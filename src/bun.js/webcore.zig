@@ -358,14 +358,10 @@ pub const Prompt = struct {
 
 pub const Crypto = struct {
     const UUID = @import("./uuid.zig");
-
+    const BoringSSL = @import("boringssl");
     pub const Class = JSC.NewClass(void, .{ .name = "crypto" }, .{
-        .getRandomValues = .{
-            .rfn = getRandomValues,
-        },
-        .randomUUID = .{
-            .rfn = randomUUID,
-        },
+        .getRandomValues = JSC.DOMCall("Crypto", @This(), "getRandomValues", JSC.JSValue, JSC.DOMEffect.top),
+        .randomUUID = JSC.DOMCall("Crypto", @This(), "randomUUID", *JSC.JSString, JSC.DOMEffect.top),
     }, .{});
     pub const Prototype = JSC.NewClass(
         void,
@@ -379,29 +375,81 @@ pub const Crypto = struct {
     );
 
     pub fn getRandomValues(
-        // this
-        _: void,
-        ctx: JSC.C.JSContextRef,
-        // function
-        _: JSC.C.JSObjectRef,
-        // thisObject
-        _: JSC.C.JSObjectRef,
-        arguments: []const JSC.C.JSValueRef,
-        exception: JSC.C.ExceptionRef,
-    ) JSC.C.JSValueRef {
+        globalThis: *JSC.JSGlobalObject,
+        _: JSC.JSValue,
+        arguments: []const JSC.JSValue,
+    ) JSC.JSValue {
         if (arguments.len == 0) {
-            JSC.JSError(JSC.getAllocator(ctx), "Expected typed array but received nothing", .{}, ctx, exception);
-            return JSC.JSValue.jsUndefined().asObjectRef();
+            globalThis.throwInvalidArguments("Expected typed array but got nothing", .{});
+            return JSC.JSValue.jsUndefined();
         }
-        var array_buffer = JSC.MarkedArrayBuffer.fromJS(ctx.ptr(), JSC.JSValue.fromRef(arguments[0]), exception) orelse {
-            JSC.JSError(JSC.getAllocator(ctx), "Expected typed array", .{}, ctx, exception);
-            return JSC.JSValue.jsUndefined().asObjectRef();
+
+        var array_buffer = arguments[0].asArrayBuffer(globalThis) orelse {
+            globalThis.throwInvalidArguments("Expected typed array but got {s}", .{@tagName(arguments[0].jsType())});
+            return JSC.JSValue.jsUndefined();
         };
-        var slice = array_buffer.slice();
-        if (slice.len > 0)
-            std.crypto.random.bytes(slice);
+        var slice = array_buffer.byteSlice();
+
+        switch (slice.len) {
+            0 => {},
+            1...JSC.RareData.EntropyCache.size / 8 => {
+                if (arguments.len > 1) {
+                    bun.rand(slice);
+                } else {
+                    std.mem.copy(u8, slice, globalThis.bunVM().rareData().entropySlice(slice.len));
+                }
+            },
+            else => {
+                bun.rand(slice);
+            },
+        }
 
         return arguments[0];
+    }
+
+    pub fn getRandomValuesWithoutTypeChecks(
+        globalThis: *JSC.JSGlobalObject,
+        _: *anyopaque,
+        array: *JSC.JSUint8Array,
+    ) callconv(.C) JSC.JSValue {
+        var slice = array.slice();
+        switch (slice.len) {
+            0 => {},
+            // 512 bytes or less we reuse from the same cache as UUID generation.
+            1...JSC.RareData.EntropyCache.size / 8 => {
+                std.mem.copy(u8, slice, globalThis.bunVM().rareData().entropySlice(slice.len));
+            },
+            else => {
+                bun.rand(slice);
+            },
+        }
+
+        return @intToEnum(JSC.JSValue, @bitCast(i64, @ptrToInt(array)));
+    }
+
+    pub fn randomUUID(
+        globalThis: *JSC.JSGlobalObject,
+        _: JSC.JSValue,
+        _: []const JSC.JSValue,
+    ) JSC.JSValue {
+        var out: [36]u8 = undefined;
+        const uuid: UUID = .{
+            .bytes = globalThis.bunVM().rareData().nextUUID(),
+        };
+        uuid.print(&out);
+        return JSC.ZigString.init(&out).toValueGC(globalThis);
+    }
+
+    pub fn randomUUIDWithoutTypeChecks(
+        globalThis: *JSC.JSGlobalObject,
+        _: *anyopaque,
+    ) callconv(.C) JSC.JSValue {
+        var out: [36]u8 = undefined;
+        const uuid: UUID = .{
+            .bytes = globalThis.bunVM().rareData().nextUUID(),
+        };
+        uuid.print(&out);
+        return JSC.ZigString.init(&out).toValueGC(globalThis);
     }
 
     pub fn call(
@@ -416,22 +464,5 @@ pub const Crypto = struct {
         _: JSC.C.ExceptionRef,
     ) JSC.C.JSValueRef {
         return JSC.JSValue.jsUndefined().asObjectRef();
-    }
-
-    pub fn randomUUID(
-        // this
-        _: void,
-        ctx: JSC.C.JSContextRef,
-        // function
-        _: JSC.C.JSObjectRef,
-        // thisObject
-        _: JSC.C.JSObjectRef,
-        _: []const JSC.C.JSValueRef,
-        _: JSC.C.ExceptionRef,
-    ) JSC.C.JSValueRef {
-        var uuid = UUID.init();
-        var out: [128]u8 = undefined;
-        var str = std.fmt.bufPrint(&out, "{s}", .{uuid}) catch unreachable;
-        return JSC.ZigString.init(str).toValueGC(ctx.ptr()).asObjectRef();
     }
 };

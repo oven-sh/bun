@@ -91,9 +91,9 @@ STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSWritableStreamSinkPrototype, JSWritableStr
 /* Hash table for prototype */
 
 static const HashTableValue JSWritableStreamSinkPrototypeTableValues[] = {
-    { "write"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(jsWritableStreamSinkPrototypeFunction_write), (intptr_t)(1) } },
-    { "close"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(jsWritableStreamSinkPrototypeFunction_close), (intptr_t)(0) } },
-    { "error"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(jsWritableStreamSinkPrototypeFunction_error), (intptr_t)(1) } },
+    { "write"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsWritableStreamSinkPrototypeFunction_write, 1 } },
+    { "close"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsWritableStreamSinkPrototypeFunction_close, 0 } },
+    { "error"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsWritableStreamSinkPrototypeFunction_error, 1 } },
 };
 
 const ClassInfo JSWritableStreamSinkPrototype::s_info = { "WritableStreamSink"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSWritableStreamSinkPrototype) };

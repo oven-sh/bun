@@ -23,61 +23,22 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-function require(name) {
-  "use strict";
-  if (typeof name !== "string") {
-    @throwTypeError("require() expects a string as its argument");
-  }
-  
-  const resolved = this.resolveSync(name, this.path);
-  var cached = @requireMap.@get(resolved);
-  const last5 = resolved.substring(resolved.length - 5);
-  if (cached) {
-    if (last5 === ".node") {
-      return cached.exports;
-    }
 
-    return cached;
-  }
-
-  
-  // TODO: remove this hardcoding
-  if (last5 === ".json") {
-    var fs = (globalThis[Symbol.for("_fs")] ||= Bun.fs());
-    var exports = JSON.parse(fs.readFileSync(resolved, "utf8"));
-    @requireMap.@set(resolved, exports);
-    return exports;
-  } else if (last5 === ".node") {
-    var module = { exports: {} };
-    globalThis.process.dlopen(module, resolved);
-    @requireMap.@set(resolved, module);
-    return module.exports;
-  } else if (last5 === ".toml") {
-    var fs = (globalThis[Symbol.for("_fs")] ||= Bun.fs());
-    var exports = Bun.TOML.parse(fs.readFileSync(resolved, "utf8"));
-    @requireMap.@set(resolved, exports);
-    return exports;
-  } else {
-    var exports = this.requireModule(this, resolved);
-    @requireMap.@set(resolved, exports);
-    return exports;
-  }
-}
-
-function loadModule(meta, resolvedSpecifier) {
+function loadCJS2ESM(resolvedSpecifier) {
   "use strict";
 
+  var loader = @Loader;
   var queue = @createFIFO();
   var key = resolvedSpecifier;
   while (key) {
     // we need to explicitly check because state could be @ModuleFetch
     // it will throw this error if we do not:
     //    @throwTypeError("Requested module is already fetched.");
-    var entry = Loader.registry.@get(key);
+    var entry = loader.registry.@get(key);
 
     if (!entry || !entry.state || entry.state <= @ModuleFetch) {
       @fulfillModuleSync(key);
-      entry = Loader.registry.@get(key);
+      entry = loader.registry.@get(key);
     }
 
 
@@ -89,11 +50,10 @@ function loadModule(meta, resolvedSpecifier) {
       entry.fetch,
       @promiseFieldReactionsOrResult
     );
-
     // parseModule() returns a Promise, but the value is already fulfilled
     // so we just pull it out of the promise here once again
     // But, this time we do it a little more carefully because this is a JSC function call and not bun source code
-    var moduleRecordPromise = Loader.parseModule(key, sourceCodeObject);
+    var moduleRecordPromise = loader.parseModule(key, sourceCodeObject);
     var module = entry.module;
     if (!module && moduleRecordPromise && @isPromise(moduleRecordPromise)) {
       var reactionsOrResult = @getPromiseInternalField(
@@ -105,7 +65,6 @@ function loadModule(meta, resolvedSpecifier) {
         @promiseFieldFlags
       );
       var state = flags & @promiseStateMask;
-
       // this branch should never happen, but just to be safe
       if (
         state === @promiseStatePending ||
@@ -129,20 +88,17 @@ function loadModule(meta, resolvedSpecifier) {
     // This is very similar to "requestInstantiate" in ModuleLoader.js in JavaScriptCore.
     @setStateToMax(entry, @ModuleLink);
     var dependenciesMap = module.dependenciesMap;
-    var requestedModules = Loader.requestedModules(module);
+    var requestedModules = loader.requestedModules(module);
     var dependencies = @newArrayWithSize(requestedModules.length);
-
     for (var i = 0, length = requestedModules.length; i < length; ++i) {
       var depName = requestedModules[i];
-
       // optimization: if it starts with a slash then it's an absolute path
       // we don't need to run the resolver a 2nd time
       var depKey =
         depName[0] === "/"
           ? depName
-          : Loader.resolveSync(depName, key, @undefined);
-      var depEntry = Loader.ensureRegistered(depKey);
-
+          : loader.resolve(depName, key, @undefined);
+      var depEntry = loader.ensureRegistered(depKey);
       if (depEntry.state < @ModuleLink) {
         queue.push(depKey);
       }
@@ -153,16 +109,16 @@ function loadModule(meta, resolvedSpecifier) {
 
     entry.dependencies = dependencies;
     // All dependencies resolved, set instantiate and satisfy field directly.
-    entry.instantiate = Promise.resolve(entry)
-    entry.satisfy = Promise.resolve(entry);
+    entry.instantiate = @Promise.resolve(entry)
+    entry.satisfy = @Promise.resolve(entry);
     key = queue.shift();
-    while (key && (Loader.registry.@get(key)?.state ?? @ModuleFetch) >= @ModuleLink) {
+    while (key && (loader.registry.@get(key)?.state ?? @ModuleFetch) >= @ModuleLink) {
       key = queue.shift();
     }
 
   }
 
-  var linkAndEvaluateResult = Loader.linkAndEvaluateModule(
+  var linkAndEvaluateResult = loader.linkAndEvaluateModule(
     resolvedSpecifier,
     @undefined
   );
@@ -174,26 +130,69 @@ function loadModule(meta, resolvedSpecifier) {
     );
   }
 
-  return Loader.registry.@get(resolvedSpecifier);
+  return loader.registry.@get(resolvedSpecifier);
 
 }
 
-function requireModule(meta, resolved) {
+
+function requireESM(resolved) {
   "use strict";
-  var Loader = globalThis.Loader;
-  var entry = Loader.registry.@get(resolved);
+  var entry = @Loader.registry.@get(resolved);
 
   if (!entry || !entry.evaluated) {
-    entry = this.loadModule(meta, resolved); 
+    entry = @loadCJS2ESM(resolved); 
   }
 
   if (!entry || !entry.evaluated || !entry.module) {
     @throwTypeError(`require() failed to evaluate module \"${resolved}\". This is an internal consistentency error.`);
   }
-  var exports = Loader.getModuleNamespaceObject(entry.module);
+  var exports = @Loader.getModuleNamespaceObject(entry.module);
   var commonJS = exports.default;
-  if (commonJS && @isObject(commonJS) && @commonJSSymbol in commonJS) {
+  var cjs = commonJS && commonJS[@commonJSSymbol];
+  if (cjs === 0) {
+    return commonJS;
+  } else if (cjs && @isCallable(commonJS)) {
     return commonJS();
   }
+  
   return exports;
+}
+
+function require(name) {
+  "use strict";
+  if (typeof name !== "string") {
+    @throwTypeError("require() expects a string as its argument");
+  }
+  const resolved = @resolveSync(name, this.path);
+  var cached = @requireMap.@get(resolved);
+  const last5 = resolved.substring(resolved.length - 5);
+  if (cached) {
+    if (last5 === ".node") {
+      return cached.exports;
+    }
+
+    return cached;
+  }
+  
+  // TODO: remove this hardcoding
+  if (last5 === ".json") {
+    var fs = (globalThis[Symbol.for("_fs")] ||= @Bun.fs());
+    var exports = JSON.parse(fs.readFileSync(resolved, "utf8"));
+    @requireMap.@set(resolved, exports);
+    return exports;
+  } else if (last5 === ".node") {
+    var module = { exports: {} };
+    process.dlopen(module, resolved);
+    @requireMap.@set(resolved, module);
+    return module.exports;
+  } else if (last5 === ".toml") {
+    var fs = (globalThis[Symbol.for("_fs")] ||= @Bun.fs());
+    var exports = @Bun.TOML.parse(fs.readFileSync(resolved, "utf8"));
+    @requireMap.@set(resolved, exports);
+    return exports;
+  } else {
+    var exports = @requireESM(resolved);
+    @requireMap.@set(resolved, exports);
+    return exports;
+  }
 }

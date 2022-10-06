@@ -189,6 +189,7 @@ pub const Arguments = struct {
         clap.parseParam("-l, --loader <STR>...             Parse files with .ext:loader, e.g. --loader .js:jsx. Valid loaders: jsx, js, json, tsx, ts, css") catch unreachable,
         clap.parseParam("-u, --origin <STR>                Rewrite import URLs to start with --origin. Default: \"\"") catch unreachable,
         clap.parseParam("-p, --port <STR>                  Port to serve bun's dev server on. Default: \"3000\"") catch unreachable,
+        clap.parseParam("--hot                             Enable auto reload in bun's JavaScript runtime") catch unreachable,
         clap.parseParam("--silent                          Don't repeat the command for bun run") catch unreachable,
         clap.parseParam("<POS>...                          ") catch unreachable,
     };
@@ -327,6 +328,10 @@ pub const Arguments = struct {
         var args = clap.parse(clap.Help, params_to_use, .{
             .diagnostic = &diag,
             .allocator = allocator,
+            .stop_after_positional_at = if (cmd == .RunCommand) 2 else if (cmd == .AutoCommand)
+                1
+            else
+                0,
         }) catch |err| {
             // Report useful error and exit
             clap.help(Output.errorWriter(), params_to_use) catch {};
@@ -399,6 +404,8 @@ pub const Arguments = struct {
         opts.generate_node_module_bundle = cmd == .BunCommand;
         opts.inject = args.options("--inject");
         opts.extension_order = args.options("--extension-order");
+        ctx.debug.hot_reload = args.flag("--hot");
+        ctx.passthrough = args.remaining();
 
         opts.no_summary = args.flag("--no-summary");
         opts.disable_hmr = args.flag("--disable-hmr");
@@ -776,6 +783,7 @@ pub const Command = struct {
         dump_limits: bool = false,
         fallback_only: bool = false,
         silent: bool = false,
+        hot_reload: bool = false,
 
         // technical debt
         macros: ?MacroMap = null,
@@ -789,6 +797,7 @@ pub const Command = struct {
         log: *logger.Log,
         allocator: std.mem.Allocator,
         positionals: []const string = &[_]string{},
+        passthrough: []const string = &[_]string{},
         install: ?*Api.BunInstall = null,
 
         debug: DebugOptions = DebugOptions{},

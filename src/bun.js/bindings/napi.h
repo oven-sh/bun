@@ -100,10 +100,8 @@ public:
 
     ~NapiRef()
     {
-        if (this->refCount > 0) {
-            this->refCount = 1;
-            this->unref();
-        }
+        strongRef.clear();
+        weakValueRef.clear();
     }
 
     JSC::Weak<JSC::JSGlobalObject> globalObject;

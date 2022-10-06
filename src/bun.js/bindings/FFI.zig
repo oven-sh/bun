@@ -36,8 +36,7 @@ pub inline fn JSVALUE_IS_NUMBER(arg_val: EncodedJSValue) @"bool" {
     const val = arg_val;
     return (@bitCast(c_ulonglong, val.asInt64) & @as(c_ulonglong, 18446181123756130304)) != 0;
 }
-pub inline fn JSVALUE_TO_UINT64(arg_globalObject: ?*anyopaque, arg_value: EncodedJSValue) u64 {
-    var globalObject = arg_globalObject;
+pub inline fn JSVALUE_TO_UINT64(arg_value: EncodedJSValue) u64 {
     var value = arg_value;
     if (JSVALUE_IS_INT32(value)) {
         return @bitCast(u64, @as(c_longlong, JSVALUE_TO_INT32(value)));
@@ -45,7 +44,7 @@ pub inline fn JSVALUE_TO_UINT64(arg_globalObject: ?*anyopaque, arg_value: Encode
     if (JSVALUE_IS_NUMBER(value)) {
         return @floatToInt(u64, JSVALUE_TO_DOUBLE(value));
     }
-    return JSVALUE_TO_UINT64_SLOW(globalObject, value);
+    return JSVALUE_TO_UINT64_SLOW(value);
 }
 pub inline fn JSVALUE_TO_INT64(arg_value: EncodedJSValue) i64 {
     const value = arg_value;
@@ -57,7 +56,7 @@ pub inline fn JSVALUE_TO_INT64(arg_value: EncodedJSValue) i64 {
     }
     return JSVALUE_TO_INT64_SLOW(value);
 }
-pub extern fn JSVALUE_TO_UINT64_SLOW(globalObject: ?*anyopaque, value: EncodedJSValue) u64;
+pub extern fn JSVALUE_TO_UINT64_SLOW(value: EncodedJSValue) u64;
 pub extern fn JSVALUE_TO_INT64_SLOW(value: EncodedJSValue) i64;
 pub const UINT64_TO_JSVALUE_SLOW = @import("./bindings.zig").JSValue.fromUInt64NoTruncate;
 pub const INT64_TO_JSVALUE_SLOW = @import("./bindings.zig").JSValue.fromInt64NoTruncate;

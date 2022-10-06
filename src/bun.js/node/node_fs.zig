@@ -770,9 +770,48 @@ const Arguments = struct {
     pub const RmDir = struct {
         path: PathLike,
 
+        force: bool = false,
+
         max_retries: u32 = 0,
         recursive: bool = false,
         retry_delay: c_uint = 100,
+
+        pub fn fromJS(ctx: JSC.C.JSContextRef, arguments: *ArgumentsSlice, exception: JSC.C.ExceptionRef) ?RmDir {
+            const path = PathLike.fromJS(ctx, arguments, exception) orelse {
+                if (exception.* == null) {
+                    JSC.throwInvalidArguments(
+                        "path must be a string or TypedArray",
+                        .{},
+                        ctx,
+                        exception,
+                    );
+                }
+                return null;
+            };
+
+            if (exception.* != null) return null;
+            var recursive = false;
+            var force = false;
+            if (arguments.next()) |val| {
+                arguments.eat();
+
+                if (val.isObject()) {
+                    if (val.get(ctx.ptr(), "recursive")) |boolean| {
+                        recursive = boolean.toBoolean();
+                    }
+
+                    if (val.get(ctx.ptr(), "force")) |boolean| {
+                        force = boolean.toBoolean();
+                    }
+                }
+            }
+
+            return RmDir{
+                .path = path,
+                .recursive = recursive,
+                .force = force,
+            };
+        }
     };
 
     /// https://github.com/nodejs/node/blob/master/lib/fs.js#L1285
@@ -2290,7 +2329,7 @@ const Return = struct {
             };
         }
     };
-    pub const ReadFile = StringOrBuffer;
+    pub const ReadFile = JSC.Node.StringOrNodeBuffer;
     pub const Readlink = StringOrBuffer;
     pub const Realpath = StringOrBuffer;
     pub const RealpathNative = Realpath;
@@ -3334,11 +3373,14 @@ pub const NodeFS = struct {
                     .result => |stat_| stat_,
                 };
 
+                // For certain files, the size might be 0 but the file might still have contents.
                 const size = @intCast(u64, @maximum(stat_.size, 0));
+
                 var buf = std.ArrayList(u8).init(bun.default_allocator);
                 buf.ensureTotalCapacityPrecise(size + 16) catch unreachable;
                 buf.expandToCapacity();
                 var total: usize = 0;
+
                 while (total < size) {
                     switch (Syscall.read(fd, buf.items.ptr[total..buf.capacity])) {
                         .err => |err| return .{
@@ -3358,8 +3400,47 @@ pub const NodeFS = struct {
                             }
                         },
                     }
+                } else {
+                    // https://github.com/oven-sh/bun/issues/1220
+                    while (true) {
+                        switch (Syscall.read(fd, buf.items.ptr[total..buf.capacity])) {
+                            .err => |err| return .{
+                                .err = err,
+                            },
+                            .result => |amt| {
+                                total += amt;
+                                // There are cases where stat()'s size is wrong or out of date
+                                if (total > size and amt != 0) {
+                                    buf.ensureUnusedCapacity(8096) catch unreachable;
+                                    buf.expandToCapacity();
+                                    continue;
+                                }
+
+                                if (amt == 0) {
+                                    break;
+                                }
+                            },
+                        }
+                    }
                 }
+
                 buf.items.len = total;
+                if (total == 0) {
+                    buf.deinit();
+                    return switch (args.encoding) {
+                        .buffer => .{
+                            .result = .{
+                                .buffer = Buffer.empty,
+                            },
+                        },
+                        else => .{
+                            .result = .{
+                                .string = "",
+                            },
+                        },
+                    };
+                }
+
                 return switch (args.encoding) {
                     .buffer => .{
                         .result = .{
@@ -3559,7 +3640,10 @@ pub const NodeFS = struct {
         switch (comptime flavor) {
             .sync => {
                 var dir = args.old_path.sliceZ(&this.sync_error_buf);
-                _ = dir;
+                switch (Syscall.getErrno(system.rmdir(dir))) {
+                    .SUCCESS => return Maybe(Return.Rmdir).success,
+                    else => |err| return Maybe(Return.Rmdir).errnoSys(err, .rmdir),
+                }
             },
             else => {},
         }
@@ -3572,6 +3656,62 @@ pub const NodeFS = struct {
         _ = args;
         _ = this;
         _ = flavor;
+        switch (comptime flavor) {
+            .sync => {
+                var dest = args.path.sliceZ(&this.sync_error_buf);
+
+                if (comptime Environment.isMac) {
+                    while (true) {
+                        var flags: u32 = 0;
+                        if (args.recursive) {
+                            flags |= bun.C.darwin.RemoveFileFlags.cross_mount;
+                            flags |= bun.C.darwin.RemoveFileFlags.allow_long_paths;
+                            flags |= bun.C.darwin.RemoveFileFlags.recursive;
+                        }
+
+                        if (Maybe(Return.Rm).errnoSys(bun.C.darwin.removefileat(std.os.AT.FDCWD, dest, null, flags), .unlink)) |errno| {
+                            switch (@intToEnum(os.E, errno.err.errno)) {
+                                .AGAIN, .INTR => continue,
+                                .NOENT => {
+                                    if (args.force) {
+                                        return Maybe(Return.Rm).success;
+                                    }
+
+                                    return errno;
+                                },
+
+                                .MLINK => {
+                                    var copy: [bun.MAX_PATH_BYTES]u8 = undefined;
+                                    @memcpy(&copy, dest.ptr, dest.len);
+                                    copy[dest.len] = 0;
+                                    var dest_copy = copy[0..dest.len :0];
+                                    switch (Syscall.unlink(dest_copy).getErrno()) {
+                                        .AGAIN, .INTR => continue,
+                                        .NOENT => {
+                                            if (args.force) {
+                                                continue;
+                                            }
+
+                                            return errno;
+                                        },
+                                        .SUCCESS => continue,
+                                        else => return errno,
+                                    }
+                                },
+                                .SUCCESS => unreachable,
+                                else => return errno,
+                            }
+                        }
+
+                        return Maybe(Return.Rm).success;
+                    }
+                } else if (comptime Environment.isLinux) {
+                    // TODO:
+                }
+            },
+            else => {},
+        }
+
         return Maybe(Return.Rm).todo;
     }
     pub fn stat(this: *NodeFS, args: Arguments.Stat, comptime flavor: Flavor) Maybe(Return.Stat) {

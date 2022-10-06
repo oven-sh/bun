@@ -544,7 +544,6 @@ You can see [Bun's Roadmap](https://github.com/oven-sh/bun/issues/159), but here
 | CSS Parser (it only bundles)                                                          | CSS            |
 | Tree-shaking                                                                          | JavaScript     |
 | Tree-shaking                                                                          | CSS            |
-| [`extends`](https://www.typescriptlang.org/tsconfig#extends) in tsconfig.json         | TS Transpiler  |
 | [TypeScript Decorators](https://www.typescriptlang.org/docs/handbook/decorators.html) | TS Transpiler  |
 | `@jsxPragma` comments                                                                 | JS Transpiler  |
 | Sharing `.bun` files                                                                  | bun            |
@@ -647,7 +646,7 @@ editor = "code"
 
 TODO: list each property name
 
-### Loaders
+## Loaders
 
 A loader determines how to map imports &amp; file extensions to transforms and output.
 
@@ -678,7 +677,7 @@ bun --loader=.js:js
 
 This will disable JSX transforms for `.js` files.
 
-### CSS in JS
+#### CSS in JS (bun dev only)
 
 When importing CSS in JavaScript-like loaders, CSS is treated special.
 
@@ -1688,6 +1687,174 @@ This command installs completions for `zsh` and/or `fish`. It runs automatically
 
 If you want to copy the completions manually, run `bun completions > path-to-file`. If you know the completions directory to install them to, run `bun completions /path/to/directory`.
 
+## Loader API
+
+Bun v0.1.11 introduces custom loaders.
+
+- import and require `.svelte`, `.vue`, `.yaml`, `.scss`, `.less` and other file extensions that Bun doesn't implement a builtin loader for
+- Dynamically generate ESM & CJS modules
+
+**YAML loader via `js-yaml`**
+
+This is an `"object"` loader. `object` loaders let you return a JS object that Bun converts to an ESM & CJS module.
+
+Plugin implementation (`my-yaml-plugin.js`)
+
+```js
+import { plugin } from "bun";
+
+plugin({
+  name: "YAML",
+
+  setup(builder) {
+    const { load } = require("js-yaml");
+    const { readFileSync } = require("fs");
+    // Run this function on any import that ends with .yaml or .yml
+    builder.onLoad({ filter: /\.(yaml|yml)$/ }, (args) => {
+      // Read the YAML file from disk
+      const text = readFileSync(args.path, "utf8");
+
+      // parse the YAML file with js-yaml
+      const exports = load(text);
+
+      return {
+        // Copy the keys and values from the parsed YAML file into the ESM module namespace object
+        exports,
+
+        // we're returning an object
+        loader: "object",
+      };
+    });
+  },
+});
+```
+
+Plugin usage:
+
+```js
+import "./my-yaml-plugin.js";
+import { hello } from "./myfile.yaml";
+
+console.log(hello); // "world"
+```
+
+**Svelte loader using `svelte/compiler`**
+
+This is a `"js"` loader, which lets you return a JS string or `ArrayBufferView` that Bun converts to an ESM & CJS module.
+
+Plugin implementation (`myplugin.js`)
+
+```js
+import { plugin } from "bun";
+
+await plugin({
+  name: "svelte loader",
+  async setup(builder) {
+    const { compile } = await import("svelte/compiler");
+    const { readFileSync } = await import("fs");
+
+    // Register a loader for .svelte files
+    builder.onLoad({ filter: /\.svelte$/ }, ({ path }) => ({
+      // Run the Svelte compiler on the import path
+      contents: compile(readFileSync(path, "utf8"), {
+        filename: path,
+        generate: "ssr",
+      }).js.code,
+
+      // Set the loader to "js"
+      // This runs it through Bun's transpiler
+      loader: "js",
+    }));
+  },
+});
+```
+
+Note: in a production implementation, you'd want to cache the compiled output and include additional error handling.
+
+Plugin usage:
+
+```js
+import "./myplugin.js";
+import MySvelteComponent from "./component.svelte";
+
+console.log(mySvelteComponent.render());
+```
+
+### Loader API Reference
+
+Bun's loader API interface is loosely based on [esbuild](https://esbuild.github.io/plugins). Some esbuild plugins "just work" in Bun.
+
+MDX:
+
+```jsx
+import { plugin } from "bun";
+import { renderToStaticMarkup } from "react-dom/server";
+
+// it's the esbuild plugin, but it works using Bun's transpiler.
+import mdx from "@mdx-js/esbuild";
+
+plugin(mdx());
+
+import Foo from "./bar.mdx";
+console.log(renderToStaticMarkup(<Foo />));
+```
+
+At the core of the loader API are `filter` and `namespace`. `filter` is a RegExp matched against import paths. `namespace` is a prefix inserted into the import path (unlike esbuild, Bun inserts the prefix into transpiled output). For example, if you have a loader with a `filter` of `\.yaml$` and a `namespace` of `yaml:`, then the import path `./myfile.yaml` will be transformed to `yaml:./myfile.yaml`.
+
+**`plugin` function**
+
+At the top-level, a `plugin` function exported from `"bun"` expects a `"name"` string and a `"setup"` function that takes a `builder` object.
+
+For plugins to automatically activate, the `plugin` function must be from an import statement like this:
+
+```js
+import { plugin } from "bun";
+
+// This automatically activates on import
+plugin({
+  name: "my plugin",
+  setup(builder) {},
+});
+
+/* Bun.plugin() does not automatically activate. */
+```
+
+Inside the `setup` function, you can:
+
+- register loaders using `builder.onLoad()`
+- register resolvers using `builder.onResolve()`
+
+Internally, Bun's transpiler automatically turns `plugin()` calls into separate files (at most 1 per file). This lets loaders activate before the rest of your application runs with zero configuration.
+
+#### `builder.onLoad({ filter, namespace?: "optional-namespace" }, callback)`
+
+`builder.onLoad()` registers a loader for a matching `filter` RegExp and `namespace` string.
+
+The `callback` function is called with an `args` object that contains the following properties:
+
+- `path`: the path of the file being loaded
+
+For now, that's the only property. More will likely be added in the future.
+
+**Loader types**
+
+There are different types of loaders:
+
+- `"js"`, `"jsx"`, `"ts"`, `"tsx"`: these loaders run the source text through Bun's transpiler
+- `"json"`, `"toml"`: these loaders run the source text through Bun's built-in parsers
+- `"object"`: this loader inserts a new ECMAScript Module into the ECMAScript Module registry by copying all the keys and values from the `"exports"` object into the [Module Namespace Object](https://tc39.es/ecma262/#module-namespace-exotic-object)
+
+The `callback` function expects a return value that contains `contents` and `loader` properties,
+unless the loader is `"object"`.
+
+`"contents"` is the source code. It can be a string or an `ArrayBufferView`.
+
+`"loader"` is the loader type. It can be `"js"`, `"jsx"`, `"ts"`, `"tsx"`, `"json"`, `"toml"`, or `"object"`.
+
+If `"loader"` is `"object"`, the `callback` function expects a `"exports"` object instead of `"contents"`. The keys and values will be copied onto the ESM module namespace object.
+
+`"object"` loaders are useful when the return value is parsed into an object, like when parsing YAML, JSON, or other data formats. Most loader APIs force you to stringify values and parse again. This loader lets you skip that step, which improves performance and is a little easier sometimes.
+
 ## `Bun.serve` - fast HTTP server
 
 For a hello world HTTP server that writes "bun!", `Bun.serve` serves about 2.5x more requests per second than node.js on Linux:
@@ -2664,11 +2831,13 @@ rustc --crate-type cdylib add.rs
 | i8        | `int8_t`   | `int8_t`                    |
 | i16       | `int16_t`  | `int16_t`                   |
 | i32       | `int32_t`  | `int32_t`, `int`            |
-| i64       | `int64_t`  | `int32_t`                   |
+| i64       | `int64_t`  | `int64_t`                   |
+| i64_fast  | `int64_t`  |                             |
 | u8        | `uint8_t`  | `uint8_t`                   |
 | u16       | `uint16_t` | `uint16_t`                  |
 | u32       | `uint32_t` | `uint32_t`                  |
-| u64       | `uint64_t` | `uint32_t`                  |
+| u64       | `uint64_t` | `uint64_t`                  |
+| u64_fast  | `uint64_t` |                             |
 | f32       | `float`    | `float`                     |
 | f64       | `double`   | `double`                    |
 | bool      | `bool`     |                             |
@@ -2838,6 +3007,56 @@ const myPtr = ptr(myTypedArray);
 // if `byteLength` is not provided, it is assumed to be a null-terminated pointer
 myTypedArray = new Uint8Array(toArrayBuffer(myPtr, 0, 32), 0, 32);
 ```
+
+**To read data from a pointer**
+
+You have two options.
+
+For long-lived pointers, a `DataView` is the fastest option:
+
+```ts
+import { toArrayBuffer } from "bun:ffi";
+var myDataView = new DataView(toArrayBuffer(myPtr, 0, 32));
+
+console.log(
+  myDataView.getUint8(0, true),
+  myDataView.getUint8(1, true),
+  myDataView.getUint8(2, true),
+  myDataView.getUint8(3, true)
+);
+```
+
+For short-lived pointers, `read` is the fastest option:
+
+_Available in Bun v0.1.12+_
+
+```ts
+import { read } from "bun:ffi";
+
+console.log(
+  // ptr, byteOffset
+  read.u8(myPtr, 0),
+  read.u8(myPtr, 1),
+  read.u8(myPtr, 2),
+  read.u8(myPtr, 3)
+);
+```
+
+`read` behaves similarly to `DataView`, but it can be faster because it doesn't need to create a `DataView` or `ArrayBuffer`.
+
+| `FFIType` | `read` function |
+| --------- | --------------- |
+| ptr       | `read.ptr`      |
+| i8        | `read.i8`       |
+| i16       | `read.i16`      |
+| i32       | `read.i32`      |
+| i64       | `read.i64`      |
+| u8        | `read.u8`       |
+| u16       | `read.u16`      |
+| u32       | `read.u32`      |
+| u64       | `read.u64`      |
+| f32       | `read.f32`      |
+| f64       | `read.f64`      |
 
 **Memory management with pointers**:
 
@@ -3326,7 +3545,12 @@ For compatibility reasons, these NPM packages are embedded into bun’s binary a
 
 ## Developing bun
 
-Estimated: 30-90 minutes :(
+Some links you should read about JavaScriptCore, the JavaScript engine Bun uses:
+
+- https://webkit.org/blog/12967/understanding-gc-in-jsc-from-scratch/
+- https://webkit.org/blog/7122/introducing-riptide-webkits-retreating-wavefront-concurrent-garbage-collector/
+
+To get your development environment configured, expect it to take 30-90 minutes :(
 
 ### VSCode Dev Container (Linux)
 
@@ -3415,9 +3639,11 @@ curl -o zig.tar.gz -sL https://github.com/oven-sh/zig/releases/download/jul1/zig
 
 # This will extract to $HOME/.bun-tools/zig
 tar -xvf zig.tar.gz -C $HOME/.bun-tools/
+rm zig.tar.gz
 
 # Make sure it gets trusted
-xattr -dr com.apple.quarantine $HOME/.bun-tools/zig/zig
+# If you get an error 'No such xattr: com.apple.quarantine', that means it's already trusted and you can continue
+xattr -d com.apple.quarantine $HOME/.bun-tools/zig/zig
 ```
 
 Now you'll need to add Zig to your PATH.
@@ -3455,8 +3681,8 @@ In `bun`:
 
 ```bash
 # If you omit --depth=1, `git submodule update` will take 17.5 minutes on 1gbps internet, mostly due to WebKit.
-git submodule update --init --recursive --progress --depth=1
-make vendor identifier-cache jsc dev
+git submodule update --init --recursive --progress --depth=1 --checkout
+make vendor identifier-cache bindings jsc dev
 ```
 
 #### Verify it worked (macOS)

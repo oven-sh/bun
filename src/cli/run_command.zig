@@ -231,7 +231,8 @@ pub const RunCommand = struct {
             var combined_script_buf = try allocator.alloc(u8, combined_script_len);
             std.mem.copy(u8, combined_script_buf, script);
             var remaining_script_buf = combined_script_buf[script.len..];
-            for (passthrough) |p| {
+            for (passthrough) |part| {
+                var p = part;
                 remaining_script_buf[0] = ' ';
                 std.mem.copy(u8, remaining_script_buf[1..], p);
                 remaining_script_buf = remaining_script_buf[p.len + 1 ..];
@@ -349,9 +350,9 @@ pub const RunCommand = struct {
         args.node_modules_bundle_path = null;
         args.node_modules_bundle_path_server = null;
         args.generate_node_module_bundle = false;
-
         this_bundler.* = try bundler.Bundler.init(ctx.allocator, ctx.log, args, null, env);
         this_bundler.options.env.behavior = Api.DotEnvBehavior.load_all;
+        this_bundler.env.quiet = true;
         this_bundler.options.env.prefix = "";
 
         this_bundler.resolver.care_about_bin_folder = true;
@@ -390,11 +391,13 @@ pub const RunCommand = struct {
                 }
             }
 
-            // Run .env in the root dir
+            // TODO: evaluate if we can skip running this in nested calls to bun run
+            // The reason why it's unclear:
+            // - Some scripts may do NODE_ENV=production bun run foo
+            //   This would cause potentially a different .env file to be loaded
             this_bundler.runEnvLoader() catch {};
 
             if (root_dir_info.getEntries()) |dir| {
-
                 // Run .env again if it exists in a parent dir
                 if (this_bundler.options.production) {
                     this_bundler.env.load(&this_bundler.fs.fs, dir, false) catch {};
@@ -713,49 +716,7 @@ pub const RunCommand = struct {
             script_name_to_search = positionals[0];
         }
 
-        var passthrough: []const string = &[_]string{};
-
-        var passthrough_list = std.ArrayList(string).init(ctx.allocator);
-        if (script_name_to_search.len > 0) {
-            get_passthrough: {
-
-                // If they explicitly pass "--", that means they want everything after that to be passed through.
-                for (std.os.argv) |argv, i| {
-                    if (strings.eqlComptime(std.mem.span(argv), "--")) {
-                        if (std.os.argv.len > i + 1) {
-                            var count: usize = 0;
-                            for (std.os.argv[i + 1 ..]) |_| {
-                                count += 1;
-                            }
-                            try passthrough_list.ensureTotalCapacity(count);
-
-                            for (std.os.argv[i + 1 ..]) |arg| {
-                                passthrough_list.appendAssumeCapacity(std.mem.span(arg));
-                            }
-
-                            passthrough = passthrough_list.toOwnedSlice();
-                            break :get_passthrough;
-                        }
-                    }
-                }
-
-                // If they do not pass "--", assume they want everything after the script name to be passed through.
-                for (std.os.argv) |argv, i| {
-                    if (strings.eql(std.mem.span(argv), script_name_to_search)) {
-                        if (std.os.argv.len > i + 1) {
-                            try passthrough_list.ensureTotalCapacity(std.os.argv[i + 1 ..].len);
-
-                            for (std.os.argv[i + 1 ..]) |arg| {
-                                passthrough_list.appendAssumeCapacity(std.mem.span(arg));
-                            }
-
-                            passthrough = passthrough_list.toOwnedSlice();
-                            break :get_passthrough;
-                        }
-                    }
-                }
-            }
-        }
+        const passthrough = ctx.passthrough;
 
         if (comptime log_errors) {
             if (script_name_to_search.len > 0) {

@@ -2390,9 +2390,6 @@ pub const Parser = struct {
         } else {
             // When tree shaking is enabled, each top-level statement is potentially a separate part.
             for (stmts) |stmt| {
-                // switch (stmt.data) {
-
-                // }
                 switch (stmt.data) {
                     .s_local => |local| {
                         if (local.decls.len > 1) {
@@ -2792,14 +2789,10 @@ pub const Parser = struct {
                                         },
                                         loc,
                                     ),
-                                    .value = p.e(
-                                        E.Dot{
-                                            .target = dot_call_target,
-                                            .name = p.options.jsx.factory[p.options.jsx.factory.len - 1],
-                                            .name_loc = loc,
-                                            .can_be_removed_if_unused = true,
-                                        },
+                                    .value = p.memberExpression(
                                         loc,
+                                        dot_call_target,
+                                        if (p.options.jsx.factory.len > 1) p.options.jsx.factory[1..] else p.options.jsx.factory,
                                     ),
                                 };
                                 decl_i += 1;
@@ -2815,14 +2808,10 @@ pub const Parser = struct {
                                         },
                                         loc,
                                     ),
-                                    .value = p.e(
-                                        E.Dot{
-                                            .target = dot_call_target,
-                                            .name = p.options.jsx.fragment[p.options.jsx.fragment.len - 1],
-                                            .name_loc = loc,
-                                            .can_be_removed_if_unused = true,
-                                        },
+                                    .value = p.memberExpression(
                                         loc,
+                                        dot_call_target,
+                                        if (p.options.jsx.fragment.len > 1) p.options.jsx.fragment[1..] else p.options.jsx.fragment,
                                     ),
                                 };
                                 decl_i += 1;
@@ -2952,6 +2941,49 @@ pub const Parser = struct {
                         before.append(js_ast.Part{
                             .stmts = part_stmts,
                             .declared_symbols = declared_symbols,
+                            .tag = .jsx_import,
+                        }) catch unreachable;
+                    }
+                } else {
+                    const jsx_fragment_symbol: Symbol = p.symbols.items[p.jsx_fragment.ref.innerIndex()];
+                    const jsx_factory_symbol: Symbol = p.symbols.items[p.jsx_factory.ref.innerIndex()];
+
+                    // inject
+                    //   var jsxFrag =
+                    if (jsx_fragment_symbol.use_count_estimate + jsx_factory_symbol.use_count_estimate > 0) {
+                        const total = @as(usize, @boolToInt(jsx_fragment_symbol.use_count_estimate > 0)) + @as(usize, @boolToInt(jsx_factory_symbol.use_count_estimate > 0));
+                        var declared_symbols = try std.ArrayList(js_ast.DeclaredSymbol).initCapacity(p.allocator, total);
+                        var decls = try std.ArrayList(G.Decl).initCapacity(p.allocator, total);
+                        var part_stmts = try p.allocator.alloc(Stmt, 1);
+
+                        if (jsx_fragment_symbol.use_count_estimate > 0) declared_symbols.appendAssumeCapacity(.{ .ref = p.jsx_fragment.ref, .is_top_level = true });
+                        if (jsx_factory_symbol.use_count_estimate > 0) declared_symbols.appendAssumeCapacity(.{ .ref = p.jsx_factory.ref, .is_top_level = true });
+
+                        if (jsx_fragment_symbol.use_count_estimate > 0)
+                            decls.appendAssumeCapacity(G.Decl{
+                                .binding = p.b(
+                                    B.Identifier{
+                                        .ref = p.jsx_fragment.ref,
+                                    },
+                                    logger.Loc.Empty,
+                                ),
+                                .value = try p.jsxStringsToMemberExpression(logger.Loc.Empty, p.options.jsx.fragment),
+                            });
+
+                        if (jsx_factory_symbol.use_count_estimate > 0)
+                            decls.appendAssumeCapacity(G.Decl{
+                                .binding = p.b(
+                                    B.Identifier{
+                                        .ref = p.jsx_factory.ref,
+                                    },
+                                    logger.Loc.Empty,
+                                ),
+                                .value = try p.jsxStringsToMemberExpression(logger.Loc.Empty, p.options.jsx.factory),
+                            });
+                        part_stmts[0] = p.s(S.Local{ .kind = .k_var, .decls = decls.items }, logger.Loc.Empty);
+                        before.append(js_ast.Part{
+                            .stmts = part_stmts,
+                            .declared_symbols = declared_symbols.items,
                             .tag = .jsx_import,
                         }) catch unreachable;
                     }
@@ -3899,7 +3931,7 @@ fn NewParser_(
         filename_ref: Ref = Ref.None,
         dirname_ref: Ref = Ref.None,
         import_meta_ref: Ref = Ref.None,
-        promise_ref: ?Ref = null,
+        bun_plugin: js_ast.BunPlugin = .{},
         scopes_in_order_visitor_index: usize = 0,
         has_classic_runtime_warned: bool = false,
         macro_call_count: MacroCallCountType = 0,
@@ -4137,7 +4169,7 @@ fn NewParser_(
                     return p.e(E.Null{}, arg.loc);
                 }
 
-                const import_record_index = p.addImportRecord(.dynamic, arg.loc, arg.data.e_string.string(p.allocator) catch unreachable);
+                const import_record_index = p.addImportRecord(.dynamic, arg.loc, arg.data.e_string.slice(p.allocator));
                 p.import_records.items[import_record_index].handles_import_errors = (state.is_await_target and p.fn_or_arrow_data_visit.try_body_count != 0) or state.is_then_catch_target;
                 p.import_records_for_current_part.append(p.allocator, import_record_index) catch unreachable;
                 return p.e(E.Import{
@@ -4334,13 +4366,12 @@ fn NewParser_(
 
                 parts.* = parts_;
             }
+            const default_export_ref =
+                if (p.named_exports.get("default")) |default_| default_.ref else Ref.None;
+
             while (parts_.len > 1) {
                 var parts_end: usize = 0;
                 var last_end = parts_.len;
-                var default_export_ref = Ref.None;
-                if (p.named_exports.get("default")) |named| {
-                    default_export_ref = named.ref;
-                }
 
                 for (parts_) |part| {
                     const is_dead = part.can_be_removed_if_unused and can_remove_part: {
@@ -6295,6 +6326,38 @@ fn NewParser_(
                 }
 
                 return p.s(S.Empty{}, loc);
+            }
+
+            if (p.options.features.hoist_bun_plugin and strings.eqlComptime(path.text, "bun")) {
+                var plugin_i: usize = std.math.maxInt(usize);
+                const items = stmt.items;
+                for (items) |item, i| {
+                    // Mark Bun.plugin()
+                    // TODO: remove if they have multiple imports of the same name?
+                    if (strings.eqlComptime(item.alias, "plugin")) {
+                        const name = p.loadNameFromRef(item.name.ref.?);
+                        const ref = try p.declareSymbol(.other, item.name.loc, name);
+                        try p.is_import_item.put(p.allocator, ref, .{});
+                        p.bun_plugin.ref = ref;
+                        plugin_i = i;
+                        break;
+                    }
+                }
+
+                if (plugin_i != std.math.maxInt(usize)) {
+                    var list = std.ArrayListUnmanaged(@TypeOf(stmt.items[0])){
+                        .items = stmt.items,
+                        .capacity = stmt.items.len,
+                    };
+                    // remove it from the list
+                    _ = list.swapRemove(plugin_i);
+                    stmt.items = list.items;
+                }
+
+                // if the import statement is now empty, remove it completely
+                if (stmt.items.len == 0 and stmt.default_name == null and stmt.star_name_loc == null) {
+                    return p.s(S.Empty{}, loc);
+                }
             }
 
             const macro_remap = if ((comptime allow_macros) and !is_macro)
@@ -8653,10 +8716,10 @@ fn NewParser_(
                         try p.skipTypeScriptType(.lowest);
                     }
 
-                    // If we end with a .t_close_paren, that's a bug. It means we aren't following the last parenthese
-
-                    if (comptime Environment.allow_assert)
-                        assert(p.lexer.token != .t_close_paren);
+                    if (p.lexer.token == .t_close_paren) {
+                        p.log.addRangeError(p.source, p.lexer.range(), "Unexpected \")\"") catch unreachable;
+                        return error.SyntaxError;
+                    }
                 }
 
                 if (p.lexer.token == .t_equals) {
@@ -11950,13 +12013,64 @@ fn NewParser_(
         // esbuild's version of this function is much more complicated.
         // I'm not sure why defines is strictly relevant for this case
         // do people do <API_URL>?
-        fn jsxStringsToMemberExpression(p: *P, loc: logger.Loc, ref: Ref) Expr {
+        fn jsxRefToMemberExpression(p: *P, loc: logger.Loc, ref: Ref) Expr {
             p.recordUsage(ref);
             return p.e(E.Identifier{
                 .ref = ref,
                 .can_be_removed_if_unused = true,
                 .call_can_be_unwrapped_if_unused = true,
             }, loc);
+        }
+
+        fn jsxStringsToMemberExpression(p: *P, loc: logger.Loc, parts: []const []const u8) !Expr {
+            const result = try p.findSymbol(loc, parts[0]);
+
+            var value = p.handleIdentifier(
+                loc,
+                E.Identifier{
+                    .ref = result.ref,
+                    .must_keep_due_to_with_stmt = result.is_inside_with_scope,
+                    .can_be_removed_if_unused = true,
+                },
+                parts[0],
+                .{
+                    .was_originally_identifier = true,
+                },
+            );
+            if (parts.len > 1) {
+                return p.memberExpression(loc, value, parts[1..]);
+            }
+
+            return value;
+        }
+
+        fn memberExpression(p: *P, loc: logger.Loc, initial_value: Expr, parts: []const []const u8) Expr {
+            var value = initial_value;
+
+            for (parts) |part| {
+                if (p.maybeRewritePropertyAccess(
+                    loc,
+                    value,
+                    part,
+                    loc,
+                    false,
+                )) |rewrote| {
+                    value = rewrote;
+                } else {
+                    value = p.e(
+                        E.Dot{
+                            .target = value,
+                            .name = part,
+                            .name_loc = loc,
+
+                            .can_be_removed_if_unused = true,
+                        },
+                        loc,
+                    );
+                }
+            }
+
+            return value;
         }
 
         // Note: The caller has already parsed the "import" keyword
@@ -12409,6 +12523,13 @@ fn NewParser_(
             const allocator = p.allocator;
             var opts = PrependTempRefsOpts{};
             var partStmts = ListManaged(Stmt).fromOwnedSlice(allocator, stmts);
+
+            //
+            const bun_plugin_usage_count_before: usize = if (p.options.features.hoist_bun_plugin and !p.bun_plugin.ref.isNull())
+                p.symbols.items[p.bun_plugin.ref.innerIndex()].use_count_estimate
+            else
+                0;
+
             try p.visitStmtsAndPrependTempRefs(&partStmts, &opts);
 
             // Insert any relocated variable statements now
@@ -12448,6 +12569,49 @@ fn NewParser_(
 
             if (partStmts.items.len > 0) {
                 const _stmts = partStmts.toOwnedSlice();
+
+                // -- hoist_bun_plugin --
+                if (_stmts.len == 1 and p.options.features.hoist_bun_plugin and !p.bun_plugin.ref.isNull()) {
+                    const bun_plugin_usage_count_after: usize = p.symbols.items[p.bun_plugin.ref.innerIndex()].use_count_estimate;
+                    if (bun_plugin_usage_count_after > bun_plugin_usage_count_before) {
+                        var previous_parts: []js_ast.Part = parts.items;
+
+                        for (previous_parts) |*previous_part, j| {
+                            if (previous_part.stmts.len == 0) continue;
+
+                            const declared_symbols = previous_part.declared_symbols;
+
+                            for (declared_symbols) |decl| {
+                                if (p.symbol_uses.contains(decl.ref)) {
+                                    // we move this part to our other file
+                                    for (previous_parts[0..j]) |*this_part| {
+                                        if (this_part.stmts.len == 0) continue;
+                                        const this_declared_symbols = this_part.declared_symbols;
+                                        for (this_declared_symbols) |this_decl| {
+                                            if (previous_part.symbol_uses.contains(this_decl.ref)) {
+                                                try p.bun_plugin.hoisted_stmts.appendSlice(p.allocator, this_part.stmts);
+                                                this_part.stmts = &.{};
+                                                break;
+                                            }
+                                        }
+                                    }
+
+                                    try p.bun_plugin.hoisted_stmts.appendSlice(p.allocator, previous_part.stmts);
+                                    break;
+                                }
+                            }
+                        }
+                        p.bun_plugin.hoisted_stmts.append(p.allocator, _stmts[0]) catch unreachable;
+
+                        // Single-statement part which uses Bun.plugin()
+                        // It's effectively an unrelated file
+                        if (p.declared_symbols.items.len > 0 or p.symbol_uses.count() > 0) {
+                            p.clearSymbolUsagesFromDeadPart(.{ .stmts = undefined, .declared_symbols = p.declared_symbols.items, .symbol_uses = p.symbol_uses });
+                        }
+                        return;
+                    }
+                }
+                // -- hoist_bun_plugin --
 
                 try parts.append(js_ast.Part{
                     .stmts = _stmts,
@@ -12815,6 +12979,7 @@ fn NewParser_(
                                 // Don't substitute an identifier for a non-identifier if this is an
                                 // assignment target, since it'll cause a syntax error
                                 if (@as(Expr.Tag, newvalue.data) == .e_identifier or in.assign_target == .none) {
+                                    p.ignoreUsage(e_.ref);
                                     return newvalue;
                                 }
 
@@ -13457,7 +13622,7 @@ fn NewParser_(
                                 if (e_.tag) |_tag| {
                                     break :tagger p.visitExpr(_tag);
                                 } else {
-                                    break :tagger p.jsxStringsToMemberExpression(expr.loc, p.jsx_fragment.ref);
+                                    break :tagger p.jsxRefToMemberExpression(expr.loc, p.jsx_fragment.ref);
                                 }
                             };
 
@@ -13534,7 +13699,7 @@ fn NewParser_(
 
                                     // Call createElement()
                                     return p.e(E.Call{
-                                        .target = p.jsxStringsToMemberExpression(expr.loc, p.jsx_factory.ref),
+                                        .target = p.jsxRefToMemberExpression(expr.loc, p.jsx_factory.ref),
                                         .args = ExprNodeList.init(args[0..i]),
                                         // Enable tree shaking
                                         .can_be_unwrapped_if_unused = !p.options.ignore_dce_annotations,
@@ -13806,7 +13971,7 @@ fn NewParser_(
                                         }
 
                                         return p.e(E.Call{
-                                            .target = p.jsxStringsToMemberExpressionAutomatic(expr.loc, is_static_jsx),
+                                            .target = p.jsxRefToMemberExpressionAutomatic(expr.loc, is_static_jsx),
                                             .args = ExprNodeList.init(args),
                                             // Enable tree shaking
                                             .can_be_unwrapped_if_unused = !p.options.ignore_dce_annotations,
@@ -15610,8 +15775,8 @@ fn NewParser_(
             }
         }
 
-        fn jsxStringsToMemberExpressionAutomatic(p: *P, loc: logger.Loc, is_static: bool) Expr {
-            return p.jsxStringsToMemberExpression(loc, if (is_static and !p.options.jsx.development)
+        fn jsxRefToMemberExpressionAutomatic(p: *P, loc: logger.Loc, is_static: bool) Expr {
+            return p.jsxRefToMemberExpression(loc, if (is_static and !p.options.jsx.development)
                 p.jsxs_runtime.ref
             else
                 p.jsx_runtime.ref);
@@ -17079,7 +17244,6 @@ fn NewParser_(
                             S.Local{
                                 .kind = .k_let,
                                 .decls = decls,
-                                .is_export = is_export,
                             },
                             stmt_loc,
                         ),
@@ -18731,6 +18895,7 @@ fn NewParser_(
                 else
                     false,
                 // .top_Level_await_keyword = p.top_level_await_keyword,
+                .bun_plugin = p.bun_plugin,
             };
         }
 

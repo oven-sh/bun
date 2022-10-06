@@ -319,3 +319,12 @@ pub const LinearFifo = @import("./linear_fifo.zig").LinearFifo;
 pub fn hash(content: []const u8) u64 {
     return std.hash.Wyhash.hash(0, content);
 }
+
+pub const HiveArray = @import("./hive_array.zig").HiveArray;
+
+pub fn rand(bytes: []u8) void {
+    const BoringSSL = @import("boringssl");
+    _ = BoringSSL.RAND_bytes(bytes.ptr, bytes.len);
+}
+
+pub const ObjectPool = @import("./pool.zig").ObjectPool;

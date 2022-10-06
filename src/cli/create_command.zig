@@ -251,7 +251,7 @@ pub const CreateCommand = struct {
         @setCold(true);
 
         Global.configureAllocator(.{ .long_running = false });
-        try NetworkThread.init();
+        try HTTP.HTTPThread.init();
 
         var create_options = try CreateOptions.parse(ctx, false);
         const positionals = create_options.positionals;
@@ -1845,11 +1845,18 @@ pub const Example = struct {
         var mutable = try ctx.allocator.create(MutableString);
         mutable.* = try MutableString.init(ctx.allocator, 8096);
 
-        var request_body = try MutableString.init(ctx.allocator, 0);
-
         // ensure very stable memory address
         var async_http: *HTTP.AsyncHTTP = ctx.allocator.create(HTTP.AsyncHTTP) catch unreachable;
-        async_http.* = try HTTP.AsyncHTTP.init(ctx.allocator, .GET, api_url, header_entries, headers_buf, mutable, &request_body, 60 * std.time.ns_per_min);
+        async_http.* = HTTP.AsyncHTTP.initSync(
+            ctx.allocator,
+            .GET,
+            api_url,
+            header_entries,
+            headers_buf,
+            mutable,
+            "",
+            60 * std.time.ns_per_min,
+        );
         async_http.client.progress_node = progress;
         const response = try async_http.sendSync(true);
 
@@ -1907,12 +1914,20 @@ pub const Example = struct {
         var mutable = try ctx.allocator.create(MutableString);
         mutable.* = try MutableString.init(ctx.allocator, 2048);
 
-        var request_body = try MutableString.init(ctx.allocator, 0);
         url = URL.parse(try std.fmt.bufPrint(&url_buf, "https://registry.npmjs.org/@bun-examples/{s}/latest", .{name}));
 
         // ensure very stable memory address
         var async_http: *HTTP.AsyncHTTP = ctx.allocator.create(HTTP.AsyncHTTP) catch unreachable;
-        async_http.* = try HTTP.AsyncHTTP.init(ctx.allocator, .GET, url, .{}, "", mutable, &request_body, 60 * std.time.ns_per_min);
+        async_http.* = HTTP.AsyncHTTP.initSync(
+            ctx.allocator,
+            .GET,
+            url,
+            .{},
+            "",
+            mutable,
+            "",
+            60 * std.time.ns_per_min,
+        );
         async_http.client.progress_node = progress;
         var response = try async_http.sendSync(true);
 
@@ -1984,7 +1999,16 @@ pub const Example = struct {
         mutable.reset();
 
         // ensure very stable memory address
-        async_http.* = try HTTP.AsyncHTTP.init(ctx.allocator, .GET, URL.parse(tarball_url), .{}, "", mutable, &request_body, 60 * std.time.ns_per_min);
+        async_http.* = HTTP.AsyncHTTP.initSync(
+            ctx.allocator,
+            .GET,
+            URL.parse(tarball_url),
+            .{},
+            "",
+            mutable,
+            "",
+            60 * std.time.ns_per_min,
+        );
         async_http.client.progress_node = progress;
 
         refresher.maybeRefresh();
@@ -2009,11 +2033,19 @@ pub const Example = struct {
         url = URL.parse(examples_url);
 
         var async_http: *HTTP.AsyncHTTP = ctx.allocator.create(HTTP.AsyncHTTP) catch unreachable;
-        var request_body = try MutableString.init(ctx.allocator, 0);
         var mutable = try ctx.allocator.create(MutableString);
         mutable.* = try MutableString.init(ctx.allocator, 2048);
 
-        async_http.* = try HTTP.AsyncHTTP.init(ctx.allocator, .GET, url, .{}, "", mutable, &request_body, 60 * std.time.ns_per_min);
+        async_http.* = HTTP.AsyncHTTP.initSync(
+            ctx.allocator,
+            .GET,
+            url,
+            .{},
+            "",
+            mutable,
+            "",
+            60 * std.time.ns_per_min,
+        );
 
         if (Output.enable_ansi_colors) {
             async_http.client.progress_node = progress_node;

@@ -1,16 +1,17 @@
 import { expect, it } from "bun:test";
 
 var SQL = globalThis[Symbol.for("Bun.lazy")]("sqlite");
+const dbPath = import.meta.dir + "/northwind.testdb";
 
 it("works", () => {
-  const handle = SQL.open("/tmp/northwind.sqlite");
+  const handle = SQL.open(dbPath);
 
   const stmt = SQL.prepare(
     handle,
-    'SELECT * FROM "Order" WHERE OrderDate > date($date)'
+    'SELECT * FROM "Orders" WHERE OrderDate > date($date)'
   );
   expect(stmt.toString()).toBe(
-    `SELECT * FROM "Order" WHERE OrderDate > date(NULL)`
+    `SELECT * FROM "Orders" WHERE OrderDate > date(NULL)`
   );
 
   expect(
@@ -24,7 +25,7 @@ it("works", () => {
     )
   ).toBe(true);
   expect(stmt.toString()).toBe(
-    `SELECT * FROM "Order" WHERE OrderDate > date('1996-09-01T07:00:00.000Z')`
+    `SELECT * FROM "Orders" WHERE OrderDate > date('1996-09-01T07:00:00.000Z')`
   );
 
   var ran = stmt.run({
@@ -35,7 +36,7 @@ it("works", () => {
   expect(Array.isArray(ran)).toBe(false);
   expect(ran === undefined).toBe(true);
   expect(stmt.toString()).toBe(
-    `SELECT * FROM "Order" WHERE OrderDate > date('1997-09-01T07:00:00.000Z')`
+    `SELECT * FROM "Orders" WHERE OrderDate > date('1997-09-01T07:00:00.000Z')`
   );
 
   expect(
@@ -48,7 +49,7 @@ it("works", () => {
     )
   ).toBe(false);
   expect(stmt.toString()).toBe(
-    `SELECT * FROM "Order" WHERE OrderDate > date('1998-09-01T07:00:00.000Z')`
+    `SELECT * FROM "Orders" WHERE OrderDate > date('1998-09-01T07:00:00.000Z')`
   );
   expect(stmt.paramsCount).toBe(1);
   expect(stmt.columnsCount).toBe(14);
@@ -58,11 +59,11 @@ it("works", () => {
 });
 
 it("SQL.run works", () => {
-  const handle = SQL.open("/tmp/northwind.sqlite");
+  const handle = SQL.open(dbPath);
   expect(typeof handle).toBe("number");
 
   expect(
-    SQL.run(handle, 'SELECT * FROM "Order" WHERE OrderDate > date($date)', {
+    SQL.run(handle, 'SELECT * FROM "Orders" WHERE OrderDate > date($date)', {
       $date: new Date(1996, 8, 1).toISOString(),
     })
   ).toBe(undefined);

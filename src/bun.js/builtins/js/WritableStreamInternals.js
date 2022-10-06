@@ -714,10 +714,12 @@ function writableStreamDefaultControllerAdvanceQueueIfNeeded(controller)
         return;
     }
 
-    if (@getByIdDirectPrivate(controller, "queue").content?.isEmpty() ?? false)
+    const queue = @getByIdDirectPrivate(controller, "queue");
+
+    if (queue.content?.isEmpty() ?? false)
         return;
 
-    const value = @peekQueueValue(@getByIdDirectPrivate(controller, "queue"));
+    const value = @peekQueueValue(queue);
     if (value === @isCloseSentinel)
         @writableStreamDefaultControllerProcessClose(controller);
     else

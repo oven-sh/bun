@@ -110,9 +110,9 @@ static bool JSVALUE_IS_CELL(EncodedJSValue val) __attribute__((__always_inline__
 static bool JSVALUE_IS_INT32(EncodedJSValue val) __attribute__((__always_inline__)); 
 static bool JSVALUE_IS_NUMBER(EncodedJSValue val) __attribute__((__always_inline__));
 
-static uint64_t JSVALUE_TO_UINT64(void* globalObject, EncodedJSValue value) __attribute__((__always_inline__));
+static uint64_t JSVALUE_TO_UINT64(EncodedJSValue value) __attribute__((__always_inline__));
 static int64_t  JSVALUE_TO_INT64(EncodedJSValue value) __attribute__((__always_inline__));
-uint64_t JSVALUE_TO_UINT64_SLOW(void* globalObject, EncodedJSValue value);
+uint64_t JSVALUE_TO_UINT64_SLOW(EncodedJSValue value);
 int64_t  JSVALUE_TO_INT64_SLOW(EncodedJSValue value);
 
 EncodedJSValue UINT64_TO_JSVALUE_SLOW(void* globalObject, uint64_t val);
@@ -146,15 +146,37 @@ static bool JSVALUE_IS_NUMBER(EncodedJSValue val) {
 }
 
 
+// JSValue numbers-as-pointers are represented as a 52-bit integer
+// Previously, the pointer was stored at the end of the 64-bit value
+// Now, they're stored at the beginning of the 64-bit value
+// This behavior change enables the JIT to handle it better
+// It also is better readability when console.log(myPtr)
 static void* JSVALUE_TO_PTR(EncodedJSValue val) {
-  // must be a double
-  return (void*)(val.asInt64 - DoubleEncodeOffset);
+  if (val.asInt64 == TagValueNull)
+    return 0;
+  val.asInt64 -= DoubleEncodeOffset;
+  size_t ptr = (size_t)val.asDouble;
+  return (void*)ptr;
 }
 
 static EncodedJSValue PTR_TO_JSVALUE(void* ptr) {
   EncodedJSValue val;
-  val.asInt64 = (int64_t)ptr + DoubleEncodeOffset;
+  if (ptr == 0)
+  {
+      val.asInt64 = TagValueNull;
+      return val;
+  }
+
+  val.asDouble = (double)(size_t)ptr;
+  val.asInt64 += DoubleEncodeOffset;
   return val;
+}
+
+static EncodedJSValue DOUBLE_TO_JSVALUE(double val) {
+   EncodedJSValue res;
+   res.asDouble = val;
+   res.asInt64 += DoubleEncodeOffset;
+   return res;
 }
 
 static int32_t JSVALUE_TO_INT32(EncodedJSValue val) {
@@ -168,12 +190,7 @@ static EncodedJSValue INT32_TO_JSVALUE(int32_t val) {
 }
 
 
-static EncodedJSValue DOUBLE_TO_JSVALUE(double val) {
-   EncodedJSValue res;
-   res.asDouble = val;
-   res.asInt64 += DoubleEncodeOffset;
-   return res;
-}
+
 
 static EncodedJSValue FLOAT_TO_JSVALUE(float val) {
   return DOUBLE_TO_JSVALUE((double)val);
@@ -200,7 +217,7 @@ static bool JSVALUE_TO_BOOL(EncodedJSValue val) {
 }
 
 
-static uint64_t JSVALUE_TO_UINT64(void* globalObject, EncodedJSValue value) {
+static uint64_t JSVALUE_TO_UINT64(EncodedJSValue value) {
   if (JSVALUE_IS_INT32(value)) {
     return (uint64_t)JSVALUE_TO_INT32(value);
   }
@@ -209,7 +226,7 @@ static uint64_t JSVALUE_TO_UINT64(void* globalObject, EncodedJSValue value) {
     return (uint64_t)JSVALUE_TO_DOUBLE(value);
   }
 
-  return JSVALUE_TO_UINT64_SLOW(globalObject, value);
+  return JSVALUE_TO_UINT64_SLOW(value);
 }
 static int64_t JSVALUE_TO_INT64(EncodedJSValue value) {
   if (JSVALUE_IS_INT32(value)) {

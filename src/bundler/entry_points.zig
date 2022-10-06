@@ -163,8 +163,7 @@ pub const ServerEntryPoint = struct {
 
     pub fn generate(
         entry: *ServerEntryPoint,
-        comptime BundlerType: type,
-        _: *BundlerType,
+        is_hot_reload_enabled: bool,
         original_path: Fs.PathName,
         name: string,
     ) !void {
@@ -180,35 +179,80 @@ pub const ServerEntryPoint = struct {
         // we want it to go through the linker and the rest of the transpilation process
 
         const dir_to_use: string = original_path.dirWithTrailingSlash();
-        const code = try std.fmt.bufPrint(
-            &entry.code_buffer,
-            \\//Auto-generated file
-            \\var cjsSymbol = Symbol.for("CommonJS");
-            \\import * as start from '{s}{s}';
-            \\export * from '{s}{s}';
-            \\var entryNamespace = start;
-            \\var cjs = start?.default;
-            \\if (cjs && typeof cjs ===  'function' && cjsSymbol in cjs) {{
-            \\  entryNamespace = cjs();
-            \\}}
-            \\if (typeof entryNamespace?.then === 'function') {{
-            \\   entryNamespace = entryNamespace.then((entryNamespace) => {{
-            \\      if(typeof entryNamespace?.default?.fetch === 'function')  {{
-            \\        Bun.serve(entryNamespace.default);
-            \\      }}
-            \\   }}, reportError);
-            \\}} else if (typeof entryNamespace?.default?.fetch === 'function') {{
-            \\   Bun.serve(entryNamespace.default);
-            \\}}
-            \\
-        ,
-            .{
-                dir_to_use,
-                original_path.filename,
-                dir_to_use,
-                original_path.filename,
-            },
-        );
+
+        const code = brk: {
+            if (is_hot_reload_enabled) {
+                break :brk try std.fmt.bufPrint(
+                    &entry.code_buffer,
+                    \\//Auto-generated file
+                    \\var cjsSymbol = Symbol.for("CommonJS");
+                    \\var hmrSymbol = Symbol.for("BunServerHMR");
+                    \\import * as start from '{s}{s}';
+                    \\export * from '{s}{s}';
+                    \\var entryNamespace = start;
+                    \\var cjs = start?.default;
+                    \\if (cjs && typeof cjs ===  'function' && cjsSymbol in cjs) {{
+                    \\  entryNamespace = cjs();
+                    \\}}
+                    \\if (typeof entryNamespace?.then === 'function') {{
+                    \\   entryNamespace = entryNamespace.then((entryNamespace) => {{
+                    \\      if(typeof entryNamespace?.default?.fetch === 'function')  {{
+                    \\        var server = globalThis[hmrSymbol];
+                    \\        if (server) {{
+                    \\           server.reload(entryNamespace.default);
+                    \\        }} else {{
+                    \\           globalThis[hmrSymbol] = Bun.serve(entryNamespace.default))
+                    \\        }}
+                    \\      }}
+                    \\   }}, reportError);
+                    \\}} else if (typeof entryNamespace?.default?.fetch === 'function') {{
+                    \\   var server = globalThis[hmrSymbol];
+                    \\   if (server) {{
+                    \\      server.reload(entryNamespace.default);
+                    \\   }} else {{
+                    \\      globalThis[hmrSymbol] = Bun.serve(entryNamespace.default))
+                    \\   }}
+                    \\}}
+                    \\
+                ,
+                    .{
+                        dir_to_use,
+                        original_path.filename,
+                        dir_to_use,
+                        original_path.filename,
+                    },
+                );
+            }
+            break :brk try std.fmt.bufPrint(
+                &entry.code_buffer,
+                \\//Auto-generated file
+                \\var cjsSymbol = Symbol.for("CommonJS");
+                \\import * as start from '{s}{s}';
+                \\export * from '{s}{s}';
+                \\var entryNamespace = start;
+                \\var cjs = start?.default;
+                \\if (cjs && typeof cjs ===  'function' && cjsSymbol in cjs) {{
+                \\  entryNamespace = cjs();
+                \\}}
+                \\if (typeof entryNamespace?.then === 'function') {{
+                \\   entryNamespace = entryNamespace.then((entryNamespace) => {{
+                \\      if(typeof entryNamespace?.default?.fetch === 'function')  {{
+                \\        Bun.serve(entryNamespace.default);
+                \\      }}
+                \\   }}, reportError);
+                \\}} else if (typeof entryNamespace?.default?.fetch === 'function') {{
+                \\   Bun.serve(entryNamespace.default);
+                \\}}
+                \\
+            ,
+                .{
+                    dir_to_use,
+                    original_path.filename,
+                    dir_to_use,
+                    original_path.filename,
+                },
+            );
+        };
 
         entry.source = logger.Source.initPathString(name, code);
         entry.source.path.text = name;

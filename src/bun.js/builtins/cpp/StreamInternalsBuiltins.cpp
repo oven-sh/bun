@@ -194,7 +194,7 @@ const char* const s_streamInternalsValidateAndNormalizeQueuingStrategyCode =
 
 const JSC::ConstructAbility s_streamInternalsCreateFIFOCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_streamInternalsCreateFIFOCodeConstructorKind = JSC::ConstructorKind::None;
-const JSC::ImplementationVisibility s_streamInternalsCreateFIFOCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
+const JSC::ImplementationVisibility s_streamInternalsCreateFIFOCodeImplementationVisibility = JSC::ImplementationVisibility::Private;
 const int s_streamInternalsCreateFIFOCodeLength = 2764;
 static const JSC::Intrinsic s_streamInternalsCreateFIFOCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_streamInternalsCreateFIFOCode =
@@ -354,7 +354,7 @@ const char* const s_streamInternalsEnqueueValueWithSizeCode =
 const JSC::ConstructAbility s_streamInternalsPeekQueueValueCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_streamInternalsPeekQueueValueCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_streamInternalsPeekQueueValueCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_streamInternalsPeekQueueValueCodeLength = 115;
+const int s_streamInternalsPeekQueueValueCodeLength = 116;
 static const JSC::Intrinsic s_streamInternalsPeekQueueValueCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_streamInternalsPeekQueueValueCode =
     "(function (queue)\n" \
@@ -363,7 +363,7 @@ const char* const s_streamInternalsPeekQueueValueCode =
     "\n" \
     "    @assert(queue.content.isNotEmpty());\n" \
     "\n" \
-    "    return queue.peek().value;\n" \
+    "    return queue.peek()?.value;\n" \
     "})\n" \
 ;
 

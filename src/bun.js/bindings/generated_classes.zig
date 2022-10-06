@@ -7,6 +7,103 @@ pub const StaticGetterType = fn (*JSC.JSGlobalObject, JSC.JSValue, JSC.JSValue) 
 pub const StaticSetterType = fn (*JSC.JSGlobalObject, JSC.JSValue, JSC.JSValue, JSC.JSValue) callconv(.C) bool;
 pub const StaticCallbackType = fn (*JSC.JSGlobalObject, *JSC.CallFrame) callconv(.C) JSC.JSValue;
 
+pub const JSSubprocess = struct {
+    const Subprocess = Classes.Subprocess;
+    const GetterType = fn (*Subprocess, *JSC.JSGlobalObject) callconv(.C) JSC.JSValue;
+    const SetterType = fn (*Subprocess, *JSC.JSGlobalObject, JSC.JSValue) callconv(.C) bool;
+    const CallbackType = fn (*Subprocess, *JSC.JSGlobalObject, *JSC.CallFrame) callconv(.C) JSC.JSValue;
+
+    /// Return the pointer to the wrapped object.
+    /// If the object does not match the type, return null.
+    pub fn fromJS(value: JSC.JSValue) ?*Subprocess {
+        JSC.markBinding();
+        return Subprocess__fromJS(value);
+    }
+
+    /// Get the Subprocess constructor value.
+    /// This loads lazily from the global object.
+    pub fn getConstructor(globalObject: *JSC.JSGlobalObject) JSC.JSValue {
+        JSC.markBinding();
+        return Subprocess__getConstructor(globalObject);
+    }
+
+    /// Create a new instance of Subprocess
+    pub fn toJS(this: *Subprocess, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
+        JSC.markBinding();
+        if (comptime Environment.allow_assert) {
+            const value__ = Subprocess__create(globalObject, this);
+            std.debug.assert(value__.as(Subprocess).? == this); // If this fails, likely a C ABI issue.
+            return value__;
+        } else {
+            return Subprocess__create(globalObject, this);
+        }
+    }
+
+    /// Modify the internal ptr to point to a new instance of Subprocess.
+    pub fn dangerouslySetPtr(value: JSC.JSValue, ptr: ?*Subprocess) bool {
+        JSC.markBinding();
+        return Subprocess__dangerouslySetPtr(value, ptr);
+    }
+
+    extern fn Subprocess__fromJS(JSC.JSValue) ?*Subprocess;
+    extern fn Subprocess__getConstructor(*JSC.JSGlobalObject) JSC.JSValue;
+
+    extern fn Subprocess__create(globalObject: *JSC.JSGlobalObject, ptr: ?*Subprocess) JSC.JSValue;
+
+    extern fn Subprocess__dangerouslySetPtr(JSC.JSValue, ?*Subprocess) bool;
+
+    comptime {
+        if (@TypeOf(Subprocess.constructor) != (fn (*JSC.JSGlobalObject, *JSC.CallFrame) callconv(.C) ?*Subprocess)) {
+            @compileLog("Subprocess.constructor is not a constructor");
+        }
+
+        if (@TypeOf(Subprocess.finalize) != (fn (*Subprocess) callconv(.C) void)) {
+            @compileLog("Subprocess.finalize is not a finalizer");
+        }
+
+        if (@TypeOf(Subprocess.getExitCode) != GetterType)
+            @compileLog("Expected Subprocess.getExitCode to be a getter");
+
+        if (@TypeOf(Subprocess.getExited) != GetterType)
+            @compileLog("Expected Subprocess.getExited to be a getter");
+
+        if (@TypeOf(Subprocess.kill) != CallbackType)
+            @compileLog("Expected Subprocess.kill to be a callback");
+        if (@TypeOf(Subprocess.getKilled) != GetterType)
+            @compileLog("Expected Subprocess.getKilled to be a getter");
+
+        if (@TypeOf(Subprocess.getPid) != GetterType)
+            @compileLog("Expected Subprocess.getPid to be a getter");
+
+        if (@TypeOf(Subprocess.doRef) != CallbackType)
+            @compileLog("Expected Subprocess.doRef to be a callback");
+        if (@TypeOf(Subprocess.getStderr) != GetterType)
+            @compileLog("Expected Subprocess.getStderr to be a getter");
+
+        if (@TypeOf(Subprocess.getStdin) != GetterType)
+            @compileLog("Expected Subprocess.getStdin to be a getter");
+
+        if (@TypeOf(Subprocess.getStdout) != GetterType)
+            @compileLog("Expected Subprocess.getStdout to be a getter");
+
+        if (@TypeOf(Subprocess.doUnref) != CallbackType)
+            @compileLog("Expected Subprocess.doUnref to be a callback");
+        if (!JSC.is_bindgen) {
+            @export(Subprocess.constructor, .{ .name = "SubprocessClass__construct" });
+            @export(Subprocess.doRef, .{ .name = "SubprocessPrototype__doRef" });
+            @export(Subprocess.doUnref, .{ .name = "SubprocessPrototype__doUnref" });
+            @export(Subprocess.finalize, .{ .name = "SubprocessClass__finalize" });
+            @export(Subprocess.getExitCode, .{ .name = "SubprocessPrototype__getExitCode" });
+            @export(Subprocess.getExited, .{ .name = "SubprocessPrototype__getExited" });
+            @export(Subprocess.getKilled, .{ .name = "SubprocessPrototype__getKilled" });
+            @export(Subprocess.getPid, .{ .name = "SubprocessPrototype__getPid" });
+            @export(Subprocess.getStderr, .{ .name = "SubprocessPrototype__getStderr" });
+            @export(Subprocess.getStdin, .{ .name = "SubprocessPrototype__getStdin" });
+            @export(Subprocess.getStdout, .{ .name = "SubprocessPrototype__getStdout" });
+            @export(Subprocess.kill, .{ .name = "SubprocessPrototype__kill" });
+        }
+    }
+};
 pub const JSSHA1 = struct {
     const SHA1 = Classes.SHA1;
     const GetterType = fn (*SHA1, *JSC.JSGlobalObject) callconv(.C) JSC.JSValue;
@@ -740,6 +837,10 @@ pub const JSRequest = struct {
     extern fn Request__dangerouslySetPtr(JSC.JSValue, ?*Request) bool;
 
     comptime {
+        if (@TypeOf(Request.estimatedSize) != (fn (*Request) callconv(.C) usize)) {
+            @compileLog("Request.estimatedSize is not a size function");
+        }
+
         if (@TypeOf(Request.constructor) != (fn (*JSC.JSGlobalObject, *JSC.CallFrame) callconv(.C) ?*Request)) {
             @compileLog("Request.constructor is not a constructor");
         }
@@ -752,6 +853,9 @@ pub const JSRequest = struct {
             @compileLog("Expected Request.getArrayBuffer to be a callback");
         if (@TypeOf(Request.getBlob) != CallbackType)
             @compileLog("Expected Request.getBlob to be a callback");
+        if (@TypeOf(Request.getBody) != GetterType)
+            @compileLog("Expected Request.getBody to be a getter");
+
         if (@TypeOf(Request.getBodyUsed) != GetterType)
             @compileLog("Expected Request.getBodyUsed to be a getter");
 
@@ -797,9 +901,11 @@ pub const JSRequest = struct {
         if (!JSC.is_bindgen) {
             @export(Request.constructor, .{ .name = "RequestClass__construct" });
             @export(Request.doClone, .{ .name = "RequestPrototype__doClone" });
+            @export(Request.estimatedSize, .{ .name = "Request__estimatedSize" });
             @export(Request.finalize, .{ .name = "RequestClass__finalize" });
             @export(Request.getArrayBuffer, .{ .name = "RequestPrototype__getArrayBuffer" });
             @export(Request.getBlob, .{ .name = "RequestPrototype__getBlob" });
+            @export(Request.getBody, .{ .name = "RequestPrototype__getBody" });
             @export(Request.getBodyUsed, .{ .name = "RequestPrototype__getBodyUsed" });
             @export(Request.getCache, .{ .name = "RequestPrototype__getCache" });
             @export(Request.getCredentials, .{ .name = "RequestPrototype__getCredentials" });
@@ -863,6 +969,10 @@ pub const JSResponse = struct {
     extern fn Response__dangerouslySetPtr(JSC.JSValue, ?*Response) bool;
 
     comptime {
+        if (@TypeOf(Response.estimatedSize) != (fn (*Response) callconv(.C) usize)) {
+            @compileLog("Response.estimatedSize is not a size function");
+        }
+
         if (@TypeOf(Response.constructor) != (fn (*JSC.JSGlobalObject, *JSC.CallFrame) callconv(.C) ?*Response)) {
             @compileLog("Response.constructor is not a constructor");
         }
@@ -875,6 +985,9 @@ pub const JSResponse = struct {
             @compileLog("Expected Response.getArrayBuffer to be a callback");
         if (@TypeOf(Response.getBlob) != CallbackType)
             @compileLog("Expected Response.getBlob to be a callback");
+        if (@TypeOf(Response.getBody) != GetterType)
+            @compileLog("Expected Response.getBody to be a getter");
+
         if (@TypeOf(Response.getBodyUsed) != GetterType)
             @compileLog("Expected Response.getBodyUsed to be a getter");
 
@@ -914,9 +1027,11 @@ pub const JSResponse = struct {
             @export(Response.constructor, .{ .name = "ResponseClass__construct" });
             @export(Response.constructRedirect, .{ .name = "ResponseClass__constructRedirect" });
             @export(Response.doClone, .{ .name = "ResponsePrototype__doClone" });
+            @export(Response.estimatedSize, .{ .name = "Response__estimatedSize" });
             @export(Response.finalize, .{ .name = "ResponseClass__finalize" });
             @export(Response.getArrayBuffer, .{ .name = "ResponsePrototype__getArrayBuffer" });
             @export(Response.getBlob, .{ .name = "ResponsePrototype__getBlob" });
+            @export(Response.getBody, .{ .name = "ResponsePrototype__getBody" });
             @export(Response.getBodyUsed, .{ .name = "ResponsePrototype__getBodyUsed" });
             @export(Response.getHeaders, .{ .name = "ResponsePrototype__getHeaders" });
             @export(Response.getJSON, .{ .name = "ResponsePrototype__getJSON" });
@@ -929,8 +1044,98 @@ pub const JSResponse = struct {
         }
     }
 };
+pub const JSBlob = struct {
+    const Blob = Classes.Blob;
+    const GetterType = fn (*Blob, *JSC.JSGlobalObject) callconv(.C) JSC.JSValue;
+    const SetterType = fn (*Blob, *JSC.JSGlobalObject, JSC.JSValue) callconv(.C) bool;
+    const CallbackType = fn (*Blob, *JSC.JSGlobalObject, *JSC.CallFrame) callconv(.C) JSC.JSValue;
+
+    /// Return the pointer to the wrapped object.
+    /// If the object does not match the type, return null.
+    pub fn fromJS(value: JSC.JSValue) ?*Blob {
+        JSC.markBinding();
+        return Blob__fromJS(value);
+    }
+
+    /// Get the Blob constructor value.
+    /// This loads lazily from the global object.
+    pub fn getConstructor(globalObject: *JSC.JSGlobalObject) JSC.JSValue {
+        JSC.markBinding();
+        return Blob__getConstructor(globalObject);
+    }
+
+    /// Create a new instance of Blob
+    pub fn toJS(this: *Blob, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
+        JSC.markBinding();
+        if (comptime Environment.allow_assert) {
+            const value__ = Blob__create(globalObject, this);
+            std.debug.assert(value__.as(Blob).? == this); // If this fails, likely a C ABI issue.
+            return value__;
+        } else {
+            return Blob__create(globalObject, this);
+        }
+    }
+
+    /// Modify the internal ptr to point to a new instance of Blob.
+    pub fn dangerouslySetPtr(value: JSC.JSValue, ptr: ?*Blob) bool {
+        JSC.markBinding();
+        return Blob__dangerouslySetPtr(value, ptr);
+    }
+
+    extern fn Blob__fromJS(JSC.JSValue) ?*Blob;
+    extern fn Blob__getConstructor(*JSC.JSGlobalObject) JSC.JSValue;
+
+    extern fn Blob__create(globalObject: *JSC.JSGlobalObject, ptr: ?*Blob) JSC.JSValue;
+
+    extern fn Blob__dangerouslySetPtr(JSC.JSValue, ?*Blob) bool;
+
+    comptime {
+        if (@TypeOf(Blob.constructor) != (fn (*JSC.JSGlobalObject, *JSC.CallFrame) callconv(.C) ?*Blob)) {
+            @compileLog("Blob.constructor is not a constructor");
+        }
+
+        if (@TypeOf(Blob.finalize) != (fn (*Blob) callconv(.C) void)) {
+            @compileLog("Blob.finalize is not a finalizer");
+        }
+
+        if (@TypeOf(Blob.getArrayBuffer) != CallbackType)
+            @compileLog("Expected Blob.getArrayBuffer to be a callback");
+        if (@TypeOf(Blob.getJSON) != CallbackType)
+            @compileLog("Expected Blob.getJSON to be a callback");
+        if (@TypeOf(Blob.getSize) != GetterType)
+            @compileLog("Expected Blob.getSize to be a getter");
+
+        if (@TypeOf(Blob.getSlice) != CallbackType)
+            @compileLog("Expected Blob.getSlice to be a callback");
+        if (@TypeOf(Blob.getStream) != CallbackType)
+            @compileLog("Expected Blob.getStream to be a callback");
+        if (@TypeOf(Blob.getText) != CallbackType)
+            @compileLog("Expected Blob.getText to be a callback");
+        if (@TypeOf(Blob.getType) != GetterType)
+            @compileLog("Expected Blob.getType to be a getter");
+
+        if (@TypeOf(Blob.setType) != SetterType)
+            @compileLog("Expected Blob.setType to be a setter");
+        if (@TypeOf(Blob.getWriter) != CallbackType)
+            @compileLog("Expected Blob.getWriter to be a callback");
+        if (!JSC.is_bindgen) {
+            @export(Blob.constructor, .{ .name = "BlobClass__construct" });
+            @export(Blob.finalize, .{ .name = "BlobClass__finalize" });
+            @export(Blob.getArrayBuffer, .{ .name = "BlobPrototype__getArrayBuffer" });
+            @export(Blob.getJSON, .{ .name = "BlobPrototype__getJSON" });
+            @export(Blob.getSize, .{ .name = "BlobPrototype__getSize" });
+            @export(Blob.getSlice, .{ .name = "BlobPrototype__getSlice" });
+            @export(Blob.getStream, .{ .name = "BlobPrototype__getStream" });
+            @export(Blob.getText, .{ .name = "BlobPrototype__getText" });
+            @export(Blob.getType, .{ .name = "BlobPrototype__getType" });
+            @export(Blob.getWriter, .{ .name = "BlobPrototype__getWriter" });
+            @export(Blob.setType, .{ .name = "BlobPrototype__setType" });
+        }
+    }
+};
 
 comptime {
+    _ = JSSubprocess;
     _ = JSSHA1;
     _ = JSMD5;
     _ = JSMD4;
@@ -942,4 +1147,5 @@ comptime {
     _ = JSTextDecoder;
     _ = JSRequest;
     _ = JSResponse;
+    _ = JSBlob;
 }

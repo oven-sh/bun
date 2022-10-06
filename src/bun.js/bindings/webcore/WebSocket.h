@@ -139,7 +139,7 @@ private:
     void refEventTarget() final { ref(); }
     void derefEventTarget() final { deref(); }
 
-    void didReceiveMessageError(WTF::StringImpl::StaticStringImpl* reason);
+    void didReceiveMessageError(unsigned short code, WTF::StringImpl::StaticStringImpl* reason);
     void didUpdateBufferedAmount(unsigned bufferedAmount);
     void didStartClosingHandshake();
 

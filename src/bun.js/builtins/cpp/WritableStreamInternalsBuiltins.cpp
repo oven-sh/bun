@@ -978,7 +978,7 @@ const char* const s_writableStreamInternalsSetUpWritableStreamDefaultControllerF
 const JSC::ConstructAbility s_writableStreamInternalsWritableStreamDefaultControllerAdvanceQueueIfNeededCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_writableStreamInternalsWritableStreamDefaultControllerAdvanceQueueIfNeededCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_writableStreamInternalsWritableStreamDefaultControllerAdvanceQueueIfNeededCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_writableStreamInternalsWritableStreamDefaultControllerAdvanceQueueIfNeededCodeLength = 895;
+const int s_writableStreamInternalsWritableStreamDefaultControllerAdvanceQueueIfNeededCodeLength = 884;
 static const JSC::Intrinsic s_writableStreamInternalsWritableStreamDefaultControllerAdvanceQueueIfNeededCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_writableStreamInternalsWritableStreamDefaultControllerAdvanceQueueIfNeededCode =
     "(function (controller)\n" \
@@ -1000,10 +1000,12 @@ const char* const s_writableStreamInternalsWritableStreamDefaultControllerAdvanc
     "        return;\n" \
     "    }\n" \
     "\n" \
-    "    if (@getByIdDirectPrivate(controller, \"queue\").content?.isEmpty() ?? false)\n" \
+    "    const queue = @getByIdDirectPrivate(controller, \"queue\");\n" \
+    "\n" \
+    "    if (queue.content?.isEmpty() ?? false)\n" \
     "        return;\n" \
     "\n" \
-    "    const value = @peekQueueValue(@getByIdDirectPrivate(controller, \"queue\"));\n" \
+    "    const value = @peekQueueValue(queue);\n" \
     "    if (value === @isCloseSentinel)\n" \
     "        @writableStreamDefaultControllerProcessClose(controller);\n" \
     "    else\n" \

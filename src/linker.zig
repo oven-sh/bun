@@ -37,6 +37,7 @@ const ResolverType = Resolver.Resolver;
 const Runtime = @import("./runtime.zig").Runtime;
 const URL = @import("url.zig").URL;
 const JSC = @import("javascript_core");
+const PluginRunner = @import("./bundler.zig").PluginRunner;
 pub const CSSResolveError = error{ResolveError};
 
 pub const OnImportCallback = fn (resolve_result: *const Resolver.Result, import_record: *ImportRecord, origin: URL) void;
@@ -56,6 +57,8 @@ pub const Linker = struct {
     hashed_filenames: HashedFileNameMap,
     import_counter: usize = 0,
     tagged_resolutions: TaggedResolution = TaggedResolution{},
+
+    plugin_runner: ?*PluginRunner = null,
 
     onImportCSS: ?OnImportCallback = null,
 
@@ -262,7 +265,7 @@ pub const Linker = struct {
                     }
 
                     if (comptime is_bun) {
-                        if (JSC.HardcodedModule.LinkerMap.get(import_record.path.text)) |replacement| {
+                        if (JSC.HardcodedModule.Aliases.get(import_record.path.text)) |replacement| {
                             import_record.path.text = replacement;
                             import_record.tag = if (strings.eqlComptime(replacement, "bun")) ImportRecord.Tag.bun else .hardcoded;
                             externals.append(record_index) catch unreachable;
@@ -312,6 +315,34 @@ pub const Linker = struct {
                         // Resolve dynamic imports lazily for perf
                         if (import_record.kind == .dynamic) {
                             continue;
+                        }
+                    }
+
+                    if (linker.plugin_runner) |runner| {
+                        if (PluginRunner.couldBePlugin(import_record.path.text)) {
+                            if (runner.onResolve(
+                                import_record.path.text,
+                                file_path.text,
+                                linker.log,
+                                import_record.range.loc,
+                                if (is_bun)
+                                    JSC.JSGlobalObject.BunPluginTarget.bun
+                                else if (linker.options.platform == .browser)
+                                    JSC.JSGlobalObject.BunPluginTarget.browser
+                                else
+                                    JSC.JSGlobalObject.BunPluginTarget.node,
+                            )) |path| {
+                                import_record.path = try linker.generateImportPath(
+                                    source_dir,
+                                    path.text,
+                                    false,
+                                    path.namespace,
+                                    origin,
+                                    import_path_format,
+                                );
+                                import_record.print_namespace_in_path = true;
+                                continue;
+                            }
                         }
                     }
 
@@ -507,6 +538,13 @@ pub const Linker = struct {
                                     continue;
                                 }
 
+                                if (comptime is_bun) {
+                                    // make these happen at runtime
+                                    if (import_record.kind == .require or import_record.kind == .require_resolve) {
+                                        continue;
+                                    }
+                                }
+
                                 had_resolve_errors = true;
 
                                 if (import_record.path.text.len > 0 and Resolver.isPackagePath(import_record.path.text)) {
@@ -639,9 +677,12 @@ pub const Linker = struct {
                     return Fs.Path.initWithNamespace(source_path, "node");
                 }
 
-                var relative_name = linker.fs.relative(source_dir, source_path);
-
-                return Fs.Path.initWithPretty(source_path, relative_name);
+                if (strings.eqlComptime(namespace, "bun") or strings.eqlComptime(namespace, "file") or namespace.len == 0) {
+                    var relative_name = linker.fs.relative(source_dir, source_path);
+                    return Fs.Path.initWithPretty(source_path, relative_name);
+                } else {
+                    return Fs.Path.initWithNamespace(source_path, namespace);
+                }
             },
             .relative => {
                 var relative_name = linker.fs.relative(source_dir, source_path);
@@ -771,8 +812,19 @@ pub const Linker = struct {
             .napi => {
                 import_record.print_mode = .napi_module;
             },
-            .wasm, .file => {
+            .wasm => {
                 import_record.print_mode = .import_path;
+            },
+            .file => {
+
+                // if we're building for web/node, always print as import path
+                // if we're building for bun
+                // it's more complicated
+                // loader plugins could be executed between when this is called and the import is evaluated
+                // but we want to preserve the semantics of "file" returning import paths for compatibiltiy with frontend frameworkss
+                if (!linker.options.platform.isBun()) {
+                    import_record.print_mode = .import_path;
+                }
             },
 
             else => {},

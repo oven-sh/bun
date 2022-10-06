@@ -1424,7 +1424,7 @@ pub fn NewPrinter(
                 }
 
                 p.print("(");
-                p.printQuotedUTF8(record.path.text, true);
+                p.printImportRecordPath(&record);
                 p.print(")");
                 return;
             }
@@ -1442,7 +1442,7 @@ pub fn NewPrinter(
 
             // Allow it to fail at runtime, if it should
             p.print("import(");
-            p.printQuotedUTF8(record.path.text, true);
+            p.printImportRecordPath(&record);
             p.print(")");
 
             if (leading_interior_comments.len > 0) {
@@ -3132,7 +3132,7 @@ pub fn NewPrinter(
                     }
                     p.print("from");
                     p.printSpace();
-                    p.printQuotedUTF8(p.import_records[s.import_record_index].path.text, false);
+                    p.printImportRecordPath(&p.import_records[s.import_record_index]);
                     p.printSemicolonAfterStatement();
                 },
                 .s_export_clause => |s| {
@@ -3377,7 +3377,7 @@ pub fn NewPrinter(
                             }
 
                             p.print("}=import.meta.require(");
-                            p.printQuotedUTF8(import_record.path.text, true);
+                            p.printImportRecordPath(&import_record);
                             p.print(")");
                             p.printSemicolonAfterStatement();
                             p.print("export {");
@@ -3445,7 +3445,7 @@ pub fn NewPrinter(
                     p.printSpace();
                     p.print("from");
                     p.printSpace();
-                    p.printQuotedUTF8(import_record.path.text, false);
+                    p.printImportRecordPath(&import_record);
                     p.printSemicolonAfterStatement();
                 },
                 .s_local => |s| {
@@ -3708,14 +3708,18 @@ pub fn NewPrinter(
                         },
                         .import_path => {
                             if (s.default_name) |name| {
-                                const quotes = p.bestQuoteCharForString(p.import_records[s.import_record_index].path.text, true);
-
                                 p.print("var ");
                                 p.printSymbol(name.ref.?);
                                 p.print(" = ");
-                                p.print(quotes);
-                                p.printUTF8StringEscapedQuotes(p.import_records[s.import_record_index].path.text, quotes);
-                                p.print(quotes);
+                                p.printImportRecordPath(&p.import_records[s.import_record_index]);
+                                p.printSemicolonAfterStatement();
+                            } else if (p.import_records[s.import_record_index].contains_import_star) {
+                                // this case is particularly important for running files without an extension in bun's runtime
+                                p.print("var ");
+                                p.printSymbol(s.namespace_ref);
+                                p.print(" = {default:");
+                                p.printImportRecordPath(&p.import_records[s.import_record_index]);
+                                p.print("}");
                                 p.printSemicolonAfterStatement();
                             }
                             return;
@@ -3726,13 +3730,10 @@ pub fn NewPrinter(
 
                                 if (import_record.print_mode == .napi_module) {
                                     p.printIndent();
-                                    const quotes = p.bestQuoteCharForString(import_record.path.text, true);
                                     p.print("var ");
                                     p.printSymbol(s.namespace_ref);
                                     p.print(" = import.meta.require(");
-                                    p.print(quotes);
-                                    p.printUTF8StringEscapedQuotes(import_record.path.text, quotes);
-                                    p.print(quotes);
+                                    p.printImportRecordPath(import_record);
                                     p.print(")");
                                     p.printSemicolonAfterStatement();
                                 }
@@ -3960,7 +3961,7 @@ pub fn NewPrinter(
                         p.printSpace();
                     }
 
-                    p.printQuotedUTF8(p.import_records[s.import_record_index].path.text, false);
+                    p.printImportRecordPath(&p.import_records[s.import_record_index]);
                     p.printSemicolonAfterStatement();
                 },
                 .s_block => |s| {
@@ -4045,6 +4046,21 @@ pub fn NewPrinter(
 
         pub inline fn printModuleExportSymbol(p: *Printer) void {
             p.print("module.exports");
+        }
+
+        pub fn printImportRecordPath(p: *Printer, import_record: *const ImportRecord) void {
+            const quote = p.bestQuoteCharForString(import_record.path.text, false);
+            if (import_record.print_namespace_in_path and import_record.path.namespace.len > 0 and !strings.eqlComptime(import_record.path.namespace, "file")) {
+                p.print(quote);
+                p.print(import_record.path.namespace);
+                p.print(":");
+                p.print(import_record.path.text);
+                p.print(quote);
+            } else {
+                p.print(quote);
+                p.print(import_record.path.text);
+                p.print(quote);
+            }
         }
 
         pub fn printBundledImport(p: *Printer, record: importRecord.ImportRecord, s: *S.Import) void {

@@ -1,6 +1,11 @@
 import { resolve } from "path";
 
-const classes = ["ArrayBufferSink", "HTTPResponseSink", "HTTPSResponseSink"];
+const classes = [
+  "ArrayBufferSink",
+  "FileSink",
+  "HTTPResponseSink",
+  "HTTPSResponseSink",
+];
 const SINK_COUNT = 5;
 
 function names(name) {
@@ -11,11 +16,14 @@ function names(name) {
     controllerName: `Readable${name}Controller`,
     prototypeName: `JS${name}Prototype`,
     controllerPrototypeName: `JSReadable${name}ControllerPrototype`,
+    writableStreamSourcePrototype: `JSWritableStreamSource${name}Prototype`,
+    writableStreamName: `JSWritableStreamSource${name}`,
   };
 }
 function header() {
   function classTemplate(name) {
-    const { constructor, className, controller } = names(name);
+    const { constructor, className, controller, writableStreamName } =
+      names(name);
 
     return `class ${constructor} final : public JSC::InternalFunction {                                                                                                     
         public:                                                                                                                                                                     
@@ -107,6 +115,8 @@ function header() {
                                                                                                                                                                                     
             void finishCreation(JSC::VM&);
         };
+
+     
 
         class ${controller} final : public JSC::JSDestructibleObject {                                                                                                              
             public:                                                                                                                                                                     
@@ -360,6 +370,8 @@ JSC_DEFINE_HOST_FUNCTION(functionStartDirectStream, (JSC::JSGlobalObject * lexic
       controllerName,
       controllerPrototypeName,
       constructor,
+      writableStreamName,
+      writableStreamSourcePrototype,
     } = names(name);
     const protopad = `${controller}__close`.length;
     const padding = `${name}__doClose`.length;
@@ -460,6 +472,8 @@ JSC_DEFINE_HOST_FUNCTION(${name}__doClose, (JSC::JSGlobalObject * lexicalGlobalO
       controllerName,
       controllerPrototypeName,
       constructor,
+      writableStreamSourcePrototype,
+      writableStreamName,
     } = names(name);
     const protopad = `${controller}__close`.length;
     const padding = `${name}__doClose`.length;

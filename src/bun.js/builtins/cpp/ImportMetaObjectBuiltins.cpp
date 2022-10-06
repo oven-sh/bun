@@ -48,74 +48,27 @@
 
 namespace WebCore {
 
-const JSC::ConstructAbility s_importMetaObjectRequireCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
-const JSC::ConstructorKind s_importMetaObjectRequireCodeConstructorKind = JSC::ConstructorKind::None;
-const JSC::ImplementationVisibility s_importMetaObjectRequireCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_importMetaObjectRequireCodeLength = 1162;
-static const JSC::Intrinsic s_importMetaObjectRequireCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_importMetaObjectRequireCode =
-    "(function (name) {\n" \
-    "  \"use strict\";\n" \
-    "  if (typeof name !== \"string\") {\n" \
-    "    @throwTypeError(\"require() expects a string as its argument\");\n" \
-    "  }\n" \
-    "  \n" \
-    "  const resolved = this.resolveSync(name, this.path);\n" \
-    "  var cached = @requireMap.@get(resolved);\n" \
-    "  const last5 = resolved.substring(resolved.length - 5);\n" \
-    "  if (cached) {\n" \
-    "    if (last5 === \".node\") {\n" \
-    "      return cached.exports;\n" \
-    "    }\n" \
-    "\n" \
-    "    return cached;\n" \
-    "  }\n" \
-    "\n" \
-    "  \n" \
-    "  //\n" \
-    "  if (last5 === \".json\") {\n" \
-    "    var fs = (globalThis[Symbol.for(\"_fs\")] ||= Bun.fs());\n" \
-    "    var exports = JSON.parse(fs.readFileSync(resolved, \"utf8\"));\n" \
-    "    @requireMap.@set(resolved, exports);\n" \
-    "    return exports;\n" \
-    "  } else if (last5 === \".node\") {\n" \
-    "    var module = { exports: {} };\n" \
-    "    globalThis.process.dlopen(module, resolved);\n" \
-    "    @requireMap.@set(resolved, module);\n" \
-    "    return module.exports;\n" \
-    "  } else if (last5 === \".toml\") {\n" \
-    "    var fs = (globalThis[Symbol.for(\"_fs\")] ||= Bun.fs());\n" \
-    "    var exports = Bun.TOML.parse(fs.readFileSync(resolved, \"utf8\"));\n" \
-    "    @requireMap.@set(resolved, exports);\n" \
-    "    return exports;\n" \
-    "  } else {\n" \
-    "    var exports = this.requireModule(this, resolved);\n" \
-    "    @requireMap.@set(resolved, exports);\n" \
-    "    return exports;\n" \
-    "  }\n" \
-    "})\n" \
-;
-
-const JSC::ConstructAbility s_importMetaObjectLoadModuleCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
-const JSC::ConstructorKind s_importMetaObjectLoadModuleCodeConstructorKind = JSC::ConstructorKind::None;
-const JSC::ImplementationVisibility s_importMetaObjectLoadModuleCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_importMetaObjectLoadModuleCodeLength = 2932;
-static const JSC::Intrinsic s_importMetaObjectLoadModuleCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_importMetaObjectLoadModuleCode =
-    "(function (meta, resolvedSpecifier) {\n" \
+const JSC::ConstructAbility s_importMetaObjectLoadCJS2ESMCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
+const JSC::ConstructorKind s_importMetaObjectLoadCJS2ESMCodeConstructorKind = JSC::ConstructorKind::None;
+const JSC::ImplementationVisibility s_importMetaObjectLoadCJS2ESMCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
+const int s_importMetaObjectLoadCJS2ESMCodeLength = 2943;
+static const JSC::Intrinsic s_importMetaObjectLoadCJS2ESMCodeIntrinsic = JSC::NoIntrinsic;
+const char* const s_importMetaObjectLoadCJS2ESMCode =
+    "(function (resolvedSpecifier) {\n" \
     "  \"use strict\";\n" \
     "\n" \
+    "  var loader = @Loader;\n" \
     "  var queue = @createFIFO();\n" \
     "  var key = resolvedSpecifier;\n" \
     "  while (key) {\n" \
     "    //\n" \
     "    //\n" \
     "    //\n" \
-    "    var entry = Loader.registry.@get(key);\n" \
+    "    var entry = loader.registry.@get(key);\n" \
     "\n" \
     "    if (!entry || !entry.state || entry.state <= @ModuleFetch) {\n" \
     "      @fulfillModuleSync(key);\n" \
-    "      entry = Loader.registry.@get(key);\n" \
+    "      entry = loader.registry.@get(key);\n" \
     "    }\n" \
     "\n" \
     "\n" \
@@ -127,11 +80,10 @@ const char* const s_importMetaObjectLoadModuleCode =
     "      entry.fetch,\n" \
     "      @promiseFieldReactionsOrResult\n" \
     "    );\n" \
-    "\n" \
     "    //\n" \
     "    //\n" \
     "    //\n" \
-    "    var moduleRecordPromise = Loader.parseModule(key, sourceCodeObject);\n" \
+    "    var moduleRecordPromise = loader.parseModule(key, sourceCodeObject);\n" \
     "    var module = entry.module;\n" \
     "    if (!module && moduleRecordPromise && @isPromise(moduleRecordPromise)) {\n" \
     "      var reactionsOrResult = @getPromiseInternalField(\n" \
@@ -143,7 +95,6 @@ const char* const s_importMetaObjectLoadModuleCode =
     "        @promiseFieldFlags\n" \
     "      );\n" \
     "      var state = flags & @promiseStateMask;\n" \
-    "\n" \
     "      //\n" \
     "      if (\n" \
     "        state === @promiseStatePending ||\n" \
@@ -167,20 +118,17 @@ const char* const s_importMetaObjectLoadModuleCode =
     "    //\n" \
     "    @setStateToMax(entry, @ModuleLink);\n" \
     "    var dependenciesMap = module.dependenciesMap;\n" \
-    "    var requestedModules = Loader.requestedModules(module);\n" \
+    "    var requestedModules = loader.requestedModules(module);\n" \
     "    var dependencies = @newArrayWithSize(requestedModules.length);\n" \
-    "\n" \
     "    for (var i = 0, length = requestedModules.length; i < length; ++i) {\n" \
     "      var depName = requestedModules[i];\n" \
-    "\n" \
     "      //\n" \
     "      //\n" \
     "      var depKey =\n" \
     "        depName[0] === \"/\"\n" \
     "          ? depName\n" \
-    "          : Loader.resolveSync(depName, key, @undefined);\n" \
-    "      var depEntry = Loader.ensureRegistered(depKey);\n" \
-    "\n" \
+    "          : loader.resolve(depName, key, @undefined);\n" \
+    "      var depEntry = loader.ensureRegistered(depKey);\n" \
     "      if (depEntry.state < @ModuleLink) {\n" \
     "        queue.push(depKey);\n" \
     "      }\n" \
@@ -191,16 +139,16 @@ const char* const s_importMetaObjectLoadModuleCode =
     "\n" \
     "    entry.dependencies = dependencies;\n" \
     "    //\n" \
-    "    entry.instantiate = Promise.resolve(entry)\n" \
-    "    entry.satisfy = Promise.resolve(entry);\n" \
+    "    entry.instantiate = @Promise.resolve(entry)\n" \
+    "    entry.satisfy = @Promise.resolve(entry);\n" \
     "    key = queue.shift();\n" \
-    "    while (key && (Loader.registry.@get(key)?.state ?? @ModuleFetch) >= @ModuleLink) {\n" \
+    "    while (key && (loader.registry.@get(key)?.state ?? @ModuleFetch) >= @ModuleLink) {\n" \
     "      key = queue.shift();\n" \
     "    }\n" \
     "\n" \
     "  }\n" \
     "\n" \
-    "  var linkAndEvaluateResult = Loader.linkAndEvaluateModule(\n" \
+    "  var linkAndEvaluateResult = loader.linkAndEvaluateModule(\n" \
     "    resolvedSpecifier,\n" \
     "    @undefined\n" \
     "  );\n" \
@@ -212,35 +160,84 @@ const char* const s_importMetaObjectLoadModuleCode =
     "    );\n" \
     "  }\n" \
     "\n" \
-    "  return Loader.registry.@get(resolvedSpecifier);\n" \
+    "  return loader.registry.@get(resolvedSpecifier);\n" \
     "\n" \
     "})\n" \
 ;
 
-const JSC::ConstructAbility s_importMetaObjectRequireModuleCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
-const JSC::ConstructorKind s_importMetaObjectRequireModuleCodeConstructorKind = JSC::ConstructorKind::None;
-const JSC::ImplementationVisibility s_importMetaObjectRequireModuleCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_importMetaObjectRequireModuleCodeLength = 606;
-static const JSC::Intrinsic s_importMetaObjectRequireModuleCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_importMetaObjectRequireModuleCode =
-    "(function (meta, resolved) {\n" \
+const JSC::ConstructAbility s_importMetaObjectRequireESMCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
+const JSC::ConstructorKind s_importMetaObjectRequireESMCodeConstructorKind = JSC::ConstructorKind::None;
+const JSC::ImplementationVisibility s_importMetaObjectRequireESMCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
+const int s_importMetaObjectRequireESMCodeLength = 626;
+static const JSC::Intrinsic s_importMetaObjectRequireESMCodeIntrinsic = JSC::NoIntrinsic;
+const char* const s_importMetaObjectRequireESMCode =
+    "(function (resolved) {\n" \
     "  \"use strict\";\n" \
-    "  var Loader = globalThis.Loader;\n" \
-    "  var entry = Loader.registry.@get(resolved);\n" \
+    "  var entry = @Loader.registry.@get(resolved);\n" \
     "\n" \
     "  if (!entry || !entry.evaluated) {\n" \
-    "    entry = this.loadModule(meta, resolved); \n" \
+    "    entry = @loadCJS2ESM(resolved); \n" \
     "  }\n" \
     "\n" \
     "  if (!entry || !entry.evaluated || !entry.module) {\n" \
     "    @throwTypeError(`require() failed to evaluate module \\\"${resolved}\\\". This is an internal consistentency error.`);\n" \
     "  }\n" \
-    "  var exports = Loader.getModuleNamespaceObject(entry.module);\n" \
+    "  var exports = @Loader.getModuleNamespaceObject(entry.module);\n" \
     "  var commonJS = exports.default;\n" \
-    "  if (commonJS && @isObject(commonJS) && @commonJSSymbol in commonJS) {\n" \
+    "  var cjs = commonJS && commonJS[@commonJSSymbol];\n" \
+    "  if (cjs === 0) {\n" \
+    "    return commonJS;\n" \
+    "  } else if (cjs && @isCallable(commonJS)) {\n" \
     "    return commonJS();\n" \
     "  }\n" \
+    "  \n" \
     "  return exports;\n" \
+    "})\n" \
+;
+
+const JSC::ConstructAbility s_importMetaObjectRequireCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
+const JSC::ConstructorKind s_importMetaObjectRequireCodeConstructorKind = JSC::ConstructorKind::None;
+const JSC::ImplementationVisibility s_importMetaObjectRequireCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
+const int s_importMetaObjectRequireCodeLength = 1133;
+static const JSC::Intrinsic s_importMetaObjectRequireCodeIntrinsic = JSC::NoIntrinsic;
+const char* const s_importMetaObjectRequireCode =
+    "(function (name) {\n" \
+    "  \"use strict\";\n" \
+    "  if (typeof name !== \"string\") {\n" \
+    "    @throwTypeError(\"require() expects a string as its argument\");\n" \
+    "  }\n" \
+    "  const resolved = @resolveSync(name, this.path);\n" \
+    "  var cached = @requireMap.@get(resolved);\n" \
+    "  const last5 = resolved.substring(resolved.length - 5);\n" \
+    "  if (cached) {\n" \
+    "    if (last5 === \".node\") {\n" \
+    "      return cached.exports;\n" \
+    "    }\n" \
+    "\n" \
+    "    return cached;\n" \
+    "  }\n" \
+    "  \n" \
+    "  //\n" \
+    "  if (last5 === \".json\") {\n" \
+    "    var fs = (globalThis[Symbol.for(\"_fs\")] ||= @Bun.fs());\n" \
+    "    var exports = JSON.parse(fs.readFileSync(resolved, \"utf8\"));\n" \
+    "    @requireMap.@set(resolved, exports);\n" \
+    "    return exports;\n" \
+    "  } else if (last5 === \".node\") {\n" \
+    "    var module = { exports: {} };\n" \
+    "    process.dlopen(module, resolved);\n" \
+    "    @requireMap.@set(resolved, module);\n" \
+    "    return module.exports;\n" \
+    "  } else if (last5 === \".toml\") {\n" \
+    "    var fs = (globalThis[Symbol.for(\"_fs\")] ||= @Bun.fs());\n" \
+    "    var exports = @Bun.TOML.parse(fs.readFileSync(resolved, \"utf8\"));\n" \
+    "    @requireMap.@set(resolved, exports);\n" \
+    "    return exports;\n" \
+    "  } else {\n" \
+    "    var exports = @requireESM(resolved);\n" \
+    "    @requireMap.@set(resolved, exports);\n" \
+    "    return exports;\n" \
+    "  }\n" \
     "})\n" \
 ;
 

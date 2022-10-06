@@ -2,6 +2,48 @@ import { it, expect } from "bun:test";
 import { mkdirSync, writeFileSync } from "fs";
 import { join } from "path";
 
+it("#imports", async () => {
+  await writePackageJSONImportsFixture();
+
+  const baz = await import.meta.resolve(
+    "#foo",
+    join(await import.meta.resolve("package-json-imports/baz"), "../")
+  );
+  expect(baz.endsWith("foo/private-foo.js")).toBe(true);
+
+  const subpath = await import.meta.resolve(
+    "#foo/bar",
+    join(await import.meta.resolve("package-json-imports/baz"), "../")
+  );
+  expect(subpath.endsWith("foo/private-foo.js")).toBe(true);
+
+  const react = await import.meta.resolve(
+    "#internal-react",
+    join(await import.meta.resolve("package-json-imports/baz"), "../")
+  );
+  expect(react.endsWith("/react/index.js")).toBe(true);
+
+  // Check that #foo is not resolved to the package.json file.
+  try {
+    await import.meta.resolve("#foo");
+    throw new Error("Test failed");
+  } catch (exception) {
+    expect(exception instanceof ResolveError).toBe(true);
+    expect(exception.referrer).toBe(import.meta.path);
+    expect(exception.name).toBe("ResolveError");
+  }
+
+  // Chcek that package-json-imports/#foo doesn't work
+  try {
+    await import.meta.resolve("package-json-imports/#foo");
+    throw new Error("Test failed");
+  } catch (exception) {
+    expect(exception instanceof ResolveError).toBe(true);
+    expect(exception.referrer).toBe(import.meta.path);
+    expect(exception.name).toBe("ResolveError");
+  }
+});
+
 it("import.meta.resolve", async () => {
   expect(await import.meta.resolve("./resolve.test.js")).toBe(import.meta.path);
 
@@ -143,6 +185,46 @@ function writePackageJSONExportsFixture() {
         exports: {
           "./baz": "./foo/bar.js",
           "./references-baz": "./foo/references-baz.js",
+        },
+      },
+      null,
+      2
+    )
+  );
+}
+
+function writePackageJSONImportsFixture() {
+  try {
+    mkdirSync(
+      join(import.meta.dir, "./node_modules/package-json-imports/foo"),
+      {
+        recursive: true,
+      }
+    );
+  } catch (exception) {}
+  writeFileSync(
+    join(import.meta.dir, "./node_modules/package-json-imports/foo/bar.js"),
+    "export const bar = 1;"
+  );
+  writeFileSync(
+    join(
+      import.meta.dir,
+      "./node_modules/package-json-imports/foo/private-foo.js"
+    ),
+    "export {bar} from 'package-json-imports/#foo';"
+  );
+  writeFileSync(
+    join(import.meta.dir, "./node_modules/package-json-imports/package.json"),
+    JSON.stringify(
+      {
+        name: "package-json-imports",
+        exports: {
+          "./baz": "./foo/bar.js",
+        },
+        imports: {
+          "#foo": "./foo/private-foo.js",
+          "#foo/bar": "./foo/private-foo.js",
+          "#internal-react": "react",
         },
       },
       null,

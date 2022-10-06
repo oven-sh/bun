@@ -104,21 +104,21 @@ function propRow(
 
   if (fn !== undefined) {
     return `
-{ "${name}"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(${fn}), (intptr_t)(${
+{ "${name}"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, ${fn}, ${
       length || 0
-    }) } }
+    } } }
 `.trim();
   } else if (getter && setter) {
     return `
     
-{ "${name}"_s, static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { (intptr_t) static_cast<PropertySlot::GetValueFunc>(${getter}), (intptr_t) static_cast<PutPropertySlot::PutValueFunc>(${setter}) } }
+{ "${name}"_s, static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { HashTableValue::GetterSetterType, ${getter}, ${setter} } }
 `.trim();
   } else if (defaultValue) {
   } else if (getter) {
-    return `{ "${name}"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { (intptr_t) static_cast<PropertySlot::GetValueFunc>(${getter}), (intptr_t) static_cast<PutPropertySlot::PutValueFunc>(0) } }
+    return `{ "${name}"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { HashTableValue::GetterSetterType, ${getter}, 0 } }
 `.trim();
   } else if (setter) {
-    return `{ "${name}"_s, static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { (intptr_t) static_cast<PropertySlot::GetValueFunc>(0), (intptr_t) static_cast<PutPropertySlot::PutValueFunc>(${setter}) } }
+    return `{ "${name}"_s, static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { HashTableValue::GetterSetterType, 0, ${setter} } }
   `.trim();
   }
 
@@ -140,24 +140,24 @@ export function generateHashTable(
   }
 
   //   static const HashTableValue JSWebSocketPrototypeTableValues[] = {
-  //     { "constructor"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontEnum), NoIntrinsic, { (intptr_t) static_cast<PropertySlot::GetValueFunc>(jsWebSocketConstructor), (intptr_t) static_cast<PutPropertySlot::PutValueFunc>(0) } },
-  //     { "URL"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { (intptr_t) static_cast<PropertySlot::GetValueFunc>(jsWebSocket_URL), (intptr_t) static_cast<PutPropertySlot::PutValueFunc>(0) } },
-  //     { "url"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { (intptr_t) static_cast<PropertySlot::GetValueFunc>(jsWebSocket_url), (intptr_t) static_cast<PutPropertySlot::PutValueFunc>(0) } },
-  //     { "readyState"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { (intptr_t) static_cast<PropertySlot::GetValueFunc>(jsWebSocket_readyState), (intptr_t) static_cast<PutPropertySlot::PutValueFunc>(0) } },
-  //     { "bufferedAmount"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { (intptr_t) static_cast<PropertySlot::GetValueFunc>(jsWebSocket_bufferedAmount), (intptr_t) static_cast<PutPropertySlot::PutValueFunc>(0) } },
-  //     { "onopen"_s, static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { (intptr_t) static_cast<PropertySlot::GetValueFunc>(jsWebSocket_onopen), (intptr_t) static_cast<PutPropertySlot::PutValueFunc>(setJSWebSocket_onopen) } },
-  //     { "onmessage"_s, static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { (intptr_t) static_cast<PropertySlot::GetValueFunc>(jsWebSocket_onmessage), (intptr_t) static_cast<PutPropertySlot::PutValueFunc>(setJSWebSocket_onmessage) } },
-  //     { "onerror"_s, static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { (intptr_t) static_cast<PropertySlot::GetValueFunc>(jsWebSocket_onerror), (intptr_t) static_cast<PutPropertySlot::PutValueFunc>(setJSWebSocket_onerror) } },
-  //     { "onclose"_s, static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { (intptr_t) static_cast<PropertySlot::GetValueFunc>(jsWebSocket_onclose), (intptr_t) static_cast<PutPropertySlot::PutValueFunc>(setJSWebSocket_onclose) } },
-  //     { "protocol"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { (intptr_t) static_cast<PropertySlot::GetValueFunc>(jsWebSocket_protocol), (intptr_t) static_cast<PutPropertySlot::PutValueFunc>(0) } },
-  //     { "extensions"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { (intptr_t) static_cast<PropertySlot::GetValueFunc>(jsWebSocket_extensions), (intptr_t) static_cast<PutPropertySlot::PutValueFunc>(0) } },
-  //     { "binaryType"_s, static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { (intptr_t) static_cast<PropertySlot::GetValueFunc>(jsWebSocket_binaryType), (intptr_t) static_cast<PutPropertySlot::PutValueFunc>(setJSWebSocket_binaryType) } },
-  //     { "send"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(jsWebSocketPrototypeFunction_send), (intptr_t)(1) } },
-  //     { "close"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(jsWebSocketPrototypeFunction_close), (intptr_t)(0) } },
-  //     { "CONNECTING"_s, JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::ConstantInteger, NoIntrinsic, { (long long)(0) } },
-  //     { "OPEN"_s, JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::ConstantInteger, NoIntrinsic, { (long long)(1) } },
-  //     { "CLOSING"_s, JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::ConstantInteger, NoIntrinsic, { (long long)(2) } },
-  //     { "CLOSED"_s, JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::ConstantInteger, NoIntrinsic, { (long long)(3) } },
+  //     { "constructor"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::GetterSetterType, jsWebSocketConstructor, 0 } },
+  //     { "URL"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { HashTableValue::GetterSetterType, jsWebSocket_URL, 0 } },
+  //     { "url"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { HashTableValue::GetterSetterType, jsWebSocket_url, 0 } },
+  //     { "readyState"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { HashTableValue::GetterSetterType, jsWebSocket_readyState, 0 } },
+  //     { "bufferedAmount"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { HashTableValue::GetterSetterType, jsWebSocket_bufferedAmount, 0 } },
+  //     { "onopen"_s, static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { HashTableValue::GetterSetterType, jsWebSocket_onopen, setJSWebSocket_onopen } }, },
+  //     { "onmessage"_s, static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { HashTableValue::GetterSetterType, jsWebSocket_onmessage, setJSWebSocket_onmessage } }, },
+  //     { "onerror"_s, static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { HashTableValue::GetterSetterType, jsWebSocket_onerror, setJSWebSocket_onerror } }, },
+  //     { "onclose"_s, static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { HashTableValue::GetterSetterType, jsWebSocket_onclose, setJSWebSocket_onclose } }, },
+  //     { "protocol"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { HashTableValue::GetterSetterType, jsWebSocket_protocol, 0 } },
+  //     { "extensions"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { HashTableValue::GetterSetterType, jsWebSocket_extensions, 0 } },
+  //     { "binaryType"_s, static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { HashTableValue::GetterSetterType, jsWebSocket_binaryType, setJSWebSocket_binaryType } }, },
+  //     { "send"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsWebSocketPrototypeFunction_send (intptr_t)(1) } },
+  //     { "close"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsWebSocketPrototypeFunction_close (intptr_t)(0) } },
+  //     { "CONNECTING"_s, JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::ConstantInteger, NoIntrinsic, { HashTableValue::ConstantType, 0 } },
+  //     { "OPEN"_s, JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::ConstantInteger, NoIntrinsic, { HashTableValue::ConstantType, 1 } },
+  //     { "CLOSING"_s, JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::ConstantInteger, NoIntrinsic, { HashTableValue::ConstantType, 2 } },
+  //     { "CLOSED"_s, JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::ConstantInteger, NoIntrinsic, { HashTableValue::ConstantType, 3 } },
   // };
   return `
   static const HashTableValue ${nameToUse}TableValues[] = {
@@ -320,6 +320,11 @@ function generateConstructorImpl(typeName, obj) {
 
   const hashTableIdentifier = hashTable.length ? `${name}TableValues` : "";
   return `
+${
+  obj.estimatedSize
+    ? `extern "C" size_t ${symbolName(typeName, "estimatedSize")}(void* ptr);`
+    : ""
+}
 ${renderStaticDecls(classSymbolName, typeName, fields)}
 ${hashTable}
 
@@ -379,6 +384,14 @@ JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES ${name}::construct(JSC::JSGlobalObj
     ${className(typeName)}* instance = ${className(
     typeName
   )}::create(vm, globalObject, structure, ptr);
+  ${
+    obj.estimatedSize
+      ? `vm.heap.reportExtraMemoryAllocated(${symbolName(
+          obj.name,
+          "estimatedSize"
+        )}(instance->wrapped()));`
+      : ""
+  }
 
     return JSValue::encode(instance);
 }
@@ -389,6 +402,14 @@ extern "C" EncodedJSValue ${typeName}__create(Zig::GlobalObject* globalObject, v
   ${className(typeName)}* instance = ${className(
     typeName
   )}::create(vm, globalObject, structure, ptr);
+  ${
+    obj.estimatedSize
+      ? `vm.heap.reportExtraMemoryAllocated(${symbolName(
+          obj.name,
+          "estimatedSize"
+        )}(ptr));`
+      : ""
+  }
   return JSValue::encode(instance);
 }
 
@@ -401,9 +422,13 @@ void ${name}::initializeProperties(VM& vm, JSC::JSGlobalObject* globalObject, ${
 
 const ClassInfo ${name}::s_info = { "Function"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(${name}) };
 
-
-extern "C" EncodedJSValue ${typeName}__getConstructor(Zig::GlobalObject* globalObject) {
-  return JSValue::encode(globalObject->${className(typeName)}Constructor());
+${
+  !obj.noConstructor
+    ? `
+  extern "C" EncodedJSValue ${typeName}__getConstructor(Zig::GlobalObject* globalObject) {
+    return JSValue::encode(globalObject->${className(typeName)}Constructor());
+  }`
+    : ""
 }
 
       
@@ -451,18 +476,16 @@ function renderDecls(symbolName, typeName, proto) {
       "setter" in proto[name] ||
       ("accessor" in proto[name] && proto[name].setter)
     ) {
-      rows
-        .push(
-          `extern "C" bool ${symbolName(
-            typeName,
-            proto[name].setter || proto[name].accessor.setter
-          )}(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, EncoedJSValue value);`,
-          `
+      rows.push(
+        `extern "C" bool ${symbolName(
+          typeName,
+          proto[name].setter || proto[name].accessor.setter
+        )}(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::EncodedJSValue value);`,
+        `
       JSC_DECLARE_CUSTOM_SETTER(${symbolName(typeName, name)}SetterWrap);
-      `,
-          "\n"
-        )
-        .trim();
+      `.trim(),
+        "\n"
+      );
     }
 
     if ("fn" in proto[name]) {
@@ -620,7 +643,7 @@ JSC_DEFINE_CUSTOM_SETTER(${symbolName(
           name
         )}SetterWrap, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, EncodedJSValue encodedValue, PropertyName attributeName))
 {
-    auto& vm = lexicalGlobalObject>
+    auto& vm = lexicalGlobalObject->vm();
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     ${className(typeName)}* thisObject = jsCast<${className(
           typeName
@@ -628,7 +651,7 @@ JSC_DEFINE_CUSTOM_SETTER(${symbolName(
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
     auto result = ${symbolName(
       typeName,
-      roto[name].setter || proto[name].accessor.setter
+      proto[name].setter || proto[name].accessor.setter
     )}(thisObject->wrapped(), lexicalGlobalObject, encodedValue);
 
     RELEASE_AND_RETURN(throwScope, result);
@@ -673,11 +696,13 @@ function generateClassHeader(typeName, obj) {
   var { klass, proto, JSType = "Object" } = obj;
   const name = className(typeName);
 
-  const DECLARE_VISIT_CHILDREN = [
-    ...Object.values(klass),
-    ...Object.values(proto),
-  ].find((a) => !!a.cache)
-    ? "DECLARE_VISIT_CHILDREN;"
+  const DECLARE_VISIT_CHILDREN =
+    obj.estimatedSize ||
+    [...Object.values(klass), ...Object.values(proto)].find((a) => !!a.cache)
+      ? "DECLARE_VISIT_CHILDREN;"
+      : "";
+  const sizeEstimator = obj.estimatedSize
+    ? "static size_t estimatedSize(JSCell* cell, VM& vm);"
     : "";
 
   return `
@@ -745,10 +770,9 @@ function generateClassHeader(typeName, obj) {
   `;
 }
 
-function generateClassImpl(typeName, obj) {
-  const { klass: fields, finalize, proto, construct } = obj;
+function generateClassImpl(typeName, obj: ClassDefinition) {
+  const { klass: fields, finalize, proto, construct, estimatedSize } = obj;
   const name = className(typeName);
-  var symbolName = classSymbolName;
 
   const DEFINE_VISIT_CHILDREN_LIST = [
     ...Object.entries(fields),
@@ -759,7 +783,7 @@ function generateClassImpl(typeName, obj) {
     .join("\n");
 
   var DEFINE_VISIT_CHILDREN = "";
-  if (DEFINE_VISIT_CHILDREN_LIST.length) {
+  if (DEFINE_VISIT_CHILDREN_LIST.length || estimatedSize) {
     DEFINE_VISIT_CHILDREN = `
 template<typename Visitor>
 void ${name}::visitChildrenImpl(JSCell* cell, Visitor& visitor)
@@ -767,6 +791,13 @@ void ${name}::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     ${name}* thisObject = jsCast<${name}*>(cell);
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
+    ${
+      estimatedSize
+        ? `if (auto* ptr = thisObject->wrapped()) {
+visitor.reportExtraMemoryVisited(${symbolName(obj.name, "estimatedSize")}(ptr));
+}`
+        : ""
+    }
 ${DEFINE_VISIT_CHILDREN_LIST}
 }
 
@@ -871,7 +902,7 @@ function generateHeader(typeName, obj) {
   return (
     generateClassHeader(typeName, obj).trim() +
     "\n" +
-    generateConstructorHeader(typeName).trim() +
+    (!obj.noConstructor ? generateConstructorHeader(typeName).trim() : "") +
     "\n"
   );
 }
@@ -880,7 +911,7 @@ function generateImpl(typeName, obj) {
   const proto = obj.proto;
   return [
     Object.keys(proto).length > 0 && generatePrototype(typeName, obj).trim(),
-    generateConstructorImpl(typeName, obj).trim(),
+    !obj.noConstructor ? generateConstructorImpl(typeName, obj).trim() : null,
     Object.keys(proto).length > 0 && generateClassImpl(typeName, obj).trim(),
   ]
     .filter(Boolean)
@@ -889,7 +920,14 @@ function generateImpl(typeName, obj) {
 
 function generateZig(
   typeName,
-  { klass = {}, proto = {}, construct, finalize } = {} as ClassDefinition
+  {
+    klass = {},
+    proto = {},
+    construct,
+    finalize,
+    noConstructor,
+    estimatedSize,
+  } = {} as ClassDefinition
 ) {
   const exports: [string, string][] = [];
 
@@ -901,6 +939,10 @@ function generateZig(
     exports.push([`finalize`, classSymbolName(typeName, "finalize")]);
   }
 
+  if (estimatedSize) {
+    exports.push([`estimatedSize`, symbolName(typeName, "estimatedSize")]);
+  }
+
   Object.values(klass).map((a) =>
     appendSymbols(exports, (name) => classSymbolName(typeName, name), a)
   );
@@ -910,6 +952,14 @@ function generateZig(
 
   function typeCheck() {
     var output = "";
+
+    if (estimatedSize) {
+      output += `
+        if (@TypeOf(${typeName}.estimatedSize) != (fn(*${typeName}) callconv(.C) usize)) {
+           @compileLog("${typeName}.estimatedSize is not a size function");
+        }
+      `;
+    }
 
     if (construct) {
       output += `
@@ -1009,13 +1059,18 @@ pub const ${className(typeName)} = struct {
         return ${symbolName(typeName, "fromJS")}(value);
     }
 
+    ${
+      !noConstructor
+        ? `
     /// Get the ${typeName} constructor value.
     /// This loads lazily from the global object.
     pub fn getConstructor(globalObject: *JSC.JSGlobalObject) JSC.JSValue {
         JSC.markBinding();
         return ${symbolName(typeName, "getConstructor")}(globalObject);
     }
-
+  `
+        : ""
+    }
     /// Create a new instance of ${typeName}
     pub fn toJS(this: *${typeName}, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
         JSC.markBinding();
@@ -1090,6 +1145,32 @@ function generateLazyClassStructureHeader(
   bool has${className(typeName)}SetterValue { false };
   mutable JSC::WriteBarrier<JSC::Unknown> m_${className(typeName)}SetterValue;
     `.trim();
+}
+
+function generateLazyStructureHeader(typeName, { klass = {}, proto = {} }) {
+  return `
+        JSC::Structure* ${className(
+          typeName
+        )}Structure() { return m_${className(typeName)}.get(this); }
+  JSC::LazyProperty<Zig::GlobalObject, Structure> m_${className(typeName)};
+  bool has${className(typeName)}SetterValue { false };
+  mutable JSC::WriteBarrier<JSC::Unknown> m_${className(typeName)}SetterValue;
+    `.trim();
+}
+
+function generateLazyStructureImpl(typeName, { klass = {}, proto = {} }) {
+  return `
+          m_${className(typeName)}.initLater(
+            [](const JSC::LazyProperty<JSC::JSGlobalObject, JSC::JSObject>::Initializer& init) {
+                 auto *prototype = WebCore::${className(
+                   typeName
+                 )}::createPrototype(init.vm, reinterpret_cast<Zig::GlobalObject*>(init.owner));
+                 init.set(WebCore::${className(
+                   typeName
+                 )}::createStructure(init.vm, init.owner, prototype));
+              });
+  
+      `.trim();
 }
 
 function generateLazyClassStructureImpl(typeName, { klass = {}, proto = {} }) {
@@ -1191,8 +1272,11 @@ void GlobalObject::visitGeneratedLazyClasses(GlobalObject *thisObject, Visitor& 
       ${classes
         .map(
           (a) =>
-            `thisObject->m_${className(a.name)}.visit(visitor);
-visitor.visit(thisObject->m_${className(a.name)}SetterValue);`
+            `thisObject->m_${className(
+              a.name
+            )}.visit(visitor);  visitor.append(thisObject->m_${className(
+              a.name
+            )}SetterValue);`
         )
         .join("\n      ")}
 }
@@ -1270,7 +1354,13 @@ await writeAndUnlink(`${import.meta.dir}/../bindings/ZigGeneratedClasses.cpp`, [
 ]);
 await writeAndUnlink(
   `${import.meta.dir}/../bindings/ZigGeneratedClasses+lazyStructureHeader.h`,
-  classes.map((a) => generateLazyClassStructureHeader(a.name, a)).join("\n")
+  classes
+    .map((a) =>
+      !a.noConstructor
+        ? generateLazyClassStructureHeader(a.name, a)
+        : generateLazyStructureHeader(a.name, a)
+    )
+    .join("\n")
 );
 
 await writeAndUnlink(
@@ -1278,9 +1368,11 @@ await writeAndUnlink(
   classes.map((a) =>
     [
       `std::unique_ptr<GCClient::IsoSubspace> ${clientSubspaceFor(a.name)};`,
-      `std::unique_ptr<GCClient::IsoSubspace> ${clientSubspaceFor(
-        a.name
-      )}Constructor;`,
+      !a.noConstructor
+        ? `std::unique_ptr<GCClient::IsoSubspace> ${clientSubspaceFor(
+            a.name
+          )}Constructor;`
+        : "",
     ].join("\n")
   )
 );
@@ -1290,7 +1382,9 @@ await writeAndUnlink(
   classes.map((a) =>
     [
       `std::unique_ptr<IsoSubspace> ${subspaceFor(a.name)};`,
-      `std::unique_ptr<IsoSubspace> ${subspaceFor(a.name)}Constructor;`,
+      !a.noConstructor
+        ? `std::unique_ptr<IsoSubspace> ${subspaceFor(a.name)}Constructor;`
+        : ``,
     ].join("\n")
   )
 );
@@ -1298,7 +1392,11 @@ await writeAndUnlink(
 await writeAndUnlink(
   `${import.meta.dir}/../bindings/ZigGeneratedClasses+lazyStructureImpl.h`,
   initLazyClasses(
-    classes.map((a) => generateLazyClassStructureImpl(a.name, a))
+    classes.map((a) =>
+      !a.noConstructor
+        ? generateLazyClassStructureImpl(a.name, a)
+        : generateLazyStructureImpl(a.name, a)
+    )
   ) +
     "\n" +
     visitLazyClasses(classes)

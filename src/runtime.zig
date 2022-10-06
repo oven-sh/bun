@@ -322,6 +322,8 @@ pub const Runtime = struct {
 
         replace_exports: ReplaceableExport.Map = .{},
 
+        hoist_bun_plugin: bool = false,
+
         pub const ReplaceableExport = union(enum) {
             delete: void,
             replace: JSAst.Expr,

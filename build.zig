@@ -140,6 +140,7 @@ fn addInternalPackages(step: *std.build.LibExeObjStep, _: std.mem.Allocator, tar
         io,
         boringssl,
         thread_pool,
+        uws,
     };
     thread_pool.dependencies = &.{ io, http };
     http.dependencies = &.{
@@ -148,6 +149,7 @@ fn addInternalPackages(step: *std.build.LibExeObjStep, _: std.mem.Allocator, tar
         io,
         boringssl,
         thread_pool,
+        uws,
     };
     thread_pool.dependencies = &.{ io, http };
 
@@ -169,6 +171,25 @@ fn addInternalPackages(step: *std.build.LibExeObjStep, _: std.mem.Allocator, tar
     step.addPackage(lol_html);
     step.addPackage(uws);
 }
+
+const BunBuildOptions = struct {
+    canary: bool = false,
+    sha: [:0]const u8 = "",
+    baseline: bool = false,
+    bindgen: bool = false,
+    sizegen: bool = false,
+
+    pub fn step(this: BunBuildOptions, b: anytype) *std.build.OptionsStep {
+        var opts = b.addOptions();
+        opts.addOption(@TypeOf(this.canary), "is_canary", this.canary);
+        opts.addOption(@TypeOf(this.sha), "sha", this.sha);
+        opts.addOption(@TypeOf(this.baseline), "baseline", this.baseline);
+        opts.addOption(@TypeOf(this.bindgen), "bindgen", this.bindgen);
+        opts.addOption(@TypeOf(this.sizegen), "sizegen", this.sizegen);
+        return opts;
+    }
+};
+
 var output_dir: []const u8 = "";
 fn panicIfNotFound(comptime filepath: []const u8) []const u8 {
     var file = std.fs.cwd().openFile(filepath, .{ .mode = .read_only }) catch |err| {
@@ -219,7 +240,6 @@ pub fn build(b: *std.build.Builder) !void {
     // between Debug, ReleaseSafe, ReleaseFast, and ReleaseSmall.
     mode = b.standardReleaseOptions();
 
-    const cwd: []const u8 = b.pathFromRoot(".");
     var exe: *std.build.LibExeObjStep = undefined;
     var output_dir_buf = std.mem.zeroes([4096]u8);
     var bin_label = if (mode == std.builtin.Mode.Debug) "packages/debug-bun-" else "packages/bun-";
@@ -281,8 +301,6 @@ pub fn build(b: *std.build.Builder) !void {
     exe.setBuildMode(mode);
     b.install_path = output_dir;
 
-    var typings_exe = b.addExecutable("typescript-decls", "src/typegen.zig");
-
     const min_version: std.builtin.Version = if (target.getOsTag() != .freestanding)
         target.getOsVersionMin().semver
     else .{ .major = 0, .minor = 0, .patch = 0 };
@@ -305,53 +323,47 @@ pub fn build(b: *std.build.Builder) !void {
     var obj_step = b.step("obj", "Build bun as a .o file");
     var obj = b.addObject(bun_executable_name, exe.root_src.?.path);
 
-    const is_baseline = arch.isX86() and (target.cpu_model == .baseline or
-        !std.Target.x86.featureSetHas(target.getCpuFeatures(), .avx2));
+    var default_build_options: BunBuildOptions = brk: {
+        const is_baseline = arch.isX86() and (target.cpu_model == .baseline or
+            !std.Target.x86.featureSetHas(target.getCpuFeatures(), .avx2));
 
-    var git_sha: [:0]const u8 = "";
-    if (std.os.getenvZ("GITHUB_SHA") orelse std.os.getenvZ("GIT_SHA")) |sha| {
-        git_sha = std.heap.page_allocator.dupeZ(u8, sha) catch unreachable;
-    } else {
-        sha: {
-            const result = std.ChildProcess.exec(.{
-                .allocator = std.heap.page_allocator,
-                .argv = &.{
-                    "git",
-                    "rev-parse",
-                    "--short",
-                    "HEAD",
-                },
-                .cwd = b.pathFromRoot("."),
-                .expand_arg0 = .expand,
-            }) catch {
-                std.debug.print("Warning: failed to get git HEAD", .{});
-                break :sha;
-            };
+        var git_sha: [:0]const u8 = "";
+        if (std.os.getenvZ("GITHUB_SHA") orelse std.os.getenvZ("GIT_SHA")) |sha| {
+            git_sha = std.heap.page_allocator.dupeZ(u8, sha) catch unreachable;
+        } else {
+            sha: {
+                const result = std.ChildProcess.exec(.{
+                    .allocator = std.heap.page_allocator,
+                    .argv = &.{
+                        "git",
+                        "rev-parse",
+                        "--short",
+                        "HEAD",
+                    },
+                    .cwd = b.pathFromRoot("."),
+                    .expand_arg0 = .expand,
+                }) catch {
+                    std.debug.print("Warning: failed to get git HEAD", .{});
+                    break :sha;
+                };
 
-            git_sha = std.heap.page_allocator.dupeZ(u8, std.mem.trim(u8, result.stdout, "\n \t")) catch unreachable;
+                git_sha = std.heap.page_allocator.dupeZ(u8, std.mem.trim(u8, result.stdout, "\n \t")) catch unreachable;
+            }
         }
-    }
 
-    const is_canary = (std.os.getenvZ("BUN_CANARY") orelse "0")[0] == '1';
+        const is_canary = (std.os.getenvZ("BUN_CANARY") orelse "0")[0] == '1';
+        break :brk .{
+            .canary = is_canary,
+            .sha = git_sha,
+            .baseline = is_baseline,
+            .bindgen = false,
+        };
+    };
 
     {
         obj.setTarget(target);
         addPicoHTTP(obj, false);
         obj.setMainPkgPath(b.pathFromRoot("."));
-        var opts = b.addOptions();
-        opts.addOption(
-            bool,
-            "bindgen",
-            false,
-        );
-
-        opts.addOption(
-            bool,
-            "baseline",
-            is_baseline,
-        );
-        opts.addOption([:0]const u8, "sha", git_sha);
-        opts.addOption(bool, "is_canary", is_canary);
 
         try addInternalPackages(
             obj,
@@ -359,7 +371,7 @@ pub fn build(b: *std.build.Builder) !void {
             target,
         );
 
-        if (is_baseline) {
+        if (default_build_options.baseline) {
             obj.target.cpu_model = .{ .explicit = &std.Target.x86.cpu.x86_64_v2 };
         } else if (arch.isX86()) {
             obj.target.cpu_model = .{ .explicit = &std.Target.x86.cpu.haswell };
@@ -386,7 +398,13 @@ pub fn build(b: *std.build.Builder) !void {
         obj.setOutputDir(output_dir);
         obj.setBuildMode(mode);
 
-        obj.addOptions("build_options", opts);
+        var actual_build_options = default_build_options;
+        if (b.option(bool, "generate-sizes", "Generate sizes of things") orelse false) {
+            actual_build_options.sizegen = true;
+            obj.setOutputDir(b.pathFromRoot("misctools/sizegen"));
+        }
+
+        obj.addOptions("build_options", actual_build_options.step(b));
 
         obj.linkLibC();
 
@@ -412,21 +430,9 @@ pub fn build(b: *std.build.Builder) !void {
         var headers_obj: *std.build.LibExeObjStep = b.addObject("headers", "src/bindgen.zig");
         defer headers_step.dependOn(&headers_obj.step);
         try configureObjectStep(b, headers_obj, target, obj.main_pkg_path.?);
-        var headers_opts = b.addOptions();
-        headers_opts.addOption(
-            bool,
-            "bindgen",
-            true,
-        );
-        headers_opts.addOption(
-            bool,
-            "baseline",
-            is_baseline,
-        );
-        headers_opts.addOption([:0]const u8, "sha", git_sha);
-        headers_opts.addOption(bool, "is_canary", is_canary);
-        headers_obj.addOptions("build_options", headers_opts);
-
+        var headers_build_options = default_build_options;
+        headers_build_options.bindgen = true;
+        headers_obj.addOptions("build_options", default_build_options.step(b));
         headers_obj.linkLibCpp();
     }
 
@@ -446,21 +452,15 @@ pub fn build(b: *std.build.Builder) !void {
         var headers_obj: *std.build.LibExeObjStep = b.addObject("httpbench", "misctools/http_bench.zig");
         defer headers_step.dependOn(&headers_obj.step);
         try configureObjectStep(b, headers_obj, target, obj.main_pkg_path.?);
-        var opts = b.addOptions();
-        opts.addOption(
-            bool,
-            "bindgen",
-            false,
-        );
+        headers_obj.addOptions("build_options", default_build_options.step(b));
+    }
 
-        opts.addOption(
-            bool,
-            "baseline",
-            is_baseline,
-        );
-        opts.addOption([:0]const u8, "sha", git_sha);
-        opts.addOption(bool, "is_canary", is_canary);
-        headers_obj.addOptions("build_options", opts);
+    {
+        const headers_step = b.step("machbench-obj", "Build Machbench tool (object files)");
+        var headers_obj: *std.build.LibExeObjStep = b.addObject("machbench", "misctools/machbench.zig");
+        defer headers_step.dependOn(&headers_obj.step);
+        try configureObjectStep(b, headers_obj, target, obj.main_pkg_path.?);
+        headers_obj.addOptions("build_options", default_build_options.step(b));
     }
 
     {
@@ -468,21 +468,7 @@ pub fn build(b: *std.build.Builder) !void {
         var headers_obj: *std.build.LibExeObjStep = b.addObject("fetch", "misctools/fetch.zig");
         defer headers_step.dependOn(&headers_obj.step);
         try configureObjectStep(b, headers_obj, target, obj.main_pkg_path.?);
-        var opts = b.addOptions();
-        opts.addOption(
-            bool,
-            "bindgen",
-            false,
-        );
-
-        opts.addOption(
-            bool,
-            "baseline",
-            is_baseline,
-        );
-        opts.addOption([:0]const u8, "sha", git_sha);
-        opts.addOption(bool, "is_canary", is_canary);
-        headers_obj.addOptions("build_options", opts);
+        headers_obj.addOptions("build_options", default_build_options.step(b));
     }
 
     {
@@ -490,21 +476,7 @@ pub fn build(b: *std.build.Builder) !void {
         var headers_obj: *std.build.LibExeObjStep = b.addExecutable("string-bench", "src/bench/string-handling.zig");
         defer headers_step.dependOn(&headers_obj.step);
         try configureObjectStep(b, headers_obj, target, obj.main_pkg_path.?);
-        var opts = b.addOptions();
-        opts.addOption(
-            bool,
-            "bindgen",
-            false,
-        );
-
-        opts.addOption(
-            bool,
-            "baseline",
-            is_baseline,
-        );
-        opts.addOption([:0]const u8, "sha", git_sha);
-        opts.addOption(bool, "is_canary", is_canary);
-        headers_obj.addOptions("build_options", opts);
+        headers_obj.addOptions("build_options", default_build_options.step(b));
     }
 
     {
@@ -512,21 +484,7 @@ pub fn build(b: *std.build.Builder) !void {
         var headers_obj: *std.build.LibExeObjStep = b.addObject("sha", "src/sha.zig");
         defer headers_step.dependOn(&headers_obj.step);
         try configureObjectStep(b, headers_obj, target, obj.main_pkg_path.?);
-        var opts = b.addOptions();
-        opts.addOption(
-            bool,
-            "bindgen",
-            false,
-        );
-
-        opts.addOption(
-            bool,
-            "baseline",
-            is_baseline,
-        );
-        opts.addOption([:0]const u8, "sha", git_sha);
-        opts.addOption(bool, "is_canary", is_canary);
-        headers_obj.addOptions("build_options", opts);
+        headers_obj.addOptions("build_options", default_build_options.step(b));
     }
 
     {
@@ -534,21 +492,7 @@ pub fn build(b: *std.build.Builder) !void {
         var headers_obj: *std.build.LibExeObjStep = b.addExecutable("vlq-bench", "src/sourcemap/vlq_bench.zig");
         defer headers_step.dependOn(&headers_obj.step);
         try configureObjectStep(b, headers_obj, target, obj.main_pkg_path.?);
-        var opts = b.addOptions();
-        opts.addOption(
-            bool,
-            "bindgen",
-            false,
-        );
-
-        opts.addOption(
-            bool,
-            "baseline",
-            is_baseline,
-        );
-        opts.addOption([:0]const u8, "sha", git_sha);
-        opts.addOption(bool, "is_canary", is_canary);
-        headers_obj.addOptions("build_options", opts);
+        headers_obj.addOptions("build_options", default_build_options.step(b));
     }
 
     {
@@ -556,21 +500,7 @@ pub fn build(b: *std.build.Builder) !void {
         var headers_obj: *std.build.LibExeObjStep = b.addObject("tgz", "misctools/tgz.zig");
         defer headers_step.dependOn(&headers_obj.step);
         try configureObjectStep(b, headers_obj, target, obj.main_pkg_path.?);
-        var opts = b.addOptions();
-        opts.addOption(
-            bool,
-            "bindgen",
-            false,
-        );
-
-        opts.addOption(
-            bool,
-            "baseline",
-            is_baseline,
-        );
-        opts.addOption([:0]const u8, "sha", git_sha);
-        opts.addOption(bool, "is_canary", is_canary);
-        headers_obj.addOptions("build_options", opts);
+        headers_obj.addOptions("build_options", default_build_options.step(b));
     }
 
     {
@@ -589,12 +519,14 @@ pub fn build(b: *std.build.Builder) !void {
 
         try configureObjectStep(b, headers_obj, target, obj.main_pkg_path.?);
         try linkObjectFiles(b, headers_obj, target);
+
         {
             var before = b.addLog("\x1b[" ++ color_map.get("magenta").? ++ "\x1b[" ++ color_map.get("b").? ++ "[{s} tests]" ++ "\x1b[" ++ color_map.get("d").? ++ " ----\n\n" ++ "\x1b[0m", .{"bun"});
             var after = b.addLog("\x1b[" ++ color_map.get("d").? ++ "–––---\n\n" ++ "\x1b[0m", .{});
             headers_step.dependOn(&before.step);
             headers_step.dependOn(&headers_obj.step);
             headers_step.dependOn(&after.step);
+            headers_obj.addOptions("build_options", default_build_options.step(b));
         }
 
         for (headers_obj.packages.items) |pkg_| {
@@ -604,7 +536,10 @@ pub fn build(b: *std.build.Builder) !void {
 
             test_.setMainPkgPath(obj.main_pkg_path.?);
             test_.setTarget(target);
+            try configureObjectStep(b, test_, target, obj.main_pkg_path.?);
             try linkObjectFiles(b, test_, target);
+            test_.addOptions("build_options", default_build_options.step(b));
+
             if (pkg.dependencies) |children| {
                 test_.packages = std.ArrayList(std.build.Pkg).init(b.allocator);
                 try test_.packages.appendSlice(children);
@@ -617,25 +552,6 @@ pub fn build(b: *std.build.Builder) !void {
             headers_step.dependOn(&after.step);
         }
     }
-
-    try configureObjectStep(b, typings_exe, target, obj.main_pkg_path.?);
-    try linkObjectFiles(b, typings_exe, target);
-
-    var typings_cmd: *std.build.RunStep = typings_exe.run();
-    typings_cmd.cwd = cwd;
-    typings_cmd.addArg(cwd);
-    typings_cmd.addArg("types");
-    typings_cmd.step.dependOn(&typings_exe.step);
-    if (target.getOsTag() == .macos) {
-        typings_exe.linkSystemLibrary("icucore");
-        typings_exe.linkSystemLibrary("iconv");
-        typings_exe.addLibPath(
-            "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk/usr/lib",
-        );
-    }
-
-    var typings_step = b.step("types", "Build TypeScript types");
-    typings_step.dependOn(&typings_cmd.step);
 }
 
 pub var original_make_fn: ?fn (step: *std.build.Step) anyerror!void = null;

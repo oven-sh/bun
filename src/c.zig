@@ -377,21 +377,21 @@ pub fn setProcessPriority(pid_: i32, priority_: i32) std.c.E {
     return errcode;
 }
 
-pub fn getVersion() []u8 {
+pub fn getVersion(buf: []u8) []const u8 {
     if (comptime Environment.isLinux) {
-        return linux.get_version();
+        return linux.get_version(buf.ptr[0..std.os.HOST_NAME_MAX]);
     } else if (comptime Environment.isMac) {
-        return darwin.get_version();
+        return darwin.get_version(buf);
     } else {
         return "unknown";
     }
 }
 
-pub fn getRelease() []u8 {
+pub fn getRelease(buf: []u8) []const u8 {
     if (comptime Environment.isLinux) {
-        return linux.get_release();
+        return linux.get_release(buf.ptr[0..std.os.HOST_NAME_MAX]);
     } else if (comptime Environment.isMac) {
-        return darwin.get_release();
+        return darwin.get_release(buf);
     } else {
         return "unknown";
     }

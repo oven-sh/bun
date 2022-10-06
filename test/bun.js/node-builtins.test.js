@@ -1,16 +1,18 @@
 import { describe, it, expect } from "bun:test";
 
 import { EventEmitter } from "events";
-
+var emitters = [EventEmitter, require("events")];
 describe("EventEmitter", () => {
   it("should emit events", () => {
-    const emitter = new EventEmitter();
-    var called = false;
-    const listener = () => {
-      called = true;
-    };
-    emitter.on("test", listener);
-    emitter.emit("test");
-    expect(called).toBe(true);
+    for (let Emitter of emitters) {
+      const emitter = new Emitter();
+      var called = false;
+      const listener = () => {
+        called = true;
+      };
+      emitter.on("test", listener);
+      emitter.emit("test");
+      expect(called).toBe(true);
+    }
   });
 });

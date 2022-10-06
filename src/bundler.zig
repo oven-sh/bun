@@ -127,6 +127,215 @@ pub const ParseResult = struct {
 
 const cache_files = false;
 
+pub const PluginRunner = struct {
+    global_object: *JSC.JSGlobalObject,
+    allocator: std.mem.Allocator,
+
+    pub fn extractNamespace(specifier: string) string {
+        const colon = strings.indexOfChar(specifier, ':') orelse return "";
+        return specifier[0..colon];
+    }
+
+    pub fn couldBePlugin(specifier: string) bool {
+        if (strings.lastIndexOfChar(specifier, '.')) |last_dor| {
+            const ext = specifier[last_dor + 1 ..];
+            // '.' followed by either a letter or a non-ascii character
+            // maybe there are non-ascii file extensions?
+            // we mostly want to cheaply rule out "../" and ".." and "./"
+            if (ext.len > 0 and ((ext[0] >= 'a' and ext[0] <= 'z') or (ext[0] >= 'A' and ext[0] <= 'Z') or ext[0] > 127))
+                return true;
+        }
+        return (!std.fs.path.isAbsolute(specifier) and strings.containsChar(specifier, ':'));
+    }
+
+    pub fn onResolve(
+        this: *PluginRunner,
+        specifier: []const u8,
+        importer: []const u8,
+        log: *logger.Log,
+        loc: logger.Loc,
+        target: JSC.JSGlobalObject.BunPluginTarget,
+    ) ?Fs.Path {
+        var global = this.global_object;
+        const namespace_slice = extractNamespace(specifier);
+        const namespace = if (namespace_slice.len > 0 and !strings.eqlComptime(namespace_slice, "file"))
+            JSC.ZigString.init(namespace_slice)
+        else
+            JSC.ZigString.init("");
+        const on_resolve_plugin = global.runOnResolvePlugins(
+            namespace,
+            JSC.ZigString.init(specifier).substring(if (namespace.len > 0) namespace.len + 1 else 0),
+            JSC.ZigString.init(importer),
+            target,
+        ) orelse return null;
+        const path_value = on_resolve_plugin.get(global, "path") orelse return null;
+        if (path_value.isEmptyOrUndefinedOrNull()) return null;
+        if (!path_value.isString()) {
+            log.addError(null, loc, "Expected \"path\" to be a string") catch unreachable;
+            return null;
+        }
+
+        var file_path = path_value.getZigString(global);
+
+        if (file_path.len == 0) {
+            log.addError(
+                null,
+                loc,
+                "Expected \"path\" to be a non-empty string in onResolve plugin",
+            ) catch unreachable;
+            return null;
+        } else if
+        // TODO: validate this better
+        (file_path.eqlComptime(".") or
+            file_path.eqlComptime("..") or
+            file_path.eqlComptime("...") or
+            file_path.eqlComptime(" "))
+        {
+            log.addError(
+                null,
+                loc,
+                "Invalid file path from onResolve plugin",
+            ) catch unreachable;
+            return null;
+        }
+        var static_namespace = true;
+        const user_namespace: JSC.ZigString = brk: {
+            if (on_resolve_plugin.get(global, "namespace")) |namespace_value| {
+                if (!namespace_value.isString()) {
+                    log.addError(null, loc, "Expected \"namespace\" to be a string") catch unreachable;
+                    return null;
+                }
+
+                const namespace_str = namespace_value.getZigString(global);
+                if (namespace_str.len == 0) {
+                    break :brk JSC.ZigString.init("file");
+                }
+
+                if (namespace_str.eqlComptime("file")) {
+                    break :brk JSC.ZigString.init("file");
+                }
+
+                if (namespace_str.eqlComptime("bun")) {
+                    break :brk JSC.ZigString.init("bun");
+                }
+
+                if (namespace_str.eqlComptime("node")) {
+                    break :brk JSC.ZigString.init("node");
+                }
+
+                static_namespace = false;
+
+                break :brk namespace_str;
+            }
+
+            break :brk JSC.ZigString.init("file");
+        };
+
+        if (static_namespace) {
+            return Fs.Path.initWithNamespace(
+                std.fmt.allocPrint(this.allocator, "{any}", .{file_path}) catch unreachable,
+                user_namespace.slice(),
+            );
+        } else {
+            return Fs.Path.initWithNamespace(
+                std.fmt.allocPrint(this.allocator, "{any}", .{file_path}) catch unreachable,
+                std.fmt.allocPrint(this.allocator, "{any}", .{user_namespace}) catch unreachable,
+            );
+        }
+    }
+
+    pub fn onResolveJSC(
+        this: *const PluginRunner,
+        namespace: JSC.ZigString,
+        specifier: JSC.ZigString,
+        importer: JSC.ZigString,
+        target: JSC.JSGlobalObject.BunPluginTarget,
+    ) ?JSC.ErrorableZigString {
+        var global = this.global_object;
+        const on_resolve_plugin = global.runOnResolvePlugins(
+            if (namespace.len > 0 and !namespace.eqlComptime("file"))
+                namespace
+            else
+                JSC.ZigString.init(""),
+            specifier,
+            importer,
+            target,
+        ) orelse return null;
+        const path_value = on_resolve_plugin.get(global, "path") orelse return null;
+        if (path_value.isEmptyOrUndefinedOrNull()) return null;
+        if (!path_value.isString()) {
+            return JSC.ErrorableZigString.err(
+                error.JSErrorObject,
+                JSC.ZigString.init("Expected \"path\" to be a string in onResolve plugin").toErrorInstance(this.global_object).asVoid(),
+            );
+        }
+
+        const file_path = path_value.getZigString(global);
+
+        if (file_path.len == 0) {
+            return JSC.ErrorableZigString.err(
+                error.JSErrorObject,
+                JSC.ZigString.init("Expected \"path\" to be a non-empty string in onResolve plugin").toErrorInstance(this.global_object).asVoid(),
+            );
+        } else if
+        // TODO: validate this better
+        (file_path.eqlComptime(".") or
+            file_path.eqlComptime("..") or
+            file_path.eqlComptime("...") or
+            file_path.eqlComptime(" "))
+        {
+            return JSC.ErrorableZigString.err(
+                error.JSErrorObject,
+                JSC.ZigString.init("\"path\" is invalid in onResolve plugin").toErrorInstance(this.global_object).asVoid(),
+            );
+        }
+        var static_namespace = true;
+        const user_namespace: JSC.ZigString = brk: {
+            if (on_resolve_plugin.get(global, "namespace")) |namespace_value| {
+                if (!namespace_value.isString()) {
+                    return JSC.ErrorableZigString.err(
+                        error.JSErrorObject,
+                        JSC.ZigString.init("Expected \"namespace\" to be a string").toErrorInstance(this.global_object).asVoid(),
+                    );
+                }
+
+                const namespace_str = namespace_value.getZigString(global);
+                if (namespace_str.len == 0) {
+                    break :brk JSC.ZigString.init("file");
+                }
+
+                if (namespace_str.eqlComptime("file")) {
+                    break :brk JSC.ZigString.init("file");
+                }
+
+                if (namespace_str.eqlComptime("bun")) {
+                    break :brk JSC.ZigString.init("bun");
+                }
+
+                if (namespace_str.eqlComptime("node")) {
+                    break :brk JSC.ZigString.init("node");
+                }
+
+                static_namespace = false;
+
+                break :brk namespace_str;
+            }
+
+            break :brk JSC.ZigString.init("file");
+        };
+
+        // Our super slow way of cloning the string into memory owned by JSC
+        var combined_string = std.fmt.allocPrint(
+            this.allocator,
+            "{any}:{any}",
+            .{ user_namespace, file_path },
+        ) catch unreachable;
+        const out = JSC.ZigString.init(combined_string).toValueGC(this.global_object).getZigString(this.global_object);
+        this.allocator.free(combined_string);
+        return JSC.ErrorableZigString.ok(out);
+    }
+};
+
 pub const Bundler = struct {
     const ThisBundler = @This();
 
@@ -219,7 +428,7 @@ pub const Bundler = struct {
             existing_bundle,
         );
 
-        var env_loader = env_loader_ orelse DotEnv.instance orelse brk: {
+        var env_loader: *DotEnv.Loader = env_loader_ orelse DotEnv.instance orelse brk: {
             var map = try allocator.create(DotEnv.Map);
             map.* = DotEnv.Map.init(allocator);
 
@@ -231,6 +440,9 @@ pub const Bundler = struct {
         if (DotEnv.instance == null) {
             DotEnv.instance = env_loader;
         }
+
+        env_loader.quiet = log.level == .err;
+
         // var pool = try allocator.create(ThreadPool);
         // try pool.init(ThreadPool.InitConfig{
         //     .allocator = allocator,
@@ -651,7 +863,8 @@ pub const Bundler = struct {
                     return BuildResolveResultPair{
                         .written = switch (result.ast.exports_kind) {
                             .esm => try bundler.printWithSourceMapMaybe(
-                                result,
+                                result.ast,
+                                &result.source,
                                 Writer,
                                 writer,
                                 .esm_ascii,
@@ -659,7 +872,8 @@ pub const Bundler = struct {
                                 source_map_handler,
                             ),
                             .cjs => try bundler.printWithSourceMapMaybe(
-                                result,
+                                result.ast,
+                                &result.source,
                                 Writer,
                                 writer,
                                 .cjs_ascii,
@@ -677,7 +891,8 @@ pub const Bundler = struct {
                 return BuildResolveResultPair{
                     .written = switch (result.ast.exports_kind) {
                         .none, .esm => try bundler.printWithSourceMapMaybe(
-                            result,
+                            result.ast,
+                            &result.source,
                             Writer,
                             writer,
                             .esm,
@@ -685,7 +900,8 @@ pub const Bundler = struct {
                             source_map_handler,
                         ),
                         .cjs => try bundler.printWithSourceMapMaybe(
-                            result,
+                            result.ast,
+                            &result.source,
                             Writer,
                             writer,
                             .cjs,
@@ -893,14 +1109,14 @@ pub const Bundler = struct {
 
     pub fn printWithSourceMapMaybe(
         bundler: *ThisBundler,
-        result: ParseResult,
+        ast: js_ast.Ast,
+        source: *const logger.Source,
         comptime Writer: type,
         writer: Writer,
         comptime format: js_printer.Format,
         comptime enable_source_map: bool,
         source_map_context: ?js_printer.SourceMapHandler,
     ) !usize {
-        const ast = result.ast;
         var symbols: [][]js_ast.Symbol = &([_][]js_ast.Symbol{ast.symbols});
 
         return switch (format) {
@@ -909,7 +1125,7 @@ pub const Bundler = struct {
                 writer,
                 ast,
                 js_ast.Symbol.Map.initList(symbols),
-                &result.source,
+                source,
                 false,
                 js_printer.Options{
                     .to_module_ref = Ref.RuntimeRef,
@@ -930,7 +1146,7 @@ pub const Bundler = struct {
                 writer,
                 ast,
                 js_ast.Symbol.Map.initList(symbols),
-                &result.source,
+                source,
                 false,
                 js_printer.Options{
                     .to_module_ref = Ref.RuntimeRef,
@@ -951,7 +1167,7 @@ pub const Bundler = struct {
                     writer,
                     ast,
                     js_ast.Symbol.Map.initList(symbols),
-                    &result.source,
+                    source,
                     true,
                     js_printer.Options{
                         .to_module_ref = Ref.RuntimeRef,
@@ -972,7 +1188,7 @@ pub const Bundler = struct {
                     writer,
                     ast,
                     js_ast.Symbol.Map.initList(symbols),
-                    &result.source,
+                    source,
                     false,
                     js_printer.Options{
                         .to_module_ref = Ref.RuntimeRef,
@@ -993,7 +1209,7 @@ pub const Bundler = struct {
                     writer,
                     ast,
                     js_ast.Symbol.Map.initList(symbols),
-                    &result.source,
+                    source,
                     true,
                     js_printer.Options{
                         .to_module_ref = Ref.RuntimeRef,
@@ -1014,7 +1230,7 @@ pub const Bundler = struct {
                     writer,
                     ast,
                     js_ast.Symbol.Map.initList(symbols),
-                    &result.source,
+                    source,
                     false,
                     js_printer.Options{
                         .to_module_ref = Ref.RuntimeRef,
@@ -1040,7 +1256,8 @@ pub const Bundler = struct {
         comptime format: js_printer.Format,
     ) !usize {
         return bundler.printWithSourceMapMaybe(
-            result,
+            result.ast,
+            &result.source,
             Writer,
             writer,
             format,
@@ -1058,7 +1275,8 @@ pub const Bundler = struct {
         handler: js_printer.SourceMapHandler,
     ) !usize {
         return bundler.printWithSourceMapMaybe(
-            result,
+            result.ast,
+            &result.source,
             Writer,
             writer,
             format,
@@ -1079,6 +1297,7 @@ pub const Bundler = struct {
         macro_js_ctx: MacroJSValueType = default_macro_js_value,
         virtual_source: ?*const logger.Source = null,
         replace_exports: runtime.Runtime.Features.ReplaceableExport.Map = .{},
+        hoist_bun_plugin: bool = false,
     };
 
     pub fn parse(
@@ -1195,7 +1414,7 @@ pub const Bundler = struct {
                     (jsx.runtime == .automatic or jsx.runtime == .classic);
 
                 opts.features.jsx_optimization_hoist = bundler.options.jsx_optimization_hoist orelse opts.features.jsx_optimization_inline;
-
+                opts.features.hoist_bun_plugin = this_parse.hoist_bun_plugin;
                 if (bundler.macro_context == null) {
                     bundler.macro_context = js_ast.Macro.MacroContext.init(bundler);
                 }

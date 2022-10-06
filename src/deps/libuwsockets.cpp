@@ -1084,13 +1084,25 @@ void uws_res_prepare_for_sendfile(int ssl, uws_res_t *res) {
 }
 
 bool uws_res_try_end(int ssl, uws_res_t *res, const char *bytes, size_t len,
-                     size_t total_len) {
+                     size_t total_len, bool close) {
   if (ssl) {
     uWS::HttpResponse<true> *uwsRes = (uWS::HttpResponse<true> *)res;
-    return uwsRes->tryEnd(std::string_view(bytes, len), total_len).first;
+    auto pair = uwsRes->tryEnd(std::string_view(bytes, len), total_len, close);
+    return pair.first;
   } else {
     uWS::HttpResponse<false> *uwsRes = (uWS::HttpResponse<false> *)res;
-    return uwsRes->tryEnd(std::string_view(bytes, len), total_len).first;
+    auto pair = uwsRes->tryEnd(std::string_view(bytes, len), total_len, close);
+    return pair.first;
+  }
+}
+
+int uws_res_state(int ssl, uws_res_t *res) {
+  if (ssl) {
+    uWS::HttpResponse<true> *uwsRes = (uWS::HttpResponse<true> *)res;
+    return uwsRes->getHttpResponseData()->state;
+  } else {
+    uWS::HttpResponse<false> *uwsRes = (uWS::HttpResponse<false> *)res;
+    return uwsRes->getHttpResponseData()->state;
   }
 }
 

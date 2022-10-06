@@ -40,12 +40,10 @@
 #include <wtf/GetPtr.h>
 #include <wtf/PointerPreparations.h>
 
-
 namespace WebCore {
 using namespace JSC;
 
 // Functions
-
 
 // Attributes
 
@@ -109,11 +107,10 @@ template<> FunctionExecutable* JSCountQueuingStrategyDOMConstructor::initializeE
 
 /* Hash table for prototype */
 
-static const HashTableValue JSCountQueuingStrategyPrototypeTableValues[] =
-{
-    { "constructor"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontEnum), NoIntrinsic, { (intptr_t)static_cast<PropertySlot::GetValueFunc>(jsCountQueuingStrategyConstructor), (intptr_t) static_cast<PutPropertySlot::PutValueFunc>(0) } },
-    { "highWaterMark"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::Accessor | JSC::PropertyAttribute::Builtin), NoIntrinsic, { (intptr_t)static_cast<BuiltinGenerator>(countQueuingStrategyHighWaterMarkCodeGenerator), (intptr_t) (0) } },
-    { "size"_s, static_cast<unsigned>(JSC::PropertyAttribute::Builtin), NoIntrinsic, { (intptr_t)static_cast<BuiltinGenerator>(countQueuingStrategySizeCodeGenerator), (intptr_t) (0) } },
+static const HashTableValue JSCountQueuingStrategyPrototypeTableValues[] = {
+    { "constructor"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::GetterSetterType, jsCountQueuingStrategyConstructor, 0 } },
+    { "highWaterMark"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::Accessor | JSC::PropertyAttribute::Builtin), NoIntrinsic, { HashTableValue::BuiltinAccessorType, countQueuingStrategyHighWaterMarkCodeGenerator, 0 } },
+    { "size"_s, static_cast<unsigned>(JSC::PropertyAttribute::Builtin), NoIntrinsic, { HashTableValue::BuiltinGeneratorType, countQueuingStrategySizeCodeGenerator, 0 } }
 };
 
 const ClassInfo JSCountQueuingStrategyPrototype::s_info = { "CountQueuingStrategy"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSCountQueuingStrategyPrototype) };
@@ -128,13 +125,14 @@ void JSCountQueuingStrategyPrototype::finishCreation(VM& vm)
 const ClassInfo JSCountQueuingStrategy::s_info = { "CountQueuingStrategy"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSCountQueuingStrategy) };
 
 JSCountQueuingStrategy::JSCountQueuingStrategy(Structure* structure, JSDOMGlobalObject& globalObject)
-    : JSDOMObject(structure, globalObject) { }
+    : JSDOMObject(structure, globalObject)
+{
+}
 
 void JSCountQueuingStrategy::finishCreation(VM& vm)
 {
     Base::finishCreation(vm);
     ASSERT(inherits(info()));
-
 }
 
 JSObject* JSCountQueuingStrategy::createPrototype(VM& vm, JSDOMGlobalObject& globalObject)
@@ -158,7 +156,7 @@ void JSCountQueuingStrategy::destroy(JSC::JSCell* cell)
     thisObject->JSCountQueuingStrategy::~JSCountQueuingStrategy();
 }
 
-JSC_DEFINE_CUSTOM_GETTER(jsCountQueuingStrategyConstructor, (JSGlobalObject* lexicalGlobalObject, EncodedJSValue thisValue, PropertyName))
+JSC_DEFINE_CUSTOM_GETTER(jsCountQueuingStrategyConstructor, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName))
 {
     VM& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
@@ -170,13 +168,12 @@ JSC_DEFINE_CUSTOM_GETTER(jsCountQueuingStrategyConstructor, (JSGlobalObject* lex
 
 JSC::GCClient::IsoSubspace* JSCountQueuingStrategy::subspaceForImpl(JSC::VM& vm)
 {
-    return WebCore::subspaceForImpl<JSCountQueuingStrategy, UseCustomHeapCellType::No>(vm,
-        [] (auto& spaces) { return spaces.m_clientSubspaceForCountQueuingStrategy.get(); },
-        [] (auto& spaces, auto&& space) { spaces.m_clientSubspaceForCountQueuingStrategy = WTFMove(space); },
-        [] (auto& spaces) { return spaces.m_subspaceForCountQueuingStrategy.get(); },
-        [] (auto& spaces, auto&& space) { spaces.m_subspaceForCountQueuingStrategy = WTFMove(space); }
-    );
+    return WebCore::subspaceForImpl<JSCountQueuingStrategy, UseCustomHeapCellType::No>(
+        vm,
+        [](auto& spaces) { return spaces.m_clientSubspaceForCountQueuingStrategy.get(); },
+        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForCountQueuingStrategy = WTFMove(space); },
+        [](auto& spaces) { return spaces.m_subspaceForCountQueuingStrategy.get(); },
+        [](auto& spaces, auto&& space) { spaces.m_subspaceForCountQueuingStrategy = WTFMove(space); });
 }
-
 
 }

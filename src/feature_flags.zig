@@ -70,6 +70,7 @@ pub const verbose_analytics = false;
 
 pub const disable_compression_in_http_client = false;
 
+pub const enable_keepalive = true;
 // Not sure why...
 // But this is slower!
 // ~/Build/throw
@@ -98,3 +99,9 @@ pub const latin1_is_now_ascii = false;
 pub const http_buffer_pooling = true;
 
 pub const disable_lolhtml = false;
+
+/// There is, what I think is, a bug in getaddrinfo()
+/// on macOS that specifically impacts localhost and not
+/// other ipv4 hosts. This is a workaround for that.
+/// "localhost" fails to connect.
+pub const hardcode_localhost_to_127_0_0_1 = env.isMac;

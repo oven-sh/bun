@@ -22,7 +22,7 @@ const Request = WebCore.Request;
 const Router = @import("./api/router.zig");
 const FetchEvent = WebCore.FetchEvent;
 const IdentityContext = @import("../identity_context.zig").IdentityContext;
-
+const uws = @import("uws");
 const Body = WebCore.Body;
 const TaggedPointerTypes = @import("../tagged_pointer.zig");
 const TaggedPointerUnion = TaggedPointerTypes.TaggedPointerUnion;
@@ -368,21 +368,6 @@ pub const To = struct {
                     }
                 }
             };
-        }
-    };
-
-    pub const Ref = struct {
-        pub inline fn str(ref: anytype) js.JSStringRef {
-            return @as(js.JSStringRef, ref);
-        }
-    };
-
-    pub const Zig = struct {
-        pub inline fn str(ref: anytype, buf: anytype) string {
-            return buf[0..js.JSStringGetUTF8CString(Ref.str(ref), buf.ptr, buf.len)];
-        }
-        pub inline fn ptr(comptime StructType: type, obj: js.JSObjectRef) *StructType {
-            return GetJSPrivateData(StructType, obj).?;
         }
     };
 };
@@ -2399,6 +2384,26 @@ pub const ArrayBuffer = extern struct {
     value: JSC.JSValue = JSC.JSValue.zero,
     shared: bool = false,
 
+    pub const Strong = struct {
+        array_buffer: ArrayBuffer,
+        held: JSC.Strong = .{},
+
+        pub fn clear(this: *ArrayBuffer.Strong) void {
+            var ref: *JSC.napi.Ref = this.ref orelse return;
+            ref.set(JSC.JSValue.zero);
+        }
+
+        pub fn slice(this: *const ArrayBuffer.Strong) []u8 {
+            return this.array_buffer.slice();
+        }
+
+        pub fn deinit(this: *ArrayBuffer.Strong) void {
+            this.held.deinit();
+        }
+    };
+
+    pub const empty = ArrayBuffer{ .offset = 0, .len = 0, .byte_len = 0, .typed_array_type = .Uint8Array, .ptr = undefined };
+
     pub const name = "Bun__ArrayBuffer";
     pub const Stream = std.io.FixedBufferStream([]u8);
 
@@ -2415,8 +2420,8 @@ pub const ArrayBuffer = extern struct {
         };
     }
 
-    extern "C" fn Bun__createUint8ArrayForCopy(*JSC.JSGlobalObject, ptr: *const anyopaque, len: usize) JSValue;
-    extern "C" fn Bun__createArrayBufferForCopy(*JSC.JSGlobalObject, ptr: *const anyopaque, len: usize) JSValue;
+    extern "C" fn Bun__createUint8ArrayForCopy(*JSC.JSGlobalObject, ptr: ?*const anyopaque, len: usize) JSValue;
+    extern "C" fn Bun__createArrayBufferForCopy(*JSC.JSGlobalObject, ptr: ?*const anyopaque, len: usize) JSValue;
 
     pub fn fromTypedArray(ctx: JSC.C.JSContextRef, value: JSC.JSValue, _: JSC.C.ExceptionRef) ArrayBuffer {
         var out = std.mem.zeroes(ArrayBuffer);
@@ -2430,6 +2435,24 @@ pub const ArrayBuffer = extern struct {
     }
 
     pub fn toJSUnchecked(this: ArrayBuffer, ctx: JSC.C.JSContextRef, exception: JSC.C.ExceptionRef) JSC.JSValue {
+
+        // The reason for this is
+        // JSC C API returns a detached arraybuffer
+        // if you pass it a zero-length TypedArray
+        // we don't ever want to send the user a detached arraybuffer
+        // that's just silly.
+        if (this.byte_len == 0) {
+            if (this.typed_array_type == .ArrayBuffer) {
+                return create(ctx, "", .ArrayBuffer);
+            }
+
+            if (this.typed_array_type == .Uint8Array) {
+                return create(ctx, "", .Uint8Array);
+            }
+
+            // TODO: others
+        }
+
         if (this.typed_array_type == .ArrayBuffer) {
             return JSC.JSValue.fromRef(JSC.C.JSObjectMakeArrayBufferWithBytesNoCopy(
                 ctx,
@@ -2458,7 +2481,7 @@ pub const ArrayBuffer = extern struct {
         }
 
         // If it's not a mimalloc heap buffer, we're not going to call a deallocator
-        if (!bun.Global.Mimalloc.mi_is_in_heap_region(this.ptr)) {
+        if (this.len > 0 and !bun.Global.Mimalloc.mi_is_in_heap_region(this.ptr)) {
             if (this.typed_array_type == .ArrayBuffer) {
                 return JSC.JSValue.fromRef(JSC.C.JSObjectMakeArrayBufferWithBytesNoCopy(
                     ctx,
@@ -2519,13 +2542,21 @@ pub const ArrayBuffer = extern struct {
 
     pub const fromArrayBuffer = fromTypedArray;
 
-    pub inline fn slice(this: *const @This()) []u8 {
-        return this.ptr[this.offset .. this.offset + this.len];
-    }
-
+    /// The equivalent of
+    ///
+    /// ```js
+    ///    new ArrayBuffer(view.buffer, view.byteOffset, view.byteLength)
+    /// ```
     pub inline fn byteSlice(this: *const @This()) []u8 {
         return this.ptr[this.offset .. this.offset + this.byte_len];
     }
+
+    /// The equivalent of
+    ///
+    /// ```js
+    ///    new ArrayBuffer(view.buffer, view.byteOffset, view.byteLength)
+    /// ```
+    pub const slice = byteSlice;
 
     pub inline fn asU16(this: *const @This()) []u16 {
         return std.mem.bytesAsSlice(u16, @alignCast(@alignOf([*]u16), this.ptr[this.offset..this.byte_len]));
@@ -2580,8 +2611,13 @@ pub const MarkedArrayBuffer = struct {
         };
     }
 
+    pub const empty = MarkedArrayBuffer{
+        .allocator = null,
+        .buffer = ArrayBuffer.empty,
+    };
+
     pub inline fn slice(this: *const @This()) []u8 {
-        return this.buffer.slice();
+        return this.buffer.byteSlice();
     }
 
     pub fn destroy(this: *MarkedArrayBuffer) void {
@@ -2600,7 +2636,23 @@ pub const MarkedArrayBuffer = struct {
         return container;
     }
 
+    pub fn toNodeBuffer(this: MarkedArrayBuffer, ctx: js.JSContextRef) js.JSObjectRef {
+        return JSValue.createBufferWithCtx(ctx, this.buffer.byteSlice(), this.buffer.ptr, MarkedArrayBuffer_deallocator).asObjectRef();
+    }
+
     pub fn toJSObjectRef(this: MarkedArrayBuffer, ctx: js.JSContextRef, exception: js.ExceptionRef) js.JSObjectRef {
+        if (!this.buffer.value.isEmptyOrUndefinedOrNull()) {
+            return this.buffer.value.asObjectRef();
+        }
+        if (this.buffer.byte_len == 0) {
+            return js.JSObjectMakeTypedArray(
+                ctx,
+                this.buffer.typed_array_type.toC(),
+                0,
+                exception,
+            );
+        }
+
         return js.JSObjectMakeTypedArrayWithBytesNoCopy(
             ctx,
             this.buffer.typed_array_type.toC(),
@@ -2747,7 +2799,6 @@ pub fn castObj(obj: js.JSObjectRef, comptime Type: type) *Type {
 const JSNode = @import("../js_ast.zig").Macro.JSNode;
 const LazyPropertiesObject = @import("../js_ast.zig").Macro.LazyPropertiesObject;
 const ModuleNamespace = @import("../js_ast.zig").Macro.ModuleNamespace;
-const FetchTaskletContext = Fetch.FetchTasklet.FetchTaskletContext;
 const Expect = Test.Expect;
 const DescribeScope = Test.DescribeScope;
 const TestScope = Test.TestScope;
@@ -2759,7 +2810,6 @@ const BigIntStats = JSC.Node.BigIntStats;
 const Transpiler = @import("./api/transpiler.zig");
 const TextEncoder = WebCore.TextEncoder;
 const TextDecoder = WebCore.TextDecoder;
-const TimeoutTask = JSC.BunTimer.Timeout.TimeoutTask;
 const HTMLRewriter = JSC.Cloudflare.HTMLRewriter;
 const Element = JSC.Cloudflare.Element;
 const Comment = JSC.Cloudflare.Comment;
@@ -2801,7 +2851,6 @@ pub const JSPrivateDataPtr = TaggedPointerUnion(.{
     Expect,
     ExpectPrototype,
     FetchEvent,
-    FetchTaskletContext,
     HTMLRewriter,
     JSNode,
     LazyPropertiesObject,
@@ -2817,7 +2866,6 @@ pub const JSPrivateDataPtr = TaggedPointerUnion(.{
     SSLServer,
     Stats,
     TextChunk,
-    TimeoutTask,
     Transpiler,
     FFI,
 });
@@ -3022,7 +3070,9 @@ pub const DOMEffect = struct {
 fn DOMCallArgumentType(comptime Type: type) []const u8 {
     const ChildType = if (@typeInfo(Type) == .Pointer) std.meta.Child(Type) else Type;
     return switch (ChildType) {
-        i32 => "JSC::SpecInt32Only",
+        i8, u8, i16, u16, i32 => "JSC::SpecInt32Only",
+        u32, i64, u64 => "JSC::SpecInt52Any",
+        f64 => "JSC::SpecDoubleReal",
         bool => "JSC::SpecBoolean",
         JSC.JSString => "JSC::SpecString",
         JSC.JSUint8Array => "JSC::SpecUint8Array",
@@ -3034,6 +3084,9 @@ fn DOMCallArgumentTypeWrapper(comptime Type: type) []const u8 {
     const ChildType = if (@typeInfo(Type) == .Pointer) std.meta.Child(Type) else Type;
     return switch (ChildType) {
         i32 => "int32_t",
+        f64 => "double",
+        u64 => "uint64_t",
+        i64 => "int64_t",
         bool => "bool",
         JSC.JSString => "JSC::JSString*",
         JSC.JSUint8Array => "JSC::JSUint8Array*",
@@ -3049,7 +3102,8 @@ fn DOMCallResultType(comptime Type: type) []const u8 {
         JSC.JSString => "JSC::SpecString",
         JSC.JSUint8Array => "JSC::SpecUint8Array",
         JSC.JSCell => "JSC::SpecCell",
-        f64 => "JSC::SpecNonIntAsDouble",
+        u52, i52 => "JSC::SpecInt52Any",
+        f64 => "JSC::SpecDoubleReal",
         else => "JSC::SpecHeapTop",
     };
 }
@@ -3123,7 +3177,9 @@ pub fn DOMCall(
             }
             {
                 switch (Fields.len - 2) {
-                    0 => @compileError("Must be > 0 arguments"),
+                    0 => {
+                        try writer.writeAll("));\n");
+                    },
                     1 => {
                         try writer.writeAll(", ");
                         try writer.writeAll(DOMCallArgumentTypeWrapper(Fields[2].field_type));
@@ -3149,7 +3205,9 @@ pub fn DOMCall(
             }
             {
                 switch (Fields.len - 2) {
-                    0 => @compileError("Must be > 0 arguments"),
+                    0 => {
+                        try writer.writeAll(")) {\n");
+                    },
                     1 => {
                         try writer.writeAll(", ");
                         try writer.writeAll(DOMCallArgumentTypeWrapper(Fields[2].field_type));
@@ -3158,7 +3216,7 @@ pub fn DOMCall(
                     2 => {
                         try writer.writeAll(", ");
                         try writer.writeAll(DOMCallArgumentTypeWrapper(Fields[2].field_type));
-                        try writer.writeAll("arg1, ");
+                        try writer.writeAll(" arg1, ");
                         try writer.writeAll(DOMCallArgumentTypeWrapper(Fields[3].field_type));
                         try writer.writeAll(" arg2)) {\n");
                     },
@@ -3177,7 +3235,9 @@ pub fn DOMCall(
                 }
                 {
                     switch (Fields.len - 2) {
-                        0 => @compileError("Must be > 0 arguments"),
+                        0 => {
+                            try writer.writeAll(");\n}\n");
+                        },
                         1 => {
                             try writer.writeAll(", arg1);\n}\n");
                         },
@@ -3238,16 +3298,17 @@ pub fn DOMCall(
 
             {
                 try writer.writeAll(DOMCallResultType(ResultType));
-                try writer.writeAll(",\n  ");
             }
 
             switch (Fields.len - 2) {
-                0 => @compileError("Must be > 0 arguments"),
+                0 => {},
                 1 => {
+                    try writer.writeAll(",\n  ");
                     try writer.writeAll(DOMCallArgumentType(Fields[2].field_type));
                     try writer.writeAll("\n  ");
                 },
                 2 => {
+                    try writer.writeAll(",\n  ");
                     try writer.writeAll(DOMCallArgumentType(Fields[2].field_type));
                     try writer.writeAll(",\n  ");
                     try writer.writeAll(DOMCallArgumentType(Fields[3].field_type));
@@ -3461,25 +3522,26 @@ pub fn wrapWithHasContainer(
             }
 
             if (comptime maybe_async) {
-                var vm = ctx.ptr().bunVM();
-                vm.tick();
+                if (result.asPromise() != null or result.asInternalPromise() != null) {
+                    var vm = ctx.ptr().bunVM();
+                    vm.tick();
+                    var promise = JSC.JSInternalPromise.resolvedPromise(ctx.ptr(), result);
 
-                var promise = JSC.JSInternalPromise.resolvedPromise(ctx.ptr(), result);
-
-                switch (promise.status(ctx.ptr().vm())) {
-                    JSC.JSPromise.Status.Pending => {
-                        while (promise.status(ctx.ptr().vm()) == .Pending) {
-                            vm.tick();
-                        }
-                        result = promise.result(ctx.ptr().vm());
-                    },
-                    JSC.JSPromise.Status.Rejected => {
-                        result = promise.result(ctx.ptr().vm());
-                        exception.* = result.asObjectRef();
-                    },
-                    JSC.JSPromise.Status.Fulfilled => {
-                        result = promise.result(ctx.ptr().vm());
-                    },
+                    switch (promise.status(ctx.ptr().vm())) {
+                        JSC.JSPromise.Status.Pending => {
+                            while (promise.status(ctx.ptr().vm()) == .Pending) {
+                                vm.tick();
+                            }
+                            result = promise.result(ctx.ptr().vm());
+                        },
+                        JSC.JSPromise.Status.Rejected => {
+                            result = promise.result(ctx.ptr().vm());
+                            exception.* = result.asObjectRef();
+                        },
+                        JSC.JSPromise.Status.Fulfilled => {
+                            result = promise.result(ctx.ptr().vm());
+                        },
+                    }
                 }
             }
 
@@ -3829,3 +3891,149 @@ pub fn cachedBoundFunction(comptime name: [:0]const u8, comptime callback: anyty
         }
     }.getter;
 }
+
+/// Track whether an object should keep the event loop alive
+pub const Ref = struct {
+    has: bool = false,
+
+    pub fn init() Ref {
+        return .{};
+    }
+
+    pub fn unref(this: *Ref, vm: *JSC.VirtualMachine) void {
+        if (!this.has)
+            return;
+        this.has = false;
+        vm.active_tasks -= 1;
+    }
+
+    pub fn ref(this: *Ref, vm: *JSC.VirtualMachine) void {
+        if (this.has)
+            return;
+        this.has = true;
+        vm.active_tasks += 1;
+    }
+};
+
+/// Track if an object whose file descriptor is being watched should keep the event loop alive.
+/// This is not reference counted. It only tracks active or inactive.
+pub const PollRef = struct {
+    status: Status = .inactive,
+
+    const log = Output.scoped(.PollRef, false);
+
+    const Status = enum { active, inactive, done };
+
+    pub inline fn isActive(this: PollRef) bool {
+        return this.status == .active;
+    }
+
+    /// Make calling ref() on this poll into a no-op.
+    pub fn disable(this: *PollRef) void {
+        this.unref();
+        this.status = .done;
+    }
+
+    /// Only intended to be used from EventLoop.Poller
+    pub fn deactivate(this: *PollRef, loop: *uws.Loop) void {
+        if (this.status != .active)
+            return;
+
+        this.status = .inactive;
+        loop.num_polls -= 1;
+        loop.active -= 1;
+    }
+
+    /// Only intended to be used from EventLoop.Poller
+    pub fn activate(this: *PollRef, loop: *uws.Loop) void {
+        if (this.status != .inactive)
+            return;
+
+        this.status = .active;
+        loop.num_polls += 1;
+        loop.active += 1;
+    }
+
+    pub fn init() PollRef {
+        return .{};
+    }
+
+    /// Prevent a poll from keeping the process alive.
+    pub fn unref(this: *PollRef, vm: *JSC.VirtualMachine) void {
+        if (this.status != .active)
+            return;
+        this.status = .inactive;
+        log("unref", .{});
+        vm.uws_event_loop.?.num_polls -= 1;
+        vm.uws_event_loop.?.active -= 1;
+    }
+
+    /// Allow a poll to keep the process alive.
+    pub fn ref(this: *PollRef, vm: *JSC.VirtualMachine) void {
+        if (this.status != .inactive)
+            return;
+        log("ref", .{});
+        this.status = .active;
+        vm.uws_event_loop.?.num_polls += 1;
+        vm.uws_event_loop.?.active += 1;
+    }
+};
+
+pub const Strong = struct {
+    ref: ?*JSC.napi.Ref = null,
+
+    pub fn init() Strong {
+        return .{};
+    }
+
+    pub fn create(
+        value: JSC.JSValue,
+        globalThis: *JSC.JSGlobalObject,
+    ) Strong {
+        var str = Strong.init();
+        if (value != .zero)
+            str.set(globalThis, value);
+        return str;
+    }
+
+    pub fn get(this: *Strong) ?JSValue {
+        var ref = this.ref orelse return null;
+        const result = ref.get();
+        if (result == .zero) {
+            return null;
+        }
+
+        return result;
+    }
+
+    pub fn swap(this: *Strong) JSValue {
+        var ref = this.ref orelse return .zero;
+        const result = ref.get();
+        if (result == .zero) {
+            return .zero;
+        }
+
+        ref.set(.zero);
+        return result;
+    }
+
+    pub fn set(this: *Strong, globalThis: *JSC.JSGlobalObject, value: JSValue) void {
+        var ref: *JSC.napi.Ref = this.ref orelse {
+            if (value == .zero) return;
+            this.ref = JSC.napi.Ref.create(globalThis, value);
+            return;
+        };
+        ref.set(value);
+    }
+
+    pub fn clear(this: *Strong) void {
+        var ref: *JSC.napi.Ref = this.ref orelse return;
+        ref.set(JSC.JSValue.zero);
+    }
+
+    pub fn deinit(this: *Strong) void {
+        var ref: *JSC.napi.Ref = this.ref orelse return;
+        this.ref = null;
+        ref.destroy();
+    }
+};

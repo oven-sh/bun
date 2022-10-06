@@ -96,7 +96,7 @@ const linux = std.os.linux;
 
 pub const ServerConfig = struct {
     port: u16 = 0,
-    hostname: [*:0]const u8 = "0.0.0.0",
+    hostname: [*:0]const u8 = "localhost",
 
     // TODO: use webkit URL parser instead of bun's
     base_url: URL = URL{},
@@ -154,7 +154,7 @@ pub const ServerConfig = struct {
                 if (sliced.len > 0) {
                     result.key_file_name = bun.default_allocator.dupeZ(u8, sliced.slice()) catch unreachable;
                     if (std.os.system.access(result.key_file_name, std.os.F_OK) != 0) {
-                        JSC.throwInvalidArguments("Unable to access keyFile path", .{}, global.ref(), exception);
+                        JSC.throwInvalidArguments("Unable to access keyFile path", .{}, global, exception);
                         result.deinit();
 
                         return null;
@@ -168,7 +168,7 @@ pub const ServerConfig = struct {
                 if (sliced.len > 0) {
                     result.cert_file_name = bun.default_allocator.dupeZ(u8, sliced.slice()) catch unreachable;
                     if (std.os.system.access(result.cert_file_name, std.os.F_OK) != 0) {
-                        JSC.throwInvalidArguments("Unable to access certFile path", .{}, global.ref(), exception);
+                        JSC.throwInvalidArguments("Unable to access certFile path", .{}, global, exception);
                         result.deinit();
                         return null;
                     }
@@ -192,7 +192,7 @@ pub const ServerConfig = struct {
                     if (sliced.len > 0) {
                         result.ca_file_name = bun.default_allocator.dupeZ(u8, sliced.slice()) catch unreachable;
                         if (std.os.system.access(result.ca_file_name, std.os.F_OK) != 0) {
-                            JSC.throwInvalidArguments("Invalid caFile path", .{}, global.ref(), exception);
+                            JSC.throwInvalidArguments("Invalid caFile path", .{}, global, exception);
                             result.deinit();
                             return null;
                         }
@@ -204,7 +204,7 @@ pub const ServerConfig = struct {
                     if (sliced.len > 0) {
                         result.dh_params_file_name = bun.default_allocator.dupeZ(u8, sliced.slice()) catch unreachable;
                         if (std.os.system.access(result.dh_params_file_name, std.os.F_OK) != 0) {
-                            JSC.throwInvalidArguments("Invalid dhParamsFile path", .{}, global.ref(), exception);
+                            JSC.throwInvalidArguments("Invalid dhParamsFile path", .{}, global, exception);
                             result.deinit();
                             return null;
                         }
@@ -276,7 +276,7 @@ pub const ServerConfig = struct {
 
         if (arguments.next()) |arg| {
             if (arg.isUndefinedOrNull() or !arg.isObject()) {
-                JSC.throwInvalidArguments("Bun.serve expects an object", .{}, global.ref(), exception);
+                JSC.throwInvalidArguments("Bun.serve expects an object", .{}, global, exception);
                 return args;
             }
 
@@ -322,25 +322,25 @@ pub const ServerConfig = struct {
 
             if (arg.getTruthy(global, "error")) |onError| {
                 if (!onError.isCallable(global.vm())) {
-                    JSC.throwInvalidArguments("Expected error to be a function", .{}, global.ref(), exception);
+                    JSC.throwInvalidArguments("Expected error to be a function", .{}, global, exception);
                     if (args.ssl_config) |*conf| {
                         conf.deinit();
                     }
                     return args;
                 }
-                JSC.C.JSValueProtect(global.ref(), onError.asObjectRef());
+                JSC.C.JSValueProtect(global, onError.asObjectRef());
                 args.onError = onError;
             }
 
             if (arg.getTruthy(global, "fetch")) |onRequest| {
                 if (!onRequest.isCallable(global.vm())) {
-                    JSC.throwInvalidArguments("Expected fetch() to be a function", .{}, global.ref(), exception);
+                    JSC.throwInvalidArguments("Expected fetch() to be a function", .{}, global, exception);
                     return args;
                 }
-                JSC.C.JSValueProtect(global.ref(), onRequest.asObjectRef());
+                JSC.C.JSValueProtect(global, onRequest.asObjectRef());
                 args.onRequest = onRequest;
             } else {
-                JSC.throwInvalidArguments("Expected fetch() to be a function", .{}, global.ref(), exception);
+                JSC.throwInvalidArguments("Expected fetch() to be a function", .{}, global, exception);
                 if (args.ssl_config) |*conf| {
                     conf.deinit();
                 }
@@ -349,20 +349,20 @@ pub const ServerConfig = struct {
         }
 
         if (args.port == 0) {
-            JSC.throwInvalidArguments("Invalid port: must be > 0", .{}, global.ref(), exception);
+            JSC.throwInvalidArguments("Invalid port: must be > 0", .{}, global, exception);
         }
 
         if (args.base_uri.len > 0) {
             args.base_url = URL.parse(args.base_uri);
             if (args.base_url.hostname.len == 0) {
-                JSC.throwInvalidArguments("baseURI must have a hostname", .{}, global.ref(), exception);
+                JSC.throwInvalidArguments("baseURI must have a hostname", .{}, global, exception);
                 bun.default_allocator.free(bun.constStrToU8(args.base_uri));
                 args.base_uri = "";
                 return args;
             }
 
             if (!strings.isAllASCII(args.base_uri)) {
-                JSC.throwInvalidArguments("Unicode baseURI must already be encoded for now.\nnew URL(baseuRI).toString() should do the trick.", .{}, global.ref(), exception);
+                JSC.throwInvalidArguments("Unicode baseURI must already be encoded for now.\nnew URL(baseuRI).toString() should do the trick.", .{}, global, exception);
                 bun.default_allocator.free(bun.constStrToU8(args.base_uri));
                 args.base_uri = "";
                 return args;
@@ -389,7 +389,7 @@ pub const ServerConfig = struct {
             }
         } else {
             const hostname: string =
-                if (has_hostname and std.mem.span(args.hostname).len > 0) std.mem.span(args.hostname) else "localhost";
+                if (has_hostname and std.mem.span(args.hostname).len > 0) std.mem.span(args.hostname) else "0.0.0.0";
             const protocol: string = if (args.ssl_config != null) "https" else "http";
 
             args.base_uri = (if ((args.port == 80 and args.ssl_config == null) or (args.port == 443 and args.ssl_config != null))
@@ -401,7 +401,7 @@ pub const ServerConfig = struct {
                 std.fmt.allocPrint(bun.default_allocator, "{s}://{s}:{d}/", .{ protocol, hostname, args.port })) catch unreachable;
 
             if (!strings.isAllASCII(hostname)) {
-                JSC.throwInvalidArguments("Unicode hostnames must already be encoded for now.\nnew URL(input).hostname should do the trick.", .{}, global.ref(), exception);
+                JSC.throwInvalidArguments("Unicode hostnames must already be encoded for now.\nnew URL(input).hostname should do the trick.", .{}, global, exception);
                 bun.default_allocator.free(bun.constStrToU8(args.base_uri));
                 args.base_uri = "";
                 return args;
@@ -413,14 +413,14 @@ pub const ServerConfig = struct {
         // I don't think there's a case where this can happen
         // but let's check anyway, just in case
         if (args.base_url.hostname.len == 0) {
-            JSC.throwInvalidArguments("baseURI must have a hostname", .{}, global.ref(), exception);
+            JSC.throwInvalidArguments("baseURI must have a hostname", .{}, global, exception);
             bun.default_allocator.free(bun.constStrToU8(args.base_uri));
             args.base_uri = "";
             return args;
         }
 
         if (args.base_url.username.len > 0 or args.base_url.password.len > 0) {
-            JSC.throwInvalidArguments("baseURI can't have a username or password", .{}, global.ref(), exception);
+            JSC.throwInvalidArguments("baseURI can't have a username or password", .{}, global, exception);
             bun.default_allocator.free(bun.constStrToU8(args.base_uri));
             args.base_uri = "";
             return args;
@@ -516,7 +516,6 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
         /// this prevents an extra pthread_getspecific() call which shows up in profiling
         allocator: std.mem.Allocator,
         req: *uws.Request,
-        url: string,
         method: HTTP.Method,
         aborted: bool = false,
         finalized: bun.DebugOnly(bool) = bun.DebugOnlyDefault(false),
@@ -529,7 +528,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
         response_jsvalue: JSC.JSValue = JSC.JSValue.zero,
         response_protected: bool = false,
         response_ptr: ?*JSC.WebCore.Response = null,
-        blob: JSC.WebCore.Blob = JSC.WebCore.Blob{},
+        blob: JSC.WebCore.AnyBlob = JSC.WebCore.AnyBlob{ .InlineBlob = .{} },
         promise: ?*JSC.JSValue = null,
         has_abort_handler: bool = false,
         has_sendfile_ctx: bool = false,
@@ -538,7 +537,12 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
         sendfile: SendfileContext = undefined,
         request_js_object: JSC.C.JSObjectRef = null,
         request_body_buf: std.ArrayListUnmanaged(u8) = .{},
+        request_body_content_len: usize = 0,
         sink: ?*ResponseStream.JSSink = null,
+        byte_stream: ?*JSC.WebCore.ByteStream = null,
+
+        /// Used in errors
+        pathname: []const u8 = "",
 
         has_written_status: bool = false,
 
@@ -546,17 +550,10 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
         /// When the response body is a temporary value
         response_buf_owned: std.ArrayListUnmanaged(u8) = .{},
 
+        keepalive: bool = true,
+
         // TODO: support builtin compression
         const can_sendfile = !ssl_enabled;
-
-        pub const thenables = shim.thenables(.{
-            PromiseHandler,
-        });
-
-        pub const lazy_static_functions = thenables;
-        pub const Export = lazy_static_functions;
-
-        const PromiseHandler = JSC.Thenable(RequestContext, onResolve, onReject);
 
         pub fn setAbortHandler(this: *RequestContext) void {
             if (this.has_abort_handler) return;
@@ -564,23 +561,23 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             this.resp.onAborted(*RequestContext, RequestContext.onAbort, this);
         }
 
-        pub fn onResolve(
-            ctx: *RequestContext,
-            _: *JSC.JSGlobalObject,
-            arguments: []const JSC.JSValue,
-        ) void {
+        pub fn onResolve(_: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSValue {
+            const arguments = callframe.arguments(2);
+            var ctx = arguments.ptr[1].asPromisePtr(@This());
+            const result = arguments.ptr[0];
             ctx.pending_promises_for_abort -|= 1;
             if (ctx.aborted) {
                 ctx.finalizeForAbort();
-                return;
+                return JSValue.jsUndefined();
             }
 
-            if (arguments.len == 0) {
+            if (result.isEmptyOrUndefinedOrNull()) {
                 ctx.renderMissing();
-                return;
+                return JSValue.jsUndefined();
             }
 
-            handleResolve(ctx, arguments[0]);
+            handleResolve(ctx, result);
+            return JSValue.jsUndefined();
         }
 
         fn handleResolve(ctx: *RequestContext, value: JSC.JSValue) void {
@@ -596,7 +593,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 return;
             };
             ctx.response_jsvalue = value;
-            JSC.C.JSValueProtect(ctx.server.globalThis.ref(), value.asObjectRef());
+            JSC.C.JSValueProtect(ctx.server.globalThis, value.asObjectRef());
 
             ctx.render(response);
         }
@@ -606,18 +603,19 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             if (this.pending_promises_for_abort == 0) this.finalize();
         }
 
-        pub fn onReject(
-            ctx: *RequestContext,
-            _: *JSC.JSGlobalObject,
-            arguments: []const JSC.JSValue,
-        ) void {
+        pub fn onReject(_: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSValue {
+            const arguments = callframe.arguments(2);
+            var ctx = arguments.ptr[1].asPromisePtr(@This());
+            const err = arguments.ptr[0];
+
             ctx.pending_promises_for_abort -|= 1;
 
             if (ctx.aborted) {
                 ctx.finalizeForAbort();
-                return;
+                return JSValue.jsUndefined();
             }
-            handleReject(ctx, if (arguments.len > 0) arguments[0] else JSC.JSValue.jsUndefined());
+            handleReject(ctx, if (!err.isEmptyOrUndefinedOrNull()) err else JSC.JSValue.jsUndefined());
+            return JSValue.jsUndefined();
         }
 
         fn handleReject(ctx: *RequestContext, value: JSC.JSValue) void {
@@ -642,13 +640,13 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 if (!ctx.has_written_status)
                     ctx.resp.writeStatus("204 No Content");
                 ctx.has_written_status = true;
-                ctx.resp.endWithoutBody();
+                ctx.resp.endWithoutBody(ctx.shouldCloseConnection());
                 ctx.finalize();
             } else {
                 if (!ctx.has_written_status)
                     ctx.resp.writeStatus("200 OK");
                 ctx.has_written_status = true;
-                ctx.resp.end("Welcome to Bun! To get started, return a Response object.", false);
+                ctx.resp.end("Welcome to Bun! To get started, return a Response object.", ctx.shouldCloseConnection());
                 ctx.finalize();
             }
         }
@@ -697,27 +695,75 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 @TypeOf(bb_writer),
                 bb_writer,
             ) catch unreachable;
-            if (this.resp.tryEnd(bb.items, bb.items.len)) {
+            if (this.resp.tryEnd(bb.items, bb.items.len, this.shouldCloseConnection())) {
                 bb.clearAndFree();
                 this.finalizeWithoutDeinit();
                 return;
             }
 
             this.response_buf_owned = std.ArrayListUnmanaged(u8){ .items = bb.items, .capacity = bb.capacity };
-            this.renderResponseBuffer();
+            this.resp.onWritable(*RequestContext, onWritableCompleteResponseBuffer, this);
         }
 
         pub fn renderResponseBuffer(this: *RequestContext) void {
             this.resp.onWritable(*RequestContext, onWritableResponseBuffer, this);
         }
 
-        pub fn onWritableResponseBuffer(this: *RequestContext, write_offset: c_ulong, resp: *App.Response) callconv(.C) bool {
+        /// Render a complete response buffer
+        pub fn renderResponseBufferAndMetadata(this: *RequestContext) void {
+            this.renderMetadata();
+
+            if (!this.resp.tryEnd(
+                this.response_buf_owned.items,
+                this.response_buf_owned.items.len,
+                this.shouldCloseConnection(),
+            )) {
+                this.resp.onWritable(*RequestContext, onWritableCompleteResponseBuffer, this);
+                this.setAbortHandler();
+                return;
+            }
+
+            this.finalize();
+        }
+
+        /// Drain a partial response buffer
+        pub fn drainResponseBufferAndMetadata(this: *RequestContext) void {
+            this.renderMetadata();
+            this.setAbortHandler();
+
+            _ = this.resp.write(
+                this.response_buf_owned.items,
+            );
+
+            this.response_buf_owned.items.len = 0;
+        }
+
+        pub fn renderResponseBufferAndMetadataCorked(this: *RequestContext) void {
+            this.resp.runCorkedWithType(*RequestContext, renderResponseBufferAndMetadata, this);
+        }
+
+        pub fn drainResponseBufferAndMetadataCorked(this: *RequestContext) void {
+            this.resp.runCorkedWithType(*RequestContext, drainResponseBufferAndMetadata, this);
+        }
+
+        pub fn onWritableResponseBuffer(this: *RequestContext, _: c_ulong, resp: *App.Response) callconv(.C) bool {
             std.debug.assert(this.resp == resp);
             if (this.aborted) {
                 this.finalizeForAbort();
                 return false;
             }
-            return this.sendWritableBytes(this.response_buf_owned.items, write_offset, resp);
+            resp.end("", this.shouldCloseConnection());
+            this.finalize();
+            return false;
+        }
+
+        pub fn onWritableCompleteResponseBuffer(this: *RequestContext, write_offset: c_ulong, resp: *App.Response) callconv(.C) bool {
+            std.debug.assert(this.resp == resp);
+            if (this.aborted) {
+                this.finalizeForAbort();
+                return false;
+            }
+            return this.sendWritableBytesForCompleteResponseBuffer(this.response_buf_owned.items, write_offset, resp);
         }
 
         pub fn create(this: *RequestContext, server: *ThisServer, req: *uws.Request, resp: *App.Response) void {
@@ -725,9 +771,6 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 .allocator = server.allocator,
                 .resp = resp,
                 .req = req,
-                // this memory is owned by the Request object
-                .url = strings.append(this.allocator, server.base_url_string_for_joining, req.url()) catch
-                    @panic("Out of memory while joining the URL path?"),
                 .method = HTTP.Method.which(req.method()) orelse .GET,
                 .server = server,
             };
@@ -772,7 +815,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
 
                     this.request_js_object = null;
                     defer request_js.ensureStillAlive();
-                    defer JSC.C.JSValueUnprotect(this.server.globalThis.ref(), request_js.asObjectRef());
+                    defer JSC.C.JSValueUnprotect(this.server.globalThis, request_js.asObjectRef());
                     // User called .blob(), .json(), text(), or .arrayBuffer() on the Request object
                     // but we received nothing or the connection was aborted
                     if (request_js.as(Request)) |req| {
@@ -780,8 +823,21 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                         if (req.body == .Locked and (req.body.Locked.action != .none or req.body.Locked.promise != null)) {
                             this.pending_promises_for_abort += 1;
                             req.body.toErrorInstance(JSC.toTypeError(.ABORT_ERR, "Request aborted", .{}, this.server.globalThis), this.server.globalThis);
+                        } else if (req.body == .Locked and (req.body.Locked.readable != null)) {
+                            req.body.Locked.readable.?.abort(this.server.globalThis);
+                            req.body.toErrorInstance(JSC.toTypeError(.ABORT_ERR, "Request aborted", .{}, this.server.globalThis), this.server.globalThis);
+                            req.body.Locked.readable = null;
                         }
                         req.uws_request = null;
+                    }
+                }
+
+                if (this.response_ptr) |response| {
+                    if (response.body.value == .Locked) {
+                        if (response.body.value.Locked.readable) |*readable| {
+                            response.body.value.Locked.readable = null;
+                            readable.abort(this.server.globalThis);
+                        }
                     }
                 }
 
@@ -827,7 +883,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
 
                 this.request_js_object = null;
                 defer request_js.ensureStillAlive();
-                defer JSC.C.JSValueUnprotect(this.server.globalThis.ref(), request_js.asObjectRef());
+                defer JSC.C.JSValueUnprotect(this.server.globalThis, request_js.asObjectRef());
                 // User called .blob(), .json(), text(), or .arrayBuffer() on the Request object
                 // but we received nothing or the connection was aborted
                 if (request_js.as(Request)) |req| {
@@ -847,7 +903,17 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 } else if (promise.asPromise()) |prom| {
                     prom.rejectAsHandled(this.server.globalThis, (JSC.toTypeError(.ABORT_ERR, "Request aborted", .{}, this.server.globalThis)));
                 }
-                JSC.C.JSValueUnprotect(this.server.globalThis.ref(), promise.asObjectRef());
+                JSC.C.JSValueUnprotect(this.server.globalThis, promise.asObjectRef());
+            }
+
+            if (this.byte_stream) |stream| {
+                this.byte_stream = null;
+                stream.unpipe();
+            }
+
+            if (this.pathname.len > 0) {
+                this.allocator.free(bun.constStrToU8(this.pathname));
+                this.pathname = "";
             }
         }
         pub fn finalize(this: *RequestContext) void {
@@ -894,7 +960,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
 
         fn cleanupAndFinalizeAfterSendfile(this: *RequestContext) void {
             this.resp.setWriteOffset(this.sendfile.offset);
-            this.resp.endWithoutBody();
+            this.resp.endWithoutBody(this.shouldCloseConnection());
             // use node syscall so that we don't segfault on BADF
             if (this.sendfile.auto_close)
                 _ = JSC.Node.Syscall.close(this.sendfile.fd);
@@ -981,21 +1047,36 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 return false;
             }
 
-            var bytes = this.blob.sharedView();
-            return this.sendWritableBytes(bytes, write_offset, resp);
+            var bytes = this.blob.slice();
+            _ = this.sendWritableBytesForBlob(bytes, write_offset, resp);
+            return true;
         }
 
-        pub fn sendWritableBytes(this: *RequestContext, bytes_: []const u8, write_offset: c_ulong, resp: *App.Response) bool {
+        pub fn sendWritableBytesForBlob(this: *RequestContext, bytes_: []const u8, write_offset: c_ulong, resp: *App.Response) bool {
             std.debug.assert(this.resp == resp);
 
             var bytes = bytes_[@minimum(bytes_.len, @truncate(usize, write_offset))..];
-            if (resp.tryEnd(bytes, bytes_.len)) {
+            if (resp.tryEnd(bytes, bytes_.len, this.shouldCloseConnection())) {
                 this.finalize();
                 return true;
             } else {
                 this.resp.onWritable(*RequestContext, onWritableBytes, this);
                 return true;
             }
+        }
+
+        pub fn sendWritableBytesForCompleteResponseBuffer(this: *RequestContext, bytes_: []const u8, write_offset: c_ulong, resp: *App.Response) bool {
+            std.debug.assert(this.resp == resp);
+
+            var bytes = bytes_[@minimum(bytes_.len, @truncate(usize, write_offset))..];
+            if (resp.tryEnd(bytes, bytes_.len, this.shouldCloseConnection())) {
+                this.response_buf_owned.items.len = 0;
+                this.finalize();
+            } else {
+                this.resp.onWritable(*RequestContext, onWritableCompleteResponseBuffer, this);
+            }
+
+            return true;
         }
 
         pub fn onWritableSendfile(this: *RequestContext, _: c_ulong, _: *App.Response) callconv(.C) bool {
@@ -1005,8 +1086,8 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
         // We tried open() in another thread for this
         // it was not faster due to the mountain of syscalls
         pub fn renderSendFile(this: *RequestContext, blob: JSC.WebCore.Blob) void {
-            this.blob = blob;
-            const file = &this.blob.store.?.data.file;
+            this.blob = .{ .Blob = blob };
+            const file = &this.blob.store().?.data.file;
             var file_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
             const auto_close = file.pathlike != .fd;
             const fd = if (!auto_close)
@@ -1072,19 +1153,19 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 }
             }
 
-            this.blob.size = @intCast(Blob.SizeType, stat.size);
+            this.blob.Blob.size = @intCast(Blob.SizeType, stat.size);
             this.needs_content_length = true;
 
             this.sendfile = .{
                 .fd = fd,
-                .remain = this.blob.size,
+                .remain = this.blob.Blob.size,
                 .auto_close = auto_close,
                 .socket_fd = if (!this.aborted) this.resp.getNativeHandle() else -999,
             };
 
             this.resp.runCorkedWithType(*RequestContext, renderMetadataAndNewline, this);
 
-            if (this.blob.size == 0) {
+            if (this.blob.Blob.size == 0) {
                 this.cleanupAndFinalizeAfterSendfile();
                 return;
             }
@@ -1112,7 +1193,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             }
 
             this.setAbortHandler();
-            this.blob.doReadFileInternal(*RequestContext, this, onReadFile, this.server.globalThis);
+            this.blob.Blob.doReadFileInternal(*RequestContext, this, onReadFile, this.server.globalThis);
         }
 
         pub fn onReadFile(this: *RequestContext, result: Blob.Store.ReadFile.ResultType) void {
@@ -1128,12 +1209,12 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
 
             const is_temporary = result.result.is_temporary;
             if (!is_temporary) {
-                this.blob.resolveSize();
+                this.blob.Blob.resolveSize();
                 this.doRenderBlob();
             } else {
-                this.blob.size = @truncate(Blob.SizeType, result.result.buf.len);
+                this.blob.Blob.size = @truncate(Blob.SizeType, result.result.buf.len);
                 this.response_buf_owned = .{ .items = result.result.buf, .capacity = result.result.buf.len };
-                this.renderResponseBuffer();
+                this.resp.onWritable(*RequestContext, onWritableCompleteResponseBuffer, this);
             }
         }
 
@@ -1150,7 +1231,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             if (this.blob.needsToReadFile()) {
                 this.req.setYield(false);
                 if (!this.has_sendfile_ctx)
-                    this.doSendfile(this.blob);
+                    this.doSendfile(this.blob.Blob);
                 return;
             }
 
@@ -1234,7 +1315,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                     this.renderMissing();
                     return;
                 } else if (wrote_anything and !responded and !this.aborted) {
-                    this.resp.endStream(false);
+                    this.resp.endStream(this.shouldCloseConnection());
                 }
 
                 this.finalize();
@@ -1247,101 +1328,6 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 assignment_result.ensureStillAlive();
                 // it returns a Promise when it goes through ReadableStreamDefaultReader
                 if (assignment_result.asPromise()) |promise| {
-                    const AwaitPromise = struct {
-                        pub fn onResolve(req: *RequestContext, _: *JSGlobalObject, _: []const JSC.JSValue) void {
-                            streamLog("onResolve", .{});
-                            var wrote_anything = false;
-
-                            if (req.sink) |wrapper| {
-                                wrapper.sink.pending_flush = null;
-                                wrapper.sink.done = true;
-                                req.aborted = req.aborted or wrapper.sink.aborted;
-                                wrote_anything = wrapper.sink.wrote > 0;
-                                wrapper.sink.finalize();
-                                wrapper.detach();
-                                req.sink = null;
-                                wrapper.sink.destroy();
-                            }
-
-                            if (req.response_ptr) |resp| {
-                                if (resp.body.value == .Locked) {
-                                    resp.body.value.Locked.readable.?.done();
-                                    resp.body.value = .{ .Used = {} };
-                                }
-                            }
-
-                            if (req.aborted) {
-                                req.finalizeForAbort();
-                                return;
-                            }
-
-                            const responded = req.resp.hasResponded();
-
-                            if (!responded and !wrote_anything) {
-                                req.resp.clearAborted();
-                                req.renderMissing();
-                                return;
-                            } else if (!responded and wrote_anything and !req.aborted) {
-                                req.resp.clearAborted();
-                                req.resp.endStream(false);
-                            }
-
-                            req.finalize();
-                        }
-                        pub fn onReject(req: *RequestContext, globalThis: *JSGlobalObject, args: []const JSC.JSValue) void {
-                            var wrote_anything = req.has_written_status;
-
-                            if (req.sink) |wrapper| {
-                                wrapper.sink.pending_flush = null;
-                                wrapper.sink.done = true;
-                                wrote_anything = wrote_anything or wrapper.sink.wrote > 0;
-                                req.aborted = req.aborted or wrapper.sink.aborted;
-                                wrapper.sink.finalize();
-                                wrapper.detach();
-                                req.sink = null;
-                                wrapper.sink.destroy();
-                            }
-
-                            if (req.response_ptr) |resp| {
-                                if (resp.body.value == .Locked) {
-                                    resp.body.value.Locked.readable.?.done();
-                                    resp.body.value = .{ .Used = {} };
-                                }
-                            }
-
-                            streamLog("onReject({s})", .{wrote_anything});
-
-                            if (req.aborted) {
-                                req.finalizeForAbort();
-                                return;
-                            }
-
-                            if (args.len > 0 and !wrote_anything) {
-                                req.response_jsvalue.unprotect();
-                                req.response_jsvalue = JSValue.zero;
-                                req.handleReject(args[0]);
-                                return;
-                            } else if (wrote_anything) {
-                                req.resp.endStream(true);
-                                if (comptime debug_mode) {
-                                    if (args.len > 0) {
-                                        var exception_list: std.ArrayList(Api.JsException) = std.ArrayList(Api.JsException).init(req.allocator);
-                                        defer exception_list.deinit();
-                                        req.server.vm.runErrorHandler(args[0], &exception_list);
-                                    }
-                                }
-                                req.finalize();
-                                return;
-                            }
-
-                            const fallback = JSC.SystemError{
-                                .code = ZigString.init(@as(string, @tagName(JSC.Node.ErrorCode.ERR_UNHANDLED_ERROR))),
-                                .message = ZigString.init("Unhandled error in ReadableStream"),
-                            };
-                            req.handleReject(fallback.toErrorInstance(globalThis));
-                        }
-                    };
-
                     streamLog("returned a promise", .{});
                     switch (promise.status(this.server.globalThis.vm())) {
                         .Pending => {
@@ -1355,19 +1341,18 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                             };
                             assignment_result.then(
                                 this.server.globalThis,
-                                RequestContext,
                                 this,
-                                AwaitPromise.onResolve,
-                                AwaitPromise.onReject,
+                                onResolveStream,
+                                onRejectStream,
                             );
                             // the response_stream should be GC'd
 
                         },
                         .Fulfilled => {
-                            AwaitPromise.onResolve(this, this.server.globalThis, &.{promise.result(this.server.globalThis.vm())});
+                            this.handleResolveStream();
                         },
                         .Rejected => {
-                            AwaitPromise.onReject(this, this.server.globalThis, &.{promise.result(this.server.globalThis.vm())});
+                            this.handleRejectStream(this.server.globalThis, promise.result(this.server.globalThis.vm()));
                         },
                     }
                     return;
@@ -1401,7 +1386,116 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
 
         const streamLog = Output.scoped(.ReadableStream, false);
 
+        pub fn handleResolveStream(req: *RequestContext) void {
+            streamLog("onResolve", .{});
+            var wrote_anything = false;
+            if (req.sink) |wrapper| {
+                wrapper.sink.pending_flush = null;
+                wrapper.sink.done = true;
+                req.aborted = req.aborted or wrapper.sink.aborted;
+                wrote_anything = wrapper.sink.wrote > 0;
+                wrapper.sink.finalize();
+                wrapper.detach();
+                req.sink = null;
+                wrapper.sink.destroy();
+            }
+
+            if (req.response_ptr) |resp| {
+                if (resp.body.value == .Locked) {
+                    resp.body.value.Locked.readable.?.done();
+                    resp.body.value = .{ .Used = {} };
+                }
+            }
+
+            if (req.aborted) {
+                req.finalizeForAbort();
+                return;
+            }
+
+            const responded = req.resp.hasResponded();
+
+            if (!responded and !wrote_anything) {
+                req.resp.clearAborted();
+                req.renderMissing();
+                return;
+            } else if (!responded and wrote_anything and !req.aborted) {
+                req.resp.clearAborted();
+                req.resp.endStream(req.shouldCloseConnection());
+            }
+
+            req.finalize();
+        }
+
+        pub fn onResolveStream(_: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSValue {
+            var args = callframe.arguments(2);
+            var req: *@This() = args.ptr[args.len - 1].asPromisePtr(@This());
+            req.handleResolveStream();
+            return JSValue.jsUndefined();
+        }
+        pub fn onRejectStream(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSValue {
+            const args = callframe.arguments(2);
+            var req = args.ptr[args.len - 1].asPromisePtr(@This());
+            var err = args.ptr[0];
+            req.handleRejectStream(globalThis, err);
+            return JSValue.jsUndefined();
+        }
+
+        pub fn handleRejectStream(req: *@This(), globalThis: *JSC.JSGlobalObject, err: JSValue) void {
+            var wrote_anything = req.has_written_status;
+
+            if (req.sink) |wrapper| {
+                wrapper.sink.pending_flush = null;
+                wrapper.sink.done = true;
+                wrote_anything = wrote_anything or wrapper.sink.wrote > 0;
+                req.aborted = req.aborted or wrapper.sink.aborted;
+                wrapper.sink.finalize();
+                wrapper.detach();
+                req.sink = null;
+                wrapper.sink.destroy();
+            }
+
+            if (req.response_ptr) |resp| {
+                if (resp.body.value == .Locked) {
+                    resp.body.value.Locked.readable.?.done();
+                    resp.body.value = .{ .Used = {} };
+                }
+            }
+
+            streamLog("onReject({s})", .{wrote_anything});
+
+            if (req.aborted) {
+                req.finalizeForAbort();
+                return;
+            }
+
+            if (!err.isEmptyOrUndefinedOrNull() and !wrote_anything) {
+                req.response_jsvalue.unprotect();
+                req.response_jsvalue = JSValue.zero;
+                req.handleReject(err);
+                return;
+            } else if (wrote_anything) {
+                req.resp.endStream(true);
+                if (comptime debug_mode) {
+                    if (!err.isEmptyOrUndefinedOrNull()) {
+                        var exception_list: std.ArrayList(Api.JsException) = std.ArrayList(Api.JsException).init(req.allocator);
+                        defer exception_list.deinit();
+                        req.server.vm.runErrorHandler(err, &exception_list);
+                    }
+                }
+                req.finalize();
+                return;
+            }
+
+            const fallback = JSC.SystemError{
+                .code = ZigString.init(@as(string, @tagName(JSC.Node.ErrorCode.ERR_UNHANDLED_ERROR))),
+                .message = ZigString.init("Unhandled error in ReadableStream"),
+            };
+            req.handleReject(fallback.toErrorInstance(globalThis));
+        }
+
         pub fn doRenderWithBody(this: *RequestContext, value: *JSC.WebCore.Body.Value) void {
+            value.toBlobIfPossible();
+
             switch (value.*) {
                 .Error => {
                     const err = value.Error;
@@ -1413,8 +1507,8 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                     this.runErrorHandler(err);
                     return;
                 },
-                .Blob => {
-                    this.blob = value.use();
+                .InlineBlob, .InternalBlob, .Blob => {
+                    this.blob = value.useAsAnyBlob();
                     this.renderWithBlobFromBodyValue();
                     return;
                 },
@@ -1444,45 +1538,53 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                         switch (stream.ptr) {
                             .Invalid => {},
 
-                            // fast path for Blob
-                            .Blob => |val| {
-                                streamLog("was Blob", .{});
-                                this.blob = JSC.WebCore.Blob.initWithStore(val.store, this.server.globalThis);
-                                this.blob.offset = val.offset;
-                                this.blob.size = val.remain;
-
-                                val.store.ref();
-                                stream.detach(this.server.globalThis);
-                                val.deinit();
-                                this.renderWithBlobFromBodyValue();
-                                return;
-                            },
-
-                            // fast path for File
-                            .File => |val| {
-                                streamLog("was File Blob", .{});
-                                this.blob = JSC.WebCore.Blob.initWithStore(val.store, this.server.globalThis);
-                                val.store.ref();
-
-                                // it should be lazy, file shouldn't have opened yet.
-                                std.debug.assert(!val.started);
-
-                                stream.detach(this.server.globalThis);
-                                val.deinit();
-                                this.renderWithBlobFromBodyValue();
-                                return;
-                            },
+                            // toBlobIfPossible should've caught this
+                            .Blob, .File => unreachable,
 
                             .JavaScript, .Direct => {
                                 var pair = StreamPair{ .stream = stream, .this = this };
                                 this.resp.runCorkedWithType(*StreamPair, doRenderStream, &pair);
                                 return;
                             },
+
+                            .Bytes => |byte_stream| {
+                                std.debug.assert(byte_stream.pipe.ctx == null);
+                                std.debug.assert(this.byte_stream == null);
+
+                                stream.detach(this.server.globalThis);
+
+                                // If we've received the complete body by the time this function is called
+                                // we can avoid streaming it and just send it all at once.
+                                if (byte_stream.has_received_last_chunk) {
+                                    this.blob.from(byte_stream.buffer);
+                                    byte_stream.parent().deinit();
+                                    this.doRenderBlob();
+                                    return;
+                                }
+
+                                byte_stream.pipe = JSC.WebCore.Pipe.New(@This(), onPipe).init(this);
+                                this.byte_stream = byte_stream;
+                                this.response_buf_owned = byte_stream.buffer.moveToUnmanaged();
+
+                                // we don't set size here because even if we have a hint
+                                // uWebSockets won't let us partially write streaming content
+                                this.blob.detach();
+
+                                // if we've received metadata and part of the body, send everything we can and drain
+                                if (this.response_buf_owned.items.len > 0) {
+                                    this.drainResponseBufferAndMetadataCorked();
+                                } else {
+                                    // if we only have metadata to send, send it now
+                                    this.resp.runCorkedWithType(*RequestContext, renderMetadata, this);
+                                }
+                                this.setAbortHandler();
+                                return;
+                            },
                         }
                     }
 
                     // when there's no stream, we need to
-                    lock.callback = doRenderWithBodyLocked;
+                    lock.onReceiveValue = doRenderWithBodyLocked;
                     lock.task = this;
 
                     return;
@@ -1493,13 +1595,49 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             this.doRenderBlob();
         }
 
+        pub fn onPipe(this: *RequestContext, stream: JSC.WebCore.StreamResult, allocator: std.mem.Allocator) void {
+            var stream_needs_deinit = stream == .owned or stream == .owned_and_done;
+
+            defer {
+                if (stream_needs_deinit) {
+                    if (stream.isDone()) {
+                        stream.owned_and_done.listManaged(allocator).deinit();
+                    } else {
+                        stream.owned.listManaged(allocator).deinit();
+                    }
+                }
+            }
+
+            if (this.aborted) {
+                this.finalizeForAbort();
+                return;
+            }
+
+            const chunk = stream.slice();
+            // on failure, it will continue to allocate
+            // we can't do buffering ourselves here or it won't work
+            // uSockets will append and manage the buffer
+            // so any write will buffer if the write fails
+            if (this.resp.write(chunk)) {
+                if (stream.isDone()) {
+                    this.resp.endStream(this.shouldCloseConnection());
+                    this.finalize();
+                }
+            } else {
+                // when it's the last one, we just want to know if it's done
+                if (stream.isDone()) {
+                    this.resp.onWritable(*RequestContext, onWritableResponseBuffer, this);
+                }
+            }
+        }
+
         pub fn doRenderBlob(this: *RequestContext) void {
             // We are not corked
             // The body is small
             // Faster to do the memcpy than to do the two network calls
             // We are not streaming
             // This is an important performance optimization
-            if (this.has_abort_handler and this.blob.sharedView().len < 16384 - 1024) {
+            if (this.has_abort_handler and this.blob.size() < 16384 - 1024) {
                 this.resp.runCorkedWithType(*RequestContext, doRenderBlobCorked, this);
             } else {
                 this.doRenderBlobCorked();
@@ -1528,7 +1666,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                         this.has_written_status = true;
                     }
 
-                    this.resp.endWithoutBody();
+                    this.resp.endWithoutBody(this.shouldCloseConnection());
                 },
                 else => {
                     if (!this.has_written_status) {
@@ -1551,6 +1689,21 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             runErrorHandlerWithStatusCode(this, value, 500);
         }
 
+        fn ensurePathname(this: *RequestContext) []const u8 {
+            if (this.pathname.len > 0)
+                return this.pathname;
+
+            if (!this.has_abort_handler) {
+                return this.req.url();
+            }
+
+            return "/";
+        }
+
+        pub inline fn shouldCloseConnection(this: *const RequestContext) bool {
+            return this.resp.state().isHttpConnectionClose();
+        }
+
         fn finishRunningErrorHandler(this: *RequestContext, value: JSC.JSValue, status: u16) void {
             var vm = this.server.vm;
             var exception_list: std.ArrayList(Api.JsException) = std.ArrayList(Api.JsException).init(this.allocator);
@@ -1563,7 +1716,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                     error.ExceptionOcurred,
                     exception_list.toOwnedSlice(),
                     "<r><red>{s}<r> - <b>{s}<r> failed",
-                    .{ @as(string, @tagName(this.method)), this.url },
+                    .{ @as(string, @tagName(this.method)), this.ensurePathname() },
                 );
             } else {
                 if (status != 404)
@@ -1583,7 +1736,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             if (!this.server.config.onError.isEmpty() and !this.has_called_error_handler) {
                 this.has_called_error_handler = true;
                 var args = [_]JSC.C.JSValueRef{value.asObjectRef()};
-                const result = JSC.C.JSObjectCallAsFunctionReturnValue(this.server.globalThis.ref(), this.server.config.onError.asObjectRef(), this.server.thisObject.asObjectRef(), 1, &args);
+                const result = JSC.C.JSObjectCallAsFunctionReturnValue(this.server.globalThis, this.server.config.onError.asObjectRef(), this.server.thisObject.asObjectRef(), 1, &args);
 
                 if (!result.isEmptyOrUndefinedOrNull()) {
                     if (result.isError() or result.isAggregateError(this.server.globalThis)) {
@@ -1613,7 +1766,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
         pub fn renderMetadata(this: *RequestContext) void {
             var response: *JSC.WebCore.Response = this.response_ptr.?;
             var status = response.statusCode();
-            const size = this.blob.size;
+            const size = this.blob.size();
             status = if (status == 200 and size == 0 and !this.blob.isDetached())
                 204
             else
@@ -1628,11 +1781,12 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                         break :brk MimeType.byName(content.slice());
                     }
                 }
-                break :brk if (this.blob.content_type.len > 0)
-                    MimeType.byName(this.blob.content_type)
-                else if (MimeType.sniff(this.blob.sharedView())) |content|
+
+                break :brk if (this.blob.contentType().len > 0)
+                    MimeType.byName(this.blob.contentType())
+                else if (MimeType.sniff(this.blob.slice())) |content|
                     content
-                else if (this.blob.is_all_ascii orelse false)
+                else if (this.blob.wasString())
                     MimeType.text
                 else
                     MimeType.other;
@@ -1659,7 +1813,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             // 1. Bun.file("foo")
             // 2. The content-disposition header is not present
             if (!has_content_disposition and content_type.category.autosetFilename()) {
-                if (this.blob.store) |store| {
+                if (this.blob.store()) |store| {
                     if (store.data == .file) {
                         if (store.data.file.pathlike == .path) {
                             const basename = std.fs.path.basename(store.data.file.pathlike.path.slice());
@@ -1683,11 +1837,12 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
         }
 
         pub fn renderBytes(this: *RequestContext) void {
-            const bytes = this.blob.sharedView();
+            const bytes = this.blob.slice();
 
             if (!this.resp.tryEnd(
                 bytes,
                 bytes.len,
+                this.shouldCloseConnection(),
             )) {
                 this.resp.onWritable(*RequestContext, onWritableBytes, this);
                 // given a blob, we might not have set an abort handler yet
@@ -1704,56 +1859,134 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             this.doRender();
         }
 
-        pub fn resolveRequestBody(this: *RequestContext) void {
-            if (this.aborted) {
-                this.finalizeForAbort();
-                return;
-            }
+        pub fn onBufferedBodyChunk(this: *RequestContext, resp: *App.Response, chunk: []const u8, last: bool) void {
+            std.debug.assert(this.resp == resp);
+
+            if (this.aborted) return;
+
             const request = JSC.JSValue.fromRef(this.request_js_object);
-            request.ensureStillAlive();
-            if (request.as(Request)) |req| {
-                var bytes = this.request_body_buf.toOwnedSlice(this.allocator);
+            var req = request.as(Request) orelse {
+                this.request_body_buf.clearAndFree(this.allocator);
+                return;
+            };
+
+            if (req.body == .Locked) {
+                if (req.body.Locked.readable) |readable| {
+                    if (readable.ptr == .Bytes) {
+                        std.debug.assert(this.request_body_buf.items.len == 0);
+
+                        if (!last) {
+                            readable.ptr.Bytes.onData(
+                                .{
+                                    .temporary = bun.ByteList.init(chunk),
+                                },
+                                bun.default_allocator,
+                            );
+                        } else {
+                            readable.ptr.Bytes.onData(
+                                .{
+                                    .temporary_and_done = bun.ByteList.init(chunk),
+                                },
+                                bun.default_allocator,
+                            );
+                        }
+
+                        return;
+                    }
+                }
+            }
+
+            if (last) {
+                request.ensureStillAlive();
+                var bytes = this.request_body_buf;
+                defer this.request_body_buf = .{};
                 var old = req.body;
-                req.body = .{
-                    .Blob = if (bytes.len > 0)
-                        Blob.init(bytes, this.allocator, this.server.globalThis)
-                    else
-                        Blob.initEmpty(this.server.globalThis),
-                };
+
+                const total = bytes.items.len + chunk.len;
+                getter: {
+                    if (total <= JSC.WebCore.InlineBlob.available_bytes) {
+                        if (total == 0) {
+                            req.body = .{ .Empty = {} };
+                            break :getter;
+                        }
+
+                        req.body = .{ .InlineBlob = JSC.WebCore.InlineBlob.init(bytes.items) };
+                        var to_copy: []u8 = req.body.InlineBlob.bytes[bytes.items.len..];
+                        @memcpy(to_copy.ptr, chunk.ptr, chunk.len);
+                        req.body.InlineBlob.len += @truncate(JSC.WebCore.InlineBlob.IntSize, chunk.len);
+                        this.request_body_buf.clearAndFree(this.allocator);
+                    } else {
+                        bytes.ensureTotalCapacityPrecise(this.allocator, total) catch |err| {
+                            this.request_body_buf.clearAndFree(this.allocator);
+                            req.body.toError(err, this.server.globalThis);
+                            break :getter;
+                        };
+
+                        bytes.items.len = total;
+                        @memcpy(bytes.items.ptr + bytes.items.len - chunk.len, chunk.ptr, chunk.len);
+                        req.body = .{
+                            .InternalBlob = .{
+                                .bytes = bytes.toManaged(this.allocator),
+                            },
+                        };
+                    }
+                }
+
                 if (old == .Locked)
                     old.resolve(&req.body, this.server.globalThis);
                 request.unprotect();
                 return;
             }
-        }
 
-        pub fn onBodyChunk(this: *RequestContext, resp: *App.Response, chunk: []const u8, last: bool) void {
-            std.debug.assert(this.resp == resp);
-
-            if (this.aborted) return;
+            if (this.request_body_buf.capacity == 0) {
+                this.request_body_buf.ensureTotalCapacityPrecise(this.allocator, @minimum(this.request_body_content_len, max_request_body_preallocate_length)) catch @panic("Out of memory while allocating request body buffer");
+            }
 
             this.request_body_buf.appendSlice(this.allocator, chunk) catch @panic("Out of memory while allocating request body");
-            if (last) {
-                const request = JSC.JSValue.fromRef(this.request_js_object);
-                if (request.as(Request) != null) {
-                    request.ensureStillAlive();
-                    uws.Loop.get().?.nextTick(*RequestContext, this, resolveRequestBody);
-                } else {
-                    this.request_body_buf.clearAndFree(this.allocator);
-                }
-            }
         }
 
-        pub fn onPull(this: *RequestContext) void {
+        pub fn onStartStreamingRequestBody(this: *RequestContext) JSC.WebCore.DrainResult {
+            if (this.aborted) {
+                return JSC.WebCore.DrainResult{
+                    .aborted = void{},
+                };
+            }
+
+            std.debug.assert(!this.resp.hasResponded());
+
+            // This means we have received part of the body but not the whole thing
+            if (this.request_body_buf.items.len > 0) {
+                var emptied = this.request_body_buf;
+                this.request_body_buf = .{};
+                return .{
+                    .owned = .{
+                        .list = emptied.toManaged(this.allocator),
+                        .size_hint = if (emptied.capacity < max_request_body_preallocate_length)
+                            emptied.capacity
+                        else
+                            0,
+                    },
+                };
+            }
+
+            this.resp.onData(*RequestContext, onBufferedBodyChunk, this);
+
+            return .{
+                .estimated_size = this.request_body_content_len,
+            };
+        }
+        const max_request_body_preallocate_length = 1024 * 256;
+        pub fn onStartBuffering(this: *RequestContext) void {
             const request = JSC.JSValue.c(this.request_js_object);
             request.ensureStillAlive();
 
             if (this.req.header("content-length")) |content_length| {
                 const len = std.fmt.parseInt(usize, content_length, 10) catch 0;
+                this.request_body_content_len = len;
                 if (len == 0) {
                     if (request.as(Request)) |req| {
                         var old = req.body;
-                        old.Locked.callback = null;
+                        old.Locked.onReceiveValue = null;
                         req.body = .{ .Empty = .{} };
                         old.resolve(&req.body, this.server.globalThis);
                         return;
@@ -1764,7 +1997,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 if (len >= this.server.config.max_request_body_size) {
                     if (request.as(Request)) |req| {
                         var old = req.body;
-                        old.Locked.callback = null;
+                        old.Locked.onReceiveValue = null;
                         req.body = .{ .Empty = .{} };
                         old.toError(error.RequestBodyTooLarge, this.server.globalThis);
                         return;
@@ -1772,18 +2005,16 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                     request.ensureStillAlive();
 
                     this.resp.writeStatus("413 Request Entity Too Large");
-                    this.resp.endWithoutBody();
+                    this.resp.endWithoutBody(true);
                     this.finalize();
                     return;
                 }
-
-                this.request_body_buf.ensureTotalCapacityPrecise(this.allocator, len) catch @panic("Out of memory while allocating request body buffer");
             } else if (this.req.header("transfer-encoding") == null) {
                 // no content-length
                 // no transfer-encoding
                 if (request.as(Request)) |req| {
                     var old = req.body;
-                    old.Locked.callback = null;
+                    old.Locked.onReceiveValue = null;
                     req.body = .{ .Empty = .{} };
                     old.resolve(&req.body, this.server.globalThis);
                     return;
@@ -1792,20 +2023,37 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
 
             request.protect();
             this.setAbortHandler();
-            this.resp.onData(*RequestContext, onBodyChunk, this);
+            this.resp.onData(*RequestContext, onBufferedBodyChunk, this);
         }
 
-        pub fn onPullCallback(this: *anyopaque) void {
-            onPull(bun.cast(*RequestContext, this));
+        pub fn onStartBufferingCallback(this: *anyopaque) void {
+            onStartBuffering(bun.cast(*RequestContext, this));
         }
+
+        pub fn onStartStreamingRequestBodyCallback(this: *anyopaque) JSC.WebCore.DrainResult {
+            return onStartStreamingRequestBody(bun.cast(*RequestContext, this));
+        }
+
+        pub const Export = shim.exportFunctions(.{
+            .onResolve = onResolve,
+            .onReject = onReject,
+            .onResolveStream = onResolveStream,
+            .onRejectStream = onRejectStream,
+        });
 
         comptime {
             if (!JSC.is_bindgen) {
-                @export(PromiseHandler.resolve, .{
+                @export(onResolve, .{
                     .name = Export[0].symbol_name,
                 });
-                @export(PromiseHandler.reject, .{
+                @export(onReject, .{
                     .name = Export[1].symbol_name,
+                });
+                @export(onResolveStream, .{
+                    .name = Export[2].symbol_name,
+                });
+                @export(onRejectStream, .{
+                    .name = Export[3].symbol_name,
                 });
             }
         }
@@ -1834,6 +2082,9 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
         has_js_deinited: bool = false,
         listen_callback: JSC.AnyTask = undefined,
         allocator: std.mem.Allocator,
+        poll_ref: JSC.PollRef = .{},
+
+        temporary_url_buffer: std.ArrayListUnmanaged(u8) = .{},
 
         pub const Class = JSC.NewClass(
             ThisServer,
@@ -1844,6 +2095,12 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
                 },
                 .finalize = .{
                     .rfn = finalize,
+                },
+                .fetch = .{
+                    .rfn = onFetch,
+                },
+                .reload = .{
+                    .rfn = onReload,
                 },
             },
             .{
@@ -1862,9 +2119,158 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
             },
         );
 
+        pub fn onReload(
+            this: *ThisServer,
+            ctx: js.JSContextRef,
+            _: js.JSObjectRef,
+            _: js.JSObjectRef,
+            arguments: []const js.JSValueRef,
+            exception: js.ExceptionRef,
+        ) js.JSObjectRef {
+            if (arguments.len < 1) {
+                JSC.throwInvalidArguments("Expected 1 argument, got 0", .{}, ctx, exception);
+                return js.JSValueMakeUndefined(ctx);
+            }
+
+            var args_slice = JSC.Node.ArgumentsSlice.from(ctx.bunVM(), arguments);
+            defer args_slice.deinit();
+            var new_config = ServerConfig.fromJS(ctx, &args_slice, exception);
+            if (exception.* != null) return js.JSValueMakeUndefined(ctx);
+
+            // only reload those two
+            if (new_config.onRequest != .zero) {
+                this.config.onRequest.unprotect();
+                this.config.onRequest = new_config.onRequest;
+            }
+            if (new_config.onError != .zero) {
+                this.config.onError.unprotect();
+                this.config.onError = new_config.onError;
+            }
+
+            return this.thisObject.asObjectRef();
+        }
+
+        pub fn onFetch(
+            this: *ThisServer,
+            ctx: js.JSContextRef,
+            _: js.JSObjectRef,
+            _: js.JSObjectRef,
+            arguments: []const js.JSValueRef,
+            _: js.ExceptionRef,
+        ) js.JSObjectRef {
+            var globalThis = ctx.ptr();
+
+            if (arguments.len == 0) {
+                const fetch_error = WebCore.Fetch.fetch_error_no_args;
+                return JSPromise.rejectedPromiseValue(globalThis, ZigString.init(fetch_error).toErrorInstance(globalThis)).asRef();
+            }
+
+            var headers: ?*JSC.FetchHeaders = null;
+            var method = HTTP.Method.GET;
+            var args = JSC.Node.ArgumentsSlice.from(ctx.bunVM(), arguments);
+            defer args.deinit();
+
+            var url: URL = undefined;
+            var first_arg = args.nextEat().?;
+            var body: JSC.WebCore.Body.Value = .{ .Empty = .{} };
+            var existing_request: ?WebCore.Request = null;
+            // TODO: set Host header
+            // TODO: set User-Agent header
+            if (first_arg.isString()) {
+                var url_zig_str = ZigString.init("");
+                JSValue.fromRef(arguments[0]).toZigString(&url_zig_str, globalThis);
+                var temp_url_str = url_zig_str.slice();
+
+                if (temp_url_str.len == 0) {
+                    const fetch_error = JSC.WebCore.Fetch.fetch_error_blank_url;
+                    return JSPromise.rejectedPromiseValue(globalThis, ZigString.init(fetch_error).toErrorInstance(globalThis)).asRef();
+                }
+
+                url = URL.parse(temp_url_str);
+
+                if (url.hostname.len == 0) {
+                    url = URL.parse(
+                        strings.append(this.allocator, this.base_url_string_for_joining, url.pathname) catch unreachable,
+                    );
+                } else {
+                    temp_url_str = this.allocator.dupe(u8, temp_url_str) catch unreachable;
+                    url = URL.parse(temp_url_str);
+                }
+
+                if (arguments.len >= 2 and arguments[1].?.value().isObject()) {
+                    var opts = JSValue.fromRef(arguments[1]);
+                    if (opts.fastGet(ctx.ptr(), .method)) |method_| {
+                        var slice_ = method_.toSlice(ctx.ptr(), getAllocator(ctx));
+                        defer slice_.deinit();
+                        method = HTTP.Method.which(slice_.slice()) orelse method;
+                    }
+
+                    if (opts.fastGet(ctx.ptr(), .headers)) |headers_| {
+                        if (headers_.as(JSC.FetchHeaders)) |headers__| {
+                            headers = headers__;
+                        } else if (JSC.FetchHeaders.createFromJS(ctx.ptr(), headers_)) |headers__| {
+                            headers = headers__;
+                        }
+                    }
+
+                    if (opts.fastGet(ctx.ptr(), .body)) |body__| {
+                        if (Blob.get(ctx.ptr(), body__, true, false)) |new_blob| {
+                            body = .{ .Blob = new_blob };
+                        } else |_| {
+                            return JSPromise.rejectedPromiseValue(globalThis, ZigString.init("fetch() received invalid body").toErrorInstance(globalThis)).asRef();
+                        }
+                    }
+                }
+            } else if (first_arg.as(Request)) |request_| {
+                existing_request = request_.*;
+            } else {
+                const fetch_error = WebCore.Fetch.fetch_type_error_strings.get(js.JSValueGetType(ctx, arguments[0]));
+                return JSPromise.rejectedPromiseValue(globalThis, ZigString.init(fetch_error).toErrorInstance(globalThis)).asRef();
+            }
+
+            if (existing_request == null) {
+                existing_request = Request{
+                    .url = url.href,
+                    .headers = headers,
+                    .body = body,
+                    .method = method,
+                };
+            }
+
+            var request = ctx.bunVM().allocator.create(Request) catch unreachable;
+            request.* = existing_request.?;
+
+            var args_ = [_]JSC.C.JSValueRef{request.toJS(this.globalThis).asObjectRef()};
+            const response_value = JSC.C.JSObjectCallAsFunctionReturnValue(
+                this.globalThis,
+                this.config.onRequest.asObjectRef(),
+                this.thisObject.asObjectRef(),
+                1,
+                &args_,
+            );
+
+            if (response_value.isAnyError(ctx)) {
+                return JSC.JSPromise.rejectedPromiseValue(ctx, response_value).asObjectRef();
+            }
+
+            if (response_value.isEmptyOrUndefinedOrNull()) {
+                return JSC.JSPromise.rejectedPromiseValue(ctx, ZigString.init("fetch() returned an empty value").toErrorInstance(ctx)).asObjectRef();
+            }
+
+            if (response_value.asPromise() != null) {
+                return response_value.asObjectRef();
+            }
+
+            if (response_value.as(JSC.WebCore.Response)) |resp| {
+                resp.url = this.allocator.dupe(u8, url.href) catch unreachable;
+            }
+
+            return JSC.JSPromise.resolvedPromiseValue(ctx, response_value).asObjectRef();
+        }
+
         pub fn stopFromJS(this: *ThisServer) JSC.JSValue {
             if (this.listener != null) {
-                JSC.C.JSValueUnprotect(this.globalThis.ref(), this.thisObject.asObjectRef());
+                JSC.C.JSValueUnprotect(this.globalThis, this.thisObject.asObjectRef());
                 this.thisObject = JSC.JSValue.jsUndefined();
                 this.stop();
             }
@@ -1881,7 +2287,7 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
         }
 
         pub fn getHostname(this: *ThisServer, globalThis: *JSGlobalObject) JSC.JSValue {
-            return ZigString.init(this.config.base_uri).toValue(globalThis);
+            return ZigString.init(bun.span(this.config.hostname)).toValue(globalThis);
         }
 
         pub fn getDevelopment(
@@ -1901,17 +2307,21 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
         }
 
         pub fn deinitIfWeCan(this: *ThisServer) void {
-            if (this.pending_requests == 0 and this.listener == null and this.has_js_deinited)
+            if (this.pending_requests == 0 and this.listener == null and this.has_js_deinited) {
+                this.unref();
                 this.deinit();
+            }
+        }
+
+        pub fn stopListening(this: *ThisServer) void {
+            var listener = this.listener orelse return;
+            this.listener = null;
+            this.unref();
+            listener.close();
         }
 
         pub fn stop(this: *ThisServer) void {
-            if (this.listener) |listener| {
-                listener.close();
-                this.listener = null;
-                this.vm.disable_run_us_loop = false;
-            }
-
+            this.stopListening();
             this.deinitIfWeCan();
         }
 
@@ -1926,7 +2336,7 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
             server.* = .{
                 .globalThis = globalThis,
                 .config = config,
-                .base_url_string_for_joining = strings.trim(config.base_url.href, "/"),
+                .base_url_string_for_joining = bun.default_allocator.dupe(u8, strings.trim(config.base_url.href, "/")) catch unreachable,
                 .vm = JSC.VirtualMachine.vm,
                 .allocator = Arena.getThreadlocalDefault(),
             };
@@ -1945,6 +2355,8 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
         }
 
         noinline fn onListenFailed(this: *ThisServer) void {
+            this.unref();
+
             var zig_str: ZigString = ZigString.init("");
             var output_buf: [4096]u8 = undefined;
 
@@ -2020,24 +2432,21 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
             }
 
             this.listener = socket;
-            const needs_post_handler = this.vm.uws_event_loop == null;
             this.vm.uws_event_loop = uws.Loop.get();
-            this.listen_callback = JSC.AnyTask.New(ThisServer, run).init(this);
-            this.vm.eventLoop().enqueueTask(JSC.Task.init(&this.listen_callback));
-            if (needs_post_handler) {
-                _ = this.vm.uws_event_loop.?.addPostHandler(*JSC.EventLoop, this.vm.eventLoop(), JSC.EventLoop.tick);
-            }
         }
 
-        pub fn run(this: *ThisServer) void {
-            // this.app.addServerName(hostname_pattern: [*:0]const u8)
+        pub fn ref(this: *ThisServer) void {
+            if (this.poll_ref.isActive()) return;
 
-            // we do not increment the reference count here
-            // uWS manages running the loop, so it is unnecessary
-            // this.vm.us_loop_reference_count +|= 1;
-            this.vm.disable_run_us_loop = true;
+            this.poll_ref.ref(this.vm);
+            this.vm.eventLoop().start_server_on_next_tick = true;
+        }
 
-            this.app.run();
+        pub fn unref(this: *ThisServer) void {
+            if (!this.poll_ref.isActive()) return;
+
+            this.poll_ref.unref(this.vm);
+            this.vm.eventLoop().start_server_on_next_tick = false;
         }
 
         pub fn onBunInfoRequest(this: *ThisServer, req: *uws.Request, resp: *App.Response) void {
@@ -2104,27 +2513,60 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
             req.setYield(false);
             var ctx = this.request_pool_allocator.create(RequestContext) catch @panic("ran out of memory");
             ctx.create(this, req, resp);
-
             var request_object = this.allocator.create(JSC.WebCore.Request) catch unreachable;
             request_object.* = .{
-                .url = JSC.ZigString.init(ctx.url),
+                .url = "",
                 .method = ctx.method,
                 .uws_request = req,
+                .base_url_string_for_joining = this.base_url_string_for_joining,
                 .body = .{
-                    .Locked = .{
-                        .task = ctx,
-                        .global = this.globalThis,
-                        .onPull = RequestContext.onPullCallback,
-                    },
+                    .Empty = .{},
                 },
             };
-            request_object.url.mark();
+
+            // we need to do this very early unfortunately
+            // it seems to work fine for synchronous requests but anything async will take too long to register the handler
+            // we do this only for HTTP methods that support request bodies, so not GET, HEAD, OPTIONS, or CONNECT.
+            if ((HTTP.Method.which(req.method()) orelse HTTP.Method.OPTIONS).hasRequestBody()) {
+                const req_len: usize = brk: {
+                    if (req.header("content-length")) |content_length| {
+                        break :brk std.fmt.parseInt(usize, content_length, 10) catch 0;
+                    }
+
+                    break :brk 0;
+                };
+
+                if (req_len > this.config.max_request_body_size) {
+                    resp.writeStatus("413 Request Entity Too Large");
+                    resp.endWithoutBody(true);
+                    this.finalize();
+                    return;
+                }
+
+                ctx.request_body_content_len = req_len;
+
+                if (req_len > 0) {
+                    // we defer pre-allocating the body until we receive the first chunk
+                    // that way if the client is lying about how big the body is or the client aborts
+                    // we don't waste memory
+                    request_object.body = .{
+                        .Locked = .{
+                            .task = ctx,
+                            .global = this.globalThis,
+                            .onStartBuffering = RequestContext.onStartBufferingCallback,
+                            .onStartStreaming = RequestContext.onStartStreamingRequestBodyCallback,
+                        },
+                    };
+                    resp.onData(*RequestContext, RequestContext.onBufferedBodyChunk, ctx);
+                }
+            }
+
             // We keep the Request object alive for the duration of the request so that we can remove the pointer to the UWS request object.
             var args = [_]JSC.C.JSValueRef{request_object.toJS(this.globalThis).asObjectRef()};
             ctx.request_js_object = args[0];
             const request_value = JSValue.c(args[0]);
             request_value.ensureStillAlive();
-            const response_value = JSC.C.JSObjectCallAsFunctionReturnValue(this.globalThis.ref(), this.config.onRequest.asObjectRef(), this.thisObject.asObjectRef(), 1, &args);
+            const response_value = JSC.C.JSObjectCallAsFunctionReturnValue(this.globalThis, this.config.onRequest.asObjectRef(), this.thisObject.asObjectRef(), 1, &args);
             request_value.ensureStillAlive();
             response_value.ensureStillAlive();
 
@@ -2198,44 +2640,29 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
             }
 
             if (wait_for_promise) {
-                // Even if the user hasn't requested it, we have to start downloading the body!!
-                // terrible for performance.
-                if (request_object.body == .Locked and (request_object.body.Locked.promise == null and request_object.body.Locked.readable == null) and ((HTTP.Method.which(req.method()) orelse HTTP.Method.OPTIONS).hasRequestBody())) {
-                    const req_len: usize = brk: {
-                        if (req.header("content-length")) |content_length| {
-                            break :brk std.fmt.parseInt(usize, content_length, 10) catch 0;
-                        }
+                request_object.uws_request = req;
 
-                        break :brk 0;
-                    };
-
-                    if (req_len > this.config.max_request_body_size) {
-                        resp.writeStatus("413 Request Entity Too Large");
-                        resp.endWithoutBody();
-                        this.finalize();
-                        return;
-                    }
-
-                    if ((req_len > 0)) {
-                        ctx.request_body_buf.ensureTotalCapacityPrecise(ctx.allocator, req_len) catch {
-                            resp.writeStatus("413 Request Entity Too Large");
-                            resp.endWithoutBody();
-                            this.finalize();
-                            return;
-                        };
-                        resp.onData(*RequestContext, RequestContext.onBodyChunk, ctx);
-                    }
-                }
-
-                ctx.setAbortHandler();
-                ctx.pending_promises_for_abort += 1;
+                request_object.ensureURL() catch {
+                    request_object.url = "";
+                };
 
                 // we have to clone the request headers here since they will soon belong to a different request
                 if (request_object.headers == null) {
                     request_object.headers = JSC.FetchHeaders.createFromUWS(this.globalThis, req);
                 }
 
-                RequestContext.PromiseHandler.then(ctx, response_value, this.globalThis);
+                if (comptime debug_mode) {
+                    ctx.pathname = bun.default_allocator.dupe(u8, request_object.url) catch unreachable;
+                }
+
+                // This object dies after the stack frame is popped
+                // so we have to clear it in here too
+                request_object.uws_request = null;
+
+                ctx.setAbortHandler();
+                ctx.pending_promises_for_abort += 1;
+
+                response_value.then(this.globalThis, ctx, RequestContext.onResolve, RequestContext.onReject);
                 return;
             }
 
@@ -2270,9 +2697,19 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
                 this.app.get("/src:/*", *ThisServer, this, onSrcRequest);
             }
 
+            const hostname = bun.span(this.config.hostname);
+            // When "localhost" is specified, we omit the hostname entirely
+            // Otherwise, "curl http://localhost:3000" doesn't actually work due to IPV6 vs IPV4 issues
+            // This prints a spurious log si_destination_compare on macOS but only when debugger is connected
+            const host: [*:0]const u8 = if (hostname.len == 0 or (!ssl_enabled and strings.eqlComptime(hostname, "localhost")))
+                ""
+            else
+                this.config.hostname;
+
+            this.ref();
             this.app.listenWithConfig(*ThisServer, this, onListen, .{
                 .port = this.config.port,
-                .host = this.config.hostname,
+                .host = host,
                 .options = 0,
             });
         }

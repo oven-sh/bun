@@ -239,6 +239,10 @@ pub const NodeFSBindings = JSC.NewClass(
             .name = "readlink",
             .rfn = call(.readlink),
         },
+        .rm = .{
+            .name = "rm",
+            .rfn = call(.rm),
+        },
         .realpath = .{
             .name = "realpath",
             .rfn = call(.realpath),
@@ -417,6 +421,10 @@ pub const NodeFSBindings = JSC.NewClass(
         .lutimesSync = .{
             .name = "lutimesSync",
             .rfn = callSync(.lutimes),
+        },
+        .rmSync = .{
+            .name = "rmSync",
+            .rfn = callSync(.rm),
         },
     },
     .{},

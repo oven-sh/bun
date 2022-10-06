@@ -76,6 +76,7 @@ const Transpiler = @import("./transpiler.zig");
 const VirtualMachine = @import("../javascript.zig").VirtualMachine;
 const IOTask = JSC.IOTask;
 const zlib = @import("../../zlib.zig");
+const Which = @import("../../which.zig");
 
 const is_bindgen = JSC.is_bindgen;
 const max_addressible_memory = std.math.maxInt(u56);
@@ -127,6 +128,80 @@ pub fn getCSSImports() []ZigString {
         ZigString.fromStringPointer(css_imports_list[i], css_imports_buf.items, &css_imports_list_strings[i]);
     }
     return css_imports_list_strings[0..tail];
+}
+
+pub fn which(
+    // this
+    _: void,
+    globalThis: js.JSContextRef,
+    // function
+    _: js.JSObjectRef,
+    // thisObject
+    _: js.JSObjectRef,
+    arguments_: []const js.JSValueRef,
+    exception: js.ExceptionRef,
+) js.JSValueRef {
+    var path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+    var arguments = JSC.Node.ArgumentsSlice.from(globalThis.bunVM(), arguments_);
+    defer arguments.deinit();
+    const path_arg = arguments.nextEat() orelse {
+        JSC.throwInvalidArguments("which: expected 1 argument, got 0", .{}, globalThis, exception);
+        return JSC.JSValue.jsUndefined().asObjectRef();
+    };
+
+    var path_str: ZigString.Slice = ZigString.Slice.empty;
+    var bin_str: ZigString.Slice = ZigString.Slice.empty;
+    var cwd_str: ZigString.Slice = ZigString.Slice.empty;
+    defer {
+        path_str.deinit();
+        bin_str.deinit();
+        cwd_str.deinit();
+    }
+
+    if (path_arg.isEmptyOrUndefinedOrNull()) {
+        return JSC.JSValue.jsNull().asObjectRef();
+    }
+
+    bin_str = path_arg.toSlice(globalThis, globalThis.bunVM().allocator);
+
+    if (bin_str.len >= bun.MAX_PATH_BYTES) {
+        JSC.throwInvalidArguments("bin path is too long", .{}, globalThis, exception);
+        return JSC.JSValue.jsUndefined().asObjectRef();
+    }
+
+    if (bin_str.len == 0) {
+        return JSC.JSValue.jsNull().asObjectRef();
+    }
+
+    path_str = ZigString.Slice.fromUTF8(
+        globalThis.bunVM().bundler.env.map.get("PATH") orelse "",
+    );
+    cwd_str = ZigString.Slice.fromUTF8(
+        globalThis.bunVM().bundler.fs.top_level_dir,
+    );
+
+    if (arguments.nextEat()) |arg| {
+        if (!arg.isEmptyOrUndefinedOrNull() and arg.isObject()) {
+            if (arg.get(globalThis, "PATH")) |str_| {
+                path_str = str_.toSlice(globalThis, globalThis.bunVM().allocator);
+            }
+
+            if (arg.get(globalThis, "cwd")) |str_| {
+                cwd_str = str_.toSlice(globalThis, globalThis.bunVM().allocator);
+            }
+        }
+    }
+
+    if (Which.which(
+        &path_buf,
+        path_str.slice(),
+        cwd_str.slice(),
+        bin_str.slice(),
+    )) |bin_path| {
+        return ZigString.init(bin_path).withEncoding().toValueGC(globalThis).asObjectRef();
+    }
+
+    return JSC.JSValue.jsNull().asObjectRef();
 }
 
 pub fn inspect(
@@ -274,7 +349,7 @@ pub fn getStdin(
     _: js.JSStringRef,
     _: js.ExceptionRef,
 ) js.JSValueRef {
-    var existing = ctx.ptr().getCachedObject(&ZigString.init("BunSTDIN"));
+    var existing = ctx.ptr().getCachedObject(ZigString.static("BunSTDIN"));
     if (existing.isEmpty()) {
         var rare_data = JSC.VirtualMachine.vm.rareData();
         var store = rare_data.stdin();
@@ -282,8 +357,8 @@ pub fn getStdin(
         blob.* = JSC.WebCore.Blob.initWithStore(store, ctx.ptr());
 
         return ctx.ptr().putCachedObject(
-            &ZigString.init("BunSTDIN"),
-            JSC.JSValue.fromRef(JSC.WebCore.Blob.Class.make(ctx, blob)),
+            ZigString.static("BunSTDIN"),
+            blob.toJS(ctx),
         ).asObjectRef();
     }
 
@@ -297,7 +372,7 @@ pub fn getStderr(
     _: js.JSStringRef,
     _: js.ExceptionRef,
 ) js.JSValueRef {
-    var existing = ctx.ptr().getCachedObject(&ZigString.init("BunSTDERR"));
+    var existing = ctx.ptr().getCachedObject(ZigString.static("BunSTDERR"));
     if (existing.isEmpty()) {
         var rare_data = JSC.VirtualMachine.vm.rareData();
         var store = rare_data.stderr();
@@ -305,8 +380,8 @@ pub fn getStderr(
         blob.* = JSC.WebCore.Blob.initWithStore(store, ctx.ptr());
 
         return ctx.ptr().putCachedObject(
-            &ZigString.init("BunSTDERR"),
-            JSC.JSValue.fromRef(JSC.WebCore.Blob.Class.make(ctx, blob)),
+            ZigString.static("BunSTDERR"),
+            blob.toJS(ctx),
         ).asObjectRef();
     }
 
@@ -320,7 +395,7 @@ pub fn getStdout(
     _: js.JSStringRef,
     _: js.ExceptionRef,
 ) js.JSValueRef {
-    var existing = ctx.ptr().getCachedObject(&ZigString.init("BunSTDOUT"));
+    var existing = ctx.ptr().getCachedObject(ZigString.static("BunSTDOUT"));
     if (existing.isEmpty()) {
         var rare_data = JSC.VirtualMachine.vm.rareData();
         var store = rare_data.stdout();
@@ -329,7 +404,7 @@ pub fn getStdout(
 
         return ctx.ptr().putCachedObject(
             &ZigString.init("BunSTDOUT"),
-            JSC.JSValue.fromRef(JSC.WebCore.Blob.Class.make(ctx, blob)),
+            blob.toJS(ctx),
         ).asObjectRef();
     }
 
@@ -936,7 +1011,7 @@ export fn Bun__resolve(
 ) JSC.JSValue {
     var exception_ = [1]JSC.JSValueRef{null};
     var exception = &exception_;
-    const value = doResolveWithArgs(global.ref(), specifier.getZigString(global), source.getZigString(global), exception, true) orelse {
+    const value = doResolveWithArgs(global, specifier.getZigString(global), source.getZigString(global), exception, true) orelse {
         return JSC.JSPromise.rejectedPromiseValue(global, JSC.JSValue.fromRef(exception[0]));
     };
     return JSC.JSPromise.resolvedPromiseValue(global, value);
@@ -949,7 +1024,7 @@ export fn Bun__resolveSync(
 ) JSC.JSValue {
     var exception_ = [1]JSC.JSValueRef{null};
     var exception = &exception_;
-    return doResolveWithArgs(global.ref(), specifier.getZigString(global), source.getZigString(global), exception, true) orelse {
+    return doResolveWithArgs(global, specifier.getZigString(global), source.getZigString(global), exception, true) orelse {
         return JSC.JSValue.fromRef(exception[0]);
     };
 }
@@ -1013,149 +1088,96 @@ pub const Class = NewClass(
     .{
         .match = .{
             .rfn = Router.match,
-            .ts = Router.match_type_definition,
         },
         .sleepSync = .{
             .rfn = sleepSync,
         },
         .fetch = .{
             .rfn = Fetch.call,
-            .ts = d.ts{},
         },
         .getImportedStyles = .{
             .rfn = Bun.getImportedStyles,
-            .ts = d.ts{
-                .name = "getImportedStyles",
-                .@"return" = "string[]",
-            },
         },
         .inspect = .{
             .rfn = Bun.inspect,
-            .ts = d.ts{
-                .name = "inspect",
-                .@"return" = "string",
-            },
         },
         .getRouteFiles = .{
             .rfn = Bun.getRouteFiles,
-            .ts = d.ts{
-                .name = "getRouteFiles",
-                .@"return" = "string[]",
-            },
         },
         ._Os = .{
             .rfn = Bun.newOs,
-            .ts = d.ts{},
         },
         ._Path = .{
             .rfn = Bun.newPath,
-            .ts = d.ts{},
         },
         .getRouteNames = .{
             .rfn = Bun.getRouteNames,
-            .ts = d.ts{
-                .name = "getRouteNames",
-                .@"return" = "string[]",
-            },
         },
         .readFile = .{
             .rfn = Bun.readFileAsString,
-            .ts = d.ts{
-                .name = "readFile",
-                .@"return" = "string",
-            },
         },
         .resolveSync = .{
             .rfn = Bun.resolveSync,
-            .ts = d.ts{
-                .name = "resolveSync",
-                .@"return" = "string",
-            },
         },
         .resolve = .{
             .rfn = Bun.resolve,
-            .ts = d.ts{
-                .name = "resolve",
-                .@"return" = "string",
-            },
         },
         .readFileBytes = .{
             .rfn = Bun.readFileAsBytes,
-            .ts = d.ts{
-                .name = "readFile",
-                .@"return" = "Uint8Array",
-            },
         },
         .getPublicPath = .{
             .rfn = Bun.getPublicPathJS,
-            .ts = d.ts{
-                .name = "getPublicPath",
-                .@"return" = "string",
-            },
         },
         .registerMacro = .{
             .rfn = Bun.registerMacro,
-            .ts = d.ts{
-                .name = "registerMacro",
-                .@"return" = "undefined",
-            },
             .enumerable = false,
         },
         .fs = .{
             .rfn = Bun.createNodeFS,
-            .ts = d.ts{},
             .enumerable = false,
         },
         .jest = .{
             .rfn = @import("../test/jest.zig").Jest.call,
-            .ts = d.ts{},
             .enumerable = false,
         },
         .gc = .{
             .rfn = Bun.runGC,
-            .ts = d.ts{},
         },
         .allocUnsafe = .{
             .rfn = Bun.allocUnsafe,
-            .ts = .{},
         },
         .mmap = .{
             .rfn = Bun.mmapFile,
-            .ts = .{},
         },
         .generateHeapSnapshot = .{
             .rfn = Bun.generateHeapSnapshot,
-            .ts = d.ts{},
         },
         .shrink = .{
             .rfn = Bun.shrink,
-            .ts = d.ts{},
         },
         .openInEditor = .{
             .rfn = Bun.openInEditor,
-            .ts = d.ts{},
         },
         .readAllStdinSync = .{
             .rfn = Bun.readAllStdinSync,
-            .ts = d.ts{},
         },
         .serve = .{
             .rfn = Bun.serve,
-            .ts = d.ts{},
         },
         .file = .{
             .rfn = JSC.WebCore.Blob.constructFile,
-            .ts = d.ts{},
         },
         .write = .{
             .rfn = JSC.WebCore.Blob.writeFile,
-            .ts = d.ts{},
         },
         .sha = .{
             .rfn = JSC.wrapWithHasContainer(Crypto.SHA512_256, "hash_", false, false, true),
         },
         .nanoseconds = .{
             .rfn = nanoseconds,
+        },
+        .DO_NOT_USE_OR_YOU_WILL_BE_FIRED_mimalloc_dump = .{
+            .rfn = dump_mimalloc,
         },
         .gzipSync = .{
             .rfn = JSC.wrapWithHasContainer(JSZlib, "gzipSync", false, false, true),
@@ -1169,19 +1191,23 @@ pub const Class = NewClass(
         .inflateSync = .{
             .rfn = JSC.wrapWithHasContainer(JSZlib, "inflateSync", false, false, true),
         },
+
+        .which = .{
+            .rfn = which,
+        },
+        .spawn = .{
+            .rfn = JSC.wrapWithHasContainer(JSC.Subprocess, "spawn", false, false, false),
+        },
     },
     .{
         .main = .{
             .get = getMain,
-            .ts = d.ts{ .name = "main", .@"return" = "string" },
         },
         .cwd = .{
             .get = getCWD,
-            .ts = d.ts{ .name = "cwd", .@"return" = "string" },
         },
         .origin = .{
             .get = getOrigin,
-            .ts = d.ts{ .name = "origin", .@"return" = "string" },
         },
         .stdin = .{
             .get = getStdin,
@@ -1194,15 +1220,12 @@ pub const Class = NewClass(
         },
         .routesDir = .{
             .get = getRoutesDir,
-            .ts = d.ts{ .name = "routesDir", .@"return" = "string" },
         },
         .assetPrefix = .{
             .get = getAssetPrefix,
-            .ts = d.ts{ .name = "assetPrefix", .@"return" = "string" },
         },
         .argv = .{
             .get = getArgv,
-            .ts = d.ts{ .name = "argv", .@"return" = "string[]" },
         },
         .env = .{
             .get = EnvironmentVariables.getter,
@@ -1213,19 +1236,16 @@ pub const Class = NewClass(
         },
         .Transpiler = .{
             .get = getTranspilerConstructor,
-            .ts = d.ts{ .name = "Transpiler", .@"return" = "Transpiler.prototype" },
         },
         .hash = .{
             .get = getHashObject,
         },
         .TOML = .{
             .get = getTOMLObject,
-            .ts = d.ts{ .name = "TOML", .@"return" = "TOML.prototype" },
         },
         .unsafe = .{
             .get = getUnsafe,
         },
-
         .SHA1 = .{
             .get = Crypto.SHA1.getter,
         },
@@ -1255,6 +1275,18 @@ pub const Class = NewClass(
         },
     },
 );
+
+fn dump_mimalloc(
+    _: void,
+    globalThis: JSC.C.JSContextRef,
+    _: JSC.C.JSObjectRef,
+    _: JSC.C.JSObjectRef,
+    _: []const JSC.C.JSValueRef,
+    _: JSC.C.ExceptionRef,
+) JSC.C.JSValueRef {
+    globalThis.bunVM().arena.dumpThreadStats();
+    return JSC.JSValue.jsUndefined().asObjectRef();
+}
 
 pub const Crypto = struct {
     const Hashers = @import("../../sha.zig");
@@ -1319,7 +1351,7 @@ pub const Crypto = struct {
                     return output_buf.value;
                 } else {
                     var array_buffer_out = JSC.ArrayBuffer.fromBytes(bun.default_allocator.dupe(u8, output_digest_slice) catch unreachable, .Uint8Array);
-                    return array_buffer_out.toJSUnchecked(globalThis.ref(), null);
+                    return array_buffer_out.toJSUnchecked(globalThis, null);
                 }
             }
 
@@ -1365,6 +1397,7 @@ pub const Crypto = struct {
             }
 
             pub fn update(this: *@This(), globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+                const thisValue = callframe.this();
                 const input = callframe.argument(0);
                 const buffer = JSC.Node.SliceOrBuffer.fromJS(globalThis.ptr(), globalThis.bunVM().allocator, input) orelse {
                     globalThis.throwInvalidArguments("expected string or buffer", .{});
@@ -1372,7 +1405,7 @@ pub const Crypto = struct {
                 };
                 defer buffer.deinit();
                 this.hashing.update(buffer.slice());
-                return input;
+                return thisValue;
             }
 
             pub fn digest_(
@@ -1430,7 +1463,7 @@ pub const Crypto = struct {
                     return output_buf.value;
                 } else {
                     var array_buffer_out = JSC.ArrayBuffer.fromBytes(bun.default_allocator.dupe(u8, &output_digest_buf) catch unreachable, .Uint8Array);
-                    return array_buffer_out.toJSUnchecked(globalThis.ref(), null);
+                    return array_buffer_out.toJSUnchecked(globalThis, null);
                 }
             }
 
@@ -1745,7 +1778,7 @@ pub fn getTranspilerConstructor(
     _: js.JSStringRef,
     _: js.ExceptionRef,
 ) js.JSValueRef {
-    var existing = ctx.ptr().getCachedObject(&ZigString.init("BunTranspiler"));
+    var existing = ctx.ptr().getCachedObject(ZigString.static("BunTranspiler"));
     if (existing.isEmpty()) {
         return ctx.ptr().putCachedObject(
             &ZigString.init("BunTranspiler"),
@@ -1763,7 +1796,7 @@ pub fn getHashObject(
     _: js.JSStringRef,
     _: js.ExceptionRef,
 ) js.JSValueRef {
-    var existing = ctx.ptr().getCachedObject(&ZigString.init("BunHash"));
+    var existing = ctx.ptr().getCachedObject(ZigString.static("BunHash"));
     if (existing.isEmpty()) {
         return ctx.ptr().putCachedObject(
             &ZigString.init("BunHash"),
@@ -1842,12 +1875,25 @@ pub const Hash = struct {
                         input = blob.sharedView();
                     } else {
                         switch (arg.jsTypeLoose()) {
-                            .ArrayBuffer, .Int8Array, .Uint8Array, .Uint8ClampedArray, .Int16Array, .Uint16Array, .Int32Array, .Uint32Array, .Float32Array, .Float64Array, .BigInt64Array, .BigUint64Array, .DataView => {
+                            .ArrayBuffer,
+                            .Int8Array,
+                            .Uint8Array,
+                            .Uint8ClampedArray,
+                            .Int16Array,
+                            .Uint16Array,
+                            .Int32Array,
+                            .Uint32Array,
+                            .Float32Array,
+                            .Float64Array,
+                            .BigInt64Array,
+                            .BigUint64Array,
+                            .DataView,
+                            => {
                                 var array_buffer = arg.asArrayBuffer(ctx.ptr()) orelse {
                                     JSC.throwInvalidArguments("ArrayBuffer conversion error", .{}, ctx, exception);
                                     return null;
                                 };
-                                input = array_buffer.slice();
+                                input = array_buffer.byteSlice();
                             },
                             else => {
                                 input_slice = arg.toSlice(ctx.ptr(), bun.default_allocator);
@@ -1897,7 +1943,7 @@ pub fn getTOMLObject(
     _: js.JSStringRef,
     _: js.ExceptionRef,
 ) js.JSValueRef {
-    var existing = ctx.ptr().getCachedObject(&ZigString.init("TOML"));
+    var existing = ctx.ptr().getCachedObject(ZigString.static("TOML"));
     if (existing.isEmpty()) {
         return ctx.ptr().putCachedObject(
             &ZigString.init("TOML"),
@@ -1915,7 +1961,7 @@ pub fn getUnsafe(
     _: js.JSStringRef,
     _: js.ExceptionRef,
 ) js.JSValueRef {
-    var existing = ctx.ptr().getCachedObject(&ZigString.init("Unsafe"));
+    var existing = ctx.ptr().getCachedObject(ZigString.static("Unsafe"));
     if (existing.isEmpty()) {
         return ctx.ptr().putCachedObject(
             &ZigString.init("Unsafe"),
@@ -2153,87 +2199,159 @@ pub const TOML = struct {
 };
 
 pub const Timer = struct {
-    last_id: i32 = 0,
+    last_id: i32 = 1,
     warned: bool = false,
-    active: u32 = 0,
-    timeouts: TimeoutMap = TimeoutMap{},
 
-    const TimeoutMap = std.AutoArrayHashMapUnmanaged(i32, *Timeout);
+    // We split up the map here to avoid storing an extra "repeat" boolean
+
+    /// Used by setTimeout()
+    timeout_map: TimeoutMap = TimeoutMap{},
+
+    /// Used by setInterval()
+    interval_map: TimeoutMap = TimeoutMap{},
+
+    /// TimeoutMap is map of i32 to nullable Timeout structs
+    /// i32 is exposed to JavaScript and can be used with clearTimeout, clearInterval, etc.
+    /// When Timeout is null, it means the tasks have been scheduled but not yet executed.
+    /// Timeouts are enqueued as a task to be run on the next tick of the task queue
+    /// The task queue runs after the event loop tasks have been run
+    /// Therefore, there is a race condition where you cancel the task after it has already been enqueued
+    /// In that case, it shouldn't run. It should be skipped.
+    pub const TimeoutMap = std.AutoArrayHashMapUnmanaged(
+        i32,
+        ?Timeout,
+    );
 
     pub fn getNextID() callconv(.C) i32 {
-        VirtualMachine.vm.timer.last_id += 1;
+        VirtualMachine.vm.timer.last_id +%= 1;
         return VirtualMachine.vm.timer.last_id;
     }
 
-    pub const Timeout = struct {
+    const uws = @import("uws");
+
+    // TODO: reference count to avoid multiple Strong references to the same
+    // object in setInterval
+    const CallbackJob = struct {
         id: i32 = 0,
-        callback: JSValue,
-        interval: i32 = 0,
-        completion: NetworkThread.Completion = undefined,
+        task: JSC.AnyTask = undefined,
+        ref: JSC.Ref = JSC.Ref.init(),
+        globalThis: *JSC.JSGlobalObject,
+        callback: JSC.Strong = .{},
         repeat: bool = false,
-        io_task: ?*TimeoutTask = null,
-        cancelled: bool = false,
 
-        pub const TimeoutTask = IOTask(Timeout);
+        pub const Task = JSC.AnyTask.New(CallbackJob, perform);
 
-        pub fn run(this: *Timeout, _task: *TimeoutTask) void {
-            this.io_task = _task;
-            NetworkThread.global.io.timeout(
-                *Timeout,
-                this,
-                onCallback,
-                &this.completion,
-                if (this.interval > 0) std.time.ns_per_ms * @intCast(
-                    u63,
-                    this.interval,
-                ) else 1,
-            );
-        }
+        pub fn perform(this: *CallbackJob) void {
+            var vm = this.globalThis.bunVM();
+            var map: *TimeoutMap = if (this.repeat) &vm.timer.interval_map else &vm.timer.timeout_map;
 
-        pub fn onCallback(this: *Timeout, _: *NetworkThread.Completion, _: NetworkThread.AsyncIO.TimeoutError!void) void {
-            this.io_task.?.onFinish();
-        }
+            defer {
+                this.callback.deinit();
+                this.ref.unref(this.globalThis.bunVM());
+                bun.default_allocator.destroy(this);
+            }
 
-        pub fn then(this: *Timeout, global: *JSGlobalObject) void {
-            if (comptime JSC.is_bindgen)
-                unreachable;
-
-            if (!this.cancelled) {
-                if (this.repeat) {
-                    this.io_task.?.deinit();
-                    var task = Timeout.TimeoutTask.createOnJSThread(VirtualMachine.vm.allocator, global, this) catch unreachable;
-                    VirtualMachine.vm.timer.timeouts.put(VirtualMachine.vm.allocator, this.id, this) catch unreachable;
-                    this.io_task = task;
-                    task.schedule();
-                }
-
-                _ = JSC.C.JSObjectCallAsFunction(global.ref(), this.callback.asObjectRef(), null, 0, null, null);
-
-                if (this.repeat)
+            // This doesn't deinit the timer
+            // Timers are deinit'd separately
+            // We do need to handle when the timer is cancelled after the job has been enqueued
+            if (!this.repeat) {
+                if (map.fetchSwapRemove(this.id) == null) {
+                    // if the timeout was cancelled, don't run the callback
                     return;
-
-                VirtualMachine.vm.timer.active -|= 1;
-                VirtualMachine.vm.active_tasks -|= 1;
+                }
             } else {
-                // the active tasks count is already cleared for canceled timeout,
-                // add one here to neutralize the `-|= 1` in event loop.
-                VirtualMachine.vm.active_tasks +|= 1;
+                if (!map.contains(this.id)) {
+                    // if the interval was cancelled, don't run the callback
+                    return;
+                }
             }
 
-            this.clear(global);
+            const callback = this.callback.get() orelse @panic("Expected CallbackJob to have a callback function");
+
+            const result = callback.call(this.globalThis, &.{});
+
+            if (result.isAnyError(this.globalThis)) {
+                vm.runErrorHandler(result, null);
+            }
+        }
+    };
+
+    pub const Timeout = struct {
+        callback: JSC.Strong = .{},
+        globalThis: *JSC.JSGlobalObject,
+        timer: *uws.Timer,
+        poll_ref: JSC.PollRef = JSC.PollRef.init(),
+
+        // this is sized to be the same as one pointer
+        pub const ID = extern struct {
+            id: i32,
+
+            repeat: u32 = 0,
+        };
+
+        pub fn run(timer: *uws.Timer) callconv(.C) void {
+            const timer_id: ID = timer.as(ID);
+
+            // use the threadlocal despite being slow on macOS
+            // to handle the timeout being cancelled after already enqueued
+            var vm = JSC.VirtualMachine.vm;
+
+            const repeats = timer_id.repeat > 0;
+
+            var map = if (repeats) &vm.timer.interval_map else &vm.timer.timeout_map;
+
+            var this_: ?Timeout = map.get(
+                timer_id.id,
+            ) orelse return;
+            var this = this_ orelse
+                return;
+
+            var cb: CallbackJob = .{
+                .callback = if (repeats)
+                    JSC.Strong.create(this.callback.get() orelse {
+                        // if the callback was freed, that's an error
+                        if (comptime Environment.allow_assert)
+                            unreachable;
+
+                        this.deinit();
+                        _ = map.swapRemove(timer_id.id);
+                        return;
+                    }, this.globalThis)
+                else
+                    this.callback,
+                .globalThis = this.globalThis,
+                .id = timer_id.id,
+                .repeat = timer_id.repeat > 0,
+            };
+
+            // This allows us to:
+            //  - free the memory before the job is run
+            //  - reuse the JSC.Strong
+            if (!repeats) {
+                this.callback = .{};
+                map.put(vm.allocator, timer_id.id, null) catch unreachable;
+                this.deinit();
+            }
+
+            var job = vm.allocator.create(CallbackJob) catch @panic(
+                "Out of memory while allocating Timeout",
+            );
+
+            job.* = cb;
+            job.task = CallbackJob.Task.init(job);
+            job.ref.ref(vm);
+
+            vm.enqueueTask(JSC.Task.init(&job.task));
         }
 
-        pub fn clear(this: *Timeout, global: *JSGlobalObject) void {
+        pub fn deinit(this: *Timeout) void {
             if (comptime JSC.is_bindgen)
                 unreachable;
 
-            this.cancelled = true;
-            JSC.C.JSValueUnprotect(global.ref(), this.callback.asObjectRef());
-            _ = VirtualMachine.vm.timer.timeouts.swapRemove(this.id);
-            if (this.io_task) |task| {
-                task.deinit();
-            }
-            VirtualMachine.vm.allocator.destroy(this);
+            var vm = this.globalThis.bunVM();
+            this.poll_ref.unref(vm);
+            this.timer.deinit();
+            this.callback.deinit();
         }
     };
 
@@ -2245,14 +2363,67 @@ pub const Timer = struct {
         repeat: bool,
     ) !void {
         if (comptime is_bindgen) unreachable;
-        var timeout = try VirtualMachine.vm.allocator.create(Timeout);
-        js.JSValueProtect(globalThis.ref(), callback.asObjectRef());
-        timeout.* = Timeout{ .id = id, .callback = callback, .interval = countdown.toInt32(), .repeat = repeat };
-        var task = try Timeout.TimeoutTask.createOnJSThread(VirtualMachine.vm.allocator, globalThis, timeout);
-        VirtualMachine.vm.timer.timeouts.put(VirtualMachine.vm.allocator, id, timeout) catch unreachable;
-        VirtualMachine.vm.timer.active +|= 1;
-        VirtualMachine.vm.active_tasks +|= 1;
-        task.schedule();
+        var vm = globalThis.bunVM();
+
+        // We don't deal with nesting levels directly
+        // but we do set the minimum timeout to be 1ms for repeating timers
+        const interval: i32 = @maximum(
+            countdown.toInt32(),
+            if (repeat) @as(i32, 1) else 0,
+        );
+
+        var map = if (repeat)
+            &vm.timer.interval_map
+        else
+            &vm.timer.timeout_map;
+
+        // setImmediate(foo)
+        // setTimeout(foo, 0)
+        if (interval == 0) {
+            var cb: CallbackJob = .{
+                .callback = JSC.Strong.create(callback, globalThis),
+                .globalThis = globalThis,
+                .id = id,
+                .repeat = false,
+            };
+
+            var job = vm.allocator.create(CallbackJob) catch @panic(
+                "Out of memory while allocating Timeout",
+            );
+
+            job.* = cb;
+            job.task = CallbackJob.Task.init(job);
+            job.ref.ref(vm);
+
+            vm.enqueueTask(JSC.Task.init(&job.task));
+            map.put(vm.allocator, id, null) catch unreachable;
+            return;
+        }
+
+        var timeout = Timeout{
+            .callback = JSC.Strong.create(callback, globalThis),
+            .globalThis = globalThis,
+            .timer = uws.Timer.create(
+                vm.uws_event_loop.?,
+                Timeout.ID{
+                    .id = id,
+                    .repeat = @as(u32, @boolToInt(repeat)),
+                },
+            ),
+        };
+
+        timeout.poll_ref.ref(vm);
+        map.put(vm.allocator, id, timeout) catch unreachable;
+
+        timeout.timer.set(
+            Timeout.ID{
+                .id = id,
+                .repeat = if (repeat) 1 else 0,
+            },
+            Timeout.run,
+            interval,
+            @as(i32, @boolToInt(repeat)) * interval,
+        );
     }
 
     pub fn setTimeout(
@@ -2261,8 +2432,8 @@ pub const Timer = struct {
         countdown: JSValue,
     ) callconv(.C) JSValue {
         if (comptime is_bindgen) unreachable;
-        const id = VirtualMachine.vm.timer.last_id;
-        VirtualMachine.vm.timer.last_id +%= 1;
+        const id = globalThis.bunVM().timer.last_id;
+        globalThis.bunVM().timer.last_id +%= 1;
 
         Timer.set(id, globalThis, callback, countdown, false) catch
             return JSValue.jsUndefined();
@@ -2275,8 +2446,8 @@ pub const Timer = struct {
         countdown: JSValue,
     ) callconv(.C) JSValue {
         if (comptime is_bindgen) unreachable;
-        const id = VirtualMachine.vm.timer.last_id;
-        VirtualMachine.vm.timer.last_id +%= 1;
+        const id = globalThis.bunVM().timer.last_id;
+        globalThis.bunVM().timer.last_id +%= 1;
 
         Timer.set(id, globalThis, callback, countdown, true) catch
             return JSValue.jsUndefined();
@@ -2284,13 +2455,22 @@ pub const Timer = struct {
         return JSValue.jsNumberWithType(i32, id);
     }
 
-    pub fn clearTimer(id: JSValue, _: *JSGlobalObject) void {
+    pub fn clearTimer(timer_id: JSValue, _: *JSGlobalObject, repeats: bool) void {
         if (comptime is_bindgen) unreachable;
-        var timer: *Timeout = VirtualMachine.vm.timer.timeouts.get(id.toInt32()) orelse return;
-        timer.cancelled = true;
-        VirtualMachine.vm.timer.active -|= 1;
-        // here we also remove the active task count added in event_loop.
-        VirtualMachine.vm.active_tasks -|= 2;
+
+        var map = if (repeats) &VirtualMachine.vm.timer.interval_map else &VirtualMachine.vm.timer.timeout_map;
+        const id: Timeout.ID = .{
+            .id = timer_id.toInt32(),
+            .repeat = @as(u32, @boolToInt(repeats)),
+        };
+        var timer = map.fetchSwapRemove(id.id) orelse return;
+        if (timer.value == null) {
+            // this timer was scheduled to run but was cancelled before it was run
+            // so long as the callback isn't already in progress, fetchSwapRemove will handle invalidating it
+            return;
+        }
+
+        timer.value.?.deinit();
     }
 
     pub fn clearTimeout(
@@ -2298,7 +2478,7 @@ pub const Timer = struct {
         id: JSValue,
     ) callconv(.C) JSValue {
         if (comptime is_bindgen) unreachable;
-        Timer.clearTimer(id, globalThis);
+        Timer.clearTimer(id, globalThis, false);
         return JSValue.jsUndefined();
     }
     pub fn clearInterval(
@@ -2306,7 +2486,7 @@ pub const Timer = struct {
         id: JSValue,
     ) callconv(.C) JSValue {
         if (comptime is_bindgen) unreachable;
-        Timer.clearTimer(id, globalThis);
+        Timer.clearTimer(id, globalThis, true);
         return JSValue.jsUndefined();
     }
 
@@ -2354,6 +2534,7 @@ pub const FFI = struct {
                 .rfn = JSC.wrapWithHasContainer(JSC.FFI, "linkSymbols", false, false, false),
             },
             .ptr = JSC.DOMCall("FFI", @This(), "ptr", f64, JSC.DOMEffect.forRead(.TypedArrayProperties)),
+
             .toBuffer = .{
                 .rfn = JSC.wrapWithHasContainer(@This(), "toBuffer", false, false, true),
             },
@@ -2362,11 +2543,296 @@ pub const FFI = struct {
             },
         },
         .{
+            .read = .{
+                .get = FFI.Reader.getter,
+            },
             .CString = .{
                 .get = UnsafeCString.getter,
             },
         },
     );
+
+    pub const Reader = struct {
+        pub const Class = NewClass(
+            void,
+            .{ .name = "FFI", .has_dom_calls = true },
+            .{
+                .@"u8" = JSC.DOMCall("Reader", @This(), "u8", i32, JSC.DOMEffect.forRead(.World)),
+                .@"u16" = JSC.DOMCall("Reader", @This(), "u16", i32, JSC.DOMEffect.forRead(.World)),
+                .@"u32" = JSC.DOMCall("Reader", @This(), "u32", i32, JSC.DOMEffect.forRead(.World)),
+                .@"ptr" = JSC.DOMCall("Reader", @This(), "ptr", i52, JSC.DOMEffect.forRead(.World)),
+                .@"i8" = JSC.DOMCall("Reader", @This(), "i8", i32, JSC.DOMEffect.forRead(.World)),
+                .@"i16" = JSC.DOMCall("Reader", @This(), "i16", i32, JSC.DOMEffect.forRead(.World)),
+                .@"i32" = JSC.DOMCall("Reader", @This(), "i32", i32, JSC.DOMEffect.forRead(.World)),
+                .@"i64" = JSC.DOMCall("Reader", @This(), "i64", i64, JSC.DOMEffect.forRead(.World)),
+                .@"u64" = JSC.DOMCall("Reader", @This(), "u64", u64, JSC.DOMEffect.forRead(.World)),
+                .@"intptr" = JSC.DOMCall("Reader", @This(), "intptr", i52, JSC.DOMEffect.forRead(.World)),
+                .@"f32" = JSC.DOMCall("Reader", @This(), "f32", f64, JSC.DOMEffect.forRead(.World)),
+                .@"f64" = JSC.DOMCall("Reader", @This(), "f64", f64, JSC.DOMEffect.forRead(.World)),
+            },
+            .{},
+        );
+
+        pub fn @"u8"(
+            _: *JSGlobalObject,
+            _: JSValue,
+            arguments: []const JSValue,
+        ) JSValue {
+            const addr = arguments[0].asPtrAddress() + if (arguments.len > 1) @intCast(usize, arguments[1].to(i32)) else @as(usize, 0);
+            const value = @intToPtr(*align(1) u8, addr).*;
+            return JSValue.jsNumber(value);
+        }
+        pub fn @"u16"(
+            _: *JSGlobalObject,
+            _: JSValue,
+            arguments: []const JSValue,
+        ) JSValue {
+            const addr = arguments[0].asPtrAddress() + if (arguments.len > 1) @intCast(usize, arguments[1].to(i32)) else @as(usize, 0);
+            const value = @intToPtr(*align(1) u16, addr).*;
+            return JSValue.jsNumber(value);
+        }
+        pub fn @"u32"(
+            _: *JSGlobalObject,
+            _: JSValue,
+            arguments: []const JSValue,
+        ) JSValue {
+            const addr = arguments[0].asPtrAddress() + if (arguments.len > 1) @intCast(usize, arguments[1].to(i32)) else @as(usize, 0);
+            const value = @intToPtr(*align(1) u32, addr).*;
+            return JSValue.jsNumber(value);
+        }
+        pub fn @"ptr"(
+            _: *JSGlobalObject,
+            _: JSValue,
+            arguments: []const JSValue,
+        ) JSValue {
+            const addr = arguments[0].asPtrAddress() + if (arguments.len > 1) @intCast(usize, arguments[1].to(i32)) else @as(usize, 0);
+            const value = @intToPtr(*align(1) u64, addr).*;
+            return JSValue.jsNumber(value);
+        }
+        pub fn @"i8"(
+            _: *JSGlobalObject,
+            _: JSValue,
+            arguments: []const JSValue,
+        ) JSValue {
+            const addr = arguments[0].asPtrAddress() + if (arguments.len > 1) @intCast(usize, arguments[1].to(i32)) else @as(usize, 0);
+            const value = @intToPtr(*align(1) i8, addr).*;
+            return JSValue.jsNumber(value);
+        }
+        pub fn @"i16"(
+            _: *JSGlobalObject,
+            _: JSValue,
+            arguments: []const JSValue,
+        ) JSValue {
+            const addr = arguments[0].asPtrAddress() + if (arguments.len > 1) @intCast(usize, arguments[1].to(i32)) else @as(usize, 0);
+            const value = @intToPtr(*align(1) i16, addr).*;
+            return JSValue.jsNumber(value);
+        }
+        pub fn @"i32"(
+            _: *JSGlobalObject,
+            _: JSValue,
+            arguments: []const JSValue,
+        ) JSValue {
+            const addr = arguments[0].asPtrAddress() + if (arguments.len > 1) @intCast(usize, arguments[1].to(i32)) else @as(usize, 0);
+            const value = @intToPtr(*align(1) i32, addr).*;
+            return JSValue.jsNumber(value);
+        }
+        pub fn @"intptr"(
+            _: *JSGlobalObject,
+            _: JSValue,
+            arguments: []const JSValue,
+        ) JSValue {
+            const addr = arguments[0].asPtrAddress() + if (arguments.len > 1) @intCast(usize, arguments[1].to(i32)) else @as(usize, 0);
+            const value = @intToPtr(*align(1) i64, addr).*;
+            return JSValue.jsNumber(value);
+        }
+
+        pub fn @"f32"(
+            _: *JSGlobalObject,
+            _: JSValue,
+            arguments: []const JSValue,
+        ) JSValue {
+            const addr = arguments[0].asPtrAddress() + if (arguments.len > 1) @intCast(usize, arguments[1].to(i32)) else @as(usize, 0);
+            const value = @intToPtr(*align(1) f32, addr).*;
+            return JSValue.jsNumber(value);
+        }
+
+        pub fn @"f64"(
+            _: *JSGlobalObject,
+            _: JSValue,
+            arguments: []const JSValue,
+        ) JSValue {
+            const addr = arguments[0].asPtrAddress() + if (arguments.len > 1) @intCast(usize, arguments[1].to(i32)) else @as(usize, 0);
+            const value = @intToPtr(*align(1) f64, addr).*;
+            return JSValue.jsNumber(value);
+        }
+
+        pub fn @"i64"(
+            global: *JSGlobalObject,
+            _: JSValue,
+            arguments: []const JSValue,
+        ) JSValue {
+            const addr = arguments[0].asPtrAddress() + if (arguments.len > 1) @intCast(usize, arguments[1].to(i32)) else @as(usize, 0);
+            const value = @intToPtr(*align(1) i64, addr).*;
+            return JSValue.fromInt64NoTruncate(global, value);
+        }
+
+        pub fn @"u64"(
+            global: *JSGlobalObject,
+            _: JSValue,
+            arguments: []const JSValue,
+        ) JSValue {
+            const addr = arguments[0].asPtrAddress() + if (arguments.len > 1) @intCast(usize, arguments[1].to(i32)) else @as(usize, 0);
+            const value = @intToPtr(*align(1) u64, addr).*;
+            return JSValue.fromUInt64NoTruncate(global, value);
+        }
+
+        pub fn @"u8WithoutTypeChecks"(
+            _: *JSGlobalObject,
+            _: *anyopaque,
+            raw_addr: i64,
+            offset: i32,
+        ) callconv(.C) JSValue {
+            const addr = @intCast(usize, raw_addr) + @intCast(usize, offset);
+            const value = @intToPtr(*align(1) u8, addr).*;
+            return JSValue.jsNumber(value);
+        }
+        pub fn @"u16WithoutTypeChecks"(
+            _: *JSGlobalObject,
+            _: *anyopaque,
+            raw_addr: i64,
+            offset: i32,
+        ) callconv(.C) JSValue {
+            const addr = @intCast(usize, raw_addr) + @intCast(usize, offset);
+            const value = @intToPtr(*align(1) u16, addr).*;
+            return JSValue.jsNumber(value);
+        }
+        pub fn @"u32WithoutTypeChecks"(
+            _: *JSGlobalObject,
+            _: *anyopaque,
+            raw_addr: i64,
+            offset: i32,
+        ) callconv(.C) JSValue {
+            const addr = @intCast(usize, raw_addr) + @intCast(usize, offset);
+            const value = @intToPtr(*align(1) u32, addr).*;
+            return JSValue.jsNumber(value);
+        }
+        pub fn @"ptrWithoutTypeChecks"(
+            _: *JSGlobalObject,
+            _: *anyopaque,
+            raw_addr: i64,
+            offset: i32,
+        ) callconv(.C) JSValue {
+            const addr = @intCast(usize, raw_addr) + @intCast(usize, offset);
+            const value = @intToPtr(*align(1) u64, addr).*;
+            return JSValue.jsNumber(value);
+        }
+        pub fn @"i8WithoutTypeChecks"(
+            _: *JSGlobalObject,
+            _: *anyopaque,
+            raw_addr: i64,
+            offset: i32,
+        ) callconv(.C) JSValue {
+            const addr = @intCast(usize, raw_addr) + @intCast(usize, offset);
+            const value = @intToPtr(*align(1) i8, addr).*;
+            return JSValue.jsNumber(value);
+        }
+        pub fn @"i16WithoutTypeChecks"(
+            _: *JSGlobalObject,
+            _: *anyopaque,
+            raw_addr: i64,
+            offset: i32,
+        ) callconv(.C) JSValue {
+            const addr = @intCast(usize, raw_addr) + @intCast(usize, offset);
+            const value = @intToPtr(*align(1) i16, addr).*;
+            return JSValue.jsNumber(value);
+        }
+        pub fn @"i32WithoutTypeChecks"(
+            _: *JSGlobalObject,
+            _: *anyopaque,
+            raw_addr: i64,
+            offset: i32,
+        ) callconv(.C) JSValue {
+            const addr = @intCast(usize, raw_addr) + @intCast(usize, offset);
+            const value = @intToPtr(*align(1) i32, addr).*;
+            return JSValue.jsNumber(value);
+        }
+        pub fn @"intptrWithoutTypeChecks"(
+            _: *JSGlobalObject,
+            _: *anyopaque,
+            raw_addr: i64,
+            offset: i32,
+        ) callconv(.C) JSValue {
+            const addr = @intCast(usize, raw_addr) + @intCast(usize, offset);
+            const value = @intToPtr(*align(1) i64, addr).*;
+            return JSValue.jsNumber(value);
+        }
+
+        pub fn @"f32WithoutTypeChecks"(
+            _: *JSGlobalObject,
+            _: *anyopaque,
+            raw_addr: i64,
+            offset: i32,
+        ) callconv(.C) JSValue {
+            const addr = @intCast(usize, raw_addr) + @intCast(usize, offset);
+            const value = @intToPtr(*align(1) f32, addr).*;
+            return JSValue.jsNumber(value);
+        }
+
+        pub fn @"f64WithoutTypeChecks"(
+            _: *JSGlobalObject,
+            _: *anyopaque,
+            raw_addr: i64,
+            offset: i32,
+        ) callconv(.C) JSValue {
+            const addr = @intCast(usize, raw_addr) + @intCast(usize, offset);
+            const value = @intToPtr(*align(1) f64, addr).*;
+            return JSValue.jsNumber(value);
+        }
+
+        pub fn @"u64WithoutTypeChecks"(
+            global: *JSGlobalObject,
+            _: *anyopaque,
+            raw_addr: i64,
+            offset: i32,
+        ) callconv(.C) JSValue {
+            const addr = @intCast(usize, raw_addr) + @intCast(usize, offset);
+            const value = @intToPtr(*align(1) u64, addr).*;
+            return JSValue.fromUInt64NoTruncate(global, value);
+        }
+
+        pub fn @"i64WithoutTypeChecks"(
+            global: *JSGlobalObject,
+            _: *anyopaque,
+            raw_addr: i64,
+            offset: i32,
+        ) callconv(.C) JSValue {
+            const addr = @intCast(usize, raw_addr) + @intCast(usize, offset);
+            const value = @intToPtr(*align(1) i64, addr).*;
+            return JSValue.fromInt64NoTruncate(global, value);
+        }
+
+        pub fn getter(
+            _: void,
+            ctx: js.JSContextRef,
+            _: js.JSValueRef,
+            _: js.JSStringRef,
+            _: js.ExceptionRef,
+        ) js.JSValueRef {
+            var existing = ctx.ptr().getCachedObject(ZigString.static("FFIReader"));
+            if (existing.isEmpty()) {
+                var prototype = JSC.C.JSObjectMake(ctx, FFI.Reader.Class.get().?[0], null);
+                var base = JSC.C.JSObjectMake(ctx, null, null);
+                JSC.C.JSObjectSetPrototype(ctx, base, prototype);
+                FFI.Reader.Class.putDOMCalls(ctx, JSC.JSValue.c(base));
+                return ctx.ptr().putCachedObject(
+                    ZigString.static("FFIReader"),
+                    JSValue.fromRef(base),
+                ).asObjectRef();
+            }
+
+            return existing.asObjectRef();
+        }
+    };
 
     pub fn ptr(
         globalThis: *JSGlobalObject,
@@ -2398,11 +2864,11 @@ pub const FFI = struct {
         }
 
         const array_buffer = value.asArrayBuffer(globalThis) orelse {
-            return JSC.toInvalidArguments("Expected ArrayBufferView but received {s}", .{@tagName(value.jsType())}, globalThis.ref());
+            return JSC.toInvalidArguments("Expected ArrayBufferView but received {s}", .{@tagName(value.jsType())}, globalThis);
         };
 
         if (array_buffer.len == 0) {
-            return JSC.toInvalidArguments("ArrayBufferView must have a length > 0. A pointer to empty memory doesn't work", .{}, globalThis.ref());
+            return JSC.toInvalidArguments("ArrayBufferView must have a length > 0. A pointer to empty memory doesn't work", .{}, globalThis);
         }
 
         var addr: usize = @ptrToInt(array_buffer.ptr);
@@ -2412,7 +2878,7 @@ pub const FFI = struct {
         if (byteOffset) |off| {
             if (!off.isEmptyOrUndefinedOrNull()) {
                 if (!off.isNumber()) {
-                    return JSC.toInvalidArguments("Expected number for byteOffset", .{}, globalThis.ref());
+                    return JSC.toInvalidArguments("Expected number for byteOffset", .{}, globalThis);
                 }
             }
 
@@ -2424,20 +2890,24 @@ pub const FFI = struct {
             }
 
             if (addr > @ptrToInt(array_buffer.ptr) + @as(usize, array_buffer.byte_len)) {
-                return JSC.toInvalidArguments("byteOffset out of bounds", .{}, globalThis.ref());
+                return JSC.toInvalidArguments("byteOffset out of bounds", .{}, globalThis);
             }
         }
 
         if (addr > max_addressible_memory) {
-            return JSC.toInvalidArguments("Pointer is outside max addressible memory, which usually means a bug in your program.", .{}, globalThis.ref());
+            return JSC.toInvalidArguments("Pointer is outside max addressible memory, which usually means a bug in your program.", .{}, globalThis);
         }
 
         if (addr == 0) {
-            return JSC.toInvalidArguments("Pointer must not be 0", .{}, globalThis.ref());
+            return JSC.toInvalidArguments("Pointer must not be 0", .{}, globalThis);
         }
 
         if (addr == 0xDEADBEEF or addr == 0xaaaaaaaa or addr == 0xAAAAAAAA) {
-            return JSC.toInvalidArguments("ptr to invalid memory, that would segfault Bun :(", .{}, globalThis.ref());
+            return JSC.toInvalidArguments("ptr to invalid memory, that would segfault Bun :(", .{}, globalThis);
+        }
+
+        if (comptime Environment.allow_assert) {
+            std.debug.assert(JSC.JSValue.fromPtrAddress(addr).asPtrAddress() == addr);
         }
 
         return JSC.JSValue.fromPtrAddress(addr);
@@ -2450,17 +2920,17 @@ pub const FFI = struct {
 
     pub fn getPtrSlice(globalThis: *JSGlobalObject, value: JSValue, byteOffset: ?JSValue, byteLength: ?JSValue) ValueOrError {
         if (!value.isNumber()) {
-            return .{ .err = JSC.toInvalidArguments("ptr must be a number.", .{}, globalThis.ref()) };
+            return .{ .err = JSC.toInvalidArguments("ptr must be a number.", .{}, globalThis) };
         }
 
-        const num = value.asNumber();
+        const num = value.asPtrAddress();
         if (num == 0) {
-            return .{ .err = JSC.toInvalidArguments("ptr cannot be zero, that would segfault Bun :(", .{}, globalThis.ref()) };
+            return .{ .err = JSC.toInvalidArguments("ptr cannot be zero, that would segfault Bun :(", .{}, globalThis) };
         }
 
-        if (!std.math.isFinite(num)) {
-            return .{ .err = JSC.toInvalidArguments("ptr must be a finite number.", .{}, globalThis.ref()) };
-        }
+        // if (!std.math.isFinite(num)) {
+        //     return .{ .err = JSC.toInvalidArguments("ptr must be a finite number.", .{}, globalThis) };
+        // }
 
         var addr = @bitCast(usize, num);
 
@@ -2474,40 +2944,40 @@ pub const FFI = struct {
                 }
 
                 if (addr == 0) {
-                    return .{ .err = JSC.toInvalidArguments("ptr cannot be zero, that would segfault Bun :(", .{}, globalThis.ref()) };
+                    return .{ .err = JSC.toInvalidArguments("ptr cannot be zero, that would segfault Bun :(", .{}, globalThis) };
                 }
 
                 if (!std.math.isFinite(byte_off.asNumber())) {
-                    return .{ .err = JSC.toInvalidArguments("ptr must be a finite number.", .{}, globalThis.ref()) };
+                    return .{ .err = JSC.toInvalidArguments("ptr must be a finite number.", .{}, globalThis) };
                 }
             } else if (!byte_off.isEmptyOrUndefinedOrNull()) {
                 // do nothing
             } else {
-                return .{ .err = JSC.toInvalidArguments("Expected number for byteOffset", .{}, globalThis.ref()) };
+                return .{ .err = JSC.toInvalidArguments("Expected number for byteOffset", .{}, globalThis) };
             }
         }
 
         if (addr == 0xDEADBEEF or addr == 0xaaaaaaaa or addr == 0xAAAAAAAA) {
-            return .{ .err = JSC.toInvalidArguments("ptr to invalid memory, that would segfault Bun :(", .{}, globalThis.ref()) };
+            return .{ .err = JSC.toInvalidArguments("ptr to invalid memory, that would segfault Bun :(", .{}, globalThis) };
         }
 
         if (byteLength) |valueLength| {
             if (!valueLength.isEmptyOrUndefinedOrNull()) {
                 if (!valueLength.isNumber()) {
-                    return .{ .err = JSC.toInvalidArguments("length must be a number.", .{}, globalThis.ref()) };
+                    return .{ .err = JSC.toInvalidArguments("length must be a number.", .{}, globalThis) };
                 }
 
                 if (valueLength.asNumber() == 0.0) {
-                    return .{ .err = JSC.toInvalidArguments("length must be > 0. This usually means a bug in your code.", .{}, globalThis.ref()) };
+                    return .{ .err = JSC.toInvalidArguments("length must be > 0. This usually means a bug in your code.", .{}, globalThis) };
                 }
 
                 const length_i = valueLength.toInt64();
                 if (length_i < 0) {
-                    return .{ .err = JSC.toInvalidArguments("length must be > 0. This usually means a bug in your code.", .{}, globalThis.ref()) };
+                    return .{ .err = JSC.toInvalidArguments("length must be > 0. This usually means a bug in your code.", .{}, globalThis) };
                 }
 
                 if (length_i > max_addressible_memory) {
-                    return .{ .err = JSC.toInvalidArguments("length exceeds max addressable memory. This usually means a bug in your code.", .{}, globalThis.ref()) };
+                    return .{ .err = JSC.toInvalidArguments("length exceeds max addressable memory. This usually means a bug in your code.", .{}, globalThis) };
                 }
 
                 const length = @intCast(usize, length_i);
@@ -2521,11 +2991,8 @@ pub const FFI = struct {
     fn getCPtr(value: JSValue) ?usize {
         // pointer to C function
         if (value.isNumber()) {
-            const addr = @bitCast(u64, value.asNumber());
-            if (addr > 0) {
-                return addr;
-            }
-            // pointer to C function as a BigInt
+            const addr = value.asPtrAddress();
+            if (addr > 0) return addr;
         } else if (value.isBigInt()) {
             const addr = @bitCast(u64, value.toUInt64NoTruncate());
             if (addr > 0) {
@@ -2573,7 +3040,7 @@ pub const FFI = struct {
                     }
                 }
 
-                return JSC.ArrayBuffer.fromBytes(slice, JSC.JSValue.JSType.ArrayBuffer).toJSWithContext(globalThis.ref(), ctx, callback, null);
+                return JSC.ArrayBuffer.fromBytes(slice, JSC.JSValue.JSType.ArrayBuffer).toJSWithContext(globalThis, ctx, callback, null);
             },
         }
     }
@@ -2647,14 +3114,14 @@ pub const FFI = struct {
         _: js.JSStringRef,
         _: js.ExceptionRef,
     ) js.JSValueRef {
-        var existing = ctx.ptr().getCachedObject(&ZigString.init("FFI"));
+        var existing = ctx.ptr().getCachedObject(ZigString.static("FFI"));
         if (existing.isEmpty()) {
             var prototype = JSC.C.JSObjectMake(ctx, FFI.Class.get().?[0], null);
             var base = JSC.C.JSObjectMake(ctx, null, null);
             JSC.C.JSObjectSetPrototype(ctx, base, prototype);
             FFI.Class.putDOMCalls(ctx, JSC.JSValue.c(base));
             return ctx.ptr().putCachedObject(
-                &ZigString.init("FFI"),
+                ZigString.static("FFI"),
                 JSValue.fromRef(base),
             ).asObjectRef();
         }
@@ -2697,10 +3164,10 @@ pub const UnsafeCString = struct {
         _: js.JSStringRef,
         _: js.ExceptionRef,
     ) js.JSValueRef {
-        var existing = ctx.ptr().getCachedObject(&ZigString.init("UnsafeCString"));
+        var existing = ctx.ptr().getCachedObject(ZigString.static("UnsafeCString"));
         if (existing.isEmpty()) {
             return ctx.ptr().putCachedObject(
-                &ZigString.init("UnsafeCString"),
+                ZigString.static("UnsafeCString"),
                 JSValue.fromRef(JSC.C.JSObjectMakeConstructor(ctx, null, constructor)),
             ).asObjectRef();
         }
@@ -2751,10 +3218,10 @@ pub const EnvironmentVariables = struct {
         _: js.JSStringRef,
         _: js.ExceptionRef,
     ) js.JSValueRef {
-        var existing = ctx.ptr().getCachedObject(&ZigString.init("Bun.env"));
+        var existing = ctx.ptr().getCachedObject(ZigString.static("Bun.env"));
         if (existing.isEmpty()) {
             return ctx.ptr().putCachedObject(
-                &ZigString.init("Bun.env"),
+                ZigString.static("Bun.env"),
                 JSValue.fromRef(js.JSObjectMake(ctx, EnvironmentVariables.Class.get().*, null)),
             ).asObjectRef();
         }
@@ -2962,10 +3429,10 @@ pub const JSZlib = struct {
         var list = std.ArrayListUnmanaged(u8).initCapacity(allocator, if (compressed.len > 512) compressed.len else 32) catch unreachable;
         var reader = zlib.ZlibCompressorArrayList.init(compressed, &list, allocator, opts) catch |err| {
             if (err == error.InvalidArgument) {
-                return JSC.toInvalidArguments("Invalid buffer", .{}, globalThis.ref());
+                return JSC.toInvalidArguments("Invalid buffer", .{}, globalThis);
             }
 
-            return JSC.toInvalidArguments("Unexpected", .{}, globalThis.ref());
+            return JSC.toInvalidArguments("Unexpected", .{}, globalThis);
         };
 
         reader.readAll() catch {
@@ -2980,7 +3447,7 @@ pub const JSZlib = struct {
         reader.list_ptr = &reader.list;
 
         var array_buffer = JSC.ArrayBuffer.fromBytes(reader.list.items, .Uint8Array);
-        return array_buffer.toJSWithContext(globalThis.ref(), reader, reader_deallocator, null);
+        return array_buffer.toJSWithContext(globalThis, reader, reader_deallocator, null);
     }
 
     pub fn inflateSync(
@@ -2994,10 +3461,10 @@ pub const JSZlib = struct {
             .windowBits = -15,
         }) catch |err| {
             if (err == error.InvalidArgument) {
-                return JSC.toInvalidArguments("Invalid buffer", .{}, globalThis.ref());
+                return JSC.toInvalidArguments("Invalid buffer", .{}, globalThis);
             }
 
-            return JSC.toInvalidArguments("Unexpected", .{}, globalThis.ref());
+            return JSC.toInvalidArguments("Unexpected", .{}, globalThis);
         };
 
         reader.readAll() catch {
@@ -3012,7 +3479,7 @@ pub const JSZlib = struct {
         reader.list_ptr = &reader.list;
 
         var array_buffer = JSC.ArrayBuffer.fromBytes(reader.list.items, .Uint8Array);
-        return array_buffer.toJSWithContext(globalThis.ref(), reader, reader_deallocator, null);
+        return array_buffer.toJSWithContext(globalThis, reader, reader_deallocator, null);
     }
 
     pub fn gunzipSync(
@@ -3024,10 +3491,10 @@ pub const JSZlib = struct {
         var list = std.ArrayListUnmanaged(u8).initCapacity(allocator, if (compressed.len > 512) compressed.len else 32) catch unreachable;
         var reader = zlib.ZlibReaderArrayList.init(compressed, &list, allocator) catch |err| {
             if (err == error.InvalidArgument) {
-                return JSC.toInvalidArguments("Invalid buffer", .{}, globalThis.ref());
+                return JSC.toInvalidArguments("Invalid buffer", .{}, globalThis);
             }
 
-            return JSC.toInvalidArguments("Unexpected", .{}, globalThis.ref());
+            return JSC.toInvalidArguments("Unexpected", .{}, globalThis);
         };
 
         reader.readAll() catch {
@@ -3042,6 +3509,8 @@ pub const JSZlib = struct {
         reader.list_ptr = &reader.list;
 
         var array_buffer = JSC.ArrayBuffer.fromBytes(reader.list.items, .Uint8Array);
-        return array_buffer.toJSWithContext(globalThis.ref(), reader, reader_deallocator, null);
+        return array_buffer.toJSWithContext(globalThis, reader, reader_deallocator, null);
     }
 };
+
+pub usingnamespace @import("./bun/subprocess.zig");

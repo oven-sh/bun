@@ -56,6 +56,7 @@ var tagSymbol = Symbol.for("CommonJSTransformed");
 var cjsRequireSymbol = Symbol.for("CommonJS");
 export var __commonJS = (cb, name) => {
   var mod;
+  var origExports;
   var has_run = false;
 
   const requireFunction = function load() {
@@ -66,27 +67,46 @@ export var __commonJS = (cb, name) => {
     has_run = true;
     cb(((mod = { exports: {} }), mod), mod.exports);
 
-    const kind = typeof mod.exports;
+    var mod_exports = (origExports = mod.exports);
 
-    if (
-      (kind === "object" || kind === "function") &&
-      !mod.exports[tagSymbol] &&
-      Object.isExtensible(mod.exports)
-    ) {
-      Object.defineProperty(mod.exports, tagSymbol, {
+    const kind = typeof mod_exports;
+
+    if ((kind === "object" || kind === "function") && !mod_exports[tagSymbol]) {
+      const extensible = Object.isExtensible(mod_exports);
+      if (!extensible) {
+        // slow path: it's a function we need to wrap
+        // example: webpack
+        if (kind === "function") {
+          mod_exports = function () {
+            return origExports.apply(this, arguments);
+          };
+          Object.setPrototypeOf(mod_exports, __getProtoOf(origExports));
+          Object.defineProperties(
+            mod_exports,
+            Object.getOwnPropertyDescriptors(origExports)
+          );
+        } else {
+          mod_exports = __create(
+            __getProtoOf(mod_exports),
+            Object.getOwnPropertyDescriptors(mod_exports)
+          );
+        }
+      }
+
+      Object.defineProperty(mod_exports, tagSymbol, {
         value: true,
         enumerable: false,
         configurable: false,
       });
 
-      if (!("default" in mod.exports)) {
-        Object.defineProperty(mod.exports, "default", {
+      if (!("default" in mod_exports)) {
+        Object.defineProperty(mod_exports, "default", {
           get() {
-            return mod.exports;
+            return origExports;
           },
           set(v) {
             if (v === mod.exports) return;
-            mod.exports = v;
+            origExports = v;
             return true;
           },
           // enumerable: false is important here
@@ -94,12 +114,21 @@ export var __commonJS = (cb, name) => {
           configurable: true,
         });
       }
+
+      if (!extensible) {
+        // can only be frozen if it's not extensible
+        if (Object.isFrozen(origExports)) {
+          Object.freeze(mod_exports);
+        } else {
+          Object.preventExtensions(mod_exports);
+        }
+      }
     }
 
-    return mod.exports;
+    return mod_exports;
   };
 
-  requireFunction[cjsRequireSymbol] = true;
+  requireFunction[cjsRequireSymbol] = 1;
   return requireFunction;
 };
 

@@ -324,6 +324,43 @@ pub fn copyLowercase(in: string, out: []u8) string {
     return out[0..in.len];
 }
 
+pub fn copyLowercaseIfNeeded(in: string, out: []u8) string {
+    var in_slice: string = in;
+    var out_slice: []u8 = out[0..in.len];
+    var any = false;
+
+    begin: while (out_slice.len > 0) {
+        for (in_slice) |c, i| {
+            switch (c) {
+                'A'...'Z' => {
+                    @memcpy(out_slice.ptr, in_slice.ptr, i);
+                    out_slice[i] = std.ascii.toLower(c);
+                    const end = i + 1;
+                    if (end >= out_slice.len) break :begin;
+                    in_slice = in_slice[end..];
+                    out_slice = out_slice[end..];
+                    any = true;
+                    continue :begin;
+                },
+                else => {},
+            }
+        }
+
+        if (!any) {
+            return in;
+        }
+
+        @memcpy(out_slice.ptr, in_slice.ptr, in_slice.len);
+        break :begin;
+    }
+
+    if (!any) {
+        return in;
+    }
+
+    return out[0..in.len];
+}
+
 test "indexOf" {
     const fixtures = .{
         .{
@@ -1402,7 +1439,7 @@ pub fn copyLatin1IntoUTF8StopOnNonASCII(buf_: []u8, comptime Type: type, latin1_
             }
 
             {
-                const end = latin1.ptr + latin1.len;
+                const end = latin1.ptr + @minimum(buf.len, latin1.len);
                 assert(@ptrToInt(latin1.ptr + 8) > @ptrToInt(end));
                 const start_ptr = @ptrToInt(buf.ptr);
                 const start_ptr_latin1 = @ptrToInt(latin1.ptr);

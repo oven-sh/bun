@@ -31,6 +31,7 @@ const which = @import("which.zig").which;
 const VirtualMachine = @import("javascript_core").VirtualMachine;
 const JSC = @import("javascript_core");
 const AsyncHTTP = @import("http").AsyncHTTP;
+const Arena = @import("./mimalloc_arena.zig").Arena;
 
 const OpaqueWrap = JSC.OpaqueWrap;
 
@@ -39,6 +40,7 @@ pub const Run = struct {
     ctx: Command.Context,
     vm: *VirtualMachine,
     entry_path: string,
+    arena: Arena = undefined,
 
     pub fn boot(ctx: Command.Context, file: std.fs.File, entry_path: string) !void {
         if (comptime JSC.is_bindgen) unreachable;
@@ -46,15 +48,17 @@ pub const Run = struct {
 
         js_ast.Expr.Data.Store.create(default_allocator);
         js_ast.Stmt.Data.Store.create(default_allocator);
+        var arena = try Arena.init();
 
         var run = Run{
-            .vm = try VirtualMachine.init(ctx.allocator, ctx.args, null, ctx.log, null),
+            .vm = try VirtualMachine.init(arena.allocator(), ctx.args, null, ctx.log, null),
             .file = file,
+            .arena = arena,
             .ctx = ctx,
             .entry_path = entry_path,
         };
-
-        run.vm.argv = ctx.positionals;
+        run.vm.argv = ctx.passthrough;
+        run.vm.arena = &run.arena;
 
         if (ctx.debug.macros) |macros| {
             run.vm.bundler.options.macro_remap = macros;
@@ -111,6 +115,9 @@ pub const Run = struct {
     }
 
     pub fn start(this: *Run) void {
+        if (this.ctx.debug.hot_reload) {
+            JSC.HotReloader.enableHotModuleReloading(this.vm);
+        }
         var promise = this.vm.loadEntryPoint(this.entry_path) catch return;
 
         if (promise.status(this.vm.global.vm()) == .Rejected) {
@@ -130,31 +137,31 @@ pub const Run = struct {
             Output.flush();
         }
 
-        this.vm.global.vm().releaseWeakRefs();
-        _ = this.vm.global.vm().runGC(false);
-        this.vm.tick();
+        // don't run the GC if we don't actually need to
+        if (this.vm.eventLoop().tasks.count > 0 or this.vm.active_tasks > 0 or
+            this.vm.uws_event_loop.?.active > 0 or
+            this.vm.eventLoop().tickConcurrentWithCount() > 0)
+        {
+            this.vm.global.vm().releaseWeakRefs();
+            _ = this.vm.arena.gc(false);
+            _ = this.vm.global.vm().runGC(false);
+            this.vm.tick();
+        }
 
         {
-            var i: usize = 0;
-            while (this.vm.*.event_loop.pending_tasks_count.loadUnchecked() > 0 or this.vm.active_tasks > 0) {
+            while (this.vm.eventLoop().tasks.count > 0 or this.vm.active_tasks > 0 or this.vm.uws_event_loop.?.active > 0) {
                 this.vm.tick();
-                i +%= 1;
-
-                if (i > 0 and i % 100 == 0) {
-                    std.time.sleep(std.time.ns_per_ms);
-                }
+                this.vm.eventLoop().autoTick();
             }
 
-            if (i > 0) {
-                if (this.vm.log.msgs.items.len > 0) {
-                    if (Output.enable_ansi_colors) {
-                        this.vm.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), true) catch {};
-                    } else {
-                        this.vm.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), false) catch {};
-                    }
-                    Output.prettyErrorln("\n", .{});
-                    Output.flush();
+            if (this.vm.log.msgs.items.len > 0) {
+                if (Output.enable_ansi_colors) {
+                    this.vm.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), true) catch {};
+                } else {
+                    this.vm.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), false) catch {};
                 }
+                Output.prettyErrorln("\n", .{});
+                Output.flush();
             }
         }
 

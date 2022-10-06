@@ -199,6 +199,32 @@ it("Bun.write('output.html', '')", async () => {
   expect(await Bun.file("/tmp/output.html").text()).toBe("lalalala");
 });
 
+it("Bun.write(Bun.stdout, 'Bun.write STDOUT TEST')", async () => {
+  expect(await Bun.write(Bun.stdout, "\nBun.write STDOUT TEST\n\n")).toBe(24);
+});
+
+it("Bun.write(Bun.stderr, 'Bun.write STDERR TEST')", async () => {
+  expect(await Bun.write(Bun.stderr, "\nBun.write STDERR TEST\n\n")).toBe(24);
+});
+
+it("Bun.write(Bun.stdout, new TextEncoder().encode('Bun.write STDOUT TEST'))", async () => {
+  expect(
+    await Bun.write(
+      Bun.stdout,
+      new TextEncoder().encode("\nBun.write STDOUT TEST\n\n")
+    )
+  ).toBe(24);
+});
+
+it("Bun.write(Bun.stderr, 'new TextEncoder().encode(Bun.write STDERR TEST'))", async () => {
+  expect(
+    await Bun.write(
+      Bun.stderr,
+      new TextEncoder().encode("\nBun.write STDERR TEST\n\n")
+    )
+  ).toBe(24);
+});
+
 // Since Bun.file is resolved lazily, this needs to specifically be checked
 it("Bun.write('output.html', HTMLRewriter.transform(Bun.file)))", async () => {
   var rewriter = new HTMLRewriter();

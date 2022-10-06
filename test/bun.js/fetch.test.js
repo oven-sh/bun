@@ -8,7 +8,7 @@ describe("fetch", () => {
     gc();
     it(url, async () => {
       gc();
-      const response = await fetch(url);
+      const response = await fetch(url, {}, { verbose: true });
       gc();
       const text = await response.text();
       gc();
@@ -144,6 +144,8 @@ function testBlobInterface(blobbyConstructor, hasBlobFn) {
           if (withGC) gc();
           expect(blobed.size).toBe(size);
           if (withGC) gc();
+          blobed.type = "";
+          if (withGC) gc();
           expect(blobed.type).toBe("");
           if (withGC) gc();
           blobed.type = "application/json";
@@ -254,6 +256,50 @@ describe("Blob", () => {
     });
   }
 });
+
+{
+  const sample = new TextEncoder().encode("Hello World!");
+  const typedArrays = [
+    Uint8Array,
+    Uint8ClampedArray,
+    Int8Array,
+    Uint16Array,
+    Int16Array,
+    Uint32Array,
+    Int32Array,
+    Float32Array,
+    Float64Array,
+  ];
+  const Constructors = [Blob, Response, Request];
+
+  for (let withGC of [false, true]) {
+    for (let TypedArray of typedArrays) {
+      for (let Constructor of Constructors) {
+        it(`${Constructor.name} arrayBuffer() with ${TypedArray.name}${
+          withGC ? " with gc" : ""
+        }`, async () => {
+          const data = new TypedArray(sample);
+          if (withGC) gc();
+          const input =
+            Constructor === Blob
+              ? [data]
+              : Constructor === Request
+              ? { body: data }
+              : data;
+          if (withGC) gc();
+          const blob = new Constructor(input);
+          if (withGC) gc();
+          const out = await blob.arrayBuffer();
+          if (withGC) gc();
+          expect(out instanceof ArrayBuffer).toBe(true);
+          if (withGC) gc();
+          expect(out.byteLength).toBe(data.byteLength);
+          if (withGC) gc();
+        });
+      }
+    }
+  }
+}
 
 describe("Response", () => {
   describe("Response.json", () => {

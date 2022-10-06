@@ -4,6 +4,15 @@ import { gc } from "./gc";
 beforeEach(() => gc());
 afterEach(() => gc());
 
+it("Buffer.toJSON()", () => {
+  expect(JSON.stringify(Buffer.from("hello"))).toBe(
+    JSON.stringify({
+      type: "Buffer",
+      data: [104, 101, 108, 108, 111],
+    })
+  );
+});
+
 it("buffer", () => {
   var buf = new Buffer(20);
   gc();
@@ -147,6 +156,14 @@ it("Buffer.from", () => {
   );
   gc();
   expect(Buffer.from([254]).join(",")).toBe("254");
+
+  expect(Buffer.from([254], "utf8").join(",")).toBe("254");
+  expect(Buffer.from([254], "utf-8").join(",")).toBe("254");
+  expect(Buffer.from([254], "latin").join(",")).toBe("254");
+  expect(Buffer.from([254], "uc2").join(",")).toBe("254");
+  expect(Buffer.from([254], "utf16").join(",")).toBe("254");
+  expect(Buffer.isBuffer(Buffer.from([254], "utf16"))).toBe(true);
+
   expect(Buffer.from(123).join(",")).toBe(Uint8Array.from(123).join(","));
   expect(Buffer.from({ length: 124 }).join(",")).toBe(
     Uint8Array.from({ length: 124 }).join(",")
@@ -214,7 +231,7 @@ it("Buffer.copy", () => {
   {
     // Create two `Buffer` instances.
     const buf1 = Buffer.allocUnsafe(26);
-    const buf2 = Buffer.allocUnsafe(26).fill('!');
+    const buf2 = Buffer.allocUnsafe(26).fill("!");
 
     for (let i = 0; i < 26; i++) {
       // 97 is the decimal ASCII value for 'a'.
@@ -223,7 +240,7 @@ it("Buffer.copy", () => {
 
     // Copy `buf1` bytes 16 through 19 into `buf2` starting at byte 8 of `buf2`.
     buf1.copy(buf2, 8, 16, 20);
-    expect(buf2.toString('ascii', 0, 25)).toBe('!!!!!!!!qrst!!!!!!!!!!!!!');
+    expect(buf2.toString("ascii", 0, 25)).toBe("!!!!!!!!qrst!!!!!!!!!!!!!");
   }
 
   {
@@ -235,7 +252,7 @@ it("Buffer.copy", () => {
     }
 
     buf.copy(buf, 0, 4, 10);
-    expect(buf.toString()).toBe('efghijghijklmnopqrstuvwxyz');
+    expect(buf.toString()).toBe("efghijghijklmnopqrstuvwxyz");
   }
 });
 
@@ -387,34 +404,65 @@ it("read", () => {
   reset();
 });
 
-it("includes", () => {
-  const buf = Buffer.from('this is a buffer');
+it("write", () => {
+  let buf = Buffer.alloc(16);
+  function reset() {
+    new Uint8Array(buf.buffer).fill(0);
+  }
 
-  expect(buf.includes('this')).toBe(true);
-  expect(buf.includes('is')).toBe(true);
-  expect(buf.includes(Buffer.from('a buffer'))).toBe(true);
+  expect(buf.write("hello", 8, 8)).toBe(5);
+  reset();
+
+  expect(buf.write("hello!", 3, 8)).toBe(6);
+  reset();
+
+  expect(buf.write("Foo Bar!", 4, 4)).toBe(4);
+  reset();
+
+  expect(buf.write("foo", 0, 1)).toBe(1);
+  reset();
+
+  expect(buf.write("foo", 0, 2)).toBe(2);
+  reset();
+
+  expect(buf.write("foo", 0)).toBe(3);
+  reset();
+
+  expect(buf.write("Foo Bar!", 4, 6)).toBe(6);
+  reset();
+
+  expect(buf.write("Foo Bar!", 4, 7)).toBe(7);
+  reset();
+});
+
+it("includes", () => {
+  const buf = Buffer.from("this is a buffer");
+
+  expect(buf.includes("this")).toBe(true);
+  expect(buf.includes("is")).toBe(true);
+  expect(buf.includes(Buffer.from("a buffer"))).toBe(true);
   expect(buf.includes(97)).toBe(true);
-  expect(buf.includes(Buffer.from('a buffer example'))).toBe(false);
-  expect(buf.includes(Buffer.from('a buffer example').slice(0, 8))).toBe(true);
-  expect(buf.includes('this', 4)).toBe(false);
+  expect(buf.includes(Buffer.from("a buffer example"))).toBe(false);
+  expect(buf.includes(Buffer.from("a buffer example").slice(0, 8))).toBe(true);
+  expect(buf.includes("this", 4)).toBe(false);
 });
 
 it("indexOf", () => {
-  const buf = Buffer.from('this is a buffer');
+  const buf = Buffer.from("this is a buffer");
 
-  expect(buf.indexOf('this')).toBe(0);
-  expect(buf.indexOf('is')).toBe(2);
-  expect(buf.indexOf(Buffer.from('a buffer'))).toBe(8);
+  expect(buf.indexOf("this")).toBe(0);
+  expect(buf.indexOf("is")).toBe(2);
+  expect(buf.indexOf(Buffer.from("a buffer"))).toBe(8);
   expect(buf.indexOf(97)).toBe(8);
-  expect(buf.indexOf(Buffer.from('a buffer example'))).toBe(-1);
-  expect(buf.indexOf(Buffer.from('a buffer example').slice(0, 8))).toBe(8);
+  expect(buf.indexOf(Buffer.from("a buffer example"))).toBe(-1);
+  expect(buf.indexOf(Buffer.from("a buffer example").slice(0, 8))).toBe(8);
 
-  const utf16Buffer = Buffer.from('\u039a\u0391\u03a3\u03a3\u0395', 'utf16le');
+  const utf16Buffer = Buffer.from("\u039a\u0391\u03a3\u03a3\u0395", "utf16le");
 
-  expect(utf16Buffer.indexOf('\u03a3', 0, 'utf16le')).toBe(4);
-  expect(utf16Buffer.indexOf('\u03a3', -4, 'utf16le')).toBe(6);
+  expect(utf16Buffer.indexOf("\u03a3", 0, "utf16le")).toBe(4);
+  expect(utf16Buffer.indexOf("\u03a3", -4, "utf16le")).toBe(6);
 
-  const b = Buffer.from('abcdef');
+  const b = Buffer.from("abcdef");
 
   // Passing a value that's a number, but not a valid byte.
   // Prints: 2, equivalent to searching for 99 or 'c'.
@@ -423,31 +471,31 @@ it("indexOf", () => {
 
   // Passing a byteOffset that coerces to NaN or 0.
   // Prints: 1, searching the whole buffer.
-  expect(b.indexOf('b', undefined)).toBe(1);
-  expect(b.indexOf('b', {})).toBe(1);
-  expect(b.indexOf('b', null)).toBe(1);
-  expect(b.indexOf('b', [])).toBe(1);
+  expect(b.indexOf("b", undefined)).toBe(1);
+  expect(b.indexOf("b", {})).toBe(1);
+  expect(b.indexOf("b", null)).toBe(1);
+  expect(b.indexOf("b", [])).toBe(1);
 });
 
 it("lastIndexOf", () => {
-  const buf = Buffer.from('this buffer is a buffer');
+  const buf = Buffer.from("this buffer is a buffer");
 
-  expect(buf.lastIndexOf('this')).toBe(0);
-  expect(buf.lastIndexOf('this', 0)).toBe(0);
-  expect(buf.lastIndexOf('this', -1000)).toBe(-1);
-  expect(buf.lastIndexOf('buffer')).toBe(17);
-  expect(buf.lastIndexOf(Buffer.from('buffer'))).toBe(17);
+  expect(buf.lastIndexOf("this")).toBe(0);
+  expect(buf.lastIndexOf("this", 0)).toBe(0);
+  expect(buf.lastIndexOf("this", -1000)).toBe(-1);
+  expect(buf.lastIndexOf("buffer")).toBe(17);
+  expect(buf.lastIndexOf(Buffer.from("buffer"))).toBe(17);
   expect(buf.lastIndexOf(97)).toBe(15);
-  expect(buf.lastIndexOf(Buffer.from('yolo'))).toBe(-1);
-  expect(buf.lastIndexOf('buffer', 5)).toBe(5);
-  expect(buf.lastIndexOf('buffer', 4)).toBe(-1);
+  expect(buf.lastIndexOf(Buffer.from("yolo"))).toBe(-1);
+  expect(buf.lastIndexOf("buffer", 5)).toBe(5);
+  expect(buf.lastIndexOf("buffer", 4)).toBe(-1);
 
-  const utf16Buffer = Buffer.from('\u039a\u0391\u03a3\u03a3\u0395', 'utf16le');
+  const utf16Buffer = Buffer.from("\u039a\u0391\u03a3\u03a3\u0395", "utf16le");
 
-  expect(utf16Buffer.lastIndexOf('\u03a3', undefined, 'utf16le')).toBe(6);
-  expect(utf16Buffer.lastIndexOf('\u03a3', -5, 'utf16le')).toBe(4);
+  expect(utf16Buffer.lastIndexOf("\u03a3", undefined, "utf16le")).toBe(6);
+  expect(utf16Buffer.lastIndexOf("\u03a3", -5, "utf16le")).toBe(4);
 
-  const b = Buffer.from('abcdef');
+  const b = Buffer.from("abcdef");
 
   // Passing a value that's a number, but not a valid byte.
   // Prints: 2, equivalent to searching for 99 or 'c'.
@@ -456,11 +504,11 @@ it("lastIndexOf", () => {
 
   // Passing a byteOffset that coerces to NaN or 0.
   // Prints: 1, searching the whole buffer.
-  expect(b.lastIndexOf('b', undefined)).toBe(1);
-  expect(b.lastIndexOf('b', {})).toBe(1);
+  expect(b.lastIndexOf("b", undefined)).toBe(1);
+  expect(b.lastIndexOf("b", {})).toBe(1);
 
   // Passing a byteOffset that coerces to 0.
   // Prints: -1, equivalent to passing 0.
-  expect(b.lastIndexOf('b', null)).toBe(-1);
-  expect(b.lastIndexOf('b', [])).toBe(-1);
+  expect(b.lastIndexOf("b", null)).toBe(-1);
+  expect(b.lastIndexOf("b", [])).toBe(-1);
 });

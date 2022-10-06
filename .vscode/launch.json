@@ -6,7 +6,7 @@
       "request": "launch",
       "name": "bun test",
       "program": "bun-debug",
-      "args": ["wiptest", "jsc"],
+      "args": ["wiptest", "${file}"],
       "cwd": "${workspaceFolder}/test",
       "env": {
         "FORCE_COLOR": "1"
@@ -29,7 +29,7 @@
       "type": "lldb",
       "request": "launch",
       "name": "bun run current file",
-      "program": "/build/bun/packages/debug-bun-linux-x64/bun-debug",
+      "program": "bun-debug",
       "args": ["${file}"],
       "cwd": "${file}/../../",
       "env": {

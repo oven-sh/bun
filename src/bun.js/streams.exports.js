@@ -23,24 +23,13 @@ var __copyProps = (to, from, except, desc) => {
       if (!__hasOwnProp.call(to, key) && key !== except)
         __defProp(to, key, {
           get: () => from[key],
+          set: (val) => (from[key] = val),
           enumerable: !(desc = __getOwnPropDesc(from, key)) || desc.enumerable,
+          configurable: true,
         });
   }
   return to;
 };
-var __reExport = (target, mod, secondTarget) => (
-  __copyProps(target, mod, "default"),
-  secondTarget && __copyProps(secondTarget, mod, "default")
-);
-var __toESM = (mod, isNodeMode, target) => (
-  (target = mod != null ? __create(__getProtoOf(mod)) : {}),
-  __copyProps(
-    isNodeMode || !mod || !mod.__esModule
-      ? __defProp(target, "default", { value: mod, enumerable: true })
-      : target,
-    mod
-  )
-);
 
 var runOnNextTick = process.nextTick;
 
@@ -141,7 +130,6 @@ var require_primordials = __commonJS({
     };
   },
 });
-
 // node_modules/readable-stream/lib/ours/util.js
 var require_util = __commonJS({
   "node_modules/readable-stream/lib/ours/util.js"(exports, module) {
@@ -1143,7 +1131,6 @@ var require_utils = __commonJS({
       const wState = stream._writableState;
       const rState = stream._readableState;
       const state = wState || rState;
-      console.log("");
       return (
         (!state && isServerResponse(stream)) ||
         !!(
@@ -2489,6 +2476,7 @@ var require_readable = __commonJS({
       Symbol: Symbol2,
     } = require_primordials();
     module.exports = Readable;
+    var ReadableState = globalThis[Symbol.for("Bun.lazy")]("bun:stream").ReadableState;
     Readable.ReadableState = ReadableState;
     var { EventEmitter: EE } = __require("events");
     var { Stream, prependListener } = require_legacy();
@@ -2497,9 +2485,13 @@ var require_readable = __commonJS({
     var debug = require_util().debuglog("stream", (fn) => {
       debug = fn;
     });
-    var BufferList = globalThis[Symbol.for("Bun.lazy")]("bun:stream").BufferList;
+    const {
+      maybeReadMore,
+      resume,
+      emitReadable,
+      onEofChunk,
+    } = globalThis[Symbol.for("Bun.lazy")]("bun:stream");
     var destroyImpl = require_destroy();
-    var { getHighWaterMark, getDefaultHighWaterMark } = require_state();
     var {
       aggregateTwoErrors,
       codes: {
@@ -2511,56 +2503,12 @@ var require_readable = __commonJS({
       },
     } = require_errors();
     var { validateObject } = require_validators();
-    var kPaused = Symbol2("kPaused");
     var { StringDecoder } = __require("string_decoder");
     var from = require_from();
     ObjectSetPrototypeOf(Readable.prototype, Stream.prototype);
     ObjectSetPrototypeOf(Readable, Stream);
     var nop = () => {};
     var { errorOrDestroy } = destroyImpl;
-    function ReadableState(options, stream, isDuplex) {
-      if (typeof isDuplex !== "boolean")
-        isDuplex = stream instanceof require_duplex();
-      this.objectMode = !!(options && options.objectMode);
-      if (isDuplex)
-        this.objectMode =
-          this.objectMode || !!(options && options.readableObjectMode);
-      this.highWaterMark = options
-        ? getHighWaterMark(this, options, "readableHighWaterMark", isDuplex)
-        : getDefaultHighWaterMark(false);
-      this.buffer = new BufferList();
-      this.length = 0;
-      this.pipes = [];
-      this.flowing = null;
-      this.ended = false;
-      this.endEmitted = false;
-      this.reading = false;
-      this.constructed = true;
-      this.sync = true;
-      this.needReadable = false;
-      this.emittedReadable = false;
-      this.readableListening = false;
-      this.resumeScheduled = false;
-      this[kPaused] = null;
-      this.errorEmitted = false;
-      this.emitClose = !options || options.emitClose !== false;
-      this.autoDestroy = !options || options.autoDestroy !== false;
-      this.destroyed = false;
-      this.errored = null;
-      this.closed = false;
-      this.closeEmitted = false;
-      this.defaultEncoding = (options && options.defaultEncoding) || "utf8";
-      this.awaitDrainWriters = null;
-      this.multiAwaitDrain = false;
-      this.readingMore = false;
-      this.dataEmitted = false;
-      this.decoder = null;
-      this.encoding = null;
-      if (options && options.encoding) {
-        this.decoder = new StringDecoder(options.encoding);
-        this.encoding = options.encoding;
-      }
-    }
     function Readable(options) {
       if (!(this instanceof Readable)) return new Readable(options);
       const isDuplex = this instanceof require_duplex();
@@ -2675,13 +2623,13 @@ var require_readable = __commonJS({
         state.length += state.objectMode ? 1 : chunk.length;
         if (addToFront) state.buffer.unshift(chunk);
         else state.buffer.push(chunk);
-        if (state.needReadable) emitReadable(stream);
+        if (state.needReadable) emitReadable(stream, state);
       }
       maybeReadMore(stream, state);
     }
     Readable.prototype.isPaused = function () {
       const state = this._readableState;
-      return state[kPaused] === true || state.flowing === false;
+      return state.paused === true || state.flowing === false;
     };
     Readable.prototype.setEncoding = function (enc) {
       const decoder = new StringDecoder(enc);
@@ -2748,7 +2696,7 @@ var require_readable = __commonJS({
       ) {
         debug("read: emitReadable", state.length, state.ended);
         if (state.length === 0 && state.ended) endReadable(this);
-        else emitReadable(this);
+        else emitReadable(this, state);
         return null;
       }
       n = howMuchToRead(n, state);
@@ -2808,66 +2756,6 @@ var require_readable = __commonJS({
       }
       return ret;
     };
-    function onEofChunk(stream, state) {
-      debug("onEofChunk");
-      if (state.ended) return;
-      if (state.decoder) {
-        const chunk = state.decoder.end();
-        if (chunk && chunk.length) {
-          state.buffer.push(chunk);
-          state.length += state.objectMode ? 1 : chunk.length;
-        }
-      }
-      state.ended = true;
-      if (state.sync) {
-        emitReadable(stream);
-      } else {
-        state.needReadable = false;
-        state.emittedReadable = true;
-        emitReadable_(stream);
-      }
-    }
-    function emitReadable(stream) {
-      const state = stream._readableState;
-      debug("emitReadable", state.needReadable, state.emittedReadable);
-      state.needReadable = false;
-      if (!state.emittedReadable) {
-        debug("emitReadable", state.flowing);
-        state.emittedReadable = true;
-        runOnNextTick(emitReadable_, stream);
-      }
-    }
-    function emitReadable_(stream) {
-      const state = stream._readableState;
-      debug("emitReadable_", state.destroyed, state.length, state.ended);
-      if (!state.destroyed && !state.errored && (state.length || state.ended)) {
-        stream.emit("readable");
-        state.emittedReadable = false;
-      }
-      state.needReadable =
-        !state.flowing && !state.ended && state.length <= state.highWaterMark;
-      flow(stream);
-    }
-    function maybeReadMore(stream, state) {
-      if (!state.readingMore && state.constructed) {
-        state.readingMore = true;
-        runOnNextTick(maybeReadMore_, stream, state);
-      }
-    }
-    function maybeReadMore_(stream, state) {
-      while (
-        !state.reading &&
-        !state.ended &&
-        (state.length < state.highWaterMark ||
-          (state.flowing && state.length === 0))
-      ) {
-        const len = state.length;
-        debug("maybeReadMore read 0");
-        stream.read(0);
-        if (len === state.length) break;
-      }
-      state.readingMore = false;
-    }
     Readable.prototype._read = function (n) {
       throw new ERR_METHOD_NOT_IMPLEMENTED("_read()");
     };
@@ -3047,7 +2935,7 @@ var require_readable = __commonJS({
           state.emittedReadable = false;
           debug("on readable", state.length, state.reading);
           if (state.length) {
-            emitReadable(this);
+            emitReadable(this, state);
           } else if (!state.reading) {
             runOnNextTick(nReadingNextTick, this);
           }
@@ -3074,7 +2962,7 @@ var require_readable = __commonJS({
     function updateReadableListening(self) {
       const state = self._readableState;
       state.readableListening = self.listenerCount("readable") > 0;
-      if (state.resumeScheduled && state[kPaused] === false) {
+      if (state.resumeScheduled && state.paused === false) {
         state.flowing = true;
       } else if (self.listenerCount("data") > 0) {
         self.resume();
@@ -3093,25 +2981,9 @@ var require_readable = __commonJS({
         state.flowing = !state.readableListening;
         resume(this, state);
       }
-      state[kPaused] = false;
+      state.paused = false;
       return this;
     };
-    function resume(stream, state) {
-      if (!state.resumeScheduled) {
-        state.resumeScheduled = true;
-        runOnNextTick(resume_, stream, state);
-      }
-    }
-    function resume_(stream, state) {
-      debug("resume", state.reading);
-      if (!state.reading) {
-        stream.read(0);
-      }
-      state.resumeScheduled = false;
-      stream.emit("resume");
-      flow(stream);
-      if (state.flowing && !state.reading) stream.read(0);
-    }
     Readable.prototype.pause = function () {
       debug("call pause flowing=%j", this._readableState.flowing);
       if (this._readableState.flowing !== false) {
@@ -3119,14 +2991,9 @@ var require_readable = __commonJS({
         this._readableState.flowing = false;
         this.emit("pause");
       }
-      this._readableState[kPaused] = true;
+      this._readableState.paused = true;
       return this;
     };
-    function flow(stream) {
-      const state = stream._readableState;
-      debug("flow", state.flowing);
-      while (state.flowing && stream.read() !== null);
-    }
     Readable.prototype.wrap = function (stream) {
       let paused = false;
       stream.on("data", (chunk) => {
@@ -3337,21 +3204,6 @@ var require_readable = __commonJS({
         enumerable: false,
         get() {
           return this._readableState ? this._readableState.endEmitted : false;
-        },
-      },
-    });
-    ObjectDefineProperties(ReadableState.prototype, {
-      pipesCount: {
-        get() {
-          return this.pipes.length;
-        },
-      },
-      paused: {
-        get() {
-          return this[kPaused] !== false;
-        },
-        set(value) {
-          this[kPaused] = !!value;
         },
       },
     });
@@ -5348,6 +5200,7 @@ var require_stream = __commonJS({
     var {
       promisify: { custom: customPromisify },
     } = require_util();
+
     var { streamReturningOperators, promiseReturningOperators } =
       require_operators();
     var {
@@ -5469,6 +5322,7 @@ var require_ours = __commonJS({
     module.exports.destroy = originalDestroy;
     module.exports.pipeline = CustomStream.pipeline;
     module.exports.compose = CustomStream.compose;
+
     Object.defineProperty(CustomStream, "promises", {
       configurable: true,
       enumerable: true,
@@ -5481,16 +5335,15 @@ var require_ours = __commonJS({
   },
 });
 
-// stream.js
-var stream_exports = {};
-__reExport(stream_exports, __toESM(require_ours()));
-var wrapper =
+var stream_exports, wrapper;
+stream_exports = require_ours();
+wrapper =
   (0,
   function () {
     return stream_exports;
   });
-wrapper[Symbol.for("CommonJS")] = true;
 
+wrapper[Symbol.for("CommonJS")] = true;
 export default wrapper;
 export var _uint8ArrayToBuffer = stream_exports._uint8ArrayToBuffer;
 export var _isUint8Array = stream_exports._isUint8Array;

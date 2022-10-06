@@ -73,12 +73,52 @@ pub const TestRunner = struct {
     allocator: std.mem.Allocator,
     callback: *Callback = undefined,
 
+    drainer: JSC.AnyTask = undefined,
+    queue: std.fifo.LinearFifo(*TestRunnerTask, .{ .Dynamic = {} }) = std.fifo.LinearFifo(*TestRunnerTask, .{ .Dynamic = {} }).init(default_allocator),
+
+    has_pending_tests: bool = false,
+    pending_test: ?*TestRunnerTask = null,
+    pub const Drainer = JSC.AnyTask.New(TestRunner, drain);
+
+    pub fn enqueue(this: *TestRunner, task: *TestRunnerTask) void {
+        this.queue.writeItem(task) catch unreachable;
+    }
+
+    pub fn runNextTest(this: *TestRunner) void {
+        this.has_pending_tests = false;
+        this.pending_test = null;
+
+        // disable idling
+        JSC.VirtualMachine.vm.uws_event_loop.?.wakeup();
+    }
+
+    pub fn drain(this: *TestRunner) void {
+        if (this.pending_test != null) return;
+
+        if (this.queue.readItem()) |task| {
+            this.pending_test = task;
+            this.has_pending_tests = true;
+            if (!task.run()) {
+                this.has_pending_tests = false;
+                this.pending_test = null;
+            }
+        }
+    }
+
     pub fn setOnly(this: *TestRunner) void {
         if (this.only) {
             return;
         }
 
         this.only = true;
+
+        var list = this.queue.readableSlice(0);
+        for (list) |task| {
+            task.deinit();
+        }
+        this.queue.count = 0;
+        this.queue.head = 0;
+
         this.tests.shrinkRetainingCapacity(0);
         this.callback.onUpdateCount(this.callback, 0, 0);
     }
@@ -185,7 +225,7 @@ pub const Jest = struct {
 
         var scope = runner_.getOrPutFile(filepath);
         DescribeScope.active = scope;
-
+        DescribeScope.module = scope;
         return DescribeScope.Class.make(ctx, scope);
     }
 };
@@ -375,7 +415,7 @@ pub const Expect = struct {
             );
             return js.JSValueMakeUndefined(ctx);
         }
-        this.scope.tests.items[this.test_id].counter.actual += 1;
+        active_test_expectation_counter.actual += 1;
         const left = JSValue.fromRef(arguments[0]);
         left.ensureStillAlive();
         const right = this.value;
@@ -438,7 +478,7 @@ pub const Expect = struct {
             );
             return js.JSValueMakeUndefined(ctx);
         }
-        this.scope.tests.items[this.test_id].counter.actual += 1;
+        active_test_expectation_counter.actual += 1;
 
         const expected = JSC.JSValue.fromRef(arguments[0]).toU32();
         const actual = this.value.getLengthOfArray(ctx.ptr());
@@ -591,11 +631,22 @@ pub const ExpectPrototype = struct {
         }
         var expect_ = getAllocator(ctx).create(Expect) catch unreachable;
         const value = JSC.JSValue.c(arguments[0]);
+        if (Jest.runner.?.pending_test == null) {
+            JSError(
+                getAllocator(ctx),
+                "expect() must be called during a test",
+                .{},
+                ctx,
+                exception,
+            );
+            return js.JSValueMakeUndefined(ctx);
+        }
+
         value.protect();
         expect_.* = .{
             .value = value,
-            .scope = DescribeScope.active,
-            .test_id = DescribeScope.active.current_test_id,
+            .scope = Jest.runner.?.pending_test.?.describe,
+            .test_id = Jest.runner.?.pending_test.?.test_id,
         };
         expect_.value.ensureStillAlive();
         return Expect.Class.make(ctx, expect_);
@@ -603,12 +654,13 @@ pub const ExpectPrototype = struct {
 };
 
 pub const TestScope = struct {
-    counter: Counter = Counter{},
     label: string = "",
     parent: *DescribeScope,
     callback: js.JSValueRef,
     id: TestRunner.Test.ID = 0,
     promise: ?*JSInternalPromise = null,
+    ran: bool = false,
+    task: ?*TestRunnerTask = null,
 
     pub const Class = NewClass(void, .{ .name = "test" }, .{ .call = call, .only = only }, .{});
 
@@ -683,27 +735,39 @@ pub const TestScope = struct {
         return this;
     }
 
-    pub const Result = union(TestRunner.Test.Status) {
-        fail: u32,
-        pass: u32, // assertion count
-        pending: void,
-    };
+    pub fn onReject(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSValue {
+        const arguments = callframe.arguments(2);
+        const err = arguments.ptr[0];
+        globalThis.bunVM().runErrorHandler(err, null);
+        var task: *TestRunnerTask = arguments.ptr[1].asPromisePtr(TestRunnerTask);
+        task.handleResult(.{ .fail = active_test_expectation_counter.actual });
+        return JSValue.jsUndefined();
+    }
+
+    pub fn onResolve(_: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSValue {
+        const arguments = callframe.arguments(2);
+        var task: *TestRunnerTask = arguments.ptr[1].asPromisePtr(TestRunnerTask);
+        task.handleResult(.{ .pass = active_test_expectation_counter.actual });
+        return JSValue.jsUndefined();
+    }
 
     pub fn run(
         this: *TestScope,
+        task: *TestRunnerTask,
     ) Result {
         if (comptime is_bindgen) return undefined;
         var vm = VirtualMachine.vm;
+        var callback = this.callback;
         defer {
-            js.JSValueUnprotect(vm.global.ref(), this.callback);
+            js.JSValueUnprotect(vm.global, callback);
             this.callback = null;
         }
         JSC.markBinding();
-        const initial_value = js.JSObjectCallAsFunctionReturnValue(vm.global.ref(), this.callback, null, 0, null);
+        const initial_value = js.JSObjectCallAsFunctionReturnValue(vm.global, callback, null, 0, null);
 
         if (initial_value.isException(vm.global.vm()) or initial_value.isError() or initial_value.isAggregateError(vm.global)) {
             vm.runErrorHandler(initial_value, null);
-            return .{ .fail = this.counter.actual };
+            return .{ .fail = active_test_expectation_counter.actual };
         }
 
         if (!initial_value.isEmptyOrUndefinedOrNull() and (initial_value.asPromise() != null or initial_value.asInternalPromise() != null)) {
@@ -711,36 +775,53 @@ pub const TestScope = struct {
                 return .{ .pending = .{} };
             }
 
-            this.promise = JSC.JSInternalPromise.resolvedPromise(vm.global, initial_value);
-            defer {
-                this.promise = null;
-            }
+            var promise = initial_value.asPromise().?;
+            this.task = task;
 
-            vm.waitForPromise(this.promise.?);
-            switch (this.promise.?.status(vm.global.vm())) {
+            switch (promise.status(vm.global.vm())) {
                 .Rejected => {
-                    vm.runErrorHandler(this.promise.?.result(vm.global.vm()), null);
-                    return .{ .fail = this.counter.actual };
+                    vm.runErrorHandler(promise.result(vm.global.vm()), null);
+                    return .{ .fail = active_test_expectation_counter.actual };
                 },
+                .Pending => {
+                    _ = promise.asValue(vm.global).then(vm.global, task, onResolve, onReject);
+                    return .{ .pending = {} };
+                },
+
                 else => {
-                    if (this.promise != null)
-                        // don't care about the result
-                        _ = this.promise.?.result(vm.global.vm());
+                    _ = promise.result(vm.global.vm());
                 },
             }
         }
 
         this.callback = null;
 
-        if (this.counter.expected > 0 and this.counter.expected < this.counter.actual) {
+        if (active_test_expectation_counter.expected > 0 and active_test_expectation_counter.expected < active_test_expectation_counter.actual) {
             Output.prettyErrorln("Test fail: {d} / {d} expectations\n (make this better!)", .{
-                this.counter.actual,
-                this.counter.expected,
+                active_test_expectation_counter.actual,
+                active_test_expectation_counter.expected,
             });
-            return .{ .fail = this.counter.actual };
+            return .{ .fail = active_test_expectation_counter.actual };
         }
 
-        return .{ .pass = this.counter.actual };
+        return .{ .pass = active_test_expectation_counter.actual };
+    }
+
+    pub const name = "TestScope";
+    pub const shim = JSC.Shimmer("Bun", name, @This());
+    pub const Export = shim.exportFunctions(.{
+        .onResolve = onResolve,
+        .onReject = onReject,
+    });
+    comptime {
+        if (!JSC.is_bindgen) {
+            @export(onResolve, .{
+                .name = Export[0].symbol_name,
+            });
+            @export(onReject, .{
+                .name = Export[1].symbol_name,
+            });
+        }
     }
 };
 
@@ -754,8 +835,24 @@ pub const DescribeScope = struct {
     test_id_start: TestRunner.Test.ID = 0,
     test_id_len: TestRunner.Test.ID = 0,
     tests: std.ArrayListUnmanaged(TestScope) = .{},
+    pending_tests: std.DynamicBitSetUnmanaged = .{},
     file_id: TestRunner.File.ID,
     current_test_id: TestRunner.Test.ID = 0,
+    value: JSValue = .zero,
+
+    pub fn push(new: *DescribeScope) void {
+        if (comptime is_bindgen) return undefined;
+        if (new == DescribeScope.active) return;
+
+        new.parent = DescribeScope.active;
+        DescribeScope.active = new;
+    }
+
+    pub fn pop(this: *DescribeScope) void {
+        if (comptime is_bindgen) return undefined;
+        if (DescribeScope.active == this)
+            DescribeScope.active = this.parent orelse DescribeScope.active;
+    }
 
     pub const LifecycleHook = enum {
         beforeAll,
@@ -772,6 +869,7 @@ pub const DescribeScope = struct {
     };
 
     pub threadlocal var active: *DescribeScope = undefined;
+    pub threadlocal var module: *DescribeScope = undefined;
 
     const CallbackFn = fn (
         this: *DescribeScope,
@@ -785,7 +883,7 @@ pub const DescribeScope = struct {
         return struct {
             const this_hook = hook;
             pub fn run(
-                this: *DescribeScope,
+                _: *DescribeScope,
                 ctx: js.JSContextRef,
                 _: js.JSObjectRef,
                 _: js.JSObjectRef,
@@ -799,7 +897,7 @@ pub const DescribeScope = struct {
 
                 JSC.JSValue.c(arguments[0]).protect();
                 const name = comptime @as(string, @tagName(this_hook));
-                @field(this, name).append(getAllocator(ctx), JSC.JSValue.c(arguments[0])) catch unreachable;
+                @field(DescribeScope.active, name).append(getAllocator(ctx), JSC.JSValue.c(arguments[0])) catch unreachable;
                 return JSC.JSValue.jsBoolean(true).asObjectRef();
             }
         }.run;
@@ -904,6 +1002,8 @@ pub const DescribeScope = struct {
         defer js.JSValueUnprotect(ctx, callback);
         var original_active = active;
         defer active = original_active;
+        if (this != module)
+            this.parent = this.parent orelse active;
         active = this;
 
         {
@@ -913,10 +1013,8 @@ pub const DescribeScope = struct {
             if (result.asPromise() != null or result.asInternalPromise() != null) {
                 var vm = JSC.VirtualMachine.vm;
 
-                const promise = JSInternalPromise.resolvedPromise(ctx.ptr(), result);
-                while (promise.status(ctx.ptr().vm()) == JSPromise.Status.Pending) {
-                    vm.tick();
-                }
+                var promise = JSInternalPromise.resolvedPromise(ctx.ptr(), result);
+                vm.waitForPromise(promise);
 
                 switch (promise.status(ctx.ptr().vm())) {
                     JSPromise.Status.Fulfilled => {},
@@ -931,25 +1029,23 @@ pub const DescribeScope = struct {
             }
         }
 
-        this.runTests(ctx);
+        this.runTests(thisObject.?.value(), ctx);
         return js.JSValueMakeUndefined(ctx);
     }
 
-    pub fn runTests(this: *DescribeScope, ctx: js.JSContextRef) void {
+    pub fn runTests(this: *DescribeScope, this_object: JSC.JSValue, ctx: js.JSContextRef) void {
         // Step 1. Initialize the test block
 
         const file = this.file_id;
         const allocator = getAllocator(ctx);
         var tests: []TestScope = this.tests.items;
         const end = @truncate(TestRunner.Test.ID, tests.len);
+        this.pending_tests = std.DynamicBitSetUnmanaged.initFull(allocator, end) catch unreachable;
 
         if (end == 0) return;
 
         // Step 2. Update the runner with the count of how many tests we have for this block
         this.test_id_start = Jest.runner.?.addTestCount(end);
-
-        // Step 3. Run the beforeAll callbacks, in reverse order
-        // TODO:
 
         const source: logger.Source = Jest.runner.?.files.items(.source)[file];
 
@@ -961,46 +1057,48 @@ pub const DescribeScope = struct {
                 Jest.runner.?.reportFailure(i + this.test_id_start, source.path.text, tests[i].label, 0, this);
                 i += 1;
             }
-            this.tests.deinit(allocator);
+            this.tests.clearAndFree(allocator);
+            this.pending_tests.deinit(allocator);
             return;
         }
 
-        while (i < end) {
-            // the test array could resize in the middle of this loop
-            this.current_test_id = i;
-            var test_ = tests[i];
-            const beforeEach = this.runCallback(ctx, .beforeEach);
+        while (i < end) : (i += 1) {
+            var runner = allocator.create(TestRunnerTask) catch unreachable;
+            runner.* = .{
+                .test_id = i,
+                .describe = this,
+                .globalThis = ctx,
+                .source = source,
+                .value = JSC.Strong.create(this_object, ctx),
+            };
+            runner.ref.ref(ctx.bunVM());
 
-            const test_id = i + this.test_id_start;
-
-            if (!beforeEach.isEmpty()) {
-                Jest.runner.?.reportFailure(test_id, source.path.text, tests[i].label, 0, this);
-                ctx.bunVM().runErrorHandler(beforeEach, null);
-                i += 1;
-                continue;
-            }
-
-            const result = TestScope.run(&test_);
-            tests[i] = test_;
-
-            switch (result) {
-                .pass => |count| Jest.runner.?.reportPass(test_id, source.path.text, tests[i].label, count, this),
-                .fail => |count| Jest.runner.?.reportFailure(test_id, source.path.text, tests[i].label, count, this),
-                .pending => @panic("Unexpected pending test"),
-            }
-
-            i += 1;
+            Jest.runner.?.enqueue(runner);
         }
+    }
 
+    pub fn onTestComplete(this: *DescribeScope, globalThis: *JSC.JSGlobalObject, test_id: TestRunner.Test.ID) void {
         // invalidate it
         this.current_test_id = std.math.maxInt(TestRunner.Test.ID);
+        this.pending_tests.unset(test_id);
 
-        const afterAll = this.execCallback(ctx, .afterAll);
-        if (!afterAll.isEmpty()) {
-            ctx.bunVM().runErrorHandler(afterAll, null);
+        const afterEach = this.execCallback(globalThis, .afterEach);
+        if (!afterEach.isEmpty()) {
+            globalThis.bunVM().runErrorHandler(afterEach, null);
         }
 
-        this.tests.deinit(allocator);
+        if (this.pending_tests.findFirstSet() != null) {
+            return;
+        }
+
+        // Step 1. Run the afterAll callbacks, in reverse order
+        const afterAll = this.execCallback(globalThis, .afterAll);
+        if (!afterAll.isEmpty()) {
+            globalThis.bunVM().runErrorHandler(afterAll, null);
+        }
+
+        this.pending_tests.deinit(getAllocator(globalThis));
+        this.tests.deinit(getAllocator(globalThis));
     }
 
     const ScopeStack = ObjectPool(std.ArrayListUnmanaged(*DescribeScope), null, true, 16);
@@ -1067,4 +1165,85 @@ pub const DescribeScope = struct {
     ) js.JSObjectRef {
         return DescribeScope.Class.make(ctx, this);
     }
+};
+
+var active_test_expectation_counter: TestScope.Counter = undefined;
+
+const TestRunnerTask = struct {
+    test_id: TestRunner.Test.ID,
+    describe: *DescribeScope,
+    globalThis: *JSC.JSGlobalObject,
+    source: logger.Source,
+    value: JSC.Strong = .{},
+    needs_before_each: bool = true,
+    ref: JSC.Ref = JSC.Ref.init(),
+
+    pub fn run(this: *TestRunnerTask) bool {
+        var describe = this.describe;
+
+        // reset the global state for each test
+        // prior to the run
+        DescribeScope.active = describe;
+        active_test_expectation_counter = .{};
+
+        var globalThis = this.globalThis;
+        var test_: TestScope = this.describe.tests.items[this.test_id];
+        const label = this.describe.tests.items[this.test_id].label;
+
+        const test_id = this.test_id;
+
+        if (this.needs_before_each) {
+            this.needs_before_each = false;
+
+            const beforeEach = this.describe.runCallback(globalThis, .beforeEach);
+
+            if (!beforeEach.isEmpty()) {
+                Jest.runner.?.reportFailure(test_id, this.source.path.text, label, 0, this.describe);
+                globalThis.bunVM().runErrorHandler(beforeEach, null);
+                return false;
+            }
+        }
+
+        const result = TestScope.run(&test_, this);
+
+        if (result == .pending) {
+            this.value.set(globalThis, this.describe.value);
+            return true;
+        }
+
+        this.handleResult(result);
+
+        return false;
+    }
+
+    pub fn handleResult(this: *TestRunnerTask, result: Result) void {
+        var globalThis = this.globalThis;
+        var test_ = this.describe.tests.items[this.test_id];
+        const label = this.describe.tests.items[this.test_id].label;
+        const test_id = this.test_id;
+        var describe = this.describe;
+
+        describe.tests.items[this.test_id] = test_;
+
+        switch (result) {
+            .pass => |count| Jest.runner.?.reportPass(test_id, this.source.path.text, label, count, describe),
+            .fail => |count| Jest.runner.?.reportFailure(test_id, this.source.path.text, label, count, describe),
+            .pending => @panic("Unexpected pending test"),
+        }
+        describe.onTestComplete(globalThis, this.test_id);
+        this.deinit();
+        Jest.runner.?.runNextTest();
+    }
+
+    fn deinit(this: *TestRunnerTask) void {
+        this.value.deinit();
+        this.ref.unref(JSC.VirtualMachine.vm);
+        default_allocator.destroy(this);
+    }
+};
+
+pub const Result = union(TestRunner.Test.Status) {
+    fail: u32,
+    pass: u32, // assertion count
+    pending: void,
 };

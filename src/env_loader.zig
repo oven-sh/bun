@@ -72,10 +72,17 @@ pub const Lexer = struct {
                     i += 1;
                     const start = i;
 
+                    const curly_braces_offset = @as(usize, @boolToInt(variable.value[i] == '{'));
+                    i += curly_braces_offset;
+
                     while (i < variable.value.len) {
                         switch (variable.value[i]) {
                             'a'...'z', 'A'...'Z', '0'...'9', '-', '_' => {
                                 i += 1;
+                            },
+                            '}' => {
+                                i += curly_braces_offset;
+                                break;
                             },
                             else => {
                                 break;
@@ -85,7 +92,7 @@ pub const Lexer = struct {
 
                     try writer.writeAll(variable.value[last_flush .. start - 1]);
                     last_flush = i;
-                    const name = variable.value[start..i];
+                    const name = variable.value[start + curly_braces_offset .. i - curly_braces_offset];
 
                     if (@call(.{ .modifier = .always_inline }, getter, .{ ctx, name })) |new_value| {
                         if (new_value.len > 0) {
@@ -948,6 +955,7 @@ pub const Parser = struct {
         var lexer = Lexer.init(source);
         var fbs = std.io.fixedBufferStream(&temporary_nested_value_buffer);
         var writer = fbs.writer();
+        const start_count = map.map.count();
 
         while (lexer.next(is_process)) |variable| {
             if (variable.has_nested_value) {
@@ -960,7 +968,13 @@ pub const Parser = struct {
                         map.put(variable.key, allocator.dupe(u8, new_value) catch unreachable) catch unreachable;
                     } else {
                         var putter = map.map.getOrPut(variable.key) catch unreachable;
-                        if (!putter.found_existing) {
+                        // Allow keys defined later in the same file to override keys defined earlier
+                        // https://github.com/oven-sh/bun/issues/1262
+                        if (!putter.found_existing or putter.index >= start_count) {
+                            if (putter.found_existing and putter.value_ptr.len > 0) {
+                                allocator.free(putter.value_ptr.*);
+                            }
+
                             putter.value_ptr.* = allocator.dupe(u8, new_value) catch unreachable;
                         }
                     }
@@ -969,7 +983,16 @@ pub const Parser = struct {
                 if (comptime override) {
                     map.put(variable.key, variable.value) catch unreachable;
                 } else {
-                    map.putDefault(variable.key, variable.value) catch unreachable;
+                    // Allow keys defined later in the same file to override keys defined earlier
+                    // https://github.com/oven-sh/bun/issues/1262
+                    var putter = map.map.getOrPut(variable.key) catch unreachable;
+                    if (!putter.found_existing or putter.index >= start_count) {
+                        if (putter.found_existing and putter.value_ptr.len > 0) {
+                            allocator.free(putter.value_ptr.*);
+                        }
+
+                        putter.value_ptr.* = allocator.dupe(u8, variable.value) catch unreachable;
+                    }
                 }
             }
         }
@@ -980,6 +1003,26 @@ pub const Map = struct {
     const HashTable = std.StringArrayHashMap(string);
 
     map: HashTable,
+
+    pub fn createNullDelimitedEnvMap(this: *Map, arena: std.mem.Allocator) ![:null]?[*:0]u8 {
+        var env_map = &this.map;
+
+        const envp_count = env_map.count();
+        const envp_buf = try arena.allocSentinel(?[*:0]u8, envp_count, null);
+        {
+            var it = env_map.iterator();
+            var i: usize = 0;
+            while (it.next()) |pair| : (i += 1) {
+                const env_buf = try arena.allocSentinel(u8, pair.key_ptr.len + pair.value_ptr.len + 1, 0);
+                std.mem.copy(u8, env_buf, pair.key_ptr.*);
+                env_buf[pair.key_ptr.len] = '=';
+                std.mem.copy(u8, env_buf[pair.key_ptr.len + 1 ..], pair.value_ptr.*);
+                envp_buf[i] = env_buf.ptr;
+            }
+            std.debug.assert(i == envp_count);
+        }
+        return envp_buf;
+    }
 
     pub fn cloneToEnvMap(this: *Map, allocator: std.mem.Allocator) !std.process.EnvMap {
         var env_map = std.process.EnvMap.init(allocator);
@@ -1089,13 +1132,74 @@ test "DotEnv Loader - basic" {
         \\
         \\NESTED_VALUE='$API_KEY'
         \\
+        \\NESTED_VALUE_WITH_CURLY_BRACES='${API_KEY}'
+        \\NESTED_VALUE_WITHOUT_OPENING_CURLY_BRACE='$API_KEY}'
+        \\
         \\RECURSIVE_NESTED_VALUE=$NESTED_VALUE:$API_KEY
         \\
+        \\RECURSIVE_NESTED_VALUE_WITH_CURLY_BRACES=${NESTED_VALUE}:${API_KEY}
+        \\
         \\NESTED_VALUES_RESPECT_ESCAPING='\$API_KEY'
+        \\
+        \\NESTED_VALUES_WITH_CURLY_BRACES_RESPECT_ESCAPING='\${API_KEY}'
         \\
         \\EMPTY_SINGLE_QUOTED_VALUE_IS_EMPTY_STRING=''
         \\
         \\EMPTY_DOUBLE_QUOTED_VALUE_IS_EMPTY_STRING=""
+        \\
+        \\VALUE_WITH_MULTIPLE_VALUES_SET_IN_SAME_FILE=''
+        \\
+        \\VALUE_WITH_MULTIPLE_VALUES_SET_IN_SAME_FILE='good'
+        \\
+    ;
+    const source = logger.Source.initPathString(".env", VALID_ENV);
+    var map = Map.init(default_allocator);
+    inline for (.{ true, false }) |override| {
+        Parser.parse(
+            &source,
+            default_allocator,
+            &map,
+            override,
+            false,
+        );
+        try expectString(map.get("NESTED_VALUES_RESPECT_ESCAPING").?, "\\$API_KEY");
+        try expectString(map.get("NESTED_VALUES_WITH_CURLY_BRACES_RESPECT_ESCAPING").?, "\\${API_KEY}");
+
+        try expectString(map.get("NESTED_VALUE").?, "verysecure");
+        try expectString(map.get("NESTED_VALUE_WITH_CURLY_BRACES").?, "verysecure");
+        try expectString(map.get("NESTED_VALUE_WITHOUT_OPENING_CURLY_BRACE").?, "verysecure}");
+        try expectString(map.get("RECURSIVE_NESTED_VALUE").?, "verysecure:verysecure");
+        try expectString(map.get("RECURSIVE_NESTED_VALUE_WITH_CURLY_BRACES").?, "verysecure:verysecure");
+
+        try expectString(map.get("API_KEY").?, "verysecure");
+        try expectString(map.get("process.env.WAT").?, "ABCDEFGHIJKLMNOPQRSTUVWXYZZ10239457123");
+        try expectString(map.get("DOUBLE-QUOTED_SHOULD_PRESERVE_NEWLINES").?, "\nya\n");
+        try expectString(map.get("SINGLE_QUOTED_SHOULDNT_PRESERVE_NEWLINES").?, "yo");
+        try expectString(map.get("SINGLE_QUOTED_DOESNT_PRESERVES_QUOTES").?, "yo");
+        try expectString(map.get("UNQUOTED_SHOULDNT_PRESERVE_NEWLINES_AND_TRIMS_TRAILING_SPACE").?, "yo");
+        try expect(map.get("LINES_WITHOUT_EQUAL_ARE_IGNORED") == null);
+        try expectString(map.get("LEADING_SPACE_IS_TRIMMED").?, "yes");
+        try expect(map.get("NO_VALUE_IS_EMPTY_STRING").?.len == 0);
+        try expectString(map.get("IGNORING_DOESNT_BREAK_OTHER_LINES").?, "yes");
+        try expectString(map.get("LEADING_SPACE_IN_UNQUOTED_VALUE_IS_TRIMMED").?, "yes");
+        try expectString(map.get("SPACE_BEFORE_EQUALS_SIGN").?, "yes");
+        try expectString(map.get("EMPTY_SINGLE_QUOTED_VALUE_IS_EMPTY_STRING").?, "");
+        try expectString(map.get("EMPTY_DOUBLE_QUOTED_VALUE_IS_EMPTY_STRING").?, "");
+        try expectString(map.get("VALUE_WITH_MULTIPLE_VALUES_SET_IN_SAME_FILE").?, "good");
+    }
+}
+
+test "DotEnv Loader - Nested values with curly braces" {
+    const VALID_ENV =
+        \\DB_USER=postgres
+        \\DB_PASS=xyz
+        \\DB_HOST=localhost
+        \\DB_PORT=5432
+        \\DB_NAME=db
+        \\
+        \\DB_USER2=${DB_USER}
+        \\
+        \\DATABASE_URL="postgresql://${DB_USER}:${DB_PASS}@${DB_HOST}:${DB_PORT}/${DB_NAME}?pool_timeout=30&connection_limit=22"
         \\
     ;
     const source = logger.Source.initPathString(".env", VALID_ENV);
@@ -1107,25 +1211,9 @@ test "DotEnv Loader - basic" {
         true,
         false,
     );
-    try expectString(map.get("NESTED_VALUES_RESPECT_ESCAPING").?, "\\$API_KEY");
-
-    try expectString(map.get("NESTED_VALUE").?, "verysecure");
-    try expectString(map.get("RECURSIVE_NESTED_VALUE").?, "verysecure:verysecure");
-
-    try expectString(map.get("API_KEY").?, "verysecure");
-    try expectString(map.get("process.env.WAT").?, "ABCDEFGHIJKLMNOPQRSTUVWXYZZ10239457123");
-    try expectString(map.get("DOUBLE-QUOTED_SHOULD_PRESERVE_NEWLINES").?, "\nya\n");
-    try expectString(map.get("SINGLE_QUOTED_SHOULDNT_PRESERVE_NEWLINES").?, "yo");
-    try expectString(map.get("SINGLE_QUOTED_DOESNT_PRESERVES_QUOTES").?, "yo");
-    try expectString(map.get("UNQUOTED_SHOULDNT_PRESERVE_NEWLINES_AND_TRIMS_TRAILING_SPACE").?, "yo");
-    try expect(map.get("LINES_WITHOUT_EQUAL_ARE_IGNORED") == null);
-    try expectString(map.get("LEADING_SPACE_IS_TRIMMED").?, "yes");
-    try expect(map.get("NO_VALUE_IS_EMPTY_STRING").?.len == 0);
-    try expectString(map.get("IGNORING_DOESNT_BREAK_OTHER_LINES").?, "yes");
-    try expectString(map.get("LEADING_SPACE_IN_UNQUOTED_VALUE_IS_TRIMMED").?, "yes");
-    try expectString(map.get("SPACE_BEFORE_EQUALS_SIGN").?, "yes");
-    try expectString(map.get("EMPTY_SINGLE_QUOTED_VALUE_IS_EMPTY_STRING").?, "");
-    try expectString(map.get("EMPTY_DOUBLE_QUOTED_VALUE_IS_EMPTY_STRING").?, "");
+    try expectString(map.get("DB_USER").?, "postgres");
+    try expectString(map.get("DB_USER2").?, "postgres");
+    try expectString(map.get("DATABASE_URL").?, "postgresql://postgres:xyz@localhost:5432/db?pool_timeout=30&connection_limit=22");
 }
 
 test "DotEnv Process" {

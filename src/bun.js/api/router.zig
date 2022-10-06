@@ -99,9 +99,7 @@ pub fn match(
         var url = URL.parse(path_.?.slice());
         pathname = url.pathname;
     } else if (arg.as(Request)) |req| {
-        var path_string = req.url;
-        path_ = path_string.toSlice(bun.default_allocator);
-        var url = URL.parse(path_.?.slice());
+        var url = URL.parse(req.url);
         pathname = url.pathname;
     }
 
@@ -177,39 +175,6 @@ fn createRouteObjectFromMatch(
 
     return Instance.make(ctx, router);
 }
-
-pub const match_type_definition = &[_]d.ts{
-    .{
-        .tsdoc = "Match a {@link https://developer.mozilla.org/en-US/docs/Web/API/FetchEvent FetchEvent} to a `Route` from the local filesystem. Returns `null` if there is no match.",
-        .args = &[_]d.ts.arg{
-            .{
-                .name = "event",
-                .@"return" = "FetchEvent",
-            },
-        },
-        .@"return" = "Route | null",
-    },
-    .{
-        .tsdoc = "Match a `pathname` to a `Route` from the local filesystem. Returns `null` if there is no match.",
-        .args = &[_]d.ts.arg{
-            .{
-                .name = "pathname",
-                .@"return" = "string",
-            },
-        },
-        .@"return" = "Route | null",
-    },
-    .{
-        .tsdoc = "Match a {@link https://developer.mozilla.org/en-US/docs/Web/API/Request Request} to a `Route` from the local filesystem. Returns `null` if there is no match.",
-        .args = &[_]d.ts.arg{
-            .{
-                .name = "request",
-                .@"return" = "Request",
-            },
-        },
-        .@"return" = "Route | null",
-    },
-};
 
 pub const Instance = NewClass(
     Router,

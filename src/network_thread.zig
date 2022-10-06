@@ -14,10 +14,9 @@ const Lock = @import("./lock.zig").Lock;
 const FIFO = @import("./io/fifo.zig").FIFO;
 
 /// Single-thread in this pool
-pool: ThreadPool,
 io: *AsyncIO = undefined,
 thread: std.Thread = undefined,
-event_fd: std.os.fd_t = 0,
+waker: AsyncIO.Waker = undefined,
 queued_tasks_mutex: Lock = Lock.init(),
 queued_tasks: Batch = .{},
 processing_tasks: Batch = .{},
@@ -27,6 +26,79 @@ pub var global: NetworkThread = undefined;
 pub var global_loaded: std.atomic.Atomic(u32) = std.atomic.Atomic(u32).init(0);
 
 const log = Output.scoped(.NetworkThread, true);
+const Global = @import("./global.zig").Global;
+pub fn onStartIOThread(waker: AsyncIO.Waker) void {
+    NetworkThread.address_list_cached = NetworkThread.AddressListCache.init(@import("./global.zig").default_allocator);
+    AsyncIO.global = AsyncIO.init(1024, 0, waker) catch |err| {
+        log: {
+            if (comptime Environment.isLinux) {
+                if (err == error.SystemOutdated) {
+                    Output.prettyErrorln(
+                        \\<red>error<r>: Linux kernel version doesn't support io_uring, which Bun depends on. 
+                        \\
+                        \\ To fix this error: please upgrade to a newer Linux kernel.
+                        \\ 
+                        \\ If you're using Windows Subsystem for Linux, here's how:
+                        \\  1. Open PowerShell as an administrator
+                        \\  2. Run this:
+                        \\      wsl --update
+                        \\      wsl --shutdown
+                        \\ 
+                        \\ Please make sure you're using WSL version 2 (not WSL 1). To check: wsl -l -v
+                        \\ If you are on WSL 1, update to WSL 2 with the following commands:
+                        \\  1. wsl --set-default-version 2
+                        \\  2. wsl --set-version [distro_name] 2
+                        \\  3. Now follow the WSL 2 instructions above.
+                        \\     Where [distro_name] is one of the names from the list given by: wsl -l -v
+                        \\ 
+                        \\ If that doesn't work (and you're on a Windows machine), try this:
+                        \\  1. Open Windows Update
+                        \\  2. Download any updates to Windows Subsystem for Linux
+                        \\ 
+                        \\ If you're still having trouble, ask for help in bun's discord https://bun.sh/discord
+                    , .{});
+                    break :log;
+                } else if (err == error.SystemResources) {
+                    Output.prettyErrorln(
+                        \\<red>error<r>: memlock limit exceeded
+                        \\
+                        \\To fix this error: <b>please increase the memlock limit<r> or upgrade to Linux kernel 5.11+
+                        \\
+                        \\If Bun is running inside Docker, make sure to set the memlock limit to unlimited (-1)
+                        \\ 
+                        \\    docker run --rm --init --ulimit memlock=-1:-1 jarredsumner/bun:edge
+                        \\
+                        \\To bump the memlock limit, check one of the following:
+                        \\    /etc/security/limits.conf
+                        \\    /etc/systemd/user.conf
+                        \\    /etc/systemd/system.conf
+                        \\
+                        \\You can also try running bun as root.
+                        \\
+                        \\If running many copies of Bun via exec or spawn, be sure that O_CLOEXEC is set so
+                        \\that resources are not leaked when the child process exits.
+                        \\
+                        \\Why does this happen?
+                        \\
+                        \\Bun uses io_uring and io_uring accounts memory it
+                        \\needs under the rlimit memlocked option, which can be
+                        \\quite low on some setups (64K).
+                        \\
+                        \\
+                    , .{});
+                    break :log;
+                }
+            }
+
+            Output.prettyErrorln("<r><red>error<r>: Failed to initialize network thread: <red><b>{s}<r>.\nHTTP requests will not work. Please file an issue and run strace().", .{@errorName(err)});
+        }
+
+        Global.exit(1);
+    };
+    AsyncIO.global_loaded = true;
+    NetworkThread.global.io = &AsyncIO.global;
+    NetworkThread.global.processEvents();
+}
 
 fn queueEvents(this: *@This()) void {
     this.queued_tasks_mutex.lock();
@@ -42,13 +114,9 @@ pub fn processEvents(this: *@This()) void {
     processEvents_(this) catch {};
     unreachable;
 }
+
 /// Should only be called on the HTTP thread!
 fn processEvents_(this: *@This()) !void {
-    {
-        var bytes: [8]u8 = undefined;
-        _ = std.os.read(this.event_fd, &bytes) catch 0;
-    }
-
     while (true) {
         this.queueEvents();
 
@@ -82,20 +150,20 @@ fn processEvents_(this: *@This()) !void {
 }
 
 pub fn schedule(this: *@This(), batch: Batch) void {
+    if (batch.len == 0)
+        return;
+
+    {
+        this.queued_tasks_mutex.lock();
+        defer this.queued_tasks_mutex.unlock();
+        this.queued_tasks.push(batch);
+    }
+
     if (comptime Environment.isLinux) {
-        if (batch.len == 0)
-            return;
-
-        {
-            this.queued_tasks_mutex.lock();
-            defer this.queued_tasks_mutex.unlock();
-            this.queued_tasks.push(batch);
-        }
-
         const one = @bitCast([8]u8, @as(usize, batch.len));
-        _ = std.os.write(this.event_fd, &one) catch @panic("Failed to write to eventfd");
+        _ = std.os.write(this.waker.fd, &one) catch @panic("Failed to write to eventfd");
     } else {
-        this.pool.schedule(batch);
+        this.waker.wake() catch @panic("Failed to wake");
     }
 }
 
@@ -151,8 +219,6 @@ pub fn warmup() !void {
     if (has_warmed or global_loaded.load(.Monotonic) > 0) return;
     has_warmed = true;
     try init();
-    if (comptime !Environment.isLinux)
-        global.pool.forceSpawn();
 }
 
 pub fn init() !void {
@@ -160,16 +226,20 @@ pub fn init() !void {
     AsyncIO.global_loaded = true;
 
     global = NetworkThread{
-        .pool = ThreadPool.init(.{ .max_threads = 1, .stack_size = 64 * 1024 * 1024 }),
         .timer = try std.time.Timer.start(),
     };
-    global.pool.on_thread_spawn = HTTP.onThreadStart;
+
     if (comptime Environment.isLinux) {
-        const event_fd = try std.os.eventfd(0, std.os.linux.EFD.CLOEXEC | 0);
-        global.event_fd = event_fd;
-        global.thread = try std.Thread.spawn(.{ .stack_size = 64 * 1024 * 1024 }, HTTP.onThreadStartNew, .{
-            @intCast(std.os.fd_t, event_fd),
-        });
-        global.thread.detach();
+        const fd = try std.os.eventfd(0, std.os.linux.EFD.CLOEXEC | 0);
+        global.waker = .{ .fd = fd };
+    } else if (comptime Environment.isMac) {
+        global.waker = try AsyncIO.Waker.init(@import("./global.zig").default_allocator);
+    } else {
+        @compileLog("TODO: Waker");
     }
+
+    global.thread = try std.Thread.spawn(.{ .stack_size = 2 * 1024 * 1024 }, onStartIOThread, .{
+        global.waker,
+    });
+    global.thread.detach();
 }

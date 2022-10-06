@@ -35,14 +35,12 @@
 #include "JSBufferConstructorBuiltins.h"
 #include "JavaScriptCore/JSBase.h"
 
+#include "JSDOMURL.h"
 #include "JavaScriptCore/JSNativeStdFunction.h"
 
 namespace Zig {
 using namespace JSC;
 using namespace WebCore;
-
-extern "C" JSC__JSValue Bun__resolve(JSC::JSGlobalObject* global, JSC__JSValue specifier, JSC__JSValue from);
-extern "C" JSC__JSValue Bun__resolveSync(JSC::JSGlobalObject* global, JSC__JSValue specifier, JSC__JSValue from);
 
 static EncodedJSValue functionRequireResolve(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame, JSC::EncodedJSValue from)
 {
@@ -133,6 +131,24 @@ JSC_DEFINE_CUSTOM_GETTER(functionRequireResolveLazyGetter,
     return JSValue::encode(JSValue(resolverFunction));
 }
 
+Zig::ImportMetaObject* Zig::ImportMetaObject::create(JSC::JSGlobalObject* globalObject, JSValue key)
+{
+    if (WebCore::DOMURL* domURL = WebCoreCast<WebCore::JSDOMURL, WebCore__DOMURL>(JSValue::encode(key))) {
+        return create(globalObject, JSC::jsString(globalObject->vm(), domURL->href().fileSystemPath()));
+    }
+
+    auto* keyString = key.toStringOrNull(globalObject);
+    if (UNLIKELY(!keyString)) {
+        return nullptr;
+    }
+
+    if (keyString->value(globalObject).startsWith("file://"_s)) {
+        return create(globalObject, JSC::jsString(globalObject->vm(), WTF::URL(keyString->value(globalObject)).fileSystemPath()));
+    }
+
+    return create(globalObject, keyString);
+}
+
 JSObject* Zig::ImportMetaObject::createRequireFunction(VM& vm, JSGlobalObject* globalObject, WTF::String& pathString)
 {
     JSFunction* requireFunction = JSFunction::create(vm, importMetaObjectRequireCodeGenerator(vm), globalObject);
@@ -142,10 +158,7 @@ JSObject* Zig::ImportMetaObject::createRequireFunction(VM& vm, JSGlobalObject* g
     return requireFunction;
 }
 
-static JSC_DECLARE_HOST_FUNCTION(functionImportMeta__resolveSync);
-
-static JSC_DEFINE_HOST_FUNCTION(functionImportMeta__resolveSync,
-    (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+extern "C" EncodedJSValue functionImportMeta__resolveSync(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame)
 {
     JSC::VM& vm = globalObject->vm();
 
@@ -209,9 +222,9 @@ static JSC_DEFINE_HOST_FUNCTION(functionImportMeta__resolveSync,
     }
 }
 
-static JSC_DECLARE_HOST_FUNCTION(functionImportMeta__resolve);
+JSC_DECLARE_HOST_FUNCTION(functionImportMeta__resolve);
 
-static JSC_DEFINE_HOST_FUNCTION(functionImportMeta__resolve,
+JSC_DEFINE_HOST_FUNCTION(functionImportMeta__resolve,
     (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     JSC::VM& vm = globalObject->vm();
@@ -299,27 +312,24 @@ void ImportMetaObjectPrototype::finishCreation(VM& vm, JSGlobalObject* globalObj
     auto* globalObject = reinterpret_cast<Zig::GlobalObject*>(globalObject_);
     auto clientData = WebCore::clientData(vm);
 
-    this->putDirect(vm, clientData->builtinNames().filePublicName(), jsEmptyString(vm), 0);
-    this->putDirect(vm, clientData->builtinNames().dirPublicName(), jsEmptyString(vm), 0);
-    this->putDirect(vm, clientData->builtinNames().pathPublicName(), jsEmptyString(vm), 0);
-    this->putDirect(vm, clientData->builtinNames().urlPublicName(), jsEmptyString(vm), 0);
-    this->putDirect(vm, clientData->builtinNames().mainPublicName(), jsBoolean(false), 0);
+    auto& builtinNames = clientData->builtinNames();
+
+    this->putDirect(vm, builtinNames.filePublicName(), jsEmptyString(vm), 0);
+    this->putDirect(vm, builtinNames.dirPublicName(), jsEmptyString(vm), 0);
+    this->putDirect(vm, builtinNames.pathPublicName(), jsEmptyString(vm), 0);
+    this->putDirect(vm, builtinNames.urlPublicName(), jsEmptyString(vm), 0);
+    this->putDirect(vm, builtinNames.mainPublicName(), jsBoolean(false), 0);
 
     String requireString = "[[require]]"_s;
-    this->putDirect(vm, clientData->builtinNames().requirePublicName(), Zig::ImportMetaObject::createRequireFunction(vm, globalObject, requireString), PropertyAttribute::Builtin | PropertyAttribute::Function | 0);
+    this->putDirect(vm, builtinNames.requirePublicName(), Zig::ImportMetaObject::createRequireFunction(vm, globalObject, requireString), PropertyAttribute::Builtin | PropertyAttribute::Function | 0);
 
-    this->putDirectBuiltinFunction(vm, globalObject,
-        clientData->builtinNames().loadModulePublicName(), importMetaObjectLoadModuleCodeGenerator(vm), JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::DontDelete | 0);
-    this->putDirectBuiltinFunction(vm, globalObject,
-        clientData->builtinNames().requireModulePublicName(), importMetaObjectRequireModuleCodeGenerator(vm), JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::DontDelete | 0);
-
-    this->putDirectNativeFunction(vm, globalObject, clientData->builtinNames().resolvePublicName(), 1,
+    this->putDirectNativeFunction(vm, globalObject, builtinNames.resolvePublicName(), 1,
         functionImportMeta__resolve,
         ImplementationVisibility::Public,
         NoIntrinsic,
         JSC::PropertyAttribute::Function | 0);
     this->putDirectNativeFunction(
-        vm, globalObject, clientData->builtinNames().resolveSyncPublicName(),
+        vm, globalObject, builtinNames.resolveSyncPublicName(),
         1,
         functionImportMeta__resolveSync,
         ImplementationVisibility::Public,

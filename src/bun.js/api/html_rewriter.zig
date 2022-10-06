@@ -112,7 +112,7 @@ pub const HTMLRewriter = struct {
             selector.deinit();
             return JSValue.fromRef(exception.*);
         }
-        var handler = getAllocator(global.ref()).create(ElementHandler) catch unreachable;
+        var handler = getAllocator(global).create(ElementHandler) catch unreachable;
         handler.* = handler_;
 
         this.builder.addElementContentHandlers(
@@ -160,7 +160,7 @@ pub const HTMLRewriter = struct {
             return JSValue.fromRef(exception.*);
         }
 
-        var handler = getAllocator(global.ref()).create(DocumentHandler) catch unreachable;
+        var handler = getAllocator(global).create(DocumentHandler) catch unreachable;
         handler.* = handler_;
 
         this.builder.addDocumentContentHandlers(
@@ -217,15 +217,13 @@ pub const HTMLRewriter = struct {
     pub fn returnEmptyResponse(this: *HTMLRewriter, global: *JSGlobalObject, response: *Response) JSValue {
         var result = bun.default_allocator.create(Response) catch unreachable;
 
-        response.cloneInto(result, getAllocator(global.ref()), global);
+        response.cloneInto(result, getAllocator(global), global);
         this.finalizeWithoutDestroy();
         return result.toJS(global);
     }
 
     pub fn transform(this: *HTMLRewriter, global: *JSGlobalObject, response: *Response) JSValue {
-        var input = response.body.slice();
-
-        if (input.len == 0 and !(response.body.value == .Blob and response.body.value.Blob.needsToReadFile())) {
+        if (response.body.len() == 0 and !(response.body.value == .Blob and response.body.value.Blob.needsToReadFile())) {
             return this.returnEmptyResponse(global, response);
         }
 
@@ -395,7 +393,7 @@ pub const HTMLRewriter = struct {
         rewriter: *LOLHTML.HTMLRewriter,
         context: LOLHTMLContext,
         response: *Response,
-        input: JSC.WebCore.Blob = undefined,
+        input: JSC.WebCore.AnyBlob = undefined,
         pub fn init(context: LOLHTMLContext, global: *JSGlobalObject, original: *Response, builder: *LOLHTML.HTMLRewriter.Builder) JSValue {
             var result = bun.default_allocator.create(Response) catch unreachable;
             var sink = bun.default_allocator.create(BufferOutputSink) catch unreachable;
@@ -413,11 +411,14 @@ pub const HTMLRewriter = struct {
             for (sink.context.element_handlers.items) |doc| {
                 doc.ctx = sink;
             }
-
+            const input_size = original.body.len();
             sink.rewriter = builder.build(
                 .UTF8,
                 .{
-                    .preallocated_parsing_buffer_size = @maximum(original.body.len(), 1024),
+                    .preallocated_parsing_buffer_size = if (input_size == JSC.WebCore.Blob.max_size)
+                        1024
+                    else
+                        @maximum(input_size, 1024),
                     .max_allowed_memory_usage = std.math.maxInt(u32),
                 },
                 false,
@@ -454,20 +455,20 @@ pub const HTMLRewriter = struct {
             result.url = bun.default_allocator.dupe(u8, original.url) catch unreachable;
             result.status_text = bun.default_allocator.dupe(u8, original.status_text) catch unreachable;
 
-            var input: JSC.WebCore.Blob = original.body.value.use();
+            var input = original.body.value.useAsAnyBlob();
+            sink.input = input;
 
             const is_pending = input.needsToReadFile();
             defer if (!is_pending) input.detach();
 
             if (is_pending) {
-                input.doReadFileInternal(*BufferOutputSink, sink, onFinishedLoading, global);
-            } else if (sink.runOutputSink(input.sharedView(), false, false)) |error_value| {
+                sink.input.Blob.doReadFileInternal(*BufferOutputSink, sink, onFinishedLoading, global);
+            } else if (sink.runOutputSink(input.slice(), false, false)) |error_value| {
                 return error_value;
             }
 
             // Hold off on cloning until we're actually done.
-
-            return sink.response.toJS(sink.global.ref());
+            return sink.response.toJS(sink.global);
         }
 
         pub fn onFinishedLoading(sink: *BufferOutputSink, bytes: JSC.WebCore.Blob.Store.ReadFile.ResultType) void {
@@ -482,7 +483,7 @@ pub const HTMLRewriter = struct {
                     } else if (sink.response.body.value == .Locked and @ptrToInt(sink.response.body.value.Locked.task) == @ptrToInt(sink) and
                         sink.response.body.value.Locked.promise != null)
                     {
-                        sink.response.body.value.Locked.callback = null;
+                        sink.response.body.value.Locked.onReceiveValue = null;
                         sink.response.body.value.Locked.task = null;
                     }
 
@@ -544,9 +545,12 @@ pub const HTMLRewriter = struct {
         pub fn done(this: *BufferOutputSink) void {
             var prev_value = this.response.body.value;
             var bytes = this.bytes.toOwnedSliceLeaky();
-            this.response.body.value = .{
-                .Blob = JSC.WebCore.Blob.init(bytes, this.bytes.allocator, this.global),
-            };
+            this.response.body.value = JSC.WebCore.Body.Value.createBlobValue(
+                bytes,
+                bun.default_allocator,
+
+                true,
+            );
             prev_value.resolve(
                 &this.response.body.value,
                 this.global,
@@ -641,7 +645,7 @@ pub const HTMLRewriter = struct {
     //         // Hold off on cloning until we're actually done.
 
     //         return JSC.JSValue.fromRef(
-    //             Response.makeMaybePooled(sink.global.ref(), sink.response),
+    //             Response.makeMaybePooled(sink.global, sink.response),
     //         );
     //     }
 
@@ -733,7 +737,7 @@ const DocumentHandler = struct {
                 JSC.throwInvalidArguments(
                     "Expected object but received {s}",
                     .{@as(string, @tagName(kind))},
-                    global.ref(),
+                    global,
                     exception,
                 );
                 return undefined;
@@ -742,66 +746,66 @@ const DocumentHandler = struct {
 
         if (thisObject.get(global, "doctype")) |val| {
             if (val.isUndefinedOrNull() or !val.isCell() or !val.isCallable(global.vm())) {
-                JSC.throwInvalidArguments("doctype must be a function", .{}, global.ref(), exception);
+                JSC.throwInvalidArguments("doctype must be a function", .{}, global, exception);
                 return undefined;
             }
-            JSC.C.JSValueProtect(global.ref(), val.asObjectRef());
+            JSC.C.JSValueProtect(global, val.asObjectRef());
             handler.onDocTypeCallback = val;
         }
 
         if (thisObject.get(global, "comments")) |val| {
             if (val.isUndefinedOrNull() or !val.isCell() or !val.isCallable(global.vm())) {
-                JSC.throwInvalidArguments("comments must be a function", .{}, global.ref(), exception);
+                JSC.throwInvalidArguments("comments must be a function", .{}, global, exception);
                 return undefined;
             }
-            JSC.C.JSValueProtect(global.ref(), val.asObjectRef());
+            JSC.C.JSValueProtect(global, val.asObjectRef());
             handler.onCommentCallback = val;
         }
 
         if (thisObject.get(global, "text")) |val| {
             if (val.isUndefinedOrNull() or !val.isCell() or !val.isCallable(global.vm())) {
-                JSC.throwInvalidArguments("text must be a function", .{}, global.ref(), exception);
+                JSC.throwInvalidArguments("text must be a function", .{}, global, exception);
                 return undefined;
             }
-            JSC.C.JSValueProtect(global.ref(), val.asObjectRef());
+            JSC.C.JSValueProtect(global, val.asObjectRef());
             handler.onTextCallback = val;
         }
 
         if (thisObject.get(global, "end")) |val| {
             if (val.isUndefinedOrNull() or !val.isCell() or !val.isCallable(global.vm())) {
-                JSC.throwInvalidArguments("end must be a function", .{}, global.ref(), exception);
+                JSC.throwInvalidArguments("end must be a function", .{}, global, exception);
                 return undefined;
             }
-            JSC.C.JSValueProtect(global.ref(), val.asObjectRef());
+            JSC.C.JSValueProtect(global, val.asObjectRef());
             handler.onEndCallback = val;
         }
 
-        JSC.C.JSValueProtect(global.ref(), thisObject.asObjectRef());
+        JSC.C.JSValueProtect(global, thisObject.asObjectRef());
         return handler;
     }
 
     pub fn deinit(this: *DocumentHandler) void {
         if (this.onDocTypeCallback) |cb| {
-            JSC.C.JSValueUnprotect(this.global.ref(), cb.asObjectRef());
+            JSC.C.JSValueUnprotect(this.global, cb.asObjectRef());
             this.onDocTypeCallback = null;
         }
 
         if (this.onCommentCallback) |cb| {
-            JSC.C.JSValueUnprotect(this.global.ref(), cb.asObjectRef());
+            JSC.C.JSValueUnprotect(this.global, cb.asObjectRef());
             this.onCommentCallback = null;
         }
 
         if (this.onTextCallback) |cb| {
-            JSC.C.JSValueUnprotect(this.global.ref(), cb.asObjectRef());
+            JSC.C.JSValueUnprotect(this.global, cb.asObjectRef());
             this.onTextCallback = null;
         }
 
         if (this.onEndCallback) |cb| {
-            JSC.C.JSValueUnprotect(this.global.ref(), cb.asObjectRef());
+            JSC.C.JSValueUnprotect(this.global, cb.asObjectRef());
             this.onEndCallback = null;
         }
 
-        JSC.C.JSValueUnprotect(this.global.ref(), this.thisObject.asObjectRef());
+        JSC.C.JSValueUnprotect(this.global, this.thisObject.asObjectRef());
     }
 };
 
@@ -820,10 +824,10 @@ fn HandlerCallback(
             @field(zig_element, field_name) = value;
             // At the end of this scope, the value is no longer valid
             var args = [1]JSC.C.JSObjectRef{
-                ZigType.Class.make(this.global.ref(), zig_element),
+                ZigType.Class.make(this.global, zig_element),
             };
             var result = JSC.C.JSObjectCallAsFunctionReturnValue(
-                this.global.ref(),
+                this.global,
                 @field(this, callback_name).?.asObjectRef(),
                 if (comptime @hasField(HandlerType, "thisObject"))
                     @field(this, "thisObject").asObjectRef()
@@ -884,7 +888,7 @@ const ElementHandler = struct {
                 JSC.throwInvalidArguments(
                     "Expected object but received {s}",
                     .{@as(string, @tagName(kind))},
-                    global.ref(),
+                    global,
                     exception,
                 );
                 return undefined;
@@ -893,52 +897,52 @@ const ElementHandler = struct {
 
         if (thisObject.get(global, "element")) |val| {
             if (val.isUndefinedOrNull() or !val.isCell() or !val.isCallable(global.vm())) {
-                JSC.throwInvalidArguments("element must be a function", .{}, global.ref(), exception);
+                JSC.throwInvalidArguments("element must be a function", .{}, global, exception);
                 return undefined;
             }
-            JSC.C.JSValueProtect(global.ref(), val.asObjectRef());
+            JSC.C.JSValueProtect(global, val.asObjectRef());
             handler.onElementCallback = val;
         }
 
         if (thisObject.get(global, "comments")) |val| {
             if (val.isUndefinedOrNull() or !val.isCell() or !val.isCallable(global.vm())) {
-                JSC.throwInvalidArguments("comments must be a function", .{}, global.ref(), exception);
+                JSC.throwInvalidArguments("comments must be a function", .{}, global, exception);
                 return undefined;
             }
-            JSC.C.JSValueProtect(global.ref(), val.asObjectRef());
+            JSC.C.JSValueProtect(global, val.asObjectRef());
             handler.onCommentCallback = val;
         }
 
         if (thisObject.get(global, "text")) |val| {
             if (val.isUndefinedOrNull() or !val.isCell() or !val.isCallable(global.vm())) {
-                JSC.throwInvalidArguments("text must be a function", .{}, global.ref(), exception);
+                JSC.throwInvalidArguments("text must be a function", .{}, global, exception);
                 return undefined;
             }
-            JSC.C.JSValueProtect(global.ref(), val.asObjectRef());
+            JSC.C.JSValueProtect(global, val.asObjectRef());
             handler.onTextCallback = val;
         }
 
-        JSC.C.JSValueProtect(global.ref(), thisObject.asObjectRef());
+        JSC.C.JSValueProtect(global, thisObject.asObjectRef());
         return handler;
     }
 
     pub fn deinit(this: *ElementHandler) void {
         if (this.onElementCallback) |cb| {
-            JSC.C.JSValueUnprotect(this.global.ref(), cb.asObjectRef());
+            JSC.C.JSValueUnprotect(this.global, cb.asObjectRef());
             this.onElementCallback = null;
         }
 
         if (this.onCommentCallback) |cb| {
-            JSC.C.JSValueUnprotect(this.global.ref(), cb.asObjectRef());
+            JSC.C.JSValueUnprotect(this.global, cb.asObjectRef());
             this.onCommentCallback = null;
         }
 
         if (this.onTextCallback) |cb| {
-            JSC.C.JSValueUnprotect(this.global.ref(), cb.asObjectRef());
+            JSC.C.JSValueUnprotect(this.global, cb.asObjectRef());
             this.onTextCallback = null;
         }
 
-        JSC.C.JSValueUnprotect(this.global.ref(), this.thisObject.asObjectRef());
+        JSC.C.JSValueUnprotect(this.global, this.thisObject.asObjectRef());
     }
 
     pub fn onElement(this: *ElementHandler, value: *LOLHTML.Element) bool {
@@ -1493,7 +1497,7 @@ pub const AttributeIterator = struct {
         var name = JSC.C.JSStringCreateStatic("AttributeIteratorGetter", "AttributeIteratorGetter".len);
         var param_name = JSC.C.JSStringCreateStatic("internal1", "internal1".len);
         var attribute_iterator_class_ = JSC.C.JSObjectMakeFunction(
-            global.ref(),
+            global,
             name,
             1,
             &[_]JSC.C.JSStringRef{param_name},
@@ -1502,7 +1506,7 @@ pub const AttributeIterator = struct {
             0,
             exception_ptr,
         );
-        JSC.C.JSValueProtect(global.ref(), attribute_iterator_class_);
+        JSC.C.JSValueProtect(global, attribute_iterator_class_);
         attribute_iterator_class = attribute_iterator_class_;
         return JSC.JSValue.fromRef(attribute_iterator_class);
     }

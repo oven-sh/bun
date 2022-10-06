@@ -10,14 +10,48 @@ const TODO_EXCEPTION: JSC.C.ExceptionRef = null;
 const Channel = @import("../sync.zig").Channel;
 
 pub const napi_env = *JSC.JSGlobalObject;
-pub const napi_ref = struct_napi_ref__;
+pub const Ref = opaque {
+    pub fn create(globalThis: *JSC.JSGlobalObject, value: JSValue) *Ref {
+        JSC.markBinding();
+        var ref: *Ref = undefined;
+        std.debug.assert(
+            napi_create_reference(
+                globalThis,
+                value,
+                1,
+                &ref,
+            ) == .ok,
+        );
+        if (comptime bun.Environment.isDebug) {
+            std.debug.assert(ref.get() == value);
+        }
+        return ref;
+    }
+
+    pub fn get(ref: *Ref) JSValue {
+        JSC.markBinding();
+        return napi_get_reference_value_internal(ref);
+    }
+
+    pub fn destroy(ref: *Ref) void {
+        JSC.markBinding();
+        napi_delete_reference_internal(ref);
+    }
+
+    pub fn set(this: *Ref, value: JSC.JSValue) void {
+        JSC.markBinding();
+        napi_set_ref(this, value);
+    }
+
+    extern fn napi_delete_reference_internal(ref: *Ref) void;
+    extern fn napi_set_ref(ref: *Ref, value: JSC.JSValue) void;
+};
 pub const napi_handle_scope = napi_env;
 pub const napi_escapable_handle_scope = struct_napi_escapable_handle_scope__;
 pub const napi_callback_info = *JSC.CallFrame;
 pub const napi_deferred = *JSC.JSPromise;
 
 pub const napi_value = JSC.JSValue;
-pub const struct_napi_ref__ = opaque {};
 pub const struct_napi_escapable_handle_scope__ = opaque {};
 pub const struct_napi_deferred__ = opaque {};
 
@@ -629,16 +663,17 @@ pub extern fn napi_define_class(
     properties: [*c]const napi_property_descriptor,
     result: *napi_value,
 ) napi_status;
-pub extern fn napi_wrap(env: napi_env, js_object: napi_value, native_object: ?*anyopaque, finalize_cb: napi_finalize, finalize_hint: ?*anyopaque, result: [*c]napi_ref) napi_status;
+pub extern fn napi_wrap(env: napi_env, js_object: napi_value, native_object: ?*anyopaque, finalize_cb: napi_finalize, finalize_hint: ?*anyopaque, result: [*c]Ref) napi_status;
 pub extern fn napi_unwrap(env: napi_env, js_object: napi_value, result: [*]*anyopaque) napi_status;
 pub extern fn napi_remove_wrap(env: napi_env, js_object: napi_value, result: [*]*anyopaque) napi_status;
 pub extern fn napi_create_external(env: napi_env, data: ?*anyopaque, finalize_cb: napi_finalize, finalize_hint: ?*anyopaque, result: *napi_value) napi_status;
 pub extern fn napi_get_value_external(env: napi_env, value: napi_value, result: [*]*anyopaque) napi_status;
-pub extern fn napi_create_reference(env: napi_env, value: napi_value, initial_refcount: u32, result: [*c]napi_ref) napi_status;
-pub extern fn napi_delete_reference(env: napi_env, ref: napi_ref) napi_status;
-pub extern fn napi_reference_ref(env: napi_env, ref: napi_ref, result: [*c]u32) napi_status;
-pub extern fn napi_reference_unref(env: napi_env, ref: napi_ref, result: [*c]u32) napi_status;
-pub extern fn napi_get_reference_value(env: napi_env, ref: napi_ref, result: *napi_value) napi_status;
+pub extern fn napi_create_reference(env: napi_env, value: napi_value, initial_refcount: u32, result: **Ref) napi_status;
+pub extern fn napi_delete_reference(env: napi_env, ref: *Ref) napi_status;
+pub extern fn napi_reference_ref(env: napi_env, ref: *Ref, result: [*c]u32) napi_status;
+pub extern fn napi_reference_unref(env: napi_env, ref: *Ref, result: [*c]u32) napi_status;
+pub extern fn napi_get_reference_value(env: napi_env, ref: *Ref, result: *napi_value) napi_status;
+pub extern fn napi_get_reference_value_internal(ref: *Ref) JSC.JSValue;
 
 // JSC scans the stack
 // we don't need this
@@ -818,7 +853,7 @@ pub export fn napi_get_date_value(env: napi_env, value: napi_value, result: *f64
     ).asNumber();
     return .ok;
 }
-pub extern fn napi_add_finalizer(env: napi_env, js_object: napi_value, native_object: ?*anyopaque, finalize_cb: napi_finalize, finalize_hint: ?*anyopaque, result: [*c]napi_ref) napi_status;
+pub extern fn napi_add_finalizer(env: napi_env, js_object: napi_value, native_object: ?*anyopaque, finalize_cb: napi_finalize, finalize_hint: ?*anyopaque, result: *Ref) napi_status;
 pub export fn napi_create_bigint_int64(env: napi_env, value: i64, result: *napi_value) napi_status {
     result.* = JSC.JSValue.fromInt64NoTruncate(env, value);
     return .ok;
@@ -853,6 +888,7 @@ const WorkPoolTask = @import("../work_pool.zig").Task;
 /// must be globally allocated
 pub const napi_async_work = struct {
     task: WorkPoolTask = .{ .callback = runFromThreadPool },
+    concurrent_task: JSC.ConcurrentTask = .{},
     completion_task: ?*anyopaque = null,
     event_loop: *JSC.EventLoop,
     global: napi_env,
@@ -863,6 +899,7 @@ pub const napi_async_work = struct {
     can_deinit: bool = false,
     wait_for_deinit: bool = false,
     scheduled: bool = false,
+    ref: JSC.PollRef = .{},
     pub const Status = enum(u32) {
         pending = 0,
         started = 1,
@@ -900,20 +937,24 @@ pub const napi_async_work = struct {
         this.execute.?(this.global, this.ctx);
         this.status.store(@enumToInt(Status.completed), .SeqCst);
 
-        this.event_loop.enqueueTaskConcurrent(JSC.Task.init(this));
+        this.event_loop.enqueueTaskConcurrent(this.concurrent_task.from(this));
     }
 
     pub fn schedule(this: *napi_async_work) void {
         if (this.scheduled) return;
         this.scheduled = true;
+        this.ref.ref(this.global.bunVM());
         WorkPool.schedule(&this.task);
     }
 
     pub fn cancel(this: *napi_async_work) bool {
+        this.ref.unref(this.global.bunVM());
         return this.status.compareAndSwap(@enumToInt(Status.cancelled), @enumToInt(Status.pending), .SeqCst, .SeqCst) != null;
     }
 
     pub fn deinit(this: *napi_async_work) void {
+        this.ref.unref(this.global.bunVM());
+
         if (this.can_deinit) {
             bun.default_allocator.destroy(this);
             return;
@@ -1139,6 +1180,8 @@ pub const ThreadSafeFunction = struct {
     owning_threads: std.AutoArrayHashMapUnmanaged(u64, void) = .{},
     owning_thread_lock: Lock = Lock.init(),
     event_loop: *JSC.EventLoop,
+    concurrent_task: JSC.ConcurrentTask = .{},
+    concurrent_finalizer_task: JSC.ConcurrentTask = .{},
 
     javascript_function: JSValue,
     finalizer_task: JSC.AnyTask = undefined,
@@ -1224,7 +1267,7 @@ pub const ThreadSafeFunction = struct {
         } else {
             // TODO: wrapper that reports errors
             _ = JSC.C.JSObjectCallAsFunction(
-                this.event_loop.global.ref(),
+                this.event_loop.global,
                 this.javascript_function.asObjectRef(),
                 JSC.JSValue.jsUndefined().asObjectRef(),
                 0,
@@ -1243,7 +1286,7 @@ pub const ThreadSafeFunction = struct {
             }
         }
 
-        this.event_loop.enqueueTaskConcurrent(JSC.Task.init(this));
+        this.event_loop.enqueueTaskConcurrent(this.concurrent_task.from(this));
     }
 
     pub fn finalize(opaq: *anyopaque) void {
@@ -1252,7 +1295,7 @@ pub const ThreadSafeFunction = struct {
             fun(this.event_loop.global, opaq, this.finalizer.ctx);
         }
 
-        JSC.C.JSValueUnprotect(this.event_loop.global.ref(), this.javascript_function.asObjectRef());
+        JSC.C.JSValueUnprotect(this.event_loop.global, this.javascript_function.asObjectRef());
         bun.default_allocator.destroy(this);
     }
 
@@ -1284,7 +1327,7 @@ pub const ThreadSafeFunction = struct {
 
         if (this.owning_threads.count() == 0) {
             this.finalizer_task = JSC.AnyTask{ .ctx = this, .callback = finalize };
-            this.event_loop.enqueueTaskConcurrent(JSC.Task.init(&this.finalizer_task));
+            this.event_loop.enqueueTaskConcurrent(this.concurrent_finalizer_task.from(&this.finalizer_task));
             return;
         }
     }
@@ -1462,6 +1505,7 @@ pub fn fixDeadCodeElimination() void {
     std.mem.doNotOptimizeAway(&napi_ref_threadsafe_function);
     std.mem.doNotOptimizeAway(&napi_add_async_cleanup_hook);
     std.mem.doNotOptimizeAway(&napi_remove_async_cleanup_hook);
+    std.mem.doNotOptimizeAway(&napi_add_finalizer);
 
     std.mem.doNotOptimizeAway(&@import("../bun.js/node/buffer.zig").BufferVectorized.fill);
 }
@@ -1555,5 +1599,6 @@ comptime {
         _ = napi_add_async_cleanup_hook;
         _ = napi_remove_async_cleanup_hook;
         _ = @import("../bun.js/node/buffer.zig").BufferVectorized.fill;
+        _ = napi_add_finalizer;
     }
 }

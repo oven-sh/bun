@@ -18,7 +18,7 @@ pub const PathString = packed struct {
     const JSC = @import("javascript_core");
     pub fn fromJS(value: JSC.JSValue, global: *JSC.JSGlobalObject, exception: JSC.C.ExceptionRef) PathString {
         if (!value.jsType().isStringLike()) {
-            JSC.JSError(JSC.getAllocator(global.ref()), "Only path strings are supported for now", .{}, global.ref(), exception);
+            JSC.JSError(JSC.getAllocator(global), "Only path strings are supported for now", .{}, global, exception);
             return PathString{};
         }
         var zig_str = JSC.ZigString.init("");

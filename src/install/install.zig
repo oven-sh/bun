@@ -40,6 +40,7 @@ const URL = @import("../url.zig").URL;
 const AsyncHTTP = @import("http").AsyncHTTP;
 const HTTPChannel = @import("http").HTTPChannel;
 const NetworkThread = @import("http").NetworkThread;
+const HTTP = @import("http");
 
 const Integrity = @import("./integrity.zig").Integrity;
 const clap = @import("clap");
@@ -183,9 +184,9 @@ const NetworkTask = struct {
         binlink: void,
     },
 
-    pub fn notify(http: *AsyncHTTP) void {
+    pub fn notify(this: *NetworkTask, _: anytype) void {
         defer PackageManager.instance.wake();
-        PackageManager.instance.network_channel.writeItem(@fieldParentPtr(NetworkTask, "http", http)) catch {};
+        PackageManager.instance.network_channel.writeItem(this) catch {};
     }
 
     // We must use a less restrictive Accept header value
@@ -316,18 +317,18 @@ const NetworkTask = struct {
             header_builder.content = GlobalStringBuilder{ .ptr = @intToPtr([*]u8, @ptrToInt(std.mem.span(default_headers_buf).ptr)), .len = default_headers_buf.len, .cap = default_headers_buf.len };
         }
 
-        this.request_buffer = try MutableString.init(allocator, 0);
         this.response_buffer = try MutableString.init(allocator, 0);
         this.allocator = allocator;
-        this.http = try AsyncHTTP.init(
+        this.http = AsyncHTTP.init(
             allocator,
             .GET,
             URL.parse(this.url_buf),
             header_builder.entries,
             header_builder.content.ptr.?[0..header_builder.content.len],
             &this.response_buffer,
-            &this.request_buffer,
+            "",
             0,
+            this.getCompletionCallback(),
         );
         this.http.max_retry_count = PackageManager.instance.options.max_retry_count;
         this.callback = .{
@@ -347,8 +348,10 @@ const NetworkTask = struct {
             this.http.client.force_last_modified = true;
             this.http.client.if_modified_since = last_modified;
         }
+    }
 
-        this.http.callback = notify;
+    pub fn getCompletionCallback(this: *NetworkTask) HTTP.HTTPClientResult.Callback {
+        return HTTP.HTTPClientResult.Callback.New(*NetworkTask, notify).init(this);
     }
 
     pub fn schedule(this: *NetworkTask, batch: *ThreadPool.Batch) void {
@@ -372,7 +375,6 @@ const NetworkTask = struct {
             this.url_buf = tarball.url;
         }
 
-        this.request_buffer = try MutableString.init(allocator, 0);
         this.response_buffer = try MutableString.init(allocator, 0);
         this.allocator = allocator;
 
@@ -399,17 +401,17 @@ const NetworkTask = struct {
             header_buf = header_builder.content.ptr.?[0..header_builder.content.len];
         }
 
-        this.http = try AsyncHTTP.init(
+        this.http = AsyncHTTP.init(
             allocator,
             .GET,
             URL.parse(this.url_buf),
             header_builder.entries,
             header_buf,
             &this.response_buffer,
-            &this.request_buffer,
+            "",
             0,
+            this.getCompletionCallback(),
         );
-        this.http.callback = notify;
         this.http.max_retry_count = PackageManager.instance.options.max_retry_count;
         this.callback = .{ .extract = tarball };
     }
@@ -1418,7 +1420,8 @@ pub const CacheLevel = struct {
     use_etag: bool,
     use_last_modified: bool,
 };
-
+const AsyncIO = @import("io");
+const Waker = AsyncIO.Waker;
 // We can't know all the packages we need until we've downloaded all the packages
 // The easy way would be:
 // 1. Download all packages, parsing their dependencies and enqueuing all dependencies for resolution
@@ -1471,9 +1474,8 @@ pub const PackageManager = struct {
     global_link_dir: ?std.fs.Dir = null,
     global_dir: ?std.fs.Dir = null,
     global_link_dir_path: string = "",
-
-    sleepy: std.atomic.Atomic(u32) = std.atomic.Atomic(u32).init(0),
-    sleep_delay_counter: u32 = 0,
+    waiter: Waker = undefined,
+    wait_count: std.atomic.Atomic(usize) = std.atomic.Atomic(usize).init(0),
 
     const PreallocatedNetworkTasks = std.BoundedArray(NetworkTask, 1024);
     const NetworkTaskQueue = std.HashMapUnmanaged(u64, void, IdentityContext(u64), 80);
@@ -1488,11 +1490,13 @@ pub const PackageManager = struct {
     );
 
     pub fn wake(this: *PackageManager) void {
-        Futex.wake(&this.sleepy, 1);
+        _ = this.wait_count.fetchAdd(1, .Monotonic);
+        this.waiter.wake() catch {};
     }
 
     pub fn sleep(this: *PackageManager) void {
-        Futex.wait(&this.sleepy, 1, std.time.ns_per_ms * 16) catch {};
+        if (this.wait_count.swap(0, .Monotonic) > 0) return;
+        _ = this.waiter.wait() catch 0;
     }
 
     pub fn globalLinkDir(this: *PackageManager) !std.fs.Dir {
@@ -2424,7 +2428,7 @@ pub const PackageManager = struct {
         manager.pending_tasks += @truncate(u32, count);
         manager.total_tasks += @truncate(u32, count);
         manager.network_resolve_batch.push(manager.network_tarball_batch);
-        NetworkThread.global.schedule(manager.network_resolve_batch);
+        HTTP.http_thread.schedule(manager.network_resolve_batch);
         manager.network_tarball_batch = .{};
         manager.network_resolve_batch = .{};
         return count;
@@ -2463,7 +2467,7 @@ pub const PackageManager = struct {
         this.pending_tasks += @truncate(u32, count);
         this.total_tasks += @truncate(u32, count);
         this.network_resolve_batch.push(this.network_tarball_batch);
-        NetworkThread.global.schedule(this.network_resolve_batch);
+        HTTP.http_thread.schedule(this.network_resolve_batch);
         this.network_tarball_batch = .{};
         this.network_resolve_batch = .{};
     }
@@ -2504,10 +2508,8 @@ pub const PackageManager = struct {
     ) anyerror!void {
         var batch = ThreadPool.Batch{};
         var has_updated_this_run = false;
-        var maybe_sleep = true;
 
         while (manager.network_channel.tryReadItem() catch null) |task_| {
-            maybe_sleep = false;
             var task: *NetworkTask = task_;
             manager.pending_tasks -|= 1;
 
@@ -2722,7 +2724,6 @@ pub const PackageManager = struct {
         }
 
         while (manager.resolve_tasks.tryReadItem() catch null) |task_| {
-            maybe_sleep = false;
             manager.pending_tasks -= 1;
 
             var task: Task = task_;
@@ -2831,7 +2832,7 @@ pub const PackageManager = struct {
             manager.total_tasks += @truncate(u32, count);
             manager.thread_pool.schedule(batch);
             manager.network_resolve_batch.push(manager.network_tarball_batch);
-            NetworkThread.global.schedule(manager.network_resolve_batch);
+            HTTP.http_thread.schedule(manager.network_resolve_batch);
             manager.network_tarball_batch = .{};
             manager.network_resolve_batch = .{};
 
@@ -2847,16 +2848,6 @@ pub const PackageManager = struct {
                 manager.downloads_node.?.activate();
                 manager.progress.maybeRefresh();
             }
-        }
-
-        manager.sleep_delay_counter = if (maybe_sleep)
-            manager.sleep_delay_counter + 1
-        else
-            0;
-
-        if (manager.sleep_delay_counter >= 5) {
-            manager.sleep_delay_counter = 0;
-            manager.sleep();
         }
     }
 
@@ -3611,7 +3602,7 @@ pub const PackageManager = struct {
         cli: CommandLineArguments,
     ) !*PackageManager {
         // assume that spawning a thread will take a lil so we do that asap
-        try NetworkThread.warmup();
+        try HTTP.HTTPThread.init();
 
         if (cli.global) {
             var explicit_global_dir: string = "";
@@ -3724,6 +3715,7 @@ pub const PackageManager = struct {
             .resolve_tasks = TaskChannel.init(),
             .lockfile = undefined,
             .root_package_json_file = package_json_file,
+            .waiter = try Waker.init(ctx.allocator),
             // .progress
         };
         manager.lockfile = try ctx.allocator.create(Lockfile);
@@ -4288,7 +4280,7 @@ pub const PackageManager = struct {
             // first one is always either:
             // add
             // remove
-            for (positionals) |positional| {
+            outer: for (positionals) |positional| {
                 var request = UpdateRequest{
                     .name = positional,
                 };
@@ -4333,6 +4325,11 @@ pub const PackageManager = struct {
                 request.name = std.mem.trim(u8, request.name, "\n\r\t");
                 if (request.name.len == 0) continue;
 
+                request.name_hash = String.Builder.stringHash(request.name);
+                for (update_requests.constSlice()) |*prev| {
+                    if (prev.name_hash == request.name_hash and request.name.len == prev.name.len) continue :outer;
+                }
+
                 request.version_buf = std.mem.trim(u8, request.version_buf, "\n\r\t");
 
                 // https://github.com/npm/npm-package-arg/blob/fbaf2fd0b72a0f38e7c24260fd4504f4724c9466/npa.js#L330
@@ -4362,7 +4359,7 @@ pub const PackageManager = struct {
                     const sliced = SlicedString.init(request.version_buf, request.version_buf);
                     request.version = Dependency.parse(allocator, request.version_buf, &sliced, log) orelse Dependency.Version{};
                 }
-                request.name_hash = String.Builder.stringHash(request.name);
+
                 update_requests.append(request) catch break;
             }
 
@@ -5271,7 +5268,7 @@ pub const PackageManager = struct {
                 if (!installer.options.do.install_packages) return error.InstallFailed;
             }
 
-            while (this.pending_tasks > 0 and installer.options.do.install_packages) {
+            while (this.pending_tasks > 0 and installer.options.do.install_packages) : (this.sleep()) {
                 try this.runTasks(
                     *PackageInstaller,
                     &installer,
@@ -5643,10 +5640,7 @@ pub const PackageManager = struct {
             }
 
             {
-                manager.sleepy.store(1, .Monotonic);
-                defer manager.sleepy.store(0, .Monotonic);
-
-                while (manager.pending_tasks > 0) {
+                while (manager.pending_tasks > 0) : (manager.sleep()) {
                     try manager.runTasks(void, void{}, null, log_level);
                 }
             }
@@ -5673,8 +5667,6 @@ pub const PackageManager = struct {
         if (manager.log.errors > 0) {
             Global.exit(1);
         }
-
-        // sleep on since we might not need it anymore
 
         const needs_clean_lockfile = had_any_diffs or needs_new_lockfile or manager.package_json_updates.len > 0;
         var did_meta_hash_change = needs_clean_lockfile;

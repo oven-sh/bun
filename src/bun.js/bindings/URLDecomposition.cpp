@@ -31,7 +31,21 @@ namespace WebCore {
 
 String URLDecomposition::origin() const
 {
-    return fullURL().hostAndPort();
+    auto fullURL = this->fullURL();
+    auto protocol = fullURL.protocol();
+    auto host = fullURL.host();
+    auto port = fullURL.port();
+
+    if (protocol == "file"_s)
+        return "file://"_s;
+
+    if (protocol.isEmpty() && host.isEmpty())
+        return {};
+
+    if (!port)
+        return makeString(protocol, "://", host);
+
+    return makeString(protocol, "://", host, ':', static_cast<uint32_t>(*port));
 }
 
 String URLDecomposition::protocol() const

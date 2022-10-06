@@ -32,6 +32,12 @@ class EventLoopTask;
 #include "DOMConstructors.h"
 #include "DOMWrapperWorld-class.h"
 #include "DOMIsoSubspaces.h"
+#include "BunPlugin.h"
+
+extern "C" void Bun__reportError(JSC__JSGlobalObject*, JSC__JSValue);
+// defined in ModuleLoader.cpp
+extern "C" JSC::EncodedJSValue jsFunctionOnLoadObjectResultResolve(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame);
+extern "C" JSC::EncodedJSValue jsFunctionOnLoadObjectResultReject(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame);
 // #include "EventTarget.h"
 
 // namespace WebCore {
@@ -171,6 +177,11 @@ public:
     JSC::Structure* FFIFunctionStructure() { return m_JSFFIFunctionStructure.getInitializedOnMainThread(this); }
     JSC::Structure* NapiClassStructure() { return m_NapiClassStructure.getInitializedOnMainThread(this); }
 
+    JSC::Structure* FileSinkStructure() { return m_JSFileSinkClassStructure.getInitializedOnMainThread(this); }
+    JSC::JSObject* FileSink() { return m_JSFileSinkClassStructure.constructorInitializedOnMainThread(this); }
+    JSC::JSValue FileSinkPrototype() { return m_JSFileSinkClassStructure.prototypeInitializedOnMainThread(this); }
+    JSC::JSValue JSReadableFileSinkControllerPrototype() { return m_JSFileSinkControllerPrototype.getInitializedOnMainThread(this); }
+
     JSC::Structure* ArrayBufferSinkStructure() { return m_JSArrayBufferSinkClassStructure.getInitializedOnMainThread(this); }
     JSC::JSObject* ArrayBufferSink() { return m_JSArrayBufferSinkClassStructure.constructorInitializedOnMainThread(this); }
     JSC::JSValue ArrayBufferSinkPrototype() { return m_JSArrayBufferSinkClassStructure.prototypeInitializedOnMainThread(this); }
@@ -185,6 +196,18 @@ public:
     JSC::JSObject* HTTPSResponseSink() { return m_JSHTTPSResponseSinkClassStructure.constructorInitializedOnMainThread(this); }
     JSC::JSValue HTTPSResponseSinkPrototype() { return m_JSHTTPSResponseSinkClassStructure.prototypeInitializedOnMainThread(this); }
     JSC::JSValue JSReadableHTTPSResponseSinkControllerPrototype() { return m_JSHTTPSResponseControllerPrototype.getInitializedOnMainThread(this); }
+
+    JSC::Structure* JSBufferListStructure() { return m_JSBufferListClassStructure.getInitializedOnMainThread(this); }
+    JSC::JSObject* JSBufferList() { return m_JSBufferListClassStructure.constructorInitializedOnMainThread(this); }
+    JSC::JSValue JSBufferListPrototype() { return m_JSBufferListClassStructure.prototypeInitializedOnMainThread(this); }
+
+    JSC::Structure* JSStringDecoderStructure() { return m_JSStringDecoderClassStructure.getInitializedOnMainThread(this); }
+    JSC::JSObject* JSStringDecoder() { return m_JSStringDecoderClassStructure.constructorInitializedOnMainThread(this); }
+    JSC::JSValue JSStringDecoderPrototype() { return m_JSStringDecoderClassStructure.prototypeInitializedOnMainThread(this); }
+
+    JSC::Structure* JSReadableStateStructure() { return m_JSReadableStateClassStructure.getInitializedOnMainThread(this); }
+    JSC::JSObject* JSReadableState() { return m_JSReadableStateClassStructure.constructorInitializedOnMainThread(this); }
+    JSC::JSValue JSReadableStatePrototype() { return m_JSReadableStateClassStructure.prototypeInitializedOnMainThread(this); }
 
     JSC::JSMap* readableStreamNativeMap() { return m_lazyReadableStreamPrototypeMap.getInitializedOnMainThread(this); }
     JSC::JSMap* requireMap() { return m_requireMap.getInitializedOnMainThread(this); }
@@ -213,17 +236,145 @@ public:
 
     EncodedJSValue assignToStream(JSValue stream, JSValue controller);
 
+    enum class PromiseFunctions : uint8_t {
+        Bun__HTTPRequestContext__onReject,
+        Bun__HTTPRequestContext__onRejectStream,
+        Bun__HTTPRequestContext__onResolve,
+        Bun__HTTPRequestContext__onResolveStream,
+        Bun__HTTPRequestContextTLS__onReject,
+        Bun__HTTPRequestContextTLS__onRejectStream,
+        Bun__HTTPRequestContextTLS__onResolve,
+        Bun__HTTPRequestContextTLS__onResolveStream,
+        Bun__HTTPRequestContextDebug__onReject,
+        Bun__HTTPRequestContextDebug__onRejectStream,
+        Bun__HTTPRequestContextDebug__onResolve,
+        Bun__HTTPRequestContextDebug__onResolveStream,
+        Bun__HTTPRequestContextDebugTLS__onReject,
+        Bun__HTTPRequestContextDebugTLS__onRejectStream,
+        Bun__HTTPRequestContextDebugTLS__onResolve,
+        Bun__HTTPRequestContextDebugTLS__onResolveStream,
+
+        jsFunctionOnLoadObjectResultResolve,
+        jsFunctionOnLoadObjectResultReject,
+
+        Bun__TestScope__onReject,
+        Bun__TestScope__onResolve,
+    };
+    static constexpr size_t promiseFunctionsSize = 20;
+
+    static PromiseFunctions promiseHandlerID(EncodedJSValue (*handler)(JSC__JSGlobalObject* arg0, JSC__CallFrame* arg1))
+    {
+        if (handler == Bun__HTTPRequestContext__onReject) {
+            return PromiseFunctions::Bun__HTTPRequestContext__onReject;
+        } else if (handler == Bun__HTTPRequestContext__onRejectStream) {
+            return PromiseFunctions::Bun__HTTPRequestContext__onRejectStream;
+        } else if (handler == Bun__HTTPRequestContext__onResolve) {
+            return PromiseFunctions::Bun__HTTPRequestContext__onResolve;
+        } else if (handler == Bun__HTTPRequestContext__onResolveStream) {
+            return PromiseFunctions::Bun__HTTPRequestContext__onResolveStream;
+        } else if (handler == Bun__HTTPRequestContextTLS__onReject) {
+            return PromiseFunctions::Bun__HTTPRequestContextTLS__onReject;
+        } else if (handler == Bun__HTTPRequestContextTLS__onRejectStream) {
+            return PromiseFunctions::Bun__HTTPRequestContextTLS__onRejectStream;
+        } else if (handler == Bun__HTTPRequestContextTLS__onResolve) {
+            return PromiseFunctions::Bun__HTTPRequestContextTLS__onResolve;
+        } else if (handler == Bun__HTTPRequestContextTLS__onResolveStream) {
+            return PromiseFunctions::Bun__HTTPRequestContextTLS__onResolveStream;
+        } else if (handler == Bun__HTTPRequestContextDebug__onReject) {
+            return PromiseFunctions::Bun__HTTPRequestContextDebug__onReject;
+        } else if (handler == Bun__HTTPRequestContextDebug__onRejectStream) {
+            return PromiseFunctions::Bun__HTTPRequestContextDebug__onRejectStream;
+        } else if (handler == Bun__HTTPRequestContextDebug__onResolve) {
+            return PromiseFunctions::Bun__HTTPRequestContextDebug__onResolve;
+        } else if (handler == Bun__HTTPRequestContextDebug__onResolveStream) {
+            return PromiseFunctions::Bun__HTTPRequestContextDebug__onResolveStream;
+        } else if (handler == Bun__HTTPRequestContextDebugTLS__onReject) {
+            return PromiseFunctions::Bun__HTTPRequestContextDebugTLS__onReject;
+        } else if (handler == Bun__HTTPRequestContextDebugTLS__onRejectStream) {
+            return PromiseFunctions::Bun__HTTPRequestContextDebugTLS__onRejectStream;
+        } else if (handler == Bun__HTTPRequestContextDebugTLS__onResolve) {
+            return PromiseFunctions::Bun__HTTPRequestContextDebugTLS__onResolve;
+        } else if (handler == Bun__HTTPRequestContextDebugTLS__onResolveStream) {
+            return PromiseFunctions::Bun__HTTPRequestContextDebugTLS__onResolveStream;
+        } else if (handler == Bun__HTTPRequestContextDebugTLS__onResolveStream) {
+            return PromiseFunctions::Bun__HTTPRequestContextDebugTLS__onResolveStream;
+        } else if (handler == Bun__HTTPRequestContextDebugTLS__onResolveStream) {
+            return PromiseFunctions::Bun__HTTPRequestContextDebugTLS__onResolveStream;
+        } else if (handler == jsFunctionOnLoadObjectResultResolve) {
+            return PromiseFunctions::jsFunctionOnLoadObjectResultResolve;
+        } else if (handler == jsFunctionOnLoadObjectResultReject) {
+            return PromiseFunctions::jsFunctionOnLoadObjectResultReject;
+        } else if (handler == Bun__TestScope__onReject) {
+            return PromiseFunctions::Bun__TestScope__onReject;
+        } else if (handler == Bun__TestScope__onResolve) {
+            return PromiseFunctions::Bun__TestScope__onResolve;
+        } else {
+            RELEASE_ASSERT_NOT_REACHED();
+        }
+    }
+
+    JSFunction* thenable(EncodedJSValue (*handler)(JSC__JSGlobalObject* arg0, JSC__CallFrame* arg1))
+    {
+        auto& barrier = this->m_thenables[static_cast<size_t>(GlobalObject::promiseHandlerID(handler))];
+        if (JSFunction* func = barrier.get()) {
+            return func;
+        }
+
+        JSFunction* func = JSC::JSFunction::create(vm(), this, 2,
+            String(), handler, ImplementationVisibility::Public);
+
+        barrier.set(vm(), this, func);
+        return func;
+    }
+
     mutable WriteBarrier<JSFunction> m_readableStreamToArrayBufferResolve;
     mutable WriteBarrier<JSFunction> m_readableStreamToText;
     mutable WriteBarrier<JSFunction> m_readableStreamToBlob;
     mutable WriteBarrier<JSFunction> m_readableStreamToJSON;
     mutable WriteBarrier<JSFunction> m_readableStreamToArrayBuffer;
     mutable WriteBarrier<JSFunction> m_assignToStream;
+    mutable WriteBarrier<JSFunction> m_thenables[promiseFunctionsSize + 1];
+
+    mutable WriteBarrier<Unknown> m_JSBufferSetterValue;
+    mutable WriteBarrier<Unknown> m_JSTextEncoderSetterValue;
+    mutable WriteBarrier<Unknown> m_JSMessageEventSetterValue;
+    mutable WriteBarrier<Unknown> m_JSWebSocketSetterValue;
+    mutable WriteBarrier<Unknown> m_JSFetchHeadersSetterValue;
+    mutable WriteBarrier<Unknown> m_JSURLSearchParamsSetterValue;
+
+    JSObject* navigatorObject();
 
     void trackFFIFunction(JSC::JSFunction* function)
     {
         this->m_ffiFunctions.append(JSC::Strong<JSC::JSFunction> { vm(), function });
     }
+    bool untrackFFIFunction(JSC::JSFunction* function)
+    {
+        for (size_t i = 0; i < this->m_ffiFunctions.size(); ++i) {
+            if (this->m_ffiFunctions[i].get() == function) {
+                this->m_ffiFunctions[i].clear();
+                this->m_ffiFunctions.remove(i);
+                return true;
+            }
+        }
+        return false;
+    }
+
+    BunPlugin::OnLoad onLoadPlugins[BunPluginTargetMax + 1] {};
+    BunPlugin::OnResolve onResolvePlugins[BunPluginTargetMax + 1] {};
+    BunPluginTarget defaultBunPluginTarget = BunPluginTargetBun;
+
+
+    void reload();
+
+    JSC::Structure* pendingVirtualModuleResultStructure() { return m_pendingVirtualModuleResultStructure.get(this); }
+
+    // When a napi module initializes on dlopen, we need to know what the value is
+    // This value is not observed by GC. It should be extremely ephemeral.
+    JSValue pendingNapiModule = JSValue {};
+    // We need to know if the napi module registered itself or we registered it.
+    // To do that, we count the number of times we register a module.
+    int napiModuleRegisterCallCount = 0;
 
 #include "ZigGeneratedClasses+lazyStructureHeader.h"
 
@@ -244,15 +395,26 @@ private:
     LazyClassStructure m_JSArrayBufferSinkClassStructure;
     LazyClassStructure m_JSHTTPResponseSinkClassStructure;
     LazyClassStructure m_JSHTTPSResponseSinkClassStructure;
+    LazyClassStructure m_JSFileSinkClassStructure;
+    LazyClassStructure m_JSBufferListClassStructure;
+    LazyClassStructure m_JSStringDecoderClassStructure;
+    LazyClassStructure m_JSReadableStateClassStructure;
+
+    LazyProperty<JSGlobalObject, JSObject> m_navigatorObject;
 
     LazyProperty<JSGlobalObject, JSObject> m_JSArrayBufferControllerPrototype;
     LazyProperty<JSGlobalObject, JSObject> m_JSHTTPSResponseControllerPrototype;
+    LazyProperty<JSGlobalObject, JSObject> m_JSFileSinkControllerPrototype;
+
     LazyProperty<JSGlobalObject, Structure> m_JSHTTPResponseController;
+
     LazyProperty<JSGlobalObject, JSObject> m_processObject;
     LazyProperty<JSGlobalObject, JSObject> m_processEnvObject;
     LazyProperty<JSGlobalObject, JSMap> m_lazyReadableStreamPrototypeMap;
     LazyProperty<JSGlobalObject, JSMap> m_requireMap;
     LazyProperty<JSGlobalObject, JSObject> m_performanceObject;
+
+    LazyProperty<JSGlobalObject, JSC::Structure> m_pendingVirtualModuleResultStructure;
 
     LazyProperty<JSGlobalObject, JSObject> m_encodeIntoObjectPrototype;
 

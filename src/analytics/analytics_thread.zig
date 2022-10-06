@@ -404,7 +404,7 @@ fn readloop() anyerror!void {
         headers_entries,
         headers_buf,
         &out_buffer,
-        &event_list.in_buffer,
+        "",
         std.time.ns_per_ms * 10000,
     ) catch return;
 

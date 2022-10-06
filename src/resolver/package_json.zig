@@ -113,6 +113,7 @@ pub const PackageJSON = struct {
     browser_map: BrowserMap,
 
     exports: ?ExportsMap = null,
+    imports: ?ExportsMap = null,
 
     pub inline fn isAppPackage(this: *const PackageJSON) bool {
         return this.hash == 0xDEADBEEF;
@@ -709,6 +710,12 @@ pub const PackageJSON = struct {
             }
         }
 
+        if (json.asProperty("imports")) |imports_prop| {
+            if (ExportsMap.parse(r.allocator, &json_source, r.log, imports_prop.expr)) |imports_map| {
+                package_json.imports = imports_map;
+            }
+        }
+
         // used by `bun run`
         if (include_scripts) {
             read_scripts: {
@@ -1000,26 +1007,31 @@ pub const ESModule = struct {
         Exact,
         Inexact, // This means we may need to try CommonJS-style extension suffixes
 
-        // Module specifier is an invalid URL, package name or package subpath specifier.
+        /// Module specifier is an invalid URL, package name or package subpath specifier.
         InvalidModuleSpecifier,
 
-        // package.json configuration is invalid or contains an invalid configuration.
+        /// package.json configuration is invalid or contains an invalid configuration.
         InvalidPackageConfiguration,
 
-        // Package exports or imports define a target module for the package that is an invalid type or string target.
+        /// Package exports or imports define a target module for the package that is an invalid type or string target.
         InvalidPackageTarget,
 
-        // Package exports do not define or permit a target subpath in the package for the given module.
+        /// Package exports do not define or permit a target subpath in the package for the given module.
         PackagePathNotExported,
 
-        // The package or module requested does not exist.
+        /// The package or module requested does not exist.
         ModuleNotFound,
 
-        // The resolved path corresponds to a directory, which is not a supported target for module imports.
+        /// The resolved path corresponds to a directory, which is not a supported target for module imports.
         UnsupportedDirectoryImport,
 
-        // When a package path is explicitly set to null, that means it's not exported.
+        /// When a package path is explicitly set to null, that means it's not exported.
         PackagePathDisabled,
+
+        // The internal #import specifier was not found
+        PackageImportNotDefined,
+
+        PackageResolve,
 
         pub inline fn isUndefined(this: Status) bool {
             return switch (this) {
@@ -1075,8 +1087,40 @@ pub const ESModule = struct {
 
     threadlocal var resolved_path_buf_percent: [bun.MAX_PATH_BYTES]u8 = undefined;
     pub fn resolve(r: *const ESModule, package_url: string, subpath: string, exports: ExportsMap.Entry) Resolution {
-        var result = r.resolveExports(package_url, subpath, exports);
+        return finalize(
+            r.resolveExports(package_url, subpath, exports),
+        );
+    }
 
+    pub fn resolveImports(r: *const ESModule, specifier: string, imports: ExportsMap.Entry) Resolution {
+        if (imports.data != .map) {
+            return .{
+                .status = .InvalidPackageConfiguration,
+                .debug = .{
+                    .token = logger.Range.None,
+                },
+            };
+        }
+
+        const result = r.resolveImportsExports(
+            specifier,
+            imports,
+            true,
+            "/",
+        );
+
+        switch (result.status) {
+            .Undefined, .Null => {
+                return .{ .status = .PackageImportNotDefined, .debug = .{ .token = result.debug.token } };
+            },
+            else => {
+                return finalize(result);
+            },
+        }
+    }
+
+    pub fn finalize(result_: Resolution) Resolution {
+        var result = result_;
         if (result.status != .Exact and result.status != .Inexact) {
             return result;
         }
@@ -1149,13 +1193,13 @@ pub const ESModule = struct {
             }
 
             if (main_export.data != .@"null") {
-                const result = r.resolveTarget(package_url, main_export, "", false);
+                const result = r.resolveTarget(package_url, main_export, "", false, false);
                 if (result.status != .Null and result.status != .Undefined) {
                     return result;
                 }
             }
         } else if (exports.data == .map and exports.keysStartWithDot()) {
-            const result = r.resolveImportsExports(subpath, exports, package_url);
+            const result = r.resolveImportsExports(subpath, exports, false, package_url);
             if (result.status != .Null and result.status != .Undefined) {
                 return result;
             }
@@ -1176,6 +1220,7 @@ pub const ESModule = struct {
         r: *const ESModule,
         match_key: string,
         match_obj: ExportsMap.Entry,
+        is_imports: bool,
         package_url: string,
     ) Resolution {
         if (r.debug_logs) |logs| {
@@ -1188,7 +1233,7 @@ pub const ESModule = struct {
                     log.addNoteFmt("Found \"{s}\"", .{match_key}) catch unreachable;
                 }
 
-                return r.resolveTarget(package_url, target, "", false);
+                return r.resolveTarget(package_url, target, "", is_imports, false);
             }
         }
 
@@ -1206,7 +1251,7 @@ pub const ESModule = struct {
                             log.addNoteFmt("The key \"{s}\" matched with \"{s}\" left over", .{ expansion.key, subpath }) catch unreachable;
                         }
 
-                        return r.resolveTarget(package_url, target, subpath, true);
+                        return r.resolveTarget(package_url, target, subpath, is_imports, true);
                     }
                 }
 
@@ -1217,7 +1262,7 @@ pub const ESModule = struct {
                         log.addNoteFmt("The key \"{s}\" matched with \"{s}\" left over", .{ expansion.key, subpath }) catch unreachable;
                     }
 
-                    var result = r.resolveTarget(package_url, target, subpath, false);
+                    var result = r.resolveTarget(package_url, target, subpath, is_imports, false);
                     result.status = if (result.status == .Exact)
                         // Return the object { resolved, exact: false }.
                         .Inexact
@@ -1250,6 +1295,7 @@ pub const ESModule = struct {
         package_url: string,
         target: ExportsMap.Entry,
         subpath: string,
+        internal: bool,
         comptime pattern: bool,
     ) Resolution {
         switch (target.data) {
@@ -1276,9 +1322,32 @@ pub const ESModule = struct {
                     }
                 }
 
+                // If target does not start with "./", then...
                 if (!strings.startsWith(str, "./")) {
                     if (r.debug_logs) |log| {
                         log.addNoteFmt("The target \"{s}\" is invalid because it doesn't start with a \"./\"", .{str}) catch unreachable;
+                    }
+
+                    if (internal and !strings.hasPrefixComptime(str, "../") and !strings.hasPrefix(str, "/")) {
+                        if (comptime pattern) {
+                            // Return the URL resolution of resolvedTarget with every instance of "*" replaced with subpath.
+                            const len = std.mem.replacementSize(u8, str, "*", subpath);
+                            _ = std.mem.replace(u8, str, "*", subpath, &resolve_target_buf2);
+                            const result = resolve_target_buf2[0..len];
+                            if (r.debug_logs) |log| {
+                                log.addNoteFmt("Subsituted \"{s}\" for \"*\" in \".{s}\" to get \".{s}\" ", .{ subpath, str, result }) catch unreachable;
+                            }
+
+                            return Resolution{ .path = result, .status = .PackageResolve, .debug = .{ .token = target.first_token } };
+                        } else {
+                            var parts2 = [_]string{ str, subpath };
+                            const result = resolve_path.joinStringBuf(&resolve_target_buf2, parts2, .auto);
+                            if (r.debug_logs) |log| {
+                                log.addNoteFmt("Resolved \".{s}\" to \".{s}\"", .{ str, result }) catch unreachable;
+                            }
+
+                            return Resolution{ .path = result, .status = .PackageResolve, .debug = .{ .token = target.first_token } };
+                        }
                     }
 
                     return Resolution{ .path = str, .status = .InvalidPackageTarget, .debug = .{ .token = target.first_token } };
@@ -1340,7 +1409,7 @@ pub const ESModule = struct {
                             log.addNoteFmt("The key \"{s}\" matched", .{key}) catch unreachable;
                         }
 
-                        var result = r.resolveTarget(package_url, slice.items(.value)[i], subpath, pattern);
+                        var result = r.resolveTarget(package_url, slice.items(.value)[i], subpath, internal, pattern);
                         if (result.status.isUndefined()) {
                             did_find_map_entry = true;
                             last_map_entry_i = i;
@@ -1431,7 +1500,7 @@ pub const ESModule = struct {
 
                 for (array) |targetValue| {
                     // Let resolved be the result, continuing the loop on any Invalid Package Target error.
-                    const result = r.resolveTarget(package_url, targetValue, subpath, pattern);
+                    const result = r.resolveTarget(package_url, targetValue, subpath, internal, pattern);
                     if (result.status == .InvalidPackageTarget or result.status == .Null) {
                         last_debug = result.debug;
                         last_exception = result.status;

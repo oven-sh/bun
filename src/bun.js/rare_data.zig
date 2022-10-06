@@ -7,6 +7,7 @@ const Syscall = @import("./node/syscall.zig");
 const JSC = @import("javascript_core");
 const std = @import("std");
 const BoringSSL = @import("boringssl");
+const bun = @import("../global.zig");
 const WebSocketClientMask = @import("../http/websocket_http_client.zig").Mask;
 
 boring_ssl_engine: ?*BoringSSL.ENGINE = null,
@@ -14,12 +15,70 @@ editor_context: EditorContext = EditorContext{},
 stderr_store: ?*Blob.Store = null,
 stdin_store: ?*Blob.Store = null,
 stdout_store: ?*Blob.Store = null,
-websocket_mask: WebSocketClientMask = WebSocketClientMask{},
+
+entropy_cache: ?*EntropyCache = null,
 
 // TODO: make this per JSGlobalObject instead of global
 // This does not handle ShadowRealm correctly!
 tail_cleanup_hook: ?*CleanupHook = null,
 cleanup_hook: ?*CleanupHook = null,
+
+pub fn nextUUID(this: *RareData) [16]u8 {
+    if (this.entropy_cache == null) {
+        this.entropy_cache = default_allocator.create(EntropyCache) catch unreachable;
+        this.entropy_cache.?.init();
+    }
+
+    return this.entropy_cache.?.get();
+}
+
+pub fn entropySlice(this: *RareData, len: usize) []u8 {
+    if (this.entropy_cache == null) {
+        this.entropy_cache = default_allocator.create(EntropyCache) catch unreachable;
+        this.entropy_cache.?.init();
+    }
+
+    return this.entropy_cache.?.slice(len);
+}
+
+pub const EntropyCache = struct {
+    pub const buffered_uuids_count = 16;
+    pub const size = buffered_uuids_count * 128;
+
+    cache: [size]u8 = undefined,
+    index: usize = 0,
+
+    pub fn init(instance: *EntropyCache) void {
+        instance.fill();
+    }
+
+    pub fn fill(this: *EntropyCache) void {
+        bun.rand(&this.cache);
+        this.index = 0;
+    }
+
+    pub fn slice(this: *EntropyCache, len: usize) []u8 {
+        if (len > this.cache.len) {
+            return &[_]u8{};
+        }
+
+        if (this.index + len > this.cache.len) {
+            this.fill();
+        }
+        const result = this.cache[this.index..][0..len];
+        this.index += len;
+        return result;
+    }
+
+    pub fn get(this: *EntropyCache) [16]u8 {
+        if (this.index + 16 > this.cache.len) {
+            this.fill();
+        }
+        const result = this.cache[this.index..][0..16].*;
+        this.index += 16;
+        return result;
+    }
+};
 
 pub const CleanupHook = struct {
     next: ?*CleanupHook = null,

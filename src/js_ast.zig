@@ -1696,7 +1696,7 @@ pub const E = struct {
 
         pub fn slice(this: *String, allocator: std.mem.Allocator) []const u8 {
             this.resovleRopeIfNeeded(allocator);
-            return @ptrCast([*]const u8, @alignCast(@alignOf(u8), this.data.ptr))[0..this.data.len];
+            return this.string(allocator) catch unreachable;
         }
 
         pub var empty = String{};
@@ -4391,7 +4391,10 @@ pub const Ast = struct {
     wrapper_ref: ?Ref = null,
     require_ref: Ref = Ref.None,
 
+    bun_plugin: BunPlugin = .{},
+
     bundle_namespace_ref: ?Ref = null,
+
     prepend_part: ?Part = null,
 
     // These are used when bundling. They are filled in during the parser pass
@@ -4520,6 +4523,7 @@ pub const Part = struct {
         cjs_imports,
         react_fast_refresh,
         dirname_filename,
+        bun_plugin,
     };
 
     pub const SymbolUseMap = std.ArrayHashMapUnmanaged(Ref, Symbol.Use, RefHashCtx, false);
@@ -4749,6 +4753,11 @@ pub fn printmem(comptime format: string, args: anytype) void {
     Output.initTest();
     Output.print(format, args);
 }
+
+pub const BunPlugin = struct {
+    ref: Ref = Ref.None,
+    hoisted_stmts: std.ArrayListUnmanaged(Stmt) = .{},
+};
 
 pub const Macro = struct {
     const JavaScript = @import("javascript_core");
@@ -7747,7 +7756,7 @@ pub const Macro = struct {
                     if (comptime is_bindgen) return undefined;
                     var macro_callback = macro.vm.macros.get(id) orelse return caller;
 
-                    var result = js.JSObjectCallAsFunctionReturnValueHoldingAPILock(macro.vm.global.ref(), macro_callback, null, args_count, &args_buf);
+                    var result = js.JSObjectCallAsFunctionReturnValueHoldingAPILock(macro.vm.global, macro_callback, null, args_count, &args_buf);
 
                     var runner = Run{
                         .caller = caller,
@@ -7831,6 +7840,9 @@ pub const Macro = struct {
                                 } else if (value.as(JSC.WebCore.Request)) |resp| {
                                     mime_type = HTTP.MimeType.init(resp.mimeType());
                                     blob_ = resp.body.use();
+                                } else if (value.as(JSC.WebCore.Blob)) |resp| {
+                                    blob_ = resp.*;
+                                    blob_.?.allocator = null;
                                 }
                             } else {
                                 var private_data = JSCBase.JSPrivateDataPtr.from(JSC.C.JSObjectGetPrivate(value.asObjectRef()).?);
@@ -7847,11 +7859,7 @@ pub const Macro = struct {
                                         this.macro.vm.runErrorHandler(value, null);
                                         return error.MacroFailed;
                                     },
-                                    .Blob => {
-                                        var blob = private_data.as(JSC.WebCore.Blob);
-                                        blob_ = blob.*;
-                                        blob.* = JSC.WebCore.Blob.initEmpty(blob.globalThis);
-                                    },
+
                                     else => {},
                                 }
                             }
@@ -7950,7 +7958,7 @@ pub const Macro = struct {
                             var object_iter = JSC.JSPropertyIterator(.{
                                 .skip_empty_name = false,
                                 .include_value = true,
-                            }).init(this.global.ref(), object);
+                            }).init(this.global, object);
                             defer object_iter.deinit();
                             var properties = this.allocator.alloc(G.Property, object_iter.len) catch unreachable;
                             errdefer this.allocator.free(properties);
@@ -8065,7 +8073,7 @@ pub const Macro = struct {
             exception_holder = Zig.ZigException.Holder.init();
             expr_nodes_buf[0] = JSNode.initExpr(caller);
             args_buf[0] = JSNode.Class.make(
-                macro.vm.global.ref(),
+                macro.vm.global,
                 &expr_nodes_buf[0],
             );
             args_buf[1] = if (javascript_object.isEmpty()) null else javascript_object.asObjectRef();
@@ -8074,7 +8082,7 @@ pub const Macro = struct {
 
             // Give it >= 256 KB stack space
             // Cast to usize to ensure we get an 8 byte aligned pointer
-            const PooledFrame = ObjectPool([@maximum(@sizeOf(@Frame(Run.runAsync)), 256_000) / @sizeOf(usize)]usize, null, true, 1);
+            const PooledFrame = ObjectPool([@maximum(@sizeOf(@Frame(Run.runAsync)), 1024 * 1024 * 2) / @sizeOf(usize)]usize, null, true, 1);
             var pooled_frame = PooledFrame.get(default_allocator);
             defer pooled_frame.release();
 

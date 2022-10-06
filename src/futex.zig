@@ -35,7 +35,7 @@ pub fn wait(ptr: *const Atomic(u32), expect: u32, timeout: ?u64) error{TimedOut}
         }
 
         // There are no other threads which could notify the caller on single_threaded.
-        // Therefor a wait() without a timeout would block indefinitely.
+        // Therefore a wait() without a timeout would block indefinitely.
         const timeout_ns = timeout orelse {
             @panic("deadlock");
         };

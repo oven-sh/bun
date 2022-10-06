@@ -36,19 +36,22 @@ var path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
 var path_buf2: [bun.MAX_PATH_BYTES]u8 = undefined;
 const PathString = bun.PathString;
 const is_bindgen = std.meta.globalOption("bindgen", bool) orelse false;
+const HTTPThread = @import("http").HTTPThread;
 
 const JSC = @import("javascript_core");
 const Jest = JSC.Jest;
 const TestRunner = JSC.Jest.TestRunner;
 const Test = TestRunner.Test;
 const NetworkThread = @import("http").NetworkThread;
-
+const uws = @import("uws");
 pub const CommandLineReporter = struct {
     jest: TestRunner,
     callback: TestRunner.Callback,
     last_dot: u32 = 0,
     summary: Summary = Summary{},
     prev_file: u64 = 0,
+
+    failures_to_repeat_buf: std.ArrayListUnmanaged(u8) = .{},
 
     pub const Summary = struct {
         pass: u32 = 0,
@@ -132,13 +135,15 @@ pub const CommandLineReporter = struct {
         this.summary.pass += 1;
         this.summary.expectations += expectations;
     }
+
     pub fn handleTestFail(cb: *TestRunner.Callback, id: Test.ID, _: string, label: string, expectations: u32, parent: ?*Jest.DescribeScope) void {
         var writer_: std.fs.File.Writer = Output.errorWriter();
-        var buffered_writer = std.io.bufferedWriter(writer_);
-        var writer = buffered_writer.writer();
-        defer buffered_writer.flush() catch unreachable;
-
         var this: *CommandLineReporter = @fieldParentPtr(CommandLineReporter, "callback", cb);
+
+        // when the tests fail, we want to repeat the failures at the end
+        // so that you can see them better when there are lots of tests that ran
+        const initial_length = this.failures_to_repeat_buf.items.len;
+        var writer = this.failures_to_repeat_buf.writer(bun.default_allocator);
 
         if (Output.enable_ansi_colors_stderr)
             writer.print(comptime Output.prettyFmt("<r><red>✗<r>", true), .{}) catch unreachable
@@ -146,6 +151,10 @@ pub const CommandLineReporter = struct {
             writer.print(comptime Output.prettyFmt("<r><red>✗<r>", false), .{}) catch unreachable;
 
         printTestLine(label, parent, writer);
+
+        writer_.writeAll(this.failures_to_repeat_buf.items[initial_length..]) catch unreachable;
+        Output.flush();
+
         // this.updateDots();
         this.summary.fail += 1;
         this.summary.expectations += expectations;
@@ -296,6 +305,7 @@ pub const TestCommand = struct {
         };
         JSC.C.JSCInitialize();
         NetworkThread.init() catch {};
+        HTTPThread.init() catch {};
         var reporter = try ctx.allocator.create(CommandLineReporter);
         reporter.* = CommandLineReporter{
             .jest = TestRunner{
@@ -338,7 +348,15 @@ pub const TestCommand = struct {
             runAllTests(reporter, vm, test_files, ctx.allocator);
         }
 
-        Output.pretty("\n", .{});
+        if (reporter.summary.pass > 20 and reporter.summary.fail > 0) {
+            Output.prettyError("\n<r><d>{d} tests failed<r>:\n", .{reporter.summary.fail});
+
+            Output.flush();
+
+            var error_writer = Output.errorWriter();
+            error_writer.writeAll(reporter.failures_to_repeat_buf.items) catch unreachable;
+        }
+
         Output.flush();
 
         Output.prettyError("\n", .{});
@@ -357,12 +375,7 @@ pub const TestCommand = struct {
 
         Output.prettyError(" {d:5>} fail<r>\n", .{reporter.summary.fail});
 
-        if (reporter.summary.fail == 0 and reporter.summary.expectations > 0) {
-            Output.prettyError("<r><green>", .{});
-        } else {
-            Output.prettyError("<r>", .{});
-        }
-        if (reporter.summary.expectations > 0) Output.prettyError(" {d:5>} expectations\n", .{reporter.summary.expectations});
+        if (reporter.summary.expectations > 0) Output.prettyError(" {d:5>} expect() calls\n", .{reporter.summary.expectations});
 
         Output.prettyError(
             \\ Ran {d} tests across {d} files 
@@ -372,7 +385,6 @@ pub const TestCommand = struct {
         });
         Output.printStartEnd(ctx.start_time, std.time.nanoTimestamp());
         Output.prettyError("\n", .{});
-
         Output.flush();
 
         if (reporter.summary.fail > 0) {
@@ -408,9 +420,14 @@ pub const TestCommand = struct {
                 TestCommand.run(reporter, vm, files[files.len - 1].slice(), allocator) catch {};
             }
         };
+
+        vm_.eventLoop().ensureWaker();
+
         var ctx = Context{ .reporter = reporter_, .vm = vm_, .files = files_, .allocator = allocator_ };
         vm_.runWithAPILock(Context, &ctx, Context.begin);
     }
+
+    fn timerNoop(_: *uws.Timer) callconv(.C) void {}
 
     pub fn run(
         reporter: *CommandLineReporter,
@@ -441,11 +458,8 @@ pub const TestCommand = struct {
 
         Output.prettyErrorln("<r>\n{s}:\n", .{resolution.path_pair.primary.name.filename});
         Output.flush();
-        var promise = try vm.loadEntryPoint(resolution.path_pair.primary.text);
 
-        while (promise.status(vm.global.vm()) == .Pending) {
-            vm.tick();
-        }
+        var promise = try vm.loadEntryPoint(resolution.path_pair.primary.text);
 
         switch (promise.status(vm.global.vm())) {
             .Rejected => {
@@ -458,7 +472,21 @@ pub const TestCommand = struct {
 
         var modules: []*Jest.DescribeScope = reporter.jest.files.items(.module_scope)[file_start..];
         for (modules) |module| {
-            module.runTests(vm.global.ref());
+            module.runTests(JSC.JSValue.zero, vm.global);
+            vm.eventLoop().tick();
+
+            while (vm.active_tasks > 0) {
+                if (!Jest.Jest.runner.?.has_pending_tests) Jest.Jest.runner.?.drain();
+                vm.eventLoop().tick();
+
+                while (Jest.Jest.runner.?.has_pending_tests) : (vm.eventLoop().tick()) {
+                    vm.eventLoop().tick();
+                    if (!Jest.Jest.runner.?.has_pending_tests) break;
+                    vm.eventLoop().autoTick();
+                }
+            }
+            _ = vm.global.vm().runGC(false);
         }
+        vm.global.vm().clearMicrotaskCallback();
     }
 };

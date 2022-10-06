@@ -1,122 +1,119 @@
 var fs = Bun.fs();
 
-export function access(...args) {
+export var access = function access(...args) {
   callbackify(fs.accessSync, args);
-}
-export function appendFile(...args) {
+};
+export var appendFile = function appendFile(...args) {
   callbackify(fs.appendFileSync, args);
-}
-export function close(...args) {
+};
+export var close = function close(...args) {
   callbackify(fs.closeSync, args);
-}
-export function copyFile(...args) {
+};
+export var rm = function rm(...args) {
+  callbackify(fs.rmSync, args);
+};
+export var copyFile = function copyFile(...args) {
   callbackify(fs.copyFileSync, args);
-}
-export function exists(...args) {
+};
+export var exists = function exists(...args) {
   callbackify(fs.existsSync, args);
-}
-export function chown(...args) {
+};
+export var chown = function chown(...args) {
   callbackify(fs.chownSync, args);
-}
-export function chmod(...args) {
+};
+export var chmod = function chmod(...args) {
   callbackify(fs.chmodSync, args);
-}
-export function fchmod(...args) {
+};
+export var fchmod = function fchmod(...args) {
   callbackify(fs.fchmodSync, args);
-}
-export function fchown(...args) {
+};
+export var fchown = function fchown(...args) {
   callbackify(fs.fchownSync, args);
-}
-export function fstat(...args) {
+};
+export var fstat = function fstat(...args) {
   callbackify(fs.fstatSync, args);
-}
-export function fsync(...args) {
+};
+export var fsync = function fsync(...args) {
   callbackify(fs.fsyncSync, args);
-}
-export function ftruncate(...args) {
+};
+export var ftruncate = function ftruncate(...args) {
   callbackify(fs.ftruncateSync, args);
-}
-export function futimes(...args) {
+};
+export var futimes = function futimes(...args) {
   callbackify(fs.futimesSync, args);
-}
-export function lchmod(...args) {
+};
+export var lchmod = function lchmod(...args) {
   callbackify(fs.lchmodSync, args);
-}
-export function lchown(...args) {
+};
+export var lchown = function lchown(...args) {
   callbackify(fs.lchownSync, args);
-}
-export function link(...args) {
+};
+export var link = function link(...args) {
   callbackify(fs.linkSync, args);
-}
-export function lstat(...args) {
+};
+export var lstat = function lstat(...args) {
   callbackify(fs.lstatSync, args);
-}
-export function mkdir(...args) {
+};
+export var mkdir = function mkdir(...args) {
   callbackify(fs.mkdirSync, args);
-}
-export function mkdtemp(...args) {
+};
+export var mkdtemp = function mkdtemp(...args) {
   callbackify(fs.mkdtempSync, args);
-}
-export function open(...args) {
+};
+export var open = function open(...args) {
   callbackify(fs.openSync, args);
-}
-export function read(...args) {
+};
+export var read = function read(...args) {
   callbackify(fs.readSync, args);
-}
-export function write(...args) {
+};
+export var write = function write(...args) {
   callbackify(fs.writeSync, args);
-}
-export function readdir(...args) {
+};
+export var readdir = function readdir(...args) {
   callbackify(fs.readdirSync, args);
-}
-export function readFile(...args) {
+};
+export var readFile = function readFile(...args) {
   callbackify(fs.readFileSync, args);
-}
-export function writeFile(...args) {
+};
+export var writeFile = function writeFile(...args) {
   callbackify(fs.writeFileSync, args);
-}
-export function readlink(...args) {
+};
+export var readlink = function readlink(...args) {
   callbackify(fs.readlinkSync, args);
-}
-export function realpath(...args) {
+};
+export var realpath = function realpath(...args) {
   callbackify(fs.realpathSync, args);
-}
-export function rename(...args) {
+};
+export var rename = function rename(...args) {
   callbackify(fs.renameSync, args);
-}
-export function stat(...args) {
+};
+export var stat = function stat(...args) {
   callbackify(fs.statSync, args);
-}
-export function symlink(...args) {
+};
+export var symlink = function symlink(...args) {
   callbackify(fs.symlinkSync, args);
-}
-export function truncate(...args) {
+};
+export var truncate = function truncate(...args) {
   callbackify(fs.truncateSync, args);
-}
-export function unlink(...args) {
+};
+export var unlink = function unlink(...args) {
   callbackify(fs.unlinkSync, args);
-}
-export function utimes(...args) {
+};
+export var utimes = function utimes(...args) {
   callbackify(fs.utimesSync, args);
-}
-export function lutimes(...args) {
+};
+export var lutimes = function lutimes(...args) {
   callbackify(fs.lutimesSync, args);
-}
+};
 
 function callbackify(fsFunction, args) {
-  queueMicrotask(function () {
-    try {
-      args[args.length - 1](
-        null,
-        fsFunction.apply(fs, args.slice(0, args.length - 1))
-      );
-    } catch (err) {
-      args[args.length - 1](err);
-    } finally {
-      // ensure we don't leak it
-      args = null;
-    }
-  });
+
+  try {
+    const result = fsFunction.apply(fs, args.slice(0, args.length - 1));
+    queueMicrotask(() => args[args.length - 1](null, result));
+  } catch (e) {
+    queueMicrotask(() => args[args.length - 1](e));
+  }
 }
 
 // note: this is not quite the same as how node does it
@@ -186,6 +183,7 @@ export var truncateSync = fs.truncateSync.bind(fs);
 export var unlinkSync = fs.unlinkSync.bind(fs);
 export var utimesSync = fs.utimesSync.bind(fs);
 export var lutimesSync = fs.lutimesSync.bind(fs);
+export var rmSync = fs.rmSync.bind(fs);
 
 export var createReadStream = fs.createReadStream.bind(fs);
 export var createWriteStream = fs.createWriteStream.bind(fs);
@@ -193,11 +191,11 @@ export var createWriteStream = fs.createWriteStream.bind(fs);
 export var promises = {
   access: promisify(fs.accessSync),
   appendFile: promisify(fs.appendFileSync),
+  chmod: promisify(fs.chmodSync),
+  chown: promisify(fs.chownSync),
   close: promisify(fs.closeSync),
   copyFile: promisify(fs.copyFileSync),
   exists: promisify(fs.existsSync),
-  chown: promisify(fs.chownSync),
-  chmod: promisify(fs.chmodSync),
   fchmod: promisify(fs.fchmodSync),
   fchown: promisify(fs.fchownSync),
   fstat: promisify(fs.fstatSync),
@@ -208,22 +206,23 @@ export var promises = {
   lchown: promisify(fs.lchownSync),
   link: promisify(fs.linkSync),
   lstat: promisify(fs.lstatSync),
+  lutimes: promisify(fs.lutimesSync),
   mkdir: promisify(fs.mkdirSync),
   mkdtemp: promisify(fs.mkdtempSync),
   open: promisify(fs.openSync),
   read: promisify(fs.readSync),
-  write: promisify(fs.writeSync),
   readdir: promisify(fs.readdirSync),
-  writeFile: promisify(fs.writeFileSync),
   readlink: promisify(fs.readlinkSync),
   realpath: promisify(fs.realpathSync),
   rename: promisify(fs.renameSync),
+  rm: promisify(fs.rmSync),
   stat: promisify(fs.statSync),
   symlink: promisify(fs.symlinkSync),
   truncate: promisify(fs.truncateSync),
   unlink: promisify(fs.unlinkSync),
   utimes: promisify(fs.utimesSync),
-  lutimes: promisify(fs.lutimesSync),
+  write: promisify(fs.writeSync),
+  writeFile: promisify(fs.writeFileSync),
 };
 
 promises.readFile = promises.readfile = promisify(fs.readFileSync);
@@ -233,76 +232,79 @@ realpath.native = realpath;
 realpathSync.native = realpathSync;
 
 export default {
+  [Symbol.for("CommonJS")]: 0,
   access,
-  appendFile,
-  close,
-  copyFile,
-  exists,
-  chown,
-  chmod,
-  fchmod,
-  fchown,
-  fstat,
-  fsync,
-  ftruncate,
-  futimes,
-  lchmod,
-  lchown,
-  link,
-  lstat,
-  mkdir,
-  mkdtemp,
-  open,
-  read,
-  write,
-  readdir,
-  readFile,
-  writeFile,
-  readlink,
-  realpath,
-  rename,
-  stat,
-  symlink,
-  truncate,
-  unlink,
-  utimes,
-  lutimes,
   accessSync,
+  appendFile,
   appendFileSync,
-  closeSync,
-  copyFileSync,
-  existsSync,
-  chownSync,
+  chmod,
   chmodSync,
-  fchmodSync,
-  fchownSync,
-  fstatSync,
-  fsyncSync,
-  ftruncateSync,
-  futimesSync,
-  lchmodSync,
-  lchownSync,
-  linkSync,
-  lstatSync,
-  mkdirSync,
-  mkdtempSync,
-  openSync,
-  readSync,
-  writeSync,
-  readdirSync,
-  readFileSync,
-  writeFileSync,
-  readlinkSync,
-  realpathSync,
-  renameSync,
-  statSync,
-  symlinkSync,
-  truncateSync,
-  unlinkSync,
-  utimesSync,
-  lutimesSync,
+  chown,
+  chownSync,
+  close,
+  closeSync,
+  constants,
+  copyFile,
+  copyFileSync,
   createReadStream,
   createWriteStream,
-  constants,
+  exists,
+  existsSync,
+  fchmod,
+  fchmodSync,
+  fchown,
+  fchownSync,
+  fstat,
+  fstatSync,
+  fsync,
+  fsyncSync,
+  ftruncate,
+  ftruncateSync,
+  futimes,
+  futimesSync,
+  lchmod,
+  lchmodSync,
+  lchown,
+  lchownSync,
+  link,
+  linkSync,
+  lstat,
+  lstatSync,
+  lutimes,
+  lutimesSync,
+  mkdir,
+  mkdirSync,
+  mkdtemp,
+  mkdtempSync,
+  open,
+  openSync,
   promises,
+  read,
+  readFile,
+  readFileSync,
+  readSync,
+  readdir,
+  readdirSync,
+  readlink,
+  readlinkSync,
+  realpath,
+  realpathSync,
+  rename,
+  renameSync,
+  rm,
+  rmSync,
+  stat,
+  statSync,
+  symlink,
+  symlinkSync,
+  truncate,
+  truncateSync,
+  unlink,
+  unlinkSync,
+  utimes,
+  utimesSync,
+  write,
+  writeFile,
+  writeFileSync,
+  writeSync,
 };

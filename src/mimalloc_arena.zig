@@ -31,7 +31,12 @@ pub const Arena = struct {
 
     pub fn deinit(this: *Arena) void {
         mimalloc.mi_heap_destroy(this.heap);
+
         this.heap = null;
+    }
+
+    pub fn dumpThreadStats(_: *Arena) void {
+        mimalloc.mi_thread_stats_print_out(null, null);
     }
 
     pub fn reset(this: *Arena) void {

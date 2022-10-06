@@ -39,7 +39,7 @@ const Sync = packed struct {
     state: enum(u2) {
         /// A notification can be issued to wake up a sleeping as the "waking thread".
         pending = 0,
-        /// The state was notifiied with a signal. A thread is woken up.
+        /// The state was notified with a signal. A thread is woken up.
         /// The first thread to transition to `waking` becomes the "waking thread".
         signaled,
         /// There is a "waking thread" among us.
@@ -93,6 +93,8 @@ pub const Batch = struct {
         if (task.node.next) |node| {
             this.head = @fieldParentPtr(Task, "node", node);
         } else {
+            if (task != this.tail.?) unreachable;
+            this.tail = null;
             this.head = null;
         }
 
@@ -138,7 +140,7 @@ pub fn schedule(self: *ThreadPool, batch: Batch) void {
         .tail = &batch.tail.?.node,
     };
 
-    // Push the task Nodes to the most approriate queue
+    // Push the task Nodes to the most appropriate queue
     if (Thread.current) |thread| {
         thread.run_buffer.push(&list) catch thread.run_queue.push(list);
     } else {
@@ -368,7 +370,7 @@ fn register(noalias self: *ThreadPool, noalias thread: *Thread) void {
 }
 
 fn unregister(noalias self: *ThreadPool, noalias maybe_thread: ?*Thread) void {
-    // Un-spawn one thread, either due to a failed OS thread spawning or the thread is exitting.
+    // Un-spawn one thread, either due to a failed OS thread spawning or the thread is exiting.
     const one_spawned = @bitCast(u32, Sync{ .spawned = 1 });
     const sync = @bitCast(Sync, self.sync.fetchSub(one_spawned, .Release));
     assert(sync.spawned > 0);
@@ -630,7 +632,7 @@ const Event = struct {
     }
 
     fn wake(self: *Event, release_with: u32, wake_threads: u32) void {
-        // Update the Event to notifty it with the new `release_with` state (either NOTIFIED or SHUTDOWN).
+        // Update the Event to notify it with the new `release_with` state (either NOTIFIED or SHUTDOWN).
         // Release barrier to ensure any operations before this are this to happen before the wait() in the other threads.
         const state = self.state.swap(release_with, .Release);
 
@@ -797,7 +799,7 @@ pub const Node = struct {
 
                 // Try to steal/overflow half of the tasks in the buffer to make room for future push()es.
                 // Migrating half amortizes the cost of stealing while requiring future pops to still use the buffer.
-                // Acquire barrier to ensure the linked list creation after the steal only happens after we succesfully steal.
+                // Acquire barrier to ensure the linked list creation after the steal only happens after we successfully steal.
                 var migrate = size / 2;
                 head = self.head.tryCompareAndSwap(
                     head,
@@ -838,7 +840,7 @@ pub const Node = struct {
                 }
 
                 // Dequeue with an acquire barrier to ensure any writes done to the Node
-                // only happen after we succesfully claim it from the array.
+                // only happens after we successfully claim it from the array.
                 head = self.head.tryCompareAndSwap(
                     head,
                     head +% 1,

@@ -156,6 +156,23 @@ check_packages() {
     fi
 }
 
+# Fall back on direct download if no apt package exists
+# Fetches .deb file to be installed with dpkg
+install_deb_using_github() {
+    check_packages wget
+    arch=$(dpkg --print-architecture)
+
+    find_version_from_git_tags CLI_VERSION https://github.com/cli/cli
+    cli_filename="gh_${CLI_VERSION}_linux_${arch}.deb"
+
+    mkdir -p /tmp/ghcli
+    pushd /tmp/ghcli
+    wget https://github.com/cli/cli/releases/download/v${CLI_VERSION}/${cli_filename}
+    dpkg -i /tmp/ghcli/${cli_filename}
+    popd
+    rm -rf /tmp/ghcli
+}
+
 export DEBIAN_FRONTEND=noninteractive
 
 # Install curl, apt-transport-https, curl, gpg, or dirmngr, git if missing
@@ -175,11 +192,16 @@ fi
 
 # Install the GitHub CLI
 echo "Downloading github CLI..."
-# Import key safely (new method rather than deprecated apt-key approach) and install
-. /etc/os-release
-receive_gpg_keys GITHUB_CLI_ARCHIVE_GPG_KEY /usr/share/keyrings/githubcli-archive-keyring.gpg
-echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages ${VERSION_CODENAME} main" >/etc/apt/sources.list.d/github-cli.list
-apt-get update
-apt-get -y install "gh${version_suffix}"
-rm -rf "/tmp/gh/gnupg"
+
+install_deb_using_github
+
+# Method below does not work until cli/cli#6175 is fixed
+# # Import key safely (new method rather than deprecated apt-key approach) and install
+# . /etc/os-release
+# receive_gpg_keys GITHUB_CLI_ARCHIVE_GPG_KEY /usr/share/keyrings/githubcli-archive-keyring.gpg
+# echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" >/etc/apt/sources.list.d/github-cli.list
+# apt-get update
+# apt-get -y install "gh${version_suffix}"
+# rm -rf "/tmp/gh/gnupg"
+
 echo "Done!"

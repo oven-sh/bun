@@ -118,6 +118,20 @@ void HTTPHeaderMap::setUncommonHeader(const String& name, const String& value)
         m_uncommonHeaders[index].value = value;
 }
 
+void HTTPHeaderMap::setUncommonHeaderCloneName(const StringView name, const String& value)
+{
+    auto index = m_uncommonHeaders.findIf([&](auto& header) {
+        return equalIgnoringASCIICase(header.key, name);
+    });
+    if (index == notFound) {
+        LChar* ptr = nullptr;
+        auto nameCopy = WTF::String::createUninitialized(name.length(), ptr);
+        memcpy(ptr, name.characters8(), name.length());
+        m_uncommonHeaders.append(UncommonHeader { nameCopy, value });
+    } else
+        m_uncommonHeaders[index].value = value;
+}
+
 void HTTPHeaderMap::add(const String& name, const String& value)
 {
     HTTPHeaderName headerName;

@@ -27,11 +27,11 @@ static const struct CompactHashIndex JSArrayBufferSinkPrototypeTableIndex[19] = 
 };
 
 static const struct HashTableValue JSArrayBufferSinkPrototypeTableValues[5] = {
-   { "close"_s, static_cast<unsigned>(PropertyAttribute::ReadOnly|PropertyAttribute::DontDelete|PropertyAttribute::Function), NoIntrinsic, { (intptr_t)static_cast<RawNativeFunction>(ArrayBufferSink__doClose), (intptr_t)(0) } },
-   { "flush"_s, static_cast<unsigned>(PropertyAttribute::ReadOnly|PropertyAttribute::DontDelete|PropertyAttribute::Function), NoIntrinsic, { (intptr_t)static_cast<RawNativeFunction>(ArrayBufferSink__flush), (intptr_t)(1) } },
-   { "end"_s, static_cast<unsigned>(PropertyAttribute::ReadOnly|PropertyAttribute::DontDelete|PropertyAttribute::Function), NoIntrinsic, { (intptr_t)static_cast<RawNativeFunction>(ArrayBufferSink__end), (intptr_t)(0) } },
-   { "start"_s, static_cast<unsigned>(PropertyAttribute::ReadOnly|PropertyAttribute::DontDelete|PropertyAttribute::Function), NoIntrinsic, { (intptr_t)static_cast<RawNativeFunction>(ArrayBufferSink__start), (intptr_t)(1) } },
-   { "write"_s, static_cast<unsigned>(PropertyAttribute::ReadOnly|PropertyAttribute::DontDelete|PropertyAttribute::Function), NoIntrinsic, { (intptr_t)static_cast<RawNativeFunction>(ArrayBufferSink__write), (intptr_t)(1) } },
+   { "close"_s, static_cast<unsigned>(PropertyAttribute::ReadOnly|PropertyAttribute::DontDelete|PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, ArrayBufferSink__doClose, 0 } },
+   { "flush"_s, static_cast<unsigned>(PropertyAttribute::ReadOnly|PropertyAttribute::DontDelete|PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, ArrayBufferSink__flush, 1 } },
+   { "end"_s, static_cast<unsigned>(PropertyAttribute::ReadOnly|PropertyAttribute::DontDelete|PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, ArrayBufferSink__end, 0 } },
+   { "start"_s, static_cast<unsigned>(PropertyAttribute::ReadOnly|PropertyAttribute::DontDelete|PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, ArrayBufferSink__start, 1 } },
+   { "write"_s, static_cast<unsigned>(PropertyAttribute::ReadOnly|PropertyAttribute::DontDelete|PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, ArrayBufferSink__write, 1 } },
 };
 
 static const struct HashTable JSArrayBufferSinkPrototypeTable =
@@ -66,15 +66,93 @@ static const struct CompactHashIndex JSReadableArrayBufferSinkControllerPrototyp
 };
 
 static const struct HashTableValue JSReadableArrayBufferSinkControllerPrototypeTableValues[5] = {
-   { "close"_s, static_cast<unsigned>(PropertyAttribute::ReadOnly|PropertyAttribute::DontDelete|PropertyAttribute::Function), NoIntrinsic, { (intptr_t)static_cast<RawNativeFunction>(JSReadableArrayBufferSinkController__close), (intptr_t)(0) } },
-   { "flush"_s, static_cast<unsigned>(PropertyAttribute::ReadOnly|PropertyAttribute::DontDelete|PropertyAttribute::Function), NoIntrinsic, { (intptr_t)static_cast<RawNativeFunction>(ArrayBufferSink__flush), (intptr_t)(1) } },
-   { "end"_s, static_cast<unsigned>(PropertyAttribute::ReadOnly|PropertyAttribute::DontDelete|PropertyAttribute::Function), NoIntrinsic, { (intptr_t)static_cast<RawNativeFunction>(JSReadableArrayBufferSinkController__end), (intptr_t)(0) } },
-   { "start"_s, static_cast<unsigned>(PropertyAttribute::ReadOnly|PropertyAttribute::DontDelete|PropertyAttribute::Function), NoIntrinsic, { (intptr_t)static_cast<RawNativeFunction>(ArrayBufferSink__start), (intptr_t)(1) } },
-   { "write"_s, static_cast<unsigned>(PropertyAttribute::ReadOnly|PropertyAttribute::DontDelete|PropertyAttribute::Function), NoIntrinsic, { (intptr_t)static_cast<RawNativeFunction>(ArrayBufferSink__write), (intptr_t)(1) } },
+   { "close"_s, static_cast<unsigned>(PropertyAttribute::ReadOnly|PropertyAttribute::DontDelete|PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, JSReadableArrayBufferSinkController__close, 0 } },
+   { "flush"_s, static_cast<unsigned>(PropertyAttribute::ReadOnly|PropertyAttribute::DontDelete|PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, ArrayBufferSink__flush, 1 } },
+   { "end"_s, static_cast<unsigned>(PropertyAttribute::ReadOnly|PropertyAttribute::DontDelete|PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, JSReadableArrayBufferSinkController__end, 0 } },
+   { "start"_s, static_cast<unsigned>(PropertyAttribute::ReadOnly|PropertyAttribute::DontDelete|PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, ArrayBufferSink__start, 1 } },
+   { "write"_s, static_cast<unsigned>(PropertyAttribute::ReadOnly|PropertyAttribute::DontDelete|PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, ArrayBufferSink__write, 1 } },
 };
 
 static const struct HashTable JSReadableArrayBufferSinkControllerPrototypeTable =
     { 5, 15, false, nullptr, JSReadableArrayBufferSinkControllerPrototypeTableValues, JSReadableArrayBufferSinkControllerPrototypeTableIndex };
+
+
+
+
+
+
+
+static const struct CompactHashIndex JSFileSinkPrototypeTableIndex[19] = {
+    { -1, -1 },
+    { -1, -1 },
+    { -1, -1 },
+    { -1, -1 },
+    { -1, -1 },
+    { -1, -1 },
+    { -1, -1 },
+    { -1, -1 },
+    { -1, -1 },
+    { -1, -1 },
+    { 0, 16 },
+    { -1, -1 },
+    { -1, -1 },
+    { -1, -1 },
+    { -1, -1 },
+    { 4, -1 },
+    { 1, 17 },
+    { 2, 18 },
+    { 3, -1 },
+};
+
+static const struct HashTableValue JSFileSinkPrototypeTableValues[5] = {
+   { "close"_s, static_cast<unsigned>(PropertyAttribute::ReadOnly|PropertyAttribute::DontDelete|PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, FileSink__doClose, 0 } },
+   { "flush"_s, static_cast<unsigned>(PropertyAttribute::ReadOnly|PropertyAttribute::DontDelete|PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, FileSink__flush, 1 } },
+   { "end"_s, static_cast<unsigned>(PropertyAttribute::ReadOnly|PropertyAttribute::DontDelete|PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, FileSink__end, 0 } },
+   { "start"_s, static_cast<unsigned>(PropertyAttribute::ReadOnly|PropertyAttribute::DontDelete|PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, FileSink__start, 1 } },
+   { "write"_s, static_cast<unsigned>(PropertyAttribute::ReadOnly|PropertyAttribute::DontDelete|PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, FileSink__write, 1 } },
+};
+
+static const struct HashTable JSFileSinkPrototypeTable =
+    { 5, 15, false, nullptr, JSFileSinkPrototypeTableValues, JSFileSinkPrototypeTableIndex };
+
+
+
+
+
+
+
+static const struct CompactHashIndex JSReadableFileSinkControllerPrototypeTableIndex[19] = {
+    { -1, -1 },
+    { -1, -1 },
+    { -1, -1 },
+    { -1, -1 },
+    { -1, -1 },
+    { -1, -1 },
+    { -1, -1 },
+    { -1, -1 },
+    { -1, -1 },
+    { -1, -1 },
+    { 0, 16 },
+    { -1, -1 },
+    { -1, -1 },
+    { -1, -1 },
+    { -1, -1 },
+    { 4, -1 },
+    { 1, 17 },
+    { 2, 18 },
+    { 3, -1 },
+};
+
+static const struct HashTableValue JSReadableFileSinkControllerPrototypeTableValues[5] = {
+   { "close"_s, static_cast<unsigned>(PropertyAttribute::ReadOnly|PropertyAttribute::DontDelete|PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, JSReadableFileSinkController__close, 0 } },
+   { "flush"_s, static_cast<unsigned>(PropertyAttribute::ReadOnly|PropertyAttribute::DontDelete|PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, FileSink__flush, 1 } },
+   { "end"_s, static_cast<unsigned>(PropertyAttribute::ReadOnly|PropertyAttribute::DontDelete|PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, JSReadableFileSinkController__end, 0 } },
+   { "start"_s, static_cast<unsigned>(PropertyAttribute::ReadOnly|PropertyAttribute::DontDelete|PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, FileSink__start, 1 } },
+   { "write"_s, static_cast<unsigned>(PropertyAttribute::ReadOnly|PropertyAttribute::DontDelete|PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, FileSink__write, 1 } },
+};
+
+static const struct HashTable JSReadableFileSinkControllerPrototypeTable =
+    { 5, 15, false, nullptr, JSReadableFileSinkControllerPrototypeTableValues, JSReadableFileSinkControllerPrototypeTableIndex };
 
 
 
@@ -105,11 +183,11 @@ static const struct CompactHashIndex JSHTTPResponseSinkPrototypeTableIndex[19] =
 };
 
 static const struct HashTableValue JSHTTPResponseSinkPrototypeTableValues[5] = {
-   { "close"_s, static_cast<unsigned>(PropertyAttribute::ReadOnly|PropertyAttribute::DontDelete|PropertyAttribute::Function), NoIntrinsic, { (intptr_t)static_cast<RawNativeFunction>(HTTPResponseSink__doClose), (intptr_t)(0) } },
-   { "flush"_s, static_cast<unsigned>(PropertyAttribute::ReadOnly|PropertyAttribute::DontDelete|PropertyAttribute::Function), NoIntrinsic, { (intptr_t)static_cast<RawNativeFunction>(HTTPResponseSink__flush), (intptr_t)(1) } },
-   { "end"_s, static_cast<unsigned>(PropertyAttribute::ReadOnly|PropertyAttribute::DontDelete|PropertyAttribute::Function), NoIntrinsic, { (intptr_t)static_cast<RawNativeFunction>(HTTPResponseSink__end), (intptr_t)(0) } },
-   { "start"_s, static_cast<unsigned>(PropertyAttribute::ReadOnly|PropertyAttribute::DontDelete|PropertyAttribute::Function), NoIntrinsic, { (intptr_t)static_cast<RawNativeFunction>(HTTPResponseSink__start), (intptr_t)(1) } },
-   { "write"_s, static_cast<unsigned>(PropertyAttribute::ReadOnly|PropertyAttribute::DontDelete|PropertyAttribute::Function), NoIntrinsic, { (intptr_t)static_cast<RawNativeFunction>(HTTPResponseSink__write), (intptr_t)(1) } },
+   { "close"_s, static_cast<unsigned>(PropertyAttribute::ReadOnly|PropertyAttribute::DontDelete|PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, HTTPResponseSink__doClose, 0 } },
+   { "flush"_s, static_cast<unsigned>(PropertyAttribute::ReadOnly|PropertyAttribute::DontDelete|PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, HTTPResponseSink__flush, 1 } },
+   { "end"_s, static_cast<unsigned>(PropertyAttribute::ReadOnly|PropertyAttribute::DontDelete|PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, HTTPResponseSink__end, 0 } },
+   { "start"_s, static_cast<unsigned>(PropertyAttribute::ReadOnly|PropertyAttribute::DontDelete|PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, HTTPResponseSink__start, 1 } },
+   { "write"_s, static_cast<unsigned>(PropertyAttribute::ReadOnly|PropertyAttribute::DontDelete|PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, HTTPResponseSink__write, 1 } },
 };
 
 static const struct HashTable JSHTTPResponseSinkPrototypeTable =
@@ -144,11 +222,11 @@ static const struct CompactHashIndex JSReadableHTTPResponseSinkControllerPrototy
 };
 
 static const struct HashTableValue JSReadableHTTPResponseSinkControllerPrototypeTableValues[5] = {
-   { "close"_s, static_cast<unsigned>(PropertyAttribute::ReadOnly|PropertyAttribute::DontDelete|PropertyAttribute::Function), NoIntrinsic, { (intptr_t)static_cast<RawNativeFunction>(JSReadableHTTPResponseSinkController__close), (intptr_t)(0) } },
-   { "flush"_s, static_cast<unsigned>(PropertyAttribute::ReadOnly|PropertyAttribute::DontDelete|PropertyAttribute::Function), NoIntrinsic, { (intptr_t)static_cast<RawNativeFunction>(HTTPResponseSink__flush), (intptr_t)(1) } },
-   { "end"_s, static_cast<unsigned>(PropertyAttribute::ReadOnly|PropertyAttribute::DontDelete|PropertyAttribute::Function), NoIntrinsic, { (intptr_t)static_cast<RawNativeFunction>(JSReadableHTTPResponseSinkController__end), (intptr_t)(0) } },
-   { "start"_s, static_cast<unsigned>(PropertyAttribute::ReadOnly|PropertyAttribute::DontDelete|PropertyAttribute::Function), NoIntrinsic, { (intptr_t)static_cast<RawNativeFunction>(HTTPResponseSink__start), (intptr_t)(1) } },
-   { "write"_s, static_cast<unsigned>(PropertyAttribute::ReadOnly|PropertyAttribute::DontDelete|PropertyAttribute::Function), NoIntrinsic, { (intptr_t)static_cast<RawNativeFunction>(HTTPResponseSink__write), (intptr_t)(1) } },
+   { "close"_s, static_cast<unsigned>(PropertyAttribute::ReadOnly|PropertyAttribute::DontDelete|PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, JSReadableHTTPResponseSinkController__close, 0 } },
+   { "flush"_s, static_cast<unsigned>(PropertyAttribute::ReadOnly|PropertyAttribute::DontDelete|PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, HTTPResponseSink__flush, 1 } },
+   { "end"_s, static_cast<unsigned>(PropertyAttribute::ReadOnly|PropertyAttribute::DontDelete|PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, JSReadableHTTPResponseSinkController__end, 0 } },
+   { "start"_s, static_cast<unsigned>(PropertyAttribute::ReadOnly|PropertyAttribute::DontDelete|PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, HTTPResponseSink__start, 1 } },
+   { "write"_s, static_cast<unsigned>(PropertyAttribute::ReadOnly|PropertyAttribute::DontDelete|PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, HTTPResponseSink__write, 1 } },
 };
 
 static const struct HashTable JSReadableHTTPResponseSinkControllerPrototypeTable =
@@ -183,11 +261,11 @@ static const struct CompactHashIndex JSHTTPSResponseSinkPrototypeTableIndex[19] 
 };
 
 static const struct HashTableValue JSHTTPSResponseSinkPrototypeTableValues[5] = {
-   { "close"_s, static_cast<unsigned>(PropertyAttribute::ReadOnly|PropertyAttribute::DontDelete|PropertyAttribute::Function), NoIntrinsic, { (intptr_t)static_cast<RawNativeFunction>(HTTPSResponseSink__doClose), (intptr_t)(0) } },
-   { "flush"_s, static_cast<unsigned>(PropertyAttribute::ReadOnly|PropertyAttribute::DontDelete|PropertyAttribute::Function), NoIntrinsic, { (intptr_t)static_cast<RawNativeFunction>(HTTPSResponseSink__flush), (intptr_t)(1) } },
-   { "end"_s, static_cast<unsigned>(PropertyAttribute::ReadOnly|PropertyAttribute::DontDelete|PropertyAttribute::Function), NoIntrinsic, { (intptr_t)static_cast<RawNativeFunction>(HTTPSResponseSink__end), (intptr_t)(0) } },
-   { "start"_s, static_cast<unsigned>(PropertyAttribute::ReadOnly|PropertyAttribute::DontDelete|PropertyAttribute::Function), NoIntrinsic, { (intptr_t)static_cast<RawNativeFunction>(HTTPSResponseSink__start), (intptr_t)(1) } },
-   { "write"_s, static_cast<unsigned>(PropertyAttribute::ReadOnly|PropertyAttribute::DontDelete|PropertyAttribute::Function), NoIntrinsic, { (intptr_t)static_cast<RawNativeFunction>(HTTPSResponseSink__write), (intptr_t)(1) } },
+   { "close"_s, static_cast<unsigned>(PropertyAttribute::ReadOnly|PropertyAttribute::DontDelete|PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, HTTPSResponseSink__doClose, 0 } },
+   { "flush"_s, static_cast<unsigned>(PropertyAttribute::ReadOnly|PropertyAttribute::DontDelete|PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, HTTPSResponseSink__flush, 1 } },
+   { "end"_s, static_cast<unsigned>(PropertyAttribute::ReadOnly|PropertyAttribute::DontDelete|PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, HTTPSResponseSink__end, 0 } },
+   { "start"_s, static_cast<unsigned>(PropertyAttribute::ReadOnly|PropertyAttribute::DontDelete|PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, HTTPSResponseSink__start, 1 } },
+   { "write"_s, static_cast<unsigned>(PropertyAttribute::ReadOnly|PropertyAttribute::DontDelete|PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, HTTPSResponseSink__write, 1 } },
 };
 
 static const struct HashTable JSHTTPSResponseSinkPrototypeTable =
@@ -222,11 +300,11 @@ static const struct CompactHashIndex JSReadableHTTPSResponseSinkControllerProtot
 };
 
 static const struct HashTableValue JSReadableHTTPSResponseSinkControllerPrototypeTableValues[5] = {
-   { "close"_s, static_cast<unsigned>(PropertyAttribute::ReadOnly|PropertyAttribute::DontDelete|PropertyAttribute::Function), NoIntrinsic, { (intptr_t)static_cast<RawNativeFunction>(JSReadableHTTPSResponseSinkController__close), (intptr_t)(0) } },
-   { "flush"_s, static_cast<unsigned>(PropertyAttribute::ReadOnly|PropertyAttribute::DontDelete|PropertyAttribute::Function), NoIntrinsic, { (intptr_t)static_cast<RawNativeFunction>(HTTPSResponseSink__flush), (intptr_t)(1) } },
-   { "end"_s, static_cast<unsigned>(PropertyAttribute::ReadOnly|PropertyAttribute::DontDelete|PropertyAttribute::Function), NoIntrinsic, { (intptr_t)static_cast<RawNativeFunction>(JSReadableHTTPSResponseSinkController__end), (intptr_t)(0) } },
-   { "start"_s, static_cast<unsigned>(PropertyAttribute::ReadOnly|PropertyAttribute::DontDelete|PropertyAttribute::Function), NoIntrinsic, { (intptr_t)static_cast<RawNativeFunction>(HTTPSResponseSink__start), (intptr_t)(1) } },
-   { "write"_s, static_cast<unsigned>(PropertyAttribute::ReadOnly|PropertyAttribute::DontDelete|PropertyAttribute::Function), NoIntrinsic, { (intptr_t)static_cast<RawNativeFunction>(HTTPSResponseSink__write), (intptr_t)(1) } },
+   { "close"_s, static_cast<unsigned>(PropertyAttribute::ReadOnly|PropertyAttribute::DontDelete|PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, JSReadableHTTPSResponseSinkController__close, 0 } },
+   { "flush"_s, static_cast<unsigned>(PropertyAttribute::ReadOnly|PropertyAttribute::DontDelete|PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, HTTPSResponseSink__flush, 1 } },
+   { "end"_s, static_cast<unsigned>(PropertyAttribute::ReadOnly|PropertyAttribute::DontDelete|PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, JSReadableHTTPSResponseSinkController__end, 0 } },
+   { "start"_s, static_cast<unsigned>(PropertyAttribute::ReadOnly|PropertyAttribute::DontDelete|PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, HTTPSResponseSink__start, 1 } },
+   { "write"_s, static_cast<unsigned>(PropertyAttribute::ReadOnly|PropertyAttribute::DontDelete|PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, HTTPSResponseSink__write, 1 } },
 };
 
 static const struct HashTable JSReadableHTTPSResponseSinkControllerPrototypeTable =

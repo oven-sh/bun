@@ -378,7 +378,7 @@ pub const Platform = enum {
 
     pub fn fromJS(global: *JSC.JSGlobalObject, value: JSC.JSValue, exception: JSC.C.ExceptionRef) ?Platform {
         if (!value.jsType().isStringLike()) {
-            JSC.throwInvalidArguments("platform must be a string", .{}, global.ref(), exception);
+            JSC.throwInvalidArguments("platform must be a string", .{}, global, exception);
 
             return null;
         }
@@ -396,7 +396,7 @@ pub const Platform = enum {
             Eight.case("node") => Platform.node,
             Eight.case("neutral") => Platform.neutral,
             else => {
-                JSC.throwInvalidArguments("platform must be one of: deno, browser, bun, macro, node, neutral", .{}, global.ref(), exception);
+                JSC.throwInvalidArguments("platform must be one of: deno, browser, bun, macro, node, neutral", .{}, global, exception);
 
                 return null;
             },
@@ -658,7 +658,7 @@ pub const Loader = enum(u4) {
         if (loader.isUndefinedOrNull()) return null;
 
         if (!loader.jsType().isStringLike()) {
-            JSC.throwInvalidArguments("loader must be a string", .{}, global.ref(), exception);
+            JSC.throwInvalidArguments("loader must be a string", .{}, global, exception);
             return null;
         }
 
@@ -667,7 +667,7 @@ pub const Loader = enum(u4) {
         if (zig_str.len == 0) return null;
 
         return fromString(zig_str.slice()) orelse {
-            JSC.throwInvalidArguments("invalid loader – must be js, jsx, tsx, ts, css, file, toml, wasm, or json", .{}, global.ref(), exception);
+            JSC.throwInvalidArguments("invalid loader – must be js, jsx, tsx, ts, css, file, toml, wasm, or json", .{}, global, exception);
             return null;
         };
     }
@@ -800,6 +800,13 @@ pub const ESMConditions = struct {
 };
 
 pub const JSX = struct {
+    pub const RuntimeMap = bun.ComptimeStringMap(JSX.Runtime, .{
+        .{ "react", JSX.Runtime.classic },
+        .{ "react-jsx", JSX.Runtime.automatic },
+        .{ "react-jsxDEV", JSX.Runtime.automatic },
+        .{ "solid", JSX.Runtime.solid },
+    });
+
     pub const Pragma = struct {
         // these need to be arrays
         factory: []const string = Defaults.Factory,

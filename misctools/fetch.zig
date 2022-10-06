@@ -17,7 +17,7 @@ const Method = @import("../src/http/method.zig").Method;
 const ColonListType = @import("../src/cli/colon_list_type.zig").ColonListType;
 const HeadersTuple = ColonListType(string, noop_resolver);
 const path_handler = @import("../src/resolver/resolve_path.zig");
-const NetworkThread = @import("http").NetworkThread;
+const HTTPThread = @import("http").HTTPThread;
 const HTTP = @import("http");
 fn noop_resolver(in: string) !string {
     return in;
@@ -172,19 +172,15 @@ pub fn main() anyerror!void {
     var args = try Arguments.parse(default_allocator);
 
     var body_out_str = try MutableString.init(default_allocator, 1024);
-    var body_in_str = try MutableString.init(default_allocator, args.body.len);
-    body_in_str.appendAssumeCapacity(args.body);
     var channel = try default_allocator.create(HTTP.HTTPChannel);
     channel.* = HTTP.HTTPChannel.init();
 
     var response_body_string = try default_allocator.create(MutableString);
     response_body_string.* = body_out_str;
-    var request_body_string = try default_allocator.create(MutableString);
-    request_body_string.* = body_in_str;
 
     try channel.buffer.ensureTotalCapacity(1);
 
-    try NetworkThread.init();
+    try HTTPThread.init();
 
     var ctx = try default_allocator.create(HTTP.HTTPChannelContext);
     ctx.* = .{
@@ -196,18 +192,18 @@ pub fn main() anyerror!void {
             args.headers,
             args.headers_buf,
             response_body_string,
-            request_body_string,
+            args.body,
 
             0,
         ),
     };
     ctx.http.callback = HTTP.HTTPChannelContext.callback;
-    var batch = NetworkThread.Batch{};
+    var batch = HTTPThread.Batch{};
     ctx.http.schedule(default_allocator, &batch);
     ctx.http.client.verbose = args.verbose;
 
     ctx.http.verbose = args.verbose;
-    NetworkThread.global.schedule(batch);
+    HTTPThread.global.schedule(batch);
 
     while (true) {
         while (channel.tryReadItem() catch null) |http| {

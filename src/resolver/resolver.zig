@@ -234,6 +234,7 @@ threadlocal var check_browser_map_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
 threadlocal var remap_path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
 threadlocal var load_as_file_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
 threadlocal var remap_path_trailing_slash: [bun.MAX_PATH_BYTES]u8 = undefined;
+threadlocal var tsconfig_paths_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
 
 pub const DebugLogs = struct {
     what: string = "",
@@ -313,13 +314,26 @@ var bin_folders_lock: Mutex = Mutex.init();
 var bin_folders_loaded: bool = false;
 
 const Timer = @import("../system_timer.zig").Timer;
-pub fn ResolveWatcher(comptime Context: type) type {
-    return struct {
-        context: *Context,
-        callback: fn (*Context, dir_path: string, dir_fd: StoredFileDescriptorType) void = undefined,
 
-        pub fn watch(this: @This(), dir_path: string, fd: StoredFileDescriptorType) void {
-            return this.callback(this.context, dir_path, fd);
+pub const AnyResolveWatcher = struct {
+    context: *anyopaque,
+    callback: fn (*anyopaque, dir_path: string, dir_fd: StoredFileDescriptorType) void = undefined,
+
+    pub fn watch(this: @This(), dir_path: string, fd: StoredFileDescriptorType) void {
+        return this.callback(this.context, dir_path, fd);
+    }
+};
+
+pub fn ResolveWatcher(comptime Context: type, comptime onWatch: anytype) type {
+    return struct {
+        pub fn init(context: Context) AnyResolveWatcher {
+            return AnyResolveWatcher{
+                .context = context,
+                .callback = watch,
+            };
+        }
+        pub fn watch(this: *anyopaque, dir_path: string, fd: StoredFileDescriptorType) void {
+            onWatch(bun.cast(Context, this), dir_path, fd);
         }
     };
 }
@@ -340,7 +354,7 @@ pub const Resolver = struct {
     debug_logs: ?DebugLogs = null,
     elapsed: u64 = 0, // tracing
 
-    watcher: ?ResolveWatcher(HTTPWatcher) = null,
+    watcher: ?AnyResolveWatcher = null,
 
     caches: CacheSet,
 
@@ -1006,7 +1020,7 @@ pub const Resolver = struct {
                         if (remapped.len == 0) {
                             // "browser": {"module": false}
                             // does the module exist in the filesystem?
-                            if (r.loadNodeModules(import_path, kind, source_dir_info)) |node_module| {
+                            if (r.loadNodeModules(import_path, kind, source_dir_info, false)) |node_module| {
                                 var pair = node_module.path_pair;
                                 pair.primary.is_disabled = true;
                                 if (pair.secondary != null) {
@@ -1182,7 +1196,13 @@ pub const Resolver = struct {
     threadlocal var esm_subpath_buf: [512]u8 = undefined;
     threadlocal var esm_absolute_package_path: [bun.MAX_PATH_BYTES]u8 = undefined;
     threadlocal var esm_absolute_package_path_joined: [bun.MAX_PATH_BYTES]u8 = undefined;
-    pub fn loadNodeModules(r: *ThisResolver, import_path: string, kind: ast.ImportKind, _dir_info: *DirInfo) ?MatchResult {
+    pub fn loadNodeModules(
+        r: *ThisResolver,
+        import_path: string,
+        kind: ast.ImportKind,
+        _dir_info: *DirInfo,
+        forbid_imports: bool,
+    ) ?MatchResult {
         var dir_info = _dir_info;
         if (r.debug_logs) |*debug| {
             debug.addNoteFmt("Searching for {s} in \"node_modules\" directories starting from \"{s}\"", .{ import_path, dir_info.abs_path }) catch {};
@@ -1219,6 +1239,44 @@ pub const Resolver = struct {
         }
 
         const esm_ = ESModule.Package.parse(import_path, &esm_subpath_buf);
+
+        if (import_path[0] == '#' and !forbid_imports) {
+            if (esm_ != null) {
+                if (dir_info.enclosing_package_json) |package_json| {
+                    load_from_imports_map: {
+                        const imports_map = package_json.imports orelse break :load_from_imports_map;
+
+                        if (import_path.len == 1 or strings.hasPrefix(import_path, "#/")) {
+                            if (r.debug_logs) |*debug| {
+                                debug.addNoteFmt("The path \"{s}\" must not equal \"#\" and must not start with \"#/\"", .{import_path}) catch {};
+                            }
+                            return null;
+                        }
+
+                        const esmodule = ESModule{
+                            .conditions = switch (kind) {
+                                ast.ImportKind.require, ast.ImportKind.require_resolve => r.opts.conditions.require,
+                                else => r.opts.conditions.import,
+                            },
+                            .allocator = r.allocator,
+                            .debug_logs = if (r.debug_logs) |*debug| debug else null,
+                        };
+
+                        const esm_resolution = esmodule.resolveImports(import_path, imports_map.root);
+
+                        if (esm_resolution.status == .PackageResolve)
+                            return r.loadNodeModules(
+                                esm_resolution.path,
+                                kind,
+                                dir_info,
+                                true,
+                            );
+
+                        return r.handleESMResolution(esm_resolution, package_json.source.path.name.dir, kind, package_json);
+                    }
+                }
+            }
+        }
 
         // Then check for the package in any enclosing "node_modules" directories
         while (true) {
@@ -1258,74 +1316,9 @@ pub const Resolver = struct {
                                 // want problems due to Windows paths, which are very unlike URL
                                 // paths. We also want to avoid any "%" characters in the absolute
                                 // directory path accidentally being interpreted as URL escapes.
-                                var esm_resolution = esmodule.resolve("/", esm.subpath, exports_map.root);
+                                const esm_resolution = esmodule.resolve("/", esm.subpath, exports_map.root);
 
-                                if ((esm_resolution.status == .Inexact or esm_resolution.status == .Exact) and
-                                    strings.startsWith(esm_resolution.path, "/"))
-                                {
-                                    const abs_esm_path: string = brk: {
-                                        var parts = [_]string{
-                                            abs_package_path,
-                                            esm_resolution.path[1..],
-                                        };
-                                        break :brk r.fs.absBuf(&parts, &esm_absolute_package_path_joined);
-                                    };
-
-                                    switch (esm_resolution.status) {
-                                        .Exact => {
-                                            const resolved_dir_info = (r.dirInfoCached(std.fs.path.dirname(abs_esm_path).?) catch null) orelse {
-                                                esm_resolution.status = .ModuleNotFound;
-                                                return null;
-                                            };
-                                            const entries = resolved_dir_info.getEntries() orelse {
-                                                esm_resolution.status = .ModuleNotFound;
-                                                return null;
-                                            };
-                                            const entry_query = entries.get(std.fs.path.basename(abs_esm_path)) orelse {
-                                                esm_resolution.status = .ModuleNotFound;
-                                                return null;
-                                            };
-
-                                            if (entry_query.entry.kind(&r.fs.fs) == .dir) {
-                                                esm_resolution.status = .UnsupportedDirectoryImport;
-                                                return null;
-                                            }
-
-                                            const absolute_out_path = brk: {
-                                                if (entry_query.entry.abs_path.isEmpty()) {
-                                                    entry_query.entry.abs_path =
-                                                        PathString.init(r.fs.dirname_store.append(@TypeOf(abs_esm_path), abs_esm_path) catch unreachable);
-                                                }
-                                                break :brk entry_query.entry.abs_path.slice();
-                                            };
-
-                                            return MatchResult{
-                                                .path_pair = PathPair{
-                                                    .primary = Path.initWithNamespace(absolute_out_path, "file"),
-                                                },
-                                                .dirname_fd = entries.fd,
-                                                .file_fd = entry_query.entry.cache.fd,
-                                                .dir_info = resolved_dir_info,
-                                                .diff_case = entry_query.diff_case,
-                                                .is_node_module = true,
-                                                .package_json = resolved_dir_info.package_json orelse package_json,
-                                            };
-                                        },
-                                        .Inexact => {
-                                            // If this was resolved against an expansion key ending in a "/"
-                                            // instead of a "*", we need to try CommonJS-style implicit
-                                            // extension and/or directory detection.
-                                            if (r.loadAsFileOrDirectory(abs_esm_path, kind)) |*res| {
-                                                res.is_node_module = true;
-                                                res.package_json = res.package_json orelse package_json;
-                                                return res.*;
-                                            }
-                                            esm_resolution.status = .ModuleNotFound;
-                                            return null;
-                                        },
-                                        else => unreachable,
-                                    }
-                                }
+                                return r.handleESMResolution(esm_resolution, abs_package_path, kind, package_json);
                             }
                         }
                     }
@@ -1346,9 +1339,79 @@ pub const Resolver = struct {
         return null;
     }
 
+    fn handleESMResolution(r: *ThisResolver, esm_resolution_: ESModule.Resolution, abs_package_path: string, kind: ast.ImportKind, package_json: *PackageJSON) ?MatchResult {
+        var esm_resolution = esm_resolution_;
+        if (!((esm_resolution.status == .Inexact or esm_resolution.status == .Exact) and
+            esm_resolution.path.len > 0 and esm_resolution.path[0] == '/'))
+            return null;
+
+        const abs_esm_path: string = brk: {
+            var parts = [_]string{
+                abs_package_path,
+                esm_resolution.path[1..],
+            };
+            break :brk r.fs.absBuf(&parts, &esm_absolute_package_path_joined);
+        };
+
+        switch (esm_resolution.status) {
+            .Exact => {
+                const resolved_dir_info = (r.dirInfoCached(std.fs.path.dirname(abs_esm_path).?) catch null) orelse {
+                    esm_resolution.status = .ModuleNotFound;
+                    return null;
+                };
+                const entries = resolved_dir_info.getEntries() orelse {
+                    esm_resolution.status = .ModuleNotFound;
+                    return null;
+                };
+                const entry_query = entries.get(std.fs.path.basename(abs_esm_path)) orelse {
+                    esm_resolution.status = .ModuleNotFound;
+                    return null;
+                };
+
+                if (entry_query.entry.kind(&r.fs.fs) == .dir) {
+                    esm_resolution.status = .UnsupportedDirectoryImport;
+                    return null;
+                }
+
+                const absolute_out_path = brk: {
+                    if (entry_query.entry.abs_path.isEmpty()) {
+                        entry_query.entry.abs_path =
+                            PathString.init(r.fs.dirname_store.append(@TypeOf(abs_esm_path), abs_esm_path) catch unreachable);
+                    }
+                    break :brk entry_query.entry.abs_path.slice();
+                };
+
+                return MatchResult{
+                    .path_pair = PathPair{
+                        .primary = Path.initWithNamespace(absolute_out_path, "file"),
+                    },
+                    .dirname_fd = entries.fd,
+                    .file_fd = entry_query.entry.cache.fd,
+                    .dir_info = resolved_dir_info,
+                    .diff_case = entry_query.diff_case,
+                    .is_node_module = true,
+                    .package_json = resolved_dir_info.package_json orelse package_json,
+                };
+            },
+            .Inexact => {
+                // If this was resolved against an expansion key ending in a "/"
+                // instead of a "*", we need to try CommonJS-style implicit
+                // extension and/or directory detection.
+                if (r.loadAsFileOrDirectory(abs_esm_path, kind)) |*res| {
+                    res.is_node_module = true;
+                    res.package_json = res.package_json orelse package_json;
+                    return res.*;
+                }
+                esm_resolution.status = .ModuleNotFound;
+                return null;
+            },
+            else => unreachable,
+        }
+    }
+
     pub fn resolveWithoutRemapping(r: *ThisResolver, source_dir_info: *DirInfo, import_path: string, kind: ast.ImportKind) ?MatchResult {
         if (isPackagePath(import_path)) {
-            return r.loadNodeModules(import_path, kind, source_dir_info);
+            return r.loadNodeModules(import_path, kind, source_dir_info, false);
         } else {
             const paths = [_]string{ source_dir_info.abs_path, import_path };
             var resolved = r.fs.absBuf(&paths, &resolve_without_remapping_buf);
@@ -1771,8 +1834,8 @@ pub const Resolver = struct {
             const original_paths = entry.value_ptr.*;
 
             if (strings.indexOfChar(key, '*')) |star| {
-                const prefix = key[0 .. star - 1];
-                const suffix = key[star + 1 ..];
+                const prefix = if (star == 0) "" else key[0..star];
+                const suffix = if (star == key.len - 1) "" else key[star + 1 ..];
 
                 // Find the match with the longest prefix. If two matches have the same
                 // prefix length, pick the one with the longest suffix. This second edge
@@ -2488,7 +2551,6 @@ pub const Resolver = struct {
         if (comptime FeatureFlags.watch_directories) {
             // For existent directories which don't find a match
             // Start watching it automatically,
-            // onStartWatchingDirectory fn decides whether to actually watch.
             if (r.watcher) |watcher| {
                 watcher.watch(entries.dir, entries.fd);
             }
@@ -2697,6 +2759,45 @@ pub const Resolver = struct {
                     }
                     break :brk null;
                 };
+                if (info.tsconfig_json) |tsconfig_json| {
+                    var parent_configs = try std.BoundedArray(*TSConfigJSON, 64).init(0);
+                    try parent_configs.append(tsconfig_json);
+                    var current = tsconfig_json;
+                    while (current.extends.len > 0) {
+                        var ts_dir_name = Dirname.dirname(current.abs_path);
+                        // not sure why this needs cwd but we'll just pass in the dir of the tsconfig...
+                        var abs_path = ResolvePath.joinAbsStringBuf(ts_dir_name, &tsconfig_path_abs_buf, &[_]string{ ts_dir_name, current.extends }, .auto);
+                        var parent_config_maybe = try r.parseTSConfig(abs_path, 0);
+                        if (parent_config_maybe) |parent_config| {
+                            try parent_configs.append(parent_config);
+                            current = parent_config;
+                        } else {
+                            break;
+                        }
+                    }
+
+                    var merged_config = parent_configs.pop();
+                    // starting from the base config (end of the list)
+                    // successively apply the inheritable attributes to the next config
+                    while (parent_configs.popOrNull()) |parent_config| {
+                        if (parent_config.base_url.len > 0) {
+                            merged_config.base_url = parent_config.base_url;
+                            merged_config.base_url_for_paths = parent_config.base_url_for_paths;
+                        }
+                        merged_config.jsx = parent_config.mergeJSX(merged_config.jsx);
+
+                        if (parent_config.preserve_imports_not_used_as_values) |value| {
+                            merged_config.preserve_imports_not_used_as_values = value;
+                        }
+
+                        var iter = parent_config.paths.iterator();
+                        while (iter.next()) |c| {
+                            merged_config.paths.put(c.key_ptr.*, c.value_ptr.*) catch unreachable;
+                        }
+                        // todo deinit these parent configs somehow?
+                    }
+                    info.tsconfig_json = merged_config;
+                }
                 info.enclosing_tsconfig_json = info.tsconfig_json;
             }
         }

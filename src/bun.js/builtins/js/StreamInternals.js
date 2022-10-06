@@ -114,7 +114,7 @@ function validateAndNormalizeQueuingStrategy(size, highWaterMark)
     return { size: size, highWaterMark: newHighWaterMark };
 }
 
-@globalPrivate
+@linkTimeConstant
 function createFIFO() {
     "use strict";
     class Denqueue {
@@ -252,7 +252,7 @@ function peekQueueValue(queue)
 
     @assert(queue.content.isNotEmpty());
 
-    return queue.peek().value;
+    return queue.peek()?.value;
 }
 
 function resetQueue(queue)

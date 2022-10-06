@@ -19,13 +19,24 @@ export interface ClassDefinition {
   klass: Record<string, Field>;
   proto: Record<string, Field>;
   JSType?: string;
+  noConstructor?: boolean;
+  estimatedSize?: boolean;
+  isEventEmitter?: boolean;
 }
 
 export function define(
-  { klass = {}, proto = {}, ...rest } = {} as ClassDefinition
+  {
+    klass = {},
+    proto = {},
+    isEventEmitter = false,
+    estimatedSize = false,
+    ...rest
+  } = {} as ClassDefinition
 ): ClassDefinition {
   return {
     ...rest,
+    isEventEmitter,
+    estimatedSize,
     klass: Object.fromEntries(
       Object.entries(klass).sort(([a], [b]) => a.localeCompare(b))
     ),

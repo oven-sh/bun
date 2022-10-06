@@ -2293,7 +2293,7 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
             return ZigString.init(bun.span(this.config.hostname)).toValue(globalThis);
         }
 
-        pub fn getProtocol(this: *ThisServer, globalThis: *JSGlobalObject) JSC.JSValue {
+        pub fn getProtocol(_: *ThisServer, globalThis: *JSGlobalObject) JSC.JSValue {
             if (comptime ssl_enabled) {
                 return ZigString.init("https:").toValue(globalThis);
             } else {

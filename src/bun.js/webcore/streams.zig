@@ -3431,8 +3431,10 @@ pub const FileBlobLoader = struct {
                                 this.has_adjusted_pipe_size_on_linux = true;
                                 var pipe_len: c_int = 0;
                                 _ = std.c.fcntl(this.fd, F_GETPIPE_SZ, &pipe_len);
+
                                 if (pipe_len <= 16 * std.mem.page_size) {
-                                    _ = std.c.fcntl(this.fd, F_SETPIPE_SZ, 512 * 1024);
+                                    var out_size: c_int = 512 * 1024;
+                                    _ = std.c.fcntl(this.fd, F_SETPIPE_SZ, &out_size);
                                 }
                             }
                         }

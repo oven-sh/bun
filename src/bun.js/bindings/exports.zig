@@ -881,20 +881,13 @@ pub const ZigConsoleClient = struct {
     pub const name = "Zig::ConsoleClient";
     pub const include = "\"ZigConsoleClient.h\"";
     pub const namespace = shim.namespace;
-    pub const Counter = struct {
-        // if it turns out a hash table is a better idea we'll do that later
-        pub const Entry = struct {
-            hash: u32,
-            count: u32,
+    const Counter = std.AutoHashMapUnmanaged(u64, u32);
 
-            pub const List = std.MultiArrayList(Entry);
-        };
-        counts: Entry.List,
-        allocator: std.mem.Allocator,
-    };
     const BufferedWriter = std.io.BufferedWriter(4096, Output.WriterType);
     error_writer: BufferedWriter,
     writer: BufferedWriter,
+
+    counts: Counter = .{},
 
     pub fn init(error_writer: Output.WriterType, writer: Output.WriterType) ZigConsoleClient {
         return ZigConsoleClient{
@@ -1654,7 +1647,7 @@ pub const ZigConsoleClient = struct {
             defer {
                 if (comptime Format.canHaveCircularReferences()) {
                     _ = this.map.remove(@enumToInt(value));
-                } 
+                }
             }
 
             switch (comptime Format) {
@@ -2459,22 +2452,45 @@ pub const ZigConsoleClient = struct {
         // console
         _: ZigConsoleClient.Type,
         // global
-        _: *JSGlobalObject,
+        globalThis: *JSGlobalObject,
         // chars
-        _: [*]const u8,
+        ptr: [*]const u8,
         // len
-        _: usize,
-    ) callconv(.C) void {}
+        len: usize,
+    ) callconv(.C) void {
+        var this = globalThis.bunVM().console;
+        const slice = ptr[0..len];
+        const hash = bun.hash(slice);
+        // we don't want to store these strings, it will take too much memory
+        var counter = this.counts.getOrPut(globalThis.allocator(), hash) catch unreachable;
+        const current = @as(u32, if (counter.found_existing) counter.value_ptr.* else @as(u32, 0)) + 1;
+        counter.value_ptr.* = current;
+
+        var writer_ctx = &this.writer;
+        var writer = &writer_ctx.writer();
+        if (Output.enable_ansi_colors_stdout)
+            writer.print(comptime Output.prettyFmt("<r>{s}<d>: <r><yellow>{d}<r>\n", true), .{ slice, current }) catch unreachable
+        else
+            writer.print(comptime Output.prettyFmt("<r>{s}<d>: <r><yellow>{d}<r>\n", false), .{ slice, current }) catch unreachable;
+        writer_ctx.flush() catch unreachable;
+    }
     pub fn countReset(
         // console
         _: ZigConsoleClient.Type,
         // global
-        _: *JSGlobalObject,
+        globalThis: *JSGlobalObject,
         // chars
-        _: [*]const u8,
+        ptr: [*]const u8,
         // len
-        _: usize,
-    ) callconv(.C) void {}
+        len: usize,
+    ) callconv(.C) void {
+        var this = globalThis.bunVM().console;
+        const slice = ptr[0..len];
+        const hash = bun.hash(slice);
+        // we don't delete it because deleting is implemented via tombstoning
+        var entry = this.counts.getEntry(hash) orelse return;
+        entry.value_ptr.* = 0;
+    }
 
     const PendingTimers = std.AutoHashMap(u64, ?std.time.Timer);
     threadlocal var pending_time_logs: PendingTimers = undefined;

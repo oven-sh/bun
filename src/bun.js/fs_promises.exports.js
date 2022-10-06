@@ -1,5 +1,11 @@
 var fs = Bun.fs();
 
+var _stat = fs.statSync;
+fs.statSync = function (path) {
+  console.trace("stat", path);
+  return _stat(path);
+};
+
 // note: this is not quite the same as how node does it
 // in some cases, node swaps around arguments or makes small tweaks to the return type
 // this is just better than nothing.
@@ -68,6 +74,7 @@ export var truncate = promisify(fs.truncateSync);
 export var unlink = promisify(fs.unlinkSync);
 export var utimes = promisify(fs.utimesSync);
 export var lutimes = promisify(fs.lutimesSync);
+export var rm = promisify(fs.rmSync);
 
 export default {
   access,
@@ -105,4 +112,7 @@ export default {
   unlink,
   utimes,
   lutimes,
+  rm,
+
+  [Symbol.for("CommonJS")]: 0,
 };

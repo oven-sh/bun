@@ -254,9 +254,28 @@ pub const Bin = extern struct {
             return name_[(std.mem.indexOfScalar(u8, name_, '/') orelse return name) + 1 ..];
         }
 
-        fn setPermissions(this: *const Linker, target: [:0]const u8) void {
+        fn setPermissions(folder: std.os.fd_t, target: [:0]const u8) void {
             // we use fchmodat to avoid any issues with current working directory
-            _ = C.fchmodat(this.root_node_modules_folder, target, umask | 0o777, 0);
+            _ = C.fchmodat(folder, target, umask | 0o777, 0);
+        }
+
+        fn setSimlinkAndPermissions(this: *Linker, target_path: [:0]const u8, dest_path: [:0]const u8) void {
+            std.os.symlinkatZ(target_path, this.root_node_modules_folder, dest_path) catch |err| {
+                // Silently ignore PathAlreadyExists
+                // Most likely, the symlink was already created by another package
+                if (err == error.PathAlreadyExists) {
+                    setPermissions(this.root_node_modules_folder, dest_path);
+                    var target_path_trim = target_path;
+                    if (strings.hasPrefix(target_path_trim, "../")) {
+                        target_path_trim = target_path_trim[3..];
+                    }
+                    setPermissions(this.package_installed_node_modules, target_path_trim);
+                    return;
+                }
+
+                this.err = err;
+            };
+            setPermissions(this.root_node_modules_folder, dest_path);
         }
 
         // It is important that we use symlinkat(2) with relative paths instead of symlink()
@@ -331,17 +350,7 @@ pub const Bin = extern struct {
                     from_remain[0] = 0;
                     var dest_path: [:0]u8 = target_buf[0 .. @ptrToInt(from_remain.ptr) - @ptrToInt(&target_buf) :0];
 
-                    std.os.symlinkatZ(target_path, this.root_node_modules_folder, dest_path) catch |err| {
-                        // Silently ignore PathAlreadyExists
-                        // Most likely, the symlink was already created by another package
-                        if (err == error.PathAlreadyExists) {
-                            this.setPermissions(dest_path);
-                            return;
-                        }
-
-                        this.err = err;
-                    };
-                    this.setPermissions(dest_path);
+                    this.setSimlinkAndPermissions(target_path, dest_path);
                 },
                 .named_file => {
                     var target = this.bin.value.named_file[1].slice(this.string_buf);
@@ -361,17 +370,7 @@ pub const Bin = extern struct {
                     from_remain[0] = 0;
                     var dest_path: [:0]u8 = target_buf[0 .. @ptrToInt(from_remain.ptr) - @ptrToInt(&target_buf) :0];
 
-                    std.os.symlinkatZ(target_path, this.root_node_modules_folder, dest_path) catch |err| {
-                        // Silently ignore PathAlreadyExists
-                        // Most likely, the symlink was already created by another package
-                        if (err == error.PathAlreadyExists) {
-                            this.setPermissions(dest_path);
-                            return;
-                        }
-
-                        this.err = err;
-                    };
-                    this.setPermissions(dest_path);
+                    this.setSimlinkAndPermissions(target_path, dest_path);
                 },
                 .map => {
                     var extern_string_i: u32 = this.bin.value.map.off;
@@ -401,17 +400,7 @@ pub const Bin = extern struct {
                         from_remain[0] = 0;
                         var dest_path: [:0]u8 = target_buf[0 .. @ptrToInt(from_remain.ptr) - @ptrToInt(&target_buf) :0];
 
-                        std.os.symlinkatZ(target_path, this.root_node_modules_folder, dest_path) catch |err| {
-                            // Silently ignore PathAlreadyExists
-                            // Most likely, the symlink was already created by another package
-                            if (err == error.PathAlreadyExists) {
-                                this.setPermissions(dest_path);
-                                continue;
-                            }
-
-                            this.err = err;
-                        };
-                        this.setPermissions(dest_path);
+                        this.setSimlinkAndPermissions(target_path, dest_path);
                     }
                 },
                 .dir => {
@@ -460,23 +449,7 @@ pub const Bin = extern struct {
                                 else
                                     std.fmt.bufPrintZ(&dest_buf, "{s}", .{entry.name}) catch continue;
 
-                                std.os.symlinkatZ(
-                                    from_path,
-                                    this.root_node_modules_folder,
-                                    to_path,
-                                ) catch |err| {
-
-                                    // Silently ignore PathAlreadyExists
-                                    // Most likely, the symlink was already created by another package
-                                    if (err == error.PathAlreadyExists) {
-                                        this.setPermissions(to_path);
-                                        continue;
-                                    }
-
-                                    this.err = err;
-                                    continue;
-                                };
-                                this.setPermissions(to_path);
+                                this.setSimlinkAndPermissions(from_path, to_path);
                             },
                             else => {},
                         }

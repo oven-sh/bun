@@ -11,6 +11,14 @@ pub const LIBUS_LISTEN_EXCLUSIVE_PORT: i32 = 1;
 pub const Socket = opaque {};
 const bun = @import("../global.zig");
 
+const BoringSSL = @import("boringssl");
+fn NativeSocketHandleType(comptime ssl: bool) type {
+    if (ssl) {
+        return BoringSSL.SSL;
+    } else {
+        return anyopaque;
+    }
+}
 pub fn NewSocketHandler(comptime ssl: bool) type {
     return struct {
         const ssl_int: i32 = @boolToInt(ssl);
@@ -23,6 +31,10 @@ pub fn NewSocketHandler(comptime ssl: bool) type {
 
         pub fn timeout(this: ThisSocket, seconds: c_uint) void {
             return us_socket_timeout(comptime ssl_int, this.socket, seconds);
+        }
+
+        pub fn getNativeHandle(this: ThisSocket) *NativeSocketHandleType(ssl) {
+            return @ptrCast(*NativeSocketHandleType(ssl), us_socket_get_native_handle(comptime ssl_int, this.socket).?);
         }
         pub fn ext(this: ThisSocket, comptime ContextType: type) ?*ContextType {
             const alignment = if (ContextType == *anyopaque)

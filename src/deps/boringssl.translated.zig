@@ -18755,6 +18755,26 @@ pub const SSL = opaque {
         _ = SSL_set_tlsext_host_name(ssl, hostname);
     }
 
+    pub fn configureHTTPClient(ssl: *SSL, hostname: [:0]const u8) void {
+        if (hostname.len > 0) ssl.setHostname(hostname);
+        _ = SSL_clear_options(ssl, SSL_OP_LEGACY_SERVER_CONNECT);
+        _ = SSL_set_options(ssl, SSL_OP_LEGACY_SERVER_CONNECT);
+        const mode = SSL_MODE_CBC_RECORD_SPLITTING | SSL_MODE_ENABLE_FALSE_START | SSL_MODE_ACCEPT_MOVING_WRITE_BUFFER;
+
+        _ = SSL_set_mode(ssl, mode);
+        _ = SSL_clear_mode(ssl, mode);
+
+        var alpns = &[_]u8{ 8, 'h', 't', 't', 'p', '/', '1', '.', '1' };
+        std.debug.assert(SSL_set_alpn_protos(ssl, alpns, alpns.len) == 0);
+
+        SSL_enable_signed_cert_timestamps(ssl);
+        SSL_enable_ocsp_stapling(ssl);
+
+        // std.debug.assert(SSL_set_strict_cipher_list(ssl, SSL_DEFAULT_CIPHER_LIST) == 0);
+
+        SSL_set_enable_ech_grease(ssl, 1);
+    }
+
     pub fn handshake(this: *SSL) Error!void {
         const rc = SSL_connect(this);
         return switch (SSL_get_error(this, rc)) {

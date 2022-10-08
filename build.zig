@@ -132,7 +132,7 @@ fn addInternalPackages(step: *std.build.LibExeObjStep, _: std.mem.Allocator, tar
     };
 
     io.dependencies = &.{analytics};
-
+    uws.dependencies = &.{boringssl};
     javascript_core.dependencies = &.{ http, strings, picohttp, io, uws };
     http.dependencies = &.{
         strings,

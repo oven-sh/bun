@@ -930,6 +930,8 @@ const PackageInstall = struct {
                                 else => |errno| switch (std.os.errno(errno)) {
                                     .OPNOTSUPP => return error.NotSupported,
                                     .NOENT => return error.FileNotFound,
+                                    // sometimes the downlowded npm package has already node_modules with it, so just ignore exist error here
+                                    .EXIST => {},
                                     else => return error.Unexpected,
                                 },
                             }

@@ -2514,6 +2514,20 @@ void GlobalObject::installAPIGlobals(JSClassRef* globals, int count, JSC::VM& vm
 
         {
 
+            JSC::Identifier identifier = JSC::Identifier::fromString(vm, "version"_s);
+            object->putDirect(vm, PropertyName(identifier), JSC::jsOwnedString(vm, makeString(Bun__version + 1)),
+                JSC::PropertyAttribute::DontDelete | 0);
+        }
+
+        {
+
+            JSC::Identifier identifier = JSC::Identifier::fromString(vm, "revision"_s);
+            object->putDirect(vm, PropertyName(identifier), JSC::jsOwnedString(vm, makeString(Bun__version_sha)),
+                JSC::PropertyAttribute::DontDelete | 0);
+        }
+
+        {
+
             JSC::Identifier identifier = JSC::Identifier::fromString(vm, pathToFileURLString);
             object->putDirectNativeFunction(vm, this, identifier, 1, functionPathToFileURL, ImplementationVisibility::Public, NoIntrinsic,
                 JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly);
@@ -2763,7 +2777,7 @@ JSC::Identifier GlobalObject::moduleLoaderResolve(JSGlobalObject* globalObject,
     ErrorableZigString res;
     res.success = false;
     ZigString keyZ = toZigString(key, globalObject);
-    ZigString referrerZ = referrer.isString() ? toZigString(referrer, globalObject) : ZigStringEmpty;
+    ZigString referrerZ = referrer && !referrer.isUndefinedOrNull() && referrer.isString() ? toZigString(referrer, globalObject) : ZigStringEmpty;
     Zig__GlobalObject__resolve(&res, globalObject, &keyZ, &referrerZ);
 
     if (res.success) {
@@ -2799,7 +2813,7 @@ JSC::JSInternalPromise* GlobalObject::moduleLoaderImportModule(JSGlobalObject* g
     }
 
     auto result = JSC::importModule(globalObject, toIdentifier(resolved.result.value, globalObject),
-        parameters, JSC::jsUndefined());
+        JSC::jsUndefined(), parameters, JSC::jsUndefined());
     RETURN_IF_EXCEPTION(scope, promise->rejectWithCaughtException(globalObject, scope));
 
     return result;

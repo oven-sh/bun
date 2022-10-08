@@ -1315,6 +1315,8 @@ pub const JSModuleLoader = extern struct {
         sourceCodeLen: usize,
         originUrlPtr: [*]const u8,
         originUrlLen: usize,
+        referrerUrlPtr: [*]const u8,
+        referrerUrlLen: usize,
         thisValue: JSValue,
         exception: [*]JSValue,
     ) JSValue {
@@ -1324,6 +1326,8 @@ pub const JSModuleLoader = extern struct {
             sourceCodeLen,
             originUrlPtr,
             originUrlLen,
+            referrerUrlPtr,
+            referrerUrlLen,
             thisValue,
             exception,
         });

@@ -3180,6 +3180,8 @@ pub const ModuleLoader = struct {
                 wrote.len,
                 temporary_source.path.text.ptr,
                 temporary_source.path.text.len,
+                parse_result.source.path.text.ptr,
+                parse_result.source.path.text.len,
                 JSC.JSValue.jsUndefined(),
                 &exception,
             );

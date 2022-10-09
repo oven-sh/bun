@@ -6,7 +6,7 @@ const dir = argv.length > 2 ? argv[2] : "/tmp";
 
 const count = readdirSync(dir).length;
 bench(`readdir("${dir}")`, () => {
-  readdirSync(dir);
+  readdirSync(dir, { withFileTypes: true });
 });
 
 await run();

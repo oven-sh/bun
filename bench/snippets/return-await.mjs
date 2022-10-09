@@ -12,8 +12,5 @@ bench("return await 1", async function () {
   return await 1;
 });
 
-bench("return 1 (async fn)", async function () {
-  return 1;
-});
 
 await run();

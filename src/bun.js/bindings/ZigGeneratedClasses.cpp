@@ -3169,6 +3169,10 @@ extern "C" JSC::EncodedJSValue ResponsePrototype__getOK(void* ptr, JSC::JSGlobal
 JSC_DECLARE_CUSTOM_GETTER(ResponsePrototype__okGetterWrap);
 
 
+extern "C" JSC::EncodedJSValue ResponsePrototype__getRedirected(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject);
+JSC_DECLARE_CUSTOM_GETTER(ResponsePrototype__redirectedGetterWrap);
+
+
 extern "C" JSC::EncodedJSValue ResponsePrototype__getStatus(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject);
 JSC_DECLARE_CUSTOM_GETTER(ResponsePrototype__statusGetterWrap);
 
@@ -3201,6 +3205,7 @@ STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSResponsePrototype, JSResponsePrototype::Ba
 { "headers"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { HashTableValue::GetterSetterType, ResponsePrototype__headersGetterWrap, 0 } }  ,
 { "json"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, ResponsePrototype__jsonCallback, 0 } }  ,
 { "ok"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { HashTableValue::GetterSetterType, ResponsePrototype__okGetterWrap, 0 } }  ,
+{ "redirected"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { HashTableValue::GetterSetterType, ResponsePrototype__redirectedGetterWrap, 0 } }  ,
 { "status"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { HashTableValue::GetterSetterType, ResponsePrototype__statusGetterWrap, 0 } }  ,
 { "statusText"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { HashTableValue::GetterSetterType, ResponsePrototype__statusTextGetterWrap, 0 } }  ,
 { "text"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, ResponsePrototype__textCallback, 0 } }  ,
@@ -3356,6 +3361,19 @@ JSC_DEFINE_CUSTOM_GETTER(ResponsePrototype__okGetterWrap, (JSGlobalObject * lexi
     JSResponse* thisObject = jsCast<JSResponse*>(JSValue::decode(thisValue));
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
     JSC::EncodedJSValue result = ResponsePrototype__getOK(thisObject->wrapped(), globalObject);
+    RETURN_IF_EXCEPTION(throwScope, {});
+    RELEASE_AND_RETURN(throwScope, result);
+}
+        
+
+JSC_DEFINE_CUSTOM_GETTER(ResponsePrototype__redirectedGetterWrap, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
+{
+    auto& vm = lexicalGlobalObject->vm();
+    Zig::GlobalObject *globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    JSResponse* thisObject = jsCast<JSResponse*>(JSValue::decode(thisValue));
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+    JSC::EncodedJSValue result = ResponsePrototype__getRedirected(thisObject->wrapped(), globalObject);
     RETURN_IF_EXCEPTION(throwScope, {});
     RELEASE_AND_RETURN(throwScope, result);
 }

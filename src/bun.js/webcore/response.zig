@@ -155,8 +155,16 @@ pub const Response = struct {
         this: *Response,
         globalThis: *JSC.JSGlobalObject,
     ) callconv(.C) JSC.JSValue {
-        // https://developer.mozilla.org/en-US/docs/Web/API/Response/url
+        // https://developer.mozilla.org/en-US/docs/Web/API/Response/statusText
         return ZigString.init(this.status_text).withEncoding().toValueGC(globalThis);
+    }
+
+    pub fn getRedirected(
+        this: *Response,
+        _: *JSC.JSGlobalObject,
+    ) callconv(.C) JSC.JSValue {
+        // https://developer.mozilla.org/en-US/docs/Web/API/Response/redirected
+        return JSValue.jsBoolean(this.redirected);
     }
 
     pub fn getOK(

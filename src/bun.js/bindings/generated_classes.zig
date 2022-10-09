@@ -1007,6 +1007,9 @@ pub const JSResponse = struct {
         if (@TypeOf(Response.getOK) != GetterType)
             @compileLog("Expected Response.getOK to be a getter");
 
+        if (@TypeOf(Response.getRedirected) != GetterType)
+            @compileLog("Expected Response.getRedirected to be a getter");
+
         if (@TypeOf(Response.getStatus) != GetterType)
             @compileLog("Expected Response.getStatus to be a getter");
 
@@ -1042,6 +1045,7 @@ pub const JSResponse = struct {
             @export(Response.getHeaders, .{ .name = "ResponsePrototype__getHeaders" });
             @export(Response.getJSON, .{ .name = "ResponsePrototype__getJSON" });
             @export(Response.getOK, .{ .name = "ResponsePrototype__getOK" });
+            @export(Response.getRedirected, .{ .name = "ResponsePrototype__getRedirected" });
             @export(Response.getResponseType, .{ .name = "ResponsePrototype__getResponseType" });
             @export(Response.getStatus, .{ .name = "ResponsePrototype__getStatus" });
             @export(Response.getStatusText, .{ .name = "ResponsePrototype__getStatusText" });

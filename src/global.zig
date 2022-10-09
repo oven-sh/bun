@@ -328,3 +328,14 @@ pub fn rand(bytes: []u8) void {
 }
 
 pub const ObjectPool = @import("./pool.zig").ObjectPool;
+
+pub fn assertNonBlocking(fd: anytype) void {
+    std.debug.assert(
+        (std.os.fcntl(fd, std.os.F.GETFL, 0) catch unreachable) & std.os.O.NONBLOCK != 0,
+    );
+}
+
+pub fn ensureNonBlocking(fd: anytype) void {
+    const current = std.os.fcntl(fd, std.os.F.GETFL, 0) catch unreachable;
+    _ = std.os.fcntl(fd, std.os.F.SETFL, current | std.os.O.NONBLOCK) catch unreachable;
+}

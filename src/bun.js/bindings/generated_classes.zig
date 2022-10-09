@@ -75,6 +75,9 @@ pub const JSSubprocess = struct {
         if (@TypeOf(Subprocess.getPid) != GetterType)
             @compileLog("Expected Subprocess.getPid to be a getter");
 
+        if (@TypeOf(Subprocess.getStdout) != GetterType)
+            @compileLog("Expected Subprocess.getStdout to be a getter");
+
         if (@TypeOf(Subprocess.doRef) != CallbackType)
             @compileLog("Expected Subprocess.doRef to be a callback");
         if (@TypeOf(Subprocess.getStderr) != GetterType)
@@ -88,6 +91,9 @@ pub const JSSubprocess = struct {
 
         if (@TypeOf(Subprocess.doUnref) != CallbackType)
             @compileLog("Expected Subprocess.doUnref to be a callback");
+        if (@TypeOf(Subprocess.getStdin) != GetterType)
+            @compileLog("Expected Subprocess.getStdin to be a getter");
+
         if (!JSC.is_bindgen) {
             @export(Subprocess.constructor, .{ .name = "SubprocessClass__construct" });
             @export(Subprocess.doRef, .{ .name = "SubprocessPrototype__doRef" });
@@ -1001,6 +1007,9 @@ pub const JSResponse = struct {
         if (@TypeOf(Response.getOK) != GetterType)
             @compileLog("Expected Response.getOK to be a getter");
 
+        if (@TypeOf(Response.getRedirected) != GetterType)
+            @compileLog("Expected Response.getRedirected to be a getter");
+
         if (@TypeOf(Response.getStatus) != GetterType)
             @compileLog("Expected Response.getStatus to be a getter");
 
@@ -1036,6 +1045,7 @@ pub const JSResponse = struct {
             @export(Response.getHeaders, .{ .name = "ResponsePrototype__getHeaders" });
             @export(Response.getJSON, .{ .name = "ResponsePrototype__getJSON" });
             @export(Response.getOK, .{ .name = "ResponsePrototype__getOK" });
+            @export(Response.getRedirected, .{ .name = "ResponsePrototype__getRedirected" });
             @export(Response.getResponseType, .{ .name = "ResponsePrototype__getResponseType" });
             @export(Response.getStatus, .{ .name = "ResponsePrototype__getStatus" });
             @export(Response.getStatusText, .{ .name = "ResponsePrototype__getStatusText" });

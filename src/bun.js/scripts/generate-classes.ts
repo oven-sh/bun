@@ -35,7 +35,7 @@ function constructorName(typeName) {
   return `JS${typeName}Constructor`;
 }
 
-function appendSymbols(to, symbolName, prop) {
+function appendSymbols(to: Map<string, string>, symbolName: (name: string) => string, prop) {
   var { defaultValue, getter, setter, accesosr, fn } = prop;
 
   if (accesosr) {
@@ -43,16 +43,16 @@ function appendSymbols(to, symbolName, prop) {
     setter = accesosr.setter;
   }
 
-  if (getter) {
-    to.push([getter, symbolName(getter)]);
+  if (getter && !to.get(getter)) {
+    to.set(getter, symbolName(getter));
   }
 
-  if (setter) {
-    to.push([setter, symbolName(setter)]);
+  if (setter && !to.get(setter)) {
+    to.set(setter, symbolName(setter));
   }
 
-  if (fn) {
-    to.push([fn, symbolName(fn)]);
+  if (fn && !to.get(fn)) {
+    to.set(fn, symbolName(fn));
   }
 }
 function propRow(
@@ -929,18 +929,18 @@ function generateZig(
     estimatedSize,
   } = {} as ClassDefinition
 ) {
-  const exports: [string, string][] = [];
+  const exports = new Map<string, string>();
 
   if (construct) {
-    exports.push([`constructor`, classSymbolName(typeName, "construct")]);
+    exports.set(`constructor`, classSymbolName(typeName, "construct"));
   }
 
   if (finalize) {
-    exports.push([`finalize`, classSymbolName(typeName, "finalize")]);
+    exports.set(`finalize`, classSymbolName(typeName, "finalize"));
   }
 
   if (estimatedSize) {
-    exports.push([`estimatedSize`, symbolName(typeName, "estimatedSize")]);
+    exports.set(`estimatedSize`, symbolName(typeName, "estimatedSize"));
   }
 
   Object.values(klass).map((a) =>
@@ -1108,7 +1108,7 @@ pub const ${className(typeName)} = struct {
     comptime {
         ${typeCheck()}
         if (!JSC.is_bindgen) {
-${exports
+${[...exports]
   .sort(([a], [b]) => a.localeCompare(b))
   .map(
     ([internalName, externalName]) =>

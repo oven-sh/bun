@@ -92,7 +92,9 @@ export default [
         getter: "getHeaders",
         cache: true,
       },
-
+      redirected: {
+        getter: "getRedirected",
+      },
       statusText: {
         getter: "getStatusText",
         cache: true,

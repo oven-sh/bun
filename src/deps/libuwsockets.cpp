@@ -196,8 +196,9 @@ void uws_app_listen(int ssl, uws_app_t *app, int port,
 }
 
 void uws_app_listen_with_config(int ssl, uws_app_t *app,
-                                uws_app_listen_config_t config,
+                                const uws_app_listen_config_t *config_,
                                 uws_listen_handler handler, void *user_data) {
+  uws_app_listen_config_t config = *config_;
   std::string hostname = config.host && config.host[0]
                              ? std::string(config.host, strlen(config.host))
                              : "";

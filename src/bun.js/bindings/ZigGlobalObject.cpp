@@ -197,6 +197,7 @@ extern "C" void JSCInitialize()
         JSC::Options::useBBQJIT() = true;
         JSC::Options::useJITCage() = false;
         JSC::Options::useShadowRealm() = true;
+        JSC::Options::showPrivateScriptsInStackTraces() = true;
         JSC::Options::ensureOptionsAreCoherent();
     }
 }

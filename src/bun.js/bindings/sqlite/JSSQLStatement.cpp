@@ -437,6 +437,14 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementDeserialize, (JSC::JSGlobalObject * lexic
 
     JSValue thisValue = callFrame->thisValue();
     JSSQLStatementConstructor* thisObject = jsDynamicCast<JSSQLStatementConstructor*>(thisValue.getObject());
+    JSC::JSArrayBufferView* array = jsDynamicCast<JSC::JSArrayBufferView*>(callFrame->argument(0));
+    unsigned int flags = SQLITE_DESERIALIZE_FREEONCLOSE | SQLITE_DESERIALIZE_RESIZEABLE;
+    JSC::EnsureStillAliveScope ensureAliveArray(array);
+
+    if (callFrame->argumentCount() > 1 and callFrame->argument(1).toBoolean(lexicalGlobalObject)) {
+        flags |= SQLITE_DESERIALIZE_READONLY;
+    }
+
     if (UNLIKELY(!thisObject)) {
         throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, "Expected SQL"_s));
         return JSValue::encode(JSC::jsUndefined());
@@ -447,7 +455,6 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementDeserialize, (JSC::JSGlobalObject * lexic
         return JSValue::encode(JSC::jsUndefined());
     }
 
-    JSC::JSArrayBufferView* array = jsDynamicCast<JSC::JSArrayBufferView*>(callFrame->argument(0));
     if (UNLIKELY(!array)) {
         throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, "Expected Uint8Array or Buffer"_s));
         return JSValue::encode(JSC::jsUndefined());
@@ -457,6 +464,14 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementDeserialize, (JSC::JSGlobalObject * lexic
         throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, "TypedArray is detached"_s));
         return JSValue::encode(JSC::jsUndefined());
     }
+
+#if LAZY_LOAD_SQLITE
+    if (UNLIKELY(lazyLoadSQLite() < 0)) {
+        WTF::String msg = WTF::String::fromUTF8(dlerror());
+        throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, msg));
+        return JSValue::encode(JSC::jsUndefined());
+    }
+#endif
 
     size_t byteLength = array->byteLength();
     void* ptr = array->vector();
@@ -471,12 +486,6 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementDeserialize, (JSC::JSGlobalObject * lexic
     }
     if (byteLength) {
         memcpy(data, ptr, byteLength);
-    }
-
-    unsigned int flags = SQLITE_DESERIALIZE_FREEONCLOSE | SQLITE_DESERIALIZE_RESIZEABLE;
-
-    if (callFrame->argumentCount() > 1 and callFrame->argument(1).toBoolean(lexicalGlobalObject)) {
-        flags |= SQLITE_DESERIALIZE_READONLY;
     }
 
     sqlite3* db = nullptr;

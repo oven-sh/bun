@@ -384,7 +384,7 @@ pub const VirtualMachine = struct {
     pub fn reload(this: *VirtualMachine) void {
         Output.debug("Reloading...", .{});
         this.global.reload();
-        this.pending_internal_promise = this.loadEntryPoint(this.main) catch @panic("Failed to reload");
+        this.pending_internal_promise = this.reloadEntryPoint(this.main) catch @panic("Failed to reload");
     }
 
     pub fn io(this: *VirtualMachine) *IO {
@@ -1474,7 +1474,7 @@ pub const VirtualMachine = struct {
         this.global.deleteModuleRegistryEntry(&str);
     }
 
-    pub fn loadEntryPoint(this: *VirtualMachine, entry_path: string) !*JSInternalPromise {
+    pub fn reloadEntryPoint(this: *VirtualMachine, entry_path: []const u8) !*JSInternalPromise {
         this.main = entry_path;
         try this.entry_point.generate(this.bun_watcher != null, Fs.PathName.init(entry_path), main_file_name);
         this.eventLoop().ensureWaker();
@@ -1500,7 +1500,29 @@ pub const VirtualMachine = struct {
             this.pending_internal_promise = promise;
         }
 
-        this.waitForPromise(promise);
+        return promise;
+    }
+
+    pub fn loadEntryPoint(this: *VirtualMachine, entry_path: string) !*JSInternalPromise {
+        var promise = try this.reloadEntryPoint(entry_path);
+
+        // pending_internal_promise can change if hot module reloading is enabled
+        if (this.bun_watcher != null) {
+            switch (this.pending_internal_promise.status(this.global.vm())) {
+                JSC.JSPromise.Status.Pending => {
+                    while (this.pending_internal_promise.status(this.global.vm()) == .Pending) {
+                        this.eventLoop().tick();
+
+                        if (this.pending_internal_promise.status(this.global.vm()) == .Pending) {
+                            this.eventLoop().autoTick();
+                        }
+                    }
+                },
+                else => {},
+            }
+        } else {
+            this.waitForPromise(promise);
+        }
 
         this.eventLoop().autoTick();
 

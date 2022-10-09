@@ -278,6 +278,8 @@ pub const EventLoop = struct {
                     var transform_task: *HotReloadTask = task.get(HotReloadTask).?;
                     transform_task.*.run();
                     transform_task.deinit();
+                    // special case: we return
+                    return 0;
                 },
                 @field(Task.Tag, typeBaseName(@typeName(AnyTask))) => {
                     var any: *AnyTask = task.get(AnyTask).?;
@@ -486,6 +488,13 @@ pub const Poller = struct {
 
                 loader.onReady(@bitCast(i64, kqueue_event.data));
             },
+            @field(Pollable.Tag, "BufferedOutput") => {
+                var loader = ptr.as(JSC.Subprocess.BufferedOutput);
+
+                loader.poll_ref.deactivate(loop);
+
+                loader.ready(@bitCast(i64, kqueue_event.data));
+            },
             @field(Pollable.Tag, "FileSink") => {
                 var loader = ptr.as(JSC.WebCore.FileSink);
                 loader.poll_ref.deactivate(loop);
@@ -524,6 +533,21 @@ pub const Poller = struct {
 
                 loader.onPoll(0, 0);
             },
+
+            @field(Pollable.Tag, "BufferedInput") => {
+                var loader = ptr.as(JSC.Subprocess.BufferedInput);
+
+                loader.poll_ref.deactivate(loop);
+
+                loader.onReady(0);
+            },
+            @field(Pollable.Tag, "BufferedOutput") => {
+                var loader = ptr.as(JSC.Subprocess.BufferedOutput);
+
+                loader.poll_ref.deactivate(loop);
+
+                loader.ready(0);
+            },
             else => unreachable,
         }
     }
@@ -535,6 +559,7 @@ pub const Poller = struct {
     const FileSink = JSC.WebCore.FileSink;
     const Subprocess = JSC.Subprocess;
     const BufferedInput = Subprocess.BufferedInput;
+    const BufferedOutput = Subprocess.BufferedOutput;
     /// epoll only allows one pointer
     /// We unfortunately need two pointers: one for a function call and one for the context
     /// We use a tagged pointer union and then call the function with the context pointer
@@ -543,6 +568,7 @@ pub const Poller = struct {
         FileSink,
         Subprocess,
         BufferedInput,
+        BufferedOutput,
     });
     const Kevent = std.os.Kevent;
     const kevent = std.c.kevent;

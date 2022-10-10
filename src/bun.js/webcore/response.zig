@@ -1306,8 +1306,6 @@ pub const Blob = struct {
 
         if (data.isString()) {
             const len = data.getLengthOfArray(ctx);
-            if (len == 0)
-                return JSC.JSPromise.resolvedPromiseValue(ctx, JSC.JSValue.jsNumber(0)).asObjectRef();
 
             if (len < 256 * 1024) {
                 const str = data.getZigString(ctx);
@@ -1324,9 +1322,6 @@ pub const Blob = struct {
                 }
             }
         } else if (data.asArrayBuffer(ctx)) |buffer_view| {
-            if (buffer_view.byte_len == 0)
-                return JSC.JSPromise.resolvedPromiseValue(ctx, JSC.JSValue.jsNumber(0)).asObjectRef();
-
             if (buffer_view.byte_len < 256 * 1024) {
                 const pathlike: JSC.Node.PathOrFileDescriptor = if (path_or_blob == .path)
                     path_or_blob.path
@@ -1466,7 +1461,7 @@ pub const Blob = struct {
             unreachable;
         };
 
-        var truncate = needs_open;
+        var truncate = needs_open or str.len == 0;
         var jsc_vm = globalThis.bunVM();
         var written: usize = 0;
 
@@ -1481,8 +1476,7 @@ pub const Blob = struct {
                 _ = JSC.Node.Syscall.close(fd);
             }
         }
-
-        if (str.is16Bit()) {
+        if (str.len == 0) {} else if (str.is16Bit()) {
             var decoded = str.toSlice(jsc_vm.allocator);
             defer decoded.deinit();
 
@@ -1572,7 +1566,7 @@ pub const Blob = struct {
             unreachable;
         };
 
-        var truncate = needs_open;
+        var truncate = needs_open or remain.len == 0;
         var written: usize = 0;
         defer {
             if (truncate) {

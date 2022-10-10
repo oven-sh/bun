@@ -911,19 +911,19 @@ pub const Subprocess = struct {
                 -1,
         );
 
-        const stdin_pipe = if (stdio[0].isPiped()) os.pipe2(std.os.O.CLOEXEC) catch |err| {
+        const stdin_pipe = if (stdio[0].isPiped()) os.pipe2(0) catch |err| {
             globalThis.throw("failed to create stdin pipe: {s}", .{err});
             return JSValue.jsUndefined();
         } else undefined;
         errdefer if (stdio[0].isPiped()) destroyPipe(stdin_pipe);
 
-        const stdout_pipe = if (stdio[1].isPiped()) os.pipe2(std.os.O.CLOEXEC) catch |err| {
+        const stdout_pipe = if (stdio[1].isPiped()) os.pipe2(0) catch |err| {
             globalThis.throw("failed to create stdout pipe: {s}", .{err});
             return JSValue.jsUndefined();
         } else undefined;
         errdefer if (stdio[1].isPiped()) destroyPipe(stdout_pipe);
 
-        const stderr_pipe = if (stdio[2].isPiped()) os.pipe2(std.os.O.CLOEXEC) catch |err| {
+        const stderr_pipe = if (stdio[2].isPiped()) os.pipe2(0) catch |err| {
             globalThis.throw("failed to create stderr pipe: {s}", .{err});
             return JSValue.jsUndefined();
         } else undefined;

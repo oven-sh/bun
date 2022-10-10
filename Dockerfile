@@ -16,7 +16,7 @@ ARG WEBKIT_URL="https://github.com/oven-sh/WebKit/releases/download/$WEBKIT_TAG/
 
 ARG ZIG_URL="https://github.com/oven-sh/zig/releases/download/$ZIG_TAG/zig-linux-$BUILDARCH.zip"
 ARG GIT_SHA=""
-ARG BUN_BASE_VERSION=0.1
+ARG BUN_BASE_VERSION=0.2
 
 
 FROM bitnami/minideb:bullseye as bun-base

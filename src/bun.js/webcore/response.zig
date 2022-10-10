@@ -1566,7 +1566,7 @@ pub const Blob = struct {
             unreachable;
         };
 
-        var truncate = needs_open or remain.len == 0;
+        var truncate = needs_open or bytes.len == 0;
         var written: usize = 0;
         defer {
             if (truncate) {

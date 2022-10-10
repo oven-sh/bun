@@ -35,6 +35,7 @@ NATIVE_OR_OLD_MARCH = -march=westmere
 endif
 
 MIN_MACOS_VERSION ?= $(DEFAULT_MIN_MACOS_VERSION)
+BUN_BASE_VERSION = 0.2
 
 AR=
 
@@ -50,7 +51,7 @@ RELEASE_BUN = $(PACKAGE_DIR)/bun
 DEBUG_BIN = $(DEBUG_PACKAGE_DIR)/
 DEBUG_BUN = $(DEBUG_BIN)/bun-debug
 BUILD_ID = $(shell cat ./build-id)
-PACKAGE_JSON_VERSION = 0.1.$(BUILD_ID)
+PACKAGE_JSON_VERSION = $(BUN_BASE_VERSION).$(BUILD_ID)
 BUN_BUILD_TAG = bun-v$(PACKAGE_JSON_VERSION)
 BUN_RELEASE_BIN = $(PACKAGE_DIR)/bun
 PRETTIER ?= $(shell which prettier || echo "./node_modules/.bin/prettier")
@@ -868,7 +869,7 @@ MIMALLOC_OVERRIDE_FLAG ?=
 
 
 bump:
-	expr 0.1.0 + 1 > build-id
+	expr 0.2.0 + 1 > build-id
 
 .PHONY: identifier-cache
 identifier-cache:

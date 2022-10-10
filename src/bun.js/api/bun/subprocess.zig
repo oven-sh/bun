@@ -436,7 +436,7 @@ pub const Subprocess = struct {
             var polls = &[_]std.os.pollfd{
                 .{
                     .fd = this.fd,
-                    .events = std.os.POLL.OUT | std.os.POLL.ERR,
+                    .events = std.os.POLL.IN | std.os.POLL.ERR,
                     .revents = 0,
                 },
             };

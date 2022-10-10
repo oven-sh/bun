@@ -38,6 +38,20 @@ docker run --rm --init --ulimit memlock=-1:-1 jarredsumner/bun:edge
 
 If using Linux, kernel version 5.6 or higher is strongly recommended, but the minimum is 5.1.
 
+## Upgrade
+
+To upgrade to the latest version of Bun, run:
+
+```sh
+bun upgrade
+```
+
+Bun automatically releases a canary build on every commit to `main`. To upgrade to the latest canary build, run:
+
+```sh
+bun upgrade --canary
+```
+
 ## Table of Contents
 
 - [Install](#install)

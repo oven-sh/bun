@@ -1,7 +1,87 @@
 import fs from "fs";
-import { it, expect } from "bun:test";
+import { it, expect, describe } from "bun:test";
 import path from "path";
 import { gcTick } from "./gc";
+
+it("Bun.write blob", async () => {
+  await Bun.write(
+    Bun.file("/tmp/response-file.test.txt"),
+    Bun.file(path.join(import.meta.dir, "fetch.js.txt"))
+  );
+  await gcTick();
+  await Bun.write(Bun.file("/tmp/response-file.test.txt"), "blah blah blha");
+  await gcTick();
+  await Bun.write(
+    Bun.file("/tmp/response-file.test.txt"),
+    new Uint32Array(1024)
+  );
+  await gcTick();
+  await Bun.write("/tmp/response-file.test.txt", new Uint32Array(1024));
+  await gcTick();
+  expect(
+    await Bun.write(
+      new TextEncoder().encode("/tmp/response-file.test.txt"),
+      new Uint32Array(1024)
+    )
+  ).toBe(new Uint32Array(1024).byteLength);
+  await gcTick();
+});
+
+describe("large file", () => {
+  const fixtures = [
+    [
+      `/tmp/bun-test-large-file-${Date.now()}.txt`,
+      "https://www.iana.org/assignments/media-types/media-types.xhtml,"
+        .repeat(100000)
+        .split("")
+        .join(),
+    ],
+  ];
+
+  for (const [filename, content] of fixtures) {
+    it(`write ${filename} ${content.length} (text)`, async () => {
+      try {
+        unlinkSync(filename);
+      } catch (e) {}
+      await Bun.write(filename, content);
+      expect(await Bun.file(filename).text()).toBe(content);
+
+      try {
+        unlinkSync(filename);
+      } catch (e) {}
+    });
+
+    it(`write ${filename}.bytes ${content.length} (bytes)`, async () => {
+      try {
+        unlinkSync(filename + ".bytes");
+      } catch (e) {}
+      var bytes = new TextEncoder().encode(content);
+      await Bun.write(filename + ".bytes", bytes);
+      expect(
+        new Buffer(await Bun.file(filename + ".bytes").arrayBuffer()).equals(
+          bytes
+        )
+      ).toBe(true);
+
+      try {
+        unlinkSync(filename + ".bytes");
+      } catch (e) {}
+    });
+
+    it(`write ${filename}.blob ${content.length} (Blob)`, async () => {
+      try {
+        unlinkSync(filename + ".blob");
+      } catch (e) {}
+      var bytes = new Blob([content]);
+      await Bun.write(filename + ".blob", bytes);
+      expect(await Bun.file(filename + ".blob").text()).toBe(content);
+
+      try {
+        unlinkSync(filename + ".blob");
+      } catch (e) {}
+    });
+  }
+});
 
 it("Bun.file not found returns ENOENT", async () => {
   try {
@@ -31,30 +111,6 @@ it("Bun.write('out.txt', 'string')", async () => {
     expect(await out.text()).toBe(fs.readFileSync("/tmp/out.txt", "utf8"));
     await gcTick();
   }
-});
-
-it("Bun.write blob", async () => {
-  await Bun.write(
-    Bun.file("/tmp/response-file.test.txt"),
-    Bun.file(path.join(import.meta.dir, "fetch.js.txt"))
-  );
-  await gcTick();
-  await Bun.write(Bun.file("/tmp/response-file.test.txt"), "blah blah blha");
-  await gcTick();
-  await Bun.write(
-    Bun.file("/tmp/response-file.test.txt"),
-    new Uint32Array(1024)
-  );
-  await gcTick();
-  await Bun.write("/tmp/response-file.test.txt", new Uint32Array(1024));
-  await gcTick();
-  expect(
-    await Bun.write(
-      new TextEncoder().encode("/tmp/response-file.test.txt"),
-      new Uint32Array(1024)
-    )
-  ).toBe(new Uint32Array(1024).byteLength);
-  await gcTick();
 });
 
 it("Bun.file -> Bun.file", async () => {

@@ -69,3 +69,10 @@ ignore = dirty
 depth = 1
 shallow = true
 fetchRecurseSubmodules = false
+[submodule "src/deps/pcre2"]
+path = src/deps/pcre2
+url = https://github.com/PCRE2Project/pcre2.git
+ignore = dirty
+depth = 1
+shallow = true
+fetchRecurseSubmodules = false

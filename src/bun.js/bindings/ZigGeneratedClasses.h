@@ -66,12 +66,9 @@ class JSSubprocess final : public JSC::JSDestructibleObject {
 
         DECLARE_VISIT_CHILDREN;
 
-        mutable JSC::WriteBarrier<JSC::Unknown> m_exited;
-mutable JSC::WriteBarrier<JSC::Unknown> m_readable;
-mutable JSC::WriteBarrier<JSC::Unknown> m_stderr;
+        mutable JSC::WriteBarrier<JSC::Unknown> m_stderr;
 mutable JSC::WriteBarrier<JSC::Unknown> m_stdin;
 mutable JSC::WriteBarrier<JSC::Unknown> m_stdout;
-mutable JSC::WriteBarrier<JSC::Unknown> m_writable;
     };
 class JSSubprocessPrototype final : public JSC::JSNonFinalObject {
     public:

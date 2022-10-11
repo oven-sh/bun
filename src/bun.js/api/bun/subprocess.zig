@@ -33,8 +33,13 @@ pub const Subprocess = struct {
     reffer: JSC.Ref = JSC.Ref.init(),
     poll_ref: JSC.PollRef = JSC.PollRef.init(),
 
-    exit_promise: JSValue = JSValue.zero,
-    this_jsvalue: JSValue = JSValue.zero,
+    exit_promise: JSC.Strong = .{},
+
+    /// Keep the JSValue alive until the process is done by default
+    /// Unless you call unref()
+    this_jsvalue: JSC.Strong = .{},
+
+    on_exit_callback: JSC.Strong = .{},
 
     exit_code: ?u8 = null,
     waitpid_err: ?JSC.Node.Syscall.Error = null,
@@ -49,14 +54,13 @@ pub const Subprocess = struct {
 
     globalThis: *JSC.JSGlobalObject,
 
-    on_exit_callback: JSC.Strong = .{},
-
     pub fn ref(this: *Subprocess) void {
         this.reffer.ref(this.globalThis.bunVM());
         this.poll_ref.ref(this.globalThis.bunVM());
     }
 
     pub fn unref(this: *Subprocess) void {
+        this.this_jsvalue.clear();
         this.reffer.unref(this.globalThis.bunVM());
         this.poll_ref.unref(this.globalThis.bunVM());
     }
@@ -279,7 +283,8 @@ pub const Subprocess = struct {
         this.stdin.close();
     }
 
-    pub fn doRef(this: *Subprocess, _: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSValue {
+    pub fn doRef(this: *Subprocess, globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSValue {
+        this.this_jsvalue.set(globalThis, callframe.this());
         this.ref();
         return JSC.JSValue.jsUndefined();
     }
@@ -347,6 +352,10 @@ pub const Subprocess = struct {
                 // we are done!
                 this.closeFDIfOpen();
                 return;
+            }
+
+            if (comptime bun.Environment.allow_assert) {
+                // bun.assertNonBlocking(this.fd);
             }
 
             while (to_write.len > 0) {
@@ -700,11 +709,11 @@ pub const Subprocess = struct {
             return JSC.JSPromise.resolvedPromiseValue(globalThis, JSC.JSValue.jsNumber(code));
         }
 
-        if (this.exit_promise == .zero) {
-            this.exit_promise = JSC.JSPromise.create(globalThis).asValue(globalThis);
+        if (!this.exit_promise.has()) {
+            this.exit_promise.set(globalThis, JSC.JSPromise.create(globalThis).asValue(globalThis));
         }
 
-        return this.exit_promise;
+        return this.exit_promise.get().?;
     }
 
     pub fn getExitCode(
@@ -1025,8 +1034,8 @@ pub const Subprocess = struct {
             subprocess.stdin.pipe.signal = JSC.WebCore.Signal.init(&subprocess.stdin);
         }
 
-        subprocess.this_jsvalue = subprocess.toJS(globalThis);
-        subprocess.this_jsvalue.ensureStillAlive();
+        const out = subprocess.toJS(globalThis);
+        subprocess.this_jsvalue.set(globalThis, out);
 
         switch (globalThis.bunVM().poller.watch(
             @intCast(JSC.Node.FileDescriptor, pidfd),
@@ -1064,7 +1073,7 @@ pub const Subprocess = struct {
             subprocess.stderr.pipe.buffer.readIfPossible();
         }
 
-        return subprocess.this_jsvalue;
+        return out;
     }
 
     pub fn onExitNotification(
@@ -1114,9 +1123,7 @@ pub const Subprocess = struct {
             }
         }
 
-        if (this.exit_promise != .zero) {
-            var promise = this.exit_promise;
-            this.exit_promise = .zero;
+        if (this.exit_promise.trySwap()) |promise| {
             if (this.exit_code) |code| {
                 promise.asPromise().?.resolve(this.globalThis, JSValue.jsNumber(code));
             } else if (this.waitpid_err) |err| {

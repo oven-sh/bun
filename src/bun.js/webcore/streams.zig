@@ -2576,6 +2576,7 @@ pub fn ReadableStreamSource(
                 var this = arguments.ptr[0].asPtr(ReadableStreamSourceType);
                 const view = arguments.ptr[1];
                 view.ensureStillAlive();
+                this.globalThis = globalThis;
                 var buffer = view.asArrayBuffer(globalThis) orelse return JSC.JSValue.jsUndefined();
                 return processResult(
                     globalThis,
@@ -2585,6 +2586,7 @@ pub fn ReadableStreamSource(
             }
             pub fn start(globalThis: *JSGlobalObject, callFrame: *JSC.CallFrame) callconv(.C) JSC.JSValue {
                 var this = callFrame.argument(0).asPtr(ReadableStreamSourceType);
+                this.globalThis = globalThis;
                 switch (this.startFromJS()) {
                     .empty => return JSValue.jsNumber(0),
                     .ready => return JSValue.jsNumber(16384),

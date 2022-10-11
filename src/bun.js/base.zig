@@ -4017,6 +4017,20 @@ pub const Strong = struct {
         return result;
     }
 
+    pub fn has(this: *Strong) bool {
+        var ref = this.ref orelse return false;
+        return ref.get() != .zero;
+    }
+
+    pub fn trySwap(this: *Strong) ?JSValue {
+        const result = this.swap();
+        if (result == .zero) {
+            return null;
+        }
+
+        return result;
+    }
+
     pub fn set(this: *Strong, globalThis: *JSC.JSGlobalObject, value: JSValue) void {
         var ref: *JSC.napi.Ref = this.ref orelse {
             if (value == .zero) return;

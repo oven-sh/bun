@@ -1,20 +1,18 @@
-import { test, expect, it, describe } from "bun:test";
 import { readableStreamToText, spawn } from "bun";
+import { describe, expect, it } from "bun:test";
 
 describe("spawn", () => {
   const hugeString = "hello".repeat(100000).slice();
 
-  it("stdin can write", async () => {
-    const { stdin, stdout } = spawn({
-      cmd: ["cat"],
-      stdin: "pipe",
+  it("stdout can be read", async () => {
+    await Bun.write("/tmp/out.txt", hugeString);
+    const { stdout } = spawn({
+      cmd: ["cat", "/tmp/out.txt"],
       stdout: "pipe",
     });
-    await stdin.write(hugeString);
-    stdin.end();
-    return readableStreamToText(stdout).then((text) => {
-      expect(text).toBe(hugeString);
-    });
+
+    const text = await readableStreamToText(stdout);
+    expect(text).toBe(hugeString);
   });
 
   describe("pipe", () => {

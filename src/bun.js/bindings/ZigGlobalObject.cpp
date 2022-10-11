@@ -163,6 +163,8 @@ using JSBuffer = WebCore::JSBuffer;
 #include "DOMJITHelpers.h"
 #include <JavaScriptCore/DFGAbstractHeap.h>
 
+#include "PCRE2RegExp.h"
+
 #ifdef __APPLE__
 #include <sys/sysctl.h>
 #else
@@ -2075,6 +2077,17 @@ void GlobalObject::finishCreation(VM& vm)
             init.setConstructor(constructor);
         });
 
+    m_PCRE2RegExpClassStructure.initLater(
+        [](LazyClassStructure::Initializer& init) {
+            auto* prototype = PCRE2RegExpConstructor::createPrototype(init.global);
+            auto* structure = PCRE2RegExpConstructor::createClassStructure(init.global, prototype);
+            auto* constructor = PCRE2RegExpConstructor::create(
+                init.vm, init.global, PCRE2RegExpConstructor::createStructure(init.vm, init.global, init.global->functionPrototype()), prototype);
+            init.setPrototype(prototype);
+            init.setStructure(structure);
+            init.setConstructor(constructor);
+        });
+
     m_JSStringDecoderClassStructure.initLater(
         [](LazyClassStructure::Initializer& init) {
             auto* prototype = JSStringDecoderPrototype::create(
@@ -2541,6 +2554,11 @@ void GlobalObject::installAPIGlobals(JSClassRef* globals, int count, JSC::VM& vm
         }
 
         {
+            JSC::Identifier identifier = JSC::Identifier::fromString(vm, "PCRE2RegExp"_s);
+            object->putDirectCustomAccessor(vm, identifier, JSC::CustomGetterSetter::create(vm, jsFunctionGetPCRE2RegExpConstructor, nullptr), JSC::PropertyAttribute::CustomAccessor | 0);
+        }
+
+        {
             JSC::Identifier identifier = JSC::Identifier::fromString(vm, "stringHashCode"_s);
             object->putDirectNativeFunction(vm, this, identifier, 1, functionHashCode, ImplementationVisibility::Public, NoIntrinsic,
                 JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DontDelete | 0);
@@ -2667,6 +2685,7 @@ void GlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     thisObject->m_JSHTTPResponseSinkClassStructure.visit(visitor);
     thisObject->m_JSHTTPSResponseSinkClassStructure.visit(visitor);
     thisObject->m_JSFileSinkClassStructure.visit(visitor);
+    thisObject->m_PCRE2RegExpClassStructure.visit(visitor);
 
     visitor.append(thisObject->m_JSBufferSetterValue);
     visitor.append(thisObject->m_JSTextEncoderSetterValue);

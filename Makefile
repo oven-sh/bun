@@ -394,7 +394,9 @@ MINIMUM_ARCHIVE_FILES = -L$(BUN_DEPS_OUT_DIR) \
 	-lssl \
 	-lcrypto \
 	-llolhtml \
-	$(BUN_DEPS_OUT_DIR)/libbacktrace.a
+	$(BUN_DEPS_OUT_DIR)/libbacktrace.a \
+	$(BUN_DEPS_OUT_DIR)/libpcre2-16.a \
+	$(BUN_DEPS_OUT_DIR)/libpcre2-posix.a
 
 ARCHIVE_FILES_WITHOUT_LIBCRYPTO = $(MINIMUM_ARCHIVE_FILES) \
 		-larchive \
@@ -483,9 +485,13 @@ builtins: ## to generate builtins
 	$(shell which python || which python2) $(realpath $(WEBKIT_DIR)/Source/JavaScriptCore/Scripts/generate-js-builtins.py) -i $(realpath src)/bun.js/builtins/js  -o $(realpath src)/bun.js/builtins/cpp --framework WebCore --force
 	$(shell which python || which python2) $(realpath $(WEBKIT_DIR)/Source/JavaScriptCore/Scripts/generate-js-builtins.py) -i $(realpath src)/bun.js/builtins/js  -o $(realpath src)/bun.js/builtins/cpp --framework WebCore --wrappers-only
 	rm -rf /tmp/1.h src/bun.js/builtins/cpp/WebCoreJSBuiltinInternals.h.1
-	echo -e '// clang-format off\nnamespace Zig { class GlobalObject; }' >> /tmp/1.h
+	echo -e '// clang-format off\nnamespace Zig { class GlobalObject; }\n#include "root.h"\n' >> /tmp/1.h
 	cat /tmp/1.h  src/bun.js/builtins/cpp/WebCoreJSBuiltinInternals.h > src/bun.js/builtins/cpp/WebCoreJSBuiltinInternals.h.1
 	mv src/bun.js/builtins/cpp/WebCoreJSBuiltinInternals.h.1 src/bun.js/builtins/cpp/WebCoreJSBuiltinInternals.h
+	rm -rf /tmp/1.h src/bun.js/builtins/cpp/WebCoreJSBuiltinInternals.h.1
+	echo -e '// clang-format off\nnamespace Zig { class GlobalObject; }\n#include "root.h"\n' >> /tmp/1.h
+	cat /tmp/1.h  src/bun.js/builtins/cpp/WebCoreJSBuiltinInternals.cpp > src/bun.js/builtins/cpp/WebCoreJSBuiltinInternals.cpp.1
+	mv src/bun.js/builtins/cpp/WebCoreJSBuiltinInternals.cpp.1 src/bun.js/builtins/cpp/WebCoreJSBuiltinInternals.cpp
 	$(SED) -i -e 's/class JSDOMGlobalObject/using JSDOMGlobalObject = Zig::GlobalObject/' src/bun.js/builtins/cpp/WebCoreJSBuiltinInternals.h
 	# this is the one we actually build
 	mv src/bun.js/builtins/cpp/*JSBuiltin*.cpp src/bun.js/builtins
@@ -494,7 +500,7 @@ builtins: ## to generate builtins
 generate-builtins: builtins
 
 .PHONY: tinycc
-vendor-without-check: npm-install node-fallbacks runtime_js fallback_decoder bun_error mimalloc picohttp zlib boringssl libarchive libbacktrace lolhtml usockets uws base64 tinycc
+vendor-without-check: npm-install node-fallbacks runtime_js fallback_decoder bun_error mimalloc picohttp zlib boringssl libarchive libbacktrace lolhtml usockets uws base64 tinycc pcre2
 
 BUN_TYPES_REPO_PATH ?= $(realpath ../bun-types)
 
@@ -548,6 +554,11 @@ libbacktrace:
 	make -j$(CPUS) && \
 	cp ./.libs/libbacktrace.a $(BUN_DEPS_OUT_DIR)/libbacktrace.a
 
+.PHONY: pcre2
+pcre2:
+	cd $(BUN_DEPS_DIR)/pcre2; CFLAGS="$(CFLAGS)" cmake $(CMAKE_FLAGS) -DPCRE2_BUILD_PCRE2_16=ON .; CFLAGS="$(CFLAGS)" make;
+	cp $(BUN_DEPS_DIR)/pcre2/*.a $(BUN_DEPS_OUT_DIR)/
+	cat $(BUN_DEPS_DIR)/pcre2/config.h $(BUN_DEPS_DIR)/pcre2/pcre2.h > $(BUN_DEPS_OUT_DIR)/pcre2.h
 
 sqlite:
 

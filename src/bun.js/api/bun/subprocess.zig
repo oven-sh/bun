@@ -1180,7 +1180,9 @@ pub const Subprocess = struct {
                     const idx: usize = if (std_fileno == 0) 0 else 1;
 
                     try actions.dup2(pipe_fd[idx], std_fileno);
-                    try actions.close(pipe_fd[1 - idx]);
+
+                    if (comptime Environment.isMac)
+                        try actions.close(pipe_fd[1 - idx]);
                 },
                 .fd => |fd| {
                     try actions.dup2(fd, std_fileno);
@@ -1196,6 +1198,7 @@ pub const Subprocess = struct {
                         try actions.dup2(std_fileno, std_fileno);
                     }
                 },
+
                 .ignore => {
                     const flag = if (std_fileno == std.os.STDIN_FILENO) @as(u32, os.O.RDONLY) else @as(u32, std.os.O.WRONLY);
                     try actions.openZ(std_fileno, "/dev/null", flag, 0o664);

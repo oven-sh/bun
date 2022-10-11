@@ -56,7 +56,8 @@ describe("large file", () => {
         unlinkSync(filename + ".bytes");
       } catch (e) {}
       var bytes = new TextEncoder().encode(content);
-      await Bun.write(filename + ".bytes", bytes);
+      const written = await Bun.write(filename + ".bytes", bytes);
+      expect(written).toBe(bytes.byteLength);
       expect(
         new Buffer(await Bun.file(filename + ".bytes").arrayBuffer()).equals(
           bytes
@@ -247,11 +248,10 @@ it("Response -> Bun.file -> Response -> text", async () => {
   await gcTick();
 });
 
-// If you write nothing to a file, it shouldn't modify it
-// If you want to truncate a file, it should be more explicit
 it("Bun.write('output.html', '')", async () => {
   await Bun.write("/tmp/output.html", "lalalala");
   expect(await Bun.write("/tmp/output.html", "")).toBe(0);
+  await Bun.write("/tmp/output.html", "lalalala");
   expect(await Bun.file("/tmp/output.html").text()).toBe("lalalala");
 });
 

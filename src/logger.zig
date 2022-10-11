@@ -293,11 +293,12 @@ pub const Data = struct {
                         }
 
                         if (location.length > 0 and location_in_line_text + @intCast(u31, location.length) < line_text.len) {
-                            try to.writeAll(line_text[location_in_line_text .. location_in_line_text + @intCast(u31, location.length)]);
+                            const end_location_in_line_text = @minimum(line_text.len, location_in_line_text + @intCast(u31, location.length) + 1);
+                            try to.writeAll(line_text[location_in_line_text..end_location_in_line_text]);
                             if (is_colored) {
                                 try to.writeAll("\x1b[0m");
                             }
-                            try to.writeAll(line_text[location_in_line_text + @intCast(u31, location.length) ..]);
+                            try to.writeAll(line_text[end_location_in_line_text..]);
                         } else {
                             const rest_of_line = line_text[location_in_line_text..];
                             if (rest_of_line.len > 0) {

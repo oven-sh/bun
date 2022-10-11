@@ -183,14 +183,14 @@ void uws_app_listen(int ssl, uws_app_t *app, int port,
     uWS::SSLApp *uwsApp = (uWS::SSLApp *)app;
     uwsApp->listen(port, [handler, config,
                           user_data](struct us_listen_socket_t *listen_socket) {
-      handler((struct us_listen_socket_t *)listen_socket, config, user_data);
+      handler((struct us_listen_socket_t *)listen_socket, user_data);
     });
   } else {
     uWS::App *uwsApp = (uWS::App *)app;
 
     uwsApp->listen(port, [handler, config,
                           user_data](struct us_listen_socket_t *listen_socket) {
-      handler((struct us_listen_socket_t *)listen_socket, config, user_data);
+      handler((struct us_listen_socket_t *)listen_socket, user_data);
     });
   }
 }
@@ -207,16 +207,14 @@ void uws_app_listen_with_config(int ssl, uws_app_t *app,
     uwsApp->listen(
         hostname, config.port, config.options,
         [handler, config, user_data](struct us_listen_socket_t *listen_socket) {
-          handler((struct us_listen_socket_t *)listen_socket, config,
-                  user_data);
+          handler((struct us_listen_socket_t *)listen_socket, user_data);
         });
   } else {
     uWS::App *uwsApp = (uWS::App *)app;
     uwsApp->listen(
         hostname, config.port, config.options,
         [handler, config, user_data](struct us_listen_socket_t *listen_socket) {
-          handler((struct us_listen_socket_t *)listen_socket, config,
-                  user_data);
+          handler((struct us_listen_socket_t *)listen_socket, user_data);
         });
   }
 }

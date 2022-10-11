@@ -596,7 +596,7 @@ pub const uws_socket_behavior_t = extern struct {
     pong: uws_websocket_ping_pong_handler,
     close: uws_websocket_close_handler,
 };
-pub const uws_listen_handler = ?fn (?*listen_socket_t, uws_app_listen_config_t, ?*anyopaque) callconv(.C) void;
+pub const uws_listen_handler = ?fn (?*listen_socket_t, ?*anyopaque) callconv(.C) void;
 pub const uws_method_handler = ?fn (*uws_res, *Request, ?*anyopaque) callconv(.C) void;
 pub const uws_filter_handler = ?fn (*uws_res, i32, ?*anyopaque) callconv(.C) void;
 pub const uws_missing_server_handler = ?fn ([*c]const u8, ?*anyopaque) callconv(.C) void;
@@ -863,18 +863,17 @@ pub fn NewApp(comptime ssl: bool) type {
             app: *ThisApp,
             comptime UserData: type,
             user_data: UserData,
-            comptime handler: fn (UserData, ?*ListenSocket, uws_app_listen_config_t) void,
+            comptime handler: fn (UserData, ?*ListenSocket) void,
             config: uws_app_listen_config_t,
         ) void {
             const Wrapper = struct {
-                pub fn handle(socket: ?*listen_socket_t, conf: uws_app_listen_config_t, data: ?*anyopaque) callconv(.C) void {
+                pub fn handle(socket: ?*listen_socket_t, data: ?*anyopaque) callconv(.C) void {
                     if (comptime UserData == void) {
-                        @call(.{ .modifier = .always_inline }, handler, .{ void{}, @ptrCast(?*ListenSocket, socket), conf });
+                        @call(.{ .modifier = .always_inline }, handler, .{ void{}, @ptrCast(?*ListenSocket, socket) });
                     } else {
                         @call(.{ .modifier = .always_inline }, handler, .{
                             @ptrCast(UserData, @alignCast(@alignOf(UserData), data.?)),
                             @ptrCast(?*ListenSocket, socket),
-                            conf,
                         });
                     }
                 }

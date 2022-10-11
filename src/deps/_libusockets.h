@@ -121,7 +121,6 @@ typedef struct {
 } uws_socket_behavior_t;
 
 typedef void (*uws_listen_handler)(struct us_listen_socket_t *listen_socket,
-                                   uws_app_listen_config_t config,
                                    void *user_data);
 typedef void (*uws_method_handler)(uws_res_t *response, uws_req_t *request,
                                    void *user_data);

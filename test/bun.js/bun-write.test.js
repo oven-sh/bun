@@ -31,10 +31,9 @@ describe("large file", () => {
   const fixtures = [
     [
       `/tmp/bun-test-large-file-${Date.now()}.txt`,
-      "https://www.iana.org/assignments/media-types/media-types.xhtml,"
-        .repeat(100000)
-        .split("")
-        .join(),
+      "https://www.iana.org/assignments/media-types/media-types.xhtml,".repeat(
+        10000
+      ),
     ],
   ];
 

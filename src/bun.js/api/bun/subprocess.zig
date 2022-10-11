@@ -85,14 +85,14 @@ pub const Subprocess = struct {
             buffer: BufferedOutput,
 
             pub fn finish(this: *@This()) void {
-                if (this.* == .stream) {
+                if (this.* == .stream and this.stream.ptr == .File) {
                     this.stream.ptr.File.finish();
                 }
             }
 
             pub fn done(this: *@This()) void {
                 if (this.* == .stream) {
-                    this.stream.ptr.File.finish();
+                    if (this.stream.ptr == .File) this.stream.ptr.File.finish();
                     this.stream.done();
                     return;
                 }

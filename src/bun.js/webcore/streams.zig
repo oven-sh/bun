@@ -3058,6 +3058,14 @@ pub const FileBlobLoader = struct {
     poll_ref: JSC.PollRef = .{},
     has_adjusted_pipe_size_on_linux: bool = false,
     finished: bool = false,
+
+    /// When we have some way of knowing that EOF truly is the write end of the
+    /// pipe being closed
+    /// Set this to true so we automatically mark it as done
+    /// This is used in Bun.spawn() to automatically close stdout and stderr
+    /// when the process exits
+    close_on_eof: bool = false,
+
     signal: JSC.WebCore.Signal = .{},
 
     pub usingnamespace NewReadyWatcher(@This(), .read, ready);
@@ -3085,6 +3093,7 @@ pub const FileBlobLoader = struct {
     pub fn finish(this: *FileBlobLoader) void {
         if (this.finished) return;
         this.finished = true;
+        this.close_on_eof = true;
 
         // we are done
         // resolve any promises with done
@@ -3430,7 +3439,7 @@ pub const FileBlobLoader = struct {
         // - empty file
         // - stream closed for some reason
         // - FIFO returned EOF
-        if ((result == 0 and (remaining == 0 or std.os.S.ISFIFO(this.mode)))) {
+        if ((result == 0 and (remaining == 0 or this.close_on_eof))) {
             this.finalize();
             return .{ .done = {} };
         }
@@ -3573,12 +3582,19 @@ pub const FileBlobLoader = struct {
                 if (result == 0 and free_buffer_on_error) {
                     bun.default_allocator.free(buf_to_use);
                     buf_to_use = read_buf;
-
-                    return this.handleReadChunk(result, view, true, buf_to_use);
                 } else if (free_buffer_on_error) {
                     this.view.clear();
                     this.buf = &.{};
                     return this.handleReadChunk(result, view, true, buf_to_use);
+                }
+
+                if (result == 0 and !this.finished and !this.close_on_eof and std.os.S.ISFIFO(this.mode)) {
+                    this.view.set(this.globalThis(), view);
+                    this.buf = read_buf;
+                    this.watch(this.fd);
+                    return .{
+                        .pending = &this.pending,
+                    };
                 }
 
                 return this.handleReadChunk(result, view, false, buf_to_use);

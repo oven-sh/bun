@@ -37,25 +37,26 @@ it("Bun.file() read text from pipe", async () => {
   });
   const exited = proc.exited;
   proc.ref();
+
   var prom = new Promise((resolve, reject) => {
     setTimeout(() => {
       (async function () {
         var reader = out.getReader();
+        var total = 0;
+
         while (true) {
           const chunk = await reader.read();
-          if (chunk.done) {
-            if (chunks.length == 0) {
-              out = Bun.file("/tmp/fifo").stream();
-              reader = out.getReader();
-              continue;
-            }
+          total += chunk.value?.byteLength || 0;
+          if (chunk.value) chunks.push(chunk.value);
+
+          if (chunk.done || total >= large.length) {
             const output = new TextDecoder()
               .decode(new Uint8Array(Buffer.concat(chunks)))
               .trim();
+            reader.releaseLock();
             resolve(output);
             break;
           }
-          chunks.push(chunk.value);
         }
       })();
     });

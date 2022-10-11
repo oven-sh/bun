@@ -2,7 +2,7 @@ import { readableStreamToText, spawn } from "bun";
 import { describe, expect, it } from "bun:test";
 
 describe("spawn", () => {
-  const hugeString = "hello".repeat(100000).slice();
+  const hugeString = "hello".repeat(10000).slice();
 
   it("stdout can be read", async () => {
     await Bun.write("/tmp/out.txt", hugeString);
@@ -13,6 +13,22 @@ describe("spawn", () => {
 
     const text = await readableStreamToText(stdout);
     expect(text).toBe(hugeString);
+  });
+
+  it("stdin can be read and stdout can be written", async () => {
+    const { stdout, stdin, exited } = spawn({
+      cmd: ["bash", import.meta.dir + "/bash-echo.sh"],
+      stdout: "pipe",
+      stdin: "pipe",
+      stderr: "inherit",
+    });
+
+    await stdin.write(hugeString);
+    await stdin.end();
+
+    const text = await readableStreamToText(stdout);
+    expect(text.trim()).toBe(hugeString);
+    await exited;
   });
 
   describe("pipe", () => {

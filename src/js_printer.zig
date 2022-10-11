@@ -1269,10 +1269,10 @@ pub fn NewPrinter(
                                         if (text[i] != '}') {
                                             return 0;
                                         }
-                                        switch (std.mem.order(char_width, text[i - 6 .. i], &[_]char_width{ '1', '0', 'F', 'F', 'F', 'F' })) {
-                                            .gt => return 0,
-                                            else => {},
-                                        }
+
+                                        // Checks if (text[i-6..i] > 0x10FFFF)
+                                        if (text[i - 6] != '1' or text[i - 5] != '0')
+                                            return 0;
                                     }
                                 } else {
                                     const t = i + 3;
@@ -1344,7 +1344,7 @@ pub fn NewPrinter(
             const quote = bestQuoteCharForProcessedRawString(char_width, text);
 
             if (quote == 0) {
-                return e.print("undefined"); // when a text is impossible to process, it becomes undefined when passed into a template literal call
+                return e.print("void 0"); // when a text is impossible to process, it becomes undefined when passed into a template literal call
             }
 
             e.print(quote);
@@ -2289,7 +2289,7 @@ pub fn NewPrinter(
                     }
 
                     if (e.is_raw_template_call and !is_ascii) {
-                        p.print("(Object.defineProperty([");
+                        p.print("(Object.freeze(Object.defineProperty([");
 
                         // print post-processed strings here.
                         e.head.resovleRopeIfNeeded(p.options.allocator);
@@ -2299,7 +2299,7 @@ pub fn NewPrinter(
                             part.tail.resovleRopeIfNeeded(p.options.allocator);
                             p.printProcessedRawStringContent(&part.tail);
                         }
-                        p.print("], \"raw\", { value: [");
+                        p.print("], \"raw\", { value: Object.freeze([");
                         // print raw strings here. I.e. we need to escape our backslashes again.
                         {
                             e.head.resovleRopeIfNeeded(p.options.allocator);
@@ -2317,7 +2317,7 @@ pub fn NewPrinter(
                             p.printStringContent(&part.tail, quote, true);
                             p.print(quote);
                         }
-                        p.print("] })");
+                        p.print("]) }))");
                         for (e.parts) |*part| {
                             p.print(", ");
                             p.printExpr(part.value, .lowest, ExprFlag.None());
@@ -5278,6 +5278,7 @@ pub fn printAst(
     defer {
         imported_module_ids_list = printer.imported_module_ids;
     }
+
     if (tree.prepend_part) |part| {
         for (part.stmts) |stmt| {
             try printer.printStmt(stmt);

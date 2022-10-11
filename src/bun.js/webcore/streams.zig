@@ -1153,16 +1153,26 @@ pub const FileSink = struct {
 
             // we flushed an entire fifo
             // but we still have more
-            // lets wait for the next poll
+            // lets check if its writable, so we avoid blocking
             if (std.os.S.ISFIFO(this.mode) and
                 max_to_write == max_fifo_size and
                 res.result == max_fifo_size and
                 remain.len > 0)
             {
-                this.watch(this.fd);
-                return .{
-                    .pending = &this.pending,
+                var polls = [_]std.os.pollfd{
+                    .{
+                        .fd = fd,
+                        .events = std.os.POLL.IN | std.os.POLL.ERR,
+                        .revents = 0,
+                    },
                 };
+
+                if ((std.os.poll(&polls, 0) catch 0) == 0) {
+                    this.watch(this.fd);
+                    return .{
+                        .pending = &this.pending,
+                    };
+                }
             }
         }
 

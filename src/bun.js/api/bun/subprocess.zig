@@ -1188,7 +1188,7 @@ pub const Subprocess = struct {
                     try actions.dup2(fd, std_fileno);
                 },
                 .path => |pathlike| {
-                    const flag = if (std_fileno == std.os.STDIN_FILENO) @as(u32, os.O.WRONLY) else @as(u32, std.os.O.RDONLY);
+                    const flag = if (std_fileno == std.os.STDIN_FILENO) @as(u32, os.O.RDONLY) else @as(u32, std.os.O.WRONLY);
                     try actions.open(std_fileno, pathlike.slice(), flag | std.os.O.CREAT, 0o664);
                 },
                 .inherit => {

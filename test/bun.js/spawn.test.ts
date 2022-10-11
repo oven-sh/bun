@@ -1,8 +1,46 @@
-import { readableStreamToText, spawn } from "bun";
+import { readableStreamToText, spawn, write } from "bun";
 import { describe, expect, it } from "bun:test";
+import { rmdirSync, unlinkSync, rmSync } from "node:fs";
 
 describe("spawn", () => {
   const hugeString = "hello".repeat(10000).slice();
+
+  it("Bun.file() works as stdout", async () => {
+    rmSync("/tmp/out.123.txt", { force: true });
+    const { exited } = spawn({
+      cmd: ["echo", "hello"],
+      stdout: Bun.file("/tmp/out.123.txt"),
+    });
+
+    await exited;
+    expect(await Bun.file("/tmp/out.123.txt").text()).toBe("hello\n");
+  });
+
+  it("Bun.file() works as stdin", async () => {
+    await write(Bun.file("/tmp/out.456.txt"), "hello there!");
+    const { stdout } = spawn({
+      cmd: ["cat"],
+      stdout: "pipe",
+      stdin: Bun.file("/tmp/out.456.txt"),
+    });
+
+    expect(await readableStreamToText(stdout)).toBe("hello there!");
+  });
+
+  it("Bun.file() works as stdin and stdout", async () => {
+    await write(Bun.file("/tmp/out.456.txt"), "hello!");
+    await write(Bun.file("/tmp/out.123.txt"), "wrong!");
+
+    const { exited } = spawn({
+      cmd: ["cat"],
+      stdout: Bun.file("/tmp/out.123.txt"),
+      stdin: Bun.file("/tmp/out.456.txt"),
+    });
+
+    await exited;
+    expect(await Bun.file("/tmp/out.456.txt").text()).toBe("hello!");
+    expect(await Bun.file("/tmp/out.123.txt").text()).toBe("hello!");
+  });
 
   it("stdout can be read", async () => {
     await Bun.write("/tmp/out.txt", hugeString);

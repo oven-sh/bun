@@ -259,6 +259,7 @@ const fd_t = os.fd_t;
 const mem = std.mem;
 const assert = std.debug.assert;
 const c = std.c;
+const bun = @import("../global.zig");
 pub const darwin = struct {
     pub usingnamespace os.darwin;
     pub extern "c" fn @"recvfrom$NOCANCEL"(sockfd: c.fd_t, noalias buf: *anyopaque, len: usize, flags: u32, noalias src_addr: ?*c.sockaddr, noalias addrlen: ?*c.socklen_t) isize;
@@ -1338,12 +1339,7 @@ pub fn read(
         struct {
             fn doOperation(op: anytype) ReadError!usize {
                 while (true) {
-                    const rc = if (op.positional) os.system.pread(
-                        op.fd,
-                        op.buf,
-                        op.len,
-                        @bitCast(isize, op.offset),
-                    ) else os.system.read(
+                    const rc = os.system.read(
                         op.fd,
                         op.buf,
                         op.len,
@@ -1576,7 +1572,10 @@ pub fn write(
         },
         struct {
             fn doOperation(op: anytype) WriteError!usize {
-                return os.pwrite(op.fd, op.buf[0..op.len], op.offset);
+
+                // Unlike Linux, macOS doesn't ignore file offsets for unseekable files, so we have to
+                // use write() instead of pwrite().
+                return std.os.write(op.fd, op.buf[0..op.len]);
             }
         },
     );

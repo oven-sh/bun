@@ -226,7 +226,6 @@ pub const EventLoop = struct {
     waker: ?AsyncIO.Waker = null,
     start_server_on_next_tick: bool = false,
     defer_count: std.atomic.Atomic(usize) = std.atomic.Atomic(usize).init(0),
-    pending_processes_to_exit: std.AutoArrayHashMap(*JSC.Subprocess, void) = undefined,
 
     pub const Queue = std.fifo.LinearFifo(Task, .Dynamic);
 
@@ -278,6 +277,8 @@ pub const EventLoop = struct {
                     var transform_task: *HotReloadTask = task.get(HotReloadTask).?;
                     transform_task.*.run();
                     transform_task.deinit();
+                    // special case: we return
+                    return 0;
                 },
                 @field(Task.Tag, typeBaseName(@typeName(AnyTask))) => {
                     var any: *AnyTask = task.get(AnyTask).?;
@@ -334,7 +335,7 @@ pub const EventLoop = struct {
     pub fn autoTick(this: *EventLoop) void {
         if (this.virtual_machine.uws_event_loop.?.num_polls > 0 or this.virtual_machine.uws_event_loop.?.active > 0) {
             this.virtual_machine.uws_event_loop.?.tick();
-            this.afterUSocketsTick();
+            // this.afterUSocketsTick();
         }
     }
 
@@ -431,16 +432,6 @@ pub const EventLoop = struct {
         }
     }
 
-    pub fn afterUSocketsTick(this: *EventLoop) void {
-        const processes = this.pending_processes_to_exit.keys();
-        if (processes.len > 0) {
-            for (processes) |process| {
-                process.onExitNotification();
-            }
-            this.pending_processes_to_exit.clearRetainingCapacity();
-        }
-    }
-
     pub fn enqueueTaskConcurrent(this: *EventLoop, task: *ConcurrentTask) void {
         JSC.markBinding();
 
@@ -474,10 +465,7 @@ pub const Poller = struct {
                 var loader = ptr.as(JSC.Subprocess);
 
                 loader.poll_ref.deactivate(loop);
-
-                // kqueue sends the same notification multiple times in the same tick potentially
-                // so we have to dedupe it
-                _ = loader.globalThis.bunVM().eventLoop().pending_processes_to_exit.getOrPut(loader) catch unreachable;
+                loader.onExitNotification();
             },
             @field(Pollable.Tag, "BufferedInput") => {
                 var loader = ptr.as(JSC.Subprocess.BufferedInput);
@@ -485,6 +473,13 @@ pub const Poller = struct {
                 loader.poll_ref.deactivate(loop);
 
                 loader.onReady(@bitCast(i64, kqueue_event.data));
+            },
+            @field(Pollable.Tag, "BufferedOutput") => {
+                var loader = ptr.as(JSC.Subprocess.BufferedOutput);
+
+                loader.poll_ref.deactivate(loop);
+
+                loader.ready(@bitCast(i64, kqueue_event.data));
             },
             @field(Pollable.Tag, "FileSink") => {
                 var loader = ptr.as(JSC.WebCore.FileSink);
@@ -514,15 +509,28 @@ pub const Poller = struct {
                 var loader = ptr.as(JSC.Subprocess);
                 loader.poll_ref.deactivate(loop);
 
-                // kqueue sends the same notification multiple times in the same tick potentially
-                // so we have to dedupe it
-                _ = loader.globalThis.bunVM().eventLoop().pending_processes_to_exit.getOrPut(loader) catch unreachable;
+                loader.onExitNotification();
             },
             @field(Pollable.Tag, "FileSink") => {
                 var loader = ptr.as(JSC.WebCore.FileSink);
                 loader.poll_ref.deactivate(loop);
 
                 loader.onPoll(0, 0);
+            },
+
+            @field(Pollable.Tag, "BufferedInput") => {
+                var loader = ptr.as(JSC.Subprocess.BufferedInput);
+
+                loader.poll_ref.deactivate(loop);
+
+                loader.onReady(0);
+            },
+            @field(Pollable.Tag, "BufferedOutput") => {
+                var loader = ptr.as(JSC.Subprocess.BufferedOutput);
+
+                loader.poll_ref.deactivate(loop);
+
+                loader.ready(0);
             },
             else => unreachable,
         }
@@ -535,6 +543,7 @@ pub const Poller = struct {
     const FileSink = JSC.WebCore.FileSink;
     const Subprocess = JSC.Subprocess;
     const BufferedInput = Subprocess.BufferedInput;
+    const BufferedOutput = Subprocess.BufferedOutput;
     /// epoll only allows one pointer
     /// We unfortunately need two pointers: one for a function call and one for the context
     /// We use a tagged pointer union and then call the function with the context pointer
@@ -543,6 +552,7 @@ pub const Poller = struct {
         FileSink,
         Subprocess,
         BufferedInput,
+        BufferedOutput,
     });
     const Kevent = std.os.Kevent;
     const kevent = std.c.kevent;
@@ -585,7 +595,7 @@ pub const Poller = struct {
                     .data = 0,
                     .fflags = 0,
                     .udata = @ptrToInt(Pollable.init(ctx).ptr()),
-                    .flags = std.c.EV_ADD | std.c.EV_ENABLE | std.c.EV_ONESHOT,
+                    .flags = std.c.EV_ADD | std.c.EV_ONESHOT,
                     .ext = .{ 0, 0 },
                 },
                 .write => .{
@@ -594,7 +604,7 @@ pub const Poller = struct {
                     .data = 0,
                     .fflags = 0,
                     .udata = @ptrToInt(Pollable.init(ctx).ptr()),
-                    .flags = std.c.EV_ADD | std.c.EV_ENABLE | std.c.EV_ONESHOT,
+                    .flags = std.c.EV_ADD | std.c.EV_ONESHOT,
                     .ext = .{ 0, 0 },
                 },
                 .process => .{
@@ -603,7 +613,7 @@ pub const Poller = struct {
                     .data = 0,
                     .fflags = std.c.NOTE_EXIT,
                     .udata = @ptrToInt(Pollable.init(ctx).ptr()),
-                    .flags = std.c.EV_ADD | std.c.EV_ENABLE | std.c.EV_ONESHOT,
+                    .flags = std.c.EV_ADD,
                     .ext = .{ 0, 0 },
                 },
             };
@@ -614,16 +624,24 @@ pub const Poller = struct {
             // The kevent() system call returns the number of events placed in
             // the eventlist, up to the value given by nevents.  If the time
             // limit expires, then kevent() returns 0.
-            const rc = std.os.system.kevent64(
-                watcher_fd,
-                &changelist,
-                1,
-                // The same array may be used for the changelist and eventlist.
-                &changelist,
-                1,
-                KEVENT_FLAG_ERROR_EVENTS,
-                &timeout,
-            );
+            const rc = rc: {
+                while (true) {
+                    const rc = std.os.system.kevent64(
+                        watcher_fd,
+                        &changelist,
+                        1,
+                        // The same array may be used for the changelist and eventlist.
+                        &changelist,
+                        1,
+                        KEVENT_FLAG_ERROR_EVENTS,
+                        &timeout,
+                    );
+
+                    if (std.c.getErrno(rc) == .INTR) continue;
+                    break :rc rc;
+                }
+            };
+
             // If an error occurs while
             // processing an element of the changelist and there is enough room
             // in the eventlist, then the event will be placed in the eventlist
@@ -638,6 +656,7 @@ pub const Poller = struct {
 
             if (errno == .SUCCESS) {
                 ctx.poll_ref.activate(this.loop.?);
+
                 return JSC.Maybe(void).success;
             }
 

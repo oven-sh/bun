@@ -359,10 +359,15 @@ pub const Prompt = struct {
 pub const Crypto = struct {
     const UUID = @import("./uuid.zig");
     const BoringSSL = @import("boringssl");
-    pub const Class = JSC.NewClass(void, .{ .name = "crypto" }, .{
-        .getRandomValues = JSC.DOMCall("Crypto", @This(), "getRandomValues", JSC.JSValue, JSC.DOMEffect.top),
-        .randomUUID = JSC.DOMCall("Crypto", @This(), "randomUUID", *JSC.JSString, JSC.DOMEffect.top),
-    }, .{});
+    pub const Class = JSC.NewClass(
+        void,
+        .{ .name = "crypto" },
+        .{
+            .getRandomValues = JSC.DOMCall("Crypto", @This(), "getRandomValues", JSC.JSValue, JSC.DOMEffect.top),
+            .randomUUID = JSC.DOMCall("Crypto", @This(), "randomUUID", *JSC.JSString, JSC.DOMEffect.top),
+        },
+        .{},
+    );
     pub const Prototype = JSC.NewClass(
         void,
         .{ .name = "Crypto" },

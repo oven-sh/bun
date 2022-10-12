@@ -148,7 +148,7 @@ pub extern fn Inspector__ScriptArguments__getFirstArgumentAsString(arg0: [*c]bin
 pub extern fn Inspector__ScriptArguments__isEqual(arg0: [*c]bindings.ScriptArguments, arg1: [*c]bindings.ScriptArguments) bool;
 pub extern fn Inspector__ScriptArguments__release(arg0: [*c]bindings.ScriptArguments) void;
 pub extern fn JSC__JSModuleLoader__checkSyntax(arg0: ?*JSC__JSGlobalObject, arg1: [*c]const JSC__SourceCode, arg2: bool) bool;
-pub extern fn JSC__JSModuleLoader__evaluate(arg0: ?*JSC__JSGlobalObject, arg1: [*c]const u8, arg2: usize, arg3: [*c]const u8, arg4: usize, JSValue5: JSC__JSValue, arg6: [*c]JSC__JSValue) JSC__JSValue;
+pub extern fn JSC__JSModuleLoader__evaluate(arg0: ?*JSC__JSGlobalObject, arg1: [*c]const u8, arg2: usize, arg3: [*c]const u8, arg4: usize, arg5: [*c]const u8, arg6: usize, JSValue7: JSC__JSValue, arg8: [*c]JSC__JSValue) JSC__JSValue;
 pub extern fn JSC__JSModuleLoader__importModule(arg0: ?*JSC__JSGlobalObject, arg1: [*c]const JSC__Identifier) [*c]JSC__JSInternalPromise;
 pub extern fn JSC__JSModuleLoader__linkAndEvaluateModule(arg0: ?*JSC__JSGlobalObject, arg1: [*c]const JSC__Identifier) JSC__JSValue;
 pub extern fn JSC__JSModuleLoader__loadAndEvaluateModule(arg0: ?*JSC__JSGlobalObject, arg1: [*c]const ZigString) [*c]JSC__JSInternalPromise;

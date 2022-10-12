@@ -155,8 +155,16 @@ pub const Response = struct {
         this: *Response,
         globalThis: *JSC.JSGlobalObject,
     ) callconv(.C) JSC.JSValue {
-        // https://developer.mozilla.org/en-US/docs/Web/API/Response/url
+        // https://developer.mozilla.org/en-US/docs/Web/API/Response/statusText
         return ZigString.init(this.status_text).withEncoding().toValueGC(globalThis);
+    }
+
+    pub fn getRedirected(
+        this: *Response,
+        _: *JSC.JSGlobalObject,
+    ) callconv(.C) JSC.JSValue {
+        // https://developer.mozilla.org/en-US/docs/Web/API/Response/redirected
+        return JSValue.jsBoolean(this.redirected);
     }
 
     pub fn getOK(
@@ -1296,10 +1304,9 @@ pub const Blob = struct {
             return null;
         }
 
+        var needs_async = false;
         if (data.isString()) {
             const len = data.getLengthOfArray(ctx);
-            if (len == 0)
-                return JSC.JSPromise.resolvedPromiseValue(ctx, JSC.JSValue.jsNumber(0)).asObjectRef();
 
             if (len < 256 * 1024) {
                 const str = data.getZigString(ctx);
@@ -1310,15 +1317,30 @@ pub const Blob = struct {
                     path_or_blob.blob.store.?.data.file.pathlike;
 
                 if (pathlike == .path) {
-                    return writeStringToFileFast(ctx, pathlike, str, true).asObjectRef();
+                    const result = writeStringToFileFast(
+                        ctx,
+                        pathlike,
+                        str,
+                        &needs_async,
+                        true,
+                    );
+                    if (!needs_async) {
+                        return result.asObjectRef();
+                    }
                 } else {
-                    return writeStringToFileFast(ctx, pathlike, str, false).asObjectRef();
+                    const result = writeStringToFileFast(
+                        ctx,
+                        pathlike,
+                        str,
+                        &needs_async,
+                        false,
+                    );
+                    if (!needs_async) {
+                        return result.asObjectRef();
+                    }
                 }
             }
         } else if (data.asArrayBuffer(ctx)) |buffer_view| {
-            if (buffer_view.byte_len == 0)
-                return JSC.JSPromise.resolvedPromiseValue(ctx, JSC.JSValue.jsNumber(0)).asObjectRef();
-
             if (buffer_view.byte_len < 256 * 1024) {
                 const pathlike: JSC.Node.PathOrFileDescriptor = if (path_or_blob == .path)
                     path_or_blob.path
@@ -1326,9 +1348,29 @@ pub const Blob = struct {
                     path_or_blob.blob.store.?.data.file.pathlike;
 
                 if (pathlike == .path) {
-                    return writeBytesToFileFast(ctx, pathlike, buffer_view.byteSlice(), true).asObjectRef();
+                    const result = writeBytesToFileFast(
+                        ctx,
+                        pathlike,
+                        buffer_view.byteSlice(),
+                        &needs_async,
+                        true,
+                    );
+
+                    if (!needs_async) {
+                        return result.asObjectRef();
+                    }
                 } else {
-                    return writeBytesToFileFast(ctx, pathlike, buffer_view.byteSlice(), false).asObjectRef();
+                    const result = writeBytesToFileFast(
+                        ctx,
+                        pathlike,
+                        buffer_view.byteSlice(),
+                        &needs_async,
+                        false,
+                    );
+
+                    if (!needs_async) {
+                        return result.asObjectRef();
+                    }
                 }
             }
         }
@@ -1437,6 +1479,7 @@ pub const Blob = struct {
         globalThis: *JSC.JSGlobalObject,
         pathlike: JSC.Node.PathOrFileDescriptor,
         str: ZigString,
+        needs_async: *bool,
         comptime needs_open: bool,
     ) JSC.JSValue {
         const fd: JSC.Node.FileDescriptor = if (comptime !needs_open) pathlike.fd else brk: {
@@ -1458,7 +1501,7 @@ pub const Blob = struct {
             unreachable;
         };
 
-        var truncate = needs_open;
+        var truncate = needs_open or str.len == 0;
         var jsc_vm = globalThis.bunVM();
         var written: usize = 0;
 
@@ -1473,8 +1516,7 @@ pub const Blob = struct {
                 _ = JSC.Node.Syscall.close(fd);
             }
         }
-
-        if (str.is16Bit()) {
+        if (str.len == 0) {} else if (str.is16Bit()) {
             var decoded = str.toSlice(jsc_vm.allocator);
             defer decoded.deinit();
 
@@ -1491,6 +1533,10 @@ pub const Blob = struct {
                     },
                     .err => |err| {
                         truncate = false;
+                        if (err.getErrno() == .AGAIN) {
+                            needs_async.* = true;
+                            return .zero;
+                        }
                         return JSC.JSPromise.rejectedPromiseValue(globalThis, err.toJSC(globalThis));
                     },
                 }
@@ -1509,6 +1555,11 @@ pub const Blob = struct {
                     },
                     .err => |err| {
                         truncate = false;
+                        if (err.getErrno() == .AGAIN) {
+                            needs_async.* = true;
+                            return .zero;
+                        }
+
                         return JSC.JSPromise.rejectedPromiseValue(globalThis, err.toJSC(globalThis));
                     },
                 }
@@ -1530,6 +1581,11 @@ pub const Blob = struct {
                     },
                     .err => |err| {
                         truncate = false;
+                        if (err.getErrno() == .AGAIN) {
+                            needs_async.* = true;
+                            return .zero;
+                        }
+
                         return JSC.JSPromise.rejectedPromiseValue(globalThis, err.toJSC(globalThis));
                     },
                 }
@@ -1543,6 +1599,7 @@ pub const Blob = struct {
         globalThis: *JSC.JSGlobalObject,
         pathlike: JSC.Node.PathOrFileDescriptor,
         bytes: []const u8,
+        needs_async: *bool,
         comptime needs_open: bool,
     ) JSC.JSValue {
         const fd: JSC.Node.FileDescriptor = if (comptime !needs_open) pathlike.fd else brk: {
@@ -1564,7 +1621,7 @@ pub const Blob = struct {
             unreachable;
         };
 
-        var truncate = needs_open;
+        var truncate = needs_open or bytes.len == 0;
         var written: usize = 0;
         defer {
             if (truncate) {
@@ -1589,6 +1646,10 @@ pub const Blob = struct {
                 },
                 .err => |err| {
                     truncate = false;
+                    if (err.getErrno() == .AGAIN) {
+                        needs_async.* = true;
+                        return .zero;
+                    }
                     return JSC.JSPromise.rejectedPromiseValue(globalThis, err.toJSC(globalThis));
                 },
             }

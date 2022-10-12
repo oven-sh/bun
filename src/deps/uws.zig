@@ -11,6 +11,14 @@ pub const LIBUS_LISTEN_EXCLUSIVE_PORT: i32 = 1;
 pub const Socket = opaque {};
 const bun = @import("../global.zig");
 
+const BoringSSL = @import("boringssl");
+fn NativeSocketHandleType(comptime ssl: bool) type {
+    if (ssl) {
+        return BoringSSL.SSL;
+    } else {
+        return anyopaque;
+    }
+}
 pub fn NewSocketHandler(comptime ssl: bool) type {
     return struct {
         const ssl_int: i32 = @boolToInt(ssl);
@@ -23,6 +31,10 @@ pub fn NewSocketHandler(comptime ssl: bool) type {
 
         pub fn timeout(this: ThisSocket, seconds: c_uint) void {
             return us_socket_timeout(comptime ssl_int, this.socket, seconds);
+        }
+
+        pub fn getNativeHandle(this: ThisSocket) *NativeSocketHandleType(ssl) {
+            return @ptrCast(*NativeSocketHandleType(ssl), us_socket_get_native_handle(comptime ssl_int, this.socket).?);
         }
         pub fn ext(this: ThisSocket, comptime ContextType: type) ?*ContextType {
             const alignment = if (ContextType == *anyopaque)
@@ -584,7 +596,7 @@ pub const uws_socket_behavior_t = extern struct {
     pong: uws_websocket_ping_pong_handler,
     close: uws_websocket_close_handler,
 };
-pub const uws_listen_handler = ?fn (?*listen_socket_t, uws_app_listen_config_t, ?*anyopaque) callconv(.C) void;
+pub const uws_listen_handler = ?fn (?*listen_socket_t, ?*anyopaque) callconv(.C) void;
 pub const uws_method_handler = ?fn (*uws_res, *Request, ?*anyopaque) callconv(.C) void;
 pub const uws_filter_handler = ?fn (*uws_res, i32, ?*anyopaque) callconv(.C) void;
 pub const uws_missing_server_handler = ?fn ([*c]const u8, ?*anyopaque) callconv(.C) void;
@@ -851,23 +863,22 @@ pub fn NewApp(comptime ssl: bool) type {
             app: *ThisApp,
             comptime UserData: type,
             user_data: UserData,
-            comptime handler: fn (UserData, ?*ListenSocket, uws_app_listen_config_t) void,
+            comptime handler: fn (UserData, ?*ListenSocket) void,
             config: uws_app_listen_config_t,
         ) void {
             const Wrapper = struct {
-                pub fn handle(socket: ?*listen_socket_t, conf: uws_app_listen_config_t, data: ?*anyopaque) callconv(.C) void {
+                pub fn handle(socket: ?*listen_socket_t, data: ?*anyopaque) callconv(.C) void {
                     if (comptime UserData == void) {
-                        @call(.{ .modifier = .always_inline }, handler, .{ void{}, @ptrCast(?*ListenSocket, socket), conf });
+                        @call(.{ .modifier = .always_inline }, handler, .{ void{}, @ptrCast(?*ListenSocket, socket) });
                     } else {
                         @call(.{ .modifier = .always_inline }, handler, .{
                             @ptrCast(UserData, @alignCast(@alignOf(UserData), data.?)),
                             @ptrCast(?*ListenSocket, socket),
-                            conf,
                         });
                     }
                 }
             };
-            return uws_app_listen_with_config(ssl_flag, @ptrCast(*uws_app_t, app), config, Wrapper.handle, user_data);
+            return uws_app_listen_with_config(ssl_flag, @ptrCast(*uws_app_t, app), &config, Wrapper.handle, user_data);
         }
         pub fn constructorFailed(app: *ThisApp) bool {
             return uws_constructor_failed(ssl_flag, app);
@@ -1239,7 +1250,7 @@ extern fn uws_app_trace(ssl: i32, app: *uws_app_t, pattern: [*c]const u8, handle
 extern fn uws_app_any(ssl: i32, app: *uws_app_t, pattern: [*c]const u8, handler: uws_method_handler, user_data: ?*anyopaque) void;
 extern fn uws_app_run(ssl: i32, *uws_app_t) void;
 extern fn uws_app_listen(ssl: i32, app: *uws_app_t, port: i32, handler: uws_listen_handler, user_data: ?*anyopaque) void;
-extern fn uws_app_listen_with_config(ssl: i32, app: *uws_app_t, config: uws_app_listen_config_t, handler: uws_listen_handler, user_data: ?*anyopaque) void;
+extern fn uws_app_listen_with_config(ssl: i32, app: *uws_app_t, config: *const uws_app_listen_config_t, handler: uws_listen_handler, user_data: ?*anyopaque) void;
 extern fn uws_constructor_failed(ssl: i32, app: *uws_app_t) bool;
 extern fn uws_num_subscribers(ssl: i32, app: *uws_app_t, topic: [*c]const u8) c_uint;
 extern fn uws_publish(ssl: i32, app: *uws_app_t, topic: [*c]const u8, topic_length: usize, message: [*c]const u8, message_length: usize, opcode: uws_opcode_t, compress: bool) bool;

@@ -4,7 +4,7 @@ import { readFileSync } from "fs";
 
 // afterEach(() => Bun.gc(true));
 
-var port = 40001;
+var port = 4020;
 
 {
   const BodyMixin = [
@@ -178,9 +178,11 @@ async function runInServer(
   cb: (url: string) => void | Promise<void>
 ) {
   var server;
+  var thisPort = port++;
+  if (port > 4120) port = 4020;
   server = Bun.serve({
     ...opts,
-    port: port++,
+    port: thisPort,
     fetch(req) {
       try {
         return opts.fetch(req);
@@ -201,10 +203,8 @@ async function runInServer(
   } catch (e) {
     throw e;
   } finally {
-    queueMicrotask(() => {
-      server && server.stop();
-      server = undefined;
-    });
+    server && server.stop();
+    server = undefined;
   }
 }
 

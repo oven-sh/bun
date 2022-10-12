@@ -109,8 +109,8 @@ it("URL.prototype.origin", () => {
 
 test("navigator", () => {
   expect(globalThis.navigator !== undefined).toBe(true);
-  const { version } = process;
-  const userAgent = `Bun/${version.substring(1)}`;
+  const version = process.versions.bun;
+  const userAgent = `Bun/${version}`;
   expect(navigator.hardwareConcurrency > 0).toBe(true);
   expect(navigator.userAgent).toBe(userAgent);
 });

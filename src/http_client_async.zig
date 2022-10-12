@@ -25,8 +25,6 @@ const ObjectPool = @import("./pool.zig").ObjectPool;
 const SOCK = os.SOCK;
 const Arena = @import("./mimalloc_arena.zig").Arena;
 const AsyncMessage = @import("./http/async_message.zig");
-const AsyncBIO = @import("./http/async_bio.zig");
-const AsyncSocket = @import("./http/async_socket.zig");
 const ZlibPool = @import("./http/zlib.zig");
 const URLBufferPool = ObjectPool([4096]u8, null, false, 10);
 const uws = @import("uws");
@@ -472,6 +470,7 @@ pub const HTTPThread = struct {
 
 const log = Output.scoped(.fetch, false);
 
+var temp_hostname: [8096]u8 = undefined;
 pub fn onOpen(
     client: *HTTPClient,
     comptime is_ssl: bool,
@@ -482,6 +481,28 @@ pub fn onOpen(
     }
 
     log("Connected {s} \n", .{client.url.href});
+
+    if (comptime is_ssl) {
+        var ssl: *BoringSSL.SSL = @ptrCast(*BoringSSL.SSL, socket.getNativeHandle());
+        if (!ssl.isInitFinished()) {
+            var hostname: [:0]u8 = "";
+            var hostname_needs_free = false;
+            if (!strings.isIPAddress(client.url.hostname)) {
+                if (client.url.hostname.len < temp_hostname.len) {
+                    @memcpy(&temp_hostname, client.url.hostname.ptr, client.url.hostname.len);
+                    temp_hostname[client.url.hostname.len] = 0;
+                    hostname = temp_hostname[0..client.url.hostname.len :0];
+                } else {
+                    hostname = bun.default_allocator.dupeZ(u8, client.url.hostname) catch unreachable;
+                    hostname_needs_free = true;
+                }
+            }
+
+            defer if (hostname_needs_free) bun.default_allocator.free(hostname);
+
+            ssl.configureHTTPClient(hostname);
+        }
+    }
     if (client.state.request_stage == .pending) {
         client.onWritable(true, comptime is_ssl, socket);
     }

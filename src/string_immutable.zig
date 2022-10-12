@@ -3698,3 +3698,14 @@ test "eqlCaseInsensitiveASCII" {
     try std.testing.expect(!eqlCaseInsensitiveASCII("aBcD", "NOOO", true));
     try std.testing.expect(!eqlCaseInsensitiveASCII("aBcD", "LENGTH CHECK", true));
 }
+
+pub fn isIPAddress(input: []const u8) bool {
+    if (containsChar(input, ':'))
+        return true;
+
+    if (std.x.os.IPv4.parse(input)) |_| {
+        return true;
+    } else |_| {
+        return false;
+    }
+}

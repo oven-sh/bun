@@ -35,7 +35,11 @@ function constructorName(typeName) {
   return `JS${typeName}Constructor`;
 }
 
-function appendSymbols(to, symbolName, prop) {
+function appendSymbols(
+  to: Map<string, string>,
+  symbolName: (name: string) => string,
+  prop
+) {
   var { defaultValue, getter, setter, accesosr, fn } = prop;
 
   if (accesosr) {
@@ -43,16 +47,16 @@ function appendSymbols(to, symbolName, prop) {
     setter = accesosr.setter;
   }
 
-  if (getter) {
-    to.push([getter, symbolName(getter)]);
+  if (getter && !to.get(getter)) {
+    to.set(getter, symbolName(getter));
   }
 
-  if (setter) {
-    to.push([setter, symbolName(setter)]);
+  if (setter && !to.get(setter)) {
+    to.set(setter, symbolName(setter));
   }
 
-  if (fn) {
-    to.push([fn, symbolName(fn)]);
+  if (fn && !to.get(fn)) {
+    to.set(fn, symbolName(fn));
   }
 }
 function propRow(
@@ -438,13 +442,13 @@ ${
 function renderCachedFieldsHeader(typeName, klass, proto) {
   const rows = [];
   for (const name in klass) {
-    if ("cache" in klass[name]) {
+    if ("cache" in klass[name] && klass[name].cache === true) {
       rows.push(`mutable JSC::WriteBarrier<JSC::Unknown> m_${name};`);
     }
   }
 
   for (const name in proto) {
-    if ("cache" in proto[name]) {
+    if (proto[name]?.cache === true) {
       rows.push(`mutable JSC::WriteBarrier<JSC::Unknown> m_${name};`);
     }
   }
@@ -577,6 +581,10 @@ JSC_DEFINE_CUSTOM_GETTER(js${typeName}Constructor, (JSGlobalObject * lexicalGlob
 
   for (const name in proto) {
     if ("cache" in proto[name]) {
+      const cacheName =
+        typeof proto[name].cache === "string"
+          ? `m_${proto[name].cache}`
+          : `m_${name}`;
       rows.push(`
 JSC_DEFINE_CUSTOM_GETTER(${symbolName(
         typeName,
@@ -591,7 +599,7 @@ JSC_DEFINE_CUSTOM_GETTER(${symbolName(
       )}*>(JSValue::decode(thisValue));
       JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
     
-    if (JSValue cachedValue = thisObject->m_${name}.get())
+    if (JSValue cachedValue = thisObject->${cacheName}.get())
         return JSValue::encode(cachedValue);
     
     JSC::JSValue result = JSC::JSValue::decode(
@@ -601,7 +609,7 @@ JSC_DEFINE_CUSTOM_GETTER(${symbolName(
         )}(thisObject->wrapped(), globalObject)
     );
     RETURN_IF_EXCEPTION(throwScope, {});
-    thisObject->m_${name}.set(vm, thisObject, result);
+    thisObject->${cacheName}.set(vm, thisObject, result);
     RELEASE_AND_RETURN(throwScope, JSValue::encode(result));
 }
 `);
@@ -692,11 +700,12 @@ JSC_DEFINE_HOST_FUNCTION(${symbolName(
   return rows.join("\n");
 }
 
-function generateClassHeader(typeName, obj) {
-  var { klass, proto, JSType = "Object" } = obj;
+function generateClassHeader(typeName, obj: ClassDefinition) {
+  var { klass, proto, JSType = "ObjectType", values = [] } = obj;
   const name = className(typeName);
 
   const DECLARE_VISIT_CHILDREN =
+    values.length ||
     obj.estimatedSize ||
     [...Object.values(klass), ...Object.values(proto)].find((a) => !!a.cache)
       ? "DECLARE_VISIT_CHILDREN;"
@@ -778,10 +787,15 @@ function generateClassImpl(typeName, obj: ClassDefinition) {
     ...Object.entries(fields),
     ...Object.entries(proto),
   ]
-    .filter(([name, { cache }]) => !!cache)
+    .filter(([name, { cache = false }]) => cache === true)
     .map(([name]) => `    visitor.append(thisObject->m_${name});`)
     .join("\n");
 
+  const values = (obj.values || [])
+    .map((val) => {
+      return `visitor.append(thisObject->m_${val});`;
+    })
+    .join("\n");
   var DEFINE_VISIT_CHILDREN = "";
   if (DEFINE_VISIT_CHILDREN_LIST.length || estimatedSize) {
     DEFINE_VISIT_CHILDREN = `
@@ -791,6 +805,7 @@ void ${name}::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     ${name}* thisObject = jsCast<${name}*>(cell);
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
+    ${values}
     ${
       estimatedSize
         ? `if (auto* ptr = thisObject->wrapped()) {
@@ -846,7 +861,6 @@ ${name}* ${name}::create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::St
   ptr->finishCreation(vm);
   return ptr;
 }
-
 
 extern "C" void* ${typeName}__fromJS(JSC::EncodedJSValue value) {
   ${className(typeName)}* object = JSC::jsDynamicCast<${className(
@@ -929,18 +943,18 @@ function generateZig(
     estimatedSize,
   } = {} as ClassDefinition
 ) {
-  const exports: [string, string][] = [];
+  const exports = new Map<string, string>();
 
   if (construct) {
-    exports.push([`constructor`, classSymbolName(typeName, "construct")]);
+    exports.set(`constructor`, classSymbolName(typeName, "construct"));
   }
 
   if (finalize) {
-    exports.push([`finalize`, classSymbolName(typeName, "finalize")]);
+    exports.set(`finalize`, classSymbolName(typeName, "finalize"));
   }
 
   if (estimatedSize) {
-    exports.push([`estimatedSize`, symbolName(typeName, "estimatedSize")]);
+    exports.set(`estimatedSize`, symbolName(typeName, "estimatedSize"));
   }
 
   Object.values(klass).map((a) =>
@@ -1108,7 +1122,7 @@ pub const ${className(typeName)} = struct {
     comptime {
         ${typeCheck()}
         if (!JSC.is_bindgen) {
-${exports
+${[...exports]
   .sort(([a], [b]) => a.localeCompare(b))
   .map(
     ([internalName, externalName]) =>

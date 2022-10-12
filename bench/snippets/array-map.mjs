@@ -1,6 +1,8 @@
 // https://github.com/oven-sh/bun/issues/1096
 import { bench, run } from "mitata";
 
+const identity = (x) => x;
+
 for (let i = 0; i < 20; i++) {
   var array = new Array(i);
   for (let j = 0; j < i; j++) {

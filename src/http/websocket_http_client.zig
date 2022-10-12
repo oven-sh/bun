@@ -125,7 +125,7 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
         body_written: usize = 0,
         websocket_protocol: u64 = 0,
         event_loop_ref: bool = false,
-
+        hostname: [:0]u8 = "",
         pub const name = if (ssl) "WebSocketHTTPSClient" else "WebSocketHTTPClient";
 
         pub const shim = JSC.Shimmer("Bun", name, @This());
@@ -190,6 +190,12 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
             vm.eventLoop().start_server_on_next_tick = true;
 
             if (Socket.connect(host_.slice(), port, @ptrCast(*uws.SocketContext, socket_ctx), HTTPClient, client, "tcp")) |out| {
+                if (comptime ssl) {
+                    if (!strings.isIPAddress(host_.slice())) {
+                        out.hostname = bun.default_allocator.dupeZ(u8, host_.slice()) catch "";
+                    }
+                }
+
                 out.tcp.timeout(120);
                 return out;
             }
@@ -249,6 +255,14 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
 
             std.debug.assert(this.input_body_buf.len > 0);
             std.debug.assert(this.to_send.len == 0);
+
+            if (comptime ssl) {
+                if (this.hostname.len > 0) {
+                    socket.getNativeHandle().configureHTTPClient(this.hostname);
+                    bun.default_allocator.free(this.hostname);
+                    this.hostname = "";
+                }
+            }
 
             const wrote = socket.write(this.input_body_buf, true);
             if (wrote < 0) {

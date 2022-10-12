@@ -1,7 +1,7 @@
 import { expect, it, describe } from "bun:test";
 import { Database, constants } from "bun:sqlite";
 import { existsSync, fstat, writeFileSync } from "fs";
-var encode = (text) => Buffer.from(text);
+var encode = (text) => new TextEncoder().encode(text)
 
 it("Database.open", () => {
   // in a folder which doesn't exist

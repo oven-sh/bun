@@ -2110,6 +2110,9 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
                 .hostname = .{
                     .get = JSC.getterWrap(ThisServer, "getHostname"),
                 },
+                .protocol = .{
+                    .get = JSC.getterWrap(ThisServer, "getProtocol"),
+                },
                 .development = .{
                     .get = JSC.getterWrap(ThisServer, "getDevelopment"),
                 },
@@ -2290,6 +2293,14 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
             return ZigString.init(bun.span(this.config.hostname)).toValue(globalThis);
         }
 
+        pub fn getProtocol(_: *ThisServer, globalThis: *JSGlobalObject) JSC.JSValue {
+            if (comptime ssl_enabled) {
+                return ZigString.init("https:").toValue(globalThis);
+            } else {
+                return ZigString.init("http:").toValue(globalThis);
+            }
+        }
+
         pub fn getDevelopment(
             _: *ThisServer,
         ) JSC.JSValue {
@@ -2426,7 +2437,7 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
             return;
         }
 
-        pub fn onListen(this: *ThisServer, socket: ?*App.ListenSocket, _: uws.uws_app_listen_config_t) void {
+        pub fn onListen(this: *ThisServer, socket: ?*App.ListenSocket) void {
             if (socket == null) {
                 return this.onListenFailed();
             }

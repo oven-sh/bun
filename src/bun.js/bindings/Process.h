@@ -4,28 +4,24 @@
 
 #include "BunBuiltinNames.h"
 #include "BunClientData.h"
+#include "JSEventEmitter.h"
 
 namespace Zig {
 
 using namespace JSC;
 
-class Process : public JSC::JSNonFinalObject {
-    using Base = JSC::JSNonFinalObject;
+class Process : public WebCore::JSEventEmitter {
+    using Base = WebCore::JSEventEmitter;
 
 public:
-    Process(JSC::VM& vm, JSC::Structure* structure)
-        : Base(vm, structure)
+    Process(JSC::Structure* structure, WebCore::JSDOMGlobalObject& globalObject, Ref<WebCore::EventEmitter>&& impl)
+        : Base(structure, globalObject, WTFMove(impl))
     {
     }
 
-    DECLARE_INFO;
+    DECLARE_EXPORT_INFO;
 
     static constexpr unsigned StructureFlags = Base::StructureFlags;
-
-    template<typename CellType, SubspaceAccess> static GCClient::IsoSubspace* subspaceFor(VM& vm)
-    {
-        return &vm.plainObjectSpace();
-    }
 
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject,
         JSC::JSValue prototype)
@@ -34,10 +30,11 @@ public:
             JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
     }
 
-    static Process* create(JSC::VM& vm, JSC::Structure* structure)
+    static Process* create(WebCore::JSDOMGlobalObject& globalObject, JSC::Structure* structure)
     {
-        Process* accessor = new (NotNull, JSC::allocateCell<Process>(vm)) Process(vm, structure);
-        accessor->finishCreation(vm);
+        auto emitter = WebCore::EventEmitter::create(*globalObject.scriptExecutionContext());
+        Process* accessor = new (NotNull, JSC::allocateCell<Process>(globalObject.vm())) Process(structure, globalObject, WTFMove(emitter));
+        accessor->finishCreation(globalObject.vm());
         return accessor;
     }
 

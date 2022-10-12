@@ -1522,7 +1522,7 @@ pub fn serve(
     exception: js.ExceptionRef,
 ) js.JSValueRef {
     var args = JSC.Node.ArgumentsSlice.from(ctx.bunVM(), arguments);
-    var config = JSC.API.ServerConfig.fromJS(ctx.ptr(), &args, exception);
+    const config = JSC.API.ServerConfig.fromJS(ctx.ptr(), &args, exception);
     if (exception.* != null) {
         return null;
     }

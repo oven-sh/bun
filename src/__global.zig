@@ -5,18 +5,20 @@ const Output = @import("output.zig");
 const use_mimalloc = @import("./global.zig").use_mimalloc;
 const StringTypes = @import("./string_types.zig");
 
+const BASE_VERSION = "0.2";
+
 pub const build_id = std.fmt.parseInt(u64, std.mem.trim(u8, @embedFile("../build-id"), "\n \r\t"), 10) catch unreachable;
 pub const package_json_version = if (Environment.isDebug)
-    std.fmt.comptimePrint("0.1.{d}_debug", .{build_id})
+    std.fmt.comptimePrint(BASE_VERSION ++ ".{d}_debug", .{build_id})
 else
-    std.fmt.comptimePrint("0.1.{d}", .{build_id});
+    std.fmt.comptimePrint(BASE_VERSION ++ ".{d}", .{build_id});
 
 pub const package_json_version_with_sha = if (Environment.git_sha.len == 0)
     package_json_version
 else if (Environment.isDebug)
-    std.fmt.comptimePrint("0.1.{d}_debug ({s})", .{ build_id, Environment.git_sha[0..@minimum(Environment.git_sha.len, 8)] })
+    std.fmt.comptimePrint(BASE_VERSION ++ ".{d}_debug ({s})", .{ build_id, Environment.git_sha[0..@minimum(Environment.git_sha.len, 8)] })
 else
-    std.fmt.comptimePrint("0.1.{d} ({s})", .{ build_id, Environment.git_sha[0..@minimum(Environment.git_sha.len, 8)] });
+    std.fmt.comptimePrint(BASE_VERSION ++ ".{d} ({s})", .{ build_id, Environment.git_sha[0..@minimum(Environment.git_sha.len, 8)] });
 
 pub const os_name = if (Environment.isWindows)
     "win32"
@@ -45,7 +47,7 @@ pub inline fn getStartTime() i128 {
 
 pub const version: @import("./install/semver.zig").Version = .{
     .major = 0,
-    .minor = 1,
+    .minor = 2,
     .patch = build_id,
 };
 

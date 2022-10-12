@@ -197,6 +197,7 @@ extern "C" void JSCInitialize()
         JSC::Options::useBBQJIT() = true;
         JSC::Options::useJITCage() = false;
         JSC::Options::useShadowRealm() = true;
+        JSC::Options::showPrivateScriptsInStackTraces() = true;
         JSC::Options::ensureOptionsAreCoherent();
     }
 }
@@ -1992,8 +1993,9 @@ void GlobalObject::finishCreation(VM& vm)
 
     m_processObject.initLater(
         [](const JSC::LazyProperty<JSC::JSGlobalObject, JSC::JSObject>::Initializer& init) {
+            Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(init.owner);
             auto* process = Zig::Process::create(
-                init.vm, Zig::Process::createStructure(init.vm, init.owner, init.owner->objectPrototype()));
+                *globalObject, Zig::Process::createStructure(init.vm, init.owner, WebCore::JSEventEmitter::prototype(init.vm, *globalObject)));
             process->putDirectCustomAccessor(init.vm, JSC::Identifier::fromString(init.vm, "env"_s),
                 JSC::CustomGetterSetter::create(init.vm, lazyProcessEnvGetter, lazyProcessEnvSetter),
                 JSC::PropertyAttribute::DontDelete
@@ -2514,6 +2516,20 @@ void GlobalObject::installAPIGlobals(JSClassRef* globals, int count, JSC::VM& vm
 
         {
 
+            JSC::Identifier identifier = JSC::Identifier::fromString(vm, "version"_s);
+            object->putDirect(vm, PropertyName(identifier), JSC::jsOwnedString(vm, makeString(Bun__version + 1)),
+                JSC::PropertyAttribute::DontDelete | 0);
+        }
+
+        {
+
+            JSC::Identifier identifier = JSC::Identifier::fromString(vm, "revision"_s);
+            object->putDirect(vm, PropertyName(identifier), JSC::jsOwnedString(vm, makeString(Bun__version_sha)),
+                JSC::PropertyAttribute::DontDelete | 0);
+        }
+
+        {
+
             JSC::Identifier identifier = JSC::Identifier::fromString(vm, pathToFileURLString);
             object->putDirectNativeFunction(vm, this, identifier, 1, functionPathToFileURL, ImplementationVisibility::Public, NoIntrinsic,
                 JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly);
@@ -2763,7 +2779,7 @@ JSC::Identifier GlobalObject::moduleLoaderResolve(JSGlobalObject* globalObject,
     ErrorableZigString res;
     res.success = false;
     ZigString keyZ = toZigString(key, globalObject);
-    ZigString referrerZ = referrer.isString() ? toZigString(referrer, globalObject) : ZigStringEmpty;
+    ZigString referrerZ = referrer && !referrer.isUndefinedOrNull() && referrer.isString() ? toZigString(referrer, globalObject) : ZigStringEmpty;
     Zig__GlobalObject__resolve(&res, globalObject, &keyZ, &referrerZ);
 
     if (res.success) {
@@ -2799,7 +2815,7 @@ JSC::JSInternalPromise* GlobalObject::moduleLoaderImportModule(JSGlobalObject* g
     }
 
     auto result = JSC::importModule(globalObject, toIdentifier(resolved.result.value, globalObject),
-        parameters, JSC::jsUndefined());
+        JSC::jsUndefined(), parameters, JSC::jsUndefined());
     RETURN_IF_EXCEPTION(scope, promise->rejectWithCaughtException(globalObject, scope));
 
     return result;

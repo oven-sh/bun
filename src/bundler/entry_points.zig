@@ -201,7 +201,8 @@ pub const ServerEntryPoint = struct {
                     \\        if (server) {{
                     \\           server.reload(entryNamespace.default);
                     \\        }} else {{
-                    \\           globalThis[hmrSymbol] = Bun.serve(entryNamespace.default))
+                    \\           server = globalThis[hmrSymbol] = Bun.serve(entryNamespace.default))
+                    \\           console.debug(`Started server ${{server.protocol}}//${{server.hostname}}:${{server.port}}`);
                     \\        }}
                     \\      }}
                     \\   }}, reportError);
@@ -210,7 +211,8 @@ pub const ServerEntryPoint = struct {
                     \\   if (server) {{
                     \\      server.reload(entryNamespace.default);
                     \\   }} else {{
-                    \\      globalThis[hmrSymbol] = Bun.serve(entryNamespace.default))
+                    \\      server = globalThis[hmrSymbol] = Bun.serve(entryNamespace.default))
+                    \\      console.debug(`Started server ${{server.protocol}}//${{server.hostname}}:${{server.port}}`);
                     \\   }}
                     \\}}
                     \\

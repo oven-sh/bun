@@ -2,6 +2,12 @@ import { it, describe, expect } from "bun:test";
 import fs from "fs";
 import { gc } from "./gc";
 
+const exampleFixture = fs.readFileSync(
+  import.meta.path.substring(0, import.meta.path.lastIndexOf("/")) +
+    "/fetch.js.txt",
+  "utf8"
+);
+
 describe("fetch", () => {
   const urls = ["https://example.com", "http://example.com"];
   for (let url of urls) {
@@ -12,15 +18,30 @@ describe("fetch", () => {
       gc();
       const text = await response.text();
       gc();
-      expect(
-        fs.readFileSync(
-          import.meta.path.substring(0, import.meta.path.lastIndexOf("/")) +
-            "/fetch.js.txt",
-          "utf8"
-        )
-      ).toBe(text);
+      expect(exampleFixture).toBe(text);
     });
   }
+});
+
+it("simultaneous HTTPS fetch", async () => {
+  const urls = ["https://example.com", "https://www.example.com"];
+  for (let batch = 0; batch < 4; batch++) {
+    const promises = new Array(20);
+    for (let i = 0; i < 20; i++) {
+      promises[i] = fetch(urls[i % 2]);
+    }
+    const result = await Promise.all(promises);
+    expect(result.length).toBe(20);
+    for (let i = 0; i < 20; i++) {
+      expect(result[i].status).toBe(200);
+      expect(await result[i].text()).toBe(exampleFixture);
+    }
+  }
+});
+
+it("website with tlsextname", async () => {
+  // irony
+  await fetch("https://bun.sh", { method: "HEAD" });
 });
 
 function testBlobInterface(blobbyConstructor, hasBlobFn) {

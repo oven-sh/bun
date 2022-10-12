@@ -61,8 +61,7 @@ pub const Subprocess = struct {
 
     pub fn unref(this: *Subprocess) void {
         this.this_jsvalue.clear();
-        this.reffer.unref(this.globalThis.bunVM());
-        this.poll_ref.unref(this.globalThis.bunVM());
+        this.unrefWithoutGC(this.globalThis.bunVM());
     }
 
     pub fn constructor(
@@ -691,7 +690,7 @@ pub const Subprocess = struct {
                             };
                         }
                     }
-                    sink.watch(fd);
+                    // sink.watch(fd);
                     return Writable{ .pipe = sink };
                 },
                 .array_buffer, .blob => {
@@ -1208,10 +1207,17 @@ pub const Subprocess = struct {
         }
 
         if (!sync) {
+            var vm = this.globalThis.bunVM();
+            this.unrefWithoutGC(vm);
             this.waitpid_task = JSC.AnyTask.New(Subprocess, onExit).init(this);
             this.has_waitpid_task = true;
-            this.globalThis.bunVM().eventLoop().enqueueTask(JSC.Task.init(&this.waitpid_task));
+            vm.eventLoop().enqueueTask(JSC.Task.init(&this.waitpid_task));
         }
+    }
+
+    pub fn unrefWithoutGC(this: *Subprocess, vm: *JSC.VirtualMachine) void {
+        this.poll_ref.unref(vm);
+        this.reffer.unref(vm);
     }
 
     fn onExit(this: *Subprocess) void {

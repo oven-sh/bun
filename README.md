@@ -1973,7 +1973,29 @@ The interface for `Bun.serve` is based on what [Cloudflare Workers](https://deve
 
 ## `Bun.spawn` – spawn a process
 
-`Bun.spawn` lets you quickly spawn a process. Available as of Bun v0.2.0.
+`Bun.spawn` lets you quickly spawn a process.
+
+Available as of Bun v0.2.0, it tends to perform around 60% faster than child_process and scales better as your application uses more memory.
+
+```zig
+bun/bench/snippets on  main
+❯ bun spawn.mjs
+cpu: Apple M1 Max
+runtime: bun 0.2.0 (arm64-darwin)
+
+benchmark              time (avg)             (min … max)       p75       p99      p995
+--------------------------------------------------------- -----------------------------
+spawnSync echo hi  888.14 µs/iter    (821.83 µs … 1.2 ms) 905.92 µs      1 ms   1.03 ms
+
+bun/bench/snippets on  main
+❯ node spawn.node.mjs
+cpu: Apple M1 Max
+runtime: node v18.9.1 (arm64-darwin)
+
+benchmark              time (avg)             (min … max)       p75       p99      p995
+--------------------------------------------------------- -----------------------------
+spawnSync echo hi    1.47 ms/iter     (1.14 ms … 2.64 ms)   1.57 ms   2.37 ms   2.52 ms
+```
 
 ```ts
 import { spawn } from "bun";

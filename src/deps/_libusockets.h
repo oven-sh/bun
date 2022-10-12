@@ -155,8 +155,8 @@ void uws_app_run(int ssl, uws_app_t *);
 
 void uws_app_listen(int ssl, uws_app_t *app, int port,
                     uws_listen_handler handler, void *user_data);
-void uws_app_listen_with_config(int ssl, uws_app_t *app,
-                                const uws_app_listen_config_t *config,
+void uws_app_listen_with_config(int ssl, uws_app_t *app, const char *host,
+                                uint16_t port, int32_t options,
                                 uws_listen_handler handler, void *user_data);
 bool uws_constructor_failed(int ssl, uws_app_t *app);
 unsigned int uws_num_subscribers(int ssl, uws_app_t *app, const char *topic);

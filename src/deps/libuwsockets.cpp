@@ -195,25 +195,22 @@ void uws_app_listen(int ssl, uws_app_t *app, int port,
   }
 }
 
-void uws_app_listen_with_config(int ssl, uws_app_t *app,
-                                const uws_app_listen_config_t *config_,
+void uws_app_listen_with_config(int ssl, uws_app_t *app, const char *host,
+                                uint16_t port, int32_t options,
                                 uws_listen_handler handler, void *user_data) {
-  uws_app_listen_config_t config = *config_;
-  std::string hostname = config.host && config.host[0]
-                             ? std::string(config.host, strlen(config.host))
-                             : "";
+  std::string hostname = host && host[0] ? std::string(host, strlen(host)) : "";
   if (ssl) {
     uWS::SSLApp *uwsApp = (uWS::SSLApp *)app;
     uwsApp->listen(
-        hostname, config.port, config.options,
-        [handler, config, user_data](struct us_listen_socket_t *listen_socket) {
+        hostname, port, options,
+        [handler, user_data](struct us_listen_socket_t *listen_socket) {
           handler((struct us_listen_socket_t *)listen_socket, user_data);
         });
   } else {
     uWS::App *uwsApp = (uWS::App *)app;
     uwsApp->listen(
-        hostname, config.port, config.options,
-        [handler, config, user_data](struct us_listen_socket_t *listen_socket) {
+        hostname, port, options,
+        [handler, user_data](struct us_listen_socket_t *listen_socket) {
           handler((struct us_listen_socket_t *)listen_socket, user_data);
         });
   }

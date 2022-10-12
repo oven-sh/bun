@@ -178,11 +178,9 @@ async function runInServer(
   cb: (url: string) => void | Promise<void>
 ) {
   var server;
-  var thisPort = port++;
-  if (port > 4120) port = 4020;
   server = Bun.serve({
     ...opts,
-    port: thisPort,
+    port: port++,
     fetch(req) {
       try {
         return opts.fetch(req);
@@ -205,6 +203,9 @@ async function runInServer(
   } finally {
     server && server.stop();
     server = undefined;
+    if (port > 4200) {
+      port = 4120;
+    }
   }
 }
 

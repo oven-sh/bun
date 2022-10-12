@@ -3556,8 +3556,23 @@ pub const FileBlobLoader = struct {
         switch (rc) {
             .err => |err| {
                 const retry = std.os.E.AGAIN;
+                const errno = brk: {
+                    const _errno = err.getErrno();
+                    if (comptime Environment.isLinux) {
+                        // EPERM and its a FIFO on Linux? Trying to read past a FIFO which has already
+                        // sent a 0
+                        // Let's retry later.
+                        if (std.os.S.ISFIFO(this.mode) and
+                            !this.close_on_eof and _errno == .PERM)
+                        {
+                            break :brk .AGAIN;
+                        }
+                    }
 
-                switch (err.getErrno()) {
+                    break :brk _errno;
+                };
+
+                switch (errno) {
                     retry => {
                         if (this.finished) {
                             return .{ .done = {} };

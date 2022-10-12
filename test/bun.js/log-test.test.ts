@@ -10,7 +10,7 @@ it("should not log .env when quiet", async () => {
     "index.ts": "export default console.log('Here');",
   });
   const out = spawn({
-    cmd: [process.argv[0], "index.ts"],
+    cmd: ["bun", "index.ts"],
     stdout: "pipe",
     stderr: "pipe",
     cwd: "/tmp/log-test-silent",
@@ -30,7 +30,7 @@ it("should log .env by default", async () => {
   });
 
   const out = spawn({
-    cmd: [process.argv[0], "index.ts"],
+    cmd: ["bun", "index.ts"],
     stdout: "pipe",
     stderr: "pipe",
     cwd: "/tmp/log-test-silent",

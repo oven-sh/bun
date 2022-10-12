@@ -1,4 +1,4 @@
-import { readableStreamToText, spawn, write } from "bun";
+import { readableStreamToText, spawn, spawnSync, write } from "bun";
 import { describe, expect, it } from "bun:test";
 import { gcTick as _gcTick } from "gc";
 import { rmdirSync, unlinkSync, rmSync, writeFileSync } from "node:fs";
@@ -8,8 +8,48 @@ for (let [gcTick, label] of [
   [() => {}, "no gc tick"],
 ]) {
   describe(label, () => {
+    describe("spawnSync", () => {
+      const hugeString = "hello".repeat(10000).slice();
+
+      it("Uint8Array works as stdin", async () => {
+        const { stdout, stderr } = spawnSync({
+          cmd: ["cat"],
+          stdin: new TextEncoder().encode(hugeString),
+        });
+
+        expect(stdout.toString()).toBe(hugeString);
+        expect(stderr.byteLength).toBe(0);
+      });
+    });
+
     describe("spawn", () => {
       const hugeString = "hello".repeat(10000).slice();
+
+      it("Uint8Array works as stdin", async () => {
+        rmSync("/tmp/out.123.txt", { force: true });
+        gcTick();
+        const { exited } = spawn({
+          cmd: ["cat"],
+          stdin: new TextEncoder().encode(hugeString),
+          stdout: Bun.file("/tmp/out.123.txt"),
+        });
+
+        await exited;
+        expect(await Bun.file("/tmp/out.123.txt").text()).toBe(hugeString);
+      });
+
+      it("Blob works as stdin", async () => {
+        rmSync("/tmp/out.123.txt", { force: true });
+        gcTick();
+        const { exited } = spawn({
+          cmd: ["cat"],
+          stdin: new Blob([new TextEncoder().encode(hugeString)]),
+          stdout: Bun.file("/tmp/out.123.txt"),
+        });
+
+        await exited;
+        expect(await Bun.file("/tmp/out.123.txt").text()).toBe(hugeString);
+      });
 
       it("Bun.file() works as stdout", async () => {
         rmSync("/tmp/out.123.txt", { force: true });

@@ -1198,6 +1198,9 @@ pub const Class = NewClass(
         .spawn = .{
             .rfn = JSC.wrapWithHasContainer(JSC.Subprocess, "spawn", false, false, false),
         },
+        .spawnSync = .{
+            .rfn = JSC.wrapWithHasContainer(JSC.Subprocess, "spawnSync", false, false, false),
+        },
     },
     .{
         .main = .{

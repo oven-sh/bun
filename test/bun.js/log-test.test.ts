@@ -1,7 +1,7 @@
 import { it, expect } from "bun:test";
 import { basename, dirname, join } from "path";
 import * as fs from "fs";
-import { readableStreamToText, spawn } from "bun";
+import { readableStreamToText, spawnSync } from "bun";
 
 it("should not log .env when quiet", async () => {
   writeDirectoryTree("/tmp/log-test-silent", {
@@ -9,17 +9,12 @@ it("should not log .env when quiet", async () => {
     "bunfig.toml": `logLevel = "error"`,
     "index.ts": "export default console.log('Here');",
   });
-  const out = spawn({
+  const { stderr } = spawnSync({
     cmd: ["bun", "index.ts"],
-    stdout: "pipe",
-    stderr: "pipe",
     cwd: "/tmp/log-test-silent",
   });
 
-  out.ref();
-  await out.exited;
-  const text = await readableStreamToText(out.stderr);
-  expect(text).toBe("");
+  expect(stderr.toString()).toBe("");
 });
 
 it("should log .env by default", async () => {
@@ -29,17 +24,12 @@ it("should log .env by default", async () => {
     "index.ts": "export default console.log('Here');",
   });
 
-  const out = spawn({
+  const { stderr } = spawnSync({
     cmd: ["bun", "index.ts"],
-    stdout: "pipe",
-    stderr: "pipe",
     cwd: "/tmp/log-test-silent",
   });
 
-  out.ref();
-  await out.exited;
-  const text = await readableStreamToText(out.stderr);
-  expect(text.includes(".env")).toBe(true);
+  expect(stderr.toString().includes(".env")).toBe(true);
 });
 
 function writeDirectoryTree(base, paths) {

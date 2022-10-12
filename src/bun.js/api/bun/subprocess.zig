@@ -986,18 +986,6 @@ pub const Subprocess = struct {
             env_array.capacity = env_array.items.len;
         }
 
-        const any_ignore = stdio[0] == .ignore or stdio[1] == .ignore or stdio[2] == .ignore;
-        const dev_null_fd = @intCast(
-            i32,
-            if (any_ignore)
-                std.os.openZ("/dev/null", std.os.O.RDONLY | std.os.O.WRONLY, 0) catch |err| {
-                    globalThis.throw("failed to open /dev/null: {s}", .{err});
-                    return JSValue.jsUndefined();
-                }
-            else
-                -1,
-        );
-
         const stdin_pipe = if (stdio[0].isPiped()) os.pipe2(0) catch |err| {
             globalThis.throw("failed to create stdin pipe: {s}", .{err});
             return JSValue.jsUndefined();
@@ -1020,21 +1008,18 @@ pub const Subprocess = struct {
             &actions,
             stdin_pipe,
             std.os.STDIN_FILENO,
-            dev_null_fd,
         ) catch |err| return globalThis.handleError(err, "in configuring child stdin");
 
         stdio[1].setUpChildIoPosixSpawn(
             &actions,
             stdout_pipe,
             std.os.STDOUT_FILENO,
-            dev_null_fd,
         ) catch |err| return globalThis.handleError(err, "in configuring child stdout");
 
         stdio[2].setUpChildIoPosixSpawn(
             &actions,
             stderr_pipe,
             std.os.STDERR_FILENO,
-            dev_null_fd,
         ) catch |err| return globalThis.handleError(err, "in configuring child stderr");
 
         actions.chdir(cwd) catch |err| return globalThis.handleError(err, "in chdir()");
@@ -1109,7 +1094,10 @@ pub const Subprocess = struct {
             subprocess.stdin.pipe.signal = JSC.WebCore.Signal.init(&subprocess.stdin);
         }
 
-        const out = if (comptime !is_sync) subprocess.toJS(globalThis) else JSValue.zero;
+        const out = if (comptime !is_sync)
+            subprocess.toJS(globalThis)
+        else
+            JSValue.zero;
         if (comptime !is_sync)
             subprocess.this_jsvalue.set(globalThis, out);
 
@@ -1277,7 +1265,6 @@ pub const Subprocess = struct {
             actions: *PosixSpawn.Actions,
             pipe_fd: [2]i32,
             std_fileno: i32,
-            _: i32,
         ) !void {
             switch (stdio) {
                 .array_buffer, .blob, .pipe => {

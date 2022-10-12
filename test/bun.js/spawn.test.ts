@@ -11,6 +11,14 @@ for (let [gcTick, label] of [
     describe("spawnSync", () => {
       const hugeString = "hello".repeat(10000).slice();
 
+      it("as an array", () => {
+        const { stdout } = spawnSync(["echo", "hi"]);
+
+        // stdout is a Buffer
+        const text = stdout.toString();
+        expect(text).toBe("hi\n");
+      });
+
       it("Uint8Array works as stdin", async () => {
         const { stdout, stderr } = spawnSync({
           cmd: ["cat"],
@@ -24,6 +32,30 @@ for (let [gcTick, label] of [
 
     describe("spawn", () => {
       const hugeString = "hello".repeat(10000).slice();
+
+      it("as an array", async () => {
+        const { stdout, exited } = spawn(["echo", "hello"], {
+          stdout: "pipe",
+        });
+        gcTick();
+        expect(await new Response(stdout).text()).toBe("hello\n");
+      });
+
+      it("as an array with options object", async () => {
+        const { stdout } = spawn(["printenv", "FOO"], {
+          cwd: "/tmp",
+          env: {
+            ...process.env,
+            FOO: "bar",
+          },
+          stdin: null,
+          stdout: "pipe",
+          stderr: "inherit",
+        });
+
+        const text = await new Response(stdout).text();
+        expect(text).toBe("bar\n");
+      });
 
       it("Uint8Array works as stdin", async () => {
         rmSync("/tmp/out.123.txt", { force: true });

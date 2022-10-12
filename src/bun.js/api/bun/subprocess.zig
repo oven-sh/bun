@@ -787,17 +787,18 @@ pub const Subprocess = struct {
         return JSC.JSValue.jsNull();
     }
 
-    pub fn spawn(globalThis: *JSC.JSGlobalObject, args: JSValue) JSValue {
-        return spawnMaybeSync(globalThis, args, false);
+    pub fn spawn(globalThis: *JSC.JSGlobalObject, args: JSValue, secondaryArgsValue: ?JSValue) JSValue {
+        return spawnMaybeSync(globalThis, args, secondaryArgsValue, false);
     }
 
-    pub fn spawnSync(globalThis: *JSC.JSGlobalObject, args: JSValue) JSValue {
-        return spawnMaybeSync(globalThis, args, true);
+    pub fn spawnSync(globalThis: *JSC.JSGlobalObject, args: JSValue, secondaryArgsValue: ?JSValue) JSValue {
+        return spawnMaybeSync(globalThis, args, secondaryArgsValue, true);
     }
 
     pub fn spawnMaybeSync(
         globalThis: *JSC.JSGlobalObject,
-        args: JSValue,
+        args_: JSValue,
+        secondaryArgsValue: ?JSValue,
         comptime is_sync: bool,
     ) JSValue {
         var arena = std.heap.ArenaAllocator.init(bun.default_allocator);
@@ -815,8 +816,8 @@ pub const Subprocess = struct {
 
         var stdio = [3]Stdio{
             .{ .ignore = .{} },
-            .{ .inherit = .{} },
             .{ .pipe = null },
+            .{ .inherit = {} },
         };
 
         if (comptime is_sync) {
@@ -827,138 +828,155 @@ pub const Subprocess = struct {
         var on_exit_callback = JSValue.zero;
         var PATH = globalThis.bunVM().bundler.env.get("PATH") orelse "";
         var argv: std.ArrayListUnmanaged(?[*:0]const u8) = undefined;
+        var cmd_value = JSValue.zero;
+        var args = args_;
         {
-            var cmd_value = args.get(globalThis, "cmd") orelse {
-                globalThis.throwInvalidArguments("cmd must be an array of strings", .{});
-                return JSValue.jsUndefined();
-            };
-
-            var cmds_array = cmd_value.arrayIterator(globalThis);
-            argv = @TypeOf(argv).initCapacity(allocator, cmds_array.len) catch {
-                globalThis.throw("out of memory", .{});
-                return JSValue.jsUndefined();
-            };
-
-            if (cmd_value.isEmptyOrUndefinedOrNull()) {
-                globalThis.throwInvalidArguments("cmd must be an array of strings", .{});
+            if (args.isEmptyOrUndefinedOrNull()) {
+                globalThis.throwInvalidArguments("cmds must be an array", .{});
                 return JSValue.jsUndefined();
             }
 
-            if (cmds_array.len == 0) {
-                globalThis.throwInvalidArguments("cmd must not be empty", .{});
+            const args_type = args.jsType();
+            if (args_type.isArray()) {
+                cmd_value = args;
+                args = secondaryArgsValue orelse JSValue.zero;
+            } else if (args.get(globalThis, "cmd")) |cmd_value_| {
+                cmd_value = cmd_value_;
+            } else {
+                globalThis.throwInvalidArguments("cmds must be an array", .{});
                 return JSValue.jsUndefined();
             }
 
             {
-                var first_cmd = cmds_array.next().?;
-                var arg0 = first_cmd.toSlice(globalThis, allocator);
-                defer arg0.deinit();
-                var path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
-                var resolved = Which.which(&path_buf, PATH, cwd, arg0.slice()) orelse {
-                    globalThis.throwInvalidArguments("cmd not in $PATH: {s}", .{arg0});
+                var cmds_array = cmd_value.arrayIterator(globalThis);
+                argv = @TypeOf(argv).initCapacity(allocator, cmds_array.len) catch {
+                    globalThis.throw("out of memory", .{});
                     return JSValue.jsUndefined();
                 };
-                argv.appendAssumeCapacity(allocator.dupeZ(u8, bun.span(resolved)) catch {
-                    globalThis.throw("out of memory", .{});
+
+                if (cmd_value.isEmptyOrUndefinedOrNull()) {
+                    globalThis.throwInvalidArguments("cmd must be an array of strings", .{});
                     return JSValue.jsUndefined();
-                });
-            }
+                }
 
-            while (cmds_array.next()) |value| {
-                argv.appendAssumeCapacity(value.getZigString(globalThis).toOwnedSliceZ(allocator) catch {
-                    globalThis.throw("out of memory", .{});
+                if (cmds_array.len == 0) {
+                    globalThis.throwInvalidArguments("cmd must not be empty", .{});
                     return JSValue.jsUndefined();
-                });
-            }
+                }
 
-            if (argv.items.len == 0) {
-                globalThis.throwInvalidArguments("cmd must be an array of strings", .{});
-                return JSValue.jsUndefined();
-            }
-
-            if (args.get(globalThis, "cwd")) |cwd_| {
-                if (!cwd_.isEmptyOrUndefinedOrNull()) {
-                    cwd = cwd_.getZigString(globalThis).toOwnedSliceZ(allocator) catch {
-                        globalThis.throw("out of memory", .{});
+                {
+                    var first_cmd = cmds_array.next().?;
+                    var arg0 = first_cmd.toSlice(globalThis, allocator);
+                    defer arg0.deinit();
+                    var path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+                    var resolved = Which.which(&path_buf, PATH, cwd, arg0.slice()) orelse {
+                        globalThis.throwInvalidArguments("cmd not in $PATH: {s}", .{arg0});
                         return JSValue.jsUndefined();
                     };
+                    argv.appendAssumeCapacity(allocator.dupeZ(u8, bun.span(resolved)) catch {
+                        globalThis.throw("out of memory", .{});
+                        return JSValue.jsUndefined();
+                    });
+                }
+
+                while (cmds_array.next()) |value| {
+                    argv.appendAssumeCapacity(value.getZigString(globalThis).toOwnedSliceZ(allocator) catch {
+                        globalThis.throw("out of memory", .{});
+                        return JSValue.jsUndefined();
+                    });
+                }
+
+                if (argv.items.len == 0) {
+                    globalThis.throwInvalidArguments("cmd must be an array of strings", .{});
+                    return JSValue.jsUndefined();
                 }
             }
 
-            if (args.get(globalThis, "onExit")) |onExit_| {
-                if (!onExit_.isEmptyOrUndefinedOrNull()) {
-                    if (!onExit_.isCell() or !onExit_.isCallable(globalThis.vm())) {
-                        globalThis.throwInvalidArguments("onExit must be a function or undefined", .{});
-                        return JSValue.jsUndefined();
-                    }
-                    on_exit_callback = onExit_;
-                }
-            }
-
-            if (args.get(globalThis, "env")) |object| {
-                if (!object.isEmptyOrUndefinedOrNull()) {
-                    if (!object.isObject()) {
-                        globalThis.throwInvalidArguments("env must be an object", .{});
-                        return JSValue.jsUndefined();
-                    }
-
-                    var object_iter = JSC.JSPropertyIterator(.{
-                        .skip_empty_name = false,
-                        .include_value = true,
-                    }).init(globalThis, object.asObjectRef());
-                    defer object_iter.deinit();
-                    env_array.ensureTotalCapacityPrecise(allocator, object_iter.len) catch {
-                        globalThis.throw("out of memory", .{});
-                        return JSValue.jsUndefined();
-                    };
-
-                    while (object_iter.next()) |key| {
-                        var value = object_iter.value;
-                        var line = std.fmt.allocPrintZ(allocator, "{}={}", .{ key, value.getZigString(globalThis) }) catch {
-                            globalThis.throw("out of memory", .{});
-                            return JSValue.jsUndefined();
-                        };
-
-                        if (key.eqlComptime("PATH")) {
-                            PATH = bun.span(line["PATH=".len..]);
-                        }
-                        env_array.append(allocator, line) catch {
+            if (args != .zero and args.isObject()) {
+                if (args.get(globalThis, "cwd")) |cwd_| {
+                    if (!cwd_.isEmptyOrUndefinedOrNull()) {
+                        cwd = cwd_.getZigString(globalThis).toOwnedSliceZ(allocator) catch {
                             globalThis.throw("out of memory", .{});
                             return JSValue.jsUndefined();
                         };
                     }
                 }
-            }
 
-            if (args.get(globalThis, "stdio")) |stdio_val| {
-                if (!stdio_val.isEmptyOrUndefinedOrNull()) {
-                    if (stdio_val.jsType().isArray()) {
-                        var stdio_iter = stdio_val.arrayIterator(globalThis);
-                        stdio_iter.len = @minimum(stdio_iter.len, 3);
-                        var i: usize = 0;
-                        while (stdio_iter.next()) |value| : (i += 1) {
-                            if (!extractStdio(globalThis, i, value, &stdio))
-                                return JSC.JSValue.jsUndefined();
+                if (args.get(globalThis, "onExit")) |onExit_| {
+                    if (!onExit_.isEmptyOrUndefinedOrNull()) {
+                        if (!onExit_.isCell() or !onExit_.isCallable(globalThis.vm())) {
+                            globalThis.throwInvalidArguments("onExit must be a function or undefined", .{});
+                            return JSValue.jsUndefined();
                         }
-                    } else {
-                        globalThis.throwInvalidArguments("stdio must be an array", .{});
-                        return JSValue.jsUndefined();
+                        on_exit_callback = onExit_;
                     }
                 }
-            } else {
-                if (args.get(globalThis, "stdin")) |value| {
-                    if (!extractStdio(globalThis, std.os.STDIN_FILENO, value, &stdio))
-                        return JSC.JSValue.jsUndefined();
+
+                if (args.get(globalThis, "env")) |object| {
+                    if (!object.isEmptyOrUndefinedOrNull()) {
+                        if (!object.isObject()) {
+                            globalThis.throwInvalidArguments("env must be an object", .{});
+                            return JSValue.jsUndefined();
+                        }
+
+                        var object_iter = JSC.JSPropertyIterator(.{
+                            .skip_empty_name = false,
+                            .include_value = true,
+                        }).init(globalThis, object.asObjectRef());
+                        defer object_iter.deinit();
+                        env_array.ensureTotalCapacityPrecise(allocator, object_iter.len) catch {
+                            globalThis.throw("out of memory", .{});
+                            return JSValue.jsUndefined();
+                        };
+
+                        while (object_iter.next()) |key| {
+                            var value = object_iter.value;
+                            var line = std.fmt.allocPrintZ(allocator, "{}={}", .{ key, value.getZigString(globalThis) }) catch {
+                                globalThis.throw("out of memory", .{});
+                                return JSValue.jsUndefined();
+                            };
+
+                            if (key.eqlComptime("PATH")) {
+                                PATH = bun.span(line["PATH=".len..]);
+                            }
+                            env_array.append(allocator, line) catch {
+                                globalThis.throw("out of memory", .{});
+                                return JSValue.jsUndefined();
+                            };
+                        }
+                    }
                 }
 
-                if (args.get(globalThis, "stderr")) |value| {
-                    if (!extractStdio(globalThis, std.os.STDERR_FILENO, value, &stdio))
-                        return JSC.JSValue.jsUndefined();
-                }
+                if (args.get(globalThis, "stdio")) |stdio_val| {
+                    if (!stdio_val.isEmptyOrUndefinedOrNull()) {
+                        if (stdio_val.jsType().isArray()) {
+                            var stdio_iter = stdio_val.arrayIterator(globalThis);
+                            stdio_iter.len = @minimum(stdio_iter.len, 3);
+                            var i: usize = 0;
+                            while (stdio_iter.next()) |value| : (i += 1) {
+                                if (!extractStdio(globalThis, i, value, &stdio))
+                                    return JSC.JSValue.jsUndefined();
+                            }
+                        } else {
+                            globalThis.throwInvalidArguments("stdio must be an array", .{});
+                            return JSValue.jsUndefined();
+                        }
+                    }
+                } else {
+                    if (args.get(globalThis, "stdin")) |value| {
+                        if (!extractStdio(globalThis, std.os.STDIN_FILENO, value, &stdio))
+                            return JSC.JSValue.jsUndefined();
+                    }
 
-                if (args.get(globalThis, "stdout")) |value| {
-                    if (!extractStdio(globalThis, std.os.STDOUT_FILENO, value, &stdio))
-                        return JSC.JSValue.jsUndefined();
+                    if (args.get(globalThis, "stderr")) |value| {
+                        if (!extractStdio(globalThis, std.os.STDERR_FILENO, value, &stdio))
+                            return JSC.JSValue.jsUndefined();
+                    }
+
+                    if (args.get(globalThis, "stdout")) |value| {
+                        if (!extractStdio(globalThis, std.os.STDOUT_FILENO, value, &stdio))
+                            return JSC.JSValue.jsUndefined();
+                    }
                 }
             }
         }

@@ -13,7 +13,8 @@
         "${workspaceFolder}/src/bun.js/bindings/WebCore/",
         "${workspaceFolder}/src/bun.js/WebKit/Source/bmalloc/",
         "${workspaceFolder}/src/bun.js/WebKit/WebKitBuild/Release/ICU/Headers/",
-        "${workspaceFolder}/../webkit-build/include/"
+        "${workspaceFolder}/../webkit-build/include/",
+        "${workspaceFolder}/src/deps/"
       ],
       "browse": {
         "path": [

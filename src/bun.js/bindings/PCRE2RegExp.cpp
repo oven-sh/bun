@@ -17,9 +17,130 @@ extern "C" EncodedJSValue jsFunctionGetPCRE2RegExpConstructor(JSGlobalObject * l
 
 namespace Zig {
 
+static WTF::String to16Bit(ASCIILiteral str)
+{
+    return WTF::String::make16BitFrom8BitSource(str.characters8(), str.length());
+}
+
+static  WTF::String to16Bit(JSC::JSString* str, JSC::JSGlobalObject *globalObject) {
+    if (!str->is8Bit() || str->length() == 0) {
+        return str->value(globalObject);
+    }
+
+    auto value = str->value(globalObject);
+    return WTF::String::make16BitFrom8BitSource(value.characters8(), value.length());
+}
 
 
+static  WTF::String to16Bit(JSValue jsValue, JSC::JSGlobalObject *globalObject, ASCIILiteral defaultValue) {
+    if (!jsValue || jsValue.isUndefinedOrNull()) {
+        return  to16Bit(defaultValue);
+    }
 
+    auto *jsString = jsValue.toString(globalObject);
+    if (jsString->length() == 0) {
+        return to16Bit(defaultValue);
+    }
+
+    return to16Bit(jsString, globalObject);
+}
+
+static inline bool is16BitLineTerminator(UChar c)
+{
+    return c == '\r' || c == '\n' || (c & ~1) == 0x2028;
+}
+
+static inline WTF::String escapedPattern(const WTF::String& pattern, const UChar* characters, size_t length)
+{
+    bool previousCharacterWasBackslash = false;
+    bool inBrackets = false;
+    bool shouldEscape = false;
+
+    // 15.10.6.4 specifies that RegExp.prototype.toString must return '/' + source + '/',
+    // and also states that the result must be a valid RegularExpressionLiteral. '//' is
+    // not a valid RegularExpressionLiteral (since it is a single line comment), and hence
+    // source cannot ever validly be "". If the source is empty, return a different Pattern
+    // that would match the same thing.
+    if (!length)
+        return "(?:)"_s;
+
+    // early return for strings that don't contain a forwards slash and LineTerminator
+    for (unsigned i = 0; i < length; ++i) {
+        UChar ch = characters[i];
+        if (!previousCharacterWasBackslash) {
+            if (inBrackets) {
+                if (ch == ']')
+                    inBrackets = false;
+            } else {
+                if (ch == '/') {
+                    shouldEscape = true;
+                    break;
+                }
+                if (ch == '[')
+                    inBrackets = true;
+            }
+        }
+
+        if (is16BitLineTerminator(ch)) {
+            shouldEscape = true;
+            break;
+        }
+
+        if (previousCharacterWasBackslash)
+            previousCharacterWasBackslash = false;
+        else
+            previousCharacterWasBackslash = ch == '\\';
+    }
+
+    if (!shouldEscape)
+        return pattern;
+
+    previousCharacterWasBackslash = false;
+    inBrackets = false;
+    StringBuilder result;
+    for (unsigned i = 0; i < length; ++i) {
+        UChar ch = characters[i];
+        if (!previousCharacterWasBackslash) {
+            if (inBrackets) {
+                if (ch == ']')
+                    inBrackets = false;
+            } else {
+                if (ch == '/')
+                    result.append('\\');
+                else if (ch == '[')
+                    inBrackets = true;
+            }
+        }
+
+        // escape LineTerminator
+        if (is16BitLineTerminator(ch)) {
+            if (!previousCharacterWasBackslash) {
+                result.append('\\');
+            }
+
+            if (ch == '\n') {
+                result.append('n');
+            }
+            else if (ch == '\r') {
+                result.append('r');
+            }
+            else if (ch == 0x2028) {
+                result.append("u2028");
+            }
+            else {
+                result.append("u2029");
+            }
+        } else
+            result.append(ch);
+
+        if (previousCharacterWasBackslash)
+            previousCharacterWasBackslash = false;
+        else
+            previousCharacterWasBackslash = ch == '\\';
+    }
+
+    return result.toString();
+}
 
 class PCRE2RegExpPrototype final : public JSC::JSNonFinalObject {
     public:
@@ -105,6 +226,7 @@ public:
     void setPatternString(const WTF::String& patternString) { m_patternString = patternString; }
 
     pcre2_code_16* m_regExpCode = NULL;
+    int32_t m_lastIndex = 0;
 
 private:
     PCRE2RegExp(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure)
@@ -165,7 +287,6 @@ JSC_DEFINE_CUSTOM_GETTER(pcre2RegExpProtoGetterIgnoreCase, (JSGlobalObject *glob
 JSC_DEFINE_CUSTOM_GETTER(pcre2RegExpProtoGetterMultiline, (JSGlobalObject *globalObject, EncodedJSValue encodedThis, PropertyName))
 {
     auto *thisValue = jsDynamicCast<PCRE2RegExp*>(JSValue::decode(encodedThis));
-    thisValue->globalObject() == globalObject;
     if (UNLIKELY(!thisValue)) {
         return JSValue::encode(jsUndefined());
     }
@@ -197,9 +318,7 @@ JSC_DEFINE_CUSTOM_GETTER(pcre2RegExpProtoGetterSource, (JSGlobalObject *globalOb
     if (!thisValue)
         return JSValue::encode(jsUndefined());
 
-    // check thisValue->patternString() for slashes and return escaped string
-
-    return JSValue::encode(jsString(globalObject->vm(), thisValue->patternString()));
+    return JSValue::encode(jsString(globalObject->vm(), escapedPattern(thisValue->patternString(), thisValue->patternString().characters16(), thisValue->patternString().length())));
 }
 
 JSC_DEFINE_CUSTOM_GETTER(pcre2RegExpProtoGetterFlags, (JSGlobalObject *globalObject, EncodedJSValue encodedThis, PropertyName))
@@ -209,6 +328,26 @@ JSC_DEFINE_CUSTOM_GETTER(pcre2RegExpProtoGetterFlags, (JSGlobalObject *globalObj
         return JSValue::encode(jsUndefined());
 
     return JSValue::encode(jsString(globalObject->vm(), thisValue->flagsString()));
+}
+
+JSC_DEFINE_CUSTOM_GETTER(pcre2RegExpProtoGetterLastIndex, (JSGlobalObject *globalObject, EncodedJSValue encodedThis, PropertyName))
+{
+    auto *thisValue = jsDynamicCast<PCRE2RegExp*>(JSValue::decode(encodedThis));
+    return JSValue::encode(jsNumber(thisValue->m_lastIndex));
+}
+
+JSC_DEFINE_CUSTOM_SETTER(pcre2RegExpProtoSetterLastIndex, (JSGlobalObject *globalObject, EncodedJSValue encodedThis, EncodedJSValue encodedValue, PropertyName))
+{
+    auto *thisValue = jsDynamicCast<PCRE2RegExp*>(JSValue::decode(encodedThis));
+    auto throwScope = DECLARE_THROW_SCOPE(globalObject->vm());
+    JSValue value = JSValue::decode(encodedValue);
+    if (!value.isAnyInt()) {
+        throwException(globalObject, throwScope, createTypeError(globalObject, "lastIndex must be an integer"_s));
+        return false;
+    }
+    int32_t lastIndex = value.toInt32(globalObject);
+    thisValue->m_lastIndex = lastIndex;
+    return true;
 }
 
 bool validateRegExpFlags(WTF::StringView flags){
@@ -237,7 +376,8 @@ JSC_DEFINE_HOST_FUNCTION(pcre2RegExpProtoFuncCompile, (JSGlobalObject *globalObj
         return JSValue::encode(jsUndefined());
 
     if (thisRegExp->globalObject() != globalObject) {
-        return JSValue::encode(throwScope.throwException(globalObject, createTypeError(globalObject, makeString("RegExp.prototype.compile function's Realm must be the same to |this| RegExp object"_s))));
+        throwScope.throwException(globalObject, createTypeError(globalObject, makeString("RegExp.prototype.compile function's Realm must be the same to |this| RegExp object"_s)));
+        return JSValue::encode({});
     }
 
     JSValue arg0 = callFrame->argument(0);
@@ -245,19 +385,21 @@ JSC_DEFINE_HOST_FUNCTION(pcre2RegExpProtoFuncCompile, (JSGlobalObject *globalObj
 
     if (auto* regExpObject = jsDynamicCast<PCRE2RegExp*>(arg0)) {
         if (!arg1.isUndefined()) {
-            return JSValue::encode(throwScope.throwException(globalObject, createTypeError(globalObject, makeString("Cannot supply flags when constructing one RegExp from another."_s))));
+            throwScope.throwException(globalObject, createTypeError(globalObject, makeString("Cannot supply flags when constructing one RegExp from another."_s)));
+            return JSValue::encode({});
         }
         thisRegExp->setPatternString(regExpObject->patternString());
         thisRegExp->setFlagsString(regExpObject->flagsString());
     } else {
-        WTF::String newPatternString = arg0.isUndefined() ? WTF::String("(?:)"_s) : arg0.toWTFString(globalObject);
+        WTF::String newPatternString = to16Bit(arg0, globalObject, "(?:)"_s);
         RETURN_IF_EXCEPTION(scope, {});
 
-        WTF::String newFlagsString = arg1.isUndefined() ? emptyString() : arg1.toWTFString(globalObject);
+        WTF::String newFlagsString = to16Bit(arg1, globalObject, ""_s);
         RETURN_IF_EXCEPTION(scope, {});
 
         if (!validateRegExpFlags(newFlagsString)) {
-            return JSValue::encode(throwScope.throwException(globalObject, createSyntaxError(globalObject, makeString("Invalid flags supplied to RegExp constructor"_s))));
+            throwScope.throwException(globalObject, createSyntaxError(globalObject, makeString("Invalid flags supplied to RegExp constructor."_s)));
+            return JSValue::encode({});
         }
 
         thisRegExp->setPatternString(newPatternString);
@@ -265,19 +407,19 @@ JSC_DEFINE_HOST_FUNCTION(pcre2RegExpProtoFuncCompile, (JSGlobalObject *globalObj
     }
 
     uint32_t flags = 0;
-    if (thisRegExp->flagsString().contains("i"_s)) {
+    if (thisRegExp->flagsString().contains('i')) {
         flags |= PCRE2_CASELESS;
     }
-    if (thisRegExp->flagsString().contains("m"_s)) {
+    if (thisRegExp->flagsString().contains('m')) {
         flags |= PCRE2_MULTILINE;
     }
-    if (thisRegExp->flagsString().contains("s"_s)) {
+    if (thisRegExp->flagsString().contains('s')) {
         flags |= PCRE2_DOTALL;
     }
-    if (thisRegExp->flagsString().contains("u"_s)) {
+    if (thisRegExp->flagsString().contains('u')) {
         flags |= PCRE2_UTF;
     }
-    if (thisRegExp->flagsString().contains("y"_s)) {
+    if (thisRegExp->flagsString().contains('y')) {
         flags |= PCRE2_ANCHORED;
     }
 
@@ -295,19 +437,18 @@ JSC_DEFINE_HOST_FUNCTION(pcre2RegExpProtoFuncCompile, (JSGlobalObject *globalObj
     if (regExpCode == NULL) {
         PCRE2_UCHAR16 buffer[256] = { 0 };
         pcre2_get_error_message_16(errorCode, buffer, sizeof(buffer));
+
         WTF::StringBuilder errorMessage = WTF::StringBuilder();
         errorMessage.append("Invalid regular expression: ");
         errorMessage.append(reinterpret_cast<const char16_t*>(buffer));
         errorMessage.append(" at offset: ");
         errorMessage.append(errorOffset);
-        return JSValue::encode(throwScope.throwException(globalObject, createSyntaxError(globalObject, errorMessage.toString())));
+        throwScope.throwException(globalObject, createSyntaxError(globalObject, errorMessage.toString()));
+        return JSValue::encode({});
     }
 
+    pcre2_code_free_16(thisRegExp->m_regExpCode);
     thisRegExp->m_regExpCode = regExpCode;
-
-    // if(newFlagsString.is8Bit()) {
-    //     newFlagsString.make16BitFrom8BitSource(newFlagsString.characters8(), newFlagsString.length());
-    // }
 
     return JSValue::encode(jsUndefined());
 }
@@ -327,7 +468,8 @@ JSC_DEFINE_HOST_FUNCTION(pcre2RegExpProtoFuncTest, (JSGlobalObject *globalObject
         return JSValue::encode(jsBoolean(false));
     }
 
-    WTF::String string = arg.toString(globalObject)->value(globalObject);
+    WTF::String string = to16Bit(arg, globalObject, ""_s);
+    RETURN_IF_EXCEPTION(scope, JSValue::encode({}));
 
     pcre2_match_data_16* matchData = pcre2_match_data_create_from_pattern_16(thisValue->m_regExpCode, NULL);
 
@@ -341,8 +483,10 @@ JSC_DEFINE_HOST_FUNCTION(pcre2RegExpProtoFuncTest, (JSGlobalObject *globalObject
         NULL
     );
 
+    pcre2_match_data_free_16(matchData);
+
     if (matchResult < 0) {
-        // catch more errors here?
+        // catch errors here?
 
         // switch(matchResult) {
         //     case PCRE2_ERROR_NOMATCH: {
@@ -355,12 +499,111 @@ JSC_DEFINE_HOST_FUNCTION(pcre2RegExpProtoFuncTest, (JSGlobalObject *globalObject
         return JSValue::encode(jsBoolean(false));
     }
 
+
     return JSValue::encode(jsBoolean(true));
 }
 JSC_DEFINE_HOST_FUNCTION(pcre2RegExpProtoFuncExec, (JSGlobalObject *globalObject ,JSC::CallFrame *callFrame))
 {
+    auto& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
 
-    return JSValue::encode(jsUndefined());
+    auto *thisValue = jsDynamicCast<PCRE2RegExp*>(callFrame->thisValue());
+    if (!thisValue)
+        return JSValue::encode(jsUndefined());
+
+    JSValue arg = callFrame->argument(0);
+    if (!arg || arg.isUndefinedOrNull()) {
+        thisValue->m_lastIndex = 0;
+        return JSValue::encode(jsNull());
+    }
+
+    WTF::String string = to16Bit(arg, globalObject, ""_s);
+    RETURN_IF_EXCEPTION(scope, JSValue::encode({}));
+
+    pcre2_match_data_16* matchData = pcre2_match_data_create_from_pattern_16(thisValue->m_regExpCode, NULL);
+
+    int matchResult = pcre2_match_16(
+        thisValue->m_regExpCode,
+        reinterpret_cast<PCRE2_SPTR16>(string.characters16()),
+        string.length(),
+        thisValue->m_lastIndex,
+        0,
+        matchData,
+        NULL
+    );
+
+    if (matchResult < 0) {
+        // catch errors here?
+
+        // switch(matchResult) {
+        //     case PCRE2_ERROR_NOMATCH: {
+        //         return JSValue::encode(jsBoolean(false));
+        //     }
+        //     default: {
+        //         return JSValue::encode(jsBoolean(false));
+        //     }
+        // }
+        return JSValue::encode(jsNull());
+    }
+
+    size_t* outVector = pcre2_get_ovector_pointer_16(matchData);
+
+    if (matchResult == 0) {
+        // no matches
+        pcre2_match_data_free_16(matchData);
+        return JSValue::encode(jsNull());
+    }
+
+    PCRE2_SPTR16 str = reinterpret_cast<PCRE2_SPTR16>(string.characters16());
+
+    size_t count = pcre2_get_ovector_count_16(matchData);
+
+    JSArray* indicesArray = constructEmptyArray(globalObject, nullptr, 0);
+    RETURN_IF_EXCEPTION(scope, JSValue::encode({}));
+    JSArray* result = constructEmptyArray(globalObject, nullptr, 0);
+    RETURN_IF_EXCEPTION(scope, JSValue::encode({}));
+    
+    result->putDirect(vm, vm.propertyNames->index, jsNumber(outVector[0]));
+    result->putDirect(vm, vm.propertyNames->input, jsString(vm, string));
+    result->putDirect(vm, vm.propertyNames->groups, jsUndefined());
+
+    for (size_t i = 0; i < count; i++) {
+        PCRE2_SPTR16 substringStart = str + outVector[2 * i];
+        PCRE2_SIZE substringLength = outVector[2 * i + 1] - outVector[2 * i];
+        UChar *ptr;
+        WTF::String outString;
+        
+        if (substringLength > 0) {
+            outString = WTF::String::createUninitialized(static_cast<unsigned int>(substringLength), ptr); 
+            if (UNLIKELY(!ptr)) {
+                throwOutOfMemoryError(globalObject, scope);
+                pcre2_match_data_free_16(matchData);
+                return JSValue::encode(jsNull());
+            }
+        
+            memcpy(ptr, substringStart, substringLength * sizeof(UChar));;
+        }
+
+        result->putDirectIndex(globalObject, i, jsString(vm, outString));
+
+        JSArray* indices = constructEmptyArray(globalObject, nullptr, 2);
+        indices->putDirectIndex(globalObject, 0, jsNumber(outVector[2 * i]));
+        indices->putDirectIndex(globalObject, 1, jsNumber(outVector[2 * i + 1]));
+        indicesArray->putDirectIndex(globalObject, i, indices);
+
+        RETURN_IF_EXCEPTION(scope, JSValue::encode({}));
+    }
+
+    if (thisValue->flagsString().contains('g')) {
+        result->putDirect(vm, vm.propertyNames->indices, indicesArray);
+    }
+
+    thisValue->m_lastIndex = outVector[2 * (count - 1) + 1];
+
+    pcre2_match_data_free_16(matchData);
+
+    return JSValue::encode(result);
 }
 JSC_DEFINE_HOST_FUNCTION(pcre2RegExpProtoFuncToString, (JSGlobalObject *globalObject ,JSC::CallFrame *callFrame))
 {
@@ -368,13 +611,17 @@ JSC_DEFINE_HOST_FUNCTION(pcre2RegExpProtoFuncToString, (JSGlobalObject *globalOb
     if (!thisValue)
         return JSValue::encode(jsUndefined());
 
-    WTF::String patternString = thisValue->patternString();
+    WTF::String patternString = escapedPattern(thisValue->patternString(), thisValue->patternString().characters16(), thisValue->patternString().length());
     WTF::String flagsString = thisValue->flagsString();
 
+    WTF::StringBuilder source;
+    source.append("/"_s);
+    source.append(patternString);
+    source.append("/"_s);
+    source.append(flagsString);
 
-    return JSValue::encode(jsString(globalObject->vm(), WTF::String("/"_s + patternString + "/"_s + flagsString)));
+    return JSValue::encode(jsString(globalObject->vm(), source.toString()));
 }
-
 
 void PCRE2RegExpPrototype::finishCreation(VM& vm, JSGlobalObject* globalObject)
 {
@@ -392,6 +639,7 @@ void PCRE2RegExpPrototype::finishCreation(VM& vm, JSGlobalObject* globalObject)
     this->putDirectCustomAccessor(vm, vm.propertyNames->unicode,  JSC::CustomGetterSetter::create(vm, pcre2RegExpProtoGetterUnicode, nullptr), 0 | PropertyAttribute::CustomAccessor | PropertyAttribute::ReadOnly);
     this->putDirectCustomAccessor(vm, vm.propertyNames->source,  JSC::CustomGetterSetter::create(vm, pcre2RegExpProtoGetterSource, nullptr), 0 | PropertyAttribute::CustomAccessor | PropertyAttribute::ReadOnly);
     this->putDirectCustomAccessor(vm, vm.propertyNames->flags,  JSC::CustomGetterSetter::create(vm, pcre2RegExpProtoGetterFlags, nullptr), 0 | PropertyAttribute::CustomAccessor | PropertyAttribute::ReadOnly);
+    this->putDirectCustomAccessor(vm, vm.propertyNames->lastIndex, JSC::CustomGetterSetter::create(vm, pcre2RegExpProtoGetterLastIndex, pcre2RegExpProtoSetterLastIndex), 0 | PropertyAttribute::CustomAccessor);;
     this->putDirectNativeFunction(vm, globalObject, PropertyName(vm.propertyNames->test),  1, pcre2RegExpProtoFuncTest, ImplementationVisibility::Public,  NoIntrinsic, static_cast<unsigned>(0));
 
     // JSC_BUILTIN_FUNCTION_WITHOUT_TRANSITION(vm.propertyNames->matchSymbol, pcre2RegExpPrototypeMatchCodeGenerator, static_cast<unsigned>(0));
@@ -433,6 +681,71 @@ PCRE2RegExpConstructor* PCRE2RegExpConstructor::create(JSC::VM& vm, JSC::JSGloba
     return ptr;
 }
 
+static JSC::EncodedJSValue constructOrCall(Zig::GlobalObject *globalObject, JSValue arg0, JSValue arg1)
+{
+    auto &vm = globalObject->vm();
+    auto scope = DECLARE_CATCH_SCOPE(vm);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+
+    WTF::String patternString = to16Bit(arg0, globalObject, "(?:)"_s);
+    RETURN_IF_EXCEPTION(scope, {});
+
+    WTF::String flagsString = to16Bit(arg1, globalObject, ""_s);
+    RETURN_IF_EXCEPTION(scope, {});
+
+    if(!validateRegExpFlags(flagsString)) {
+        throwScope.throwException(globalObject, createSyntaxError(globalObject, makeString("Invalid flags supplied to RegExp constructor."_s)));
+        return JSValue::encode({});
+    }
+
+    uint32_t flags = 0;
+    if (flagsString.contains('i')) {
+        flags |= PCRE2_CASELESS;
+    }
+    if (flagsString.contains('m')) {
+        flags |= PCRE2_MULTILINE;
+    }
+    if (flagsString.contains('s')) {
+        flags |= PCRE2_DOTALL;
+    }
+    if (flagsString.contains('u')) {
+        flags |= PCRE2_UTF;
+    }
+    if (flagsString.contains('y')) {
+        flags |= PCRE2_ANCHORED;
+    }
+
+    int errorCode = 0;
+    PCRE2_SIZE errorOffset = 0;
+    pcre2_code_16* regExpCode = pcre2_compile_16(
+        reinterpret_cast<const PCRE2_SPTR16>(patternString.characters16()),
+        patternString.length(),
+        flags,
+        &errorCode,
+        &errorOffset,
+        NULL
+    );
+
+    if (regExpCode == NULL) {
+        PCRE2_UCHAR16 buffer[256] = { 0 };
+        pcre2_get_error_message_16(errorCode, buffer, sizeof(buffer));
+
+        WTF::StringBuilder errorMessage = WTF::StringBuilder();
+        errorMessage.append("Invalid regular expression: ");
+        errorMessage.append(reinterpret_cast<const char16_t*>(buffer));
+        errorMessage.append(" at offset: ");
+        errorMessage.append(errorOffset);
+        throwScope.throwException(globalObject, createSyntaxError(globalObject, errorMessage.toString()));
+        return JSValue::encode({});
+    }
+
+    RETURN_IF_EXCEPTION(scope, {});
+
+    PCRE2RegExp *result = PCRE2RegExp::create(globalObject, WTFMove(patternString), WTFMove(flagsString), regExpCode);
+
+    return JSValue::encode(result);
+}
+
 
 
 JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES PCRE2RegExpConstructor::construct(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame)
@@ -457,74 +770,7 @@ JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES PCRE2RegExpConstructor::construct(J
       );
     }
 
-    auto scope = DECLARE_CATCH_SCOPE(vm);
-    auto throwScope = DECLARE_THROW_SCOPE(vm);
-
-    WTF::String patternString = WTF::String("(?:)"_s);
-    if (auto *patternStr = callFrame->argument(0).toStringOrNull(globalObject)) {
-        patternString = patternStr->value(globalObject);
-    }
-    RETURN_IF_EXCEPTION(scope, {});
-
-    WTF::String flagsString = WTF::String();
-    if (callFrame->argumentCount() > 1) {
-        if (auto *flagsStr = callFrame->argument(1).toStringOrNull(globalObject)) {
-            flagsString = flagsStr->value(globalObject);
-        }
-    }
-    RETURN_IF_EXCEPTION(scope, {});
-
-    if(!validateRegExpFlags(flagsString)) {
-        return JSValue::encode(throwScope.throwException(globalObject, createSyntaxError(globalObject, makeString("Invalid flags supplied to RegExp constructor"_s))));
-    }
-
-    // pcre2_general_context_16* context = pcre2_general_context_create_16(nullptr, nullptr, nullptr);
-    // pcre2_compile_context_16* compileContext = pcre2_compile_context_create_16(NULL);
-
-    uint32_t flags = 0;
-    if (flagsString.contains("i"_s)) {
-        flags |= PCRE2_CASELESS;
-    }
-    if (flagsString.contains("m"_s)) {
-        flags |= PCRE2_MULTILINE;
-    }
-    if (flagsString.contains("s"_s)) {
-        flags |= PCRE2_DOTALL;
-    }
-    if (flagsString.contains("u"_s)) {
-        flags |= PCRE2_UTF;
-    }
-    if (flagsString.contains(makeString("y"_s))) {
-        flags |= PCRE2_ANCHORED;
-    }
-
-    int errorCode = 0;
-    PCRE2_SIZE errorOffset = 0;
-    pcre2_code_16* regExpCode = pcre2_compile_16(
-        reinterpret_cast<const PCRE2_SPTR16>(patternString.characters16()),
-        patternString.length(),
-        flags,
-        &errorCode,
-        &errorOffset,
-        NULL
-    );
-
-    if (regExpCode == NULL) {
-        PCRE2_UCHAR16 buffer[256] = { 0 };
-        pcre2_get_error_message_16(errorCode, buffer, sizeof(buffer));
-        WTF::StringBuilder errorMessage = WTF::StringBuilder();
-        errorMessage.append("Invalid regular expression: ");
-        errorMessage.append(reinterpret_cast<const char16_t*>(buffer));
-        errorMessage.append(" at offset: ");
-        errorMessage.append(errorOffset);
-        return JSValue::encode(throwScope.throwException(globalObject, createSyntaxError(globalObject, errorMessage.toString())));
-    }
-
-    RETURN_IF_EXCEPTION(scope, {});
-
-    PCRE2RegExp *result = PCRE2RegExp::create(globalObject, WTFMove(patternString), WTFMove(flagsString), regExpCode);
-
-    return JSValue::encode(result);
+    return constructOrCall(globalObject, callFrame->argument(0), callFrame->argument(1));
 }
 
 }

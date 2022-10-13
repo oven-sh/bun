@@ -72,25 +72,40 @@ function readMany()
 
     
     var controller = @getByIdDirectPrivate(stream, "readableStreamController");
+    var queue  = @getByIdDirectPrivate(controller, "queue");
+    
+    if (!queue) {
+        // This is a ReadableStream direct controller implemented in JS
+        // It hasn't been started yet.
+        return controller.@pull(
+            controller
+        ).@then(
+            ({done, value}) => (
+                done ? 
+                { done: true, value: [], size: 0 } : 
+                { value: [value], size: 1, done: false }
+        ));
+    }
 
-    const content = @getByIdDirectPrivate(controller, "queue").content;
-    var size = @getByIdDirectPrivate(controller, "queue").size;
+    const content = queue.content;
+    var size = queue.size;
     var values = content.toArray(false);
+    
     var length = values.length;
 
     if (length > 0) {
-
+        var outValues = @newArrayWithSize(length);
         if (@isReadableByteStreamController(controller)) {
-            for (var i = 0; i < value.length; i++) {
-                const buf = value[i];
+            for (var i = 0; i < length; i++) {
+                const buf = values[i];
                 if (!(@ArrayBuffer.@isView(buf) || buf instanceof @ArrayBuffer)) {
-                    value[i] = new @Uint8Array(buf.buffer, buf.byteOffset, buf.byteLength);
+                    @putByValDirect(outValues, i, @Uint8Array(buf.buffer, buf.byteOffset, buf.byteLength));
                 }
             }
         } else {
-            values[0] = values[0].value;
-            for (var i = 1; i < values.length; i++) {
-                values[i] = values[i].value;
+            @putByValDirect(outValues, 0, values[0].value);
+            for (var i = 1; i < length; i++) {
+                @putByValDirect(outValues, i, values[i].value);
             }
         }
         
@@ -103,7 +118,7 @@ function readMany()
         else if (@isReadableByteStreamController(controller))
             @readableByteStreamControllerCallPullIfNeeded(controller);
 
-        return {value: values, size, done: false};
+        return {value: outValues, size, done: false};
     }
 
     var onPullMany = (result) => {
@@ -114,17 +129,19 @@ function readMany()
         
         var queue = @getByIdDirectPrivate(controller, "queue");
         var value = [result.value].concat(queue.content.toArray(false));
+        var length = value.length;
 
         if (@isReadableByteStreamController(controller)) {
-            for (var i = 0; i < value.length; i++) {
+            for (var i = 0; i < length; i++) {
                 const buf = value[i];
                 if (!(@ArrayBuffer.@isView(buf) || buf instanceof @ArrayBuffer)) {
-                    value[i] = new @Uint8Array(buf.buffer, buf.byteOffset, buf.byteLength);
+                    const {buffer, byteOffset, byteLength} = buf;
+                    @putByValDirect(value, i, new @Uint8Array(buffer, byteOffset, byteLength));
                 }
             }
         } else {
-            for (var i = 1; i < value.length; i++) {
-                value[i] = value[i].value;
+            for (var i = 1; i < length; i++) {
+                @putByValDirect(value, i, value[i].value);
             }
         }
         

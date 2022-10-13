@@ -1402,6 +1402,17 @@ pub fn NewPrinter(
             assert(p.import_records.len > import_record_index);
             const record = p.import_records[import_record_index];
 
+            if (comptime is_bun_platform) {
+                if (record.tag == .bun) {
+                    if (record.kind == .dynamic) {
+                        p.print("Promise.resolve(globalThis.Bun)");
+                    } else if (record.kind == .require) {
+                        p.print("globalThis.Bun");
+                    }
+                    return;
+                }
+            }
+
             const is_external = std.mem.indexOfScalar(
                 u32,
                 p.options.externals,

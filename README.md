@@ -1969,13 +1969,11 @@ const server = Bun.serve({
 server.stop();
 ```
 
-The interface for `Bun.serve` is based on what [Cloudflare Workers](https://developers.cloudflare.com/workers/learning/migrating-to-module-workers/#module-workers-in-the-dashboard) does.
+The interface for `Bun.serve` is loosely based on what [Cloudflare Workers](https://developers.cloudflare.com/workers/learning/migrating-to-module-workers/#module-workers-in-the-dashboard) does.
 
 ## `Bun.spawn` – spawn a process
 
 `Bun.spawn` lets you quickly spawn a process. Available as of Bun v0.2.0.
-
-Example:
 
 ```ts
 import { spawn } from "bun";
@@ -2054,12 +2052,12 @@ console.log(text); // "bar\n"
 You can also pass a `Bun.file` for `stdin`:
 
 ```ts
-import { spawn } from "bun";
+import { spawn, file, write } from "bun";
 
-await Bun.write("/tmp/foo.txt", "hi");
+await write("/tmp/foo.txt", "hi");
 const { stdout } = spawn(["cat"], {
-  stdin: Bun.file("/tmp/foo.txt"),
-  stdout: "pipe",
+  // Set /tmp/foo.txt as stdin
+  stdin: file("/tmp/foo.txt"),
 });
 
 const text = await new Response(stdout).text();

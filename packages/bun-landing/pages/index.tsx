@@ -164,7 +164,7 @@ const InstallBox = ({ desktop = false }) => (
   >
     <div className="InstallBox-label">
       <div className="InstallBox-label-heading">
-        Install Bun CLI {process.version} (beta)
+        Install Bun CLI {process.versions.bun} (beta)
       </div>
       <div className="InstallBox-label-subtitle">
         macOS x64 &amp; Silicon, Linux x64, Windows Subsystem for Linux
@@ -262,29 +262,29 @@ export default function LandingPage() {
                 <ul style={{ "--count": 3 }} className="BarGraphList">
                   <BarGraphItem
                     type="bun"
-                    amount={48936}
+                    amount={69845}
                     label="requests per second"
-                    max={Math.max(48936, 16288, 15786) * 1.25}
+                    max={Math.max(69845, 16288, 12926) * 1.25}
                   />
                   <BarGraphItem
                     type="node"
                     amount={16288}
                     label="requests per second"
-                    max={Math.max(48936, 16288, 15786) * 1.25}
+                    max={Math.max(69845, 16288, 12926) * 1.25}
                   />
                   <BarGraphItem
                     type="deno"
-                    amount={15786}
+                    amount={12926}
                     label="requests per second"
-                    max={Math.max(48936, 16288, 15786) * 1.25}
+                    max={Math.max(69845, 16288, 12926) * 1.25}
                   />
                 </ul>
 
                 <div style={{ "--count": 3 }} className="BarGraphKey">
                   <BarGraphLabel
                     name="bun"
-                    version="v0.1.0"
-                    source="https://github.com/oven-sh/bun/blob/e55d6eed2bf9a5db30250fdd8b9be063dc949054/bench/react-hello-world/react-hello-world.jsx"
+                    version="v0.2.0"
+                    source="https://github.com/oven-sh/bun/blob/b0a7f8df926e91d3b2f0b3b8833ddaf55073f30e/bench/react-hello-world/react-hello-world.jsx#L27"
                   />
                   <BarGraphLabel
                     name="node"
@@ -292,9 +292,9 @@ export default function LandingPage() {
                     source="https://github.com/oven-sh/bun/blob/e55d6eed2bf9a5db30250fdd8b9be063dc949054/bench/react-hello-world/react-hello-world.node.jsx"
                   />
                   <BarGraphLabel
-                    name="deno"
-                    version="v1.23.2"
-                    source="https://github.com/oven-sh/bun/blob/e55d6eed2bf9a5db30250fdd8b9be063dc949054/bench/react-hello-world/react-hello-world.deno.jsx"
+                    name="Deno.serve()"
+                    version="v1.26.0"
+                    source="https://github.com/oven-sh/bun/blob/af033c02c5fbaade201abfe332f376879d9e6885/bench/react-hello-world/react-hello-world.deno.jsx"
                   />
                 </div>
               </div>
@@ -314,10 +314,18 @@ export default function LandingPage() {
                 <ul style={{ "--count": 3 }} className="BarGraphList">
                   <BarGraphItem
                     type="bun"
-                    amount={(1000 / 16.6).toFixed(2)}
+                    amount={(1000 / 14.22).toFixed(2)}
                     label="queries per second"
                     max={Math.ceil(
-                      Math.max(1000 / 16.6, 1000 / 42.96, 1000 / 104.69) * 1.25
+                      Math.max(1000 / 14.22, 1000 / 42.96, 1000 / 27.37) * 1.25
+                    )}
+                  />
+                  <BarGraphItem
+                    type="deno"
+                    amount={(1000 / 27.37).toFixed(2)}
+                    label="queries per second"
+                    max={Math.ceil(
+                      Math.max(1000 / 14.22, 1000 / 42.96, 1000 / 27.37) * 1.25
                     )}
                   />
                   <BarGraphItem
@@ -325,15 +333,7 @@ export default function LandingPage() {
                     amount={(1000 / 42.96).toFixed(2)}
                     label="queries per second"
                     max={Math.ceil(
-                      Math.max(1000 / 16.6, 1000 / 42.96, 1000 / 104.69) * 1.25
-                    )}
-                  />
-                  <BarGraphItem
-                    type="deno"
-                    amount={(1000 / 104.69).toFixed(2)}
-                    label="queries per second"
-                    max={Math.ceil(
-                      Math.max(1000 / 16.6, 1000 / 42.96, 1000 / 104.69) * 1.25
+                      Math.max(1000 / 14.22, 1000 / 42.96, 1000 / 27.37) * 1.25
                     )}
                   />
                 </ul>
@@ -341,18 +341,18 @@ export default function LandingPage() {
                 <div style={{ "--count": 3 }} className="BarGraphKey">
                   <BarGraphLabel
                     name="bun:sqlite"
-                    version="v0.1.0"
-                    source="https://github.com/oven-sh/bun/blob/e55d6eed2bf9a5db30250fdd8b9be063dc949054/bench/sqlite/bun.js"
+                    version="v0.2.0"
+                    source="https://github.com/oven-sh/bun/blob/b0a7f8df926e91d3b2f0b3b8833ddaf55073f30e/bench/sqlite/bun.js#L9"
+                  />
+                  <BarGraphLabel
+                    name="deno (x/sqlite)"
+                    version="v1.26.1"
+                    source="https://github.com/oven-sh/bun/blob/e55d6eed2bf9a5db30250fdd8b9be063dc949054/bench/sqlite/deno.js"
                   />
                   <BarGraphLabel
                     name="better-sqlite3"
                     source="https://github.com/oven-sh/bun/blob/e55d6eed2bf9a5db30250fdd8b9be063dc949054/bench/sqlite/node.mjs"
                     version="node v18.2.0"
-                  />
-                  <BarGraphLabel
-                    name="deno (x/sqlite)"
-                    version="v1.23.2"
-                    source="https://github.com/oven-sh/bun/blob/e55d6eed2bf9a5db30250fdd8b9be063dc949054/bench/sqlite/deno.js"
                   />
                 </div>
               </div>
@@ -372,39 +372,39 @@ export default function LandingPage() {
                 <ul style={{ "--count": 3 }} className="BarGraphList">
                   <BarGraphItem
                     type="bun"
-                    amount={(13080444).toFixed(2)}
+                    amount={(17434000).toFixed(2)}
                     label="operations per second"
-                    max={Math.ceil(Math.max(13080444, 6870963, 5736247) * 1.25)}
+                    max={Math.ceil(Math.max(17434000, 6870963, 7563000) * 1.25)}
+                  />
+                  <BarGraphItem
+                    type="deno"
+                    amount={(7563000).toFixed(2)}
+                    label="operations per iteration"
+                    max={Math.ceil(Math.max(17434000, 6870963, 7563000) * 1.25)}
                   />
                   <BarGraphItem
                     type="Node-API"
                     amount={(6870963).toFixed(2)}
                     label="operations per second"
-                    max={Math.ceil(Math.max(13080444, 6870963, 5736247) * 1.25)}
-                  />
-                  <BarGraphItem
-                    type="deno"
-                    amount={(5736247).toFixed(2)}
-                    label="operations per iteration"
-                    max={Math.ceil(Math.max(13080444, 6870963, 5736247) * 1.25)}
+                    max={Math.ceil(Math.max(17434000, 6870963, 7563000) * 1.25)}
                   />
                 </ul>
 
                 <div style={{ "--count": 3 }} className="BarGraphKey">
                   <BarGraphLabel
                     name="bun:ffi"
-                    version="v0.1.3"
+                    version="v0.2.0"
                     source="https://github.com/oven-sh/bun/blob/cbc1e407c3aad3d396ab60317fc24b94341dfb45/bench/ffi/bun.js"
+                  />
+                  <BarGraphLabel
+                    name="deno (ffi)"
+                    version="v1.26.1"
+                    source="https://github.com/oven-sh/bun/blob/af033c02c5fbaade201abfe332f376879d9e6885/bench/ffi/deno.js"
                   />
                   <BarGraphLabel
                     name="node (napi)"
                     source="https://github.com/oven-sh/bun/blob/cbc1e407c3aad3d396ab60317fc24b94341dfb45/bench/ffi/node.mjs"
                     version="node v18.2.0"
-                  />
-                  <BarGraphLabel
-                    name="deno (ffi)"
-                    version="v1.24.0"
-                    source="https://github.com/oven-sh/bun/blob/cbc1e407c3aad3d396ab60317fc24b94341dfb45/bench/ffi/deno.js"
                   />
                 </div>
               </div>
@@ -737,7 +737,7 @@ for (const el of document.querySelectorAll(".InstallBox-copy")) {
       `,
         }}
       />
-      <div className="Built">Built with Bun {process.version}</div>
+      <div className="Built">Built with Bun {process.versions.bun}</div>
     </>
   );
 }

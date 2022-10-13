@@ -1330,11 +1330,11 @@ bun run relay-compiler --schema foo.graphql
 
 `bun --hot` enables hot reloading of code in Bun's JavaScript runtime. This is a very experimental feature available in Bun v0.2.0.
 
-Unlike file watchers like `nodemon`, `bun --hot` won't crash your HTTP server.
+Unlike file watchers like `nodemon`, `bun --hot` can keep stateful objects like the HTTP server running.
 
-**Left**: Bun v0.2.0 with `--hot` enabled
-
-**Right**: Nodemon (Node)
+|                |             |
+| -------------- | ----------- |
+| :-- Bun v0.2.0 | Nodemon --: |
 
 ![Screen Recording 2022-10-06 at 2 36 06 AM](https://user-images.githubusercontent.com/709451/195477632-5fd8a73e-014d-4589-9ba2-e075ad9eb040.gif)
 

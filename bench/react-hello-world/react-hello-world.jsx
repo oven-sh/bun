@@ -1,5 +1,5 @@
 // to run this:
-//   bun react-hello-world.jsx --jsx-production
+//   bun --jsx-production react-hello-world.jsx
 
 // This will become the official react-dom/server.bun build a little later
 // It will be the default when you import from "react-dom/server"

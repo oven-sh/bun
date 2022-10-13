@@ -2080,6 +2080,8 @@ console.log(text); // "hi\n"
 
 `Bun.spawn` also supports incrementally writing to stdin:
 
+> :warning: **This API is a little buggy right now**
+
 ```ts
 import { spawn } from "bun";
 

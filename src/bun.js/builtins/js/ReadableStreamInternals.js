@@ -1614,7 +1614,17 @@ function readableStreamCancel(stream, reason) {
   @readableStreamClose(stream);
 
   var controller = @getByIdDirectPrivate(stream, "readableStreamController");
-  return controller.@cancel(controller, reason).@then(function () {});
+  var cancel = controller.@cancel;
+  if (cancel) {
+    return cancel(controller, reason).@then(function () {});
+  }
+
+  var close = controller.close;
+  if (close) {
+    return @Promise.@resolve(controller.close(reason));
+  }
+
+  @throwTypeError("ReadableStreamController has no cancel or close method");
 }
 
 function readableStreamDefaultControllerCancel(controller, reason) {

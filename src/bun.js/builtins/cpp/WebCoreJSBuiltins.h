@@ -40,6 +40,7 @@
 #include "ImportMetaObjectBuiltins.h"
 #include "JSBufferConstructorBuiltins.h"
 #include "JSBufferPrototypeBuiltins.h"
+#include "ProcessObjectBuiltins.h"
 #include "ReadableByteStreamControllerBuiltins.h"
 #include "ReadableByteStreamInternalsBuiltins.h"
 #include "ReadableStreamBYOBReaderBuiltins.h"
@@ -68,6 +69,7 @@ public:
         , m_importMetaObjectBuiltins(m_vm)
         , m_jsBufferConstructorBuiltins(m_vm)
         , m_jsBufferPrototypeBuiltins(m_vm)
+        , m_processObjectBuiltins(m_vm)
         , m_readableByteStreamControllerBuiltins(m_vm)
         , m_readableByteStreamInternalsBuiltins(m_vm)
         , m_readableStreamBuiltins(m_vm)
@@ -96,6 +98,7 @@ public:
     ImportMetaObjectBuiltinsWrapper& importMetaObjectBuiltins() { return m_importMetaObjectBuiltins; }
     JSBufferConstructorBuiltinsWrapper& jsBufferConstructorBuiltins() { return m_jsBufferConstructorBuiltins; }
     JSBufferPrototypeBuiltinsWrapper& jsBufferPrototypeBuiltins() { return m_jsBufferPrototypeBuiltins; }
+    ProcessObjectBuiltinsWrapper& processObjectBuiltins() { return m_processObjectBuiltins; }
     ReadableByteStreamControllerBuiltinsWrapper& readableByteStreamControllerBuiltins() { return m_readableByteStreamControllerBuiltins; }
     ReadableByteStreamInternalsBuiltinsWrapper& readableByteStreamInternalsBuiltins() { return m_readableByteStreamInternalsBuiltins; }
     ReadableStreamBuiltinsWrapper& readableStreamBuiltins() { return m_readableStreamBuiltins; }
@@ -119,6 +122,7 @@ private:
     ImportMetaObjectBuiltinsWrapper m_importMetaObjectBuiltins;
     JSBufferConstructorBuiltinsWrapper m_jsBufferConstructorBuiltins;
     JSBufferPrototypeBuiltinsWrapper m_jsBufferPrototypeBuiltins;
+    ProcessObjectBuiltinsWrapper m_processObjectBuiltins;
     ReadableByteStreamControllerBuiltinsWrapper m_readableByteStreamControllerBuiltins;
     ReadableByteStreamInternalsBuiltinsWrapper m_readableByteStreamInternalsBuiltins;
     ReadableStreamBuiltinsWrapper m_readableStreamBuiltins;

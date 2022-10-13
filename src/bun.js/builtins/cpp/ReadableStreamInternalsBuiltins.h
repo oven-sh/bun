@@ -362,6 +362,11 @@ extern const int s_readableStreamInternalsReadableStreamToArrayDirectCodeLength;
 extern const JSC::ConstructAbility s_readableStreamInternalsReadableStreamToArrayDirectCodeConstructAbility;
 extern const JSC::ConstructorKind s_readableStreamInternalsReadableStreamToArrayDirectCodeConstructorKind;
 extern const JSC::ImplementationVisibility s_readableStreamInternalsReadableStreamToArrayDirectCodeImplementationVisibility;
+extern const char* const s_readableStreamInternalsReadableStreamDefineLazyIteratorsCode;
+extern const int s_readableStreamInternalsReadableStreamDefineLazyIteratorsCodeLength;
+extern const JSC::ConstructAbility s_readableStreamInternalsReadableStreamDefineLazyIteratorsCodeConstructAbility;
+extern const JSC::ConstructorKind s_readableStreamInternalsReadableStreamDefineLazyIteratorsCodeConstructorKind;
+extern const JSC::ImplementationVisibility s_readableStreamInternalsReadableStreamDefineLazyIteratorsCodeImplementationVisibility;
 
 #define WEBCORE_FOREACH_READABLESTREAMINTERNALS_BUILTIN_DATA(macro) \
     macro(readableStreamReaderGenericInitialize, readableStreamInternalsReadableStreamReaderGenericInitialize, 2) \
@@ -427,6 +432,7 @@ extern const JSC::ImplementationVisibility s_readableStreamInternalsReadableStre
     macro(readableStreamToArrayBufferDirect, readableStreamInternalsReadableStreamToArrayBufferDirect, 2) \
     macro(readableStreamToTextDirect, readableStreamInternalsReadableStreamToTextDirect, 2) \
     macro(readableStreamToArrayDirect, readableStreamInternalsReadableStreamToArrayDirect, 2) \
+    macro(readableStreamDefineLazyIterators, readableStreamInternalsReadableStreamDefineLazyIterators, 1) \
 
 #define WEBCORE_BUILTIN_READABLESTREAMINTERNALS_READABLESTREAMREADERGENERICINITIALIZE 1
 #define WEBCORE_BUILTIN_READABLESTREAMINTERNALS_PRIVATEINITIALIZEREADABLESTREAMDEFAULTCONTROLLER 1
@@ -491,6 +497,7 @@ extern const JSC::ImplementationVisibility s_readableStreamInternalsReadableStre
 #define WEBCORE_BUILTIN_READABLESTREAMINTERNALS_READABLESTREAMTOARRAYBUFFERDIRECT 1
 #define WEBCORE_BUILTIN_READABLESTREAMINTERNALS_READABLESTREAMTOTEXTDIRECT 1
 #define WEBCORE_BUILTIN_READABLESTREAMINTERNALS_READABLESTREAMTOARRAYDIRECT 1
+#define WEBCORE_BUILTIN_READABLESTREAMINTERNALS_READABLESTREAMDEFINELAZYITERATORS 1
 
 #define WEBCORE_FOREACH_READABLESTREAMINTERNALS_BUILTIN_CODE(macro) \
     macro(readableStreamInternalsReadableStreamReaderGenericInitializeCode, readableStreamReaderGenericInitialize, ASCIILiteral(), s_readableStreamInternalsReadableStreamReaderGenericInitializeCodeLength) \
@@ -556,6 +563,7 @@ extern const JSC::ImplementationVisibility s_readableStreamInternalsReadableStre
     macro(readableStreamInternalsReadableStreamToArrayBufferDirectCode, readableStreamToArrayBufferDirect, ASCIILiteral(), s_readableStreamInternalsReadableStreamToArrayBufferDirectCodeLength) \
     macro(readableStreamInternalsReadableStreamToTextDirectCode, readableStreamToTextDirect, ASCIILiteral(), s_readableStreamInternalsReadableStreamToTextDirectCodeLength) \
     macro(readableStreamInternalsReadableStreamToArrayDirectCode, readableStreamToArrayDirect, ASCIILiteral(), s_readableStreamInternalsReadableStreamToArrayDirectCodeLength) \
+    macro(readableStreamInternalsReadableStreamDefineLazyIteratorsCode, readableStreamDefineLazyIterators, ASCIILiteral(), s_readableStreamInternalsReadableStreamDefineLazyIteratorsCodeLength) \
 
 #define WEBCORE_FOREACH_READABLESTREAMINTERNALS_BUILTIN_FUNCTION_NAME(macro) \
     macro(acquireReadableStreamDefaultReader) \
@@ -604,6 +612,7 @@ extern const JSC::ImplementationVisibility s_readableStreamInternalsReadableStre
     macro(readableStreamDefaultControllerShouldCallPull) \
     macro(readableStreamDefaultControllerStart) \
     macro(readableStreamDefaultReaderRead) \
+    macro(readableStreamDefineLazyIterators) \
     macro(readableStreamError) \
     macro(readableStreamFulfillReadRequest) \
     macro(readableStreamIntoArray) \

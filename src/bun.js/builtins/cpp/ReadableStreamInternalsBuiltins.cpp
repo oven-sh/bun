@@ -1938,7 +1938,7 @@ const char* const s_readableStreamInternalsReadableStreamReaderGenericCancelCode
 const JSC::ConstructAbility s_readableStreamInternalsReadableStreamCancelCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableStreamInternalsReadableStreamCancelCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_readableStreamInternalsReadableStreamCancelCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_readableStreamInternalsReadableStreamCancelCodeLength = 505;
+const int s_readableStreamInternalsReadableStreamCancelCodeLength = 736;
 static const JSC::Intrinsic s_readableStreamInternalsReadableStreamCancelCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_readableStreamInternalsReadableStreamCancelCode =
     "(function (stream, reason) {\n" \
@@ -1952,7 +1952,17 @@ const char* const s_readableStreamInternalsReadableStreamCancelCode =
     "  @readableStreamClose(stream);\n" \
     "\n" \
     "  var controller = @getByIdDirectPrivate(stream, \"readableStreamController\");\n" \
-    "  return controller.@cancel(controller, reason).@then(function () {});\n" \
+    "  var cancel = controller.@cancel;\n" \
+    "  if (cancel) {\n" \
+    "    return cancel(controller, reason).@then(function () {});\n" \
+    "  }\n" \
+    "\n" \
+    "  var close = controller.close;\n" \
+    "  if (close) {\n" \
+    "    return @Promise.@resolve(controller.close(reason));\n" \
+    "  }\n" \
+    "\n" \
+    "  @throwTypeError(\"ReadableStreamController has no cancel or close method\");\n" \
     "})\n" \
 ;
 
@@ -2552,6 +2562,65 @@ const char* const s_readableStreamInternalsReadableStreamToArrayDirectCode =
     "  }\n" \
     "\n" \
     "  return capability.@promise;\n" \
+    "})\n" \
+;
+
+const JSC::ConstructAbility s_readableStreamInternalsReadableStreamDefineLazyIteratorsCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
+const JSC::ConstructorKind s_readableStreamInternalsReadableStreamDefineLazyIteratorsCodeConstructorKind = JSC::ConstructorKind::None;
+const JSC::ImplementationVisibility s_readableStreamInternalsReadableStreamDefineLazyIteratorsCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
+const int s_readableStreamInternalsReadableStreamDefineLazyIteratorsCodeLength = 1651;
+static const JSC::Intrinsic s_readableStreamInternalsReadableStreamDefineLazyIteratorsCodeIntrinsic = JSC::NoIntrinsic;
+const char* const s_readableStreamInternalsReadableStreamDefineLazyIteratorsCode =
+    "(function (prototype) {\n" \
+    "    \"use strict\";\n" \
+    "\n" \
+    "    var asyncIterator = globalThis.Symbol.asyncIterator;\n" \
+    "\n" \
+    "    var ReadableStreamAsyncIterator = async function* ReadableStreamAsyncIterator(stream, preventCancel) {\n" \
+    "        var reader = stream.getReader();\n" \
+    "        var deferredError;\n" \
+    "          try {\n" \
+    "              while (true) {\n" \
+    "                  var done, value;\n" \
+    "                  const firstResult = reader.readMany();\n" \
+    "                  if (@isPromise(firstResult)) {\n" \
+    "                      const result = await firstResult;\n" \
+    "                      done = result.done;\n" \
+    "                      value = result.value;\n" \
+    "                  } else {\n" \
+    "                      done = firstResult.done;\n" \
+    "                      value = firstResult.value;\n" \
+    "                  }\n" \
+    "\n" \
+    "                  if (done) {\n" \
+    "                      return;\n" \
+    "                  }\n" \
+    "                  yield* value;\n" \
+    "              }\n" \
+    "          } catch(e) {\n" \
+    "            deferredError = e;\n" \
+    "          } finally {\n" \
+    "            reader.releaseLock();\n" \
+    "\n" \
+    "            if (!preventCancel) {\n" \
+    "                stream.cancel(deferredError);\n" \
+    "            }\n" \
+    "\n" \
+    "            if (deferredError) {\n" \
+    "            throw deferredError;\n" \
+    "          }\n" \
+    "          }\n" \
+    "    };\n" \
+    "\n" \
+    "    var createAsyncIterator = function asyncIterator() {\n" \
+    "        return ReadableStreamAsyncIterator(this, false);\n" \
+    "    };\n" \
+    "    var createValues = function values({preventCancel = false} = {preventCancel: false}) {\n" \
+    "        return ReadableStreamAsyncIterator(this, preventCancel);\n" \
+    "    };\n" \
+    "    @Object.@defineProperty(prototype, asyncIterator, { value: createAsyncIterator });\n" \
+    "    @Object.@defineProperty(prototype, \"values\", { value: createValues });\n" \
+    "    return prototype;\n" \
     "})\n" \
 ;
 

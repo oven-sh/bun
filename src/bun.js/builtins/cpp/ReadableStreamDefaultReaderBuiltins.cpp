@@ -93,7 +93,7 @@ const char* const s_readableStreamDefaultReaderCancelCode =
 const JSC::ConstructAbility s_readableStreamDefaultReaderReadManyCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableStreamDefaultReaderReadManyCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_readableStreamDefaultReaderReadManyCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_readableStreamDefaultReaderReadManyCodeLength = 3712;
+const int s_readableStreamDefaultReaderReadManyCodeLength = 4130;
 static const JSC::Intrinsic s_readableStreamDefaultReaderReadManyCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_readableStreamDefaultReaderReadManyCode =
     "(function ()\n" \
@@ -117,25 +117,34 @@ const char* const s_readableStreamDefaultReaderReadManyCode =
     "\n" \
     "    \n" \
     "    var controller = @getByIdDirectPrivate(stream, \"readableStreamController\");\n" \
+    "    var queue  = @getByIdDirectPrivate(controller, \"queue\");\n" \
+    "    \n" \
+    "    if (!queue) {\n" \
+    "        return controller.@pull(\n" \
+    "            controller\n" \
+    "        ).@then(\n" \
+    "            ({done, value}) => (done ? { done: true, value: [], size: 0 } : { value: [value], size: 1, done: false }));\n" \
+    "    }\n" \
     "\n" \
-    "    const content = @getByIdDirectPrivate(controller, \"queue\").content;\n" \
-    "    var size = @getByIdDirectPrivate(controller, \"queue\").size;\n" \
+    "    const content = queue.content;\n" \
+    "    var size = queue.size;\n" \
     "    var values = content.toArray(false);\n" \
+    "    \n" \
     "    var length = values.length;\n" \
     "\n" \
     "    if (length > 0) {\n" \
-    "\n" \
+    "        var outValues = @newArrayWithSize(length);\n" \
     "        if (@isReadableByteStreamController(controller)) {\n" \
-    "            for (var i = 0; i < value.length; i++) {\n" \
-    "                const buf = value[i];\n" \
+    "            for (var i = 0; i < length; i++) {\n" \
+    "                const buf = values[i];\n" \
     "                if (!(@ArrayBuffer.@isView(buf) || buf instanceof @ArrayBuffer)) {\n" \
-    "                    value[i] = new @Uint8Array(buf.buffer, buf.byteOffset, buf.byteLength);\n" \
+    "                    @putByValDirect(outValues, i, @Uint8Array(buf.buffer, buf.byteOffset, buf.byteLength));\n" \
     "                }\n" \
     "            }\n" \
     "        } else {\n" \
-    "            values[0] = values[0].value;\n" \
-    "            for (var i = 1; i < values.length; i++) {\n" \
-    "                values[i] = values[i].value;\n" \
+    "            @putByValDirect(outValues, 0, values[0].value);\n" \
+    "            for (var i = 1; i < length; i++) {\n" \
+    "                @putByValDirect(outValues, i, values[i].value);\n" \
     "            }\n" \
     "        }\n" \
     "        \n" \
@@ -148,7 +157,7 @@ const char* const s_readableStreamDefaultReaderReadManyCode =
     "        else if (@isReadableByteStreamController(controller))\n" \
     "            @readableByteStreamControllerCallPullIfNeeded(controller);\n" \
     "\n" \
-    "        return {value: values, size, done: false};\n" \
+    "        return {value: outValues, size, done: false};\n" \
     "    }\n" \
     "\n" \
     "    var onPullMany = (result) => {\n" \
@@ -159,17 +168,19 @@ const char* const s_readableStreamDefaultReaderReadManyCode =
     "        \n" \
     "        var queue = @getByIdDirectPrivate(controller, \"queue\");\n" \
     "        var value = [result.value].concat(queue.content.toArray(false));\n" \
+    "        var length = value.length;\n" \
     "\n" \
     "        if (@isReadableByteStreamController(controller)) {\n" \
-    "            for (var i = 0; i < value.length; i++) {\n" \
+    "            for (var i = 0; i < length; i++) {\n" \
     "                const buf = value[i];\n" \
     "                if (!(@ArrayBuffer.@isView(buf) || buf instanceof @ArrayBuffer)) {\n" \
-    "                    value[i] = new @Uint8Array(buf.buffer, buf.byteOffset, buf.byteLength);\n" \
+    "                    const {buffer, byteOffset, byteLength} = buf;\n" \
+    "                    @putByValDirect(value, i, new @Uint8Array(buffer, byteOffset, byteLength));\n" \
     "                }\n" \
     "            }\n" \
     "        } else {\n" \
-    "            for (var i = 1; i < value.length; i++) {\n" \
-    "                value[i] = value[i].value;\n" \
+    "            for (var i = 1; i < length; i++) {\n" \
+    "                @putByValDirect(value, i, value[i].value);\n" \
     "            }\n" \
     "        }\n" \
     "        \n" \

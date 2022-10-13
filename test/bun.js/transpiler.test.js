@@ -1747,6 +1747,14 @@ class Foo {
       expect(out.includes("otherNamesStillWork")).toBe(true);
     });
 
+    it("special identifier in import statement", () => {
+      const out = transpiler.transformSync(`
+        import {ɵtest} from 'foo'
+      `);
+
+      expect(out).toBe("import {ɵtest} from \"foo\";\n");
+    });
+
     const importLines = [
       "import {createElement, bacon} from 'react';",
       "import {bacon, createElement} from 'react';",

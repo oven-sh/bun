@@ -881,7 +881,7 @@ pub fn NewPrinter(
             p.printIdentifier(name);
         }
         pub fn printClauseAlias(p: *Printer, alias: string) void {
-            if (p.canPrintIdentifier(alias)) {
+            if (!strings.containsNonBmpCodePoint(alias)) {
                 p.printSpaceBeforeIdentifier();
                 p.printIdentifier(alias);
             } else {

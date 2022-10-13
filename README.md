@@ -1332,8 +1332,8 @@ bun run relay-compiler --schema foo.graphql
 
 Unlike file watchers like `nodemon`, `bun --hot` won't crash your HTTP server.
 
-left: Bun v0.2.0
-right: Nodemon
+**Left**: Bun v0.2.0 with `--hot` enabled
+**Right**: Nodemon (Node)
 
 ![Screen Recording 2022-10-06 at 2 36 06 AM](https://user-images.githubusercontent.com/709451/195477632-5fd8a73e-014d-4589-9ba2-e075ad9eb040.gif)
 

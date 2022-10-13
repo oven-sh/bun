@@ -52,6 +52,8 @@ Bun automatically releases a canary build on every commit to `main`. To upgrade 
 bun upgrade --canary
 ```
 
+[View canary build](https://github.com/oven-sh/bun/releases/tag/canary)
+
 <sup>Canary builds are released without automated tests</sup>
 
 ## Table of Contents

@@ -13,6 +13,123 @@ new Uint8Array();
 
 beforeEach(() => gc());
 afterEach(() => gc());
+
+it("ReadableStream.prototype[Symbol.asyncIterator]", async () => {
+  const stream = new ReadableStream({
+    start(controller) {
+      controller.enqueue("hello");
+      controller.enqueue("world");
+      controller.close();
+    },
+    cancel(reason) {},
+  });
+
+  const chunks = [];
+  try {
+    for await (const chunk of stream) {
+      chunks.push(chunk);
+    }
+  } catch (e) {
+    console.log(e.message);
+    console.log(e.stack);
+  }
+
+  expect(chunks.join("")).toBe("helloworld");
+});
+
+it("ReadableStream.prototype[Symbol.asyncIterator] pull", async () => {
+  const stream = new ReadableStream({
+    pull(controller) {
+      controller.enqueue("hello");
+      controller.enqueue("world");
+      controller.close();
+    },
+    cancel(reason) {},
+  });
+
+  const chunks = [];
+  for await (const chunk of stream) {
+    chunks.push(chunk);
+  }
+  expect(chunks.join("")).toBe("helloworld");
+});
+
+it("ReadableStream.prototype[Symbol.asyncIterator] direct", async () => {
+  const stream = new ReadableStream({
+    pull(controller) {
+      controller.write("hello");
+      controller.write("world");
+      controller.close();
+    },
+    type: "direct",
+    cancel(reason) {},
+  });
+
+  const chunks = [];
+  try {
+    for await (const chunk of stream) {
+      chunks.push(chunk);
+    }
+  } catch (e) {
+    console.log(e.message);
+    console.log(e.stack);
+  }
+
+  expect(Buffer.concat(chunks).toString()).toBe("helloworld");
+});
+
+it("ReadableStream.prototype.values() cancel", async () => {
+  var cancelled = false;
+  const stream = new ReadableStream({
+    pull(controller) {
+      controller.enqueue("hello");
+      controller.enqueue("world");
+    },
+    cancel(reason) {
+      cancelled = true;
+    },
+  });
+
+  for await (const chunk of stream.values({ preventCancel: false })) {
+    break;
+  }
+  expect(cancelled).toBe(true);
+});
+
+it("ReadableStream.prototype.values() preventCancel", async () => {
+  var cancelled = false;
+  const stream = new ReadableStream({
+    pull(controller) {
+      controller.enqueue("hello");
+      controller.enqueue("world");
+    },
+    cancel(reason) {
+      cancelled = true;
+    },
+  });
+
+  for await (const chunk of stream.values({ preventCancel: true })) {
+    break;
+  }
+  expect(cancelled).toBe(false);
+});
+
+it("ReadableStream.prototype.values", async () => {
+  const stream = new ReadableStream({
+    start(controller) {
+      controller.enqueue("hello");
+      controller.enqueue("world");
+      controller.close();
+    },
+  });
+
+  const chunks = [];
+  for await (const chunk of stream.values()) {
+    chunks.push(chunk);
+  }
+  expect(chunks.join("")).toBe("helloworld");
+});
+
 it("Bun.file() read text from pipe", async () => {
   try {
     unlinkSync("/tmp/fifo");

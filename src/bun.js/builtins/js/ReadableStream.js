@@ -443,3 +443,24 @@ function locked()
 
     return @isReadableStreamLocked(this);
 }
+
+function values(options) {
+    "use strict";
+    var prototype = this?.constructor?.prototype;
+    if (!prototype) {
+        return @undefined;
+    }
+    @readableStreamDefineLazyIterators(prototype);
+    return prototype.values.@call(this, options);
+}
+
+@linkTimeConstant
+function lazyAsyncIterator() {
+    "use strict";
+    var prototype = this?.constructor?.prototype;
+    if (!prototype) {
+        return @undefined;
+    }
+    @readableStreamDefineLazyIterators(prototype);
+    return prototype[globalThis.Symbol.asyncIterator].@call(this);
+}

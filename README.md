@@ -1326,6 +1326,98 @@ bun run relay-compiler --schema foo.graphql
 
 `bun run` supports lifecycle hooks like `post${task}` and `pre{task}`. If they exist, they will run, matching the behavior of npm clients. If the `pre${task}` fails, the next task will not be run. There is currently no flag to skip these lifecycle tasks if they exist, if you want that file an issue.
 
+### `bun --hot`
+
+`bun --hot` enables hot reloading of code in Bun's JavaScript runtime. This is a very experimental feature available in Bun v0.2.0.
+
+Unlike file watchers like `nodemon`, `bun --hot` won't crash your HTTP server.
+
+left: Bun v0.2.0
+right: Nodemon
+
+![Screen Recording 2022-10-06 at 2 36 06 AM](https://user-images.githubusercontent.com/709451/195477632-5fd8a73e-014d-4589-9ba2-e075ad9eb040.gif)
+
+To use it with Bun's HTTP server (automatic):
+
+`server.ts`:
+
+```ts
+// The global object is preserved across code reloads
+// You can use it to store state, for now until Bun implements import.meta.hot.
+const reloadCount = globalThis.reloadCount || 0;
+globalThis.reloadCount = reloadCount + 1;
+
+export default {
+  fetch(req: Request) {
+    return new Response(`Code reloaded ${reloadCount} times`, {
+      headers: { "content-type": "text/plain" },
+    });
+  },
+};
+```
+
+Then, run:
+
+```bash
+bun --hot server.ts
+```
+
+You can also use `bun run`:
+
+```bash
+bun run --hot server.ts
+```
+
+To use it manually:
+
+```ts
+// The global object is preserved across code reloads
+// You can use it to store state, for now until Bun implements import.meta.hot.
+const reloadCount = globalThis.reloadCount || 0;
+globalThis.reloadCount = reloadCount + 1;
+
+const reloadServer = (globalThis.reloadServer ||= (() => {
+  let server;
+  return (handler) => {
+    if (server) {
+      // call `server.reload` to reload the server
+      server.reload(handler);
+    } else {
+      server = Bun.serve(handler);
+    }
+    return server;
+  };
+})());
+
+const handler = {
+  fetch(req: Request) {
+    return new Response(`Code reloaded ${reloadCount} times`, {
+      headers: { "content-type": "text/plain" },
+    });
+  },
+};
+
+reloadServer(handler);
+```
+
+In a future version of Bun, support for Vite's `import.meta.hot` is planned to enable better lifecycle management for hot reloading and to align with the ecosystem.
+
+#### How `bun --hot` works
+
+`bun --hot` monitors imported files for changes and reloads them. It does not monitor files that are not imported and it does not monitor `node_modules`.
+
+On reload, it resets the internal `require` cache and ES module registry (`Loader.registry`).
+
+Then:
+
+- It runs the garbage collector synchronously (to minimize memory leaks, at the cost of runtime performance)
+- Bun re-transpiles all of your code from scratch (including sourcemaps)
+- JavaScriptCore (the engine) re-evaluates the code.
+
+Traditional file watchers restart the entire process which means that HTTP servers and other stateful objects are lost. `bun --hot` does not restart the process, so it preserves _some_ state across reloads to be less intrusive.
+
+This implementation isn't particularly optimized. It re-transpiles files that haven't changed. It makes no attempt at incremental compilation. It's a starting point.
+
 ### `bun create`
 
 `bun create` is a fast way to create a new project from a template.

@@ -1334,10 +1334,10 @@ Unlike file watchers like `nodemon`, `bun --hot` can keep stateful objects like 
 
 <table>
 <tr>
-<th width="441" align="center">
+<th width="800" align="center">
 Bun v0.2.0
 </th>
-<th width="441" align="center">
+<th width="800" align="center">
 Nodemon
 </th>
 </tr>

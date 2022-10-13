@@ -2134,7 +2134,7 @@ There are three main differences between `Bun.spawn` and `Bun.spawnSync`.
 
 1. `Bun.spawnSync` blocks the event loop until the subprocess exits. For HTTP servers, you probably should avoid using `Bun.spawnSync` but for CLI apps, you probably should use `Bun.spawnSync`.
 
-2. `stdout` and `stderr` return different objects
+2. `spawnSync` returns a different object for `stdout` and `stderr` so you can read the data synchronously.
 
 | `spawn`          | `spawnSync` |
 | ---------------- | ----------- |

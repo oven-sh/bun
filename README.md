@@ -1332,9 +1332,28 @@ bun run relay-compiler --schema foo.graphql
 
 Unlike file watchers like `nodemon`, `bun --hot` can keep stateful objects like the HTTP server running.
 
-|            |         |
-| :--------- | ------: |
-| Bun v0.2.0 | Nodemon |
+<table>
+<tr>
+<th align="center">
+<img width="441" height="1">
+<p> 
+<small>
+Bun v0.2.0
+</small>
+</p>
+</th>
+<th align="center">
+<img width="441" height="1">
+<p> 
+<small>
+Nodemon
+</small>
+</p>
+</th>
+</tr>
+<tr>
+</tr>
+</table>
 
 ![Screen Recording 2022-10-06 at 2 36 06 AM](https://user-images.githubusercontent.com/709451/195477632-5fd8a73e-014d-4589-9ba2-e075ad9eb040.gif)
 

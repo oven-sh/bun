@@ -24,7 +24,7 @@ const port = Number(process.env.PORT || 3001);
 Bun.serve({
   port,
   async fetch(req) {
-    return new Response(await renderToReadableStream(<App />));
+    return new Response(await renderToReadableStream(<App />), headers);
   },
 });
 

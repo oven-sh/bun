@@ -1351,8 +1351,6 @@ Nodemon
 </p>
 </th>
 </tr>
-<tr>
-</tr>
 </table>
 
 ![Screen Recording 2022-10-06 at 2 36 06 AM](https://user-images.githubusercontent.com/709451/195477632-5fd8a73e-014d-4589-9ba2-e075ad9eb040.gif)

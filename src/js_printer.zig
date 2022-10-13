@@ -1403,6 +1403,16 @@ pub fn NewPrinter(
             const record = p.import_records[import_record_index];
 
             if (comptime is_bun_platform) {
+                // "bun" is not a real module. It's just globalThis.Bun.
+                //
+                //  transform from:
+                //      const foo = await import("bun")
+                //      const bar = require("bun")
+                //
+                //  transform to:
+                //      const foo = await Promise.resolve(globalThis.Bun)
+                //      const bar = globalThis.Bun
+                //
                 if (record.tag == .bun) {
                     if (record.kind == .dynamic) {
                         p.print("Promise.resolve(globalThis.Bun)");

@@ -186,6 +186,33 @@ describe("ReactDOM", () => {
           expect(text.replaceAll("<!-- -->", "")).toBe(inputString);
           gc();
         });
+        it("for await (chunk of stream)", async () => {
+          const stream = await renderToReadableStream(reactElement);
+          gc();
+          const chunks = [];
+          for await (let chunk of stream) {
+            chunks.push(chunk);
+          }
+          const text = await new Response(chunks).text();
+          gc();
+          expect(text.replaceAll("<!-- -->", "")).toBe(inputString);
+          gc();
+        });
+
+        it("for await (chunk of stream) (arrayBuffer)", async () => {
+          const stream = await renderToReadableStream(reactElement);
+          gc();
+          const chunks = [];
+          for await (let chunk of stream) {
+            chunks.push(chunk);
+          }
+          const text = new TextDecoder().decode(
+            await new Response(chunks).arrayBuffer()
+          );
+          gc();
+          expect(text.replaceAll("<!-- -->", "")).toBe(inputString);
+          gc();
+        });
       });
     }
   }

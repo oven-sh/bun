@@ -385,6 +385,7 @@ static inline JSC::EncodedJSValue jsTextEncoderPrototypeFunction_encodeBody(JSC:
     String str;
     if (input->is8Bit()) {
         if (input->isRope()) {
+            GCDeferralContext gcDeferralContext(vm);
             auto encodedValue = TextEncoder__encodeRopeString(lexicalGlobalObject, input);
             if (!JSC::JSValue::decode(encodedValue).isUndefined()) {
                 RELEASE_AND_RETURN(throwScope, encodedValue);

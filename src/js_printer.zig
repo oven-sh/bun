@@ -1765,7 +1765,7 @@ pub fn NewPrinter(
                         flags,
                     );
 
-                    if (p.canPrintIdentifier(e.name)) {
+                    if (!strings.containsNonBmpCodePoint(e.name)) {
                         if (!isOptionalChain and p.prev_num_end == p.writer.written) {
                             // "1.toString" is a syntax error, so print "1 .toString" instead
                             p.print(" ");

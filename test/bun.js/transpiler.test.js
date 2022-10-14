@@ -1755,6 +1755,16 @@ class Foo {
       expect(out).toBe("import {ɵtest} from \"foo\";\n");
     });
 
+    it("special identifier in namespace import", () => {
+        const out = transpiler.transformSync(`
+            import * as ɵi from 'foo'
+            ɵi.ɵtest()
+        `);
+
+        expect(out).toBe("import * as ɵi from \"foo\";\nɵi.ɵtest();\n");
+    });
+
+
     const importLines = [
       "import {createElement, bacon} from 'react';",
       "import {bacon, createElement} from 'react';",

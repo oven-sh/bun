@@ -409,6 +409,7 @@ _bun() {
                         '--version[Show version and exit]' \
                         '-V[Show version and exit]' \
                         '--cwd[Change directory]:cwd' \
+                        '--hot[Enable hot reloading]' \
                         '--help[Show command help]' \
                         '-h[Show command help]' \
                         '--all[]' &&

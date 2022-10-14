@@ -21,11 +21,11 @@ export default [
       },
       writable: {
         getter: "getStdin",
-        cache: true,
+        cache: "stdin",
       },
       readable: {
         getter: "getStdout",
-        cache: true,
+        cache: "stdout",
       },
       stderr: {
         getter: "getStderr",
@@ -56,7 +56,6 @@ export default [
 
       exited: {
         getter: "getExited",
-        cache: true,
       },
     },
   }),

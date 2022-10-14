@@ -259,7 +259,7 @@ const Scanner = struct {
         this.has_iterated = true;
         switch (entry.kind(&this.fs.fs)) {
             .dir => {
-                if (strings.eqlComptime(name, "node_modules") or strings.eqlComptime(name, ".git")) {
+                if ((name.len > 0 and name[0] == '.') or strings.eqlComptime(name, "node_modules")) {
                     return;
                 }
 

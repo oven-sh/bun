@@ -336,6 +336,30 @@ pub fn assertNonBlocking(fd: anytype) void {
 }
 
 pub fn ensureNonBlocking(fd: anytype) void {
-    const current = std.os.fcntl(fd, std.os.F.GETFL, 0) catch unreachable;
-    _ = std.os.fcntl(fd, std.os.F.SETFL, current | std.os.O.NONBLOCK) catch unreachable;
+    const current = std.os.fcntl(fd, std.os.F.GETFL, 0) catch 0;
+    _ = std.os.fcntl(fd, std.os.F.SETFL, current | std.os.O.NONBLOCK) catch 0;
+}
+
+pub fn isReadable(fd: std.os.fd_t) bool {
+    var polls = &[_]std.os.pollfd{
+        .{
+            .fd = fd,
+            .events = std.os.POLL.IN | std.os.POLL.ERR,
+            .revents = 0,
+        },
+    };
+
+    return (std.os.poll(polls, 0) catch 0) != 0;
+}
+
+pub fn isWritable(fd: std.os.fd_t) bool {
+    var polls = &[_]std.os.pollfd{
+        .{
+            .fd = fd,
+            .events = std.os.POLL.OUT | std.os.POLL.ERR,
+            .revents = 0,
+        },
+    };
+
+    return (std.os.poll(polls, 0) catch 0) != 0;
 }

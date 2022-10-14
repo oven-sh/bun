@@ -258,6 +258,7 @@ JSC_DEFINE_JIT_OPERATION(jsTextEncoderEncodeWithoutTypeCheck, JSC::EncodedJSValu
     String str;
     if (input->is8Bit()) {
         if (input->isRope()) {
+            GCDeferralContext gcDeferralContext(vm);
             auto encodedValue = TextEncoder__encodeRopeString(lexicalGlobalObject, input);
             if (!JSC::JSValue::decode(encodedValue).isUndefined()) {
                 RELEASE_AND_RETURN(throwScope, encodedValue);
@@ -384,6 +385,7 @@ static inline JSC::EncodedJSValue jsTextEncoderPrototypeFunction_encodeBody(JSC:
     String str;
     if (input->is8Bit()) {
         if (input->isRope()) {
+            GCDeferralContext gcDeferralContext(vm);
             auto encodedValue = TextEncoder__encodeRopeString(lexicalGlobalObject, input);
             if (!JSC::JSValue::decode(encodedValue).isUndefined()) {
                 RELEASE_AND_RETURN(throwScope, encodedValue);
@@ -416,7 +418,6 @@ static inline JSC::EncodedJSValue jsTextEncoderPrototypeFunction_encodeIntoBody(
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     UNUSED_PARAM(throwScope);
     UNUSED_PARAM(callFrame);
-    auto& impl = castedThis->wrapped();
     if (UNLIKELY(callFrame->argumentCount() < 2))
         return throwVMError(lexicalGlobalObject, throwScope, createNotEnoughArgumentsError(lexicalGlobalObject));
     EnsureStillAliveScope argument0 = callFrame->uncheckedArgument(0);

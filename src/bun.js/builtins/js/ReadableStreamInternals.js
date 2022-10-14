@@ -1614,7 +1614,17 @@ function readableStreamCancel(stream, reason) {
   @readableStreamClose(stream);
 
   var controller = @getByIdDirectPrivate(stream, "readableStreamController");
-  return controller.@cancel(controller, reason).@then(function () {});
+  var cancel = controller.@cancel;
+  if (cancel) {
+    return cancel(controller, reason).@then(function () {});
+  }
+
+  var close = controller.close;
+  if (close) {
+    return @Promise.@resolve(controller.close(reason));
+  }
+
+  @throwTypeError("ReadableStreamController has no cancel or close method");
 }
 
 function readableStreamDefaultControllerCancel(controller, reason) {
@@ -2095,4 +2105,57 @@ async function readableStreamToArrayDirect(stream, underlyingSource) {
   }
 
   return capability.@promise;
+}
+
+
+function readableStreamDefineLazyIterators(prototype) {
+    "use strict";
+
+    var asyncIterator = globalThis.Symbol.asyncIterator;
+
+    var ReadableStreamAsyncIterator = async function* ReadableStreamAsyncIterator(stream, preventCancel) {
+        var reader = stream.getReader();
+        var deferredError;
+          try {
+              while (true) {
+                  var done, value;
+                  const firstResult = reader.readMany();
+                  if (@isPromise(firstResult)) {
+                      const result = await firstResult;
+                      done = result.done;
+                      value = result.value;
+                  } else {
+                      done = firstResult.done;
+                      value = firstResult.value;
+                  }
+
+                  if (done) {
+                      return;
+                  }
+                  yield* value;
+              }
+          } catch(e) {
+            deferredError = e;
+          } finally {
+            reader.releaseLock();
+
+            if (!preventCancel) {
+                stream.cancel(deferredError);
+            }
+
+            if (deferredError) {
+            throw deferredError;
+          }
+          }
+    };
+
+    var createAsyncIterator = function asyncIterator() {
+        return ReadableStreamAsyncIterator(this, false);
+    };
+    var createValues = function values({preventCancel = false} = {preventCancel: false}) {
+        return ReadableStreamAsyncIterator(this, preventCancel);
+    };
+    @Object.@defineProperty(prototype, asyncIterator, { value: createAsyncIterator });
+    @Object.@defineProperty(prototype, "values", { value: createValues });
+    return prototype;
 }

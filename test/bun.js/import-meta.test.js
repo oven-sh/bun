@@ -121,3 +121,11 @@ it("import.meta.dir", () => {
 it("import.meta.path", () => {
   expect(path.endsWith("/bun/test/bun.js/import-meta.test.js")).toBe(true);
 });
+
+it('require("bun") works', () => {
+  expect(require("bun")).toBe(Bun);
+});
+
+it('import("bun") works', async () => {
+  expect(await import("bun")).toBe(Bun);
+});

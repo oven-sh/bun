@@ -1,23 +1,53 @@
-import { readableStreamToText } from "bun";
-import { spawn } from "bun";
+import { spawn, which } from "bun";
+import { rmSync } from "fs";
+import { basename } from "path";
 
-const proc = spawn({
-  cmd: ["ls", "-l"],
+const repo = process.argv.at(3) || "TheoBr/vercel-vite-demo";
 
-  // Both of these forms work:
+const target = basename(repo) + "-main";
+console.log("Downloading", repo, "to", "/tmp/" + target);
 
-  // as an array:
-  stdio: ["ignore", "pipe", "ignore"],
+const archive = await fetch(
+  `https://github.com/${repo}/archive/refs/heads/main.tar.gz`
+);
 
-  // You can also use "inherit" to inherit the parent's stdio.
-  // stdin: "inherit",
+// remove the directory if it already exists locally
+rmSync("/tmp/" + target, { recursive: true, force: true });
 
-  // You can pass a Bun.file to save it to a file:
-  // stdout: Bun.file("/tmp/stdout.txt"),
+const tar = spawn({
+  cmd: ["tar", "-xzf", "-"],
+  stdin: archive.body,
+
+  stderr: "inherit",
+  stdout: "inherit",
+  cwd: "/tmp",
 });
 
-const result = await readableStreamToText(proc.stdout);
+await tar.exited;
 
-await proc.exited();
+// if vercel isn't installed, install it
+if (!which("vercel")) {
+  console.log("Installing vercel...");
 
-console.log(result);
+  const installer = spawn(
+    { cmd: ["bun", "install", "-g", "vercel"] },
+    {
+      stderr: "inherit",
+      stdout: "inherit",
+      stdin: "inherit",
+    }
+  );
+  await installer.exited;
+
+  if (!which("vercel")) {
+    throw new Error("Failed to install Vercel CLI");
+  }
+}
+
+const { exited: deployed } = spawn({
+  cmd: ["vercel", "deploy", "--yes", "--public", target],
+  stdio: ["inherit", "inherit", "inherit"],
+  cwd: "/tmp",
+});
+
+await deployed;

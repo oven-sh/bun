@@ -1995,8 +1995,9 @@ void GlobalObject::finishCreation(VM& vm)
 
     m_processObject.initLater(
         [](const JSC::LazyProperty<JSC::JSGlobalObject, JSC::JSObject>::Initializer& init) {
+            Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(init.owner);
             auto* process = Zig::Process::create(
-                init.vm, Zig::Process::createStructure(init.vm, init.owner, init.owner->objectPrototype()));
+                *globalObject, Zig::Process::createStructure(init.vm, init.owner, WebCore::JSEventEmitter::prototype(init.vm, *globalObject)));
             process->putDirectCustomAccessor(init.vm, JSC::Identifier::fromString(init.vm, "env"_s),
                 JSC::CustomGetterSetter::create(init.vm, lazyProcessEnvGetter, lazyProcessEnvSetter),
                 JSC::PropertyAttribute::DontDelete

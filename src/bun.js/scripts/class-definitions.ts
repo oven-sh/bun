@@ -1,7 +1,7 @@
 export type Field =
-  | { getter: string; cache?: true }
+  | { getter: string; cache?: true | string }
   | { setter: string }
-  | { accessor: { getter: string; setter: string }; cache?: true }
+  | { accessor: { getter: string; setter: string }; cache?: true | string }
   | {
       fn: string;
       length?: number;
@@ -18,6 +18,7 @@ export interface ClassDefinition {
   finalize?: boolean;
   klass: Record<string, Field>;
   proto: Record<string, Field>;
+  values?: string[];
   JSType?: string;
   noConstructor?: boolean;
   estimatedSize?: boolean;

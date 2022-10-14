@@ -1153,16 +1153,26 @@ pub const FileSink = struct {
 
             // we flushed an entire fifo
             // but we still have more
-            // lets wait for the next poll
+            // lets check if its writable, so we avoid blocking
             if (std.os.S.ISFIFO(this.mode) and
                 max_to_write == max_fifo_size and
                 res.result == max_fifo_size and
                 remain.len > 0)
             {
-                this.watch(this.fd);
-                return .{
-                    .pending = &this.pending,
+                var polls = [_]std.os.pollfd{
+                    .{
+                        .fd = fd,
+                        .events = std.os.POLL.IN | std.os.POLL.ERR,
+                        .revents = 0,
+                    },
                 };
+
+                if ((std.os.poll(&polls, 0) catch 0) == 0) {
+                    this.watch(this.fd);
+                    return .{
+                        .pending = &this.pending,
+                    };
+                }
             }
         }
 
@@ -2576,6 +2586,7 @@ pub fn ReadableStreamSource(
                 var this = arguments.ptr[0].asPtr(ReadableStreamSourceType);
                 const view = arguments.ptr[1];
                 view.ensureStillAlive();
+                this.globalThis = globalThis;
                 var buffer = view.asArrayBuffer(globalThis) orelse return JSC.JSValue.jsUndefined();
                 return processResult(
                     globalThis,
@@ -2585,6 +2596,7 @@ pub fn ReadableStreamSource(
             }
             pub fn start(globalThis: *JSGlobalObject, callFrame: *JSC.CallFrame) callconv(.C) JSC.JSValue {
                 var this = callFrame.argument(0).asPtr(ReadableStreamSourceType);
+                this.globalThis = globalThis;
                 switch (this.startFromJS()) {
                     .empty => return JSValue.jsNumber(0),
                     .ready => return JSValue.jsNumber(16384),
@@ -3056,6 +3068,14 @@ pub const FileBlobLoader = struct {
     poll_ref: JSC.PollRef = .{},
     has_adjusted_pipe_size_on_linux: bool = false,
     finished: bool = false,
+
+    /// When we have some way of knowing that EOF truly is the write end of the
+    /// pipe being closed
+    /// Set this to true so we automatically mark it as done
+    /// This is used in Bun.spawn() to automatically close stdout and stderr
+    /// when the process exits
+    close_on_eof: bool = false,
+
     signal: JSC.WebCore.Signal = .{},
 
     pub usingnamespace NewReadyWatcher(@This(), .read, ready);
@@ -3083,6 +3103,7 @@ pub const FileBlobLoader = struct {
     pub fn finish(this: *FileBlobLoader) void {
         if (this.finished) return;
         this.finished = true;
+        this.close_on_eof = true;
 
         // we are done
         // resolve any promises with done
@@ -3428,7 +3449,7 @@ pub const FileBlobLoader = struct {
         // - empty file
         // - stream closed for some reason
         // - FIFO returned EOF
-        if ((result == 0 and (remaining == 0 or std.os.S.ISFIFO(this.mode)))) {
+        if ((result == 0 and (remaining == 0 or this.close_on_eof))) {
             this.finalize();
             return .{ .done = {} };
         }
@@ -3535,8 +3556,23 @@ pub const FileBlobLoader = struct {
         switch (rc) {
             .err => |err| {
                 const retry = std.os.E.AGAIN;
+                const errno = brk: {
+                    const _errno = err.getErrno();
+                    if (comptime Environment.isLinux) {
+                        // EPERM and its a FIFO on Linux? Trying to read past a FIFO which has already
+                        // sent a 0
+                        // Let's retry later.
+                        if (std.os.S.ISFIFO(this.mode) and
+                            !this.close_on_eof and _errno == .PERM)
+                        {
+                            break :brk .AGAIN;
+                        }
+                    }
 
-                switch (err.getErrno()) {
+                    break :brk _errno;
+                };
+
+                switch (errno) {
                     retry => {
                         if (this.finished) {
                             return .{ .done = {} };
@@ -3571,12 +3607,19 @@ pub const FileBlobLoader = struct {
                 if (result == 0 and free_buffer_on_error) {
                     bun.default_allocator.free(buf_to_use);
                     buf_to_use = read_buf;
-
-                    return this.handleReadChunk(result, view, true, buf_to_use);
                 } else if (free_buffer_on_error) {
                     this.view.clear();
                     this.buf = &.{};
                     return this.handleReadChunk(result, view, true, buf_to_use);
+                }
+
+                if (result == 0 and !this.finished and !this.close_on_eof and std.os.S.ISFIFO(this.mode)) {
+                    this.view.set(this.globalThis(), view);
+                    this.buf = read_buf;
+                    this.watch(this.fd);
+                    return .{
+                        .pending = &this.pending,
+                    };
                 }
 
                 return this.handleReadChunk(result, view, false, buf_to_use);

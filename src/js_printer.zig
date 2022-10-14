@@ -881,7 +881,7 @@ pub fn NewPrinter(
             p.printIdentifier(name);
         }
         pub fn printClauseAlias(p: *Printer, alias: string) void {
-            if (p.canPrintIdentifier(alias)) {
+            if (!strings.containsNonBmpCodePoint(alias)) {
                 p.printSpaceBeforeIdentifier();
                 p.printIdentifier(alias);
             } else {
@@ -1401,6 +1401,27 @@ pub fn NewPrinter(
 
             assert(p.import_records.len > import_record_index);
             const record = p.import_records[import_record_index];
+
+            if (comptime is_bun_platform) {
+                // "bun" is not a real module. It's just globalThis.Bun.
+                //
+                //  transform from:
+                //      const foo = await import("bun")
+                //      const bar = require("bun")
+                //
+                //  transform to:
+                //      const foo = await Promise.resolve(globalThis.Bun)
+                //      const bar = globalThis.Bun
+                //
+                if (record.tag == .bun) {
+                    if (record.kind == .dynamic) {
+                        p.print("Promise.resolve(globalThis.Bun)");
+                    } else if (record.kind == .require) {
+                        p.print("globalThis.Bun");
+                    }
+                    return;
+                }
+            }
 
             const is_external = std.mem.indexOfScalar(
                 u32,

@@ -52,6 +52,10 @@ Bun automatically releases a canary build on every commit to `main`. To upgrade 
 bun upgrade --canary
 ```
 
+[View canary build](https://github.com/oven-sh/bun/releases/tag/canary)
+
+<sup>Canary builds are released without automated tests</sup>
+
 ## Table of Contents
 
 - [Install](#install)
@@ -125,6 +129,7 @@ bun upgrade --canary
   - [Usage](#usage-1)
   - [Error handling](#error-handling)
 - [`Bun.write` – optimizing I/O](#bunwrite--optimizing-io)
+- [`Bun.spawn` - spawn processes](#bunspawn)
 - [bun:sqlite (SQLite3 module)](#bunsqlite-sqlite3-module)
   - [bun:sqlite Benchmark](#bunsqlite-benchmark)
   - [Getting started with bun:sqlite](#getting-started-with-bunsqlite)
@@ -1323,6 +1328,106 @@ bun run relay-compiler --schema foo.graphql
 
 `bun run` supports lifecycle hooks like `post${task}` and `pre{task}`. If they exist, they will run, matching the behavior of npm clients. If the `pre${task}` fails, the next task will not be run. There is currently no flag to skip these lifecycle tasks if they exist, if you want that file an issue.
 
+### `bun --hot`
+
+`bun --hot` enables hot reloading of code in Bun's JavaScript runtime. This is a very experimental feature available in Bun v0.2.0.
+
+Unlike file watchers like `nodemon`, `bun --hot` can keep stateful objects like the HTTP server running.
+
+<table>
+<tr>
+<th width="800" align="center">
+Bun v0.2.0
+</th>
+<th width="800" align="center">
+Nodemon
+</th>
+</tr>
+</table>
+
+![Screen Recording 2022-10-06 at 2 36 06 AM](https://user-images.githubusercontent.com/709451/195477632-5fd8a73e-014d-4589-9ba2-e075ad9eb040.gif)
+
+To use it with Bun's HTTP server (automatic):
+
+`server.ts`:
+
+```ts
+// The global object is preserved across code reloads
+// You can use it to store state, for now until Bun implements import.meta.hot.
+const reloadCount = globalThis.reloadCount || 0;
+globalThis.reloadCount = reloadCount + 1;
+
+export default {
+  fetch(req: Request) {
+    return new Response(`Code reloaded ${reloadCount} times`, {
+      headers: { "content-type": "text/plain" },
+    });
+  },
+};
+```
+
+Then, run:
+
+```bash
+bun --hot server.ts
+```
+
+You can also use `bun run`:
+
+```bash
+bun run --hot server.ts
+```
+
+To use it manually:
+
+```ts
+// The global object is preserved across code reloads
+// You can use it to store state, for now until Bun implements import.meta.hot.
+const reloadCount = globalThis.reloadCount || 0;
+globalThis.reloadCount = reloadCount + 1;
+
+const reloadServer = (globalThis.reloadServer ||= (() => {
+  let server;
+  return (handler) => {
+    if (server) {
+      // call `server.reload` to reload the server
+      server.reload(handler);
+    } else {
+      server = Bun.serve(handler);
+    }
+    return server;
+  };
+})());
+
+const handler = {
+  fetch(req: Request) {
+    return new Response(`Code reloaded ${reloadCount} times`, {
+      headers: { "content-type": "text/plain" },
+    });
+  },
+};
+
+reloadServer(handler);
+```
+
+In a future version of Bun, support for Vite's `import.meta.hot` is planned to enable better lifecycle management for hot reloading and to align with the ecosystem.
+
+#### How `bun --hot` works
+
+`bun --hot` monitors imported files for changes and reloads them. It does not monitor files that are not imported and it does not monitor `node_modules`.
+
+On reload, it resets the internal `require` cache and ES module registry (`Loader.registry`).
+
+Then:
+
+- It runs the garbage collector synchronously (to minimize memory leaks, at the cost of runtime performance)
+- Bun re-transpiles all of your code from scratch (including sourcemaps)
+- JavaScriptCore (the engine) re-evaluates the code.
+
+Traditional file watchers restart the entire process which means that HTTP servers and other stateful objects are lost. `bun --hot` does not restart the process, so it preserves _some_ state across reloads to be less intrusive.
+
+This implementation isn't particularly optimized. It re-transpiles files that haven't changed. It makes no attempt at incremental compilation. It's a starting point.
+
 ### `bun create`
 
 `bun create` is a fast way to create a new project from a template.
@@ -1966,7 +2071,210 @@ const server = Bun.serve({
 server.stop();
 ```
 
-The interface for `Bun.serve` is based on what [Cloudflare Workers](https://developers.cloudflare.com/workers/learning/migrating-to-module-workers/#module-workers-in-the-dashboard) does.
+The interface for `Bun.serve` is loosely based on what [Cloudflare Workers](https://developers.cloudflare.com/workers/learning/migrating-to-module-workers/#module-workers-in-the-dashboard) does.
+
+## `Bun.spawn` – spawn a process
+
+`Bun.spawn` lets you quickly spawn a process. Available as of Bun v0.2.0.
+
+```ts
+import { spawn } from "bun";
+
+const { stdout } = spawn(["esbuild"], {
+  stdin: await fetch(
+    "https://raw.githubusercontent.com/oven-sh/bun/main/examples/hashing.js"
+  ),
+});
+
+const text = await new Response(stdout).text();
+console.log(text); // "const input = "hello world".repeat(400); ..."
+```
+
+Bun.spawn spawns processes 60% faster than Node.js' `child_process`.
+
+```zig
+❯ bun spawn.mjs
+cpu: Apple M1 Max
+runtime: bun 0.2.0 (arm64-darwin)
+
+benchmark              time (avg)             (min … max)       p75       p99      p995
+--------------------------------------------------------- -----------------------------
+spawnSync echo hi  888.14 µs/iter    (821.83 µs … 1.2 ms) 905.92 µs      1 ms   1.03 ms
+
+❯ node spawn.node.mjs
+cpu: Apple M1 Max
+runtime: node v18.9.1 (arm64-darwin)
+
+benchmark              time (avg)             (min … max)       p75       p99      p995
+--------------------------------------------------------- -----------------------------
+spawnSync echo hi    1.47 ms/iter     (1.14 ms … 2.64 ms)   1.57 ms   2.37 ms   2.52 ms
+```
+
+Synchronous example:
+
+```ts
+import { spawnSync } from "bun";
+
+const { stdout } = spawnSync(["echo", "hi"]);
+
+// When using spawnSync, stdout is a Buffer
+// this lets you read from it synchronously
+const text = stdout.toString();
+
+console.log(text); // "hi\n"
+```
+
+You can pass an object as the second argument to customize the process:
+
+```ts
+import { spawn } from "bun";
+
+const { stdout } = spawn(["printenv", "FOO"], {
+  cwd: "/tmp",
+
+  env: {
+    ...process.env,
+    FOO: "bar",
+  },
+
+  // Disable stdin
+  stdin: null,
+
+  // Allow us to read from stdout
+  stdout: "pipe",
+
+  // Point stderr to write to "/tmp/stderr.log"
+  stderr: Bun.file("/tmp/stderr.log"),
+});
+
+const text = await new Response(stdout).text();
+console.log(text); // "bar\n"
+```
+
+You can also pass a `Bun.file` for `stdin`:
+
+```ts
+import { spawn, file, write } from "bun";
+
+await write("/tmp/foo.txt", "hi");
+const { stdout } = spawn(["cat"], {
+  // Set /tmp/foo.txt as stdin
+  stdin: file("/tmp/foo.txt"),
+});
+
+const text = await new Response(stdout).text();
+console.log(text); // "hi\n"
+```
+
+`stdin` also accepts a TypedArray:
+
+```ts
+import { spawn } from "bun";
+
+const { stdout } = spawn(["cat"], {
+  stdin: new TextEncoder().encode("hi"),
+  stdout: "pipe",
+});
+
+const text = await new Response(stdout).text();
+console.log(text); // "hi\n"
+```
+
+`Bun.spawn` also supports incrementally writing to stdin:
+
+> :warning: **This API is a little buggy right now**
+
+```ts
+import { spawn } from "bun";
+
+const { stdin, stdout } = spawn(["cat"], {
+  stdin: "pipe",
+  stdout: "pipe",
+});
+
+// You can pass it strings or TypedArrays
+// Write "hi" to stdin
+stdin.write("hi");
+
+// By default, stdin is buffered so you need to call flush() to send it
+stdin.flush(true);
+
+// When you're done, call end()
+stdin.end();
+
+const text = await new Response(stdout).text();
+console.log(text); // "hi\n"
+```
+
+Under the hood, `Bun.spawn` and `Bun.spawnSync` use [`posix_spawn(3)`](https://man7.org/linux/man-pages/man3/posix_spawn.3.html).
+
+**stdin**
+
+`stdin` can be one of:
+
+- `Bun.file()`
+- `null` (no stdin)
+- `ArrayBufferView`
+- `Response`, `Request` with a buffered body or from `fetch()`. `ReadableStream` is not supported yet (TODO)
+- `number` (file descriptor)
+- `"pipe"` (default), which returns a `FileSink` for fast incremental writing
+- `"inherit"` which will inherit the parent's stdin
+
+**stdout** and **stderr**
+
+`stdout` and `stderr` can be one of:
+
+- `Bun.file()`
+- `null` (disable)
+- `number` (file descriptor)
+- `"pipe"` (default for `stdout`), returns a `ReadableStream`
+- `"inherit"` (default for `stderr`) which will inherit the parent's stdout/stderr
+
+**When to use `Bun.spawn` vs `Bun.spawnSync`**
+
+There are three main differences between `Bun.spawn` and `Bun.spawnSync`.
+
+1. `Bun.spawnSync` blocks the event loop until the subprocess exits. For HTTP servers, you probably should avoid using `Bun.spawnSync` but for CLI apps, you probably should use `Bun.spawnSync`.
+
+2. `spawnSync` returns a different object for `stdout` and `stderr` so you can read the data synchronously.
+
+| `spawn`          | `spawnSync` |
+| ---------------- | ----------- |
+| `ReadableStream` | `Buffer`    |
+
+3. `Bun.spawn` supports incrementally writing to `stdin`.
+
+If you need to read from `stdout` or `stderr` synchronously, you should use `Bun.spawnSync`. Otherwise, `Bun.spawn` is preferred.
+
+**More details**
+
+`Bun.spawn` returns a `Subprocess` object.
+
+More complete types are available in [`bun-types`](https://github.com/oven-sh/bun-types).
+
+```ts
+interface Subprocess {
+  readonly pid: number;
+  readonly stdin: FileSink | undefined;
+  readonly stdout: ReadableStream | number | undefined;
+  readonly stderr: ReadableStream | number | undefined;
+
+  readonly exitCode: number | undefined;
+
+  // Wait for the process to exit
+  readonly exited: Promise<number>;
+
+  // Keep Bun's process alive until the subprocess exits
+  ref(): void;
+
+  // Don't keep Bun's process alive until the subprocess exits
+  unref(): void;
+
+  // Kill the process
+  kill(code?: number): void;
+  readonly killed: boolean;
+}
+```
 
 ## `Bun.write` – optimizing I/O
 

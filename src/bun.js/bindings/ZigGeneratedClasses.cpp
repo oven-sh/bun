@@ -131,19 +131,12 @@ JSC_DEFINE_CUSTOM_GETTER(SubprocessPrototype__exitedGetterWrap, (JSGlobalObject 
     Zig::GlobalObject *globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     JSSubprocess* thisObject = jsCast<JSSubprocess*>(JSValue::decode(thisValue));
-      JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
-    
-    if (JSValue cachedValue = thisObject->m_exited.get())
-        return JSValue::encode(cachedValue);
-    
-    JSC::JSValue result = JSC::JSValue::decode(
-        SubprocessPrototype__getExited(thisObject->wrapped(), globalObject)
-    );
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+    JSC::EncodedJSValue result = SubprocessPrototype__getExited(thisObject->wrapped(), globalObject);
     RETURN_IF_EXCEPTION(throwScope, {});
-    thisObject->m_exited.set(vm, thisObject, result);
-    RELEASE_AND_RETURN(throwScope, JSValue::encode(result));
+    RELEASE_AND_RETURN(throwScope, result);
 }
-
+        
 
 JSC_DEFINE_HOST_FUNCTION(SubprocessPrototype__killCallback, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
@@ -196,14 +189,14 @@ JSC_DEFINE_CUSTOM_GETTER(SubprocessPrototype__readableGetterWrap, (JSGlobalObjec
     JSSubprocess* thisObject = jsCast<JSSubprocess*>(JSValue::decode(thisValue));
       JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
     
-    if (JSValue cachedValue = thisObject->m_readable.get())
+    if (JSValue cachedValue = thisObject->m_stdout.get())
         return JSValue::encode(cachedValue);
     
     JSC::JSValue result = JSC::JSValue::decode(
         SubprocessPrototype__getStdout(thisObject->wrapped(), globalObject)
     );
     RETURN_IF_EXCEPTION(throwScope, {});
-    thisObject->m_readable.set(vm, thisObject, result);
+    thisObject->m_stdout.set(vm, thisObject, result);
     RELEASE_AND_RETURN(throwScope, JSValue::encode(result));
 }
 
@@ -310,14 +303,14 @@ JSC_DEFINE_CUSTOM_GETTER(SubprocessPrototype__writableGetterWrap, (JSGlobalObjec
     JSSubprocess* thisObject = jsCast<JSSubprocess*>(JSValue::decode(thisValue));
       JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
     
-    if (JSValue cachedValue = thisObject->m_writable.get())
+    if (JSValue cachedValue = thisObject->m_stdin.get())
         return JSValue::encode(cachedValue);
     
     JSC::JSValue result = JSC::JSValue::decode(
         SubprocessPrototype__getStdin(thisObject->wrapped(), globalObject)
     );
     RETURN_IF_EXCEPTION(throwScope, {});
-    thisObject->m_writable.set(vm, thisObject, result);
+    thisObject->m_stdin.set(vm, thisObject, result);
     RELEASE_AND_RETURN(throwScope, JSValue::encode(result));
 }
 
@@ -422,7 +415,6 @@ JSSubprocess* JSSubprocess::create(JSC::VM& vm, JSC::JSGlobalObject* globalObjec
   return ptr;
 }
 
-
 extern "C" void* Subprocess__fromJS(JSC::EncodedJSValue value) {
   JSSubprocess* object = JSC::jsDynamicCast<JSSubprocess*>(JSValue::decode(value));
   if (!object)
@@ -465,12 +457,10 @@ void JSSubprocess::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
     
-    visitor.append(thisObject->m_exited);
-    visitor.append(thisObject->m_readable);
+    
     visitor.append(thisObject->m_stderr);
     visitor.append(thisObject->m_stdin);
     visitor.append(thisObject->m_stdout);
-    visitor.append(thisObject->m_writable);
 }
 
 DEFINE_VISIT_CHILDREN(JSSubprocess);extern "C" void* SHA1Class__construct(JSC::JSGlobalObject*, JSC::CallFrame*);
@@ -672,7 +662,6 @@ JSSHA1* JSSHA1::create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Stru
   ptr->finishCreation(vm);
   return ptr;
 }
-
 
 extern "C" void* SHA1__fromJS(JSC::EncodedJSValue value) {
   JSSHA1* object = JSC::jsDynamicCast<JSSHA1*>(JSValue::decode(value));
@@ -907,7 +896,6 @@ JSMD5* JSMD5::create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Struct
   return ptr;
 }
 
-
 extern "C" void* MD5__fromJS(JSC::EncodedJSValue value) {
   JSMD5* object = JSC::jsDynamicCast<JSMD5*>(JSValue::decode(value));
   if (!object)
@@ -1140,7 +1128,6 @@ JSMD4* JSMD4::create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Struct
   ptr->finishCreation(vm);
   return ptr;
 }
-
 
 extern "C" void* MD4__fromJS(JSC::EncodedJSValue value) {
   JSMD4* object = JSC::jsDynamicCast<JSMD4*>(JSValue::decode(value));
@@ -1375,7 +1362,6 @@ JSSHA224* JSSHA224::create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::
   return ptr;
 }
 
-
 extern "C" void* SHA224__fromJS(JSC::EncodedJSValue value) {
   JSSHA224* object = JSC::jsDynamicCast<JSSHA224*>(JSValue::decode(value));
   if (!object)
@@ -1608,7 +1594,6 @@ JSSHA512* JSSHA512::create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::
   ptr->finishCreation(vm);
   return ptr;
 }
-
 
 extern "C" void* SHA512__fromJS(JSC::EncodedJSValue value) {
   JSSHA512* object = JSC::jsDynamicCast<JSSHA512*>(JSValue::decode(value));
@@ -1843,7 +1828,6 @@ JSSHA384* JSSHA384::create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::
   return ptr;
 }
 
-
 extern "C" void* SHA384__fromJS(JSC::EncodedJSValue value) {
   JSSHA384* object = JSC::jsDynamicCast<JSSHA384*>(JSValue::decode(value));
   if (!object)
@@ -2076,7 +2060,6 @@ JSSHA256* JSSHA256::create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::
   ptr->finishCreation(vm);
   return ptr;
 }
-
 
 extern "C" void* SHA256__fromJS(JSC::EncodedJSValue value) {
   JSSHA256* object = JSC::jsDynamicCast<JSSHA256*>(JSValue::decode(value));
@@ -2311,7 +2294,6 @@ JSSHA512_256* JSSHA512_256::create(JSC::VM& vm, JSC::JSGlobalObject* globalObjec
   return ptr;
 }
 
-
 extern "C" void* SHA512_256__fromJS(JSC::EncodedJSValue value) {
   JSSHA512_256* object = JSC::jsDynamicCast<JSSHA512_256*>(JSValue::decode(value));
   if (!object)
@@ -2539,7 +2521,6 @@ JSTextDecoder* JSTextDecoder::create(JSC::VM& vm, JSC::JSGlobalObject* globalObj
   return ptr;
 }
 
-
 extern "C" void* TextDecoder__fromJS(JSC::EncodedJSValue value) {
   JSTextDecoder* object = JSC::jsDynamicCast<JSTextDecoder*>(JSValue::decode(value));
   if (!object)
@@ -2581,6 +2562,7 @@ void JSTextDecoder::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     JSTextDecoder* thisObject = jsCast<JSTextDecoder*>(cell);
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
+    
     
     visitor.append(thisObject->m_encoding);
 }
@@ -3083,7 +3065,6 @@ JSRequest* JSRequest::create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC
   return ptr;
 }
 
-
 extern "C" void* Request__fromJS(JSC::EncodedJSValue value) {
   JSRequest* object = JSC::jsDynamicCast<JSRequest*>(JSValue::decode(value));
   if (!object)
@@ -3125,6 +3106,7 @@ void JSRequest::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     JSRequest* thisObject = jsCast<JSRequest*>(cell);
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
+    
     if (auto* ptr = thisObject->wrapped()) {
 visitor.reportExtraMemoryVisited(Request__estimatedSize(ptr));
 }
@@ -3574,7 +3556,6 @@ JSResponse* JSResponse::create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, J
   return ptr;
 }
 
-
 extern "C" void* Response__fromJS(JSC::EncodedJSValue value) {
   JSResponse* object = JSC::jsDynamicCast<JSResponse*>(JSValue::decode(value));
   if (!object)
@@ -3616,6 +3597,7 @@ void JSResponse::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     JSResponse* thisObject = jsCast<JSResponse*>(cell);
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
+    
     if (auto* ptr = thisObject->wrapped()) {
 visitor.reportExtraMemoryVisited(Response__estimatedSize(ptr));
 }
@@ -3937,7 +3919,6 @@ JSBlob* JSBlob::create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Stru
   ptr->finishCreation(vm);
   return ptr;
 }
-
 
 extern "C" void* Blob__fromJS(JSC::EncodedJSValue value) {
   JSBlob* object = JSC::jsDynamicCast<JSBlob*>(JSValue::decode(value));

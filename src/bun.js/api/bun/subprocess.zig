@@ -33,8 +33,13 @@ pub const Subprocess = struct {
     reffer: JSC.Ref = JSC.Ref.init(),
     poll_ref: JSC.PollRef = JSC.PollRef.init(),
 
-    exit_promise: JSValue = JSValue.zero,
-    this_jsvalue: JSValue = JSValue.zero,
+    exit_promise: JSC.Strong = .{},
+
+    /// Keep the JSValue alive until the process is done by default
+    /// Unless you call unref()
+    this_jsvalue: JSC.Strong = .{},
+
+    on_exit_callback: JSC.Strong = .{},
 
     exit_code: ?u8 = null,
     waitpid_err: ?JSC.Node.Syscall.Error = null,
@@ -49,16 +54,14 @@ pub const Subprocess = struct {
 
     globalThis: *JSC.JSGlobalObject,
 
-    on_exit_callback: JSC.Strong = .{},
-
     pub fn ref(this: *Subprocess) void {
         this.reffer.ref(this.globalThis.bunVM());
         this.poll_ref.ref(this.globalThis.bunVM());
     }
 
     pub fn unref(this: *Subprocess) void {
-        this.reffer.unref(this.globalThis.bunVM());
-        this.poll_ref.unref(this.globalThis.bunVM());
+        this.this_jsvalue.clear();
+        this.unrefWithoutGC(this.globalThis.bunVM());
     }
 
     pub fn constructor(
@@ -81,14 +84,14 @@ pub const Subprocess = struct {
             buffer: BufferedOutput,
 
             pub fn finish(this: *@This()) void {
-                if (this.* == .stream) {
+                if (this.* == .stream and this.stream.ptr == .File) {
                     this.stream.ptr.File.finish();
                 }
             }
 
             pub fn done(this: *@This()) void {
                 if (this.* == .stream) {
-                    this.stream.ptr.File.finish();
+                    if (this.stream.ptr == .File) this.stream.ptr.File.finish();
                     this.stream.done();
                     return;
                 }
@@ -164,6 +167,37 @@ pub const Subprocess = struct {
                 },
                 .pipe => {
                     return this.pipe.toJS(this, globalThis, exited);
+                },
+                else => {
+                    return JSValue.jsUndefined();
+                },
+            }
+        }
+
+        pub fn toBufferedValue(this: *Readable, globalThis: *JSC.JSGlobalObject) JSValue {
+            switch (this.*) {
+                .fd => |fd| {
+                    return JSValue.jsNumber(fd);
+                },
+                .pipe => {
+                    defer this.close();
+
+                    // TODO: handle when there's pending unread data in the pipe
+                    // For some reason, this currently hangs forever
+                    if (!this.pipe.buffer.received_eof and this.pipe.buffer.fd != std.math.maxInt(JSC.Node.FileDescriptor)) {
+                        if (this.pipe.buffer.canRead())
+                            this.pipe.buffer.readIfPossible(true);
+                    }
+
+                    var bytes = this.pipe.buffer.internal_buffer.slice();
+                    this.pipe.buffer.internal_buffer = .{};
+
+                    if (bytes.len > 0) {
+                        // Return a Buffer so that they can do .toString() on it
+                        return JSC.JSValue.createBuffer(globalThis, bytes, bun.default_allocator);
+                    }
+
+                    return JSC.JSValue.createBuffer(globalThis, &.{}, bun.default_allocator);
                 },
                 else => {
                     return JSValue.jsUndefined();
@@ -279,7 +313,8 @@ pub const Subprocess = struct {
         this.stdin.close();
     }
 
-    pub fn doRef(this: *Subprocess, _: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSValue {
+    pub fn doRef(this: *Subprocess, globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSValue {
+        this.this_jsvalue.set(globalThis, callframe.this());
         this.ref();
         return JSC.JSValue.jsUndefined();
     }
@@ -316,30 +351,30 @@ pub const Subprocess = struct {
 
         pub usingnamespace JSC.WebCore.NewReadyWatcher(BufferedInput, .write, onReady);
 
-        pub fn onReady(this: *BufferedInput, size_or_offset: i64) void {
-            this.write(@intCast(usize, @maximum(size_or_offset, 0)));
+        pub fn onReady(this: *BufferedInput, _: i64) void {
+            this.write();
         }
 
-        pub fn writeIfPossible(this: *BufferedInput) void {
-            // we ask, "Is it possible to write right now?"
-            // we do this rather than epoll or kqueue()
-            // because we don't want to block the thread waiting for the write
-            var polls = &[_]std.os.pollfd{
-                .{
-                    .fd = this.fd,
-                    .events = std.os.POLL.OUT | std.os.POLL.ERR,
-                    .revents = 0,
-                },
-            };
-            if ((std.os.poll(polls, 0) catch 0) == 0) {
-                this.watch(this.fd);
-                return;
+        pub fn canWrite(this: *BufferedInput) bool {
+            return bun.isWritable(this.fd);
+        }
+
+        pub fn writeIfPossible(this: *BufferedInput, comptime is_sync: bool) void {
+            if (comptime !is_sync) {
+
+                // we ask, "Is it possible to write right now?"
+                // we do this rather than epoll or kqueue()
+                // because we don't want to block the thread waiting for the write
+                if (!this.canWrite()) {
+                    this.watch(this.fd);
+                    return;
+                }
             }
 
-            this.write(0);
+            this.write();
         }
 
-        pub fn write(this: *BufferedInput, _: usize) void {
+        pub fn write(this: *BufferedInput) void {
             var to_write = this.remain;
 
             if (to_write.len == 0) {
@@ -347,6 +382,10 @@ pub const Subprocess = struct {
                 // we are done!
                 this.closeFDIfOpen();
                 return;
+            }
+
+            if (comptime bun.Environment.allow_assert) {
+                // bun.assertNonBlocking(this.fd);
             }
 
             while (to_write.len > 0) {
@@ -358,6 +397,11 @@ pub const Subprocess = struct {
                             });
 
                             this.watch(this.fd);
+                            return;
+                        }
+
+                        if (e.getErrno() == .PIPE) {
+                            this.deinit();
                             return;
                         }
 
@@ -426,31 +470,30 @@ pub const Subprocess = struct {
 
         pub fn ready(this: *BufferedOutput, _: i64) void {
             // TODO: what happens if the task was already enqueued after unwatch()?
-            this.readAll();
+            this.readAll(false);
         }
 
-        pub fn readIfPossible(this: *BufferedOutput) void {
-            // we ask, "Is it possible to read right now?"
-            // we do this rather than epoll or kqueue()
-            // because we don't want to block the thread waiting for the read
-            var polls = &[_]std.os.pollfd{
-                .{
-                    .fd = this.fd,
-                    .events = std.os.POLL.IN | std.os.POLL.ERR,
-                    .revents = 0,
-                },
-            };
+        pub fn canRead(this: *BufferedOutput) bool {
+            return bun.isReadable(this.fd);
+        }
 
-            if ((std.os.poll(polls, 0) catch 0) == 0) {
-                return;
+        pub fn readIfPossible(this: *BufferedOutput, comptime force: bool) void {
+            if (comptime !force) {
+                // we ask, "Is it possible to read right now?"
+                // we do this rather than epoll or kqueue()
+                // because we don't want to block the thread waiting for the read
+                // and because kqueue or epoll might return other unrelated events
+                // and we don't want this to become an event loop ticking point
+                if (!this.canRead()) {
+                    this.watch(this.fd);
+                    return;
+                }
             }
 
-            this.readAll();
+            this.readAll(force);
         }
 
-        pub fn readAll(
-            this: *BufferedOutput,
-        ) void {
+        pub fn readAll(this: *BufferedOutput, comptime force: bool) void {
             // read as much as we can from the pipe
             while (this.internal_buffer.len <= this.max_internal_buffer) {
                 var buffer_: [@maximum(std.mem.page_size, 16384)]u8 = undefined;
@@ -462,14 +505,20 @@ pub const Subprocess = struct {
                     buf = available;
                 }
 
-                if (comptime bun.Environment.allow_assert) {
-                    // bun.assertNonBlocking(this.fd);
-                }
-
                 switch (JSC.Node.Syscall.read(this.fd, buf)) {
                     .err => |e| {
                         if (e.isRetry()) {
                             this.watch(this.fd);
+                            return;
+                        }
+
+                        // INTR is returned on macOS when the process is killed
+                        // It probably sent SIGPIPE but we have the handler for
+                        // that disabled.
+                        // We know it's the "real" INTR because we use read$NOCANCEL
+                        if (e.getErrno() == .INTR) {
+                            this.received_eof = true;
+                            this.autoCloseFileDescriptor();
                             return;
                         }
 
@@ -484,19 +533,28 @@ pub const Subprocess = struct {
                     .result => |bytes_read| {
                         log("readAll() {d}", .{bytes_read});
 
-                        if (bytes_read == 0) {
-                            this.watch(this.fd);
-                            this.received_eof = true;
-                            return;
+                        if (bytes_read > 0) {
+                            if (buf.ptr == available.ptr) {
+                                this.internal_buffer.len += @truncate(u32, bytes_read);
+                            } else {
+                                _ = this.internal_buffer.write(bun.default_allocator, buf[0..bytes_read]) catch @panic("Ran out of memory");
+                            }
                         }
 
-                        if (buf.ptr == available.ptr) {
-                            this.internal_buffer.len += @truncate(u32, bytes_read);
+                        if (comptime !force) {
+                            if (buf[bytes_read..].len > 0 or !this.canRead()) {
+                                this.watch(this.fd);
+                                this.received_eof = true;
+                                return;
+                            }
                         } else {
-                            _ = this.internal_buffer.write(bun.default_allocator, buf[0..bytes_read]) catch @panic("Ran out of memory");
+                            // we consider a short read as being EOF
+                            this.received_eof = this.received_eof or bytes_read < buf.len;
+                            if (this.received_eof) {
+                                this.autoCloseFileDescriptor();
+                                return;
+                            }
                         }
-
-                        continue;
                     },
                 }
             }
@@ -511,12 +569,11 @@ pub const Subprocess = struct {
         }
 
         pub fn toReadableStream(this: *BufferedOutput, globalThis: *JSC.JSGlobalObject, exited: bool) JSC.WebCore.ReadableStream {
-            if (this.poll_ref.isActive())
-                this.unwatch(this.fd);
-
             if (exited) {
                 // exited + received EOF => no more read()
                 if (this.received_eof) {
+                    this.autoCloseFileDescriptor();
+
                     // also no data at all
                     if (this.internal_buffer.len == 0) {
                         this.close();
@@ -540,6 +597,12 @@ pub const Subprocess = struct {
 
             std.debug.assert(this.fd != std.math.maxInt(JSC.Node.FileDescriptor));
 
+            // BufferedOutput is going away
+            // let's make sure we don't watch it anymore
+            if (this.poll_ref.isActive()) {
+                this.unwatch(this.fd);
+            }
+
             // There could still be data waiting to be read in the pipe
             // so we need to create a new stream that will read from the
             // pipe and then return the blob.
@@ -562,14 +625,20 @@ pub const Subprocess = struct {
             return result;
         }
 
-        pub fn close(this: *BufferedOutput) void {
-            if (this.fd != std.math.maxInt(JSC.Node.FileDescriptor)) {
-                if (this.poll_ref.isActive())
-                    this.unwatch(this.fd);
+        pub fn autoCloseFileDescriptor(this: *BufferedOutput) void {
+            const fd = this.fd;
+            if (fd == std.math.maxInt(JSC.Node.FileDescriptor))
+                return;
+            this.fd = std.math.maxInt(JSC.Node.FileDescriptor);
 
-                _ = JSC.Node.Syscall.close(this.fd);
-                this.fd = std.math.maxInt(JSC.Node.FileDescriptor);
-            }
+            if (this.poll_ref.isActive())
+                this.unwatch(fd);
+
+            _ = JSC.Node.Syscall.close(fd);
+        }
+
+        pub fn close(this: *BufferedOutput) void {
+            this.autoCloseFileDescriptor();
 
             if (this.internal_buffer.cap > 0) {
                 this.internal_buffer.listManaged(bun.default_allocator).deinit();
@@ -621,7 +690,7 @@ pub const Subprocess = struct {
                             };
                         }
                     }
-                    sink.watch(fd);
+                    // sink.watch(fd);
                     return Writable{ .pipe = sink };
                 },
                 .array_buffer, .blob => {
@@ -700,11 +769,11 @@ pub const Subprocess = struct {
             return JSC.JSPromise.resolvedPromiseValue(globalThis, JSC.JSValue.jsNumber(code));
         }
 
-        if (this.exit_promise == .zero) {
-            this.exit_promise = JSC.JSPromise.create(globalThis).asValue(globalThis);
+        if (!this.exit_promise.has()) {
+            this.exit_promise.set(globalThis, JSC.JSPromise.create(globalThis).asValue(globalThis));
         }
 
-        return this.exit_promise;
+        return this.exit_promise.get().?;
     }
 
     pub fn getExitCode(
@@ -717,7 +786,20 @@ pub const Subprocess = struct {
         return JSC.JSValue.jsNull();
     }
 
-    pub fn spawn(globalThis: *JSC.JSGlobalObject, args: JSValue) JSValue {
+    pub fn spawn(globalThis: *JSC.JSGlobalObject, args: JSValue, secondaryArgsValue: ?JSValue) JSValue {
+        return spawnMaybeSync(globalThis, args, secondaryArgsValue, false);
+    }
+
+    pub fn spawnSync(globalThis: *JSC.JSGlobalObject, args: JSValue, secondaryArgsValue: ?JSValue) JSValue {
+        return spawnMaybeSync(globalThis, args, secondaryArgsValue, true);
+    }
+
+    pub fn spawnMaybeSync(
+        globalThis: *JSC.JSGlobalObject,
+        args_: JSValue,
+        secondaryArgsValue: ?JSValue,
+        comptime is_sync: bool,
+    ) JSValue {
         var arena = std.heap.ArenaAllocator.init(bun.default_allocator);
         defer arena.deinit();
         var allocator = arena.allocator();
@@ -733,145 +815,167 @@ pub const Subprocess = struct {
 
         var stdio = [3]Stdio{
             .{ .ignore = .{} },
-            .{ .inherit = .{} },
             .{ .pipe = null },
+            .{ .inherit = {} },
         };
+
+        if (comptime is_sync) {
+            stdio[1] = .{ .pipe = null };
+            stdio[2] = .{ .pipe = null };
+        }
 
         var on_exit_callback = JSValue.zero;
         var PATH = globalThis.bunVM().bundler.env.get("PATH") orelse "";
         var argv: std.ArrayListUnmanaged(?[*:0]const u8) = undefined;
+        var cmd_value = JSValue.zero;
+        var args = args_;
         {
-            var cmd_value = args.get(globalThis, "cmd") orelse {
-                globalThis.throwInvalidArguments("cmd must be an array of strings", .{});
-                return JSValue.jsUndefined();
-            };
-
-            var cmds_array = cmd_value.arrayIterator(globalThis);
-            argv = @TypeOf(argv).initCapacity(allocator, cmds_array.len) catch {
-                globalThis.throw("out of memory", .{});
-                return JSValue.jsUndefined();
-            };
-
-            if (cmd_value.isEmptyOrUndefinedOrNull()) {
-                globalThis.throwInvalidArguments("cmd must be an array of strings", .{});
+            if (args.isEmptyOrUndefinedOrNull()) {
+                globalThis.throwInvalidArguments("cmds must be an array", .{});
                 return JSValue.jsUndefined();
             }
 
-            if (cmds_array.len == 0) {
-                globalThis.throwInvalidArguments("cmd must not be empty", .{});
+            const args_type = args.jsType();
+            if (args_type.isArray()) {
+                cmd_value = args;
+                args = secondaryArgsValue orelse JSValue.zero;
+            } else if (args.get(globalThis, "cmd")) |cmd_value_| {
+                cmd_value = cmd_value_;
+            } else {
+                globalThis.throwInvalidArguments("cmds must be an array", .{});
                 return JSValue.jsUndefined();
             }
 
             {
-                var first_cmd = cmds_array.next().?;
-                var arg0 = first_cmd.toSlice(globalThis, allocator);
-                defer arg0.deinit();
-                var path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
-                var resolved = Which.which(&path_buf, PATH, cwd, arg0.slice()) orelse {
-                    globalThis.throwInvalidArguments("cmd not in $PATH: {s}", .{arg0});
+                var cmds_array = cmd_value.arrayIterator(globalThis);
+                argv = @TypeOf(argv).initCapacity(allocator, cmds_array.len) catch {
+                    globalThis.throw("out of memory", .{});
                     return JSValue.jsUndefined();
                 };
-                argv.appendAssumeCapacity(allocator.dupeZ(u8, bun.span(resolved)) catch {
-                    globalThis.throw("out of memory", .{});
+
+                if (cmd_value.isEmptyOrUndefinedOrNull()) {
+                    globalThis.throwInvalidArguments("cmd must be an array of strings", .{});
                     return JSValue.jsUndefined();
-                });
-            }
+                }
 
-            while (cmds_array.next()) |value| {
-                argv.appendAssumeCapacity(value.getZigString(globalThis).toOwnedSliceZ(allocator) catch {
-                    globalThis.throw("out of memory", .{});
+                if (cmds_array.len == 0) {
+                    globalThis.throwInvalidArguments("cmd must not be empty", .{});
                     return JSValue.jsUndefined();
-                });
-            }
+                }
 
-            if (argv.items.len == 0) {
-                globalThis.throwInvalidArguments("cmd must be an array of strings", .{});
-                return JSValue.jsUndefined();
-            }
-
-            if (args.get(globalThis, "cwd")) |cwd_| {
-                if (!cwd_.isEmptyOrUndefinedOrNull()) {
-                    cwd = cwd_.getZigString(globalThis).toOwnedSliceZ(allocator) catch {
-                        globalThis.throw("out of memory", .{});
+                {
+                    var first_cmd = cmds_array.next().?;
+                    var arg0 = first_cmd.toSlice(globalThis, allocator);
+                    defer arg0.deinit();
+                    var path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+                    var resolved = Which.which(&path_buf, PATH, cwd, arg0.slice()) orelse {
+                        globalThis.throwInvalidArguments("cmd not in $PATH: {s}", .{arg0});
                         return JSValue.jsUndefined();
                     };
+                    argv.appendAssumeCapacity(allocator.dupeZ(u8, bun.span(resolved)) catch {
+                        globalThis.throw("out of memory", .{});
+                        return JSValue.jsUndefined();
+                    });
+                }
+
+                while (cmds_array.next()) |value| {
+                    argv.appendAssumeCapacity(value.getZigString(globalThis).toOwnedSliceZ(allocator) catch {
+                        globalThis.throw("out of memory", .{});
+                        return JSValue.jsUndefined();
+                    });
+                }
+
+                if (argv.items.len == 0) {
+                    globalThis.throwInvalidArguments("cmd must be an array of strings", .{});
+                    return JSValue.jsUndefined();
                 }
             }
 
-            if (args.get(globalThis, "onExit")) |onExit_| {
-                if (!onExit_.isEmptyOrUndefinedOrNull()) {
-                    if (!onExit_.isCell() or !onExit_.isCallable(globalThis.vm())) {
-                        globalThis.throwInvalidArguments("onExit must be a function or undefined", .{});
-                        return JSValue.jsUndefined();
-                    }
-                    on_exit_callback = onExit_;
-                }
-            }
-
-            if (args.get(globalThis, "env")) |object| {
-                if (!object.isEmptyOrUndefinedOrNull()) {
-                    if (!object.isObject()) {
-                        globalThis.throwInvalidArguments("env must be an object", .{});
-                        return JSValue.jsUndefined();
-                    }
-
-                    var object_iter = JSC.JSPropertyIterator(.{
-                        .skip_empty_name = false,
-                        .include_value = true,
-                    }).init(globalThis, object.asObjectRef());
-                    defer object_iter.deinit();
-                    env_array.ensureTotalCapacityPrecise(allocator, object_iter.len) catch {
-                        globalThis.throw("out of memory", .{});
-                        return JSValue.jsUndefined();
-                    };
-
-                    while (object_iter.next()) |key| {
-                        var value = object_iter.value;
-                        var line = std.fmt.allocPrintZ(allocator, "{}={}", .{ key, value.getZigString(globalThis) }) catch {
-                            globalThis.throw("out of memory", .{});
-                            return JSValue.jsUndefined();
-                        };
-
-                        if (key.eqlComptime("PATH")) {
-                            PATH = bun.span(line["PATH=".len..]);
-                        }
-                        env_array.append(allocator, line) catch {
+            if (args != .zero and args.isObject()) {
+                if (args.get(globalThis, "cwd")) |cwd_| {
+                    if (!cwd_.isEmptyOrUndefinedOrNull()) {
+                        cwd = cwd_.getZigString(globalThis).toOwnedSliceZ(allocator) catch {
                             globalThis.throw("out of memory", .{});
                             return JSValue.jsUndefined();
                         };
                     }
                 }
-            }
 
-            if (args.get(globalThis, "stdio")) |stdio_val| {
-                if (!stdio_val.isEmptyOrUndefinedOrNull()) {
-                    if (stdio_val.jsType().isArray()) {
-                        var stdio_iter = stdio_val.arrayIterator(globalThis);
-                        stdio_iter.len = @minimum(stdio_iter.len, 3);
-                        var i: usize = 0;
-                        while (stdio_iter.next()) |value| : (i += 1) {
-                            if (!extractStdio(globalThis, i, value, &stdio))
-                                return JSC.JSValue.jsUndefined();
+                if (args.get(globalThis, "onExit")) |onExit_| {
+                    if (!onExit_.isEmptyOrUndefinedOrNull()) {
+                        if (!onExit_.isCell() or !onExit_.isCallable(globalThis.vm())) {
+                            globalThis.throwInvalidArguments("onExit must be a function or undefined", .{});
+                            return JSValue.jsUndefined();
                         }
-                    } else {
-                        globalThis.throwInvalidArguments("stdio must be an array", .{});
-                        return JSValue.jsUndefined();
+                        on_exit_callback = onExit_;
                     }
                 }
-            } else {
-                if (args.get(globalThis, "stdin")) |value| {
-                    if (!extractStdio(globalThis, std.os.STDIN_FILENO, value, &stdio))
-                        return JSC.JSValue.jsUndefined();
+
+                if (args.get(globalThis, "env")) |object| {
+                    if (!object.isEmptyOrUndefinedOrNull()) {
+                        if (!object.isObject()) {
+                            globalThis.throwInvalidArguments("env must be an object", .{});
+                            return JSValue.jsUndefined();
+                        }
+
+                        var object_iter = JSC.JSPropertyIterator(.{
+                            .skip_empty_name = false,
+                            .include_value = true,
+                        }).init(globalThis, object.asObjectRef());
+                        defer object_iter.deinit();
+                        env_array.ensureTotalCapacityPrecise(allocator, object_iter.len) catch {
+                            globalThis.throw("out of memory", .{});
+                            return JSValue.jsUndefined();
+                        };
+
+                        while (object_iter.next()) |key| {
+                            var value = object_iter.value;
+                            var line = std.fmt.allocPrintZ(allocator, "{}={}", .{ key, value.getZigString(globalThis) }) catch {
+                                globalThis.throw("out of memory", .{});
+                                return JSValue.jsUndefined();
+                            };
+
+                            if (key.eqlComptime("PATH")) {
+                                PATH = bun.span(line["PATH=".len..]);
+                            }
+                            env_array.append(allocator, line) catch {
+                                globalThis.throw("out of memory", .{});
+                                return JSValue.jsUndefined();
+                            };
+                        }
+                    }
                 }
 
-                if (args.get(globalThis, "stderr")) |value| {
-                    if (!extractStdio(globalThis, std.os.STDERR_FILENO, value, &stdio))
-                        return JSC.JSValue.jsUndefined();
-                }
+                if (args.get(globalThis, "stdio")) |stdio_val| {
+                    if (!stdio_val.isEmptyOrUndefinedOrNull()) {
+                        if (stdio_val.jsType().isArray()) {
+                            var stdio_iter = stdio_val.arrayIterator(globalThis);
+                            stdio_iter.len = @minimum(stdio_iter.len, 3);
+                            var i: usize = 0;
+                            while (stdio_iter.next()) |value| : (i += 1) {
+                                if (!extractStdio(globalThis, i, value, &stdio))
+                                    return JSC.JSValue.jsUndefined();
+                            }
+                        } else {
+                            globalThis.throwInvalidArguments("stdio must be an array", .{});
+                            return JSValue.jsUndefined();
+                        }
+                    }
+                } else {
+                    if (args.get(globalThis, "stdin")) |value| {
+                        if (!extractStdio(globalThis, std.os.STDIN_FILENO, value, &stdio))
+                            return JSC.JSValue.jsUndefined();
+                    }
 
-                if (args.get(globalThis, "stdout")) |value| {
-                    if (!extractStdio(globalThis, std.os.STDOUT_FILENO, value, &stdio))
-                        return JSC.JSValue.jsUndefined();
+                    if (args.get(globalThis, "stderr")) |value| {
+                        if (!extractStdio(globalThis, std.os.STDERR_FILENO, value, &stdio))
+                            return JSC.JSValue.jsUndefined();
+                    }
+
+                    if (args.get(globalThis, "stdout")) |value| {
+                        if (!extractStdio(globalThis, std.os.STDOUT_FILENO, value, &stdio))
+                            return JSC.JSValue.jsUndefined();
+                    }
                 }
             }
         }
@@ -899,18 +1003,6 @@ pub const Subprocess = struct {
             env_array.capacity = env_array.items.len;
         }
 
-        const any_ignore = stdio[0] == .ignore or stdio[1] == .ignore or stdio[2] == .ignore;
-        const dev_null_fd = @intCast(
-            i32,
-            if (any_ignore)
-                std.os.openZ("/dev/null", std.os.O.RDONLY | std.os.O.WRONLY, 0) catch |err| {
-                    globalThis.throw("failed to open /dev/null: {s}", .{err});
-                    return JSValue.jsUndefined();
-                }
-            else
-                -1,
-        );
-
         const stdin_pipe = if (stdio[0].isPiped()) os.pipe2(0) catch |err| {
             globalThis.throw("failed to create stdin pipe: {s}", .{err});
             return JSValue.jsUndefined();
@@ -933,21 +1025,18 @@ pub const Subprocess = struct {
             &actions,
             stdin_pipe,
             std.os.STDIN_FILENO,
-            dev_null_fd,
         ) catch |err| return globalThis.handleError(err, "in configuring child stdin");
 
         stdio[1].setUpChildIoPosixSpawn(
             &actions,
             stdout_pipe,
             std.os.STDOUT_FILENO,
-            dev_null_fd,
         ) catch |err| return globalThis.handleError(err, "in configuring child stdout");
 
         stdio[2].setUpChildIoPosixSpawn(
             &actions,
             stderr_pipe,
             std.os.STDERR_FILENO,
-            dev_null_fd,
         ) catch |err| return globalThis.handleError(err, "in configuring child stderr");
 
         actions.chdir(cwd) catch |err| return globalThis.handleError(err, "in chdir()");
@@ -978,7 +1067,7 @@ pub const Subprocess = struct {
             const kernel = @import("../../../analytics.zig").GenerateHeader.GeneratePlatform.kernelVersion();
 
             // pidfd_nonblock only supported in 5.10+
-            const flags: u32 = if (kernel.orderWithoutTag(.{ .major = 5, .minor = 10, .patch = 0 }).compare(.gte))
+            const flags: u32 = if (!is_sync and kernel.orderWithoutTag(.{ .major = 5, .minor = 10, .patch = 0 }).compare(.gte))
                 std.os.O.NONBLOCK
             else
                 0;
@@ -1000,15 +1089,12 @@ pub const Subprocess = struct {
             }
         };
 
-        // set non-blocking stdin
-        // if (stdio[0].isPiped())
-        //     _ = std.os.fcntl(stdin_pipe[1], std.os.F.SETFL, std.os.O.NONBLOCK) catch 0;
-
         var subprocess = globalThis.allocator().create(Subprocess) catch {
             globalThis.throw("out of memory", .{});
             return JSValue.jsUndefined();
         };
 
+        // When run synchronously, subprocess isn't garbage collected
         subprocess.* = Subprocess{
             .globalThis = globalThis,
             .pid = pid,
@@ -1025,25 +1111,31 @@ pub const Subprocess = struct {
             subprocess.stdin.pipe.signal = JSC.WebCore.Signal.init(&subprocess.stdin);
         }
 
-        subprocess.this_jsvalue = subprocess.toJS(globalThis);
-        subprocess.this_jsvalue.ensureStillAlive();
+        const out = if (comptime !is_sync)
+            subprocess.toJS(globalThis)
+        else
+            JSValue.zero;
+        if (comptime !is_sync)
+            subprocess.this_jsvalue.set(globalThis, out);
 
-        switch (globalThis.bunVM().poller.watch(
-            @intCast(JSC.Node.FileDescriptor, pidfd),
-            .process,
-            Subprocess,
-            subprocess,
-        )) {
-            .result => {},
-            .err => |err| {
-                if (err.getErrno() == .SRCH) {
-                    @panic("This shouldn't happen");
-                }
+        if (comptime !is_sync) {
+            switch (globalThis.bunVM().poller.watch(
+                @intCast(JSC.Node.FileDescriptor, pidfd),
+                .process,
+                Subprocess,
+                subprocess,
+            )) {
+                .result => {},
+                .err => |err| {
+                    if (err.getErrno() == .SRCH) {
+                        @panic("This shouldn't happen");
+                    }
 
-                // process has already exited
-                // https://cs.github.com/libuv/libuv/blob/b00d1bd225b602570baee82a6152eaa823a84fa6/src/unix/process.c#L1007
-                subprocess.onExitNotification();
-            },
+                    // process has already exited
+                    // https://cs.github.com/libuv/libuv/blob/b00d1bd225b602570baee82a6152eaa823a84fa6/src/unix/process.c#L1007
+                    subprocess.onExitNotification();
+                },
+            }
         }
 
         if (subprocess.stdin == .buffered_input) {
@@ -1051,29 +1143,54 @@ pub const Subprocess = struct {
                 .blob => subprocess.stdin.buffered_input.source.blob.slice(),
                 .array_buffer => |array_buffer| array_buffer.slice(),
             };
-            subprocess.stdin.buffered_input.writeIfPossible();
+            subprocess.stdin.buffered_input.writeIfPossible(is_sync);
         }
 
         if (subprocess.stdout == .pipe and subprocess.stdout.pipe == .buffer) {
-            // bun.ensureNonBlocking(subprocess.stdout.pipe.buffer.fd);
-            subprocess.stdout.pipe.buffer.readIfPossible();
+            if (comptime is_sync) {
+                if (subprocess.stderr.pipe.buffer.canRead()) {
+                    subprocess.stderr.pipe.buffer.readAll(true);
+                }
+            } else {
+                subprocess.stdout.pipe.buffer.readIfPossible(false);
+            }
         }
 
         if (subprocess.stderr == .pipe and subprocess.stderr.pipe == .buffer) {
-            // bun.ensureNonBlocking(subprocess.stderr.pipe.buffer.fd);
-            subprocess.stderr.pipe.buffer.readIfPossible();
+            if (comptime is_sync) {
+                if (subprocess.stderr.pipe.buffer.canRead()) {
+                    subprocess.stderr.pipe.buffer.readAll(true);
+                }
+            } else {
+                subprocess.stderr.pipe.buffer.readIfPossible(false);
+            }
         }
 
-        return subprocess.this_jsvalue;
+        if (comptime !is_sync) {
+            return out;
+        }
+
+        subprocess.wait(true);
+        const exitCode = subprocess.exit_code orelse 1;
+        const stdout = subprocess.stdout.toBufferedValue(globalThis);
+        const stderr = subprocess.stderr.toBufferedValue(globalThis);
+        subprocess.finalize();
+
+        const sync_value = JSC.JSValue.createEmptyObject(globalThis, 4);
+        sync_value.put(globalThis, JSC.ZigString.static("exitCode"), JSValue.jsNumber(@intCast(i32, exitCode) * -1));
+        sync_value.put(globalThis, JSC.ZigString.static("stdout"), stdout);
+        sync_value.put(globalThis, JSC.ZigString.static("stderr"), stderr);
+        sync_value.put(globalThis, JSC.ZigString.static("success"), JSValue.jsBoolean(exitCode == 0));
+        return sync_value;
     }
 
     pub fn onExitNotification(
         this: *Subprocess,
     ) void {
-        this.wait(this.globalThis.bunVM());
+        this.wait(false);
     }
 
-    pub fn wait(this: *Subprocess, vm: *JSC.VirtualMachine) void {
+    pub fn wait(this: *Subprocess, sync: bool) void {
         if (this.has_waitpid_task) {
             return;
         }
@@ -1089,9 +1206,18 @@ pub const Subprocess = struct {
             },
         }
 
-        this.waitpid_task = JSC.AnyTask.New(Subprocess, onExit).init(this);
-        this.has_waitpid_task = true;
-        vm.eventLoop().enqueueTask(JSC.Task.init(&this.waitpid_task));
+        if (!sync) {
+            var vm = this.globalThis.bunVM();
+            this.unrefWithoutGC(vm);
+            this.waitpid_task = JSC.AnyTask.New(Subprocess, onExit).init(this);
+            this.has_waitpid_task = true;
+            vm.eventLoop().enqueueTask(JSC.Task.init(&this.waitpid_task));
+        }
+    }
+
+    pub fn unrefWithoutGC(this: *Subprocess, vm: *JSC.VirtualMachine) void {
+        this.poll_ref.unref(vm);
+        this.reffer.unref(vm);
     }
 
     fn onExit(this: *Subprocess) void {
@@ -1114,9 +1240,7 @@ pub const Subprocess = struct {
             }
         }
 
-        if (this.exit_promise != .zero) {
-            var promise = this.exit_promise;
-            this.exit_promise = .zero;
+        if (this.exit_promise.trySwap()) |promise| {
             if (this.exit_code) |code| {
                 promise.asPromise().?.resolve(this.globalThis, JSValue.jsNumber(code));
             } else if (this.waitpid_err) |err| {
@@ -1165,7 +1289,6 @@ pub const Subprocess = struct {
             actions: *PosixSpawn.Actions,
             pipe_fd: [2]i32,
             std_fileno: i32,
-            _: i32,
         ) !void {
             switch (stdio) {
                 .array_buffer, .blob, .pipe => {
@@ -1179,7 +1302,7 @@ pub const Subprocess = struct {
                     try actions.dup2(fd, std_fileno);
                 },
                 .path => |pathlike| {
-                    const flag = if (std_fileno == std.os.STDIN_FILENO) @as(u32, os.O.WRONLY) else @as(u32, std.os.O.RDONLY);
+                    const flag = if (std_fileno == std.os.STDIN_FILENO) @as(u32, os.O.RDONLY) else @as(u32, std.os.O.WRONLY);
                     try actions.open(std_fileno, pathlike.slice(), flag | std.os.O.CREAT, 0o664);
                 },
                 .inherit => {
@@ -1189,6 +1312,7 @@ pub const Subprocess = struct {
                         try actions.dup2(std_fileno, std_fileno);
                     }
                 },
+
                 .ignore => {
                     const flag = if (std_fileno == std.os.STDIN_FILENO) @as(u32, os.O.RDONLY) else @as(u32, std.os.O.WRONLY);
                     try actions.openZ(std_fileno, "/dev/null", flag, 0o664);

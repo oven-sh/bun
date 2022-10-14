@@ -75,13 +75,16 @@ complete -c bun \
 complete -c bun \
 	-n "not __fish_seen_subcommand_from (__fish__get_bun_bins) (__fish__get_bun_scripts) install remove add;" --no-files -s 'u' -l 'origin' -r -d 'Server URL. Rewrites import paths'
 complete -c bun \
--n "not __fish_seen_subcommand_from (__fish__get_bun_bins) (__fish__get_bun_scripts) install remove add;" --no-files  -s 'p' -l 'port' -r -d 'Port number to start server from' 
+	-n "not __fish_seen_subcommand_from (__fish__get_bun_bins) (__fish__get_bun_scripts) install remove add;" --no-files  -s 'p' -l 'port' -r -d 'Port number to start server from' 
 complete -c bun \
 	-n "not __fish_seen_subcommand_from (__fish__get_bun_bins) (__fish__get_bun_scripts) install remove add;" --no-files  -s 'd' -l 'define' -r -d 'Substitute K:V while parsing, e.g. --define process.env.NODE_ENV:\"development\"' 
 complete -c bun \
 	-n "not __fish_seen_subcommand_from (__fish__get_bun_bins) (__fish__get_bun_scripts) install remove add;" --no-files  -s 'e' -l 'external' -r -d 'Exclude module from transpilation (can use * wildcards). ex: -e react' 
 complete -c bun \
 	-n "not __fish_seen_subcommand_from (__fish__get_bun_bins) (__fish__get_bun_scripts) install remove add;" --no-files -l 'use' -r -d 'Use a framework (ex: next)' 
+complete -c bun \
+	-n "not __fish_seen_subcommand_from (__fish__get_bun_bins) (__fish__get_bun_scripts) install remove add;" --no-files -l 'hot' -r -d 'Enable hot reloading in Bun\'s JavaScript runtime' 
+	
 complete -c bun \
 	-n "bun_fish_is_nth_token 1; and not __fish_seen_subcommand_from $bun_builtin_cmds; and not __fish_seen_subcommand_from (__fish__get_bun_bins) (__fish__get_bun_scripts) and __fish_use_subcommand" -a 'dev' -d 'Start dev server'
 complete -c bun \

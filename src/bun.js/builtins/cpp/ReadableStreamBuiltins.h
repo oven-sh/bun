@@ -78,6 +78,11 @@ extern const int s_readableStreamReadableStreamToBlobCodeLength;
 extern const JSC::ConstructAbility s_readableStreamReadableStreamToBlobCodeConstructAbility;
 extern const JSC::ConstructorKind s_readableStreamReadableStreamToBlobCodeConstructorKind;
 extern const JSC::ImplementationVisibility s_readableStreamReadableStreamToBlobCodeImplementationVisibility;
+extern const char* const s_readableStreamReadableStreamToNodeReadableCode;
+extern const int s_readableStreamReadableStreamToNodeReadableCodeLength;
+extern const JSC::ConstructAbility s_readableStreamReadableStreamToNodeReadableCodeConstructAbility;
+extern const JSC::ConstructorKind s_readableStreamReadableStreamToNodeReadableCodeConstructorKind;
+extern const JSC::ImplementationVisibility s_readableStreamReadableStreamToNodeReadableCodeImplementationVisibility;
 extern const char* const s_readableStreamConsumeReadableStreamCode;
 extern const int s_readableStreamConsumeReadableStreamCodeLength;
 extern const JSC::ConstructAbility s_readableStreamConsumeReadableStreamCodeConstructAbility;
@@ -123,6 +128,16 @@ extern const int s_readableStreamLockedCodeLength;
 extern const JSC::ConstructAbility s_readableStreamLockedCodeConstructAbility;
 extern const JSC::ConstructorKind s_readableStreamLockedCodeConstructorKind;
 extern const JSC::ImplementationVisibility s_readableStreamLockedCodeImplementationVisibility;
+extern const char* const s_readableStreamValuesCode;
+extern const int s_readableStreamValuesCodeLength;
+extern const JSC::ConstructAbility s_readableStreamValuesCodeConstructAbility;
+extern const JSC::ConstructorKind s_readableStreamValuesCodeConstructorKind;
+extern const JSC::ImplementationVisibility s_readableStreamValuesCodeImplementationVisibility;
+extern const char* const s_readableStreamLazyAsyncIteratorCode;
+extern const int s_readableStreamLazyAsyncIteratorCodeLength;
+extern const JSC::ConstructAbility s_readableStreamLazyAsyncIteratorCodeConstructAbility;
+extern const JSC::ConstructorKind s_readableStreamLazyAsyncIteratorCodeConstructorKind;
+extern const JSC::ImplementationVisibility s_readableStreamLazyAsyncIteratorCodeImplementationVisibility;
 
 #define WEBCORE_FOREACH_READABLESTREAM_BUILTIN_DATA(macro) \
     macro(initializeReadableStream, readableStreamInitializeReadableStream, 2) \
@@ -131,6 +146,7 @@ extern const JSC::ImplementationVisibility s_readableStreamLockedCodeImplementat
     macro(readableStreamToArrayBuffer, readableStreamReadableStreamToArrayBuffer, 1) \
     macro(readableStreamToJSON, readableStreamReadableStreamToJSON, 1) \
     macro(readableStreamToBlob, readableStreamReadableStreamToBlob, 1) \
+    macro(readableStreamToNodeReadable, readableStreamReadableStreamToNodeReadable, 1) \
     macro(consumeReadableStream, readableStreamConsumeReadableStream, 3) \
     macro(createEmptyReadableStream, readableStreamCreateEmptyReadableStream, 0) \
     macro(createNativeReadableStream, readableStreamCreateNativeReadableStream, 3) \
@@ -140,6 +156,8 @@ extern const JSC::ImplementationVisibility s_readableStreamLockedCodeImplementat
     macro(pipeTo, readableStreamPipeTo, 1) \
     macro(tee, readableStreamTee, 0) \
     macro(locked, readableStreamLocked, 0) \
+    macro(values, readableStreamValues, 1) \
+    macro(lazyAsyncIterator, readableStreamLazyAsyncIterator, 0) \
 
 #define WEBCORE_BUILTIN_READABLESTREAM_INITIALIZEREADABLESTREAM 1
 #define WEBCORE_BUILTIN_READABLESTREAM_READABLESTREAMTOARRAY 1
@@ -147,6 +165,7 @@ extern const JSC::ImplementationVisibility s_readableStreamLockedCodeImplementat
 #define WEBCORE_BUILTIN_READABLESTREAM_READABLESTREAMTOARRAYBUFFER 1
 #define WEBCORE_BUILTIN_READABLESTREAM_READABLESTREAMTOJSON 1
 #define WEBCORE_BUILTIN_READABLESTREAM_READABLESTREAMTOBLOB 1
+#define WEBCORE_BUILTIN_READABLESTREAM_READABLESTREAMTONODEREADABLE 1
 #define WEBCORE_BUILTIN_READABLESTREAM_CONSUMEREADABLESTREAM 1
 #define WEBCORE_BUILTIN_READABLESTREAM_CREATEEMPTYREADABLESTREAM 1
 #define WEBCORE_BUILTIN_READABLESTREAM_CREATENATIVEREADABLESTREAM 1
@@ -156,6 +175,8 @@ extern const JSC::ImplementationVisibility s_readableStreamLockedCodeImplementat
 #define WEBCORE_BUILTIN_READABLESTREAM_PIPETO 1
 #define WEBCORE_BUILTIN_READABLESTREAM_TEE 1
 #define WEBCORE_BUILTIN_READABLESTREAM_LOCKED 1
+#define WEBCORE_BUILTIN_READABLESTREAM_VALUES 1
+#define WEBCORE_BUILTIN_READABLESTREAM_LAZYASYNCITERATOR 1
 
 #define WEBCORE_FOREACH_READABLESTREAM_BUILTIN_CODE(macro) \
     macro(readableStreamInitializeReadableStreamCode, initializeReadableStream, ASCIILiteral(), s_readableStreamInitializeReadableStreamCodeLength) \
@@ -164,6 +185,7 @@ extern const JSC::ImplementationVisibility s_readableStreamLockedCodeImplementat
     macro(readableStreamReadableStreamToArrayBufferCode, readableStreamToArrayBuffer, ASCIILiteral(), s_readableStreamReadableStreamToArrayBufferCodeLength) \
     macro(readableStreamReadableStreamToJSONCode, readableStreamToJSON, ASCIILiteral(), s_readableStreamReadableStreamToJSONCodeLength) \
     macro(readableStreamReadableStreamToBlobCode, readableStreamToBlob, ASCIILiteral(), s_readableStreamReadableStreamToBlobCodeLength) \
+    macro(readableStreamReadableStreamToNodeReadableCode, readableStreamToNodeReadable, ASCIILiteral(), s_readableStreamReadableStreamToNodeReadableCodeLength) \
     macro(readableStreamConsumeReadableStreamCode, consumeReadableStream, ASCIILiteral(), s_readableStreamConsumeReadableStreamCodeLength) \
     macro(readableStreamCreateEmptyReadableStreamCode, createEmptyReadableStream, ASCIILiteral(), s_readableStreamCreateEmptyReadableStreamCodeLength) \
     macro(readableStreamCreateNativeReadableStreamCode, createNativeReadableStream, ASCIILiteral(), s_readableStreamCreateNativeReadableStreamCodeLength) \
@@ -173,6 +195,8 @@ extern const JSC::ImplementationVisibility s_readableStreamLockedCodeImplementat
     macro(readableStreamPipeToCode, pipeTo, ASCIILiteral(), s_readableStreamPipeToCodeLength) \
     macro(readableStreamTeeCode, tee, ASCIILiteral(), s_readableStreamTeeCodeLength) \
     macro(readableStreamLockedCode, locked, "get locked"_s, s_readableStreamLockedCodeLength) \
+    macro(readableStreamValuesCode, values, ASCIILiteral(), s_readableStreamValuesCodeLength) \
+    macro(readableStreamLazyAsyncIteratorCode, lazyAsyncIterator, ASCIILiteral(), s_readableStreamLazyAsyncIteratorCodeLength) \
 
 #define WEBCORE_FOREACH_READABLESTREAM_BUILTIN_FUNCTION_NAME(macro) \
     macro(cancel) \
@@ -181,6 +205,7 @@ extern const JSC::ImplementationVisibility s_readableStreamLockedCodeImplementat
     macro(createNativeReadableStream) \
     macro(getReader) \
     macro(initializeReadableStream) \
+    macro(lazyAsyncIterator) \
     macro(locked) \
     macro(pipeThrough) \
     macro(pipeTo) \
@@ -188,8 +213,10 @@ extern const JSC::ImplementationVisibility s_readableStreamLockedCodeImplementat
     macro(readableStreamToArrayBuffer) \
     macro(readableStreamToBlob) \
     macro(readableStreamToJSON) \
+    macro(readableStreamToNodeReadable) \
     macro(readableStreamToText) \
     macro(tee) \
+    macro(values) \
 
 #define DECLARE_BUILTIN_GENERATOR(codeName, functionName, overriddenName, argumentCount) \
     JSC::FunctionExecutable* codeName##Generator(JSC::VM&);

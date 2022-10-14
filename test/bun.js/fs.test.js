@@ -14,7 +14,9 @@ import {
   statSync,
   lstatSync,
   copyFileSync,
+  rmSync,
 } from "node:fs";
+import { join } from "node:path";
 
 const Buffer = globalThis.Buffer || Uint8Array;
 
@@ -385,5 +387,35 @@ describe("stat", () => {
     expect(fileStats.isSymbolicLink()).toBe(false);
     expect(fileStats.isFile()).toBe(false);
     expect(fileStats.isDirectory()).toBe(true);
+  });
+});
+
+describe("rm", () => {
+  it("removes a file", () => {
+    const path = `/tmp/${Date.now()}.rm.txt`;
+    writeFileSync(path, "File written successfully", "utf8");
+    expect(existsSync(path)).toBe(true);
+    rmSync(path);
+    expect(existsSync(path)).toBe(false);
+  });
+
+  it("removes a dir", () => {
+    const path = `/tmp/${Date.now()}.rm.dir`;
+    try {
+      mkdirSync(path);
+    } catch (e) {}
+    expect(existsSync(path)).toBe(true);
+    rmSync(path);
+    expect(existsSync(path)).toBe(false);
+  });
+
+  it("removes a dir recursively", () => {
+    const path = `/tmp/${Date.now()}.rm.dir/foo/bar`;
+    try {
+      mkdirSync(path, { recursive: true });
+    } catch (e) {}
+    expect(existsSync(path)).toBe(true);
+    rmSync(join(path, "../../"), { recursive: true });
+    expect(existsSync(path)).toBe(false);
   });
 });

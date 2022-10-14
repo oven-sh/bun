@@ -1,11 +1,190 @@
-import { file, readableStreamToArrayBuffer, readableStreamToArray } from "bun";
+import {
+  file,
+  readableStreamToArrayBuffer,
+  readableStreamToArray,
+  readableStreamToText,
+} from "bun";
 import { expect, it, beforeEach, afterEach } from "bun:test";
-import { writeFileSync } from "node:fs";
+import { mkfifo } from "mkfifo";
+import { unlinkSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { gc } from "./gc";
 new Uint8Array();
 
 beforeEach(() => gc());
 afterEach(() => gc());
+
+it("ReadableStream.prototype[Symbol.asyncIterator]", async () => {
+  const stream = new ReadableStream({
+    start(controller) {
+      controller.enqueue("hello");
+      controller.enqueue("world");
+      controller.close();
+    },
+    cancel(reason) {},
+  });
+
+  const chunks = [];
+  try {
+    for await (const chunk of stream) {
+      chunks.push(chunk);
+    }
+  } catch (e) {
+    console.log(e.message);
+    console.log(e.stack);
+  }
+
+  expect(chunks.join("")).toBe("helloworld");
+});
+
+it("ReadableStream.prototype[Symbol.asyncIterator] pull", async () => {
+  const stream = new ReadableStream({
+    pull(controller) {
+      controller.enqueue("hello");
+      controller.enqueue("world");
+      controller.close();
+    },
+    cancel(reason) {},
+  });
+
+  const chunks = [];
+  for await (const chunk of stream) {
+    chunks.push(chunk);
+  }
+  expect(chunks.join("")).toBe("helloworld");
+});
+
+it("ReadableStream.prototype[Symbol.asyncIterator] direct", async () => {
+  const stream = new ReadableStream({
+    pull(controller) {
+      controller.write("hello");
+      controller.write("world");
+      controller.close();
+    },
+    type: "direct",
+    cancel(reason) {},
+  });
+
+  const chunks = [];
+  try {
+    for await (const chunk of stream) {
+      chunks.push(chunk);
+    }
+  } catch (e) {
+    console.log(e.message);
+    console.log(e.stack);
+  }
+
+  expect(Buffer.concat(chunks).toString()).toBe("helloworld");
+});
+
+it("ReadableStream.prototype.values() cancel", async () => {
+  var cancelled = false;
+  const stream = new ReadableStream({
+    pull(controller) {
+      controller.enqueue("hello");
+      controller.enqueue("world");
+    },
+    cancel(reason) {
+      cancelled = true;
+    },
+  });
+
+  for await (const chunk of stream.values({ preventCancel: false })) {
+    break;
+  }
+  expect(cancelled).toBe(true);
+});
+
+it("ReadableStream.prototype.values() preventCancel", async () => {
+  var cancelled = false;
+  const stream = new ReadableStream({
+    pull(controller) {
+      controller.enqueue("hello");
+      controller.enqueue("world");
+    },
+    cancel(reason) {
+      cancelled = true;
+    },
+  });
+
+  for await (const chunk of stream.values({ preventCancel: true })) {
+    break;
+  }
+  expect(cancelled).toBe(false);
+});
+
+it("ReadableStream.prototype.values", async () => {
+  const stream = new ReadableStream({
+    start(controller) {
+      controller.enqueue("hello");
+      controller.enqueue("world");
+      controller.close();
+    },
+  });
+
+  const chunks = [];
+  for await (const chunk of stream.values()) {
+    chunks.push(chunk);
+  }
+  expect(chunks.join("")).toBe("helloworld");
+});
+
+it("Bun.file() read text from pipe", async () => {
+  try {
+    unlinkSync("/tmp/fifo");
+  } catch (e) {}
+
+  mkfifo("/tmp/fifo", 0o666);
+
+  const large = "HELLO!".repeat((((1024 * 512) / "HELLO!".length) | 0) + 1);
+
+  const chunks = [];
+  var out = Bun.file("/tmp/fifo").stream();
+  const proc = Bun.spawn({
+    cmd: [
+      "bash",
+      join(import.meta.dir + "/", "bun-streams-test-fifo.sh"),
+      "/tmp/fifo",
+    ],
+    stderr: "inherit",
+    env: {
+      FIFO_TEST: large,
+    },
+  });
+  const exited = proc.exited;
+  proc.ref();
+
+  var prom = new Promise((resolve, reject) => {
+    setTimeout(() => {
+      (async function () {
+        var reader = out.getReader();
+        var total = 0;
+
+        while (true) {
+          const chunk = await reader.read();
+          total += chunk.value?.byteLength || 0;
+          if (chunk.value) chunks.push(chunk.value);
+
+          if (chunk.done || total >= large.length) {
+            const output = new TextDecoder()
+              .decode(new Uint8Array(Buffer.concat(chunks)))
+              .trim();
+            reader.releaseLock();
+            resolve(output);
+            break;
+          }
+        }
+      })();
+    });
+  });
+
+  const [status, output] = await Promise.all([exited, prom]);
+
+  expect(output.length).toBe(large.length);
+  expect(output).toBe(large);
+  expect(status).toBe(0);
+});
 
 it("exists globally", () => {
   expect(typeof ReadableStream).toBe("function");
@@ -191,7 +370,6 @@ it("ReadableStream for Blob", async () => {
       console.error(e);
       console.error(e.stack);
     }
-
     if (chunk.done) break;
     chunks.push(new TextDecoder().decode(chunk.value));
   }

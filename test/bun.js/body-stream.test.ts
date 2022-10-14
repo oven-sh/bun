@@ -4,7 +4,7 @@ import { readFileSync } from "fs";
 
 // afterEach(() => Bun.gc(true));
 
-var port = 40001;
+var port = 4020;
 
 {
   const BodyMixin = [
@@ -201,10 +201,11 @@ async function runInServer(
   } catch (e) {
     throw e;
   } finally {
-    queueMicrotask(() => {
-      server && server.stop();
-      server = undefined;
-    });
+    server && server.stop();
+    server = undefined;
+    if (port > 4200) {
+      port = 4120;
+    }
   }
 }
 

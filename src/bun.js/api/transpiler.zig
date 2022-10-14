@@ -1119,6 +1119,7 @@ pub fn transformSync(
     buffer_writer = printer.ctx;
     var out = JSC.ZigString.init(buffer_writer.written);
     out.mark();
+    out.setOutputEncoding();
 
     return out.toValueGC(ctx.ptr()).asObjectRef();
 }

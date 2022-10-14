@@ -11,16 +11,16 @@ const {
 } = Deno.dlopen(path, {
   ffi_noop: { parameters: [], result: "void" },
   ffi_string: { parameters: [], result: "pointer" },
-  ffi_hash: { parameters: ["pointer", "u32"], result: "u32" },
+  ffi_hash: { parameters: ["buffer", "u32"], result: "u32" },
 });
 
 const bytes = new Uint8Array(64);
 
 group("deno:ffi", () => {
   bench("noop", () => ffi_noop());
-  bench("hash", () => ffi_hash(Deno.UnsafePointer.of(bytes), bytes.byteLength));
+  bench("hash", () => ffi_hash(bytes, bytes.byteLength));
   bench("c string", () =>
-    new Deno.UnsafePointerView(ffi_string()).getCString()
+    Deno.UnsafePointerView.getCString(ffi_string())
   );
 });
 

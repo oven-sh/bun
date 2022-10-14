@@ -290,7 +290,7 @@ JSC_DEFINE_CUSTOM_GETTER(pcre2RegExpProtoGetterGlobal, (JSGlobalObject *globalOb
     if (UNLIKELY(!thisValue)) {
         return JSValue::encode(jsUndefined());
     }
-    return JSValue::encode(jsBoolean(thisValue->flagsString().contains('g') ? true : false));
+    return JSValue::encode(jsBoolean(thisValue->flagsString().contains('g')));
 }
 
 JSC_DEFINE_CUSTOM_GETTER(pcre2RegExpProtoGetterDotAll, (JSGlobalObject *globalObject, EncodedJSValue encodedThis, PropertyName))
@@ -299,7 +299,7 @@ JSC_DEFINE_CUSTOM_GETTER(pcre2RegExpProtoGetterDotAll, (JSGlobalObject *globalOb
     if (UNLIKELY(!thisValue)) {
         return JSValue::encode(jsUndefined());
     }
-    return JSValue::encode(jsBoolean(thisValue->flagsString().contains('s') ? true : false));
+    return JSValue::encode(jsBoolean(thisValue->flagsString().contains('s')));
 }
 
 JSC_DEFINE_CUSTOM_GETTER(pcre2RegExpProtoGetterHasIndices, (JSGlobalObject *globalObject, EncodedJSValue encodedThis, PropertyName))
@@ -308,7 +308,7 @@ JSC_DEFINE_CUSTOM_GETTER(pcre2RegExpProtoGetterHasIndices, (JSGlobalObject *glob
     if (UNLIKELY(!thisValue)) {
         return JSValue::encode(jsUndefined());
     }
-    return JSValue::encode(jsBoolean(thisValue->flagsString().contains('d') ? true : false));
+    return JSValue::encode(jsBoolean(thisValue->flagsString().contains('d')));
 }
 
 JSC_DEFINE_CUSTOM_GETTER(pcre2RegExpProtoGetterIgnoreCase, (JSGlobalObject *globalObject, EncodedJSValue encodedThis, PropertyName))
@@ -317,7 +317,7 @@ JSC_DEFINE_CUSTOM_GETTER(pcre2RegExpProtoGetterIgnoreCase, (JSGlobalObject *glob
     if (UNLIKELY(!thisValue)) {
         return JSValue::encode(jsUndefined());
     }
-    return JSValue::encode(jsBoolean(thisValue->flagsString().contains('i') ? true : false));
+    return JSValue::encode(jsBoolean(thisValue->flagsString().contains('i')));
 }
 
 JSC_DEFINE_CUSTOM_GETTER(pcre2RegExpProtoGetterMultiline, (JSGlobalObject *globalObject, EncodedJSValue encodedThis, PropertyName))
@@ -326,7 +326,7 @@ JSC_DEFINE_CUSTOM_GETTER(pcre2RegExpProtoGetterMultiline, (JSGlobalObject *globa
     if (UNLIKELY(!thisValue)) {
         return JSValue::encode(jsUndefined());
     }
-    return JSValue::encode(jsBoolean(thisValue->flagsString().contains('m') ? true : false));
+    return JSValue::encode(jsBoolean(thisValue->flagsString().contains('m')));
 }
 
 JSC_DEFINE_CUSTOM_GETTER(pcre2RegExpProtoGetterSticky, (JSGlobalObject *globalObject, EncodedJSValue encodedThis, PropertyName))
@@ -336,7 +336,7 @@ JSC_DEFINE_CUSTOM_GETTER(pcre2RegExpProtoGetterSticky, (JSGlobalObject *globalOb
         return JSValue::encode(jsUndefined());
     }
 
-    return JSValue::encode(jsBoolean(thisValue->flagsString().contains('y') ? true : false));
+    return JSValue::encode(jsBoolean(thisValue->flagsString().contains('y')));
 }
 
 JSC_DEFINE_CUSTOM_GETTER(pcre2RegExpProtoGetterUnicode, (JSGlobalObject *globalObject, EncodedJSValue encodedThis, PropertyName))
@@ -345,7 +345,7 @@ JSC_DEFINE_CUSTOM_GETTER(pcre2RegExpProtoGetterUnicode, (JSGlobalObject *globalO
     if (UNLIKELY(!thisValue)) {
         return JSValue::encode(jsUndefined());
     }
-    return JSValue::encode(jsBoolean(thisValue->flagsString().contains('u') ? true : false));
+    return JSValue::encode(jsBoolean(thisValue->flagsString().contains('u')));
 }
 
 JSC_DEFINE_CUSTOM_GETTER(pcre2RegExpProtoGetterSource, (JSGlobalObject *globalObject, EncodedJSValue encodedThis, PropertyName))

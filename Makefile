@@ -395,8 +395,7 @@ MINIMUM_ARCHIVE_FILES = -L$(BUN_DEPS_OUT_DIR) \
 	-lcrypto \
 	-llolhtml \
 	$(BUN_DEPS_OUT_DIR)/libbacktrace.a \
-	$(BUN_DEPS_OUT_DIR)/libpcre2-16.a \
-	$(BUN_DEPS_OUT_DIR)/libpcre2-posix.a
+	$(BUN_DEPS_OUT_DIR)/libpcre2-16.a
 
 ARCHIVE_FILES_WITHOUT_LIBCRYPTO = $(MINIMUM_ARCHIVE_FILES) \
 		-larchive \

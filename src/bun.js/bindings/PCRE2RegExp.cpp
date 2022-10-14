@@ -202,9 +202,9 @@ class PCRE2RegExpPrototype final : public JSC::JSNonFinalObject {
     
 
 
-class PCRE2RegExp final : public JSC::JSNonFinalObject {
+class PCRE2RegExp final : public JSC::JSDestructibleObject {
 public:
-    using Base = JSC::JSNonFinalObject;
+    using Base = JSC::JSDestructibleObject;
 
     static PCRE2RegExp* create(JSC::VM& vm, JSGlobalObject* globalObject, JSC::Structure* structure)
     {
@@ -237,8 +237,17 @@ public:
             [](auto& spaces) { return spaces.m_subspaceForPCRE2RegExp.get(); },
             [](auto& spaces, auto&& space) { spaces.m_subspaceForPCRE2RegExp = WTFMove(space); });
                                                                                 
-    }                                                                                                                                                                       
-        
+    }
+
+    static void destroy(JSC::JSCell* cell) {
+        static_cast<PCRE2RegExp*>(cell)->PCRE2RegExp::~PCRE2RegExp();
+    }
+
+    ~PCRE2RegExp() {
+        if (m_regExpCode) {
+            pcre2_code_free_16(m_regExpCode);
+        }
+    }
 
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
     {

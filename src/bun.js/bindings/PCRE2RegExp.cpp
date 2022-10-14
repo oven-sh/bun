@@ -7,6 +7,7 @@
 using namespace JSC;
 using namespace WebCore;
 
+#include "WebCoreJSClientData.h"
 
 extern "C" EncodedJSValue jsFunctionGetPCRE2RegExpConstructor(JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName)
 {
@@ -142,6 +143,32 @@ static inline WTF::String escapedPattern(const WTF::String& pattern, const UChar
     return result.toString();
 }
 
+WTF::String sortRegExpFlags(WTF::String flagsString) {
+    WTF::Vector<UChar> flags = {'d', 'g', 'i', 'm', 's', 'u', 'y'};
+    WTF::StringBuilder result;
+
+    for (auto flag : flags) {
+        if (flagsString.contains(flag)) {
+            result.append(flag);
+        }
+    }
+
+    return result.toString();
+}
+
+bool validateRegExpFlags(WTF::StringView flags){
+    std::map<char16_t, bool> flagsAllowed = {{'g', false}, {'i', false}, {'m', false}, {'s', false}, {'u', false}, {'y', false}, {'d', false}};
+    for (auto flag : flags.codeUnits()) {
+        auto flagItr = flagsAllowed.find(flag);
+        if (flagItr == flagsAllowed.end() || flagItr->second) {
+            return false;
+        }
+        flagItr->second = true;
+    }
+
+    return true;
+}
+
 class PCRE2RegExpPrototype final : public JSC::JSNonFinalObject {
     public:
         using Base = JSC::JSNonFinalObject;
@@ -215,7 +242,7 @@ public:
 
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
     {
-        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
+        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(RegExpObjectType, StructureFlags), info());
     }
 
     // static void analyzeHeap(JSCell*, JSC::HeapAnalyzer&);
@@ -350,19 +377,6 @@ JSC_DEFINE_CUSTOM_SETTER(pcre2RegExpProtoSetterLastIndex, (JSGlobalObject *globa
     return true;
 }
 
-bool validateRegExpFlags(WTF::StringView flags){
-    std::map<char16_t, bool> flagsAllowed = {{'g', false}, {'i', false}, {'m', false}, {'s', false}, {'u', false}, {'y', false}, {'d', false}};
-    for (auto flag : flags.codeUnits()) {
-        auto flagItr = flagsAllowed.find(flag);
-        if (flagItr == flagsAllowed.end() || flagItr->second) {
-            return false;
-        }
-        flagItr->second = true;
-    }
-
-    return true;
-}
-
 // compile is deprecated
 JSC_DEFINE_HOST_FUNCTION(pcre2RegExpProtoFuncCompile, (JSGlobalObject *globalObject, JSC::CallFrame *callFrame))
 {
@@ -401,6 +415,8 @@ JSC_DEFINE_HOST_FUNCTION(pcre2RegExpProtoFuncCompile, (JSGlobalObject *globalObj
             throwScope.throwException(globalObject, createSyntaxError(globalObject, makeString("Invalid flags supplied to RegExp constructor."_s)));
             return JSValue::encode({});
         }
+
+        newFlagsString = sortRegExpFlags(newFlagsString);
 
         thisRegExp->setPatternString(newPatternString);
         thisRegExp->setFlagsString(newFlagsString);
@@ -642,14 +658,12 @@ void PCRE2RegExpPrototype::finishCreation(VM& vm, JSGlobalObject* globalObject)
     this->putDirectCustomAccessor(vm, vm.propertyNames->lastIndex, JSC::CustomGetterSetter::create(vm, pcre2RegExpProtoGetterLastIndex, pcre2RegExpProtoSetterLastIndex), 0 | PropertyAttribute::CustomAccessor);;
     this->putDirectNativeFunction(vm, globalObject, PropertyName(vm.propertyNames->test),  1, pcre2RegExpProtoFuncTest, ImplementationVisibility::Public,  NoIntrinsic, static_cast<unsigned>(0));
 
-    // JSC_BUILTIN_FUNCTION_WITHOUT_TRANSITION(vm.propertyNames->matchSymbol, pcre2RegExpPrototypeMatchCodeGenerator, static_cast<unsigned>(0));
-    // JSC_BUILTIN_FUNCTION_WITHOUT_TRANSITION(vm.propertyNames->matchAllSymbol, pcre2RegExpPrototypeMatchAllCodeGenerator, static_cast<unsigned>(0));
-    // JSC_BUILTIN_FUNCTION_WITHOUT_TRANSITION(vm.propertyNames->replaceSymbol, pcre2RegExpPrototypeReplaceCodeGenerator, static_cast<unsigned>(0));
-    // JSC_BUILTIN_FUNCTION_WITHOUT_TRANSITION(vm.propertyNames->searchSymbol, pcre2RegExpPrototypeSearchCodeGenerator, static_cast<unsigned>(0));
-    // JSC_BUILTIN_FUNCTION_WITHOUT_TRANSITION(vm.propertyNames->splitSymbol, pcre2RegExpPrototypeSplitCodeGenerator, static_cast<unsigned>(0));
+    this->putDirectBuiltinFunction(vm, globalObject, vm.propertyNames->matchSymbol, pCRE2RegExpPrototypeMatchCodeGenerator(vm), static_cast<unsigned>(0));
+    this->putDirectBuiltinFunction(vm, globalObject, vm.propertyNames->matchAllSymbol, pCRE2RegExpPrototypeMatchAllCodeGenerator(vm), static_cast<unsigned>(0));
+    this->putDirectBuiltinFunction(vm, globalObject, vm.propertyNames->replaceSymbol, pCRE2RegExpPrototypeReplaceCodeGenerator(vm), static_cast<unsigned>(0));
+    this->putDirectBuiltinFunction(vm, globalObject, vm.propertyNames->searchSymbol, pCRE2RegExpPrototypeSearchCodeGenerator(vm), static_cast<unsigned>(0));
+    this->putDirectBuiltinFunction(vm, globalObject, vm.propertyNames->splitSymbol, pCRE2RegExpPrototypeSplitCodeGenerator(vm), static_cast<unsigned>(0));
 }
-
-
 
 JSC::Structure* PCRE2RegExpConstructor::createClassStructure(JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
 {
@@ -697,6 +711,8 @@ static JSC::EncodedJSValue constructOrCall(Zig::GlobalObject *globalObject, JSVa
         throwScope.throwException(globalObject, createSyntaxError(globalObject, makeString("Invalid flags supplied to RegExp constructor."_s)));
         return JSValue::encode({});
     }
+
+    flagsString = sortRegExpFlags(flagsString);
 
     uint32_t flags = 0;
     if (flagsString.contains('i')) {
@@ -746,8 +762,6 @@ static JSC::EncodedJSValue constructOrCall(Zig::GlobalObject *globalObject, JSVa
     return JSValue::encode(result);
 }
 
-
-
 JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES PCRE2RegExpConstructor::construct(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame)
 {
     Zig::GlobalObject *globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
@@ -773,32 +787,4 @@ JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES PCRE2RegExpConstructor::construct(J
     return constructOrCall(globalObject, callFrame->argument(0), callFrame->argument(1));
 }
 
-}
-
-void compileRegExp(PCRE2RegExp& obj, int& errorCode, PCRE2_SIZE& errorOffset) {
-    //     pcre2_code_free_16(obj.m_regExpCode);
-
-//     errorCode = 0;
-//     errorOffset = 0;
-//     pcre2_code_16* regExpCode = pcre2_compile_16(
-//         reinterpret_cast<const PCRE2_SPTR16>(obj.patternString().characters16()),
-//         obj.patternString().length(),
-//         0,
-//         &errorCode,
-//         &errorOffset,
-//         NULL
-//     );
-
-//     obj.m_regExpCode = regExpCode;
-
-
-//     if (NULL == regExpCode) {
-//         PCRE2_UCHAR16 errorBuffer[256] = { 0 };
-//         pcre2_get_error_message_16(errorCode, errorBuffer, sizeof(errorBuffer));
-//         auto message = WTF::String(WTF::StringImpl::createWithoutCopying(reinterpret_cast<UChar*>(errorBuffer), sizeof(errorBuffer) / sizeof(UChar)));
-// auto throwScope =  DECLARE_THROW_SCOPE(vm);
-
-//         throwSyntaxError(globalObject, throwScope, makeString("Invalid regular expression", message, "\n\t"_s, obj.patternString()));
-//         return;
-//     }
 }

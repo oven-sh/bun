@@ -24,6 +24,10 @@ it("PCRE2RegExp.prototype.exec()", () => {
     expect(a1_1.indices[1][1]).toBe(a2_1.indices[1][1]);
 });
 
+test("PCRE2RegExp flag order", () => {
+    expect(new PCRE2RegExp('a', 'gd').toString()).toBe(new PCRE2RegExp('a', 'dg').toString());
+});
+
 test("PCRE2RegExp.prototype.source", () => {
     let a1 = new PCRE2RegExp('(foo)', 'gd')
     let a2 = new RegExp('(foo)', 'dg')
@@ -234,3 +238,84 @@ test('PCRE2RegExp random', () => {
     expect(new RegExp('a', 'd').unicode).toBe(false);
 });
 
+
+it("String.prototype.replace", () => {
+    for (let RegExpConstructor of [PCRE2RegExp, RegExp]) {
+        const r = new RegExpConstructor('a', 'g');
+        expect('a'.replace(r, 'b')).toBe('b');
+        expect('a'.replace(r, () => 'b')).toBe('b');
+        expect('a'.replace(r, (match, offset, string) => {
+            expect(match).toBe('a');
+            expect(offset).toBe(0);
+            expect(string).toBe('a');
+            return 'b';
+        })).toBe('b');
+    }
+
+    expect('aaaaaa'.replace(new PCRE2RegExp('a', 'g'), 'b')).toBe('bbbbbb');
+    expect('aaaaaa'.replace(new PCRE2RegExp('a'), 'b')).toBe('baaaaa');
+    // case sensitive
+    expect('aaaaaa'.replace(new PCRE2RegExp('A', 'i'), 'b')).toBe('baaaaa');
+    expect('aaaaaa'.replace(new PCRE2RegExp('A'), 'b')).toBe('aaaaaa');
+
+    expect('aaaaaa'.replace(new RegExp('a', 'g'), 'b')).toBe('bbbbbb');
+    expect('aaaaaa'.replace(new RegExp('a'), 'b')).toBe('baaaaa');
+});
+
+it("Strings.prototype.match", () => {
+    let str = 'The rain in SPAIN stays mainly in the plain';
+    for (let RegExpConstructor of [PCRE2RegExp, RegExp]) {
+        let r1 = new RegExpConstructor('ain', 'g');
+        let m1 = str.match(r1);
+        expect(m1[0]).toBe('ain');
+        expect(m1[1]).toBe('ain');
+        expect(m1[2]).toBe('ain');
+
+        r1.compile('ain', 'ig');
+        m1 = str.match(r1);
+        expect(m1[0]).toBe('ain');
+        expect(m1[1]).toBe('AIN');
+        expect(m1[2]).toBe('ain');
+        expect(m1[3]).toBe('ain');    
+    }
+});
+
+it("String.prototype.matchAll", () => {
+    let str = 'test1test2';
+    for (let RegExpConstructor of [RegExp, PCRE2RegExp]) {
+        const regexp = new RegExpConstructor('t(e)(st(\d?))', 'g');
+        const array = [...str.matchAll(regexp)];
+        expect(array[0][0]).toBe('test');
+        expect(array[0][1]).toBe('e');
+        expect(array[0][2]).toBe('st');
+        expect(array[0][3]).toBe('');
+        expect(array[1][0]).toBe('test');
+        expect(array[1][1]).toBe('e');
+        expect(array[1][2]).toBe('st');
+        expect(array[1][3]).toBe('');
+    }
+});
+
+it("String.prototype.search", () => {
+    let str = 'The rain in SPAIN stays mainly in the plain';
+    for (let RegExpConstructor of [PCRE2RegExp, RegExp]) {
+        let r1 = new RegExpConstructor('ain', 'g');
+        expect(str.search(r1)).toBe(5);
+        r1.compile('ain', 'ig');
+        expect(str.search(r1)).toBe(5);
+    }
+});
+
+it("String.prototype.split", () => {
+    let str = 'Hello World. How are you doing?';
+    for (let RegExpConstructor of [RegExp, PCRE2RegExp]) {
+        let r1 = new RegExpConstructor('\\s', 'g');
+        let m1 = str.split(r1);
+        expect(m1[0]).toBe('Hello');
+        expect(m1[1]).toBe('World.');
+        expect(m1[2]).toBe('How');
+        expect(m1[3]).toBe('are');
+        expect(m1[4]).toBe('you');
+        expect(m1[5]).toBe('doing?');
+    }
+});

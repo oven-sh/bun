@@ -26,6 +26,7 @@ pub const Jest = @import("./bun.js/test/jest.zig");
 pub const API = struct {
     pub const Transpiler = @import("./bun.js/api/transpiler.zig");
     pub const Server = @import("./bun.js/api/server.zig").Server;
+    pub const ServerWebSocket = @import("./bun.js/api/server.zig").ServerWebSocket;
     pub const SSLServer = @import("./bun.js/api/server.zig").SSLServer;
     pub const DebugServer = @import("./bun.js/api/server.zig").DebugServer;
     pub const DebugSSLServer = @import("./bun.js/api/server.zig").DebugSSLServer;

@@ -14,4 +14,5 @@ pub const Classes = struct {
     pub const TextDecoder = JSC.WebCore.TextDecoder;
     pub const Blob = JSC.WebCore.Blob;
     pub const Subprocess = JSC.Subprocess;
+    pub const ServerWebSocket = JSC.API.ServerWebSocket;
 };

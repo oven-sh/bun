@@ -90,9 +90,10 @@ typedef void (*uws_websocket_ping_pong_handler)(uws_websocket_t *ws,
                                                 size_t length);
 typedef void (*uws_websocket_close_handler)(uws_websocket_t *ws, int code,
                                             const char *message, size_t length);
-typedef void (*uws_websocket_upgrade_handler)(uws_res_t *response,
+typedef void (*uws_websocket_upgrade_handler)(void *, uws_res_t *response,
                                               uws_req_t *request,
-                                              uws_socket_context_t *context);
+                                              uws_socket_context_t *context,
+                                              size_t id);
 
 typedef struct {
   uws_compress_options_t compression;
@@ -177,8 +178,9 @@ void uws_filter(int ssl, uws_app_t *app, uws_filter_handler handler,
                 void *user_data);
 
 // WebSocket
-void uws_ws(int ssl, uws_app_t *app, const char *pattern,
-            uws_socket_behavior_t behavior);
+void uws_ws(int ssl, uws_app_t *app, void *upgradeCtx, const char *pattern,
+            size_t pattern_length, size_t id,
+            const uws_socket_behavior_t *behavior);
 void *uws_ws_get_user_data(int ssl, uws_websocket_t *ws);
 void uws_ws_close(int ssl, uws_websocket_t *ws);
 uws_sendstatus_t uws_ws_send(int ssl, uws_websocket_t *ws, const char *message,

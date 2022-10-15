@@ -20,6 +20,30 @@ pub const JSSubprocess = struct {
         return Subprocess__fromJS(value);
     }
 
+    extern fn SubprocessPrototype__stderrSetCachedValue(JSC.JSValue, *JSC.JSGlobalObject, JSC.JSValue) void;
+
+    /// Set the cached value for stderr on Subprocess
+    /// This value will be visited by the garbage collector.
+    pub fn stderrSetCached(thisValue: JSC.JSValue, globalObject: *JSC.JSGlobalObject, value: JSC.JSValue) void {
+        SubprocessPrototype__stderrSetCachedValue(thisValue, globalObject, value);
+    }
+
+    extern fn SubprocessPrototype__stdinSetCachedValue(JSC.JSValue, *JSC.JSGlobalObject, JSC.JSValue) void;
+
+    /// Set the cached value for stdin on Subprocess
+    /// This value will be visited by the garbage collector.
+    pub fn stdinSetCached(thisValue: JSC.JSValue, globalObject: *JSC.JSGlobalObject, value: JSC.JSValue) void {
+        SubprocessPrototype__stdinSetCachedValue(thisValue, globalObject, value);
+    }
+
+    extern fn SubprocessPrototype__stdoutSetCachedValue(JSC.JSValue, *JSC.JSGlobalObject, JSC.JSValue) void;
+
+    /// Set the cached value for stdout on Subprocess
+    /// This value will be visited by the garbage collector.
+    pub fn stdoutSetCached(thisValue: JSC.JSValue, globalObject: *JSC.JSGlobalObject, value: JSC.JSValue) void {
+        SubprocessPrototype__stdoutSetCachedValue(thisValue, globalObject, value);
+    }
+
     /// Get the Subprocess constructor value.
     /// This loads lazily from the global object.
     pub fn getConstructor(globalObject: *JSC.JSGlobalObject) JSC.JSValue {
@@ -726,6 +750,115 @@ pub const JSSHA512_256 = struct {
         }
     }
 };
+pub const JSServerWebSocket = struct {
+    const ServerWebSocket = Classes.ServerWebSocket;
+    const GetterType = fn (*ServerWebSocket, *JSC.JSGlobalObject) callconv(.C) JSC.JSValue;
+    const SetterType = fn (*ServerWebSocket, *JSC.JSGlobalObject, JSC.JSValue) callconv(.C) bool;
+    const CallbackType = fn (*ServerWebSocket, *JSC.JSGlobalObject, *JSC.CallFrame) callconv(.C) JSC.JSValue;
+
+    /// Return the pointer to the wrapped object.
+    /// If the object does not match the type, return null.
+    pub fn fromJS(value: JSC.JSValue) ?*ServerWebSocket {
+        JSC.markBinding();
+        return ServerWebSocket__fromJS(value);
+    }
+
+    extern fn ServerWebSocketPrototype__dataSetCachedValue(JSC.JSValue, *JSC.JSGlobalObject, JSC.JSValue) void;
+
+    /// Set the cached value for data on ServerWebSocket
+    /// This value will be visited by the garbage collector.
+    pub fn dataSetCached(thisValue: JSC.JSValue, globalObject: *JSC.JSGlobalObject, value: JSC.JSValue) void {
+        ServerWebSocketPrototype__dataSetCachedValue(thisValue, globalObject, value);
+    }
+
+    extern fn ServerWebSocketPrototype__remoteAddressSetCachedValue(JSC.JSValue, *JSC.JSGlobalObject, JSC.JSValue) void;
+
+    /// Set the cached value for remoteAddress on ServerWebSocket
+    /// This value will be visited by the garbage collector.
+    pub fn remoteAddressSetCached(thisValue: JSC.JSValue, globalObject: *JSC.JSGlobalObject, value: JSC.JSValue) void {
+        ServerWebSocketPrototype__remoteAddressSetCachedValue(thisValue, globalObject, value);
+    }
+
+    /// Get the ServerWebSocket constructor value.
+    /// This loads lazily from the global object.
+    pub fn getConstructor(globalObject: *JSC.JSGlobalObject) JSC.JSValue {
+        JSC.markBinding();
+        return ServerWebSocket__getConstructor(globalObject);
+    }
+
+    /// Create a new instance of ServerWebSocket
+    pub fn toJS(this: *ServerWebSocket, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
+        JSC.markBinding();
+        if (comptime Environment.allow_assert) {
+            const value__ = ServerWebSocket__create(globalObject, this);
+            std.debug.assert(value__.as(ServerWebSocket).? == this); // If this fails, likely a C ABI issue.
+            return value__;
+        } else {
+            return ServerWebSocket__create(globalObject, this);
+        }
+    }
+
+    /// Modify the internal ptr to point to a new instance of ServerWebSocket.
+    pub fn dangerouslySetPtr(value: JSC.JSValue, ptr: ?*ServerWebSocket) bool {
+        JSC.markBinding();
+        return ServerWebSocket__dangerouslySetPtr(value, ptr);
+    }
+
+    extern fn ServerWebSocket__fromJS(JSC.JSValue) ?*ServerWebSocket;
+    extern fn ServerWebSocket__getConstructor(*JSC.JSGlobalObject) JSC.JSValue;
+
+    extern fn ServerWebSocket__create(globalObject: *JSC.JSGlobalObject, ptr: ?*ServerWebSocket) JSC.JSValue;
+
+    extern fn ServerWebSocket__dangerouslySetPtr(JSC.JSValue, ?*ServerWebSocket) bool;
+
+    comptime {
+        if (@TypeOf(ServerWebSocket.constructor) != (fn (*JSC.JSGlobalObject, *JSC.CallFrame) callconv(.C) ?*ServerWebSocket)) {
+            @compileLog("ServerWebSocket.constructor is not a constructor");
+        }
+
+        if (@TypeOf(ServerWebSocket.finalize) != (fn (*ServerWebSocket) callconv(.C) void)) {
+            @compileLog("ServerWebSocket.finalize is not a finalizer");
+        }
+
+        if (@TypeOf(ServerWebSocket.close) != CallbackType)
+            @compileLog("Expected ServerWebSocket.close to be a callback");
+        if (@TypeOf(ServerWebSocket.getData) != GetterType)
+            @compileLog("Expected ServerWebSocket.getData to be a getter");
+
+        if (@TypeOf(ServerWebSocket.getBufferedAmount) != CallbackType)
+            @compileLog("Expected ServerWebSocket.getBufferedAmount to be a callback");
+        if (@TypeOf(ServerWebSocket.isSubscribed) != CallbackType)
+            @compileLog("Expected ServerWebSocket.isSubscribed to be a callback");
+        if (@TypeOf(ServerWebSocket.publish) != CallbackType)
+            @compileLog("Expected ServerWebSocket.publish to be a callback");
+        if (@TypeOf(ServerWebSocket.getReadyState) != GetterType)
+            @compileLog("Expected ServerWebSocket.getReadyState to be a getter");
+
+        if (@TypeOf(ServerWebSocket.getRemoteAddress) != GetterType)
+            @compileLog("Expected ServerWebSocket.getRemoteAddress to be a getter");
+
+        if (@TypeOf(ServerWebSocket.send) != CallbackType)
+            @compileLog("Expected ServerWebSocket.send to be a callback");
+        if (@TypeOf(ServerWebSocket.subscribe) != CallbackType)
+            @compileLog("Expected ServerWebSocket.subscribe to be a callback");
+        if (@TypeOf(ServerWebSocket.unsubscribe) != CallbackType)
+            @compileLog("Expected ServerWebSocket.unsubscribe to be a callback");
+        if (!JSC.is_bindgen) {
+            @export(ServerWebSocket.close, .{ .name = "ServerWebSocketPrototype__close" });
+            @export(ServerWebSocket.constructor, .{ .name = "ServerWebSocketClass__construct" });
+            @export(ServerWebSocket.finalize, .{ .name = "ServerWebSocketClass__finalize" });
+            @export(ServerWebSocket.getBufferedAmount, .{ .name = "ServerWebSocketPrototype__getBufferedAmount" });
+            @export(ServerWebSocket.getData, .{ .name = "ServerWebSocketPrototype__getData" });
+            @export(ServerWebSocket.getReadyState, .{ .name = "ServerWebSocketPrototype__getReadyState" });
+            @export(ServerWebSocket.getRemoteAddress, .{ .name = "ServerWebSocketPrototype__getRemoteAddress" });
+            @export(ServerWebSocket.isSubscribed, .{ .name = "ServerWebSocketPrototype__isSubscribed" });
+            @export(ServerWebSocket.publish, .{ .name = "ServerWebSocketPrototype__publish" });
+            @export(ServerWebSocket.send, .{ .name = "ServerWebSocketPrototype__send" });
+            @export(ServerWebSocket.subscribe, .{ .name = "ServerWebSocketPrototype__subscribe" });
+            @export(ServerWebSocket.unsubscribe, .{ .name = "ServerWebSocketPrototype__unsubscribe" });
+        }
+    }
+};
 pub const JSTextDecoder = struct {
     const TextDecoder = Classes.TextDecoder;
     const GetterType = fn (*TextDecoder, *JSC.JSGlobalObject) callconv(.C) JSC.JSValue;
@@ -737,6 +870,14 @@ pub const JSTextDecoder = struct {
     pub fn fromJS(value: JSC.JSValue) ?*TextDecoder {
         JSC.markBinding();
         return TextDecoder__fromJS(value);
+    }
+
+    extern fn TextDecoderPrototype__encodingSetCachedValue(JSC.JSValue, *JSC.JSGlobalObject, JSC.JSValue) void;
+
+    /// Set the cached value for encoding on TextDecoder
+    /// This value will be visited by the garbage collector.
+    pub fn encodingSetCached(thisValue: JSC.JSValue, globalObject: *JSC.JSGlobalObject, value: JSC.JSValue) void {
+        TextDecoderPrototype__encodingSetCachedValue(thisValue, globalObject, value);
     }
 
     /// Get the TextDecoder constructor value.
@@ -808,6 +949,30 @@ pub const JSRequest = struct {
     pub fn fromJS(value: JSC.JSValue) ?*Request {
         JSC.markBinding();
         return Request__fromJS(value);
+    }
+
+    extern fn RequestPrototype__bodySetCachedValue(JSC.JSValue, *JSC.JSGlobalObject, JSC.JSValue) void;
+
+    /// Set the cached value for body on Request
+    /// This value will be visited by the garbage collector.
+    pub fn bodySetCached(thisValue: JSC.JSValue, globalObject: *JSC.JSGlobalObject, value: JSC.JSValue) void {
+        RequestPrototype__bodySetCachedValue(thisValue, globalObject, value);
+    }
+
+    extern fn RequestPrototype__headersSetCachedValue(JSC.JSValue, *JSC.JSGlobalObject, JSC.JSValue) void;
+
+    /// Set the cached value for headers on Request
+    /// This value will be visited by the garbage collector.
+    pub fn headersSetCached(thisValue: JSC.JSValue, globalObject: *JSC.JSGlobalObject, value: JSC.JSValue) void {
+        RequestPrototype__headersSetCachedValue(thisValue, globalObject, value);
+    }
+
+    extern fn RequestPrototype__urlSetCachedValue(JSC.JSValue, *JSC.JSGlobalObject, JSC.JSValue) void;
+
+    /// Set the cached value for url on Request
+    /// This value will be visited by the garbage collector.
+    pub fn urlSetCached(thisValue: JSC.JSValue, globalObject: *JSC.JSGlobalObject, value: JSC.JSValue) void {
+        RequestPrototype__urlSetCachedValue(thisValue, globalObject, value);
     }
 
     /// Get the Request constructor value.
@@ -940,6 +1105,38 @@ pub const JSResponse = struct {
     pub fn fromJS(value: JSC.JSValue) ?*Response {
         JSC.markBinding();
         return Response__fromJS(value);
+    }
+
+    extern fn ResponsePrototype__bodySetCachedValue(JSC.JSValue, *JSC.JSGlobalObject, JSC.JSValue) void;
+
+    /// Set the cached value for body on Response
+    /// This value will be visited by the garbage collector.
+    pub fn bodySetCached(thisValue: JSC.JSValue, globalObject: *JSC.JSGlobalObject, value: JSC.JSValue) void {
+        ResponsePrototype__bodySetCachedValue(thisValue, globalObject, value);
+    }
+
+    extern fn ResponsePrototype__headersSetCachedValue(JSC.JSValue, *JSC.JSGlobalObject, JSC.JSValue) void;
+
+    /// Set the cached value for headers on Response
+    /// This value will be visited by the garbage collector.
+    pub fn headersSetCached(thisValue: JSC.JSValue, globalObject: *JSC.JSGlobalObject, value: JSC.JSValue) void {
+        ResponsePrototype__headersSetCachedValue(thisValue, globalObject, value);
+    }
+
+    extern fn ResponsePrototype__statusTextSetCachedValue(JSC.JSValue, *JSC.JSGlobalObject, JSC.JSValue) void;
+
+    /// Set the cached value for statusText on Response
+    /// This value will be visited by the garbage collector.
+    pub fn statusTextSetCached(thisValue: JSC.JSValue, globalObject: *JSC.JSGlobalObject, value: JSC.JSValue) void {
+        ResponsePrototype__statusTextSetCachedValue(thisValue, globalObject, value);
+    }
+
+    extern fn ResponsePrototype__urlSetCachedValue(JSC.JSValue, *JSC.JSGlobalObject, JSC.JSValue) void;
+
+    /// Set the cached value for url on Response
+    /// This value will be visited by the garbage collector.
+    pub fn urlSetCached(thisValue: JSC.JSValue, globalObject: *JSC.JSGlobalObject, value: JSC.JSValue) void {
+        ResponsePrototype__urlSetCachedValue(thisValue, globalObject, value);
     }
 
     /// Get the Response constructor value.
@@ -1154,6 +1351,7 @@ comptime {
     _ = JSSHA384;
     _ = JSSHA256;
     _ = JSSHA512_256;
+    _ = JSServerWebSocket;
     _ = JSTextDecoder;
     _ = JSRequest;
     _ = JSResponse;

@@ -1133,6 +1133,131 @@ class JSSHA512_256Prototype final : public JSC::JSNonFinalObject {
     
         void finishCreation(JSC::VM&, JSC::JSGlobalObject* globalObject, JSSHA512_256Prototype* prototype);
     };
+class JSServerWebSocket final : public JSC::JSDestructibleObject {
+    public:
+        using Base = JSC::JSDestructibleObject;
+        static JSServerWebSocket* create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, void* ctx);
+    
+        DECLARE_EXPORT_INFO;
+        template<typename, JSC::SubspaceAccess mode> static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
+        {
+            if constexpr (mode == JSC::SubspaceAccess::Concurrently)
+                return nullptr;
+            return WebCore::subspaceForImpl<JSServerWebSocket, WebCore::UseCustomHeapCellType::No>(
+                vm,
+                [](auto& spaces) { return spaces.m_clientSubspaceForServerWebSocket.get(); },
+                [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForServerWebSocket = WTFMove(space); },
+                [](auto& spaces) { return spaces.m_subspaceForServerWebSocket.get(); },
+                [](auto& spaces, auto&& space) { spaces.m_subspaceForServerWebSocket = WTFMove(space); });
+        }
+    
+        static void destroy(JSC::JSCell*);
+        static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
+        {
+            return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(static_cast<JSC::JSType>(0b11101110), StructureFlags), info());
+        }
+    
+        static JSObject* createPrototype(VM& vm, JSDOMGlobalObject* globalObject);
+    
+        ~JSServerWebSocket();
+    
+        void* wrapped() const { return m_ctx; }
+    
+        void detach()
+        {
+            m_ctx = nullptr;
+        }
+    
+        static void analyzeHeap(JSCell*, JSC::HeapAnalyzer&);
+        static ptrdiff_t offsetOfWrapped() { return OBJECT_OFFSETOF(JSServerWebSocket, m_ctx); }
+    
+        void* m_ctx { nullptr };
+
+            
+        JSServerWebSocket(JSC::VM& vm, JSC::Structure* structure, void* sinkPtr)
+            : Base(vm, structure)
+        {
+            m_ctx = sinkPtr;
+        }
+    
+        void finishCreation(JSC::VM&);
+
+        DECLARE_VISIT_CHILDREN;
+
+        mutable JSC::WriteBarrier<JSC::Unknown> m_data;
+mutable JSC::WriteBarrier<JSC::Unknown> m_remoteAddress;
+    };
+class JSServerWebSocketPrototype final : public JSC::JSNonFinalObject {
+    public:
+        using Base = JSC::JSNonFinalObject;
+    
+        static JSServerWebSocketPrototype* create(JSC::VM& vm, JSGlobalObject* globalObject, JSC::Structure* structure)
+        {
+            JSServerWebSocketPrototype* ptr = new (NotNull, JSC::allocateCell<JSServerWebSocketPrototype>(vm)) JSServerWebSocketPrototype(vm, globalObject, structure);
+            ptr->finishCreation(vm, globalObject);
+            return ptr;
+        }
+    
+        DECLARE_INFO;
+        template<typename CellType, JSC::SubspaceAccess>
+        static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
+        {
+            return &vm.plainObjectSpace();
+        }
+        static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
+        {
+            return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
+        }
+    
+    private:
+        JSServerWebSocketPrototype(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure)
+            : Base(vm, structure)
+        {
+        }
+    
+        void finishCreation(JSC::VM&, JSC::JSGlobalObject*);
+    };
+    
+  class JSServerWebSocketConstructor final : public JSC::InternalFunction {
+    public:
+        using Base = JSC::InternalFunction;
+        static JSServerWebSocketConstructor* create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, JSServerWebSocketPrototype* prototype);
+    
+        static constexpr unsigned StructureFlags = Base::StructureFlags;
+        static constexpr bool needsDestruction = false;
+    
+        static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
+        {
+            return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::InternalFunctionType, StructureFlags), info());
+        }
+
+        template<typename, JSC::SubspaceAccess mode> static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
+        {
+            if constexpr (mode == JSC::SubspaceAccess::Concurrently)
+                return nullptr;
+            return WebCore::subspaceForImpl<JSServerWebSocketConstructor, WebCore::UseCustomHeapCellType::No>(
+                vm,
+                [](auto& spaces) { return spaces.m_clientSubspaceForServerWebSocketConstructor.get(); },
+                [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForServerWebSocketConstructor = WTFMove(space); },
+                [](auto& spaces) { return spaces.m_subspaceForServerWebSocketConstructor.get(); },
+                [](auto& spaces, auto&& space) { spaces.m_subspaceForServerWebSocketConstructor = WTFMove(space); });
+        }
+    
+
+        void initializeProperties(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSServerWebSocketPrototype* prototype);
+    
+        // Must be defined for each specialization class.
+        static JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES construct(JSC::JSGlobalObject*, JSC::CallFrame*);
+        DECLARE_EXPORT_INFO;
+    private:
+        JSServerWebSocketConstructor(JSC::VM& vm, JSC::Structure* structure, JSC::NativeFunction nativeFunction)
+            : Base(vm, structure, nativeFunction, nativeFunction)
+    
+        {
+        }
+    
+        void finishCreation(JSC::VM&, JSC::JSGlobalObject* globalObject, JSServerWebSocketPrototype* prototype);
+    };
 class JSTextDecoder final : public JSC::JSDestructibleObject {
     public:
         using Base = JSC::JSDestructibleObject;

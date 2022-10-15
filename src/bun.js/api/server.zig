@@ -3076,8 +3076,8 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
                 .pendingRequests = .{
                     .get = JSC.getterWrap(ThisServer, "getPendingRequests"),
                 },
-                .pendingSockets = .{
-                    .get = JSC.getterWrap(ThisServer, "getPendingSockets"),
+                .pendingWebSockets = .{
+                    .get = JSC.getterWrap(ThisServer, "getPendingWebSockets"),
                 },
             },
         );
@@ -3297,7 +3297,7 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
             return JSC.JSValue.jsNumber(@intCast(i32, @truncate(u31, this.pending_requests)));
         }
 
-        pub fn getPendingSockets(this: *ThisServer) JSC.JSValue {
+        pub fn getPendingWebSockets(this: *ThisServer) JSC.JSValue {
             return JSC.JSValue.jsNumber(@intCast(i32, @truncate(u31, this.activeSocketsCount())));
         }
 

@@ -2523,7 +2523,8 @@ pub const ServerWebSocket = struct {
         }
 
         if (onOpenHandler.isEmptyOrUndefinedOrNull()) return;
-        var args = [_]JSValue{this.this_value};
+        const this_value = this.getThisValue();
+        var args = [_]JSValue{this_value};
 
         var corker = Corker{
             .args = &args,
@@ -2535,9 +2536,9 @@ pub const ServerWebSocket = struct {
             log("onOpen exception", .{});
 
             ws.close();
-            _ = ServerWebSocket.dangerouslySetPtr(this.this_value, null);
+            _ = ServerWebSocket.dangerouslySetPtr(this_value, null);
             handler.active_connections -|= 1;
-            this.this_value.unprotect();
+            this_value.unprotect();
             bun.default_allocator.destroy(this);
             globalObject.bunVM().runErrorHandler(corker.result, null);
         }

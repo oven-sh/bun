@@ -3777,7 +3777,7 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
             }
 
             // The returned object becomes the data for the ServerWebSocket
-            if (response_value.isObject() or (response_value.isString() and response_value.getLengthOfArray(this.globalThis) > 0)) {
+            if (response_value.isCell() or (response_value.isString() and response_value.getLengthOfArray(this.globalThis) > 0)) {
                 var upgrader = this.allocator.create(ServerWebSocket) catch @panic("Out of memory");
                 upgrader.* = .{
                     .handler = websocket_handler,

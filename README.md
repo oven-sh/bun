@@ -1544,10 +1544,11 @@ Warning: **This will always delete everything in destination-dir**.
 
 The `bun-create` section of `package.json` is automatically removed from the `package.json` on disk. This lets you add create-only steps without waiting for an extra package to install.
 
-There are currently two options:
+There are currently three options:
 
 - `postinstall`
 - `preinstall`
+- `start` (customize the displayed start command)
 
 They can be an array of strings or one string. An array of steps will be executed in order.
 
@@ -1570,10 +1571,12 @@ Here is an example:
     "typescript": "^4.3.5"
   },
   "bun-create": {
-    "postinstall": ["bun bun --use next"]
+    "postinstall": ["bun bun --use next"],
+    "start": "bun run echo 'Hello world!'"
   }
 }
 ```
+
 
 By default, all commands run inside the environment exposed by the auto-detected npm client. This incurs a significant performance penalty, something like 150ms spent waiting for the npm client to start on each invocation.
 

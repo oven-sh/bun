@@ -1577,7 +1577,6 @@ Here is an example:
 }
 ```
 
-
 By default, all commands run inside the environment exposed by the auto-detected npm client. This incurs a significant performance penalty, something like 150ms spent waiting for the npm client to start on each invocation.
 
 Any command that starts with `"bun "` will be run without npm, relying on the first `bun` binary in `$PATH`.
@@ -2074,7 +2073,169 @@ const server = Bun.serve({
 server.stop();
 ```
 
+### HTTPS with Bun.serve()
+
+`Bun.serve()` has builtin support for TLS (HTTPS). Pass `keyFile` and `certFile` option to enable HTTPS.
+
+Example:
+
+```ts
+Bun.serve({
+  fetch(req) {
+    return new Response("Hello!!!");
+  },
+  /**
+   * File path to a TLS key
+   *
+   * To enable TLS, this option is required.
+   */
+  keyFile: "./key.pem",
+  /**
+   * File path to a TLS certificate
+   *
+   * To enable TLS, this option is required.
+   */
+  certFile: "./cert.pem",
+
+  /**
+   * Optional SSL options
+   */
+  // passphrase?: string;
+  // caFile?: string;
+  // dhParamsFile?: string;
+  // lowMemoryMode?: boolean;
+});
+```
+
+### WebSockets with Bun.serve()
+
+`Bun.serve()` has builtin support for server-side websockets (as of Bun v0.2.1).
+
+Here is an example that echoes back any message it receives:
+
+```ts
+Bun.serve({
+  websocket: {
+    message(ws, message) {
+      ws.send(message);
+    },
+  },
+
+  fetch(req) {
+    return new Response("Regular HTTP response");
+  },
+});
+```
+
+You can also limit websocket connections to specific paths:
+
+```ts
+Bun.serve({
+  websockets: {
+    "/chat": {
+      message(ws, message) {
+        ws.send(message);
+      },
+    },
+
+    "/analytics": {
+      message(ws, message) {
+        ws.send(message);
+      },
+    },
+  },
+
+  fetch(req) {
+    return new Response("Regular HTTP response");
+  },
+});
+```
+
+Here is a more complete example:
+
+```ts
+import type { WebSocketHandler } from "bun";
+
+Bun.serve({
+  websocket: {
+    upgrade(req: Request) {
+      // Don't allow the connection to become a WebSocket if the protocol is not "chat"
+      if (req.headers.get("sec-websocket-protocol") !== "chat") {
+        // returning null, undefined, or false will reject the upgrade
+        return;
+      }
+
+      // The object returned from this function
+      // becomes the `data` value on the `ServerWebSocket` object
+      return req;
+    },
+    open(ws) {
+      console.log("WebSocket opened");
+    },
+
+    message(ws, message) {
+      console.log(`[${ws.data.url}] WebSocket message received:`, message);
+
+      // you can send a string or an ArrayBufferView
+      ws.send(message);
+    },
+
+    close(ws) {
+      console.log("WebSocket closed");
+    },
+
+    // Enable compression for clients that support it
+    compressor: "shared",
+    decompressor: "shared",
+
+    /**
+     * The maximum size of a message
+     */
+    // maxPayloadLength?: number;
+    /**
+     * After a connection has not received a message for this many seconds, it will be closed.
+     * @default 120 (2 minutes)
+     */
+    // idleTimeout?: number;
+    /**
+     * The maximum number of bytes that can be buffered for a single connection.
+     * @default 16MB
+     */
+    // backpressureLimit?: number;
+    /**
+     * Close the connection if the backpressure limit is reached.
+     * @default false
+     */
+    // closeOnBackpressureLimit?: boolean;
+
+    // this makes it so ws.data shows up as a Request object
+  } as WebSocketHandler<Request>,
+
+  fetch(req) {
+    return new Response("Regular HTTP response");
+  },
+
+  // TLS is also supported with WebSockets
+  /**
+   * File path to a TLS key
+   *
+   * To enable TLS, this option is required.
+   */
+  // keyFile: "./key.pem",
+  /**
+   * File path to a TLS certificate
+   *
+   * To enable TLS, this option is required.
+   */
+  // certFile: "./cert.pem",
+});
+```
+
+---
+
 The interface for `Bun.serve` is loosely based on what [Cloudflare Workers](https://developers.cloudflare.com/workers/learning/migrating-to-module-workers/#module-workers-in-the-dashboard) does.
+
+The HTTP server is based on [uWebSockets](https://github.com/uNetworking/uWebSockets).
 
 ## `Bun.spawn` – spawn a process
 

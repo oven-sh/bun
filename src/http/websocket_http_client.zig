@@ -640,7 +640,7 @@ fn parseWebSocketHeader(
     is_final.* = header.final;
     need_compression.* = header.compressed;
 
-    if (header.mask) {
+    if (header.mask and (header.opcode == .Text or header.opcode == .Binary)) {
         return .need_mask;
     }
 

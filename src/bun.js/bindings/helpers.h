@@ -197,9 +197,21 @@ static const WTF::String toStringCopy(ZigString str)
         return WTF::String::fromUTF8(untag(str.ptr), str.len);
     }
 
-    return !isTaggedUTF16Ptr(str.ptr) ? WTF::String(WTF::StringImpl::create(untag(str.ptr), str.len))
-                                      : WTF::String(WTF::StringImpl::create(
-                                          reinterpret_cast<const UChar*>(untag(str.ptr)), str.len));
+    if (isTaggedUTF16Ptr(str.ptr)) {
+        UChar* out = nullptr;
+        auto impl = WTF::StringImpl::tryCreateUninitialized(str.len, out);
+        if (UNLIKELY(!impl))
+            return WTF::String();
+        memcpy(out, untag(str.ptr), str.len * sizeof(UChar));
+        return WTF::String(WTFMove(impl));
+    } else {
+        LChar* out = nullptr;
+        auto impl = WTF::StringImpl::tryCreateUninitialized(str.len, out);
+        if (UNLIKELY(!impl))
+            return WTF::String();
+        memcpy(out, untag(str.ptr), str.len * sizeof(LChar));
+        return WTF::String(WTFMove(impl));
+    }
 }
 
 static WTF::String toStringNotConst(ZigString str) { return toString(str); }

@@ -673,6 +673,8 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 return;
             };
             ctx.response_jsvalue = value;
+            std.debug.assert(!ctx.response_protected);
+            ctx.response_protected = true;
             JSC.C.JSValueProtect(ctx.server.globalThis, value.asObjectRef());
 
             ctx.render(response);

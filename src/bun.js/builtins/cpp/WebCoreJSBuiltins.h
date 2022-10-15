@@ -41,7 +41,7 @@
 #include "ImportMetaObjectBuiltins.h"
 #include "JSBufferConstructorBuiltins.h"
 #include "JSBufferPrototypeBuiltins.h"
-#include "PCRE2RegExpPrototypeBuiltins.h"
+#include "OnigurumaRegExpPrototypeBuiltins.h"
 #include "ProcessObjectBuiltins.h"
 #include "ReadableByteStreamControllerBuiltins.h"
 #include "ReadableByteStreamInternalsBuiltins.h"
@@ -71,7 +71,7 @@ public:
         , m_importMetaObjectBuiltins(m_vm)
         , m_jsBufferConstructorBuiltins(m_vm)
         , m_jsBufferPrototypeBuiltins(m_vm)
-        , m_pCRE2RegExpPrototypeBuiltins(m_vm)
+        , m_onigurumaRegExpPrototypeBuiltins(m_vm)
         , m_processObjectBuiltins(m_vm)
         , m_readableByteStreamControllerBuiltins(m_vm)
         , m_readableByteStreamInternalsBuiltins(m_vm)
@@ -101,7 +101,7 @@ public:
     ImportMetaObjectBuiltinsWrapper& importMetaObjectBuiltins() { return m_importMetaObjectBuiltins; }
     JSBufferConstructorBuiltinsWrapper& jsBufferConstructorBuiltins() { return m_jsBufferConstructorBuiltins; }
     JSBufferPrototypeBuiltinsWrapper& jsBufferPrototypeBuiltins() { return m_jsBufferPrototypeBuiltins; }
-    PCRE2RegExpPrototypeBuiltinsWrapper& pCRE2RegExpPrototypeBuiltins() { return m_pCRE2RegExpPrototypeBuiltins; }
+    OnigurumaRegExpPrototypeBuiltinsWrapper& onigurumaRegExpPrototypeBuiltins() { return m_onigurumaRegExpPrototypeBuiltins; }
     ProcessObjectBuiltinsWrapper& processObjectBuiltins() { return m_processObjectBuiltins; }
     ReadableByteStreamControllerBuiltinsWrapper& readableByteStreamControllerBuiltins() { return m_readableByteStreamControllerBuiltins; }
     ReadableByteStreamInternalsBuiltinsWrapper& readableByteStreamInternalsBuiltins() { return m_readableByteStreamInternalsBuiltins; }
@@ -126,7 +126,7 @@ private:
     ImportMetaObjectBuiltinsWrapper m_importMetaObjectBuiltins;
     JSBufferConstructorBuiltinsWrapper m_jsBufferConstructorBuiltins;
     JSBufferPrototypeBuiltinsWrapper m_jsBufferPrototypeBuiltins;
-    PCRE2RegExpPrototypeBuiltinsWrapper m_pCRE2RegExpPrototypeBuiltins;
+    OnigurumaRegExpPrototypeBuiltinsWrapper m_onigurumaRegExpPrototypeBuiltins;
     ProcessObjectBuiltinsWrapper m_processObjectBuiltins;
     ReadableByteStreamControllerBuiltinsWrapper m_readableByteStreamControllerBuiltins;
     ReadableByteStreamInternalsBuiltinsWrapper m_readableByteStreamInternalsBuiltins;

@@ -209,9 +209,9 @@ public:
     JSC::JSObject* JSReadableState() { return m_JSReadableStateClassStructure.constructorInitializedOnMainThread(this); }
     JSC::JSValue JSReadableStatePrototype() { return m_JSReadableStateClassStructure.prototypeInitializedOnMainThread(this); }
 
-    JSC::Structure* PCRE2RegExpStructure() { return m_PCRE2RegExpClassStructure.getInitializedOnMainThread(this); }
-    JSC::JSValue PCRE2RegExpPrototype() { return m_PCRE2RegExpClassStructure.prototypeInitializedOnMainThread(this); }
-    JSC::JSObject* PCRE2RegExpConstructor() { return m_PCRE2RegExpClassStructure.constructorInitializedOnMainThread(this); }
+    JSC::Structure* OnigurumaRegExpStructure() { return m_OnigurumaRegExpClassStructure.getInitializedOnMainThread(this); }
+    JSC::JSValue OnigurumaRegExpPrototype() { return m_OnigurumaRegExpClassStructure.prototypeInitializedOnMainThread(this); }
+    JSC::JSObject* OnigurumaRegExpConstructor() { return m_OnigurumaRegExpClassStructure.constructorInitializedOnMainThread(this); }
 
     JSC::JSMap* readableStreamNativeMap() { return m_lazyReadableStreamPrototypeMap.getInitializedOnMainThread(this); }
     JSC::JSMap* requireMap() { return m_requireMap.getInitializedOnMainThread(this); }
@@ -403,7 +403,7 @@ private:
     LazyClassStructure m_JSBufferListClassStructure;
     LazyClassStructure m_JSStringDecoderClassStructure;
     LazyClassStructure m_JSReadableStateClassStructure;
-    LazyClassStructure m_PCRE2RegExpClassStructure;
+    LazyClassStructure m_OnigurumaRegExpClassStructure;
 
     LazyProperty<JSGlobalObject, JSObject> m_navigatorObject;
 

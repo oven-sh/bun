@@ -35,7 +35,7 @@
 // builtins by the script: Source/JavaScriptCore/Scripts/generate-js-builtins.py
 
 #include "config.h"
-#include "PCRE2RegExpPrototypeBuiltins.h"
+#include "OnigurumaRegExpPrototypeBuiltins.h"
 
 #include "WebCoreJSClientData.h"
 #include <JavaScriptCore/HeapInlines.h>
@@ -49,12 +49,12 @@
 
 namespace WebCore {
 
-const JSC::ConstructAbility s_pCRE2RegExpPrototypeAdvanceStringIndexCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
-const JSC::ConstructorKind s_pCRE2RegExpPrototypeAdvanceStringIndexCodeConstructorKind = JSC::ConstructorKind::None;
-const JSC::ImplementationVisibility s_pCRE2RegExpPrototypeAdvanceStringIndexCodeImplementationVisibility = JSC::ImplementationVisibility::Private;
-const int s_pCRE2RegExpPrototypeAdvanceStringIndexCodeLength = 427;
-static const JSC::Intrinsic s_pCRE2RegExpPrototypeAdvanceStringIndexCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_pCRE2RegExpPrototypeAdvanceStringIndexCode =
+const JSC::ConstructAbility s_onigurumaRegExpPrototypeAdvanceStringIndexCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
+const JSC::ConstructorKind s_onigurumaRegExpPrototypeAdvanceStringIndexCodeConstructorKind = JSC::ConstructorKind::None;
+const JSC::ImplementationVisibility s_onigurumaRegExpPrototypeAdvanceStringIndexCodeImplementationVisibility = JSC::ImplementationVisibility::Private;
+const int s_onigurumaRegExpPrototypeAdvanceStringIndexCodeLength = 427;
+static const JSC::Intrinsic s_onigurumaRegExpPrototypeAdvanceStringIndexCodeIntrinsic = JSC::NoIntrinsic;
+const char* const s_onigurumaRegExpPrototypeAdvanceStringIndexCode =
     "(function (string, index, unicode)\n" \
     "{\n" \
     "    //\n" \
@@ -78,12 +78,12 @@ const char* const s_pCRE2RegExpPrototypeAdvanceStringIndexCode =
     "})\n" \
 ;
 
-const JSC::ConstructAbility s_pCRE2RegExpPrototypeMatchSlowCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
-const JSC::ConstructorKind s_pCRE2RegExpPrototypeMatchSlowCodeConstructorKind = JSC::ConstructorKind::None;
-const JSC::ImplementationVisibility s_pCRE2RegExpPrototypeMatchSlowCodeImplementationVisibility = JSC::ImplementationVisibility::Private;
-const int s_pCRE2RegExpPrototypeMatchSlowCodeLength = 796;
-static const JSC::Intrinsic s_pCRE2RegExpPrototypeMatchSlowCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_pCRE2RegExpPrototypeMatchSlowCode =
+const JSC::ConstructAbility s_onigurumaRegExpPrototypeMatchSlowCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
+const JSC::ConstructorKind s_onigurumaRegExpPrototypeMatchSlowCodeConstructorKind = JSC::ConstructorKind::None;
+const JSC::ImplementationVisibility s_onigurumaRegExpPrototypeMatchSlowCodeImplementationVisibility = JSC::ImplementationVisibility::Private;
+const int s_onigurumaRegExpPrototypeMatchSlowCodeLength = 796;
+static const JSC::Intrinsic s_onigurumaRegExpPrototypeMatchSlowCodeIntrinsic = JSC::NoIntrinsic;
+const char* const s_onigurumaRegExpPrototypeMatchSlowCode =
     "(function (regexp, str)\n" \
     "{\n" \
     "    \"use strict\";\n" \
@@ -122,12 +122,12 @@ const char* const s_pCRE2RegExpPrototypeMatchSlowCode =
     "})\n" \
 ;
 
-const JSC::ConstructAbility s_pCRE2RegExpPrototypeMatchCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
-const JSC::ConstructorKind s_pCRE2RegExpPrototypeMatchCodeConstructorKind = JSC::ConstructorKind::None;
-const JSC::ImplementationVisibility s_pCRE2RegExpPrototypeMatchCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_pCRE2RegExpPrototypeMatchCodeLength = 225;
-static const JSC::Intrinsic s_pCRE2RegExpPrototypeMatchCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_pCRE2RegExpPrototypeMatchCode =
+const JSC::ConstructAbility s_onigurumaRegExpPrototypeMatchCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
+const JSC::ConstructorKind s_onigurumaRegExpPrototypeMatchCodeConstructorKind = JSC::ConstructorKind::None;
+const JSC::ImplementationVisibility s_onigurumaRegExpPrototypeMatchCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
+const int s_onigurumaRegExpPrototypeMatchCodeLength = 225;
+static const JSC::Intrinsic s_onigurumaRegExpPrototypeMatchCodeIntrinsic = JSC::NoIntrinsic;
+const char* const s_onigurumaRegExpPrototypeMatchCode =
     "(function (strArg)\n" \
     "{\n" \
     "    \"use strict\";\n" \
@@ -141,12 +141,12 @@ const char* const s_pCRE2RegExpPrototypeMatchCode =
     "})\n" \
 ;
 
-const JSC::ConstructAbility s_pCRE2RegExpPrototypeMatchAllCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
-const JSC::ConstructorKind s_pCRE2RegExpPrototypeMatchAllCodeConstructorKind = JSC::ConstructorKind::None;
-const JSC::ImplementationVisibility s_pCRE2RegExpPrototypeMatchAllCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_pCRE2RegExpPrototypeMatchAllCodeLength = 2924;
-static const JSC::Intrinsic s_pCRE2RegExpPrototypeMatchAllCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_pCRE2RegExpPrototypeMatchAllCode =
+const JSC::ConstructAbility s_onigurumaRegExpPrototypeMatchAllCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
+const JSC::ConstructorKind s_onigurumaRegExpPrototypeMatchAllCodeConstructorKind = JSC::ConstructorKind::None;
+const JSC::ImplementationVisibility s_onigurumaRegExpPrototypeMatchAllCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
+const int s_onigurumaRegExpPrototypeMatchAllCodeLength = 2928;
+static const JSC::Intrinsic s_onigurumaRegExpPrototypeMatchAllCodeIntrinsic = JSC::NoIntrinsic;
+const char* const s_onigurumaRegExpPrototypeMatchAllCode =
     "(function (strArg)\n" \
     "{\n" \
     "    \"use strict\";\n" \
@@ -158,7 +158,7 @@ const char* const s_pCRE2RegExpPrototypeMatchAllCode =
     "\n" \
     "    var string = @toString(strArg);\n" \
     "\n" \
-    "    var Matcher = @speciesConstructor(regExp, @Bun.PCRE2RegExp);\n" \
+    "    var Matcher = @speciesConstructor(regExp, @Bun.OnigurumaRegExp);\n" \
     "\n" \
     "    var flags = @toString(regExp.flags);\n" \
     "    var matcher = new Matcher(regExp.source, flags);\n" \
@@ -227,12 +227,12 @@ const char* const s_pCRE2RegExpPrototypeMatchAllCode =
     "})\n" \
 ;
 
-const JSC::ConstructAbility s_pCRE2RegExpPrototypeGetSubstitutionCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
-const JSC::ConstructorKind s_pCRE2RegExpPrototypeGetSubstitutionCodeConstructorKind = JSC::ConstructorKind::None;
-const JSC::ImplementationVisibility s_pCRE2RegExpPrototypeGetSubstitutionCodeImplementationVisibility = JSC::ImplementationVisibility::Private;
-const int s_pCRE2RegExpPrototypeGetSubstitutionCodeLength = 3603;
-static const JSC::Intrinsic s_pCRE2RegExpPrototypeGetSubstitutionCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_pCRE2RegExpPrototypeGetSubstitutionCode =
+const JSC::ConstructAbility s_onigurumaRegExpPrototypeGetSubstitutionCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
+const JSC::ConstructorKind s_onigurumaRegExpPrototypeGetSubstitutionCodeConstructorKind = JSC::ConstructorKind::None;
+const JSC::ImplementationVisibility s_onigurumaRegExpPrototypeGetSubstitutionCodeImplementationVisibility = JSC::ImplementationVisibility::Private;
+const int s_onigurumaRegExpPrototypeGetSubstitutionCodeLength = 3603;
+static const JSC::Intrinsic s_onigurumaRegExpPrototypeGetSubstitutionCodeIntrinsic = JSC::NoIntrinsic;
+const char* const s_onigurumaRegExpPrototypeGetSubstitutionCode =
     "(function (matched, str, position, captures, namedCaptures, replacement)\n" \
     "{\n" \
     "    \"use strict\";\n" \
@@ -333,12 +333,12 @@ const char* const s_pCRE2RegExpPrototypeGetSubstitutionCode =
     "})\n" \
 ;
 
-const JSC::ConstructAbility s_pCRE2RegExpPrototypeReplaceCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
-const JSC::ConstructorKind s_pCRE2RegExpPrototypeReplaceCodeConstructorKind = JSC::ConstructorKind::None;
-const JSC::ImplementationVisibility s_pCRE2RegExpPrototypeReplaceCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_pCRE2RegExpPrototypeReplaceCodeLength = 3208;
-static const JSC::Intrinsic s_pCRE2RegExpPrototypeReplaceCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_pCRE2RegExpPrototypeReplaceCode =
+const JSC::ConstructAbility s_onigurumaRegExpPrototypeReplaceCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
+const JSC::ConstructorKind s_onigurumaRegExpPrototypeReplaceCodeConstructorKind = JSC::ConstructorKind::None;
+const JSC::ImplementationVisibility s_onigurumaRegExpPrototypeReplaceCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
+const int s_onigurumaRegExpPrototypeReplaceCodeLength = 3208;
+static const JSC::Intrinsic s_onigurumaRegExpPrototypeReplaceCodeIntrinsic = JSC::NoIntrinsic;
+const char* const s_onigurumaRegExpPrototypeReplaceCode =
     "(function (strArg, replace)\n" \
     "{\n" \
     "    \"use strict\";\n" \
@@ -444,12 +444,12 @@ const char* const s_pCRE2RegExpPrototypeReplaceCode =
     "})\n" \
 ;
 
-const JSC::ConstructAbility s_pCRE2RegExpPrototypeSearchCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
-const JSC::ConstructorKind s_pCRE2RegExpPrototypeSearchCodeConstructorKind = JSC::ConstructorKind::None;
-const JSC::ImplementationVisibility s_pCRE2RegExpPrototypeSearchCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_pCRE2RegExpPrototypeSearchCodeLength = 631;
-static const JSC::Intrinsic s_pCRE2RegExpPrototypeSearchCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_pCRE2RegExpPrototypeSearchCode =
+const JSC::ConstructAbility s_onigurumaRegExpPrototypeSearchCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
+const JSC::ConstructorKind s_onigurumaRegExpPrototypeSearchCodeConstructorKind = JSC::ConstructorKind::None;
+const JSC::ImplementationVisibility s_onigurumaRegExpPrototypeSearchCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
+const int s_onigurumaRegExpPrototypeSearchCodeLength = 631;
+static const JSC::Intrinsic s_onigurumaRegExpPrototypeSearchCodeIntrinsic = JSC::NoIntrinsic;
+const char* const s_onigurumaRegExpPrototypeSearchCode =
     "(function (strArg)\n" \
     "{\n" \
     "    \"use strict\";\n" \
@@ -490,12 +490,12 @@ const char* const s_pCRE2RegExpPrototypeSearchCode =
     "})\n" \
 ;
 
-const JSC::ConstructAbility s_pCRE2RegExpPrototypeSplitCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
-const JSC::ConstructorKind s_pCRE2RegExpPrototypeSplitCodeConstructorKind = JSC::ConstructorKind::None;
-const JSC::ImplementationVisibility s_pCRE2RegExpPrototypeSplitCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_pCRE2RegExpPrototypeSplitCodeLength = 2926;
-static const JSC::Intrinsic s_pCRE2RegExpPrototypeSplitCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_pCRE2RegExpPrototypeSplitCode =
+const JSC::ConstructAbility s_onigurumaRegExpPrototypeSplitCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
+const JSC::ConstructorKind s_onigurumaRegExpPrototypeSplitCodeConstructorKind = JSC::ConstructorKind::None;
+const JSC::ImplementationVisibility s_onigurumaRegExpPrototypeSplitCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
+const int s_onigurumaRegExpPrototypeSplitCodeLength = 2926;
+static const JSC::Intrinsic s_onigurumaRegExpPrototypeSplitCodeIntrinsic = JSC::NoIntrinsic;
+const char* const s_onigurumaRegExpPrototypeSplitCode =
     "(function (string, limit)\n" \
     "{\n" \
     "    \"use strict\";\n" \
@@ -624,19 +624,19 @@ const char* const s_pCRE2RegExpPrototypeSplitCode =
     "})\n" \
 ;
 
-const JSC::ConstructAbility s_pCRE2RegExpPrototypeTestCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
-const JSC::ConstructorKind s_pCRE2RegExpPrototypeTestCodeConstructorKind = JSC::ConstructorKind::None;
-const JSC::ImplementationVisibility s_pCRE2RegExpPrototypeTestCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_pCRE2RegExpPrototypeTestCodeLength = 448;
-static const JSC::Intrinsic s_pCRE2RegExpPrototypeTestCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_pCRE2RegExpPrototypeTestCode =
+const JSC::ConstructAbility s_onigurumaRegExpPrototypeTestCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
+const JSC::ConstructorKind s_onigurumaRegExpPrototypeTestCodeConstructorKind = JSC::ConstructorKind::None;
+const JSC::ImplementationVisibility s_onigurumaRegExpPrototypeTestCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
+const int s_onigurumaRegExpPrototypeTestCodeLength = 452;
+static const JSC::Intrinsic s_onigurumaRegExpPrototypeTestCodeIntrinsic = JSC::NoIntrinsic;
+const char* const s_onigurumaRegExpPrototypeTestCode =
     "(function (strArg)\n" \
     "{\n" \
     "    \"use strict\";\n" \
     "\n" \
     "    var regexp = this;\n" \
     "\n" \
-    "    if (regexp.test == @Bun.PCRE2RegExp.prototype.test) {\n" \
+    "    if (regexp.test == @Bun.OnigurumaRegExp.prototype.test) {\n" \
     "        return regexp.test(strArg);\n" \
     "    }\n" \
     "\n" \
@@ -663,9 +663,9 @@ const char* const s_pCRE2RegExpPrototypeTestCode =
 JSC::FunctionExecutable* codeName##Generator(JSC::VM& vm) \
 {\
     JSVMClientData* clientData = static_cast<JSVMClientData*>(vm.clientData); \
-    return clientData->builtinFunctions().pCRE2RegExpPrototypeBuiltins().codeName##Executable()->link(vm, nullptr, clientData->builtinFunctions().pCRE2RegExpPrototypeBuiltins().codeName##Source(), std::nullopt, s_##codeName##Intrinsic); \
+    return clientData->builtinFunctions().onigurumaRegExpPrototypeBuiltins().codeName##Executable()->link(vm, nullptr, clientData->builtinFunctions().onigurumaRegExpPrototypeBuiltins().codeName##Source(), std::nullopt, s_##codeName##Intrinsic); \
 }
-WEBCORE_FOREACH_PCRE2REGEXPPROTOTYPE_BUILTIN_CODE(DEFINE_BUILTIN_GENERATOR)
+WEBCORE_FOREACH_ONIGURUMAREGEXPPROTOTYPE_BUILTIN_CODE(DEFINE_BUILTIN_GENERATOR)
 #undef DEFINE_BUILTIN_GENERATOR
 
 

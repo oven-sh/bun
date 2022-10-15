@@ -39,7 +39,7 @@
 #include "ImportMetaObjectBuiltins.cpp"
 #include "JSBufferConstructorBuiltins.cpp"
 #include "JSBufferPrototypeBuiltins.cpp"
-#include "PCRE2RegExpPrototypeBuiltins.cpp"
+#include "OnigurumaRegExpPrototypeBuiltins.cpp"
 #include "ProcessObjectBuiltins.cpp"
 #include "ReadableByteStreamControllerBuiltins.cpp"
 #include "ReadableByteStreamInternalsBuiltins.cpp"

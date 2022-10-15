@@ -111,7 +111,7 @@ function matchAll(strArg)
 
     var string = @toString(strArg);
 
-    var Matcher = @speciesConstructor(regExp, @Bun.PCRE2RegExp);
+    var Matcher = @speciesConstructor(regExp, @Bun.OnigurumaRegExp);
 
     var flags = @toString(regExp.flags);
     var matcher = new Matcher(regExp.source, flags);
@@ -561,7 +561,7 @@ function test(strArg)
 
     var regexp = this;
 
-    if (regexp.test == @Bun.PCRE2RegExp.prototype.test) {
+    if (regexp.test == @Bun.OnigurumaRegExp.prototype.test) {
         return regexp.test(strArg);
     }
 

@@ -2237,7 +2237,7 @@ Bun.serve({
 
 The interface for `Bun.serve` is loosely based on what [Cloudflare Workers](https://developers.cloudflare.com/workers/learning/migrating-to-module-workers/#module-workers-in-the-dashboard) does.
 
-The HTTP server is based on [uWebSockets](https://github.com/uNetworking/uWebSockets).
+The HTTP server and server-side websockets are based on [uWebSockets](https://github.com/uNetworking/uWebSockets).
 
 ## `Bun.spawn` – spawn a process
 

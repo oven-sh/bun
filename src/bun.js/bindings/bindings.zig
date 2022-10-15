@@ -443,10 +443,43 @@ pub const ZigString = extern struct {
         return try allocator.dupe(u8, this.slice());
     }
 
+    pub fn toSliceFast(this: ZigString, allocator: std.mem.Allocator) Slice {
+        if (this.len == 0)
+            return Slice{ .ptr = "", .len = 0, .allocator = allocator, .allocated = false };
+        if (is16Bit(&this)) {
+            var buffer = this.toOwnedSlice(allocator) catch unreachable;
+            return Slice{
+                .ptr = buffer.ptr,
+                .len = @truncate(u32, buffer.len),
+                .allocated = true,
+                .allocator = allocator,
+            };
+        }
+
+        return Slice{
+            .ptr = untagged(this.ptr),
+            .len = @truncate(u32, this.len),
+            .allocated = false,
+            .allocator = allocator,
+        };
+    }
+
+    /// This function checks if the input is latin1 non-ascii
+    /// It is slow but safer when the input is from JavaScript
     pub fn toSlice(this: ZigString, allocator: std.mem.Allocator) Slice {
         if (this.len == 0)
             return Slice{ .ptr = "", .len = 0, .allocator = allocator, .allocated = false };
         if (is16Bit(&this)) {
+            var buffer = this.toOwnedSlice(allocator) catch unreachable;
+            return Slice{
+                .ptr = buffer.ptr,
+                .len = @truncate(u32, buffer.len),
+                .allocated = true,
+                .allocator = allocator,
+            };
+        }
+
+        if (!this.isUTF8() and !strings.isAllASCII(untagged(this.ptr)[0..this.len])) {
             var buffer = this.toOwnedSlice(allocator) catch unreachable;
             return Slice{
                 .ptr = buffer.ptr,
@@ -2702,7 +2735,7 @@ pub const JSValue = enum(JSValueReprInt) {
     }
 
     pub fn call(this: JSValue, globalThis: *JSGlobalObject, args: []const JSC.JSValue) JSC.JSValue {
-        return callWithThis(this, globalThis, JSC.JSValue.zero, args);
+        return callWithThis(this, globalThis, JSC.JSValue.jsUndefined(), args);
     }
 
     pub fn callWithThis(this: JSValue, globalThis: *JSGlobalObject, thisValue: JSC.JSValue, args: []const JSC.JSValue) JSC.JSValue {

@@ -127,6 +127,8 @@ bun upgrade --canary
   - [`bun completions`](#bun-completions)
 - [`Bun.serve` - fast HTTP server](#bunserve---fast-http-server)
   - [Usage](#usage-1)
+  - [HTTPS](##https-with-bunserve)
+  - [WebSockets](#websockets-with-bunserve)
   - [Error handling](#error-handling)
 - [`Bun.write` – optimizing I/O](#bunwrite--optimizing-io)
 - [`Bun.spawn` - spawn processes](#bunspawn)

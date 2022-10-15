@@ -1496,6 +1496,8 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 ctx.response_jsvalue = response_value;
                 ctx.response_jsvalue.ensureStillAlive();
                 ctx.response_protected = false;
+                response.body.value.toBlobIfPossible();
+
                 switch (response.body.value) {
                     .Blob => |*blob| {
                         if (blob.needsToReadFile()) {
@@ -1521,7 +1523,35 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 switch (promise.status(vm.global.vm())) {
                     .Pending => {},
                     .Fulfilled => {
-                        ctx.handleResolve(promise.result(vm.global.vm()));
+                        const fulfilled_value = promise.result(vm.global.vm());
+                        if (fulfilled_value.isEmptyOrUndefinedOrNull()) {
+                            ctx.renderMissing();
+                            return;
+                        }
+                        var response = fulfilled_value.as(JSC.WebCore.Response) orelse {
+                            ctx.renderMissing();
+                            return;
+                        };
+
+                        ctx.response_jsvalue = fulfilled_value;
+                        ctx.response_jsvalue.ensureStillAlive();
+                        ctx.response_protected = false;
+                        ctx.response_ptr = response;
+                        response.body.value.toBlobIfPossible();
+                        switch (response.body.value) {
+                            .Blob => |*blob| {
+                                if (blob.needsToReadFile()) {
+                                    fulfilled_value.protect();
+                                    ctx.response_protected = true;
+                                }
+                            },
+                            .Locked => {
+                                fulfilled_value.protect();
+                                ctx.response_protected = true;
+                            },
+                            else => {},
+                        }
+                        ctx.render(response);
                         return;
                     },
                     .Rejected => {

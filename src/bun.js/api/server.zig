@@ -1956,7 +1956,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             value: JSC.JSValue,
             status: u16,
         ) void {
-            JSC.markBinding();
+            JSC.markBinding(@src());
             if (!this.server.config.onError.isEmpty() and !this.has_called_error_handler) {
                 this.has_called_error_handler = true;
                 var args = [_]JSC.C.JSValueRef{value.asObjectRef()};
@@ -1981,7 +1981,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             value: JSC.JSValue,
             status: u16,
         ) void {
-            JSC.markBinding();
+            JSC.markBinding(@src());
             if (this.resp.hasResponded()) return;
 
             runErrorHandlerWithStatusCodeDontCheckResponded(this, value, status);
@@ -3486,7 +3486,7 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
         }
 
         pub fn onBunInfoRequest(this: *ThisServer, req: *uws.Request, resp: *App.Response) void {
-            JSC.markBinding();
+            JSC.markBinding(@src());
             this.pending_requests += 1;
             defer this.pending_requests -= 1;
             req.setYield(false);
@@ -3513,7 +3513,7 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
         }
 
         pub fn onSrcRequest(this: *ThisServer, req: *uws.Request, resp: *App.Response) void {
-            JSC.markBinding();
+            JSC.markBinding(@src());
             this.pending_requests += 1;
             defer this.pending_requests -= 1;
             req.setYield(false);
@@ -3547,7 +3547,7 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
             req: *uws.Request,
             resp: *App.Response,
         ) void {
-            JSC.markBinding();
+            JSC.markBinding(@src());
             this.pending_requests += 1;
             req.setYield(false);
             var ctx = this.request_pool_allocator.create(RequestContext) catch @panic("ran out of memory");

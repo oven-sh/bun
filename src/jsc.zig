@@ -46,8 +46,13 @@ pub const Node = struct {
 pub const Maybe = Node.Maybe;
 pub const jsNumber = @This().JSValue.jsNumber;
 pub const jsBoolean = @This().JSValue.jsBoolean;
-pub inline fn markBinding() void {
+const std = @import("std");
+
+const Output = @import("./output.zig");
+const __jsc_log = Output.scoped(.JSC, false);
+pub inline fn markBinding(src: std.builtin.SourceLocation) void {
     if (comptime is_bindgen) unreachable;
+    __jsc_log("{s} ({s}:{d})", .{ src.fn_name, src.file, src.line });
 }
 pub const Subprocess = @import("./bun.js/api/bun.zig").Subprocess;
 

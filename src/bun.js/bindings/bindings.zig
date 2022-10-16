@@ -539,7 +539,7 @@ pub const ZigString = extern struct {
         }
     }
 
-    fn assertGlobalIfNeeded(this: *const ZigString) void {
+    inline fn assertGlobalIfNeeded(this: *const ZigString) void {
         if (comptime bun.Environment.allow_assert) {
             if (this.isGloballyAllocated()) {
                 this.assertGlobal();
@@ -547,7 +547,7 @@ pub const ZigString = extern struct {
         }
     }
 
-    fn assertGlobal(this: *const ZigString) void {
+    inline fn assertGlobal(this: *const ZigString) void {
         if (comptime bun.Environment.allow_assert) {
             std.debug.assert(bun.Global.Mimalloc.mi_is_in_heap_region(untagged(this.ptr)) or bun.Global.Mimalloc.mi_check_owned(untagged(this.ptr)));
         }
@@ -1913,7 +1913,7 @@ pub const JSGlobalObject = extern struct {
     extern fn Bun__runOnResolvePlugins(*JSC.JSGlobalObject, ?*const ZigString, *const ZigString, *const ZigString, BunPluginTarget) JSValue;
 
     pub fn runOnLoadPlugins(this: *JSGlobalObject, namespace_: ZigString, path: ZigString, target: BunPluginTarget) ?JSValue {
-        JSC.markBinding();
+        JSC.markBinding(@src());
         const result = Bun__runOnLoadPlugins(this, if (namespace_.len > 0) &namespace_ else null, &path, target);
         if (result.isEmptyOrUndefinedOrNull()) {
             return null;
@@ -1923,7 +1923,7 @@ pub const JSGlobalObject = extern struct {
     }
 
     pub fn runOnResolvePlugins(this: *JSGlobalObject, namespace_: ZigString, path: ZigString, source: ZigString, target: BunPluginTarget) ?JSValue {
-        JSC.markBinding();
+        JSC.markBinding(@src());
 
         const result = Bun__runOnResolvePlugins(this, if (namespace_.len > 0) &namespace_ else null, &path, &source, target);
         if (result.isEmptyOrUndefinedOrNull()) {
@@ -1963,7 +1963,7 @@ pub const JSGlobalObject = extern struct {
             this.vm().throwError(this, err);
             this.bunVM().allocator.free(ZigString.untagged(str.ptr)[0..str.len]);
         } else {
-            this.vm().throwError(this, ZigString.init(fmt).toValue(this));
+            this.vm().throwError(this, ZigString.static(fmt).toValue(this));
         }
     }
 
@@ -2739,7 +2739,7 @@ pub const JSValue = enum(JSValueReprInt) {
     }
 
     pub fn callWithThis(this: JSValue, globalThis: *JSGlobalObject, thisValue: JSC.JSValue, args: []const JSC.JSValue) JSC.JSValue {
-        JSC.markBinding();
+        JSC.markBinding(@src());
         return JSC.C.JSObjectCallAsFunctionReturnValue(
             globalThis,
             this.asObjectRef(),

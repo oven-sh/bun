@@ -109,19 +109,19 @@ pub const ReadableStream = struct {
     }
 
     pub fn cancel(this: *const ReadableStream, globalThis: *JSGlobalObject) void {
-        JSC.markBinding();
+        JSC.markBinding(@src());
         this.value.unprotect();
         ReadableStream__cancel(this.value, globalThis);
     }
 
     pub fn abort(this: *const ReadableStream, globalThis: *JSGlobalObject) void {
-        JSC.markBinding();
+        JSC.markBinding(@src());
         this.value.unprotect();
         ReadableStream__cancel(this.value, globalThis);
     }
 
     pub fn detach(this: *const ReadableStream, globalThis: *JSGlobalObject) void {
-        JSC.markBinding();
+        JSC.markBinding(@src());
         this.value.unprotect();
         ReadableStream__detach(this.value, globalThis);
     }
@@ -184,17 +184,17 @@ pub const ReadableStream = struct {
     ) JSC.JSValue;
 
     pub fn isDisturbed(this: *const ReadableStream, globalObject: *JSGlobalObject) bool {
-        JSC.markBinding();
+        JSC.markBinding(@src());
         return ReadableStream__isDisturbed(this.value, globalObject);
     }
 
     pub fn isLocked(this: *const ReadableStream, globalObject: *JSGlobalObject) bool {
-        JSC.markBinding();
+        JSC.markBinding(@src());
         return ReadableStream__isLocked(this.value, globalObject);
     }
 
     pub fn fromJS(value: JSValue, globalThis: *JSGlobalObject) ?ReadableStream {
-        JSC.markBinding();
+        JSC.markBinding(@src());
         var ptr = JSValue.zero;
         return switch (ReadableStreamTag__tagged(globalThis, value, &ptr)) {
             .JavaScript => ReadableStream{
@@ -242,7 +242,7 @@ pub const ReadableStream = struct {
     extern fn ZigGlobalObject__createNativeReadableStream(*JSGlobalObject, nativePtr: JSValue, nativeType: JSValue) JSValue;
 
     pub fn fromNative(globalThis: *JSGlobalObject, id: Tag, ptr: *anyopaque) JSC.JSValue {
-        JSC.markBinding();
+        JSC.markBinding(@src());
         return ZigGlobalObject__createNativeReadableStream(globalThis, JSValue.fromPtr(ptr), JSValue.jsNumber(@enumToInt(id)));
     }
     pub fn fromBlob(globalThis: *JSGlobalObject, blob: *const Blob, recommended_chunk_size: Blob.SizeType) JSC.JSValue {
@@ -1605,37 +1605,37 @@ pub fn NewJSSink(comptime SinkType: type, comptime name_: []const u8) type {
         };
 
         pub fn onClose(ptr: JSValue, reason: JSValue) callconv(.C) void {
-            JSC.markBinding();
+            JSC.markBinding(@src());
 
             return shim.cppFn("onClose", .{ ptr, reason });
         }
 
         pub fn onReady(ptr: JSValue, amount: JSValue, offset: JSValue) callconv(.C) void {
-            JSC.markBinding();
+            JSC.markBinding(@src());
 
             return shim.cppFn("onReady", .{ ptr, amount, offset });
         }
 
         pub fn onStart(ptr: JSValue, globalThis: *JSGlobalObject) callconv(.C) void {
-            JSC.markBinding();
+            JSC.markBinding(@src());
 
             return shim.cppFn("onStart", .{ ptr, globalThis });
         }
 
         pub fn createObject(globalThis: *JSGlobalObject, object: *anyopaque) callconv(.C) JSValue {
-            JSC.markBinding();
+            JSC.markBinding(@src());
 
             return shim.cppFn("createObject", .{ globalThis, object });
         }
 
         pub fn fromJS(globalThis: *JSGlobalObject, value: JSValue) ?*anyopaque {
-            JSC.markBinding();
+            JSC.markBinding(@src());
 
             return shim.cppFn("fromJS", .{ globalThis, value });
         }
 
         pub fn construct(globalThis: *JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSValue {
-            JSC.markBinding();
+            JSC.markBinding(@src());
 
             if (comptime !@hasDecl(SinkType, "construct")) {
                 const Static = struct {
@@ -1703,7 +1703,7 @@ pub fn NewJSSink(comptime SinkType: type, comptime name_: []const u8) type {
         }
 
         pub fn write(globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSValue {
-            JSC.markBinding();
+            JSC.markBinding(@src());
             var this = getThis(globalThis, callframe) orelse return invalidThis(globalThis);
 
             if (comptime @hasDecl(SinkType, "getPendingError")) {
@@ -1753,7 +1753,7 @@ pub fn NewJSSink(comptime SinkType: type, comptime name_: []const u8) type {
         }
 
         pub fn writeUTF8(globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSValue {
-            JSC.markBinding();
+            JSC.markBinding(@src());
 
             var this = getThis(globalThis, callframe) orelse return invalidThis(globalThis);
 
@@ -1792,7 +1792,7 @@ pub fn NewJSSink(comptime SinkType: type, comptime name_: []const u8) type {
         }
 
         pub fn close(globalThis: *JSGlobalObject, sink_ptr: ?*anyopaque) callconv(.C) JSValue {
-            JSC.markBinding();
+            JSC.markBinding(@src());
             var this = @ptrCast(*ThisSink, @alignCast(std.meta.alignment(ThisSink), sink_ptr orelse return invalidThis(globalThis)));
 
             if (comptime @hasDecl(SinkType, "getPendingError")) {
@@ -1806,7 +1806,7 @@ pub fn NewJSSink(comptime SinkType: type, comptime name_: []const u8) type {
         }
 
         pub fn flush(globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSValue {
-            JSC.markBinding();
+            JSC.markBinding(@src());
 
             var this = getThis(globalThis, callframe) orelse return invalidThis(globalThis);
 
@@ -1834,7 +1834,7 @@ pub fn NewJSSink(comptime SinkType: type, comptime name_: []const u8) type {
         }
 
         pub fn start(globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSValue {
-            JSC.markBinding();
+            JSC.markBinding(@src());
 
             var this = getThis(globalThis, callframe) orelse return invalidThis(globalThis);
 
@@ -1867,7 +1867,7 @@ pub fn NewJSSink(comptime SinkType: type, comptime name_: []const u8) type {
         }
 
         pub fn end(globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSValue {
-            JSC.markBinding();
+            JSC.markBinding(@src());
 
             var this = getThis(globalThis, callframe) orelse return invalidThis(globalThis);
 
@@ -1888,7 +1888,7 @@ pub fn NewJSSink(comptime SinkType: type, comptime name_: []const u8) type {
         }
 
         pub fn endWithSink(ptr: *anyopaque, globalThis: *JSGlobalObject) callconv(.C) JSValue {
-            JSC.markBinding();
+            JSC.markBinding(@src());
 
             var this = @ptrCast(*ThisSink, @alignCast(std.meta.alignment(ThisSink), ptr));
 
@@ -1942,7 +1942,7 @@ pub fn NewJSSink(comptime SinkType: type, comptime name_: []const u8) type {
 //         socket: Socket,
 
 //         pub fn connect(globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSValue {
-//             JSC.markBinding();
+//             JSC.markBinding(@src());
 
 //             var this = @ptrCast(*ThisSocket, @alignCast(std.meta.alignment(ThisSocket), fromJS(globalThis, callframe.this()) orelse {
 //                 const err = JSC.toTypeError(JSC.Node.ErrorCode.ERR_INVALID_THIS, "Expected Socket", .{}, globalThis);
@@ -2851,7 +2851,7 @@ pub const ByteStream = struct {
         stream: StreamResult,
         allocator: std.mem.Allocator,
     ) void {
-        JSC.markBinding();
+        JSC.markBinding(@src());
         if (this.done) {
             if (stream.isDone() and (stream == .owned or stream == .owned_and_done)) {
                 if (stream == .owned) allocator.free(stream.owned.slice());
@@ -2946,7 +2946,7 @@ pub const ByteStream = struct {
     }
 
     pub fn setValue(this: *@This(), view: JSC.JSValue) void {
-        JSC.markBinding();
+        JSC.markBinding(@src());
         this.pending_value.set(this.parent().globalThis, view);
     }
 
@@ -2955,7 +2955,7 @@ pub const ByteStream = struct {
     }
 
     pub fn onPull(this: *@This(), buffer: []u8, view: JSC.JSValue) StreamResult {
-        JSC.markBinding();
+        JSC.markBinding(@src());
         std.debug.assert(buffer.len > 0);
 
         if (this.buffer.items.len > 0) {
@@ -3010,7 +3010,7 @@ pub const ByteStream = struct {
     }
 
     pub fn onCancel(this: *@This()) void {
-        JSC.markBinding();
+        JSC.markBinding(@src());
         const view = this.value();
         if (this.buffer.capacity > 0) this.buffer.clearAndFree();
         this.done = true;
@@ -3024,7 +3024,7 @@ pub const ByteStream = struct {
     }
 
     pub fn deinit(this: *@This()) void {
-        JSC.markBinding();
+        JSC.markBinding(@src());
         if (this.buffer.capacity > 0) this.buffer.clearAndFree();
 
         this.pending_value.deinit();

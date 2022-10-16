@@ -235,13 +235,13 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
         }
 
         pub fn fail(this: *HTTPClient, code: ErrorCode) void {
-            JSC.markBinding();
+            JSC.markBinding(@src());
             WebSocket__didCloseWithErrorCode(this.outgoing_websocket, code);
             this.cancel();
         }
 
         pub fn handleClose(this: *HTTPClient, _: Socket, _: c_int, _: ?*anyopaque) void {
-            JSC.markBinding();
+            JSC.markBinding(@src());
             this.clearData();
             WebSocket__didCloseWithErrorCode(this.outgoing_websocket, ErrorCode.ended);
         }
@@ -445,7 +445,7 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
             }
 
             this.clearData();
-            JSC.markBinding();
+            JSC.markBinding(@src());
             this.tcp.timeout(0);
             log("onDidConnect", .{});
             WebSocket__didConnect(this.outgoing_websocket, this.tcp.socket, overflow.ptr, overflow.len);
@@ -831,7 +831,7 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
         }
 
         pub fn fail(this: *WebSocket, code: ErrorCode) void {
-            JSC.markBinding();
+            JSC.markBinding(@src());
             if (this.outgoing_websocket) |ws|
                 WebSocket__didCloseWithErrorCode(ws, code);
 
@@ -839,7 +839,7 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
         }
 
         pub fn handleClose(this: *WebSocket, _: Socket, _: c_int, _: ?*anyopaque) void {
-            JSC.markBinding();
+            JSC.markBinding(@src());
             this.clearData();
             if (this.outgoing_websocket) |ws|
                 WebSocket__didCloseWithErrorCode(ws, ErrorCode.ended);
@@ -896,16 +896,16 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
                     if (utf16_bytes_) |utf16| {
                         outstring = JSC.ZigString.from16Slice(utf16);
                         outstring.mark();
-                        JSC.markBinding();
+                        JSC.markBinding(@src());
                         WebSocket__didReceiveText(out, false, &outstring);
                     } else {
                         outstring = JSC.ZigString.init(data_);
-                        JSC.markBinding();
+                        JSC.markBinding(@src());
                         WebSocket__didReceiveText(out, true, &outstring);
                     }
                 },
                 .Binary => {
-                    JSC.markBinding();
+                    JSC.markBinding(@src());
                     WebSocket__didReceiveBytes(out, data_.ptr, data_.len);
                 },
                 else => unreachable,
@@ -1396,7 +1396,7 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
         fn dispatchClose(this: *WebSocket) void {
             var out = this.outgoing_websocket orelse return;
             this.poll_ref.unref(this.globalThis.bunVM());
-            JSC.markBinding();
+            JSC.markBinding(@src());
             WebSocket__didCloseWithErrorCode(out, ErrorCode.closed);
         }
 

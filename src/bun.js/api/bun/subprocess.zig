@@ -241,14 +241,14 @@ pub const Subprocess = struct {
 
         if (!(sig > -1 and sig < std.math.maxInt(u8))) {
             globalThis.throwInvalidArguments("Invalid signal: must be > -1 and < 255", .{});
-            return JSValue.jsUndefined();
+            return .zero;
         }
 
         switch (this.tryKill(sig)) {
             .result => {},
             .err => |err| {
                 globalThis.throwValue(err.toJSC(globalThis));
-                return JSValue.jsUndefined();
+                return .zero;
             },
         }
 
@@ -832,7 +832,7 @@ pub const Subprocess = struct {
         {
             if (args.isEmptyOrUndefinedOrNull()) {
                 globalThis.throwInvalidArguments("cmds must be an array", .{});
-                return JSValue.jsUndefined();
+                return .zero;
             }
 
             const args_type = args.jsType();
@@ -843,24 +843,24 @@ pub const Subprocess = struct {
                 cmd_value = cmd_value_;
             } else {
                 globalThis.throwInvalidArguments("cmds must be an array", .{});
-                return JSValue.jsUndefined();
+                return .zero;
             }
 
             {
                 var cmds_array = cmd_value.arrayIterator(globalThis);
                 argv = @TypeOf(argv).initCapacity(allocator, cmds_array.len) catch {
                     globalThis.throw("out of memory", .{});
-                    return JSValue.jsUndefined();
+                    return .zero;
                 };
 
                 if (cmd_value.isEmptyOrUndefinedOrNull()) {
                     globalThis.throwInvalidArguments("cmd must be an array of strings", .{});
-                    return JSValue.jsUndefined();
+                    return .zero;
                 }
 
                 if (cmds_array.len == 0) {
                     globalThis.throwInvalidArguments("cmd must not be empty", .{});
-                    return JSValue.jsUndefined();
+                    return .zero;
                 }
 
                 {
@@ -870,24 +870,24 @@ pub const Subprocess = struct {
                     var path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
                     var resolved = Which.which(&path_buf, PATH, cwd, arg0.slice()) orelse {
                         globalThis.throwInvalidArguments("cmd not in $PATH: {s}", .{arg0});
-                        return JSValue.jsUndefined();
+                        return .zero;
                     };
                     argv.appendAssumeCapacity(allocator.dupeZ(u8, bun.span(resolved)) catch {
                         globalThis.throw("out of memory", .{});
-                        return JSValue.jsUndefined();
+                        return .zero;
                     });
                 }
 
                 while (cmds_array.next()) |value| {
                     argv.appendAssumeCapacity(value.getZigString(globalThis).toOwnedSliceZ(allocator) catch {
                         globalThis.throw("out of memory", .{});
-                        return JSValue.jsUndefined();
+                        return .zero;
                     });
                 }
 
                 if (argv.items.len == 0) {
                     globalThis.throwInvalidArguments("cmd must be an array of strings", .{});
-                    return JSValue.jsUndefined();
+                    return .zero;
                 }
             }
 
@@ -896,7 +896,7 @@ pub const Subprocess = struct {
                     if (!cwd_.isEmptyOrUndefinedOrNull()) {
                         cwd = cwd_.getZigString(globalThis).toOwnedSliceZ(allocator) catch {
                             globalThis.throw("out of memory", .{});
-                            return JSValue.jsUndefined();
+                            return .zero;
                         };
                     }
                 }
@@ -905,7 +905,7 @@ pub const Subprocess = struct {
                     if (!onExit_.isEmptyOrUndefinedOrNull()) {
                         if (!onExit_.isCell() or !onExit_.isCallable(globalThis.vm())) {
                             globalThis.throwInvalidArguments("onExit must be a function or undefined", .{});
-                            return JSValue.jsUndefined();
+                            return .zero;
                         }
                         on_exit_callback = onExit_;
                     }
@@ -915,7 +915,7 @@ pub const Subprocess = struct {
                     if (!object.isEmptyOrUndefinedOrNull()) {
                         if (!object.isObject()) {
                             globalThis.throwInvalidArguments("env must be an object", .{});
-                            return JSValue.jsUndefined();
+                            return .zero;
                         }
 
                         var object_iter = JSC.JSPropertyIterator(.{
@@ -925,14 +925,14 @@ pub const Subprocess = struct {
                         defer object_iter.deinit();
                         env_array.ensureTotalCapacityPrecise(allocator, object_iter.len) catch {
                             globalThis.throw("out of memory", .{});
-                            return JSValue.jsUndefined();
+                            return .zero;
                         };
 
                         while (object_iter.next()) |key| {
                             var value = object_iter.value;
                             var line = std.fmt.allocPrintZ(allocator, "{}={}", .{ key, value.getZigString(globalThis) }) catch {
                                 globalThis.throw("out of memory", .{});
-                                return JSValue.jsUndefined();
+                                return .zero;
                             };
 
                             if (key.eqlComptime("PATH")) {
@@ -940,7 +940,7 @@ pub const Subprocess = struct {
                             }
                             env_array.append(allocator, line) catch {
                                 globalThis.throw("out of memory", .{});
-                                return JSValue.jsUndefined();
+                                return .zero;
                             };
                         }
                     }
@@ -958,23 +958,23 @@ pub const Subprocess = struct {
                             }
                         } else {
                             globalThis.throwInvalidArguments("stdio must be an array", .{});
-                            return JSValue.jsUndefined();
+                            return .zero;
                         }
                     }
                 } else {
                     if (args.get(globalThis, "stdin")) |value| {
                         if (!extractStdio(globalThis, std.os.STDIN_FILENO, value, &stdio))
-                            return JSC.JSValue.jsUndefined();
+                            return .zero;
                     }
 
                     if (args.get(globalThis, "stderr")) |value| {
                         if (!extractStdio(globalThis, std.os.STDERR_FILENO, value, &stdio))
-                            return JSC.JSValue.jsUndefined();
+                            return .zero;
                     }
 
                     if (args.get(globalThis, "stdout")) |value| {
                         if (!extractStdio(globalThis, std.os.STDOUT_FILENO, value, &stdio))
-                            return JSC.JSValue.jsUndefined();
+                            return .zero;
                     }
                 }
             }
@@ -982,7 +982,7 @@ pub const Subprocess = struct {
 
         var attr = PosixSpawn.Attr.init() catch {
             globalThis.throw("out of memory", .{});
-            return JSValue.jsUndefined();
+            return .zero;
         };
 
         defer attr.deinit();
@@ -1005,19 +1005,19 @@ pub const Subprocess = struct {
 
         const stdin_pipe = if (stdio[0].isPiped()) os.pipe2(0) catch |err| {
             globalThis.throw("failed to create stdin pipe: {s}", .{err});
-            return JSValue.jsUndefined();
+            return .zero;
         } else undefined;
         errdefer if (stdio[0].isPiped()) destroyPipe(stdin_pipe);
 
         const stdout_pipe = if (stdio[1].isPiped()) os.pipe2(0) catch |err| {
             globalThis.throw("failed to create stdout pipe: {s}", .{err});
-            return JSValue.jsUndefined();
+            return .zero;
         } else undefined;
         errdefer if (stdio[1].isPiped()) destroyPipe(stdout_pipe);
 
         const stderr_pipe = if (stdio[2].isPiped()) os.pipe2(0) catch |err| {
             globalThis.throw("failed to create stderr pipe: {s}", .{err});
-            return JSValue.jsUndefined();
+            return .zero;
         } else undefined;
         errdefer if (stdio[2].isPiped()) destroyPipe(stderr_pipe);
 
@@ -1043,13 +1043,13 @@ pub const Subprocess = struct {
 
         argv.append(allocator, null) catch {
             globalThis.throw("out of memory", .{});
-            return JSValue.jsUndefined();
+            return .zero;
         };
 
         if (env_array.items.len > 0) {
             env_array.append(allocator, null) catch {
                 globalThis.throw("out of memory", .{});
-                return JSValue.jsUndefined();
+                return .zero;
             };
             env = @ptrCast(@TypeOf(env), env_array.items.ptr);
         }
@@ -1091,7 +1091,7 @@ pub const Subprocess = struct {
 
         var subprocess = globalThis.allocator().create(Subprocess) catch {
             globalThis.throw("out of memory", .{});
-            return JSValue.jsUndefined();
+            return .zero;
         };
 
         // When run synchronously, subprocess isn't garbage collected
@@ -1101,7 +1101,7 @@ pub const Subprocess = struct {
             .pidfd = pidfd,
             .stdin = Writable.init(stdio[std.os.STDIN_FILENO], stdin_pipe[1], globalThis) catch {
                 globalThis.throw("out of memory", .{});
-                return JSValue.jsUndefined();
+                return .zero;
             },
             .stdout = Readable.init(stdio[std.os.STDOUT_FILENO], stdout_pipe[0], globalThis),
             .stderr = Readable.init(stdio[std.os.STDERR_FILENO], stderr_pipe[0], globalThis),

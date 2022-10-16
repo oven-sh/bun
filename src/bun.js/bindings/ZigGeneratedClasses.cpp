@@ -446,7 +446,12 @@ JSSubprocess* JSSubprocess::create(JSC::VM& vm, JSC::JSGlobalObject* globalObjec
 }
 
 extern "C" void* Subprocess__fromJS(JSC::EncodedJSValue value) {
-  JSSubprocess* object = JSC::jsDynamicCast<JSSubprocess*>(JSValue::decode(value));
+  JSC::JSValue decodedValue = JSC::JSValue::decode(value);
+  if (!decodedValue || decodedValue.isUndefinedOrNull()) 
+    return nullptr;
+
+  JSSubprocess* object = JSC::jsDynamicCast<JSSubprocess*>(decodedValue);
+
   if (!object)
       return nullptr;
       
@@ -694,7 +699,12 @@ JSSHA1* JSSHA1::create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Stru
 }
 
 extern "C" void* SHA1__fromJS(JSC::EncodedJSValue value) {
-  JSSHA1* object = JSC::jsDynamicCast<JSSHA1*>(JSValue::decode(value));
+  JSC::JSValue decodedValue = JSC::JSValue::decode(value);
+  if (!decodedValue || decodedValue.isUndefinedOrNull()) 
+    return nullptr;
+
+  JSSHA1* object = JSC::jsDynamicCast<JSSHA1*>(decodedValue);
+
   if (!object)
       return nullptr;
       
@@ -927,7 +937,12 @@ JSMD5* JSMD5::create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Struct
 }
 
 extern "C" void* MD5__fromJS(JSC::EncodedJSValue value) {
-  JSMD5* object = JSC::jsDynamicCast<JSMD5*>(JSValue::decode(value));
+  JSC::JSValue decodedValue = JSC::JSValue::decode(value);
+  if (!decodedValue || decodedValue.isUndefinedOrNull()) 
+    return nullptr;
+
+  JSMD5* object = JSC::jsDynamicCast<JSMD5*>(decodedValue);
+
   if (!object)
       return nullptr;
       
@@ -1160,7 +1175,12 @@ JSMD4* JSMD4::create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Struct
 }
 
 extern "C" void* MD4__fromJS(JSC::EncodedJSValue value) {
-  JSMD4* object = JSC::jsDynamicCast<JSMD4*>(JSValue::decode(value));
+  JSC::JSValue decodedValue = JSC::JSValue::decode(value);
+  if (!decodedValue || decodedValue.isUndefinedOrNull()) 
+    return nullptr;
+
+  JSMD4* object = JSC::jsDynamicCast<JSMD4*>(decodedValue);
+
   if (!object)
       return nullptr;
       
@@ -1393,7 +1413,12 @@ JSSHA224* JSSHA224::create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::
 }
 
 extern "C" void* SHA224__fromJS(JSC::EncodedJSValue value) {
-  JSSHA224* object = JSC::jsDynamicCast<JSSHA224*>(JSValue::decode(value));
+  JSC::JSValue decodedValue = JSC::JSValue::decode(value);
+  if (!decodedValue || decodedValue.isUndefinedOrNull()) 
+    return nullptr;
+
+  JSSHA224* object = JSC::jsDynamicCast<JSSHA224*>(decodedValue);
+
   if (!object)
       return nullptr;
       
@@ -1626,7 +1651,12 @@ JSSHA512* JSSHA512::create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::
 }
 
 extern "C" void* SHA512__fromJS(JSC::EncodedJSValue value) {
-  JSSHA512* object = JSC::jsDynamicCast<JSSHA512*>(JSValue::decode(value));
+  JSC::JSValue decodedValue = JSC::JSValue::decode(value);
+  if (!decodedValue || decodedValue.isUndefinedOrNull()) 
+    return nullptr;
+
+  JSSHA512* object = JSC::jsDynamicCast<JSSHA512*>(decodedValue);
+
   if (!object)
       return nullptr;
       
@@ -1859,7 +1889,12 @@ JSSHA384* JSSHA384::create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::
 }
 
 extern "C" void* SHA384__fromJS(JSC::EncodedJSValue value) {
-  JSSHA384* object = JSC::jsDynamicCast<JSSHA384*>(JSValue::decode(value));
+  JSC::JSValue decodedValue = JSC::JSValue::decode(value);
+  if (!decodedValue || decodedValue.isUndefinedOrNull()) 
+    return nullptr;
+
+  JSSHA384* object = JSC::jsDynamicCast<JSSHA384*>(decodedValue);
+
   if (!object)
       return nullptr;
       
@@ -2092,7 +2127,12 @@ JSSHA256* JSSHA256::create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::
 }
 
 extern "C" void* SHA256__fromJS(JSC::EncodedJSValue value) {
-  JSSHA256* object = JSC::jsDynamicCast<JSSHA256*>(JSValue::decode(value));
+  JSC::JSValue decodedValue = JSC::JSValue::decode(value);
+  if (!decodedValue || decodedValue.isUndefinedOrNull()) 
+    return nullptr;
+
+  JSSHA256* object = JSC::jsDynamicCast<JSSHA256*>(decodedValue);
+
   if (!object)
       return nullptr;
       
@@ -2325,7 +2365,12 @@ JSSHA512_256* JSSHA512_256::create(JSC::VM& vm, JSC::JSGlobalObject* globalObjec
 }
 
 extern "C" void* SHA512_256__fromJS(JSC::EncodedJSValue value) {
-  JSSHA512_256* object = JSC::jsDynamicCast<JSSHA512_256*>(JSValue::decode(value));
+  JSC::JSValue decodedValue = JSC::JSValue::decode(value);
+  if (!decodedValue || decodedValue.isUndefinedOrNull()) 
+    return nullptr;
+
+  JSSHA512_256* object = JSC::jsDynamicCast<JSSHA512_256*>(decodedValue);
+
   if (!object)
       return nullptr;
       
@@ -2369,6 +2414,10 @@ extern "C" JSC::EncodedJSValue ServerWebSocketPrototype__getData(void* ptr, JSC:
 JSC_DECLARE_CUSTOM_GETTER(ServerWebSocketPrototype__dataGetterWrap);
 
 
+extern "C" bool ServerWebSocketPrototype__setData(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::EncodedJSValue value);
+JSC_DECLARE_CUSTOM_SETTER(ServerWebSocketPrototype__dataSetterWrap);
+
+
 extern "C" EncodedJSValue ServerWebSocketPrototype__getBufferedAmount(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
 JSC_DECLARE_HOST_FUNCTION(ServerWebSocketPrototype__getBufferedAmountCallback);
 
@@ -2406,7 +2455,7 @@ STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSServerWebSocketPrototype, JSServerWebSocke
 
   static const HashTableValue JSServerWebSocketPrototypeTableValues[] = {
 { "close"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, ServerWebSocketPrototype__closeCallback, 1 } }  ,
-{ "data"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { HashTableValue::GetterSetterType, ServerWebSocketPrototype__dataGetterWrap, 0 } }  ,
+{ "data"_s, static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { HashTableValue::GetterSetterType, ServerWebSocketPrototype__dataGetterWrap, ServerWebSocketPrototype__dataSetterWrap } }  ,
 { "getBufferedAmount"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, ServerWebSocketPrototype__getBufferedAmountCallback, 0 } }  ,
 { "isSubscribed"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, ServerWebSocketPrototype__isSubscribedCallback, 1 } }  ,
 { "publish"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, ServerWebSocketPrototype__publishCallback, 3 } }  ,
@@ -2476,6 +2525,18 @@ extern "C" void ServerWebSocketPrototype__dataSetCachedValue(JSC::EncodedJSValue
     auto& vm = globalObject->vm();
     auto* thisObject = jsCast<JSServerWebSocket*>(JSValue::decode(thisValue));
     thisObject->m_data.set(vm, thisObject, JSValue::decode(value));
+}
+
+
+JSC_DEFINE_CUSTOM_SETTER(ServerWebSocketPrototype__dataSetterWrap, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, EncodedJSValue encodedValue, PropertyName attributeName))
+{
+    auto& vm = lexicalGlobalObject->vm();
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    JSServerWebSocket* thisObject = jsCast<JSServerWebSocket*>(JSValue::decode(thisValue));
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+    auto result = ServerWebSocketPrototype__setData(thisObject->wrapped(), lexicalGlobalObject, encodedValue);
+
+    RELEASE_AND_RETURN(throwScope, result);
 }
 
 
@@ -2721,7 +2782,12 @@ JSServerWebSocket* JSServerWebSocket::create(JSC::VM& vm, JSC::JSGlobalObject* g
 }
 
 extern "C" void* ServerWebSocket__fromJS(JSC::EncodedJSValue value) {
-  JSServerWebSocket* object = JSC::jsDynamicCast<JSServerWebSocket*>(JSValue::decode(value));
+  JSC::JSValue decodedValue = JSC::JSValue::decode(value);
+  if (!decodedValue || decodedValue.isUndefinedOrNull()) 
+    return nullptr;
+
+  JSServerWebSocket* object = JSC::jsDynamicCast<JSServerWebSocket*>(decodedValue);
+
   if (!object)
       return nullptr;
       
@@ -2968,7 +3034,12 @@ JSTextDecoder* JSTextDecoder::create(JSC::VM& vm, JSC::JSGlobalObject* globalObj
 }
 
 extern "C" void* TextDecoder__fromJS(JSC::EncodedJSValue value) {
-  JSTextDecoder* object = JSC::jsDynamicCast<JSTextDecoder*>(JSValue::decode(value));
+  JSC::JSValue decodedValue = JSC::JSValue::decode(value);
+  if (!decodedValue || decodedValue.isUndefinedOrNull()) 
+    return nullptr;
+
+  JSTextDecoder* object = JSC::jsDynamicCast<JSTextDecoder*>(decodedValue);
+
   if (!object)
       return nullptr;
       
@@ -3530,7 +3601,12 @@ JSRequest* JSRequest::create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC
 }
 
 extern "C" void* Request__fromJS(JSC::EncodedJSValue value) {
-  JSRequest* object = JSC::jsDynamicCast<JSRequest*>(JSValue::decode(value));
+  JSC::JSValue decodedValue = JSC::JSValue::decode(value);
+  if (!decodedValue || decodedValue.isUndefinedOrNull()) 
+    return nullptr;
+
+  JSRequest* object = JSC::jsDynamicCast<JSRequest*>(decodedValue);
+
   if (!object)
       return nullptr;
       
@@ -4045,7 +4121,12 @@ JSResponse* JSResponse::create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, J
 }
 
 extern "C" void* Response__fromJS(JSC::EncodedJSValue value) {
-  JSResponse* object = JSC::jsDynamicCast<JSResponse*>(JSValue::decode(value));
+  JSC::JSValue decodedValue = JSC::JSValue::decode(value);
+  if (!decodedValue || decodedValue.isUndefinedOrNull()) 
+    return nullptr;
+
+  JSResponse* object = JSC::jsDynamicCast<JSResponse*>(decodedValue);
+
   if (!object)
       return nullptr;
       
@@ -4409,7 +4490,12 @@ JSBlob* JSBlob::create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Stru
 }
 
 extern "C" void* Blob__fromJS(JSC::EncodedJSValue value) {
-  JSBlob* object = JSC::jsDynamicCast<JSBlob*>(JSValue::decode(value));
+  JSC::JSValue decodedValue = JSC::JSValue::decode(value);
+  if (!decodedValue || decodedValue.isUndefinedOrNull()) 
+    return nullptr;
+
+  JSBlob* object = JSC::jsDynamicCast<JSBlob*>(decodedValue);
+
   if (!object)
       return nullptr;
       

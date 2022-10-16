@@ -2722,7 +2722,7 @@ pub const ServerWebSocket = struct {
         defer topic_slice.deinit();
         if (topic_slice.len == 0) {
             globalThis.throw("publish requires a non-empty topic", .{});
-            return JSValue.jsNumber(0);
+            return .zero;
         }
 
         const compress = args.len > 1 and compress_value.toBoolean();
@@ -3737,6 +3737,7 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
                     var upgrader = this.allocator.create(ServerWebSocket) catch @panic("Out of memory");
                     upgrader.* = .{
                         .handler = websocket_handler,
+                        .this_value = .zero,
                     };
                     resp.upgrade(
                         *ServerWebSocket,

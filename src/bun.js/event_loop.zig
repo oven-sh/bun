@@ -176,7 +176,7 @@ pub const AnyTask = struct {
 pub const CppTask = opaque {
     extern fn Bun__performTask(globalObject: *JSGlobalObject, task: *CppTask) void;
     pub fn run(this: *CppTask, global: *JSGlobalObject) void {
-        JSC.markBinding();
+        JSC.markBinding(@src());
         Bun__performTask(global, this);
     }
 };
@@ -423,7 +423,7 @@ pub const EventLoop = struct {
     }
 
     pub fn ensureWaker(this: *EventLoop) void {
-        JSC.markBinding();
+        JSC.markBinding(@src());
         if (this.virtual_machine.uws_event_loop == null) {
             var actual = uws.Loop.get().?;
             this.virtual_machine.uws_event_loop = actual;
@@ -433,7 +433,7 @@ pub const EventLoop = struct {
     }
 
     pub fn enqueueTaskConcurrent(this: *EventLoop, task: *ConcurrentTask) void {
-        JSC.markBinding();
+        JSC.markBinding(@src());
 
         this.concurrent_tasks.push(task);
 

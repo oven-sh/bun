@@ -488,15 +488,17 @@ uws_sendstatus_t uws_ws_send_with_options(int ssl, uws_websocket_t *ws,
   if (ssl) {
     uWS::WebSocket<true, true, void *> *uws =
         (uWS::WebSocket<true, true, void *> *)ws;
-    return (uws_sendstatus_t)uws->send(std::string_view(message),
+    return (uws_sendstatus_t)uws->send(std::string_view(message, length),
+                                       (uWS::OpCode)(unsigned char)opcode,
+                                       compress, fin);
+  } else {
+
+    uWS::WebSocket<false, true, void *> *uws =
+        (uWS::WebSocket<false, true, void *> *)ws;
+    return (uws_sendstatus_t)uws->send(std::string_view(message, length),
                                        (uWS::OpCode)(unsigned char)opcode,
                                        compress, fin);
   }
-  uWS::WebSocket<false, true, void *> *uws =
-      (uWS::WebSocket<false, true, void *> *)ws;
-  return (uws_sendstatus_t)uws->send(std::string_view(message),
-                                     (uWS::OpCode)(unsigned char)opcode,
-                                     compress, fin);
 }
 
 uws_sendstatus_t uws_ws_send_fragment(int ssl, uws_websocket_t *ws,
@@ -520,12 +522,12 @@ uws_sendstatus_t uws_ws_send_first_fragment(int ssl, uws_websocket_t *ws,
     uWS::WebSocket<true, true, void *> *uws =
         (uWS::WebSocket<true, true, void *> *)ws;
     return (uws_sendstatus_t)uws->sendFirstFragment(
-        std::string_view(message), uWS::OpCode::BINARY, compress);
+        std::string_view(message, length), uWS::OpCode::BINARY, compress);
   }
   uWS::WebSocket<false, true, void *> *uws =
       (uWS::WebSocket<false, true, void *> *)ws;
   return (uws_sendstatus_t)uws->sendFirstFragment(
-      std::string_view(message), uWS::OpCode::BINARY, compress);
+      std::string_view(message, length), uWS::OpCode::BINARY, compress);
 }
 uws_sendstatus_t
 uws_ws_send_first_fragment_with_opcode(int ssl, uws_websocket_t *ws,

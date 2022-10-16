@@ -874,9 +874,14 @@ ${name}* ${name}::create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::St
 }
 
 extern "C" void* ${typeName}__fromJS(JSC::EncodedJSValue value) {
+  JSC::JSValue decodedValue = JSC::JSValue::decode(value);
+  if (!decodedValue || decodedValue.isUndefinedOrNull()) 
+    return nullptr;
+
   ${className(typeName)}* object = JSC::jsDynamicCast<${className(
     typeName
-  )}*>(JSValue::decode(value));
+  )}*>(decodedValue);
+
   if (!object)
       return nullptr;
       
@@ -1103,7 +1108,7 @@ pub const ${className(typeName)} = struct {
     /// Return the pointer to the wrapped object.
     /// If the object does not match the type, return null.
     pub fn fromJS(value: JSC.JSValue) ?*${typeName} {
-        JSC.markBinding();
+        JSC.markBinding(@src());
         return ${symbolName(typeName, "fromJS")}(value);
     }
 
@@ -1115,7 +1120,7 @@ pub const ${className(typeName)} = struct {
     /// Get the ${typeName} constructor value.
     /// This loads lazily from the global object.
     pub fn getConstructor(globalObject: *JSC.JSGlobalObject) JSC.JSValue {
-        JSC.markBinding();
+        JSC.markBinding(@src());
         return ${symbolName(typeName, "getConstructor")}(globalObject);
     }
   `
@@ -1123,7 +1128,7 @@ pub const ${className(typeName)} = struct {
     }
     /// Create a new instance of ${typeName}
     pub fn toJS(this: *${typeName}, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
-        JSC.markBinding();
+        JSC.markBinding(@src());
         if (comptime Environment.allow_assert) {
             const value__ = ${symbolName(
               typeName,
@@ -1138,7 +1143,7 @@ pub const ${className(typeName)} = struct {
 
     /// Modify the internal ptr to point to a new instance of ${typeName}.
     pub fn dangerouslySetPtr(value: JSC.JSValue, ptr: ?*${typeName}) bool {
-      JSC.markBinding();
+      JSC.markBinding(@src());
       return ${symbolName(typeName, "dangerouslySetPtr")}(value, ptr);
     }
 

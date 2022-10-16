@@ -19,7 +19,7 @@ typedef struct StringPointer {
 extern "C" {
 #endif
 
-typedef enum {
+enum uws_compress_options_t : int32_t {
   /* These are not actual compression options */
   _COMPRESSOR_MASK = 0x00FF,
   _DECOMPRESSOR_MASK = 0x0F00,
@@ -49,18 +49,18 @@ typedef enum {
   DEDICATED_COMPRESSOR_256KB = 15 << 4 | 8,
   /* Same as 256kb */
   DEDICATED_COMPRESSOR = 15 << 4 | 8
-} uws_compress_options_t;
+};
 
-typedef enum {
+enum uws_opcode_t : int32_t {
   CONTINUATION = 0,
   TEXT = 1,
   BINARY = 2,
   CLOSE = 8,
   PING = 9,
   PONG = 10
-} uws_opcode_t;
+};
 
-typedef enum { BACKPRESSURE, SUCCESS, DROPPED } uws_sendstatus_t;
+enum uws_sendstatus_t : uint32_t { BACKPRESSURE, SUCCESS, DROPPED };
 
 typedef struct {
 

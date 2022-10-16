@@ -24,7 +24,6 @@ pub const NetworkThread = @import("./network_thread.zig");
 const ObjectPool = @import("./pool.zig").ObjectPool;
 const SOCK = os.SOCK;
 const Arena = @import("./mimalloc_arena.zig").Arena;
-const AsyncMessage = @import("./http/async_message.zig");
 const ZlibPool = @import("./http/zlib.zig");
 const URLBufferPool = ObjectPool([4096]u8, null, false, 10);
 const uws = @import("uws");
@@ -623,7 +622,7 @@ pub const HTTPStage = enum {
 };
 
 pub const InternalState = struct {
-    request_message: ?*AsyncMessage = null,
+    request_message: ?*BodyPreamblePool.Node = null,
     pending_response: picohttp.Response = undefined,
     allow_keepalive: bool = true,
     transfer_encoding: Encoding = Encoding.identity,
@@ -1067,6 +1066,9 @@ pub const AsyncHTTP = struct {
     }
 };
 
+const BodyPreambleArray = std.BoundedArray(u8, 1024 * 16);
+const BodyPreamblePool = ObjectPool(BodyPreambleArray, null, false, 16);
+
 pub fn buildRequest(this: *HTTPClient, body_len: usize) picohttp.Request {
     var header_count: usize = 0;
     var header_entries = this.header_entries.slice();
@@ -1353,7 +1355,7 @@ pub fn onData(this: *HTTPClient, comptime is_ssl: bool, incoming_data: []const u
             var amount_read: usize = 0;
             var needs_move = true;
             if (this.state.request_message) |req_msg| {
-                var available = req_msg.buf;
+                var available = req_msg.data.unusedCapacitySlice();
                 if (available.len == 0) {
                     this.state.request_message.?.release();
                     this.state.request_message = null;
@@ -1361,18 +1363,11 @@ pub fn onData(this: *HTTPClient, comptime is_ssl: bool, incoming_data: []const u
                     return;
                 }
 
-                const wrote = @minimum(available.len - req_msg.used, incoming_data.len);
-                @memcpy(
-                    available.ptr + req_msg.used,
-                    incoming_data.ptr,
-                    wrote,
-                );
-                req_msg.used += @truncate(u32, wrote);
-                amount_read = 0;
-                req_msg.sent = 0;
-                needs_move = false;
-                to_read = available[0..req_msg.used];
-                pending_buffers[1] = incoming_data[wrote..];
+                const to_read_len = @minimum(available.len, to_read.len);
+                req_msg.data.appendSliceAssumeCapacity(to_read[0..to_read_len]);
+                to_read = req_msg.data.slice();
+                pending_buffers[1] = incoming_data[to_read_len..];
+                needs_move = pending_buffers[1].len > 0;
             }
 
             this.state.pending_response = picohttp.Response{};
@@ -1385,15 +1380,19 @@ pub fn onData(this: *HTTPClient, comptime is_ssl: bool, incoming_data: []const u
                 switch (err) {
                     error.ShortRead => {
                         if (needs_move) {
-                            std.debug.assert(this.state.request_message == null);
-                            this.state.request_message = AsyncMessage.get(default_allocator);
-                            if (to_read.len > this.state.request_message.?.buf.len) {
-                                this.closeAndFail(error.ResponseHeadersTooLarge, is_ssl, socket);
-                                return;
-                            }
+                            const to_copy = incoming_data;
 
-                            _ = this.state.request_message.?.writeAll(incoming_data);
-                            this.state.request_message.?.sent = @truncate(u32, amount_read);
+                            if (to_copy.len > 0) {
+                                this.state.request_message = this.state.request_message orelse brk: {
+                                    var preamble = BodyPreamblePool.get(getAllocator());
+                                    preamble.data = .{};
+                                    break :brk preamble;
+                                };
+                                this.state.request_message.?.data.appendSlice(to_copy) catch {
+                                    this.closeAndFail(error.ResponseHeadersTooLarge, is_ssl, socket);
+                                    return;
+                                };
+                            }
                         }
 
                         this.setTimeout(socket, 60);

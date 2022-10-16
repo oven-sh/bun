@@ -632,12 +632,8 @@ pub const Fetch = struct {
             return fetch_error.toErrorInstance(this.global_this);
         }
 
-        pub fn onResolve(this: *FetchTasklet) JSValue {
-            var allocator = this.global_this.bunVM().allocator;
-            const http_response = this.result.response;
-            var response = allocator.create(Response) catch unreachable;
-            var internal_blob = this.response_buffer.list.toManaged(this.response_buffer.allocator);
-
+        fn toBodyValue(this: *FetchTasklet) Body.Value {
+            var response_buffer = this.response_buffer.list;
             this.response_buffer = .{
                 .allocator = default_allocator,
                 .list = .{
@@ -646,19 +642,22 @@ pub const Fetch = struct {
                 },
             };
 
-            var body_value: Body.Value = undefined;
-            if (internal_blob.items.len < InlineBlob.available_bytes) {
-                body_value = .{ .InlineBlob = InlineBlob.init(internal_blob.items) };
-                internal_blob.deinit();
-            } else {
-                body_value = .{
-                    .InternalBlob = .{
-                        .bytes = internal_blob,
-                    },
-                };
+            if (response_buffer.items.len < InlineBlob.available_bytes) {
+                const inline_blob = InlineBlob.init(response_buffer.items);
+                defer response_buffer.deinit(bun.default_allocator);
+                return .{ .InlineBlob = inline_blob };
             }
 
-            response.* = Response{
+            return .{
+                .InternalBlob = .{
+                    .bytes = response_buffer.toManaged(bun.default_allocator),
+                },
+            };
+        }
+
+        fn toResponse(this: *FetchTasklet, allocator: std.mem.Allocator) Response {
+            const http_response = this.result.response;
+            return Response{
                 .allocator = allocator,
                 .url = allocator.dupe(u8, this.result.href) catch unreachable,
                 .status_text = allocator.dupe(u8, http_response.status) catch unreachable,
@@ -668,9 +667,15 @@ pub const Fetch = struct {
                         .headers = FetchHeaders.createFromPicoHeaders(http_response.headers),
                         .status_code = @truncate(u16, http_response.status_code),
                     },
-                    .value = body_value,
+                    .value = this.toBodyValue(),
                 },
             };
+        }
+
+        pub fn onResolve(this: *FetchTasklet) JSValue {
+            var allocator = this.global_this.bunVM().allocator;
+            var response = allocator.create(Response) catch unreachable;
+            response.* = this.toResponse(allocator);
             return Response.makeMaybePooled(@ptrCast(js.JSContextRef, this.global_this), response);
         }
 
@@ -5522,6 +5527,7 @@ fn BodyMixin(comptime Type: type) type {
             globalThis: *JSC.JSGlobalObject,
         ) callconv(.C) JSValue {
             var body: *Body.Value = this.getBodyValue();
+
             if (body.* == .Used) {
                 // TODO: make this closed
                 return JSC.WebCore.ReadableStream.empty(globalThis);

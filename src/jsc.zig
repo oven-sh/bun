@@ -49,7 +49,7 @@ pub const jsBoolean = @This().JSValue.jsBoolean;
 const std = @import("std");
 
 const Output = @import("./output.zig");
-const __jsc_log = Output.scoped(.JSC, false);
+const __jsc_log = Output.scoped(.JSC, true);
 pub inline fn markBinding(src: std.builtin.SourceLocation) void {
     if (comptime is_bindgen) unreachable;
     __jsc_log("{s} ({s}:{d})", .{ src.fn_name, src.file, src.line });

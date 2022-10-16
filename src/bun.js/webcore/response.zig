@@ -5334,7 +5334,7 @@ pub const Request = struct {
     ) callconv(.C) JSC.JSValue {
         this.ensureURL() catch {
             globalObject.throw("Failed to join URL", .{});
-            return JSValue.jsUndefined();
+            return .zero;
         };
 
         return ZigString.init(this.url).withEncoding().toValueGC(globalObject);
@@ -5506,8 +5506,7 @@ fn BodyMixin(comptime Type: type) type {
         ) callconv(.C) JSC.JSValue {
             var value: *Body.Value = this.getBodyValue();
             if (value.* == .Used) {
-                globalThis.throw("Body already used", .{});
-                return JSValue.jsUndefined();
+                return handleBodyAlreadyUsed(globalThis);
             }
 
             if (value.* == .Locked) {
@@ -5524,8 +5523,8 @@ fn BodyMixin(comptime Type: type) type {
         ) callconv(.C) JSValue {
             var body: *Body.Value = this.getBodyValue();
             if (body.* == .Used) {
-                globalThis.throw("Body already used", .{});
-                return JSValue.jsUndefined();
+                // TODO: make this closed
+                return JSC.WebCore.ReadableStream.empty(globalThis);
             }
 
             return body.toReadableStream(globalThis);
@@ -5545,8 +5544,7 @@ fn BodyMixin(comptime Type: type) type {
         ) callconv(.C) JSC.JSValue {
             var value: *Body.Value = this.getBodyValue();
             if (value.* == .Used) {
-                globalObject.throw("Body already used", .{});
-                return JSValue.jsUndefined();
+                return handleBodyAlreadyUsed(globalObject);
             }
 
             if (value.* == .Locked) {
@@ -5555,6 +5553,13 @@ fn BodyMixin(comptime Type: type) type {
 
             var blob = value.useAsAnyBlob();
             return JSC.JSPromise.wrap(globalObject, blob.toJSON(globalObject, .share));
+        }
+
+        fn handleBodyAlreadyUsed(globalObject: *JSC.JSGlobalObject) JSValue {
+            return JSC.JSPromise.rejectedPromiseValue(
+                globalObject,
+                ZigString.static("Body already used").toErrorInstance(globalObject),
+            );
         }
 
         pub fn getArrayBuffer(

@@ -2143,8 +2143,10 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                             break :getter;
                         };
 
+                        const prev_len = bytes.items.len;
                         bytes.items.len = total;
-                        @memcpy(bytes.items.ptr + bytes.items.len - chunk.len, chunk.ptr, chunk.len);
+                        var slice = bytes.items[prev_len..];
+                        @memcpy(slice.ptr, chunk.ptr, chunk.len);
                         req.body = .{
                             .InternalBlob = .{
                                 .bytes = bytes.toManaged(this.allocator),

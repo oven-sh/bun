@@ -4194,6 +4194,23 @@ pub const InlineBlob = extern struct {
     len: IntSize align(1) = 0,
     was_string: bool align(1) = false,
 
+    pub fn concat(first: []const u8, second: []const u8) InlineBlob {
+        const total = first.len + second.len;
+        std.debug.assert(total <= available_bytes);
+
+        var inline_blob: JSC.WebCore.InlineBlob = .{};
+        var bytes_slice = inline_blob.bytes[0..total];
+
+        if (first.len > 0)
+            @memcpy(bytes_slice.ptr, first.ptr, first.len);
+
+        if (second.len > 0)
+            @memcpy(bytes_slice.ptr + first.len, second.ptr, second.len);
+
+        inline_blob.len = @truncate(@TypeOf(inline_blob.len), total);
+        return inline_blob;
+    }
+
     pub fn init(data: []const u8) InlineBlob {
         std.debug.assert(data.len <= available_bytes);
 
@@ -4553,7 +4570,7 @@ pub const Body = struct {
         pub const empty = Value{ .Empty = .{} };
 
         pub fn toReadableStream(this: *Value, globalThis: *JSGlobalObject) JSValue {
-            JSC.markBinding();
+            JSC.markBinding(@src());
 
             switch (this.*) {
                 .Used, .Empty => {
@@ -5548,8 +5565,7 @@ fn BodyMixin(comptime Type: type) type {
             var value: *Body.Value = this.getBodyValue();
 
             if (value.* == .Used) {
-                globalObject.throw("Body already used", .{});
-                return JSValue.jsUndefined();
+                return handleBodyAlreadyUsed(globalObject);
             }
 
             if (value.* == .Locked) {
@@ -5566,6 +5582,10 @@ fn BodyMixin(comptime Type: type) type {
             _: *JSC.CallFrame,
         ) callconv(.C) JSC.JSValue {
             var value: *Body.Value = this.getBodyValue();
+
+            if (value.* == .Used) {
+                return handleBodyAlreadyUsed(globalObject);
+            }
 
             if (value.* == .Locked) {
                 return value.Locked.setPromise(globalObject, .getBlob);

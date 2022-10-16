@@ -2134,10 +2134,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                             break :getter;
                         }
 
-                        req.body = .{ .InlineBlob = JSC.WebCore.InlineBlob.init(bytes.items) };
-                        var to_copy: []u8 = req.body.InlineBlob.bytes[bytes.items.len..];
-                        @memcpy(to_copy.ptr, chunk.ptr, chunk.len);
-                        req.body.InlineBlob.len += @truncate(JSC.WebCore.InlineBlob.IntSize, chunk.len);
+                        req.body = .{ .InlineBlob = JSC.WebCore.InlineBlob.concat(bytes.items, chunk) };
                         this.request_body_buf.clearAndFree(this.allocator);
                     } else {
                         bytes.ensureTotalCapacityPrecise(this.allocator, total) catch |err| {

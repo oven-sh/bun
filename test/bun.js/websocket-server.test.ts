@@ -53,13 +53,15 @@ describe("websocket server", () => {
     var server = serve({
       port: getPort(),
       websocket: {
-        accept(ws) {
+        upgrade(ws) {
           return { count: 0 };
         },
-        open(ws) {
-          ws.send("first");
-        },
+        open(ws) {},
         message(ws, msg) {
+          if (msg === "first") {
+            ws.send("first");
+            return;
+          }
           ws.send(`counter: ${dataCount++}`);
         },
       },
@@ -70,8 +72,12 @@ describe("websocket server", () => {
 
     await new Promise((resolve, reject) => {
       const websocket = new WebSocket(`ws://localhost:${server.port}`);
+      websocket.onerror = (e) => {
+        reject(e);
+      };
 
       var counter = 0;
+      websocket.onopen = () => websocket.send("first");
       websocket.onmessage = (e) => {
         try {
           switch (counter++) {
@@ -106,9 +112,63 @@ describe("websocket server", () => {
         } finally {
         }
       };
+    });
+  });
+
+  it("send rope strings", async () => {
+    var ropey = "hello world".repeat(10);
+    var sendQueue = [];
+    for (var i = 0; i < 100; i++) {
+      sendQueue.push(ropey + " " + i);
+    }
+
+    var serverCounter = 0;
+    var clientCounter = 0;
+
+    var server = serve({
+      port: getPort(),
+      websocket: {
+        upgrade(ws) {
+          return { count: 0 };
+        },
+        open(ws) {},
+        message(ws, msg) {
+          ws.send(sendQueue[serverCounter++] + " ");
+        },
+      },
+      fetch(req) {
+        return new Response("noooooo hello world");
+      },
+    });
+
+    await new Promise((resolve, reject) => {
+      const websocket = new WebSocket(`ws://localhost:${server.port}`);
       websocket.onerror = (e) => {
         reject(e);
       };
+
+      var counter = 0;
+      websocket.onopen = () => websocket.send("first");
+      websocket.onmessage = (e) => {
+        try {
+          const expected = sendQueue[clientCounter++] + " ";
+          expect(e.data).toBe(expected);
+          websocket.send("next");
+          if (clientCounter === sendQueue.length) {
+            websocket.close();
+            resolve();
+          }
+        } catch (r) {
+          reject(r);
+          console.error(r);
+          server?.stop();
+          websocket.close();
+          return;
+        } finally {
+        }
+      };
     });
+
+    server?.stop();
   });
 });

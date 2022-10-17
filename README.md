@@ -2260,9 +2260,33 @@ Bun.serve<User>({
 
 For server websocket connections, Bun exposes a `ServerWebSocket` class which is similar to the web-standard `WebSocket` class used for websocket client connections, but with a few differences:
 
+##### Headers
+
+`ServerWebSocket` supports passing headers. This is useful for setting cookies or other headers that you want to send to the client before the connection is upgraded.
+
+```ts
+server.upgrade(req, {
+  headers: {
+    "Set-Cookie": "name=" + new URL(req.url).searchParams.get("name"),
+  },
+});
+```
+
+The web-standard `WebSocket` API does not let you specify headers.
+
+##### Publish/subscribe
+
+`ServerWebSocket` has `publish()`, `subscribe()`, and `unsubscribe` methods which let you broadcast the same message to all clients connected to a topic in one line of code.
+
+```ts
+ws.publish("stock-prices/GOOG", `${price}`);
+```
+
+##### Backpressure
+
 `ServerWebSocket.send` returns a number that indicates:
 
-- `0` if the message was dropped due to a connection issue or otherwise
+- `0` if the message was dropped due to a connection issue
 - `-1` if the message was enqueued but there is backpressure
 - any other number indicates the number of bytes sent
 
@@ -2279,16 +2303,6 @@ ws.send("Hello".repeat(1000), true);
 
 `ServerWebSocket` also supports a `drain` callback that runs when the connection is ready to receive more data.
 
-##### Publish/subscribe
-
-`ServerWebSocket` has `publish()`, `subscribe()`, and `unsubscribe` methods which let you broadcast the same message to all clients connected to a topic in one line of code.
-
-```ts
-ws.publish("stock-prices/GOOG", `${price}`);
-```
-
-This is significantly more performant than sending the same message to each client individually.
-
 ##### Callbacks are per server instead of per socket
 
 `ServerWebSocket` expects you to pass a `WebSocketHandler` object to the `Bun.serve()` method which has methods for `open`, `message`, `close`, `drain`, and `error`. This is different than the client-side `WebSocket` class which extends `EventTarget` (onmessage, onopen, onclose),
@@ -2304,20 +2318,6 @@ But servers tend to have **many** socket connections open, which means:
 So, instead of using an event-based API, `ServerWebSocket` expects you to pass a single object with methods for each event in `Bun.serve()` and it is reused for each connection.
 
 This leads to less memory usage and less time spent adding/removing event listeners.
-
-##### Headers
-
-`ServerWebSocket` supports passing headers. This is useful for setting cookies or other headers that you want to send to the client before the connection is upgraded.
-
-```ts
-server.upgrade(req, {
-  headers: {
-    "Set-Cookie": "name=" + new URL(req.url).searchParams.get("name"),
-  },
-});
-```
-
-The web-standard `WebSocket` API does not let you specify headers.
 
 ---
 

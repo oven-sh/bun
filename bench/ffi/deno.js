@@ -19,9 +19,7 @@ const bytes = new Uint8Array(64);
 group("deno:ffi", () => {
   bench("noop", () => ffi_noop());
   bench("hash", () => ffi_hash(bytes, bytes.byteLength));
-  bench("c string", () =>
-    Deno.UnsafePointerView.getCString(ffi_string())
-  );
+  bench("c string", () => Deno.UnsafePointerView.getCString(ffi_string()));
 });
 
 await run();

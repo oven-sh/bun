@@ -911,7 +911,6 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
         pub fn consume(this: *WebSocket, data_: []const u8, left_in_fragment: usize, kind: Opcode, is_final: bool) usize {
             std.debug.assert(kind == .Text or kind == .Binary);
             std.debug.assert(data_.len <= left_in_fragment);
-            std.debug.assert(data_.len > 0);
 
             // did all the data fit in the buffer?
             // we can avoid copying & allocating a temporary buffer
@@ -919,6 +918,9 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
                 this.dispatchData(data_, kind);
                 return data_.len;
             }
+
+            // this must come after the above check
+            std.debug.assert(data_.len > 0);
 
             var writable = this.receive_buffer.writableWithSize(data_.len) catch unreachable;
             @memcpy(writable.ptr, data_.ptr, data_.len);

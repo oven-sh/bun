@@ -11,12 +11,12 @@ __require as require
 import {
 __FastRefreshModule as FastHMR
 } from "http://localhost:8080/bun:wrap";
-import * as $1407d117 from "http://localhost:8080/node_modules/react/jsx-dev-runtime.js";
-var JSX = require($1407d117);
+import * as $a77976b9 from "http://localhost:8080/node_modules/react/jsx-dev-runtime.js";
+var JSX = require($a77976b9);
 var jsx = require(JSX).jsxDEV;
-import * as $45b81229 from "http://localhost:8080/node_modules/react/index.js";
-var { default: React} = require($45b81229);
-var hmr = new FastHMR(2913325904, "react-context-value-func.tsx", FastRefresh), exports = hmr.exports;
+import * as $a66742df from "http://localhost:8080/node_modules/react/index.js";
+var { default: React} = require($a66742df);
+var hmr = new FastHMR(4175696745, "react-context-value-func.tsx", FastRefresh), exports = hmr.exports;
 (hmr._load = function() {
   const Context = React.createContext({});
   const ContextProvider = ({ children }) => {

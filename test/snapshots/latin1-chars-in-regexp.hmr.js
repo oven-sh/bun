@@ -8,7 +8,7 @@ __FastRefreshModule as FastHMR
 import {
 __FastRefreshRuntime as FastRefresh
 } from "http://localhost:8080/bun:wrap";
-var hmr = new FastHMR(3684541220, "latin1-chars-in-regexp.js", FastRefresh), exports = hmr.exports;
+var hmr = new FastHMR(3390984578, "latin1-chars-in-regexp.js", FastRefresh), exports = hmr.exports;
 (hmr._load = function() {
   var re_utob = /[\uD800-\uDBFF][\uDC00-\uDFFFF]|[^\x00-\x7F]/g;
   var re_btou = new RegExp([

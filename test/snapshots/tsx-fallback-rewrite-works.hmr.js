@@ -8,7 +8,7 @@ __FastRefreshModule as FastHMR
 import {
 __FastRefreshRuntime as FastRefresh
 } from "http://localhost:8080/bun:wrap";
-var hmr = new FastHMR(360033594, "tsx-fallback-rewrite-works.tsx", FastRefresh), exports = hmr.exports;
+var hmr = new FastHMR(2381755226, "tsx-fallback-rewrite-works.tsx", FastRefresh), exports = hmr.exports;
 (hmr._load = function() {
   function test() {
     return testDone(import.meta.url);

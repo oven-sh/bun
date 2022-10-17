@@ -53,6 +53,46 @@ describe("websocket server", () => {
     });
     server.stop();
   });
+
+  it("headers error doesn't crash", async () => {
+    var resolve, reject;
+    var server = serve({
+      port: getPort(),
+      websocket: {
+        open(ws) {},
+        message(ws, msg) {},
+        close() {
+          resolve();
+        },
+      },
+      error(err) {
+        resolve();
+      },
+      fetch(req, server) {
+        if (
+          server.upgrade(req, {
+            data: "hello world",
+
+            headers: 1238,
+          })
+        ) {
+          reject();
+          return;
+        }
+        reject();
+        return new Response("noooooo hello world");
+      },
+    });
+
+    await new Promise((resolve_, reject) => {
+      resolve = resolve_;
+      const websocket = new WebSocket(`ws://localhost:${server.port}`);
+      websocket.onopen = () => websocket.close();
+      websocket.onmessage = (e) => {};
+      websocket.onerror = (e) => {};
+    });
+    server.stop();
+  });
   it("can do hello world", async () => {
     var server = serve({
       port: getPort(),

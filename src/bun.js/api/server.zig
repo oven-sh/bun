@@ -3644,13 +3644,11 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
             if (upgrader.aborted) {
                 return JSC.jsBoolean(false);
             }
-            request.upgrader = null;
+
             if (upgrader.upgrade_context == null or @ptrToInt(upgrader.upgrade_context) == std.math.maxInt(usize)) {
                 return JSC.jsBoolean(false);
             }
             var ctx = upgrader.upgrade_context.?;
-            // obviously invalid pointer marks it as used
-            upgrader.upgrade_context = @intToPtr(*uws.uws_socket_context_s, std.math.maxInt(usize));
 
             var sec_websocket_key_str = ZigString.Empty;
 
@@ -3735,6 +3733,13 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
                     }
                 }
             }
+
+            // --- After this point, do not throw an exception
+            // See https://github.com/oven-sh/bun/issues/1339
+
+            // obviously invalid pointer marks it as used
+            upgrader.upgrade_context = @intToPtr(*uws.uws_socket_context_s, std.math.maxInt(usize));
+            request.upgrader = null;
 
             upgrader.resp.clearAborted();
             var ws = this.vm.allocator.create(ServerWebSocket) catch return .zero;

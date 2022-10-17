@@ -8,7 +8,7 @@ __FastRefreshModule as FastHMR
 import {
 __FastRefreshRuntime as FastRefresh
 } from "http://localhost:8080/bun:wrap";
-var hmr = new FastHMR(4057172107, "void-shouldnt-delete-call-expressions.js", FastRefresh), exports = hmr.exports;
+var hmr = new FastHMR(2720826654, "void-shouldnt-delete-call-expressions.js", FastRefresh), exports = hmr.exports;
 (hmr._load = function() {
   var was_called = false;
   function thisShouldBeCalled() {

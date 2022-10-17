@@ -954,15 +954,17 @@ pub fn toUTF16Alloc(allocator: std.mem.Allocator, bytes: []const u8, comptime fa
             }
 
             const replacement = strings.convertUTF8BytesIntoUTF16(&sequence);
+            if (comptime fail_if_invalid) {
+                if (replacement.fail) {
+                    std.debug.assert(replacement.code_point == unicode_replacement);
+                    return error.InvalidByteSequence;
+                }
+            }
+
             remaining = remaining[@maximum(replacement.len, 1)..];
             const new_len = strings.u16Len(replacement.code_point);
             try output.ensureUnusedCapacity(new_len);
             output.items.len += @as(usize, new_len);
-
-            if (comptime fail_if_invalid) {
-                if (replacement.code_point == unicode_replacement)
-                    return error.InvalidByteSequence;
-            }
 
             switch (replacement.code_point) {
                 0...0xffff => {
@@ -990,16 +992,18 @@ pub fn toUTF16Alloc(allocator: std.mem.Allocator, bytes: []const u8, comptime fa
             }
 
             const replacement = strings.convertUTF8BytesIntoUTF16(&sequence);
+            if (comptime fail_if_invalid) {
+                if (replacement.fail) {
+                    std.debug.assert(replacement.code_point == unicode_replacement);
+                    return error.InvalidByteSequence;
+                }
+            }
+
             remaining = remaining[@maximum(replacement.len, 1)..];
             const new_len = j + @as(usize, strings.u16Len(replacement.code_point));
             try output.ensureUnusedCapacity(new_len);
             output.items.len += new_len;
             strings.copyU8IntoU16(output.items[output.items.len - new_len ..][0..j], last);
-
-            if (comptime fail_if_invalid) {
-                if (replacement.code_point == unicode_replacement)
-                    return error.InvalidByteSequence;
-            }
 
             switch (replacement.code_point) {
                 0...0xffff => {
@@ -1235,6 +1239,11 @@ pub const UTF16Replacement = struct {
     code_point: u32 = unicode_replacement,
     len: u3 = 0,
 
+    /// Explicit fail boolean to distinguish between a Unicode Replacement Codepoint
+    /// that was already in there
+    /// and a genuine error.
+    fail: bool = false,
+
     pub inline fn utf8Width(replacement: UTF16Replacement) usize {
         return switch (replacement.code_point) {
             0...0x7F => 1,
@@ -1257,7 +1266,7 @@ pub fn convertUTF8BytesIntoUTF16(sequence: *const [4]u8) UTF16Replacement {
             if (Environment.allow_assert)
                 assert(sequence[0] <= 0xDF);
             if (sequence[1] < 0x80 or sequence[1] > 0xBF) {
-                return .{ .len = 1 };
+                return .{ .len = 1, .fail = true };
             }
             return .{ .len = len, .code_point = ((@as(u32, sequence[0]) << 6) + @as(u32, sequence[1])) - 0x00003080 };
         },
@@ -1269,22 +1278,22 @@ pub fn convertUTF8BytesIntoUTF16(sequence: *const [4]u8) UTF16Replacement {
             switch (sequence[0]) {
                 0xE0 => {
                     if (sequence[1] < 0xA0 or sequence[1] > 0xBF) {
-                        return .{ .len = 1 };
+                        return .{ .len = 1, .fail = true };
                     }
                 },
                 0xED => {
                     if (sequence[1] < 0x80 or sequence[1] > 0x9F) {
-                        return .{ .len = 1 };
+                        return .{ .len = 1, .fail = true };
                     }
                 },
                 else => {
                     if (sequence[1] < 0x80 or sequence[1] > 0xBF) {
-                        return .{ .len = 1 };
+                        return .{ .len = 1, .fail = true };
                     }
                 },
             }
             if (sequence[2] < 0x80 or sequence[2] > 0xBF) {
-                return .{ .len = 2 };
+                return .{ .len = 2, .fail = true };
             }
             return .{
                 .len = len,
@@ -1292,33 +1301,36 @@ pub fn convertUTF8BytesIntoUTF16(sequence: *const [4]u8) UTF16Replacement {
             };
         },
         4 => {
-            if (Environment.allow_assert)
-                assert(sequence[0] >= 0xF0);
-            if (Environment.allow_assert)
-                assert(sequence[0] <= 0xF4);
             switch (sequence[0]) {
                 0xF0 => {
                     if (sequence[1] < 0x90 or sequence[1] > 0xBF) {
-                        return .{ .len = 1 };
+                        return .{ .len = 1, .fail = true };
                     }
                 },
                 0xF4 => {
                     if (sequence[1] < 0x80 or sequence[1] > 0x8F) {
-                        return .{ .len = 1 };
+                        return .{ .len = 1, .fail = true };
                     }
                 },
+
+                // invalid code point
+                // this used to be an assertion
+                0...(0xF0 - 1), 0xF4 + 1...std.math.maxInt(@TypeOf(sequence[0])) => {
+                    return UTF16Replacement{ .len = 1, .fail = true };
+                },
+
                 else => {
                     if (sequence[1] < 0x80 or sequence[1] > 0xBF) {
-                        return .{ .len = 1 };
+                        return .{ .len = 1, .fail = true };
                     }
                 },
             }
 
             if (sequence[2] < 0x80 or sequence[2] > 0xBF) {
-                return .{ .len = 2 };
+                return .{ .len = 2, .fail = true };
             }
             if (sequence[3] < 0x80 or sequence[3] > 0xBF) {
-                return .{ .len = 3 };
+                return .{ .len = 3, .fail = true };
             }
             return .{
                 .len = 4,
@@ -1329,7 +1341,7 @@ pub fn convertUTF8BytesIntoUTF16(sequence: *const [4]u8) UTF16Replacement {
         },
         // invalid unicode sequence
         // 1 or 0 are both invalid here
-        else => return UTF16Replacement{ .len = 1 },
+        else => return UTF16Replacement{ .len = 1, .fail = true },
     }
 }
 

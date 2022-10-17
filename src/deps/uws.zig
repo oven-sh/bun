@@ -573,28 +573,229 @@ pub const uws_app_t = uws_app_s;
 
 pub const uws_socket_context_s = opaque {};
 pub const uws_socket_context_t = uws_socket_context_s;
+pub const AnyWebSocket = union(enum) {
+    ssl: *NewApp(true).WebSocket,
+    tcp: *NewApp(false).WebSocket,
+
+    pub fn raw(this: AnyWebSocket) *RawWebSocket {
+        return switch (this) {
+            .ssl => this.ssl.raw(),
+            .tcp => this.tcp.raw(),
+        };
+    }
+    pub fn as(this: AnyWebSocket, comptime Type: type) ?*Type {
+        @setRuntimeSafety(false);
+        return switch (this) {
+            .ssl => this.ssl.as(Type),
+            .tcp => this.tcp.as(Type),
+        };
+    }
+
+    pub fn close(this: AnyWebSocket) void {
+        const ssl_flag = @boolToInt(this == .ssl);
+        return uws_ws_close(ssl_flag, this.raw());
+    }
+
+    pub fn send(this: AnyWebSocket, message: []const u8, opcode: Opcode, compress: bool, fin: bool) SendStatus {
+        return switch (this) {
+            .ssl => uws_ws_send_with_options(1, this.ssl.raw(), message.ptr, message.len, opcode, compress, fin),
+            .tcp => uws_ws_send_with_options(0, this.tcp.raw(), message.ptr, message.len, opcode, compress, fin),
+        };
+    }
+    pub fn sendLastFragment(this: AnyWebSocket, message: []const u8, compress: bool) SendStatus {
+        switch (this) {
+            .tcp => return uws_ws_send_last_fragment(0, this.raw(), message.ptr, message.len, compress),
+            .ssl => return uws_ws_send_last_fragment(1, this.raw(), message.ptr, message.len, compress),
+        }
+    }
+    pub fn end(this: AnyWebSocket, code: i32, message: []const u8) void {
+        switch (this) {
+            .tcp => uws_ws_end(1, this.tcp.raw(), code, message.ptr, message.len),
+            .ssl => uws_ws_end(0, this.ssl.raw(), code, message.ptr, message.len),
+        }
+    }
+    pub fn cork(this: AnyWebSocket, ctx: anytype, comptime callback: anytype) void {
+        const ContextType = @TypeOf(ctx);
+        const Wrapper = struct {
+            pub fn wrap(user_data: ?*anyopaque) callconv(.C) void {
+                @call(.{ .modifier = .always_inline }, callback, .{bun.cast(ContextType, user_data.?)});
+            }
+        };
+
+        switch (this) {
+            .ssl => uws_ws_cork(1, this.raw(), Wrapper.wrap, ctx),
+            .tcp => uws_ws_cork(0, this.raw(), Wrapper.wrap, ctx),
+        }
+    }
+    pub fn subscribe(this: AnyWebSocket, topic: []const u8) bool {
+        return switch (this) {
+            .ssl => uws_ws_subscribe(1, this.ssl.raw(), topic.ptr, topic.len),
+            .tcp => uws_ws_subscribe(0, this.tcp.raw(), topic.ptr, topic.len),
+        };
+    }
+    pub fn unsubscribe(this: AnyWebSocket, topic: []const u8) bool {
+        return switch (this) {
+            .ssl => uws_ws_unsubscribe(1, this.raw(), topic.ptr, topic.len),
+            .tcp => uws_ws_unsubscribe(0, this.raw(), topic.ptr, topic.len),
+        };
+    }
+    pub fn isSubscribed(this: AnyWebSocket, topic: []const u8) bool {
+        return switch (this) {
+            .ssl => uws_ws_is_subscribed(1, this.raw(), topic.ptr, topic.len),
+            .tcp => uws_ws_is_subscribed(0, this.raw(), topic.ptr, topic.len),
+        };
+    }
+    // pub fn iterateTopics(this: AnyWebSocket) {
+    //     return uws_ws_iterate_topics(ssl_flag, this.raw(), callback: ?fn ([*c]const u8, usize, ?*anyopaque) callconv(.C) void, user_data: ?*anyopaque) void;
+    // }
+    pub fn publish(this: AnyWebSocket, topic: []const u8, message: []const u8) bool {
+        return switch (this) {
+            .ssl => uws_ws_publish(1, this.ssl.raw(), topic.ptr, topic.len, message.ptr, message.len),
+            .tcp => uws_ws_publish(0, this.tcp.raw(), topic.ptr, topic.len, message.ptr, message.len),
+        };
+    }
+    pub fn publishWithOptions(this: AnyWebSocket, app: *anyopaque, topic: []const u8, message: []const u8, opcode: Opcode, compress: bool) bool {
+        return switch (this) {
+            .ssl => uws_publish(1, @ptrCast(*uws_app_t, app), topic.ptr, topic.len, message.ptr, message.len, opcode, compress),
+            .tcp => uws_publish(0, @ptrCast(*uws_app_t, app), topic.ptr, topic.len, message.ptr, message.len, opcode, compress),
+        };
+    }
+    pub fn getBufferedAmount(this: AnyWebSocket) u32 {
+        return switch (this) {
+            .ssl => uws_ws_get_buffered_amount(1, this.ssl.raw()),
+            .tcp => uws_ws_get_buffered_amount(0, this.tcp.raw()),
+        };
+    }
+
+    pub fn getRemoteAddress(this: AnyWebSocket, buf: []u8) []u8 {
+        return switch (this) {
+            .ssl => this.ssl.getRemoteAddressAsText(buf),
+            .tcp => this.tcp.getRemoteAddressAsText(buf),
+        };
+    }
+};
+
 pub const RawWebSocket = opaque {};
-pub const uws_websocket_handler = ?fn (?*RawWebSocket) callconv(.C) void;
-pub const uws_websocket_message_handler = ?fn (?*RawWebSocket, [*c]const u8, usize, uws_opcode_t) callconv(.C) void;
-pub const uws_websocket_ping_pong_handler = ?fn (?*RawWebSocket, [*c]const u8, usize) callconv(.C) void;
-pub const uws_websocket_close_handler = ?fn (?*RawWebSocket, i32, [*c]const u8, usize) callconv(.C) void;
-pub const uws_websocket_upgrade_handler = ?fn (*uws_res, ?*Request, ?*uws_socket_context_t) callconv(.C) void;
-pub const uws_socket_behavior_t = extern struct {
-    compression: uws_compress_options_t,
-    maxPayloadLength: c_uint,
-    idleTimeout: c_ushort,
-    maxBackpressure: c_uint,
-    closeOnBackpressureLimit: bool,
-    resetIdleTimeoutOnSend: bool,
-    sendPingsAutomatically: bool,
-    maxLifetime: c_ushort,
-    upgrade: uws_websocket_upgrade_handler,
-    open: uws_websocket_handler,
-    message: uws_websocket_message_handler,
-    drain: uws_websocket_handler,
-    ping: uws_websocket_ping_pong_handler,
-    pong: uws_websocket_ping_pong_handler,
-    close: uws_websocket_close_handler,
+
+pub const uws_websocket_handler = ?fn (*RawWebSocket) callconv(.C) void;
+pub const uws_websocket_message_handler = ?fn (*RawWebSocket, [*c]const u8, usize, Opcode) callconv(.C) void;
+pub const uws_websocket_close_handler = ?fn (*RawWebSocket, i32, [*c]const u8, usize) callconv(.C) void;
+pub const uws_websocket_upgrade_handler = ?fn (*anyopaque, *uws_res, *Request, *uws_socket_context_t, usize) callconv(.C) void;
+
+pub const uws_websocket_ping_pong_handler = ?fn (*RawWebSocket, [*c]const u8, usize) callconv(.C) void;
+
+pub const WebSocketBehavior = extern struct {
+    compression: uws_compress_options_t = 0,
+    maxPayloadLength: c_uint = std.math.maxInt(u32),
+    idleTimeout: c_ushort = 120,
+    maxBackpressure: c_uint = 1024 * 1024,
+    closeOnBackpressureLimit: bool = false,
+    resetIdleTimeoutOnSend: bool = true,
+    sendPingsAutomatically: bool = true,
+    maxLifetime: c_ushort = 0,
+    upgrade: uws_websocket_upgrade_handler = null,
+    open: uws_websocket_handler = null,
+    message: uws_websocket_message_handler = null,
+    drain: uws_websocket_handler = null,
+    ping: uws_websocket_ping_pong_handler = null,
+    pong: uws_websocket_ping_pong_handler = null,
+    close: uws_websocket_close_handler = null,
+
+    pub fn Wrap(
+        comptime ServerType: type,
+        comptime Type: type,
+        comptime ssl: bool,
+    ) type {
+        return extern struct {
+            const is_ssl = ssl;
+            const WebSocket = NewApp(is_ssl).WebSocket;
+            const Server = ServerType;
+
+            const active_field_name = if (is_ssl) "ssl" else "tcp";
+
+            pub fn _open(raw_ws: *RawWebSocket) callconv(.C) void {
+                var ws = @unionInit(AnyWebSocket, active_field_name, @ptrCast(*WebSocket, raw_ws));
+                var this = ws.as(Type).?;
+                @call(.{ .modifier = .always_inline }, Type.onOpen, .{ this, ws });
+            }
+            pub fn _message(raw_ws: *RawWebSocket, message: [*c]const u8, length: usize, opcode: Opcode) callconv(.C) void {
+                var ws = @unionInit(AnyWebSocket, active_field_name, @ptrCast(*WebSocket, raw_ws));
+                var this = ws.as(Type).?;
+                @call(
+                    .{ .modifier = .always_inline },
+                    Type.onMessage,
+                    .{ this, ws, if (length > 0) message.?[0..length] else "", opcode },
+                );
+            }
+            pub fn _drain(raw_ws: *RawWebSocket) callconv(.C) void {
+                var ws = @unionInit(AnyWebSocket, active_field_name, @ptrCast(*WebSocket, raw_ws));
+                var this = ws.as(Type).?;
+                @call(.{ .modifier = .always_inline }, Type.onDrain, .{
+                    this,
+                    ws,
+                });
+            }
+            pub fn _ping(raw_ws: *RawWebSocket, message: [*c]const u8, length: usize) callconv(.C) void {
+                var ws = @unionInit(AnyWebSocket, active_field_name, @ptrCast(*WebSocket, raw_ws));
+                var this = ws.as(Type).?;
+                @call(.{ .modifier = .always_inline }, Type.onPing, .{
+                    this,
+                    ws,
+                    if (length > 0) message.?[0..length] else "",
+                });
+            }
+            pub fn _pong(raw_ws: *RawWebSocket, message: [*c]const u8, length: usize) callconv(.C) void {
+                var ws = @unionInit(AnyWebSocket, active_field_name, @ptrCast(*WebSocket, raw_ws));
+                var this = ws.as(Type).?;
+                @call(.{ .modifier = .always_inline }, Type.onPong, .{
+                    this,
+                    ws,
+                    if (length > 0) message.?[0..length] else "",
+                });
+            }
+            pub fn _close(raw_ws: *RawWebSocket, code: i32, message: [*c]const u8, length: usize) callconv(.C) void {
+                var ws = @unionInit(AnyWebSocket, active_field_name, @ptrCast(*WebSocket, raw_ws));
+                var this = ws.as(Type).?;
+                @call(
+                    .{ .modifier = .always_inline },
+                    Type.onClose,
+                    .{
+                        this,
+                        ws,
+                        code,
+                        if (length > 0) message.?[0..length] else "",
+                    },
+                );
+            }
+            pub fn _upgrade(ptr: *anyopaque, res: *uws_res, req: *Request, context: *uws_socket_context_t, id: usize) callconv(.C) void {
+                @call(
+                    .{ .modifier = .always_inline },
+                    Server.onWebSocketUpgrade,
+                    .{ bun.cast(*Server, ptr), @ptrCast(*NewApp(is_ssl).Response, res), req, context, id },
+                );
+            }
+
+            pub fn apply(behavior: WebSocketBehavior) WebSocketBehavior {
+                return WebSocketBehavior{
+                    .compression = behavior.compression,
+                    .maxPayloadLength = behavior.maxPayloadLength,
+                    .idleTimeout = behavior.idleTimeout,
+                    .maxBackpressure = behavior.maxBackpressure,
+                    .closeOnBackpressureLimit = behavior.closeOnBackpressureLimit,
+                    .resetIdleTimeoutOnSend = behavior.resetIdleTimeoutOnSend,
+                    .sendPingsAutomatically = behavior.sendPingsAutomatically,
+                    .maxLifetime = behavior.maxLifetime,
+                    .upgrade = _upgrade,
+                    .open = _open,
+                    .message = _message,
+                    .drain = _drain,
+                    .ping = _ping,
+                    .pong = _pong,
+                    .close = _close,
+                };
+            }
+        };
+    }
 };
 pub const uws_listen_handler = ?fn (?*listen_socket_t, ?*anyopaque) callconv(.C) void;
 pub const uws_method_handler = ?fn (*uws_res, *Request, ?*anyopaque) callconv(.C) void;
@@ -886,7 +1087,7 @@ pub fn NewApp(comptime ssl: bool) type {
         pub fn num_subscribers(app: *ThisApp, topic: [:0]const u8) c_uint {
             return uws_num_subscribers(ssl_flag, @ptrCast(*uws_app_t, app), topic);
         }
-        pub fn publish(app: *ThisApp, topic: []const u8, message: []const u8, opcode: uws_opcode_t, compress: bool) bool {
+        pub fn publish(app: *ThisApp, topic: []const u8, message: []const u8, opcode: Opcode, compress: bool) bool {
             return uws_publish(ssl_flag, @ptrCast(*uws_app_t, app), topic.ptr, topic.len, message.ptr, message.len, opcode, compress);
         }
         pub fn getNativeHandle(app: *ThisApp) ?*anyopaque {
@@ -907,8 +1108,9 @@ pub fn NewApp(comptime ssl: bool) type {
         pub fn filter(app: *ThisApp, handler: uws_filter_handler, user_data: ?*anyopaque) void {
             return uws_filter(ssl_flag, @ptrCast(*uws_app_t, app), handler, user_data);
         }
-        pub fn ws(app: *ThisApp, pattern: [:0]const u8, behavior: uws_socket_behavior_t) void {
-            return uws_ws(ssl_flag, @ptrCast(*uws_app_t, app), pattern, behavior);
+        pub fn ws(app: *ThisApp, pattern: []const u8, ctx: *anyopaque, id: usize, behavior_: WebSocketBehavior) void {
+            var behavior = behavior_;
+            uws_ws(ssl_flag, @ptrCast(*uws_app_t, app), ctx, pattern.ptr, pattern.len, id, &behavior);
         }
 
         pub const Response = opaque {
@@ -1158,78 +1360,102 @@ pub fn NewApp(comptime ssl: bool) type {
                 uws_res_write_headers(ssl_flag, res.downcast(), names.ptr, values.ptr, values.len, buf.ptr);
             }
 
-            pub const WebSocket = opaque {
-                pub fn raw(this: *WebSocket) *RawWebSocket {
-                    return @ptrCast(*RawWebSocket, this);
-                }
-                pub fn as(this: *WebSocket, comptime Type: type) ?*Type {
-                    @setRuntimeSafety(false);
-                    return @ptrCast(*?Type, @alignCast(@alignOf(Type), uws_ws_get_user_data(this))).*;
-                }
+            pub fn upgrade(
+                res: *Response,
+                comptime Data: type,
+                data: Data,
+                sec_web_socket_key: []const u8,
+                sec_web_socket_protocol: []const u8,
+                sec_web_socket_extensions: []const u8,
+                ctx: ?*uws_socket_context_t,
+            ) void {
+                uws_res_upgrade(
+                    ssl_flag,
+                    res.downcast(),
+                    data,
+                    sec_web_socket_key.ptr,
+                    sec_web_socket_key.len,
+                    sec_web_socket_protocol.ptr,
+                    sec_web_socket_protocol.len,
+                    sec_web_socket_extensions.ptr,
+                    sec_web_socket_extensions.len,
+                    ctx,
+                );
+            }
+        };
 
-                pub fn close(this: *WebSocket) void {
-                    return uws_ws_close(ssl_flag, this.raw());
-                }
-                pub fn send(this: *WebSocket, message: []const u8, opcode: uws_opcode_t) SendStatus {
-                    return uws_ws_send(ssl_flag, this.raw(), message.ptr, message.len, opcode);
-                }
-                pub fn sendWithOptions(this: *WebSocket, message: []const u8, opcode: uws_opcode_t, compress: bool, fin: bool) SendStatus {
-                    return uws_ws_send_with_options(ssl_flag, this.raw(), message.ptr, message.len, opcode, compress, fin);
-                }
-                // pub fn sendFragment(this: *WebSocket, message: []const u8) SendStatus {
-                //     return uws_ws_send_fragment(ssl_flag, this.raw(), message: [*c]const u8, length: usize, compress: bool);
-                // }
-                // pub fn sendFirstFragment(this: *WebSocket, message: []const u8) SendStatus {
-                //     return uws_ws_send_first_fragment(ssl_flag, this.raw(), message: [*c]const u8, length: usize, compress: bool);
-                // }
-                // pub fn sendFirstFragmentWithOpcode(this: *WebSocket, message: []const u8, opcode: u32, compress: bool) SendStatus {
-                //     return uws_ws_send_first_fragment_with_opcode(ssl_flag, this.raw(), message: [*c]const u8, length: usize, opcode: uws_opcode_t, compress: bool);
-                // }
-                pub fn sendLastFragment(this: *WebSocket, message: []const u8, compress: bool) SendStatus {
-                    return uws_ws_send_last_fragment(ssl_flag, this.raw(), message.ptr, message.len, compress);
-                }
-                pub fn end(this: *WebSocket, code: i32, message: []const u8) void {
-                    return uws_ws_end(ssl_flag, this.raw(), code, message.ptr, message.len);
-                }
-                pub fn cork(this: *WebSocket, ctx: anytype, comptime callback: anytype) void {
-                    const ContextType = @TypeOf(ctx);
-                    const Wrapper = struct {
-                        pub fn wrap(user_data: ?*anyopaque) callconv(.C) void {
-                            @call(.{ .modifier = .always_inline }, callback, .{bun.cast(ContextType, user_data.?)});
-                        }
-                    };
+        pub const WebSocket = opaque {
+            pub fn raw(this: *WebSocket) *RawWebSocket {
+                return @ptrCast(*RawWebSocket, this);
+            }
+            pub fn as(this: *WebSocket, comptime Type: type) ?*Type {
+                @setRuntimeSafety(false);
+                return @ptrCast(?*Type, @alignCast(@alignOf(Type), uws_ws_get_user_data(ssl_flag, this.raw())));
+            }
 
-                    return uws_ws_cork(ssl_flag, this.raw(), Wrapper.wrap, ctx);
-                }
-                pub fn subscribe(this: *WebSocket, topic: []const u8) bool {
-                    return uws_ws_subscribe(ssl_flag, this.raw(), topic.ptr, topic.len);
-                }
-                pub fn unsubscribe(this: *WebSocket, topic: []const u8) bool {
-                    return uws_ws_unsubscribe(ssl_flag, this.raw(), topic.ptr, topic.len);
-                }
-                pub fn isSubscribed(this: *WebSocket, topic: []const u8) bool {
-                    return uws_ws_is_subscribed(ssl_flag, this.raw(), topic.ptr, topic.len);
-                }
-                // pub fn iterateTopics(this: *WebSocket) {
-                //     return uws_ws_iterate_topics(ssl_flag, this.raw(), callback: ?fn ([*c]const u8, usize, ?*anyopaque) callconv(.C) void, user_data: ?*anyopaque) void;
-                // }
-                pub fn publish(this: *WebSocket, topic: []const u8, message: []const u8) bool {
-                    return uws_ws_publish(ssl_flag, this.raw(), topic.ptr, topic.len, message.ptr, message.len);
-                }
-                pub fn publishWithOptions(this: *WebSocket, topic: []const u8, message: []const u8, opcode: uws_opcode_t, compress: bool) bool {
-                    return uws_ws_publish_with_options(ssl_flag, this.raw(), topic.ptr, topic.len, message.ptr, message.len, opcode, compress);
-                }
-                pub fn getBufferedAmount(this: *WebSocket) u32 {
-                    return uws_ws_get_buffered_amount(ssl_flag, this.raw());
-                }
-                pub fn getRemoteAddress(this: *WebSocket, buf: []u8) []u8 {
-                    return buf[0..uws_ws_get_remote_address(ssl_flag, this.raw(), &buf.ptr)];
-                }
+            pub fn close(this: *WebSocket) void {
+                return uws_ws_close(ssl_flag, this.raw());
+            }
+            pub fn send(this: *WebSocket, message: []const u8, opcode: Opcode) SendStatus {
+                return uws_ws_send(ssl_flag, this.raw(), message.ptr, message.len, opcode);
+            }
+            pub fn sendWithOptions(this: *WebSocket, message: []const u8, opcode: Opcode, compress: bool, fin: bool) SendStatus {
+                return uws_ws_send_with_options(ssl_flag, this.raw(), message.ptr, message.len, opcode, compress, fin);
+            }
+            // pub fn sendFragment(this: *WebSocket, message: []const u8) SendStatus {
+            //     return uws_ws_send_fragment(ssl_flag, this.raw(), message: [*c]const u8, length: usize, compress: bool);
+            // }
+            // pub fn sendFirstFragment(this: *WebSocket, message: []const u8) SendStatus {
+            //     return uws_ws_send_first_fragment(ssl_flag, this.raw(), message: [*c]const u8, length: usize, compress: bool);
+            // }
+            // pub fn sendFirstFragmentWithOpcode(this: *WebSocket, message: []const u8, opcode: u32, compress: bool) SendStatus {
+            //     return uws_ws_send_first_fragment_with_opcode(ssl_flag, this.raw(), message: [*c]const u8, length: usize, opcode: Opcode, compress: bool);
+            // }
+            pub fn sendLastFragment(this: *WebSocket, message: []const u8, compress: bool) SendStatus {
+                return uws_ws_send_last_fragment(ssl_flag, this.raw(), message.ptr, message.len, compress);
+            }
+            pub fn end(this: *WebSocket, code: i32, message: []const u8) void {
+                return uws_ws_end(ssl_flag, this.raw(), code, message.ptr, message.len);
+            }
+            pub fn cork(this: *WebSocket, ctx: anytype, comptime callback: anytype) void {
+                const ContextType = @TypeOf(ctx);
+                const Wrapper = struct {
+                    pub fn wrap(user_data: ?*anyopaque) callconv(.C) void {
+                        @call(.{ .modifier = .always_inline }, callback, .{bun.cast(ContextType, user_data.?)});
+                    }
+                };
 
-                pub fn getRemoteAddressAsText(this: *WebSocket, buf: []u8) []u8 {
-                    return buf[0..uws_ws_get_remote_address_as_text(ssl_flag, this.raw(), &buf.ptr)];
-                }
-            };
+                return uws_ws_cork(ssl_flag, this.raw(), Wrapper.wrap, ctx);
+            }
+            pub fn subscribe(this: *WebSocket, topic: []const u8) bool {
+                return uws_ws_subscribe(ssl_flag, this.raw(), topic.ptr, topic.len);
+            }
+            pub fn unsubscribe(this: *WebSocket, topic: []const u8) bool {
+                return uws_ws_unsubscribe(ssl_flag, this.raw(), topic.ptr, topic.len);
+            }
+            pub fn isSubscribed(this: *WebSocket, topic: []const u8) bool {
+                return uws_ws_is_subscribed(ssl_flag, this.raw(), topic.ptr, topic.len);
+            }
+            // pub fn iterateTopics(this: *WebSocket) {
+            //     return uws_ws_iterate_topics(ssl_flag, this.raw(), callback: ?fn ([*c]const u8, usize, ?*anyopaque) callconv(.C) void, user_data: ?*anyopaque) void;
+            // }
+            pub fn publish(this: *WebSocket, topic: []const u8, message: []const u8) bool {
+                return uws_ws_publish(ssl_flag, this.raw(), topic.ptr, topic.len, message.ptr, message.len);
+            }
+            pub fn publishWithOptions(this: *WebSocket, topic: []const u8, message: []const u8, opcode: Opcode, compress: bool) bool {
+                return uws_ws_publish_with_options(ssl_flag, this.raw(), topic.ptr, topic.len, message.ptr, message.len, opcode, compress);
+            }
+            pub fn getBufferedAmount(this: *WebSocket) u32 {
+                return uws_ws_get_buffered_amount(ssl_flag, this.raw());
+            }
+            pub fn getRemoteAddress(this: *WebSocket, buf: []u8) []u8 {
+                return buf[0..uws_ws_get_remote_address(ssl_flag, this.raw(), &buf.ptr)];
+            }
+
+            pub fn getRemoteAddressAsText(this: *WebSocket, buf: []u8) []u8 {
+                var copy = buf;
+                return buf[0..uws_ws_get_remote_address_as_text(ssl_flag, this.raw(), &copy.ptr)];
+            }
         };
     };
 }
@@ -1261,22 +1487,22 @@ extern fn uws_app_listen_with_config(
 ) void;
 extern fn uws_constructor_failed(ssl: i32, app: *uws_app_t) bool;
 extern fn uws_num_subscribers(ssl: i32, app: *uws_app_t, topic: [*c]const u8) c_uint;
-extern fn uws_publish(ssl: i32, app: *uws_app_t, topic: [*c]const u8, topic_length: usize, message: [*c]const u8, message_length: usize, opcode: uws_opcode_t, compress: bool) bool;
+extern fn uws_publish(ssl: i32, app: *uws_app_t, topic: [*c]const u8, topic_length: usize, message: [*c]const u8, message_length: usize, opcode: Opcode, compress: bool) bool;
 extern fn uws_get_native_handle(ssl: i32, app: *uws_app_t) ?*anyopaque;
 extern fn uws_remove_server_name(ssl: i32, app: *uws_app_t, hostname_pattern: [*c]const u8) void;
 extern fn uws_add_server_name(ssl: i32, app: *uws_app_t, hostname_pattern: [*c]const u8) void;
 extern fn uws_add_server_name_with_options(ssl: i32, app: *uws_app_t, hostname_pattern: [*c]const u8, options: us_socket_context_options_t) void;
 extern fn uws_missing_server_name(ssl: i32, app: *uws_app_t, handler: uws_missing_server_handler, user_data: ?*anyopaque) void;
 extern fn uws_filter(ssl: i32, app: *uws_app_t, handler: uws_filter_handler, user_data: ?*anyopaque) void;
-extern fn uws_ws(ssl: i32, app: *uws_app_t, pattern: [*c]const u8, behavior: uws_socket_behavior_t) void;
+extern fn uws_ws(ssl: i32, app: *uws_app_t, ctx: *anyopaque, pattern: [*]const u8, pattern_len: usize, id: usize, behavior: *const WebSocketBehavior) void;
 
 extern fn uws_ws_get_user_data(ssl: i32, ws: ?*RawWebSocket) ?*anyopaque;
 extern fn uws_ws_close(ssl: i32, ws: ?*RawWebSocket) void;
-extern fn uws_ws_send(ssl: i32, ws: ?*RawWebSocket, message: [*c]const u8, length: usize, opcode: uws_opcode_t) SendStatus;
-extern fn uws_ws_send_with_options(ssl: i32, ws: ?*RawWebSocket, message: [*c]const u8, length: usize, opcode: uws_opcode_t, compress: bool, fin: bool) SendStatus;
+extern fn uws_ws_send(ssl: i32, ws: ?*RawWebSocket, message: [*c]const u8, length: usize, opcode: Opcode) SendStatus;
+extern fn uws_ws_send_with_options(ssl: i32, ws: ?*RawWebSocket, message: [*c]const u8, length: usize, opcode: Opcode, compress: bool, fin: bool) SendStatus;
 extern fn uws_ws_send_fragment(ssl: i32, ws: ?*RawWebSocket, message: [*c]const u8, length: usize, compress: bool) SendStatus;
 extern fn uws_ws_send_first_fragment(ssl: i32, ws: ?*RawWebSocket, message: [*c]const u8, length: usize, compress: bool) SendStatus;
-extern fn uws_ws_send_first_fragment_with_opcode(ssl: i32, ws: ?*RawWebSocket, message: [*c]const u8, length: usize, opcode: uws_opcode_t, compress: bool) SendStatus;
+extern fn uws_ws_send_first_fragment_with_opcode(ssl: i32, ws: ?*RawWebSocket, message: [*c]const u8, length: usize, opcode: Opcode, compress: bool) SendStatus;
 extern fn uws_ws_send_last_fragment(ssl: i32, ws: ?*RawWebSocket, message: [*c]const u8, length: usize, compress: bool) SendStatus;
 extern fn uws_ws_end(ssl: i32, ws: ?*RawWebSocket, code: i32, message: [*c]const u8, length: usize) void;
 extern fn uws_ws_cork(ssl: i32, ws: ?*RawWebSocket, handler: ?fn (?*anyopaque) callconv(.C) void, user_data: ?*anyopaque) void;
@@ -1285,10 +1511,10 @@ extern fn uws_ws_unsubscribe(ssl: i32, ws: ?*RawWebSocket, topic: [*c]const u8, 
 extern fn uws_ws_is_subscribed(ssl: i32, ws: ?*RawWebSocket, topic: [*c]const u8, length: usize) bool;
 extern fn uws_ws_iterate_topics(ssl: i32, ws: ?*RawWebSocket, callback: ?fn ([*c]const u8, usize, ?*anyopaque) callconv(.C) void, user_data: ?*anyopaque) void;
 extern fn uws_ws_publish(ssl: i32, ws: ?*RawWebSocket, topic: [*c]const u8, topic_length: usize, message: [*c]const u8, message_length: usize) bool;
-extern fn uws_ws_publish_with_options(ssl: i32, ws: ?*RawWebSocket, topic: [*c]const u8, topic_length: usize, message: [*c]const u8, message_length: usize, opcode: uws_opcode_t, compress: bool) bool;
+extern fn uws_ws_publish_with_options(ssl: i32, ws: ?*RawWebSocket, topic: [*c]const u8, topic_length: usize, message: [*c]const u8, message_length: usize, opcode: Opcode, compress: bool) bool;
 extern fn uws_ws_get_buffered_amount(ssl: i32, ws: ?*RawWebSocket) c_uint;
-extern fn uws_ws_get_remote_address(ssl: i32, ws: ?*RawWebSocket, dest: [*c][*c]const u8) usize;
-extern fn uws_ws_get_remote_address_as_text(ssl: i32, ws: ?*RawWebSocket, dest: [*c][*c]const u8) usize;
+extern fn uws_ws_get_remote_address(ssl: i32, ws: ?*RawWebSocket, dest: *[*]u8) usize;
+extern fn uws_ws_get_remote_address_as_text(ssl: i32, ws: ?*RawWebSocket, dest: *[*]u8) usize;
 const uws_res = opaque {};
 extern fn uws_res_uncork(ssl: i32, res: *uws_res) void;
 extern fn uws_res_end(ssl: i32, res: *uws_res, data: [*c]const u8, length: usize, close_connection: bool) void;
@@ -1361,14 +1587,23 @@ pub const DEDICATED_COMPRESSOR_64KB: i32 = 214;
 pub const DEDICATED_COMPRESSOR_128KB: i32 = 231;
 pub const DEDICATED_COMPRESSOR_256KB: i32 = 248;
 pub const DEDICATED_COMPRESSOR: i32 = 248;
-pub const uws_compress_options_t = c_uint;
+pub const uws_compress_options_t = i32;
 pub const CONTINUATION: i32 = 0;
 pub const TEXT: i32 = 1;
 pub const BINARY: i32 = 2;
 pub const CLOSE: i32 = 8;
 pub const PING: i32 = 9;
 pub const PONG: i32 = 10;
-pub const uws_opcode_t = c_uint;
+
+pub const Opcode = enum(i32) {
+    text = 1,
+    binary = 2,
+    close = 8,
+    ping = 9,
+    pong = 10,
+    _,
+};
+
 pub const SendStatus = enum(c_uint) {
     backpressure = 0,
     success = 1,

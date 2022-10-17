@@ -127,6 +127,8 @@ bun upgrade --canary
   - [`bun completions`](#bun-completions)
 - [`Bun.serve` - fast HTTP server](#bunserve---fast-http-server)
   - [Usage](#usage-1)
+  - [HTTPS](#https-with-bunserve)
+  - [WebSockets](#websockets-with-bunserve)
   - [Error handling](#error-handling)
 - [`Bun.write` – optimizing I/O](#bunwrite--optimizing-io)
 - [`Bun.spawn` - spawn processes](#bunspawn)
@@ -554,7 +556,6 @@ You can see [Bun's Roadmap](https://github.com/oven-sh/bun/issues/159), but here
 | ------------------------------------------------------------------------------------- | -------------- |
 | Web Streams with Fetch API                                                            | bun.js         |
 | Web Streams with HTMLRewriter                                                         | bun.js         |
-| WebSocket Server                                                                      | bun.js         |
 | Package hoisting that matches npm behavior                                            | bun install    |
 | Source Maps (unbundled is supported)                                                  | JS Bundler     |
 | Source Maps                                                                           | CSS            |
@@ -1454,7 +1455,7 @@ Create from a GitHub repo:
 bun create ahfarmer/calculator ./app
 ```
 
-To see a list of examples, run:
+To see a list of templates, run:
 
 ```bash
 bun create
@@ -1476,7 +1477,7 @@ Note: you don’t need `bun create` to use bun. You don’t need any configurati
 
 If you have your own boilerplate you prefer using, copy it into `$HOME/.bun-create/my-boilerplate-name`.
 
-Before checking bun’s examples folder, `bun create` checks for a local folder matching the input in:
+Before checking bun’s templates on npmjs, `bun create` checks for a local folder matching the input in:
 
 - `$BUN_CREATE_DIR/`
 - `$HOME/.bun-create/`
@@ -1526,7 +1527,7 @@ By default, `bun create` will cancel if there are existing files it would overwr
 
 #### Publishing a new template
 
-Clone this repository and a new folder in `examples/` with your new template. The `package.json` must have a `name` that starts with `@bun-examples/`. Do not worry about publishing it, that will happen automatically after the PR is merged.
+Clone [https://github.com/bun-community/create-templates/](https://github.com/bun-community/create-templates/) and create a new folder in root directory with your new template. The `package.json` must have a `name` that starts with `@bun-examples/`. Do not worry about publishing it, that will happen automatically after the PR is merged.
 
 Make sure to include a `.gitignore` that includes `node_modules` so that `node_modules` aren’t checked in to git when people download the template.
 
@@ -1576,7 +1577,6 @@ Here is an example:
   }
 }
 ```
-
 
 By default, all commands run inside the environment exposed by the auto-detected npm client. This incurs a significant performance penalty, something like 150ms spent waiting for the npm client to start on each invocation.
 
@@ -2074,7 +2074,264 @@ const server = Bun.serve({
 server.stop();
 ```
 
+### HTTPS with Bun.serve()
+
+`Bun.serve()` has builtin support for TLS (HTTPS). Pass `keyFile` and `certFile` option to enable HTTPS.
+
+Example:
+
+```ts
+Bun.serve({
+  fetch(req) {
+    return new Response("Hello!!!");
+  },
+  /**
+   * File path to a TLS key
+   *
+   * To enable TLS, this option is required.
+   */
+  keyFile: "./key.pem",
+  /**
+   * File path to a TLS certificate
+   *
+   * To enable TLS, this option is required.
+   */
+  certFile: "./cert.pem",
+
+  /**
+   * Optional SSL options
+   */
+  // passphrase?: string;
+  // caFile?: string;
+  // dhParamsFile?: string;
+  // lowMemoryMode?: boolean;
+});
+```
+
+### WebSockets with Bun.serve()
+
+`Bun.serve()` has builtin support for server-side websockets (as of Bun v0.2.1).
+
+Features:
+
+- Compression (pass `perMessageDeflate: true`)
+- HTTPS
+- Pubsub / broadcast support with MQTT-like topics
+
+Here is an example that echoes back any message it receives:
+
+```ts
+Bun.serve({
+  websocket: {
+    message(ws, message) {
+      ws.send(message);
+    },
+  },
+
+  fetch(req, server) {
+    // Upgrade to a ServerWebSocket if we can
+    // This automatically checks for the `Sec-WebSocket-Key` header
+    // meaning you don't have to check headers, you can just call `upgrade()`
+    if (server.upgrade(req))
+      // When upgrading, we return undefined since we don't want to send a Response
+      return;
+
+    return new Response("Regular HTTP response");
+  },
+});
+```
+
+Here is a more complete example:
+
+```ts
+type User = {
+  name: string;
+};
+
+Bun.serve<User>({
+  fetch(req, server) {
+    if (req.url === "/chat") {
+      if (
+        server.upgrade(req, {
+          // This User object becomes ws.data
+          data: {
+            name: new URL(req.url).searchParams.get("name") || "Friend",
+          },
+          // Pass along some headers to the client
+          headers: {
+            "Set-Cookie": "name=" + new URL(req.url).searchParams.get("name"),
+          },
+        })
+      )
+        return;
+    }
+
+    return new Response("Expected a websocket connection", { status: 400 });
+  },
+
+  websocket: {
+    open(ws) {
+      console.log("WebSocket opened");
+
+      // subscribe to "the-group-chat" topic
+      ws.subscribe("the-group-chat");
+    },
+
+    message(ws, message) {
+      // In a group chat, we want to broadcast to everyone
+      // so we use publish()
+      ws.publish("the-group-chat", `${ws.data.name}: ${message}`);
+
+      // if we wanted to publish to everyone except the sender, we could first unsubscribe from the topic
+      // ws.unsubscribe("the-group-chat");
+      // then publish
+      // ws.publish("the-group-chat", `${ws.data.name}: ${message}`);
+      // then re-subscribe
+      // ws.subscribe("the-group-chat");
+    },
+
+    close(ws, code, reason) {
+      ws.publish("the-group-chat", `${ws.data.name} left the chat`);
+    },
+
+    drain(ws) {
+      console.log("Please send me data. I am ready to receive it.");
+    },
+
+    // enable compression
+    perMessageDeflate: true,
+    /*
+    * perMessageDeflate: {
+       **
+       * Enable compression on the {@link ServerWebSocket}
+       *
+       * @default false
+       *
+       * `true` is equivalent to `"shared"
+       compress?: WebSocketCompressor | false | true;
+       **
+       * Configure decompression
+       *
+       * @default false
+       *
+       * `true` is equivalent to `"shared"
+       decompress?: WebSocketCompressor | false | true;
+    */
+
+    /**
+     * The maximum size of a message
+     */
+    // maxPayloadLength?: number;
+    /**
+     * After a connection has not received a message for this many seconds, it will be closed.
+     * @default 120 (2 minutes)
+     */
+    // idleTimeout?: number;
+    /**
+     * The maximum number of bytes that can be buffered for a single connection.
+     * @default 16MB
+     */
+    // backpressureLimit?: number;
+    /**
+     * Close the connection if the backpressure limit is reached.
+     * @default false
+     */
+    // closeOnBackpressureLimit?: boolean;
+
+    // this makes it so ws.data shows up as a Request object
+  },
+  // TLS is also supported with WebSockets
+  /**
+   * File path to a TLS key
+   *
+   * To enable TLS, this option is required.
+   */
+  // keyFile: "./key.pem",
+  /**
+   * File path to a TLS certificate
+   *
+   * To enable TLS, this option is required.
+   */
+  // certFile: "./cert.pem",
+});
+```
+
+#### ServerWebSocket vs WebSocket
+
+For server websocket connections, Bun exposes a `ServerWebSocket` class which is similar to the web-standard `WebSocket` class used for websocket client connections, but with a few differences:
+
+##### Headers
+
+`ServerWebSocket` supports passing headers. This is useful for setting cookies or other headers that you want to send to the client before the connection is upgraded.
+
+```ts
+Bun.serve({
+  fetch(req, server) {
+    if (
+      server.upgrade(req, { headers: { "Set-Cookie": "name=HiThereMyNameIs" } })
+    )
+      return;
+  },
+  websocket: {
+    message(ws, message) {
+      ws.send(message);
+    },
+  },
+});
+```
+
+The web-standard `WebSocket` API does not let you specify headers.
+
+##### Publish/subscribe
+
+`ServerWebSocket` has `publish()`, `subscribe()`, and `unsubscribe` methods which let you broadcast the same message to all clients connected to a topic in one line of code.
+
+```ts
+ws.publish("stock-prices/GOOG", `${price}`);
+```
+
+##### Backpressure
+
+`ServerWebSocket.send` returns a number that indicates:
+
+- `0` if the message was dropped due to a connection issue
+- `-1` if the message was enqueued but there is backpressure
+- any other number indicates the number of bytes sent
+
+This lets you have **better control over backpressure in your server**.
+
+You can also enable/disable compression per message with the `compress` option:
+
+```ts
+// this will compress
+ws.send("Hello".repeat(1000), true);
+```
+
+`WebSocket.send` returns `undefined` and does not indicate backpressure, which can cause issues if you are sending a lot of data.
+
+`ServerWebSocket` also supports a `drain` callback that runs when the connection is ready to receive more data.
+
+##### Callbacks are per server instead of per socket
+
+`ServerWebSocket` expects you to pass a `WebSocketHandler` object to the `Bun.serve()` method which has methods for `open`, `message`, `close`, `drain`, and `error`. This is different than the client-side `WebSocket` class which extends `EventTarget` (onmessage, onopen, onclose),
+
+Clients tend to not have many socket connections open so an event-based API makes sense.
+
+But servers tend to have **many** socket connections open, which means:
+
+- Time spent adding/removing event listeners for each connection adds up
+- Extra memory spent on storing references to callbacks function for each connection
+- Usually, people create new functions for each connection, which also means more memory
+
+So, instead of using an event-based API, `ServerWebSocket` expects you to pass a single object with methods for each event in `Bun.serve()` and it is reused for each connection.
+
+This leads to less memory usage and less time spent adding/removing event listeners.
+
+---
+
 The interface for `Bun.serve` is loosely based on what [Cloudflare Workers](https://developers.cloudflare.com/workers/learning/migrating-to-module-workers/#module-workers-in-the-dashboard) does.
+
+The HTTP server and server-side websockets are based on [uWebSockets](https://github.com/uNetworking/uWebSockets).
 
 ## `Bun.spawn` – spawn a process
 

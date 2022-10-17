@@ -8,7 +8,7 @@ __FastRefreshModule as FastHMR
 import {
 __FastRefreshRuntime as FastRefresh
 } from "http://localhost:8080/bun:wrap";
-var hmr = new FastHMR(997256900, "global-is-remapped-to-globalThis.js", FastRefresh), exports = hmr.exports;
+var hmr = new FastHMR(614040514, "global-is-remapped-to-globalThis.js", FastRefresh), exports = hmr.exports;
 (hmr._load = function() {
   function test() {
     console.assert(globalThis === globalThis);

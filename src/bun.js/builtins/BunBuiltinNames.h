@@ -77,6 +77,7 @@ using namespace JSC;
     macro(createUninitializedArrayBuffer) \
     macro(createWritableStreamFromInternal) \
     macro(cwd) \
+    macro(data) \
     macro(dataView) \
     macro(decode) \
     macro(delimiter) \

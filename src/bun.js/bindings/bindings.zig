@@ -443,10 +443,43 @@ pub const ZigString = extern struct {
         return try allocator.dupe(u8, this.slice());
     }
 
+    pub fn toSliceFast(this: ZigString, allocator: std.mem.Allocator) Slice {
+        if (this.len == 0)
+            return Slice{ .ptr = "", .len = 0, .allocator = allocator, .allocated = false };
+        if (is16Bit(&this)) {
+            var buffer = this.toOwnedSlice(allocator) catch unreachable;
+            return Slice{
+                .ptr = buffer.ptr,
+                .len = @truncate(u32, buffer.len),
+                .allocated = true,
+                .allocator = allocator,
+            };
+        }
+
+        return Slice{
+            .ptr = untagged(this.ptr),
+            .len = @truncate(u32, this.len),
+            .allocated = false,
+            .allocator = allocator,
+        };
+    }
+
+    /// This function checks if the input is latin1 non-ascii
+    /// It is slow but safer when the input is from JavaScript
     pub fn toSlice(this: ZigString, allocator: std.mem.Allocator) Slice {
         if (this.len == 0)
             return Slice{ .ptr = "", .len = 0, .allocator = allocator, .allocated = false };
         if (is16Bit(&this)) {
+            var buffer = this.toOwnedSlice(allocator) catch unreachable;
+            return Slice{
+                .ptr = buffer.ptr,
+                .len = @truncate(u32, buffer.len),
+                .allocated = true,
+                .allocator = allocator,
+            };
+        }
+
+        if (!this.isUTF8() and !strings.isAllASCII(untagged(this.ptr)[0..this.len])) {
             var buffer = this.toOwnedSlice(allocator) catch unreachable;
             return Slice{
                 .ptr = buffer.ptr,
@@ -506,7 +539,7 @@ pub const ZigString = extern struct {
         }
     }
 
-    fn assertGlobalIfNeeded(this: *const ZigString) void {
+    inline fn assertGlobalIfNeeded(this: *const ZigString) void {
         if (comptime bun.Environment.allow_assert) {
             if (this.isGloballyAllocated()) {
                 this.assertGlobal();
@@ -514,7 +547,7 @@ pub const ZigString = extern struct {
         }
     }
 
-    fn assertGlobal(this: *const ZigString) void {
+    inline fn assertGlobal(this: *const ZigString) void {
         if (comptime bun.Environment.allow_assert) {
             std.debug.assert(bun.Global.Mimalloc.mi_is_in_heap_region(untagged(this.ptr)) or bun.Global.Mimalloc.mi_check_owned(untagged(this.ptr)));
         }
@@ -1138,6 +1171,20 @@ pub const JSString = extern struct {
         return shim.cppFn("toObject", .{ this, global });
     }
 
+    pub fn toZigString(this: *JSString, global: *JSGlobalObject, zig_str: *JSC.ZigString) void {
+        return shim.cppFn("toZigString", .{ this, global, zig_str });
+    }
+
+    pub fn toSlice(
+        this: *JSString,
+        global: *JSGlobalObject,
+        allocator: std.mem.Allocator,
+    ) ZigString.Slice {
+        var str = ZigString.init("");
+        this.toZigString(global, &str);
+        return str.toSlice(allocator);
+    }
+
     pub fn eql(this: *const JSString, global: *JSGlobalObject, other: *JSString) bool {
         return shim.cppFn("eql", .{ this, global, other });
     }
@@ -1187,7 +1234,7 @@ pub const JSString = extern struct {
         write16: ?JStringIteratorWrite16Callback,
     };
 
-    pub const Extern = [_][]const u8{ "iterator", "toObject", "eql", "value", "length", "is8Bit", "createFromOwnedString", "createFromString" };
+    pub const Extern = [_][]const u8{ "toZigString", "iterator", "toObject", "eql", "value", "length", "is8Bit", "createFromOwnedString", "createFromString" };
 };
 
 pub const JSPromiseRejectionOperation = enum(u32) {
@@ -1880,7 +1927,7 @@ pub const JSGlobalObject = extern struct {
     extern fn Bun__runOnResolvePlugins(*JSC.JSGlobalObject, ?*const ZigString, *const ZigString, *const ZigString, BunPluginTarget) JSValue;
 
     pub fn runOnLoadPlugins(this: *JSGlobalObject, namespace_: ZigString, path: ZigString, target: BunPluginTarget) ?JSValue {
-        JSC.markBinding();
+        JSC.markBinding(@src());
         const result = Bun__runOnLoadPlugins(this, if (namespace_.len > 0) &namespace_ else null, &path, target);
         if (result.isEmptyOrUndefinedOrNull()) {
             return null;
@@ -1890,7 +1937,7 @@ pub const JSGlobalObject = extern struct {
     }
 
     pub fn runOnResolvePlugins(this: *JSGlobalObject, namespace_: ZigString, path: ZigString, source: ZigString, target: BunPluginTarget) ?JSValue {
-        JSC.markBinding();
+        JSC.markBinding(@src());
 
         const result = Bun__runOnResolvePlugins(this, if (namespace_.len > 0) &namespace_ else null, &path, &source, target);
         if (result.isEmptyOrUndefinedOrNull()) {
@@ -1930,7 +1977,7 @@ pub const JSGlobalObject = extern struct {
             this.vm().throwError(this, err);
             this.bunVM().allocator.free(ZigString.untagged(str.ptr)[0..str.len]);
         } else {
-            this.vm().throwError(this, ZigString.init(fmt).toValue(this));
+            this.vm().throwError(this, ZigString.static(fmt).toValue(this));
         }
     }
 
@@ -2702,11 +2749,11 @@ pub const JSValue = enum(JSValueReprInt) {
     }
 
     pub fn call(this: JSValue, globalThis: *JSGlobalObject, args: []const JSC.JSValue) JSC.JSValue {
-        return callWithThis(this, globalThis, JSC.JSValue.zero, args);
+        return callWithThis(this, globalThis, JSC.JSValue.jsUndefined(), args);
     }
 
     pub fn callWithThis(this: JSValue, globalThis: *JSGlobalObject, thisValue: JSC.JSValue, args: []const JSC.JSValue) JSC.JSValue {
-        JSC.markBinding();
+        JSC.markBinding(@src());
         return JSC.C.JSObjectCallAsFunctionReturnValue(
             globalThis,
             this.asObjectRef(),
@@ -3185,6 +3232,7 @@ pub const JSValue = enum(JSValueReprInt) {
         status,
         url,
         body,
+        data,
     };
 
     // intended to be more lightweight than ZigString

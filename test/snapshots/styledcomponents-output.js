@@ -1,15 +1,15 @@
 import {
 __require as require
 } from "http://localhost:8080/bun:wrap";
-import * as $1407d117 from "http://localhost:8080/node_modules/react/jsx-dev-runtime.js";
-var JSX = require($1407d117);
+import * as $a77976b9 from "http://localhost:8080/node_modules/react/jsx-dev-runtime.js";
+var JSX = require($a77976b9);
 var jsx = require(JSX).jsxDEV;
-import * as $1dd97690 from "http://localhost:8080/node_modules/styled-components/dist/styled-components.browser.esm.js";
-var { default: styled} = require($1dd97690);
-import * as $45b81229 from "http://localhost:8080/node_modules/react/index.js";
-var { default: React} = require($45b81229);
-import * as $d2dc5006 from "http://localhost:8080/node_modules/react-dom/index.js";
-var { default: ReactDOM} = require($d2dc5006);
+import * as $11bd281d from "http://localhost:8080/node_modules/styled-components/dist/styled-components.browser.esm.js";
+var { default: styled} = require($11bd281d);
+import * as $a66742df from "http://localhost:8080/node_modules/react/index.js";
+var { default: React} = require($a66742df);
+import * as $12d4369 from "http://localhost:8080/node_modules/react-dom/index.js";
+var { default: ReactDOM} = require($12d4369);
 const ErrorScreenRoot = styled.div`
   font-family: "Muli", -apple-system, BlinkMacSystemFont, Helvetica, Arial,
     sans-serif;

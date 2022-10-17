@@ -3271,7 +3271,7 @@ pub const ModuleLoader = struct {
         referrer: *ZigString,
         ret: *ErrorableResolvedSource,
     ) bool {
-        JSC.markBinding();
+        JSC.markBinding(@src());
         var log = logger.Log.init(jsc_vm.bundler.allocator);
         defer log.deinit();
         if (jsc_vm.fetchBuiltinModule(specifier.slice(), &log, false) catch |err| {
@@ -3292,7 +3292,7 @@ pub const ModuleLoader = struct {
         referrer: *ZigString,
         ret: *ErrorableResolvedSource,
     ) bool {
-        JSC.markBinding();
+        JSC.markBinding(@src());
         var log = logger.Log.init(jsc_vm.bundler.allocator);
         defer log.deinit();
         var _specifier = specifier_ptr.toSlice(jsc_vm.allocator);
@@ -3329,7 +3329,7 @@ pub const ModuleLoader = struct {
     }
 
     export fn Bun__runVirtualModule(globalObject: *JSC.JSGlobalObject, specifier_ptr: *ZigString) JSValue {
-        JSC.markBinding();
+        JSC.markBinding(@src());
         if (globalObject.bunVM().plugin_runner == null) return JSValue.zero;
 
         const specifier = specifier_ptr.slice();
@@ -3355,7 +3355,7 @@ pub const ModuleLoader = struct {
         loader_: Api.Loader,
         ret: *ErrorableResolvedSource,
     ) bool {
-        JSC.markBinding();
+        JSC.markBinding(@src());
         const jsc_vm = globalObject.bunVM();
         std.debug.assert(jsc_vm.plugin_runner != null);
 

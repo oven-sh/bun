@@ -16,20 +16,47 @@ pub const JSSubprocess = struct {
     /// Return the pointer to the wrapped object.
     /// If the object does not match the type, return null.
     pub fn fromJS(value: JSC.JSValue) ?*Subprocess {
-        JSC.markBinding();
+        JSC.markBinding(@src());
         return Subprocess__fromJS(value);
+    }
+
+    extern fn SubprocessPrototype__stderrSetCachedValue(JSC.JSValue, *JSC.JSGlobalObject, JSC.JSValue) void;
+
+    /// Set the cached value for stderr on Subprocess
+    /// This value will be visited by the garbage collector.
+    pub fn stderrSetCached(thisValue: JSC.JSValue, globalObject: *JSC.JSGlobalObject, value: JSC.JSValue) void {
+        JSC.markBinding(@src());
+        SubprocessPrototype__stderrSetCachedValue(thisValue, globalObject, value);
+    }
+
+    extern fn SubprocessPrototype__stdinSetCachedValue(JSC.JSValue, *JSC.JSGlobalObject, JSC.JSValue) void;
+
+    /// Set the cached value for stdin on Subprocess
+    /// This value will be visited by the garbage collector.
+    pub fn stdinSetCached(thisValue: JSC.JSValue, globalObject: *JSC.JSGlobalObject, value: JSC.JSValue) void {
+        JSC.markBinding(@src());
+        SubprocessPrototype__stdinSetCachedValue(thisValue, globalObject, value);
+    }
+
+    extern fn SubprocessPrototype__stdoutSetCachedValue(JSC.JSValue, *JSC.JSGlobalObject, JSC.JSValue) void;
+
+    /// Set the cached value for stdout on Subprocess
+    /// This value will be visited by the garbage collector.
+    pub fn stdoutSetCached(thisValue: JSC.JSValue, globalObject: *JSC.JSGlobalObject, value: JSC.JSValue) void {
+        JSC.markBinding(@src());
+        SubprocessPrototype__stdoutSetCachedValue(thisValue, globalObject, value);
     }
 
     /// Get the Subprocess constructor value.
     /// This loads lazily from the global object.
     pub fn getConstructor(globalObject: *JSC.JSGlobalObject) JSC.JSValue {
-        JSC.markBinding();
+        JSC.markBinding(@src());
         return Subprocess__getConstructor(globalObject);
     }
 
     /// Create a new instance of Subprocess
     pub fn toJS(this: *Subprocess, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
-        JSC.markBinding();
+        JSC.markBinding(@src());
         if (comptime Environment.allow_assert) {
             const value__ = Subprocess__create(globalObject, this);
             std.debug.assert(value__.as(Subprocess).? == this); // If this fails, likely a C ABI issue.
@@ -41,7 +68,7 @@ pub const JSSubprocess = struct {
 
     /// Modify the internal ptr to point to a new instance of Subprocess.
     pub fn dangerouslySetPtr(value: JSC.JSValue, ptr: ?*Subprocess) bool {
-        JSC.markBinding();
+        JSC.markBinding(@src());
         return Subprocess__dangerouslySetPtr(value, ptr);
     }
 
@@ -119,20 +146,20 @@ pub const JSSHA1 = struct {
     /// Return the pointer to the wrapped object.
     /// If the object does not match the type, return null.
     pub fn fromJS(value: JSC.JSValue) ?*SHA1 {
-        JSC.markBinding();
+        JSC.markBinding(@src());
         return SHA1__fromJS(value);
     }
 
     /// Get the SHA1 constructor value.
     /// This loads lazily from the global object.
     pub fn getConstructor(globalObject: *JSC.JSGlobalObject) JSC.JSValue {
-        JSC.markBinding();
+        JSC.markBinding(@src());
         return SHA1__getConstructor(globalObject);
     }
 
     /// Create a new instance of SHA1
     pub fn toJS(this: *SHA1, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
-        JSC.markBinding();
+        JSC.markBinding(@src());
         if (comptime Environment.allow_assert) {
             const value__ = SHA1__create(globalObject, this);
             std.debug.assert(value__.as(SHA1).? == this); // If this fails, likely a C ABI issue.
@@ -144,7 +171,7 @@ pub const JSSHA1 = struct {
 
     /// Modify the internal ptr to point to a new instance of SHA1.
     pub fn dangerouslySetPtr(value: JSC.JSValue, ptr: ?*SHA1) bool {
-        JSC.markBinding();
+        JSC.markBinding(@src());
         return SHA1__dangerouslySetPtr(value, ptr);
     }
 
@@ -196,20 +223,20 @@ pub const JSMD5 = struct {
     /// Return the pointer to the wrapped object.
     /// If the object does not match the type, return null.
     pub fn fromJS(value: JSC.JSValue) ?*MD5 {
-        JSC.markBinding();
+        JSC.markBinding(@src());
         return MD5__fromJS(value);
     }
 
     /// Get the MD5 constructor value.
     /// This loads lazily from the global object.
     pub fn getConstructor(globalObject: *JSC.JSGlobalObject) JSC.JSValue {
-        JSC.markBinding();
+        JSC.markBinding(@src());
         return MD5__getConstructor(globalObject);
     }
 
     /// Create a new instance of MD5
     pub fn toJS(this: *MD5, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
-        JSC.markBinding();
+        JSC.markBinding(@src());
         if (comptime Environment.allow_assert) {
             const value__ = MD5__create(globalObject, this);
             std.debug.assert(value__.as(MD5).? == this); // If this fails, likely a C ABI issue.
@@ -221,7 +248,7 @@ pub const JSMD5 = struct {
 
     /// Modify the internal ptr to point to a new instance of MD5.
     pub fn dangerouslySetPtr(value: JSC.JSValue, ptr: ?*MD5) bool {
-        JSC.markBinding();
+        JSC.markBinding(@src());
         return MD5__dangerouslySetPtr(value, ptr);
     }
 
@@ -273,20 +300,20 @@ pub const JSMD4 = struct {
     /// Return the pointer to the wrapped object.
     /// If the object does not match the type, return null.
     pub fn fromJS(value: JSC.JSValue) ?*MD4 {
-        JSC.markBinding();
+        JSC.markBinding(@src());
         return MD4__fromJS(value);
     }
 
     /// Get the MD4 constructor value.
     /// This loads lazily from the global object.
     pub fn getConstructor(globalObject: *JSC.JSGlobalObject) JSC.JSValue {
-        JSC.markBinding();
+        JSC.markBinding(@src());
         return MD4__getConstructor(globalObject);
     }
 
     /// Create a new instance of MD4
     pub fn toJS(this: *MD4, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
-        JSC.markBinding();
+        JSC.markBinding(@src());
         if (comptime Environment.allow_assert) {
             const value__ = MD4__create(globalObject, this);
             std.debug.assert(value__.as(MD4).? == this); // If this fails, likely a C ABI issue.
@@ -298,7 +325,7 @@ pub const JSMD4 = struct {
 
     /// Modify the internal ptr to point to a new instance of MD4.
     pub fn dangerouslySetPtr(value: JSC.JSValue, ptr: ?*MD4) bool {
-        JSC.markBinding();
+        JSC.markBinding(@src());
         return MD4__dangerouslySetPtr(value, ptr);
     }
 
@@ -350,20 +377,20 @@ pub const JSSHA224 = struct {
     /// Return the pointer to the wrapped object.
     /// If the object does not match the type, return null.
     pub fn fromJS(value: JSC.JSValue) ?*SHA224 {
-        JSC.markBinding();
+        JSC.markBinding(@src());
         return SHA224__fromJS(value);
     }
 
     /// Get the SHA224 constructor value.
     /// This loads lazily from the global object.
     pub fn getConstructor(globalObject: *JSC.JSGlobalObject) JSC.JSValue {
-        JSC.markBinding();
+        JSC.markBinding(@src());
         return SHA224__getConstructor(globalObject);
     }
 
     /// Create a new instance of SHA224
     pub fn toJS(this: *SHA224, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
-        JSC.markBinding();
+        JSC.markBinding(@src());
         if (comptime Environment.allow_assert) {
             const value__ = SHA224__create(globalObject, this);
             std.debug.assert(value__.as(SHA224).? == this); // If this fails, likely a C ABI issue.
@@ -375,7 +402,7 @@ pub const JSSHA224 = struct {
 
     /// Modify the internal ptr to point to a new instance of SHA224.
     pub fn dangerouslySetPtr(value: JSC.JSValue, ptr: ?*SHA224) bool {
-        JSC.markBinding();
+        JSC.markBinding(@src());
         return SHA224__dangerouslySetPtr(value, ptr);
     }
 
@@ -427,20 +454,20 @@ pub const JSSHA512 = struct {
     /// Return the pointer to the wrapped object.
     /// If the object does not match the type, return null.
     pub fn fromJS(value: JSC.JSValue) ?*SHA512 {
-        JSC.markBinding();
+        JSC.markBinding(@src());
         return SHA512__fromJS(value);
     }
 
     /// Get the SHA512 constructor value.
     /// This loads lazily from the global object.
     pub fn getConstructor(globalObject: *JSC.JSGlobalObject) JSC.JSValue {
-        JSC.markBinding();
+        JSC.markBinding(@src());
         return SHA512__getConstructor(globalObject);
     }
 
     /// Create a new instance of SHA512
     pub fn toJS(this: *SHA512, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
-        JSC.markBinding();
+        JSC.markBinding(@src());
         if (comptime Environment.allow_assert) {
             const value__ = SHA512__create(globalObject, this);
             std.debug.assert(value__.as(SHA512).? == this); // If this fails, likely a C ABI issue.
@@ -452,7 +479,7 @@ pub const JSSHA512 = struct {
 
     /// Modify the internal ptr to point to a new instance of SHA512.
     pub fn dangerouslySetPtr(value: JSC.JSValue, ptr: ?*SHA512) bool {
-        JSC.markBinding();
+        JSC.markBinding(@src());
         return SHA512__dangerouslySetPtr(value, ptr);
     }
 
@@ -504,20 +531,20 @@ pub const JSSHA384 = struct {
     /// Return the pointer to the wrapped object.
     /// If the object does not match the type, return null.
     pub fn fromJS(value: JSC.JSValue) ?*SHA384 {
-        JSC.markBinding();
+        JSC.markBinding(@src());
         return SHA384__fromJS(value);
     }
 
     /// Get the SHA384 constructor value.
     /// This loads lazily from the global object.
     pub fn getConstructor(globalObject: *JSC.JSGlobalObject) JSC.JSValue {
-        JSC.markBinding();
+        JSC.markBinding(@src());
         return SHA384__getConstructor(globalObject);
     }
 
     /// Create a new instance of SHA384
     pub fn toJS(this: *SHA384, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
-        JSC.markBinding();
+        JSC.markBinding(@src());
         if (comptime Environment.allow_assert) {
             const value__ = SHA384__create(globalObject, this);
             std.debug.assert(value__.as(SHA384).? == this); // If this fails, likely a C ABI issue.
@@ -529,7 +556,7 @@ pub const JSSHA384 = struct {
 
     /// Modify the internal ptr to point to a new instance of SHA384.
     pub fn dangerouslySetPtr(value: JSC.JSValue, ptr: ?*SHA384) bool {
-        JSC.markBinding();
+        JSC.markBinding(@src());
         return SHA384__dangerouslySetPtr(value, ptr);
     }
 
@@ -581,20 +608,20 @@ pub const JSSHA256 = struct {
     /// Return the pointer to the wrapped object.
     /// If the object does not match the type, return null.
     pub fn fromJS(value: JSC.JSValue) ?*SHA256 {
-        JSC.markBinding();
+        JSC.markBinding(@src());
         return SHA256__fromJS(value);
     }
 
     /// Get the SHA256 constructor value.
     /// This loads lazily from the global object.
     pub fn getConstructor(globalObject: *JSC.JSGlobalObject) JSC.JSValue {
-        JSC.markBinding();
+        JSC.markBinding(@src());
         return SHA256__getConstructor(globalObject);
     }
 
     /// Create a new instance of SHA256
     pub fn toJS(this: *SHA256, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
-        JSC.markBinding();
+        JSC.markBinding(@src());
         if (comptime Environment.allow_assert) {
             const value__ = SHA256__create(globalObject, this);
             std.debug.assert(value__.as(SHA256).? == this); // If this fails, likely a C ABI issue.
@@ -606,7 +633,7 @@ pub const JSSHA256 = struct {
 
     /// Modify the internal ptr to point to a new instance of SHA256.
     pub fn dangerouslySetPtr(value: JSC.JSValue, ptr: ?*SHA256) bool {
-        JSC.markBinding();
+        JSC.markBinding(@src());
         return SHA256__dangerouslySetPtr(value, ptr);
     }
 
@@ -658,20 +685,20 @@ pub const JSSHA512_256 = struct {
     /// Return the pointer to the wrapped object.
     /// If the object does not match the type, return null.
     pub fn fromJS(value: JSC.JSValue) ?*SHA512_256 {
-        JSC.markBinding();
+        JSC.markBinding(@src());
         return SHA512_256__fromJS(value);
     }
 
     /// Get the SHA512_256 constructor value.
     /// This loads lazily from the global object.
     pub fn getConstructor(globalObject: *JSC.JSGlobalObject) JSC.JSValue {
-        JSC.markBinding();
+        JSC.markBinding(@src());
         return SHA512_256__getConstructor(globalObject);
     }
 
     /// Create a new instance of SHA512_256
     pub fn toJS(this: *SHA512_256, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
-        JSC.markBinding();
+        JSC.markBinding(@src());
         if (comptime Environment.allow_assert) {
             const value__ = SHA512_256__create(globalObject, this);
             std.debug.assert(value__.as(SHA512_256).? == this); // If this fails, likely a C ABI issue.
@@ -683,7 +710,7 @@ pub const JSSHA512_256 = struct {
 
     /// Modify the internal ptr to point to a new instance of SHA512_256.
     pub fn dangerouslySetPtr(value: JSC.JSValue, ptr: ?*SHA512_256) bool {
-        JSC.markBinding();
+        JSC.markBinding(@src());
         return SHA512_256__dangerouslySetPtr(value, ptr);
     }
 
@@ -726,6 +753,154 @@ pub const JSSHA512_256 = struct {
         }
     }
 };
+pub const JSServerWebSocket = struct {
+    const ServerWebSocket = Classes.ServerWebSocket;
+    const GetterType = fn (*ServerWebSocket, *JSC.JSGlobalObject) callconv(.C) JSC.JSValue;
+    const SetterType = fn (*ServerWebSocket, *JSC.JSGlobalObject, JSC.JSValue) callconv(.C) bool;
+    const CallbackType = fn (*ServerWebSocket, *JSC.JSGlobalObject, *JSC.CallFrame) callconv(.C) JSC.JSValue;
+
+    /// Return the pointer to the wrapped object.
+    /// If the object does not match the type, return null.
+    pub fn fromJS(value: JSC.JSValue) ?*ServerWebSocket {
+        JSC.markBinding(@src());
+        return ServerWebSocket__fromJS(value);
+    }
+
+    extern fn ServerWebSocketPrototype__dataSetCachedValue(JSC.JSValue, *JSC.JSGlobalObject, JSC.JSValue) void;
+
+    /// Set the cached value for data on ServerWebSocket
+    /// This value will be visited by the garbage collector.
+    pub fn dataSetCached(thisValue: JSC.JSValue, globalObject: *JSC.JSGlobalObject, value: JSC.JSValue) void {
+        JSC.markBinding(@src());
+        ServerWebSocketPrototype__dataSetCachedValue(thisValue, globalObject, value);
+    }
+
+    extern fn ServerWebSocketPrototype__remoteAddressSetCachedValue(JSC.JSValue, *JSC.JSGlobalObject, JSC.JSValue) void;
+
+    /// Set the cached value for remoteAddress on ServerWebSocket
+    /// This value will be visited by the garbage collector.
+    pub fn remoteAddressSetCached(thisValue: JSC.JSValue, globalObject: *JSC.JSGlobalObject, value: JSC.JSValue) void {
+        JSC.markBinding(@src());
+        ServerWebSocketPrototype__remoteAddressSetCachedValue(thisValue, globalObject, value);
+    }
+
+    /// Get the ServerWebSocket constructor value.
+    /// This loads lazily from the global object.
+    pub fn getConstructor(globalObject: *JSC.JSGlobalObject) JSC.JSValue {
+        JSC.markBinding(@src());
+        return ServerWebSocket__getConstructor(globalObject);
+    }
+
+    /// Create a new instance of ServerWebSocket
+    pub fn toJS(this: *ServerWebSocket, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
+        JSC.markBinding(@src());
+        if (comptime Environment.allow_assert) {
+            const value__ = ServerWebSocket__create(globalObject, this);
+            std.debug.assert(value__.as(ServerWebSocket).? == this); // If this fails, likely a C ABI issue.
+            return value__;
+        } else {
+            return ServerWebSocket__create(globalObject, this);
+        }
+    }
+
+    /// Modify the internal ptr to point to a new instance of ServerWebSocket.
+    pub fn dangerouslySetPtr(value: JSC.JSValue, ptr: ?*ServerWebSocket) bool {
+        JSC.markBinding(@src());
+        return ServerWebSocket__dangerouslySetPtr(value, ptr);
+    }
+
+    extern fn ServerWebSocket__fromJS(JSC.JSValue) ?*ServerWebSocket;
+    extern fn ServerWebSocket__getConstructor(*JSC.JSGlobalObject) JSC.JSValue;
+
+    extern fn ServerWebSocket__create(globalObject: *JSC.JSGlobalObject, ptr: ?*ServerWebSocket) JSC.JSValue;
+
+    extern fn ServerWebSocket__dangerouslySetPtr(JSC.JSValue, ?*ServerWebSocket) bool;
+
+    comptime {
+        if (@TypeOf(ServerWebSocket.constructor) != (fn (*JSC.JSGlobalObject, *JSC.CallFrame) callconv(.C) ?*ServerWebSocket)) {
+            @compileLog("ServerWebSocket.constructor is not a constructor");
+        }
+
+        if (@TypeOf(ServerWebSocket.finalize) != (fn (*ServerWebSocket) callconv(.C) void)) {
+            @compileLog("ServerWebSocket.finalize is not a finalizer");
+        }
+
+        if (@TypeOf(ServerWebSocket.getBinaryType) != GetterType)
+            @compileLog("Expected ServerWebSocket.getBinaryType to be a getter");
+
+        if (@TypeOf(ServerWebSocket.setBinaryType) != SetterType)
+            @compileLog("Expected ServerWebSocket.setBinaryType to be a setter");
+        if (@TypeOf(ServerWebSocket.close) != CallbackType)
+            @compileLog("Expected ServerWebSocket.close to be a callback");
+        if (@TypeOf(ServerWebSocket.cork) != CallbackType)
+            @compileLog("Expected ServerWebSocket.cork to be a callback");
+        if (@TypeOf(ServerWebSocket.getData) != GetterType)
+            @compileLog("Expected ServerWebSocket.getData to be a getter");
+
+        if (@TypeOf(ServerWebSocket.setData) != SetterType)
+            @compileLog("Expected ServerWebSocket.setData to be a setter");
+        if (@TypeOf(ServerWebSocket.getBufferedAmount) != CallbackType)
+            @compileLog("Expected ServerWebSocket.getBufferedAmount to be a callback");
+        if (@TypeOf(ServerWebSocket.isSubscribed) != CallbackType)
+            @compileLog("Expected ServerWebSocket.isSubscribed to be a callback");
+        if (@TypeOf(ServerWebSocket.publish) != CallbackType)
+            @compileLog("Expected ServerWebSocket.publish to be a callback");
+        if (@TypeOf(ServerWebSocket.publishBinaryWithoutTypeChecks) != fn (*ServerWebSocket, *JSC.JSGlobalObject, *JSC.JSString, *JSC.JSUint8Array) callconv(.C) JSC.JSValue)
+            @compileLog("Expected ServerWebSocket.publishBinaryWithoutTypeChecks to be a DOMJIT function");
+        if (@TypeOf(ServerWebSocket.publishBinary) != CallbackType)
+            @compileLog("Expected ServerWebSocket.publishBinary to be a callback");
+        if (@TypeOf(ServerWebSocket.publishTextWithoutTypeChecks) != fn (*ServerWebSocket, *JSC.JSGlobalObject, *JSC.JSString, *JSC.JSString) callconv(.C) JSC.JSValue)
+            @compileLog("Expected ServerWebSocket.publishTextWithoutTypeChecks to be a DOMJIT function");
+        if (@TypeOf(ServerWebSocket.publishText) != CallbackType)
+            @compileLog("Expected ServerWebSocket.publishText to be a callback");
+        if (@TypeOf(ServerWebSocket.getReadyState) != GetterType)
+            @compileLog("Expected ServerWebSocket.getReadyState to be a getter");
+
+        if (@TypeOf(ServerWebSocket.getRemoteAddress) != GetterType)
+            @compileLog("Expected ServerWebSocket.getRemoteAddress to be a getter");
+
+        if (@TypeOf(ServerWebSocket.send) != CallbackType)
+            @compileLog("Expected ServerWebSocket.send to be a callback");
+        if (@TypeOf(ServerWebSocket.sendBinaryWithoutTypeChecks) != fn (*ServerWebSocket, *JSC.JSGlobalObject, *JSC.JSUint8Array, bool) callconv(.C) JSC.JSValue)
+            @compileLog("Expected ServerWebSocket.sendBinaryWithoutTypeChecks to be a DOMJIT function");
+        if (@TypeOf(ServerWebSocket.sendBinary) != CallbackType)
+            @compileLog("Expected ServerWebSocket.sendBinary to be a callback");
+        if (@TypeOf(ServerWebSocket.sendTextWithoutTypeChecks) != fn (*ServerWebSocket, *JSC.JSGlobalObject, *JSC.JSString, bool) callconv(.C) JSC.JSValue)
+            @compileLog("Expected ServerWebSocket.sendTextWithoutTypeChecks to be a DOMJIT function");
+        if (@TypeOf(ServerWebSocket.sendText) != CallbackType)
+            @compileLog("Expected ServerWebSocket.sendText to be a callback");
+        if (@TypeOf(ServerWebSocket.subscribe) != CallbackType)
+            @compileLog("Expected ServerWebSocket.subscribe to be a callback");
+        if (@TypeOf(ServerWebSocket.unsubscribe) != CallbackType)
+            @compileLog("Expected ServerWebSocket.unsubscribe to be a callback");
+        if (!JSC.is_bindgen) {
+            @export(ServerWebSocket.close, .{ .name = "ServerWebSocketPrototype__close" });
+            @export(ServerWebSocket.constructor, .{ .name = "ServerWebSocketClass__construct" });
+            @export(ServerWebSocket.cork, .{ .name = "ServerWebSocketPrototype__cork" });
+            @export(ServerWebSocket.finalize, .{ .name = "ServerWebSocketClass__finalize" });
+            @export(ServerWebSocket.getBinaryType, .{ .name = "ServerWebSocketPrototype__getBinaryType" });
+            @export(ServerWebSocket.getBufferedAmount, .{ .name = "ServerWebSocketPrototype__getBufferedAmount" });
+            @export(ServerWebSocket.getData, .{ .name = "ServerWebSocketPrototype__getData" });
+            @export(ServerWebSocket.getReadyState, .{ .name = "ServerWebSocketPrototype__getReadyState" });
+            @export(ServerWebSocket.getRemoteAddress, .{ .name = "ServerWebSocketPrototype__getRemoteAddress" });
+            @export(ServerWebSocket.isSubscribed, .{ .name = "ServerWebSocketPrototype__isSubscribed" });
+            @export(ServerWebSocket.publish, .{ .name = "ServerWebSocketPrototype__publish" });
+            @export(ServerWebSocket.publishBinary, .{ .name = "ServerWebSocketPrototype__publishBinary" });
+            @export(ServerWebSocket.publishBinaryWithoutTypeChecks, .{ .name = "ServerWebSocketPrototype__publishBinaryWithoutTypeChecks" });
+            @export(ServerWebSocket.publishText, .{ .name = "ServerWebSocketPrototype__publishText" });
+            @export(ServerWebSocket.publishTextWithoutTypeChecks, .{ .name = "ServerWebSocketPrototype__publishTextWithoutTypeChecks" });
+            @export(ServerWebSocket.send, .{ .name = "ServerWebSocketPrototype__send" });
+            @export(ServerWebSocket.sendBinary, .{ .name = "ServerWebSocketPrototype__sendBinary" });
+            @export(ServerWebSocket.sendBinaryWithoutTypeChecks, .{ .name = "ServerWebSocketPrototype__sendBinaryWithoutTypeChecks" });
+            @export(ServerWebSocket.sendText, .{ .name = "ServerWebSocketPrototype__sendText" });
+            @export(ServerWebSocket.sendTextWithoutTypeChecks, .{ .name = "ServerWebSocketPrototype__sendTextWithoutTypeChecks" });
+            @export(ServerWebSocket.setBinaryType, .{ .name = "ServerWebSocketPrototype__setBinaryType" });
+            @export(ServerWebSocket.setData, .{ .name = "ServerWebSocketPrototype__setData" });
+            @export(ServerWebSocket.subscribe, .{ .name = "ServerWebSocketPrototype__subscribe" });
+            @export(ServerWebSocket.unsubscribe, .{ .name = "ServerWebSocketPrototype__unsubscribe" });
+        }
+    }
+};
 pub const JSTextDecoder = struct {
     const TextDecoder = Classes.TextDecoder;
     const GetterType = fn (*TextDecoder, *JSC.JSGlobalObject) callconv(.C) JSC.JSValue;
@@ -735,20 +910,29 @@ pub const JSTextDecoder = struct {
     /// Return the pointer to the wrapped object.
     /// If the object does not match the type, return null.
     pub fn fromJS(value: JSC.JSValue) ?*TextDecoder {
-        JSC.markBinding();
+        JSC.markBinding(@src());
         return TextDecoder__fromJS(value);
+    }
+
+    extern fn TextDecoderPrototype__encodingSetCachedValue(JSC.JSValue, *JSC.JSGlobalObject, JSC.JSValue) void;
+
+    /// Set the cached value for encoding on TextDecoder
+    /// This value will be visited by the garbage collector.
+    pub fn encodingSetCached(thisValue: JSC.JSValue, globalObject: *JSC.JSGlobalObject, value: JSC.JSValue) void {
+        JSC.markBinding(@src());
+        TextDecoderPrototype__encodingSetCachedValue(thisValue, globalObject, value);
     }
 
     /// Get the TextDecoder constructor value.
     /// This loads lazily from the global object.
     pub fn getConstructor(globalObject: *JSC.JSGlobalObject) JSC.JSValue {
-        JSC.markBinding();
+        JSC.markBinding(@src());
         return TextDecoder__getConstructor(globalObject);
     }
 
     /// Create a new instance of TextDecoder
     pub fn toJS(this: *TextDecoder, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
-        JSC.markBinding();
+        JSC.markBinding(@src());
         if (comptime Environment.allow_assert) {
             const value__ = TextDecoder__create(globalObject, this);
             std.debug.assert(value__.as(TextDecoder).? == this); // If this fails, likely a C ABI issue.
@@ -760,7 +944,7 @@ pub const JSTextDecoder = struct {
 
     /// Modify the internal ptr to point to a new instance of TextDecoder.
     pub fn dangerouslySetPtr(value: JSC.JSValue, ptr: ?*TextDecoder) bool {
-        JSC.markBinding();
+        JSC.markBinding(@src());
         return TextDecoder__dangerouslySetPtr(value, ptr);
     }
 
@@ -806,20 +990,47 @@ pub const JSRequest = struct {
     /// Return the pointer to the wrapped object.
     /// If the object does not match the type, return null.
     pub fn fromJS(value: JSC.JSValue) ?*Request {
-        JSC.markBinding();
+        JSC.markBinding(@src());
         return Request__fromJS(value);
+    }
+
+    extern fn RequestPrototype__bodySetCachedValue(JSC.JSValue, *JSC.JSGlobalObject, JSC.JSValue) void;
+
+    /// Set the cached value for body on Request
+    /// This value will be visited by the garbage collector.
+    pub fn bodySetCached(thisValue: JSC.JSValue, globalObject: *JSC.JSGlobalObject, value: JSC.JSValue) void {
+        JSC.markBinding(@src());
+        RequestPrototype__bodySetCachedValue(thisValue, globalObject, value);
+    }
+
+    extern fn RequestPrototype__headersSetCachedValue(JSC.JSValue, *JSC.JSGlobalObject, JSC.JSValue) void;
+
+    /// Set the cached value for headers on Request
+    /// This value will be visited by the garbage collector.
+    pub fn headersSetCached(thisValue: JSC.JSValue, globalObject: *JSC.JSGlobalObject, value: JSC.JSValue) void {
+        JSC.markBinding(@src());
+        RequestPrototype__headersSetCachedValue(thisValue, globalObject, value);
+    }
+
+    extern fn RequestPrototype__urlSetCachedValue(JSC.JSValue, *JSC.JSGlobalObject, JSC.JSValue) void;
+
+    /// Set the cached value for url on Request
+    /// This value will be visited by the garbage collector.
+    pub fn urlSetCached(thisValue: JSC.JSValue, globalObject: *JSC.JSGlobalObject, value: JSC.JSValue) void {
+        JSC.markBinding(@src());
+        RequestPrototype__urlSetCachedValue(thisValue, globalObject, value);
     }
 
     /// Get the Request constructor value.
     /// This loads lazily from the global object.
     pub fn getConstructor(globalObject: *JSC.JSGlobalObject) JSC.JSValue {
-        JSC.markBinding();
+        JSC.markBinding(@src());
         return Request__getConstructor(globalObject);
     }
 
     /// Create a new instance of Request
     pub fn toJS(this: *Request, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
-        JSC.markBinding();
+        JSC.markBinding(@src());
         if (comptime Environment.allow_assert) {
             const value__ = Request__create(globalObject, this);
             std.debug.assert(value__.as(Request).? == this); // If this fails, likely a C ABI issue.
@@ -831,7 +1042,7 @@ pub const JSRequest = struct {
 
     /// Modify the internal ptr to point to a new instance of Request.
     pub fn dangerouslySetPtr(value: JSC.JSValue, ptr: ?*Request) bool {
-        JSC.markBinding();
+        JSC.markBinding(@src());
         return Request__dangerouslySetPtr(value, ptr);
     }
 
@@ -938,20 +1149,56 @@ pub const JSResponse = struct {
     /// Return the pointer to the wrapped object.
     /// If the object does not match the type, return null.
     pub fn fromJS(value: JSC.JSValue) ?*Response {
-        JSC.markBinding();
+        JSC.markBinding(@src());
         return Response__fromJS(value);
+    }
+
+    extern fn ResponsePrototype__bodySetCachedValue(JSC.JSValue, *JSC.JSGlobalObject, JSC.JSValue) void;
+
+    /// Set the cached value for body on Response
+    /// This value will be visited by the garbage collector.
+    pub fn bodySetCached(thisValue: JSC.JSValue, globalObject: *JSC.JSGlobalObject, value: JSC.JSValue) void {
+        JSC.markBinding(@src());
+        ResponsePrototype__bodySetCachedValue(thisValue, globalObject, value);
+    }
+
+    extern fn ResponsePrototype__headersSetCachedValue(JSC.JSValue, *JSC.JSGlobalObject, JSC.JSValue) void;
+
+    /// Set the cached value for headers on Response
+    /// This value will be visited by the garbage collector.
+    pub fn headersSetCached(thisValue: JSC.JSValue, globalObject: *JSC.JSGlobalObject, value: JSC.JSValue) void {
+        JSC.markBinding(@src());
+        ResponsePrototype__headersSetCachedValue(thisValue, globalObject, value);
+    }
+
+    extern fn ResponsePrototype__statusTextSetCachedValue(JSC.JSValue, *JSC.JSGlobalObject, JSC.JSValue) void;
+
+    /// Set the cached value for statusText on Response
+    /// This value will be visited by the garbage collector.
+    pub fn statusTextSetCached(thisValue: JSC.JSValue, globalObject: *JSC.JSGlobalObject, value: JSC.JSValue) void {
+        JSC.markBinding(@src());
+        ResponsePrototype__statusTextSetCachedValue(thisValue, globalObject, value);
+    }
+
+    extern fn ResponsePrototype__urlSetCachedValue(JSC.JSValue, *JSC.JSGlobalObject, JSC.JSValue) void;
+
+    /// Set the cached value for url on Response
+    /// This value will be visited by the garbage collector.
+    pub fn urlSetCached(thisValue: JSC.JSValue, globalObject: *JSC.JSGlobalObject, value: JSC.JSValue) void {
+        JSC.markBinding(@src());
+        ResponsePrototype__urlSetCachedValue(thisValue, globalObject, value);
     }
 
     /// Get the Response constructor value.
     /// This loads lazily from the global object.
     pub fn getConstructor(globalObject: *JSC.JSGlobalObject) JSC.JSValue {
-        JSC.markBinding();
+        JSC.markBinding(@src());
         return Response__getConstructor(globalObject);
     }
 
     /// Create a new instance of Response
     pub fn toJS(this: *Response, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
-        JSC.markBinding();
+        JSC.markBinding(@src());
         if (comptime Environment.allow_assert) {
             const value__ = Response__create(globalObject, this);
             std.debug.assert(value__.as(Response).? == this); // If this fails, likely a C ABI issue.
@@ -963,7 +1210,7 @@ pub const JSResponse = struct {
 
     /// Modify the internal ptr to point to a new instance of Response.
     pub fn dangerouslySetPtr(value: JSC.JSValue, ptr: ?*Response) bool {
-        JSC.markBinding();
+        JSC.markBinding(@src());
         return Response__dangerouslySetPtr(value, ptr);
     }
 
@@ -1063,20 +1310,20 @@ pub const JSBlob = struct {
     /// Return the pointer to the wrapped object.
     /// If the object does not match the type, return null.
     pub fn fromJS(value: JSC.JSValue) ?*Blob {
-        JSC.markBinding();
+        JSC.markBinding(@src());
         return Blob__fromJS(value);
     }
 
     /// Get the Blob constructor value.
     /// This loads lazily from the global object.
     pub fn getConstructor(globalObject: *JSC.JSGlobalObject) JSC.JSValue {
-        JSC.markBinding();
+        JSC.markBinding(@src());
         return Blob__getConstructor(globalObject);
     }
 
     /// Create a new instance of Blob
     pub fn toJS(this: *Blob, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
-        JSC.markBinding();
+        JSC.markBinding(@src());
         if (comptime Environment.allow_assert) {
             const value__ = Blob__create(globalObject, this);
             std.debug.assert(value__.as(Blob).? == this); // If this fails, likely a C ABI issue.
@@ -1088,7 +1335,7 @@ pub const JSBlob = struct {
 
     /// Modify the internal ptr to point to a new instance of Blob.
     pub fn dangerouslySetPtr(value: JSC.JSValue, ptr: ?*Blob) bool {
-        JSC.markBinding();
+        JSC.markBinding(@src());
         return Blob__dangerouslySetPtr(value, ptr);
     }
 
@@ -1154,6 +1401,7 @@ comptime {
     _ = JSSHA384;
     _ = JSSHA256;
     _ = JSSHA512_256;
+    _ = JSServerWebSocket;
     _ = JSTextDecoder;
     _ = JSRequest;
     _ = JSResponse;

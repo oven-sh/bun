@@ -836,6 +836,11 @@ unsigned char JSC__JSCell__getType(JSC__JSCell* arg0) { return arg0->type(); }
 
 #pragma mark - JSC::JSString
 
+void JSC__JSString__toZigString(JSC__JSString* arg0, JSC__JSGlobalObject* arg1, ZigString* arg2)
+{
+    *arg2 = Zig::toZigString(arg0->value(arg1));
+}
+
 JSC__JSString* JSC__JSString__createFromOwnedString(JSC__VM* arg0, const WTF__String* arg1)
 {
     return JSC::jsOwnedString(reinterpret_cast<JSC__VM&>(arg0),
@@ -1818,12 +1823,13 @@ bool JSC__JSValue__isError(JSC__JSValue JSValue0)
 
 bool JSC__JSValue__isAggregateError(JSC__JSValue JSValue0, JSC__JSGlobalObject* global)
 {
-    JSC::JSObject* obj = JSC::JSValue::decode(JSValue0).getObject();
+    JSValue value = JSC::JSValue::decode(JSValue0);
+    if (value.isUndefinedOrNull() || !value || !value.isObject()) {
+        return false;
+    }
 
-    if (obj != nullptr) {
-        if (JSC::ErrorInstance* err = JSC::jsDynamicCast<JSC::ErrorInstance*>(obj)) {
-            return err->errorType() == JSC::ErrorType::AggregateError;
-        }
+    if (JSC::ErrorInstance* err = JSC::jsDynamicCast<JSC::ErrorInstance*>(value)) {
+        return err->errorType() == JSC::ErrorType::AggregateError;
     }
 
     return false;
@@ -1871,7 +1877,7 @@ bool JSC__JSValue__isNumber(JSC__JSValue JSValue0)
 }
 bool JSC__JSValue__isObject(JSC__JSValue JSValue0)
 {
-    return JSC::JSValue::decode(JSValue0).isObject();
+    return JSValue0 != 0 && JSC::JSValue::decode(JSValue0).isObject();
 }
 bool JSC__JSValue__isPrimitive(JSC__JSValue JSValue0)
 {
@@ -2554,6 +2560,12 @@ void JSC__JSValue__toZigException(JSC__JSValue JSValue0, JSC__JSGlobalObject* ar
     ZigException* exception)
 {
     JSC::JSValue value = JSC::JSValue::decode(JSValue0);
+    if (value == JSC::JSValue {}) {
+        exception->code = JSErrorCodeError;
+        exception->name = Zig::toZigString("Error"_s);
+        exception->message = Zig::toZigString("Unknown error"_s);
+        return;
+    }
 
     if (JSC::Exception* jscException = JSC::jsDynamicCast<JSC::Exception*>(value)) {
         if (JSC::ErrorInstance* error = JSC::jsDynamicCast<JSC::ErrorInstance*>(jscException->value())) {
@@ -3063,6 +3075,7 @@ enum class BuiltinNamesMap : uint8_t {
     status,
     url,
     body,
+    data,
 };
 
 static JSC::Identifier builtinNameMap(JSC::JSGlobalObject* globalObject, unsigned char name)
@@ -3083,6 +3096,9 @@ static JSC::Identifier builtinNameMap(JSC::JSGlobalObject* globalObject, unsigne
     }
     case BuiltinNamesMap::body: {
         return clientData->builtinNames().bodyPublicName();
+    }
+    case BuiltinNamesMap::data: {
+        return clientData->builtinNames().dataPublicName();
     }
     }
 }

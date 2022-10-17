@@ -109,6 +109,8 @@ pub const ServerConfig = struct {
     onError: JSC.JSValue = JSC.JSValue.zero,
     onRequest: JSC.JSValue = JSC.JSValue.zero,
 
+    websocket: ?WebSocketServer = null,
+
     pub const SSLConfig = struct {
         server_name: [*c]const u8 = null,
 
@@ -278,6 +280,25 @@ pub const ServerConfig = struct {
             if (arg.isUndefinedOrNull() or !arg.isObject()) {
                 JSC.throwInvalidArguments("Bun.serve expects an object", .{}, global, exception);
                 return args;
+            }
+
+            if (arg.getTruthy(global, "webSocket") orelse arg.getTruthy(global, "websocket")) |websocket_object| {
+                if (!websocket_object.isObject()) {
+                    JSC.throwInvalidArguments("Expected websocket to be an object", .{}, global, exception);
+                    if (args.ssl_config) |*conf| {
+                        conf.deinit();
+                    }
+                    return args;
+                }
+
+                if (WebSocketServer.onCreate(global, websocket_object)) |wss| {
+                    args.websocket = wss;
+                } else {
+                    if (args.ssl_config) |*conf| {
+                        conf.deinit();
+                    }
+                    return args;
+                }
             }
 
             if (arg.getTruthy(global, "port")) |port_| {
@@ -519,6 +540,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
         method: HTTP.Method,
         aborted: bool = false,
         finalized: bun.DebugOnly(bool) = bun.DebugOnlyDefault(false),
+        upgrade_context: ?*uws.uws_socket_context_t = null,
 
         /// We can only safely free once the request body promise is finalized
         /// and the response is rejected
@@ -528,7 +550,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
         response_jsvalue: JSC.JSValue = JSC.JSValue.zero,
         response_protected: bool = false,
         response_ptr: ?*JSC.WebCore.Response = null,
-        blob: JSC.WebCore.AnyBlob = JSC.WebCore.AnyBlob{ .InlineBlob = .{} },
+        blob: JSC.WebCore.AnyBlob = JSC.WebCore.AnyBlob{ .Blob = .{} },
         promise: ?*JSC.JSValue = null,
         has_abort_handler: bool = false,
         has_sendfile_ctx: bool = false,
@@ -581,6 +603,11 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
         }
 
         fn handleResolve(ctx: *RequestContext, value: JSC.JSValue) void {
+            if (ctx.didUpgradeWebSocket()) {
+                ctx.finalize();
+                return;
+            }
+
             if (value.isEmptyOrUndefinedOrNull()) {
                 ctx.renderMissing();
                 return;
@@ -593,6 +620,8 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 return;
             };
             ctx.response_jsvalue = value;
+            std.debug.assert(!ctx.response_protected);
+            ctx.response_protected = true;
             JSC.C.JSValueProtect(ctx.server.globalThis, value.asObjectRef());
 
             ctx.render(response);
@@ -1047,7 +1076,10 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 return false;
             }
 
-            var bytes = this.blob.slice();
+            // Copy to stack memory to prevent aliasing issues in release builds
+            const blob = this.blob;
+            const bytes = blob.slice();
+
             _ = this.sendWritableBytesForBlob(bytes, write_offset, resp);
             return true;
         }
@@ -1386,6 +1418,164 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
 
         const streamLog = Output.scoped(.ReadableStream, false);
 
+        pub fn didUpgradeWebSocket(this: *RequestContext) bool {
+            return @ptrToInt(this.upgrade_context) == std.math.maxInt(usize);
+        }
+
+        pub fn onResponse(
+            ctx: *RequestContext,
+            this: *ThisServer,
+            req: *uws.Request,
+            request_object: *Request,
+            request_value: JSValue,
+            response_value: JSValue,
+        ) void {
+            request_value.ensureStillAlive();
+            response_value.ensureStillAlive();
+
+            if (ctx.aborted) {
+                ctx.finalizeForAbort();
+                return;
+            }
+
+            if (ctx.didUpgradeWebSocket()) {
+                ctx.finalize();
+                return;
+            }
+
+            if (response_value.isEmptyOrUndefinedOrNull()) {
+                if (ctx.didUpgradeWebSocket())
+                    return;
+
+                ctx.renderMissing();
+                return;
+            }
+
+            if (response_value.isError() or response_value.isAggregateError(this.globalThis) or response_value.isException(this.globalThis.vm())) {
+                ctx.runErrorHandler(response_value);
+
+                return;
+            }
+
+            if (response_value.as(JSC.WebCore.Response)) |response| {
+                ctx.response_jsvalue = response_value;
+                ctx.response_jsvalue.ensureStillAlive();
+                ctx.response_protected = false;
+                response.body.value.toBlobIfPossible();
+
+                switch (response.body.value) {
+                    .Blob => |*blob| {
+                        if (blob.needsToReadFile()) {
+                            response_value.protect();
+                            ctx.response_protected = true;
+                        }
+                    },
+                    .Locked => {
+                        response_value.protect();
+                        ctx.response_protected = true;
+                    },
+                    else => {},
+                }
+                ctx.render(response);
+                return;
+            }
+
+            var wait_for_promise = false;
+            var vm = this.vm;
+
+            if (response_value.asPromise()) |promise| {
+                // If we immediately have the value available, we can skip the extra event loop tick
+                switch (promise.status(vm.global.vm())) {
+                    .Pending => {},
+                    .Fulfilled => {
+                        const fulfilled_value = promise.result(vm.global.vm());
+                        if (fulfilled_value.isEmptyOrUndefinedOrNull()) {
+                            if (ctx.didUpgradeWebSocket())
+                                return;
+
+                            ctx.renderMissing();
+                            return;
+                        }
+                        var response = fulfilled_value.as(JSC.WebCore.Response) orelse {
+                            ctx.renderMissing();
+                            return;
+                        };
+
+                        ctx.response_jsvalue = fulfilled_value;
+                        ctx.response_jsvalue.ensureStillAlive();
+                        ctx.response_protected = false;
+                        ctx.response_ptr = response;
+                        response.body.value.toBlobIfPossible();
+                        switch (response.body.value) {
+                            .Blob => |*blob| {
+                                if (blob.needsToReadFile()) {
+                                    fulfilled_value.protect();
+                                    ctx.response_protected = true;
+                                }
+                            },
+                            .Locked => {
+                                fulfilled_value.protect();
+                                ctx.response_protected = true;
+                            },
+                            else => {},
+                        }
+                        ctx.render(response);
+                        return;
+                    },
+                    .Rejected => {
+                        ctx.handleReject(promise.result(vm.global.vm()));
+                        return;
+                    },
+                }
+                wait_for_promise = true;
+                // I don't think this case should happen
+                // But I'm uncertain
+            } else if (response_value.asInternalPromise()) |promise| {
+                switch (promise.status(vm.global.vm())) {
+                    .Pending => {},
+                    .Fulfilled => {
+                        ctx.handleResolve(promise.result(vm.global.vm()));
+                        return;
+                    },
+                    .Rejected => {
+                        ctx.handleReject(promise.result(vm.global.vm()));
+                        return;
+                    },
+                }
+                wait_for_promise = true;
+            }
+
+            if (wait_for_promise) {
+                request_object.uws_request = req;
+
+                request_object.ensureURL() catch {
+                    request_object.url = "";
+                };
+
+                // we have to clone the request headers here since they will soon belong to a different request
+                if (request_object.headers == null) {
+                    request_object.headers = JSC.FetchHeaders.createFromUWS(this.globalThis, req);
+                }
+
+                if (comptime debug_mode) {
+                    ctx.pathname = bun.default_allocator.dupe(u8, request_object.url) catch unreachable;
+                }
+
+                // This object dies after the stack frame is popped
+                // so we have to clear it in here too
+                request_object.uws_request = null;
+
+                ctx.setAbortHandler();
+                ctx.pending_promises_for_abort += 1;
+
+                response_value.then(this.globalThis, ctx, RequestContext.onResolve, RequestContext.onReject);
+                return;
+            }
+
+            // The user returned something that wasn't a promise or a promise with a response
+            if (!ctx.resp.hasResponded()) ctx.renderMissing();
+        }
+
         pub fn handleResolveStream(req: *RequestContext) void {
             streamLog("onResolve", .{});
             var wrote_anything = false;
@@ -1507,7 +1697,10 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                     this.runErrorHandler(err);
                     return;
                 },
-                .InlineBlob, .InternalBlob, .Blob => {
+                // .InlineBlob,
+                .InternalBlob,
+                .Blob,
+                => {
                     this.blob = value.useAsAnyBlob();
                     this.renderWithBlobFromBodyValue();
                     return;
@@ -1732,7 +1925,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             value: JSC.JSValue,
             status: u16,
         ) void {
-            JSC.markBinding();
+            JSC.markBinding(@src());
             if (!this.server.config.onError.isEmpty() and !this.has_called_error_handler) {
                 this.has_called_error_handler = true;
                 var args = [_]JSC.C.JSValueRef{value.asObjectRef()};
@@ -1757,7 +1950,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             value: JSC.JSValue,
             status: u16,
         ) void {
-            JSC.markBinding();
+            JSC.markBinding(@src());
             if (this.resp.hasResponded()) return;
 
             runErrorHandlerWithStatusCodeDontCheckResponded(this, value, status);
@@ -1837,7 +2030,9 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
         }
 
         pub fn renderBytes(this: *RequestContext) void {
-            const bytes = this.blob.slice();
+            // copy it to stack memory to prevent aliasing issues in release builds
+            const blob = this.blob;
+            const bytes = blob.slice();
 
             if (!this.resp.tryEnd(
                 bytes,
@@ -1904,32 +2099,31 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
 
                 const total = bytes.items.len + chunk.len;
                 getter: {
-                    if (total <= JSC.WebCore.InlineBlob.available_bytes) {
-                        if (total == 0) {
-                            req.body = .{ .Empty = {} };
-                            break :getter;
-                        }
+                    // if (total <= JSC.WebCore.InlineBlob.available_bytes) {
+                    //     if (total == 0) {
+                    //         req.body = .{ .Empty = {} };
+                    //         break :getter;
+                    //     }
 
-                        req.body = .{ .InlineBlob = JSC.WebCore.InlineBlob.init(bytes.items) };
-                        var to_copy: []u8 = req.body.InlineBlob.bytes[bytes.items.len..];
-                        @memcpy(to_copy.ptr, chunk.ptr, chunk.len);
-                        req.body.InlineBlob.len += @truncate(JSC.WebCore.InlineBlob.IntSize, chunk.len);
+                    //     req.body = .{ .InlineBlob = JSC.WebCore.InlineBlob.concat(bytes.items, chunk) };
+                    //     this.request_body_buf.clearAndFree(this.allocator);
+                    // } else {
+                    bytes.ensureTotalCapacityPrecise(this.allocator, total) catch |err| {
                         this.request_body_buf.clearAndFree(this.allocator);
-                    } else {
-                        bytes.ensureTotalCapacityPrecise(this.allocator, total) catch |err| {
-                            this.request_body_buf.clearAndFree(this.allocator);
-                            req.body.toError(err, this.server.globalThis);
-                            break :getter;
-                        };
+                        req.body.toError(err, this.server.globalThis);
+                        break :getter;
+                    };
 
-                        bytes.items.len = total;
-                        @memcpy(bytes.items.ptr + bytes.items.len - chunk.len, chunk.ptr, chunk.len);
-                        req.body = .{
-                            .InternalBlob = .{
-                                .bytes = bytes.toManaged(this.allocator),
-                            },
-                        };
-                    }
+                    const prev_len = bytes.items.len;
+                    bytes.items.len = total;
+                    var slice = bytes.items[prev_len..];
+                    @memcpy(slice.ptr, chunk.ptr, chunk.len);
+                    req.body = .{
+                        .InternalBlob = .{
+                            .bytes = bytes.toManaged(this.allocator),
+                        },
+                    };
+                    // }
                 }
 
                 if (old == .Locked)
@@ -2060,6 +2254,1304 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
     };
 }
 
+pub const WebSocketServer = struct {
+    globalObject: *JSC.JSGlobalObject = undefined,
+    handler: WebSocketServer.Handler = .{},
+
+    maxPayloadLength: u32 = 1024 * 1024 * 16,
+    maxLifetime: u16 = 0,
+    idleTimeout: u16 = 120,
+    compression: i32 = 0,
+    backpressureLimit: u32 = 1024 * 1024 * 16,
+    sendPingsAutomatically: bool = true,
+    resetIdleTimeoutOnSend: bool = true,
+    closeOnBackpressureLimit: bool = false,
+
+    pub const Handler = struct {
+        onOpen: JSC.JSValue = .zero,
+        onMessage: JSC.JSValue = .zero,
+        onClose: JSC.JSValue = .zero,
+        onDrain: JSC.JSValue = .zero,
+        onError: JSC.JSValue = .zero,
+
+        app: *anyopaque = undefined,
+
+        globalObject: *JSC.JSGlobalObject = undefined,
+        active_connections: usize = 0,
+
+        pub fn fromJS(globalObject: *JSC.JSGlobalObject, object: JSC.JSValue) ?Handler {
+            var handler = Handler{ .globalObject = globalObject };
+            if (object.getTruthy(globalObject, "message")) |message| {
+                if (!message.isCallable(globalObject.vm())) {
+                    globalObject.throwInvalidArguments("websocket expects a function for the message option", .{});
+                    return null;
+                }
+                handler.onMessage = message;
+                message.ensureStillAlive();
+            }
+
+            if (object.getTruthy(globalObject, "open")) |open| {
+                if (!open.isCallable(globalObject.vm())) {
+                    globalObject.throwInvalidArguments("websocket expects a function for the open option", .{});
+                    return null;
+                }
+                handler.onOpen = open;
+                open.ensureStillAlive();
+            }
+
+            if (object.getTruthy(globalObject, "close")) |close| {
+                if (!close.isCallable(globalObject.vm())) {
+                    globalObject.throwInvalidArguments("websocket expects a function for the close option", .{});
+                    return null;
+                }
+                handler.onClose = close;
+                close.ensureStillAlive();
+            }
+
+            if (object.getTruthy(globalObject, "drain")) |drain| {
+                if (!drain.isCallable(globalObject.vm())) {
+                    globalObject.throwInvalidArguments("websocket expects a function for the drain option", .{});
+                    return null;
+                }
+                handler.onDrain = drain;
+                drain.ensureStillAlive();
+            }
+
+            if (object.getTruthy(globalObject, "onError")) |onError| {
+                if (!onError.isCallable(globalObject.vm())) {
+                    globalObject.throwInvalidArguments("websocket expects a function for the onError option", .{});
+                    return null;
+                }
+                handler.onError = onError;
+                onError.ensureStillAlive();
+            }
+
+            if (handler.onMessage != .zero or handler.onOpen != .zero)
+                return handler;
+
+            return null;
+        }
+
+        pub fn protect(this: Handler) void {
+            this.onOpen.protect();
+            this.onMessage.protect();
+            this.onClose.protect();
+            this.onDrain.protect();
+            this.onError.protect();
+        }
+
+        pub fn unprotect(this: Handler) void {
+            this.onOpen.unprotect();
+            this.onMessage.unprotect();
+            this.onClose.unprotect();
+            this.onDrain.unprotect();
+            this.onError.unprotect();
+        }
+    };
+
+    pub fn toBehavior(this: WebSocketServer) uws.WebSocketBehavior {
+        return .{
+            .maxPayloadLength = this.maxPayloadLength,
+            .idleTimeout = this.idleTimeout,
+            .compression = this.compression,
+            .maxBackpressure = this.backpressureLimit,
+            .sendPingsAutomatically = this.sendPingsAutomatically,
+            .maxLifetime = this.maxLifetime,
+            .resetIdleTimeoutOnSend = this.resetIdleTimeoutOnSend,
+            .closeOnBackpressureLimit = this.closeOnBackpressureLimit,
+        };
+    }
+
+    pub fn protect(this: WebSocketServer) void {
+        this.handler.protect();
+    }
+    pub fn unprotect(this: WebSocketServer) void {
+        this.handler.unprotect();
+    }
+
+    const CompressTable = bun.ComptimeStringMap(i32, .{
+        .{ "disable", 0 },
+        .{ "shared", uws.SHARED_COMPRESSOR },
+        .{ "dedicated", uws.DEDICATED_COMPRESSOR },
+        .{ "3KB", uws.DEDICATED_COMPRESSOR_3KB },
+        .{ "4KB", uws.DEDICATED_COMPRESSOR_4KB },
+        .{ "8KB", uws.DEDICATED_COMPRESSOR_8KB },
+        .{ "16KB", uws.DEDICATED_COMPRESSOR_16KB },
+        .{ "32KB", uws.DEDICATED_COMPRESSOR_32KB },
+        .{ "64KB", uws.DEDICATED_COMPRESSOR_64KB },
+        .{ "128KB", uws.DEDICATED_COMPRESSOR_128KB },
+        .{ "256KB", uws.DEDICATED_COMPRESSOR_256KB },
+    });
+
+    const DecompressTable = bun.ComptimeStringMap(i32, .{
+        .{ "disable", 0 },
+        .{ "shared", uws.SHARED_DECOMPRESSOR },
+        .{ "dedicated", uws.DEDICATED_DECOMPRESSOR },
+        .{ "3KB", uws.DEDICATED_COMPRESSOR_3KB },
+        .{ "4KB", uws.DEDICATED_COMPRESSOR_4KB },
+        .{ "8KB", uws.DEDICATED_COMPRESSOR_8KB },
+        .{ "16KB", uws.DEDICATED_COMPRESSOR_16KB },
+        .{ "32KB", uws.DEDICATED_COMPRESSOR_32KB },
+        .{ "64KB", uws.DEDICATED_COMPRESSOR_64KB },
+        .{ "128KB", uws.DEDICATED_COMPRESSOR_128KB },
+        .{ "256KB", uws.DEDICATED_COMPRESSOR_256KB },
+    });
+
+    pub fn onCreate(globalObject: *JSC.JSGlobalObject, object: JSValue) ?WebSocketServer {
+        var server = WebSocketServer{};
+
+        if (Handler.fromJS(globalObject, object)) |handler| {
+            server.handler = handler;
+        } else {
+            globalObject.throwInvalidArguments("WebSocketServer expects a message handler", .{});
+            return null;
+        }
+
+        if (object.get(globalObject, "perMessageDeflate")) |per_message_deflate| {
+            getter: {
+                if (per_message_deflate.isUndefined()) {
+                    break :getter;
+                }
+
+                if (per_message_deflate.isBoolean() or per_message_deflate.isNull()) {
+                    if (per_message_deflate.toBoolean()) {
+                        server.compression = uws.SHARED_COMPRESSOR | uws.SHARED_DECOMPRESSOR;
+                    } else {
+                        server.compression = 0;
+                    }
+                    break :getter;
+                }
+
+                if (per_message_deflate.getTruthy(globalObject, "compress")) |compression| {
+                    if (compression.isBoolean()) {
+                        server.compression |= if (compression.toBoolean()) uws.SHARED_COMPRESSOR else 0;
+                    } else if (compression.isString()) {
+                        server.compression |= CompressTable.getWithEql(compression.getZigString(globalObject), ZigString.eqlComptime) orelse {
+                            globalObject.throwInvalidArguments(
+                                "WebSocketServer expects a valid compress option, either disable \"shared\" \"dedicated\" \"3KB\" \"4KB\" \"8KB\" \"16KB\" \"32KB\" \"64KB\" \"128KB\" or \"256KB\"",
+                                .{},
+                            );
+                            return null;
+                        };
+                    } else {
+                        globalObject.throwInvalidArguments(
+                            "websocket expects a valid compress option, either disable \"shared\" \"dedicated\" \"3KB\" \"4KB\" \"8KB\" \"16KB\" \"32KB\" \"64KB\" \"128KB\" or \"256KB\"",
+                            .{},
+                        );
+                        return null;
+                    }
+                }
+
+                if (per_message_deflate.getTruthy(globalObject, "decompress")) |compression| {
+                    if (compression.isBoolean()) {
+                        server.compression |= if (compression.toBoolean()) uws.SHARED_DECOMPRESSOR else 0;
+                    } else if (compression.isString()) {
+                        server.compression |= DecompressTable.getWithEql(compression.getZigString(globalObject), ZigString.eqlComptime) orelse {
+                            globalObject.throwInvalidArguments(
+                                "websocket expects a valid decompress option, either \"disable\" \"shared\" \"dedicated\" \"3KB\" \"4KB\" \"8KB\" \"16KB\" \"32KB\" \"64KB\" \"128KB\" or \"256KB\"",
+                                .{},
+                            );
+                            return null;
+                        };
+                    } else {
+                        globalObject.throwInvalidArguments(
+                            "websocket expects a valid decompress option, either \"disable\" \"shared\" \"dedicated\" \"3KB\" \"4KB\" \"8KB\" \"16KB\" \"32KB\" \"64KB\" \"128KB\" or \"256KB\"",
+                            .{},
+                        );
+                        return null;
+                    }
+                }
+            }
+        }
+
+        if (object.get(globalObject, "maxPayloadLength")) |value| {
+            if (!value.isUndefinedOrNull()) {
+                if (!value.isAnyInt()) {
+                    globalObject.throwInvalidArguments("websocket expects maxPayloadLength to be an integer", .{});
+                    return null;
+                }
+                server.maxPayloadLength = @intCast(u32, @truncate(i33, @maximum(value.toInt64(), 0)));
+            }
+        }
+        if (object.get(globalObject, "idleTimeout")) |value| {
+            if (!value.isUndefinedOrNull()) {
+                if (!value.isAnyInt()) {
+                    globalObject.throwInvalidArguments("websocket expects idleTimeout to be an integer", .{});
+                    return null;
+                }
+
+                server.idleTimeout = value.to(u16);
+            }
+        }
+        if (object.get(globalObject, "backpressureLimit")) |value| {
+            if (!value.isUndefinedOrNull()) {
+                if (!value.isAnyInt()) {
+                    globalObject.throwInvalidArguments("websocket expects backpressureLimit to be an integer", .{});
+                    return null;
+                }
+
+                server.backpressureLimit = @intCast(u32, @truncate(i33, @maximum(value.toInt64(), 0)));
+            }
+        }
+        // if (object.get(globalObject, "sendPings")) |value| {
+        //     if (!value.isUndefinedOrNull()) {
+        //         if (!value.isBoolean()) {
+        //             globalObject.throwInvalidArguments("websocket expects sendPings to be a boolean", .{});
+        //             return null;
+        //         }
+
+        //         server.sendPings = value.toBoolean();
+        //     }
+        // }
+
+        if (object.get(globalObject, "closeOnBackpressureLimit")) |value| {
+            if (!value.isUndefinedOrNull()) {
+                if (!value.isBoolean()) {
+                    globalObject.throwInvalidArguments("websocket expects closeOnBackpressureLimit to be a boolean", .{});
+                    return null;
+                }
+
+                server.closeOnBackpressureLimit = value.toBoolean();
+            }
+        }
+
+        server.protect();
+        return server;
+    }
+};
+
+const Corker = struct {
+    args: []const JSValue = &.{},
+    globalObject: *JSC.JSGlobalObject,
+    this_value: JSC.JSValue = .zero,
+    callback: JSC.JSValue,
+    result: JSValue = .zero,
+
+    pub fn run(this: *Corker) void {
+        const this_value = this.this_value;
+        this.result = if (this_value == .zero)
+            this.callback.call(this.globalObject, this.args)
+        else
+            this.callback.callWithThis(this.globalObject, this_value, this.args);
+    }
+};
+
+pub const ServerWebSocket = struct {
+    handler: *WebSocketServer.Handler,
+    this_value: JSValue = .zero,
+    websocket: uws.AnyWebSocket = undefined,
+    closed: bool = false,
+    binary_type: JSC.JSValue.JSType = .Uint8Array,
+    opened: bool = false,
+
+    pub usingnamespace JSC.Codegen.JSServerWebSocket;
+
+    const log = Output.scoped(.WebSocketServer, false);
+
+    pub fn onOpen(this: *ServerWebSocket, ws: uws.AnyWebSocket) void {
+        log("OnOpen", .{});
+
+        this.websocket = ws;
+        this.closed = false;
+
+        // the this value is initially set to whatever the user passed in
+        const value_to_cache = this.this_value;
+
+        var handler = this.handler;
+        handler.active_connections +|= 1;
+        var globalObject = handler.globalObject;
+
+        const onOpenHandler = handler.onOpen;
+        this.this_value = .zero;
+        this.opened = false;
+        if (value_to_cache != .zero) {
+            const current_this = this.getThisValue();
+            ServerWebSocket.dataSetCached(current_this, globalObject, value_to_cache);
+        }
+
+        if (onOpenHandler.isEmptyOrUndefinedOrNull()) return;
+        const this_value = this.getThisValue();
+        var args = [_]JSValue{this_value};
+
+        var corker = Corker{
+            .args = &args,
+            .globalObject = globalObject,
+            .callback = onOpenHandler,
+        };
+        const error_handler = handler.onError;
+        ws.cork(&corker, Corker.run);
+        const result = corker.result;
+        this.opened = true;
+        if (result.isAnyError(globalObject)) {
+            log("onOpen exception", .{});
+
+            if (!this.closed) {
+                this.closed = true;
+                this.websocket.end(1000, "");
+            }
+
+            _ = ServerWebSocket.dangerouslySetPtr(this_value, null);
+            handler.active_connections -|= 1;
+            this_value.unprotect();
+            bun.default_allocator.destroy(this);
+            if (error_handler.isEmptyOrUndefinedOrNull()) {
+                globalObject.bunVM().runErrorHandler(result, null);
+            } else {
+                const corky = [_]JSValue{corker.result};
+                corker.args = &corky;
+                corker.callback = error_handler;
+                corker.this_value = .zero;
+                corker.result = .zero;
+                corker.run();
+            }
+        }
+    }
+
+    pub fn getThisValue(this: *ServerWebSocket) JSValue {
+        var this_value = this.this_value;
+        if (this_value == .zero) {
+            this_value = this.toJS(this.handler.globalObject);
+            this_value.protect();
+            this.this_value = this_value;
+        }
+        return this_value;
+    }
+
+    pub fn onMessage(
+        this: *ServerWebSocket,
+        ws: uws.AnyWebSocket,
+        message: []const u8,
+        opcode: uws.Opcode,
+    ) void {
+        log("onMessage({d}): {s}", .{
+            @enumToInt(opcode),
+            message,
+        });
+        const onMessageHandler = this.handler.onMessage;
+        if (onMessageHandler.isEmptyOrUndefinedOrNull()) return;
+        var globalObject = this.handler.globalObject;
+
+        const arguments = [_]JSValue{
+            this.getThisValue(),
+            switch (opcode) {
+                .text => brk: {
+                    var str = ZigString.init(message);
+                    str.markUTF8();
+                    break :brk str.toValueGC(globalObject);
+                },
+                .binary => if (this.binary_type == .Uint8Array)
+                    JSC.ArrayBuffer.create(
+                        globalObject,
+                        message,
+                        .Uint8Array,
+                    )
+                else
+                    JSC.ArrayBuffer.create(
+                        globalObject,
+                        message,
+                        .ArrayBuffer,
+                    ),
+                else => unreachable,
+            },
+        };
+
+        var corker = Corker{
+            .args = &arguments,
+            .globalObject = globalObject,
+            .callback = onMessageHandler,
+        };
+
+        ws.cork(&corker, Corker.run);
+        const result = corker.result;
+
+        if (result.isEmptyOrUndefinedOrNull()) return;
+
+        if (result.isAnyError(globalObject)) {
+            if (this.handler.onError.isEmptyOrUndefinedOrNull()) {
+                globalObject.bunVM().runErrorHandler(result, null);
+            } else {
+                const args = [_]JSValue{result};
+                corker.args = &args;
+                corker.callback = this.handler.onError;
+                corker.this_value = .zero;
+                corker.result = .zero;
+                corker.run();
+            }
+            return;
+        }
+
+        if (result.asPromise()) |promise| {
+            switch (promise.status(globalObject.vm())) {
+                .Rejected => {
+                    _ = promise.result(globalObject.vm());
+                    return;
+                },
+
+                else => {},
+            }
+        }
+    }
+    pub fn onDrain(this: *ServerWebSocket, _: uws.AnyWebSocket) void {
+        log("onDrain", .{});
+
+        var handler = this.handler;
+        if (this.closed)
+            return;
+
+        if (handler.onDrain != .zero) {
+            var globalObject = handler.globalObject;
+
+            var corker = Corker{
+                .args = &[_]JSC.JSValue{this.this_value},
+                .globalObject = globalObject,
+                .callback = handler.onDrain,
+            };
+
+            this.websocket.cork(&corker, Corker.run);
+            const result = corker.result;
+
+            if (result.isAnyError(globalObject)) {
+                if (this.handler.onError.isEmptyOrUndefinedOrNull()) {
+                    globalObject.bunVM().runErrorHandler(result, null);
+                } else {
+                    const args = [_]JSValue{result};
+                    corker.args = &args;
+                    corker.callback = this.handler.onError;
+                    corker.this_value = .zero;
+                    corker.result = .zero;
+                    corker.run();
+                }
+            }
+        }
+    }
+    pub fn onPing(_: *ServerWebSocket, _: uws.AnyWebSocket, _: []const u8) void {
+        log("onPing", .{});
+    }
+    pub fn onPong(_: *ServerWebSocket, _: uws.AnyWebSocket, _: []const u8) void {
+        log("onPong", .{});
+    }
+    pub fn onClose(this: *ServerWebSocket, _: uws.AnyWebSocket, code: i32, message: []const u8) void {
+        log("onClose", .{});
+        var handler = this.handler;
+        this.closed = true;
+        defer handler.active_connections -|= 1;
+
+        if (handler.onClose != .zero) {
+            const result = handler.onClose.call(
+                handler.globalObject,
+                &[_]JSC.JSValue{ this.this_value, JSValue.jsNumber(code), ZigString.init(message).toValueGC(handler.globalObject) },
+            );
+
+            if (result.isAnyError(handler.globalObject)) {
+                log("onClose error", .{});
+                handler.globalObject.bunVM().runErrorHandler(result, null);
+            }
+        }
+
+        this.this_value.unprotect();
+    }
+
+    pub fn behavior(comptime ServerType: type, comptime ssl: bool, opts: uws.WebSocketBehavior) uws.WebSocketBehavior {
+        return uws.WebSocketBehavior.Wrap(ServerType, @This(), ssl).apply(opts);
+    }
+
+    pub fn constructor(globalObject: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) ?*ServerWebSocket {
+        globalObject.throw("Cannot construct ServerWebSocket", .{});
+        return null;
+    }
+
+    pub fn finalize(this: *ServerWebSocket) callconv(.C) void {
+        bun.default_allocator.destroy(this);
+    }
+
+    pub fn publish(
+        this: *ServerWebSocket,
+        globalThis: *JSC.JSGlobalObject,
+        callframe: *JSC.CallFrame,
+    ) callconv(.C) JSValue {
+        const args = callframe.arguments(4);
+
+        if (args.len < 1) {
+            log("publish()", .{});
+            globalThis.throw("publish requires at least 1 argument", .{});
+            return .zero;
+        }
+
+        if (this.closed) {
+            log("publish() closed", .{});
+            return JSValue.jsNumber(0);
+        }
+
+        const topic_value = args.ptr[0];
+        const message_value = args.ptr[1];
+        const compress_value = args.ptr[2];
+
+        if (topic_value.isEmptyOrUndefinedOrNull() or !topic_value.isString()) {
+            log("publish() topic invalid", .{});
+            globalThis.throw("publish requires a topic string", .{});
+            return .zero;
+        }
+
+        var topic_slice = topic_value.toSlice(globalThis, bun.default_allocator);
+        defer topic_slice.deinit();
+        if (topic_slice.len == 0) {
+            globalThis.throw("publish requires a non-empty topic", .{});
+            return .zero;
+        }
+
+        const compress = args.len > 1 and compress_value.toBoolean();
+
+        if (message_value.isEmptyOrUndefinedOrNull()) {
+            globalThis.throw("publish requires a non-empty message", .{});
+            return .zero;
+        }
+
+        if (message_value.asArrayBuffer(globalThis)) |buffer| {
+            if (buffer.len == 0) {
+                globalThis.throw("publish requires a non-empty message", .{});
+                return .zero;
+            }
+
+            return JSValue.jsNumber(
+                // if 0, return 0
+                // else return number of bytes sent
+                @as(i32, @boolToInt(this.websocket.publishWithOptions(this.handler.app, topic_slice.slice(), buffer.slice(), .binary, compress))) * @intCast(i32, @truncate(u31, buffer.len)),
+            );
+        }
+
+        {
+            var string_slice = message_value.toSlice(globalThis, bun.default_allocator);
+            defer string_slice.deinit();
+            if (string_slice.len == 0) {
+                return JSValue.jsNumber(0);
+            }
+
+            const buffer = string_slice.slice();
+            return JSValue.jsNumber(
+                // if 0, return 0
+                // else return number of bytes sent
+                @as(i32, @boolToInt(this.websocket.publishWithOptions(this.handler.app, topic_slice.slice(), buffer, .text, compress))) * @intCast(i32, @truncate(u31, buffer.len)),
+            );
+        }
+
+        return .zero;
+    }
+
+    pub fn publishText(
+        this: *ServerWebSocket,
+        globalThis: *JSC.JSGlobalObject,
+        callframe: *JSC.CallFrame,
+    ) callconv(.C) JSValue {
+        const args = callframe.arguments(4);
+
+        if (args.len < 1) {
+            log("publish()", .{});
+            globalThis.throw("publish requires at least 1 argument", .{});
+            return .zero;
+        }
+
+        if (this.closed) {
+            log("publish() closed", .{});
+            return JSValue.jsNumber(0);
+        }
+
+        const topic_value = args.ptr[0];
+        const message_value = args.ptr[1];
+        const compress_value = args.ptr[2];
+
+        if (topic_value.isEmptyOrUndefinedOrNull() or !topic_value.isString()) {
+            log("publish() topic invalid", .{});
+            globalThis.throw("publishText requires a topic string", .{});
+            return .zero;
+        }
+
+        var topic_slice = topic_value.toSlice(globalThis, bun.default_allocator);
+        defer topic_slice.deinit();
+        if (topic_slice.len == 0) {
+            globalThis.throw("publishText requires a non-empty topic", .{});
+            return .zero;
+        }
+
+        const compress = args.len > 1 and compress_value.toBoolean();
+
+        if (message_value.isEmptyOrUndefinedOrNull() or !message_value.isString()) {
+            globalThis.throw("publishText requires a non-empty message", .{});
+            return .zero;
+        }
+
+        var string_slice = message_value.toSlice(globalThis, bun.default_allocator);
+        defer string_slice.deinit();
+        if (string_slice.len == 0) {
+            return JSValue.jsNumber(0);
+        }
+
+        const buffer = string_slice.slice();
+        return JSValue.jsNumber(
+            // if 0, return 0
+            // else return number of bytes sent
+            @as(i32, @boolToInt(this.websocket.publishWithOptions(this.handler.app, topic_slice.slice(), buffer, .text, compress))) * @intCast(i32, @truncate(u31, buffer.len)),
+        );
+    }
+
+    pub fn publishBinary(
+        this: *ServerWebSocket,
+        globalThis: *JSC.JSGlobalObject,
+        callframe: *JSC.CallFrame,
+    ) callconv(.C) JSValue {
+        const args = callframe.arguments(4);
+
+        if (args.len < 1) {
+            log("publishBinary()", .{});
+            globalThis.throw("publishBinary requires at least 1 argument", .{});
+            return .zero;
+        }
+
+        if (this.closed) {
+            log("publishBinary() closed", .{});
+            return JSValue.jsNumber(0);
+        }
+
+        const topic_value = args.ptr[0];
+        const message_value = args.ptr[1];
+        const compress_value = args.ptr[2];
+
+        if (topic_value.isEmptyOrUndefinedOrNull() or !topic_value.isString()) {
+            log("publishBinary() topic invalid", .{});
+            globalThis.throw("publishBinary requires a topic string", .{});
+            return .zero;
+        }
+
+        var topic_slice = topic_value.toSlice(globalThis, bun.default_allocator);
+        defer topic_slice.deinit();
+        if (topic_slice.len == 0) {
+            globalThis.throw("publishBinary requires a non-empty topic", .{});
+            return .zero;
+        }
+
+        const compress = args.len > 1 and compress_value.toBoolean();
+
+        if (message_value.isEmptyOrUndefinedOrNull()) {
+            globalThis.throw("publishBinary requires a non-empty message", .{});
+            return .zero;
+        }
+        const buffer = message_value.asArrayBuffer(globalThis) orelse {
+            globalThis.throw("publishBinary expects an ArrayBufferView", .{});
+            return .zero;
+        };
+
+        if (buffer.len == 0) {
+            return JSC.JSValue.jsNumber(0);
+        }
+
+        return JSValue.jsNumber(
+            // if 0, return 0
+            // else return number of bytes sent
+            @as(i32, @boolToInt(this.websocket.publishWithOptions(this.handler.app, topic_slice.slice(), buffer.slice(), .binary, compress))) * @intCast(i32, @truncate(u31, buffer.len)),
+        );
+    }
+
+    pub fn publishBinaryWithoutTypeChecks(
+        this: *ServerWebSocket,
+        globalThis: *JSC.JSGlobalObject,
+        topic_str: *JSC.JSString,
+        buffer: *JSC.JSUint8Array,
+    ) callconv(.C) JSC.JSValue {
+        if (this.closed) {
+            log("publishBinary() closed", .{});
+            return JSValue.jsNumber(0);
+        }
+
+        var topic_slice = topic_str.toSlice(globalThis, bun.default_allocator);
+        defer topic_slice.deinit();
+        if (topic_slice.len == 0) {
+            globalThis.throw("publishBinary requires a non-empty topic", .{});
+            return .zero;
+        }
+
+        const compress = true;
+
+        const slice = buffer.slice();
+        if (slice.len == 0) {
+            return JSC.JSValue.jsNumber(0);
+        }
+
+        return JSValue.jsNumber(
+            // if 0, return 0
+            // else return number of bytes sent
+            @as(
+                i32,
+                @boolToInt(
+                    this.websocket.publishWithOptions(
+                        this.handler.app,
+                        topic_slice.slice(),
+                        slice,
+                        .binary,
+                        compress,
+                    ),
+                ),
+            ) * @intCast(
+                i32,
+                @truncate(u31, slice.len),
+            ),
+        );
+    }
+
+    pub fn publishTextWithoutTypeChecks(
+        this: *ServerWebSocket,
+        globalThis: *JSC.JSGlobalObject,
+        topic_str: *JSC.JSString,
+        str: *JSC.JSString,
+    ) callconv(.C) JSC.JSValue {
+        if (this.closed) {
+            log("publishBinary() closed", .{});
+            return JSValue.jsNumber(0);
+        }
+
+        var topic_slice = topic_str.toSlice(globalThis, bun.default_allocator);
+        defer topic_slice.deinit();
+        if (topic_slice.len == 0) {
+            globalThis.throw("publishBinary requires a non-empty topic", .{});
+            return .zero;
+        }
+
+        const compress = true;
+
+        const slice = str.toSlice(globalThis, bun.default_allocator);
+        if (slice.len == 0) {
+            return JSC.JSValue.jsNumber(0);
+        }
+
+        return JSValue.jsNumber(
+            // if 0, return 0
+            // else return number of bytes sent
+            @as(i32, @boolToInt(this.websocket.publishWithOptions(
+                this.handler.app,
+                topic_slice.slice(),
+                slice.slice(),
+                .text,
+                compress,
+            ))) * @intCast(
+                i32,
+                @truncate(u31, slice.len),
+            ),
+        );
+    }
+
+    pub fn cork(
+        this: *ServerWebSocket,
+        globalThis: *JSC.JSGlobalObject,
+        callframe: *JSC.CallFrame,
+    ) callconv(.C) JSValue {
+        const args = callframe.arguments(1);
+
+        if (args.len < 1) {
+            globalThis.throw("cork requires at least 1 argument", .{});
+            return .zero;
+        }
+        const callback = args.ptr[0];
+        if (callback.isEmptyOrUndefinedOrNull() or !callback.isCallable(globalThis.vm())) {
+            globalThis.throw("cork requires a function", .{});
+            return .zero;
+        }
+
+        if (this.closed) {
+            return JSValue.jsUndefined();
+        }
+
+        var corker = Corker{
+            .globalObject = globalThis,
+            .this_value = this.this_value,
+            .callback = callback,
+        };
+        this.websocket.cork(&corker, Corker.run);
+
+        const result = corker.result;
+
+        if (result.isEmptyOrUndefinedOrNull())
+            return JSValue.jsUndefined();
+
+        if (result.isAnyError(globalThis)) {
+            globalThis.throwValue(result);
+            return JSValue.jsUndefined();
+        }
+
+        return result;
+    }
+
+    pub fn send(
+        this: *ServerWebSocket,
+        globalThis: *JSC.JSGlobalObject,
+        callframe: *JSC.CallFrame,
+    ) callconv(.C) JSValue {
+        const args = callframe.arguments(2);
+
+        if (args.len < 1) {
+            log("send()", .{});
+            globalThis.throw("send requires at least 1 argument", .{});
+            return .zero;
+        }
+
+        if (this.closed) {
+            log("send() closed", .{});
+            return JSValue.jsNumber(0);
+        }
+
+        const message_value = args.ptr[0];
+        const compress_value = args.ptr[1];
+
+        const compress = args.len > 1 and compress_value.toBoolean();
+
+        if (message_value.isEmptyOrUndefinedOrNull()) {
+            globalThis.throw("send requires a non-empty message", .{});
+            return .zero;
+        }
+
+        if (message_value.asArrayBuffer(globalThis)) |buffer| {
+            if (buffer.len == 0) {
+                return JSValue.jsNumber(0);
+            }
+
+            switch (this.websocket.send(buffer.slice(), .binary, compress, true)) {
+                .backpressure => {
+                    log("send() backpressure ({d} bytes)", .{buffer.len});
+                    return JSValue.jsNumber(-1);
+                },
+                .success => {
+                    log("send() success ({d} bytes)", .{buffer.len});
+                    return JSValue.jsNumber(buffer.slice().len);
+                },
+                .dropped => {
+                    log("send() dropped ({d} bytes)", .{buffer.len});
+                    return JSValue.jsNumber(0);
+                },
+            }
+        }
+
+        {
+            var string_slice = message_value.toSlice(globalThis, bun.default_allocator);
+            defer string_slice.deinit();
+            if (string_slice.len == 0) {
+                return JSValue.jsNumber(0);
+            }
+
+            const buffer = string_slice.slice();
+            switch (this.websocket.send(buffer, .text, compress, true)) {
+                .backpressure => {
+                    log("send() backpressure ({d} bytes string)", .{buffer.len});
+                    return JSValue.jsNumber(-1);
+                },
+                .success => {
+                    log("send() success ({d} bytes string)", .{buffer.len});
+                    return JSValue.jsNumber(buffer.len);
+                },
+                .dropped => {
+                    log("send() dropped ({d} bytes string)", .{buffer.len});
+                    return JSValue.jsNumber(0);
+                },
+            }
+        }
+
+        return .zero;
+    }
+
+    pub fn sendText(
+        this: *ServerWebSocket,
+        globalThis: *JSC.JSGlobalObject,
+        callframe: *JSC.CallFrame,
+    ) callconv(.C) JSValue {
+        const args = callframe.arguments(2);
+
+        if (args.len < 1) {
+            log("sendText()", .{});
+            globalThis.throw("sendText requires at least 1 argument", .{});
+            return .zero;
+        }
+
+        if (this.closed) {
+            log("sendText() closed", .{});
+            return JSValue.jsNumber(0);
+        }
+
+        const message_value = args.ptr[0];
+        const compress_value = args.ptr[1];
+
+        const compress = args.len > 1 and compress_value.toBoolean();
+
+        if (message_value.isEmptyOrUndefinedOrNull() or !message_value.isString()) {
+            globalThis.throw("sendText expects a string", .{});
+            return .zero;
+        }
+
+        var string_slice = message_value.toSlice(globalThis, bun.default_allocator);
+        defer string_slice.deinit();
+        if (string_slice.len == 0) {
+            return JSValue.jsNumber(0);
+        }
+
+        const buffer = string_slice.slice();
+        switch (this.websocket.send(buffer, .text, compress, true)) {
+            .backpressure => {
+                log("sendText() backpressure ({d} bytes string)", .{buffer.len});
+                return JSValue.jsNumber(-1);
+            },
+            .success => {
+                log("sendText() success ({d} bytes string)", .{buffer.len});
+                return JSValue.jsNumber(buffer.len);
+            },
+            .dropped => {
+                log("sendText() dropped ({d} bytes string)", .{buffer.len});
+                return JSValue.jsNumber(0);
+            },
+        }
+    }
+
+    pub fn sendTextWithoutTypeChecks(
+        this: *ServerWebSocket,
+        globalThis: *JSC.JSGlobalObject,
+        message_str: *JSC.JSString,
+        compress: bool,
+    ) callconv(.C) JSValue {
+        if (this.closed) {
+            log("sendText() closed", .{});
+            return JSValue.jsNumber(0);
+        }
+
+        var string_slice = message_str.toSlice(globalThis, bun.default_allocator);
+        defer string_slice.deinit();
+        if (string_slice.len == 0) {
+            return JSValue.jsNumber(0);
+        }
+
+        const buffer = string_slice.slice();
+        switch (this.websocket.send(buffer, .text, compress, true)) {
+            .backpressure => {
+                log("sendText() backpressure ({d} bytes string)", .{buffer.len});
+                return JSValue.jsNumber(-1);
+            },
+            .success => {
+                log("sendText() success ({d} bytes string)", .{buffer.len});
+                return JSValue.jsNumber(buffer.len);
+            },
+            .dropped => {
+                log("sendText() dropped ({d} bytes string)", .{buffer.len});
+                return JSValue.jsNumber(0);
+            },
+        }
+    }
+
+    pub fn sendBinary(
+        this: *ServerWebSocket,
+        globalThis: *JSC.JSGlobalObject,
+        callframe: *JSC.CallFrame,
+    ) callconv(.C) JSValue {
+        const args = callframe.arguments(2);
+
+        if (args.len < 1) {
+            log("sendBinary()", .{});
+            globalThis.throw("sendBinary requires at least 1 argument", .{});
+            return .zero;
+        }
+
+        if (this.closed) {
+            log("sendBinary() closed", .{});
+            return JSValue.jsNumber(0);
+        }
+
+        const message_value = args.ptr[0];
+        const compress_value = args.ptr[1];
+
+        const compress = args.len > 1 and compress_value.toBoolean();
+
+        const buffer = message_value.asArrayBuffer(globalThis) orelse {
+            globalThis.throw("sendBinary requires an ArrayBufferView", .{});
+            return .zero;
+        };
+
+        if (buffer.len == 0) {
+            return JSValue.jsNumber(0);
+        }
+
+        switch (this.websocket.send(buffer.slice(), .binary, compress, true)) {
+            .backpressure => {
+                log("sendBinary() backpressure ({d} bytes)", .{buffer.len});
+                return JSValue.jsNumber(-1);
+            },
+            .success => {
+                log("sendBinary() success ({d} bytes)", .{buffer.len});
+                return JSValue.jsNumber(buffer.slice().len);
+            },
+            .dropped => {
+                log("sendBinary() dropped ({d} bytes)", .{buffer.len});
+                return JSValue.jsNumber(0);
+            },
+        }
+    }
+
+    pub fn sendBinaryWithoutTypeChecks(
+        this: *ServerWebSocket,
+        _: *JSC.JSGlobalObject,
+        array_buffer: *JSC.JSUint8Array,
+        compress: bool,
+    ) callconv(.C) JSValue {
+        if (this.closed) {
+            log("sendBinary() closed", .{});
+            return JSValue.jsNumber(0);
+        }
+
+        const buffer = array_buffer.slice();
+
+        if (buffer.len == 0) {
+            return JSValue.jsNumber(0);
+        }
+
+        switch (this.websocket.send(buffer, .binary, compress, true)) {
+            .backpressure => {
+                log("sendBinary() backpressure ({d} bytes)", .{buffer.len});
+                return JSValue.jsNumber(-1);
+            },
+            .success => {
+                log("sendBinary() success ({d} bytes)", .{buffer.len});
+                return JSValue.jsNumber(buffer.len);
+            },
+            .dropped => {
+                log("sendBinary() dropped ({d} bytes)", .{buffer.len});
+                return JSValue.jsNumber(0);
+            },
+        }
+    }
+
+    pub fn getData(
+        _: *ServerWebSocket,
+        _: *JSC.JSGlobalObject,
+    ) callconv(.C) JSValue {
+        log("getData()", .{});
+        return JSValue.jsUndefined();
+    }
+
+    pub fn setData(
+        this: *ServerWebSocket,
+        globalObject: *JSC.JSGlobalObject,
+        value: JSC.JSValue,
+    ) callconv(.C) bool {
+        log("setData()", .{});
+        ServerWebSocket.dataSetCached(this.this_value, globalObject, value);
+        return true;
+    }
+
+    pub fn getReadyState(
+        this: *ServerWebSocket,
+        _: *JSC.JSGlobalObject,
+    ) callconv(.C) JSValue {
+        log("getReadyState()", .{});
+
+        if (this.closed) {
+            return JSValue.jsNumber(3);
+        }
+
+        return JSValue.jsNumber(1);
+    }
+
+    pub fn close(
+        this: *ServerWebSocket,
+        globalThis: *JSC.JSGlobalObject,
+        callframe: *JSC.CallFrame,
+    ) callconv(.C) JSValue {
+        const args = callframe.arguments(2);
+        log("close()", .{});
+
+        if (this.closed) {
+            return JSValue.jsUndefined();
+        }
+
+        if (!this.opened) {
+            globalThis.throw("Calling close() inside open() is not supported. Consider changing your upgrade() callback instead", .{});
+            return .zero;
+        }
+        this.closed = true;
+
+        const code = if (args.len > 0) args.ptr[0].toInt32() else @as(i32, 1000);
+        var message_value = if (args.len > 1) args.ptr[1].toSlice(globalThis, bun.default_allocator) else ZigString.Slice.empty;
+        defer message_value.deinit();
+        if (code > 0) {
+            this.websocket.end(code, message_value.slice());
+        } else {
+            this.this_value.unprotect();
+            this.websocket.close();
+        }
+
+        return JSValue.jsUndefined();
+    }
+
+    pub fn getBinaryType(
+        this: *ServerWebSocket,
+        globalThis: *JSC.JSGlobalObject,
+    ) callconv(.C) JSValue {
+        log("getBinaryType()", .{});
+
+        return switch (this.binary_type) {
+            .Uint8Array => ZigString.static("uint8array").toValue(globalThis),
+            else => ZigString.static("arraybuffer").toValue(globalThis),
+        };
+    }
+
+    pub const BinaryType = bun.ComptimeStringMap(JSC.JSValue.JSType, .{
+        &.{ "uint8array", .Uint8Array },
+        &.{ "Uint8Array", .Uint8Array },
+        &.{ "arraybuffer", .ArrayBuffer },
+        &.{ "ArrayBuffer", .ArrayBuffer },
+    });
+
+    pub fn setBinaryType(
+        this: *ServerWebSocket,
+        globalThis: *JSC.JSGlobalObject,
+        value: JSC.JSValue,
+    ) callconv(.C) bool {
+        log("setBinaryType()", .{});
+
+        if (value.isEmptyOrUndefinedOrNull() or !value.isString()) {
+            globalThis.throw("binaryType must be either \"uint8array\" or \"arraybuffer\"", .{});
+            return false;
+        }
+
+        switch (BinaryType.getWithEql(
+            value.getZigString(globalThis),
+            ZigString.eqlComptime,
+        ) orelse // random value
+            .Uint8ClampedArray) {
+            .Uint8Array => {
+                this.binary_type = .Uint8Array;
+
+                return true;
+            },
+            .ArrayBuffer => {
+                this.binary_type = .ArrayBuffer;
+                return true;
+            },
+            else => {
+                globalThis.throw("binaryType must be either \"uint8array\" or \"arraybuffer\"", .{});
+                return false;
+            },
+        }
+    }
+
+    pub fn getBufferedAmount(
+        this: *ServerWebSocket,
+        _: *JSC.JSGlobalObject,
+        _: *JSC.CallFrame,
+    ) callconv(.C) JSValue {
+        log("getBufferedAmount()", .{});
+
+        if (this.closed) {
+            return JSValue.jsNumber(0);
+        }
+
+        return JSValue.jsNumber(this.websocket.getBufferedAmount());
+    }
+    pub fn subscribe(
+        this: *ServerWebSocket,
+        globalThis: *JSC.JSGlobalObject,
+        callframe: *JSC.CallFrame,
+    ) callconv(.C) JSValue {
+        const args = callframe.arguments(1);
+        if (args.len < 1) {
+            globalThis.throw("subscribe requires at least 1 argument", .{});
+            return .zero;
+        }
+
+        if (this.closed) {
+            return JSValue.jsBoolean(true);
+        }
+
+        var topic = args.ptr[0].toSlice(globalThis, bun.default_allocator);
+        defer topic.deinit();
+
+        if (topic.len == 0) {
+            globalThis.throw("subscribe requires a non-empty topic name", .{});
+            return .zero;
+        }
+
+        return JSValue.jsBoolean(this.websocket.subscribe(topic.slice()));
+    }
+    pub fn unsubscribe(
+        this: *ServerWebSocket,
+        globalThis: *JSC.JSGlobalObject,
+        callframe: *JSC.CallFrame,
+    ) callconv(.C) JSValue {
+        const args = callframe.arguments(1);
+        if (args.len < 1) {
+            globalThis.throw("unsubscribe requires at least 1 argument", .{});
+            return .zero;
+        }
+
+        if (this.closed) {
+            return JSValue.jsBoolean(true);
+        }
+
+        var topic = args.ptr[0].toSlice(globalThis, bun.default_allocator);
+        defer topic.deinit();
+
+        if (topic.len == 0) {
+            globalThis.throw("unsubscribe requires a non-empty topic name", .{});
+            return .zero;
+        }
+
+        return JSValue.jsBoolean(this.websocket.unsubscribe(topic.slice()));
+    }
+    pub fn isSubscribed(
+        this: *ServerWebSocket,
+        globalThis: *JSC.JSGlobalObject,
+        callframe: *JSC.CallFrame,
+    ) callconv(.C) JSValue {
+        const args = callframe.arguments(1);
+        if (args.len < 1) {
+            globalThis.throw("isSubscribed requires at least 1 argument", .{});
+            return .zero;
+        }
+
+        if (this.closed) {
+            return JSValue.jsBoolean(false);
+        }
+
+        var topic = args.ptr[0].toSlice(globalThis, bun.default_allocator);
+        defer topic.deinit();
+
+        if (topic.len == 0) {
+            globalThis.throw("isSubscribed requires a non-empty topic name", .{});
+            return .zero;
+        }
+
+        return JSValue.jsBoolean(this.websocket.isSubscribed(topic.slice()));
+    }
+
+    // pub fn getTopics(
+    //     this: *ServerWebSocket,
+    //     globalThis: *JSC.JSGlobalObject,
+    // ) callconv(.C) JSValue {
+    //     if (this.closed) {
+    //         return JSValue.createStringArray(globalThis, bun.default_allocator, null, 0, false);
+    //     }
+
+    //      this
+    // }
+
+    pub fn getRemoteAddress(
+        this: *ServerWebSocket,
+        globalThis: *JSC.JSGlobalObject,
+    ) callconv(.C) JSValue {
+        if (this.closed) {
+            return JSValue.jsUndefined();
+        }
+
+        var buf: [512]u8 = undefined;
+        const address = this.websocket.getRemoteAddress(&buf);
+        if (address.len == 0) {
+            return JSValue.jsUndefined();
+        }
+
+        return ZigString.init(address).toValueGC(globalThis);
+    }
+};
+
 pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
     return struct {
         pub const ssl_enabled = ssl_enabled_;
@@ -2102,6 +3594,9 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
                 .reload = .{
                     .rfn = onReload,
                 },
+                .upgrade = .{
+                    .rfn = JSC.wrapSync(ThisServer, "onUpgrade"),
+                },
             },
             .{
                 .port = .{
@@ -2119,8 +3614,156 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
                 .pendingRequests = .{
                     .get = JSC.getterWrap(ThisServer, "getPendingRequests"),
                 },
+                .pendingWebSockets = .{
+                    .get = JSC.getterWrap(ThisServer, "getPendingWebSockets"),
+                },
             },
         );
+
+        pub fn onUpgrade(
+            this: *ThisServer,
+            globalThis: *JSC.JSGlobalObject,
+            object: JSC.JSValue,
+            optional: ?JSValue,
+            exception: js.ExceptionRef,
+        ) JSValue {
+            if (this.config.websocket == null) {
+                JSC.throwInvalidArguments("To enable websocket support, set the \"websocket\" object in Bun.serve({})", .{}, globalThis, exception);
+                return JSValue.jsUndefined();
+            }
+            var request = object.as(Request) orelse {
+                JSC.throwInvalidArguments("upgrade requires a Request object", .{}, globalThis, exception);
+                return JSValue.jsUndefined();
+            };
+
+            if (request.upgrader == null) {
+                return JSC.jsBoolean(false);
+            }
+
+            var upgrader = bun.cast(*RequestContext, request.upgrader.?);
+            if (upgrader.aborted) {
+                return JSC.jsBoolean(false);
+            }
+
+            if (upgrader.upgrade_context == null or @ptrToInt(upgrader.upgrade_context) == std.math.maxInt(usize)) {
+                return JSC.jsBoolean(false);
+            }
+            var ctx = upgrader.upgrade_context.?;
+
+            var sec_websocket_key_str = ZigString.Empty;
+
+            if (request.headers) |head| {
+                sec_websocket_key_str = head.fastGet(.SecWebSocketKey) orelse ZigString.Empty;
+            }
+
+            if (sec_websocket_key_str.len == 0) {
+                sec_websocket_key_str = ZigString.init(upgrader.req.header("sec-websocket-key") orelse "");
+            }
+
+            if (sec_websocket_key_str.len == 0) {
+                return JSC.jsBoolean(false);
+            }
+
+            var sec_websocket_protocol = ZigString.init(upgrader.req.header("sec-websocket-protocol") orelse "");
+            var sec_websocket_extensions = ZigString.init(upgrader.req.header("sec-websocket-extensions") orelse "");
+
+            if (sec_websocket_protocol.len > 0) {
+                sec_websocket_protocol.markUTF8();
+            }
+            if (sec_websocket_extensions.len > 0) {
+                sec_websocket_extensions.markUTF8();
+            }
+
+            var data_value = JSC.JSValue.zero;
+
+            // if we converted a HeadersInit to a Headers object, we need to free it
+            var fetch_headers_to_deref: ?*JSC.FetchHeaders = null;
+
+            defer {
+                if (fetch_headers_to_deref) |fh| {
+                    fh.deref();
+                }
+            }
+
+            if (optional) |opts| {
+                getter: {
+                    if (opts.isEmptyOrUndefinedOrNull()) {
+                        break :getter;
+                    }
+
+                    if (!opts.isObject()) {
+                        JSC.throwInvalidArguments("upgrade options must be an object", .{}, globalThis, exception);
+                        return JSValue.jsUndefined();
+                    }
+
+                    if (opts.fastGet(globalThis, .data)) |headers_value| {
+                        data_value = headers_value;
+                    }
+
+                    if (opts.fastGet(globalThis, .headers)) |headers_value| {
+                        if (headers_value.isEmptyOrUndefinedOrNull()) {
+                            break :getter;
+                        }
+
+                        var fetch_headers_to_use: *JSC.FetchHeaders = headers_value.as(JSC.FetchHeaders) orelse brk: {
+                            if (headers_value.isObject()) {
+                                if (JSC.FetchHeaders.createFromJS(globalThis, headers_value)) |fetch_headers| {
+                                    fetch_headers_to_deref = fetch_headers;
+                                    break :brk fetch_headers;
+                                }
+                            }
+                            break :brk null;
+                        } orelse {
+                            JSC.throwInvalidArguments("upgrade options.headers must be a Headers or an object", .{}, globalThis, exception);
+                            return JSValue.jsUndefined();
+                        };
+
+                        if (fetch_headers_to_use.fastGet(.SecWebSocketProtocol)) |protocol| {
+                            sec_websocket_protocol = protocol;
+                        }
+
+                        if (fetch_headers_to_use.fastGet(.SecWebSocketExtensions)) |protocol| {
+                            sec_websocket_extensions = protocol;
+                        }
+
+                        // TODO: should we cork?
+                        // we must write the status first so that 200 OK isn't written
+                        upgrader.resp.writeStatus("101 Switching Protocols");
+                        fetch_headers_to_use.toUWSResponse(comptime ssl_enabled, upgrader.resp);
+                    }
+                }
+            }
+
+            // --- After this point, do not throw an exception
+            // See https://github.com/oven-sh/bun/issues/1339
+
+            // obviously invalid pointer marks it as used
+            upgrader.upgrade_context = @intToPtr(*uws.uws_socket_context_s, std.math.maxInt(usize));
+            request.upgrader = null;
+
+            upgrader.resp.clearAborted();
+            var ws = this.vm.allocator.create(ServerWebSocket) catch return .zero;
+            ws.* = .{
+                .handler = &this.config.websocket.?.handler,
+                .this_value = data_value,
+            };
+
+            var sec_websocket_protocol_str = sec_websocket_protocol.toSlice(bun.default_allocator);
+            defer sec_websocket_protocol_str.deinit();
+            var sec_websocket_extensions_str = sec_websocket_extensions.toSlice(bun.default_allocator);
+            defer sec_websocket_extensions_str.deinit();
+
+            upgrader.resp.upgrade(
+                *ServerWebSocket,
+                ws,
+                sec_websocket_key_str.slice(),
+                sec_websocket_protocol_str.slice(),
+                sec_websocket_extensions_str.slice(),
+                ctx,
+            );
+
+            return JSC.jsBoolean(true);
+        }
 
         pub fn onReload(
             this: *ThisServer,
@@ -2148,6 +3791,23 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
             if (new_config.onError != .zero) {
                 this.config.onError.unprotect();
                 this.config.onError = new_config.onError;
+            }
+
+            if (new_config.websocket) |*ws| {
+                if (ws.handler.onMessage != .zero or ws.handler.onOpen != .zero) {
+                    if (this.config.websocket) |old_ws| {
+                        old_ws.unprotect();
+                    } else {
+                        this.app.ws("/*", this, 0, ServerWebSocket.behavior(
+                            ThisServer,
+                            ssl_enabled,
+                            ws.toBehavior(),
+                        ));
+                    }
+
+                    ws.globalObject = ctx;
+                    this.config.websocket = ws.*;
+                } // we don't remove it
             }
 
             return this.thisObject.asObjectRef();
@@ -2289,6 +3949,10 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
             return JSC.JSValue.jsNumber(@intCast(i32, @truncate(u31, this.pending_requests)));
         }
 
+        pub fn getPendingWebSockets(this: *ThisServer) JSC.JSValue {
+            return JSC.JSValue.jsNumber(@intCast(i32, @truncate(u31, this.activeSocketsCount())));
+        }
+
         pub fn getHostname(this: *ThisServer, globalThis: *JSGlobalObject) JSC.JSValue {
             return ZigString.init(bun.span(this.config.hostname)).toValue(globalThis);
         }
@@ -2317,8 +3981,17 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
             this.deinitIfWeCan();
         }
 
+        pub fn activeSocketsCount(this: *const ThisServer) u32 {
+            const websocket = &(this.config.websocket orelse return 0);
+            return @truncate(u32, websocket.handler.active_connections);
+        }
+
+        pub fn hasActiveWebSockets(this: *const ThisServer) bool {
+            return this.activeSocketsCount() > 0;
+        }
+
         pub fn deinitIfWeCan(this: *ThisServer) void {
-            if (this.pending_requests == 0 and this.listener == null and this.has_js_deinited) {
+            if (this.pending_requests == 0 and this.listener == null and this.has_js_deinited and !this.hasActiveWebSockets()) {
                 this.unref();
                 this.deinit();
             }
@@ -2461,7 +4134,7 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
         }
 
         pub fn onBunInfoRequest(this: *ThisServer, req: *uws.Request, resp: *App.Response) void {
-            JSC.markBinding();
+            JSC.markBinding(@src());
             this.pending_requests += 1;
             defer this.pending_requests -= 1;
             req.setYield(false);
@@ -2488,7 +4161,7 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
         }
 
         pub fn onSrcRequest(this: *ThisServer, req: *uws.Request, resp: *App.Response) void {
-            JSC.markBinding();
+            JSC.markBinding(@src());
             this.pending_requests += 1;
             defer this.pending_requests -= 1;
             req.setYield(false);
@@ -2517,10 +4190,13 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
             }
         }
 
-        pub fn onRequest(this: *ThisServer, req: *uws.Request, resp: *App.Response) void {
-            JSC.markBinding();
+        pub fn onRequest(
+            this: *ThisServer,
+            req: *uws.Request,
+            resp: *App.Response,
+        ) void {
+            JSC.markBinding(@src());
             this.pending_requests += 1;
-            var vm = this.vm;
             req.setYield(false);
             var ctx = this.request_pool_allocator.create(RequestContext) catch @panic("ran out of memory");
             ctx.create(this, req, resp);
@@ -2573,112 +4249,66 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
             }
 
             // We keep the Request object alive for the duration of the request so that we can remove the pointer to the UWS request object.
-            var args = [_]JSC.C.JSValueRef{request_object.toJS(this.globalThis).asObjectRef()};
-            ctx.request_js_object = args[0];
-            const request_value = JSValue.c(args[0]);
+            var args = [_]JSC.JSValue{
+                request_object.toJS(this.globalThis),
+                this.thisObject,
+            };
+            ctx.request_js_object = args[0].asObjectRef();
+            const request_value = args[0];
             request_value.ensureStillAlive();
-            const response_value = JSC.C.JSObjectCallAsFunctionReturnValue(this.globalThis, this.config.onRequest.asObjectRef(), this.thisObject.asObjectRef(), 1, &args);
+            const response_value = this.config.onRequest.callWithThis(this.globalThis, this.thisObject, &args);
+
+            ctx.onResponse(
+                this,
+                req,
+                request_object,
+                request_value,
+                response_value,
+            );
+        }
+
+        pub fn onWebSocketUpgrade(
+            this: *ThisServer,
+            resp: *App.Response,
+            req: *uws.Request,
+            upgrade_ctx: *uws.uws_socket_context_t,
+            _: usize,
+        ) void {
+            JSC.markBinding(@src());
+            this.pending_requests += 1;
+            req.setYield(false);
+            var ctx = this.request_pool_allocator.create(RequestContext) catch @panic("ran out of memory");
+            ctx.create(this, req, resp);
+            var request_object = this.allocator.create(JSC.WebCore.Request) catch unreachable;
+            request_object.* = .{
+                .url = "",
+                .method = ctx.method,
+                .uws_request = req,
+                .base_url_string_for_joining = this.base_url_string_for_joining,
+                .upgrader = ctx,
+                .body = .{
+                    .Empty = .{},
+                },
+            };
+            ctx.upgrade_context = upgrade_ctx;
+
+            // We keep the Request object alive for the duration of the request so that we can remove the pointer to the UWS request object.
+            var args = [_]JSC.JSValue{
+                request_object.toJS(this.globalThis),
+                this.thisObject,
+            };
+            ctx.request_js_object = args[0].asObjectRef();
+            const request_value = args[0];
             request_value.ensureStillAlive();
-            response_value.ensureStillAlive();
+            const response_value = this.config.onRequest.callWithThis(this.globalThis, this.thisObject, &args);
 
-            if (ctx.aborted) {
-                ctx.finalizeForAbort();
-                return;
-            }
-            if (response_value.isEmptyOrUndefinedOrNull() and !ctx.resp.hasResponded()) {
-                ctx.renderMissing();
-                return;
-            }
-
-            if (response_value.isError() or response_value.isAggregateError(this.globalThis) or response_value.isException(this.globalThis.vm())) {
-                ctx.runErrorHandler(response_value);
-
-                return;
-            }
-
-            if (response_value.as(JSC.WebCore.Response)) |response| {
-                ctx.response_jsvalue = response_value;
-                ctx.response_jsvalue.ensureStillAlive();
-                ctx.response_protected = false;
-                switch (response.body.value) {
-                    .Blob => |*blob| {
-                        if (blob.needsToReadFile()) {
-                            response_value.protect();
-                            ctx.response_protected = true;
-                        }
-                    },
-                    .Locked => {
-                        response_value.protect();
-                        ctx.response_protected = true;
-                    },
-                    else => {},
-                }
-                ctx.render(response);
-                return;
-            }
-
-            var wait_for_promise = false;
-
-            if (response_value.asPromise()) |promise| {
-                // If we immediately have the value available, we can skip the extra event loop tick
-                switch (promise.status(vm.global.vm())) {
-                    .Pending => {},
-                    .Fulfilled => {
-                        ctx.handleResolve(promise.result(vm.global.vm()));
-                        return;
-                    },
-                    .Rejected => {
-                        ctx.handleReject(promise.result(vm.global.vm()));
-                        return;
-                    },
-                }
-                wait_for_promise = true;
-                // I don't think this case should happen
-                // But I'm uncertain
-            } else if (response_value.asInternalPromise()) |promise| {
-                switch (promise.status(vm.global.vm())) {
-                    .Pending => {},
-                    .Fulfilled => {
-                        ctx.handleResolve(promise.result(vm.global.vm()));
-                        return;
-                    },
-                    .Rejected => {
-                        ctx.handleReject(promise.result(vm.global.vm()));
-                        return;
-                    },
-                }
-                wait_for_promise = true;
-            }
-
-            if (wait_for_promise) {
-                request_object.uws_request = req;
-
-                request_object.ensureURL() catch {
-                    request_object.url = "";
-                };
-
-                // we have to clone the request headers here since they will soon belong to a different request
-                if (request_object.headers == null) {
-                    request_object.headers = JSC.FetchHeaders.createFromUWS(this.globalThis, req);
-                }
-
-                if (comptime debug_mode) {
-                    ctx.pathname = bun.default_allocator.dupe(u8, request_object.url) catch unreachable;
-                }
-
-                // This object dies after the stack frame is popped
-                // so we have to clear it in here too
-                request_object.uws_request = null;
-
-                ctx.setAbortHandler();
-                ctx.pending_promises_for_abort += 1;
-
-                response_value.then(this.globalThis, ctx, RequestContext.onResolve, RequestContext.onReject);
-                return;
-            }
-
-            // The user returned something that wasn't a promise or a promise with a response
-            if (!ctx.resp.hasResponded()) ctx.renderMissing();
+            ctx.onResponse(
+                this,
+                req,
+                request_object,
+                request_value,
+                response_value,
+            );
         }
 
         pub fn listen(this: *ThisServer) void {
@@ -2701,6 +4331,17 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
                 this.app = App.create(.{});
             }
 
+            if (this.config.websocket) |*websocket| {
+                websocket.globalObject = this.globalThis;
+                websocket.handler.app = this.app;
+                this.app.ws(
+                    "/*",
+                    this,
+                    0,
+                    ServerWebSocket.behavior(ThisServer, ssl_enabled, websocket.toBehavior()),
+                );
+            }
+
             this.app.any("/*", *ThisServer, this, onRequest);
 
             if (comptime debug_mode) {
@@ -2718,6 +4359,7 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
                 this.config.hostname;
 
             this.ref();
+
             this.app.listenWithConfig(*ThisServer, this, onListen, .{
                 .port = this.config.port,
                 .host = host,

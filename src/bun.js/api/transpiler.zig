@@ -862,7 +862,7 @@ pub fn scan(
     arguments: []const js.JSValueRef,
     exception: js.ExceptionRef,
 ) JSC.C.JSObjectRef {
-    JSC.markBinding();
+    JSC.markBinding(@src());
     var args = JSC.Node.ArgumentsSlice.init(ctx.bunVM(), @ptrCast([*]const JSC.JSValue, arguments.ptr)[0..arguments.len]);
     defer args.arena.deinit();
     const code_arg = args.next() orelse {
@@ -954,7 +954,7 @@ pub fn transform(
     arguments: []const js.JSValueRef,
     exception: js.ExceptionRef,
 ) JSC.C.JSObjectRef {
-    JSC.markBinding();
+    JSC.markBinding(@src());
 
     var args = JSC.Node.ArgumentsSlice.init(ctx.bunVM(), @ptrCast([*]const JSC.JSValue, arguments.ptr)[0..arguments.len]);
     defer args.arena.deinit();

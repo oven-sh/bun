@@ -13,7 +13,7 @@ import _auth from "http://localhost:8080/_auth.js";
 import * as _loginReally from "http://localhost:8080/_login.js";
 import * as _loginReally2 from "http://localhost:8080/_login.js";
 import * as _authReally from "http://localhost:8080/_auth.js";
-var hmr = new FastHMR(2970650542, "cjs-transform-shouldnt-have-static-imports-in-cjs-function.js", FastRefresh), exports = hmr.exports;
+var hmr = new FastHMR(1284442761, "cjs-transform-shouldnt-have-static-imports-in-cjs-function.js", FastRefresh), exports = hmr.exports;
 (hmr._load = function() {
   function test() {
     return testDone(import.meta.url);

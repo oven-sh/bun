@@ -53,6 +53,12 @@ void GlobalObject::initGeneratedLazyClasses() {
                  init.setStructure(WebCore::JSSHA512_256::createStructure(init.vm, init.global, init.prototype));
                  init.setConstructor(WebCore::JSSHA512_256Constructor::create(init.vm, init.global, WebCore::JSSHA512_256Constructor::createStructure(init.vm, init.global, init.global->functionPrototype()), jsCast<WebCore::JSSHA512_256Prototype*>(init.prototype)));
               });
+    m_JSServerWebSocket.initLater(
+              [](LazyClassStructure::Initializer& init) {
+                 init.setPrototype(WebCore::JSServerWebSocket::createPrototype(init.vm, reinterpret_cast<Zig::GlobalObject*>(init.global)));
+                 init.setStructure(WebCore::JSServerWebSocket::createStructure(init.vm, init.global, init.prototype));
+                 init.setConstructor(WebCore::JSServerWebSocketConstructor::create(init.vm, init.global, WebCore::JSServerWebSocketConstructor::createStructure(init.vm, init.global, init.global->functionPrototype()), jsCast<WebCore::JSServerWebSocketPrototype*>(init.prototype)));
+              });
     m_JSTextDecoder.initLater(
               [](LazyClassStructure::Initializer& init) {
                  init.setPrototype(WebCore::JSTextDecoder::createPrototype(init.vm, reinterpret_cast<Zig::GlobalObject*>(init.global)));
@@ -90,6 +96,7 @@ void GlobalObject::visitGeneratedLazyClasses(GlobalObject *thisObject, Visitor& 
       thisObject->m_JSSHA384.visit(visitor);  visitor.append(thisObject->m_JSSHA384SetterValue);
       thisObject->m_JSSHA256.visit(visitor);  visitor.append(thisObject->m_JSSHA256SetterValue);
       thisObject->m_JSSHA512_256.visit(visitor);  visitor.append(thisObject->m_JSSHA512_256SetterValue);
+      thisObject->m_JSServerWebSocket.visit(visitor);  visitor.append(thisObject->m_JSServerWebSocketSetterValue);
       thisObject->m_JSTextDecoder.visit(visitor);  visitor.append(thisObject->m_JSTextDecoderSetterValue);
       thisObject->m_JSRequest.visit(visitor);  visitor.append(thisObject->m_JSRequestSetterValue);
       thisObject->m_JSResponse.visit(visitor);  visitor.append(thisObject->m_JSResponseSetterValue);

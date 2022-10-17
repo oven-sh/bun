@@ -5,7 +5,7 @@ Bun.activate(false);
 import {
 __HMRModule as HMR
 } from "http://localhost:8080/bun:wrap";
-var hmr = new HMR(3679071858, "type-only-imports.ts"), exports = hmr.exports;
+var hmr = new HMR(4067108788, "type-only-imports.ts"), exports = hmr.exports;
 (hmr._load = function() {
   var baconator = true;
   var SilentSymbolCollisionsAreOkayInTypeScript = true;

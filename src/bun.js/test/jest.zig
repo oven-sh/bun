@@ -762,7 +762,7 @@ pub const TestScope = struct {
             js.JSValueUnprotect(vm.global, callback);
             this.callback = null;
         }
-        JSC.markBinding();
+        JSC.markBinding(@src());
         const initial_value = js.JSObjectCallAsFunctionReturnValue(vm.global, callback, null, 0, null);
 
         if (initial_value.isException(vm.global.vm()) or initial_value.isError() or initial_value.isAggregateError(vm.global)) {
@@ -1007,7 +1007,7 @@ pub const DescribeScope = struct {
         active = this;
 
         {
-            JSC.markBinding();
+            JSC.markBinding(@src());
             var result = js.JSObjectCallAsFunctionReturnValue(ctx, callback, thisObject, 0, null);
 
             if (result.asPromise() != null or result.asInternalPromise() != null) {

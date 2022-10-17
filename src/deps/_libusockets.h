@@ -19,7 +19,7 @@ typedef struct StringPointer {
 extern "C" {
 #endif
 
-typedef enum {
+enum uws_compress_options_t : int32_t {
   /* These are not actual compression options */
   _COMPRESSOR_MASK = 0x00FF,
   _DECOMPRESSOR_MASK = 0x0F00,
@@ -49,18 +49,18 @@ typedef enum {
   DEDICATED_COMPRESSOR_256KB = 15 << 4 | 8,
   /* Same as 256kb */
   DEDICATED_COMPRESSOR = 15 << 4 | 8
-} uws_compress_options_t;
+};
 
-typedef enum {
+enum uws_opcode_t : int32_t {
   CONTINUATION = 0,
   TEXT = 1,
   BINARY = 2,
   CLOSE = 8,
   PING = 9,
   PONG = 10
-} uws_opcode_t;
+};
 
-typedef enum { BACKPRESSURE, SUCCESS, DROPPED } uws_sendstatus_t;
+enum uws_sendstatus_t : uint32_t { BACKPRESSURE, SUCCESS, DROPPED };
 
 typedef struct {
 
@@ -90,9 +90,10 @@ typedef void (*uws_websocket_ping_pong_handler)(uws_websocket_t *ws,
                                                 size_t length);
 typedef void (*uws_websocket_close_handler)(uws_websocket_t *ws, int code,
                                             const char *message, size_t length);
-typedef void (*uws_websocket_upgrade_handler)(uws_res_t *response,
+typedef void (*uws_websocket_upgrade_handler)(void *, uws_res_t *response,
                                               uws_req_t *request,
-                                              uws_socket_context_t *context);
+                                              uws_socket_context_t *context,
+                                              size_t id);
 
 typedef struct {
   uws_compress_options_t compression;
@@ -177,8 +178,9 @@ void uws_filter(int ssl, uws_app_t *app, uws_filter_handler handler,
                 void *user_data);
 
 // WebSocket
-void uws_ws(int ssl, uws_app_t *app, const char *pattern,
-            uws_socket_behavior_t behavior);
+void uws_ws(int ssl, uws_app_t *app, void *upgradeCtx, const char *pattern,
+            size_t pattern_length, size_t id,
+            const uws_socket_behavior_t *behavior);
 void *uws_ws_get_user_data(int ssl, uws_websocket_t *ws);
 void uws_ws_close(int ssl, uws_websocket_t *ws);
 uws_sendstatus_t uws_ws_send(int ssl, uws_websocket_t *ws, const char *message,

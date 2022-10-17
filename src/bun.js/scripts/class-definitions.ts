@@ -8,7 +8,6 @@ export type Field =
       DOMJIT?: {
         return: string;
         args?: [string, string] | [string, string, string] | [string];
-        symbol: string;
       };
     };
 

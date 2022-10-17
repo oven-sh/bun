@@ -2412,7 +2412,7 @@ pub const ArrayBuffer = extern struct {
     }
 
     pub fn create(globalThis: *JSC.JSGlobalObject, bytes: []const u8, comptime kind: JSC.JSValue.JSType) JSValue {
-        JSC.markBinding();
+        JSC.markBinding(@src());
         return switch (comptime kind) {
             .Uint8Array => Bun__createUint8ArrayForCopy(globalThis, bytes.ptr, bytes.len),
             .ArrayBuffer => Bun__createArrayBufferForCopy(globalThis, bytes.ptr, bytes.len),
@@ -3547,6 +3547,10 @@ pub fn wrapWithHasContainer(
 
             iter.deinit();
 
+            if (result == .zero) {
+                return null;
+            }
+
             return result.asObjectRef();
         }
     }.callback;
@@ -3979,7 +3983,7 @@ pub const PollRef = struct {
     }
 };
 
-pub const Strong = struct {
+pub const Strong = extern struct {
     ref: ?*JSC.napi.Ref = null,
 
     pub fn init() Strong {

@@ -11,14 +11,14 @@ __require as require
 import {
 __FastRefreshModule as FastHMR
 } from "http://localhost:8080/bun:wrap";
-import * as $1407d117 from "http://localhost:8080/node_modules/react/jsx-dev-runtime.js";
-var JSX = require($1407d117);
-import * as $45b81229 from "http://localhost:8080/node_modules/react/index.js";
-var JSXClassic = require($45b81229);
+import * as $a77976b9 from "http://localhost:8080/node_modules/react/jsx-dev-runtime.js";
+var JSX = require($a77976b9);
+import * as $a66742df from "http://localhost:8080/node_modules/react/index.js";
+var JSXClassic = require($a66742df);
 var jsx = require(JSX).jsxDEV, JSXFrag = require(JSXClassic).Fragment;
-var { default: React} = require($45b81229);
-var { default: React2} = require($45b81229);
-var hmr = new FastHMR(2063938930, "multiple-imports.js", FastRefresh), exports = hmr.exports;
+var { default: React} = require($a66742df);
+var { default: React2} = require($a66742df);
+var hmr = new FastHMR(2469023238, "multiple-imports.js", FastRefresh), exports = hmr.exports;
 (hmr._load = function() {
   const bacon = React;
   const bacon2 = jsx(JSXFrag, {

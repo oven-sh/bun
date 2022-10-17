@@ -76,8 +76,8 @@ jobs:
         with:
           context: .
           push: false
-          cache-from: type=registry,ref=ghcr.io/oven-sh/bun-obj:buildcache-bust-3--${{matrix.cpu}}-${{matrix.build_arch}}
-          cache-to: type=registry,ref=ghcr.io/oven-sh/bun-obj:buildcache-bust-3--${{matrix.cpu}}-${{matrix.build_arch}},mode=max
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
           build-args: |
             ARCH=${{matrix.arch}}
             BUILDARCH=${{matrix.build_arch}}

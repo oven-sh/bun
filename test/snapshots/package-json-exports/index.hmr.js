@@ -1,5 +1,5 @@
 import {
-__require as require
+__require
 } from "http://localhost:8080/bun:wrap";
 import {
 __HMRClient as Bun
@@ -11,15 +11,15 @@ __FastRefreshModule as FastHMR
 import {
 __FastRefreshRuntime as FastRefresh
 } from "http://localhost:8080/bun:wrap";
-import * as $147f6594 from "http://localhost:8080/package-json-exports/node_modules/inexact/browser/index.js";
-var InexactRoot = require($147f6594);
-import * as $f9f33cd5 from "http://localhost:8080/package-json-exports/node_modules/inexact/browser/dir/file.js";
-var InexactFile = require($f9f33cd5);
-import * as $efd1f056 from "http://localhost:8080/package-json-exports/node_modules/inexact/browser/foo.js";
-var ExactFile = require($efd1f056);
-import * as $3e697ad7 from "http://localhost:8080/package-json-exports/node_modules/js-only-exports/browser/js-file.js";
-var JSFileExtensionOnly = require($3e697ad7);
-var hmr = new FastHMR(2713515135, "package-json-exports/index.js", FastRefresh), exports = hmr.exports;
+import * as $a4de9925 from "http://localhost:8080/package-json-exports/node_modules/inexact/browser/index.js";
+var InexactRoot = __require($a4de9925);
+import * as $725c641 from "http://localhost:8080/package-json-exports/node_modules/inexact/browser/dir/file.js";
+var InexactFile = __require($725c641);
+import * as $fbe61cb7 from "http://localhost:8080/package-json-exports/node_modules/inexact/browser/foo.js";
+var ExactFile = __require($fbe61cb7);
+import * as $6a256e60 from "http://localhost:8080/package-json-exports/node_modules/js-only-exports/browser/js-file.js";
+var JSFileExtensionOnly = __require($6a256e60);
+var hmr = new FastHMR(879772149, "package-json-exports/index.js", FastRefresh), exports = hmr.exports;
 (hmr._load = function() {
   async function test() {
     console.assert(InexactRoot.target === "browser");

@@ -1456,7 +1456,7 @@ Create from a GitHub repo:
 bun create ahfarmer/calculator ./app
 ```
 
-To see a list of examples, run:
+To see a list of templates, run:
 
 ```bash
 bun create
@@ -1478,7 +1478,7 @@ Note: you don’t need `bun create` to use bun. You don’t need any configurati
 
 If you have your own boilerplate you prefer using, copy it into `$HOME/.bun-create/my-boilerplate-name`.
 
-Before checking bun’s examples folder, `bun create` checks for a local folder matching the input in:
+Before checking bun’s templates on npmjs, `bun create` checks for a local folder matching the input in:
 
 - `$BUN_CREATE_DIR/`
 - `$HOME/.bun-create/`
@@ -1528,7 +1528,7 @@ By default, `bun create` will cancel if there are existing files it would overwr
 
 #### Publishing a new template
 
-Clone this repository and a new folder in `examples/` with your new template. The `package.json` must have a `name` that starts with `@bun-examples/`. Do not worry about publishing it, that will happen automatically after the PR is merged.
+Clone [https://github.com/bun-community/create-templates/](https://github.com/bun-community/create-templates/) and create a new folder in root directory with your new template. The `package.json` must have a `name` that starts with `@bun-examples/`. Do not worry about publishing it, that will happen automatically after the PR is merged.
 
 Make sure to include a `.gitignore` that includes `node_modules` so that `node_modules` aren’t checked in to git when people download the template.
 

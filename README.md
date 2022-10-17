@@ -2265,9 +2265,17 @@ For server websocket connections, Bun exposes a `ServerWebSocket` class which is
 `ServerWebSocket` supports passing headers. This is useful for setting cookies or other headers that you want to send to the client before the connection is upgraded.
 
 ```ts
-server.upgrade(req, {
-  headers: {
-    "Set-Cookie": "name=" + new URL(req.url).searchParams.get("name"),
+Bun.serve({
+  fetch(req, server) {
+    if (
+      server.upgrade(req, { headers: { "Set-Cookie": "name=HiThereMyNameIs" } })
+    )
+      return;
+  },
+  websocket: {
+    message(ws, message) {
+      ws.send(message);
+    },
   },
 });
 ```

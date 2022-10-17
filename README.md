@@ -556,7 +556,6 @@ You can see [Bun's Roadmap](https://github.com/oven-sh/bun/issues/159), but here
 | ------------------------------------------------------------------------------------- | -------------- |
 | Web Streams with Fetch API                                                            | bun.js         |
 | Web Streams with HTMLRewriter                                                         | bun.js         |
-| WebSocket Server                                                                      | bun.js         |
 | Package hoisting that matches npm behavior                                            | bun install    |
 | Source Maps (unbundled is supported)                                                  | JS Bundler     |
 | Source Maps                                                                           | CSS            |

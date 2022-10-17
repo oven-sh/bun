@@ -2256,7 +2256,7 @@ Bun.serve<User>({
 });
 ```
 
-##### `ServerWebSocket` vs `WebSocket`
+#### ServerWebSocket vs WebSocket
 
 For server websocket connections, Bun exposes a `ServerWebSocket` class which is similar to the web-standard `WebSocket` class used for websocket client connections, but with a few differences:
 
@@ -2268,31 +2268,56 @@ For server websocket connections, Bun exposes a `ServerWebSocket` class which is
 
 This lets you have **better control over backpressure in your server**.
 
-`WebSocket.send` returns `undefined` and does not indicate backpressure, which can cause issues if you are sending a lot of data.
+You can also enable/disable compression per message with the `compress` option:
 
-The reason for using `number` to indicate these states is so you can do error handling by checking for `=== 0` or `=== -1` instead of having to do `typeof` checks.
+```ts
+// this will compress
+ws.send("Hello".repeat(1000), true);
+```
+
+`WebSocket.send` returns `undefined` and does not indicate backpressure, which can cause issues if you are sending a lot of data.
 
 `ServerWebSocket` also supports a `drain` callback that runs when the connection is ready to receive more data.
 
-###### Publish/subscribe
+##### Publish/subscribe
 
-- `ServerWebSocket` has a `publish()` method which lets you publish a message to a topic. This is similar to MQTT's publish/subscribe model. It efficiently broadcasts a message to all websocket connections that are subscribed to a topic.
+`ServerWebSocket` has `publish()`, `subscribe()`, and `unsubscribe` methods which let you broadcast the same message to all clients connected to a topic in one line of code.
 
-- `ServerWebSocket` has a `subscribe()` method which lets you subscribe to a topic. This is similar to MQTT's publish/subscribe model. It efficiently broadcasts a message to all websocket connections that are subscribed to a topic.
+```ts
+ws.publish("stock-prices/GOOG", `${price}`);
+```
 
-- `ServerWebSocket` has a `unsubscribe()` method which lets you unsubscribe from a topic. This is similar to MQTT's publish/subscribe model. It efficiently broadcasts a message to all websocket connections that are subscribed to a topic.
+This is significantly more performant than sending the same message to each client individually.
 
-###### Callbacks are per server, instead of per socket
+##### Callbacks are per server instead of per socket
 
-Unlike the client-side `WebSocket` class which extends `EventTarget` (onmessage, onopen, onclose), `ServerWebSocket` expects you to pass a `WebSocketHandler` object to the `Bun.serve()` method which has methods for `open`, `message`, `close`, `drain`, and `error`.
+`ServerWebSocket` expects you to pass a `WebSocketHandler` object to the `Bun.serve()` method which has methods for `open`, `message`, `close`, `drain`, and `error`. This is different than the client-side `WebSocket` class which extends `EventTarget` (onmessage, onopen, onclose),
 
 Clients tend to not have many socket connections open so an event-based API makes sense.
 
 But servers tend to have **many** socket connections open, which means:
 
-- Adding/removing event listeners for each connection can be expensive
+- Time spent adding/removing event listeners for each connection adds up
 - Extra memory spent on storing references to callbacks function for each connection
 - Usually, people create new functions for each connection, which also means more memory
+
+So, instead of using an event-based API, `ServerWebSocket` expects you to pass a single object with methods for each event in `Bun.serve()` and it is reused for each connection.
+
+This leads to less memory usage and less time spent adding/removing event listeners.
+
+##### Headers
+
+`ServerWebSocket` supports passing headers. This is useful for setting cookies or other headers that you want to send to the client before the connection is upgraded.
+
+```ts
+server.upgrade(req, {
+  headers: {
+    "Set-Cookie": "name=" + new URL(req.url).searchParams.get("name"),
+  },
+});
+```
+
+The web-standard `WebSocket` API does not let you specify headers.
 
 ---
 

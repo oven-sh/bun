@@ -2113,6 +2113,12 @@ Bun.serve({
 
 `Bun.serve()` has builtin support for server-side websockets (as of Bun v0.2.1).
 
+Features:
+
+- Compression (pass `perMessageDeflate: true`)
+- HTTPS
+- Pubsub / broadcast support with MQTT-like topics
+
 Here is an example that echoes back any message it receives:
 
 ```ts
@@ -2124,7 +2130,12 @@ Bun.serve({
   },
 
   fetch(req, server) {
-    if (server.upgrade(req)) return;
+    // Upgrade to a ServerWebSocket if we can
+    // This automatically checks for the `Sec-WebSocket-Key` header
+    // meaning you don't have to check headers, you can just call `upgrade()`
+    if (server.upgrade(req))
+      // When upgrading, we return undefined since we don't want to send a Response
+      return;
 
     return new Response("Regular HTTP response");
   },
@@ -2143,8 +2154,13 @@ Bun.serve<User>({
     if (req.url === "/chat") {
       if (
         server.upgrade(req, {
+          // This User object becomes ws.data
           data: {
             name: new URL(req.url).searchParams.get("name") || "Friend",
+          },
+          // Pass along some headers to the client
+          headers: {
+            "Set-Cookie": "name=" + new URL(req.url).searchParams.get("name"),
           },
         })
       )
@@ -2157,17 +2173,26 @@ Bun.serve<User>({
   websocket: {
     open(ws) {
       console.log("WebSocket opened");
+
+      // subscribe to "the-group-chat" topic
+      ws.subscribe("the-group-chat");
     },
 
     message(ws, message) {
-      console.log(`[${ws.data.name}]:`, message);
+      // In a group chat, we want to broadcast to everyone
+      // so we use publish()
+      ws.publish("the-group-chat", `${ws.data.name}: ${message}`);
 
-      // you can send a string or an ArrayBufferView
-      ws.send(message);
+      // if we wanted to publish to everyone except the sender, we could first unsubscribe from the topic
+      // ws.unsubscribe("the-group-chat");
+      // then publish
+      // ws.publish("the-group-chat", `${ws.data.name}: ${message}`);
+      // then re-subscribe
+      // ws.subscribe("the-group-chat");
     },
 
     close(ws, code, reason) {
-      console.log("WebSocket closed");
+      ws.publish("the-group-chat", `${ws.data.name} left the chat`);
     },
 
     drain(ws) {
@@ -2231,6 +2256,44 @@ Bun.serve<User>({
   // certFile: "./cert.pem",
 });
 ```
+
+##### `ServerWebSocket` vs `WebSocket`
+
+For server websocket connections, Bun exposes a `ServerWebSocket` class which is similar to the web-standard `WebSocket` class used for websocket client connections, but with a few differences:
+
+`ServerWebSocket.send` returns a number that indicates:
+
+- `0` if the message was dropped due to a connection issue or otherwise
+- `-1` if the message was enqueued but there is backpressure
+- any other number indicates the number of bytes sent
+
+This lets you have **better control over backpressure in your server**.
+
+`WebSocket.send` returns `undefined` and does not indicate backpressure, which can cause issues if you are sending a lot of data.
+
+The reason for using `number` to indicate these states is so you can do error handling by checking for `=== 0` or `=== -1` instead of having to do `typeof` checks.
+
+`ServerWebSocket` also supports a `drain` callback that runs when the connection is ready to receive more data.
+
+###### Publish/subscribe
+
+- `ServerWebSocket` has a `publish()` method which lets you publish a message to a topic. This is similar to MQTT's publish/subscribe model. It efficiently broadcasts a message to all websocket connections that are subscribed to a topic.
+
+- `ServerWebSocket` has a `subscribe()` method which lets you subscribe to a topic. This is similar to MQTT's publish/subscribe model. It efficiently broadcasts a message to all websocket connections that are subscribed to a topic.
+
+- `ServerWebSocket` has a `unsubscribe()` method which lets you unsubscribe from a topic. This is similar to MQTT's publish/subscribe model. It efficiently broadcasts a message to all websocket connections that are subscribed to a topic.
+
+###### Callbacks are per server, instead of per socket
+
+Unlike the client-side `WebSocket` class which extends `EventTarget` (onmessage, onopen, onclose), `ServerWebSocket` expects you to pass a `WebSocketHandler` object to the `Bun.serve()` method which has methods for `open`, `message`, `close`, `drain`, and `error`.
+
+Clients tend to not have many socket connections open so an event-based API makes sense.
+
+But servers tend to have **many** socket connections open, which means:
+
+- Adding/removing event listeners for each connection can be expensive
+- Extra memory spent on storing references to callbacks function for each connection
+- Usually, people create new functions for each connection, which also means more memory
 
 ---
 

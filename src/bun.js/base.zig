@@ -3547,6 +3547,10 @@ pub fn wrapWithHasContainer(
 
             iter.deinit();
 
+            if (result == .zero) {
+                return null;
+            }
+
             return result.asObjectRef();
         }
     }.callback;

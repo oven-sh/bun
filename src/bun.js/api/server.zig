@@ -608,7 +608,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
         response_jsvalue: JSC.JSValue = JSC.JSValue.zero,
         response_protected: bool = false,
         response_ptr: ?*JSC.WebCore.Response = null,
-        blob: JSC.WebCore.AnyBlob = JSC.WebCore.AnyBlob{ .InlineBlob = .{} },
+        blob: JSC.WebCore.AnyBlob = JSC.WebCore.AnyBlob{ .Blob = .{} },
         promise: ?*JSC.JSValue = null,
         has_abort_handler: bool = false,
         has_sendfile_ctx: bool = false,
@@ -1129,7 +1129,10 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 return false;
             }
 
-            var bytes = this.blob.slice();
+            // Copy to stack memory to prevent aliasing issues in release builds
+            const blob = this.blob;
+            const bytes = blob.slice();
+
             _ = this.sendWritableBytesForBlob(bytes, write_offset, resp);
             return true;
         }
@@ -1731,7 +1734,10 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                     this.runErrorHandler(err);
                     return;
                 },
-                .InlineBlob, .InternalBlob, .Blob => {
+                // .InlineBlob,
+                .InternalBlob,
+                .Blob,
+                => {
                     this.blob = value.useAsAnyBlob();
                     this.renderWithBlobFromBodyValue();
                     return;
@@ -2061,7 +2067,9 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
         }
 
         pub fn renderBytes(this: *RequestContext) void {
-            const bytes = this.blob.slice();
+            // copy it to stack memory to prevent aliasing issues in release builds
+            const blob = this.blob;
+            const bytes = blob.slice();
 
             if (!this.resp.tryEnd(
                 bytes,
@@ -2128,31 +2136,31 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
 
                 const total = bytes.items.len + chunk.len;
                 getter: {
-                    if (total <= JSC.WebCore.InlineBlob.available_bytes) {
-                        if (total == 0) {
-                            req.body = .{ .Empty = {} };
-                            break :getter;
-                        }
+                    // if (total <= JSC.WebCore.InlineBlob.available_bytes) {
+                    //     if (total == 0) {
+                    //         req.body = .{ .Empty = {} };
+                    //         break :getter;
+                    //     }
 
-                        req.body = .{ .InlineBlob = JSC.WebCore.InlineBlob.concat(bytes.items, chunk) };
+                    //     req.body = .{ .InlineBlob = JSC.WebCore.InlineBlob.concat(bytes.items, chunk) };
+                    //     this.request_body_buf.clearAndFree(this.allocator);
+                    // } else {
+                    bytes.ensureTotalCapacityPrecise(this.allocator, total) catch |err| {
                         this.request_body_buf.clearAndFree(this.allocator);
-                    } else {
-                        bytes.ensureTotalCapacityPrecise(this.allocator, total) catch |err| {
-                            this.request_body_buf.clearAndFree(this.allocator);
-                            req.body.toError(err, this.server.globalThis);
-                            break :getter;
-                        };
+                        req.body.toError(err, this.server.globalThis);
+                        break :getter;
+                    };
 
-                        const prev_len = bytes.items.len;
-                        bytes.items.len = total;
-                        var slice = bytes.items[prev_len..];
-                        @memcpy(slice.ptr, chunk.ptr, chunk.len);
-                        req.body = .{
-                            .InternalBlob = .{
-                                .bytes = bytes.toManaged(this.allocator),
-                            },
-                        };
-                    }
+                    const prev_len = bytes.items.len;
+                    bytes.items.len = total;
+                    var slice = bytes.items[prev_len..];
+                    @memcpy(slice.ptr, chunk.ptr, chunk.len);
+                    req.body = .{
+                        .InternalBlob = .{
+                            .bytes = bytes.toManaged(this.allocator),
+                        },
+                    };
+                    // }
                 }
 
                 if (old == .Locked)

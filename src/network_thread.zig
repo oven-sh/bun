@@ -97,6 +97,7 @@ pub fn onStartIOThread(waker: AsyncIO.Waker) void {
     };
     AsyncIO.global_loaded = true;
     NetworkThread.global.io = &AsyncIO.global;
+    Output.Source.configureNamedThread("Async IO");
     NetworkThread.global.processEvents();
 }
 

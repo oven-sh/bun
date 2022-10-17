@@ -621,7 +621,7 @@ JSC_DEFINE_HOST_FUNCTION(onigurumaRegExpProtoFuncExec, (JSGlobalObject *globalOb
         indicesArray->putDirectIndex(globalObject, i, indices);
     }
 
-    if (thisValue->flagsString().contains('g')) {
+    if (thisValue->flagsString().contains('d')) {
         array->putDirect(vm, vm.propertyNames->indices, indicesArray);
     }
 

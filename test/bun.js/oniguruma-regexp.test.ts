@@ -25,7 +25,8 @@ it("OnigurumaRegExp.prototype.exec()", () => {
 });
 
 test("OnigurumaRegExp flag order", () => {
-    expect(new OnigurumaRegExp('a', 'gd').toString()).toBe(new OnigurumaRegExp('a', 'dg').toString());
+    expect(new OnigurumaRegExp('a', 'gd').toString()).toBe('/a/dg');
+    expect(new OnigurumaRegExp('a', 'ydmg').toString()).toBe('/a/dgmy');
 });
 
 test("OnigurumaRegExp.prototype.source", () => {
@@ -87,6 +88,13 @@ test('OnigurumaRegExp flags', () => {
     for (const RegExpConstructor of [OnigurumaRegExp, RegExp]) {
         expect(new RegExpConstructor('a.b').test('a\nb')).toBe(false);
         expect(new RegExpConstructor('a.b', 's').test('a\nb')).toBe(true);
+    }
+
+    // indices option
+    for (const RegExpConstructor of [OnigurumaRegExp, RegExp]) {
+        expect(new RegExpConstructor('a', 'g').exec('a').indices).toBe(undefined);
+        expect(new RegExpConstructor('a', 'gd').exec('a').index).toBe(0);
+        expect(new RegExpConstructor('a', 'dg').exec('a').index).toBe(0);
     }
 });
 

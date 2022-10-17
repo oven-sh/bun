@@ -340,11 +340,15 @@ pub fn print(comptime fmt: string, args: anytype) void {
 }
 
 /// Debug-only logs which should not appear in release mode
+/// To enable a specific log at runtime, set the environment variable
+///   BUN_DEBUG_${TAG} to 1
+/// For example, to enable the "foo" log, set the environment variable
+///   BUN_DEBUG_foo=1
+/// To enable all logs, set the environment variable
+///   BUN_DEBUG_ALL=1
 const _log_fn = fn (comptime fmt: string, args: anytype) callconv(.Inline) void;
 pub fn scoped(comptime tag: @Type(.EnumLiteral), comptime disabled: bool) _log_fn {
-    const disable = comptime !Environment.isDebug or disabled;
-
-    if (comptime disable) {
+    if (comptime !Environment.isDebug) {
         return struct {
             pub inline fn log(comptime _: string, _: anytype) void {}
         }.log;
@@ -355,8 +359,29 @@ pub fn scoped(comptime tag: @Type(.EnumLiteral), comptime disabled: bool) _log_f
         var buffered_writer: BufferedWriter = undefined;
         var out: BufferedWriter.Writer = undefined;
         var out_set = false;
+        var really_disable = disabled;
+        var evaluated_disable = false;
+
         /// Debug-only logs which should not appear in release mode
+        /// To enable a specific log at runtime, set the environment variable
+        ///   BUN_DEBUG_${TAG} to 1
+        /// For example, to enable the "foo" log, set the environment variable
+        ///   BUN_DEBUG_foo=1
+        /// To enable all logs, set the environment variable
+        ///   BUN_DEBUG_ALL=1
         pub inline fn log(comptime fmt: string, args: anytype) void {
+            if (!evaluated_disable) {
+                evaluated_disable = true;
+                if (std.os.getenv("BUN_DEBUG_ALL") != null or
+                    std.os.getenv("BUN_DEBUG_" ++ @tagName(tag)) != null)
+                {
+                    really_disable = false;
+                }
+            }
+
+            if (really_disable)
+                return;
+
             if (!out_set) {
                 buffered_writer = .{
                     .unbuffered_writer = writer(),

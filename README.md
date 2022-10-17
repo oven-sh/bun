@@ -2123,31 +2123,9 @@ Bun.serve({
     },
   },
 
-  fetch(req) {
-    return new Response("Regular HTTP response");
-  },
-});
-```
+  fetch(req, server) {
+    if (server.upgrade(req)) return;
 
-You can also limit websocket connections to specific paths:
-
-```ts
-Bun.serve({
-  websockets: {
-    "/chat": {
-      message(ws, message) {
-        ws.send(message);
-      },
-    },
-
-    "/analytics": {
-      message(ws, message) {
-        ws.send(message);
-      },
-    },
-  },
-
-  fetch(req) {
     return new Response("Regular HTTP response");
   },
 });
@@ -2156,39 +2134,65 @@ Bun.serve({
 Here is a more complete example:
 
 ```ts
-import type { WebSocketHandler } from "bun";
+type User = {
+  name: string;
+};
 
-Bun.serve({
-  websocket: {
-    upgrade(req: Request) {
-      // Don't allow the connection to become a WebSocket if the protocol is not "chat"
-      if (req.headers.get("sec-websocket-protocol") !== "chat") {
-        // returning null, undefined, or false will reject the upgrade
+Bun.serve<User>({
+  fetch(req, server) {
+    if (req.url === "/chat") {
+      if (
+        server.upgrade(req, {
+          data: {
+            name: new URL(req.url).searchParams.get("name") || "Friend",
+          },
+        })
+      )
         return;
-      }
+    }
 
-      // The object returned from this function
-      // becomes the `data` value on the `ServerWebSocket` object
-      return req;
-    },
+    return new Response("Expected a websocket connection", { status: 400 });
+  },
+
+  websocket: {
     open(ws) {
       console.log("WebSocket opened");
     },
 
     message(ws, message) {
-      console.log(`[${ws.data.url}] WebSocket message received:`, message);
+      console.log(`[${ws.data.name}]:`, message);
 
       // you can send a string or an ArrayBufferView
       ws.send(message);
     },
 
-    close(ws) {
+    close(ws, code, reason) {
       console.log("WebSocket closed");
     },
 
-    // Enable compression for clients that support it
-    compressor: "shared",
-    decompressor: "shared",
+    drain(ws) {
+      console.log("Please send me data. I am ready to receive it.");
+    },
+
+    // enable compression
+    perMessageDeflate: true,
+    /*
+    * perMessageDeflate: {
+       **
+       * Enable compression on the {@link ServerWebSocket}
+       *
+       * @default false
+       *
+       * `true` is equivalent to `"shared"
+       compress?: WebSocketCompressor | false | true;
+       **
+       * Configure decompression
+       *
+       * @default false
+       *
+       * `true` is equivalent to `"shared"
+       decompress?: WebSocketCompressor | false | true;
+    */
 
     /**
      * The maximum size of a message
@@ -2211,12 +2215,7 @@ Bun.serve({
     // closeOnBackpressureLimit?: boolean;
 
     // this makes it so ws.data shows up as a Request object
-  } as WebSocketHandler<Request>,
-
-  fetch(req) {
-    return new Response("Regular HTTP response");
   },
-
   // TLS is also supported with WebSockets
   /**
    * File path to a TLS key

@@ -2978,7 +2978,18 @@ pub const ServerWebSocket = struct {
         return JSValue.jsNumber(
             // if 0, return 0
             // else return number of bytes sent
-            @as(i32, @boolToInt(this.websocket.publishWithOptions(this.handler.app, topic_slice.slice(), slice, .binary, compress))) * @intCast(
+            @as(
+                i32,
+                @boolToInt(
+                    this.websocket.publishWithOptions(
+                        this.handler.app,
+                        topic_slice.slice(),
+                        slice,
+                        .binary,
+                        compress,
+                    ),
+                ),
+            ) * @intCast(
                 i32,
                 @truncate(u31, slice.len),
             ),
@@ -3352,13 +3363,18 @@ pub const ServerWebSocket = struct {
             return JSValue.jsUndefined();
         }
 
+        if (!this.opened) {
+            globalThis.throw("Calling close() inside open() is not supported. Consider changing your upgrade() callback instead", .{});
+            return .zero;
+        }
+        this.closed = true;
+
         const code = if (args.len > 0) args.ptr[0].toInt32() else @as(i32, 1000);
         var message_value = if (args.len > 1) args.ptr[1].toSlice(globalThis, bun.default_allocator) else ZigString.Slice.empty;
         defer message_value.deinit();
         if (code > 0) {
             this.websocket.end(code, message_value.slice());
         } else {
-            this.closed = true;
             this.this_value.unprotect();
             this.websocket.close();
         }

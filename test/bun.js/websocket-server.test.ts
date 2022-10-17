@@ -18,13 +18,22 @@ describe("websocket server", () => {
     var server = serve({
       port: getPort(),
       websocket: {
-        open(ws) {
-          ws.send(ws.data);
+        open(ws) {},
+        message(ws, msg) {
+          ws.send("hello world");
         },
-        message(ws, msg) {},
       },
       fetch(req, server) {
-        if (server.upgrade(req, { data: "hello world" })) {
+        if (
+          server.upgrade(req, {
+            data: "hello world",
+
+            // check that headers works
+            headers: {
+              "x-a": "text/plain",
+            },
+          })
+        ) {
           if (server.upgrade(req)) {
             throw new Error("should not upgrade twice");
           }
@@ -37,7 +46,9 @@ describe("websocket server", () => {
 
     await new Promise((resolve, reject) => {
       const websocket = new WebSocket(`ws://localhost:${server.port}`);
-
+      websocket.onopen = () => {
+        websocket.send("hello world");
+      };
       websocket.onmessage = (e) => {
         try {
           expect(e.data).toBe("hello world");

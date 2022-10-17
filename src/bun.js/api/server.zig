@@ -3307,6 +3307,8 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
                 }
             }
 
+            
+
             if (optional) |opts| {
                 getter: {
                     if (opts.isEmptyOrUndefinedOrNull()) {
@@ -3328,6 +3330,9 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
                                 sec_websocket_extensions = protocol;
                             }
 
+                            // we must write the status first so that 200 OK isn't written
+                            upgrader.resp.writeStatus("101 Switching Protocols");
+
                             fetch_headers.toUWSResponse(comptime ssl_enabled, upgrader.resp);
                             break :getter;
                         } else if (headers_value.isObject()) {
@@ -3339,6 +3344,9 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
                                 if (fetch_headers.fastGet(.SecWebSocketExtensions)) |protocol| {
                                     sec_websocket_extensions = protocol;
                                 }
+
+                                // we must write the status first so that 200 OK isn't written
+                                upgrader.resp.writeStatus("101 Switching Protocols");
 
                                 fetch_headers.toUWSResponse(comptime ssl_enabled, upgrader.resp);
                                 fetch_headers_to_deref = fetch_headers;

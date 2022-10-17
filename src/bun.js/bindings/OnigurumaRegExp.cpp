@@ -460,12 +460,15 @@ JSC_DEFINE_HOST_FUNCTION(onigurumaRegExpProtoFuncCompile, (JSGlobalObject *globa
     );
 
     if (errorCode != ONIG_NORMAL) {
-        char16_t errorBuff[ONIG_MAX_ERROR_MESSAGE_LEN] = { 0 };
-        onig_error_code_to_str((OnigUChar*)errorBuff, errorCode, &errorInfo);
-
+        OnigUChar errorBuff[ONIG_MAX_ERROR_MESSAGE_LEN] = { 0 };
+        int length = onig_error_code_to_str(errorBuff, errorCode, &errorInfo);
         WTF::StringBuilder errorMessage;
         errorMessage.append("Invalid regular expression: "_s);
-        errorMessage.append(reinterpret_cast<const char16_t*>(errorBuff));
+        if (length < 0) {
+            errorMessage.append("An unknown error occurred."_s);
+        } else {
+            errorMessage.appendCharacters(errorBuff, length);
+        }
         throwScope.throwException(globalObject, createSyntaxError(globalObject, errorMessage.toString()));
         return JSValue::encode({});
     }
@@ -754,12 +757,15 @@ static JSC::EncodedJSValue constructOrCall(Zig::GlobalObject *globalObject, JSVa
     );
 
     if (errorCode != ONIG_NORMAL) {
-        char16_t errorBuff[ONIG_MAX_ERROR_MESSAGE_LEN] = { 0 };
-        onig_error_code_to_str((OnigUChar*)errorBuff, errorCode, &errorInfo);
-
+        OnigUChar errorBuff[ONIG_MAX_ERROR_MESSAGE_LEN] = { 0 };
+        int length = onig_error_code_to_str(errorBuff, errorCode, &errorInfo);
         WTF::StringBuilder errorMessage;
         errorMessage.append("Invalid regular expression: "_s);
-        errorMessage.append(reinterpret_cast<const char16_t*>(errorBuff));
+        if (length < 0) {
+            errorMessage.append("An unknown error occurred."_s);
+        } else {
+            errorMessage.appendCharacters(errorBuff, length);
+        }
         throwScope.throwException(globalObject, createSyntaxError(globalObject, errorMessage.toString()));
         return JSValue::encode({});
     }

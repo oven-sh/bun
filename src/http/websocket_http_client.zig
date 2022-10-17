@@ -126,8 +126,9 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
         body_buf: ?*BodyBuf = null,
         body_written: usize = 0,
         websocket_protocol: u64 = 0,
-        event_loop_ref: bool = false,
         hostname: [:0]u8 = "",
+        poll_ref: JSC.PollRef = .{},
+
         pub const name = if (ssl) "WebSocketHTTPSClient" else "WebSocketHTTPClient";
 
         pub const shim = JSC.Shimmer("Bun", name, @This());
@@ -186,11 +187,9 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
             var host_ = host.toSlice(bun.default_allocator);
             defer host_.deinit();
             var vm = global.bunVM();
-            vm.us_loop_reference_count +|= 1;
-            client.event_loop_ref = true;
             const prev_start_server_on_next_tick = vm.eventLoop().start_server_on_next_tick;
             vm.eventLoop().start_server_on_next_tick = true;
-
+            client.poll_ref.ref(vm);
             if (Socket.connect(host_.slice(), port, @ptrCast(*uws.SocketContext, socket_ctx), HTTPClient, client, "tcp")) |out| {
                 if (comptime ssl) {
                     if (!strings.isIPAddress(host_.slice())) {
@@ -201,7 +200,6 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
                 out.tcp.timeout(120);
                 return out;
             }
-            vm.us_loop_reference_count -|= 1;
             vm.eventLoop().start_server_on_next_tick = prev_start_server_on_next_tick;
 
             client.clearData();
@@ -214,10 +212,8 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
             this.input_body_buf.len = 0;
         }
         pub fn clearData(this: *HTTPClient) void {
-            if (this.event_loop_ref) {
-                this.event_loop_ref = false;
-                JSC.VirtualMachine.vm.us_loop_reference_count -|= 1;
-            }
+            this.poll_ref.unref(JSC.VirtualMachine.vm);
+
             this.clearInput();
             if (this.body_buf) |buf| {
                 this.body_buf = null;

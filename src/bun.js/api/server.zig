@@ -2272,6 +2272,9 @@ pub const WebSocketServer = struct {
         onMessage: JSC.JSValue = .zero,
         onClose: JSC.JSValue = .zero,
         onDrain: JSC.JSValue = .zero,
+        onError: JSC.JSValue = .zero,
+
+        app: *anyopaque = undefined,
 
         globalObject: *JSC.JSGlobalObject = undefined,
         active_connections: usize = 0,
@@ -2314,6 +2317,15 @@ pub const WebSocketServer = struct {
                 drain.ensureStillAlive();
             }
 
+            if (object.getTruthy(globalObject, "onError")) |onError| {
+                if (!onError.isCallable(globalObject.vm())) {
+                    globalObject.throwInvalidArguments("websocket expects a function for the onError option", .{});
+                    return null;
+                }
+                handler.onError = onError;
+                onError.ensureStillAlive();
+            }
+
             if (handler.onMessage != .zero or handler.onOpen != .zero)
                 return handler;
 
@@ -2325,6 +2337,7 @@ pub const WebSocketServer = struct {
             this.onMessage.protect();
             this.onClose.protect();
             this.onDrain.protect();
+            this.onError.protect();
         }
 
         pub fn unprotect(this: Handler) void {
@@ -2332,6 +2345,7 @@ pub const WebSocketServer = struct {
             this.onMessage.unprotect();
             this.onClose.unprotect();
             this.onDrain.unprotect();
+            this.onError.unprotect();
         }
     };
 
@@ -2527,6 +2541,7 @@ pub const ServerWebSocket = struct {
     this_value: JSValue = .zero,
     websocket: uws.AnyWebSocket = undefined,
     closed: bool = false,
+    binary_type: JSC.JSValue.JSType = .Uint8Array,
 
     pub usingnamespace JSC.Codegen.JSServerWebSocket;
 
@@ -2561,8 +2576,10 @@ pub const ServerWebSocket = struct {
             .globalObject = globalObject,
             .callback = onOpenHandler,
         };
+        const error_handler = handler.onError;
         ws.cork(&corker, Corker.run);
-        if (corker.result.isAnyError(globalObject)) {
+        const result = corker.result;
+        if (result.isAnyError(globalObject)) {
             log("onOpen exception", .{});
 
             ws.close();
@@ -2570,7 +2587,16 @@ pub const ServerWebSocket = struct {
             handler.active_connections -|= 1;
             this_value.unprotect();
             bun.default_allocator.destroy(this);
-            globalObject.bunVM().runErrorHandler(corker.result, null);
+            if (error_handler.isEmptyOrUndefinedOrNull()) {
+                globalObject.bunVM().runErrorHandler(result, null);
+            } else {
+                const corky = [_]JSValue{corker.result};
+                corker.args = &corky;
+                corker.callback = error_handler;
+                corker.this_value = .zero;
+                corker.result = .zero;
+                corker.run();
+            }
         }
     }
 
@@ -2606,7 +2632,18 @@ pub const ServerWebSocket = struct {
                     str.markUTF8();
                     break :brk str.toValueGC(globalObject);
                 },
-                .binary => JSC.ArrayBuffer.create(globalObject, message, .Uint8Array),
+                .binary => if (this.binary_type == .Uint8Array)
+                    JSC.ArrayBuffer.create(
+                        globalObject,
+                        message,
+                        .Uint8Array,
+                    )
+                else
+                    JSC.ArrayBuffer.create(
+                        globalObject,
+                        message,
+                        .ArrayBuffer,
+                    ),
                 else => unreachable,
             },
         };
@@ -2623,7 +2660,16 @@ pub const ServerWebSocket = struct {
         if (result.isEmptyOrUndefinedOrNull()) return;
 
         if (result.isAnyError(globalObject)) {
-            this.handler.globalObject.bunVM().runErrorHandler(result, null);
+            if (this.handler.onError.isEmptyOrUndefinedOrNull()) {
+                globalObject.bunVM().runErrorHandler(result, null);
+            } else {
+                const args = [_]JSValue{result};
+                corker.args = &args;
+                corker.callback = this.handler.onError;
+                corker.this_value = .zero;
+                corker.result = .zero;
+                corker.run();
+            }
             return;
         }
 
@@ -2642,12 +2688,32 @@ pub const ServerWebSocket = struct {
         log("onDrain", .{});
 
         var handler = this.handler;
-        if (handler.onDrain != .zero) {
-            const result = handler.onDrain.call(handler.globalObject, &[_]JSC.JSValue{this.this_value});
+        if (this.closed)
+            return;
 
-            if (result.isAnyError(handler.globalObject)) {
-                log("onDrain error", .{});
-                handler.globalObject.bunVM().runErrorHandler(result, null);
+        if (handler.onDrain != .zero) {
+            var globalObject = handler.globalObject;
+
+            var corker = Corker{
+                .args = &[_]JSC.JSValue{this.this_value},
+                .globalObject = globalObject,
+                .callback = handler.onDrain,
+            };
+
+            this.websocket.cork(&corker, Corker.run);
+            const result = corker.result;
+
+            if (result.isAnyError(globalObject)) {
+                if (this.handler.onError.isEmptyOrUndefinedOrNull()) {
+                    globalObject.bunVM().runErrorHandler(result, null);
+                } else {
+                    const args = [_]JSValue{result};
+                    corker.args = &args;
+                    corker.callback = this.handler.onError;
+                    corker.this_value = .zero;
+                    corker.result = .zero;
+                    corker.run();
+                }
             }
         }
     }
@@ -2742,7 +2808,7 @@ pub const ServerWebSocket = struct {
             return JSValue.jsNumber(
                 // if 0, return 0
                 // else return number of bytes sent
-                @as(i32, @boolToInt(this.websocket.publishWithOptions(topic_slice.slice(), buffer.slice(), .text, compress))) * @intCast(i32, @truncate(u31, buffer.len)),
+                @as(i32, @boolToInt(this.websocket.publishWithOptions(this.handler.app, topic_slice.slice(), buffer.slice(), .text, compress))) * @intCast(i32, @truncate(u31, buffer.len)),
             );
         }
 
@@ -2757,7 +2823,7 @@ pub const ServerWebSocket = struct {
             return JSValue.jsNumber(
                 // if 0, return 0
                 // else return number of bytes sent
-                @as(i32, @boolToInt(this.websocket.publishWithOptions(topic_slice.slice(), buffer, .text, compress))) * @intCast(i32, @truncate(u31, buffer.len)),
+                @as(i32, @boolToInt(this.websocket.publishWithOptions(this.handler.app, topic_slice.slice(), buffer, .text, compress))) * @intCast(i32, @truncate(u31, buffer.len)),
             );
         }
 
@@ -2938,6 +3004,59 @@ pub const ServerWebSocket = struct {
 
         return JSValue.jsUndefined();
     }
+
+    pub fn getBinaryType(
+        this: *ServerWebSocket,
+        globalThis: *JSC.JSGlobalObject,
+    ) callconv(.C) JSValue {
+        log("getBinaryType()", .{});
+
+        return switch (this.binary_type) {
+            .Uint8Array => ZigString.static("uint8array").toValue(globalThis),
+            else => ZigString.static("arraybuffer").toValue(globalThis),
+        };
+    }
+
+    pub const BinaryType = bun.ComptimeStringMap(JSC.JSValue.JSType, .{
+        &.{ "uint8array", .Uint8Array },
+        &.{ "Uint8Array", .Uint8Array },
+        &.{ "arraybuffer", .ArrayBuffer },
+        &.{ "ArrayBuffer", .ArrayBuffer },
+    });
+
+    pub fn setBinaryType(
+        this: *ServerWebSocket,
+        globalThis: *JSC.JSGlobalObject,
+        value: JSC.JSValue,
+    ) callconv(.C) bool {
+        log("setBinaryType()", .{});
+
+        if (value.isEmptyOrUndefinedOrNull() or !value.isString()) {
+            globalThis.throw("binaryType must be either \"uint8array\" or \"arraybuffer\"", .{});
+            return false;
+        }
+
+        switch (BinaryType.getWithEql(
+            value.getZigString(globalThis),
+            ZigString.eqlComptime,
+        ) orelse // random value
+            .Uint8ClampedArray) {
+            .Uint8Array => {
+                this.binary_type = .Uint8Array;
+
+                return true;
+            },
+            .ArrayBuffer => {
+                this.binary_type = .ArrayBuffer;
+                return true;
+            },
+            else => {
+                globalThis.throw("binaryType must be either \"uint8array\" or \"arraybuffer\"", .{});
+                return false;
+            },
+        }
+    }
+
     pub fn getBufferedAmount(
         this: *ServerWebSocket,
         _: *JSC.JSGlobalObject,
@@ -3129,14 +3248,15 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
             globalThis: *JSC.JSGlobalObject,
             object: JSC.JSValue,
             optional: ?JSValue,
+            exception: js.ExceptionRef,
         ) JSValue {
             if (this.config.websocket == null) {
-                globalThis.throw("To enable WebSocket support, set the \"websocket\" object in Bun.serve({})", .{});
-                return .zero;
+                JSC.throwInvalidArguments("To enable websocket support, set the \"websocket\" object in Bun.serve({})", .{}, globalThis, exception);
+                return JSValue.jsUndefined();
             }
             var request = object.as(Request) orelse {
-                globalThis.throw("upgrade requires a Request object", .{});
-                return .zero;
+                JSC.throwInvalidArguments("upgrade requires a Request object", .{}, globalThis, exception);
+                return JSValue.jsUndefined();
             };
 
             if (request.upgrader == null) {
@@ -3194,8 +3314,8 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
                     }
 
                     if (!opts.isObject()) {
-                        globalThis.throw("upgrade options must be an object", .{});
-                        return .zero;
+                        JSC.throwInvalidArguments("upgrade options must be an object", .{}, globalThis, exception);
+                        return JSValue.jsUndefined();
                     }
 
                     if (opts.fastGet(globalThis, .headers)) |headers_value| {
@@ -3222,12 +3342,13 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
 
                                 fetch_headers.toUWSResponse(comptime ssl_enabled, upgrader.resp);
                                 fetch_headers_to_deref = fetch_headers;
-                                break :getter;
                             }
+
+                            break :getter;
                         }
 
-                        globalThis.throw("upgrade options.headers must be an object or Headers", .{});
-                        return .zero;
+                        JSC.throwInvalidArguments("upgrade options.headers must be a Headers or an object", .{}, globalThis, exception);
+                        return JSValue.jsUndefined();
                     }
 
                     if (opts.fastGet(globalThis, .data)) |headers_value| {
@@ -3828,6 +3949,7 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
 
             if (this.config.websocket) |*websocket| {
                 websocket.globalObject = this.globalThis;
+                websocket.handler.app = this.app;
                 this.app.ws(
                     "/*",
                     this,

@@ -41,6 +41,10 @@ export default [
         fn: "getBufferedAmount",
         length: 0,
       },
+      binaryType: {
+        getter: "getBinaryType",
+        setter: "setBinaryType",
+      },
       publish: {
         fn: "publish",
         length: 3,

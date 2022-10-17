@@ -629,8 +629,8 @@ pub const AnyWebSocket = union(enum) {
     }
     pub fn subscribe(this: AnyWebSocket, topic: []const u8) bool {
         return switch (this) {
-            .ssl => uws_ws_subscribe(0, this.ssl.raw(), topic.ptr, topic.len),
-            .tcp => uws_ws_subscribe(1, this.tcp.raw(), topic.ptr, topic.len),
+            .ssl => uws_ws_subscribe(1, this.ssl.raw(), topic.ptr, topic.len),
+            .tcp => uws_ws_subscribe(0, this.tcp.raw(), topic.ptr, topic.len),
         };
     }
     pub fn unsubscribe(this: AnyWebSocket, topic: []const u8) bool {
@@ -654,10 +654,10 @@ pub const AnyWebSocket = union(enum) {
             .tcp => uws_ws_publish(0, this.tcp.raw(), topic.ptr, topic.len, message.ptr, message.len),
         };
     }
-    pub fn publishWithOptions(this: AnyWebSocket, topic: []const u8, message: []const u8, opcode: Opcode, compress: bool) bool {
+    pub fn publishWithOptions(this: AnyWebSocket, app: *anyopaque, topic: []const u8, message: []const u8, opcode: Opcode, compress: bool) bool {
         return switch (this) {
-            .ssl => uws_ws_publish_with_options(1, this.ssl.raw(), topic.ptr, topic.len, message.ptr, message.len, opcode, compress),
-            .tcp => uws_ws_publish_with_options(0, this.tcp.raw(), topic.ptr, topic.len, message.ptr, message.len, opcode, compress),
+            .ssl => uws_publish(1, @ptrCast(*uws_app_t, app), topic.ptr, topic.len, message.ptr, message.len, opcode, compress),
+            .tcp => uws_publish(0, @ptrCast(*uws_app_t, app), topic.ptr, topic.len, message.ptr, message.len, opcode, compress),
         };
     }
     pub fn getBufferedAmount(this: AnyWebSocket) u32 {

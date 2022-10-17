@@ -1818,12 +1818,13 @@ bool JSC__JSValue__isError(JSC__JSValue JSValue0)
 
 bool JSC__JSValue__isAggregateError(JSC__JSValue JSValue0, JSC__JSGlobalObject* global)
 {
-    JSC::JSObject* obj = JSC::JSValue::decode(JSValue0).getObject();
+    JSValue value = JSC::JSValue::decode(JSValue0);
+    if (value.isUndefinedOrNull() || !value || !value.isObject()) {
+        return false;
+    }
 
-    if (obj != nullptr) {
-        if (JSC::ErrorInstance* err = JSC::jsDynamicCast<JSC::ErrorInstance*>(obj)) {
-            return err->errorType() == JSC::ErrorType::AggregateError;
-        }
+    if (JSC::ErrorInstance* err = JSC::jsDynamicCast<JSC::ErrorInstance*>(value)) {
+        return err->errorType() == JSC::ErrorType::AggregateError;
     }
 
     return false;
@@ -1871,7 +1872,7 @@ bool JSC__JSValue__isNumber(JSC__JSValue JSValue0)
 }
 bool JSC__JSValue__isObject(JSC__JSValue JSValue0)
 {
-    return JSC::JSValue::decode(JSValue0).isObject();
+    return JSValue0 != 0 && JSC::JSValue::decode(JSValue0).isObject();
 }
 bool JSC__JSValue__isPrimitive(JSC__JSValue JSValue0)
 {
@@ -2554,6 +2555,12 @@ void JSC__JSValue__toZigException(JSC__JSValue JSValue0, JSC__JSGlobalObject* ar
     ZigException* exception)
 {
     JSC::JSValue value = JSC::JSValue::decode(JSValue0);
+    if (value == JSC::JSValue {}) {
+        exception->code = JSErrorCodeError;
+        exception->name = Zig::toZigString("Error"_s);
+        exception->message = Zig::toZigString("Unknown error"_s);
+        return;
+    }
 
     if (JSC::Exception* jscException = JSC::jsDynamicCast<JSC::Exception*>(value)) {
         if (JSC::ErrorInstance* error = JSC::jsDynamicCast<JSC::ErrorInstance*>(jscException->value())) {

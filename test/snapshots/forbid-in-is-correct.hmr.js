@@ -8,7 +8,7 @@ __FastRefreshModule as FastHMR
 import {
 __FastRefreshRuntime as FastRefresh
 } from "http://localhost:8080/bun:wrap";
-var hmr = new FastHMR(30801918, "forbid-in-is-correct.js", FastRefresh), exports = hmr.exports;
+var hmr = new FastHMR(483885974, "forbid-in-is-correct.js", FastRefresh), exports = hmr.exports;
 (hmr._load = function() {
   var foo = () => {
     var D = (i, r) => () => (r || i((r = { exports: {} }).exports, r), r.exports);

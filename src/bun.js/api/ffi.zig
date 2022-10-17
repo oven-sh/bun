@@ -92,7 +92,7 @@ pub const FFI = struct {
     );
 
     pub fn callback(globalThis: *JSGlobalObject, interface: JSC.JSValue, js_callback: JSC.JSValue) JSValue {
-        JSC.markBinding();
+        JSC.markBinding(@src());
         if (!interface.isObject()) {
             return JSC.toInvalidArguments("Expected object", .{}, globalThis);
         }
@@ -140,7 +140,7 @@ pub const FFI = struct {
         this: *FFI,
         globalThis: *JSC.JSGlobalObject,
     ) JSValue {
-        JSC.markBinding();
+        JSC.markBinding(@src());
         if (this.closed) {
             return JSC.JSValue.jsUndefined();
         }
@@ -161,7 +161,7 @@ pub const FFI = struct {
     }
 
     pub fn printCallback(global: *JSGlobalObject, object: JSC.JSValue) JSValue {
-        JSC.markBinding();
+        JSC.markBinding(@src());
         const allocator = VirtualMachine.vm.allocator;
 
         if (object.isEmptyOrUndefinedOrNull() or !object.isObject()) {
@@ -206,7 +206,7 @@ pub const FFI = struct {
             symbols.clearAndFree(allocator);
             return val;
         }
-        JSC.markBinding();
+        JSC.markBinding(@src());
         var zig_strings = allocator.alloc(ZigString, symbols.count()) catch unreachable;
         for (symbols.values()) |*function, i| {
             var arraylist = std.ArrayList(u8).init(allocator);
@@ -268,7 +268,7 @@ pub const FFI = struct {
     // }
 
     pub fn open(global: *JSGlobalObject, name_str: ZigString, object: JSC.JSValue) JSC.JSValue {
-        JSC.markBinding();
+        JSC.markBinding(@src());
         const allocator = VirtualMachine.vm.allocator;
         var name_slice = name_str.toSlice(allocator);
         defer name_slice.deinit();
@@ -397,7 +397,7 @@ pub const FFI = struct {
     }
 
     pub fn linkSymbols(global: *JSGlobalObject, object: JSC.JSValue) JSC.JSValue {
-        JSC.markBinding();
+        JSC.markBinding(@src());
         const allocator = VirtualMachine.vm.allocator;
 
         if (object.isEmptyOrUndefinedOrNull() or !object.isObject()) {
@@ -493,7 +493,7 @@ pub const FFI = struct {
         return JSC.JSValue.createObject2(global, ZigString.static("close"), ZigString.static("symbols"), close_object, obj);
     }
     pub fn generateSymbolForFunction(global: *JSGlobalObject, allocator: std.mem.Allocator, value: JSC.JSValue, function: *Function) !?JSValue {
-        JSC.markBinding();
+        JSC.markBinding(@src());
 
         var abi_types = std.ArrayListUnmanaged(ABIType){};
 
@@ -586,7 +586,7 @@ pub const FFI = struct {
         return null;
     }
     pub fn generateSymbols(global: *JSGlobalObject, symbols: *std.StringArrayHashMapUnmanaged(Function), object: JSC.JSValue) !?JSValue {
-        JSC.markBinding();
+        JSC.markBinding(@src());
         const allocator = VirtualMachine.vm.allocator;
 
         var symbols_iter = JSC.JSPropertyIterator(.{
@@ -855,7 +855,7 @@ pub const FFI = struct {
             }
 
             pub fn inject(state: *TCC.TCCState) void {
-                JSC.markBinding();
+                JSC.markBinding(@src());
                 _ = TCC.tcc_add_symbol(state, "memset", &memset);
                 _ = TCC.tcc_add_symbol(state, "memcpy", &memcpy);
 

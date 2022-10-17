@@ -127,6 +127,8 @@ bun upgrade --canary
   - [`bun completions`](#bun-completions)
 - [`Bun.serve` - fast HTTP server](#bunserve---fast-http-server)
   - [Usage](#usage-1)
+  - [HTTPS](#https-with-bunserve)
+  - [WebSockets](#websockets-with-bunserve)
   - [Error handling](#error-handling)
 - [`Bun.write` – optimizing I/O](#bunwrite--optimizing-io)
 - [`Bun.spawn` - spawn processes](#bunspawn)
@@ -1454,7 +1456,7 @@ Create from a GitHub repo:
 bun create ahfarmer/calculator ./app
 ```
 
-To see a list of examples, run:
+To see a list of templates, run:
 
 ```bash
 bun create
@@ -1476,7 +1478,7 @@ Note: you don’t need `bun create` to use bun. You don’t need any configurati
 
 If you have your own boilerplate you prefer using, copy it into `$HOME/.bun-create/my-boilerplate-name`.
 
-Before checking bun’s examples folder, `bun create` checks for a local folder matching the input in:
+Before checking bun’s templates on npmjs, `bun create` checks for a local folder matching the input in:
 
 - `$BUN_CREATE_DIR/`
 - `$HOME/.bun-create/`
@@ -1526,7 +1528,7 @@ By default, `bun create` will cancel if there are existing files it would overwr
 
 #### Publishing a new template
 
-Clone this repository and a new folder in `examples/` with your new template. The `package.json` must have a `name` that starts with `@bun-examples/`. Do not worry about publishing it, that will happen automatically after the PR is merged.
+Clone [https://github.com/bun-community/create-templates/](https://github.com/bun-community/create-templates/) and create a new folder in root directory with your new template. The `package.json` must have a `name` that starts with `@bun-examples/`. Do not worry about publishing it, that will happen automatically after the PR is merged.
 
 Make sure to include a `.gitignore` that includes `node_modules` so that `node_modules` aren’t checked in to git when people download the template.
 
@@ -1544,10 +1546,11 @@ Warning: **This will always delete everything in destination-dir**.
 
 The `bun-create` section of `package.json` is automatically removed from the `package.json` on disk. This lets you add create-only steps without waiting for an extra package to install.
 
-There are currently two options:
+There are currently three options:
 
 - `postinstall`
 - `preinstall`
+- `start` (customize the displayed start command)
 
 They can be an array of strings or one string. An array of steps will be executed in order.
 
@@ -1570,7 +1573,8 @@ Here is an example:
     "typescript": "^4.3.5"
   },
   "bun-create": {
-    "postinstall": ["bun bun --use next"]
+    "postinstall": ["bun bun --use next"],
+    "start": "bun run echo 'Hello world!'"
   }
 }
 ```
@@ -2071,7 +2075,169 @@ const server = Bun.serve({
 server.stop();
 ```
 
+### HTTPS with Bun.serve()
+
+`Bun.serve()` has builtin support for TLS (HTTPS). Pass `keyFile` and `certFile` option to enable HTTPS.
+
+Example:
+
+```ts
+Bun.serve({
+  fetch(req) {
+    return new Response("Hello!!!");
+  },
+  /**
+   * File path to a TLS key
+   *
+   * To enable TLS, this option is required.
+   */
+  keyFile: "./key.pem",
+  /**
+   * File path to a TLS certificate
+   *
+   * To enable TLS, this option is required.
+   */
+  certFile: "./cert.pem",
+
+  /**
+   * Optional SSL options
+   */
+  // passphrase?: string;
+  // caFile?: string;
+  // dhParamsFile?: string;
+  // lowMemoryMode?: boolean;
+});
+```
+
+### WebSockets with Bun.serve()
+
+`Bun.serve()` has builtin support for server-side websockets (as of Bun v0.2.1).
+
+Here is an example that echoes back any message it receives:
+
+```ts
+Bun.serve({
+  websocket: {
+    message(ws, message) {
+      ws.send(message);
+    },
+  },
+
+  fetch(req) {
+    return new Response("Regular HTTP response");
+  },
+});
+```
+
+You can also limit websocket connections to specific paths:
+
+```ts
+Bun.serve({
+  websockets: {
+    "/chat": {
+      message(ws, message) {
+        ws.send(message);
+      },
+    },
+
+    "/analytics": {
+      message(ws, message) {
+        ws.send(message);
+      },
+    },
+  },
+
+  fetch(req) {
+    return new Response("Regular HTTP response");
+  },
+});
+```
+
+Here is a more complete example:
+
+```ts
+import type { WebSocketHandler } from "bun";
+
+Bun.serve({
+  websocket: {
+    upgrade(req: Request) {
+      // Don't allow the connection to become a WebSocket if the protocol is not "chat"
+      if (req.headers.get("sec-websocket-protocol") !== "chat") {
+        // returning null, undefined, or false will reject the upgrade
+        return;
+      }
+
+      // The object returned from this function
+      // becomes the `data` value on the `ServerWebSocket` object
+      return req;
+    },
+    open(ws) {
+      console.log("WebSocket opened");
+    },
+
+    message(ws, message) {
+      console.log(`[${ws.data.url}] WebSocket message received:`, message);
+
+      // you can send a string or an ArrayBufferView
+      ws.send(message);
+    },
+
+    close(ws) {
+      console.log("WebSocket closed");
+    },
+
+    // Enable compression for clients that support it
+    compressor: "shared",
+    decompressor: "shared",
+
+    /**
+     * The maximum size of a message
+     */
+    // maxPayloadLength?: number;
+    /**
+     * After a connection has not received a message for this many seconds, it will be closed.
+     * @default 120 (2 minutes)
+     */
+    // idleTimeout?: number;
+    /**
+     * The maximum number of bytes that can be buffered for a single connection.
+     * @default 16MB
+     */
+    // backpressureLimit?: number;
+    /**
+     * Close the connection if the backpressure limit is reached.
+     * @default false
+     */
+    // closeOnBackpressureLimit?: boolean;
+
+    // this makes it so ws.data shows up as a Request object
+  } as WebSocketHandler<Request>,
+
+  fetch(req) {
+    return new Response("Regular HTTP response");
+  },
+
+  // TLS is also supported with WebSockets
+  /**
+   * File path to a TLS key
+   *
+   * To enable TLS, this option is required.
+   */
+  // keyFile: "./key.pem",
+  /**
+   * File path to a TLS certificate
+   *
+   * To enable TLS, this option is required.
+   */
+  // certFile: "./cert.pem",
+});
+```
+
+---
+
 The interface for `Bun.serve` is loosely based on what [Cloudflare Workers](https://developers.cloudflare.com/workers/learning/migrating-to-module-workers/#module-workers-in-the-dashboard) does.
+
+The HTTP server and server-side websockets are based on [uWebSockets](https://github.com/uNetworking/uWebSockets).
 
 ## `Bun.spawn` – spawn a process
 

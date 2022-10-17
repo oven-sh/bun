@@ -11,13 +11,13 @@ __require as require
 import {
 __FastRefreshModule as FastHMR
 } from "http://localhost:8080/bun:wrap";
-import * as $1407d117 from "http://localhost:8080/node_modules/react/jsx-dev-runtime.js";
-var JSX = require($1407d117);
-import * as $45b81229 from "http://localhost:8080/node_modules/react/index.js";
-var JSXClassic = require($45b81229);
+import * as $a77976b9 from "http://localhost:8080/node_modules/react/jsx-dev-runtime.js";
+var JSX = require($a77976b9);
+import * as $a66742df from "http://localhost:8080/node_modules/react/index.js";
+var JSXClassic = require($a66742df);
 var jsx = require(JSX).jsxDEV, jsxEl = require(JSXClassic).createElement;
-var { default: React} = require($45b81229);
-var hmr = new FastHMR(1528600417, "spread_with_key.tsx", FastRefresh), exports = hmr.exports;
+var { default: React} = require($a66742df);
+var hmr = new FastHMR(1094129250, "spread_with_key.tsx", FastRefresh), exports = hmr.exports;
 (hmr._load = function() {
   function SpreadWithTheKey({ className }) {
     const rest = {};

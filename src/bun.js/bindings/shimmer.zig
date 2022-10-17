@@ -9,6 +9,7 @@ fn isNullableType(comptime Type: type) bool {
         (@typeInfo(Type) == .Pointer and @typeInfo(Type).Pointer.is_allowzero);
 }
 
+const log = @import("../../output.zig").scoped(.CPP, true);
 pub fn Shimmer(comptime _namespace: []const u8, comptime _name: []const u8, comptime Parent: type) type {
     return struct {
         pub const namespace = _namespace;
@@ -175,6 +176,7 @@ pub fn Shimmer(comptime _namespace: []const u8, comptime _name: []const u8, comp
             }
             break :ret @typeInfo(@TypeOf(@field(Parent, typeName))).Fn.return_type.?;
         }) {
+            log(comptime name ++ "__" ++ typeName, .{});
             @setEvalBranchQuota(99999);
             if (comptime is_bindgen) {
                 unreachable;

@@ -40,7 +40,7 @@ function appendSymbols(
   symbolName: (name: string) => string,
   prop
 ) {
-  var { defaultValue, getter, setter, accesosr, fn } = prop;
+  var { defaultValue, getter, setter, accesosr, fn, cache } = prop;
 
   if (accesosr) {
     getter = accesosr.getter;
@@ -612,6 +612,17 @@ JSC_DEFINE_CUSTOM_GETTER(${symbolName(
     thisObject->${cacheName}.set(vm, thisObject, result);
     RELEASE_AND_RETURN(throwScope, JSValue::encode(result));
 }
+extern "C" void ${symbolName(
+        typeName,
+        name
+      )}SetCachedValue(JSC::EncodedJSValue thisValue, JSC::JSGlobalObject *globalObject, JSC::EncodedJSValue value)
+{
+    auto& vm = globalObject->vm();
+    auto* thisObject = jsCast<${className(
+      typeName
+    )}*>(JSValue::decode(thisValue));
+    thisObject->${cacheName}.set(vm, thisObject, JSValue::decode(value));
+}
 `);
     } else if (
       "getter" in proto[name] ||
@@ -863,9 +874,14 @@ ${name}* ${name}::create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::St
 }
 
 extern "C" void* ${typeName}__fromJS(JSC::EncodedJSValue value) {
+  JSC::JSValue decodedValue = JSC::JSValue::decode(value);
+  if (!decodedValue || decodedValue.isUndefinedOrNull()) 
+    return nullptr;
+
   ${className(typeName)}* object = JSC::jsDynamicCast<${className(
     typeName
-  )}*>(JSValue::decode(value));
+  )}*>(decodedValue);
+
   if (!object)
       return nullptr;
       
@@ -964,6 +980,27 @@ function generateZig(
     appendSymbols(exports, (name) => protoSymbolName(typeName, name), a)
   );
 
+  const externs = Object.entries(proto)
+    .filter(([name, { cache }]) => cache && typeof cache !== "string")
+    .map(
+      ([name, { cache }]) =>
+        `extern fn ${protoSymbolName(
+          typeName,
+          name
+        )}SetCachedValue(JSC.JSValue, *JSC.JSGlobalObject, JSC.JSValue) void;
+        
+        /// Set the cached value for ${name} on ${typeName}
+        /// This value will be visited by the garbage collector.
+        pub fn ${name}SetCached(thisValue: JSC.JSValue, globalObject: *JSC.JSGlobalObject, value: JSC.JSValue) void {
+          ${protoSymbolName(
+            typeName,
+            name
+          )}SetCachedValue(thisValue, globalObject, value); 
+        }
+`.trim() + "\n"
+    )
+    .join("\n");
+
   function typeCheck() {
     var output = "";
 
@@ -991,37 +1028,39 @@ function generateZig(
       `;
     }
 
-    [...Object.values(proto)].forEach(({ getter, setter, accessor, fn }) => {
-      if (accessor) {
-        getter = accessor.getter;
-        setter = accessor.setter;
-      }
+    [...Object.values(proto)].forEach(
+      ({ getter, setter, accessor, fn, cache }) => {
+        if (accessor) {
+          getter = accessor.getter;
+          setter = accessor.setter;
+        }
 
-      if (getter) {
-        output += `
+        if (getter) {
+          output += `
           if (@TypeOf(${typeName}.${getter}) != GetterType) 
             @compileLog(
               "Expected ${typeName}.${getter} to be a getter"
             );
 `;
-      }
+        }
 
-      if (setter) {
-        output += `
+        if (setter) {
+          output += `
           if (@TypeOf(${typeName}.${setter}) != SetterType) 
             @compileLog(
               "Expected ${typeName}.${setter} to be a setter"
             );`;
-      }
+        }
 
-      if (fn) {
-        output += `
+        if (fn) {
+          output += `
           if (@TypeOf(${typeName}.${fn}) != CallbackType) 
             @compileLog(
               "Expected ${typeName}.${fn} to be a callback"
             );`;
+        }
       }
-    });
+    );
 
     [...Object.values(klass)].forEach(({ getter, setter, accessor, fn }) => {
       if (accessor) {
@@ -1069,9 +1108,11 @@ pub const ${className(typeName)} = struct {
     /// Return the pointer to the wrapped object.
     /// If the object does not match the type, return null.
     pub fn fromJS(value: JSC.JSValue) ?*${typeName} {
-        JSC.markBinding();
+        JSC.markBinding(@src());
         return ${symbolName(typeName, "fromJS")}(value);
     }
+
+    ${externs}
 
     ${
       !noConstructor
@@ -1079,7 +1120,7 @@ pub const ${className(typeName)} = struct {
     /// Get the ${typeName} constructor value.
     /// This loads lazily from the global object.
     pub fn getConstructor(globalObject: *JSC.JSGlobalObject) JSC.JSValue {
-        JSC.markBinding();
+        JSC.markBinding(@src());
         return ${symbolName(typeName, "getConstructor")}(globalObject);
     }
   `
@@ -1087,7 +1128,7 @@ pub const ${className(typeName)} = struct {
     }
     /// Create a new instance of ${typeName}
     pub fn toJS(this: *${typeName}, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
-        JSC.markBinding();
+        JSC.markBinding(@src());
         if (comptime Environment.allow_assert) {
             const value__ = ${symbolName(
               typeName,
@@ -1102,7 +1143,7 @@ pub const ${className(typeName)} = struct {
 
     /// Modify the internal ptr to point to a new instance of ${typeName}.
     pub fn dangerouslySetPtr(value: JSC.JSValue, ptr: ?*${typeName}) bool {
-      JSC.markBinding();
+      JSC.markBinding(@src());
       return ${symbolName(typeName, "dangerouslySetPtr")}(value, ptr);
     }
 

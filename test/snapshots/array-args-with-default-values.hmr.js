@@ -8,7 +8,7 @@ __FastRefreshModule as FastHMR
 import {
 __FastRefreshRuntime as FastRefresh
 } from "http://localhost:8080/bun:wrap";
-var hmr = new FastHMR(3022324119, "array-args-with-default-values.js", FastRefresh), exports = hmr.exports;
+var hmr = new FastHMR(326432150, "array-args-with-default-values.js", FastRefresh), exports = hmr.exports;
 (hmr._load = function() {
   var lines;
   const data = () => lines.map(([a = null, b = null, c = null, d = null]) => ({

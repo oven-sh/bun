@@ -8,7 +8,7 @@ __FastRefreshModule as FastHMR
 import {
 __FastRefreshRuntime as FastRefresh
 } from "http://localhost:8080/bun:wrap";
-var hmr = new FastHMR(1028067224, "multiple-var.js", FastRefresh), exports = hmr.exports;
+var hmr = new FastHMR(1943563621, "multiple-var.js", FastRefresh), exports = hmr.exports;
 (hmr._load = function() {
   var foo = true;
   globalThis.TRUE_BUT_WE_CANT_TREESHAKE_IT = true;

@@ -12,7 +12,7 @@ const Channel = @import("../sync.zig").Channel;
 pub const napi_env = *JSC.JSGlobalObject;
 pub const Ref = opaque {
     pub fn create(globalThis: *JSC.JSGlobalObject, value: JSValue) *Ref {
-        JSC.markBinding();
+        JSC.markBinding(@src());
         var ref: *Ref = undefined;
         std.debug.assert(
             napi_create_reference(
@@ -29,17 +29,17 @@ pub const Ref = opaque {
     }
 
     pub fn get(ref: *Ref) JSValue {
-        JSC.markBinding();
+        JSC.markBinding(@src());
         return napi_get_reference_value_internal(ref);
     }
 
     pub fn destroy(ref: *Ref) void {
-        JSC.markBinding();
+        JSC.markBinding(@src());
         napi_delete_reference_internal(ref);
     }
 
     pub fn set(this: *Ref, value: JSC.JSValue) void {
-        JSC.markBinding();
+        JSC.markBinding(@src());
         napi_set_ref(this, value);
     }
 

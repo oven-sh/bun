@@ -1,5 +1,5 @@
 import {
-__require as require
+__require
 } from "http://localhost:8080/bun:wrap";
 import {
 __HMRClient as Bun
@@ -11,8 +11,8 @@ __FastRefreshModule as FastHMR
 import {
 __FastRefreshRuntime as FastRefresh
 } from "http://localhost:8080/bun:wrap";
-import * as $45b81229 from "http://localhost:8080/node_modules/react/index.js";
-var hmr = new FastHMR(2903293251, "bundled-entry-point.js", FastRefresh), exports = hmr.exports;
+import * as $a66742df from "http://localhost:8080/node_modules/react/index.js";
+var hmr = new FastHMR(173057717, "bundled-entry-point.js", FastRefresh), exports = hmr.exports;
 (hmr._load = function() {
   function test() {
     return testDone(import.meta.url);

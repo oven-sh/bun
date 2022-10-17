@@ -13,7 +13,9 @@
         "${workspaceFolder}/src/bun.js/bindings/WebCore/",
         "${workspaceFolder}/src/bun.js/WebKit/Source/bmalloc/",
         "${workspaceFolder}/src/bun.js/WebKit/WebKitBuild/Release/ICU/Headers/",
-        "${workspaceFolder}/../webkit-build/include/"
+        "${workspaceFolder}/../webkit-build/include/",
+        "${workspaceFolder}/src/deps",
+        "${workspaceFolder}/src/deps/uws/uSockets/src"
       ],
       "browse": {
         "path": [
@@ -28,7 +30,9 @@
           "${workspaceFolder}/src/bun.js/builtins/cpp/**",
           "${workspaceFolder}/src/bun.js/WebKit/Source/bmalloc/**",
           "${workspaceFolder}/src/bun.js/WebKit/WebKitBuild/Release/ICU/Headers/",
-          "${workspaceFolder}/../webkit-build/include/"
+          "${workspaceFolder}/../webkit-build/include/",
+          "${workspaceFolder}/src/deps",
+          "${workspaceFolder}/src/deps/uws/uSockets/src"
         ],
         "limitSymbolsToIncludedHeaders": true,
         "databaseFilename": ".vscode/cppdb"

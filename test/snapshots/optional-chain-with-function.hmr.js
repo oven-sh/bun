@@ -8,7 +8,7 @@ __FastRefreshModule as FastHMR
 import {
 __FastRefreshRuntime as FastRefresh
 } from "http://localhost:8080/bun:wrap";
-var hmr = new FastHMR(2063149784, "optional-chain-with-function.js", FastRefresh), exports = hmr.exports;
+var hmr = new FastHMR(2145684817, "optional-chain-with-function.js", FastRefresh), exports = hmr.exports;
 (hmr._load = function() {
   function test() {
     try {

@@ -9,7 +9,7 @@ import {
 __FastRefreshRuntime as FastRefresh
 } from "http://localhost:8080/bun:wrap";
 import pkg from "http://localhost:8080/utf8-package-json.json";
-var hmr = new FastHMR(1703475520, "package-json-utf8.js", FastRefresh), exports = hmr.exports;
+var hmr = new FastHMR(3383656110, "package-json-utf8.js", FastRefresh), exports = hmr.exports;
 (hmr._load = function() {
   function test() {
     console.assert(!!pkg.author);

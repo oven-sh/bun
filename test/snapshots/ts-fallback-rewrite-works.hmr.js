@@ -5,7 +5,7 @@ Bun.activate(false);
 import {
 __HMRModule as HMR
 } from "http://localhost:8080/bun:wrap";
-var hmr = new HMR(1227236257, "ts-fallback-rewrite-works.ts"), exports = hmr.exports;
+var hmr = new HMR(3305050967, "ts-fallback-rewrite-works.ts"), exports = hmr.exports;
 (hmr._load = function() {
   function test() {
     return testDone(import.meta.url);

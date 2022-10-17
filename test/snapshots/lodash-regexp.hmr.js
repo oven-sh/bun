@@ -1,5 +1,5 @@
 import {
-__require as require
+__require
 } from "http://localhost:8080/bun:wrap";
 import {
 __HMRClient as Bun
@@ -11,9 +11,9 @@ __FastRefreshModule as FastHMR
 import {
 __FastRefreshRuntime as FastRefresh
 } from "http://localhost:8080/bun:wrap";
-import * as $2f2e4966 from "http://localhost:8080/node_modules/lodash/lodash.js";
-var { shuffle} = require($2f2e4966);
-var hmr = new FastHMR(639488503, "lodash-regexp.js", FastRefresh), exports = hmr.exports;
+import * as $75175720 from "http://localhost:8080/node_modules/lodash/lodash.js";
+var { shuffle} = __require($75175720);
+var hmr = new FastHMR(2675673186, "lodash-regexp.js", FastRefresh), exports = hmr.exports;
 (hmr._load = function() {
   function test() {
     const foo = [1, 2, 3, 4, 6];

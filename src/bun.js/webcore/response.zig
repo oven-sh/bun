@@ -5179,6 +5179,7 @@ pub const Request = struct {
     body: Body.Value = Body.Value{ .Empty = .{} },
     method: Method = Method.GET,
     uws_request: ?*uws.Request = null,
+    upgrader: ?*anyopaque = null,
 
     // We must report a consistent value for this
     reported_estimated_size: ?u63 = null,

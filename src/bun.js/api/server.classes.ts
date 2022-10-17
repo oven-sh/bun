@@ -33,6 +33,10 @@ export default [
         fn: "close",
         length: 1,
       },
+      cork: {
+        fn: "cork",
+        length: 1,
+      },
       getBufferedAmount: {
         fn: "getBufferedAmount",
         length: 0,

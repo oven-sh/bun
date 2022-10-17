@@ -2410,6 +2410,10 @@ extern "C" EncodedJSValue ServerWebSocketPrototype__close(void* ptr, JSC::JSGlob
 JSC_DECLARE_HOST_FUNCTION(ServerWebSocketPrototype__closeCallback);
 
 
+extern "C" EncodedJSValue ServerWebSocketPrototype__cork(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
+JSC_DECLARE_HOST_FUNCTION(ServerWebSocketPrototype__corkCallback);
+
+
 extern "C" JSC::EncodedJSValue ServerWebSocketPrototype__getData(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject);
 JSC_DECLARE_CUSTOM_GETTER(ServerWebSocketPrototype__dataGetterWrap);
 
@@ -2455,6 +2459,7 @@ STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSServerWebSocketPrototype, JSServerWebSocke
 
   static const HashTableValue JSServerWebSocketPrototypeTableValues[] = {
 { "close"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, ServerWebSocketPrototype__closeCallback, 1 } }  ,
+{ "cork"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, ServerWebSocketPrototype__corkCallback, 1 } }  ,
 { "data"_s, static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { HashTableValue::GetterSetterType, ServerWebSocketPrototype__dataGetterWrap, ServerWebSocketPrototype__dataSetterWrap } }  ,
 { "getBufferedAmount"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, ServerWebSocketPrototype__getBufferedAmountCallback, 0 } }  ,
 { "isSubscribed"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, ServerWebSocketPrototype__isSubscribedCallback, 1 } }  ,
@@ -2499,6 +2504,23 @@ JSC_DEFINE_HOST_FUNCTION(ServerWebSocketPrototype__closeCallback, (JSGlobalObjec
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
     
     return ServerWebSocketPrototype__close(thisObject->wrapped(), lexicalGlobalObject, callFrame);
+}
+
+
+JSC_DEFINE_HOST_FUNCTION(ServerWebSocketPrototype__corkCallback, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    auto& vm = lexicalGlobalObject->vm();
+    
+    JSServerWebSocket* thisObject = jsDynamicCast<JSServerWebSocket*>(callFrame->thisValue());
+
+    if (UNLIKELY(!thisObject)) {
+        auto throwScope = DECLARE_THROW_SCOPE(vm);
+        return throwVMTypeError(lexicalGlobalObject, throwScope);
+    }
+
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+    
+    return ServerWebSocketPrototype__cork(thisObject->wrapped(), lexicalGlobalObject, callFrame);
 }
 
 

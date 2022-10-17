@@ -822,6 +822,8 @@ pub const JSServerWebSocket = struct {
 
         if (@TypeOf(ServerWebSocket.close) != CallbackType)
             @compileLog("Expected ServerWebSocket.close to be a callback");
+        if (@TypeOf(ServerWebSocket.cork) != CallbackType)
+            @compileLog("Expected ServerWebSocket.cork to be a callback");
         if (@TypeOf(ServerWebSocket.getData) != GetterType)
             @compileLog("Expected ServerWebSocket.getData to be a getter");
 
@@ -848,6 +850,7 @@ pub const JSServerWebSocket = struct {
         if (!JSC.is_bindgen) {
             @export(ServerWebSocket.close, .{ .name = "ServerWebSocketPrototype__close" });
             @export(ServerWebSocket.constructor, .{ .name = "ServerWebSocketClass__construct" });
+            @export(ServerWebSocket.cork, .{ .name = "ServerWebSocketPrototype__cork" });
             @export(ServerWebSocket.finalize, .{ .name = "ServerWebSocketClass__finalize" });
             @export(ServerWebSocket.getBufferedAmount, .{ .name = "ServerWebSocketPrototype__getBufferedAmount" });
             @export(ServerWebSocket.getData, .{ .name = "ServerWebSocketPrototype__getData" });

@@ -22,7 +22,50 @@ describe("websocket server", () => {
         },
         message(ws, msg) {},
       },
-      fetch(req) {
+      fetch(req, server) {
+        if (server.upgrade(req)) return;
+
+        return new Response("noooooo hello world");
+      },
+    });
+
+    await new Promise((resolve, reject) => {
+      const websocket = new WebSocket(`ws://localhost:${server.port}`);
+
+      websocket.onmessage = (e) => {
+        try {
+          expect(e.data).toBe("hello world");
+          resolve();
+        } catch (r) {
+          reject(r);
+          return;
+        } finally {
+          server?.stop();
+          websocket.close();
+        }
+      };
+      websocket.onerror = (e) => {
+        reject(e);
+      };
+    });
+  });
+
+  it("can do hello world corked", async () => {
+    var server = serve({
+      port: getPort(),
+      websocket: {
+        open(ws) {
+          ws.send("hello world");
+        },
+        message(ws, msg) {
+          ws.cork(() => {
+            ws.send("hello world");
+          });
+        },
+      },
+      fetch(req, server) {
+        if (server.upgrade(req)) return;
+
         return new Response("noooooo hello world");
       },
     });
@@ -53,9 +96,6 @@ describe("websocket server", () => {
     var server = serve({
       port: getPort(),
       websocket: {
-        upgrade(ws) {
-          return { count: 0 };
-        },
         open(ws) {},
         message(ws, msg) {
           if (msg === "first") {
@@ -65,8 +105,13 @@ describe("websocket server", () => {
           ws.send(`counter: ${dataCount++}`);
         },
       },
-      fetch(req) {
-        return new Response("noooooo hello world");
+      fetch(req, server) {
+        if (
+          server.upgrade(req, {
+            count: 0,
+          })
+        )
+          return new Response("noooooo hello world");
       },
     });
 
@@ -128,15 +173,19 @@ describe("websocket server", () => {
     var server = serve({
       port: getPort(),
       websocket: {
-        upgrade(ws) {
-          return { count: 0 };
-        },
         open(ws) {},
         message(ws, msg) {
           ws.send(sendQueue[serverCounter++] + " ");
         },
       },
-      fetch(req) {
+      fetch(req, server) {
+        if (
+          server.upgrade(req, {
+            data: { count: 0 },
+          })
+        )
+          return;
+
         return new Response("noooooo hello world");
       },
     });

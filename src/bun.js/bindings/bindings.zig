@@ -3218,6 +3218,7 @@ pub const JSValue = enum(JSValueReprInt) {
         status,
         url,
         body,
+        data,
     };
 
     // intended to be more lightweight than ZigString

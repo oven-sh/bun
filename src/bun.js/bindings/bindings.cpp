@@ -3063,6 +3063,7 @@ enum class BuiltinNamesMap : uint8_t {
     status,
     url,
     body,
+    data,
 };
 
 static JSC::Identifier builtinNameMap(JSC::JSGlobalObject* globalObject, unsigned char name)
@@ -3083,6 +3084,9 @@ static JSC::Identifier builtinNameMap(JSC::JSGlobalObject* globalObject, unsigne
     }
     case BuiltinNamesMap::body: {
         return clientData->builtinNames().bodyPublicName();
+    }
+    case BuiltinNamesMap::data: {
+        return clientData->builtinNames().dataPublicName();
     }
     }
 }

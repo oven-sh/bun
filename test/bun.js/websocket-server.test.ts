@@ -12,6 +12,47 @@ function getPort() {
 }
 
 describe("websocket server", () => {
+  it("close inside open", async () => {
+    var resolve;
+    var server = serve({
+      port: getPort(),
+      websocket: {
+        open(ws) {},
+        message(ws, msg) {},
+        close() {
+          resolve();
+        },
+      },
+      fetch(req, server) {
+        if (
+          server.upgrade(req, {
+            data: "hello world",
+
+            // check that headers works
+            headers: {
+              "x-a": "text/plain",
+            },
+          })
+        ) {
+          if (server.upgrade(req)) {
+            throw new Error("should not upgrade twice");
+          }
+          return;
+        }
+
+        return new Response("noooooo hello world");
+      },
+    });
+
+    await new Promise((resolve_, reject) => {
+      resolve = resolve_;
+      const websocket = new WebSocket(`ws://localhost:${server.port}`);
+      websocket.onopen = () => websocket.close();
+      websocket.onmessage = (e) => {};
+      websocket.onerror = (e) => {};
+    });
+    server.stop();
+  });
   it("can do hello world", async () => {
     var server = serve({
       port: getPort(),

@@ -141,6 +141,7 @@ pub extern fn JSC__JSString__is8Bit(arg0: [*c]const JSC__JSString) bool;
 pub extern fn JSC__JSString__iterator(arg0: [*c]JSC__JSString, arg1: ?*JSC__JSGlobalObject, arg2: ?*anyopaque) void;
 pub extern fn JSC__JSString__length(arg0: [*c]const JSC__JSString) usize;
 pub extern fn JSC__JSString__toObject(arg0: [*c]JSC__JSString, arg1: ?*JSC__JSGlobalObject) [*c]JSC__JSObject;
+pub extern fn JSC__JSString__toZigString(arg0: [*c]JSC__JSString, arg1: ?*JSC__JSGlobalObject, arg2: [*c]ZigString) void;
 pub extern fn JSC__JSString__value(arg0: [*c]JSC__JSString, arg1: ?*JSC__JSGlobalObject) bWTF__String;
 pub extern fn Inspector__ScriptArguments__argumentAt(arg0: [*c]bindings.ScriptArguments, arg1: usize) JSC__JSValue;
 pub extern fn Inspector__ScriptArguments__argumentCount(arg0: [*c]bindings.ScriptArguments) usize;

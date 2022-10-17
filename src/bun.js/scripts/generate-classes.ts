@@ -35,12 +35,108 @@ function constructorName(typeName) {
   return `JS${typeName}Constructor`;
 }
 
+function DOMJITName(fnName) {
+  return `${fnName}WithoutTypeChecks`;
+}
+
+function argTypeName(arg) {
+  return {
+    ["bool"]: "bool",
+    ["int"]: "int32_t",
+    ["JSUint8Array"]: "JSC::JSUint8Array*",
+    ["JSString"]: "JSC::JSString*",
+    ["JSValue"]: "JSC::JSValue",
+  }[arg];
+}
+
+function DOMJITType(type) {
+  return {
+    ["bool"]: "JSC::SpecBoolean",
+    ["int"]: "JSC::SpecInt32Only",
+    ["JSUint8Array"]: "JSC::SpecUint8Array",
+    ["JSString"]: "JSC::SpecString",
+    ["JSValue"]: "JSC::SpecHeapTop",
+  }[type];
+}
+
+function ZigDOMJITArgType(type) {
+  return {
+    ["bool"]: "bool",
+    ["int"]: "i32",
+    ["JSUint8Array"]: "*JSC.JSUint8Array",
+    ["JSString"]: "*JSC.JSString",
+    ["JSValue"]: "JSC.JSValue",
+  }[type];
+}
+
+function ZigDOMJITFunctionType(thisName, { args, returns }) {
+  return `fn (*${thisName}, *JSC.JSGlobalObject, ${args
+    .map(ZigDOMJITArgType)
+    .join(", ")}) callconv(.C) ${ZigDOMJITArgType("JSValue")}`;
+}
+
+function DOMJITReturnType(type) {
+  return {
+    ["bool"]: "bool",
+    ["int"]: "int32_t",
+    ["JSUint8Array"]: "JSC::JSUint8Array*",
+    ["JSString"]: "JSString*",
+    ["JSValue"]: "EncodedJSValue",
+  }[type];
+}
+
+function DOMJITFunctionDeclaration(jsClassName, fnName, { args, returns }) {
+  const argNames = args.map((arg, i) => `${argTypeName(arg)} arg${i}`);
+  return `
+  extern "C" JSC_DECLARE_JIT_OPERATION_WITHOUT_WTF_INTERNAL(${DOMJITName(
+    fnName
+  )}Wrapper, EncodedJSValue, (JSC::JSGlobalObject * lexicalGlobalObject, void* thisValue, ${argNames.join(
+    ", "
+  )}));
+  extern "C" EncodedJSValue ${DOMJITName(
+    fnName
+  )}(void* ptr, JSC::JSGlobalObject * lexicalGlobalObject, ${argNames.join(
+    ", "
+  )});
+
+  static const JSC::DOMJIT::Signature DOMJITSignatureFor${fnName}(${DOMJITName(
+    fnName
+  )}Wrapper, 
+  ${jsClassName}::info(), 
+  JSC::DOMJIT::Effect::forReadWrite(JSC::DOMJIT::HeapRange::top(), JSC::DOMJIT::HeapRange::top()), 
+  ${DOMJITType("JSValue")}, ${args.map(DOMJITType).join(", ")});
+`.trim();
+}
+
+function DOMJITFunctionDefinition(jsClassName, fnName, { args }) {
+  const argNames = args.map((arg, i) => `${argTypeName(arg)} arg${i}`);
+  return `
+JSC_DEFINE_JIT_OPERATION(${DOMJITName(
+    fnName
+  )}Wrapper, EncodedJSValue, (JSC::JSGlobalObject * lexicalGlobalObject, void* thisValue, ${argNames.join(
+    ", "
+  )}))
+{
+    VM& vm = JSC::getVM(lexicalGlobalObject);
+    IGNORE_WARNINGS_BEGIN("frame-address")
+    CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
+    IGNORE_WARNINGS_END
+    JSC::JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
+    return ${DOMJITName(
+      fnName
+    )}(reinterpret_cast<${jsClassName}*>(thisValue)->wrapped(), lexicalGlobalObject, ${args
+    .map((b, i) => "arg" + i)
+    .join(", ")});
+}
+`;
+}
+
 function appendSymbols(
   to: Map<string, string>,
   symbolName: (name: string) => string,
   prop
 ) {
-  var { defaultValue, getter, setter, accesosr, fn, cache } = prop;
+  var { defaultValue, getter, setter, accesosr, fn, DOMJIT, cache } = prop;
 
   if (accesosr) {
     getter = accesosr.getter;
@@ -56,6 +152,9 @@ function appendSymbols(
   }
 
   if (fn && !to.get(fn)) {
+    if (DOMJIT) {
+      to.set(DOMJITName(fn), symbolName(DOMJITName(fn)));
+    }
     to.set(fn, symbolName(fn));
   }
 }
@@ -75,6 +174,7 @@ function propRow(
     fn,
     length = 0,
     cache,
+    DOMJIT,
   } = prop;
 
   if (accesosr) {
@@ -107,6 +207,12 @@ function propRow(
   }
 
   if (fn !== undefined) {
+    if (DOMJIT) {
+      // { "getElementById"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DOMJITFunction), NoIntrinsic, { HashTableValue::DOMJITFunctionType, jsTestDOMJITPrototypeFunction_getElementById, &DOMJITSignatureForTestDOMJITGetElementById } },
+      return `
+      { "${name}"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DOMJITFunction), NoIntrinsic, { HashTableValue::DOMJITFunctionType, ${fn}, &DOMJITSignatureFor${symbol} } }
+      `.trim();
+    }
     return `
 { "${name}"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, ${fn}, ${
       length || 0
@@ -201,6 +307,7 @@ ${generateHashTable(
   protoFields,
   true
 )}
+
 
 const ClassInfo ${proto}::s_info = { "${typeName}"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(${proto}) };
 
@@ -504,6 +611,21 @@ function renderDecls(symbolName, typeName, proto) {
         `.trim(),
         "\n"
       );
+
+      if (proto[name].DOMJIT) {
+        rows.push(
+          DOMJITFunctionDeclaration(
+            className(typeName),
+            symbolName(typeName, name),
+            proto[name].DOMJIT
+          ),
+          DOMJITFunctionDefinition(
+            className(typeName),
+            symbolName(typeName, name),
+            proto[name].DOMJIT
+          )
+        );
+      }
     }
   }
 
@@ -992,6 +1114,7 @@ function generateZig(
         /// Set the cached value for ${name} on ${typeName}
         /// This value will be visited by the garbage collector.
         pub fn ${name}SetCached(thisValue: JSC.JSValue, globalObject: *JSC.JSGlobalObject, value: JSC.JSValue) void {
+          JSC.markBinding(@src());
           ${protoSymbolName(
             typeName,
             name
@@ -1029,7 +1152,7 @@ function generateZig(
     }
 
     [...Object.values(proto)].forEach(
-      ({ getter, setter, accessor, fn, cache }) => {
+      ({ getter, setter, accessor, fn, cache, DOMJIT }) => {
         if (accessor) {
           getter = accessor.getter;
           setter = accessor.setter;
@@ -1053,6 +1176,17 @@ function generateZig(
         }
 
         if (fn) {
+          if (DOMJIT) {
+            output += `
+          if (@TypeOf(${typeName}.${DOMJITName(fn)}) != ${ZigDOMJITFunctionType(
+              typeName,
+              DOMJIT
+            )}) 
+            @compileLog(
+              "Expected ${typeName}.${DOMJITName(fn)} to be a DOMJIT function"
+            );`;
+          }
+
           output += `
           if (@TypeOf(${typeName}.${fn}) != CallbackType) 
             @compileLog(

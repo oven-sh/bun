@@ -836,6 +836,11 @@ unsigned char JSC__JSCell__getType(JSC__JSCell* arg0) { return arg0->type(); }
 
 #pragma mark - JSC::JSString
 
+void JSC__JSString__toZigString(JSC__JSString* arg0, JSC__JSGlobalObject* arg1, ZigString* arg2)
+{
+    *arg2 = Zig::toZigString(arg0->value(arg1));
+}
+
 JSC__JSString* JSC__JSString__createFromOwnedString(JSC__VM* arg0, const WTF__String* arg1)
 {
     return JSC::jsOwnedString(reinterpret_cast<JSC__VM&>(arg0),

@@ -25,6 +25,7 @@ pub const JSSubprocess = struct {
     /// Set the cached value for stderr on Subprocess
     /// This value will be visited by the garbage collector.
     pub fn stderrSetCached(thisValue: JSC.JSValue, globalObject: *JSC.JSGlobalObject, value: JSC.JSValue) void {
+        JSC.markBinding(@src());
         SubprocessPrototype__stderrSetCachedValue(thisValue, globalObject, value);
     }
 
@@ -33,6 +34,7 @@ pub const JSSubprocess = struct {
     /// Set the cached value for stdin on Subprocess
     /// This value will be visited by the garbage collector.
     pub fn stdinSetCached(thisValue: JSC.JSValue, globalObject: *JSC.JSGlobalObject, value: JSC.JSValue) void {
+        JSC.markBinding(@src());
         SubprocessPrototype__stdinSetCachedValue(thisValue, globalObject, value);
     }
 
@@ -41,6 +43,7 @@ pub const JSSubprocess = struct {
     /// Set the cached value for stdout on Subprocess
     /// This value will be visited by the garbage collector.
     pub fn stdoutSetCached(thisValue: JSC.JSValue, globalObject: *JSC.JSGlobalObject, value: JSC.JSValue) void {
+        JSC.markBinding(@src());
         SubprocessPrototype__stdoutSetCachedValue(thisValue, globalObject, value);
     }
 
@@ -768,6 +771,7 @@ pub const JSServerWebSocket = struct {
     /// Set the cached value for data on ServerWebSocket
     /// This value will be visited by the garbage collector.
     pub fn dataSetCached(thisValue: JSC.JSValue, globalObject: *JSC.JSGlobalObject, value: JSC.JSValue) void {
+        JSC.markBinding(@src());
         ServerWebSocketPrototype__dataSetCachedValue(thisValue, globalObject, value);
     }
 
@@ -776,6 +780,7 @@ pub const JSServerWebSocket = struct {
     /// Set the cached value for remoteAddress on ServerWebSocket
     /// This value will be visited by the garbage collector.
     pub fn remoteAddressSetCached(thisValue: JSC.JSValue, globalObject: *JSC.JSGlobalObject, value: JSC.JSValue) void {
+        JSC.markBinding(@src());
         ServerWebSocketPrototype__remoteAddressSetCachedValue(thisValue, globalObject, value);
     }
 
@@ -840,6 +845,14 @@ pub const JSServerWebSocket = struct {
             @compileLog("Expected ServerWebSocket.isSubscribed to be a callback");
         if (@TypeOf(ServerWebSocket.publish) != CallbackType)
             @compileLog("Expected ServerWebSocket.publish to be a callback");
+        if (@TypeOf(ServerWebSocket.publishBinaryWithoutTypeChecks) != fn (*ServerWebSocket, *JSC.JSGlobalObject, *JSC.JSString, *JSC.JSUint8Array) callconv(.C) JSC.JSValue)
+            @compileLog("Expected ServerWebSocket.publishBinaryWithoutTypeChecks to be a DOMJIT function");
+        if (@TypeOf(ServerWebSocket.publishBinary) != CallbackType)
+            @compileLog("Expected ServerWebSocket.publishBinary to be a callback");
+        if (@TypeOf(ServerWebSocket.publishTextWithoutTypeChecks) != fn (*ServerWebSocket, *JSC.JSGlobalObject, *JSC.JSString, *JSC.JSString) callconv(.C) JSC.JSValue)
+            @compileLog("Expected ServerWebSocket.publishTextWithoutTypeChecks to be a DOMJIT function");
+        if (@TypeOf(ServerWebSocket.publishText) != CallbackType)
+            @compileLog("Expected ServerWebSocket.publishText to be a callback");
         if (@TypeOf(ServerWebSocket.getReadyState) != GetterType)
             @compileLog("Expected ServerWebSocket.getReadyState to be a getter");
 
@@ -848,6 +861,14 @@ pub const JSServerWebSocket = struct {
 
         if (@TypeOf(ServerWebSocket.send) != CallbackType)
             @compileLog("Expected ServerWebSocket.send to be a callback");
+        if (@TypeOf(ServerWebSocket.sendBinaryWithoutTypeChecks) != fn (*ServerWebSocket, *JSC.JSGlobalObject, *JSC.JSUint8Array, bool) callconv(.C) JSC.JSValue)
+            @compileLog("Expected ServerWebSocket.sendBinaryWithoutTypeChecks to be a DOMJIT function");
+        if (@TypeOf(ServerWebSocket.sendBinary) != CallbackType)
+            @compileLog("Expected ServerWebSocket.sendBinary to be a callback");
+        if (@TypeOf(ServerWebSocket.sendTextWithoutTypeChecks) != fn (*ServerWebSocket, *JSC.JSGlobalObject, *JSC.JSString, bool) callconv(.C) JSC.JSValue)
+            @compileLog("Expected ServerWebSocket.sendTextWithoutTypeChecks to be a DOMJIT function");
+        if (@TypeOf(ServerWebSocket.sendText) != CallbackType)
+            @compileLog("Expected ServerWebSocket.sendText to be a callback");
         if (@TypeOf(ServerWebSocket.subscribe) != CallbackType)
             @compileLog("Expected ServerWebSocket.subscribe to be a callback");
         if (@TypeOf(ServerWebSocket.unsubscribe) != CallbackType)
@@ -864,7 +885,15 @@ pub const JSServerWebSocket = struct {
             @export(ServerWebSocket.getRemoteAddress, .{ .name = "ServerWebSocketPrototype__getRemoteAddress" });
             @export(ServerWebSocket.isSubscribed, .{ .name = "ServerWebSocketPrototype__isSubscribed" });
             @export(ServerWebSocket.publish, .{ .name = "ServerWebSocketPrototype__publish" });
+            @export(ServerWebSocket.publishBinary, .{ .name = "ServerWebSocketPrototype__publishBinary" });
+            @export(ServerWebSocket.publishBinaryWithoutTypeChecks, .{ .name = "ServerWebSocketPrototype__publishBinaryWithoutTypeChecks" });
+            @export(ServerWebSocket.publishText, .{ .name = "ServerWebSocketPrototype__publishText" });
+            @export(ServerWebSocket.publishTextWithoutTypeChecks, .{ .name = "ServerWebSocketPrototype__publishTextWithoutTypeChecks" });
             @export(ServerWebSocket.send, .{ .name = "ServerWebSocketPrototype__send" });
+            @export(ServerWebSocket.sendBinary, .{ .name = "ServerWebSocketPrototype__sendBinary" });
+            @export(ServerWebSocket.sendBinaryWithoutTypeChecks, .{ .name = "ServerWebSocketPrototype__sendBinaryWithoutTypeChecks" });
+            @export(ServerWebSocket.sendText, .{ .name = "ServerWebSocketPrototype__sendText" });
+            @export(ServerWebSocket.sendTextWithoutTypeChecks, .{ .name = "ServerWebSocketPrototype__sendTextWithoutTypeChecks" });
             @export(ServerWebSocket.setBinaryType, .{ .name = "ServerWebSocketPrototype__setBinaryType" });
             @export(ServerWebSocket.setData, .{ .name = "ServerWebSocketPrototype__setData" });
             @export(ServerWebSocket.subscribe, .{ .name = "ServerWebSocketPrototype__subscribe" });
@@ -890,6 +919,7 @@ pub const JSTextDecoder = struct {
     /// Set the cached value for encoding on TextDecoder
     /// This value will be visited by the garbage collector.
     pub fn encodingSetCached(thisValue: JSC.JSValue, globalObject: *JSC.JSGlobalObject, value: JSC.JSValue) void {
+        JSC.markBinding(@src());
         TextDecoderPrototype__encodingSetCachedValue(thisValue, globalObject, value);
     }
 
@@ -969,6 +999,7 @@ pub const JSRequest = struct {
     /// Set the cached value for body on Request
     /// This value will be visited by the garbage collector.
     pub fn bodySetCached(thisValue: JSC.JSValue, globalObject: *JSC.JSGlobalObject, value: JSC.JSValue) void {
+        JSC.markBinding(@src());
         RequestPrototype__bodySetCachedValue(thisValue, globalObject, value);
     }
 
@@ -977,6 +1008,7 @@ pub const JSRequest = struct {
     /// Set the cached value for headers on Request
     /// This value will be visited by the garbage collector.
     pub fn headersSetCached(thisValue: JSC.JSValue, globalObject: *JSC.JSGlobalObject, value: JSC.JSValue) void {
+        JSC.markBinding(@src());
         RequestPrototype__headersSetCachedValue(thisValue, globalObject, value);
     }
 
@@ -985,6 +1017,7 @@ pub const JSRequest = struct {
     /// Set the cached value for url on Request
     /// This value will be visited by the garbage collector.
     pub fn urlSetCached(thisValue: JSC.JSValue, globalObject: *JSC.JSGlobalObject, value: JSC.JSValue) void {
+        JSC.markBinding(@src());
         RequestPrototype__urlSetCachedValue(thisValue, globalObject, value);
     }
 
@@ -1125,6 +1158,7 @@ pub const JSResponse = struct {
     /// Set the cached value for body on Response
     /// This value will be visited by the garbage collector.
     pub fn bodySetCached(thisValue: JSC.JSValue, globalObject: *JSC.JSGlobalObject, value: JSC.JSValue) void {
+        JSC.markBinding(@src());
         ResponsePrototype__bodySetCachedValue(thisValue, globalObject, value);
     }
 
@@ -1133,6 +1167,7 @@ pub const JSResponse = struct {
     /// Set the cached value for headers on Response
     /// This value will be visited by the garbage collector.
     pub fn headersSetCached(thisValue: JSC.JSValue, globalObject: *JSC.JSGlobalObject, value: JSC.JSValue) void {
+        JSC.markBinding(@src());
         ResponsePrototype__headersSetCachedValue(thisValue, globalObject, value);
     }
 
@@ -1141,6 +1176,7 @@ pub const JSResponse = struct {
     /// Set the cached value for statusText on Response
     /// This value will be visited by the garbage collector.
     pub fn statusTextSetCached(thisValue: JSC.JSValue, globalObject: *JSC.JSGlobalObject, value: JSC.JSValue) void {
+        JSC.markBinding(@src());
         ResponsePrototype__statusTextSetCachedValue(thisValue, globalObject, value);
     }
 
@@ -1149,6 +1185,7 @@ pub const JSResponse = struct {
     /// Set the cached value for url on Response
     /// This value will be visited by the garbage collector.
     pub fn urlSetCached(thisValue: JSC.JSValue, globalObject: *JSC.JSGlobalObject, value: JSC.JSValue) void {
+        JSC.markBinding(@src());
         ResponsePrototype__urlSetCachedValue(thisValue, globalObject, value);
     }
 

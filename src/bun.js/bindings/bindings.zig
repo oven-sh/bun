@@ -1171,6 +1171,20 @@ pub const JSString = extern struct {
         return shim.cppFn("toObject", .{ this, global });
     }
 
+    pub fn toZigString(this: *JSString, global: *JSGlobalObject, zig_str: *JSC.ZigString) void {
+        return shim.cppFn("toZigString", .{ this, global, zig_str });
+    }
+
+    pub fn toSlice(
+        this: *JSString,
+        global: *JSGlobalObject,
+        allocator: std.mem.Allocator,
+    ) ZigString.Slice {
+        var str = ZigString.init("");
+        this.toZigString(global, &str);
+        return str.toSlice(allocator);
+    }
+
     pub fn eql(this: *const JSString, global: *JSGlobalObject, other: *JSString) bool {
         return shim.cppFn("eql", .{ this, global, other });
     }
@@ -1220,7 +1234,7 @@ pub const JSString = extern struct {
         write16: ?JStringIteratorWrite16Callback,
     };
 
-    pub const Extern = [_][]const u8{ "iterator", "toObject", "eql", "value", "length", "is8Bit", "createFromOwnedString", "createFromString" };
+    pub const Extern = [_][]const u8{ "toZigString", "iterator", "toObject", "eql", "value", "length", "is8Bit", "createFromOwnedString", "createFromString" };
 };
 
 pub const JSPromiseRejectionOperation = enum(u32) {

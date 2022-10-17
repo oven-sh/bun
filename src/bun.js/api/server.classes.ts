@@ -29,6 +29,40 @@ export default [
         fn: "send",
         length: 2,
       },
+      sendText: {
+        fn: "sendText",
+        length: 2,
+        DOMJIT: {
+          returns: "int",
+          args: ["JSString", "bool"],
+        },
+      },
+      sendBinary: {
+        fn: "sendBinary",
+        length: 2,
+        DOMJIT: {
+          returns: "int",
+          args: ["JSUint8Array", "bool"],
+        },
+      },
+
+      publishText: {
+        fn: "publishText",
+        length: 2,
+        DOMJIT: {
+          returns: "int",
+          args: ["JSString", "JSString"],
+        },
+      },
+      publishBinary: {
+        fn: "publishBinary",
+        length: 2,
+        DOMJIT: {
+          returns: "int",
+          args: ["JSString", "JSUint8Array"],
+        },
+      },
+
       close: {
         fn: "close",
         length: 1,

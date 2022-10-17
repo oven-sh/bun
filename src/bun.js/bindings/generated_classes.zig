@@ -820,6 +820,11 @@ pub const JSServerWebSocket = struct {
             @compileLog("ServerWebSocket.finalize is not a finalizer");
         }
 
+        if (@TypeOf(ServerWebSocket.getBinaryType) != GetterType)
+            @compileLog("Expected ServerWebSocket.getBinaryType to be a getter");
+
+        if (@TypeOf(ServerWebSocket.setBinaryType) != SetterType)
+            @compileLog("Expected ServerWebSocket.setBinaryType to be a setter");
         if (@TypeOf(ServerWebSocket.close) != CallbackType)
             @compileLog("Expected ServerWebSocket.close to be a callback");
         if (@TypeOf(ServerWebSocket.cork) != CallbackType)
@@ -852,6 +857,7 @@ pub const JSServerWebSocket = struct {
             @export(ServerWebSocket.constructor, .{ .name = "ServerWebSocketClass__construct" });
             @export(ServerWebSocket.cork, .{ .name = "ServerWebSocketPrototype__cork" });
             @export(ServerWebSocket.finalize, .{ .name = "ServerWebSocketClass__finalize" });
+            @export(ServerWebSocket.getBinaryType, .{ .name = "ServerWebSocketPrototype__getBinaryType" });
             @export(ServerWebSocket.getBufferedAmount, .{ .name = "ServerWebSocketPrototype__getBufferedAmount" });
             @export(ServerWebSocket.getData, .{ .name = "ServerWebSocketPrototype__getData" });
             @export(ServerWebSocket.getReadyState, .{ .name = "ServerWebSocketPrototype__getReadyState" });
@@ -859,6 +865,7 @@ pub const JSServerWebSocket = struct {
             @export(ServerWebSocket.isSubscribed, .{ .name = "ServerWebSocketPrototype__isSubscribed" });
             @export(ServerWebSocket.publish, .{ .name = "ServerWebSocketPrototype__publish" });
             @export(ServerWebSocket.send, .{ .name = "ServerWebSocketPrototype__send" });
+            @export(ServerWebSocket.setBinaryType, .{ .name = "ServerWebSocketPrototype__setBinaryType" });
             @export(ServerWebSocket.setData, .{ .name = "ServerWebSocketPrototype__setData" });
             @export(ServerWebSocket.subscribe, .{ .name = "ServerWebSocketPrototype__subscribe" });
             @export(ServerWebSocket.unsubscribe, .{ .name = "ServerWebSocketPrototype__unsubscribe" });

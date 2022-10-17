@@ -3300,14 +3300,15 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
             }
 
             var data_value = JSC.JSValue.zero;
+
+            // if we converted a HeadersInit to a Headers object, we need to free it
             var fetch_headers_to_deref: ?*JSC.FetchHeaders = null;
+
             defer {
                 if (fetch_headers_to_deref) |fh| {
                     fh.deref();
                 }
             }
-
-            
 
             if (optional) |opts| {
                 getter: {
@@ -3320,47 +3321,40 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
                         return JSValue.jsUndefined();
                     }
 
+                    if (opts.fastGet(globalThis, .data)) |headers_value| {
+                        data_value = headers_value;
+                    }
+
                     if (opts.fastGet(globalThis, .headers)) |headers_value| {
-                        if (headers_value.as(JSC.FetchHeaders)) |fetch_headers| {
-                            if (fetch_headers.fastGet(.SecWebSocketProtocol)) |protocol| {
-                                sec_websocket_protocol = protocol;
-                            }
-
-                            if (fetch_headers.fastGet(.SecWebSocketExtensions)) |protocol| {
-                                sec_websocket_extensions = protocol;
-                            }
-
-                            // we must write the status first so that 200 OK isn't written
-                            upgrader.resp.writeStatus("101 Switching Protocols");
-
-                            fetch_headers.toUWSResponse(comptime ssl_enabled, upgrader.resp);
-                            break :getter;
-                        } else if (headers_value.isObject()) {
-                            if (JSC.FetchHeaders.createFromJS(globalThis, headers_value)) |fetch_headers| {
-                                if (fetch_headers.fastGet(.SecWebSocketProtocol)) |protocol| {
-                                    sec_websocket_protocol = protocol;
-                                }
-
-                                if (fetch_headers.fastGet(.SecWebSocketExtensions)) |protocol| {
-                                    sec_websocket_extensions = protocol;
-                                }
-
-                                // we must write the status first so that 200 OK isn't written
-                                upgrader.resp.writeStatus("101 Switching Protocols");
-
-                                fetch_headers.toUWSResponse(comptime ssl_enabled, upgrader.resp);
-                                fetch_headers_to_deref = fetch_headers;
-                            }
-
+                        if (headers_value.isEmptyOrUndefinedOrNull()) {
                             break :getter;
                         }
 
-                        JSC.throwInvalidArguments("upgrade options.headers must be a Headers or an object", .{}, globalThis, exception);
-                        return JSValue.jsUndefined();
-                    }
+                        var fetch_headers_to_use: *JSC.FetchHeaders = headers_value.as(JSC.FetchHeaders) orelse brk: {
+                            if (headers_value.isObject()) {
+                                if (JSC.FetchHeaders.createFromJS(globalThis, headers_value)) |fetch_headers| {
+                                    fetch_headers_to_deref = fetch_headers;
+                                    break :brk fetch_headers;
+                                }
+                            }
+                            break :brk null;
+                        } orelse {
+                            JSC.throwInvalidArguments("upgrade options.headers must be a Headers or an object", .{}, globalThis, exception);
+                            return JSValue.jsUndefined();
+                        };
 
-                    if (opts.fastGet(globalThis, .data)) |headers_value| {
-                        data_value = headers_value;
+                        if (fetch_headers_to_use.fastGet(.SecWebSocketProtocol)) |protocol| {
+                            sec_websocket_protocol = protocol;
+                        }
+
+                        if (fetch_headers_to_use.fastGet(.SecWebSocketExtensions)) |protocol| {
+                            sec_websocket_extensions = protocol;
+                        }
+
+                        // TODO: should we cork?
+                        // we must write the status first so that 200 OK isn't written
+                        upgrader.resp.writeStatus("101 Switching Protocols");
+                        fetch_headers_to_use.toUWSResponse(comptime ssl_enabled, upgrader.resp);
                     }
                 }
             }

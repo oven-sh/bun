@@ -2474,6 +2474,7 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
                 this.buffer = bun.ByteList.init("");
                 ByteListPool.push(this.allocator, buffer);
             } else {
+                // Don't release this buffer until destroy() is called
                 this.buffer.len = 0;
             }
         }

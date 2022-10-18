@@ -216,8 +216,8 @@ template<> void JSTextEncoderDOMConstructor::initializeProperties(VM& vm, JSDOMG
 constexpr JSC::DFG::AbstractHeapKind heapKinds[4] = { JSC::DFG::HeapObjectCount };
 
 // This is the equivalent of DataView.set
-constexpr JSC::DFG::AbstractHeapKind encodeIntoRead[4] = { JSC::DFG::MiscFields, JSC::DFG::TypedArrayProperties };
-constexpr JSC::DFG::AbstractHeapKind encodeIntoWrite[4] = { JSC::DFG::TypedArrayProperties };
+constexpr JSC::DFG::AbstractHeapKind encodeIntoRead[4] = { JSC::DFG::MiscFields, JSC::DFG::TypedArrayProperties, JSC::DFG::Absolute };
+constexpr JSC::DFG::AbstractHeapKind encodeIntoWrite[4] = { JSC::DFG::TypedArrayProperties, JSC::DFG::Absolute };
 
 static const JSC::DOMJIT::Signature DOMJITSignatureForJSTextEncoderEncodeWithoutTypeCheck(
     jsTextEncoderEncodeWithoutTypeCheck,

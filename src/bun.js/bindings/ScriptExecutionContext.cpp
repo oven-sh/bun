@@ -3,8 +3,8 @@
 #include "ScriptExecutionContext.h"
 
 #include "webcore/WebSocket.h"
-
-#include <uws/src/App.h>
+#include "libusockets.h"
+#include "_libusockets.h"
 
 extern "C" void Bun__startLoop(us_loop_t* loop);
 
@@ -27,7 +27,7 @@ static void registerHTTPContextForWebSocket(ScriptExecutionContext* script, us_s
 us_socket_context_t* ScriptExecutionContext::webSocketContextSSL()
 {
     if (!m_ssl_client_websockets_ctx) {
-        us_loop_t* loop = (us_loop_t*)uWS::Loop::get();
+        us_loop_t* loop = (us_loop_t*)uws_get_loop();
         us_socket_context_options_t opts;
         memset(&opts, 0, sizeof(us_socket_context_options_t));
         this->m_ssl_client_websockets_ctx = us_create_socket_context(1, loop, sizeof(size_t), opts);
@@ -42,7 +42,7 @@ us_socket_context_t* ScriptExecutionContext::webSocketContextSSL()
 us_socket_context_t* ScriptExecutionContext::webSocketContextNoSSL()
 {
     if (!m_client_websockets_ctx) {
-        us_loop_t* loop = (us_loop_t*)uWS::Loop::get();
+        us_loop_t* loop = (us_loop_t*)uws_get_loop();
         us_socket_context_options_t opts;
         memset(&opts, 0, sizeof(us_socket_context_options_t));
         this->m_client_websockets_ctx = us_create_socket_context(0, loop, sizeof(size_t), opts);
@@ -57,7 +57,7 @@ us_socket_context_t* ScriptExecutionContext::webSocketContextNoSSL()
 template<bool SSL>
 static us_socket_context_t* registerWebSocketClientContext(ScriptExecutionContext* script, us_socket_context_t* parent)
 {
-    us_loop_t* loop = (us_loop_t*)uWS::Loop::get();
+    us_loop_t* loop = (us_loop_t*)uws_get_loop();
     if constexpr (SSL) {
         us_socket_context_t* child = us_create_child_socket_context(1, parent, sizeof(size_t));
         Bun__WebSocketClientTLS__register(script->jsGlobalObject(), loop, child);

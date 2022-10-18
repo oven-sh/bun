@@ -69,8 +69,6 @@
 #include <wtf/text/CString.h>
 #include <wtf/text/StringBuilder.h>
 
-#include <uws/src/App.h>
-
 // #if USE(WEB_THREAD)
 // #include "WebCoreThreadRun.h"
 // #endif
@@ -182,14 +180,14 @@ WebSocket::~WebSocket()
         Bun__WebSocketClientTLS__finalize(this->m_connectedWebSocket.clientSSL);
         break;
     }
-    case ConnectedWebSocketKind::Server: {
-        this->m_connectedWebSocket.server->end(None);
-        break;
-    }
-    case ConnectedWebSocketKind::ServerSSL: {
-        this->m_connectedWebSocket.serverSSL->end(None);
-        break;
-    }
+    // case ConnectedWebSocketKind::Server: {
+    //     this->m_connectedWebSocket.server->end(None);
+    //     break;
+    // }
+    // case ConnectedWebSocketKind::ServerSSL: {
+    //     this->m_connectedWebSocket.serverSSL->end(None);
+    //     break;
+    // }
     default: {
         break;
     }
@@ -484,7 +482,6 @@ ExceptionOr<void> WebSocket::send(ArrayBufferView& arrayBufferView)
 
 void WebSocket::sendWebSocketData(const char* baseAddress, size_t length)
 {
-    uWS::OpCode opCode = uWS::OpCode::BINARY;
 
     switch (m_connectedWebSocketKind) {
     case ConnectedWebSocketKind::Client: {
@@ -497,16 +494,16 @@ void WebSocket::sendWebSocketData(const char* baseAddress, size_t length)
         Bun__WebSocketClientTLS__writeBinaryData(this->m_connectedWebSocket.clientSSL, reinterpret_cast<const unsigned char*>(baseAddress), length);
         break;
     }
-    case ConnectedWebSocketKind::Server: {
-        this->m_connectedWebSocket.server->send({ baseAddress, length }, opCode);
-        this->m_bufferedAmount = this->m_connectedWebSocket.server->getBufferedAmount();
-        break;
-    }
-    case ConnectedWebSocketKind::ServerSSL: {
-        this->m_connectedWebSocket.serverSSL->send({ baseAddress, length }, opCode);
-        this->m_bufferedAmount = this->m_connectedWebSocket.serverSSL->getBufferedAmount();
-        break;
-    }
+    // case ConnectedWebSocketKind::Server: {
+    //     this->m_connectedWebSocket.server->send({ baseAddress, length }, opCode);
+    //     this->m_bufferedAmount = this->m_connectedWebSocket.server->getBufferedAmount();
+    //     break;
+    // }
+    // case ConnectedWebSocketKind::ServerSSL: {
+    //     this->m_connectedWebSocket.serverSSL->send({ baseAddress, length }, opCode);
+    //     this->m_bufferedAmount = this->m_connectedWebSocket.serverSSL->getBufferedAmount();
+    //     break;
+    // }
     default: {
         RELEASE_ASSERT_NOT_REACHED();
     }
@@ -529,18 +526,18 @@ void WebSocket::sendWebSocketString(const String& message)
         Bun__WebSocketClientTLS__writeString(this->m_connectedWebSocket.clientSSL, &zigStr);
         break;
     }
-    case ConnectedWebSocketKind::Server: {
-        auto utf8 = message.utf8(StrictConversionReplacingUnpairedSurrogatesWithFFFD);
-        this->m_connectedWebSocket.server->send({ utf8.data(), utf8.length() }, uWS::OpCode::TEXT);
-        this->m_bufferedAmount = this->m_connectedWebSocket.server->getBufferedAmount();
-        break;
-    }
-    case ConnectedWebSocketKind::ServerSSL: {
-        auto utf8 = message.utf8(StrictConversionReplacingUnpairedSurrogatesWithFFFD);
-        this->m_connectedWebSocket.serverSSL->send({ utf8.data(), utf8.length() }, uWS::OpCode::TEXT);
-        this->m_bufferedAmount = this->m_connectedWebSocket.serverSSL->getBufferedAmount();
-        break;
-    }
+    // case ConnectedWebSocketKind::Server: {
+    //     auto utf8 = message.utf8(StrictConversionReplacingUnpairedSurrogatesWithFFFD);
+    //     this->m_connectedWebSocket.server->send({ utf8.data(), utf8.length() }, uWS::OpCode::TEXT);
+    //     this->m_bufferedAmount = this->m_connectedWebSocket.server->getBufferedAmount();
+    //     break;
+    // }
+    // case ConnectedWebSocketKind::ServerSSL: {
+    //     auto utf8 = message.utf8(StrictConversionReplacingUnpairedSurrogatesWithFFFD);
+    //     this->m_connectedWebSocket.serverSSL->send({ utf8.data(), utf8.length() }, uWS::OpCode::TEXT);
+    //     this->m_bufferedAmount = this->m_connectedWebSocket.serverSSL->getBufferedAmount();
+    //     break;
+    // }
     default: {
         RELEASE_ASSERT_NOT_REACHED();
     }
@@ -592,16 +589,16 @@ ExceptionOr<void> WebSocket::close(std::optional<unsigned short> optionalCode, c
         // this->m_bufferedAmount = this->m_connectedWebSocket.clientSSL->getBufferedAmount();
         break;
     }
-    case ConnectedWebSocketKind::Server: {
-        // this->m_connectedWebSocket.server->end(code, { utf8.data(), utf8.length() });
-        // this->m_bufferedAmount = this->m_connectedWebSocket.server->getBufferedAmount();
-        break;
-    }
-    case ConnectedWebSocketKind::ServerSSL: {
-        // this->m_connectedWebSocket.serverSSL->end(code, { utf8.data(), utf8.length() });
-        // this->m_bufferedAmount = this->m_connectedWebSocket.serverSSL->getBufferedAmount();
-        break;
-    }
+    // case ConnectedWebSocketKind::Server: {
+    // this->m_connectedWebSocket.server->end(code, { utf8.data(), utf8.length() });
+    // this->m_bufferedAmount = this->m_connectedWebSocket.server->getBufferedAmount();
+    //     break;
+    // }
+    // case ConnectedWebSocketKind::ServerSSL: {
+    //     // this->m_connectedWebSocket.serverSSL->end(code, { utf8.data(), utf8.length() });
+    //     // this->m_bufferedAmount = this->m_connectedWebSocket.serverSSL->getBufferedAmount();
+    //     break;
+    // }
     default: {
         break;
     }

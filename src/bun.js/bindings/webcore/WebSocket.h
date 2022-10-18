@@ -112,15 +112,11 @@ private:
     typedef union AnyWebSocket {
         WebSocketClient* client;
         WebSocketClientTLS* clientSSL;
-        uWS::WebSocket<false, true, WebCore::WebSocket*>* server;
-        uWS::WebSocket<true, true, WebCore::WebSocket*>* serverSSL;
     } AnyWebSocket;
     enum ConnectedWebSocketKind {
         None,
         Client,
         ClientSSL,
-        Server,
-        ServerSSL
     };
 
     explicit WebSocket(ScriptExecutionContext&);

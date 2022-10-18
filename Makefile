@@ -395,7 +395,7 @@ MINIMUM_ARCHIVE_FILES = -L$(BUN_DEPS_OUT_DIR) \
 	-lcrypto \
 	-llolhtml \
 	$(BUN_DEPS_OUT_DIR)/libbacktrace.a \
-	$(BUN_DEPS_OUT_DIR)/oniguruma/src/.libs/libonig.a
+	$(BUN_DEPS_OUT_DIR)/libonig.a
 
 ARCHIVE_FILES_WITHOUT_LIBCRYPTO = $(MINIMUM_ARCHIVE_FILES) \
 		-larchive \
@@ -558,7 +558,8 @@ oniguruma:
 	cd $(BUN_DEPS_DIR)/oniguruma && \
 	autoreconf -vfi && \
 	CFLAGS="$(CFLAGS)" CC=$(CC) ./configure && \
-	make -j${CPUS}
+	make -j${CPUS} && \
+	cp ./src/.libs/libonig.a $(BUN_DEPS_OUT_DIR)/libonig.a
 
 sqlite:
 

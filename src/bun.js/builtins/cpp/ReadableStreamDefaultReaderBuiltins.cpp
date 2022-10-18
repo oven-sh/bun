@@ -4,6 +4,7 @@
  * Copyright (c) 2015 Igalia.
  * Copyright (c) 2015, 2016 Canon Inc. All rights reserved.
  * Copyright (c) 2015, 2016, 2017 Canon Inc.
+ * Copyright (c) 2016, 2018 -2018 Apple Inc. All rights reserved.
  * Copyright (c) 2016, 2020 Apple Inc. All rights reserved.
  * Copyright (c) 2022 Codeblog Corp. All rights reserved.
  * 
@@ -93,7 +94,7 @@ const char* const s_readableStreamDefaultReaderCancelCode =
 const JSC::ConstructAbility s_readableStreamDefaultReaderReadManyCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableStreamDefaultReaderReadManyCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_readableStreamDefaultReaderReadManyCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_readableStreamDefaultReaderReadManyCodeLength = 4130;
+const int s_readableStreamDefaultReaderReadManyCodeLength = 4212;
 static const JSC::Intrinsic s_readableStreamDefaultReaderReadManyCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_readableStreamDefaultReaderReadManyCode =
     "(function ()\n" \
@@ -120,10 +121,16 @@ const char* const s_readableStreamDefaultReaderReadManyCode =
     "    var queue  = @getByIdDirectPrivate(controller, \"queue\");\n" \
     "    \n" \
     "    if (!queue) {\n" \
+    "        //\n" \
+    "        //\n" \
     "        return controller.@pull(\n" \
     "            controller\n" \
     "        ).@then(\n" \
-    "            ({done, value}) => (done ? { done: true, value: [], size: 0 } : { value: [value], size: 1, done: false }));\n" \
+    "            ({done, value}) => (\n" \
+    "                done ? \n" \
+    "                { done: true, value: [], size: 0 } : \n" \
+    "                { value: [value], size: 1, done: false }\n" \
+    "        ));\n" \
     "    }\n" \
     "\n" \
     "    const content = queue.content;\n" \

@@ -394,7 +394,8 @@ MINIMUM_ARCHIVE_FILES = -L$(BUN_DEPS_OUT_DIR) \
 	-lssl \
 	-lcrypto \
 	-llolhtml \
-	$(BUN_DEPS_OUT_DIR)/libbacktrace.a
+	$(BUN_DEPS_OUT_DIR)/libbacktrace.a \
+	$(BUN_DEPS_OUT_DIR)/libonig.a
 
 ARCHIVE_FILES_WITHOUT_LIBCRYPTO = $(MINIMUM_ARCHIVE_FILES) \
 		-larchive \
@@ -483,9 +484,13 @@ builtins: ## to generate builtins
 	$(shell which python || which python2) $(realpath $(WEBKIT_DIR)/Source/JavaScriptCore/Scripts/generate-js-builtins.py) -i $(realpath src)/bun.js/builtins/js  -o $(realpath src)/bun.js/builtins/cpp --framework WebCore --force
 	$(shell which python || which python2) $(realpath $(WEBKIT_DIR)/Source/JavaScriptCore/Scripts/generate-js-builtins.py) -i $(realpath src)/bun.js/builtins/js  -o $(realpath src)/bun.js/builtins/cpp --framework WebCore --wrappers-only
 	rm -rf /tmp/1.h src/bun.js/builtins/cpp/WebCoreJSBuiltinInternals.h.1
-	echo -e '// clang-format off\nnamespace Zig { class GlobalObject; }' >> /tmp/1.h
+	echo -e '// clang-format off\nnamespace Zig { class GlobalObject; }\n#include "root.h"\n' >> /tmp/1.h
 	cat /tmp/1.h  src/bun.js/builtins/cpp/WebCoreJSBuiltinInternals.h > src/bun.js/builtins/cpp/WebCoreJSBuiltinInternals.h.1
 	mv src/bun.js/builtins/cpp/WebCoreJSBuiltinInternals.h.1 src/bun.js/builtins/cpp/WebCoreJSBuiltinInternals.h
+	rm -rf /tmp/1.h src/bun.js/builtins/cpp/WebCoreJSBuiltinInternals.h.1
+	echo -e '// clang-format off\nnamespace Zig { class GlobalObject; }\n#include "root.h"\n' >> /tmp/1.h
+	cat /tmp/1.h  src/bun.js/builtins/cpp/WebCoreJSBuiltinInternals.cpp > src/bun.js/builtins/cpp/WebCoreJSBuiltinInternals.cpp.1
+	mv src/bun.js/builtins/cpp/WebCoreJSBuiltinInternals.cpp.1 src/bun.js/builtins/cpp/WebCoreJSBuiltinInternals.cpp
 	$(SED) -i -e 's/class JSDOMGlobalObject/using JSDOMGlobalObject = Zig::GlobalObject/' src/bun.js/builtins/cpp/WebCoreJSBuiltinInternals.h
 	# this is the one we actually build
 	mv src/bun.js/builtins/cpp/*JSBuiltin*.cpp src/bun.js/builtins
@@ -494,7 +499,7 @@ builtins: ## to generate builtins
 generate-builtins: builtins
 
 .PHONY: tinycc
-vendor-without-check: npm-install node-fallbacks runtime_js fallback_decoder bun_error mimalloc picohttp zlib boringssl libarchive libbacktrace lolhtml usockets uws base64 tinycc
+vendor-without-check: npm-install node-fallbacks runtime_js fallback_decoder bun_error mimalloc picohttp zlib boringssl libarchive libbacktrace lolhtml usockets uws base64 tinycc oniguruma
 
 BUN_TYPES_REPO_PATH ?= $(realpath ../bun-types)
 
@@ -548,6 +553,13 @@ libbacktrace:
 	make -j$(CPUS) && \
 	cp ./.libs/libbacktrace.a $(BUN_DEPS_OUT_DIR)/libbacktrace.a
 
+.PHONY: oniguruma
+oniguruma:
+	cd $(BUN_DEPS_DIR)/oniguruma && \
+	autoreconf -vfi && \
+	CFLAGS="$(CFLAGS)" CC=$(CC) ./configure && \
+	make -j${CPUS} && \
+	cp ./src/.libs/libonig.a $(BUN_DEPS_OUT_DIR)/libonig.a
 
 sqlite:
 

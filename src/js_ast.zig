@@ -1849,6 +1849,23 @@ pub const E = struct {
 
         pub var empty = RegExp{ .value = "" };
 
+        pub fn usesLookBehindAssertion(this: *const RegExp) bool {
+            var pat = this.pattern();
+            while (pat.len > 0) {
+                const start = strings.indexOfChar(pat, '?') orelse return false;
+                if (start == 0) return false;
+                const l_paren = pat[start - 1];
+                if (l_paren != '(' or pat.len < start + 1) return false;
+                const op = pat[start + 1];
+                if (op == '<' or op == '=' or op == '!') {
+                    return true;
+                }
+                pat = pat[start + 1 ..];
+            }
+
+            return false;
+        }
+
         pub fn pattern(this: RegExp) string {
 
             // rewind until we reach the /foo/gim

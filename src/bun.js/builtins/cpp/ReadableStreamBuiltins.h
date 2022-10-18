@@ -4,6 +4,7 @@
  * Copyright (c) 2015 Igalia.
  * Copyright (c) 2015, 2016 Canon Inc. All rights reserved.
  * Copyright (c) 2015, 2016, 2017 Canon Inc.
+ * Copyright (c) 2016, 2018 -2018 Apple Inc. All rights reserved.
  * Copyright (c) 2016, 2020 Apple Inc. All rights reserved.
  * Copyright (c) 2022 Codeblog Corp. All rights reserved.
  * 
@@ -77,11 +78,6 @@ extern const int s_readableStreamReadableStreamToBlobCodeLength;
 extern const JSC::ConstructAbility s_readableStreamReadableStreamToBlobCodeConstructAbility;
 extern const JSC::ConstructorKind s_readableStreamReadableStreamToBlobCodeConstructorKind;
 extern const JSC::ImplementationVisibility s_readableStreamReadableStreamToBlobCodeImplementationVisibility;
-extern const char* const s_readableStreamReadableStreamToNodeReadableCode;
-extern const int s_readableStreamReadableStreamToNodeReadableCodeLength;
-extern const JSC::ConstructAbility s_readableStreamReadableStreamToNodeReadableCodeConstructAbility;
-extern const JSC::ConstructorKind s_readableStreamReadableStreamToNodeReadableCodeConstructorKind;
-extern const JSC::ImplementationVisibility s_readableStreamReadableStreamToNodeReadableCodeImplementationVisibility;
 extern const char* const s_readableStreamConsumeReadableStreamCode;
 extern const int s_readableStreamConsumeReadableStreamCodeLength;
 extern const JSC::ConstructAbility s_readableStreamConsumeReadableStreamCodeConstructAbility;
@@ -145,7 +141,6 @@ extern const JSC::ImplementationVisibility s_readableStreamLazyAsyncIteratorCode
     macro(readableStreamToArrayBuffer, readableStreamReadableStreamToArrayBuffer, 1) \
     macro(readableStreamToJSON, readableStreamReadableStreamToJSON, 1) \
     macro(readableStreamToBlob, readableStreamReadableStreamToBlob, 1) \
-    macro(readableStreamToNodeReadable, readableStreamReadableStreamToNodeReadable, 1) \
     macro(consumeReadableStream, readableStreamConsumeReadableStream, 3) \
     macro(createEmptyReadableStream, readableStreamCreateEmptyReadableStream, 0) \
     macro(createNativeReadableStream, readableStreamCreateNativeReadableStream, 3) \
@@ -164,7 +159,6 @@ extern const JSC::ImplementationVisibility s_readableStreamLazyAsyncIteratorCode
 #define WEBCORE_BUILTIN_READABLESTREAM_READABLESTREAMTOARRAYBUFFER 1
 #define WEBCORE_BUILTIN_READABLESTREAM_READABLESTREAMTOJSON 1
 #define WEBCORE_BUILTIN_READABLESTREAM_READABLESTREAMTOBLOB 1
-#define WEBCORE_BUILTIN_READABLESTREAM_READABLESTREAMTONODEREADABLE 1
 #define WEBCORE_BUILTIN_READABLESTREAM_CONSUMEREADABLESTREAM 1
 #define WEBCORE_BUILTIN_READABLESTREAM_CREATEEMPTYREADABLESTREAM 1
 #define WEBCORE_BUILTIN_READABLESTREAM_CREATENATIVEREADABLESTREAM 1
@@ -184,7 +178,6 @@ extern const JSC::ImplementationVisibility s_readableStreamLazyAsyncIteratorCode
     macro(readableStreamReadableStreamToArrayBufferCode, readableStreamToArrayBuffer, ASCIILiteral(), s_readableStreamReadableStreamToArrayBufferCodeLength) \
     macro(readableStreamReadableStreamToJSONCode, readableStreamToJSON, ASCIILiteral(), s_readableStreamReadableStreamToJSONCodeLength) \
     macro(readableStreamReadableStreamToBlobCode, readableStreamToBlob, ASCIILiteral(), s_readableStreamReadableStreamToBlobCodeLength) \
-    macro(readableStreamReadableStreamToNodeReadableCode, readableStreamToNodeReadable, ASCIILiteral(), s_readableStreamReadableStreamToNodeReadableCodeLength) \
     macro(readableStreamConsumeReadableStreamCode, consumeReadableStream, ASCIILiteral(), s_readableStreamConsumeReadableStreamCodeLength) \
     macro(readableStreamCreateEmptyReadableStreamCode, createEmptyReadableStream, ASCIILiteral(), s_readableStreamCreateEmptyReadableStreamCodeLength) \
     macro(readableStreamCreateNativeReadableStreamCode, createNativeReadableStream, ASCIILiteral(), s_readableStreamCreateNativeReadableStreamCodeLength) \
@@ -212,7 +205,6 @@ extern const JSC::ImplementationVisibility s_readableStreamLazyAsyncIteratorCode
     macro(readableStreamToArrayBuffer) \
     macro(readableStreamToBlob) \
     macro(readableStreamToJSON) \
-    macro(readableStreamToNodeReadable) \
     macro(readableStreamToText) \
     macro(tee) \
     macro(values) \

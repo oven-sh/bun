@@ -29,6 +29,7 @@ public:
     std::unique_ptr<IsoSubspace> m_subspaceForStringDecoder;
     std::unique_ptr<IsoSubspace> m_subspaceForReadableState;
     std::unique_ptr<IsoSubspace> m_subspaceForPendingVirtualModuleResult;
+    std::unique_ptr<IsoSubspace> m_subspaceForOnigurumaRegExp;
 #include "ZigGeneratedClasses+DOMIsoSubspaces.h"
     /*-- BUN --*/
 

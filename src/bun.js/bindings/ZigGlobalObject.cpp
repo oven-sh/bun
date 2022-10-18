@@ -163,6 +163,8 @@ using JSBuffer = WebCore::JSBuffer;
 #include "DOMJITHelpers.h"
 #include <JavaScriptCore/DFGAbstractHeap.h>
 
+#include "OnigurumaRegExp.h"
+
 #ifdef __APPLE__
 #include <sys/sysctl.h>
 #else
@@ -2076,6 +2078,17 @@ void GlobalObject::finishCreation(VM& vm)
             init.setConstructor(constructor);
         });
 
+    m_OnigurumaRegExpClassStructure.initLater(
+        [](LazyClassStructure::Initializer& init) {
+            auto* prototype = OnigurumaRegExpConstructor::createPrototype(init.global);
+            auto* structure = OnigurumaRegExpConstructor::createClassStructure(init.global, prototype);
+            auto* constructor = OnigurumaRegExpConstructor::create(
+                init.vm, init.global, OnigurumaRegExpConstructor::createStructure(init.vm, init.global, init.global->functionPrototype()), prototype);
+            init.setPrototype(prototype);
+            init.setStructure(structure);
+            init.setConstructor(constructor);
+        });
+
     m_JSStringDecoderClassStructure.initLater(
         [](LazyClassStructure::Initializer& init) {
             auto* prototype = JSStringDecoderPrototype::create(
@@ -2542,6 +2555,11 @@ void GlobalObject::installAPIGlobals(JSClassRef* globals, int count, JSC::VM& vm
         }
 
         {
+            JSC::Identifier identifier = JSC::Identifier::fromString(vm, "OnigurumaRegExp"_s);
+            object->putDirectCustomAccessor(vm, identifier, JSC::CustomGetterSetter::create(vm, jsFunctionGetOnigurumaRegExpConstructor, nullptr), JSC::PropertyAttribute::CustomAccessor | 0);
+        }
+
+        {
             JSC::Identifier identifier = JSC::Identifier::fromString(vm, "stringHashCode"_s);
             object->putDirectNativeFunction(vm, this, identifier, 1, functionHashCode, ImplementationVisibility::Public, NoIntrinsic,
                 JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DontDelete | 0);
@@ -2668,6 +2686,7 @@ void GlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     thisObject->m_JSHTTPResponseSinkClassStructure.visit(visitor);
     thisObject->m_JSHTTPSResponseSinkClassStructure.visit(visitor);
     thisObject->m_JSFileSinkClassStructure.visit(visitor);
+    thisObject->m_OnigurumaRegExpClassStructure.visit(visitor);
 
     visitor.append(thisObject->m_JSBufferSetterValue);
     visitor.append(thisObject->m_JSTextEncoderSetterValue);

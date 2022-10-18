@@ -4,6 +4,7 @@
  * Copyright (c) 2015 Igalia.
  * Copyright (c) 2015, 2016 Canon Inc. All rights reserved.
  * Copyright (c) 2015, 2016, 2017 Canon Inc.
+ * Copyright (c) 2016, 2018 -2018 Apple Inc. All rights reserved.
  * Copyright (c) 2016, 2020 Apple Inc. All rights reserved.
  * Copyright (c) 2022 Codeblog Corp. All rights reserved.
  * 
@@ -208,106 +209,6 @@ const char* const s_readableStreamReadableStreamToBlobCode =
     "(function (stream) {\n" \
     "    \"use strict\";\n" \
     "    return @Promise.resolve(@Bun.readableStreamToArray(stream)).@then(array => new Blob(array));\n" \
-    "})\n" \
-;
-
-const JSC::ConstructAbility s_readableStreamReadableStreamToNodeReadableCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
-const JSC::ConstructorKind s_readableStreamReadableStreamToNodeReadableCodeConstructorKind = JSC::ConstructorKind::None;
-const JSC::ImplementationVisibility s_readableStreamReadableStreamToNodeReadableCodeImplementationVisibility = JSC::ImplementationVisibility::Private;
-const int s_readableStreamReadableStreamToNodeReadableCodeLength = 2476;
-static const JSC::Intrinsic s_readableStreamReadableStreamToNodeReadableCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_readableStreamReadableStreamToNodeReadableCode =
-    "(function (stream) {\n" \
-    "    \"use strict\";\n" \
-    "    var {Readable} = @require(\"node:stream\");\n" \
-    "\n" \
-    "   var Prototype = class ReadableNodeStream extends Readable {\n" \
-    "        #reader;\n" \
-    "        #stream;\n" \
-    "        #pushed;\n" \
-    "        #boundOnData;\n" \
-    "        #scheduledRead;\n" \
-    "        constructor(stream) {\n" \
-    "            super();\n" \
-    "            this.#stream = stream;\n" \
-    "            this.#reader = @undefined;\n" \
-    "            this.#pushed = [];\n" \
-    "            this.#boundOnData = (result) => this.#onData(result);\n" \
-    "            this.#scheduledRead = false;\n" \
-    "        }\n" \
-    "\n" \
-    "        _read(size = 0) {\n" \
-    "            if (!this.#reader) {\n" \
-    "                this.#reader = this.#stream.getReader();\n" \
-    "            }\n" \
-    "\n" \
-    "            const pushed = this.#pushed;\n" \
-    "            const pending = pushed.length;\n" \
-    "            for (let i = 0; i < pending; i++) {\n" \
-    "                if (!this.push(pushed[i])) {\n" \
-    "                    pushed.splice(0, i);\n" \
-    "                    return;\n" \
-    "                }\n" \
-    "            }\n" \
-    "\n" \
-    "            this.#scheduleRead();\n" \
-    "        }\n" \
-    "\n" \
-    "        #handleData(value) {\n" \
-    "            var i = 0;\n" \
-    "            const expectedCount = this.#pushed.length;\n" \
-    "            var pushed = this.#pushed;\n" \
-    "            try {\n" \
-    "                for (i; i < expectedCount; i++) {\n" \
-    "                    var item = pushed[i];\n" \
-    "                    if (!this.push(item)) {\n" \
-    "                        return false;\n" \
-    "                    }\n" \
-    "                }\n" \
-    "            } catch(e) {\n" \
-    "                this.error(e);\n" \
-    "                return false;\n" \
-    "            } finally {\n" \
-    "                this.#pushed.splice(0, i);\n" \
-    "                if (this.#pushed.length > 0) {\n" \
-    "                    this.#pushed.push(...value);\n" \
-    "                    return false;\n" \
-    "                }\n" \
-    "\n" \
-    "            }\n" \
-    "\n" \
-    "            const valueLength = value.length;\n" \
-    "            for (i = 0; i < valueLength; i++) {\n" \
-    "                if (!this.push(value[i])) {\n" \
-    "                    this.#pushed.push(...value.slice(i));\n" \
-    "                    return false;\n" \
-    "                }\n" \
-    "            }\n" \
-    "\n" \
-    "            return true;\n" \
-    "        }\n" \
-    "\n" \
-    "        #onData({done, value}) {\n" \
-    "            this.#scheduledRead = false;\n" \
-    "\n" \
-    "            if (done) {\n" \
-    "                this.destroy(@undefined);\n" \
-    "                return;\n" \
-    "            }\n" \
-    "\n" \
-    "            if (!this.#handleData(value)) {\n" \
-    "                return;\n" \
-    "            }\n" \
-    "\n" \
-    "            this.#scheduleRead();\n" \
-    "        }\n" \
-    "\n" \
-    "        #scheduleRead() {\n" \
-    "            if (this.#scheduledRead) return;\n" \
-    "            this.#scheduledRead = true;\n" \
-    "            this.#reader.readMany().@then(this.#onData, this.error);\n" \
-    "        }\n" \
-    "   };\n" \
     "})\n" \
 ;
 

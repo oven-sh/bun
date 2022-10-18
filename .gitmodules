@@ -69,3 +69,10 @@ ignore = dirty
 depth = 1
 shallow = true
 fetchRecurseSubmodules = false
+[submodule "src/deps/oniguruma"]
+path = src/deps/oniguruma
+url = https://github.com/kkos/oniguruma
+ignore = dirty
+depth = 1
+shallow = true
+fetchRecurseSubmodules = false

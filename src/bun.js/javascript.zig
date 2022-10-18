@@ -537,7 +537,20 @@ pub const VirtualMachine = struct {
 
     /// Instead of storing timestamp as a i128, we store it as a u64.
     /// We subtract the timestamp from Jan 1, 2000 (Y2K)
-    pub const origin_relative_epoch = 975628800000 * std.time.ns_per_ms;
+    pub const origin_relative_epoch = 946684800 * std.time.ns_per_s;
+    fn getOriginTimestamp() u64 {
+        return @truncate(
+            u64,
+            @intCast(
+                u128,
+                // handle if they set their system clock to be before epoch
+                @maximum(
+                    std.time.nanoTimestamp(),
+                    origin_relative_epoch,
+                ),
+            ) - origin_relative_epoch,
+        );
+    }
 
     pub fn init(
         allocator: std.mem.Allocator,
@@ -582,7 +595,7 @@ pub const VirtualMachine = struct {
             .macros = MacroMap.init(allocator),
             .macro_entry_points = @TypeOf(VirtualMachine.vm.macro_entry_points).init(allocator),
             .origin_timer = std.time.Timer.start() catch @panic("Please don't mess with timers."),
-            .origin_timestamp = @truncate(u64, @intCast(u128, @maximum(std.time.nanoTimestamp(), origin_relative_epoch)) - origin_relative_epoch),
+            .origin_timestamp = getOriginTimestamp(),
             .ref_strings = JSC.RefString.Map.init(allocator),
             .file_blobs = JSC.WebCore.Blob.Store.Map.init(allocator),
         };

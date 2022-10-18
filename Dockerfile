@@ -183,8 +183,26 @@ RUN install_packages autoconf automake libtool pkg-config
 COPY Makefile ${BUN_DIR}/Makefile
 COPY src/deps/libarchive ${BUN_DIR}/src/deps/libarchive
 
+FROM bun-base as oniguruma
+
+ARG DEBIAN_FRONTEND
+ARG GITHUB_WORKSPACE
+ARG ZIG_PATH
+# Directory extracts to "bun-webkit"
+ARG WEBKIT_DIR
+ARG BUN_RELEASE_DIR
+ARG BUN_DEPS_OUT_DIR
+ARG BUN_DIR
+ARG CPU_TARGET
+ENV CPU_TARGET=${CPU_TARGET}
+
+RUN install_packages autoconf automake libtool pkg-config 
+
+COPY Makefile ${BUN_DIR}/Makefile
+COPY src/deps/oniguruma ${BUN_DIR}/src/deps/oniguruma
+
 WORKDIR $BUN_DIR
-RUN make libarchive && rm -rf src/deps/libarchive Makefile
+RUN make oniguruma && rm -rf src/deps/oniguruma Makefile
 
 FROM bun-base as tinycc
 
@@ -459,6 +477,7 @@ ENV LIB_ICU_PATH=${WEBKIT_DIR}/lib
 COPY --from=lolhtml ${BUN_DEPS_OUT_DIR}/*.a ${BUN_DEPS_OUT_DIR}/
 COPY --from=mimalloc ${BUN_DEPS_OUT_DIR}/*.o ${BUN_DEPS_OUT_DIR}/
 COPY --from=libarchive ${BUN_DEPS_OUT_DIR}/*.a ${BUN_DEPS_OUT_DIR}/
+COPY --from=oniguruma ${BUN_DEPS_OUT_DIR}/*.a ${BUN_DEPS_OUT_DIR}/
 COPY --from=picohttp ${BUN_DEPS_OUT_DIR}/*.o ${BUN_DEPS_OUT_DIR}/
 COPY --from=boringssl ${BUN_DEPS_OUT_DIR}/*.a ${BUN_DEPS_OUT_DIR}/
 COPY --from=uws ${BUN_DEPS_OUT_DIR}/*.a ${BUN_DEPS_OUT_DIR}/

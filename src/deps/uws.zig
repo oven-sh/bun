@@ -326,7 +326,7 @@ pub const Loop = extern struct {
     active: u32 = 0,
 
     /// The list of ready polls
-    ready_polls: [1024]EventType,
+    ready_polls: [1024]EventType align(16),
 
     const EventType = if (Environment.isLinux) std.os.linux.epoll_event else if (Environment.isMac) std.os.system.kevent64_s;
 
@@ -445,11 +445,12 @@ pub const us_socket_context_options_t = extern struct {
     passphrase: [*c]const u8 = null,
     dh_params_file_name: [*c]const u8 = null,
     ca_file_name: [*c]const u8 = null,
+    ssl_ciphers: [*c]const u8 = null,
     ssl_prefer_low_memory_usage: i32 = 0,
 };
 
 extern fn SocketContextimestamp(ssl: i32, context: ?*SocketContext) c_ushort;
-extern fn us_socket_context_add_server_name(ssl: i32, context: ?*SocketContext, hostname_pattern: [*c]const u8, options: us_socket_context_options_t) void;
+extern fn us_socket_context_add_server_name(ssl: i32, context: ?*SocketContext, hostname_pattern: [*c]const u8, options: us_socket_context_options_t, ?*anyopaque) void;
 extern fn us_socket_context_remove_server_name(ssl: i32, context: ?*SocketContext, hostname_pattern: [*c]const u8) void;
 extern fn us_socket_context_on_server_name(ssl: i32, context: ?*SocketContext, cb: ?fn (?*SocketContext, [*c]const u8) callconv(.C) void) void;
 extern fn us_socket_context_get_native_handle(ssl: i32, context: ?*SocketContext) ?*anyopaque;

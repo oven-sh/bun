@@ -810,16 +810,16 @@ void uws_res_write_header_int(int ssl, uws_res_t *res, const char *key,
 void uws_res_end_without_body(int ssl, uws_res_t *res) {
   if (ssl) {
     uWS::HttpResponse<true> *uwsRes = (uWS::HttpResponse<true> *)res;
-    uwsRes->getHttpResponseData()->state |=
-        uWS::HttpResponseData<true>::HTTP_END_CALLED;
-    uwsRes->markDone(uwsRes->getHttpResponseData());
+    auto *data = uwsRes->getHttpResponseData();
+    data->state |= uWS::HttpResponseData<true>::HTTP_END_CALLED;
+    data->markDone();
     us_socket_timeout(true, (us_socket_t *)uwsRes, uWS::HTTP_TIMEOUT_S);
   } else {
 
     uWS::HttpResponse<false> *uwsRes = (uWS::HttpResponse<false> *)res;
-    uwsRes->getHttpResponseData()->state |=
-        uWS::HttpResponseData<false>::HTTP_END_CALLED;
-    uwsRes->markDone(uwsRes->getHttpResponseData());
+    auto *data = uwsRes->getHttpResponseData();
+    data->state |= uWS::HttpResponseData<false>::HTTP_END_CALLED;
+    data->markDone();
     us_socket_timeout(false, (us_socket_t *)uwsRes, uWS::HTTP_TIMEOUT_S);
   }
 }

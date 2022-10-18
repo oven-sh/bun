@@ -478,6 +478,7 @@ JSC_DEFINE_HOST_FUNCTION(onigurumaRegExpProtoFuncCompile, (JSGlobalObject *globa
     }
 
     thisRegExp->m_onigurumaRegExp = onigRegExp;
+    thisRegExp->m_lastIndex = 0;
 
     return JSValue::encode(jsUndefined());
 }
@@ -522,18 +523,24 @@ JSC_DEFINE_HOST_FUNCTION(onigurumaRegExpProtoFuncTest, (JSGlobalObject *globalOb
         ONIG_OPTION_DEFAULT        
     );
 
-    onig_region_free(region, 1);
-
     if (result < 0) {
         thisValue->m_lastIndex = 0;
+        onig_region_free(region, 1);
         return JSValue::encode(jsBoolean(false));
     }
 
     if (thisValue->flagsString().contains('y') && region->beg[0] != thisValue->m_lastIndex) {
+        onig_region_free(region, 1);
         return JSValue::encode(jsBoolean(false));
     }
 
-    thisValue->m_lastIndex = region->end[0] / 2;
+    if (thisValue->flagsString().contains('g')) {
+        thisValue->m_lastIndex = region->end[0] / 2;
+    } else {
+        thisValue->m_lastIndex = 0;
+    }
+
+    onig_region_free(region, 1);
 
     return JSValue::encode(jsBoolean(true));
 }
@@ -563,27 +570,15 @@ JSC_DEFINE_HOST_FUNCTION(onigurumaRegExpProtoFuncExec, (JSGlobalObject *globalOb
     const OnigUChar* start = reinterpret_cast<const OnigUChar*>(string.characters16() + thisValue->m_lastIndex);
     const OnigUChar* range = end;
 
-    int result = 0;
-    if (thisValue->flagsString().contains('y')) {
-        result = onig_match(
-            thisValue->m_onigurumaRegExp,
-            reinterpret_cast<const OnigUChar*>(string.characters16()),
-            end,
-            start,
-            region,
-            ONIG_OPTION_DEFAULT
-        );
-    } else {    
-        result = onig_search(
-            thisValue->m_onigurumaRegExp,
-            reinterpret_cast<const OnigUChar*>(string.characters16()),
-            end,
-            start,
-            range,
-            region,
-            ONIG_OPTION_DEFAULT
-        );
-    }
+    int result = onig_search(
+        thisValue->m_onigurumaRegExp,
+        reinterpret_cast<const OnigUChar*>(string.characters16()),
+        end,
+        start,
+        range,
+        region,
+        ONIG_OPTION_DEFAULT
+    );
 
     if (result < 0) {
         onig_region_free(region, 1);
@@ -628,7 +623,11 @@ JSC_DEFINE_HOST_FUNCTION(onigurumaRegExpProtoFuncExec, (JSGlobalObject *globalOb
         array->putDirect(vm, vm.propertyNames->indices, indicesArray);
     }
 
-    thisValue->m_lastIndex = region->end[0] / 2;
+    if (thisValue->flagsString().contains('g')) {
+        thisValue->m_lastIndex = region->end[0] / 2;
+    } else {
+        thisValue->m_lastIndex = 0;
+    }
 
     onig_region_free(region, 1);
 

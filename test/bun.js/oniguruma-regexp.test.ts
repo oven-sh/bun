@@ -123,6 +123,29 @@ test('OnigurumaRegExp.lastIndex', () => {
     p2.lastIndex = 2348;
     expect(p2.lastIndex).toBe(2348);
     expect(p1.lastIndex).toBe(2);
+
+    for (const RegExpConstructor of [RegExp, OnigurumaRegExp]) {
+        let a = new RegExpConstructor('foo', 'g');
+        a.lastIndex = 33;
+        expect(a.lastIndex).toBe(33);
+        a.compile('bar');
+        expect(a.lastIndex).toBe(0);
+        a.lastIndex = 44;
+        expect(a.lastIndex).toBe(44);
+    }
+
+    for (const RegExpConstructor of [OnigurumaRegExp]) {
+        let a = new RegExpConstructor('foo', 'g');
+        expect(a.lastIndex).toBe(0);
+        a.test('kfjekfoofjekf');
+        expect(a.lastIndex).toBe(8);
+        a.test('kejfkjs');
+        expect(a.lastIndex).toBe(0);
+        a.exec('kfjekfoofjekf');
+        expect(a.lastIndex).toBe(8);
+        a.exec('kejfkjs');
+        expect(a.lastIndex).toBe(0);
+    }
 });
 
 test('OnigurumaRegExp errors', () => {

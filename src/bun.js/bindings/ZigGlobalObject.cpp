@@ -1606,6 +1606,7 @@ JSC_DEFINE_HOST_FUNCTION(functionConcatTypedArrays, (JSGlobalObject * globalObje
 }
 
 extern "C" uint64_t Bun__readOriginTimer(void*);
+extern "C" double Bun__readOriginTimerStart(void*);
 
 static inline EncodedJSValue functionPerformanceNowBody(JSGlobalObject* globalObject)
 {
@@ -1669,6 +1670,11 @@ private:
             &DOMJITSignatureForPerformanceNow);
 
         this->putDirect(vm, JSC::Identifier::fromString(vm, "now"_s), function, JSC::PropertyAttribute::DOMJITFunction | JSC::PropertyAttribute::Function);
+        this->putDirect(
+            vm,
+            JSC::Identifier::fromString(vm, "timeOrigin"_s),
+            jsNumber(Bun__readOriginTimerStart(reinterpret_cast<Zig::GlobalObject*>(this->globalObject())->bunVM())),
+            JSC::PropertyAttribute::ReadOnly | 0);
     }
 };
 const ClassInfo JSPerformanceObject::s_info = { "Performance"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSPerformanceObject) };

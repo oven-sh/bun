@@ -16,3 +16,9 @@ it("performance.now() should be monotonic", () => {
   expect(Bun.nanoseconds() > sixth).toBe(true);
   expect(typeof Bun.nanoseconds() === "number").toBe(true);
 });
+
+it("performance.timeOrigin + performance.now() should be similar to Date.now()", () => {
+  expect(
+    Math.abs(performance.timeOrigin + performance.now() - Date.now()) < 1000
+  ).toBe(true);
+});

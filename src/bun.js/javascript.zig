@@ -262,6 +262,12 @@ export fn Bun__readOriginTimer(vm: *JSC.VirtualMachine) u64 {
     return vm.origin_timer.read();
 }
 
+export fn Bun__readOriginTimerStart(vm: *JSC.VirtualMachine) f64 {
+    // timespce to milliseconds
+    // use f128 to reduce precision loss when converting to f64
+    return @floatCast(f64, (@intToFloat(f128, vm.origin_timestamp) + JSC.VirtualMachine.origin_relative_epoch) / 1_000_000.0);
+}
+
 comptime {
     if (!JSC.is_bindgen) {
         _ = Bun__getDefaultGlobal;
@@ -271,6 +277,7 @@ comptime {
         _ = Bun__handleRejectedPromise;
         _ = Bun__readOriginTimer;
         _ = Bun__onDidAppendPlugin;
+        _ = Bun__readOriginTimerStart;
     }
 }
 
@@ -365,6 +372,7 @@ pub const VirtualMachine = struct {
     global_api_constructors: [GlobalConstructors.len]JSC.JSValue = undefined,
 
     origin_timer: std.time.Timer = undefined,
+    origin_timestamp: u64 = 0,
     macro_event_loop: EventLoop = EventLoop{},
     regular_event_loop: EventLoop = EventLoop{},
     event_loop: *EventLoop = undefined,
@@ -527,6 +535,10 @@ pub const VirtualMachine = struct {
         return this.bun_dev_watcher != null or this.bun_watcher != null;
     }
 
+    /// Instead of storing timestamp as a i128, we store it as a u64.
+    /// We subtract the timestamp from Jan 1, 2000 (Y2K)
+    pub const origin_relative_epoch = 975628800000 * std.time.ns_per_ms;
+
     pub fn init(
         allocator: std.mem.Allocator,
         _args: Api.TransformOptions,
@@ -570,6 +582,7 @@ pub const VirtualMachine = struct {
             .macros = MacroMap.init(allocator),
             .macro_entry_points = @TypeOf(VirtualMachine.vm.macro_entry_points).init(allocator),
             .origin_timer = std.time.Timer.start() catch @panic("Please don't mess with timers."),
+            .origin_timestamp = @truncate(u64, @intCast(u128, @maximum(std.time.nanoTimestamp(), origin_relative_epoch)) - origin_relative_epoch),
             .ref_strings = JSC.RefString.Map.init(allocator),
             .file_blobs = JSC.WebCore.Blob.Store.Map.init(allocator),
         };

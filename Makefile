@@ -394,8 +394,8 @@ MINIMUM_ARCHIVE_FILES = -L$(BUN_DEPS_OUT_DIR) \
 	-lssl \
 	-lcrypto \
 	-llolhtml \
+	-lonig \
 	$(BUN_DEPS_OUT_DIR)/libbacktrace.a \
-	$(BUN_DEPS_OUT_DIR)/libonig.a
 
 ARCHIVE_FILES_WITHOUT_LIBCRYPTO = $(MINIMUM_ARCHIVE_FILES) \
 		-larchive \

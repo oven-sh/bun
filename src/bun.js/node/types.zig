@@ -1826,12 +1826,10 @@ pub const Path = struct {
 pub const Process = struct {
     pub fn getArgv(globalObject: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue {
         var vm = globalObject.bunVM();
-        if (vm.argv.len == 0)
-            return JSC.JSValue.createStringArray(globalObject, null, 0, false);
 
         // Allocate up to 32 strings in stack
         var stack_fallback_allocator = std.heap.stackFallback(
-            32 * @sizeOf(JSC.ZigString),
+            32 * @sizeOf(JSC.ZigString) + (bun.MAX_PATH_BYTES + 1) + 32,
             heap_allocator,
         );
         var allocator = stack_fallback_allocator.get();
@@ -1843,19 +1841,14 @@ pub const Process = struct {
             vm.argv.len + 2,
         ) catch unreachable;
         var args_list = std.ArrayListUnmanaged(JSC.ZigString){ .items = args, .capacity = args.len };
-        args_list.items.len = 0;
 
         // get the bun executable
         // without paying the cost of a syscall to resolve the full path
-        if (std.process.args().next()) |arg0| {
-            std.debug.assert(arg0.len > 0);
-
-            args_list.appendAssumeCapacity(
-                JSC.ZigString.init(
-                    bun.span(arg0),
-                ).withEncoding(),
-            );
-        }
+        args_list.appendAssumeCapacity(
+            JSC.ZigString.init(
+                std.fs.selfExePathAlloc(allocator) catch "bun",
+            ).withEncoding(),
+        );
 
         if (vm.main.len > 0)
             args_list.appendAssumeCapacity(JSC.ZigString.init(vm.main).withEncoding());

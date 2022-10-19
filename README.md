@@ -2189,12 +2189,6 @@ Bun.serve<User>({
       // so we use publish()
       ws.publish("the-group-chat", `${ws.data.name}: ${message}`);
 
-      // if we wanted to publish to everyone except the sender, we could first unsubscribe from the topic
-      // ws.unsubscribe("the-group-chat");
-      // then publish
-      // ws.publish("the-group-chat", `${ws.data.name}: ${message}`);
-      // then re-subscribe
-      // ws.subscribe("the-group-chat");
     },
 
     close(ws, code, reason) {

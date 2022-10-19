@@ -2120,10 +2120,10 @@ Features:
 
 It's also fast. For [a chatroom](./bench/websocket-server/) on Linux x64:
 
-| Messages sent per second | Runtime                        |
-| ------------------------ | ------------------------------ |
-| ~700,000                 | (`Bun.serve`) Bun v0.2.1 (x64) |
-| ~100,000                 | (`ws`) Node v18.10.0 (x64)     |
+| Messages sent per second | Runtime                        | Clients |
+| ------------------------ | ------------------------------ | ------- |
+| ~700,000                 | (`Bun.serve`) Bun v0.2.1 (x64) | 16      |
+| ~100,000                 | (`ws`) Node v18.10.0 (x64)     | 16      |
 
 Here is an example that echoes back any message it receives:
 
@@ -2188,7 +2188,6 @@ Bun.serve<User>({
       // In a group chat, we want to broadcast to everyone
       // so we use publish()
       ws.publish("the-group-chat", `${ws.data.name}: ${message}`);
-
     },
 
     close(ws, code, reason) {

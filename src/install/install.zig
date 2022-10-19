@@ -2482,17 +2482,17 @@ pub const PackageManager = struct {
             return CacheDir{ .path = dir, .is_node_modules = false };
         }
 
-        if (env_loader.map.get("HOME")) |dir| {
-            var parts = [_]string{ dir, ".bun/", "install/", "cache/" };
-            return CacheDir{ .path = Fs.FileSystem.instance.abs(&parts), .is_node_modules = false };
-        }
-
         if (env_loader.map.get("BUN_INSTALL")) |dir| {
             var parts = [_]string{ dir, "install/", "cache/" };
             return CacheDir{ .path = Fs.FileSystem.instance.abs(&parts), .is_node_modules = false };
         }
 
         if (env_loader.map.get("XDG_CACHE_HOME")) |dir| {
+            var parts = [_]string{ dir, ".bun/", "install/", "cache/" };
+            return CacheDir{ .path = Fs.FileSystem.instance.abs(&parts), .is_node_modules = false };
+        }
+
+        if (env_loader.map.get("HOME")) |dir| {
             var parts = [_]string{ dir, ".bun/", "install/", "cache/" };
             return CacheDir{ .path = Fs.FileSystem.instance.abs(&parts), .is_node_modules = false };
         }

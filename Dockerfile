@@ -183,6 +183,9 @@ RUN install_packages autoconf automake libtool pkg-config
 COPY Makefile ${BUN_DIR}/Makefile
 COPY src/deps/libarchive ${BUN_DIR}/src/deps/libarchive
 
+RUN cd $BUN_DIR && \
+    make libarchive && rm -rf src/deps/libarchive Makefile
+
 FROM bun-base as oniguruma
 
 ARG DEBIAN_FRONTEND

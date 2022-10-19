@@ -3,33 +3,29 @@ import { spawn } from "bun";
 import { test, expect } from "bun:test";
 
 test("args exclude run", async () => {
-    const arg_prefix = '[ "' + process.argv[0] + '", "' + import.meta.dir + '/print-process-args.js"';
+    const arg1 = process.argv[0];
+    const arg2 = import.meta.dir + '/print-process-args.js';
 
     const { stdout: s1 } = spawn(["bun-debug", "print-process-args.js"], { cwd: import.meta.dir });
-    const t1 = await (await new Response(s1).text()).trim();
-    const e1 = new String(arg_prefix + ' ]\n').trim();
-    expect(t1).toBe(e1);
-    console.log(t1.length + ": " + t1);
-    console.log(e1.length + ": " + e1);
+    const t1 = JSON.parse(await new Response(s1).text());
+    expect(t1[0]).toBe(arg1);
+    expect(t1[1]).toBe(arg2);
 
-    const { stdout: s4 } = spawn(["bun-debug", "print-process-args.js", "arg1"], { cwd: import.meta.dir });
-    const t4 = (await new Response(s4).text()).trim();
-    const e4 = new String(arg_prefix + ', "arg1" ]\n').trim();
-    expect(t4).toBe(e4);
-    console.log(t4.length + ": " + t4);
-    console.log(e4.length + ": " + e4);
+    const { stdout: s2 } = spawn(["bun-debug", "print-process-args.js", "arg1"], { cwd: import.meta.dir });
+    const t2 = JSON.parse(await new Response(s2).text());
+    expect(t2[0]).toBe(arg1);
+    expect(t2[1]).toBe(arg2);
+    expect(t2[2]).toBe("arg1");
 
-    const { stdout: s2 } = spawn(["bun-debug", "run", "print-process-args.js"], { cwd: import.meta.dir });
-    const t2 = await (await new Response(s2).text()).trim();
-    const e2 = new String(arg_prefix + ' ]\n').trim();
-    expect(t2).toBe(e2);
-    console.log(t2.length + ": " + t2);
-    console.log(e2.length + ": " + e2);
+    const { stdout: s3 } = spawn(["bun-debug", "run", "print-process-args.js"], { cwd: import.meta.dir });
+    const t3 = JSON.parse(await new Response(s3).text());
+    expect(t3[0]).toBe(arg1);
+    expect(t3[1]).toBe(arg2);
 
-    const { stdout: s3 } = spawn(["bun-debug", "run", "print-process-args.js", "arg1", "arg2"], { cwd: import.meta.dir });
-    const t3 = await (await new Response(s3).text()).trim();
-    const e3 = new String(arg_prefix + ', "arg1", "arg2" ]\n').trim();
-    expect(t3).toBe(e3);
-    console.log(t3.length + ": " + t3);
-    console.log(e3.length + ": " + e3);
+    const { stdout: s4 } = spawn(["bun-debug", "print-process-args.js", "arg1", "arg2"], { cwd: import.meta.dir });
+    const t4 = JSON.parse(await new Response(s4).text());
+    expect(t4[0]).toBe(arg1);
+    expect(t4[1]).toBe(arg2);
+    expect(t4[2]).toBe("arg1");
+    expect(t4[3]).toBe("arg2");
 });

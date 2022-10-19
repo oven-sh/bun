@@ -1,0 +1,35 @@
+name: 📥 Install Problem
+description: Report an issue during install or upgrade
+labels: [bug, install]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thank you for submitting a bug report. It helps make Bun better.
+
+        If you need help or support using Bun, and are not reporting an issue, please
+        join our [Discord](https://discord.gg/CXdq2DP29u) server, where you can ask questions in the [`#help`](https://discord.gg/32EtH6p7HN) forum.
+
+        Please try to include as much information as possible.
+  - type: input
+    attributes:
+      label: What platform is your computer?
+      description: |
+        For MacOS and Linux: copy the output of `uname -mprsv`
+        For Windows: copy the output of `"$([Environment]::OSVersion | ForEach-Object VersionString) $(if ([Environment]::Is64BitOperatingSystem) { "x64" } else { "x86" })"` in the PowerShell console
+  - type: textarea
+    attributes:
+      label: How did you attempt to install or upgrade?
+      description: Please provide the commands you ran to install or upgrade.
+    validations:
+      required: true
+  - type: textarea
+    attributes:
+      label: What do you see instead?
+      description: If possible, please provide text instead of a screenshot.
+    validations:
+      required: true
+  - type: textarea
+    attributes:
+      label: Additional information
+      description: Is there anything else you think we should know?

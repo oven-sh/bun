@@ -46,8 +46,10 @@ describe("websocket server", () => {
 
     await new Promise((resolve_, reject) => {
       resolve = resolve_;
-      const websocket = new WebSocket(`ws://localhost:${server.port}`);
-      websocket.onopen = () => websocket.close();
+      const websocket = new WebSocket(`ws://${server.hostname}:${server.port}`);
+      websocket.onopen = () => {
+        websocket.close();
+      };
       websocket.onmessage = (e) => {};
       websocket.onerror = (e) => {};
     });
@@ -69,16 +71,22 @@ describe("websocket server", () => {
         resolve();
       },
       fetch(req, server) {
-        if (
-          server.upgrade(req, {
-            data: "hello world",
+        try {
+          if (
+            server.upgrade(req, {
+              data: "hello world",
 
-            headers: 1238,
-          })
-        ) {
-          reject();
-          return;
+              headers: 1238,
+            })
+          ) {
+            reject();
+            return;
+          }
+        } catch (e) {
+          resolve();
+          return new Response("success");
         }
+
         reject();
         return new Response("noooooo hello world");
       },
@@ -86,7 +94,7 @@ describe("websocket server", () => {
 
     await new Promise((resolve_, reject) => {
       resolve = resolve_;
-      const websocket = new WebSocket(`ws://localhost:${server.port}`);
+      const websocket = new WebSocket(`ws://${server.hostname}:${server.port}`);
       websocket.onopen = () => websocket.close();
       websocket.onmessage = (e) => {};
       websocket.onerror = (e) => {};
@@ -124,7 +132,7 @@ describe("websocket server", () => {
     });
 
     await new Promise((resolve, reject) => {
-      const websocket = new WebSocket(`ws://localhost:${server.port}`);
+      const websocket = new WebSocket(`ws://${server.hostname}:${server.port}`);
       websocket.onopen = () => {
         websocket.send("hello world");
       };
@@ -144,6 +152,7 @@ describe("websocket server", () => {
         reject(e);
       };
     });
+    server.stop();
   });
 
   it("binaryType works", async () => {
@@ -151,9 +160,7 @@ describe("websocket server", () => {
     var server = serve({
       port: getPort(),
       websocket: {
-        open(ws) {
-          ws.send(ws.data);
-        },
+        open(ws) {},
         message(ws, msg) {
           if (ws.binaryType === "uint8array") {
             expect(ws.binaryType).toBe("uint8array");
@@ -183,7 +190,7 @@ describe("websocket server", () => {
 
     await new Promise((resolve, reject) => {
       var counter = 0;
-      const websocket = new WebSocket(`ws://localhost:${server.port}`);
+      const websocket = new WebSocket(`ws://${server.hostname}:${server.port}`);
       websocket.onopen = () => {
         websocket.send(Buffer.from("hello world"));
       };
@@ -209,6 +216,7 @@ describe("websocket server", () => {
         reject(e);
       };
     });
+    server.stop();
   });
 
   it("does not upgrade for non-websocket connections", async () => {
@@ -230,7 +238,7 @@ describe("websocket server", () => {
         },
       });
 
-      const response = await fetch(`http://localhost:${server.port}`);
+      const response = await fetch(`http://${server.hostname}:${server.port}`);
       expect(await response.text()).toBe("success");
       resolve();
       server.stop();
@@ -254,7 +262,7 @@ describe("websocket server", () => {
         },
       });
 
-      const response = await fetch(`http://localhost:${server.port}`);
+      const response = await fetch(`http://${server.hostname}:${server.port}`);
       expect(await response.text()).toBe("success");
       resolve();
       server.stop();
@@ -279,7 +287,7 @@ describe("websocket server", () => {
     });
 
     await new Promise((resolve, reject) => {
-      const websocket = new WebSocket(`ws://localhost:${server.port}`);
+      const websocket = new WebSocket(`ws://${server.hostname}:${server.port}`);
 
       websocket.onmessage = (e) => {
         try {
@@ -320,7 +328,7 @@ describe("websocket server", () => {
         },
       });
 
-      const websocket = new WebSocket(`ws://localhost:${server.port}`);
+      const websocket = new WebSocket(`ws://${server.hostname}:${server.port}`);
       websocket.onmessage = () => {};
       websocket.onerror = () => {};
     });
@@ -348,7 +356,7 @@ describe("websocket server", () => {
         },
       });
 
-      const websocket = new WebSocket(`ws://localhost:${server.port}`);
+      const websocket = new WebSocket(`ws://${server.hostname}:${server.port}`);
       websocket.onmessage = () => {};
       websocket.onerror = () => {};
     });
@@ -375,7 +383,7 @@ describe("websocket server", () => {
         },
       });
 
-      const websocket = new WebSocket(`ws://localhost:${server.port}`);
+      const websocket = new WebSocket(`ws://${server.hostname}:${server.port}`);
       websocket.onmessage = () => {};
       websocket.onerror = () => {};
     });
@@ -403,7 +411,7 @@ describe("websocket server", () => {
         },
       });
 
-      const websocket = new WebSocket(`ws://localhost:${server.port}`);
+      const websocket = new WebSocket(`ws://${server.hostname}:${server.port}`);
       websocket.onmessage = () => {};
       websocket.onerror = () => {};
     });
@@ -430,7 +438,7 @@ describe("websocket server", () => {
     });
 
     await new Promise((resolve, reject) => {
-      const websocket = new WebSocket(`ws://localhost:${server.port}`);
+      const websocket = new WebSocket(`ws://${server.hostname}:${server.port}`);
 
       websocket.onmessage = (e) => {
         try {
@@ -475,7 +483,7 @@ describe("websocket server", () => {
     });
 
     await new Promise((resolve, reject) => {
-      const websocket = new WebSocket(`ws://localhost:${server.port}`);
+      const websocket = new WebSocket(`ws://${server.hostname}:${server.port}`);
       websocket.onerror = (e) => {
         reject(e);
       };
@@ -551,7 +559,7 @@ describe("websocket server", () => {
     });
 
     await new Promise((resolve, reject) => {
-      const websocket = new WebSocket(`ws://localhost:${server.port}`);
+      const websocket = new WebSocket(`ws://${server.hostname}:${server.port}`);
       websocket.onerror = (e) => {
         reject(e);
       };
@@ -643,7 +651,9 @@ describe("websocket server", () => {
           reject = rej;
         });
         gcTick();
-        const websocket = new WebSocket(`ws://localhost:${server.port}`);
+        const websocket = new WebSocket(
+          `ws://${server.hostname}:${server.port}`
+        );
         websocket.onerror = (e) => {
           reject(e);
         };

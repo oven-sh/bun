@@ -2118,6 +2118,13 @@ Features:
 - HTTPS
 - Pubsub / broadcast support with MQTT-like topics
 
+It's also fast. For [a chatroom](./bench/websocket-server/) on Linux x64:
+
+| Messages sent per second | Runtime                        |
+| ------------------------ | ------------------------------ |
+| ~700,000                 | (`Bun.serve`) Bun v0.2.1 (x64) |
+| ~100,000                 | (`ws`) Node v18.10.0 (x64)     |
+
 Here is an example that echoes back any message it receives:
 
 ```ts

@@ -339,7 +339,7 @@ pub const Date = struct {
         return @intCast(i64, days) * time.ms_per_day;
     }
 
-    // Convert to an ISOCalendar date containg the year, week number, and
+    // Convert to an ISOCalendar date contain the year, week number, and
     // weekday. First week is 1. Monday is 1, Sunday is 7.
     pub fn isoCalendar(self: Date) ISOCalendar {
         // Ported from python's isocalendar.

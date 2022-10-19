@@ -316,7 +316,7 @@ header {
 .Tab:hover,
 .Graphs--active-react .Tab[data-tab="react"],
 .Graphs--active-sqlite .Tab[data-tab="sqlite"],
-.Graphs--active-ffi .Tab[data-tab="ffi"] {
+.Graphs--active-websocket .Tab[data-tab="websocket"] {
   border-bottom-color: aquamarine;
   background-color: rgba(130, 216, 247, 0.1);
   border-right-color: aquamarine;
@@ -750,13 +750,13 @@ header {
 }
 
 .BarGraph--react,
-.BarGraph--ffi,
+.BarGraph--websocket,
 .BarGraph--sqlite {
   display: none;
 }
 
 .Graphs--active-react .BarGraph--react,
-.Graphs--active-ffi .BarGraph--ffi,
+.Graphs--active-websocket .BarGraph--websocket,
 .Graphs--active-sqlite .BarGraph--sqlite {
   display: block;
 }
@@ -851,7 +851,7 @@ header {
 
   .Graphs--active-react .Tab[data-tab="react"],
   .Graphs--active-sqlite .Tab[data-tab="sqlite"],
-  .Graphs--active-ffi .Tab[data-tab="ffi"] {
+  .Graphs--active-websocket .Tab[data-tab="websocket"] {
     background-color: rgba(100, 100, 100, 0.1);
   }
 }

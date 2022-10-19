@@ -224,6 +224,16 @@ export default function LandingPage() {
                 Bun.serve
               </button>
               <button
+                data-tab="websocket"
+                id="tab-websocket"
+                aria-controls="websocket-tab-content"
+                className="Tab"
+                role="tab"
+                tabIndex={-1}
+              >
+                WebSocket
+              </button>
+              <button
                 data-tab="sqlite"
                 id="tab-sqlite"
                 aria-controls="sqlite-tab-content"
@@ -232,16 +242,6 @@ export default function LandingPage() {
                 tabIndex={-1}
               >
                 bun:sqlite
-              </button>
-              <button
-                data-tab="ffi"
-                id="tab-ffi"
-                aria-controls="ffi-tab-content"
-                className="Tab"
-                role="tab"
-                tabIndex={-1}
-              >
-                bun:ffi
               </button>
             </div>
             <div id="active-tab" className="ActiveTab">
@@ -256,7 +256,7 @@ export default function LandingPage() {
                   Server-side rendering React
                 </h2>
                 <p className="BarGraph-subheading">
-                  HTTP requests per second (Linux AMD64)
+                  HTTP requests per second (Linux x64)
                 </p>
 
                 <ul style={{ "--count": 3 }} className="BarGraphList">
@@ -295,6 +295,58 @@ export default function LandingPage() {
                     name="Deno.serve()"
                     version="v1.26.0"
                     source="https://github.com/oven-sh/bun/blob/af033c02c5fbaade201abfe332f376879d9e6885/bench/react-hello-world/react-hello-world.deno.jsx"
+                  />
+                </div>
+              </div>
+
+              <div
+                role="tabpanel"
+                tabIndex={-1}
+                id="websocket-tab-content"
+                aria-labelledby="tab-websocket"
+                className="BarGraph BarGraph--websocket BarGraph--horizontal BarGraph--dark"
+              >
+                <h2 className="BarGraph-heading">WebSocket chat server</h2>
+                <p className="BarGraph-subheading">
+                  Messages sent per second (Linux x64, 16 clients)
+                </p>
+
+                <ul style={{ "--count": 3 }} className="BarGraphList">
+                  <BarGraphItem
+                    type="bun"
+                    amount={(737280).toFixed(2)}
+                    label="messages sent per second"
+                    max={Math.ceil(Math.max(737280, 107457, 82097) * 1.25)}
+                  />
+                  <BarGraphItem
+                    type="node"
+                    amount={(107457).toFixed(2)}
+                    label="messages sent per second"
+                    max={Math.ceil(Math.max(737280, 107457, 82097) * 1.25)}
+                  />
+                  <BarGraphItem
+                    type="deno"
+                    amount={(82097).toFixed(2)}
+                    label="messages sent per second"
+                    max={Math.ceil(Math.max(737280, 107457, 82097) * 1.25)}
+                  />
+                </ul>
+
+                <div style={{ "--count": 3 }} className="BarGraphKey">
+                  <BarGraphLabel
+                    name="Bun.serve()"
+                    version="v0.2.1"
+                    source="https://github.com/oven-sh/bun/blob/9c7eb75a9ac845d92bfdfd6cc574dc8f39bde293/bench/websocket-server/chat-server.bun.js#L1"
+                  />
+                  <BarGraphLabel
+                    name="ws (Node.js)"
+                    version="node v18.10.0"
+                    source="https://github.com/oven-sh/bun/blob/9c7eb75a9ac845d92bfdfd6cc574dc8f39bde293/bench/websocket-server/chat-server.node.mjs#L1"
+                  />
+                  <BarGraphLabel
+                    name="Deno.serve()"
+                    source="https://github.com/oven-sh/bun/blob/9c7eb75a9ac845d92bfdfd6cc574dc8f39bde293/bench/websocket-server/chat-server.deno.mjs#L1"
+                    version="v1.26.2"
                   />
                 </div>
               </div>
@@ -345,65 +397,13 @@ export default function LandingPage() {
                     source="https://github.com/oven-sh/bun/blob/b0a7f8df926e91d3b2f0b3b8833ddaf55073f30e/bench/sqlite/bun.js#L9"
                   />
                   <BarGraphLabel
-                    name="deno (x/sqlite)"
+                    name="deno (x/sqlite3)"
                     version="v1.26.1"
-                    source="https://github.com/oven-sh/bun/blob/e55d6eed2bf9a5db30250fdd8b9be063dc949054/bench/sqlite/deno.js"
+                    source="https://github.com/oven-sh/bun/blob/6223030360c121e272aad98c7d1c14a009c5fc1c/bench/sqlite/deno.js#L9"
                   />
                   <BarGraphLabel
                     name="better-sqlite3"
                     source="https://github.com/oven-sh/bun/blob/e55d6eed2bf9a5db30250fdd8b9be063dc949054/bench/sqlite/node.mjs"
-                    version="node v18.2.0"
-                  />
-                </div>
-              </div>
-
-              <div
-                role="tabpanel"
-                tabIndex={-1}
-                id="ffi-tab-content"
-                aria-labelledby="tab-ffi"
-                className="BarGraph BarGraph--ffi BarGraph--horizontal BarGraph--dark"
-              >
-                <h2 className="BarGraph-heading">
-                  How fast can it get? (Hashing)
-                </h2>
-                <p className="BarGraph-subheading">Operations per second</p>
-
-                <ul style={{ "--count": 3 }} className="BarGraphList">
-                  <BarGraphItem
-                    type="bun"
-                    amount={(17434000).toFixed(2)}
-                    label="operations per second"
-                    max={Math.ceil(Math.max(17434000, 6870963, 7563000) * 1.25)}
-                  />
-                  <BarGraphItem
-                    type="deno"
-                    amount={(7563000).toFixed(2)}
-                    label="operations per iteration"
-                    max={Math.ceil(Math.max(17434000, 6870963, 7563000) * 1.25)}
-                  />
-                  <BarGraphItem
-                    type="Node-API"
-                    amount={(6870963).toFixed(2)}
-                    label="operations per second"
-                    max={Math.ceil(Math.max(17434000, 6870963, 7563000) * 1.25)}
-                  />
-                </ul>
-
-                <div style={{ "--count": 3 }} className="BarGraphKey">
-                  <BarGraphLabel
-                    name="bun:ffi"
-                    version="v0.2.0"
-                    source="https://github.com/oven-sh/bun/blob/cbc1e407c3aad3d396ab60317fc24b94341dfb45/bench/ffi/bun.js"
-                  />
-                  <BarGraphLabel
-                    name="deno (ffi)"
-                    version="v1.26.1"
-                    source="https://github.com/oven-sh/bun/blob/af033c02c5fbaade201abfe332f376879d9e6885/bench/ffi/deno.js"
-                  />
-                  <BarGraphLabel
-                    name="node (napi)"
-                    source="https://github.com/oven-sh/bun/blob/cbc1e407c3aad3d396ab60317fc24b94341dfb45/bench/ffi/node.mjs"
                     version="node v18.2.0"
                   />
                 </div>

@@ -658,6 +658,13 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 ctx.finalizeForAbort();
                 return;
             }
+
+            // I don't think this case happens?
+            if (ctx.didUpgradeWebSocket()) {
+                ctx.finalize();
+                return;
+            }
+
             if (!ctx.resp.hasResponded()) {
                 ctx.renderMissing();
                 return;
@@ -1438,15 +1445,16 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 return;
             }
 
+            // if you return a Response object or a Promise<Response>
+            // but you upgraded the connection to a WebSocket
+            // just ignore the Response object. It doesn't do anything.
+            // it's better to do that than to throw an error
             if (ctx.didUpgradeWebSocket()) {
                 ctx.finalize();
                 return;
             }
 
             if (response_value.isEmptyOrUndefinedOrNull()) {
-                if (ctx.didUpgradeWebSocket())
-                    return;
-
                 ctx.renderMissing();
                 return;
             }
@@ -1489,10 +1497,17 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                     .Pending => {},
                     .Fulfilled => {
                         const fulfilled_value = promise.result(vm.global.vm());
-                        if (fulfilled_value.isEmptyOrUndefinedOrNull()) {
-                            if (ctx.didUpgradeWebSocket())
-                                return;
 
+                        // if you return a Response object or a Promise<Response>
+                        // but you upgraded the connection to a WebSocket
+                        // just ignore the Response object. It doesn't do anything.
+                        // it's better to do that than to throw an error
+                        if (ctx.didUpgradeWebSocket()) {
+                            ctx.finalize();
+                            return;
+                        }
+
+                        if (fulfilled_value.isEmptyOrUndefinedOrNull()) {
                             ctx.renderMissing();
                             return;
                         }

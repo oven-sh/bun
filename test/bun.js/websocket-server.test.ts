@@ -155,6 +155,122 @@ describe("websocket server", () => {
     server.stop();
   });
 
+  it("fetch() allows a Response object to be returned for an upgraded ServerWebSocket", () => {
+    var server = serve({
+      port: getPort(),
+      websocket: {
+        open(ws) {},
+        message(ws, msg) {
+          ws.send("hello world");
+        },
+      },
+      error(err) {
+        console.error(err);
+      },
+      fetch(req, server) {
+        if (
+          server.upgrade(req, {
+            data: "hello world",
+
+            // check that headers works
+            headers: {
+              "x-a": "text/plain",
+            },
+          })
+        ) {
+          if (server.upgrade(req)) {
+            throw new Error("should not upgrade twice");
+          }
+          return new Response("lol!", {
+            status: 101,
+          });
+        }
+
+        return new Response("noooooo hello world");
+      },
+    });
+
+    return new Promise((resolve, reject) => {
+      const websocket = new WebSocket(`ws://${server.hostname}:${server.port}`);
+      websocket.onopen = () => {
+        websocket.send("hello world");
+      };
+      websocket.onmessage = (e) => {
+        try {
+          expect(e.data).toBe("hello world");
+          resolve();
+        } catch (r) {
+          reject(r);
+          return;
+        } finally {
+          server?.stop();
+          websocket.close();
+        }
+      };
+      websocket.onerror = (e) => {
+        reject(e);
+      };
+    });
+  });
+
+  it("fetch() allows a Promise<Response> object to be returned for an upgraded ServerWebSocket", () => {
+    var server = serve({
+      port: getPort(),
+      websocket: {
+        async open(ws) {},
+        async message(ws, msg) {
+          await 1;
+          ws.send("hello world");
+        },
+      },
+      error(err) {
+        console.error(err);
+      },
+      async fetch(req, server) {
+        await 1;
+        if (
+          server.upgrade(req, {
+            data: "hello world",
+
+            // check that headers works
+            headers: {
+              "x-a": "text/plain",
+            },
+          })
+        ) {
+          if (server.upgrade(req)) {
+            throw new Error("should not upgrade twice");
+          }
+          return new Response("lol!", {
+            status: 101,
+          });
+        }
+
+        return new Response("noooooo hello world");
+      },
+    });
+    return new Promise((resolve, reject) => {
+      const websocket = new WebSocket(`ws://${server.hostname}:${server.port}`);
+      websocket.onopen = () => {
+        websocket.send("hello world");
+      };
+      websocket.onmessage = (e) => {
+        try {
+          expect(e.data).toBe("hello world");
+          resolve();
+        } catch (r) {
+          reject(r);
+          return;
+        } finally {
+          server?.stop();
+          websocket.close();
+        }
+      };
+      websocket.onerror = (e) => {
+        reject(e);
+      };
+    });
+  });
   it("binaryType works", async () => {
     var done = false;
     var server = serve({

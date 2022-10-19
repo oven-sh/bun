@@ -1,25 +1,20 @@
-# bun
+# <a href="https://bun.sh"><img width="30" src="https://user-images.githubusercontent.com/709451/182802334-d9c42afe-f35d-4a7b-86ea-9985f73f20c3.png" alt="Logo"></a> bun <a href="https://bun.sh/discord" target="_blank"><img height=20 src="https://img.shields.io/discord/876711213126520882" /></a>
 
-<p align="center">
-  <a href="https://bun.sh"><img src="https://user-images.githubusercontent.com/709451/182802334-d9c42afe-f35d-4a7b-86ea-9985f73f20c3.png" alt="Logo" height=170></a>
-  <br />
-  <br />
-  <a href="https://bun.sh/discord" target="_blank"><img height=20 src="https://img.shields.io/discord/876711213126520882" /></a>
-</p>
+**Bun** is a blazing fast JavaScript runtime written with *Zig* on top of *JavaScriptCore* engine focused in high performance and wide compatibility with Node.js packages. 
 
-bun is a new:
+🗺 [Bun's roadmap](https://github.com/oven-sh/bun/issues/159) - 💬 [Discord Server](https://bun.sh/discord) - 📚 [Table of contents](#table-of-contents)
 
-- JavaScript runtime with Web APIs like [`fetch`](https://developer.mozilla.org/en-US/docs/Web/API/fetch), [`WebSocket`](https://developer.mozilla.org/en-US/docs/Web/API/WebSocket), and several more built-in. bun embeds JavaScriptCore, which tends to be faster and more memory efficient than more popular engines like V8 (though harder to embed)
+Features quick view:
+
+- Runtime with Web APIs like [**fetch**](https://developer.mozilla.org/en-US/docs/Web/API/fetch), [**WebSocket**](https://developer.mozilla.org/en-US/docs/Web/API/WebSocket), and several more built-in
 - JavaScript/TypeScript/JSX transpiler
 - JavaScript & CSS bundler
 - Task runner for package.json scripts
 - npm-compatible package manager
 
-All in one fast &amp; easy-to-use tool. Instead of 1,000 node_modules for development, you only need bun.
-
-**bun is experimental software**. Join [bun’s Discord](https://bun.sh/discord) for help and have a look at [things that don’t work yet](#not-implemented-yet).
-
-Today, bun's primary focus is bun.js: bun's JavaScript runtime.
+> ⚠ **bun is experimental software**
+> 
+> Join [bun’s Discord](https://bun.sh/discord) for help and have a look at [things that don’t work yet](#not-implemented-yet). Today, bun's primary focus is bun.js: bun's JavaScript runtime.
 
 ## Install
 

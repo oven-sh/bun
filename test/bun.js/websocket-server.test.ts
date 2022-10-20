@@ -12,6 +12,69 @@ function getPort() {
 }
 
 describe("websocket server", () => {
+  for (let method of ["publish", "publishText", "publishBinary"]) {
+    describe(method, () => {
+      it("in close() should work", async () => {
+        var server = serve({
+          port: getPort(),
+          websocket: {
+            open(ws) {
+              ws.subscribe("all");
+            },
+            message(ws, msg) {},
+            close(ws) {
+              ws[method](
+                "all",
+                method === "publishBinary" ? Buffer.from("bye!") : "bye!"
+              );
+            },
+          },
+          fetch(req, server) {
+            if (server.upgrade(req)) {
+              return;
+            }
+
+            return new Response("success");
+          },
+        });
+
+        try {
+          const first = await new Promise((resolve2, reject2) => {
+            var socket = new WebSocket(
+              `ws://${server.hostname}:${server.port}`
+            );
+            socket.onopen = () => resolve2(socket);
+          });
+
+          const second = await new Promise((resolve2, reject2) => {
+            var socket = new WebSocket(
+              `ws://${server.hostname}:${server.port}`
+            );
+            socket.onmessage = (ev) => {
+              var msg = ev.data;
+              if (typeof msg !== "string") {
+                msg = new TextDecoder().decode(msg);
+              }
+              if (msg === "bye!") {
+                resolve2(socket);
+              } else {
+                reject2(msg);
+              }
+            };
+            socket.onopen = () => {
+              first.close();
+            };
+          });
+
+          second.close();
+        } catch (r) {
+        } finally {
+          server.stop();
+        }
+      });
+    });
+  }
+
   it("close inside open", async () => {
     var resolve;
     var server = serve({

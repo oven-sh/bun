@@ -206,18 +206,20 @@ describe("streaming", () => {
     var server;
     try {
       var pass = false;
+      var err = { name: '', message: '' };
       server = serve({
         port: port++,
         development: false,
         error(e) {
           pass = true;
+          err = e;
           return new Response("Fail", { status: 500 });
         },
         fetch(req) {
           return new Response(
             new ReadableStream({
               start(controller) {
-                throw new Error("error");
+                throw new TypeError("error");
               },
             })
           );
@@ -228,6 +230,8 @@ describe("streaming", () => {
       expect(response.status).toBe(500);
       expect(await response.text()).toBe("Fail");
       expect(pass).toBe(true);
+      expect(err.name).toBe("TypeError");
+      expect(err.message).toBe("error");
     } catch (e) {
       throw e;
     } finally {

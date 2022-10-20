@@ -1460,6 +1460,15 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             }
 
             if (response_value.isError() or response_value.isAggregateError(this.globalThis) or response_value.isException(this.globalThis.vm())) {
+                // cast exception to error instance
+                if (response_value.isException(this.globalThis.vm())) {
+                    const err = response_value.toError(this.globalThis);
+                    if (!err.isUndefinedOrNull()) {
+                        ctx.runErrorHandler(err);
+                        return;
+                    }
+                }
+
                 ctx.runErrorHandler(response_value);
 
                 return;

@@ -32,6 +32,14 @@ static  WTF::String to16Bit(JSC::JSString* str, JSC::JSGlobalObject *globalObjec
     return WTF::String::make16BitFrom8BitSource(value.characters8(), value.length());
 }
 
+static WTF::String to16Bit(WTF::String str) {
+    if (str.is8Bit()) {
+        return WTF::String::make16BitFrom8BitSource(str.characters8(), str.length());
+    }
+
+    return str;
+}
+
 
 static  WTF::String to16Bit(JSValue jsValue, JSC::JSGlobalObject *globalObject, ASCIILiteral defaultValue) {
     if (!jsValue || jsValue.isUndefinedOrNull()) {
@@ -44,6 +52,35 @@ static  WTF::String to16Bit(JSValue jsValue, JSC::JSGlobalObject *globalObject, 
     }
 
     return to16Bit(jsString, globalObject);
+}
+
+static WTF::String extendMultibyteHexCharacters(const WTF::String &string) {
+    WTF::StringBuilder sb;
+    bool escape = false;
+    bool hex = false;
+    int hDigitCounter = 0;
+    for (int i = 0; i < string.length(); i++) {
+        sb.append(string.characterAt(i));
+        if (string.characterAt(i) == '\\') {
+            escape = true;
+        } else if (string.characterAt(i) == 'x') {
+            hex = true;
+        } else if (string.characterAt(i) == '{' && hex && escape) {
+            hex = false;
+            escape = false;
+            hDigitCounter = 0;
+        } else if (isxdigit(string.characterAt(i)) && escape && hex) {
+            hDigitCounter += 1;
+            if (hDigitCounter == 2) {
+                hDigitCounter = 0;
+                escape = false;
+                hex = false;
+                sb.append("\\x00"_s);
+            }
+        }
+    }
+
+    return to16Bit(sb.toString());
 }
 
 static inline bool is16BitLineTerminator(UChar c)
@@ -417,6 +454,8 @@ JSC_DEFINE_HOST_FUNCTION(onigurumaRegExpProtoFuncCompile, (JSGlobalObject *globa
         WTF::String newPatternString = to16Bit(arg0, globalObject, "(?:)"_s);
         RETURN_IF_EXCEPTION(scope, {});
 
+        newPatternString = extendMultibyteHexCharacters(newPatternString);
+
         WTF::String newFlagsString = to16Bit(arg1, globalObject, ""_s);
         RETURN_IF_EXCEPTION(scope, {});
 
@@ -431,8 +470,10 @@ JSC_DEFINE_HOST_FUNCTION(onigurumaRegExpProtoFuncCompile, (JSGlobalObject *globa
         thisRegExp->setFlagsString(newFlagsString);
     }
 
-    OnigEncoding encoding = ONIG_ENCODING_UTF16_LE;
-    onig_initialize(&encoding, 1);
+    OnigEncoding encodings[] = {
+        ONIG_ENCODING_UTF16_LE,
+    };
+    onig_initialize(encodings, 1);
 
     OnigOptionType options = 0;
     if (thisRegExp->flagsString().contains('i')) {
@@ -447,15 +488,25 @@ JSC_DEFINE_HOST_FUNCTION(onigurumaRegExpProtoFuncCompile, (JSGlobalObject *globa
         options |= ONIG_OPTION_MULTILINE;
     }
 
+    OnigSyntaxType* syntax = ONIG_SYNTAX_DEFAULT;
+    onig_set_syntax_op(syntax, onig_get_syntax_op(syntax) | ONIG_SYN_OP_ESC_X_HEX2);
+    onig_set_syntax_op(syntax, onig_get_syntax_op(syntax) | ONIG_SYN_OP_ESC_X_BRACE_HEX8);
+    onig_set_syntax_op2(syntax, onig_get_syntax_op2(syntax) | ONIG_SYN_OP2_ESC_U_HEX4);
+    onig_set_syntax_behavior(syntax, onig_get_syntax_behavior(syntax) | ONIG_SYN_ALLOW_EMPTY_RANGE_IN_CC);
+    onig_set_syntax_behavior(syntax, onig_get_syntax_behavior(syntax) | ONIG_SYN_ALLOW_INVALID_CODE_END_OF_RANGE_IN_CC);
+
+    OnigEncodingType* encoding = ONIG_ENCODING_UTF16_LE;
     OnigErrorInfo errorInfo = { 0 };
     regex_t* onigRegExp = NULL;
-    int errorCode = onig_new(
+    int errorCode = 0;
+
+    errorCode = onig_new(
         &onigRegExp,
         reinterpret_cast<const OnigUChar*>(thisRegExp->patternString().characters16()),
         reinterpret_cast<const OnigUChar*>(thisRegExp->patternString().characters16() + thisRegExp->patternString().length()),
         options,
-        ONIG_ENCODING_UTF16_LE,
-        ONIG_SYNTAX_DEFAULT,
+        encoding,
+        syntax,
         &errorInfo
     );
 
@@ -717,6 +768,8 @@ static JSC::EncodedJSValue constructOrCall(Zig::GlobalObject *globalObject, JSVa
     WTF::String patternString = to16Bit(arg0, globalObject, "(?:)"_s);
     RETURN_IF_EXCEPTION(scope, {});
 
+    patternString = extendMultibyteHexCharacters(patternString);
+
     WTF::String flagsString = to16Bit(arg1, globalObject, ""_s);
     RETURN_IF_EXCEPTION(scope, {});
 
@@ -727,8 +780,10 @@ static JSC::EncodedJSValue constructOrCall(Zig::GlobalObject *globalObject, JSVa
 
     flagsString = sortRegExpFlags(flagsString);
 
-    OnigEncoding encoding = ONIG_ENCODING_UTF16_LE;
-    onig_initialize(&encoding, 1);
+    OnigEncoding encodings[] = {
+        ONIG_ENCODING_UTF16_LE,
+    };
+    onig_initialize(encodings, 1);
 
     OnigOptionType options = 0;
     if (flagsString.contains('i')) {
@@ -743,15 +798,25 @@ static JSC::EncodedJSValue constructOrCall(Zig::GlobalObject *globalObject, JSVa
         options |= ONIG_OPTION_MULTILINE;
     }
 
+    OnigSyntaxType* syntax = ONIG_SYNTAX_DEFAULT;
+    onig_set_syntax_op(syntax, onig_get_syntax_op(syntax) | ONIG_SYN_OP_ESC_X_HEX2);
+    onig_set_syntax_op(syntax, onig_get_syntax_op(syntax) | ONIG_SYN_OP_ESC_X_BRACE_HEX8);
+    onig_set_syntax_op2(syntax, onig_get_syntax_op2(syntax) | ONIG_SYN_OP2_ESC_U_HEX4);
+    onig_set_syntax_behavior(syntax, onig_get_syntax_behavior(syntax) | ONIG_SYN_ALLOW_EMPTY_RANGE_IN_CC);
+    onig_set_syntax_behavior(syntax, onig_get_syntax_behavior(syntax) | ONIG_SYN_ALLOW_INVALID_CODE_END_OF_RANGE_IN_CC);
+
+    OnigEncodingType* encoding = ONIG_ENCODING_UTF16_LE;
     OnigErrorInfo errorInfo = { 0 };
     regex_t* onigRegExp = NULL;
-    int errorCode = onig_new(
+    int errorCode = 0;
+
+    errorCode = onig_new(
         &onigRegExp,
         reinterpret_cast<const OnigUChar*>(patternString.characters16()),
         reinterpret_cast<const OnigUChar*>(patternString.characters16() + patternString.length()),
         options,
-        ONIG_ENCODING_UTF16_LE,
-        ONIG_SYNTAX_DEFAULT,
+        encoding,
+        syntax,
         &errorInfo
     );
 

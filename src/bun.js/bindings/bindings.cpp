@@ -2556,6 +2556,20 @@ void JSC__JSValue__getNameProperty(JSC__JSValue JSValue0, JSC__JSGlobalObject* a
     arg2->len = 0;
 }
 
+JSC__JSValue JSC__JSValue__toError(JSC__JSValue JSValue0, JSC__JSGlobalObject* arg1)
+{
+    JSC::JSValue value = JSC::JSValue::decode(JSValue0);
+    if (JSC::Exception* jscException = JSC::jsDynamicCast<JSC::Exception*>(value)) {
+        if (JSC::ErrorInstance* error = JSC::jsDynamicCast<JSC::ErrorInstance*>(jscException->value())) {
+            return JSC::JSValue::encode(JSC::JSValue(error));
+        }
+    }
+    if (JSC::ErrorInstance* error = JSC::jsDynamicCast<JSC::ErrorInstance*>(value)) {
+        return JSC::JSValue::encode(JSC::JSValue(error));
+    }
+    return JSC::JSValue::encode(JSC::jsUndefined());
+}
+
 void JSC__JSValue__toZigException(JSC__JSValue JSValue0, JSC__JSGlobalObject* arg1,
     ZigException* exception)
 {

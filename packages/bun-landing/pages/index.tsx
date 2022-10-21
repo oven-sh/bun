@@ -171,7 +171,7 @@ const InstallBox = ({ desktop = false }) => (
       </div>
     </div>
     <div className="InstallBox-code-box">
-      <div className="InstallBox-curl">curl https://bun.sh/install | bash</div>
+      <div className="InstallBox-curl">curl -fsSL https://bun.sh/install | bash</div>
       <button className="InstallBox-copy" aria-label="Copy installation script">
         copy
       </button>
@@ -567,7 +567,7 @@ export default function LandingPage() {
             in your terminal. It downloads Bun from GitHub.
           </p>
           <CodeBlock lang="shell">{`
-curl https://bun.sh/install | bash
+curl -fsSL https://bun.sh/install | bash
           `}</CodeBlock>
           <p>
             {" "}
@@ -731,7 +731,7 @@ export default {
 
 for (const el of document.querySelectorAll(".InstallBox-copy")) {
   el.addEventListener("click", async e => {
-    await navigator.clipboard.writeText("curl https://bun.sh/install | bash");
+    await navigator.clipboard.writeText("curl -fsSL https://bun.sh/install | bash");
   });
 }
       `,

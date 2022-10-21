@@ -1856,8 +1856,9 @@ pub const E = struct {
                 if (start == 0) return false;
                 const l_paren = pat[start - 1];
                 if (l_paren != '(' or pat.len < start + 1) return false;
+                if (start > 1 and pat[start - 2] == '\\') return false;
                 const op = pat[start + 1];
-                if (op == '<' or op == '=' or op == '!') {
+                if (op == '<') {
                     return true;
                 }
                 pat = pat[start + 1 ..];

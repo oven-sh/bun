@@ -443,18 +443,20 @@ JSC_DEFINE_HOST_FUNCTION(onigurumaRegExpProtoFuncCompile, (JSGlobalObject *globa
     JSValue arg0 = callFrame->argument(0);
     JSValue arg1 = callFrame->argument(1);
 
+    WTF::String patternStringExtended;
     if (auto* regExpObject = jsDynamicCast<OnigurumaRegEx*>(arg0)) {
         if (!arg1.isUndefined()) {
             throwScope.throwException(globalObject, createTypeError(globalObject, makeString("Cannot supply flags when constructing one RegExp from another."_s)));
             return JSValue::encode({});
         }
         thisRegExp->setPatternString(regExpObject->patternString());
+        patternStringExtended = extendMultibyteHexCharacters(thisRegExp->patternString());
         thisRegExp->setFlagsString(regExpObject->flagsString());
     } else {
         WTF::String newPatternString = to16Bit(arg0, globalObject, "(?:)"_s);
         RETURN_IF_EXCEPTION(scope, {});
 
-        newPatternString = extendMultibyteHexCharacters(newPatternString);
+        patternStringExtended = extendMultibyteHexCharacters(newPatternString);
 
         WTF::String newFlagsString = to16Bit(arg1, globalObject, ""_s);
         RETURN_IF_EXCEPTION(scope, {});
@@ -502,8 +504,8 @@ JSC_DEFINE_HOST_FUNCTION(onigurumaRegExpProtoFuncCompile, (JSGlobalObject *globa
 
     errorCode = onig_new(
         &onigRegExp,
-        reinterpret_cast<const OnigUChar*>(thisRegExp->patternString().characters16()),
-        reinterpret_cast<const OnigUChar*>(thisRegExp->patternString().characters16() + thisRegExp->patternString().length()),
+        reinterpret_cast<const OnigUChar*>(patternStringExtended.characters16()),
+        reinterpret_cast<const OnigUChar*>(patternStringExtended.characters16() + patternStringExtended.length()),
         options,
         encoding,
         syntax,
@@ -768,7 +770,7 @@ static JSC::EncodedJSValue constructOrCall(Zig::GlobalObject *globalObject, JSVa
     WTF::String patternString = to16Bit(arg0, globalObject, "(?:)"_s);
     RETURN_IF_EXCEPTION(scope, {});
 
-    patternString = extendMultibyteHexCharacters(patternString);
+    WTF::String patternStringExtended = extendMultibyteHexCharacters(patternString);
 
     WTF::String flagsString = to16Bit(arg1, globalObject, ""_s);
     RETURN_IF_EXCEPTION(scope, {});
@@ -812,8 +814,8 @@ static JSC::EncodedJSValue constructOrCall(Zig::GlobalObject *globalObject, JSVa
 
     errorCode = onig_new(
         &onigRegExp,
-        reinterpret_cast<const OnigUChar*>(patternString.characters16()),
-        reinterpret_cast<const OnigUChar*>(patternString.characters16() + patternString.length()),
+        reinterpret_cast<const OnigUChar*>(patternStringExtended.characters16()),
+        reinterpret_cast<const OnigUChar*>(patternStringExtended.characters16() + patternStringExtended.length()),
         options,
         encoding,
         syntax,

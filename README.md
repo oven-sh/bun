@@ -740,7 +740,7 @@ Additionally, bun exposes an API for SSR/SSG that returns a flat list of URLs to
 // Initially, you could only use bun.js through `bun dev`
 // and this API was created at that time
 addEventListener("fetch", async (event: FetchEvent) => {
-  var route = Bun.match(event);
+  let route = Bun.match(event);
   const App = await import("pages/_app");
 
   // This returns all .css files that were imported in the line above.
@@ -1672,9 +1672,9 @@ From a design perspective, the most important part of the `.bun` format is how c
 
 ```js
 // preact/dist/preact.module.js
-export var $eb6819b = $$m({
+export let $eb6819b = $$m({
   "preact/dist/preact.module.js": (module, exports) => {
-    var n, l, u, i, t, o, r, f, e = {}, c = [], s = /acit|ex(?:s|g|n|p|$)|rph|grid|ows|mnc|ntw|ine[ch]|zoo|^ord|itera/i;
+    let n, l, u, i, t, o, r, f, e = {}, c = [], s = /acit|ex(?:s|g|n|p|$)|rph|grid|ows|mnc|ntw|ine[ch]|zoo|^ord|itera/i;
     // ... rest of code
 ```
 
@@ -1726,7 +1726,7 @@ Bundled dependencies are not eligible for Hot Module Reloading. The code is serv
 The `$eb6819b` hash used here:
 
 ```js
-export var $eb6819b = $$m({
+export let $eb6819b = $$m({
 ```
 
 Is generated like this:
@@ -2740,9 +2740,9 @@ Open an in-memory database:
 import { Database } from "bun:sqlite";
 
 // all of these do the same thing
-var db = new Database(":memory:");
-var db = new Database();
-var db = new Database("");
+let db = new Database(":memory:");
+let db = new Database();
+let db = new Database("");
 ```
 
 Open read-write and throw if the database doesn't exist:
@@ -2780,7 +2780,7 @@ const db = new Database(readFileSync("mydb.sqlite"));
 Close a database:
 
 ```ts
-var db = new Database();
+let db = new Database();
 db.close();
 ```
 
@@ -2811,7 +2811,7 @@ You can bind parameters on any call to a statement.
 import { Database } from "bun:sqlite";
 
 // generate some data
-var db = new Database();
+let db = new Database();
 db.run(
   "CREATE TABLE foo (id INTEGER PRIMARY KEY AUTOINCREMENT, greeting TEXT)"
 );
@@ -2838,7 +2838,7 @@ Unlike `query()`, this does not cache the compiled query.
 import { Database } from "bun:sqlite";
 
 // generate some data
-var db = new Database();
+let db = new Database();
 db.run(
   "CREATE TABLE foo (id INTEGER PRIMARY KEY AUTOINCREMENT, greeting TEXT)"
 );
@@ -2872,7 +2872,7 @@ Creating a table:
 ```ts
 import { Database } from "bun:sqlite";
 
-var db = new Database();
+let db = new Database();
 db.exec(
   "CREATE TABLE foo (id INTEGER PRIMARY KEY AUTOINCREMENT, greeting TEXT)"
 );
@@ -2883,7 +2883,7 @@ Inserting one row:
 ```ts
 import { Database } from "bun:sqlite";
 
-var db = new Database();
+let db = new Database();
 db.exec(
   "CREATE TABLE foo (id INTEGER PRIMARY KEY AUTOINCREMENT, greeting TEXT)"
 );
@@ -2974,7 +2974,7 @@ SQLite has a built-in way to [serialize](https://www.sqlite.org/c3ref/serialize.
 `bun:sqlite` fully supports it:
 
 ```ts
-var db = new Database();
+let db = new Database();
 
 // write some data
 db.run(
@@ -3007,7 +3007,7 @@ To load a SQLite extension, call `Database.prototype.loadExtension(name)`:
 ```ts
 import { Database } from "bun:sqlite";
 
-var db = new Database();
+let db = new Database();
 
 db.loadExtension("myext");
 ```
@@ -3022,7 +3022,7 @@ import { Database } from "bun:sqlite";
 // on linux it will still check that a string was passed
 Database.setCustomSQLite("/path/to/sqlite.dylib");
 
-var db = new Database();
+let db = new Database();
 
 db.loadExtension("myext");
 ```
@@ -3054,7 +3054,7 @@ You can bind parameters on any call to a statement. Named parameters and positio
 import { Database } from "bun:sqlite";
 
 // setup
-var db = new Database();
+let db = new Database();
 db.run(
   "CREATE TABLE foo (id INTEGER PRIMARY KEY AUTOINCREMENT, greeting TEXT)"
 );
@@ -3062,7 +3062,7 @@ db.run("INSERT INTO foo VALUES (?)", "Welcome to bun!");
 db.run("INSERT INTO foo VALUES (?)", "Hello World!");
 
 // Statement object
-var statement = db.query("SELECT * FROM foo");
+let statement = db.query("SELECT * FROM foo");
 
 // returns all the rows
 statement.all();
@@ -3082,7 +3082,7 @@ Calling `all()` on a `Statement` instance runs the query and returns the rows as
 import { Database } from "bun:sqlite";
 
 // setup
-var db = new Database();
+let db = new Database();
 db.run(
   "CREATE TABLE foo (id INTEGER PRIMARY KEY AUTOINCREMENT, greeting TEXT, count INTEGER)"
 );
@@ -3095,7 +3095,7 @@ db.run(
 );
 
 // Statement object
-var statement = db.query("SELECT * FROM foo WHERE count = ?");
+let statement = db.query("SELECT * FROM foo WHERE count = ?");
 
 // return all the query results, binding 2 to the count parameter
 statement.all(2);
@@ -3115,7 +3115,7 @@ Calling `values()` on a `Statement` instance runs the query and returns the rows
 import { Database } from "bun:sqlite";
 
 // setup
-var db = new Database();
+let db = new Database();
 db.run(
   "CREATE TABLE foo (id INTEGER PRIMARY KEY AUTOINCREMENT, greeting TEXT, count INTEGER)"
 );
@@ -3128,7 +3128,7 @@ db.run(
 );
 
 // Statement object
-var statement = db.query("SELECT * FROM foo WHERE count = ?");
+let statement = db.query("SELECT * FROM foo WHERE count = ?");
 
 // return all the query results as an array of arrays, binding 2 to "count"
 statement.values(2);
@@ -3138,7 +3138,7 @@ statement.values(2);
 // ]
 
 // Statement object, but with named parameters
-var statement = db.query("SELECT * FROM foo WHERE count = $count");
+let statement = db.query("SELECT * FROM foo WHERE count = $count");
 
 // return all the query results as an array of arrays, binding 2 to "count"
 statement.values({ $count: 2 });
@@ -3158,7 +3158,7 @@ Calling `get()` on a `Statement` instance runs the query and returns the first r
 import { Database } from "bun:sqlite";
 
 // setup
-var db = new Database();
+let db = new Database();
 db.run(
   "CREATE TABLE foo (id INTEGER PRIMARY KEY AUTOINCREMENT, greeting TEXT, count INTEGER)"
 );
@@ -3171,14 +3171,14 @@ db.run(
 );
 
 // Statement object
-var statement = db.query("SELECT * FROM foo WHERE count = ?");
+let statement = db.query("SELECT * FROM foo WHERE count = ?");
 
 // return the first row as an object, binding 2 to the count parameter
 statement.get(2);
 // => { id: 1, greeting: "Welcome to bun!", count: 2 }
 
 // Statement object, but with named parameters
-var statement = db.query("SELECT * FROM foo WHERE count = $count");
+let statement = db.query("SELECT * FROM foo WHERE count = $count");
 
 // return the first row as an object, binding 2 to the count parameter
 statement.get({ $count: 2 });
@@ -3197,7 +3197,7 @@ This is useful if you want to repeatedly run a query, but don't care about the r
 import { Database } from "bun:sqlite";
 
 // setup
-var db = new Database();
+let db = new Database();
 db.run(
   "CREATE TABLE foo (id INTEGER PRIMARY KEY AUTOINCREMENT, greeting TEXT, count INTEGER)"
 );
@@ -3210,7 +3210,7 @@ db.run(
 );
 
 // Statement object (TODO: use a better example query)
-var statement = db.query("SELECT * FROM foo");
+let statement = db.query("SELECT * FROM foo");
 
 // run the query, returning nothing
 statement.run();
@@ -3230,7 +3230,7 @@ It is a good idea to finalize a statement when you are done with it, but the gar
 import { Database } from "bun:sqlite";
 
 // setup
-var db = new Database();
+let db = new Database();
 db.run(
   "CREATE TABLE foo (id INTEGER PRIMARY KEY AUTOINCREMENT, greeting TEXT, count INTEGER)"
 );
@@ -3243,7 +3243,7 @@ db.run(
 );
 
 // Statement object
-var statement = db.query("SELECT * FROM foo WHERE count = ?");
+let statement = db.query("SELECT * FROM foo WHERE count = ?");
 
 statement.finalize();
 
@@ -3259,7 +3259,7 @@ Calling `toString()` on a `Statement` instance prints the expanded SQL query. Th
 import { Database } from "bun:sqlite";
 
 // setup
-var db = new Database();
+let db = new Database();
 db.run(
   "CREATE TABLE foo (id INTEGER PRIMARY KEY AUTOINCREMENT, greeting TEXT, count INTEGER)"
 );
@@ -3501,7 +3501,7 @@ This is useful if using Node-API (napi) with Bun, and you've already loaded some
 ```ts
 import { CFunction } from "bun:ffi";
 
-var myNativeLibraryGetVersion = /* somehow, you got this pointer */
+let myNativeLibraryGetVersion = /* somehow, you got this pointer */
 
 const getVersion = new CFunction({
   returns: "cstring",
@@ -3573,7 +3573,7 @@ If you pass a `BigInt` to a function, it will be converted to a `number`
 
 ```ts
 import { ptr } from "bun:ffi";
-var myTypedArray = new Uint8Array(32);
+let myTypedArray = new Uint8Array(32);
 const myPtr = ptr(myTypedArray);
 ```
 
@@ -3581,7 +3581,7 @@ const myPtr = ptr(myTypedArray);
 
 ```ts
 import { ptr, toArrayBuffer } from "bun:ffi";
-var myTypedArray = new Uint8Array(32);
+let myTypedArray = new Uint8Array(32);
 const myPtr = ptr(myTypedArray);
 
 // toTypedArray accepts a `byteOffset` and `byteLength`
@@ -3597,7 +3597,7 @@ For long-lived pointers, a `DataView` is the fastest option:
 
 ```ts
 import { toArrayBuffer } from "bun:ffi";
-var myDataView = new DataView(toArrayBuffer(myPtr, 0, 32));
+let myDataView = new DataView(toArrayBuffer(myPtr, 0, 32));
 
 console.log(
   myDataView.getUint8(0, true),
@@ -3783,7 +3783,7 @@ const out = encode_png(
 );
 
 // assuming it is 0-terminated, it can be read like this:
-var png = new Uint8Array(toArrayBuffer(out));
+let png = new Uint8Array(toArrayBuffer(out));
 
 // save it to disk:
 await Bun.write("out.png", png);
@@ -3811,7 +3811,7 @@ const napi = require("./my-node-module.node");
 You can also use `process.dlopen`:
 
 ```js
-var mod = { exports: {} };
+let mod = { exports: {} };
 process.dlopen(mod, "./my-node-module.node");
 ```
 
@@ -3927,7 +3927,7 @@ transpiler.transformSync("<div>hi!</div>");
 ```js
 import { __require as require } from "bun:wrap";
 import * as JSX from "react/jsx-dev-runtime";
-var jsx = require(JSX).jsxDEV;
+let jsx = require(JSX).jsxDEV;
 
 export default jsx(
   "div",
@@ -3961,7 +3961,7 @@ await transpiler.transform("<div>hi!</div>");
 ```js
 import { __require as require } from "bun:wrap";
 import * as JSX from "react/jsx-dev-runtime";
-var jsx = require(JSX).jsxDEV;
+let jsx = require(JSX).jsxDEV;
 
 export default jsx(
   "div",

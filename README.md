@@ -1672,7 +1672,7 @@ From a design perspective, the most important part of the `.bun` format is how c
 
 ```js
 // preact/dist/preact.module.js
-export let $eb6819b = $$m({
+export var $eb6819b = $$m({
   "preact/dist/preact.module.js": (module, exports) => {
     let n, l, u, i, t, o, r, f, e = {}, c = [], s = /acit|ex(?:s|g|n|p|$)|rph|grid|ows|mnc|ntw|ine[ch]|zoo|^ord|itera/i;
     // ... rest of code
@@ -1726,7 +1726,7 @@ Bundled dependencies are not eligible for Hot Module Reloading. The code is serv
 The `$eb6819b` hash used here:
 
 ```js
-export let $eb6819b = $$m({
+export var $eb6819b = $$m({
 ```
 
 Is generated like this:
@@ -3927,7 +3927,7 @@ transpiler.transformSync("<div>hi!</div>");
 ```js
 import { __require as require } from "bun:wrap";
 import * as JSX from "react/jsx-dev-runtime";
-let jsx = require(JSX).jsxDEV;
+var jsx = require(JSX).jsxDEV;
 
 export default jsx(
   "div",
@@ -3961,7 +3961,7 @@ await transpiler.transform("<div>hi!</div>");
 ```js
 import { __require as require } from "bun:wrap";
 import * as JSX from "react/jsx-dev-runtime";
-let jsx = require(JSX).jsxDEV;
+var jsx = require(JSX).jsxDEV;
 
 export default jsx(
   "div",

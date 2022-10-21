@@ -117,6 +117,8 @@ function validateAndNormalizeQueuingStrategy(size, highWaterMark)
 @linkTimeConstant
 function createFIFO() {
     "use strict";
+    var slice = @Array.prototype.slice;
+
     class Denqueue {
         constructor() {
           this._head = 0;
@@ -125,6 +127,11 @@ function createFIFO() {
           this._capacityMask = 0x3;
           this._list = @newArrayWithSize(4);
         }
+
+        _head;
+        _tail;
+        _capacityMask;
+        _list;
   
         size() {
           if (this._head === this._tail) return 0;
@@ -141,12 +148,12 @@ function createFIFO() {
         }
   
         shift() {
-            var head = this._head;
-            if (head === this._tail) return @undefined;
-            var item = this._list[head];
-            @putByValDirect(this._list, head, @undefined);
-            this._head = (head + 1) & this._capacityMask;
-            if (head < 2 && this._tail > 10000 && this._tail <= this._list.length >>> 2) this._shrinkArray();
+            var { _head: head, _tail, _list, _capacityMask } = this;
+            if (head === _tail) return @undefined;
+            var item = _list[head];
+            @putByValDirect(_list, head, @undefined);
+            head = this._head = (head + 1) & _capacityMask;
+            if (head < 2 && _tail > 10000 && _tail <= _list.length >>> 2) this._shrinkArray();
             return item;
         }
 
@@ -181,7 +188,7 @@ function createFIFO() {
             for (var i = 0; i < _tail; i++) @putByValDirect(array, j++, list[i]);
             return array;
           } else {
-            return @Array.prototype.slice.@call(list, this._head, this._tail);
+            return slice.@call(list, this._head, this._tail);
           }
         }
         

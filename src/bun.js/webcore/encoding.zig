@@ -767,13 +767,14 @@ pub const Encoder = struct {
         return switch (@intToEnum(JSC.Node.Encoding, encoding)) {
             .ucs2 => toString(input, len, globalObject, .utf16le),
             .utf16le => toString(input, len, globalObject, .utf16le),
-            .buffer => toString(input, len, globalObject, .utf8),
             .utf8 => toString(input, len, globalObject, .utf8),
             .ascii => toString(input, len, globalObject, .ascii),
             .hex => toString(input, len, globalObject, .hex),
             .base64 => toString(input, len, globalObject, .base64),
             .base64url => toString(input, len, globalObject, .base64url),
-            else => unreachable,
+
+            // treat everything else as utf8
+            else => toString(input, len, globalObject, .utf8),
         };
     }
 

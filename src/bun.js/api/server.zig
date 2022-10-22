@@ -4352,14 +4352,16 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
             if (ssl_enabled) {
                 BoringSSL.load();
                 const ssl_config = this.config.ssl_config orelse @panic("Assertion failure: ssl_config");
-                this.app = App.create(.{
-                    .key_file_name = ssl_config.key_file_name,
-                    .cert_file_name = ssl_config.cert_file_name,
-                    .passphrase = ssl_config.passphrase,
-                    .dh_params_file_name = ssl_config.dh_params_file_name,
-                    .ca_file_name = ssl_config.ca_file_name,
-                    .ssl_prefer_low_memory_usage = @as(c_int, @boolToInt(ssl_config.low_memory_mode)),
-                });
+                this.app = App.create(
+                    .{
+                        .key_file_name = ssl_config.key_file_name,
+                        .cert_file_name = ssl_config.cert_file_name,
+                        .passphrase = ssl_config.passphrase,
+                        .dh_params_file_name = ssl_config.dh_params_file_name,
+                        .ca_file_name = ssl_config.ca_file_name,
+                        .ssl_prefer_low_memory_usage = @as(c_int, @boolToInt(ssl_config.low_memory_mode)),
+                    },
+                );
 
                 if (ssl_config.server_name != null and std.mem.span(ssl_config.server_name).len > 0) {
                     this.app.addServerName(ssl_config.server_name);

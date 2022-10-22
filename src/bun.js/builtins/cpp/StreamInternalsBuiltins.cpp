@@ -196,11 +196,13 @@ const char* const s_streamInternalsValidateAndNormalizeQueuingStrategyCode =
 const JSC::ConstructAbility s_streamInternalsCreateFIFOCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_streamInternalsCreateFIFOCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_streamInternalsCreateFIFOCodeImplementationVisibility = JSC::ImplementationVisibility::Private;
-const int s_streamInternalsCreateFIFOCodeLength = 2764;
+const int s_streamInternalsCreateFIFOCodeLength = 2863;
 static const JSC::Intrinsic s_streamInternalsCreateFIFOCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_streamInternalsCreateFIFOCode =
     "(function () {\n" \
     "    \"use strict\";\n" \
+    "    var slice = @Array.prototype.slice;\n" \
+    "\n" \
     "    class Denqueue {\n" \
     "        constructor() {\n" \
     "          this._head = 0;\n" \
@@ -209,6 +211,11 @@ const char* const s_streamInternalsCreateFIFOCode =
     "          this._capacityMask = 0x3;\n" \
     "          this._list = @newArrayWithSize(4);\n" \
     "        }\n" \
+    "\n" \
+    "        _head;\n" \
+    "        _tail;\n" \
+    "        _capacityMask;\n" \
+    "        _list;\n" \
     "  \n" \
     "        size() {\n" \
     "          if (this._head === this._tail) return 0;\n" \
@@ -225,12 +232,12 @@ const char* const s_streamInternalsCreateFIFOCode =
     "        }\n" \
     "  \n" \
     "        shift() {\n" \
-    "            var head = this._head;\n" \
-    "            if (head === this._tail) return @undefined;\n" \
-    "            var item = this._list[head];\n" \
-    "            @putByValDirect(this._list, head, @undefined);\n" \
-    "            this._head = (head + 1) & this._capacityMask;\n" \
-    "            if (head < 2 && this._tail > 10000 && this._tail <= this._list.length >>> 2) this._shrinkArray();\n" \
+    "            var { _head: head, _tail, _list, _capacityMask } = this;\n" \
+    "            if (head === _tail) return @undefined;\n" \
+    "            var item = _list[head];\n" \
+    "            @putByValDirect(_list, head, @undefined);\n" \
+    "            head = this._head = (head + 1) & _capacityMask;\n" \
+    "            if (head < 2 && _tail > 10000 && _tail <= _list.length >>> 2) this._shrinkArray();\n" \
     "            return item;\n" \
     "        }\n" \
     "\n" \
@@ -265,7 +272,7 @@ const char* const s_streamInternalsCreateFIFOCode =
     "            for (var i = 0; i < _tail; i++) @putByValDirect(array, j++, list[i]);\n" \
     "            return array;\n" \
     "          } else {\n" \
-    "            return @Array.prototype.slice.@call(list, this._head, this._tail);\n" \
+    "            return slice.@call(list, this._head, this._tail);\n" \
     "          }\n" \
     "        }\n" \
     "        \n" \

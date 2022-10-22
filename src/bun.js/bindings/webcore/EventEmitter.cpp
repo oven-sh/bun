@@ -37,7 +37,6 @@ bool EventEmitter::addListener(const Identifier& eventType, Ref<EventListener>&&
             return false;
     }
 
-
     eventListenersDidChange();
     return true;
 }
@@ -205,7 +204,27 @@ void EventEmitter::innerInvokeEventListeners(const Identifier& eventType, Simple
         if (JSC::JSObject* jsFunction = registeredListener->callback().jsFunction()) {
             JSC::JSGlobalObject* lexicalGlobalObject = jsFunction->globalObject();
             auto callData = JSC::getCallData(jsFunction);
-            JSC::call(jsFunction->globalObject(), jsFunction, callData, JSC::jsUndefined(), arguments);
+            if (callData.type == JSC::CallData::Type::None)
+                continue;
+
+            WTF::NakedPtr<JSC::Exception> exceptionPtr;
+            JSC::call(jsFunction->globalObject(), jsFunction, callData, JSC::jsUndefined(), arguments, exceptionPtr);
+            if (auto* exception = exceptionPtr.get()) {
+                auto errorIdentifier = JSC::Identifier::fromString(vm, eventNames().errorEvent);
+                auto hasErrorListener = this->hasActiveEventListeners(errorIdentifier);
+                if (!hasErrorListener || eventType == errorIdentifier) {
+                    // If the event type is error, report the exception to the console.
+                    Bun__reportError(lexicalGlobalObject, JSValue::encode(JSValue(exception)));
+                } else if (hasErrorListener) {
+                    MarkedArgumentBuffer expcep;
+                    JSValue errorValue = exception->value();
+                    if (!errorValue) {
+                        errorValue = JSC::jsUndefined();
+                    }
+                    expcep.append(errorValue);
+                    fireEventListeners(errorIdentifier, WTFMove(expcep));
+                }
+            }
         }
     }
 }

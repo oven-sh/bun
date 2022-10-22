@@ -65,6 +65,11 @@ public:
     bool hasEventListeners() const;
     bool hasEventListeners(const Identifier& eventType) const;
     bool hasActiveEventListeners(const Identifier& eventType) const;
+    bool hasEventListeners(JSC::VM& vm, ASCIILiteral eventType) const;
+
+    unsigned getMaxListeners() const { return m_maxListeners; };
+
+    void setMaxListeners(unsigned count);
 
     Vector<Identifier> eventTypes();
     const SimpleEventListenerVector& eventListeners(const Identifier& eventType);
@@ -93,6 +98,7 @@ private:
     void invalidateEventListenerRegions();
 
     EventEmitterData m_eventTargetData;
+    unsigned m_maxListeners { 10 };
 };
 
 inline const EventEmitterData* EventEmitter::eventTargetData() const
@@ -116,6 +122,16 @@ inline bool EventEmitter::hasEventListeners(const Identifier& eventType) const
 {
     auto* data = eventTargetData();
     return data && data->eventListenerMap.contains(eventType);
+}
+
+inline bool EventEmitter::hasEventListeners(JSC::VM& vm, ASCIILiteral eventType) const
+{
+    return this->hasEventListeners(Identifier::fromString(vm, eventType));
+}
+
+inline void EventEmitter::setMaxListeners(unsigned count)
+{
+    this->m_maxListeners = count;
 }
 
 } // namespace WebCore

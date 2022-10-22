@@ -690,6 +690,19 @@ pub fn NewPrinter(
                 p.printIndent();
             }
 
+            if (import.default_name) |default| {
+                p.print("var ");
+                p.printSymbol(default.ref.?);
+                if (comptime Statement == void) {
+                    p.print(" = ");
+                    p.printRequireOrImportExpr(import.import_record_index, &.{}, Level.lowest, ExprFlag.None());
+                } else {
+                    p.print(" = ");
+                    p.print(statement);
+                }
+                p.printSemicolonAfterStatement();
+            }
+
             if (import.items.len > 0) {
                 p.print("var ");
                 p.print("{ ");
@@ -698,13 +711,6 @@ pub fn NewPrinter(
                     p.print("\n");
                     p.options.indent += 1;
                     p.printIndent();
-                }
-
-                if (import.default_name) |default_name| {
-                    p.print("default:");
-                    p.printSpaceBeforeIdentifier();
-                    p.printSymbol(default_name.ref.?);
-                    p.print(", ");
                 }
 
                 for (import.items) |item, i| {
@@ -728,7 +734,7 @@ pub fn NewPrinter(
                     p.printSpace();
                 }
 
-                if (import.star_name_loc == null) {
+                if (import.star_name_loc == null and import.default_name == null) {
                     if (comptime Statement == void) {
                         p.print("} = ");
                         p.printRequireOrImportExpr(import.import_record_index, &.{}, Level.lowest, ExprFlag.None());
@@ -736,23 +742,16 @@ pub fn NewPrinter(
                         p.print("} = ");
                         p.print(statement);
                     }
+                } else if (import.default_name) |name| {
+                    p.print("} =");
+                    p.printSpaceBeforeIdentifier();
+                    p.printSymbol(name.ref.?);
                 } else {
                     p.print("} =");
                     p.printSpaceBeforeIdentifier();
                     p.printSymbol(import.namespace_ref);
                 }
 
-                p.printSemicolonAfterStatement();
-            } else if (import.default_name) |default| {
-                p.print("var ");
-                p.printSymbol(default.ref.?);
-                if (comptime Statement == void) {
-                    p.print(" = ");
-                    p.printRequireOrImportExpr(import.import_record_index, &.{}, Level.lowest, ExprFlag.None());
-                } else {
-                    p.print(" = ");
-                    p.print(statement);
-                }
                 p.printSemicolonAfterStatement();
             }
         }

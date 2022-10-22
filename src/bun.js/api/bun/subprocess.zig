@@ -1177,7 +1177,7 @@ pub const Subprocess = struct {
         subprocess.finalize();
 
         const sync_value = JSC.JSValue.createEmptyObject(globalThis, 4);
-        sync_value.put(globalThis, JSC.ZigString.static("exitCode"), JSValue.jsNumber(@intCast(i32, exitCode) * -1));
+        sync_value.put(globalThis, JSC.ZigString.static("exitCode"), JSValue.jsNumber(@intCast(i32, exitCode)));
         sync_value.put(globalThis, JSC.ZigString.static("stdout"), stdout);
         sync_value.put(globalThis, JSC.ZigString.static("stderr"), stderr);
         sync_value.put(globalThis, JSC.ZigString.static("success"), JSValue.jsBoolean(exitCode == 0));
@@ -1203,6 +1203,13 @@ pub const Subprocess = struct {
             },
             .result => |status| {
                 this.exit_code = @truncate(u8, status.status);
+                // Do WEXITSTATUS macro check: https://linux.die.net/man/3/waitpid
+                // https://code.woboq.org/gtk/include/bits/waitstatus.h.html
+                const w_if_exited = (status.status & 0x7f) == 0;
+                if (w_if_exited) {
+                    const w_exit_status = (status.status & 0xff00) >> 8;
+                    this.exit_code = @truncate(u8, w_exit_status);
+                }
             },
         }
 

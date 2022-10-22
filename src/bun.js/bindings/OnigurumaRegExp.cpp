@@ -56,32 +56,32 @@ static  WTF::String to16Bit(JSValue jsValue, JSC::JSGlobalObject *globalObject, 
 
 static WTF::String extendMultibyteHexCharacters(const WTF::String &string) {
     WTF::StringBuilder sb;
-    for (int i = 0; i < string.length(); i++) {
-        if (string.characterAt(i) == '\\') {
-            while (string.characterAt(i) == '\\') {
-                if (i + 1 < string.length() && string.characterAt(i + 1) == 'x') {
-                    if (i + 2 < string.length() && isxdigit(string.characterAt(i + 2))) {
-                        if (i + 3 < string.length() && isxdigit(string.characterAt(i + 3))) {
-                            sb.append(string.substring(i, 4));
-                            sb.append("\\x00"_s);
-                            i += 3;
-                        } else {
-                            // skip "\"
-                            sb.append(string.substring(i + 1, 2));
-                            i += 2;
-                        }
+    uint32_t length = string.length();
+    for (int i = 0; i < length; i++) {
+        while (string.characterAt(i) == '\\') {
+            if (i + 1 < length && string.characterAt(i + 1) == 'x') {
+                if (i + 2 < length && isxdigit(string.characterAt(i + 2))) {
+                    if (i + 3 < length && isxdigit(string.characterAt(i + 3))) {
+                        sb.append(string.substring(i, 4));
+                        sb.append("\\x00"_s);
+                        i += 4;
                     } else {
-                        sb.append(string.characterAt(i));
-                        break;
+                        // skip "\"
+                        sb.append(string.substring(i + 1, 2));
+                        i += 3;
                     }
                 } else {
-                    sb.append(string.characterAt(i));
                     break;
                 }
+            } else {
+                break;
             }
-        } else {
-            sb.append(string.characterAt(i));
         }
+
+        if (i >= length) {
+            break;
+        }
+        sb.append(string.characterAt(i));
     }
 
     return to16Bit(sb.toString());

@@ -3,6 +3,9 @@ import { expect, it, test } from "bun:test";
 import { gc as gcTrace } from "./gc";
 
 it("OnigurumaRegExp.prototype.exec()", () => {
+  expect(new RegExp("\\x56").test("V")).toBe(true);
+  expect(new OnigurumaRegExp("\\x56").test("V")).toBe(true);
+
   let a1 = new OnigurumaRegExp("\x3e", "gd");
   let a1_1 = a1.exec("table fo\x3eotball, fo\x3eosball");
   a1_1 = a1.exec("table fo\x3eotball, fo\x3eosball");
@@ -42,7 +45,11 @@ test("OnigurumaRegExp.prototype.exec() 2", () => {
 
 test("OnigurumaRegExp.prototype.exec() 3", () => {
 
-  let a1 = new OnigurumaRegExp("\\x3\\x5e", "gd");
+  let a22 = new OnigurumaRegExp("\\x9\\x5e", "gd");
+  let a22_1 = a22.exec("table fox9\^otball, fox9\^osball");
+  expect(a22_1[0]).toBe("x9^");
+
+  let a1 = new OnigurumaRegExp("x3\\x5e", "gd");
   let a1_1 = a1.exec("table fo\\x3\x5eotball, fo\\x3\x5eosball");
 
   let a2 = new RegExp("\\x3\\x5e", "gd");
@@ -66,7 +73,7 @@ test("OnigurumaRegExp.prototype.exec() 4", () => {
   for (const RegExpConstructor of [OnigurumaRegExp, RegExp]) {
     let a2 = new RegExpConstructor("\\x3\\x5e", "gd");
     let a2_1 = a2.exec("table fox3\^otball, fox3\^osball");
-    expect(a2_1 === null).toBe(false);
+    expect(a2_1[0]).toBe("x3^");
 
     expect(new RegExpConstructor("\\x3").source).toBe("\\x3");
     expect(new RegExpConstructor("\\x").source).toBe("\\x");
@@ -75,6 +82,7 @@ test("OnigurumaRegExp.prototype.exec() 4", () => {
     expect(new RegExpConstructor("\\x3\\x5\\j").source).toBe("\\x3\\x5\\j");
     expect(new RegExpConstructor("\\x3\\x7\\xa").source).toBe("\\x3\\x7\\xa");
     expect(new RegExpConstructor("\\j323\\x7\\xa").source).toBe("\\j323\\x7\\xa");
+    expect(new RegExpConstructor("\\x56").test("V")).toBe(true);
   }
 });
 

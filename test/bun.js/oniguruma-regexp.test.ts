@@ -89,6 +89,11 @@ test("OnigurumaRegExp.prototype.test()", () => {
 
   expect(new RegExp("\\x56").test("V")).toBe(true);
   expect(new OnigurumaRegExp("\\x56").test("V")).toBe(true);
+
+  expect(new RegExp('//').compile('\\\\(?![*+?^${}(|)[\\]])', 'g').test('\\')).toBe(true);
+  let r = new OnigurumaRegExp('//');
+  expect(r.compile('\\\\(?![*+?^${}(|)[\\]])', 'g').test('\\')).toBe(true);
+  expect(new OnigurumaRegExp('').compile('\\\\(?![*+?^${}(|)[\\]])', 'g').test('\\')).toBe(true);
 });
 
 test("OnigurumaRegExp flag order", () => {
@@ -335,7 +340,7 @@ test("OnigurumaRegExp random", () => {
   expect(r.toString()).toBe("/b/i");
 
   let b = new OnigurumaRegExp("l", "m");
-  expect(r.compile(b)).toBe(undefined);
+  expect(r.compile(b) instanceof OnigurumaRegExp).toBe(true);
   expect(r.source).toBe("l");
   expect(r.flags).toBe("m");
   expect(r.toString()).toBe("/l/m");

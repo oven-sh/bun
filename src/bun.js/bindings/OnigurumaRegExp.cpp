@@ -500,6 +500,7 @@ JSC_DEFINE_HOST_FUNCTION(onigurumaRegExpProtoFuncCompile, (JSGlobalObject *globa
     onig_set_syntax_op2(syntax, onig_get_syntax_op2(syntax) | ONIG_SYN_OP2_ESC_U_HEX4);
     onig_set_syntax_behavior(syntax, onig_get_syntax_behavior(syntax) | ONIG_SYN_ALLOW_EMPTY_RANGE_IN_CC);
     onig_set_syntax_behavior(syntax, onig_get_syntax_behavior(syntax) | ONIG_SYN_ALLOW_INVALID_CODE_END_OF_RANGE_IN_CC);
+    onig_set_syntax_behavior(syntax, onig_get_syntax_behavior(syntax) & ~ONIG_SYN_BACKSLASH_ESCAPE_IN_CC);
 
     OnigEncodingType* encoding = ONIG_ENCODING_UTF16_LE;
     OnigErrorInfo errorInfo = { 0 };
@@ -537,7 +538,7 @@ JSC_DEFINE_HOST_FUNCTION(onigurumaRegExpProtoFuncCompile, (JSGlobalObject *globa
     thisRegExp->m_onigurumaRegExp = onigRegExp;
     thisRegExp->m_lastIndex = 0;
 
-    return JSValue::encode(jsUndefined());
+    return JSValue::encode(thisRegExp);
 }
 
 JSC_DEFINE_HOST_FUNCTION(onigurumaRegExpProtoFuncTest, (JSGlobalObject *globalObject, JSC::CallFrame *callFrame))

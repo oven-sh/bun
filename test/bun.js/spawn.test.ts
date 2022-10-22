@@ -28,6 +28,17 @@ for (let [gcTick, label] of [
         expect(stdout.toString()).toBe(hugeString);
         expect(stderr.byteLength).toBe(0);
       });
+
+      it("check exit code", async () => {
+        const { exitCode: exitCode1 } = spawnSync({
+          cmd: ["ls"]
+        });
+        const { exitCode: exitCode2 } = spawnSync({
+          cmd: ["false"]
+        });
+        expect(exitCode1).toBe(0);
+        expect(exitCode2).toBe(1);
+      });
     });
 
     describe("spawn", () => {
@@ -68,6 +79,17 @@ for (let [gcTick, label] of [
 
         await exited;
         expect(await Bun.file("/tmp/out.123.txt").text()).toBe(hugeString);
+      });
+
+      it("check exit code", async () => {
+        const exitCode1 = await spawn({
+          cmd: ["ls"],
+        }).exited;
+        const exitCode2 = await spawn({
+          cmd: ["false"]
+        }).exited;
+        expect(exitCode1).toBe(0);
+        expect(exitCode2).toBe(1);
       });
 
       it("Blob works as stdin", async () => {

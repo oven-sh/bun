@@ -2360,7 +2360,7 @@ pub const ResolveError = struct {
         _: js.JSStringRef,
         _: js.ExceptionRef,
     ) js.JSValueRef {
-        return ZigString.init(@as(string, @tagName(JSC.Node.ErrorCode.ERR_MODULE_NOT_FOUND))).toValue(ctx).asObjectRef();
+        return ZigString.static(comptime @as(string, @tagName(JSC.Node.ErrorCode.ERR_MODULE_NOT_FOUND))).toValue(ctx).asObjectRef();
     }
 
     pub fn getPosition(
@@ -2368,9 +2368,9 @@ pub const ResolveError = struct {
         ctx: js.JSContextRef,
         _: js.JSObjectRef,
         _: js.JSStringRef,
-        exception: js.ExceptionRef,
+        _: js.ExceptionRef,
     ) js.JSValueRef {
-        return BuildError.generatePositionObject(this.msg, ctx, exception);
+        return BuildError.generatePositionObject(this.msg, ctx);
     }
 
     pub fn getMessage(
@@ -2380,7 +2380,7 @@ pub const ResolveError = struct {
         _: js.JSStringRef,
         _: js.ExceptionRef,
     ) js.JSValueRef {
-        return ZigString.init(this.msg.data.text).toValue(ctx.ptr()).asRef();
+        return ZigString.init(this.msg.data.text).toValueGC(ctx.ptr()).asRef();
     }
 
     pub fn getSpecifier(
@@ -2390,7 +2390,7 @@ pub const ResolveError = struct {
         _: js.JSStringRef,
         _: js.ExceptionRef,
     ) js.JSValueRef {
-        return ZigString.init(this.msg.metadata.resolve.specifier.slice(this.msg.data.text)).toValue(ctx.ptr()).asRef();
+        return ZigString.init(this.msg.metadata.resolve.specifier.slice(this.msg.data.text)).toValueGC(ctx.ptr()).asRef();
     }
 
     pub fn getImportKind(
@@ -2411,13 +2411,12 @@ pub const ResolveError = struct {
         _: js.ExceptionRef,
     ) js.JSValueRef {
         if (this.referrer) |referrer| {
-            return ZigString.init(referrer.text).toValue(ctx.ptr()).asRef();
+            return ZigString.init(referrer.text).toValueGC(ctx.ptr()).asRef();
         } else {
             return js.JSValueMakeNull(ctx);
         }
     }
 
-    const BuildErrorName = "ResolveError";
     pub fn getName(
         _: *ResolveError,
         ctx: js.JSContextRef,
@@ -2425,7 +2424,7 @@ pub const ResolveError = struct {
         _: js.JSStringRef,
         _: js.ExceptionRef,
     ) js.JSValueRef {
-        return ZigString.init(BuildErrorName).toValue(ctx.ptr()).asRef();
+        return ZigString.static("ResolveError").toValue(ctx.ptr()).asRef();
     }
 
     pub fn finalize(this: *ResolveError) void {
@@ -2533,130 +2532,51 @@ pub const BuildError = struct {
         ctx: js.JSContextRef,
         _: js.JSObjectRef,
         _: js.JSStringRef,
-        exception: js.ExceptionRef,
+        _: js.ExceptionRef,
     ) js.JSValueRef {
-        return generatePositionObject(this.msg, ctx, exception);
+        return generatePositionObject(this.msg, ctx);
     }
 
-    pub const PositionProperties = struct {
-        const _file = ZigString.init("file");
-        var file_ptr: js.JSStringRef = null;
-        pub fn file() js.JSStringRef {
-            if (file_ptr == null) {
-                file_ptr = _file.toJSStringRef();
-            }
-            return file_ptr.?;
-        }
-        const _namespace = ZigString.init("namespace");
-        var namespace_ptr: js.JSStringRef = null;
-        pub fn namespace() js.JSStringRef {
-            if (namespace_ptr == null) {
-                namespace_ptr = _namespace.toJSStringRef();
-            }
-            return namespace_ptr.?;
-        }
-        const _line = ZigString.init("line");
-        var line_ptr: js.JSStringRef = null;
-        pub fn line() js.JSStringRef {
-            if (line_ptr == null) {
-                line_ptr = _line.toJSStringRef();
-            }
-            return line_ptr.?;
-        }
-        const _column = ZigString.init("column");
-        var column_ptr: js.JSStringRef = null;
-        pub fn column() js.JSStringRef {
-            if (column_ptr == null) {
-                column_ptr = _column.toJSStringRef();
-            }
-            return column_ptr.?;
-        }
-        const _length = ZigString.init("length");
-        var length_ptr: js.JSStringRef = null;
-        pub fn length() js.JSStringRef {
-            if (length_ptr == null) {
-                length_ptr = _length.toJSStringRef();
-            }
-            return length_ptr.?;
-        }
-        const _lineText = ZigString.init("lineText");
-        var lineText_ptr: js.JSStringRef = null;
-        pub fn lineText() js.JSStringRef {
-            if (lineText_ptr == null) {
-                lineText_ptr = _lineText.toJSStringRef();
-            }
-            return lineText_ptr.?;
-        }
-        const _offset = ZigString.init("offset");
-        var offset_ptr: js.JSStringRef = null;
-        pub fn offset() js.JSStringRef {
-            if (offset_ptr == null) {
-                offset_ptr = _offset.toJSStringRef();
-            }
-            return offset_ptr.?;
-        }
-    };
-
-    pub fn generatePositionObject(msg: logger.Msg, ctx: js.JSContextRef, exception: ExceptionValueRef) js.JSValueRef {
+    pub fn generatePositionObject(msg: logger.Msg, ctx: js.JSContextRef) js.JSValueRef {
         if (msg.data.location) |location| {
-            const ref = js.JSObjectMake(ctx, null, null);
-            js.JSObjectSetProperty(
+            var object = JSC.JSValue.createEmptyObject(ctx, 7);
+
+            object.put(
                 ctx,
-                ref,
-                PositionProperties.lineText(),
-                ZigString.init(location.line_text orelse "").toJSStringRef(),
-                0,
-                exception,
+                ZigString.static("lineText"),
+                ZigString.init(location.line_text orelse "").toValueGC(ctx),
             );
-            js.JSObjectSetProperty(
+            object.put(
                 ctx,
-                ref,
-                PositionProperties.file(),
-                ZigString.init(location.file).toJSStringRef(),
-                0,
-                exception,
+                ZigString.static("file"),
+                ZigString.init(location.file).toValueGC(ctx),
             );
-            js.JSObjectSetProperty(
+            object.put(
                 ctx,
-                ref,
-                PositionProperties.namespace(),
-                ZigString.init(location.namespace).toJSStringRef(),
-                0,
-                exception,
+                ZigString.static("namespace"),
+                ZigString.init(location.namespace).toValueGC(ctx),
             );
-            js.JSObjectSetProperty(
+            object.put(
                 ctx,
-                ref,
-                PositionProperties.line(),
-                js.JSValueMakeNumber(ctx, @intToFloat(f64, location.line)),
-                0,
-                exception,
+                ZigString.static("line"),
+                JSValue.jsNumber(location.line),
             );
-            js.JSObjectSetProperty(
+            object.put(
                 ctx,
-                ref,
-                PositionProperties.column(),
-                js.JSValueMakeNumber(ctx, @intToFloat(f64, location.column)),
-                0,
-                exception,
+                ZigString.static("column"),
+                JSValue.jsNumber(location.column),
             );
-            js.JSObjectSetProperty(
+            object.put(
                 ctx,
-                ref,
-                PositionProperties.length(),
-                js.JSValueMakeNumber(ctx, @intToFloat(f64, location.length)),
-                0,
-                exception,
+                ZigString.static("length"),
+                JSValue.jsNumber(location.length),
             );
-            js.JSObjectSetProperty(
+            object.put(
                 ctx,
-                ref,
-                PositionProperties.offset(),
-                js.JSValueMakeNumber(ctx, @intToFloat(f64, location.offset)),
-                0,
-                exception,
+                ZigString.static("offset"),
+                JSValue.jsNumber(location.offset),
             );
-            return ref;
+            return object.asObjectRef();
         }
 
         return js.JSValueMakeNull(ctx);

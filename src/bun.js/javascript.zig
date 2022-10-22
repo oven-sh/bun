@@ -845,6 +845,15 @@ pub const VirtualMachine = struct {
                     };
                 },
                 .@"node:fs" => {
+                    if (comptime Environment.isDebug) {
+                        return ResolvedSource{
+                            .allocator = null,
+                            .source_code = ZigString.init(strings.append(bun.default_allocator, jsModuleFromFile("fs.exports.js"), JSC.Node.fs.constants_string) catch unreachable),
+                            .specifier = ZigString.init("node:fs"),
+                            .source_url = ZigString.init("node:fs"),
+                            .hash = 0,
+                        };
+                    }
                     return ResolvedSource{
                         .allocator = null,
                         .source_code = ZigString.init(@embedFile("fs.exports.js") ++ JSC.Node.fs.constants_string),

@@ -374,7 +374,7 @@ pub const UpgradeCommand = struct {
         @setCold(true);
 
         _exec(ctx) catch |err| {
-            Output.prettyErrorln("<r>bun upgrade failed with error: <red><b>{s}<r>\n\n<cyan>Please upgrade manually<r>:\n  <b>curl https://bun.sh/install | bash<r>\n\n", .{@errorName(err)});
+            Output.prettyErrorln("<r>bun upgrade failed with error: <red><b>{s}<r>\n\n<cyan>Please upgrade manually<r>:\n  <b>curl -fsSL https://bun.sh/install | bash<r>\n\n", .{@errorName(err)});
             Global.exit(1);
         };
     }
@@ -678,7 +678,7 @@ pub const UpgradeCommand = struct {
             if (env_loader.map.get("BUN_DRY_RUN") == null) {
                 C.moveFileZ(save_dir.fd, exe, target_dir.fd, target_filename) catch |err| {
                     save_dir_.deleteTree(version_name) catch {};
-                    Output.prettyErrorln("<r><red>error:<r> Failed to move new version of bun due to {s}. You could try the install script instead:\n   curl -L https://bun.sh/install | bash", .{@errorName(err)});
+                    Output.prettyErrorln("<r><red>error:<r> Failed to move new version of bun due to {s}. You could try the install script instead:\n   curl -fsSL https://bun.sh/install | bash", .{@errorName(err)});
                     Global.exit(1);
                 };
             }

@@ -1,8 +1,15 @@
-const { serve, file, resolveSync } = Bun;
-const { path } = import.meta;
+import { file } from "bun";
+
 serve({
   fetch(req: Request) {
-    return new Response(file(new URL(req.url).pathname.substring(1)));
+    const pathname = new URL(req.url).pathname.substring(1);
+
+    // If the URL is empty, display this file.
+    if (pathname === "") {
+      return new Response(file(import.meta.url));
+    }
+
+    return new Response(file(pathname));
   },
 
   // this is called when fetch() throws or rejects

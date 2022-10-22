@@ -655,11 +655,17 @@ pub const AnyWebSocket = union(enum) {
             .tcp => uws_ws_publish(0, this.tcp.raw(), topic.ptr, topic.len, message.ptr, message.len),
         };
     }
-    pub fn publishWithOptions(this: AnyWebSocket, app: *anyopaque, topic: []const u8, message: []const u8, opcode: Opcode, compress: bool) bool {
-        return switch (this) {
-            .ssl => uws_publish(1, @ptrCast(*uws_app_t, app), topic.ptr, topic.len, message.ptr, message.len, opcode, compress),
-            .tcp => uws_publish(0, @ptrCast(*uws_app_t, app), topic.ptr, topic.len, message.ptr, message.len, opcode, compress),
-        };
+    pub fn publishWithOptions(ssl: bool, app: *anyopaque, topic: []const u8, message: []const u8, opcode: Opcode, compress: bool) bool {
+        return uws_publish(
+            @boolToInt(ssl),
+            @ptrCast(*uws_app_t, app),
+            topic.ptr,
+            topic.len,
+            message.ptr,
+            message.len,
+            opcode,
+            compress,
+        );
     }
     pub fn getBufferedAmount(this: AnyWebSocket) u32 {
         return switch (this) {

@@ -5075,10 +5075,11 @@ pub const Body = struct {
 
         pub fn clone(this: *Value, globalThis: *JSC.JSGlobalObject) Value {
             if (this.* == .InternalBlob) {
+                var internal_blob = this.InternalBlob;
                 this.* = .{
                     .Blob = Blob.init(
-                        this.InternalBlob.toOwnedSlice(),
-                        this.InternalBlob.bytes.allocator,
+                        internal_blob.toOwnedSlice(),
+                        internal_blob.bytes.allocator,
                         globalThis,
                     ),
                 };

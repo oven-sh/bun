@@ -810,6 +810,7 @@ static JSC::EncodedJSValue constructOrCall(Zig::GlobalObject *globalObject, JSVa
     onig_set_syntax_op2(syntax, onig_get_syntax_op2(syntax) | ONIG_SYN_OP2_ESC_U_HEX4);
     onig_set_syntax_behavior(syntax, onig_get_syntax_behavior(syntax) | ONIG_SYN_ALLOW_EMPTY_RANGE_IN_CC);
     onig_set_syntax_behavior(syntax, onig_get_syntax_behavior(syntax) | ONIG_SYN_ALLOW_INVALID_CODE_END_OF_RANGE_IN_CC);
+    onig_set_syntax_behavior(syntax, onig_get_syntax_behavior(syntax) & ~ONIG_SYN_BACKSLASH_ESCAPE_IN_CC);
 
     OnigEncodingType* encoding = encodings[0];
     OnigErrorInfo errorInfo = { 0 };

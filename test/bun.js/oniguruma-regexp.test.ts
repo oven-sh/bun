@@ -3,9 +3,6 @@ import { expect, it, test } from "bun:test";
 import { gc as gcTrace } from "./gc";
 
 it("OnigurumaRegExp.prototype.exec()", () => {
-  expect(new RegExp("\\x56").test("V")).toBe(true);
-  expect(new OnigurumaRegExp("\\x56").test("V")).toBe(true);
-
   let a1 = new OnigurumaRegExp("\x3e", "gd");
   let a1_1 = a1.exec("table fo\x3eotball, fo\x3eosball");
   a1_1 = a1.exec("table fo\x3eotball, fo\x3eosball");
@@ -84,6 +81,14 @@ test("OnigurumaRegExp.prototype.exec() 4", () => {
     expect(new RegExpConstructor("\\j323\\x7\\xa").source).toBe("\\j323\\x7\\xa");
     expect(new RegExpConstructor("\\x56").test("V")).toBe(true);
   }
+});
+
+test("OnigurumaRegExp.prototype.test()", () => {
+  expect(new RegExp("\\\\(?![*+?^${}(|)[\\]])", "g").test('\\')).toBe(true);
+  expect(new OnigurumaRegExp("\\\\(?![*+?^${}(|)[\\]])", "g").test('\\')).toBe(true);
+
+  expect(new RegExp("\\x56").test("V")).toBe(true);
+  expect(new OnigurumaRegExp("\\x56").test("V")).toBe(true);
 });
 
 test("OnigurumaRegExp flag order", () => {

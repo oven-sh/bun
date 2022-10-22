@@ -52,6 +52,8 @@ static JSC_DECLARE_HOST_FUNCTION(jsEventEmitterPrototypeFunction_emit);
 static JSC_DECLARE_HOST_FUNCTION(jsEventEmitterPrototypeFunction_eventNames);
 static JSC_DECLARE_HOST_FUNCTION(jsEventEmitterPrototypeFunction_listenerCount);
 static JSC_DECLARE_HOST_FUNCTION(jsEventEmitterPrototypeFunction_listeners);
+static JSC_DECLARE_HOST_FUNCTION(jsEventEmitterPrototypeFunction_setMaxListeners);
+static JSC_DECLARE_HOST_FUNCTION(jsEventEmitterPrototypeFunction_getMaxListeners);
 
 // Attributes
 
@@ -106,6 +108,11 @@ template<> EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSEventEmitterDOMConstructor:
     auto object = EventEmitter::create(*context);
     if constexpr (IsExceptionOr<decltype(object)>)
         RETURN_IF_EXCEPTION(throwScope, {});
+
+    if (JSValue maxListeners = castedThis->getIfPropertyExists(lexicalGlobalObject, JSC::Identifier::fromString(vm, "defaultMaxListeners"_s))) {
+        if (maxListeners.isUInt32())
+            object->setMaxListeners(maxListeners.toUInt32(lexicalGlobalObject));
+    }
     static_assert(TypeOrExceptionOrUnderlyingType<decltype(object)>::isRef);
     auto jsValue = toJSNewlyCreated<IDLInterface<EventEmitter>>(*lexicalGlobalObject, *castedThis->globalObject(), throwScope, WTFMove(object));
     if constexpr (IsExceptionOr<decltype(object)>)
@@ -130,6 +137,7 @@ template<> void JSEventEmitterDOMConstructor::initializeProperties(VM& vm, JSDOM
     JSString* nameString = jsNontrivialString(vm, "EventEmitter"_s);
     m_originalName.set(vm, this, nameString);
     putDirect(vm, vm.propertyNames->name, nameString, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum);
+    putDirect(vm, JSC::Identifier::fromString(vm, "defaultMaxListeners"_s), jsNumber(10), 0);
     putDirect(vm, vm.propertyNames->prototype, JSEventEmitter::prototype(vm, globalObject), JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::DontDelete);
 }
 
@@ -149,8 +157,11 @@ static const HashTableValue JSEventEmitterPrototypeTableValues[] = {
     { "eventNames"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsEventEmitterPrototypeFunction_eventNames, 0 } },
     { "listenerCount"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsEventEmitterPrototypeFunction_listenerCount, 1 } },
     { "listeners"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsEventEmitterPrototypeFunction_listeners, 1 } },
-    // Need to double check the difference between rawListeners and listeners.
+    // TODO: Need to double check the difference between rawListeners and listeners.
     { "rawListeners"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsEventEmitterPrototypeFunction_listeners, 1 } },
+    { "setMaxListeners"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsEventEmitterPrototypeFunction_setMaxListeners, 1 } },
+    { "getMaxListeners"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsEventEmitterPrototypeFunction_getMaxListeners, 0 } }
+
 };
 
 const ClassInfo JSEventEmitterPrototype::s_info = { "EventEmitter"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSEventEmitterPrototype) };
@@ -234,6 +245,30 @@ static inline JSC::EncodedJSValue jsEventEmitterPrototypeFunction_addListenerBod
     return addListener(lexicalGlobalObject, callFrame, castedThis, false, false);
 }
 
+static inline JSC::EncodedJSValue jsEventEmitterPrototypeFunction_setMaxListenersBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSEventEmitter>::ClassParameter castedThis)
+{
+    auto& impl = castedThis->wrapped();
+    auto throwScope = DECLARE_THROW_SCOPE(JSC::getVM(lexicalGlobalObject));
+    if (callFrame->argumentCount() == 0) {
+        return JSC::JSValue::encode(JSC::jsUndefined());
+    }
+    EnsureStillAliveScope argument0 = callFrame->uncheckedArgument(0);
+    if (!argument0.value().isNumber()) {
+        throwTypeError(lexicalGlobalObject, throwScope, "The maxListeners argument must be a number"_s);
+        return JSC::JSValue::encode(JSC::jsUndefined());
+    }
+    unsigned maxListeners = argument0.value().toUInt32(lexicalGlobalObject);
+
+    impl.setMaxListeners(maxListeners);
+    return JSC::JSValue::encode(JSC::jsUndefined());
+}
+
+static inline JSC::EncodedJSValue jsEventEmitterPrototypeFunction_getMaxListenersBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSEventEmitter>::ClassParameter castedThis)
+{
+    auto& impl = castedThis->wrapped();
+    return JSC::JSValue::encode(JSC::jsNumber(impl.getMaxListeners()));
+}
+
 static inline JSC::EncodedJSValue jsEventEmitterPrototypeFunction_addOnceListenerBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSEventEmitter>::ClassParameter castedThis)
 {
     return addListener(lexicalGlobalObject, callFrame, castedThis, true, false);
@@ -257,6 +292,16 @@ JSC_DEFINE_HOST_FUNCTION(jsEventEmitterPrototypeFunction_addListener, (JSGlobalO
 JSC_DEFINE_HOST_FUNCTION(jsEventEmitterPrototypeFunction_addOnceListener, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
     return IDLOperation<JSEventEmitter>::call<jsEventEmitterPrototypeFunction_addOnceListenerBody>(*lexicalGlobalObject, *callFrame, "once");
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsEventEmitterPrototypeFunction_getMaxListeners, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    return IDLOperation<JSEventEmitter>::call<jsEventEmitterPrototypeFunction_getMaxListenersBody>(*lexicalGlobalObject, *callFrame, "getMaxListeners");
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsEventEmitterPrototypeFunction_setMaxListeners, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    return IDLOperation<JSEventEmitter>::call<jsEventEmitterPrototypeFunction_setMaxListenersBody>(*lexicalGlobalObject, *callFrame, "setMaxListeners");
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsEventEmitterPrototypeFunction_prependListener, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))

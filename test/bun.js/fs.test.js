@@ -15,6 +15,7 @@ import {
   lstatSync,
   copyFileSync,
   rmSync,
+  createReadStream,
 } from "node:fs";
 import { join } from "node:path";
 
@@ -417,5 +418,47 @@ describe("rm", () => {
     expect(existsSync(path)).toBe(true);
     rmSync(join(path, "../../"), { recursive: true });
     expect(existsSync(path)).toBe(false);
+  });
+});
+
+describe("createReadStream", () => {
+  it("works (1 chunk)", async () => {
+    return await new Promise((resolve, reject) => {
+      var stream = createReadStream(import.meta.dir + "/readFileSync.txt", {});
+
+      stream.on("error", (e) => {
+        reject(e);
+      });
+
+      stream.on("data", (chunk) => {
+        expect(chunk instanceof Buffer).toBe(true);
+        expect(chunk.length).toBe("File read successfully".length);
+        expect(chunk.toString()).toBe("File read successfully");
+      });
+
+      stream.on("close", () => {
+        resolve(true);
+      });
+    });
+  });
+
+  it("works (22 chunk)", async () => {
+    var stream = createReadStream(import.meta.dir + "/readFileSync.txt", {
+      highWaterMark: 1,
+    });
+
+    var data = readFileSync(import.meta.dir + "/readFileSync.txt", "utf8");
+    var i = 0;
+    return await new Promise((resolve) => {
+      stream.on("data", (chunk) => {
+        expect(chunk instanceof Buffer).toBe(true);
+        expect(chunk.length).toBe(1);
+        expect(chunk.toString()).toBe(data[i++]);
+      });
+
+      stream.on("end", () => {
+        resolve(true);
+      });
+    });
   });
 });

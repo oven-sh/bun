@@ -56,27 +56,31 @@ static  WTF::String to16Bit(JSValue jsValue, JSC::JSGlobalObject *globalObject, 
 
 static WTF::String extendMultibyteHexCharacters(const WTF::String &string) {
     WTF::StringBuilder sb;
-    bool escape = false;
-    bool hex = false;
-    int hDigitCounter = 0;
     for (int i = 0; i < string.length(); i++) {
-        sb.append(string.characterAt(i));
         if (string.characterAt(i) == '\\') {
-            escape = true;
-        } else if (string.characterAt(i) == 'x') {
-            hex = true;
-        } else if (string.characterAt(i) == '{' && hex && escape) {
-            hex = false;
-            escape = false;
-            hDigitCounter = 0;
-        } else if (isxdigit(string.characterAt(i)) && escape && hex) {
-            hDigitCounter += 1;
-            if (hDigitCounter == 2) {
-                hDigitCounter = 0;
-                escape = false;
-                hex = false;
-                sb.append("\\x00"_s);
+            while (string.characterAt(i) == '\\') {
+                if (i + 1 < string.length() && string.characterAt(i + 1) == 'x') {
+                    if (i + 2 < string.length() && isxdigit(string.characterAt(i + 2))) {
+                        if (i + 3 < string.length() && isxdigit(string.characterAt(i + 3))) {
+                            sb.append(string.substring(i, 4));
+                            sb.append("\\x00"_s);
+                            i += 3;
+                        } else {
+                            // skip "\"
+                            sb.append(string.substring(i + 1, 2));
+                            i += 2;
+                        }
+                    } else {
+                        sb.append(string.characterAt(i));
+                        break;
+                    }
+                } else {
+                    sb.append(string.characterAt(i));
+                    break;
+                }
             }
+        } else {
+            sb.append(string.characterAt(i));
         }
     }
 
@@ -800,14 +804,14 @@ static JSC::EncodedJSValue constructOrCall(Zig::GlobalObject *globalObject, JSVa
         options |= ONIG_OPTION_MULTILINE;
     }
 
-    OnigSyntaxType* syntax = ONIG_SYNTAX_DEFAULT;
+    OnigSyntaxType* syntax = ONIG_SYNTAX_ONIGURUMA;
     onig_set_syntax_op(syntax, onig_get_syntax_op(syntax) | ONIG_SYN_OP_ESC_X_HEX2);
     onig_set_syntax_op(syntax, onig_get_syntax_op(syntax) | ONIG_SYN_OP_ESC_X_BRACE_HEX8);
     onig_set_syntax_op2(syntax, onig_get_syntax_op2(syntax) | ONIG_SYN_OP2_ESC_U_HEX4);
     onig_set_syntax_behavior(syntax, onig_get_syntax_behavior(syntax) | ONIG_SYN_ALLOW_EMPTY_RANGE_IN_CC);
     onig_set_syntax_behavior(syntax, onig_get_syntax_behavior(syntax) | ONIG_SYN_ALLOW_INVALID_CODE_END_OF_RANGE_IN_CC);
 
-    OnigEncodingType* encoding = ONIG_ENCODING_UTF16_LE;
+    OnigEncodingType* encoding = encodings[0];
     OnigErrorInfo errorInfo = { 0 };
     regex_t* onigRegExp = NULL;
     int errorCode = 0;

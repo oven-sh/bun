@@ -19,7 +19,11 @@ int64_t getHighWaterMark(JSC::VM& vm, JSC::JSGlobalObject* globalObject, bool is
 {
     auto throwScope = DECLARE_THROW_SCOPE(vm);
 
-    if (JSValue highWaterMarkVal = options->getIfPropertyExists(globalObject, PropertyName(JSC::Identifier::fromString(vm, "highWaterMark"_s)))) {
+    // We must use getIfPropertyExists because:
+    // - it might be a getter
+    // - it might be from a super class
+    auto* clientData = WebCore::clientData(vm);
+    if (JSValue highWaterMarkVal = options->getIfPropertyExists(globalObject, clientData->builtinNames().highWaterMarkPublicName())) {
         if (isDuplex && (highWaterMarkVal.isUndefined() || highWaterMarkVal.isNull())) {
             highWaterMarkVal = options->getDirect(vm, JSC::Identifier::fromString(vm, "readableObjectMode"_s));
         }
@@ -45,7 +49,11 @@ void JSReadableState::finishCreation(JSC::VM& vm, JSC::JSGlobalObject* globalObj
             setBool(JSReadableState::Mask::objectMode, true);
     }
 
-    m_highWaterMark = getBool(JSReadableState::Mask::objectMode) ? 16 : 16 * 1024; // default value
+    m_highWaterMark = getBool(
+                          JSReadableState::Mask::objectMode)
+        ? 16
+        : 16 * 1024; // default value
+
     if (options != nullptr) {
         int64_t customHightWaterMark = getHighWaterMark(vm, globalObject, isDuplex, options);
         if (customHightWaterMark >= 0)
@@ -73,8 +81,7 @@ void JSReadableState::finishCreation(JSC::VM& vm, JSC::JSGlobalObject* globalObj
     if (options == nullptr) {
         m_defaultEncoding.set(vm, this, JSC::jsString(vm, WTF::String("utf8"_s)));
     } else {
-        JSC::JSValue defaultEncodingVal = getDirect(vm, JSC::Identifier::fromString(vm, "defaultEncoding"_s));
-        if (defaultEncodingVal) {
+        if (JSC::JSValue defaultEncodingVal = getIfPropertyExists(globalObject, PropertyName(JSC::Identifier::fromString(vm, "defaultEncoding"_s)))) {
             m_defaultEncoding.set(vm, this, defaultEncodingVal);
         } else {
             m_defaultEncoding.set(vm, this, JSC::jsString(vm, WTF::String("utf8"_s)));
@@ -88,7 +95,7 @@ void JSReadableState::finishCreation(JSC::VM& vm, JSC::JSGlobalObject* globalObj
         m_encoding.set(vm, this, JSC::jsNull());
     } else {
         JSC::JSValue encodingVal = options->getDirect(vm, JSC::Identifier::fromString(vm, "encoding"_s));
-        if (encodingVal) {
+        if (encodingVal && encodingVal.isString()) {
             auto constructor = reinterpret_cast<Zig::GlobalObject*>(globalObject)->JSStringDecoder();
             auto constructData = JSC::getConstructData(constructor);
             MarkedArgumentBuffer args;

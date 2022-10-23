@@ -567,7 +567,7 @@ pub fn get_machine(buf: []u8) []const u8 {
     @memset(buf.ptr, 0, buf.len);
 
     var size: usize = buf.len;
-	
+
     if (std.c.sysctlbyname(
         "machdep.cpu.brand_string",
         buf.ptr,

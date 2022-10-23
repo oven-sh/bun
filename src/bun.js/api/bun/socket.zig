@@ -205,7 +205,7 @@ pub const SocketConfig = struct {
             return null;
         }
 
-        if (opts.getTruthy(globalObject, "hostname")) |hostname| {
+        if (opts.getTruthy(globalObject, "hostname") orelse opts.getTruthy(globalObject, "host")) |hostname| {
             if (hostname.isEmptyOrUndefinedOrNull() or !hostname.isString()) {
                 exception.* = JSC.toInvalidArguments("Expected \"hostname\" to be a string", .{}, globalObject).asObjectRef();
                 return null;
@@ -329,7 +329,7 @@ pub const Listener = struct {
         var exception: JSC.C.JSValueRef = null;
 
         var socket_obj = opts.get(globalObject, "socket") orelse {
-            globalObject.throw("Expected \"socket\" option", .{});
+            globalObject.throw("Expected \"socket\" object", .{});
             return .zero;
         };
 
@@ -353,7 +353,7 @@ pub const Listener = struct {
     ) JSValue {
         log("listen", .{});
         if (opts.isEmptyOrUndefinedOrNull() or opts.isBoolean() or !opts.isObject()) {
-            exception.* = JSC.toInvalidArguments("Expected options object", .{}, globalObject).asObjectRef();
+            exception.* = JSC.toInvalidArguments("Expected object", .{}, globalObject).asObjectRef();
             return .zero;
         }
 
@@ -524,7 +524,7 @@ pub const Listener = struct {
         socket.timeout(120000);
     }
 
-    pub fn close(this: *Listener, _: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSValue {
+    pub fn stop(this: *Listener, _: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSValue {
         log("close", .{});
 
         var listener = this.listener orelse return JSValue.jsUndefined();
@@ -855,32 +855,21 @@ fn NewSocket(comptime ssl: bool) type {
                 handlers.vm.runErrorHandler(result, null);
             }
         }
-        pub fn onConnectError(_: *This, _: Socket, err: c_int) void {
+        pub fn onConnectError(this: *This, socket: Socket, errno: c_int) void {
             JSC.markBinding(@src());
-            log("onConnectError({d}", .{err});
-            // this.detached = true;
-            // var handlers = this.handlers;
-            // this.poll_ref.unref(handlers.vm);
-
-            // const onConnectError = handlers.onConnectError;
-            // {
-            //     if (onConnectError == .zero) {
-            //         this.markInactive();
-            //         this.finalize();
-            //         return;
-            //     }
-
-            //     const result = onConnectError.call(handlers.globalObject, &[_]JSValue{
-            //         JSC.JSValue.jsNumber(err),
-            //     });
-
-            //     if (!result.isEmptyOrUndefinedOrNull() and result.isAnyError(handlers.globalObject)) {
-            //         handlers.vm.runErrorHandler(result, null);
-            //     }
-            // }
-
-            // this.markInactive();
-            // this.finalize();
+            log("onConnectError({d}", .{errno});
+            this.detached = true;
+            var handlers = this.handlers;
+            this.poll_ref.unref(handlers.vm);
+            var err = JSC.SystemError{
+                .errno = errno,
+                .message = ZigString.init("Failed to connect"),
+                .syscall = ZigString.init("connect"),
+            };
+            handlers.rejectPromise(err.toErrorInstance(handlers.globalObject));
+            this.reffer.unref(handlers.vm);
+            handlers.markInactive(ssl, socket.context());
+            this.finalize();
         }
 
         pub fn markActive(this: *This) void {

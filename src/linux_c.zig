@@ -368,6 +368,14 @@ pub fn get_version(name_buffer: *[std.os.HOST_NAME_MAX]u8) []const u8 {
     return name_buffer[0..result.len];
 }
 
+pub fn get_machine(name_buffer: *[std.os.HOST_NAME_MAX]u8) []const u8 {
+    const uts = std.os.uname();
+    const result = std.mem.sliceTo(std.meta.assumeSentinel(&uts.machine, 0), 0);
+    std.mem.copy(u8, name_buffer, result);
+
+    return name_buffer[0..result.len];
+}
+
 pub fn get_release(name_buffer: *[std.os.HOST_NAME_MAX]u8) []const u8 {
     const uts = std.os.uname();
     const result = std.mem.sliceTo(std.meta.assumeSentinel(&uts.release, 0), 0);

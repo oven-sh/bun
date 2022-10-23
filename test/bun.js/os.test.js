@@ -125,6 +125,23 @@ it("networkInterfaces", () => {
   }
 });
 
+it("machine", () => {
+  const possibleValues = [
+    "arm",
+    "aarch64",
+    "mips",
+    "mips64",
+    "ppc64",
+    "ppc64le",
+    "s390",
+    "s390x",
+    "i386",
+    "i686",
+    "x86_64",
+  ];
+  expect(possibleValues.includes(os.machine())).toBe(true);
+});
+
 it("EOL", () => {
   if (process.platform === "win32") expect(os.EOL).toBe("\\r\\n");
   else expect(os.EOL).toBe("\\n");

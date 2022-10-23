@@ -1,3 +1,21 @@
+JSC::Structure* JSTCPSocketStructure() { return m_JSTCPSocket.getInitializedOnMainThread(this); }
+        JSC::JSObject* JSTCPSocketConstructor() { return m_JSTCPSocket.constructorInitializedOnMainThread(this); }
+        JSC::JSValue JSTCPSocketPrototype() { return m_JSTCPSocket.prototypeInitializedOnMainThread(this); }
+  JSC::LazyClassStructure m_JSTCPSocket;
+  bool hasJSTCPSocketSetterValue { false };
+  mutable JSC::WriteBarrier<JSC::Unknown> m_JSTCPSocketSetterValue;
+JSC::Structure* JSTLSSocketStructure() { return m_JSTLSSocket.getInitializedOnMainThread(this); }
+        JSC::JSObject* JSTLSSocketConstructor() { return m_JSTLSSocket.constructorInitializedOnMainThread(this); }
+        JSC::JSValue JSTLSSocketPrototype() { return m_JSTLSSocket.prototypeInitializedOnMainThread(this); }
+  JSC::LazyClassStructure m_JSTLSSocket;
+  bool hasJSTLSSocketSetterValue { false };
+  mutable JSC::WriteBarrier<JSC::Unknown> m_JSTLSSocketSetterValue;
+JSC::Structure* JSListenerStructure() { return m_JSListener.getInitializedOnMainThread(this); }
+        JSC::JSObject* JSListenerConstructor() { return m_JSListener.constructorInitializedOnMainThread(this); }
+        JSC::JSValue JSListenerPrototype() { return m_JSListener.prototypeInitializedOnMainThread(this); }
+  JSC::LazyClassStructure m_JSListener;
+  bool hasJSListenerSetterValue { false };
+  mutable JSC::WriteBarrier<JSC::Unknown> m_JSListenerSetterValue;
 JSC::Structure* JSSubprocessStructure() { return m_JSSubprocess.getInitializedOnMainThread(this); }
         JSC::JSObject* JSSubprocessConstructor() { return m_JSSubprocess.constructorInitializedOnMainThread(this); }
         JSC::JSValue JSSubprocessPrototype() { return m_JSSubprocess.prototypeInitializedOnMainThread(this); }

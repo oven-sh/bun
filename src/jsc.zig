@@ -26,13 +26,16 @@ pub const Jest = @import("./bun.js/test/jest.zig");
 pub const API = struct {
     pub const Transpiler = @import("./bun.js/api/transpiler.zig");
     pub const Server = @import("./bun.js/api/server.zig").Server;
+    pub const ServerConfig = @import("./bun.js/api/server.zig").ServerConfig;
     pub const ServerWebSocket = @import("./bun.js/api/server.zig").ServerWebSocket;
     pub const SSLServer = @import("./bun.js/api/server.zig").SSLServer;
     pub const DebugServer = @import("./bun.js/api/server.zig").DebugServer;
     pub const DebugSSLServer = @import("./bun.js/api/server.zig").DebugSSLServer;
     pub const Bun = @import("./bun.js/api/bun.zig");
     pub const Router = @import("./bun.js/api/router.zig");
-    pub const ServerConfig = @import("./bun.js/api/server.zig").ServerConfig;
+    pub const TCPSocket = @import("./bun.js/api/bun/socket.zig").TCPSocket;
+    pub const TLSSocket = @import("./bun.js/api/bun/socket.zig").TLSSocket;
+    pub const Listener = @import("./bun.js/api/bun/socket.zig").Listener;
 };
 pub const FFI = @import("./bun.js/api/ffi.zig").FFI;
 pub const Node = struct {

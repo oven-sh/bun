@@ -1,6 +1,7 @@
 {
   "dependencies": {
-    "bun-types": "^0.1.5",
+    "bun-types": "latest",
+    "express": "^4.18.2",
     "mitata": "^0.1.3",
     "peechy": "0.4.32",
     "react": "^18.2.0",

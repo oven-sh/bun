@@ -1486,7 +1486,7 @@ pub const JSPromise = extern struct {
     ) JSValue {
         if (value.isEmpty()) {
             return resolvedPromiseValue(globalObject, JSValue.jsUndefined());
-        } else if (value.isEmptyOrUndefinedOrNull()) {
+        } else if (value.isEmptyOrUndefinedOrNull() or !value.isCell()) {
             return resolvedPromiseValue(globalObject, value);
         }
 

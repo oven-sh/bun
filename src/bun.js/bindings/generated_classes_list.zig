@@ -15,4 +15,7 @@ pub const Classes = struct {
     pub const Blob = JSC.WebCore.Blob;
     pub const Subprocess = JSC.Subprocess;
     pub const ServerWebSocket = JSC.API.ServerWebSocket;
+    pub const TCPSocket = JSC.API.TCPSocket;
+    pub const TLSSocket = JSC.API.TLSSocket;
+    pub const Listener = JSC.API.Listener;
 };

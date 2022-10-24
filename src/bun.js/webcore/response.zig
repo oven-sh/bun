@@ -4673,17 +4673,10 @@ pub const Body = struct {
         pub fn fromJS(globalThis: *JSGlobalObject, value: JSValue) ?Value {
             value.ensureStillAlive();
 
-            if (value.isEmpty() or value.isUndefined()) {
+            if (value.isEmptyOrUndefinedOrNull()) {
                 return Body.Value{
                     .Empty = void{},
                 };
-            }
-
-            if (value.isNull()) {
-                var null_str: [4]u8 = "null".*;
-
-                // this looks like a pointer to stack memory, but it will be copied
-                return Body.Value.createBlobValue(&null_str, undefined, true);
             }
 
             const js_type = value.jsType();

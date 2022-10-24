@@ -271,15 +271,16 @@ DEBUG_BINDINGS_OBJ := $(DEBUG_OBJ_FILES) $(DEBUG_WEBCORE_OBJ_FILES) $(DEBUG_SQLI
 MAC_INCLUDE_DIRS := -I$(WEBKIT_RELEASE_DIR)/JavaScriptCore/PrivateHeaders \
 		-I$(WEBKIT_RELEASE_DIR)/WTF/Headers \
 		-I$(WEBKIT_RELEASE_DIR)/ICU/Headers \
+		-I$(WEBKIT_RELEASE_DIR)/bmalloc/Headers \
 		-I$(WEBKIT_RELEASE_DIR)/ \
 		-Isrc/bun.js/bindings/ \
 		-Isrc/bun.js/builtins/ \
 		-Isrc/bun.js/bindings/webcore \
+		-Isrc/bun.js/bindings/webcrypto \
 		-Isrc/bun.js/bindings/sqlite \
 		-Isrc/bun.js/builtins/cpp \
 		-Isrc/bun.js/bindings/node_os \
 		-Isrc/bun.js/modules \
-		-I$(WEBKIT_DIR)/Source/bmalloc  \
 		-I$(WEBKIT_DIR)/Source \
 		-I$(JSC_INCLUDE_DIR)
 
@@ -297,7 +298,7 @@ LINUX_INCLUDE_DIRS := -I$(JSC_INCLUDE_DIR) \
 UWS_INCLUDE_DIR := -I$(BUN_DEPS_DIR)/uws/uSockets/src -I$(BUN_DEPS_DIR)/uws/src -I$(BUN_DEPS_DIR)
 
 
-INCLUDE_DIRS := $(UWS_INCLUDE_DIR) -I$(BUN_DEPS_DIR)/mimalloc/include -Isrc/napi
+INCLUDE_DIRS := $(UWS_INCLUDE_DIR) -I$(BUN_DEPS_DIR)/mimalloc/include -Isrc/napi -I$(BUN_DEPS_DIR)/boringssl/include
 
 
 ifeq ($(OS_NAME),linux)
@@ -373,8 +374,8 @@ endif
 
 SHARED_LIB_EXTENSION = .so
 
-JSC_BINDINGS = $(BINDINGS_OBJ) $(JSC_FILES)
-JSC_BINDINGS_DEBUG = $(DEBUG_BINDINGS_OBJ) $(JSC_FILES_DEBUG)
+JSC_BINDINGS = $(BINDINGS_OBJ) $(JSC_FILES) -lwebcrypto
+JSC_BINDINGS_DEBUG = $(DEBUG_BINDINGS_OBJ) $(JSC_FILES_DEBUG) 
 
 RELEASE_FLAGS=
 DEBUG_FLAGS=
@@ -440,9 +441,9 @@ BUN_LLD_FLAGS_WITHOUT_JSC = $(ARCHIVE_FILES) \
 
 
 
-BUN_LLD_FLAGS = $(BUN_LLD_FLAGS_WITHOUT_JSC)  $(JSC_FILES) $(BINDINGS_OBJ)
-BUN_LLD_FLAGS_DEBUG = $(BUN_LLD_FLAGS_WITHOUT_JSC) $(JSC_FILES_DEBUG) $(DEBUG_BINDINGS_OBJ)
-BUN_LLD_FLAGS_FAST = $(BUN_LLD_FLAGS_WITHOUT_JSC)  $(JSC_FILES_DEBUG) $(BINDINGS_OBJ)
+BUN_LLD_FLAGS = $(BUN_LLD_FLAGS_WITHOUT_JSC)  $(JSC_FILES) $(BINDINGS_OBJ) -lwebcrypto
+BUN_LLD_FLAGS_DEBUG = $(BUN_LLD_FLAGS_WITHOUT_JSC) $(JSC_FILES_DEBUG) $(DEBUG_BINDINGS_OBJ) -lwebcrypto-debug
+BUN_LLD_FLAGS_FAST = $(BUN_LLD_FLAGS_WITHOUT_JSC)  $(JSC_FILES_DEBUG) $(BINDINGS_OBJ) -lwebcrypto-debug
 
 CLANG_VERSION = $(shell $(CC) --version | awk '/version/ {for(i=1; i<=NF; i++){if($$i=="version"){split($$(i+1),v,".");print v[1]}}}')
 
@@ -499,7 +500,7 @@ builtins: ## to generate builtins
 generate-builtins: builtins
 
 .PHONY: tinycc
-vendor-without-check: npm-install node-fallbacks runtime_js fallback_decoder bun_error mimalloc picohttp zlib boringssl libarchive libbacktrace lolhtml usockets uws base64 tinycc oniguruma
+vendor-without-check: npm-install node-fallbacks runtime_js fallback_decoder bun_error mimalloc picohttp zlib boringssl libarchive libbacktrace lolhtml usockets uws base64 tinycc oniguruma webcrypto webcrypto-debug
 
 BUN_TYPES_REPO_PATH ?= $(realpath ../bun-types)
 
@@ -1628,6 +1629,53 @@ $(DEBUG_OBJ_DIR)/%.o: src/bun.js/modules/%.cpp
 		$(EMIT_LLVM_FOR_DEBUG) \
 		-g3 -c -o $@ $<
 
+
+
+$(DEBUG_OBJ_DIR)/webcrypto/%.o: src/bun.js/bindings/webcrypto/%.cpp
+	$(CXX) $(CLANG_FLAGS) \
+		$(MACOS_MIN_FLAG) \
+		$(DEBUG_OPTIMIZATION_LEVEL) \
+		-fno-exceptions \
+		-fno-rtti \
+		-ferror-limit=1000 \
+		$(EMIT_LLVM_FOR_DEBUG) \
+		-g3 -c -o $@ $<
+
+
+.PHONY: webcrypto-debug-obj
+# Make all the .cpp files in the webcrypto directory into .o files using Makefile substitutions
+webcrypto-debug-obj: $(patsubst src/bun.js/bindings/webcrypto/%.cpp, $(DEBUG_OBJ_DIR)/webcrypto/%.o, $(wildcard src/bun.js/bindings/webcrypto/*.cpp))
+
+.PHONY: webcrypto-debug
+webcrypto-debug:
+	rm -rf $(DEBUG_OBJ_DIR)/webcrypto $(BUN_DEPS_OUT_DIR)/libwebcrypto-debug.a
+	mkdir -p $(DEBUG_OBJ_DIR)/webcrypto
+	make webcrypto-debug-obj -j$(CPUS)
+	$(AR) rcs $(BUN_DEPS_OUT_DIR)/libwebcrypto-debug.a $(DEBUG_OBJ_DIR)/webcrypto/*.o
+
+
+$(OBJ_DIR)/webcrypto/%.o: src/bun.js/bindings/webcrypto/%.cpp
+	$(CXX) $(CLANG_FLAGS) \
+		$(MACOS_MIN_FLAG) \
+		$(OPTIMIZATION_LEVEL) \
+		-fno-exceptions \
+		-fno-rtti \
+		-ferror-limit=1000 \
+		$(EMIT_LLVM_FOR_RELEASE) \
+		-g3 -c -o $@ $<
+
+
+.PHONY: webcrypto-obj
+# Make all the .cpp files in the webcrypto directory into .o files using Makefile substitutions
+webcrypto-obj: $(patsubst src/bun.js/bindings/webcrypto/%.cpp, $(OBJ_DIR)/webcrypto/%.o, $(wildcard src/bun.js/bindings/webcrypto/*.cpp))
+
+.PHONY: webcrypto
+webcrypto:
+	rm -rf $(OBJ_DIR)/webcrypto $(BUN_DEPS_OUT_DIR)/libwebcrypto.a
+	mkdir -p $(OBJ_DIR)/webcrypto
+	make webcrypto-obj -j$(CPUS)
+	$(AR) rcs $(BUN_DEPS_OUT_DIR)/libwebcrypto.a $(OBJ_DIR)/webcrypto/*.o
+
 sizegen:
 	mkdir -p $(BUN_TMP_DIR)
 	$(CXX) src/bun.js/headergen/sizegen.cpp -Wl,-dead_strip -Wl,-dead_strip_dylibs -fuse-ld=lld -o $(BUN_TMP_DIR)/sizegen $(CLANG_FLAGS) -O1 
@@ -1795,3 +1843,4 @@ PACKAGE_MAP = --pkg-begin thread_pool $(BUN_DIR)/src/thread_pool.zig --pkg-begin
 
 .PHONY: bun
 bun: vendor identifier-cache build-obj bun-link-lld-release bun-codesign-release-local
+

@@ -324,8 +324,8 @@ public:
     // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForDocumentTimeline;
     // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForKeyframeEffect;
     // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForWebAnimation;
-    // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForCryptoKey;
-    // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForSubtleCrypto;
+    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForCryptoKey;
+    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForSubtleCrypto;
     // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForCSSConditionRule;
     // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForCSSCounterStyleRule;
     // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForCSSFontFaceRule;

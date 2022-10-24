@@ -9,6 +9,7 @@
         "${workspaceFolder}/src/bun.js/WebKit/WebKitBuild/Release/*",
         "${workspaceFolder}/src/bun.js/bindings/",
         "${workspaceFolder}/src/bun.js/bindings/sqlite/",
+        "${workspaceFolder}/src/bun.js/bindings/webcrypto/",
         "${workspaceFolder}/src/bun.js/builtins/",
         "${workspaceFolder}/src/bun.js/builtins/cpp",
         "${workspaceFolder}/src/bun.js/bindings/WebCore/",
@@ -33,6 +34,7 @@
           "${workspaceFolder}/src/bun.js/builtins/cpp/**",
           "${workspaceFolder}/src/bun.js/WebKit/Source/bmalloc/**",
           "${workspaceFolder}/src/bun.js/WebKit/WebKitBuild/Release/ICU/Headers/",
+          "${workspaceFolder}/src/bun.js/bindings/webcrypto/",
           "${workspaceFolder}/../webkit-build/include/",
           "${workspaceFolder}/src/deps",
           "${workspaceFolder}/src/deps/uws/uSockets/src"

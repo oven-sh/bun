@@ -314,8 +314,8 @@ public:
     // std::unique_ptr<IsoSubspace> m_subspaceForDocumentTimeline;
     // std::unique_ptr<IsoSubspace> m_subspaceForKeyframeEffect;
     // std::unique_ptr<IsoSubspace> m_subspaceForWebAnimation;
-    // std::unique_ptr<IsoSubspace> m_subspaceForCryptoKey;
-    // std::unique_ptr<IsoSubspace> m_subspaceForSubtleCrypto;
+    std::unique_ptr<IsoSubspace> m_subspaceForCryptoKey;
+    std::unique_ptr<IsoSubspace> m_subspaceForSubtleCrypto;
     // std::unique_ptr<IsoSubspace> m_subspaceForCSSConditionRule;
     // std::unique_ptr<IsoSubspace> m_subspaceForCSSCounterStyleRule;
     // std::unique_ptr<IsoSubspace> m_subspaceForCSSFontFaceRule;

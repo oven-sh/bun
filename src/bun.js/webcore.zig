@@ -395,19 +395,7 @@ pub const Crypto = struct {
         };
         var slice = array_buffer.byteSlice();
 
-        switch (slice.len) {
-            0 => {},
-            1...JSC.RareData.EntropyCache.size / 8 => {
-                if (arguments.len > 1) {
-                    bun.rand(slice);
-                } else {
-                    std.mem.copy(u8, slice, globalThis.bunVM().rareData().entropySlice(slice.len));
-                }
-            },
-            else => {
-                bun.rand(slice);
-            },
-        }
+        randomData(globalThis, slice.ptr, slice.len);
 
         return arguments[0];
     }
@@ -418,6 +406,17 @@ pub const Crypto = struct {
         array: *JSC.JSUint8Array,
     ) callconv(.C) JSC.JSValue {
         var slice = array.slice();
+        randomData(globalThis, slice.ptr, slice.len);
+        return @intToEnum(JSC.JSValue, @bitCast(i64, @ptrToInt(array)));
+    }
+
+    fn randomData(
+        globalThis: *JSC.JSGlobalObject,
+        ptr: [*]u8,
+        len: usize,
+    ) void {
+        var slice = ptr[0..len];
+
         switch (slice.len) {
             0 => {},
             // 512 bytes or less we reuse from the same cache as UUID generation.
@@ -428,8 +427,6 @@ pub const Crypto = struct {
                 bun.rand(slice);
             },
         }
-
-        return @intToEnum(JSC.JSValue, @bitCast(i64, @ptrToInt(array)));
     }
 
     pub fn randomUUID(

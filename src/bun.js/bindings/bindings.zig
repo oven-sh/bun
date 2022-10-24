@@ -2148,6 +2148,11 @@ pub const JSGlobalObject = extern struct {
         return @ptrCast(*JSC.VirtualMachine, @alignCast(std.meta.alignment(JSC.VirtualMachine), this.bunVM_()));
     }
 
+    /// We can't do the threadlocal check when queued from another thread
+    pub fn bunVMConcurrently(this: *JSGlobalObject) *JSC.VirtualMachine {
+        return @ptrCast(*JSC.VirtualMachine, @alignCast(std.meta.alignment(JSC.VirtualMachine), this.bunVM_()));
+    }
+
     pub fn handleRejectedPromises(this: *JSGlobalObject) void {
         return cppFn("handleRejectedPromises", .{this});
     }

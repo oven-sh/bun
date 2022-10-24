@@ -1,5 +1,7 @@
 #pragma once
 
+#include "root.h"
+
 #include "IdentifierEventListenerMap.h"
 #include "ExceptionOr.h"
 #include "ContextDestructionObserver.h"
@@ -9,8 +11,6 @@
 #include <wtf/Forward.h>
 
 #include <wtf/WeakPtr.h>
-
-#include "root.h"
 
 namespace JSC {
 class JSValue;

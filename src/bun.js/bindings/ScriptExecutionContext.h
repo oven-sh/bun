@@ -68,13 +68,17 @@ protected:
     bool m_isCleanupTask;
 };
 
+using ScriptExecutionContextIdentifier = uint32_t;
+
 class ScriptExecutionContext : public CanMakeWeakPtr<ScriptExecutionContext> {
-public:
+
 public:
     ScriptExecutionContext(JSC::VM* vm, JSC::JSGlobalObject* globalObject)
         : m_vm(vm)
         , m_globalObject(globalObject)
+        , m_identifier(0)
     {
+        regenerateIdentifier();
     }
 
     JSC::JSGlobalObject* jsGlobalObject()
@@ -106,12 +110,23 @@ public:
     // {
     // }
 
+    static bool postTaskTo(ScriptExecutionContextIdentifier identifier, Function<void(ScriptExecutionContext&)>&& task);
+
+    void regenerateIdentifier();
+    void addToContextsMap();
+    void removeFromContextsMap();
+
+    void postTaskConcurrently(Function<void(ScriptExecutionContext&)>&& lambda)
+    {
+        auto* task = new EventLoopTask(WTFMove(lambda));
+        reinterpret_cast<Zig::GlobalObject*>(m_globalObject)->queueTaskConcurrently(task);
+    } // Executes the task on context's thread asynchronously.
+
     void postTask(Function<void(ScriptExecutionContext&)>&& lambda)
     {
         auto* task = new EventLoopTask(WTFMove(lambda));
         reinterpret_cast<Zig::GlobalObject*>(m_globalObject)->queueTask(task);
     } // Executes the task on context's thread asynchronously.
-
     void postTask(EventLoopTask* task)
     {
         reinterpret_cast<Zig::GlobalObject*>(m_globalObject)->queueTask(task);
@@ -126,11 +141,13 @@ public:
     }
 
     JSC::VM& vm() { return *m_vm; }
+    ScriptExecutionContextIdentifier identifier() const { return m_identifier; }
 
 private:
     JSC::VM* m_vm = nullptr;
     JSC::JSGlobalObject* m_globalObject = nullptr;
     WTF::URL m_url = WTF::URL();
+    ScriptExecutionContextIdentifier m_identifier;
 
     us_socket_context_t* webSocketContextSSL();
     us_socket_context_t* webSocketContextNoSSL();

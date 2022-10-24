@@ -609,6 +609,12 @@ function readableStreamTee(stream, shouldClone) {
   @assert(@isReadableStream(stream));
   @assert(typeof shouldClone === "boolean");
 
+  var start_ = @getByIdDirectPrivate(stream, "start");
+  if (start_) {
+      @putByIdDirectPrivate(stream, "start", @undefined);
+      start_();
+  }
+
   const reader = new @ReadableStreamDefaultReader(stream);
 
   const teeState = {

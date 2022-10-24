@@ -364,6 +364,7 @@ pub const Listener = struct {
         var port = socket_config.port;
         var ssl = socket_config.ssl;
         var handlers = socket_config.handlers;
+        handlers.is_server = true;
 
         const ssl_enabled = ssl != null;
 
@@ -876,20 +877,19 @@ fn NewSocket(comptime ssl: bool) type {
             if (!this.reffer.has) {
                 this.handlers.active_connections += 1;
                 this.reffer.ref(this.handlers.vm);
-
-                if (this.this_value != .zero) {
-                    this.this_value.protect();
-                }
             }
         }
 
         pub fn markInactive(this: *This) void {
             if (this.reffer.has) {
+                var vm = this.handlers.vm;
                 this.handlers.markInactive(ssl, this.socket.context());
-                this.reffer.unref(this.handlers.vm);
-                if (this.this_value != .zero) {
-                    this.this_value.unprotect();
-                }
+                this.reffer.unref(vm);
+                this.poll_ref.unref(vm);
+            }
+
+            if (this.this_value != .zero) {
+                this.this_value.unprotect();
             }
         }
 
@@ -914,6 +914,8 @@ fn NewSocket(comptime ssl: bool) type {
                 this.handlers.resolvePromise(this_value);
                 return;
             }
+
+            handlers.resolvePromise(this_value);
 
             const result = handlers.onOpen.callWithThis(handlers.globalObject, this_value, &[_]JSValue{
                 this_value,
@@ -941,7 +943,6 @@ fn NewSocket(comptime ssl: bool) type {
             }
 
             this.markActive();
-            handlers.resolvePromise(this_value);
         }
 
         pub fn getThisValue(this: *This, globalObject: *JSC.JSGlobalObject) JSValue {
@@ -1019,25 +1020,18 @@ fn NewSocket(comptime ssl: bool) type {
 
             if (this.detached) return;
             var handlers = this.handlers;
-            const encoding = handlers.encoding;
+            // const encoding = handlers.encoding;
             const callback = handlers.onData;
             if (callback == .zero) {
                 return;
             }
 
-            var output_value = JSValue.zero;
-
-            switch (encoding) {
-                .buffer => {
-                    output_value = JSC.ArrayBuffer.create(handlers.globalObject, data, .Uint8Array);
-                },
-                // TODO:
-                else => {},
-            }
+            const output_value = JSC.ArrayBuffer.create(handlers.globalObject, data, .Uint8Array);
 
             const this_value = this.getThisValue(handlers.globalObject);
             const result = callback.callWithThis(handlers.globalObject, this_value, &[_]JSValue{
                 this_value,
+                output_value,
             });
 
             if (!result.isEmptyOrUndefinedOrNull() and result.isAnyError(handlers.globalObject)) {
@@ -1349,7 +1343,11 @@ fn NewSocket(comptime ssl: bool) type {
             if (args.len == 0) {
                 log("end()", .{});
                 if (!this.detached) {
-                    this.socket.close(0, null);
+                    if (!this.socket.isClosed()) this.socket.flush();
+                    this.detached = true;
+                    this.markInactive();
+                    if (!this.socket.isClosed())
+                        this.socket.close(0, null);
                 }
 
                 return JSValue.jsUndefined();

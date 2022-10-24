@@ -3403,7 +3403,7 @@ pub const ServerWebSocket = struct {
         const code = if (args.len > 0) args.ptr[0].toInt32() else @as(i32, 1000);
         var message_value = if (args.len > 1) args.ptr[1].toSlice(globalThis, bun.default_allocator) else ZigString.Slice.empty;
         defer message_value.deinit();
-        if (code > 0) {
+        if (code > 1000 or message_value.len > 0) {
             this.websocket.end(code, message_value.slice());
         } else {
             this.this_value.unprotect();

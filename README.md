@@ -139,6 +139,7 @@ bun upgrade --canary
   - [Error handling](#error-handling)
 - [`Bun.write` – optimizing I/O](#bunwrite--optimizing-io)
 - [`Bun.spawn` - spawn processes](#bunspawn)
+- [`Bun.which` - find the path to a bin](#bunwhich)
 - [bun:sqlite (SQLite3 module)](#bunsqlite-sqlite3-module)
   - [bun:sqlite Benchmark](#bunsqlite-benchmark)
   - [Getting started with bun:sqlite](#getting-started-with-bunsqlite)
@@ -173,6 +174,7 @@ bun upgrade --canary
   - [`Bun.Transpiler.transform`](#buntranspilertransform)
   - [`Bun.Transpiler.scan`](#buntranspilerscan)
   - [`Bun.Transpiler.scanImports`](#buntranspilerscanimports)
+- [`Bun.peek` - read a promise same-tick](#bunpeek)
 - [Environment variables](#environment-variables)
 - [Credits](#credits)
 - [License](#license)
@@ -2541,6 +2543,99 @@ interface Subprocess {
   kill(code?: number): void;
   readonly killed: boolean;
 }
+```
+
+## `Bun.which` – find the path to a binary
+
+Find the path to an executable, similar to typing `which` in your terminal.
+
+```ts
+const ls = Bun.which("ls");
+console.log(ls); // "/bin/ls"
+```
+
+`Bun.which` defaults the `PATH` to the current `PATH` environment variable, but you can customize it
+
+```ts
+const ls = Bun.which("ls", {
+  PATH: "/usr/local/bin:/usr/bin:/bin",
+});
+console.log(ls); // "/usr/bin/ls"
+```
+
+`Bun.which` also accepts a `cwd` option to search for the binary in a specific directory.
+
+```ts
+const ls = Bun.which("ls", {
+  cwd: "/tmp",
+  PATH: "",
+});
+
+console.log(ls); // null
+```
+
+## `Bun.peek` - read a promise without resolving it
+
+`Bun.peek` is a utility function that lets you read a promise's result without `await` or `.then`, but only if the promise has already fulfilled or rejected.
+
+```ts
+import { peek } from "bun";
+
+const promise = Promise.resolve("hi");
+const result = await peek(promise);
+console.log(result); // "hi"
+```
+
+`Bun.peek` is useful for performance-sensitive code that wants to reduce the number of extra microticks. It's an advanced API and you probably shouldn't use it unless you know what you're doing.
+
+```ts
+import { peek } from "bun";
+import { expect, test } from "bun:test";
+
+test("peek", () => {
+  const promise = Promise.resolve(true);
+
+  // no await necessary!
+  expect(peek(promise)).toBe(true);
+
+  // if we peek again, it returns the same value
+  const again = peek(promise);
+  expect(again).toBe(true);
+
+  // if we peek a non-promise, it returns the value
+  const value = peek(42);
+  expect(value).toBe(42);
+
+  // if we peek a pending promise, it returns the promise again
+  const pending = new Promise(() => {});
+  expect(peek(pending)).toBe(pending);
+
+  // If we peek a rejected promise, it:
+  // - returns the error
+  // - does not mark the promise as handled
+  const rejected = Promise.reject(
+    new Error("Succesfully tested promise rejection")
+  );
+  expect(peek(rejected).message).toBe("Succesfully tested promise rejection");
+});
+```
+
+`peek.status` lets you read the status of a promise without resolving it.
+
+```ts
+import { peek } from "bun";
+import { expect, test } from "bun:test";
+
+test("peek.status", () => {
+  const promise = Promise.resolve(true);
+  expect(peek.status(promise)).toBe("fulfilled");
+
+  const pending = new Promise(() => {});
+  expect(peek.status(pending)).toBe("pending");
+
+  const rejected = Promise.reject(new Error("oh nooo"));
+  expect(peek.status(rejected)).toBe("rejected");
+});
 ```
 
 ## `Bun.write` – optimizing I/O

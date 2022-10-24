@@ -1142,11 +1142,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             const stat: std.os.Stat = switch (JSC.Node.Syscall.fstat(fd)) {
                 .result => |result| result,
                 .err => |err| {
-                    var out = std.ArrayList(u8).initCapacity(this.allocator, 16) catch unreachable;
-                    std.fmt.format(out.writer(), "{}", .{file.pathlike}) catch {};
-                    var zig_string = ZigString.init(out.items);
-                    zig_string.mark();
-                    this.runErrorHandler(err.withPath(zig_string.toSliceFast(this.allocator).slice()).toSystemError().toErrorInstance(
+                    this.runErrorHandler(err.withPathLike(file.pathlike).toSystemError().toErrorInstance(
                         this.server.globalThis,
                     ));
                     if (auto_close) {
@@ -1164,10 +1160,9 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
 
                     var err = JSC.Node.Syscall.Error{
                         .errno = @intCast(JSC.Node.Syscall.Error.Int, @enumToInt(std.os.E.INVAL)),
-                        .path = file.pathlike.path.slice(),
                         .syscall = .sendfile,
                     };
-                    var sys = err.toSystemError();
+                    var sys = err.withPathLike(file.pathlike).toSystemError();
                     sys.message = ZigString.init("MacOS does not support sending non-regular files");
                     this.runErrorHandler(sys.toErrorInstance(
                         this.server.globalThis,
@@ -1184,10 +1179,9 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
 
                     var err = JSC.Node.Syscall.Error{
                         .errno = @intCast(JSC.Node.Syscall.Error.Int, @enumToInt(std.os.E.INVAL)),
-                        .path = file.pathlike.path.slice(),
                         .syscall = .sendfile,
                     };
-                    var sys = err.toSystemError();
+                    var sys = err.withPathLike(file.pathlike).toSystemError();
                     sys.message = ZigString.init("File must be regular or FIFO");
                     this.runErrorHandler(sys.toErrorInstance(
                         this.server.globalThis,

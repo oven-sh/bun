@@ -1092,6 +1092,7 @@ pub const SystemError = extern struct {
     message: ZigString = ZigString.init(""),
     path: ZigString = ZigString.init(""),
     syscall: ZigString = ZigString.init(""),
+    fd: i32 = -1,
 
     pub fn Maybe(comptime Result: type) type {
         return union(enum) {

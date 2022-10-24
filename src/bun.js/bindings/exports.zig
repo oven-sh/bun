@@ -767,6 +767,8 @@ pub const ZigException = extern struct {
 
     remapped: bool = false,
 
+    fd: i32 = -1,
+
     pub const shim = Shimmer("Zig", "Exception", @This());
     pub const name = "ZigException";
     pub const namespace = shim.namespace;

@@ -42,6 +42,7 @@ typedef struct SystemError {
     ZigString message;
     ZigString path;
     ZigString syscall;
+    int fd;
 } SystemError;
 
 typedef void* ArrayBufferSink;
@@ -101,6 +102,7 @@ typedef struct ZigException {
     ZigStackTrace stack;
     void* exception;
     bool remapped;
+    int fd;
 } ZigException;
 
 typedef uint8_t JSErrorCode;

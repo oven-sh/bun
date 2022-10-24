@@ -417,6 +417,12 @@ JSC__JSValue SystemError__toErrorInstance(const SystemError* arg0,
             JSC::PropertyAttribute::DontDelete | 0);
     }
 
+    if (err.fd != -1) {
+        JSC::JSValue fd = JSC::JSValue(jsNumber(err.fd));
+        result->putDirect(vm, JSC::Identifier::fromString(vm, "fd"_s), fd,
+            JSC::PropertyAttribute::DontDelete | 0);
+    }
+
     if (err.syscall.len > 0) {
         JSC::JSValue syscall = JSC::JSValue(Zig::toJSString(err.syscall, globalObject));
         result->putDirect(vm, clientData->builtinNames().syscallPublicName(), syscall,
@@ -2390,6 +2396,12 @@ static void fromErrorInstance(ZigException* except, JSC::JSGlobalObject* global,
 
         if (JSC::JSValue path = obj->getIfPropertyExists(global, clientData->builtinNames().pathPublicName())) {
             except->path = Zig::toZigString(path, global);
+        }
+
+        if (JSC::JSValue fd = obj->getIfPropertyExists(global, Identifier::fromString(global->vm(), "fd"_s))) {
+            if (fd.isAnyInt()) {
+                except->fd = fd.toInt32(global);
+            }
         }
 
         if (JSC::JSValue errno_ = obj->getIfPropertyExists(global, clientData->builtinNames().errnoPublicName())) {

@@ -2009,6 +2009,7 @@ pub const VirtualMachine = struct {
             syscall: bool = false,
             errno: bool = false,
             path: bool = false,
+            fd: bool = false,
         };
 
         var show = Show{
@@ -2016,6 +2017,7 @@ pub const VirtualMachine = struct {
             .syscall = exception.syscall.len > 0,
             .errno = exception.errno < 0,
             .path = exception.path.len > 0,
+            .fd = exception.fd != -1,
         };
 
         if (show.path) {

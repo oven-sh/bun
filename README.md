@@ -2582,7 +2582,10 @@ console.log(ls); // null
 import { peek } from "bun";
 
 const promise = Promise.resolve("hi");
+
+// no await!
 const result = peek(promise);
+
 console.log(result); // "hi"
 ```
 

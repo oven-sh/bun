@@ -4541,6 +4541,12 @@ pub const PackageManager = struct {
             current_package_json_buf[0..current_package_json_contents_len],
         );
 
+        // If there originally was a newline at the end of their package.json, preserve it
+        // so that we don't cause unnecessary diffs in their git history.
+        // https://github.com/oven-sh/bun/issues/1375
+        const preserve_trailing_newline_at_eof_for_package_json = current_package_json_contents_len > 0 and
+            current_package_json_buf[current_package_json_contents_len - 1] == '\n';
+
         initializeStore();
         var current_package_json = json_parser.ParseJSONUTF8(&package_json_source, ctx.log, manager.allocator) catch |err| {
             if (Output.enable_ansi_colors) {
@@ -4691,6 +4697,8 @@ pub const PackageManager = struct {
             try PackageJSONEditor.edit(ctx.allocator, updates, &current_package_json, dependency_list);
             var buffer_writer_two = try JSPrinter.BufferWriter.init(ctx.allocator);
             try buffer_writer_two.buffer.list.ensureTotalCapacity(ctx.allocator, new_package_json_source.len + 1);
+            buffer_writer_two.append_newline =
+                preserve_trailing_newline_at_eof_for_package_json;
             var package_json_writer_two = JSPrinter.BufferPrinter.init(buffer_writer_two);
 
             written = JSPrinter.printJSON(

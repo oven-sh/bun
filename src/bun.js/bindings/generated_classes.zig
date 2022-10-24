@@ -79,8 +79,6 @@ pub const JSTCPSocket = struct {
             @compileLog("TCPSocket.finalize is not a finalizer");
         }
 
-        if (@TypeOf(TCPSocket.close) != CallbackType)
-            @compileLog("Expected TCPSocket.close to be a callback");
         if (@TypeOf(TCPSocket.getData) != GetterType)
             @compileLog("Expected TCPSocket.getData to be a getter");
 
@@ -115,7 +113,6 @@ pub const JSTCPSocket = struct {
         if (@TypeOf(TCPSocket.write) != CallbackType)
             @compileLog("Expected TCPSocket.write to be a callback");
         if (!JSC.is_bindgen) {
-            @export(TCPSocket.close, .{ .name = "TCPSocketPrototype__close" });
             @export(TCPSocket.constructor, .{ .name = "TCPSocketClass__construct" });
             @export(TCPSocket.end, .{ .name = "TCPSocketPrototype__end" });
             @export(TCPSocket.finalize, .{ .name = "TCPSocketClass__finalize" });
@@ -207,8 +204,6 @@ pub const JSTLSSocket = struct {
             @compileLog("TLSSocket.finalize is not a finalizer");
         }
 
-        if (@TypeOf(TLSSocket.close) != CallbackType)
-            @compileLog("Expected TLSSocket.close to be a callback");
         if (@TypeOf(TLSSocket.getData) != GetterType)
             @compileLog("Expected TLSSocket.getData to be a getter");
 
@@ -243,7 +238,6 @@ pub const JSTLSSocket = struct {
         if (@TypeOf(TLSSocket.write) != CallbackType)
             @compileLog("Expected TLSSocket.write to be a callback");
         if (!JSC.is_bindgen) {
-            @export(TLSSocket.close, .{ .name = "TLSSocketPrototype__close" });
             @export(TLSSocket.constructor, .{ .name = "TLSSocketClass__construct" });
             @export(TLSSocket.end, .{ .name = "TLSSocketPrototype__end" });
             @export(TLSSocket.finalize, .{ .name = "TLSSocketClass__finalize" });
@@ -335,8 +329,6 @@ pub const JSListener = struct {
             @compileLog("Listener.finalize is not a finalizer");
         }
 
-        if (@TypeOf(Listener.close) != CallbackType)
-            @compileLog("Expected Listener.close to be a callback");
         if (@TypeOf(Listener.getData) != GetterType)
             @compileLog("Expected Listener.getData to be a getter");
 
@@ -352,13 +344,14 @@ pub const JSListener = struct {
             @compileLog("Expected Listener.ref to be a callback");
         if (@TypeOf(Listener.reload) != CallbackType)
             @compileLog("Expected Listener.reload to be a callback");
+        if (@TypeOf(Listener.stop) != CallbackType)
+            @compileLog("Expected Listener.stop to be a callback");
         if (@TypeOf(Listener.getUnix) != GetterType)
             @compileLog("Expected Listener.getUnix to be a getter");
 
         if (@TypeOf(Listener.unref) != CallbackType)
             @compileLog("Expected Listener.unref to be a callback");
         if (!JSC.is_bindgen) {
-            @export(Listener.close, .{ .name = "ListenerPrototype__close" });
             @export(Listener.constructor, .{ .name = "ListenerClass__construct" });
             @export(Listener.finalize, .{ .name = "ListenerClass__finalize" });
             @export(Listener.getData, .{ .name = "ListenerPrototype__getData" });
@@ -368,6 +361,7 @@ pub const JSListener = struct {
             @export(Listener.ref, .{ .name = "ListenerPrototype__ref" });
             @export(Listener.reload, .{ .name = "ListenerPrototype__reload" });
             @export(Listener.setData, .{ .name = "ListenerPrototype__setData" });
+            @export(Listener.stop, .{ .name = "ListenerPrototype__stop" });
             @export(Listener.unref, .{ .name = "ListenerPrototype__unref" });
         }
     }

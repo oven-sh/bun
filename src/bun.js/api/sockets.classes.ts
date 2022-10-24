@@ -19,11 +19,6 @@ function generate(ssl) {
         getter: "getListener",
       },
 
-      close: {
-        fn: "close",
-        length: 1,
-      },
-
       timeout: {
         fn: "timeout",
         length: 1,
@@ -90,8 +85,8 @@ export default [
     name: "Listener",
     JSType: "0b11101110",
     proto: {
-      close: {
-        fn: "close",
+      stop: {
+        fn: "stop",
         length: 1,
       },
 

@@ -866,7 +866,7 @@ fn NewSocket(comptime ssl: bool) type {
                 .message = ZigString.init("Failed to connect"),
                 .syscall = ZigString.init("connect"),
             };
-            handlers.rejectPromise(err.toErrorInstance(handlers.globalObject));
+            _ = handlers.rejectPromise(err.toErrorInstance(handlers.globalObject));
             this.reffer.unref(handlers.vm);
             handlers.markInactive(ssl, socket.context());
             this.finalize();
@@ -1120,25 +1120,6 @@ fn NewSocket(comptime ssl: bool) type {
             return JSValue.jsUndefined();
         }
 
-        pub fn close(
-            this: *This,
-            _: *JSC.JSGlobalObject,
-            callframe: *JSC.CallFrame,
-        ) callconv(.C) JSValue {
-            JSC.markBinding(@src());
-            log("close", .{});
-            const args = callframe.arguments(1);
-            if (this.detached) return JSValue.jsUndefined();
-
-            var code: i32 = 0;
-            if (args.len > 0) {
-                code = args.ptr[0].toInt32();
-            }
-
-            this.socket.close(code, null);
-            return JSValue.jsUndefined();
-        }
-
         pub fn write(
             this: *This,
             globalObject: *JSC.JSGlobalObject,
@@ -1361,18 +1342,23 @@ fn NewSocket(comptime ssl: bool) type {
             globalObject: *JSC.JSGlobalObject,
             callframe: *JSC.CallFrame,
         ) callconv(.C) JSValue {
-            log("end()", .{});
             JSC.markBinding(@src());
-
-            if (this.detached) {
-                return JSValue.jsNumber(@as(i32, -1));
-            }
 
             const args = callframe.arguments(4);
 
             if (args.len == 0) {
-                globalObject.throw("Expected 1 - 4 arguments, got 0", .{});
-                return .zero;
+                log("end()", .{});
+                if (!this.detached) {
+                    this.socket.close(0, null);
+                }
+
+                return JSValue.jsUndefined();
+            }
+
+            log("end({d} args)", .{args.len});
+
+            if (this.detached) {
+                return JSValue.jsNumber(@as(i32, -1));
             }
 
             const result = this.writeOrEnd(globalObject, args.ptr[0..args.len], true);

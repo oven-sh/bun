@@ -2578,6 +2578,8 @@ console.log(ls); // null
 
 `Bun.peek` is a utility function that lets you read a promise's result without `await` or `.then`, but only if the promise has already fulfilled or rejected.
 
+This function was added in Bun v0.2.2.
+
 ```ts
 import { peek } from "bun";
 

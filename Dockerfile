@@ -494,7 +494,7 @@ COPY --from=base64 ${BUN_DEPS_OUT_DIR}/*.a ${BUN_DEPS_OUT_DIR}/
 COPY src/deps/boringssl/include ${BUN_DIR}/src/deps/boringssl/include
 
 RUN cd $BUN_DIR && mkdir -p src/bun.js/bindings-obj &&  rm -rf $HOME/.cache zig-cache && mkdir -p $BUN_RELEASE_DIR && make webcrypto && \
-    make release-bindings -j10 && mv src/bun.js/bindings-obj/* /tmp
+    make release-bindings -j10 && mv ${BUN_DEPS_OUT_DIR}/libwebcrypto.a /tmp && mv src/bun.js/bindings-obj/* /tmp
 
 FROM prepare_release as sqlite
 
@@ -519,6 +519,7 @@ RUN cd $BUN_DIR && make sqlite
 FROM scratch as build_release_cpp
 
 COPY --from=compile_cpp /tmp/*.o /
+COPY --from=compile_cpp /tmp/libwebcrypto.a /
 
 FROM prepare_release as build_release
 
@@ -555,6 +556,7 @@ COPY --from=uws ${BUN_DEPS_OUT_DIR}/*.a ${BUN_DEPS_OUT_DIR}/
 COPY --from=uws ${BUN_DEPS_OUT_DIR}/*.o ${BUN_DEPS_OUT_DIR}/
 COPY --from=build_release_obj /*.o /tmp
 COPY --from=build_release_cpp /*.o ${BUN_DIR}/src/bun.js/bindings-obj/
+COPY --from=build_release_cpp /*.a ${BUN_DEPS_OUT_DIR}/
 
 RUN cd $BUN_DIR && mkdir -p ${BUN_RELEASE_DIR} && make bun-relink copy-to-bun-release-dir && \
     rm -rf $HOME/.cache zig-cache misctools package.json build-id completions build.zig $(BUN_DIR)/packages

@@ -268,11 +268,17 @@ DEBUG_MODULES_OBJ_FILES := $(patsubst $(MODULES_DIR)/%.cpp,$(DEBUG_OBJ_DIR)/%.o,
 BINDINGS_OBJ := $(OBJ_FILES) $(WEBCORE_OBJ_FILES) $(SQLITE_OBJ_FILES) $(NODE_OS_OBJ_FILES) $(BUILTINS_OBJ_FILES) $(IO_FILES) $(MODULES_OBJ_FILES)
 DEBUG_BINDINGS_OBJ := $(DEBUG_OBJ_FILES) $(DEBUG_WEBCORE_OBJ_FILES) $(DEBUG_SQLITE_OBJ_FILES) $(DEBUG_NODE_OS_OBJ_FILES) $(DEBUG_BUILTINS_OBJ_FILES) $(DEBUG_IO_FILES) $(DEBUG_MODULES_OBJ_FILES)
 
-MAC_INCLUDE_DIRS := -I$(WEBKIT_RELEASE_DIR)/JavaScriptCore/PrivateHeaders \
-		-I$(WEBKIT_RELEASE_DIR)/WTF/Headers \
+ALL_JSC_INCLUDE_DIRS := -I$(WEBKIT_RELEASE_DIR)/WTF/Headers \
 		-I$(WEBKIT_RELEASE_DIR)/ICU/Headers \
 		-I$(WEBKIT_RELEASE_DIR)/bmalloc/Headers \
 		-I$(WEBKIT_RELEASE_DIR)/ \
+		-I$(WEBKIT_RELEASE_DIR)/include \
+		-I$(WEBKIT_RELEASE_DIR)/JavaScriptCore/PrivateHeaders \
+		-I$(WEBKIT_RELEASE_DIR)/bmalloc/PrivateHeaders \
+		-I$(WEBKIT_RELEASE_DIR)/WTF/PrivateHeaders
+
+
+MAC_INCLUDE_DIRS :=  $(ALL_JSC_INCLUDE_DIRS) \
 		-Isrc/bun.js/bindings/ \
 		-Isrc/bun.js/builtins/ \
 		-Isrc/bun.js/bindings/webcore \
@@ -285,7 +291,8 @@ MAC_INCLUDE_DIRS := -I$(WEBKIT_RELEASE_DIR)/JavaScriptCore/PrivateHeaders \
 		-I$(JSC_INCLUDE_DIR)
 
 LINUX_INCLUDE_DIRS := -I$(JSC_INCLUDE_DIR) \
-						-Isrc/bun.js/builtins/ \
+					   $(ALL_JSC_INCLUDE_DIRS) \
+					  -Isrc/bun.js/builtins/ \
 					  -Isrc/bun.js/bindings/ \
 					  -Isrc/bun.js/bindings/webcore \
 					  -Isrc/bun.js/bindings/sqlite \

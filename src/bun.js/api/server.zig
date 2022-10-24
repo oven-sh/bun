@@ -1142,7 +1142,11 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             const stat: std.os.Stat = switch (JSC.Node.Syscall.fstat(fd)) {
                 .result => |result| result,
                 .err => |err| {
-                    this.runErrorHandler(err.withPath(file.pathlike.path.slice()).toSystemError().toErrorInstance(
+                    var out = std.ArrayList(u8).initCapacity(this.allocator, 16) catch unreachable;
+                    std.fmt.format(out.writer(), "{}", .{file.pathlike}) catch {};
+                    var zig_string = ZigString.init(out.items);
+                    zig_string.mark();
+                    this.runErrorHandler(err.withPath(zig_string.toSliceFast(this.allocator).slice()).toSystemError().toErrorInstance(
                         this.server.globalThis,
                     ));
                     if (auto_close) {

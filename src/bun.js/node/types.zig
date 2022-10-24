@@ -801,6 +801,16 @@ pub const PathOrFileDescriptor = union(Tag) {
         };
     }
 
+    pub fn format(this: PathOrFileDescriptor, comptime fmt: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+        if (fmt.len != 0 and fmt != "s") {
+            @compileError("Unsupported format argument: '" ++ fmt ++ "'.");
+        }
+        switch (this) {
+            .path => |p| try writer.writeAll(p.slice()),
+            .fd => |fd| try writer.print("{d}", .{fd}),
+        }
+    }
+
     pub fn fromJS(ctx: JSC.C.JSContextRef, arguments: *ArgumentsSlice, exception: JSC.C.ExceptionRef) ?PathOrFileDescriptor {
         const first = arguments.next() orelse return null;
 

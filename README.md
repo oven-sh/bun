@@ -138,8 +138,8 @@ bun upgrade --canary
   - [WebSockets](#websockets-with-bunserve)
   - [Error handling](#error-handling)
 - [`Bun.write` – optimizing I/O](#bunwrite--optimizing-io)
-- [`Bun.spawn` - spawn processes](#bunspawn)
-- [`Bun.which` - find the path to a bin](#bunwhich)
+- [`Bun.spawn` - spawn processes](#bunspawn--spawn-a-process)
+- [`Bun.which` - find the path to a bin](#bunwhich--find-the-path-to-a-binary)
 - [bun:sqlite (SQLite3 module)](#bunsqlite-sqlite3-module)
   - [bun:sqlite Benchmark](#bunsqlite-benchmark)
   - [Getting started with bun:sqlite](#getting-started-with-bunsqlite)
@@ -174,7 +174,7 @@ bun upgrade --canary
   - [`Bun.Transpiler.transform`](#buntranspilertransform)
   - [`Bun.Transpiler.scan`](#buntranspilerscan)
   - [`Bun.Transpiler.scanImports`](#buntranspilerscanimports)
-- [`Bun.peek` - read a promise same-tick](#bunpeek)
+- [`Bun.peek` - read a promise same-tick](#bunpeek---read-a-promise-without-resolving-it)
 - [Environment variables](#environment-variables)
 - [Credits](#credits)
 - [License](#license)
@@ -2551,7 +2551,7 @@ Find the path to an executable, similar to typing `which` in your terminal.
 
 ```ts
 const ls = Bun.which("ls");
-console.log(ls); // "/bin/ls"
+console.log(ls); // "/usr/bin/ls"
 ```
 
 `Bun.which` defaults the `PATH` to the current `PATH` environment variable, but you can customize it

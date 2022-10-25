@@ -2905,6 +2905,10 @@ pub const ModuleLoader = struct {
                     return error.ParseError;
                 };
 
+                if (jsc_vm.bundler.log.errors > 0) {
+                    return error.ParseError;
+                }
+
                 if (comptime disable_transpilying) {
                     return ResolvedSource{
                         .allocator = null,

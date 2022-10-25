@@ -1743,7 +1743,6 @@ fn NewLexer_(
             };
 
             try lexer.addRangeError(lexer.range(), "Unexpected {s}", .{found}, true);
-            return error.SyntaxError;
         }
 
         pub fn raw(self: *LexerType) []const u8 {
@@ -1764,7 +1763,6 @@ fn NewLexer_(
             };
 
             try self.addRangeError(self.range(), "Expected {s} but found \"{s}\"", .{ text, found }, true);
-            return error.SyntaxError;
         }
 
         fn scanCommentText(lexer: *LexerType) void {

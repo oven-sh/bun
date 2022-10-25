@@ -57,16 +57,19 @@ static  WTF::String to16Bit(JSValue jsValue, JSC::JSGlobalObject *globalObject, 
 static WTF::String extendMultibyteHexCharacters(const WTF::String &string) {
     WTF::StringBuilder sb;
     uint32_t length = string.length();
+    const UChar *characters = string.characters16();
+    bool inCharacterClass = false;
+
     for (int i = 0; i < length; i++) {
-        while (string.characterAt(i) == '\\') {
-            if (i + 1 < length && string.characterAt(i + 1) == 'x') {
-                if (i + 2 < length && isxdigit(string.characterAt(i + 2))) {
-                    if (i + 3 < length && isxdigit(string.characterAt(i + 3))) {
+        while (characters[i] == '\\') {
+            if (i + 1 < length && characters[i + 1] == 'x') {
+                if (i + 2 < length && isxdigit(characters[i+ 2])) {
+                    if (i + 3 < length && isxdigit(characters[i+ 3])) {
                         sb.append(string.substring(i, 4));
                         sb.append("\\x00"_s);
                         i += 4;
                     } else {
-                        // skip "\"
+                        // skip '\'
                         sb.append(string.substring(i + 1, 2));
                         i += 3;
                     }
@@ -81,7 +84,32 @@ static WTF::String extendMultibyteHexCharacters(const WTF::String &string) {
         if (i >= length) {
             break;
         }
-        sb.append(string.characterAt(i));
+
+        if (inCharacterClass) {
+            // we know ']' will be escaped so there isn't a need to scan for the closing bracket
+            if (characters[i] == '[' || characters[i] == ']' || characters[i] == '^' || characters[i] == '-' || characters[i] == ')' || characters[i] == '(') {
+                if (characters[i- 1] != '\\') {
+                    // character class intersections not supported, assume end of character class
+                    if (characters[i] == ']') {
+                        inCharacterClass = false;
+                    } else {
+                        sb.append('\\');
+                    }
+                }
+            }
+        } else {
+            if (characters[i] == '[') {
+                if (i - 1 >= 0) {
+                    if (characters[i- 1] != '\\') {
+                        inCharacterClass = true;
+                    }
+                } else {
+                    inCharacterClass = true;
+                }
+            }
+        }
+
+        sb.append(characters[i]);
     }
 
     return to16Bit(sb.toString());
@@ -811,7 +839,6 @@ static JSC::EncodedJSValue constructOrCall(Zig::GlobalObject *globalObject, JSVa
     onig_set_syntax_op2(syntax, onig_get_syntax_op2(syntax) | ONIG_SYN_OP2_ESC_U_HEX4);
     onig_set_syntax_behavior(syntax, onig_get_syntax_behavior(syntax) | ONIG_SYN_ALLOW_EMPTY_RANGE_IN_CC);
     onig_set_syntax_behavior(syntax, onig_get_syntax_behavior(syntax) | ONIG_SYN_ALLOW_INVALID_CODE_END_OF_RANGE_IN_CC);
-    onig_set_syntax_behavior(syntax, onig_get_syntax_behavior(syntax) & ~ONIG_SYN_BACKSLASH_ESCAPE_IN_CC);
 
     OnigEncodingType* encoding = encodings[0];
     OnigErrorInfo errorInfo = { 0 };

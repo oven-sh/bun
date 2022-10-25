@@ -163,8 +163,8 @@ using JSBuffer = WebCore::JSBuffer;
 #include "DOMJITHelpers.h"
 #include <JavaScriptCore/DFGAbstractHeap.h>
 
-#include "JSCryptoKey.h"
-#include "JSSubtleCrypto.h"
+#include "webcrypto/JSCryptoKey.h"
+#include "webcrypto/JSSubtleCrypto.h"
 
 #include "OnigurumaRegExp.h"
 

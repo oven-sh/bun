@@ -1885,13 +1885,13 @@ fn NewLexer_(
                         lexer.step();
 
                         var has_set_flags_start = false;
-                        const min_flag = comptime std.mem.min(u8, "gimsuy");
-                        const max_flag = comptime std.mem.max(u8, "gimsuy");
+                        const min_flag = comptime std.mem.min(u8, "dgimsuy");
+                        const max_flag = comptime std.mem.max(u8, "dgimsuy");
                         const RegexpFlags = std.bit_set.IntegerBitSet((max_flag - min_flag) + 1);
                         var flags = RegexpFlags.initEmpty();
                         while (isIdentifierContinue(lexer.code_point)) {
                             switch (lexer.code_point) {
-                                'g', 'i', 'm', 's', 'u', 'y' => {
+                                'd', 'g', 'i', 'm', 's', 'u', 'y' => {
                                     if (!has_set_flags_start) {
                                         lexer.regex_flags_start = @truncate(u16, lexer.end - lexer.start);
                                         has_set_flags_start = true;

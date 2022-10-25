@@ -2865,9 +2865,10 @@ await Bun.write("index.html", await fetch("http://example.com"));
 await Bun.write(Bun.file("index.html"), await fetch("http://example.com"));
 ```
 
-````ts
+```ts
 // copy input.txt to output.txt
 await Bun.write("output.txt", Bun.file("input.txt"));
+```
 
 ## bun:sqlite (SQLite3 module)
 
@@ -2885,7 +2886,7 @@ Installation:
 ```sh
 # there's nothing to install
 # bun:sqlite is built-in to bun.js
-````
+```
 
 Example:
 

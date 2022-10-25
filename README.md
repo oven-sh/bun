@@ -2574,6 +2574,183 @@ const ls = Bun.which("ls", {
 console.log(ls); // null
 ```
 
+## `Bun.listen` & `Bun.connect` - TCP/TLS sockets
+
+`Bun.listen` and `Bun.connect` is bun's native TCP & TLS socket API. Use it to implement database clients, game servers – anything that needs to communicate over TCP (instead of HTTP). This is a low-level API intended for library others and for advanced use cases.
+
+Start a TCP server with `Bun.listen`:
+
+```ts
+// The server
+Bun.listen({
+  hostname: "localhost",
+  port: 8080,
+  socket: {
+    open(socket) {
+      socket.write("hello world");
+    },
+    data(socket, data) {
+      console.log(data instanceof Uint8Array); // true
+    },
+    drain(socket) {
+      console.log("gimme more data");
+    },
+    close(socket) {
+      console.log("goodbye!");
+    },
+  },
+  // This is a TLS socket
+  // certFile: "/path/to/cert.pem",
+  // keyFile: "/path/to/key.pem",
+});
+```
+
+`Bun.connect` lets you create a TCP client:
+
+```ts
+// The client
+Bun.connect({
+  hostname: "localhost",
+  port: 8080,
+
+  socket: {
+    open(socket) {
+      socket.write("hello server, i'm the client!");
+    },
+    data(socket, message) {
+      socket.write("thanks for the message! Sincerely, " + socket.data.name);
+    },
+    drain(socket) {
+      console.log("my socket is ready for more data");
+    },
+    close(socket) {
+      console.log("");
+    },
+    timeout(socket) {
+      console.log("socket timed out");
+    },
+  },
+
+  data: {
+    name: "Clienty McClientface",
+  },
+});
+```
+
+#### Benchmark-driven API design
+
+Bun's TCP socket API is designed to go as fast as we can.
+
+Instead of using promises or assigning callbacks per socket instance (like Node.js' `EventEmitter` or the web-standard `WebSocket` API), assign all callbacks one time
+
+This design decision was made after benchmarking. For performance-sensitive servers, promise-heavy APIs or assigning callbacks per socket instance can cause significant garbage collector pressure and increase memory usage. If you're using a TCP server API, you probably care more about performance.
+
+```ts
+Bun.listen({
+  socket: {
+    open(socket) {},
+    data(socket, data) {},
+    drain(socket) {},
+    close(socket) {},
+    error(socket, error) {},
+  },
+  hostname: "localhost",
+  port: 8080,
+});
+```
+
+Instead of having to allocate unique functions for each instance of a socket, we can use each callback once for all sockets. This is a small optimization, but it adds up.
+
+How do you pass per-socket data to each socket object?
+
+`**data**` is a property on the `TCPSocket` & `TLSSocket` object that you can use to store per-socket data.
+
+```ts
+socket.data = { name: "Clienty McClientface" };
+```
+
+You can assign a default value to `data` in the `connect` or `listen` options.
+
+```ts
+Bun.listen({
+  socket: {
+    open(socket) {
+      console.log(socket.data); // { name: "Servery McServerface" }
+    },
+  },
+  data: {
+    name: "Servery McServerface",
+  },
+});
+```
+
+#### Hot-reloading TCP servers & clients
+
+`TCPSocket` (returned by `Bun.connect` and passed through callbacks in `Bun.listen`) has a `reload` method that lets you reload the callbacks for all related sockets (either just the one for `Bun.connect` or all sockets for `Bun.listen`):
+
+```ts
+const socket = Bun.connect({
+  hostname: "localhost",
+  port: 8080,
+  socket: {
+    data(socket, msg) {
+      console.log("wow i got a message!");
+
+      // this will be called the next time the server sends a message
+      socket.reload({
+        data(socket) {
+          console.log("okay, not so surprising this time");
+        },
+      });
+    },
+  },
+});
+```
+
+#### No buffering
+
+Currently, `TCPSocket` & `TLSSocket` in Bun do not buffer data. Adding support for corking (similar to `ServerWebSocket`) is planned, but it means you will need to handle backpressure yourself using the `drain` callback.
+
+Your TCP client/server will have abysmal performance if you don't consider buffering carefully.
+
+For example, this:
+
+```ts
+socket.write("h");
+socket.write("e");
+socket.write("l");
+socket.write("l");
+socket.write("o");
+```
+
+Performs significantly worse than:
+
+```ts
+socket.write("hello");
+```
+
+To simplify this for now, consider using `ArrayBufferSink` with the `{stream: true}` option:
+
+```ts
+const sink = new ArrayBufferSink({ stream: true, highWaterMark: 1024 });
+
+sink.write("h");
+sink.write("e");
+sink.write("l");
+sink.write("l");
+sink.write("o");
+
+queueMicrotask(() => {
+  var data = sink.flush();
+  if (!socket.write(data)) {
+    // put it back in the sink if the socket is full
+    sink.write(data);
+  }
+});
+```
+
+Builtin buffering is planned in a future version of Bun.
+
 ## `Bun.peek` - read a promise without resolving it
 
 `Bun.peek` is a utility function that lets you read a promise's result without `await` or `.then`, but only if the promise has already fulfilled or rejected.

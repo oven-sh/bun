@@ -1,4 +1,22 @@
 void GlobalObject::initGeneratedLazyClasses() {
+    m_JSTCPSocket.initLater(
+              [](LazyClassStructure::Initializer& init) {
+                 init.setPrototype(WebCore::JSTCPSocket::createPrototype(init.vm, reinterpret_cast<Zig::GlobalObject*>(init.global)));
+                 init.setStructure(WebCore::JSTCPSocket::createStructure(init.vm, init.global, init.prototype));
+                 init.setConstructor(WebCore::JSTCPSocketConstructor::create(init.vm, init.global, WebCore::JSTCPSocketConstructor::createStructure(init.vm, init.global, init.global->functionPrototype()), jsCast<WebCore::JSTCPSocketPrototype*>(init.prototype)));
+              });
+    m_JSTLSSocket.initLater(
+              [](LazyClassStructure::Initializer& init) {
+                 init.setPrototype(WebCore::JSTLSSocket::createPrototype(init.vm, reinterpret_cast<Zig::GlobalObject*>(init.global)));
+                 init.setStructure(WebCore::JSTLSSocket::createStructure(init.vm, init.global, init.prototype));
+                 init.setConstructor(WebCore::JSTLSSocketConstructor::create(init.vm, init.global, WebCore::JSTLSSocketConstructor::createStructure(init.vm, init.global, init.global->functionPrototype()), jsCast<WebCore::JSTLSSocketPrototype*>(init.prototype)));
+              });
+    m_JSListener.initLater(
+              [](LazyClassStructure::Initializer& init) {
+                 init.setPrototype(WebCore::JSListener::createPrototype(init.vm, reinterpret_cast<Zig::GlobalObject*>(init.global)));
+                 init.setStructure(WebCore::JSListener::createStructure(init.vm, init.global, init.prototype));
+                 init.setConstructor(WebCore::JSListenerConstructor::create(init.vm, init.global, WebCore::JSListenerConstructor::createStructure(init.vm, init.global, init.global->functionPrototype()), jsCast<WebCore::JSListenerPrototype*>(init.prototype)));
+              });
     m_JSSubprocess.initLater(
               [](LazyClassStructure::Initializer& init) {
                  init.setPrototype(WebCore::JSSubprocess::createPrototype(init.vm, reinterpret_cast<Zig::GlobalObject*>(init.global)));
@@ -87,6 +105,9 @@ void GlobalObject::initGeneratedLazyClasses() {
 template<typename Visitor>
 void GlobalObject::visitGeneratedLazyClasses(GlobalObject *thisObject, Visitor& visitor)
 {
+      thisObject->m_JSTCPSocket.visit(visitor);  visitor.append(thisObject->m_JSTCPSocketSetterValue);
+      thisObject->m_JSTLSSocket.visit(visitor);  visitor.append(thisObject->m_JSTLSSocketSetterValue);
+      thisObject->m_JSListener.visit(visitor);  visitor.append(thisObject->m_JSListenerSetterValue);
       thisObject->m_JSSubprocess.visit(visitor);  visitor.append(thisObject->m_JSSubprocessSetterValue);
       thisObject->m_JSSHA1.visit(visitor);  visitor.append(thisObject->m_JSSHA1SetterValue);
       thisObject->m_JSMD5.visit(visitor);  visitor.append(thisObject->m_JSMD5SetterValue);

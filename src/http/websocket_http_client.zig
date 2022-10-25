@@ -149,6 +149,7 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
 
             Socket.configure(
                 ctx,
+                false,
                 HTTPClient,
                 struct {
                     pub const onOpen = handleOpen;
@@ -793,6 +794,7 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
 
             Socket.configure(
                 ctx,
+                false,
                 WebSocket,
                 struct {
                     pub const onClose = handleClose;

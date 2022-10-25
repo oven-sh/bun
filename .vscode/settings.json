@@ -8,8 +8,8 @@
   "search.useIgnoreFiles": true,
   "zig.buildOnSave": false,
   "[zig]": {
-	  "editor.tabSize": 4,
-	  "editor.useTabStops": false,
+    "editor.tabSize": 4,
+    "editor.useTabStops": false,
     "editor.defaultFormatter": "AugusteRame.zls-vscode",
     "editor.formatOnSave": true
   },
@@ -87,6 +87,7 @@
     "editor.defaultFormatter": "xaver.clang-format"
   },
   "files.associations": {
+    "*.lock": "yarnlock",
     "*.idl": "cpp",
     "memory": "cpp",
     "iostream": "cpp",
@@ -178,7 +179,8 @@
     "ctype.h": "c",
     "ethernet.h": "c",
     "inet.h": "c",
-    "packet.h": "c"
+    "packet.h": "c",
+    "queue": "cpp"
   },
   "cmake.configureOnOpen": false
 }

@@ -1,0 +1,130 @@
+import { define } from "../scripts/class-definitions";
+
+function generate(ssl) {
+  return define({
+    name: ssl ? "TCPSocket" : "TLSSocket",
+    JSType: "0b11101110",
+    proto: {
+      write: {
+        fn: "write",
+        length: 3,
+      },
+      end: {
+        fn: "end",
+        length: 3,
+      },
+
+      //   },
+      listener: {
+        getter: "getListener",
+      },
+
+      timeout: {
+        fn: "timeout",
+        length: 1,
+      },
+
+      flush: {
+        fn: "flush",
+        length: 0,
+      },
+
+      shutdown: {
+        fn: "shutdown",
+        length: 1,
+      },
+
+      ref: {
+        fn: "ref",
+        length: 0,
+      },
+      unref: {
+        fn: "unref",
+        length: 0,
+      },
+
+      localPort: {
+        getter: "getLocalPort",
+      },
+      //   cork: {
+      //     fn: "cork",
+      //     length: 1,
+      //   },
+      data: {
+        getter: "getData",
+        cache: true,
+        setter: "setData",
+      },
+      readyState: {
+        getter: "getReadyState",
+      },
+
+      // topics: {
+      //   getter: "getTopics",
+      // },
+
+      remoteAddress: {
+        getter: "getRemoteAddress",
+        cache: true,
+      },
+
+      reload: {
+        fn: "reload",
+        length: 1,
+      },
+    },
+    finalize: true,
+    construct: true,
+    klass: {},
+  });
+}
+export default [
+  generate(true),
+  generate(false),
+  define({
+    name: "Listener",
+    JSType: "0b11101110",
+    proto: {
+      stop: {
+        fn: "stop",
+        length: 1,
+      },
+
+      ref: {
+        fn: "ref",
+        length: 0,
+      },
+      unref: {
+        fn: "unref",
+        length: 0,
+      },
+
+      port: {
+        getter: "getPort",
+      },
+
+      unix: {
+        getter: "getUnix",
+        cache: true,
+      },
+
+      reload: {
+        fn: "reload",
+        length: 1,
+      },
+
+      hostname: {
+        getter: "getHostname",
+        cache: true,
+      },
+
+      data: {
+        getter: "getData",
+        setter: "setData",
+      },
+    },
+    finalize: true,
+    construct: true,
+    klass: {},
+  }),
+];

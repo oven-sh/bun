@@ -1,4 +1,7 @@
-std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForSubprocess;
+std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForTCPSocket;
+std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForTCPSocketConstructor;std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForTLSSocket;
+std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForTLSSocketConstructor;std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForListener;
+std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForListenerConstructor;std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForSubprocess;
 std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForSubprocessConstructor;std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForSHA1;
 std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForSHA1Constructor;std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForMD5;
 std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForMD5Constructor;std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForMD4;

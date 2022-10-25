@@ -1201,6 +1201,14 @@ pub const Class = NewClass(
         .spawnSync = .{
             .rfn = JSC.wrapWithHasContainer(JSC.Subprocess, "spawnSync", false, false, false),
         },
+
+        .listen = .{
+            .rfn = JSC.wrapWithHasContainer(JSC.API.Listener, "listen", false, false, false),
+        },
+
+        .connect = .{
+            .rfn = JSC.wrapWithHasContainer(JSC.API.Listener, "connect", false, false, false),
+        },
     },
     .{
         .main = .{

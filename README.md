@@ -2639,7 +2639,27 @@ Bun.connect({
 
 #### Benchmark-driven API design
 
-This API design is a bit different than what you might be used to. Instead of using promises or assigning callbacks per socket instance (like Node.js' `EventEmitter` or the web-standard `WebSocket` API), assign all callbacks one time, right at the beginning. The reason for this is performance. Instead of having to allocate unique functions for each instance of a socket, we can use each callback once for all sockets. This is a small optimization, but it adds up.
+Bun's TCP socket API is designed to go as fast as we can.
+
+Instead of using promises or assigning callbacks per socket instance (like Node.js' `EventEmitter` or the web-standard `WebSocket` API), assign all callbacks one time
+
+This design decision was made after benchmarking. For performance-sensitive servers, promise-heavy APIs or assigning callbacks per socket instance can cause significant garbage collector pressure and increase memory usage. If you're using a TCP server API, you probably care more about performance.
+
+```ts
+Bun.listen({
+  socket: {
+    open(socket) {},
+    data(socket, data) {},
+    drain(socket) {},
+    close(socket) {},
+    error(socket, error) {},
+  },
+  hostname: "localhost",
+  port: 8080,
+});
+```
+
+Instead of having to allocate unique functions for each instance of a socket, we can use each callback once for all sockets. This is a small optimization, but it adds up.
 
 How do you pass per-socket data to each socket object?
 

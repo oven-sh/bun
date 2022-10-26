@@ -85,7 +85,7 @@ bun upgrade --canary
 - [Configuration](#configuration)
   - [bunfig.toml](#bunfigtoml)
   - [Loaders](#loaders)
-  - [CSS in JS](#css-in-js)
+  - [CSS in JS](#css-in-js-bun-dev-only)
     - [When `platform` is `browser`](#when-platform-is-browser)
     - [When `platform` is `bun`](#when-platform-is-bun)
   - [CSS Loader](#css-loader)
@@ -2576,7 +2576,7 @@ console.log(ls); // null
 
 ## `Bun.listen` & `Bun.connect` - TCP/TLS sockets
 
-`Bun.listen` and `Bun.connect` is bun's native TCP & TLS socket API. Use it to implement database clients, game servers – anything that needs to communicate over TCP (instead of HTTP). This is a low-level API intended for library others and for advanced use cases.
+`Bun.listen` and `Bun.connect` is bun's native TCP & TLS socket API. Use it to implement database clients, game servers – anything that needs to communicate over TCP (instead of HTTP). This is a low-level API intended for library authors and for advanced use cases.
 
 Start a TCP server with `Bun.listen`:
 
@@ -3861,7 +3861,7 @@ import { ptr, toArrayBuffer } from "bun:ffi";
 let myTypedArray = new Uint8Array(32);
 const myPtr = ptr(myTypedArray);
 
-// toTypedArray accepts a `byteOffset` and `byteLength`
+// toArrayBuffer accepts a `byteOffset` and `byteLength`
 // if `byteLength` is not provided, it is assumed to be a null-terminated pointer
 myTypedArray = new Uint8Array(toArrayBuffer(myPtr, 0, 32), 0, 32);
 ```

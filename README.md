@@ -2639,7 +2639,7 @@ Bun.connect({
 
 #### Benchmark-driven API design
 
-Bun's TCP socket API is designed to go as fast as we can.
+Bun's TCP socket API is designed to go fast.
 
 Instead of using promises or assigning callbacks per socket instance (like Node.js' `EventEmitter` or the web-standard `WebSocket` API), assign all callbacks one time
 

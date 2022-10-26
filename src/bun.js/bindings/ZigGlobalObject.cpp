@@ -1270,26 +1270,18 @@ JSC_DEFINE_CUSTOM_GETTER(jsServiceWorkerGlobalScope_WritableStreamDefaultWriterC
     return IDLAttribute<Zig::GlobalObject>::get<jsServiceWorkerGlobalScope_WritableStreamDefaultWriterConstructorGetter>(*lexicalGlobalObject, thisValue, attributeName);
 }
 
-static inline JSValue getterSubtleCryptoBodyConstructor(JSGlobalObject& lexicalGlobalObject, Zig::GlobalObject& thisObject)
-{
-    UNUSED_PARAM(lexicalGlobalObject);
-    return JSSubtleCrypto::getConstructor(JSC::getVM(&lexicalGlobalObject), &thisObject);
-}
-
 JSC_DEFINE_CUSTOM_GETTER(getterSubtleCryptoConstructor, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
 {
-    return IDLAttribute<Zig::GlobalObject>::get<getterSubtleCryptoBodyConstructor>(*lexicalGlobalObject, thisValue, attributeName);
-}
-
-static inline JSValue getterCryptoKeyBodyConstructor(JSGlobalObject& lexicalGlobalObject, Zig::GlobalObject& thisObject)
-{
-    UNUSED_PARAM(lexicalGlobalObject);
-    return JSCryptoKey::getConstructor(JSC::getVM(&lexicalGlobalObject), &thisObject);
+    Zig::GlobalObject* thisObject = JSC::jsCast<Zig::GlobalObject*>(lexicalGlobalObject);
+    return JSValue::encode(
+        JSSubtleCrypto::getConstructor(thisObject->vm(), thisObject));
 }
 
 JSC_DEFINE_CUSTOM_GETTER(getterCryptoKeyConstructor, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
 {
-    return IDLAttribute<Zig::GlobalObject>::get<getterCryptoKeyBodyConstructor>(*lexicalGlobalObject, thisValue, attributeName);
+    Zig::GlobalObject* thisObject = JSC::jsCast<Zig::GlobalObject*>(lexicalGlobalObject);
+     return JSValue::encode(
+        JSCryptoKey::getConstructor(thisObject->vm(), thisObject));
 }
 
 static inline JSValue getterSubtleCryptoBody(JSGlobalObject& lexicalGlobalObject, Zig::GlobalObject& thisObject)
@@ -2405,18 +2397,6 @@ void GlobalObject::addBuiltinGlobals(JSC::VM& vm)
                 "atob"_s, functionATOB, ImplementationVisibility::Public),
             JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DontDelete | 0 });
 
-    JSC::Identifier SubtleCryptoIdentifier = JSC::Identifier::fromString(vm, "SubtleCrypto"_s);
-    extraStaticGlobals.uncheckedAppend(
-        GlobalPropertyInfo { SubtleCryptoIdentifier,
-            JSC::CustomGetterSetter::create(vm, getterSubtleCryptoConstructor, nullptr),
-            JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontDelete | 0 });
-
-    JSC::Identifier CryptoKeyIdentifier = JSC::Identifier::fromString(vm, "CryptoKey"_s);
-    extraStaticGlobals.uncheckedAppend(
-        GlobalPropertyInfo { CryptoKeyIdentifier,
-            JSC::CustomGetterSetter::create(vm, getterCryptoKeyConstructor, nullptr),
-            JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontDelete | 0 });
-
     JSC::Identifier btoaIdentifier = JSC::Identifier::fromString(vm, "btoa"_s);
     extraStaticGlobals.uncheckedAppend(
         GlobalPropertyInfo { btoaIdentifier,
@@ -2580,6 +2560,9 @@ void GlobalObject::addBuiltinGlobals(JSC::VM& vm)
     putDirectCustomAccessor(vm, static_cast<JSVMClientData*>(vm.clientData)->builtinNames().WritableStreamDefaultWriterPublicName(), CustomGetterSetter::create(vm, jsServiceWorkerGlobalScope_WritableStreamDefaultWriterConstructor, nullptr), JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly);
     putDirectCustomAccessor(vm, JSC::Identifier::fromString(vm, "ByteLengthQueuingStrategy"_s), CustomGetterSetter::create(vm, jsServiceWorkerGlobalScope_ByteLengthQueuingStrategyConstructor, nullptr), JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly);
     putDirectCustomAccessor(vm, JSC::Identifier::fromString(vm, "CountQueuingStrategy"_s), CustomGetterSetter::create(vm, jsServiceWorkerGlobalScope_CountQueuingStrategyConstructor, nullptr), JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly);
+
+    putDirectCustomAccessor(vm, JSC::Identifier::fromString(vm, "SubtleCrypto"_s), JSC::CustomGetterSetter::create(vm, getterSubtleCryptoConstructor, nullptr), JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly);
+    putDirectCustomAccessor(vm, JSC::Identifier::fromString(vm, "CryptoKey"_s), JSC::CustomGetterSetter::create(vm, getterCryptoKeyConstructor, nullptr), JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly);
 
     // putDirect(vm, static_cast<JSVMClientData*>(vm.clientData)->builtinNames().nativeReadableStreamPrototypePrivateName(), jsUndefined(), JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::DontEnum | 0);
 }

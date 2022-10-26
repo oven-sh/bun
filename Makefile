@@ -277,29 +277,25 @@ ALL_JSC_INCLUDE_DIRS := -I$(WEBKIT_RELEASE_DIR)/WTF/Headers \
 		-I$(WEBKIT_RELEASE_DIR)/bmalloc/PrivateHeaders \
 		-I$(WEBKIT_RELEASE_DIR)/WTF/PrivateHeaders
 
+SHARED_INCLUDE_DIR = -I$(realpath src/bun.js/bindings)/ \
+		-I$(realpath src/bun.js/builtins/) \
+		-I$(realpath src/bun.js/bindings) \
+		-I$(realpath src/bun.js/bindings/webcore) \
+		-I$(realpath src/bun.js/bindings/webcrypto) \
+		-I$(realpath src/bun.js/bindings/sqlite) \
+		-I$(realpath src/bun.js/builtins/cpp) \
+		-I$(realpath src/bun.js/bindings/node_os) \
+		-I$(realpath src/bun.js/modules) \
+
 
 MAC_INCLUDE_DIRS :=  $(ALL_JSC_INCLUDE_DIRS) \
-		-Isrc/bun.js/bindings/ \
-		-Isrc/bun.js/builtins/ \
-		-Isrc/bun.js/bindings \
-		-Isrc/bun.js/bindings/webcore \
-		-Isrc/bun.js/bindings/webcrypto \
-		-Isrc/bun.js/bindings/sqlite \
-		-Isrc/bun.js/builtins/cpp \
-		-Isrc/bun.js/bindings/node_os \
-		-Isrc/bun.js/modules \
+		$(SHARED_INCLUDE_DIR) \
 		-I$(WEBKIT_DIR)/Source \
 		-I$(JSC_INCLUDE_DIR)
 
 LINUX_INCLUDE_DIRS := -I$(JSC_INCLUDE_DIR) \
 					   $(ALL_JSC_INCLUDE_DIRS) \
-					  -Isrc/bun.js/builtins/ \
-					  -Isrc/bun.js/bindings/ \
-					  -Isrc/bun.js/bindings/webcore \
-					  -Isrc/bun.js/bindings/sqlite \
-					  -Isrc/bun.js/builtins/cpp \
-					  -Isrc/bun.js/bindings/node_os \
-						-Isrc/bun.js/modules \
+					   $(SHARED_INCLUDE_DIR) \
 					  -I$(ZLIB_INCLUDE_DIR)
 
 
@@ -1669,7 +1665,6 @@ $(OBJ_DIR)/webcrypto/%.o: src/bun.js/bindings/webcrypto/%.cpp
 		$(OPTIMIZATION_LEVEL) \
 		-fno-exceptions \
 		-fno-rtti \
-		-I$(SRC_DIR) \
 		-ferror-limit=1000 \
 		$(EMIT_LLVM_FOR_RELEASE) \
 		-g3 -c -o $@ $<

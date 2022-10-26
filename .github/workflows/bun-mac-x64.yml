@@ -177,7 +177,7 @@ jobs:
           WEBKIT_RELEASE_DIR: ${{ runner.temp }}/bun-webkit
           WEBKIT_RELEASE_DIR_LTO: ${{ runner.temp }}/bun-webkit
         run: |
-          mkdir -p $BUN_DEPS_OUT_DIR
+          mkdir -p $OBJ_DIR $BUN_DEPS_OUT_DIR
           make vendor-without-check webcrypto
       - name: Compile C++
         if: matrix.compile_obj

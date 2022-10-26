@@ -3,7 +3,6 @@ env:
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository }}
   TEST_TAG: bun-test'
-concurrency: ${{ runner.name }}-${{ runner.os }}-${{ runner.arch }}
 
 on:
   push:
@@ -30,6 +29,7 @@ jobs:
     name: ${{matrix.tag}}
     runs-on: ${{matrix.runner}}
     timeout-minutes: 90
+    concurrency: ${{ runner.name }}-${{ runner.os }}-${{ runner.arch }}
     strategy:
       matrix:
         include:

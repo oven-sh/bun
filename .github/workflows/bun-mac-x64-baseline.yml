@@ -3,7 +3,6 @@ env:
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository }}
   TEST_TAG: bun-test'
-concurrency: ${{ runner.name }}-${{ runner.os }}-${{ runner.arch }}
 
 on:
   push:
@@ -29,6 +28,7 @@ jobs:
   macos-object-files:
     name: macOS Object
     runs-on: zig-object
+    concurrency: ${{ runner.name }}-${{ runner.os }}-${{ runner.arch }}
     strategy:
       matrix:
         include:
@@ -191,7 +191,7 @@ jobs:
           WEBKIT_RELEASE_DIR_LTO: ${{ runner.temp }}/bun-webkit
         run: |
           mkdir -p $OBJ_DIR $BUN_DEPS_OUT_DIR
-          
+
           make -j $(sysctl -n hw.ncpu) release-bindings
       - name: Upload C++
         if: matrix.compile_obj

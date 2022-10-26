@@ -1643,6 +1643,7 @@ $(DEBUG_OBJ_DIR)/webcrypto/%.o: src/bun.js/bindings/webcrypto/%.cpp
 		$(MACOS_MIN_FLAG) \
 		$(DEBUG_OPTIMIZATION_LEVEL) \
 		-fno-exceptions \
+		-I$(SRC_DIR) \
 		-fno-rtti \
 		-ferror-limit=1000 \
 		$(EMIT_LLVM_FOR_DEBUG) \
@@ -1667,6 +1668,7 @@ $(OBJ_DIR)/webcrypto/%.o: src/bun.js/bindings/webcrypto/%.cpp
 		$(OPTIMIZATION_LEVEL) \
 		-fno-exceptions \
 		-fno-rtti \
+		-I$(SRC_DIR) \
 		-ferror-limit=1000 \
 		$(EMIT_LLVM_FOR_RELEASE) \
 		-g3 -c -o $@ $<

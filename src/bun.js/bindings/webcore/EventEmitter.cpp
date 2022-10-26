@@ -1,8 +1,6 @@
-#include <iostream>
-#include "config.h"
-#include "Event.h"
-
 #include "EventEmitter.h"
+
+#include "Event.h"
 
 #include "DOMWrapperWorld.h"
 #include "EventNames.h"
@@ -18,7 +16,6 @@
 namespace WebCore {
 
 WTF_MAKE_ISO_ALLOCATED_IMPL(EventEmitter);
-WTF_MAKE_ISO_ALLOCATED_IMPL(EventEmitterWithInlineData);
 
 Ref<EventEmitter> EventEmitter::create(ScriptExecutionContext& context)
 {

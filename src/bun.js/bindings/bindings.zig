@@ -1092,6 +1092,7 @@ pub const SystemError = extern struct {
     message: ZigString = ZigString.init(""),
     path: ZigString = ZigString.init(""),
     syscall: ZigString = ZigString.init(""),
+    fd: i32 = -1,
 
     pub fn Maybe(comptime Result: type) type {
         return union(enum) {
@@ -1485,7 +1486,7 @@ pub const JSPromise = extern struct {
     ) JSValue {
         if (value.isEmpty()) {
             return resolvedPromiseValue(globalObject, JSValue.jsUndefined());
-        } else if (value.isEmptyOrUndefinedOrNull()) {
+        } else if (value.isEmptyOrUndefinedOrNull() or !value.isCell()) {
             return resolvedPromiseValue(globalObject, value);
         }
 
@@ -2145,6 +2146,11 @@ pub const JSGlobalObject = extern struct {
             if (!assertion) @breakpoint();
             std.debug.assert(assertion);
         }
+        return @ptrCast(*JSC.VirtualMachine, @alignCast(std.meta.alignment(JSC.VirtualMachine), this.bunVM_()));
+    }
+
+    /// We can't do the threadlocal check when queued from another thread
+    pub fn bunVMConcurrently(this: *JSGlobalObject) *JSC.VirtualMachine {
         return @ptrCast(*JSC.VirtualMachine, @alignCast(std.meta.alignment(JSC.VirtualMachine), this.bunVM_()));
     }
 

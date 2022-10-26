@@ -1,4 +1,7 @@
-std::unique_ptr<IsoSubspace> m_subspaceForSubprocess;
+std::unique_ptr<IsoSubspace> m_subspaceForTCPSocket;
+std::unique_ptr<IsoSubspace> m_subspaceForTCPSocketConstructor;std::unique_ptr<IsoSubspace> m_subspaceForTLSSocket;
+std::unique_ptr<IsoSubspace> m_subspaceForTLSSocketConstructor;std::unique_ptr<IsoSubspace> m_subspaceForListener;
+std::unique_ptr<IsoSubspace> m_subspaceForListenerConstructor;std::unique_ptr<IsoSubspace> m_subspaceForSubprocess;
 std::unique_ptr<IsoSubspace> m_subspaceForSubprocessConstructor;std::unique_ptr<IsoSubspace> m_subspaceForSHA1;
 std::unique_ptr<IsoSubspace> m_subspaceForSHA1Constructor;std::unique_ptr<IsoSubspace> m_subspaceForMD5;
 std::unique_ptr<IsoSubspace> m_subspaceForMD5Constructor;std::unique_ptr<IsoSubspace> m_subspaceForMD4;

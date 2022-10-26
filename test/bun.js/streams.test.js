@@ -4,7 +4,7 @@ import {
   readableStreamToArray,
   readableStreamToText,
 } from "bun";
-import { expect, it, beforeEach, afterEach } from "bun:test";
+import { expect, it, beforeEach, afterEach, describe } from "bun:test";
 import { mkfifo } from "mkfifo";
 import { unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -13,6 +13,53 @@ new Uint8Array();
 
 beforeEach(() => gc());
 afterEach(() => gc());
+
+describe("ReadableStream.prototype.tee", async () => {
+  it("class", () => {
+    const [a, b] = new ReadableStream().tee();
+    expect(a instanceof ReadableStream).toBe(true);
+    expect(b instanceof ReadableStream).toBe(true);
+  });
+
+  describe("default stream", () => {
+    it("works", async () => {
+      var [a, b] = new ReadableStream({
+        start(controller) {
+          controller.enqueue("a");
+          controller.enqueue("b");
+          controller.enqueue("c");
+          controller.close();
+        },
+      }).tee();
+
+      expect(await readableStreamToText(a)).toBe("abc");
+      expect(await readableStreamToText(b)).toBe("abc");
+    });
+  });
+
+  describe("direct stream", () => {
+    it("works", async () => {
+      try {
+        var [a, b] = new ReadableStream({
+          pull(controller) {
+            controller.write("a");
+            controller.write("b");
+            controller.write("c");
+            controller.close();
+          },
+          type: "direct",
+        }).tee();
+
+        expect(await readableStreamToText(a)).toBe("abc");
+        expect(await readableStreamToText(b)).toBe("abc");
+      } catch (e) {
+        console.log(e.message);
+        console.log(e.stack);
+        throw e;
+      }
+    });
+  });
+});
 
 it("ReadableStream.prototype[Symbol.asyncIterator]", async () => {
   const stream = new ReadableStream({

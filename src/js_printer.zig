@@ -4899,6 +4899,7 @@ pub const BufferWriter = struct {
     written: []u8 = "",
     sentinel: [:0]u8 = "",
     append_null_byte: bool = false,
+    append_newline: bool = false,
     approximate_newline_count: usize = 0,
 
     pub fn getWritten(this: *BufferWriter) []u8 {
@@ -4963,6 +4964,11 @@ pub const BufferWriter = struct {
     pub fn done(
         ctx: *BufferWriter,
     ) anyerror!void {
+        if (ctx.append_newline) {
+            ctx.append_newline = false;
+            try ctx.buffer.appendChar('\n');
+        }
+
         if (ctx.append_null_byte) {
             ctx.sentinel = ctx.buffer.toOwnedSentinelLeaky();
             ctx.written = ctx.buffer.toOwnedSliceLeaky();

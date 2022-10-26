@@ -163,6 +163,9 @@ using JSBuffer = WebCore::JSBuffer;
 #include "DOMJITHelpers.h"
 #include <JavaScriptCore/DFGAbstractHeap.h>
 
+#include "webcrypto/JSCryptoKey.h"
+#include "webcrypto/JSSubtleCrypto.h"
+
 #include "OnigurumaRegExp.h"
 
 #ifdef __APPLE__
@@ -427,7 +430,10 @@ GlobalObject::GlobalObject(JSC::VM& vm, JSC::Structure* structure)
     m_scriptExecutionContext = new WebCore::ScriptExecutionContext(&vm, this);
 }
 
-GlobalObject::~GlobalObject() = default;
+GlobalObject::~GlobalObject()
+{
+    scriptExecutionContext()->removeFromContextsMap();
+}
 
 void GlobalObject::destroy(JSCell* cell)
 {
@@ -1264,6 +1270,40 @@ JSC_DEFINE_CUSTOM_GETTER(jsServiceWorkerGlobalScope_WritableStreamDefaultWriterC
     return IDLAttribute<Zig::GlobalObject>::get<jsServiceWorkerGlobalScope_WritableStreamDefaultWriterConstructorGetter>(*lexicalGlobalObject, thisValue, attributeName);
 }
 
+static inline JSValue getterSubtleCryptoBodyConstructor(JSGlobalObject& lexicalGlobalObject, Zig::GlobalObject& thisObject)
+{
+    UNUSED_PARAM(lexicalGlobalObject);
+    return JSSubtleCrypto::getConstructor(JSC::getVM(&lexicalGlobalObject), &thisObject);
+}
+
+JSC_DEFINE_CUSTOM_GETTER(getterSubtleCryptoConstructor, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
+{
+    return IDLAttribute<Zig::GlobalObject>::get<getterSubtleCryptoBodyConstructor>(*lexicalGlobalObject, thisValue, attributeName);
+}
+
+static inline JSValue getterCryptoKeyBodyConstructor(JSGlobalObject& lexicalGlobalObject, Zig::GlobalObject& thisObject)
+{
+    UNUSED_PARAM(lexicalGlobalObject);
+    return JSCryptoKey::getConstructor(JSC::getVM(&lexicalGlobalObject), &thisObject);
+}
+
+JSC_DEFINE_CUSTOM_GETTER(getterCryptoKeyConstructor, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
+{
+    return IDLAttribute<Zig::GlobalObject>::get<getterCryptoKeyBodyConstructor>(*lexicalGlobalObject, thisValue, attributeName);
+}
+
+static inline JSValue getterSubtleCryptoBody(JSGlobalObject& lexicalGlobalObject, Zig::GlobalObject& thisObject)
+{
+    UNUSED_PARAM(lexicalGlobalObject);
+    return thisObject.subtleCrypto();
+}
+
+JSC_DEFINE_CUSTOM_GETTER(getterSubtleCrypto, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
+{
+    return JSValue::encode(
+        getterSubtleCryptoBody(*lexicalGlobalObject, *reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject)));
+}
+
 JSC_DECLARE_HOST_FUNCTION(makeThisTypeErrorForBuiltins);
 JSC_DECLARE_HOST_FUNCTION(makeGetterTypeErrorForBuiltins);
 JSC_DECLARE_HOST_FUNCTION(makeDOMExceptionForBuiltins);
@@ -1951,6 +1991,15 @@ void GlobalObject::finishCreation(VM& vm)
 
     this->initGeneratedLazyClasses();
 
+    m_subtleCryptoObject.initLater(
+        [](const JSC::LazyProperty<JSC::JSGlobalObject, JSC::JSObject>::Initializer& init) {
+            auto& global = *reinterpret_cast<Zig::GlobalObject*>(init.owner);
+            RefPtr<WebCore::SubtleCrypto> crypto = WebCore::SubtleCrypto::create(global.scriptExecutionContext());
+
+            init.set(
+                toJSNewlyCreated<IDLInterface<SubtleCrypto>>(*init.owner, global, WTFMove(crypto)).getObject());
+        });
+
     m_NapiClassStructure.initLater(
         [](LazyClassStructure::Initializer& init) {
             init.setStructure(Zig::NapiClass::createStructure(init.vm, init.global, init.global->functionPrototype()));
@@ -2133,6 +2182,90 @@ void GlobalObject::finishCreation(VM& vm)
     RELEASE_ASSERT(classInfo());
 }
 
+JSC_DEFINE_HOST_FUNCTION(functionBunPeek,
+    (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    JSC::VM& vm = globalObject->vm();
+
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSValue promiseValue = callFrame->argument(0);
+    if (UNLIKELY(!promiseValue)) {
+        return JSValue::encode(jsUndefined());
+    } else if (!promiseValue.isCell()) {
+        return JSValue::encode(promiseValue);
+    }
+
+    auto* promise = jsDynamicCast<JSPromise*>(promiseValue);
+
+    if (!promise) {
+        return JSValue::encode(promiseValue);
+    }
+
+    JSValue invalidateValue = callFrame->argument(1);
+    bool invalidate = invalidateValue.isBoolean() && invalidateValue.asBoolean();
+
+    switch (promise->status(vm)) {
+    case JSPromise::Status::Pending: {
+        break;
+    }
+    case JSPromise::Status::Fulfilled: {
+        JSValue result = promise->result(vm);
+        if (invalidate) {
+            promise->internalField(JSC::JSPromise::Field::ReactionsOrResult).set(vm, promise, jsUndefined());
+        }
+        return JSValue::encode(result);
+    }
+    case JSPromise::Status::Rejected: {
+        JSValue result = promise->result(vm);
+        JSC::EnsureStillAliveScope ensureStillAliveScope(result);
+
+        if (invalidate) {
+            promise->internalField(JSC::JSPromise::Field::Flags).set(vm, promise, jsNumber(promise->internalField(JSC::JSPromise::Field::Flags).get().asUInt32() | JSC::JSPromise::isHandledFlag));
+            promise->internalField(JSC::JSPromise::Field::ReactionsOrResult).set(vm, promise, JSC::jsUndefined());
+        }
+
+        return JSValue::encode(result);
+    }
+    }
+
+    return JSValue::encode(promiseValue);
+}
+
+JSC_DEFINE_HOST_FUNCTION(functionBunPeekStatus,
+    (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    JSC::VM& vm = globalObject->vm();
+    static NeverDestroyed<String> fulfilled = MAKE_STATIC_STRING_IMPL("fulfilled");
+
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSValue promiseValue = callFrame->argument(0);
+    if (!promiseValue || !promiseValue.isCell()) {
+        return JSValue::encode(jsOwnedString(vm, fulfilled));
+    }
+
+    auto* promise = jsDynamicCast<JSPromise*>(promiseValue);
+
+    if (!promise) {
+        return JSValue::encode(jsOwnedString(vm, fulfilled));
+    }
+
+    switch (promise->status(vm)) {
+    case JSPromise::Status::Pending: {
+        static NeverDestroyed<String> pending = MAKE_STATIC_STRING_IMPL("pending");
+        return JSValue::encode(jsOwnedString(vm, pending));
+    }
+    case JSPromise::Status::Fulfilled: {
+        return JSValue::encode(jsOwnedString(vm, fulfilled));
+    }
+    case JSPromise::Status::Rejected: {
+        static NeverDestroyed<String> rejected = MAKE_STATIC_STRING_IMPL("rejected");
+        return JSValue::encode(jsOwnedString(vm, rejected));
+    }
+    }
+
+    return JSValue::encode(jsUndefined());
+}
+
 extern "C" void Bun__setOnEachMicrotaskTick(JSC::VM* vm, void* ptr, void (*callback)(void* ptr))
 {
     if (callback == nullptr) {
@@ -2218,7 +2351,7 @@ void GlobalObject::addBuiltinGlobals(JSC::VM& vm)
     auto& builtinNames = WebCore::builtinNames(vm);
 
     WTF::Vector<GlobalPropertyInfo> extraStaticGlobals;
-    extraStaticGlobals.reserveCapacity(40);
+    extraStaticGlobals.reserveCapacity(42);
 
     JSC::Identifier queueMicrotaskIdentifier = JSC::Identifier::fromString(vm, "queueMicrotask"_s);
     extraStaticGlobals.uncheckedAppend(
@@ -2271,6 +2404,18 @@ void GlobalObject::addBuiltinGlobals(JSC::VM& vm)
             JSC::JSFunction::create(vm, JSC::jsCast<JSC::JSGlobalObject*>(globalObject()), 1,
                 "atob"_s, functionATOB, ImplementationVisibility::Public),
             JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DontDelete | 0 });
+
+    JSC::Identifier SubtleCryptoIdentifier = JSC::Identifier::fromString(vm, "SubtleCrypto"_s);
+    extraStaticGlobals.uncheckedAppend(
+        GlobalPropertyInfo { SubtleCryptoIdentifier,
+            JSC::CustomGetterSetter::create(vm, getterSubtleCryptoConstructor, nullptr),
+            JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontDelete | 0 });
+
+    JSC::Identifier CryptoKeyIdentifier = JSC::Identifier::fromString(vm, "CryptoKey"_s);
+    extraStaticGlobals.uncheckedAppend(
+        GlobalPropertyInfo { CryptoKeyIdentifier,
+            JSC::CustomGetterSetter::create(vm, getterCryptoKeyConstructor, nullptr),
+            JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontDelete | 0 });
 
     JSC::Identifier btoaIdentifier = JSC::Identifier::fromString(vm, "btoa"_s);
     extraStaticGlobals.uncheckedAppend(
@@ -2486,6 +2631,15 @@ void GlobalObject::installAPIGlobals(JSClassRef* globals, int count, JSC::VM& vm
         }
 
         {
+            JSC::Identifier identifier = JSC::Identifier::fromString(vm, "peek"_s);
+            JSFunction* peekFunction = JSFunction::create(vm, this, 2, WTF::String("peek"_s), functionBunPeek, ImplementationVisibility::Public, NoIntrinsic);
+            JSFunction* peekStatus = JSFunction::create(vm, this, 1, WTF::String("status"_s), functionBunPeekStatus, ImplementationVisibility::Public, NoIntrinsic);
+            peekFunction->putDirect(vm, PropertyName(JSC::Identifier::fromString(vm, "status"_s)), peekStatus, JSC::PropertyAttribute::Function | JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontDelete | 0);
+            object->putDirect(vm, PropertyName(identifier), JSValue(peekFunction),
+                JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DontDelete | 0);
+        }
+
+        {
             JSC::Identifier identifier = JSC::Identifier::fromString(vm, "readableStreamToArrayBuffer"_s);
             object->putDirectBuiltinFunction(vm, this, identifier, readableStreamReadableStreamToArrayBufferCodeGenerator(vm),
                 JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DontDelete | 0);
@@ -2598,6 +2752,8 @@ void GlobalObject::installAPIGlobals(JSClassRef* globals, int count, JSC::VM& vm
 
         Crypto__getRandomValues__put(this, JSValue::encode(object));
         Crypto__randomUUID__put(this, JSValue::encode(object));
+        object->putDirectCustomAccessor(vm, JSC::Identifier::fromString(vm, "subtle"_s), JSC::CustomGetterSetter::create(vm, getterSubtleCrypto, nullptr),
+            JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontDelete | 0);
         extraStaticGlobals.uncheckedAppend(
             GlobalPropertyInfo { JSC::Identifier::fromString(vm, jsClass->className()),
                 JSC::JSValue(object), JSC::PropertyAttribute::DontDelete | 0 });
@@ -2688,6 +2844,7 @@ void GlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     thisObject->m_processObject.visit(visitor);
     thisObject->m_performanceObject.visit(visitor);
     thisObject->m_navigatorObject.visit(visitor);
+    thisObject->m_subtleCryptoObject.visit(visitor);
 
     thisObject->m_JSHTTPResponseSinkClassStructure.visit(visitor);
     thisObject->m_JSHTTPSResponseSinkClassStructure.visit(visitor);
@@ -2719,7 +2876,8 @@ void GlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     visitor.addOpaqueRoot(context);
 }
 
-extern "C" void Bun__queueMicrotask(JSC__JSGlobalObject*, WebCore::EventLoopTask* task);
+extern "C" void Bun__queueTask(JSC__JSGlobalObject*, WebCore::EventLoopTask* task);
+extern "C" void Bun__queueTaskConcurrently(JSC__JSGlobalObject*, WebCore::EventLoopTask* task);
 extern "C" void Bun__performTask(Zig::GlobalObject* globalObject, WebCore::EventLoopTask* task)
 {
     task->performTask(*globalObject->scriptExecutionContext());
@@ -2727,7 +2885,12 @@ extern "C" void Bun__performTask(Zig::GlobalObject* globalObject, WebCore::Event
 
 void GlobalObject::queueTask(WebCore::EventLoopTask* task)
 {
-    Bun__queueMicrotask(this, task);
+    Bun__queueTask(this, task);
+}
+
+void GlobalObject::queueTaskConcurrently(WebCore::EventLoopTask* task)
+{
+    Bun__queueTaskConcurrently(this, task);
 }
 
 extern "C" void Bun__handleRejectedPromise(Zig::GlobalObject* JSGlobalObject, JSC::JSPromise* promise);

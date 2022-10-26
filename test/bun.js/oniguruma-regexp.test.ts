@@ -2,14 +2,80 @@ import { OnigurumaRegExp } from "bun";
 import { expect, it, test } from "bun:test";
 import { gc as gcTrace } from "./gc";
 
-it("OnigurumaRegExp.prototype.exec()", () => {
-  let a1 = new OnigurumaRegExp("(foo)", "gd");
-  let a1_1 = a1.exec("table football, foosball");
-  a1_1 = a1.exec("table football, foosball");
+it("escaped characters in character classes", () => {
+  let r1 = new RegExp("^([[(]-?[\\d]+)?,?(-?[\\d]+[\\])])?$").exec("(1,1]");
+  let r2 = new OnigurumaRegExp("^([[(]-?[\\d]+)?,?(-?[\\d]+[\\])])?$").exec("(1,1]");
+  expect(r1[0]).toBe(r2[0]);
 
-  let a2 = new RegExp("(foo)", "dg");
-  let a2_1 = a2.exec("table football, foosball");
-  a2_1 = a2.exec("table football, foosball");
+  let r3 = new RegExp("[\\d],[\\d]").exec("1,2");
+  let r4 = new OnigurumaRegExp("[\\d],[\\d]").exec("1,2");
+  expect(r3[0]).toBe(r4[0]);
+
+  let r5 = new RegExp("^[(],[)]?$").exec("(,");
+  let r6 = new OnigurumaRegExp("^[(],[)]?$").exec("(,");
+  expect(r5[0]).toBe(r6[0]);
+
+  let r9 = new RegExp("[([],[)\\]]").exec("[,]");
+  let r10 = new OnigurumaRegExp("[([],[)\\]]").exec("[,]");
+  expect(r9[0]).toBe(r10[0]);
+
+  let r13 = new RegExp("\\[").exec("[");
+  let r14 = new OnigurumaRegExp("\\[").exec("[");
+  expect(r13[0]).toBe(r14[0]);
+
+  let r15 = new RegExp("\\]").exec("]");
+  let r16 = new OnigurumaRegExp("\\]").exec("]");
+  expect(r15[0]).toBe(r16[0]);
+
+  let r17 = new RegExp("]").exec("]");
+  let r18 = new OnigurumaRegExp("]").exec("]");
+  expect(r17[0]).toBe(r18[0]);
+
+  let r21 = new RegExp("[\\]]").exec("]");
+  let r22 = new OnigurumaRegExp("[\\]]").exec("]");
+  expect(r21[0]).toBe(r22[0]);
+
+  let r23 = new RegExp("[\\[]").exec("[");
+  let r24 = new OnigurumaRegExp("[\\[]").exec("[");
+  expect(r23[0]).toBe(r24[0]);
+
+  let r25 = new RegExp("[[][[]").exec("[[");
+  let r26 = new OnigurumaRegExp("[[][[]").exec("[[");
+  expect(r25[0]).toBe(r26[0]);
+
+  let r27 = new RegExp("[[\\]][[\\]]").exec("[]");
+  let r28 = new OnigurumaRegExp("[[\\]][[\\]]").exec("[]");
+  expect(r27[0]).toBe(r28[0]);
+
+  let r29 = new RegExp("[[\\]][[\\]]").exec("][");
+  let r30 = new OnigurumaRegExp("[[\\]][[\\]]").exec("][");
+  expect(r29[0]).toBe(r30[0]);
+
+  let r31 = new RegExp("[[\\]][[\\]]").exec("]]");
+  let r32 = new OnigurumaRegExp("[[\\]][[\\]]").exec("]]");
+  expect(r31[0]).toBe(r32[0]);
+  
+  let r33 = new RegExp("[\\]][\\]]").exec("]]");
+  let r34 = new OnigurumaRegExp("[\\]][\\]]").exec("]]");
+  expect(r33[0]).toBe(r34[0]);
+  
+  let r35 = new RegExp("[a-z&&[^aeiou]").exec("a");
+  let r36 = new OnigurumaRegExp("[a-z&&[^aeiou]").exec("a");
+  expect(r35[0]).toBe(r36[0]);
+  
+  let r37 = new RegExp("[a-z&&[^aeiou]]").exec("a]");
+  let r38 = new OnigurumaRegExp("[a-z&&[^aeiou]]").exec("a]");
+  expect(r37[0]).toBe(r38[0]);
+});
+
+it("OnigurumaRegExp.prototype.exec()", () => {
+  let a1 = new OnigurumaRegExp("\x3e", "gd");
+  let a1_1 = a1.exec("table fo\x3eotball, fo\x3eosball");
+  a1_1 = a1.exec("table fo\x3eotball, fo\x3eosball");
+
+  let a2 = new RegExp("\x3e", "gd");
+  let a2_1 = a2.exec("table fo\x3eotball, fo\x3eosball");
+  a2_1 = a2.exec("table fo\x3eotball, fo\x3eosball");
 
   expect(a1_1[0]).toBe(a2_1[0]);
   expect(a1_1[1]).toBe(a2_1[1]);
@@ -19,8 +85,81 @@ it("OnigurumaRegExp.prototype.exec()", () => {
   expect(a1_1.groups).toBe(a2_1.groups);
   expect(a1_1.indices[0][0]).toBe(a2_1.indices[0][0]);
   expect(a1_1.indices[0][1]).toBe(a2_1.indices[0][1]);
-  expect(a1_1.indices[1][0]).toBe(a2_1.indices[1][0]);
-  expect(a1_1.indices[1][1]).toBe(a2_1.indices[1][1]);
+});
+
+test("OnigurumaRegExp.prototype.exec() 2", () => {
+  let a1 = new OnigurumaRegExp("\x3e\\x5e", "gd");
+  let a1_1 = a1.exec("table fo\x3e\x5eotball, fo\x3e\x5eosball");
+  a1_1 = a1.exec("table fo\x3e\x5eotball, fo\x3e\x5eosball");
+
+  let a2 = new RegExp("\x3e\\x5e", "gd");
+  let a2_1 = a2.exec("table fo\x3e\x5eotball, fo\x3e\x5eosball");
+  a2_1 = a2.exec("table fo\x3e\x5eotball, fo\x3e\x5eosball");
+
+  expect(a1_1[0]).toBe(a2_1[0]);
+  expect(a1_1[1]).toBe(a2_1[1]);
+  expect(a1_1.index).toBe(a2_1.index);
+  expect(a1_1.input).toBe(a2_1.input);
+  expect(a1.lastIndex).toBe(a2.lastIndex);
+  expect(a1_1.groups).toBe(a2_1.groups);
+  expect(a1_1.indices[0][0]).toBe(a2_1.indices[0][0]);
+  expect(a1_1.indices[0][1]).toBe(a2_1.indices[0][1]);
+});
+
+test("OnigurumaRegExp.prototype.exec() 3", () => {
+
+  let a22 = new OnigurumaRegExp("\\x9\\x5e", "gd");
+  let a22_1 = a22.exec("table fox9\^otball, fox9\^osball");
+  expect(a22_1[0]).toBe("x9^");
+
+  let a1 = new OnigurumaRegExp("x3\\x5e", "gd");
+  let a1_1 = a1.exec("table fo\\x3\x5eotball, fo\\x3\x5eosball");
+
+  let a2 = new RegExp("\\x3\\x5e", "gd");
+  let a2_1 = a2.exec("table fo\\x3\x5eotball, fo\\x3\x5eosball");
+
+  expect(a1_1[0]).toBe(a2_1[0]);
+  expect(a1_1[1]).toBe(a2_1[1]);
+  expect(a1_1.index).toBe(a2_1.index);
+  expect(a1_1.input).toBe(a2_1.input);
+  expect(a1.lastIndex).toBe(a2.lastIndex);
+  expect(a1_1.groups).toBe(a2_1.groups);
+  expect(a1_1.indices[0][0]).toBe(a2_1.indices[0][0]);
+  expect(a1_1.indices[0][1]).toBe(a2_1.indices[0][1]);
+});
+
+test("OnigurumaRegExp.prototype.exec() 4", () => {
+  let a2 = new RegExp("\\x3\\x5e", "gd");
+  let a2_1 = a2.exec("table fox3\^otball, fox3\^osball");
+  a2_1 = a2.exec("table fox3\^otball, fox3\^osball");
+
+  for (const RegExpConstructor of [OnigurumaRegExp, RegExp]) {
+    let a2 = new RegExpConstructor("\\x3\\x5e", "gd");
+    let a2_1 = a2.exec("table fox3\^otball, fox3\^osball");
+    expect(a2_1[0]).toBe("x3^");
+
+    expect(new RegExpConstructor("\\x3").source).toBe("\\x3");
+    expect(new RegExpConstructor("\\x").source).toBe("\\x");
+    expect(new RegExpConstructor("\\a").source).toBe("\\a");
+    expect(new RegExpConstructor("j\\x3\\x2").source).toBe("j\\x3\\x2");
+    expect(new RegExpConstructor("\\x3\\x5\\j").source).toBe("\\x3\\x5\\j");
+    expect(new RegExpConstructor("\\x3\\x7\\xa").source).toBe("\\x3\\x7\\xa");
+    expect(new RegExpConstructor("\\j323\\x7\\xa").source).toBe("\\j323\\x7\\xa");
+    expect(new RegExpConstructor("\\x56").test("V")).toBe(true);
+  }
+});
+
+test("OnigurumaRegExp.prototype.test()", () => {
+  expect(new RegExp("\\\\(?![*+?^${}(|)[\\]])", "g").test('\\')).toBe(true);
+  expect(new OnigurumaRegExp("\\\\(?![*+?^${}(|)[\\]])", "g").test('\\')).toBe(true);
+
+  expect(new RegExp("\\x56").test("V")).toBe(true);
+  expect(new OnigurumaRegExp("\\x56").test("V")).toBe(true);
+
+  expect(new RegExp('//').compile('\\\\(?![*+?^${}(|)[\\]])', 'g').test('\\')).toBe(true);
+  let r = new OnigurumaRegExp('//');
+  expect(r.compile('\\\\(?![*+?^${}(|)[\\]])', 'g').test('\\')).toBe(true);
+  expect(new OnigurumaRegExp('').compile('\\\\(?![*+?^${}(|)[\\]])', 'g').test('\\')).toBe(true);
 });
 
 test("OnigurumaRegExp flag order", () => {
@@ -90,6 +229,20 @@ test("OnigurumaRegExp flags", () => {
     expect(g1.test(str2)).toBe(true);
     expect(g2.test(str2)).toBe(true);
   }
+
+  expect(/a/s.toString()).toBe("/a/s");
+  expect(/a/g.toString()).toBe("/a/g");
+  expect(/a/y.toString()).toBe("/a/y");
+  expect(/a/m.toString()).toBe("/a/m");
+  expect(/a/sg.toString()).toBe("/a/gs");
+  expect(/a/ys.toString()).toBe("/a/sy");
+  expect(/a/gm.toString()).toBe("/a/gm");
+  expect(/a/sgy.toString()).toBe("/a/gsy");
+  expect(/a/sgm.toString()).toBe("/a/gms");
+  expect(/a/ymg.toString()).toBe("/a/gmy");
+  // expect(/a/d.toString()).toBe("/a/d");
+  // expect(/a/dgimsuy.toString()).toBe("/a/dgimsuy");
+
 
   // case insensitive option
   for (const RegExpConstructor of [OnigurumaRegExp, RegExp]) {
@@ -253,7 +406,7 @@ test("OnigurumaRegExp random", () => {
   expect(r.toString()).toBe("/b/i");
 
   let b = new OnigurumaRegExp("l", "m");
-  expect(r.compile(b)).toBe(undefined);
+  expect(r.compile(b) instanceof OnigurumaRegExp).toBe(true);
   expect(r.source).toBe("l");
   expect(r.flags).toBe("m");
   expect(r.toString()).toBe("/l/m");
@@ -371,6 +524,49 @@ it("String.prototype.split", () => {
   }
 });
 
+it("escapes characters, unicode, and hex", () => {
+  for (const RegExpConstructor of [OnigurumaRegExp, RegExp]) {
+    expect(new RegExpConstructor("[\\x00-\\x1F]").toString()).toBe("/[\\x00-\\x1F]/");
+    expect(new RegExpConstructor("[\\u0000-\\u001F]").toString()).toBe("/[\\u0000-\\u001F]/");
+    var s = /\\x{7HHHHHHH}(?=\\u{1233})/
+    let a = new RegExpConstructor('\u{0001F46E}');
+    expect(a.exec('👮')[0]).toBe('👮');
+  }
+
+  let y = new OnigurumaRegExp('[👮\\x7F](?<=👮)');
+  expect(y.exec('👮\\x{7F}')[0]).toBe('👮');
+
+  let by = new OnigurumaRegExp('[👮\\cx7f](?<=👮)');
+  expect(y.exec('👮\\x{7F}')[0]).toBe('👮');
+
+  let bz = new OnigurumaRegExp('[👮\\x7](?<=👮)');
+
+  let d = new OnigurumaRegExp('[\u{0001F46E}\x7F](?<=\u{0001F46E})');
+  expect(d.exec('👮\x7F')[0]).toBe('👮');
+
+  let y_2 = /[[👮\x7F](?<=👮)]/;
+  expect(y_2.exec('👮\x7F')[0]).toBe('👮');
+
+  let a1 = new OnigurumaRegExp("(f\xf3oo)", "gd");
+  let a1_1 = a1.exec("table f\xf3ootball, f\xf3oosball");
+  a1_1 = a1.exec("table f\xf3ootball, f\xf3oosball");
+  
+  let a2 = new RegExp("(f\xf3oo)", "dg");
+  let a2_1 = a2.exec("table f\xf3ootball, f\xf3oosball");
+  a2_1 = a2.exec("table f\xf3ootball, f\xf3oosball");
+
+  expect(a1_1[0]).toBe(a2_1[0]);
+  expect(a1_1[1]).toBe(a2_1[1]);
+  expect(a1_1.index).toBe(a2_1.index);
+  expect(a1_1.input).toBe(a2_1.input);
+  expect(a1.lastIndex).toBe(a2.lastIndex);
+  expect(a1_1.groups).toBe(a2_1.groups);
+  expect(a1_1.indices[0][0]).toBe(a2_1.indices[0][0]);
+  expect(a1_1.indices[0][1]).toBe(a2_1.indices[0][1]);
+  expect(a1_1.indices[1][0]).toBe(a2_1.indices[1][0]);
+  expect(a1_1.indices[1][1]).toBe(a2_1.indices[1][1]);
+});
+
 it("lookbehinds", () => {
   expect(/\d+(?=%)/.source).toBe("\\d+(?=%)");
   expect(/\d+(?!%)/.source).toBe("\\d+(?!%)");
@@ -380,4 +576,22 @@ it("lookbehinds", () => {
   expect(/(?<=(\w)+)r/.source).toBe("(?<=(\\w)+)r");
   expect(/(?<=(o)d\1)r/.source).toBe("(?<=(o)d\\1)r");
   expect(/(?<=\1d(o))r/.source).toBe("(?<=\\1d(o))r");
+
+  let small = /(?:)/;
+  expect(small instanceof OnigurumaRegExp).toBe(false);
+
+  expect(/[\x00-\x1F\x27\x5C\x7F-\x9F]|[\uD800-\uDBFF]\(?<=[\uDC00-\uDFFF]\)|(?!.*[\uD800-\uDBFF][\uDC00-\uDFFF]).*[\uDC00-\uDFFF]/ instanceof RegExp).toBe(true);
+  expect(/[\x00-\x1F\x27\x5C\x7F-\x9F]|[\uD800-\uDBFF](?<=[\uDC00-\uDFFF])|(?!.*[\uD800-\uDBFF][\uDC00-\uDFFF]).*[\uDC00-\uDFFF]/ instanceof OnigurumaRegExp).toBe(true);
+
+  expect(/(?<=\1d(o))/ instanceof OnigurumaRegExp).toBe(true);
+  expect(/\(?<=\1d(o)\)/ instanceof OnigurumaRegExp).toBe(false);
+  expect(/(?!.*[\uD800-\uDBFF][\uDC00-\uDFFF]).*[\uDC00-\uDFFF]/ instanceof RegExp).toBe(true);
+  expect(/\(?!.*[\uD800-\uDBFF][\uDC00-\uDFFF]\).*[\uDC00-\uDFFF]/ instanceof RegExp).toBe(true);
+
+  let e = new OnigurumaRegExp('\(?<=\)');
+  expect(e.source).toBe('(?<=)');
+  expect(new OnigurumaRegExp('(?<=)').source).toBe('(?<=)');
+
+  expect(/\(?<=\)/.source).toBe("\\(?<=\\)");
+  expect(/(?<=)/.source).toBe("(?<=)");
 });

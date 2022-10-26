@@ -100,6 +100,7 @@ fn NewHTTPContext(comptime ssl: bool) type {
 
             HTTPSocket.configure(
                 this.us_socket_context,
+                false,
                 anyopaque,
                 Handler,
             );

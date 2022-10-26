@@ -204,6 +204,7 @@ const UnboundedQueue = @import("./unbounded_queue.zig").UnboundedQueue;
 pub const ConcurrentTask = struct {
     task: Task = undefined,
     next: ?*ConcurrentTask = null,
+    auto_delete: bool = false,
 
     pub const Queue = UnboundedQueue(ConcurrentTask, .next);
 
@@ -326,6 +327,7 @@ pub const EventLoop = struct {
             writable[0] = task.task;
             writable = writable[1..];
             this.tasks.count += 1;
+            if (task.auto_delete) bun.default_allocator.destroy(task);
             if (writable.len == 0) break;
         }
 

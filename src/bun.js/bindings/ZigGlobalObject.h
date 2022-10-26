@@ -138,6 +138,7 @@ public:
     WebCore::ScriptExecutionContext* scriptExecutionContext() const;
 
     void queueTask(WebCore::EventLoopTask* task);
+    void queueTaskConcurrently(WebCore::EventLoopTask* task);
 
     JSDOMStructureMap& structures() WTF_REQUIRES_LOCK(m_gcLock) { return m_structures; }
     JSDOMStructureMap& structures(NoLockingNecessaryTag) WTF_IGNORES_THREAD_SAFETY_ANALYSIS
@@ -237,6 +238,11 @@ public:
 
     void* bunVM() { return m_bunVM; }
     bool isThreadLocalDefaultGlobalObject = false;
+
+    JSObject* subtleCrypto()
+    {
+        return m_subtleCryptoObject.getInitializedOnMainThread(this);
+    }
 
     EncodedJSValue assignToStream(JSValue stream, JSValue controller);
 
@@ -368,7 +374,6 @@ public:
     BunPlugin::OnResolve onResolvePlugins[BunPluginTargetMax + 1] {};
     BunPluginTarget defaultBunPluginTarget = BunPluginTargetBun;
 
-
     void reload();
 
     JSC::Structure* pendingVirtualModuleResultStructure() { return m_pendingVirtualModuleResultStructure.get(this); }
@@ -418,6 +423,8 @@ private:
     LazyProperty<JSGlobalObject, JSMap> m_lazyReadableStreamPrototypeMap;
     LazyProperty<JSGlobalObject, JSMap> m_requireMap;
     LazyProperty<JSGlobalObject, JSObject> m_performanceObject;
+
+    LazyProperty<JSGlobalObject, JSObject> m_subtleCryptoObject;
 
     LazyProperty<JSGlobalObject, JSC::Structure> m_pendingVirtualModuleResultStructure;
 

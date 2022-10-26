@@ -751,7 +751,7 @@ const char* const s_readableStreamInternalsPipeToFinalizeCode =
 const JSC::ConstructAbility s_readableStreamInternalsReadableStreamTeeCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableStreamInternalsReadableStreamTeeCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_readableStreamInternalsReadableStreamTeeCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_readableStreamInternalsReadableStreamTeeCodeLength = 1689;
+const int s_readableStreamInternalsReadableStreamTeeCodeLength = 1839;
 static const JSC::Intrinsic s_readableStreamInternalsReadableStreamTeeCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_readableStreamInternalsReadableStreamTeeCode =
     "(function (stream, shouldClone) {\n" \
@@ -759,6 +759,12 @@ const char* const s_readableStreamInternalsReadableStreamTeeCode =
     "\n" \
     "  @assert(@isReadableStream(stream));\n" \
     "  @assert(typeof shouldClone === \"boolean\");\n" \
+    "\n" \
+    "  var start_ = @getByIdDirectPrivate(stream, \"start\");\n" \
+    "  if (start_) {\n" \
+    "      @putByIdDirectPrivate(stream, \"start\", @undefined);\n" \
+    "      start_();\n" \
+    "  }\n" \
     "\n" \
     "  const reader = new @ReadableStreamDefaultReader(stream);\n" \
     "\n" \

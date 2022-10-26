@@ -1142,7 +1142,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             const stat: std.os.Stat = switch (JSC.Node.Syscall.fstat(fd)) {
                 .result => |result| result,
                 .err => |err| {
-                    this.runErrorHandler(err.withPath(file.pathlike.path.slice()).toSystemError().toErrorInstance(
+                    this.runErrorHandler(err.withPathLike(file.pathlike).toSystemError().toErrorInstance(
                         this.server.globalThis,
                     ));
                     if (auto_close) {
@@ -1160,10 +1160,9 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
 
                     var err = JSC.Node.Syscall.Error{
                         .errno = @intCast(JSC.Node.Syscall.Error.Int, @enumToInt(std.os.E.INVAL)),
-                        .path = file.pathlike.path.slice(),
                         .syscall = .sendfile,
                     };
-                    var sys = err.toSystemError();
+                    var sys = err.withPathLike(file.pathlike).toSystemError();
                     sys.message = ZigString.init("MacOS does not support sending non-regular files");
                     this.runErrorHandler(sys.toErrorInstance(
                         this.server.globalThis,
@@ -1180,10 +1179,9 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
 
                     var err = JSC.Node.Syscall.Error{
                         .errno = @intCast(JSC.Node.Syscall.Error.Int, @enumToInt(std.os.E.INVAL)),
-                        .path = file.pathlike.path.slice(),
                         .syscall = .sendfile,
                     };
-                    var sys = err.toSystemError();
+                    var sys = err.withPathLike(file.pathlike).toSystemError();
                     sys.message = ZigString.init("File must be regular or FIFO");
                     this.runErrorHandler(sys.toErrorInstance(
                         this.server.globalThis,
@@ -3405,7 +3403,7 @@ pub const ServerWebSocket = struct {
         const code = if (args.len > 0) args.ptr[0].toInt32() else @as(i32, 1000);
         var message_value = if (args.len > 1) args.ptr[1].toSlice(globalThis, bun.default_allocator) else ZigString.Slice.empty;
         defer message_value.deinit();
-        if (code > 0) {
+        if (code > 1000 or message_value.len > 0) {
             this.websocket.end(code, message_value.slice());
         } else {
             this.this_value.unprotect();

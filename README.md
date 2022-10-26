@@ -85,7 +85,7 @@ bun upgrade --canary
 - [Configuration](#configuration)
   - [bunfig.toml](#bunfigtoml)
   - [Loaders](#loaders)
-  - [CSS in JS](#css-in-js)
+  - [CSS in JS](#css-in-js-bun-dev-only)
     - [When `platform` is `browser`](#when-platform-is-browser)
     - [When `platform` is `bun`](#when-platform-is-bun)
   - [CSS Loader](#css-loader)
@@ -138,7 +138,8 @@ bun upgrade --canary
   - [WebSockets](#websockets-with-bunserve)
   - [Error handling](#error-handling)
 - [`Bun.write` – optimizing I/O](#bunwrite--optimizing-io)
-- [`Bun.spawn` - spawn processes](#bunspawn)
+- [`Bun.spawn` - spawn processes](#bunspawn--spawn-a-process)
+- [`Bun.which` - find the path to a bin](#bunwhich--find-the-path-to-a-binary)
 - [bun:sqlite (SQLite3 module)](#bunsqlite-sqlite3-module)
   - [bun:sqlite Benchmark](#bunsqlite-benchmark)
   - [Getting started with bun:sqlite](#getting-started-with-bunsqlite)
@@ -173,6 +174,7 @@ bun upgrade --canary
   - [`Bun.Transpiler.transform`](#buntranspilertransform)
   - [`Bun.Transpiler.scan`](#buntranspilerscan)
   - [`Bun.Transpiler.scanImports`](#buntranspilerscanimports)
+- [`Bun.peek` - read a promise same-tick](#bunpeek---read-a-promise-without-resolving-it)
 - [Environment variables](#environment-variables)
 - [Credits](#credits)
 - [License](#license)
@@ -2543,6 +2545,281 @@ interface Subprocess {
 }
 ```
 
+## `Bun.which` – find the path to a binary
+
+Find the path to an executable, similar to typing `which` in your terminal.
+
+```ts
+const ls = Bun.which("ls");
+console.log(ls); // "/usr/bin/ls"
+```
+
+`Bun.which` defaults the `PATH` to the current `PATH` environment variable, but you can customize it
+
+```ts
+const ls = Bun.which("ls", {
+  PATH: "/usr/local/bin:/usr/bin:/bin",
+});
+console.log(ls); // "/usr/bin/ls"
+```
+
+`Bun.which` also accepts a `cwd` option to search for the binary in a specific directory.
+
+```ts
+const ls = Bun.which("ls", {
+  cwd: "/tmp",
+  PATH: "",
+});
+
+console.log(ls); // null
+```
+
+## `Bun.listen` & `Bun.connect` - TCP/TLS sockets
+
+`Bun.listen` and `Bun.connect` is bun's native TCP & TLS socket API. Use it to implement database clients, game servers – anything that needs to communicate over TCP (instead of HTTP). This is a low-level API intended for library authors and for advanced use cases.
+
+Start a TCP server with `Bun.listen`:
+
+```ts
+// The server
+Bun.listen({
+  hostname: "localhost",
+  port: 8080,
+  socket: {
+    open(socket) {
+      socket.write("hello world");
+    },
+    data(socket, data) {
+      console.log(data instanceof Uint8Array); // true
+    },
+    drain(socket) {
+      console.log("gimme more data");
+    },
+    close(socket) {
+      console.log("goodbye!");
+    },
+  },
+  // This is a TLS socket
+  // certFile: "/path/to/cert.pem",
+  // keyFile: "/path/to/key.pem",
+});
+```
+
+`Bun.connect` lets you create a TCP client:
+
+```ts
+// The client
+Bun.connect({
+  hostname: "localhost",
+  port: 8080,
+
+  socket: {
+    open(socket) {
+      socket.write("hello server, i'm the client!");
+    },
+    data(socket, message) {
+      socket.write("thanks for the message! Sincerely, " + socket.data.name);
+    },
+    drain(socket) {
+      console.log("my socket is ready for more data");
+    },
+    close(socket) {
+      console.log("");
+    },
+    timeout(socket) {
+      console.log("socket timed out");
+    },
+  },
+
+  data: {
+    name: "Clienty McClientface",
+  },
+});
+```
+
+#### Benchmark-driven API design
+
+Bun's TCP socket API is designed to go fast.
+
+Instead of using promises or assigning callbacks per socket instance (like Node.js' `EventEmitter` or the web-standard `WebSocket` API), assign all callbacks one time
+
+This design decision was made after benchmarking. For performance-sensitive servers, promise-heavy APIs or assigning callbacks per socket instance can cause significant garbage collector pressure and increase memory usage. If you're using a TCP server API, you probably care more about performance.
+
+```ts
+Bun.listen({
+  socket: {
+    open(socket) {},
+    data(socket, data) {},
+    drain(socket) {},
+    close(socket) {},
+    error(socket, error) {},
+  },
+  hostname: "localhost",
+  port: 8080,
+});
+```
+
+Instead of having to allocate unique functions for each instance of a socket, we can use each callback once for all sockets. This is a small optimization, but it adds up.
+
+How do you pass per-socket data to each socket object?
+
+`**data**` is a property on the `TCPSocket` & `TLSSocket` object that you can use to store per-socket data.
+
+```ts
+socket.data = { name: "Clienty McClientface" };
+```
+
+You can assign a default value to `data` in the `connect` or `listen` options.
+
+```ts
+Bun.listen({
+  socket: {
+    open(socket) {
+      console.log(socket.data); // { name: "Servery McServerface" }
+    },
+  },
+  data: {
+    name: "Servery McServerface",
+  },
+});
+```
+
+#### Hot-reloading TCP servers & clients
+
+`TCPSocket` (returned by `Bun.connect` and passed through callbacks in `Bun.listen`) has a `reload` method that lets you reload the callbacks for all related sockets (either just the one for `Bun.connect` or all sockets for `Bun.listen`):
+
+```ts
+const socket = Bun.connect({
+  hostname: "localhost",
+  port: 8080,
+  socket: {
+    data(socket, msg) {
+      console.log("wow i got a message!");
+
+      // this will be called the next time the server sends a message
+      socket.reload({
+        data(socket) {
+          console.log("okay, not so surprising this time");
+        },
+      });
+    },
+  },
+});
+```
+
+#### No buffering
+
+Currently, `TCPSocket` & `TLSSocket` in Bun do not buffer data. Adding support for corking (similar to `ServerWebSocket`) is planned, but it means you will need to handle backpressure yourself using the `drain` callback.
+
+Your TCP client/server will have abysmal performance if you don't consider buffering carefully.
+
+For example, this:
+
+```ts
+socket.write("h");
+socket.write("e");
+socket.write("l");
+socket.write("l");
+socket.write("o");
+```
+
+Performs significantly worse than:
+
+```ts
+socket.write("hello");
+```
+
+To simplify this for now, consider using `ArrayBufferSink` with the `{stream: true}` option:
+
+```ts
+const sink = new ArrayBufferSink({ stream: true, highWaterMark: 1024 });
+
+sink.write("h");
+sink.write("e");
+sink.write("l");
+sink.write("l");
+sink.write("o");
+
+queueMicrotask(() => {
+  var data = sink.flush();
+  if (!socket.write(data)) {
+    // put it back in the sink if the socket is full
+    sink.write(data);
+  }
+});
+```
+
+Builtin buffering is planned in a future version of Bun.
+
+## `Bun.peek` - read a promise without resolving it
+
+`Bun.peek` is a utility function that lets you read a promise's result without `await` or `.then`, but only if the promise has already fulfilled or rejected.
+
+This function was added in Bun v0.2.2.
+
+```ts
+import { peek } from "bun";
+
+const promise = Promise.resolve("hi");
+
+// no await!
+const result = peek(promise);
+
+console.log(result); // "hi"
+```
+
+`Bun.peek` is useful for performance-sensitive code that wants to reduce the number of extra microticks. It's an advanced API and you probably shouldn't use it unless you know what you're doing.
+
+```ts
+import { peek } from "bun";
+import { expect, test } from "bun:test";
+
+test("peek", () => {
+  const promise = Promise.resolve(true);
+
+  // no await necessary!
+  expect(peek(promise)).toBe(true);
+
+  // if we peek again, it returns the same value
+  const again = peek(promise);
+  expect(again).toBe(true);
+
+  // if we peek a non-promise, it returns the value
+  const value = peek(42);
+  expect(value).toBe(42);
+
+  // if we peek a pending promise, it returns the promise again
+  const pending = new Promise(() => {});
+  expect(peek(pending)).toBe(pending);
+
+  // If we peek a rejected promise, it:
+  // - returns the error
+  // - does not mark the promise as handled
+  const rejected = Promise.reject(
+    new Error("Succesfully tested promise rejection")
+  );
+  expect(peek(rejected).message).toBe("Succesfully tested promise rejection");
+});
+```
+
+`peek.status` lets you read the status of a promise without resolving it.
+
+```ts
+import { peek } from "bun";
+import { expect, test } from "bun:test";
+
+test("peek.status", () => {
+  const promise = Promise.resolve(true);
+  expect(peek.status(promise)).toBe("fulfilled");
+
+  const pending = new Promise(() => {});
+  expect(peek.status(pending)).toBe("pending");
+
+  const rejected = Promise.reject(new Error("oh nooo"));
+  expect(peek.status(rejected)).toBe("rejected");
+});
+```
+
 ## `Bun.write` – optimizing I/O
 
 `Bun.write` lets you write, copy or pipe files automatically using the fastest system calls compatible with the input and platform.
@@ -3584,7 +3861,7 @@ import { ptr, toArrayBuffer } from "bun:ffi";
 let myTypedArray = new Uint8Array(32);
 const myPtr = ptr(myTypedArray);
 
-// toTypedArray accepts a `byteOffset` and `byteLength`
+// toArrayBuffer accepts a `byteOffset` and `byteLength`
 // if `byteLength` is not provided, it is assumed to be a null-terminated pointer
 myTypedArray = new Uint8Array(toArrayBuffer(myPtr, 0, 32), 0, 32);
 ```
@@ -4142,7 +4419,7 @@ The VSCode Dev Container in this repository is the easiest way to get started. I
 To develop on Linux, the following is required:
 
 - [Visual Studio Code](https://code.visualstudio.com/)
-- [Remote - Containers](https://marketplace.visualstudio.com/items?itemName=ms-vscode-remote.remote-containers) extension for Visual Studio Code
+- [Dev Containers](https://marketplace.visualstudio.com/items?itemName=ms-vscode-remote.remote-containers) extension for Visual Studio Code
 - [Docker](https://www.docker.com). If using WSL on Windows, it is recommended to use [Docker Desktop](https://docs.microsoft.com/en-us/windows/wsl/tutorials/wsl-containers) for its WSL2 integration.
 - [Dev Container CLI](https://www.npmjs.com/package/@devcontainers/cli): `npm install -g @devcontainers/cli`
 
@@ -4154,7 +4431,7 @@ make devcontainer-build
 ```
 
 Next, open VS Code in the `bun` repository.
-To open the dev container, open the command palette (Ctrl + Shift + P) and run: `Remote-Containers: Reopen in Container`.
+To open the dev container, open the command palette (Ctrl + Shift + P) and run: `Dev Containers: Reopen in Container`.
 
 You will then need to clone the GitHub repository inside that container.
 

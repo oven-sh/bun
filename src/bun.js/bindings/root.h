@@ -71,12 +71,18 @@
 
 #include "wtf/PlatformCallingConventions.h"
 #include "JavaScriptCore/JSCInlines.h"
+#include "wtf/IsoMalloc.h"
+#include "wtf/IsoMallocInlines.h"
 
-#define WTF_MAKE_ISO_ALLOCATED(className) \
-    WTF_MAKE_FAST_ALLOCATED_WITH_HEAP_IDENTIFIER(className)
+#define ENABLE_WEB_CRYPTO 1
+#define USE_OPENSSL 1
+#define HAVE_RSA_PSS 1
 
-#define WTF_MAKE_ISO_ALLOCATED_EXPORT(className, a) WTF_MAKE_FAST_ALLOCATED_WITH_HEAP_IDENTIFIER(className);
+// #define WTF_MAKE_ISO_ALLOCATED(className) \
+//     WTF_MAKE_FAST_ALLOCATED_WITH_HEAP_IDENTIFIER(className)
 
-#define WTF_MAKE_ISO_ALLOCATED_IMPL(className)
+// #define WTF_MAKE_ISO_ALLOCATED_EXPORT(className, a) WTF_MAKE_FAST_ALLOCATED_WITH_HEAP_IDENTIFIER(className);
+
+// #define WTF_MAKE_ISO_ALLOCATED_IMPL(className)
 
 #endif

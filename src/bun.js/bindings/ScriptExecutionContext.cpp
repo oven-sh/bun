@@ -10,6 +10,16 @@ extern "C" void Bun__startLoop(us_loop_t* loop);
 
 namespace WebCore {
 
+static unsigned lastUniqueIdentifier = 0;
+
+static Lock allScriptExecutionContextsMapLock;
+static HashMap<ScriptExecutionContextIdentifier, ScriptExecutionContext*>& allScriptExecutionContextsMap() WTF_REQUIRES_LOCK(allScriptExecutionContextsMapLock)
+{
+    static NeverDestroyed<HashMap<ScriptExecutionContextIdentifier, ScriptExecutionContext*>> contexts;
+    ASSERT(allScriptExecutionContextsMapLock.isLocked());
+    return contexts;
+}
+
 template<bool SSL, bool isServer>
 static void registerHTTPContextForWebSocket(ScriptExecutionContext* script, us_socket_context_t* ctx, us_loop_t* loop)
 {
@@ -37,6 +47,18 @@ us_socket_context_t* ScriptExecutionContext::webSocketContextSSL()
     }
 
     return m_ssl_client_websockets_ctx;
+}
+
+bool ScriptExecutionContext::postTaskTo(ScriptExecutionContextIdentifier identifier, Function<void(ScriptExecutionContext&)>&& task)
+{
+    Locker locker { allScriptExecutionContextsMapLock };
+    auto* context = allScriptExecutionContextsMap().get(identifier);
+
+    if (!context)
+        return false;
+
+    context->postTaskConcurrently(WTFMove(task));
+    return true;
 }
 
 us_socket_context_t* ScriptExecutionContext::webSocketContextNoSSL()
@@ -76,6 +98,33 @@ us_socket_context_t* ScriptExecutionContext::connectedWebSocketKindClient()
 us_socket_context_t* ScriptExecutionContext::connectedWebSocketKindClientSSL()
 {
     return registerWebSocketClientContext<true>(this, webSocketContextSSL());
+}
+
+void ScriptExecutionContext::regenerateIdentifier()
+{
+    Locker locker { allScriptExecutionContextsMapLock };
+
+    ASSERT(allScriptExecutionContextsMap().contains(m_identifier));
+    allScriptExecutionContextsMap().remove(m_identifier);
+
+    m_identifier = ++lastUniqueIdentifier;
+
+    ASSERT(!allScriptExecutionContextsMap().contains(m_identifier));
+    allScriptExecutionContextsMap().add(m_identifier, this);
+}
+
+void ScriptExecutionContext::addToContextsMap()
+{
+    Locker locker { allScriptExecutionContextsMapLock };
+    ASSERT(!allScriptExecutionContextsMap().contains(m_identifier));
+    allScriptExecutionContextsMap().add(m_identifier, this);
+}
+
+void ScriptExecutionContext::removeFromContextsMap()
+{
+    Locker locker { allScriptExecutionContextsMapLock };
+    ASSERT(allScriptExecutionContextsMap().contains(m_identifier));
+    allScriptExecutionContextsMap().remove(m_identifier);
 }
 
 }

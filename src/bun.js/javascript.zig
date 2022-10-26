@@ -273,7 +273,8 @@ comptime {
         _ = Bun__getDefaultGlobal;
         _ = Bun__getVM;
         _ = Bun__drainMicrotasks;
-        _ = Bun__queueMicrotask;
+        _ = Bun__queueTask;
+        _ = Bun__queueTaskConcurrently;
         _ = Bun__handleRejectedPromise;
         _ = Bun__readOriginTimer;
         _ = Bun__onDidAppendPlugin;
@@ -281,8 +282,22 @@ comptime {
     }
 }
 
-pub export fn Bun__queueMicrotask(global: *JSGlobalObject, task: *JSC.CppTask) void {
+/// This function is called on the main thread
+/// The bunVM() call will assert this
+pub export fn Bun__queueTask(global: *JSGlobalObject, task: *JSC.CppTask) void {
     global.bunVM().eventLoop().enqueueTask(Task.init(task));
+}
+
+/// This function is called on another thread
+/// The main difference: we need to allocate the task & wakeup the thread
+/// We can avoid that if we run it from the main thread.
+pub export fn Bun__queueTaskConcurrently(global: *JSGlobalObject, task: *JSC.CppTask) void {
+    var concurrent = bun.default_allocator.create(JSC.ConcurrentTask) catch unreachable;
+    concurrent.* = JSC.ConcurrentTask{
+        .task = Task.init(task),
+        .auto_delete = true,
+    };
+    global.bunVMConcurrently().eventLoop().enqueueTaskConcurrent(concurrent);
 }
 
 pub export fn Bun__handleRejectedPromise(global: *JSGlobalObject, promise: *JSC.JSPromise) void {
@@ -1994,6 +2009,7 @@ pub const VirtualMachine = struct {
             syscall: bool = false,
             errno: bool = false,
             path: bool = false,
+            fd: bool = false,
         };
 
         var show = Show{
@@ -2001,6 +2017,7 @@ pub const VirtualMachine = struct {
             .syscall = exception.syscall.len > 0,
             .errno = exception.errno < 0,
             .path = exception.path.len > 0,
+            .fd = exception.fd != -1,
         };
 
         if (show.path) {
@@ -2904,6 +2921,10 @@ pub const ModuleLoader = struct {
                 ) orelse {
                     return error.ParseError;
                 };
+
+                if (jsc_vm.bundler.log.errors > 0) {
+                    return error.ParseError;
+                }
 
                 if (comptime disable_transpilying) {
                     return ResolvedSource{

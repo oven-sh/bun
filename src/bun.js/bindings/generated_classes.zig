@@ -7,6 +7,365 @@ pub const StaticGetterType = fn (*JSC.JSGlobalObject, JSC.JSValue, JSC.JSValue) 
 pub const StaticSetterType = fn (*JSC.JSGlobalObject, JSC.JSValue, JSC.JSValue, JSC.JSValue) callconv(.C) bool;
 pub const StaticCallbackType = fn (*JSC.JSGlobalObject, *JSC.CallFrame) callconv(.C) JSC.JSValue;
 
+pub const JSTCPSocket = struct {
+    const TCPSocket = Classes.TCPSocket;
+    const GetterType = fn (*TCPSocket, *JSC.JSGlobalObject) callconv(.C) JSC.JSValue;
+    const SetterType = fn (*TCPSocket, *JSC.JSGlobalObject, JSC.JSValue) callconv(.C) bool;
+    const CallbackType = fn (*TCPSocket, *JSC.JSGlobalObject, *JSC.CallFrame) callconv(.C) JSC.JSValue;
+
+    /// Return the pointer to the wrapped object.
+    /// If the object does not match the type, return null.
+    pub fn fromJS(value: JSC.JSValue) ?*TCPSocket {
+        JSC.markBinding(@src());
+        return TCPSocket__fromJS(value);
+    }
+
+    extern fn TCPSocketPrototype__dataSetCachedValue(JSC.JSValue, *JSC.JSGlobalObject, JSC.JSValue) void;
+
+    /// Set the cached value for data on TCPSocket
+    /// This value will be visited by the garbage collector.
+    pub fn dataSetCached(thisValue: JSC.JSValue, globalObject: *JSC.JSGlobalObject, value: JSC.JSValue) void {
+        JSC.markBinding(@src());
+        TCPSocketPrototype__dataSetCachedValue(thisValue, globalObject, value);
+    }
+
+    extern fn TCPSocketPrototype__remoteAddressSetCachedValue(JSC.JSValue, *JSC.JSGlobalObject, JSC.JSValue) void;
+
+    /// Set the cached value for remoteAddress on TCPSocket
+    /// This value will be visited by the garbage collector.
+    pub fn remoteAddressSetCached(thisValue: JSC.JSValue, globalObject: *JSC.JSGlobalObject, value: JSC.JSValue) void {
+        JSC.markBinding(@src());
+        TCPSocketPrototype__remoteAddressSetCachedValue(thisValue, globalObject, value);
+    }
+
+    /// Get the TCPSocket constructor value.
+    /// This loads lazily from the global object.
+    pub fn getConstructor(globalObject: *JSC.JSGlobalObject) JSC.JSValue {
+        JSC.markBinding(@src());
+        return TCPSocket__getConstructor(globalObject);
+    }
+
+    /// Create a new instance of TCPSocket
+    pub fn toJS(this: *TCPSocket, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
+        JSC.markBinding(@src());
+        if (comptime Environment.allow_assert) {
+            const value__ = TCPSocket__create(globalObject, this);
+            std.debug.assert(value__.as(TCPSocket).? == this); // If this fails, likely a C ABI issue.
+            return value__;
+        } else {
+            return TCPSocket__create(globalObject, this);
+        }
+    }
+
+    /// Modify the internal ptr to point to a new instance of TCPSocket.
+    pub fn dangerouslySetPtr(value: JSC.JSValue, ptr: ?*TCPSocket) bool {
+        JSC.markBinding(@src());
+        return TCPSocket__dangerouslySetPtr(value, ptr);
+    }
+
+    extern fn TCPSocket__fromJS(JSC.JSValue) ?*TCPSocket;
+    extern fn TCPSocket__getConstructor(*JSC.JSGlobalObject) JSC.JSValue;
+
+    extern fn TCPSocket__create(globalObject: *JSC.JSGlobalObject, ptr: ?*TCPSocket) JSC.JSValue;
+
+    extern fn TCPSocket__dangerouslySetPtr(JSC.JSValue, ?*TCPSocket) bool;
+
+    comptime {
+        if (@TypeOf(TCPSocket.constructor) != (fn (*JSC.JSGlobalObject, *JSC.CallFrame) callconv(.C) ?*TCPSocket)) {
+            @compileLog("TCPSocket.constructor is not a constructor");
+        }
+
+        if (@TypeOf(TCPSocket.finalize) != (fn (*TCPSocket) callconv(.C) void)) {
+            @compileLog("TCPSocket.finalize is not a finalizer");
+        }
+
+        if (@TypeOf(TCPSocket.getData) != GetterType)
+            @compileLog("Expected TCPSocket.getData to be a getter");
+
+        if (@TypeOf(TCPSocket.setData) != SetterType)
+            @compileLog("Expected TCPSocket.setData to be a setter");
+        if (@TypeOf(TCPSocket.end) != CallbackType)
+            @compileLog("Expected TCPSocket.end to be a callback");
+        if (@TypeOf(TCPSocket.flush) != CallbackType)
+            @compileLog("Expected TCPSocket.flush to be a callback");
+        if (@TypeOf(TCPSocket.getListener) != GetterType)
+            @compileLog("Expected TCPSocket.getListener to be a getter");
+
+        if (@TypeOf(TCPSocket.getLocalPort) != GetterType)
+            @compileLog("Expected TCPSocket.getLocalPort to be a getter");
+
+        if (@TypeOf(TCPSocket.getReadyState) != GetterType)
+            @compileLog("Expected TCPSocket.getReadyState to be a getter");
+
+        if (@TypeOf(TCPSocket.ref) != CallbackType)
+            @compileLog("Expected TCPSocket.ref to be a callback");
+        if (@TypeOf(TCPSocket.reload) != CallbackType)
+            @compileLog("Expected TCPSocket.reload to be a callback");
+        if (@TypeOf(TCPSocket.getRemoteAddress) != GetterType)
+            @compileLog("Expected TCPSocket.getRemoteAddress to be a getter");
+
+        if (@TypeOf(TCPSocket.shutdown) != CallbackType)
+            @compileLog("Expected TCPSocket.shutdown to be a callback");
+        if (@TypeOf(TCPSocket.timeout) != CallbackType)
+            @compileLog("Expected TCPSocket.timeout to be a callback");
+        if (@TypeOf(TCPSocket.unref) != CallbackType)
+            @compileLog("Expected TCPSocket.unref to be a callback");
+        if (@TypeOf(TCPSocket.write) != CallbackType)
+            @compileLog("Expected TCPSocket.write to be a callback");
+        if (!JSC.is_bindgen) {
+            @export(TCPSocket.constructor, .{ .name = "TCPSocketClass__construct" });
+            @export(TCPSocket.end, .{ .name = "TCPSocketPrototype__end" });
+            @export(TCPSocket.finalize, .{ .name = "TCPSocketClass__finalize" });
+            @export(TCPSocket.flush, .{ .name = "TCPSocketPrototype__flush" });
+            @export(TCPSocket.getData, .{ .name = "TCPSocketPrototype__getData" });
+            @export(TCPSocket.getListener, .{ .name = "TCPSocketPrototype__getListener" });
+            @export(TCPSocket.getLocalPort, .{ .name = "TCPSocketPrototype__getLocalPort" });
+            @export(TCPSocket.getReadyState, .{ .name = "TCPSocketPrototype__getReadyState" });
+            @export(TCPSocket.getRemoteAddress, .{ .name = "TCPSocketPrototype__getRemoteAddress" });
+            @export(TCPSocket.ref, .{ .name = "TCPSocketPrototype__ref" });
+            @export(TCPSocket.reload, .{ .name = "TCPSocketPrototype__reload" });
+            @export(TCPSocket.setData, .{ .name = "TCPSocketPrototype__setData" });
+            @export(TCPSocket.shutdown, .{ .name = "TCPSocketPrototype__shutdown" });
+            @export(TCPSocket.timeout, .{ .name = "TCPSocketPrototype__timeout" });
+            @export(TCPSocket.unref, .{ .name = "TCPSocketPrototype__unref" });
+            @export(TCPSocket.write, .{ .name = "TCPSocketPrototype__write" });
+        }
+    }
+};
+pub const JSTLSSocket = struct {
+    const TLSSocket = Classes.TLSSocket;
+    const GetterType = fn (*TLSSocket, *JSC.JSGlobalObject) callconv(.C) JSC.JSValue;
+    const SetterType = fn (*TLSSocket, *JSC.JSGlobalObject, JSC.JSValue) callconv(.C) bool;
+    const CallbackType = fn (*TLSSocket, *JSC.JSGlobalObject, *JSC.CallFrame) callconv(.C) JSC.JSValue;
+
+    /// Return the pointer to the wrapped object.
+    /// If the object does not match the type, return null.
+    pub fn fromJS(value: JSC.JSValue) ?*TLSSocket {
+        JSC.markBinding(@src());
+        return TLSSocket__fromJS(value);
+    }
+
+    extern fn TLSSocketPrototype__dataSetCachedValue(JSC.JSValue, *JSC.JSGlobalObject, JSC.JSValue) void;
+
+    /// Set the cached value for data on TLSSocket
+    /// This value will be visited by the garbage collector.
+    pub fn dataSetCached(thisValue: JSC.JSValue, globalObject: *JSC.JSGlobalObject, value: JSC.JSValue) void {
+        JSC.markBinding(@src());
+        TLSSocketPrototype__dataSetCachedValue(thisValue, globalObject, value);
+    }
+
+    extern fn TLSSocketPrototype__remoteAddressSetCachedValue(JSC.JSValue, *JSC.JSGlobalObject, JSC.JSValue) void;
+
+    /// Set the cached value for remoteAddress on TLSSocket
+    /// This value will be visited by the garbage collector.
+    pub fn remoteAddressSetCached(thisValue: JSC.JSValue, globalObject: *JSC.JSGlobalObject, value: JSC.JSValue) void {
+        JSC.markBinding(@src());
+        TLSSocketPrototype__remoteAddressSetCachedValue(thisValue, globalObject, value);
+    }
+
+    /// Get the TLSSocket constructor value.
+    /// This loads lazily from the global object.
+    pub fn getConstructor(globalObject: *JSC.JSGlobalObject) JSC.JSValue {
+        JSC.markBinding(@src());
+        return TLSSocket__getConstructor(globalObject);
+    }
+
+    /// Create a new instance of TLSSocket
+    pub fn toJS(this: *TLSSocket, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
+        JSC.markBinding(@src());
+        if (comptime Environment.allow_assert) {
+            const value__ = TLSSocket__create(globalObject, this);
+            std.debug.assert(value__.as(TLSSocket).? == this); // If this fails, likely a C ABI issue.
+            return value__;
+        } else {
+            return TLSSocket__create(globalObject, this);
+        }
+    }
+
+    /// Modify the internal ptr to point to a new instance of TLSSocket.
+    pub fn dangerouslySetPtr(value: JSC.JSValue, ptr: ?*TLSSocket) bool {
+        JSC.markBinding(@src());
+        return TLSSocket__dangerouslySetPtr(value, ptr);
+    }
+
+    extern fn TLSSocket__fromJS(JSC.JSValue) ?*TLSSocket;
+    extern fn TLSSocket__getConstructor(*JSC.JSGlobalObject) JSC.JSValue;
+
+    extern fn TLSSocket__create(globalObject: *JSC.JSGlobalObject, ptr: ?*TLSSocket) JSC.JSValue;
+
+    extern fn TLSSocket__dangerouslySetPtr(JSC.JSValue, ?*TLSSocket) bool;
+
+    comptime {
+        if (@TypeOf(TLSSocket.constructor) != (fn (*JSC.JSGlobalObject, *JSC.CallFrame) callconv(.C) ?*TLSSocket)) {
+            @compileLog("TLSSocket.constructor is not a constructor");
+        }
+
+        if (@TypeOf(TLSSocket.finalize) != (fn (*TLSSocket) callconv(.C) void)) {
+            @compileLog("TLSSocket.finalize is not a finalizer");
+        }
+
+        if (@TypeOf(TLSSocket.getData) != GetterType)
+            @compileLog("Expected TLSSocket.getData to be a getter");
+
+        if (@TypeOf(TLSSocket.setData) != SetterType)
+            @compileLog("Expected TLSSocket.setData to be a setter");
+        if (@TypeOf(TLSSocket.end) != CallbackType)
+            @compileLog("Expected TLSSocket.end to be a callback");
+        if (@TypeOf(TLSSocket.flush) != CallbackType)
+            @compileLog("Expected TLSSocket.flush to be a callback");
+        if (@TypeOf(TLSSocket.getListener) != GetterType)
+            @compileLog("Expected TLSSocket.getListener to be a getter");
+
+        if (@TypeOf(TLSSocket.getLocalPort) != GetterType)
+            @compileLog("Expected TLSSocket.getLocalPort to be a getter");
+
+        if (@TypeOf(TLSSocket.getReadyState) != GetterType)
+            @compileLog("Expected TLSSocket.getReadyState to be a getter");
+
+        if (@TypeOf(TLSSocket.ref) != CallbackType)
+            @compileLog("Expected TLSSocket.ref to be a callback");
+        if (@TypeOf(TLSSocket.reload) != CallbackType)
+            @compileLog("Expected TLSSocket.reload to be a callback");
+        if (@TypeOf(TLSSocket.getRemoteAddress) != GetterType)
+            @compileLog("Expected TLSSocket.getRemoteAddress to be a getter");
+
+        if (@TypeOf(TLSSocket.shutdown) != CallbackType)
+            @compileLog("Expected TLSSocket.shutdown to be a callback");
+        if (@TypeOf(TLSSocket.timeout) != CallbackType)
+            @compileLog("Expected TLSSocket.timeout to be a callback");
+        if (@TypeOf(TLSSocket.unref) != CallbackType)
+            @compileLog("Expected TLSSocket.unref to be a callback");
+        if (@TypeOf(TLSSocket.write) != CallbackType)
+            @compileLog("Expected TLSSocket.write to be a callback");
+        if (!JSC.is_bindgen) {
+            @export(TLSSocket.constructor, .{ .name = "TLSSocketClass__construct" });
+            @export(TLSSocket.end, .{ .name = "TLSSocketPrototype__end" });
+            @export(TLSSocket.finalize, .{ .name = "TLSSocketClass__finalize" });
+            @export(TLSSocket.flush, .{ .name = "TLSSocketPrototype__flush" });
+            @export(TLSSocket.getData, .{ .name = "TLSSocketPrototype__getData" });
+            @export(TLSSocket.getListener, .{ .name = "TLSSocketPrototype__getListener" });
+            @export(TLSSocket.getLocalPort, .{ .name = "TLSSocketPrototype__getLocalPort" });
+            @export(TLSSocket.getReadyState, .{ .name = "TLSSocketPrototype__getReadyState" });
+            @export(TLSSocket.getRemoteAddress, .{ .name = "TLSSocketPrototype__getRemoteAddress" });
+            @export(TLSSocket.ref, .{ .name = "TLSSocketPrototype__ref" });
+            @export(TLSSocket.reload, .{ .name = "TLSSocketPrototype__reload" });
+            @export(TLSSocket.setData, .{ .name = "TLSSocketPrototype__setData" });
+            @export(TLSSocket.shutdown, .{ .name = "TLSSocketPrototype__shutdown" });
+            @export(TLSSocket.timeout, .{ .name = "TLSSocketPrototype__timeout" });
+            @export(TLSSocket.unref, .{ .name = "TLSSocketPrototype__unref" });
+            @export(TLSSocket.write, .{ .name = "TLSSocketPrototype__write" });
+        }
+    }
+};
+pub const JSListener = struct {
+    const Listener = Classes.Listener;
+    const GetterType = fn (*Listener, *JSC.JSGlobalObject) callconv(.C) JSC.JSValue;
+    const SetterType = fn (*Listener, *JSC.JSGlobalObject, JSC.JSValue) callconv(.C) bool;
+    const CallbackType = fn (*Listener, *JSC.JSGlobalObject, *JSC.CallFrame) callconv(.C) JSC.JSValue;
+
+    /// Return the pointer to the wrapped object.
+    /// If the object does not match the type, return null.
+    pub fn fromJS(value: JSC.JSValue) ?*Listener {
+        JSC.markBinding(@src());
+        return Listener__fromJS(value);
+    }
+
+    extern fn ListenerPrototype__hostnameSetCachedValue(JSC.JSValue, *JSC.JSGlobalObject, JSC.JSValue) void;
+
+    /// Set the cached value for hostname on Listener
+    /// This value will be visited by the garbage collector.
+    pub fn hostnameSetCached(thisValue: JSC.JSValue, globalObject: *JSC.JSGlobalObject, value: JSC.JSValue) void {
+        JSC.markBinding(@src());
+        ListenerPrototype__hostnameSetCachedValue(thisValue, globalObject, value);
+    }
+
+    extern fn ListenerPrototype__unixSetCachedValue(JSC.JSValue, *JSC.JSGlobalObject, JSC.JSValue) void;
+
+    /// Set the cached value for unix on Listener
+    /// This value will be visited by the garbage collector.
+    pub fn unixSetCached(thisValue: JSC.JSValue, globalObject: *JSC.JSGlobalObject, value: JSC.JSValue) void {
+        JSC.markBinding(@src());
+        ListenerPrototype__unixSetCachedValue(thisValue, globalObject, value);
+    }
+
+    /// Get the Listener constructor value.
+    /// This loads lazily from the global object.
+    pub fn getConstructor(globalObject: *JSC.JSGlobalObject) JSC.JSValue {
+        JSC.markBinding(@src());
+        return Listener__getConstructor(globalObject);
+    }
+
+    /// Create a new instance of Listener
+    pub fn toJS(this: *Listener, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
+        JSC.markBinding(@src());
+        if (comptime Environment.allow_assert) {
+            const value__ = Listener__create(globalObject, this);
+            std.debug.assert(value__.as(Listener).? == this); // If this fails, likely a C ABI issue.
+            return value__;
+        } else {
+            return Listener__create(globalObject, this);
+        }
+    }
+
+    /// Modify the internal ptr to point to a new instance of Listener.
+    pub fn dangerouslySetPtr(value: JSC.JSValue, ptr: ?*Listener) bool {
+        JSC.markBinding(@src());
+        return Listener__dangerouslySetPtr(value, ptr);
+    }
+
+    extern fn Listener__fromJS(JSC.JSValue) ?*Listener;
+    extern fn Listener__getConstructor(*JSC.JSGlobalObject) JSC.JSValue;
+
+    extern fn Listener__create(globalObject: *JSC.JSGlobalObject, ptr: ?*Listener) JSC.JSValue;
+
+    extern fn Listener__dangerouslySetPtr(JSC.JSValue, ?*Listener) bool;
+
+    comptime {
+        if (@TypeOf(Listener.constructor) != (fn (*JSC.JSGlobalObject, *JSC.CallFrame) callconv(.C) ?*Listener)) {
+            @compileLog("Listener.constructor is not a constructor");
+        }
+
+        if (@TypeOf(Listener.finalize) != (fn (*Listener) callconv(.C) void)) {
+            @compileLog("Listener.finalize is not a finalizer");
+        }
+
+        if (@TypeOf(Listener.getData) != GetterType)
+            @compileLog("Expected Listener.getData to be a getter");
+
+        if (@TypeOf(Listener.setData) != SetterType)
+            @compileLog("Expected Listener.setData to be a setter");
+        if (@TypeOf(Listener.getHostname) != GetterType)
+            @compileLog("Expected Listener.getHostname to be a getter");
+
+        if (@TypeOf(Listener.getPort) != GetterType)
+            @compileLog("Expected Listener.getPort to be a getter");
+
+        if (@TypeOf(Listener.ref) != CallbackType)
+            @compileLog("Expected Listener.ref to be a callback");
+        if (@TypeOf(Listener.reload) != CallbackType)
+            @compileLog("Expected Listener.reload to be a callback");
+        if (@TypeOf(Listener.stop) != CallbackType)
+            @compileLog("Expected Listener.stop to be a callback");
+        if (@TypeOf(Listener.getUnix) != GetterType)
+            @compileLog("Expected Listener.getUnix to be a getter");
+
+        if (@TypeOf(Listener.unref) != CallbackType)
+            @compileLog("Expected Listener.unref to be a callback");
+        if (!JSC.is_bindgen) {
+            @export(Listener.constructor, .{ .name = "ListenerClass__construct" });
+            @export(Listener.finalize, .{ .name = "ListenerClass__finalize" });
+            @export(Listener.getData, .{ .name = "ListenerPrototype__getData" });
+            @export(Listener.getHostname, .{ .name = "ListenerPrototype__getHostname" });
+            @export(Listener.getPort, .{ .name = "ListenerPrototype__getPort" });
+            @export(Listener.getUnix, .{ .name = "ListenerPrototype__getUnix" });
+            @export(Listener.ref, .{ .name = "ListenerPrototype__ref" });
+            @export(Listener.reload, .{ .name = "ListenerPrototype__reload" });
+            @export(Listener.setData, .{ .name = "ListenerPrototype__setData" });
+            @export(Listener.stop, .{ .name = "ListenerPrototype__stop" });
+            @export(Listener.unref, .{ .name = "ListenerPrototype__unref" });
+        }
+    }
+};
 pub const JSSubprocess = struct {
     const Subprocess = Classes.Subprocess;
     const GetterType = fn (*Subprocess, *JSC.JSGlobalObject) callconv(.C) JSC.JSValue;
@@ -1392,6 +1751,9 @@ pub const JSBlob = struct {
 };
 
 comptime {
+    _ = JSTCPSocket;
+    _ = JSTLSSocket;
+    _ = JSListener;
     _ = JSSubprocess;
     _ = JSSHA1;
     _ = JSMD5;

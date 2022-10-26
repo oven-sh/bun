@@ -73,6 +73,11 @@ const Handlers = struct {
     is_server: bool = false,
     promise: JSC.Strong = .{},
 
+    pub fn markActive(this: *Handlers) void {
+        Listener.log("markActive", .{});
+        this.active_connections += 1;
+    }
+
     // corker: Corker = .{},
 
     pub fn resolvePromise(this: *Handlers, value: JSValue) void {
@@ -89,6 +94,7 @@ const Handlers = struct {
     }
 
     pub fn markInactive(this: *Handlers, ssl: bool, ctx: *uws.SocketContext) void {
+        Listener.log("markInactive", .{});
         this.active_connections -= 1;
         if (this.active_connections == 0 and this.is_server) {
             var listen_socket: *Listener = @fieldParentPtr(Listener, "handlers", this);
@@ -261,7 +267,7 @@ pub const SocketConfig = struct {
 };
 
 pub const Listener = struct {
-    const log = Output.scoped(.Listener, false);
+    pub const log = Output.scoped(.Listener, false);
 
     handlers: Handlers,
     listener: ?*uws.ListenSocket = null,
@@ -697,6 +703,10 @@ pub const Listener = struct {
         handlers_ptr.* = handlers;
         handlers_ptr.is_server = false;
 
+        var promise = JSC.JSPromise.create(globalObject);
+        var promise_value = promise.asValue(globalObject);
+        handlers_ptr.promise.set(globalObject, promise_value);
+
         if (ssl_enabled) {
             var tls = handlers.vm.allocator.create(TLSSocket) catch @panic("OOM");
 
@@ -705,10 +715,6 @@ pub const Listener = struct {
                 .this_value = default_data,
                 .socket = undefined,
             };
-
-            var promise = JSC.JSPromise.create(globalObject);
-            var promise_value = promise.asValue(globalObject);
-            handlers.promise.set(globalObject, promise_value);
 
             tls.doConnect(connection, socket_context) catch {
                 handlers_ptr.unprotect();
@@ -729,9 +735,6 @@ pub const Listener = struct {
                 .this_value = default_data,
                 .socket = undefined,
             };
-            var promise = JSC.JSPromise.create(globalObject);
-            var promise_value = promise.asValue(globalObject);
-            handlers.promise.set(globalObject, promise_value);
 
             tcp.doConnect(connection, socket_context) catch {
                 handlers_ptr.unprotect();
@@ -875,7 +878,7 @@ fn NewSocket(comptime ssl: bool) type {
 
         pub fn markActive(this: *This) void {
             if (!this.reffer.has) {
-                this.handlers.active_connections += 1;
+                this.handlers.markActive();
                 this.reffer.ref(this.handlers.vm);
             }
         }
@@ -883,8 +886,15 @@ fn NewSocket(comptime ssl: bool) type {
         pub fn markInactive(this: *This) void {
             if (this.reffer.has) {
                 var vm = this.handlers.vm;
-                this.handlers.markInactive(ssl, this.socket.context());
                 this.reffer.unref(vm);
+
+                // we have to close the socket before the socket context is closed
+                // otherwise we will get a segfault
+                // uSockets will defer closing the TCP socket until the next tick
+                if (!this.socket.isClosed())
+                    this.socket.close(0, null);
+
+                this.handlers.markInactive(ssl, this.socket.context());
                 this.poll_ref.unref(vm);
             }
 
@@ -909,13 +919,11 @@ fn NewSocket(comptime ssl: bool) type {
                 This.dataSetCached(this_value, handlers.globalObject, old_this_value);
             }
 
-            if (handlers.onOpen == .zero and old_this_value == .zero) {
-                this.markActive();
-                this.handlers.resolvePromise(this_value);
-                return;
-            }
-
+            this.markActive();
             handlers.resolvePromise(this_value);
+
+            if (handlers.onOpen == .zero and old_this_value == .zero)
+                return;
 
             const result = handlers.onOpen.callWithThis(handlers.globalObject, this_value, &[_]JSValue{
                 this_value,
@@ -941,8 +949,6 @@ fn NewSocket(comptime ssl: bool) type {
                 handlers.vm.runErrorHandler(result, null);
                 return;
             }
-
-            this.markActive();
         }
 
         pub fn getThisValue(this: *This, globalObject: *JSC.JSGlobalObject) JSValue {
@@ -1345,6 +1351,7 @@ fn NewSocket(comptime ssl: bool) type {
                 if (!this.detached) {
                     if (!this.socket.isClosed()) this.socket.flush();
                     this.detached = true;
+
                     this.markInactive();
                     if (!this.socket.isClosed())
                         this.socket.close(0, null);

@@ -85,7 +85,7 @@ it("echo server 1 on 1", async () => {
         counter: 0,
       },
     });
-    connect({
+    const clientProm = connect({
       socket: handlers,
       hostname: "localhost",
       port: 8084,
@@ -93,7 +93,7 @@ it("echo server 1 on 1", async () => {
         counter: 0,
       },
     });
-    await Promise.all([prom, serverProm]);
+    await Promise.all([prom, clientProm, serverProm]);
     server.stop();
     server = serverData = clientData = undefined;
     Bun.gc(true);

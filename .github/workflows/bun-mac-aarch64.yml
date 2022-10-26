@@ -3,6 +3,7 @@ env:
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository }}
   TEST_TAG: bun-test'
+concurrency: ${{ runner.name }}-${{ runner.os }}-${{ runner.arch }}
 
 on:
   push:

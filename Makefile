@@ -286,12 +286,11 @@ SHARED_INCLUDE_DIR = -I$(realpath src/bun.js/bindings)/ \
 		-I$(realpath src/bun.js/builtins/cpp) \
 		-I$(realpath src/bun.js/bindings/node_os) \
 		-I$(realpath src/bun.js/modules) \
-
+		-I$(JSC_INCLUDE_DIR)
 
 MAC_INCLUDE_DIRS :=  $(ALL_JSC_INCLUDE_DIRS) \
 		$(SHARED_INCLUDE_DIR) \
 		-I$(WEBKIT_DIR)/Source \
-		-I$(JSC_INCLUDE_DIR)
 
 LINUX_INCLUDE_DIRS := -I$(JSC_INCLUDE_DIR) \
 					   $(ALL_JSC_INCLUDE_DIRS) \

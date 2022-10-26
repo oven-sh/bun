@@ -281,6 +281,7 @@ ALL_JSC_INCLUDE_DIRS := -I$(WEBKIT_RELEASE_DIR)/WTF/Headers \
 MAC_INCLUDE_DIRS :=  $(ALL_JSC_INCLUDE_DIRS) \
 		-Isrc/bun.js/bindings/ \
 		-Isrc/bun.js/builtins/ \
+		-Isrc/bun.js/bindings \
 		-Isrc/bun.js/bindings/webcore \
 		-Isrc/bun.js/bindings/webcrypto \
 		-Isrc/bun.js/bindings/sqlite \

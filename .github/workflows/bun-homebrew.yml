@@ -4,7 +4,7 @@ on:
     types:
       - published
 jobs:
-  docker:
+  homebrew:
     runs-on: ubuntu-latest
     if: github.repository_owner == 'oven-sh'
     steps:

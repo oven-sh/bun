@@ -329,7 +329,7 @@ pub const ServerConfig = struct {
                 args.development = dev.toBoolean();
             }
 
-            if (arg.getTruthy("tls")) |tls| {
+            if (arg.getTruthy(global, "tls")) |tls| {
                 if (SSLConfig.inJS(global, tls, exception)) |ssl_config| {
                     args.ssl_config = ssl_config;
                 }

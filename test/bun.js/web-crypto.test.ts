@@ -3,8 +3,8 @@ import { describe, expect, it } from "bun:test";
 describe("Web Crypto", () => {
   it("has globals", () => {
     expect(crypto.subtle !== undefined).toBe(true);
-    expect(CryptoKey !== undefined).toBe(true);
-    expect(SubtleCrypto !== undefined).toBe(true);
+    expect(CryptoKey.name).toBe("CryptoKey");
+    expect(SubtleCrypto.name).toBe("SubtleCrypto");
   });
   it("should encrypt and decrypt", async () => {
     const key = await crypto.subtle.generateKey(

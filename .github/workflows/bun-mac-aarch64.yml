@@ -28,6 +28,7 @@ jobs:
   macos-object-files:
     name: macOS Object
     runs-on: zig-object
+    concurrency: macos
     strategy:
       matrix:
         include:
@@ -196,7 +197,6 @@ jobs:
         run: |
           mkdir -p $OBJ_DIR $BUN_DEPS_OUT_DIR
           make clean-bindings
-          make webcrypto
           make -j $(sysctl -n hw.ncpu) release-bindings
       - name: Upload C++
         if: matrix.compile_obj
@@ -305,7 +305,7 @@ jobs:
           rm -rf packages/${{ matrix.package }}
           mkdir -p packages/${{ matrix.package }}
           mv ${{ runner.temp }}/release/* packages/${{ matrix.package }}/
-          make bun-link-lld-release copy-to-bun-release-dir-bin
+          make webcrypto bun-link-lld-release copy-to-bun-release-dir-bin
       - name: Zip
         env:
           CPU_TARGET: ${{ matrix.cpu }}

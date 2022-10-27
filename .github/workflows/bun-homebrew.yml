@@ -3,10 +3,11 @@ on:
   release:
     types:
       - published
+      - edited
 jobs:
   homebrew:
     runs-on: ubuntu-latest
-    if: github.repository_owner == 'oven-sh'
+    if: github.repository_owner == 'oven-sh' && !github.event.release.draft
     steps:
       - id: checkout
         name: Checkout

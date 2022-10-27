@@ -33,7 +33,7 @@ test("decorator order of evaluation", () => {
     }
 
     @decorator6
-    move(newX: number, newY: number) {
+    move(newX: number, @decorator12 newY: number) {
       this.x = newX;
       this._y = newY;
     }
@@ -47,13 +47,13 @@ test("decorator order of evaluation", () => {
   let d = new BugReport("bad bug");
 
   function decorator1(target, propertyKey) {
-    expect(counter++).toBe(10);
+    expect(counter++).toBe(11);
     expect(target === BugReport).toBe(true);
     expect(propertyKey).toBe(undefined);
   }
 
   function decorator2(target, propertyKey) {
-    expect(counter++).toBe(9);
+    expect(counter++).toBe(10);
     expect(target === BugReport).toBe(true);
     expect(propertyKey).toBe(undefined);
   }
@@ -65,7 +65,7 @@ test("decorator order of evaluation", () => {
   }
 
   function decorator4(target, propertyKey) {
-    expect(counter++).toBe(7);
+    expect(counter++).toBe(8);
     expect(target === BugReport.prototype).toBe(true);
     expect(propertyKey).toBe("jump");
   }
@@ -77,7 +77,7 @@ test("decorator order of evaluation", () => {
   }
 
   function decorator6(target, propertyKey) {
-    expect(counter++).toBe(6);
+    expect(counter++).toBe(7);
     expect(target === BugReport.prototype).toBe(true);
     expect(propertyKey).toBe("move");
   }
@@ -89,7 +89,7 @@ test("decorator order of evaluation", () => {
   }
 
   function decorator8(target, propertyKey) {
-    expect(counter++).toBe(8);
+    expect(counter++).toBe(9);
     expect(target === BugReport).toBe(true);
     expect(propertyKey).toBe(undefined);
   }
@@ -110,6 +110,143 @@ test("decorator order of evaluation", () => {
     expect(counter++).toBe(4);
     expect(target === BugReport.prototype).toBe(true);
     expect(propertyKey).toBe("y");
+  }
+
+  function decorator12(target, propertyKey) {
+    expect(counter++).toBe(6);
+    expect(target === BugReport.prototype).toBe(true);
+    expect(propertyKey).toBe("move");
+  }
+});
+
+test("decorator factories order of evaluation", () => {
+  let counter = 0;
+  const computedProp: unique symbol = Symbol("computedProp");
+
+  @decorator1()
+  @decorator2()
+  class BugReport {
+    @decorator7()
+    type: string;
+
+    @decorator3()
+    x: number = 20;
+
+    @decorator5()
+    private _y: number = 12;
+
+    @decorator10()
+    get y() {
+      return this._y;
+    }
+    @decorator11()
+    set y(newY: number) {
+      this._y = newY;
+    }
+
+    @decorator9()
+    [computedProp]: string = "yes";
+
+    constructor(@decorator8() type: string) {
+      this.type = type;
+    }
+
+    @decorator6()
+    move(newX: number, @decorator12() newY: number) {
+      this.x = newX;
+      this._y = newY;
+    }
+
+    @decorator4()
+    jump() {
+      this._y += 30;
+    }
+  }
+
+  let d = new BugReport("bad bug");
+
+  function decorator1() {
+    expect(counter++).toBe(18);
+    return function (target, descriptorKey) {
+      expect(counter++).toBe(23);
+    };
+  }
+
+  function decorator2() {
+    expect(counter++).toBe(19);
+    return function (target, descriptorKey) {
+      expect(counter++).toBe(22);
+    };
+  }
+
+  function decorator3() {
+    expect(counter++).toBe(2);
+    return function (target, descriptorKey) {
+      expect(counter++).toBe(3);
+    };
+  }
+
+  function decorator4() {
+    expect(counter++).toBe(16);
+    return function (target, descriptorKey) {
+      expect(counter++).toBe(17);
+    };
+  }
+
+  function decorator5() {
+    expect(counter++).toBe(4);
+    return function (target, descriptorKey) {
+      expect(counter++).toBe(5);
+    };
+  }
+
+  function decorator6() {
+    expect(counter++).toBe(12);
+    return function (target, descriptorKey) {
+      expect(counter++).toBe(15);
+    };
+  }
+
+  function decorator7() {
+    expect(counter++).toBe(0);
+    return function (target, descriptorKey) {
+      expect(counter++).toBe(1);
+    };
+  }
+
+  function decorator8() {
+    expect(counter++).toBe(20);
+    return function (target, descriptorKey) {
+      expect(counter++).toBe(21);
+    };
+  }
+
+  function decorator9() {
+    expect(counter++).toBe(10);
+    return function (target, descriptorKey) {
+      expect(counter++).toBe(11);
+    };
+  }
+
+  function decorator10() {
+    expect(counter++).toBe(6);
+    return function (target, descriptorKey) {
+      expect(counter++).toBe(7);
+    };
+  }
+
+  function decorator11() {
+    expect(counter++).toBe(8);
+    return function (target, descriptorKey) {
+      expect(counter++).toBe(9);
+    };
+  }
+
+  function decorator12() {
+    expect(counter++).toBe(13);
+    return function (target, descriptorKey) {
+      expect(counter++).toBe(14);
+    };
   }
 });
 

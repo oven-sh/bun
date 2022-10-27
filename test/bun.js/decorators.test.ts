@@ -331,28 +331,30 @@ test("parameter decorators", () => {
     expect(propertyKey).toBe("dance");
     expect(parameterIndex).toBe(0);
   }
+
+  class Maybe {
+    constructor(
+      @m1 private x: number,
+      @m2 public y: boolean,
+      @m3 protected z: string
+    ) {}
+  }
+
+  function m1(target, propertyKey, index) {
+    expect(target === Maybe).toBe(true);
+    expect(propertyKey).toBe(undefined);
+    expect(index).toBe(0);
+  }
+
+  function m2(target, propertyKey, index) {
+    expect(target === Maybe).toBe(true);
+    expect(propertyKey).toBe(undefined);
+    expect(index).toBe(1);
+  }
+
+  function m3(target, propertyKey, index) {
+    expect(target === Maybe).toBe(true);
+    expect(propertyKey).toBe(undefined);
+    expect(index).toBe(2);
+  }
 });
-
-// test("accessor decorators", () => {});
-
-// test("decorator factories", () => {
-//   class T {
-//     @color("red")
-//     c: string = "blue";
-//     x: number = 10;
-
-//     constructor(x: number) {
-//       this.x = x;
-//     }
-//   }
-
-//   function color(value: string) {
-//     return function (target: any, propertyKey) {
-//       expect(propertyKey).toBe("c");
-//     };
-//   }
-// });
-
-// test("decorator composition", () => {});
-
-// test("decorator metadata", () => {});

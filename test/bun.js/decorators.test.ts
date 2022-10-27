@@ -44,8 +44,6 @@ test("decorator order of evaluation", () => {
     }
   }
 
-  let d = new BugReport("bad bug");
-
   function decorator1(target, propertyKey) {
     expect(counter++).toBe(11);
     expect(target === BugReport).toBe(true);
@@ -163,8 +161,6 @@ test("decorator factories order of evaluation", () => {
     }
   }
 
-  let d = new BugReport("bad bug");
-
   function decorator1() {
     expect(counter++).toBe(18);
     return function (target, descriptorKey) {
@@ -250,57 +246,92 @@ test("decorator factories order of evaluation", () => {
   }
 });
 
-test("class decorators", () => {
-  @decorator1
-  class BugReport {
-    #x: number = 20;
-    type: string = "default";
-    private static someting: number = 10;
-    static anotherStatic: boolean;
+test("parameter decorators", () => {
+  let counter = 0;
+  class HappyDecorator {
+    width: number;
+    height: number;
+    x: number;
+    y: number;
 
-    constructor(type: string) {
-      this.type = type;
+    move(@d4 x: number, @d5 @d6 y: number) {
+      this.x = x;
+      this.y = y;
+    }
+
+    constructor(
+      one: number,
+      two: string,
+      three: boolean,
+      @d1 @d2 width: number,
+      @d3 height: number
+    ) {
+      this.width = width;
+      this.height = height;
+    }
+
+    dance(@d7 @d8 intensity: number) {
+      this.width *= intensity;
+      this.height *= intensity;
     }
   }
 
-  let d = new BugReport("bad bug");
+  function d1(target, propertyKey, parameterIndex) {
+    expect(counter++).toBe(7);
+    expect(target === HappyDecorator).toBe(true);
+    expect(propertyKey).toBe(undefined);
+    expect(parameterIndex).toBe(3);
+  }
 
-  function decorator1(target) {
-    expect(target === BugReport).toBe(true);
+  function d2(target, propertyKey, parameterIndex) {
+    expect(counter++).toBe(6);
+    expect(target === HappyDecorator).toBe(true);
+    expect(propertyKey).toBe(undefined);
+    expect(parameterIndex).toBe(3);
+  }
+
+  function d3(target, propertyKey, parameterIndex) {
+    expect(counter++).toBe(5);
+    expect(target === HappyDecorator).toBe(true);
+    expect(propertyKey).toBe(undefined);
+    expect(parameterIndex).toBe(4);
+  }
+
+  function d4(target, propertyKey, parameterIndex) {
+    expect(counter++).toBe(2);
+    expect(target === HappyDecorator.prototype).toBe(true);
+    expect(propertyKey).toBe("move");
+    expect(parameterIndex).toBe(0);
+  }
+
+  function d5(target, propertyKey, parameterIndex) {
+    expect(counter++).toBe(1);
+    expect(target === HappyDecorator.prototype).toBe(true);
+    expect(propertyKey).toBe("move");
+    expect(parameterIndex).toBe(1);
+  }
+
+  function d6(target, propertyKey, parameterIndex) {
+    expect(counter++).toBe(0);
+    expect(target === HappyDecorator.prototype).toBe(true);
+    expect(propertyKey).toBe("move");
+    expect(parameterIndex).toBe(1);
+  }
+
+  function d7(target, propertyKey, parameterIndex) {
+    expect(counter++).toBe(4);
+    expect(target === HappyDecorator.prototype).toBe(true);
+    expect(propertyKey).toBe("dance");
+    expect(parameterIndex).toBe(0);
+  }
+
+  function d8(target, propertyKey, parameterIndex) {
+    expect(counter++).toBe(3);
+    expect(target === HappyDecorator.prototype).toBe(true);
+    expect(propertyKey).toBe("dance");
+    expect(parameterIndex).toBe(0);
   }
 });
-
-// test("method decorators", () => {
-//   class M {
-//     @decorator1()
-//     @decorator2()
-//     method() {}
-//   }
-
-//   function decorator1() {
-//     console.log("decorator1() evaluated");
-//     return function (
-//       target: any,
-//       propertyKey: string,
-//       descriptor: PropertyDescriptor
-//     ) {
-//       console.log("decorator1() called");
-//     };
-//   }
-
-//   function decorator2() {
-//     console.log("decorator2() evaluated");
-//     return function (
-//       target: any,
-//       propertyKey: string,
-//       descriptor: PropertyDescriptor
-//     ) {
-//       console.log("decorator2() called");
-//     };
-//   }
-// });
-
-// test("parameter decorators", () => {});
 
 // test("accessor decorators", () => {});
 

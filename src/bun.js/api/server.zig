@@ -258,7 +258,7 @@ pub const ServerConfig = struct {
             args.development = false;
         }
 
-        const PORT_ENV = .{ "PORT", "BUN_PORT", "NODE_PORT" };
+        const PORT_ENV = .{ "BUN_PORT", "PORT", "NODE_PORT" };
 
         inline for (PORT_ENV) |PORT| {
             if (env.get(PORT)) |port| {

@@ -66,3 +66,12 @@ it("process.hrtime.bigint()", () => {
   const end = process.hrtime.bigint();
   expect(end > start).toBe(true);
 });
+
+it("process.release", () => {
+  expect(process.release.name).toBe("bun");
+  expect(process.release.sourceUrl).toBe(
+    `https://github.com/oven-sh/bun/release/bun-v${process.versions.bun}/bun-${
+      process.platform
+    }-${{ arm64: "aarch64", x64: "x64" }[process.arch] || process.arch}.zip`
+  );
+});

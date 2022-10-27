@@ -1014,6 +1014,8 @@ const StaticSymbolName = struct {
         pub const __HMRClient = NewStaticSymbol("Bun");
         pub const __FastRefreshModule = NewStaticSymbol("FastHMR");
         pub const __FastRefreshRuntime = NewStaticSymbol("FastRefresh");
+        pub const __decorateClass = NewStaticSymbol("__decorateClass");
+        pub const __decorateParam = NewStaticSymbol("__decorateParam");
 
         pub const @"$$m" = NewStaticSymbol("$$m");
 
@@ -17355,9 +17357,85 @@ fn NewParser_(
         ) []Stmt {
             switch (stmtorexpr) {
                 .stmt => |stmt| {
-                    var stmts = p.allocator.alloc(Stmt, 1) catch unreachable;
-                    stmts[0] = stmt;
-                    return stmts;
+                    var class = stmt.data.s_class.class;
+
+                    var class_decorators = ListManaged(Stmt).init(p.allocator);
+                    var static_decorators = ListManaged(Stmt).init(p.allocator);
+                    var instance_decorators = ListManaged(Stmt).init(p.allocator);
+
+                    for (class.properties) |*prop| {
+                        if (prop.flags.contains(.is_method)) {
+                            if (prop.value) |prop_value| {
+                                switch (prop_value.data) {
+                                    .e_function => |func| {
+                                        const is_constructor = (prop.key.?.data == .e_string and prop.key.?.data.e_string.eqlComptime("constructor"));
+                                        for (func.func.args) |arg, i| {
+                                            for (arg.ts_decorators.ptr[0..arg.ts_decorators.len]) |arg_decorator| {
+                                                var decorators = if (is_constructor) class.ts_decorators.listManaged(p.allocator) else prop.ts_decorators.listManaged(p.allocator);
+                                                const args = p.allocator.alloc(Expr, 2) catch unreachable;
+                                                args[0] = p.e(E.Number{ .value = @intToFloat(f64, i) }, arg_decorator.loc);
+                                                args[1] = arg_decorator;
+                                                decorators.append(p.callRuntime(arg_decorator.loc, "__decorateParam", args)) catch unreachable;
+                                                if (is_constructor) {
+                                                    class.ts_decorators.update(decorators);
+                                                } else {
+                                                    prop.ts_decorators.update(decorators);
+                                                }
+                                            }
+                                        }
+                                    },
+                                    else => unreachable,
+                                }
+                            }
+                        }
+
+                        if (prop.ts_decorators.len > 0) {
+                            const loc = prop.key.?.loc;
+                            const descriptor_key = switch (prop.key.?.data) {
+                                .e_identifier => |k| p.e(E.Identifier{ .ref = k.ref }, loc),
+                                .e_number => |k| p.e(E.Number{ .value = k.value }, loc),
+                                .e_string => |k| p.e(E.String{ .data = k.data }, loc),
+                                else => undefined,
+                            };
+                            const descriptor_kind: f64 = if (!prop.flags.contains(.is_method)) 2 else 1;
+                            const args = p.allocator.alloc(Expr, 4) catch unreachable;
+                            args[0] = p.e(E.Array{ .items = prop.ts_decorators }, loc);
+                            args[1] = p.e(E.Dot{ .target = p.e(E.Identifier{ .ref = class.class_name.?.ref.? }, class.class_name.?.loc), .name = "prototype", .name_loc = loc }, loc);
+                            args[2] = descriptor_key;
+                            args[3] = p.e(E.Number{ .value = descriptor_kind }, loc);
+
+                            const decorator = p.callRuntime(prop.key.?.loc, "__decorateClass", args);
+                            const decorator_stmt = p.s(S.SExpr{ .value = decorator }, decorator.loc);
+
+                            if (prop.flags.contains(.is_static)) {
+                                static_decorators.append(decorator_stmt) catch unreachable;
+                            } else {
+                                instance_decorators.append(decorator_stmt) catch unreachable;
+                            }
+                        }
+                    }
+
+                    if (class.ts_decorators.len > 0) {
+                        var args = p.allocator.alloc(Expr, 2) catch unreachable;
+                        args[0] = p.e(E.Array{ .items = class.ts_decorators }, stmt.loc);
+                        args[1] = p.e(E.Identifier{ .ref = class.class_name.?.ref.? }, class.class_name.?.loc);
+
+                        class_decorators.append(Expr.assignStmt(
+                            p.e(E.Identifier{ .ref = class.class_name.?.ref.? }, class.class_name.?.loc),
+                            p.callRuntime(stmt.loc, "__decorateClass", args),
+                            p.allocator,
+                        )) catch unreachable;
+
+                        p.recordUsage(class.class_name.?.ref.?);
+                        p.recordUsage(class.class_name.?.ref.?);
+                    }
+
+                    var stmts = ListManaged(Stmt).init(p.allocator);
+                    stmts.append(stmt) catch unreachable;
+                    stmts.appendSlice(instance_decorators.toOwnedSlice()) catch unreachable;
+                    stmts.appendSlice(static_decorators.toOwnedSlice()) catch unreachable;
+                    stmts.appendSlice(class_decorators.toOwnedSlice()) catch unreachable;
+                    return stmts.items;
                 },
                 .expr => |expr| {
                     var stmts = p.allocator.alloc(Stmt, 1) catch unreachable;

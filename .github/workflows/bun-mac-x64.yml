@@ -178,7 +178,7 @@ jobs:
           WEBKIT_RELEASE_DIR_LTO: ${{ runner.temp }}/bun-webkit
         run: |
           mkdir -p $OBJ_DIR $BUN_DEPS_OUT_DIR
-          make vendor-without-check webcrypto
+          make vendor-without-check
       - name: Compile C++
         if: matrix.compile_obj
         env:
@@ -303,7 +303,7 @@ jobs:
           rm -rf packages/${{ matrix.package }}
           mkdir -p packages/${{ matrix.package }}
           mv ${{ runner.temp }}/release/* packages/${{ matrix.package }}/
-          make bun-link-lld-release copy-to-bun-release-dir-bin
+          make webcrypto bun-link-lld-release copy-to-bun-release-dir-bin
       - name: Zip
         env:
           CPU_TARGET: ${{ matrix.cpu }}

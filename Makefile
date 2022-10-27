@@ -502,7 +502,7 @@ builtins: ## to generate builtins
 generate-builtins: builtins
 
 .PHONY: tinycc
-vendor-without-check: npm-install node-fallbacks runtime_js fallback_decoder bun_error mimalloc picohttp zlib boringssl libarchive libbacktrace lolhtml usockets uws base64 tinycc oniguruma
+vendor-without-check: npm-install node-fallbacks runtime_js fallback_decoder bun_error mimalloc picohttp zlib boringssl libarchive libbacktrace lolhtml usockets uws base64 tinycc oniguruma webcrypto-debug webcrypto
 
 BUN_TYPES_REPO_PATH ?= $(realpath ../bun-types)
 
@@ -854,7 +854,7 @@ clone-submodules:
 	git -c submodule."src/bun.js/WebKit".update=none submodule update --init --recursive --depth=1 --progress
 
 .PHONY: devcontainer
-devcontainer: $(OBJ_DIR) $(DEBUG_OBJ_DIR) clone-submodules libbacktrace mimalloc zlib libarchive boringssl picohttp identifier-cache node-fallbacks npm-install api analytics bun_error fallback_decoder bindings uws lolhtml usockets base64 tinycc runtime_js_dev sqlite dev
+devcontainer: $(OBJ_DIR) $(DEBUG_OBJ_DIR) clone-submodules libbacktrace mimalloc zlib libarchive boringssl picohttp identifier-cache node-fallbacks npm-install api analytics bun_error fallback_decoder bindings uws lolhtml usockets base64 tinycc runtime_js_dev sqlite oniguruma webcrypto-debug webcrypto dev 
 
 .PHONY: devcontainer-build
 devcontainer-build:

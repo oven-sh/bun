@@ -272,6 +272,34 @@ static JSC_DEFINE_HOST_FUNCTION(Process_functionChdir,
     return JSC::JSValue::encode(result);
 }
 
+extern "C" const char* Bun__githubURL;
+
+JSC_DEFINE_CUSTOM_GETTER(Process_getterRelease, (JSGlobalObject * globalObject, EncodedJSValue thisValue, PropertyName))
+{
+    auto& vm = globalObject->vm();
+
+    auto* release = JSC::constructEmptyObject(globalObject);
+    release->putDirect(vm, Identifier::fromString(vm, "name"_s), jsString(vm, WTF::String("bun"_s)), 0);
+    release->putDirect(vm, Identifier::fromString(vm, "lts"_s), jsBoolean(false), 0);
+    release->putDirect(vm, Identifier::fromString(vm, "sourceUrl"_s), jsString(vm, WTF::String(Bun__githubURL, strlen(Bun__githubURL))), 0);
+    release->putDirect(vm, Identifier::fromString(vm, "headersUrl"_s), jsEmptyString(vm), 0);
+    release->putDirect(vm, Identifier::fromString(vm, "libUrl"_s), jsEmptyString(vm), 0);
+
+    return JSValue::encode(release);
+}
+
+JSC_DEFINE_CUSTOM_SETTER(Process_setterRelease,
+    (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue,
+        JSC::EncodedJSValue value, JSC::PropertyName))
+{
+    JSC::VM& vm = globalObject->vm();
+
+    JSC::JSObject* thisObject = JSC::jsDynamicCast<JSC::JSObject*>(JSValue::decode(thisValue));
+    thisObject->putDirect(vm, JSC::Identifier::fromString(vm, "release"_s), JSValue::decode(value), 0);
+
+    return true;
+}
+
 void Process::finishCreation(JSC::VM& vm)
 {
     Base::finishCreation(vm);
@@ -368,6 +396,9 @@ void Process::finishCreation(JSC::VM& vm)
 
     hrtime->putDirect(vm, JSC::Identifier::fromString(vm, "bigint"_s), hrtimeBigInt);
     this->putDirect(this->vm(), JSC::Identifier::fromString(this->vm(), "hrtime"_s), hrtime);
+
+    this->putDirectCustomAccessor(vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "release"_s)),
+        JSC::CustomGetterSetter::create(vm, Process_getterRelease, Process_setterRelease), 0);
 }
 
 const JSC::ClassInfo Process::s_info = { "Process"_s, &Base::s_info, nullptr, nullptr,

@@ -258,7 +258,7 @@ pub const ServerConfig = struct {
             args.development = false;
         }
 
-        const PORT_ENV = .{ "PORT", "BUN_PORT", "NODE_PORT" };
+        const PORT_ENV = .{ "BUN_PORT", "PORT", "NODE_PORT" };
 
         inline for (PORT_ENV) |PORT| {
             if (env.get(PORT)) |port| {
@@ -329,12 +329,26 @@ pub const ServerConfig = struct {
                 args.development = dev.toBoolean();
             }
 
-            if (SSLConfig.fromJS(global, arguments, exception)) |ssl_config| {
-                args.ssl_config = ssl_config;
+            if (arg.getTruthy(global, "tls")) |tls| {
+                if (SSLConfig.inJS(global, tls, exception)) |ssl_config| {
+                    args.ssl_config = ssl_config;
+                }
+
+                if (exception.* != null) {
+                    return args;
+                }
             }
 
-            if (exception.* != null) {
-                return args;
+            // @compatibility Bun v0.x - v0.2.1
+            // this used to be top-level, now it's "tls" object
+            if (args.ssl_config == null) {
+                if (SSLConfig.inJS(global, arg, exception)) |ssl_config| {
+                    args.ssl_config = ssl_config;
+                }
+
+                if (exception.* != null) {
+                    return args;
+                }
             }
 
             if (arg.getTruthy(global, "maxRequestBodySize")) |max_request_body_size| {

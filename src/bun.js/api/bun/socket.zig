@@ -205,13 +205,15 @@ pub const SocketConfig = struct {
         var ssl: ?JSC.API.ServerConfig.SSLConfig = null;
         var default_data = JSValue.zero;
 
-        if (JSC.API.ServerConfig.SSLConfig.inJS(globalObject, opts, exception)) |ssl_config| {
-            ssl = ssl_config;
-        } else if (exception.* != null) {
-            return null;
+        if (opts.getTruthy(globalObject, "tls")) |tls| {
+            if (JSC.API.ServerConfig.SSLConfig.inJS(globalObject, tls, exception)) |ssl_config| {
+                ssl = ssl_config;
+            } else if (exception.* != null) {
+                return null;
+            }
         }
 
-        if (opts.getTruthy(globalObject, "hostname") orelse opts.getTruthy(globalObject, "host")) |hostname| {
+        if (opts.getTruthy(globalObject, "hostname")) |hostname| {
             if (hostname.isEmptyOrUndefinedOrNull() or !hostname.isString()) {
                 exception.* = JSC.toInvalidArguments("Expected \"hostname\" to be a string", .{}, globalObject).asObjectRef();
                 return null;

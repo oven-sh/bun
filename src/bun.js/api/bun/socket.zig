@@ -379,9 +379,9 @@ pub const Listener = struct {
         var socket = Listener{
             .handlers = handlers,
             .connection = if (port) |port_| .{
-                .host = .{ .host = (hostname_or_unix.cloneIfNeeded() catch unreachable).slice(), .port = port_ },
+                .host = .{ .host = (hostname_or_unix.cloneIfNeeded(bun.default_allocator) catch unreachable).slice(), .port = port_ },
             } else .{
-                .unix = (hostname_or_unix.cloneIfNeeded() catch unreachable).slice(),
+                .unix = (hostname_or_unix.cloneIfNeeded(bun.default_allocator) catch unreachable).slice(),
             },
             .ssl = ssl_enabled,
         };
@@ -660,9 +660,9 @@ pub const Listener = struct {
 
         var socket_context = uws.us_create_socket_context(@boolToInt(ssl_enabled), uws.Loop.get().?, @sizeOf(usize), ctx_opts).?;
         var connection: Listener.UnixOrHost = if (port) |port_| .{
-            .host = .{ .host = (hostname_or_unix.cloneIfNeeded() catch unreachable).slice(), .port = port_ },
+            .host = .{ .host = (hostname_or_unix.cloneIfNeeded(bun.default_allocator) catch unreachable).slice(), .port = port_ },
         } else .{
-            .unix = (hostname_or_unix.cloneIfNeeded() catch unreachable).slice(),
+            .unix = (hostname_or_unix.cloneIfNeeded(bun.default_allocator) catch unreachable).slice(),
         };
 
         if (ssl_enabled) {

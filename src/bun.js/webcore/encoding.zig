@@ -666,7 +666,7 @@ pub const TextDecoder = struct {
             }
 
             var str = arguments[0].toSlice(globalThis, default_allocator);
-            defer if (str.allocated) str.deinit();
+            defer if (str.isAllocated()) str.deinit();
             encoding = EncodingLabel.which(str.slice()) orelse {
                 globalThis.throwInvalidArguments("Unsupported encoding label \"{s}\"", .{str.slice()});
                 return null;

@@ -254,6 +254,7 @@ function FFIBuilder(params, returnType, functionToCall, name) {
     case 5:
       wrap = (arg1, arg2, arg3, arg4, arg5) =>
         func(functionToCall, arg1, arg2, arg3, arg4, arg5);
+      break;
     case 6:
       wrap = (arg1, arg2, arg3, arg4, arg5, arg6) =>
         func(functionToCall, arg1, arg2, arg3, arg4, arg5, arg6);

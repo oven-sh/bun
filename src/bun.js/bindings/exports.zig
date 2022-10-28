@@ -1999,7 +1999,7 @@ pub const ZigConsoleClient = struct {
                     var tag_name_slice: ZigString.Slice = ZigString.Slice.empty;
                     var is_tag_kind_primitive = false;
 
-                    defer if (tag_name_slice.allocated) tag_name_slice.deinit();
+                    defer if (tag_name_slice.isAllocated()) tag_name_slice.deinit();
 
                     if (value.get(this.globalThis, "type")) |type_value| {
                         const _tag = Tag.get(type_value, this.globalThis);

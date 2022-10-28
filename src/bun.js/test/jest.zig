@@ -707,7 +707,8 @@ pub const TestScope = struct {
         }
 
         if (js.JSValueIsString(ctx, args[0])) {
-            label = (JSC.JSValue.fromRef(arguments[0]).toSlice(ctx, getAllocator(ctx)).cloneIfNeeded() catch unreachable).slice();
+            const allocator = getAllocator(ctx);
+            label = (JSC.JSValue.fromRef(arguments[0]).toSlice(ctx, allocator).cloneIfNeeded(allocator) catch unreachable).slice();
             args = args[1..];
         }
 
@@ -972,6 +973,7 @@ pub const DescribeScope = struct {
 
         var label = ZigString.init("");
         var args = arguments;
+        const allocator = getAllocator(ctx);
 
         if (js.JSValueIsString(ctx, arguments[0])) {
             JSC.JSValue.fromRef(arguments[0]).toZigString(&label, ctx.ptr());
@@ -979,15 +981,15 @@ pub const DescribeScope = struct {
         }
 
         if (args.len == 0 or !js.JSObjectIsFunction(ctx, args[0])) {
-            JSError(getAllocator(ctx), "describe() requires a callback function", .{}, ctx, exception);
+            JSError(allocator, "describe() requires a callback function", .{}, ctx, exception);
             return js.JSValueMakeUndefined(ctx);
         }
 
         var callback = args[0];
 
-        var scope = getAllocator(ctx).create(DescribeScope) catch unreachable;
+        var scope = allocator.create(DescribeScope) catch unreachable;
         scope.* = .{
-            .label = (label.toSlice(getAllocator(ctx)).cloneIfNeeded() catch unreachable).slice(),
+            .label = (label.toSlice(allocator).cloneIfNeeded(allocator) catch unreachable).slice(),
             .parent = this,
             .file_id = this.file_id,
         };

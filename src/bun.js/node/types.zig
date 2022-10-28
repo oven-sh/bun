@@ -1675,7 +1675,7 @@ pub const Path = struct {
             PathHandler.normalizeStringNode(str, &buf, .windows);
 
         var out_str = JSC.ZigString.init(out);
-        if (str_slice.allocated) out_str.setOutputEncoding();
+        if (str_slice.isAllocated()) out_str.setOutputEncoding();
         return out_str.toValueGC(globalThis);
     }
     pub fn parse(globalThis: *JSC.JSGlobalObject, isWindows: bool, args_ptr: [*]JSC.JSValue, args_len: u16) callconv(.C) JSC.JSValue {
@@ -1743,7 +1743,7 @@ pub const Path = struct {
             PathHandler.relativePlatform(from, to, .windows, true);
 
         var out_str = JSC.ZigString.init(out);
-        if (from_slice.allocated or to_slice.allocated) out_str.setOutputEncoding();
+        if (from_slice.isAllocated() or to_slice.isAllocated()) out_str.setOutputEncoding();
         return out_str.toValueGC(globalThis);
     }
 

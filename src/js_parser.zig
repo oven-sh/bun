@@ -9111,7 +9111,7 @@ fn NewParser_(
                         .s_expr => |expr| {
                             switch (expr.value.data) {
                                 .e_string => |str| {
-                                    if (!str.prefer_template) {
+                                    if (!str.flags.prefer_template) {
                                         isDirectivePrologue = true;
 
                                         if (str.eqlComptime("use strict")) {
@@ -10497,7 +10497,7 @@ fn NewParser_(
         pub fn parseStringLiteral(p: *P) anyerror!Expr {
             const loc = p.lexer.loc();
             var str = p.lexer.toEString();
-            str.prefer_template = p.lexer.token == .t_no_substitution_template_literal;
+            str.flags.prefer_template = p.lexer.token == .t_no_substitution_template_literal;
 
             const expr = p.e(str, loc);
             try p.lexer.next();

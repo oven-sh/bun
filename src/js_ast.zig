@@ -1615,7 +1615,6 @@ pub const E = struct {
         // A version of this where `utf8` and `value` are stored in a packed union, with len as a single u32 was attempted.
         // It did not improve benchmarks. Neither did converting this from a heap-allocated type to a stack-allocated type.
         data: []const u8 = "",
-        prefer_template: bool = false,
 
         // A very simple rope implementation
         // We only use this for string folding, so this is kind of overkill
@@ -1623,7 +1622,11 @@ pub const E = struct {
         next: ?*String = null,
         end: ?*String = null,
         rope_len: u32 = 0,
-        is_utf16: bool = false,
+
+        flags: packed struct {
+            prefer_template: bool = false,
+            is_utf16: bool = false,
+        } = .{},
 
         pub var class = E.String{ .data = "class" };
         pub fn push(this: *String, other: *String) void {
@@ -1649,9 +1652,9 @@ pub const E = struct {
         }
 
         pub fn toUTF8(this: *String, allocator: std.mem.Allocator) !void {
-            if (!this.is_utf16) return;
+            if (!this.flags.is_utf16) return;
             this.data = try strings.toUTF8Alloc(allocator, this.slice16());
-            this.is_utf16 = false;
+            this.flags.is_utf16 = false;
         }
 
         pub fn init(value: anytype) String {
@@ -1659,7 +1662,7 @@ pub const E = struct {
             if (Value == []u16 or Value == []const u16) {
                 return .{
                     .data = @ptrCast([*]const u8, value.ptr)[0..value.len],
-                    .is_utf16 = true,
+                    .flags = .{ .is_utf16 = true },
                 };
             }
             return .{
@@ -1668,7 +1671,7 @@ pub const E = struct {
         }
 
         pub fn slice16(this: *const String) []const u16 {
-            std.debug.assert(this.is_utf16);
+            std.debug.assert(this.flags.is_utf16);
             return @ptrCast([*]const u16, @alignCast(@alignOf(u16), this.data.ptr))[0..this.data.len];
         }
 
@@ -1708,8 +1711,10 @@ pub const E = struct {
         pub fn clone(str: *const String, allocator: std.mem.Allocator) !String {
             return String{
                 .data = try allocator.dupe(u8, str.data),
-                .prefer_template = str.prefer_template,
-                .is_utf16 = !str.isUTF8(),
+                .flags = .{
+                    .is_utf16 = !str.isUTF8(),
+                    .prefer_template = str.flags.prefer_template,
+                },
             };
         }
 
@@ -1718,7 +1723,7 @@ pub const E = struct {
         }
 
         pub inline fn isUTF8(s: *const String) bool {
-            return !s.is_utf16;
+            return !s.flags.is_utf16;
         }
 
         pub inline fn isBlank(s: *const String) bool {

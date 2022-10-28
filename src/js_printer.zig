@@ -2041,7 +2041,7 @@ pub fn NewPrinter(
                     e.resovleRopeIfNeeded(p.options.allocator);
 
                     // If this was originally a template literal, print it as one as long as we're not minifying
-                    if (e.prefer_template) {
+                    if (e.flags.prefer_template) {
                         p.print("`");
                         p.printStringContent(e, '`');
                         p.print("`");

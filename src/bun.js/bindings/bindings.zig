@@ -199,7 +199,7 @@ pub const ZigString = extern struct {
     pub const shim = Shimmer("", "ZigString", @This());
 
     pub const Slice = struct {
-        allocator: NullableAllocator,
+        allocator: NullableAllocator = .{},
         ptr: [*]const u8,
         len: u32,
 
@@ -207,11 +207,11 @@ pub const ZigString = extern struct {
             return .{
                 .ptr = input.ptr,
                 .len = @truncate(u32, input.len),
-                .allocator = NullableAllocator.new(bun.default_allocator),
+                .allocator = NullableAllocator.init(bun.default_allocator),
             };
         }
 
-        pub const empty = Slice{ .allocator = NullableAllocator{}, .ptr = undefined, .len = 0 };
+        pub const empty = Slice{ .ptr = undefined, .len = 0 };
 
         pub inline fn isAllocated(this: Slice) bool {
             return !this.allocator.isNull();
@@ -223,7 +223,7 @@ pub const ZigString = extern struct {
             }
 
             var duped = try allocator.dupe(u8, this.ptr[0..this.len]);
-            return Slice{ .allocator = NullableAllocator.new(allocator), .ptr = duped.ptr, .len = this.len };
+            return Slice{ .allocator = NullableAllocator.init(allocator), .ptr = duped.ptr, .len = this.len };
         }
 
         pub fn cloneIfNeeded(this: Slice, allocator: std.mem.Allocator) !Slice {
@@ -232,7 +232,7 @@ pub const ZigString = extern struct {
             }
 
             var duped = try allocator.dupe(u8, this.ptr[0..this.len]);
-            return Slice{ .allocator = NullableAllocator.new(allocator), .ptr = duped.ptr, .len = this.len };
+            return Slice{ .allocator = NullableAllocator.init(allocator), .ptr = duped.ptr, .len = this.len };
         }
 
         pub fn cloneZ(this: Slice, allocator: std.mem.Allocator) !Slice {
@@ -241,7 +241,7 @@ pub const ZigString = extern struct {
             }
 
             var duped = try allocator.dupeZ(u8, this.ptr[0..this.len]);
-            return Slice{ .allocator = NullableAllocator.new(allocator), .ptr = duped.ptr, .len = this.len };
+            return Slice{ .allocator = NullableAllocator.init(allocator), .ptr = duped.ptr, .len = this.len };
         }
 
         pub fn slice(this: Slice) []const u8 {
@@ -453,14 +453,13 @@ pub const ZigString = extern struct {
             return Slice{
                 .ptr = buffer.ptr,
                 .len = @truncate(u32, buffer.len),
-                .allocator = NullableAllocator.new(allocator),
+                .allocator = NullableAllocator.init(allocator),
             };
         }
 
         return Slice{
             .ptr = untagged(this.ptr),
             .len = @truncate(u32, this.len),
-            .allocator = NullableAllocator{},
         };
     }
 
@@ -468,11 +467,11 @@ pub const ZigString = extern struct {
     /// It is slow but safer when the input is from JavaScript
     pub fn toSlice(this: ZigString, allocator: std.mem.Allocator) Slice {
         if (this.len == 0)
-            return Slice{ .ptr = "", .len = 0, .allocator = NullableAllocator{} };
+            return Slice.empty;
         if (is16Bit(&this)) {
             var buffer = this.toOwnedSlice(allocator) catch unreachable;
             return Slice{
-                .allocator = NullableAllocator.new(allocator),
+                .allocator = NullableAllocator.init(allocator),
                 .ptr = buffer.ptr,
                 .len = @truncate(u32, buffer.len),
             };
@@ -486,7 +485,6 @@ pub const ZigString = extern struct {
         return Slice{
             .ptr = untagged(this.ptr),
             .len = @truncate(u32, this.len),
-            .allocator = NullableAllocator,
         };
     }
 
@@ -499,14 +497,13 @@ pub const ZigString = extern struct {
             return Slice{
                 .ptr = buffer.ptr,
                 .len = @truncate(u32, buffer.len),
-                .allocator = NullableAllocator.new(allocator),
+                .allocator = NullableAllocator.init(allocator),
             };
         }
 
         return Slice{
             .ptr = untagged(this.ptr),
             .len = @truncate(u32, this.len),
-            .allocator = NullableAllocator{},
         };
     }
 

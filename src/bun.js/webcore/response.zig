@@ -3800,7 +3800,7 @@ pub const Blob = struct {
                     const is_all_ascii = !sliced.isAllocated();
                     if (!sliced.isAllocated() and sliced.len > 0) {
                         sliced.ptr = @ptrCast([*]const u8, (try bun.default_allocator.dupe(u8, sliced.slice())).ptr);
-                        sliced.allocator = NullableAllocator.new(bun.default_allocator);
+                        sliced.allocator = NullableAllocator.init(bun.default_allocator);
                     }
 
                     return Blob.initWithAllASCII(bun.constStrToU8(sliced.slice()), bun.default_allocator, global, is_all_ascii);

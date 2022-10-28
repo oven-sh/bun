@@ -8,7 +8,7 @@ pub const NullableAllocator = struct {
     // `ptr` property.
     vtable: ?*const std.mem.Allocator.VTable = null,
 
-    pub inline fn new(a: std.mem.Allocator) @This() {
+    pub inline fn init(a: std.mem.Allocator) @This() {
         return .{
             .ptr = a.ptr,
             .vtable = a.vtable,

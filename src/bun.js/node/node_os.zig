@@ -316,9 +316,23 @@ pub const Os = struct {
         return JSC.ZigString.init(C.getVersion(&name_buffer)).withEncoding().toValueGC(globalThis);
     }
 
+    inline fn getMachineName() []const u8 {
+        return switch (@import("builtin").target.cpu.arch) {
+            .arm => "arm",
+            .aarch64 => "aarch64",
+            .mips => "mips",
+            .mips64 => "mips64",
+            .powerpc64 => "ppc64",
+            .powerpc64le => "ppc64le",
+            .s390x => "s390x",
+            .i386 => "i386",
+            .x86_64 => "x86_64",
+            else => "unknown",
+        };
+    }
+
     pub fn machine(globalThis: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSC.JSValue {
         JSC.markBinding(@src());
-        var name_buffer: [std.os.HOST_NAME_MAX]u8 = undefined;
-        return JSC.ZigString.init(C.getMachine(&name_buffer)).withEncoding().toValueGC(globalThis);
+        return JSC.ZigString.static(comptime getMachineName()).toValue(globalThis);
     }
 };

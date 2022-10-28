@@ -387,16 +387,6 @@ pub fn getVersion(buf: []u8) []const u8 {
     }
 }
 
-pub fn getMachine(buf: []u8) []const u8 {
-    if (comptime Environment.isLinux) {
-        return linux.get_machine(buf.ptr[0..std.os.HOST_NAME_MAX]);
-    } else if (comptime Environment.isMac) {
-        return darwin.get_machine(buf);
-    } else {
-        return "unknown";
-    }
-}
-
 pub fn getRelease(buf: []u8) []const u8 {
     if (comptime Environment.isLinux) {
         return linux.get_release(buf.ptr[0..std.os.HOST_NAME_MAX]);

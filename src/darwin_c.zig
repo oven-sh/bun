@@ -563,22 +563,6 @@ pub fn get_version(buf: []u8) []const u8 {
     return std.mem.span(std.meta.assumeSentinel(buf.ptr, 0));
 }
 
-pub fn get_machine(buf: []u8) []const u8 {
-    @memset(buf.ptr, 0, buf.len);
-
-    var size: usize = buf.len;
-
-    if (std.c.sysctlbyname(
-        "machdep.cpu.brand_string",
-        buf.ptr,
-        &size,
-        null,
-        0,
-    ) == -1) return "unknown";
-
-    return std.mem.span(std.meta.assumeSentinel(buf.ptr, 0));
-}
-
 pub fn get_release(buf: []u8) []const u8 {
     @memset(buf.ptr, 0, buf.len);
 

@@ -90,7 +90,7 @@ static WTF::String extendMultibyteHexCharacters(const WTF::String& string)
 
         if (inCharacterClass) {
             // we know ']' will be escaped so there isn't a need to scan for the closing bracket
-            if (characters[i] == '[' || characters[i] == ']' || characters[i] == '^' || characters[i] == '-' || characters[i] == ')' || characters[i] == '(') {
+            if (characters[i] == '[' || characters[i] == ']' || (characters[i] == '^' && characters[i - 1] != '[') || characters[i] == '-' || characters[i] == ')' || characters[i] == '(') {
                 if (characters[i - 1] != '\\') {
                     // character class intersections not supported, assume end of character class
                     if (characters[i] == ']') {

@@ -9,10 +9,10 @@ using namespace WebCore;
 
 #include "WebCoreJSClientData.h"
 
-extern "C" EncodedJSValue jsFunctionGetOnigurumaRegExpConstructor(JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName)
+extern "C" EncodedJSValue jsFunctionGetOnigurumaRegExpConstructor(JSGlobalObject* lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName)
 {
     auto& vm = lexicalGlobalObject->vm();
-    Zig::GlobalObject *globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+    Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
     return JSValue::encode(globalObject->OnigurumaRegExpConstructor());
 }
 
@@ -23,7 +23,8 @@ static WTF::String to16Bit(ASCIILiteral str)
     return WTF::String::make16BitFrom8BitSource(str.characters8(), str.length());
 }
 
-static  WTF::String to16Bit(JSC::JSString* str, JSC::JSGlobalObject *globalObject) {
+static WTF::String to16Bit(JSC::JSString* str, JSC::JSGlobalObject* globalObject)
+{
     if (!str->is8Bit() || str->length() == 0) {
         return str->value(globalObject);
     }
@@ -32,7 +33,8 @@ static  WTF::String to16Bit(JSC::JSString* str, JSC::JSGlobalObject *globalObjec
     return WTF::String::make16BitFrom8BitSource(value.characters8(), value.length());
 }
 
-static WTF::String to16Bit(WTF::String str) {
+static WTF::String to16Bit(WTF::String str)
+{
     if (str.is8Bit()) {
         return WTF::String::make16BitFrom8BitSource(str.characters8(), str.length());
     }
@@ -40,13 +42,13 @@ static WTF::String to16Bit(WTF::String str) {
     return str;
 }
 
-
-static  WTF::String to16Bit(JSValue jsValue, JSC::JSGlobalObject *globalObject, ASCIILiteral defaultValue) {
+static WTF::String to16Bit(JSValue jsValue, JSC::JSGlobalObject* globalObject, ASCIILiteral defaultValue)
+{
     if (!jsValue || jsValue.isUndefinedOrNull()) {
-        return  to16Bit(defaultValue);
+        return to16Bit(defaultValue);
     }
 
-    auto *jsString = jsValue.toString(globalObject);
+    auto* jsString = jsValue.toString(globalObject);
     if (jsString->length() == 0) {
         return to16Bit(defaultValue);
     }
@@ -54,17 +56,18 @@ static  WTF::String to16Bit(JSValue jsValue, JSC::JSGlobalObject *globalObject, 
     return to16Bit(jsString, globalObject);
 }
 
-static WTF::String extendMultibyteHexCharacters(const WTF::String &string) {
+static WTF::String extendMultibyteHexCharacters(const WTF::String& string)
+{
     WTF::StringBuilder sb;
     uint32_t length = string.length();
-    const UChar *characters = string.characters16();
+    const UChar* characters = string.characters16();
     bool inCharacterClass = false;
 
     for (int i = 0; i < length; i++) {
         while (characters[i] == '\\') {
             if (i + 1 < length && characters[i + 1] == 'x') {
-                if (i + 2 < length && isxdigit(characters[i+ 2])) {
-                    if (i + 3 < length && isxdigit(characters[i+ 3])) {
+                if (i + 2 < length && isxdigit(characters[i + 2])) {
+                    if (i + 3 < length && isxdigit(characters[i + 3])) {
                         sb.append(string.substring(i, 4));
                         sb.append("\\x00"_s);
                         i += 4;
@@ -88,7 +91,7 @@ static WTF::String extendMultibyteHexCharacters(const WTF::String &string) {
         if (inCharacterClass) {
             // we know ']' will be escaped so there isn't a need to scan for the closing bracket
             if (characters[i] == '[' || characters[i] == ']' || characters[i] == '^' || characters[i] == '-' || characters[i] == ')' || characters[i] == '(') {
-                if (characters[i- 1] != '\\') {
+                if (characters[i - 1] != '\\') {
                     // character class intersections not supported, assume end of character class
                     if (characters[i] == ']') {
                         inCharacterClass = false;
@@ -100,7 +103,7 @@ static WTF::String extendMultibyteHexCharacters(const WTF::String &string) {
         } else {
             if (characters[i] == '[') {
                 if (i - 1 >= 0) {
-                    if (characters[i- 1] != '\\') {
+                    if (characters[i - 1] != '\\') {
                         inCharacterClass = true;
                     }
                 } else {
@@ -190,14 +193,11 @@ static inline WTF::String escapedPattern(const WTF::String& pattern, const UChar
 
             if (ch == '\n') {
                 result.append('n');
-            }
-            else if (ch == '\r') {
+            } else if (ch == '\r') {
                 result.append('r');
-            }
-            else if (ch == 0x2028) {
+            } else if (ch == 0x2028) {
                 result.append("u2028");
-            }
-            else {
+            } else {
                 result.append("u2029");
             }
         } else
@@ -212,8 +212,9 @@ static inline WTF::String escapedPattern(const WTF::String& pattern, const UChar
     return result.toString();
 }
 
-WTF::String sortRegExpFlags(WTF::String flagsString) {
-    WTF::Vector<UChar> flags = {'d', 'g', 'i', 'm', 's', 'u', 'y'};
+WTF::String sortRegExpFlags(WTF::String flagsString)
+{
+    WTF::Vector<UChar> flags = { 'd', 'g', 'i', 'm', 's', 'u', 'y' };
     WTF::StringBuilder result;
 
     for (auto flag : flags) {
@@ -225,8 +226,9 @@ WTF::String sortRegExpFlags(WTF::String flagsString) {
     return result.toString();
 }
 
-bool validateRegExpFlags(WTF::StringView flags){
-    std::map<char16_t, bool> flagsAllowed = {{'g', false}, {'i', false}, {'m', false}, {'s', false}, {'u', false}, {'y', false}, {'d', false}};
+bool validateRegExpFlags(WTF::StringView flags)
+{
+    std::map<char16_t, bool> flagsAllowed = { { 'g', false }, { 'i', false }, { 'm', false }, { 's', false }, { 'u', false }, { 'y', false }, { 'd', false } };
     for (auto flag : flags.codeUnits()) {
         auto flagItr = flagsAllowed.find(flag);
         if (flagItr == flagsAllowed.end() || flagItr->second) {
@@ -239,37 +241,35 @@ bool validateRegExpFlags(WTF::StringView flags){
 }
 
 class OnigurumaRegExpPrototype final : public JSC::JSNonFinalObject {
-    public:
-        using Base = JSC::JSNonFinalObject;
-    
-        static OnigurumaRegExpPrototype* create(JSC::VM& vm, JSGlobalObject* globalObject, JSC::Structure* structure)
-        {
-            OnigurumaRegExpPrototype* ptr = new (NotNull, JSC::allocateCell<OnigurumaRegExpPrototype>(vm)) OnigurumaRegExpPrototype(vm, globalObject, structure);
-            ptr->finishCreation(vm, globalObject);
-            return ptr;
-        }
-    
-        DECLARE_INFO;
-        template<typename CellType, JSC::SubspaceAccess>
-        static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
-        {
-            return &vm.plainObjectSpace();
-        }
-        static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
-        {
-            return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
-        }
-    
-    private:
-        OnigurumaRegExpPrototype(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure)
-            : Base(vm, structure)
-        {
-        }
-    
-        void finishCreation(JSC::VM&, JSC::JSGlobalObject*);
-    };
-    
+public:
+    using Base = JSC::JSNonFinalObject;
 
+    static OnigurumaRegExpPrototype* create(JSC::VM& vm, JSGlobalObject* globalObject, JSC::Structure* structure)
+    {
+        OnigurumaRegExpPrototype* ptr = new (NotNull, JSC::allocateCell<OnigurumaRegExpPrototype>(vm)) OnigurumaRegExpPrototype(vm, globalObject, structure);
+        ptr->finishCreation(vm, globalObject);
+        return ptr;
+    }
+
+    DECLARE_INFO;
+    template<typename CellType, JSC::SubspaceAccess>
+    static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
+    {
+        return &vm.plainObjectSpace();
+    }
+    static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
+    {
+        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
+    }
+
+private:
+    OnigurumaRegExpPrototype(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure)
+        : Base(vm, structure)
+    {
+    }
+
+    void finishCreation(JSC::VM&, JSC::JSGlobalObject*);
+};
 
 class OnigurumaRegEx final : public JSC::JSDestructibleObject {
 public:
@@ -282,9 +282,10 @@ public:
         return ptr;
     }
 
-    static OnigurumaRegEx* create(JSC::JSGlobalObject* globalObject, WTF::String&& pattern, WTF::String&& flags, regex_t* regExpCode) {
-        auto *structure = reinterpret_cast<Zig::GlobalObject*>(globalObject)->OnigurumaRegExpStructure();
-        auto *object = create(globalObject->vm(), globalObject, structure);
+    static OnigurumaRegEx* create(JSC::JSGlobalObject* globalObject, WTF::String&& pattern, WTF::String&& flags, regex_t* regExpCode)
+    {
+        auto* structure = reinterpret_cast<Zig::GlobalObject*>(globalObject)->OnigurumaRegExpStructure();
+        auto* object = create(globalObject->vm(), globalObject, structure);
         object->m_flagsString = WTFMove(flags);
         object->m_patternString = WTFMove(pattern);
         object->m_onigurumaRegExp = regExpCode;
@@ -292,27 +293,27 @@ public:
         return object;
     }
 
+    DECLARE_EXPORT_INFO;
+    template<typename, JSC::SubspaceAccess mode> static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
+    {
+        if constexpr (mode == JSC::SubspaceAccess::Concurrently)
+            return nullptr;
 
-    DECLARE_EXPORT_INFO;                                                                                                                                                    
-    template<typename, JSC::SubspaceAccess mode> static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)                                                                
-    {                                                                                                                                                                       
-        if constexpr (mode == JSC::SubspaceAccess::Concurrently)                                                                                                            
-            return nullptr;                                                                                                                                                 
- 
         return WebCore::subspaceForImpl<OnigurumaRegEx, UseCustomHeapCellType::No>(
             vm,
             [](auto& spaces) { return spaces.m_clientSubspaceForOnigurumaRegExp.get(); },
             [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForOnigurumaRegExp = WTFMove(space); },
             [](auto& spaces) { return spaces.m_subspaceForOnigurumaRegExp.get(); },
             [](auto& spaces, auto&& space) { spaces.m_subspaceForOnigurumaRegExp = WTFMove(space); });
-                                                                                
     }
 
-    static void destroy(JSC::JSCell* cell) {
+    static void destroy(JSC::JSCell* cell)
+    {
         static_cast<OnigurumaRegEx*>(cell)->OnigurumaRegEx::~OnigurumaRegEx();
     }
 
-    ~OnigurumaRegEx() {
+    ~OnigurumaRegEx()
+    {
         if (m_onigurumaRegExp) {
             onig_free(m_onigurumaRegExp);
         }
@@ -339,68 +340,67 @@ private:
     {
     }
 
-    void finishCreation(JSC::VM&) {
+    void finishCreation(JSC::VM&)
+    {
         Base::finishCreation(vm());
-
     }
 
     WTF::String m_patternString = {};
     WTF::String m_flagsString = {};
-
 };
 
 const ClassInfo OnigurumaRegExpConstructor::s_info = { "Function"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(OnigurumaRegExpConstructor) };
 const ClassInfo OnigurumaRegExpPrototype::s_info = { "Object"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(OnigurumaRegExpPrototype) };
 const ClassInfo OnigurumaRegEx::s_info = { "RegExp"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(OnigurumaRegEx) };
 
-JSC_DEFINE_CUSTOM_GETTER(onigurumaRegExpProtoGetterGlobal, (JSGlobalObject *globalObject, EncodedJSValue encodedThis, PropertyName))
+JSC_DEFINE_CUSTOM_GETTER(onigurumaRegExpProtoGetterGlobal, (JSGlobalObject * globalObject, EncodedJSValue encodedThis, PropertyName))
 {
-    auto *thisValue = jsDynamicCast<OnigurumaRegEx*>(JSValue::decode(encodedThis));
+    auto* thisValue = jsDynamicCast<OnigurumaRegEx*>(JSValue::decode(encodedThis));
     if (UNLIKELY(!thisValue)) {
         return JSValue::encode(jsUndefined());
     }
     return JSValue::encode(jsBoolean(thisValue->flagsString().contains('g')));
 }
 
-JSC_DEFINE_CUSTOM_GETTER(onigurumaRegExpProtoGetterDotAll, (JSGlobalObject *globalObject, EncodedJSValue encodedThis, PropertyName))
+JSC_DEFINE_CUSTOM_GETTER(onigurumaRegExpProtoGetterDotAll, (JSGlobalObject * globalObject, EncodedJSValue encodedThis, PropertyName))
 {
-    auto *thisValue = jsDynamicCast<OnigurumaRegEx*>(JSValue::decode(encodedThis));
+    auto* thisValue = jsDynamicCast<OnigurumaRegEx*>(JSValue::decode(encodedThis));
     if (UNLIKELY(!thisValue)) {
         return JSValue::encode(jsUndefined());
     }
     return JSValue::encode(jsBoolean(thisValue->flagsString().contains('s')));
 }
 
-JSC_DEFINE_CUSTOM_GETTER(onigurumaRegExpProtoGetterHasIndices, (JSGlobalObject *globalObject, EncodedJSValue encodedThis, PropertyName))
+JSC_DEFINE_CUSTOM_GETTER(onigurumaRegExpProtoGetterHasIndices, (JSGlobalObject * globalObject, EncodedJSValue encodedThis, PropertyName))
 {
-    auto *thisValue = jsDynamicCast<OnigurumaRegEx*>(JSValue::decode(encodedThis));
+    auto* thisValue = jsDynamicCast<OnigurumaRegEx*>(JSValue::decode(encodedThis));
     if (UNLIKELY(!thisValue)) {
         return JSValue::encode(jsUndefined());
     }
     return JSValue::encode(jsBoolean(thisValue->flagsString().contains('d')));
 }
 
-JSC_DEFINE_CUSTOM_GETTER(onigurumaRegExpProtoGetterIgnoreCase, (JSGlobalObject *globalObject, EncodedJSValue encodedThis, PropertyName))
+JSC_DEFINE_CUSTOM_GETTER(onigurumaRegExpProtoGetterIgnoreCase, (JSGlobalObject * globalObject, EncodedJSValue encodedThis, PropertyName))
 {
-    auto *thisValue = jsDynamicCast<OnigurumaRegEx*>(JSValue::decode(encodedThis));
+    auto* thisValue = jsDynamicCast<OnigurumaRegEx*>(JSValue::decode(encodedThis));
     if (UNLIKELY(!thisValue)) {
         return JSValue::encode(jsUndefined());
     }
     return JSValue::encode(jsBoolean(thisValue->flagsString().contains('i')));
 }
 
-JSC_DEFINE_CUSTOM_GETTER(onigurumaRegExpProtoGetterMultiline, (JSGlobalObject *globalObject, EncodedJSValue encodedThis, PropertyName))
+JSC_DEFINE_CUSTOM_GETTER(onigurumaRegExpProtoGetterMultiline, (JSGlobalObject * globalObject, EncodedJSValue encodedThis, PropertyName))
 {
-    auto *thisValue = jsDynamicCast<OnigurumaRegEx*>(JSValue::decode(encodedThis));
+    auto* thisValue = jsDynamicCast<OnigurumaRegEx*>(JSValue::decode(encodedThis));
     if (UNLIKELY(!thisValue)) {
         return JSValue::encode(jsUndefined());
     }
     return JSValue::encode(jsBoolean(thisValue->flagsString().contains('m')));
 }
 
-JSC_DEFINE_CUSTOM_GETTER(onigurumaRegExpProtoGetterSticky, (JSGlobalObject *globalObject, EncodedJSValue encodedThis, PropertyName))
+JSC_DEFINE_CUSTOM_GETTER(onigurumaRegExpProtoGetterSticky, (JSGlobalObject * globalObject, EncodedJSValue encodedThis, PropertyName))
 {
-    auto *thisValue = jsDynamicCast<OnigurumaRegEx*>(JSValue::decode(encodedThis));
+    auto* thisValue = jsDynamicCast<OnigurumaRegEx*>(JSValue::decode(encodedThis));
     if (UNLIKELY(!thisValue)) {
         return JSValue::encode(jsUndefined());
     }
@@ -408,42 +408,42 @@ JSC_DEFINE_CUSTOM_GETTER(onigurumaRegExpProtoGetterSticky, (JSGlobalObject *glob
     return JSValue::encode(jsBoolean(thisValue->flagsString().contains('y')));
 }
 
-JSC_DEFINE_CUSTOM_GETTER(onigurumaRegExpProtoGetterUnicode, (JSGlobalObject *globalObject, EncodedJSValue encodedThis, PropertyName))
+JSC_DEFINE_CUSTOM_GETTER(onigurumaRegExpProtoGetterUnicode, (JSGlobalObject * globalObject, EncodedJSValue encodedThis, PropertyName))
 {
-    auto *thisValue = jsDynamicCast<OnigurumaRegEx*>(JSValue::decode(encodedThis));
+    auto* thisValue = jsDynamicCast<OnigurumaRegEx*>(JSValue::decode(encodedThis));
     if (UNLIKELY(!thisValue)) {
         return JSValue::encode(jsUndefined());
     }
     return JSValue::encode(jsBoolean(thisValue->flagsString().contains('u')));
 }
 
-JSC_DEFINE_CUSTOM_GETTER(onigurumaRegExpProtoGetterSource, (JSGlobalObject *globalObject, EncodedJSValue encodedThis, PropertyName))
+JSC_DEFINE_CUSTOM_GETTER(onigurumaRegExpProtoGetterSource, (JSGlobalObject * globalObject, EncodedJSValue encodedThis, PropertyName))
 {
-    auto *thisValue = jsDynamicCast<OnigurumaRegEx*>(JSValue::decode(encodedThis));
+    auto* thisValue = jsDynamicCast<OnigurumaRegEx*>(JSValue::decode(encodedThis));
     if (!thisValue)
         return JSValue::encode(jsUndefined());
 
     return JSValue::encode(jsString(globalObject->vm(), escapedPattern(thisValue->patternString(), thisValue->patternString().characters16(), thisValue->patternString().length())));
 }
 
-JSC_DEFINE_CUSTOM_GETTER(onigurumaRegExpProtoGetterFlags, (JSGlobalObject *globalObject, EncodedJSValue encodedThis, PropertyName))
+JSC_DEFINE_CUSTOM_GETTER(onigurumaRegExpProtoGetterFlags, (JSGlobalObject * globalObject, EncodedJSValue encodedThis, PropertyName))
 {
-    auto *thisValue = jsDynamicCast<OnigurumaRegEx*>(JSValue::decode(encodedThis));
+    auto* thisValue = jsDynamicCast<OnigurumaRegEx*>(JSValue::decode(encodedThis));
     if (!thisValue)
         return JSValue::encode(jsUndefined());
 
     return JSValue::encode(jsString(globalObject->vm(), thisValue->flagsString()));
 }
 
-JSC_DEFINE_CUSTOM_GETTER(onigurumaRegExpProtoGetterLastIndex, (JSGlobalObject *globalObject, EncodedJSValue encodedThis, PropertyName))
+JSC_DEFINE_CUSTOM_GETTER(onigurumaRegExpProtoGetterLastIndex, (JSGlobalObject * globalObject, EncodedJSValue encodedThis, PropertyName))
 {
-    auto *thisValue = jsDynamicCast<OnigurumaRegEx*>(JSValue::decode(encodedThis));
+    auto* thisValue = jsDynamicCast<OnigurumaRegEx*>(JSValue::decode(encodedThis));
     return JSValue::encode(jsNumber(thisValue->m_lastIndex));
 }
 
-JSC_DEFINE_CUSTOM_SETTER(onigurumaRegExpProtoSetterLastIndex, (JSGlobalObject *globalObject, EncodedJSValue encodedThis, EncodedJSValue encodedValue, PropertyName))
+JSC_DEFINE_CUSTOM_SETTER(onigurumaRegExpProtoSetterLastIndex, (JSGlobalObject * globalObject, EncodedJSValue encodedThis, EncodedJSValue encodedValue, PropertyName))
 {
-    auto *thisValue = jsDynamicCast<OnigurumaRegEx*>(JSValue::decode(encodedThis));
+    auto* thisValue = jsDynamicCast<OnigurumaRegEx*>(JSValue::decode(encodedThis));
     auto throwScope = DECLARE_THROW_SCOPE(globalObject->vm());
     JSValue value = JSValue::decode(encodedValue);
     if (!value.isAnyInt()) {
@@ -456,14 +456,14 @@ JSC_DEFINE_CUSTOM_SETTER(onigurumaRegExpProtoSetterLastIndex, (JSGlobalObject *g
 }
 
 // compile is deprecated
-JSC_DEFINE_HOST_FUNCTION(onigurumaRegExpProtoFuncCompile, (JSGlobalObject *globalObject, JSC::CallFrame *callFrame))
+JSC_DEFINE_HOST_FUNCTION(onigurumaRegExpProtoFuncCompile, (JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_CATCH_SCOPE(vm);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
 
     JSValue thisValue = callFrame->thisValue();
-    auto *thisRegExp = jsDynamicCast<OnigurumaRegEx*>(callFrame->thisValue());
+    auto* thisRegExp = jsDynamicCast<OnigurumaRegEx*>(callFrame->thisValue());
     if (UNLIKELY(!thisRegExp))
         return JSValue::encode(jsUndefined());
 
@@ -542,8 +542,7 @@ JSC_DEFINE_HOST_FUNCTION(onigurumaRegExpProtoFuncCompile, (JSGlobalObject *globa
         options,
         encoding,
         syntax,
-        &errorInfo
-    );
+        &errorInfo);
 
     if (errorCode != ONIG_NORMAL) {
         OnigUChar errorBuff[ONIG_MAX_ERROR_MESSAGE_LEN] = { 0 };
@@ -569,12 +568,12 @@ JSC_DEFINE_HOST_FUNCTION(onigurumaRegExpProtoFuncCompile, (JSGlobalObject *globa
     return JSValue::encode(thisRegExp);
 }
 
-JSC_DEFINE_HOST_FUNCTION(onigurumaRegExpProtoFuncTest, (JSGlobalObject *globalObject, JSC::CallFrame *callFrame))
+JSC_DEFINE_HOST_FUNCTION(onigurumaRegExpProtoFuncTest, (JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     auto& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    auto *thisValue = jsDynamicCast<OnigurumaRegEx*>(callFrame->thisValue());
+    auto* thisValue = jsDynamicCast<OnigurumaRegEx*>(callFrame->thisValue());
     if (!thisValue)
         return JSValue::encode(jsUndefined());
 
@@ -587,7 +586,7 @@ JSC_DEFINE_HOST_FUNCTION(onigurumaRegExpProtoFuncTest, (JSGlobalObject *globalOb
     WTF::String string = to16Bit(arg, globalObject, ""_s);
     RETURN_IF_EXCEPTION(scope, JSValue::encode({}));
 
-    OnigRegion *region = onig_region_new();
+    OnigRegion* region = onig_region_new();
 
     const OnigUChar* end = reinterpret_cast<const OnigUChar*>(string.characters16() + string.length());
     const OnigUChar* start = reinterpret_cast<const OnigUChar*>(string.characters16() + thisValue->m_lastIndex);
@@ -606,8 +605,7 @@ JSC_DEFINE_HOST_FUNCTION(onigurumaRegExpProtoFuncTest, (JSGlobalObject *globalOb
         start,
         range,
         region,
-        ONIG_OPTION_DEFAULT        
-    );
+        ONIG_OPTION_DEFAULT);
 
     if (result < 0) {
         thisValue->m_lastIndex = 0;
@@ -631,13 +629,13 @@ JSC_DEFINE_HOST_FUNCTION(onigurumaRegExpProtoFuncTest, (JSGlobalObject *globalOb
     return JSValue::encode(jsBoolean(true));
 }
 
-JSC_DEFINE_HOST_FUNCTION(onigurumaRegExpProtoFuncExec, (JSGlobalObject *globalObject ,JSC::CallFrame *callFrame))
+JSC_DEFINE_HOST_FUNCTION(onigurumaRegExpProtoFuncExec, (JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     auto& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
 
-    auto *thisValue = jsDynamicCast<OnigurumaRegEx*>(callFrame->thisValue());
+    auto* thisValue = jsDynamicCast<OnigurumaRegEx*>(callFrame->thisValue());
     if (!thisValue)
         return JSValue::encode(jsUndefined());
 
@@ -650,7 +648,7 @@ JSC_DEFINE_HOST_FUNCTION(onigurumaRegExpProtoFuncExec, (JSGlobalObject *globalOb
     WTF::String string = to16Bit(arg, globalObject, ""_s);
     RETURN_IF_EXCEPTION(scope, JSValue::encode({}));
 
-    OnigRegion *region = onig_region_new();
+    OnigRegion* region = onig_region_new();
 
     const OnigUChar* end = reinterpret_cast<const OnigUChar*>(string.characters16() + string.length());
     const OnigUChar* start = reinterpret_cast<const OnigUChar*>(string.characters16() + thisValue->m_lastIndex);
@@ -663,8 +661,7 @@ JSC_DEFINE_HOST_FUNCTION(onigurumaRegExpProtoFuncExec, (JSGlobalObject *globalOb
         start,
         range,
         region,
-        ONIG_OPTION_DEFAULT
-    );
+        ONIG_OPTION_DEFAULT);
 
     if (result < 0) {
         onig_region_free(region, 1);
@@ -672,9 +669,9 @@ JSC_DEFINE_HOST_FUNCTION(onigurumaRegExpProtoFuncExec, (JSGlobalObject *globalOb
         return JSValue::encode(jsNull());
     }
 
-    JSArray *array = constructEmptyArray(globalObject, nullptr, 0);
+    JSArray* array = constructEmptyArray(globalObject, nullptr, 0);
     RETURN_IF_EXCEPTION(scope, JSValue::encode({}));
-    JSArray *indicesArray = constructEmptyArray(globalObject, nullptr, 0);
+    JSArray* indicesArray = constructEmptyArray(globalObject, nullptr, 0);
     RETURN_IF_EXCEPTION(scope, JSValue::encode({}));
 
     array->putDirect(vm, vm.propertyNames->index, jsNumber(region->beg[0] / 2));
@@ -683,7 +680,7 @@ JSC_DEFINE_HOST_FUNCTION(onigurumaRegExpProtoFuncExec, (JSGlobalObject *globalOb
 
     for (int i = 0; i < region->num_regs; i++) {
         size_t outStringLen = (region->end[i] / 2) - (region->beg[i] / 2);
-        UChar *ptr;
+        UChar* ptr;
         WTF::String outString;
         if (outStringLen > 0) {
             outString = WTF::String::createUninitialized(static_cast<unsigned int>(outStringLen), ptr);
@@ -698,7 +695,7 @@ JSC_DEFINE_HOST_FUNCTION(onigurumaRegExpProtoFuncExec, (JSGlobalObject *globalOb
 
         array->putDirectIndex(globalObject, i, jsString(vm, outString));
 
-        JSArray *indices = constructEmptyArray(globalObject, nullptr, 0);
+        JSArray* indices = constructEmptyArray(globalObject, nullptr, 0);
         RETURN_IF_EXCEPTION(scope, JSValue::encode({}));
         indices->putDirectIndex(globalObject, 0, jsNumber(region->beg[i] / 2));
         indices->putDirectIndex(globalObject, 1, jsNumber(region->end[i] / 2));
@@ -720,9 +717,9 @@ JSC_DEFINE_HOST_FUNCTION(onigurumaRegExpProtoFuncExec, (JSGlobalObject *globalOb
     return JSValue::encode(array);
 }
 
-JSC_DEFINE_HOST_FUNCTION(onigurumaRegExpProtoFuncToString, (JSGlobalObject *globalObject ,JSC::CallFrame *callFrame))
+JSC_DEFINE_HOST_FUNCTION(onigurumaRegExpProtoFuncToString, (JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
-    auto *thisValue = jsDynamicCast<OnigurumaRegEx*>(callFrame->thisValue());
+    auto* thisValue = jsDynamicCast<OnigurumaRegEx*>(callFrame->thisValue());
     if (!thisValue)
         return JSValue::encode(jsUndefined());
 
@@ -742,20 +739,21 @@ void OnigurumaRegExpPrototype::finishCreation(VM& vm, JSGlobalObject* globalObje
 {
     Base::finishCreation(vm);
     ASSERT(inherits(info()));
-    this->putDirectNativeFunction(vm, globalObject, PropertyName(vm.propertyNames->compile),  2,  onigurumaRegExpProtoFuncCompile, ImplementationVisibility::Public, NoIntrinsic, static_cast<unsigned>(0));
-    this->putDirectNativeFunction(vm, globalObject, PropertyName(vm.propertyNames->exec),  1,  onigurumaRegExpProtoFuncExec, ImplementationVisibility::Public, NoIntrinsic, static_cast<unsigned>(0));
-    this->putDirectNativeFunction(vm, globalObject, PropertyName(vm.propertyNames->toString),  0,  onigurumaRegExpProtoFuncToString, ImplementationVisibility::Public, NoIntrinsic, static_cast<unsigned>(0));
-    this->putDirectCustomAccessor(vm, vm.propertyNames->global,  JSC::CustomGetterSetter::create(vm, onigurumaRegExpProtoGetterGlobal, nullptr), 0 | PropertyAttribute::CustomAccessor | PropertyAttribute::ReadOnly);
-    this->putDirectCustomAccessor(vm, vm.propertyNames->dotAll,  JSC::CustomGetterSetter::create(vm, onigurumaRegExpProtoGetterDotAll, nullptr), 0 | PropertyAttribute::CustomAccessor | PropertyAttribute::ReadOnly);
-    this->putDirectCustomAccessor(vm, vm.propertyNames->hasIndices,  JSC::CustomGetterSetter::create(vm, onigurumaRegExpProtoGetterHasIndices, nullptr), 0 | PropertyAttribute::CustomAccessor | PropertyAttribute::ReadOnly);
-    this->putDirectCustomAccessor(vm, vm.propertyNames->ignoreCase,  JSC::CustomGetterSetter::create(vm, onigurumaRegExpProtoGetterIgnoreCase, nullptr), 0 | PropertyAttribute::CustomAccessor | PropertyAttribute::ReadOnly);
-    this->putDirectCustomAccessor(vm, vm.propertyNames->multiline,  JSC::CustomGetterSetter::create(vm, onigurumaRegExpProtoGetterMultiline, nullptr), 0 | PropertyAttribute::CustomAccessor | PropertyAttribute::ReadOnly);
-    this->putDirectCustomAccessor(vm, vm.propertyNames->sticky,  JSC::CustomGetterSetter::create(vm, onigurumaRegExpProtoGetterSticky, nullptr), 0 | PropertyAttribute::CustomAccessor | PropertyAttribute::ReadOnly);
-    this->putDirectCustomAccessor(vm, vm.propertyNames->unicode,  JSC::CustomGetterSetter::create(vm, onigurumaRegExpProtoGetterUnicode, nullptr), 0 | PropertyAttribute::CustomAccessor | PropertyAttribute::ReadOnly);
-    this->putDirectCustomAccessor(vm, vm.propertyNames->source,  JSC::CustomGetterSetter::create(vm, onigurumaRegExpProtoGetterSource, nullptr), 0 | PropertyAttribute::CustomAccessor | PropertyAttribute::ReadOnly);
-    this->putDirectCustomAccessor(vm, vm.propertyNames->flags,  JSC::CustomGetterSetter::create(vm, onigurumaRegExpProtoGetterFlags, nullptr), 0 | PropertyAttribute::CustomAccessor | PropertyAttribute::ReadOnly);
-    this->putDirectCustomAccessor(vm, vm.propertyNames->lastIndex, JSC::CustomGetterSetter::create(vm, onigurumaRegExpProtoGetterLastIndex, onigurumaRegExpProtoSetterLastIndex), 0 | PropertyAttribute::CustomAccessor);;
-    this->putDirectNativeFunction(vm, globalObject, PropertyName(vm.propertyNames->test),  1, onigurumaRegExpProtoFuncTest, ImplementationVisibility::Public,  NoIntrinsic, static_cast<unsigned>(0));
+    this->putDirectNativeFunction(vm, globalObject, PropertyName(vm.propertyNames->compile), 2, onigurumaRegExpProtoFuncCompile, ImplementationVisibility::Public, NoIntrinsic, static_cast<unsigned>(0));
+    this->putDirectNativeFunction(vm, globalObject, PropertyName(vm.propertyNames->exec), 1, onigurumaRegExpProtoFuncExec, ImplementationVisibility::Public, NoIntrinsic, static_cast<unsigned>(0));
+    this->putDirectNativeFunction(vm, globalObject, PropertyName(vm.propertyNames->toString), 0, onigurumaRegExpProtoFuncToString, ImplementationVisibility::Public, NoIntrinsic, static_cast<unsigned>(0));
+    this->putDirectCustomAccessor(vm, vm.propertyNames->global, JSC::CustomGetterSetter::create(vm, onigurumaRegExpProtoGetterGlobal, nullptr), 0 | PropertyAttribute::CustomAccessor | PropertyAttribute::ReadOnly);
+    this->putDirectCustomAccessor(vm, vm.propertyNames->dotAll, JSC::CustomGetterSetter::create(vm, onigurumaRegExpProtoGetterDotAll, nullptr), 0 | PropertyAttribute::CustomAccessor | PropertyAttribute::ReadOnly);
+    this->putDirectCustomAccessor(vm, vm.propertyNames->hasIndices, JSC::CustomGetterSetter::create(vm, onigurumaRegExpProtoGetterHasIndices, nullptr), 0 | PropertyAttribute::CustomAccessor | PropertyAttribute::ReadOnly);
+    this->putDirectCustomAccessor(vm, vm.propertyNames->ignoreCase, JSC::CustomGetterSetter::create(vm, onigurumaRegExpProtoGetterIgnoreCase, nullptr), 0 | PropertyAttribute::CustomAccessor | PropertyAttribute::ReadOnly);
+    this->putDirectCustomAccessor(vm, vm.propertyNames->multiline, JSC::CustomGetterSetter::create(vm, onigurumaRegExpProtoGetterMultiline, nullptr), 0 | PropertyAttribute::CustomAccessor | PropertyAttribute::ReadOnly);
+    this->putDirectCustomAccessor(vm, vm.propertyNames->sticky, JSC::CustomGetterSetter::create(vm, onigurumaRegExpProtoGetterSticky, nullptr), 0 | PropertyAttribute::CustomAccessor | PropertyAttribute::ReadOnly);
+    this->putDirectCustomAccessor(vm, vm.propertyNames->unicode, JSC::CustomGetterSetter::create(vm, onigurumaRegExpProtoGetterUnicode, nullptr), 0 | PropertyAttribute::CustomAccessor | PropertyAttribute::ReadOnly);
+    this->putDirectCustomAccessor(vm, vm.propertyNames->source, JSC::CustomGetterSetter::create(vm, onigurumaRegExpProtoGetterSource, nullptr), 0 | PropertyAttribute::CustomAccessor | PropertyAttribute::ReadOnly);
+    this->putDirectCustomAccessor(vm, vm.propertyNames->flags, JSC::CustomGetterSetter::create(vm, onigurumaRegExpProtoGetterFlags, nullptr), 0 | PropertyAttribute::CustomAccessor | PropertyAttribute::ReadOnly);
+    this->putDirectCustomAccessor(vm, vm.propertyNames->lastIndex, JSC::CustomGetterSetter::create(vm, onigurumaRegExpProtoGetterLastIndex, onigurumaRegExpProtoSetterLastIndex), 0 | PropertyAttribute::CustomAccessor);
+    ;
+    this->putDirectNativeFunction(vm, globalObject, PropertyName(vm.propertyNames->test), 1, onigurumaRegExpProtoFuncTest, ImplementationVisibility::Public, NoIntrinsic, static_cast<unsigned>(0));
 
     this->putDirectBuiltinFunction(vm, globalObject, vm.propertyNames->matchSymbol, onigurumaRegExpPrototypeMatchCodeGenerator(vm), static_cast<unsigned>(0));
     this->putDirectBuiltinFunction(vm, globalObject, vm.propertyNames->matchAllSymbol, onigurumaRegExpPrototypeMatchAllCodeGenerator(vm), static_cast<unsigned>(0));
@@ -770,16 +768,14 @@ JSC::Structure* OnigurumaRegExpConstructor::createClassStructure(JSC::JSGlobalOb
     return OnigurumaRegEx::createStructure(
         vm,
         globalObject,
-        prototype
-    );
+        prototype);
 }
 JSC::JSObject* OnigurumaRegExpConstructor::createPrototype(JSC::JSGlobalObject* globalObject)
 {
     return OnigurumaRegExpPrototype::create(globalObject->vm(), globalObject, OnigurumaRegExpPrototype::createStructure(globalObject->vm(), globalObject, globalObject->objectPrototype()));
 }
-    
 
-void OnigurumaRegExpConstructor::finishCreation(VM &vm, JSValue prototype)
+void OnigurumaRegExpConstructor::finishCreation(VM& vm, JSValue prototype)
 {
 
     Base::finishCreation(vm, 0, "RegExp"_s, PropertyAdditionMode::WithoutStructureTransition);
@@ -787,16 +783,16 @@ void OnigurumaRegExpConstructor::finishCreation(VM &vm, JSValue prototype)
     ASSERT(inherits(info()));
 }
 
-OnigurumaRegExpConstructor* OnigurumaRegExpConstructor::create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, JSValue prototype) 
+OnigurumaRegExpConstructor* OnigurumaRegExpConstructor::create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, JSValue prototype)
 {
     OnigurumaRegExpConstructor* ptr = new (NotNull, JSC::allocateCell<OnigurumaRegExpConstructor>(vm)) OnigurumaRegExpConstructor(vm, structure, construct);
     ptr->finishCreation(vm, prototype);
     return ptr;
 }
 
-static JSC::EncodedJSValue constructOrCall(Zig::GlobalObject *globalObject, JSValue arg0, JSValue arg1)
+static JSC::EncodedJSValue constructOrCall(Zig::GlobalObject* globalObject, JSValue arg0, JSValue arg1)
 {
-    auto &vm = globalObject->vm();
+    auto& vm = globalObject->vm();
     auto scope = DECLARE_CATCH_SCOPE(vm);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
 
@@ -808,7 +804,7 @@ static JSC::EncodedJSValue constructOrCall(Zig::GlobalObject *globalObject, JSVa
     WTF::String flagsString = to16Bit(arg1, globalObject, ""_s);
     RETURN_IF_EXCEPTION(scope, {});
 
-    if(!validateRegExpFlags(flagsString)) {
+    if (!validateRegExpFlags(flagsString)) {
         throwScope.throwException(globalObject, createSyntaxError(globalObject, makeString("Invalid flags supplied to RegExp constructor."_s)));
         return JSValue::encode({});
     }
@@ -852,8 +848,7 @@ static JSC::EncodedJSValue constructOrCall(Zig::GlobalObject *globalObject, JSVa
         options,
         encoding,
         syntax,
-        &errorInfo
-    );
+        &errorInfo);
 
     if (errorCode != ONIG_NORMAL) {
         OnigUChar errorBuff[ONIG_MAX_ERROR_MESSAGE_LEN] = { 0 };
@@ -871,31 +866,29 @@ static JSC::EncodedJSValue constructOrCall(Zig::GlobalObject *globalObject, JSVa
 
     RETURN_IF_EXCEPTION(scope, {});
 
-    OnigurumaRegEx *result = OnigurumaRegEx::create(globalObject, WTFMove(patternString), WTFMove(flagsString), onigRegExp);
+    OnigurumaRegEx* result = OnigurumaRegEx::create(globalObject, WTFMove(patternString), WTFMove(flagsString), onigRegExp);
 
     return JSValue::encode(result);
 }
 
 JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES OnigurumaRegExpConstructor::construct(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame)
 {
-    Zig::GlobalObject *globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
-    JSC::VM &vm = globalObject->vm();
+    Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+    JSC::VM& vm = globalObject->vm();
     JSObject* newTarget = asObject(callFrame->newTarget());
     auto* constructor = globalObject->OnigurumaRegExpConstructor();
     Structure* structure = globalObject->OnigurumaRegExpStructure();
     if (constructor != newTarget) {
-      auto scope = DECLARE_THROW_SCOPE(vm);
+        auto scope = DECLARE_THROW_SCOPE(vm);
 
-      auto* functionGlobalObject = reinterpret_cast<Zig::GlobalObject*>(
-        // ShadowRealm functions belong to a different global object.
-        getFunctionRealm(globalObject, newTarget)
-      );
-      RETURN_IF_EXCEPTION(scope, {});
-      structure = InternalFunction::createSubclassStructure(
-        globalObject,
-        newTarget,
-        functionGlobalObject->OnigurumaRegExpStructure()
-      );
+        auto* functionGlobalObject = reinterpret_cast<Zig::GlobalObject*>(
+            // ShadowRealm functions belong to a different global object.
+            getFunctionRealm(globalObject, newTarget));
+        RETURN_IF_EXCEPTION(scope, {});
+        structure = InternalFunction::createSubclassStructure(
+            globalObject,
+            newTarget,
+            functionGlobalObject->OnigurumaRegExpStructure());
     }
 
     return constructOrCall(globalObject, callFrame->argument(0), callFrame->argument(1));

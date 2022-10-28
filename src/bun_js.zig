@@ -110,6 +110,12 @@ pub const Run = struct {
             }
         }
 
+        if (run.vm.bundler.env.map.get("BUN_OVERRIDE_MODULE_PATH")) |override_path| {
+            if (override_path.len > 0) {
+                run.vm.load_builtins_from_path = override_path;
+            }
+        }
+
         var callback = OpaqueWrap(Run, Run.start);
         run.vm.global.vm().holdAPILock(&run, callback);
     }

@@ -36,6 +36,7 @@ const JSPromise = JSC.JSPromise;
 const JSValue = JSC.JSValue;
 const JSError = JSC.JSError;
 const JSGlobalObject = JSC.JSGlobalObject;
+const NullableAllocator = @import("../../nullable_allocator.zig").NullableAllocator;
 
 const VirtualMachine = @import("../javascript.zig").VirtualMachine;
 const Task = JSC.Task;
@@ -333,15 +334,16 @@ pub const Response = struct {
             json_value.jsonStringify(globalThis.ptr(), 0, &zig_str);
 
             if (zig_str.len > 0) {
-                var zig_str_slice = zig_str.toSlice(getAllocator(globalThis));
+                const allocator = getAllocator(globalThis);
+                var zig_str_slice = zig_str.toSlice(allocator);
 
-                if (zig_str_slice.allocated) {
+                if (zig_str_slice.isAllocated()) {
                     response.body.value = .{
-                        .Blob = Blob.initWithAllASCII(zig_str_slice.mut(), zig_str_slice.allocator, globalThis.ptr(), false),
+                        .Blob = Blob.initWithAllASCII(zig_str_slice.mut(), allocator, globalThis.ptr(), false),
                     };
                 } else {
                     response.body.value = .{
-                        .Blob = Blob.initWithAllASCII(getAllocator(globalThis).dupe(u8, zig_str_slice.slice()) catch unreachable, zig_str_slice.allocator, globalThis.ptr(), true),
+                        .Blob = Blob.initWithAllASCII(allocator.dupe(u8, zig_str_slice.slice()) catch unreachable, allocator, globalThis.ptr(), true),
                     };
                 }
             }
@@ -3101,12 +3103,7 @@ pub const Blob = struct {
             input_path = .{ .fd = store.data.file.pathlike.fd };
         } else {
             input_path = .{
-                .path = ZigString.Slice{
-                    .ptr = store.data.file.pathlike.path.slice().ptr,
-                    .len = @truncate(u32, store.data.file.pathlike.path.slice().len),
-                    .allocated = false,
-                    .allocator = bun.default_allocator,
-                },
+                .path = ZigString.Slice.fromUTF8(store.data.file.pathlike.path.slice()),
             };
         }
 
@@ -3800,10 +3797,10 @@ pub const Blob = struct {
                 JSC.JSValue.JSType.DerivedStringObject,
                 => {
                     var sliced = top_value.toSlice(global, bun.default_allocator);
-                    const is_all_ascii = !sliced.allocated;
-                    if (!sliced.allocated and sliced.len > 0) {
+                    const is_all_ascii = !sliced.isAllocated();
+                    if (!sliced.isAllocated() and sliced.len > 0) {
                         sliced.ptr = @ptrCast([*]const u8, (try bun.default_allocator.dupe(u8, sliced.slice())).ptr);
-                        sliced.allocated = true;
+                        sliced.allocator = NullableAllocator.new(bun.default_allocator);
                     }
 
                     return Blob.initWithAllASCII(bun.constStrToU8(sliced.slice()), bun.default_allocator, global, is_all_ascii);
@@ -3861,11 +3858,12 @@ pub const Blob = struct {
                 JSC.JSValue.JSType.DerivedStringObject,
                 => {
                     var sliced = current.toSlice(global, bun.default_allocator);
-                    could_have_non_ascii = could_have_non_ascii or sliced.allocated;
+                    const allocator = sliced.allocator.get();
+                    could_have_non_ascii = could_have_non_ascii or allocator != null;
                     joiner.append(
                         sliced.slice(),
                         0,
-                        if (sliced.allocated) sliced.allocator else null,
+                        allocator,
                     );
                 },
 
@@ -3890,11 +3888,12 @@ pub const Blob = struct {
                                 JSC.JSValue.JSType.DerivedStringObject,
                                 => {
                                     var sliced = item.toSlice(global, bun.default_allocator);
-                                    could_have_non_ascii = could_have_non_ascii or sliced.allocated;
+                                    const allocator = sliced.allocator.get();
+                                    could_have_non_ascii = could_have_non_ascii or allocator != null;
                                     joiner.append(
                                         sliced.slice(),
                                         0,
-                                        if (sliced.allocated) sliced.allocator else null,
+                                        allocator,
                                     );
                                     continue;
                                 },
@@ -3966,11 +3965,12 @@ pub const Blob = struct {
 
                 else => {
                     var sliced = current.toSlice(global, bun.default_allocator);
-                    could_have_non_ascii = could_have_non_ascii or sliced.allocated;
+                    const allocator = sliced.allocator.get();
+                    could_have_non_ascii = could_have_non_ascii or allocator != null;
                     joiner.append(
                         sliced.slice(),
                         0,
-                        if (sliced.allocated) sliced.allocator else null,
+                        allocator,
                     );
                 },
             }
@@ -5399,7 +5399,7 @@ pub const Request = struct {
                 const urlOrObject = arguments[0];
                 const url_or_object_type = urlOrObject.jsType();
                 if (url_or_object_type.isStringLike()) {
-                    request.url = (arguments[0].toSlice(globalThis, bun.default_allocator).cloneIfNeeded() catch {
+                    request.url = (arguments[0].toSlice(globalThis, bun.default_allocator).cloneIfNeeded(bun.default_allocator) catch {
                         return null;
                     }).slice();
                     request.url_was_allocated = request.url.len > 0;
@@ -5418,7 +5418,7 @@ pub const Request = struct {
                     }
 
                     if (urlOrObject.fastGet(globalThis, .url)) |url| {
-                        request.url = (url.toSlice(globalThis, bun.default_allocator).cloneIfNeeded() catch {
+                        request.url = (url.toSlice(globalThis, bun.default_allocator).cloneIfNeeded(bun.default_allocator) catch {
                             return null;
                         }).slice();
                         request.url_was_allocated = request.url.len > 0;
@@ -5439,7 +5439,7 @@ pub const Request = struct {
                     request.method = req_init.method;
                 }
 
-                request.url = (arguments[0].toSlice(globalThis, bun.default_allocator).cloneIfNeeded() catch {
+                request.url = (arguments[0].toSlice(globalThis, bun.default_allocator).cloneIfNeeded(bun.default_allocator) catch {
                     return null;
                 }).slice();
                 request.url_was_allocated = request.url.len > 0;

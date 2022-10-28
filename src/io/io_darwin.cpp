@@ -62,4 +62,16 @@ extern "C" bool io_darwin_schedule_wakeup(mach_port_t waker) {
   return true;
 }
 
+#else
+
+// stub out these symbols
+extern "C" int io_darwin_create_machport(unsigned long long wakeup, int fd,
+                                         void *wakeup_buffer_,
+                                         unsigned long long nbytes) {
+  return 0;
+}
+
+// stub out these symbols
+extern "C" bool io_darwin_schedule_wakeup(void *waker) { return false; }
+
 #endif

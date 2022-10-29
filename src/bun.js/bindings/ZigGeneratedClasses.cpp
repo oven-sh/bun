@@ -140,12 +140,21 @@ JSC_DEFINE_CUSTOM_GETTER(TCPSocketPrototype__dataGetterWrap, (JSGlobalObject * l
     thisObject->m_data.set(vm, thisObject, result);
     RELEASE_AND_RETURN(throwScope, JSValue::encode(result));
 }
+
+
 extern "C" void TCPSocketPrototype__dataSetCachedValue(JSC::EncodedJSValue thisValue, JSC::JSGlobalObject *globalObject, JSC::EncodedJSValue value)
 {
     auto& vm = globalObject->vm();
     auto* thisObject = jsCast<JSTCPSocket*>(JSValue::decode(thisValue));
     thisObject->m_data.set(vm, thisObject, JSValue::decode(value));
 }
+
+extern "C" EncodedJSValue TCPSocketPrototype__dataGetCachedValue(JSC::EncodedJSValue thisValue)
+{
+  auto* thisObject = jsCast<JSTCPSocket*>(JSValue::decode(thisValue));
+  return JSValue::encode(thisObject->m_data.get());
+}
+
 
 
 JSC_DEFINE_CUSTOM_SETTER(TCPSocketPrototype__dataSetterWrap, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, EncodedJSValue encodedValue, PropertyName attributeName))
@@ -285,12 +294,21 @@ JSC_DEFINE_CUSTOM_GETTER(TCPSocketPrototype__remoteAddressGetterWrap, (JSGlobalO
     thisObject->m_remoteAddress.set(vm, thisObject, result);
     RELEASE_AND_RETURN(throwScope, JSValue::encode(result));
 }
+
+
 extern "C" void TCPSocketPrototype__remoteAddressSetCachedValue(JSC::EncodedJSValue thisValue, JSC::JSGlobalObject *globalObject, JSC::EncodedJSValue value)
 {
     auto& vm = globalObject->vm();
     auto* thisObject = jsCast<JSTCPSocket*>(JSValue::decode(thisValue));
     thisObject->m_remoteAddress.set(vm, thisObject, JSValue::decode(value));
 }
+
+extern "C" EncodedJSValue TCPSocketPrototype__remoteAddressGetCachedValue(JSC::EncodedJSValue thisValue)
+{
+  auto* thisObject = jsCast<JSTCPSocket*>(JSValue::decode(thisValue));
+  return JSValue::encode(thisObject->m_remoteAddress.get());
+}
+
 
 
 JSC_DEFINE_HOST_FUNCTION(TCPSocketPrototype__shutdownCallback, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
@@ -454,6 +472,7 @@ void JSTCPSocket::finishCreation(VM& vm)
     Base::finishCreation(vm);
     ASSERT(inherits(info()));
 }
+
 
 JSTCPSocket* JSTCPSocket::create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, void* ctx) {
   JSTCPSocket* ptr = new (NotNull, JSC::allocateCell<JSTCPSocket>(vm)) JSTCPSocket(vm, structure, ctx);
@@ -630,12 +649,21 @@ JSC_DEFINE_CUSTOM_GETTER(TLSSocketPrototype__dataGetterWrap, (JSGlobalObject * l
     thisObject->m_data.set(vm, thisObject, result);
     RELEASE_AND_RETURN(throwScope, JSValue::encode(result));
 }
+
+
 extern "C" void TLSSocketPrototype__dataSetCachedValue(JSC::EncodedJSValue thisValue, JSC::JSGlobalObject *globalObject, JSC::EncodedJSValue value)
 {
     auto& vm = globalObject->vm();
     auto* thisObject = jsCast<JSTLSSocket*>(JSValue::decode(thisValue));
     thisObject->m_data.set(vm, thisObject, JSValue::decode(value));
 }
+
+extern "C" EncodedJSValue TLSSocketPrototype__dataGetCachedValue(JSC::EncodedJSValue thisValue)
+{
+  auto* thisObject = jsCast<JSTLSSocket*>(JSValue::decode(thisValue));
+  return JSValue::encode(thisObject->m_data.get());
+}
+
 
 
 JSC_DEFINE_CUSTOM_SETTER(TLSSocketPrototype__dataSetterWrap, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, EncodedJSValue encodedValue, PropertyName attributeName))
@@ -775,12 +803,21 @@ JSC_DEFINE_CUSTOM_GETTER(TLSSocketPrototype__remoteAddressGetterWrap, (JSGlobalO
     thisObject->m_remoteAddress.set(vm, thisObject, result);
     RELEASE_AND_RETURN(throwScope, JSValue::encode(result));
 }
+
+
 extern "C" void TLSSocketPrototype__remoteAddressSetCachedValue(JSC::EncodedJSValue thisValue, JSC::JSGlobalObject *globalObject, JSC::EncodedJSValue value)
 {
     auto& vm = globalObject->vm();
     auto* thisObject = jsCast<JSTLSSocket*>(JSValue::decode(thisValue));
     thisObject->m_remoteAddress.set(vm, thisObject, JSValue::decode(value));
 }
+
+extern "C" EncodedJSValue TLSSocketPrototype__remoteAddressGetCachedValue(JSC::EncodedJSValue thisValue)
+{
+  auto* thisObject = jsCast<JSTLSSocket*>(JSValue::decode(thisValue));
+  return JSValue::encode(thisObject->m_remoteAddress.get());
+}
+
 
 
 JSC_DEFINE_HOST_FUNCTION(TLSSocketPrototype__shutdownCallback, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
@@ -944,6 +981,7 @@ void JSTLSSocket::finishCreation(VM& vm)
     Base::finishCreation(vm);
     ASSERT(inherits(info()));
 }
+
 
 JSTLSSocket* JSTLSSocket::create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, void* ctx) {
   JSTLSSocket* ptr = new (NotNull, JSC::allocateCell<JSTLSSocket>(vm)) JSTLSSocket(vm, structure, ctx);
@@ -1120,12 +1158,21 @@ JSC_DEFINE_CUSTOM_GETTER(ListenerPrototype__hostnameGetterWrap, (JSGlobalObject 
     thisObject->m_hostname.set(vm, thisObject, result);
     RELEASE_AND_RETURN(throwScope, JSValue::encode(result));
 }
+
+
 extern "C" void ListenerPrototype__hostnameSetCachedValue(JSC::EncodedJSValue thisValue, JSC::JSGlobalObject *globalObject, JSC::EncodedJSValue value)
 {
     auto& vm = globalObject->vm();
     auto* thisObject = jsCast<JSListener*>(JSValue::decode(thisValue));
     thisObject->m_hostname.set(vm, thisObject, JSValue::decode(value));
 }
+
+extern "C" EncodedJSValue ListenerPrototype__hostnameGetCachedValue(JSC::EncodedJSValue thisValue)
+{
+  auto* thisObject = jsCast<JSListener*>(JSValue::decode(thisValue));
+  return JSValue::encode(thisObject->m_hostname.get());
+}
+
 
 
 JSC_DEFINE_CUSTOM_GETTER(ListenerPrototype__portGetterWrap, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
@@ -1210,12 +1257,21 @@ JSC_DEFINE_CUSTOM_GETTER(ListenerPrototype__unixGetterWrap, (JSGlobalObject * le
     thisObject->m_unix.set(vm, thisObject, result);
     RELEASE_AND_RETURN(throwScope, JSValue::encode(result));
 }
+
+
 extern "C" void ListenerPrototype__unixSetCachedValue(JSC::EncodedJSValue thisValue, JSC::JSGlobalObject *globalObject, JSC::EncodedJSValue value)
 {
     auto& vm = globalObject->vm();
     auto* thisObject = jsCast<JSListener*>(JSValue::decode(thisValue));
     thisObject->m_unix.set(vm, thisObject, JSValue::decode(value));
 }
+
+extern "C" EncodedJSValue ListenerPrototype__unixGetCachedValue(JSC::EncodedJSValue thisValue)
+{
+  auto* thisObject = jsCast<JSListener*>(JSValue::decode(thisValue));
+  return JSValue::encode(thisObject->m_unix.get());
+}
+
 
 
 JSC_DEFINE_HOST_FUNCTION(ListenerPrototype__unrefCallback, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
@@ -1328,6 +1384,7 @@ void JSListener::finishCreation(VM& vm)
     Base::finishCreation(vm);
     ASSERT(inherits(info()));
 }
+
 
 JSListener* JSListener::create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, void* ctx) {
   JSListener* ptr = new (NotNull, JSC::allocateCell<JSListener>(vm)) JSListener(vm, structure, ctx);
@@ -1564,12 +1621,21 @@ JSC_DEFINE_CUSTOM_GETTER(SubprocessPrototype__readableGetterWrap, (JSGlobalObjec
     thisObject->m_stdout.set(vm, thisObject, result);
     RELEASE_AND_RETURN(throwScope, JSValue::encode(result));
 }
+
+
 extern "C" void SubprocessPrototype__readableSetCachedValue(JSC::EncodedJSValue thisValue, JSC::JSGlobalObject *globalObject, JSC::EncodedJSValue value)
 {
     auto& vm = globalObject->vm();
     auto* thisObject = jsCast<JSSubprocess*>(JSValue::decode(thisValue));
     thisObject->m_stdout.set(vm, thisObject, JSValue::decode(value));
 }
+
+extern "C" EncodedJSValue SubprocessPrototype__readableGetCachedValue(JSC::EncodedJSValue thisValue)
+{
+  auto* thisObject = jsCast<JSSubprocess*>(JSValue::decode(thisValue));
+  return JSValue::encode(thisObject->m_stdout.get());
+}
+
 
 
 JSC_DEFINE_HOST_FUNCTION(SubprocessPrototype__refCallback, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
@@ -1607,12 +1673,21 @@ JSC_DEFINE_CUSTOM_GETTER(SubprocessPrototype__stderrGetterWrap, (JSGlobalObject 
     thisObject->m_stderr.set(vm, thisObject, result);
     RELEASE_AND_RETURN(throwScope, JSValue::encode(result));
 }
+
+
 extern "C" void SubprocessPrototype__stderrSetCachedValue(JSC::EncodedJSValue thisValue, JSC::JSGlobalObject *globalObject, JSC::EncodedJSValue value)
 {
     auto& vm = globalObject->vm();
     auto* thisObject = jsCast<JSSubprocess*>(JSValue::decode(thisValue));
     thisObject->m_stderr.set(vm, thisObject, JSValue::decode(value));
 }
+
+extern "C" EncodedJSValue SubprocessPrototype__stderrGetCachedValue(JSC::EncodedJSValue thisValue)
+{
+  auto* thisObject = jsCast<JSSubprocess*>(JSValue::decode(thisValue));
+  return JSValue::encode(thisObject->m_stderr.get());
+}
+
 
 
 JSC_DEFINE_CUSTOM_GETTER(SubprocessPrototype__stdinGetterWrap, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
@@ -1633,12 +1708,21 @@ JSC_DEFINE_CUSTOM_GETTER(SubprocessPrototype__stdinGetterWrap, (JSGlobalObject *
     thisObject->m_stdin.set(vm, thisObject, result);
     RELEASE_AND_RETURN(throwScope, JSValue::encode(result));
 }
+
+
 extern "C" void SubprocessPrototype__stdinSetCachedValue(JSC::EncodedJSValue thisValue, JSC::JSGlobalObject *globalObject, JSC::EncodedJSValue value)
 {
     auto& vm = globalObject->vm();
     auto* thisObject = jsCast<JSSubprocess*>(JSValue::decode(thisValue));
     thisObject->m_stdin.set(vm, thisObject, JSValue::decode(value));
 }
+
+extern "C" EncodedJSValue SubprocessPrototype__stdinGetCachedValue(JSC::EncodedJSValue thisValue)
+{
+  auto* thisObject = jsCast<JSSubprocess*>(JSValue::decode(thisValue));
+  return JSValue::encode(thisObject->m_stdin.get());
+}
+
 
 
 JSC_DEFINE_CUSTOM_GETTER(SubprocessPrototype__stdoutGetterWrap, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
@@ -1659,12 +1743,21 @@ JSC_DEFINE_CUSTOM_GETTER(SubprocessPrototype__stdoutGetterWrap, (JSGlobalObject 
     thisObject->m_stdout.set(vm, thisObject, result);
     RELEASE_AND_RETURN(throwScope, JSValue::encode(result));
 }
+
+
 extern "C" void SubprocessPrototype__stdoutSetCachedValue(JSC::EncodedJSValue thisValue, JSC::JSGlobalObject *globalObject, JSC::EncodedJSValue value)
 {
     auto& vm = globalObject->vm();
     auto* thisObject = jsCast<JSSubprocess*>(JSValue::decode(thisValue));
     thisObject->m_stdout.set(vm, thisObject, JSValue::decode(value));
 }
+
+extern "C" EncodedJSValue SubprocessPrototype__stdoutGetCachedValue(JSC::EncodedJSValue thisValue)
+{
+  auto* thisObject = jsCast<JSSubprocess*>(JSValue::decode(thisValue));
+  return JSValue::encode(thisObject->m_stdout.get());
+}
+
 
 
 JSC_DEFINE_HOST_FUNCTION(SubprocessPrototype__unrefCallback, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
@@ -1702,12 +1795,21 @@ JSC_DEFINE_CUSTOM_GETTER(SubprocessPrototype__writableGetterWrap, (JSGlobalObjec
     thisObject->m_stdin.set(vm, thisObject, result);
     RELEASE_AND_RETURN(throwScope, JSValue::encode(result));
 }
+
+
 extern "C" void SubprocessPrototype__writableSetCachedValue(JSC::EncodedJSValue thisValue, JSC::JSGlobalObject *globalObject, JSC::EncodedJSValue value)
 {
     auto& vm = globalObject->vm();
     auto* thisObject = jsCast<JSSubprocess*>(JSValue::decode(thisValue));
     thisObject->m_stdin.set(vm, thisObject, JSValue::decode(value));
 }
+
+extern "C" EncodedJSValue SubprocessPrototype__writableGetCachedValue(JSC::EncodedJSValue thisValue)
+{
+  auto* thisObject = jsCast<JSSubprocess*>(JSValue::decode(thisValue));
+  return JSValue::encode(thisObject->m_stdin.get());
+}
+
 
 
 void JSSubprocessPrototype::finishCreation(JSC::VM& vm, JSC::JSGlobalObject* globalObject)
@@ -1803,6 +1905,7 @@ void JSSubprocess::finishCreation(VM& vm)
     Base::finishCreation(vm);
     ASSERT(inherits(info()));
 }
+
 
 JSSubprocess* JSSubprocess::create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, void* ctx) {
   JSSubprocess* ptr = new (NotNull, JSC::allocateCell<JSSubprocess>(vm)) JSSubprocess(vm, structure, ctx);
@@ -2058,6 +2161,7 @@ void JSSHA1::finishCreation(VM& vm)
     ASSERT(inherits(info()));
 }
 
+
 JSSHA1* JSSHA1::create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, void* ctx) {
   JSSHA1* ptr = new (NotNull, JSC::allocateCell<JSSHA1>(vm)) JSSHA1(vm, structure, ctx);
   ptr->finishCreation(vm);
@@ -2296,6 +2400,7 @@ void JSMD5::finishCreation(VM& vm)
     Base::finishCreation(vm);
     ASSERT(inherits(info()));
 }
+
 
 JSMD5* JSMD5::create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, void* ctx) {
   JSMD5* ptr = new (NotNull, JSC::allocateCell<JSMD5>(vm)) JSMD5(vm, structure, ctx);
@@ -2536,6 +2641,7 @@ void JSMD4::finishCreation(VM& vm)
     ASSERT(inherits(info()));
 }
 
+
 JSMD4* JSMD4::create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, void* ctx) {
   JSMD4* ptr = new (NotNull, JSC::allocateCell<JSMD4>(vm)) JSMD4(vm, structure, ctx);
   ptr->finishCreation(vm);
@@ -2774,6 +2880,7 @@ void JSSHA224::finishCreation(VM& vm)
     Base::finishCreation(vm);
     ASSERT(inherits(info()));
 }
+
 
 JSSHA224* JSSHA224::create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, void* ctx) {
   JSSHA224* ptr = new (NotNull, JSC::allocateCell<JSSHA224>(vm)) JSSHA224(vm, structure, ctx);
@@ -3014,6 +3121,7 @@ void JSSHA512::finishCreation(VM& vm)
     ASSERT(inherits(info()));
 }
 
+
 JSSHA512* JSSHA512::create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, void* ctx) {
   JSSHA512* ptr = new (NotNull, JSC::allocateCell<JSSHA512>(vm)) JSSHA512(vm, structure, ctx);
   ptr->finishCreation(vm);
@@ -3252,6 +3360,7 @@ void JSSHA384::finishCreation(VM& vm)
     Base::finishCreation(vm);
     ASSERT(inherits(info()));
 }
+
 
 JSSHA384* JSSHA384::create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, void* ctx) {
   JSSHA384* ptr = new (NotNull, JSC::allocateCell<JSSHA384>(vm)) JSSHA384(vm, structure, ctx);
@@ -3492,6 +3601,7 @@ void JSSHA256::finishCreation(VM& vm)
     ASSERT(inherits(info()));
 }
 
+
 JSSHA256* JSSHA256::create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, void* ctx) {
   JSSHA256* ptr = new (NotNull, JSC::allocateCell<JSSHA256>(vm)) JSSHA256(vm, structure, ctx);
   ptr->finishCreation(vm);
@@ -3730,6 +3840,7 @@ void JSSHA512_256::finishCreation(VM& vm)
     Base::finishCreation(vm);
     ASSERT(inherits(info()));
 }
+
 
 JSSHA512_256* JSSHA512_256::create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, void* ctx) {
   JSSHA512_256* ptr = new (NotNull, JSC::allocateCell<JSSHA512_256>(vm)) JSSHA512_256(vm, structure, ctx);
@@ -4042,12 +4153,21 @@ JSC_DEFINE_CUSTOM_GETTER(ServerWebSocketPrototype__dataGetterWrap, (JSGlobalObje
     thisObject->m_data.set(vm, thisObject, result);
     RELEASE_AND_RETURN(throwScope, JSValue::encode(result));
 }
+
+
 extern "C" void ServerWebSocketPrototype__dataSetCachedValue(JSC::EncodedJSValue thisValue, JSC::JSGlobalObject *globalObject, JSC::EncodedJSValue value)
 {
     auto& vm = globalObject->vm();
     auto* thisObject = jsCast<JSServerWebSocket*>(JSValue::decode(thisValue));
     thisObject->m_data.set(vm, thisObject, JSValue::decode(value));
 }
+
+extern "C" EncodedJSValue ServerWebSocketPrototype__dataGetCachedValue(JSC::EncodedJSValue thisValue)
+{
+  auto* thisObject = jsCast<JSServerWebSocket*>(JSValue::decode(thisValue));
+  return JSValue::encode(thisObject->m_data.get());
+}
+
 
 
 JSC_DEFINE_CUSTOM_SETTER(ServerWebSocketPrototype__dataSetterWrap, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, EncodedJSValue encodedValue, PropertyName attributeName))
@@ -4178,12 +4298,21 @@ JSC_DEFINE_CUSTOM_GETTER(ServerWebSocketPrototype__remoteAddressGetterWrap, (JSG
     thisObject->m_remoteAddress.set(vm, thisObject, result);
     RELEASE_AND_RETURN(throwScope, JSValue::encode(result));
 }
+
+
 extern "C" void ServerWebSocketPrototype__remoteAddressSetCachedValue(JSC::EncodedJSValue thisValue, JSC::JSGlobalObject *globalObject, JSC::EncodedJSValue value)
 {
     auto& vm = globalObject->vm();
     auto* thisObject = jsCast<JSServerWebSocket*>(JSValue::decode(thisValue));
     thisObject->m_remoteAddress.set(vm, thisObject, JSValue::decode(value));
 }
+
+extern "C" EncodedJSValue ServerWebSocketPrototype__remoteAddressGetCachedValue(JSC::EncodedJSValue thisValue)
+{
+  auto* thisObject = jsCast<JSServerWebSocket*>(JSValue::decode(thisValue));
+  return JSValue::encode(thisObject->m_remoteAddress.get());
+}
+
 
 
 JSC_DEFINE_HOST_FUNCTION(ServerWebSocketPrototype__sendCallback, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
@@ -4365,6 +4494,7 @@ void JSServerWebSocket::finishCreation(VM& vm)
     ASSERT(inherits(info()));
 }
 
+
 JSServerWebSocket* JSServerWebSocket::create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, void* ctx) {
   JSServerWebSocket* ptr = new (NotNull, JSC::allocateCell<JSServerWebSocket>(vm)) JSServerWebSocket(vm, structure, ctx);
   ptr->finishCreation(vm);
@@ -4503,12 +4633,21 @@ JSC_DEFINE_CUSTOM_GETTER(TextDecoderPrototype__encodingGetterWrap, (JSGlobalObje
     thisObject->m_encoding.set(vm, thisObject, result);
     RELEASE_AND_RETURN(throwScope, JSValue::encode(result));
 }
+
+
 extern "C" void TextDecoderPrototype__encodingSetCachedValue(JSC::EncodedJSValue thisValue, JSC::JSGlobalObject *globalObject, JSC::EncodedJSValue value)
 {
     auto& vm = globalObject->vm();
     auto* thisObject = jsCast<JSTextDecoder*>(JSValue::decode(thisValue));
     thisObject->m_encoding.set(vm, thisObject, JSValue::decode(value));
 }
+
+extern "C" EncodedJSValue TextDecoderPrototype__encodingGetCachedValue(JSC::EncodedJSValue thisValue)
+{
+  auto* thisObject = jsCast<JSTextDecoder*>(JSValue::decode(thisValue));
+  return JSValue::encode(thisObject->m_encoding.get());
+}
+
 
 
 JSC_DEFINE_CUSTOM_GETTER(TextDecoderPrototype__fatalGetterWrap, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
@@ -4617,6 +4756,7 @@ void JSTextDecoder::finishCreation(VM& vm)
     Base::finishCreation(vm);
     ASSERT(inherits(info()));
 }
+
 
 JSTextDecoder* JSTextDecoder::create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, void* ctx) {
   JSTextDecoder* ptr = new (NotNull, JSC::allocateCell<JSTextDecoder>(vm)) JSTextDecoder(vm, structure, ctx);
@@ -4847,12 +4987,21 @@ JSC_DEFINE_CUSTOM_GETTER(RequestPrototype__bodyGetterWrap, (JSGlobalObject * lex
     thisObject->m_body.set(vm, thisObject, result);
     RELEASE_AND_RETURN(throwScope, JSValue::encode(result));
 }
+
+
 extern "C" void RequestPrototype__bodySetCachedValue(JSC::EncodedJSValue thisValue, JSC::JSGlobalObject *globalObject, JSC::EncodedJSValue value)
 {
     auto& vm = globalObject->vm();
     auto* thisObject = jsCast<JSRequest*>(JSValue::decode(thisValue));
     thisObject->m_body.set(vm, thisObject, JSValue::decode(value));
 }
+
+extern "C" EncodedJSValue RequestPrototype__bodyGetCachedValue(JSC::EncodedJSValue thisValue)
+{
+  auto* thisObject = jsCast<JSRequest*>(JSValue::decode(thisValue));
+  return JSValue::encode(thisObject->m_body.get());
+}
+
 
 
 JSC_DEFINE_CUSTOM_GETTER(RequestPrototype__bodyUsedGetterWrap, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
@@ -4942,12 +5091,21 @@ JSC_DEFINE_CUSTOM_GETTER(RequestPrototype__headersGetterWrap, (JSGlobalObject * 
     thisObject->m_headers.set(vm, thisObject, result);
     RELEASE_AND_RETURN(throwScope, JSValue::encode(result));
 }
+
+
 extern "C" void RequestPrototype__headersSetCachedValue(JSC::EncodedJSValue thisValue, JSC::JSGlobalObject *globalObject, JSC::EncodedJSValue value)
 {
     auto& vm = globalObject->vm();
     auto* thisObject = jsCast<JSRequest*>(JSValue::decode(thisValue));
     thisObject->m_headers.set(vm, thisObject, JSValue::decode(value));
 }
+
+extern "C" EncodedJSValue RequestPrototype__headersGetCachedValue(JSC::EncodedJSValue thisValue)
+{
+  auto* thisObject = jsCast<JSRequest*>(JSValue::decode(thisValue));
+  return JSValue::encode(thisObject->m_headers.get());
+}
+
 
 
 JSC_DEFINE_CUSTOM_GETTER(RequestPrototype__integrityGetterWrap, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
@@ -5080,12 +5238,21 @@ JSC_DEFINE_CUSTOM_GETTER(RequestPrototype__urlGetterWrap, (JSGlobalObject * lexi
     thisObject->m_url.set(vm, thisObject, result);
     RELEASE_AND_RETURN(throwScope, JSValue::encode(result));
 }
+
+
 extern "C" void RequestPrototype__urlSetCachedValue(JSC::EncodedJSValue thisValue, JSC::JSGlobalObject *globalObject, JSC::EncodedJSValue value)
 {
     auto& vm = globalObject->vm();
     auto* thisObject = jsCast<JSRequest*>(JSValue::decode(thisValue));
     thisObject->m_url.set(vm, thisObject, JSValue::decode(value));
 }
+
+extern "C" EncodedJSValue RequestPrototype__urlGetCachedValue(JSC::EncodedJSValue thisValue)
+{
+  auto* thisObject = jsCast<JSRequest*>(JSValue::decode(thisValue));
+  return JSValue::encode(thisObject->m_url.get());
+}
+
 
 
 void JSRequestPrototype::finishCreation(JSC::VM& vm, JSC::JSGlobalObject* globalObject)
@@ -5185,6 +5352,7 @@ void JSRequest::finishCreation(VM& vm)
     Base::finishCreation(vm);
     ASSERT(inherits(info()));
 }
+
 
 JSRequest* JSRequest::create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, void* ctx) {
   JSRequest* ptr = new (NotNull, JSC::allocateCell<JSRequest>(vm)) JSRequest(vm, structure, ctx);
@@ -5399,12 +5567,21 @@ JSC_DEFINE_CUSTOM_GETTER(ResponsePrototype__bodyGetterWrap, (JSGlobalObject * le
     thisObject->m_body.set(vm, thisObject, result);
     RELEASE_AND_RETURN(throwScope, JSValue::encode(result));
 }
+
+
 extern "C" void ResponsePrototype__bodySetCachedValue(JSC::EncodedJSValue thisValue, JSC::JSGlobalObject *globalObject, JSC::EncodedJSValue value)
 {
     auto& vm = globalObject->vm();
     auto* thisObject = jsCast<JSResponse*>(JSValue::decode(thisValue));
     thisObject->m_body.set(vm, thisObject, JSValue::decode(value));
 }
+
+extern "C" EncodedJSValue ResponsePrototype__bodyGetCachedValue(JSC::EncodedJSValue thisValue)
+{
+  auto* thisObject = jsCast<JSResponse*>(JSValue::decode(thisValue));
+  return JSValue::encode(thisObject->m_body.get());
+}
+
 
 
 JSC_DEFINE_CUSTOM_GETTER(ResponsePrototype__bodyUsedGetterWrap, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
@@ -5455,12 +5632,21 @@ JSC_DEFINE_CUSTOM_GETTER(ResponsePrototype__headersGetterWrap, (JSGlobalObject *
     thisObject->m_headers.set(vm, thisObject, result);
     RELEASE_AND_RETURN(throwScope, JSValue::encode(result));
 }
+
+
 extern "C" void ResponsePrototype__headersSetCachedValue(JSC::EncodedJSValue thisValue, JSC::JSGlobalObject *globalObject, JSC::EncodedJSValue value)
 {
     auto& vm = globalObject->vm();
     auto* thisObject = jsCast<JSResponse*>(JSValue::decode(thisValue));
     thisObject->m_headers.set(vm, thisObject, JSValue::decode(value));
 }
+
+extern "C" EncodedJSValue ResponsePrototype__headersGetCachedValue(JSC::EncodedJSValue thisValue)
+{
+  auto* thisObject = jsCast<JSResponse*>(JSValue::decode(thisValue));
+  return JSValue::encode(thisObject->m_headers.get());
+}
+
 
 
 JSC_DEFINE_HOST_FUNCTION(ResponsePrototype__jsonCallback, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
@@ -5537,12 +5723,21 @@ JSC_DEFINE_CUSTOM_GETTER(ResponsePrototype__statusTextGetterWrap, (JSGlobalObjec
     thisObject->m_statusText.set(vm, thisObject, result);
     RELEASE_AND_RETURN(throwScope, JSValue::encode(result));
 }
+
+
 extern "C" void ResponsePrototype__statusTextSetCachedValue(JSC::EncodedJSValue thisValue, JSC::JSGlobalObject *globalObject, JSC::EncodedJSValue value)
 {
     auto& vm = globalObject->vm();
     auto* thisObject = jsCast<JSResponse*>(JSValue::decode(thisValue));
     thisObject->m_statusText.set(vm, thisObject, JSValue::decode(value));
 }
+
+extern "C" EncodedJSValue ResponsePrototype__statusTextGetCachedValue(JSC::EncodedJSValue thisValue)
+{
+  auto* thisObject = jsCast<JSResponse*>(JSValue::decode(thisValue));
+  return JSValue::encode(thisObject->m_statusText.get());
+}
+
 
 
 JSC_DEFINE_HOST_FUNCTION(ResponsePrototype__textCallback, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
@@ -5593,12 +5788,21 @@ JSC_DEFINE_CUSTOM_GETTER(ResponsePrototype__urlGetterWrap, (JSGlobalObject * lex
     thisObject->m_url.set(vm, thisObject, result);
     RELEASE_AND_RETURN(throwScope, JSValue::encode(result));
 }
+
+
 extern "C" void ResponsePrototype__urlSetCachedValue(JSC::EncodedJSValue thisValue, JSC::JSGlobalObject *globalObject, JSC::EncodedJSValue value)
 {
     auto& vm = globalObject->vm();
     auto* thisObject = jsCast<JSResponse*>(JSValue::decode(thisValue));
     thisObject->m_url.set(vm, thisObject, JSValue::decode(value));
 }
+
+extern "C" EncodedJSValue ResponsePrototype__urlGetCachedValue(JSC::EncodedJSValue thisValue)
+{
+  auto* thisObject = jsCast<JSResponse*>(JSValue::decode(thisValue));
+  return JSValue::encode(thisObject->m_url.get());
+}
+
 
 
 void JSResponsePrototype::finishCreation(JSC::VM& vm, JSC::JSGlobalObject* globalObject)
@@ -5706,6 +5910,7 @@ void JSResponse::finishCreation(VM& vm)
     Base::finishCreation(vm);
     ASSERT(inherits(info()));
 }
+
 
 JSResponse* JSResponse::create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, void* ctx) {
   JSResponse* ptr = new (NotNull, JSC::allocateCell<JSResponse>(vm)) JSResponse(vm, structure, ctx);
@@ -6076,6 +6281,7 @@ void JSBlob::finishCreation(VM& vm)
     Base::finishCreation(vm);
     ASSERT(inherits(info()));
 }
+
 
 JSBlob* JSBlob::create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, void* ctx) {
   JSBlob* ptr = new (NotNull, JSC::allocateCell<JSBlob>(vm)) JSBlob(vm, structure, ctx);

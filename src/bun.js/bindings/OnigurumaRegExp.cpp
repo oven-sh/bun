@@ -240,7 +240,7 @@ bool validateRegExpFlags(WTF::StringView flags)
     return true;
 }
 
-static regex_t* createOnigurumaRegExp(JSGlobalObject* globalObject, const WTF::String& patternString, const WTF::String& flagsString)
+static regex_t* createOnigurumaRegExp(JSGlobalObject* globalObject, const WTF::String& patternString, const WTF::String& flagsString, int& errorCode)
 {
     auto& vm = globalObject->vm();
     auto throwScope = DECLARE_THROW_SCOPE(vm);
@@ -273,7 +273,6 @@ static regex_t* createOnigurumaRegExp(JSGlobalObject* globalObject, const WTF::S
     OnigEncodingType* encoding = encodings[0];
     OnigErrorInfo errorInfo = { 0 };
     regex_t* onigRegExp = NULL;
-    int errorCode = 0;
 
     errorCode = onig_new(
         &onigRegExp,
@@ -283,20 +282,6 @@ static regex_t* createOnigurumaRegExp(JSGlobalObject* globalObject, const WTF::S
         encoding,
         syntax,
         &errorInfo);
-
-    if (errorCode != ONIG_NORMAL) {
-        OnigUChar errorBuff[ONIG_MAX_ERROR_MESSAGE_LEN] = { 0 };
-        int length = onig_error_code_to_str(errorBuff, errorCode, &errorInfo);
-        WTF::StringBuilder errorMessage;
-        errorMessage.append("Invalid regular expression: "_s);
-        if (length < 0) {
-            errorMessage.append("An unknown error occurred."_s);
-        } else {
-            errorMessage.appendCharacters(errorBuff, length);
-        }
-        throwScope.throwException(globalObject, createSyntaxError(globalObject, errorMessage.toString()));
-        return nullptr;
-    }
 
     return onigRegExp;
 }
@@ -552,8 +537,19 @@ JSC_DEFINE_HOST_FUNCTION(onigurumaRegExpProtoFuncCompile, (JSGlobalObject * glob
     }
 
     // for pattern syntax checking
-    regex_t* onigurumaRegExp = createOnigurumaRegExp(globalObject, extendMultibyteHexCharacters(thisRegExp->patternString()), thisRegExp->flagsString());
-    if (onigurumaRegExp == nullptr) {
+    int errorCode = 0;
+    regex_t* onigurumaRegExp = createOnigurumaRegExp(globalObject, extendMultibyteHexCharacters(thisRegExp->patternString()), thisRegExp->flagsString(), errorCode);
+    if (errorCode != ONIG_NORMAL) {
+        OnigUChar errorBuff[ONIG_MAX_ERROR_MESSAGE_LEN] = { 0 };
+        int length = onig_error_code_to_str(errorBuff, errorCode, &errorInfo);
+        WTF::StringBuilder errorMessage;
+        errorMessage.append("Invalid regular expression: "_s);
+        if (length < 0) {
+            errorMessage.append("An unknown error occurred."_s);
+        } else {
+            errorMessage.appendCharacters(errorBuff, length);
+        }
+        throwScope.throwException(globalObject, createSyntaxError(globalObject, errorMessage.toString()));
         return JSValue::encode({});
     }
     onig_free(onigurumaRegExp);
@@ -581,9 +577,20 @@ JSC_DEFINE_HOST_FUNCTION(onigurumaRegExpProtoFuncTest, (JSGlobalObject * globalO
     WTF::String string = to16Bit(arg, globalObject, ""_s);
     RETURN_IF_EXCEPTION(scope, JSValue::encode({}));
 
-    regex_t* onigurumaRegExp = createOnigurumaRegExp(globalObject, extendMultibyteHexCharacters(thisValue->patternString()), thisValue->flagsString());
-    if (!onigurumaRegExp) {
-        return JSValue::encode(jsBoolean(false));
+    int errorCode = 0;
+    regex_t* onigurumaRegExp = createOnigurumaRegExp(globalObject, extendMultibyteHexCharacters(thisValue->patternString()), thisValue->flagsString(), errorCode);
+    if (errorCode != ONIG_NORMAL) {
+        OnigUChar errorBuff[ONIG_MAX_ERROR_MESSAGE_LEN] = { 0 };
+        int length = onig_error_code_to_str(errorBuff, errorCode, &errorInfo);
+        WTF::StringBuilder errorMessage;
+        errorMessage.append("Invalid regular expression: "_s);
+        if (length < 0) {
+            errorMessage.append("An unknown error occurred."_s);
+        } else {
+            errorMessage.appendCharacters(errorBuff, length);
+        }
+        throwScope.throwException(globalObject, createSyntaxError(globalObject, errorMessage.toString()));
+        return JSValue::encode({});
     }
 
     OnigRegion* region = onig_region_new();
@@ -649,9 +656,20 @@ JSC_DEFINE_HOST_FUNCTION(onigurumaRegExpProtoFuncExec, (JSGlobalObject * globalO
     WTF::String string = to16Bit(arg, globalObject, ""_s);
     RETURN_IF_EXCEPTION(scope, JSValue::encode({}));
 
-    regex_t* onigurumaRegExp = createOnigurumaRegExp(globalObject, extendMultibyteHexCharacters(thisValue->patternString()), thisValue->flagsString());
-    if (onigurumaRegExp == nullptr) {
-        return JSValue::encode(jsNull());
+    int errorCode = 0;
+    regex_t* onigurumaRegExp = createOnigurumaRegExp(globalObject, extendMultibyteHexCharacters(thisValue->patternString()), thisValue->flagsString(), errorCode);
+    if (errorCode != ONIG_NORMAL) {
+        OnigUChar errorBuff[ONIG_MAX_ERROR_MESSAGE_LEN] = { 0 };
+        int length = onig_error_code_to_str(errorBuff, errorCode, &errorInfo);
+        WTF::StringBuilder errorMessage;
+        errorMessage.append("Invalid regular expression: "_s);
+        if (length < 0) {
+            errorMessage.append("An unknown error occurred."_s);
+        } else {
+            errorMessage.appendCharacters(errorBuff, length);
+        }
+        throwScope.throwException(globalObject, createSyntaxError(globalObject, errorMessage.toString()));
+        return JSValue::encode({});
     }
 
     OnigRegion* region = onig_region_new();
@@ -817,8 +835,19 @@ static JSC::EncodedJSValue constructOrCall(Zig::GlobalObject* globalObject, JSVa
     flagsString = sortRegExpFlags(flagsString);
 
     // create for pattern compilation errors, but need to create another for each exec/test
-    regex_t* onigurumaRegExp = createOnigurumaRegExp(globalObject, extendMultibyteHexCharacters(patternString), flagsString);
-    if (!onigurumaRegExp) {
+    int errorCode = 0;
+    regex_t* onigurumaRegExp = createOnigurumaRegExp(globalObject, extendMultibyteHexCharacters(patternString), flagsString, errorCode);
+    if (errorCode != ONIG_NORMAL) {
+        OnigUChar errorBuff[ONIG_MAX_ERROR_MESSAGE_LEN] = { 0 };
+        int length = onig_error_code_to_str(errorBuff, errorCode, &errorInfo);
+        WTF::StringBuilder errorMessage;
+        errorMessage.append("Invalid regular expression: "_s);
+        if (length < 0) {
+            errorMessage.append("An unknown error occurred."_s);
+        } else {
+            errorMessage.appendCharacters(errorBuff, length);
+        }
+        throwScope.throwException(globalObject, createSyntaxError(globalObject, errorMessage.toString()));
         return JSValue::encode({});
     }
     onig_free(onigurumaRegExp);

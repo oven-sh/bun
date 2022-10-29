@@ -4,7 +4,6 @@
 #include "BunBuiltinNames.h"
 #include "BunClientData.h"
 #include "ZigGlobalObject.h"
-#include "JavaScriptCore/JSDestructibleObjectHeapCellType.h"
 
 extern "C" JSC::EncodedJSValue jsFunctionGetOnigurumaRegExpConstructor(JSC::JSGlobalObject* lexicalGlobalObject, JSC::EncodedJSValue thisValue, JSC::PropertyName attributeName);
 

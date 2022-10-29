@@ -247,6 +247,8 @@ bool validateRegExpFlags(WTF::StringView flags)
     return true;
 }
 
+std::once_flag onigurumaEncodingInitFlag;
+
 static regex_t* createOnigurumaRegExp(JSGlobalObject* globalObject, const WTF::String& patternString, const WTF::String& flagsString, int& errorCode, OnigErrorInfo& errorInfo)
 {
     auto& vm = globalObject->vm();
@@ -255,7 +257,9 @@ static regex_t* createOnigurumaRegExp(JSGlobalObject* globalObject, const WTF::S
     OnigEncoding encodings[] = {
         ONIG_ENCODING_UTF16_LE,
     };
-    onig_initialize(encodings, 1);
+    std::call_once(onigurumaEncodingInitFlag, [&encodings]() {
+        onig_initialize(encodings, 1);
+    });
 
     OnigOptionType options = 0;
     if (flagsString.contains('i')) {

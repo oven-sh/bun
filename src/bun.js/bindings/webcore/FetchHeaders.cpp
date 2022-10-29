@@ -147,6 +147,7 @@ ExceptionOr<void> FetchHeaders::fill(const FetchHeaders& otherHeaders)
 
 ExceptionOr<void> FetchHeaders::append(const String& name, const String& value)
 {
+    ++m_updateCounter;
     return appendToHeaderMap(name, value, m_headers, m_guard);
 }
 
@@ -164,6 +165,7 @@ ExceptionOr<void> FetchHeaders::remove(const String& name)
     if (m_guard == FetchHeaders::Guard::Response && isForbiddenResponseHeaderName(name))
         return {};
 
+    ++m_updateCounter;
     m_headers.remove(name);
 
     if (m_guard == FetchHeaders::Guard::RequestNoCors)
@@ -195,6 +197,7 @@ ExceptionOr<void> FetchHeaders::set(const String& name, const String& value)
     if (!canWriteResult.releaseReturnValue())
         return {};
 
+    ++m_updateCounter;
     m_headers.set(name, normalizedValue);
 
     if (m_guard == FetchHeaders::Guard::RequestNoCors)
@@ -221,6 +224,14 @@ void FetchHeaders::filterAndFill(const HTTPHeaderMap& headers, Guard guard)
 
 std::optional<KeyValuePair<String, String>> FetchHeaders::Iterator::next()
 {
+    if (m_keys.isEmpty() || m_updateCounter != m_headers->m_updateCounter) {
+        m_keys.resize(0);
+        m_keys.reserveCapacity(m_headers->m_headers.size());
+        for (auto& header : m_headers->m_headers)
+            m_keys.uncheckedAppend(header.key.convertToASCIILowercase());
+        std::sort(m_keys.begin(), m_keys.end(), WTF::codePointCompareLessThan);
+        m_updateCounter = m_headers->m_updateCounter;
+    }
     while (m_currentIndex < m_keys.size()) {
         auto key = m_keys[m_currentIndex++];
         auto value = m_headers->m_headers.get(key);
@@ -233,10 +244,6 @@ std::optional<KeyValuePair<String, String>> FetchHeaders::Iterator::next()
 FetchHeaders::Iterator::Iterator(FetchHeaders& headers)
     : m_headers(headers)
 {
-    m_keys.reserveInitialCapacity(headers.m_headers.size());
-    for (auto& header : headers.m_headers)
-        m_keys.uncheckedAppend(header.key.convertToASCIILowercase());
-    std::sort(m_keys.begin(), m_keys.end(), WTF::codePointCompareLessThan);
 }
 
 } // namespace WebCore

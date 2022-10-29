@@ -60,9 +60,12 @@ class JSTCPSocket final : public JSC::JSDestructibleObject {
             : Base(vm, structure)
         {
             m_ctx = sinkPtr;
+            
         }
     
         void finishCreation(JSC::VM&);
+
+        
 
         DECLARE_VISIT_CHILDREN;
 
@@ -185,9 +188,12 @@ class JSTLSSocket final : public JSC::JSDestructibleObject {
             : Base(vm, structure)
         {
             m_ctx = sinkPtr;
+            
         }
     
         void finishCreation(JSC::VM&);
+
+        
 
         DECLARE_VISIT_CHILDREN;
 
@@ -310,9 +316,12 @@ class JSListener final : public JSC::JSDestructibleObject {
             : Base(vm, structure)
         {
             m_ctx = sinkPtr;
+            
         }
     
         void finishCreation(JSC::VM&);
+
+        
 
         DECLARE_VISIT_CHILDREN;
 
@@ -435,9 +444,12 @@ class JSSubprocess final : public JSC::JSDestructibleObject {
             : Base(vm, structure)
         {
             m_ctx = sinkPtr;
+            
         }
     
         void finishCreation(JSC::VM&);
+
+        
 
         DECLARE_VISIT_CHILDREN;
 
@@ -561,9 +573,12 @@ class JSSHA1 final : public JSC::JSDestructibleObject {
             : Base(vm, structure)
         {
             m_ctx = sinkPtr;
+            
         }
     
         void finishCreation(JSC::VM&);
+
+        
 
         
 
@@ -685,9 +700,12 @@ class JSMD5 final : public JSC::JSDestructibleObject {
             : Base(vm, structure)
         {
             m_ctx = sinkPtr;
+            
         }
     
         void finishCreation(JSC::VM&);
+
+        
 
         
 
@@ -809,9 +827,12 @@ class JSMD4 final : public JSC::JSDestructibleObject {
             : Base(vm, structure)
         {
             m_ctx = sinkPtr;
+            
         }
     
         void finishCreation(JSC::VM&);
+
+        
 
         
 
@@ -933,9 +954,12 @@ class JSSHA224 final : public JSC::JSDestructibleObject {
             : Base(vm, structure)
         {
             m_ctx = sinkPtr;
+            
         }
     
         void finishCreation(JSC::VM&);
+
+        
 
         
 
@@ -1057,9 +1081,12 @@ class JSSHA512 final : public JSC::JSDestructibleObject {
             : Base(vm, structure)
         {
             m_ctx = sinkPtr;
+            
         }
     
         void finishCreation(JSC::VM&);
+
+        
 
         
 
@@ -1181,9 +1208,12 @@ class JSSHA384 final : public JSC::JSDestructibleObject {
             : Base(vm, structure)
         {
             m_ctx = sinkPtr;
+            
         }
     
         void finishCreation(JSC::VM&);
+
+        
 
         
 
@@ -1305,9 +1335,12 @@ class JSSHA256 final : public JSC::JSDestructibleObject {
             : Base(vm, structure)
         {
             m_ctx = sinkPtr;
+            
         }
     
         void finishCreation(JSC::VM&);
+
+        
 
         
 
@@ -1429,9 +1462,12 @@ class JSSHA512_256 final : public JSC::JSDestructibleObject {
             : Base(vm, structure)
         {
             m_ctx = sinkPtr;
+            
         }
     
         void finishCreation(JSC::VM&);
+
+        
 
         
 
@@ -1553,9 +1589,12 @@ class JSServerWebSocket final : public JSC::JSDestructibleObject {
             : Base(vm, structure)
         {
             m_ctx = sinkPtr;
+            
         }
     
         void finishCreation(JSC::VM&);
+
+        
 
         DECLARE_VISIT_CHILDREN;
 
@@ -1678,9 +1717,12 @@ class JSTextDecoder final : public JSC::JSDestructibleObject {
             : Base(vm, structure)
         {
             m_ctx = sinkPtr;
+            
         }
     
         void finishCreation(JSC::VM&);
+
+        
 
         DECLARE_VISIT_CHILDREN;
 
@@ -1802,9 +1844,12 @@ class JSRequest final : public JSC::JSDestructibleObject {
             : Base(vm, structure)
         {
             m_ctx = sinkPtr;
+            
         }
     
         void finishCreation(JSC::VM&);
+
+        
 
         DECLARE_VISIT_CHILDREN;
 
@@ -1928,9 +1973,12 @@ class JSResponse final : public JSC::JSDestructibleObject {
             : Base(vm, structure)
         {
             m_ctx = sinkPtr;
+            
         }
     
         void finishCreation(JSC::VM&);
+
+        
 
         DECLARE_VISIT_CHILDREN;
 
@@ -2055,9 +2103,12 @@ class JSBlob final : public JSC::JSDestructibleObject {
             : Base(vm, structure)
         {
             m_ctx = sinkPtr;
+            
         }
     
         void finishCreation(JSC::VM&);
+
+        
 
         
 

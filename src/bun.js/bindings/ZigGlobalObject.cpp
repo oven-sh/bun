@@ -1280,7 +1280,7 @@ JSC_DEFINE_CUSTOM_GETTER(getterSubtleCryptoConstructor, (JSGlobalObject * lexica
 JSC_DEFINE_CUSTOM_GETTER(getterCryptoKeyConstructor, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
 {
     Zig::GlobalObject* thisObject = JSC::jsCast<Zig::GlobalObject*>(lexicalGlobalObject);
-     return JSValue::encode(
+    return JSValue::encode(
         JSCryptoKey::getConstructor(thisObject->vm(), thisObject));
 }
 
@@ -2168,7 +2168,7 @@ void GlobalObject::finishCreation(VM& vm)
     addBuiltinGlobals(vm);
 
 #if ENABLE(REMOTE_INSPECTOR)
-    setRemoteDebuggingEnabled(false);
+    setInspectable(false);
 #endif
 
     RELEASE_ASSERT(classInfo());
@@ -2787,7 +2787,7 @@ extern "C" bool JSC__JSGlobalObject__startRemoteInspector(JSC__JSGlobalObject* g
 #if !ENABLE(REMOTE_INSPECTOR)
     return false;
 #else
-    globalObject->setRemoteDebuggingEnabled(true);
+    globalObject->setInspectable(true);
     auto& server = Inspector::RemoteInspectorServer::singleton();
     return server.start(reinterpret_cast<const char*>(host), arg1);
 #endif

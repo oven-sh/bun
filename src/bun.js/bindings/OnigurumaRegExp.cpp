@@ -240,7 +240,7 @@ bool validateRegExpFlags(WTF::StringView flags)
     return true;
 }
 
-static regex_t* createOnigurumaRegExp(JSGlobalObject* globalObject, const WTF::String& patternString, const WTF::String& flagsString, int& errorCode)
+static regex_t* createOnigurumaRegExp(JSGlobalObject* globalObject, const WTF::String& patternString, const WTF::String& flagsString, int& errorCode, OnigErrorInfo& errorInfo)
 {
     auto& vm = globalObject->vm();
     auto throwScope = DECLARE_THROW_SCOPE(vm);
@@ -271,7 +271,6 @@ static regex_t* createOnigurumaRegExp(JSGlobalObject* globalObject, const WTF::S
     onig_set_syntax_behavior(syntax, onig_get_syntax_behavior(syntax) | ONIG_SYN_ALLOW_INVALID_CODE_END_OF_RANGE_IN_CC);
 
     OnigEncodingType* encoding = encodings[0];
-    OnigErrorInfo errorInfo = { 0 };
     regex_t* onigRegExp = NULL;
 
     errorCode = onig_new(
@@ -538,7 +537,8 @@ JSC_DEFINE_HOST_FUNCTION(onigurumaRegExpProtoFuncCompile, (JSGlobalObject * glob
 
     // for pattern syntax checking
     int errorCode = 0;
-    regex_t* onigurumaRegExp = createOnigurumaRegExp(globalObject, extendMultibyteHexCharacters(thisRegExp->patternString()), thisRegExp->flagsString(), errorCode);
+    OnigErrorInfo errorInfo = { 0 };
+    regex_t* onigurumaRegExp = createOnigurumaRegExp(globalObject, extendMultibyteHexCharacters(thisRegExp->patternString()), thisRegExp->flagsString(), errorCode, errorInfo);
     if (errorCode != ONIG_NORMAL) {
         OnigUChar errorBuff[ONIG_MAX_ERROR_MESSAGE_LEN] = { 0 };
         int length = onig_error_code_to_str(errorBuff, errorCode, &errorInfo);
@@ -563,6 +563,7 @@ JSC_DEFINE_HOST_FUNCTION(onigurumaRegExpProtoFuncTest, (JSGlobalObject * globalO
 {
     auto& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
 
     auto* thisValue = jsDynamicCast<OnigurumaRegEx*>(callFrame->thisValue());
     if (!thisValue)
@@ -578,7 +579,8 @@ JSC_DEFINE_HOST_FUNCTION(onigurumaRegExpProtoFuncTest, (JSGlobalObject * globalO
     RETURN_IF_EXCEPTION(scope, JSValue::encode({}));
 
     int errorCode = 0;
-    regex_t* onigurumaRegExp = createOnigurumaRegExp(globalObject, extendMultibyteHexCharacters(thisValue->patternString()), thisValue->flagsString(), errorCode);
+    OnigErrorInfo errorInfo = { 0 };
+    regex_t* onigurumaRegExp = createOnigurumaRegExp(globalObject, extendMultibyteHexCharacters(thisValue->patternString()), thisValue->flagsString(), errorCode, errorInfo);
     if (errorCode != ONIG_NORMAL) {
         OnigUChar errorBuff[ONIG_MAX_ERROR_MESSAGE_LEN] = { 0 };
         int length = onig_error_code_to_str(errorBuff, errorCode, &errorInfo);
@@ -657,7 +659,8 @@ JSC_DEFINE_HOST_FUNCTION(onigurumaRegExpProtoFuncExec, (JSGlobalObject * globalO
     RETURN_IF_EXCEPTION(scope, JSValue::encode({}));
 
     int errorCode = 0;
-    regex_t* onigurumaRegExp = createOnigurumaRegExp(globalObject, extendMultibyteHexCharacters(thisValue->patternString()), thisValue->flagsString(), errorCode);
+    OnigErrorInfo errorInfo = { 0 };
+    regex_t* onigurumaRegExp = createOnigurumaRegExp(globalObject, extendMultibyteHexCharacters(thisValue->patternString()), thisValue->flagsString(), errorCode, errorInfo);
     if (errorCode != ONIG_NORMAL) {
         OnigUChar errorBuff[ONIG_MAX_ERROR_MESSAGE_LEN] = { 0 };
         int length = onig_error_code_to_str(errorBuff, errorCode, &errorInfo);
@@ -836,7 +839,8 @@ static JSC::EncodedJSValue constructOrCall(Zig::GlobalObject* globalObject, JSVa
 
     // create for pattern compilation errors, but need to create another for each exec/test
     int errorCode = 0;
-    regex_t* onigurumaRegExp = createOnigurumaRegExp(globalObject, extendMultibyteHexCharacters(patternString), flagsString, errorCode);
+    OnigErrorInfo errorInfo = { 0 };
+    regex_t* onigurumaRegExp = createOnigurumaRegExp(globalObject, extendMultibyteHexCharacters(patternString), flagsString, errorCode, errorInfo);
     if (errorCode != ONIG_NORMAL) {
         OnigUChar errorBuff[ONIG_MAX_ERROR_MESSAGE_LEN] = { 0 };
         int length = onig_error_code_to_str(errorBuff, errorCode, &errorInfo);

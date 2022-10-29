@@ -331,6 +331,13 @@ pub const TestCommand = struct {
 
         try vm.bundler.configureDefines();
         vm.bundler.options.rewrite_jest_for_tests = true;
+
+        if (vm.bundler.env.map.get("BUN_OVERRIDE_MODULE_PATH")) |override_path| {
+            if (override_path.len > 0) {
+                vm.load_builtins_from_path = override_path;
+            }
+        }
+
         var scanner = Scanner{
             .dirs_to_scan = Scanner.Fifo.init(ctx.allocator),
             .options = &vm.bundler.options,

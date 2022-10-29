@@ -22,20 +22,46 @@ pub const JSTCPSocket = struct {
 
     extern fn TCPSocketPrototype__dataSetCachedValue(JSC.JSValue, *JSC.JSGlobalObject, JSC.JSValue) void;
 
-    /// Set the cached value for data on TCPSocket
+    extern fn TCPSocketPrototype__dataGetCachedValue(JSC.JSValue) JSC.JSValue;
+
+    /// `TCPSocket.data` setter
     /// This value will be visited by the garbage collector.
     pub fn dataSetCached(thisValue: JSC.JSValue, globalObject: *JSC.JSGlobalObject, value: JSC.JSValue) void {
         JSC.markBinding(@src());
         TCPSocketPrototype__dataSetCachedValue(thisValue, globalObject, value);
     }
 
+    /// `TCPSocket.data` getter
+    /// This value will be visited by the garbage collector.
+    pub fn dataGetCached(thisValue: JSC.JSValue) ?JSC.JSValue {
+        JSC.markBinding(@src());
+        const result = TCPSocketPrototype__dataGetCachedValue(thisValue);
+        if (result == .zero)
+            return null;
+
+        return result;
+    }
+
     extern fn TCPSocketPrototype__remoteAddressSetCachedValue(JSC.JSValue, *JSC.JSGlobalObject, JSC.JSValue) void;
 
-    /// Set the cached value for remoteAddress on TCPSocket
+    extern fn TCPSocketPrototype__remoteAddressGetCachedValue(JSC.JSValue) JSC.JSValue;
+
+    /// `TCPSocket.remoteAddress` setter
     /// This value will be visited by the garbage collector.
     pub fn remoteAddressSetCached(thisValue: JSC.JSValue, globalObject: *JSC.JSGlobalObject, value: JSC.JSValue) void {
         JSC.markBinding(@src());
         TCPSocketPrototype__remoteAddressSetCachedValue(thisValue, globalObject, value);
+    }
+
+    /// `TCPSocket.remoteAddress` getter
+    /// This value will be visited by the garbage collector.
+    pub fn remoteAddressGetCached(thisValue: JSC.JSValue) ?JSC.JSValue {
+        JSC.markBinding(@src());
+        const result = TCPSocketPrototype__remoteAddressGetCachedValue(thisValue);
+        if (result == .zero)
+            return null;
+
+        return result;
     }
 
     /// Get the TCPSocket constructor value.
@@ -61,6 +87,12 @@ pub const JSTCPSocket = struct {
     pub fn dangerouslySetPtr(value: JSC.JSValue, ptr: ?*TCPSocket) bool {
         JSC.markBinding(@src());
         return TCPSocket__dangerouslySetPtr(value, ptr);
+    }
+
+    /// Detach the ptr from the thisValue
+    pub fn detachPtr(_: *TCPSocket, value: JSC.JSValue) void {
+        JSC.markBinding(@src());
+        std.debug.assert(TCPSocket__dangerouslySetPtr(value, null));
     }
 
     extern fn TCPSocket__fromJS(JSC.JSValue) ?*TCPSocket;
@@ -147,20 +179,46 @@ pub const JSTLSSocket = struct {
 
     extern fn TLSSocketPrototype__dataSetCachedValue(JSC.JSValue, *JSC.JSGlobalObject, JSC.JSValue) void;
 
-    /// Set the cached value for data on TLSSocket
+    extern fn TLSSocketPrototype__dataGetCachedValue(JSC.JSValue) JSC.JSValue;
+
+    /// `TLSSocket.data` setter
     /// This value will be visited by the garbage collector.
     pub fn dataSetCached(thisValue: JSC.JSValue, globalObject: *JSC.JSGlobalObject, value: JSC.JSValue) void {
         JSC.markBinding(@src());
         TLSSocketPrototype__dataSetCachedValue(thisValue, globalObject, value);
     }
 
+    /// `TLSSocket.data` getter
+    /// This value will be visited by the garbage collector.
+    pub fn dataGetCached(thisValue: JSC.JSValue) ?JSC.JSValue {
+        JSC.markBinding(@src());
+        const result = TLSSocketPrototype__dataGetCachedValue(thisValue);
+        if (result == .zero)
+            return null;
+
+        return result;
+    }
+
     extern fn TLSSocketPrototype__remoteAddressSetCachedValue(JSC.JSValue, *JSC.JSGlobalObject, JSC.JSValue) void;
 
-    /// Set the cached value for remoteAddress on TLSSocket
+    extern fn TLSSocketPrototype__remoteAddressGetCachedValue(JSC.JSValue) JSC.JSValue;
+
+    /// `TLSSocket.remoteAddress` setter
     /// This value will be visited by the garbage collector.
     pub fn remoteAddressSetCached(thisValue: JSC.JSValue, globalObject: *JSC.JSGlobalObject, value: JSC.JSValue) void {
         JSC.markBinding(@src());
         TLSSocketPrototype__remoteAddressSetCachedValue(thisValue, globalObject, value);
+    }
+
+    /// `TLSSocket.remoteAddress` getter
+    /// This value will be visited by the garbage collector.
+    pub fn remoteAddressGetCached(thisValue: JSC.JSValue) ?JSC.JSValue {
+        JSC.markBinding(@src());
+        const result = TLSSocketPrototype__remoteAddressGetCachedValue(thisValue);
+        if (result == .zero)
+            return null;
+
+        return result;
     }
 
     /// Get the TLSSocket constructor value.
@@ -186,6 +244,12 @@ pub const JSTLSSocket = struct {
     pub fn dangerouslySetPtr(value: JSC.JSValue, ptr: ?*TLSSocket) bool {
         JSC.markBinding(@src());
         return TLSSocket__dangerouslySetPtr(value, ptr);
+    }
+
+    /// Detach the ptr from the thisValue
+    pub fn detachPtr(_: *TLSSocket, value: JSC.JSValue) void {
+        JSC.markBinding(@src());
+        std.debug.assert(TLSSocket__dangerouslySetPtr(value, null));
     }
 
     extern fn TLSSocket__fromJS(JSC.JSValue) ?*TLSSocket;
@@ -272,20 +336,46 @@ pub const JSListener = struct {
 
     extern fn ListenerPrototype__hostnameSetCachedValue(JSC.JSValue, *JSC.JSGlobalObject, JSC.JSValue) void;
 
-    /// Set the cached value for hostname on Listener
+    extern fn ListenerPrototype__hostnameGetCachedValue(JSC.JSValue) JSC.JSValue;
+
+    /// `Listener.hostname` setter
     /// This value will be visited by the garbage collector.
     pub fn hostnameSetCached(thisValue: JSC.JSValue, globalObject: *JSC.JSGlobalObject, value: JSC.JSValue) void {
         JSC.markBinding(@src());
         ListenerPrototype__hostnameSetCachedValue(thisValue, globalObject, value);
     }
 
+    /// `Listener.hostname` getter
+    /// This value will be visited by the garbage collector.
+    pub fn hostnameGetCached(thisValue: JSC.JSValue) ?JSC.JSValue {
+        JSC.markBinding(@src());
+        const result = ListenerPrototype__hostnameGetCachedValue(thisValue);
+        if (result == .zero)
+            return null;
+
+        return result;
+    }
+
     extern fn ListenerPrototype__unixSetCachedValue(JSC.JSValue, *JSC.JSGlobalObject, JSC.JSValue) void;
 
-    /// Set the cached value for unix on Listener
+    extern fn ListenerPrototype__unixGetCachedValue(JSC.JSValue) JSC.JSValue;
+
+    /// `Listener.unix` setter
     /// This value will be visited by the garbage collector.
     pub fn unixSetCached(thisValue: JSC.JSValue, globalObject: *JSC.JSGlobalObject, value: JSC.JSValue) void {
         JSC.markBinding(@src());
         ListenerPrototype__unixSetCachedValue(thisValue, globalObject, value);
+    }
+
+    /// `Listener.unix` getter
+    /// This value will be visited by the garbage collector.
+    pub fn unixGetCached(thisValue: JSC.JSValue) ?JSC.JSValue {
+        JSC.markBinding(@src());
+        const result = ListenerPrototype__unixGetCachedValue(thisValue);
+        if (result == .zero)
+            return null;
+
+        return result;
     }
 
     /// Get the Listener constructor value.
@@ -311,6 +401,12 @@ pub const JSListener = struct {
     pub fn dangerouslySetPtr(value: JSC.JSValue, ptr: ?*Listener) bool {
         JSC.markBinding(@src());
         return Listener__dangerouslySetPtr(value, ptr);
+    }
+
+    /// Detach the ptr from the thisValue
+    pub fn detachPtr(_: *Listener, value: JSC.JSValue) void {
+        JSC.markBinding(@src());
+        std.debug.assert(Listener__dangerouslySetPtr(value, null));
     }
 
     extern fn Listener__fromJS(JSC.JSValue) ?*Listener;
@@ -381,29 +477,68 @@ pub const JSSubprocess = struct {
 
     extern fn SubprocessPrototype__stderrSetCachedValue(JSC.JSValue, *JSC.JSGlobalObject, JSC.JSValue) void;
 
-    /// Set the cached value for stderr on Subprocess
+    extern fn SubprocessPrototype__stderrGetCachedValue(JSC.JSValue) JSC.JSValue;
+
+    /// `Subprocess.stderr` setter
     /// This value will be visited by the garbage collector.
     pub fn stderrSetCached(thisValue: JSC.JSValue, globalObject: *JSC.JSGlobalObject, value: JSC.JSValue) void {
         JSC.markBinding(@src());
         SubprocessPrototype__stderrSetCachedValue(thisValue, globalObject, value);
     }
 
+    /// `Subprocess.stderr` getter
+    /// This value will be visited by the garbage collector.
+    pub fn stderrGetCached(thisValue: JSC.JSValue) ?JSC.JSValue {
+        JSC.markBinding(@src());
+        const result = SubprocessPrototype__stderrGetCachedValue(thisValue);
+        if (result == .zero)
+            return null;
+
+        return result;
+    }
+
     extern fn SubprocessPrototype__stdinSetCachedValue(JSC.JSValue, *JSC.JSGlobalObject, JSC.JSValue) void;
 
-    /// Set the cached value for stdin on Subprocess
+    extern fn SubprocessPrototype__stdinGetCachedValue(JSC.JSValue) JSC.JSValue;
+
+    /// `Subprocess.stdin` setter
     /// This value will be visited by the garbage collector.
     pub fn stdinSetCached(thisValue: JSC.JSValue, globalObject: *JSC.JSGlobalObject, value: JSC.JSValue) void {
         JSC.markBinding(@src());
         SubprocessPrototype__stdinSetCachedValue(thisValue, globalObject, value);
     }
 
+    /// `Subprocess.stdin` getter
+    /// This value will be visited by the garbage collector.
+    pub fn stdinGetCached(thisValue: JSC.JSValue) ?JSC.JSValue {
+        JSC.markBinding(@src());
+        const result = SubprocessPrototype__stdinGetCachedValue(thisValue);
+        if (result == .zero)
+            return null;
+
+        return result;
+    }
+
     extern fn SubprocessPrototype__stdoutSetCachedValue(JSC.JSValue, *JSC.JSGlobalObject, JSC.JSValue) void;
 
-    /// Set the cached value for stdout on Subprocess
+    extern fn SubprocessPrototype__stdoutGetCachedValue(JSC.JSValue) JSC.JSValue;
+
+    /// `Subprocess.stdout` setter
     /// This value will be visited by the garbage collector.
     pub fn stdoutSetCached(thisValue: JSC.JSValue, globalObject: *JSC.JSGlobalObject, value: JSC.JSValue) void {
         JSC.markBinding(@src());
         SubprocessPrototype__stdoutSetCachedValue(thisValue, globalObject, value);
+    }
+
+    /// `Subprocess.stdout` getter
+    /// This value will be visited by the garbage collector.
+    pub fn stdoutGetCached(thisValue: JSC.JSValue) ?JSC.JSValue {
+        JSC.markBinding(@src());
+        const result = SubprocessPrototype__stdoutGetCachedValue(thisValue);
+        if (result == .zero)
+            return null;
+
+        return result;
     }
 
     /// Get the Subprocess constructor value.
@@ -429,6 +564,12 @@ pub const JSSubprocess = struct {
     pub fn dangerouslySetPtr(value: JSC.JSValue, ptr: ?*Subprocess) bool {
         JSC.markBinding(@src());
         return Subprocess__dangerouslySetPtr(value, ptr);
+    }
+
+    /// Detach the ptr from the thisValue
+    pub fn detachPtr(_: *Subprocess, value: JSC.JSValue) void {
+        JSC.markBinding(@src());
+        std.debug.assert(Subprocess__dangerouslySetPtr(value, null));
     }
 
     extern fn Subprocess__fromJS(JSC.JSValue) ?*Subprocess;
@@ -534,6 +675,12 @@ pub const JSSHA1 = struct {
         return SHA1__dangerouslySetPtr(value, ptr);
     }
 
+    /// Detach the ptr from the thisValue
+    pub fn detachPtr(_: *SHA1, value: JSC.JSValue) void {
+        JSC.markBinding(@src());
+        std.debug.assert(SHA1__dangerouslySetPtr(value, null));
+    }
+
     extern fn SHA1__fromJS(JSC.JSValue) ?*SHA1;
     extern fn SHA1__getConstructor(*JSC.JSGlobalObject) JSC.JSValue;
 
@@ -609,6 +756,12 @@ pub const JSMD5 = struct {
     pub fn dangerouslySetPtr(value: JSC.JSValue, ptr: ?*MD5) bool {
         JSC.markBinding(@src());
         return MD5__dangerouslySetPtr(value, ptr);
+    }
+
+    /// Detach the ptr from the thisValue
+    pub fn detachPtr(_: *MD5, value: JSC.JSValue) void {
+        JSC.markBinding(@src());
+        std.debug.assert(MD5__dangerouslySetPtr(value, null));
     }
 
     extern fn MD5__fromJS(JSC.JSValue) ?*MD5;
@@ -688,6 +841,12 @@ pub const JSMD4 = struct {
         return MD4__dangerouslySetPtr(value, ptr);
     }
 
+    /// Detach the ptr from the thisValue
+    pub fn detachPtr(_: *MD4, value: JSC.JSValue) void {
+        JSC.markBinding(@src());
+        std.debug.assert(MD4__dangerouslySetPtr(value, null));
+    }
+
     extern fn MD4__fromJS(JSC.JSValue) ?*MD4;
     extern fn MD4__getConstructor(*JSC.JSGlobalObject) JSC.JSValue;
 
@@ -763,6 +922,12 @@ pub const JSSHA224 = struct {
     pub fn dangerouslySetPtr(value: JSC.JSValue, ptr: ?*SHA224) bool {
         JSC.markBinding(@src());
         return SHA224__dangerouslySetPtr(value, ptr);
+    }
+
+    /// Detach the ptr from the thisValue
+    pub fn detachPtr(_: *SHA224, value: JSC.JSValue) void {
+        JSC.markBinding(@src());
+        std.debug.assert(SHA224__dangerouslySetPtr(value, null));
     }
 
     extern fn SHA224__fromJS(JSC.JSValue) ?*SHA224;
@@ -842,6 +1007,12 @@ pub const JSSHA512 = struct {
         return SHA512__dangerouslySetPtr(value, ptr);
     }
 
+    /// Detach the ptr from the thisValue
+    pub fn detachPtr(_: *SHA512, value: JSC.JSValue) void {
+        JSC.markBinding(@src());
+        std.debug.assert(SHA512__dangerouslySetPtr(value, null));
+    }
+
     extern fn SHA512__fromJS(JSC.JSValue) ?*SHA512;
     extern fn SHA512__getConstructor(*JSC.JSGlobalObject) JSC.JSValue;
 
@@ -917,6 +1088,12 @@ pub const JSSHA384 = struct {
     pub fn dangerouslySetPtr(value: JSC.JSValue, ptr: ?*SHA384) bool {
         JSC.markBinding(@src());
         return SHA384__dangerouslySetPtr(value, ptr);
+    }
+
+    /// Detach the ptr from the thisValue
+    pub fn detachPtr(_: *SHA384, value: JSC.JSValue) void {
+        JSC.markBinding(@src());
+        std.debug.assert(SHA384__dangerouslySetPtr(value, null));
     }
 
     extern fn SHA384__fromJS(JSC.JSValue) ?*SHA384;
@@ -996,6 +1173,12 @@ pub const JSSHA256 = struct {
         return SHA256__dangerouslySetPtr(value, ptr);
     }
 
+    /// Detach the ptr from the thisValue
+    pub fn detachPtr(_: *SHA256, value: JSC.JSValue) void {
+        JSC.markBinding(@src());
+        std.debug.assert(SHA256__dangerouslySetPtr(value, null));
+    }
+
     extern fn SHA256__fromJS(JSC.JSValue) ?*SHA256;
     extern fn SHA256__getConstructor(*JSC.JSGlobalObject) JSC.JSValue;
 
@@ -1073,6 +1256,12 @@ pub const JSSHA512_256 = struct {
         return SHA512_256__dangerouslySetPtr(value, ptr);
     }
 
+    /// Detach the ptr from the thisValue
+    pub fn detachPtr(_: *SHA512_256, value: JSC.JSValue) void {
+        JSC.markBinding(@src());
+        std.debug.assert(SHA512_256__dangerouslySetPtr(value, null));
+    }
+
     extern fn SHA512_256__fromJS(JSC.JSValue) ?*SHA512_256;
     extern fn SHA512_256__getConstructor(*JSC.JSGlobalObject) JSC.JSValue;
 
@@ -1127,20 +1316,46 @@ pub const JSServerWebSocket = struct {
 
     extern fn ServerWebSocketPrototype__dataSetCachedValue(JSC.JSValue, *JSC.JSGlobalObject, JSC.JSValue) void;
 
-    /// Set the cached value for data on ServerWebSocket
+    extern fn ServerWebSocketPrototype__dataGetCachedValue(JSC.JSValue) JSC.JSValue;
+
+    /// `ServerWebSocket.data` setter
     /// This value will be visited by the garbage collector.
     pub fn dataSetCached(thisValue: JSC.JSValue, globalObject: *JSC.JSGlobalObject, value: JSC.JSValue) void {
         JSC.markBinding(@src());
         ServerWebSocketPrototype__dataSetCachedValue(thisValue, globalObject, value);
     }
 
+    /// `ServerWebSocket.data` getter
+    /// This value will be visited by the garbage collector.
+    pub fn dataGetCached(thisValue: JSC.JSValue) ?JSC.JSValue {
+        JSC.markBinding(@src());
+        const result = ServerWebSocketPrototype__dataGetCachedValue(thisValue);
+        if (result == .zero)
+            return null;
+
+        return result;
+    }
+
     extern fn ServerWebSocketPrototype__remoteAddressSetCachedValue(JSC.JSValue, *JSC.JSGlobalObject, JSC.JSValue) void;
 
-    /// Set the cached value for remoteAddress on ServerWebSocket
+    extern fn ServerWebSocketPrototype__remoteAddressGetCachedValue(JSC.JSValue) JSC.JSValue;
+
+    /// `ServerWebSocket.remoteAddress` setter
     /// This value will be visited by the garbage collector.
     pub fn remoteAddressSetCached(thisValue: JSC.JSValue, globalObject: *JSC.JSGlobalObject, value: JSC.JSValue) void {
         JSC.markBinding(@src());
         ServerWebSocketPrototype__remoteAddressSetCachedValue(thisValue, globalObject, value);
+    }
+
+    /// `ServerWebSocket.remoteAddress` getter
+    /// This value will be visited by the garbage collector.
+    pub fn remoteAddressGetCached(thisValue: JSC.JSValue) ?JSC.JSValue {
+        JSC.markBinding(@src());
+        const result = ServerWebSocketPrototype__remoteAddressGetCachedValue(thisValue);
+        if (result == .zero)
+            return null;
+
+        return result;
     }
 
     /// Get the ServerWebSocket constructor value.
@@ -1166,6 +1381,12 @@ pub const JSServerWebSocket = struct {
     pub fn dangerouslySetPtr(value: JSC.JSValue, ptr: ?*ServerWebSocket) bool {
         JSC.markBinding(@src());
         return ServerWebSocket__dangerouslySetPtr(value, ptr);
+    }
+
+    /// Detach the ptr from the thisValue
+    pub fn detachPtr(_: *ServerWebSocket, value: JSC.JSValue) void {
+        JSC.markBinding(@src());
+        std.debug.assert(ServerWebSocket__dangerouslySetPtr(value, null));
     }
 
     extern fn ServerWebSocket__fromJS(JSC.JSValue) ?*ServerWebSocket;
@@ -1275,11 +1496,24 @@ pub const JSTextDecoder = struct {
 
     extern fn TextDecoderPrototype__encodingSetCachedValue(JSC.JSValue, *JSC.JSGlobalObject, JSC.JSValue) void;
 
-    /// Set the cached value for encoding on TextDecoder
+    extern fn TextDecoderPrototype__encodingGetCachedValue(JSC.JSValue) JSC.JSValue;
+
+    /// `TextDecoder.encoding` setter
     /// This value will be visited by the garbage collector.
     pub fn encodingSetCached(thisValue: JSC.JSValue, globalObject: *JSC.JSGlobalObject, value: JSC.JSValue) void {
         JSC.markBinding(@src());
         TextDecoderPrototype__encodingSetCachedValue(thisValue, globalObject, value);
+    }
+
+    /// `TextDecoder.encoding` getter
+    /// This value will be visited by the garbage collector.
+    pub fn encodingGetCached(thisValue: JSC.JSValue) ?JSC.JSValue {
+        JSC.markBinding(@src());
+        const result = TextDecoderPrototype__encodingGetCachedValue(thisValue);
+        if (result == .zero)
+            return null;
+
+        return result;
     }
 
     /// Get the TextDecoder constructor value.
@@ -1305,6 +1539,12 @@ pub const JSTextDecoder = struct {
     pub fn dangerouslySetPtr(value: JSC.JSValue, ptr: ?*TextDecoder) bool {
         JSC.markBinding(@src());
         return TextDecoder__dangerouslySetPtr(value, ptr);
+    }
+
+    /// Detach the ptr from the thisValue
+    pub fn detachPtr(_: *TextDecoder, value: JSC.JSValue) void {
+        JSC.markBinding(@src());
+        std.debug.assert(TextDecoder__dangerouslySetPtr(value, null));
     }
 
     extern fn TextDecoder__fromJS(JSC.JSValue) ?*TextDecoder;
@@ -1355,29 +1595,68 @@ pub const JSRequest = struct {
 
     extern fn RequestPrototype__bodySetCachedValue(JSC.JSValue, *JSC.JSGlobalObject, JSC.JSValue) void;
 
-    /// Set the cached value for body on Request
+    extern fn RequestPrototype__bodyGetCachedValue(JSC.JSValue) JSC.JSValue;
+
+    /// `Request.body` setter
     /// This value will be visited by the garbage collector.
     pub fn bodySetCached(thisValue: JSC.JSValue, globalObject: *JSC.JSGlobalObject, value: JSC.JSValue) void {
         JSC.markBinding(@src());
         RequestPrototype__bodySetCachedValue(thisValue, globalObject, value);
     }
 
+    /// `Request.body` getter
+    /// This value will be visited by the garbage collector.
+    pub fn bodyGetCached(thisValue: JSC.JSValue) ?JSC.JSValue {
+        JSC.markBinding(@src());
+        const result = RequestPrototype__bodyGetCachedValue(thisValue);
+        if (result == .zero)
+            return null;
+
+        return result;
+    }
+
     extern fn RequestPrototype__headersSetCachedValue(JSC.JSValue, *JSC.JSGlobalObject, JSC.JSValue) void;
 
-    /// Set the cached value for headers on Request
+    extern fn RequestPrototype__headersGetCachedValue(JSC.JSValue) JSC.JSValue;
+
+    /// `Request.headers` setter
     /// This value will be visited by the garbage collector.
     pub fn headersSetCached(thisValue: JSC.JSValue, globalObject: *JSC.JSGlobalObject, value: JSC.JSValue) void {
         JSC.markBinding(@src());
         RequestPrototype__headersSetCachedValue(thisValue, globalObject, value);
     }
 
+    /// `Request.headers` getter
+    /// This value will be visited by the garbage collector.
+    pub fn headersGetCached(thisValue: JSC.JSValue) ?JSC.JSValue {
+        JSC.markBinding(@src());
+        const result = RequestPrototype__headersGetCachedValue(thisValue);
+        if (result == .zero)
+            return null;
+
+        return result;
+    }
+
     extern fn RequestPrototype__urlSetCachedValue(JSC.JSValue, *JSC.JSGlobalObject, JSC.JSValue) void;
 
-    /// Set the cached value for url on Request
+    extern fn RequestPrototype__urlGetCachedValue(JSC.JSValue) JSC.JSValue;
+
+    /// `Request.url` setter
     /// This value will be visited by the garbage collector.
     pub fn urlSetCached(thisValue: JSC.JSValue, globalObject: *JSC.JSGlobalObject, value: JSC.JSValue) void {
         JSC.markBinding(@src());
         RequestPrototype__urlSetCachedValue(thisValue, globalObject, value);
+    }
+
+    /// `Request.url` getter
+    /// This value will be visited by the garbage collector.
+    pub fn urlGetCached(thisValue: JSC.JSValue) ?JSC.JSValue {
+        JSC.markBinding(@src());
+        const result = RequestPrototype__urlGetCachedValue(thisValue);
+        if (result == .zero)
+            return null;
+
+        return result;
     }
 
     /// Get the Request constructor value.
@@ -1403,6 +1682,12 @@ pub const JSRequest = struct {
     pub fn dangerouslySetPtr(value: JSC.JSValue, ptr: ?*Request) bool {
         JSC.markBinding(@src());
         return Request__dangerouslySetPtr(value, ptr);
+    }
+
+    /// Detach the ptr from the thisValue
+    pub fn detachPtr(_: *Request, value: JSC.JSValue) void {
+        JSC.markBinding(@src());
+        std.debug.assert(Request__dangerouslySetPtr(value, null));
     }
 
     extern fn Request__fromJS(JSC.JSValue) ?*Request;
@@ -1514,38 +1799,90 @@ pub const JSResponse = struct {
 
     extern fn ResponsePrototype__bodySetCachedValue(JSC.JSValue, *JSC.JSGlobalObject, JSC.JSValue) void;
 
-    /// Set the cached value for body on Response
+    extern fn ResponsePrototype__bodyGetCachedValue(JSC.JSValue) JSC.JSValue;
+
+    /// `Response.body` setter
     /// This value will be visited by the garbage collector.
     pub fn bodySetCached(thisValue: JSC.JSValue, globalObject: *JSC.JSGlobalObject, value: JSC.JSValue) void {
         JSC.markBinding(@src());
         ResponsePrototype__bodySetCachedValue(thisValue, globalObject, value);
     }
 
+    /// `Response.body` getter
+    /// This value will be visited by the garbage collector.
+    pub fn bodyGetCached(thisValue: JSC.JSValue) ?JSC.JSValue {
+        JSC.markBinding(@src());
+        const result = ResponsePrototype__bodyGetCachedValue(thisValue);
+        if (result == .zero)
+            return null;
+
+        return result;
+    }
+
     extern fn ResponsePrototype__headersSetCachedValue(JSC.JSValue, *JSC.JSGlobalObject, JSC.JSValue) void;
 
-    /// Set the cached value for headers on Response
+    extern fn ResponsePrototype__headersGetCachedValue(JSC.JSValue) JSC.JSValue;
+
+    /// `Response.headers` setter
     /// This value will be visited by the garbage collector.
     pub fn headersSetCached(thisValue: JSC.JSValue, globalObject: *JSC.JSGlobalObject, value: JSC.JSValue) void {
         JSC.markBinding(@src());
         ResponsePrototype__headersSetCachedValue(thisValue, globalObject, value);
     }
 
+    /// `Response.headers` getter
+    /// This value will be visited by the garbage collector.
+    pub fn headersGetCached(thisValue: JSC.JSValue) ?JSC.JSValue {
+        JSC.markBinding(@src());
+        const result = ResponsePrototype__headersGetCachedValue(thisValue);
+        if (result == .zero)
+            return null;
+
+        return result;
+    }
+
     extern fn ResponsePrototype__statusTextSetCachedValue(JSC.JSValue, *JSC.JSGlobalObject, JSC.JSValue) void;
 
-    /// Set the cached value for statusText on Response
+    extern fn ResponsePrototype__statusTextGetCachedValue(JSC.JSValue) JSC.JSValue;
+
+    /// `Response.statusText` setter
     /// This value will be visited by the garbage collector.
     pub fn statusTextSetCached(thisValue: JSC.JSValue, globalObject: *JSC.JSGlobalObject, value: JSC.JSValue) void {
         JSC.markBinding(@src());
         ResponsePrototype__statusTextSetCachedValue(thisValue, globalObject, value);
     }
 
+    /// `Response.statusText` getter
+    /// This value will be visited by the garbage collector.
+    pub fn statusTextGetCached(thisValue: JSC.JSValue) ?JSC.JSValue {
+        JSC.markBinding(@src());
+        const result = ResponsePrototype__statusTextGetCachedValue(thisValue);
+        if (result == .zero)
+            return null;
+
+        return result;
+    }
+
     extern fn ResponsePrototype__urlSetCachedValue(JSC.JSValue, *JSC.JSGlobalObject, JSC.JSValue) void;
 
-    /// Set the cached value for url on Response
+    extern fn ResponsePrototype__urlGetCachedValue(JSC.JSValue) JSC.JSValue;
+
+    /// `Response.url` setter
     /// This value will be visited by the garbage collector.
     pub fn urlSetCached(thisValue: JSC.JSValue, globalObject: *JSC.JSGlobalObject, value: JSC.JSValue) void {
         JSC.markBinding(@src());
         ResponsePrototype__urlSetCachedValue(thisValue, globalObject, value);
+    }
+
+    /// `Response.url` getter
+    /// This value will be visited by the garbage collector.
+    pub fn urlGetCached(thisValue: JSC.JSValue) ?JSC.JSValue {
+        JSC.markBinding(@src());
+        const result = ResponsePrototype__urlGetCachedValue(thisValue);
+        if (result == .zero)
+            return null;
+
+        return result;
     }
 
     /// Get the Response constructor value.
@@ -1571,6 +1908,12 @@ pub const JSResponse = struct {
     pub fn dangerouslySetPtr(value: JSC.JSValue, ptr: ?*Response) bool {
         JSC.markBinding(@src());
         return Response__dangerouslySetPtr(value, ptr);
+    }
+
+    /// Detach the ptr from the thisValue
+    pub fn detachPtr(_: *Response, value: JSC.JSValue) void {
+        JSC.markBinding(@src());
+        std.debug.assert(Response__dangerouslySetPtr(value, null));
     }
 
     extern fn Response__fromJS(JSC.JSValue) ?*Response;
@@ -1696,6 +2039,12 @@ pub const JSBlob = struct {
     pub fn dangerouslySetPtr(value: JSC.JSValue, ptr: ?*Blob) bool {
         JSC.markBinding(@src());
         return Blob__dangerouslySetPtr(value, ptr);
+    }
+
+    /// Detach the ptr from the thisValue
+    pub fn detachPtr(_: *Blob, value: JSC.JSValue) void {
+        JSC.markBinding(@src());
+        std.debug.assert(Blob__dangerouslySetPtr(value, null));
     }
 
     extern fn Blob__fromJS(JSC.JSValue) ?*Blob;

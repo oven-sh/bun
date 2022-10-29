@@ -6,7 +6,7 @@
 #include "ZigGlobalObject.h"
 #include "JavaScriptCore/JSDestructibleObjectHeapCellType.h"
 
-extern "C" JSC::EncodedJSValue jsFunctionGetOnigurumaRegExpConstructor(JSC::JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, JSC::PropertyName attributeName);
+extern "C" JSC::EncodedJSValue jsFunctionGetOnigurumaRegExpConstructor(JSC::JSGlobalObject* lexicalGlobalObject, JSC::EncodedJSValue thisValue, JSC::PropertyName attributeName);
 
 namespace Zig {
 
@@ -24,24 +24,20 @@ public:
 
     static JSC::Structure* createClassStructure(JSC::JSGlobalObject*, JSC::JSValue prototype);
     static JSC::JSObject* createPrototype(JSC::JSGlobalObject*);
-    
+
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
     {
         return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::InternalFunctionType, StructureFlags), info());
     }
 
-
 private:
     OnigurumaRegExpConstructor(JSC::VM& vm, JSC::Structure* structure, JSC::NativeFunction nativeFunction)
-            : Base(vm, structure, nativeFunction, nativeFunction)
-    
-        {
-        }
-    
+        : Base(vm, structure, nativeFunction, nativeFunction)
+
+    {
+    }
 
     void finishCreation(JSC::VM&, JSValue prototype);
 };
-
-
 
 }

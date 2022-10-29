@@ -1,14 +1,19 @@
 {
   "compilerOptions": {
-    "lib": ["ESNext"],
+    "lib": [
+      "ESNext"
+    ],
     "module": "esnext",
     "target": "esnext",
     "moduleResolution": "node",
-
+    "strict": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
     // so that if your project isn't using TypeScript, it still has autocomplete
     "allowJs": true,
-
     // "bun-types" is the important part
-    "types": ["bun-types"]
+    "types": [
+      "bun-types"
+    ]
   }
 }

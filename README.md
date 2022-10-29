@@ -47,7 +47,7 @@ If using Linux, kernel version 5.6 or higher is strongly recommended, but the mi
 
 ### Make permament bun on your machine
 
-Also please add this lines on ~/.bashrc
+Also if you use Linux, please add this lines on ~/.bashrc
 
 ```sh
 sudo nano ~/.bashrc

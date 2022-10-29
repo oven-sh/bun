@@ -20,7 +20,10 @@ namespace Zig {
 
 static WTF::String to16Bit(ASCIILiteral str)
 {
-    return WTF::String::make16BitFrom8BitSource(str.characters8(), str.length());
+    UChar* buffer = nullptr;
+    auto out = WTF::StringImpl::createUninitialized(str.length(), buffer);
+    WTF::StringImpl::copyCharacters(buffer, str.characters8(), str.length());
+    return WTF::String(WTFMove(out));
 }
 
 static WTF::String to16Bit(JSC::JSString* str, JSC::JSGlobalObject* globalObject)
@@ -30,13 +33,17 @@ static WTF::String to16Bit(JSC::JSString* str, JSC::JSGlobalObject* globalObject
     }
 
     auto value = str->value(globalObject);
-    return WTF::String::make16BitFrom8BitSource(value.characters8(), value.length());
+    auto outStr = WTF::String(value.characters8(), value.length());
+    outStr.convertTo16Bit();
+    return outStr;
 }
 
 static WTF::String to16Bit(WTF::String str)
 {
     if (str.is8Bit()) {
-        return WTF::String::make16BitFrom8BitSource(str.characters8(), str.length());
+        auto out = str.isolatedCopy();
+        out.convertTo16Bit();
+        return out;
     }
 
     return str;
@@ -594,7 +601,7 @@ JSC_DEFINE_HOST_FUNCTION(onigurumaRegExpProtoFuncTest, (JSGlobalObject * globalO
         throwScope.throwException(globalObject, createSyntaxError(globalObject, errorMessage.toString()));
         return JSValue::encode({});
     }
-
+    
     OnigRegion* region = onig_region_new();
 
     const OnigUChar* end = reinterpret_cast<const OnigUChar*>(string.characters16() + string.length());
@@ -674,7 +681,7 @@ JSC_DEFINE_HOST_FUNCTION(onigurumaRegExpProtoFuncExec, (JSGlobalObject * globalO
         throwScope.throwException(globalObject, createSyntaxError(globalObject, errorMessage.toString()));
         return JSValue::encode({});
     }
-
+    
     OnigRegion* region = onig_region_new();
 
     const OnigUChar* end = reinterpret_cast<const OnigUChar*>(string.characters16() + string.length());
@@ -780,7 +787,7 @@ void OnigurumaRegExpPrototype::finishCreation(VM& vm, JSGlobalObject* globalObje
     this->putDirectCustomAccessor(vm, vm.propertyNames->source, JSC::CustomGetterSetter::create(vm, onigurumaRegExpProtoGetterSource, nullptr), 0 | PropertyAttribute::CustomAccessor | PropertyAttribute::ReadOnly);
     this->putDirectCustomAccessor(vm, vm.propertyNames->flags, JSC::CustomGetterSetter::create(vm, onigurumaRegExpProtoGetterFlags, nullptr), 0 | PropertyAttribute::CustomAccessor | PropertyAttribute::ReadOnly);
     this->putDirectCustomAccessor(vm, vm.propertyNames->lastIndex, JSC::CustomGetterSetter::create(vm, onigurumaRegExpProtoGetterLastIndex, onigurumaRegExpProtoSetterLastIndex), 0 | PropertyAttribute::CustomAccessor);
-    ;
+
     this->putDirectNativeFunction(vm, globalObject, PropertyName(vm.propertyNames->test), 1, onigurumaRegExpProtoFuncTest, ImplementationVisibility::Public, NoIntrinsic, static_cast<unsigned>(0));
 
     this->putDirectBuiltinFunction(vm, globalObject, vm.propertyNames->matchSymbol, onigurumaRegExpPrototypeMatchCodeGenerator(vm), static_cast<unsigned>(0));

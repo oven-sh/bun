@@ -246,6 +246,8 @@ export function generateHashTable(
   const rows = [];
 
   for (const name in props) {
+    if ("internal" in props[name]) continue;
+
     rows.push(propRow(symbolName, typeName, name, props[name], wrapped));
   }
 
@@ -549,13 +551,16 @@ ${
 function renderCachedFieldsHeader(typeName, klass, proto) {
   const rows = [];
   for (const name in klass) {
-    if ("cache" in klass[name] && klass[name].cache === true) {
+    if (
+      ("cache" in klass[name] && klass[name].cache === true) ||
+      klass[name]?.internal
+    ) {
       rows.push(`mutable JSC::WriteBarrier<JSC::Unknown> m_${name};`);
     }
   }
 
   for (const name in proto) {
-    if (proto[name]?.cache === true) {
+    if (proto[name]?.cache === true || klass[name]?.internal) {
       rows.push(`mutable JSC::WriteBarrier<JSC::Unknown> m_${name};`);
     }
   }
@@ -702,23 +707,24 @@ JSC_DEFINE_CUSTOM_GETTER(js${typeName}Constructor, (JSGlobalObject * lexicalGlob
   }
 
   for (const name in proto) {
-    if ("cache" in proto[name]) {
+    if ("cache" in proto[name] || proto[name]?.internal) {
       const cacheName =
         typeof proto[name].cache === "string"
           ? `m_${proto[name].cache}`
           : `m_${name}`;
-      rows.push(`
+      if ("cache" in proto[name]) {
+        rows.push(`
 JSC_DEFINE_CUSTOM_GETTER(${symbolName(
-        typeName,
-        name
-      )}GetterWrap, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
+          typeName,
+          name
+        )}GetterWrap, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
 {
     auto& vm = lexicalGlobalObject->vm();
     Zig::GlobalObject *globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     ${className(typeName)}* thisObject = jsCast<${className(
-        typeName
-      )}*>(JSValue::decode(thisValue));
+          typeName
+        )}*>(JSValue::decode(thisValue));
       JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
     
     if (JSValue cachedValue = thisObject->${cacheName}.get())
@@ -733,7 +739,10 @@ JSC_DEFINE_CUSTOM_GETTER(${symbolName(
     RETURN_IF_EXCEPTION(throwScope, {});
     thisObject->${cacheName}.set(vm, thisObject, result);
     RELEASE_AND_RETURN(throwScope, JSValue::encode(result));
-}
+}`);
+      }
+      rows.push(`
+
 extern "C" void ${symbolName(
         typeName,
         name
@@ -745,6 +754,18 @@ extern "C" void ${symbolName(
     )}*>(JSValue::decode(thisValue));
     thisObject->${cacheName}.set(vm, thisObject, JSValue::decode(value));
 }
+
+extern "C" EncodedJSValue ${symbolName(
+        typeName,
+        name
+      )}GetCachedValue(JSC::EncodedJSValue thisValue)
+{
+  auto* thisObject = jsCast<${className(
+    typeName
+  )}*>(JSValue::decode(thisValue));
+  return JSValue::encode(thisObject->${cacheName}.get());
+}
+
 `);
     } else if (
       "getter" in proto[name] ||
@@ -847,6 +868,40 @@ function generateClassHeader(typeName, obj: ClassDefinition) {
     ? "static size_t estimatedSize(JSCell* cell, VM& vm);"
     : "";
 
+  var weakOwner = "";
+  var weakInit = "";
+
+  if (obj.hasPendingActivity) {
+    weakOwner = `
+      JSC::Weak<${name}> m_weakThis;
+      bool internalHasPendingActivity();
+      bool hasPendingActivity() {
+        if (!m_ctx)
+          return false;
+
+        return this->internalHasPendingActivity();
+      }
+
+      class Owner final : public JSC::WeakHandleOwner {
+        public:
+            bool isReachableFromOpaqueRoots(JSC::Handle<JSC::Unknown> handle, void* context, JSC::AbstractSlotVisitor&, const char**) final
+            {
+                auto* controller = JSC::jsCast<${name}*>(handle.slot()->asCell());
+                return controller->hasPendingActivity();
+            }
+            void finalize(JSC::Handle<JSC::Unknown>, void* context) final {}
+        };
+    
+        static JSC::WeakHandleOwner* getOwner()
+        {
+            static NeverDestroyed<Owner> m_owner;
+            return &m_owner.get();
+        }
+      `;
+    weakInit = `
+    m_weakThis = JSC::Weak<${name}>(vm, this, getOwner());
+`;
+  }
   return `
   class ${name} final : public JSC::JSDestructibleObject {
     public:
@@ -901,9 +956,12 @@ function generateClassHeader(typeName, obj: ClassDefinition) {
             : Base(vm, structure)
         {
             m_ctx = sinkPtr;
+            ${weakInit.trim()}
         }
     
         void finishCreation(JSC::VM&);
+
+        ${weakOwner}
 
         ${DECLARE_VISIT_CHILDREN}
 
@@ -913,14 +971,24 @@ function generateClassHeader(typeName, obj: ClassDefinition) {
 }
 
 function generateClassImpl(typeName, obj: ClassDefinition) {
-  const { klass: fields, finalize, proto, construct, estimatedSize } = obj;
+  const {
+    klass: fields,
+    finalize,
+    proto,
+    construct,
+    estimatedSize,
+    hasPendingActivity = false,
+  } = obj;
   const name = className(typeName);
 
   const DEFINE_VISIT_CHILDREN_LIST = [
     ...Object.entries(fields),
     ...Object.entries(proto),
   ]
-    .filter(([name, { cache = false }]) => cache === true)
+    .filter(
+      ([name, { cache = false, internal = false }]) =>
+        (cache || internal) === true
+    )
     .map(([name]) => `    visitor.append(thisObject->m_${name});`)
     .join("\n");
 
@@ -955,6 +1023,15 @@ DEFINE_VISIT_CHILDREN(${name});
 
   var output = ``;
 
+  if (hasPendingActivity) {
+    output += `
+    extern "C" bool ${symbolName(typeName, "hasPendingActivity")}(void* ptr);
+    ${name}::internalHasPendingActivity() {
+        return ${symbolName(typeName, "hasPendingActivity")}(m_ctx);
+    }
+`;
+  }
+
   if (finalize) {
     output += `
 ${name}::~${name}()
@@ -988,6 +1065,7 @@ void ${name}::finishCreation(VM& vm)
     Base::finishCreation(vm);
     ASSERT(inherits(info()));
 }
+
 
 ${name}* ${name}::create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, void* ctx) {
   ${name}* ptr = new (NotNull, JSC::allocateCell<${name}>(vm)) ${name}(vm, structure, ctx);
@@ -1079,6 +1157,7 @@ function generateZig(
     finalize,
     noConstructor,
     estimatedSize,
+    hasPendingActivity = false,
   } = {} as ClassDefinition
 ) {
   const exports = new Map<string, string>();
@@ -1095,6 +1174,13 @@ function generateZig(
     exports.set(`estimatedSize`, symbolName(typeName, "estimatedSize"));
   }
 
+  if (hasPendingActivity) {
+    exports.set(
+      "hasPendingActivity",
+      symbolName(typeName, "hasPendingActivity")
+    );
+  }
+
   Object.values(klass).map((a) =>
     appendSymbols(exports, (name) => classSymbolName(typeName, name), a)
   );
@@ -1103,15 +1189,23 @@ function generateZig(
   );
 
   const externs = Object.entries(proto)
-    .filter(([name, { cache }]) => cache && typeof cache !== "string")
+    .filter(
+      ([name, { cache, internal }]) =>
+        (cache && typeof cache !== "string") || internal
+    )
     .map(
       ([name, { cache }]) =>
         `extern fn ${protoSymbolName(
           typeName,
           name
         )}SetCachedValue(JSC.JSValue, *JSC.JSGlobalObject, JSC.JSValue) void;
+
+        extern fn ${protoSymbolName(
+          typeName,
+          name
+        )}GetCachedValue(JSC.JSValue) JSC.JSValue;
         
-        /// Set the cached value for ${name} on ${typeName}
+        /// \`${typeName}.${name}\` setter
         /// This value will be visited by the garbage collector.
         pub fn ${name}SetCached(thisValue: JSC.JSValue, globalObject: *JSC.JSGlobalObject, value: JSC.JSValue) void {
           JSC.markBinding(@src());
@@ -1119,6 +1213,20 @@ function generateZig(
             typeName,
             name
           )}SetCachedValue(thisValue, globalObject, value); 
+        }
+
+        /// \`${typeName}.${name}\` getter
+        /// This value will be visited by the garbage collector.
+        pub fn ${name}GetCached(thisValue: JSC.JSValue) ?JSC.JSValue {
+          JSC.markBinding(@src());
+          const result = ${protoSymbolName(
+            typeName,
+            name
+          )}GetCachedValue(thisValue);
+          if (result == .zero)
+            return null;
+          
+          return result;
         }
 `.trim() + "\n"
     )
@@ -1279,6 +1387,15 @@ pub const ${className(typeName)} = struct {
     pub fn dangerouslySetPtr(value: JSC.JSValue, ptr: ?*${typeName}) bool {
       JSC.markBinding(@src());
       return ${symbolName(typeName, "dangerouslySetPtr")}(value, ptr);
+    }
+
+    /// Detach the ptr from the thisValue
+    pub fn detachPtr(_: *${typeName}, value: JSC.JSValue) void {
+      JSC.markBinding(@src());
+      std.debug.assert(${symbolName(
+        typeName,
+        "dangerouslySetPtr"
+      )}(value, null));
     }
 
     extern fn ${symbolName(typeName, "fromJS")}(JSC.JSValue) ?*${typeName};

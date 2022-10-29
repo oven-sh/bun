@@ -423,7 +423,6 @@ pub extern fn JSStringCreateExternal(string: UTF8Ptr, length: usize, finalize_pt
 pub extern fn JSStringIsEqualToString(a: JSStringRef, string: UTF8Ptr, length: usize) bool;
 pub extern fn JSStringEncoding(string: JSStringRef) Encoding;
 pub extern fn JSStringGetCharacters8Ptr(string: JSStringRef) UTF8Ptr;
-extern fn JSStringIterate(string: JSCellValue, iter: *JSStringIterator_) void;
 pub extern fn JSCellType(cell: JSCellValue) CellType;
 pub extern fn JSStringIsStatic(ref: JSStringRef) bool;
 pub extern fn JSStringIsExternal(ref: JSStringRef) bool;

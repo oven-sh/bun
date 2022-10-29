@@ -45,6 +45,29 @@ docker run --rm --init --ulimit memlock=-1:-1 jarredsumner/bun:edge
 
 If using Linux, kernel version 5.6 or higher is strongly recommended, but the minimum is 5.1.
 
+### Make permament bun on your machine
+
+Also please add this lines on ~/.bashrc
+
+```sh
+sudo nano ~/.bashrc
+```
+
+With you username at the bottom of the file, to ensure the installation is correct:
+
+
+```sh
+BUN_INSTALL="/home/youUserNameGoesHere/.bun"
+PATH="$BUN_INSTALL/bin:$PATH"
+```
+
+Then reboot and try:
+
+
+```sh
+bun --version
+```
+
 ## Upgrade
 
 To upgrade to the latest version of Bun, run:
@@ -66,6 +89,7 @@ bun upgrade --canary
 ## Table of Contents
 
 - [Install](#install)
+  - [Make permament bun on your machine](#Make-permament-bun-on-your-machine)
 - [Using bun.js - a new JavaScript runtime environment](#using-bunjs---a-new-javascript-runtime-environment)
   - [Types for bun.js (editor autocomplete)](#types-for-bunjs-editor-autocomplete)
   - [Fast paths for Web APIs](#fast-paths-for-web-apis)

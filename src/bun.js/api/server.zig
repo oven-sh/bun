@@ -1009,7 +1009,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
         }
 
         fn cleanupAndFinalizeAfterSendfile(this: *RequestContext) void {
-            this.resp.setWriteOffset(this.sendfile.offset);
+            this.resp.overrideWriteOffset(this.sendfile.offset);
             this.resp.endWithoutBody(this.shouldCloseConnection());
             // use node syscall so that we don't segfault on BADF
             if (this.sendfile.auto_close)

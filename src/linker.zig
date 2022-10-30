@@ -419,18 +419,48 @@ pub const Linker = struct {
                             },
                         }
 
-                        if (linker.resolver.resolve(source_dir, import_record.path.text, import_record.kind)) |_resolved_import| {
-                            switch (import_record.tag) {
-                                else => {},
-                                .react_refresh => {
-                                    linker.tagged_resolutions.react_refresh = _resolved_import;
-                                    linker.tagged_resolutions.react_refresh.?.path_pair.primary = linker.tagged_resolutions.react_refresh.?.path().?.dupeAlloc(bun.default_allocator) catch unreachable;
-                                },
+                        if (comptime is_bun) {
+                            var bundler: *Bundler = @fieldParentPtr(Bundler, "linker", linker);
+                            if (bundler.options.enable_auto_install and bundler.package_manager == null and Resolver.isPackagePath(import_record.path.text)) {
+                                _ = bundler.getPackageManager();
                             }
 
-                            break :brk _resolved_import;
-                        } else |err| {
-                            break :brk err;
+                            switch (linker.resolver.resolveAndAutoInstall(
+                                source_dir,
+                                import_record.path.text,
+                                import_record.kind,
+                                bundler.options.enable_auto_install,
+                            )) {
+                                .success => |_resolved_import| {
+                                    switch (import_record.tag) {
+                                        else => {},
+                                        .react_refresh => {
+                                            linker.tagged_resolutions.react_refresh = _resolved_import;
+                                            linker.tagged_resolutions.react_refresh.?.path_pair.primary = linker.tagged_resolutions.react_refresh.?.path().?.dupeAlloc(bun.default_allocator) catch unreachable;
+                                        },
+                                    }
+
+                                    break :brk _resolved_import;
+                                },
+                                .failure => |err| {
+                                    break :brk err;
+                                },
+                                else => unreachable,
+                            }
+                        } else {
+                            if (linker.resolver.resolve(source_dir, import_record.path.text, import_record.kind)) |_resolved_import| {
+                                switch (import_record.tag) {
+                                    else => {},
+                                    .react_refresh => {
+                                        linker.tagged_resolutions.react_refresh = _resolved_import;
+                                        linker.tagged_resolutions.react_refresh.?.path_pair.primary = linker.tagged_resolutions.react_refresh.?.path().?.dupeAlloc(bun.default_allocator) catch unreachable;
+                                    },
+                                }
+
+                                break :brk _resolved_import;
+                            } else |err| {
+                                break :brk err;
+                            }
                         }
                     };
 

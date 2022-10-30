@@ -14,6 +14,7 @@ const JSLexer = @import("../js_lexer.zig");
 const logger = @import("../logger.zig");
 
 const js_parser = @import("../js_parser.zig");
+const Expr = @import("../js_ast.zig").Expr;
 const json_parser = @import("../json_parser.zig");
 const JSPrinter = @import("../js_printer.zig");
 
@@ -1796,7 +1797,7 @@ pub const StringBuffer = std.ArrayListUnmanaged(u8);
 pub const ExternalStringBuffer = std.ArrayListUnmanaged(ExternalString);
 
 pub const Package = extern struct {
-    const DependencyGroup = struct {
+    pub const DependencyGroup = struct {
         prop: string,
         field: string,
         behavior: Behavior,
@@ -2250,6 +2251,30 @@ pub const Package = extern struct {
             Global.exit(1);
         };
 
+        try parseWithJSON(
+            package,
+            lockfile,
+            allocator,
+            log,
+            source,
+            json,
+            ResolverContext,
+            resolver,
+            features,
+        );
+    }
+
+    pub fn parseWithJSON(
+        package: *Lockfile.Package,
+        lockfile: *Lockfile,
+        allocator: std.mem.Allocator,
+        log: *logger.Log,
+        source: logger.Source,
+        json: Expr,
+        comptime ResolverContext: type,
+        resolver: ResolverContext,
+        comptime features: Features,
+    ) !void {
         var string_builder = lockfile.stringBuilder();
         var total_dependencies_count: u32 = 0;
 
@@ -3091,4 +3116,38 @@ pub fn generateMetaHash(this: *Lockfile, print_name_version_string: bool) !MetaH
     Crypto.SHA512_256.hash(alphabetized_name_version_string, &digest);
 
     return digest;
+}
+
+pub fn resolve(this: *Lockfile, package_name: []const u8, version: Dependency.Version) ?PackageID {
+    const name_hash = bun.hash(package_name);
+    const entry = this.package_index.get(name_hash) orelse return null;
+    const can_satisfy = version.tag == .npm;
+
+    switch (entry) {
+        .PackageID => |id| {
+            const resolutions = this.packages.items(.resolution);
+
+            if (can_satisfy and version.value.npm.satisfies(resolutions[id].value.npm.version)) {
+                return id;
+            }
+        },
+        .PackageIDMultiple => |multi_| {
+            const multi = std.mem.span(multi_);
+            const resolutions = this.packages.items(.resolution);
+
+            for (multi) |id| {
+                if (comptime Environment.isDebug or Environment.isTest) {
+                    std.debug.assert(id != invalid_package_id);
+                }
+
+                if (id == invalid_package_id - 1) return null;
+
+                if (can_satisfy and version.value.npm.satisfies(resolutions[id].value.npm.version)) {
+                    return id;
+                }
+            }
+        },
+    }
+
+    return null;
 }

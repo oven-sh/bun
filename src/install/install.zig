@@ -175,6 +175,7 @@ const NetworkTask = struct {
     allocator: std.mem.Allocator,
     request_buffer: MutableString = undefined,
     response_buffer: MutableString = undefined,
+    package_manager: *PackageManager = &PackageManager.instance,
     callback: union(Task.Tag) {
         package_manifest: struct {
             loaded_manifest: ?Npm.PackageManifest = null,
@@ -185,8 +186,8 @@ const NetworkTask = struct {
     },
 
     pub fn notify(this: *NetworkTask, _: anytype) void {
-        defer PackageManager.instance.wake();
-        PackageManager.instance.network_channel.writeItem(this) catch {};
+        defer this.package_manager.wake();
+        this.package_manager.network_channel.writeItem(this) catch {};
     }
 
     // We must use a less restrictive Accept header value
@@ -330,7 +331,7 @@ const NetworkTask = struct {
             0,
             this.getCompletionCallback(),
         );
-        this.http.max_retry_count = PackageManager.instance.options.max_retry_count;
+        this.http.max_retry_count = this.package_manager.options.max_retry_count;
         this.callback = .{
             .package_manifest = .{
                 .name = try strings.StringOrTinyString.initAppendIfNeeded(name, *FileSystem.FilenameStore, &FileSystem.FilenameStore.instance),
@@ -369,7 +370,7 @@ const NetworkTask = struct {
                 scope.url.href,
                 tarball.name,
                 tarball.resolution.value.npm.version,
-                PackageManager.instance.lockfile.buffers.string_bytes.items,
+                this.package_manager.lockfile.buffers.string_bytes.items,
             );
         } else {
             this.url_buf = tarball.url;
@@ -412,7 +413,7 @@ const NetworkTask = struct {
             0,
             this.getCompletionCallback(),
         );
-        this.http.max_retry_count = PackageManager.instance.options.max_retry_count;
+        this.http.max_retry_count = this.package_manager.options.max_retry_count;
         this.callback = .{ .extract = tarball };
     }
 };
@@ -489,6 +490,7 @@ const Task = struct {
     log: logger.Log,
     id: u64,
     err: ?anyerror = null,
+    package_manager: *PackageManager = &PackageManager.instance,
 
     /// An ID that lets us register a callback without keeping the same pointer around
     pub const Id = struct {
@@ -519,11 +521,11 @@ const Task = struct {
 
         var this = @fieldParentPtr(Task, "threadpool_task", task);
 
-        defer PackageManager.instance.wake();
+        defer this.package_manager.wake();
 
         switch (this.tag) {
             .package_manifest => {
-                var allocator = PackageManager.instance.allocator;
+                var allocator = this.package_manager.allocator;
                 const package_manifest = Npm.Registry.getPackageMetadata(
                     allocator,
                     this.request.package_manifest.network.http.response.?,
@@ -531,6 +533,7 @@ const Task = struct {
                     &this.log,
                     this.request.package_manifest.name.slice(),
                     this.request.package_manifest.network.callback.package_manifest.loaded_manifest,
+                    this.package_manager,
                 ) catch |err| {
                     if (comptime Environment.isDebug) {
                         if (@errorReturnTrace()) |trace| {
@@ -539,7 +542,7 @@ const Task = struct {
                     }
                     this.err = err;
                     this.status = Status.fail;
-                    PackageManager.instance.resolve_tasks.writeItem(this.*) catch unreachable;
+                    this.package_manager.resolve_tasks.writeItem(this.*) catch unreachable;
                     return;
                 };
 
@@ -550,7 +553,7 @@ const Task = struct {
                     .fresh => |manifest| {
                         this.data = .{ .package_manifest = manifest };
                         this.status = Status.success;
-                        PackageManager.instance.resolve_tasks.writeItem(this.*) catch unreachable;
+                        this.package_manager.resolve_tasks.writeItem(this.*) catch unreachable;
                         return;
                     },
                     .not_found => {
@@ -558,7 +561,7 @@ const Task = struct {
                             this.request.package_manifest.name.slice(),
                         }) catch unreachable;
                         this.status = Status.fail;
-                        PackageManager.instance.resolve_tasks.writeItem(this.*) catch unreachable;
+                        this.package_manager.resolve_tasks.writeItem(this.*) catch unreachable;
                         return;
                     },
                 }
@@ -576,13 +579,13 @@ const Task = struct {
                     this.err = err;
                     this.status = Status.fail;
                     this.data = .{ .extract = "" };
-                    PackageManager.instance.resolve_tasks.writeItem(this.*) catch unreachable;
+                    this.package_manager.resolve_tasks.writeItem(this.*) catch unreachable;
                     return;
                 };
 
                 this.data = .{ .extract = result };
                 this.status = Status.success;
-                PackageManager.instance.resolve_tasks.writeItem(this.*) catch unreachable;
+                this.package_manager.resolve_tasks.writeItem(this.*) catch unreachable;
             },
             .binlink => {},
         }
@@ -1779,6 +1782,99 @@ pub const PackageManager = struct {
         return true;
     }
 
+    pub fn pathForResolution(
+        this: *PackageManager,
+        package_id: PackageID,
+        resolution: Resolution,
+        buf: *[bun.MAX_PATH_BYTES]u8,
+    ) ![]u8 {
+        // const folder_name = this.cachedNPMPackageFolderName(name, version);
+        switch (resolution.tag) {
+            .npm => {
+                const npm = resolution.value.npm;
+                var package_name_version_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+                const package_name_ = this.lockfile.packages.items(.name)[package_id];
+                const package_name = this.lockfile.str(package_name_);
+                var subpath = std.fmt.bufPrintZ(
+                    &package_name_version_buf,
+                    "{s}" ++ std.fs.path.sep_str ++ "{any}",
+                    .{
+                        package_name,
+                        npm.fmt(this.lockfile.buffers.string_bytes.items),
+                    },
+                ) catch unreachable;
+                return try this.getCacheDirectory().readLink(
+                    subpath,
+                    buf,
+                );
+            },
+            else => return "",
+        }
+    }
+
+    pub fn getInstalledVersionsFromDiskCache(this: *PackageManager, tags_buf: *std.ArrayList(u8), package_name: []const u8, version: Dependency.Version, allocator: std.mem.Allocator) !std.ArrayList(Semver.Version) {
+        var list = std.ArrayList(Semver.Version).init(allocator);
+        var dir = this.getCacheDirectory().openDir(package_name, .{ .iterate = true }) catch |err| {
+            switch (err) {
+                error.FileNotFound, error.NotDir, error.AccessDenied, error.DeviceBusy => {
+                    return list;
+                },
+                else => return err,
+            }
+        };
+        defer dir.close();
+        var iter = dir.iterate();
+
+        while (try iter.next()) |entry| {
+            if (entry.kind != .Dir) continue;
+            const name = entry.name;
+            var sliced = SlicedString.init(name, name);
+            var parsed = Semver.Version.parse(&sliced, allocator);
+            // not handling OOM
+            // TODO: wildcard
+            const total = parsed.version.tag.build.len() + parsed.version.tag.pre.len();
+            if (total > 0) {
+                tags_buf.ensureUnusedCapacity(total) catch unreachable;
+                var available = tags_buf.items.ptr[tags_buf.items.len..tags_buf.capacity];
+                const new_version = parsed.version.cloneInto(name, &available);
+                tags_buf.items.len += total;
+                parsed.version = new_version;
+            }
+
+            list.append(parsed) catch unreachable;
+        }
+
+        return list;
+    }
+
+    pub fn resolveFromDiskCache(this: *PackageManager, package_name: []const u8, version: Dependency.Version) ?PackageID {
+        const name_hash = bun.hash(package_name);
+        const entry = this.lockfile.package_index.get(name_hash) orelse return null;
+        const can_satisfy = version.tag == .npm;
+        var stack_fallback = std.heap.stackFallback(4096, this.allocator);
+        var allocator = stack_fallback.get();
+        var tags_buf = std.ArrayList(u8).init(allocator);
+        defer tags_buf.deinit();
+        var installed_versions = this.getInstalledVersionsFromDiskCache(&tags_buf, package_name, version, allocator) catch |err| {
+            Output.debug("error getting installed versions from disk cache: {s}", .{std.mem.span(@errorName(err))});
+            return null;
+        };
+
+        // TODO: make this fewer passes
+        std.sort.sort(
+            Semver.Version,
+            installed_versions.items,
+            tags_buf.items,
+            Semver.Version.sortFn,
+        );
+
+        for (installed_versions.items) |installed_version| {
+            if (version.value.npm.satisfies(installed_version)) {
+                
+            }
+        }
+    }
+
     const ResolvedPackageResult = struct {
         package: Lockfile.Package,
 
@@ -1888,6 +1984,7 @@ pub const PackageManager = struct {
             .task_id = task_id,
             .callback = undefined,
             .allocator = this.allocator,
+            .package_manager = this,
         };
 
         const scope = this.scopeForPackageName(this.lockfile.str(package.name));
@@ -1962,6 +2059,7 @@ pub const PackageManager = struct {
                 .callback = undefined,
                 .task_id = task_id,
                 .allocator = this.allocator,
+                .package_manager = this,
             };
             try network_task.forManifest(name, this.allocator, this.scopeForPackageName(name), loaded_manifest);
             this.enqueueNetworkTask(network_task);
@@ -2637,7 +2735,7 @@ pub const PackageManager = struct {
                             entry.value_ptr.* = manifest;
                             entry.value_ptr.*.pkg.public_max_age = @truncate(u32, @intCast(u64, @maximum(0, std.time.timestamp()))) + 300;
                             {
-                                Npm.PackageManifest.Serializer.save(entry.value_ptr, PackageManager.instance.getTemporaryDirectory(), PackageManager.instance.getCacheDirectory()) catch {};
+                                Npm.PackageManifest.Serializer.save(entry.value_ptr, manager.getTemporaryDirectory(), manager.getCacheDirectory()) catch {};
                             }
 
                             var dependency_list_entry = manager.task_queue.getEntry(task.task_id).?;
@@ -3598,7 +3696,7 @@ pub const PackageManager = struct {
         return try initWithCLI(_ctx, package_json_file_, cli);
     }
 
-    fn initWithCLI(
+    pub fn initWithCLI(
         ctx: Command.Context,
         package_json_file_: ?std.fs.File,
         cli: CommandLineArguments,
@@ -3749,6 +3847,140 @@ pub const PackageManager = struct {
         );
 
         manager.timestamp = @truncate(u32, @intCast(u64, @maximum(std.time.timestamp(), 0)));
+        return manager;
+    }
+
+    pub fn initWithRuntime(
+        log: *logger.Log,
+        allocator: std.mem.Allocator,
+        cli: CommandLineArguments,
+        env_loader: *DotEnv.Loader,
+        main_file_name: []const u8,
+    ) !*PackageManager {
+        if (env_loader.map.get("BUN_INSTALL_VERBOSE") != null) {
+            PackageManager.verbose_install = true;
+        }
+
+        var cpu_count = @truncate(u32, ((try std.Thread.getCpuCount()) + 1));
+
+        if (env_loader.map.get("GOMAXPROCS")) |max_procs| {
+            if (std.fmt.parseInt(u32, max_procs, 10)) |cpu_count_| {
+                cpu_count = @minimum(cpu_count, cpu_count_);
+            } else |_| {}
+        }
+
+        var manager = &instance;
+        var root_dir = try Fs.FileSystem.instance.fs.readDirectory(
+            Fs.FileSystem.instance.top_level_dir,
+            null,
+        );
+        // var progress = Progress{};
+        // var node = progress.start(name: []const u8, estimated_total_items: usize)
+        manager.* = PackageManager{
+            .options = .{},
+            .network_task_fifo = NetworkQueue.init(),
+            .env_loader = env_loader,
+            .allocator = allocator,
+            .log = log,
+            .root_dir = &root_dir.entries,
+            .env = env_loader,
+            .cpu_count = cpu_count,
+            .thread_pool = ThreadPool.init(.{
+                .max_threads = cpu_count,
+            }),
+            .resolve_tasks = TaskChannel.init(),
+            .lockfile = undefined,
+            .root_package_json_file = undefined,
+            .waiter = try Waker.init(allocator),
+            // .progress
+        };
+        manager.lockfile = try allocator.create(Lockfile);
+
+        if (!manager.options.enable.cache) {
+            manager.options.enable.manifest_cache = false;
+            manager.options.enable.manifest_cache_control = false;
+        }
+
+        if (env_loader.map.get("BUN_MANIFEST_CACHE")) |manifest_cache| {
+            if (strings.eqlComptime(manifest_cache, "1")) {
+                manager.options.enable.manifest_cache = true;
+                manager.options.enable.manifest_cache_control = false;
+            } else if (strings.eqlComptime(manifest_cache, "2")) {
+                manager.options.enable.manifest_cache = true;
+                manager.options.enable.manifest_cache_control = true;
+            } else {
+                manager.options.enable.manifest_cache = false;
+                manager.options.enable.manifest_cache_control = false;
+            }
+        }
+
+        try manager.options.load(
+            allocator,
+            log,
+            env_loader,
+            cli,
+            null,
+        );
+
+        manager.timestamp = @truncate(u32, @intCast(u64, @maximum(std.time.timestamp(), 0)));
+
+        manager.lockfile = brk: {
+            var buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+
+            if (main_file_name.len > 0) {
+                const extlen = std.fs.path.extension(main_file_name);
+                @memcpy(&buf, main_file_name.ptr, main_file_name.len - extlen.len);
+                buf[main_file_name.len - extlen.len .. buf.len][0..".lockb".len].* = ".lockb".*;
+                buf[main_file_name.len - extlen.len .. buf.len][".lockb".len] = 0;
+
+                var lockfile_path = buf[0 .. main_file_name.len - extlen.len + ".lockb".len];
+                buf[lockfile_path.len] = 0;
+                var lockfile_path_z = std.meta.assumeSentinel(buf[0..lockfile_path.len], 0);
+                const result = manager.lockfile.loadFromDisk(
+                    allocator,
+                    log,
+                    lockfile_path_z,
+                );
+
+                if (result == .ok) {
+                    break :brk result.ok;
+                }
+            }
+
+            {
+                var basedir = if (main_file_name.len > 0)
+                    std.fs.path.dirname(main_file_name) orelse "/"
+                else
+                    FileSystem.instance.top_level_dir;
+
+                var parts = [_]string{
+                    basedir,
+                    "bun.lockb",
+                };
+                var lockfile_path = Path.joinAbsStringBuf(
+                    Fs.FileSystem.instance.top_level_dir,
+                    &buf,
+                    &parts,
+                    .auto,
+                );
+                buf[lockfile_path.len] = 0;
+                var lockfile_path_z = std.meta.assumeSentinel(buf[0..lockfile_path.len], 0);
+
+                const result = manager.lockfile.loadFromDisk(
+                    allocator,
+                    log,
+                    lockfile_path_z,
+                );
+
+                if (result == .ok) {
+                    break :brk result.ok;
+                }
+            }
+
+            try manager.lockfile.initEmpty(allocator);
+            break :brk manager.lockfile;
+        };
+
         return manager;
     }
 
@@ -4516,7 +4748,24 @@ pub const PackageManager = struct {
         }
 
         var updates = UpdateRequest.parse(ctx.allocator, ctx.log, manager.options.positionals[1..], &update_requests, op);
+        try updatePackageJSONAndInstallWithManagerWithUpdates(
+            ctx,
+            manager,
+            updates,
+            false,
+            op,
+            log_level,
+        );
+    }
 
+    pub fn updatePackageJSONAndInstallWithManagerWithUpdates(
+        ctx: Command.Context,
+        manager: *PackageManager,
+        updates: []UpdateRequest,
+        auto_free: bool,
+        comptime op: Lockfile.Package.Diff.Op,
+        comptime log_level: Options.LogLevel,
+    ) !void {
         if (ctx.log.errors > 0) {
             if (comptime log_level != .silent) {
                 if (Output.enable_ansi_colors) {
@@ -4672,7 +4921,9 @@ pub const PackageManager = struct {
         var new_package_json_source = try ctx.allocator.dupe(u8, package_json_writer.ctx.writtenWithoutTrailingZero());
 
         // Do not free the old package.json AST nodes
-        _ = JSAst.Expr.Data.Store.toOwnedSlice();
+        var old_ast_nodes = JSAst.Expr.Data.Store.toOwnedSlice();
+        // haha unless
+        defer if (auto_free) bun.default_allocator.free(old_ast_nodes);
 
         try installWithManager(ctx, manager, new_package_json_source, log_level);
 

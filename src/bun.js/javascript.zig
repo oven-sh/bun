@@ -87,6 +87,7 @@ const Transpiler = @import("./api/transpiler.zig");
 const Bun = JSC.API.Bun;
 const EventLoop = JSC.EventLoop;
 const ThreadSafeFunction = JSC.napi.ThreadSafeFunction;
+const PackageManager = @import("../install/install.zig").PackageManager;
 pub const GlobalConstructors = [_]type{
     JSC.Cloudflare.HTMLRewriter.Constructor,
 };
@@ -346,6 +347,7 @@ pub const VirtualMachine = struct {
     is_printing_plugin: bool = false,
 
     plugin_runner: ?PluginRunner = null,
+    is_main_thread: bool = false,
 
     /// Do not access this field directly
     /// It exists in the VirtualMachine struct so that
@@ -404,8 +406,10 @@ pub const VirtualMachine = struct {
     us_loop_reference_count: usize = 0,
     is_us_loop_entered: bool = false,
     pending_internal_promise: *JSC.JSInternalPromise = undefined,
-
+    auto_install_dependencies: bool = false,
     load_builtins_from_path: []const u8 = "",
+
+    pub threadlocal var is_main_thread_vm: bool = false;
 
     pub fn reload(this: *VirtualMachine) void {
         Output.debug("Reloading...", .{});
@@ -3013,6 +3017,7 @@ pub const ModuleLoader = struct {
                 printer.ctx.reset();
 
                 const start_count = jsc_vm.bundler.linker.import_counter;
+
                 // We _must_ link because:
                 // - node_modules bundle won't be properly
                 try jsc_vm.bundler.linker.link(

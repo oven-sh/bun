@@ -59,6 +59,9 @@ pub const Run = struct {
         };
         run.vm.argv = ctx.passthrough;
         run.vm.arena = &run.arena;
+        run.vm.bundler.options.enable_auto_install = true;
+        run.vm.bundler.resolver.opts.enable_auto_install = true;
+        run.vm.bundler.main_file_for_package_manager = entry_path;
 
         if (ctx.debug.macros) |macros| {
             run.vm.bundler.options.macro_remap = macros;
@@ -115,6 +118,9 @@ pub const Run = struct {
                 run.vm.load_builtins_from_path = override_path;
             }
         }
+
+        run.vm.is_main_thread = true;
+        JSC.VirtualMachine.is_main_thread_vm = true;
 
         var callback = OpaqueWrap(Run, Run.start);
         run.vm.global.vm().holdAPILock(&run, callback);

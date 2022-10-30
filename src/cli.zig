@@ -312,7 +312,7 @@ pub const Arguments = struct {
         try loadConfigPath(allocator, auto_loaded, config_path, ctx, comptime cmd);
     }
 
-    fn loadConfigWithCmdArgs(
+    pub fn loadConfigWithCmdArgs(
         comptime cmd: Command.Tag,
         allocator: std.mem.Allocator,
         args: clap.Args(clap.Help, cmd.params()),
@@ -784,6 +784,7 @@ pub const Command = struct {
         fallback_only: bool = false,
         silent: bool = false,
         hot_reload: bool = false,
+        auto_install_setting: ?bool = null,
 
         // technical debt
         macros: ?MacroMap = null,

@@ -1225,6 +1225,8 @@ pub const BundleOptions = struct {
 
     disable_transpilation: bool = false,
 
+    enable_auto_install: bool = false,
+
     pub inline fn cssImportBehavior(this: *const BundleOptions) Api.CssInJsBehavior {
         switch (this.platform) {
             .neutral, .browser => {

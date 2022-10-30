@@ -338,6 +338,9 @@ pub const TestCommand = struct {
             }
         }
 
+        vm.is_main_thread = true;
+        JSC.VirtualMachine.is_main_thread_vm = true;
+
         var scanner = Scanner{
             .dirs_to_scan = Scanner.Fifo.init(ctx.allocator),
             .options = &vm.bundler.options,

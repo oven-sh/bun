@@ -54,6 +54,7 @@ const Linker = linker.Linker;
 const Resolver = _resolver.Resolver;
 const TOML = @import("./toml/toml_parser.zig").TOML;
 const JSC = @import("javascript_core");
+const PackageManager = @import("./install/install.zig").PackageManager;
 
 pub fn MacroJSValueType_() type {
     if (comptime JSC.is_bindgen) {
@@ -337,13 +338,13 @@ pub const PluginRunner = struct {
 };
 
 pub const Bundler = struct {
+    package_manager: ?*PackageManager = null,
     options: options.BundleOptions,
     log: *logger.Log,
     allocator: std.mem.Allocator,
     result: options.TransformResult = undefined,
     resolver: Resolver,
     fs: *Fs.FileSystem,
-    // thread_pool: *ThreadPool,
     output_files: std.ArrayList(options.OutputFile),
     resolve_results: *ResolveResults,
     resolve_queue: ResolveQueue,
@@ -356,10 +357,29 @@ pub const Bundler = struct {
     env: *DotEnv.Loader,
 
     macro_context: ?js_ast.Macro.MacroContext = null,
+    main_file_for_package_manager: []const u8 = "",
 
     pub const isCacheEnabled = cache_files;
 
-    pub fn clone(this: *ThisBundler, allocator: std.mem.Allocator, to: *ThisBundler) !void {
+    pub fn getPackageManager(this: *Bundler) *PackageManager {
+        if (this.package_manager != null) {
+            return this.package_manager.?;
+        }
+
+        this.package_manager = PackageManager.initWithRuntime(
+            this.log,
+            this.allocator,
+            .{},
+            this.env,
+            this.main_file_for_package_manager,
+        ) catch @panic("Failed to initialize package manager");
+
+        this.resolver.package_manager = this.package_manager;
+
+        return this.package_manager.?;
+    }
+
+    pub fn clone(this: *Bundler, allocator: std.mem.Allocator, to: *Bundler) !void {
         to.* = this.*;
         to.setAllocator(allocator);
         to.log = try allocator.create(logger.Log);
@@ -368,19 +388,19 @@ pub const Bundler = struct {
         to.macro_context = null;
     }
 
-    pub fn setLog(this: *ThisBundler, log: *logger.Log) void {
+    pub fn setLog(this: *Bundler, log: *logger.Log) void {
         this.log = log;
         this.linker.log = log;
         this.resolver.log = log;
     }
 
-    pub fn setAllocator(this: *ThisBundler, allocator: std.mem.Allocator) void {
+    pub fn setAllocator(this: *Bundler, allocator: std.mem.Allocator) void {
         this.allocator = allocator;
         this.linker.allocator = allocator;
         this.resolver.allocator = allocator;
     }
 
-    pub inline fn resolveEntryPoint(bundler: *ThisBundler, entry_point: string) !_resolver.Result {
+    pub inline fn resolveEntryPoint(bundler: *Bundler, entry_point: string) !_resolver.Result {
         return bundler.resolver.resolve(bundler.fs.top_level_dir, entry_point, .entry_point) catch |err| {
             const has_dot_slash_form = !strings.hasPrefix(entry_point, "./") and brk: {
                 _ = bundler.resolver.resolve(bundler.fs.top_level_dir, try strings.append(bundler.allocator, "./", entry_point), .entry_point) catch break :brk false;
@@ -411,7 +431,7 @@ pub const Bundler = struct {
         opts: Api.TransformOptions,
         existing_bundle: ?*NodeModuleBundle,
         env_loader_: ?*DotEnv.Loader,
-    ) !ThisBundler {
+    ) !Bundler {
         js_ast.Expr.Data.Store.create(allocator);
         js_ast.Stmt.Data.Store.create(allocator);
         var fs = try Fs.FileSystem.init1(
@@ -447,7 +467,7 @@ pub const Bundler = struct {
         // });
         var resolve_results = try allocator.create(ResolveResults);
         resolve_results.* = ResolveResults.init(allocator);
-        return ThisBundler{
+        return Bundler{
             .options = bundle_options,
             .fs = fs,
             .allocator = allocator,
@@ -464,7 +484,7 @@ pub const Bundler = struct {
         };
     }
 
-    pub fn configureLinkerWithAutoJSX(bundler: *ThisBundler, auto_jsx: bool) void {
+    pub fn configureLinkerWithAutoJSX(bundler: *Bundler, auto_jsx: bool) void {
         bundler.linker = Linker.init(
             bundler.allocator,
             bundler.log,
@@ -488,11 +508,11 @@ pub const Bundler = struct {
         }
     }
 
-    pub fn configureLinker(bundler: *ThisBundler) void {
+    pub fn configureLinker(bundler: *Bundler) void {
         bundler.configureLinkerWithAutoJSX(true);
     }
 
-    pub fn runEnvLoader(this: *ThisBundler) !void {
+    pub fn runEnvLoader(this: *Bundler) !void {
         switch (this.options.env.behavior) {
             .prefix, .load_all => {
                 // Step 1. Load the project root.
@@ -528,7 +548,7 @@ pub const Bundler = struct {
     }
 
     // This must be run after a framework is configured, if a framework is enabled
-    pub fn configureDefines(this: *ThisBundler) !void {
+    pub fn configureDefines(this: *Bundler) !void {
         if (this.options.defines_loaded) {
             return;
         }
@@ -581,7 +601,7 @@ pub const Bundler = struct {
     }
 
     pub fn configureFramework(
-        this: *ThisBundler,
+        this: *Bundler,
         comptime load_defines: bool,
     ) !void {
         if (this.options.framework) |*framework| {
@@ -614,7 +634,7 @@ pub const Bundler = struct {
         }
     }
 
-    pub fn configureFrameworkWithResolveResult(this: *ThisBundler, comptime client: bool) !?_resolver.Result {
+    pub fn configureFrameworkWithResolveResult(this: *Bundler, comptime client: bool) !?_resolver.Result {
         if (this.options.framework != null) {
             try this.configureFramework(true);
             if (comptime client) {
@@ -635,7 +655,7 @@ pub const Bundler = struct {
         return null;
     }
 
-    pub fn configureRouter(this: *ThisBundler, comptime load_defines: bool) !void {
+    pub fn configureRouter(this: *Bundler, comptime load_defines: bool) !void {
         try this.configureFramework(load_defines);
         defer {
             if (load_defines) {
@@ -702,12 +722,12 @@ pub const Bundler = struct {
         }
     }
 
-    pub fn resetStore(_: *const ThisBundler) void {
+    pub fn resetStore(_: *const Bundler) void {
         js_ast.Expr.Data.Store.reset();
         js_ast.Stmt.Data.Store.reset();
     }
 
-    pub noinline fn dumpEnvironmentVariables(bundler: *const ThisBundler) void {
+    pub noinline fn dumpEnvironmentVariables(bundler: *const Bundler) void {
         @setCold(true);
         const opts = std.json.StringifyOptions{
             .whitespace = std.json.StringifyOptions.Whitespace{
@@ -727,7 +747,7 @@ pub const Bundler = struct {
         empty: bool = false,
     };
     pub fn buildWithResolveResult(
-        bundler: *ThisBundler,
+        bundler: *Bundler,
         resolve_result: _resolver.Result,
         allocator: std.mem.Allocator,
         loader: options.Loader,
@@ -915,7 +935,7 @@ pub const Bundler = struct {
     }
 
     pub fn buildWithResolveResultEager(
-        bundler: *ThisBundler,
+        bundler: *Bundler,
         resolve_result: _resolver.Result,
         comptime import_path_format: options.BundleOptions.ImportPathFormat,
         comptime Outstream: type,
@@ -1106,7 +1126,7 @@ pub const Bundler = struct {
     }
 
     pub fn printWithSourceMapMaybe(
-        bundler: *ThisBundler,
+        bundler: *Bundler,
         ast: js_ast.Ast,
         source: *const logger.Source,
         comptime Writer: type,
@@ -1247,7 +1267,7 @@ pub const Bundler = struct {
     }
 
     pub fn print(
-        bundler: *ThisBundler,
+        bundler: *Bundler,
         result: ParseResult,
         comptime Writer: type,
         writer: Writer,
@@ -1265,7 +1285,7 @@ pub const Bundler = struct {
     }
 
     pub fn printWithSourceMap(
-        bundler: *ThisBundler,
+        bundler: *Bundler,
         result: ParseResult,
         comptime Writer: type,
         writer: Writer,
@@ -1299,7 +1319,7 @@ pub const Bundler = struct {
     };
 
     pub fn parse(
-        bundler: *ThisBundler,
+        bundler: *Bundler,
         this_parse: ParseOptions,
         client_entry_point_: anytype,
     ) ?ParseResult {
@@ -1307,7 +1327,7 @@ pub const Bundler = struct {
     }
 
     pub fn parseMaybeReturnFileOnly(
-        bundler: *ThisBundler,
+        bundler: *Bundler,
         this_parse: ParseOptions,
         client_entry_point_: anytype,
         comptime return_file_only: bool,
@@ -1523,7 +1543,7 @@ pub const Bundler = struct {
     // We try to be mostly stateless when serving
     // This means we need a slightly different resolver setup
     pub fn buildFile(
-        bundler: *ThisBundler,
+        bundler: *Bundler,
         log: *logger.Log,
         path_to_use_: string,
         comptime client_entry_point_enabled: bool,
@@ -1619,7 +1639,7 @@ pub const Bundler = struct {
         }
     }
 
-    pub fn normalizeEntryPointPath(bundler: *ThisBundler, _entry: string) string {
+    pub fn normalizeEntryPointPath(bundler: *Bundler, _entry: string) string {
         var paths = [_]string{_entry};
         var entry = bundler.fs.abs(&paths);
 
@@ -1651,7 +1671,7 @@ pub const Bundler = struct {
         return entry;
     }
 
-    fn enqueueEntryPoints(bundler: *ThisBundler, entry_points: []_resolver.Result, comptime normalize_entry_point: bool) usize {
+    fn enqueueEntryPoints(bundler: *Bundler, entry_points: []_resolver.Result, comptime normalize_entry_point: bool) usize {
         var entry_point_i: usize = 0;
 
         for (bundler.options.entry_points) |_entry| {
@@ -1688,7 +1708,7 @@ pub const Bundler = struct {
         log: *logger.Log,
         opts: Api.TransformOptions,
     ) !options.TransformResult {
-        var bundler = try ThisBundler.init(allocator, log, opts, null, null);
+        var bundler = try Bundler.init(allocator, log, opts, null, null);
         bundler.configureLinker();
         try bundler.configureRouter(false);
         try bundler.configureDefines();
@@ -1807,7 +1827,7 @@ pub const Bundler = struct {
     // pub fn processResolveQueueWithThreadPool(bundler)
 
     pub fn processResolveQueue(
-        bundler: *ThisBundler,
+        bundler: *Bundler,
         comptime import_path_format: options.BundleOptions.ImportPathFormat,
         comptime wrap_entry_point: bool,
         comptime Outstream: type,
@@ -1827,7 +1847,7 @@ pub const Bundler = struct {
                 if (item.import_kind == .entry_point and loader.supportsClientEntryPoint()) {
                     var client_entry_point = try bundler.allocator.create(EntryPoints.ClientEntryPoint);
                     client_entry_point.* = EntryPoints.ClientEntryPoint{};
-                    try client_entry_point.generate(ThisBundler, bundler, path.name, bundler.options.framework.?.client.path);
+                    try client_entry_point.generate(Bundler, bundler, path.name, bundler.options.framework.?.client.path);
 
                     const entry_point_output_file = bundler.buildWithResolveResultEager(
                         item,

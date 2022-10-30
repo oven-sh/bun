@@ -80,6 +80,34 @@ pub const String = extern struct {
         }
     }
 
+    pub const HashContext = struct {
+        a_buf: []const u8,
+        b_buf: []const u8,
+
+        pub fn eql(ctx: HashContext, a: String, b: String) bool {
+            return a.eql(b, ctx.a_buf, ctx.b_buf);
+        }
+
+        pub fn hash(ctx: HashContext, a: String) u64 {
+            const str = a.slice(ctx.a_buf);
+            return bun.hash(str);
+        }
+    };
+
+    pub const ArrayHashContext = struct {
+        a_buf: []const u8,
+        b_buf: []const u8,
+
+        pub fn eql(ctx: ArrayHashContext, a: String, b: String, _: usize) bool {
+            return a.eql(b, ctx.a_buf, ctx.b_buf);
+        }
+
+        pub fn hash(ctx: ArrayHashContext, a: String) u32 {
+            const str = a.slice(ctx.a_buf);
+            return @truncate(u32, bun.hash(str));
+        }
+    };
+
     pub fn init(
         buf: string,
         in: string,
@@ -489,6 +517,11 @@ pub const Version = extern struct {
     patch: u32 = 0,
     tag: Tag = Tag{},
     // raw: RawType = RawType{},
+
+    /// Assumes that there is only one buffer for all the strings
+    pub fn sortFn(ctx: []const u8, lhs: Version, rhs: Version) std.math.Order {
+        return lhs.order(rhs, ctx, ctx);
+    }
 
     pub fn cloneInto(this: Version, slice: []const u8, buf: *[]u8) Version {
         return Version{
@@ -1210,6 +1243,11 @@ pub const Query = struct {
 
         pub inline fn eql(lhs: Group, rhs: Group) bool {
             return lhs.head.eql(&rhs.head);
+        }
+
+        pub fn toVersion(this: Group) Version {
+            std.debug.assert(this.isExact());
+            return this.head.head.range.left.version;
         }
 
         pub fn orVersion(self: *Group, version: Version) !void {

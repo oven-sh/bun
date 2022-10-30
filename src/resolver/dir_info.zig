@@ -35,6 +35,8 @@ enclosing_tsconfig_json: ?*const TSConfigJSON = null,
 /// https://github.com/oven-sh/bun/issues/229
 enclosing_package_json: ?*PackageJSON = null,
 
+package_json_for_dependencies: ?*const PackageJSON = null,
+
 abs_path: string = "",
 entries: Index = undefined,
 has_node_modules: bool = false, // Is there a "node_modules" subdirectory?

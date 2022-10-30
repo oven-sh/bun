@@ -163,6 +163,7 @@ pub const Registry = struct {
         log: *logger.Log,
         package_name: string,
         loaded_manifest: ?PackageManifest,
+        package_manager: *PackageManager,
     ) !PackageVersionResponse {
         switch (response.status_code) {
             400 => return error.BadRequest,
@@ -210,8 +211,8 @@ pub const Registry = struct {
             new_etag,
             @truncate(u32, @intCast(u64, @maximum(0, std.time.timestamp()))) + 300,
         )) |package| {
-            if (PackageManager.instance.options.enable.manifest_cache) {
-                PackageManifest.Serializer.save(&package, PackageManager.instance.getTemporaryDirectory(), PackageManager.instance.getCacheDirectory()) catch {};
+            if (package_manager.options.enable.manifest_cache) {
+                PackageManifest.Serializer.save(&package, package_manager.getTemporaryDirectory(), package_manager.getCacheDirectory()) catch {};
             }
 
             return PackageVersionResponse{ .fresh = package };

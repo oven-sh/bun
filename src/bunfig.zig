@@ -476,6 +476,11 @@ pub const Bunfig = struct {
                 jsx.development = jsx_dev;
             }
 
+            if (json.get("autoInstall")) |auto_install_expr| {
+                try this.expect(auto_install_expr, .e_boolean);
+                this.ctx.debug.auto_install_setting = auto_install_expr.asBool();
+            }
+
             switch (comptime cmd) {
                 .AutoCommand, .DevCommand, .BuildCommand, .BunCommand => {
                     if (json.get("publicDir")) |public_dir| {

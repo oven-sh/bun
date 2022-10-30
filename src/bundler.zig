@@ -337,8 +337,6 @@ pub const PluginRunner = struct {
 };
 
 pub const Bundler = struct {
-    const ThisBundler = @This();
-
     options: options.BundleOptions,
     log: *logger.Log,
     allocator: std.mem.Allocator,

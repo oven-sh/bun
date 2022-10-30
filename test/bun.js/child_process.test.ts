@@ -33,19 +33,17 @@ describe("spawn()", () => {
     expect(!!child).toBe(true);
   });
 
-  it("should allow array syntax", () => {
-    const child = spawn(["echo", "hello"]);
-    expect(!!child).toBe(true);
-  });
-
   it("should disallow invalid filename", () => {
     let child;
+    let child2;
     try {
       child = spawn(123);
+      child2 = spawn(["echo", "hello"]);
     } catch (e) {
       console.error(e);
     }
     expect(!!child).toBe(false);
+    expect(!!child2).toBe(false);
   });
 
   it("should allow stdout to be read via Node stream.Readable API", async () => {

@@ -129,20 +129,21 @@ export function spawn(file, args, options) {
 //------------------------------------------------------------------------------
 
 function normalizeSpawnArguments(file, args, options) {
-  if (file == null) {
-    throw new ERR_INVALID_ARG_TYPE("file", "string", file);
-  }
+  if (file.length === 0)
+    throw new ERR_INVALID_ARG_VALUE("file", file, "cannot be empty");
 
-  if (Array.isArray(file)) {
-    options = args;
-    args = file;
-    file = args[0];
+  if (ArrayIsArray(args)) {
+    args = ArrayPrototypeSlice(args);
   } else if (args == null) {
     args = [];
-  } else if (!Array.isArray(args)) {
+  } else if (typeof args !== "object") {
+    throw new ERR_INVALID_ARG_TYPE("args", "object", args);
+  } else {
     options = args;
     args = [];
   }
+
+  // validateArgumentsNullCheck(args, "args");
 
   if (options == null) {
     options = {};

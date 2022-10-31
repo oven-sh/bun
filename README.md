@@ -175,6 +175,7 @@ bun upgrade --canary
   - [`Bun.Transpiler.scan`](#buntranspilerscan)
   - [`Bun.Transpiler.scanImports`](#buntranspilerscanimports)
 - [`Bun.peek` - read a promise same-tick](#bunpeek---read-a-promise-without-resolving-it)
+- [Module resolution in Bun](#module-resolution-in-bun)
 - [Environment variables](#environment-variables)
 - [Credits](#credits)
 - [License](#license)
@@ -4393,6 +4394,203 @@ export const loader = () => import('./loader');
   }
 ]
 ```
+
+## Module resolution in Bun
+
+Loading & resolving modules in JavaScript & TypeScript is complicated.
+
+### Module loading
+
+Bun supports CommonJS and ESM. Bun automatically transpiles CommonJS into synchronous ESM. Bun assumes projects internally use ESM, but dependencies may use either ESM or CommonJS. Using CommonJS is discouraged in new projects because it lacks support for top-level await and syntax like `export * from` is less reliable in CommonJS (without bundling the entire dependency tree ahead of time).
+
+Bun supports the `"bun"` `exports` condition and will prefer that over other conditions.
+
+To load a bun-specific module, set the `"bun"` export condition in package.json:
+
+```json
+{
+  "name": "foo",
+  "exports": {
+    "bun": "./index.bun.js",
+    "default": "./index.js"
+  }
+}
+```
+
+When importing `"foo"` in a bun project, it will load `./index.bun.js` instead of `./index.js`.
+
+If the library strictly uses ESM (excluding dependencies), specify `"type": "module"` in package.json.
+
+```json
+{
+  "name": "foo",
+  "type": "module",
+  "exports": {
+    "bun": "./index.bun.js",
+    "default": "./index.js"
+  }
+}
+```
+
+### Module resolution
+
+Bun implements the Node Module Resolution Algorithm, which is the same algorithm used by Node.js. It is also the same algorithm used by Webpack, Rollup, esbuild and many other bundlers.
+
+```js
+import "./foo";
+// This will check:
+// - ./foo.ts
+// - ./foo.tsx
+// - ./foo.js
+// - ./foo.mjs
+// - ./foo.cjs
+// - ./foo/index.ts
+// - ./foo/index.js
+// - ./foo/index.json
+// - ./foo/index.mjs
+```
+
+Bun also supports `package.json`, including `exports`, `imports`, `module`, `main` and `browser` fields.
+
+Bun supports `tsconfig.json`'s `paths` field, allowing you to override how paths resolve.
+
+```json
+{
+  "compilerOptions": {
+    "paths": {
+      "foo": ["./bar"]
+    }
+  }
+}
+```
+
+```js
+import "foo";
+// This will check:
+// - ./bar
+// - ./bar.ts
+// - ./bar.tsx
+// - ./bar.js
+// - ./bar.mjs
+// - ./bar.cjs
+// - ./bar/index.ts
+// - ./bar/index.js
+// - ./bar/index.json
+// - ./bar/index.mjs
+```
+
+You can also use `jsconfig.json` if you don't want to use TypeScript.
+
+### Bun's Module Resolution Algorithm
+
+Bun's module resolution algorithm is a lot like Node's except one key difference: `node_modules` folder is optional and `package.json` is optional.
+
+Highlights:
+
+- Automatic package installs
+- Offline-first
+- `package.json` is optional
+- Compatible with npm packages
+- Save disk space & time by not copying/linking dependencies into `node_modules`. Instead, Bun uses a shared global cache to store & load dependencies in a single location.
+- Security: no postinstall scripts are run. No malicious code can be run when installing dependencies
+- One name@version of a dependency is used instead of multiple copies. Bun still supports different versions of the same package. Since `node_modules` relies on directory structure to resolve dependencies, projects often end up with the same name@version of a dependency installed multiple times in one `node_modules` folder. This is not a problem with Bun's module resolution algorithm because it uses a single flat global cache for all dependencies on your computer.
+
+For ecosystem compatibility, when the `node_modules` folder is present, it will be used to resolve modules like in node and Bun-specific features like automatic package installs are disabled.
+
+When the `node_modules` folder is _not_ present, that's when it gets more interesting.
+
+Bun lazily loads a lockfile for the project. It checks the following files:
+
+- `./my-entry-point-name.lockb` (script-specific lockfile, `bun run foo.js` => `foo.lockb`)
+- `./bun.lockb` (project-specific lockfile)
+
+If the lockfile is present, the lockfile will be used to resolve modules first. If the lockfile is not present, the lockfile will be lazily generated.
+
+```js
+// unspecified version:
+import React from "react";
+
+// specific version:
+import React18_2 from "react@18.2.0";
+
+// range version:
+import React18 from "react@^18";
+```
+
+It will check the lockfile for the version. If the lockfile doesn't have a version, it will check the nearest `package.json` for a `react` dependency and use that version. If the `package.json` doesn't have a `react` dependency, it will use the latest version installed on-disk in Bun's shared global cache. If no version is installed in the global cache, it will install the latest version from npm's registry.
+
+When you import a module like `lodash` in Bun without a node_modules folder, here's what happens:
+
+```js
+import { debounce } from "lodash";
+```
+
+#### Resolving packages
+
+`bun install` uses a shared global cache. After packages install, they add a symlink indexing the version of the package to allow us to quickly see what versions of a package are installed on-disk.
+
+Bun's module resolver shares the same global cache as `bun install` so it can resolve packages without needing to install them into a local `node_modules` folder. Instead, it will use the global cache to load packages.
+
+1. Check if auto-install is enabled and if so, load the lockfile or lazily generate it.
+2. Check if the lockfile has an existing dependency for `lodash`.
+3. If the lockfile has an existing dependency for `lodash`, use the resolved version specified in the lockfile.
+4. If the lockfile does not have an existing resolved version for `lodash`, check if there is a `package.json` in the current or parent directory which has a dependency on `lodash`. If so, use that as the range specifier for the dependency. Since no version is specified for the `"lodash"` string, it is assumed that you meant the version specified in the `package.json`'s `"dependencies"` field.
+5. If there is no `package.json` in the current or parent directory which has a dependency on `lodash`, use the latest version of `lodash` that is currently installed on-disk. If no version of `lodash` is installed on-disk, resolve & download the `latest` version of `lodash` tagged and use that version.
+6. If the version specifier is not exact (such as `^1.2.3`), first we check if a matching version is already installed on-disk by looking at the `$HOME/.bun/install/cache/${package.name}` folder where the names are versions. The highest matching version is used. If no matching version exists, Bun will enqueue a job to resolve the highest matching version of lodash and download it to the cache.
+7. If the version specifier is exact but doesn't exist on-disk, Bun will enqueue a job to download it to the cache. If the version specifier is exact and exists on-disk, Bun will use that version.
+
+#### Resolving modules
+
+After ensuring the package is installed, Bun resolves the module.
+
+For the most part, this is the same as what Node.js does.
+
+The main difference is instead of looking for `node_modules` folders to resolve packages, Bun looks for the `$HOME/.bun/install/cache/${package.name}/${package.version}` folder where the names are versions.
+
+This only activates for "package paths". That is, paths that start with a package name. For example, `lodash/debounce` is a package path. `./foo` is not a package path.
+
+Do not rely on this particular directory structure to exist, it may change in the future and also using folders like this may change in the future too. Eventually, Bun will likely move to a binary archive format which will allow us to efficiently load dependencies from disk.
+
+#### FAQ
+
+**How is this different than what Node.js does?**
+
+Per-project `node_modules` folders are not required. This saves you disk space and time spent copying/linking dependencies into `node_modules` folders for every project.
+
+![image](https://user-images.githubusercontent.com/709451/198907459-710d5299-bac0-40d8-b630-8112d42900e1.png)
+
+**How do I debug this?**
+
+If you run `bun install` (or any other npm package manager), it will create a `node_modules` folder and install dependencies into that folder.
+
+You can continue to use node_modules when vendoring dependencies for your project.
+
+**How is this different than what pnpm does?**
+
+You have to run `pnpm install`, which creates a `node_modules` folder of symlinks for the runtime to resolve.
+
+With Bun, you don't have to run any commands to install dependencies. Bun doesn't create a `node_modules` folder.
+
+Just run `bun run foo.js` and it will automatically install the dependencies for you on-demand.
+
+**How is this different than Yarn Plug'N'Play does?**
+
+Two things:
+
+1. With yarn, you have to run `yarn install`. With Bun, you don't have to run any extra commands to install dependencies &amp; run them.
+2. Yarn Plug'N'Play [makes loading dependencies slower](https://twitter.com/jarredsumner/status/1458207919636287490) at runtime because under the hood, it uses zip files to store dependencies. zip files are not performant for random access reads. Today, Bun uses an ordinary folder so there is no performance hit. In the future, Bun will likely move to a [binary archive format](https://github.com/jarred-sumner/hop) designed for fast random access reads.
+
+**How is this different than what Deno does?**
+
+Deno requires an `npm:` specifier before each npm import, lacks support for `"paths"` in tsconfig.json, and doesn't have as much support for package.json fields.
+
+**What about security?**
+
+Bun doesn't run postinstall scripts. No malicious code can be run from installing dependencies.
+
+**Can I use bun install with Node.js projects?**
+
+Yes. `bun install` creates a ordinary node_modules folder. It's designed to be compatible with other package managers and Node.js.
 
 ## Environment variables
 

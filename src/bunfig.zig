@@ -31,6 +31,15 @@ const TOML = @import("./toml/toml_parser.zig").TOML;
 
 // TODO: replace Api.TransformOptions with Bunfig
 pub const Bunfig = struct {
+    pub const OfflineMode = enum {
+        online,
+        offline,
+    };
+    pub const Prefer = bun.ComptimeStringMap(OfflineMode, .{
+        &.{ "offline", OfflineMode.offline },
+        &.{ "online", OfflineMode.online },
+    });
+
     const Parser = struct {
         json: js_ast.Expr,
         source: *const logger.Source,
@@ -180,7 +189,7 @@ pub const Bunfig = struct {
                 }
             }
 
-            if (comptime cmd.isNPMRelated()) {
+            if (comptime cmd.isNPMRelated() or cmd == .RunCommand or cmd == .AutoCommand) {
                 if (json.get("install")) |_bun| {
                     var install: *Api.BunInstall = this.ctx.install orelse brk: {
                         var install_ = try this.allocator.create(Api.BunInstall);
@@ -188,6 +197,21 @@ pub const Bunfig = struct {
                         this.ctx.install = install_;
                         break :brk install_;
                     };
+
+                    if (json.get("auto")) |auto_install_expr| {
+                        try this.expect(auto_install_expr, .e_boolean);
+                        this.ctx.debug.auto_install_setting = auto_install_expr.asBool();
+                    }
+
+                    if (json.get("prefer")) |prefer_expr| {
+                        try this.expect(prefer_expr, .e_string);
+
+                        if (Prefer.get(prefer_expr.asString(bun.default_allocator) orelse "")) |setting| {
+                            this.ctx.debug.offline_mode_setting = setting;
+                        } else {
+                            try this.addError(prefer_expr.loc, "Invalid prefer setting, must be one of online or offline");
+                        }
+                    }
 
                     if (_bun.get("registry")) |registry| {
                         install.default_registry = try this.parseRegistry(registry);
@@ -474,11 +498,6 @@ pub const Bunfig = struct {
                 }
                 jsx.runtime = jsx_runtime;
                 jsx.development = jsx_dev;
-            }
-
-            if (json.get("autoInstall")) |auto_install_expr| {
-                try this.expect(auto_install_expr, .e_boolean);
-                this.ctx.debug.auto_install_setting = auto_install_expr.asBool();
             }
 
             switch (comptime cmd) {

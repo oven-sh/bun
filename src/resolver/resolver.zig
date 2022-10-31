@@ -1470,6 +1470,7 @@ pub const Resolver = struct {
                 var manager = r.package_manager.?;
                 var dependency_version: Dependency.Version = .{};
                 var dependency_behavior = @intToEnum(Dependency.Behavior, Dependency.Behavior.normal);
+                // const initial_pending_tasks = manager.pending_tasks;
                 var resolved_package_id: Install.PackageID = brk: {
                     // check if the package.json in the source directory was already added to the lockfile
                     // and try to look up the dependency from there
@@ -1743,7 +1744,7 @@ pub const Resolver = struct {
 
         var package: Package = .{};
 
-        if (pm.lockfile.packages.len == 0) {
+        if (pm.lockfile.packages.len == 0 and input_package_id == Install.invalid_package_id) {
             if (package_json_) |package_json| {
                 package = Package.fromPackageJSON(
                     pm.allocator,
@@ -1785,9 +1786,11 @@ pub const Resolver = struct {
             }
         }
 
-        if (pm.resolveFromDiskCache(esm.name, version)) |package_id| {
-            input_package_id_.* = package_id;
-            return .{ .resolution = pm.lockfile.packages.items(.resolution)[package_id] };
+        if (r.opts.prefer_offline_install) {
+            if (pm.resolveFromDiskCache(esm.name, version)) |package_id| {
+                input_package_id_.* = package_id;
+                return .{ .resolution = pm.lockfile.packages.items(.resolution)[package_id] };
+            }
         }
 
         if (input_package_id == Install.invalid_package_id or input_package_id == 0) {

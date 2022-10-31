@@ -4095,6 +4095,7 @@ pub const PackageManager = struct {
 
     pub fn initWithRuntime(
         log: *logger.Log,
+        bun_install: ?*Api.BunInstall,
         allocator: std.mem.Allocator,
         cli: CommandLineArguments,
         env_loader: *DotEnv.Loader,
@@ -4162,7 +4163,7 @@ pub const PackageManager = struct {
             log,
             env_loader,
             cli,
-            null,
+            bun_install,
         );
 
         manager.timestamp = @truncate(u32, @intCast(u64, @maximum(std.time.timestamp(), 0)));

@@ -2555,7 +2555,9 @@ pub const ZigConsoleClient = struct {
         _: usize,
         // args
         _: *ScriptArguments,
-    ) callconv(.C) void {}
+    ) callconv(.C) void {
+        
+    }
     pub fn profile(
         // console
         _: ZigConsoleClient.Type,

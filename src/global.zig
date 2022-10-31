@@ -368,3 +368,9 @@ pub inline fn unreachablePanic(comptime fmts: []const u8, args: anytype) noretur
     if (comptime !Environment.allow_assert) unreachable;
     std.debug.panic(fmts, args);
 }
+
+pub fn StringEnum(comptime Type: type, comptime Map: anytype, value: []const u8) ?Type {
+    return ComptimeStringMap(Type, Map).get(value);
+}
+
+pub const Bunfig = @import("./bunfig.zig").Bunfig;

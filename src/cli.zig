@@ -190,6 +190,8 @@ pub const Arguments = struct {
         clap.parseParam("-u, --origin <STR>                Rewrite import URLs to start with --origin. Default: \"\"") catch unreachable,
         clap.parseParam("-p, --port <STR>                  Port to serve bun's dev server on. Default: \"3000\"") catch unreachable,
         clap.parseParam("--hot                             Enable auto reload in bun's JavaScript runtime") catch unreachable,
+        clap.parseParam("--no-auto-install                 Disable auto install in bun's JavaScript runtime") catch unreachable,
+        clap.parseParam("--prefer-offline                  Skip staleness checks for packages in bun's JavaScript runtime") catch unreachable,
         clap.parseParam("--silent                          Don't repeat the command for bun run") catch unreachable,
         clap.parseParam("<POS>...                          ") catch unreachable,
     };
@@ -428,6 +430,9 @@ pub const Arguments = struct {
         ctx.debug.dump_environment_variables = args.flag("--dump-environment-variables");
         ctx.debug.fallback_only = ctx.debug.fallback_only or args.flag("--disable-bun.js");
         ctx.debug.dump_limits = args.flag("--dump-limits");
+
+        ctx.debug.offline_mode_setting = if (args.flag("--prefer-offline")) Bunfig.OfflineMode.offline else Bunfig.OfflineMode.online;
+        ctx.debug.auto_install_setting = !args.flag("--no-auto-install");
 
         // var output_dir = args.option("--outdir");
         var output_dir: ?string = null;
@@ -785,6 +790,7 @@ pub const Command = struct {
         silent: bool = false,
         hot_reload: bool = false,
         auto_install_setting: ?bool = null,
+        offline_mode_setting: ?Bunfig.OfflineMode = null,
 
         // technical debt
         macros: ?MacroMap = null,

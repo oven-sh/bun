@@ -368,6 +368,7 @@ pub const Bundler = struct {
 
         this.package_manager = PackageManager.initWithRuntime(
             this.log,
+            this.options.install,
             this.allocator,
             .{},
             this.env,

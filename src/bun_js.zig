@@ -59,8 +59,15 @@ pub const Run = struct {
         };
         run.vm.argv = ctx.passthrough;
         run.vm.arena = &run.arena;
-        run.vm.bundler.options.enable_auto_install = true;
-        run.vm.bundler.resolver.opts.enable_auto_install = true;
+
+        run.vm.bundler.options.install = ctx.install;
+        run.vm.bundler.options.enable_auto_install = ctx.debug.auto_install_setting orelse true;
+        run.vm.bundler.options.prefer_offline_install = (ctx.debug.offline_mode_setting orelse bun.Bunfig.OfflineMode.online) == .offline;
+
+        run.vm.bundler.options.install = ctx.install;
+        run.vm.bundler.resolver.opts.enable_auto_install = run.vm.bundler.options.enable_auto_install;
+
+        run.vm.bundler.resolver.opts.prefer_offline_install = run.vm.bundler.options.prefer_offline_install;
         run.vm.bundler.main_file_for_package_manager = entry_path;
 
         if (ctx.debug.macros) |macros| {

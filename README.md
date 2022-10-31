@@ -4551,7 +4551,7 @@ This only activates for "package paths". That is, paths that start with a packag
 
 Do not rely on this particular directory structure to exist, it may change in the future and also using folders like this may change in the future too. Eventually, Bun will likely move to a binary archive format which will allow us to efficiently load dependencies from disk.
 
-#### FAQ
+#### Frequently asked questions
 
 **How is this different than what Node.js does?**
 
@@ -4567,7 +4567,7 @@ You can continue to use node_modules when vendoring dependencies for your projec
 
 **How is this different than what pnpm does?**
 
-You have to run `pnpm install`, which creates a `node_modules` folder of symlinks for the runtime to resolve.
+With pnpm, you have to run `pnpm install`, which creates a `node_modules` folder of symlinks for the runtime to resolve.
 
 With Bun, you don't have to run any commands to install dependencies. Bun doesn't create a `node_modules` folder.
 
@@ -4578,7 +4578,7 @@ Just run `bun run foo.js` and it will automatically install the dependencies for
 Two things:
 
 1. With yarn, you have to run `yarn install`. With Bun, you don't have to run any extra commands to install dependencies &amp; run them.
-2. Yarn Plug'N'Play [makes loading dependencies slower](https://twitter.com/jarredsumner/status/1458207919636287490) at runtime because under the hood, it uses zip files to store dependencies. zip files are not performant for random access reads. Today, Bun uses an ordinary folder so there is no performance hit. In the future, Bun will likely move to a [binary archive format](https://github.com/jarred-sumner/hop) designed for fast random access reads.
+2. Yarn Plug'N'Play [makes loading dependencies slower](https://twitter.com/jarredsumner/status/1458207919636287490) at runtime because under the hood, it uses zip files to store dependencies. zip files are not performant for random access reads. Today, Bun uses an ordinary folder so there is no performance hit. In the future, Bun will likely move to a [binary archive format](https://github.com/jarred-sumner/hop) designed for fast random access reads (which will likely make it faster than the filesystem)
 
 **How is this different than what Deno does?**
 

@@ -1471,7 +1471,6 @@ pub const Resolver = struct {
                 var dependency_version: Dependency.Version = .{};
                 var dependency_behavior = @intToEnum(Dependency.Behavior, Dependency.Behavior.normal);
                 var resolved_package_id: Install.PackageID = brk: {
-
                     // check if the package.json in the source directory was already added to the lockfile
                     // and try to look up the dependency from there
                     if (dir_info.package_json_for_dependencies) |package_json| {
@@ -1562,24 +1561,6 @@ pub const Resolver = struct {
                 const resolution: Resolution = brk: {
                     if (resolved_package_id != Install.invalid_package_id) {
                         break :brk manager.lockfile.packages.items(.resolution)[resolved_package_id];
-                    }
-
-                    switch (dependency_version.tag) {
-                        .npm, .uninitialized, .dist_tag => {
-                            // shortcut: resolve from disk for exact versions
-                            if (dependency_version.tag == .npm and dependency_version.value.npm.isExact()) {
-                                break :brk Resolution{
-                                    .tag = .npm,
-                                    .value = .{
-                                        .npm = .{
-                                            .url = Semver.String.init("", ""),
-                                            .version = dependency_version.value.npm.toVersion(),
-                                        },
-                                    },
-                                };
-                            }
-                        },
-                        else => {},
                     }
 
                     // unsupported or not found dependency, we might need to install it to the cache
@@ -1762,10 +1743,8 @@ pub const Resolver = struct {
 
         var package: Package = .{};
 
-        if (package_json_) |package_json| {
-            // if the input package ID is invalid, it means we're resolving an unknown package
-            // the unknown package is the root package
-            if (input_package_id == Install.invalid_package_id) {
+        if (pm.lockfile.packages.len == 0) {
+            if (package_json_) |package_json| {
                 package = Package.fromPackageJSON(
                     pm.allocator,
                     pm.lockfile,
@@ -1781,18 +1760,24 @@ pub const Resolver = struct {
                     return .{ .failure = err };
                 };
 
+                package.resolution = .{
+                    .tag = .root,
+                    .value = .{ .root = {} },
+                };
+
                 package = pm.lockfile.appendPackage(package) catch |err| {
                     return .{ .failure = err };
                 };
                 package_json.package_manager_package_id = package.meta.id;
-            }
-        } else if (input_package_id == Install.invalid_package_id) {
-            if (pm.lockfile.packages.len == 0) {
-
+            } else {
                 // we're resolving an unknown package
                 // the unknown package is the root package
                 package = Package{
                     .name = Semver.String.init("", ""),
+                };
+                package.resolution = .{
+                    .tag = .root,
+                    .value = .{ .root = {} },
                 };
                 package = pm.lockfile.appendPackage(package) catch |err| {
                     return .{ .failure = err };
@@ -1810,8 +1795,9 @@ pub const Resolver = struct {
             // All packages are enqueued to the root
             // because we download all the npm package dependencies
             switch (pm.enqueueDependencyToRoot(esm.name, esm.version, version, behavior)) {
-                .resolution => |resolution| {
-                    return .{ .resolution = resolution };
+                .resolution => |result| {
+                    input_package_id_.* = result.package_id;
+                    return .{ .resolution = result.resolution };
                 },
                 .pending => |id| {
                     var builder = Semver.String.Builder{};
@@ -3208,7 +3194,7 @@ pub const Resolver = struct {
                     info.enclosing_package_json = parent_package_json;
                 }
 
-                if (parent_package_json.dependencies.map.count() > 0) {
+                if (parent_package_json.dependencies.map.count() > 0 or parent_package_json.package_manager_package_id != Install.invalid_package_id) {
                     info.package_json_for_dependencies = parent_package_json;
                 }
             }
@@ -3263,7 +3249,7 @@ pub const Resolver = struct {
                     if (pkg.name.len > 0 or r.care_about_bin_folder)
                         info.enclosing_package_json = pkg;
 
-                    if (pkg.dependencies.map.count() > 0)
+                    if (pkg.dependencies.map.count() > 0 or pkg.package_manager_package_id != Install.invalid_package_id)
                         info.package_json_for_dependencies = pkg;
 
                     if (r.debug_logs) |*logs| {

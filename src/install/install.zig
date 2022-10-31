@@ -1517,7 +1517,7 @@ pub const PackageManager = struct {
 
     const DependencyToEnqueue = union(enum) {
         pending: PackageID,
-        resolution: Resolution,
+        resolution: struct { package_id: PackageID, resolution: Resolution },
         not_found: void,
         failure: anyerror,
     };
@@ -1536,7 +1536,10 @@ pub const PackageManager = struct {
                 if (pair.dependency.version.eql(version, str_buf, version_buf)) {
                     if (pair.resolution_id != invalid_package_id) {
                         return .{
-                            .resolution = this.lockfile.packages.items(.resolution)[pair.resolution_id],
+                            .resolution = .{
+                                .resolution = this.lockfile.packages.items(.resolution)[pair.resolution_id],
+                                .package_id = pair.resolution_id,
+                            },
                         };
                     }
                     return .{ .pending = @truncate(u32, i) };
@@ -1575,8 +1578,12 @@ pub const PackageManager = struct {
         const resolution_id = root_deps.items[index].resolution_id;
         // check if we managed to synchronously resolve the dependency
         if (resolution_id != invalid_package_id) {
+            this.drainDependencyList();
             return .{
-                .resolution = this.lockfile.packages.items(.resolution)[resolution_id],
+                .resolution = .{
+                    .resolution = this.lockfile.packages.items(.resolution)[resolution_id],
+                    .package_id = resolution_id,
+                },
             };
         }
 
@@ -2714,6 +2721,8 @@ pub const PackageManager = struct {
         var lockfile = this.lockfile;
         var dependency_queue = &lockfile.scratch.dependency_list_queue;
 
+        this.flushNetworkQueue();
+
         while (dependency_queue.readItem()) |dependencies_list| {
             var i: u32 = dependencies_list.off;
             const end = dependencies_list.off + dependencies_list.len;
@@ -2772,6 +2781,10 @@ pub const PackageManager = struct {
             }
         }
 
+        this.drainDependencyList();
+    }
+
+    pub fn drainDependencyList(this: *PackageManager) void {
         // Step 2. If there were cached dependencies, go through all of those but don't download the devDependencies for them.
         this.flushDependencyQueue();
 

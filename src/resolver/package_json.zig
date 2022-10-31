@@ -743,22 +743,27 @@ pub const PackageJSON = struct {
         }
 
         if (comptime include_dependencies == .main or include_dependencies == .local) {
-            {
+            update_dependencies: {
                 // // if there is a name & version, check if the lockfile has the package
-                // if (package_json.name.len > 0 and package_json.version.len > 0) {
-                //     if (r.package_manager) |pm| {
-                //         const tag = Dependency.Version.Tag.infer(package_json.version);
+                if (package_json.name.len > 0 and package_json.version.len > 0) {
+                    if (r.package_manager) |pm| {
+                        const tag = Dependency.Version.Tag.infer(package_json.version);
 
-                //         if (tag == .npm) {
-                //             const sliced = Semver.SlicedString.init(package_json.version, package_json.version);
-                //             if (Dependency.parseWithTag(r.allocator, package_json.version, &sliced, r.log)) |dependency_version| {
-                //                 if (dependency_version.value.npm.isExact()) {
-
-                //                 }
-                //             }
-                //         }
-                //     }
-                // }
+                        if (tag == .npm) {
+                            const sliced = Semver.SlicedString.init(package_json.version, package_json.version);
+                            if (Dependency.parseWithTag(r.allocator, package_json.version, .npm, &sliced, r.log)) |dependency_version| {
+                                if (dependency_version.value.npm.isExact()) {
+                                    if (pm.lockfile.resolve(package_json.name, dependency_version)) |resolved| {
+                                        package_json.package_manager_package_id = resolved;
+                                        if (resolved > 0) {
+                                            break :update_dependencies;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
                 if (json.get("cpu")) |os_field| {
                     var first = true;
                     if (os_field.asArray()) |*array| {
@@ -1249,7 +1254,7 @@ pub const ESModule = struct {
                 return .{
                     .name = this.name,
                     .subpath = this.subpath,
-                    .version = "latest",
+                    .version = ">=0.0.0",
                 };
             }
 

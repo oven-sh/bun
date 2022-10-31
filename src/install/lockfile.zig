@@ -1984,11 +1984,12 @@ pub const Package = extern struct {
             package.name_hash = package_name.hash;
             package.name = package_name.value;
             var package_version = string_builder.append(String, package_json.version);
+            var buf = string_builder.allocatedSlice();
 
             const version: Dependency.Version = brk: {
                 if (package_json.version.len > 0) {
-                    const sliced = package_version.sliced(string_builder.allocatedSlice());
-                    const name = package.name.slice(string_builder.allocatedSlice());
+                    const sliced = package_version.sliced(buf);
+                    const name = package.name.slice(buf);
                     if (Dependency.parse(allocator, name, &sliced, log)) |dep| {
                         break :brk dep;
                     }

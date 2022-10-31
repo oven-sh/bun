@@ -25,7 +25,6 @@ it("repeated match and exec calls no global flag", () => {
 const rb1 = new OnigurumaRegExp("//.+?/[^?]+", "s");
 const rb2 = new RegExp("//.+?/[^?]+", "s");
 it("repeated match calls with global regex without global flag", () => {
-  let no = 0;
   for (let i = 0; i < 20000; i++) {
     let s1 = "https://dylan-conway.com/profile";
     expect(rb1.exec(s1)[0] === rb2.exec(s1)[0]).toBe(true);
@@ -34,6 +33,46 @@ it("repeated match calls with global regex without global flag", () => {
 });
 
 it("escaped characters in character classes", () => {
+  expect(
+    new RegExp("[a-z]").exec("a")[0] ===
+      new OnigurumaRegExp("[a-z]").exec("a")[0]
+  ).toBe(true);
+
+  expect(
+    new RegExp("[a-z]").exec("b")[0] ===
+      new OnigurumaRegExp("[a-z]").exec("b")[0]
+  ).toBe(true);
+
+  expect(new RegExp("[a-zA-Z0-9_]+").exec("B9")[0]).toBe(
+    new OnigurumaRegExp("[a-zA-Z0-9_]+").exec("B9")[0]
+  );
+  expect(new RegExp("[a-z]").exec("-")).toBe(null);
+  expect(new OnigurumaRegExp("[a-z]").exec("-")).toBe(null);
+  expect(new RegExp("[a\\-z]").exec("-")[0]).toBe("-");
+  expect(new OnigurumaRegExp("[a\\-z]").exec("-")[0]).toBe("-");
+  expect(new RegExp("[a\\-z]").exec("a")[0]).toBe("a");
+  expect(new OnigurumaRegExp("[a\\-z]").exec("a")[0]).toBe("a");
+  expect(new RegExp("[a\\-z]").exec("z")[0]).toBe("z");
+  expect(new OnigurumaRegExp("[a\\-z]").exec("z")[0]).toBe("z");
+  expect(new RegExp("[a\\-z]").exec("b")).toBe(null);
+  expect(new OnigurumaRegExp("[a\\-z]").exec("b")).toBe(null);
+
+  expect(new RegExp("[^b-c]").exec("a")[0]).toBe(
+    new OnigurumaRegExp("[^b-c]").exec("a")[0]
+  );
+
+  expect(new RegExp("[\\^b-c]").exec("a")).toBe(null);
+  expect(new OnigurumaRegExp("[\\^b-c]").exec("a")).toBe(null);
+
+  expect(new RegExp("[\\^b-c]").exec("^c")[0]).toBe("^");
+  expect(new OnigurumaRegExp("[\\^b-c]").exec("^c")[0]).toBe("^");
+
+  expect(new RegExp("[a^b-c]").exec("a^")[0]).toBe("a");
+  expect(new OnigurumaRegExp("[a^b-c]").exec("a^")[0]).toBe("a");
+
+  expect(new RegExp("[\\\\]").exec("\\")[0]).toBe("\\");
+  expect(new OnigurumaRegExp("[\\\\]").exec("\\")[0]).toBe("\\");
+
   let p = "//.+?[^?]+";
   let s = "https://dylan-conway.com/profile";
   const b1 = new RegExp(p, "gs");

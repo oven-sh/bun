@@ -97,7 +97,7 @@ static WTF::String extendMultibyteHexCharacters(const WTF::String& string)
 
         if (inCharacterClass) {
             // we know ']' will be escaped so there isn't a need to scan for the closing bracket
-            if (characters[i] == '[' || characters[i] == ']' || (characters[i] == '^' && characters[i - 1] != '[') || characters[i] == '-' || characters[i] == ')' || characters[i] == '(') {
+            if (characters[i] == '[' || characters[i] == ']') {
                 if (characters[i - 1] != '\\') {
                     // character class intersections not supported, assume end of character class
                     if (characters[i] == ']') {
@@ -275,12 +275,6 @@ static regex_t* createOnigurumaRegExp(JSGlobalObject* globalObject, const WTF::S
     }
 
     OnigSyntaxType* syntax = ONIG_SYNTAX_ONIGURUMA;
-    onig_set_syntax_op(syntax, onig_get_syntax_op(syntax) | ONIG_SYN_OP_ESC_X_HEX2);
-    onig_set_syntax_op(syntax, onig_get_syntax_op(syntax) | ONIG_SYN_OP_ESC_X_BRACE_HEX8);
-    onig_set_syntax_op2(syntax, onig_get_syntax_op2(syntax) | ONIG_SYN_OP2_ESC_U_HEX4);
-    onig_set_syntax_behavior(syntax, onig_get_syntax_behavior(syntax) | ONIG_SYN_ALLOW_EMPTY_RANGE_IN_CC);
-    onig_set_syntax_behavior(syntax, onig_get_syntax_behavior(syntax) | ONIG_SYN_ALLOW_INVALID_CODE_END_OF_RANGE_IN_CC);
-
     OnigEncodingType* encoding = encodings[0];
     regex_t* onigRegExp = NULL;
 
@@ -605,7 +599,7 @@ JSC_DEFINE_HOST_FUNCTION(onigurumaRegExpProtoFuncTest, (JSGlobalObject * globalO
         throwScope.throwException(globalObject, createSyntaxError(globalObject, errorMessage.toString()));
         return JSValue::encode({});
     }
-    
+
     OnigRegion* region = onig_region_new();
 
     const OnigUChar* end = reinterpret_cast<const OnigUChar*>(string.characters16() + string.length());
@@ -685,7 +679,7 @@ JSC_DEFINE_HOST_FUNCTION(onigurumaRegExpProtoFuncExec, (JSGlobalObject * globalO
         throwScope.throwException(globalObject, createSyntaxError(globalObject, errorMessage.toString()));
         return JSValue::encode({});
     }
-    
+
     OnigRegion* region = onig_region_new();
 
     const OnigUChar* end = reinterpret_cast<const OnigUChar*>(string.characters16() + string.length());

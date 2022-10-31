@@ -83,6 +83,8 @@ const Crypto = @import("../sha.zig").Hashers;
 pub const MetaHash = [std.crypto.hash.sha2.Sha512256.digest_length]u8;
 const zero_hash = std.mem.zeroes(MetaHash);
 
+const PackageJSON = @import("../resolver/package_json.zig").PackageJSON;
+
 pub const ExternalStringBuilder = StructBuilder.Builder(ExternalString);
 pub const SmallExternalStringList = ExternalSlice(String);
 
@@ -1662,7 +1664,8 @@ pub const StringBuilder = struct {
         }
     }
 
-    pub fn allocatedSlice(this: *StringBuilder) ![]u8 {
+    pub fn allocatedSlice(this: *StringBuilder) []const u8 {
+        if (this.ptr == null) return "";
         return this.ptr.?[0..this.cap];
     }
 
@@ -1932,6 +1935,124 @@ pub const Package = extern struct {
         }
 
         return new_package.meta.id;
+    }
+
+    pub fn fromPackageJSON(
+        allocator: std.mem.Allocator,
+        lockfile: *Lockfile,
+        log: *logger.Log,
+        package_json: *PackageJSON,
+        comptime features: Features,
+    ) !Lockfile.Package {
+        var package = Lockfile.Package{};
+
+        // var string_buf = package_json;
+
+        var string_builder = lockfile.stringBuilder();
+
+        var total_dependencies_count: u32 = 0;
+        // var bin_extern_strings_count: u32 = 0;
+
+        // --- Counting
+        {
+            string_builder.count(package_json.name);
+            string_builder.count(package_json.version);
+            var dependencies = package_json.dependencies.map.values();
+            for (dependencies) |dep| {
+                if (dep.behavior.isEnabled(features)) {
+                    dep.count(package_json.dependencies.source_buf, @TypeOf(&string_builder), &string_builder);
+                    total_dependencies_count += 1;
+                }
+            }
+        }
+
+        // string_builder.count(manifest.str(package_version_ptr.tarball_url));
+
+        try string_builder.allocate();
+        defer string_builder.clamp();
+        // var extern_strings_list = &lockfile.buffers.extern_strings;
+        var dependencies_list = &lockfile.buffers.dependencies;
+        var resolutions_list = &lockfile.buffers.resolutions;
+        try dependencies_list.ensureUnusedCapacity(lockfile.allocator, total_dependencies_count);
+        try resolutions_list.ensureUnusedCapacity(lockfile.allocator, total_dependencies_count);
+        // try extern_strings_list.ensureUnusedCapacity(lockfile.allocator, bin_extern_strings_count);
+        // extern_strings_list.items.len += bin_extern_strings_count;
+
+        // -- Cloning
+        {
+            const package_name: ExternalString = string_builder.append(ExternalString, package_json.name);
+            package.name_hash = package_name.hash;
+            package.name = package_name.value;
+            var package_version = string_builder.append(String, package_json.version);
+
+            const version: Dependency.Version = brk: {
+                if (package_json.version.len > 0) {
+                    const sliced = package_version.sliced(string_builder.allocatedSlice());
+                    const name = package.name.slice(string_builder.allocatedSlice());
+                    if (Dependency.parse(allocator, name, &sliced, log)) |dep| {
+                        break :brk dep;
+                    }
+                }
+
+                break :brk Dependency.Version{};
+            };
+
+            if (version.tag == .npm and version.value.npm.isExact()) {
+                package.resolution = Resolution{
+                    .value = .{
+                        .npm = .{
+                            .version = version.value.npm.toVersion(),
+                            .url = .{},
+                        },
+                    },
+                    .tag = .npm,
+                };
+            } else {
+                package.resolution = Resolution{
+                    .value = .{
+                        .root = {},
+                    },
+                    .tag = .root,
+                };
+            }
+            const total_len = dependencies_list.items.len + total_dependencies_count;
+            std.debug.assert(dependencies_list.items.len == resolutions_list.items.len);
+
+            var dependencies: []Dependency = dependencies_list.items.ptr[dependencies_list.items.len..total_len];
+            std.mem.set(Dependency, dependencies, Dependency{});
+
+            const package_dependencies = package_json.dependencies.map.values();
+            const source_buf = package_json.dependencies.source_buf;
+            for (package_dependencies) |dep| {
+                if (!dep.behavior.isEnabled(features)) continue;
+
+                dependencies[0] = try dep.clone(source_buf, @TypeOf(&string_builder), &string_builder);
+                dependencies = dependencies[1..];
+                if (dependencies.len == 0) break;
+            }
+
+            // We lose the bin info here
+            // package.bin = package_version.bin.clone(string_buf, manifest.extern_strings_bin_entries, extern_strings_list.items, extern_strings_slice, @TypeOf(&string_builder), &string_builder);
+            // and the integriy hash
+            // package.meta.integrity = package_version.integrity;
+
+            package.meta.arch = package_json.arch;
+            package.meta.os = package_json.os;
+
+            package.dependencies.off = @truncate(u32, dependencies_list.items.len);
+            package.dependencies.len = total_dependencies_count - @truncate(u32, dependencies.len);
+            package.resolutions.off = package.dependencies.off;
+            package.resolutions.len = package.dependencies.len;
+
+            const new_length = package.dependencies.len + dependencies_list.items.len;
+
+            std.mem.set(PackageID, resolutions_list.items.ptr[package.dependencies.off .. package.dependencies.off + package.dependencies.len], invalid_package_id);
+
+            dependencies_list.items = dependencies_list.items.ptr[0..new_length];
+            resolutions_list.items = resolutions_list.items.ptr[0..new_length];
+
+            return package;
+        }
     }
 
     pub fn fromNPM(

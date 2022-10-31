@@ -363,3 +363,8 @@ pub fn isWritable(fd: std.os.fd_t) bool {
 
     return (std.os.poll(polls, 0) catch 0) != 0;
 }
+
+pub inline fn unreachablePanic(comptime fmts: []const u8, args: anytype) noreturn {
+    if (comptime !Environment.allow_assert) unreachable;
+    std.debug.panic(fmts, args);
+}

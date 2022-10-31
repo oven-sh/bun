@@ -12,6 +12,7 @@ const IdentityContext = @import("../../identity_context.zig").IdentityContext;
 const strings = @import("strings");
 const Resolution = @import("../resolution.zig").Resolution;
 const String = @import("../semver.zig").String;
+const Semver = @import("../semver.zig");
 const bun = @import("../../global.zig");
 const Dependency = @import("../dependency.zig");
 pub const FolderResolution = union(Tag) {
@@ -50,6 +51,24 @@ pub const FolderResolution = union(Tag) {
 
     pub const Resolver = NewResolver(Resolution.Tag.folder);
     pub const SymlinkResolver = NewResolver(Resolution.Tag.symlink);
+    pub const CacheFolderResolver = struct {
+        folder_path: []const u8 = "",
+        version: Semver.Version,
+
+        pub fn resolve(this: @This(), comptime Builder: type, _: Builder, _: JSAst.Expr) !Resolution {
+            return Resolution{
+                .tag = Resolution.Tag.npm,
+                .value = .{
+                    .npm = .{
+                        .version = this.version,
+                        .url = String.init("", ""),
+                    },
+                },
+            };
+        }
+
+        pub fn count(_: @This(), comptime Builder: type, _: Builder, _: JSAst.Expr) void {}
+    };
 
     pub fn normalizePackageJSONPath(global_or_relative: GlobalOrRelative, joined: *[bun.MAX_PATH_BYTES]u8, non_normalized_path: string) [2]string {
         var abs: string = "";
@@ -69,16 +88,22 @@ pub const FolderResolution = union(Tag) {
         } else {
             var remain: []u8 = joined[0..];
             switch (global_or_relative) {
-                .global => |path| {
-                    const offset = path.len - @as(usize, @boolToInt(path[path.len - 1] == std.fs.path.sep));
-                    @memcpy(remain.ptr, path.ptr, offset);
-                    remain = remain[offset..];
-                    if ((path[path.len - 1] != std.fs.path.sep) and (normalized[0] != std.fs.path.sep)) {
-                        remain[0] = std.fs.path.sep;
-                        remain = remain[1..];
+                .global, .cache_folder => {
+                    const path = if (global_or_relative == .global) global_or_relative.global else global_or_relative.cache_folder;
+                    if (path.len > 0) {
+                        const offset = path.len -| @as(usize, @boolToInt(path[path.len -| 1] == std.fs.path.sep));
+                        if (offset > 0)
+                            @memcpy(remain.ptr, path.ptr, offset);
+                        remain = remain[offset..];
+                        if (normalized.len > 0) {
+                            if ((path[path.len - 1] != std.fs.path.sep) and (normalized[0] != std.fs.path.sep)) {
+                                remain[0] = std.fs.path.sep;
+                                remain = remain[1..];
+                            }
+                        }
                     }
                 },
-                .relative => {},
+                else => {},
             }
             std.mem.copy(u8, remain, normalized);
             remain[normalized.len] = std.fs.path.sep;
@@ -136,6 +161,7 @@ pub const FolderResolution = union(Tag) {
     pub const GlobalOrRelative = union(enum) {
         global: []const u8,
         relative: void,
+        cache_folder: []const u8,
     };
 
     pub fn getOrPut(global_or_relative: GlobalOrRelative, version: Dependency.Version, non_normalized_path: string, manager: *PackageManager) FolderResolution {
@@ -149,7 +175,7 @@ pub const FolderResolution = union(Tag) {
 
         joined[abs.len] = 0;
         var joinedZ: [:0]u8 = joined[0..abs.len :0];
-        const package = switch (global_or_relative) {
+        const package: Lockfile.Package = switch (global_or_relative) {
             .global => readPackageJSONFromDisk(
                 manager,
                 joinedZ,
@@ -167,6 +193,15 @@ pub const FolderResolution = union(Tag) {
                 Features.folder,
                 Resolver,
                 Resolver{ .folder_path = rel },
+            ),
+            .cache_folder => readPackageJSONFromDisk(
+                manager,
+                joinedZ,
+                abs,
+                version,
+                Features.npm,
+                CacheFolderResolver,
+                CacheFolderResolver{ .version = version.value.npm.toVersion() },
             ),
         } catch |err| {
             if (err == error.FileNotFound) {

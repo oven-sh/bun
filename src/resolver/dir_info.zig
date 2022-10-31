@@ -35,7 +35,7 @@ enclosing_tsconfig_json: ?*const TSConfigJSON = null,
 /// https://github.com/oven-sh/bun/issues/229
 enclosing_package_json: ?*PackageJSON = null,
 
-package_json_for_dependencies: ?*const PackageJSON = null,
+package_json_for_dependencies: ?*PackageJSON = null,
 
 abs_path: string = "",
 entries: Index = undefined,

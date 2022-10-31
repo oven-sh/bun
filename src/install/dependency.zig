@@ -6,10 +6,17 @@ const std = @import("std");
 const SlicedString = Semver.SlicedString;
 const PackageNameHash = @import("./install.zig").PackageNameHash;
 const Features = @import("./install.zig").Features;
+const Install = @import("./install.zig");
 const logger = @import("../logger.zig");
 const Dependency = @This();
 const string = @import("../string_types.zig").string;
 const strings = @import("../string_immutable.zig");
+const bun = @import("../global.zig");
+
+pub const Pair = struct {
+    resolution_id: Install.PackageID = Install.invalid_package_id,
+    dependency: Dependency = .{},
+};
 
 pub const URI = union(Tag) {
     local: String,
@@ -127,6 +134,25 @@ pub const Version = struct {
     tag: Dependency.Version.Tag = Dependency.Version.Tag.uninitialized,
     literal: String = String{},
     value: Value = Value{ .uninitialized = void{} },
+
+    pub const @"0.0.0" = Version{
+        .tag = Dependency.Version.Tag.npm,
+        .literal = String.init("0.0.0", "0.0.0"),
+        .value = Value{
+            .npm = Semver.Query.Group{
+                .allocator = bun.default_allocator,
+                .head = .{
+                    .head = .{
+                        .range = .{
+                            .left = .{
+                                .op = .gte,
+                            },
+                        },
+                    },
+                },
+            },
+        },
+    };
 
     pub const zeroed = Version{};
 

@@ -295,6 +295,40 @@ pub const String = extern struct {
             return @call(.{ .modifier = .always_inline }, appendWithHash, .{ this, Type, slice_, stringHash(slice_) });
         }
 
+        pub fn appendUTF8WithoutPool(this: *Builder, comptime Type: type, slice_: string, hash: u64) Type {
+            if (slice_.len < String.max_inline_len) {
+                if (strings.isAllASCII(slice_)) {
+                    switch (Type) {
+                        String => {
+                            return String.init(this.allocatedSlice(), slice_);
+                        },
+                        ExternalString => {
+                            return ExternalString.init(this.allocatedSlice(), slice_, hash);
+                        },
+                        else => @compileError("Invalid type passed to StringBuilder"),
+                    }
+                }
+            }
+            assert(this.len <= this.cap); // didn't count everything
+            assert(this.ptr != null); // must call allocate first
+
+            copy(u8, this.ptr.?[this.len..this.cap], slice_);
+            const final_slice = this.ptr.?[this.len..this.cap][0..slice_.len];
+            this.len += slice_.len;
+
+            assert(this.len <= this.cap);
+
+            switch (Type) {
+                String => {
+                    return String.init(this.allocatedSlice(), final_slice);
+                },
+                ExternalString => {
+                    return ExternalString.init(this.allocatedSlice(), final_slice, hash);
+                },
+                else => @compileError("Invalid type passed to StringBuilder"),
+            }
+        }
+
         // SlicedString is not supported due to inline strings.
         pub fn appendWithoutPool(this: *Builder, comptime Type: type, slice_: string, hash: u64) Type {
             if (slice_.len < String.max_inline_len) {
@@ -519,7 +553,11 @@ pub const Version = extern struct {
     // raw: RawType = RawType{},
 
     /// Assumes that there is only one buffer for all the strings
-    pub fn sortFn(ctx: []const u8, lhs: Version, rhs: Version) std.math.Order {
+    pub fn sortGt(ctx: []const u8, lhs: Version, rhs: Version) bool {
+        return orderFn(ctx, lhs, rhs) == .gt;
+    }
+
+    pub fn orderFn(ctx: []const u8, lhs: Version, rhs: Version) std.math.Order {
         return lhs.order(rhs, ctx, ctx);
     }
 
@@ -655,7 +693,7 @@ pub const Version = extern struct {
             }
 
             if (this.build.isInline()) {
-                build = this.pre.build;
+                build = this.build.value;
             } else {
                 const build_slice = this.build.slice(slice);
                 std.mem.copy(u8, buf.*, build_slice);
@@ -669,7 +707,7 @@ pub const Version = extern struct {
                     .hash = this.pre.hash,
                 },
                 .build = .{
-                    .value = this.build,
+                    .value = build,
                     .hash = this.build.hash,
                 },
             };
@@ -1235,6 +1273,22 @@ pub const Query = struct {
             pub const build = 0;
         };
 
+        pub fn from(version: Version) Group {
+            return .{
+                .allocator = bun.default_allocator,
+                .head = .{
+                    .head = .{
+                        .range = .{
+                            .left = .{
+                                .op = .eql,
+                                .version = version,
+                            },
+                        },
+                    },
+                },
+            };
+        }
+
         pub const FlagsBitSet = std.bit_set.IntegerBitSet(3);
 
         pub fn isExact(this: *const Group) bool {
@@ -1246,7 +1300,7 @@ pub const Query = struct {
         }
 
         pub fn toVersion(this: Group) Version {
-            std.debug.assert(this.isExact());
+            std.debug.assert(this.isExact() or this.head.head.range.left.op == .unset);
             return this.head.head.range.left.version;
         }
 

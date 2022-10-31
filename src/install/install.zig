@@ -1405,11 +1405,17 @@ const TaggedPointer = @import("../tagged_pointer.zig");
 const TaskCallbackContext = union(Tag) {
     dependency: PackageID,
     request_id: PackageID,
+    root_dependency: PackageID,
+    root_request_id: PackageID,
     node_modules_folder: u32, // Really, this is a file descriptor
+    root_node_modules_folder: u32, // Really, this is a file descriptor
     pub const Tag = enum {
         dependency,
         request_id,
         node_modules_folder,
+        root_dependency,
+        root_request_id,
+        root_node_modules_folder,
     };
 };
 
@@ -1427,6 +1433,7 @@ pub const CacheLevel = struct {
 };
 const AsyncIO = @import("io");
 const Waker = AsyncIO.Waker;
+
 // We can't know all the packages we need until we've downloaded all the packages
 // The easy way would be:
 // 1. Download all packages, parsing their dependencies and enqueuing all dependencies for resolution
@@ -1455,6 +1462,10 @@ pub const PackageManager = struct {
 
     root_package_json_file: std.fs.File,
     root_dependency_list: Lockfile.DependencySlice = .{},
+
+    /// Used to make "dependencies" optional in the main package
+    /// Depended on packages have to explicitly list their dependencies
+    dynamic_root_dependencies: ?std.ArrayList(Dependency.Pair) = null,
 
     thread_pool: ThreadPool,
 
@@ -1504,6 +1515,74 @@ pub const PackageManager = struct {
         _ = this.waiter.wait() catch 0;
     }
 
+    const DependencyToEnqueue = union(enum) {
+        pending: PackageID,
+        resolution: Resolution,
+        not_found: void,
+        failure: anyerror,
+    };
+    pub fn enqueueDependencyToRoot(
+        this: *PackageManager,
+        name: []const u8,
+        version_buf: []const u8,
+        version: Dependency.Version,
+        behavior: Dependency.Behavior,
+    ) DependencyToEnqueue {
+        var root_deps = this.dynamicRootDependencies();
+        const existing: []const Dependency.Pair = root_deps.items;
+        var str_buf = this.lockfile.buffers.string_bytes.items;
+        for (existing) |pair, i| {
+            if (strings.eqlLong(this.lockfile.str(pair.dependency.name), name, true)) {
+                if (pair.dependency.version.eql(version, str_buf, version_buf)) {
+                    if (pair.resolution_id != invalid_package_id) {
+                        return .{
+                            .resolution = this.lockfile.packages.items(.resolution)[pair.resolution_id],
+                        };
+                    }
+                    return .{ .pending = @truncate(u32, i) };
+                }
+            }
+        }
+
+        var builder = this.lockfile.stringBuilder();
+        const dependency = Dependency{
+            .name = String.init(name, name),
+            .name_hash = String.Builder.stringHash(name),
+            .version = version,
+            .behavior = behavior,
+        };
+        dependency.count(version_buf, @TypeOf(&builder), &builder);
+
+        const cloned_dependency = dependency.clone(version_buf, @TypeOf(&builder), &builder) catch unreachable;
+        builder.clamp();
+        const index = @truncate(u32, root_deps.items.len);
+        root_deps.append(
+            .{
+                .dependency = cloned_dependency,
+            },
+        ) catch unreachable;
+        this.enqueueDependencyWithMainAndSuccessFn(
+            0,
+            cloned_dependency,
+            index,
+            true,
+            assignRootResolution,
+        ) catch |err| {
+            root_deps.items.len = index;
+            return .{ .failure = err };
+        };
+
+        const resolution_id = root_deps.items[index].resolution_id;
+        // check if we managed to synchronously resolve the dependency
+        if (resolution_id != invalid_package_id) {
+            return .{
+                .resolution = this.lockfile.packages.items(.resolution)[resolution_id],
+            };
+        }
+
+        return .{ .pending = index };
+    }
+
     pub fn globalLinkDir(this: *PackageManager) !std.fs.Dir {
         return this.global_link_dir orelse brk: {
             var global_dir = try Options.openGlobalDir(this.options.explicit_global_directory);
@@ -1536,6 +1615,7 @@ pub const PackageManager = struct {
         this.ensurePreinstallStateListCapacity(lockfile.packages.len) catch return;
         this.preinstall_state.items[package_id] = value;
     }
+
     pub fn getPreinstallState(this: *PackageManager, package_id: PackageID, _: *Lockfile) PreinstallState {
         if (package_id >= this.preinstall_state.items.len) {
             return PreinstallState.unknown;
@@ -1782,6 +1862,33 @@ pub const PackageManager = struct {
         return true;
     }
 
+    pub fn pathForCachedNPMPath(
+        this: *PackageManager,
+        buf: *[bun.MAX_PATH_BYTES]u8,
+        package_name: []const u8,
+        npm: Semver.Version,
+    ) ![]u8 {
+        var package_name_version_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+
+        var subpath = std.fmt.bufPrintZ(
+            &package_name_version_buf,
+            "{s}" ++ std.fs.path.sep_str ++ "{any}",
+            .{
+                package_name,
+                npm.fmt(this.lockfile.buffers.string_bytes.items),
+            },
+        ) catch unreachable;
+        return this.getCacheDirectory().readLink(
+            subpath,
+            buf,
+        ) catch |err| {
+            // if we run into an error, delete the symlink
+            // so that we don't repeatedly try to read it
+            std.os.unlinkat(this.getCacheDirectory().fd, subpath, 0) catch {};
+            return err;
+        };
+    }
+
     pub fn pathForResolution(
         this: *PackageManager,
         package_id: PackageID,
@@ -1792,27 +1899,16 @@ pub const PackageManager = struct {
         switch (resolution.tag) {
             .npm => {
                 const npm = resolution.value.npm;
-                var package_name_version_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
                 const package_name_ = this.lockfile.packages.items(.name)[package_id];
                 const package_name = this.lockfile.str(package_name_);
-                var subpath = std.fmt.bufPrintZ(
-                    &package_name_version_buf,
-                    "{s}" ++ std.fs.path.sep_str ++ "{any}",
-                    .{
-                        package_name,
-                        npm.fmt(this.lockfile.buffers.string_bytes.items),
-                    },
-                ) catch unreachable;
-                return try this.getCacheDirectory().readLink(
-                    subpath,
-                    buf,
-                );
+
+                return this.pathForCachedNPMPath(buf, package_name, npm.version);
             },
             else => return "",
         }
     }
 
-    pub fn getInstalledVersionsFromDiskCache(this: *PackageManager, tags_buf: *std.ArrayList(u8), package_name: []const u8, version: Dependency.Version, allocator: std.mem.Allocator) !std.ArrayList(Semver.Version) {
+    pub fn getInstalledVersionsFromDiskCache(this: *PackageManager, tags_buf: *std.ArrayList(u8), package_name: []const u8, allocator: std.mem.Allocator) !std.ArrayList(Semver.Version) {
         var list = std.ArrayList(Semver.Version).init(allocator);
         var dir = this.getCacheDirectory().openDir(package_name, .{ .iterate = true }) catch |err| {
             switch (err) {
@@ -1826,10 +1922,11 @@ pub const PackageManager = struct {
         var iter = dir.iterate();
 
         while (try iter.next()) |entry| {
-            if (entry.kind != .Dir) continue;
+            if (entry.kind != .Directory and entry.kind != .SymLink) continue;
             const name = entry.name;
             var sliced = SlicedString.init(name, name);
-            var parsed = Semver.Version.parse(&sliced, allocator);
+            var parsed = Semver.Version.parse(sliced, allocator);
+            if (!parsed.valid or parsed.wildcard != .none) continue;
             // not handling OOM
             // TODO: wildcard
             const total = parsed.version.tag.build.len() + parsed.version.tag.pre.len();
@@ -1841,21 +1938,26 @@ pub const PackageManager = struct {
                 parsed.version = new_version;
             }
 
-            list.append(parsed) catch unreachable;
+            list.append(parsed.version) catch unreachable;
         }
 
         return list;
     }
 
     pub fn resolveFromDiskCache(this: *PackageManager, package_name: []const u8, version: Dependency.Version) ?PackageID {
-        const name_hash = bun.hash(package_name);
-        const entry = this.lockfile.package_index.get(name_hash) orelse return null;
-        const can_satisfy = version.tag == .npm;
-        var stack_fallback = std.heap.stackFallback(4096, this.allocator);
+        if (version.tag != .npm) {
+            // only npm supported right now
+            // tags are more ambiguous
+            return null;
+        }
+
+        var arena = std.heap.ArenaAllocator.init(this.allocator);
+        defer arena.deinit();
+        var arena_alloc = arena.allocator();
+        var stack_fallback = std.heap.stackFallback(4096, arena_alloc);
         var allocator = stack_fallback.get();
         var tags_buf = std.ArrayList(u8).init(allocator);
-        defer tags_buf.deinit();
-        var installed_versions = this.getInstalledVersionsFromDiskCache(&tags_buf, package_name, version, allocator) catch |err| {
+        var installed_versions = this.getInstalledVersionsFromDiskCache(&tags_buf, package_name, allocator) catch |err| {
             Output.debug("error getting installed versions from disk cache: {s}", .{std.mem.span(@errorName(err))});
             return null;
         };
@@ -1864,15 +1966,40 @@ pub const PackageManager = struct {
         std.sort.sort(
             Semver.Version,
             installed_versions.items,
-            tags_buf.items,
-            Semver.Version.sortFn,
+            @as([]const u8, tags_buf.items),
+            Semver.Version.sortGt,
         );
-
         for (installed_versions.items) |installed_version| {
             if (version.value.npm.satisfies(installed_version)) {
-                
+                var buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+                var npm_package_path = this.pathForCachedNPMPath(&buf, package_name, installed_version) catch |err| {
+                    Output.debug("error getting path for cached npm path: {s}", .{std.mem.span(@errorName(err))});
+                    return null;
+                };
+                const dependency = Dependency.Version{
+                    .tag = .npm,
+                    .value = .{
+                        .npm = Semver.Query.Group.from(installed_version),
+                    },
+                };
+                switch (FolderResolution.getOrPut(.{ .cache_folder = npm_package_path }, dependency, ".", this)) {
+                    .new_package_id => |id| {
+                        this.enqueueDependencyList(this.lockfile.packages.items(.dependencies)[id], false);
+                        return id;
+                    },
+                    .package_id => |id| {
+                        this.enqueueDependencyList(this.lockfile.packages.items(.dependencies)[id], false);
+                        return id;
+                    },
+                    .err => |err| {
+                        Output.debug("error getting or putting folder resolution: {s}", .{std.mem.span(@errorName(err))});
+                        return null;
+                    },
+                }
             }
         }
+
+        return null;
     }
 
     const ResolvedPackageResult = struct {
@@ -1894,6 +2021,7 @@ pub const PackageManager = struct {
         behavior: Behavior,
         manifest: *const Npm.PackageManifest,
         find_result: Npm.PackageManifest.FindResult,
+        comptime successFn: SuccessFn,
     ) !?ResolvedPackageResult {
 
         // Was this package already allocated? Let's reuse the existing one.
@@ -1910,7 +2038,7 @@ pub const PackageManager = struct {
                 },
             },
         )) |id| {
-            this.lockfile.buffers.resolutions.items[dependency_id] = id;
+            successFn(this, dependency_id, id);
             return ResolvedPackageResult{
                 .package = this.lockfile.packages.get(id),
                 .is_first_time = false,
@@ -1932,7 +2060,7 @@ pub const PackageManager = struct {
         // appendPackage sets the PackageID on the package
         package = try this.lockfile.appendPackage(package);
 
-        if (!behavior.isEnabled(if (this.root_dependency_list.contains(dependency_id))
+        if (!behavior.isEnabled(if (this.isRootDependency(dependency_id))
             this.options.local_package_features
         else
             this.options.remote_package_features))
@@ -1942,7 +2070,8 @@ pub const PackageManager = struct {
 
         const preinstall = this.determinePreinstallState(package, this.lockfile);
 
-        this.lockfile.buffers.resolutions.items[dependency_id] = package.meta.id;
+        successFn(this, dependency_id, package.meta.id);
+
         if (comptime Environment.isDebug or Environment.isTest) std.debug.assert(package.meta.id != invalid_package_id);
 
         switch (preinstall) {
@@ -2082,6 +2211,24 @@ pub const PackageManager = struct {
         this.network_task_fifo.writeItemAssumeCapacity(task);
     }
 
+    const SuccessFn = fn (*PackageManager, PackageID, PackageID) void;
+    fn assignResolution(this: *PackageManager, dependency_id: PackageID, package_id: PackageID) void {
+        this.lockfile.buffers.resolutions.items[dependency_id] = package_id;
+    }
+
+    fn assignRootResolution(this: *PackageManager, dependency_id: PackageID, package_id: PackageID) void {
+        if (this.dynamic_root_dependencies) |*dynamic| {
+            dynamic.items[dependency_id].resolution_id = package_id;
+        } else {
+            if (this.lockfile.buffers.resolutions.items.len > dependency_id) {
+                this.lockfile.buffers.resolutions.items[dependency_id] = package_id;
+            } else {
+                // this means a bug
+                bun.unreachablePanic("assignRootResolution: dependency_id: {d} out of bounds (package_id: {d})", .{ dependency_id, package_id });
+            }
+        }
+    }
+
     pub fn getOrPutResolvedPackage(
         this: *PackageManager,
         name_hash: PackageNameHash,
@@ -2090,6 +2237,7 @@ pub const PackageManager = struct {
         behavior: Behavior,
         dependency_id: PackageID,
         resolution: PackageID,
+        comptime successFn: SuccessFn,
     ) !?ResolvedPackageResult {
         if (resolution < this.lockfile.packages.len) {
             return ResolvedPackageResult{ .package = this.lockfile.packages.get(resolution) };
@@ -2109,7 +2257,17 @@ pub const PackageManager = struct {
                     else => unreachable,
                 };
 
-                return try getOrPutResolvedPackageWithFindResult(this, name_hash, name, version, dependency_id, behavior, manifest, find_result);
+                return try getOrPutResolvedPackageWithFindResult(
+                    this,
+                    name_hash,
+                    name,
+                    version,
+                    dependency_id,
+                    behavior,
+                    manifest,
+                    find_result,
+                    successFn,
+                );
             },
 
             .folder => {
@@ -2119,12 +2277,12 @@ pub const PackageManager = struct {
                 switch (res) {
                     .err => |err| return err,
                     .package_id => |package_id| {
-                        this.lockfile.buffers.resolutions.items[dependency_id] = package_id;
+                        successFn(this, dependency_id, package_id);
                         return ResolvedPackageResult{ .package = this.lockfile.packages.get(package_id) };
                     },
 
                     .new_package_id => |package_id| {
-                        this.lockfile.buffers.resolutions.items[dependency_id] = package_id;
+                        successFn(this, dependency_id, package_id);
                         return ResolvedPackageResult{ .package = this.lockfile.packages.get(package_id), .is_first_time = true };
                     },
                 }
@@ -2194,8 +2352,29 @@ pub const PackageManager = struct {
         return &task.threadpool_task;
     }
 
-    inline fn enqueueDependency(this: *PackageManager, id: u32, dependency: Dependency, resolution: PackageID) !void {
+    pub inline fn enqueueDependency(this: *PackageManager, id: u32, dependency: Dependency, resolution: PackageID) !void {
         return try this.enqueueDependencyWithMain(id, dependency, resolution, false);
+    }
+
+    pub inline fn enqueueMainDependency(this: *PackageManager, id: u32, dependency: Dependency, resolution: PackageID) !void {
+        return try this.enqueueDependencyWithMain(id, dependency, resolution, true);
+    }
+
+    fn dynamicRootDependencies(this: *PackageManager) *std.ArrayList(Dependency.Pair) {
+        if (this.dynamic_root_dependencies == null) {
+            const root_deps = this.lockfile.rootPackage().?.dependencies.get(this.lockfile.buffers.dependencies.items);
+
+            this.dynamic_root_dependencies = std.ArrayList(Dependency.Pair).initCapacity(this.allocator, root_deps.len) catch unreachable;
+            this.dynamic_root_dependencies.?.items.len = root_deps.len;
+            for (root_deps) |dep, i| {
+                this.dynamic_root_dependencies.?.items[i] = .{
+                    .dependency = dep,
+                    .resolution_id = invalid_package_id,
+                };
+            }
+        }
+
+        return &this.dynamic_root_dependencies.?;
     }
 
     pub fn writeYarnLock(this: *PackageManager) !void {
@@ -2240,12 +2419,44 @@ pub const PackageManager = struct {
         try tmpfile.promote(tmpname, std.fs.cwd().fd, "yarn.lock");
     }
 
+    pub fn isRootDependency(this: *const PackageManager, id: PackageID) bool {
+        if (this.dynamic_root_dependencies) |*list| {
+            const package = this.lockfile.packages.get(id);
+            const deps: []const Dependency.Pair = list.items;
+            for (deps) |*pair| {
+                const dep = &pair.dependency;
+                if (dep.name.len() == package.name.len() and dep.name_hash == package.name_hash) {
+                    return true;
+                }
+            }
+        }
+
+        return this.root_dependency_list.contains(id);
+    }
+
     fn enqueueDependencyWithMain(
         this: *PackageManager,
         id: u32,
         dependency: Dependency,
         resolution: PackageID,
         comptime is_main: bool,
+    ) !void {
+        return this.enqueueDependencyWithMainAndSuccessFn(
+            id,
+            dependency,
+            resolution,
+            is_main,
+            assignResolution,
+        );
+    }
+
+    pub fn enqueueDependencyWithMainAndSuccessFn(
+        this: *PackageManager,
+        id: u32,
+        dependency: Dependency,
+        resolution: PackageID,
+        comptime is_main: bool,
+        comptime successFn: SuccessFn,
     ) !void {
         const name = dependency.name;
         const name_hash = dependency.name_hash;
@@ -2254,7 +2465,7 @@ pub const PackageManager = struct {
 
         if (comptime !is_main) {
             // it might really be main
-            if (!this.root_dependency_list.contains(id))
+            if (!this.isRootDependency(id))
                 if (!dependency.behavior.isEnabled(switch (dependency.version.tag) {
                     .folder => this.options.remote_package_features,
                     .dist_tag, .npm => this.options.remote_package_features,
@@ -2273,6 +2484,7 @@ pub const PackageManager = struct {
                         dependency.behavior,
                         id,
                         resolution,
+                        successFn,
                     );
 
                     retry_with_new_resolve_result: while (true) {
@@ -2365,6 +2577,7 @@ pub const PackageManager = struct {
                                                     dependency.behavior,
                                                     &loaded_manifest.?,
                                                     find_result,
+                                                    successFn,
                                                 ) catch null) |new_resolve_result| {
                                                     resolve_result_ = new_resolve_result;
                                                     _ = this.network_dedupe_map.remove(task_id);
@@ -2407,7 +2620,8 @@ pub const PackageManager = struct {
                                 manifest_entry_parse.value_ptr.* = TaskCallbackList{};
                             }
 
-                            try manifest_entry_parse.value_ptr.append(this.allocator, TaskCallbackContext{ .dependency = id });
+                            const callback_tag = comptime if (successFn == assignRootResolution) "root_dependency" else "dependency";
+                            try manifest_entry_parse.value_ptr.append(this.allocator, @unionInit(TaskCallbackContext, callback_tag, id));
                         }
                         return;
                     }
@@ -2422,6 +2636,7 @@ pub const PackageManager = struct {
                     dependency.behavior,
                     id,
                     resolution,
+                    successFn,
                 ) catch |err| brk: {
                     if (err == error.MissingPackageJSON) {
                         break :brk null;
@@ -2570,6 +2785,47 @@ pub const PackageManager = struct {
         HTTP.http_thread.schedule(this.network_resolve_batch);
         this.network_tarball_batch = .{};
         this.network_resolve_batch = .{};
+    }
+
+    fn processDependencyList(this: *PackageManager, dep_list: TaskCallbackList) !void {
+        if (dep_list.items.len > 0) {
+            var dependency_list = dep_list;
+            for (dependency_list.items) |item| {
+                switch (item) {
+                    .dependency => |dependency_id| {
+                        const dependency = this.lockfile.buffers.dependencies.items[dependency_id];
+                        const resolution = this.lockfile.buffers.resolutions.items[dependency_id];
+
+                        try this.enqueueDependency(
+                            dependency_id,
+                            dependency,
+                            resolution,
+                        );
+                    },
+
+                    .root_dependency => |dependency_id| {
+                        const pair = this.dynamicRootDependencies().items[dependency_id];
+                        const dependency = pair.dependency;
+
+                        try this.enqueueDependencyWithMainAndSuccessFn(
+                            dependency_id,
+                            dependency,
+                            dependency_id,
+                            true,
+                            assignRootResolution,
+                        );
+
+                        const new_resolution_id = this.dynamicRootDependencies().items[dependency_id].resolution_id;
+                        if (new_resolution_id != pair.resolution_id) {
+                            Output.debug("Resolved root dependency", .{});
+                        }
+                    },
+                    else => unreachable,
+                }
+            }
+
+            dependency_list.deinit(this.allocator);
+        }
     }
 
     const CacheDir = struct { path: string, is_node_modules: bool };
@@ -2743,20 +2999,7 @@ pub const PackageManager = struct {
                             var dependency_list = dependency_list_entry.value_ptr.*;
                             dependency_list_entry.value_ptr.* = .{};
 
-                            if (dependency_list.items.len > 0) {
-                                for (dependency_list.items) |item| {
-                                    var dependency = manager.lockfile.buffers.dependencies.items[item.dependency];
-                                    var resolution = manager.lockfile.buffers.resolutions.items[item.dependency];
-
-                                    try manager.enqueueDependency(
-                                        item.dependency,
-                                        dependency,
-                                        resolution,
-                                    );
-                                }
-
-                                dependency_list.deinit(manager.allocator);
-                            }
+                            try manager.processDependencyList(dependency_list);
 
                             manager.flushDependencyQueue();
                             continue;
@@ -2862,20 +3105,7 @@ pub const PackageManager = struct {
                     var dependency_list = dependency_list_entry.value_ptr.*;
                     dependency_list_entry.value_ptr.* = .{};
 
-                    if (dependency_list.items.len > 0) {
-                        for (dependency_list.items) |item| {
-                            var dependency = manager.lockfile.buffers.dependencies.items[item.dependency];
-                            var resolution = manager.lockfile.buffers.resolutions.items[item.dependency];
-
-                            try manager.enqueueDependency(
-                                item.dependency,
-                                dependency,
-                                resolution,
-                            );
-                        }
-
-                        dependency_list.deinit(manager.allocator);
-                    }
+                    try manager.processDependencyList(dependency_list);
 
                     if (comptime log_level.showProgress()) {
                         if (!has_updated_this_run) {

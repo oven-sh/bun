@@ -35,6 +35,8 @@ const Version = Semver.Version;
 const Install = @import("../install/install.zig");
 const FolderResolver = @import("../install/resolvers/folder_resolver.zig");
 
+const Architecture = @import("../install/npm.zig").Architecture;
+const OperatingSystem = @import("../install/npm.zig").OperatingSystem;
 pub const DependencyMap = struct {
     map: HashMap = .{},
     source_buf: []const u8 = "",
@@ -102,6 +104,9 @@ pub const PackageJSON = struct {
     hash: u32 = 0xDEADBEEF,
 
     scripts: ?*ScriptsMap = null,
+
+    arch: Architecture = Architecture.all,
+    os: OperatingSystem = OperatingSystem.all,
 
     package_manager_package_id: Install.PackageID = Install.invalid_package_id,
     dependencies: DependencyMap = .{},
@@ -738,93 +743,141 @@ pub const PackageJSON = struct {
         }
 
         if (comptime include_dependencies == .main or include_dependencies == .local) {
-            const DependencyGroup = Install.Lockfile.Package.DependencyGroup;
-            const features = .{
-                .dependencies = true,
-                .dev_dependencies = include_dependencies == .main,
-                .optional_dependencies = false,
-                .peer_dependencies = false,
-            };
+            {
+                // // if there is a name & version, check if the lockfile has the package
+                // if (package_json.name.len > 0 and package_json.version.len > 0) {
+                //     if (r.package_manager) |pm| {
+                //         const tag = Dependency.Version.Tag.infer(package_json.version);
 
-            const dependency_groups = comptime brk: {
-                var out_groups: [
-                    @as(usize, @boolToInt(features.dependencies)) +
-                        @as(usize, @boolToInt(features.dev_dependencies)) +
-                        @as(usize, @boolToInt(features.optional_dependencies)) +
-                        @as(usize, @boolToInt(features.peer_dependencies))
-                ]DependencyGroup = undefined;
-                var out_group_i: usize = 0;
-                if (features.dependencies) {
-                    out_groups[out_group_i] = DependencyGroup.dependencies;
-                    out_group_i += 1;
-                }
+                //         if (tag == .npm) {
+                //             const sliced = Semver.SlicedString.init(package_json.version, package_json.version);
+                //             if (Dependency.parseWithTag(r.allocator, package_json.version, &sliced, r.log)) |dependency_version| {
+                //                 if (dependency_version.value.npm.isExact()) {
 
-                if (features.dev_dependencies) {
-                    out_groups[out_group_i] = DependencyGroup.dev;
-                    out_group_i += 1;
-                }
-                if (features.optional_dependencies) {
-                    out_groups[out_group_i] = DependencyGroup.optional;
-                    out_group_i += 1;
-                }
-
-                if (features.peer_dependencies) {
-                    out_groups[out_group_i] = DependencyGroup.peer;
-                    out_group_i += 1;
-                }
-
-                break :brk out_groups;
-            };
-
-            var total_dependency_count: usize = 0;
-            inline for (dependency_groups) |group| {
-                if (json.get(group.field)) |group_json| {
-                    if (group_json.data == .e_object) {
-                        total_dependency_count += group_json.data.e_object.properties.len;
+                //                 }
+                //             }
+                //         }
+                //     }
+                // }
+                if (json.get("cpu")) |os_field| {
+                    var first = true;
+                    if (os_field.asArray()) |*array| {
+                        while (array.next()) |item| {
+                            if (item.asString(bun.default_allocator)) |str| {
+                                if (first) {
+                                    package_json.arch = Architecture.none;
+                                    first = false;
+                                }
+                                package_json.arch = package_json.arch.apply(str);
+                            }
+                        }
                     }
                 }
-            }
 
-            if (total_dependency_count > 0) {
-                package_json.dependencies.map = DependencyMap.HashMap{};
-                const ctx = String.ArrayHashContext{
-                    .a_buf = json_source.contents,
-                    .b_buf = json_source.contents,
+                if (json.get("os")) |os_field| {
+                    var first = true;
+                    if (os_field.asArray()) |*array| {
+                        while (array.next()) |item| {
+                            if (item.asString(bun.default_allocator)) |str| {
+                                if (first) {
+                                    package_json.os = OperatingSystem.none;
+                                    first = false;
+                                }
+                                package_json.os = package_json.os.apply(str);
+                            }
+                        }
+                    }
+                }
+
+                const DependencyGroup = Install.Lockfile.Package.DependencyGroup;
+                const features = .{
+                    .dependencies = true,
+                    .dev_dependencies = include_dependencies == .main,
+                    .optional_dependencies = false,
+                    .peer_dependencies = false,
                 };
-                package_json.dependencies.map.ensureTotalCapacityContext(
-                    r.allocator,
-                    total_dependency_count,
-                    ctx,
-                ) catch unreachable;
 
+                const dependency_groups = comptime brk: {
+                    var out_groups: [
+                        @as(usize, @boolToInt(features.dependencies)) +
+                            @as(usize, @boolToInt(features.dev_dependencies)) +
+                            @as(usize, @boolToInt(features.optional_dependencies)) +
+                            @as(usize, @boolToInt(features.peer_dependencies))
+                    ]DependencyGroup = undefined;
+                    var out_group_i: usize = 0;
+                    if (features.dependencies) {
+                        out_groups[out_group_i] = DependencyGroup.dependencies;
+                        out_group_i += 1;
+                    }
+
+                    if (features.dev_dependencies) {
+                        out_groups[out_group_i] = DependencyGroup.dev;
+                        out_group_i += 1;
+                    }
+                    if (features.optional_dependencies) {
+                        out_groups[out_group_i] = DependencyGroup.optional;
+                        out_group_i += 1;
+                    }
+
+                    if (features.peer_dependencies) {
+                        out_groups[out_group_i] = DependencyGroup.peer;
+                        out_group_i += 1;
+                    }
+
+                    break :brk out_groups;
+                };
+
+                var total_dependency_count: usize = 0;
                 inline for (dependency_groups) |group| {
                     if (json.get(group.field)) |group_json| {
                         if (group_json.data == .e_object) {
-                            var group_obj = group_json.data.e_object;
-                            for (group_obj.properties.slice()) |*prop| {
-                                const name = prop.key orelse continue;
-                                const name_str = name.asString(r.allocator) orelse continue;
-                                const version_value = prop.value orelse continue;
-                                const version_str = version_value.asString(r.allocator) orelse continue;
-                                const sliced_str = Semver.SlicedString.init(version_str, version_str);
+                            total_dependency_count += group_json.data.e_object.properties.len;
+                        }
+                    }
+                }
 
-                                if (Dependency.parse(
-                                    r.allocator,
-                                    version_str,
-                                    &sliced_str,
-                                    r.log,
-                                )) |dependency_version| {
-                                    const dependency = Dependency{
-                                        .name = String.init(name_str, name_str),
-                                        .version = dependency_version,
-                                        .name_hash = bun.hash(name_str),
-                                        .behavior = group.behavior,
-                                    };
-                                    package_json.dependencies.map.putAssumeCapacityContext(
-                                        dependency.name,
-                                        dependency,
-                                        ctx,
-                                    );
+                if (total_dependency_count > 0) {
+                    package_json.dependencies.map = DependencyMap.HashMap{};
+                    package_json.dependencies.source_buf = json_source.contents;
+                    const ctx = String.ArrayHashContext{
+                        .a_buf = json_source.contents,
+                        .b_buf = json_source.contents,
+                    };
+                    package_json.dependencies.map.ensureTotalCapacityContext(
+                        r.allocator,
+                        total_dependency_count,
+                        ctx,
+                    ) catch unreachable;
+
+                    inline for (dependency_groups) |group| {
+                        if (json.get(group.field)) |group_json| {
+                            if (group_json.data == .e_object) {
+                                var group_obj = group_json.data.e_object;
+                                for (group_obj.properties.slice()) |*prop| {
+                                    const name = prop.key orelse continue;
+                                    const name_str = name.asString(r.allocator) orelse continue;
+                                    const version_value = prop.value orelse continue;
+                                    const version_str = version_value.asString(r.allocator) orelse continue;
+                                    const sliced_str = Semver.SlicedString.init(version_str, version_str);
+
+                                    if (Dependency.parse(
+                                        r.allocator,
+                                        version_str,
+                                        &sliced_str,
+                                        r.log,
+                                    )) |dependency_version| {
+                                        const dependency = Dependency{
+                                            .name = String.init(name_str, name_str),
+                                            .version = dependency_version,
+                                            .name_hash = bun.hash(name_str),
+                                            .behavior = group.behavior,
+                                        };
+                                        package_json.dependencies.map.putAssumeCapacityContext(
+                                            dependency.name,
+                                            dependency,
+                                            ctx,
+                                        );
+                                    }
                                 }
                             }
                         }
@@ -1168,6 +1221,20 @@ pub const ESModule = struct {
             version: Semver.String = .{},
             subpath: Semver.String = .{},
         };
+
+        pub fn count(this: Package, builder: *Semver.String.Builder) void {
+            builder.count(this.name);
+            builder.count(this.version);
+            builder.count(this.subpath);
+        }
+
+        pub fn clone(this: Package, builder: *Semver.String.Builder) External {
+            return .{
+                .name = builder.appendUTF8WithoutPool(Semver.String, this.name, 0),
+                .version = builder.appendUTF8WithoutPool(Semver.String, this.version, 0),
+                .subpath = builder.appendUTF8WithoutPool(Semver.String, this.subpath, 0),
+            };
+        }
 
         pub fn toExternal(this: Package, buffer: []const u8) External {
             return .{

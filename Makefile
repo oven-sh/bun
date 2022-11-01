@@ -501,7 +501,7 @@ builtins: ## to generate builtins
 .PHONY: generate-builtins
 generate-builtins: builtins
 
-.PHONY: tinycc
+.PHONY: vendor-without-check
 vendor-without-check: npm-install node-fallbacks runtime_js fallback_decoder bun_error mimalloc picohttp zlib boringssl libarchive libbacktrace lolhtml usockets uws base64 tinycc oniguruma
 
 BUN_TYPES_REPO_PATH ?= $(realpath ../bun-types)

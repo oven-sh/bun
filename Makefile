@@ -864,6 +864,10 @@ devcontainer-build:
 devcontainer-up:
 	DOCKER_BUILDARCH="$(DOCKER_BUILDARCH)" devcontainer up --workspace-folder .
 
+.PHONY: devcontainer-rebuild
+devcontainer-rebuild:
+	DOCKER_BUILDARCH="$(DOCKER_BUILDARCH)" devcontainer up --workspace-folder . --remove-existing-container
+
 CLANG_FORMAT := $(shell command -v clang-format 2> /dev/null)
 
 .PHONY: headers

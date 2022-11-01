@@ -97,7 +97,7 @@ static WTF::String extendMultibyteHexCharacters(const WTF::String& string)
 
         if (inCharacterClass) {
             // we know ']' will be escaped so there isn't a need to scan for the closing bracket
-            if (characters[i] == '[' || characters[i] == ']' || characters[i] == '^' || characters[i] == '-' || characters[i] == ')' || characters[i] == '(') {
+            if (characters[i] == '[' || characters[i] == ']') {
                 if (characters[i - 1] != '\\') {
                     // character class intersections not supported, assume end of character class
                     if (characters[i] == ']') {
@@ -247,6 +247,49 @@ bool validateRegExpFlags(WTF::StringView flags)
     return true;
 }
 
+std::once_flag onigurumaEncodingInitFlag;
+
+static regex_t* createOnigurumaRegExp(JSGlobalObject* globalObject, const WTF::String& patternString, const WTF::String& flagsString, int& errorCode, OnigErrorInfo& errorInfo)
+{
+    auto& vm = globalObject->vm();
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+
+    OnigEncoding encodings[] = {
+        ONIG_ENCODING_UTF16_LE,
+    };
+    std::call_once(onigurumaEncodingInitFlag, [&encodings]() {
+        onig_initialize(encodings, 1);
+    });
+
+    OnigOptionType options = 0;
+    if (flagsString.contains('i')) {
+        options |= ONIG_OPTION_IGNORECASE;
+    }
+    if (flagsString.contains('m')) {
+        options |= ONIG_OPTION_MULTILINE;
+    } else {
+        options |= ONIG_OPTION_SINGLELINE;
+    }
+    if (flagsString.contains('s')) {
+        options |= ONIG_OPTION_MULTILINE;
+    }
+
+    OnigSyntaxType* syntax = ONIG_SYNTAX_ONIGURUMA;
+    OnigEncodingType* encoding = encodings[0];
+    regex_t* onigRegExp = NULL;
+
+    errorCode = onig_new(
+        &onigRegExp,
+        reinterpret_cast<const OnigUChar*>(patternString.characters16()),
+        reinterpret_cast<const OnigUChar*>(patternString.characters16() + patternString.length()),
+        options,
+        encoding,
+        syntax,
+        &errorInfo);
+
+    return onigRegExp;
+}
+
 class OnigurumaRegExpPrototype final : public JSC::JSNonFinalObject {
 public:
     using Base = JSC::JSNonFinalObject;
@@ -289,13 +332,12 @@ public:
         return ptr;
     }
 
-    static OnigurumaRegEx* create(JSC::JSGlobalObject* globalObject, WTF::String&& pattern, WTF::String&& flags, regex_t* regExpCode)
+    static OnigurumaRegEx* create(JSC::JSGlobalObject* globalObject, WTF::String&& pattern, WTF::String&& flags)
     {
         auto* structure = reinterpret_cast<Zig::GlobalObject*>(globalObject)->OnigurumaRegExpStructure();
         auto* object = create(globalObject->vm(), globalObject, structure);
         object->m_flagsString = WTFMove(flags);
         object->m_patternString = WTFMove(pattern);
-        object->m_onigurumaRegExp = regExpCode;
 
         return object;
     }
@@ -314,18 +356,6 @@ public:
             [](auto& spaces, auto&& space) { spaces.m_subspaceForOnigurumaRegExp = WTFMove(space); });
     }
 
-    static void destroy(JSC::JSCell* cell)
-    {
-        static_cast<OnigurumaRegEx*>(cell)->OnigurumaRegEx::~OnigurumaRegEx();
-    }
-
-    ~OnigurumaRegEx()
-    {
-        if (m_onigurumaRegExp) {
-            onig_free(m_onigurumaRegExp);
-        }
-    }
-
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
     {
         return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(RegExpObjectType, StructureFlags), info());
@@ -338,7 +368,6 @@ public:
     const WTF::String& patternString() const { return m_patternString; }
     void setPatternString(const WTF::String& patternString) { m_patternString = patternString; }
 
-    regex_t* m_onigurumaRegExp = NULL;
     int32_t m_lastIndex = 0;
 
 private:
@@ -511,46 +540,10 @@ JSC_DEFINE_HOST_FUNCTION(onigurumaRegExpProtoFuncCompile, (JSGlobalObject * glob
         thisRegExp->setFlagsString(newFlagsString);
     }
 
-    OnigEncoding encodings[] = {
-        ONIG_ENCODING_UTF16_LE,
-    };
-    onig_initialize(encodings, 1);
-
-    OnigOptionType options = 0;
-    if (thisRegExp->flagsString().contains('i')) {
-        options |= ONIG_OPTION_IGNORECASE;
-    }
-    if (thisRegExp->flagsString().contains('m')) {
-        options |= ONIG_OPTION_MULTILINE;
-    } else {
-        options |= ONIG_OPTION_SINGLELINE;
-    }
-    if (thisRegExp->flagsString().contains('s')) {
-        options |= ONIG_OPTION_MULTILINE;
-    }
-
-    OnigSyntaxType* syntax = ONIG_SYNTAX_DEFAULT;
-    onig_set_syntax_op(syntax, onig_get_syntax_op(syntax) | ONIG_SYN_OP_ESC_X_HEX2);
-    onig_set_syntax_op(syntax, onig_get_syntax_op(syntax) | ONIG_SYN_OP_ESC_X_BRACE_HEX8);
-    onig_set_syntax_op2(syntax, onig_get_syntax_op2(syntax) | ONIG_SYN_OP2_ESC_U_HEX4);
-    onig_set_syntax_behavior(syntax, onig_get_syntax_behavior(syntax) | ONIG_SYN_ALLOW_EMPTY_RANGE_IN_CC);
-    onig_set_syntax_behavior(syntax, onig_get_syntax_behavior(syntax) | ONIG_SYN_ALLOW_INVALID_CODE_END_OF_RANGE_IN_CC);
-    onig_set_syntax_behavior(syntax, onig_get_syntax_behavior(syntax) & ~ONIG_SYN_BACKSLASH_ESCAPE_IN_CC);
-
-    OnigEncodingType* encoding = ONIG_ENCODING_UTF16_LE;
-    OnigErrorInfo errorInfo = { 0 };
-    regex_t* onigRegExp = NULL;
+    // for pattern syntax checking
     int errorCode = 0;
-
-    errorCode = onig_new(
-        &onigRegExp,
-        reinterpret_cast<const OnigUChar*>(patternStringExtended.characters16()),
-        reinterpret_cast<const OnigUChar*>(patternStringExtended.characters16() + patternStringExtended.length()),
-        options,
-        encoding,
-        syntax,
-        &errorInfo);
-
+    OnigErrorInfo errorInfo = { 0 };
+    regex_t* onigurumaRegExp = createOnigurumaRegExp(globalObject, extendMultibyteHexCharacters(thisRegExp->patternString()), thisRegExp->flagsString(), errorCode, errorInfo);
     if (errorCode != ONIG_NORMAL) {
         OnigUChar errorBuff[ONIG_MAX_ERROR_MESSAGE_LEN] = { 0 };
         int length = onig_error_code_to_str(errorBuff, errorCode, &errorInfo);
@@ -561,15 +554,14 @@ JSC_DEFINE_HOST_FUNCTION(onigurumaRegExpProtoFuncCompile, (JSGlobalObject * glob
         } else {
             errorMessage.appendCharacters(errorBuff, length);
         }
+        if (onigurumaRegExp != nullptr) {
+            onig_free(onigurumaRegExp);
+        }
         throwScope.throwException(globalObject, createSyntaxError(globalObject, errorMessage.toString()));
         return JSValue::encode({});
     }
+    onig_free(onigurumaRegExp);
 
-    if (thisRegExp->m_onigurumaRegExp) {
-        onig_free(thisRegExp->m_onigurumaRegExp);
-    }
-
-    thisRegExp->m_onigurumaRegExp = onigRegExp;
     thisRegExp->m_lastIndex = 0;
 
     return JSValue::encode(thisRegExp);
@@ -579,6 +571,7 @@ JSC_DEFINE_HOST_FUNCTION(onigurumaRegExpProtoFuncTest, (JSGlobalObject * globalO
 {
     auto& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
 
     auto* thisValue = jsDynamicCast<OnigurumaRegEx*>(callFrame->thisValue());
     if (!thisValue)
@@ -593,6 +586,26 @@ JSC_DEFINE_HOST_FUNCTION(onigurumaRegExpProtoFuncTest, (JSGlobalObject * globalO
     WTF::String string = to16Bit(arg, globalObject, ""_s);
     RETURN_IF_EXCEPTION(scope, JSValue::encode({}));
 
+    int errorCode = 0;
+    OnigErrorInfo errorInfo = { 0 };
+    regex_t* onigurumaRegExp = createOnigurumaRegExp(globalObject, extendMultibyteHexCharacters(thisValue->patternString()), thisValue->flagsString(), errorCode, errorInfo);
+    if (errorCode != ONIG_NORMAL) {
+        OnigUChar errorBuff[ONIG_MAX_ERROR_MESSAGE_LEN] = { 0 };
+        int length = onig_error_code_to_str(errorBuff, errorCode, &errorInfo);
+        WTF::StringBuilder errorMessage;
+        errorMessage.append("Invalid regular expression: "_s);
+        if (length < 0) {
+            errorMessage.append("An unknown error occurred."_s);
+        } else {
+            errorMessage.appendCharacters(errorBuff, length);
+        }
+        if (onigurumaRegExp != nullptr) {
+            onig_free(onigurumaRegExp);
+        }
+        throwScope.throwException(globalObject, createSyntaxError(globalObject, errorMessage.toString()));
+        return JSValue::encode({});
+    }
+
     OnigRegion* region = onig_region_new();
 
     const OnigUChar* end = reinterpret_cast<const OnigUChar*>(string.characters16() + string.length());
@@ -601,12 +614,13 @@ JSC_DEFINE_HOST_FUNCTION(onigurumaRegExpProtoFuncTest, (JSGlobalObject * globalO
 
     if (thisValue->m_lastIndex >= string.length()) {
         onig_region_free(region, 1);
+        onig_free(onigurumaRegExp);
         thisValue->m_lastIndex = 0;
         return JSValue::encode(jsBoolean(false));
     }
 
     int result = onig_search(
-        thisValue->m_onigurumaRegExp,
+        onigurumaRegExp,
         reinterpret_cast<const OnigUChar*>(string.characters16()),
         end,
         start,
@@ -617,11 +631,13 @@ JSC_DEFINE_HOST_FUNCTION(onigurumaRegExpProtoFuncTest, (JSGlobalObject * globalO
     if (result < 0) {
         thisValue->m_lastIndex = 0;
         onig_region_free(region, 1);
+        onig_free(onigurumaRegExp);
         return JSValue::encode(jsBoolean(false));
     }
 
     if (thisValue->flagsString().contains('y') && region->beg[0] != thisValue->m_lastIndex) {
         onig_region_free(region, 1);
+        onig_free(onigurumaRegExp);
         return JSValue::encode(jsBoolean(false));
     }
 
@@ -632,6 +648,7 @@ JSC_DEFINE_HOST_FUNCTION(onigurumaRegExpProtoFuncTest, (JSGlobalObject * globalO
     }
 
     onig_region_free(region, 1);
+    onig_free(onigurumaRegExp);
 
     return JSValue::encode(jsBoolean(true));
 }
@@ -655,6 +672,26 @@ JSC_DEFINE_HOST_FUNCTION(onigurumaRegExpProtoFuncExec, (JSGlobalObject * globalO
     WTF::String string = to16Bit(arg, globalObject, ""_s);
     RETURN_IF_EXCEPTION(scope, JSValue::encode({}));
 
+    int errorCode = 0;
+    OnigErrorInfo errorInfo = { 0 };
+    regex_t* onigurumaRegExp = createOnigurumaRegExp(globalObject, extendMultibyteHexCharacters(thisValue->patternString()), thisValue->flagsString(), errorCode, errorInfo);
+    if (errorCode != ONIG_NORMAL) {
+        OnigUChar errorBuff[ONIG_MAX_ERROR_MESSAGE_LEN] = { 0 };
+        int length = onig_error_code_to_str(errorBuff, errorCode, &errorInfo);
+        WTF::StringBuilder errorMessage;
+        errorMessage.append("Invalid regular expression: "_s);
+        if (length < 0) {
+            errorMessage.append("An unknown error occurred."_s);
+        } else {
+            errorMessage.appendCharacters(errorBuff, length);
+        }
+        if (onigurumaRegExp != nullptr) {
+            onig_free(onigurumaRegExp);
+        }
+        throwScope.throwException(globalObject, createSyntaxError(globalObject, errorMessage.toString()));
+        return JSValue::encode({});
+    }
+
     OnigRegion* region = onig_region_new();
 
     const OnigUChar* end = reinterpret_cast<const OnigUChar*>(string.characters16() + string.length());
@@ -662,7 +699,7 @@ JSC_DEFINE_HOST_FUNCTION(onigurumaRegExpProtoFuncExec, (JSGlobalObject * globalO
     const OnigUChar* range = end;
 
     int result = onig_search(
-        thisValue->m_onigurumaRegExp,
+        onigurumaRegExp,
         reinterpret_cast<const OnigUChar*>(string.characters16()),
         end,
         start,
@@ -672,6 +709,7 @@ JSC_DEFINE_HOST_FUNCTION(onigurumaRegExpProtoFuncExec, (JSGlobalObject * globalO
 
     if (result < 0) {
         onig_region_free(region, 1);
+        onig_free(onigurumaRegExp);
         thisValue->m_lastIndex = 0;
         return JSValue::encode(jsNull());
     }
@@ -694,6 +732,7 @@ JSC_DEFINE_HOST_FUNCTION(onigurumaRegExpProtoFuncExec, (JSGlobalObject * globalO
             if (UNLIKELY(!ptr)) {
                 throwOutOfMemoryError(globalObject, scope);
                 onig_region_free(region, 1);
+                onig_free(onigurumaRegExp);
                 return JSValue::encode(jsNull());
             }
 
@@ -720,6 +759,7 @@ JSC_DEFINE_HOST_FUNCTION(onigurumaRegExpProtoFuncExec, (JSGlobalObject * globalO
     }
 
     onig_region_free(region, 1);
+    onig_free(onigurumaRegExp);
 
     return JSValue::encode(array);
 }
@@ -759,6 +799,7 @@ void OnigurumaRegExpPrototype::finishCreation(VM& vm, JSGlobalObject* globalObje
     this->putDirectCustomAccessor(vm, vm.propertyNames->source, JSC::CustomGetterSetter::create(vm, onigurumaRegExpProtoGetterSource, nullptr), 0 | PropertyAttribute::CustomAccessor | PropertyAttribute::ReadOnly);
     this->putDirectCustomAccessor(vm, vm.propertyNames->flags, JSC::CustomGetterSetter::create(vm, onigurumaRegExpProtoGetterFlags, nullptr), 0 | PropertyAttribute::CustomAccessor | PropertyAttribute::ReadOnly);
     this->putDirectCustomAccessor(vm, vm.propertyNames->lastIndex, JSC::CustomGetterSetter::create(vm, onigurumaRegExpProtoGetterLastIndex, onigurumaRegExpProtoSetterLastIndex), 0 | PropertyAttribute::CustomAccessor);
+
     this->putDirectNativeFunction(vm, globalObject, PropertyName(vm.propertyNames->test), 1, onigurumaRegExpProtoFuncTest, ImplementationVisibility::Public, NoIntrinsic, static_cast<unsigned>(0));
 
     this->putDirectBuiltinFunction(vm, globalObject, vm.propertyNames->matchSymbol, onigurumaRegExpPrototypeMatchCodeGenerator(vm), static_cast<unsigned>(0));
@@ -805,8 +846,6 @@ static JSC::EncodedJSValue constructOrCall(Zig::GlobalObject* globalObject, JSVa
     WTF::String patternString = to16Bit(arg0, globalObject, "(?:)"_s);
     RETURN_IF_EXCEPTION(scope, {});
 
-    WTF::String patternStringExtended = extendMultibyteHexCharacters(patternString);
-
     WTF::String flagsString = to16Bit(arg1, globalObject, ""_s);
     RETURN_IF_EXCEPTION(scope, {});
 
@@ -817,45 +856,10 @@ static JSC::EncodedJSValue constructOrCall(Zig::GlobalObject* globalObject, JSVa
 
     flagsString = sortRegExpFlags(flagsString);
 
-    OnigEncoding encodings[] = {
-        ONIG_ENCODING_UTF16_LE,
-    };
-    onig_initialize(encodings, 1);
-
-    OnigOptionType options = 0;
-    if (flagsString.contains('i')) {
-        options |= ONIG_OPTION_IGNORECASE;
-    }
-    if (flagsString.contains('m')) {
-        options |= ONIG_OPTION_MULTILINE;
-    } else {
-        options |= ONIG_OPTION_SINGLELINE;
-    }
-    if (flagsString.contains('s')) {
-        options |= ONIG_OPTION_MULTILINE;
-    }
-
-    OnigSyntaxType* syntax = ONIG_SYNTAX_ONIGURUMA;
-    onig_set_syntax_op(syntax, onig_get_syntax_op(syntax) | ONIG_SYN_OP_ESC_X_HEX2);
-    onig_set_syntax_op(syntax, onig_get_syntax_op(syntax) | ONIG_SYN_OP_ESC_X_BRACE_HEX8);
-    onig_set_syntax_op2(syntax, onig_get_syntax_op2(syntax) | ONIG_SYN_OP2_ESC_U_HEX4);
-    onig_set_syntax_behavior(syntax, onig_get_syntax_behavior(syntax) | ONIG_SYN_ALLOW_EMPTY_RANGE_IN_CC);
-    onig_set_syntax_behavior(syntax, onig_get_syntax_behavior(syntax) | ONIG_SYN_ALLOW_INVALID_CODE_END_OF_RANGE_IN_CC);
-
-    OnigEncodingType* encoding = encodings[0];
-    OnigErrorInfo errorInfo = { 0 };
-    regex_t* onigRegExp = NULL;
+    // create for pattern compilation errors, but need to create another for each exec/test
     int errorCode = 0;
-
-    errorCode = onig_new(
-        &onigRegExp,
-        reinterpret_cast<const OnigUChar*>(patternStringExtended.characters16()),
-        reinterpret_cast<const OnigUChar*>(patternStringExtended.characters16() + patternStringExtended.length()),
-        options,
-        encoding,
-        syntax,
-        &errorInfo);
-
+    OnigErrorInfo errorInfo = { 0 };
+    regex_t* onigurumaRegExp = createOnigurumaRegExp(globalObject, extendMultibyteHexCharacters(patternString), flagsString, errorCode, errorInfo);
     if (errorCode != ONIG_NORMAL) {
         OnigUChar errorBuff[ONIG_MAX_ERROR_MESSAGE_LEN] = { 0 };
         int length = onig_error_code_to_str(errorBuff, errorCode, &errorInfo);
@@ -869,10 +873,9 @@ static JSC::EncodedJSValue constructOrCall(Zig::GlobalObject* globalObject, JSVa
         throwScope.throwException(globalObject, createSyntaxError(globalObject, errorMessage.toString()));
         return JSValue::encode({});
     }
+    onig_free(onigurumaRegExp);
 
-    RETURN_IF_EXCEPTION(scope, {});
-
-    OnigurumaRegEx* result = OnigurumaRegEx::create(globalObject, WTFMove(patternString), WTFMove(flagsString), onigRegExp);
+    OnigurumaRegEx* result = OnigurumaRegEx::create(globalObject, WTFMove(patternString), WTFMove(flagsString));
 
     return JSValue::encode(result);
 }

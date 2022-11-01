@@ -179,7 +179,7 @@ bun upgrade --canary
 - [Credits](#credits)
 - [License](#license)
 - [Developing bun](#developing-bun)
-  - [VSCode Dev Container (Linux)](#vscode-dev-container-linux)
+  - [Dev Container (Linux/Windows)](#dev-container-linuxwindows)
   - [MacOS](#macos)
     - [Build bun (macOS)](#build-bun-macos)
     - [Verify it worked (macOS)](#verify-it-worked-macos)
@@ -4410,28 +4410,50 @@ Some links you should read about JavaScriptCore, the JavaScript engine Bun uses:
 
 To get your development environment configured, expect it to take 30-90 minutes :(
 
-### VSCode Dev Container (Linux)
+### Dev Container (Linux/Windows)
 
-The VSCode Dev Container in this repository is the easiest way to get started. It comes with Zig, JavaScriptCore, Zig Language Server, vscode-zig, and more pre-installed on an instance of Ubuntu.
+The [Dev Container](https://containers.dev) in this repository is the easiest way to get started. It comes with Zig, JavaScriptCore, Zig Language Server, vscode-zig, and more pre-installed on an instance of Ubuntu.
 
 <img src="https://user-images.githubusercontent.com/709451/147319227-6446589c-a4d9-480d-bd5b-43037a9e56fd.png" />
 
-To develop on Linux, the following is required:
+To develop on Linux/Windows, [Docker](https://www.docker.com) is required. If using WSL on Windows, it is recommended to use [Docker Desktop](https://docs.microsoft.com/en-us/windows/wsl/tutorials/wsl-containers) for its WSL2 integration.
 
-- [Visual Studio Code](https://code.visualstudio.com/)
-- [Dev Containers](https://marketplace.visualstudio.com/items?itemName=ms-vscode-remote.remote-containers) extension for Visual Studio Code
-- [Docker](https://www.docker.com). If using WSL on Windows, it is recommended to use [Docker Desktop](https://docs.microsoft.com/en-us/windows/wsl/tutorials/wsl-containers) for its WSL2 integration.
-- [Dev Container CLI](https://www.npmjs.com/package/@devcontainers/cli): `npm install -g @devcontainers/cli`
+#### Visual Studio Code
 
-To get started, in the `bun` repository, locally run:
+If you're using VSCode, you'll need to have the [Dev Containers](https://marketplace.visualstudio.com/items?itemName=ms-vscode-remote.remote-containers) extension installed.
+
+To get started, open VS Code in the `bun` repository. The first time you try to open the dev container, the extension will automatically build it for you, based on [`Dockerfile.devcontainer`](Dockerfile.devcontainer).
+
+To open the dev container, open the command palette (Ctrl + Shift + P) and run: `Dev Containers: Reopen in Container`. To later rebuild it (only needed when the devcontainer itself changes, not the bun code), run: `Dev Containers: Rebuild and Reopen in Container`.
+
+#### Other editors and CLI
+
+If you're using another editor or want to manually control the dev container from the command line or a script, you'll need to install the [Dev Container CLI](https://www.npmjs.com/package/@devcontainers/cli): `npm install -g @devcontainers/cli`.
+
+To create and start the dev container, in the `bun` repository, locally run:
 
 ```bash
-# devcontainer-build just sets the architecture so if you're on ARM64, it'll do the right thing.
+# `make devcontainer-<command>` should be equivalent to `devcontainer <command>`, it just sets the
+# architecture so if you're on ARM64, it'll do the right thing
+make devcontainer-up
+```
+
+To just build the dev container image, run:
+
+```bash
 make devcontainer-build
 ```
 
-Next, open VS Code in the `bun` repository.
-To open the dev container, open the command palette (Ctrl + Shift + P) and run: `Dev Containers: Reopen in Container`.
+To start a shell inside the container, run:
+
+```bash
+make devcontainer-sh
+
+# if it attaches to the container non-interactively, instead use the regular docker exec command:
+docker exec -it <container-name/id> zsh
+```
+
+#### In the dev container
 
 You will then need to clone the GitHub repository inside that container.
 
@@ -4439,13 +4461,15 @@ Inside the container, run this:
 
 ```bash
 # First time setup
+gh auth login # if it fails to open a browser, use Personal Access Token instead
 gh repo clone oven-sh/bun . -- --depth=1 --progress -j8
-
-# update all submodules except webkit because webkit takes awhile and it's already compiled for you.
-git -c submodule."src/bun.js/WebKit".update=none submodule update --init --recursive --depth=1 --progress
 
 # Compile bun dependencies (zig is already compiled)
 make devcontainer
+
+# It initializes and updates all submodules except webkit, because webkit takes a while and it's already compiled for you.
+# To do it manually, use:
+# git -c submodule."src/bun.js/WebKit".update=none submodule update --init --recursive --depth=1 --progress
 
 # Build bun for development
 make dev

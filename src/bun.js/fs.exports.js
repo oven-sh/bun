@@ -339,7 +339,6 @@ function getLazyReadStream() {
         callback();
         return;
       }
-      // this[readStreamPathFastPathSymbol] = false;
       var { path, flags, mode } = this;
 
       this.#fs.open(path, flags, mode, (er, fd) => {
@@ -696,6 +695,27 @@ function getLazyWriteStream() {
       });
     }
 
+    _construct(callback) {
+      if (typeof this.fd === "number") {
+        callback();
+        return;
+      }
+      // this[readStreamPathFastPathSymbol] = false;
+      var { path, flags, mode } = this;
+
+      this.#fs.open(path, flags, mode, (er, fd) => {
+        if (er) {
+          callback(er);
+          return;
+        }
+
+        this.fd = fd;
+        callback();
+        this.emit("open", this.fd);
+        this.emit("ready");
+      });
+    }
+
     _destroy(err, cb) {
       if (this.fd === null) {
         return cb(err);
@@ -745,7 +765,7 @@ function getLazyWriteStream() {
           chunk.length,
           this.pos,
           (err, bytes) => {
-            ths[kIoDone] = false;
+            this[kIoDone] = false;
             this.#handleWrite(err, bytes);
             this.emit(kIoDone);
 
@@ -754,12 +774,19 @@ function getLazyWriteStream() {
         );
       } else {
         this[kIoDone] = true;
-        this.#fs.write(this.fd, chunk, 0, chunk.length, null, (err, bytes) => {
-          ths[kIoDone] = false;
-          this.#handleWrite(err, bytes);
-          this.emit(kIoDone);
-          !err ? cb() : cb(err);
-        });
+        this.#fs.write(
+          this.fd,
+          chunk,
+          0,
+          chunk.length,
+          null,
+          (err, bytes, buffer) => {
+            this[kIoDone] = false;
+            this.#handleWrite(err, bytes);
+            this.emit(kIoDone);
+            !err ? cb() : cb(err);
+          }
+        );
       }
     }
     _write = this.#internalWrite;

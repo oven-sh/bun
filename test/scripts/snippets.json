@@ -1,7 +1,6 @@
 [
   "/cjs-transform-shouldnt-have-static-imports-in-cjs-function.js",
   "/bundled-entry-point.js",
-  "/simple-lit-example.ts",
   "/export.js",
   "/type-only-imports.ts",
   "/global-is-remapped-to-globalThis.js",
@@ -26,6 +25,7 @@
   "/optional-chain-with-function.js",
   "/template-literal.js",
   "/number-literal-bug.js",
+  "/simple-lit-example.ts",
   "/caught-require.js",
   "/package-json-utf8.js",
   "/multiple-var.js",

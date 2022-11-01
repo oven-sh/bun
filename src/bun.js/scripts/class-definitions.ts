@@ -9,7 +9,8 @@ export type Field =
         return: string;
         args?: [string, string] | [string, string, string] | [string];
       };
-    };
+    }
+  | { internal: true };
 
 export interface ClassDefinition {
   name: string;
@@ -21,7 +22,7 @@ export interface ClassDefinition {
   JSType?: string;
   noConstructor?: boolean;
   estimatedSize?: boolean;
-  isEventEmitter?: boolean;
+  hasPendingActivity?: boolean;
 }
 
 export function define(

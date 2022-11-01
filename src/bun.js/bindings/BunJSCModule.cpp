@@ -70,7 +70,7 @@ JSC_DEFINE_HOST_FUNCTION(functionStartRemoteDebugger, (JSGlobalObject * globalOb
         return JSC::JSValue::encode(JSC::jsUndefined());
     }
 
-    globalObject->setRemoteDebuggingEnabled(true);
+    globalObject->setInspectable(true);
     auto& server = Inspector::RemoteInspectorServer::singleton();
     if (!server.start(reinterpret_cast<const char*>(host), port)) {
         throwVMError(globalObject, scope, createError(globalObject, "Failed to start server \""_s + host + ":"_s + port + "\". Is port already in use?"_s));

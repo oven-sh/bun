@@ -1185,8 +1185,8 @@ pub fn NewApp(comptime ssl: bool) type {
         pub fn constructorFailed(app: *ThisApp) bool {
             return uws_constructor_failed(ssl_flag, app);
         }
-        pub fn num_subscribers(app: *ThisApp, topic: [:0]const u8) c_uint {
-            return uws_num_subscribers(ssl_flag, @ptrCast(*uws_app_t, app), topic);
+        pub fn num_subscribers(app: *ThisApp, topic: []const u8) c_uint {
+            return uws_num_subscribers(ssl_flag, @ptrCast(*uws_app_t, app), topic.ptr, topic.len);
         }
         pub fn publish(app: *ThisApp, topic: []const u8, message: []const u8, opcode: Opcode, compress: bool) bool {
             return uws_publish(ssl_flag, @ptrCast(*uws_app_t, app), topic.ptr, topic.len, message.ptr, message.len, opcode, compress);
@@ -1272,8 +1272,8 @@ pub fn NewApp(comptime ssl: bool) type {
             pub fn getWriteOffset(res: *Response) uintmax_t {
                 return uws_res_get_write_offset(ssl_flag, res.downcast());
             }
-            pub fn setWriteOffset(res: *Response, offset: anytype) void {
-                uws_res_set_write_offset(ssl_flag, res.downcast(), @intCast(uintmax_t, offset));
+            pub fn overrideWriteOffset(res: *Response, offset: anytype) void {
+                uws_res_override_write_offset(ssl_flag, res.downcast(), @intCast(uintmax_t, offset));
             }
             pub fn hasResponded(res: *Response) bool {
                 return uws_res_has_responded(ssl_flag, res.downcast());
@@ -1587,7 +1587,7 @@ extern fn uws_app_listen_with_config(
     user_data: ?*anyopaque,
 ) void;
 extern fn uws_constructor_failed(ssl: i32, app: *uws_app_t) bool;
-extern fn uws_num_subscribers(ssl: i32, app: *uws_app_t, topic: [*c]const u8) c_uint;
+extern fn uws_num_subscribers(ssl: i32, app: *uws_app_t, topic: [*c]const u8, topic_length: usize) c_uint;
 extern fn uws_publish(ssl: i32, app: *uws_app_t, topic: [*c]const u8, topic_length: usize, message: [*c]const u8, message_length: usize, opcode: Opcode, compress: bool) bool;
 extern fn uws_get_native_handle(ssl: i32, app: *uws_app_t) ?*anyopaque;
 extern fn uws_remove_server_name(ssl: i32, app: *uws_app_t, hostname_pattern: [*c]const u8) void;
@@ -1636,7 +1636,7 @@ extern fn uws_res_write_header_int(ssl: i32, res: *uws_res, key: [*c]const u8, k
 extern fn uws_res_end_without_body(ssl: i32, res: *uws_res) void;
 extern fn uws_res_write(ssl: i32, res: *uws_res, data: [*c]const u8, length: usize) bool;
 extern fn uws_res_get_write_offset(ssl: i32, res: *uws_res) uintmax_t;
-extern fn uws_res_set_write_offset(ssl: i32, res: *uws_res, uintmax_t) void;
+extern fn uws_res_override_write_offset(ssl: i32, res: *uws_res, uintmax_t) void;
 extern fn uws_res_has_responded(ssl: i32, res: *uws_res) bool;
 extern fn uws_res_on_writable(ssl: i32, res: *uws_res, handler: ?fn (*uws_res, uintmax_t, ?*anyopaque) callconv(.C) bool, user_data: ?*anyopaque) void;
 extern fn uws_res_on_aborted(ssl: i32, res: *uws_res, handler: ?fn (*uws_res, ?*anyopaque) callconv(.C) void, opcional_data: ?*anyopaque) void;

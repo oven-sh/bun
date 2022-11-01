@@ -33,6 +33,186 @@ var __copyProps = (to, from, except, desc) => {
 
 var runOnNextTick = process.nextTick;
 
+/**
+ * @param {ReadableStream} readableStream
+ * @param {{
+ *   highWaterMark? : number,
+ *   encoding? : string,
+ *   objectMode? : boolean,
+ *   signal? : AbortSignal,
+ * }} [options]
+ * @returns {Readable}
+ */
+function newStreamReadableFromReadableStream(readableStream, options = {}) {
+  if (!isReadableStream(readableStream)) {
+    throw new ERR_INVALID_ARG_TYPE(
+      "readableStream",
+      "ReadableStream",
+      readableStream
+    );
+  }
+
+  validateObject(options, "options");
+  const { highWaterMark, encoding, objectMode = false, signal } = options;
+
+  if (encoding !== undefined && !Buffer.isEncoding(encoding))
+    throw new ERR_INVALID_ARG_VALUE(encoding, "options.encoding");
+  validateBoolean(objectMode, "options.objectMode");
+
+  const reader = readableStream.getReader();
+
+  let closed = false;
+
+  const readable = new Readable({
+    objectMode,
+    highWaterMark,
+    encoding,
+    signal,
+
+    read() {
+      reader
+        .read()
+        .then((chunk) => {
+          if (chunk.done) {
+            // Value should always be undefined here.
+            readable.push(null);
+          } else {
+            readable.push(chunk.value);
+          }
+        })
+        .catch((error) => destroy(readable, error));
+    },
+    destroy(error, callback) {
+      function done() {
+        try {
+          callback(error);
+        } catch (error) {
+          // In a next tick because this is happening within
+          // a promise context, and if there are any errors
+          // thrown we don't want those to cause an unhandled
+          // rejection. Let's just escape the promise and
+          // handle it separately.
+          process.nextTick(() => {
+            throw error;
+          });
+        }
+      }
+
+      if (!closed) {
+        reader.cancel(error).then(done).catch(done);
+        return;
+      }
+      done();
+    },
+    // NOTE(Derrick): For whatever reason this seems to be necessary to make this work
+    // I couldn't find out why .constructed was getting set to false
+    // even though construct() was getting called
+    construct() {
+      this._readableState.constructed = true;
+    },
+  });
+
+  reader.closed
+    .then(() => {
+      closed = true;
+    })
+    .catch((error) => {
+      closed = true;
+      reader.destroy(readable, error);
+    });
+
+  return readable;
+}
+
+function isReadableStream(value) {
+  return value instanceof ReadableStream;
+}
+
+function validateBoolean(value, name) {
+  if (typeof value !== "boolean")
+    throw new ERR_INVALID_ARG_TYPE(name, "boolean", value);
+}
+
+/**
+ * @callback validateObject
+ * @param {*} value
+ * @param {string} name
+ * @param {{
+ *   allowArray?: boolean,
+ *   allowFunction?: boolean,
+ *   nullable?: boolean
+ * }} [options]
+ */
+
+/** @type {validateObject} */
+const validateObject = (value, name, options = null) => {
+  // const validateObject = hideStackFrames((value, name, options = null) => {
+  const allowArray = getOwnPropertyValueOrDefault(options, "allowArray", false);
+  const allowFunction = getOwnPropertyValueOrDefault(
+    options,
+    "allowFunction",
+    false
+  );
+  const nullable = getOwnPropertyValueOrDefault(options, "nullable", false);
+  if (
+    (!nullable && value === null) ||
+    (!allowArray && ArrayIsArray(value)) ||
+    (typeof value !== "object" &&
+      (!allowFunction || typeof value !== "function"))
+  ) {
+    throw new ERR_INVALID_ARG_TYPE(name, "Object", value);
+  }
+};
+
+/**
+ * @callback validateString
+ * @param {*} value
+ * @param {string} name
+ * @returns {asserts value is string}
+ */
+
+/** @type {validateString} */
+function validateString(value, name) {
+  if (typeof value !== "string")
+    throw new ERR_INVALID_ARG_TYPE(name, "string", value);
+}
+
+/**
+ * @param {?object} options
+ * @param {string} key
+ * @param {boolean} defaultValue
+ * @returns {boolean}
+ */
+function getOwnPropertyValueOrDefault(options, key, defaultValue) {
+  return options == null || !ObjectPrototypeHasOwnProperty(options, key)
+    ? defaultValue
+    : options[key];
+}
+
+function ObjectPrototypeHasOwnProperty(obj, prop) {
+  return Object.prototype.hasOwnProperty.call(obj, prop);
+}
+
+function ArrayIsArray(arg) {
+  return Array.isArray(arg);
+}
+
+//------------------------------------------------------------------------------
+// Node error polyfills
+//------------------------------------------------------------------------------
+
+function ERR_INVALID_ARG_TYPE(name, type, value) {
+  return new Error(
+    `The argument '${name}' is invalid. Received '${value}' for type '${type}'`
+  );
+}
+
+function ERR_INVALID_ARG_VALUE(name, value, reason) {
+  return new Error(
+    `The value '${value}' is invalid for argument '${name}'. Reason: ${reason}`
+  );
+}
+
 // node_modules/readable-stream/lib/ours/primordials.js
 var require_primordials = __commonJS({
   "node_modules/readable-stream/lib/ours/primordials.js"(exports, module) {
@@ -2509,7 +2689,9 @@ var require_readable = __commonJS({
         const state = this._readableState;
         if (ev === "data") {
           state.readableListening = this.listenerCount("readable") > 0;
-          if (state.flowing !== false) this.resume();
+          if (state.flowing !== false) {
+            this.resume();
+          }
         } else if (ev === "readable") {
           if (!state.endEmitted && !state.readableListening) {
             state.readableListening = state.needReadable = true;
@@ -3327,7 +3509,9 @@ var require_readable = __commonJS({
     Readable.from = function (iterable, opts) {
       return from(Readable, iterable, opts);
     };
-    var webStreamsAdapters;
+    var webStreamsAdapters = {
+      newStreamReadableFromReadableStream,
+    };
     function lazyWebStreams() {
       if (webStreamsAdapters === void 0) webStreamsAdapters = {};
       return webStreamsAdapters;

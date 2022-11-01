@@ -8,15 +8,24 @@ const { Readable } = import.meta.require("node:stream");
 // 4. ChildProcess helpers
 // 5. Validators
 // 6. Node error polyfills
-// 7. Node stream polyfills
 
 // TODO:
+// Add stdin support
+// Add timeout support
+// Add encoding support
+// Check if Bun.spawn launches a shell
 // IPC support
 // Add more tests
 // Implement various stdio options
 // Finish getValidStdio
 // Make sure flushStdio is working
 // Finish normalizing spawn args
+
+// From node child_process docs(https://nodejs.org/api/child_process.html#optionsstdio):
+// 'ipc': Create an IPC channel for passing messages/file descriptors between parent and child.
+// A ChildProcess may have at most one IPC stdio file descriptor. Setting this option enables the subprocess.send() method.
+// If the child is a Node.js process, the presence of an IPC channel will enable process.send() and process.disconnect() methods,
+// as well as 'disconnect' and 'message' events within the child.
 
 //------------------------------------------------------------------------------
 // Section 1. Exported child_process functions
@@ -317,6 +326,10 @@ function normalizeSpawnArguments(file, args, options) {
 // Section 3. ChildProcess class
 //------------------------------------------------------------------------------
 
+// TODO:
+// AFTER IPC
+// `disconnect` event
+// `message` event
 export class ChildProcess extends EventEmitter {
   constructor() {
     super();
@@ -345,6 +358,8 @@ export class ChildProcess extends EventEmitter {
     this._error = null;
     this._maxListeners = undefined;
     this._exited = false;
+
+    this._handleOnExit = this._handleOnExit.bind(this);
   }
 
   _handleOnExit(exitCode, signalCode) {
@@ -424,16 +439,18 @@ export class ChildProcess extends EventEmitter {
       stdin: "pipe", // TODO: Unhardcode
       stdout: "pipe", // TODO: Unhardcode
       stderr: "pipe", // TODO: Unhardcode
-      onExit: this._handleOnExit.bind(this),
+      onExit: this._handleOnExit,
     });
-    // NOTE: We need these for supporting the `ChildProcess` EventEmitter-style API for pipes
-    // There may be a better way to do this...
-    this.stdout = newStreamReadableFromReadableStream(this._handle.stdout, {
+
+    this.stdout = Readable.fromWeb(this._handle.stdout, {
       encoding: "utf8",
     });
-    this.stderr = newStreamReadableFromReadableStream(this._handle.stderr, {
+    this.stderr = Readable.fromWeb(this._handle.stderr, {
       encoding: "utf8",
     });
+    // Put the readables into flowing mode by default...
+    // This only means that when you connect an on('data') handler,
+    // that they will automatically start receiving data events
     // const err = this._handle.spawn(options);
     process.nextTick(onSpawnNT, this);
 
@@ -515,6 +532,40 @@ export class ChildProcess extends EventEmitter {
     this.killed = true;
     this.emit("exit", null, signal);
     maybeClose(this);
+
+    // const signal =
+    //   sig === 0
+    //     ? sig
+    //     : convertToValidSignal(sig === undefined ? "SIGTERM" : sig);
+
+    // if (this._handle) {
+    //   const err = this._handle.kill(signal);
+    //   if (err === 0) {
+    //     /* Success. */
+    //     this.killed = true;
+    //     return true;
+    //   }
+    //   if (err === UV_ESRCH) {
+    //     /* Already dead. */
+    //   } else if (err === UV_EINVAL || err === UV_ENOSYS) {
+    //     /* The underlying platform doesn't support this signal. */
+    //     throw errnoException(err, 'kill');
+    //   } else {
+    //     /* Other error, almost certainly EPERM. */
+    //     this.emit('error', errnoException(err, 'kill'));
+    //   }
+    // }
+
+    // /* Kill didn't succeed. */
+    // return false;
+  }
+
+  ref() {
+    if (this._handle) this._handle.ref();
+  }
+
+  unref() {
+    if (this._handle) this._handle.unref();
   }
 }
 
@@ -882,109 +933,6 @@ function ERR_INVALID_ARG_VALUE(name, value, reason) {
 // TODO: Add actual proper error implementation here
 function errnoException(err, name) {
   return new Error(`Error: ${name}. Internal error: ${err.message}`);
-}
-
-//------------------------------------------------------------------------------
-// 7. Node stream polyfills
-//------------------------------------------------------------------------------
-Readable.prototype.on = function (event, listener) {
-  EventEmitter.prototype.on.call(this, event, listener);
-  if (event === "data") {
-    this._readableState.flowing = true;
-    this._read();
-  }
-};
-/**
- * @param {ReadableStream} readableStream
- * @param {{
- *   highWaterMark? : number,
- *   encoding? : string,
- *   objectMode? : boolean,
- *   signal? : AbortSignal,
- * }} [options]
- * @returns {Readable}
- */
-export function newStreamReadableFromReadableStream(
-  readableStream,
-  options = {}
-) {
-  if (!isReadableStream(readableStream)) {
-    throw new ERR_INVALID_ARG_TYPE(
-      "readableStream",
-      "ReadableStream",
-      readableStream
-    );
-  }
-
-  validateObject(options, "options");
-  const { highWaterMark, encoding, objectMode = false, signal } = options;
-
-  if (encoding !== undefined && !Buffer.isEncoding(encoding))
-    throw new ERR_INVALID_ARG_VALUE(encoding, "options.encoding");
-  validateBoolean(objectMode, "options.objectMode");
-
-  const reader = readableStream.getReader();
-
-  let closed = false;
-
-  const readable = new Readable({
-    objectMode,
-    highWaterMark,
-    encoding,
-    signal,
-
-    read() {
-      reader
-        .read()
-        .then((chunk) => {
-          if (chunk.done) {
-            // Value should always be undefined here.
-            readable.push(null);
-          } else {
-            readable.push(chunk.value);
-          }
-        })
-        .catch((error) => destroy(readable, error));
-    },
-
-    destroy(error, callback) {
-      function done() {
-        try {
-          callback(error);
-        } catch (error) {
-          // In a next tick because this is happening within
-          // a promise context, and if there are any errors
-          // thrown we don't want those to cause an unhandled
-          // rejection. Let's just escape the promise and
-          // handle it separately.
-          process.nextTick(() => {
-            throw error;
-          });
-        }
-      }
-
-      if (!closed) {
-        reader.cancel(error).then(done).catch(done);
-        return;
-      }
-      done();
-    },
-  });
-
-  reader.closed
-    .then(() => {
-      closed = true;
-    })
-    .catch((error) => {
-      closed = true;
-      destroy(readable, error);
-    });
-
-  return readable;
-}
-
-function isReadableStream(value) {
-  return value instanceof ReadableStream;
 }
 
 export default {

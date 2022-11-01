@@ -854,15 +854,15 @@ clone-submodules:
 	git -c submodule."src/bun.js/WebKit".update=none submodule update --init --recursive --depth=1 --progress
 
 .PHONY: devcontainer
-devcontainer: $(OBJ_DIR) $(DEBUG_OBJ_DIR) clone-submodules libbacktrace mimalloc zlib libarchive boringssl picohttp identifier-cache node-fallbacks npm-install api analytics bun_error fallback_decoder bindings uws lolhtml usockets base64 tinycc runtime_js_dev sqlite oniguruma webcrypto-debug webcrypto dev 
+devcontainer: $(OBJ_DIR) $(DEBUG_OBJ_DIR) clone-submodules libbacktrace mimalloc zlib libarchive boringssl picohttp identifier-cache node-fallbacks npm-install api analytics bun_error fallback_decoder bindings uws lolhtml usockets base64 tinycc runtime_js_dev sqlite oniguruma webcrypto-debug webcrypto
 
 .PHONY: devcontainer-build
 devcontainer-build:
 	DOCKER_BUILDARCH="$(DOCKER_BUILDARCH)" devcontainer build --workspace-folder .
 
-.PHONY: devcontainer-open
-devcontainer-open:
-	DOCKER_BUILDARCH="$(DOCKER_BUILDARCH)" devcontainer open
+.PHONY: devcontainer-up
+devcontainer-up:
+	DOCKER_BUILDARCH="$(DOCKER_BUILDARCH)" devcontainer up --workspace-folder .
 
 CLANG_FORMAT := $(shell command -v clang-format 2> /dev/null)
 

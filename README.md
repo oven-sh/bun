@@ -4444,6 +4444,15 @@ To just build the dev container image, run:
 make devcontainer-build
 ```
 
+To start a shell inside the container, run:
+
+```bash
+make devcontainer-sh
+
+# if it attaches to the container non-interactively, instead use the regular docker exec command:
+docker exec -it <container-name/id> zsh
+```
+
 #### In the dev container
 
 You will then need to clone the GitHub repository inside that container.

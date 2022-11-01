@@ -1,6 +1,6 @@
 /**
  * @license React
- * react-dom-server.bun.development.js
+ * react-dom-server.bun.production.js
  *
  * Copyright (c) Meta Platforms, Inc. and affiliates.
  *
@@ -9,10 +9,10 @@
  */
 
 import {
-  __SECRET_INTERNALS_DO_NOT_USE_OR_YOU_WILL_BE_FIRED,
   Children,
+  __SECRET_INTERNALS_DO_NOT_USE_OR_YOU_WILL_BE_FIRED as __SECRET_INTERNALS_DO_NOT_USE_OR_YOU_WILL_BE_FIRED$1,
 } from 'react';
-import {__SECRET_INTERNALS_DO_NOT_USE_OR_YOU_WILL_BE_FIRED as __SECRET_INTERNALS_DO_NOT_USE_OR_YOU_WILL_BE_FIRED$1} from 'react-dom';
+import {__SECRET_INTERNALS_DO_NOT_USE_OR_YOU_WILL_BE_FIRED} from 'react-dom';
 
 // TODO: this is special because it gets imported during build.
 //
@@ -24,79 +24,9 @@ import {__SECRET_INTERNALS_DO_NOT_USE_OR_YOU_WILL_BE_FIRED as __SECRET_INTERNALS
 // process, and use the ReactVersions.js module as the single source of truth.
 var ReactVersion = '18.2.0';
 
-var ReactSharedInternals = __SECRET_INTERNALS_DO_NOT_USE_OR_YOU_WILL_BE_FIRED;
-
-// by calls to these methods by a Babel plugin.
-//
-// In PROD (or in packages without access to React internals),
-// they are left as they are instead.
-
-function warn(format) {
-  {
-    {
-      for (
-        var _len = arguments.length,
-          args = new Array(_len > 1 ? _len - 1 : 0),
-          _key = 1;
-        _key < _len;
-        _key++
-      ) {
-        args[_key - 1] = arguments[_key];
-      }
-
-      printWarning('warn', format, args);
-    }
-  }
-}
-function error(format) {
-  {
-    {
-      for (
-        var _len2 = arguments.length,
-          args = new Array(_len2 > 1 ? _len2 - 1 : 0),
-          _key2 = 1;
-        _key2 < _len2;
-        _key2++
-      ) {
-        args[_key2 - 1] = arguments[_key2];
-      }
-
-      printWarning('error', format, args);
-    }
-  }
-}
-
-function printWarning(level, format, args) {
-  // When changing this logic, you might want to also
-  // update consoleWithStackDev.www.js as well.
-  {
-    var ReactDebugCurrentFrame = ReactSharedInternals.ReactDebugCurrentFrame;
-    var stack = ReactDebugCurrentFrame.getStackAddendum();
-
-    if (stack !== '') {
-      format += '%s';
-      args = args.concat([stack]);
-    } // eslint-disable-next-line react-internal/safe-string-coercion
-
-    var argsWithFormat = args.map(function (item) {
-      return String(item);
-    }); // Careful: RN currently depends on this prefix
-
-    argsWithFormat.unshift('Warning: ' + format); // We intentionally don't use spread (or .apply) directly because it
-    // breaks IE9: https://github.com/facebook/react/issues/13610
-    // eslint-disable-next-line react-internal/no-production-logging
-
-    Function.prototype.apply.call(console[level], console, argsWithFormat);
-  }
-}
-
 function scheduleWork(callback) {
   callback();
 }
-// TODO: Move this to some special WinterCG build.
-
-var supportsRequestStorage = typeof AsyncLocalStorage === 'function';
-var requestStorage = supportsRequestStorage ? new AsyncLocalStorage() : null;
 function beginWriting(destination) {}
 function writeChunk(destination, chunk) {
   if (chunk.length === 0) {
@@ -134,154 +64,51 @@ function closeWithError(destination, error) {
   }
 }
 
-/*
- * The `'' + value` pattern (used in perf-sensitive code) throws for Symbol
- * and Temporal.* types. See https://github.com/facebook/react/pull/22064.
- *
- * The functions in this module will throw an easier-to-understand,
- * easier-to-debug exception with a clear errors message message explaining the
- * problem. (Instead of a confusing exception thrown inside the implementation
- * of the `value` object).
- */
-// $FlowFixMe only called in DEV, so void return is not possible.
-function typeName(value) {
-  {
-    // toStringTag is needed for namespaced types like Temporal.Instant
-    var hasToStringTag = typeof Symbol === 'function' && Symbol.toStringTag;
-    var type =
-      (hasToStringTag && value[Symbol.toStringTag]) ||
-      value.constructor.name ||
-      'Object'; // $FlowFixMe
-
-    return type;
-  }
-} // $FlowFixMe only called in DEV, so void return is not possible.
-
-function willCoercionThrow(value) {
-  {
-    try {
-      testStringCoercion(value);
-      return false;
-    } catch (e) {
-      return true;
-    }
-  }
-}
-
-function testStringCoercion(value) {
-  // If you ended up here by following an exception call stack, here's what's
-  // happened: you supplied an object or symbol value to React (as a prop, key,
-  // DOM attribute, CSS property, string ref, etc.) and when React tried to
-  // coerce it to a string using `'' + value`, an exception was thrown.
-  //
-  // The most common types that will cause this exception are `Symbol` instances
-  // and Temporal objects like `Temporal.Instant`. But any object that has a
-  // `valueOf` or `[Symbol.toPrimitive]` method that throws will also cause this
-  // exception. (Library authors do this to prevent users from using built-in
-  // numeric operators like `+` or comparison operators like `>=` because custom
-  // methods are needed to perform accurate arithmetic or comparison.)
-  //
-  // To fix the problem, coerce this object or symbol value to a string before
-  // passing it to React. The most reliable way is usually `String(value)`.
-  //
-  // To find which value is throwing, check the browser or debugger console.
-  // Before this exception was thrown, there should be `console.error` output
-  // that shows the type (Symbol, Temporal.PlainDate, etc.) that caused the
-  // problem and how that type was used: key, atrribute, input value prop, etc.
-  // In most cases, this console output also shows the component and its
-  // ancestor components where the exception happened.
-  //
-  // eslint-disable-next-line react-internal/safe-string-coercion
-  return '' + value;
-}
-
-function checkAttributeStringCoercion(value, attributeName) {
-  {
-    if (willCoercionThrow(value)) {
-      error(
-        'The provided `%s` attribute is an unsupported type %s.' +
-          ' This value must be coerced to a string before before using it here.',
-        attributeName,
-        typeName(value)
-      );
-
-      return testStringCoercion(value); // throw (to help callers find troubleshooting comments)
-    }
-  }
-}
-function checkCSSPropertyStringCoercion(value, propName) {
-  {
-    if (willCoercionThrow(value)) {
-      error(
-        'The provided `%s` CSS property is an unsupported type %s.' +
-          ' This value must be coerced to a string before before using it here.',
-        propName,
-        typeName(value)
-      );
-
-      return testStringCoercion(value); // throw (to help callers find troubleshooting comments)
-    }
-  }
-}
-function checkHtmlStringCoercion(value) {
-  {
-    if (willCoercionThrow(value)) {
-      error(
-        'The provided HTML markup uses a value of unsupported type %s.' +
-          ' This value must be coerced to a string before before using it here.',
-        typeName(value)
-      );
-
-      return testStringCoercion(value); // throw (to help callers find troubleshooting comments)
-    }
-  }
-}
-
 // -----------------------------------------------------------------------------
-var enableFloat = true; // When a node is unmounted, recurse into the Fiber subtree and clean out
+const enableFloat = true; // When a node is unmounted, recurse into the Fiber subtree and clean out
 
 // $FlowFixMe[method-unbinding]
-var hasOwnProperty = Object.prototype.hasOwnProperty;
+const hasOwnProperty = Object.prototype.hasOwnProperty;
 
 // A reserved attribute.
 // It is handled by React separately and shouldn't be written to the DOM.
-var RESERVED = 0; // A simple string attribute.
+const RESERVED = 0; // A simple string attribute.
 // Attributes that aren't in the filter are presumed to have this type.
 
-var STRING = 1; // A string attribute that accepts booleans in React. In HTML, these are called
+const STRING = 1; // A string attribute that accepts booleans in React. In HTML, these are called
 // "enumerated" attributes with "true" and "false" as possible values.
 // When true, it should be set to a "true" string.
 // When false, it should be set to a "false" string.
 
-var BOOLEANISH_STRING = 2; // A real boolean attribute.
+const BOOLEANISH_STRING = 2; // A real boolean attribute.
 // When true, it should be present (set either to an empty string or its name).
 // When false, it should be omitted.
 
-var BOOLEAN = 3; // An attribute that can be used as a flag as well as with a value.
+const BOOLEAN = 3; // An attribute that can be used as a flag as well as with a value.
 // When true, it should be present (set either to an empty string or its name).
 // When false, it should be omitted.
 // For any other value, should be present with that value.
 
-var OVERLOADED_BOOLEAN = 4; // An attribute that must be numeric or parse as a numeric.
+const OVERLOADED_BOOLEAN = 4; // An attribute that must be numeric or parse as a numeric.
 // When falsy, it should be removed.
 
-var NUMERIC = 5; // An attribute that must be positive numeric or parse as a positive numeric.
+const NUMERIC = 5; // An attribute that must be positive numeric or parse as a positive numeric.
 // When falsy, it should be removed.
 
-var POSITIVE_NUMERIC = 6;
+const POSITIVE_NUMERIC = 6;
 
 /* eslint-disable max-len */
-var ATTRIBUTE_NAME_START_CHAR =
+const ATTRIBUTE_NAME_START_CHAR =
   ':A-Z_a-z\\u00C0-\\u00D6\\u00D8-\\u00F6\\u00F8-\\u02FF\\u0370-\\u037D\\u037F-\\u1FFF\\u200C-\\u200D\\u2070-\\u218F\\u2C00-\\u2FEF\\u3001-\\uD7FF\\uF900-\\uFDCF\\uFDF0-\\uFFFD';
 /* eslint-enable max-len */
 
-var ATTRIBUTE_NAME_CHAR =
+const ATTRIBUTE_NAME_CHAR =
   ATTRIBUTE_NAME_START_CHAR + '\\-.0-9\\u00B7\\u0300-\\u036F\\u203F-\\u2040';
-var VALID_ATTRIBUTE_NAME_REGEX = new RegExp(
+const VALID_ATTRIBUTE_NAME_REGEX = new RegExp(
   '^[' + ATTRIBUTE_NAME_START_CHAR + '][' + ATTRIBUTE_NAME_CHAR + ']*$'
 );
-var illegalAttributeNameCache = {};
-var validatedAttributeNameCache = {};
+const illegalAttributeNameCache = {};
+const validatedAttributeNameCache = {};
 function isAttributeNameSafe(attributeName) {
   if (hasOwnProperty.call(validatedAttributeNameCache, attributeName)) {
     return true;
@@ -298,44 +125,7 @@ function isAttributeNameSafe(attributeName) {
 
   illegalAttributeNameCache[attributeName] = true;
 
-  {
-    error('Invalid attribute name: `%s`', attributeName);
-  }
-
   return false;
-}
-function shouldRemoveAttributeWithWarning(
-  name,
-  value,
-  propertyInfo,
-  isCustomComponentTag
-) {
-  if (propertyInfo !== null && propertyInfo.type === RESERVED) {
-    return false;
-  }
-
-  switch (typeof value) {
-    case 'function':
-    case 'symbol':
-      // eslint-disable-line
-      return true;
-
-    case 'boolean': {
-      if (isCustomComponentTag) {
-        return false;
-      }
-
-      if (propertyInfo !== null) {
-        return !propertyInfo.acceptsBooleans;
-      } else {
-        var prefix = name.toLowerCase().slice(0, 5);
-        return prefix !== 'data-' && prefix !== 'aria-';
-      }
-    }
-
-    default:
-      return false;
-  }
 }
 function getPropertyInfo(name) {
   return properties.hasOwnProperty(name) ? properties[name] : null;
@@ -365,9 +155,9 @@ function PropertyInfoRecord(
 // the `possibleStandardNames` module to ensure casing and incorrect
 // name warnings.
 
-var properties = {}; // These props are reserved by React. They shouldn't be written to the DOM.
+const properties = {}; // These props are reserved by React. They shouldn't be written to the DOM.
 
-var reservedProps = [
+const reservedProps = [
   'children',
   'dangerouslySetInnerHTML', // TODO: This prevents the assignment of defaultValue to regular
   // elements (not just inputs). Now that ReactDOMInput assigns to the
@@ -384,7 +174,7 @@ var reservedProps = [
   reservedProps.push('innerText', 'textContent');
 }
 
-reservedProps.forEach(function (name) {
+reservedProps.forEach((name) => {
   // $FlowFixMe[invalid-constructor] Flow no longer supports calling new on functions
   properties[name] = new PropertyInfoRecord(
     name,
@@ -403,8 +193,8 @@ reservedProps.forEach(function (name) {
   ['className', 'class'],
   ['htmlFor', 'for'],
   ['httpEquiv', 'http-equiv'],
-].forEach(function (_ref) {
-  var name = _ref[0],
+].forEach((_ref) => {
+  let name = _ref[0],
     attributeName = _ref[1];
   // $FlowFixMe[invalid-constructor] Flow no longer supports calling new on functions
   properties[name] = new PropertyInfoRecord(
@@ -420,9 +210,7 @@ reservedProps.forEach(function (name) {
 // In React, we let users pass `true` and `false` even though technically
 // these aren't boolean attributes (they are coerced to strings).
 
-['contentEditable', 'draggable', 'spellCheck', 'value'].forEach(function (
-  name
-) {
+['contentEditable', 'draggable', 'spellCheck', 'value'].forEach((name) => {
   // $FlowFixMe[invalid-constructor] Flow no longer supports calling new on functions
   properties[name] = new PropertyInfoRecord(
     name,
@@ -443,7 +231,7 @@ reservedProps.forEach(function (name) {
   'externalResourcesRequired',
   'focusable',
   'preserveAlpha',
-].forEach(function (name) {
+].forEach((name) => {
   // $FlowFixMe[invalid-constructor] Flow no longer supports calling new on functions
   properties[name] = new PropertyInfoRecord(
     name,
@@ -481,7 +269,7 @@ reservedProps.forEach(function (name) {
   'scoped',
   'seamless', // Microdata
   'itemScope',
-].forEach(function (name) {
+].forEach((name) => {
   // $FlowFixMe[invalid-constructor] Flow no longer supports calling new on functions
   properties[name] = new PropertyInfoRecord(
     name,
@@ -503,7 +291,7 @@ reservedProps.forEach(function (name) {
   'selected', // NOTE: if you add a camelCased prop to this list,
   // you'll need to set attributeName to name.toLowerCase()
   // instead in the assignment below.
-].forEach(function (name) {
+].forEach((name) => {
   // $FlowFixMe[invalid-constructor] Flow no longer supports calling new on functions
   properties[name] = new PropertyInfoRecord(
     name,
@@ -522,7 +310,7 @@ reservedProps.forEach(function (name) {
   'download', // NOTE: if you add a camelCased prop to this list,
   // you'll need to set attributeName to name.toLowerCase()
   // instead in the assignment below.
-].forEach(function (name) {
+].forEach((name) => {
   // $FlowFixMe[invalid-constructor] Flow no longer supports calling new on functions
   properties[name] = new PropertyInfoRecord(
     name,
@@ -542,7 +330,7 @@ reservedProps.forEach(function (name) {
   'span', // NOTE: if you add a camelCased prop to this list,
   // you'll need to set attributeName to name.toLowerCase()
   // instead in the assignment below.
-].forEach(function (name) {
+].forEach((name) => {
   // $FlowFixMe[invalid-constructor] Flow no longer supports calling new on functions
   properties[name] = new PropertyInfoRecord(
     name,
@@ -555,7 +343,7 @@ reservedProps.forEach(function (name) {
   );
 }); // These are HTML attributes that must be numbers.
 
-['rowSpan', 'start'].forEach(function (name) {
+['rowSpan', 'start'].forEach((name) => {
   // $FlowFixMe[invalid-constructor] Flow no longer supports calling new on functions
   properties[name] = new PropertyInfoRecord(
     name,
@@ -567,11 +355,9 @@ reservedProps.forEach(function (name) {
     false
   );
 });
-var CAMELIZE = /[\-\:]([a-z])/g;
+const CAMELIZE = /[\-\:]([a-z])/g;
 
-var capitalize = function (token) {
-  return token[1].toUpperCase();
-}; // This is a list of all SVG attributes that need special casing, namespacing,
+const capitalize = (token) => token[1].toUpperCase(); // This is a list of all SVG attributes that need special casing, namespacing,
 // or boolean value assignment. Regular attributes that just accept strings
 // and have the same names are omitted, just like in the HTML attribute filter.
 // Some of these attributes can be hard to find. This list was created by
@@ -653,8 +439,8 @@ var capitalize = function (token) {
   'x-height', // NOTE: if you add a camelCased prop to this list,
   // you'll need to set attributeName to name.toLowerCase()
   // instead in the assignment below.
-].forEach(function (attributeName) {
-  var name = attributeName.replace(CAMELIZE, capitalize); // $FlowFixMe[invalid-constructor] Flow no longer supports calling new on functions
+].forEach((attributeName) => {
+  const name = attributeName.replace(CAMELIZE, capitalize); // $FlowFixMe[invalid-constructor] Flow no longer supports calling new on functions
 
   properties[name] = new PropertyInfoRecord(
     name,
@@ -676,8 +462,8 @@ var capitalize = function (token) {
   'xlink:type', // NOTE: if you add a camelCased prop to this list,
   // you'll need to set attributeName to name.toLowerCase()
   // instead in the assignment below.
-].forEach(function (attributeName) {
-  var name = attributeName.replace(CAMELIZE, capitalize); // $FlowFixMe[invalid-constructor] Flow no longer supports calling new on functions
+].forEach((attributeName) => {
+  const name = attributeName.replace(CAMELIZE, capitalize); // $FlowFixMe[invalid-constructor] Flow no longer supports calling new on functions
 
   properties[name] = new PropertyInfoRecord(
     name,
@@ -696,8 +482,8 @@ var capitalize = function (token) {
   'xml:space', // NOTE: if you add a camelCased prop to this list,
   // you'll need to set attributeName to name.toLowerCase()
   // instead in the assignment below.
-].forEach(function (attributeName) {
-  var name = attributeName.replace(CAMELIZE, capitalize); // $FlowFixMe[invalid-constructor] Flow no longer supports calling new on functions
+].forEach((attributeName) => {
+  const name = attributeName.replace(CAMELIZE, capitalize); // $FlowFixMe[invalid-constructor] Flow no longer supports calling new on functions
 
   properties[name] = new PropertyInfoRecord(
     name,
@@ -712,7 +498,7 @@ var capitalize = function (token) {
 // The attribute name is case-sensitive in SVG so we can't just use
 // the React name like we do for attributes that exist only in HTML.
 
-['tabIndex', 'crossOrigin'].forEach(function (attributeName) {
+['tabIndex', 'crossOrigin'].forEach((attributeName) => {
   // $FlowFixMe[invalid-constructor] Flow no longer supports calling new on functions
   properties[attributeName] = new PropertyInfoRecord(
     attributeName,
@@ -726,7 +512,7 @@ var capitalize = function (token) {
 }); // These attributes accept URLs. These must not allow javascript: URLS.
 // These will also need to accept Trusted Types object in the future.
 
-var xlinkHref = 'xlinkHref'; // $FlowFixMe[invalid-constructor] Flow no longer supports calling new on functions
+const xlinkHref = 'xlinkHref'; // $FlowFixMe[invalid-constructor] Flow no longer supports calling new on functions
 
 properties[xlinkHref] = new PropertyInfoRecord(
   'xlinkHref',
@@ -737,7 +523,7 @@ properties[xlinkHref] = new PropertyInfoRecord(
   true, // sanitizeURL
   false
 );
-['src', 'href', 'action', 'formAction'].forEach(function (attributeName) {
+['src', 'href', 'action', 'formAction'].forEach((attributeName) => {
   // $FlowFixMe[invalid-constructor] Flow no longer supports calling new on functions
   properties[attributeName] = new PropertyInfoRecord(
     attributeName,
@@ -753,7 +539,7 @@ properties[xlinkHref] = new PropertyInfoRecord(
 /**
  * CSS properties which accept numbers but are not in units of "px".
  */
-var isUnitlessNumber = {
+const isUnitlessNumber = {
   animationIterationCount: true,
   aspectRatio: true,
   borderImageOutset: true,
@@ -814,7 +600,7 @@ function prefixKey(prefix, key) {
  * of vendor prefixes.
  */
 
-var prefixes = ['Webkit', 'ms', 'Moz', 'O']; // Using Object.keys here, or else the vanilla for-in loop makes IE8 go into an
+const prefixes = ['Webkit', 'ms', 'Moz', 'O']; // Using Object.keys here, or else the vanilla for-in loop makes IE8 go into an
 // infinite loop, because it iterates over the newly added props too.
 
 Object.keys(isUnitlessNumber).forEach(function (prop) {
@@ -823,1162 +609,8 @@ Object.keys(isUnitlessNumber).forEach(function (prop) {
   });
 });
 
-var hasReadOnlyValue = {
-  button: true,
-  checkbox: true,
-  image: true,
-  hidden: true,
-  radio: true,
-  reset: true,
-  submit: true,
-};
-function checkControlledValueProps(tagName, props) {
-  {
-    if (
-      !(
-        hasReadOnlyValue[props.type] ||
-        props.onChange ||
-        props.onInput ||
-        props.readOnly ||
-        props.disabled ||
-        props.value == null
-      )
-    ) {
-      error(
-        'You provided a `value` prop to a form field without an ' +
-          '`onChange` handler. This will render a read-only field. If ' +
-          'the field should be mutable use `defaultValue`. Otherwise, ' +
-          'set either `onChange` or `readOnly`.'
-      );
-    }
-
-    if (
-      !(
-        props.onChange ||
-        props.readOnly ||
-        props.disabled ||
-        props.checked == null
-      )
-    ) {
-      error(
-        'You provided a `checked` prop to a form field without an ' +
-          '`onChange` handler. This will render a read-only field. If ' +
-          'the field should be mutable use `defaultChecked`. Otherwise, ' +
-          'set either `onChange` or `readOnly`.'
-      );
-    }
-  }
-}
-
-function isCustomComponent(tagName, props) {
-  if (tagName.indexOf('-') === -1) {
-    return typeof props.is === 'string';
-  }
-
-  switch (tagName) {
-    // These are reserved SVG and MathML elements.
-    // We don't mind this list too much because we expect it to never grow.
-    // The alternative is to track the namespace in a few places which is convoluted.
-    // https://w3c.github.io/webcomponents/spec/custom/#custom-elements-core-concepts
-    case 'annotation-xml':
-    case 'color-profile':
-    case 'font-face':
-    case 'font-face-src':
-    case 'font-face-uri':
-    case 'font-face-format':
-    case 'font-face-name':
-    case 'missing-glyph':
-      return false;
-
-    default:
-      return true;
-  }
-}
-
-var ariaProperties = {
-  'aria-current': 0,
-  // state
-  'aria-description': 0,
-  'aria-details': 0,
-  'aria-disabled': 0,
-  // state
-  'aria-hidden': 0,
-  // state
-  'aria-invalid': 0,
-  // state
-  'aria-keyshortcuts': 0,
-  'aria-label': 0,
-  'aria-roledescription': 0,
-  // Widget Attributes
-  'aria-autocomplete': 0,
-  'aria-checked': 0,
-  'aria-expanded': 0,
-  'aria-haspopup': 0,
-  'aria-level': 0,
-  'aria-modal': 0,
-  'aria-multiline': 0,
-  'aria-multiselectable': 0,
-  'aria-orientation': 0,
-  'aria-placeholder': 0,
-  'aria-pressed': 0,
-  'aria-readonly': 0,
-  'aria-required': 0,
-  'aria-selected': 0,
-  'aria-sort': 0,
-  'aria-valuemax': 0,
-  'aria-valuemin': 0,
-  'aria-valuenow': 0,
-  'aria-valuetext': 0,
-  // Live Region Attributes
-  'aria-atomic': 0,
-  'aria-busy': 0,
-  'aria-live': 0,
-  'aria-relevant': 0,
-  // Drag-and-Drop Attributes
-  'aria-dropeffect': 0,
-  'aria-grabbed': 0,
-  // Relationship Attributes
-  'aria-activedescendant': 0,
-  'aria-colcount': 0,
-  'aria-colindex': 0,
-  'aria-colspan': 0,
-  'aria-controls': 0,
-  'aria-describedby': 0,
-  'aria-errormessage': 0,
-  'aria-flowto': 0,
-  'aria-labelledby': 0,
-  'aria-owns': 0,
-  'aria-posinset': 0,
-  'aria-rowcount': 0,
-  'aria-rowindex': 0,
-  'aria-rowspan': 0,
-  'aria-setsize': 0,
-};
-
-var warnedProperties = {};
-var rARIA = new RegExp('^(aria)-[' + ATTRIBUTE_NAME_CHAR + ']*$');
-var rARIACamel = new RegExp('^(aria)[A-Z][' + ATTRIBUTE_NAME_CHAR + ']*$');
-
-function validateProperty(tagName, name) {
-  {
-    if (hasOwnProperty.call(warnedProperties, name) && warnedProperties[name]) {
-      return true;
-    }
-
-    if (rARIACamel.test(name)) {
-      var ariaName = 'aria-' + name.slice(4).toLowerCase();
-      var correctName = ariaProperties.hasOwnProperty(ariaName)
-        ? ariaName
-        : null; // If this is an aria-* attribute, but is not listed in the known DOM
-      // DOM properties, then it is an invalid aria-* attribute.
-
-      if (correctName == null) {
-        error(
-          'Invalid ARIA attribute `%s`. ARIA attributes follow the pattern aria-* and must be lowercase.',
-          name
-        );
-
-        warnedProperties[name] = true;
-        return true;
-      } // aria-* attributes should be lowercase; suggest the lowercase version.
-
-      if (name !== correctName) {
-        error(
-          'Invalid ARIA attribute `%s`. Did you mean `%s`?',
-          name,
-          correctName
-        );
-
-        warnedProperties[name] = true;
-        return true;
-      }
-    }
-
-    if (rARIA.test(name)) {
-      var lowerCasedName = name.toLowerCase();
-      var standardName = ariaProperties.hasOwnProperty(lowerCasedName)
-        ? lowerCasedName
-        : null; // If this is an aria-* attribute, but is not listed in the known DOM
-      // DOM properties, then it is an invalid aria-* attribute.
-
-      if (standardName == null) {
-        warnedProperties[name] = true;
-        return false;
-      } // aria-* attributes should be lowercase; suggest the lowercase version.
-
-      if (name !== standardName) {
-        error(
-          'Unknown ARIA attribute `%s`. Did you mean `%s`?',
-          name,
-          standardName
-        );
-
-        warnedProperties[name] = true;
-        return true;
-      }
-    }
-  }
-
-  return true;
-}
-
-function warnInvalidARIAProps(type, props) {
-  {
-    var invalidProps = [];
-
-    for (var key in props) {
-      var isValid = validateProperty(type, key);
-
-      if (!isValid) {
-        invalidProps.push(key);
-      }
-    }
-
-    var unknownPropString = invalidProps
-      .map(function (prop) {
-        return '`' + prop + '`';
-      })
-      .join(', ');
-
-    if (invalidProps.length === 1) {
-      error(
-        'Invalid aria prop %s on <%s> tag. ' +
-          'For details, see https://reactjs.org/link/invalid-aria-props',
-        unknownPropString,
-        type
-      );
-    } else if (invalidProps.length > 1) {
-      error(
-        'Invalid aria props %s on <%s> tag. ' +
-          'For details, see https://reactjs.org/link/invalid-aria-props',
-        unknownPropString,
-        type
-      );
-    }
-  }
-}
-
-function validateProperties(type, props) {
-  if (isCustomComponent(type, props)) {
-    return;
-  }
-
-  warnInvalidARIAProps(type, props);
-}
-
-var didWarnValueNull = false;
-function validateProperties$1(type, props) {
-  {
-    if (type !== 'input' && type !== 'textarea' && type !== 'select') {
-      return;
-    }
-
-    if (props != null && props.value === null && !didWarnValueNull) {
-      didWarnValueNull = true;
-
-      if (type === 'select' && props.multiple) {
-        error(
-          '`value` prop on `%s` should not be null. ' +
-            'Consider using an empty array when `multiple` is set to `true` ' +
-            'to clear the component or `undefined` for uncontrolled components.',
-          type
-        );
-      } else {
-        error(
-          '`value` prop on `%s` should not be null. ' +
-            'Consider using an empty string to clear the component or `undefined` ' +
-            'for uncontrolled components.',
-          type
-        );
-      }
-    }
-  }
-}
-
-// When adding attributes to the HTML or SVG allowed attribute list, be sure to
-// also add them to this module to ensure casing and incorrect name
-// warnings.
-var possibleStandardNames = {
-  // HTML
-  accept: 'accept',
-  acceptcharset: 'acceptCharset',
-  'accept-charset': 'acceptCharset',
-  accesskey: 'accessKey',
-  action: 'action',
-  allowfullscreen: 'allowFullScreen',
-  alt: 'alt',
-  as: 'as',
-  async: 'async',
-  autocapitalize: 'autoCapitalize',
-  autocomplete: 'autoComplete',
-  autocorrect: 'autoCorrect',
-  autofocus: 'autoFocus',
-  autoplay: 'autoPlay',
-  autosave: 'autoSave',
-  capture: 'capture',
-  cellpadding: 'cellPadding',
-  cellspacing: 'cellSpacing',
-  challenge: 'challenge',
-  charset: 'charSet',
-  checked: 'checked',
-  children: 'children',
-  cite: 'cite',
-  class: 'className',
-  classid: 'classID',
-  classname: 'className',
-  cols: 'cols',
-  colspan: 'colSpan',
-  content: 'content',
-  contenteditable: 'contentEditable',
-  contextmenu: 'contextMenu',
-  controls: 'controls',
-  controlslist: 'controlsList',
-  coords: 'coords',
-  crossorigin: 'crossOrigin',
-  dangerouslysetinnerhtml: 'dangerouslySetInnerHTML',
-  data: 'data',
-  datetime: 'dateTime',
-  default: 'default',
-  defaultchecked: 'defaultChecked',
-  defaultvalue: 'defaultValue',
-  defer: 'defer',
-  dir: 'dir',
-  disabled: 'disabled',
-  disablepictureinpicture: 'disablePictureInPicture',
-  disableremoteplayback: 'disableRemotePlayback',
-  download: 'download',
-  draggable: 'draggable',
-  enctype: 'encType',
-  enterkeyhint: 'enterKeyHint',
-  for: 'htmlFor',
-  form: 'form',
-  formmethod: 'formMethod',
-  formaction: 'formAction',
-  formenctype: 'formEncType',
-  formnovalidate: 'formNoValidate',
-  formtarget: 'formTarget',
-  frameborder: 'frameBorder',
-  headers: 'headers',
-  height: 'height',
-  hidden: 'hidden',
-  high: 'high',
-  href: 'href',
-  hreflang: 'hrefLang',
-  htmlfor: 'htmlFor',
-  httpequiv: 'httpEquiv',
-  'http-equiv': 'httpEquiv',
-  icon: 'icon',
-  id: 'id',
-  imagesizes: 'imageSizes',
-  imagesrcset: 'imageSrcSet',
-  innerhtml: 'innerHTML',
-  inputmode: 'inputMode',
-  integrity: 'integrity',
-  is: 'is',
-  itemid: 'itemID',
-  itemprop: 'itemProp',
-  itemref: 'itemRef',
-  itemscope: 'itemScope',
-  itemtype: 'itemType',
-  keyparams: 'keyParams',
-  keytype: 'keyType',
-  kind: 'kind',
-  label: 'label',
-  lang: 'lang',
-  list: 'list',
-  loop: 'loop',
-  low: 'low',
-  manifest: 'manifest',
-  marginwidth: 'marginWidth',
-  marginheight: 'marginHeight',
-  max: 'max',
-  maxlength: 'maxLength',
-  media: 'media',
-  mediagroup: 'mediaGroup',
-  method: 'method',
-  min: 'min',
-  minlength: 'minLength',
-  multiple: 'multiple',
-  muted: 'muted',
-  name: 'name',
-  nomodule: 'noModule',
-  nonce: 'nonce',
-  novalidate: 'noValidate',
-  open: 'open',
-  optimum: 'optimum',
-  pattern: 'pattern',
-  placeholder: 'placeholder',
-  playsinline: 'playsInline',
-  poster: 'poster',
-  preload: 'preload',
-  profile: 'profile',
-  radiogroup: 'radioGroup',
-  readonly: 'readOnly',
-  referrerpolicy: 'referrerPolicy',
-  rel: 'rel',
-  required: 'required',
-  reversed: 'reversed',
-  role: 'role',
-  rows: 'rows',
-  rowspan: 'rowSpan',
-  sandbox: 'sandbox',
-  scope: 'scope',
-  scoped: 'scoped',
-  scrolling: 'scrolling',
-  seamless: 'seamless',
-  selected: 'selected',
-  shape: 'shape',
-  size: 'size',
-  sizes: 'sizes',
-  span: 'span',
-  spellcheck: 'spellCheck',
-  src: 'src',
-  srcdoc: 'srcDoc',
-  srclang: 'srcLang',
-  srcset: 'srcSet',
-  start: 'start',
-  step: 'step',
-  style: 'style',
-  summary: 'summary',
-  tabindex: 'tabIndex',
-  target: 'target',
-  title: 'title',
-  type: 'type',
-  usemap: 'useMap',
-  value: 'value',
-  width: 'width',
-  wmode: 'wmode',
-  wrap: 'wrap',
-  // SVG
-  about: 'about',
-  accentheight: 'accentHeight',
-  'accent-height': 'accentHeight',
-  accumulate: 'accumulate',
-  additive: 'additive',
-  alignmentbaseline: 'alignmentBaseline',
-  'alignment-baseline': 'alignmentBaseline',
-  allowreorder: 'allowReorder',
-  alphabetic: 'alphabetic',
-  amplitude: 'amplitude',
-  arabicform: 'arabicForm',
-  'arabic-form': 'arabicForm',
-  ascent: 'ascent',
-  attributename: 'attributeName',
-  attributetype: 'attributeType',
-  autoreverse: 'autoReverse',
-  azimuth: 'azimuth',
-  basefrequency: 'baseFrequency',
-  baselineshift: 'baselineShift',
-  'baseline-shift': 'baselineShift',
-  baseprofile: 'baseProfile',
-  bbox: 'bbox',
-  begin: 'begin',
-  bias: 'bias',
-  by: 'by',
-  calcmode: 'calcMode',
-  capheight: 'capHeight',
-  'cap-height': 'capHeight',
-  clip: 'clip',
-  clippath: 'clipPath',
-  'clip-path': 'clipPath',
-  clippathunits: 'clipPathUnits',
-  cliprule: 'clipRule',
-  'clip-rule': 'clipRule',
-  color: 'color',
-  colorinterpolation: 'colorInterpolation',
-  'color-interpolation': 'colorInterpolation',
-  colorinterpolationfilters: 'colorInterpolationFilters',
-  'color-interpolation-filters': 'colorInterpolationFilters',
-  colorprofile: 'colorProfile',
-  'color-profile': 'colorProfile',
-  colorrendering: 'colorRendering',
-  'color-rendering': 'colorRendering',
-  contentscripttype: 'contentScriptType',
-  contentstyletype: 'contentStyleType',
-  cursor: 'cursor',
-  cx: 'cx',
-  cy: 'cy',
-  d: 'd',
-  datatype: 'datatype',
-  decelerate: 'decelerate',
-  descent: 'descent',
-  diffuseconstant: 'diffuseConstant',
-  direction: 'direction',
-  display: 'display',
-  divisor: 'divisor',
-  dominantbaseline: 'dominantBaseline',
-  'dominant-baseline': 'dominantBaseline',
-  dur: 'dur',
-  dx: 'dx',
-  dy: 'dy',
-  edgemode: 'edgeMode',
-  elevation: 'elevation',
-  enablebackground: 'enableBackground',
-  'enable-background': 'enableBackground',
-  end: 'end',
-  exponent: 'exponent',
-  externalresourcesrequired: 'externalResourcesRequired',
-  fill: 'fill',
-  fillopacity: 'fillOpacity',
-  'fill-opacity': 'fillOpacity',
-  fillrule: 'fillRule',
-  'fill-rule': 'fillRule',
-  filter: 'filter',
-  filterres: 'filterRes',
-  filterunits: 'filterUnits',
-  floodopacity: 'floodOpacity',
-  'flood-opacity': 'floodOpacity',
-  floodcolor: 'floodColor',
-  'flood-color': 'floodColor',
-  focusable: 'focusable',
-  fontfamily: 'fontFamily',
-  'font-family': 'fontFamily',
-  fontsize: 'fontSize',
-  'font-size': 'fontSize',
-  fontsizeadjust: 'fontSizeAdjust',
-  'font-size-adjust': 'fontSizeAdjust',
-  fontstretch: 'fontStretch',
-  'font-stretch': 'fontStretch',
-  fontstyle: 'fontStyle',
-  'font-style': 'fontStyle',
-  fontvariant: 'fontVariant',
-  'font-variant': 'fontVariant',
-  fontweight: 'fontWeight',
-  'font-weight': 'fontWeight',
-  format: 'format',
-  from: 'from',
-  fx: 'fx',
-  fy: 'fy',
-  g1: 'g1',
-  g2: 'g2',
-  glyphname: 'glyphName',
-  'glyph-name': 'glyphName',
-  glyphorientationhorizontal: 'glyphOrientationHorizontal',
-  'glyph-orientation-horizontal': 'glyphOrientationHorizontal',
-  glyphorientationvertical: 'glyphOrientationVertical',
-  'glyph-orientation-vertical': 'glyphOrientationVertical',
-  glyphref: 'glyphRef',
-  gradienttransform: 'gradientTransform',
-  gradientunits: 'gradientUnits',
-  hanging: 'hanging',
-  horizadvx: 'horizAdvX',
-  'horiz-adv-x': 'horizAdvX',
-  horizoriginx: 'horizOriginX',
-  'horiz-origin-x': 'horizOriginX',
-  ideographic: 'ideographic',
-  imagerendering: 'imageRendering',
-  'image-rendering': 'imageRendering',
-  in2: 'in2',
-  in: 'in',
-  inlist: 'inlist',
-  intercept: 'intercept',
-  k1: 'k1',
-  k2: 'k2',
-  k3: 'k3',
-  k4: 'k4',
-  k: 'k',
-  kernelmatrix: 'kernelMatrix',
-  kernelunitlength: 'kernelUnitLength',
-  kerning: 'kerning',
-  keypoints: 'keyPoints',
-  keysplines: 'keySplines',
-  keytimes: 'keyTimes',
-  lengthadjust: 'lengthAdjust',
-  letterspacing: 'letterSpacing',
-  'letter-spacing': 'letterSpacing',
-  lightingcolor: 'lightingColor',
-  'lighting-color': 'lightingColor',
-  limitingconeangle: 'limitingConeAngle',
-  local: 'local',
-  markerend: 'markerEnd',
-  'marker-end': 'markerEnd',
-  markerheight: 'markerHeight',
-  markermid: 'markerMid',
-  'marker-mid': 'markerMid',
-  markerstart: 'markerStart',
-  'marker-start': 'markerStart',
-  markerunits: 'markerUnits',
-  markerwidth: 'markerWidth',
-  mask: 'mask',
-  maskcontentunits: 'maskContentUnits',
-  maskunits: 'maskUnits',
-  mathematical: 'mathematical',
-  mode: 'mode',
-  numoctaves: 'numOctaves',
-  offset: 'offset',
-  opacity: 'opacity',
-  operator: 'operator',
-  order: 'order',
-  orient: 'orient',
-  orientation: 'orientation',
-  origin: 'origin',
-  overflow: 'overflow',
-  overlineposition: 'overlinePosition',
-  'overline-position': 'overlinePosition',
-  overlinethickness: 'overlineThickness',
-  'overline-thickness': 'overlineThickness',
-  paintorder: 'paintOrder',
-  'paint-order': 'paintOrder',
-  panose1: 'panose1',
-  'panose-1': 'panose1',
-  pathlength: 'pathLength',
-  patterncontentunits: 'patternContentUnits',
-  patterntransform: 'patternTransform',
-  patternunits: 'patternUnits',
-  pointerevents: 'pointerEvents',
-  'pointer-events': 'pointerEvents',
-  points: 'points',
-  pointsatx: 'pointsAtX',
-  pointsaty: 'pointsAtY',
-  pointsatz: 'pointsAtZ',
-  prefix: 'prefix',
-  preservealpha: 'preserveAlpha',
-  preserveaspectratio: 'preserveAspectRatio',
-  primitiveunits: 'primitiveUnits',
-  property: 'property',
-  r: 'r',
-  radius: 'radius',
-  refx: 'refX',
-  refy: 'refY',
-  renderingintent: 'renderingIntent',
-  'rendering-intent': 'renderingIntent',
-  repeatcount: 'repeatCount',
-  repeatdur: 'repeatDur',
-  requiredextensions: 'requiredExtensions',
-  requiredfeatures: 'requiredFeatures',
-  resource: 'resource',
-  restart: 'restart',
-  result: 'result',
-  results: 'results',
-  rotate: 'rotate',
-  rx: 'rx',
-  ry: 'ry',
-  scale: 'scale',
-  security: 'security',
-  seed: 'seed',
-  shaperendering: 'shapeRendering',
-  'shape-rendering': 'shapeRendering',
-  slope: 'slope',
-  spacing: 'spacing',
-  specularconstant: 'specularConstant',
-  specularexponent: 'specularExponent',
-  speed: 'speed',
-  spreadmethod: 'spreadMethod',
-  startoffset: 'startOffset',
-  stddeviation: 'stdDeviation',
-  stemh: 'stemh',
-  stemv: 'stemv',
-  stitchtiles: 'stitchTiles',
-  stopcolor: 'stopColor',
-  'stop-color': 'stopColor',
-  stopopacity: 'stopOpacity',
-  'stop-opacity': 'stopOpacity',
-  strikethroughposition: 'strikethroughPosition',
-  'strikethrough-position': 'strikethroughPosition',
-  strikethroughthickness: 'strikethroughThickness',
-  'strikethrough-thickness': 'strikethroughThickness',
-  string: 'string',
-  stroke: 'stroke',
-  strokedasharray: 'strokeDasharray',
-  'stroke-dasharray': 'strokeDasharray',
-  strokedashoffset: 'strokeDashoffset',
-  'stroke-dashoffset': 'strokeDashoffset',
-  strokelinecap: 'strokeLinecap',
-  'stroke-linecap': 'strokeLinecap',
-  strokelinejoin: 'strokeLinejoin',
-  'stroke-linejoin': 'strokeLinejoin',
-  strokemiterlimit: 'strokeMiterlimit',
-  'stroke-miterlimit': 'strokeMiterlimit',
-  strokewidth: 'strokeWidth',
-  'stroke-width': 'strokeWidth',
-  strokeopacity: 'strokeOpacity',
-  'stroke-opacity': 'strokeOpacity',
-  suppresscontenteditablewarning: 'suppressContentEditableWarning',
-  suppresshydrationwarning: 'suppressHydrationWarning',
-  surfacescale: 'surfaceScale',
-  systemlanguage: 'systemLanguage',
-  tablevalues: 'tableValues',
-  targetx: 'targetX',
-  targety: 'targetY',
-  textanchor: 'textAnchor',
-  'text-anchor': 'textAnchor',
-  textdecoration: 'textDecoration',
-  'text-decoration': 'textDecoration',
-  textlength: 'textLength',
-  textrendering: 'textRendering',
-  'text-rendering': 'textRendering',
-  to: 'to',
-  transform: 'transform',
-  typeof: 'typeof',
-  u1: 'u1',
-  u2: 'u2',
-  underlineposition: 'underlinePosition',
-  'underline-position': 'underlinePosition',
-  underlinethickness: 'underlineThickness',
-  'underline-thickness': 'underlineThickness',
-  unicode: 'unicode',
-  unicodebidi: 'unicodeBidi',
-  'unicode-bidi': 'unicodeBidi',
-  unicoderange: 'unicodeRange',
-  'unicode-range': 'unicodeRange',
-  unitsperem: 'unitsPerEm',
-  'units-per-em': 'unitsPerEm',
-  unselectable: 'unselectable',
-  valphabetic: 'vAlphabetic',
-  'v-alphabetic': 'vAlphabetic',
-  values: 'values',
-  vectoreffect: 'vectorEffect',
-  'vector-effect': 'vectorEffect',
-  version: 'version',
-  vertadvy: 'vertAdvY',
-  'vert-adv-y': 'vertAdvY',
-  vertoriginx: 'vertOriginX',
-  'vert-origin-x': 'vertOriginX',
-  vertoriginy: 'vertOriginY',
-  'vert-origin-y': 'vertOriginY',
-  vhanging: 'vHanging',
-  'v-hanging': 'vHanging',
-  videographic: 'vIdeographic',
-  'v-ideographic': 'vIdeographic',
-  viewbox: 'viewBox',
-  viewtarget: 'viewTarget',
-  visibility: 'visibility',
-  vmathematical: 'vMathematical',
-  'v-mathematical': 'vMathematical',
-  vocab: 'vocab',
-  widths: 'widths',
-  wordspacing: 'wordSpacing',
-  'word-spacing': 'wordSpacing',
-  writingmode: 'writingMode',
-  'writing-mode': 'writingMode',
-  x1: 'x1',
-  x2: 'x2',
-  x: 'x',
-  xchannelselector: 'xChannelSelector',
-  xheight: 'xHeight',
-  'x-height': 'xHeight',
-  xlinkactuate: 'xlinkActuate',
-  'xlink:actuate': 'xlinkActuate',
-  xlinkarcrole: 'xlinkArcrole',
-  'xlink:arcrole': 'xlinkArcrole',
-  xlinkhref: 'xlinkHref',
-  'xlink:href': 'xlinkHref',
-  xlinkrole: 'xlinkRole',
-  'xlink:role': 'xlinkRole',
-  xlinkshow: 'xlinkShow',
-  'xlink:show': 'xlinkShow',
-  xlinktitle: 'xlinkTitle',
-  'xlink:title': 'xlinkTitle',
-  xlinktype: 'xlinkType',
-  'xlink:type': 'xlinkType',
-  xmlbase: 'xmlBase',
-  'xml:base': 'xmlBase',
-  xmllang: 'xmlLang',
-  'xml:lang': 'xmlLang',
-  xmlns: 'xmlns',
-  'xml:space': 'xmlSpace',
-  xmlnsxlink: 'xmlnsXlink',
-  'xmlns:xlink': 'xmlnsXlink',
-  xmlspace: 'xmlSpace',
-  y1: 'y1',
-  y2: 'y2',
-  y: 'y',
-  ychannelselector: 'yChannelSelector',
-  z: 'z',
-  zoomandpan: 'zoomAndPan',
-};
-
-var validateProperty$1 = function () {};
-
-{
-  var warnedProperties$1 = {};
-  var EVENT_NAME_REGEX = /^on./;
-  var INVALID_EVENT_NAME_REGEX = /^on[^A-Z]/;
-  var rARIA$1 = new RegExp('^(aria)-[' + ATTRIBUTE_NAME_CHAR + ']*$');
-  var rARIACamel$1 = new RegExp('^(aria)[A-Z][' + ATTRIBUTE_NAME_CHAR + ']*$');
-
-  validateProperty$1 = function (tagName, name, value, eventRegistry) {
-    if (
-      hasOwnProperty.call(warnedProperties$1, name) &&
-      warnedProperties$1[name]
-    ) {
-      return true;
-    }
-
-    var lowerCasedName = name.toLowerCase();
-
-    if (lowerCasedName === 'onfocusin' || lowerCasedName === 'onfocusout') {
-      error(
-        'React uses onFocus and onBlur instead of onFocusIn and onFocusOut. ' +
-          'All React events are normalized to bubble, so onFocusIn and onFocusOut ' +
-          'are not needed/supported by React.'
-      );
-
-      warnedProperties$1[name] = true;
-      return true;
-    } // We can't rely on the event system being injected on the server.
-
-    if (eventRegistry != null) {
-      var registrationNameDependencies =
-          eventRegistry.registrationNameDependencies,
-        possibleRegistrationNames = eventRegistry.possibleRegistrationNames;
-
-      if (registrationNameDependencies.hasOwnProperty(name)) {
-        return true;
-      }
-
-      var registrationName = possibleRegistrationNames.hasOwnProperty(
-        lowerCasedName
-      )
-        ? possibleRegistrationNames[lowerCasedName]
-        : null;
-
-      if (registrationName != null) {
-        error(
-          'Invalid event handler property `%s`. Did you mean `%s`?',
-          name,
-          registrationName
-        );
-
-        warnedProperties$1[name] = true;
-        return true;
-      }
-
-      if (EVENT_NAME_REGEX.test(name)) {
-        error('Unknown event handler property `%s`. It will be ignored.', name);
-
-        warnedProperties$1[name] = true;
-        return true;
-      }
-    } else if (EVENT_NAME_REGEX.test(name)) {
-      // If no event plugins have been injected, we are in a server environment.
-      // So we can't tell if the event name is correct for sure, but we can filter
-      // out known bad ones like `onclick`. We can't suggest a specific replacement though.
-      if (INVALID_EVENT_NAME_REGEX.test(name)) {
-        error(
-          'Invalid event handler property `%s`. ' +
-            'React events use the camelCase naming convention, for example `onClick`.',
-          name
-        );
-      }
-
-      warnedProperties$1[name] = true;
-      return true;
-    } // Let the ARIA attribute hook validate ARIA attributes
-
-    if (rARIA$1.test(name) || rARIACamel$1.test(name)) {
-      return true;
-    }
-
-    if (lowerCasedName === 'innerhtml') {
-      error(
-        'Directly setting property `innerHTML` is not permitted. ' +
-          'For more information, lookup documentation on `dangerouslySetInnerHTML`.'
-      );
-
-      warnedProperties$1[name] = true;
-      return true;
-    }
-
-    if (lowerCasedName === 'aria') {
-      error(
-        'The `aria` attribute is reserved for future use in React. ' +
-          'Pass individual `aria-` attributes instead.'
-      );
-
-      warnedProperties$1[name] = true;
-      return true;
-    }
-
-    if (
-      lowerCasedName === 'is' &&
-      value !== null &&
-      value !== undefined &&
-      typeof value !== 'string'
-    ) {
-      error(
-        'Received a `%s` for a string attribute `is`. If this is expected, cast ' +
-          'the value to a string.',
-        typeof value
-      );
-
-      warnedProperties$1[name] = true;
-      return true;
-    }
-
-    if (typeof value === 'number' && isNaN(value)) {
-      error(
-        'Received NaN for the `%s` attribute. If this is expected, cast ' +
-          'the value to a string.',
-        name
-      );
-
-      warnedProperties$1[name] = true;
-      return true;
-    }
-
-    var propertyInfo = getPropertyInfo(name);
-    var isReserved = propertyInfo !== null && propertyInfo.type === RESERVED; // Known attributes should match the casing specified in the property config.
-
-    if (possibleStandardNames.hasOwnProperty(lowerCasedName)) {
-      var standardName = possibleStandardNames[lowerCasedName];
-
-      if (standardName !== name) {
-        error(
-          'Invalid DOM property `%s`. Did you mean `%s`?',
-          name,
-          standardName
-        );
-
-        warnedProperties$1[name] = true;
-        return true;
-      }
-    } else if (!isReserved && name !== lowerCasedName) {
-      // Unknown attributes should have lowercase casing since that's how they
-      // will be cased anyway with server rendering.
-      error(
-        'React does not recognize the `%s` prop on a DOM element. If you ' +
-          'intentionally want it to appear in the DOM as a custom ' +
-          'attribute, spell it as lowercase `%s` instead. ' +
-          'If you accidentally passed it from a parent component, remove ' +
-          'it from the DOM element.',
-        name,
-        lowerCasedName
-      );
-
-      warnedProperties$1[name] = true;
-      return true;
-    }
-
-    if (
-      typeof value === 'boolean' &&
-      shouldRemoveAttributeWithWarning(name, value, propertyInfo, false)
-    ) {
-      if (value) {
-        error(
-          'Received `%s` for a non-boolean attribute `%s`.\n\n' +
-            'If you want to write it to the DOM, pass a string instead: ' +
-            '%s="%s" or %s={value.toString()}.',
-          value,
-          name,
-          name,
-          value,
-          name
-        );
-      } else {
-        error(
-          'Received `%s` for a non-boolean attribute `%s`.\n\n' +
-            'If you want to write it to the DOM, pass a string instead: ' +
-            '%s="%s" or %s={value.toString()}.\n\n' +
-            'If you used to conditionally omit it with %s={condition && value}, ' +
-            'pass %s={condition ? value : undefined} instead.',
-          value,
-          name,
-          name,
-          value,
-          name,
-          name,
-          name
-        );
-      }
-
-      warnedProperties$1[name] = true;
-      return true;
-    } // Now that we've validated casing, do not validate
-    // data types for reserved props
-
-    if (isReserved) {
-      return true;
-    } // Warn when a known attribute is a bad type
-
-    if (shouldRemoveAttributeWithWarning(name, value, propertyInfo, false)) {
-      warnedProperties$1[name] = true;
-      return false;
-    } // Warn when passing the strings 'false' or 'true' into a boolean prop
-
-    if (
-      (value === 'false' || value === 'true') &&
-      propertyInfo !== null &&
-      propertyInfo.type === BOOLEAN
-    ) {
-      error(
-        'Received the string `%s` for the boolean attribute `%s`. ' +
-          '%s ' +
-          'Did you mean %s={%s}?',
-        value,
-        name,
-        value === 'false'
-          ? 'The browser will interpret it as a truthy value.'
-          : 'Although this works, it will not work as expected if you pass the string "false".',
-        name,
-        value
-      );
-
-      warnedProperties$1[name] = true;
-      return true;
-    }
-
-    return true;
-  };
-}
-
-var warnUnknownProperties = function (type, props, eventRegistry) {
-  {
-    var unknownProps = [];
-
-    for (var key in props) {
-      var isValid = validateProperty$1(type, key, props[key], eventRegistry);
-
-      if (!isValid) {
-        unknownProps.push(key);
-      }
-    }
-
-    var unknownPropString = unknownProps
-      .map(function (prop) {
-        return '`' + prop + '`';
-      })
-      .join(', ');
-
-    if (unknownProps.length === 1) {
-      error(
-        'Invalid value for prop %s on <%s> tag. Either remove it from the element, ' +
-          'or pass a string or number value to keep it in the DOM. ' +
-          'For details, see https://reactjs.org/link/attribute-behavior ',
-        unknownPropString,
-        type
-      );
-    } else if (unknownProps.length > 1) {
-      error(
-        'Invalid values for props %s on <%s> tag. Either remove them from the element, ' +
-          'or pass a string or number value to keep them in the DOM. ' +
-          'For details, see https://reactjs.org/link/attribute-behavior ',
-        unknownPropString,
-        type
-      );
-    }
-  }
-};
-
-function validateProperties$2(type, props, eventRegistry) {
-  if (isCustomComponent(type, props)) {
-    return;
-  }
-
-  warnUnknownProperties(type, props, eventRegistry);
-}
-
-var warnValidStyle = function () {};
-
-{
-  // 'msTransform' is correct, but the other prefixes should be capitalized
-  var badVendoredStyleNamePattern = /^(?:webkit|moz|o)[A-Z]/;
-  var msPattern = /^-ms-/;
-  var hyphenPattern = /-(.)/g; // style values shouldn't contain a semicolon
-
-  var badStyleValueWithSemicolonPattern = /;\s*$/;
-  var warnedStyleNames = {};
-  var warnedStyleValues = {};
-  var warnedForNaNValue = false;
-  var warnedForInfinityValue = false;
-
-  var camelize = function (string) {
-    return string.replace(hyphenPattern, function (_, character) {
-      return character.toUpperCase();
-    });
-  };
-
-  var warnHyphenatedStyleName = function (name) {
-    if (warnedStyleNames.hasOwnProperty(name) && warnedStyleNames[name]) {
-      return;
-    }
-
-    warnedStyleNames[name] = true;
-
-    error(
-      'Unsupported style property %s. Did you mean %s?',
-      name, // As Andi Smith suggests
-      // (http://www.andismith.com/blog/2012/02/modernizr-prefixed/), an `-ms` prefix
-      // is converted to lowercase `ms`.
-      camelize(name.replace(msPattern, 'ms-'))
-    );
-  };
-
-  var warnBadVendoredStyleName = function (name) {
-    if (warnedStyleNames.hasOwnProperty(name) && warnedStyleNames[name]) {
-      return;
-    }
-
-    warnedStyleNames[name] = true;
-
-    error(
-      'Unsupported vendor-prefixed style property %s. Did you mean %s?',
-      name,
-      name.charAt(0).toUpperCase() + name.slice(1)
-    );
-  };
-
-  var warnStyleValueWithSemicolon = function (name, value) {
-    if (warnedStyleValues.hasOwnProperty(value) && warnedStyleValues[value]) {
-      return;
-    }
-
-    warnedStyleValues[value] = true;
-
-    error(
-      "Style property values shouldn't contain a semicolon. " +
-        'Try "%s: %s" instead.',
-      name,
-      value.replace(badStyleValueWithSemicolonPattern, '')
-    );
-  };
-
-  var warnStyleValueIsNaN = function (name, value) {
-    if (warnedForNaNValue) {
-      return;
-    }
-
-    warnedForNaNValue = true;
-
-    error('`NaN` is an invalid value for the `%s` css style property.', name);
-  };
-
-  var warnStyleValueIsInfinity = function (name, value) {
-    if (warnedForInfinityValue) {
-      return;
-    }
-
-    warnedForInfinityValue = true;
-
-    error(
-      '`Infinity` is an invalid value for the `%s` css style property.',
-      name
-    );
-  };
-
-  warnValidStyle = function (name, value) {
-    if (name.indexOf('-') > -1) {
-      warnHyphenatedStyleName(name);
-    } else if (badVendoredStyleNamePattern.test(name)) {
-      warnBadVendoredStyleName(name);
-    } else if (badStyleValueWithSemicolonPattern.test(value)) {
-      warnStyleValueWithSemicolon(name, value);
-    }
-
-    if (typeof value === 'number') {
-      if (isNaN(value)) {
-        warnStyleValueIsNaN(name, value);
-      } else if (!isFinite(value)) {
-        warnStyleValueIsInfinity(name, value);
-      }
-    }
-  };
-}
-
-var warnValidStyle$1 = warnValidStyle;
-
 // code copied and modified from escape-html
-var matchHtmlRegExp = /["'&<>]/;
+const matchHtmlRegExp = /["'&<>]/;
 /**
  * Escapes special characters and HTML entities in a given html string.
  *
@@ -1988,21 +620,17 @@ var matchHtmlRegExp = /["'&<>]/;
  */
 
 function escapeHtml(string) {
-  {
-    checkHtmlStringCoercion(string);
-  }
-
-  var str = '' + string;
-  var match = matchHtmlRegExp.exec(str);
+  const str = '' + string;
+  const match = matchHtmlRegExp.exec(str);
 
   if (!match) {
     return str;
   }
 
-  var escape;
-  var html = '';
-  var index;
-  var lastIndex = 0;
+  let escape;
+  let html = '';
+  let index;
+  let lastIndex = 0;
 
   for (index = match.index; index < str.length; index++) {
     switch (str.charCodeAt(index)) {
@@ -2065,8 +693,8 @@ function escapeTextForBrowser(text) {
   return escapeHtml(text);
 }
 
-var uppercasePattern = /([A-Z])/g;
-var msPattern$1 = /^ms-/;
+const uppercasePattern = /([A-Z])/g;
+const msPattern = /^ms-/;
 /**
  * Hyphenates a camelcased CSS property name, for example:
  *
@@ -2085,671 +713,16 @@ function hyphenateStyleName(name) {
   return name
     .replace(uppercasePattern, '-$1')
     .toLowerCase()
-    .replace(msPattern$1, '-ms-');
+    .replace(msPattern, '-ms-');
 }
 
-// and any newline or tab are filtered out as if they're not part of the URL.
-// https://url.spec.whatwg.org/#url-parsing
-// Tab or newline are defined as \r\n\t:
-// https://infra.spec.whatwg.org/#ascii-tab-or-newline
-// A C0 control is a code point in the range \u0000 NULL to \u001F
-// INFORMATION SEPARATOR ONE, inclusive:
-// https://infra.spec.whatwg.org/#c0-control-or-space
-
-/* eslint-disable max-len */
-
-var isJavaScriptProtocol =
-  /^[\u0000-\u001F ]*j[\r\n\t]*a[\r\n\t]*v[\r\n\t]*a[\r\n\t]*s[\r\n\t]*c[\r\n\t]*r[\r\n\t]*i[\r\n\t]*p[\r\n\t]*t[\r\n\t]*\:/i;
-var didWarn = false;
-
-function sanitizeURL(url) {
-  {
-    if (!didWarn && isJavaScriptProtocol.test(url)) {
-      didWarn = true;
-
-      error(
-        'A future version of React will block javascript: URLs as a security precaution. ' +
-          'Use event handlers instead if you can. If you need to generate unsafe HTML try ' +
-          'using dangerouslySetInnerHTML instead. React was passed %s.',
-        JSON.stringify(url)
-      );
-    }
-  }
-}
-
-var isArrayImpl = Array.isArray; // eslint-disable-next-line no-redeclare
+const isArrayImpl = Array.isArray; // eslint-disable-next-line no-redeclare
 
 function isArray(a) {
   return isArrayImpl(a);
 }
 
-var assign = Object.assign;
-
-function validatePreloadResourceDifference(
-  originalProps,
-  originalImplicit,
-  latestProps,
-  latestImplicit
-) {
-  {
-    var href = originalProps.href;
-    var originalWarningName = getResourceNameForWarning(
-      'preload',
-      originalProps,
-      originalImplicit
-    );
-    var latestWarningName = getResourceNameForWarning(
-      'preload',
-      latestProps,
-      latestImplicit
-    );
-
-    if (latestProps.as !== originalProps.as) {
-      error(
-        'A %s is using the same href "%s" as a %s. This is always an error and React will only keep the first preload' +
-          ' for any given href, discarding subsequent instances. To fix, find where you are using this href in link' +
-          ' tags or in calls to ReactDOM.preload() or ReactDOM.preinit() and either make the Resource types agree or' +
-          ' update the hrefs to be distinct for different Resource types.',
-        latestWarningName,
-        href,
-        originalWarningName
-      );
-    } else {
-      var missingProps = null;
-      var extraProps = null;
-      var differentProps = null;
-
-      if (originalProps.media != null && latestProps.media == null) {
-        missingProps = missingProps || {};
-        missingProps.media = originalProps.media;
-      }
-
-      for (var propName in latestProps) {
-        var propValue = latestProps[propName];
-        var originalValue = originalProps[propName];
-
-        if (propValue != null && propValue !== originalValue) {
-          if (originalValue == null) {
-            extraProps = extraProps || {};
-            extraProps[propName] = propValue;
-          } else {
-            differentProps = differentProps || {};
-            differentProps[propName] = {
-              original: originalValue,
-              latest: propValue,
-            };
-          }
-        }
-      }
-
-      if (missingProps || extraProps || differentProps) {
-        warnDifferentProps(
-          href,
-          'href',
-          originalWarningName,
-          latestWarningName,
-          extraProps,
-          missingProps,
-          differentProps
-        );
-      }
-    }
-  }
-}
-function validateStyleResourceDifference(originalProps, latestProps) {
-  {
-    var href = originalProps.href; // eslint-disable-next-line no-labels
-
-    var originalWarningName = getResourceNameForWarning(
-      'style',
-      originalProps,
-      false
-    );
-    var latestWarningName = getResourceNameForWarning(
-      'style',
-      latestProps,
-      false
-    );
-    var missingProps = null;
-    var extraProps = null;
-    var differentProps = null;
-
-    if (originalProps.media != null && latestProps.media == null) {
-      missingProps = missingProps || {};
-      missingProps.media = originalProps.media;
-    }
-
-    for (var propName in latestProps) {
-      var propValue = latestProps[propName];
-      var originalValue = originalProps[propName];
-
-      if (propValue != null && propValue !== originalValue) {
-        propName = propName === 'data-precedence' ? 'precedence' : propName;
-
-        if (originalValue == null) {
-          extraProps = extraProps || {};
-          extraProps[propName] = propValue;
-        } else {
-          differentProps = differentProps || {};
-          differentProps[propName] = {
-            original: originalValue,
-            latest: propValue,
-          };
-        }
-      }
-    }
-
-    if (missingProps || extraProps || differentProps) {
-      warnDifferentProps(
-        href,
-        'href',
-        originalWarningName,
-        latestWarningName,
-        extraProps,
-        missingProps,
-        differentProps
-      );
-    }
-  }
-}
-function validateScriptResourceDifference(originalProps, latestProps) {
-  {
-    var src = originalProps.src; // eslint-disable-next-line no-labels
-
-    var originalWarningName = getResourceNameForWarning(
-      'script',
-      originalProps,
-      false
-    );
-    var latestWarningName = getResourceNameForWarning(
-      'script',
-      latestProps,
-      false
-    );
-    var extraProps = null;
-    var differentProps = null;
-
-    for (var propName in latestProps) {
-      var propValue = latestProps[propName];
-      var originalValue = originalProps[propName];
-
-      if (propValue != null && propValue !== originalValue) {
-        if (originalValue == null) {
-          extraProps = extraProps || {};
-          extraProps[propName] = propValue;
-        } else {
-          differentProps = differentProps || {};
-          differentProps[propName] = {
-            original: originalValue,
-            latest: propValue,
-          };
-        }
-      }
-    }
-
-    if (extraProps || differentProps) {
-      warnDifferentProps(
-        src,
-        'src',
-        originalWarningName,
-        latestWarningName,
-        extraProps,
-        null,
-        differentProps
-      );
-    }
-  }
-}
-function validateStyleAndHintProps(preloadProps, styleProps, implicitPreload) {
-  {
-    var href = preloadProps.href;
-    var originalWarningName = getResourceNameForWarning(
-      'preload',
-      preloadProps,
-      implicitPreload
-    );
-    var latestWarningName = getResourceNameForWarning(
-      'style',
-      styleProps,
-      false
-    );
-
-    if (preloadProps.as !== 'style') {
-      error(
-        'While creating a %s for href "%s" a %s for this same href was found. When preloading a stylesheet the' +
-          ' "as" prop must be of type "style". This most likely ocurred by rendering a preload link with an incorrect' +
-          ' "as" prop or by calling ReactDOM.preload with an incorrect "as" option.',
-        latestWarningName,
-        href,
-        originalWarningName
-      );
-    }
-
-    var missingProps = null;
-    var extraProps = null;
-    var differentProps = null;
-
-    for (var propName in styleProps) {
-      var styleValue = styleProps[propName];
-      var preloadValue = preloadProps[propName];
-
-      switch (propName) {
-        // Check for difference on specific props that cross over or influence
-        // the relationship between the preload and stylesheet
-        case 'crossOrigin':
-        case 'referrerPolicy':
-        case 'media':
-        case 'title': {
-          if (
-            preloadValue !== styleValue &&
-            !(preloadValue == null && styleValue == null)
-          ) {
-            if (styleValue == null) {
-              missingProps = missingProps || {};
-              missingProps[propName] = preloadValue;
-            } else if (preloadValue == null) {
-              extraProps = extraProps || {};
-              extraProps[propName] = styleValue;
-            } else {
-              differentProps = differentProps || {};
-              differentProps[propName] = {
-                original: preloadValue,
-                latest: styleValue,
-              };
-            }
-          }
-        }
-      }
-    }
-
-    if (missingProps || extraProps || differentProps) {
-      warnDifferentProps(
-        href,
-        'href',
-        originalWarningName,
-        latestWarningName,
-        extraProps,
-        missingProps,
-        differentProps
-      );
-    }
-  }
-}
-function validateScriptAndHintProps(
-  preloadProps,
-  scriptProps,
-  implicitPreload
-) {
-  {
-    var href = preloadProps.href;
-    var originalWarningName = getResourceNameForWarning(
-      'preload',
-      preloadProps,
-      implicitPreload
-    );
-    var latestWarningName = getResourceNameForWarning(
-      'script',
-      scriptProps,
-      false
-    );
-
-    if (preloadProps.as !== 'script') {
-      error(
-        'While creating a %s for href "%s" a %s for this same url was found. When preloading a script the' +
-          ' "as" prop must be of type "script". This most likely ocurred by rendering a preload link with an incorrect' +
-          ' "as" prop or by calling ReactDOM.preload with an incorrect "as" option.',
-        latestWarningName,
-        href,
-        originalWarningName
-      );
-    }
-
-    var missingProps = null;
-    var extraProps = null;
-    var differentProps = null;
-
-    for (var propName in scriptProps) {
-      var scriptValue = scriptProps[propName];
-      var preloadValue = preloadProps[propName];
-
-      switch (propName) {
-        // Check for difference on specific props that cross over or influence
-        // the relationship between the preload and stylesheet
-        case 'crossOrigin':
-        case 'referrerPolicy':
-        case 'integrity': {
-          if (
-            preloadValue !== scriptValue &&
-            !(preloadValue == null && scriptValue == null)
-          ) {
-            if (scriptValue == null) {
-              missingProps = missingProps || {};
-              missingProps[propName] = preloadValue;
-            } else if (preloadValue == null) {
-              extraProps = extraProps || {};
-              extraProps[propName] = scriptValue;
-            } else {
-              differentProps = differentProps || {};
-              differentProps[propName] = {
-                original: preloadValue,
-                latest: scriptValue,
-              };
-            }
-          }
-        }
-      }
-    }
-
-    if (missingProps || extraProps || differentProps) {
-      warnDifferentProps(
-        href,
-        'href',
-        originalWarningName,
-        latestWarningName,
-        extraProps,
-        missingProps,
-        differentProps
-      );
-    }
-  }
-}
-
-function warnDifferentProps(
-  url,
-  urlPropKey,
-  originalName,
-  latestName,
-  extraProps,
-  missingProps,
-  differentProps
-) {
-  {
-    var juxtaposedNameStatement =
-      latestName === originalName
-        ? 'an earlier instance of this Resource'
-        : 'a ' + originalName + ' with the same ' + urlPropKey;
-    var comparisonStatement = '';
-
-    if (missingProps !== null && typeof missingProps === 'object') {
-      for (var propName in missingProps) {
-        comparisonStatement +=
-          '\n  ' +
-          propName +
-          ': missing or null in latest props, "' +
-          missingProps[propName] +
-          '" in original props';
-      }
-    }
-
-    if (extraProps !== null && typeof extraProps === 'object') {
-      for (var _propName in extraProps) {
-        comparisonStatement +=
-          '\n  ' +
-          _propName +
-          ': "' +
-          extraProps[_propName] +
-          '" in latest props, missing or null in original props';
-      }
-    }
-
-    if (differentProps !== null && typeof differentProps === 'object') {
-      for (var _propName2 in differentProps) {
-        comparisonStatement +=
-          '\n  ' +
-          _propName2 +
-          ': "' +
-          differentProps[_propName2].latest +
-          '" in latest props, "' +
-          differentProps[_propName2].original +
-          '" in original props';
-      }
-    }
-
-    error(
-      'A %s with %s "%s" has props that disagree with those found on %s. Resources always use the props' +
-        ' that were provided the first time they are encountered so any differences will be ignored. Please' +
-        ' update Resources that share an %s to have props that agree. The differences are described below.%s',
-      latestName,
-      urlPropKey,
-      url,
-      juxtaposedNameStatement,
-      urlPropKey,
-      comparisonStatement
-    );
-  }
-}
-
-function getResourceNameForWarning(type, props, implicit) {
-  {
-    switch (type) {
-      case 'style': {
-        return 'style Resource';
-      }
-
-      case 'script': {
-        return 'script Resource';
-      }
-
-      case 'preload': {
-        if (implicit) {
-          return 'preload for a ' + props.as + ' Resource';
-        }
-
-        return 'preload Resource (as "' + props.as + '")';
-      }
-    }
-  }
-
-  return 'Resource';
-}
-function validateLinkPropsForStyleResource(props) {
-  {
-    // This should only be called when we know we are opting into Resource semantics (i.e. precedence is not null)
-    var href = props.href,
-      onLoad = props.onLoad,
-      onError = props.onError,
-      disabled = props.disabled;
-    var allProps = ['onLoad', 'onError', 'disabled'];
-    var includedProps = [];
-    if (onLoad) includedProps.push('onLoad');
-    if (onError) includedProps.push('onError');
-    if (disabled != null) includedProps.push('disabled');
-    var allPropsUnionPhrase = propNamesListJoin(allProps, 'or');
-    var includedPropsPhrase = propNamesListJoin(includedProps, 'and');
-    includedPropsPhrase += includedProps.length === 1 ? ' prop' : ' props';
-
-    if (includedProps.length) {
-      error(
-        'A link (rel="stylesheet") element with href "%s" has the precedence prop but also included the %s.' +
-          ' When using %s React will opt out of Resource behavior. If you meant for this' +
-          ' element to be treated as a Resource remove the %s. Otherwise remove the precedence prop.',
-        href,
-        includedPropsPhrase,
-        allPropsUnionPhrase,
-        includedPropsPhrase
-      );
-
-      return true;
-    }
-  }
-
-  return false;
-}
-
-function propNamesListJoin(list, combinator) {
-  switch (list.length) {
-    case 0:
-      return '';
-
-    case 1:
-      return list[0];
-
-    case 2:
-      return list[0] + ' ' + combinator + ' ' + list[1];
-
-    default:
-      return (
-        list.slice(0, -1).join(', ') +
-        ', ' +
-        combinator +
-        ' ' +
-        list[list.length - 1]
-      );
-  }
-}
-
-function validateLinkPropsForPreloadResource(linkProps) {
-  {
-    var href = linkProps.href,
-      as = linkProps.as;
-
-    if (as === 'font') {
-      var name = getResourceNameForWarning('preload', linkProps, false);
-
-      if (!hasOwnProperty.call(linkProps, 'crossOrigin')) {
-        error(
-          'A %s with href "%s" did not specify the crossOrigin prop. Font preloads must always use' +
-            ' anonymouse CORS mode. To fix add an empty string, "anonymous", or any other string' +
-            ' value except "use-credentials" for the crossOrigin prop of all font preloads.',
-          name,
-          href
-        );
-      } else if (linkProps.crossOrigin === 'use-credentials') {
-        error(
-          'A %s with href "%s" specified a crossOrigin value of "use-credentials". Font preloads must always use' +
-            ' anonymouse CORS mode. To fix use an empty string, "anonymous", or any other string' +
-            ' value except "use-credentials" for the crossOrigin prop of all font preloads.',
-          name,
-          href
-        );
-      }
-    }
-  }
-}
-function validatePreloadArguments(href, options) {
-  {
-    if (!href || typeof href !== 'string') {
-      var typeOfArg = getValueDescriptorExpectingObjectForWarning(href);
-
-      error(
-        'ReactDOM.preload() expected the first argument to be a string representing an href but found %s instead.',
-        typeOfArg
-      );
-    } else if (typeof options !== 'object' || options === null) {
-      var _typeOfArg = getValueDescriptorExpectingObjectForWarning(options);
-
-      error(
-        'ReactDOM.preload() expected the second argument to be an options argument containing at least an "as" property' +
-          ' specifying the Resource type. It found %s instead. The href for the preload call where this warning originated is "%s".',
-        _typeOfArg,
-        href
-      );
-    } else {
-      var as = options.as;
-
-      switch (as) {
-        // Font specific validation of options
-        case 'font': {
-          if (options.crossOrigin === 'use-credentials') {
-            error(
-              'ReactDOM.preload() was called with an "as" type of "font" and with a "crossOrigin" option of "use-credentials".' +
-                ' Fonts preloading must use crossOrigin "anonymous" to be functional. Please update your font preload to omit' +
-                ' the crossOrigin option or change it to any other value than "use-credentials" (Browsers default all other values' +
-                ' to anonymous mode). The href for the preload call where this warning originated is "%s"',
-              href
-            );
-          }
-
-          break;
-        }
-
-        case 'script':
-        case 'style': {
-          break;
-        }
-        // We have an invalid as type and need to warn
-
-        default: {
-          var typeOfAs = getValueDescriptorExpectingEnumForWarning(as);
-
-          error(
-            'ReactDOM.preload() expected a valid "as" type in the options (second) argument but found %s instead.' +
-              ' Please use one of the following valid values instead: %s. The href for the preload call where this' +
-              ' warning originated is "%s".',
-            typeOfAs,
-            '"style", "font", or "script"',
-            href
-          );
-        }
-      }
-    }
-  }
-}
-function validatePreinitArguments(href, options) {
-  {
-    if (!href || typeof href !== 'string') {
-      var typeOfArg = getValueDescriptorExpectingObjectForWarning(href);
-
-      error(
-        'ReactDOM.preinit() expected the first argument to be a string representing an href but found %s instead.',
-        typeOfArg
-      );
-    } else if (typeof options !== 'object' || options === null) {
-      var _typeOfArg2 = getValueDescriptorExpectingObjectForWarning(options);
-
-      error(
-        'ReactDOM.preinit() expected the second argument to be an options argument containing at least an "as" property' +
-          ' specifying the Resource type. It found %s instead. The href for the preload call where this warning originated is "%s".',
-        _typeOfArg2,
-        href
-      );
-    } else {
-      var as = options.as;
-
-      switch (as) {
-        case 'style':
-        case 'script': {
-          break;
-        }
-        // We have an invalid as type and need to warn
-
-        default: {
-          var typeOfAs = getValueDescriptorExpectingEnumForWarning(as);
-
-          error(
-            'ReactDOM.preinit() expected the second argument to be an options argument containing at least an "as" property' +
-              ' specifying the Resource type. It found %s instead. Currently, valid resource types for for preinit are "style"' +
-              ' and "script". The href for the preinit call where this warning originated is "%s".',
-            typeOfAs,
-            href
-          );
-        }
-      }
-    }
-  }
-}
-
-function getValueDescriptorExpectingObjectForWarning(thing) {
-  return thing === null
-    ? 'null'
-    : thing === undefined
-    ? 'undefined'
-    : thing === ''
-    ? 'an empty string'
-    : 'something with type "' + typeof thing + '"';
-}
-
-function getValueDescriptorExpectingEnumForWarning(thing) {
-  return thing === null
-    ? 'null'
-    : thing === undefined
-    ? 'undefined'
-    : thing === ''
-    ? 'an empty string'
-    : typeof thing === 'string'
-    ? JSON.stringify(thing)
-    : 'something with type "' + typeof thing + '"';
-}
+const assign = Object.assign;
 
 // @TODO add bootstrap script to implicit preloads
 function createResources() {
@@ -2782,8 +755,8 @@ function createResources() {
 function createBoundaryResources() {
   return new Set();
 }
-var currentResources = null;
-var currentResourcesStack = [];
+let currentResources = null;
+const currentResourcesStack = [];
 function prepareToRenderResources(resources) {
   currentResourcesStack.push(currentResources);
   currentResources = resources;
@@ -2797,9 +770,9 @@ function setCurrentlyRenderingBoundaryResourcesTarget(
 ) {
   resources.boundaryResources = boundaryResources;
 }
-var ReactDOMServerDispatcher = {
-  preload: preload,
-  preinit: preinit,
+const ReactDOMServerDispatcher = {
+  preload,
+  preinit,
 };
 
 function preload(href, options) {
@@ -2813,11 +786,7 @@ function preload(href, options) {
     return;
   }
 
-  var resources = currentResources;
-
-  {
-    validatePreloadArguments(href, options);
-  }
+  const resources = currentResources;
 
   if (
     typeof href === 'string' &&
@@ -2825,21 +794,11 @@ function preload(href, options) {
     typeof options === 'object' &&
     options !== null
   ) {
-    var as = options.as;
-    var resource = resources.preloadsMap.get(href);
+    const as = options.as;
+    let resource = resources.preloadsMap.get(href);
 
-    if (resource) {
-      {
-        var originallyImplicit = resource._dev_implicit_construction === true;
-        var latestProps = preloadPropsFromPreloadOptions(href, as, options);
-        validatePreloadResourceDifference(
-          resource.props,
-          originallyImplicit,
-          latestProps,
-          false
-        );
-      }
-    } else {
+    if (resource);
+    else {
       resource = createPreloadResource(
         resources,
         href,
@@ -2878,11 +837,7 @@ function preinit(href, options) {
     return;
   }
 
-  var resources = currentResources;
-
-  {
-    validatePreinitArguments(href, options);
-  }
+  const resources = currentResources;
 
   if (
     typeof href === 'string' &&
@@ -2890,24 +845,16 @@ function preinit(href, options) {
     typeof options === 'object' &&
     options !== null
   ) {
-    var as = options.as;
+    const as = options.as;
 
     switch (as) {
       case 'style': {
-        var resource = resources.stylesMap.get(href);
+        let resource = resources.stylesMap.get(href);
 
-        if (resource) {
-          {
-            var latestProps = stylePropsFromPreinitOptions(
-              href,
-              resource.precedence,
-              options
-            );
-            validateStyleResourceDifference(resource.props, latestProps);
-          }
-        } else {
-          var precedence = options.precedence || 'default';
-          var resourceProps = stylePropsFromPreinitOptions(
+        if (resource);
+        else {
+          const precedence = options.precedence || 'default';
+          const resourceProps = stylePropsFromPreinitOptions(
             href,
             precedence,
             options
@@ -2926,20 +873,14 @@ function preinit(href, options) {
       }
 
       case 'script': {
-        var src = href;
+        const src = href;
+        let resource = resources.scriptsMap.get(src);
 
-        var _resource = resources.scriptsMap.get(src);
-
-        if (_resource) {
-          {
-            var _latestProps = scriptPropsFromPreinitOptions(src, options);
-
-            validateScriptResourceDifference(_resource.props, _latestProps);
-          }
-        } else {
-          var scriptProps = scriptPropsFromPreinitOptions(src, options);
-          _resource = createScriptResource(resources, src, scriptProps);
-          resources.scripts.add(_resource);
+        if (resource);
+        else {
+          const scriptProps = scriptPropsFromPreinitOptions(src, options);
+          resource = createScriptResource(resources, src, scriptProps);
+          resources.scripts.add(resource);
         }
 
         return;
@@ -2950,16 +891,16 @@ function preinit(href, options) {
 
 function preloadPropsFromPreloadOptions(href, as, options) {
   return {
-    href: href,
+    href,
     rel: 'preload',
-    as: as,
+    as,
     crossOrigin: as === 'font' ? '' : options.crossOrigin,
     integrity: options.integrity,
   };
 }
 
 function preloadPropsFromRawProps(href, as, rawProps) {
-  var props = assign({}, rawProps);
+  const props = assign({}, rawProps);
 
   props.href = href;
   props.rel = 'preload';
@@ -2992,7 +933,7 @@ function preloadAsScriptPropsFromProps(href, props) {
   return {
     rel: 'preload',
     as: 'script',
-    href: href,
+    href,
     crossOrigin: props.crossOrigin,
     integrity: props.integrity,
     referrerPolicy: props.referrerPolicy,
@@ -3000,29 +941,21 @@ function preloadAsScriptPropsFromProps(href, props) {
 }
 
 function createPreloadResource(resources, href, as, props) {
-  var preloadsMap = resources.preloadsMap;
+  const preloadsMap = resources.preloadsMap;
 
-  {
-    if (preloadsMap.has(href)) {
-      error(
-        'createPreloadResource was called when a preload Resource matching the same href already exists. This is a bug in React.'
-      );
-    }
-  }
-
-  var resource = {
+  const resource = {
     type: 'preload',
-    as: as,
-    href: href,
+    as,
+    href,
     flushed: false,
-    props: props,
+    props,
   };
   preloadsMap.set(href, resource);
   return resource;
 }
 
 function stylePropsFromRawProps(href, precedence, rawProps) {
-  var props = assign({}, rawProps);
+  const props = assign({}, rawProps);
 
   props.href = href;
   props.rel = 'stylesheet';
@@ -3034,34 +967,26 @@ function stylePropsFromRawProps(href, precedence, rawProps) {
 function stylePropsFromPreinitOptions(href, precedence, options) {
   return {
     rel: 'stylesheet',
-    href: href,
+    href,
     'data-precedence': precedence,
     crossOrigin: options.crossOrigin,
   };
 }
 
 function createStyleResource(resources, href, precedence, props) {
-  {
-    if (resources.stylesMap.has(href)) {
-      error(
-        'createStyleResource was called when a style Resource matching the same href already exists. This is a bug in React.'
-      );
-    }
-  }
-
-  var stylesMap = resources.stylesMap,
+  const stylesMap = resources.stylesMap,
     preloadsMap = resources.preloadsMap,
     precedences = resources.precedences; // If this is the first time we've seen this precedence we encode it's position in our set even though
   // we don't add the resource to this set yet
 
-  var precedenceSet = precedences.get(precedence);
+  let precedenceSet = precedences.get(precedence);
 
   if (!precedenceSet) {
     precedenceSet = new Set();
     precedences.set(precedence, precedenceSet);
   }
 
-  var hint = preloadsMap.get(href);
+  let hint = preloadsMap.get(href);
 
   if (hint) {
     // If a preload for this style Resource already exists there are certain props we want to adopt
@@ -3069,16 +994,8 @@ function createStyleResource(resources, href, precedence, props) {
     // the preload pathways. For instance if you have diffreent crossOrigin attributes for a preload
     // and a stylesheet the stylesheet will make a new request even if the preload had already loaded
     adoptPreloadPropsForStyleProps(props, hint.props);
-
-    {
-      validateStyleAndHintProps(
-        hint.props,
-        props,
-        hint._dev_implicit_construction
-      );
-    }
   } else {
-    var preloadResourceProps = preloadAsStylePropsFromProps(href, props);
+    const preloadResourceProps = preloadAsStylePropsFromProps(href, props);
     hint = createPreloadResource(
       resources,
       href,
@@ -3086,21 +1003,17 @@ function createStyleResource(resources, href, precedence, props) {
       preloadResourceProps
     );
 
-    {
-      hint._dev_implicit_construction = true;
-    }
-
     resources.explicitStylePreloads.add(hint);
   }
 
-  var resource = {
+  const resource = {
     type: 'style',
-    href: href,
-    precedence: precedence,
+    href,
+    precedence,
     flushed: false,
     inShell: false,
-    props: props,
-    hint: hint,
+    props,
+    hint,
     set: precedenceSet,
   };
   stylesMap.set(href, resource);
@@ -3117,7 +1030,7 @@ function adoptPreloadPropsForStyleProps(resourceProps, preloadProps) {
 
 function scriptPropsFromPreinitOptions(src, options) {
   return {
-    src: src,
+    src,
     async: true,
     crossOrigin: options.crossOrigin,
     integrity: options.integrity,
@@ -3125,24 +1038,16 @@ function scriptPropsFromPreinitOptions(src, options) {
 }
 
 function scriptPropsFromRawProps(src, rawProps) {
-  var props = assign({}, rawProps);
+  const props = assign({}, rawProps);
 
   props.src = src;
   return props;
 }
 
 function createScriptResource(resources, src, props) {
-  {
-    if (resources.scriptsMap.has(src)) {
-      error(
-        'createScriptResource was called when a script Resource matching the same src already exists. This is a bug in React.'
-      );
-    }
-  }
-
-  var scriptsMap = resources.scriptsMap,
+  const scriptsMap = resources.scriptsMap,
     preloadsMap = resources.preloadsMap;
-  var hint = preloadsMap.get(src);
+  let hint = preloadsMap.get(src);
 
   if (hint) {
     // If a preload for this style Resource already exists there are certain props we want to adopt
@@ -3150,16 +1055,8 @@ function createScriptResource(resources, src, props) {
     // the preload pathways. For instance if you have diffreent crossOrigin attributes for a preload
     // and a stylesheet the stylesheet will make a new request even if the preload had already loaded
     adoptPreloadPropsForScriptProps(props, hint.props);
-
-    {
-      validateScriptAndHintProps(
-        hint.props,
-        props,
-        hint._dev_implicit_construction
-      );
-    }
   } else {
-    var preloadResourceProps = preloadAsScriptPropsFromProps(src, props);
+    const preloadResourceProps = preloadAsScriptPropsFromProps(src, props);
     hint = createPreloadResource(
       resources,
       src,
@@ -3167,19 +1064,15 @@ function createScriptResource(resources, src, props) {
       preloadResourceProps
     );
 
-    {
-      hint._dev_implicit_construction = true;
-    }
-
     resources.explicitScriptPreloads.add(hint);
   }
 
-  var resource = {
+  const resource = {
     type: 'script',
-    src: src,
+    src,
     flushed: false,
-    props: props,
-    hint: hint,
+    props,
+    hint,
   };
   scriptsMap.set(src, resource);
   return resource;
@@ -3195,7 +1088,7 @@ function adoptPreloadPropsForScriptProps(resourceProps, preloadProps) {
 }
 
 function titlePropsFromRawProps(child, rawProps) {
-  var props = assign({}, rawProps);
+  const props = assign({}, rawProps);
 
   props.children = child;
   return props;
@@ -3208,19 +1101,19 @@ function resourcesFromElement(type, props) {
     );
   }
 
-  var resources = currentResources;
+  const resources = currentResources;
 
   switch (type) {
     case 'title': {
-      var child = props.children;
+      let child = props.children;
 
       if (Array.isArray(child) && child.length === 1) {
         child = child[0];
       }
 
       if (typeof child === 'string' || typeof child === 'number') {
-        var key = 'title::' + child;
-        var resource = resources.headsMap.get(key);
+        const key = 'title::' + child;
+        let resource = resources.headsMap.get(key);
 
         if (!resource) {
           resource = {
@@ -3237,50 +1130,50 @@ function resourcesFromElement(type, props) {
     }
 
     case 'meta': {
-      var _key, propertyPath;
+      let key, propertyPath;
 
       if (typeof props.charSet === 'string') {
-        _key = 'charSet';
+        key = 'charSet';
       } else if (typeof props.content === 'string') {
-        var contentKey = '::' + props.content;
+        const contentKey = '::' + props.content;
 
         if (typeof props.httpEquiv === 'string') {
-          _key = 'httpEquiv::' + props.httpEquiv + contentKey;
+          key = 'httpEquiv::' + props.httpEquiv + contentKey;
         } else if (typeof props.name === 'string') {
-          _key = 'name::' + props.name + contentKey;
+          key = 'name::' + props.name + contentKey;
         } else if (typeof props.itemProp === 'string') {
-          _key = 'itemProp::' + props.itemProp + contentKey;
+          key = 'itemProp::' + props.itemProp + contentKey;
         } else if (typeof props.property === 'string') {
-          var property = props.property;
-          _key = 'property::' + property + contentKey;
+          const property = props.property;
+          key = 'property::' + property + contentKey;
           propertyPath = property;
-          var parentPath = property.split(':').slice(0, -1).join(':');
-          var parentResource = resources.structuredMetaKeys.get(parentPath);
+          const parentPath = property.split(':').slice(0, -1).join(':');
+          const parentResource = resources.structuredMetaKeys.get(parentPath);
 
           if (parentResource) {
-            _key = parentResource.key + '::child::' + _key;
+            key = parentResource.key + '::child::' + key;
           }
         }
       }
 
-      if (_key) {
-        if (!resources.headsMap.has(_key)) {
-          var _resource2 = {
+      if (key) {
+        if (!resources.headsMap.has(key)) {
+          const resource = {
             type: 'meta',
-            key: _key,
+            key,
             props: assign({}, props),
             flushed: false,
           };
-          resources.headsMap.set(_key, _resource2);
+          resources.headsMap.set(key, resource);
 
-          if (_key === 'charSet') {
-            resources.charset = _resource2;
+          if (key === 'charSet') {
+            resources.charset = resource;
           } else {
             if (propertyPath) {
-              resources.structuredMetaKeys.set(propertyPath, _resource2);
+              resources.structuredMetaKeys.set(propertyPath, resource);
             }
 
-            resources.headResources.add(_resource2);
+            resources.headResources.add(resource);
           }
         }
       }
@@ -3289,27 +1182,27 @@ function resourcesFromElement(type, props) {
     }
 
     case 'base': {
-      var target = props.target,
+      const target = props.target,
         href = props.href; // We mirror the key construction on the client since we will likely unify
       // this code in the future to better guarantee key semantics are identical
       // in both environments
 
-      var _key2 = 'base';
-      _key2 +=
+      let key = 'base';
+      key +=
         typeof href === 'string' ? '[href="' + href + '"]' : ':not([href])';
-      _key2 +=
+      key +=
         typeof target === 'string'
           ? '[target="' + target + '"]'
           : ':not([target])';
 
-      if (!resources.headsMap.has(_key2)) {
-        var _resource3 = {
+      if (!resources.headsMap.has(key)) {
+        const resource = {
           type: 'base',
           props: assign({}, props),
           flushed: false,
         };
-        resources.headsMap.set(_key2, _resource3);
-        resources.bases.add(_resource3);
+        resources.headsMap.set(key, resource);
+        resources.bases.add(resource);
       }
 
       return true;
@@ -3326,19 +1219,19 @@ function resourcesFromLink(props) {
     );
   }
 
-  var resources = currentResources;
-  var rel = props.rel,
+  const resources = currentResources;
+  const rel = props.rel,
     href = props.href;
 
   if (!href || typeof href !== 'string' || !rel || typeof rel !== 'string') {
     return false;
   }
 
-  var key = '';
+  let key = '';
 
   switch (rel) {
     case 'stylesheet': {
-      var onLoad = props.onLoad,
+      const onLoad = props.onLoad,
         onError = props.onError,
         precedence = props.precedence,
         disabled = props.disabled;
@@ -3349,14 +1242,7 @@ function resourcesFromLink(props) {
         onError ||
         disabled != null
       ) {
-        // This stylesheet is either not opted into Resource semantics or has conflicting properties which
-        // disqualify it for such. We can still create a preload resource to help it load faster on the
-        // client
-        {
-          validateLinkPropsForStyleResource(props);
-        } // $FlowFixMe[incompatible-use] found when upgrading Flow
-
-        var preloadResource = resources.preloadsMap.get(href);
+        let preloadResource = resources.preloadsMap.get(href);
 
         if (!preloadResource) {
           preloadResource = createPreloadResource(
@@ -3367,10 +1253,6 @@ function resourcesFromLink(props) {
             preloadAsStylePropsFromProps(href, props)
           );
 
-          {
-            preloadResource._dev_implicit_construction = true;
-          }
-
           resources.usedStylePreloads.add(preloadResource);
         }
 
@@ -3378,34 +1260,25 @@ function resourcesFromLink(props) {
       } else {
         // We are able to convert this link element to a resource exclusively. We construct the relevant Resource
         // and return true indicating that this link was fully consumed.
-        var _resource4 = resources.stylesMap.get(href);
+        let resource = resources.stylesMap.get(href);
 
-        if (_resource4) {
-          {
-            var resourceProps = stylePropsFromRawProps(href, precedence, props);
-            adoptPreloadPropsForStyleProps(
-              resourceProps,
-              _resource4.hint.props
-            );
-            validateStyleResourceDifference(_resource4.props, resourceProps);
-          }
-        } else {
-          var _resourceProps = stylePropsFromRawProps(href, precedence, props);
-
-          _resource4 = createStyleResource(
+        if (resource);
+        else {
+          const resourceProps = stylePropsFromRawProps(href, precedence, props);
+          resource = createStyleResource(
             // $FlowFixMe[incompatible-call] found when upgrading Flow
             currentResources,
             href,
             precedence,
-            _resourceProps
+            resourceProps
           );
-          resources.usedStylePreloads.add(_resource4.hint);
+          resources.usedStylePreloads.add(resource.hint);
         }
 
         if (resources.boundaryResources) {
-          resources.boundaryResources.add(_resource4);
+          resources.boundaryResources.add(resource);
         } else {
-          _resource4.set.add(_resource4);
+          resource.set.add(resource);
         }
 
         return true;
@@ -3413,32 +1286,17 @@ function resourcesFromLink(props) {
     }
 
     case 'preload': {
-      var as = props.as;
+      const as = props.as;
 
       switch (as) {
         case 'script':
         case 'style':
         case 'font': {
-          {
-            validateLinkPropsForPreloadResource(props);
-          }
+          let resource = resources.preloadsMap.get(href);
 
-          var _resource5 = resources.preloadsMap.get(href);
-
-          if (_resource5) {
-            {
-              var originallyImplicit =
-                _resource5._dev_implicit_construction === true;
-              var latestProps = preloadPropsFromRawProps(href, as, props);
-              validatePreloadResourceDifference(
-                _resource5.props,
-                originallyImplicit,
-                latestProps,
-                false
-              );
-            }
-          } else {
-            _resource5 = createPreloadResource(
+          if (resource);
+          else {
+            resource = createPreloadResource(
               resources,
               href,
               as,
@@ -3447,17 +1305,17 @@ function resourcesFromLink(props) {
 
             switch (as) {
               case 'script': {
-                resources.explicitScriptPreloads.add(_resource5);
+                resources.explicitScriptPreloads.add(resource);
                 break;
               }
 
               case 'style': {
-                resources.explicitStylePreloads.add(_resource5);
+                resources.explicitStylePreloads.add(resource);
                 break;
               }
 
               case 'font': {
-                resources.fontPreloads.add(_resource5);
+                resources.fontPreloads.add(resource);
                 break;
               }
             }
@@ -3479,11 +1337,11 @@ function resourcesFromLink(props) {
     return true;
   }
 
-  var sizes = typeof props.sizes === 'string' ? props.sizes : '';
-  var media = typeof props.media === 'string' ? props.media : '';
+  const sizes = typeof props.sizes === 'string' ? props.sizes : '';
+  const media = typeof props.media === 'string' ? props.media : '';
   key =
     'rel:' + rel + '::href:' + href + '::sizes:' + sizes + '::media:' + media;
-  var resource = resources.headsMap.get(key);
+  let resource = resources.headsMap.get(key);
 
   if (!resource) {
     resource = {
@@ -3516,8 +1374,8 @@ function resourcesFromScript(props) {
     );
   }
 
-  var resources = currentResources;
-  var src = props.src,
+  const resources = currentResources;
+  const src = props.src,
     async = props.async,
     onLoad = props.onLoad,
     onError = props.onError;
@@ -3528,7 +1386,7 @@ function resourcesFromScript(props) {
 
   if (async) {
     if (onLoad || onError) {
-      var preloadResource = resources.preloadsMap.get(src);
+      let preloadResource = resources.preloadsMap.get(src);
 
       if (!preloadResource) {
         preloadResource = createPreloadResource(
@@ -3539,23 +1397,14 @@ function resourcesFromScript(props) {
           preloadAsScriptPropsFromProps(src, props)
         );
 
-        {
-          preloadResource._dev_implicit_construction = true;
-        }
-
         resources.usedScriptPreloads.add(preloadResource);
       }
     } else {
-      var resource = resources.scriptsMap.get(src);
+      let resource = resources.scriptsMap.get(src);
 
-      if (resource) {
-        {
-          var latestProps = scriptPropsFromRawProps(src, props);
-          adoptPreloadPropsForScriptProps(latestProps, resource.hint.props);
-          validateScriptResourceDifference(resource.props, latestProps);
-        }
-      } else {
-        var resourceProps = scriptPropsFromRawProps(src, props);
+      if (resource);
+      else {
+        const resourceProps = scriptPropsFromRawProps(src, props);
         resource = createScriptResource(resources, src, resourceProps);
         resources.scripts.add(resource);
       }
@@ -3567,40 +1416,36 @@ function resourcesFromScript(props) {
   return false;
 }
 function hoistResources(resources, source) {
-  var currentBoundaryResources = resources.boundaryResources;
+  const currentBoundaryResources = resources.boundaryResources;
 
   if (currentBoundaryResources) {
-    source.forEach(function (resource) {
-      return currentBoundaryResources.add(resource);
-    });
+    source.forEach((resource) => currentBoundaryResources.add(resource));
     source.clear();
   }
 }
 function hoistResourcesToRoot(resources, boundaryResources) {
-  boundaryResources.forEach(function (resource) {
-    return resource.set.add(resource);
-  });
+  boundaryResources.forEach((resource) => resource.set.add(resource));
   boundaryResources.clear();
 }
 
 // The build script is at scripts/rollup/generate-inline-fizz-runtime.js.
 // Run `yarn generate-inline-fizz-runtime` to generate.
-var clientRenderBoundary =
+const clientRenderBoundary =
   '$RX=function(b,c,d,e){var a=document.getElementById(b);a&&(b=a.previousSibling,b.data="$!",a=a.dataset,c&&(a.dgst=c),d&&(a.msg=d),e&&(a.stck=e),b._reactRetry&&b._reactRetry())};';
-var completeBoundary =
+const completeBoundary =
   '$RC=function(b,c,e){c=document.getElementById(c);c.parentNode.removeChild(c);var a=document.getElementById(b);if(a){b=a.previousSibling;if(e)b.data="$!",a.setAttribute("data-dgst",e);else{e=b.parentNode;a=b.nextSibling;var f=0;do{if(a&&8===a.nodeType){var d=a.data;if("/$"===d)if(0===f)break;else f--;else"$"!==d&&"$?"!==d&&"$!"!==d||f++}d=a.nextSibling;e.removeChild(a);a=d}while(a);for(;c.firstChild;)e.insertBefore(c.firstChild,a);b.data="$"}b._reactRetry&&b._reactRetry()}};';
-var completeBoundaryWithStyles =
+const completeBoundaryWithStyles =
   '$RM=new Map;\n$RR=function(p,q,v){function r(l){this.s=l}for(var t=$RC,u=$RM,m=new Map,n=document,g,e,f=n.querySelectorAll("link[data-precedence],style[data-precedence]"),d=0;e=f[d++];)m.set(e.dataset.precedence,g=e);e=0;f=[];for(var c,h,b,a;c=v[e++];){var k=0;h=c[k++];if(b=u.get(h))"l"!==b.s&&f.push(b);else{a=n.createElement("link");a.href=h;a.rel="stylesheet";for(a.dataset.precedence=d=c[k++];b=c[k++];)a.setAttribute(b,c[k++]);b=a._p=new Promise(function(l,w){a.onload=l;a.onerror=w});b.then(r.bind(b,\n"l"),r.bind(b,"e"));u.set(h,b);f.push(b);c=m.get(d)||g;c===g&&(g=a);m.set(d,a);c?c.parentNode.insertBefore(a,c.nextSibling):(d=n.head,d.insertBefore(a,d.firstChild))}}Promise.all(f).then(t.bind(null,p,q,""),t.bind(null,p,q,"Resource failed to load"))};';
-var completeSegment =
+const completeSegment =
   '$RS=function(a,b){a=document.getElementById(a);b=document.getElementById(b);for(a.parentNode.removeChild(a);a.firstChild;)b.parentNode.insertBefore(a.firstChild,b);b.parentNode.removeChild(b)};';
 
-var ReactDOMSharedInternals =
-  __SECRET_INTERNALS_DO_NOT_USE_OR_YOU_WILL_BE_FIRED$1;
+const ReactDOMSharedInternals =
+  __SECRET_INTERNALS_DO_NOT_USE_OR_YOU_WILL_BE_FIRED;
 
-var ReactDOMCurrentDispatcher = ReactDOMSharedInternals.Dispatcher;
+const ReactDOMCurrentDispatcher = ReactDOMSharedInternals.Dispatcher;
 function prepareToRender(resources) {
   prepareToRenderResources(resources);
-  var previousHostDispatcher = ReactDOMCurrentDispatcher.current;
+  const previousHostDispatcher = ReactDOMCurrentDispatcher.current;
   ReactDOMCurrentDispatcher.current = ReactDOMServerDispatcher;
   return previousHostDispatcher;
 }
@@ -3609,12 +1454,12 @@ function cleanupAfterRender(previousDispatcher) {
   ReactDOMCurrentDispatcher.current = previousDispatcher;
 } // Used to distinguish these contexts from ones used in other renderers.
 
-var startInlineScript = stringToPrecomputedChunk('<script>');
-var endInlineScript = stringToPrecomputedChunk('</script>');
-var startScriptSrc = stringToPrecomputedChunk('<script src="');
-var startModuleSrc = stringToPrecomputedChunk('<script type="module" src="');
-var scriptIntegirty = stringToPrecomputedChunk('" integrity="');
-var endAsyncScript = stringToPrecomputedChunk('" async=""></script>');
+const startInlineScript = stringToPrecomputedChunk('<script>');
+const endInlineScript = stringToPrecomputedChunk('</script>');
+const startScriptSrc = stringToPrecomputedChunk('<script src="');
+const startModuleSrc = stringToPrecomputedChunk('<script type="module" src="');
+const scriptIntegirty = stringToPrecomputedChunk('" integrity="');
+const endAsyncScript = stringToPrecomputedChunk('" async=""></script>');
 /**
  * This escaping function is designed to work with bootstrapScriptContent only.
  * because we know we are escaping the entire script. We can avoid for instance
@@ -3627,18 +1472,13 @@ var endAsyncScript = stringToPrecomputedChunk('" async=""></script>');
  */
 
 function escapeBootstrapScriptContent(scriptText) {
-  {
-    checkHtmlStringCoercion(scriptText);
-  }
-
   return ('' + scriptText).replace(scriptRegex, scriptReplacer);
 }
 
-var scriptRegex = /(<\/|<)(s)(cript)/gi;
+const scriptRegex = /(<\/|<)(s)(cript)/gi;
 
-var scriptReplacer = function (match, prefix, s, suffix) {
-  return '' + prefix + (s === 's' ? '\\u0073' : '\\u0053') + suffix;
-};
+const scriptReplacer = (match, prefix, s, suffix) =>
+  '' + prefix + (s === 's' ? '\\u0073' : '\\u0053') + suffix;
 
 // Allows us to keep track of what we've already written so we can refer back to it.
 function createResponseState(
@@ -3649,14 +1489,14 @@ function createResponseState(
   bootstrapModules,
   externalRuntimeConfig
 ) {
-  var idPrefix = identifierPrefix === undefined ? '' : identifierPrefix;
-  var inlineScriptWithNonce =
+  const idPrefix = identifierPrefix === undefined ? '' : identifierPrefix;
+  const inlineScriptWithNonce =
     nonce === undefined
       ? startInlineScript
       : stringToPrecomputedChunk(
           '<script nonce="' + escapeTextForBrowser(nonce) + '">'
         );
-  var bootstrapChunks = [];
+  const bootstrapChunks = [];
 
   if (bootstrapScriptContent !== undefined) {
     bootstrapChunks.push(
@@ -3667,24 +1507,21 @@ function createResponseState(
   }
 
   if (bootstrapScripts !== undefined) {
-    for (var i = 0; i < bootstrapScripts.length; i++) {
-      var scriptConfig = bootstrapScripts[i];
-
-      var _src =
+    for (let i = 0; i < bootstrapScripts.length; i++) {
+      const scriptConfig = bootstrapScripts[i];
+      const src =
         typeof scriptConfig === 'string' ? scriptConfig : scriptConfig.src;
-
-      var _integrity =
+      const integrity =
         typeof scriptConfig === 'string' ? undefined : scriptConfig.integrity;
-
       bootstrapChunks.push(
         startScriptSrc,
-        stringToChunk(escapeTextForBrowser(_src))
+        stringToChunk(escapeTextForBrowser(src))
       );
 
-      if (_integrity) {
+      if (integrity) {
         bootstrapChunks.push(
           scriptIntegirty,
-          stringToChunk(escapeTextForBrowser(_integrity))
+          stringToChunk(escapeTextForBrowser(integrity))
         );
       }
 
@@ -3693,24 +1530,21 @@ function createResponseState(
   }
 
   if (bootstrapModules !== undefined) {
-    for (var _i = 0; _i < bootstrapModules.length; _i++) {
-      var _scriptConfig = bootstrapModules[_i];
-
-      var _src2 =
-        typeof _scriptConfig === 'string' ? _scriptConfig : _scriptConfig.src;
-
-      var _integrity2 =
-        typeof _scriptConfig === 'string' ? undefined : _scriptConfig.integrity;
-
+    for (let i = 0; i < bootstrapModules.length; i++) {
+      const scriptConfig = bootstrapModules[i];
+      const src =
+        typeof scriptConfig === 'string' ? scriptConfig : scriptConfig.src;
+      const integrity =
+        typeof scriptConfig === 'string' ? undefined : scriptConfig.integrity;
       bootstrapChunks.push(
         startModuleSrc,
-        stringToChunk(escapeTextForBrowser(_src2))
+        stringToChunk(escapeTextForBrowser(src))
       );
 
-      if (_integrity2) {
+      if (integrity) {
         bootstrapChunks.push(
           scriptIntegirty,
-          stringToChunk(escapeTextForBrowser(_integrity2))
+          stringToChunk(escapeTextForBrowser(integrity))
         );
       }
 
@@ -3735,27 +1569,27 @@ function createResponseState(
 // modes. We only include the variants as they matter for the sake of our purposes.
 // We don't actually provide the namespace therefore we use constants instead of the string.
 
-var ROOT_HTML_MODE = 0; // Used for the root most element tag.
+const ROOT_HTML_MODE = 0; // Used for the root most element tag.
 
-var HTML_MODE = 1;
-var SVG_MODE = 2;
-var MATHML_MODE = 3;
-var HTML_TABLE_MODE = 4;
-var HTML_TABLE_BODY_MODE = 5;
-var HTML_TABLE_ROW_MODE = 6;
-var HTML_COLGROUP_MODE = 7; // We have a greater than HTML_TABLE_MODE check elsewhere. If you add more cases here, make sure it
+const HTML_MODE = 1;
+const SVG_MODE = 2;
+const MATHML_MODE = 3;
+const HTML_TABLE_MODE = 4;
+const HTML_TABLE_BODY_MODE = 5;
+const HTML_TABLE_ROW_MODE = 6;
+const HTML_COLGROUP_MODE = 7; // We have a greater than HTML_TABLE_MODE check elsewhere. If you add more cases here, make sure it
 // still makes sense
 
 function createFormatContext(insertionMode, selectedValue, noscriptTagInScope) {
   return {
-    insertionMode: insertionMode,
-    selectedValue: selectedValue,
-    noscriptTagInScope: noscriptTagInScope,
+    insertionMode,
+    selectedValue,
+    noscriptTagInScope,
   };
 }
 
 function createRootFormatContext(namespaceURI) {
-  var insertionMode =
+  const insertionMode =
     namespaceURI === 'http://www.w3.org/2000/svg'
       ? SVG_MODE
       : namespaceURI === 'http://www.w3.org/1998/Math/MathML'
@@ -3850,16 +1684,16 @@ function getChildFormatContext(parentContext, type, props) {
 
   return parentContext;
 }
-var UNINITIALIZED_SUSPENSE_BOUNDARY_ID = null;
+const UNINITIALIZED_SUSPENSE_BOUNDARY_ID = null;
 function assignSuspenseBoundaryID(responseState) {
-  var generatedID = responseState.nextSuspenseID++;
+  const generatedID = responseState.nextSuspenseID++;
   return stringToPrecomputedChunk(
     responseState.boundaryPrefix + generatedID.toString(16)
   );
 }
 function makeId(responseState, treeId, localId) {
-  var idPrefix = responseState.idPrefix;
-  var id = ':' + idPrefix + 'R' + treeId; // Unless this is the first id at this level, append a number at the end
+  const idPrefix = responseState.idPrefix;
+  let id = ':' + idPrefix + 'R' + treeId; // Unless this is the first id at this level, append a number at the end
   // that represents the position of this useId hook among all the useId
   // hooks for this fiber.
 
@@ -3874,7 +1708,7 @@ function encodeHTMLTextNode(text) {
   return escapeTextForBrowser(text);
 }
 
-var textSeparator = stringToPrecomputedChunk('<!-- -->');
+const textSeparator = stringToPrecomputedChunk('<!-- -->');
 function pushTextInstance(target, text, responseState, textEmbedded) {
   if (text === '') {
     // Empty text doesn't have a DOM node representation and the hydration is aware of this.
@@ -3900,25 +1734,25 @@ function pushSegmentFinale(
     target.push(textSeparator);
   }
 }
-var styleNameCache = new Map();
+const styleNameCache = new Map();
 
 function processStyleName(styleName) {
-  var chunk = styleNameCache.get(styleName);
+  const chunk = styleNameCache.get(styleName);
 
   if (chunk !== undefined) {
     return chunk;
   }
 
-  var result = stringToPrecomputedChunk(
+  const result = stringToPrecomputedChunk(
     escapeTextForBrowser(hyphenateStyleName(styleName))
   );
   styleNameCache.set(styleName, result);
   return result;
 }
 
-var styleAttributeStart = stringToPrecomputedChunk(' style="');
-var styleAssign = stringToPrecomputedChunk(':');
-var styleSeparator = stringToPrecomputedChunk(';');
+const styleAttributeStart = stringToPrecomputedChunk(' style="');
+const styleAssign = stringToPrecomputedChunk(':');
+const styleSeparator = stringToPrecomputedChunk(';');
 
 function pushStyle(target, responseState, style) {
   if (typeof style !== 'object') {
@@ -3929,9 +1763,9 @@ function pushStyle(target, responseState, style) {
     );
   }
 
-  var isFirst = true;
+  let isFirst = true;
 
-  for (var styleName in style) {
+  for (const styleName in style) {
     if (!hasOwnProperty.call(style, styleName)) {
       continue;
     } // If you provide unsafe user data here they can inject arbitrary CSS
@@ -3942,7 +1776,7 @@ function pushStyle(target, responseState, style) {
     // which has lead to a greater discussion about how we're going to
     // trust URLs moving forward. See #2115901
 
-    var styleValue = style[styleName];
+    const styleValue = style[styleName];
 
     if (
       styleValue == null ||
@@ -3953,25 +1787,17 @@ function pushStyle(target, responseState, style) {
       continue;
     }
 
-    var nameChunk = void 0;
-    var valueChunk = void 0;
-    var isCustomProperty = styleName.indexOf('--') === 0;
+    let nameChunk;
+    let valueChunk;
+    const isCustomProperty = styleName.indexOf('--') === 0;
 
     if (isCustomProperty) {
       nameChunk = stringToChunk(escapeTextForBrowser(styleName));
-
-      {
-        checkCSSPropertyStringCoercion(styleValue, styleName);
-      }
 
       valueChunk = stringToChunk(
         escapeTextForBrowser(('' + styleValue).trim())
       );
     } else {
-      {
-        warnValidStyle$1(styleName, styleValue);
-      }
-
       nameChunk = processStyleName(styleName);
 
       if (typeof styleValue === 'number') {
@@ -3984,10 +1810,6 @@ function pushStyle(target, responseState, style) {
           valueChunk = stringToChunk('' + styleValue);
         }
       } else {
-        {
-          checkCSSPropertyStringCoercion(styleValue, styleName);
-        }
-
         valueChunk = stringToChunk(
           escapeTextForBrowser(('' + styleValue).trim())
         );
@@ -4008,10 +1830,10 @@ function pushStyle(target, responseState, style) {
   }
 }
 
-var attributeSeparator = stringToPrecomputedChunk(' ');
-var attributeAssign = stringToPrecomputedChunk('="');
-var attributeEnd = stringToPrecomputedChunk('"');
-var attributeEmptyString = stringToPrecomputedChunk('=""');
+const attributeSeparator = stringToPrecomputedChunk(' ');
+const attributeAssign = stringToPrecomputedChunk('="');
+const attributeEnd = stringToPrecomputedChunk('"');
+const attributeEmptyString = stringToPrecomputedChunk('=""');
 
 function pushAttribute(target, responseState, name, value) {
   switch (name) {
@@ -4041,7 +1863,7 @@ function pushAttribute(target, responseState, name, value) {
     return;
   }
 
-  var propertyInfo = getPropertyInfo(name);
+  const propertyInfo = getPropertyInfo(name);
 
   if (propertyInfo !== null) {
     // shouldRemoveAttribute
@@ -4058,8 +1880,8 @@ function pushAttribute(target, responseState, name, value) {
       }
     }
 
-    var attributeName = propertyInfo.attributeName;
-    var attributeNameChunk = stringToChunk(attributeName); // TODO: If it's known we can cache the chunk.
+    const attributeName = propertyInfo.attributeName;
+    const attributeNameChunk = stringToChunk(attributeName); // TODO: If it's known we can cache the chunk.
 
     switch (propertyInfo.type) {
       case BOOLEAN:
@@ -4121,12 +1943,7 @@ function pushAttribute(target, responseState, name, value) {
 
       default:
         if (propertyInfo.sanitizeURL) {
-          {
-            checkAttributeStringCoercion(value, attributeName);
-          }
-
           value = '' + value;
-          sanitizeURL(value);
         }
 
         target.push(
@@ -4146,7 +1963,7 @@ function pushAttribute(target, responseState, name, value) {
         return;
 
       case 'boolean': {
-        var prefix = name.toLowerCase().slice(0, 5);
+        const prefix = name.toLowerCase().slice(0, 5);
 
         if (prefix !== 'data-' && prefix !== 'aria-') {
           return;
@@ -4164,8 +1981,8 @@ function pushAttribute(target, responseState, name, value) {
   }
 }
 
-var endOfStartTag = stringToPrecomputedChunk('>');
-var endOfStartTagSelfClosing = stringToPrecomputedChunk('/>');
+const endOfStartTag = stringToPrecomputedChunk('>');
+const endOfStartTagSelfClosing = stringToPrecomputedChunk('/>');
 
 function pushInnerHTML(target, innerHTML, children) {
   if (innerHTML != null) {
@@ -4183,81 +2000,22 @@ function pushInnerHTML(target, innerHTML, children) {
       );
     }
 
-    var html = innerHTML.__html;
+    const html = innerHTML.__html;
 
     if (html !== null && html !== undefined) {
-      {
-        checkHtmlStringCoercion(html);
-      }
-
       target.push(stringToChunk('' + html));
     }
   }
 } // TODO: Move these to ResponseState so that we warn for every request.
-// It would help debugging in stateful servers (e.g. service worker).
-
-var didWarnDefaultInputValue = false;
-var didWarnDefaultChecked = false;
-var didWarnDefaultSelectValue = false;
-var didWarnDefaultTextareaValue = false;
-var didWarnInvalidOptionChildren = false;
-var didWarnInvalidOptionInnerHTML = false;
-var didWarnSelectedSetOnOption = false;
-
-function checkSelectProp(props, propName) {
-  {
-    var value = props[propName];
-
-    if (value != null) {
-      var array = isArray(value);
-
-      if (props.multiple && !array) {
-        error(
-          'The `%s` prop supplied to <select> must be an array if ' +
-            '`multiple` is true.',
-          propName
-        );
-      } else if (!props.multiple && array) {
-        error(
-          'The `%s` prop supplied to <select> must be a scalar ' +
-            'value if `multiple` is false.',
-          propName
-        );
-      }
-    }
-  }
-}
 
 function pushStartSelect(target, props, responseState) {
-  {
-    checkControlledValueProps('select', props);
-    checkSelectProp(props, 'value');
-    checkSelectProp(props, 'defaultValue');
-
-    if (
-      props.value !== undefined &&
-      props.defaultValue !== undefined &&
-      !didWarnDefaultSelectValue
-    ) {
-      error(
-        'Select elements must be either controlled or uncontrolled ' +
-          '(specify either the value prop, or the defaultValue prop, but not ' +
-          'both). Decide between using a controlled or uncontrolled select ' +
-          'element and remove one of these props. More info: ' +
-          'https://reactjs.org/link/controlled-components'
-      );
-
-      didWarnDefaultSelectValue = true;
-    }
-  }
-
   target.push(startChunkForTag('select'));
-  var children = null;
-  var innerHTML = null;
+  let children = null;
+  let innerHTML = null;
 
-  for (var propKey in props) {
+  for (const propKey in props) {
     if (hasOwnProperty.call(props, propKey)) {
-      var propValue = props[propKey];
+      const propValue = props[propKey];
 
       if (propValue == null) {
         continue;
@@ -4292,7 +2050,7 @@ function pushStartSelect(target, props, responseState) {
 }
 
 function flattenOptionChildren(children) {
-  var content = ''; // Flatten children and warn if they aren't strings or numbers;
+  let content = ''; // Flatten children and warn if they aren't strings or numbers;
   // invalid types are ignored.
 
   Children.forEach(children, function (child) {
@@ -4301,38 +2059,23 @@ function flattenOptionChildren(children) {
     }
 
     content += child;
-
-    {
-      if (
-        !didWarnInvalidOptionChildren &&
-        typeof child !== 'string' &&
-        typeof child !== 'number'
-      ) {
-        didWarnInvalidOptionChildren = true;
-
-        error(
-          'Cannot infer the option value of complex children. ' +
-            'Pass a `value` prop or use a plain string as children to <option>.'
-        );
-      }
-    }
   });
   return content;
 }
 
-var selectedMarkerAttribute = stringToPrecomputedChunk(' selected=""');
+const selectedMarkerAttribute = stringToPrecomputedChunk(' selected=""');
 
 function pushStartOption(target, props, responseState, formatContext) {
-  var selectedValue = formatContext.selectedValue;
+  const selectedValue = formatContext.selectedValue;
   target.push(startChunkForTag('option'));
-  var children = null;
-  var value = null;
-  var selected = null;
-  var innerHTML = null;
+  let children = null;
+  let value = null;
+  let selected = null;
+  let innerHTML = null;
 
-  for (var propKey in props) {
+  for (const propKey in props) {
     if (hasOwnProperty.call(props, propKey)) {
-      var propValue = props[propKey];
+      const propValue = props[propKey];
 
       if (propValue == null) {
         continue;
@@ -4346,18 +2089,6 @@ function pushStartOption(target, props, responseState, formatContext) {
         case 'selected':
           // ignore
           selected = propValue;
-
-          {
-            // TODO: Remove support for `selected` in <option>.
-            if (!didWarnSelectedSetOnOption) {
-              error(
-                'Use the `defaultValue` or `value` props on <select> instead of ' +
-                  'setting `selected` on <option>.'
-              );
-
-              didWarnSelectedSetOnOption = true;
-            }
-          }
 
           break;
 
@@ -4379,39 +2110,18 @@ function pushStartOption(target, props, responseState, formatContext) {
   }
 
   if (selectedValue != null) {
-    var stringValue;
+    let stringValue;
 
     if (value !== null) {
-      {
-        checkAttributeStringCoercion(value, 'value');
-      }
-
       stringValue = '' + value;
     } else {
-      {
-        if (innerHTML !== null) {
-          if (!didWarnInvalidOptionInnerHTML) {
-            didWarnInvalidOptionInnerHTML = true;
-
-            error(
-              'Pass a `value` prop if you set dangerouslyInnerHTML so React knows ' +
-                'which value should be selected.'
-            );
-          }
-        }
-      }
-
       stringValue = flattenOptionChildren(children);
     }
 
     if (isArray(selectedValue)) {
       // multiple
-      for (var i = 0; i < selectedValue.length; i++) {
-        {
-          checkAttributeStringCoercion(selectedValue[i], 'value');
-        }
-
-        var v = '' + selectedValue[i];
+      for (let i = 0; i < selectedValue.length; i++) {
+        const v = '' + selectedValue[i];
 
         if (v === stringValue) {
           target.push(selectedMarkerAttribute);
@@ -4419,10 +2129,6 @@ function pushStartOption(target, props, responseState, formatContext) {
         }
       }
     } else {
-      {
-        checkAttributeStringCoercion(selectedValue, 'select.value');
-      }
-
       if ('' + selectedValue === stringValue) {
         target.push(selectedMarkerAttribute);
       }
@@ -4437,57 +2143,15 @@ function pushStartOption(target, props, responseState, formatContext) {
 }
 
 function pushInput(target, props, responseState) {
-  {
-    checkControlledValueProps('input', props);
-
-    if (
-      props.checked !== undefined &&
-      props.defaultChecked !== undefined &&
-      !didWarnDefaultChecked
-    ) {
-      error(
-        '%s contains an input of type %s with both checked and defaultChecked props. ' +
-          'Input elements must be either controlled or uncontrolled ' +
-          '(specify either the checked prop, or the defaultChecked prop, but not ' +
-          'both). Decide between using a controlled or uncontrolled input ' +
-          'element and remove one of these props. More info: ' +
-          'https://reactjs.org/link/controlled-components',
-        'A component',
-        props.type
-      );
-
-      didWarnDefaultChecked = true;
-    }
-
-    if (
-      props.value !== undefined &&
-      props.defaultValue !== undefined &&
-      !didWarnDefaultInputValue
-    ) {
-      error(
-        '%s contains an input of type %s with both value and defaultValue props. ' +
-          'Input elements must be either controlled or uncontrolled ' +
-          '(specify either the value prop, or the defaultValue prop, but not ' +
-          'both). Decide between using a controlled or uncontrolled input ' +
-          'element and remove one of these props. More info: ' +
-          'https://reactjs.org/link/controlled-components',
-        'A component',
-        props.type
-      );
-
-      didWarnDefaultInputValue = true;
-    }
-  }
-
   target.push(startChunkForTag('input'));
-  var value = null;
-  var defaultValue = null;
-  var checked = null;
-  var defaultChecked = null;
+  let value = null;
+  let defaultValue = null;
+  let checked = null;
+  let defaultChecked = null;
 
-  for (var propKey in props) {
+  for (const propKey in props) {
     if (hasOwnProperty.call(props, propKey)) {
-      var propValue = props[propKey];
+      const propValue = props[propKey];
 
       if (propValue == null) {
         continue;
@@ -4543,34 +2207,14 @@ function pushInput(target, props, responseState) {
 }
 
 function pushStartTextArea(target, props, responseState) {
-  {
-    checkControlledValueProps('textarea', props);
-
-    if (
-      props.value !== undefined &&
-      props.defaultValue !== undefined &&
-      !didWarnDefaultTextareaValue
-    ) {
-      error(
-        'Textarea elements must be either controlled or uncontrolled ' +
-          '(specify either the value prop, or the defaultValue prop, but not ' +
-          'both). Decide between using a controlled or uncontrolled textarea ' +
-          'and remove one of these props. More info: ' +
-          'https://reactjs.org/link/controlled-components'
-      );
-
-      didWarnDefaultTextareaValue = true;
-    }
-  }
-
   target.push(startChunkForTag('textarea'));
-  var value = null;
-  var defaultValue = null;
-  var children = null;
+  let value = null;
+  let defaultValue = null;
+  let children = null;
 
-  for (var propKey in props) {
+  for (const propKey in props) {
     if (hasOwnProperty.call(props, propKey)) {
-      var propValue = props[propKey];
+      const propValue = props[propKey];
 
       if (propValue == null) {
         continue;
@@ -4609,13 +2253,6 @@ function pushStartTextArea(target, props, responseState) {
   target.push(endOfStartTag); // TODO (yungsters): Remove support for children content in <textarea>.
 
   if (children != null) {
-    {
-      error(
-        'Use the `defaultValue` or `value` props instead of setting ' +
-          'children on <textarea>.'
-      );
-    }
-
     if (value != null) {
       throw new Error(
         'If you supply `defaultValue` on a <textarea>, do not pass children.'
@@ -4626,17 +2263,8 @@ function pushStartTextArea(target, props, responseState) {
       if (children.length > 1) {
         throw new Error('<textarea> can only have at most one child.');
       } // TODO: remove the coercion and the DEV check below because it will
-      // always be overwritten by the coercion several lines below it. #22309
-
-      {
-        checkHtmlStringCoercion(children[0]);
-      }
 
       value = '' + children[0];
-    }
-
-    {
-      checkHtmlStringCoercion(children);
     }
 
     value = '' + children;
@@ -4659,10 +2287,6 @@ function pushStartTextArea(target, props, responseState) {
   // This also currently avoids a trailing comment node which breaks textarea.
 
   if (value !== null) {
-    {
-      checkAttributeStringCoercion(value, 'value');
-    }
-
     target.push(stringToChunk(encodeHTMLTextNode('' + value)));
   }
 
@@ -4733,12 +2357,12 @@ function pushLink(
 }
 
 function pushLinkImpl(target, props, responseState) {
-  var isStylesheet = props.rel === 'stylesheet';
+  const isStylesheet = props.rel === 'stylesheet';
   target.push(startChunkForTag('link'));
 
-  for (var propKey in props) {
+  for (const propKey in props) {
     if (hasOwnProperty.call(props, propKey)) {
-      var propValue = props[propKey];
+      const propValue = props[propKey];
 
       if (propValue == null) {
         continue;
@@ -4775,9 +2399,9 @@ function pushLinkImpl(target, props, responseState) {
 function pushSelfClosing(target, props, tag, responseState) {
   target.push(startChunkForTag(tag));
 
-  for (var propKey in props) {
+  for (const propKey in props) {
     if (hasOwnProperty.call(props, propKey)) {
-      var propValue = props[propKey];
+      const propValue = props[propKey];
 
       if (propValue == null) {
         continue;
@@ -4807,9 +2431,9 @@ function pushSelfClosing(target, props, tag, responseState) {
 function pushStartMenuItem(target, props, responseState) {
   target.push(startChunkForTag('menuitem'));
 
-  for (var propKey in props) {
+  for (const propKey in props) {
     if (hasOwnProperty.call(props, propKey)) {
-      var propValue = props[propKey];
+      const propValue = props[propKey];
 
       if (propValue == null) {
         continue;
@@ -4835,47 +2459,6 @@ function pushStartMenuItem(target, props, responseState) {
 }
 
 function pushTitle(target, props, responseState, noscriptTagInScope) {
-  {
-    var children = props.children;
-    var childForValidation =
-      Array.isArray(children) && children.length < 2
-        ? children[0] || null
-        : children;
-
-    if (Array.isArray(children) && children.length > 1) {
-      error(
-        'A title element received an array with more than 1 element as children. ' +
-          'In browsers title Elements can only have Text Nodes as children. If ' +
-          'the children being rendered output more than a single text node in aggregate the browser ' +
-          'will display markup and comments as text in the title and hydration will likely fail and ' +
-          'fall back to client rendering'
-      );
-    } else if (
-      childForValidation != null &&
-      childForValidation.$$typeof != null
-    ) {
-      error(
-        'A title element received a React element for children. ' +
-          'In the browser title Elements can only have Text Nodes as children. If ' +
-          'the children being rendered output more than a single text node in aggregate the browser ' +
-          'will display markup and comments as text in the title and hydration will likely fail and ' +
-          'fall back to client rendering'
-      );
-    } else if (
-      childForValidation != null &&
-      typeof childForValidation !== 'string' &&
-      typeof childForValidation !== 'number'
-    ) {
-      error(
-        'A title element received a value that was not a string or number for children. ' +
-          'In the browser title Elements can only have Text Nodes as children. If ' +
-          'the children being rendered output more than a single text node in aggregate the browser ' +
-          'will display markup and comments as text in the title and hydration will likely fail and ' +
-          'fall back to client rendering'
-      );
-    }
-  }
-
   if (!noscriptTagInScope && resourcesFromElement('title', props)) {
     // We have converted this link exclusively to a resource and no longer
     // need to emit it
@@ -4887,11 +2470,11 @@ function pushTitle(target, props, responseState, noscriptTagInScope) {
 
 function pushTitleImpl(target, props, responseState) {
   target.push(startChunkForTag('title'));
-  var children = null;
+  let children = null;
 
-  for (var propKey in props) {
+  for (const propKey in props) {
     if (hasOwnProperty.call(props, propKey)) {
-      var propValue = props[propKey];
+      const propValue = props[propKey];
 
       if (propValue == null) {
         continue;
@@ -4916,7 +2499,7 @@ function pushTitleImpl(target, props, responseState) {
   }
 
   target.push(endOfStartTag);
-  var child =
+  const child =
     Array.isArray(children) && children.length < 2
       ? children[0] || null
       : children;
@@ -4976,12 +2559,12 @@ function pushScript(
 
 function pushScriptImpl(target, props, responseState) {
   target.push(startChunkForTag('script'));
-  var children = null;
-  var innerHTML = null;
+  let children = null;
+  let innerHTML = null;
 
-  for (var propKey in props) {
+  for (const propKey in props) {
     if (hasOwnProperty.call(props, propKey)) {
-      var propValue = props[propKey];
+      const propValue = props[propKey];
 
       if (propValue == null) {
         continue;
@@ -5005,23 +2588,6 @@ function pushScriptImpl(target, props, responseState) {
 
   target.push(endOfStartTag);
 
-  {
-    if (children != null && typeof children !== 'string') {
-      var descriptiveStatement =
-        typeof children === 'number'
-          ? 'a number for children'
-          : Array.isArray(children)
-          ? 'an array for children'
-          : 'something unexpected for children';
-
-      error(
-        'A script element was rendered with %s. If script element has children it must be a single string.' +
-          ' Consider using dangerouslySetInnerHTML or passing a plain string as children.',
-        descriptiveStatement
-      );
-    }
-  }
-
   pushInnerHTML(target, innerHTML, children);
 
   if (typeof children === 'string') {
@@ -5034,12 +2600,12 @@ function pushScriptImpl(target, props, responseState) {
 
 function pushStartGenericElement(target, props, tag, responseState) {
   target.push(startChunkForTag(tag));
-  var children = null;
-  var innerHTML = null;
+  let children = null;
+  let innerHTML = null;
 
-  for (var propKey in props) {
+  for (const propKey in props) {
     if (hasOwnProperty.call(props, propKey)) {
-      var propValue = props[propKey];
+      const propValue = props[propKey];
 
       if (propValue == null) {
         continue;
@@ -5076,12 +2642,12 @@ function pushStartGenericElement(target, props, tag, responseState) {
 
 function pushStartCustomElement(target, props, tag, responseState) {
   target.push(startChunkForTag(tag));
-  var children = null;
-  var innerHTML = null;
+  let children = null;
+  let innerHTML = null;
 
-  for (var propKey in props) {
+  for (let propKey in props) {
     if (hasOwnProperty.call(props, propKey)) {
-      var propValue = props[propKey];
+      let propValue = props[propKey];
 
       if (propValue == null) {
         continue;
@@ -5151,16 +2717,16 @@ function pushStartCustomElement(target, props, tag, responseState) {
   return children;
 }
 
-var leadingNewline = stringToPrecomputedChunk('\n');
+const leadingNewline = stringToPrecomputedChunk('\n');
 
 function pushStartPreformattedElement(target, props, tag, responseState) {
   target.push(startChunkForTag(tag));
-  var children = null;
-  var innerHTML = null;
+  let children = null;
+  let innerHTML = null;
 
-  for (var propKey in props) {
+  for (const propKey in props) {
     if (hasOwnProperty.call(props, propKey)) {
-      var propValue = props[propKey];
+      const propValue = props[propKey];
 
       if (propValue == null) {
         continue;
@@ -5210,16 +2776,12 @@ function pushStartPreformattedElement(target, props, tag, responseState) {
       );
     }
 
-    var html = innerHTML.__html;
+    const html = innerHTML.__html;
 
     if (html !== null && html !== undefined) {
       if (typeof html === 'string' && html.length > 0 && html[0] === '\n') {
         target.push(leadingNewline, stringToChunk(html));
       } else {
-        {
-          checkHtmlStringCoercion(html);
-        }
-
         target.push(stringToChunk('' + html));
       }
     }
@@ -5234,12 +2796,12 @@ function pushStartPreformattedElement(target, props, tag, responseState) {
 // HTML, we want to make sure that it's a safe tag.
 // http://www.w3.org/TR/REC-xml/#NT-Name
 
-var VALID_TAG_REGEX = /^[a-zA-Z][a-zA-Z:_\.\-\d]*$/; // Simplified subset
+const VALID_TAG_REGEX = /^[a-zA-Z][a-zA-Z:_\.\-\d]*$/; // Simplified subset
 
-var validatedTagCache = new Map();
+const validatedTagCache = new Map();
 
 function startChunkForTag(tag) {
-  var tagStartChunk = validatedTagCache.get(tag);
+  let tagStartChunk = validatedTagCache.get(tag);
 
   if (tagStartChunk === undefined) {
     if (!VALID_TAG_REGEX.test(tag)) {
@@ -5253,7 +2815,7 @@ function startChunkForTag(tag) {
   return tagStartChunk;
 }
 
-var DOCTYPE = stringToPrecomputedChunk('<!DOCTYPE html>');
+const DOCTYPE = stringToPrecomputedChunk('<!DOCTYPE html>');
 function pushStartInstance(
   target,
   preamble,
@@ -5263,43 +2825,6 @@ function pushStartInstance(
   formatContext,
   textEmbedded
 ) {
-  {
-    validateProperties(type, props);
-    validateProperties$1(type, props);
-    validateProperties$2(type, props, null);
-
-    if (
-      !props.suppressContentEditableWarning &&
-      props.contentEditable &&
-      props.children != null
-    ) {
-      error(
-        'A component is `contentEditable` and contains `children` managed by ' +
-          'React. It is now your responsibility to guarantee that none of ' +
-          'those nodes are unexpectedly modified or duplicated. This is ' +
-          'probably not intentional.'
-      );
-    }
-
-    if (
-      formatContext.insertionMode !== SVG_MODE &&
-      formatContext.insertionMode !== MATHML_MODE
-    ) {
-      if (
-        type.indexOf('-') === -1 &&
-        typeof props.is !== 'string' &&
-        type.toLowerCase() !== type
-      ) {
-        error(
-          '<%s /> is using incorrect casing. ' +
-            'Use PascalCase for React components, ' +
-            'or lowercase for HTML elements.',
-          type
-        );
-      }
-    }
-  }
-
   switch (type) {
     // Special tags
     case 'select':
@@ -5421,8 +2946,8 @@ function pushStartInstance(
     }
   }
 }
-var endTag1 = stringToPrecomputedChunk('</');
-var endTag2 = stringToPrecomputedChunk('>');
+const endTag1 = stringToPrecomputedChunk('</');
+const endTag2 = stringToPrecomputedChunk('>');
 function pushEndInstance(target, postamble, type, props) {
   switch (type) {
     // When float is on we expect title and script tags to always be pushed in
@@ -5471,8 +2996,8 @@ function pushEndInstance(target, postamble, type, props) {
   target.push(endTag1, stringToChunk(type), endTag2);
 }
 function writeCompletedRoot(destination, responseState) {
-  var bootstrapChunks = responseState.bootstrapChunks;
-  var i = 0;
+  const bootstrapChunks = responseState.bootstrapChunks;
+  let i = 0;
 
   for (; i < bootstrapChunks.length - 1; i++) {
     writeChunk(destination, bootstrapChunks[i]);
@@ -5488,34 +3013,31 @@ function writeCompletedRoot(destination, responseState) {
 // display. It's never visible to users. We use the template tag because it can be used in every
 // type of parent. <script> tags also work in every other tag except <colgroup>.
 
-var placeholder1 = stringToPrecomputedChunk('<template id="');
-var placeholder2 = stringToPrecomputedChunk('"></template>');
+const placeholder1 = stringToPrecomputedChunk('<template id="');
+const placeholder2 = stringToPrecomputedChunk('"></template>');
 function writePlaceholder(destination, responseState, id) {
   writeChunk(destination, placeholder1);
   writeChunk(destination, responseState.placeholderPrefix);
-  var formattedID = stringToChunk(id.toString(16));
+  const formattedID = stringToChunk(id.toString(16));
   writeChunk(destination, formattedID);
   return writeChunkAndReturn(destination, placeholder2);
 } // Suspense boundaries are encoded as comments.
 
-var startCompletedSuspenseBoundary = stringToPrecomputedChunk('<!--$-->');
-var startPendingSuspenseBoundary1 = stringToPrecomputedChunk(
+const startCompletedSuspenseBoundary = stringToPrecomputedChunk('<!--$-->');
+const startPendingSuspenseBoundary1 = stringToPrecomputedChunk(
   '<!--$?--><template id="'
 );
-var startPendingSuspenseBoundary2 = stringToPrecomputedChunk('"></template>');
-var startClientRenderedSuspenseBoundary = stringToPrecomputedChunk('<!--$!-->');
-var endSuspenseBoundary = stringToPrecomputedChunk('<!--/$-->');
-var clientRenderedSuspenseBoundaryError1 =
+const startPendingSuspenseBoundary2 = stringToPrecomputedChunk('"></template>');
+const startClientRenderedSuspenseBoundary =
+  stringToPrecomputedChunk('<!--$!-->');
+const endSuspenseBoundary = stringToPrecomputedChunk('<!--/$-->');
+const clientRenderedSuspenseBoundaryError1 =
   stringToPrecomputedChunk('<template');
-var clientRenderedSuspenseBoundaryErrorAttrInterstitial =
+const clientRenderedSuspenseBoundaryErrorAttrInterstitial =
   stringToPrecomputedChunk('"');
-var clientRenderedSuspenseBoundaryError1A =
+const clientRenderedSuspenseBoundaryError1A =
   stringToPrecomputedChunk(' data-dgst="');
-var clientRenderedSuspenseBoundaryError1B =
-  stringToPrecomputedChunk(' data-msg="');
-var clientRenderedSuspenseBoundaryError1C =
-  stringToPrecomputedChunk(' data-stck="');
-var clientRenderedSuspenseBoundaryError2 =
+const clientRenderedSuspenseBoundaryError2 =
   stringToPrecomputedChunk('></template>');
 function writeStartCompletedSuspenseBoundary(destination, responseState) {
   return writeChunkAndReturn(destination, startCompletedSuspenseBoundary);
@@ -5539,7 +3061,7 @@ function writeStartClientRenderedSuspenseBoundary(
   errorMesssage,
   errorComponentStack
 ) {
-  var result;
+  let result;
   result = writeChunkAndReturn(
     destination,
     startClientRenderedSuspenseBoundary
@@ -5553,32 +3075,6 @@ function writeStartClientRenderedSuspenseBoundary(
       destination,
       clientRenderedSuspenseBoundaryErrorAttrInterstitial
     );
-  }
-
-  {
-    if (errorMesssage) {
-      writeChunk(destination, clientRenderedSuspenseBoundaryError1B);
-      writeChunk(
-        destination,
-        stringToChunk(escapeTextForBrowser(errorMesssage))
-      );
-      writeChunk(
-        destination,
-        clientRenderedSuspenseBoundaryErrorAttrInterstitial
-      );
-    }
-
-    if (errorComponentStack) {
-      writeChunk(destination, clientRenderedSuspenseBoundaryError1C);
-      writeChunk(
-        destination,
-        stringToChunk(escapeTextForBrowser(errorComponentStack))
-      );
-      writeChunk(
-        destination,
-        clientRenderedSuspenseBoundaryErrorAttrInterstitial
-      );
-    }
   }
 
   result = writeChunkAndReturn(
@@ -5596,35 +3092,35 @@ function writeEndPendingSuspenseBoundary(destination, responseState) {
 function writeEndClientRenderedSuspenseBoundary(destination, responseState) {
   return writeChunkAndReturn(destination, endSuspenseBoundary);
 }
-var startSegmentHTML = stringToPrecomputedChunk('<div hidden id="');
-var startSegmentHTML2 = stringToPrecomputedChunk('">');
-var endSegmentHTML = stringToPrecomputedChunk('</div>');
-var startSegmentSVG = stringToPrecomputedChunk(
+const startSegmentHTML = stringToPrecomputedChunk('<div hidden id="');
+const startSegmentHTML2 = stringToPrecomputedChunk('">');
+const endSegmentHTML = stringToPrecomputedChunk('</div>');
+const startSegmentSVG = stringToPrecomputedChunk(
   '<svg aria-hidden="true" style="display:none" id="'
 );
-var startSegmentSVG2 = stringToPrecomputedChunk('">');
-var endSegmentSVG = stringToPrecomputedChunk('</svg>');
-var startSegmentMathML = stringToPrecomputedChunk(
+const startSegmentSVG2 = stringToPrecomputedChunk('">');
+const endSegmentSVG = stringToPrecomputedChunk('</svg>');
+const startSegmentMathML = stringToPrecomputedChunk(
   '<math aria-hidden="true" style="display:none" id="'
 );
-var startSegmentMathML2 = stringToPrecomputedChunk('">');
-var endSegmentMathML = stringToPrecomputedChunk('</math>');
-var startSegmentTable = stringToPrecomputedChunk('<table hidden id="');
-var startSegmentTable2 = stringToPrecomputedChunk('">');
-var endSegmentTable = stringToPrecomputedChunk('</table>');
-var startSegmentTableBody = stringToPrecomputedChunk(
+const startSegmentMathML2 = stringToPrecomputedChunk('">');
+const endSegmentMathML = stringToPrecomputedChunk('</math>');
+const startSegmentTable = stringToPrecomputedChunk('<table hidden id="');
+const startSegmentTable2 = stringToPrecomputedChunk('">');
+const endSegmentTable = stringToPrecomputedChunk('</table>');
+const startSegmentTableBody = stringToPrecomputedChunk(
   '<table hidden><tbody id="'
 );
-var startSegmentTableBody2 = stringToPrecomputedChunk('">');
-var endSegmentTableBody = stringToPrecomputedChunk('</tbody></table>');
-var startSegmentTableRow = stringToPrecomputedChunk('<table hidden><tr id="');
-var startSegmentTableRow2 = stringToPrecomputedChunk('">');
-var endSegmentTableRow = stringToPrecomputedChunk('</tr></table>');
-var startSegmentColGroup = stringToPrecomputedChunk(
+const startSegmentTableBody2 = stringToPrecomputedChunk('">');
+const endSegmentTableBody = stringToPrecomputedChunk('</tbody></table>');
+const startSegmentTableRow = stringToPrecomputedChunk('<table hidden><tr id="');
+const startSegmentTableRow2 = stringToPrecomputedChunk('">');
+const endSegmentTableRow = stringToPrecomputedChunk('</tr></table>');
+const startSegmentColGroup = stringToPrecomputedChunk(
   '<table hidden><colgroup id="'
 );
-var startSegmentColGroup2 = stringToPrecomputedChunk('">');
-var endSegmentColGroup = stringToPrecomputedChunk('</colgroup></table>');
+const startSegmentColGroup2 = stringToPrecomputedChunk('">');
+const endSegmentColGroup = stringToPrecomputedChunk('</colgroup></table>');
 function writeStartSegment(destination, responseState, formatContext, id) {
   switch (formatContext.insertionMode) {
     case ROOT_HTML_MODE:
@@ -5722,12 +3218,12 @@ function writeEndSegment(destination, formatContext) {
     }
   }
 }
-var completeSegmentScript1Full = stringToPrecomputedChunk(
+const completeSegmentScript1Full = stringToPrecomputedChunk(
   completeSegment + ';$RS("'
 );
-var completeSegmentScript1Partial = stringToPrecomputedChunk('$RS("');
-var completeSegmentScript2 = stringToPrecomputedChunk('","');
-var completeSegmentScript3 = stringToPrecomputedChunk('")</script>');
+const completeSegmentScript1Partial = stringToPrecomputedChunk('$RS("');
+const completeSegmentScript2 = stringToPrecomputedChunk('","');
+const completeSegmentScript3 = stringToPrecomputedChunk('")</script>');
 function writeCompletedSegmentInstruction(
   destination,
   responseState,
@@ -5745,29 +3241,29 @@ function writeCompletedSegmentInstruction(
   }
 
   writeChunk(destination, responseState.segmentPrefix);
-  var formattedID = stringToChunk(contentSegmentID.toString(16));
+  const formattedID = stringToChunk(contentSegmentID.toString(16));
   writeChunk(destination, formattedID);
   writeChunk(destination, completeSegmentScript2);
   writeChunk(destination, responseState.placeholderPrefix);
   writeChunk(destination, formattedID);
   return writeChunkAndReturn(destination, completeSegmentScript3);
 }
-var completeBoundaryScript1Full = stringToPrecomputedChunk(
+const completeBoundaryScript1Full = stringToPrecomputedChunk(
   completeBoundary + ';$RC("'
 );
-var completeBoundaryScript1Partial = stringToPrecomputedChunk('$RC("');
-var completeBoundaryWithStylesScript1FullBoth = stringToPrecomputedChunk(
+const completeBoundaryScript1Partial = stringToPrecomputedChunk('$RC("');
+const completeBoundaryWithStylesScript1FullBoth = stringToPrecomputedChunk(
   completeBoundary + ';' + completeBoundaryWithStyles + ';$RR("'
 );
-var completeBoundaryWithStylesScript1FullPartial = stringToPrecomputedChunk(
+const completeBoundaryWithStylesScript1FullPartial = stringToPrecomputedChunk(
   completeBoundaryWithStyles + ';$RR("'
 );
-var completeBoundaryWithStylesScript1Partial =
+const completeBoundaryWithStylesScript1Partial =
   stringToPrecomputedChunk('$RR("');
-var completeBoundaryScript2 = stringToPrecomputedChunk('","');
-var completeBoundaryScript2a = stringToPrecomputedChunk('",');
-var completeBoundaryScript3 = stringToPrecomputedChunk('"');
-var completeBoundaryScript4 = stringToPrecomputedChunk(')</script>');
+const completeBoundaryScript2 = stringToPrecomputedChunk('","');
+const completeBoundaryScript2a = stringToPrecomputedChunk('",');
+const completeBoundaryScript3 = stringToPrecomputedChunk('"');
+const completeBoundaryScript4 = stringToPrecomputedChunk(')</script>');
 function writeCompletedBoundaryInstruction(
   destination,
   responseState,
@@ -5775,7 +3271,7 @@ function writeCompletedBoundaryInstruction(
   contentSegmentID,
   boundaryResources
 ) {
-  var hasStyleDependencies;
+  let hasStyleDependencies;
 
   {
     hasStyleDependencies = hasStyleResourceDependencies(boundaryResources);
@@ -5809,7 +3305,7 @@ function writeCompletedBoundaryInstruction(
     );
   }
 
-  var formattedContentID = stringToChunk(contentSegmentID.toString(16));
+  const formattedContentID = stringToChunk(contentSegmentID.toString(16));
   writeChunk(destination, boundaryID);
   writeChunk(destination, completeBoundaryScript2);
   writeChunk(destination, responseState.segmentPrefix);
@@ -5824,13 +3320,13 @@ function writeCompletedBoundaryInstruction(
 
   return writeChunkAndReturn(destination, completeBoundaryScript4);
 }
-var clientRenderScript1Full = stringToPrecomputedChunk(
+const clientRenderScript1Full = stringToPrecomputedChunk(
   clientRenderBoundary + ';$RX("'
 );
-var clientRenderScript1Partial = stringToPrecomputedChunk('$RX("');
-var clientRenderScript1A = stringToPrecomputedChunk('"');
-var clientRenderScript2 = stringToPrecomputedChunk(')</script>');
-var clientRenderErrorScriptArgInterstitial = stringToPrecomputedChunk(',');
+const clientRenderScript1Partial = stringToPrecomputedChunk('$RX("');
+const clientRenderScript1A = stringToPrecomputedChunk('"');
+const clientRenderScript2 = stringToPrecomputedChunk(')</script>');
+const clientRenderErrorScriptArgInterstitial = stringToPrecomputedChunk(',');
 function writeClientRenderBoundaryInstruction(
   destination,
   responseState,
@@ -5885,40 +3381,37 @@ function writeClientRenderBoundaryInstruction(
 
   return writeChunkAndReturn(destination, clientRenderScript2);
 }
-var regexForJSStringsInInstructionScripts = /[<\u2028\u2029]/g;
+const regexForJSStringsInInstructionScripts = /[<\u2028\u2029]/g;
 
 function escapeJSStringsForInstructionScripts(input) {
-  var escaped = JSON.stringify(input);
-  return escaped.replace(
-    regexForJSStringsInInstructionScripts,
-    function (match) {
-      switch (match) {
-        // santizing breaking out of strings and script tags
-        case '<':
-          return '\\u003c';
+  const escaped = JSON.stringify(input);
+  return escaped.replace(regexForJSStringsInInstructionScripts, (match) => {
+    switch (match) {
+      // santizing breaking out of strings and script tags
+      case '<':
+        return '\\u003c';
 
-        case '\u2028':
-          return '\\u2028';
+      case '\u2028':
+        return '\\u2028';
 
-        case '\u2029':
-          return '\\u2029';
+      case '\u2029':
+        return '\\u2029';
 
-        default: {
-          // eslint-disable-next-line react-internal/prod-error-codes
-          throw new Error(
-            'escapeJSStringsForInstructionScripts encountered a match it does not know how to replace. this means the match regex and the replacement characters are no longer in sync. This is a bug in React'
-          );
-        }
+      default: {
+        // eslint-disable-next-line react-internal/prod-error-codes
+        throw new Error(
+          'escapeJSStringsForInstructionScripts encountered a match it does not know how to replace. this means the match regex and the replacement characters are no longer in sync. This is a bug in React'
+        );
       }
     }
-  );
+  });
 }
 
-var regexForJSStringsInScripts = /[&><\u2028\u2029]/g;
+const regexForJSStringsInScripts = /[&><\u2028\u2029]/g;
 
 function escapeJSObjectForInstructionScripts(input) {
-  var escaped = JSON.stringify(input);
-  return escaped.replace(regexForJSStringsInScripts, function (match) {
+  const escaped = JSON.stringify(input);
+  return escaped.replace(regexForJSStringsInScripts, (match) => {
     switch (match) {
       // santizing breaking out of strings and script tags
       case '&':
@@ -5946,10 +3439,10 @@ function escapeJSObjectForInstructionScripts(input) {
   });
 }
 
-var precedencePlaceholderStart = stringToPrecomputedChunk(
+const precedencePlaceholderStart = stringToPrecomputedChunk(
   '<style data-precedence="'
 );
-var precedencePlaceholderEnd = stringToPrecomputedChunk('"></style>');
+const precedencePlaceholderEnd = stringToPrecomputedChunk('"></style>');
 function writeInitialResources(destination, resources, responseState) {
   function flushLinkResource(resource) {
     if (!resource.flushed) {
@@ -5958,8 +3451,8 @@ function writeInitialResources(destination, resources, responseState) {
     }
   }
 
-  var target = [];
-  var charset = resources.charset,
+  const target = [];
+  const charset = resources.charset,
     bases = resources.bases,
     preconnects = resources.preconnects,
     fontPreloads = resources.fontPreloads,
@@ -5977,27 +3470,27 @@ function writeInitialResources(destination, resources, responseState) {
     resources.charset = null;
   }
 
-  bases.forEach(function (r) {
+  bases.forEach((r) => {
     pushSelfClosing(target, r.props, 'base', responseState);
     r.flushed = true;
   });
   bases.clear();
-  preconnects.forEach(function (r) {
+  preconnects.forEach((r) => {
     // font preload Resources should not already be flushed so we elide this check
     pushLinkImpl(target, r.props, responseState);
     r.flushed = true;
   });
   preconnects.clear();
-  fontPreloads.forEach(function (r) {
+  fontPreloads.forEach((r) => {
     // font preload Resources should not already be flushed so we elide this check
     pushLinkImpl(target, r.props, responseState);
     r.flushed = true;
   });
   fontPreloads.clear(); // Flush stylesheets first by earliest precedence
 
-  precedences.forEach(function (p, precedence) {
+  precedences.forEach((p, precedence) => {
     if (p.size) {
-      p.forEach(function (r) {
+      p.forEach((r) => {
         // resources should not already be flushed so we elide this check
         pushLinkImpl(target, r.props, responseState);
         r.flushed = true;
@@ -6015,7 +3508,7 @@ function writeInitialResources(destination, resources, responseState) {
   });
   usedStylePreloads.forEach(flushLinkResource);
   usedStylePreloads.clear();
-  scripts.forEach(function (r) {
+  scripts.forEach((r) => {
     // should never be flushed already
     pushScriptImpl(target, r.props, responseState);
     r.flushed = true;
@@ -6028,7 +3521,7 @@ function writeInitialResources(destination, resources, responseState) {
   explicitStylePreloads.clear();
   explicitScriptPreloads.forEach(flushLinkResource);
   explicitScriptPreloads.clear();
-  headResources.forEach(function (r) {
+  headResources.forEach((r) => {
     switch (r.type) {
       case 'title': {
         pushTitleImpl(target, r.props, responseState);
@@ -6049,8 +3542,8 @@ function writeInitialResources(destination, resources, responseState) {
     r.flushed = true;
   });
   headResources.clear();
-  var i;
-  var r = true;
+  let i;
+  let r = true;
 
   for (i = 0; i < target.length - 1; i++) {
     writeChunk(destination, target[i]);
@@ -6070,8 +3563,8 @@ function writeImmediateResources(destination, resources, responseState) {
     }
   }
 
-  var target = [];
-  var charset = resources.charset,
+  const target = [];
+  const charset = resources.charset,
     preconnects = resources.preconnects,
     fontPreloads = resources.fontPreloads,
     usedStylePreloads = resources.usedStylePreloads,
@@ -6087,13 +3580,13 @@ function writeImmediateResources(destination, resources, responseState) {
     resources.charset = null;
   }
 
-  preconnects.forEach(function (r) {
+  preconnects.forEach((r) => {
     // font preload Resources should not already be flushed so we elide this check
     pushLinkImpl(target, r.props, responseState);
     r.flushed = true;
   });
   preconnects.clear();
-  fontPreloads.forEach(function (r) {
+  fontPreloads.forEach((r) => {
     // font preload Resources should not already be flushed so we elide this check
     pushLinkImpl(target, r.props, responseState);
     r.flushed = true;
@@ -6101,7 +3594,7 @@ function writeImmediateResources(destination, resources, responseState) {
   fontPreloads.clear();
   usedStylePreloads.forEach(flushLinkResource);
   usedStylePreloads.clear();
-  scripts.forEach(function (r) {
+  scripts.forEach((r) => {
     // should never be flushed already
     pushStartGenericElement(target, r.props, 'script', responseState);
     pushEndInstance(target, target, 'script', r.props);
@@ -6115,7 +3608,7 @@ function writeImmediateResources(destination, resources, responseState) {
   explicitStylePreloads.clear();
   explicitScriptPreloads.forEach(flushLinkResource);
   explicitScriptPreloads.clear();
-  headResources.forEach(function (r) {
+  headResources.forEach((r) => {
     switch (r.type) {
       case 'title': {
         pushTitleImpl(target, r.props, responseState);
@@ -6136,8 +3629,8 @@ function writeImmediateResources(destination, resources, responseState) {
     r.flushed = true;
   });
   headResources.clear();
-  var i;
-  var r = true;
+  let i;
+  let r = true;
 
   for (i = 0; i < target.length - 1; i++) {
     writeChunk(destination, target[i]);
@@ -6151,11 +3644,11 @@ function writeImmediateResources(destination, resources, responseState) {
 }
 
 function hasStyleResourceDependencies(boundaryResources) {
-  var iter = boundaryResources.values(); // At the moment boundaries only accumulate style resources
+  const iter = boundaryResources.values(); // At the moment boundaries only accumulate style resources
   // so we assume the type is correct and don't check it
 
   while (true) {
-    var _iter$next = iter.next(),
+    const _iter$next = iter.next(),
       resource = _iter$next.value;
 
     if (!resource) break; // If every style Resource flushed in the shell we do not need to send
@@ -6169,15 +3662,15 @@ function hasStyleResourceDependencies(boundaryResources) {
   return false;
 }
 
-var arrayFirstOpenBracket = stringToPrecomputedChunk('[');
-var arraySubsequentOpenBracket = stringToPrecomputedChunk(',[');
-var arrayInterstitial = stringToPrecomputedChunk(',');
-var arrayCloseBracket = stringToPrecomputedChunk(']');
+const arrayFirstOpenBracket = stringToPrecomputedChunk('[');
+const arraySubsequentOpenBracket = stringToPrecomputedChunk(',[');
+const arrayInterstitial = stringToPrecomputedChunk(',');
+const arrayCloseBracket = stringToPrecomputedChunk(']');
 
 function writeStyleResourceDependencies(destination, boundaryResources) {
   writeChunk(destination, arrayFirstOpenBracket);
-  var nextArrayOpenBrackChunk = arrayFirstOpenBracket;
-  boundaryResources.forEach(function (resource) {
+  let nextArrayOpenBrackChunk = arrayFirstOpenBracket;
+  boundaryResources.forEach((resource) => {
     if (resource.inShell);
     else if (resource.flushed) {
       writeChunk(destination, nextArrayOpenBrackChunk);
@@ -6202,13 +3695,7 @@ function writeStyleResourceDependencies(destination, boundaryResources) {
 }
 
 function writeStyleResourceDependencyHrefOnly(destination, href) {
-  // We should actually enforce this earlier when the resource is created but for
-  // now we make sure we are actually dealing with a string here.
-  {
-    checkAttributeStringCoercion(href, 'href');
-  }
-
-  var coercedHref = '' + href;
+  const coercedHref = '' + href;
   writeChunk(
     destination,
     stringToChunk(escapeJSObjectForInstructionScripts(coercedHref))
@@ -6216,31 +3703,22 @@ function writeStyleResourceDependencyHrefOnly(destination, href) {
 }
 
 function writeStyleResourceDependency(destination, href, precedence, props) {
-  {
-    checkAttributeStringCoercion(href, 'href');
-  }
-
-  var coercedHref = '' + href;
-  sanitizeURL(coercedHref);
+  const coercedHref = '' + href;
   writeChunk(
     destination,
     stringToChunk(escapeJSObjectForInstructionScripts(coercedHref))
   );
 
-  {
-    checkAttributeStringCoercion(precedence, 'precedence');
-  }
-
-  var coercedPrecedence = '' + precedence;
+  const coercedPrecedence = '' + precedence;
   writeChunk(destination, arrayInterstitial);
   writeChunk(
     destination,
     stringToChunk(escapeJSObjectForInstructionScripts(coercedPrecedence))
   );
 
-  for (var propKey in props) {
+  for (const propKey in props) {
     if (hasOwnProperty.call(props, propKey)) {
-      var propValue = props[propKey];
+      const propValue = props[propKey];
 
       if (propValue == null) {
         continue;
@@ -6274,8 +3752,8 @@ function writeStyleResourceDependency(destination, href, precedence, props) {
 }
 
 function writeStyleResourceAttribute(destination, name, value) {
-  var attributeName = name.toLowerCase();
-  var attributeValue;
+  let attributeName = name.toLowerCase();
+  let attributeValue;
 
   switch (typeof value) {
     case 'function':
@@ -6310,12 +3788,7 @@ function writeStyleResourceAttribute(destination, name, value) {
 
     case 'src':
     case 'href': {
-      {
-        checkAttributeStringCoercion(value, attributeName);
-      }
-
       attributeValue = '' + value;
-      sanitizeURL(attributeValue);
       break;
     }
 
@@ -6336,10 +3809,6 @@ function writeStyleResourceAttribute(destination, name, value) {
     return;
   }
 
-  {
-    checkAttributeStringCoercion(value, attributeName);
-  }
-
   attributeValue = '' + value;
   writeChunk(destination, arrayInterstitial);
   writeChunk(
@@ -6357,36 +3826,36 @@ function writeStyleResourceAttribute(destination, name, value) {
 // When adding new symbols to this file,
 // Please consider also adding to 'react-devtools-shared/src/backend/ReactSymbols'
 // The Symbol used to tag the ReactElement-like types.
-var REACT_ELEMENT_TYPE = Symbol.for('react.element');
-var REACT_PORTAL_TYPE = Symbol.for('react.portal');
-var REACT_FRAGMENT_TYPE = Symbol.for('react.fragment');
-var REACT_STRICT_MODE_TYPE = Symbol.for('react.strict_mode');
-var REACT_PROFILER_TYPE = Symbol.for('react.profiler');
-var REACT_PROVIDER_TYPE = Symbol.for('react.provider');
-var REACT_CONTEXT_TYPE = Symbol.for('react.context');
-var REACT_SERVER_CONTEXT_TYPE = Symbol.for('react.server_context');
-var REACT_FORWARD_REF_TYPE = Symbol.for('react.forward_ref');
-var REACT_SUSPENSE_TYPE = Symbol.for('react.suspense');
-var REACT_SUSPENSE_LIST_TYPE = Symbol.for('react.suspense_list');
-var REACT_MEMO_TYPE = Symbol.for('react.memo');
-var REACT_LAZY_TYPE = Symbol.for('react.lazy');
-var REACT_SCOPE_TYPE = Symbol.for('react.scope');
-var REACT_DEBUG_TRACING_MODE_TYPE = Symbol.for('react.debug_trace_mode');
-var REACT_OFFSCREEN_TYPE = Symbol.for('react.offscreen');
-var REACT_LEGACY_HIDDEN_TYPE = Symbol.for('react.legacy_hidden');
-var REACT_CACHE_TYPE = Symbol.for('react.cache');
-var REACT_SERVER_CONTEXT_DEFAULT_VALUE_NOT_LOADED = Symbol.for(
+const REACT_ELEMENT_TYPE = Symbol.for('react.element');
+const REACT_PORTAL_TYPE = Symbol.for('react.portal');
+const REACT_FRAGMENT_TYPE = Symbol.for('react.fragment');
+const REACT_STRICT_MODE_TYPE = Symbol.for('react.strict_mode');
+const REACT_PROFILER_TYPE = Symbol.for('react.profiler');
+const REACT_PROVIDER_TYPE = Symbol.for('react.provider');
+const REACT_CONTEXT_TYPE = Symbol.for('react.context');
+const REACT_SERVER_CONTEXT_TYPE = Symbol.for('react.server_context');
+const REACT_FORWARD_REF_TYPE = Symbol.for('react.forward_ref');
+const REACT_SUSPENSE_TYPE = Symbol.for('react.suspense');
+const REACT_SUSPENSE_LIST_TYPE = Symbol.for('react.suspense_list');
+const REACT_MEMO_TYPE = Symbol.for('react.memo');
+const REACT_LAZY_TYPE = Symbol.for('react.lazy');
+const REACT_SCOPE_TYPE = Symbol.for('react.scope');
+const REACT_DEBUG_TRACING_MODE_TYPE = Symbol.for('react.debug_trace_mode');
+const REACT_OFFSCREEN_TYPE = Symbol.for('react.offscreen');
+const REACT_LEGACY_HIDDEN_TYPE = Symbol.for('react.legacy_hidden');
+const REACT_CACHE_TYPE = Symbol.for('react.cache');
+const REACT_SERVER_CONTEXT_DEFAULT_VALUE_NOT_LOADED = Symbol.for(
   'react.default_value'
 );
-var REACT_MEMO_CACHE_SENTINEL = Symbol.for('react.memo_cache_sentinel');
-var MAYBE_ITERATOR_SYMBOL = Symbol.iterator;
-var FAUX_ITERATOR_SYMBOL = '@@iterator';
+const REACT_MEMO_CACHE_SENTINEL = Symbol.for('react.memo_cache_sentinel');
+const MAYBE_ITERATOR_SYMBOL = Symbol.iterator;
+const FAUX_ITERATOR_SYMBOL = '@@iterator';
 function getIteratorFn(maybeIterable) {
   if (maybeIterable === null || typeof maybeIterable !== 'object') {
     return null;
   }
 
-  var maybeIterator =
+  const maybeIterator =
     (MAYBE_ITERATOR_SYMBOL && maybeIterable[MAYBE_ITERATOR_SYMBOL]) ||
     maybeIterable[FAUX_ITERATOR_SYMBOL];
 
@@ -6398,13 +3867,13 @@ function getIteratorFn(maybeIterable) {
 }
 
 function getWrappedName(outerType, innerType, wrapperName) {
-  var displayName = outerType.displayName;
+  const displayName = outerType.displayName;
 
   if (displayName) {
     return displayName;
   }
 
-  var functionName = innerType.displayName || innerType.name || '';
+  const functionName = innerType.displayName || innerType.name || '';
   return functionName !== ''
     ? wrapperName + '(' + functionName + ')'
     : wrapperName;
@@ -6418,15 +3887,6 @@ function getComponentNameFromType(type) {
   if (type == null) {
     // Host root, text node or just invalid type.
     return null;
-  }
-
-  {
-    if (typeof type.tag === 'number') {
-      error(
-        'Received an unexpected object in getComponentNameFromType(). ' +
-          'This is likely a bug in React. Please file an issue.'
-      );
-    }
   }
 
   if (typeof type === 'function') {
@@ -6464,18 +3924,18 @@ function getComponentNameFromType(type) {
   if (typeof type === 'object') {
     switch (type.$$typeof) {
       case REACT_CONTEXT_TYPE:
-        var context = type;
+        const context = type;
         return getContextName(context) + '.Consumer';
 
       case REACT_PROVIDER_TYPE:
-        var provider = type;
+        const provider = type;
         return getContextName(provider._context) + '.Provider';
 
       case REACT_FORWARD_REF_TYPE:
         return getWrappedName(type, type.render, 'ForwardRef');
 
       case REACT_MEMO_TYPE:
-        var outerName = type.displayName || null;
+        const outerName = type.displayName || null;
 
         if (outerName !== null) {
           return outerName;
@@ -6484,9 +3944,9 @@ function getComponentNameFromType(type) {
         return getComponentNameFromType(type.type) || 'Memo';
 
       case REACT_LAZY_TYPE: {
-        var lazyComponent = type;
-        var payload = lazyComponent._payload;
-        var init = lazyComponent._init;
+        const lazyComponent = type;
+        const payload = lazyComponent._payload;
+        const init = lazyComponent._init;
 
         try {
           return getComponentNameFromType(init(payload));
@@ -6496,7 +3956,7 @@ function getComponentNameFromType(type) {
       }
 
       case REACT_SERVER_CONTEXT_TYPE: {
-        var context2 = type;
+        const context2 = type;
         return (context2.displayName || context2._globalName) + '.Provider';
       }
 
@@ -6507,483 +3967,27 @@ function getComponentNameFromType(type) {
   return null;
 }
 
-// Helpers to patch console.logs to avoid logging during side-effect free
-// replaying on render function. This currently only patches the object
-// lazily which won't cover if the log function was extracted eagerly.
-// We could also eagerly patch the method.
-var disabledDepth = 0;
-var prevLog;
-var prevInfo;
-var prevWarn;
-var prevError;
-var prevGroup;
-var prevGroupCollapsed;
-var prevGroupEnd;
+const ReactSharedInternals =
+  __SECRET_INTERNALS_DO_NOT_USE_OR_YOU_WILL_BE_FIRED$1;
 
-function disabledLog() {}
+const ReactCurrentDispatcher = ReactSharedInternals.ReactCurrentDispatcher;
 
-disabledLog.__reactDisabledLog = true;
-function disableLogs() {
-  {
-    if (disabledDepth === 0) {
-      /* eslint-disable react-internal/no-production-logging */
-      prevLog = console.log;
-      prevInfo = console.info;
-      prevWarn = console.warn;
-      prevError = console.error;
-      prevGroup = console.group;
-      prevGroupCollapsed = console.groupCollapsed;
-      prevGroupEnd = console.groupEnd; // https://github.com/facebook/react/issues/19099
+const ReactDebugCurrentFrame = ReactSharedInternals.ReactDebugCurrentFrame;
 
-      var props = {
-        configurable: true,
-        enumerable: true,
-        value: disabledLog,
-        writable: true,
-      }; // $FlowFixMe Flow thinks console is immutable.
-
-      Object.defineProperties(console, {
-        info: props,
-        log: props,
-        warn: props,
-        error: props,
-        group: props,
-        groupCollapsed: props,
-        groupEnd: props,
-      });
-      /* eslint-enable react-internal/no-production-logging */
-    }
-
-    disabledDepth++;
-  }
-}
-function reenableLogs() {
-  {
-    disabledDepth--;
-
-    if (disabledDepth === 0) {
-      /* eslint-disable react-internal/no-production-logging */
-      var props = {
-        configurable: true,
-        enumerable: true,
-        writable: true,
-      }; // $FlowFixMe Flow thinks console is immutable.
-
-      Object.defineProperties(console, {
-        log: assign({}, props, {
-          value: prevLog,
-        }),
-        info: assign({}, props, {
-          value: prevInfo,
-        }),
-        warn: assign({}, props, {
-          value: prevWarn,
-        }),
-        error: assign({}, props, {
-          value: prevError,
-        }),
-        group: assign({}, props, {
-          value: prevGroup,
-        }),
-        groupCollapsed: assign({}, props, {
-          value: prevGroupCollapsed,
-        }),
-        groupEnd: assign({}, props, {
-          value: prevGroupEnd,
-        }),
-      });
-      /* eslint-enable react-internal/no-production-logging */
-    }
-
-    if (disabledDepth < 0) {
-      error(
-        'disabledDepth fell below zero. ' +
-          'This is a bug in React. Please file an issue.'
-      );
-    }
-  }
-}
-
-var ReactCurrentDispatcher = ReactSharedInternals.ReactCurrentDispatcher;
-var prefix;
-function describeBuiltInComponentFrame(name, source, ownerFn) {
-  {
-    if (prefix === undefined) {
-      // Extract the VM specific prefix used by each line.
-      try {
-        throw Error();
-      } catch (x) {
-        var match = x.stack.trim().match(/\n( *(at )?)/);
-        prefix = (match && match[1]) || '';
-      }
-    } // We use the prefix to ensure our stacks line up with native stack frames.
-
-    return '\n' + prefix + name;
-  }
-}
-var reentry = false;
-var componentFrameCache;
-
-{
-  var PossiblyWeakMap = typeof WeakMap === 'function' ? WeakMap : Map;
-  componentFrameCache = new PossiblyWeakMap();
-}
-
-function describeNativeComponentFrame(fn, construct) {
-  // If something asked for a stack inside a fake render, it should get ignored.
-  if (!fn || reentry) {
-    return '';
-  }
-
-  {
-    var frame = componentFrameCache.get(fn);
-
-    if (frame !== undefined) {
-      return frame;
-    }
-  }
-
-  var control;
-  reentry = true;
-  var previousPrepareStackTrace = Error.prepareStackTrace; // $FlowFixMe It does accept undefined.
-
-  Error.prepareStackTrace = undefined;
-  var previousDispatcher;
-
-  {
-    previousDispatcher = ReactCurrentDispatcher.current; // Set the dispatcher in DEV because this might be call in the render function
-    // for warnings.
-
-    ReactCurrentDispatcher.current = null;
-    disableLogs();
-  }
-
-  try {
-    // This should throw.
-    if (construct) {
-      // Something should be setting the props in the constructor.
-      var Fake = function () {
-        throw Error();
-      }; // $FlowFixMe
-
-      Object.defineProperty(Fake.prototype, 'props', {
-        set: function () {
-          // We use a throwing setter instead of frozen or non-writable props
-          // because that won't throw in a non-strict mode function.
-          throw Error();
-        },
-      });
-
-      if (typeof Reflect === 'object' && Reflect.construct) {
-        // We construct a different control for this case to include any extra
-        // frames added by the construct call.
-        try {
-          Reflect.construct(Fake, []);
-        } catch (x) {
-          control = x;
-        }
-
-        Reflect.construct(fn, [], Fake);
-      } else {
-        try {
-          Fake.call();
-        } catch (x) {
-          control = x;
-        } // $FlowFixMe[prop-missing] found when upgrading Flow
-
-        fn.call(Fake.prototype);
-      }
-    } else {
-      try {
-        throw Error();
-      } catch (x) {
-        control = x;
-      } // TODO(luna): This will currently only throw if the function component
-      // tries to access React/ReactDOM/props. We should probably make this throw
-      // in simple components too
-
-      fn();
-    }
-  } catch (sample) {
-    // This is inlined manually because closure doesn't do it for us.
-    if (sample && control && typeof sample.stack === 'string') {
-      // This extracts the first frame from the sample that isn't also in the control.
-      // Skipping one frame that we assume is the frame that calls the two.
-      var sampleLines = sample.stack.split('\n');
-      var controlLines = control.stack.split('\n');
-      var s = sampleLines.length - 1;
-      var c = controlLines.length - 1;
-
-      while (s >= 1 && c >= 0 && sampleLines[s] !== controlLines[c]) {
-        // We expect at least one stack frame to be shared.
-        // Typically this will be the root most one. However, stack frames may be
-        // cut off due to maximum stack limits. In this case, one maybe cut off
-        // earlier than the other. We assume that the sample is longer or the same
-        // and there for cut off earlier. So we should find the root most frame in
-        // the sample somewhere in the control.
-        c--;
-      }
-
-      for (; s >= 1 && c >= 0; s--, c--) {
-        // Next we find the first one that isn't the same which should be the
-        // frame that called our sample function and the control.
-        if (sampleLines[s] !== controlLines[c]) {
-          // In V8, the first line is describing the message but other VMs don't.
-          // If we're about to return the first line, and the control is also on the same
-          // line, that's a pretty good indicator that our sample threw at same line as
-          // the control. I.e. before we entered the sample frame. So we ignore this result.
-          // This can happen if you passed a class to function component, or non-function.
-          if (s !== 1 || c !== 1) {
-            do {
-              s--;
-              c--; // We may still have similar intermediate frames from the construct call.
-              // The next one that isn't the same should be our match though.
-
-              if (c < 0 || sampleLines[s] !== controlLines[c]) {
-                // V8 adds a "new" prefix for native classes. Let's remove it to make it prettier.
-                var _frame = '\n' + sampleLines[s].replace(' at new ', ' at '); // If our component frame is labeled "<anonymous>"
-                // but we have a user-provided "displayName"
-                // splice it in to make the stack more readable.
-
-                if (fn.displayName && _frame.includes('<anonymous>')) {
-                  _frame = _frame.replace('<anonymous>', fn.displayName);
-                }
-
-                {
-                  if (typeof fn === 'function') {
-                    componentFrameCache.set(fn, _frame);
-                  }
-                } // Return the line we found.
-
-                return _frame;
-              }
-            } while (s >= 1 && c >= 0);
-          }
-
-          break;
-        }
-      }
-    }
-  } finally {
-    reentry = false;
-
-    {
-      ReactCurrentDispatcher.current = previousDispatcher;
-      reenableLogs();
-    }
-
-    Error.prepareStackTrace = previousPrepareStackTrace;
-  } // Fallback to just using the name if we couldn't make it throw.
-
-  var name = fn ? fn.displayName || fn.name : '';
-  var syntheticFrame = name ? describeBuiltInComponentFrame(name) : '';
-
-  {
-    if (typeof fn === 'function') {
-      componentFrameCache.set(fn, syntheticFrame);
-    }
-  }
-
-  return syntheticFrame;
-}
-
-function describeClassComponentFrame(ctor, source, ownerFn) {
-  {
-    return describeNativeComponentFrame(ctor, true);
-  }
-}
-function describeFunctionComponentFrame(fn, source, ownerFn) {
-  {
-    return describeNativeComponentFrame(fn, false);
-  }
-}
-
-function shouldConstruct(Component) {
-  var prototype = Component.prototype;
-  return !!(prototype && prototype.isReactComponent);
-}
-
-function describeUnknownElementTypeFrameInDEV(type, source, ownerFn) {
-  if (type == null) {
-    return '';
-  }
-
-  if (typeof type === 'function') {
-    {
-      return describeNativeComponentFrame(type, shouldConstruct(type));
-    }
-  }
-
-  if (typeof type === 'string') {
-    return describeBuiltInComponentFrame(type);
-  }
-
-  switch (type) {
-    case REACT_SUSPENSE_TYPE:
-      return describeBuiltInComponentFrame('Suspense');
-
-    case REACT_SUSPENSE_LIST_TYPE:
-      return describeBuiltInComponentFrame('SuspenseList');
-  }
-
-  if (typeof type === 'object') {
-    switch (type.$$typeof) {
-      case REACT_FORWARD_REF_TYPE:
-        return describeFunctionComponentFrame(type.render);
-
-      case REACT_MEMO_TYPE:
-        // Memo may contain any component type so we recursively resolve it.
-        return describeUnknownElementTypeFrameInDEV(type.type, source, ownerFn);
-
-      case REACT_LAZY_TYPE: {
-        var lazyComponent = type;
-        var payload = lazyComponent._payload;
-        var init = lazyComponent._init;
-
-        try {
-          // Lazy may contain any component type so we recursively resolve it.
-          return describeUnknownElementTypeFrameInDEV(
-            init(payload),
-            source,
-            ownerFn
-          );
-        } catch (x) {}
-      }
-    }
-  }
-
-  return '';
-}
-
-var loggedTypeFailures = {};
-var ReactDebugCurrentFrame = ReactSharedInternals.ReactDebugCurrentFrame;
-
-function setCurrentlyValidatingElement(element) {
-  {
-    if (element) {
-      var owner = element._owner;
-      var stack = describeUnknownElementTypeFrameInDEV(
-        element.type,
-        element._source,
-        owner ? owner.type : null
-      );
-      ReactDebugCurrentFrame.setExtraStackFrame(stack);
-    } else {
-      ReactDebugCurrentFrame.setExtraStackFrame(null);
-    }
-  }
-}
-
-function checkPropTypes(typeSpecs, values, location, componentName, element) {
-  {
-    // $FlowFixMe This is okay but Flow doesn't know it.
-    var has = Function.call.bind(hasOwnProperty);
-
-    for (var typeSpecName in typeSpecs) {
-      if (has(typeSpecs, typeSpecName)) {
-        var error$1 = void 0; // Prop type validation may throw. In case they do, we don't want to
-        // fail the render phase where it didn't fail before. So we log it.
-        // After these have been cleaned up, we'll let them throw.
-
-        try {
-          // This is intentionally an invariant that gets caught. It's the same
-          // behavior as without this statement except with a better message.
-          if (typeof typeSpecs[typeSpecName] !== 'function') {
-            // eslint-disable-next-line react-internal/prod-error-codes
-            var err = Error(
-              (componentName || 'React class') +
-                ': ' +
-                location +
-                ' type `' +
-                typeSpecName +
-                '` is invalid; ' +
-                'it must be a function, usually from the `prop-types` package, but received `' +
-                typeof typeSpecs[typeSpecName] +
-                '`.' +
-                'This often happens because of typos such as `PropTypes.function` instead of `PropTypes.func`.'
-            );
-            err.name = 'Invariant Violation';
-            throw err;
-          }
-
-          error$1 = typeSpecs[typeSpecName](
-            values,
-            typeSpecName,
-            componentName,
-            location,
-            null,
-            'SECRET_DO_NOT_PASS_THIS_OR_YOU_WILL_BE_FIRED'
-          );
-        } catch (ex) {
-          error$1 = ex;
-        }
-
-        if (error$1 && !(error$1 instanceof Error)) {
-          setCurrentlyValidatingElement(element);
-
-          error(
-            '%s: type specification of %s' +
-              ' `%s` is invalid; the type checker ' +
-              'function must return `null` or an `Error` but returned a %s. ' +
-              'You may have forgotten to pass an argument to the type checker ' +
-              'creator (arrayOf, instanceOf, objectOf, oneOf, oneOfType, and ' +
-              'shape all require an argument).',
-            componentName || 'React class',
-            location,
-            typeSpecName,
-            typeof error$1
-          );
-
-          setCurrentlyValidatingElement(null);
-        }
-
-        if (
-          error$1 instanceof Error &&
-          !(error$1.message in loggedTypeFailures)
-        ) {
-          // Only monitor this failure once because there tends to be a lot of the
-          // same error.
-          loggedTypeFailures[error$1.message] = true;
-          setCurrentlyValidatingElement(element);
-
-          error('Failed %s type: %s', location, error$1.message);
-
-          setCurrentlyValidatingElement(null);
-        }
-      }
-    }
-  }
-}
-
-var warnedAboutMissingGetChildContext;
-
-{
-  warnedAboutMissingGetChildContext = {};
-} // $FlowFixMe[incompatible-exact]
-
-var emptyContextObject = {};
-
-{
-  Object.freeze(emptyContextObject);
-}
+const emptyContextObject = {};
 
 function getMaskedContext(type, unmaskedContext) {
   {
-    var contextTypes = type.contextTypes;
+    const contextTypes = type.contextTypes;
 
     if (!contextTypes) {
       return emptyContextObject;
     }
 
-    var context = {};
+    const context = {};
 
-    for (var key in contextTypes) {
+    for (const key in contextTypes) {
       context[key] = unmaskedContext[key];
-    }
-
-    {
-      var name = getComponentNameFromType(type) || 'Unknown';
-      checkPropTypes(contextTypes, context, 'context', name);
     }
 
     return context;
@@ -6994,28 +3998,12 @@ function processChildContext(instance, type, parentContext, childContextTypes) {
     // TODO (bvaughn) Replace this behavior with an invariant() in the future.
     // It has only been added in Fiber to match the (unintentional) behavior in Stack.
     if (typeof instance.getChildContext !== 'function') {
-      {
-        var componentName = getComponentNameFromType(type) || 'Unknown';
-
-        if (!warnedAboutMissingGetChildContext[componentName]) {
-          warnedAboutMissingGetChildContext[componentName] = true;
-
-          error(
-            '%s.childContextTypes is specified but there is no getChildContext() method ' +
-              'on the instance. You can either define getChildContext() on %s or remove ' +
-              'childContextTypes from it.',
-            componentName,
-            componentName
-          );
-        }
-      }
-
       return parentContext;
     }
 
-    var childContext = instance.getChildContext();
+    const childContext = instance.getChildContext();
 
-    for (var contextKey in childContext) {
+    for (const contextKey in childContext) {
       if (!(contextKey in childContextTypes)) {
         throw new Error(
           (getComponentNameFromType(type) || 'Unknown') +
@@ -7026,28 +4014,17 @@ function processChildContext(instance, type, parentContext, childContextTypes) {
       }
     }
 
-    {
-      var name = getComponentNameFromType(type) || 'Unknown';
-      checkPropTypes(childContextTypes, childContext, 'child context', name);
-    }
-
     return assign({}, parentContext, childContext);
   }
 }
 
-var rendererSigil;
-
-{
-  // Use this to detect multiple renderers using the same context
-  rendererSigil = {};
-} // Used to store the parent path of all context overrides in a shared linked list.
 // Forming a reverse tree.
 
-var rootContextSnapshot = null; // We assume that this runtime owns the "current" field on all ReactContext instances.
+const rootContextSnapshot = null; // We assume that this runtime owns the "current" field on all ReactContext instances.
 // This global (actually thread local) state represents what state all those "current",
 // fields are currently in.
 
-var currentActiveSnapshot = null;
+let currentActiveSnapshot = null;
 
 function popNode(prev) {
   {
@@ -7065,8 +4042,8 @@ function popToNearestCommonAncestor(prev, next) {
   if (prev === next);
   else {
     popNode(prev);
-    var parentPrev = prev.parent;
-    var parentNext = next.parent;
+    const parentPrev = prev.parent;
+    const parentNext = next.parent;
 
     if (parentPrev === null) {
       if (parentNext !== null) {
@@ -7090,7 +4067,7 @@ function popToNearestCommonAncestor(prev, next) {
 
 function popAllPrevious(prev) {
   popNode(prev);
-  var parentPrev = prev.parent;
+  const parentPrev = prev.parent;
 
   if (parentPrev !== null) {
     popAllPrevious(parentPrev);
@@ -7098,7 +4075,7 @@ function popAllPrevious(prev) {
 }
 
 function pushAllNext(next) {
-  var parentNext = next.parent;
+  const parentNext = next.parent;
 
   if (parentNext !== null) {
     pushAllNext(parentNext);
@@ -7109,7 +4086,7 @@ function pushAllNext(next) {
 
 function popPreviousToCommonLevel(prev, next) {
   popNode(prev);
-  var parentPrev = prev.parent;
+  const parentPrev = prev.parent;
 
   if (parentPrev === null) {
     throw new Error(
@@ -7127,7 +4104,7 @@ function popPreviousToCommonLevel(prev, next) {
 }
 
 function popNextToCommonLevel(prev, next) {
-  var parentNext = next.parent;
+  const parentNext = next.parent;
 
   if (parentNext === null) {
     throw new Error(
@@ -7158,8 +4135,8 @@ function switchContext(newSnapshot) {
   // 1) First we pop which ever snapshot tree was deepest. Popping old contexts as we go.
   // 2) Then we find the nearest common ancestor from there. Popping old contexts as we go.
   // 3) Then we reapply new contexts on the way back up the stack.
-  var prev = currentActiveSnapshot;
-  var next = newSnapshot;
+  const prev = currentActiveSnapshot;
+  const next = newSnapshot;
 
   if (prev !== next) {
     if (prev === null) {
@@ -7179,30 +4156,15 @@ function switchContext(newSnapshot) {
   }
 }
 function pushProvider(context, nextValue) {
-  var prevValue;
+  let prevValue;
 
   {
     prevValue = context._currentValue;
     context._currentValue = nextValue;
-
-    {
-      if (
-        context._currentRenderer !== undefined &&
-        context._currentRenderer !== null &&
-        context._currentRenderer !== rendererSigil
-      ) {
-        error(
-          'Detected multiple renderers concurrently rendering the ' +
-            'same context provider. This is currently unsupported.'
-        );
-      }
-
-      context._currentRenderer = rendererSigil;
-    }
   }
 
-  var prevNode = currentActiveSnapshot;
-  var newNode = {
+  const prevNode = currentActiveSnapshot;
+  const newNode = {
     parent: prevNode,
     depth: prevNode === null ? 0 : prevNode.depth + 1,
     context: context,
@@ -7213,7 +4175,7 @@ function pushProvider(context, nextValue) {
   return newNode;
 }
 function popProvider(context) {
-  var prevSnapshot = currentActiveSnapshot;
+  const prevSnapshot = currentActiveSnapshot;
 
   if (prevSnapshot === null) {
     throw new Error(
@@ -7222,35 +4184,12 @@ function popProvider(context) {
   }
 
   {
-    if (prevSnapshot.context !== context) {
-      error(
-        'The parent context is not the expected context. This is probably a bug in React.'
-      );
-    }
-  }
-
-  {
-    var value = prevSnapshot.parentValue;
+    const value = prevSnapshot.parentValue;
 
     if (value === REACT_SERVER_CONTEXT_DEFAULT_VALUE_NOT_LOADED) {
       prevSnapshot.context._currentValue = prevSnapshot.context._defaultValue;
     } else {
       prevSnapshot.context._currentValue = value;
-    }
-
-    {
-      if (
-        context._currentRenderer !== undefined &&
-        context._currentRenderer !== null &&
-        context._currentRenderer !== rendererSigil
-      ) {
-        error(
-          'Detected multiple renderers concurrently rendering the ' +
-            'same context provider. This is currently unsupported.'
-        );
-      }
-
-      context._currentRenderer = rendererSigil;
     }
   }
 
@@ -7260,7 +4199,7 @@ function getActiveContext() {
   return currentActiveSnapshot;
 }
 function readContext(context) {
-  var value = context._currentValue;
+  const value = context._currentValue;
   return value;
 }
 
@@ -7280,130 +4219,30 @@ function set(key, value) {
   key._reactInternals = value;
 }
 
-var didWarnAboutNoopUpdateForComponent = {};
-var didWarnAboutDeprecatedWillMount = {};
-var didWarnAboutUninitializedState;
-var didWarnAboutGetSnapshotBeforeUpdateWithoutDidUpdate;
-var didWarnAboutLegacyLifecyclesAndDerivedState;
-var didWarnAboutUndefinedDerivedState;
-var warnOnUndefinedDerivedState;
-var warnOnInvalidCallback;
-var didWarnAboutDirectlyAssigningPropsToState;
-var didWarnAboutContextTypeAndContextTypes;
-var didWarnAboutInvalidateContextType;
-
-{
-  didWarnAboutUninitializedState = new Set();
-  didWarnAboutGetSnapshotBeforeUpdateWithoutDidUpdate = new Set();
-  didWarnAboutLegacyLifecyclesAndDerivedState = new Set();
-  didWarnAboutDirectlyAssigningPropsToState = new Set();
-  didWarnAboutUndefinedDerivedState = new Set();
-  didWarnAboutContextTypeAndContextTypes = new Set();
-  didWarnAboutInvalidateContextType = new Set();
-  var didWarnOnInvalidCallback = new Set();
-
-  warnOnInvalidCallback = function (callback, callerName) {
-    if (callback === null || typeof callback === 'function') {
-      return;
-    }
-
-    var key = callerName + '_' + callback;
-
-    if (!didWarnOnInvalidCallback.has(key)) {
-      didWarnOnInvalidCallback.add(key);
-
-      error(
-        '%s(...): Expected the last optional `callback` argument to be a ' +
-          'function. Instead received: %s.',
-        callerName,
-        callback
-      );
-    }
-  };
-
-  warnOnUndefinedDerivedState = function (type, partialState) {
-    if (partialState === undefined) {
-      var componentName = getComponentNameFromType(type) || 'Component';
-
-      if (!didWarnAboutUndefinedDerivedState.has(componentName)) {
-        didWarnAboutUndefinedDerivedState.add(componentName);
-
-        error(
-          '%s.getDerivedStateFromProps(): A valid state object (or null) must be returned. ' +
-            'You have returned undefined.',
-          componentName
-        );
-      }
-    }
-  };
-}
-
-function warnNoop(publicInstance, callerName) {
-  {
-    var _constructor = publicInstance.constructor;
-    var componentName =
-      (_constructor && getComponentNameFromType(_constructor)) || 'ReactClass';
-    var warningKey = componentName + '.' + callerName;
-
-    if (didWarnAboutNoopUpdateForComponent[warningKey]) {
-      return;
-    }
-
-    error(
-      '%s(...): Can only update a mounting component. ' +
-        'This usually means you called %s() outside componentWillMount() on the server. ' +
-        'This is a no-op.\n\nPlease check the code for the %s component.',
-      callerName,
-      callerName,
-      componentName
-    );
-
-    didWarnAboutNoopUpdateForComponent[warningKey] = true;
-  }
-}
-
-var classComponentUpdater = {
-  isMounted: function (inst) {
+const classComponentUpdater = {
+  isMounted(inst) {
     return false;
   },
-  enqueueSetState: function (inst, payload, callback) {
-    var internals = get(inst);
 
-    if (internals.queue === null) {
-      warnNoop(inst, 'setState');
-    } else {
+  enqueueSetState(inst, payload, callback) {
+    const internals = get(inst);
+
+    if (internals.queue === null);
+    else {
       internals.queue.push(payload);
-
-      {
-        if (callback !== undefined && callback !== null) {
-          warnOnInvalidCallback(callback, 'setState');
-        }
-      }
     }
   },
-  enqueueReplaceState: function (inst, payload, callback) {
-    var internals = get(inst);
+
+  enqueueReplaceState(inst, payload, callback) {
+    const internals = get(inst);
     internals.replace = true;
     internals.queue = [payload];
-
-    {
-      if (callback !== undefined && callback !== null) {
-        warnOnInvalidCallback(callback, 'setState');
-      }
-    }
   },
-  enqueueForceUpdate: function (inst, callback) {
-    var internals = get(inst);
 
-    if (internals.queue === null) {
-      warnNoop(inst, 'forceUpdate');
-    } else {
-      {
-        if (callback !== undefined && callback !== null) {
-          warnOnInvalidCallback(callback, 'setState');
-        }
-      }
-    }
+  enqueueForceUpdate(inst, callback) {
+    const internals = get(inst);
+
+    if (internals.queue === null);
   },
 };
 
@@ -7414,13 +4253,9 @@ function applyDerivedStateFromProps(
   prevState,
   nextProps
 ) {
-  var partialState = getDerivedStateFromProps(nextProps, prevState);
+  const partialState = getDerivedStateFromProps(nextProps, prevState);
 
-  {
-    warnOnUndefinedDerivedState(ctor, partialState);
-  } // Merge the partial state and the previous state.
-
-  var newState =
+  const newState =
     partialState === null || partialState === undefined
       ? prevState
       : assign({}, prevState, partialState);
@@ -7428,50 +4263,8 @@ function applyDerivedStateFromProps(
 }
 
 function constructClassInstance(ctor, props, maskedLegacyContext) {
-  var context = emptyContextObject;
-  var contextType = ctor.contextType;
-
-  {
-    if ('contextType' in ctor) {
-      var isValid = // Allow null for conditional declaration
-        contextType === null ||
-        (contextType !== undefined &&
-          contextType.$$typeof === REACT_CONTEXT_TYPE &&
-          contextType._context === undefined); // Not a <Context.Consumer>
-
-      if (!isValid && !didWarnAboutInvalidateContextType.has(ctor)) {
-        didWarnAboutInvalidateContextType.add(ctor);
-        var addendum = '';
-
-        if (contextType === undefined) {
-          addendum =
-            ' However, it is set to undefined. ' +
-            'This can be caused by a typo or by mixing up named and default imports. ' +
-            'This can also happen due to a circular dependency, so ' +
-            'try moving the createContext() call to a separate file.';
-        } else if (typeof contextType !== 'object') {
-          addendum = ' However, it is set to a ' + typeof contextType + '.';
-        } else if (contextType.$$typeof === REACT_PROVIDER_TYPE) {
-          addendum = ' Did you accidentally pass the Context.Provider instead?';
-        } else if (contextType._context !== undefined) {
-          // <Context.Consumer>
-          addendum = ' Did you accidentally pass the Context.Consumer instead?';
-        } else {
-          addendum =
-            ' However, it is set to an object with keys {' +
-            Object.keys(contextType).join(', ') +
-            '}.';
-        }
-
-        error(
-          '%s defines an invalid contextType. ' +
-            'contextType should point to the Context object returned by React.createContext().%s',
-          getComponentNameFromType(ctor) || 'Component',
-          addendum
-        );
-      }
-    }
-  }
+  let context = emptyContextObject;
+  const contextType = ctor.contextType;
 
   if (typeof contextType === 'object' && contextType !== null) {
     context = readContext(contextType);
@@ -7479,351 +4272,15 @@ function constructClassInstance(ctor, props, maskedLegacyContext) {
     context = maskedLegacyContext;
   }
 
-  var instance = new ctor(props, context);
-
-  {
-    if (
-      typeof ctor.getDerivedStateFromProps === 'function' &&
-      (instance.state === null || instance.state === undefined)
-    ) {
-      var componentName = getComponentNameFromType(ctor) || 'Component';
-
-      if (!didWarnAboutUninitializedState.has(componentName)) {
-        didWarnAboutUninitializedState.add(componentName);
-
-        error(
-          '`%s` uses `getDerivedStateFromProps` but its initial state is ' +
-            '%s. This is not recommended. Instead, define the initial state by ' +
-            'assigning an object to `this.state` in the constructor of `%s`. ' +
-            'This ensures that `getDerivedStateFromProps` arguments have a consistent shape.',
-          componentName,
-          instance.state === null ? 'null' : 'undefined',
-          componentName
-        );
-      }
-    } // If new component APIs are defined, "unsafe" lifecycles won't be called.
-    // Warn about these lifecycles if they are present.
-    // Don't warn about react-lifecycles-compat polyfilled methods though.
-
-    if (
-      typeof ctor.getDerivedStateFromProps === 'function' ||
-      typeof instance.getSnapshotBeforeUpdate === 'function'
-    ) {
-      var foundWillMountName = null;
-      var foundWillReceivePropsName = null;
-      var foundWillUpdateName = null;
-
-      if (
-        typeof instance.componentWillMount === 'function' &&
-        instance.componentWillMount.__suppressDeprecationWarning !== true
-      ) {
-        foundWillMountName = 'componentWillMount';
-      } else if (typeof instance.UNSAFE_componentWillMount === 'function') {
-        foundWillMountName = 'UNSAFE_componentWillMount';
-      }
-
-      if (
-        typeof instance.componentWillReceiveProps === 'function' &&
-        instance.componentWillReceiveProps.__suppressDeprecationWarning !== true
-      ) {
-        foundWillReceivePropsName = 'componentWillReceiveProps';
-      } else if (
-        typeof instance.UNSAFE_componentWillReceiveProps === 'function'
-      ) {
-        foundWillReceivePropsName = 'UNSAFE_componentWillReceiveProps';
-      }
-
-      if (
-        typeof instance.componentWillUpdate === 'function' &&
-        instance.componentWillUpdate.__suppressDeprecationWarning !== true
-      ) {
-        foundWillUpdateName = 'componentWillUpdate';
-      } else if (typeof instance.UNSAFE_componentWillUpdate === 'function') {
-        foundWillUpdateName = 'UNSAFE_componentWillUpdate';
-      }
-
-      if (
-        foundWillMountName !== null ||
-        foundWillReceivePropsName !== null ||
-        foundWillUpdateName !== null
-      ) {
-        var _componentName = getComponentNameFromType(ctor) || 'Component';
-
-        var newApiName =
-          typeof ctor.getDerivedStateFromProps === 'function'
-            ? 'getDerivedStateFromProps()'
-            : 'getSnapshotBeforeUpdate()';
-
-        if (!didWarnAboutLegacyLifecyclesAndDerivedState.has(_componentName)) {
-          didWarnAboutLegacyLifecyclesAndDerivedState.add(_componentName);
-
-          error(
-            'Unsafe legacy lifecycles will not be called for components using new component APIs.\n\n' +
-              '%s uses %s but also contains the following legacy lifecycles:%s%s%s\n\n' +
-              'The above lifecycles should be removed. Learn more about this warning here:\n' +
-              'https://reactjs.org/link/unsafe-component-lifecycles',
-            _componentName,
-            newApiName,
-            foundWillMountName !== null ? '\n  ' + foundWillMountName : '',
-            foundWillReceivePropsName !== null
-              ? '\n  ' + foundWillReceivePropsName
-              : '',
-            foundWillUpdateName !== null ? '\n  ' + foundWillUpdateName : ''
-          );
-        }
-      }
-    }
-  }
+  const instance = new ctor(props, context);
 
   return instance;
 }
 
-function checkClassInstance(instance, ctor, newProps) {
-  {
-    var name = getComponentNameFromType(ctor) || 'Component';
-    var renderPresent = instance.render;
-
-    if (!renderPresent) {
-      if (ctor.prototype && typeof ctor.prototype.render === 'function') {
-        error(
-          '%s(...): No `render` method found on the returned component ' +
-            'instance: did you accidentally return an object from the constructor?',
-          name
-        );
-      } else {
-        error(
-          '%s(...): No `render` method found on the returned component ' +
-            'instance: you may have forgotten to define `render`.',
-          name
-        );
-      }
-    }
-
-    if (
-      instance.getInitialState &&
-      !instance.getInitialState.isReactClassApproved &&
-      !instance.state
-    ) {
-      error(
-        'getInitialState was defined on %s, a plain JavaScript class. ' +
-          'This is only supported for classes created using React.createClass. ' +
-          'Did you mean to define a state property instead?',
-        name
-      );
-    }
-
-    if (
-      instance.getDefaultProps &&
-      !instance.getDefaultProps.isReactClassApproved
-    ) {
-      error(
-        'getDefaultProps was defined on %s, a plain JavaScript class. ' +
-          'This is only supported for classes created using React.createClass. ' +
-          'Use a static property to define defaultProps instead.',
-        name
-      );
-    }
-
-    if (instance.propTypes) {
-      error(
-        'propTypes was defined as an instance property on %s. Use a static ' +
-          'property to define propTypes instead.',
-        name
-      );
-    }
-
-    if (instance.contextType) {
-      error(
-        'contextType was defined as an instance property on %s. Use a static ' +
-          'property to define contextType instead.',
-        name
-      );
-    }
-
-    {
-      if (instance.contextTypes) {
-        error(
-          'contextTypes was defined as an instance property on %s. Use a static ' +
-            'property to define contextTypes instead.',
-          name
-        );
-      }
-
-      if (
-        ctor.contextType &&
-        ctor.contextTypes &&
-        !didWarnAboutContextTypeAndContextTypes.has(ctor)
-      ) {
-        didWarnAboutContextTypeAndContextTypes.add(ctor);
-
-        error(
-          '%s declares both contextTypes and contextType static properties. ' +
-            'The legacy contextTypes property will be ignored.',
-          name
-        );
-      }
-    }
-
-    if (typeof instance.componentShouldUpdate === 'function') {
-      error(
-        '%s has a method called ' +
-          'componentShouldUpdate(). Did you mean shouldComponentUpdate()? ' +
-          'The name is phrased as a question because the function is ' +
-          'expected to return a value.',
-        name
-      );
-    }
-
-    if (
-      ctor.prototype &&
-      ctor.prototype.isPureReactComponent &&
-      typeof instance.shouldComponentUpdate !== 'undefined'
-    ) {
-      error(
-        '%s has a method called shouldComponentUpdate(). ' +
-          'shouldComponentUpdate should not be used when extending React.PureComponent. ' +
-          'Please extend React.Component if shouldComponentUpdate is used.',
-        getComponentNameFromType(ctor) || 'A pure component'
-      );
-    }
-
-    if (typeof instance.componentDidUnmount === 'function') {
-      error(
-        '%s has a method called ' +
-          'componentDidUnmount(). But there is no such lifecycle method. ' +
-          'Did you mean componentWillUnmount()?',
-        name
-      );
-    }
-
-    if (typeof instance.componentDidReceiveProps === 'function') {
-      error(
-        '%s has a method called ' +
-          'componentDidReceiveProps(). But there is no such lifecycle method. ' +
-          'If you meant to update the state in response to changing props, ' +
-          'use componentWillReceiveProps(). If you meant to fetch data or ' +
-          'run side-effects or mutations after React has updated the UI, use componentDidUpdate().',
-        name
-      );
-    }
-
-    if (typeof instance.componentWillRecieveProps === 'function') {
-      error(
-        '%s has a method called ' +
-          'componentWillRecieveProps(). Did you mean componentWillReceiveProps()?',
-        name
-      );
-    }
-
-    if (typeof instance.UNSAFE_componentWillRecieveProps === 'function') {
-      error(
-        '%s has a method called ' +
-          'UNSAFE_componentWillRecieveProps(). Did you mean UNSAFE_componentWillReceiveProps()?',
-        name
-      );
-    }
-
-    var hasMutatedProps = instance.props !== newProps;
-
-    if (instance.props !== undefined && hasMutatedProps) {
-      error(
-        '%s(...): When calling super() in `%s`, make sure to pass ' +
-          "up the same props that your component's constructor was passed.",
-        name,
-        name
-      );
-    }
-
-    if (instance.defaultProps) {
-      error(
-        'Setting defaultProps as an instance property on %s is not supported and will be ignored.' +
-          ' Instead, define defaultProps as a static property on %s.',
-        name,
-        name
-      );
-    }
-
-    if (
-      typeof instance.getSnapshotBeforeUpdate === 'function' &&
-      typeof instance.componentDidUpdate !== 'function' &&
-      !didWarnAboutGetSnapshotBeforeUpdateWithoutDidUpdate.has(ctor)
-    ) {
-      didWarnAboutGetSnapshotBeforeUpdateWithoutDidUpdate.add(ctor);
-
-      error(
-        '%s: getSnapshotBeforeUpdate() should be used with componentDidUpdate(). ' +
-          'This component defines getSnapshotBeforeUpdate() only.',
-        getComponentNameFromType(ctor)
-      );
-    }
-
-    if (typeof instance.getDerivedStateFromProps === 'function') {
-      error(
-        '%s: getDerivedStateFromProps() is defined as an instance method ' +
-          'and will be ignored. Instead, declare it as a static method.',
-        name
-      );
-    }
-
-    if (typeof instance.getDerivedStateFromError === 'function') {
-      error(
-        '%s: getDerivedStateFromError() is defined as an instance method ' +
-          'and will be ignored. Instead, declare it as a static method.',
-        name
-      );
-    }
-
-    if (typeof ctor.getSnapshotBeforeUpdate === 'function') {
-      error(
-        '%s: getSnapshotBeforeUpdate() is defined as a static method ' +
-          'and will be ignored. Instead, declare it as an instance method.',
-        name
-      );
-    }
-
-    var _state = instance.state;
-
-    if (_state && (typeof _state !== 'object' || isArray(_state))) {
-      error('%s.state: must be set to an object or null', name);
-    }
-
-    if (
-      typeof instance.getChildContext === 'function' &&
-      typeof ctor.childContextTypes !== 'object'
-    ) {
-      error(
-        '%s.getChildContext(): childContextTypes must be defined in order to ' +
-          'use getChildContext().',
-        name
-      );
-    }
-  }
-}
-
 function callComponentWillMount(type, instance) {
-  var oldState = instance.state;
+  const oldState = instance.state;
 
   if (typeof instance.componentWillMount === 'function') {
-    {
-      if (instance.componentWillMount.__suppressDeprecationWarning !== true) {
-        var componentName = getComponentNameFromType(type) || 'Unknown';
-
-        if (!didWarnAboutDeprecatedWillMount[componentName]) {
-          warn(
-            // keep this warning in sync with ReactStrictModeWarning.js
-            'componentWillMount has been renamed, and is not recommended for use. ' +
-              'See https://reactjs.org/link/unsafe-component-lifecycles for details.\n\n' +
-              '* Move code from componentWillMount to componentDidMount (preferred in most cases) ' +
-              'or the constructor.\n' +
-              '\nPlease update the following components: %s',
-            componentName
-          );
-
-          didWarnAboutDeprecatedWillMount[componentName] = true;
-        }
-      }
-    }
-
     instance.componentWillMount();
   }
 
@@ -7832,15 +4289,6 @@ function callComponentWillMount(type, instance) {
   }
 
   if (oldState !== instance.state) {
-    {
-      error(
-        '%s.componentWillMount(): Assigning directly to this.state is ' +
-          "deprecated (except inside a component's " +
-          'constructor). Use setState instead.',
-        getComponentNameFromType(type) || 'Component'
-      );
-    }
-
     classComponentUpdater.enqueueReplaceState(instance, instance.state, null);
   }
 }
@@ -7852,20 +4300,20 @@ function processUpdateQueue(
   maskedLegacyContext
 ) {
   if (internalInstance.queue !== null && internalInstance.queue.length > 0) {
-    var oldQueue = internalInstance.queue;
-    var oldReplace = internalInstance.replace;
+    const oldQueue = internalInstance.queue;
+    const oldReplace = internalInstance.replace;
     internalInstance.queue = null;
     internalInstance.replace = false;
 
     if (oldReplace && oldQueue.length === 1) {
       inst.state = oldQueue[0];
     } else {
-      var nextState = oldReplace ? oldQueue[0] : inst.state;
-      var dontMutate = true;
+      let nextState = oldReplace ? oldQueue[0] : inst.state;
+      let dontMutate = true;
 
-      for (var i = oldReplace ? 1 : 0; i < oldQueue.length; i++) {
-        var partial = oldQueue[i];
-        var partialState =
+      for (let i = oldReplace ? 1 : 0; i < oldQueue.length; i++) {
+        const partial = oldQueue[i];
+        const partialState =
           typeof partial === 'function'
             ? partial.call(inst, nextState, props, maskedLegacyContext)
             : partial;
@@ -7888,22 +4336,18 @@ function processUpdateQueue(
 } // Invokes the mount life-cycles on a previously never rendered instance.
 
 function mountClassInstance(instance, ctor, newProps, maskedLegacyContext) {
-  {
-    checkClassInstance(instance, ctor, newProps);
-  }
-
-  var initialState = instance.state !== undefined ? instance.state : null;
+  const initialState = instance.state !== undefined ? instance.state : null;
   instance.updater = classComponentUpdater;
   instance.props = newProps;
   instance.state = initialState; // We don't bother initializing the refs object on the server, since we're not going to resolve them anyway.
   // The internal instance will be used to manage updates that happen during this mount.
 
-  var internalInstance = {
+  const internalInstance = {
     queue: [],
     replace: false,
   };
   set(instance, internalInstance);
-  var contextType = ctor.contextType;
+  const contextType = ctor.contextType;
 
   if (typeof contextType === 'object' && contextType !== null) {
     instance.context = readContext(contextType);
@@ -7911,24 +4355,7 @@ function mountClassInstance(instance, ctor, newProps, maskedLegacyContext) {
     instance.context = maskedLegacyContext;
   }
 
-  {
-    if (instance.state === newProps) {
-      var componentName = getComponentNameFromType(ctor) || 'Component';
-
-      if (!didWarnAboutDirectlyAssigningPropsToState.has(componentName)) {
-        didWarnAboutDirectlyAssigningPropsToState.add(componentName);
-
-        error(
-          '%s: It is not recommended to assign props directly to state ' +
-            "because updates to props won't be reflected in state. " +
-            'In most cases, it is better to use props directly.',
-          componentName
-        );
-      }
-    }
-  }
-
-  var getDerivedStateFromProps = ctor.getDerivedStateFromProps;
+  const getDerivedStateFromProps = ctor.getDerivedStateFromProps;
 
   if (typeof getDerivedStateFromProps === 'function') {
     instance.state = applyDerivedStateFromProps(
@@ -8010,25 +4437,25 @@ function mountClassInstance(instance, ctor, newProps, maskedLegacyContext) {
 // because every log2(base) bits corresponds to a single character, i.e. every
 // log2(32) = 5 bits. That means we can lop bits off the end 5 at a time without
 // affecting the final result.
-var emptyTreeContext = {
+const emptyTreeContext = {
   id: 1,
   overflow: '',
 };
 function getTreeId(context) {
-  var overflow = context.overflow;
-  var idWithLeadingBit = context.id;
-  var id = idWithLeadingBit & ~getLeadingBit(idWithLeadingBit);
+  const overflow = context.overflow;
+  const idWithLeadingBit = context.id;
+  const id = idWithLeadingBit & ~getLeadingBit(idWithLeadingBit);
   return id.toString(32) + overflow;
 }
 function pushTreeContext(baseContext, totalChildren, index) {
-  var baseIdWithLeadingBit = baseContext.id;
-  var baseOverflow = baseContext.overflow; // The leftmost 1 marks the end of the sequence, non-inclusive. It's not part
+  const baseIdWithLeadingBit = baseContext.id;
+  const baseOverflow = baseContext.overflow; // The leftmost 1 marks the end of the sequence, non-inclusive. It's not part
   // of the id; we use it to account for leading 0s.
 
-  var baseLength = getBitLength(baseIdWithLeadingBit) - 1;
-  var baseId = baseIdWithLeadingBit & ~(1 << baseLength);
-  var slot = index + 1;
-  var length = getBitLength(totalChildren) + baseLength; // 30 is the max length we can store without overflowing, taking into
+  const baseLength = getBitLength(baseIdWithLeadingBit) - 1;
+  const baseId = baseIdWithLeadingBit & ~(1 << baseLength);
+  const slot = index + 1;
+  const length = getBitLength(totalChildren) + baseLength; // 30 is the max length we can store without overflowing, taking into
   // consideration the leading 1 we use to mark the end of the sequence.
 
   if (length > 30) {
@@ -8045,34 +4472,32 @@ function pushTreeContext(baseContext, totalChildren, index) {
     //
     // First calculate how many bits in the base id represent a complete
     // sequence of characters.
-    var numberOfOverflowBits = baseLength - (baseLength % 5); // Then create a bitmask that selects only those bits.
+    const numberOfOverflowBits = baseLength - (baseLength % 5); // Then create a bitmask that selects only those bits.
 
-    var newOverflowBits = (1 << numberOfOverflowBits) - 1; // Select the bits, and convert them to a base 32 string.
+    const newOverflowBits = (1 << numberOfOverflowBits) - 1; // Select the bits, and convert them to a base 32 string.
 
-    var newOverflow = (baseId & newOverflowBits).toString(32); // Now we can remove those bits from the base id.
+    const newOverflow = (baseId & newOverflowBits).toString(32); // Now we can remove those bits from the base id.
 
-    var restOfBaseId = baseId >> numberOfOverflowBits;
-    var restOfBaseLength = baseLength - numberOfOverflowBits; // Finally, encode the rest of the bits using the normal algorithm. Because
+    const restOfBaseId = baseId >> numberOfOverflowBits;
+    const restOfBaseLength = baseLength - numberOfOverflowBits; // Finally, encode the rest of the bits using the normal algorithm. Because
     // we made more room, this time it won't overflow.
 
-    var restOfLength = getBitLength(totalChildren) + restOfBaseLength;
-    var restOfNewBits = slot << restOfBaseLength;
-    var id = restOfNewBits | restOfBaseId;
-    var overflow = newOverflow + baseOverflow;
+    const restOfLength = getBitLength(totalChildren) + restOfBaseLength;
+    const restOfNewBits = slot << restOfBaseLength;
+    const id = restOfNewBits | restOfBaseId;
+    const overflow = newOverflow + baseOverflow;
     return {
       id: (1 << restOfLength) | id,
-      overflow: overflow,
+      overflow,
     };
   } else {
     // Normal path
-    var newBits = slot << baseLength;
-
-    var _id = newBits | baseId;
-
-    var _overflow = baseOverflow;
+    const newBits = slot << baseLength;
+    const id = newBits | baseId;
+    const overflow = baseOverflow;
     return {
-      id: (1 << length) | _id,
-      overflow: _overflow,
+      id: (1 << length) | id,
+      overflow,
     };
   }
 }
@@ -8085,15 +4510,15 @@ function getLeadingBit(id) {
   return 1 << (getBitLength(id) - 1);
 } // TODO: Math.clz32 is supported in Node 12+. Maybe we can drop the fallback.
 
-var clz32 = Math.clz32 ? Math.clz32 : clz32Fallback; // Count leading zeros.
+const clz32 = Math.clz32 ? Math.clz32 : clz32Fallback; // Count leading zeros.
 // Based on:
 // https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Math/clz32
 
-var log = Math.log;
-var LN2 = Math.LN2;
+const log = Math.log;
+const LN2 = Math.LN2;
 
 function clz32Fallback(x) {
-  var asUint = x >>> 0;
+  const asUint = x >>> 0;
 
   if (asUint === 0) {
     return 32;
@@ -8115,7 +4540,7 @@ function createThenableState() {
 function noop() {}
 
 function trackUsedThenable(thenableState, thenable, index) {
-  var previous = thenableState[index];
+  const previous = thenableState[index];
 
   if (previous === undefined) {
     thenableState.push(thenable);
@@ -8137,31 +4562,31 @@ function trackUsedThenable(thenableState, thenable, index) {
 
   switch (thenable.status) {
     case 'fulfilled': {
-      var fulfilledValue = thenable.value;
+      const fulfilledValue = thenable.value;
       return fulfilledValue;
     }
 
     case 'rejected': {
-      var rejectedError = thenable.reason;
+      const rejectedError = thenable.reason;
       throw rejectedError;
     }
 
     default: {
       if (typeof thenable.status === 'string');
       else {
-        var pendingThenable = thenable;
+        const pendingThenable = thenable;
         pendingThenable.status = 'pending';
         pendingThenable.then(
-          function (fulfilledValue) {
+          (fulfilledValue) => {
             if (thenable.status === 'pending') {
-              var fulfilledThenable = thenable;
+              const fulfilledThenable = thenable;
               fulfilledThenable.status = 'fulfilled';
               fulfilledThenable.value = fulfilledValue;
             }
           },
-          function (error) {
+          (error) => {
             if (thenable.status === 'pending') {
-              var rejectedThenable = thenable;
+              const rejectedThenable = thenable;
               rejectedThenable.status = 'rejected';
               rejectedThenable.reason = error;
             }
@@ -8190,29 +4615,26 @@ function is(x, y) {
   );
 }
 
-var objectIs = typeof Object.is === 'function' ? Object.is : is; // $FlowFixMe[method-unbinding]
+const objectIs = typeof Object.is === 'function' ? Object.is : is; // $FlowFixMe[method-unbinding]
 
-var currentlyRenderingComponent = null;
-var currentlyRenderingTask = null;
-var firstWorkInProgressHook = null;
-var workInProgressHook = null; // Whether the work-in-progress hook is a re-rendered hook
+let currentlyRenderingComponent = null;
+let currentlyRenderingTask = null;
+let firstWorkInProgressHook = null;
+let workInProgressHook = null; // Whether the work-in-progress hook is a re-rendered hook
 
-var isReRender = false; // Whether an update was scheduled during the currently executing render pass.
+let isReRender = false; // Whether an update was scheduled during the currently executing render pass.
 
-var didScheduleRenderPhaseUpdate = false; // Counts the number of useId hooks in this component
+let didScheduleRenderPhaseUpdate = false; // Counts the number of useId hooks in this component
 
-var localIdCounter = 0; // Counts the number of use(thenable) calls in this component
+let localIdCounter = 0; // Counts the number of use(thenable) calls in this component
 
-var thenableIndexCounter = 0;
-var thenableState = null; // Lazily created map of render-phase updates
+let thenableIndexCounter = 0;
+let thenableState = null; // Lazily created map of render-phase updates
 
-var renderPhaseUpdates = null; // Counter to prevent infinite loops.
+let renderPhaseUpdates = null; // Counter to prevent infinite loops.
 
-var numberOfReRenders = 0;
-var RE_RENDER_LIMIT = 25;
-var isInHookUserCodeInDev = false; // In DEV, this is the name of the currently executing primitive hook
-
-var currentHookNameInDev;
+let numberOfReRenders = 0;
+const RE_RENDER_LIMIT = 25;
 
 function resolveCurrentlyRenderingComponent() {
   if (currentlyRenderingComponent === null) {
@@ -8226,51 +4648,15 @@ function resolveCurrentlyRenderingComponent() {
     );
   }
 
-  {
-    if (isInHookUserCodeInDev) {
-      error(
-        'Do not call Hooks inside useEffect(...), useMemo(...), or other built-in Hooks. ' +
-          'You can only call Hooks at the top level of your React function. ' +
-          'For more information, see ' +
-          'https://reactjs.org/link/rules-of-hooks'
-      );
-    }
-  }
-
   return currentlyRenderingComponent;
 }
 
 function areHookInputsEqual(nextDeps, prevDeps) {
   if (prevDeps === null) {
-    {
-      error(
-        '%s received a final argument during this render, but not during ' +
-          'the previous render. Even though the final argument is optional, ' +
-          'its type cannot change between renders.',
-        currentHookNameInDev
-      );
-    }
-
     return false;
   }
 
-  {
-    // Don't bother comparing lengths in prod because these arrays should be
-    // passed inline.
-    if (nextDeps.length !== prevDeps.length) {
-      error(
-        'The final argument passed to %s changed size between renders. The ' +
-          'order and size of this array must remain constant.\n\n' +
-          'Previous: %s\n' +
-          'Incoming: %s',
-        currentHookNameInDev,
-        '[' + nextDeps.join(', ') + ']',
-        '[' + prevDeps.join(', ') + ']'
-      );
-    }
-  } // $FlowFixMe[incompatible-use] found when upgrading Flow
-
-  for (var i = 0; i < prevDeps.length && i < nextDeps.length; i++) {
+  for (let i = 0; i < prevDeps.length && i < nextDeps.length; i++) {
     // $FlowFixMe[incompatible-use] found when upgrading Flow
     if (objectIs(nextDeps[i], prevDeps[i])) {
       continue;
@@ -8323,10 +4709,6 @@ function createWorkInProgressHook() {
 function prepareToUseHooks(task, componentIdentity, prevThenableState) {
   currentlyRenderingComponent = componentIdentity;
   currentlyRenderingTask = task;
-
-  {
-    isInHookUserCodeInDev = false;
-  } // The following should have already been reset
   // didScheduleRenderPhaseUpdate = false;
   // firstWorkInProgressHook = null;
   // numberOfReRenders = 0;
@@ -8358,7 +4740,7 @@ function finishHooks(Component, props, children, refOrContext) {
   return children;
 }
 function getThenableStateAfterSuspending() {
-  var state = thenableState;
+  const state = thenableState;
   thenableState = null;
   return state;
 }
@@ -8366,15 +4748,11 @@ function checkDidRenderIdHook() {
   // This should be called immediately after every finishHooks call.
   // Conceptually, it's part of the return value of finishHooks; it's only a
   // separate function to avoid using an array tuple.
-  var didRenderIdHook = localIdCounter !== 0;
+  const didRenderIdHook = localIdCounter !== 0;
   return didRenderIdHook;
 } // Reset the internal hooks state if an error occurs while rendering a component
 
 function resetHooksState() {
-  {
-    isInHookUserCodeInDev = false;
-  }
-
   currentlyRenderingComponent = null;
   currentlyRenderingTask = null;
   didScheduleRenderPhaseUpdate = false;
@@ -8385,25 +4763,10 @@ function resetHooksState() {
 }
 
 function readContext$1(context) {
-  {
-    if (isInHookUserCodeInDev) {
-      error(
-        'Context can only be read while React is rendering. ' +
-          'In classes, you can read it in the render method or getDerivedStateFromProps. ' +
-          'In function components, you can read it directly in the function body, but not ' +
-          'inside Hooks like useReducer() or useMemo().'
-      );
-    }
-  }
-
   return readContext(context);
 }
 
 function useContext(context) {
-  {
-    currentHookNameInDev = 'useContext';
-  }
-
   resolveCurrentlyRenderingComponent();
   return readContext(context);
 }
@@ -8414,57 +4777,39 @@ function basicStateReducer(state, action) {
 }
 
 function useState(initialState) {
-  {
-    currentHookNameInDev = 'useState';
-  }
-
   return useReducer(
     basicStateReducer, // useReducer has a special case to support lazy useState initializers
     initialState
   );
 }
 function useReducer(reducer, initialArg, init) {
-  {
-    if (reducer !== basicStateReducer) {
-      currentHookNameInDev = 'useReducer';
-    }
-  }
-
   currentlyRenderingComponent = resolveCurrentlyRenderingComponent();
   workInProgressHook = createWorkInProgressHook();
 
   if (isReRender) {
     // This is a re-render. Apply the new render phase updates to the previous
     // current hook.
-    var queue = workInProgressHook.queue;
-    var dispatch = queue.dispatch;
+    const queue = workInProgressHook.queue;
+    const dispatch = queue.dispatch;
 
     if (renderPhaseUpdates !== null) {
       // Render phase updates are stored in a map of queue -> linked list
-      var firstRenderPhaseUpdate = renderPhaseUpdates.get(queue);
+      const firstRenderPhaseUpdate = renderPhaseUpdates.get(queue);
 
       if (firstRenderPhaseUpdate !== undefined) {
         // $FlowFixMe[incompatible-use] found when upgrading Flow
         renderPhaseUpdates.delete(queue); // $FlowFixMe[incompatible-use] found when upgrading Flow
 
-        var newState = workInProgressHook.memoizedState;
-        var update = firstRenderPhaseUpdate;
+        let newState = workInProgressHook.memoizedState;
+        let update = firstRenderPhaseUpdate;
 
         do {
           // Process this render phase update. We don't have to check the
           // priority because it will always be the same as the current
           // render's.
-          var action = update.action;
-
-          {
-            isInHookUserCodeInDev = true;
-          }
+          const action = update.action;
 
           newState = reducer(newState, action);
-
-          {
-            isInHookUserCodeInDev = false;
-          } // $FlowFixMe[incompatible-type] we bail out when we get a null
 
           update = update.next;
         } while (update !== null); // $FlowFixMe[incompatible-use] found when upgrading Flow
@@ -8476,11 +4821,7 @@ function useReducer(reducer, initialArg, init) {
 
     return [workInProgressHook.memoizedState, dispatch];
   } else {
-    {
-      isInHookUserCodeInDev = true;
-    }
-
-    var initialState;
+    let initialState;
 
     if (reducer === basicStateReducer) {
       // Special case for `useState`.
@@ -8490,38 +4831,33 @@ function useReducer(reducer, initialArg, init) {
       initialState = init !== undefined ? init(initialArg) : initialArg;
     }
 
-    {
-      isInHookUserCodeInDev = false;
-    } // $FlowFixMe[incompatible-use] found when upgrading Flow
-
     workInProgressHook.memoizedState = initialState; // $FlowFixMe[incompatible-use] found when upgrading Flow
 
-    var _queue = (workInProgressHook.queue = {
+    const queue = (workInProgressHook.queue = {
       last: null,
       dispatch: null,
     });
-
-    var _dispatch = (_queue.dispatch = dispatchAction.bind(
+    const dispatch = (queue.dispatch = dispatchAction.bind(
       null,
       currentlyRenderingComponent,
-      _queue
+      queue
     )); // $FlowFixMe[incompatible-use] found when upgrading Flow
 
-    return [workInProgressHook.memoizedState, _dispatch];
+    return [workInProgressHook.memoizedState, dispatch];
   }
 }
 
 function useMemo(nextCreate, deps) {
   currentlyRenderingComponent = resolveCurrentlyRenderingComponent();
   workInProgressHook = createWorkInProgressHook();
-  var nextDeps = deps === undefined ? null : deps;
+  const nextDeps = deps === undefined ? null : deps;
 
   if (workInProgressHook !== null) {
-    var prevState = workInProgressHook.memoizedState;
+    const prevState = workInProgressHook.memoizedState;
 
     if (prevState !== null) {
       if (nextDeps !== null) {
-        var prevDeps = prevState[1];
+        const prevDeps = prevState[1];
 
         if (areHookInputsEqual(nextDeps, prevDeps)) {
           return prevState[0];
@@ -8530,15 +4866,7 @@ function useMemo(nextCreate, deps) {
     }
   }
 
-  {
-    isInHookUserCodeInDev = true;
-  }
-
-  var nextValue = nextCreate();
-
-  {
-    isInHookUserCodeInDev = false;
-  } // $FlowFixMe[incompatible-use] found when upgrading Flow
+  const nextValue = nextCreate();
 
   workInProgressHook.memoizedState = [nextValue, nextDeps];
   return nextValue;
@@ -8547,16 +4875,12 @@ function useMemo(nextCreate, deps) {
 function useRef(initialValue) {
   currentlyRenderingComponent = resolveCurrentlyRenderingComponent();
   workInProgressHook = createWorkInProgressHook();
-  var previousRef = workInProgressHook.memoizedState;
+  const previousRef = workInProgressHook.memoizedState;
 
   if (previousRef === null) {
-    var ref = {
+    const ref = {
       current: initialValue,
     };
-
-    {
-      Object.seal(ref);
-    } // $FlowFixMe[incompatible-use] found when upgrading Flow
 
     workInProgressHook.memoizedState = ref;
     return ref;
@@ -8565,20 +4889,7 @@ function useRef(initialValue) {
   }
 }
 
-function useLayoutEffect(create, inputs) {
-  {
-    currentHookNameInDev = 'useLayoutEffect';
-
-    error(
-      'useLayoutEffect does nothing on the server, because its effect cannot ' +
-        "be encoded into the server renderer's output format. This will lead " +
-        'to a mismatch between the initial, non-hydrated UI and the intended ' +
-        'UI. To avoid this, useLayoutEffect should only be used in ' +
-        'components that render exclusively on the client. ' +
-        'See https://reactjs.org/link/uselayouteffect-ssr for common fixes.'
-    );
-  }
-}
+function useLayoutEffect(create, inputs) {}
 
 function dispatchAction(componentIdentity, queue, action) {
   if (numberOfReRenders >= RE_RENDER_LIMIT) {
@@ -8593,8 +4904,8 @@ function dispatchAction(componentIdentity, queue, action) {
     // queue -> linked list of updates. After this render pass, we'll restart
     // and apply the stashed updates on top of the work-in-progress hook.
     didScheduleRenderPhaseUpdate = true;
-    var update = {
-      action: action,
+    const update = {
+      action,
       next: null,
     };
 
@@ -8602,14 +4913,14 @@ function dispatchAction(componentIdentity, queue, action) {
       renderPhaseUpdates = new Map();
     }
 
-    var firstRenderPhaseUpdate = renderPhaseUpdates.get(queue);
+    const firstRenderPhaseUpdate = renderPhaseUpdates.get(queue);
 
     if (firstRenderPhaseUpdate === undefined) {
       // $FlowFixMe[incompatible-use] found when upgrading Flow
       renderPhaseUpdates.set(queue, update);
     } else {
       // Append the update to the end of the list.
-      var lastRenderPhaseUpdate = firstRenderPhaseUpdate;
+      let lastRenderPhaseUpdate = firstRenderPhaseUpdate;
 
       while (lastRenderPhaseUpdate.next !== null) {
         lastRenderPhaseUpdate = lastRenderPhaseUpdate.next;
@@ -8621,9 +4932,7 @@ function dispatchAction(componentIdentity, queue, action) {
 }
 
 function useCallback(callback, deps) {
-  return useMemo(function () {
-    return callback;
-  }, deps);
+  return useMemo(() => callback, deps);
 }
 
 function throwOnUseEventCall() {
@@ -8670,9 +4979,9 @@ function useTransition() {
 }
 
 function useId() {
-  var task = currentlyRenderingTask;
-  var treeId = getTreeId(task.treeContext);
-  var responseState = currentResponseState;
+  const task = currentlyRenderingTask;
+  const treeId = getTreeId(task.treeContext);
+  const responseState = currentResponseState;
 
   if (responseState === null) {
     throw new Error(
@@ -8680,7 +4989,7 @@ function useId() {
     );
   }
 
-  var localId = localIdCounter++;
+  const localId = localIdCounter++;
   return makeId(responseState, treeId, localId);
 }
 
@@ -8689,9 +4998,9 @@ function use(usable) {
     // $FlowFixMe[method-unbinding]
     if (typeof usable.then === 'function') {
       // This is a thenable.
-      var thenable = usable; // Track the position of the thenable within this fiber.
+      const thenable = usable; // Track the position of the thenable within this fiber.
 
-      var index = thenableIndexCounter;
+      const index = thenableIndexCounter;
       thenableIndexCounter += 1;
 
       if (thenableState === null) {
@@ -8703,7 +5012,7 @@ function use(usable) {
       usable.$$typeof === REACT_CONTEXT_TYPE ||
       usable.$$typeof === REACT_SERVER_CONTEXT_TYPE
     ) {
-      var context = usable;
+      const context = usable;
       return readContext$1(context);
     }
   } // eslint-disable-next-line react-internal/safe-string-coercion
@@ -8720,9 +5029,9 @@ function useCacheRefresh() {
 }
 
 function useMemoCache(size) {
-  var data = new Array(size);
+  const data = new Array(size);
 
-  for (var i = 0; i < size; i++) {
+  for (let i = 0; i < size; i++) {
     data[i] = REACT_MEMO_CACHE_SENTINEL;
   }
 
@@ -8731,28 +5040,28 @@ function useMemoCache(size) {
 
 function noop$1() {}
 
-var HooksDispatcher = {
+const HooksDispatcher = {
   readContext: readContext$1,
-  useContext: useContext,
-  useMemo: useMemo,
-  useReducer: useReducer,
-  useRef: useRef,
-  useState: useState,
+  useContext,
+  useMemo,
+  useReducer,
+  useRef,
+  useState,
   useInsertionEffect: noop$1,
-  useLayoutEffect: useLayoutEffect,
-  useCallback: useCallback,
+  useLayoutEffect,
+  useCallback,
   // useImperativeHandle is not run in the server environment
   useImperativeHandle: noop$1,
   // Effects are not run in the server environment.
   useEffect: noop$1,
   // Debugging effect
   useDebugValue: noop$1,
-  useDeferredValue: useDeferredValue,
-  useTransition: useTransition,
-  useId: useId,
+  useDeferredValue,
+  useTransition,
+  useId,
   // Subscriptions are not setup in a server environment.
-  useMutableSource: useMutableSource,
-  useSyncExternalStore: useSyncExternalStore,
+  useMutableSource,
+  useSyncExternalStore,
 };
 
 {
@@ -8771,7 +5080,7 @@ var HooksDispatcher = {
   HooksDispatcher.use = use;
 }
 
-var currentResponseState = null;
+let currentResponseState = null;
 function setCurrentResponseState(responseState) {
   currentResponseState = responseState;
 }
@@ -8784,51 +5093,22 @@ function getCacheForType(resourceType) {
   throw new Error('Not implemented.');
 }
 
-var DefaultCacheDispatcher = {
-  getCacheSignal: getCacheSignal,
-  getCacheForType: getCacheForType,
+const DefaultCacheDispatcher = {
+  getCacheSignal,
+  getCacheForType,
 };
 
-function getStackByComponentStackNode(componentStack) {
-  try {
-    var info = '';
-    var node = componentStack;
-
-    do {
-      switch (node.tag) {
-        case 0:
-          info += describeBuiltInComponentFrame(node.type, null, null);
-          break;
-
-        case 1:
-          info += describeFunctionComponentFrame(node.type, null, null);
-          break;
-
-        case 2:
-          info += describeClassComponentFrame(node.type, null, null);
-          break;
-      } // $FlowFixMe[incompatible-type] we bail out when we get a null
-
-      node = node.parent;
-    } while (node);
-
-    return info;
-  } catch (x) {
-    return '\nError generating stack: ' + x.message + '\n' + x.stack;
-  }
-}
-
-var ReactCurrentDispatcher$1 = ReactSharedInternals.ReactCurrentDispatcher;
-var ReactCurrentCache = ReactSharedInternals.ReactCurrentCache;
-var ReactDebugCurrentFrame$1 = ReactSharedInternals.ReactDebugCurrentFrame;
-var PENDING = 0;
-var COMPLETED = 1;
-var FLUSHED = 2;
-var ABORTED = 3;
-var ERRORED = 4;
-var OPEN = 0;
-var CLOSING = 1;
-var CLOSED = 2;
+const ReactCurrentDispatcher$1 = ReactSharedInternals.ReactCurrentDispatcher;
+const ReactCurrentCache = ReactSharedInternals.ReactCurrentCache;
+const ReactDebugCurrentFrame$1 = ReactSharedInternals.ReactDebugCurrentFrame;
+const PENDING = 0;
+const COMPLETED = 1;
+const FLUSHED = 2;
+const ABORTED = 3;
+const ERRORED = 4;
+const OPEN = 0;
+const CLOSING = 1;
+const CLOSED = 2;
 // This is a default heuristic for how to split up the HTML content into progressive
 // loading. Our goal is to be able to display additional new content about every 500ms.
 // Faster than that is unnecessary and should be throttled on the client. It also
@@ -8844,7 +5124,7 @@ var CLOSED = 2;
 // about 12.5kb of content per 500ms. Not counting starting latency for the first
 // paint.
 // 500 * 1024 / 8 * .8 * 0.5 / 2
-var DEFAULT_PROGRESSIVE_CHUNK_SIZE = 12800;
+const DEFAULT_PROGRESSIVE_CHUNK_SIZE = 12800;
 
 function defaultErrorHandler(error) {
   console['error'](error); // Don't transform to our wrapper
@@ -8865,12 +5145,12 @@ function createRequest(
   onShellError,
   onFatalError
 ) {
-  var pingedTasks = [];
-  var abortSet = new Set();
-  var resources = createResources();
-  var request = {
+  const pingedTasks = [];
+  const abortSet = new Set();
+  const resources = createResources();
+  const request = {
     destination: null,
-    responseState: responseState,
+    responseState,
     progressiveChunkSize:
       progressiveChunkSize === undefined
         ? DEFAULT_PROGRESSIVE_CHUNK_SIZE
@@ -8880,7 +5160,7 @@ function createRequest(
     nextSegmentId: 0,
     allPendingTasks: 0,
     pendingRootTasks: 0,
-    resources: resources,
+    resources,
     completedRootSegment: null,
     abortableTasks: abortSet,
     pingedTasks: pingedTasks,
@@ -8896,7 +5176,7 @@ function createRequest(
     onFatalError: onFatalError === undefined ? noop$2 : onFatalError,
   }; // This segment represents the root fallback.
 
-  var rootSegment = createPendingSegment(
+  const rootSegment = createPendingSegment(
     request,
     0,
     null,
@@ -8906,7 +5186,7 @@ function createRequest(
   ); // There is no parent so conceptually, we're unblocked to flush this segment.
 
   rootSegment.parentFlushed = true;
-  var rootTask = createTask(
+  const rootTask = createTask(
     request,
     null,
     children,
@@ -8922,13 +5202,11 @@ function createRequest(
 }
 
 function pingTask(request, task) {
-  var pingedTasks = request.pingedTasks;
+  const pingedTasks = request.pingedTasks;
   pingedTasks.push(task);
 
   if (pingedTasks.length === 1) {
-    scheduleWork(function () {
-      return performWork(request);
-    });
+    scheduleWork(() => performWork(request));
   }
 }
 
@@ -8941,7 +5219,7 @@ function createSuspenseBoundary(request, fallbackAbortableTasks) {
     forceClientRender: false,
     completedSegments: [],
     byteSize: 0,
-    fallbackAbortableTasks: fallbackAbortableTasks,
+    fallbackAbortableTasks,
     errorDigest: null,
     resources: createBoundaryResources(),
   };
@@ -8966,23 +5244,17 @@ function createTask(
     blockedBoundary.pendingTasks++;
   }
 
-  var task = {
-    node: node,
-    ping: function () {
-      return pingTask(request, task);
-    },
-    blockedBoundary: blockedBoundary,
-    blockedSegment: blockedSegment,
-    abortSet: abortSet,
-    legacyContext: legacyContext,
-    context: context,
-    treeContext: treeContext,
-    thenableState: thenableState,
+  const task = {
+    node,
+    ping: () => pingTask(request, task),
+    blockedBoundary,
+    blockedSegment,
+    abortSet,
+    legacyContext,
+    context,
+    treeContext,
+    thenableState,
   };
-
-  {
-    task.componentStack = null;
-  }
 
   abortSet.add(task);
   return task;
@@ -9000,98 +5272,25 @@ function createPendingSegment(
     status: PENDING,
     id: -1,
     // lazily assigned later
-    index: index,
+    index,
     parentFlushed: false,
     chunks: [],
     children: [],
-    formatContext: formatContext,
-    boundary: boundary,
-    lastPushedText: lastPushedText,
-    textEmbedded: textEmbedded,
+    formatContext,
+    boundary,
+    lastPushedText,
+    textEmbedded,
   };
 } // DEV-only global reference to the currently executing task
 
-var currentTaskInDEV = null;
+function pushFunctionComponentStackInDEV(task, type) {}
 
-function getCurrentStackInDEV() {
-  {
-    if (currentTaskInDEV === null || currentTaskInDEV.componentStack === null) {
-      return '';
-    }
-
-    return getStackByComponentStackNode(currentTaskInDEV.componentStack);
-  }
-}
-
-function pushBuiltInComponentStackInDEV(task, type) {
-  {
-    task.componentStack = {
-      tag: 0,
-      parent: task.componentStack,
-      type: type,
-    };
-  }
-}
-
-function pushFunctionComponentStackInDEV(task, type) {
-  {
-    task.componentStack = {
-      tag: 1,
-      parent: task.componentStack,
-      type: type,
-    };
-  }
-}
-
-function pushClassComponentStackInDEV(task, type) {
-  {
-    task.componentStack = {
-      tag: 2,
-      parent: task.componentStack,
-      type: type,
-    };
-  }
-}
-
-function popComponentStackInDEV(task) {
-  {
-    if (task.componentStack === null) {
-      error(
-        'Unexpectedly popped too many stack frames. This is a bug in React.'
-      );
-    } else {
-      task.componentStack = task.componentStack.parent;
-    }
-  }
-} // stash the component stack of an unwinding error until it is processed
-
-var lastBoundaryErrorComponentStackDev = null;
-
-function captureBoundaryErrorDetailsDev(boundary, error) {
-  {
-    var errorMessage;
-
-    if (typeof error === 'string') {
-      errorMessage = error;
-    } else if (error && typeof error.message === 'string') {
-      errorMessage = error.message;
-    } else {
-      // eslint-disable-next-line react-internal/safe-string-coercion
-      errorMessage = String(error);
-    }
-
-    var errorComponentStack =
-      lastBoundaryErrorComponentStackDev || getCurrentStackInDEV();
-    lastBoundaryErrorComponentStackDev = null;
-    boundary.errorMessage = errorMessage;
-    boundary.errorComponentStack = errorComponentStack;
-  }
-}
+function popComponentStackInDEV(task) {} // stash the component stack of an unwinding error until it is processed
 
 function logRecoverableError(request, error) {
   // If this callback errors, we intentionally let that error bubble up to become a fatal error
   // so that someone fixes the error reporting instead of hiding it.
-  var errorDigest = request.onError(error);
+  const errorDigest = request.onError(error);
 
   if (errorDigest != null && typeof errorDigest !== 'string') {
     // eslint-disable-next-line react-internal/prod-error-codes
@@ -9109,9 +5308,9 @@ function fatalError(request, error) {
   // This is called outside error handling code such as if the root errors outside
   // a suspense boundary or if the root suspense boundary's fallback errors.
   // It's also called if React itself or its host configs errors.
-  var onShellError = request.onShellError;
+  const onShellError = request.onShellError;
   onShellError(error);
-  var onFatalError = request.onFatalError;
+  const onFatalError = request.onFatalError;
   onFatalError(error);
 
   if (request.destination !== null) {
@@ -9124,20 +5323,19 @@ function fatalError(request, error) {
 }
 
 function renderSuspenseBoundary(request, task, props) {
-  pushBuiltInComponentStackInDEV(task, 'Suspense');
-  var parentBoundary = task.blockedBoundary;
-  var parentSegment = task.blockedSegment; // Each time we enter a suspense boundary, we split out into a new segment for
+  const parentBoundary = task.blockedBoundary;
+  const parentSegment = task.blockedSegment; // Each time we enter a suspense boundary, we split out into a new segment for
   // the fallback so that we can later replace that segment with the content.
   // This also lets us split out the main content even if it doesn't suspend,
   // in case it ends up generating a large subtree of content.
 
-  var fallback = props.fallback;
-  var content = props.children;
-  var fallbackAbortSet = new Set();
-  var newBoundary = createSuspenseBoundary(request, fallbackAbortSet);
-  var insertionIndex = parentSegment.chunks.length; // The children of the boundary segment is actually the fallback.
+  const fallback = props.fallback;
+  const content = props.children;
+  const fallbackAbortSet = new Set();
+  const newBoundary = createSuspenseBoundary(request, fallbackAbortSet);
+  const insertionIndex = parentSegment.chunks.length; // The children of the boundary segment is actually the fallback.
 
-  var boundarySegment = createPendingSegment(
+  const boundarySegment = createPendingSegment(
     request,
     insertionIndex,
     newBoundary,
@@ -9149,7 +5347,7 @@ function renderSuspenseBoundary(request, task, props) {
 
   parentSegment.lastPushedText = false; // This segment is the actual child content. We can start rendering that immediately.
 
-  var contentRootSegment = createPendingSegment(
+  const contentRootSegment = createPendingSegment(
     request,
     0,
     null,
@@ -9207,10 +5405,6 @@ function renderSuspenseBoundary(request, task, props) {
     contentRootSegment.status = ERRORED;
     newBoundary.forceClientRender = true;
     newBoundary.errorDigest = logRecoverableError(request, error);
-
-    {
-      captureBoundaryErrorDetailsDev(newBoundary, error);
-    } // We don't need to decrement any task numbers because we didn't spawn any new task.
     // We don't need to schedule any task because we know the parent has written yet.
     // We do need to fallthrough to create the fallback though.
   } finally {
@@ -9226,7 +5420,7 @@ function renderSuspenseBoundary(request, task, props) {
   } // We create suspended task for the fallback because we don't want to actually work
   // on it yet in case we finish the main content, so we queue for later.
 
-  var suspendedFallbackTask = createTask(
+  const suspendedFallbackTask = createTask(
     request,
     null,
     fallback,
@@ -9237,14 +5431,9 @@ function renderSuspenseBoundary(request, task, props) {
     task.context,
     task.treeContext
   );
-
-  {
-    suspendedFallbackTask.componentStack = task.componentStack;
-  } // TODO: This should be queued at a separate lower priority queue so that we only work
   // on preparing fallbacks if we don't have any more main content to task on.
 
   request.pingedTasks.push(suspendedFallbackTask);
-  popComponentStackInDEV(task);
 }
 
 function hoistCompletedBoundaryResources(request, completedBoundary) {
@@ -9257,9 +5446,8 @@ function hoistCompletedBoundaryResources(request, completedBoundary) {
 }
 
 function renderHostElement(request, task, type, props) {
-  pushBuiltInComponentStackInDEV(task, type);
-  var segment = task.blockedSegment;
-  var children = pushStartInstance(
+  const segment = task.blockedSegment;
+  const children = pushStartInstance(
     segment.chunks,
     request.preamble,
     type,
@@ -9269,7 +5457,7 @@ function renderHostElement(request, task, type, props) {
     segment.lastPushedText
   );
   segment.lastPushedText = false;
-  var prevContext = segment.formatContext;
+  const prevContext = segment.formatContext;
   segment.formatContext = getChildFormatContext(prevContext, type, props); // We use the non-destructive form because if something suspends, we still
   // need to pop back up and finish this subtree of HTML.
 
@@ -9279,10 +5467,9 @@ function renderHostElement(request, task, type, props) {
   segment.formatContext = prevContext;
   pushEndInstance(segment.chunks, request.postamble, type);
   segment.lastPushedText = false;
-  popComponentStackInDEV(task);
 }
 
-function shouldConstruct$1(Component) {
+function shouldConstruct(Component) {
   return Component.prototype && Component.prototype.isReactComponent;
 }
 
@@ -9294,35 +5481,21 @@ function renderWithHooks(
   props,
   secondArg
 ) {
-  var componentIdentity = {};
+  const componentIdentity = {};
   prepareToUseHooks(task, componentIdentity, prevThenableState);
-  var result = Component(props, secondArg);
+  const result = Component(props, secondArg);
   return finishHooks(Component, props, result, secondArg);
 }
 
 function finishClassComponent(request, task, instance, Component, props) {
-  var nextChildren = instance.render();
+  const nextChildren = instance.render();
 
   {
-    if (instance.props !== props) {
-      if (!didWarnAboutReassigningProps) {
-        error(
-          'It looks like %s is reassigning its own `this.props` while rendering. ' +
-            'This is not supported and can lead to confusing bugs.',
-          getComponentNameFromType(Component) || 'a component'
-        );
-      }
-
-      didWarnAboutReassigningProps = true;
-    }
-  }
-
-  {
-    var childContextTypes = Component.childContextTypes;
+    const childContextTypes = Component.childContextTypes;
 
     if (childContextTypes !== null && childContextTypes !== undefined) {
-      var previousContext = task.legacyContext;
-      var mergedContext = processChildContext(
+      const previousContext = task.legacyContext;
+      const mergedContext = processChildContext(
         instance,
         Component,
         previousContext,
@@ -9339,22 +5512,11 @@ function finishClassComponent(request, task, instance, Component, props) {
 }
 
 function renderClassComponent(request, task, Component, props) {
-  pushClassComponentStackInDEV(task, Component);
-  var maskedContext = getMaskedContext(Component, task.legacyContext);
-  var instance = constructClassInstance(Component, props, maskedContext);
+  const maskedContext = getMaskedContext(Component, task.legacyContext);
+  const instance = constructClassInstance(Component, props, maskedContext);
   mountClassInstance(instance, Component, props, maskedContext);
-  finishClassComponent(request, task, instance, Component, props);
-  popComponentStackInDEV(task);
+  finishClassComponent(request, task, instance, Component);
 }
-
-var didWarnAboutBadClass = {};
-var didWarnAboutModulePatternComponent = {};
-var didWarnAboutContextTypeOnFunctionComponent = {};
-var didWarnAboutGetDerivedStateOnFunctionComponent = {};
-var didWarnAboutReassigningProps = false;
-var didWarnAboutGenerators = false;
-var didWarnAboutMaps = false;
-var hasWarnedAboutUsingContextAsConsumer = false; // This would typically be a function component but we still support module pattern
 // components for some reason.
 
 function renderIndeterminateComponent(
@@ -9364,35 +5526,13 @@ function renderIndeterminateComponent(
   Component,
   props
 ) {
-  var legacyContext;
+  let legacyContext;
 
   {
     legacyContext = getMaskedContext(Component, task.legacyContext);
   }
 
-  pushFunctionComponentStackInDEV(task, Component);
-
-  {
-    if (
-      Component.prototype &&
-      typeof Component.prototype.render === 'function'
-    ) {
-      var componentName = getComponentNameFromType(Component) || 'Unknown';
-
-      if (!didWarnAboutBadClass[componentName]) {
-        error(
-          "The <%s /> component appears to have a render method, but doesn't extend React.Component. " +
-            'This is likely to cause errors. Change %s to extend React.Component instead.',
-          componentName,
-          componentName
-        );
-
-        didWarnAboutBadClass[componentName] = true;
-      }
-    }
-  }
-
-  var value = renderWithHooks(
+  const value = renderWithHooks(
     request,
     task,
     prevThenableState,
@@ -9400,35 +5540,7 @@ function renderIndeterminateComponent(
     props,
     legacyContext
   );
-  var hasId = checkDidRenderIdHook();
-
-  {
-    // Support for module components is deprecated and is removed behind a flag.
-    // Whether or not it would crash later, we want to show a good message in DEV first.
-    if (
-      typeof value === 'object' &&
-      value !== null &&
-      typeof value.render === 'function' &&
-      value.$$typeof === undefined
-    ) {
-      var _componentName = getComponentNameFromType(Component) || 'Unknown';
-
-      if (!didWarnAboutModulePatternComponent[_componentName]) {
-        error(
-          'The <%s /> component appears to be a function component that returns a class instance. ' +
-            'Change %s to a class that extends React.Component instead. ' +
-            "If you can't use a class try assigning the prototype on the function as a workaround. " +
-            "`%s.prototype = React.Component.prototype`. Don't use an arrow function since it " +
-            'cannot be called with `new` by React.',
-          _componentName,
-          _componentName,
-          _componentName
-        );
-
-        didWarnAboutModulePatternComponent[_componentName] = true;
-      }
-    }
-  }
+  const hasId = checkDidRenderIdHook();
 
   if (
     // Run these checks in production only if the flag is off.
@@ -9438,39 +5550,17 @@ function renderIndeterminateComponent(
     typeof value.render === 'function' &&
     value.$$typeof === undefined
   ) {
-    {
-      var _componentName2 = getComponentNameFromType(Component) || 'Unknown';
-
-      if (!didWarnAboutModulePatternComponent[_componentName2]) {
-        error(
-          'The <%s /> component appears to be a function component that returns a class instance. ' +
-            'Change %s to a class that extends React.Component instead. ' +
-            "If you can't use a class try assigning the prototype on the function as a workaround. " +
-            "`%s.prototype = React.Component.prototype`. Don't use an arrow function since it " +
-            'cannot be called with `new` by React.',
-          _componentName2,
-          _componentName2,
-          _componentName2
-        );
-
-        didWarnAboutModulePatternComponent[_componentName2] = true;
-      }
-    }
-
     mountClassInstance(value, Component, props, legacyContext);
-    finishClassComponent(request, task, value, Component, props);
+    finishClassComponent(request, task, value, Component);
   } else {
-    {
-      validateFunctionComponentInDev(Component);
-    } // We're now successfully past this task, and we don't have to pop back to
     // the previous task every again, so we can use the destructive recursive form.
 
     if (hasId) {
       // This component materialized an id. We treat this as its own level, with
       // a single "child" slot.
-      var prevTreeContext = task.treeContext;
-      var totalChildren = 1;
-      var index = 0;
+      const prevTreeContext = task.treeContext;
+      const totalChildren = 1;
+      const index = 0;
       task.treeContext = pushTreeContext(prevTreeContext, totalChildren, index);
 
       try {
@@ -9482,59 +5572,15 @@ function renderIndeterminateComponent(
       renderNodeDestructive(request, task, null, value);
     }
   }
-
-  popComponentStackInDEV(task);
-}
-
-function validateFunctionComponentInDev(Component) {
-  {
-    if (Component) {
-      if (Component.childContextTypes) {
-        error(
-          '%s(...): childContextTypes cannot be defined on a function component.',
-          Component.displayName || Component.name || 'Component'
-        );
-      }
-    }
-
-    if (typeof Component.getDerivedStateFromProps === 'function') {
-      var _componentName3 = getComponentNameFromType(Component) || 'Unknown';
-
-      if (!didWarnAboutGetDerivedStateOnFunctionComponent[_componentName3]) {
-        error(
-          '%s: Function components do not support getDerivedStateFromProps.',
-          _componentName3
-        );
-
-        didWarnAboutGetDerivedStateOnFunctionComponent[_componentName3] = true;
-      }
-    }
-
-    if (
-      typeof Component.contextType === 'object' &&
-      Component.contextType !== null
-    ) {
-      var _componentName4 = getComponentNameFromType(Component) || 'Unknown';
-
-      if (!didWarnAboutContextTypeOnFunctionComponent[_componentName4]) {
-        error(
-          '%s: Function components do not support contextType.',
-          _componentName4
-        );
-
-        didWarnAboutContextTypeOnFunctionComponent[_componentName4] = true;
-      }
-    }
-  }
 }
 
 function resolveDefaultProps(Component, baseProps) {
   if (Component && Component.defaultProps) {
     // Resolve default props. Taken from ReactElement
-    var props = assign({}, baseProps);
-    var defaultProps = Component.defaultProps;
+    const props = assign({}, baseProps);
+    const defaultProps = Component.defaultProps;
 
-    for (var propName in defaultProps) {
+    for (const propName in defaultProps) {
       if (props[propName] === undefined) {
         props[propName] = defaultProps[propName];
       }
@@ -9548,7 +5594,7 @@ function resolveDefaultProps(Component, baseProps) {
 
 function renderForwardRef(request, task, prevThenableState, type, props, ref) {
   pushFunctionComponentStackInDEV(task, type.render);
-  var children = renderWithHooks(
+  const children = renderWithHooks(
     request,
     task,
     prevThenableState,
@@ -9556,14 +5602,14 @@ function renderForwardRef(request, task, prevThenableState, type, props, ref) {
     props,
     ref
   );
-  var hasId = checkDidRenderIdHook();
+  const hasId = checkDidRenderIdHook();
 
   if (hasId) {
     // This component materialized an id. We treat this as its own level, with
     // a single "child" slot.
-    var prevTreeContext = task.treeContext;
-    var totalChildren = 1;
-    var index = 0;
+    const prevTreeContext = task.treeContext;
+    const totalChildren = 1;
+    const index = 0;
     task.treeContext = pushTreeContext(prevTreeContext, totalChildren, index);
 
     try {
@@ -9574,13 +5620,11 @@ function renderForwardRef(request, task, prevThenableState, type, props, ref) {
   } else {
     renderNodeDestructive(request, task, null, children);
   }
-
-  popComponentStackInDEV(task);
 }
 
 function renderMemo(request, task, prevThenableState, type, props, ref) {
-  var innerType = type.type;
-  var resolvedProps = resolveDefaultProps(innerType, props);
+  const innerType = type.type;
+  const resolvedProps = resolveDefaultProps(innerType, props);
   renderElement(
     request,
     task,
@@ -9592,72 +5636,21 @@ function renderMemo(request, task, prevThenableState, type, props, ref) {
 }
 
 function renderContextConsumer(request, task, context, props) {
-  // The logic below for Context differs depending on PROD or DEV mode. In
-  // DEV mode, we create a separate object for Context.Consumer that acts
-  // like a proxy to Context. This proxy object adds unnecessary code in PROD
-  // so we use the old behaviour (Context.Consumer references Context) to
-  // reduce size and overhead. The separate object references context via
-  // a property called "_context", which also gives us the ability to check
-  // in DEV mode if this property exists or not and warn if it does not.
-  {
-    if (context._context === undefined) {
-      // This may be because it's a Context (rather than a Consumer).
-      // Or it may be because it's older React where they're the same thing.
-      // We only want to warn if we're sure it's a new React.
-      if (context !== context.Consumer) {
-        if (!hasWarnedAboutUsingContextAsConsumer) {
-          hasWarnedAboutUsingContextAsConsumer = true;
+  const render = props.children;
 
-          error(
-            'Rendering <Context> directly is not supported and will be removed in ' +
-              'a future major release. Did you mean to render <Context.Consumer> instead?'
-          );
-        }
-      }
-    } else {
-      context = context._context;
-    }
-  }
-
-  var render = props.children;
-
-  {
-    if (typeof render !== 'function') {
-      error(
-        'A context consumer was rendered with multiple children, or a child ' +
-          "that isn't a function. A context consumer expects a single child " +
-          'that is a function. If you did pass a function, make sure there ' +
-          'is no trailing or leading whitespace around it.'
-      );
-    }
-  }
-
-  var newValue = readContext(context);
-  var newChildren = render(newValue);
+  const newValue = readContext(context);
+  const newChildren = render(newValue);
   renderNodeDestructive(request, task, null, newChildren);
 }
 
 function renderContextProvider(request, task, type, props) {
-  var context = type._context;
-  var value = props.value;
-  var children = props.children;
-  var prevSnapshot;
-
-  {
-    prevSnapshot = task.context;
-  }
+  const context = type._context;
+  const value = props.value;
+  const children = props.children;
 
   task.context = pushProvider(context, value);
   renderNodeDestructive(request, task, null, children);
-  task.context = popProvider(context);
-
-  {
-    if (prevSnapshot !== task.context) {
-      error(
-        'Popping the context provider did not return back to the original snapshot. This is a bug in React.'
-      );
-    }
-  }
+  task.context = popProvider();
 }
 
 function renderLazyComponent(
@@ -9668,11 +5661,10 @@ function renderLazyComponent(
   props,
   ref
 ) {
-  pushBuiltInComponentStackInDEV(task, 'Lazy');
-  var payload = lazyComponent._payload;
-  var init = lazyComponent._init;
-  var Component = init(payload);
-  var resolvedProps = resolveDefaultProps(Component, props);
+  const payload = lazyComponent._payload;
+  const init = lazyComponent._init;
+  const Component = init(payload);
+  const resolvedProps = resolveDefaultProps(Component, props);
   renderElement(
     request,
     task,
@@ -9681,11 +5673,10 @@ function renderLazyComponent(
     resolvedProps,
     ref
   );
-  popComponentStackInDEV(task);
 }
 
 function renderOffscreen(request, task, props) {
-  var mode = props.mode;
+  const mode = props.mode;
 
   if (mode === 'hidden');
   else {
@@ -9697,7 +5688,7 @@ function renderOffscreen(request, task, props) {
 
 function renderElement(request, task, prevThenableState, type, props, ref) {
   if (typeof type === 'function') {
-    if (shouldConstruct$1(type)) {
+    if (shouldConstruct(type)) {
       renderClassComponent(request, task, type, props);
       return;
     } else {
@@ -9742,10 +5733,7 @@ function renderElement(request, task, prevThenableState, type, props, ref) {
     }
 
     case REACT_SUSPENSE_LIST_TYPE: {
-      pushBuiltInComponentStackInDEV(task, 'SuspenseList'); // TODO: SuspenseList should control the boundaries.
-
       renderNodeDestructive(request, task, null, props.children);
-      popComponentStackInDEV(task);
       return;
     }
 
@@ -9792,61 +5780,13 @@ function renderElement(request, task, prevThenableState, type, props, ref) {
     }
   }
 
-  var info = '';
-
-  {
-    if (
-      type === undefined ||
-      (typeof type === 'object' &&
-        type !== null &&
-        Object.keys(type).length === 0)
-    ) {
-      info +=
-        ' You likely forgot to export your component from the file ' +
-        "it's defined in, or you might have mixed up default and " +
-        'named imports.';
-    }
-  }
+  let info = '';
 
   throw new Error(
     'Element type is invalid: expected a string (for built-in ' +
       'components) or a class/function (for composite components) ' +
       ('but got: ' + (type == null ? type : typeof type) + '.' + info)
   );
-}
-
-function validateIterable(iterable, iteratorFn) {
-  {
-    // We don't support rendering Generators because it's a mutation.
-    // See https://github.com/facebook/react/issues/12995
-    if (
-      typeof Symbol === 'function' && // $FlowFixMe Flow doesn't know about toStringTag
-      iterable[Symbol.toStringTag] === 'Generator'
-    ) {
-      if (!didWarnAboutGenerators) {
-        error(
-          'Using Generators as children is unsupported and will likely yield ' +
-            'unexpected results because enumerating a generator mutates it. ' +
-            'You may convert it to an array with `Array.from()` or the ' +
-            '`[...spread]` operator before rendering. Keep in mind ' +
-            'you might need to polyfill these features for older browsers.'
-        );
-      }
-
-      didWarnAboutGenerators = true;
-    } // Warn about using Maps as children
-
-    if (iterable.entries === iteratorFn) {
-      if (!didWarnAboutMaps) {
-        error(
-          'Using Maps as children is not supported. ' +
-            'Use an array of keyed ReactElements instead.'
-        );
-      }
-
-      didWarnAboutMaps = true;
-    }
-  }
 }
 
 function renderNodeDestructive(
@@ -9857,23 +5797,7 @@ function renderNodeDestructive(
   node
 ) {
   {
-    // In Dev we wrap renderNodeDestructiveImpl in a try / catch so we can capture
-    // a component stack at the right place in the tree. We don't do this in renderNode
-    // becuase it is not called at every layer of the tree and we may lose frames
-    try {
-      return renderNodeDestructiveImpl(request, task, prevThenableState, node);
-    } catch (x) {
-      if (typeof x === 'object' && x !== null && typeof x.then === 'function');
-      else {
-        // This is an error, stash the component stack if it is null.
-        lastBoundaryErrorComponentStackDev =
-          lastBoundaryErrorComponentStackDev !== null
-            ? lastBoundaryErrorComponentStackDev
-            : getCurrentStackInDEV();
-      } // rethrow so normal suspense logic can handle thrown value accordingly
-
-      throw x;
-    }
+    return renderNodeDestructiveImpl(request, task, prevThenableState, node);
   }
 } // This function by it self renders a node and consumes the task by mutating it
 // to update the current execution state.
@@ -9886,10 +5810,10 @@ function renderNodeDestructiveImpl(request, task, prevThenableState, node) {
   if (typeof node === 'object' && node !== null) {
     switch (node.$$typeof) {
       case REACT_ELEMENT_TYPE: {
-        var element = node;
-        var type = element.type;
-        var props = element.props;
-        var ref = element.ref;
+        const element = node;
+        const type = element.type;
+        const props = element.props;
+        const ref = element.ref;
         renderElement(request, task, prevThenableState, type, props, ref);
         return;
       }
@@ -9902,29 +5826,13 @@ function renderNodeDestructiveImpl(request, task, prevThenableState, node) {
       // eslint-disable-next-line-no-fallthrough
 
       case REACT_LAZY_TYPE: {
-        var lazyNode = node;
-        var payload = lazyNode._payload;
-        var init = lazyNode._init;
-        var resolvedNode;
+        const lazyNode = node;
+        const payload = lazyNode._payload;
+        const init = lazyNode._init;
+        let resolvedNode;
 
         {
-          try {
-            resolvedNode = init(payload);
-          } catch (x) {
-            if (
-              typeof x === 'object' &&
-              x !== null &&
-              typeof x.then === 'function'
-            ) {
-              // this Lazy initializer is suspending. push a temporary frame onto the stack so it can be
-              // popped off in spawnNewSuspendedTask. This aligns stack behavior between Lazy in element position
-              // vs Component position. We do not want the frame for Errors so we exclusively do this in
-              // the wakeable branch
-              pushBuiltInComponentStackInDEV(task, 'Lazy');
-            }
-
-            throw x;
-          }
+          resolvedNode = init(payload);
         }
 
         renderNodeDestructive(request, task, null, resolvedNode);
@@ -9937,14 +5845,10 @@ function renderNodeDestructiveImpl(request, task, prevThenableState, node) {
       return;
     }
 
-    var iteratorFn = getIteratorFn(node);
+    const iteratorFn = getIteratorFn(node);
 
     if (iteratorFn) {
-      {
-        validateIterable(node, iteratorFn);
-      }
-
-      var iterator = iteratorFn.call(node);
+      const iterator = iteratorFn.call(node);
 
       if (iterator) {
         // We need to know how many total children are in this set, so that we
@@ -9952,10 +5856,10 @@ function renderNodeDestructiveImpl(request, task, prevThenableState, node) {
         // the iterator before we start recursively rendering the children.
         // TODO: This is not great but I think it's inherent to the id
         // generation algorithm.
-        var step = iterator.next(); // If there are not entries, we need to push an empty so we start by checking that.
+        let step = iterator.next(); // If there are not entries, we need to push an empty so we start by checking that.
 
         if (!step.done) {
-          var children = [];
+          const children = [];
 
           do {
             children.push(step.value);
@@ -9970,7 +5874,7 @@ function renderNodeDestructiveImpl(request, task, prevThenableState, node) {
       }
     } // $FlowFixMe[method-unbinding]
 
-    var childString = Object.prototype.toString.call(node);
+    const childString = Object.prototype.toString.call(node);
     throw new Error(
       'Objects are not valid as a React child (found: ' +
         (childString === '[object Object]'
@@ -9983,7 +5887,7 @@ function renderNodeDestructiveImpl(request, task, prevThenableState, node) {
   }
 
   if (typeof node === 'string') {
-    var segment = task.blockedSegment;
+    const segment = task.blockedSegment;
     segment.lastPushedText = pushTextInstance(
       task.blockedSegment.chunks,
       node,
@@ -9994,32 +5898,22 @@ function renderNodeDestructiveImpl(request, task, prevThenableState, node) {
   }
 
   if (typeof node === 'number') {
-    var _segment = task.blockedSegment;
-    _segment.lastPushedText = pushTextInstance(
+    const segment = task.blockedSegment;
+    segment.lastPushedText = pushTextInstance(
       task.blockedSegment.chunks,
       '' + node,
       request.responseState,
-      _segment.lastPushedText
+      segment.lastPushedText
     );
     return;
-  }
-
-  {
-    if (typeof node === 'function') {
-      error(
-        'Functions are not valid as a React child. This may happen if ' +
-          'you return a Component instead of <Component /> from render. ' +
-          'Or maybe you meant to call this function rather than return it.'
-      );
-    }
   }
 }
 
 function renderChildrenArray(request, task, children) {
-  var totalChildren = children.length;
+  const totalChildren = children.length;
 
-  for (var i = 0; i < totalChildren; i++) {
-    var prevTreeContext = task.treeContext;
+  for (let i = 0; i < totalChildren; i++) {
+    const prevTreeContext = task.treeContext;
     task.treeContext = pushTreeContext(prevTreeContext, totalChildren, i);
 
     try {
@@ -10034,9 +5928,9 @@ function renderChildrenArray(request, task, children) {
 
 function spawnNewSuspendedTask(request, task, thenableState, x) {
   // Something suspended, we'll need to create a new segment and resolve it later.
-  var segment = task.blockedSegment;
-  var insertionIndex = segment.chunks.length;
-  var newSegment = createPendingSegment(
+  const segment = task.blockedSegment;
+  const insertionIndex = segment.chunks.length;
+  const newSegment = createPendingSegment(
     request,
     insertionIndex,
     null,
@@ -10047,7 +5941,7 @@ function spawnNewSuspendedTask(request, task, thenableState, x) {
   segment.children.push(newSegment); // Reset lastPushedText for current Segment since the new Segment "consumed" it
 
   segment.lastPushedText = false;
-  var newTask = createTask(
+  const newTask = createTask(
     request,
     thenableState,
     task.node,
@@ -10059,15 +5953,7 @@ function spawnNewSuspendedTask(request, task, thenableState, x) {
     task.treeContext
   );
 
-  {
-    if (task.componentStack !== null) {
-      // We pop one task off the stack because the node that suspended will be tried again,
-      // which will add it back onto the stack.
-      newTask.componentStack = task.componentStack.parent;
-    }
-  }
-
-  var ping = newTask.ping;
+  const ping = newTask.ping;
   x.then(ping, ping);
 } // This is a non-destructive form of rendering a node. If it suspends it spawns
 // a new task and restores the context of this task to what it was before.
@@ -10077,14 +5963,9 @@ function renderNode(request, task, node) {
   // suspended partially through writing something.
   // Snapshot the current context in case something throws to interrupt the
   // process.
-  var previousFormatContext = task.blockedSegment.formatContext;
-  var previousLegacyContext = task.legacyContext;
-  var previousContext = task.context;
-  var previousComponentStack = null;
-
-  {
-    previousComponentStack = task.componentStack;
-  }
+  const previousFormatContext = task.blockedSegment.formatContext;
+  const previousLegacyContext = task.legacyContext;
+  const previousContext = task.context;
 
   try {
     return renderNodeDestructive(request, task, null, node);
@@ -10092,7 +5973,7 @@ function renderNode(request, task, node) {
     resetHooksState();
 
     if (typeof x === 'object' && x !== null && typeof x.then === 'function') {
-      var thenableState = getThenableStateAfterSuspending();
+      const thenableState = getThenableStateAfterSuspending();
       spawnNewSuspendedTask(request, task, thenableState, x); // Restore the context. We assume that this will be restored by the inner
       // functions in case nothing throws so we don't use "finally" here.
 
@@ -10101,10 +5982,6 @@ function renderNode(request, task, node) {
       task.context = previousContext; // Restore all active ReactContexts to what they were before.
 
       switchContext(previousContext);
-
-      {
-        task.componentStack = previousComponentStack;
-      }
 
       return;
     } else {
@@ -10115,10 +5992,6 @@ function renderNode(request, task, node) {
       task.context = previousContext; // Restore all active ReactContexts to what they were before.
 
       switchContext(previousContext);
-
-      {
-        task.componentStack = previousComponentStack;
-      } // We assume that we don't need the correct context.
       // Let's terminate the rest of the tree and don't render any siblings.
 
       throw x;
@@ -10128,7 +6001,7 @@ function renderNode(request, task, node) {
 
 function erroredTask(request, boundary, segment, error) {
   // Report the error to a global handler.
-  var errorDigest = logRecoverableError(request, error);
+  const errorDigest = logRecoverableError(request, error);
 
   if (boundary === null) {
     fatalError(request, error);
@@ -10138,10 +6011,6 @@ function erroredTask(request, boundary, segment, error) {
     if (!boundary.forceClientRender) {
       boundary.forceClientRender = true;
       boundary.errorDigest = errorDigest;
-
-      {
-        captureBoundaryErrorDetailsDev(boundary, error);
-      } // Regardless of what happens next, this boundary won't be displayed,
       // so we can flush it, if the parent already flushed.
 
       if (boundary.parentFlushed) {
@@ -10157,7 +6026,7 @@ function erroredTask(request, boundary, segment, error) {
   request.allPendingTasks--;
 
   if (request.allPendingTasks === 0) {
-    var onAllReady = request.onAllReady;
+    const onAllReady = request.onAllReady;
     onAllReady();
   }
 }
@@ -10166,9 +6035,9 @@ function abortTaskSoft(task) {
   // This aborts task without aborting the parent boundary that it blocks.
   // It's used for when we didn't need this task to complete the tree.
   // If task was needed, then it should use abortTask instead.
-  var request = this;
-  var boundary = task.blockedBoundary;
-  var segment = task.blockedSegment;
+  const request = this;
+  const boundary = task.blockedBoundary;
+  const segment = task.blockedSegment;
   segment.status = ABORTED;
   finishedTask(request, boundary, segment);
 }
@@ -10176,8 +6045,8 @@ function abortTaskSoft(task) {
 function abortTask(task, request, error) {
   // This aborts the task and aborts the parent that it blocks, putting it into
   // client rendered mode.
-  var boundary = task.blockedBoundary;
-  var segment = task.blockedSegment;
+  const boundary = task.blockedBoundary;
+  const segment = task.blockedSegment;
   segment.status = ABORTED;
 
   if (boundary === null) {
@@ -10195,41 +6064,20 @@ function abortTask(task, request, error) {
       boundary.forceClientRender = true;
       boundary.errorDigest = request.onError(error);
 
-      {
-        var errorPrefix = 'The server did not finish this Suspense boundary: ';
-        var errorMessage;
-
-        if (error && typeof error.message === 'string') {
-          errorMessage = errorPrefix + error.message;
-        } else {
-          // eslint-disable-next-line react-internal/safe-string-coercion
-          errorMessage = errorPrefix + String(error);
-        }
-
-        var previousTaskInDev = currentTaskInDEV;
-        currentTaskInDEV = task;
-
-        try {
-          captureBoundaryErrorDetailsDev(boundary, errorMessage);
-        } finally {
-          currentTaskInDEV = previousTaskInDev;
-        }
-      }
-
       if (boundary.parentFlushed) {
         request.clientRenderedBoundaries.push(boundary);
       }
     } // If this boundary was still pending then we haven't already cancelled its fallbacks.
     // We'll need to abort the fallbacks, which will also error that parent boundary.
 
-    boundary.fallbackAbortableTasks.forEach(function (fallbackTask) {
-      return abortTask(fallbackTask, request, error);
-    });
+    boundary.fallbackAbortableTasks.forEach((fallbackTask) =>
+      abortTask(fallbackTask, request, error)
+    );
     boundary.fallbackAbortableTasks.clear();
     request.allPendingTasks--;
 
     if (request.allPendingTasks === 0) {
-      var onAllReady = request.onAllReady;
+      const onAllReady = request.onAllReady;
       onAllReady();
     }
   }
@@ -10243,7 +6091,7 @@ function queueCompletedSegment(boundary, segment) {
   ) {
     // This is an empty segment. There's nothing to write, so we can instead transfer the ID
     // to the child. That way any existing references point to the child.
-    var childSegment = segment.children[0];
+    const childSegment = segment.children[0];
     childSegment.id = segment.id;
     childSegment.parentFlushed = true;
 
@@ -10251,7 +6099,7 @@ function queueCompletedSegment(boundary, segment) {
       queueCompletedSegment(boundary, childSegment);
     }
   } else {
-    var completedSegments = boundary.completedSegments;
+    const completedSegments = boundary.completedSegments;
     completedSegments.push(segment);
   }
 }
@@ -10273,7 +6121,7 @@ function finishedTask(request, boundary, segment) {
     if (request.pendingRootTasks === 0) {
       // We have completed the shell so the shell can't error anymore.
       request.onShellError = noop$2;
-      var onShellReady = request.onShellReady;
+      const onShellReady = request.onShellReady;
       onShellReady();
     }
   } else {
@@ -10312,7 +6160,7 @@ function finishedTask(request, boundary, segment) {
         // to emit it.
         if (segment.status === COMPLETED) {
           queueCompletedSegment(boundary, segment);
-          var completedSegments = boundary.completedSegments;
+          const completedSegments = boundary.completedSegments;
 
           if (completedSegments.length === 1) {
             // This is the first time since we last flushed that we completed anything.
@@ -10332,21 +6180,21 @@ function finishedTask(request, boundary, segment) {
   if (request.allPendingTasks === 0) {
     // This needs to be called at the very end so that we can synchronously write the result
     // in the callback if needed.
-    var onAllReady = request.onAllReady;
+    const onAllReady = request.onAllReady;
     onAllReady();
   }
 }
 
 function retryTask(request, task) {
   {
-    var blockedBoundary = task.blockedBoundary;
+    const blockedBoundary = task.blockedBoundary;
     setCurrentlyRenderingBoundaryResourcesTarget(
       request.resources,
       blockedBoundary ? blockedBoundary.resources : null
     );
   }
 
-  var segment = task.blockedSegment;
+  const segment = task.blockedSegment;
 
   if (segment.status !== PENDING) {
     // We completed this by other means before we had a chance to retry it.
@@ -10356,12 +6204,6 @@ function retryTask(request, task) {
   // needing a very similar context soon again.
 
   switchContext(task.context);
-  var prevTaskInDEV = null;
-
-  {
-    prevTaskInDEV = currentTaskInDEV;
-    currentTaskInDEV = task;
-  }
 
   try {
     // We call the destructive form that mutates this task. That way if something
@@ -10369,7 +6211,7 @@ function retryTask(request, task) {
     // Reset the task's thenable state before continuing, so that if a later
     // component suspends we can reuse the same task object. If the same
     // component suspends again, the thenable state will be restored.
-    var prevThenableState = task.thenableState;
+    const prevThenableState = task.thenableState;
     task.thenableState = null;
     renderNodeDestructive(request, task, prevThenableState, task.node);
     pushSegmentFinale(
@@ -10386,7 +6228,7 @@ function retryTask(request, task) {
 
     if (typeof x === 'object' && x !== null && typeof x.then === 'function') {
       // Something suspended again, let's pick it back up later.
-      var ping = task.ping;
+      const ping = task.ping;
       x.then(ping, ping);
       task.thenableState = getThenableStateAfterSuspending();
     } else {
@@ -10398,10 +6240,6 @@ function retryTask(request, task) {
     {
       setCurrentlyRenderingBoundaryResourcesTarget(request.resources, null);
     }
-
-    {
-      currentTaskInDEV = prevTaskInDEV;
-    }
   }
 }
 
@@ -10410,33 +6248,27 @@ function performWork(request) {
     return;
   }
 
-  var prevContext = getActiveContext();
-  var prevDispatcher = ReactCurrentDispatcher$1.current;
+  const prevContext = getActiveContext();
+  const prevDispatcher = ReactCurrentDispatcher$1.current;
   ReactCurrentDispatcher$1.current = HooksDispatcher;
-  var prevCacheDispatcher;
+  let prevCacheDispatcher;
 
   {
     prevCacheDispatcher = ReactCurrentCache.current;
     ReactCurrentCache.current = DefaultCacheDispatcher;
   }
 
-  var previousHostDispatcher = prepareToRender(request.resources);
-  var prevGetCurrentStackImpl;
+  const previousHostDispatcher = prepareToRender(request.resources);
 
-  {
-    prevGetCurrentStackImpl = ReactDebugCurrentFrame$1.getCurrentStack;
-    ReactDebugCurrentFrame$1.getCurrentStack = getCurrentStackInDEV;
-  }
-
-  var prevResponseState = currentResponseState;
+  const prevResponseState = currentResponseState;
   setCurrentResponseState(request.responseState);
 
   try {
-    var pingedTasks = request.pingedTasks;
-    var i;
+    const pingedTasks = request.pingedTasks;
+    let i;
 
     for (i = 0; i < pingedTasks.length; i++) {
-      var task = pingedTasks[i];
+      const task = pingedTasks[i];
       retryTask(request, task);
     }
 
@@ -10458,10 +6290,6 @@ function performWork(request) {
 
     cleanupAfterRender(previousHostDispatcher);
 
-    {
-      ReactDebugCurrentFrame$1.getCurrentStack = prevGetCurrentStackImpl;
-    }
-
     if (prevDispatcher === HooksDispatcher) {
       // This means that we were in a reentrant work loop. This could happen
       // in a renderer that supports synchronous work like renderToString,
@@ -10482,7 +6310,7 @@ function flushSubtree(request, destination, segment) {
     case PENDING: {
       // We're emitting a placeholder for this segment to be filled in later.
       // Therefore we'll need to assign it an ID - to refer to it by.
-      var segmentID = (segment.id = request.nextSegmentId++); // When this segment finally completes it won't be embedded in text since it will flush separately
+      const segmentID = (segment.id = request.nextSegmentId++); // When this segment finally completes it won't be embedded in text since it will flush separately
 
       segment.lastPushedText = false;
       segment.textEmbedded = false;
@@ -10491,13 +6319,13 @@ function flushSubtree(request, destination, segment) {
 
     case COMPLETED: {
       segment.status = FLUSHED;
-      var r = true;
-      var chunks = segment.chunks;
-      var chunkIdx = 0;
-      var children = segment.children;
+      let r = true;
+      const chunks = segment.chunks;
+      let chunkIdx = 0;
+      const children = segment.children;
 
-      for (var childIdx = 0; childIdx < children.length; childIdx++) {
-        var nextChild = children[childIdx]; // Write all the chunks up until the next child.
+      for (let childIdx = 0; childIdx < children.length; childIdx++) {
+        const nextChild = children[childIdx]; // Write all the chunks up until the next child.
 
         for (; chunkIdx < nextChild.index; chunkIdx++) {
           writeChunk(destination, chunks[chunkIdx]);
@@ -10526,7 +6354,7 @@ function flushSubtree(request, destination, segment) {
 }
 
 function flushSegment(request, destination, segment) {
-  var boundary = segment.boundary;
+  const boundary = segment.boundary;
 
   if (boundary === null) {
     // Not a suspense boundary.
@@ -10562,7 +6390,7 @@ function flushSegment(request, destination, segment) {
       request.partialBoundaries.push(boundary);
     } /// This is the first time we should have referenced this ID.
 
-    var id = (boundary.id = assignSuspenseBoundaryID(request.responseState));
+    const id = (boundary.id = assignSuspenseBoundaryID(request.responseState));
     writeStartPendingSuspenseBoundary(destination, request.responseState, id); // Flush the fallback.
 
     flushSubtree(request, destination, segment);
@@ -10591,7 +6419,7 @@ function flushSegment(request, destination, segment) {
     } // We can inline this boundary's content as a complete boundary.
 
     writeStartCompletedSuspenseBoundary(destination, request.responseState);
-    var completedSegments = boundary.completedSegments;
+    const completedSegments = boundary.completedSegments;
 
     if (completedSegments.length !== 1) {
       throw new Error(
@@ -10599,7 +6427,7 @@ function flushSegment(request, destination, segment) {
       );
     }
 
-    var contentSegment = completedSegments[0];
+    const contentSegment = completedSegments[0];
     flushSegment(request, destination, contentSegment);
     return writeEndCompletedSuspenseBoundary(
       destination,
@@ -10650,11 +6478,11 @@ function flushCompletedBoundary(request, destination, boundary) {
     );
   }
 
-  var completedSegments = boundary.completedSegments;
-  var i = 0;
+  const completedSegments = boundary.completedSegments;
+  let i = 0;
 
   for (; i < completedSegments.length; i++) {
-    var segment = completedSegments[i];
+    const segment = completedSegments[i];
     flushPartiallyCompletedSegment(request, destination, boundary, segment);
   }
 
@@ -10676,11 +6504,11 @@ function flushPartialBoundary(request, destination, boundary) {
     );
   }
 
-  var completedSegments = boundary.completedSegments;
-  var i = 0;
+  const completedSegments = boundary.completedSegments;
+  let i = 0;
 
   for (; i < completedSegments.length; i++) {
-    var segment = completedSegments[i];
+    const segment = completedSegments[i];
 
     if (
       !flushPartiallyCompletedSegment(request, destination, boundary, segment)
@@ -10708,12 +6536,12 @@ function flushPartiallyCompletedSegment(
     return true;
   }
 
-  var segmentID = segment.id;
+  const segmentID = segment.id;
 
   if (segmentID === -1) {
     // This segment wasn't previously referred to. This happens at the root of
     // a boundary. We make kind of a leap here and assume this is the root.
-    var rootSegmentID = (segment.id = boundary.rootSegmentID);
+    const rootSegmentID = (segment.id = boundary.rootSegmentID);
 
     if (rootSegmentID === -1) {
       throw new Error(
@@ -10738,13 +6566,13 @@ function flushCompletedQueues(request, destination) {
     // until the sink tells us to stop. When we should stop, we still finish writing
     // that item fully and then yield. At that point we remove the already completed
     // items up until the point we completed them.
-    var i;
-    var completedRootSegment = request.completedRootSegment;
+    let i;
+    const completedRootSegment = request.completedRootSegment;
 
     if (completedRootSegment !== null) {
       if (request.pendingRootTasks === 0) {
         if (enableFloat) {
-          var preamble = request.preamble;
+          const preamble = request.preamble;
 
           for (i = 0; i < preamble.length; i++) {
             // we expect the preamble to be tiny and will ignore backpressure
@@ -10771,10 +6599,10 @@ function flushCompletedQueues(request, destination) {
     // This is so that we can signal to the client to start client rendering them as
     // soon as possible.
 
-    var clientRenderedBoundaries = request.clientRenderedBoundaries;
+    const clientRenderedBoundaries = request.clientRenderedBoundaries;
 
     for (i = 0; i < clientRenderedBoundaries.length; i++) {
-      var boundary = clientRenderedBoundaries[i];
+      const boundary = clientRenderedBoundaries[i];
 
       if (!flushClientRenderedBoundary(request, destination, boundary)) {
         request.destination = null;
@@ -10788,12 +6616,12 @@ function flushCompletedQueues(request, destination) {
     // that are completely done since we can actually show them, than it is to emit
     // any individual segments from a partially complete boundary.
 
-    var completedBoundaries = request.completedBoundaries;
+    const completedBoundaries = request.completedBoundaries;
 
     for (i = 0; i < completedBoundaries.length; i++) {
-      var _boundary = completedBoundaries[i];
+      const boundary = completedBoundaries[i];
 
-      if (!flushCompletedBoundary(request, destination, _boundary)) {
+      if (!flushCompletedBoundary(request, destination, boundary)) {
         request.destination = null;
         i++;
         completedBoundaries.splice(0, i);
@@ -10809,12 +6637,12 @@ function flushCompletedQueues(request, destination) {
     // Next we emit any segments of any boundaries that are partially complete
     // but not deeply complete.
 
-    var partialBoundaries = request.partialBoundaries;
+    const partialBoundaries = request.partialBoundaries;
 
     for (i = 0; i < partialBoundaries.length; i++) {
-      var _boundary2 = partialBoundaries[i];
+      const boundary = partialBoundaries[i];
 
-      if (!flushPartialBoundary(request, destination, _boundary2)) {
+      if (!flushPartialBoundary(request, destination, boundary)) {
         request.destination = null;
         i++;
         partialBoundaries.splice(0, i);
@@ -10826,12 +6654,12 @@ function flushCompletedQueues(request, destination) {
     // boundaries added to it in case they were too larged to be inlined.
     // New ones might be added in this loop.
 
-    var largeBoundaries = request.completedBoundaries;
+    const largeBoundaries = request.completedBoundaries;
 
     for (i = 0; i < largeBoundaries.length; i++) {
-      var _boundary3 = largeBoundaries[i];
+      const boundary = largeBoundaries[i];
 
-      if (!flushCompletedBoundary(request, destination, _boundary3)) {
+      if (!flushCompletedBoundary(request, destination, boundary)) {
         request.destination = null;
         i++;
         largeBoundaries.splice(0, i);
@@ -10849,20 +6677,12 @@ function flushCompletedQueues(request, destination) {
       // either they have pending task or they're complete.
     ) {
       {
-        var postamble = request.postamble;
+        const postamble = request.postamble;
 
-        for (var _i = 0; _i < postamble.length; _i++) {
-          writeChunk(destination, postamble[_i]);
+        for (let i = 0; i < postamble.length; i++) {
+          writeChunk(destination, postamble[i]);
         }
       }
-
-      {
-        if (request.abortableTasks.size !== 0) {
-          error(
-            'There was still abortable task at the root when we closed. This is a bug in React.'
-          );
-        }
-      } // We're done.
 
       close(destination);
     }
@@ -10870,9 +6690,7 @@ function flushCompletedQueues(request, destination) {
 }
 
 function startWork(request) {
-  scheduleWork(function () {
-    return performWork(request);
-  });
+  scheduleWork(() => performWork(request));
 }
 function startFlowing(request, destination) {
   if (request.status === CLOSING) {
@@ -10902,17 +6720,14 @@ function startFlowing(request, destination) {
 
 function abort(request, reason) {
   try {
-    var abortableTasks = request.abortableTasks;
+    const abortableTasks = request.abortableTasks;
 
     if (abortableTasks.size > 0) {
-      var _error =
+      const error =
         reason === undefined
           ? new Error('The render was aborted by the server without a reason.')
           : reason;
-
-      abortableTasks.forEach(function (task) {
-        return abortTask(task, request, _error);
-      });
+      abortableTasks.forEach((task) => abortTask(task, request, error));
       abortableTasks.clear();
     }
 
@@ -10926,22 +6741,23 @@ function abort(request, reason) {
 }
 
 function renderToReadableStream(children, options) {
-  return new Promise(function (resolve, reject) {
-    var onFatalError;
-    var onAllReady;
-    var allReady = new Promise(function (res, rej) {
+  return new Promise((resolve, reject) => {
+    let onFatalError;
+    let onAllReady;
+    const allReady = new Promise((res, rej) => {
       onAllReady = res;
       onFatalError = rej;
     });
 
     function onShellReady() {
-      var stream = new ReadableStream(
+      const stream = new ReadableStream(
         {
           type: 'direct',
-          pull: function (controller) {
+          pull: (controller) => {
+            // $FlowIgnore
             startFlowing(request, controller);
           },
-          cancel: function (reason) {
+          cancel: (reason) => {
             abort(request);
           },
         }, // $FlowFixMe size() methods are not allowed on byte streams.
@@ -10958,11 +6774,11 @@ function renderToReadableStream(children, options) {
       // If the shell errors the caller of `renderToReadableStream` won't have access to `allReady`.
       // However, `allReady` will be rejected by `onFatalError` as well.
       // So we need to catch the duplicate, uncatchable fatal error in `allReady` to prevent a `UnhandledPromiseRejection`.
-      allReady.catch(function () {});
+      allReady.catch(() => {});
       reject(error);
     }
 
-    var request = createRequest(
+    const request = createRequest(
       children,
       createResponseState(
         options ? options.identifierPrefix : undefined,
@@ -10982,12 +6798,12 @@ function renderToReadableStream(children, options) {
     );
 
     if (options && options.signal) {
-      var signal = options.signal;
+      const signal = options.signal;
 
       if (signal.aborted) {
         abort(request, signal.reason);
       } else {
-        var listener = function () {
+        const listener = () => {
           abort(request, signal.reason);
           signal.removeEventListener('abort', listener);
         };

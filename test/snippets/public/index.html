@@ -27,7 +27,6 @@
       globalThis.runTest = async (name) => {
         var Namespace = await import(name);
         var testFunction = Namespace.test;
-        var setupFunction = Namespace.setup;
 
         if (
           !("test" in Namespace) &&
@@ -48,11 +47,6 @@
               Namespace
             ).join(", ")} `
           );
-        }
-
-        if (setupFunction && typeof setupFunction === "function") {
-          // optional setup function for dom elements
-          await setupFunction();
         }
 
         if (globalThis.BUN_DEBUG_MODE) {

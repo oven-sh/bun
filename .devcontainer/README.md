@@ -1,10 +1,11 @@
 # Bun's Dev Container
 
-To get started, login to GitHub and clone bun's GitHub repo into `/workspaces/bun`
+To get started, login to GitHub and clone bun's GitHub repo into `/build/bun`
 
 # First time setup
 
 ```bash
+gh auth login # if it fails to open a browser, use Personal Access Token instead
 gh repo clone oven-sh/bun . -- --depth=1 --progress -j8
 ```
 

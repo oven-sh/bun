@@ -1,7 +1,7 @@
 #!/bin/bash
 
-echo "To get started, login to GitHub and clone bun's GitHub repo into /workspaces/bun"
-echo "Make sure to login with a Personal Access Token"
+echo "To get started, login to GitHub and clone bun's GitHub repo into /build/bun"
+echo "If it fails to open a browser, login with a Personal Access Token instead"
 echo "# First time setup"
 echo "gh auth login"
 echo "gh repo clone oven-sh/bun . -- --depth=1 --progress -j8"

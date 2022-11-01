@@ -27,7 +27,7 @@
     "esbenp.prettier-vscode",
     "xaver.clang-format"
   ],
-  "postCreateCommand": "cd /build/bun; bash /build/getting-started.sh; code /build/README.md",
+  "postCreateCommand": "cd /build/bun; bash /build/getting-started.sh; cat /build/README.md",
 
   "build": {
     "target": "bun.devcontainer",

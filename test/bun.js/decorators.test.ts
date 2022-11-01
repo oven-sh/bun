@@ -358,3 +358,344 @@ test("parameter decorators", () => {
     expect(index).toBe(2);
   }
 });
+
+test("decorators random", () => {
+  @Frozen
+  class IceCream {}
+
+  function Frozen(constructor: Function) {
+    Object.freeze(constructor);
+    Object.freeze(constructor.prototype);
+  }
+
+  expect(Object.isFrozen(IceCream)).toBe(true);
+
+  class IceCreamComponent {
+    @Emoji()
+    flavor = "vanilla";
+  }
+
+  // Property Decorator
+  function Emoji() {
+    return function (target: Object, key: string | symbol) {
+      let val = target[key];
+
+      const getter = () => {
+        return val;
+      };
+      const setter = (next) => {
+        val = `🍦 ${next} 🍦`;
+      };
+
+      Object.defineProperty(target, key, {
+        get: getter,
+        set: setter,
+        enumerable: true,
+        configurable: true,
+      });
+    };
+  }
+
+  const iceCream = new IceCreamComponent();
+  expect(iceCream.flavor === "🍦 vanilla 🍦").toBe(true);
+  iceCream.flavor = "chocolate";
+  expect(iceCream.flavor === "🍦 chocolate 🍦").toBe(true);
+
+  const i: unique symbol = Symbol.for("i");
+  const h: unique symbol = Symbol.for("h");
+  const t: unique symbol = Symbol.for("t");
+  const q: unique symbol = Symbol.for("q");
+  const p: unique symbol = Symbol.for("p");
+  const u3: unique symbol = Symbol.for("u3");
+  const u5: unique symbol = Symbol.for("u5");
+  const u6: unique symbol = Symbol.for("u6");
+  const u8: unique symbol = Symbol.for("u8");
+
+  class S {
+    @StringAppender("😛") k = 35;
+    @StringAppender("🤠") static j = 4;
+    @StringAppender("😵‍💫") private static [h] = 30;
+    @StringAppender("🤯") private static u = 60;
+    @StringAppender("🤪") private [t] = 32;
+    @StringAppender("🤑") [i] = 8;
+    @StringAppender("🎃") private e = 10;
+    @StringAppender("👻") static [q] = 202;
+    @StringAppender("😇") r = S[h];
+    _y: number;
+    @StringAppender("🤡") get y() {
+      return this._y;
+    }
+    set y(next) {
+      this._y = next;
+    }
+    #o = 100;
+
+    @StringAppender("😍") u1: number;
+    @StringAppender("🥳") static u2: number;
+    @StringAppender("🤓") private static [u3]: number;
+    @StringAppender("🥺") private static u4: number;
+    @StringAppender("🤯") private [u5]: number;
+    @StringAppender("🤩") [u6]: number;
+    @StringAppender("☹️") private u7: number;
+    @StringAppender("🙃") static [u8]: number;
+
+    @StringAppender("🤔") u9 = this.u1;
+    @StringAppender("🤨") u10 = this.u2;
+    @StringAppender("🙂") u11 = S[u3];
+    @StringAppender("🙁") u12 = S.u4;
+    @StringAppender("😐") u13 = this[u5];
+    @StringAppender("😑") u14 = this[u6];
+    @StringAppender("😶") u15 = this.u7;
+    @StringAppender("😏") u16 = S[u8];
+
+    constructor() {
+      this.k = 3;
+      expect(this.k).toBe("3 😛");
+      expect(S.j).toBe(4);
+      expect(this[i]).toBe("8 🤑");
+      expect(this.e).toBe("10 🎃");
+      expect(S[h]).toBe(30);
+      expect(S.u).toBe(60);
+      expect(this[t]).toBe("32 🤪");
+      expect(S[q]).toBe(202);
+      expect(this.#o).toBe(100);
+      expect(this.r).toBe("30 😇");
+      expect(this.y).toBe(undefined);
+      this.y = 100;
+      expect(this.y).toBe(100);
+
+      expect(this.u1).toBe(undefined);
+      expect(S.u2).toBe(undefined);
+      expect(S[u3]).toBe(undefined);
+      expect(S.u4).toBe(undefined);
+      expect(this[u5]).toBe(undefined);
+      expect(this[u6]).toBe(undefined);
+      expect(this.u7).toBe(undefined);
+      expect(S[u8]).toBe(undefined);
+
+      expect(this.u9).toBe("undefined 🤔");
+      expect(this.u10).toBe("undefined 🤨");
+      expect(this.u11).toBe("undefined 🙂");
+      expect(this.u12).toBe("undefined 🙁");
+      expect(this.u13).toBe("undefined 😐");
+      expect(this.u14).toBe("undefined 😑");
+      expect(this.u15).toBe("undefined 😶");
+      expect(this.u16).toBe("undefined 😏");
+
+      this.u1 = 100;
+      expect(this.u1).toBe("100 😍");
+      S.u2 = 100;
+      expect(S.u2).toBe("100 🥳");
+      S[u3] = 100;
+      expect(S[u3]).toBe("100 🤓");
+      S.u4 = 100;
+      expect(S.u4).toBe("100 🥺");
+      this[u5] = 100;
+      expect(this[u5]).toBe("100 🤯");
+      this[u6] = 100;
+      expect(this[u6]).toBe("100 🤩");
+      this.u7 = 100;
+      expect(this.u7).toBe("100 ☹️");
+      S[u8] = 100;
+      expect(S[u8]).toBe("100 🙃");
+
+      expect(this.u9).toBe("undefined 🤔");
+      expect(this.u10).toBe("undefined 🤨");
+      expect(this.u11).toBe("undefined 🙂");
+      expect(this.u12).toBe("undefined 🙁");
+      expect(this.u13).toBe("undefined 😐");
+      expect(this.u14).toBe("undefined 😑");
+      expect(this.u15).toBe("undefined 😶");
+      expect(this.u16).toBe("undefined 😏");
+    }
+  }
+
+  let s = new S();
+  expect(s.u9).toBe("undefined 🤔");
+  expect(s.u10).toBe("undefined 🤨");
+  expect(s.u11).toBe("undefined 🙂");
+  expect(s.u12).toBe("undefined 🙁");
+  expect(s.u13).toBe("undefined 😐");
+  expect(s.u14).toBe("undefined 😑");
+  expect(s.u15).toBe("undefined 😶");
+  expect(s.u16).toBe("undefined 😏");
+
+  s.u9 = 35;
+  expect(s.u9).toBe("35 🤔");
+  s.u10 = 36;
+  expect(s.u10).toBe("36 🤨");
+  s.u11 = 37;
+  expect(s.u11).toBe("37 🙂");
+  s.u12 = 38;
+  expect(s.u12).toBe("38 🙁");
+  s.u13 = 39;
+  expect(s.u13).toBe("39 😐");
+  s.u14 = 40;
+  expect(s.u14).toBe("40 😑");
+  s.u15 = 41;
+  expect(s.u15).toBe("41 😶");
+  s.u16 = 42;
+  expect(s.u16).toBe("42 😏");
+
+  function StringAppender(emoji: string) {
+    return function (target: Object, key: string | symbol) {
+      let val = target[key];
+
+      const getter = () => {
+        return val;
+      };
+      const setter = (value) => {
+        val = `${value} ${emoji}`;
+      };
+
+      Object.defineProperty(target, key, {
+        get: getter,
+        set: setter,
+        enumerable: true,
+        configurable: true,
+      });
+    };
+  }
+});
+
+test("class field order", () => {
+  class N {
+    l = 455;
+  }
+  class M {
+    u = 4;
+    @d1 w = 9;
+    constructor() {
+      // this.w = 9 should be moved here
+      expect(this.u).toBe(4);
+      expect(this.w).toBe(9);
+      this.u = 3;
+      this.w = 6;
+      expect(this.u).toBe(3);
+      expect(this.w).toBe(6);
+    }
+  }
+
+  function d1(target, propertyKey) {
+    expect(target === M.prototype).toBe(true);
+    expect(propertyKey).toBe("w");
+  }
+
+  let m = new M();
+  expect(m.u).toBe(3);
+  expect(m.w).toBe(6);
+});
+
+test("changing static method", () => {
+  class A {
+    static bar() {
+      return 1;
+    }
+  }
+
+  @changeMethodReturn("bar", 5)
+  class A_2 {
+    static bar() {
+      return 7;
+    }
+  }
+
+  function changeMethodReturn(method, value) {
+    return function (target) {
+      target[method] = function () {
+        return value;
+      };
+      return target;
+    };
+  }
+
+  @changeMethodReturn("bar", 2)
+  class B extends A {}
+
+  @changeMethodReturn("bar", 9)
+  class C extends B {}
+
+  expect(A_2.bar()).toBe(5);
+  expect(A.bar()).toBe(1);
+  expect(B.bar()).toBe(2);
+  expect(C.bar()).toBe(9);
+});
+
+test("class extending from another class", () => {
+  class A {
+    a: number;
+    constructor() {
+      this.a = 3;
+    }
+  }
+
+  class B extends A {
+    a: number = 9;
+  }
+
+  expect(new A().a).toBe(3);
+  expect(new B().a).toBe(9);
+
+  class C {
+    a: number = 80;
+  }
+
+  class D extends C {
+    a: number = 32;
+    constructor() {
+      super();
+    }
+  }
+
+  expect(new C().a).toBe(80);
+  expect(new D().a).toBe(32);
+
+  class E {
+    a: number = 40;
+    constructor() {
+      expect(this.a).toBe(40);
+    }
+  }
+
+  class F extends E {
+    @d1 a: number = 50;
+    constructor() {
+      super();
+      expect(this.a).toBe(50);
+      this.a = 60;
+      expect(this.a).toBe(60);
+    }
+  }
+
+  function d1(target) {
+    target.a = 100;
+  }
+});
+
+test("decorated fields moving to constructor", () => {
+  class A {
+    @d1 a = 3;
+    @d2 b = 4;
+    @d3 c = 5;
+  }
+
+  function d1(target, propertyKey) {
+    expect(target === A.prototype).toBe(true);
+    expect(propertyKey).toBe("a");
+  }
+
+  function d2(target, propertyKey) {
+    expect(target === A.prototype).toBe(true);
+    expect(propertyKey).toBe("b");
+  }
+
+  function d3(target, propertyKey) {
+    expect(target === A.prototype).toBe(true);
+    expect(propertyKey).toBe("c");
+  }
+
+  let a = new A();
+  expect(a.a).toBe(3);
+  expect(a.b).toBe(4);
+  expect(a.c).toBe(5);
+});

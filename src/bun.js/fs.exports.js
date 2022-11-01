@@ -624,7 +624,7 @@ function getLazyWriteStream() {
       this._writableState.autoDestroy = val;
     }
 
-    destroySoon = this.end;
+    destroySoon = this.end; // TODO: what is this for?
 
     // noop, node has deprecated this
     open() {}
@@ -700,7 +700,6 @@ function getLazyWriteStream() {
         callback();
         return;
       }
-      // this[readStreamPathFastPathSymbol] = false;
       var { path, flags, mode } = this;
 
       this.#fs.open(path, flags, mode, (er, fd) => {

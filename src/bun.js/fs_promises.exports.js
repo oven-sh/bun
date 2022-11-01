@@ -1,11 +1,5 @@
 var fs = Bun.fs();
 
-var _stat = fs.statSync;
-fs.statSync = function (path) {
-  console.trace("stat", path);
-  return _stat(path);
-};
-
 // note: this is not quite the same as how node does it
 // in some cases, node swaps around arguments or makes small tweaks to the return type
 // this is just better than nothing.

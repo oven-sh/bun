@@ -38,60 +38,86 @@ it("escaped characters in character classes", () => {
       new OnigurumaRegExp("[a-z]").exec("a")[0]
   ).toBe(true);
 
+  Bun.gc(true);
+
   expect(
     new RegExp("[a-z]").exec("b")[0] ===
       new OnigurumaRegExp("[a-z]").exec("b")[0]
   ).toBe(true);
 
+  Bun.gc(true);
+
   expect(new RegExp("[a-zA-Z0-9_]+").exec("B9")[0]).toBe(
     new OnigurumaRegExp("[a-zA-Z0-9_]+").exec("B9")[0]
   );
+  Bun.gc(true);
   expect(new RegExp("[a-z]").exec("-")).toBe(null);
+  Bun.gc(true);
   expect(new OnigurumaRegExp("[a-z]").exec("-")).toBe(null);
+  Bun.gc(true);
   expect(new RegExp("[a\\-z]").exec("-")[0]).toBe("-");
+  Bun.gc(true);
   expect(new OnigurumaRegExp("[a\\-z]").exec("-")[0]).toBe("-");
+  Bun.gc(true);
   expect(new RegExp("[a\\-z]").exec("a")[0]).toBe("a");
+  Bun.gc(true);
   expect(new OnigurumaRegExp("[a\\-z]").exec("a")[0]).toBe("a");
+  Bun.gc(true);
   expect(new RegExp("[a\\-z]").exec("z")[0]).toBe("z");
+  Bun.gc(true);
   expect(new OnigurumaRegExp("[a\\-z]").exec("z")[0]).toBe("z");
+  Bun.gc(true);
   expect(new RegExp("[a\\-z]").exec("b")).toBe(null);
+  Bun.gc(true);
   expect(new OnigurumaRegExp("[a\\-z]").exec("b")).toBe(null);
+  Bun.gc(true);
 
   expect(new RegExp("[^b-c]").exec("a")[0]).toBe(
     new OnigurumaRegExp("[^b-c]").exec("a")[0]
   );
+  Bun.gc(true);
 
   expect(new RegExp("[\\^b-c]").exec("a")).toBe(null);
   expect(new OnigurumaRegExp("[\\^b-c]").exec("a")).toBe(null);
+  Bun.gc(true);
 
   expect(new RegExp("[\\^b-c]").exec("^c")[0]).toBe("^");
   expect(new OnigurumaRegExp("[\\^b-c]").exec("^c")[0]).toBe("^");
+  Bun.gc(true);
 
   expect(new RegExp("[a^b-c]").exec("a^")[0]).toBe("a");
   expect(new OnigurumaRegExp("[a^b-c]").exec("a^")[0]).toBe("a");
+  Bun.gc(true);
 
   expect(new RegExp("[\\\\]").exec("\\")[0]).toBe("\\");
   expect(new OnigurumaRegExp("[\\\\]").exec("\\")[0]).toBe("\\");
+  Bun.gc(true);
 
   let p = "//.+?[^?]+";
   let s = "https://dylan-conway.com/profile";
   const b1 = new RegExp(p, "gs");
   const b2 = new OnigurumaRegExp(p, "gs");
+  Bun.gc(true);
   expect(s.match(b1)[0] === s.match(b2)[0]).toBe(true);
+  Bun.gc(true);
 
   const b3 = new RegExp("[\\^]");
   const b4 = new OnigurumaRegExp("[\\^]");
+  Bun.gc(true);
   expect(
     "https://dylan-co^nway.com/profile".match(b3)[0] ===
       "https://dylan-co^nway.com/profile".match(b4)[0]
   ).toBe(true);
+  Bun.gc(true);
 
   // prettier-ignore
   p = "\/\/.+?\/[^?]+";
   s = "https://dylan-conway.com/profile";
+  Bun.gc(true);
   expect(s.match(new OnigurumaRegExp(p, "gs"))[0]).toBe(
     new RegExp(p, "gs").exec(s)[0]
   );
+  Bun.gc(true);
 
   // middle no escape
   p = "[.i^e]+";
@@ -149,10 +175,13 @@ it("escaped characters in character classes", () => {
   expect(new OnigurumaRegExp(p).exec(s)[0]).toBe(new RegExp(p).exec(s)[0]);
 
   let r1 = new RegExp("^([[(]-?[\\d]+)?,?(-?[\\d]+[\\])])?$").exec("(1,1]");
+  Bun.gc(true);
   let r2 = new OnigurumaRegExp("^([[(]-?[\\d]+)?,?(-?[\\d]+[\\])])?$").exec(
     "(1,1]"
   );
+  Bun.gc(true);
   expect(r1[0]).toBe(r2[0]);
+  Bun.gc(true);
 
   let r3 = new RegExp("[\\d],[\\d]").exec("1,2");
   let r4 = new OnigurumaRegExp("[\\d],[\\d]").exec("1,2");

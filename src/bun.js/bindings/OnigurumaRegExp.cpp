@@ -554,6 +554,9 @@ JSC_DEFINE_HOST_FUNCTION(onigurumaRegExpProtoFuncCompile, (JSGlobalObject * glob
         } else {
             errorMessage.appendCharacters(errorBuff, length);
         }
+        if (onigurumaRegExp != nullptr) {
+            onig_free(onigurumaRegExp);
+        }
         throwScope.throwException(globalObject, createSyntaxError(globalObject, errorMessage.toString()));
         return JSValue::encode({});
     }
@@ -596,6 +599,9 @@ JSC_DEFINE_HOST_FUNCTION(onigurumaRegExpProtoFuncTest, (JSGlobalObject * globalO
         } else {
             errorMessage.appendCharacters(errorBuff, length);
         }
+        if (onigurumaRegExp != nullptr) {
+            onig_free(onigurumaRegExp);
+        }
         throwScope.throwException(globalObject, createSyntaxError(globalObject, errorMessage.toString()));
         return JSValue::encode({});
     }
@@ -608,6 +614,7 @@ JSC_DEFINE_HOST_FUNCTION(onigurumaRegExpProtoFuncTest, (JSGlobalObject * globalO
 
     if (thisValue->m_lastIndex >= string.length()) {
         onig_region_free(region, 1);
+        onig_free(onigurumaRegExp);
         thisValue->m_lastIndex = 0;
         return JSValue::encode(jsBoolean(false));
     }
@@ -624,11 +631,13 @@ JSC_DEFINE_HOST_FUNCTION(onigurumaRegExpProtoFuncTest, (JSGlobalObject * globalO
     if (result < 0) {
         thisValue->m_lastIndex = 0;
         onig_region_free(region, 1);
+        onig_free(onigurumaRegExp);
         return JSValue::encode(jsBoolean(false));
     }
 
     if (thisValue->flagsString().contains('y') && region->beg[0] != thisValue->m_lastIndex) {
         onig_region_free(region, 1);
+        onig_free(onigurumaRegExp);
         return JSValue::encode(jsBoolean(false));
     }
 
@@ -676,6 +685,9 @@ JSC_DEFINE_HOST_FUNCTION(onigurumaRegExpProtoFuncExec, (JSGlobalObject * globalO
         } else {
             errorMessage.appendCharacters(errorBuff, length);
         }
+        if (onigurumaRegExp != nullptr) {
+            onig_free(onigurumaRegExp);
+        }
         throwScope.throwException(globalObject, createSyntaxError(globalObject, errorMessage.toString()));
         return JSValue::encode({});
     }
@@ -697,6 +709,7 @@ JSC_DEFINE_HOST_FUNCTION(onigurumaRegExpProtoFuncExec, (JSGlobalObject * globalO
 
     if (result < 0) {
         onig_region_free(region, 1);
+        onig_free(onigurumaRegExp);
         thisValue->m_lastIndex = 0;
         return JSValue::encode(jsNull());
     }
@@ -719,6 +732,7 @@ JSC_DEFINE_HOST_FUNCTION(onigurumaRegExpProtoFuncExec, (JSGlobalObject * globalO
             if (UNLIKELY(!ptr)) {
                 throwOutOfMemoryError(globalObject, scope);
                 onig_region_free(region, 1);
+                onig_free(onigurumaRegExp);
                 return JSValue::encode(jsNull());
             }
 

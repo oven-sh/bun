@@ -16,6 +16,7 @@ import {
   copyFileSync,
   rmSync,
   createReadStream,
+  createWriteStream,
 } from "node:fs";
 import { join } from "node:path";
 
@@ -459,6 +460,74 @@ describe("createReadStream", () => {
       stream.on("end", () => {
         resolve(true);
       });
+    });
+  });
+});
+
+describe("createWriteStream", () => {
+  it("simple write stream finishes", async () => {
+    const path = `/tmp/fs.test.js/${Date.now()}.createWriteStream.txt`;
+    const stream = createWriteStream(path);
+    stream.write("Test file written successfully");
+    stream.end();
+
+    return await new Promise((resolve, reject) => {
+      stream.on("error", (e) => {
+        reject(e);
+      });
+
+      stream.on("finish", () => {
+        expect(readFileSync(path, "utf8")).toBe(
+          "Test file written successfully"
+        );
+        resolve(true);
+      });
+    });
+  });
+
+  it("writing null throws ERR_STREAM_NULL_VALUES", async () => {
+    const path = `/tmp/fs.test.js/${Date.now()}.createWriteStreamNulls.txt`;
+    const stream = createWriteStream(path);
+    try {
+      stream.write(null);
+      throw new Error("should not get here");
+    } catch (exception) {
+      expect(exception.code).toBe("ERR_STREAM_NULL_VALUES");
+    }
+  });
+
+  it("writing null with objectMode: true throws ERR_STREAM_NULL_VALUES", async () => {
+    const path = `/tmp/fs.test.js/${Date.now()}.createWriteStreamNulls.txt`;
+    const stream = createWriteStream(path, {
+      objectMode: true,
+    });
+    try {
+      stream.write(null);
+      throw new Error("should not get here");
+    } catch (exception) {
+      expect(exception.code).toBe("ERR_STREAM_NULL_VALUES");
+    }
+  });
+
+  it("writing false throws ERR_INVALID_ARG_TYPE", async () => {
+    const path = `/tmp/fs.test.js/${Date.now()}.createWriteStreamFalse.txt`;
+    const stream = createWriteStream(path);
+    try {
+      stream.write(false);
+      throw new Error("should not get here");
+    } catch (exception) {
+      expect(exception.code).toBe("ERR_INVALID_ARG_TYPE");
+    }
+  });
+
+  it("writing false with objectMode: true should not throw", async () => {
+    const path = `/tmp/fs.test.js/${Date.now()}.createWriteStreamFalse.txt`;
+    const stream = createWriteStream(path, {
+      objectMode: true,
+    });
+    stream.write(false);
+    stream.on("error", () => {
+      throw new Error("should not get here");
     });
   });
 });

@@ -17357,13 +17357,17 @@ fn NewParser_(
         ) []Stmt {
             switch (stmtorexpr) {
                 .stmt => |stmt| {
-                    var class = stmt.data.s_class.class;
+                    var class = &stmt.data.s_class.class;
+                    var constructor_function: ?*E.Function = null;
 
-                    var class_decorators = ListManaged(Stmt).init(p.allocator);
                     var static_decorators = ListManaged(Stmt).init(p.allocator);
                     var instance_decorators = ListManaged(Stmt).init(p.allocator);
+                    var instance_members = ListManaged(Stmt).init(p.allocator);
+                    var static_members = ListManaged(Stmt).init(p.allocator);
+                    var class_properties = ListManaged(Property).init(p.allocator);
 
                     for (class.properties) |*prop| {
+                        // merge parameter decorators with method decorators
                         if (prop.flags.contains(.is_method)) {
                             if (prop.value) |prop_value| {
                                 switch (prop_value.data) {
@@ -17389,6 +17393,19 @@ fn NewParser_(
                             }
                         }
 
+                        if (prop.flags.contains(.is_method)) {
+                            if (prop.key.?.data == .e_string and prop.key.?.data.e_string.eqlComptime("constructor")) {
+                                if (prop.value) |prop_value| {
+                                    switch (prop_value.data) {
+                                        .e_function => |func| {
+                                            constructor_function = func;
+                                        },
+                                        else => unreachable,
+                                    }
+                                }
+                            }
+                        }
+
                         if (prop.ts_decorators.len > 0) {
                             const loc = prop.key.?.loc;
                             const descriptor_key = switch (prop.key.?.data) {
@@ -17397,10 +17414,20 @@ fn NewParser_(
                                 .e_string => |k| p.e(E.String{ .data = k.data }, loc),
                                 else => undefined,
                             };
+
                             const descriptor_kind: f64 = if (!prop.flags.contains(.is_method)) 2 else 1;
+
+                            var target: Expr = undefined;
+                            if (prop.flags.contains(.is_static)) {
+                                p.recordUsage(class.class_name.?.ref.?);
+                                target = p.e(E.Identifier{ .ref = class.class_name.?.ref.? }, class.class_name.?.loc);
+                            } else {
+                                target = p.e(E.Dot{ .target = p.e(E.Identifier{ .ref = class.class_name.?.ref.? }, class.class_name.?.loc), .name = "prototype", .name_loc = loc }, loc);
+                            }
+
                             const args = p.allocator.alloc(Expr, 4) catch unreachable;
                             args[0] = p.e(E.Array{ .items = prop.ts_decorators }, loc);
-                            args[1] = p.e(E.Dot{ .target = p.e(E.Identifier{ .ref = class.class_name.?.ref.? }, class.class_name.?.loc), .name = "prototype", .name_loc = loc }, loc);
+                            args[1] = target;
                             args[2] = descriptor_key;
                             args[3] = p.e(E.Number{ .value = descriptor_kind }, loc);
 
@@ -17413,28 +17440,115 @@ fn NewParser_(
                                 instance_decorators.append(decorator_stmt) catch unreachable;
                             }
                         }
+
+                        if (!prop.flags.contains(.is_method) and prop.key.?.data != .e_private_identifier and prop.ts_decorators.len > 0) {
+                            // remove decorated fields without initializers to avoid assigning undefined.
+                            const initializer = if (prop.initializer) |initializer_value| initializer_value else continue;
+
+                            var target: Expr = undefined;
+                            if (prop.flags.contains(.is_static)) {
+                                p.recordUsage(class.class_name.?.ref.?);
+                                target = p.e(E.Identifier{ .ref = class.class_name.?.ref.? }, class.class_name.?.loc);
+                            } else {
+                                target = p.e(E.This{}, prop.key.?.loc);
+                            }
+
+                            if (prop.flags.contains(.is_computed)) {
+                                target = p.e(E.Index{
+                                    .target = target,
+                                    .index = prop.key.?,
+                                }, prop.key.?.loc);
+                            } else {
+                                target = p.e(E.Dot{
+                                    .target = target,
+                                    .name = prop.key.?.data.e_string.data,
+                                    .name_loc = prop.key.?.loc,
+                                }, prop.key.?.loc);
+                            }
+
+                            // remove fields with decorators from class body. Move static members outside of class.
+                            if (prop.flags.contains(.is_static)) {
+                                static_members.append(Expr.assignStmt(target, initializer, p.allocator)) catch unreachable;
+                            } else {
+                                instance_members.append(Expr.assignStmt(target, initializer, p.allocator)) catch unreachable;
+                            }
+                            continue;
+                        }
+
+                        class_properties.append(prop.*) catch unreachable;
                     }
 
+                    class.properties = class_properties.items;
+
+                    if (instance_members.items.len > 0 or class.extends != null) {
+                        if (constructor_function == null) {
+                            var properties = ListManaged(Property).fromOwnedSlice(p.allocator, class.properties);
+                            var constructor_stmts = ListManaged(Stmt).init(p.allocator);
+
+                            if (class.extends != null) {
+                                const target = p.e(E.Super{}, stmt.loc);
+                                const arguments_ref = p.newSymbol(.unbound, "arguments") catch unreachable;
+                                p.current_scope.generated.append(p.allocator, arguments_ref) catch unreachable;
+
+                                const super = p.e(E.Spread{ .value = p.e(E.Identifier{ .ref = arguments_ref }, stmt.loc) }, stmt.loc);
+                                const args = ExprNodeList.one(p.allocator, super) catch unreachable;
+
+                                constructor_stmts.append(p.s(S.SExpr{ .value = p.e(E.Call{ .target = target, .args = args }, stmt.loc) }, stmt.loc)) catch unreachable;
+                            }
+
+                            constructor_stmts.appendSlice(instance_members.items) catch unreachable;
+
+                            properties.insert(0, G.Property{
+                                .flags = Flags.Property.init(.{ .is_method = true }),
+                                .key = p.e(E.String{ .data = "constructor" }, stmt.loc),
+                                .value = p.e(E.Function{ .func = G.Fn{
+                                    .name = null,
+                                    .open_parens_loc = logger.Loc.Empty,
+                                    .args = &[_]Arg{},
+                                    .body = .{ .loc = stmt.loc, .stmts = constructor_stmts.items },
+                                    .flags = Flags.Function.init(.{}),
+                                } }, stmt.loc),
+                            }) catch unreachable;
+
+                            class.properties = properties.items;
+                        } else {
+                            var constructor_stmts = ListManaged(Stmt).fromOwnedSlice(p.allocator, constructor_function.?.func.body.stmts);
+                            // statements coming from class body inserted after super call or beginning of constructor.
+                            var has_super = false;
+                            for (constructor_stmts.items) |item, index| {
+                                if (item.data != .s_expr or item.data.s_expr.value.data != .e_call or item.data.s_expr.value.data.e_call.target.data != .e_super) continue;
+                                has_super = true;
+                                constructor_stmts.insertSlice(index + 1, instance_members.items) catch unreachable;
+                            }
+                            if (!has_super) {
+                                constructor_stmts.insertSlice(0, instance_members.items) catch unreachable;
+                            }
+
+                            constructor_function.?.func.body.stmts = constructor_stmts.items;
+                        }
+                    }
+
+                    var stmts_count: usize = 1 + static_members.items.len + instance_decorators.items.len + static_decorators.items.len;
+                    if (class.ts_decorators.len > 0) stmts_count += 1;
+                    var stmts = ListManaged(Stmt).initCapacity(p.allocator, stmts_count) catch unreachable;
+                    stmts.appendAssumeCapacity(stmt);
+                    stmts.appendSliceAssumeCapacity(static_members.items);
+                    stmts.appendSliceAssumeCapacity(instance_decorators.items);
+                    stmts.appendSliceAssumeCapacity(static_decorators.items);
                     if (class.ts_decorators.len > 0) {
-                        var args = p.allocator.alloc(Expr, 2) catch unreachable;
+                        const args = p.allocator.alloc(Expr, 2) catch unreachable;
                         args[0] = p.e(E.Array{ .items = class.ts_decorators }, stmt.loc);
                         args[1] = p.e(E.Identifier{ .ref = class.class_name.?.ref.? }, class.class_name.?.loc);
 
-                        class_decorators.append(Expr.assignStmt(
+                        stmts.appendAssumeCapacity(Expr.assignStmt(
                             p.e(E.Identifier{ .ref = class.class_name.?.ref.? }, class.class_name.?.loc),
                             p.callRuntime(stmt.loc, "__decorateClass", args),
                             p.allocator,
-                        )) catch unreachable;
+                        ));
 
                         p.recordUsage(class.class_name.?.ref.?);
                         p.recordUsage(class.class_name.?.ref.?);
                     }
-
-                    var stmts = ListManaged(Stmt).init(p.allocator);
-                    stmts.append(stmt) catch unreachable;
-                    stmts.appendSlice(instance_decorators.toOwnedSlice()) catch unreachable;
-                    stmts.appendSlice(static_decorators.toOwnedSlice()) catch unreachable;
-                    stmts.appendSlice(class_decorators.toOwnedSlice()) catch unreachable;
                     return stmts.items;
                 },
                 .expr => |expr| {

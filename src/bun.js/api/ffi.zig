@@ -91,6 +91,12 @@ pub const FFI = struct {
         .{},
     );
 
+    pub fn closeCallback(globalThis: *JSGlobalObject, ctx: JSValue) JSValue {
+        var function = ctx.asPtr(Function);
+        function.deinit(globalThis, bun.default_allocator);
+        return JSValue.jsUndefined();
+    }
+
     pub fn callback(globalThis: *JSGlobalObject, interface: JSC.JSValue, js_callback: JSC.JSValue) JSValue {
         JSC.markBinding(@src());
         if (!interface.isObject()) {
@@ -110,13 +116,12 @@ pub const FFI = struct {
         }
 
         // TODO: WeakRefHandle that automatically frees it?
-        JSC.C.JSValueProtect(globalThis, js_callback.asObjectRef());
         func.base_name = "";
+        js_callback.ensureStillAlive();
 
-        func.compileCallback(allocator, globalThis, js_callback.asObjectRef().?) catch return ZigString.init("Out of memory").toErrorInstance(globalThis);
+        func.compileCallback(allocator, globalThis, js_callback) catch return ZigString.init("Out of memory").toErrorInstance(globalThis);
         switch (func.step) {
             .failed => |err| {
-                JSC.C.JSValueUnprotect(globalThis, js_callback.asObjectRef());
                 const message = ZigString.init(err.msg).toErrorInstance(globalThis);
 
                 func.deinit(globalThis, allocator);
@@ -124,14 +129,19 @@ pub const FFI = struct {
                 return message;
             },
             .pending => {
-                JSC.C.JSValueUnprotect(globalThis, js_callback.asObjectRef());
                 func.deinit(globalThis, allocator);
                 return ZigString.init("Failed to compile, but not sure why. Please report this bug").toErrorInstance(globalThis);
             },
             .compiled => {
                 var function_ = bun.default_allocator.create(Function) catch unreachable;
                 function_.* = func.*;
-                return JSC.JSValue.fromPtrAddress(@ptrToInt(function_.step.compiled.ptr));
+                return JSValue.createObject2(
+                    globalThis,
+                    ZigString.static("ptr"),
+                    ZigString.static("ctx"),
+                    JSC.JSValue.fromPtrAddress(@ptrToInt(function_.step.compiled.ptr)),
+                    JSC.JSValue.fromPtrAddress(@ptrToInt(function_)),
+                );
             },
         }
     }
@@ -179,7 +189,7 @@ pub const FFI = struct {
 
         function.base_name = "my_callback_function";
 
-        function.printCallbackSourceCode(&writer) catch {
+        function.printCallbackSourceCode(null, null, &writer) catch {
             return ZigString.init("Error while printing code").toErrorInstance(global);
         };
         return ZigString.init(arraylist.items).toValueGC(global);
@@ -628,6 +638,8 @@ pub const FFI = struct {
 
         pub var lib_dirZ: [*:0]const u8 = "";
 
+        extern "C" fn FFICallbackFunctionWrapper_destroy(*anyopaque) void;
+
         pub fn deinit(val: *Function, globalThis: *JSC.JSGlobalObject, allocator: std.mem.Allocator) void {
             if (val.base_name) |base_name| {
                 if (std.mem.span(base_name).len > 0) {
@@ -649,6 +661,11 @@ pub const FFI = struct {
                     // _ = JSC.untrackFunction(globalThis, val.step.compiled.js_function);
                     val.step.compiled.js_function = .zero;
                 }
+
+                if (val.step.compiled.ffi_callback_function_wrapper) |wrapper| {
+                    FFICallbackFunctionWrapper_destroy(wrapper);
+                    val.step.compiled.ffi_callback_function_wrapper = null;
+                }
             }
 
             if (val.step == .failed and val.step.failed.allocated) {
@@ -660,10 +677,10 @@ pub const FFI = struct {
             pending: void,
             compiled: struct {
                 ptr: *anyopaque,
-                fast_path_ptr: ?*anyopaque = null,
                 buf: []u8,
                 js_function: JSValue = JSValue.zero,
                 js_context: ?*anyopaque = null,
+                ffi_callback_function_wrapper: ?*anyopaque = null,
             },
             failed: struct {
                 msg: []const u8,
@@ -796,7 +813,8 @@ pub const FFI = struct {
             }
 
             if (relocation_size < 0) {
-                this.step = .{ .failed = .{ .msg = "tcc_relocate returned a negative value" } };
+                if (this.step != .failed)
+                    this.step = .{ .failed = .{ .msg = "tcc_relocate returned a negative value" } };
                 return;
             }
 
@@ -891,14 +909,13 @@ pub const FFI = struct {
         pub fn compileCallback(
             this: *Function,
             allocator: std.mem.Allocator,
-            js_context: *anyopaque,
-            js_function: *anyopaque,
+            js_context: *JSC.JSGlobalObject,
+            js_function: JSValue,
         ) !void {
-            Output.debug("welcome", .{});
             var source_code = std.ArrayList(u8).init(allocator);
             var source_code_writer = source_code.writer();
-            try this.printCallbackSourceCode(&source_code_writer);
-            Output.debug("helllooo", .{});
+            var ffi_wrapper = Bun__createFFICallbackFunction(js_context, js_function);
+            try this.printCallbackSourceCode(js_context, ffi_wrapper, &source_code_writer);
             try source_code.append(0);
             // defer source_code.deinit();
             var state = TCC.tcc_new() orelse return error.TCCMissing;
@@ -920,7 +937,6 @@ pub const FFI = struct {
                 state,
                 source_code.items.ptr,
             );
-            Output.debug("compile", .{});
             // did tcc report an error?
             if (this.step == .failed) {
                 return;
@@ -934,13 +950,30 @@ pub const FFI = struct {
             }
 
             CompilerRT.inject(state);
-            Output.debug("here", .{});
-            _ = TCC.tcc_add_symbol(state, "bun_call", workaround.bun_call.*);
-            _ = TCC.tcc_add_symbol(state, "cachedJSContext", js_context);
-            _ = TCC.tcc_add_symbol(state, "cachedCallbackFunction", js_function);
-
+            _ = TCC.tcc_add_symbol(
+                state,
+                "FFI_Callback_call",
+                // TODO: stage2 - make these ptrs
+                switch (this.arg_types.items.len) {
+                    0 => FFI_Callback_call_0,
+                    1 => FFI_Callback_call_1,
+                    2 => FFI_Callback_call_2,
+                    3 => FFI_Callback_call_3,
+                    4 => FFI_Callback_call_4,
+                    5 => FFI_Callback_call_5,
+                    6 => FFI_Callback_call_6,
+                    7 => FFI_Callback_call_7,
+                    else => FFI_Callback_call,
+                },
+            );
             var relocation_size = TCC.tcc_relocate(state, null);
-            if (relocation_size == 0) return;
+
+            if (relocation_size < 0) {
+                if (this.step != .failed)
+                    this.step = .{ .failed = .{ .msg = "tcc_relocate returned a negative value" } };
+                return;
+            }
+
             var bytes: []u8 = try allocator.rawAlloc(@intCast(usize, relocation_size), 16, 16, 0);
             defer {
                 if (this.step == .failed) {
@@ -966,8 +999,9 @@ pub const FFI = struct {
                 .compiled = .{
                     .ptr = symbol,
                     .buf = bytes,
-                    .js_function = JSC.JSValue.fromPtr(js_function),
+                    .js_function = js_function,
                     .js_context = js_context,
+                    .ffi_callback_function_wrapper = ffi_wrapper,
                 },
             };
         }
@@ -1021,7 +1055,7 @@ pub const FFI = struct {
                 \\
                 \\
                 \\/* ---- Your Wrapper Function ---- */
-                \\ZIG_REPR_TYPE JSFunctionCall(void* globalObject, void* callFrame) {
+                \\ZIG_REPR_TYPE JSFunctionCall(void* JS_GLOBAL_OBJECT, void* callFrame) {
                 \\
             );
 
@@ -1125,10 +1159,24 @@ pub const FFI = struct {
             try writer.writeAll(";\n}\n\n");
         }
 
+        extern fn FFI_Callback_call(*anyopaque, usize, [*]JSValue) JSValue;
+        extern fn FFI_Callback_call_0(*anyopaque, usize, [*]JSValue) JSValue;
+        extern fn FFI_Callback_call_1(*anyopaque, usize, [*]JSValue) JSValue;
+        extern fn FFI_Callback_call_2(*anyopaque, usize, [*]JSValue) JSValue;
+        extern fn FFI_Callback_call_3(*anyopaque, usize, [*]JSValue) JSValue;
+        extern fn FFI_Callback_call_4(*anyopaque, usize, [*]JSValue) JSValue;
+        extern fn FFI_Callback_call_5(*anyopaque, usize, [*]JSValue) JSValue;
+        extern fn FFI_Callback_call_6(*anyopaque, usize, [*]JSValue) JSValue;
+        extern fn FFI_Callback_call_7(*anyopaque, usize, [*]JSValue) JSValue;
+        extern fn Bun__createFFICallbackFunction(*JSC.JSGlobalObject, JSValue) *anyopaque;
+
         pub fn printCallbackSourceCode(
             this: *Function,
+            globalObject: ?*JSC.JSGlobalObject,
+            context_ptr: ?*anyopaque,
             writer: anytype,
         ) !void {
+            try writer.print("#define JS_GLOBAL_OBJECT (void*)0x{X}UL\n", .{@ptrToInt(globalObject)});
             try writer.writeAll("#define IS_CALLBACK 1\n");
 
             brk: {
@@ -1193,44 +1241,40 @@ pub const FFI = struct {
             first = true;
 
             if (this.arg_types.items.len > 0) {
-                try writer.print("  EncodedJSValue arguments[{d}] = {{\n", .{this.arg_types.items.len});
-
                 var arg_buf: [512]u8 = undefined;
                 arg_buf[0.."arg".len].* = "arg".*;
                 for (this.arg_types.items) |arg, i| {
                     const printed = std.fmt.bufPrintIntToSlice(arg_buf["arg".len..], i, 10, .lower, .{});
                     const arg_name = arg_buf[0 .. "arg".len + printed.len];
-                    try writer.print("    {}", .{arg.toJS(arg_name)});
-                    if (i < this.arg_types.items.len - 1) {
-                        try writer.writeAll(",\n");
-                    }
+                    try writer.print("arguments[{d}] = {}.asZigRepr;\n", .{ i, arg.toJS(arg_name) });
                 }
-                try writer.writeAll("\n  };\n");
-            } else {
-                try writer.writeAll(" EncodedJSValue arguments[1] = {{0}};\n");
             }
 
             try writer.writeAll("  ");
-            if (!(this.return_type == .void)) {
-                try writer.writeAll("EncodedJSValue return_value = {");
-            }
-            // JSC.C.JSObjectCallAsFunction(
-            //     ctx,
-            //     object,
-            //     thisObject,
-            //     argumentCount,
-            //     arguments,
-            //     exception,
-            // );
-            try writer.writeAll("bun_call(cachedJSContext, cachedCallbackFunction, (void*)0, ");
+            var inner_buf_: [372]u8 = undefined;
+            var inner_buf: []u8 = &.{};
             if (this.arg_types.items.len > 0) {
-                try writer.print("{d}, &arguments[0], (void*)0)", .{this.arg_types.items.len});
+                inner_buf = try std.fmt.bufPrint(
+                    inner_buf_[1..],
+                    "FFI_Callback_call((void*)0x{X}UL, {d}, arguments)",
+                    .{ @ptrToInt(context_ptr), this.arg_types.items.len },
+                );
             } else {
-                try writer.writeAll("0, &arguments[0], (void*)0)");
+                inner_buf = try std.fmt.bufPrint(
+                    inner_buf_[1..],
+                    "FFI_Callback_call((void*)0x{X}UL, 0, (ZIG_REPR_TYPE*)0)",
+                    .{
+                        @ptrToInt(context_ptr),
+                    },
+                );
             }
-
-            if (this.return_type != .void) {
-                try writer.print("}};\n  return {}", .{this.return_type.toC("return_value")});
+            if (this.return_type == .void) {
+                try writer.writeAll(inner_buf);
+            } else {
+                const len = inner_buf.len + 1;
+                inner_buf = inner_buf_[0..len];
+                inner_buf[0] = '_';
+                try writer.print("return {s}", .{this.return_type.toCExact(inner_buf)});
             }
 
             try writer.writeAll(";\n}\n\n");
@@ -1266,6 +1310,8 @@ pub const FFI = struct {
 
         i64_fast = 15,
         u64_fast = 16,
+
+        function = 17,
 
         /// Types that we can directly pass through as an `int64_t`
         pub fn needsACastInC(this: ABIType) bool {
@@ -1311,6 +1357,9 @@ pub const FFI = struct {
             .{ "cstring", ABIType.@"cstring" },
             .{ "i64_fast", ABIType.i64_fast },
             .{ "u64_fast", ABIType.u64_fast },
+            .{ "function", ABIType.function },
+            .{ "callback", ABIType.callback },
+            .{ "fn", ABIType.function },
         };
         pub const label = ComptimeStringMap(ABIType, map);
         const EnumMapFormatter = struct {
@@ -1362,32 +1411,58 @@ pub const FFI = struct {
         const ToCFormatter = struct {
             symbol: string,
             tag: ABIType,
+            exact: bool = false,
 
             pub fn format(self: ToCFormatter, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
                 switch (self.tag) {
-                    .void => {},
+                    .void => {
+                        return;
+                    },
                     .bool => {
-                        try writer.print("JSVALUE_TO_BOOL({s})", .{self.symbol});
+                        if (self.exact)
+                            try writer.writeAll("(bool)");
+                        try writer.writeAll("JSVALUE_TO_BOOL(");
                     },
                     .char, .int8_t, .uint8_t, .int16_t, .uint16_t, .int32_t, .uint32_t => {
-                        try writer.print("JSVALUE_TO_INT32({s})", .{self.symbol});
+                        if (self.exact)
+                            try writer.print("({s})", .{std.mem.span(@tagName(self.tag))});
+
+                        try writer.writeAll("JSVALUE_TO_INT32(");
                     },
                     .i64_fast, .int64_t => {
-                        try writer.print("JSVALUE_TO_INT64({s})", .{self.symbol});
+                        if (self.exact)
+                            try writer.writeAll("(int64_t)");
+                        try writer.writeAll("JSVALUE_TO_INT64(");
                     },
                     .u64_fast, .uint64_t => {
-                        try writer.print("JSVALUE_TO_UINT64({s})", .{self.symbol});
+                        if (self.exact)
+                            try writer.writeAll("(uint64_t)");
+                        try writer.writeAll("JSVALUE_TO_UINT64(");
                     },
-                    .cstring, .ptr => {
-                        try writer.print("JSVALUE_TO_PTR({s})", .{self.symbol});
+                    .function, .cstring, .ptr => {
+                        if (self.exact)
+                            try writer.writeAll("(void*)");
+                        try writer.writeAll("JSVALUE_TO_PTR(");
                     },
                     .double => {
-                        try writer.print("JSVALUE_TO_DOUBLE({s})", .{self.symbol});
+                        if (self.exact)
+                            try writer.writeAll("(double)");
+                        try writer.writeAll("JSVALUE_TO_DOUBLE(");
                     },
                     .float => {
-                        try writer.print("JSVALUE_TO_FLOAT({s})", .{self.symbol});
+                        if (self.exact)
+                            try writer.writeAll("(float)");
+                        try writer.writeAll("JSVALUE_TO_FLOAT(");
                     },
                 }
+                // if (self.fromi64) {
+                //     try writer.writeAll("EncodedJSValue{ ");
+                // }
+                try writer.writeAll(self.symbol);
+                // if (self.fromi64) {
+                //     try writer.writeAll(", }");
+                // }
+                try writer.writeAll(")");
             }
         };
 
@@ -1401,22 +1476,22 @@ pub const FFI = struct {
                     .bool => {
                         try writer.print("BOOLEAN_TO_JSVALUE({s})", .{self.symbol});
                     },
-                    .char, .int8_t, .uint8_t, .int16_t, .uint16_t, .int32_t, .uint32_t => {
-                        try writer.print("INT32_TO_JSVALUE({s})", .{self.symbol});
+                    .char, .int8_t, .uint8_t, .int16_t, .uint16_t, .int32_t => {
+                        try writer.print("INT32_TO_JSVALUE((int32_t){s})", .{self.symbol});
                     },
-                    .i64_fast => {
-                        try writer.print("INT64_TO_JSVALUE(globalObject, {s})", .{self.symbol});
+                    .uint32_t, .i64_fast => {
+                        try writer.print("INT64_TO_JSVALUE(JS_GLOBAL_OBJECT, (int64_t){s})", .{self.symbol});
                     },
                     .int64_t => {
-                        try writer.print("INT64_TO_JSVALUE_SLOW(globalObject, {s})", .{self.symbol});
+                        try writer.print("INT64_TO_JSVALUE_SLOW(JS_GLOBAL_OBJECT, {s})", .{self.symbol});
                     },
                     .u64_fast => {
-                        try writer.print("UINT64_TO_JSVALUE(globalObject, {s})", .{self.symbol});
+                        try writer.print("UINT64_TO_JSVALUE(JS_GLOBAL_OBJECT, {s})", .{self.symbol});
                     },
                     .uint64_t => {
-                        try writer.print("UINT64_TO_JSVALUE_SLOW(globalObject, {s})", .{self.symbol});
+                        try writer.print("UINT64_TO_JSVALUE_SLOW(JS_GLOBAL_OBJECT, {s})", .{self.symbol});
                     },
-                    .cstring, .ptr => {
+                    .function, .cstring, .ptr => {
                         try writer.print("PTR_TO_JSVALUE({s})", .{self.symbol});
                     },
                     .double => {
@@ -1431,6 +1506,10 @@ pub const FFI = struct {
 
         pub fn toC(this: ABIType, symbol: string) ToCFormatter {
             return ToCFormatter{ .tag = this, .symbol = symbol };
+        }
+
+        pub fn toCExact(this: ABIType, symbol: string) ToCFormatter {
+            return ToCFormatter{ .tag = this, .symbol = symbol, .exact = true };
         }
 
         pub fn toJS(
@@ -1449,7 +1528,7 @@ pub const FFI = struct {
 
         pub fn typenameLabel(this: ABIType) []const u8 {
             return switch (this) {
-                .cstring, .ptr => "void*",
+                .function, .cstring, .ptr => "void*",
                 .bool => "bool",
                 .int8_t => "int8_t",
                 .uint8_t => "uint8_t",

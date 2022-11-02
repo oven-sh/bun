@@ -2603,6 +2603,9 @@ pub const FFI = struct {
             .toArrayBuffer = .{
                 .rfn = JSC.wrapWithHasContainer(@This(), "toArrayBuffer", false, false, true),
             },
+            .closeCallback = .{
+                .rfn = JSC.wrapWithHasContainer(JSC.FFI, "closeCallback", false, false, false),
+            },
         },
         .{
             .read = .{

@@ -3682,24 +3682,25 @@ rustc --crate-type cdylib add.rs
 
 #### Supported FFI types (`FFIType`)
 
-| `FFIType` | C Type     | Aliases                     |
-| --------- | ---------- | --------------------------- |
-| cstring   | `char*`    |                             |
-| ptr       | `void*`    | `pointer`, `void*`, `char*` |
-| i8        | `int8_t`   | `int8_t`                    |
-| i16       | `int16_t`  | `int16_t`                   |
-| i32       | `int32_t`  | `int32_t`, `int`            |
-| i64       | `int64_t`  | `int64_t`                   |
-| i64_fast  | `int64_t`  |                             |
-| u8        | `uint8_t`  | `uint8_t`                   |
-| u16       | `uint16_t` | `uint16_t`                  |
-| u32       | `uint32_t` | `uint32_t`                  |
-| u64       | `uint64_t` | `uint64_t`                  |
-| u64_fast  | `uint64_t` |                             |
-| f32       | `float`    | `float`                     |
-| f64       | `double`   | `double`                    |
-| bool      | `bool`     |                             |
-| char      | `char`     |                             |
+| `FFIType` | C Type         | Aliases                     |
+| --------- | -------------- | --------------------------- |
+| cstring   | `char*`        |                             |
+| function  | `(void*)(*)()` | `fn`, `callback`            |
+| ptr       | `void*`        | `pointer`, `void*`, `char*` |
+| i8        | `int8_t`       | `int8_t`                    |
+| i16       | `int16_t`      | `int16_t`                   |
+| i32       | `int32_t`      | `int32_t`, `int`            |
+| i64       | `int64_t`      | `int64_t`                   |
+| i64_fast  | `int64_t`      |                             |
+| u8        | `uint8_t`      | `uint8_t`                   |
+| u16       | `uint16_t`     | `uint16_t`                  |
+| u32       | `uint32_t`     | `uint32_t`                  |
+| u64       | `uint64_t`     | `uint64_t`                  |
+| u64_fast  | `uint64_t`     |                             |
+| f32       | `float`        | `float`                     |
+| f64       | `double`       | `double`                    |
+| bool      | `bool`         |                             |
+| char      | `char`         |                             |
 
 #### Strings (`CString`)
 
@@ -3824,6 +3825,77 @@ const [major, minor, patch] = [
   lib.symbols.getMinor(),
   lib.symbols.getPatch(),
 ];
+```
+
+#### Callbacks (`JSCallback`)
+
+Bun v0.2.3 added `JSCallback` which lets you create JavaScript callback functions that you can pass to C/FFI functions. The C/FFI function can call into the JavaScript/TypeScript code. This is useful for asynchronous code or otherwise when you want to call into JavaScript code from C.
+
+```ts
+import { dlopen, JSCallback } from "bun:ffi";
+
+const {
+  symbols: { setOnResolve, setOnReject },
+} = dlopen("libmylib", {
+  setOnResolve: {
+    returns: "bool",
+    args: ["function"],
+  },
+  setOnReject: {
+    returns: "bool",
+    args: ["function"],
+  },
+});
+
+const onResolve = new JSCallback(
+  {
+    returns: "bool",
+    args: ["i32"],
+  },
+  (arg) => arg === 42
+);
+
+const onReject = new JSCallback(
+  {
+    returns: "bool",
+    args: ["i32"],
+  },
+  (arg) => arg > 42
+);
+
+setOnResolve(onResolve);
+setOnReject(onReject);
+
+// Sometime later:
+setTimeout(() => {
+  onResolve.close();
+  onReject.close();
+}, 5000);
+```
+
+When you're done with a JSCallback, you should call `close()` to free the memory.
+
+For a slight performance boost, directly pass `JSCallback.prototype.ptr` instead of the `JSCallback` object:
+
+```ts
+const onResolve = new JSCallback(
+  {
+    returns: "bool",
+    args: ["i32"],
+  },
+  (arg) => arg === 42
+);
+const setOnResolve = new CFunction({
+  returns: "bool",
+  args: ["function"],
+  ptr: myNativeLibrarySetOnResolve,
+});
+
+// This code runs slightly faster:
+setOnResolve(onResolve.ptr);
+
+// Compared to this:
+setOnResolve(onResolve);
 ```
 
 #### Pointers

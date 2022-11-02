@@ -9,6 +9,36 @@ export const viewSource = ffi.viewSource;
 
 const BunCString = ffi.CString;
 const nativeLinkSymbols = ffi.linkSymbols;
+const nativeDLOpen = ffi.dlopen;
+const nativeCallback = ffi.callback;
+const closeCallback = ffi.closeCallback;
+delete ffi.callback;
+delete ffi.closeCallback;
+
+export class JSCallback {
+  constructor(options, cb) {
+    const { ctx, ptr } = nativeCallback(options, cb);
+    this.#ctx = ctx;
+    this.ptr = ptr;
+  }
+
+  ptr;
+  #ctx;
+
+  [Symbol.toPrimitive]() {
+    return this.ptr;
+  }
+
+  close() {
+    const ctx = this.#ctx;
+    this.ptr = null;
+    this.#ctx = null;
+
+    if (ctx) {
+      closeCallback(ctx);
+    }
+  }
+}
 
 export class CString extends String {
   constructor(ptr, byteOffset, byteLength) {
@@ -55,7 +85,8 @@ Object.defineProperty(globalThis, "__GlobalBunCString", {
   configurable: false,
 });
 
-const ffiWrappers = new Array(16);
+const ffiWrappers = new Array(18);
+
 var char = (val) => val | 0;
 ffiWrappers.fill(char);
 ffiWrappers[FFIType.uint8_t] = function uint8(val) {
@@ -195,6 +226,25 @@ function cstringReturnType(val) {
   return new __GlobalBunCString(val);
 }
 
+ffiWrappers[FFIType.function] = function functionType(val) {
+  if (typeof val === "number") {
+    return val;
+  }
+
+  if (typeof val === "bigint") {
+    return Number(val);
+  }
+
+  // we overwrote Symbol.toPrimitive
+  var ptr = +val;
+
+  if (!Number.isFinite(ptr) || ptr === 0) {
+    throw new Error("Expected function to be a JSCallback or a number");
+  }
+
+  return ptr;
+};
+
 function FFIBuilder(params, returnType, functionToCall, name) {
   const hasReturnType =
     typeof FFIType[returnType] === "number" &&
@@ -293,11 +343,11 @@ function FFIBuilder(params, returnType, functionToCall, name) {
   return wrap;
 }
 
-const nativeDLOpen = ffi.dlopen;
-const nativeCallback = ffi.callback;
 export const native = {
   dlopen: nativeDLOpen,
-  callback: nativeCallback,
+  callback: () => {
+    throw new Error("Deprecated. Use new JSCallback(options, fn) instead");
+  },
 };
 
 export function dlopen(path, options) {
@@ -381,10 +431,6 @@ export function CFunction(options) {
   );
 
   return result.symbols[identifier];
-}
-
-export function callback(options, cb) {
-  return nativeCallback(options, cb);
 }
 
 export const read = ffi.read;

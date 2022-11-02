@@ -4,6 +4,7 @@ import {
   CFunction,
   CString,
   dlopen as _dlopen,
+  JSCallback,
   ptr,
   read,
   toArrayBuffer,
@@ -372,6 +373,7 @@ function ffiRunner(fast) {
     },
     close,
   } = dlopen("/tmp/bun-ffi-test.dylib", types);
+
   Bun.gc(true);
   expect(returns_true()).toBe(true);
   Bun.gc(true);
@@ -407,6 +409,7 @@ function ffiRunner(fast) {
 
   expect(identity_int8_t(10)).toBe(10);
   expect(identity_int16_t(10)).toBe(10);
+
   if (fast) expect(identity_int64_t(10)).toBe(10);
   else expect(identity_int64_t(10)).toBe(10n);
   expect(identity_uint8_t(10)).toBe(10);
@@ -486,6 +489,70 @@ function ffiRunner(fast) {
   });
   expect(myCFunction()).toBe(true);
 
+  {
+    const typeMap = {
+      int8_t: -8,
+      int16_t: -16,
+      int32_t: -32,
+      int64_t: -64n,
+      uint8_t: 8,
+      uint16_t: 16,
+      uint32_t: 32,
+      uint64_t: 64n,
+      float: 32.5,
+      double: 64.5,
+      ptr: 0xdeadbeef,
+      "void*": null,
+    };
+
+    // Return types, 1 argument
+    for (let [returnName, returnValue] of Object.entries(typeMap)) {
+      var roundtripFunction = new CFunction({
+        ptr: new JSCallback(
+          {
+            returns: returnName,
+            args: [returnName],
+          },
+          (input) => {
+            return input;
+          }
+        ).ptr,
+        returns: returnName,
+        args: [returnName],
+      });
+      expect(roundtripFunction(returnValue)).toBe(returnValue);
+    }
+
+    {
+      var toClose = new JSCallback(
+        {
+          returns: "bool",
+          args: ["bool"],
+        },
+        (input) => {
+          return input;
+        }
+      );
+      expect(toClose.ptr > 0).toBe(true);
+      toClose.close();
+      expect(toClose.ptr === null).toBe(true);
+    }
+
+    // Return types, no args
+    for (let [name, value] of Object.entries(typeMap)) {
+      var roundtripFunction = new CFunction({
+        ptr: new JSCallback(
+          {
+            returns: name,
+          },
+          () => value
+        ).ptr,
+        returns: name,
+      });
+      expect(roundtripFunction()).toBe(value);
+    }
+  }
+
   // check deallocator is called
 
   // for (let constructor of [toArrayBuffer, toBuffer]) {
@@ -506,103 +573,6 @@ function ffiRunner(fast) {
   //   Bun.gc(true);
   // }
   close();
-  /*
-    ---
-    This style of callback is not implemented yet
-  */
-  // function identityBool() {
-  //   return true;
-  // }
-  // globalThis.identityBool = identityBool;
-
-  // const first = native.callback(
-  //   {
-  //     returns: "bool",
-  //   },
-  //   identityBool
-  // );
-  // expect(
-  // cb_identity_true()
-  // ).toBe(true);
-
-  // expect(cb_identity_true(first)).toBe(true);
-
-  // expect(
-  //   cb_identity_false(
-  //     callback(
-  //       {
-  //         returns: "bool",
-  //       },
-  //       () => false
-  //     )
-  //   )
-  // ).toBe(false);
-
-  // expect(
-  //   cb_identity_42_char(
-  //     callback(
-  //       {
-  //         returns: "char",
-  //       },
-  //       () => 42
-  //     )
-  //   )
-  // ).toBe(42);
-  // expect(
-  //   cb_identity_42_uint8_t(
-  //     callback(
-  //       {
-  //         returns: "uint8_t",
-  //       },
-  //       () => 42
-  //     )
-  //   )
-  // ).toBe(42);
-
-  // cb_identity_neg_42_int8_t(
-  //   callback(
-  //     {
-  //       returns: "int8_t",
-  //     },
-  //     () => -42
-  //   )
-  // ).toBe(-42);
-
-  // cb_identity_42_uint16_t(
-  //   callback(
-  //     {
-  //       returns: "uint16_t",
-  //     },
-  //     () => 42
-  //   )
-  // ).toBe(42);
-
-  // cb_identity_42_uint32_t(
-  //   callback(
-  //     {
-  //       returns: "uint32_t",
-  //     },
-  //     () => 42
-  //   )
-  // ).toBe(42);
-
-  // cb_identity_neg_42_int16_t(
-  //   callback(
-  //     {
-  //       returns: "int16_t",
-  //     },
-  //     () => -42
-  //   )
-  // ).toBe(-42);
-
-  // cb_identity_neg_42_int32_t(
-  //   callback(
-  //     {
-  //       returns: "int32_t",
-  //     },
-  //     () => -42
-  //   )
-  // ).toBe(-42);
 }
 
 // TODO: There is a crash when dlopen() two times the same library in quick succession

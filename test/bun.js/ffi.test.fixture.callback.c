@@ -1,3 +1,4 @@
+#define JS_GLOBAL_OBJECT (void*)0x0UL
 #define IS_CALLBACK 1
 // This file is part of Bun!
 // You can find the original source:
@@ -102,9 +103,16 @@ typedef void* JSContext;
 
 
 #ifdef IS_CALLBACK
-extern int64_t bun_call(JSContext, void* func,  void* thisValue, size_t len, const EncodedJSValue args[], void* exception);
-JSContext cachedJSContext;
-void* cachedCallbackFunction;
+ZIG_REPR_TYPE FFI_Callback_call(void* ctx, size_t argCount, ZIG_REPR_TYPE* args);
+// We wrap 
+static EncodedJSValue _FFI_Callback_call(void* ctx, size_t argCount, ZIG_REPR_TYPE* args)  __attribute__((__always_inline__));
+static EncodedJSValue _FFI_Callback_call(void* ctx, size_t argCount, ZIG_REPR_TYPE* args) {
+  EncodedJSValue return_value;
+  return_value.asZigRepr = FFI_Callback_call(ctx, argCount, args);
+  return return_value;
+}
+static ZIG_REPR_TYPE arguments[100];
+
 #endif
 
 static bool JSVALUE_IS_CELL(EncodedJSValue val) __attribute__((__always_inline__));
@@ -116,10 +124,10 @@ static int64_t  JSVALUE_TO_INT64(EncodedJSValue value) __attribute__((__always_i
 uint64_t JSVALUE_TO_UINT64_SLOW(EncodedJSValue value);
 int64_t  JSVALUE_TO_INT64_SLOW(EncodedJSValue value);
 
-EncodedJSValue UINT64_TO_JSVALUE_SLOW(void* globalObject, uint64_t val);
-EncodedJSValue INT64_TO_JSVALUE_SLOW(void* globalObject, int64_t val);
-static EncodedJSValue UINT64_TO_JSVALUE(void* globalObject, uint64_t val) __attribute__((__always_inline__));
-static EncodedJSValue INT64_TO_JSVALUE(void* globalObject, int64_t val) __attribute__((__always_inline__));
+EncodedJSValue UINT64_TO_JSVALUE_SLOW(void* jsGlobalObject, uint64_t val);
+EncodedJSValue INT64_TO_JSVALUE_SLOW(void* jsGlobalObject, int64_t val);
+static EncodedJSValue UINT64_TO_JSVALUE(void* jsGlobalObject, uint64_t val) __attribute__((__always_inline__));
+static EncodedJSValue INT64_TO_JSVALUE(void* jsGlobalObject, int64_t val) __attribute__((__always_inline__));
 
 
 static EncodedJSValue INT32_TO_JSVALUE(int32_t val) __attribute__((__always_inline__));
@@ -241,7 +249,7 @@ static int64_t JSVALUE_TO_INT64(EncodedJSValue value) {
   return JSVALUE_TO_INT64_SLOW(value);
 }
 
-static EncodedJSValue UINT64_TO_JSVALUE(void* globalObject, uint64_t val) {
+static EncodedJSValue UINT64_TO_JSVALUE(void* jsGlobalObject, uint64_t val) {
   if (val < MAX_INT32) {
     return INT32_TO_JSVALUE((int32_t)val);
   }
@@ -250,10 +258,10 @@ static EncodedJSValue UINT64_TO_JSVALUE(void* globalObject, uint64_t val) {
     return DOUBLE_TO_JSVALUE((double)val);
   }
 
-  return UINT64_TO_JSVALUE_SLOW(globalObject, val);
+  return UINT64_TO_JSVALUE_SLOW(jsGlobalObject, val);
 }
 
-static EncodedJSValue INT64_TO_JSVALUE(void* globalObject, int64_t val) {
+static EncodedJSValue INT64_TO_JSVALUE(void* jsGlobalObject, int64_t val) {
   if (val >= -MAX_INT32 && val <= MAX_INT32) {
     return INT32_TO_JSVALUE((int32_t)val);
   }
@@ -262,11 +270,11 @@ static EncodedJSValue INT64_TO_JSVALUE(void* globalObject, int64_t val) {
     return DOUBLE_TO_JSVALUE((double)val);
   }
 
-  return INT64_TO_JSVALUE_SLOW(globalObject, val);
+  return INT64_TO_JSVALUE_SLOW(jsGlobalObject, val);
 }
 
 #ifndef IS_CALLBACK
-ZIG_REPR_TYPE JSFunctionCall(void* globalObject, void* callFrame);
+ZIG_REPR_TYPE JSFunctionCall(void* jsGlobalObject, void* callFrame);
 
 #endif
 
@@ -282,10 +290,7 @@ bool my_callback_function(void* arg0) {
 #ifdef INJECT_BEFORE
 INJECT_BEFORE;
 #endif
-  EncodedJSValue arguments[1] = {
-    PTR_TO_JSVALUE(arg0)
-  };
-  EncodedJSValue return_value = {bun_call(cachedJSContext, cachedCallbackFunction, (void*)0, 1, &arguments[0], (void*)0)};
-  return JSVALUE_TO_BOOL(return_value);
+arguments[0] = PTR_TO_JSVALUE(arg0).asZigRepr;
+  return (bool)JSVALUE_TO_BOOL(_FFI_Callback_call((void*)0x0UL, 1, arguments));
 }
 

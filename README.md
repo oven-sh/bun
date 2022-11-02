@@ -3832,7 +3832,7 @@ const [major, minor, patch] = [
 Bun v0.2.3 added `JSCallback` which lets you create JavaScript callback functions that you can pass to C/FFI functions. The C/FFI function can call into the JavaScript/TypeScript code. This is useful for asynchronous code or otherwise when you want to call into JavaScript code from C.
 
 ```ts
-import { dlopen, JSCallback } from "bun:ffi";
+import { dlopen, JSCallback, ptr } from "bun:ffi";
 
 const {
   symbols: { search },

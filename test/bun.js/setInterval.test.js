@@ -33,3 +33,19 @@ it("clearInterval", async () => {
   });
   expect(called).toBe(false);
 });
+
+it("async setInterval", async () => {
+  var remaining = 5;
+  await new Promise((resolve, reject) => {
+    queueMicrotask(() => {
+      var id = setInterval(async () => {
+        await 1;
+        remaining--;
+        if (remaining === 0) {
+          clearInterval(id);
+          resolve();
+        }
+      }, 1);
+    });
+  });
+});

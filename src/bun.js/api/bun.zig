@@ -2252,15 +2252,39 @@ pub const Timer = struct {
 
         pub const Task = JSC.AnyTask.New(CallbackJob, perform);
 
-        pub fn perform(this: *CallbackJob) void {
-            var vm = this.globalThis.bunVM();
-            var map: *TimeoutMap = if (this.repeat) &vm.timer.interval_map else &vm.timer.timeout_map;
-
-            defer {
-                this.callback.deinit();
-                this.ref.unref(this.globalThis.bunVM());
-                bun.default_allocator.destroy(this);
+        pub export fn CallbackJob__onResolve(_: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSValue {
+            const args = callframe.arguments(2);
+            if (args.len < 2) {
+                return JSValue.jsUndefined();
             }
+
+            var this = args.ptr[1].asPtr(CallbackJob);
+            this.deinit();
+            return JSValue.jsUndefined();
+        }
+
+        pub export fn CallbackJob__onReject(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSValue {
+            const args = callframe.arguments(2);
+            if (args.len < 2) {
+                return JSValue.jsUndefined();
+            }
+
+            var this = args.ptr[1].asPtr(CallbackJob);
+            globalThis.bunVM().runErrorHandler(args.ptr[0], null);
+            this.deinit();
+            return JSValue.jsUndefined();
+        }
+
+        pub fn deinit(this: *CallbackJob) void {
+            this.callback.deinit();
+            this.ref.unref(this.globalThis.bunVM());
+            bun.default_allocator.destroy(this);
+        }
+
+        pub fn perform(this: *CallbackJob) void {
+            var globalThis = this.globalThis;
+            var vm = globalThis.bunVM();
+            var map: *TimeoutMap = if (this.repeat) &vm.timer.interval_map else &vm.timer.timeout_map;
 
             // This doesn't deinit the timer
             // Timers are deinit'd separately
@@ -2268,21 +2292,43 @@ pub const Timer = struct {
             if (!this.repeat) {
                 if (map.fetchSwapRemove(this.id) == null) {
                     // if the timeout was cancelled, don't run the callback
+                    this.deinit();
                     return;
                 }
             } else {
                 if (!map.contains(this.id)) {
                     // if the interval was cancelled, don't run the callback
+                    this.deinit();
                     return;
                 }
             }
 
             const callback = this.callback.get() orelse @panic("Expected CallbackJob to have a callback function");
 
-            const result = callback.call(this.globalThis, &.{});
+            const result = callback.call(globalThis, &.{});
 
-            if (result.isAnyError(this.globalThis)) {
+            if (result.isAnyError(globalThis)) {
                 vm.runErrorHandler(result, null);
+                this.deinit();
+                return;
+            }
+
+            if (result.asPromise()) |promise| {
+                switch (promise.status(globalThis.vm())) {
+                    .Rejected => {
+                        this.deinit();
+                        vm.runErrorHandler(promise.result(globalThis.vm()), null);
+                    },
+                    .Fulfilled => {
+                        this.deinit();
+
+                        // get the value out of the promise
+                        _ = promise.result(this.globalThis.vm());
+                    },
+                    .Pending => {
+                        result.then(globalThis, this, CallbackJob__onResolve, CallbackJob__onReject);
+                    },
+                }
             }
         }
     };
@@ -2317,20 +2363,25 @@ pub const Timer = struct {
             var this = this_ orelse
                 return;
 
+            var globalThis = this.globalThis;
+
             var cb: CallbackJob = .{
                 .callback = if (repeats)
-                    JSC.Strong.create(this.callback.get() orelse {
-                        // if the callback was freed, that's an error
-                        if (comptime Environment.allow_assert)
-                            unreachable;
+                    JSC.Strong.create(
+                        this.callback.get() orelse {
+                            // if the callback was freed, that's an error
+                            if (comptime Environment.allow_assert)
+                                unreachable;
 
-                        this.deinit();
-                        _ = map.swapRemove(timer_id.id);
-                        return;
-                    }, this.globalThis)
+                            this.deinit();
+                            _ = map.swapRemove(timer_id.id);
+                            return;
+                        },
+                        globalThis,
+                    )
                 else
                     this.callback,
-                .globalThis = this.globalThis,
+                .globalThis = globalThis,
                 .id = timer_id.id,
                 .repeat = timer_id.repeat > 0,
             };

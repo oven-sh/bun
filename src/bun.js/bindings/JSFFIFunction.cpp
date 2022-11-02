@@ -151,6 +151,32 @@ FFI_Callback_call(FFICallbackFunctionWrapper& wrapper, size_t argCount, JSC::Enc
     return JSC::JSValue::encode(result);
 }
 
+extern "C" void
+FFI_Callback_threadsafe_call(FFICallbackFunctionWrapper& wrapper, size_t argCount, JSC::EncodedJSValue* args)
+{
+
+    auto* globalObject = wrapper.globalObject.get();
+    WTF::Vector<JSC::EncodedJSValue, 8> argsVec;
+    for (size_t i = 0; i < argCount; ++i)
+        argsVec.append(args[i]);
+
+    WebCore::ScriptExecutionContext::postTaskTo(globalObject->scriptExecutionContext()->identifier(), [argsVec = WTFMove(argsVec), wrapper](WebCore::ScriptExecutionContext& ctx) mutable {
+        auto* globalObject = JSC::jsCast<Zig::GlobalObject*>(ctx.jsGlobalObject());
+        auto& vm = globalObject->vm();
+        JSC::MarkedArgumentBuffer arguments;
+        auto* function = wrapper.m_function.get();
+        for (size_t i = 0; i < argsVec.size(); ++i)
+            arguments.appendWithCrashOnOverflow(JSC::JSValue::decode(argsVec[i]));
+        WTF::NakedPtr<JSC::Exception> exception;
+        JSC::call(globalObject, function, JSC::getCallData(function), JSC::jsUndefined(), arguments, exception);
+        if (UNLIKELY(exception)) {
+            auto scope = DECLARE_THROW_SCOPE(vm);
+            scope.throwException(globalObject, exception);
+            return;
+        }
+    });
+}
+
 extern "C" JSC::EncodedJSValue
 FFI_Callback_call_0(FFICallbackFunctionWrapper& wrapper, size_t argCount, JSC::EncodedJSValue* args)
 {

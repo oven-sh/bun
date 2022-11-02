@@ -509,12 +509,12 @@ function ffiRunner(fast) {
     for (let [returnName, returnValue] of Object.entries(typeMap)) {
       var roundtripFunction = new CFunction({
         ptr: new JSCallback(
+          (input) => {
+            return input;
+          },
           {
             returns: returnName,
             args: [returnName],
-          },
-          (input) => {
-            return input;
           }
         ).ptr,
         returns: returnName,
@@ -525,12 +525,12 @@ function ffiRunner(fast) {
 
     {
       var toClose = new JSCallback(
+        (input) => {
+          return input;
+        },
         {
           returns: "bool",
           args: ["bool"],
-        },
-        (input) => {
-          return input;
         }
       );
       expect(toClose.ptr > 0).toBe(true);
@@ -541,15 +541,30 @@ function ffiRunner(fast) {
     // Return types, no args
     for (let [name, value] of Object.entries(typeMap)) {
       var roundtripFunction = new CFunction({
-        ptr: new JSCallback(
-          {
-            returns: name,
-          },
-          () => value
-        ).ptr,
+        ptr: new JSCallback(() => value, {
+          returns: name,
+        }).ptr,
         returns: name,
       });
       expect(roundtripFunction()).toBe(value);
+    }
+
+    // 1 arg, threadsafe
+    for (let [name, value] of Object.entries(typeMap)) {
+      var roundtripFunction = new CFunction({
+        ptr: new JSCallback(
+          (arg1) => {
+            expect(arg1).toBe(value);
+          },
+          {
+            args: [name],
+            threadsafe: true,
+          }
+        ).ptr,
+        returns: "void",
+        args: [name],
+      });
+      roundtripFunction(value);
     }
   }
 

@@ -119,7 +119,7 @@ pub const FFI = struct {
         func.base_name = "";
         js_callback.ensureStillAlive();
 
-        func.compileCallback(allocator, globalThis, js_callback) catch return ZigString.init("Out of memory").toErrorInstance(globalThis);
+        func.compileCallback(allocator, globalThis, js_callback, func.threadsafe) catch return ZigString.init("Out of memory").toErrorInstance(globalThis);
         switch (func.step) {
             .failed => |err| {
                 const message = ZigString.init(err.msg).toErrorInstance(globalThis);
@@ -551,6 +551,12 @@ pub const FFI = struct {
         // var function
         var return_type = ABIType.@"void";
 
+        var threadsafe = false;
+
+        if (value.get(global, "threadsafe")) |threadsafe_value| {
+            threadsafe = threadsafe_value.toBoolean();
+        }
+
         if (value.get(global, "returns")) |ret_value| brk: {
             if (ret_value.isAnyInt()) {
                 const int = ret_value.toInt32();
@@ -574,10 +580,16 @@ pub const FFI = struct {
             };
         }
 
+        if (function.threadsafe and return_type != ABIType.@"void") {
+            abi_types.clearAndFree(allocator);
+            return ZigString.static("Threadsafe functions must return void").toErrorInstance(global);
+        }
+
         function.* = Function{
             .base_name = null,
             .arg_types = abi_types,
             .return_type = return_type,
+            .threadsafe = threadsafe,
         };
 
         if (value.get(global, "ptr")) |ptr| {
@@ -635,6 +647,7 @@ pub const FFI = struct {
         return_type: ABIType = ABIType.@"void",
         arg_types: std.ArrayListUnmanaged(ABIType) = .{},
         step: Step = Step{ .pending = {} },
+        threadsafe: bool = false,
 
         pub var lib_dirZ: [*:0]const u8 = "";
 
@@ -911,6 +924,7 @@ pub const FFI = struct {
             allocator: std.mem.Allocator,
             js_context: *JSC.JSGlobalObject,
             js_function: JSValue,
+            is_threadsafe: bool,
         ) !void {
             var source_code = std.ArrayList(u8).init(allocator);
             var source_code_writer = source_code.writer();
@@ -954,7 +968,9 @@ pub const FFI = struct {
                 state,
                 "FFI_Callback_call",
                 // TODO: stage2 - make these ptrs
-                switch (this.arg_types.items.len) {
+                if (is_threadsafe)
+                    FFI_Callback_threadsafe_call
+                else switch (this.arg_types.items.len) {
                     0 => FFI_Callback_call_0,
                     1 => FFI_Callback_call_1,
                     2 => FFI_Callback_call_2,
@@ -1166,6 +1182,7 @@ pub const FFI = struct {
         extern fn FFI_Callback_call_3(*anyopaque, usize, [*]JSValue) JSValue;
         extern fn FFI_Callback_call_4(*anyopaque, usize, [*]JSValue) JSValue;
         extern fn FFI_Callback_call_5(*anyopaque, usize, [*]JSValue) JSValue;
+        extern fn FFI_Callback_threadsafe_call(*anyopaque, usize, [*]JSValue) JSValue;
         extern fn FFI_Callback_call_6(*anyopaque, usize, [*]JSValue) JSValue;
         extern fn FFI_Callback_call_7(*anyopaque, usize, [*]JSValue) JSValue;
         extern fn Bun__createFFICallbackFunction(*JSC.JSGlobalObject, JSValue) *anyopaque;

@@ -26,7 +26,8 @@ export class JSCallback {
   #ctx;
 
   [Symbol.toPrimitive]() {
-    return this.ptr;
+    const { ptr } = this;
+    return typeof ptr === "number" ? ptr : 0;
   }
 
   close() {

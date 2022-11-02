@@ -28,7 +28,7 @@ export class JSCallback {
   #threadsafe;
 
   get threadsafe() {
-    return true;
+    return this.#threadsafe;
   }
 
   [Symbol.toPrimitive]() {
@@ -245,7 +245,7 @@ ffiWrappers[FFIType.function] = function functionType(val) {
   var ptr = val && val.ptr;
 
   if (!ptr) {
-    throw new Error("Expected function to be a JSCallback or a number");
+    throw new TypeError("Expected function to be a JSCallback or a number");
   }
 
   return ptr;

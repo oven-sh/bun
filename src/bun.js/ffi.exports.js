@@ -20,10 +20,16 @@ export class JSCallback {
     const { ctx, ptr } = nativeCallback(options, cb);
     this.#ctx = ctx;
     this.ptr = ptr;
+    this.#threadsafe = !!options?.threadsafe;
   }
 
   ptr;
   #ctx;
+  #threadsafe;
+
+  get threadsafe() {
+    return true;
+  }
 
   [Symbol.toPrimitive]() {
     const { ptr } = this;
@@ -236,10 +242,9 @@ ffiWrappers[FFIType.function] = function functionType(val) {
     return Number(val);
   }
 
-  // we overwrote Symbol.toPrimitive
-  var ptr = +val;
+  var ptr = val && val.ptr;
 
-  if (!Number.isFinite(ptr) || ptr === 0) {
+  if (!ptr) {
     throw new Error("Expected function to be a JSCallback or a number");
   }
 

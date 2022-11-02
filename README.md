@@ -3845,7 +3845,7 @@ const {
 });
 
 const searchIterator = new JSCallback(
-  (ptr, length) => new CString(ptr, length).test(/wut/i),
+  (ptr, length) => /hello/.test(new CString(ptr, length)),
   {
     returns: "bool",
     args: ["ptr", "usize"],

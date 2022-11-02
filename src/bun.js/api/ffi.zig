@@ -1358,7 +1358,7 @@ pub const FFI = struct {
             .{ "i64_fast", ABIType.i64_fast },
             .{ "u64_fast", ABIType.u64_fast },
             .{ "function", ABIType.function },
-            .{ "callback", ABIType.callback },
+            .{ "callback", ABIType.function },
             .{ "fn", ABIType.function },
         };
         pub const label = ComptimeStringMap(ABIType, map);

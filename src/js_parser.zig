@@ -2012,6 +2012,8 @@ const FnOrArrowDataParse = struct {
     is_constructor: bool = false,
     is_typescript_declare: bool = false,
 
+    has_argument_decorators: bool = false,
+
     is_return_disallowed: bool = false,
     is_this_disallowed: bool = false,
 
@@ -2142,6 +2144,7 @@ const PropertyOpts = struct {
     class_has_extends: bool = false,
     allow_ts_decorators: bool = false,
     ts_decorators: []Expr = &[_]Expr{},
+    has_argument_decorators: bool = false,
 };
 
 pub const ScanPassResult = struct {
@@ -5506,6 +5509,7 @@ fn NewParser_(
                 // Only allow omitting the body if we're parsing TypeScript
                 .allow_missing_body_for_type_script = is_typescript_enabled,
             });
+            p.fn_or_arrow_data_parse.has_argument_decorators = false;
 
             if (comptime is_typescript_enabled) {
                 // Don't output anything if it's just a forward declaration of a function
@@ -5608,6 +5612,7 @@ fn NewParser_(
             p.fn_or_arrow_data_parse.allow_super_call = opts.allow_super_call;
             p.fn_or_arrow_data_parse.allow_super_property = opts.allow_super_property;
 
+            var arg_has_decorators: bool = false;
             var args = List(G.Arg){};
             while (p.lexer.token != T.t_close_paren) {
                 // Skip over "this" type annotations
@@ -5628,6 +5633,9 @@ fn NewParser_(
                 var ts_decorators: []ExprNodeIndex = &([_]ExprNodeIndex{});
                 if (opts.allow_ts_decorators) {
                     ts_decorators = try p.parseTypeScriptDecorators();
+                    if (ts_decorators.len > 0) {
+                        arg_has_decorators = true;
+                    }
                 }
 
                 if (!func.flags.contains(.has_rest_arg) and p.lexer.token == T.t_dot_dot_dot) {
@@ -5735,6 +5743,8 @@ fn NewParser_(
 
             try p.lexer.expect(.t_close_paren);
             p.fn_or_arrow_data_parse = std.mem.bytesToValue(@TypeOf(p.fn_or_arrow_data_parse), &old_fn_or_arrow_data);
+
+            p.fn_or_arrow_data_parse.has_argument_decorators = arg_has_decorators;
 
             // "function foo(): any {}"
             if (is_typescript_enabled and p.lexer.token == .t_colon) {
@@ -9420,6 +9430,7 @@ fn NewParser_(
                 .allow_await = if (is_async) .allow_expr else .allow_ident,
                 .allow_yield = if (is_generator) .allow_expr else .allow_ident,
             });
+            p.fn_or_arrow_data_parse.has_argument_decorators = false;
 
             p.validateFunctionName(func, .expr);
             p.popScope();
@@ -10234,6 +10245,9 @@ fn NewParser_(
                     .allow_missing_body_for_type_script = is_typescript_enabled and opts.is_class,
                 });
 
+                opts.has_argument_decorators = opts.has_argument_decorators or p.fn_or_arrow_data_parse.has_argument_decorators;
+                p.fn_or_arrow_data_parse.has_argument_decorators = false;
+
                 // "class Foo { foo(): void; foo(): void {} }"
                 if (func.flags.contains(.is_forward_declaration)) {
                     // Skip this property entirely
@@ -10337,6 +10351,7 @@ fn NewParser_(
         // been parsed. We need to start parsing from the "extends" clause.
         pub fn parseClass(p: *P, class_keyword: logger.Range, name: ?js_ast.LocRef, class_opts: ParseClassOptions) !G.Class {
             var extends: ?Expr = null;
+            var has_decorators: bool = false;
 
             if (p.lexer.token == .t_extends) {
                 try p.lexer.next();
@@ -10388,12 +10403,13 @@ fn NewParser_(
                     continue;
                 }
 
-                opts = PropertyOpts{ .is_class = true, .allow_ts_decorators = class_opts.allow_ts_decorators, .class_has_extends = extends != null };
+                opts = PropertyOpts{ .is_class = true, .allow_ts_decorators = class_opts.allow_ts_decorators, .class_has_extends = extends != null, .has_argument_decorators = false };
 
                 // Parse decorators for this property
                 const first_decorator_loc = p.lexer.loc();
                 if (opts.allow_ts_decorators) {
                     opts.ts_decorators = try p.parseTypeScriptDecorators();
+                    has_decorators = has_decorators or opts.ts_decorators.len > 0;
                 } else {
                     opts.ts_decorators = &[_]Expr{};
                 }
@@ -10413,6 +10429,8 @@ fn NewParser_(
                             else => {},
                         }
                     }
+
+                    has_decorators = has_decorators or opts.has_argument_decorators;
                 }
             }
 
@@ -10435,6 +10453,7 @@ fn NewParser_(
                 .class_keyword = class_keyword,
                 .body_loc = body_loc,
                 .properties = properties.toOwnedSlice(),
+                .has_decorators = has_decorators or class_opts.ts_decorators.len > 0,
             };
         }
 
@@ -17357,6 +17376,12 @@ fn NewParser_(
         ) []Stmt {
             switch (stmtorexpr) {
                 .stmt => |stmt| {
+                    if (!stmt.data.s_class.class.has_decorators) {
+                        var stmts = p.allocator.alloc(Stmt, 1) catch unreachable;
+                        stmts[0] = stmt;
+                        return stmts;
+                    }
+
                     var class = &stmt.data.s_class.class;
                     var constructor_function: ?*E.Function = null;
 

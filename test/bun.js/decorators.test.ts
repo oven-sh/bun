@@ -699,3 +699,89 @@ test("decorated fields moving to constructor", () => {
   expect(a.b).toBe(4);
   expect(a.c).toBe(5);
 });
+
+test("only class decorator", () => {
+  let a = 0;
+  @d1
+  class A {}
+
+  let aa = new A();
+
+  function d1(target) {
+    a = 1;
+    expect(target).toBe(A);
+  }
+
+  expect(a).toBe(1);
+});
+
+test("only property decorators", () => {
+  let a = 0;
+  class A {
+    @d1 a() {}
+  }
+
+  let b = 0;
+  class B {
+    @d2 b = 3;
+  }
+
+  let c = 0;
+  class C {
+    @d3 get c() {
+      return 3;
+    }
+  }
+
+  function d1(target, propertyKey) {
+    a = 1;
+    expect(target === A.prototype).toBe(true);
+    expect(propertyKey).toBe("a");
+  }
+  expect(a).toBe(1);
+
+  function d2(target, propertyKey) {
+    b = 1;
+    expect(target === B.prototype).toBe(true);
+    expect(propertyKey).toBe("b");
+  }
+  expect(b).toBe(1);
+
+  function d3(target, propertyKey) {
+    c = 1;
+    expect(target === C.prototype).toBe(true);
+    expect(propertyKey).toBe("c");
+  }
+  expect(c).toBe(1);
+});
+
+test("only argument decorators", () => {
+  let a = 0;
+  class A {
+    a(@d1 a: string) {}
+  }
+
+  function d1(target, propertyKey, parameterIndex) {
+    a = 1;
+    expect(target === A.prototype).toBe(true);
+    expect(propertyKey).toBe("a");
+    expect(parameterIndex).toBe(0);
+  }
+
+  expect(a).toBe(1);
+});
+
+test("no decorators", () => {
+  let a = 0;
+  class A {
+    b: number;
+    constructor() {
+      a = 1;
+      this.b = 300000;
+    }
+  }
+
+  let aa = new A();
+  expect(a).toBe(1);
+  expect(aa.b).toBe(300000);
+});

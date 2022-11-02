@@ -539,6 +539,7 @@ pub const G = struct {
         body_loc: logger.Loc = logger.Loc.Empty,
         close_brace_loc: logger.Loc = logger.Loc.Empty,
         properties: []Property = &([_]Property{}),
+        has_decorators: bool = false,
     };
 
     // invalid shadowing if left as Comment

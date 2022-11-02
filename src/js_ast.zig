@@ -48,7 +48,7 @@ pub fn NewBaseStore(comptime Union: anytype, comptime count: usize) type {
             store: Self,
         };
 
-        const Block = struct {
+        pub const Block = struct {
             used: SizeType = 0,
             items: [count]UnionValueType align(MaxAlign) = undefined,
 

@@ -326,9 +326,15 @@ pub const PendingResolution = struct {
     esm: ESModule.Package.External = .{},
     dependency: Dependency.Version = .{},
     resolution_id: Install.PackageID = Install.invalid_package_id,
+    import_record_id: u32 = std.math.maxInt(u32),
     string_buf: []const u8 = "",
 
-    pub fn init(allocator: std.mem.Allocator, esm: ESModule.Package, dependency: Dependency.Version, resolution_id: Install.PackageID) !PendingResolution {
+    pub fn init(
+        allocator: std.mem.Allocator,
+        esm: ESModule.Package,
+        dependency: Dependency.Version,
+        resolution_id: Install.PackageID,
+    ) !PendingResolution {
         return PendingResolution{
             .esm = try esm.copy(allocator),
             .dependency = dependency,
@@ -341,6 +347,7 @@ pub const PendingDownload = struct {
     esm: ESModule.Package.External = .{},
     dependency: Dependency.Version = .{},
     package_id: Install.PackageID = Install.invalid_package_id,
+    import_record_id: u32 = std.math.maxInt(u32),
     resolution: Resolution = .{},
 };
 
@@ -1403,7 +1410,7 @@ pub const Resolver = struct {
         while (true) {
             // Skip directories that are themselves called "node_modules", since we
             // don't ever want to search for "node_modules/node_modules"
-            if (dir_info.has_node_modules) {
+            if (dir_info.hasNodeModules()) {
                 any_node_modules_folder = true;
                 var _paths = [_]string{ dir_info.abs_path, "node_modules", import_path };
                 const abs_path = r.fs.absBuf(&_paths, &node_modules_check_buf);
@@ -2565,7 +2572,7 @@ pub const Resolver = struct {
                     // package and the parent package.
                     const isInSamePackage = brk: {
                         const parent = dir_info.getParent() orelse break :brk true;
-                        break :brk !parent.is_node_modules;
+                        break :brk !parent.isNodeModules();
                     };
 
                     if (isInSamePackage) {
@@ -3120,18 +3127,18 @@ pub const Resolver = struct {
         // base must
         if (base.len > 1 and base[base.len - 1] == std.fs.path.sep) base = base[0 .. base.len - 1];
 
-        info.is_node_modules = strings.eqlComptime(base, "node_modules");
+        info.flags.setPresent(.is_node_modules, strings.eqlComptime(base, "node_modules"));
 
         // if (entries != null) {
-        if (!info.is_node_modules) {
+        if (!info.isNodeModules()) {
             if (entries.getComptimeQuery("node_modules")) |entry| {
-                info.has_node_modules = (entry.entry.kind(rfs)) == .dir;
+                info.flags.setPresent(.has_node_modules, (entry.entry.kind(rfs)) == .dir);
             }
         }
 
         if (r.care_about_bin_folder) {
             append_bin_dir: {
-                if (info.has_node_modules) {
+                if (info.hasNodeModules()) {
                     if (entries.hasComptimeQuery("node_modules")) {
                         if (!bin_folders_loaded) {
                             bin_folders_loaded = true;
@@ -3155,7 +3162,7 @@ pub const Resolver = struct {
                     }
                 }
 
-                if (info.is_node_modules) {
+                if (info.isNodeModules()) {
                     if (entries.getComptimeQuery(".bin")) |q| {
                         if (q.entry.kind(rfs) == .dir) {
                             if (!bin_folders_loaded) {
@@ -3238,7 +3245,7 @@ pub const Resolver = struct {
         if (entries.getComptimeQuery("package.json")) |lookup| {
             const entry = lookup.entry;
             if (entry.kind(rfs) == .file) {
-                info.package_json = if (r.usePackageManager() and !info.has_node_modules and !info.is_node_modules)
+                info.package_json = if (r.usePackageManager() and !info.hasNodeModules() and !info.isNodeModules())
                     r.parsePackageJSON(path, if (FeatureFlags.store_file_descriptors) fd else 0, true) catch null
                 else
                     r.parsePackageJSON(path, if (FeatureFlags.store_file_descriptors) fd else 0, false) catch null;

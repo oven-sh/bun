@@ -1493,6 +1493,8 @@ pub const PackageManager = struct {
     waiter: Waker = undefined,
     wait_count: std.atomic.Atomic(usize) = std.atomic.Atomic(usize).init(0),
 
+    onWake: WakeHandler = .{},
+
     const PreallocatedNetworkTasks = std.BoundedArray(NetworkTask, 1024);
     const NetworkTaskQueue = std.HashMapUnmanaged(u64, void, IdentityContext(u64), 80);
     const PackageIndex = std.AutoHashMapUnmanaged(u64, *Package);
@@ -1505,7 +1507,17 @@ pub const PackageManager = struct {
         80,
     );
 
+    pub const WakeHandler = struct {
+        handler: fn (ctx: *anyopaque, pm: *PackageManager) void = undefined,
+        context: ?*anyopaque = null,
+    };
+
     pub fn wake(this: *PackageManager) void {
+        if (this.onWake.context != null) {
+            this.onWake.handler(this.onWake.context.?, this);
+            return;
+        }
+
         _ = this.wait_count.fetchAdd(1, .Monotonic);
         this.waiter.wake() catch {};
     }

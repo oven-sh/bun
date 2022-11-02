@@ -124,6 +124,18 @@ pub const ParseResult = struct {
     ast: js_ast.Ast,
     input_fd: ?StoredFileDescriptorType = null,
     empty: bool = false,
+    pending_imports: std.ArrayListUnmanaged(_resolver.Pending) = .{},
+
+    pub fn isPendingImport(this: *const ParseResult, id: u32) bool {
+        for (this.pending_imports.items) |pending| {
+            if (switch (pending) {
+                .resolve => |res| res.import_record_id == id,
+                .download => |dl| dl.import_record_id == id,
+            }) return true;
+        }
+
+        return false;
+    }
 };
 
 const cache_files = false;

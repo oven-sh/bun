@@ -26,6 +26,7 @@ const Resolver = @import("../resolver/resolver.zig");
 const ast = @import("../import_record.zig");
 const NodeModuleBundle = @import("../node_module_bundle.zig").NodeModuleBundle;
 const MacroEntryPoint = @import("../bundler.zig").MacroEntryPoint;
+const ParseResult = @import("../bundler.zig").ParseResult;
 const logger = @import("../logger.zig");
 const Api = @import("../api/schema.zig").Api;
 const options = @import("../options.zig");
@@ -45,7 +46,6 @@ const Runtime = @import("../runtime.zig");
 const Router = @import("./api/router.zig");
 const ImportRecord = ast.ImportRecord;
 const DotEnv = @import("../env_loader.zig");
-const ParseResult = @import("../bundler.zig").ParseResult;
 const PackageJSON = @import("../resolver/package_json.zig").PackageJSON;
 const MacroRemap = @import("../resolver/package_json.zig").MacroMap;
 const WebCore = @import("../jsc.zig").WebCore;
@@ -1183,6 +1183,7 @@ pub const VirtualMachine = struct {
             log,
             null,
             ret,
+            null,
             VirtualMachine.source_code_printer.?,
             flags,
         );
@@ -2890,6 +2891,142 @@ fn dumpSource(specifier: string, printer: anytype) !void {
 }
 
 pub const ModuleLoader = struct {
+    const PendingModuleResolution = struct {
+        parse_result: ParseResult,
+        stmt_blocks: []*js_ast.Stmt.Data.Store.All.Block = &[_]*js_ast.Stmt.Data.Store.All.Block{},
+        expr_blocks: []*js_ast.Expr.Data.Store.All.Block = &[_]*js_ast.Expr.Data.Store.All.Block{},
+        promise: JSC.Strong = .{},
+        path: Fs.Path,
+        specifier: string,
+        referrer: string,
+        string_buf: []u8 = &[_]u8{},
+        fd: ?StoredFileDescriptorType = null,
+        package_json: ?*PackageJSON = null,
+
+        // pub fn create(opts: anytype) *PendingModuleResolution {
+
+        // }
+
+        pub fn done(this: *PendingModuleResolution) void {
+            var jsc_vm = JSC.VirtualMachine.vm;
+            var log = logger.Log.init(jsc_vm.allocator);
+            defer log.deinit();
+            var errorable: ErrorableResolvedSource = undefined;
+            errorable = this.resumeLoadingModule(&log) catch |err| brk: {
+                jsc_vm.processFetchLog(jsc_vm.global, ZigString.init(this.specifier), ZigString.init(this.referrer), &log, &errorable, err);
+                break :brk errorable;
+            };
+
+            Bun__onFulfillPendingModule(
+                this.promise.get().?,
+                &errorable,
+                ZigString.init(this.specifier).withEncoding(),
+                ZigString.init(this.referrer).withEncoding(),
+            );
+            this.deinit();
+        }
+
+        pub fn resumeLoadingModule(this: *PendingModuleResolution, log: *logger.Log) !ErrorableResolvedSource {
+            var parse_result = this.parse_result;
+            var path = this.path;
+            var jsc_vm = JSC.VirtualMachine.vm;
+            var specifier = this.specifier;
+            var old_log = jsc_vm.log;
+
+            jsc_vm.bundler.linker.log = log;
+            jsc_vm.bundler.log = log;
+            jsc_vm.bundler.resolver.log = log;
+            defer {
+                jsc_vm.bundler.linker.log = old_log;
+                jsc_vm.bundler.log = old_log;
+                jsc_vm.bundler.resolver.log = old_log;
+            }
+            // We _must_ link because:
+            // - node_modules bundle won't be properly
+            try jsc_vm.bundler.linker.link(
+                path,
+                &parse_result,
+                jsc_vm.origin,
+                .absolute_path,
+                false,
+                true,
+            );
+            this.parse_result = parse_result;
+
+            var printer = VirtualMachine.source_code_printer.?.*;
+            printer.ctx.reset();
+
+            const written = brk: {
+                defer VirtualMachine.source_code_printer.* = printer;
+                break :brk try jsc_vm.bundler.printWithSourceMap(
+                    parse_result,
+                    @TypeOf(&printer),
+                    &printer,
+                    .esm_ascii,
+                    SavedSourceMap.SourceMapHandler.init(&jsc_vm.source_mappings),
+                );
+            };
+
+            if (written == 0) {
+                return error.PrintingErrorWriteFailed;
+            }
+
+            if (comptime Environment.dump_source) {
+                try dumpSource(specifier, &printer);
+            }
+
+            if (jsc_vm.isWatcherEnabled()) {
+                const resolved_source = jsc_vm.refCountedResolvedSource(printer.ctx.written, specifier, path.text, null);
+
+                if (parse_result.input_fd) |fd_| {
+                    if (jsc_vm.bun_watcher != null and std.fs.path.isAbsolute(path.text) and !strings.contains(path.text, "node_modules")) {
+                        jsc_vm.bun_watcher.?.addFile(
+                            fd_,
+                            path.text,
+                            this.hash,
+                            this.loader,
+                            0,
+                            this.package_json,
+                            true,
+                        ) catch {};
+                    }
+                }
+
+                return resolved_source;
+            }
+
+            return ResolvedSource{
+                .allocator = null,
+                .source_code = ZigString.init(try default_allocator.dupe(u8, printer.ctx.getWritten())),
+                .specifier = ZigString.init(specifier),
+                .source_url = ZigString.init(path.text),
+                // // TODO: change hash to a bitfield
+                // .hash = 1,
+
+                // having JSC own the memory causes crashes
+                .hash = 0,
+            };
+        }
+
+        pub fn deinit(this: *PendingModuleResolution) void {
+            this.parse_result.pending_imports.deinit(bun.default_allocator);
+            bun.default_allocator.free(bun.constStrToU8(this.parse_result.source.contents));
+            bun.default_allocator.free(this.stmt_blocks);
+            bun.default_allocator.free(this.expr_blocks);
+            this.promise.deinit();
+            bun.default_allocator.free(this.string_buf);
+            bun.default_allocator.destroy(this);
+            this.* = undefined;
+        }
+
+        extern "C" fn Bun__onFulfillPendingModule(
+            promiseValue: JSC.JSValue,
+            res: *JSC.ErrorableResolvedSource,
+            specifier: *ZigString,
+            referrer: *ZigString,
+        ) void;
+    };
+
     pub export fn Bun__getDefaultLoader(global: *JSC.JSGlobalObject, str: *ZigString) Api.Loader {
         var jsc_vm = global.bunVM();
         const filename = str.toSlice(jsc_vm.allocator);
@@ -2901,6 +3038,7 @@ pub const ModuleLoader = struct {
 
         return loader;
     }
+
     pub fn transpileSourceCode(
         jsc_vm: *VirtualMachine,
         specifier: string,
@@ -2909,6 +3047,7 @@ pub const ModuleLoader = struct {
         log: *logger.Log,
         virtual_source: ?*const logger.Source,
         ret: *ErrorableResolvedSource,
+        promise_ptr: ?*?*JSC.JSInternalPromise,
         source_code_printer: *js_printer.BufferPrinter,
         comptime flags: FetchFlags,
     ) !ResolvedSource {
@@ -3013,9 +3152,6 @@ pub const ModuleLoader = struct {
                     try ModuleLoader.runBunPlugin(jsc_vm, source_code_printer, &parse_result, ret);
                 }
 
-                var printer = source_code_printer.*;
-                printer.ctx.reset();
-
                 const start_count = jsc_vm.bundler.linker.import_counter;
 
                 // We _must_ link because:
@@ -3029,9 +3165,34 @@ pub const ModuleLoader = struct {
                     true,
                 );
 
+                if (parse_result.pending_imports.items.len > 0) {
+                    if (promise_ptr == null) {
+                        return error.UnexpectedPendingImport;
+                    }
+
+                    if (jsc_vm.isWatcherEnabled()) {
+                        if (parse_result.input_fd) |fd_| {
+                            if (jsc_vm.bun_watcher != null and !is_node_override and std.fs.path.isAbsolute(path.text) and !strings.contains(path.text, "node_modules")) {
+                                jsc_vm.bun_watcher.?.addFile(
+                                    fd_,
+                                    path.text,
+                                    hash,
+                                    loader,
+                                    0,
+                                    package_json,
+                                    true,
+                                ) catch {};
+                            }
+                        }
+                    }
+                }
+
                 if (!jsc_vm.macro_mode)
                     jsc_vm.resolved_count += jsc_vm.bundler.linker.import_counter - start_count;
                 jsc_vm.bundler.linker.import_counter = 0;
+
+                var printer = source_code_printer.*;
+                printer.ctx.reset();
 
                 const written = brk: {
                     defer source_code_printer.* = printer;
@@ -3335,7 +3496,8 @@ pub const ModuleLoader = struct {
         specifier_ptr: *ZigString,
         referrer: *ZigString,
         ret: *ErrorableResolvedSource,
-    ) bool {
+        allow_promise: bool,
+    ) ?*anyopaque {
         JSC.markBinding(@src());
         var log = logger.Log.init(jsc_vm.bundler.allocator);
         defer log.deinit();
@@ -3344,6 +3506,7 @@ pub const ModuleLoader = struct {
         var specifier = normalizeSpecifier(jsc_vm, _specifier.slice());
         const path = Fs.Path.init(specifier);
         const loader = jsc_vm.bundler.options.loaders.get(path.name.ext) orelse options.Loader.js;
+        var promise: ?*JSC.JSInternalPromise = null;
         ret.* = ErrorableResolvedSource.ok(
             ModuleLoader.transpileSourceCode(
                 jsc_vm,
@@ -3353,17 +3516,18 @@ pub const ModuleLoader = struct {
                 &log,
                 null,
                 ret,
+                if (allow_promise) &promise else null,
                 VirtualMachine.source_code_printer.?,
                 FetchFlags.transpile,
             ) catch |err| {
                 if (err == error.PluginError) {
-                    return true;
+                    return null;
                 }
                 VirtualMachine.processFetchLog(globalObject, specifier_ptr.*, referrer.*, &log, ret, err);
-                return true;
+                return null;
             },
         );
-        return true;
+        return promise;
     }
 
     export fn Bun__runVirtualModule(globalObject: *JSC.JSGlobalObject, specifier_ptr: *ZigString) JSValue {
@@ -3428,6 +3592,7 @@ pub const ModuleLoader = struct {
                 &log,
                 &virtual_source,
                 ret,
+                null,
                 VirtualMachine.source_code_printer.?,
                 FetchFlags.transpile,
             ) catch |err| {

@@ -325,6 +325,29 @@ static JSValue handleVirtualModuleResult(
     }
 }
 
+extern "C" void Bun__onFulfillPendingModule(
+    EncodedJSValue promiseValue,
+    ErrorableResolvedSource* res,
+    ZigString* specifier,
+    ZigString* referrer)
+{
+    JSC::JSValue value = JSValue::decode(promiseValue);
+    JSC::JSInternalPromise* promise = jsCast<JSC::JSInternalPromise*>(value);
+    auto* globalObject = promise->globalObject();
+    auto& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    if (!res->success) {
+        throwException(scope, res->result.err, globalObject);
+        auto* exception = scope.exception();
+        scope.clearException();
+        return promise->reject(promise->globalObject(), exception);
+    }
+
+    auto provider = Zig::SourceProvider::create(res->result.value);
+    promise->resolve(promise->globalObject(), JSC::JSSourceCode::create(vm, JSC::SourceCode(provider)));
+}
+
 template<bool allowPromise>
 static JSValue fetchSourceCode(
     Zig::GlobalObject* globalObject,
@@ -435,7 +458,15 @@ static JSValue fetchSourceCode(
         return handleVirtualModuleResult<allowPromise>(globalObject, virtualModuleResult, res, specifier, referrer);
     }
 
-    Bun__transpileFile(bunVM, globalObject, specifier, referrer, res);
+    if constexpr (allowPromise) {
+        void* pendingCtx = Bun__transpileFile(bunVM, globalObject, specifier, referrer, res, true);
+        if (pendingCtx) {
+            return reinterpret_cast<JSC::JSInternalPromise*>(pendingCtx);
+        }
+    } else {
+        Bun__transpileFile(bunVM, globalObject, specifier, referrer, res, false);
+    }
+
     if (!res->success) {
         throwException(scope, res->result.err, globalObject);
         auto* exception = scope.exception();

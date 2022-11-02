@@ -220,6 +220,8 @@ pub const Linker = struct {
         var needs_require = false;
         var node_module_bundle_import_path: ?string = null;
 
+        const is_deferred = result.pending_imports.items.len > 0;
+
         var import_records = result.ast.import_records;
         defer {
             result.ast.import_records = import_records;
@@ -232,7 +234,7 @@ pub const Linker = struct {
 
                 outer: while (record_i < record_count) : (record_i += 1) {
                     var import_record = &import_records[record_i];
-                    if (import_record.is_unused) continue;
+                    if (import_record.is_unused or (is_bun and is_deferred and result.isPendingImport(record_i))) continue;
 
                     const record_index = record_i;
                     if (comptime !ignore_runtime) {
@@ -445,7 +447,26 @@ pub const Linker = struct {
                                 .failure => |err| {
                                     break :brk err;
                                 },
-                                else => unreachable,
+                                .pending => |*pending| {
+                                    if (!bundler.options.enable_auto_install) {
+                                        break :brk error.InstallationPending;
+                                    }
+
+                                    switch (pending.*) {
+                                        .resolve => {
+                                            pending.resolve.import_record_id = record_i;
+                                        },
+                                        .download => {
+                                            pending.download.import_record_id = record_i;
+                                        },
+                                    }
+
+                                    result.pending_imports.append(linker.allocator, pending.*) catch unreachable;
+                                    std.debug.assert(!is_deferred);
+                                    continue;
+                                },
+                                .not_found => break :brk error.ModuleNotFound,
+                                // else => unreachable,
                             }
                         } else {
                             if (linker.resolver.resolve(source_dir, import_record.path.text, import_record.kind)) |_resolved_import| {

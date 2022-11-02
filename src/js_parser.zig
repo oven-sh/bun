@@ -1014,6 +1014,8 @@ const StaticSymbolName = struct {
         pub const __HMRClient = NewStaticSymbol("Bun");
         pub const __FastRefreshModule = NewStaticSymbol("FastHMR");
         pub const __FastRefreshRuntime = NewStaticSymbol("FastRefresh");
+        pub const __decorateClass = NewStaticSymbol("__decorateClass");
+        pub const __decorateParam = NewStaticSymbol("__decorateParam");
 
         pub const @"$$m" = NewStaticSymbol("$$m");
 
@@ -2010,6 +2012,8 @@ const FnOrArrowDataParse = struct {
     is_constructor: bool = false,
     is_typescript_declare: bool = false,
 
+    has_argument_decorators: bool = false,
+
     is_return_disallowed: bool = false,
     is_this_disallowed: bool = false,
 
@@ -2140,6 +2144,7 @@ const PropertyOpts = struct {
     class_has_extends: bool = false,
     allow_ts_decorators: bool = false,
     ts_decorators: []Expr = &[_]Expr{},
+    has_argument_decorators: bool = false,
 };
 
 pub const ScanPassResult = struct {
@@ -5504,6 +5509,7 @@ fn NewParser_(
                 // Only allow omitting the body if we're parsing TypeScript
                 .allow_missing_body_for_type_script = is_typescript_enabled,
             });
+            p.fn_or_arrow_data_parse.has_argument_decorators = false;
 
             if (comptime is_typescript_enabled) {
                 // Don't output anything if it's just a forward declaration of a function
@@ -5606,6 +5612,7 @@ fn NewParser_(
             p.fn_or_arrow_data_parse.allow_super_call = opts.allow_super_call;
             p.fn_or_arrow_data_parse.allow_super_property = opts.allow_super_property;
 
+            var arg_has_decorators: bool = false;
             var args = List(G.Arg){};
             while (p.lexer.token != T.t_close_paren) {
                 // Skip over "this" type annotations
@@ -5626,6 +5633,9 @@ fn NewParser_(
                 var ts_decorators: []ExprNodeIndex = &([_]ExprNodeIndex{});
                 if (opts.allow_ts_decorators) {
                     ts_decorators = try p.parseTypeScriptDecorators();
+                    if (ts_decorators.len > 0) {
+                        arg_has_decorators = true;
+                    }
                 }
 
                 if (!func.flags.contains(.has_rest_arg) and p.lexer.token == T.t_dot_dot_dot) {
@@ -5733,6 +5743,8 @@ fn NewParser_(
 
             try p.lexer.expect(.t_close_paren);
             p.fn_or_arrow_data_parse = std.mem.bytesToValue(@TypeOf(p.fn_or_arrow_data_parse), &old_fn_or_arrow_data);
+
+            p.fn_or_arrow_data_parse.has_argument_decorators = arg_has_decorators;
 
             // "function foo(): any {}"
             if (is_typescript_enabled and p.lexer.token == .t_colon) {
@@ -9418,6 +9430,7 @@ fn NewParser_(
                 .allow_await = if (is_async) .allow_expr else .allow_ident,
                 .allow_yield = if (is_generator) .allow_expr else .allow_ident,
             });
+            p.fn_or_arrow_data_parse.has_argument_decorators = false;
 
             p.validateFunctionName(func, .expr);
             p.popScope();
@@ -10232,6 +10245,9 @@ fn NewParser_(
                     .allow_missing_body_for_type_script = is_typescript_enabled and opts.is_class,
                 });
 
+                opts.has_argument_decorators = opts.has_argument_decorators or p.fn_or_arrow_data_parse.has_argument_decorators;
+                p.fn_or_arrow_data_parse.has_argument_decorators = false;
+
                 // "class Foo { foo(): void; foo(): void {} }"
                 if (func.flags.contains(.is_forward_declaration)) {
                     // Skip this property entirely
@@ -10335,6 +10351,7 @@ fn NewParser_(
         // been parsed. We need to start parsing from the "extends" clause.
         pub fn parseClass(p: *P, class_keyword: logger.Range, name: ?js_ast.LocRef, class_opts: ParseClassOptions) !G.Class {
             var extends: ?Expr = null;
+            var has_decorators: bool = false;
 
             if (p.lexer.token == .t_extends) {
                 try p.lexer.next();
@@ -10386,12 +10403,13 @@ fn NewParser_(
                     continue;
                 }
 
-                opts = PropertyOpts{ .is_class = true, .allow_ts_decorators = class_opts.allow_ts_decorators, .class_has_extends = extends != null };
+                opts = PropertyOpts{ .is_class = true, .allow_ts_decorators = class_opts.allow_ts_decorators, .class_has_extends = extends != null, .has_argument_decorators = false };
 
                 // Parse decorators for this property
                 const first_decorator_loc = p.lexer.loc();
                 if (opts.allow_ts_decorators) {
                     opts.ts_decorators = try p.parseTypeScriptDecorators();
+                    has_decorators = has_decorators or opts.ts_decorators.len > 0;
                 } else {
                     opts.ts_decorators = &[_]Expr{};
                 }
@@ -10411,6 +10429,8 @@ fn NewParser_(
                             else => {},
                         }
                     }
+
+                    has_decorators = has_decorators or opts.has_argument_decorators;
                 }
             }
 
@@ -10433,6 +10453,7 @@ fn NewParser_(
                 .class_keyword = class_keyword,
                 .body_loc = body_loc,
                 .properties = properties.toOwnedSlice(),
+                .has_decorators = has_decorators or class_opts.ts_decorators.len > 0,
             };
         }
 
@@ -17355,9 +17376,205 @@ fn NewParser_(
         ) []Stmt {
             switch (stmtorexpr) {
                 .stmt => |stmt| {
-                    var stmts = p.allocator.alloc(Stmt, 1) catch unreachable;
-                    stmts[0] = stmt;
-                    return stmts;
+                    if (!stmt.data.s_class.class.has_decorators) {
+                        var stmts = p.allocator.alloc(Stmt, 1) catch unreachable;
+                        stmts[0] = stmt;
+                        return stmts;
+                    }
+
+                    var class = &stmt.data.s_class.class;
+                    var constructor_function: ?*E.Function = null;
+
+                    var static_decorators = ListManaged(Stmt).init(p.allocator);
+                    var instance_decorators = ListManaged(Stmt).init(p.allocator);
+                    var instance_members = ListManaged(Stmt).init(p.allocator);
+                    var static_members = ListManaged(Stmt).init(p.allocator);
+                    var class_properties = ListManaged(Property).init(p.allocator);
+
+                    for (class.properties) |*prop| {
+                        // merge parameter decorators with method decorators
+                        if (prop.flags.contains(.is_method)) {
+                            if (prop.value) |prop_value| {
+                                switch (prop_value.data) {
+                                    .e_function => |func| {
+                                        const is_constructor = (prop.key.?.data == .e_string and prop.key.?.data.e_string.eqlComptime("constructor"));
+                                        for (func.func.args) |arg, i| {
+                                            for (arg.ts_decorators.ptr[0..arg.ts_decorators.len]) |arg_decorator| {
+                                                var decorators = if (is_constructor) class.ts_decorators.listManaged(p.allocator) else prop.ts_decorators.listManaged(p.allocator);
+                                                const args = p.allocator.alloc(Expr, 2) catch unreachable;
+                                                args[0] = p.e(E.Number{ .value = @intToFloat(f64, i) }, arg_decorator.loc);
+                                                args[1] = arg_decorator;
+                                                decorators.append(p.callRuntime(arg_decorator.loc, "__decorateParam", args)) catch unreachable;
+                                                if (is_constructor) {
+                                                    class.ts_decorators.update(decorators);
+                                                } else {
+                                                    prop.ts_decorators.update(decorators);
+                                                }
+                                            }
+                                        }
+                                    },
+                                    else => unreachable,
+                                }
+                            }
+                        }
+
+                        if (prop.flags.contains(.is_method)) {
+                            if (prop.key.?.data == .e_string and prop.key.?.data.e_string.eqlComptime("constructor")) {
+                                if (prop.value) |prop_value| {
+                                    switch (prop_value.data) {
+                                        .e_function => |func| {
+                                            constructor_function = func;
+                                        },
+                                        else => unreachable,
+                                    }
+                                }
+                            }
+                        }
+
+                        if (prop.ts_decorators.len > 0) {
+                            const loc = prop.key.?.loc;
+                            const descriptor_key = switch (prop.key.?.data) {
+                                .e_identifier => |k| p.e(E.Identifier{ .ref = k.ref }, loc),
+                                .e_number => |k| p.e(E.Number{ .value = k.value }, loc),
+                                .e_string => |k| p.e(E.String{ .data = k.data }, loc),
+                                else => undefined,
+                            };
+
+                            const descriptor_kind: f64 = if (!prop.flags.contains(.is_method)) 2 else 1;
+
+                            var target: Expr = undefined;
+                            if (prop.flags.contains(.is_static)) {
+                                p.recordUsage(class.class_name.?.ref.?);
+                                target = p.e(E.Identifier{ .ref = class.class_name.?.ref.? }, class.class_name.?.loc);
+                            } else {
+                                target = p.e(E.Dot{ .target = p.e(E.Identifier{ .ref = class.class_name.?.ref.? }, class.class_name.?.loc), .name = "prototype", .name_loc = loc }, loc);
+                            }
+
+                            const args = p.allocator.alloc(Expr, 4) catch unreachable;
+                            args[0] = p.e(E.Array{ .items = prop.ts_decorators }, loc);
+                            args[1] = target;
+                            args[2] = descriptor_key;
+                            args[3] = p.e(E.Number{ .value = descriptor_kind }, loc);
+
+                            const decorator = p.callRuntime(prop.key.?.loc, "__decorateClass", args);
+                            const decorator_stmt = p.s(S.SExpr{ .value = decorator }, decorator.loc);
+
+                            if (prop.flags.contains(.is_static)) {
+                                static_decorators.append(decorator_stmt) catch unreachable;
+                            } else {
+                                instance_decorators.append(decorator_stmt) catch unreachable;
+                            }
+                        }
+
+                        if (!prop.flags.contains(.is_method) and prop.key.?.data != .e_private_identifier and prop.ts_decorators.len > 0) {
+                            // remove decorated fields without initializers to avoid assigning undefined.
+                            const initializer = if (prop.initializer) |initializer_value| initializer_value else continue;
+
+                            var target: Expr = undefined;
+                            if (prop.flags.contains(.is_static)) {
+                                p.recordUsage(class.class_name.?.ref.?);
+                                target = p.e(E.Identifier{ .ref = class.class_name.?.ref.? }, class.class_name.?.loc);
+                            } else {
+                                target = p.e(E.This{}, prop.key.?.loc);
+                            }
+
+                            if (prop.flags.contains(.is_computed)) {
+                                target = p.e(E.Index{
+                                    .target = target,
+                                    .index = prop.key.?,
+                                }, prop.key.?.loc);
+                            } else {
+                                target = p.e(E.Dot{
+                                    .target = target,
+                                    .name = prop.key.?.data.e_string.data,
+                                    .name_loc = prop.key.?.loc,
+                                }, prop.key.?.loc);
+                            }
+
+                            // remove fields with decorators from class body. Move static members outside of class.
+                            if (prop.flags.contains(.is_static)) {
+                                static_members.append(Expr.assignStmt(target, initializer, p.allocator)) catch unreachable;
+                            } else {
+                                instance_members.append(Expr.assignStmt(target, initializer, p.allocator)) catch unreachable;
+                            }
+                            continue;
+                        }
+
+                        class_properties.append(prop.*) catch unreachable;
+                    }
+
+                    class.properties = class_properties.items;
+
+                    if (instance_members.items.len > 0 or class.extends != null) {
+                        if (constructor_function == null) {
+                            var properties = ListManaged(Property).fromOwnedSlice(p.allocator, class.properties);
+                            var constructor_stmts = ListManaged(Stmt).init(p.allocator);
+
+                            if (class.extends != null) {
+                                const target = p.e(E.Super{}, stmt.loc);
+                                const arguments_ref = p.newSymbol(.unbound, "arguments") catch unreachable;
+                                p.current_scope.generated.append(p.allocator, arguments_ref) catch unreachable;
+
+                                const super = p.e(E.Spread{ .value = p.e(E.Identifier{ .ref = arguments_ref }, stmt.loc) }, stmt.loc);
+                                const args = ExprNodeList.one(p.allocator, super) catch unreachable;
+
+                                constructor_stmts.append(p.s(S.SExpr{ .value = p.e(E.Call{ .target = target, .args = args }, stmt.loc) }, stmt.loc)) catch unreachable;
+                            }
+
+                            constructor_stmts.appendSlice(instance_members.items) catch unreachable;
+
+                            properties.insert(0, G.Property{
+                                .flags = Flags.Property.init(.{ .is_method = true }),
+                                .key = p.e(E.String{ .data = "constructor" }, stmt.loc),
+                                .value = p.e(E.Function{ .func = G.Fn{
+                                    .name = null,
+                                    .open_parens_loc = logger.Loc.Empty,
+                                    .args = &[_]Arg{},
+                                    .body = .{ .loc = stmt.loc, .stmts = constructor_stmts.items },
+                                    .flags = Flags.Function.init(.{}),
+                                } }, stmt.loc),
+                            }) catch unreachable;
+
+                            class.properties = properties.items;
+                        } else {
+                            var constructor_stmts = ListManaged(Stmt).fromOwnedSlice(p.allocator, constructor_function.?.func.body.stmts);
+                            // statements coming from class body inserted after super call or beginning of constructor.
+                            var has_super = false;
+                            for (constructor_stmts.items) |item, index| {
+                                if (item.data != .s_expr or item.data.s_expr.value.data != .e_call or item.data.s_expr.value.data.e_call.target.data != .e_super) continue;
+                                has_super = true;
+                                constructor_stmts.insertSlice(index + 1, instance_members.items) catch unreachable;
+                            }
+                            if (!has_super) {
+                                constructor_stmts.insertSlice(0, instance_members.items) catch unreachable;
+                            }
+
+                            constructor_function.?.func.body.stmts = constructor_stmts.items;
+                        }
+                    }
+
+                    var stmts_count: usize = 1 + static_members.items.len + instance_decorators.items.len + static_decorators.items.len;
+                    if (class.ts_decorators.len > 0) stmts_count += 1;
+                    var stmts = ListManaged(Stmt).initCapacity(p.allocator, stmts_count) catch unreachable;
+                    stmts.appendAssumeCapacity(stmt);
+                    stmts.appendSliceAssumeCapacity(static_members.items);
+                    stmts.appendSliceAssumeCapacity(instance_decorators.items);
+                    stmts.appendSliceAssumeCapacity(static_decorators.items);
+                    if (class.ts_decorators.len > 0) {
+                        const args = p.allocator.alloc(Expr, 2) catch unreachable;
+                        args[0] = p.e(E.Array{ .items = class.ts_decorators }, stmt.loc);
+                        args[1] = p.e(E.Identifier{ .ref = class.class_name.?.ref.? }, class.class_name.?.loc);
+
+                        stmts.appendAssumeCapacity(Expr.assignStmt(
+                            p.e(E.Identifier{ .ref = class.class_name.?.ref.? }, class.class_name.?.loc),
+                            p.callRuntime(stmt.loc, "__decorateClass", args),
+                            p.allocator,
+                        ));
+
+                        p.recordUsage(class.class_name.?.ref.?);
+                        p.recordUsage(class.class_name.?.ref.?);
+                    }
+                    return stmts.items;
                 },
                 .expr => |expr| {
                     var stmts = p.allocator.alloc(Stmt, 1) catch unreachable;

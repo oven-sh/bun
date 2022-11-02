@@ -3835,41 +3835,32 @@ Bun v0.2.3 added `JSCallback` which lets you create JavaScript callback function
 import { dlopen, JSCallback } from "bun:ffi";
 
 const {
-  symbols: { setOnResolve, setOnReject },
+  symbols: { search },
+  close,
 } = dlopen("libmylib", {
-  setOnResolve: {
-    returns: "bool",
-    args: ["function"],
-  },
-  setOnReject: {
-    returns: "bool",
-    args: ["function"],
+  search: {
+    returns: "usize",
+    args: ["cstring", "callback"],
   },
 });
 
-const onResolve = new JSCallback(
+const searchIterator = new JSCallback(
+  (ptr, length) => Buffer.from(ptr, length, "utf8").toString().test(/wut/i),
   {
     returns: "bool",
-    args: ["i32"],
-  },
-  (arg) => arg === 42
+    args: ["ptr", "usize"],
+  }
 );
 
-const onReject = new JSCallback(
-  {
-    returns: "bool",
-    args: ["i32"],
-  },
-  (arg) => arg > 42
-);
-
-setOnResolve(onResolve);
-setOnReject(onReject);
+const str = Buffer.from("wwutwutwutwutwutwutwutwutwutwutut\0", "utf8");
+if (search(ptr(str), searchIterator)) {
+  // found a match!
+}
 
 // Sometime later:
 setTimeout(() => {
-  onResolve.close();
-  onReject.close();
+  searchIterator.close();
+  close();
 }, 5000);
 ```
 
@@ -3878,13 +3869,10 @@ When you're done with a JSCallback, you should call `close()` to free the memory
 For a slight performance boost, directly pass `JSCallback.prototype.ptr` instead of the `JSCallback` object:
 
 ```ts
-const onResolve = new JSCallback(
-  {
-    returns: "bool",
-    args: ["i32"],
-  },
-  (arg) => arg === 42
-);
+const onResolve = new JSCallback((arg) => arg === 42, {
+  returns: "bool",
+  args: ["i32"],
+});
 const setOnResolve = new CFunction({
   returns: "bool",
   args: ["function"],

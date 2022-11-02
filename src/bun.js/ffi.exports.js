@@ -16,7 +16,7 @@ delete ffi.callback;
 delete ffi.closeCallback;
 
 export class JSCallback {
-  constructor(options, cb) {
+  constructor(cb, options) {
     const { ctx, ptr } = nativeCallback(options, cb);
     this.#ctx = ctx;
     this.ptr = ptr;

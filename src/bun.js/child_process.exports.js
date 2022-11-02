@@ -1,5 +1,11 @@
 const EventEmitter = import.meta.require("node:events");
 const { Readable } = import.meta.require("node:stream");
+const {
+  constants: { signals },
+} = import.meta.require("node:os");
+const assert = import.meta.require("node:assert");
+
+const debug = process.env.DEBUG ? console.log : () => {};
 
 // Sections:
 // 1. Exported child_process functions
@@ -7,19 +13,33 @@ const { Readable } = import.meta.require("node:stream");
 // 3. ChildProcess "class"
 // 4. ChildProcess helpers
 // 5. Validators
-// 6. Node error polyfills
+// 6. Primordials
+// 7. Random utilities
+// 8. Node errors / error polyfills
 
 // TODO:
-// Add stdin support
-// Add timeout support
-// Add encoding support
-// Check if Bun.spawn launches a shell
-// IPC support
+// Make commit
+// Port some tests for spawn
+// Make commit / push
+// ------------------------------
+// Make sure stdin works as expected (Writeable API)
 // Add more tests
-// Implement various stdio options
-// Finish getValidStdio
-// Make sure flushStdio is working
-// Finish normalizing spawn args
+// Check if need to handle spawn error
+// ------------------------------
+// TODO: Look at Pipe to see if we can support passing Node Pipe objects to stdio param
+
+// TODO: Add these params after support added in Bun.spawn
+// uid <number> Sets the user identity of the process (see setuid(2)).
+// gid <number> Sets the group identity of the process (see setgid(2)).
+// detached <boolean> Prepare child to run independently of its parent process. Specific behavior depends on the platform, see options.detached).
+
+// TODO: After IPC channels can be opened
+// serialization <string> Specify the kind of serialization used for sending messages between processes. Possible values are 'json' and 'advanced'. See Advanced serialization for more details. Default: 'json'.
+
+// TODO: Add support for ipc option, verify only one IPC channel in array
+// stdio <Array> | <string> Child's stdio configuration (see options.stdio).
+// Support wrapped ipc types (e.g. net.Socket, dgram.Socket, TTY, etc.)
+// IPC FD passing support
 
 // From node child_process docs(https://nodejs.org/api/child_process.html#optionsstdio):
 // 'ipc': Create an IPC channel for passing messages/file descriptors between parent and child.
@@ -34,15 +54,6 @@ const { Readable } = import.meta.require("node:stream");
 // TODO: Implement these props when Windows is supported
 // *   windowsVerbatimArguments?: boolean;
 // *   windowsHide?: boolean;
-
-// TODO:
-// argv0 support
-// Detached child process support
-// Allow setting uid and gid
-// Advanced serialization of IPC messages
-// Shell support
-// Abort signal
-// Kill signal
 
 // Copyright Joyent, Inc. and other Node contributors.
 //
@@ -64,6 +75,10 @@ const { Readable } = import.meta.require("node:stream");
 // DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR
 // OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE
 // USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+// TODO: Validate kill process works (don't need to await?)
+// TODO: Test kill signal
+// TODO: Test abort signal
 
 /**
  * Spawns a new process using the given `file`.
@@ -87,12 +102,12 @@ const { Readable } = import.meta.require("node:stream");
  */
 export function spawn(file, args, options) {
   options = normalizeSpawnArguments(file, args, options);
-  // validateTimeout(options.timeout);
-  // validateAbortSignal(options.signal, "options.signal");
-  // const killSignal = sanitizeKillSignal(options.killSignal);
+  validateTimeout(options.timeout);
+  validateAbortSignal(options.signal, "options.signal");
+  const killSignal = sanitizeKillSignal(options.killSignal);
   const child = new ChildProcess();
 
-  // debug('spawn', options);
+  debug("spawn", options);
   child.spawn(options);
 
   if (options.timeout > 0) {
@@ -115,34 +130,72 @@ export function spawn(file, args, options) {
     });
   }
 
-  // if (options.signal) {
-  //   const signal = options.signal;
-  //   if (signal.aborted) {
-  //     process.nextTick(onAbortListener);
-  //   } else {
-  //     signal.addEventListener("abort", onAbortListener, { once: true });
-  //     child.once("exit", () =>
-  //       signal.removeEventListener("abort", onAbortListener)
-  //     );
-  //   }
+  if (options.signal) {
+    const signal = options.signal;
+    if (signal.aborted) {
+      process.nextTick(onAbortListener);
+    } else {
+      signal.addEventListener("abort", onAbortListener, { once: true });
+      child.once("exit", () =>
+        signal.removeEventListener("abort", onAbortListener)
+      );
+    }
 
-  //   function onAbortListener() {
-  //     abortChildProcess(child, killSignal);
-  //   }
-  // }
+    function onAbortListener() {
+      abortChildProcess(child, killSignal);
+    }
+  }
   return child;
 }
 
 //------------------------------------------------------------------------------
 // Section 2. child_process helpers
 //------------------------------------------------------------------------------
+let signalsToNamesMapping;
+function getSignalsToNamesMapping() {
+  if (signalsToNamesMapping !== undefined) return signalsToNamesMapping;
+
+  signalsToNamesMapping = ObjectCreate(null);
+  for (const key in signals) {
+    signalsToNamesMapping[signals[key]] = key;
+  }
+
+  return signalsToNamesMapping;
+}
+
+function convertToValidSignal(signal) {
+  if (typeof signal === "number" && getSignalsToNamesMapping()[signal])
+    return signal;
+
+  if (typeof signal === "string") {
+    const signalName = signals[StringPrototypeToUpperCase.call(signal)];
+    if (signalName) return signalName;
+  }
+
+  throw new ERR_UNKNOWN_SIGNAL(signal);
+}
+
+function sanitizeKillSignal(killSignal) {
+  if (typeof killSignal === "string" || typeof killSignal === "number") {
+    return convertToValidSignal(killSignal);
+  } else if (killSignal != null) {
+    throw new ERR_INVALID_ARG_TYPE(
+      "options.killSignal",
+      ["string", "number"],
+      killSignal
+    );
+  }
+}
 
 function normalizeSpawnArguments(file, args, options) {
+  validateString(file, "file");
+  validateArgumentNullCheck(file, "file");
+
   if (file.length === 0)
     throw new ERR_INVALID_ARG_VALUE("file", file, "cannot be empty");
 
   if (ArrayIsArray(args)) {
-    args = ArrayPrototypeSlice(args);
+    args = ArrayPrototypeSlice.call(args);
   } else if (args == null) {
     args = [];
   } else if (typeof args !== "object") {
@@ -152,218 +205,130 @@ function normalizeSpawnArguments(file, args, options) {
     args = [];
   }
 
-  // validateArgumentsNullCheck(args, "args");
+  validateArgumentsNullCheck(args, "args");
 
-  if (options == null) {
-    options = {};
-  } else if (typeof options !== "object") {
-    throw new ERR_INVALID_ARG_TYPE("options", "Object", options);
+  if (options === undefined) options = {};
+  else validateObject(options, "options");
+
+  let cwd = options.cwd;
+
+  // Validate the cwd, if present.
+  if (cwd != null) {
+    cwd = getValidatedPath(cwd, "options.cwd");
   }
 
-  validateString(file, "file");
-  validateArray(args, "args");
-  validateObject(options, "options");
+  // TODO: Detached check
+  // TODO: Gid check
+  // TODO: Uid check
 
-  return { ...options, file, args };
+  // Validate the shell, if present.
+  if (
+    options.shell != null &&
+    typeof options.shell !== "boolean" &&
+    typeof options.shell !== "string"
+  ) {
+    throw new ERR_INVALID_ARG_TYPE(
+      "options.shell",
+      ["boolean", "string"],
+      options.shell
+    );
+  }
+
+  // Validate argv0, if present.
+  if (options.argv0 != null) {
+    validateString(options.argv0, "options.argv0");
+    validateArgumentNullCheck(options.argv0, "options.argv0");
+  }
+
+  // TODO: Windows checks for Windows specific options
+
+  // Handle shell
+  if (options.shell) {
+    validateArgumentNullCheck(options.shell, "options.shell");
+    const command = ArrayPrototypeJoin.call([file, ...args], " ");
+    // TODO: Windows moment
+    // Set the shell, switches, and commands.
+    // if (process.platform === "win32") {
+    //   if (typeof options.shell === "string") file = options.shell;
+    //   else file = process.env.comspec || "cmd.exe";
+    //   // '/d /s /c' is used only for cmd.exe.
+    //   if (RegExpPrototypeExec(/^(?:.*\\)?cmd(?:\.exe)?$/i, file) !== null) {
+    //     args = ["/d", "/s", "/c", `"${command}"`];
+    //     windowsVerbatimArguments = true;
+    //   } else {
+    //     args = ["-c", command];
+    //   }
+    // } else {
+    if (typeof options.shell === "string") file = options.shell;
+    else if (process.platform === "android") file = "sh";
+    else file = "sh";
+    args = ["-c", command];
+    // }
+  }
+
+  // Handle argv0
+  if (typeof options.argv0 === "string") {
+    ArrayPrototypeUnshift.call(args, options.argv0);
+  } else {
+    ArrayPrototypeUnshift.call(args, file);
+  }
+
+  const env = options.env || process.env;
+  const envPairs = [];
+
+  // // process.env.NODE_V8_COVERAGE always propagates, making it possible to
+  // // collect coverage for programs that spawn with white-listed environment.
+  // copyProcessEnvToEnv(env, "NODE_V8_COVERAGE", options.env);
+
+  let envKeys = [];
+  // Prototype values are intentionally included.
+  for (const key in env) {
+    ArrayPrototypePush.call(envKeys, key);
+  }
+
+  // TODO: Windows env support here...
+
+  for (const key of envKeys) {
+    const value = env[key];
+    if (value !== undefined) {
+      validateArgumentNullCheck(key, `options.env['${key}']`);
+      validateArgumentNullCheck(value, `options.env['${key}']`);
+      ArrayPrototypePush.call(envPairs, `${key}=${value}`);
+    }
+  }
+
+  return { ...options, file, args, cwd, envPairs };
 }
-
-// function normalizeSpawnArguments(file, args, options) {
-//   validateString(file, "file");
-//   validateArgumentNullCheck(file, "file");
-
-//   if (file.length === 0)
-//     throw new ERR_INVALID_ARG_VALUE("file", file, "cannot be empty");
-
-//   if (ArrayIsArray(args)) {
-//     args = ArrayPrototypeSlice(args);
-//   } else if (args == null) {
-//     args = [];
-//   } else if (typeof args !== "object") {
-//     throw new ERR_INVALID_ARG_TYPE("args", "object", args);
-//   } else {
-//     options = args;
-//     args = [];
-//   }
-
-//   validateArgumentsNullCheck(args, "args");
-
-//   if (options === undefined) options = kEmptyObject;
-//   else validateObject(options, "options");
-
-//   let cwd = options.cwd;
-
-//   // Validate the cwd, if present.
-//   if (cwd != null) {
-//     cwd = getValidatedPath(cwd, "options.cwd");
-//   }
-
-//   // Validate detached, if present.
-//   if (options.detached != null) {
-//     validateBoolean(options.detached, "options.detached");
-//   }
-
-//   // Validate the uid, if present.
-//   if (options.uid != null && !isInt32(options.uid)) {
-//     throw new ERR_INVALID_ARG_TYPE("options.uid", "int32", options.uid);
-//   }
-
-//   // Validate the gid, if present.
-//   if (options.gid != null && !isInt32(options.gid)) {
-//     throw new ERR_INVALID_ARG_TYPE("options.gid", "int32", options.gid);
-//   }
-
-//   // Validate the shell, if present.
-//   if (
-//     options.shell != null &&
-//     typeof options.shell !== "boolean" &&
-//     typeof options.shell !== "string"
-//   ) {
-//     throw new ERR_INVALID_ARG_TYPE(
-//       "options.shell",
-//       ["boolean", "string"],
-//       options.shell
-//     );
-//   }
-
-//   // Validate argv0, if present.
-//   if (options.argv0 != null) {
-//     validateString(options.argv0, "options.argv0");
-//     validateArgumentNullCheck(options.argv0, "options.argv0");
-//   }
-
-//   // // Validate windowsHide, if present.
-//   // if (options.windowsHide != null) {
-//   //   validateBoolean(options.windowsHide, "options.windowsHide");
-//   // }
-
-//   // // Validate windowsVerbatimArguments, if present.
-//   // let { windowsVerbatimArguments } = options;
-//   // if (windowsVerbatimArguments != null) {
-//   //   validateBoolean(
-//   //     windowsVerbatimArguments,
-//   //     "options.windowsVerbatimArguments"
-//   //   );
-//   // }
-
-//   if (options.shell) {
-//     validateArgumentNullCheck(options.shell, "options.shell");
-//     const command = ArrayPrototypeJoin([file, ...args], " ");
-//     // Set the shell, switches, and commands.
-//     if (process.platform === "win32") {
-//       if (typeof options.shell === "string") file = options.shell;
-//       else file = process.env.comspec || "cmd.exe";
-//       // '/d /s /c' is used only for cmd.exe.
-//       if (RegExpPrototypeExec(/^(?:.*\\)?cmd(?:\.exe)?$/i, file) !== null) {
-//         args = ["/d", "/s", "/c", `"${command}"`];
-//         windowsVerbatimArguments = true;
-//       } else {
-//         args = ["-c", command];
-//       }
-//     } else {
-//       if (typeof options.shell === "string") file = options.shell;
-//       else if (process.platform === "android") file = "/system/bin/sh";
-//       else file = "/bin/sh";
-//       args = ["-c", command];
-//     }
-//   }
-
-//   if (typeof options.argv0 === "string") {
-//     ArrayPrototypeUnshift(args, options.argv0);
-//   } else {
-//     ArrayPrototypeUnshift(args, file);
-//   }
-
-//   const env = options.env || process.env;
-//   const envPairs = [];
-
-//   // process.env.NODE_V8_COVERAGE always propagates, making it possible to
-//   // collect coverage for programs that spawn with white-listed environment.
-//   copyProcessEnvToEnv(env, "NODE_V8_COVERAGE", options.env);
-
-//   let envKeys = [];
-//   // Prototype values are intentionally included.
-//   for (const key in env) {
-//     ArrayPrototypePush(envKeys, key);
-//   }
-
-//   if (process.platform === "win32") {
-//     // On Windows env keys are case insensitive. Filter out duplicates,
-//     // keeping only the first one (in lexicographic order)
-//     const sawKey = new SafeSet();
-//     envKeys = ArrayPrototypeFilter(ArrayPrototypeSort(envKeys), (key) => {
-//       const uppercaseKey = StringPrototypeToUpperCase(key);
-//       if (sawKey.has(uppercaseKey)) {
-//         return false;
-//       }
-//       sawKey.add(uppercaseKey);
-//       return true;
-//     });
-//   }
-
-//   for (const key of envKeys) {
-//     const value = env[key];
-//     if (value !== undefined) {
-//       validateArgumentNullCheck(key, `options.env['${key}']`);
-//       validateArgumentNullCheck(value, `options.env['${key}']`);
-//       ArrayPrototypePush(envPairs, `${key}=${value}`);
-//     }
-//   }
-
-//   return {
-//     // Make a shallow copy so we don't clobber the user's options object.
-//     ...options,
-//     args,
-//     cwd,
-//     detached: !!options.detached,
-//     envPairs,
-//     file,
-//     // windowsHide: !!options.windowsHide,
-//     // windowsVerbatimArguments: !!windowsVerbatimArguments,
-//   };
-// }
 
 //------------------------------------------------------------------------------
 // Section 3. ChildProcess class
 //------------------------------------------------------------------------------
-
-// TODO:
-// AFTER IPC
-// `disconnect` event
-// `message` event
 export class ChildProcess extends EventEmitter {
-  constructor() {
-    super();
-    this._closesNeeded = 0;
-    this._closesGot = 0;
-    this.connected = false;
-    this.signalCode = null;
-    this.exitCode = null;
-    this.killed = false;
-    this.spawnfile = undefined;
-    this.spawnargs = undefined;
-    this.pid = undefined;
-    this.stdin = undefined;
-    this.stdout = undefined;
-    this.stderr = undefined;
-    this.stdio = undefined;
-    this.channel = undefined;
-    this._handle = undefined;
-    this._handleQueue = undefined;
-    this._pendingMessage = undefined;
-    this._pendingHandle = undefined;
-    this._channel = undefined;
-    this._serialization = undefined;
-    this._eventsCount = undefined;
-    this._events = undefined;
-    this._error = null;
-    this._maxListeners = undefined;
-    this._exited = false;
+  #exited = false;
+  #handle = undefined;
+  #closesNeeded = 0;
+  #closesGot = 0;
 
-    this._handleOnExit = this._handleOnExit.bind(this);
-  }
+  connected = false;
+  signalCode = null;
+  exitCode = null;
+  killed = false;
+  spawnfile = undefined;
+  spawnargs = undefined;
+  pid = undefined;
+  stdin = undefined;
+  stdout = undefined;
+  stderr = undefined;
+  stdio = undefined;
+  channel = undefined;
 
-  _handleOnExit(exitCode, signalCode) {
-    if (this._exited) return;
+  // constructor(options) {
+  //   super(options);
+  //   this.#handle[owner_symbol] = this;
+  // }
+
+  #handleOnExit(exitCode, signalCode) {
+    if (this.#exited) return;
     if (signalCode) {
       this.signalCode = signalCode;
     } else {
@@ -373,8 +338,8 @@ export class ChildProcess extends EventEmitter {
     if (this.stdin) {
       this.stdin.destroy();
     }
-    if (this._handle) {
-      this._handle = null;
+    if (this.#handle) {
+      this.#handle = null;
     }
 
     if (exitCode < 0) {
@@ -383,7 +348,7 @@ export class ChildProcess extends EventEmitter {
 
       if (this.spawnfile) err.path = this.spawnfile;
 
-      err.spawnargs = ArrayPrototypeSlice(this.spawnargs, 1);
+      err.spawnargs = ArrayPrototypeSlice.call(this.spawnargs, 1);
       this.emit("error", err);
     } else {
       this.emit("exit", this.exitCode, this.signalCode);
@@ -397,10 +362,9 @@ export class ChildProcess extends EventEmitter {
     // start reading the data once the process exits.
     process.nextTick(flushStdio, this);
 
-    maybeClose(this);
-    this._exited = true;
+    this.#maybeClose();
+    this.#exited = true;
   }
-  // this._handle[owner_symbol] = this;
 
   spawn(options) {
     validateObject(options, "options");
@@ -417,8 +381,8 @@ export class ChildProcess extends EventEmitter {
     //   if (options.envPairs === undefined) options.envPairs = [];
     //   else validateArray(options.envPairs, "options.envPairs");
 
-    //   ArrayPrototypePush(options.envPairs, `NODE_CHANNEL_FD=${ipcFd}`);
-    //   ArrayPrototypePush(
+    //   ArrayPrototypePush.call(options.envPairs, `NODE_CHANNEL_FD=${ipcFd}`);
+    //   ArrayPrototypePush.call(
     //     options.envPairs,
     //     `NODE_CHANNEL_SERIALIZATION_MODE=${serialization}`
     //   );
@@ -434,27 +398,39 @@ export class ChildProcess extends EventEmitter {
       this.spawnargs = options.args;
     }
 
-    this._handle = Bun.spawn({
-      cmd: [this.spawnfile, ...this.spawnargs],
-      stdin: "pipe", // TODO: Unhardcode
-      stdout: "pipe", // TODO: Unhardcode
-      stderr: "pipe", // TODO: Unhardcode
-      onExit: this._handleOnExit,
+    const stdio = options.stdio || "pipe";
+    const bunStdio = getBunStdioOptions(stdio);
+
+    console.log(this.spawnargs);
+
+    this.#handle = Bun.spawn({
+      cmd: [...this.spawnargs],
+      stdin: bunStdio[0],
+      stdout: bunStdio[1],
+      stderr: bunStdio[2],
+      cwd: options.cwd || undefined,
+      env: options.envPairs || undefined,
+      onExit: this.#handleOnExit.bind(this),
     });
 
-    this.stdout = Readable.fromWeb(this._handle.stdout, {
-      encoding: "utf8",
-    });
-    this.stderr = Readable.fromWeb(this._handle.stderr, {
-      encoding: "utf8",
-    });
-    // Put the readables into flowing mode by default...
-    // This only means that when you connect an on('data') handler,
-    // that they will automatically start receiving data events
-    // const err = this._handle.spawn(options);
+    // TODO: Handle stdin
+    this.stdin = bunStdio[0] ? undefined : null;
+
+    this.stdout = bunStdio[1]
+      ? Readable.fromWeb(this.#handle.stdout, {
+          encoding: "utf8",
+        })
+      : null;
+
+    this.stderr = bunStdio[2]
+      ? Readable.fromWeb(this.#handle.stderr, {
+          encoding: "utf8",
+        })
+      : null;
+
     process.nextTick(onSpawnNT, this);
 
-    this.pid = this._handle.pid;
+    this.pid = this.#handle.pid;
 
     // If no `stdio` option was given - use default
     // let stdio = options.stdio || "pipe"; // TODO: reset default
@@ -513,7 +489,7 @@ export class ChildProcess extends EventEmitter {
     // this.stdio = [];
 
     // for (i = 0; i < stdio.length; i++)
-    //   ArrayPrototypePush(
+    //   ArrayPrototypePush.call(
     //     this.stdio,
     //     stdio[i].socket === undefined ? null : stdio[i].socket
     //   );
@@ -522,56 +498,117 @@ export class ChildProcess extends EventEmitter {
     // if (ipc !== undefined) setupChannel(this, ipc, serialization);
   }
 
-  kill(signal) {
-    if (this.killed) return;
+  kill(sig) {
+    const signal =
+      sig === 0
+        ? sig
+        : convertToValidSignal(sig === undefined ? "SIGTERM" : sig);
 
-    if (this._handle) {
-      this._handle.kill(signal);
+    if (this.#handle) {
+      this.#handle.kill(signal);
     }
 
     this.killed = true;
     this.emit("exit", null, signal);
-    maybeClose(this);
+    this.#maybeClose();
 
-    // const signal =
-    //   sig === 0
-    //     ? sig
-    //     : convertToValidSignal(sig === undefined ? "SIGTERM" : sig);
+    return this.#handle.killed;
+  }
 
-    // if (this._handle) {
-    //   const err = this._handle.kill(signal);
-    //   if (err === 0) {
-    //     /* Success. */
-    //     this.killed = true;
-    //     return true;
-    //   }
-    //   if (err === UV_ESRCH) {
-    //     /* Already dead. */
-    //   } else if (err === UV_EINVAL || err === UV_ENOSYS) {
-    //     /* The underlying platform doesn't support this signal. */
-    //     throw errnoException(err, 'kill');
-    //   } else {
-    //     /* Other error, almost certainly EPERM. */
-    //     this.emit('error', errnoException(err, 'kill'));
-    //   }
-    // }
+  #maybeClose() {
+    this.#closesGot++;
 
-    // /* Kill didn't succeed. */
-    // return false;
+    if (this.#closesGot === this.#closesNeeded) {
+      this.emit("close", this.exitCode, this.signalCode);
+    }
   }
 
   ref() {
-    if (this._handle) this._handle.ref();
+    if (this.#handle) this.#handle.ref();
   }
 
   unref() {
-    if (this._handle) this._handle.unref();
+    if (this.#handle) this.#handle.unref();
   }
 }
 
 //------------------------------------------------------------------------------
 // Section 4. ChildProcess helpers
 //------------------------------------------------------------------------------
+const nodeToBunLookup = {
+  ignore: null,
+  pipe: "pipe",
+  overlapped: "pipe", // TODO: this may need to work differently for Windows
+  inherit: "inherit",
+};
+
+function nodeToBun(item) {
+  // If inherit and we are referencing stdin/stdout/stderr index,
+  // we can get the fd from the ReadStream for the corresponding stdio
+  if (typeof item === "number") {
+    return item;
+  } else {
+    const result = nodeToBunLookup[item];
+    if (result === undefined) throw new Error("Invalid stdio option");
+    return result;
+  }
+}
+
+function getBunStdioOptions(stdio) {
+  const normalizedStdio = normalizeStdio(stdio);
+  // Node options:
+  // pipe: just a pipe
+  // ipc = can only be one in array
+  // overlapped -- same as pipe on Unix based systems
+  // inherit -- 'inherit': equivalent to ['inherit', 'inherit', 'inherit'] or [0, 1, 2]
+  // ignore -- > /dev/null, more or less same as null option for Bun.spawn stdio
+  // TODO: Stream -- use this stream
+  // number -- used as FD
+  // null, undefined: Use default value. Not same as ignore, which is Bun.spawn null.
+  // null/undefined: For stdio fds 0, 1, and 2 (in other words, stdin, stdout, and stderr) a pipe is created. For fd 3 and up, the default is 'ignore'
+
+  // Important Bun options
+  // pipe
+  // fd
+  // null - no stdin/stdout/stderr
+
+  // Translations: node -> bun
+  // pipe -> pipe
+  // overlapped -> pipe
+  // ignore -> null
+  // inherit -> inherit (stdin/stdout/stderr)
+  // Stream -> throw err for now
+
+  return normalizedStdio.map((item) => nodeToBun(item));
+}
+
+function normalizeStdio(stdio) {
+  if (typeof stdio === "string") {
+    switch (stdio) {
+      case "ignore":
+        return ["ignore", "ignore", "ignore"];
+      case "pipe":
+        return ["pipe", "pipe", "pipe"];
+      case "inherit":
+        return ["inherit", "inherit", "inherit"];
+      default:
+        throw new ERR_INVALID_OPT_VALUE("stdio", stdio);
+    }
+  } else if (ArrayIsArray(stdio)) {
+    // Validate if each is a valid stdio type
+    // TODO: Support wrapped types here
+
+    let processedStdio;
+    if (stdio.length === 0) processedStdio = ["pipe", "pipe", "pipe"];
+    else if (stdio.length === 1) processedStdio = [stdio[0], "pipe", "pipe"];
+    else if (stdio.length === 2) processedStdio = [stdio[0], stdio[1], "pipe"];
+    else if (stdio.length >= 3) processedStdio = [stdio[0], stdio[1], stdio[2]];
+
+    return processedStdio.map((item) => (!item ? "pipe" : item));
+  } else {
+    throw new ERR_INVALID_OPT_VALUE("stdio", stdio);
+  }
+}
 
 function flushStdio(subprocess) {
   const stdio = subprocess.stdio;
@@ -594,167 +631,6 @@ function onSpawnNT(self) {
   self.emit("spawn");
 }
 
-// TODO: Deps for getValidStdio():
-// stdioStringToArray
-// Pipe
-// ERR_IPC_ONE_PIPE
-// PipeConstants.SOCKET
-// inspect
-// getHandleWrapType
-
-// function getValidStdio(stdio, sync) {
-//   let ipc;
-//   let ipcFd;
-
-//   // Replace shortcut with an array
-//   if (typeof stdio === "string") {
-//     stdio = stdioStringToArray(stdio);
-//   } else if (!ArrayIsArray(stdio)) {
-//     throw new ERR_INVALID_ARG_VALUE("stdio", stdio);
-//   }
-
-//   // At least 3 stdio will be created
-//   // Don't concat() a new Array() because it would be sparse, and
-//   // stdio.reduce() would skip the sparse elements of stdio.
-//   // See https://stackoverflow.com/a/5501711/3561
-//   while (stdio.length < 3) ArrayPrototypePush(stdio, undefined);
-
-//   // Translate stdio into C++-readable form
-//   // (i.e. PipeWraps or fds)
-//   stdio = ArrayPrototypeReduce(
-//     stdio,
-//     (acc, stdio, i) => {
-//       function cleanup() {
-//         for (let i = 0; i < acc.length; i++) {
-//           if (
-//             (acc[i].type === "pipe" || acc[i].type === "ipc") &&
-//             acc[i].handle
-//           )
-//             acc[i].handle.close();
-//         }
-//       }
-
-//       // Defaults
-//       if (stdio == null) {
-//         stdio = i < 3 ? "pipe" : "ignore";
-//       }
-
-//       if (stdio === "ignore") {
-//         ArrayPrototypePush(acc, { type: "ignore" });
-//       } else if (
-//         stdio === "pipe" ||
-//         stdio === "overlapped" ||
-//         (typeof stdio === "number" && stdio < 0)
-//       ) {
-//         const a = {
-//           type: stdio === "overlapped" ? "overlapped" : "pipe",
-//           readable: i === 0,
-//           writable: i !== 0,
-//         };
-
-//         if (!sync) a.handle = new Pipe(PipeConstants.SOCKET);
-
-//         ArrayPrototypePush(acc, a);
-//       } else if (stdio === "ipc") {
-//         if (sync || ipc !== undefined) {
-//           // Cleanup previously created pipes
-//           cleanup();
-//           if (!sync) throw new ERR_IPC_ONE_PIPE();
-//           else throw new ERR_IPC_SYNC_FORK();
-//         }
-
-//         ipc = new Pipe(PipeConstants.IPC);
-//         ipcFd = i;
-
-//         ArrayPrototypePush(acc, {
-//           type: "pipe",
-//           handle: ipc,
-//           ipc: true,
-//         });
-//       } else if (stdio === "inherit") {
-//         ArrayPrototypePush(acc, {
-//           type: "inherit",
-//           fd: i,
-//         });
-//       } else if (typeof stdio === "number" || typeof stdio.fd === "number") {
-//         ArrayPrototypePush(acc, {
-//           type: "fd",
-//           fd: typeof stdio === "number" ? stdio : stdio.fd,
-//         });
-//       } else if (
-//         getHandleWrapType(stdio) ||
-//         getHandleWrapType(stdio.handle) ||
-//         getHandleWrapType(stdio._handle)
-//       ) {
-//         const handle = getHandleWrapType(stdio)
-//           ? stdio
-//           : getHandleWrapType(stdio.handle)
-//           ? stdio.handle
-//           : stdio._handle;
-
-//         ArrayPrototypePush(acc, {
-//           type: "wrap",
-//           wrapType: getHandleWrapType(handle),
-//           handle: handle,
-//           _stdio: stdio,
-//         });
-//       } else if (isArrayBufferView(stdio) || typeof stdio === "string") {
-//         if (!sync) {
-//           cleanup();
-//           throw new ERR_INVALID_SYNC_FORK_INPUT(inspect(stdio));
-//         }
-//       } else {
-//         // Cleanup
-//         cleanup();
-//         throw new ERR_INVALID_ARG_VALUE("stdio", stdio);
-//       }
-
-//       return acc;
-//     },
-//     []
-//   );
-
-//   return { stdio, ipc, ipcFd };
-// }
-
-function stdioStringToArray(stdio, channel) {
-  const options = [];
-
-  switch (stdio) {
-    case "ignore":
-    case "overlapped":
-    case "pipe":
-      ArrayPrototypePush(options, stdio, stdio, stdio);
-      break;
-    case "inherit":
-      ArrayPrototypePush(options, 0, 1, 2);
-      break;
-    default:
-      throw new ERR_INVALID_ARG_VALUE("stdio", stdio);
-  }
-
-  if (channel) ArrayPrototypePush(options, channel);
-
-  return options;
-}
-
-function getHandleWrapType(stream) {
-  if (stream instanceof Pipe) return "pipe";
-  if (stream instanceof TTY) return "tty";
-  if (stream instanceof TCP) return "tcp";
-  if (stream instanceof UDP) return "udp";
-
-  return false;
-}
-
-function maybeClose(subprocess) {
-  subprocess._closesGot++;
-
-  if (subprocess._closesGot === subprocess._closesNeeded) {
-    subprocess.emit("close", subprocess.exitCode, subprocess.signalCode);
-  }
-}
-
 function abortChildProcess(child, killSignal) {
   if (!child) return;
   try {
@@ -770,10 +646,48 @@ function abortChildProcess(child, killSignal) {
 // Section 5. Validators
 //------------------------------------------------------------------------------
 
+function validateArgumentNullCheck(arg, propName) {
+  if (typeof arg === "string" && StringPrototypeIncludes.call(arg, "\u0000")) {
+    throw new ERR_INVALID_ARG_VALUE(
+      propName,
+      arg,
+      "must be a string without null bytes"
+    );
+  }
+}
+
+function validateArgumentsNullCheck(args, propName) {
+  for (let i = 0; i < args.length; ++i) {
+    validateArgumentNullCheck(args[i], `${propName}[${i}]`);
+  }
+}
+
+function validateTimeout(timeout) {
+  if (timeout != null && !(NumberIsInteger(timeout) && timeout >= 0)) {
+    throw new ERR_OUT_OF_RANGE("timeout", "an unsigned integer", timeout);
+  }
+}
+
 function validateBoolean(value, name) {
   if (typeof value !== "boolean")
     throw new ERR_INVALID_ARG_TYPE(name, "boolean", value);
 }
+
+/**
+ * @callback validateAbortSignal
+ * @param {*} signal
+ * @param {string} name
+ */
+
+/** @type {validateAbortSignal} */
+const validateAbortSignal = (signal, name) => {
+  if (
+    signal !== undefined &&
+    (signal === null || typeof signal !== "object" || !("aborted" in signal))
+  ) {
+    throw new ERR_INVALID_ARG_TYPE(name, "AbortSignal", signal);
+  }
+};
 
 /**
  * @callback validateOneOf
@@ -786,9 +700,9 @@ function validateBoolean(value, name) {
 /** @type {validateOneOf} */
 const validateOneOf = (value, name, oneOf) => {
   // const validateOneOf = hideStackFrames((value, name, oneOf) => {
-  if (!ArrayPrototypeIncludes(oneOf, value)) {
-    const allowed = ArrayPrototypeJoin(
-      ArrayPrototypeMap(oneOf, (v) =>
+  if (!ArrayPrototypeIncludes.call(oneOf, value)) {
+    const allowed = ArrayPrototypeJoin.call(
+      ArrayPrototypeMap.call(oneOf, (v) =>
         typeof v === "string" ? `'${v}'` : String(v)
       ),
       ", "
@@ -821,7 +735,7 @@ const validateObject = (value, name, options = null) => {
   const nullable = getOwnPropertyValueOrDefault(options, "nullable", false);
   if (
     (!nullable && value === null) ||
-    (!allowArray && ArrayIsArray(value)) ||
+    (!allowArray && ArrayIsArray.call(value)) ||
     (typeof value !== "object" &&
       (!allowFunction || typeof value !== "function"))
   ) {
@@ -869,59 +783,207 @@ function validateString(value, name) {
  * @returns {boolean}
  */
 function getOwnPropertyValueOrDefault(options, key, defaultValue) {
-  return options == null || !ObjectPrototypeHasOwnProperty(options, key)
+  return options == null || !ObjectPrototypeHasOwnProperty.call(options, key)
     ? defaultValue
     : options[key];
 }
 
-function ObjectPrototypeHasOwnProperty(obj, prop) {
-  return Object.prototype.hasOwnProperty.call(obj, prop);
+function nullCheck(path, propName, throwError = true) {
+  const pathIsString = typeof path === "string";
+  const pathIsUint8Array = isUint8Array(path);
+
+  // We can only perform meaningful checks on strings and Uint8Arrays.
+  if (
+    (!pathIsString && !pathIsUint8Array) ||
+    (pathIsString && !StringPrototypeIncludes.call(path, "\u0000")) ||
+    (pathIsUint8Array && !Uint8ArrayPrototypeIncludes.call(path, 0))
+  ) {
+    return;
+  }
+
+  const err = new ERR_INVALID_ARG_VALUE(
+    propName,
+    path,
+    "must be a string or Uint8Array without null bytes"
+  );
+  if (throwError) {
+    throw err;
+  }
+  return err;
 }
 
-function ArrayPrototypePush(array, ...items) {
-  return array.push(...items);
+function validatePath(path, propName = "path") {
+  if (typeof path !== "string" && !isUint8Array(path)) {
+    throw new ERR_INVALID_ARG_TYPE(propName, ["string", "Buffer", "URL"], path);
+  }
+
+  const err = nullCheck(path, propName, false);
+
+  if (err !== undefined) {
+    throw err;
+  }
 }
 
-function ArrayPrototypeReduce(array, callback, initialValue) {
-  return array.reduce(callback, initialValue);
+function getValidatedPath(fileURLOrPath, propName = "path") {
+  const path = toPathIfFileURL(fileURLOrPath);
+  validatePath(path, propName);
+  return path;
 }
 
-function ArrayPrototypeJoin(array, separator) {
-  return array.join(separator);
-}
+//------------------------------------------------------------------------------
+// Section 6. Primordials
+//------------------------------------------------------------------------------
+var ArrayBufferView = globalThis.ArrayBufferView;
+var Uint8Array = globalThis.Uint8Array;
+var String = globalThis.String;
+var Object = globalThis.Object;
 
-function ArrayPrototypeMap(array, callback) {
-  return array.map(callback);
-}
+var ObjectPrototypeHasOwnProperty = Object.prototype.hasOwnProperty;
+var ObjectCreate = Object.create;
 
-function ArrayPrototypeSlice(array, begin, end) {
-  return array.slice(begin, end);
-}
+var ArrayPrototypePush = Array.prototype.push;
+var ArrayPrototypeReduce = Array.prototype.reduce;
+var ArrayPrototypeFilter = Array.prototype.filter;
+var ArrayPrototypeJoin = Array.prototype.join;
+var ArrayPrototypeMap = Array.prototype.map;
+var ArrayPrototypeIncludes = Array.prototype.includes;
+var ArrayPrototypeSlice = Array.prototype.slice;
+var ArrayPrototypeUnshift = Array.prototype.unshift;
+var ArrayIsArray = Array.isArray;
 
-function ArrayPrototypeFilter(array, callback) {
-  return array.filter(callback);
-}
+var NumberIsInteger = Number.isInteger;
+var MathAbs = Math.abs;
 
-function ArrayPrototypeIncludes(array, searchElement, fromIndex) {
-  return array.includes(searchElement, fromIndex);
-}
-
-function ArrayIsArray(arg) {
-  return Array.isArray(arg);
-}
+var StringPrototypeToUpperCase = String.prototype.toUpperCase;
+var StringPrototypeIncludes = String.prototype.includes;
+var Uint8ArrayPrototypeIncludes = Uint8Array.prototype.includes;
 
 function isArrayBufferView(value) {
-  return value instanceof ArrayBufferView;
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    value instanceof ArrayBufferView
+  );
+}
+
+function isUint8Array(value) {
+  return (
+    typeof value === "object" && value !== null && value instanceof Uint8Array
+  );
 }
 
 //------------------------------------------------------------------------------
-// 6. Node error polyfills
+// Section 7. Random utilities
 //------------------------------------------------------------------------------
 
+function isURLInstance(fileURLOrPath) {
+  return fileURLOrPath != null && fileURLOrPath.href && fileURLOrPath.origin;
+}
+
+function getPathFromURLPosix(url) {
+  if (url.hostname !== "") {
+    throw new ERR_INVALID_FILE_URL_HOST(platform);
+  }
+  const pathname = url.pathname;
+  for (let n = 0; n < pathname.length; n++) {
+    if (pathname[n] === "%") {
+      const third = pathname.codePointAt(n + 2) | 0x20;
+      if (pathname[n + 1] === "2" && third === 102) {
+        throw new ERR_INVALID_FILE_URL_PATH(
+          "must not include encoded / characters"
+        );
+      }
+    }
+  }
+  return decodeURIComponent(pathname);
+}
+
+function fileURLToPath(path) {
+  if (typeof path === "string") path = new URL(path);
+  else if (!isURLInstance(path))
+    throw new ERR_INVALID_ARG_TYPE("path", ["string", "URL"], path);
+  if (path.protocol !== "file:") throw new ERR_INVALID_URL_SCHEME("file");
+  // TODO: Windows support
+  // return isWindows ? getPathFromURLWin32(path) : getPathFromURLPosix(path);
+  return getPathFromURLPosix(path);
+}
+
+function toPathIfFileURL(fileURLOrPath) {
+  if (!isURLInstance(fileURLOrPath)) return fileURLOrPath;
+  return fileURLToPath(fileURLOrPath);
+}
+
+//------------------------------------------------------------------------------
+// Section 8. Node errors / error polyfills
+//------------------------------------------------------------------------------
+var Error = globalThis.Error;
+var TypeError = globalThis.TypeError;
+var RangeError = globalThis.RangeError;
+var AbortError = globalThis.AbortError;
+
+console.log(AbortError);
+
+// class AbortError extends Error {
+//   name = "AbortError";
+//   code = "ABORT_ERR";
+//   constructor(message) {
+//     super(message || "The process was aborted");
+//   }
+// }
+
+function ERR_OUT_OF_RANGE(str, range, input, replaceDefaultBoolean = false) {
+  // Node implementation:
+  // assert(range, 'Missing "range" argument');
+  // let msg = replaceDefaultBoolean
+  //   ? str
+  //   : `The value of "${str}" is out of range.`;
+  // let received;
+  // if (NumberIsInteger(input) && MathAbs(input) > 2 ** 32) {
+  //   received = addNumericalSeparator(String(input));
+  // } else if (typeof input === "bigint") {
+  //   received = String(input);
+  //   if (input > 2n ** 32n || input < -(2n ** 32n)) {
+  //     received = addNumericalSeparator(received);
+  //   }
+  //   received += "n";
+  // } else {
+  //   received = lazyInternalUtilInspect().inspect(input);
+  // }
+  // msg += ` It must be ${range}. Received ${received}`;
+  // return new RangeError(msg);
+  return new RangeError(
+    `The value of ${str} is out of range. It must be ${range}. Received ${input}`
+  );
+}
+
+function ERR_UNKNOWN_SIGNAL(name) {
+  return new TypeError(`Unknown signal: ${name}`);
+}
+
 function ERR_INVALID_ARG_TYPE(name, type, value) {
-  return new Error(
+  return new TypeError(
     `The argument '${name}' is invalid. Received '${value}' for type '${type}'`
   );
+}
+
+function ERR_INVALID_FILE_URL_HOST(platform) {
+  return new TypeError(
+    `File URL host must be "localhost" or empty on ${platform}`
+  );
+}
+
+function ERR_INVALID_FILE_URL_PATH(path) {
+  return new TypeError(`File URL path: ${path}`);
+}
+
+function ERR_INVALID_URL_SCHEME(expected) {
+  if (typeof expected === "string") expected = [expected];
+  assert(expected.length <= 2);
+  const res =
+    expected.length === 2
+      ? `one of scheme ${expected[0]} or ${expected[1]}`
+      : `of scheme ${expected[0]}`;
+  return `The URL must be ${res}`;
 }
 
 function ERR_INVALID_ARG_VALUE(name, value, reason) {

@@ -33,99 +33,20 @@ var __copyProps = (to, from, except, desc) => {
 
 var runOnNextTick = process.nextTick;
 
-/**
- * @param {ReadableStream} readableStream
- * @param {{
- *   highWaterMark? : number,
- *   encoding? : string,
- *   objectMode? : boolean,
- *   signal? : AbortSignal,
- * }} [options]
- * @returns {Readable}
- */
-function newStreamReadableFromReadableStream(readableStream, options = {}) {
-  if (!isReadableStream(readableStream)) {
-    throw new ERR_INVALID_ARG_TYPE(
-      "readableStream",
-      "ReadableStream",
-      readableStream
-    );
-  }
-
-  validateObject(options, "options");
-  const { highWaterMark, encoding, objectMode = false, signal } = options;
-
-  if (encoding !== undefined && !Buffer.isEncoding(encoding))
-    throw new ERR_INVALID_ARG_VALUE(encoding, "options.encoding");
-  validateBoolean(objectMode, "options.objectMode");
-
-  const reader = readableStream.getReader();
-
-  let closed = false;
-
-  const readable = new Readable({
-    objectMode,
-    highWaterMark,
-    encoding,
-    signal,
-
-    read() {
-      reader
-        .read()
-        .then((chunk) => {
-          if (chunk.done) {
-            // Value should always be undefined here.
-            readable.push(null);
-          } else {
-            readable.push(chunk.value);
-          }
-        })
-        .catch((error) => destroy(readable, error));
-    },
-    destroy(error, callback) {
-      function done() {
-        try {
-          callback(error);
-        } catch (error) {
-          // In a next tick because this is happening within
-          // a promise context, and if there are any errors
-          // thrown we don't want those to cause an unhandled
-          // rejection. Let's just escape the promise and
-          // handle it separately.
-          process.nextTick(() => {
-            throw error;
-          });
-        }
-      }
-
-      if (!closed) {
-        reader.cancel(error).then(done).catch(done);
-        return;
-      }
-      done();
-    },
-    // NOTE(Derrick): For whatever reason this seems to be necessary to make this work
-    // I couldn't find out why .constructed was getting set to false
-    // even though construct() was getting called
-    construct() {
-      this._readableState.constructed = true;
-    },
-  });
-
-  reader.closed
-    .then(() => {
-      closed = true;
-    })
-    .catch((error) => {
-      closed = true;
-      reader.destroy(readable, error);
-    });
-
-  return readable;
+function isPromise(toTest) {
+  return (
+    Boolean(toTest) &&
+    (typeof toTest === "object" || typeof toTest === "function") &&
+    typeof toTest.then === "function"
+  );
 }
 
 function isReadableStream(value) {
-  return value instanceof ReadableStream;
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    value instanceof ReadableStream
+  );
 }
 
 function validateBoolean(value, name) {
@@ -184,18 +105,13 @@ function validateString(value, name) {
  * @returns {boolean}
  */
 function getOwnPropertyValueOrDefault(options, key, defaultValue) {
-  return options == null || !ObjectPrototypeHasOwnProperty(options, key)
+  return options == null || !ObjectPrototypeHasOwnProperty.call(options, key)
     ? defaultValue
     : options[key];
 }
 
-function ObjectPrototypeHasOwnProperty(obj, prop) {
-  return Object.prototype.hasOwnProperty.call(obj, prop);
-}
-
-function ArrayIsArray(arg) {
-  return Array.isArray(arg);
-}
+var ObjectPrototypeHasOwnProperty = Object.prototype.hasOwnProperty;
+var ArrayIsArray = Array.isArray;
 
 //------------------------------------------------------------------------------
 // Node error polyfills
@@ -2710,6 +2626,135 @@ var require_readable = __commonJS({
 
       static ReadableState = ReadableState;
     }
+
+    class ReadableFromWeb extends Readable {
+      #reader;
+
+      constructor(options) {
+        const { objectMode, highWaterMark, encoding, signal, reader } = options;
+        let closed = false;
+        super({
+          objectMode,
+          highWaterMark,
+          encoding,
+          signal,
+
+          async read() {
+            var deferredError;
+            try {
+              var done, value;
+              const firstResult = reader.readMany();
+
+              if (isPromise(firstResult)) {
+                const result = await firstResult;
+                done = result.done;
+                value = result.value;
+              } else {
+                done = firstResult.done;
+                value = firstResult.value;
+              }
+
+              if (done) {
+                this.push(null);
+                return;
+              }
+
+              if (!value)
+                throw new Error(
+                  `Invalid value from ReadableStream reader: ${value}`
+                );
+              if (ArrayIsArray(value)) {
+                this.push(...value);
+              } else {
+                this.push(value);
+              }
+            } catch (e) {
+              deferredError = e;
+            } finally {
+              if (deferredError) throw deferredError;
+            }
+          },
+          destroy(error, callback) {
+            function done() {
+              try {
+                callback(error);
+              } catch (error) {
+                // In a next tick because this is happening within
+                // a promise context, and if there are any errors
+                // thrown we don't want those to cause an unhandled
+                // rejection. Let's just escape the promise and
+                // handle it separately.
+                process.nextTick(() => {
+                  throw error;
+                });
+              }
+            }
+
+            if (!closed) {
+              reader.releaseLock();
+              reader.cancel(error).then(done).catch(done);
+              return;
+            }
+            done();
+          },
+          // NOTE(Derrick): For whatever reason this seems to be necessary to make this work
+          // I couldn't find out why .constructed was getting set to false
+          // even though construct() was getting called
+          construct() {
+            this._readableState.constructed = true;
+          },
+        });
+
+        this.#reader = reader;
+        this.#reader.closed
+          .then(() => {
+            closed = true;
+          })
+          .catch((error) => {
+            closed = true;
+            destroy(this, error);
+          });
+      }
+    }
+
+    /**
+     * @param {ReadableStream} readableStream
+     * @param {{
+     *   highWaterMark? : number,
+     *   encoding? : string,
+     *   objectMode? : boolean,
+     *   signal? : AbortSignal,
+     * }} [options]
+     * @returns {Readable}
+     */
+    function newStreamReadableFromReadableStream(readableStream, options = {}) {
+      if (!isReadableStream(readableStream)) {
+        throw new ERR_INVALID_ARG_TYPE(
+          "readableStream",
+          "ReadableStream",
+          readableStream
+        );
+      }
+
+      validateObject(options, "options");
+      const { highWaterMark, encoding, objectMode = false, signal } = options;
+
+      if (encoding !== undefined && !Buffer.isEncoding(encoding))
+        throw new ERR_INVALID_ARG_VALUE(encoding, "options.encoding");
+      validateBoolean(objectMode, "options.objectMode");
+
+      const reader = readableStream.getReader();
+      const readable = new ReadableFromWeb({
+        highWaterMark,
+        encoding,
+        objectMode,
+        signal,
+        reader,
+      });
+
+      return readable;
+    }
+
     module.exports = Readable;
 
     var { addAbortSignal } = require_add_abort_signal();

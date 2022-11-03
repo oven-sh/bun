@@ -480,7 +480,7 @@ pub const ZigString = extern struct {
         if (!this.isUTF8() and !strings.isAllASCII(untagged(this.ptr)[0..this.len])) {
             var buffer = this.toOwnedSlice(allocator) catch unreachable;
             return Slice{
-                .allocator = allocator,
+                .allocator = NullableAllocator.init(allocator),
                 .ptr = buffer.ptr,
                 .len = @truncate(u32, buffer.len),
             };

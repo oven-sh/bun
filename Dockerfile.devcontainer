@@ -6,6 +6,7 @@ ARG WEBKIT_DIR=${GITHUB_WORKSPACE}/bun-webkit
 ARG BUN_RELEASE_DIR=${GITHUB_WORKSPACE}/bun-release
 ARG BUN_DEPS_OUT_DIR=${GITHUB_WORKSPACE}/bun-deps
 ARG BUN_DIR=${GITHUB_WORKSPACE}/bun
+ARG BUN_PACKAGES_DIR=${BUN_DIR}/packages
 
 FROM --platform=linux/${BUILDARCH} ubuntu:22.04 as bun.devcontainer
 
@@ -17,13 +18,14 @@ ARG WEBKIT_DIR
 ARG BUN_RELEASE_DIR
 ARG BUN_DEPS_OUT_DIR
 ARG BUN_DIR
+ARG BUN_PACKAGES_DIR
 
 ENV WEBKIT_OUT_DIR ${WEBKIT_DIR}
 ENV PATH "$ZIG_PATH:$PATH"
 ENV JSC_BASE_DIR $WEBKIT_OUT_DIR
 ENV LIB_ICU_PATH ${WEBKIT_OUT_DIR}/lib
 ENV BUN_RELEASE_DIR ${BUN_RELEASE_DIR}
-ENV PATH "${GITHUB_WORKSPACE}/packages/bun-linux-x64:${GITHUB_WORKSPACE}/packages/bun-linux-aarch64:${GITHUB_WORKSPACE}/packages/debug-bun-linux-x64:${GITHUB_WORKSPACE}/packages/debug-bun-linux-aarch64:$PATH"
+ENV PATH "${BUN_PACKAGES_DIR}/bun-linux-x64:${BUN_PACKAGES_DIR}/bun-linux-aarch64:${BUN_PACKAGES_DIR}/debug-bun-linux-x64:${BUN_PACKAGES_DIR}/debug-bun-linux-aarch64:$PATH"
 ENV PATH "/home/ubuntu/zls/zig-out/bin:$PATH"
 ENV BUN_INSTALL /home/ubuntu/.bun
 ENV XDG_CONFIG_HOME /home/ubuntu/.config

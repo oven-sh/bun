@@ -3334,9 +3334,7 @@ pub const ModuleLoader = struct {
         JSC.markBinding(@src());
         var log = logger.Log.init(jsc_vm.bundler.allocator);
         defer log.deinit();
-        var _specifier = specifier_ptr.toSlice(jsc_vm.allocator);
-        defer _specifier.deinit();
-        var specifier = normalizeSpecifier(jsc_vm, _specifier.slice());
+        var specifier = normalizeSpecifier(jsc_vm, specifier_ptr.slice());
         const path = Fs.Path.init(specifier);
         const loader = jsc_vm.bundler.options.loaders.get(path.name.ext) orelse brk: {
             if (strings.eqlLong(specifier, jsc_vm.main, true)) {

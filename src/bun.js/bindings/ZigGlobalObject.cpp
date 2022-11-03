@@ -2737,9 +2737,7 @@ void GlobalObject::installAPIGlobals(JSClassRef* globals, int count, JSC::VM& vm
         Crypto__randomUUID__put(this, JSValue::encode(object));
         object->putDirectCustomAccessor(vm, JSC::Identifier::fromString(vm, "subtle"_s), JSC::CustomGetterSetter::create(vm, getterSubtleCrypto, nullptr),
             JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontDelete | 0);
-        extraStaticGlobals.uncheckedAppend(
-            GlobalPropertyInfo { JSC::Identifier::fromString(vm, jsClass->className()),
-                JSC::JSValue(object), JSC::PropertyAttribute::DontDelete | 0 });
+        this->putDirect(vm, JSC::Identifier::fromString(vm, "Crypto"_s), object, JSC::PropertyAttribute::DontDelete | 0);
     }
 
     for (j = 2; j < count - 1; j++) {
@@ -2750,9 +2748,7 @@ void GlobalObject::installAPIGlobals(JSClassRef* globals, int count, JSC::VM& vm
         if (JSObject* prototype = object->classRef()->prototype(this))
             object->setPrototypeDirect(vm, prototype);
 
-        extraStaticGlobals.uncheckedAppend(
-            GlobalPropertyInfo { JSC::Identifier::fromString(vm, jsClass->className()),
-                JSC::JSValue(object), JSC::PropertyAttribute::DontDelete | 0 });
+        this->putDirect(vm, JSC::Identifier::fromString(vm, jsClass->className()), JSC::JSValue(object), JSC::PropertyAttribute::DontDelete | 0);
     }
 
     // The last one must be "process.env"

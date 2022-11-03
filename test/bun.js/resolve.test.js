@@ -44,6 +44,18 @@ it("#imports", async () => {
   }
 });
 
+// this is known to be failing
+it("#imports with wildcard", async () => {
+  await writePackageJSONImportsFixture();
+
+  // Chcek that package-json-imports/#foo/wildcard works
+  expect(
+    (
+      await import.meta.resolve("package-json-imports/#foo/wildcard.js")
+    ).endsWith("/wildcard.js")
+  ).toBe(true);
+});
+
 it("import.meta.resolve", async () => {
   expect(await import.meta.resolve("./resolve.test.js")).toBe(import.meta.path);
 
@@ -209,6 +221,13 @@ function writePackageJSONImportsFixture() {
   writeFileSync(
     join(
       import.meta.dir,
+      "./node_modules/package-json-imports/foo/wildcard.js"
+    ),
+    "export const wildcard = 1;"
+  );
+  writeFileSync(
+    join(
+      import.meta.dir,
       "./node_modules/package-json-imports/foo/private-foo.js"
     ),
     "export {bar} from 'package-json-imports/#foo';"
@@ -224,6 +243,7 @@ function writePackageJSONImportsFixture() {
         imports: {
           "#foo": "./foo/private-foo.js",
           "#foo/bar": "./foo/private-foo.js",
+          "#foo/": "./foo/",
           "#internal-react": "react",
         },
       },

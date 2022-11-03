@@ -319,6 +319,7 @@ void ImportMetaObjectPrototype::finishCreation(VM& vm, JSGlobalObject* globalObj
     this->putDirect(vm, builtinNames.pathPublicName(), jsEmptyString(vm), 0);
     this->putDirect(vm, builtinNames.urlPublicName(), jsEmptyString(vm), 0);
     this->putDirect(vm, builtinNames.mainPublicName(), jsBoolean(false), 0);
+    this->putDirect(vm, Identifier::fromString(vm, "primordials"_s), jsUndefined(), JSC::PropertyAttribute::DontEnum | 0);
 
     String requireString = "[[require]]"_s;
     this->putDirect(vm, builtinNames.requirePublicName(), Zig::ImportMetaObject::createRequireFunction(vm, globalObject, requireString), PropertyAttribute::Builtin | PropertyAttribute::Function | 0);

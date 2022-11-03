@@ -4,6 +4,10 @@ import sync from "./require-json.json";
 
 const { path, dir } = import.meta;
 
+it("primordials are not here!", () => {
+  expect(import.meta.primordials === undefined).toBe(true);
+});
+
 it("import.meta.resolveSync", () => {
   expect(
     import.meta.resolveSync("./" + import.meta.file, import.meta.path)

@@ -219,6 +219,7 @@ public:
     JSC::JSObject* encodeIntoObjectPrototype() { return m_encodeIntoObjectPrototype.getInitializedOnMainThread(this); }
 
     JSC::JSObject* performanceObject() { return m_performanceObject.getInitializedOnMainThread(this); }
+    JSC::JSObject* primordialsObject() { return m_primordialsObject.getInitializedOnMainThread(this); }
 
     JSC::JSObject* processObject()
     {
@@ -416,6 +417,8 @@ private:
     LazyClassStructure m_JSStringDecoderClassStructure;
     LazyClassStructure m_JSReadableStateClassStructure;
     LazyClassStructure m_OnigurumaRegExpClassStructure;
+
+    LazyProperty<JSGlobalObject, JSObject> m_primordialsObject;
 
     LazyProperty<JSGlobalObject, JSObject> m_navigatorObject;
 

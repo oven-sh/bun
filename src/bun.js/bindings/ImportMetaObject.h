@@ -67,6 +67,9 @@ public:
         if (view.startsWith('/')) {
             metaProperties->putDirect(vm, builtinNames.urlPublicName(), JSC::JSValue(JSC::jsString(vm, WTF::URL::fileURLWithFileSystemPath(view).string())));
         } else {
+            if (view.startsWith("node:"_s) || view.startsWith("bun:"_s)) {
+                metaProperties->putDirect(globalObject->vm(), JSC::Identifier::fromString(globalObject->vm(), "primordials"_s), reinterpret_cast<Zig::GlobalObject*>(globalObject)->primordialsObject());
+            }
             metaProperties->putDirect(vm, builtinNames.urlPublicName(), keyString);
         }
 

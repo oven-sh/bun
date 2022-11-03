@@ -230,14 +230,14 @@ extern "C" JSC::EncodedJSValue Bun__runVirtualModule(
     ZigString* specifier);
 
 extern "C" bool Bun__transpileFile(
-extern "C" JSC::EncodedJSValue CallbackJob__onResolve(JSC::JSGlobalObject*, JSC::CallFrame*);
-extern "C" JSC::EncodedJSValue CallbackJob__onReject(JSC::JSGlobalObject*, JSC::CallFrame*);
-
     void* bunVM,
     JSC::JSGlobalObject* global,
     ZigString* specifier,
     ZigString* referrer,
     ErrorableResolvedSource* result);
+
+extern "C" JSC::EncodedJSValue CallbackJob__onResolve(JSC::JSGlobalObject*, JSC::CallFrame*);
+extern "C" JSC::EncodedJSValue CallbackJob__onReject(JSC::JSGlobalObject*, JSC::CallFrame*);
 
 extern "C" bool Bun__fetchBuiltinModule(
     void* bunVM,

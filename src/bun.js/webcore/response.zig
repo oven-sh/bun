@@ -3103,7 +3103,7 @@ pub const Blob = struct {
             input_path = .{ .fd = store.data.file.pathlike.fd };
         } else {
             input_path = .{
-                .path = ZigString.Slice.fromUTF8(store.data.file.pathlike.path.slice()),
+                .path = ZigString.Slice.fromUTF8NeverFree(store.data.file.pathlike.path.slice()),
             };
         }
 

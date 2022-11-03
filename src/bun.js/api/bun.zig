@@ -173,10 +173,10 @@ pub fn which(
         return JSC.JSValue.jsNull().asObjectRef();
     }
 
-    path_str = ZigString.Slice.fromUTF8(
+    path_str = ZigString.Slice.fromUTF8NeverFree(
         globalThis.bunVM().bundler.env.map.get("PATH") orelse "",
     );
-    cwd_str = ZigString.Slice.fromUTF8(
+    cwd_str = ZigString.Slice.fromUTF8NeverFree(
         globalThis.bunVM().bundler.fs.top_level_dir,
     );
 

@@ -203,7 +203,7 @@ pub const ZigString = extern struct {
         ptr: [*]const u8,
         len: u32,
 
-        pub fn fromUTF8(input: []const u8) Slice {
+        pub fn fromUTF8NeverFree(input: []const u8) Slice {
             return .{
                 .ptr = input.ptr,
                 .len = @truncate(u32, input.len),
@@ -479,7 +479,11 @@ pub const ZigString = extern struct {
 
         if (!this.isUTF8() and !strings.isAllASCII(untagged(this.ptr)[0..this.len])) {
             var buffer = this.toOwnedSlice(allocator) catch unreachable;
-            return Slice.fromUTF8(buffer);
+            return Slice{
+                .allocator = allocator,
+                .ptr = buffer.ptr,
+                .len = @truncate(u32, buffer.len),
+            };
         }
 
         return Slice{

@@ -1,0 +1,31 @@
+name: Generate
+on:
+  push:
+
+jobs:
+  generate:
+    name: Generate
+    runs-on: ubuntu-latest
+    if: github.repository_owner == 'oven-sh'
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v2
+
+      - name: Install bun
+        uses: xhyrom/setup-bun@v0.1.6
+        with:
+          bun-version: latest
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Generate github stuff
+        run: bun run generate:githubstuff
+
+      - name: Push changes
+        uses: actions-js/push@master
+        with:
+          github_token: '${{ secrets.GITHUB_TOKEN }}'
+          branch: master
+          author_email: 41898282+github-actions[bot]@users.noreply.github.com
+          author_name: github-actions[bot]
+          message: 'chore: update labels and labeler'

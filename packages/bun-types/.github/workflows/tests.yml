@@ -1,0 +1,36 @@
+name: Tests
+on:
+  push:
+  pull_request:
+
+jobs:
+  tests:
+    name: Tests
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v2
+
+      - name: Install bun
+        uses: xhyrom/setup-bun@v0.1.6
+        with:
+          bun-version: latest
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Install node
+        uses: actions/setup-node@v3
+        with:
+          node-version: latest
+
+      - name: Install dependencies
+        run: bun install
+
+      - name: Generate package
+        run: bun run generate:package
+
+      - name: ESLint
+        run: bun run lint
+
+      - name: Tests
+        run: bun run test

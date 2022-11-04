@@ -1,0 +1,125 @@
+name: Release
+on:
+  workflow_dispatch:
+
+jobs:
+  test-build:
+    name: Test & Build
+    runs-on: ubuntu-latest
+    if: github.repository_owner == 'oven-sh'
+
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Install bun
+        uses: xhyrom/setup-bun@v0.1.6
+        with:
+          bun-version: latest
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Install node
+        uses: actions/setup-node@v3
+        with:
+          node-version: latest
+
+      - name: Install dependencies
+        run: bun install
+
+      - name: ESLint
+        run: bun run lint
+
+      - name: Build package
+        run: bun run generate:package
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v3
+        with:
+          name: bun-types
+          path: dist/*
+          if-no-files-found: error
+
+  publish-npm:
+    name: Publish on NPM
+    runs-on: ubuntu-latest
+    needs: [test-build]
+    if: github.repository_owner == 'oven-sh'
+
+    steps:
+      - uses: actions/checkout@v3
+      - name: Install node
+        uses: actions/setup-node@v3
+        with:
+          node-version: latest
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v3
+        with:
+          name: bun-types
+          path: dist
+
+      - name: Publish on NPM
+        run: cd dist/ && npm publish --access public
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+  publish-gpr:
+    name: Publish on GPR
+    runs-on: ubuntu-latest
+    needs: [test-build]
+    if: github.repository_owner == 'oven-sh'
+
+    steps:
+      - uses: actions/checkout@v3
+      - name: Install node
+        uses: actions/setup-node@v3
+        with:
+          node-version: latest
+          registry-url: 'https://npm.pkg.github.com/'
+          scope: '@oven-sh'
+
+      - name: Install bun
+        uses: xhyrom/setup-bun@v0.1.6
+        with:
+          bun-version: latest
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v3
+        with:
+          name: bun-types
+          path: dist
+
+      - name: Add scope to name
+        run: bun scripts/gpr.ts
+
+      - name: Publish on GPR
+        run: cd dist/ && npm publish --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  create-release:
+    name: Create Release
+    runs-on: ubuntu-latest
+    needs: [test-build]
+    if: github.repository_owner == 'oven-sh'
+
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v3
+        with:
+          name: bun-types
+          path: dist
+
+      - name: Set version
+        run: echo "version=$(jq --raw-output '.version' dist/package.json)" >> $GITHUB_ENV
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v0.1.14
+        with:
+          tag_name: "v${{ env.version }}"
+          body: "This is the release of bun-types that corresponds to the commit [${{ github.sha }}]"
+          token: ${{ secrets.GITHUB_TOKEN }}
+          files: |
+            dist/*

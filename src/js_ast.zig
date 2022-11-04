@@ -4450,6 +4450,15 @@ pub const Ast = struct {
         } };
         try std.json.stringify(self.parts, opts, stream);
     }
+
+    /// Do not call this if it wasn't globally allocated!
+    pub fn deinit(this: *Ast) void {
+        // TODO: assert mimalloc-owned memory
+        if (this.parts.len > 0) bun.default_allocator.free(this.parts);
+        if (this.externals.len > 0) bun.default_allocator.free(this.externals);
+        if (this.symbols.len > 0) bun.default_allocator.free(this.symbols);
+        if (this.import_records.len > 0) bun.default_allocator.free(this.import_records);
+    }
 };
 
 pub const Span = struct {

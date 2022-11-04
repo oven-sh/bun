@@ -135,7 +135,7 @@ pub const Result = struct {
     pub const Union = union(enum) {
         success: Result,
         failure: anyerror,
-        pending: Pending,
+        pending: PendingResolution,
         not_found: void,
     };
 
@@ -312,14 +312,9 @@ pub const MatchResult = struct {
     pub const Union = union(enum) {
         not_found: void,
         success: MatchResult,
-        pending: Pending,
+        pending: PendingResolution,
         failure: anyerror,
     };
-};
-
-pub const Pending = union(enum) {
-    resolve: PendingResolution,
-    download: PendingDownload,
 };
 
 pub const PendingResolution = struct {
@@ -327,7 +322,33 @@ pub const PendingResolution = struct {
     dependency: Dependency.Version = .{},
     resolution_id: Install.PackageID = Install.invalid_package_id,
     import_record_id: u32 = std.math.maxInt(u32),
-    string_buf: []const u8 = "",
+    string_buf: []u8 = "",
+    tag: Tag,
+
+    pub const List = std.MultiArrayList(PendingResolution);
+
+    pub fn deinitListItems(list_: List, allocator: std.mem.Allocator) void {
+        var list = list_;
+        var dependencies = list.items(.dependency);
+        var string_bufs = list.items(.string_buf);
+        for (dependencies) |*dependency| {
+            dependency.deinit(allocator);
+        }
+
+        for (string_bufs) |*string_buf| {
+            allocator.free(string_buf);
+        }
+    }
+
+    pub fn deinit(this: *PendingResolution, allocator: std.mem.Allocator) void {
+        this.dependency.deinit();
+        allocator.free(this.string_buf);
+    }
+
+    pub const Tag = enum {
+        download,
+        resolve,
+    };
 
     pub fn init(
         allocator: std.mem.Allocator,
@@ -341,14 +362,6 @@ pub const PendingResolution = struct {
             .resolution_id = resolution_id,
         };
     }
-};
-
-pub const PendingDownload = struct {
-    esm: ESModule.Package.External = .{},
-    dependency: Dependency.Version = .{},
-    package_id: Install.PackageID = Install.invalid_package_id,
-    import_record_id: u32 = std.math.maxInt(u32),
-    resolution: Resolution = .{},
 };
 
 pub const LoadResult = struct {
@@ -1727,12 +1740,19 @@ pub const Resolver = struct {
 
     const DependencyToResolve = union(enum) {
         not_found: void,
-        pending: Pending,
+        pending: PendingResolution,
         failure: anyerror,
         resolution: Resolution,
     };
 
-    fn enqueueDependencyToResolve(r: *ThisResolver, package_json_: ?*PackageJSON, esm: ESModule.Package, behavior: Dependency.Behavior, input_package_id_: *Install.PackageID, version: Dependency.Version) DependencyToResolve {
+    fn enqueueDependencyToResolve(
+        r: *ThisResolver,
+        package_json_: ?*PackageJSON,
+        esm: ESModule.Package,
+        behavior: Dependency.Behavior,
+        input_package_id_: *Install.PackageID,
+        version: Dependency.Version,
+    ) DependencyToResolve {
         std.debug.assert(r.package_manager != null);
         if (r.debug_logs) |*debug| {
             debug.addNoteFmt("Enqueueing pending dependency \"{s}@{s}\"", .{ esm.name, esm.version });
@@ -1817,12 +1837,11 @@ pub const Resolver = struct {
 
                     return .{
                         .pending = .{
-                            .resolve = .{
-                                .esm = cloned,
-                                .dependency = version,
-                                .resolution_id = id,
-                                .string_buf = builder.allocatedSlice(),
-                            },
+                            .esm = cloned,
+                            .dependency = version,
+                            .resolution_id = id,
+                            .string_buf = builder.allocatedSlice(),
+                            .tag = .resolve,
                         },
                     };
                 },

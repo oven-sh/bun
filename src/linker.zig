@@ -452,17 +452,8 @@ pub const Linker = struct {
                                         break :brk error.InstallationPending;
                                     }
 
-                                    switch (pending.*) {
-                                        .resolve => {
-                                            pending.resolve.import_record_id = record_i;
-                                        },
-                                        .download => {
-                                            pending.download.import_record_id = record_i;
-                                        },
-                                    }
-
-                                    result.pending_imports.append(linker.allocator, pending.*) catch unreachable;
-                                    std.debug.assert(!is_deferred);
+                                    pending.import_record_id = record_i;
+                                    try result.pending_imports.append(linker.allocator, pending.*);
                                     continue;
                                 },
                                 .not_found => break :brk error.ModuleNotFound,

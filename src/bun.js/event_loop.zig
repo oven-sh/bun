@@ -183,6 +183,7 @@ pub const CppTask = opaque {
 const ThreadSafeFunction = JSC.napi.ThreadSafeFunction;
 const MicrotaskForDefaultGlobalObject = JSC.MicrotaskForDefaultGlobalObject;
 const HotReloadTask = JSC.HotReloader.HotReloadTask;
+const PollPendingModulesTask = JSC.ModuleLoader.PendingModule.Queue;
 // const PromiseTask = JSInternalPromise.Completion.PromiseTask;
 pub const Task = TaggedPointerUnion(.{
     FetchTasklet,
@@ -197,6 +198,7 @@ pub const Task = TaggedPointerUnion(.{
     ThreadSafeFunction,
     CppTask,
     HotReloadTask,
+    PollPendingModulesTask,
     // PromiseTask,
     // TimeoutTasklet,
 });

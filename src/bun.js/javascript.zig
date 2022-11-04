@@ -86,6 +86,7 @@ const URL = @import("../url.zig").URL;
 const Transpiler = @import("./api/transpiler.zig");
 const Bun = JSC.API.Bun;
 const EventLoop = JSC.EventLoop;
+const PendingResolution = @import("../resolver/resolver.zig").PendingResolution;
 const ThreadSafeFunction = JSC.napi.ThreadSafeFunction;
 const PackageManager = @import("../install/install.zig").PackageManager;
 pub const GlobalConstructors = [_]type{
@@ -409,7 +410,17 @@ pub const VirtualMachine = struct {
     auto_install_dependencies: bool = false,
     load_builtins_from_path: []const u8 = "",
 
+    modules: ModuleLoader.PendingModule.Map = .{},
+    next_pending_module_id: u32 = 1,
+
     pub threadlocal var is_main_thread_vm: bool = false;
+
+    pub fn packageManager(this: *VirtualMachine) *PackageManager {
+        var pm = this.bundler.getPackageManager();
+        pm.onWake.context = &this.modules;
+        pm.onWake.handler = ModuleLoader.PendingModule.Queue.onWakeHandler;
+        return pm;
+    }
 
     pub fn reload(this: *VirtualMachine) void {
         Output.debug("Reloading...", .{});
@@ -466,7 +477,7 @@ pub const VirtualMachine = struct {
         this.eventLoop().enqueueTask(task);
     }
 
-    pub inline fn enqueueTaskConcurrent(this: *VirtualMachine, task: JSC.ConcurrentTask) void {
+    pub inline fn enqueueTaskConcurrent(this: *VirtualMachine, task: *JSC.ConcurrentTask) void {
         this.eventLoop().enqueueTaskConcurrent(task);
     }
 
@@ -2891,23 +2902,109 @@ fn dumpSource(specifier: string, printer: anytype) !void {
 }
 
 pub const ModuleLoader = struct {
-    const PendingModuleResolution = struct {
+    pub const PendingModule = struct {
         parse_result: ParseResult,
         stmt_blocks: []*js_ast.Stmt.Data.Store.All.Block = &[_]*js_ast.Stmt.Data.Store.All.Block{},
         expr_blocks: []*js_ast.Expr.Data.Store.All.Block = &[_]*js_ast.Expr.Data.Store.All.Block{},
         promise: JSC.Strong = .{},
         path: Fs.Path,
-        specifier: string,
-        referrer: string,
+        specifier: string = "",
+        referrer: string = "",
         string_buf: []u8 = &[_]u8{},
         fd: ?StoredFileDescriptorType = null,
         package_json: ?*PackageJSON = null,
+        loader: Api.Loader,
 
-        // pub fn create(opts: anytype) *PendingModuleResolution {
+        pub const Id = u32;
+        pub const Queue = struct {
+            map: HashMap = .{},
+            next_id: Id = 0,
+            concurrent_task_count: std.atomic.Atomic(u32) = std.atomic.Atomic(u32).init(0),
 
-        // }
+            pub const HashMap = std.AutoArrayHashMapUnmanaged(Id, PendingModule);
 
-        pub fn done(this: *PendingModuleResolution) void {
+            pub fn onWakeHandler(ctx: *anyopaque, _: *PackageManager) void {
+                var this = @ptrCast(*Queue, ctx);
+                if (this.concurrent_task_count.fetchAdd(1, .Monotonic) == 0) {
+                    var concurrent_task = bun.default_allocator.create(JSC.ConcurrentTask) catch @panic("OOM");
+                    concurrent_task.* = .{
+                        .task = JSC.Task.init(this),
+                    };
+                    this.vm().enqueueTaskConcurrent(concurrent_task);
+                }
+            }
+
+            pub fn onPoll(this: *Queue) void {
+                this.concurrent_task_count.store(0, .Monotonic);
+                var pm = this.vm().packageManager();
+                this.runTasks();
+                this.pollModules();
+            }
+
+            pub fn runTasks(this: *Queue) void {
+                var pm = this.vm().packageManager();
+            }
+
+            pub fn onPackageIDWrap(this: *Queue, package_id: u32, comptime _: PackageManager.Options.LogLevel) void {
+                this.onPackageID(package_id);
+            }
+
+            pub fn onPackageID(this: *Queue, package_id: u32) void {
+                var values = this.map.values();
+                for (values) |value| {
+                    var package_ids = value.parse_result.pending_imports.items(.resolution_id);
+                }
+            }
+
+            pub fn pollModules(this: *Queue) void {
+                _ = this.vm().packageManager();
+                // var modules = this.map.values();
+                // for (modules) |*module| {
+                //     var imports: []PendingResolution = module.parse_result.pending_imports.items;
+
+                // }
+            }
+
+            pub fn vm(this: *Queue) *VirtualMachine {
+                return @fieldParentPtr(VirtualMachine, "modules_queue", this);
+            }
+        };
+
+        pub fn init(opts: anytype, globalObject: *JSC.JSGlobalObject) PendingModule {
+            var promise = JSC.Strong{};
+            var stmt_blocks = js_ast.Stmt.Data.Store.toOwnedSlice();
+            var expr_blocks = js_ast.Expr.Data.Store.toOwnedSlice();
+            const this_promise = JSValue.createInternalPromise(globalObject);
+            promise.set(globalObject, this_promise);
+
+            var buf = bun.StringBuilder{};
+            buf.count(opts.referrer);
+            buf.count(opts.specifier);
+            buf.count(opts.path.text);
+
+            try buf.allocate(bun.default_allocator);
+
+            const referrer = buf.append(opts.referrer);
+            const specifier = buf.append(opts.specifier);
+            const path = Fs.Path.init(buf.append(opts.path.text));
+
+            return PendingModule{
+                .parse_result = opts.parse_result,
+                .promise = promise,
+                .path = path,
+                .specifier = specifier,
+                .referrer = referrer,
+                .fd = opts.fd,
+                .package_json = opts.package_json,
+                .loader = opts.loader,
+                .path = path,
+                .string_buf = buf.allocatedSlice(),
+                .stmt_blocks = stmt_blocks,
+                .expr_blocks = expr_blocks,
+            };
+        }
+
+        pub fn done(this: *PendingModule) void {
             var jsc_vm = JSC.VirtualMachine.vm;
             var log = logger.Log.init(jsc_vm.allocator);
             defer log.deinit();
@@ -2926,7 +3023,7 @@ pub const ModuleLoader = struct {
             this.deinit();
         }
 
-        pub fn resumeLoadingModule(this: *PendingModuleResolution, log: *logger.Log) !ErrorableResolvedSource {
+        pub fn resumeLoadingModule(this: *PendingModule, log: *logger.Log) !ErrorableResolvedSource {
             var parse_result = this.parse_result;
             var path = this.path;
             var jsc_vm = JSC.VirtualMachine.vm;
@@ -3008,9 +3105,8 @@ pub const ModuleLoader = struct {
             };
         }
 
-        pub fn deinit(this: *PendingModuleResolution) void {
-            this.parse_result.pending_imports.deinit(bun.default_allocator);
-            bun.default_allocator.free(bun.constStrToU8(this.parse_result.source.contents));
+        pub fn deinit(this: *PendingModule) void {
+            this.parse_result.deinit();
             bun.default_allocator.free(this.stmt_blocks);
             bun.default_allocator.free(this.expr_blocks);
             this.promise.deinit();
@@ -3167,7 +3263,7 @@ pub const ModuleLoader = struct {
 
                 if (parse_result.pending_imports.items.len > 0) {
                     if (promise_ptr == null) {
-                        return error.UnexpectedPendingImport;
+                        return error.UnexpectedPendingResolution;
                     }
 
                     if (jsc_vm.isWatcherEnabled()) {

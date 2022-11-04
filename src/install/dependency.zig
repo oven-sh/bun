@@ -135,6 +135,15 @@ pub const Version = struct {
     literal: String = String{},
     value: Value = Value{ .uninitialized = void{} },
 
+    pub fn deinit(this: *Version) void {
+        switch (this.tag) {
+            .npm => {
+                this.value.npm.deinit();
+            },
+            else => {},
+        }
+    }
+
     pub const @"0.0.0" = Version{
         .tag = Dependency.Version.Tag.npm,
         .literal = String.init("0.0.0", "0.0.0"),

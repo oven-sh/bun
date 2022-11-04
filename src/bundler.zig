@@ -124,17 +124,22 @@ pub const ParseResult = struct {
     ast: js_ast.Ast,
     input_fd: ?StoredFileDescriptorType = null,
     empty: bool = false,
-    pending_imports: std.ArrayListUnmanaged(_resolver.Pending) = .{},
+    pending_imports: _resolver.PendingResolution.List = .{},
 
     pub fn isPendingImport(this: *const ParseResult, id: u32) bool {
-        for (this.pending_imports.items) |pending| {
-            if (switch (pending) {
-                .resolve => |res| res.import_record_id == id,
-                .download => |dl| dl.import_record_id == id,
-            }) return true;
-        }
+        const import_record_ids = this.pending_imports.items(.import_record_id);
 
-        return false;
+        return std.mem.indexOfScalar(u32, import_record_ids, id) != null;
+    }
+
+    /// **DO NOT CALL THIS UNDER NORMAL CIRCUMSTANCES**
+    /// Normally, we allocate each AST in an arena and free all at once
+    /// So this function only should be used when we globally allocate an AST
+    pub fn deinit(this: *ParseResult) void {
+        _resolver.PendingResolution.deinitListItems(this.pending_imports, bun.default_allocator);
+        this.pending_imports.deinit(bun.default_allocator);
+        this.ast.deinit();
+        bun.default_allocator.free(bun.constStrToU8(this.source.contents));
     }
 };
 

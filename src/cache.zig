@@ -72,6 +72,19 @@ pub const Fs = struct {
             &this.macro_shared_buffer;
     }
 
+    /// When we need to suspend/resume something that has pointers into the shared buffer, we need to
+    /// switch out the shared buffer so that it is not in use
+    /// The caller must
+    pub fn resetSharedBuffer(this: *Fs, buffer: *MutableString) void {
+        if (buffer == &this.shared_buffer) {
+            this.shared_buffer = MutableString.initEmpty(bun.default_allocator);
+        } else if (buffer == &this.macro_shared_buffer) {
+            this.macro_shared_buffer = MutableString.initEmpty(bun.default_allocator);
+        } else {
+            bun.unreachablePanic("resetSharedBuffer: invalid buffer", .{});
+        }
+    }
+
     pub fn deinit(c: *Fs) void {
         var iter = c.entries.iterator();
         while (iter.next()) |entry| {

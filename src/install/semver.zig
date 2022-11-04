@@ -1273,6 +1273,21 @@ pub const Query = struct {
             pub const build = 0;
         };
 
+        pub fn deinit(this: *Group) void {
+            var list = this.head;
+            var allocator = this.allocator;
+
+            while (list.next) |next| {
+                var query = list.head;
+                while (query.next) |next_query| {
+                    allocator.destroy(next_query);
+                    query = next_query.*;
+                }
+                allocator.destroy(next);
+                list = next.*;
+            }
+        }
+
         pub fn from(version: Version) Group {
             return .{
                 .allocator = bun.default_allocator,

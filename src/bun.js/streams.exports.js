@@ -1,5 +1,6 @@
 // "readable-stream" npm package
 // just transpiled
+// var { isPromise } = import.meta.primordials;
 
 var __create = Object.create;
 var __defProp = Object.defineProperty;
@@ -2163,6 +2164,7 @@ var require_destroy = __commonJS({
       }
     }
     function errorOrDestroy(stream, err, sync) {
+      console.log(stream);
       const r = stream._readableState;
       const w = stream._writableState;
       if ((w && w.destroyed) || (r && r.destroyed)) {
@@ -2629,91 +2631,82 @@ var require_readable = __commonJS({
 
     class ReadableFromWeb extends Readable {
       #reader;
+      #closed;
 
       constructor(options) {
         const { objectMode, highWaterMark, encoding, signal, reader } = options;
-        let closed = false;
         super({
           objectMode,
           highWaterMark,
           encoding,
           signal,
-
-          async read() {
-            var deferredError;
-            try {
-              var done, value;
-              const firstResult = reader.readMany();
-
-              if (isPromise(firstResult)) {
-                const result = await firstResult;
-                done = result.done;
-                value = result.value;
-              } else {
-                done = firstResult.done;
-                value = firstResult.value;
-              }
-
-              if (done) {
-                this.push(null);
-                return;
-              }
-
-              if (!value)
-                throw new Error(
-                  `Invalid value from ReadableStream reader: ${value}`
-                );
-              if (ArrayIsArray(value)) {
-                this.push(...value);
-              } else {
-                this.push(value);
-              }
-            } catch (e) {
-              deferredError = e;
-            } finally {
-              if (deferredError) throw deferredError;
-            }
-          },
-          destroy(error, callback) {
-            function done() {
-              try {
-                callback(error);
-              } catch (error) {
-                // In a next tick because this is happening within
-                // a promise context, and if there are any errors
-                // thrown we don't want those to cause an unhandled
-                // rejection. Let's just escape the promise and
-                // handle it separately.
-                process.nextTick(() => {
-                  throw error;
-                });
-              }
-            }
-
-            if (!closed) {
-              reader.releaseLock();
-              reader.cancel(error).then(done).catch(done);
-              return;
-            }
-            done();
-          },
-          // NOTE(Derrick): For whatever reason this seems to be necessary to make this work
-          // I couldn't find out why .constructed was getting set to false
-          // even though construct() was getting called
-          construct() {
-            this._readableState.constructed = true;
-          },
         });
 
         this.#reader = reader;
         this.#reader.closed
           .then(() => {
-            closed = true;
+            this.#closed = true;
           })
           .catch((error) => {
-            closed = true;
+            this.#closed = true;
             destroy(this, error);
           });
+      }
+
+      async _read() {
+        var deferredError;
+        try {
+          var done, value;
+          const firstResult = this.#reader.readMany();
+
+          if (isPromise(firstResult)) {
+            const result = await firstResult;
+            done = result.done;
+            value = result.value;
+          } else {
+            done = firstResult.done;
+            value = firstResult.value;
+          }
+
+          if (done) {
+            this.push(null);
+            return;
+          }
+
+          if (!value)
+            throw new Error(
+              `Invalid value from ReadableStream reader: ${value}`
+            );
+          if (ArrayIsArray(value)) {
+            this.push(...value);
+          } else {
+            this.push(value);
+          }
+        } catch (e) {
+          deferredError = e;
+        } finally {
+          if (deferredError) throw deferredError;
+        }
+      }
+
+      _destroy(error, callback) {
+        if (!this.#closed) {
+          this.#reader.releaseLock();
+          this.#reader.cancel(error).then(done).catch(done);
+          return;
+        }
+        try {
+          callback(error);
+        } catch (error) {
+          globalThis.reportError(error);
+        }
+      }
+
+      // NOTE(Derrick): For whatever reason this seems to be necessary to make this work
+      // I couldn't find out why .constructed was getting set to false
+      // even though construct() was getting called
+      _construct() {
+        this._readableState.constructed = true;
       }
     }
 

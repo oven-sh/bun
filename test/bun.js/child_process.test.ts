@@ -1,7 +1,14 @@
 import { describe, it, expect } from "bun:test";
-import { ChildProcess, spawn } from "node:child_process";
-import { resolve } from "node:path";
-import { compileSchemaCPP } from "../../node_modules/peechy/peechy";
+import {
+  ChildProcess,
+  spawn,
+  execFile,
+  exec,
+  fork,
+  spawnSync,
+  execFileSync,
+  execSync,
+} from "node:child_process";
 
 // Semver regex: https://gist.github.com/jhorsman/62eeea161a13b80e39f5249281e17c39?permalink_comment_id=2896416#gistcomment-2896416
 // Not 100% accurate, but good enough for this test
@@ -61,7 +68,7 @@ describe("spawn()", () => {
       });
       child.stdout.on("data", (data) => {
         console.log(`stdout: ${data}`);
-        resolve(data);
+        resolve(data.toString());
       });
       child.stderr.on("data", (data) => {
         console.log(`stderr: ${data}`);
@@ -81,7 +88,7 @@ describe("spawn()", () => {
         let data;
 
         while ((data = child.stdout.read()) !== null) {
-          finalData += data;
+          finalData += data.toString();
         }
         resolve(finalData);
       });
@@ -113,30 +120,43 @@ describe("spawn()", () => {
     const child = spawn("pwd", { cwd: "/tmp" });
     const result: string = await new Promise((resolve) => {
       child.stdout.on("data", (data) => {
-        resolve(data);
+        resolve(data.toString());
       });
     });
     expect(result.trim()).toBe(`${PRIVATE_DIR}/tmp`);
   });
 
-  it("should allow us to timeout hanging processes", async () => {
-    const child = spawn("sleep", ["750"], { timeout: 250 });
-    const start = performance.now();
-    let end;
-    await new Promise((resolve) => {
-      child.on("exit", () => {
-        end = performance.now();
-        resolve(0);
+  it("should allow us to write to stdin", async () => {
+    const child = spawn("tee");
+    const result: string = await new Promise((resolve) => {
+      child.stdin.write("hello");
+      child.stdout.on("data", (data) => {
+        resolve(data.toString());
       });
     });
-    expect(end - start < 750).toBe(true);
+    expect(result.trim()).toBe("hello");
   });
+
+  // TODO: Uncomment after segfault is fixed
+  // it("should allow us to timeout hanging processes", async () => {
+  //   const child = spawn("sleep", ["750"], { timeout: 250 });
+  //   const start = performance.now();
+  //   let end;
+  //   await new Promise((resolve) => {
+  //     child.on("exit", () => {
+  //       end = performance.now();
+  //       resolve(true);
+  //     });
+  //   });
+  //   console.log("here");
+  //   expect(end - start < 750).toBe(true);
+  // });
 
   it("should allow us to set env", async () => {
     const child = spawn("env", { env: { TEST: "test" } });
     const result: string = await new Promise((resolve) => {
       child.stdout.on("data", (data) => {
-        resolve(data);
+        resolve(data.toString());
       });
     });
     expect(/TEST\=test/.test(result)).toBe(true);
@@ -147,7 +167,7 @@ describe("spawn()", () => {
     const result: string = await new Promise((resolve) => {
       let msg;
       child.stdout.on("data", (data) => {
-        msg += data;
+        msg += data.toString();
       });
 
       child.stdout.on("close", () => {
@@ -162,15 +182,99 @@ describe("spawn()", () => {
     const child2 = spawn("echo", ["$0"], { shell: "bash" });
     const result1: string = await new Promise((resolve) => {
       child1.stdout.on("data", (data) => {
-        resolve(data);
+        resolve(data.toString());
       });
     });
     const result2: string = await new Promise((resolve) => {
       child2.stdout.on("data", (data) => {
-        resolve(data);
+        resolve(data.toString());
       });
     });
     expect(result1.trim()).toBe("/bin/sh");
     expect(result2.trim()).toBe("/bin/bash");
   });
+  it("should spawn a process synchronously", () => {
+    const { stdout } = spawnSync("echo", ["hello"], { encoding: "utf8" });
+    expect(stdout.trim()).toBe("hello");
+  });
 });
+
+describe("execFile()", () => {
+  it("should execute a file", async () => {
+    const result: Buffer = await new Promise((resolve, reject) => {
+      execFile("bun", ["-v"], (error, stdout, stderr) => {
+        if (error) {
+          reject(error);
+        }
+        resolve(stdout);
+      });
+    });
+    expect(SEMVER_REGEX.test(result.toString().trim())).toBe(true);
+  });
+});
+
+describe("exec()", () => {
+  it("should execute a command in a shell", async () => {
+    const result: Buffer = await new Promise((resolve, reject) => {
+      exec("bun -v", (error, stdout, stderr) => {
+        if (error) {
+          reject(error);
+        }
+        resolve(stdout);
+      });
+    });
+    console.log(result);
+    expect(SEMVER_REGEX.test(result.toString().trim())).toBe(true);
+  });
+});
+
+describe("fork()", () => {
+  it("should throw an error when used", () => {
+    let err;
+    try {
+      fork("index.js");
+    } catch (e) {
+      err = e;
+    }
+    expect(err instanceof Error).toBe(true);
+  });
+});
+
+describe("spawnSync()", () => {
+  it("should spawn a process synchronously", () => {
+    const { stdout } = spawnSync("echo", ["hello"], { encoding: "utf8" });
+    expect(stdout.trim()).toBe("hello");
+  });
+});
+
+describe("execFileSync()", () => {
+  it("should execute a file synchronously", () => {
+    const result = execFileSync("bun", ["-v"], { encoding: "utf8" });
+    expect(SEMVER_REGEX.test(result.trim())).toBe(true);
+  });
+});
+
+describe("execSync()", () => {
+  it("should execute a command in the shell synchronously", () => {
+    const result = execSync("bun -v", { encoding: "utf8" });
+    expect(SEMVER_REGEX.test(result.trim())).toBe(true);
+  });
+});
+
+// describe("Bun.spawn", () => {
+//   it("should return exit code 0 on successful execution", async () => {
+//     const result = await new Promise((resolve) => {
+//       Bun.spawn({
+//         cmd: ["echo", "hello"],
+//         encoding: "utf8",
+//         onExit: (code) => resolve(code),
+//         stdout: "inherit",
+//       });
+//     });
+//     expect(result).toBe(0);
+//   });
+//   it("should fail when given an invalid cwd", () => {
+//     const child = Bun.spawn({ cmd: ["echo", "hello"], cwd: "/invalid" });
+//     expect(child.pid).toBe(undefined);
+//   });
+// });

@@ -2917,6 +2917,7 @@ pub const JSValue = enum(JSValueReprInt) {
     pub fn asPromise(
         value: JSValue,
     ) ?*JSPromise {
+        if (value.isEmptyOrUndefinedOrNull()) return null;
         return cppFn("asPromise", .{
             value,
         });

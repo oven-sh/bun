@@ -1345,7 +1345,6 @@ function getValidatedPath(fileURLOrPath, propName = "path") {
 //------------------------------------------------------------------------------
 // Section 6. Primordials
 //------------------------------------------------------------------------------
-var ArrayBufferView = globalThis.ArrayBufferView;
 var Uint8Array = globalThis.Uint8Array;
 var String = globalThis.String;
 var Object = globalThis.Object;
@@ -1373,14 +1372,6 @@ var MathAbs = Math.abs;
 var StringPrototypeToUpperCase = String.prototype.toUpperCase;
 var StringPrototypeIncludes = String.prototype.includes;
 var Uint8ArrayPrototypeIncludes = Uint8Array.prototype.includes;
-
-function isArrayBufferView(value) {
-  return (
-    typeof value === "object" &&
-    value !== null &&
-    value instanceof ArrayBufferView
-  );
-}
 
 function isUint8Array(value) {
   return (

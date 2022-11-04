@@ -138,7 +138,7 @@ describe("spawn()", () => {
   });
 
   it("should allow us to timeout hanging processes", async () => {
-    const child = spawn("sleep", ["750"], { timeout: 250 });
+    const child = spawn("sleep", ["2"], { timeout: 400 });
     const start = performance.now();
     let end;
     await new Promise((resolve) => {
@@ -147,8 +147,7 @@ describe("spawn()", () => {
         resolve(true);
       });
     });
-    console.log("here");
-    expect(end - start < 750).toBe(true);
+    expect(end - start < 2000).toBe(true);
   });
 
   it("should allow us to set env", async () => {
@@ -177,14 +176,14 @@ describe("spawn()", () => {
   });
 
   it("should allow us to spawn in a shell", async () => {
-    const child1 = spawn("echo", ["$0"], { shell: true });
-    const child2 = spawn("echo", ["$0"], { shell: "bash" });
     const result1: string = await new Promise((resolve) => {
+      const child1 = spawn("echo", ["$0"], { shell: true });
       child1.stdout.on("data", (data) => {
         resolve(data.toString());
       });
     });
     const result2: string = await new Promise((resolve) => {
+      const child2 = spawn("echo", ["$0"], { shell: "bash" });
       child2.stdout.on("data", (data) => {
         resolve(data.toString());
       });

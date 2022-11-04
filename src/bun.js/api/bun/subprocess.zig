@@ -869,7 +869,7 @@ pub const Subprocess = struct {
                     defer arg0.deinit();
                     var path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
                     var resolved = Which.which(&path_buf, PATH, cwd, arg0.slice()) orelse {
-                        globalThis.throwInvalidArguments("cmd not in $PATH: {s}", .{arg0});
+                        globalThis.throwInvalidArguments("cmd not in $PATH: {any}", .{arg0});
                         return .zero;
                     };
                     argv.appendAssumeCapacity(allocator.dupeZ(u8, bun.span(resolved)) catch {

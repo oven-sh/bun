@@ -924,7 +924,7 @@ export class ChildProcess extends EventEmitter {
       onExit: this.#handleOnExit.bind(this),
     });
 
-    this.stdio = this.#getBunSpawnIo(stdio, options);
+    this.stdio = this.#getBunSpawnIo(bunStdio, options);
     this.stdin = this.stdio[0];
     this.stdout = this.stdio[1];
     this.stderr = this.stdio[2];

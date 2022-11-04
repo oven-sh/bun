@@ -849,6 +849,35 @@ export class ChildProcess extends EventEmitter {
     this.#exited = true;
   }
 
+  #getBunSpawnIo(stdio, options) {
+    const result = [];
+    switch (stdio[0]) {
+      case "pipe":
+        result[0] = new WrappedFileSink(this.#handle.stdin);
+        break;
+      case "inherit":
+        result[0] = process.stdin;
+      default:
+        result[0] = null;
+    }
+    let i = 1;
+    for (; i < stdio.length; i++) {
+      switch (stdio[i]) {
+        case "pipe":
+          result[i] = ReadableFromWeb(this.#handle[fdToStdioName(i)], {
+            encoding: options.encoding || undefined,
+          });
+          break;
+        case "inherit":
+          result[i] = process[fdToStdioName(i)];
+          break;
+        default:
+          result[i] = null;
+      }
+    }
+    return result;
+  }
+
   spawn(options) {
     validateObject(options, "options");
 
@@ -895,19 +924,10 @@ export class ChildProcess extends EventEmitter {
       onExit: this.#handleOnExit.bind(this),
     });
 
-    this.stdin = bunStdio[0] ? new WrappedFileSink(this.#handle.stdin) : null;
-
-    this.stdout = bunStdio[1]
-      ? ReadableFromWeb(this.#handle.stdout, {
-          encoding: options.encoding || undefined,
-        })
-      : null;
-
-    this.stderr = bunStdio[2]
-      ? ReadableFromWeb(this.#handle.stderr, {
-          encoding: options.encoding || undefined,
-        })
-      : null;
+    this.stdio = this.#getBunSpawnIo(stdio, options);
+    this.stdin = this.stdio[0];
+    this.stdout = this.stdio[1];
+    this.stderr = this.stdio[2];
 
     process.nextTick(onSpawnNT, this);
 
@@ -1038,6 +1058,19 @@ function nodeToBun(item) {
   }
 }
 
+function fdToStdioName(fd) {
+  switch (fd) {
+    case 0:
+      return "stdin";
+    case 1:
+      return "stdout";
+    case 2:
+      return "stderr";
+    default:
+      return null;
+  }
+}
+
 function getBunStdioOptions(stdio) {
   const normalizedStdio = normalizeStdio(stdio);
   // Node options:
@@ -1126,10 +1159,11 @@ function abortChildProcess(child, killSignal) {
   }
 }
 
-class WrappedFileSink {
+class WrappedFileSink extends EventEmitter {
   #fileSink;
 
   constructor(fileSink) {
+    super();
     this.#fileSink = fileSink;
   }
 

@@ -2138,7 +2138,6 @@ var require_destroy = __commonJS({
       }
     }
     function errorOrDestroy(stream, err, sync) {
-      console.log(stream);
       const r = stream._readableState;
       const w = stream._writableState;
       if ((w && w.destroyed) || (r && r.destroyed)) {

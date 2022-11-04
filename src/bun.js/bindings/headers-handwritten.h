@@ -229,7 +229,7 @@ extern "C" JSC::EncodedJSValue Bun__runVirtualModule(
     JSC::JSGlobalObject* global,
     ZigString* specifier);
 
-extern "C" bool Bun__transpileFile(
+extern "C" void* Bun__transpileFile(
     void* bunVM,
     JSC::JSGlobalObject* global,
     ZigString* specifier,

@@ -116,14 +116,16 @@ describe("spawn()", () => {
   });
 
   it("should allow us to set cwd", async () => {
-    const PRIVATE_DIR = "/private";
-    const child = spawn("pwd", { cwd: "/tmp" });
+    const child = spawn("pwd", { cwd: process.env.TMPDIR });
     const result: string = await new Promise((resolve) => {
       child.stdout.on("data", (data) => {
         resolve(data.toString());
       });
     });
-    expect(result.trim()).toBe(`${PRIVATE_DIR}/tmp`);
+    const platformTmpDir = `${process.platform === "darwin" ? "/private" : ""}${
+      process.env.TMPDIR
+    }`;
+    expect(`${result.trim()}/`).toBe(platformTmpDir);
   });
 
   it("should allow us to write to stdin", async () => {

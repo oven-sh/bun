@@ -137,23 +137,43 @@ function _mustCallInner(fn, criteria = 1, field) {
 }
 
 const strictEqual = (...args) => {
-  assertNode.strictEqual(...args);
-  expect(true).toBe(true);
+  let error = null;
+  try {
+    assertNode.strictEqual(...args);
+  } catch (err) {
+    error = err;
+  }
+  expect(error).toBe(null);
 };
 
 const throws = (...args) => {
-  assertNode.throws(...args);
-  expect(true).toBe(true);
+  let error = null;
+  try {
+    assertNode.throws(...args);
+  } catch (err) {
+    error = err;
+  }
+  expect(error).toBe(null);
 };
 
 const assert = (...args) => {
-  assertNode(...args);
-  expect(true).toBe(true);
+  let error = null;
+  try {
+    assertNode(...args);
+  } catch (err) {
+    error = err;
+  }
+  expect(error).toBe(null);
 };
 
 const assertOk = (...args) => {
-  assertNode.ok(...args);
-  expect(true).toBe(true);
+  let error = null;
+  try {
+    assertNode.ok(...args);
+  } catch (err) {
+    error = err;
+  }
+  expect(error).toBe(null);
 };
 
 describe("ChildProcess.constructor", () => {
@@ -353,7 +373,7 @@ describe("child_process cwd", () => {
     // Can't assert callback, as stayed in to API:
     // _The 'exit' event may or may not fire after an error has occurred._
     child.on("exit", function (code, signal) {
-      strictEqual(code, expectCode);
+      strictEqual(code, expectCode).bind(this);
     });
 
     child.on(

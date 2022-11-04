@@ -2307,6 +2307,11 @@ pub const Timer = struct {
 
             const result = callback.call(globalThis, &.{});
 
+            if (result.isEmptyOrUndefinedOrNull() or !result.isCell()) {
+                this.deinit();
+                return;
+            }
+
             if (result.isAnyError(globalThis)) {
                 vm.runErrorHandler(result, null);
                 this.deinit();

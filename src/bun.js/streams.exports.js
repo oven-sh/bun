@@ -1,6 +1,6 @@
 // "readable-stream" npm package
 // just transpiled
-// var { isPromise } = import.meta.primordials;
+var { isPromise } = import.meta.primordials;
 
 var __create = Object.create;
 var __defProp = Object.defineProperty;
@@ -34,14 +34,6 @@ var __copyProps = (to, from, except, desc) => {
 
 var runOnNextTick = process.nextTick;
 
-function isPromise(toTest) {
-  return (
-    Boolean(toTest) &&
-    (typeof toTest === "object" || typeof toTest === "function") &&
-    typeof toTest.then === "function"
-  );
-}
-
 function isReadableStream(value) {
   return (
     typeof value === "object" &&
@@ -68,14 +60,9 @@ function validateBoolean(value, name) {
 
 /** @type {validateObject} */
 const validateObject = (value, name, options = null) => {
-  // const validateObject = hideStackFrames((value, name, options = null) => {
-  const allowArray = getOwnPropertyValueOrDefault(options, "allowArray", false);
-  const allowFunction = getOwnPropertyValueOrDefault(
-    options,
-    "allowFunction",
-    false
-  );
-  const nullable = getOwnPropertyValueOrDefault(options, "nullable", false);
+  const allowArray = options?.allowArray ?? false;
+  const allowFunction = options?.allowFunction ?? false;
+  const nullable = options?.nullable ?? false;
   if (
     (!nullable && value === null) ||
     (!allowArray && ArrayIsArray(value)) ||
@@ -99,19 +86,6 @@ function validateString(value, name) {
     throw new ERR_INVALID_ARG_TYPE(name, "string", value);
 }
 
-/**
- * @param {?object} options
- * @param {string} key
- * @param {boolean} defaultValue
- * @returns {boolean}
- */
-function getOwnPropertyValueOrDefault(options, key, defaultValue) {
-  return options == null || !ObjectPrototypeHasOwnProperty.call(options, key)
-    ? defaultValue
-    : options[key];
-}
-
-var ObjectPrototypeHasOwnProperty = Object.prototype.hasOwnProperty;
 var ArrayIsArray = Array.isArray;
 
 //------------------------------------------------------------------------------

@@ -1201,15 +1201,21 @@ pub const Subprocess = struct {
             .err => |err| {
                 this.waitpid_err = err;
             },
-            .result => |status| {
-                this.exit_code = @truncate(u8, status.status);
-                // Do WEXITSTATUS macro check: https://linux.die.net/man/3/waitpid
-                // https://code.woboq.org/gtk/include/bits/waitstatus.h.html
-                const w_if_exited = (status.status & 0x7f) == 0;
-                if (w_if_exited) {
-                    const w_exit_status = (status.status & 0xff00) >> 8;
-                    this.exit_code = @truncate(u8, w_exit_status);
-                }
+            .result => |result| {
+                this.exit_code = @truncate(
+                    u8,
+                    brk: {
+                        if (std.os.W.IFEXITED(result.status)) {
+                            break :brk std.os.W.EXITSTATUS(result.status);
+                        } else if (std.os.W.IFSIGNALED(result.status)) {
+                            break :brk std.os.W.TERMSIG(result.status);
+                        } else if (std.os.W.IFSTOPPED(result.status)) {
+                            break :brk std.os.W.STOPSIG(result.status);
+                        } else {
+                            break :brk 1;
+                        }
+                    },
+                );
             },
         }
 

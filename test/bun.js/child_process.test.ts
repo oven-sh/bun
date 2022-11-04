@@ -137,20 +137,19 @@ describe("spawn()", () => {
     expect(result.trim()).toBe("hello");
   });
 
-  // TODO: Uncomment after segfault is fixed
-  // it("should allow us to timeout hanging processes", async () => {
-  //   const child = spawn("sleep", ["750"], { timeout: 250 });
-  //   const start = performance.now();
-  //   let end;
-  //   await new Promise((resolve) => {
-  //     child.on("exit", () => {
-  //       end = performance.now();
-  //       resolve(true);
-  //     });
-  //   });
-  //   console.log("here");
-  //   expect(end - start < 750).toBe(true);
-  // });
+  it("should allow us to timeout hanging processes", async () => {
+    const child = spawn("sleep", ["750"], { timeout: 250 });
+    const start = performance.now();
+    let end;
+    await new Promise((resolve) => {
+      child.on("exit", () => {
+        end = performance.now();
+        resolve(true);
+      });
+    });
+    console.log("here");
+    expect(end - start < 750).toBe(true);
+  });
 
   it("should allow us to set env", async () => {
     const child = spawn("env", { env: { TEST: "test" } });
@@ -261,7 +260,7 @@ describe("execSync()", () => {
   });
 });
 
-// describe("Bun.spawn", () => {
+// describe("Bun.spawn()", () => {
 //   it("should return exit code 0 on successful execution", async () => {
 //     const result = await new Promise((resolve) => {
 //       Bun.spawn({

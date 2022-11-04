@@ -221,7 +221,6 @@ describe("exec()", () => {
         resolve(stdout);
       });
     });
-    console.log(result);
     expect(SEMVER_REGEX.test(result.toString().trim())).toBe(true);
   });
 });

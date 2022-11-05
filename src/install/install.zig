@@ -2851,7 +2851,6 @@ pub const PackageManager = struct {
                         const new_resolution_id = this.dynamicRootDependencies().items[dependency_id].resolution_id;
                         if (new_resolution_id != pair.resolution_id) {
                             any_root = true;
-                            Output.debug("Resolved root dependency", .{});
                         }
                     },
                     else => unreachable,

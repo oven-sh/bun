@@ -1811,9 +1811,7 @@ pub const Resolver = struct {
             debug.addNoteFmt("Enqueueing pending dependency \"{s}@{s}\"", .{ esm.name, esm.version });
         }
 
-        _ = esm;
         const input_package_id = input_package_id_.*;
-        _ = version;
         var pm = r.package_manager.?;
         if (comptime Environment.allow_assert) {
             // we should never be trying to resolve a dependency that is already resolved

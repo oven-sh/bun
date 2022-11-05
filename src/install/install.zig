@@ -1499,7 +1499,7 @@ pub const PackageManager = struct {
     const PreallocatedNetworkTasks = std.BoundedArray(NetworkTask, 1024);
     const NetworkTaskQueue = std.HashMapUnmanaged(u64, void, IdentityContext(u64), 80);
     const PackageIndex = std.AutoHashMapUnmanaged(u64, *Package);
-    pub var verbose_install = true;
+    pub var verbose_install = false;
 
     const PackageDedupeList = std.HashMapUnmanaged(
         u32,
@@ -1568,6 +1568,8 @@ pub const PackageManager = struct {
             .behavior = behavior,
         };
         dependency.countWithDifferentBuffers(name, version_buf, @TypeOf(&builder), &builder);
+
+        try builder.allocate();
 
         const cloned_dependency = dependency.cloneWithDifferentBuffers(name, version_buf, @TypeOf(&builder), &builder) catch unreachable;
         builder.clamp();

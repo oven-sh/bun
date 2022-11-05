@@ -667,6 +667,13 @@ pub const ModuleLoader = struct {
                         }
                     }
 
+                    if (parse_result.source.contents_is_recycled) {
+                        // this shared buffer is about to become owned by the AsyncModule struct
+                        jsc_vm.bundler.resolver.caches.fs.resetSharedBuffer(
+                            jsc_vm.bundler.resolver.caches.fs.sharedBuffer(),
+                        );
+                    }
+
                     jsc_vm.modules.enqueue(
                         globalObject.?,
                         .{

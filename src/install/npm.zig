@@ -194,7 +194,6 @@ pub const Registry = struct {
             }
         }
 
-        initializeStore();
         var new_etag_buf: [64]u8 = undefined;
 
         if (new_etag.len < new_etag_buf.len) {

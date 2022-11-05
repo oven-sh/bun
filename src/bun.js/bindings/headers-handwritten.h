@@ -234,7 +234,7 @@ extern "C" void* Bun__transpileFile(
     JSC::JSGlobalObject* global,
     ZigString* specifier,
     ZigString* referrer,
-    ErrorableResolvedSource* result);
+    ErrorableResolvedSource* result, bool allowPromise);
 
 extern "C" JSC::EncodedJSValue CallbackJob__onResolve(JSC::JSGlobalObject*, JSC::CallFrame*);
 extern "C" JSC::EncodedJSValue CallbackJob__onReject(JSC::JSGlobalObject*, JSC::CallFrame*);

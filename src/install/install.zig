@@ -525,7 +525,7 @@ const Task = struct {
 
         switch (this.tag) {
             .package_manifest => {
-                var allocator = this.package_manager.allocator;
+                var allocator = bun.default_allocator;
                 const package_manifest = Npm.Registry.getPackageMetadata(
                     allocator,
                     this.request.package_manifest.network.http.response.?,
@@ -1466,6 +1466,7 @@ pub const PackageManager = struct {
     /// Used to make "dependencies" optional in the main package
     /// Depended on packages have to explicitly list their dependencies
     dynamic_root_dependencies: ?std.ArrayList(Dependency.Pair) = null,
+    // remote_dependencies: RemoteDependency.List = .{},
 
     thread_pool: ThreadPool,
 
@@ -1498,7 +1499,7 @@ pub const PackageManager = struct {
     const PreallocatedNetworkTasks = std.BoundedArray(NetworkTask, 1024);
     const NetworkTaskQueue = std.HashMapUnmanaged(u64, void, IdentityContext(u64), 80);
     const PackageIndex = std.AutoHashMapUnmanaged(u64, *Package);
-    pub var verbose_install = false;
+    pub var verbose_install = true;
 
     const PackageDedupeList = std.HashMapUnmanaged(
         u32,
@@ -1566,9 +1567,9 @@ pub const PackageManager = struct {
             .version = version,
             .behavior = behavior,
         };
-        dependency.count(version_buf, @TypeOf(&builder), &builder);
+        dependency.countWithDifferentBuffers(name, version_buf, @TypeOf(&builder), &builder);
 
-        const cloned_dependency = dependency.clone(version_buf, @TypeOf(&builder), &builder) catch unreachable;
+        const cloned_dependency = dependency.cloneWithDifferentBuffers(name, version_buf, @TypeOf(&builder), &builder) catch unreachable;
         builder.clamp();
         const index = @truncate(u32, root_deps.items.len);
         root_deps.append(
@@ -1577,9 +1578,9 @@ pub const PackageManager = struct {
             },
         ) catch unreachable;
         this.enqueueDependencyWithMainAndSuccessFn(
-            0,
-            cloned_dependency,
             index,
+            cloned_dependency,
+            invalid_package_id,
             true,
             assignRootResolution,
         ) catch |err| {
@@ -2089,10 +2090,8 @@ pub const PackageManager = struct {
 
         const preinstall = this.determinePreinstallState(package, this.lockfile);
 
-        successFn(this, dependency_id, package.meta.id);
-
         if (comptime Environment.isDebug or Environment.isTest) std.debug.assert(package.meta.id != invalid_package_id);
-
+        defer successFn(this, dependency_id, package.meta.id);
         switch (preinstall) {
             // Is this package already in the cache?
             // We don't need to download the tarball, but we should enqueue dependencies
@@ -2379,7 +2378,7 @@ pub const PackageManager = struct {
         return try this.enqueueDependencyWithMain(id, dependency, resolution, true);
     }
 
-    fn dynamicRootDependencies(this: *PackageManager) *std.ArrayList(Dependency.Pair) {
+    pub fn dynamicRootDependencies(this: *PackageManager) *std.ArrayList(Dependency.Pair) {
         if (this.dynamic_root_dependencies == null) {
             const root_deps = this.lockfile.rootPackage().?.dependencies.get(this.lockfile.buffers.dependencies.items);
 
@@ -2807,14 +2806,22 @@ pub const PackageManager = struct {
         this.pending_tasks += @truncate(u32, count);
         this.total_tasks += @truncate(u32, count);
         this.network_resolve_batch.push(this.network_tarball_batch);
+
         HTTP.http_thread.schedule(this.network_resolve_batch);
         this.network_tarball_batch = .{};
         this.network_resolve_batch = .{};
     }
 
-    fn processDependencyList(this: *PackageManager, dep_list: TaskCallbackList) !void {
+    fn processDependencyList(
+        this: *PackageManager,
+        dep_list: TaskCallbackList,
+        comptime Context: type,
+        ctx: Context,
+        comptime callbacks: anytype,
+    ) !void {
         if (dep_list.items.len > 0) {
             var dependency_list = dep_list;
+            var any_root = false;
             for (dependency_list.items) |item| {
                 switch (item) {
                     .dependency => |dependency_id| {
@@ -2831,21 +2838,29 @@ pub const PackageManager = struct {
                     .root_dependency => |dependency_id| {
                         const pair = this.dynamicRootDependencies().items[dependency_id];
                         const dependency = pair.dependency;
+                        const resolution = pair.resolution_id;
 
                         try this.enqueueDependencyWithMainAndSuccessFn(
                             dependency_id,
                             dependency,
-                            dependency_id,
+                            resolution,
                             true,
                             assignRootResolution,
                         );
 
                         const new_resolution_id = this.dynamicRootDependencies().items[dependency_id].resolution_id;
                         if (new_resolution_id != pair.resolution_id) {
+                            any_root = true;
                             Output.debug("Resolved root dependency", .{});
                         }
                     },
                     else => unreachable,
+                }
+            }
+
+            if (comptime @TypeOf(callbacks.onResolve) != void) {
+                if (any_root) {
+                    callbacks.onResolve(ctx);
                 }
             }
 
@@ -2880,11 +2895,11 @@ pub const PackageManager = struct {
         return CacheDir{ .is_node_modules = true, .path = Fs.FileSystem.instance.abs(&fallback_parts) };
     }
 
-    fn runTasks(
+    pub fn runTasks(
         manager: *PackageManager,
         comptime ExtractCompletionContext: type,
         extract_ctx: ExtractCompletionContext,
-        comptime callback_fn: anytype,
+        comptime callbacks: anytype,
         comptime log_level: Options.LogLevel,
     ) anyerror!void {
         var batch = ThreadPool.Batch{};
@@ -2999,6 +3014,10 @@ pub const PackageManager = struct {
                             }
                         }
 
+                        if (@TypeOf(callbacks.onPackageManifestError) != void) {
+                            callbacks.onPackageManifestError(extract_ctx, name.slice());
+                        }
+
                         continue;
                     }
 
@@ -3024,7 +3043,7 @@ pub const PackageManager = struct {
                             var dependency_list = dependency_list_entry.value_ptr.*;
                             dependency_list_entry.value_ptr.* = .{};
 
-                            try manager.processDependencyList(dependency_list);
+                            try manager.processDependencyList(dependency_list, ExtractCompletionContext, extract_ctx, callbacks);
 
                             manager.flushDependencyQueue();
                             continue;
@@ -3130,7 +3149,7 @@ pub const PackageManager = struct {
                     var dependency_list = dependency_list_entry.value_ptr.*;
                     dependency_list_entry.value_ptr.* = .{};
 
-                    try manager.processDependencyList(dependency_list);
+                    try manager.processDependencyList(dependency_list, ExtractCompletionContext, extract_ctx, callbacks);
 
                     if (comptime log_level.showProgress()) {
                         if (!has_updated_this_run) {
@@ -3164,8 +3183,8 @@ pub const PackageManager = struct {
                     manager.extracted_count += 1;
                     manager.setPreinstallState(package_id, manager.lockfile, .done);
 
-                    if (comptime ExtractCompletionContext != void) {
-                        callback_fn(extract_ctx, package_id, comptime log_level);
+                    if (comptime @TypeOf(callbacks.onExtract) != void) {
+                        callbacks.onExtract(extract_ctx, package_id, comptime log_level);
                     }
 
                     if (comptime log_level.showProgress()) {
@@ -5561,28 +5580,15 @@ pub const PackageManager = struct {
                             switch (resolution.tag) {
                                 .npm => {
                                     std.debug.assert(resolution.value.npm.url.len() > 0);
-
-                                    const task_id = Task.Id.forNPMPackage(Task.Tag.extract, name, resolution.value.npm.version);
-                                    var task_queue = this.manager.task_queue.getOrPut(this.manager.allocator, task_id) catch unreachable;
-                                    if (!task_queue.found_existing) {
-                                        task_queue.value_ptr.* = .{};
-                                    }
-
-                                    task_queue.value_ptr.append(
-                                        this.manager.allocator,
+                                    this.manager.enqueuePackageForDownload(
+                                        name,
+                                        package_id,
+                                        resolution.value.npm.version,
+                                        resolution.value.npm.url.slice(buf),
                                         .{
                                             .node_modules_folder = @intCast(u32, this.node_modules_folder.fd),
                                         },
-                                    ) catch unreachable;
-
-                                    if (!task_queue.found_existing) {
-                                        if (this.manager.generateNetworkTaskForTarball(task_id, resolution.value.npm.url.slice(buf), this.lockfile.packages.get(package_id)) catch unreachable) |task| {
-                                            task.schedule(&this.manager.network_tarball_batch);
-                                            if (this.manager.network_tarball_batch.len > 0) {
-                                                _ = this.manager.scheduleNetworkTasks();
-                                            }
-                                        }
-                                    }
+                                    );
                                 },
                                 else => {
                                     Output.prettyErrorln(
@@ -5634,6 +5640,35 @@ pub const PackageManager = struct {
             this.installPackageWithNameAndResolution(package_id, log_level, name, resolution);
         }
     };
+
+    pub fn enqueuePackageForDownload(
+        this: *PackageManager,
+        name: []const u8,
+        package_id: PackageID,
+        version: Semver.Version,
+        url: []const u8,
+        task_context: TaskCallbackContext,
+    ) void {
+        const task_id = Task.Id.forNPMPackage(Task.Tag.extract, name, version);
+        var task_queue = this.task_queue.getOrPut(this.allocator, task_id) catch unreachable;
+        if (!task_queue.found_existing) {
+            task_queue.value_ptr.* = .{};
+        }
+
+        task_queue.value_ptr.append(
+            this.allocator,
+            task_context,
+        ) catch unreachable;
+
+        if (!task_queue.found_existing) {
+            if (this.generateNetworkTaskForTarball(task_id, url, this.lockfile.packages.get(package_id)) catch unreachable) |task| {
+                task.schedule(&this.network_tarball_batch);
+                if (this.network_tarball_batch.len > 0) {
+                    _ = this.scheduleNetworkTasks();
+                }
+            }
+        }
+    }
 
     pub fn installPackages(
         this: *PackageManager,
@@ -5765,7 +5800,11 @@ pub const PackageManager = struct {
                         try this.runTasks(
                             *PackageInstaller,
                             &installer,
-                            PackageInstaller.installEnqueuedPackages,
+                            .{
+                                .onExtract = PackageInstaller.installEnqueuedPackages,
+                                .onResolve = void{},
+                                .onPackageManifestError = void{},
+                            },
                             log_level,
                         );
                         if (!installer.options.do.install_packages) return error.InstallFailed;
@@ -5779,7 +5818,11 @@ pub const PackageManager = struct {
                 try this.runTasks(
                     *PackageInstaller,
                     &installer,
-                    PackageInstaller.installEnqueuedPackages,
+                    .{
+                        .onExtract = PackageInstaller.installEnqueuedPackages,
+                        .onResolve = void{},
+                        .onPackageManifestError = void{},
+                    },
                     log_level,
                 );
                 if (!installer.options.do.install_packages) return error.InstallFailed;
@@ -5789,7 +5832,11 @@ pub const PackageManager = struct {
                 try this.runTasks(
                     *PackageInstaller,
                     &installer,
-                    PackageInstaller.installEnqueuedPackages,
+                    .{
+                        .onExtract = PackageInstaller.installEnqueuedPackages,
+                        .onResolve = void{},
+                        .onPackageManifestError = void{},
+                    },
                     log_level,
                 );
             }
@@ -6158,7 +6205,11 @@ pub const PackageManager = struct {
 
             {
                 while (manager.pending_tasks > 0) : (manager.sleep()) {
-                    try manager.runTasks(void, void{}, null, log_level);
+                    try manager.runTasks(void, void{}, .{
+                        .onExtract = void{},
+                        .onResolve = void{},
+                        .onPackageManifestError = void{},
+                    }, log_level);
                 }
             }
 
@@ -6493,3 +6544,30 @@ test "UpdateRequests.parse" {
     try std.testing.expectEqualStrings(reqs[5].version.literal.slice("bing@1.0.0"), "latest");
     try std.testing.expectEqual(updates.len, 6);
 }
+
+pub const FailureCode = error{
+    PackageDoesNotExist,
+    DistTagDoesNotExist,
+    NoMatchingVersion,
+    TarballHTTP404,
+    TarballHTTP403,
+    TarballHTTP5xx,
+    ManifestHTTP403,
+    ManifestHTTP5xx,
+};
+
+pub const RemoteDependency = struct {
+    package_name: Semver.String = .{},
+    version: Dependency.Version = .{},
+
+    result: union(enum) {
+        pending: enum {
+            resolve,
+            download,
+        },
+        failure: FailureCode,
+        success: PackageID,
+    },
+
+    pub const List = std.MultiArrayList(RemoteDependency);
+};

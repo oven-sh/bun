@@ -716,6 +716,21 @@ pub const Loader = enum(u4) {
         };
     }
 
+    pub fn fromAPI(loader: Api.Loader) Loader {
+        return switch (loader) {
+            .jsx => .jsx,
+            .js => .js,
+            .ts => .ts,
+            .tsx => .tsx,
+            .css => .css,
+            .json => .json,
+            .toml => .toml,
+            .wasm => .wasm,
+            .napi => .napi,
+            else => .file,
+        };
+    }
+
     pub fn isJSX(loader: Loader) bool {
         return loader == .jsx or loader == .tsx;
     }

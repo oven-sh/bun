@@ -356,6 +356,7 @@ pub const PluginRunner = struct {
 
 pub const Bundler = struct {
     package_manager: ?*PackageManager = null,
+    onWakePackageManager: PackageManager.WakeHandler = .{},
     options: options.BundleOptions,
     log: *logger.Log,
     allocator: std.mem.Allocator,
@@ -383,6 +384,7 @@ pub const Bundler = struct {
             return this.package_manager.?;
         }
 
+        bun.HTTPThead.init() catch unreachable;
         this.package_manager = PackageManager.initWithRuntime(
             this.log,
             this.options.install,
@@ -391,7 +393,7 @@ pub const Bundler = struct {
             this.env,
             this.main_file_for_package_manager,
         ) catch @panic("Failed to initialize package manager");
-
+        this.package_manager.?.onWake = this.onWakePackageManager;
         this.resolver.package_manager = this.package_manager;
 
         return this.package_manager.?;

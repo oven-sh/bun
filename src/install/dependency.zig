@@ -70,19 +70,27 @@ pub fn isLessThan(string_buf: []const u8, lhs: Dependency, rhs: Dependency) bool
     return strings.cmpStringsAsc(void{}, lhs_name, rhs_name);
 }
 
+pub fn countWithDifferentBuffers(this: Dependency, name_buf: []const u8, version_buf: []const u8, comptime StringBuilder: type, builder: StringBuilder) void {
+    builder.count(this.name.slice(name_buf));
+    builder.count(this.version.literal.slice(version_buf));
+}
+
 pub fn count(this: Dependency, buf: []const u8, comptime StringBuilder: type, builder: StringBuilder) void {
-    builder.count(this.name.slice(buf));
-    builder.count(this.version.literal.slice(buf));
+    this.countWithDifferentBuffers(buf, buf, StringBuilder, builder);
 }
 
 pub fn clone(this: Dependency, buf: []const u8, comptime StringBuilder: type, builder: StringBuilder) !Dependency {
+    return this.cloneWithDifferentBuffers(buf, buf, StringBuilder, builder);
+}
+
+pub fn cloneWithDifferentBuffers(this: Dependency, name_buf: []const u8, version_buf: []const u8, comptime StringBuilder: type, builder: StringBuilder) !Dependency {
     const out_slice = builder.lockfile.buffers.string_bytes.items;
-    const new_literal = builder.append(String, this.version.literal.slice(buf));
+    const new_literal = builder.append(String, this.version.literal.slice(version_buf));
     const sliced = new_literal.sliced(out_slice);
 
     return Dependency{
         .name_hash = this.name_hash,
-        .name = builder.append(String, this.name.slice(buf)),
+        .name = builder.append(String, this.name.slice(name_buf)),
         .version = Dependency.parseWithTag(
             builder.lockfile.allocator,
             new_literal.slice(out_slice),

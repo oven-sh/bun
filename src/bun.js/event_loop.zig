@@ -183,7 +183,7 @@ pub const CppTask = opaque {
 const ThreadSafeFunction = JSC.napi.ThreadSafeFunction;
 const MicrotaskForDefaultGlobalObject = JSC.MicrotaskForDefaultGlobalObject;
 const HotReloadTask = JSC.HotReloader.HotReloadTask;
-const PollPendingModulesTask = JSC.ModuleLoader.PendingModule.Queue;
+const PollPendingModulesTask = JSC.ModuleLoader.AsyncModule.Queue;
 // const PromiseTask = JSInternalPromise.Completion.PromiseTask;
 pub const Task = TaggedPointerUnion(.{
     FetchTasklet,
@@ -225,7 +225,7 @@ pub const EventLoop = struct {
     tasks: Queue = undefined,
     concurrent_tasks: ConcurrentTask.Queue = ConcurrentTask.Queue{},
     global: *JSGlobalObject = undefined,
-    virtual_machine: *VirtualMachine = undefined,
+    virtual_machine: *JSC.VirtualMachine = undefined,
     waker: ?AsyncIO.Waker = null,
     start_server_on_next_tick: bool = false,
     defer_count: std.atomic.Atomic(usize) = std.atomic.Atomic(usize).init(0),
@@ -290,6 +290,9 @@ pub const EventLoop = struct {
                 @field(Task.Tag, typeBaseName(@typeName(CppTask))) => {
                     var any: *CppTask = task.get(CppTask).?;
                     any.run(global);
+                },
+                @field(Task.Tag, typeBaseName(@typeName(PollPendingModulesTask))) => {
+                    this.virtual_machine.modules.onPoll();
                 },
                 else => if (Environment.allow_assert) {
                     bun.Output.prettyln("\nUnexpected tag: {s}\n", .{@tagName(task.tag())});

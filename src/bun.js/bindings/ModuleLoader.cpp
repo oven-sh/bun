@@ -325,7 +325,7 @@ static JSValue handleVirtualModuleResult(
     }
 }
 
-extern "C" void Bun__onFulfillPendingModule(
+extern "C" void Bun__onFulfillAsyncModule(
     EncodedJSValue promiseValue,
     ErrorableResolvedSource* res,
     ZigString* specifier,

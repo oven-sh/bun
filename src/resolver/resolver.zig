@@ -332,10 +332,10 @@ pub const PendingResolution = struct {
         var dependencies = list.items(.dependency);
         var string_bufs = list.items(.string_buf);
         for (dependencies) |*dependency| {
-            dependency.deinit(allocator);
+            dependency.deinit();
         }
 
-        for (string_bufs) |*string_buf| {
+        for (string_bufs) |string_buf| {
             allocator.free(string_buf);
         }
     }
@@ -348,6 +348,7 @@ pub const PendingResolution = struct {
     pub const Tag = enum {
         download,
         resolve,
+        done,
     };
 
     pub fn init(
@@ -473,7 +474,7 @@ pub const Resolver = struct {
     dir_cache: *DirInfo.HashMap,
 
     pub inline fn usePackageManager(self: *const ThisResolver) bool {
-        return self.opts.enable_auto_install == true;
+        return self.opts.enable_global_cache == true;
     }
 
     pub fn init1(
@@ -669,7 +670,7 @@ pub const Resolver = struct {
         source_dir: string,
         import_path: string,
         kind: ast.ImportKind,
-        auto_install: bool,
+        global_cache: GlobalCache,
     ) Result.Union {
         const original_order = r.extension_order;
         defer r.extension_order = original_order;
@@ -773,7 +774,7 @@ pub const Resolver = struct {
         // defer r.mutex.unlock();
         errdefer (r.flushDebugLogs(.fail) catch {});
 
-        switch (r.resolveWithoutSymlinks(source_dir, import_path, kind, auto_install)) {
+        switch (r.resolveWithoutSymlinks(source_dir, import_path, kind, global_cache)) {
             .success => |*result| {
                 if (!strings.eqlComptime(result.path_pair.primary.namespace, "node"))
                     r.finalizeResult(result, kind) catch |err| return .{ .failure = err };
@@ -798,7 +799,7 @@ pub const Resolver = struct {
     }
 
     pub fn resolve(r: *ThisResolver, source_dir: string, import_path: string, kind: ast.ImportKind) !Result {
-        switch (r.resolveAndAutoInstall(source_dir, import_path, kind, false)) {
+        switch (r.resolveAndAutoInstall(source_dir, import_path, kind, GlobalCache.disable)) {
             .success => |result| return result,
             .pending, .not_found => return error.ModuleNotFound,
 
@@ -903,7 +904,7 @@ pub const Resolver = struct {
         result.module_type = module_type;
     }
 
-    pub fn resolveWithoutSymlinks(r: *ThisResolver, source_dir: string, import_path_: string, kind: ast.ImportKind, auto_install: bool) Result.Union {
+    pub fn resolveWithoutSymlinks(r: *ThisResolver, source_dir: string, import_path_: string, kind: ast.ImportKind, global_cache: bool) Result.Union {
         var import_path = import_path_;
 
         // This implements the module resolution algorithm from node.js, which is
@@ -1036,7 +1037,7 @@ pub const Resolver = struct {
                             };
                         }
 
-                        switch (r.resolveWithoutRemapping(import_dir_info, remap, kind, auto_install)) {
+                        switch (r.resolveWithoutRemapping(import_dir_info, remap, kind, global_cache)) {
                             .success => |_result| {
                                 result = Result{
                                     .path_pair = _result.path_pair,
@@ -1142,7 +1143,7 @@ pub const Resolver = struct {
                         if (remapped.len == 0) {
                             // "browser": {"module": false}
                             // does the module exist in the filesystem?
-                            switch (r.loadNodeModules(import_path, kind, source_dir_info, auto_install, false)) {
+                            switch (r.loadNodeModules(import_path, kind, source_dir_info, global_cache, false)) {
                                 .success => |node_module| {
                                     var pair = node_module.path_pair;
                                     pair.primary.is_disabled = true;
@@ -1182,7 +1183,7 @@ pub const Resolver = struct {
                 }
             }
 
-            switch (r.resolveWithoutRemapping(source_dir_info, import_path, kind, auto_install)) {
+            switch (r.resolveWithoutRemapping(source_dir_info, import_path, kind, global_cache)) {
                 .success => |res| {
                     result.path_pair = res.path_pair;
                     result.dirname_fd = res.dirname_fd;
@@ -1208,7 +1209,7 @@ pub const Resolver = struct {
                                     result.path_pair.primary.is_disabled = true;
                                     result.path_pair.primary = Fs.Path.initWithNamespace(remap, "file");
                                 } else {
-                                    switch (r.resolveWithoutRemapping(browser_scope, remap, kind, auto_install)) {
+                                    switch (r.resolveWithoutRemapping(browser_scope, remap, kind, global_cache)) {
                                         .success => |remapped| {
                                             result.path_pair = remapped.path_pair;
                                             result.dirname_fd = remapped.dirname_fd;
@@ -1228,6 +1229,8 @@ pub const Resolver = struct {
 
                     return .{ .success = result };
                 },
+                .pending => |p| return .{ .pending = p },
+                .failure => |p| return .{ .failure = p },
                 else => return .{ .not_found = {} },
             }
         }
@@ -1333,7 +1336,7 @@ pub const Resolver = struct {
         import_path: string,
         kind: ast.ImportKind,
         _dir_info: *DirInfo,
-        auto_install: bool,
+        global_cache: GlobalCache,
         forbid_imports: bool,
     ) MatchResult.Union {
         var dir_info = _dir_info;
@@ -1402,7 +1405,7 @@ pub const Resolver = struct {
                                 esm_resolution.path,
                                 kind,
                                 dir_info,
-                                auto_install,
+                                global_cache,
                                 true,
                             );
 
@@ -1481,7 +1484,7 @@ pub const Resolver = struct {
         dir_info = source_dir_info;
 
         // this is the magic!
-        if (!any_node_modules_folder and auto_install and r.usePackageManager() and esm_ != null) {
+        if (!any_node_modules_folder and global_cache.canUse() and r.usePackageManager() and esm_ != null) {
             const esm = esm_.?.withAutoVersion();
             load_module_from_cache: {
 
@@ -1600,13 +1603,57 @@ pub const Resolver = struct {
                     }
                 };
 
-                // if we are in the middle of extracting a package to the cache dir
-                // we cannot resolve it yet or we risk a race condition where a partially downloaded package is resolved
-                if (r.enqueueDependencyToDownload(esm, resolution, resolved_package_id, dependency_version)) |result| {
-                    return result;
-                }
+                const dir_path_for_resolution = manager.pathForResolution(resolved_package_id, resolution, &path_in_global_disk_cache_buf) catch |err| {
+                    // if it's missing, we need to install it
+                    if (err == error.FileNotFound) {
+                        switch (manager.getPreinstallState(resolved_package_id, manager.lockfile)) {
+                            .done => {
+                                var path = Fs.Path.init(import_path);
+                                path.is_disabled = true;
+                                // this might mean the package is disabled
+                                return .{
+                                    .success = .{
+                                        .path_pair = .{
+                                            .primary = path,
+                                        },
+                                    },
+                                };
+                            },
+                            .extract, .extracting => |st| {
+                                var builder = Semver.String.Builder{};
+                                esm.count(&builder);
+                                builder.allocate(manager.allocator) catch unreachable;
+                                const cloned = esm.clone(&builder);
 
-                if (r.dirInfoForResolution(resolved_package_id, resolution, esm, dependency_version)) |dir_info_to_use_| {
+                                if (st == .extract)
+                                    manager.enqueuePackageForDownload(
+                                        esm.name,
+                                        resolved_package_id,
+                                        resolution.value.npm.version,
+                                        manager.lockfile.str(resolution.value.npm.url),
+                                        .{
+                                            .root_request_id = 0,
+                                        },
+                                    );
+
+                                return .{
+                                    .pending = .{
+                                        .esm = cloned,
+                                        .dependency = dependency_version,
+                                        .resolution_id = resolved_package_id,
+                                        .string_buf = builder.allocatedSlice(),
+                                        .tag = .download,
+                                    },
+                                };
+                            },
+                            else => {},
+                        }
+                    }
+
+                    return .{ .failure = err };
+                };
+
+                if (r.dirInfoForResolution(dir_path_for_resolution, resolved_package_id)) |dir_info_to_use_| {
                     if (dir_info_to_use_) |pkg_dir_info| {
                         const abs_package_path = pkg_dir_info.abs_path;
 
@@ -1615,11 +1662,16 @@ pub const Resolver = struct {
                                 // The condition set is determined by the kind of import
                                 const esmodule = ESModule{
                                     .conditions = switch (kind) {
-                                        ast.ImportKind.require, ast.ImportKind.require_resolve => r.opts.conditions.require,
+                                        ast.ImportKind.require,
+                                        ast.ImportKind.require_resolve,
+                                        => r.opts.conditions.require,
                                         else => r.opts.conditions.import,
                                     },
                                     .allocator = r.allocator,
-                                    .debug_logs = if (r.debug_logs) |*debug| debug else null,
+                                    .debug_logs = if (r.debug_logs) |*debug|
+                                        debug
+                                    else
+                                        null,
                                 };
 
                                 // Resolve against the path "/", then join it with the absolute
@@ -1662,15 +1714,10 @@ pub const Resolver = struct {
     }
     fn dirInfoForResolution(
         r: *ThisResolver,
+        dir_path: []const u8,
         package_id: Install.PackageID,
-        resolution: Resolution,
-        _: ESModule.Package,
-        _: Dependency.Version,
     ) !?*DirInfo {
         std.debug.assert(r.package_manager != null);
-        var manager = r.package_manager.?;
-
-        const dir_path = try manager.pathForResolution(package_id, resolution, &path_in_global_disk_cache_buf);
 
         var dir_cache_info_result = r.dir_cache.getOrPut(dir_path) catch unreachable;
         if (dir_cache_info_result.status == .exists) {
@@ -1945,10 +1992,10 @@ pub const Resolver = struct {
         source_dir_info: *DirInfo,
         import_path: string,
         kind: ast.ImportKind,
-        auto_install: bool,
+        global_cache: GlobalCache,
     ) MatchResult.Union {
         if (isPackagePath(import_path)) {
-            return r.loadNodeModules(import_path, kind, source_dir_info, auto_install, false);
+            return r.loadNodeModules(import_path, kind, source_dir_info, global_cache, false);
         } else {
             const paths = [_]string{ source_dir_info.abs_path, import_path };
             var resolved = r.fs.absBuf(&paths, &resolve_without_remapping_buf);
@@ -3405,4 +3452,17 @@ pub const Dirname = struct {
 pub const RootPathPair = struct {
     base_path: string,
     package_json: *const PackageJSON,
+};
+
+pub const GlobalCache = enum {
+    auto_install,
+    enable_but_no_install,
+    disable,
+
+    pub fn canUse(this: GlobalCache) bool {
+        return switch (this) {
+            .auto_install, .enable_but_no_install => true,
+            .disable => false,
+        };
+    }
 };

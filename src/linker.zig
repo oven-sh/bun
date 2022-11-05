@@ -220,7 +220,7 @@ pub const Linker = struct {
         var needs_require = false;
         var node_module_bundle_import_path: ?string = null;
 
-        const is_deferred = result.pending_imports.items.len > 0;
+        const is_deferred = result.pending_imports.len > 0;
 
         var import_records = result.ast.import_records;
         defer {
@@ -234,7 +234,7 @@ pub const Linker = struct {
 
                 outer: while (record_i < record_count) : (record_i += 1) {
                     var import_record = &import_records[record_i];
-                    if (import_record.is_unused or (is_bun and is_deferred and result.isPendingImport(record_i))) continue;
+                    if (import_record.is_unused or (is_bun and is_deferred and !result.isPendingImport(record_i))) continue;
 
                     const record_index = record_i;
                     if (comptime !ignore_runtime) {

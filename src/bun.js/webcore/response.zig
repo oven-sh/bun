@@ -801,9 +801,9 @@ pub const Fetch = struct {
         var disable_timeout = false;
         var disable_keepalive = false;
         var verbose = false;
-        if (first_arg.isString()) {
+        if (first_arg.toStringOrNull(globalThis)) |jsstring| {
             var url_zig_str = ZigString.init("");
-            JSValue.fromRef(arguments[0]).toZigString(&url_zig_str, globalThis);
+            jsstring.toZigString(globalThis, &url_zig_str);
             var url_str = url_zig_str.slice();
 
             if (url_str.len == 0) {

@@ -861,6 +861,7 @@ pub const VirtualMachine = struct {
             .success => |r| r,
             .failure => |e| e,
             .not_found => error.ModuleNotFound,
+            .pending => unreachable,
         };
 
         if (!jsc_vm.macro_mode) {

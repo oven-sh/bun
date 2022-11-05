@@ -431,7 +431,7 @@ pub const Linker = struct {
                                 source_dir,
                                 import_record.path.text,
                                 import_record.kind,
-                                bundler.options.enable_auto_install,
+                                if (bundler.options.enable_auto_install) Resolver.GlobalCache.auto_install else Resolver.GlobalCache.disable,
                             )) {
                                 .success => |_resolved_import| {
                                     switch (import_record.tag) {

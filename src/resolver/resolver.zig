@@ -474,7 +474,7 @@ pub const Resolver = struct {
     dir_cache: *DirInfo.HashMap,
 
     pub inline fn usePackageManager(self: *const ThisResolver) bool {
-        return self.opts.enable_global_cache == true;
+        return self.opts.enable_auto_install == true;
     }
 
     pub fn init1(
@@ -904,7 +904,13 @@ pub const Resolver = struct {
         result.module_type = module_type;
     }
 
-    pub fn resolveWithoutSymlinks(r: *ThisResolver, source_dir: string, import_path_: string, kind: ast.ImportKind, global_cache: bool) Result.Union {
+    pub fn resolveWithoutSymlinks(
+        r: *ThisResolver,
+        source_dir: string,
+        import_path_: string,
+        kind: ast.ImportKind,
+        global_cache: GlobalCache,
+    ) Result.Union {
         var import_path = import_path_;
 
         // This implements the module resolution algorithm from node.js, which is

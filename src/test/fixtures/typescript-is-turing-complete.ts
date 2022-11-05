@@ -1,3 +1,4 @@
+// @ts-nocheck
 type StringBool = "true" | "false";
 
 interface AnyNumber {

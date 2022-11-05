@@ -2,9 +2,6 @@
   "name": "websocket-server",
   "module": "index.ts",
   "type": "module",
-  "devDependencies": {
-    "bun-types": "^0.2.0"
-  },
   "dependencies": {
     "bufferutil": "^4.0.7",
     "utf-8-validate": "^5.0.10",

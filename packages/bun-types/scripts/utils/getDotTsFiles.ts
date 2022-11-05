@@ -1,11 +1,9 @@
-/// <reference path="../../index.d.ts" />
-
 import { readdir } from "node:fs/promises";
 import { join } from "node:path";
 
 const allDotTsFiles: string[] = [];
 export const getDotTsFiles = async (
-  prefix: string = "",
+  prefix = "",
   folder: string = join(import.meta.dir, "..", ".."),
   folderName?: string
 ) => {

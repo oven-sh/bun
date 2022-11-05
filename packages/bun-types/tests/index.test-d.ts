@@ -1,13 +1,15 @@
 import { ZlibCompressionOptions } from "bun";
 import { expectAssignable, expectType } from "tsd";
 import Bun, { fs, fsPromises } from ".";
+// import Bun from "bun";
+// import fs from "fs";
+// import fsPromises from "fs/promises";
 
 // Testing ../bun.d.ts
 
 // FileBlob
 expectType<ReadableStream<Uint8Array>>(Bun.file("index.test-d.ts").stream());
 expectType<Promise<ArrayBuffer>>(Bun.file("index.test-d.ts").arrayBuffer());
-expectType<Promise<any>>(Bun.file("index.test-d.ts").json());
 expectType<Promise<string>>(Bun.file("index.test-d.ts").text());
 
 expectType<number>(Bun.file("index.test-d.ts").size);
@@ -65,3 +67,5 @@ expectType<Promise<void>>(fsPromises.appendFile("./index.d.ts", "test"));
 expectType<Promise<void>>(fsPromises.mkdir("./index.d.ts"));
 
 Bun.env;
+
+Bun.version;

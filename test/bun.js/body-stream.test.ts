@@ -15,9 +15,9 @@ var port = 4020;
   ];
   const useRequestObjectValues = [true, false];
 
-  for (let RequestPrototyeMixin of BodyMixin) {
+  for (let RequestPrototypeMixin of BodyMixin) {
     for (let useRequestObject of useRequestObjectValues) {
-      describe(`Request.prototoype.${RequestPrototyeMixin.name}() ${
+      describe(`Request.prototoype.${RequestPrototypeMixin.name}() ${
         useRequestObject ? "fetch(req)" : "fetch(url)"
       }`, () => {
         const inputFixture = [
@@ -67,8 +67,8 @@ var port = 4020;
             await runInServer(
               {
                 async fetch(req) {
-                  var result = await RequestPrototyeMixin.call(req);
-                  if (RequestPrototyeMixin === Request.prototype.json) {
+                  var result = await RequestPrototypeMixin.call(req);
+                  if (RequestPrototypeMixin === Request.prototype.json) {
                     result = JSON.stringify(result);
                   }
                   if (typeof result === "string") {

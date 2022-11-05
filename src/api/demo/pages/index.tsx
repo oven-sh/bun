@@ -1,19 +1,22 @@
 import Head from "next/head";
 import Image from "next/image";
 import styles from "../styles/Home.module.css";
+import { readFile } from "fs/promises";
 
 import React from "react";
 
 if (typeof window !== "undefined") {
   globalThis.Run = await import("../lib/run");
-  await import("../lib/api.ts");
+  await import("../lib/api");
 }
 
 export async function getStaticProps(ctx) {
   return {
     props: {
-      code: Bun.readFile(
-        "/Users/jarred/Build/es-module-lexer/test/samples/magic-string.js"
+      // not tested
+      code: readFile(
+        "/Users/jarred/Build/es-module-lexer/test/samples/magic-string.js",
+        { encoding: "utf-8" }
       ),
     },
   };
@@ -21,7 +24,7 @@ export async function getStaticProps(ctx) {
 
 var textDecoder = new TextDecoder();
 export default function Home({ code }) {
-  const fileNameRef = React.useRef();
+  const fileNameRef = React.useRef<HTMLInputElement>(null);
   const [esbuildResult, setEsbuildResult] = React.useState("");
   const [bunResult, setBunResult] = React.useState("");
   const [swcResult, setSWCResult] = React.useState("");
@@ -33,7 +36,7 @@ export default function Home({ code }) {
     (event) => {
       globalThis.Run.transform(
         event.target.value,
-        fileNameRef.current.value
+        fileNameRef?.current?.value
       ).then((result) => {
         setEsbuildResult(result.esbuild.code);
         setBunResult(textDecoder.decode(result.bun.files[0].data));

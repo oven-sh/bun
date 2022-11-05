@@ -1,15 +1,23 @@
 {
   "compilerOptions": {
-    "lib": ["ESNext"],
+    "lib": [
+      "ESNext"
+    ],
     "module": "esnext",
     "target": "esnext",
+    "moduleResolution": "nodenext",
+    "jsx": "react",
     "noEmit": true,
     "allowJs": true,
-    "types": ["bun-types"],
+    "types": [
+      "../../packages/bun-types"
+    ],
     "allowSyntheticDefaultImports": true,
     "baseUrl": ".",
     "paths": {
-      "foo/bar": ["baz.js"]
+      "foo/bar": [
+        "baz.js"
+      ]
     }
   }
 }

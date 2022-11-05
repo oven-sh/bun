@@ -1,11 +1,15 @@
 {
+  "extends": "./tsconfig.base.json",
   "compilerOptions": {
-    "lib": ["ESNext"],
-    "module": "esnext",
-    "target": "esnext",
-    "typeRoots": ["./types"],
-    "types": ["bun-types"],
-    "allowJs": true
+    "experimentalDecorators": true,
+    "noEmit": true,
+    "skipLibCheck": true
+    // "allowJs": true
   },
-  "exclude": ["src"]
+  "include": [
+    "."
+  ],
+  "exclude": [
+    "src/test"
+  ]
 }

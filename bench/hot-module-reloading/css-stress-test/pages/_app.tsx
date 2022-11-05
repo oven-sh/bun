@@ -1,3 +1,4 @@
+// @ts-nocheck
 import "../src/index.css";
 
 import App from "next/app";

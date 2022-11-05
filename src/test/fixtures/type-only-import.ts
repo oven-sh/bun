@@ -1,3 +1,4 @@
+// @ts-nocheck
 import { Foo } from "bacon";
 import React from "react";
 import * as Boom from "react";

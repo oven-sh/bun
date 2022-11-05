@@ -197,7 +197,7 @@ bun.js focuses on performance, developer experience and compatibility with the J
 export default {
   port: 3000,
   fetch(request: Request) {
-    return new Response("Hello World");
+    return new Response('Hello World');
   },
 };
 
@@ -237,8 +237,8 @@ The runtime uses JavaScriptCore, the JavaScript engine powering WebKit and Safar
 
 ```js
 // cat.js
-import { resolve } from "path";
-import { write, stdout, file, argv } from "bun";
+import {resolve} from 'path';
+import {write, stdout, file, argv} from 'bun';
 
 const path = resolve(argv.at(-1));
 
@@ -257,7 +257,7 @@ Server-side render React:
 ```js
 // requires Bun v0.1.0 or later
 // react-ssr.tsx
-import { renderToReadableStream } from "react-dom/server";
+import {renderToReadableStream} from 'react-dom/server';
 
 const dt = new Intl.DateTimeFormat();
 
@@ -289,7 +289,7 @@ PRs adding more examples are very welcome!
 
 ### Types for bun.js (editor autocomplete)
 
-The best docs right now are the TypeScript types in the [`bun-types`](https://github.com/oven-sh/bun-types) npm package. A docs site is coming soon.
+The best docs right now are the TypeScript types in the [`bun-types`](https://github.com/oven-sh/bun/tree/main/packages/bun-types) npm package. A docs site is coming soon.
 
 To get autocomplete for bun.js types in your editor,
 
@@ -328,8 +328,8 @@ bun.js has fast paths for common use cases that make Web APIs live up to the per
 When you pass a file blob to `Bun.write`, Bun automatically uses a faster system call:
 
 ```js
-const blob = Bun.file("input.txt");
-await Bun.write("output.txt", blob);
+const blob = Bun.file('input.txt');
+await Bun.write('output.txt', blob);
 ```
 
 On Linux, this uses the [`copy_file_range`](https://man7.org/linux/man-pages/man2/copy_file_range.2.html) syscall and on macOS, this becomes `clonefile` (or [`fcopyfile`](https://developer.apple.com/library/archive/documentation/System/Conceptual/ManPages_iPhoneOS/man3/copyfile.3.html)).
@@ -338,7 +338,7 @@ On Linux, this uses the [`copy_file_range`](https://man7.org/linux/man-pages/man
 
 ```js
 // Eventually, this will stream the response to disk but today it buffers
-await Bun.write("index.html", await fetch("https://example.com"));
+await Bun.write('index.html', await fetch('https://example.com'));
 ```
 
 ## Using bun as a package manager
@@ -714,15 +714,15 @@ When importing CSS in JavaScript-like loaders, CSS is treated special.
 By default, bun will transform a statement like this:
 
 ```js
-import "../styles/global.css";
+import '../styles/global.css';
 ```
 
 ##### When `platform` is `browser`
 
 ```js
 globalThis.document?.dispatchEvent(
-  new CustomEvent("onimportcss", {
-    detail: "http://localhost:3000/styles/globals.css",
+  new CustomEvent('onimportcss', {
+    detail: 'http://localhost:3000/styles/globals.css',
   })
 );
 ```
@@ -742,9 +742,9 @@ Additionally, bun exposes an API for SSR/SSG that returns a flat list of URLs to
 // This API needs to be changed somewhat to work more generally with Bun.js
 // Initially, you could only use bun.js through `bun dev`
 // and this API was created at that time
-addEventListener("fetch", async (event: FetchEvent) => {
+addEventListener('fetch', async (event: FetchEvent) => {
   let route = Bun.match(event);
-  const App = await import("pages/_app");
+  const App = await import('pages/_app');
 
   // This returns all .css files that were imported in the line above.
   // It’s recursive, so any file that imports a CSS file will be included.
@@ -763,9 +763,9 @@ bun bundles `.css` files imported via `@import` into a single file. It doesn’t
 This input:
 
 ```css
-@import url("./hi.css");
-@import url("./hello.css");
-@import url("./yo.css");
+@import url('./hi.css');
+@import url('./hello.css');
+@import url('./yo.css');
 ```
 
 Becomes:
@@ -881,7 +881,7 @@ type Framework = Environment & {
   // If the framework does routing, you may want to handle CSS manually
   // "facade" removes CSS imports from JavaScript files,
   //    and replaces an imported object with a proxy that mimics CSS module support without doing any class renaming.
-  css?: "onimportcss" | "facade";
+  css?: 'onimportcss' | 'facade';
 
   // bun’s filesystem router
   router?: Router;
@@ -893,7 +893,7 @@ type Define = {
   // When "*", all environment variables will be automatically injected into the JavaScript loader
   // When a string like "NEXT_PUBLIC_", only environment variables starting with that prefix will be injected
 
-  ".env": string | "*";
+  '.env': string | '*';
 
   // These environment variables will be injected into the JavaScript loader
   // These are the equivalent of Webpack’s resolve.alias and esbuild’s --define.
@@ -1117,7 +1117,7 @@ export interface Install {
   globalBinDir: string;
   cache: Cache;
   lockfile: Lockfile;
-  logLevel: "debug" | "error" | "warn";
+  logLevel: 'debug' | 'error' | 'warn';
 }
 
 type Registry =
@@ -1138,7 +1138,7 @@ export interface Cache {
 }
 
 export interface Lockfile {
-  print?: "yarn";
+  print?: 'yarn';
   path: string;
   savePath: string;
   save: boolean;
@@ -1371,7 +1371,7 @@ globalThis.reloadCount = reloadCount + 1;
 export default {
   fetch(req: Request) {
     return new Response(`Code reloaded ${reloadCount} times`, {
-      headers: { "content-type": "text/plain" },
+      headers: {'content-type': 'text/plain'},
     });
   },
 };
@@ -1413,7 +1413,7 @@ const reloadServer = (globalThis.reloadServer ||= (() => {
 const handler = {
   fetch(req: Request) {
     return new Response(`Code reloaded ${reloadCount} times`, {
-      headers: { "content-type": "text/plain" },
+      headers: {'content-type': 'text/plain'},
     });
   },
 };
@@ -1825,18 +1825,18 @@ This is an `"object"` loader. `object` loaders let you return a JS object that B
 Plugin implementation (`my-yaml-plugin.js`)
 
 ```js
-import { plugin } from "bun";
+import {plugin} from 'bun';
 
 plugin({
-  name: "YAML",
+  name: 'YAML',
 
   setup(builder) {
-    const { load } = require("js-yaml");
-    const { readFileSync } = require("fs");
+    const {load} = require('js-yaml');
+    const {readFileSync} = require('fs');
     // Run this function on any import that ends with .yaml or .yml
-    builder.onLoad({ filter: /\.(yaml|yml)$/ }, (args) => {
+    builder.onLoad({filter: /\.(yaml|yml)$/}, (args) => {
       // Read the YAML file from disk
-      const text = readFileSync(args.path, "utf8");
+      const text = readFileSync(args.path, 'utf8');
 
       // parse the YAML file with js-yaml
       const exports = load(text);
@@ -1846,7 +1846,7 @@ plugin({
         exports,
 
         // we're returning an object
-        loader: "object",
+        loader: 'object',
       };
     });
   },
@@ -1856,8 +1856,8 @@ plugin({
 Plugin usage:
 
 ```js
-import "./my-yaml-plugin.js";
-import { hello } from "./myfile.yaml";
+import './my-yaml-plugin.js';
+import {hello} from './myfile.yaml';
 
 console.log(hello); // "world"
 ```
@@ -1869,25 +1869,25 @@ This is a `"js"` loader, which lets you return a JS string or `ArrayBufferView` 
 Plugin implementation (`myplugin.js`)
 
 ```js
-import { plugin } from "bun";
+import {plugin} from 'bun';
 
 await plugin({
-  name: "svelte loader",
+  name: 'svelte loader',
   async setup(builder) {
-    const { compile } = await import("svelte/compiler");
-    const { readFileSync } = await import("fs");
+    const {compile} = await import('svelte/compiler');
+    const {readFileSync} = await import('fs');
 
     // Register a loader for .svelte files
-    builder.onLoad({ filter: /\.svelte$/ }, ({ path }) => ({
+    builder.onLoad({filter: /\.svelte$/}, ({path}) => ({
       // Run the Svelte compiler on the import path
-      contents: compile(readFileSync(path, "utf8"), {
+      contents: compile(readFileSync(path, 'utf8'), {
         filename: path,
-        generate: "ssr",
+        generate: 'ssr',
       }).js.code,
 
       // Set the loader to "js"
       // This runs it through Bun's transpiler
-      loader: "js",
+      loader: 'js',
     }));
   },
 });
@@ -1898,8 +1898,8 @@ Note: in a production implementation, you'd want to cache the compiled output an
 Plugin usage:
 
 ```js
-import "./myplugin.js";
-import MySvelteComponent from "./component.svelte";
+import './myplugin.js';
+import MySvelteComponent from './component.svelte';
 
 console.log(mySvelteComponent.render());
 ```
@@ -1911,15 +1911,15 @@ Bun's loader API interface is loosely based on [esbuild](https://esbuild.github.
 MDX:
 
 ```jsx
-import { plugin } from "bun";
-import { renderToStaticMarkup } from "react-dom/server";
+import {plugin} from 'bun';
+import {renderToStaticMarkup} from 'react-dom/server';
 
 // it's the esbuild plugin, but it works using Bun's transpiler.
-import mdx from "@mdx-js/esbuild";
+import mdx from '@mdx-js/esbuild';
 
 plugin(mdx());
 
-import Foo from "./bar.mdx";
+import Foo from './bar.mdx';
 console.log(renderToStaticMarkup(<Foo />));
 ```
 
@@ -1932,11 +1932,11 @@ At the top-level, a `plugin` function exported from `"bun"` expects a `"name"` s
 For plugins to automatically activate, the `plugin` function must be from an import statement like this:
 
 ```js
-import { plugin } from "bun";
+import {plugin} from 'bun';
 
 // This automatically activates on import
 plugin({
-  name: "my plugin",
+  name: 'my plugin',
   setup(builder) {},
 });
 
@@ -2007,8 +2007,8 @@ Bun.serve({
 Node:
 
 ```ts
-require("http")
-  .createServer((req, res) => res.end("bun!"))
+require('http')
+  .createServer((req, res) => res.end('bun!'))
   .listen(8080);
 ```
 
@@ -2028,7 +2028,7 @@ If the file used to start bun has a default export with a `fetch` function, it w
 // hi.js
 export default {
   fetch(req) {
-    return new Response("HI!");
+    return new Response('HI!');
   },
 };
 
@@ -2042,7 +2042,7 @@ export default {
 ```ts
 Bun.serve({
   fetch(req) {
-    return new Response("HI!");
+    return new Response('HI!');
   },
 });
 ```
@@ -2062,10 +2062,10 @@ It will hopefully make it easier to debug issues with bun until bun gets debugge
 ```js
 Bun.serve({
   fetch(req) {
-    throw new Error("woops!");
+    throw new Error('woops!');
   },
   error(error: Error) {
-    return new Response("Uh oh!!\n" + error.toString(), { status: 500 });
+    return new Response('Uh oh!!\n' + error.toString(), {status: 500});
   },
 });
 ```
@@ -2077,7 +2077,7 @@ To stop the server, call `server.stop()`:
 ```ts
 const server = Bun.serve({
   fetch() {
-    return new Response("HI!");
+    return new Response('HI!');
   },
 });
 
@@ -2093,20 +2093,20 @@ Example:
 ```ts
 Bun.serve({
   fetch(req) {
-    return new Response("Hello!!!");
+    return new Response('Hello!!!');
   },
   /**
    * File path to a TLS key
    *
    * To enable TLS, this option is required.
    */
-  keyFile: "./key.pem",
+  keyFile: './key.pem',
   /**
    * File path to a TLS certificate
    *
    * To enable TLS, this option is required.
    */
-  certFile: "./cert.pem",
+  certFile: './cert.pem',
 
   /**
    * Optional SSL options
@@ -2153,7 +2153,7 @@ Bun.serve({
       // When upgrading, we return undefined since we don't want to send a Response
       return;
 
-    return new Response("Regular HTTP response");
+    return new Response('Regular HTTP response');
   },
 });
 ```
@@ -2167,45 +2167,45 @@ type User = {
 
 Bun.serve<User>({
   fetch(req, server) {
-    if (req.url === "/chat") {
+    if (req.url === '/chat') {
       if (
         server.upgrade(req, {
           // This User object becomes ws.data
           data: {
-            name: new URL(req.url).searchParams.get("name") || "Friend",
+            name: new URL(req.url).searchParams.get('name') || 'Friend',
           },
           // Pass along some headers to the client
           headers: {
-            "Set-Cookie": "name=" + new URL(req.url).searchParams.get("name"),
+            'Set-Cookie': 'name=' + new URL(req.url).searchParams.get('name'),
           },
         })
       )
         return;
     }
 
-    return new Response("Expected a websocket connection", { status: 400 });
+    return new Response('Expected a websocket connection', {status: 400});
   },
 
   websocket: {
     open(ws) {
-      console.log("WebSocket opened");
+      console.log('WebSocket opened');
 
       // subscribe to "the-group-chat" topic
-      ws.subscribe("the-group-chat");
+      ws.subscribe('the-group-chat');
     },
 
     message(ws, message) {
       // In a group chat, we want to broadcast to everyone
       // so we use publish()
-      ws.publish("the-group-chat", `${ws.data.name}: ${message}`);
+      ws.publish('the-group-chat', `${ws.data.name}: ${message}`);
     },
 
     close(ws, code, reason) {
-      ws.publish("the-group-chat", `${ws.data.name} left the chat`);
+      ws.publish('the-group-chat', `${ws.data.name} left the chat`);
     },
 
     drain(ws) {
-      console.log("Please send me data. I am ready to receive it.");
+      console.log('Please send me data. I am ready to receive it.');
     },
 
     // enable compression
@@ -2277,9 +2277,7 @@ For server websocket connections, Bun exposes a `ServerWebSocket` class which is
 ```ts
 Bun.serve({
   fetch(req, server) {
-    if (
-      server.upgrade(req, { headers: { "Set-Cookie": "name=HiThereMyNameIs" } })
-    )
+    if (server.upgrade(req, {headers: {'Set-Cookie': 'name=HiThereMyNameIs'}}))
       return;
   },
   websocket: {
@@ -2297,7 +2295,7 @@ The web-standard `WebSocket` API does not let you specify headers.
 `ServerWebSocket` has `publish()`, `subscribe()`, and `unsubscribe` methods which let you broadcast the same message to all clients connected to a topic in one line of code.
 
 ```ts
-ws.publish("stock-prices/GOOG", `${price}`);
+ws.publish('stock-prices/GOOG', `${price}`);
 ```
 
 ##### Backpressure
@@ -2314,7 +2312,7 @@ You can also enable/disable compression per message with the `compress` option:
 
 ```ts
 // this will compress
-ws.send("Hello".repeat(1000), true);
+ws.send('Hello'.repeat(1000), true);
 ```
 
 `WebSocket.send` returns `undefined` and does not indicate backpressure, which can cause issues if you are sending a lot of data.
@@ -2348,11 +2346,11 @@ The HTTP server and server-side websockets are based on [uWebSockets](https://gi
 `Bun.spawn` lets you quickly spawn a process. Available as of Bun v0.2.0.
 
 ```ts
-import { spawn } from "bun";
+import {spawn} from 'bun';
 
-const { stdout } = spawn(["esbuild"], {
+const {stdout} = spawn(['esbuild'], {
   stdin: await fetch(
-    "https://raw.githubusercontent.com/oven-sh/bun/main/examples/hashing.js"
+    'https://raw.githubusercontent.com/oven-sh/bun/main/examples/hashing.js'
   ),
 });
 
@@ -2383,9 +2381,9 @@ spawnSync echo hi    1.47 ms/iter     (1.14 ms … 2.64 ms)   1.57 ms   2.37 ms 
 Synchronous example:
 
 ```ts
-import { spawnSync } from "bun";
+import {spawnSync} from 'bun';
 
-const { stdout } = spawnSync(["echo", "hi"]);
+const {stdout} = spawnSync(['echo', 'hi']);
 
 // When using spawnSync, stdout is a Buffer
 // this lets you read from it synchronously
@@ -2397,24 +2395,24 @@ console.log(text); // "hi\n"
 You can pass an object as the second argument to customize the process:
 
 ```ts
-import { spawn } from "bun";
+import {spawn} from 'bun';
 
-const { stdout } = spawn(["printenv", "FOO"], {
-  cwd: "/tmp",
+const {stdout} = spawn(['printenv', 'FOO'], {
+  cwd: '/tmp',
 
   env: {
     ...process.env,
-    FOO: "bar",
+    FOO: 'bar',
   },
 
   // Disable stdin
   stdin: null,
 
   // Allow us to read from stdout
-  stdout: "pipe",
+  stdout: 'pipe',
 
   // Point stderr to write to "/tmp/stderr.log"
-  stderr: Bun.file("/tmp/stderr.log"),
+  stderr: Bun.file('/tmp/stderr.log'),
 });
 
 const text = await new Response(stdout).text();
@@ -2424,12 +2422,12 @@ console.log(text); // "bar\n"
 You can also pass a `Bun.file` for `stdin`:
 
 ```ts
-import { spawn, file, write } from "bun";
+import {spawn, file, write} from 'bun';
 
-await write("/tmp/foo.txt", "hi");
-const { stdout } = spawn(["cat"], {
+await write('/tmp/foo.txt', 'hi');
+const {stdout} = spawn(['cat'], {
   // Set /tmp/foo.txt as stdin
-  stdin: file("/tmp/foo.txt"),
+  stdin: file('/tmp/foo.txt'),
 });
 
 const text = await new Response(stdout).text();
@@ -2439,11 +2437,11 @@ console.log(text); // "hi\n"
 `stdin` also accepts a TypedArray:
 
 ```ts
-import { spawn } from "bun";
+import {spawn} from 'bun';
 
-const { stdout } = spawn(["cat"], {
-  stdin: new TextEncoder().encode("hi"),
-  stdout: "pipe",
+const {stdout} = spawn(['cat'], {
+  stdin: new TextEncoder().encode('hi'),
+  stdout: 'pipe',
 });
 
 const text = await new Response(stdout).text();
@@ -2455,16 +2453,16 @@ console.log(text); // "hi\n"
 > :warning: **This API is a little buggy right now**
 
 ```ts
-import { spawn } from "bun";
+import {spawn} from 'bun';
 
-const { stdin, stdout } = spawn(["cat"], {
-  stdin: "pipe",
-  stdout: "pipe",
+const {stdin, stdout} = spawn(['cat'], {
+  stdin: 'pipe',
+  stdout: 'pipe',
 });
 
 // You can pass it strings or TypedArrays
 // Write "hi" to stdin
-stdin.write("hi");
+stdin.write('hi');
 
 // By default, stdin is buffered so you need to call flush() to send it
 stdin.flush(true);
@@ -2551,15 +2549,15 @@ interface Subprocess {
 Find the path to an executable, similar to typing `which` in your terminal.
 
 ```ts
-const ls = Bun.which("ls");
+const ls = Bun.which('ls');
 console.log(ls); // "/usr/bin/ls"
 ```
 
 `Bun.which` defaults the `PATH` to the current `PATH` environment variable, but you can customize it
 
 ```ts
-const ls = Bun.which("ls", {
-  PATH: "/usr/local/bin:/usr/bin:/bin",
+const ls = Bun.which('ls', {
+  PATH: '/usr/local/bin:/usr/bin:/bin',
 });
 console.log(ls); // "/usr/bin/ls"
 ```
@@ -2567,9 +2565,9 @@ console.log(ls); // "/usr/bin/ls"
 `Bun.which` also accepts a `cwd` option to search for the binary in a specific directory.
 
 ```ts
-const ls = Bun.which("ls", {
-  cwd: "/tmp",
-  PATH: "",
+const ls = Bun.which('ls', {
+  cwd: '/tmp',
+  PATH: '',
 });
 
 console.log(ls); // null
@@ -2584,20 +2582,20 @@ Start a TCP server with `Bun.listen`:
 ```ts
 // The server
 Bun.listen({
-  hostname: "localhost",
+  hostname: 'localhost',
   port: 8080,
   socket: {
     open(socket) {
-      socket.write("hello world");
+      socket.write('hello world');
     },
     data(socket, data) {
       console.log(data instanceof Uint8Array); // true
     },
     drain(socket) {
-      console.log("gimme more data");
+      console.log('gimme more data');
     },
     close(socket) {
-      console.log("goodbye!");
+      console.log('goodbye!');
     },
   },
   // This is a TLS socket
@@ -2611,7 +2609,7 @@ Bun.listen({
 ```ts
 // The client
 Bun.connect({
-  hostname: "localhost",
+  hostname: 'localhost',
   port: 8080,
 
   socket: {
@@ -2619,21 +2617,21 @@ Bun.connect({
       socket.write("hello server, i'm the client!");
     },
     data(socket, message) {
-      socket.write("thanks for the message! Sincerely, " + socket.data.name);
+      socket.write('thanks for the message! Sincerely, ' + socket.data.name);
     },
     drain(socket) {
-      console.log("my socket is ready for more data");
+      console.log('my socket is ready for more data');
     },
     close(socket) {
-      console.log("");
+      console.log('');
     },
     timeout(socket) {
-      console.log("socket timed out");
+      console.log('socket timed out');
     },
   },
 
   data: {
-    name: "Clienty McClientface",
+    name: 'Clienty McClientface',
   },
 });
 ```
@@ -2655,7 +2653,7 @@ Bun.listen({
     close(socket) {},
     error(socket, error) {},
   },
-  hostname: "localhost",
+  hostname: 'localhost',
   port: 8080,
 });
 ```
@@ -2667,7 +2665,7 @@ How do you pass per-socket data to each socket object?
 `**data**` is a property on the `TCPSocket` & `TLSSocket` object that you can use to store per-socket data.
 
 ```ts
-socket.data = { name: "Clienty McClientface" };
+socket.data = {name: 'Clienty McClientface'};
 ```
 
 You can assign a default value to `data` in the `connect` or `listen` options.
@@ -2680,7 +2678,7 @@ Bun.listen({
     },
   },
   data: {
-    name: "Servery McServerface",
+    name: 'Servery McServerface',
   },
 });
 ```
@@ -2691,16 +2689,16 @@ Bun.listen({
 
 ```ts
 const socket = Bun.connect({
-  hostname: "localhost",
+  hostname: 'localhost',
   port: 8080,
   socket: {
     data(socket, msg) {
-      console.log("wow i got a message!");
+      console.log('wow i got a message!');
 
       // this will be called the next time the server sends a message
       socket.reload({
         data(socket) {
-          console.log("okay, not so surprising this time");
+          console.log('okay, not so surprising this time');
         },
       });
     },
@@ -2717,29 +2715,29 @@ Your TCP client/server will have abysmal performance if you don't consider buffe
 For example, this:
 
 ```ts
-socket.write("h");
-socket.write("e");
-socket.write("l");
-socket.write("l");
-socket.write("o");
+socket.write('h');
+socket.write('e');
+socket.write('l');
+socket.write('l');
+socket.write('o');
 ```
 
 Performs significantly worse than:
 
 ```ts
-socket.write("hello");
+socket.write('hello');
 ```
 
 To simplify this for now, consider using `ArrayBufferSink` with the `{stream: true}` option:
 
 ```ts
-const sink = new ArrayBufferSink({ stream: true, highWaterMark: 1024 });
+const sink = new ArrayBufferSink({stream: true, highWaterMark: 1024});
 
-sink.write("h");
-sink.write("e");
-sink.write("l");
-sink.write("l");
-sink.write("o");
+sink.write('h');
+sink.write('e');
+sink.write('l');
+sink.write('l');
+sink.write('o');
 
 queueMicrotask(() => {
   var data = sink.flush();
@@ -2759,9 +2757,9 @@ Builtin buffering is planned in a future version of Bun.
 This function was added in Bun v0.2.2.
 
 ```ts
-import { peek } from "bun";
+import {peek} from 'bun';
 
-const promise = Promise.resolve("hi");
+const promise = Promise.resolve('hi');
 
 // no await!
 const result = peek(promise);
@@ -2772,10 +2770,10 @@ console.log(result); // "hi"
 `Bun.peek` is useful for performance-sensitive code that wants to reduce the number of extra microticks. It's an advanced API and you probably shouldn't use it unless you know what you're doing.
 
 ```ts
-import { peek } from "bun";
-import { expect, test } from "bun:test";
+import {peek} from 'bun';
+import {expect, test} from 'bun:test';
 
-test("peek", () => {
+test('peek', () => {
   const promise = Promise.resolve(true);
 
   // no await necessary!
@@ -2797,27 +2795,27 @@ test("peek", () => {
   // - returns the error
   // - does not mark the promise as handled
   const rejected = Promise.reject(
-    new Error("Succesfully tested promise rejection")
+    new Error('Succesfully tested promise rejection')
   );
-  expect(peek(rejected).message).toBe("Succesfully tested promise rejection");
+  expect(peek(rejected).message).toBe('Succesfully tested promise rejection');
 });
 ```
 
 `peek.status` lets you read the status of a promise without resolving it.
 
 ```ts
-import { peek } from "bun";
-import { expect, test } from "bun:test";
+import {peek} from 'bun';
+import {expect, test} from 'bun:test';
 
-test("peek.status", () => {
+test('peek.status', () => {
   const promise = Promise.resolve(true);
-  expect(peek.status(promise)).toBe("fulfilled");
+  expect(peek.status(promise)).toBe('fulfilled');
 
   const pending = new Promise(() => {});
-  expect(peek.status(pending)).toBe("pending");
+  expect(peek.status(pending)).toBe('pending');
 
-  const rejected = Promise.reject(new Error("oh nooo"));
-  expect(peek.status(rejected)).toBe("rejected");
+  const rejected = Promise.reject(new Error('oh nooo'));
+  expect(peek.status(rejected)).toBe('rejected');
 });
 ```
 
@@ -2851,24 +2849,24 @@ All this complexity is handled by a single function.
 
 ```ts
 // Write "Hello World" to output.txt
-await Bun.write("output.txt", "Hello World");
+await Bun.write('output.txt', 'Hello World');
 ```
 
 ```ts
 // log a file to stdout
-await Bun.write(Bun.stdout, Bun.file("input.txt"));
+await Bun.write(Bun.stdout, Bun.file('input.txt'));
 ```
 
 ```ts
 // write the HTTP response body to disk
-await Bun.write("index.html", await fetch("http://example.com"));
+await Bun.write('index.html', await fetch('http://example.com'));
 // this does the same thing
-await Bun.write(Bun.file("index.html"), await fetch("http://example.com"));
+await Bun.write(Bun.file('index.html'), await fetch('http://example.com'));
 ```
 
 ```ts
 // copy input.txt to output.txt
-await Bun.write("output.txt", Bun.file("input.txt"));
+await Bun.write('output.txt', Bun.file('input.txt'));
 ```
 
 ## bun:sqlite (SQLite3 module)
@@ -2892,35 +2890,35 @@ Installation:
 Example:
 
 ```ts
-import { Database } from "bun:sqlite";
+import {Database} from 'bun:sqlite';
 
-const db = new Database("mydb.sqlite");
+const db = new Database('mydb.sqlite');
 db.run(
-  "CREATE TABLE IF NOT EXISTS foo (id INTEGER PRIMARY KEY AUTOINCREMENT, greeting TEXT)"
+  'CREATE TABLE IF NOT EXISTS foo (id INTEGER PRIMARY KEY AUTOINCREMENT, greeting TEXT)'
 );
-db.run("INSERT INTO foo (greeting) VALUES (?)", "Welcome to bun!");
-db.run("INSERT INTO foo (greeting) VALUES (?)", "Hello World!");
+db.run('INSERT INTO foo (greeting) VALUES (?)', 'Welcome to bun!');
+db.run('INSERT INTO foo (greeting) VALUES (?)', 'Hello World!');
 
 // get the first row
-db.query("SELECT * FROM foo").get();
+db.query('SELECT * FROM foo').get();
 // { id: 1, greeting: "Welcome to bun!" }
 
 // get all rows
-db.query("SELECT * FROM foo").all();
+db.query('SELECT * FROM foo').all();
 // [
 //   { id: 1, greeting: "Welcome to bun!" },
 //   { id: 2, greeting: "Hello World!" },
 // ]
 
 // get all rows matching a condition
-db.query("SELECT * FROM foo WHERE greeting = ?").all("Welcome to bun!");
+db.query('SELECT * FROM foo WHERE greeting = ?').all('Welcome to bun!');
 // [
 //   { id: 1, greeting: "Welcome to bun!" },
 // ]
 
 // get first row matching a named condition
-db.query("SELECT * FROM foo WHERE greeting = $greeting").get({
-  $greeting: "Welcome to bun!",
+db.query('SELECT * FROM foo WHERE greeting = $greeting').get({
+  $greeting: 'Welcome to bun!',
 });
 // [
 //   { id: 1, greeting: "Welcome to bun!" },
@@ -3007,52 +3005,52 @@ constructor(
 To open or create a SQLite3 database:
 
 ```ts
-import { Database } from "bun:sqlite";
+import {Database} from 'bun:sqlite';
 
-const db = new Database("mydb.sqlite");
+const db = new Database('mydb.sqlite');
 ```
 
 Open an in-memory database:
 
 ```ts
-import { Database } from "bun:sqlite";
+import {Database} from 'bun:sqlite';
 
 // all of these do the same thing
-let db = new Database(":memory:");
+let db = new Database(':memory:');
 let db = new Database();
-let db = new Database("");
+let db = new Database('');
 ```
 
 Open read-write and throw if the database doesn't exist:
 
 ```ts
-import { Database } from "bun:sqlite";
-const db = new Database("mydb.sqlite", { readwrite: true });
+import {Database} from 'bun:sqlite';
+const db = new Database('mydb.sqlite', {readwrite: true});
 ```
 
 Open read-only and throw if the database doesn't exist:
 
 ```ts
-import { Database } from "bun:sqlite";
-const db = new Database("mydb.sqlite", { readonly: true });
+import {Database} from 'bun:sqlite';
+const db = new Database('mydb.sqlite', {readonly: true});
 ```
 
 Open read-write, don't throw if new file:
 
 ```ts
-import { Database } from "bun:sqlite";
-const db = new Database("mydb.sqlite", { readonly: true, create: true });
+import {Database} from 'bun:sqlite';
+const db = new Database('mydb.sqlite', {readonly: true, create: true});
 ```
 
 Open a database from a `Uint8Array`:
 
 ```ts
-import { Database } from "bun:sqlite";
-import { readFileSync } from "fs";
+import {Database} from 'bun:sqlite';
+import {readFileSync} from 'fs';
 
 // unlike passing a filepath, this will not persist any changes to disk
 // it will be read-write but not persistent
-const db = new Database(readFileSync("mydb.sqlite"));
+const db = new Database(readFileSync('mydb.sqlite'));
 ```
 
 Close a database:
@@ -3086,24 +3084,24 @@ This intended to make it easier for `bun:sqlite` to be fast by default. Calling 
 You can bind parameters on any call to a statement.
 
 ```js
-import { Database } from "bun:sqlite";
+import {Database} from 'bun:sqlite';
 
 // generate some data
 let db = new Database();
 db.run(
-  "CREATE TABLE foo (id INTEGER PRIMARY KEY AUTOINCREMENT, greeting TEXT)"
+  'CREATE TABLE foo (id INTEGER PRIMARY KEY AUTOINCREMENT, greeting TEXT)'
 );
-db.run("INSERT INTO foo (greeting) VALUES ($greeting)", {
-  $greeting: "Welcome to bun",
+db.run('INSERT INTO foo (greeting) VALUES ($greeting)', {
+  $greeting: 'Welcome to bun',
 });
 
 // get the query
-const stmt = db.query("SELECT * FROM foo WHERE greeting = ?");
+const stmt = db.query('SELECT * FROM foo WHERE greeting = ?');
 
 // run the query
-stmt.all("Welcome to bun!");
-stmt.get("Welcome to bun!");
-stmt.run("Welcome to bun!");
+stmt.all('Welcome to bun!');
+stmt.get('Welcome to bun!');
+stmt.run('Welcome to bun!');
 ```
 
 #### Database.prototype.prepare
@@ -3113,19 +3111,19 @@ stmt.run("Welcome to bun!");
 Unlike `query()`, this does not cache the compiled query.
 
 ```ts
-import { Database } from "bun:sqlite";
+import {Database} from 'bun:sqlite';
 
 // generate some data
 let db = new Database();
 db.run(
-  "CREATE TABLE foo (id INTEGER PRIMARY KEY AUTOINCREMENT, greeting TEXT)"
+  'CREATE TABLE foo (id INTEGER PRIMARY KEY AUTOINCREMENT, greeting TEXT)'
 );
 
 // compile the prepared statement
-const stmt = db.prepare("SELECT * FROM foo WHERE bar = ?");
+const stmt = db.prepare('SELECT * FROM foo WHERE bar = ?');
 
 // run the prepared statement
-stmt.all("baz");
+stmt.all('baz');
 ```
 
 Internally, this calls [`sqlite3_prepare_v3`](https://www.sqlite.org/c3ref/prepare.html).
@@ -3148,27 +3146,27 @@ This is useful for things like
 Creating a table:
 
 ```ts
-import { Database } from "bun:sqlite";
+import {Database} from 'bun:sqlite';
 
 let db = new Database();
 db.exec(
-  "CREATE TABLE foo (id INTEGER PRIMARY KEY AUTOINCREMENT, greeting TEXT)"
+  'CREATE TABLE foo (id INTEGER PRIMARY KEY AUTOINCREMENT, greeting TEXT)'
 );
 ```
 
 Inserting one row:
 
 ```ts
-import { Database } from "bun:sqlite";
+import {Database} from 'bun:sqlite';
 
 let db = new Database();
 db.exec(
-  "CREATE TABLE foo (id INTEGER PRIMARY KEY AUTOINCREMENT, greeting TEXT)"
+  'CREATE TABLE foo (id INTEGER PRIMARY KEY AUTOINCREMENT, greeting TEXT)'
 );
 
 // insert one row
-db.exec("INSERT INTO foo (greeting) VALUES ($greeting)", {
-  $greeting: "Welcome to bun",
+db.exec('INSERT INTO foo (greeting) VALUES ($greeting)', {
+  $greeting: 'Welcome to bun',
 });
 ```
 
@@ -3182,21 +3180,21 @@ Creates a function that always runs inside a transaction. When the function is i
 
 ```ts
 // setup
-import { Database } from "bun:sqlite";
-const db = Database.open(":memory:");
+import {Database} from 'bun:sqlite';
+const db = Database.open(':memory:');
 db.exec(
-  "CREATE TABLE cats (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT UNIQUE, age INTEGER)"
+  'CREATE TABLE cats (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT UNIQUE, age INTEGER)'
 );
 
-const insert = db.prepare("INSERT INTO cats (name, age) VALUES ($name, $age)");
+const insert = db.prepare('INSERT INTO cats (name, age) VALUES ($name, $age)');
 const insertMany = db.transaction((cats) => {
   for (const cat of cats) insert.run(cat);
 });
 
 insertMany([
-  { $name: "Joey", $age: 2 },
-  { $name: "Sally", $age: 4 },
-  { $name: "Junior", $age: 1 },
+  {$name: 'Joey', $age: 2},
+  {$name: 'Sally', $age: 4},
+  {$name: 'Junior', $age: 1},
 ]);
 ```
 
@@ -3204,31 +3202,31 @@ Transaction functions can be called from inside other transaction functions. Whe
 
 ```ts
 // setup
-import { Database } from "bun:sqlite";
-const db = Database.open(":memory:");
+import {Database} from 'bun:sqlite';
+const db = Database.open(':memory:');
 db.exec(
-  "CREATE TABLE expenses (id INTEGER PRIMARY KEY AUTOINCREMENT, note TEXT, dollars INTEGER);"
+  'CREATE TABLE expenses (id INTEGER PRIMARY KEY AUTOINCREMENT, note TEXT, dollars INTEGER);'
 );
 db.exec(
-  "CREATE TABLE cats (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT UNIQUE, age INTEGER)"
+  'CREATE TABLE cats (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT UNIQUE, age INTEGER)'
 );
 const newExpense = db.prepare(
-  "INSERT INTO expenses (note, dollars) VALUES (?, ?)"
+  'INSERT INTO expenses (note, dollars) VALUES (?, ?)'
 );
-const insert = db.prepare("INSERT INTO cats (name, age) VALUES ($name, $age)");
+const insert = db.prepare('INSERT INTO cats (name, age) VALUES ($name, $age)');
 const insertMany = db.transaction((cats) => {
   for (const cat of cats) insert.run(cat);
 });
 
 const adopt = db.transaction((cats) => {
-  newExpense.run("adoption fees", 20);
+  newExpense.run('adoption fees', 20);
   insertMany(cats); // nested transaction
 });
 
 adopt([
-  { $name: "Joey", $age: 2 },
-  { $name: "Sally", $age: 4 },
-  { $name: "Junior", $age: 1 },
+  {$name: 'Joey', $age: 2},
+  {$name: 'Sally', $age: 4},
+  {$name: 'Junior', $age: 1},
 ]);
 ```
 
@@ -3256,16 +3254,16 @@ let db = new Database();
 
 // write some data
 db.run(
-  "CREATE TABLE foo (id INTEGER PRIMARY KEY AUTOINCREMENT, greeting TEXT)"
+  'CREATE TABLE foo (id INTEGER PRIMARY KEY AUTOINCREMENT, greeting TEXT)'
 );
-db.run("INSERT INTO foo VALUES (?)", "Welcome to bun!");
-db.run("INSERT INTO foo VALUES (?)", "Hello World!");
+db.run('INSERT INTO foo VALUES (?)', 'Welcome to bun!');
+db.run('INSERT INTO foo VALUES (?)', 'Hello World!');
 
 const copy = db.serialize();
 // => Uint8Array
 
 const db2 = new Database(copy);
-db2.query("SELECT * FROM foo").all();
+db2.query('SELECT * FROM foo').all();
 // => [
 //   { id: 1, greeting: "Welcome to bun!" },
 //   { id: 2, greeting: "Hello World!" },
@@ -3283,26 +3281,26 @@ Internally, it calls [`sqlite3_serialize`](https://www.sqlite.org/c3ref/serializ
 To load a SQLite extension, call `Database.prototype.loadExtension(name)`:
 
 ```ts
-import { Database } from "bun:sqlite";
+import {Database} from 'bun:sqlite';
 
 let db = new Database();
 
-db.loadExtension("myext");
+db.loadExtension('myext');
 ```
 
 If you're on macOS, you will need to first use a custom SQLite install (you can install with homebrew). By default, bun uses Apple's proprietary build of SQLite because it benchmarks about 50% faster. However, they disabled extension support, so you will need to have a custom build of SQLite to use extensions on macOS.
 
 ```ts
-import { Database } from "bun:sqlite";
+import {Database} from 'bun:sqlite';
 
 // on macOS, this must be run before any other calls to `Database`
 // if called on linux, it will return true and do nothing
 // on linux it will still check that a string was passed
-Database.setCustomSQLite("/path/to/sqlite.dylib");
+Database.setCustomSQLite('/path/to/sqlite.dylib');
 
 let db = new Database();
 
-db.loadExtension("myext");
+db.loadExtension('myext');
 ```
 
 To install sqlite with homebrew:
@@ -3329,18 +3327,18 @@ TLDR:
 You can bind parameters on any call to a statement. Named parameters and positional parameters are supported. Bound parameters are remembered between calls and reset the next time you pass parameters to bind.
 
 ```ts
-import { Database } from "bun:sqlite";
+import {Database} from 'bun:sqlite';
 
 // setup
 let db = new Database();
 db.run(
-  "CREATE TABLE foo (id INTEGER PRIMARY KEY AUTOINCREMENT, greeting TEXT)"
+  'CREATE TABLE foo (id INTEGER PRIMARY KEY AUTOINCREMENT, greeting TEXT)'
 );
-db.run("INSERT INTO foo VALUES (?)", "Welcome to bun!");
-db.run("INSERT INTO foo VALUES (?)", "Hello World!");
+db.run('INSERT INTO foo VALUES (?)', 'Welcome to bun!');
+db.run('INSERT INTO foo VALUES (?)', 'Hello World!');
 
 // Statement object
-let statement = db.query("SELECT * FROM foo");
+let statement = db.query('SELECT * FROM foo');
 
 // returns all the rows
 statement.all();
@@ -3357,23 +3355,23 @@ statement.run();
 Calling `all()` on a `Statement` instance runs the query and returns the rows as an array of objects.
 
 ```ts
-import { Database } from "bun:sqlite";
+import {Database} from 'bun:sqlite';
 
 // setup
 let db = new Database();
 db.run(
-  "CREATE TABLE foo (id INTEGER PRIMARY KEY AUTOINCREMENT, greeting TEXT, count INTEGER)"
+  'CREATE TABLE foo (id INTEGER PRIMARY KEY AUTOINCREMENT, greeting TEXT, count INTEGER)'
 );
-db.run("INSERT INTO foo (greeting, count) VALUES (?, ?)", "Welcome to bun!", 2);
-db.run("INSERT INTO foo (greeting, count) VALUES (?, ?)", "Hello World!", 0);
+db.run('INSERT INTO foo (greeting, count) VALUES (?, ?)', 'Welcome to bun!', 2);
+db.run('INSERT INTO foo (greeting, count) VALUES (?, ?)', 'Hello World!', 0);
 db.run(
-  "INSERT INTO foo (greeting, count) VALUES (?, ?)",
-  "Welcome to bun!!!!",
+  'INSERT INTO foo (greeting, count) VALUES (?, ?)',
+  'Welcome to bun!!!!',
   2
 );
 
 // Statement object
-let statement = db.query("SELECT * FROM foo WHERE count = ?");
+let statement = db.query('SELECT * FROM foo WHERE count = ?');
 
 // return all the query results, binding 2 to the count parameter
 statement.all(2);
@@ -3390,23 +3388,23 @@ Internally, this calls [`sqlite3_reset`](https://www.sqlite.org/capi3ref.html#sq
 Calling `values()` on a `Statement` instance runs the query and returns the rows as an array of arrays.
 
 ```ts
-import { Database } from "bun:sqlite";
+import {Database} from 'bun:sqlite';
 
 // setup
 let db = new Database();
 db.run(
-  "CREATE TABLE foo (id INTEGER PRIMARY KEY AUTOINCREMENT, greeting TEXT, count INTEGER)"
+  'CREATE TABLE foo (id INTEGER PRIMARY KEY AUTOINCREMENT, greeting TEXT, count INTEGER)'
 );
-db.run("INSERT INTO foo (greeting, count) VALUES (?, ?)", "Welcome to bun!", 2);
-db.run("INSERT INTO foo (greeting, count) VALUES (?, ?)", "Hello World!", 0);
+db.run('INSERT INTO foo (greeting, count) VALUES (?, ?)', 'Welcome to bun!', 2);
+db.run('INSERT INTO foo (greeting, count) VALUES (?, ?)', 'Hello World!', 0);
 db.run(
-  "INSERT INTO foo (greeting, count) VALUES (?, ?)",
-  "Welcome to bun!!!!",
+  'INSERT INTO foo (greeting, count) VALUES (?, ?)',
+  'Welcome to bun!!!!',
   2
 );
 
 // Statement object
-let statement = db.query("SELECT * FROM foo WHERE count = ?");
+let statement = db.query('SELECT * FROM foo WHERE count = ?');
 
 // return all the query results as an array of arrays, binding 2 to "count"
 statement.values(2);
@@ -3416,10 +3414,10 @@ statement.values(2);
 // ]
 
 // Statement object, but with named parameters
-let statement = db.query("SELECT * FROM foo WHERE count = $count");
+let statement = db.query('SELECT * FROM foo WHERE count = $count');
 
 // return all the query results as an array of arrays, binding 2 to "count"
-statement.values({ $count: 2 });
+statement.values({$count: 2});
 // => [
 //   [ 1, "Welcome to bun!", 2 ],
 //   [ 3, "Welcome to bun!!!!", 2 ],
@@ -3433,33 +3431,33 @@ Internally, this calls [`sqlite3_reset`](https://www.sqlite.org/capi3ref.html#sq
 Calling `get()` on a `Statement` instance runs the query and returns the first result as an object.
 
 ```ts
-import { Database } from "bun:sqlite";
+import {Database} from 'bun:sqlite';
 
 // setup
 let db = new Database();
 db.run(
-  "CREATE TABLE foo (id INTEGER PRIMARY KEY AUTOINCREMENT, greeting TEXT, count INTEGER)"
+  'CREATE TABLE foo (id INTEGER PRIMARY KEY AUTOINCREMENT, greeting TEXT, count INTEGER)'
 );
-db.run("INSERT INTO foo (greeting, count) VALUES (?, ?)", "Welcome to bun!", 2);
-db.run("INSERT INTO foo (greeting, count) VALUES (?, ?)", "Hello World!", 0);
+db.run('INSERT INTO foo (greeting, count) VALUES (?, ?)', 'Welcome to bun!', 2);
+db.run('INSERT INTO foo (greeting, count) VALUES (?, ?)', 'Hello World!', 0);
 db.run(
-  "INSERT INTO foo (greeting, count) VALUES (?, ?)",
-  "Welcome to bun!!!!",
+  'INSERT INTO foo (greeting, count) VALUES (?, ?)',
+  'Welcome to bun!!!!',
   2
 );
 
 // Statement object
-let statement = db.query("SELECT * FROM foo WHERE count = ?");
+let statement = db.query('SELECT * FROM foo WHERE count = ?');
 
 // return the first row as an object, binding 2 to the count parameter
 statement.get(2);
 // => { id: 1, greeting: "Welcome to bun!", count: 2 }
 
 // Statement object, but with named parameters
-let statement = db.query("SELECT * FROM foo WHERE count = $count");
+let statement = db.query('SELECT * FROM foo WHERE count = $count');
 
 // return the first row as an object, binding 2 to the count parameter
-statement.get({ $count: 2 });
+statement.get({$count: 2});
 // => { id: 1, greeting: "Welcome to bun!", count: 2 }
 ```
 
@@ -3472,23 +3470,23 @@ Calling `run()` on a `Statement` instance runs the query and returns nothing.
 This is useful if you want to repeatedly run a query, but don't care about the results.
 
 ```ts
-import { Database } from "bun:sqlite";
+import {Database} from 'bun:sqlite';
 
 // setup
 let db = new Database();
 db.run(
-  "CREATE TABLE foo (id INTEGER PRIMARY KEY AUTOINCREMENT, greeting TEXT, count INTEGER)"
+  'CREATE TABLE foo (id INTEGER PRIMARY KEY AUTOINCREMENT, greeting TEXT, count INTEGER)'
 );
-db.run("INSERT INTO foo (greeting, count) VALUES (?, ?)", "Welcome to bun!", 2);
-db.run("INSERT INTO foo (greeting, count) VALUES (?, ?)", "Hello World!", 0);
+db.run('INSERT INTO foo (greeting, count) VALUES (?, ?)', 'Welcome to bun!', 2);
+db.run('INSERT INTO foo (greeting, count) VALUES (?, ?)', 'Hello World!', 0);
 db.run(
-  "INSERT INTO foo (greeting, count) VALUES (?, ?)",
-  "Welcome to bun!!!!",
+  'INSERT INTO foo (greeting, count) VALUES (?, ?)',
+  'Welcome to bun!!!!',
   2
 );
 
 // Statement object (TODO: use a better example query)
-let statement = db.query("SELECT * FROM foo");
+let statement = db.query('SELECT * FROM foo');
 
 // run the query, returning nothing
 statement.run();
@@ -3505,23 +3503,23 @@ After a statement has been finalized, it cannot be used for any further queries.
 It is a good idea to finalize a statement when you are done with it, but the garbage collector will do it for you if you don't.
 
 ```ts
-import { Database } from "bun:sqlite";
+import {Database} from 'bun:sqlite';
 
 // setup
 let db = new Database();
 db.run(
-  "CREATE TABLE foo (id INTEGER PRIMARY KEY AUTOINCREMENT, greeting TEXT, count INTEGER)"
+  'CREATE TABLE foo (id INTEGER PRIMARY KEY AUTOINCREMENT, greeting TEXT, count INTEGER)'
 );
-db.run("INSERT INTO foo (greeting, count) VALUES (?, ?)", "Welcome to bun!", 2);
-db.run("INSERT INTO foo (greeting, count) VALUES (?, ?)", "Hello World!", 0);
+db.run('INSERT INTO foo (greeting, count) VALUES (?, ?)', 'Welcome to bun!', 2);
+db.run('INSERT INTO foo (greeting, count) VALUES (?, ?)', 'Hello World!', 0);
 db.run(
-  "INSERT INTO foo (greeting, count) VALUES (?, ?)",
-  "Welcome to bun!!!!",
+  'INSERT INTO foo (greeting, count) VALUES (?, ?)',
+  'Welcome to bun!!!!',
   2
 );
 
 // Statement object
-let statement = db.query("SELECT * FROM foo WHERE count = ?");
+let statement = db.query('SELECT * FROM foo WHERE count = ?');
 
 statement.finalize();
 
@@ -3534,23 +3532,23 @@ statement.run();
 Calling `toString()` on a `Statement` instance prints the expanded SQL query. This is useful for debugging.
 
 ```ts
-import { Database } from "bun:sqlite";
+import {Database} from 'bun:sqlite';
 
 // setup
 let db = new Database();
 db.run(
-  "CREATE TABLE foo (id INTEGER PRIMARY KEY AUTOINCREMENT, greeting TEXT, count INTEGER)"
+  'CREATE TABLE foo (id INTEGER PRIMARY KEY AUTOINCREMENT, greeting TEXT, count INTEGER)'
 );
-db.run("INSERT INTO foo (greeting, count) VALUES (?, ?)", "Welcome to bun!", 2);
-db.run("INSERT INTO foo (greeting, count) VALUES (?, ?)", "Hello World!", 0);
+db.run('INSERT INTO foo (greeting, count) VALUES (?, ?)', 'Welcome to bun!', 2);
+db.run('INSERT INTO foo (greeting, count) VALUES (?, ?)', 'Hello World!', 0);
 db.run(
-  "INSERT INTO foo (greeting, count) VALUES (?, ?)",
-  "Welcome to bun!!!!",
+  'INSERT INTO foo (greeting, count) VALUES (?, ?)',
+  'Welcome to bun!!!!',
   2
 );
 
 // Statement object
-const statement = db.query("SELECT * FROM foo WHERE count = ?");
+const statement = db.query('SELECT * FROM foo WHERE count = ?');
 
 console.log(statement.toString());
 // => "SELECT * FROM foo WHERE count = NULL"
@@ -3582,7 +3580,7 @@ Internally, this calls [`sqlite3_expanded_sql`](https://www.sqlite.org/capi3ref.
 This snippet prints sqlite3's version number:
 
 ```ts
-import { dlopen, FFIType, suffix } from "bun:ffi";
+import {dlopen, FFIType, suffix} from 'bun:ffi';
 
 // `suffix` is either "dylib", "so", or "dll" depending on the platform
 // you don't have to use "suffix", it's just there for convenience
@@ -3651,7 +3649,7 @@ zig build-lib add.zig -dynamic -OReleaseFast
 Pass `dlopen` the path to the shared library and the list of symbols you want to import.
 
 ```ts
-import { dlopen, FFIType, suffix } from "bun:ffi";
+import {dlopen, FFIType, suffix} from 'bun:ffi';
 
 const path = `libadd.${suffix}`;
 
@@ -3793,7 +3791,7 @@ getVersion();
 If you have multiple function pointers, you can define them all at once with `linkSymbols`:
 
 ```ts
-import { linkSymbols } from "bun:ffi";
+import {linkSymbols} from 'bun:ffi';
 
 // getVersionPtrs defined elsewhere
 const [majorPtr, minorPtr, patchPtr] = getVersionPtrs();
@@ -3801,7 +3799,7 @@ const [majorPtr, minorPtr, patchPtr] = getVersionPtrs();
 const lib = linkSymbols({
   // Unlike with dlopen(), the names here can be whatever you want
   getMajor: {
-    returns: "cstring",
+    returns: 'cstring',
     args: [],
 
     // Since this doesn't use dlsym(), you have to provide a valid ptr
@@ -3810,12 +3808,12 @@ const lib = linkSymbols({
     ptr: majorPtr,
   },
   getMinor: {
-    returns: "cstring",
+    returns: 'cstring',
     args: [],
     ptr: minorPtr,
   },
   getPatch: {
-    returns: "cstring",
+    returns: 'cstring',
     args: [],
     ptr: patchPtr,
   },
@@ -3833,27 +3831,27 @@ const [major, minor, patch] = [
 Bun v0.2.3 added `JSCallback` which lets you create JavaScript callback functions that you can pass to C/FFI functions. The C/FFI function can call into the JavaScript/TypeScript code. This is useful for asynchronous code or otherwise when you want to call into JavaScript code from C.
 
 ```ts
-import { dlopen, JSCallback, ptr, CString } from "bun:ffi";
+import {dlopen, JSCallback, ptr, CString} from 'bun:ffi';
 
 const {
-  symbols: { search },
+  symbols: {search},
   close,
-} = dlopen("libmylib", {
+} = dlopen('libmylib', {
   search: {
-    returns: "usize",
-    args: ["cstring", "callback"],
+    returns: 'usize',
+    args: ['cstring', 'callback'],
   },
 });
 
 const searchIterator = new JSCallback(
   (ptr, length) => /hello/.test(new CString(ptr, length)),
   {
-    returns: "bool",
-    args: ["ptr", "usize"],
+    returns: 'bool',
+    args: ['ptr', 'usize'],
   }
 );
 
-const str = Buffer.from("wwutwutwutwutwutwutwutwutwutwutut\0", "utf8");
+const str = Buffer.from('wwutwutwutwutwutwutwutwutwutwutut\0', 'utf8');
 if (search(ptr(str), searchIterator)) {
   // found a match!
 }
@@ -3871,12 +3869,12 @@ For a slight performance boost, directly pass `JSCallback.prototype.ptr` instead
 
 ```ts
 const onResolve = new JSCallback((arg) => arg === 42, {
-  returns: "bool",
-  args: ["i32"],
+  returns: 'bool',
+  args: ['i32'],
 });
 const setOnResolve = new CFunction({
-  returns: "bool",
-  args: ["function"],
+  returns: 'bool',
+  args: ['function'],
   ptr: myNativeLibrarySetOnResolve,
 });
 
@@ -3910,7 +3908,7 @@ If you pass a `BigInt` to a function, it will be converted to a `number`
 **To convert from a TypedArray to a pointer**:
 
 ```ts
-import { ptr } from "bun:ffi";
+import {ptr} from 'bun:ffi';
 let myTypedArray = new Uint8Array(32);
 const myPtr = ptr(myTypedArray);
 ```
@@ -3918,7 +3916,7 @@ const myPtr = ptr(myTypedArray);
 **To convert from a pointer to an ArrayBuffer**:
 
 ```ts
-import { ptr, toArrayBuffer } from "bun:ffi";
+import {ptr, toArrayBuffer} from 'bun:ffi';
 let myTypedArray = new Uint8Array(32);
 const myPtr = ptr(myTypedArray);
 
@@ -3934,7 +3932,7 @@ You have two options.
 For long-lived pointers, a `DataView` is the fastest option:
 
 ```ts
-import { toArrayBuffer } from "bun:ffi";
+import {toArrayBuffer} from 'bun:ffi';
 let myDataView = new DataView(toArrayBuffer(myPtr, 0, 32));
 
 console.log(
@@ -3950,7 +3948,7 @@ For short-lived pointers, `read` is the fastest option:
 _Available in Bun v0.1.12+_
 
 ```ts
-import { read } from "bun:ffi";
+import {read} from 'bun:ffi';
 
 console.log(
   // ptr, byteOffset
@@ -3998,7 +3996,7 @@ typedef void (*JSTypedArrayBytesDeallocator)(void *bytes, void *deallocatorConte
 ```
 
 ```ts
-import { toArrayBuffer } from "bun:ffi";
+import {toArrayBuffer} from 'bun:ffi';
 
 // with a deallocatorContext:
 toArrayBuffer(
@@ -4045,14 +4043,14 @@ Where FFI functions expect a pointer, pass a TypedArray of equivalent size
 Easymode:
 
 ```ts
-import { dlopen, FFIType } from "bun:ffi";
+import {dlopen, FFIType} from 'bun:ffi';
 
 const {
-  symbols: { encode_png },
+  symbols: {encode_png},
 } = dlopen(myLibraryPath, {
   encode_png: {
     // FFIType's can be specified as strings too
-    args: ["ptr", "u32", "u32"],
+    args: ['ptr', 'u32', 'u32'],
     returns: FFIType.ptr,
   },
 });
@@ -4079,14 +4077,14 @@ The [auto-generated wrapper](https://github.com/oven-sh/bun/blob/6a65631cbdcae75
 If you don't want the automatic conversion or you want a pointer to a specific byte offset within the TypedArray, you can also directly get the pointer to the TypedArray:
 
 ```ts
-import { dlopen, FFIType, ptr } from "bun:ffi";
+import {dlopen, FFIType, ptr} from 'bun:ffi';
 
 const {
-  symbols: { encode_png },
+  symbols: {encode_png},
 } = dlopen(myLibraryPath, {
   encode_png: {
     // FFIType's can be specified as strings too
-    args: ["ptr", "u32", "u32"],
+    args: ['ptr', 'u32', 'u32'],
     returns: FFIType.ptr,
   },
 });
@@ -4124,7 +4122,7 @@ const out = encode_png(
 let png = new Uint8Array(toArrayBuffer(out));
 
 // save it to disk:
-await Bun.write("out.png", png);
+await Bun.write('out.png', png);
 ```
 
 ##### Not implemented yet
@@ -4143,14 +4141,14 @@ You can see the status of [this here](https://github.com/oven-sh/bun/issues/158)
 Loading Node-API modules in Bun.js works the same as in Node.js:
 
 ```js
-const napi = require("./my-node-module.node");
+const napi = require('./my-node-module.node');
 ```
 
 You can also use `process.dlopen`:
 
 ```js
-let mod = { exports: {} };
-process.dlopen(mod, "./my-node-module.node");
+let mod = {exports: {}};
+process.dlopen(mod, './my-node-module.node');
 ```
 
 As part of that work, Bun.js also polyfills the [`detect-libc`](https://npmjs.com/package/detect-libc) package, which is used by many Node-API modules to detect which `.node` binding to `require`.
@@ -4163,10 +4161,10 @@ When requiring a `*.node` module, Bun's JavaScript transpiler transforms the `re
 
 ```js
 // this is the input
-require("./my-node-module.node");
+require('./my-node-module.node');
 
 // this is the output
-import.meta.require("./my-node-module.node");
+import.meta.require('./my-node-module.node');
 ```
 
 Bun doesn't currently support dynamic requires, but `import.meta.require` is an escape hatch for that. It uses a [JavaScriptCore built-in function](https://github.com/oven-sh/bun/blob/aa87d40f4b7fdfb52575f44d151906ddba6a82d0/src/javascript/jsc/bindings/builtins/js/JSZigGlobalObject.js#L26).
@@ -4258,19 +4256,19 @@ This lets you transpile JavaScript, TypeScript, TSX, and JSX using Bun's transpi
 It is synchronous and runs in the same thread as other JavaScript code.
 
 ```js
-const transpiler = new Bun.Transpiler({ loader: "jsx" });
-transpiler.transformSync("<div>hi!</div>");
+const transpiler = new Bun.Transpiler({loader: 'jsx'});
+transpiler.transformSync('<div>hi!</div>');
 ```
 
 ```js
-import { __require as require } from "bun:wrap";
-import * as JSX from "react/jsx-dev-runtime";
+import {__require as require} from 'bun:wrap';
+import * as JSX from 'react/jsx-dev-runtime';
 var jsx = require(JSX).jsxDEV;
 
 export default jsx(
-  "div",
+  'div',
   {
-    children: "hi!",
+    children: 'hi!',
   },
   undefined,
   false,
@@ -4292,19 +4290,19 @@ If code uses a macro, it will potentially spawn a new copy of Bun.js' JavaScript
 Unless you're transpiling _many_ large files, you should probably use `Bun.Transpiler.transformSync`. The cost of the threadpool will often take longer than actually transpiling code.
 
 ```js
-const transpiler = new Bun.Transpiler({ loader: "jsx" });
-await transpiler.transform("<div>hi!</div>");
+const transpiler = new Bun.Transpiler({loader: 'jsx'});
+await transpiler.transform('<div>hi!</div>');
 ```
 
 ```js
-import { __require as require } from "bun:wrap";
-import * as JSX from "react/jsx-dev-runtime";
+import {__require as require} from 'bun:wrap';
+import * as JSX from 'react/jsx-dev-runtime';
 var jsx = require(JSX).jsxDEV;
 
 export default jsx(
-  "div",
+  'div',
   {
-    children: "hi!",
+    children: 'hi!',
   },
   undefined,
   false,
@@ -4316,7 +4314,7 @@ export default jsx(
 You can also pass a `Loader` as a string
 
 ```js
-await transpiler.transform("<div>hi!</div>", "tsx");
+await transpiler.transform('<div>hi!</div>', 'tsx');
 ```
 
 #### `Bun.Transpiler.scan`
@@ -4326,7 +4324,7 @@ This is a fast way to get a list of imports & exports used in a JavaScript/jsx o
 This function is synchronous.
 
 ```ts
-const transpiler = new Bun.Transpiler({ loader: "ts" });
+const transpiler = new Bun.Transpiler({loader: 'ts'});
 
 transpiler.scan(`
 import React from 'react';
@@ -4367,7 +4365,7 @@ This is a fast path for getting a list of imports used in a JavaScript/jsx or Ty
 This function is synchronous.
 
 ```ts
-const transpiler = new Bun.Transpiler({ loader: "ts" });
+const transpiler = new Bun.Transpiler({loader: 'ts'});
 
 transpiler.scanImports(`
 import React from 'react';

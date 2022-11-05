@@ -93,9 +93,11 @@ describe("React", () => {
   it("React.createContext works", () => {
     expect(typeof React.createContext).toBe("function");
     const pleaseDontThrow = React.createContext({ foo: true });
-    expect(pleaseDontThrow.$$typeof.description).toBe("react.context");
+    expect((pleaseDontThrow as any).$$typeof.description).toBe("react.context");
 
-    const pleaseDontThrow2 = React.default.createContext({ foo: true });
+    const pleaseDontThrow2 = (React as any).default.createContext({
+      foo: true,
+    });
     expect(pleaseDontThrow2.$$typeof.description).toBe("react.context");
   });
 });
@@ -172,7 +174,7 @@ describe("ReactDOM", () => {
           const text =
             renderToReadableStream === renderToReadableStreamBun
               ? array.join("")
-              : new TextDecoder().decode(concatArrayBuffers(array));
+              : new TextDecoder().decode(concatArrayBuffers(array as any[]));
           gc();
           expect(text.replaceAll("<!-- -->", "")).toBe(inputString);
           gc();
@@ -189,7 +191,7 @@ describe("ReactDOM", () => {
         it("for await (chunk of stream)", async () => {
           const stream = await renderToReadableStream(reactElement);
           gc();
-          const chunks = [];
+          const chunks: any = [];
           for await (let chunk of stream) {
             chunks.push(chunk);
           }
@@ -207,7 +209,7 @@ describe("ReactDOM", () => {
             chunks.push(chunk);
           }
           const text = new TextDecoder().decode(
-            await new Response(chunks).arrayBuffer()
+            await new Response(chunks as any).arrayBuffer()
           );
           gc();
           expect(text.replaceAll("<!-- -->", "")).toBe(inputString);

@@ -21,6 +21,7 @@
   },
   "devDependencies": {
     "@types/react": "^17.0.8",
+    "bun-types": "^0.2.2",
     "typescript": "^4.3.2",
     "webpack": "^5.38.1",
     "webpack-cli": "^4.7.0"

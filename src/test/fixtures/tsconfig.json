@@ -1,8 +1,12 @@
 {
   "compilerOptions": {
     "baseUrl": "/Users/jarredsumner/Code/bun/src/test/fixtures",
+    "strict": true,
+    "noImplicitAny": false,
     "paths": {
-      "components/*": ["components/*"]
+      "components/*": [
+        "components/*"
+      ]
     },
     "jsx": "preserve",
   }

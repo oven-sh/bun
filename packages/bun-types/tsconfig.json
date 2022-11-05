@@ -1,20 +1,28 @@
 {
   "compilerOptions": {
-    "composite": true,
-    "emitDeclarationOnly": true,
-    "lib": ["ESNext"],
-    "baseUrl": ".",
-    "rootDir": ".",
-    "outFile": "./types.d.ts",
+    // "composite": true,
+    // "emitDeclarationOnly": true,
+    "lib": [
+      "ESNext"
+    ],
+    // "baseUrl": ".",
+    // "rootDir": ".",
     "skipLibCheck": true,
+    "strict": true,
     "target": "esnext",
-    "disableSolutionSearching": true
+    "module": "esnext",
+    "moduleResolution": "node",
+    // "disableSolutionSearching": true
   },
-  "include": ["./*.d.ts", "./**/*.d.ts"],
+  // "include": [
+  //   "./*.d.ts",
+  //   "./**/*.d.ts"
+  // ],
   "exclude": [
-    "node_modules",
-    "./node_modules",
-    "./node_modules/*",
-    "./node_modules/@types/node/index.d.ts"
+    "dist"
+    // "node_modules"
+    // "./node_modules",
+    // "./node_modules/*",
+    // "./node_modules/@types/node/index.d.ts"
   ]
 }

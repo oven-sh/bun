@@ -1,5 +1,3 @@
-/// <reference path="../index.d.ts" />
-
 import { file, write } from "bun";
 import { mkdirSync } from "fs";
 import { join, resolve } from "path";
@@ -19,7 +17,9 @@ if (folder.endsWith("bundle.ts")) {
 
 try {
   mkdirSync(folder, { recursive: true });
-} catch {}
+} catch (err) {
+  err;
+}
 
 const header = await file(join(import.meta.dir, "..", "header.txt")).text();
 const filesToCat = (await getDotTsFiles("./")).filter(

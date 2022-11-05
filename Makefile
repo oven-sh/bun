@@ -455,6 +455,8 @@ bun:
 npm-install:
 	$(NPM_CLIENT) install
 
+print-%  : ; @echo $* = $($*)
+
 
 
 
@@ -497,7 +499,7 @@ generate-builtins: builtins
 .PHONY: vendor-without-check
 vendor-without-check: npm-install node-fallbacks runtime_js fallback_decoder bun_error mimalloc picohttp zlib boringssl libarchive libbacktrace lolhtml usockets uws tinycc oniguruma
 
-BUN_TYPES_REPO_PATH ?= $(realpath ../bun-types)
+BUN_TYPES_REPO_PATH ?= $(realpath packages/bun-types)
 
 .PHONY: prepare-types
 prepare-types:
@@ -509,7 +511,7 @@ prepare-types:
 release-types:
 	# can be removed when/if "bun publish" is implemented
 	@npm --version >/dev/null 2>&1 || (echo -e "ERROR: npm is required."; exit 1)
-	cd $(BUN_TYPES_REPO_PATH)/dist && npm publish
+	cd $(BUN_TYPES_REPO_PATH)/dist && npm publish --dry-run
 
 .PHONY: format
 format: ## to format the code

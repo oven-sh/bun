@@ -31,7 +31,6 @@
   },
   "zig.beforeDebugCmd": "make build-unit ${file} ${filter} ${bin}",
   "zig.testCmd": "make test ${file} ${filter} ${bin}",
-
   "lldb.verboseLogging": false,
   "files.exclude": {
     "**/.git": true,
@@ -44,8 +43,6 @@
     "**/*.xcscheme": true,
     "**/*.pem": true,
     "**/*.xcodeproj": true,
-    "packages/bun-types/*.d.ts": true,
-
     "test/snapshots": true,
     "test/snapshots-no-hmr": true,
     "src/bun.js/WebKit": true,
@@ -183,5 +180,8 @@
     "queue": "cpp"
   },
   "cmake.configureOnOpen": false,
-  "C_Cpp.errorSquiggles": "Enabled"
+  "C_Cpp.errorSquiggles": "Enabled",
+  "eslint.workingDirectories": [
+    "packages/bun-types"
+  ]
 }

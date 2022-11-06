@@ -621,8 +621,8 @@ pub const ModuleLoader = struct {
             const name: []const u8 = switch (result.err) {
                 error.NoMatchingVersion => "PackageVersionNotFound",
                 error.DistTagNotFound => "PackageTagNotFound",
-                error.PackageManifestHTTP403 => "PackageForbiddenError",
-                error.PackageManifestHTTP404 => "PackageNotFoundError",
+                error.PackageManifestHTTP403 => "PackageForbidden",
+                error.PackageManifestHTTP404 => "PackageNotFound",
                 else => "PackageResolveError",
             };
 

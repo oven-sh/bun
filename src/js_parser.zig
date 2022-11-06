@@ -16313,6 +16313,7 @@ fn NewParser_(
                         ),
                     ) catch unreachable;
                     p.recordUsage(p.module_ref);
+                    return;
                 },
                 .s_break => |data| {
                     if (data.label) |*label| {

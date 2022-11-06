@@ -94,6 +94,10 @@ describe("Bun.Transpiler", () => {
         "export const Foo = Baz.Bar"
       );
     });
+
+    it("export = {foo: 123}", () => {
+      ts.expectPrinted_("export = {foo: 123}", "module.exports = { foo: 123 }");
+    });
   });
 
   describe("generated closures", () => {

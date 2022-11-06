@@ -1446,7 +1446,7 @@ pub const PackageManager = struct {
     allocator: std.mem.Allocator,
     log: *logger.Log,
     resolve_tasks: TaskChannel,
-    timestamp: u32 = 0,
+    timestamp_for_manifest_cache_control: u32 = 0,
     extracted_count: u32 = 0,
     default_features: Features = Features{},
     summary: Lockfile.Package.Diff.Summary = Lockfile.Package.Diff.Summary{},
@@ -1573,7 +1573,9 @@ pub const PackageManager = struct {
         };
         dependency.countWithDifferentBuffers(name, version_buf, @TypeOf(&builder), &builder);
 
-        try builder.allocate();
+        builder.allocate() catch |err| {
+            return .{ .failure = err };
+        };
 
         const cloned_dependency = dependency.cloneWithDifferentBuffers(name, version_buf, @TypeOf(&builder), &builder) catch unreachable;
         builder.clamp();
@@ -2184,7 +2186,7 @@ pub const PackageManager = struct {
                     const manifest: Npm.PackageManifest = manifest_;
                     loaded_manifest = manifest;
 
-                    if (this.options.enable.manifest_cache_control and manifest.pkg.public_max_age > this.timestamp) {
+                    if (this.options.enable.manifest_cache_control and manifest.pkg.public_max_age > this.timestamp_for_manifest_cache_control) {
                         try this.manifests.put(this.allocator, @truncate(PackageNameHash, manifest.pkg.name.hash), manifest);
                     }
 
@@ -2197,7 +2199,7 @@ pub const PackageManager = struct {
                     }
 
                     // Was it recent enough to just load it without the network call?
-                    if (this.options.enable.manifest_cache_control and manifest.pkg.public_max_age > this.timestamp) {
+                    if (this.options.enable.manifest_cache_control and manifest.pkg.public_max_age > this.timestamp_for_manifest_cache_control) {
                         return manifest;
                     }
                 }
@@ -2444,15 +2446,8 @@ pub const PackageManager = struct {
     }
 
     pub fn isRootDependency(this: *const PackageManager, id: PackageID) bool {
-        if (this.dynamic_root_dependencies) |*list| {
-            const package = this.lockfile.packages.get(id);
-            const deps: []const Dependency.Pair = list.items;
-            for (deps) |*pair| {
-                const dep = &pair.dependency;
-                if (dep.name.len() == package.name.len() and dep.name_hash == package.name_hash) {
-                    return true;
-                }
-            }
+        if (this.dynamic_root_dependencies != null) {
+            return false;
         }
 
         return this.root_dependency_list.contains(id);
@@ -2585,7 +2580,7 @@ pub const PackageManager = struct {
                                         const manifest: Npm.PackageManifest = manifest_;
                                         loaded_manifest = manifest;
 
-                                        if (this.options.enable.manifest_cache_control and manifest.pkg.public_max_age > this.timestamp) {
+                                        if (this.options.enable.manifest_cache_control and manifest.pkg.public_max_age > this.timestamp_for_manifest_cache_control) {
                                             try this.manifests.put(this.allocator, @truncate(PackageNameHash, manifest.pkg.name.hash), manifest);
                                         }
 
@@ -2611,7 +2606,7 @@ pub const PackageManager = struct {
                                         }
 
                                         // Was it recent enough to just load it without the network call?
-                                        if (this.options.enable.manifest_cache_control and manifest.pkg.public_max_age > this.timestamp) {
+                                        if (this.options.enable.manifest_cache_control and manifest.pkg.public_max_age > this.timestamp_for_manifest_cache_control) {
                                             _ = this.network_dedupe_map.remove(task_id);
                                             continue :retry_from_manifests_ptr;
                                         }
@@ -3193,6 +3188,7 @@ pub const PackageManager = struct {
                     }
                     const package_id = task.request.extract.tarball.package_id;
                     manager.extracted_count += 1;
+                    bun.Analytics.Features.extracted_packages = true;
                     manager.setPreinstallState(package_id, manager.lockfile, .done);
 
                     if (comptime @TypeOf(callbacks.onExtract) != void) {
@@ -3223,7 +3219,7 @@ pub const PackageManager = struct {
             manager.network_resolve_batch = .{};
 
             if (comptime log_level.showProgress()) {
-                if (comptime ExtractCompletionContext == void) {
+                if (comptime ExtractCompletionContext == void or (@hasField(@TypeOf(callbacks), "progress_bar") and callbacks.progress_bar == true)) {
                     const completed_items = manager.total_tasks - manager.pending_tasks;
                     if (completed_items != manager.downloads_node.?.unprotected_completed_items or has_updated_this_run) {
                         manager.downloads_node.?.setCompletedItems(completed_items);
@@ -4132,7 +4128,7 @@ pub const PackageManager = struct {
             ctx.install,
         );
 
-        manager.timestamp = @truncate(u32, @intCast(u64, @maximum(std.time.timestamp(), 0)));
+        manager.timestamp_for_manifest_cache_control = @truncate(u32, @intCast(u64, @maximum(std.time.timestamp(), 0)));
         return manager;
     }
 
@@ -4179,7 +4175,6 @@ pub const PackageManager = struct {
             .lockfile = undefined,
             .root_package_json_file = undefined,
             .waiter = try Waker.init(allocator),
-            // .progress
         };
         manager.lockfile = try allocator.create(Lockfile);
 
@@ -4216,30 +4211,21 @@ pub const PackageManager = struct {
             bun_install,
         );
 
-        manager.timestamp = @truncate(u32, @intCast(u64, @maximum(std.time.timestamp(), 0)));
+        manager.timestamp_for_manifest_cache_control = @truncate(
+            u32,
+            @intCast(
+                u64,
+                @maximum(
+                    std.time.timestamp(),
+                    0,
+                ),
+            ),
+            // When using "bun install", we check for updates with a 300 second cache.
+            // When using bun, we only do staleness checks once per day
+        ) -| std.time.s_per_day;
 
         manager.lockfile = brk: {
             var buf: [bun.MAX_PATH_BYTES]u8 = undefined;
-
-            if (main_file_name.len > 0) {
-                const extlen = std.fs.path.extension(main_file_name);
-                @memcpy(&buf, main_file_name.ptr, main_file_name.len - extlen.len);
-                buf[main_file_name.len - extlen.len .. buf.len][0..".lockb".len].* = ".lockb".*;
-                buf[main_file_name.len - extlen.len .. buf.len][".lockb".len] = 0;
-
-                var lockfile_path = buf[0 .. main_file_name.len - extlen.len + ".lockb".len];
-                buf[lockfile_path.len] = 0;
-                var lockfile_path_z = std.meta.assumeSentinel(buf[0..lockfile_path.len], 0);
-                const result = manager.lockfile.loadFromDisk(
-                    allocator,
-                    log,
-                    lockfile_path_z,
-                );
-
-                if (result == .ok) {
-                    break :brk result.ok;
-                }
-            }
 
             {
                 var basedir = if (main_file_name.len > 0)

@@ -352,4 +352,4 @@ jobs:
           token: ${{ secrets.GITHUB_TOKEN }}
           name: "Canary (${{github.sha}})"
           tag: "canary"
-          artifacts: "${{runner.temp}}/release/bun-${{matrix.tag}}.zip,${{runner.temp}}/release/bun-${{matrix.tag}}-profile.zip"
+          artifacts: "${{runner.temp}}/release/${{matrix.tag}}.zip,${{runner.temp}}/release/${{matrix.tag}}-profile.zip"

@@ -1756,7 +1756,7 @@ class Foo {
         import {ɵtest} from 'foo'
       `);
 
-      expect(out).toBe("import {ɵtest} from \"foo\";\n");
+      expect(out).toBe('import {ɵtest} from "foo";\n');
     });
 
     const importLines = [

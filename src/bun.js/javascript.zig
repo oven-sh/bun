@@ -1969,7 +1969,7 @@ pub const ResolveError = struct {
     pub fn fmt(allocator: std.mem.Allocator, specifier: string, referrer: string, err: anyerror) !string {
         switch (err) {
             error.ModuleNotFound => {
-                if (Resolver.isPackagePath(specifier)) {
+                if (Resolver.isPackagePath(specifier) and !strings.containsChar(specifier, '/')) {
                     return try std.fmt.allocPrint(allocator, "Cannot find package \"{s}\" from \"{s}\"", .{ specifier, referrer });
                 } else {
                     return try std.fmt.allocPrint(allocator, "Cannot find module \"{s}\" from \"{s}\"", .{ specifier, referrer });

@@ -2906,6 +2906,8 @@ pub const PackageManager = struct {
         var batch = ThreadPool.Batch{};
         var has_updated_this_run = false;
 
+        var timestamp_this_tick: ?u32 = null;
+
         while (manager.network_channel.tryReadItem() catch null) |task_| {
             var task: *NetworkTask = task_;
             manager.pending_tasks -|= 1;
@@ -3034,7 +3036,12 @@ pub const PackageManager = struct {
                         if (manifest_req.loaded_manifest) |manifest| {
                             var entry = try manager.manifests.getOrPut(manager.allocator, manifest.pkg.name.hash);
                             entry.value_ptr.* = manifest;
-                            entry.value_ptr.*.pkg.public_max_age = @truncate(u32, @intCast(u64, @maximum(0, std.time.timestamp()))) + 300;
+
+                            if (timestamp_this_tick == null) {
+                                timestamp_this_tick = @truncate(u32, @intCast(u64, @maximum(0, std.time.timestamp()))) +| 300;
+                            }
+
+                            entry.value_ptr.*.pkg.public_max_age = timestamp_this_tick.?;
                             {
                                 Npm.PackageManifest.Serializer.save(entry.value_ptr, manager.getTemporaryDirectory(), manager.getCacheDirectory()) catch {};
                             }

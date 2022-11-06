@@ -296,7 +296,7 @@ pub const String = extern struct {
         }
 
         pub fn appendUTF8WithoutPool(this: *Builder, comptime Type: type, slice_: string, hash: u64) Type {
-            if (slice_.len < String.max_inline_len) {
+            if (slice_.len <= String.max_inline_len) {
                 if (strings.isAllASCII(slice_)) {
                     switch (Type) {
                         String => {
@@ -309,6 +309,7 @@ pub const String = extern struct {
                     }
                 }
             }
+
             assert(this.len <= this.cap); // didn't count everything
             assert(this.ptr != null); // must call allocate first
 
@@ -331,7 +332,7 @@ pub const String = extern struct {
 
         // SlicedString is not supported due to inline strings.
         pub fn appendWithoutPool(this: *Builder, comptime Type: type, slice_: string, hash: u64) Type {
-            if (slice_.len < String.max_inline_len) {
+            if (slice_.len <= String.max_inline_len) {
                 switch (Type) {
                     String => {
                         return String.init(this.allocatedSlice(), slice_);
@@ -363,7 +364,7 @@ pub const String = extern struct {
         }
 
         pub fn appendWithHash(this: *Builder, comptime Type: type, slice_: string, hash: u64) Type {
-            if (slice_.len < String.max_inline_len) {
+            if (slice_.len <= String.max_inline_len) {
                 switch (Type) {
                     String => {
                         return String.init(this.allocatedSlice(), slice_);

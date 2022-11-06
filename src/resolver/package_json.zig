@@ -567,6 +567,7 @@ pub const PackageJSON = struct {
         r: *resolver.Resolver,
         input_path: string,
         dirname_fd: StoredFileDescriptorType,
+        package_id: ?Install.PackageID,
         comptime include_scripts: bool,
         comptime include_dependencies: @Type(.EnumLiteral),
         comptime generate_hash: bool,
@@ -744,6 +745,11 @@ pub const PackageJSON = struct {
 
         if (comptime include_dependencies == .main or include_dependencies == .local) {
             update_dependencies: {
+                if (package_id) |pkg| {
+                    package_json.package_manager_package_id = pkg;
+                    break :update_dependencies;
+                }
+
                 // // if there is a name & version, check if the lockfile has the package
                 if (package_json.name.len > 0 and package_json.version.len > 0) {
                     if (r.package_manager) |pm| {

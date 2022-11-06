@@ -1240,8 +1240,9 @@ pub const BundleOptions = struct {
 
     disable_transpilation: bool = false,
 
-    enable_auto_install: bool = false,
+    global_cache: GlobalCache = .disable,
     prefer_offline_install: bool = false,
+    prefer_latest_install: bool = false,
     install: ?*Api.BunInstall = null,
 
     pub inline fn cssImportBehavior(this: *const BundleOptions) Api.CssInJsBehavior {
@@ -2335,3 +2336,5 @@ pub const RouteConfig = struct {
         return router;
     }
 };
+
+pub const GlobalCache = @import("./resolver/resolver.zig").GlobalCache;

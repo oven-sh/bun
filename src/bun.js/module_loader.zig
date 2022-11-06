@@ -293,16 +293,16 @@ pub const ModuleLoader = struct {
                 for (modules) |mod| {
                     var module = mod;
                     var tags = module.parse_result.pending_imports.items(.tag);
-                    var resolution_ids = module.parse_result.pending_imports.items(.resolution_id);
+                    var root_dependency_ids = module.parse_result.pending_imports.items(.root_dependency_id);
                     // var esms = module.parse_result.pending_imports.items(.esm);
                     // var versions = module.parse_result.pending_imports.items(.dependency);
                     var done_count: usize = 0;
                     for (tags) |tag, tag_i| {
-                        const resolution_id = resolution_ids[tag_i];
+                        const package_id = pm.dynamicRootDependencies().items[root_dependency_ids[tag_i]].resolution_id;
 
                         switch (tag) {
                             .resolve => {
-                                if (resolution_id == Install.invalid_package_id) {
+                                if (package_id == Install.invalid_package_id) {
                                     continue;
                                 }
 
@@ -310,7 +310,7 @@ pub const ModuleLoader = struct {
                                 tags[tag_i] = .download;
                             },
                             .download => {
-                                if (resolution_id == Install.invalid_package_id) {
+                                if (package_id == Install.invalid_package_id) {
                                     unreachable;
                                 }
                             },

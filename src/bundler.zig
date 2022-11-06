@@ -355,8 +355,6 @@ pub const PluginRunner = struct {
 };
 
 pub const Bundler = struct {
-    package_manager: ?*PackageManager = null,
-    onWakePackageManager: PackageManager.WakeHandler = .{},
     options: options.BundleOptions,
     log: *logger.Log,
     allocator: std.mem.Allocator,
@@ -375,29 +373,8 @@ pub const Bundler = struct {
     env: *DotEnv.Loader,
 
     macro_context: ?js_ast.Macro.MacroContext = null,
-    main_file_for_package_manager: []const u8 = "",
 
     pub const isCacheEnabled = cache_files;
-
-    pub fn getPackageManager(this: *Bundler) *PackageManager {
-        if (this.package_manager != null) {
-            return this.package_manager.?;
-        }
-
-        bun.HTTPThead.init() catch unreachable;
-        this.package_manager = PackageManager.initWithRuntime(
-            this.log,
-            this.options.install,
-            this.allocator,
-            .{},
-            this.env,
-            this.main_file_for_package_manager,
-        ) catch @panic("Failed to initialize package manager");
-        this.package_manager.?.onWake = this.onWakePackageManager;
-        this.resolver.package_manager = this.package_manager;
-
-        return this.package_manager.?;
-    }
 
     pub fn clone(this: *Bundler, allocator: std.mem.Allocator, to: *Bundler) !void {
         to.* = this.*;
@@ -406,6 +383,10 @@ pub const Bundler = struct {
         to.log.* = logger.Log.init(allocator);
         to.setLog(to.log);
         to.macro_context = null;
+    }
+
+    pub inline fn getPackageManager(this: *Bundler) *PackageManager {
+        return this.resolver.getPackageManager();
     }
 
     pub fn setLog(this: *Bundler, log: *logger.Log) void {
@@ -440,10 +421,6 @@ pub const Bundler = struct {
             return err;
         };
     }
-
-    // to_bundle:
-
-    // thread_pool: *ThreadPool,
 
     pub fn init(
         allocator: std.mem.Allocator,

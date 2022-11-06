@@ -33,10 +33,12 @@ const TOML = @import("./toml/toml_parser.zig").TOML;
 pub const Bunfig = struct {
     pub const OfflineMode = enum {
         online,
+        latest,
         offline,
     };
     pub const Prefer = bun.ComptimeStringMap(OfflineMode, .{
         &.{ "offline", OfflineMode.offline },
+        &.{ "latest", OfflineMode.latest },
         &.{ "online", OfflineMode.online },
     });
 
@@ -199,8 +201,20 @@ pub const Bunfig = struct {
                     };
 
                     if (json.get("auto")) |auto_install_expr| {
-                        try this.expect(auto_install_expr, .e_boolean);
-                        this.ctx.debug.auto_install_setting = auto_install_expr.asBool();
+                        if (auto_install_expr.data == .e_string) {
+                            this.ctx.debug.global_cache = options.GlobalCache.Map.get(auto_install_expr.asString(this.allocator) orelse "") orelse {
+                                try this.addError(auto_install_expr.loc, "Invalid auto install setting, must be one of true, false, or \"force\" \"fallback\" \"disable\"");
+                                return;
+                            };
+                        } else if (auto_install_expr.data == .e_boolean) {
+                            this.ctx.debug.global_cache = if (auto_install_expr.asBool().?)
+                                options.GlobalCache.allow_install
+                            else
+                                options.GlobalCache.disable;
+                        } else {
+                            try this.addError(auto_install_expr.loc, "Invalid auto install setting, must be one of true, false, or \"force\" \"fallback\" \"disable\"");
+                            return;
+                        }
                     }
 
                     if (json.get("prefer")) |prefer_expr| {

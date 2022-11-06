@@ -376,3 +376,5 @@ pub fn StringEnum(comptime Type: type, comptime Map: anytype, value: []const u8)
 pub const Bunfig = @import("./bunfig.zig").Bunfig;
 
 pub const HTTPThead = @import("./http_client_async.zig").HTTPThread;
+
+pub const Analytics = @import("./analytics/analytics_thread.zig");

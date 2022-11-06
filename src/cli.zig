@@ -168,7 +168,7 @@ pub const Arguments = struct {
         clap.parseParam("--cwd <STR>                       Absolute path to resolve files & entry points from. This just changes the process' cwd.") catch unreachable,
         clap.parseParam("-c, --config <PATH>?               Config file to load bun from (e.g. -c bunfig.toml") catch unreachable,
         clap.parseParam("--disable-react-fast-refresh      Disable React Fast Refresh") catch unreachable,
-        clap.parseParam("--disable-hmr                     Disable Hot Module Reloading (disables fast refresh too)") catch unreachable,
+        clap.parseParam("--disable-hmr                     Disable Hot Module Reloading (disables fast refresh too) in bun dev") catch unreachable,
         clap.parseParam("--extension-order <STR>...        defaults to: .tsx,.ts,.jsx,.js,.json ") catch unreachable,
         clap.parseParam("--jsx-factory <STR>               Changes the function called when compiling JSX elements using the classic JSX runtime") catch unreachable,
         clap.parseParam("--jsx-fragment <STR>              Changes the function called when compiling JSX fragments") catch unreachable,
@@ -185,13 +185,15 @@ pub const Arguments = struct {
         clap.parseParam("-d, --define <STR>...             Substitute K:V while parsing, e.g. --define process.env.NODE_ENV:\"development\". Values are parsed as JSON.") catch unreachable,
         clap.parseParam("-e, --external <STR>...           Exclude module from transpilation (can use * wildcards). ex: -e react") catch unreachable,
         clap.parseParam("-h, --help                        Display this help and exit.              ") catch unreachable,
-        clap.parseParam("-i, --inject <STR>...             Inject module at the top of every file") catch unreachable,
         clap.parseParam("-l, --loader <STR>...             Parse files with .ext:loader, e.g. --loader .js:jsx. Valid loaders: jsx, js, json, tsx, ts, css") catch unreachable,
         clap.parseParam("-u, --origin <STR>                Rewrite import URLs to start with --origin. Default: \"\"") catch unreachable,
         clap.parseParam("-p, --port <STR>                  Port to serve bun's dev server on. Default: \"3000\"") catch unreachable,
         clap.parseParam("--hot                             Enable auto reload in bun's JavaScript runtime") catch unreachable,
-        clap.parseParam("--no-auto-install                 Disable auto install in bun's JavaScript runtime") catch unreachable,
-        clap.parseParam("--prefer-offline                  Skip staleness checks for packages in bun's JavaScript runtime") catch unreachable,
+        clap.parseParam("--no-install                      Disable auto install in bun's JavaScript runtime") catch unreachable,
+        clap.parseParam("-i                                Automatically install dependencies and use global cache in bun's runtime, equivalent to --install=fallback") catch unreachable,
+        clap.parseParam("--install <STR>                   Install dependencies automatically when no node_modules are present, default: \"auto\". \"force\" to ignore node_modules, fallback to install any missing") catch unreachable,
+        clap.parseParam("--prefer-offline                  Skip staleness checks for packages in bun's JavaScript runtime and resolve from disk") catch unreachable,
+        clap.parseParam("--prefer-latest                   Use the latest matching versions of packages in bun's JavaScript runtime, always checking npm") catch unreachable,
         clap.parseParam("--silent                          Don't repeat the command for bun run") catch unreachable,
         clap.parseParam("<POS>...                          ") catch unreachable,
     };
@@ -404,7 +406,8 @@ pub const Arguments = struct {
         opts.serve = cmd == .DevCommand;
         opts.main_fields = args.options("--main-fields");
         opts.generate_node_module_bundle = cmd == .BunCommand;
-        opts.inject = args.options("--inject");
+        // we never actually supported inject.
+        // opts.inject = args.options("--inject");
         opts.extension_order = args.options("--extension-order");
         ctx.debug.hot_reload = args.flag("--hot");
         ctx.passthrough = args.remaining();
@@ -431,8 +434,29 @@ pub const Arguments = struct {
         ctx.debug.fallback_only = ctx.debug.fallback_only or args.flag("--disable-bun.js");
         ctx.debug.dump_limits = args.flag("--dump-limits");
 
-        ctx.debug.offline_mode_setting = if (args.flag("--prefer-offline")) Bunfig.OfflineMode.offline else Bunfig.OfflineMode.online;
-        ctx.debug.auto_install_setting = !args.flag("--no-auto-install");
+        ctx.debug.offline_mode_setting = if (args.flag("--prefer-offline"))
+            Bunfig.OfflineMode.offline
+        else if (args.flag("--prefer-latest"))
+            Bunfig.OfflineMode.latest
+        else
+            Bunfig.OfflineMode.online;
+
+        if (args.flag("--no-install")) {
+            ctx.debug.global_cache = .disable;
+        } else if (args.flag("-i")) {
+            ctx.debug.global_cache = .fallback;
+        } else if (args.option("--install")) |enum_value| {
+            // -i=auto --install=force, --install=disable
+            if (options.GlobalCache.Map.get(enum_value)) |result| {
+                ctx.debug.global_cache = result;
+                // -i, --install
+            } else if (enum_value.len == 0) {
+                ctx.debug.global_cache = options.GlobalCache.force;
+            } else {
+                Output.prettyErrorln("Invalid value for --install: \"{s}\". Must be either \"auto\", \"fallback\", \"force\", or \"disable\"\n", .{enum_value});
+                Global.exit(1);
+            }
+        }
 
         // var output_dir = args.option("--outdir");
         var output_dir: ?string = null;
@@ -789,7 +813,7 @@ pub const Command = struct {
         fallback_only: bool = false,
         silent: bool = false,
         hot_reload: bool = false,
-        auto_install_setting: ?bool = null,
+        global_cache: options.GlobalCache = .auto,
         offline_mode_setting: ?Bunfig.OfflineMode = null,
 
         // technical debt

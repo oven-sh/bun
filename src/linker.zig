@@ -234,7 +234,8 @@ pub const Linker = struct {
 
                 outer: while (record_i < record_count) : (record_i += 1) {
                     var import_record = &import_records[record_i];
-                    if (import_record.is_unused or (is_bun and is_deferred and !result.isPendingImport(record_i))) continue;
+                    if (import_record.is_unused or
+                        (is_bun and is_deferred and !result.isPendingImport(record_i))) continue;
 
                     const record_index = record_i;
                     if (comptime !ignore_runtime) {
@@ -422,16 +423,11 @@ pub const Linker = struct {
                         }
 
                         if (comptime is_bun) {
-                            var bundler: *Bundler = @fieldParentPtr(Bundler, "linker", linker);
-                            if (bundler.options.enable_auto_install and bundler.package_manager == null and Resolver.isPackagePath(import_record.path.text)) {
-                                _ = bundler.getPackageManager();
-                            }
-
                             switch (linker.resolver.resolveAndAutoInstall(
                                 source_dir,
                                 import_record.path.text,
                                 import_record.kind,
-                                if (bundler.options.enable_auto_install) Resolver.GlobalCache.auto_install else Resolver.GlobalCache.disable,
+                                linker.options.global_cache,
                             )) {
                                 .success => |_resolved_import| {
                                     switch (import_record.tag) {
@@ -448,7 +444,7 @@ pub const Linker = struct {
                                     break :brk err;
                                 },
                                 .pending => |*pending| {
-                                    if (!bundler.options.enable_auto_install) {
+                                    if (!linker.resolver.opts.global_cache.canInstall()) {
                                         break :brk error.InstallationPending;
                                     }
 

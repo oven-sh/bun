@@ -28,12 +28,12 @@ const bundler = @import("bundler.zig");
 const NodeModuleBundle = @import("node_module_bundle.zig").NodeModuleBundle;
 const DotEnv = @import("env_loader.zig");
 const which = @import("which.zig").which;
-const VirtualMachine = @import("javascript_core").VirtualMachine;
 const JSC = @import("javascript_core");
 const AsyncHTTP = @import("http").AsyncHTTP;
 const Arena = @import("./mimalloc_arena.zig").Arena;
 
 const OpaqueWrap = JSC.OpaqueWrap;
+const VirtualMachine = JSC.VirtualMachine;
 
 pub const Run = struct {
     file: std.fs.File,
@@ -61,14 +61,15 @@ pub const Run = struct {
         run.vm.arena = &run.arena;
 
         run.vm.bundler.options.install = ctx.install;
-        run.vm.bundler.options.enable_auto_install = ctx.debug.auto_install_setting orelse true;
-        run.vm.bundler.options.prefer_offline_install = (ctx.debug.offline_mode_setting orelse bun.Bunfig.OfflineMode.online) == .offline;
-
-        run.vm.bundler.options.install = ctx.install;
-        run.vm.bundler.resolver.opts.enable_auto_install = run.vm.bundler.options.enable_auto_install;
-
-        run.vm.bundler.resolver.opts.prefer_offline_install = run.vm.bundler.options.prefer_offline_install;
-        run.vm.bundler.main_file_for_package_manager = entry_path;
+        run.vm.bundler.resolver.opts.install = ctx.install;
+        run.vm.bundler.resolver.opts.global_cache = ctx.debug.global_cache;
+        run.vm.bundler.resolver.opts.prefer_offline_install = (ctx.debug.offline_mode_setting orelse .online) == .offline;
+        run.vm.bundler.resolver.opts.prefer_latest_install = (ctx.debug.offline_mode_setting orelse .online) == .latest;
+        run.vm.bundler.resolver.main_file_for_package_manager = entry_path;
+        run.vm.bundler.options.global_cache = run.vm.bundler.resolver.opts.global_cache;
+        run.vm.bundler.options.prefer_offline_install = run.vm.bundler.resolver.opts.prefer_offline_install;
+        run.vm.bundler.options.prefer_latest_install = run.vm.bundler.resolver.opts.prefer_latest_install;
+        run.vm.bundler.resolver.env_loader = run.vm.bundler.env;
 
         if (ctx.debug.macros) |macros| {
             run.vm.bundler.options.macro_remap = macros;

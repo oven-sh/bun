@@ -88,7 +88,7 @@ const ThreadSafeFunction = JSC.napi.ThreadSafeFunction;
 const PackageManager = @import("../install/install.zig").PackageManager;
 const Install = @import("../install/install.zig");
 const VirtualMachine = JSC.VirtualMachine;
-const Dependency = @import("../install/dependency.zig").Dependency;
+const Dependency = @import("../install/dependency.zig");
 
 // This exists to make it so we can reload these quicker in development
 fn jsModuleFromFile(from_path: string, comptime input: string) string {
@@ -184,15 +184,37 @@ pub const ModuleLoader = struct {
         package_json: ?*PackageJSON = null,
         loader: Api.Loader,
         hash: u32 = std.math.maxInt(u32),
+        globalThis: *JSC.JSGlobalObject = undefined,
 
         // This is the specific state for making it async
         poll_ref: JSC.PollRef = .{},
 
         pub const Id = u32;
         const debug = Output.scoped(.ModuleLoader, false);
+
+        const PackageDownloadError = struct {
+            name: []const u8,
+            resolution: Install.Resolution,
+            err: anyerror,
+            url: []const u8,
+        };
+
+        const PackageResolveError = struct {
+            name: []const u8,
+            err: anyerror,
+            url: []const u8,
+            version: Dependency.Version,
+        };
+
         pub const Queue = struct {
             map: Map = .{},
             concurrent_task_count: std.atomic.Atomic(u32) = std.atomic.Atomic(u32).init(0),
+
+            const DeferredDependencyError = struct {
+                dependency: Dependency,
+                root_dependency_id: Install.PackageID,
+                err: anyerror,
+            };
 
             pub const Map = std.ArrayListUnmanaged(AsyncModule);
 
@@ -206,6 +228,35 @@ pub const ModuleLoader = struct {
                 _ = this.vm().packageManager().scheduleNetworkTasks();
             }
 
+            pub fn onDependencyError(ctx: *anyopaque, dependency: Dependency, root_dependency_id: Install.PackageID, err: anyerror) void {
+                var this = bun.cast(*Queue, ctx);
+                debug("onDependencyError: {s}", .{this.vm().packageManager().lockfile.str(dependency.name)});
+
+                var modules: []AsyncModule = this.map.items;
+                var i: usize = 0;
+                outer: for (modules) |module_| {
+                    var module = module_;
+                    var root_dependency_ids = module.parse_result.pending_imports.items(.root_dependency_id);
+                    for (root_dependency_ids) |dep, dep_i| {
+                        if (dep != root_dependency_id) continue;
+                        module.resolveError(
+                            this.vm(),
+                            module.parse_result.pending_imports.items(.import_record_id)[dep_i],
+                            .{
+                                .name = this.vm().packageManager().lockfile.str(dependency.name),
+                                .err = err,
+                                .url = "",
+                                .version = dependency.version,
+                            },
+                        ) catch unreachable;
+                        continue :outer;
+                    }
+
+                    modules[i] = module;
+                    i += 1;
+                }
+                this.map.items.len = i;
+            }
             pub fn onWakeHandler(ctx: *anyopaque, _: *PackageManager) void {
                 debug("onWake", .{});
                 var this = bun.cast(*Queue, ctx);
@@ -239,6 +290,7 @@ pub const ModuleLoader = struct {
                             .onExtract = onExtract,
                             .onResolve = onResolve,
                             .onPackageManifestError = onPackageManifestError,
+                            .onPackageDownloadError = onPackageDownloadError,
                             .progress_bar = true,
                         },
                         PackageManager.Options.LogLevel.default,
@@ -251,6 +303,7 @@ pub const ModuleLoader = struct {
                             .onExtract = onExtract,
                             .onResolve = onResolve,
                             .onPackageManifestError = onPackageManifestError,
+                            .onPackageDownloadError = onPackageDownloadError,
                         },
                         PackageManager.Options.LogLevel.default_no_progress,
                     ) catch unreachable;
@@ -261,10 +314,83 @@ pub const ModuleLoader = struct {
                 debug("onResolve", .{});
             }
 
-            pub fn onPackageManifestError(this: *Queue, name: []const u8) void {
+            pub fn onPackageManifestError(
+                this: *Queue,
+                name: []const u8,
+                err: anyerror,
+                url: []const u8,
+            ) void {
                 debug("onPackageManifestError: {s}", .{name});
-                _ = this;
-                _ = name;
+
+                var modules: []AsyncModule = this.map.items;
+                var i: usize = 0;
+                outer: for (modules) |module_| {
+                    var module = module_;
+                    var tags = module.parse_result.pending_imports.items(.tag);
+                    for (tags) |tag, tag_i| {
+                        if (tag == .resolve) {
+                            var esms = module.parse_result.pending_imports.items(.esm);
+                            const esm = esms[tag_i];
+                            var string_bufs = module.parse_result.pending_imports.items(.string_buf);
+
+                            if (!strings.eql(esm.name.slice(string_bufs[tag_i]), name)) continue;
+
+                            var versions = module.parse_result.pending_imports.items(.dependency);
+
+                            module.resolveError(
+                                this.vm(),
+                                module.parse_result.pending_imports.items(.import_record_id)[tag_i],
+                                .{
+                                    .name = name,
+                                    .err = err,
+                                    .url = url,
+                                    .version = versions[tag_i],
+                                },
+                            ) catch unreachable;
+                            continue :outer;
+                        }
+                    }
+
+                    modules[i] = module;
+                    i += 1;
+                }
+                this.map.items.len = i;
+            }
+
+            pub fn onPackageDownloadError(
+                this: *Queue,
+                package_id: Install.PackageID,
+                name: []const u8,
+                resolution: Install.Resolution,
+                err: anyerror,
+                url: []const u8,
+            ) void {
+                debug("onPackageDownloadError: {s}", .{name});
+
+                var modules: []AsyncModule = this.map.items;
+                var i: usize = 0;
+                outer: for (modules) |module_| {
+                    var module = module_;
+                    var root_dependency_ids = module.parse_result.pending_imports.items(.root_dependency_id);
+                    for (root_dependency_ids) |dep, dep_i| {
+                        if (this.vm().packageManager().dynamicRootDependencies().items[dep].resolution_id != package_id) continue;
+                        module.downloadError(
+                            this.vm(),
+                            module.parse_result.pending_imports.items(.import_record_id)[dep_i],
+                            .{
+                                .name = name,
+                                .resolution = resolution,
+                                .err = err,
+                                .url = url,
+                            },
+                        ) catch unreachable;
+                        continue :outer;
+                    }
+
+                    modules[i] = module;
+                    i += 1;
+                }
+                this.map.items.len = i;
             }
 
             pub fn onExtract(this: *Queue, package_id: u32, comptime _: PackageManager.Options.LogLevel) void {
@@ -393,6 +519,7 @@ pub const ModuleLoader = struct {
                 .loader = opts.loader.toAPI(),
                 .string_buf = buf.allocatedSlice(),
                 .stmt_blocks = stmt_blocks,
+                .globalThis = globalObject,
                 .expr_blocks = expr_blocks,
             };
         }
@@ -405,7 +532,7 @@ pub const ModuleLoader = struct {
             outer: {
                 errorable = ErrorableResolvedSource.ok(this.resumeLoadingModule(&log) catch |err| {
                     JSC.VirtualMachine.processFetchLog(
-                        jsc_vm.global, // TODO: shadowrealm
+                        this.globalThis,
                         ZigString.init(this.specifier),
                         ZigString.init(this.referrer),
                         &log,
@@ -425,6 +552,192 @@ pub const ModuleLoader = struct {
                 &ref,
             );
             this.deinit();
+        }
+
+        pub fn resolveError(this: *AsyncModule, vm: *JSC.VirtualMachine, import_record_id: u32, result: PackageResolveError) !void {
+            var globalThis = this.globalThis;
+
+            var msg: []u8 = try switch (result.err) {
+                error.PackageManifestHTTP400 => std.fmt.allocPrint(
+                    bun.default_allocator,
+                    "HTTP 400 while resolving package '{s}' at '{s}'",
+                    .{ result.name, result.url },
+                ),
+                error.PackageManifestHTTP401 => std.fmt.allocPrint(
+                    bun.default_allocator,
+                    "HTTP 401 while resolving package '{s}' at '{s}'",
+                    .{ result.name, result.url },
+                ),
+                error.PackageManifestHTTP402 => std.fmt.allocPrint(
+                    bun.default_allocator,
+                    "HTTP 402 while resolving package '{s}' at '{s}'",
+                    .{ result.name, result.url },
+                ),
+                error.PackageManifestHTTP403 => std.fmt.allocPrint(
+                    bun.default_allocator,
+                    "HTTP 403 while resolving package '{s}' at '{s}'",
+                    .{ result.name, result.url },
+                ),
+                error.PackageManifestHTTP404 => std.fmt.allocPrint(
+                    bun.default_allocator,
+                    "Package '{s}' was not found",
+                    .{result.name},
+                ),
+                error.PackageManifestHTTP4xx => std.fmt.allocPrint(
+                    bun.default_allocator,
+                    "HTTP 4xx while resolving package '{s}' at '{s}'",
+                    .{ result.name, result.url },
+                ),
+                error.PackageManifestHTTP5xx => std.fmt.allocPrint(
+                    bun.default_allocator,
+                    "HTTP 5xx while resolving package '{s}' at '{s}'",
+                    .{ result.name, result.url },
+                ),
+                error.DistTagNotFound, error.NoMatchingVersion => brk: {
+                    const prefix: []const u8 = if (result.err == error.NoMatchingVersion and result.version.tag == .npm and result.version.value.npm.isExact())
+                        "Version not found"
+                    else if (result.version.tag == .npm and !result.version.value.npm.isExact())
+                        "No matching version found"
+                    else
+                        "No match found";
+
+                    break :brk std.fmt.allocPrint(
+                        bun.default_allocator,
+                        "{s} '{s}' for package '{s}' (but package exists)",
+                        .{ prefix, vm.packageManager().lockfile.str(result.version.literal), result.name },
+                    );
+                },
+                else => |err| std.fmt.allocPrint(
+                    bun.default_allocator,
+                    "{s} resolving package '{s}' at '{s}'",
+                    .{ std.mem.span(@errorName(err)), result.name, result.url },
+                ),
+            };
+
+            const name: []const u8 = switch (result.err) {
+                error.NoMatchingVersion => "PackageVersionNotFound",
+                error.DistTagNotFound => "PackageTagNotFound",
+                error.PackageManifestHTTP403 => "PackageForbiddenError",
+                error.PackageManifestHTTP404 => "PackageNotFoundError",
+                else => "PackageResolveError",
+            };
+
+            var error_instance = ZigString.init(msg).withEncoding().toErrorInstance(globalThis);
+            if (result.url.len > 0)
+                error_instance.put(globalThis, ZigString.static("url"), ZigString.init(result.url).withEncoding().toValueGC(globalThis));
+            error_instance.put(globalThis, ZigString.static("name"), ZigString.init(name).withEncoding().toValueGC(globalThis));
+            error_instance.put(globalThis, ZigString.static("pkg"), ZigString.init(result.name).withEncoding().toValueGC(globalThis));
+            error_instance.put(globalThis, ZigString.static("specifier"), ZigString.init(this.specifier).withEncoding().toValueGC(globalThis));
+            const location = logger.rangeData(&this.parse_result.source, this.parse_result.ast.import_records[import_record_id].range, "").location.?;
+            error_instance.put(globalThis, ZigString.static("sourceURL"), ZigString.init(this.parse_result.source.path.text).withEncoding().toValueGC(globalThis));
+            error_instance.put(globalThis, ZigString.static("line"), JSValue.jsNumber(location.line));
+            if (location.line_text) |line_text| {
+                error_instance.put(globalThis, ZigString.static("lineText"), ZigString.init(line_text).withEncoding().toValueGC(globalThis));
+            }
+            error_instance.put(globalThis, ZigString.static("column"), JSValue.jsNumber(location.column));
+            if (this.referrer.len > 0 and !strings.eqlComptime(this.referrer, "undefined")) {
+                error_instance.put(globalThis, ZigString.static("referrer"), ZigString.init(this.referrer).withEncoding().toValueGC(globalThis));
+            }
+
+            const promise_value = this.promise.swap();
+            var promise = promise_value.asInternalPromise().?;
+            promise_value.ensureStillAlive();
+            this.poll_ref.unref(vm);
+            this.deinit();
+            promise.rejectAsHandled(globalThis, error_instance);
+        }
+        pub fn downloadError(this: *AsyncModule, vm: *JSC.VirtualMachine, import_record_id: u32, result: PackageDownloadError) !void {
+            var globalThis = this.globalThis;
+
+            const msg_args = .{
+                result.name,
+                result.resolution.fmt(vm.packageManager().lockfile.buffers.string_bytes.items),
+            };
+
+            var msg: []u8 = try switch (result.err) {
+                error.TarballHTTP400 => std.fmt.allocPrint(
+                    bun.default_allocator,
+                    "HTTP 400 downloading package '{s}@{any}'",
+                    msg_args,
+                ),
+                error.TarballHTTP401 => std.fmt.allocPrint(
+                    bun.default_allocator,
+                    "HTTP 401 downloading package '{s}@{any}'",
+                    msg_args,
+                ),
+                error.TarballHTTP402 => std.fmt.allocPrint(
+                    bun.default_allocator,
+                    "HTTP 402 downloading package '{s}@{any}'",
+                    msg_args,
+                ),
+                error.TarballHTTP403 => std.fmt.allocPrint(
+                    bun.default_allocator,
+                    "HTTP 403 downloading package '{s}@{any}'",
+                    msg_args,
+                ),
+                error.TarballHTTP404 => std.fmt.allocPrint(
+                    bun.default_allocator,
+                    "HTTP 404 downloading package '{s}@{any}'",
+                    msg_args,
+                ),
+                error.TarballHTTP4xx => std.fmt.allocPrint(
+                    bun.default_allocator,
+                    "HTTP 4xx downloading package '{s}@{any}'",
+                    msg_args,
+                ),
+                error.TarballHTTP5xx => std.fmt.allocPrint(
+                    bun.default_allocator,
+                    "HTTP 5xx downloading package '{s}@{any}'",
+                    msg_args,
+                ),
+                error.TarballFailedToExtract => std.fmt.allocPrint(
+                    bun.default_allocator,
+                    "Failed to extract tarball for package '{s}@{any}'",
+                    msg_args,
+                ),
+                else => |err| std.fmt.allocPrint(
+                    bun.default_allocator,
+                    "{s} downloading package '{s}@{any}'",
+                    .{
+                        std.mem.span(@errorName(err)),                                                  result.name,
+                        result.resolution.fmt(vm.packageManager().lockfile.buffers.string_bytes.items),
+                    },
+                ),
+            };
+
+            const name: []const u8 = switch (result.err) {
+                error.TarballFailedToExtract => "PackageExtractionError",
+                error.TarballHTTP403 => "TarballForbiddenError",
+                error.TarballHTTP404 => "TarballNotFoundError",
+                else => "TarballDownloadError",
+            };
+
+            var error_instance = ZigString.init(msg).withEncoding().toErrorInstance(globalThis);
+            if (result.url.len > 0)
+                error_instance.put(globalThis, ZigString.static("url"), ZigString.init(result.url).withEncoding().toValueGC(globalThis));
+            error_instance.put(globalThis, ZigString.static("name"), ZigString.init(name).withEncoding().toValueGC(globalThis));
+            error_instance.put(globalThis, ZigString.static("pkg"), ZigString.init(result.name).withEncoding().toValueGC(globalThis));
+            if (this.specifier.len > 0 and !strings.eqlComptime(this.specifier, "undefined")) {
+                error_instance.put(globalThis, ZigString.static("referrer"), ZigString.init(this.specifier).withEncoding().toValueGC(globalThis));
+            }
+
+            const location = logger.rangeData(&this.parse_result.source, this.parse_result.ast.import_records[import_record_id].range, "").location.?;
+            error_instance.put(globalThis, ZigString.static("specifier"), ZigString.init(
+                this.parse_result.ast.import_records[import_record_id].path.text,
+            ).withEncoding().toValueGC(globalThis));
+            error_instance.put(globalThis, ZigString.static("sourceURL"), ZigString.init(this.parse_result.source.path.text).withEncoding().toValueGC(globalThis));
+            error_instance.put(globalThis, ZigString.static("line"), JSValue.jsNumber(location.line));
+            if (location.line_text) |line_text| {
+                error_instance.put(globalThis, ZigString.static("lineText"), ZigString.init(line_text).withEncoding().toValueGC(globalThis));
+            }
+            error_instance.put(globalThis, ZigString.static("column"), JSValue.jsNumber(location.column));
+
+            const promise_value = this.promise.swap();
+            var promise = promise_value.asInternalPromise().?;
+            promise_value.ensureStillAlive();
+            this.poll_ref.unref(vm);
+            this.deinit();
+            promise.rejectAsHandled(globalThis, error_instance);
         }
 
         pub fn resumeLoadingModule(this: *AsyncModule, log: *logger.Log) !ResolvedSource {

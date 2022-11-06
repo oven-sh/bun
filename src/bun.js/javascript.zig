@@ -642,6 +642,7 @@ pub const VirtualMachine = struct {
         VirtualMachine.vm.bundler.resolver.onWakePackageManager = .{
             .context = &VirtualMachine.vm.modules,
             .handler = ModuleLoader.AsyncModule.Queue.onWakeHandler,
+            .onDependencyError = JSC.ModuleLoader.AsyncModule.Queue.onDependencyError,
         };
 
         VirtualMachine.vm.bundler.configureLinker();
@@ -965,26 +966,46 @@ pub const VirtualMachine = struct {
             res.* = ErrorableZigString.ok(ZigString.init(hardcoded));
             return;
         }
+        var old_log = jsc_vm.log;
+        var log = logger.Log.init(jsc_vm.allocator);
+        defer log.deinit();
+        jsc_vm.log = &log;
+        jsc_vm.bundler.resolver.log = &log;
+        jsc_vm.bundler.linker.log = &log;
+        defer {
+            jsc_vm.log = old_log;
+            jsc_vm.bundler.linker.log = old_log;
+            jsc_vm.bundler.resolver.log = old_log;
+        }
+        _resolve(&result, global, specifier.slice(), source.slice(), is_a_file_path, realpath) catch |err_| {
+            var err = err_;
+            const msg: logger.Msg = brk: {
+                var msgs: []logger.Msg = log.msgs.items;
 
-        _resolve(&result, global, specifier.slice(), source.slice(), is_a_file_path, realpath) catch |err| {
-            // This should almost always just apply to dynamic imports
+                for (msgs) |m| {
+                    if (m.metadata == .resolve) {
+                        err = m.metadata.resolve.err;
+                        break :brk m;
+                    }
+                }
 
-            const printed = ResolveError.fmt(
-                jsc_vm.allocator,
-                specifier.slice(),
-                source.slice(),
-                err,
-            ) catch unreachable;
-            const msg = logger.Msg{
-                .data = logger.rangeData(
-                    null,
-                    logger.Range.None,
-                    printed,
-                ),
-                .metadata = .{
-                    // import_kind is wrong probably
-                    .resolve = .{ .specifier = logger.BabyString.in(printed, specifier.slice()), .import_kind = .stmt },
-                },
+                const printed = ResolveError.fmt(
+                    jsc_vm.allocator,
+                    specifier.slice(),
+                    source.slice(),
+                    err,
+                ) catch unreachable;
+                break :brk logger.Msg{
+                    .data = logger.rangeData(
+                        null,
+                        logger.Range.None,
+                        printed,
+                    ),
+                    .metadata = .{
+                        // import_kind is wrong probably
+                        .resolve = .{ .specifier = logger.BabyString.in(printed, specifier.slice()), .import_kind = .stmt },
+                    },
+                };
             };
 
             {

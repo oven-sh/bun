@@ -4875,6 +4875,7 @@ pub const Macro = struct {
                             "Macro \"{s}\" not found",
                             .{import_record_path},
                             .stmt,
+                            err,
                         ) catch unreachable;
                         return error.MacroNotFound;
                     },

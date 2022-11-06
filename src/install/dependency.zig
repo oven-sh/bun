@@ -16,6 +16,7 @@ const bun = @import("../global.zig");
 pub const Pair = struct {
     resolution_id: Install.PackageID = Install.invalid_package_id,
     dependency: Dependency = .{},
+    failed: ?anyerror = null,
 };
 
 pub const URI = union(Tag) {

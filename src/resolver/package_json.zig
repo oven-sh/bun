@@ -1291,7 +1291,12 @@ pub const ESModule = struct {
                 //      ^^^^^^^^^^^^^^
                 //    this is the version
 
-                return specifier_after_name[0..slash];
+                const remainder = specifier_after_name[0..slash];
+                if (remainder.len > 0 and remainder[0] == '@') {
+                    return remainder[1..];
+                }
+
+                return remainder;
             }
 
             return null;

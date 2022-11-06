@@ -1399,7 +1399,7 @@ const PackageInstall = struct {
     }
 };
 
-const Resolution = @import("./resolution.zig").Resolution;
+pub const Resolution = @import("./resolution.zig").Resolution;
 const Progress = std.Progress;
 const TaggedPointer = @import("../tagged_pointer.zig");
 const TaskCallbackContext = union(Tag) {
@@ -1514,8 +1514,26 @@ pub const PackageManager = struct {
 
     pub const WakeHandler = struct {
         handler: fn (ctx: *anyopaque, pm: *PackageManager) void = undefined,
+        onDependencyError: fn (ctx: *anyopaque, Dependency, PackageID, anyerror) void = undefined,
         context: ?*anyopaque = null,
     };
+
+    pub fn failRootResolution(this: *PackageManager, dependency: Dependency, dependency_id: PackageID, err: anyerror) void {
+        if (this.dynamic_root_dependencies) |*dynamic| {
+            dynamic.items[dependency_id].failed = err;
+            if (this.onWake.context) |ctx| {
+                this.onWake.onDependencyError(
+                    ctx,
+                    dependency,
+                    dependency_id,
+                    err,
+                );
+            }
+        } else {
+            // this means a bug
+            bun.unreachablePanic("assignRootResolution: dependency_id: {d} out of bounds", .{dependency_id});
+        }
+    }
 
     pub fn wake(this: *PackageManager) void {
         if (this.onWake.context != null) {
@@ -1591,12 +1609,19 @@ pub const PackageManager = struct {
             invalid_package_id,
             true,
             assignRootResolution,
+            failRootResolution,
         ) catch |err| {
             root_deps.items.len = index;
             return .{ .failure = err };
         };
 
+        if (root_deps.items[index].failed) |fail| {
+            root_deps.items.len = index;
+            return .{ .failure = fail };
+        }
+
         const resolution_id = root_deps.items[index].resolution_id;
+
         // check if we managed to synchronously resolve the dependency
         if (resolution_id != invalid_package_id) {
             this.drainDependencyList();
@@ -2238,6 +2263,7 @@ pub const PackageManager = struct {
     }
 
     const SuccessFn = fn (*PackageManager, PackageID, PackageID) void;
+    const FailFn = fn (*PackageManager, Dependency, PackageID, anyerror) void;
     fn assignResolution(this: *PackageManager, dependency_id: PackageID, package_id: PackageID) void {
         this.lockfile.buffers.resolutions.items[dependency_id] = package_id;
     }
@@ -2466,6 +2492,7 @@ pub const PackageManager = struct {
             resolution,
             is_main,
             assignResolution,
+            null,
         );
     }
 
@@ -2476,6 +2503,7 @@ pub const PackageManager = struct {
         resolution: PackageID,
         comptime is_main: bool,
         comptime successFn: SuccessFn,
+        comptime failFn: ?FailFn,
     ) !void {
         const name = dependency.name;
         const name_hash = dependency.name_hash;
@@ -2511,36 +2539,66 @@ pub const PackageManager = struct {
                             switch (err) {
                                 error.DistTagNotFound => {
                                     if (dependency.behavior.isRequired()) {
-                                        this.log.addErrorFmt(
-                                            null,
-                                            logger.Loc.Empty,
-                                            this.allocator,
-                                            "package \"{s}\" with tag \"{s}\" not found, but package exists",
-                                            .{
-                                                this.lockfile.str(name),
-                                                this.lockfile.str(version.value.dist_tag),
-                                            },
-                                        ) catch unreachable;
+                                        if (failFn) |fail| {
+                                            fail(
+                                                this,
+                                                dependency,
+                                                id,
+                                                err,
+                                            );
+                                        } else {
+                                            this.log.addErrorFmt(
+                                                null,
+                                                logger.Loc.Empty,
+                                                this.allocator,
+                                                "package \"{s}\" with tag \"{s}\" not found, but package exists",
+                                                .{
+                                                    this.lockfile.str(name),
+                                                    this.lockfile.str(version.value.dist_tag),
+                                                },
+                                            ) catch unreachable;
+                                        }
                                     }
 
                                     return;
                                 },
                                 error.NoMatchingVersion => {
                                     if (dependency.behavior.isRequired()) {
-                                        this.log.addErrorFmt(
-                                            null,
-                                            logger.Loc.Empty,
-                                            this.allocator,
-                                            "No version matching \"{s}\" found for specifier \"{s}\" (but package exists)",
-                                            .{
-                                                this.lockfile.str(version.literal),
-                                                this.lockfile.str(name),
-                                            },
-                                        ) catch unreachable;
+                                        if (failFn) |fail| {
+                                            fail(
+                                                this,
+                                                dependency,
+                                                id,
+                                                err,
+                                            );
+                                        } else {
+                                            this.log.addErrorFmt(
+                                                null,
+                                                logger.Loc.Empty,
+                                                this.allocator,
+                                                "No version matching \"{s}\" found for specifier \"{s}\" (but package exists)",
+                                                .{
+                                                    this.lockfile.str(version.literal),
+                                                    this.lockfile.str(name),
+                                                },
+                                            ) catch unreachable;
+                                        }
                                     }
                                     return;
                                 },
-                                else => return err,
+                                else => {
+                                    if (failFn) |fail| {
+                                        fail(
+                                            this,
+                                            dependency,
+                                            id,
+                                            err,
+                                        );
+                                        return;
+                                    }
+
+                                    return err;
+                                },
                             }
                         };
 
@@ -2847,6 +2905,7 @@ pub const PackageManager = struct {
                             resolution,
                             true,
                             assignRootResolution,
+                            failRootResolution,
                         );
 
                         const new_resolution_id = this.dynamicRootDependencies().items[dependency_id].resolution_id;
@@ -2922,9 +2981,27 @@ pub const PackageManager = struct {
                     }
 
                     const response = task.http.response orelse {
-                        if (comptime log_level != .silent) {
+                        const err = task.http.err orelse error.HTTPError;
+
+                        if (@TypeOf(callbacks.onPackageManifestError) != void) {
+                            if (manager.dynamic_root_dependencies) |*root_deps| {
+                                var deps: []Dependency.Pair = root_deps.items;
+                                for (deps) |*dep| {
+                                    if (strings.eql(manager.lockfile.str(dep.dependency.name), name.slice())) {
+                                        dep.failed = dep.failed orelse err;
+                                    }
+                                }
+                            }
+
+                            callbacks.onPackageManifestError(
+                                extract_ctx,
+                                name.slice(),
+                                err,
+                                task.url_buf,
+                            );
+                        } else if (comptime log_level != .silent) {
                             const fmt = "\n<r><red>error<r>: {s} downloading package manifest <b>{s}<r>\n";
-                            const error_name: string = if (task.http.err) |err| std.mem.span(@errorName(err)) else "failed";
+                            const error_name: string = std.mem.span(@errorName(err));
                             const args = .{ error_name, name.slice() };
                             if (comptime log_level.showProgress()) {
                                 Output.prettyWithPrinterFn(fmt, args, Progress.log, &manager.progress);
@@ -2940,72 +3017,100 @@ pub const PackageManager = struct {
                     };
 
                     if (response.status_code > 399) {
-                        switch (response.status_code) {
-                            404 => {
-                                if (comptime log_level != .silent) {
-                                    const fmt = "\n<r><red>error<r>: package <b>\"{s}\"<r> not found <d>{s}{s} 404<r>\n";
-                                    const args = .{
-                                        name.slice(),
-                                        task.http.url.displayHostname(),
-                                        task.http.url.pathname,
-                                    };
+                        if (@TypeOf(callbacks.onPackageManifestError) != void) {
+                            const err: PackageManifestError = switch (response.status_code) {
+                                400 => error.PackageManifestHTTP400,
+                                401 => error.PackageManifestHTTP401,
+                                402 => error.PackageManifestHTTP402,
+                                403 => error.PackageManifestHTTP403,
+                                404 => error.PackageManifestHTTP404,
+                                405...499 => error.PackageManifestHTTP4xx,
+                                else => error.PackageManifestHTTP5xx,
+                            };
 
-                                    if (comptime log_level.showProgress()) {
-                                        Output.prettyWithPrinterFn(fmt, args, Progress.log, &manager.progress);
-                                    } else {
-                                        Output.prettyErrorln(fmt, args);
-                                        Output.flush();
+                            if (manager.dynamic_root_dependencies) |*root_deps| {
+                                var deps: []Dependency.Pair = root_deps.items;
+                                for (deps) |*dep| {
+                                    if (strings.eql(manager.lockfile.str(dep.dependency.name), name.slice())) {
+                                        dep.failed = dep.failed orelse err;
                                     }
                                 }
-                            },
-                            401 => {
-                                if (comptime log_level != .silent) {
-                                    const fmt = "\n<r><red>error<r>: unauthorized <b>\"{s}\"<r> <d>{s}{s} 401<r>\n";
-                                    const args = .{
-                                        name.slice(),
-                                        task.http.url.displayHostname(),
-                                        task.http.url.pathname,
-                                    };
+                            }
 
-                                    if (comptime log_level.showProgress()) {
-                                        Output.prettyWithPrinterFn(fmt, args, Progress.log, &manager.progress);
-                                    } else {
-                                        Output.prettyErrorln(fmt, args);
-                                        Output.flush();
-                                    }
-                                }
-                            },
-                            403 => {
-                                if (comptime log_level != .silent) {
-                                    const fmt = "\n<r><red>error<r>: forbidden while loading <b>\"{s}\"<r><d> 403<r>\n";
-                                    const args = .{
-                                        name.slice(),
-                                    };
+                            callbacks.onPackageManifestError(
+                                extract_ctx,
+                                name.slice(),
+                                err,
+                                task.url_buf,
+                            );
+                        } else {
+                            switch (response.status_code) {
+                                404 => {
+                                    if (comptime log_level != .silent) {
+                                        const fmt = "\n<r><red>error<r>: package <b>\"{s}\"<r> not found <d>{s}{s} 404<r>\n";
+                                        const args = .{
+                                            name.slice(),
+                                            task.http.url.displayHostname(),
+                                            task.http.url.pathname,
+                                        };
 
-                                    if (comptime log_level.showProgress()) {
-                                        Output.prettyWithPrinterFn(fmt, args, Progress.log, &manager.progress);
-                                    } else {
-                                        Output.prettyErrorln(fmt, args);
-                                        Output.flush();
+                                        if (comptime log_level.showProgress()) {
+                                            Output.prettyWithPrinterFn(fmt, args, Progress.log, &manager.progress);
+                                        } else {
+                                            Output.prettyErrorln(fmt, args);
+                                            Output.flush();
+                                        }
                                     }
-                                }
-                            },
-                            else => {
-                                if (comptime log_level != .silent) {
-                                    const fmt = "\n<r><red><b>GET<r><red> {s}<d> - {d}<r>\n";
-                                    const args = .{
-                                        task.http.client.url.href,
-                                        response.status_code,
-                                    };
+                                },
+                                401 => {
+                                    if (comptime log_level != .silent) {
+                                        const fmt = "\n<r><red>error<r>: unauthorized <b>\"{s}\"<r> <d>{s}{s} 401<r>\n";
+                                        const args = .{
+                                            name.slice(),
+                                            task.http.url.displayHostname(),
+                                            task.http.url.pathname,
+                                        };
 
-                                    if (comptime log_level.showProgress()) {
-                                        Output.prettyWithPrinterFn(fmt, args, Progress.log, &manager.progress);
-                                    } else {
-                                        Output.prettyErrorln(fmt, args);
-                                        Output.flush();
+                                        if (comptime log_level.showProgress()) {
+                                            Output.prettyWithPrinterFn(fmt, args, Progress.log, &manager.progress);
+                                        } else {
+                                            Output.prettyErrorln(fmt, args);
+                                            Output.flush();
+                                        }
                                     }
-                                }
-                            },
+                                },
+                                403 => {
+                                    if (comptime log_level != .silent) {
+                                        const fmt = "\n<r><red>error<r>: forbidden while loading <b>\"{s}\"<r><d> 403<r>\n";
+                                        const args = .{
+                                            name.slice(),
+                                        };
+
+                                        if (comptime log_level.showProgress()) {
+                                            Output.prettyWithPrinterFn(fmt, args, Progress.log, &manager.progress);
+                                        } else {
+                                            Output.prettyErrorln(fmt, args);
+                                            Output.flush();
+                                        }
+                                    }
+                                },
+                                else => {
+                                    if (comptime log_level != .silent) {
+                                        const fmt = "\n<r><red><b>GET<r><red> {s}<d> - {d}<r>\n";
+                                        const args = .{
+                                            task.http.client.url.href,
+                                            response.status_code,
+                                        };
+
+                                        if (comptime log_level.showProgress()) {
+                                            Output.prettyWithPrinterFn(fmt, args, Progress.log, &manager.progress);
+                                        } else {
+                                            Output.prettyErrorln(fmt, args);
+                                            Output.flush();
+                                        }
+                                    }
+                                },
+                            }
                         }
                         for (manager.package_json_updates) |*update| {
                             if (strings.eql(update.name, name.slice())) {
@@ -3014,10 +3119,6 @@ pub const PackageManager = struct {
                                 manager.options.do.save_yarn_lock = false;
                                 manager.options.do.install_packages = false;
                             }
-                        }
-
-                        if (@TypeOf(callbacks.onPackageManifestError) != void) {
-                            callbacks.onPackageManifestError(extract_ctx, name.slice());
                         }
 
                         continue;
@@ -3061,23 +3162,71 @@ pub const PackageManager = struct {
                 },
                 .extract => |extract| {
                     const response = task.http.response orelse {
-                        const fmt = "\n<r><red>error<r>: {s} downloading tarball <b>{s}@{s}<r>\n";
-                        const error_name: string = if (task.http.err) |err| std.mem.span(@errorName(err)) else "failed";
-                        const args = .{ error_name, extract.name.slice(), extract.resolution.fmt(manager.lockfile.buffers.string_bytes.items) };
+                        const err = task.http.err orelse error.TarballFailedToDownload;
 
-                        if (comptime log_level != .silent) {
-                            if (comptime log_level.showProgress()) {
-                                Output.prettyWithPrinterFn(fmt, args, Progress.log, &manager.progress);
-                            } else {
-                                Output.prettyErrorln(fmt, args);
-                                Output.flush();
+                        if (@TypeOf(callbacks.onPackageDownloadError) != void) {
+                            if (manager.dynamic_root_dependencies) |*root_deps| {
+                                for (root_deps.items) |*dep| {
+                                    if (dep.resolution_id == extract.package_id) {
+                                        dep.failed = err;
+                                    }
+                                }
+                            }
+                            callbacks.onPackageDownloadError(
+                                extract_ctx,
+                                extract.package_id,
+                                extract.name.slice(),
+                                extract.resolution,
+                                err,
+                                task.url_buf,
+                            );
+                        } else {
+                            const fmt = "\n<r><red>error<r>: {s} downloading tarball <b>{s}@{s}<r>\n";
+                            const error_name: string = std.mem.span(@errorName(err));
+                            const args = .{ error_name, extract.name.slice(), extract.resolution.fmt(manager.lockfile.buffers.string_bytes.items) };
+
+                            if (comptime log_level != .silent) {
+                                if (comptime log_level.showProgress()) {
+                                    Output.prettyWithPrinterFn(fmt, args, Progress.log, &manager.progress);
+                                } else {
+                                    Output.prettyErrorln(fmt, args);
+                                    Output.flush();
+                                }
                             }
                         }
+
                         continue;
                     };
 
                     if (response.status_code > 399) {
-                        if (comptime log_level != .silent) {
+                        if (@TypeOf(callbacks.onPackageDownloadError) != void) {
+                            const err = switch (response.status_code) {
+                                400 => error.TarballHTTP400,
+                                401 => error.TarballHTTP401,
+                                402 => error.TarballHTTP402,
+                                403 => error.TarballHTTP403,
+                                404 => error.TarballHTTP404,
+                                405...499 => error.TarballHTTP4xx,
+                                else => error.TarballHTTP5xx,
+                            };
+
+                            if (manager.dynamic_root_dependencies) |*root_deps| {
+                                for (root_deps.items) |*dep| {
+                                    if (dep.resolution_id == extract.package_id) {
+                                        dep.failed = err;
+                                    }
+                                }
+                            }
+
+                            callbacks.onPackageDownloadError(
+                                extract_ctx,
+                                extract.package_id,
+                                extract.name.slice(),
+                                extract.resolution,
+                                err,
+                                task.url_buf,
+                            );
+                        } else if (comptime log_level != .silent) {
                             const fmt = "\n<r><red><b>GET<r><red> {s}<d> - {d}<r>\n";
                             const args = .{
                                 task.http.client.url.href,
@@ -3094,6 +3243,7 @@ pub const PackageManager = struct {
                                 Output.flush();
                             }
                         }
+
                         continue;
                     }
 
@@ -3132,11 +3282,30 @@ pub const PackageManager = struct {
             switch (task.tag) {
                 .package_manifest => {
                     if (task.status == .fail) {
-                        if (comptime log_level != .silent) {
-                            const fmt = "\n<r><red>rerror<r>: {s} parsing package manifest for <b>{s}<r>";
-                            const error_name: string = if (task.err != null) std.mem.span(@errorName(task.err.?)) else @as(string, "Failed");
+                        const name = task.request.package_manifest.name;
+                        const err = task.err orelse error.Failed;
 
-                            const args = .{ error_name, task.request.package_manifest.name.slice() };
+                        if (@TypeOf(callbacks.onPackageManifestError) != void) {
+                            if (manager.dynamic_root_dependencies) |*root_deps| {
+                                var deps: []Dependency.Pair = root_deps.items;
+                                for (deps) |*dep| {
+                                    if (strings.eql(manager.lockfile.str(dep.dependency.name), name.slice())) {
+                                        dep.failed = dep.failed orelse err;
+                                    }
+                                }
+                            }
+
+                            callbacks.onPackageManifestError(
+                                extract_ctx,
+                                name.slice(),
+                                err,
+                                task.request.package_manifest.network.url_buf,
+                            );
+                        } else if (comptime log_level != .silent) {
+                            const fmt = "\n<r><red>rerror<r>: {s} parsing package manifest for <b>{s}<r>";
+                            const error_name: string = @errorName(err);
+
+                            const args = .{ error_name, name.slice() };
                             if (comptime log_level.showProgress()) {
                                 Output.prettyWithPrinterFn(fmt, args, Progress.log, &manager.progress);
                             } else {
@@ -3167,9 +3336,28 @@ pub const PackageManager = struct {
                 },
                 .extract => {
                     if (task.status == .fail) {
-                        if (comptime log_level != .silent) {
+                        const err = task.err orelse error.TarballFailedToExtract;
+                        if (@TypeOf(callbacks.onPackageDownloadError) != void) {
+                            if (manager.dynamic_root_dependencies) |*root_deps| {
+                                var deps: []Dependency.Pair = root_deps.items;
+                                for (deps) |*dep| {
+                                    if (dep.resolution_id == task.request.extract.tarball.package_id) {
+                                        dep.failed = dep.failed orelse err;
+                                    }
+                                }
+                            }
+
+                            callbacks.onPackageDownloadError(
+                                extract_ctx,
+                                task.request.extract.tarball.package_id,
+                                task.request.extract.tarball.name.slice(),
+                                task.request.extract.tarball.resolution,
+                                err,
+                                task.request.extract.network.url_buf,
+                            );
+                        } else if (comptime log_level != .silent) {
                             const fmt = "<r><red>error<r>: {s} extracting tarball for <b>{s}<r>";
-                            const error_name: string = if (task.err != null) std.mem.span(@errorName(task.err.?)) else @as(string, "Failed");
+                            const error_name: string = @errorName(err);
                             const args = .{
                                 error_name,
                                 task.request.extract.tarball.name.slice(),
@@ -5809,6 +5997,7 @@ pub const PackageManager = struct {
                                 .onExtract = PackageInstaller.installEnqueuedPackages,
                                 .onResolve = void{},
                                 .onPackageManifestError = void{},
+                                .onPackageDownloadError = void{},
                             },
                             log_level,
                         );
@@ -5827,6 +6016,7 @@ pub const PackageManager = struct {
                         .onExtract = PackageInstaller.installEnqueuedPackages,
                         .onResolve = void{},
                         .onPackageManifestError = void{},
+                        .onPackageDownloadError = void{},
                     },
                     log_level,
                 );
@@ -5841,6 +6031,7 @@ pub const PackageManager = struct {
                         .onExtract = PackageInstaller.installEnqueuedPackages,
                         .onResolve = void{},
                         .onPackageManifestError = void{},
+                        .onPackageDownloadError = void{},
                     },
                     log_level,
                 );
@@ -6233,6 +6424,7 @@ pub const PackageManager = struct {
                         .onExtract = void{},
                         .onResolve = void{},
                         .onPackageManifestError = void{},
+                        .onPackageDownloadError = void{},
                     }, log_level);
                 }
             }
@@ -6564,29 +6756,12 @@ test "UpdateRequests.parse" {
     try std.testing.expectEqual(updates.len, 6);
 }
 
-pub const FailureCode = error{
-    PackageDoesNotExist,
-    DistTagDoesNotExist,
-    NoMatchingVersion,
-    TarballHTTP404,
-    TarballHTTP403,
-    TarballHTTP5xx,
-    ManifestHTTP403,
-    ManifestHTTP5xx,
-};
-
-pub const RemoteDependency = struct {
-    package_name: Semver.String = .{},
-    version: Dependency.Version = .{},
-
-    result: union(enum) {
-        pending: enum {
-            resolve,
-            download,
-        },
-        failure: FailureCode,
-        success: PackageID,
-    },
-
-    pub const List = std.MultiArrayList(RemoteDependency);
+pub const PackageManifestError = error{
+    PackageManifestHTTP400,
+    PackageManifestHTTP401,
+    PackageManifestHTTP402,
+    PackageManifestHTTP403,
+    PackageManifestHTTP404,
+    PackageManifestHTTP4xx,
+    PackageManifestHTTP5xx,
 };

@@ -1023,6 +1023,7 @@ pub fn NewWriter(
                                     "Not Found - \"{s}\"",
                                     .{import.text.utf8},
                                     import_record.ImportKind.at,
+                                    err,
                                 ) catch {};
                             },
                             else => {},

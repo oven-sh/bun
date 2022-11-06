@@ -1148,8 +1148,8 @@ pub const Subprocess = struct {
 
         if (subprocess.stdout == .pipe and subprocess.stdout.pipe == .buffer) {
             if (comptime is_sync) {
-                if (subprocess.stderr.pipe.buffer.canRead()) {
-                    subprocess.stderr.pipe.buffer.readAll(true);
+                if (subprocess.stdout.pipe.buffer.canRead()) {
+                    subprocess.stdout.pipe.buffer.readAll(true);
                 }
             } else {
                 subprocess.stdout.pipe.buffer.readIfPossible(false);

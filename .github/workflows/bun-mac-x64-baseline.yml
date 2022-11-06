@@ -346,6 +346,7 @@ jobs:
           replacesArtifacts: true
           generateReleaseNotes: true
           artifactErrorsFailBuild: true
+          token: ${{ secrets.GITHUB_TOKEN }}
           name: "Canary (${{github.sha}})"
           tag: "canary"
           artifacts: "${{runner.temp}}/release/bun-${{matrix.tag}}.zip,${{runner.temp}}/release/bun-${{matrix.tag}}-profile.zip"

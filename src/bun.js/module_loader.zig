@@ -424,7 +424,11 @@ pub const ModuleLoader = struct {
                     // var versions = module.parse_result.pending_imports.items(.dependency);
                     var done_count: usize = 0;
                     for (tags) |tag, tag_i| {
-                        const package_id = pm.dynamicRootDependencies().items[root_dependency_ids[tag_i]].resolution_id;
+                        const root_id = root_dependency_ids[tag_i];
+                        if (root_id == Install.invalid_package_id) continue;
+                        const root_items = pm.dynamicRootDependencies().items;
+                        if (root_items.len <= root_id) continue;
+                        const package_id = root_items[root_id].resolution_id;
 
                         switch (tag) {
                             .resolve => {

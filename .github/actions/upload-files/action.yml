@@ -31,7 +31,6 @@ runs:
   using: "composite"
   steps:
     - run: |
-        shopt -s globstar
         rm -rf artifact.tar
         tar -cvf artifact.tar -C ${{ inputs.path }}
       shell: bash

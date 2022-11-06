@@ -337,14 +337,15 @@ jobs:
           path: ${{runner.temp}}/release/${{matrix.tag}}.zip
       - name: Release
         id: release
-        uses: softprops/action-gh-release@v1
+        uses: ncipollo/release-action@v1
         if: github.ref == 'refs/heads/main'
         with:
           prerelease: true
-          generate_release_notes: true
-          body: "This is the canary release of Bun that corresponds to the commit [${{ github.sha }}]"
+          body: "This canary release of Bun corresponds to the commit [${{ github.sha }}]"
+          allowUpdates: true
+          replacesArtifacts: true
+          generateReleaseNotes: true
+          artifactErrorsFailBuild: true
           name: "Canary (${{github.sha}})"
-          tag_name: "canary"
-          files: |
-            ${{runner.temp}}/release/${{matrix.tag}}.zip
-            ${{runner.temp}}/release/${{matrix.tag}}-profile.zip
+          tag: "canary"
+          artifacts: "${{runner.temp}}/release/bun-${{matrix.tag}}.zip,${{runner.temp}}/release/bun-${{matrix.tag}}-profile.zip"

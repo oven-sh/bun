@@ -415,7 +415,7 @@ pub const VirtualMachine = struct {
 
     pub threadlocal var is_main_thread_vm: bool = false;
 
-    pub fn packageManager(this: *VirtualMachine) *PackageManager {
+    pub inline fn packageManager(this: *VirtualMachine) *PackageManager {
         return this.bundler.getPackageManager();
     }
 
@@ -639,7 +639,7 @@ pub const VirtualMachine = struct {
 
         vm.bundler.macro_context = null;
 
-        VirtualMachine.vm.bundler.onWakePackageManager = .{
+        VirtualMachine.vm.bundler.resolver.onWakePackageManager = .{
             .context = &VirtualMachine.vm.modules,
             .handler = ModuleLoader.AsyncModule.Queue.onWakeHandler,
         };
@@ -856,7 +856,7 @@ pub const VirtualMachine = struct {
             // TODO: do we need to handle things like query string params?
             if (strings.hasPrefixComptime(specifier, "file://")) specifier["file://".len..] else specifier,
             .stmt,
-            .enable_but_no_install,
+            .read_only,
         )) {
             .success => |r| r,
             .failure => |e| e,

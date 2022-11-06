@@ -1458,6 +1458,10 @@ pub const PackageManager = struct {
     cpu_count: u32 = 0,
     package_json_updates: []UpdateRequest = &[_]UpdateRequest{},
 
+    // progress bar stuff when not stack allocated
+    root_progress_node: *std.Progress.Node = undefined,
+    root_download_node: std.Progress.Node = undefined,
+
     to_remove: []const UpdateRequest = &[_]UpdateRequest{},
 
     root_package_json_file: std.fs.File,
@@ -4179,6 +4183,13 @@ pub const PackageManager = struct {
         };
         manager.lockfile = try allocator.create(Lockfile);
 
+        if (Output.enable_ansi_colors_stderr) {
+            manager.progress = Progress{};
+            manager.progress.supports_ansi_escape_codes = Output.enable_ansi_colors_stderr;
+            manager.root_progress_node = manager.progress.start("", 0);
+            manager.root_download_node = manager.root_progress_node.start(ProgressStrings.download(), 0);
+        }
+
         if (!manager.options.enable.cache) {
             manager.options.enable.manifest_cache = false;
             manager.options.enable.manifest_cache_control = false;
@@ -5948,6 +5959,31 @@ pub const PackageManager = struct {
         manager.options.bin_path = std.meta.assumeSentinel(try FileSystem.instance.dirname_store.append([:0]u8, result_), 0);
     }
 
+    pub fn startProgressBarIfNone(manager: *PackageManager) void {
+        if (manager.downloads_node == null) {
+            manager.startProgressBar();
+        }
+    }
+    pub fn startProgressBar(manager: *PackageManager) void {
+        manager.downloads_node = manager.progress.start(ProgressStrings.download(), 0);
+        manager.progress.supports_ansi_escape_codes = Output.enable_ansi_colors_stderr;
+        manager.setNodeName(manager.downloads_node.?, ProgressStrings.download_no_emoji_, ProgressStrings.download_emoji, true);
+        manager.downloads_node.?.setEstimatedTotalItems(manager.total_tasks + manager.extracted_count);
+        manager.downloads_node.?.setCompletedItems(manager.total_tasks - manager.pending_tasks);
+        manager.downloads_node.?.activate();
+        manager.progress.refresh();
+    }
+
+    pub fn endProgressBar(manager: *PackageManager) void {
+        var downloads_node = manager.downloads_node orelse return;
+        downloads_node.setEstimatedTotalItems(downloads_node.unprotected_estimated_total_items);
+        downloads_node.setCompletedItems(downloads_node.unprotected_estimated_total_items);
+        manager.progress.refresh();
+        manager.progress.root.end();
+        manager.progress = .{};
+        manager.downloads_node = null;
+    }
+
     fn installWithManager(
         ctx: Command.Context,
         manager: *PackageManager,
@@ -6199,13 +6235,7 @@ pub const PackageManager = struct {
             }
 
             if (comptime log_level.showProgress()) {
-                manager.downloads_node = manager.progress.start(ProgressStrings.download(), 0);
-                manager.progress.supports_ansi_escape_codes = Output.enable_ansi_colors_stderr;
-                manager.setNodeName(manager.downloads_node.?, ProgressStrings.download_no_emoji_, ProgressStrings.download_emoji, true);
-                manager.downloads_node.?.setEstimatedTotalItems(manager.total_tasks + manager.extracted_count);
-                manager.downloads_node.?.setCompletedItems(manager.total_tasks - manager.pending_tasks);
-                manager.downloads_node.?.activate();
-                manager.progress.refresh();
+                manager.startProgressBar();
             } else if (comptime log_level != .silent) {
                 Output.prettyErrorln(" Resolving dependencies", .{});
                 Output.flush();
@@ -6222,12 +6252,7 @@ pub const PackageManager = struct {
             }
 
             if (comptime log_level.showProgress()) {
-                manager.downloads_node.?.setEstimatedTotalItems(manager.downloads_node.?.unprotected_estimated_total_items);
-                manager.downloads_node.?.setCompletedItems(manager.downloads_node.?.unprotected_estimated_total_items);
-                manager.progress.refresh();
-                manager.progress.root.end();
-                manager.progress = .{};
-                manager.downloads_node = null;
+                manager.endProgressBar();
             } else if (comptime log_level != .silent) {
                 Output.prettyErrorln(" Resolved, downloaded and extracted [{d}]", .{manager.total_tasks});
                 Output.flush();

@@ -229,16 +229,32 @@ pub const ModuleLoader = struct {
 
             pub fn runTasks(this: *Queue) void {
                 var pm = this.vm().packageManager();
-                pm.runTasks(
-                    *Queue,
-                    this,
-                    .{
-                        .onExtract = onExtract,
-                        .onResolve = onResolve,
-                        .onPackageManifestError = onPackageManifestError,
-                    },
-                    PackageManager.Options.LogLevel.default_no_progress,
-                ) catch unreachable;
+
+                if (Output.enable_ansi_colors_stderr) {
+                    pm.startProgressBarIfNone();
+                    pm.runTasks(
+                        *Queue,
+                        this,
+                        .{
+                            .onExtract = onExtract,
+                            .onResolve = onResolve,
+                            .onPackageManifestError = onPackageManifestError,
+                            .progress_bar = true,
+                        },
+                        PackageManager.Options.LogLevel.default,
+                    ) catch unreachable;
+                } else {
+                    pm.runTasks(
+                        *Queue,
+                        this,
+                        .{
+                            .onExtract = onExtract,
+                            .onResolve = onResolve,
+                            .onPackageManifestError = onPackageManifestError,
+                        },
+                        PackageManager.Options.LogLevel.default_no_progress,
+                    ) catch unreachable;
+                }
             }
 
             pub fn onResolve(_: *Queue) void {
@@ -304,9 +320,6 @@ pub const ModuleLoader = struct {
                             },
                         }
 
-                        // we might have finished loading the dependency into the lockfile
-                        var package_id = pm.dynamicRootDependencies().items[resolution_id].resolution_id;
-
                         if (package_id == Install.invalid_package_id) {
                             continue;
                         }
@@ -330,6 +343,9 @@ pub const ModuleLoader = struct {
                     }
 
                     if (done_count == tags.len) {
+                        if (i + 1 >= modules.len) {
+                            this.vm().packageManager().endProgressBar();
+                        }
                         module.done(this.vm());
                     } else {
                         modules[i] = module;
@@ -337,6 +353,10 @@ pub const ModuleLoader = struct {
                     }
                 }
                 this.map.items.len = i;
+                if (i == 0) {
+                    // ensure we always end the progress bar
+                    this.vm().packageManager().endProgressBar();
+                }
             }
 
             pub fn vm(this: *Queue) *VirtualMachine {
@@ -418,11 +438,14 @@ pub const ModuleLoader = struct {
             jsc_vm.bundler.linker.log = log;
             jsc_vm.bundler.log = log;
             jsc_vm.bundler.resolver.log = log;
+            jsc_vm.packageManager().log = log;
             defer {
                 jsc_vm.bundler.linker.log = old_log;
                 jsc_vm.bundler.log = old_log;
                 jsc_vm.bundler.resolver.log = old_log;
+                jsc_vm.packageManager().log = old_log;
             }
+
             // We _must_ link because:
             // - node_modules bundle won't be properly
             try jsc_vm.bundler.linker.link(
@@ -563,11 +586,17 @@ pub const ModuleLoader = struct {
                 jsc_vm.bundler.log = log;
                 jsc_vm.bundler.linker.log = log;
                 jsc_vm.bundler.resolver.log = log;
+                if (jsc_vm.bundler.resolver.package_manager) |pm| {
+                    pm.log = log;
+                }
 
                 defer {
                     jsc_vm.bundler.log = old;
                     jsc_vm.bundler.linker.log = old;
                     jsc_vm.bundler.resolver.log = old;
+                    if (jsc_vm.bundler.resolver.package_manager) |pm| {
+                        pm.log = old;
+                    }
                 }
 
                 // this should be a cheap lookup because 24 bytes == 8 * 3 so it's read 3 machine words

@@ -199,13 +199,13 @@ jobs:
           make -j $(sysctl -n hw.ncpu) release-bindings
       - name: Upload C++
         if: matrix.compile_obj
-        uses: alehechka/upload-tartifact@v1
+        uses: ./.github/actions/upload-files
         with:
           name: ${{ matrix.tag }}-cpp
           path: ${{ runner.temp }}/bun-cpp-obj
       - name: Upload Dependencies
         if: matrix.dependencies
-        uses: alehechka/upload-tartifact@v1
+        uses: ./.github/actions/upload-files
         with:
           name: ${{ matrix.tag }}-deps
           path: ${{runner.temp}}/bun-deps

@@ -1677,6 +1677,35 @@ pub const VirtualMachine = struct {
             .fd = exception.fd != -1,
         };
 
+        const extra_fields = .{
+            "url",
+            "info",
+            "pkg",
+        };
+
+        if (error_instance.isCell()) {
+            inline for (extra_fields) |field| {
+                if (error_instance.get(this.global, field)) |value| {
+                    if (!value.isEmptyOrUndefinedOrNull()) {
+                        const kind = value.jsType();
+                        if (kind.isStringLike()) {
+                            if (value.toStringOrNull(this.global)) |str| {
+                                var zig_str = str.toSlice(this.global, bun.default_allocator);
+                                defer zig_str.deinit();
+                                try writer.print(comptime Output.prettyFmt(" {s}<d>: <r>\"{s}\"<r>\n", allow_ansi_color), .{ field, zig_str.slice() });
+                                add_extra_line = true;
+                            }
+                        } else if (kind.isObject() or kind.isArray()) {
+                            var zig_str = ZigString.init("");
+                            value.jsonStringify(this.global, 2, &zig_str);
+                            try writer.print(comptime Output.prettyFmt(" {s}<d>: <r>{s}<r>\n", allow_ansi_color), .{ field, zig_str });
+                            add_extra_line = true;
+                        }
+                    }
+                }
+            }
+        }
+
         if (show.path) {
             if (show.syscall) {
                 try writer.writeAll("  ");
@@ -1684,6 +1713,16 @@ pub const VirtualMachine = struct {
                 try writer.writeAll(" ");
             }
             try writer.print(comptime Output.prettyFmt(" path<d>: <r><cyan>\"{s}\"<r>\n", allow_ansi_color), .{exception.path});
+        }
+
+        if (show.fd) {
+            if (show.syscall) {
+                try writer.writeAll("   ");
+            } else if (show.errno) {
+                try writer.writeAll("  ");
+            }
+
+            try writer.print(comptime Output.prettyFmt(" fd<d>: <r><cyan>\"{d}\"<r>\n", allow_ansi_color), .{exception.fd});
         }
 
         if (show.system_code) {

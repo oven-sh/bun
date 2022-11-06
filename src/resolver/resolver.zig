@@ -45,6 +45,8 @@ const Lockfile = @import("../install/lockfile.zig").Lockfile;
 const Package = @import("../install/lockfile.zig").Package;
 const Resolution = @import("../install/resolution.zig").Resolution;
 const Semver = @import("../install/semver.zig");
+const DotEnv = @import("../env_loader.zig");
+
 pub fn isPackagePath(path: string) bool {
     // this could probably be flattened into something more optimized
     return path.len > 0 and path[0] != '/' and !strings.startsWith(path, "./") and !strings.startsWith(path, "../") and !strings.eql(path, ".") and !strings.eql(path, "..");
@@ -321,6 +323,7 @@ pub const PendingResolution = struct {
     esm: ESModule.Package.External = .{},
     dependency: Dependency.Version = .{},
     resolution_id: Install.PackageID = Install.invalid_package_id,
+    root_dependency_id: Install.PackageID = Install.invalid_package_id,
     import_record_id: u32 = std.math.maxInt(u32),
     string_buf: []u8 = "",
     tag: Tag,
@@ -428,6 +431,9 @@ pub const Resolver = struct {
     caches: CacheSet,
 
     package_manager: ?*PackageManager = null,
+    onWakePackageManager: PackageManager.WakeHandler = .{},
+    main_file_for_package_manager: []const u8 = "",
+    env_loader: ?*DotEnv.Loader = null,
 
     // These are sets that represent various conditions for the "exports" field
     // in package.json.
@@ -473,8 +479,26 @@ pub const Resolver = struct {
     // all parent directories
     dir_cache: *DirInfo.HashMap,
 
+    pub fn getPackageManager(this: *Resolver) *PackageManager {
+        if (this.package_manager != null) {
+            return this.package_manager.?;
+        }
+        bun.HTTPThead.init() catch unreachable;
+        this.package_manager = PackageManager.initWithRuntime(
+            this.log,
+            this.opts.install,
+            this.allocator,
+            .{},
+            this.env_loader.?,
+            this.main_file_for_package_manager,
+        ) catch @panic("Failed to initialize package manager");
+        this.package_manager.?.onWake = this.onWakePackageManager;
+
+        return this.package_manager.?;
+    }
+
     pub inline fn usePackageManager(self: *const ThisResolver) bool {
-        return self.opts.enable_auto_install == true;
+        return self.opts.global_cache.isEnabled();
     }
 
     pub fn init1(
@@ -1427,9 +1451,10 @@ pub const Resolver = struct {
 
         var source_dir_info = dir_info;
         var any_node_modules_folder = false;
+        const use_node_module_resolver = global_cache != .force;
 
         // Then check for the package in any enclosing "node_modules" directories
-        while (true) {
+        while (use_node_module_resolver) {
             // Skip directories that are themselves called "node_modules", since we
             // don't ever want to search for "node_modules/node_modules"
             if (dir_info.hasNodeModules()) {
@@ -1490,13 +1515,13 @@ pub const Resolver = struct {
         dir_info = source_dir_info;
 
         // this is the magic!
-        if (!any_node_modules_folder and global_cache.canUse() and r.usePackageManager() and esm_ != null) {
+        if (global_cache.canUse(any_node_modules_folder) and r.usePackageManager() and esm_ != null) {
             const esm = esm_.?.withAutoVersion();
             load_module_from_cache: {
 
                 // If the source directory doesn't have a node_modules directory, we can
                 // check the global cache directory for a package.json file.
-                var manager = r.package_manager.?;
+                var manager = r.getPackageManager();
                 var dependency_version: Dependency.Version = .{};
                 var dependency_behavior = @intToEnum(Dependency.Behavior, Dependency.Behavior.normal);
                 // const initial_pending_tasks = manager.pending_tasks;
@@ -1626,6 +1651,9 @@ pub const Resolver = struct {
                                 };
                             },
                             .extract, .extracting => |st| {
+                                if (!global_cache.canInstall()) {
+                                    return .{ .not_found = {} };
+                                }
                                 var builder = Semver.String.Builder{};
                                 esm.count(&builder);
                                 builder.allocate(manager.allocator) catch unreachable;
@@ -1647,6 +1675,7 @@ pub const Resolver = struct {
                                         .esm = cloned,
                                         .dependency = dependency_version,
                                         .resolution_id = resolved_package_id,
+
                                         .string_buf = builder.allocatedSlice(),
                                         .tag = .download,
                                     },
@@ -1784,10 +1813,8 @@ pub const Resolver = struct {
             null,
             allocators.NotFound,
             open_dir.fd,
+            package_id,
         );
-        if (dir_info_ptr.package_json) |pkg_json| {
-            pkg_json.package_manager_package_id = package_id;
-        }
         return dir_info_ptr;
     }
 
@@ -1806,13 +1833,12 @@ pub const Resolver = struct {
         input_package_id_: *Install.PackageID,
         version: Dependency.Version,
     ) DependencyToResolve {
-        std.debug.assert(r.package_manager != null);
         if (r.debug_logs) |*debug| {
             debug.addNoteFmt("Enqueueing pending dependency \"{s}@{s}\"", .{ esm.name, esm.version });
         }
 
         const input_package_id = input_package_id_.*;
-        var pm = r.package_manager.?;
+        var pm = r.getPackageManager();
         if (comptime Environment.allow_assert) {
             // we should never be trying to resolve a dependency that is already resolved
             std.debug.assert(pm.lockfile.resolve(esm.name, version) == null);
@@ -1890,7 +1916,8 @@ pub const Resolver = struct {
                         .pending = .{
                             .esm = cloned,
                             .dependency = version,
-                            .resolution_id = id,
+                            .resolution_id = Install.invalid_package_id,
+                            .root_dependency_id = id,
                             .string_buf = builder.allocatedSlice(),
                             .tag = .resolve,
                         },
@@ -1906,19 +1933,6 @@ pub const Resolver = struct {
         }
 
         bun.unreachablePanic("TODO: implement enqueueDependencyToResolve for non-root packages", .{});
-    }
-
-    fn enqueueDependencyToDownload(r: *ThisResolver, esm: ESModule.Package, resolution: Resolution, input_package_id: Install.PackageID, version: Dependency.Version) ?MatchResult.Union {
-        if (r.debug_logs) |*debug| {
-            debug.addNoteFmt("Enqueueing pending dependency \"{s}@{s}\"", .{ esm.name, esm.version });
-        }
-
-        _ = esm;
-        _ = input_package_id;
-        _ = version;
-        _ = resolution;
-
-        return null;
     }
 
     fn handleESMResolution(r: *ThisResolver, esm_resolution_: ESModule.Resolution, abs_package_path: string, kind: ast.ImportKind, package_json: *PackageJSON) ?MatchResult {
@@ -2064,6 +2078,7 @@ pub const Resolver = struct {
         r: *ThisResolver,
         file: string,
         dirname_fd: StoredFileDescriptorType,
+        package_id: ?Install.PackageID,
         comptime allow_dependencies: bool,
     ) !?*PackageJSON {
         var pkg: PackageJSON = undefined;
@@ -2072,6 +2087,7 @@ pub const Resolver = struct {
                 r,
                 file,
                 dirname_fd,
+                package_id,
                 true,
                 if (allow_dependencies) .local else .none,
                 false,
@@ -2081,6 +2097,7 @@ pub const Resolver = struct {
                 r,
                 file,
                 dirname_fd,
+                package_id,
                 true,
                 if (allow_dependencies) .local else .none,
                 true,
@@ -2365,6 +2382,7 @@ pub const Resolver = struct {
                 r.dir_cache.atIndex(top_parent.index),
                 top_parent.index,
                 open_dir.fd,
+                null,
             );
 
             if (queue_slice.len == 0) {
@@ -3178,6 +3196,7 @@ pub const Resolver = struct {
         parent: ?*DirInfo,
         parent_index: allocators.IndexType,
         fd: FileDescriptorType,
+        package_id: ?Install.PackageID,
     ) anyerror!void {
         var result = _result;
 
@@ -3316,9 +3335,9 @@ pub const Resolver = struct {
             const entry = lookup.entry;
             if (entry.kind(rfs) == .file) {
                 info.package_json = if (r.usePackageManager() and !info.hasNodeModules() and !info.isNodeModules())
-                    r.parsePackageJSON(path, if (FeatureFlags.store_file_descriptors) fd else 0, true) catch null
+                    r.parsePackageJSON(path, if (FeatureFlags.store_file_descriptors) fd else 0, package_id, true) catch null
                 else
-                    r.parsePackageJSON(path, if (FeatureFlags.store_file_descriptors) fd else 0, false) catch null;
+                    r.parsePackageJSON(path, if (FeatureFlags.store_file_descriptors) fd else 0, null, false) catch null;
 
                 if (info.package_json) |pkg| {
                     if (pkg.browser_map.count() > 0) {
@@ -3459,14 +3478,45 @@ pub const RootPathPair = struct {
 };
 
 pub const GlobalCache = enum {
-    auto_install,
-    enable_but_no_install,
+    allow_install,
+    read_only,
+    auto,
+    force,
+    fallback,
     disable,
 
-    pub fn canUse(this: GlobalCache) bool {
+    pub const Map = bun.ComptimeStringMap(GlobalCache, .{
+        .{ "auto", GlobalCache.auto },
+        .{ "force", GlobalCache.force },
+        .{ "disable", GlobalCache.disable },
+        .{ "fallback", GlobalCache.fallback },
+    });
+
+    pub fn canUse(this: GlobalCache, has_a_node_modules_folder: bool) bool {
+        // When there is a node_modules folder, we default to false
+        // When there is NOT a node_modules folder, we default to true
+        // That is the difference between these two branches.
+        if (has_a_node_modules_folder) {
+            return switch (this) {
+                .fallback, .allow_install, .force => true,
+                .read_only, .disable, .auto => false,
+            };
+        } else {
+            return switch (this) {
+                .fallback, .allow_install, .auto, .force => true,
+                .read_only, .disable => false,
+            };
+        }
+    }
+
+    pub fn isEnabled(this: GlobalCache) bool {
+        return this != .disable;
+    }
+
+    pub fn canInstall(this: GlobalCache) bool {
         return switch (this) {
-            .auto_install, .enable_but_no_install => true,
-            .disable => false,
+            .auto, .allow_install, .force, .fallback => true,
+            else => false,
         };
     }
 };

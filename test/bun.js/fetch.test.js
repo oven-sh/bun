@@ -9,10 +9,24 @@ const exampleFixture = fs.readFileSync(
 );
 
 describe("fetch", () => {
-  const urls = ["https://example.com", "http://example.com"];
+  const urls = [
+    "https://example.com",
+    "http://example.com",
+    new URL("https://example.com"),
+    new Request({ url: "https://example.com" }),
+    { toString: () => "https://example.com" },
+  ];
   for (let url of urls) {
     gc();
-    it(url, async () => {
+    let name = url;
+    if (name instanceof URL) {
+      name = "URL: " + name;
+    } else if (name instanceof Request) {
+      name = "Request: " + name.url;
+    } else if (name.hasOwnProperty("toString")) {
+      name = "Object: " + name.toString();
+    }
+    it(name, async () => {
       gc();
       const response = await fetch(url, {}, { verbose: true });
       gc();

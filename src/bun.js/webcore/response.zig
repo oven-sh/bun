@@ -801,7 +801,14 @@ pub const Fetch = struct {
         var disable_timeout = false;
         var disable_keepalive = false;
         var verbose = false;
-        if (first_arg.toStringOrNull(globalThis)) |jsstring| {
+        if (first_arg.as(Request)) |request| {
+            url = ZigURL.parse(getAllocator(ctx).dupe(u8, request.url) catch unreachable);
+            method = request.method;
+            if (request.headers) |head| {
+                headers = Headers.from(head, bun.default_allocator) catch unreachable;
+            }
+            body = request.body.useAsAnyBlob();
+        } else if (first_arg.toStringOrNull(globalThis)) |jsstring| {
             var url_zig_str = ZigString.init("");
             jsstring.toZigString(globalThis, &url_zig_str);
             var url_str = url_zig_str.slice();
@@ -876,13 +883,6 @@ pub const Fetch = struct {
                     }
                 }
             }
-        } else if (first_arg.as(Request)) |request| {
-            url = ZigURL.parse(getAllocator(ctx).dupe(u8, request.url) catch unreachable);
-            method = request.method;
-            if (request.headers) |head| {
-                headers = Headers.from(head, bun.default_allocator) catch unreachable;
-            }
-            body = request.body.useAsAnyBlob();
         } else {
             const fetch_error = fetch_type_error_strings.get(js.JSValueGetType(ctx, arguments[0]));
             exception.* = ZigString.init(fetch_error).toErrorInstance(globalThis).asObjectRef();

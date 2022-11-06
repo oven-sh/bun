@@ -188,11 +188,13 @@ export function execFile(file, args, options, callback) {
     ...options,
   };
 
+  const maxBuffer = options.maxBuffer;
+
   // Validate the timeout, if present.
   validateTimeout(options.timeout);
 
   // Validate maxBuffer, if present.
-  validateMaxBuffer(options.maxBuffer);
+  validateMaxBuffer(maxBuffer);
 
   options.killSignal = sanitizeKillSignal(options.killSignal);
 
@@ -218,6 +220,8 @@ export function execFile(file, args, options, callback) {
   let killed = false;
   let exited = false;
   let timeoutId;
+  let encodedStdoutLen;
+  let encodedStderrLen;
 
   let ex = null;
 
@@ -234,15 +238,16 @@ export function execFile(file, args, options, callback) {
 
     if (!callback) return;
 
+    const readableEncoding = child?.stdout?.readableEncoding;
     // merge chunks
     let stdout;
     let stderr;
-    if (encoding || (child.stdout && child.stdout.readableEncoding)) {
+    if (encoding || (child.stdout && readableEncoding)) {
       stdout = ArrayPrototypeJoin.call(_stdout, "");
     } else {
       stdout = BufferConcat(_stdout);
     }
-    if (encoding || (child.stderr && child.stderr.readableEncoding)) {
+    if (encoding || (child.stderr && readableEncoding)) {
       stderr = ArrayPrototypeJoin.call(_stderr, "");
     } else {
       stderr = BufferConcat(_stderr);
@@ -303,19 +308,25 @@ export function execFile(file, args, options, callback) {
 
     child.stdout.on(
       "data",
-      encoding
+      maxBuffer === Infinity
+        ? function onUnlimitedSizeBufferedData(chunk) {
+            ArrayPrototypePush.call(_stdout, chunk);
+          }
+        : encoding
         ? function onChildStdoutEncoded(chunk) {
-            // Do not need to count the length
-            if (options.maxBuffer === Infinity) {
-              ArrayPrototypePush.call(_stdout, chunk);
-              return;
-            }
             stdoutLen += chunk.length;
 
-            if (stdoutLen * 4 > options.maxBuffer) {
+            if (stdoutLen * 4 > maxBuffer) {
               const encoding = child.stdout.readableEncoding;
               const actualLen = Buffer.byteLength(chunk, encoding);
-              const truncatedLen = options.maxBuffer - (stdoutLen - actualLen);
+              if (encodedStdoutLen === undefined) {
+                for (let i = 0; i < _stdout.length; i++) {
+                  encodedStdoutLen += Buffer.byteLength(_stdout[i], encoding);
+                }
+              } else {
+                encodedStdoutLen += actualLen;
+              }
+              const truncatedLen = maxBuffer - (encodedStdoutLen - actualLen);
               ArrayPrototypePush.call(
                 _stdout,
                 StringPrototypeSlice.apply(chunk, 0, truncatedLen)
@@ -328,16 +339,10 @@ export function execFile(file, args, options, callback) {
             }
           }
         : function onChildStdoutRaw(chunk) {
-            // Do not need to count the length
-            if (options.maxBuffer === Infinity) {
-              ArrayPrototypePush.call(_stdout, chunk);
-              return;
-            }
             stdoutLen += chunk.length;
 
-            if (stdoutLen > options.maxBuffer) {
-              const truncatedLen =
-                options.maxBuffer - (stdoutLen - chunk.length);
+            if (stdoutLen > maxBuffer) {
+              const truncatedLen = maxBuffer - (stdoutLen - chunk.length);
               ArrayPrototypePush.call(_stdout, chunk.slice(0, truncatedLen));
 
               ex = new ERR_CHILD_PROCESS_STDIO_MAXBUFFER("stdout");
@@ -354,19 +359,25 @@ export function execFile(file, args, options, callback) {
 
     child.stderr.on(
       "data",
-      encoding
+      maxBuffer === Infinity
+        ? function onUnlimitedSizeBufferedData(chunk) {
+            ArrayPrototypePush.call(_stderr, chunk);
+          }
+        : encoding
         ? function onChildStderrEncoded(chunk) {
-            if (options.maxBuffer === Infinity) {
-              ArrayPrototypePush.call(_stderr, chunk);
-              return;
-            }
-
             stderrLen += chunk.length;
 
-            if (stderrLen * 4 > options.maxBuffer) {
+            if (stderrLen * 4 > maxBuffer) {
               const encoding = child.stderr.readableEncoding;
               const actualLen = Buffer.byteLength(chunk, encoding);
-              const truncatedLen = options.maxBuffer - (stderrLen - actualLen);
+              if (encodedStderrLen === undefined) {
+                for (let i = 0; i < _stderr.length; i++) {
+                  encodedStderrLen += Buffer.byteLength(_stderr[i], encoding);
+                }
+              } else {
+                encodedStderrLen += actualLen;
+              }
+              const truncatedLen = maxBuffer - (encodedStderrLen - actualLen);
               ArrayPrototypePush.call(
                 _stderr,
                 StringPrototypeSlice.call(chunk, 0, truncatedLen)
@@ -379,16 +390,10 @@ export function execFile(file, args, options, callback) {
             }
           }
         : function onChildStderrRaw(chunk) {
-            if (options.maxBuffer === Infinity) {
-              ArrayPrototypePush.call(_stderr, chunk);
-              return;
-            }
-
             stderrLen += chunk.length;
 
-            if (stderrLen > options.maxBuffer) {
-              const truncatedLen =
-                options.maxBuffer - (stderrLen - chunk.length);
+            if (stderrLen > maxBuffer) {
+              const truncatedLen = maxBuffer - (stderrLen - chunk.length);
               ArrayPrototypePush.call(
                 _stderr,
                 StringPrototypeSlice.call(chunk, 0, truncatedLen)
@@ -471,13 +476,16 @@ export function spawnSync(file, args, options) {
     ...normalizeSpawnArguments(file, args, options),
   };
 
+  const maxBuffer = options.maxBuffer;
+  const encoding = options.encoding;
+
   debug("spawnSync", options);
 
   // Validate the timeout, if present.
   validateTimeout(options.timeout);
 
   // Validate maxBuffer, if present.
-  validateMaxBuffer(options.maxBuffer);
+  validateMaxBuffer(maxBuffer);
 
   // Validate and translate the kill signal, if present.
   options.killSignal = sanitizeKillSignal(options.killSignal);
@@ -523,12 +531,12 @@ export function spawnSync(file, args, options) {
     output: [null, stdout, stderr],
   };
 
-  if (stdout && options.encoding && options.encoding !== "buffer") {
-    result.output[1] = result.output[1]?.toString(options.encoding);
+  if (stdout && encoding && encoding !== "buffer") {
+    result.output[1] = result.output[1]?.toString(encoding);
   }
 
-  if (stderr && options.encoding && options.encoding !== "buffer") {
-    result.output[2] = result.output[2]?.toString(options.encoding);
+  if (stderr && encoding && encoding !== "buffer") {
+    result.output[2] = result.output[2]?.toString(encoding);
   }
 
   result.stdout = result.output[1];

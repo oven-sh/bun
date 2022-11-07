@@ -302,7 +302,13 @@ pub const ServerConfig = struct {
             }
 
             if (arg.getTruthy(global, "port")) |port_| {
-                args.port = @intCast(u16, @minimum(@maximum(0, port_.toInt32()), std.math.maxInt(u16)));
+                args.port = @intCast(
+                    u16,
+                    @minimum(
+                        @maximum(0, port_.coerce(i32, global)),
+                        std.math.maxInt(u16),
+                    ),
+                );
             }
 
             if (arg.getTruthy(global, "baseURI")) |baseURI| {

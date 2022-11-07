@@ -482,10 +482,13 @@ pub const TestCommand = struct {
 
         var modules: []*Jest.DescribeScope = reporter.jest.files.items(.module_scope)[file_start..];
         for (modules) |module| {
+            vm.onUnhandledRejectionCtx = null;
+            vm.onUnhandledRejection = Jest.TestRunnerTask.onUnhandledRejection;
             module.runTests(JSC.JSValue.zero, vm.global);
             vm.eventLoop().tick();
 
-            while (vm.active_tasks > 0) {
+            const initial_unhandled_counter = vm.unhandled_error_counter;
+            while (vm.active_tasks > 0 and vm.unhandled_error_counter == initial_unhandled_counter) {
                 if (!Jest.Jest.runner.?.has_pending_tests) Jest.Jest.runner.?.drain();
                 vm.eventLoop().tick();
 

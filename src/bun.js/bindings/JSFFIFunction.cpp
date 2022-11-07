@@ -70,13 +70,44 @@ extern "C" FFICallbackFunctionWrapper* Bun__createFFICallbackFunction(
     return wrapper;
 }
 
-extern "C" Zig::JSFFIFunction* Bun__CreateFFIFunction(Zig::GlobalObject* globalObject, const ZigString* symbolName, unsigned argCount, Zig::FFIFunction functionPointer, bool strong)
+extern "C" Zig::JSFFIFunction* Bun__CreateFFIFunctionWithData(Zig::GlobalObject* globalObject, const ZigString* symbolName, unsigned argCount, Zig::FFIFunction functionPointer, bool strong, void* data)
 {
     JSC::VM& vm = globalObject->vm();
     Zig::JSFFIFunction* function = Zig::JSFFIFunction::create(vm, globalObject, argCount, symbolName != nullptr ? Zig::toStringCopy(*symbolName) : String(), functionPointer, JSC::NoIntrinsic);
     if (strong)
         globalObject->trackFFIFunction(function);
+    function->dataPtr = data;
     return function;
+}
+
+extern "C" JSC::EncodedJSValue Bun__CreateFFIFunctionWithDataValue(Zig::GlobalObject* globalObject, const ZigString* symbolName, unsigned argCount, Zig::FFIFunction functionPointer, bool strong, void* data)
+{
+    return JSC::JSValue::encode(Bun__CreateFFIFunctionWithData(globalObject, symbolName, argCount, functionPointer, strong, data));
+}
+
+extern "C" Zig::JSFFIFunction* Bun__CreateFFIFunction(Zig::GlobalObject* globalObject, const ZigString* symbolName, unsigned argCount, Zig::FFIFunction functionPointer, bool strong)
+{
+    return Bun__CreateFFIFunctionWithData(globalObject, symbolName, argCount, functionPointer, strong, nullptr);
+}
+
+extern "C" void* Bun__FFIFunction_getDataPtr(JSC::EncodedJSValue jsValue)
+{
+
+    Zig::JSFFIFunction* function = jsDynamicCast<Zig::JSFFIFunction*>(JSC::JSValue::decode(jsValue));
+    if (!function)
+        return nullptr;
+
+    return function->dataPtr;
+}
+
+extern "C" void Bun__FFIFunction_setDataPtr(JSC::EncodedJSValue jsValue, void* ptr)
+{
+
+    Zig::JSFFIFunction* function = jsDynamicCast<Zig::JSFFIFunction*>(JSC::JSValue::decode(jsValue));
+    if (!function)
+        return;
+
+    function->dataPtr = ptr;
 }
 extern "C" void Bun__untrackFFIFunction(Zig::GlobalObject* globalObject, JSC::EncodedJSValue function)
 {

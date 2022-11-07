@@ -1,4 +1,5 @@
 const std = @import("std");
+const bun = @import("../../global.zig");
 const Api = @import("../../api/schema.zig").Api;
 const RequestContext = @import("../../http.zig").RequestContext;
 const MimeType = @import("../../http.zig").MimeType;
@@ -535,14 +536,36 @@ pub const TestScope = struct {
         const err = arguments.ptr[0];
         globalThis.bunVM().runErrorHandler(err, null);
         var task: *TestRunnerTask = arguments.ptr[1].asPromisePtr(TestRunnerTask);
-        task.handleResult(.{ .fail = active_test_expectation_counter.actual });
+        task.handleResult(.{ .fail = active_test_expectation_counter.actual }, .promise);
         return JSValue.jsUndefined();
     }
 
     pub fn onResolve(_: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSValue {
         const arguments = callframe.arguments(2);
         var task: *TestRunnerTask = arguments.ptr[1].asPromisePtr(TestRunnerTask);
-        task.handleResult(.{ .pass = active_test_expectation_counter.actual });
+        task.handleResult(.{ .pass = active_test_expectation_counter.actual }, .promise);
+        return JSValue.jsUndefined();
+    }
+
+    pub fn onDone(
+        globalThis: *JSC.JSGlobalObject,
+        callframe: *JSC.CallFrame,
+    ) callconv(.C) JSValue {
+        const function = callframe.callee();
+        const args = callframe.arguments(1);
+
+        if (JSC.getFunctionData(function)) |data| {
+            var task = bun.cast(*TestRunnerTask, data);
+            JSC.setFunctionData(function, null);
+            if (args.len > 0) {
+                const err = args.ptr[0];
+                globalThis.bunVM().runErrorHandlerWithDedupe(err, null);
+                task.handleResult(.{ .fail = active_test_expectation_counter.actual }, .callback);
+            } else {
+                task.handleResult(.{ .pass = active_test_expectation_counter.actual }, .callback);
+            }
+        }
+
         return JSValue.jsUndefined();
     }
 
@@ -558,7 +581,24 @@ pub const TestScope = struct {
             this.callback = null;
         }
         JSC.markBinding(@src());
-        const initial_value = js.JSObjectCallAsFunctionReturnValue(vm.global, callback, null, 0, null);
+
+        const callback_length = JSValue.fromRef(callback).getLengthOfArray(vm.global);
+
+        var initial_value = JSValue.zero;
+        if (callback_length > 0) {
+            const callback_func = JSC.NewFunctionWithData(
+                vm.global,
+                ZigString.static("done"),
+                0,
+                TestScope.onDone,
+                false,
+                task,
+            );
+            task.done_callback_state = .pending;
+            initial_value = JSValue.fromRef(callback.?).call(vm.global, &.{callback_func});
+        } else {
+            initial_value = js.JSObjectCallAsFunctionReturnValue(vm.global, callback, null, 0, null);
+        }
 
         if (initial_value.isException(vm.global.vm()) or initial_value.isError() or initial_value.isAggregateError(vm.global)) {
             vm.runErrorHandler(initial_value, null);
@@ -579,6 +619,7 @@ pub const TestScope = struct {
                     return .{ .fail = active_test_expectation_counter.actual };
                 },
                 .Pending => {
+                    task.promise_state = .pending;
                     _ = promise.asValue(vm.global).then(vm.global, task, onResolve, onReject);
                     return .{ .pending = {} };
                 },
@@ -587,6 +628,10 @@ pub const TestScope = struct {
                     _ = promise.result(vm.global.vm());
                 },
             }
+        }
+
+        if (callback_length > 0) {
+            return .{ .pending = {} };
         }
 
         this.callback = null;
@@ -960,7 +1005,7 @@ pub const DescribeScope = struct {
 
 var active_test_expectation_counter: TestScope.Counter = undefined;
 
-const TestRunnerTask = struct {
+pub const TestRunnerTask = struct {
     test_id: TestRunner.Test.ID,
     describe: *DescribeScope,
     globalThis: *JSC.JSGlobalObject,
@@ -968,6 +1013,31 @@ const TestRunnerTask = struct {
     value: JSC.Strong = .{},
     needs_before_each: bool = true,
     ref: JSC.Ref = JSC.Ref.init(),
+
+    done_callback_state: AsyncState = .none,
+    promise_state: AsyncState = .none,
+    sync_state: AsyncState = .none,
+    reported: bool = false,
+
+    pub const AsyncState = enum {
+        none,
+        pending,
+        fulfilled,
+    };
+
+    pub fn onUnhandledRejection(jsc_vm: *VirtualMachine, _: *JSC.JSGlobalObject, rejection: JSC.JSValue) void {
+        if (jsc_vm.last_reported_error_for_dedupe == rejection and rejection != .zero) {
+            jsc_vm.last_reported_error_for_dedupe = .zero;
+        } else {
+            jsc_vm.runErrorHandlerWithDedupe(rejection, null);
+        }
+
+        if (jsc_vm.onUnhandledRejectionCtx) |ctx| {
+            var this = bun.cast(*TestRunnerTask, ctx);
+            jsc_vm.onUnhandledRejectionCtx = null;
+            this.handleResult(.{ .fail = active_test_expectation_counter.actual }, .unhandledRejection);
+        }
+    }
 
     pub fn run(this: *TestRunnerTask) bool {
         var describe = this.describe;
@@ -977,7 +1047,9 @@ const TestRunnerTask = struct {
         DescribeScope.active = describe;
         active_test_expectation_counter = .{};
 
+        describe.current_test_id = this.test_id;
         var globalThis = this.globalThis;
+        globalThis.bunVM().onUnhandledRejectionCtx = this;
         var test_: TestScope = this.describe.tests.items[this.test_id];
         const label = this.describe.tests.items[this.test_id].label;
 
@@ -995,19 +1067,56 @@ const TestRunnerTask = struct {
             }
         }
 
-        const result = TestScope.run(&test_, this);
+        this.sync_state = .pending;
 
-        if (result == .pending) {
+        const result = TestScope.run(&test_, this);
+        if (result == .pending and this.sync_state == .pending and (this.done_callback_state == .pending or this.promise_state == .pending)) {
+            this.sync_state = .fulfilled;
             this.value.set(globalThis, this.describe.value);
             return true;
         }
 
-        this.handleResult(result);
+        this.handleResult(result, .sync);
 
         return false;
     }
 
-    pub fn handleResult(this: *TestRunnerTask, result: Result) void {
+    pub fn handleResult(this: *TestRunnerTask, result: Result, comptime from: @Type(.EnumLiteral)) void {
+        switch (comptime from) {
+            .promise => {
+                std.debug.assert(this.promise_state == .pending);
+                this.promise_state = .fulfilled;
+
+                if (this.done_callback_state == .pending and result == .pass) {
+                    return;
+                }
+            },
+            .callback => {
+                std.debug.assert(this.done_callback_state == .pending);
+                this.done_callback_state = .fulfilled;
+
+                if (this.promise_state == .pending and result == .pass) {
+                    return;
+                }
+            },
+            .sync => {
+                std.debug.assert(this.sync_state == .pending);
+                this.sync_state = .fulfilled;
+            },
+            .unhandledRejection => {},
+            else => @compileError("Bad from"),
+        }
+
+        defer {
+            if (this.reported and this.promise_state != .pending and this.sync_state != .pending and this.done_callback_state != .pending)
+                this.deinit();
+        }
+
+        if (this.reported)
+            return;
+
+        this.reported = true;
+
         var globalThis = this.globalThis;
         var test_ = this.describe.tests.items[this.test_id];
         const label = this.describe.tests.items[this.test_id].label;
@@ -1015,20 +1124,26 @@ const TestRunnerTask = struct {
         var describe = this.describe;
 
         describe.tests.items[this.test_id] = test_;
-
         switch (result) {
             .pass => |count| Jest.runner.?.reportPass(test_id, this.source.path.text, label, count, describe),
             .fail => |count| Jest.runner.?.reportFailure(test_id, this.source.path.text, label, count, describe),
             .pending => @panic("Unexpected pending test"),
         }
         describe.onTestComplete(globalThis, this.test_id);
-        this.deinit();
+
         Jest.runner.?.runNextTest();
     }
 
     fn deinit(this: *TestRunnerTask) void {
+        var vm = JSC.VirtualMachine.vm;
+        if (vm.onUnhandledRejectionCtx) |ctx| {
+            if (ctx == @ptrCast(*anyopaque, this)) {
+                vm.onUnhandledRejectionCtx = null;
+            }
+        }
+
         this.value.deinit();
-        this.ref.unref(JSC.VirtualMachine.vm);
+        this.ref.unref(vm);
         default_allocator.destroy(this);
     }
 };

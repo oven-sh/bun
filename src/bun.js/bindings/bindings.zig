@@ -4217,6 +4217,14 @@ pub const JSArray = struct {
 };
 
 const private = struct {
+    pub extern fn Bun__CreateFFIFunctionWithDataValue(
+        *JSGlobalObject,
+        ?*const ZigString,
+        argCount: u32,
+        function: *const anyopaque,
+        strong: bool,
+        data: *anyopaque,
+    ) JSValue;
     pub extern fn Bun__CreateFFIFunction(
         globalObject: *JSGlobalObject,
         symbolName: ?*const ZigString,
@@ -4237,7 +4245,11 @@ const private = struct {
         globalObject: *JSGlobalObject,
         function: JSValue,
     ) bool;
+
+    pub extern fn Bun__FFIFunction_getDataPtr(JSValue) ?*anyopaque;
+    pub extern fn Bun__FFIFunction_setDataPtr(JSValue, ?*anyopaque) void;
 };
+
 pub fn NewFunctionPtr(globalObject: *JSGlobalObject, symbolName: ?*const ZigString, argCount: u32, functionPointer: anytype, strong: bool) *anyopaque {
     if (comptime JSC.is_bindgen) unreachable;
     return private.Bun__CreateFFIFunction(globalObject, symbolName, argCount, @ptrCast(*const anyopaque, functionPointer), strong);
@@ -4252,6 +4264,35 @@ pub fn NewFunction(
 ) JSValue {
     if (comptime JSC.is_bindgen) unreachable;
     return private.Bun__CreateFFIFunctionValue(globalObject, symbolName, argCount, @ptrCast(*const anyopaque, functionPointer), strong);
+}
+
+pub fn getFunctionData(function: JSValue) ?*anyopaque {
+    if (comptime JSC.is_bindgen) unreachable;
+    return private.Bun__FFIFunction_getDataPtr(function);
+}
+
+pub fn setFunctionData(function: JSValue, value: ?*anyopaque) void {
+    if (comptime JSC.is_bindgen) unreachable;
+    return private.Bun__FFIFunction_setDataPtr(function, value);
+}
+
+pub fn NewFunctionWithData(
+    globalObject: *JSGlobalObject,
+    symbolName: ?*const ZigString,
+    argCount: u32,
+    functionPointer: anytype,
+    strong: bool,
+    data: *anyopaque,
+) JSValue {
+    if (comptime JSC.is_bindgen) unreachable;
+    return private.Bun__CreateFFIFunctionWithDataValue(
+        globalObject,
+        symbolName,
+        argCount,
+        @ptrCast(*const anyopaque, functionPointer),
+        strong,
+        data,
+    );
 }
 
 pub fn untrackFunction(

@@ -2270,7 +2270,7 @@ pub const Timer = struct {
             }
 
             var this = args.ptr[1].asPtr(CallbackJob);
-            globalThis.bunVM().runErrorHandler(args.ptr[0], null);
+            globalThis.bunVM().runErrorHandlerWithDedupe(args.ptr[0], null);
             this.deinit();
             return JSValue.jsUndefined();
         }
@@ -2313,7 +2313,7 @@ pub const Timer = struct {
             }
 
             if (result.isAnyError(globalThis)) {
-                vm.runErrorHandler(result, null);
+                vm.runErrorHandlerWithDedupe(result, null);
                 this.deinit();
                 return;
             }
@@ -2322,7 +2322,7 @@ pub const Timer = struct {
                 switch (promise.status(globalThis.vm())) {
                     .Rejected => {
                         this.deinit();
-                        vm.runErrorHandler(promise.result(globalThis.vm()), null);
+                        vm.runErrorHandlerWithDedupe(promise.result(globalThis.vm()), null);
                     },
                     .Fulfilled => {
                         this.deinit();

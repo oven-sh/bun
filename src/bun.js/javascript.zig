@@ -282,6 +282,7 @@ comptime {
         _ = Bun__readOriginTimer;
         _ = Bun__onDidAppendPlugin;
         _ = Bun__readOriginTimerStart;
+        _ = Bun__reportUnhandledError;
     }
 }
 
@@ -289,6 +290,12 @@ comptime {
 /// The bunVM() call will assert this
 pub export fn Bun__queueTask(global: *JSGlobalObject, task: *JSC.CppTask) void {
     global.bunVM().eventLoop().enqueueTask(Task.init(task));
+}
+
+pub export fn Bun__reportUnhandledError(globalObject: *JSGlobalObject, value: JSValue) callconv(.C) JSValue {
+    var jsc_vm = globalObject.bunVM();
+    jsc_vm.onUnhandledError(globalObject, value);
+    return JSC.JSValue.jsUndefined();
 }
 
 /// This function is called on another thread
@@ -305,7 +312,8 @@ pub export fn Bun__queueTaskConcurrently(global: *JSGlobalObject, task: *JSC.Cpp
 
 pub export fn Bun__handleRejectedPromise(global: *JSGlobalObject, promise: *JSC.JSPromise) void {
     const result = promise.result(global.vm());
-    global.bunVM().runErrorHandler(result, null);
+    var jsc_vm = global.bunVM();
+    jsc_vm.onUnhandledError(global, result);
 }
 
 pub export fn Bun__onDidAppendPlugin(jsc_vm: *VirtualMachine, globalObject: *JSGlobalObject) void {
@@ -350,6 +358,7 @@ pub const VirtualMachine = struct {
 
     plugin_runner: ?PluginRunner = null,
     is_main_thread: bool = false,
+    last_reported_error_for_dedupe: JSValue = .zero,
 
     /// Do not access this field directly
     /// It exists in the VirtualMachine struct so that
@@ -411,9 +420,26 @@ pub const VirtualMachine = struct {
     auto_install_dependencies: bool = false,
     load_builtins_from_path: []const u8 = "",
 
+    onUnhandledRejection: fn (*VirtualMachine, globalObject: *JSC.JSGlobalObject, JSC.JSValue) void = defaultOnUnhandledRejection,
+    onUnhandledRejectionCtx: ?*anyopaque = null,
+    unhandled_error_counter: usize = 0,
+
     modules: ModuleLoader.AsyncModule.Queue = .{},
 
     pub threadlocal var is_main_thread_vm: bool = false;
+
+    pub fn resetUnhandledRejection(this: *VirtualMachine) void {
+        this.onUnhandledRejection = defaultOnUnhandledRejection;
+    }
+
+    pub fn onUnhandledError(this: *JSC.VirtualMachine, globalObject: *JSC.JSGlobalObject, value: JSC.JSValue) void {
+        this.unhandled_error_counter += 1;
+        this.onUnhandledRejection(this, globalObject, value);
+    }
+
+    pub fn defaultOnUnhandledRejection(this: *JSC.VirtualMachine, _: *JSC.JSGlobalObject, value: JSC.JSValue) void {
+        this.runErrorHandler(value, null);
+    }
 
     pub inline fn packageManager(this: *VirtualMachine) *PackageManager {
         return this.bundler.getPackageManager();
@@ -1173,7 +1199,17 @@ pub const VirtualMachine = struct {
         }
     }
 
+    pub fn runErrorHandlerWithDedupe(this: *VirtualMachine, result: JSValue, exception_list: ?*ExceptionList) void {
+        if (this.last_reported_error_for_dedupe == result and !this.last_reported_error_for_dedupe.isEmptyOrUndefinedOrNull())
+            return;
+
+        this.runErrorHandler(result, exception_list);
+    }
+
     pub fn runErrorHandler(this: *VirtualMachine, result: JSValue, exception_list: ?*ExceptionList) void {
+        if (!result.isEmptyOrUndefinedOrNull())
+            this.last_reported_error_for_dedupe = result;
+
         if (result.isException(this.global.vm())) {
             var exception = @ptrCast(*Exception, result.asVoid());
 
@@ -1454,8 +1490,9 @@ pub const VirtualMachine = struct {
         }
     }
 
-    pub fn reportUncaughtExceptio(_: *JSGlobalObject, exception: *JSC.Exception) JSValue {
-        VirtualMachine.vm.runErrorHandler(exception.value(), null);
+    pub fn reportUncaughtException(globalObject: *JSGlobalObject, exception: *JSC.Exception) JSValue {
+        var jsc_vm = globalObject.bunVM();
+        jsc_vm.onUnhandledError(globalObject, exception.value());
         return JSC.JSValue.jsUndefined();
     }
 

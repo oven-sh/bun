@@ -4487,22 +4487,18 @@ Bun's module resolution algorithm is a lot like Node's except one key difference
 
 Highlights:
 
-- Automatic package installs
-- Offline-first
+- Automatic package installs, there is no need to run `npm install` or `bun install` before running a project.
+- Save disk space & time by not copying/linking dependencies into `node_modules`. Instead, Bun uses a shared global cache to store & load dependencies from a single location on disk.
 - `package.json` is optional
 - Compatible with npm packages
-- Save disk space & time by not copying/linking dependencies into `node_modules`. Instead, Bun uses a shared global cache to store & load dependencies in a single location.
-- Security: no postinstall scripts are run. No malicious code can be run when installing dependencies
+- Security: dependencies can't run postinstall scripts. No malicious code can be run when installing dependencies.
 - One name@version of a dependency is used instead of multiple copies. Bun still supports different versions of the same package. Since `node_modules` relies on directory structure to resolve dependencies, projects often end up with the same name@version of a dependency installed multiple times in one `node_modules` folder. This is not a problem with Bun's module resolution algorithm because it uses a single flat global cache for all dependencies on your computer.
 
 For ecosystem compatibility, when the `node_modules` folder is present, it will be used to resolve modules like in node and Bun-specific features like automatic package installs are disabled.
 
 When the `node_modules` folder is _not_ present, that's when it gets more interesting.
 
-Bun lazily loads a lockfile for the project. It checks the following files:
-
-- `./my-entry-point-name.lockb` (script-specific lockfile, `bun run foo.js` => `foo.lockb`)
-- `./bun.lockb` (project-specific lockfile)
+Bun lazily loads a lockfile for the project. It checks for `bun.lockb` in the project root.
 
 If the lockfile is present, the lockfile will be used to resolve modules first. If the lockfile is not present, the lockfile will be lazily generated.
 
@@ -4510,14 +4506,24 @@ If the lockfile is present, the lockfile will be used to resolve modules first. 
 // unspecified version:
 import React from "react";
 
-// specific version:
+// set version in import specifier: (only supported if no package.json is present)
 import React18_2 from "react@18.2.0";
 
-// range version:
+// range version: (only supported if no package.json is present)
 import React18 from "react@^18";
 ```
 
-It will check the lockfile for the version. If the lockfile doesn't have a version, it will check the nearest `package.json` for a `react` dependency and use that version. If the `package.json` doesn't have a `react` dependency, it will use the latest version installed on-disk in Bun's shared global cache. If no version is installed in the global cache, it will install the latest version from npm's registry.
+It will check the lockfile for the version. If the lockfile doesn't have a version, it will check the nearest `package.json` for a `react` dependency and use that version. If the `package.json` doesn't have a `react` dependency, it will use the latest version. If the latest version is not installed in the global cache, it will download the latest version from npm's registry.
+
+Lowlights:
+
+- TypeScript type support is not implmented yet.
+
+#### Resolving packages
+
+`bun install` uses a shared global cache. After packages install, we add a symlink indexing the version of the package to allow us to quickly see what versions of a package are installed on-disk.
+
+Bun's module resolver shares the same global cache as `bun install` so it can resolve packages without needing to install them into a local `node_modules` folder. Instead, it uses the global cache to resolve packages.
 
 When you import a module like `lodash` in Bun without a node_modules folder, here's what happens:
 
@@ -4525,19 +4531,37 @@ When you import a module like `lodash` in Bun without a node_modules folder, her
 import { debounce } from "lodash";
 ```
 
-#### Resolving packages
-
-`bun install` uses a shared global cache. After packages install, they add a symlink indexing the version of the package to allow us to quickly see what versions of a package are installed on-disk.
-
-Bun's module resolver shares the same global cache as `bun install` so it can resolve packages without needing to install them into a local `node_modules` folder. Instead, it will use the global cache to load packages.
-
 1. Check if auto-install is enabled and if so, load the lockfile or lazily generate it.
 2. Check if the lockfile has an existing dependency for `lodash`.
 3. If the lockfile has an existing dependency for `lodash`, use the resolved version specified in the lockfile.
-4. If the lockfile does not have an existing resolved version for `lodash`, check if there is a `package.json` in the current or parent directory which has a dependency on `lodash`. If so, use that as the range specifier for the dependency. Since no version is specified for the `"lodash"` string, it is assumed that you meant the version specified in the `package.json`'s `"dependencies"` field.
-5. If there is no `package.json` in the current or parent directory which has a dependency on `lodash`, use the latest version of `lodash` that is currently installed on-disk. If no version of `lodash` is installed on-disk, resolve & download the `latest` version of `lodash` tagged and use that version.
-6. If the version specifier is not exact (such as `^1.2.3`), first we check if a matching version is already installed on-disk by looking at the `$HOME/.bun/install/cache/${package.name}` folder where the names are versions. The highest matching version is used. If no matching version exists, Bun will enqueue a job to resolve the highest matching version of lodash and download it to the cache.
-7. If the version specifier is exact but doesn't exist on-disk, Bun will enqueue a job to download it to the cache. If the version specifier is exact and exists on-disk, Bun will use that version.
+4. If the lockfile does not have an existing resolved version for `lodash`, check if there is a `package.json` in the current or parent directories with a dependency on `lodash`. If so, use that as the range specifier for the dependency. Since no version is specified for the `"lodash"` string, it is assumed that you meant the version specified in the `package.json`'s `"dependencies"` field.
+5. If there is no `package.json` in the current or parent directories which has a dependency on `lodash`, use the latest version of `lodash` listed in the package manifest cache. If the package manifest cache is out of date, refresh it.
+6. Once a version is chosen, add the dependency to the lockfile and all the dependencies of the dependency to the lockfile.
+7. Return the file path to the resolved version of `lodash`. If the version is not installed on-disk, download &amp; install it, along with all dependencies.
+
+More details:
+
+- `bun install` ordinarily caches package manifests from npm for up to 5 minutes. For automatic package installs in Bun's JavaScript runtime, that cache is refreshed daily instead. This is to minimize startup time cost when no lockfile is present.
+- The `BUN_INSTALL_CACHE_DIR` environment variable lets you customize the location of the cache. Currently, it defaults to `$XDG_CACHE_HOME/.bun/install/cache` or `$HOME/.bun/install/cache`.
+- The implementation details of Bun's install cache will change between versions. Don't think of it as an API. To reliably resolve packages, use bun's builtin APIs (such as `Bun.resolveSync` or `import.meta.resolve`) instead of relying on the filesystem directly. Bun will likely move to a binary archive format where packages may not correspond to files/folders on disk at all - so if you depend on the filesystem structure instead of the JavaScript API, your code will eventually break.
+
+##### Prefer offline
+
+Instead of checking npm for latest versions, you can pass the `--prefer-offline` flag to prefer locally-installed versions of packages.
+
+```bash
+bun run --prefer-offline my-script.ts
+```
+
+This will check the install cache for installed versions of packages before checking the npm registry. If no matching version of a package is installed, only then will it check npm for the latest version.
+
+##### Prefer latest
+
+To always use the latest version of a package, you can pass the `--prefer-latest` flag.
+
+```bash
+bun run --prefer-latest my-script.ts
+```
 
 #### Resolving modules
 
@@ -4545,25 +4569,47 @@ After ensuring the package is installed, Bun resolves the module.
 
 For the most part, this is the same as what Node.js does.
 
-The main difference is instead of looking for `node_modules` folders to resolve packages, Bun looks for the `$HOME/.bun/install/cache/${package.name}/${package.version}` folder where the names are versions.
+The main difference is instead of looking for `node_modules` folders to resolve packages, Bun looks in bun's install cache.
 
 This only activates for "package paths". That is, paths that start with a package name. For example, `lodash/debounce` is a package path. `./foo` is not a package path.
-
-Do not rely on this particular directory structure to exist, it may change in the future and also using folders like this may change in the future too. Eventually, Bun will likely move to a binary archive format which will allow us to efficiently load dependencies from disk.
 
 #### Frequently asked questions
 
 **How is this different than what Node.js does?**
 
-Per-project `node_modules` folders are not required. This saves you disk space and time spent copying/linking dependencies into `node_modules` folders for every project.
+Per-project `node_modules` folders are not necessary when using Bun. This saves you disk space and time spent copying/linking dependencies into `node_modules` folders for every project.
+
+| Runtime | require/import | in package | resolution                                               |
+| ------- | -------------- | ---------- | -------------------------------------------------------- |
+| Node.js | "react-dom"    | "react"    | `./node_modules/react-dom/index.js`                      |
+| Bun     | "react-dom"    | "react"    | `$BUN_INSTALL_CACHE/react-dom@${REACT_VERSION}/index.js` |
+
+When multiple versions of a package are installed, Node.js relies on the directory tree structure to resolve the correct version.
+
+Bun uses bun's lockfile to figure out what the version SHOULD be and then installs it into the global cache if that version is not already installed.
+
+With a dependency tree like this:
+
+```zig
+- root 1.0.0
+  - dep1 1.0.0
+    - dep2 1.0.0
+    - dep3 1.0.0
+      - dep2 2.0.0
+  - dep2 2.0.0
+```
+
+To satisfy the Node.js Module Resolution algorithm, npm clients are forced to install the same version of `dep2` **multiple times for the same project**. This is because `dep2` is a dependency of `dep1` and `dep3`, and `dep3` depends on a different version of `dep2` than `dep1`.
+
+With Bun, the lockfile is used to resolve the correct version of `dep2` to use. This means that `dep2` only needs to be installed once and it will be reused for every project that depends on it.
 
 ![image](https://user-images.githubusercontent.com/709451/198907459-710d5299-bac0-40d8-b630-8112d42900e1.png)
 
-**How do I debug this?**
+**How do I debug an issue with a dependency?**
 
 If you run `bun install` (or any other npm package manager), it will create a `node_modules` folder and install dependencies into that folder.
 
-You can continue to use node_modules when vendoring dependencies for your project.
+Bun's runtime continues to fully support the `node_modules` folder.
 
 **How is this different than what pnpm does?**
 
@@ -4577,12 +4623,12 @@ Just run `bun run foo.js` and it will automatically install the dependencies for
 
 Two things:
 
-1. With yarn, you have to run `yarn install`. With Bun, you don't have to run any extra commands to install dependencies &amp; run them.
-2. Yarn Plug'N'Play [makes loading dependencies slower](https://twitter.com/jarredsumner/status/1458207919636287490) at runtime because under the hood, it uses zip files to store dependencies. zip files are not performant for random access reads. Today, Bun uses an ordinary folder so there is no performance hit. In the future, Bun will likely move to a [binary archive format](https://github.com/jarred-sumner/hop) designed for fast random access reads (which will likely make it faster than the filesystem)
+1. Bun's JavaScript runtime automatically installs dependencies when running a file. With yarn, you have to run `yarn install` before you run a script.
+2. Yarn Plug'N'Play [makes loading dependencies slower](https://twitter.com/jarredsumner/status/1458207919636287490) at runtime because under the hood, it uses zip files to store dependencies. zip files tend not to be as performant for random access reads as files on disk.
 
 **How is this different than what Deno does?**
 
-Deno requires an `npm:` specifier before each npm import, lacks support for `"paths"` in tsconfig.json, and doesn't have as much support for package.json fields.
+Deno requires an `npm:` specifier before each npm import, lacks support for reading `"paths"` from tsconfig.json, and doesn't have as much support for package.json fields.
 
 **What about security?**
 

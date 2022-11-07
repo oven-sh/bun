@@ -78,7 +78,9 @@ it("process.nextTick", async () => {
         "queueMicrotask should throw a TypeError if the argument is empty"
       );
   }
+});
 
+it("process.nextTick 2 args", async () => {
   await new Promise((resolve, reject) => {
     process.nextTick(
       (first, second) => {
@@ -89,5 +91,16 @@ it("process.nextTick", async () => {
       12345,
       "hello"
     );
+  });
+});
+
+it("process.nextTick 5 args", async () => {
+  await new Promise((resolve, reject) => {
+    var args = [12345, "hello", "hello", "hello", 5];
+    process.nextTick((...receivedArgs) => {
+      if (!args.every((arg, index) => arg === receivedArgs[index]))
+        reject(new Error("process.nextTick called with wrong arguments"));
+      resolve(true);
+    }, ...args);
   });
 });

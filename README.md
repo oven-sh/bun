@@ -4424,11 +4424,7 @@ If the library strictly uses ESM (excluding dependencies), specify `"type": "mod
 ```json
 {
   "name": "foo",
-  "type": "module",
-  "exports": {
-    "bun": "./index.bun.js",
-    "default": "./index.js"
-  }
+  "type": "module"
 }
 ```
 

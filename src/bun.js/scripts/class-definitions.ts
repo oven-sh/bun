@@ -15,6 +15,7 @@ export type Field =
 export interface ClassDefinition {
   name: string;
   construct?: boolean;
+  call?: boolean;
   finalize?: boolean;
   klass: Record<string, Field>;
   proto: Record<string, Field>;
@@ -29,15 +30,19 @@ export function define(
   {
     klass = {},
     proto = {},
-    isEventEmitter = false,
+    values = [],
     estimatedSize = false,
+    call = false,
+    construct = false,
     ...rest
   } = {} as ClassDefinition
 ): ClassDefinition {
   return {
     ...rest,
-    isEventEmitter,
+    call,
+    construct,
     estimatedSize,
+    values,
     klass: Object.fromEntries(
       Object.entries(klass).sort(([a], [b]) => a.localeCompare(b))
     ),

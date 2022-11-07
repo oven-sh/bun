@@ -4326,7 +4326,6 @@ pub const PackageManager = struct {
         allocator: std.mem.Allocator,
         cli: CommandLineArguments,
         env_loader: *DotEnv.Loader,
-        main_file_name: []const u8,
     ) !*PackageManager {
         if (env_loader.map.get("BUN_INSTALL_VERBOSE") != null) {
             PackageManager.verbose_install = true;
@@ -4415,15 +4414,9 @@ pub const PackageManager = struct {
         manager.lockfile = brk: {
             var buf: [bun.MAX_PATH_BYTES]u8 = undefined;
 
-            {
-                var basedir = if (main_file_name.len > 0)
-                    std.fs.path.dirname(main_file_name) orelse "/"
-                else
-                    FileSystem.instance.top_level_dir;
-
+            if (root_dir.entries.hasComptimeQuery("bun.lockb")) {
                 var parts = [_]string{
-                    basedir,
-                    "bun.lockb",
+                    "./bun.lockb",
                 };
                 var lockfile_path = Path.joinAbsStringBuf(
                     Fs.FileSystem.instance.top_level_dir,

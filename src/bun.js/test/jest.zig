@@ -1070,6 +1070,11 @@ pub const TestRunnerTask = struct {
         this.sync_state = .pending;
 
         const result = TestScope.run(&test_, this);
+
+        // rejected promises should fail the test
+        if (result != .fail)
+            globalThis.handleRejectedPromises();
+
         if (result == .pending and this.sync_state == .pending and (this.done_callback_state == .pending or this.promise_state == .pending)) {
             this.sync_state = .fulfilled;
             this.value.set(globalThis, this.describe.value);
@@ -1077,6 +1082,10 @@ pub const TestRunnerTask = struct {
         }
 
         this.handleResult(result, .sync);
+
+        if (result == .fail) {
+            globalThis.handleRejectedPromises();
+        }
 
         return false;
     }

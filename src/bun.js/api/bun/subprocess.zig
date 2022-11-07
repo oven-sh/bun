@@ -238,7 +238,7 @@ pub const Subprocess = struct {
         var sig: i32 = 1;
 
         if (arguments.len > 0) {
-            sig = arguments.ptr[0].toInt32();
+            sig = arguments.ptr[0].coerce(i32, globalThis);
         }
 
         if (!(sig > -1 and sig < std.math.maxInt(u8))) {

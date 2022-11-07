@@ -2435,7 +2435,7 @@ pub const Timer = struct {
         // We don't deal with nesting levels directly
         // but we do set the minimum timeout to be 1ms for repeating timers
         const interval: i32 = @maximum(
-            countdown.toInt32(),
+            countdown.coerce(i32, globalThis),
             if (repeat) @as(i32, 1) else 0,
         );
 
@@ -3477,19 +3477,19 @@ pub const JSZlib = struct {
         if (options_val_) |options_val| {
             if (options_val.isObject()) {
                 if (options_val.get(globalThis, "windowBits")) |window| {
-                    opts.windowBits = window.toInt32();
+                    opts.windowBits = window.coerce(i32, globalThis);
                 }
 
                 if (options_val.get(globalThis, "level")) |level| {
-                    opts.level = level.toInt32();
+                    opts.level = level.coerce(i32, globalThis);
                 }
 
                 if (options_val.get(globalThis, "memLevel")) |memLevel| {
-                    opts.memLevel = memLevel.toInt32();
+                    opts.memLevel = memLevel.coerce(i32, globalThis);
                 }
 
                 if (options_val.get(globalThis, "strategy")) |strategy| {
-                    opts.strategy = strategy.toInt32();
+                    opts.strategy = strategy.coerce(i32, globalThis);
                 }
             }
         }

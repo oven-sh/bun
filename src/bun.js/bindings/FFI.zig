@@ -120,7 +120,7 @@ pub inline fn JSVALUE_TO_FLOAT(arg_val: EncodedJSValue) f32 {
 }
 pub inline fn JSVALUE_TO_DOUBLE(arg_val: EncodedJSValue) f64 {
     var val = arg_val;
-    val.asInt64 -= @as(c_longlong, 1) << @intCast(@import("std").math.Log2Int(c_longlong), 49);
+    val.asInt64 -= comptime @as(c_longlong, 1) << @intCast(@import("std").math.Log2Int(c_longlong), 49);
     return val.asDouble;
 }
 pub inline fn JSVALUE_TO_BOOL(arg_val: EncodedJSValue) @"bool" {

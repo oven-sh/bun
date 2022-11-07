@@ -1424,7 +1424,7 @@ const Arguments = struct {
                     }
 
                     if (current.getIfPropertyExists(ctx.ptr(), "position")) |num| {
-                        const position: i32 = if (num.isEmptyOrUndefinedOrNull()) -1 else num.toInt32();
+                        const position: i32 = if (num.isEmptyOrUndefinedOrNull()) -1 else num.coerce(i32, ctx);
                         if (position > -1) {
                             args.position = @intCast(ReadPosition, position);
                         }
@@ -1905,11 +1905,11 @@ const Arguments = struct {
                     }
 
                     if (arg.getIfPropertyExists(ctx.ptr(), "start")) |start| {
-                        stream.start = start.toInt32();
+                        stream.start = start.coerce(i32, ctx);
                     }
 
                     if (arg.getIfPropertyExists(ctx.ptr(), "end")) |end| {
-                        stream.end = end.toInt32();
+                        stream.end = end.coerce(i32, ctx);
                     }
 
                     if (arg.getIfPropertyExists(ctx.ptr(), "highWaterMark")) |highwaterMark| {
@@ -2128,7 +2128,7 @@ const Arguments = struct {
             if (arguments.next()) |arg| {
                 arguments.eat();
                 if (arg.isNumber()) {
-                    mode = arg.toInt32();
+                    mode = arg.coerce(i32, ctx);
                 }
             }
 

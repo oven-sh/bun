@@ -1111,7 +1111,7 @@ fn NewSocket(comptime ssl: bool) type {
                 globalObject.throw("Expected 1 argument, got 0", .{});
                 return .zero;
             }
-            const t = args.ptr[0].toInt32();
+            const t = args.ptr[0].coerce(i32, globalObject);
             if (t < 0) {
                 globalObject.throw("Timeout must be a positive integer", .{});
                 return .zero;

@@ -271,6 +271,7 @@ pub extern fn JSC__JSValue__asNumber(JSValue0: JSC__JSValue) f64;
 pub extern fn JSC__JSValue__asObject(JSValue0: JSC__JSValue) bJSC__JSObject;
 pub extern fn JSC__JSValue__asPromise(JSValue0: JSC__JSValue) [*c]JSC__JSPromise;
 pub extern fn JSC__JSValue__asString(JSValue0: JSC__JSValue) [*c]JSC__JSString;
+pub extern fn JSC__JSValue__coerceToInt32(JSValue0: JSC__JSValue, arg1: ?*JSC__JSGlobalObject) i32;
 pub extern fn JSC__JSValue__createEmptyObject(arg0: ?*JSC__JSGlobalObject, arg1: usize) JSC__JSValue;
 pub extern fn JSC__JSValue__createInternalPromise(arg0: ?*JSC__JSGlobalObject) JSC__JSValue;
 pub extern fn JSC__JSValue__createObject2(arg0: ?*JSC__JSGlobalObject, arg1: [*c]const ZigString, arg2: [*c]const ZigString, JSValue3: JSC__JSValue, JSValue4: JSC__JSValue) JSC__JSValue;

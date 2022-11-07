@@ -2718,6 +2718,30 @@ pub const JSValue = enum(JSValueReprInt) {
         }
     };
 
+    pub fn coerceToInt32(this: JSValue, globalThis: *JSC.JSGlobalObject) i32 {
+        return cppFn("coerceToInt32", .{ this, globalThis });
+    }
+
+    pub fn coerce(this: JSValue, comptime T: type, globalThis: *JSC.JSGlobalObject) T {
+        return switch (T) {
+            ZigString => this.getZigString(globalThis),
+            i32 => {
+                if (this.isInt32()) {
+                    return this.asInt32();
+                }
+
+                if (this.isNumber()) {
+                    return @truncate(i32, @floatToInt(i64, this.asDouble()));
+                }
+
+                return this.coerceToInt32(globalThis);
+            },
+            else => @compileError("Unsupported coercion type"),
+        };
+    }
+
+    /// This does not call [Symbol.toPrimitive] or [Symbol.toStringTag].
+    /// This is only safe when you don't want to do conversions across non-primitive types.
     pub fn to(this: JSValue, comptime T: type) T {
         return switch (comptime T) {
             u32 => toU32(this),
@@ -3292,7 +3316,7 @@ pub const JSValue = enum(JSValueReprInt) {
 
     pub fn getTruthy(this: JSValue, global: *JSGlobalObject, comptime property: []const u8) ?JSValue {
         if (get(this, global, property)) |prop| {
-            if (@enumToInt(prop) == 0 or prop.isUndefinedOrNull()) return null;
+            if (prop.isEmptyOrUndefinedOrNull()) return null;
             return prop;
         }
 
@@ -3408,6 +3432,11 @@ pub const JSValue = enum(JSValueReprInt) {
             return @truncate(i32, @floatToInt(i64, asDouble(this)));
         }
 
+        if (comptime bun.Environment.allow_assert) {
+            std.debug.assert(!this.isString()); // use coerce() instead
+            std.debug.assert(!this.isCell()); // use coerce() instead
+        }
+
         return cppFn("toInt32", .{
             this,
         });
@@ -3496,7 +3525,7 @@ pub const JSValue = enum(JSValueReprInt) {
         return this.asNullableVoid().?;
     }
 
-    pub const Extern = [_][]const u8{ "fastGet_", "getStaticProperty", "createUninitializedUint8Array", "fromInt64NoTruncate", "fromUInt64NoTruncate", "toUInt64NoTruncate", "asPromise", "toInt64", "_then", "put", "makeWithNameAndPrototype", "parseJSON", "symbolKeyFor", "symbolFor", "getSymbolDescription", "createInternalPromise", "asInternalPromise", "asArrayBuffer_", "fromEntries", "createTypeError", "createRangeError", "createObject2", "getIfPropertyExistsImpl", "jsType", "jsonStringify", "kind_", "isTerminationException", "isSameValue", "getLengthOfArray", "toZigString", "createStringArray", "createEmptyObject", "putRecord", "asPromise", "isClass", "getNameProperty", "getClassName", "getErrorsProperty", "toInt32", "toBoolean", "isInt32", "isIterable", "forEach", "isAggregateError", "toError", "toZigException", "isException", "toWTFString", "hasProperty", "getPropertyNames", "getDirect", "putDirect", "getIfExists", "asString", "asObject", "asNumber", "isError", "jsNull", "jsUndefined", "jsTDZValue", "jsBoolean", "jsDoubleNumber", "jsNumberFromDouble", "jsNumberFromChar", "jsNumberFromU16", "jsNumberFromInt64", "isBoolean", "isAnyInt", "isUInt32AsAnyInt", "isInt32AsAnyInt", "isNumber", "isString", "isBigInt", "isHeapBigInt", "isBigInt32", "isSymbol", "isPrimitive", "isGetterSetter", "isCustomGetterSetter", "isObject", "isCell", "asCell", "toString", "toStringOrNull", "toPropertyKey", "toPropertyKeyValue", "toObject", "toString", "getPrototype", "getPropertyByPropertyName", "eqlValue", "eqlCell", "isCallable" };
+    pub const Extern = [_][]const u8{ "coerceToInt32", "fastGet_", "getStaticProperty", "createUninitializedUint8Array", "fromInt64NoTruncate", "fromUInt64NoTruncate", "toUInt64NoTruncate", "asPromise", "toInt64", "_then", "put", "makeWithNameAndPrototype", "parseJSON", "symbolKeyFor", "symbolFor", "getSymbolDescription", "createInternalPromise", "asInternalPromise", "asArrayBuffer_", "fromEntries", "createTypeError", "createRangeError", "createObject2", "getIfPropertyExistsImpl", "jsType", "jsonStringify", "kind_", "isTerminationException", "isSameValue", "getLengthOfArray", "toZigString", "createStringArray", "createEmptyObject", "putRecord", "asPromise", "isClass", "getNameProperty", "getClassName", "getErrorsProperty", "toInt32", "toBoolean", "isInt32", "isIterable", "forEach", "isAggregateError", "toError", "toZigException", "isException", "toWTFString", "hasProperty", "getPropertyNames", "getDirect", "putDirect", "getIfExists", "asString", "asObject", "asNumber", "isError", "jsNull", "jsUndefined", "jsTDZValue", "jsBoolean", "jsDoubleNumber", "jsNumberFromDouble", "jsNumberFromChar", "jsNumberFromU16", "jsNumberFromInt64", "isBoolean", "isAnyInt", "isUInt32AsAnyInt", "isInt32AsAnyInt", "isNumber", "isString", "isBigInt", "isHeapBigInt", "isBigInt32", "isSymbol", "isPrimitive", "isGetterSetter", "isCustomGetterSetter", "isObject", "isCell", "asCell", "toString", "toStringOrNull", "toPropertyKey", "toPropertyKeyValue", "toObject", "toString", "getPrototype", "getPropertyByPropertyName", "eqlValue", "eqlCell", "isCallable" };
 };
 
 extern "c" fn Microtask__run(*Microtask, *JSGlobalObject) void;

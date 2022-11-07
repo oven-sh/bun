@@ -522,9 +522,9 @@ pub const FFI = struct {
                 }
 
                 if (val.isAnyInt()) {
-                    const int = val.toInt32();
+                    const int = val.to(i32);
                     switch (int) {
-                        0...14 => {
+                        0...ABIType.max => {
                             abi_types.appendAssumeCapacity(@intToEnum(ABIType, int));
                             continue;
                         },
@@ -561,7 +561,7 @@ pub const FFI = struct {
             if (ret_value.isAnyInt()) {
                 const int = ret_value.toInt32();
                 switch (int) {
-                    0...14 => {
+                    0...ABIType.max => {
                         return_type = @intToEnum(ABIType, int);
                         break :brk;
                     },
@@ -1329,6 +1329,8 @@ pub const FFI = struct {
         u64_fast = 16,
 
         function = 17,
+
+        pub const max = @enumToInt(ABIType.function);
 
         /// Types that we can directly pass through as an `int64_t`
         pub fn needsACastInC(this: ABIType) bool {

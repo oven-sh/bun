@@ -233,7 +233,9 @@ pub const Subprocess = struct {
         callframe: *JSC.CallFrame,
     ) callconv(.C) JSValue {
         var arguments = callframe.arguments(1);
-        var sig: i32 = 0;
+        // If signal is 0, then no actual signal is sent, but error checking
+        // is still performed.
+        var sig: i32 = 1;
 
         if (arguments.len > 0) {
             sig = arguments.ptr[0].toInt32();

@@ -31,10 +31,10 @@ for (let [gcTick, label] of [
 
       it("check exit code", async () => {
         const { exitCode: exitCode1 } = spawnSync({
-          cmd: ["ls"]
+          cmd: ["ls"],
         });
         const { exitCode: exitCode2 } = spawnSync({
-          cmd: ["false"]
+          cmd: ["false"],
         });
         expect(exitCode1).toBe(0);
         expect(exitCode2).toBe(1);
@@ -86,7 +86,7 @@ for (let [gcTick, label] of [
           cmd: ["ls"],
         }).exited;
         const exitCode2 = await spawn({
-          cmd: ["false"]
+          cmd: ["false"],
         }).exited;
         expect(exitCode1).toBe(0);
         expect(exitCode2).toBe(1);
@@ -160,6 +160,28 @@ for (let [gcTick, label] of [
         const text = await readableStreamToText(stdout);
         gcTick();
         expect(text).toBe(hugeString);
+      });
+
+      it("kill(1) works", async () => {
+        const process = spawn({
+          cmd: ["bash", "-c", "sleep 1000"],
+          stdout: "pipe",
+        });
+        gcTick();
+        const prom = process.exited;
+        process.kill(1);
+        await prom;
+      });
+
+      it("kill() works", async () => {
+        const process = spawn({
+          cmd: ["bash", "-c", "sleep 1000"],
+          stdout: "pipe",
+        });
+        gcTick();
+        const prom = process.exited;
+        process.kill();
+        await prom;
       });
 
       it("stdin can be read and stdout can be written", async () => {

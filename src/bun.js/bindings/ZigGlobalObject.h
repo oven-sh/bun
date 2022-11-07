@@ -221,6 +221,9 @@ public:
     JSC::JSObject* performanceObject() { return m_performanceObject.getInitializedOnMainThread(this); }
     JSC::JSObject* primordialsObject() { return m_primordialsObject.getInitializedOnMainThread(this); }
 
+    JSC::JSFunction* performMicrotaskFunction() { return m_performMicrotaskFunction.getInitializedOnMainThread(this); }
+    JSC::JSFunction* performMicrotaskVariadicFunction() { return m_performMicrotaskVariadicFunction.getInitializedOnMainThread(this); }
+
     JSC::JSObject* processObject()
     {
         return m_processObject.getInitializedOnMainThread(this);
@@ -427,6 +430,8 @@ private:
     LazyProperty<JSGlobalObject, JSObject> m_JSFileSinkControllerPrototype;
 
     LazyProperty<JSGlobalObject, Structure> m_JSHTTPResponseController;
+    LazyProperty<JSGlobalObject, JSFunction> m_performMicrotaskFunction;
+    LazyProperty<JSGlobalObject, JSFunction> m_performMicrotaskVariadicFunction;
 
     LazyProperty<JSGlobalObject, JSObject> m_processObject;
     LazyProperty<JSGlobalObject, JSObject> m_processEnvObject;

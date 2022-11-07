@@ -686,8 +686,10 @@ static JSC_DEFINE_HOST_FUNCTION(functionQueueMicrotask,
         return JSC::JSValue::encode(JSC::JSValue {});
     }
 
+    Zig::GlobalObject* global = JSC::jsCast<Zig::GlobalObject*>(globalObject);
+
     // This is a JSC builtin function
-    globalObject->queueMicrotask(job, JSC::JSValue {}, JSC::JSValue {},
+    globalObject->queueMicrotask(global->performMicrotaskFunction(), job, JSC::JSValue {},
         JSC::JSValue {}, JSC::JSValue {});
 
     return JSC::JSValue::encode(JSC::jsUndefined());
@@ -2014,6 +2016,95 @@ public:
 
 const ClassInfo BunPrimordialsObject::s_info = { "Primordials"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(BunPrimordialsObject) };
 
+extern "C" void Bun__reportUnhandledError(JSGlobalObject*, EncodedJSValue);
+JSC_DEFINE_HOST_FUNCTION(jsFunctionPerformMicrotask, (JSGlobalObject * globalObject, CallFrame* callframe))
+{
+    auto& vm = globalObject->vm();
+    auto scope = DECLARE_CATCH_SCOPE(vm);
+
+    auto job = callframe->argument(0);
+    if (!job || job.isUndefinedOrNull()) {
+        return JSValue::encode(jsUndefined());
+    }
+
+    auto callData = JSC::getCallData(job);
+    MarkedArgumentBuffer arguments;
+
+    if (UNLIKELY(callData.type == CallData::Type::None)) {
+        return JSValue::encode(jsUndefined());
+    }
+
+    JSValue result;
+    WTF::NakedPtr<JSC::Exception> exceptionPtr;
+
+    switch (callframe->argumentCount()) {
+    case 1:
+        JSC::call(globalObject, job, callData, jsUndefined(), arguments, exceptionPtr);
+        break;
+    case 2:
+        arguments.append(callframe->argument(1));
+        JSC::call(globalObject, job, callData, jsUndefined(), arguments, exceptionPtr);
+        break;
+    case 3:
+        arguments.append(callframe->argument(1));
+        arguments.append(callframe->argument(2));
+        JSC::call(globalObject, job, callData, jsUndefined(), arguments, exceptionPtr);
+        break;
+    case 4:
+        arguments.append(callframe->argument(1));
+        arguments.append(callframe->argument(2));
+        arguments.append(callframe->argument(3));
+        JSC::call(globalObject, job, callData, jsUndefined(), arguments, exceptionPtr);
+        break;
+    default:
+        RELEASE_ASSERT_NOT_REACHED();
+    }
+
+    if (auto* exception = exceptionPtr.get()) {
+        Bun__reportUnhandledError(globalObject, JSValue::encode(exception));
+    }
+
+    return JSValue::encode(jsUndefined());
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsFunctionPerformMicrotaskVariadic, (JSGlobalObject * globalObject, CallFrame* callframe))
+{
+    auto& vm = globalObject->vm();
+    auto scope = DECLARE_CATCH_SCOPE(vm);
+
+    auto job = callframe->argument(0);
+    if (!job || job.isUndefinedOrNull()) {
+        return JSValue::encode(jsUndefined());
+    }
+
+    auto callData = JSC::getCallData(job);
+    MarkedArgumentBuffer arguments;
+    if (UNLIKELY(callData.type == CallData::Type::None)) {
+        return JSValue::encode(jsUndefined());
+    }
+
+    JSArray* array = jsCast<JSArray*>(callframe->argument(1));
+    for (unsigned i = 0; i < array->length(); i++) {
+        arguments.append(array->getIndex(globalObject, i));
+    }
+
+    JSValue result;
+    WTF::NakedPtr<JSC::Exception> exceptionPtr;
+    JSValue thisValue = jsUndefined();
+
+    if (callframe->argumentCount() > 2) {
+        thisValue = callframe->argument(2);
+    }
+
+    JSC::call(globalObject, job, callData, thisValue, arguments, exceptionPtr);
+
+    if (auto* exception = exceptionPtr.get()) {
+        Bun__reportUnhandledError(globalObject, JSValue::encode(exception));
+    }
+
+    return JSValue::encode(jsUndefined());
+}
+
 void GlobalObject::finishCreation(VM& vm)
 {
     Base::finishCreation(vm);
@@ -2023,6 +2114,16 @@ void GlobalObject::finishCreation(VM& vm)
     m_moduleNamespaceObjectStructure.initLater(
         [](const Initializer<Structure>& init) {
             init.set(JSModuleNamespaceObject::createStructure(init.vm, init.owner, init.owner->objectPrototype()));
+        });
+
+    m_performMicrotaskFunction.initLater(
+        [](const Initializer<JSFunction>& init) {
+            init.set(JSFunction::create(init.vm, init.owner, 4, "performMicrotask"_s, jsFunctionPerformMicrotask, ImplementationVisibility::Public));
+        });
+
+    m_performMicrotaskVariadicFunction.initLater(
+        [](const Initializer<JSFunction>& init) {
+            init.set(JSFunction::create(init.vm, init.owner, 4, "performMicrotaskVariadic"_s, jsFunctionPerformMicrotaskVariadic, ImplementationVisibility::Public));
         });
 
     m_navigatorObject.initLater(

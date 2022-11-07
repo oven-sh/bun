@@ -38,8 +38,8 @@ static JSC_DECLARE_CUSTOM_GETTER(Process_getPPID);
 
 static JSC_DECLARE_HOST_FUNCTION(Process_functionCwd);
 
-static JSC_DECLARE_HOST_FUNCTION(Process_functionNextTick);
-static JSC_DEFINE_HOST_FUNCTION(Process_functionNextTick,
+JSC_DECLARE_HOST_FUNCTION(Process_functionNextTick);
+JSC_DEFINE_HOST_FUNCTION(Process_functionNextTick,
     (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     JSC::VM& vm = globalObject->vm();
@@ -58,61 +58,49 @@ static JSC_DEFINE_HOST_FUNCTION(Process_functionNextTick,
         return JSC::JSValue::encode(JSC::JSValue {});
     }
 
-    switch (argCount) {
+    Zig::GlobalObject* global = JSC::jsCast<Zig::GlobalObject*>(globalObject);
 
+    switch (callFrame->argumentCount()) {
     case 1: {
-        // This is a JSC builtin function
-        globalObject->queueMicrotask(job, JSC::JSValue {}, JSC::JSValue {},
-            JSC::JSValue {}, JSC::JSValue {});
+        global->queueMicrotask(global->performMicrotaskFunction(), job, JSC::JSValue {}, JSC::JSValue {}, JSC::JSValue {});
         break;
     }
-
-    case 2:
-    case 3:
-    case 4:
-    case 5: {
-        JSC::JSValue argument0 = callFrame->uncheckedArgument(1);
-        JSC::JSValue argument1 = argCount > 2 ? callFrame->uncheckedArgument(2) : JSC::JSValue {};
-        JSC::JSValue argument2 = argCount > 3 ? callFrame->uncheckedArgument(3) : JSC::JSValue {};
-        JSC::JSValue argument3 = argCount > 4 ? callFrame->uncheckedArgument(4) : JSC::JSValue {};
-        globalObject->queueMicrotask(
-            job, argument0, argument1, argument2, argument3);
+    case 2: {
+        global->queueMicrotask(global->performMicrotaskFunction(), job, callFrame->uncheckedArgument(1), JSC::JSValue {}, JSC::JSValue {});
         break;
     }
-
+    case 3: {
+        global->queueMicrotask(global->performMicrotaskFunction(), job, callFrame->uncheckedArgument(1), callFrame->uncheckedArgument(2), JSC::JSValue {});
+        break;
+    }
+    case 4: {
+        global->queueMicrotask(global->performMicrotaskFunction(), job, callFrame->uncheckedArgument(1), callFrame->uncheckedArgument(2), callFrame->uncheckedArgument(3));
+        break;
+    }
     default: {
-        auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
-        JSC::throwTypeError(globalObject, scope,
-            "nextTick doesn't support more than 4 arguments currently"_s);
-        return JSC::JSValue::encode(JSC::JSValue {});
+        JSC::JSArray* args = JSC::constructEmptyArray(globalObject, nullptr, argCount - 1);
+        if (UNLIKELY(!args)) {
+            auto scope = DECLARE_THROW_SCOPE(vm);
+            throwVMError(globalObject, scope, createOutOfMemoryError(globalObject));
+            return JSC::JSValue::encode(JSC::JSValue {});
+        }
+
+        for (unsigned i = 1; i < argCount; i++) {
+            args->putDirectIndex(globalObject, i - 1, callFrame->uncheckedArgument(i));
+        }
+
+        global->queueMicrotask(
+            global->performMicrotaskVariadicFunction(), job, args, JSValue {}, JSC::JSValue {});
 
         break;
     }
-
-        // JSC::MarkedArgumentBuffer args;
-        // for (unsigned i = 1; i < callFrame->argumentCount(); i++) {
-        //   args.append(callFrame->uncheckedArgument(i));
-        // }
-
-        // JSC::ArgList argsList(args);
-        // JSC::gcProtect(job);
-        // JSC::JSFunction *callback = JSC::JSNativeStdFunction::create(
-        //   vm, globalObject, 0, String(),
-        //   [job, &argsList](JSC::JSGlobalObject *globalObject, JSC::CallFrame *callFrame) {
-        //     JSC::VM &vm = globalObject->vm();
-        //     auto callData = getCallData(job);
-
-        //     return JSC::JSValue::encode(JSC::call(globalObject, job, callData, job, argsList));
-        //   });
-
-        // globalObject->queueMicrotask(JSC::createJSMicrotask(vm, JSC::JSValue(callback)));
     }
 
-    return JSC::JSValue::encode(JSC::jsUndefined());
+    return JSC::JSValue::encode(jsUndefined());
 }
 
-static JSC_DECLARE_HOST_FUNCTION(Process_functionDlopen);
-static JSC_DEFINE_HOST_FUNCTION(Process_functionDlopen,
+JSC_DECLARE_HOST_FUNCTION(Process_functionDlopen);
+JSC_DEFINE_HOST_FUNCTION(Process_functionDlopen,
     (JSC::JSGlobalObject * globalObject_, JSC::CallFrame* callFrame))
 {
     Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(globalObject_);

@@ -363,3 +363,18 @@ pub fn isWritable(fd: std.os.fd_t) bool {
 
     return (std.os.poll(polls, 0) catch 0) != 0;
 }
+
+pub inline fn unreachablePanic(comptime fmts: []const u8, args: anytype) noreturn {
+    if (comptime !Environment.allow_assert) unreachable;
+    std.debug.panic(fmts, args);
+}
+
+pub fn StringEnum(comptime Type: type, comptime Map: anytype, value: []const u8) ?Type {
+    return ComptimeStringMap(Type, Map).get(value);
+}
+
+pub const Bunfig = @import("./bunfig.zig").Bunfig;
+
+pub const HTTPThead = @import("./http_client_async.zig").HTTPThread;
+
+pub const Analytics = @import("./analytics/analytics_thread.zig");

@@ -6,10 +6,18 @@ const std = @import("std");
 const SlicedString = Semver.SlicedString;
 const PackageNameHash = @import("./install.zig").PackageNameHash;
 const Features = @import("./install.zig").Features;
+const Install = @import("./install.zig");
 const logger = @import("../logger.zig");
 const Dependency = @This();
 const string = @import("../string_types.zig").string;
 const strings = @import("../string_immutable.zig");
+const bun = @import("../global.zig");
+
+pub const Pair = struct {
+    resolution_id: Install.PackageID = Install.invalid_package_id,
+    dependency: Dependency = .{},
+    failed: ?anyerror = null,
+};
 
 pub const URI = union(Tag) {
     local: String,
@@ -63,19 +71,27 @@ pub fn isLessThan(string_buf: []const u8, lhs: Dependency, rhs: Dependency) bool
     return strings.cmpStringsAsc(void{}, lhs_name, rhs_name);
 }
 
+pub fn countWithDifferentBuffers(this: Dependency, name_buf: []const u8, version_buf: []const u8, comptime StringBuilder: type, builder: StringBuilder) void {
+    builder.count(this.name.slice(name_buf));
+    builder.count(this.version.literal.slice(version_buf));
+}
+
 pub fn count(this: Dependency, buf: []const u8, comptime StringBuilder: type, builder: StringBuilder) void {
-    builder.count(this.name.slice(buf));
-    builder.count(this.version.literal.slice(buf));
+    this.countWithDifferentBuffers(buf, buf, StringBuilder, builder);
 }
 
 pub fn clone(this: Dependency, buf: []const u8, comptime StringBuilder: type, builder: StringBuilder) !Dependency {
+    return this.cloneWithDifferentBuffers(buf, buf, StringBuilder, builder);
+}
+
+pub fn cloneWithDifferentBuffers(this: Dependency, name_buf: []const u8, version_buf: []const u8, comptime StringBuilder: type, builder: StringBuilder) !Dependency {
     const out_slice = builder.lockfile.buffers.string_bytes.items;
-    const new_literal = builder.append(String, this.version.literal.slice(buf));
+    const new_literal = builder.append(String, this.version.literal.slice(version_buf));
     const sliced = new_literal.sliced(out_slice);
 
     return Dependency{
         .name_hash = this.name_hash,
-        .name = builder.append(String, this.name.slice(buf)),
+        .name = builder.append(String, this.name.slice(name_buf)),
         .version = Dependency.parseWithTag(
             builder.lockfile.allocator,
             new_literal.slice(out_slice),
@@ -127,6 +143,34 @@ pub const Version = struct {
     tag: Dependency.Version.Tag = Dependency.Version.Tag.uninitialized,
     literal: String = String{},
     value: Value = Value{ .uninitialized = void{} },
+
+    pub fn deinit(this: *Version) void {
+        switch (this.tag) {
+            .npm => {
+                this.value.npm.deinit();
+            },
+            else => {},
+        }
+    }
+
+    pub const @"0.0.0" = Version{
+        .tag = Dependency.Version.Tag.npm,
+        .literal = String.init("0.0.0", "0.0.0"),
+        .value = Value{
+            .npm = Semver.Query.Group{
+                .allocator = bun.default_allocator,
+                .head = .{
+                    .head = .{
+                        .range = .{
+                            .left = .{
+                                .op = .gte,
+                            },
+                        },
+                    },
+                },
+            },
+        },
+    };
 
     pub const zeroed = Version{};
 

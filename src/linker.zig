@@ -34,6 +34,7 @@ const _bundler = @import("./bundler.zig");
 const Bundler = _bundler.Bundler;
 const ResolveQueue = _bundler.ResolveQueue;
 const ResolverType = Resolver.Resolver;
+const ESModule = @import("./resolver/package_json.zig").ESModule;
 const Runtime = @import("./runtime.zig").Runtime;
 const URL = @import("url.zig").URL;
 const JSC = @import("javascript_core");
@@ -220,6 +221,8 @@ pub const Linker = struct {
         var needs_require = false;
         var node_module_bundle_import_path: ?string = null;
 
+        const is_deferred = result.pending_imports.len > 0;
+
         var import_records = result.ast.import_records;
         defer {
             result.ast.import_records = import_records;
@@ -232,7 +235,8 @@ pub const Linker = struct {
 
                 outer: while (record_i < record_count) : (record_i += 1) {
                     var import_record = &import_records[record_i];
-                    if (import_record.is_unused) continue;
+                    if (import_record.is_unused or
+                        (is_bun and is_deferred and !result.isPendingImport(record_i))) continue;
 
                     const record_index = record_i;
                     if (comptime !ignore_runtime) {
@@ -419,18 +423,53 @@ pub const Linker = struct {
                             },
                         }
 
-                        if (linker.resolver.resolve(source_dir, import_record.path.text, import_record.kind)) |_resolved_import| {
-                            switch (import_record.tag) {
-                                else => {},
-                                .react_refresh => {
-                                    linker.tagged_resolutions.react_refresh = _resolved_import;
-                                    linker.tagged_resolutions.react_refresh.?.path_pair.primary = linker.tagged_resolutions.react_refresh.?.path().?.dupeAlloc(bun.default_allocator) catch unreachable;
-                                },
-                            }
+                        if (comptime is_bun) {
+                            switch (linker.resolver.resolveAndAutoInstall(
+                                source_dir,
+                                import_record.path.text,
+                                import_record.kind,
+                                linker.options.global_cache,
+                            )) {
+                                .success => |_resolved_import| {
+                                    switch (import_record.tag) {
+                                        else => {},
+                                        .react_refresh => {
+                                            linker.tagged_resolutions.react_refresh = _resolved_import;
+                                            linker.tagged_resolutions.react_refresh.?.path_pair.primary = linker.tagged_resolutions.react_refresh.?.path().?.dupeAlloc(bun.default_allocator) catch unreachable;
+                                        },
+                                    }
 
-                            break :brk _resolved_import;
-                        } else |err| {
-                            break :brk err;
+                                    break :brk _resolved_import;
+                                },
+                                .failure => |err| {
+                                    break :brk err;
+                                },
+                                .pending => |*pending| {
+                                    if (!linker.resolver.opts.global_cache.canInstall()) {
+                                        break :brk error.InstallationPending;
+                                    }
+
+                                    pending.import_record_id = record_i;
+                                    try result.pending_imports.append(linker.allocator, pending.*);
+                                    continue;
+                                },
+                                .not_found => break :brk error.ModuleNotFound,
+                                // else => unreachable,
+                            }
+                        } else {
+                            if (linker.resolver.resolve(source_dir, import_record.path.text, import_record.kind)) |_resolved_import| {
+                                switch (import_record.tag) {
+                                    else => {},
+                                    .react_refresh => {
+                                        linker.tagged_resolutions.react_refresh = _resolved_import;
+                                        linker.tagged_resolutions.react_refresh.?.path_pair.primary = linker.tagged_resolutions.react_refresh.?.path().?.dupeAlloc(bun.default_allocator) catch unreachable;
+                                    },
+                                }
+
+                                break :brk _resolved_import;
+                            } else |err| {
+                                break :brk err;
+                            }
                         }
                     };
 
@@ -532,6 +571,139 @@ pub const Linker = struct {
                         }
                     } else |err| {
                         switch (err) {
+                            error.VersionSpecifierNotAllowedHere => {
+                                var subpath_buf: [512]u8 = undefined;
+
+                                if (ESModule.Package.parse(import_record.path.text, &subpath_buf)) |pkg| {
+                                    linker.log.addResolveError(
+                                        &result.source,
+                                        import_record.range,
+                                        linker.allocator,
+                                        "Unexpected version \"{s}\" in import specifier \"{s}\". When a package.json is present, please use one of the \"dependencies\" fields in package.json for setting dependency versions",
+                                        .{ pkg.version, import_record.path.text },
+                                        import_record.kind,
+                                        err,
+                                    ) catch {};
+                                } else {
+                                    linker.log.addResolveError(
+                                        &result.source,
+                                        import_record.range,
+                                        linker.allocator,
+                                        "Unexpected version in import specifier \"{s}\". When a package.json is present, please use one of the \"dependencies\" fields in package.json to specify the version",
+                                        .{import_record.path.text},
+                                        import_record.kind,
+                                        err,
+                                    ) catch {};
+                                }
+                                had_resolve_errors = true;
+                                continue;
+                            },
+
+                            error.NoMatchingVersion => {
+                                if (import_record.handles_import_errors) {
+                                    import_record.path.is_disabled = true;
+                                    continue;
+                                }
+
+                                had_resolve_errors = true;
+
+                                var package_name = import_record.path.text;
+                                var subpath_buf: [512]u8 = undefined;
+                                if (ESModule.Package.parse(import_record.path.text, &subpath_buf)) |pkg| {
+                                    package_name = pkg.name;
+                                    linker.log.addResolveError(
+                                        &result.source,
+                                        import_record.range,
+                                        linker.allocator,
+                                        "Version \"{s}\" not found for package \"{s}\" (while resolving \"{s}\")",
+                                        .{ pkg.version, package_name, import_record.path.text },
+                                        import_record.kind,
+                                        err,
+                                    ) catch {};
+                                } else {
+                                    linker.log.addResolveError(
+                                        &result.source,
+                                        import_record.range,
+                                        linker.allocator,
+                                        "Package version not found: \"{s}\"",
+                                        .{import_record.path.text},
+                                        import_record.kind,
+                                        err,
+                                    ) catch {};
+                                }
+                                continue;
+                            },
+
+                            error.DistTagNotFound => {
+                                if (import_record.handles_import_errors) {
+                                    import_record.path.is_disabled = true;
+                                    continue;
+                                }
+
+                                had_resolve_errors = true;
+
+                                var package_name = import_record.path.text;
+                                var subpath_buf: [512]u8 = undefined;
+                                if (ESModule.Package.parse(import_record.path.text, &subpath_buf)) |pkg| {
+                                    package_name = pkg.name;
+                                    linker.log.addResolveError(
+                                        &result.source,
+                                        import_record.range,
+                                        linker.allocator,
+                                        "Version \"{s}\" not found for package \"{s}\" (while resolving \"{s}\")",
+                                        .{ pkg.version, package_name, import_record.path.text },
+                                        import_record.kind,
+                                        err,
+                                    ) catch {};
+                                } else {
+                                    linker.log.addResolveError(
+                                        &result.source,
+                                        import_record.range,
+                                        linker.allocator,
+                                        "Package tag not found: \"{s}\"",
+                                        .{import_record.path.text},
+                                        import_record.kind,
+                                        err,
+                                    ) catch {};
+                                }
+
+                                continue;
+                            },
+
+                            error.PackageManifestHTTP404 => {
+                                if (import_record.handles_import_errors) {
+                                    import_record.path.is_disabled = true;
+                                    continue;
+                                }
+
+                                had_resolve_errors = true;
+
+                                var package_name = import_record.path.text;
+                                var subpath_buf: [512]u8 = undefined;
+                                if (ESModule.Package.parse(import_record.path.text, &subpath_buf)) |pkg| {
+                                    package_name = pkg.name;
+                                    linker.log.addResolveError(
+                                        &result.source,
+                                        import_record.range,
+                                        linker.allocator,
+                                        "Package not found: \"{s}\" (while resolving \"{s}\")",
+                                        .{ package_name, import_record.path.text },
+                                        import_record.kind,
+                                        err,
+                                    ) catch {};
+                                } else {
+                                    linker.log.addResolveError(
+                                        &result.source,
+                                        import_record.range,
+                                        linker.allocator,
+                                        "Package not found: \"{s}\"",
+                                        .{package_name},
+                                        import_record.kind,
+                                        err,
+                                    ) catch {};
+                                }
+                                continue;
+                            },
                             error.ModuleNotFound => {
                                 if (import_record.handles_import_errors) {
                                     import_record.path.is_disabled = true;
@@ -556,6 +728,7 @@ pub const Linker = struct {
                                             "Could not resolve: \"{s}\". Try setting --platform=\"node\" (after bun build exists)",
                                             .{import_record.path.text},
                                             import_record.kind,
+                                            err,
                                         );
                                         continue;
                                     } else {
@@ -566,6 +739,7 @@ pub const Linker = struct {
                                             "Could not resolve: \"{s}\". Maybe you need to \"bun install\"?",
                                             .{import_record.path.text},
                                             import_record.kind,
+                                            err,
                                         );
                                         continue;
                                     }
@@ -579,6 +753,7 @@ pub const Linker = struct {
                                             import_record.path.text,
                                         },
                                         import_record.kind,
+                                        err,
                                     );
                                     continue;
                                 }
@@ -596,6 +771,7 @@ pub const Linker = struct {
                                         import_record.path.text,
                                     },
                                     import_record.kind,
+                                    err,
                                 );
                                 continue;
                             },

@@ -31,6 +31,17 @@ const TOML = @import("./toml/toml_parser.zig").TOML;
 
 // TODO: replace Api.TransformOptions with Bunfig
 pub const Bunfig = struct {
+    pub const OfflineMode = enum {
+        online,
+        latest,
+        offline,
+    };
+    pub const Prefer = bun.ComptimeStringMap(OfflineMode, .{
+        &.{ "offline", OfflineMode.offline },
+        &.{ "latest", OfflineMode.latest },
+        &.{ "online", OfflineMode.online },
+    });
+
     const Parser = struct {
         json: js_ast.Expr,
         source: *const logger.Source,
@@ -180,7 +191,7 @@ pub const Bunfig = struct {
                 }
             }
 
-            if (comptime cmd.isNPMRelated()) {
+            if (comptime cmd.isNPMRelated() or cmd == .RunCommand or cmd == .AutoCommand) {
                 if (json.get("install")) |_bun| {
                     var install: *Api.BunInstall = this.ctx.install orelse brk: {
                         var install_ = try this.allocator.create(Api.BunInstall);
@@ -188,6 +199,33 @@ pub const Bunfig = struct {
                         this.ctx.install = install_;
                         break :brk install_;
                     };
+
+                    if (json.get("auto")) |auto_install_expr| {
+                        if (auto_install_expr.data == .e_string) {
+                            this.ctx.debug.global_cache = options.GlobalCache.Map.get(auto_install_expr.asString(this.allocator) orelse "") orelse {
+                                try this.addError(auto_install_expr.loc, "Invalid auto install setting, must be one of true, false, or \"force\" \"fallback\" \"disable\"");
+                                return;
+                            };
+                        } else if (auto_install_expr.data == .e_boolean) {
+                            this.ctx.debug.global_cache = if (auto_install_expr.asBool().?)
+                                options.GlobalCache.allow_install
+                            else
+                                options.GlobalCache.disable;
+                        } else {
+                            try this.addError(auto_install_expr.loc, "Invalid auto install setting, must be one of true, false, or \"force\" \"fallback\" \"disable\"");
+                            return;
+                        }
+                    }
+
+                    if (json.get("prefer")) |prefer_expr| {
+                        try this.expect(prefer_expr, .e_string);
+
+                        if (Prefer.get(prefer_expr.asString(bun.default_allocator) orelse "")) |setting| {
+                            this.ctx.debug.offline_mode_setting = setting;
+                        } else {
+                            try this.addError(prefer_expr.loc, "Invalid prefer setting, must be one of online or offline");
+                        }
+                    }
 
                     if (_bun.get("registry")) |registry| {
                         install.default_registry = try this.parseRegistry(registry);

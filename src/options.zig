@@ -716,6 +716,21 @@ pub const Loader = enum(u4) {
         };
     }
 
+    pub fn fromAPI(loader: Api.Loader) Loader {
+        return switch (loader) {
+            .jsx => .jsx,
+            .js => .js,
+            .ts => .ts,
+            .tsx => .tsx,
+            .css => .css,
+            .json => .json,
+            .toml => .toml,
+            .wasm => .wasm,
+            .napi => .napi,
+            else => .file,
+        };
+    }
+
     pub fn isJSX(loader: Loader) bool {
         return loader == .jsx or loader == .tsx;
     }
@@ -1224,6 +1239,11 @@ pub const BundleOptions = struct {
     sourcemap: SourceMapOption = SourceMapOption.none,
 
     disable_transpilation: bool = false,
+
+    global_cache: GlobalCache = .disable,
+    prefer_offline_install: bool = false,
+    prefer_latest_install: bool = false,
+    install: ?*Api.BunInstall = null,
 
     pub inline fn cssImportBehavior(this: *const BundleOptions) Api.CssInJsBehavior {
         switch (this.platform) {
@@ -2316,3 +2336,5 @@ pub const RouteConfig = struct {
         return router;
     }
 };
+
+pub const GlobalCache = @import("./resolver/resolver.zig").GlobalCache;

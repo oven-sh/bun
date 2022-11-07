@@ -376,6 +376,8 @@ pub fn scoped(comptime tag: @Type(.EnumLiteral), comptime disabled: bool) _log_f
                     std.os.getenv("BUN_DEBUG_" ++ @tagName(tag)) != null)
                 {
                     really_disable = false;
+                } else if (std.os.getenv("BUN_DEBUG_QUIET_LOGS") != null) {
+                    really_disable = true;
                 }
             }
 

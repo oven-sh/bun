@@ -2419,12 +2419,22 @@ static void fromErrorInstance(ZigException* except, JSC::JSGlobalObject* global,
         if (JSC::JSValue sourceURL = obj->getIfPropertyExists(global, global->vm().propertyNames->sourceURL)) {
             except->stack.frames_ptr[0].source_url = Zig::toZigString(sourceURL, global);
 
-            if (JSC::JSValue line = obj->getIfPropertyExists(global, global->vm().propertyNames->line)) {
-                except->stack.frames_ptr[0].position.line = line.toInt32(global);
-            }
-
             if (JSC::JSValue column = obj->getIfPropertyExists(global, global->vm().propertyNames->column)) {
                 except->stack.frames_ptr[0].position.column_start = column.toInt32(global);
+            }
+
+            if (JSC::JSValue line = obj->getIfPropertyExists(global, global->vm().propertyNames->line)) {
+                except->stack.frames_ptr[0].position.line = line.toInt32(global);
+
+                if (JSC::JSValue lineText = obj->getIfPropertyExists(global, JSC::Identifier::fromString(global->vm(), "lineText"_s))) {
+                    if (JSC::JSString* jsStr = lineText.toStringOrNull(global)) {
+                        auto str = jsStr->value(global);
+                        except->stack.source_lines_ptr[0] = Zig::toZigString(str);
+                        except->stack.source_lines_numbers[0] = except->stack.frames_ptr[0].position.line;
+                        except->stack.source_lines_len = 1;
+                        except->remapped = true;
+                    }
+                }
             }
             except->stack.frames_len = 1;
         }

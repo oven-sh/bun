@@ -80,6 +80,34 @@ pub const String = extern struct {
         }
     }
 
+    pub const HashContext = struct {
+        a_buf: []const u8,
+        b_buf: []const u8,
+
+        pub fn eql(ctx: HashContext, a: String, b: String) bool {
+            return a.eql(b, ctx.a_buf, ctx.b_buf);
+        }
+
+        pub fn hash(ctx: HashContext, a: String) u64 {
+            const str = a.slice(ctx.a_buf);
+            return bun.hash(str);
+        }
+    };
+
+    pub const ArrayHashContext = struct {
+        a_buf: []const u8,
+        b_buf: []const u8,
+
+        pub fn eql(ctx: ArrayHashContext, a: String, b: String, _: usize) bool {
+            return a.eql(b, ctx.a_buf, ctx.b_buf);
+        }
+
+        pub fn hash(ctx: ArrayHashContext, a: String) u32 {
+            const str = a.slice(ctx.a_buf);
+            return @truncate(u32, bun.hash(str));
+        }
+    };
+
     pub fn init(
         buf: string,
         in: string,
@@ -267,9 +295,44 @@ pub const String = extern struct {
             return @call(.{ .modifier = .always_inline }, appendWithHash, .{ this, Type, slice_, stringHash(slice_) });
         }
 
+        pub fn appendUTF8WithoutPool(this: *Builder, comptime Type: type, slice_: string, hash: u64) Type {
+            if (slice_.len <= String.max_inline_len) {
+                if (strings.isAllASCII(slice_)) {
+                    switch (Type) {
+                        String => {
+                            return String.init(this.allocatedSlice(), slice_);
+                        },
+                        ExternalString => {
+                            return ExternalString.init(this.allocatedSlice(), slice_, hash);
+                        },
+                        else => @compileError("Invalid type passed to StringBuilder"),
+                    }
+                }
+            }
+
+            assert(this.len <= this.cap); // didn't count everything
+            assert(this.ptr != null); // must call allocate first
+
+            copy(u8, this.ptr.?[this.len..this.cap], slice_);
+            const final_slice = this.ptr.?[this.len..this.cap][0..slice_.len];
+            this.len += slice_.len;
+
+            assert(this.len <= this.cap);
+
+            switch (Type) {
+                String => {
+                    return String.init(this.allocatedSlice(), final_slice);
+                },
+                ExternalString => {
+                    return ExternalString.init(this.allocatedSlice(), final_slice, hash);
+                },
+                else => @compileError("Invalid type passed to StringBuilder"),
+            }
+        }
+
         // SlicedString is not supported due to inline strings.
         pub fn appendWithoutPool(this: *Builder, comptime Type: type, slice_: string, hash: u64) Type {
-            if (slice_.len < String.max_inline_len) {
+            if (slice_.len <= String.max_inline_len) {
                 switch (Type) {
                     String => {
                         return String.init(this.allocatedSlice(), slice_);
@@ -301,7 +364,7 @@ pub const String = extern struct {
         }
 
         pub fn appendWithHash(this: *Builder, comptime Type: type, slice_: string, hash: u64) Type {
-            if (slice_.len < String.max_inline_len) {
+            if (slice_.len <= String.max_inline_len) {
                 switch (Type) {
                     String => {
                         return String.init(this.allocatedSlice(), slice_);
@@ -490,6 +553,15 @@ pub const Version = extern struct {
     tag: Tag = Tag{},
     // raw: RawType = RawType{},
 
+    /// Assumes that there is only one buffer for all the strings
+    pub fn sortGt(ctx: []const u8, lhs: Version, rhs: Version) bool {
+        return orderFn(ctx, lhs, rhs) == .gt;
+    }
+
+    pub fn orderFn(ctx: []const u8, lhs: Version, rhs: Version) std.math.Order {
+        return lhs.order(rhs, ctx, ctx);
+    }
+
     pub fn cloneInto(this: Version, slice: []const u8, buf: *[]u8) Version {
         return Version{
             .major = this.major,
@@ -622,7 +694,7 @@ pub const Version = extern struct {
             }
 
             if (this.build.isInline()) {
-                build = this.pre.build;
+                build = this.build.value;
             } else {
                 const build_slice = this.build.slice(slice);
                 std.mem.copy(u8, buf.*, build_slice);
@@ -636,7 +708,7 @@ pub const Version = extern struct {
                     .hash = this.pre.hash,
                 },
                 .build = .{
-                    .value = this.build,
+                    .value = build,
                     .hash = this.build.hash,
                 },
             };
@@ -1202,6 +1274,37 @@ pub const Query = struct {
             pub const build = 0;
         };
 
+        pub fn deinit(this: *Group) void {
+            var list = this.head;
+            var allocator = this.allocator;
+
+            while (list.next) |next| {
+                var query = list.head;
+                while (query.next) |next_query| {
+                    allocator.destroy(next_query);
+                    query = next_query.*;
+                }
+                allocator.destroy(next);
+                list = next.*;
+            }
+        }
+
+        pub fn from(version: Version) Group {
+            return .{
+                .allocator = bun.default_allocator,
+                .head = .{
+                    .head = .{
+                        .range = .{
+                            .left = .{
+                                .op = .eql,
+                                .version = version,
+                            },
+                        },
+                    },
+                },
+            };
+        }
+
         pub const FlagsBitSet = std.bit_set.IntegerBitSet(3);
 
         pub fn isExact(this: *const Group) bool {
@@ -1210,6 +1313,11 @@ pub const Query = struct {
 
         pub inline fn eql(lhs: Group, rhs: Group) bool {
             return lhs.head.eql(&rhs.head);
+        }
+
+        pub fn toVersion(this: Group) Version {
+            std.debug.assert(this.isExact() or this.head.head.range.left.op == .unset);
+            return this.head.head.range.left.version;
         }
 
         pub fn orVersion(self: *Group, version: Version) !void {

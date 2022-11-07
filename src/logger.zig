@@ -447,6 +447,7 @@ pub const Msg = struct {
         pub const Resolve = struct {
             specifier: BabyString,
             import_kind: ImportKind,
+            err: anyerror = error.ModuleNotFound,
         };
     };
 
@@ -775,7 +776,18 @@ pub const Log = struct {
         });
     }
 
-    inline fn _addResolveErrorWithLevel(log: *Log, source: *const Source, r: Range, allocator: std.mem.Allocator, comptime fmt: string, args: anytype, import_kind: ImportKind, comptime dupe_text: bool, comptime is_error: bool) !void {
+    inline fn _addResolveErrorWithLevel(
+        log: *Log,
+        source: *const Source,
+        r: Range,
+        allocator: std.mem.Allocator,
+        comptime fmt: string,
+        args: anytype,
+        import_kind: ImportKind,
+        comptime dupe_text: bool,
+        comptime is_error: bool,
+        err: anyerror,
+    ) !void {
         const text = try std.fmt.allocPrint(allocator, fmt, args);
         // TODO: fix this. this is stupid, it should be returned in allocPrint.
         const specifier = BabyString.in(text, args.@"0");
@@ -806,18 +818,42 @@ pub const Log = struct {
         const msg = Msg{
             .kind = if (comptime is_error) Kind.err else Kind.warn,
             .data = data,
-            .metadata = .{ .resolve = Msg.Metadata.Resolve{ .specifier = specifier, .import_kind = import_kind } },
+            .metadata = .{ .resolve = Msg.Metadata.Resolve{
+                .specifier = specifier,
+                .import_kind = import_kind,
+                .err = err,
+            } },
         };
 
         try log.addMsg(msg);
     }
 
-    inline fn _addResolveError(log: *Log, source: *const Source, r: Range, allocator: std.mem.Allocator, comptime fmt: string, args: anytype, import_kind: ImportKind, comptime dupe_text: bool) !void {
-        return _addResolveErrorWithLevel(log, source, r, allocator, fmt, args, import_kind, dupe_text, true);
+    inline fn _addResolveError(
+        log: *Log,
+        source: *const Source,
+        r: Range,
+        allocator: std.mem.Allocator,
+        comptime fmt: string,
+        args: anytype,
+        import_kind: ImportKind,
+        comptime dupe_text: bool,
+        err: anyerror,
+    ) !void {
+        return _addResolveErrorWithLevel(log, source, r, allocator, fmt, args, import_kind, dupe_text, true, err);
     }
 
-    inline fn _addResolveWarn(log: *Log, source: *const Source, r: Range, allocator: std.mem.Allocator, comptime fmt: string, args: anytype, import_kind: ImportKind, comptime dupe_text: bool) !void {
-        return _addResolveErrorWithLevel(log, source, r, allocator, fmt, args, import_kind, dupe_text, false);
+    inline fn _addResolveWarn(
+        log: *Log,
+        source: *const Source,
+        r: Range,
+        allocator: std.mem.Allocator,
+        comptime fmt: string,
+        args: anytype,
+        import_kind: ImportKind,
+        comptime dupe_text: bool,
+        err: anyerror,
+    ) !void {
+        return _addResolveErrorWithLevel(log, source, r, allocator, fmt, args, import_kind, dupe_text, false, err);
     }
 
     pub fn addResolveError(
@@ -828,9 +864,10 @@ pub const Log = struct {
         comptime fmt: string,
         args: anytype,
         import_kind: ImportKind,
+        err: anyerror,
     ) !void {
         @setCold(true);
-        return try _addResolveError(log, source, r, allocator, fmt, args, import_kind, false);
+        return try _addResolveError(log, source, r, allocator, fmt, args, import_kind, false, err);
     }
 
     pub fn addResolveErrorWithTextDupe(
@@ -843,7 +880,7 @@ pub const Log = struct {
         import_kind: ImportKind,
     ) !void {
         @setCold(true);
-        return try _addResolveError(log, source, r, allocator, fmt, args, import_kind, true);
+        return try _addResolveError(log, source, r, allocator, fmt, args, import_kind, true, error.ModuleNotFound);
     }
 
     pub fn addResolveErrorWithTextDupeMaybeWarn(
@@ -858,9 +895,9 @@ pub const Log = struct {
     ) !void {
         @setCold(true);
         if (warn) {
-            return try _addResolveError(log, source, r, allocator, fmt, args, import_kind, true);
+            return try _addResolveError(log, source, r, allocator, fmt, args, import_kind, true, error.ModuleNotFound);
         } else {
-            return try _addResolveWarn(log, source, r, allocator, fmt, args, import_kind, true);
+            return try _addResolveWarn(log, source, r, allocator, fmt, args, import_kind, true, error.ModuleNotFound);
         }
     }
 

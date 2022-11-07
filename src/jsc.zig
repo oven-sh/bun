@@ -9,6 +9,7 @@ pub usingnamespace @import("./bun.js/base.zig");
 pub const RareData = @import("./bun.js/rare_data.zig");
 pub const Shimmer = @import("./bun.js/bindings/shimmer.zig").Shimmer;
 pub usingnamespace @import("./bun.js/javascript.zig");
+pub usingnamespace @import("./bun.js/module_loader.zig");
 pub const C = @import("./bun.js/javascript_core_c_api.zig");
 pub const WebCore = @import("./bun.js/webcore.zig");
 pub const Cloudflare = struct {

@@ -524,6 +524,9 @@ pub const PathLike = union(Tag) {
     }
 
     pub fn fromJS(ctx: JSC.C.JSContextRef, arguments: *ArgumentsSlice, exception: JSC.C.ExceptionRef) ?PathLike {
+        return fromJSWithAllocator(ctx, arguments, arguments.arena.allocator(), exception);
+    }
+    pub fn fromJSWithAllocator(ctx: JSC.C.JSContextRef, arguments: *ArgumentsSlice, allocator: std.mem.Allocator, exception: JSC.C.ExceptionRef) ?PathLike {
         const arg = arguments.next() orelse return null;
         switch (arg.jsType()) {
             JSC.JSValue.JSType.Uint8Array,
@@ -551,18 +554,15 @@ pub const PathLike = union(Tag) {
             JSC.JSValue.JSType.StringObject,
             JSC.JSValue.JSType.DerivedStringObject,
             => {
-                var zig_str = JSC.ZigString.init("");
-                arg.toZigString(&zig_str, ctx.ptr());
+                var zig_str = arg.toSlice(ctx, allocator);
 
-                if (!Valid.pathString(zig_str, ctx, exception)) return null;
+                if (!Valid.pathSlice(zig_str, ctx, exception)) {
+                    zig_str.deinit();
+                    return null;
+                }
 
                 arguments.eat();
                 arg.ensureStillAlive();
-
-                if (zig_str.is16Bit()) {
-                    var printed = std.mem.span(std.fmt.allocPrintZ(arguments.arena.allocator(), "{}", .{zig_str}) catch unreachable);
-                    return PathLike{ .string = PathString.init(printed.ptr[0 .. printed.len + 1]) };
-                }
 
                 return PathLike{ .string = PathString.init(zig_str.slice()) };
             },
@@ -595,6 +595,28 @@ pub const Valid = struct {
         }
 
         return true;
+    }
+
+    pub fn pathSlice(zig_str: JSC.ZigString.Slice, ctx: JSC.C.JSContextRef, exception: JSC.C.ExceptionRef) bool {
+        switch (zig_str.len) {
+            0 => {
+                JSC.throwInvalidArguments("Invalid path string: can't be empty", .{}, ctx, exception);
+                return false;
+            },
+            1...bun.MAX_PATH_BYTES => return true,
+            else => {
+                // TODO: should this be an EINVAL?
+                JSC.throwInvalidArguments(
+                    comptime std.fmt.comptimePrint("Invalid path string: path is too long (max: {d})", .{bun.MAX_PATH_BYTES}),
+                    .{},
+                    ctx,
+                    exception,
+                );
+                return false;
+            },
+        }
+
+        unreachable;
     }
 
     pub fn pathString(zig_str: JSC.ZigString, ctx: JSC.C.JSContextRef, exception: JSC.C.ExceptionRef) bool {
@@ -811,7 +833,7 @@ pub const PathOrFileDescriptor = union(Tag) {
         }
     }
 
-    pub fn fromJS(ctx: JSC.C.JSContextRef, arguments: *ArgumentsSlice, exception: JSC.C.ExceptionRef) ?PathOrFileDescriptor {
+    pub fn fromJS(ctx: JSC.C.JSContextRef, arguments: *ArgumentsSlice, allocator: std.mem.Allocator, exception: JSC.C.ExceptionRef) ?PathOrFileDescriptor {
         const first = arguments.next() orelse return null;
 
         if (fileDescriptorFromJS(ctx, first, exception)) |fd| {
@@ -821,7 +843,7 @@ pub const PathOrFileDescriptor = union(Tag) {
 
         if (exception.* != null) return null;
 
-        return PathOrFileDescriptor{ .path = PathLike.fromJS(ctx, arguments, exception) orelse return null };
+        return PathOrFileDescriptor{ .path = PathLike.fromJSWithAllocator(ctx, arguments, allocator, exception) orelse return null };
     }
 
     pub fn toJS(this: PathOrFileDescriptor, ctx: JSC.C.JSContextRef, exception: JSC.C.ExceptionRef) JSC.C.JSValueRef {

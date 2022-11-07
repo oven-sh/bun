@@ -952,26 +952,8 @@ const PathOrBlob = union(enum) {
     path: JSC.Node.PathOrFileDescriptor,
     blob: Blob,
 
-    pub fn fromJS(ctx: js.JSContextRef, args: *JSC.Node.ArgumentsSlice, exception: js.ExceptionRef) ?PathOrBlob {
-        if (JSC.Node.PathOrFileDescriptor.fromJS(ctx, args, exception)) |path| {
-            return PathOrBlob{
-                .path = path,
-            };
-        }
-
-        const arg = args.nextEat() orelse return null;
-
-        if (arg.as(Blob)) |blob| {
-            return PathOrBlob{
-                .blob = blob.dupe(),
-            };
-        }
-
-        return null;
-    }
-
     pub fn fromJSNoCopy(ctx: js.JSContextRef, args: *JSC.Node.ArgumentsSlice, exception: js.ExceptionRef) ?PathOrBlob {
-        if (JSC.Node.PathOrFileDescriptor.fromJS(ctx, args, exception)) |path| {
+        if (JSC.Node.PathOrFileDescriptor.fromJS(ctx, args, args.arena.allocator(), exception)) |path| {
             return PathOrBlob{
                 .path = path,
             };
@@ -1687,58 +1669,66 @@ pub const Blob = struct {
         arguments: []const js.JSValueRef,
         exception: js.ExceptionRef,
     ) js.JSObjectRef {
-        var args = JSC.Node.ArgumentsSlice.from(ctx.bunVM(), arguments);
+        var vm = ctx.bunVM();
+        var args = JSC.Node.ArgumentsSlice.from(vm, arguments);
         defer args.deinit();
 
-        var path = JSC.Node.PathOrFileDescriptor.fromJS(ctx, &args, exception) orelse {
+        const path = JSC.Node.PathOrFileDescriptor.fromJS(ctx, &args, args.arena.allocator(), exception) orelse {
             exception.* = JSC.toInvalidArguments("Expected file path string or file descriptor", .{}, ctx).asObjectRef();
             return js.JSValueMakeUndefined(ctx);
         };
 
         const blob = Blob.findOrCreateFileFromPath(path, ctx.ptr());
 
-        var ptr = bun.default_allocator.create(Blob) catch unreachable;
+        var ptr = vm.allocator.create(Blob) catch unreachable;
         ptr.* = blob;
-        ptr.allocator = bun.default_allocator;
+        ptr.allocator = vm.allocator;
         return ptr.toJS(ctx).asObjectRef();
     }
 
     pub fn findOrCreateFileFromPath(path_: JSC.Node.PathOrFileDescriptor, globalThis: *JSGlobalObject) Blob {
-        var path = path_;
         var vm = globalThis.bunVM();
-        if (vm.getFileBlob(path)) |blob| {
+        if (vm.getFileBlob(path_)) |blob| {
             blob.ref();
             return Blob.initWithStore(blob, globalThis);
         }
 
-        switch (path) {
-            .path => {
-                path.path = .{
-                    .string = bun.PathString.init(
-                        (bun.default_allocator.dupeZ(u8, path.path.slice()) catch unreachable)[0..path.path.slice().len],
-                    ),
-                };
-            },
-            .fd => {
-                switch (path.fd) {
-                    std.os.STDIN_FILENO => return Blob.initWithStore(
-                        vm.rareData().stdin(),
-                        globalThis,
-                    ),
-                    std.os.STDERR_FILENO => return Blob.initWithStore(
-                        vm.rareData().stderr(),
-                        globalThis,
-                    ),
-                    std.os.STDOUT_FILENO => return Blob.initWithStore(
-                        vm.rareData().stdout(),
-                        globalThis,
-                    ),
-                    else => {},
-                }
-            },
-        }
+        var allocator = globalThis.bunVM().allocator;
 
-        const result = Blob.initWithStore(Blob.Store.initFile(path, null, bun.default_allocator) catch unreachable, globalThis);
+        const path: JSC.Node.PathOrFileDescriptor = brk: {
+            switch (path_) {
+                .path => {
+                    const slice = path_.path.slice();
+                    var cloned = (allocator.dupeZ(u8, slice) catch unreachable)[0..slice.len];
+
+                    break :brk .{
+                        .path = .{
+                            .string = bun.PathString.init(cloned),
+                        },
+                    };
+                },
+                .fd => {
+                    switch (path_.fd) {
+                        std.os.STDIN_FILENO => return Blob.initWithStore(
+                            vm.rareData().stdin(),
+                            globalThis,
+                        ),
+                        std.os.STDERR_FILENO => return Blob.initWithStore(
+                            vm.rareData().stderr(),
+                            globalThis,
+                        ),
+                        std.os.STDOUT_FILENO => return Blob.initWithStore(
+                            vm.rareData().stdout(),
+                            globalThis,
+                        ),
+                        else => {},
+                    }
+                    break :brk path_;
+                },
+            }
+        };
+
+        const result = Blob.initWithStore(Blob.Store.initFile(path, null, allocator) catch unreachable, globalThis);
         vm.putFileBlob(path, result.store.?) catch unreachable;
         return result;
     }
@@ -3098,14 +3088,20 @@ pub const Blob = struct {
             return JSValue.jsUndefined();
         };
 
-        var input_path: JSC.WebCore.PathOrFileDescriptor = undefined;
-        if (store.data.file.pathlike == .fd) {
-            input_path = .{ .fd = store.data.file.pathlike.fd };
-        } else {
-            input_path = .{
-                .path = ZigString.Slice.fromUTF8NeverFree(store.data.file.pathlike.path.slice()),
-            };
-        }
+        const input_path: JSC.WebCore.PathOrFileDescriptor = brk: {
+            if (store.data.file.pathlike == .fd) {
+                break :brk .{ .fd = store.data.file.pathlike.fd };
+            } else {
+                break :brk .{
+                    .path = ZigString.Slice.fromUTF8NeverFree(
+                        store.data.file.pathlike.path.slice(),
+                    ).clone(
+                        globalThis.allocator(),
+                    ) catch unreachable,
+                };
+            }
+        };
+        defer input_path.deinit();
 
         var stream_start: JSC.WebCore.StreamStart = .{
             .FileSink = .{
@@ -3122,7 +3118,8 @@ pub const Blob = struct {
             .err => |err| {
                 globalThis.vm().throwError(globalThis, err.toJSC(globalThis));
                 sink.finalize();
-                return JSC.JSValue.jsUndefined();
+
+                return JSC.JSValue.zero;
             },
             else => {},
         }

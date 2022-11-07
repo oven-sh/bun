@@ -1220,7 +1220,7 @@ pub const VirtualMachine = struct {
                     return promise;
             }
 
-            promise = JSModuleLoader.loadAndEvaluateModule(this.global, &ZigString.init(std.mem.span(main_file_name)));
+            promise = JSModuleLoader.loadAndEvaluateModule(this.global, ZigString.static(main_file_name));
             this.pending_internal_promise = promise;
         } else {
             promise = JSModuleLoader.loadAndEvaluateModule(this.global, &ZigString.init(this.main));
@@ -1704,7 +1704,7 @@ pub const VirtualMachine = struct {
             "pkg",
         };
 
-        if (error_instance.isCell()) {
+        if (error_instance != .zero and error_instance.isCell() and error_instance.jsType().canGet()) {
             inline for (extra_fields) |field| {
                 if (error_instance.get(this.global, field)) |value| {
                     if (!value.isEmptyOrUndefinedOrNull()) {

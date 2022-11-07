@@ -999,6 +999,10 @@ pub const Sink = struct {
 pub const PathOrFileDescriptor = union(enum) {
     path: ZigString.Slice,
     fd: JSC.Node.FileDescriptor,
+
+    pub fn deinit(this: *const PathOrFileDescriptor) void {
+        if (this.* == .path) this.path.deinit();
+    }
 };
 
 pub const FileSink = struct {
@@ -1045,9 +1049,7 @@ pub const FileSink = struct {
                 if (auto_close) {
                     _ = JSC.Node.Syscall.close(fd);
                 }
-                if (input_path == .path)
-                    return .{ .err = err.withPath(input_path.path.slice()) };
-                return .{ .err = err };
+                return .{ .err = err.withPathLike(input_path) };
             },
         };
 
@@ -1083,8 +1085,6 @@ pub const FileSink = struct {
                 this.chunk_size = config.chunk_size;
                 this.auto_close = config.close or config.input_path == .path;
                 this.auto_truncate = config.truncate;
-
-                defer if (config.input_path == .path) config.input_path.path.deinit();
 
                 switch (this.prepare(config.input_path, config.mode)) {
                     .err => |err| {

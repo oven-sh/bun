@@ -101,7 +101,7 @@ const Arguments = struct {
         len: JSC.WebCore.Blob.SizeType = 0,
 
         pub fn fromJS(ctx: JSC.C.JSContextRef, arguments: *ArgumentsSlice, exception: JSC.C.ExceptionRef) ?Truncate {
-            const path = PathOrFileDescriptor.fromJS(ctx, arguments, exception) orelse {
+            const path = PathOrFileDescriptor.fromJS(ctx, arguments, arguments.arena.allocator(), exception) orelse {
                 if (exception.* == null) {
                     JSC.throwInvalidArguments(
                         "path must be a string or TypedArray",
@@ -1448,7 +1448,7 @@ const Arguments = struct {
         flag: FileSystemFlags = FileSystemFlags.@"r",
 
         pub fn fromJS(ctx: JSC.C.JSContextRef, arguments: *ArgumentsSlice, exception: JSC.C.ExceptionRef) ?ReadFile {
-            const path = PathOrFileDescriptor.fromJS(ctx, arguments, exception) orelse {
+            const path = PathOrFileDescriptor.fromJS(ctx, arguments, arguments.arena.allocator(), exception) orelse {
                 if (exception.* == null) {
                     JSC.throwInvalidArguments(
                         "path must be a string or a file descriptor",
@@ -1529,7 +1529,7 @@ const Arguments = struct {
         data: StringOrBuffer,
 
         pub fn fromJS(ctx: JSC.C.JSContextRef, arguments: *ArgumentsSlice, exception: JSC.C.ExceptionRef) ?WriteFile {
-            const file = PathOrFileDescriptor.fromJS(ctx, arguments, exception) orelse {
+            const file = PathOrFileDescriptor.fromJS(ctx, arguments, arguments.arena.allocator(), exception) orelse {
                 if (exception.* == null) {
                     JSC.throwInvalidArguments(
                         "path must be a string or a file descriptor",

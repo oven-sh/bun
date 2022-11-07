@@ -1165,7 +1165,7 @@ fn NewLexer_(
                     },
                     ';' => {
                         if (comptime is_json) {
-                            return lexer.addUnsupportedSyntaxError("Semicolons are not allowed in JSON");
+                            return lexer.addUnsupportedSyntaxError("Semicolons are not allowed in JSON");
                         }
 
                         lexer.step();

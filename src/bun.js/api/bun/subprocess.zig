@@ -1240,14 +1240,26 @@ pub const Subprocess = struct {
 
         this.has_waitpid_task = false;
 
-        const callback = this.on_exit_callback.swap();
-        if (callback != .zero) {
+        if (this.on_exit_callback.trySwap()) |callback| {
+            const exit_value: JSValue = if (this.exit_code) |code|
+                JSC.JSValue.jsNumber(code)
+            else
+                JSC.JSValue.jsNumber(@as(i32, -1));
+
+            const waitpid_value: JSValue =
+                if (this.waitpid_err) |err|
+                err.toJSC(this.globalThis)
+            else
+                JSC.JSValue.jsUndefined();
+
+            const args = [_]JSValue{
+                exit_value,
+                waitpid_value,
+            };
+
             const result = callback.call(
                 this.globalThis,
-                &[_]JSValue{
-                    if (this.exit_code != null) JSC.JSValue.jsNumber(this.exit_code.?) else JSC.JSValue.jsNumber(@as(i32, -1)),
-                    if (this.waitpid_err != null) this.waitpid_err.?.toJSC(this.globalThis) else JSC.JSValue.jsUndefined(),
-                },
+                args[0 .. @as(usize, @boolToInt(this.exit_code != null)) + @as(usize, @boolToInt(this.waitpid_err != null))],
             );
 
             if (result.isAnyError(this.globalThis)) {

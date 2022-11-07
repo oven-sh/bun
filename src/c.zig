@@ -396,26 +396,3 @@ pub fn getRelease(buf: []u8) []const u8 {
         return "unknown";
     }
 }
-
-// we only want these two symbols from this
-const WaitH = struct {
-    pub usingnamespace @cImport("sys/wait.h");
-};
-
-/// Return exit status.
-pub const WEXITSTATUS = WaitH.WEXITSTATUS;
-
-/// True if child exited normally.
-pub const WIFEXITED = WaitH.WIFEXITED;
-
-/// True if child exited due to uncaught signal.
-pub const WIFSIGNALED = WaitH.WIFSIGNALED;
-
-/// True if child is currently stopped.
-pub const WIFSTOPPED = WaitH.WIFSTOPPED;
-
-/// Return signal number that caused process to stop.
-pub const WSTOPSIG = WaitH.WSTOPSIG;
-
-/// Return signal number that caused process to terminate.
-pub const WTERMSIG = WaitH.WTERMSIG;

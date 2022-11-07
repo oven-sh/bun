@@ -2961,14 +2961,9 @@ pub const JSValue = enum(JSValueReprInt) {
         return switch (comptime Number) {
             JSValue => number,
             f32, f64 => jsNumberFromDouble(@as(f64, number)),
-            u8 => jsNumberFromChar(number),
-            i16, i32, c_int, i8, u16 => jsNumberFromInt32(@intCast(i32, number)),
-            i64 => jsNumberFromInt64(@intCast(i64, number)),
-            c_uint => jsNumberFromUint64(@intCast(u64, number)),
-            u64 => jsNumberFromUint64(@intCast(u64, number)),
-            u32 => if (number <= std.math.maxInt(i32)) jsNumberFromInt32(@intCast(i32, number)) else jsNumberFromUint64(@as(u64, number)),
-            u52 => jsNumberFromUint64(@as(u64, number)),
-            usize => jsNumberFromUint64(@as(u64, number)),
+            u8, i16, i32, c_int, i8, u16 => jsNumberFromInt32(@intCast(i32, number)),
+            u32, u52, c_uint, i64 => jsNumberFromInt64(@intCast(i64, number)),
+            usize, u64 => jsNumberFromUint64(@intCast(u64, number)),
             comptime_int => switch (number) {
                 0...std.math.maxInt(i32) => jsNumberFromInt32(@intCast(i32, number)),
                 else => jsNumberFromInt64(@intCast(i64, number)),

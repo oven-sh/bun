@@ -92,6 +92,35 @@ for (let [gcTick, label] of [
         expect(exitCode2).toBe(1);
       });
 
+      it("check exit code from onExit", async () => {
+        var exitCode1, exitCode2;
+        await new Promise((resolve) => {
+          var counter = 0;
+          spawn({
+            cmd: ["ls"],
+            onExit(code) {
+              exitCode1 = code;
+              counter++;
+              if (counter === 2) {
+                resolve();
+              }
+            },
+          });
+          spawn({
+            cmd: ["false"],
+            onExit(code) {
+              exitCode2 = code;
+              counter++;
+              if (counter === 2) {
+                resolve();
+              }
+            },
+          });
+        });
+        expect(exitCode1).toBe(0);
+        expect(exitCode2).toBe(1);
+      });
+
       it("Blob works as stdin", async () => {
         rmSync("/tmp/out.123.txt", { force: true });
         gcTick();

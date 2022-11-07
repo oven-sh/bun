@@ -235,8 +235,9 @@ pub const Jest = struct {
 pub const Expect = struct {
     test_id: TestRunner.Test.ID,
     scope: *DescribeScope,
-    value: JSValue,
     op: Op.Set = Op.Set.init(.{}),
+
+    pub usingnamespace JSC.Codegen.JSExpect;
 
     pub const Op = enum(u3) {
         resolves,
@@ -247,410 +248,203 @@ pub const Expect = struct {
 
     pub fn finalize(
         this: *Expect,
-    ) void {
-        this.value.unprotect();
+    ) callconv(.C) void {
         VirtualMachine.vm.allocator.destroy(this);
     }
 
-    pub const Class = NewClass(
-        Expect,
-        .{ .name = "Expect" },
-        .{
-            .toBe = .{
-                .rfn = Expect.toBe,
-                .name = "toBe",
-            },
-            .toHaveBeenCalledTimes = .{
-                .rfn = Expect.toHaveBeenCalledTimes,
-                .name = "toHaveBeenCalledTimes",
-            },
-            .finalize = .{ .rfn = Expect.finalize, .name = "finalize" },
-            .toHaveBeenCalledWith = .{
-                .rfn = Expect.toHaveBeenCalledWith,
-                .name = "toHaveBeenCalledWith",
-            },
-            .toHaveBeenLastCalledWith = .{
-                .rfn = Expect.toHaveBeenLastCalledWith,
-                .name = "toHaveBeenLastCalledWith",
-            },
-            .toHaveBeenNthCalledWith = .{
-                .rfn = Expect.toHaveBeenNthCalledWith,
-                .name = "toHaveBeenNthCalledWith",
-            },
-            .toHaveReturnedTimes = .{
-                .rfn = Expect.toHaveReturnedTimes,
-                .name = "toHaveReturnedTimes",
-            },
-            .toHaveReturnedWith = .{
-                .rfn = Expect.toHaveReturnedWith,
-                .name = "toHaveReturnedWith",
-            },
-            .toHaveLastReturnedWith = .{
-                .rfn = Expect.toHaveLastReturnedWith,
-                .name = "toHaveLastReturnedWith",
-            },
-            .toHaveNthReturnedWith = .{
-                .rfn = Expect.toHaveNthReturnedWith,
-                .name = "toHaveNthReturnedWith",
-            },
-            .toHaveLength = .{
-                .rfn = Expect.toHaveLength,
-                .name = "toHaveLength",
-            },
-            .toHaveProperty = .{
-                .rfn = Expect.toHaveProperty,
-                .name = "toHaveProperty",
-            },
-            .toBeCloseTo = .{
-                .rfn = Expect.toBeCloseTo,
-                .name = "toBeCloseTo",
-            },
-            .toBeGreaterThan = .{
-                .rfn = Expect.toBeGreaterThan,
-                .name = "toBeGreaterThan",
-            },
-            .toBeGreaterThanOrEqual = .{
-                .rfn = Expect.toBeGreaterThanOrEqual,
-                .name = "toBeGreaterThanOrEqual",
-            },
-            .toBeLessThan = .{
-                .rfn = Expect.toBeLessThan,
-                .name = "toBeLessThan",
-            },
-            .toBeLessThanOrEqual = .{
-                .rfn = Expect.toBeLessThanOrEqual,
-                .name = "toBeLessThanOrEqual",
-            },
-            .toBeInstanceOf = .{
-                .rfn = Expect.toBeInstanceOf,
-                .name = "toBeInstanceOf",
-            },
-            .toContain = .{
-                .rfn = Expect.toContain,
-                .name = "toContain",
-            },
-            .toContainEqual = .{
-                .rfn = Expect.toContainEqual,
-                .name = "toContainEqual",
-            },
-            .toEqual = .{
-                .rfn = Expect.toEqual,
-                .name = "toEqual",
-            },
-            .toMatch = .{
-                .rfn = Expect.toMatch,
-                .name = "toMatch",
-            },
-            .toMatchObject = .{
-                .rfn = Expect.toMatchObject,
-                .name = "toMatchObject",
-            },
-            .toMatchSnapshot = .{
-                .rfn = Expect.toMatchSnapshot,
-                .name = "toMatchSnapshot",
-            },
-            .toMatchInlineSnapshot = .{
-                .rfn = Expect.toMatchInlineSnapshot,
-                .name = "toMatchInlineSnapshot",
-            },
-            .toStrictEqual = .{
-                .rfn = Expect.toStrictEqual,
-                .name = "toStrictEqual",
-            },
-            .toThrow = .{
-                .rfn = Expect.toThrow,
-                .name = "toThrow",
-            },
-            .toThrowErrorMatchingSnapshot = .{
-                .rfn = Expect.toThrowErrorMatchingSnapshot,
-                .name = "toThrowErrorMatchingSnapshot",
-            },
-            .toThrowErrorMatchingInlineSnapshot = .{
-                .rfn = Expect.toThrowErrorMatchingInlineSnapshot,
-                .name = "toThrowErrorMatchingInlineSnapshot",
-            },
-        },
-        .{
-            .not = .{
-                .get = Expect.not,
-                .name = "not",
-            },
-            .resolves = .{
-                .get = Expect.resolves,
-                .name = "resolves",
-            },
-            .rejects = .{
-                .get = Expect.rejects,
-                .name = "rejects",
-            },
-        },
-    );
+    pub fn call(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+        const arguments_ = callframe.arguments(1);
+        if (arguments_.len < 1) {
+            globalObject.throw("expect() requires one argument", .{});
+            return .zero;
+        }
+        const arguments = arguments_.ptr[0..arguments_.len];
+
+        var expect = globalObject.bunVM().allocator.create(Expect) catch unreachable;
+        const value = arguments[0];
+
+        if (Jest.runner.?.pending_test == null) {
+            globalObject.throw("expect() must be called inside a test", .{});
+            return .zero;
+        }
+
+        expect.* = .{
+            .scope = Jest.runner.?.pending_test.?.describe,
+            .test_id = Jest.runner.?.pending_test.?.test_id,
+        };
+        const expect_js_value = expect.toJS(globalObject);
+        JSC.Jest.Expect.capturedValueSetCached(expect_js_value, globalObject, value);
+        return expect_js_value;
+    }
+
+    pub fn constructor(
+        globalObject: *JSC.JSGlobalObject,
+        callframe: *JSC.CallFrame,
+    ) callconv(.C) ?*Expect {
+        _ = callframe.arguments(1);
+        globalObject.throw("expect() cannot be called with new", .{});
+        return null;
+    }
 
     /// Object.is()
     pub fn toBe(
         this: *Expect,
-        ctx: js.JSContextRef,
-        _: js.JSObjectRef,
-        thisObject: js.JSObjectRef,
-        arguments: []const js.JSValueRef,
-        exception: js.ExceptionRef,
-    ) js.JSValueRef {
-        if (arguments.len != 1) {
-            JSC.JSError(
-                getAllocator(ctx),
-                ".toBe() takes 1 argument",
-                .{},
-                ctx,
-                exception,
-            );
-            return js.JSValueMakeUndefined(ctx);
+        globalObject: *JSC.JSGlobalObject,
+        callframe: *JSC.CallFrame,
+    ) callconv(.C) JSC.JSValue {
+        const thisValue = callframe.this();
+        const arguments_ = callframe.arguments(1);
+        const arguments = arguments_.ptr[0..arguments_.len];
+
+        if (arguments.len < 1) {
+            globalObject.throwInvalidArguments("toBe() takes 1 argument", .{});
+            return .zero;
         }
+
         if (this.scope.tests.items.len <= this.test_id) {
-            JSC.JSError(
-                getAllocator(ctx),
-                ".toBe() called in wrong scope",
-                .{},
-                ctx,
-                exception,
-            );
-            return js.JSValueMakeUndefined(ctx);
+            globalObject.throw("toBe() must be called in a test", .{});
+            return .zero;
         }
+
         active_test_expectation_counter.actual += 1;
-        const left = JSValue.fromRef(arguments[0]);
+        const left = arguments[0];
         left.ensureStillAlive();
-        const right = this.value;
+        const right = Expect.capturedValueGetCached(thisValue) orelse {
+            globalObject.throw("Internal consistency error: the expect(value) was garbage collected but it should not have been!", .{});
+            return .zero;
+        };
         right.ensureStillAlive();
-        const eql = left.isSameValue(right, ctx.ptr());
+        const eql = left.isSameValue(right, globalObject);
         if (comptime Environment.allow_assert) {
-            std.debug.assert(eql == JSC.C.JSValueIsStrictEqual(ctx, left.asObjectRef(), right.asObjectRef()));
+            std.debug.assert(eql == JSC.C.JSValueIsStrictEqual(globalObject, left.asObjectRef(), right.asObjectRef()));
         }
 
         if (!eql) {
-            var lhs_formatter: JSC.ZigConsoleClient.Formatter = JSC.ZigConsoleClient.Formatter{ .globalThis = ctx.ptr() };
-            var rhs_formatter: JSC.ZigConsoleClient.Formatter = JSC.ZigConsoleClient.Formatter{ .globalThis = ctx.ptr() };
+            var lhs_formatter: JSC.ZigConsoleClient.Formatter = JSC.ZigConsoleClient.Formatter{ .globalThis = globalObject };
+            var rhs_formatter: JSC.ZigConsoleClient.Formatter = JSC.ZigConsoleClient.Formatter{ .globalThis = globalObject };
 
             if (comptime Environment.allow_assert) {
                 Output.prettyErrorln("\nJSType: {s}\nJSType: {s}\n\n", .{ @tagName(left.jsType()), @tagName(right.jsType()) });
             }
 
-            JSC.JSError(
-                getAllocator(ctx),
-                "Expected: {}\n\tReceived: {}",
+            globalObject.throw(
+                "Expected: {any}\n\tReceived: {any}",
                 .{
-                    left.toFmt(ctx.ptr(), &lhs_formatter),
-                    right.toFmt(ctx.ptr(), &rhs_formatter),
+                    left.toFmt(globalObject, &lhs_formatter),
+                    right.toFmt(globalObject, &rhs_formatter),
                 },
-                ctx,
-                exception,
             );
 
-            return null;
+            return .zero;
         }
 
-        return thisObject;
+        return thisValue;
     }
 
     pub fn toHaveLength(
         this: *Expect,
-        ctx: js.JSContextRef,
-        _: js.JSObjectRef,
-        thisObject: js.JSObjectRef,
-        arguments: []const js.JSValueRef,
-        exception: js.ExceptionRef,
-    ) js.JSValueRef {
-        if (arguments.len != 1) {
-            JSC.JSError(
-                getAllocator(ctx),
-                ".toHaveLength() takes 1 argument",
-                .{},
-                ctx,
-                exception,
-            );
-            return js.JSValueMakeUndefined(ctx);
+        globalObject: *JSC.JSGlobalObject,
+        callframe: *JSC.CallFrame,
+    ) callconv(.C) JSC.JSValue {
+        const thisValue = callframe.this();
+        const arguments_ = callframe.arguments(1);
+        const arguments = arguments_.ptr[0..arguments_.len];
+
+        if (arguments.len < 1) {
+            globalObject.throwInvalidArguments("toHaveLength() takes 1 argument", .{});
+            return .zero;
         }
+
         if (this.scope.tests.items.len <= this.test_id) {
-            JSC.JSError(
-                getAllocator(ctx),
-                ".toHaveLength() called in wrong scope",
-                .{},
-                ctx,
-                exception,
-            );
-            return js.JSValueMakeUndefined(ctx);
+            globalObject.throw("toHaveLength() must be called in a test", .{});
+            return .zero;
         }
+
         active_test_expectation_counter.actual += 1;
 
-        const expected = JSC.JSValue.fromRef(arguments[0]).toU32();
-        const actual = this.value.getLengthOfArray(ctx.ptr());
-        if (expected != actual) {
-            JSC.JSError(
-                getAllocator(ctx),
-                "Expected length to equal {d} but received {d}\n  Expected: {d}\n    Actual: {d}\n",
-                .{
-                    expected,
-                    actual,
-                    expected,
-                    actual,
-                },
-                ctx,
-                exception,
-            );
-            return null;
-        }
-        return thisObject;
-    }
-
-    pub const toHaveBeenCalledTimes = notImplementedFn;
-    pub const toHaveBeenCalledWith = notImplementedFn;
-    pub const toHaveBeenLastCalledWith = notImplementedFn;
-    pub const toHaveBeenNthCalledWith = notImplementedFn;
-    pub const toHaveReturnedTimes = notImplementedFn;
-    pub const toHaveReturnedWith = notImplementedFn;
-    pub const toHaveLastReturnedWith = notImplementedFn;
-    pub const toHaveNthReturnedWith = notImplementedFn;
-    pub const toHaveProperty = notImplementedFn;
-    pub const toBeCloseTo = notImplementedFn;
-    pub const toBeGreaterThan = notImplementedFn;
-    pub const toBeGreaterThanOrEqual = notImplementedFn;
-    pub const toBeLessThan = notImplementedFn;
-    pub const toBeLessThanOrEqual = notImplementedFn;
-    pub const toBeInstanceOf = notImplementedFn;
-    pub const toContain = notImplementedFn;
-    pub const toContainEqual = notImplementedFn;
-    pub const toEqual = notImplementedFn;
-    pub const toMatch = notImplementedFn;
-    pub const toMatchObject = notImplementedFn;
-    pub const toMatchSnapshot = notImplementedFn;
-    pub const toMatchInlineSnapshot = notImplementedFn;
-    pub const toStrictEqual = notImplementedFn;
-    pub const toThrow = notImplementedFn;
-    pub const toThrowErrorMatchingSnapshot = notImplementedFn;
-    pub const toThrowErrorMatchingInlineSnapshot = notImplementedFn;
-
-    pub const not = notImplementedProp;
-    pub const resolves = notImplementedProp;
-    pub const rejects = notImplementedProp;
-};
-
-pub const ExpectPrototype = struct {
-    scope: *DescribeScope,
-    test_id: TestRunner.Test.ID,
-    op: Expect.Op.Set = Expect.Op.Set.init(.{}),
-
-    pub const Class = NewClass(
-        ExpectPrototype,
-        .{
-            .name = "ExpectPrototype",
-            .read_only = true,
-        },
-        .{
-            .call = .{
-                .rfn = ExpectPrototype.call,
-            },
-            .extend = .{
-                .name = "extend",
-                .rfn = ExpectPrototype.extend,
-            },
-            .anything = .{
-                .name = "anything",
-                .rfn = ExpectPrototype.anything,
-            },
-            .any = .{
-                .name = "any",
-                .rfn = ExpectPrototype.any,
-            },
-            .arrayContaining = .{
-                .name = "arrayContaining",
-                .rfn = ExpectPrototype.arrayContaining,
-            },
-            .assertions = .{
-                .name = "assertions",
-                .rfn = ExpectPrototype.assertions,
-            },
-            .hasAssertions = .{
-                .name = "hasAssertions",
-                .rfn = ExpectPrototype.hasAssertions,
-            },
-            .objectContaining = .{
-                .name = "objectContaining",
-                .rfn = ExpectPrototype.objectContaining,
-            },
-            .stringContaining = .{
-                .name = "stringContaining",
-                .rfn = ExpectPrototype.stringContaining,
-            },
-            .stringMatching = .{
-                .name = "stringMatching",
-                .rfn = ExpectPrototype.stringMatching,
-            },
-            .addSnapshotSerializer = .{
-                .name = "addSnapshotSerializer",
-                .rfn = ExpectPrototype.addSnapshotSerializer,
-            },
-        },
-        .{
-            .not = .{
-                .name = "not",
-                .get = ExpectPrototype.not,
-            },
-            .resolves = .{
-                .name = "resolves",
-                .get = ExpectPrototype.resolves,
-            },
-            .rejects = .{
-                .name = "rejects",
-                .get = ExpectPrototype.rejects,
-            },
-        },
-    );
-    pub const extend = notImplementedFn;
-    pub const anything = notImplementedFn;
-    pub const any = notImplementedFn;
-    pub const arrayContaining = notImplementedFn;
-    pub const assertions = notImplementedFn;
-    pub const hasAssertions = notImplementedFn;
-    pub const objectContaining = notImplementedFn;
-    pub const stringContaining = notImplementedFn;
-    pub const stringMatching = notImplementedFn;
-    pub const addSnapshotSerializer = notImplementedFn;
-    pub const not = notImplementedProp;
-    pub const resolves = notImplementedProp;
-    pub const rejects = notImplementedProp;
-
-    pub fn call(
-        _: *ExpectPrototype,
-        ctx: js.JSContextRef,
-        _: js.JSObjectRef,
-        _: js.JSObjectRef,
-        arguments: []const js.JSValueRef,
-        exception: js.ExceptionRef,
-    ) js.JSObjectRef {
-        if (arguments.len != 1) {
-            JSError(getAllocator(ctx), "expect() requires one argument", .{}, ctx, exception);
-            return js.JSValueMakeUndefined(ctx);
-        }
-        var expect_ = getAllocator(ctx).create(Expect) catch unreachable;
-        const value = JSC.JSValue.c(arguments[0]);
-        if (Jest.runner.?.pending_test == null) {
-            JSError(
-                getAllocator(ctx),
-                "expect() must be called during a test",
-                .{},
-                ctx,
-                exception,
-            );
-            return js.JSValueMakeUndefined(ctx);
-        }
-
-        value.protect();
-        expect_.* = .{
-            .value = value,
-            .scope = Jest.runner.?.pending_test.?.describe,
-            .test_id = Jest.runner.?.pending_test.?.test_id,
+        const expected = arguments[0].coerce(i32, globalObject);
+        const value = JSC.Jest.Expect.capturedValueGetCached(thisValue) orelse {
+            globalObject.throw("Internal consistency error: the expect(value) was garbage collected but it should not have been!", .{});
+            return .zero;
         };
-        expect_.value.ensureStillAlive();
-        return Expect.Class.make(ctx, expect_);
+        const actual = value.getLengthOfArray(globalObject);
+        if (expected != actual) {
+            globalObject.throw("Expected length to equal {d} but received {d}\n  Expected: {d}\n    Actual: {d}\n", .{
+                expected,
+                actual,
+                expected,
+                actual,
+            });
+            return .zero;
+        }
+
+        return thisValue;
     }
+
+    pub const toHaveBeenCalledTimes = notImplementedJSCFn;
+    pub const toHaveBeenCalledWith = notImplementedJSCFn;
+    pub const toHaveBeenLastCalledWith = notImplementedJSCFn;
+    pub const toHaveBeenNthCalledWith = notImplementedJSCFn;
+    pub const toHaveReturnedTimes = notImplementedJSCFn;
+    pub const toHaveReturnedWith = notImplementedJSCFn;
+    pub const toHaveLastReturnedWith = notImplementedJSCFn;
+    pub const toHaveNthReturnedWith = notImplementedJSCFn;
+    pub const toHaveProperty = notImplementedJSCFn;
+    pub const toBeCloseTo = notImplementedJSCFn;
+    pub const toBeGreaterThan = notImplementedJSCFn;
+    pub const toBeGreaterThanOrEqual = notImplementedJSCFn;
+    pub const toBeLessThan = notImplementedJSCFn;
+    pub const toBeLessThanOrEqual = notImplementedJSCFn;
+    pub const toBeInstanceOf = notImplementedJSCFn;
+    pub const toContain = notImplementedJSCFn;
+    pub const toContainEqual = notImplementedJSCFn;
+    pub const toEqual = notImplementedJSCFn;
+    pub const toMatch = notImplementedJSCFn;
+    pub const toMatchObject = notImplementedJSCFn;
+    pub const toMatchSnapshot = notImplementedJSCFn;
+    pub const toMatchInlineSnapshot = notImplementedJSCFn;
+    pub const toStrictEqual = notImplementedJSCFn;
+    pub const toThrow = notImplementedJSCFn;
+    pub const toThrowErrorMatchingSnapshot = notImplementedJSCFn;
+    pub const toThrowErrorMatchingInlineSnapshot = notImplementedJSCFn;
+
+    pub fn notImplementedJSCFn(_: *Expect, globalObject: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+        globalObject.throw("Not implemented", .{});
+        return .zero;
+    }
+
+    pub fn notImplementedStaticFn(globalObject: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+        globalObject.throw("Not implemented", .{});
+        return .zero;
+    }
+
+    pub fn notImplementedJSCProp(_: *Expect, globalObject: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue {
+        globalObject.throw("Not implemented", .{});
+        return .zero;
+    }
+
+    pub fn notImplementedStaticProp(globalObject: *JSC.JSGlobalObject, _: JSC.JSValue, _: JSC.JSValue) callconv(.C) JSC.JSValue {
+        globalObject.throw("Not implemented", .{});
+        return .zero;
+    }
+
+    pub const getStaticNot = notImplementedStaticProp;
+    pub const getStaticResolves = notImplementedStaticProp;
+    pub const getStaticRejects = notImplementedStaticProp;
+    pub const getNot = notImplementedJSCProp;
+    pub const getResolves = notImplementedJSCProp;
+    pub const getRejects = notImplementedJSCProp;
+
+    pub const extend = notImplementedStaticFn;
+    pub const anything = notImplementedStaticFn;
+    pub const any = notImplementedStaticFn;
+    pub const arrayContaining = notImplementedStaticFn;
+    pub const assertions = notImplementedStaticFn;
+    pub const hasAssertions = notImplementedStaticFn;
+    pub const objectContaining = notImplementedStaticFn;
+    pub const stringContaining = notImplementedStaticFn;
+    pub const stringMatching = notImplementedStaticFn;
+    pub const addSnapshotSerializer = notImplementedStaticFn;
 };
 
 pub const TestScope = struct {
@@ -1140,12 +934,7 @@ pub const DescribeScope = struct {
         _: js.JSStringRef,
         _: js.ExceptionRef,
     ) js.JSObjectRef {
-        var expect_ = getAllocator(ctx).create(ExpectPrototype) catch unreachable;
-        expect_.* = .{
-            .scope = DescribeScope.active,
-            .test_id = DescribeScope.active.current_test_id,
-        };
-        return ExpectPrototype.Class.make(ctx, expect_);
+        return JSC.Jest.Expect.getConstructor(ctx).asObjectRef();
     }
 
     pub fn createTest(

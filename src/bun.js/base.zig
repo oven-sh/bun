@@ -2802,7 +2802,6 @@ const ModuleNamespace = @import("../js_ast.zig").Macro.ModuleNamespace;
 const Expect = Test.Expect;
 const DescribeScope = Test.DescribeScope;
 const TestScope = Test.TestScope;
-const ExpectPrototype = Test.ExpectPrototype;
 const NodeFS = JSC.Node.NodeFS;
 const DirEnt = JSC.Node.DirEnt;
 const Stats = JSC.Node.Stats;
@@ -2848,8 +2847,6 @@ pub const JSPrivateDataPtr = TaggedPointerUnion(.{
     DocType,
     Element,
     EndTag,
-    Expect,
-    ExpectPrototype,
     FetchEvent,
     HTMLRewriter,
     JSNode,

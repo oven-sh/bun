@@ -1481,6 +1481,257 @@ pub const JSServerWebSocket = struct {
         }
     }
 };
+pub const JSExpect = struct {
+    const Expect = Classes.Expect;
+    const GetterType = fn (*Expect, *JSC.JSGlobalObject) callconv(.C) JSC.JSValue;
+    const SetterType = fn (*Expect, *JSC.JSGlobalObject, JSC.JSValue) callconv(.C) bool;
+    const CallbackType = fn (*Expect, *JSC.JSGlobalObject, *JSC.CallFrame) callconv(.C) JSC.JSValue;
+
+    /// Return the pointer to the wrapped object.
+    /// If the object does not match the type, return null.
+    pub fn fromJS(value: JSC.JSValue) ?*Expect {
+        JSC.markBinding(@src());
+        return Expect__fromJS(value);
+    }
+
+    extern fn ExpectPrototype__capturedValueSetCachedValue(JSC.JSValue, *JSC.JSGlobalObject, JSC.JSValue) void;
+
+    extern fn ExpectPrototype__capturedValueGetCachedValue(JSC.JSValue) JSC.JSValue;
+
+    /// `Expect.capturedValue` setter
+    /// This value will be visited by the garbage collector.
+    pub fn capturedValueSetCached(thisValue: JSC.JSValue, globalObject: *JSC.JSGlobalObject, value: JSC.JSValue) void {
+        JSC.markBinding(@src());
+        ExpectPrototype__capturedValueSetCachedValue(thisValue, globalObject, value);
+    }
+
+    /// `Expect.capturedValue` getter
+    /// This value will be visited by the garbage collector.
+    pub fn capturedValueGetCached(thisValue: JSC.JSValue) ?JSC.JSValue {
+        JSC.markBinding(@src());
+        const result = ExpectPrototype__capturedValueGetCachedValue(thisValue);
+        if (result == .zero)
+            return null;
+
+        return result;
+    }
+
+    extern fn ExpectPrototype__resultValueSetCachedValue(JSC.JSValue, *JSC.JSGlobalObject, JSC.JSValue) void;
+
+    extern fn ExpectPrototype__resultValueGetCachedValue(JSC.JSValue) JSC.JSValue;
+
+    /// `Expect.resultValue` setter
+    /// This value will be visited by the garbage collector.
+    pub fn resultValueSetCached(thisValue: JSC.JSValue, globalObject: *JSC.JSGlobalObject, value: JSC.JSValue) void {
+        JSC.markBinding(@src());
+        ExpectPrototype__resultValueSetCachedValue(thisValue, globalObject, value);
+    }
+
+    /// `Expect.resultValue` getter
+    /// This value will be visited by the garbage collector.
+    pub fn resultValueGetCached(thisValue: JSC.JSValue) ?JSC.JSValue {
+        JSC.markBinding(@src());
+        const result = ExpectPrototype__resultValueGetCachedValue(thisValue);
+        if (result == .zero)
+            return null;
+
+        return result;
+    }
+
+    /// Get the Expect constructor value.
+    /// This loads lazily from the global object.
+    pub fn getConstructor(globalObject: *JSC.JSGlobalObject) JSC.JSValue {
+        JSC.markBinding(@src());
+        return Expect__getConstructor(globalObject);
+    }
+
+    /// Create a new instance of Expect
+    pub fn toJS(this: *Expect, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
+        JSC.markBinding(@src());
+        if (comptime Environment.allow_assert) {
+            const value__ = Expect__create(globalObject, this);
+            std.debug.assert(value__.as(Expect).? == this); // If this fails, likely a C ABI issue.
+            return value__;
+        } else {
+            return Expect__create(globalObject, this);
+        }
+    }
+
+    /// Modify the internal ptr to point to a new instance of Expect.
+    pub fn dangerouslySetPtr(value: JSC.JSValue, ptr: ?*Expect) bool {
+        JSC.markBinding(@src());
+        return Expect__dangerouslySetPtr(value, ptr);
+    }
+
+    /// Detach the ptr from the thisValue
+    pub fn detachPtr(_: *Expect, value: JSC.JSValue) void {
+        JSC.markBinding(@src());
+        std.debug.assert(Expect__dangerouslySetPtr(value, null));
+    }
+
+    extern fn Expect__fromJS(JSC.JSValue) ?*Expect;
+    extern fn Expect__getConstructor(*JSC.JSGlobalObject) JSC.JSValue;
+
+    extern fn Expect__create(globalObject: *JSC.JSGlobalObject, ptr: ?*Expect) JSC.JSValue;
+
+    extern fn Expect__dangerouslySetPtr(JSC.JSValue, ?*Expect) bool;
+
+    comptime {
+        if (@TypeOf(Expect.constructor) != (fn (*JSC.JSGlobalObject, *JSC.CallFrame) callconv(.C) ?*Expect)) {
+            @compileLog("Expect.constructor is not a constructor");
+        }
+
+        if (@TypeOf(Expect.finalize) != (fn (*Expect) callconv(.C) void)) {
+            @compileLog("Expect.finalize is not a finalizer");
+        }
+
+        if (@TypeOf(Expect.getNot) != GetterType)
+            @compileLog("Expected Expect.getNot to be a getter");
+
+        if (@TypeOf(Expect.getRejects) != GetterType)
+            @compileLog("Expected Expect.getRejects to be a getter");
+
+        if (@TypeOf(Expect.getResolves) != GetterType)
+            @compileLog("Expected Expect.getResolves to be a getter");
+
+        if (@TypeOf(Expect.toBe) != CallbackType)
+            @compileLog("Expected Expect.toBe to be a callback");
+        if (@TypeOf(Expect.toBeCloseTo) != CallbackType)
+            @compileLog("Expected Expect.toBeCloseTo to be a callback");
+        if (@TypeOf(Expect.toBeGreaterThan) != CallbackType)
+            @compileLog("Expected Expect.toBeGreaterThan to be a callback");
+        if (@TypeOf(Expect.toBeGreaterThanOrEqual) != CallbackType)
+            @compileLog("Expected Expect.toBeGreaterThanOrEqual to be a callback");
+        if (@TypeOf(Expect.toBeInstanceOf) != CallbackType)
+            @compileLog("Expected Expect.toBeInstanceOf to be a callback");
+        if (@TypeOf(Expect.toBeLessThan) != CallbackType)
+            @compileLog("Expected Expect.toBeLessThan to be a callback");
+        if (@TypeOf(Expect.toBeLessThanOrEqual) != CallbackType)
+            @compileLog("Expected Expect.toBeLessThanOrEqual to be a callback");
+        if (@TypeOf(Expect.toContain) != CallbackType)
+            @compileLog("Expected Expect.toContain to be a callback");
+        if (@TypeOf(Expect.toContainEqual) != CallbackType)
+            @compileLog("Expected Expect.toContainEqual to be a callback");
+        if (@TypeOf(Expect.toEqual) != CallbackType)
+            @compileLog("Expected Expect.toEqual to be a callback");
+        if (@TypeOf(Expect.toHaveBeenCalledTimes) != CallbackType)
+            @compileLog("Expected Expect.toHaveBeenCalledTimes to be a callback");
+        if (@TypeOf(Expect.toHaveBeenCalledWith) != CallbackType)
+            @compileLog("Expected Expect.toHaveBeenCalledWith to be a callback");
+        if (@TypeOf(Expect.toHaveBeenLastCalledWith) != CallbackType)
+            @compileLog("Expected Expect.toHaveBeenLastCalledWith to be a callback");
+        if (@TypeOf(Expect.toHaveBeenNthCalledWith) != CallbackType)
+            @compileLog("Expected Expect.toHaveBeenNthCalledWith to be a callback");
+        if (@TypeOf(Expect.toHaveLastReturnedWith) != CallbackType)
+            @compileLog("Expected Expect.toHaveLastReturnedWith to be a callback");
+        if (@TypeOf(Expect.toHaveLength) != CallbackType)
+            @compileLog("Expected Expect.toHaveLength to be a callback");
+        if (@TypeOf(Expect.toHaveNthReturnedWith) != CallbackType)
+            @compileLog("Expected Expect.toHaveNthReturnedWith to be a callback");
+        if (@TypeOf(Expect.toHaveProperty) != CallbackType)
+            @compileLog("Expected Expect.toHaveProperty to be a callback");
+        if (@TypeOf(Expect.toHaveReturnedTimes) != CallbackType)
+            @compileLog("Expected Expect.toHaveReturnedTimes to be a callback");
+        if (@TypeOf(Expect.toHaveReturnedWith) != CallbackType)
+            @compileLog("Expected Expect.toHaveReturnedWith to be a callback");
+        if (@TypeOf(Expect.toMatch) != CallbackType)
+            @compileLog("Expected Expect.toMatch to be a callback");
+        if (@TypeOf(Expect.toMatchInlineSnapshot) != CallbackType)
+            @compileLog("Expected Expect.toMatchInlineSnapshot to be a callback");
+        if (@TypeOf(Expect.toMatchObject) != CallbackType)
+            @compileLog("Expected Expect.toMatchObject to be a callback");
+        if (@TypeOf(Expect.toMatchSnapshot) != CallbackType)
+            @compileLog("Expected Expect.toMatchSnapshot to be a callback");
+        if (@TypeOf(Expect.toStrictEqual) != CallbackType)
+            @compileLog("Expected Expect.toStrictEqual to be a callback");
+        if (@TypeOf(Expect.toThrow) != CallbackType)
+            @compileLog("Expected Expect.toThrow to be a callback");
+        if (@TypeOf(Expect.toThrowErrorMatchingInlineSnapshot) != CallbackType)
+            @compileLog("Expected Expect.toThrowErrorMatchingInlineSnapshot to be a callback");
+        if (@TypeOf(Expect.toThrowErrorMatchingSnapshot) != CallbackType)
+            @compileLog("Expected Expect.toThrowErrorMatchingSnapshot to be a callback");
+        if (@TypeOf(Expect.addSnapshotSerializer) != StaticCallbackType)
+            @compileLog("Expected Expect.addSnapshotSerializer to be a static callback");
+        if (@TypeOf(Expect.any) != StaticCallbackType)
+            @compileLog("Expected Expect.any to be a static callback");
+        if (@TypeOf(Expect.anything) != StaticCallbackType)
+            @compileLog("Expected Expect.anything to be a static callback");
+        if (@TypeOf(Expect.arrayContaining) != StaticCallbackType)
+            @compileLog("Expected Expect.arrayContaining to be a static callback");
+        if (@TypeOf(Expect.assertions) != StaticCallbackType)
+            @compileLog("Expected Expect.assertions to be a static callback");
+        if (@TypeOf(Expect.extend) != StaticCallbackType)
+            @compileLog("Expected Expect.extend to be a static callback");
+        if (@TypeOf(Expect.hasAssertions) != StaticCallbackType)
+            @compileLog("Expected Expect.hasAssertions to be a static callback");
+        if (@TypeOf(Expect.getStaticNot) != StaticGetterType)
+            @compileLog("Expected Expect.getStaticNot to be a static getter");
+
+        if (@TypeOf(Expect.objectContaining) != StaticCallbackType)
+            @compileLog("Expected Expect.objectContaining to be a static callback");
+        if (@TypeOf(Expect.getStaticRejects) != StaticGetterType)
+            @compileLog("Expected Expect.getStaticRejects to be a static getter");
+
+        if (@TypeOf(Expect.getStaticResolves) != StaticGetterType)
+            @compileLog("Expected Expect.getStaticResolves to be a static getter");
+
+        if (@TypeOf(Expect.stringContaining) != StaticCallbackType)
+            @compileLog("Expected Expect.stringContaining to be a static callback");
+        if (@TypeOf(Expect.stringMatching) != StaticCallbackType)
+            @compileLog("Expected Expect.stringMatching to be a static callback");
+        if (@TypeOf(Expect.call) != StaticCallbackType)
+            @compileLog("Expected Expect.call to be a static callback");
+        if (!JSC.is_bindgen) {
+            @export(Expect.addSnapshotSerializer, .{ .name = "ExpectClass__addSnapshotSerializer" });
+            @export(Expect.any, .{ .name = "ExpectClass__any" });
+            @export(Expect.anything, .{ .name = "ExpectClass__anything" });
+            @export(Expect.arrayContaining, .{ .name = "ExpectClass__arrayContaining" });
+            @export(Expect.assertions, .{ .name = "ExpectClass__assertions" });
+            @export(Expect.call, .{ .name = "ExpectClass__call" });
+            @export(Expect.constructor, .{ .name = "ExpectClass__construct" });
+            @export(Expect.extend, .{ .name = "ExpectClass__extend" });
+            @export(Expect.finalize, .{ .name = "ExpectClass__finalize" });
+            @export(Expect.getNot, .{ .name = "ExpectPrototype__getNot" });
+            @export(Expect.getRejects, .{ .name = "ExpectPrototype__getRejects" });
+            @export(Expect.getResolves, .{ .name = "ExpectPrototype__getResolves" });
+            @export(Expect.getStaticNot, .{ .name = "ExpectClass__getStaticNot" });
+            @export(Expect.getStaticRejects, .{ .name = "ExpectClass__getStaticRejects" });
+            @export(Expect.getStaticResolves, .{ .name = "ExpectClass__getStaticResolves" });
+            @export(Expect.hasAssertions, .{ .name = "ExpectClass__hasAssertions" });
+            @export(Expect.objectContaining, .{ .name = "ExpectClass__objectContaining" });
+            @export(Expect.stringContaining, .{ .name = "ExpectClass__stringContaining" });
+            @export(Expect.stringMatching, .{ .name = "ExpectClass__stringMatching" });
+            @export(Expect.toBe, .{ .name = "ExpectPrototype__toBe" });
+            @export(Expect.toBeCloseTo, .{ .name = "ExpectPrototype__toBeCloseTo" });
+            @export(Expect.toBeGreaterThan, .{ .name = "ExpectPrototype__toBeGreaterThan" });
+            @export(Expect.toBeGreaterThanOrEqual, .{ .name = "ExpectPrototype__toBeGreaterThanOrEqual" });
+            @export(Expect.toBeInstanceOf, .{ .name = "ExpectPrototype__toBeInstanceOf" });
+            @export(Expect.toBeLessThan, .{ .name = "ExpectPrototype__toBeLessThan" });
+            @export(Expect.toBeLessThanOrEqual, .{ .name = "ExpectPrototype__toBeLessThanOrEqual" });
+            @export(Expect.toContain, .{ .name = "ExpectPrototype__toContain" });
+            @export(Expect.toContainEqual, .{ .name = "ExpectPrototype__toContainEqual" });
+            @export(Expect.toEqual, .{ .name = "ExpectPrototype__toEqual" });
+            @export(Expect.toHaveBeenCalledTimes, .{ .name = "ExpectPrototype__toHaveBeenCalledTimes" });
+            @export(Expect.toHaveBeenCalledWith, .{ .name = "ExpectPrototype__toHaveBeenCalledWith" });
+            @export(Expect.toHaveBeenLastCalledWith, .{ .name = "ExpectPrototype__toHaveBeenLastCalledWith" });
+            @export(Expect.toHaveBeenNthCalledWith, .{ .name = "ExpectPrototype__toHaveBeenNthCalledWith" });
+            @export(Expect.toHaveLastReturnedWith, .{ .name = "ExpectPrototype__toHaveLastReturnedWith" });
+            @export(Expect.toHaveLength, .{ .name = "ExpectPrototype__toHaveLength" });
+            @export(Expect.toHaveNthReturnedWith, .{ .name = "ExpectPrototype__toHaveNthReturnedWith" });
+            @export(Expect.toHaveProperty, .{ .name = "ExpectPrototype__toHaveProperty" });
+            @export(Expect.toHaveReturnedTimes, .{ .name = "ExpectPrototype__toHaveReturnedTimes" });
+            @export(Expect.toHaveReturnedWith, .{ .name = "ExpectPrototype__toHaveReturnedWith" });
+            @export(Expect.toMatch, .{ .name = "ExpectPrototype__toMatch" });
+            @export(Expect.toMatchInlineSnapshot, .{ .name = "ExpectPrototype__toMatchInlineSnapshot" });
+            @export(Expect.toMatchObject, .{ .name = "ExpectPrototype__toMatchObject" });
+            @export(Expect.toMatchSnapshot, .{ .name = "ExpectPrototype__toMatchSnapshot" });
+            @export(Expect.toStrictEqual, .{ .name = "ExpectPrototype__toStrictEqual" });
+            @export(Expect.toThrow, .{ .name = "ExpectPrototype__toThrow" });
+            @export(Expect.toThrowErrorMatchingInlineSnapshot, .{ .name = "ExpectPrototype__toThrowErrorMatchingInlineSnapshot" });
+            @export(Expect.toThrowErrorMatchingSnapshot, .{ .name = "ExpectPrototype__toThrowErrorMatchingSnapshot" });
+        }
+    }
+};
 pub const JSTextDecoder = struct {
     const TextDecoder = Classes.TextDecoder;
     const GetterType = fn (*TextDecoder, *JSC.JSGlobalObject) callconv(.C) JSC.JSValue;
@@ -2113,6 +2364,7 @@ comptime {
     _ = JSSHA256;
     _ = JSSHA512_256;
     _ = JSServerWebSocket;
+    _ = JSExpect;
     _ = JSTextDecoder;
     _ = JSRequest;
     _ = JSResponse;

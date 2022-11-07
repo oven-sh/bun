@@ -76,6 +76,12 @@ JSC::Structure* JSServerWebSocketStructure() { return m_JSServerWebSocket.getIni
   JSC::LazyClassStructure m_JSServerWebSocket;
   bool hasJSServerWebSocketSetterValue { false };
   mutable JSC::WriteBarrier<JSC::Unknown> m_JSServerWebSocketSetterValue;
+JSC::Structure* JSExpectStructure() { return m_JSExpect.getInitializedOnMainThread(this); }
+        JSC::JSObject* JSExpectConstructor() { return m_JSExpect.constructorInitializedOnMainThread(this); }
+        JSC::JSValue JSExpectPrototype() { return m_JSExpect.prototypeInitializedOnMainThread(this); }
+  JSC::LazyClassStructure m_JSExpect;
+  bool hasJSExpectSetterValue { false };
+  mutable JSC::WriteBarrier<JSC::Unknown> m_JSExpectSetterValue;
 JSC::Structure* JSTextDecoderStructure() { return m_JSTextDecoder.getInitializedOnMainThread(this); }
         JSC::JSObject* JSTextDecoderConstructor() { return m_JSTextDecoder.constructorInitializedOnMainThread(this); }
         JSC::JSValue JSTextDecoderPrototype() { return m_JSTextDecoder.prototypeInitializedOnMainThread(this); }

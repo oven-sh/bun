@@ -11,7 +11,8 @@ std::unique_ptr<IsoSubspace> m_subspaceForSHA512Constructor;std::unique_ptr<IsoS
 std::unique_ptr<IsoSubspace> m_subspaceForSHA384Constructor;std::unique_ptr<IsoSubspace> m_subspaceForSHA256;
 std::unique_ptr<IsoSubspace> m_subspaceForSHA256Constructor;std::unique_ptr<IsoSubspace> m_subspaceForSHA512_256;
 std::unique_ptr<IsoSubspace> m_subspaceForSHA512_256Constructor;std::unique_ptr<IsoSubspace> m_subspaceForServerWebSocket;
-std::unique_ptr<IsoSubspace> m_subspaceForServerWebSocketConstructor;std::unique_ptr<IsoSubspace> m_subspaceForTextDecoder;
+std::unique_ptr<IsoSubspace> m_subspaceForServerWebSocketConstructor;std::unique_ptr<IsoSubspace> m_subspaceForExpect;
+std::unique_ptr<IsoSubspace> m_subspaceForExpectConstructor;std::unique_ptr<IsoSubspace> m_subspaceForTextDecoder;
 std::unique_ptr<IsoSubspace> m_subspaceForTextDecoderConstructor;std::unique_ptr<IsoSubspace> m_subspaceForRequest;
 std::unique_ptr<IsoSubspace> m_subspaceForRequestConstructor;std::unique_ptr<IsoSubspace> m_subspaceForResponse;
 std::unique_ptr<IsoSubspace> m_subspaceForResponseConstructor;std::unique_ptr<IsoSubspace> m_subspaceForBlob;

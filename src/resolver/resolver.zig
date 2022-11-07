@@ -432,7 +432,6 @@ pub const Resolver = struct {
 
     package_manager: ?*PackageManager = null,
     onWakePackageManager: PackageManager.WakeHandler = .{},
-    main_file_for_package_manager: []const u8 = "",
     env_loader: ?*DotEnv.Loader = null,
 
     // These are sets that represent various conditions for the "exports" field

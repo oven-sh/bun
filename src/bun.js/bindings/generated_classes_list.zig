@@ -18,4 +18,5 @@ pub const Classes = struct {
     pub const TCPSocket = JSC.API.TCPSocket;
     pub const TLSSocket = JSC.API.TLSSocket;
     pub const Listener = JSC.API.Listener;
+    pub const Expect = JSC.Jest.Expect;
 };

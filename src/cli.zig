@@ -179,7 +179,7 @@ pub const Arguments = struct {
         clap.parseParam("--no-summary                     Don't print a summary (when generating .bun") catch unreachable,
         clap.parseParam("-v, --version                    Print version and exit") catch unreachable,
         clap.parseParam("--platform <STR>                  \"browser\" or \"node\". Defaults to \"browser\"") catch unreachable,
-        // clap.parseParam("--production                      [not implemented] generate production code") catch unreachable,
+        // clap.parseParam("--production                      [not implemented] generate production code") catch unreachable,
         clap.parseParam("--public-dir <STR>                Top-level directory for .html files, fonts or anything external. Defaults to \"<cwd>/public\", to match create-react-app and Next.js") catch unreachable,
         clap.parseParam("--tsconfig-override <STR>         Load tsconfig from path instead of cwd/tsconfig.json") catch unreachable,
         clap.parseParam("-d, --define <STR>...             Substitute K:V while parsing, e.g. --define process.env.NODE_ENV:\"development\". Values are parsed as JSON.") catch unreachable,

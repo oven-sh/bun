@@ -53,9 +53,7 @@ describe("spawn()", () => {
     try {
       child = spawn(123);
       child2 = spawn(["echo", "hello"]);
-    } catch (e) {
-      console.error(e);
-    }
+    } catch (e) {}
     expect(!!child).toBe(false);
     expect(!!child2).toBe(false);
   });
@@ -140,7 +138,7 @@ describe("spawn()", () => {
   });
 
   it("should allow us to timeout hanging processes", async () => {
-    const child = spawn("sleep", ["2"], { timeout: 400 });
+    const child = spawn("sleep", ["2"], { timeout: 3 });
     const start = performance.now();
     let end;
     await new Promise((resolve) => {
@@ -174,7 +172,7 @@ describe("spawn()", () => {
         resolve(msg);
       });
     });
-    expect(/bun:/.test(result)).toBe(true);
+    expect(/Open bun's Discord server/.test(result)).toBe(true);
   });
 
   it("should allow us to spawn in a shell", async () => {
@@ -190,8 +188,8 @@ describe("spawn()", () => {
         resolve(data.toString());
       });
     });
-    expect(result1.trim()).toBe("/bin/sh");
-    expect(result2.trim()).toBe("/bin/bash");
+    expect(result1.trim()).toBe(Bun.which("sh"));
+    expect(result2.trim()).toBe(Bun.which("bash"));
   });
   it("should spawn a process synchronously", () => {
     const { stdout } = spawnSync("echo", ["hello"], { encoding: "utf8" });
@@ -260,20 +258,19 @@ describe("execSync()", () => {
   });
 });
 
-// describe("Bun.spawn()", () => {
-//   it("should return exit code 0 on successful execution", async () => {
-//     const result = await new Promise((resolve) => {
-//       Bun.spawn({
-//         cmd: ["echo", "hello"],
-//         encoding: "utf8",
-//         onExit: (code) => resolve(code),
-//         stdout: "inherit",
-//       });
-//     });
-//     expect(result).toBe(0);
-//   });
-//   it("should fail when given an invalid cwd", () => {
-//     const child = Bun.spawn({ cmd: ["echo", "hello"], cwd: "/invalid" });
-//     expect(child.pid).toBe(undefined);
-//   });
-// });
+describe("Bun.spawn()", () => {
+  it("should return exit code 0 on successful execution", async () => {
+    const result = await new Promise((resolve) => {
+      Bun.spawn({
+        cmd: ["echo", "hello"],
+        onExit: (code) => resolve(code),
+        stdout: "inherit",
+      });
+    });
+    expect(result).toBe(0);
+  });
+  // it("should fail when given an invalid cwd", () => {
+  //   const child = Bun.spawn({ cmd: ["echo", "hello"], cwd: "/invalid" });
+  //   expect(child.pid).toBe(undefined);
+  // });
+});

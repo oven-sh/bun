@@ -207,7 +207,7 @@ pub const ZigString = extern struct {
             return .{
                 .ptr = input.ptr,
                 .len = @truncate(u32, input.len),
-                .allocator = NullableAllocator.init(bun.default_allocator),
+                .allocator = .{},
             };
         }
 
@@ -2599,6 +2599,57 @@ pub const JSValue = enum(JSValueReprInt) {
         DOMWrapper = 0b11101110,
         Blob = 0b11111100,
         _,
+
+        pub fn canGet(this: JSType) bool {
+            return switch (this) {
+                .Array,
+                .ArrayBuffer,
+                .BigInt64Array,
+                .BigUint64Array,
+                .BooleanObject,
+                .DOMWrapper,
+                .DataView,
+                .DerivedArray,
+                .DerivedStringObject,
+                .ErrorInstance,
+                .Event,
+                .FinalObject,
+                .Float32Array,
+                .Float64Array,
+                .GlobalObject,
+                .Int16Array,
+                .Int32Array,
+                .Int8Array,
+                .InternalFunction,
+                .JSArrayIterator,
+                .JSAsyncGenerator,
+                .JSDate,
+                .JSFunction,
+                .JSGenerator,
+                .JSMap,
+                .JSMapIterator,
+                .JSPromise,
+                .JSSet,
+                .JSSetIterator,
+                .JSStringIterator,
+                .JSWeakMap,
+                .JSWeakSet,
+                .ModuleNamespaceObject,
+                .NumberObject,
+                .Object,
+                .ProxyObject,
+                .RegExpObject,
+                .ShadowRealm,
+                .StringObject,
+                .Uint16Array,
+                .Uint32Array,
+                .Uint8Array,
+                .Uint8ClampedArray,
+                .WebAssemblyModule,
+                => true,
+                else => false,
+            };
+        }
 
         pub fn isObject(this: JSType) bool {
             return switch (this) {

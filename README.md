@@ -4479,6 +4479,8 @@ You can also use `jsconfig.json` if you don't want to use TypeScript.
 
 ### Bun's Module Resolution Algorithm
 
+<small>Added in Bun v0.2.3</small>
+
 Bun's module resolution algorithm is a lot like Node's except one key difference: `node_modules` folder is optional and `package.json` is optional.
 
 Highlights:

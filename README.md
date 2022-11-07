@@ -4598,7 +4598,7 @@ With a dependency tree like this:
 
 To satisfy the Node.js Module Resolution algorithm, npm clients are forced to install the same version of `dep2` **multiple times for the same project**. This is because `dep2` is a dependency of `dep1` and `dep3`, and `dep3` depends on a different version of `dep2` than `dep1`.
 
-With Bun, the lockfile is used to resolve the correct version of `dep2` to use. This means that `dep2` only needs to be installed once and it will be reused for every project that depends on it.
+With Bun, the lockfile is used to resolve the correct version of `dep2` to use. This means that `dep2` only needs to be installed once and it will be reused for all projects on your computer that depend on it.
 
 ![image](https://user-images.githubusercontent.com/709451/198907459-710d5299-bac0-40d8-b630-8112d42900e1.png)
 

@@ -654,6 +654,8 @@ pub const FFI = struct {
         extern "C" fn FFICallbackFunctionWrapper_destroy(*anyopaque) void;
 
         pub fn deinit(val: *Function, globalThis: *JSC.JSGlobalObject, allocator: std.mem.Allocator) void {
+            JSC.markBinding(@src());
+
             if (val.base_name) |base_name| {
                 if (std.mem.span(base_name).len > 0) {
                     allocator.free(bun.constStrToU8(std.mem.span(base_name)));
@@ -926,6 +928,7 @@ pub const FFI = struct {
             js_function: JSValue,
             is_threadsafe: bool,
         ) !void {
+            JSC.markBinding(@src());
             var source_code = std.ArrayList(u8).init(allocator);
             var source_code_writer = source_code.writer();
             var ffi_wrapper = Bun__createFFICallbackFunction(js_context, js_function);

@@ -490,7 +490,6 @@ pub const Resolver = struct {
             this.allocator,
             .{},
             this.env_loader.?,
-            this.main_file_for_package_manager,
         ) catch @panic("Failed to initialize package manager");
         this.package_manager.?.onWake = this.onWakePackageManager;
 
@@ -1580,6 +1579,9 @@ pub const Resolver = struct {
                     {
                         if (dependency_version.tag == .uninitialized) {
                             const sliced_string = Semver.SlicedString.init(esm.version, esm.version);
+                            if (esm_.?.version.len > 0 and dir_info.enclosing_package_json != null and global_cache.allowVersionSpecifier()) {
+                                return .{ .failure = error.VersionSpecifierNotAllowedHere };
+                            }
                             dependency_version = Dependency.parse(
                                 r.allocator,
                                 esm.version,
@@ -3491,6 +3493,10 @@ pub const GlobalCache = enum {
         .{ "disable", GlobalCache.disable },
         .{ "fallback", GlobalCache.fallback },
     });
+
+    pub fn allowVersionSpecifier(this: GlobalCache) bool {
+        return this == .force;
+    }
 
     pub fn canUse(this: GlobalCache, has_a_node_modules_folder: bool) bool {
         // When there is a node_modules folder, we default to false

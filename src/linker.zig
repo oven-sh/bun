@@ -571,6 +571,34 @@ pub const Linker = struct {
                         }
                     } else |err| {
                         switch (err) {
+                            error.VersionSpecifierNotAllowedHere => {
+                                var subpath_buf: [512]u8 = undefined;
+
+                                if (ESModule.Package.parse(import_record.path.text, &subpath_buf)) |pkg| {
+                                    linker.log.addResolveError(
+                                        &result.source,
+                                        import_record.range,
+                                        linker.allocator,
+                                        "Unexpected version \"{s}\" in import specifier \"{s}\". When a package.json is present, please use one of the \"dependencies\" fields in package.json for setting dependency versions",
+                                        .{ pkg.version, import_record.path.text },
+                                        import_record.kind,
+                                        err,
+                                    ) catch {};
+                                } else {
+                                    linker.log.addResolveError(
+                                        &result.source,
+                                        import_record.range,
+                                        linker.allocator,
+                                        "Unexpected version in import specifier \"{s}\". When a package.json is present, please use one of the \"dependencies\" fields in package.json to specify the version",
+                                        .{import_record.path.text},
+                                        import_record.kind,
+                                        err,
+                                    ) catch {};
+                                }
+                                had_resolve_errors = true;
+                                continue;
+                            },
+
                             error.NoMatchingVersion => {
                                 if (import_record.handles_import_errors) {
                                     import_record.path.is_disabled = true;

@@ -65,7 +65,6 @@ pub const Run = struct {
         run.vm.bundler.resolver.opts.global_cache = ctx.debug.global_cache;
         run.vm.bundler.resolver.opts.prefer_offline_install = (ctx.debug.offline_mode_setting orelse .online) == .offline;
         run.vm.bundler.resolver.opts.prefer_latest_install = (ctx.debug.offline_mode_setting orelse .online) == .latest;
-        run.vm.bundler.resolver.main_file_for_package_manager = entry_path;
         run.vm.bundler.options.global_cache = run.vm.bundler.resolver.opts.global_cache;
         run.vm.bundler.options.prefer_offline_install = run.vm.bundler.resolver.opts.prefer_offline_install;
         run.vm.bundler.options.prefer_latest_install = run.vm.bundler.resolver.opts.prefer_latest_install;

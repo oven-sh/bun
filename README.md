@@ -4513,7 +4513,8 @@ It will check the lockfile for the version. If the lockfile doesn't have a versi
 
 Lowlights:
 
-- TypeScript type support is not implmented yet.
+- TypeScript type support isn't implmented yet
+- patch package support isn't implemented yet
 
 #### Resolving packages
 
@@ -4575,14 +4576,14 @@ This only activates for "package paths". That is, paths that start with a packag
 
 Per-project `node_modules` folders are not necessary when using Bun. This saves you disk space and time spent copying/linking dependencies into `node_modules` folders for every project.
 
-| Runtime | require/import | in package | resolution                                               |
-| ------- | -------------- | ---------- | -------------------------------------------------------- |
-| Node.js | "react-dom"    | "react"    | `./node_modules/react-dom/index.js`                      |
-| Bun     | "react-dom"    | "react"    | `$BUN_INSTALL_CACHE/react-dom@${REACT_VERSION}/index.js` |
+| Runtime | require/import | in package | resolution                                             |
+| ------- | -------------- | ---------- | ------------------------------------------------------ |
+| Node.js | "react-dom"    | "react"    | `./node_modules/react-dom/index.js`                    |
+| Bun     | "react-dom"    | "react"    | `$BUN_INSTALL_CACHE_DIR/react-dom@${version}/index.js` |
 
 When multiple versions of a package are installed, Node.js relies on the directory tree structure to resolve the correct version.
 
-Bun uses bun's lockfile to figure out what the version SHOULD be and then installs it into the global cache if that version is not already installed.
+Bun uses bun's lockfile to figure out what the version SHOULD be and then installs it into the global cache (if that version is not already installed).
 
 With a dependency tree like this:
 

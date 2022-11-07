@@ -194,13 +194,13 @@ jobs:
           make -j $(sysctl -n hw.ncpu) release-bindings
       - name: Upload C++
         if: matrix.compile_obj
-        uses: ./.github/actions/upload-files
+        uses: actions/upload-artifact@v3
         with:
           name: ${{ matrix.tag }}-cpp
           path: ${{ runner.temp }}/bun-cpp-obj
       - name: Upload Dependencies
         if: matrix.dependencies
-        uses: ./.github/actions/upload-files
+        uses: actions/upload-artifact@v3
         with:
           name: ${{ matrix.tag }}-deps
           path: ${{runner.temp}}/bun-deps
@@ -273,12 +273,12 @@ jobs:
           mkdir -p $JSC_BASE_DIR
           curl -L ${{ matrix.webkit_url }} | tar -xz -C $JSC_BASE_DIR --strip-components=1
       - name: Download C++
-        uses: alehechka/download-tartifact@v1
+        uses: actions/download-artifact@v3
         with:
           name: ${{ matrix.tag }}-cpp
           path: ${{ runner.temp }}/bun-cpp-obj
       - name: Download Dependencies
-        uses: alehechka/download-tartifact@v1
+        uses: actions/download-artifact@v3
         with:
           name: ${{ matrix.tag }}-deps
           path: ${{ runner.temp }}/bun-deps

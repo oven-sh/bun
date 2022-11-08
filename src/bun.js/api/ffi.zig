@@ -1262,6 +1262,8 @@ pub const FFI = struct {
 
             if (this.arg_types.items.len > 0) {
                 var arg_buf: [512]u8 = undefined;
+                try writer.print(" ZIG_REPR_TYPE arguments[{d}];\n", .{this.arg_types.items.len});
+
                 arg_buf[0.."arg".len].* = "arg".*;
                 for (this.arg_types.items) |arg, i| {
                     const printed = std.fmt.bufPrintIntToSlice(arg_buf["arg".len..], i, 10, .lower, .{});

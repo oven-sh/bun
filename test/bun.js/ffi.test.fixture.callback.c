@@ -111,8 +111,6 @@ static EncodedJSValue _FFI_Callback_call(void* ctx, size_t argCount, ZIG_REPR_TY
   return_value.asZigRepr = FFI_Callback_call(ctx, argCount, args);
   return return_value;
 }
-static ZIG_REPR_TYPE arguments[100];
-
 #endif
 
 static bool JSVALUE_IS_CELL(EncodedJSValue val) __attribute__((__always_inline__));
@@ -290,6 +288,7 @@ bool my_callback_function(void* arg0) {
 #ifdef INJECT_BEFORE
 INJECT_BEFORE;
 #endif
+ ZIG_REPR_TYPE arguments[1];
 arguments[0] = PTR_TO_JSVALUE(arg0).asZigRepr;
   return (bool)JSVALUE_TO_BOOL(_FFI_Callback_call((void*)0x0UL, 1, arguments));
 }

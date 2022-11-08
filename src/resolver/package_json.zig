@@ -804,7 +804,7 @@ pub const PackageJSON = struct {
                 const features = .{
                     .dependencies = true,
                     .dev_dependencies = include_dependencies == .main,
-                    .optional_dependencies = false,
+                    .optional_dependencies = true,
                     .peer_dependencies = false,
                 };
 

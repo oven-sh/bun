@@ -10,6 +10,8 @@ import {
   execSync,
 } from "node:child_process";
 
+const debug = process.env.DEBUG ? console.log : () => {};
+
 const platformTmpDir = `${process.platform === "darwin" ? "/private" : ""}${
   process.env.TMPDIR
 }`.slice(0, -1); // remove trailing slash
@@ -69,11 +71,11 @@ describe("spawn()", () => {
         console.error(e);
       });
       child.stdout.on("data", (data) => {
-        console.log(`stdout: ${data}`);
+        debug(`stdout: ${data}`);
         resolve(data.toString());
       });
       child.stderr.on("data", (data) => {
-        console.log(`stderr: ${data}`);
+        debug(`stderr: ${data}`);
       });
     });
     expect(SEMVER_REGEX.test(result.trim())).toBe(true);

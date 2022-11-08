@@ -1,4 +1,4 @@
-import { listen, connect } from "bun";
+import { listen, connect, TCPSocketListener } from "bun";
 import { expect, it } from "bun:test";
 import * as JSC from "bun:jsc";
 
@@ -76,7 +76,7 @@ it("echo server 1 on 1", async () => {
       },
     };
 
-    var server = listen({
+    var server: TCPSocketListener<any> | undefined = listen({
       socket: handlers,
       hostname: "localhost",
       port: 8084,

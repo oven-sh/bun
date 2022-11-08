@@ -80,7 +80,9 @@ declare module "bun" {
    * });
    * ```
    */
-  export function serve(options: Serve): Server;
+  export function serve<ServeOoptions extends Serve<any>>(
+    options: ServeOoptions
+  ): Server;
 
   /**
    * Synchronously resolve a `moduleId` as though it were imported from `parent`

@@ -119,7 +119,7 @@ describe("ReactDOM", () => {
             gc();
             expect(text.replaceAll("<!-- -->", "")).toBe(inputString);
             gc();
-          } catch (e) {
+          } catch (e: any) {
             console.log(e.stack);
             throw e;
           }
@@ -161,7 +161,7 @@ describe("ReactDOM", () => {
             gc();
             expect(text.replaceAll("<!-- -->", "")).toBe(inputString);
             gc();
-          } catch (e) {
+          } catch (e: any) {
             console.error(e.message);
             console.error(e.stack);
             throw e;
@@ -204,7 +204,7 @@ describe("ReactDOM", () => {
         it("for await (chunk of stream) (arrayBuffer)", async () => {
           const stream = await renderToReadableStream(reactElement);
           gc();
-          const chunks = [];
+          const chunks: any[] = [];
           for await (let chunk of stream) {
             chunks.push(chunk);
           }

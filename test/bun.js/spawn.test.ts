@@ -15,7 +15,7 @@ for (let [gcTick, label] of [
         const { stdout } = spawnSync(["echo", "hi"]);
 
         // stdout is a Buffer
-        const text = stdout.toString();
+        const text = stdout!.toString();
         expect(text).toBe("hi\n");
       });
 
@@ -25,8 +25,8 @@ for (let [gcTick, label] of [
           stdin: new TextEncoder().encode(hugeString),
         });
 
-        expect(stdout.toString()).toBe(hugeString);
-        expect(stderr.byteLength).toBe(0);
+        expect(stdout!.toString()).toBe(hugeString);
+        expect(stderr!.byteLength).toBe(0);
       });
 
       it("check exit code", async () => {
@@ -156,7 +156,7 @@ for (let [gcTick, label] of [
           stdin: Bun.file("/tmp/out.456.txt"),
         });
         gcTick();
-        expect(await readableStreamToText(stdout)).toBe("hello there!");
+        expect(await readableStreamToText(stdout!)).toBe("hello there!");
       });
 
       it("Bun.file() works as stdin and stdout", async () => {
@@ -187,7 +187,7 @@ for (let [gcTick, label] of [
 
         gcTick();
 
-        const text = await readableStreamToText(stdout);
+        const text = await readableStreamToText(stdout!);
         gcTick();
         expect(text).toBe(hugeString);
       });
@@ -223,16 +223,16 @@ for (let [gcTick, label] of [
         });
 
         proc.stdin!.write(hugeString);
-        await proc.stdin.end();
+        await proc.stdin!.end();
         var text = "";
-        var reader = proc.stdout.getReader();
+        var reader = proc.stdout!.getReader();
         var done = false;
         while (!done) {
           var { value, done } = await reader.read();
           if (value) text += new TextDecoder().decode(value);
           if (done && text.length === 0) {
             reader.releaseLock();
-            reader = proc.stdout.getReader();
+            reader = proc.stdout!.getReader();
             done = false;
           }
         }
@@ -271,7 +271,7 @@ for (let [gcTick, label] of [
             describe("should should allow reading stdout", () => {
               it("before exit", async () => {
                 const process = callback();
-                const output = await readableStreamToText(process.stdout);
+                const output = await readableStreamToText(process.stdout!);
                 const expected = fixture + "\n";
                 expect(output.length).toBe(expected.length);
                 expect(output).toBe(expected);
@@ -282,7 +282,7 @@ for (let [gcTick, label] of [
               it("before exit (chunked)", async () => {
                 const process = callback();
                 var output = "";
-                var reader = process.stdout.getReader();
+                var reader = process.stdout!.getReader();
                 var done = false;
                 while (!done) {
                   var { value, done } = await reader.read();
@@ -298,9 +298,9 @@ for (let [gcTick, label] of [
 
               it("after exit", async () => {
                 const process = callback();
-                await process.stdin.end();
+                await process.stdin!.end();
 
-                const output = await readableStreamToText(process.stdout);
+                const output = await readableStreamToText(process.stdout!);
                 const expected = fixture + "\n";
 
                 expect(output.length).toBe(expected.length);

@@ -6,10 +6,12 @@
     "module": "esnext",
     "target": "esnext",
     "moduleResolution": "nodenext",
+    "strict": true,
+    "noImplicitAny": false,
+    "allowSyntheticDefaultImports": true,
     "allowJs": true,
     "downlevelIteration": true,
     "skipLibCheck": true,
-    "allowSyntheticDefaultImports": true,
     "jsx": "react-jsx",
     "types": [
       "bun-types"

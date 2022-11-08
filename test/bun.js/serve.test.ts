@@ -222,7 +222,7 @@ describe("streaming", () => {
       var response;
       try {
         response = await fetch(`http://${server.hostname}:${server.port}`);
-      } catch (e) {
+      } catch (e: any) {
         if (e.name !== "ConnectionClosed") {
           throw e;
         }

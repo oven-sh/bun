@@ -603,7 +603,7 @@ describe("websocket server", () => {
           ws.send("hello world");
         },
         message(ws, msg) {
-          ws.cork(() => {
+          ws.cork!(() => {
             ws.send("hello world");
           });
         },
@@ -707,7 +707,7 @@ describe("websocket server", () => {
 
   it("send rope strings", async () => {
     var ropey = "hello world".repeat(10);
-    var sendQueue = [];
+    var sendQueue: any[] = [];
     for (var i = 0; i < 100; i++) {
       sendQueue.push(ropey + " " + i);
     }
@@ -770,7 +770,7 @@ describe("websocket server", () => {
   // this test sends 100 messages to 10 connected clients via pubsub
   it("pub/sub", async () => {
     var ropey = "hello world".repeat(10);
-    var sendQueue = [];
+    var sendQueue: any[] = [];
     for (var i = 0; i < 100; i++) {
       sendQueue.push(ropey + " " + i);
       gcTick();

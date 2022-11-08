@@ -7,7 +7,7 @@ export function wrap({
   beforeAll: beforeAll_ = undefined,
   afterEach: afterEach_ = undefined,
   afterAll: afterAll_ = undefined,
-}) {
+}: any) {
   if (it_ === undefined) {
     it_ = test_;
   }

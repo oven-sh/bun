@@ -8,18 +8,13 @@
       "esnext",
       "WebWorker"
     ],
-    // "allowJs": true,
-    // "skipLibCheck": true,
     "strict": false,
     "forceConsistentCasingInFileNames": true,
     "noEmit": true,
     "esModuleInterop": true,
-    // "module": "esnext",
-    // "moduleResolution": "Node",
     "resolveJsonModule": true,
     "isolatedModules": true,
     "jsx": "preserve",
-    // "baseUrl": ".",
   },
   "include": [
     "next-env.d.ts",

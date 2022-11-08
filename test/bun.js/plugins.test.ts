@@ -242,7 +242,7 @@ describe("errors", () => {
       try {
         require(`fail:my-file-${loader}`);
         throw -1;
-      } catch (e) {
+      } catch (e: any) {
         if (e === -1) {
           throw new Error("Expected error");
         }
@@ -261,7 +261,7 @@ describe("errors", () => {
       try {
         require(`fail:my-file-${loader}-3`);
         throw -1;
-      } catch (e) {
+      } catch (e: any) {
         if (e === -1) {
           throw new Error("Expected error");
         }
@@ -275,7 +275,7 @@ describe("errors", () => {
       globalThis.asyncret = { wat: true };
       await import("asyncret:my-file");
       throw -1;
-    } catch (e) {
+    } catch (e: any) {
       if (e === -1) {
         throw new Error("Expected error");
       }
@@ -289,7 +289,7 @@ describe("errors", () => {
       globalThis.asyncfail = new Error("async error");
       await import("asyncfail:my-file");
       throw -1;
-    } catch (e) {
+    } catch (e: any) {
       if (e === -1) {
         throw new Error("Expected error");
       }
@@ -309,7 +309,7 @@ describe("errors", () => {
       try {
         require(`fail:my-file-${i}-2`);
         throw -1;
-      } catch (e) {
+      } catch (e: any) {
         if (e === -1) {
           throw new Error("Expected error");
         }
@@ -323,7 +323,7 @@ describe("errors", () => {
       globalThis.asyncOnLoad = `const x: string = -NaNAn../!!;`;
       await import("async:fail");
       throw -1;
-    } catch (e) {
+    } catch (e: any) {
       if (e === -1) {
         throw new Error("Expected error");
       }

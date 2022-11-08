@@ -1,12 +1,8 @@
 {
   "compilerOptions": {
-    // "composite": true,
-    // "emitDeclarationOnly": true,
     "lib": [
       "ESNext"
     ],
-    // "baseUrl": ".",
-    // "rootDir": ".",
     "skipLibCheck": true,
     "strict": true,
     "target": "esnext",
@@ -14,10 +10,6 @@
     "moduleResolution": "node",
     "disableSolutionSearching": true
   },
-  // "include": [
-  //   "./*.d.ts",
-  //   "./**/*.d.ts"
-  // ],
   "exclude": [
     "dist",
     "node_modules",

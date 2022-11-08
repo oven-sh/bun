@@ -318,11 +318,6 @@ extern const int s_jsBufferPrototypeToJSONCodeLength;
 extern const JSC::ConstructAbility s_jsBufferPrototypeToJSONCodeConstructAbility;
 extern const JSC::ConstructorKind s_jsBufferPrototypeToJSONCodeConstructorKind;
 extern const JSC::ImplementationVisibility s_jsBufferPrototypeToJSONCodeImplementationVisibility;
-extern const char* const s_jsBufferPrototypeSubarrayCode;
-extern const int s_jsBufferPrototypeSubarrayCodeLength;
-extern const JSC::ConstructAbility s_jsBufferPrototypeSubarrayCodeConstructAbility;
-extern const JSC::ConstructorKind s_jsBufferPrototypeSubarrayCodeConstructorKind;
-extern const JSC::ImplementationVisibility s_jsBufferPrototypeSubarrayCodeImplementationVisibility;
 extern const char* const s_jsBufferPrototypeSliceCode;
 extern const int s_jsBufferPrototypeSliceCodeLength;
 extern const JSC::ConstructAbility s_jsBufferPrototypeSliceCodeConstructAbility;
@@ -389,7 +384,6 @@ extern const JSC::ImplementationVisibility s_jsBufferPrototypeInitializeBunBuffe
     macro(base64urlSlice, jsBufferPrototypeBase64urlSlice, 2) \
     macro(hexSlice, jsBufferPrototypeHexSlice, 2) \
     macro(toJSON, jsBufferPrototypeToJSON, 0) \
-    macro(subarray, jsBufferPrototypeSubarray, 2) \
     macro(slice, jsBufferPrototypeSlice, 2) \
     macro(initializeBunBuffer, jsBufferPrototypeInitializeBunBuffer, 1) \
 
@@ -447,7 +441,6 @@ extern const JSC::ImplementationVisibility s_jsBufferPrototypeInitializeBunBuffe
 #define WEBCORE_BUILTIN_JSBUFFERPROTOTYPE_BASE64URLSLICE 1
 #define WEBCORE_BUILTIN_JSBUFFERPROTOTYPE_HEXSLICE 1
 #define WEBCORE_BUILTIN_JSBUFFERPROTOTYPE_TOJSON 1
-#define WEBCORE_BUILTIN_JSBUFFERPROTOTYPE_SUBARRAY 1
 #define WEBCORE_BUILTIN_JSBUFFERPROTOTYPE_SLICE 1
 #define WEBCORE_BUILTIN_JSBUFFERPROTOTYPE_INITIALIZEBUNBUFFER 1
 
@@ -506,7 +499,6 @@ extern const JSC::ImplementationVisibility s_jsBufferPrototypeInitializeBunBuffe
     macro(jsBufferPrototypeBase64urlSliceCode, base64urlSlice, ASCIILiteral(), s_jsBufferPrototypeBase64urlSliceCodeLength) \
     macro(jsBufferPrototypeHexSliceCode, hexSlice, ASCIILiteral(), s_jsBufferPrototypeHexSliceCodeLength) \
     macro(jsBufferPrototypeToJSONCode, toJSON, ASCIILiteral(), s_jsBufferPrototypeToJSONCodeLength) \
-    macro(jsBufferPrototypeSubarrayCode, subarray, ASCIILiteral(), s_jsBufferPrototypeSubarrayCodeLength) \
     macro(jsBufferPrototypeSliceCode, slice, ASCIILiteral(), s_jsBufferPrototypeSliceCodeLength) \
     macro(jsBufferPrototypeInitializeBunBufferCode, initializeBunBuffer, ASCIILiteral(), s_jsBufferPrototypeInitializeBunBufferCodeLength) \
 
@@ -542,7 +534,6 @@ extern const JSC::ImplementationVisibility s_jsBufferPrototypeInitializeBunBuffe
     macro(readUInt8) \
     macro(setBigUint64) \
     macro(slice) \
-    macro(subarray) \
     macro(toJSON) \
     macro(ucs2Slice) \
     macro(ucs2Write) \

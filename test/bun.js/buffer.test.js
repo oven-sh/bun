@@ -213,6 +213,71 @@ it("Buffer.compare", () => {
   b[2] = 0;
   expect(a.compare(b)).toBe(1);
   expect(b.compare(a)).toBe(-1);
+
+  const buf = Buffer.from("0123456789", "utf8");
+  const expectedSameBufs = [
+    [buf.slice(-10, 10), Buffer.from("0123456789", "utf8")],
+    [buf.slice(-20, 10), Buffer.from("0123456789", "utf8")],
+    [buf.slice(-20, -10), Buffer.from("", "utf8")],
+    [buf.slice(), Buffer.from("0123456789", "utf8")],
+    [buf.slice(0), Buffer.from("0123456789", "utf8")],
+    [buf.slice(0, 0), Buffer.from("", "utf8")],
+    [buf.slice(undefined), Buffer.from("0123456789", "utf8")],
+    [buf.slice("foobar"), Buffer.from("0123456789", "utf8")],
+    [buf.slice(undefined, undefined), Buffer.from("0123456789", "utf8")],
+    [buf.slice(2), Buffer.from("23456789", "utf8")],
+    [buf.slice(5), Buffer.from("56789", "utf8")],
+    [buf.slice(10), Buffer.from("", "utf8")],
+    [buf.slice(5, 8), Buffer.from("567", "utf8")],
+    [buf.slice(8, -1), Buffer.from("8", "utf8")],
+    [buf.slice(-10), Buffer.from("0123456789", "utf8")],
+    [buf.slice(0, -9), Buffer.from("0", "utf8")],
+    [buf.slice(0, -10), Buffer.from("", "utf8")],
+    [buf.slice(0, -1), Buffer.from("012345678", "utf8")],
+    [buf.slice(2, -2), Buffer.from("234567", "utf8")],
+    [buf.slice(0, 65536), Buffer.from("0123456789", "utf8")],
+    [buf.slice(65536, 0), Buffer.from("", "utf8")],
+    [buf.slice(-5, -8), Buffer.from("", "utf8")],
+    [buf.slice(-5, -3), Buffer.from("56", "utf8")],
+    [buf.slice(-10, 10), Buffer.from("0123456789", "utf8")],
+    [buf.slice("0", "1"), Buffer.from("0", "utf8")],
+    [buf.slice("-5", "10"), Buffer.from("56789", "utf8")],
+    [buf.slice("-10", "10"), Buffer.from("0123456789", "utf8")],
+    [buf.slice("-10", "-5"), Buffer.from("01234", "utf8")],
+    [buf.slice("-10", "-0"), Buffer.from("", "utf8")],
+    [buf.slice("111"), Buffer.from("", "utf8")],
+    [buf.slice("0", "-111"), Buffer.from("", "utf8")],
+  ];
+
+  for (let i = 0, s = buf.toString(); i < buf.length; ++i) {
+    expectedSameBufs.push(
+      [buf.slice(i), Buffer.from(s.slice(i))],
+      [buf.slice(0, i), Buffer.from(s.slice(0, i))],
+      [buf.slice(-i), Buffer.from(s.slice(-i))],
+      [buf.slice(0, -i), Buffer.from(s.slice(0, -i))]
+    );
+  }
+
+  expectedSameBufs.forEach(([buf1, buf2]) => {
+    expect(Buffer.compare(buf1, buf2)).toBe(0);
+  });
+
+  {
+    const buf = Buffer.from([
+      1, 29, 0, 0, 1, 143, 216, 162, 92, 254, 248, 63, 0, 0, 0, 18, 184, 6, 0,
+      175, 29, 0, 8, 11, 1, 0, 0,
+    ]);
+    const chunk1 = Buffer.from([
+      1, 29, 0, 0, 1, 143, 216, 162, 92, 254, 248, 63, 0,
+    ]);
+    const chunk2 = Buffer.from([
+      0, 0, 18, 184, 6, 0, 175, 29, 0, 8, 11, 1, 0, 0,
+    ]);
+    const middle = buf.length / 2;
+
+    expect(JSON.stringify(buf.slice(0, middle))).toBe(JSON.stringify(chunk1));
+    expect(JSON.stringify(buf.slice(middle))).toBe(JSON.stringify(chunk2));
+  }
 });
 
 it("Buffer.copy", () => {
@@ -512,3 +577,16 @@ it("lastIndexOf", () => {
   expect(b.lastIndexOf("b", null)).toBe(-1);
   expect(b.lastIndexOf("b", [])).toBe(-1);
 });
+
+for (let fn of [Buffer.prototype.slice, Buffer.prototype.subarray]) {
+  it(`Buffer.${fn.name}`, () => {
+    const buf = new Buffer("buffer");
+    const slice = fn.call(buf, 1, 3);
+    expect(slice.toString()).toBe("uf");
+    const slice2 = fn.call(slice, 100);
+    expect(slice2.toString()).toBe("");
+
+    const slice3 = fn.call(slice, -1);
+    expect(slice3.toString()).toBe("f");
+  });
+}

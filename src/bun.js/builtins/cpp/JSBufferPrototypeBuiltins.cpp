@@ -717,40 +717,33 @@ const char* const s_jsBufferPrototypeToJSONCode =
     "})\n" \
 ;
 
-const JSC::ConstructAbility s_jsBufferPrototypeSubarrayCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
-const JSC::ConstructorKind s_jsBufferPrototypeSubarrayCodeConstructorKind = JSC::ConstructorKind::None;
-const JSC::ImplementationVisibility s_jsBufferPrototypeSubarrayCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_jsBufferPrototypeSubarrayCodeLength = 196;
-static const JSC::Intrinsic s_jsBufferPrototypeSubarrayCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_jsBufferPrototypeSubarrayCode =
-    "(function (start, end) {\n" \
-    "    \"use strict\";\n" \
-    "\n" \
-    "    Buffer[Symbol.species] ??= Buffer;\n" \
-    "    return new Buffer(this.buffer, this.byteOffset + (start || 0), (end || this.byteLength)  - (start || 0));\n" \
-    "})\n" \
-;
-
 const JSC::ConstructAbility s_jsBufferPrototypeSliceCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_jsBufferPrototypeSliceCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_jsBufferPrototypeSliceCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_jsBufferPrototypeSliceCodeLength = 308;
+const int s_jsBufferPrototypeSliceCodeLength = 612;
 static const JSC::Intrinsic s_jsBufferPrototypeSliceCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_jsBufferPrototypeSliceCode =
     "(function (start, end) {\n" \
     "  \"use strict\";\n" \
-    "  if (start === undefined && end === undefined) {\n" \
-    "    return this;\n" \
+    "  var { buffer, byteOffset, byteLength } = this;\n" \
+    "\n" \
+    "  function adjustOffset(offset, length) {\n" \
+    "    //\n" \
+    "    //\n" \
+    "    offset = @trunc(offset);\n" \
+    "    if (offset === 0 || @isNaN(offset)) {\n" \
+    "      return 0;\n" \
+    "    } else if (offset < 0) {\n" \
+    "      offset += length;\n" \
+    "      return offset > 0 ? offset : 0;\n" \
+    "    } else {\n" \
+    "      return offset < length ? offset : length;\n" \
+    "    }\n" \
     "  }\n" \
     "\n" \
-    "  Buffer[Symbol.species] ||= Buffer;\n" \
-    "\n" \
-    "  start = start || 0;\n" \
-    "  if (end !== 0) {\n" \
-    "      end = end || this.byteLength;\n" \
-    "  }\n" \
-    "\n" \
-    "  return new Buffer(this.buffer, this.byteOffset + start, end - start);\n" \
+    "  var start_ = adjustOffset(start, byteLength);\n" \
+    "  var end_ = end !== undefined ? adjustOffset(end, byteLength) : byteLength;\n" \
+    "  return new Buffer(buffer, byteOffset + start_, end_ > start_ ? (end_ - start_) : 0);\n" \
     "})\n" \
 ;
 

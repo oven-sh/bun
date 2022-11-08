@@ -277,27 +277,27 @@ function toJSON() {
   return { type, data };
 }
 
-function subarray(start, end) {
-    "use strict";
-
-    Buffer[Symbol.species] ??= Buffer;
-    return new Buffer(this.buffer, this.byteOffset + (start || 0), (end || this.byteLength)  - (start || 0));
-}
-
 function slice(start, end) {
   "use strict";
-  if (start === undefined && end === undefined) {
-    return this;
+  var { buffer, byteOffset, byteLength } = this;
+
+  function adjustOffset(offset, length) {
+    // Use Math.trunc() to convert offset to an integer value that can be larger
+    // than an Int32. Hence, don't use offset | 0 or similar techniques.
+    offset = @trunc(offset);
+    if (offset === 0 || @isNaN(offset)) {
+      return 0;
+    } else if (offset < 0) {
+      offset += length;
+      return offset > 0 ? offset : 0;
+    } else {
+      return offset < length ? offset : length;
+    }
   }
 
-  Buffer[Symbol.species] ||= Buffer;
-
-  start = start || 0;
-  if (end !== 0) {
-      end = end || this.byteLength;
-  }
-
-  return new Buffer(this.buffer, this.byteOffset + start, end - start);
+  var start_ = adjustOffset(start, byteLength);
+  var end_ = end !== undefined ? adjustOffset(end, byteLength) : byteLength;
+  return new Buffer(buffer, byteOffset + start_, end_ > start_ ? (end_ - start_) : 0);
 }
 
 

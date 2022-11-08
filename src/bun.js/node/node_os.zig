@@ -45,7 +45,7 @@ pub const Os = struct {
         return module;
     }
 
-    pub const EOL = if (Environment.isWindows) "\\r\\n" else "\\n";
+    pub const EOL = if (Environment.isWindows) "\r\n" else "\n";
     pub const devNull = if (Environment.isWindows) "\\\\.\nul" else "/dev/null";
 
     pub fn arch(globalThis: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSC.JSValue {

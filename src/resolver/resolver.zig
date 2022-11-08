@@ -1522,6 +1522,56 @@ pub const Resolver = struct {
                 var manager = r.getPackageManager();
                 var dependency_version: Dependency.Version = .{};
                 var dependency_behavior = @intToEnum(Dependency.Behavior, Dependency.Behavior.normal);
+
+                // Handle self-references
+                // for example
+                //    require.resolve("esbuild") from inside the "esbuild" package within the cache
+                const package_jsons_to_try = .{
+                    "package_json",
+                    "enclosing_package_json",
+                    "package_json_for_dependencies",
+                };
+
+                inline for (package_jsons_to_try) |package_json_field| {
+                    if (@field(dir_info, package_json_field)) |package_json| {
+                        if (strings.eqlLong(package_json.name, esm.name, true)) {
+                            if (package_json.exports) |exports_map| {
+
+                                // The condition set is determined by the kind of import
+                                const esmodule = ESModule{
+                                    .conditions = switch (kind) {
+                                        ast.ImportKind.require, ast.ImportKind.require_resolve => r.opts.conditions.require,
+                                        else => r.opts.conditions.import,
+                                    },
+                                    .allocator = r.allocator,
+                                    .debug_logs = if (r.debug_logs) |*debug| debug else null,
+                                };
+
+                                // Resolve against the path "/", then join it with the absolute
+                                // directory path. This is done because ESM package resolution uses
+                                // URLs while our path resolution uses file system paths. We don't
+                                // want problems due to Windows paths, which are very unlike URL
+                                // paths. We also want to avoid any "%" characters in the absolute
+                                // directory path accidentally being interpreted as URL escapes.
+                                const esm_resolution = esmodule.resolve("/", esm.subpath, exports_map.root);
+
+                                if (r.handleESMResolution(esm_resolution, package_json.source.path.name.dir, kind, package_json)) |result| {
+                                    return .{ .success = result };
+                                }
+
+                                return .{ .not_found = {} };
+                            }
+
+                            var _paths = [_]string{ dir_info.abs_path, import_path };
+                            const abs_path = r.fs.absBuf(&_paths, &node_modules_check_buf);
+
+                            if (r.loadAsFileOrDirectory(abs_path, kind)) |res| {
+                                return .{ .success = res };
+                            }
+                        }
+                    }
+                }
+
                 // const initial_pending_tasks = manager.pending_tasks;
                 var resolved_package_id: Install.PackageID = brk: {
                     // check if the package.json in the source directory was already added to the lockfile
@@ -1566,27 +1616,6 @@ pub const Resolver = struct {
                         }
                     }
 
-                    // check if the lockfile already resolved this package somewhere
-                    {
-                        if (dependency_version.tag == .uninitialized) {
-                            const sliced_string = Semver.SlicedString.init(esm.version, esm.version);
-                            if (esm_.?.version.len > 0 and dir_info.enclosing_package_json != null and global_cache.allowVersionSpecifier()) {
-                                return .{ .failure = error.VersionSpecifierNotAllowedHere };
-                            }
-                            dependency_version = Dependency.parse(
-                                r.allocator,
-                                esm.version,
-                                &sliced_string,
-                                r.log,
-                            ) orelse break :load_module_from_cache;
-                        }
-
-                        // first we check if the lockfile already has a version of this package somewhere at all
-                        if (manager.lockfile.resolve(esm.name, dependency_version)) |id| {
-                            break :brk id;
-                        }
-                    }
-
                     // If we get here, it means that the lockfile doesn't have this package at all.
                     // we know nothing
                     break :brk Install.invalid_package_id;
@@ -1607,6 +1636,25 @@ pub const Resolver = struct {
                 // Even after resolution, we might still need to download the package
                 // There are two steps here! Two steps!
                 const resolution: Resolution = brk: {
+                    if (resolved_package_id == Install.invalid_package_id) {
+                        if (dependency_version.tag == .uninitialized) {
+                            const sliced_string = Semver.SlicedString.init(esm.version, esm.version);
+                            if (esm_.?.version.len > 0 and dir_info.enclosing_package_json != null and global_cache.allowVersionSpecifier()) {
+                                return .{ .failure = error.VersionSpecifierNotAllowedHere };
+                            }
+                            dependency_version = Dependency.parse(
+                                r.allocator,
+                                esm.version,
+                                &sliced_string,
+                                r.log,
+                            ) orelse break :load_module_from_cache;
+                        }
+
+                        if (manager.lockfile.resolve(esm.name, dependency_version)) |id| {
+                            resolved_package_id = id;
+                        }
+                    }
+
                     if (resolved_package_id != Install.invalid_package_id) {
                         break :brk manager.lockfile.packages.items(.resolution)[resolved_package_id];
                     }
@@ -1841,7 +1889,8 @@ pub const Resolver = struct {
 
         var package: Package = .{};
 
-        if (pm.lockfile.packages.len == 0 and input_package_id == Install.invalid_package_id) {
+        const is_main = pm.lockfile.packages.len == 0 and input_package_id == Install.invalid_package_id;
+        if (is_main) {
             if (package_json_) |package_json| {
                 package = Package.fromPackageJSON(
                     pm.allocator,
@@ -1894,7 +1943,7 @@ pub const Resolver = struct {
 
             // All packages are enqueued to the root
             // because we download all the npm package dependencies
-            switch (pm.enqueueDependencyToRoot(esm.name, esm.version, version, behavior)) {
+            switch (pm.enqueueDependencyToRoot(esm.name, esm.version, version, behavior, is_main)) {
                 .resolution => |result| {
                     input_package_id_.* = result.package_id;
                     return .{ .resolution = result.resolution };
@@ -3500,8 +3549,8 @@ pub const GlobalCache = enum {
             };
         } else {
             return switch (this) {
-                .fallback, .allow_install, .auto, .force => true,
-                .read_only, .disable => false,
+                .read_only, .fallback, .allow_install, .auto, .force => true,
+                .disable => false,
             };
         }
     }

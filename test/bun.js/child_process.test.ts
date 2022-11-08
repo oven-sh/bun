@@ -10,6 +10,10 @@ import {
   execSync,
 } from "node:child_process";
 
+const platformTmpDir = `${process.platform === "darwin" ? "/private" : ""}${
+  process.env.TMPDIR
+}`.slice(0, -1); // remove trailing slash
+
 // Semver regex: https://gist.github.com/jhorsman/62eeea161a13b80e39f5249281e17c39?permalink_comment_id=2896416#gistcomment-2896416
 // Not 100% accurate, but good enough for this test
 const SEMVER_REGEX =
@@ -120,10 +124,7 @@ describe("spawn()", () => {
         resolve(data.toString());
       });
     });
-    const platformTmpDir = `${process.platform === "darwin" ? "/private" : ""}${
-      process.env.TMPDIR
-    }`;
-    expect(`${result.trim()}/`).toBe(platformTmpDir);
+    expect(result.trim()).toBe(platformTmpDir);
   });
 
   it("should allow us to write to stdin", async () => {

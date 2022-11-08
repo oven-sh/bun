@@ -1177,7 +1177,7 @@ pub fn NewPrinter(
                         if (quote == '`')
                             e.print(0x08)
                         else
-                            e.print("\\f");
+                            e.print("\\b");
                     },
                     0x0C => {
                         if (quote == '`')

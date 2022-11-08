@@ -2335,6 +2335,7 @@ pub const Parser = struct {
 
     fn _parse(self: *Parser, comptime ParserType: type) !js_ast.Result {
         var p: ParserType = undefined;
+        const orig_error_count = self.log.errors;
         try ParserType.init(self.allocator, self.log, self.source, self.define, self.lexer, self.options, &p);
         p.should_fold_numeric_constants = self.options.features.should_fold_numeric_constants;
         defer p.lexer.deinit();
@@ -2363,6 +2364,15 @@ pub const Parser = struct {
         // June 4: "Parsing took: 18028000"
         // June 4: "Rest of this took: 8003000"
         const stmts = try p.parseStmtsUpTo(js_lexer.T.t_end_of_file, &opts);
+
+        // Halt parsing right here if there were any errors
+        // This fixes various conditions that would cause crashes due to the AST being in an invalid state while visiting
+        // In a number of situations, we continue to parsing despite errors so that we can report more errors to the user
+        //   Example where NOT halting causes a crash: A TS enum with a number literal as a member name
+        //     https://discord.com/channels/876711213126520882/876711213126520885/1039325382488371280
+        if (self.log.errors > orig_error_count) {
+            return error.SyntaxError;
+        }
 
         try p.prepareForVisitPass();
 
@@ -2424,6 +2434,11 @@ pub const Parser = struct {
                     },
                 }
             }
+        }
+
+        // If there were errors while visiting, also halt here
+        if (self.log.errors > orig_error_count) {
+            return error.SyntaxError;
         }
 
         const uses_dirname = p.symbols.items[p.dirname_ref.innerIndex()].use_count_estimate > 0;

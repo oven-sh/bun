@@ -2037,28 +2037,26 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionPerformMicrotask, (JSGlobalObject * globalObj
     JSValue result;
     WTF::NakedPtr<JSC::Exception> exceptionPtr;
 
-    switch (callframe->argumentCount()) {
-    case 1:
-        JSC::call(globalObject, job, callData, jsUndefined(), arguments, exceptionPtr);
-        break;
-    case 2:
-        arguments.append(callframe->argument(1));
-        JSC::call(globalObject, job, callData, jsUndefined(), arguments, exceptionPtr);
-        break;
-    case 3:
-        arguments.append(callframe->argument(1));
-        arguments.append(callframe->argument(2));
-        JSC::call(globalObject, job, callData, jsUndefined(), arguments, exceptionPtr);
-        break;
-    case 4:
-        arguments.append(callframe->argument(1));
-        arguments.append(callframe->argument(2));
-        arguments.append(callframe->argument(3));
-        JSC::call(globalObject, job, callData, jsUndefined(), arguments, exceptionPtr);
-        break;
-    default:
-        RELEASE_ASSERT_NOT_REACHED();
+    size_t argCount = callframe->argumentCount();
+    if (argCount > 1) {
+        if (JSValue arg0 = callframe->argument(1)) {
+            arguments.append(arg0);
+        }
+
+        if (argCount > 2) {
+            if (JSValue arg1 = callframe->argument(2)) {
+                arguments.append(arg1);
+            }
+
+            if (argCount > 3) {
+                if (JSValue arg2 = callframe->argument(3)) {
+                    arguments.append(arg2);
+                }
+            }
+        }
     }
+
+    JSC::call(globalObject, job, callData, jsUndefined(), arguments, exceptionPtr);
 
     if (auto* exception = exceptionPtr.get()) {
         Bun__reportUnhandledError(globalObject, JSValue::encode(exception));
@@ -2992,46 +2990,58 @@ void GlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
         visitor.append(constructor);
 
     thisObject->m_builtinInternalFunctions.visit(visitor);
-    thisObject->m_JSFFIFunctionStructure.visit(visitor);
-    thisObject->m_JSArrayBufferSinkClassStructure.visit(visitor);
-    thisObject->m_JSArrayBufferControllerPrototype.visit(visitor);
-    thisObject->m_JSBufferListClassStructure.visit(visitor);
-    thisObject->m_JSStringDecoderClassStructure.visit(visitor);
-    thisObject->m_JSReadableStateClassStructure.visit(visitor);
-    thisObject->m_lazyReadableStreamPrototypeMap.visit(visitor);
-    thisObject->m_requireMap.visit(visitor);
-    thisObject->m_processEnvObject.visit(visitor);
-    thisObject->m_processObject.visit(visitor);
-    thisObject->m_performanceObject.visit(visitor);
-    thisObject->m_navigatorObject.visit(visitor);
-    thisObject->m_subtleCryptoObject.visit(visitor);
-    thisObject->m_primordialsObject.visit(visitor);
 
-    thisObject->m_JSHTTPResponseSinkClassStructure.visit(visitor);
-    thisObject->m_JSHTTPSResponseSinkClassStructure.visit(visitor);
-    thisObject->m_JSFileSinkClassStructure.visit(visitor);
-    thisObject->m_OnigurumaRegExpClassStructure.visit(visitor);
+    visitor.append(thisObject->m_assignToStream);
+    visitor.append(thisObject->m_readableStreamToArrayBuffer);
+    visitor.append(thisObject->m_readableStreamToArrayBufferResolve);
+    visitor.append(thisObject->m_readableStreamToBlob);
+    visitor.append(thisObject->m_readableStreamToJSON);
+    visitor.append(thisObject->m_readableStreamToText);
 
-    visitor.append(thisObject->m_JSBufferSetterValue);
-    visitor.append(thisObject->m_JSTextEncoderSetterValue);
+    visitor.append(thisObject->m_JSTextDecoderSetterValue);
+    visitor.append(thisObject->m_JSResponseSetterValue);
+    visitor.append(thisObject->m_JSRequestSetterValue);
+    visitor.append(thisObject->m_JSBlobSetterValue);
     visitor.append(thisObject->m_JSMessageEventSetterValue);
+    visitor.append(thisObject->m_JSBufferSetterValue);
     visitor.append(thisObject->m_JSWebSocketSetterValue);
     visitor.append(thisObject->m_JSFetchHeadersSetterValue);
     visitor.append(thisObject->m_JSTextEncoderSetterValue);
     visitor.append(thisObject->m_JSURLSearchParamsSetterValue);
+
+    thisObject->m_JSArrayBufferSinkClassStructure.visit(visitor);
+    thisObject->m_JSBufferListClassStructure.visit(visitor);
+    thisObject->m_JSFFIFunctionStructure.visit(visitor);
+    thisObject->m_JSFileSinkClassStructure.visit(visitor);
+    thisObject->m_JSHTTPResponseSinkClassStructure.visit(visitor);
+    thisObject->m_JSHTTPSResponseSinkClassStructure.visit(visitor);
+    thisObject->m_JSReadableStateClassStructure.visit(visitor);
+    thisObject->m_JSStringDecoderClassStructure.visit(visitor);
+    thisObject->m_NapiClassStructure.visit(visitor);
+    thisObject->m_OnigurumaRegExpClassStructure.visit(visitor);
+
+    thisObject->m_pendingVirtualModuleResultStructure.visit(visitor);
+    thisObject->m_performMicrotaskFunction.visit(visitor);
+    thisObject->m_performMicrotaskVariadicFunction.visit(visitor);
+    thisObject->m_lazyReadableStreamPrototypeMap.visit(visitor);
+    thisObject->m_requireMap.visit(visitor);
+    thisObject->m_encodeIntoObjectPrototype.visit(visitor);
+    thisObject->m_JSArrayBufferControllerPrototype.visit(visitor);
+    thisObject->m_JSFileSinkControllerPrototype.visit(visitor);
+    thisObject->m_JSHTTPSResponseControllerPrototype.visit(visitor);
+    thisObject->m_navigatorObject.visit(visitor);
+    thisObject->m_performanceObject.visit(visitor);
+    thisObject->m_primordialsObject.visit(visitor);
+    thisObject->m_processEnvObject.visit(visitor);
+    thisObject->m_processObject.visit(visitor);
+    thisObject->m_subtleCryptoObject.visit(visitor);
+    thisObject->m_JSHTTPResponseController.visit(visitor);
 
     for (auto& barrier : thisObject->m_thenables) {
         visitor.append(barrier);
     }
 
     thisObject->visitGeneratedLazyClasses<Visitor>(thisObject, visitor);
-
-    visitor.append(thisObject->m_readableStreamToArrayBufferResolve);
-    visitor.append(thisObject->m_readableStreamToText);
-    visitor.append(thisObject->m_readableStreamToJSON);
-    visitor.append(thisObject->m_readableStreamToBlob);
-    visitor.append(thisObject->m_readableStreamToArrayBuffer);
-    visitor.append(thisObject->m_assignToStream);
 
     ScriptExecutionContext* context = thisObject->scriptExecutionContext();
     visitor.addOpaqueRoot(context);

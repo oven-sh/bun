@@ -348,20 +348,30 @@ public:
         return func;
     }
 
+    /**
+     * WARNING: You must update visitChildrenImpl() if you add a new field.
+     *
+     * That informs the garbage collector that these fields exist. If you don't
+     * do that, the garbage collector will not know about these fields and will
+     * not trace them. This will lead to crashes and very strange behavior at runtime.
+     *
+     * For example, if you don't add the queueMicrotask functions to visitChildrenImpl(),
+     * those callbacks will eventually never be called anymore. But it'll work the first time!
+     */
+    mutable WriteBarrier<JSFunction> m_assignToStream;
+    mutable WriteBarrier<JSFunction> m_readableStreamToArrayBuffer;
     mutable WriteBarrier<JSFunction> m_readableStreamToArrayBufferResolve;
-    mutable WriteBarrier<JSFunction> m_readableStreamToText;
     mutable WriteBarrier<JSFunction> m_readableStreamToBlob;
     mutable WriteBarrier<JSFunction> m_readableStreamToJSON;
-    mutable WriteBarrier<JSFunction> m_readableStreamToArrayBuffer;
-    mutable WriteBarrier<JSFunction> m_assignToStream;
-    mutable WriteBarrier<JSFunction> m_thenables[promiseFunctionsSize + 1];
-
+    mutable WriteBarrier<JSFunction> m_readableStreamToText;
     mutable WriteBarrier<Unknown> m_JSBufferSetterValue;
-    mutable WriteBarrier<Unknown> m_JSTextEncoderSetterValue;
-    mutable WriteBarrier<Unknown> m_JSMessageEventSetterValue;
-    mutable WriteBarrier<Unknown> m_JSWebSocketSetterValue;
     mutable WriteBarrier<Unknown> m_JSFetchHeadersSetterValue;
+    mutable WriteBarrier<Unknown> m_JSMessageEventSetterValue;
+    mutable WriteBarrier<Unknown> m_JSTextEncoderSetterValue;
     mutable WriteBarrier<Unknown> m_JSURLSearchParamsSetterValue;
+    mutable WriteBarrier<Unknown> m_JSWebSocketSetterValue;
+
+    mutable WriteBarrier<JSFunction> m_thenables[promiseFunctionsSize + 1];
 
     JSObject* navigatorObject();
 
@@ -410,42 +420,54 @@ private:
     Lock m_gcLock;
     WebCore::ScriptExecutionContext* m_scriptExecutionContext;
     Ref<WebCore::DOMWrapperWorld> m_world;
-    LazyClassStructure m_JSFFIFunctionStructure;
-    LazyClassStructure m_NapiClassStructure;
+
+    /**
+     * WARNING: You must update visitChildrenImpl() if you add a new field.
+     *
+     * That informs the garbage collector that these fields exist. If you don't
+     * do that, the garbage collector will not know about these fields and will
+     * not trace them. This will lead to crashes and very strange behavior at runtime.
+     *
+     * For example, if you don't add the queueMicrotask functions to visitChildrenImpl(),
+     * those callbacks will eventually never be called anymore. But it'll work the first time!
+     */
     LazyClassStructure m_JSArrayBufferSinkClassStructure;
+    LazyClassStructure m_JSBufferListClassStructure;
+    LazyClassStructure m_JSFFIFunctionStructure;
+    LazyClassStructure m_JSFileSinkClassStructure;
     LazyClassStructure m_JSHTTPResponseSinkClassStructure;
     LazyClassStructure m_JSHTTPSResponseSinkClassStructure;
-    LazyClassStructure m_JSFileSinkClassStructure;
-    LazyClassStructure m_JSBufferListClassStructure;
-    LazyClassStructure m_JSStringDecoderClassStructure;
     LazyClassStructure m_JSReadableStateClassStructure;
+    LazyClassStructure m_JSStringDecoderClassStructure;
+    LazyClassStructure m_NapiClassStructure;
     LazyClassStructure m_OnigurumaRegExpClassStructure;
 
-    LazyProperty<JSGlobalObject, JSObject> m_primordialsObject;
-
-    LazyProperty<JSGlobalObject, JSObject> m_navigatorObject;
-
-    LazyProperty<JSGlobalObject, JSObject> m_JSArrayBufferControllerPrototype;
-    LazyProperty<JSGlobalObject, JSObject> m_JSHTTPSResponseControllerPrototype;
-    LazyProperty<JSGlobalObject, JSObject> m_JSFileSinkControllerPrototype;
-
-    LazyProperty<JSGlobalObject, Structure> m_JSHTTPResponseController;
+    /**
+     * WARNING: You must update visitChildrenImpl() if you add a new field.
+     *
+     * That informs the garbage collector that these fields exist. If you don't
+     * do that, the garbage collector will not know about these fields and will
+     * not trace them. This will lead to crashes and very strange behavior at runtime.
+     *
+     * For example, if you don't add the queueMicrotask functions to visitChildrenImpl(),
+     * those callbacks will eventually never be called anymore. But it'll work the first time!
+     */
+    LazyProperty<JSGlobalObject, JSC::Structure> m_pendingVirtualModuleResultStructure;
     LazyProperty<JSGlobalObject, JSFunction> m_performMicrotaskFunction;
     LazyProperty<JSGlobalObject, JSFunction> m_performMicrotaskVariadicFunction;
-
-    LazyProperty<JSGlobalObject, JSObject> m_processObject;
-    LazyProperty<JSGlobalObject, JSObject> m_processEnvObject;
     LazyProperty<JSGlobalObject, JSMap> m_lazyReadableStreamPrototypeMap;
     LazyProperty<JSGlobalObject, JSMap> m_requireMap;
-    LazyProperty<JSGlobalObject, JSObject> m_performanceObject;
-
-    LazyProperty<JSGlobalObject, JSObject> m_subtleCryptoObject;
-
-    LazyProperty<JSGlobalObject, JSC::Structure> m_pendingVirtualModuleResultStructure;
-
     LazyProperty<JSGlobalObject, JSObject> m_encodeIntoObjectPrototype;
-
-    // LazyProperty<JSGlobalObject, WebCore::JSEventTarget> m_eventTarget;
+    LazyProperty<JSGlobalObject, JSObject> m_JSArrayBufferControllerPrototype;
+    LazyProperty<JSGlobalObject, JSObject> m_JSFileSinkControllerPrototype;
+    LazyProperty<JSGlobalObject, JSObject> m_JSHTTPSResponseControllerPrototype;
+    LazyProperty<JSGlobalObject, JSObject> m_navigatorObject;
+    LazyProperty<JSGlobalObject, JSObject> m_performanceObject;
+    LazyProperty<JSGlobalObject, JSObject> m_primordialsObject;
+    LazyProperty<JSGlobalObject, JSObject> m_processEnvObject;
+    LazyProperty<JSGlobalObject, JSObject> m_processObject;
+    LazyProperty<JSGlobalObject, JSObject> m_subtleCryptoObject;
+    LazyProperty<JSGlobalObject, Structure> m_JSHTTPResponseController;
 
     JSClassRef m_dotEnvClassRef;
 

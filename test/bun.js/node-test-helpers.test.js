@@ -5,7 +5,7 @@ import {
   strictEqual,
   createCallCheckCtx,
   createDoneDotAll,
-} from "our-assert";
+} from "node-test-helpers";
 
 describe("OurAssert.throws()", () => {
   it("should pass when the function throws", () => {

@@ -264,11 +264,16 @@ describe("execSync()", () => {
 describe("Bun.spawn()", () => {
   it("should return exit code 0 on successful execution", async () => {
     const result = await new Promise((resolve) => {
-      Bun.spawn({
+      const proc = Bun.spawn({
         cmd: ["echo", "hello"],
-        onExit: (code) => resolve(code),
         stdout: "inherit",
       });
+      const maybeExited = Bun.peek(proc.exited);
+      if (maybeExited === proc.exited) {
+        proc.exited.then((code) => resolve(code));
+      } else {
+        resolve(maybeExited);
+      }
     });
     expect(result).toBe(0);
   });

@@ -7,7 +7,7 @@ import {
   assertOk,
   createCallCheckCtx,
   createDoneDotAll,
-} from "our-assert";
+} from "node-test-helpers";
 
 const debug = process.env.DEBUG ? console.log : () => {};
 

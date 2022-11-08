@@ -894,7 +894,12 @@ export class ChildProcess extends EventEmitter {
       err.spawnargs = ArrayPrototypeSlice.call(this.spawnargs, 1);
       this.emit("error", err);
     } else {
-      await this.#handleExited;
+      const maybeExited = Bun.peek(this.#handleExited);
+      if (maybeExited === this.#handleExited) {
+        this.exitCode = await this.#handleExited;
+      } else {
+        this.exitCode = maybeExited;
+      }
       this.emit("exit", this.exitCode, this.signalCode);
     }
 

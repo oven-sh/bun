@@ -2950,13 +2950,13 @@ pub const Expr = struct {
 
         pub fn typeof(tag: Tag) ?string {
             return switch (tag) {
-                .e_null => "object",
+                .e_array, .e_object, .e_null, .e_reg_exp => "object",
                 .e_undefined => "undefined",
                 .e_boolean => "boolean",
                 .e_number => "number",
                 .e_big_int => "bigint",
                 .e_string => "string",
-                .e_function, .e_arrow => "function",
+                .e_class, .e_function, .e_arrow => "function",
                 else => null,
             };
         }

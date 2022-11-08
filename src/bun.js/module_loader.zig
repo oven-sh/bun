@@ -188,6 +188,7 @@ pub const ModuleLoader = struct {
 
         // This is the specific state for making it async
         poll_ref: JSC.PollRef = .{},
+        any_task: JSC.AnyTask = undefined,
 
         pub const Id = u32;
         const debug = Output.scoped(.ModuleLoader, false);
@@ -208,6 +209,7 @@ pub const ModuleLoader = struct {
 
         pub const Queue = struct {
             map: Map = .{},
+            scheduled: u32 = 0,
             concurrent_task_count: std.atomic.Atomic(u32) = std.atomic.Atomic(u32).init(0),
 
             const DeferredDependencyError = struct {
@@ -273,9 +275,11 @@ pub const ModuleLoader = struct {
                 var pm = this.vm().packageManager();
 
                 this.runTasks();
+                _ = pm.scheduleNetworkTasks();
+                this.runTasks();
+
                 this.pollModules();
                 _ = pm.flushDependencyQueue();
-                _ = pm.scheduleNetworkTasks();
             }
 
             pub fn runTasks(this: *Queue) void {
@@ -414,8 +418,11 @@ pub const ModuleLoader = struct {
 
             pub fn pollModules(this: *Queue) void {
                 var pm = this.vm().packageManager();
-                var modules = this.map.items;
+                if (pm.pending_tasks > 0) return;
+
+                var modules: []AsyncModule = this.map.items;
                 var i: usize = 0;
+
                 for (modules) |mod| {
                     var module = mod;
                     var tags = module.parse_result.pending_imports.items(.tag);
@@ -459,8 +466,14 @@ pub const ModuleLoader = struct {
 
                         switch (pm.determinePreinstallState(package, pm.lockfile)) {
                             .done => {
-                                done_count += 1;
-                                tags[tag_i] = .done;
+                                // we are only truly done if all the dependencies are done.
+                                const current_tasks = pm.total_tasks;
+                                // so if enqueuing all the dependencies produces no new tasks, we are done.
+                                pm.enqueueDependencyList(package.dependencies, false);
+                                if (current_tasks == pm.total_tasks) {
+                                    tags[tag_i] = .done;
+                                    done_count += 1;
+                                }
                             },
                             .extracting => {
                                 // we are extracting the package
@@ -473,9 +486,6 @@ pub const ModuleLoader = struct {
                     }
 
                     if (done_count == tags.len) {
-                        if (i + 1 >= modules.len) {
-                            this.vm().packageManager().endProgressBar();
-                        }
                         module.done(this.vm());
                     } else {
                         modules[i] = module;
@@ -529,6 +539,19 @@ pub const ModuleLoader = struct {
         }
 
         pub fn done(this: *AsyncModule, jsc_vm: *JSC.VirtualMachine) void {
+            var clone = jsc_vm.allocator.create(AsyncModule) catch unreachable;
+            clone.* = this.*;
+            jsc_vm.modules.scheduled += 1;
+            clone.any_task = JSC.AnyTask.New(AsyncModule, onDone).init(clone);
+            jsc_vm.enqueueTask(JSC.Task.init(&clone.any_task));
+        }
+
+        pub fn onDone(this: *AsyncModule) void {
+            var jsc_vm = this.globalThis.bunVM();
+            jsc_vm.modules.scheduled -= 1;
+            if (jsc_vm.modules.scheduled == 0) {
+                jsc_vm.packageManager().endProgressBar();
+            }
             var log = logger.Log.init(jsc_vm.allocator);
             defer log.deinit();
             var errorable: ErrorableResolvedSource = undefined;
@@ -556,6 +579,7 @@ pub const ModuleLoader = struct {
                 &ref,
             );
             this.deinit();
+            jsc_vm.allocator.destroy(this);
         }
 
         pub fn resolveError(this: *AsyncModule, vm: *JSC.VirtualMachine, import_record_id: u32, result: PackageResolveError) !void {

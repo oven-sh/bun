@@ -480,6 +480,18 @@ pub const TestCommand = struct {
             else => {},
         }
 
+        {
+            vm.global.vm().drainMicrotasks();
+            var count = vm.unhandled_error_counter;
+            vm.global.handleRejectedPromises();
+            while (vm.unhandled_error_counter > count) {
+                count = vm.unhandled_error_counter;
+                vm.global.vm().drainMicrotasks();
+                vm.global.handleRejectedPromises();
+            }
+            vm.global.vm().doWork();
+        }
+
         var modules: []*Jest.DescribeScope = reporter.jest.files.items(.module_scope)[file_start..];
         for (modules) |module| {
             vm.onUnhandledRejectionCtx = null;
@@ -501,5 +513,6 @@ pub const TestCommand = struct {
             _ = vm.global.vm().runGC(false);
         }
         vm.global.vm().clearMicrotaskCallback();
+        vm.global.handleRejectedPromises();
     }
 };

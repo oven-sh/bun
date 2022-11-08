@@ -1543,21 +1543,13 @@ pub const Resolver = struct {
                             string_buf = package_json.dependencies.source_buf;
                         }
 
-                        var hash: u64 = std.math.maxInt(u64);
-
                         for (dependencies_list) |dependency, dependency_id| {
                             const dep_name_ = &dependency.name;
                             const dep_name = dep_name_.slice(string_buf);
                             if (dep_name.len == esm.name.len) {
-                                if (hash == std.math.maxInt(u64)) {
-                                    hash = bun.hash(dep_name);
-                                }
-
-                                if (hash != dependency.name_hash) {
+                                if (!strings.eqlLong(dep_name, esm.name, false)) {
                                     continue;
                                 }
-
-                                std.debug.assert(strings.eql(dep_name, esm.name));
 
                                 dependency_version = dependency.version;
                                 dependency_behavior = dependency.behavior;

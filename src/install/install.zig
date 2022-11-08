@@ -2791,8 +2791,6 @@ pub const PackageManager = struct {
         var lockfile = this.lockfile;
         var dependency_queue = &lockfile.scratch.dependency_list_queue;
 
-        this.flushNetworkQueue();
-
         while (dependency_queue.readItem()) |dependencies_list| {
             var i: u32 = dependencies_list.off;
             const end = dependencies_list.off + dependencies_list.len;
@@ -2804,16 +2802,19 @@ pub const PackageManager = struct {
                     false,
                 ) catch {};
             }
-
-            this.flushNetworkQueue();
         }
+
+        this.flushNetworkQueue();
     }
     pub fn flushDependencyQueue(this: *PackageManager) void {
-        this.flushNetworkQueue();
-        this.doFlushDependencyQueue();
-        this.doFlushDependencyQueue();
-        this.doFlushDependencyQueue();
-        this.flushNetworkQueue();
+        var last_count = this.total_tasks;
+        while (true) : (last_count = this.total_tasks) {
+            this.flushNetworkQueue();
+            this.doFlushDependencyQueue();
+            this.flushNetworkQueue();
+
+            if (this.total_tasks == last_count) break;
+        }
     }
 
     pub fn scheduleNetworkTasks(manager: *PackageManager) usize {
@@ -2987,7 +2988,7 @@ pub const PackageManager = struct {
                             if (manager.dynamic_root_dependencies) |*root_deps| {
                                 var deps: []Dependency.Pair = root_deps.items;
                                 for (deps) |*dep| {
-                                    if (strings.eql(manager.lockfile.str(dep.dependency.name), name.slice())) {
+                                    if (strings.eqlLong(manager.lockfile.str(dep.dependency.name), name.slice(), true)) {
                                         dep.failed = dep.failed orelse err;
                                     }
                                 }
@@ -3153,7 +3154,6 @@ pub const PackageManager = struct {
 
                             try manager.processDependencyList(dependency_list, ExtractCompletionContext, extract_ctx, callbacks);
 
-                            manager.flushDependencyQueue();
                             continue;
                         }
                     }

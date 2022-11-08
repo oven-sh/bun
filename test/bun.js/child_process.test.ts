@@ -10,6 +10,12 @@ import {
   execSync,
 } from "node:child_process";
 
+const debug = process.env.DEBUG ? console.log : () => {};
+
+const platformTmpDir = `${process.platform === "darwin" ? "/private" : ""}${
+  process.env.TMPDIR
+}`.slice(0, -1); // remove trailing slash
+
 // Semver regex: https://gist.github.com/jhorsman/62eeea161a13b80e39f5249281e17c39?permalink_comment_id=2896416#gistcomment-2896416
 // Not 100% accurate, but good enough for this test
 const SEMVER_REGEX =
@@ -65,11 +71,11 @@ describe("spawn()", () => {
         console.error(e);
       });
       child.stdout.on("data", (data) => {
-        console.log(`stdout: ${data}`);
+        debug(`stdout: ${data}`);
         resolve(data.toString());
       });
       child.stderr.on("data", (data) => {
-        console.log(`stderr: ${data}`);
+        debug(`stderr: ${data}`);
       });
     });
     expect(SEMVER_REGEX.test(result.trim())).toBe(true);
@@ -120,10 +126,7 @@ describe("spawn()", () => {
         resolve(data.toString());
       });
     });
-    const platformTmpDir = `${process.platform === "darwin" ? "/private" : ""}${
-      process.env.TMPDIR
-    }`;
-    expect(`${result.trim()}/`).toBe(platformTmpDir);
+    expect(result.trim()).toBe(platformTmpDir);
   });
 
   it("should allow us to write to stdin", async () => {
@@ -261,11 +264,16 @@ describe("execSync()", () => {
 describe("Bun.spawn()", () => {
   it("should return exit code 0 on successful execution", async () => {
     const result = await new Promise((resolve) => {
-      Bun.spawn({
+      const proc = Bun.spawn({
         cmd: ["echo", "hello"],
-        onExit: (code) => resolve(code),
         stdout: "inherit",
       });
+      const maybeExited = Bun.peek(proc.exited);
+      if (maybeExited === proc.exited) {
+        proc.exited.then((code) => resolve(code));
+      } else {
+        resolve(maybeExited);
+      }
     });
     expect(result).toBe(0);
   });

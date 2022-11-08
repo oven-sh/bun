@@ -1,10 +1,19 @@
-import { describe, expect, it } from "bun:test";
+import { beforeAll, describe, it } from "bun:test";
 import { ChildProcess, spawn, exec } from "node:child_process";
-import { EOL } from "node:os";
-import assertNode from "node:assert";
-import { inspect } from "node:util";
+import {
+  strictEqual,
+  throws,
+  assert,
+  assertOk,
+  createCallCheckCtx,
+  createDoneDotAll,
+} from "node-test-helpers";
 
-const debug = console.log;
+const debug = process.env.DEBUG ? console.log : () => {};
+
+const platformTmpDir = `${process.platform === "darwin" ? "/private" : ""}${
+  process.env.TMPDIR
+}`.slice(0, -1); // remove trailing slash
 
 // Copyright Joyent, Inc. and other Node contributors.
 //
@@ -28,152 +37,7 @@ const debug = console.log;
 // USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 const common = {
-  // // TODO: Fix the implementations of these functions, they may be ruining everything...
-  // mustCallAtLeast: function mustCallAtLeast(callback) {
-  //   return (...args) => {
-  //     callback(...args);
-  //     expect(true).toBe(true);
-  //   };
-  // },
-  // mustCall: function mustCall(callback) {
-  //   return (...args) => {
-  //     callback(...args);
-  //     expect(true).toBe(true);
-  //   };
-  // },
   pwdCommand: ["pwd", []],
-};
-
-const mustCallChecks = [];
-
-function runCallChecks(exitCode) {
-  if (exitCode !== 0) return;
-
-  const failed = mustCallChecks.filter(function (context) {
-    if ("minimum" in context) {
-      context.messageSegment = `at least ${context.minimum}`;
-      return context.actual < context.minimum;
-    }
-    context.messageSegment = `exactly ${context.exact}`;
-    return context.actual !== context.exact;
-  });
-
-  failed.forEach(function (context) {
-    console.log(
-      "Mismatched %s function calls. Expected %s, actual %d.",
-      context.name,
-      context.messageSegment,
-      context.actual
-    );
-    console.log(context.stack.split("\n").slice(2).join("\n"));
-  });
-
-  if (failed.length) process.exit(1);
-}
-
-function mustCall(fn, exact) {
-  return _mustCallInner(fn, exact, "exact");
-}
-
-function mustSucceed(fn, exact) {
-  return mustCall(function (err, ...args) {
-    assert.ifError(err);
-    if (typeof fn === "function") return fn.apply(this, args);
-  }, exact);
-}
-
-function mustCallAtLeast(fn, minimum) {
-  return _mustCallInner(fn, minimum, "minimum");
-}
-
-function _mustCallInner(fn, criteria = 1, field) {
-  if (process._exiting)
-    throw new Error("Cannot use common.mustCall*() in process exit handler");
-  if (typeof fn === "number") {
-    criteria = fn;
-    fn = noop;
-  } else if (fn === undefined) {
-    fn = noop;
-  }
-
-  if (typeof criteria !== "number")
-    throw new TypeError(`Invalid ${field} value: ${criteria}`);
-
-  const context = {
-    [field]: criteria,
-    actual: 0,
-    stack: inspect(new Error()),
-    name: fn.name || "<anonymous>",
-  };
-
-  // Add the exit listener only once to avoid listener leak warnings
-  if (mustCallChecks.length === 0) process.on("exit", runCallChecks);
-
-  mustCallChecks.push(context);
-
-  const _return = function () {
-    // eslint-disable-line func-style
-    context.actual++;
-    return fn.apply(this, arguments);
-  };
-  // Function instances have own properties that may be relevant.
-  // Let's replicate those properties to the returned function.
-  // Refs: https://tc39.es/ecma262/#sec-function-instances
-  Object.defineProperties(_return, {
-    name: {
-      value: fn.name,
-      writable: false,
-      enumerable: false,
-      configurable: true,
-    },
-    length: {
-      value: fn.length,
-      writable: false,
-      enumerable: false,
-      configurable: true,
-    },
-  });
-  return _return;
-}
-
-const strictEqual = (...args) => {
-  let error = null;
-  try {
-    assertNode.strictEqual(...args);
-  } catch (err) {
-    error = err;
-  }
-  expect(error).toBe(null);
-};
-
-const throws = (...args) => {
-  let error = null;
-  try {
-    assertNode.throws(...args);
-  } catch (err) {
-    error = err;
-  }
-  expect(error).toBe(null);
-};
-
-const assert = (...args) => {
-  let error = null;
-  try {
-    assertNode(...args);
-  } catch (err) {
-    error = err;
-  }
-  expect(error).toBe(null);
-};
-
-const assertOk = (...args) => {
-  let error = null;
-  try {
-    assertNode.ok(...args);
-  } catch (err) {
-    error = err;
-  }
-  expect(error).toBe(null);
 };
 
 describe("ChildProcess.constructor", () => {
@@ -302,62 +166,80 @@ describe("ChildProcess spawn bad stdio", () => {
   // Monkey patch spawn() to create a child process normally, but destroy the
   // stdout and stderr streams. This replicates the conditions where the streams
   // cannot be properly created.
-  const original = ChildProcess.prototype.spawn;
+  function createChild(options, callback, done) {
+    var __originalSpawn = ChildProcess.prototype.spawn;
+    ChildProcess.prototype.spawn = function () {
+      const err = __originalSpawn.apply(this, arguments);
 
-  ChildProcess.prototype.spawn = function () {
-    const err = original.apply(this, arguments);
+      this.stdout.destroy();
+      this.stderr.destroy();
+      this.stdout = null;
+      this.stderr = null;
 
-    this.stdout.destroy();
-    this.stderr.destroy();
-    this.stdout = null;
-    this.stderr = null;
+      return err;
+    };
 
-    return err;
-  };
-
-  function createChild(options, callback) {
-    const cmd = `"${process.execPath}" "${import.meta.path}" child`;
-    return exec(cmd, options, mustCall(callback));
+    const { mustCall } = createCallCheckCtx(done);
+    const cmd = `bun ${__dirname}/spawned-child.js`;
+    const child = exec(cmd, options, mustCall(callback));
+    ChildProcess.prototype.spawn = __originalSpawn;
+    return child;
   }
 
-  it("should handle normal execution of child process", () => {
-    createChild({}, (err, stdout, stderr) => {
-      strictEqual(err, null);
-      strictEqual(stdout, "");
-      strictEqual(stderr, "");
-    });
+  it("should handle normal execution of child process", (done) => {
+    createChild(
+      {},
+      (err, stdout, stderr) => {
+        strictEqual(err, null);
+        strictEqual(stdout, "");
+        strictEqual(stderr, "");
+      },
+      done
+    );
   });
 
-  it("should handle error event of child process", () => {
+  it("should handle error event of child process", (done) => {
     const error = new Error("foo");
-    const child = createChild({}, (err, stdout, stderr) => {
-      strictEqual(err, error);
-      strictEqual(stdout, "");
-      strictEqual(stderr, "");
-    });
+    const child = createChild(
+      {},
+      (err, stdout, stderr) => {
+        strictEqual(err, error);
+        strictEqual(stdout, "");
+        strictEqual(stderr, "");
+      },
+      done
+    );
 
     child.emit("error", error);
   });
 
-  it("should handle killed process", () => {
-    createChild({ timeout: 1 }, (err, stdout, stderr) => {
-      strictEqual(err.killed, true);
-      strictEqual(stdout, "");
-      strictEqual(stderr, "");
-    });
+  it("should handle killed process", (done) => {
+    createChild(
+      { timeout: 1 },
+      (err, stdout, stderr) => {
+        strictEqual(err.killed, true);
+        strictEqual(stdout, "");
+        strictEqual(stderr, "");
+      },
+      done
+    );
   });
-
-  ChildProcess.prototype.spawn = original;
 });
 
 describe("child_process cwd", () => {
-  const tmpdir = { path: Bun.env.TMPDIR };
-
   // Spawns 'pwd' with given options, then test
   // - whether the child pid is undefined or number,
   // - whether the exit code equals expectCode,
   // - optionally whether the trimmed stdout result matches expectData
-  function testCwd(options, expectPidType, expectCode = 0, expectData) {
+  function testCwd(
+    options,
+    { expectPidType, expectCode = 0, expectData },
+    done = () => {}
+  ) {
+    const createDone = createDoneDotAll(done);
+    const { mustCall } = createCallCheckCtx(createDone(1500));
+    const exitDone = createDone(5000);
+
     const child = spawn(...common.pwdCommand, options);
 
     strictEqual(typeof child.pid, expectPidType);
@@ -366,19 +248,25 @@ describe("child_process cwd", () => {
 
     // No need to assert callback since `data` is asserted.
     let data = "";
-    child.stdout.on("data", function (chunk) {
+    child.stdout.on("data", (chunk) => {
       data += chunk;
     });
 
-    // Can't assert callback, as stayed in to API:
-    // _The 'exit' event may or may not fire after an error has occurred._
-    child.on("exit", function (code, signal) {
-      strictEqual(code, expectCode).bind(this);
+    // TODO: Test exit events
+    // // Can't assert callback, as stayed in to API:
+    // // _The 'exit' event may or may not fire after an error has occurred._
+    child.on("exit", (code, signal) => {
+      try {
+        strictEqual(code, expectCode);
+        exitDone();
+      } catch (err) {
+        exitDone(err);
+      }
     });
 
     child.on(
       "close",
-      mustCall(function () {
+      mustCall(() => {
         expectData && strictEqual(data.trim(), expectData);
       })
     );
@@ -426,55 +314,82 @@ describe("child_process cwd", () => {
   //   // }
   // });
 
-  it("should work for valid given cwd", () => {
+  it("should work for valid given cwd", (done) => {
+    const tmpdir = { path: Bun.env.TMPDIR };
+    const createDone = createDoneDotAll(done);
+
     // Assume these exist, and 'pwd' gives us the right directory back
-    testCwd({ cwd: tmpdir.path }, "number", 0, tmpdir.path);
+    testCwd(
+      { cwd: tmpdir.path },
+      {
+        expectPidType: "number",
+        expectCode: 0,
+        expectData: platformTmpDir,
+      },
+      createDone(1500)
+    );
     const shouldExistDir = "/dev";
-    testCwd({ cwd: shouldExistDir }, "number", 0, shouldExistDir);
-    testCwd({ cwd: Bun.pathToFileURL(tmpdir.path) }, "number", 0, tmpdir.path);
+    testCwd(
+      { cwd: shouldExistDir },
+      {
+        expectPidType: "number",
+        expectCode: 0,
+        expectData: shouldExistDir,
+      },
+      createDone(1500)
+    );
+    testCwd(
+      { cwd: Bun.pathToFileURL(tmpdir.path) },
+      {
+        expectPidType: "number",
+        expectCode: 0,
+        expectData: platformTmpDir,
+      },
+      createDone(1500)
+    );
   });
 
-  it("shouldn't try to chdir to an invalid cwd", () => {
+  it("shouldn't try to chdir to an invalid cwd", (done) => {
+    const createDone = createDoneDotAll(done);
     // Spawn() shouldn't try to chdir() to invalid arg, so this should just work
-    testCwd({ cwd: "" }, "number");
-    testCwd({ cwd: undefined }, "number");
-    testCwd({ cwd: null }, "number");
+    testCwd({ cwd: "" }, { expectPidType: "number" }, createDone(1500));
+    testCwd({ cwd: undefined }, { expectPidType: "number" }, createDone(1500));
+    testCwd({ cwd: null }, { expectPidType: "number" }, createDone(1500));
   });
 });
 
 describe("child_process default options", () => {
-  process.env.HELLO = "WORLD";
+  it("should use process.env as default env", (done) => {
+    let child = spawn("printenv", [], {});
+    let response = "";
 
-  let child = spawn("/usr/bin/env", [], {});
-  let response = "";
-
-  child.stdout.setEncoding("utf8");
-
-  it("should use process.env as default env", () => {
-    child.stdout.on("data", function (chunk) {
+    child.stdout.setEncoding("utf8");
+    child.stdout.on("data", (chunk) => {
       debug(`stdout: ${chunk}`);
       response += chunk;
     });
 
-    process.on("exit", function () {
+    // NOTE: Original test used child.on("exit"), but this is unreliable
+    // because the process can exit before the stream is closed and the data is read
+    child.stdout.on("close", () => {
       assertOk(
-        response.includes("HELLO=WORLD"),
+        response.includes(`TMPDIR=${process.env.TMPDIR}`),
         "spawn did not use process.env as default " +
-          `(process.env.HELLO = ${process.env.HELLO})`
+          `(process.env.TMPDIR = ${process.env.TMPDIR})`
       );
+      done();
     });
   });
-
-  delete process.env.HELLO;
 });
 
 describe("child_process double pipe", () => {
-  let grep, sed, echo;
-  grep = spawn("grep", ["o"]);
-  sed = spawn("sed", ["s/o/O/"]);
-  echo = spawn("echo", ["hello\nnode\nand\nworld\n"]);
+  it("should allow two pipes to be used at once", (done) => {
+    const { mustCallAtLeast, mustCall } = createCallCheckCtx(done);
+    let grep, sed, echo;
+    grep = spawn("grep", ["o"]);
+    sed = spawn("sed", ["s/o/O/"]);
+    echo = spawn("echo", ["hello\nnode\nand\nworld\n"]);
 
-  it("should allow two pipes to be used at once", () => {
     // pipe echo | grep
     echo.stdout.on(
       "data",
@@ -497,7 +412,8 @@ describe("child_process double pipe", () => {
     // Propagate end from echo to grep
     echo.stdout.on(
       "end",
-      mustCall((code) => {
+      mustCall(() => {
+        debug("echo stdout end");
         grep.stdin.end();
       })
     );
@@ -555,15 +471,16 @@ describe("child_process double pipe", () => {
     sed.stdout.on(
       "data",
       mustCallAtLeast((data) => {
-        result += data.toString("utf8", 0, data.length);
+        result += data.toString("utf8");
         debug(data);
       })
     );
 
     sed.stdout.on(
       "end",
-      mustCall((code) => {
-        strictEqual(result, `hellO${EOL}nOde${EOL}wOrld${EOL}`);
+      mustCall(() => {
+        debug("result: " + result);
+        strictEqual(result, `hellO\nnOde\nwOrld\n`);
       })
     );
   });

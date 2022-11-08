@@ -9,6 +9,10 @@ const {
 const MAX_BUFFER = 1024 * 1024;
 const debug = process.env.DEBUG ? console.log : () => {};
 
+const platformTmpDir = `${process.platform === "darwin" ? "/private" : ""}${
+  process.env.TMPDIR
+}`.slice(0, -1); // remove trailing slash
+
 // Sections:
 // 1. Exported child_process functions
 // 2. child_process helpers
@@ -253,8 +257,7 @@ export function execFile(file, args, options, callback) {
       stderr = BufferConcat(_stderr);
     }
 
-    // TODO: Make this check code === 0 when Bun.spawn fixes exit code issue
-    if (!ex && code >= 0 && signal === null) {
+    if (!ex && code === 0 && signal === null) {
       callback(null, stdout, stderr);
       return;
     }
@@ -843,6 +846,7 @@ function checkExecSyncError(ret, args, cmd) {
 //------------------------------------------------------------------------------
 export class ChildProcess extends EventEmitter {
   #handle;
+  #handleExited;
   #exited = false;
   #closesNeeded = 1;
   #closesGot = 0;
@@ -865,12 +869,12 @@ export class ChildProcess extends EventEmitter {
   //   this.#handle[owner_symbol] = this;
   // }
 
-  #handleOnExit(exitCode, signalCode) {
+  async #handleOnExit(exitCode, signalCode) {
     if (this.#exited) return;
     if (signalCode) {
       this.signalCode = signalCode;
     } else {
-      this.exitCode = exitCode;
+      this.exitCode = this.#handle.exitCode;
     }
 
     if (this.stdin) {
@@ -890,6 +894,12 @@ export class ChildProcess extends EventEmitter {
       err.spawnargs = ArrayPrototypeSlice.call(this.spawnargs, 1);
       this.emit("error", err);
     } else {
+      const maybeExited = Bun.peek(this.#handleExited);
+      if (maybeExited === this.#handleExited) {
+        this.exitCode = await this.#handleExited;
+      } else {
+        this.exitCode = maybeExited;
+      }
       this.emit("exit", this.exitCode, this.signalCode);
     }
 
@@ -979,6 +989,7 @@ export class ChildProcess extends EventEmitter {
       env: options.envPairs || undefined,
       onExit: this.#handleOnExit.bind(this),
     });
+    this.#handleExited = this.#handle.exited;
 
     this.stdio = this.#getBunSpawnIo(bunStdio, options);
     this.stdin = this.stdio[0];

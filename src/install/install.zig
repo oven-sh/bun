@@ -1562,6 +1562,7 @@ pub const PackageManager = struct {
         version_buf: []const u8,
         version: Dependency.Version,
         behavior: Dependency.Behavior,
+        is_main: bool,
     ) DependencyToEnqueue {
         var root_deps = this.dynamicRootDependencies();
         const existing: []const Dependency.Pair = root_deps.items;
@@ -1603,17 +1604,31 @@ pub const PackageManager = struct {
                 .dependency = cloned_dependency,
             },
         ) catch unreachable;
-        this.enqueueDependencyWithMainAndSuccessFn(
-            index,
-            cloned_dependency,
-            invalid_package_id,
-            true,
-            assignRootResolution,
-            failRootResolution,
-        ) catch |err| {
-            root_deps.items.len = index;
-            return .{ .failure = err };
-        };
+        if (is_main) {
+            this.enqueueDependencyWithMainAndSuccessFn(
+                index,
+                cloned_dependency,
+                invalid_package_id,
+                true,
+                assignRootResolution,
+                failRootResolution,
+            ) catch |err| {
+                root_deps.items.len = index;
+                return .{ .failure = err };
+            };
+        } else {
+            this.enqueueDependencyWithMainAndSuccessFn(
+                index,
+                cloned_dependency,
+                invalid_package_id,
+                false,
+                assignRootResolution,
+                failRootResolution,
+            ) catch |err| {
+                root_deps.items.len = index;
+                return .{ .failure = err };
+            };
+        }
 
         if (root_deps.items[index].failed) |fail| {
             root_deps.items.len = index;
@@ -3447,7 +3462,7 @@ pub const PackageManager = struct {
         positionals: []const string = &[_]string{},
         update: Update = Update{},
         dry_run: bool = false,
-        remote_package_features: Features = Features{ .peer_dependencies = false },
+        remote_package_features: Features = Features{ .peer_dependencies = false, .optional_dependencies = true },
         local_package_features: Features = Features{ .peer_dependencies = false, .dev_dependencies = true },
         allowed_install_scripts: []const PackageNameHash = &default_allowed_install_scripts,
         // The idea here is:

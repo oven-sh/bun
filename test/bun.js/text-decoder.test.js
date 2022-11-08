@@ -71,6 +71,14 @@ describe("TextDecoder", () => {
         expect(decoded).toBe(text);
       });
     }
+
+    it("DOMJIT call", () => {
+      const array = new Uint8Array(bytes.buffer);
+      for (let i = 0; i < 100_000; i++) {
+        const decoded = decoder.decode(array);
+        expect(decoded).toBe(text);
+      }
+    });
   });
 
   it("should decode unicode text with multiple consecutive emoji", () => {

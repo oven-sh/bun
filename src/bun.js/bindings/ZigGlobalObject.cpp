@@ -2023,7 +2023,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionPerformMicrotask, (JSGlobalObject * globalObj
     auto scope = DECLARE_CATCH_SCOPE(vm);
 
     auto job = callframe->argument(0);
-    if (!job || job.isUndefinedOrNull()) {
+    if (UNLIKELY(!job || job.isUndefinedOrNull())) {
         return JSValue::encode(jsUndefined());
     }
 
@@ -2082,7 +2082,8 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionPerformMicrotaskVariadic, (JSGlobalObject * g
     }
 
     JSArray* array = jsCast<JSArray*>(callframe->argument(1));
-    for (unsigned i = 0; i < array->length(); i++) {
+    unsigned length = array->length();
+    for (unsigned i = 0; i < length; i++) {
         arguments.append(array->getIndex(globalObject, i));
     }
 

@@ -1,5 +1,4 @@
-
-type AnyFunction = (...args: any[]):any;
+type AnyFunction = (...args: any[]) => any;
 export function wrap({
   test: test_,
   it: it_,
@@ -13,7 +12,7 @@ export function wrap({
     it_ = test_;
   }
 
-  var describe = (label, cb: Function) => {
+  var describe = (label, cb: AnyFunction) => {
     return describe_(
       label,
       cb instanceof async function () {}.constructor
@@ -40,7 +39,7 @@ export function wrap({
     );
   };
 
-  var it = (label, cb) => {
+  var it = (label, cb: AnyFunction) => {
     console.log("Before", label);
     return it_(
       label,
@@ -68,7 +67,7 @@ export function wrap({
     );
   };
 
-  var beforeEach = (cb) => {
+  var beforeEach = (cb: AnyFunction) => {
     return beforeEach_(
       cb instanceof async function () {}.constructor
         ? async () => {
@@ -93,7 +92,7 @@ export function wrap({
           }
     );
   };
-  var beforeAll = (cb) => {
+  var beforeAll = (cb: AnyFunction) => {
     return beforeAll_(
       cb instanceof async function () {}.constructor
         ? async () => {
@@ -118,7 +117,7 @@ export function wrap({
           }
     );
   };
-  var afterEach = (cb) => {
+  var afterEach = (cb: AnyFunction) => {
     return afterEach_(
       cb instanceof async function () {}.constructor
         ? async () => {
@@ -143,7 +142,7 @@ export function wrap({
           }
     );
   };
-  var afterAll = (cb) => {
+  var afterAll = (cb: AnyFunction) => {
     return afterAll_(
       cb instanceof async function () {}.constructor
         ? async () => {

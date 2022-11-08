@@ -13,14 +13,9 @@
     "lint:fix": "eslint './**/*.d.ts' --fix"
   },
   "devDependencies": {
-    // "@typescript-eslint/eslint-plugin": "^5.31.0",
-    // "@typescript-eslint/parser": "^5.31.0",
-    // "eslint": "^8.20.0",
-    // "eslint-config-prettier": "^8.5.0",
-    // "prettier": "latest",
     "tsd": "^0.22.0",
-    "typedoc": "^0.23.9",
-    // "typescript": "^4.7.4"
+    "typedoc": "^0.23.9"
+  
   },
   "tsd": {
     "directory": "tests"

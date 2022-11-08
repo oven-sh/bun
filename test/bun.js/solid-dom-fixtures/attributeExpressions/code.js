@@ -46,7 +46,7 @@ const template4 = (
   <div class="hi" className={state.class} classList={{ "ccc:ddd": true }} />
 );
 
-const template5 = <div class="a" className="b"></div>;
+const template5 = <div class="a" className="b" />;
 
 const template6 = <div style={someStyle()} textContent="Hi" />;
 

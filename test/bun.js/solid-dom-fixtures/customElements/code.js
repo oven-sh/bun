@@ -24,6 +24,6 @@ const template3 = (
 
 const template4 = (
   <>
-    <slot name="head"></slot>
+    <slot name="head" />
   </>
 );

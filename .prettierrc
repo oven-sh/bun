@@ -2,5 +2,6 @@
   "tabWidth": 2,
   "useTabs": false,
   "singleQuote": false,
-  "bracketSpacing": true
+  "bracketSpacing": true,
+  "trailingComma": "es5"
 }

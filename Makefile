@@ -519,11 +519,9 @@ release-types:
 
 .PHONY: format
 format: ## to format the code
-	$(PRETTIER) --write test/bun.js/*.js
-	$(PRETTIER) --write test/bun.js/*.jsx
-	$(PRETTIER) --write test/bun.js/*.ts
-	$(PRETTIER) --write test/bun.js/*.tsx
-	$(PRETTIER) --write test/bun.js/solid-dom-fixtures/**/*.{js|ts|jsx|tsx}
+	-$(PRETTIER) --write 'test/bun.js/*.{js,jsx,ts,tsx}'
+	-$(PRETTIER) --write 'test/bun.js/solid-dom-fixtures/**/*.{js,jsx,ts,tsx}'
+
 
 .PHONY: lolhtml
 lolhtml:

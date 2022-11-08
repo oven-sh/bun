@@ -64,7 +64,7 @@ describe("FileSink", () => {
         "abcdefghijklmnopqrstuvwxyz" +
         "😋 Get Emoji — All Emojis to ✂️ Copy and 📋 Paste 👌",
     ],
-  ];
+  ] as const;
 
   for (const [input, expected, label] of fixtures) {
     it(`${JSON.stringify(label)}`, async () => {

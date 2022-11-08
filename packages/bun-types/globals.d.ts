@@ -241,8 +241,15 @@ interface Process {
    * @param callback - The function to run
    */
   nextTick(callback: (...args: any) => any, ...args: any): void;
+  title: string;
+  exitCode: number;
+  browser: boolean;
   versions: Record<string, string>;
   ppid: number;
+  hrtime: {
+    (time?: [number, number]): [number, number];
+    bigint(): bigint;
+  };
   pid: number;
   arch: Architecture;
   platform: Platform;
@@ -1105,7 +1112,7 @@ declare function fetch(
   }
 ): Promise<Response>;
 
-declare function queueMicrotask(callback: () => void): void;
+declare function queueMicrotask(callback: (...args: any[]) => void): void;
 /**
  * Log an error using the default exception handler
  * @param error Error or string

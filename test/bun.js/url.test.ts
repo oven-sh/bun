@@ -17,24 +17,7 @@ describe("url", () => {
     );
   });
   it("works", () => {
-    const inputs: [
-      [
-        string,
-        {
-          hash: string;
-          host: string;
-          hostname: string;
-          href: string;
-          origin: string;
-          password: string;
-          pathname: string;
-          port: string;
-          protocol: string;
-          search: string;
-          username: string;
-        }
-      ]
-    ] = [
+    const inputs = [
       [
         "https://username:password@api.foo.bar.com:9999/baz/okay/i/123?ran=out&of=things#to-use-as-a-placeholder",
         {
@@ -83,7 +66,7 @@ describe("url", () => {
           username: "",
         },
       ],
-    ];
+    ] as const;
 
     for (let [url, values] of inputs) {
       const result = new URL(url);

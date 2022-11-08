@@ -1,3 +1,5 @@
+
+type AnyFunction = (...args: any[]):any;
 export function wrap({
   test: test_,
   it: it_,
@@ -11,7 +13,7 @@ export function wrap({
     it_ = test_;
   }
 
-  var describe = (label, cb) => {
+  var describe = (label, cb: Function) => {
     return describe_(
       label,
       cb instanceof async function () {}.constructor

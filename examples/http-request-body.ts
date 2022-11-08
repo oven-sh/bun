@@ -11,6 +11,7 @@ serve({
     }
     const wrote = await writer.end();
 
+    // @ts-ignore
     return Response.json({ wrote, type: req.headers.get("Content-Type") });
   },
 });

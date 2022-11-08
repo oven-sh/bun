@@ -1,12 +1,13 @@
 {
+  "extends": "../../tsconfig.base.json",
   "compilerOptions": {
-    "lib": [
-      "ESNext"
-    ],
-    "module": "esnext",
-    "target": "esnext",
-    "moduleResolution": "nodenext",
-    "jsx": "react",
+    // "lib": [
+    //   "ESNext"
+    // ],
+    // "module": "esnext",
+    // "target": "esnext",
+    // "moduleResolution": "nodenext",
+    "jsx": "react-jsx",
     "noEmit": true,
     "allowJs": true,
     "types": [

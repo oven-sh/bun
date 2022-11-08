@@ -12,7 +12,7 @@
     "target": "esnext",
     "module": "esnext",
     "moduleResolution": "node",
-    // "disableSolutionSearching": true
+    "disableSolutionSearching": true
   },
   // "include": [
   //   "./*.d.ts",

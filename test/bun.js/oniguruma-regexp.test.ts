@@ -1,3 +1,4 @@
+// @ts-ignore
 import { OnigurumaRegExp } from "bun";
 import { expect, it, test } from "bun:test";
 import { gc as gcTrace } from "./gc";
@@ -259,7 +260,9 @@ it("OnigurumaRegExp.prototype.exec()", () => {
   expect(a1_1.input).toBe(a2_1.input);
   expect(a1.lastIndex).toBe(a2.lastIndex);
   expect(a1_1.groups).toBe(a2_1.groups);
+  // @ts-ignore remove when `indices` is added to lib/dom
   expect(a1_1.indices[0][0]).toBe(a2_1.indices[0][0]);
+  // @ts-ignore
   expect(a1_1.indices[0][1]).toBe(a2_1.indices[0][1]);
 });
 
@@ -278,7 +281,9 @@ test("OnigurumaRegExp.prototype.exec() 2", () => {
   expect(a1_1.input).toBe(a2_1.input);
   expect(a1.lastIndex).toBe(a2.lastIndex);
   expect(a1_1.groups).toBe(a2_1.groups);
+  // @ts-ignore
   expect(a1_1.indices[0][0]).toBe(a2_1.indices[0][0]);
+  // @ts-ignore
   expect(a1_1.indices[0][1]).toBe(a2_1.indices[0][1]);
 });
 
@@ -299,7 +304,9 @@ test("OnigurumaRegExp.prototype.exec() 3", () => {
   expect(a1_1.input).toBe(a2_1.input);
   expect(a1.lastIndex).toBe(a2.lastIndex);
   expect(a1_1.groups).toBe(a2_1.groups);
+  // @ts-ignore
   expect(a1_1.indices[0][0]).toBe(a2_1.indices[0][0]);
+  // @ts-ignore
   expect(a1_1.indices[0][1]).toBe(a2_1.indices[0][1]);
 });
 
@@ -358,6 +365,7 @@ test("OnigurumaRegExp.prototype.source", () => {
   expect(new OnigurumaRegExp("/").source).toBe("\\/");
   expect(new RegExp("/").source).toBe("\\/");
 
+  // @ts-ignore TS doesn't allow empty constructor
   expect(new OnigurumaRegExp().source).toBe(new RegExp().source);
   expect(new OnigurumaRegExp("").source).toBe(new RegExp("").source);
   expect(new OnigurumaRegExp("a").source).toBe(new RegExp("a").source);
@@ -370,6 +378,7 @@ test("OnigurumaRegExp.prototype.source", () => {
 });
 
 test("OnigurumaRegExp.prototype.toString()", () => {
+  // @ts-ignore
   expect(new OnigurumaRegExp().toString()).toBe(new RegExp().toString());
   expect(new OnigurumaRegExp("").toString()).toBe(new RegExp("").toString());
   expect(new OnigurumaRegExp("a").toString()).toBe(new RegExp("a").toString());
@@ -607,7 +616,9 @@ test("OnigurumaRegExp random", () => {
   expect(new OnigurumaRegExp("a", "i").sticky).toBe(false);
   expect(new OnigurumaRegExp("a", "u").unicode).toBe(true);
   expect(new OnigurumaRegExp("a", "d").unicode).toBe(false);
+  // @ts-ignore
   expect(new RegExp("a", "d").hasIndices).toBe(true);
+  // @ts-ignore
   expect(new RegExp("a", "i").hasIndices).toBe(false);
   expect(new RegExp("a", "s").dotAll).toBe(true);
   expect(new RegExp("a", "i").dotAll).toBe(false);
@@ -747,9 +758,13 @@ it("escapes characters, unicode, and hex", () => {
   expect(a1_1.input).toBe(a2_1.input);
   expect(a1.lastIndex).toBe(a2.lastIndex);
   expect(a1_1.groups).toBe(a2_1.groups);
+  // @ts-ignore
   expect(a1_1.indices[0][0]).toBe(a2_1.indices[0][0]);
+  // @ts-ignore
   expect(a1_1.indices[0][1]).toBe(a2_1.indices[0][1]);
+  // @ts-ignore
   expect(a1_1.indices[1][0]).toBe(a2_1.indices[1][0]);
+  // @ts-ignore
   expect(a1_1.indices[1][1]).toBe(a2_1.indices[1][1]);
 });
 

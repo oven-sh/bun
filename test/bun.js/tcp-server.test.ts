@@ -1,5 +1,5 @@
-import { listen, connect, finalizationCounter } from "bun";
-import { expect, describe, it } from "bun:test";
+import { listen, connect } from "bun";
+import { expect, it } from "bun:test";
 import * as JSC from "bun:jsc";
 
 var decoder = new TextDecoder();
@@ -103,7 +103,7 @@ it("echo server 1 on 1", async () => {
   await new Promise((resolve, reject) => {
     setTimeout(() => {
       Bun.gc(true);
-      resolve();
+      resolve(undefined);
     }, 1);
   });
 

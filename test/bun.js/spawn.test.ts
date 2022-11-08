@@ -6,7 +6,7 @@ import { rmdirSync, unlinkSync, rmSync, writeFileSync } from "node:fs";
 for (let [gcTick, label] of [
   [_gcTick, "gcTick"],
   [() => {}, "no gc tick"],
-]) {
+] as const) {
   describe(label, () => {
     describe("spawnSync", () => {
       const hugeString = "hello".repeat(10000).slice();
@@ -184,6 +184,7 @@ for (let [gcTick, label] of [
           cmd: ["cat", "/tmp/out.txt"],
           stdout: "pipe",
         });
+
         gcTick();
 
         const text = await readableStreamToText(stdout);
@@ -220,8 +221,9 @@ for (let [gcTick, label] of [
           stdin: "pipe",
           stderr: "inherit",
         });
-        proc.stdin.write(hugeString);
-        await proc.stdin.end(true);
+
+        proc.stdin!.write(hugeString);
+        await proc.stdin.end();
         var text = "";
         var reader = proc.stdout.getReader();
         var done = false;
@@ -262,7 +264,7 @@ for (let [gcTick, label] of [
         const fixtures = [
           [helloWorld, "hello"],
           [huge, hugeString],
-        ];
+        ] as const;
 
         for (const [callback, fixture] of fixtures) {
           describe(fixture.slice(0, 12), () => {

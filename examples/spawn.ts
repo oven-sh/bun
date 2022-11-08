@@ -29,14 +29,11 @@ await tar.exited;
 if (!which("vercel")) {
   console.log("Installing vercel...");
 
-  const installer = spawn(
-    { cmd: ["bun", "install", "-g", "vercel"] },
-    {
-      stderr: "inherit",
-      stdout: "inherit",
-      stdin: "inherit",
-    }
-  );
+  const installer = spawn(["bun", "install", "-g", "vercel"], {
+    stderr: "inherit",
+    stdout: "inherit",
+    stdin: "inherit",
+  });
   await installer.exited;
 
   if (!which("vercel")) {

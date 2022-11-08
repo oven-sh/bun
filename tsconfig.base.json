@@ -5,7 +5,11 @@
     ],
     "module": "esnext",
     "target": "esnext",
-    "moduleResolution": "node",
+    "moduleResolution": "nodenext",
+    "allowJs": true,
+    "downlevelIteration": true,
+    "allowSyntheticDefaultImports": true,
+    "jsx": "react-jsx",
     "types": [
       "bun-types"
     ],

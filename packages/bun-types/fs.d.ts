@@ -1346,6 +1346,41 @@ declare module "fs" {
      */
     retryDelay?: number | undefined;
   }
+  /**
+   * Asynchronously removes files and directories (modeled on the standard POSIX `rm`utility). No arguments other than a possible exception are given to the
+   * completion callback.
+   * @since v14.14.0
+   */
+  export function rm(path: PathLike, callback: NoParamCallback): void;
+  export function rm(
+    path: PathLike,
+    options: RmOptions,
+    callback: NoParamCallback
+  ): void;
+  export namespace rm {
+    /**
+     * Asynchronously removes files and directories (modeled on the standard POSIX `rm` utility).
+     */
+    function __promisify__(path: PathLike, options?: RmOptions): Promise<void>;
+  }
+  /**
+   * Synchronously removes files and directories (modeled on the standard POSIX `rm`utility). Returns `undefined`.
+   * @since v14.14.0
+   */
+  export function rmSync(path: PathLike, options?: RmOptions): void;
+  export interface MakeDirectoryOptions {
+    /**
+     * Indicates whether parent folders should be created.
+     * If a folder was created, the path to the first created folder will be returned.
+     * @default false
+     */
+    recursive?: boolean | undefined;
+    /**
+     * A file mode. If a string is passed, it is parsed as an octal integer. If not specified
+     * @default 0o777
+     */
+    mode?: Mode | undefined;
+  }
   interface MakeDirectoryOptions {
     /**
      * Indicates whether parent folders should be created.
@@ -3309,6 +3344,122 @@ declare module "fs" {
    * @param [mode=fs.constants.F_OK]
    */
   function accessSync(path: PathLike, mode?: number): void;
+
+  interface StreamOptions {
+    flags?: string | undefined;
+    encoding?: BufferEncoding | undefined;
+    fd?: number | promises.FileHandle | undefined;
+    mode?: number | undefined;
+    autoClose?: boolean | undefined;
+    /**
+     * @default false
+     */
+    emitClose?: boolean | undefined;
+    start?: number | undefined;
+    highWaterMark?: number | undefined;
+  }
+  interface ReadStreamOptions extends StreamOptions {
+    end?: number | undefined;
+  }
+  /**
+   * Unlike the 16 kb default `highWaterMark` for a `stream.Readable`, the stream
+   * returned by this method has a default `highWaterMark` of 64 kb.
+   *
+   * `options` can include `start` and `end` values to read a range of bytes from
+   * the file instead of the entire file. Both `start` and `end` are inclusive and
+   * start counting at 0, allowed values are in the
+   * \[0, [`Number.MAX_SAFE_INTEGER`](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Number/MAX_SAFE_INTEGER)\] range. If `fd` is specified and `start` is
+   * omitted or `undefined`, `fs.createReadStream()` reads sequentially from the
+   * current file position. The `encoding` can be any one of those accepted by `Buffer`.
+   *
+   * If `fd` is specified, `ReadStream` will ignore the `path` argument and will use
+   * the specified file descriptor. This means that no `'open'` event will be
+   * emitted. `fd` should be blocking; non-blocking `fd`s should be passed to `net.Socket`.
+   *
+   * If `fd` points to a character device that only supports blocking reads
+   * (such as keyboard or sound card), read operations do not finish until data is
+   * available. This can prevent the process from exiting and the stream from
+   * closing naturally.
+   *
+   * By default, the stream will emit a `'close'` event after it has been
+   * destroyed.  Set the `emitClose` option to `false` to change this behavior.
+   *
+   * By providing the `fs` option, it is possible to override the corresponding `fs`implementations for `open`, `read`, and `close`. When providing the `fs` option,
+   * an override for `read` is required. If no `fd` is provided, an override for`open` is also required. If `autoClose` is `true`, an override for `close` is
+   * also required.
+   *
+   * ```js
+   * import { createReadStream } from 'fs';
+   *
+   * // Create a stream from some character device.
+   * const stream = createReadStream('/dev/input/event0');
+   * setTimeout(() => {
+   *   stream.close(); // This may not close the stream.
+   *   // Artificially marking end-of-stream, as if the underlying resource had
+   *   // indicated end-of-file by itself, allows the stream to close.
+   *   // This does not cancel pending read operations, and if there is such an
+   *   // operation, the process may still not be able to exit successfully
+   *   // until it finishes.
+   *   stream.push(null);
+   *   stream.read(0);
+   * }, 100);
+   * ```
+   *
+   * If `autoClose` is false, then the file descriptor won't be closed, even if
+   * there's an error. It is the application's responsibility to close it and make
+   * sure there's no file descriptor leak. If `autoClose` is set to true (default
+   * behavior), on `'error'` or `'end'` the file descriptor will be closed
+   * automatically.
+   *
+   * `mode` sets the file mode (permission and sticky bits), but only if the
+   * file was created.
+   *
+   * An example to read the last 10 bytes of a file which is 100 bytes long:
+   *
+   * ```js
+   * import { createReadStream } from 'fs';
+   *
+   * createReadStream('sample.txt', { start: 90, end: 99 });
+   * ```
+   *
+   * If `options` is a string, then it specifies the encoding.
+   * @since v0.1.31
+   */
+  export function createReadStream(
+    path: PathLike,
+    options?: BufferEncoding | ReadStreamOptions
+  ): ReadStream;
+  /**
+   * `options` may also include a `start` option to allow writing data at some
+   * position past the beginning of the file, allowed values are in the
+   * \[0, [`Number.MAX_SAFE_INTEGER`](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Number/MAX_SAFE_INTEGER)\] range. Modifying a file rather than
+   * replacing it may require the `flags` option to be set to `r+` rather than the
+   * default `w`. The `encoding` can be any one of those accepted by `Buffer`.
+   *
+   * If `autoClose` is set to true (default behavior) on `'error'` or `'finish'`the file descriptor will be closed automatically. If `autoClose` is false,
+   * then the file descriptor won't be closed, even if there's an error.
+   * It is the application's responsibility to close it and make sure there's no
+   * file descriptor leak.
+   *
+   * By default, the stream will emit a `'close'` event after it has been
+   * destroyed.  Set the `emitClose` option to `false` to change this behavior.
+   *
+   * By providing the `fs` option it is possible to override the corresponding `fs`implementations for `open`, `write`, `writev` and `close`. Overriding `write()`without `writev()` can reduce
+   * performance as some optimizations (`_writev()`)
+   * will be disabled. When providing the `fs` option, overrides for at least one of`write` and `writev` are required. If no `fd` option is supplied, an override
+   * for `open` is also required. If `autoClose` is `true`, an override for `close`is also required.
+   *
+   * Like `fs.ReadStream`, if `fd` is specified, `fs.WriteStream` will ignore the`path` argument and will use the specified file descriptor. This means that no`'open'` event will be
+   * emitted. `fd` should be blocking; non-blocking `fd`s
+   * should be passed to `net.Socket`.
+   *
+   * If `options` is a string, then it specifies the encoding.
+   * @since v0.1.31
+   */
+  export function createWriteStream(
+    path: PathLike,
+    options?: BufferEncoding | StreamOptions
+  ): WriteStream;
 
   /**
    * Forces all currently queued I/O operations associated with the file to the

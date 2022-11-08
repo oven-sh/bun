@@ -64,13 +64,16 @@ describe("ArrayBufferSink", () => {
         "abcdefghijklmnopqrstuvwxyz" +
         "😋 Get Emoji — All Emojis to ✂️ Copy and 📋 Paste 👌",
     ],
-  ];
+  ] as const;
 
   for (const [input, expected, label] of fixtures) {
     it(`${JSON.stringify(label)}`, () => {
       const sink = new ArrayBufferSink();
       for (let i = 0; i < input.length; i++) {
-        sink.write(input[i]);
+        const el = input[i];
+        if (typeof el !== "number") {
+          sink.write(el);
+        }
       }
       const output = new Uint8Array(sink.end());
       for (let i = 0; i < expected.length; i++) {

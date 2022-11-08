@@ -31,6 +31,19 @@ declare module "bun" {
   export const env: Record<string, string>;
 
   /**
+   * Find the path to an executable, similar to typing which in your terminal. Reads the `PATH` environment variable unless overridden with `options.PATH`.
+   *
+   * @param {string} command The name of the executable or script
+   * @param {string} options.PATH Overrides the PATH environment variable
+   * @param {string} options.cwd Limits the search to a particular directory in which to searc
+   *
+   */
+  export function which(
+    command: string,
+    options?: { PATH?: string; cwd?: string }
+  ): string;
+
+  /**
    * Start a fast HTTP server.
    *
    * @param options Server options (port defaults to $PORT || 8080)
@@ -437,7 +450,7 @@ declare module "bun" {
     /**
      * Incremental writer for files and pipes.
      */
-    writer(): FileSink;
+    writer(options?: { highWaterMark?: number }): FileSink;
 
     readonly readable: ReadableStream;
 
@@ -1232,7 +1245,7 @@ declare module "bun" {
     error?: (
       this: Server,
       request: Errorlike
-    ) => Response | Promise<Response> | undefined | Promise<undefined>;
+    ) => Response | Promise<Response> | undefined | void | Promise<undefined>;
   }
 
   export interface ServeOptions extends GenericServeOptions {
@@ -2098,7 +2111,9 @@ declare module "bun" {
   }
 
   type OnLoadResult = OnLoadResultSourceCode | OnLoadResultObject;
-  type OnLoadCallback = (args: OnLoadArgs) => OnLoadResult;
+  type OnLoadCallback = (
+    args: OnLoadArgs
+  ) => OnLoadResult | Promise<OnLoadResult>;
 
   interface OnResolveArgs {
     /**
@@ -2436,6 +2451,7 @@ declare module "bun" {
   namespace SpawnOptions {
     type Readable =
       | "inherit"
+      | "ignore"
       | "pipe"
       | null
       | undefined
@@ -2445,8 +2461,10 @@ declare module "bun" {
 
     type Writable =
       | "inherit"
+      | "ignore"
       | "pipe"
       | null
+      | ReadableStream // supported by stdin
       | undefined
       | FileBlob
       | ArrayBufferView
@@ -2511,17 +2529,22 @@ declare module "bun" {
     }
   }
 
-  interface Subprocess {
-    readonly stdin: undefined | number | FileSink;
-    readonly stdout: undefined | number | ReadableStream;
-    readonly stderr: undefined | number | ReadableStream;
+  interface SubprocessIO {
+    readonly stdin?: undefined | number | FileSink;
+    readonly stdout?: undefined | number | ReadableStream;
+    readonly stderr?: undefined | number | ReadableStream;
+  }
+  interface Subprocess<T extends SubprocessIO = SubprocessIO> {
+    readonly stdin: T["stdin"] | undefined;
+    readonly stdout: T["stdout"] | undefined;
+    readonly stderr: T["stderr"] | undefined;
 
     /**
      * This returns the same value as {@link Subprocess.stdout}
      *
      * It exists for compatibility with {@link ReadableStream.pipeThrough}
      */
-    readonly readable: undefined | number | ReadableStream;
+    readonly readable: T["stdout"] | undefined;
 
     /**
      * The process ID of the child process
@@ -2587,8 +2610,8 @@ declare module "bun" {
    *
    * Internally, this uses [posix_spawn(2)](https://developer.apple.com/library/archive/documentation/System/Conceptual/ManPages_iPhoneOS/man2/posix_spawn.2.html)
    */
-  function spawn(
-    options: SpawnOptions.OptionsObject & {
+  function spawn<Opts extends SpawnOptions.OptionsObject>(
+    options: Opts & {
       /**
        * The command to run
        *
@@ -2599,9 +2622,9 @@ declare module "bun" {
        * To check if the command exists before running it, use `Bun.which(bin)`.
        *
        */
-      cmd: [string, ...string[]];
+      cmd: string[]; // to support dynamically constructed commands
     }
-  ): Subprocess;
+  ): Subprocess<OptionsToSubprocessIO<Opts>>;
 
   /**
    * Spawn a new process
@@ -2614,21 +2637,25 @@ declare module "bun" {
    *
    * Internally, this uses [posix_spawn(2)](https://developer.apple.com/library/archive/documentation/System/Conceptual/ManPages_iPhoneOS/man2/posix_spawn.2.html)
    */
-  function spawn(
+  function spawn<Opts extends SpawnOptions.OptionsObject>(
     /**
      * The command to run
      * @example
      * ```ts
      * const subprocess = Bun.spawn(["echo", "hello"]);
      */
-    cmds: [
-      /** One command is required */
-      string,
-      /** Additional arguments */
-      ...string[]
-    ],
-    options?: SpawnOptions.OptionsObject
-  ): Subprocess;
+    cmds: string[],
+    options?: Opts
+  ): Subprocess<OptionsToSubprocessIO<Opts>>;
+  type OptionsToSubprocessIO<Opts extends SpawnOptions.OptionsObject> = {
+    stdin?: Opts["stdin"] extends number
+      ? number
+      : Opts["stdin"] extends "pipe"
+      ? FileSink
+      : ReadableStream;
+    stdout?: Opts["stdout"] extends number ? number : ReadableStream;
+    stderr?: Opts["stderr"] extends number ? number : ReadableStream;
+  };
 
   /**
    * Spawn a new process
@@ -2711,7 +2738,7 @@ type TypedArray =
   | Float64Array;
 type TimeLike = string | number | Date;
 type StringOrBuffer = string | TypedArray | ArrayBufferLike;
-type PathLike = string | TypedArray | ArrayBufferLike;
+type PathLike = string | TypedArray | ArrayBufferLike | URL;
 type PathOrFileDescriptor = PathLike | number;
 type NoParamCallback = VoidFunction;
 type BufferEncoding =

@@ -22,9 +22,10 @@ Add this to your `tsconfig.json` or `jsconfig.json`:
 ```jsonc
 {
   "compilerOptions": {
-    "lib": ["ESNext"],
+    "lib": ["esnext"],
     "module": "esnext",
     "target": "esnext",
+    "moduleResolution": "node",
     // "bun-types" is the important part
     "types": ["bun-types"]
   }

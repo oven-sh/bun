@@ -1,3 +1,4 @@
+// @ts-nocheck
 import { file, gc, serve, ServeOptions } from "bun";
 import { afterEach, describe, expect, it, test } from "bun:test";
 import { readFileSync } from "fs";
@@ -59,6 +60,7 @@ var port = 4020;
             ),
           ],
         ];
+
         for (const [name, input] of inputFixture) {
           test(`${name.slice(
             0,

@@ -1,3 +1,4 @@
+// @ts-nocheck
 import { test, expect } from "bun:test";
 
 test("decorator order of evaluation", () => {

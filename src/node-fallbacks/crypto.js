@@ -8,3 +8,6 @@ export var getRandomValues = (array) => {
 export var randomUUID = () => {
   return crypto.randomUUID();
 };
+
+export var subtle = crypto.subtle;
+export var webcrypto = crypto;

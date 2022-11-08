@@ -176,9 +176,9 @@ pub const FileSystem = struct {
                     allocator,
                     _top_level_dir,
                 ),
-                // .stats = std.StringHashMap(Stat).init(allocator),
-                .dirname_store = DirnameStore.init(allocator),
-                .filename_store = FilenameStore.init(allocator),
+                // must always use default_allocator since the other allocators may not be threadsafe when an element resizes
+                .dirname_store = DirnameStore.init(bun.default_allocator),
+                .filename_store = FilenameStore.init(bun.default_allocator),
             };
             instance_loaded = true;
 

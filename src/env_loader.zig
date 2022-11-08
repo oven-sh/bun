@@ -51,7 +51,7 @@ pub const Lexer = struct {
     pub inline fn step(this: *Lexer) void {
         const ended = !this.iter.next(&this.cursor);
         if (ended) this.cursor.c = -1;
-        this.current = this.cursor.i + @boolToInt(ended);
+        this.current = this.cursor.i + @as(usize, @boolToInt(ended));
     }
 
     pub fn eatNestedValue(

@@ -26,6 +26,7 @@ test("peek", () => {
     new Error("Succesfully tested promise rejection")
   );
   expect(peek(rejected).message).toBe("Succesfully tested promise rejection");
+  rejected.catch(() => {});
 });
 
 test("peek.status", () => {
@@ -37,4 +38,5 @@ test("peek.status", () => {
 
   const rejected = Promise.reject(new Error("oh nooo"));
   expect(peek.status(rejected)).toBe("rejected");
+  rejected.catch(() => {});
 });

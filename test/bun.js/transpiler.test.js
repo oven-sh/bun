@@ -1536,8 +1536,12 @@ class Foo {
       expectPrinted("typeof 'abc'", '"string"');
       expectPrinted("typeof function() {}", '"function"');
       expectPrinted("typeof (() => {})", '"function"');
-      expectPrinted("typeof {}", "typeof {}");
-      expectPrinted("typeof []", "typeof []");
+      expectPrinted("typeof {}", '"object"');
+      expectPrinted("typeof {foo: 123}", '"object"');
+      expectPrinted("typeof []", '"object"');
+      expectPrinted("typeof [0]", '"object"');
+      expectPrinted("typeof [null]", '"object"');
+      expectPrinted("typeof ['boolean']", '"object"');
 
       expectPrinted("undefined === undefined", "true");
       expectPrinted("undefined !== undefined", "false");

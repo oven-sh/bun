@@ -1,3 +1,4 @@
+// @ts-nocheck
 import { ByteBuffer } from "peechy";
 import * as API from "../api/schema";
 

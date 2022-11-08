@@ -8,6 +8,7 @@
     "moduleResolution": "nodenext",
     "allowJs": true,
     "downlevelIteration": true,
+    "skipLibCheck": true,
     "allowSyntheticDefaultImports": true,
     "jsx": "react-jsx",
     "types": [

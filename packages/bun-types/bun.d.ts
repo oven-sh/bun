@@ -29,6 +29,7 @@ declare module "bun" {
    *
    */
   export const env: Record<string, string>;
+  export const origin: string;
 
   /**
    * Find the path to an executable, similar to typing which in your terminal. Reads the `PATH` environment variable unless overridden with `options.PATH`.
@@ -2397,7 +2398,7 @@ declare module "bun" {
   interface SocketOptions<Data = unknown> {
     socket: SocketHandler<Data>;
     tls?: TLSOptions;
-    data: Data;
+    data?: Data;
   }
   interface TCPSocketOptions<Data = undefined> extends SocketOptions<Data> {
     hostname: string;
@@ -2759,4 +2760,7 @@ interface BufferEncodingOption {
   encoding?: BufferEncoding;
 }
 
-declare var Bun: typeof import("bun");
+// declare var Bun: typeof import("bun");
+declare namespace Bun {
+  export * from "bun";
+}

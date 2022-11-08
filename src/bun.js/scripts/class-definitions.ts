@@ -6,7 +6,7 @@ export type Field =
       fn: string;
       length?: number;
       DOMJIT?: {
-        return: string;
+        returns: string;
         args?: [string, string] | [string, string, string] | [string];
       };
     }
@@ -24,6 +24,7 @@ export interface ClassDefinition {
   noConstructor?: boolean;
   estimatedSize?: boolean;
   hasPendingActivity?: boolean;
+  isEventEmitter?: boolean;
 }
 
 export function define(

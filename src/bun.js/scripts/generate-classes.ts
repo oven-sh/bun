@@ -1,3 +1,4 @@
+// @ts-nocheck
 import { unlinkSync } from "fs";
 import { readdirSync } from "fs";
 import { resolve } from "path";
@@ -183,7 +184,7 @@ function propRow(
     length = 0,
     cache,
     DOMJIT,
-  } = prop;
+  } = prop as any;
 
   if (accesosr) {
     getter = accesosr.getter;

@@ -1,3 +1,4 @@
+/// <reference types="./plugins" />
 import { plugin } from "bun";
 import { describe, expect, it } from "bun:test";
 import { resolve } from "path";

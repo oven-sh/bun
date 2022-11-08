@@ -18,8 +18,8 @@
   ],
   "exclude": [
     "node_modules",
-    // "./node_modules",
-    // "./node_modules/*",
-    // "./node_modules/@types/node/index.d.ts"
+    "./node_modules",
+    "./node_modules/*",
+    "./node_modules/@types/node/index.d.ts"
   ]
 }

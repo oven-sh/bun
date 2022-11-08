@@ -8,3 +8,4 @@ declare module "asyncfail:*";
 declare module "async-obj:*";
 declare module "obj:*";
 declare module "delay:*";
+declare module "./*.svelte";

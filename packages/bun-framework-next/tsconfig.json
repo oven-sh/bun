@@ -1,4 +1,5 @@
 {
+  "extends": "../../tsconfig.base.json",
   "compilerOptions": {
     "target": "esnext",
     "lib": [
@@ -7,19 +8,18 @@
       "esnext",
       "WebWorker"
     ],
-    "allowJs": true,
-    "skipLibCheck": true,
+    // "allowJs": true,
+    // "skipLibCheck": true,
     "strict": false,
     "forceConsistentCasingInFileNames": true,
     "noEmit": true,
     "esModuleInterop": true,
-    "module": "esnext",
-    "moduleResolution": "Node",
+    // "module": "esnext",
+    // "moduleResolution": "Node",
     "resolveJsonModule": true,
     "isolatedModules": true,
     "jsx": "preserve",
-    "baseUrl": ".",
-    "paths": {}
+    // "baseUrl": ".",
   },
   "include": [
     "next-env.d.ts",
@@ -29,5 +29,5 @@
   ],
   "exclude": [
     "node_modules"
-  ]
+  ],
 }

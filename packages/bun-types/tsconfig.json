@@ -19,10 +19,10 @@
   //   "./**/*.d.ts"
   // ],
   "exclude": [
-    "dist"
-    // "node_modules"
-    // "./node_modules",
-    // "./node_modules/*",
-    // "./node_modules/@types/node/index.d.ts"
+    "dist",
+    "node_modules",
+    "./node_modules",
+    "./node_modules/*",
+    "./node_modules/@types/node/index.d.ts"
   ]
 }

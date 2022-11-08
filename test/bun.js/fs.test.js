@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { gc, gcTick } from "gc";
+import { gc, gcTick } from "./gc";
 import {
   closeSync,
   existsSync,

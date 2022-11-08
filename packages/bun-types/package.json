@@ -15,7 +15,6 @@
   "devDependencies": {
     "tsd": "^0.22.0",
     "typedoc": "^0.23.9"
-  
   },
   "tsd": {
     "directory": "tests"

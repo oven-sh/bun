@@ -2400,6 +2400,11 @@ interface SubtleCrypto {
   ): Promise<ArrayBuffer>;
 }
 
+declare var SubtleCrypto: {
+  prototype: SubtleCrypto;
+  new (): SubtleCrypto;
+};
+
 interface RsaPssParams extends Algorithm {
   saltLength: number;
 }

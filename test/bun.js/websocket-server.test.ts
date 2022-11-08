@@ -1,6 +1,6 @@
 import { serve } from "bun";
 import { describe, expect, it } from "bun:test";
-import { gcTick } from "gc";
+import { gcTick } from "./gc";
 
 var port = 4321;
 function getPort() {

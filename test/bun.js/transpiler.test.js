@@ -1543,6 +1543,10 @@ class Foo {
       expectPrinted("typeof [null]", '"object"');
       expectPrinted("typeof ['boolean']", '"object"');
 
+      expectPrinted('typeof [] === "object"', "true");
+      expectPrinted("typeof {foo: 123} === typeof {bar: 123}", "true");
+      expectPrinted("typeof {foo: 123} !== typeof 123", "true");
+
       expectPrinted("undefined === undefined", "true");
       expectPrinted("undefined !== undefined", "false");
       expectPrinted("undefined == undefined", "true");

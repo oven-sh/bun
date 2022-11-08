@@ -110,7 +110,9 @@ function DOMJITFunctionDeclaration(jsClassName, fnName, { args, returns }) {
   )}Wrapper, 
   ${jsClassName}::info(), 
   JSC::DOMJIT::Effect::forReadWrite(JSC::DOMJIT::HeapRange::top(), JSC::DOMJIT::HeapRange::top()), 
-  ${DOMJITType("JSValue")}, ${args.map(DOMJITType).join(", ")});
+  ${returns === "JSString" ? "JSC::SpecString" : DOMJITType("JSValue")}, ${args
+    .map(DOMJITType)
+    .join(", ")});
 `.trim();
 }
 

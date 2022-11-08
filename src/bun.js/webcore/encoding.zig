@@ -651,6 +651,71 @@ pub const TextDecoder = struct {
         }
     }
 
+    pub fn decodeWithoutTypeChecks(this: *TextDecoder, globalThis: *JSC.JSGlobalObject, uint8array: *JSC.JSUint8Array) callconv(.C) JSValue {
+        const buffer_slice = uint8array.slice();
+        switch (this.encoding) {
+            EncodingLabel.@"latin1" => {
+                return ZigString.init(buffer_slice).toValueGC(globalThis);
+            },
+            EncodingLabel.@"UTF-8" => {
+                if (this.fatal) {
+                    if (strings.toUTF16Alloc(default_allocator, buffer_slice, true)) |result_| {
+                        if (result_) |result| {
+                            return ZigString.toExternalU16(result.ptr, result.len, globalThis);
+                        }
+                    } else |err| {
+                        switch (err) {
+                            error.InvalidByteSequence => {
+                                globalThis.throw("Invalid byte sequence", .{});
+                                return JSValue.zero;
+                            },
+                            error.OutOfMemory => {
+                                globalThis.throw("Out of memory", .{});
+                                return JSValue.zero;
+                            },
+                            else => {
+                                globalThis.throw("Unknown error", .{});
+                                return JSValue.zero;
+                            },
+                        }
+                    }
+                } else {
+                    if (strings.toUTF16Alloc(default_allocator, buffer_slice, false)) |result_| {
+                        if (result_) |result| {
+                            return ZigString.toExternalU16(result.ptr, result.len, globalThis);
+                        }
+                    } else |err| {
+                        switch (err) {
+                            error.OutOfMemory => {
+                                globalThis.throw("Out of memory", .{});
+                                return JSValue.zero;
+                            },
+                            else => {
+                                globalThis.throw("Unknown error", .{});
+                                return JSValue.zero;
+                            },
+                        }
+                    }
+                }
+
+                // Experiment: using mimalloc directly is slightly slower
+                return ZigString.init(buffer_slice).toValueGC(globalThis);
+            },
+
+            EncodingLabel.@"UTF-16LE" => {
+                if (std.mem.isAligned(@ptrToInt(buffer_slice.ptr), @alignOf([*]u16))) {
+                    return this.decodeUTF16WithAlignment([]u16, @alignCast(2, std.mem.bytesAsSlice(u16, buffer_slice)), globalThis);
+                }
+
+                return this.decodeUTF16WithAlignment([]align(1) u16, std.mem.bytesAsSlice(u16, buffer_slice), globalThis);
+            },
+            else => {
+                globalThis.throwInvalidArguments("TextDecoder.decode set to unsupported encoding", .{});
+                return JSValue.zero;
+            },
+        }
+    }
+
     pub fn constructor(
         globalThis: *JSC.JSGlobalObject,
         callframe: *JSC.CallFrame,

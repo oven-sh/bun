@@ -1814,6 +1814,8 @@ pub const JSTextDecoder = struct {
             @compileLog("TextDecoder.finalize is not a finalizer");
         }
 
+        if (@TypeOf(TextDecoder.decodeWithoutTypeChecks) != fn (*TextDecoder, *JSC.JSGlobalObject, *JSC.JSUint8Array) callconv(.C) JSC.JSValue)
+            @compileLog("Expected TextDecoder.decodeWithoutTypeChecks to be a DOMJIT function");
         if (@TypeOf(TextDecoder.decode) != CallbackType)
             @compileLog("Expected TextDecoder.decode to be a callback");
         if (@TypeOf(TextDecoder.getEncoding) != GetterType)
@@ -1825,6 +1827,7 @@ pub const JSTextDecoder = struct {
         if (!JSC.is_bindgen) {
             @export(TextDecoder.constructor, .{ .name = "TextDecoderClass__construct" });
             @export(TextDecoder.decode, .{ .name = "TextDecoderPrototype__decode" });
+            @export(TextDecoder.decodeWithoutTypeChecks, .{ .name = "TextDecoderPrototype__decodeWithoutTypeChecks" });
             @export(TextDecoder.finalize, .{ .name = "TextDecoderClass__finalize" });
             @export(TextDecoder.getEncoding, .{ .name = "TextDecoderPrototype__getEncoding" });
             @export(TextDecoder.getFatal, .{ .name = "TextDecoderPrototype__getFatal" });

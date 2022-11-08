@@ -19,6 +19,11 @@ export default [
       decode: {
         fn: "decode",
         length: 1,
+
+        DOMJIT: {
+          returns: "JSString",
+          args: ["JSUint8Array"],
+        },
       },
     },
   }),

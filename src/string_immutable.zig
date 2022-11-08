@@ -942,16 +942,13 @@ pub fn toUTF16Alloc(allocator: std.mem.Allocator, bytes: []const u8, comptime fa
         var remaining = chunk;
 
         {
-            var sequence: [4]u8 = undefined;
-
-            if (remaining.len >= 4) {
-                sequence = remaining[0..4].*;
-            } else {
-                sequence[0] = remaining[0];
-                sequence[1] = if (remaining.len > 1) remaining[1] else 0;
-                sequence[2] = if (remaining.len > 2) remaining[2] else 0;
-                sequence[3] = 0;
-            }
+            const sequence: [4]u8 = switch (remaining.len) {
+                0 => unreachable,
+                1 => [_]u8{ remaining[0], 0, 0, 0 },
+                2 => [_]u8{ remaining[0], remaining[1], 0, 0 },
+                3 => [_]u8{ remaining[0], remaining[1], remaining[2], 0 },
+                else => remaining[0..4].*,
+            };
 
             const replacement = strings.convertUTF8BytesIntoUTF16(&sequence);
             if (comptime fail_if_invalid) {
@@ -980,16 +977,13 @@ pub fn toUTF16Alloc(allocator: std.mem.Allocator, bytes: []const u8, comptime fa
             const last = remaining[0..j];
             remaining = remaining[j..];
 
-            var sequence: [4]u8 = undefined;
-
-            if (remaining.len >= 4) {
-                sequence = remaining[0..4].*;
-            } else {
-                sequence[0] = remaining[0];
-                sequence[1] = if (remaining.len > 1) remaining[1] else 0;
-                sequence[2] = if (remaining.len > 2) remaining[2] else 0;
-                sequence[3] = 0;
-            }
+            const sequence: [4]u8 = switch (remaining.len) {
+                0 => unreachable,
+                1 => [_]u8{ remaining[0], 0, 0, 0 },
+                2 => [_]u8{ remaining[0], remaining[1], 0, 0 },
+                3 => [_]u8{ remaining[0], remaining[1], remaining[2], 0 },
+                else => remaining[0..4].*,
+            };
 
             const replacement = strings.convertUTF8BytesIntoUTF16(&sequence);
             if (comptime fail_if_invalid) {
@@ -1016,7 +1010,8 @@ pub fn toUTF16Alloc(allocator: std.mem.Allocator, bytes: []const u8, comptime fa
         }
 
         if (remaining.len > 0) {
-            try output.ensureUnusedCapacity(remaining.len);
+            try output.ensureTotalCapacityPrecise(output.items.len + remaining.len);
+
             output.items.len += remaining.len;
             strings.copyU8IntoU16(output.items[output.items.len - remaining.len ..], remaining);
         }

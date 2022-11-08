@@ -65,6 +65,13 @@ describe("Bun.Transpiler", () => {
     },
   };
 
+  it("normalizes \\r\\n", () => {
+    ts.expectPrinted_(
+      "console.log(`\r\n\r\n\r\n`)",
+      "console.log(`\n\n\n`);\n"
+    );
+  });
+
   describe("TypeScript", () => {
     it("import Foo = Baz.Bar", () => {
       ts.expectPrinted_(

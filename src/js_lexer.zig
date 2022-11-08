@@ -280,7 +280,8 @@ fn NewLexer_(
                         // include a <CR> or <CR><LF> sequence.
 
                         // Convert '\r\n' into '\n'
-                        iter.i += @as(u32, @boolToInt(iter.i < text.len and text[iter.i] == '\n'));
+                        const next_i: usize = iter.i + 1;
+                        iter.i += @as(u32, @boolToInt(next_i < text.len and text[next_i] == '\n'));
 
                         // Convert '\r' into '\n'
                         buf.append('\n') catch unreachable;
@@ -546,11 +547,11 @@ fn NewLexer_(
                                     try lexer.syntaxError();
                                 }
 
+                                // Make sure Windows CRLF counts as a single newline
+                                const next_i: usize = iter.i + 1;
+                                iter.i += @as(u32, @boolToInt(next_i < text.len and text[next_i] == '\n'));
+
                                 // Ignore line continuations. A line continuation is not an escaped newline.
-                                if (iter.i < text.len and text[iter.i + 1] == '\n') {
-                                    // Make sure Windows CRLF counts as a single newline
-                                    iter.i += 1;
-                                }
                                 continue;
                             },
                             '\n', 0x2028, 0x2029 => {

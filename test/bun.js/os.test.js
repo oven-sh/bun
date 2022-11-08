@@ -128,6 +128,7 @@ it("networkInterfaces", () => {
 it("machine", () => {
   const possibleValues = [
     "arm",
+    "arm64",
     "aarch64",
     "mips",
     "mips64",

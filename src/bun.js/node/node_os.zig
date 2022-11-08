@@ -319,7 +319,7 @@ pub const Os = struct {
     inline fn getMachineName() []const u8 {
         return switch (@import("builtin").target.cpu.arch) {
             .arm => "arm",
-            .aarch64 => "aarch64",
+            .aarch64 => "arm64",
             .mips => "mips",
             .mips64 => "mips64",
             .powerpc64 => "ppc64",

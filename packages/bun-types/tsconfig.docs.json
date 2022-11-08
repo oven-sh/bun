@@ -2,7 +2,9 @@
   "compilerOptions": {
     "composite": true,
     "emitDeclarationOnly": true,
-    "lib": ["ESNext"],
+    "lib": [
+      "ESNext"
+    ],
     "baseUrl": ".",
     "rootDir": ".",
     "outFile": "./types.d.ts",
@@ -10,11 +12,14 @@
     "target": "esnext",
     "disableSolutionSearching": true
   },
-  "include": ["./*.d.ts", "dist"],
+  "include": [
+    "./*.d.ts",
+    "dist"
+  ],
   "exclude": [
     "node_modules",
-    "./node_modules",
-    "./node_modules/*",
-    "./node_modules/@types/node/index.d.ts"
+    // "./node_modules",
+    // "./node_modules/*",
+    // "./node_modules/@types/node/index.d.ts"
   ]
 }

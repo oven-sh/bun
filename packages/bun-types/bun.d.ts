@@ -2530,7 +2530,7 @@ declare module "bun" {
   }
 
   interface SubprocessIO {
-    readonly stdin?: undefined | number | FileSink;
+    readonly stdin?: undefined | number | ReadableStream | FileSink;
     readonly stdout?: undefined | number | ReadableStream;
     readonly stderr?: undefined | number | ReadableStream;
   }

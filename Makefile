@@ -501,9 +501,13 @@ vendor-without-check: npm-install node-fallbacks runtime_js fallback_decoder bun
 
 BUN_TYPES_REPO_PATH ?= $(realpath packages/bun-types)
 
+ifeq ($(DEBUG),true)
+BUN_RELEASE_BIN = bun
+endif
+
 .PHONY: prepare-types
 prepare-types:
-	BUN_VERSION=$(PACKAGE_JSON_VERSION) $(BUN_RELEASE_BIN) $(BUN_TYPES_REPO_PATH)/bundle.ts $(BUN_TYPES_REPO_PATH)/dist
+	BUN_VERSION=$(PACKAGE_JSON_VERSION) $(BUN_RELEASE_BIN) $(BUN_TYPES_REPO_PATH)/scripts/bundle.ts $(BUN_TYPES_REPO_PATH)/dist
 	echo "Generated types for $(PACKAGE_JSON_VERSION) in $(BUN_TYPES_REPO_PATH)/dist"
 	cp $(BUN_TYPES_REPO_PATH)/dist/types.d.ts /tmp/bun-types.d.ts
 	cd /tmp && $(PACKAGE_DIR)/../../node_modules/.bin/tsc /tmp/bun-types.d.ts
@@ -516,7 +520,10 @@ release-types:
 .PHONY: format
 format: ## to format the code
 	$(PRETTIER) --write test/bun.js/*.js
-	$(PRETTIER) --write test/bun.js/solid-dom-fixtures/**/*.js
+	$(PRETTIER) --write test/bun.js/*.jsx
+	$(PRETTIER) --write test/bun.js/*.ts
+	$(PRETTIER) --write test/bun.js/*.tsx
+	$(PRETTIER) --write test/bun.js/solid-dom-fixtures/**/*.{js|ts|jsx|tsx}
 
 .PHONY: lolhtml
 lolhtml:

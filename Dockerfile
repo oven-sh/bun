@@ -265,26 +265,6 @@ WORKDIR $BUN_DIR
 
 RUN make boringssl && rm -rf src/deps/boringssl Makefile
 
-FROM bun-base as base64
-
-ARG DEBIAN_FRONTEND
-ARG GITHUB_WORKSPACE
-ARG ZIG_PATH
-# Directory extracts to "bun-webkit"
-ARG WEBKIT_DIR
-ARG BUN_RELEASE_DIR
-ARG BUN_DEPS_OUT_DIR
-ARG BUN_DIR
-ARG CPU_TARGET
-ENV CPU_TARGET=${CPU_TARGET}
-
-COPY Makefile ${BUN_DIR}/Makefile
-COPY src/base64 ${BUN_DIR}/src/base64
-
-WORKDIR $BUN_DIR
-
-RUN make base64 && rm -rf src/base64 Makefile
-
 FROM bun-base as uws
 
 ARG DEBIAN_FRONTEND
@@ -488,7 +468,6 @@ COPY --from=uws ${BUN_DEPS_OUT_DIR}/*.a ${BUN_DEPS_OUT_DIR}/
 COPY --from=uws ${BUN_DEPS_OUT_DIR}/*.o ${BUN_DEPS_OUT_DIR}/
 COPY --from=libbacktrace ${BUN_DEPS_OUT_DIR}/*.a ${BUN_DEPS_OUT_DIR}/
 COPY --from=tinycc ${BUN_DEPS_OUT_DIR}/*.a ${BUN_DEPS_OUT_DIR}/
-COPY --from=base64 ${BUN_DEPS_OUT_DIR}/*.a ${BUN_DEPS_OUT_DIR}/
 
 # Required for `make webcrypto`
 COPY src/deps/boringssl/include ${BUN_DIR}/src/deps/boringssl/include
@@ -543,7 +522,6 @@ ENV LIB_ICU_PATH=${WEBKIT_DIR}/lib
 
 COPY --from=zlib ${BUN_DEPS_OUT_DIR}/*.a ${BUN_DEPS_OUT_DIR}/
 COPY --from=libarchive ${BUN_DEPS_OUT_DIR}/*.a ${BUN_DEPS_OUT_DIR}/
-COPY --from=base64 ${BUN_DEPS_OUT_DIR}/*.a ${BUN_DEPS_OUT_DIR}/
 COPY --from=boringssl ${BUN_DEPS_OUT_DIR}/*.a ${BUN_DEPS_OUT_DIR}/
 COPY --from=libbacktrace ${BUN_DEPS_OUT_DIR}/*.a ${BUN_DEPS_OUT_DIR}/
 COPY --from=lolhtml ${BUN_DEPS_OUT_DIR}/*.a ${BUN_DEPS_OUT_DIR}/

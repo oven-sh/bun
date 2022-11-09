@@ -373,7 +373,8 @@ declare module "bun:ffi" {
     | "ptr"
     | "pointer"
     | "void"
-    | "cstring";
+    | "cstring"
+    | "function";
 
   interface FFIFunction {
     /**
@@ -438,6 +439,23 @@ declare module "bun:ffi" {
      * or if the module is also using Node-API.
      */
     ptr?: number | bigint;
+
+    /**
+     * Can C/FFI code call this function from a separate thread?
+     *
+     * Only supported with {@link JSCallback}.
+     *
+     * This does not make the function run in a separate thread. It is still up to the application/library
+     * to run their code in a separate thread.
+     *
+     * By default, {@link JSCallback} calls are not thread-safe. Turning this on
+     * incurs a small performance penalty for every function call. That small
+     * performance penalty needs to be less than the performance gain from
+     * running the function in a separate thread.
+     *
+     * @default false
+     */
+    threadsafe?: boolean;
   }
 
   type Symbols = Record<string, FFIFunction>;
@@ -733,6 +751,38 @@ declare module "bun:ffi" {
      * `null` or empty ptrs returns an `ArrayBuffer` with `byteLength` 0
      */
     get arrayBuffer(): ArrayBuffer;
+  }
+
+  /**
+   * Pass a JavaScript function to FFI (Foreign Function Interface)
+   */
+  export class JSCallback {
+    /**
+     * Enable a JavaScript callback function to be passed to C with bun:ffi
+     *
+     * @param callback The JavaScript function to be called
+     * @param definition The C function definition
+     */
+    constructor(callback: (...args: any[]) => any, definition: FFIFunction);
+
+    /**
+     * The pointer to the C function
+     *
+     * Becomes `null` once {@link JSCallback.prototype.close} is called
+     */
+    readonly ptr: number | null;
+
+    /**
+     * Can the callback be called from a different thread?
+     */
+    readonly threadsafe: boolean;
+
+    /**
+     * Free the memory allocated for the callback
+     *
+     * If called multiple times, does nothing after the first call.
+     */
+    close(): void;
   }
 
   /**

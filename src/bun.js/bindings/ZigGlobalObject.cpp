@@ -2296,7 +2296,7 @@ JSC_DEFINE_HOST_FUNCTION(errorConstructorFuncCaptureStackTrace, (JSC::JSGlobalOb
     Bun__remapStackFramePositions(lexicalGlobalObject, remappedFrames, framesCount);
 
     JSC::JSValue formattedStackTrace = globalObject->formatStackTrace(vm, lexicalGlobalObject, errorObject, callSites, remappedFrames);
-    RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode(scope.exception()));
+    RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode({}));
 
     if (errorObject->hasProperty(lexicalGlobalObject, vm.propertyNames->stack)) {
         errorObject->deleteProperty(lexicalGlobalObject, vm.propertyNames->stack);

@@ -5187,7 +5187,7 @@ pub const Request = struct {
         };
     }
 
-    pub fn writeFormat(this: *const Request, formatter: *JSC.Formatter, writer: anytype, comptime enable_ansi_colors: bool) !void {
+    pub fn writeFormat(this: *Request, formatter: *JSC.Formatter, writer: anytype, comptime enable_ansi_colors: bool) !void {
         const Writer = @TypeOf(writer);
         try formatter.writeIndent(Writer, writer);
         try writer.print("Request ({}) {{\n", .{bun.fmt.size(this.body.slice().len)});
@@ -5204,7 +5204,9 @@ pub const Request = struct {
 
             try formatter.writeIndent(Writer, writer);
             try writer.writeAll("url: \"");
+            try this.ensureURL();
             try writer.print(comptime Output.prettyFmt("<r><b>{s}<r>", enable_ansi_colors), .{this.url});
+
             try writer.writeAll("\"");
             if (this.body == .Blob) {
                 try writer.writeAll("\n");
@@ -5376,6 +5378,7 @@ pub const Request = struct {
 
         return 0;
     }
+
     pub fn ensureURL(this: *Request) !void {
         if (this.url.len > 0) return;
 

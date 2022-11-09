@@ -26,7 +26,24 @@ it("should work for a file", async () => {
     },
   });
   const response = await fetch(`http://${server.hostname}:${server.port}`);
-  console.log(response);
+  expect(await response.text()).toBe(textToExpect);
+  server.stop();
+});
+
+it("request.url should log successfully", async () => {
+  const fixture = resolve(import.meta.dir, "./fetch.js.txt");
+  const textToExpect = readFileSync(fixture, "utf-8");
+  var expected;
+  const server = serve({
+    port: port++,
+    fetch(req) {
+      expect(Bun.inspect(req).includes(expected)).toBe(true);
+      return new Response(file(fixture));
+    },
+  });
+  expected = `http://${server.hostname}:${server.port}/helloooo`;
+  const response = await fetch(expected);
+  expect(response.url).toBe(expected);
   expect(await response.text()).toBe(textToExpect);
   server.stop();
 });
@@ -206,7 +223,7 @@ describe("streaming", () => {
     var server;
     try {
       var pass = false;
-      var err = { name: '', message: '' };
+      var err = { name: "", message: "" };
       server = serve({
         port: port++,
         development: false,

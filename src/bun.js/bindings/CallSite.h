@@ -22,6 +22,7 @@ public:
         IsStrict = 1,
         IsEval = 2,
         IsConstructor = 4,
+        IsNative = 8,
     };
 
 private:
@@ -73,6 +74,7 @@ public:
     bool isEval() const { return m_flags & static_cast<unsigned int>(Flags::IsEval); }
     bool isConstructor() const { return m_flags & static_cast<unsigned int>(Flags::IsConstructor); }
     bool isStrict() const { return m_flags & static_cast<unsigned int>(Flags::IsStrict); }
+    bool isNative() const { return m_flags & static_cast<unsigned int>(Flags::IsNative); }
 
 private:
     CallSite(JSC::VM& vm, JSC::Structure* structure)

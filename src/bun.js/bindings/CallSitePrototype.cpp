@@ -95,12 +95,14 @@ void CallSitePrototype::finishCreation(JSC::VM& vm, JSC::JSGlobalObject* globalO
     JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
 }
 
+// TODO: doesn't recognize thisValue as global object
 JSC_DEFINE_HOST_FUNCTION(callSiteProtoFuncGetThis, (JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     ENTER_PROTO_FUNC();
     return JSC::JSValue::encode(callSite->thisValue());
 }
 
+// TODO: doesn't get class name
 JSC_DEFINE_HOST_FUNCTION(callSiteProtoFuncGetTypeName, (JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     ENTER_PROTO_FUNC();
@@ -143,7 +145,7 @@ JSC_DEFINE_HOST_FUNCTION(callSiteProtoFuncGetColumnNumber, (JSGlobalObject * glo
     return JSC::JSValue::encode(callSite->columnNumber());
 }
 
-// TODO
+// TODO:
 JSC_DEFINE_HOST_FUNCTION(callSiteProtoFuncGetEvalOrigin, (JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     return JSC::JSValue::encode(JSC::jsUndefined());
@@ -187,8 +189,8 @@ JSC_DEFINE_HOST_FUNCTION(callSiteProtoFuncIsNative, (JSGlobalObject * globalObje
 {
     ENTER_PROTO_FUNC();
 
-    // TODO
-    return JSC::JSValue::encode(JSC::jsBoolean(false));
+    bool isNative = callSite->isNative();
+    return JSC::JSValue::encode(JSC::jsBoolean(isNative));
 }
 
 JSC_DEFINE_HOST_FUNCTION(callSiteProtoFuncIsConstructor, (JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
@@ -199,6 +201,7 @@ JSC_DEFINE_HOST_FUNCTION(callSiteProtoFuncIsConstructor, (JSGlobalObject * globa
     return JSC::JSValue::encode(JSC::jsBoolean(isConstructor));
 }
 
+// TODO:
 JSC_DEFINE_HOST_FUNCTION(callSiteProtoFuncIsAsync, (JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     ENTER_PROTO_FUNC();
@@ -206,6 +209,7 @@ JSC_DEFINE_HOST_FUNCTION(callSiteProtoFuncIsAsync, (JSGlobalObject * globalObjec
     return JSC::JSValue::encode(JSC::jsBoolean(false));
 }
 
+// TODO:
 JSC_DEFINE_HOST_FUNCTION(callSiteProtoFuncIsPromiseAll, (JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     ENTER_PROTO_FUNC();
@@ -213,6 +217,7 @@ JSC_DEFINE_HOST_FUNCTION(callSiteProtoFuncIsPromiseAll, (JSGlobalObject * global
     return JSC::JSValue::encode(JSC::jsBoolean(false));
 }
 
+// TODO:
 JSC_DEFINE_HOST_FUNCTION(callSiteProtoFuncGetPromiseIndex, (JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     ENTER_PROTO_FUNC();

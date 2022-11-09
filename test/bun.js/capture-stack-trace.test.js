@@ -137,6 +137,14 @@ test("prepare stack trace", () => {
   }
 
   function f2() {
+    let e = {};
+    let prevPrepareStackTrace = Error.prepareStackTrace;
+    Error.prepareStackTrace = (e, stack) => {
+      return "custom stack trace";
+    };
+    Error.captureStackTrace(e);
+    expect(e.stack).toBe("custom stack trace");
+    Error.prepareStackTrace = prevPrepareStackTrace;
     f3();
   }
 
@@ -146,12 +154,9 @@ test("prepare stack trace", () => {
     Error.prepareStackTrace = (e, s) => {
       expect(e.message === "bad error!").toBe(true);
       expect(s.length).toBe(4);
-      Object.keys(s[0]).forEach((key) => {
-        console.log(key);
-        // expect(s[0][key] !== undefined).toBe(true);
-      });
     };
     Error.captureStackTrace(e);
+    expect(e.stack === undefined).toBe(true);
     Error.prepareStackTrace = prevPrepareStackTrace;
   }
 
@@ -266,81 +271,27 @@ test("prepare stack trace call sites", () => {
     // let e = new Error("bad error!");
     let prevPrepareStackTrace = Error.prepareStackTrace;
     Error.prepareStackTrace = (e, s) => {
-      // console.log("getThis: " + s[0].getThis());
-      // console.log("getTypeName: " + s[0].getTypeName());
-      // console.log("getFunction: " + s[0].getFunction());
-      // console.log("getFunctionName: " + s[0].getFunctionName());
-      // console.log("getMethodName: " + s[0].getMethodName());
-      // console.log("getFileName: " + s[0].getFileName());
-      // console.log("getLineNumber: " + s[0].getLineNumber());
-      // console.log("getColumnNumber: " + s[0].getColumnNumber());
-      // console.log("getEvalOrigin: " + s[0].getEvalOrigin());
-      // console.log("isToplevel: " + s[0].isToplevel());
-      // console.log("isEval: " + s[0].isEval());
-      // console.log("isNative: " + s[0].isNative());
-      // console.log("isConstructor: " + s[0].isConstructor());
-      // console.log("isAsync: " + s[0].isAsync());
-      // console.log("isPromiseAll: " + s[0].isPromiseAll());
-      // console.log("getPromiseIndex: " + s[0].getPromiseIndex());
-
-      expect(s[0].getThis !== undefined).toBe(false);
-      expect(s[0].getTypeName !== undefined).toBe(false);
-      expect(s[0].getFunction !== undefined).toBe(false);
-      expect(s[0].getFunctionName !== undefined).toBe(false);
-      expect(s[0].getMethodName !== undefined).toBe(false);
-      expect(s[0].getFileName !== undefined).toBe(false);
-      expect(s[0].getLineNumber !== undefined).toBe(false);
-      expect(s[0].getColumnNumber !== undefined).toBe(false);
-      expect(s[0].getEvalOrigin !== undefined).toBe(false);
-      expect(s[0].isToplevel !== undefined).toBe(false);
-      expect(s[0].isEval !== undefined).toBe(false);
-      expect(s[0].isNative !== undefined).toBe(false);
-      expect(s[0].isConstructor !== undefined).toBe(false);
-      expect(s[0].isAsync !== undefined).toBe(false);
-      expect(s[0].isPromiseAll !== undefined).toBe(false);
-      expect(s[0].getPromiseIndex !== undefined).toBe(false);
+      expect(s[0].getThis !== undefined).toBe(true);
+      expect(s[0].getTypeName !== undefined).toBe(true);
+      expect(s[0].getFunction !== undefined).toBe(true);
+      expect(s[0].getFunctionName !== undefined).toBe(true);
+      expect(s[0].getMethodName !== undefined).toBe(true);
+      expect(s[0].getFileName !== undefined).toBe(true);
+      expect(s[0].getLineNumber !== undefined).toBe(true);
+      expect(s[0].getColumnNumber !== undefined).toBe(true);
+      expect(s[0].getEvalOrigin !== undefined).toBe(true);
+      expect(s[0].isToplevel !== undefined).toBe(true);
+      expect(s[0].isEval !== undefined).toBe(true);
+      expect(s[0].isNative !== undefined).toBe(true);
+      expect(s[0].isConstructor !== undefined).toBe(true);
+      expect(s[0].isAsync !== undefined).toBe(true);
+      expect(s[0].isPromiseAll !== undefined).toBe(true);
+      expect(s[0].getPromiseIndex !== undefined).toBe(true);
     };
     Error.captureStackTrace(e);
-    console.log(e.stack);
+    expect(e.stack === undefined).toBe(true);
     Error.prepareStackTrace = prevPrepareStackTrace;
   }
 
   f1();
 });
-
-// function f1() {
-//   f2();
-// }
-
-// function f2() {
-//   f3();
-// }
-
-// function f3() {
-//   // let e = { message: "bad error!" };
-//   let e = new Error("bad error!");
-//   let prevPrepareStackTrace = Error.prepareStackTrace;
-//   Error.prepareStackTrace = (e, s) => {
-//     console.log("getThis: " + s[0].getThis());
-//     console.log("getTypeName: " + s[0].getTypeName());
-//     console.log("getFunction: " + s[0].getFunction());
-//     console.log("getFunctionName: " + s[0].getFunctionName());
-//     console.log("getMethodName: " + s[0].getMethodName());
-//     console.log("getFileName: " + s[0].getFileName());
-//     console.log("getLineNumber: " + s[0].getLineNumber());
-//     console.log("getColumnNumber: " + s[0].getColumnNumber());
-//     console.log("getEvalOrigin: " + s[0].getEvalOrigin());
-//     console.log("isToplevel: " + s[0].isToplevel());
-//     console.log("isEval: " + s[0].isEval());
-//     console.log("isNative: " + s[0].isNative());
-//     console.log("isConstructor: " + s[0].isConstructor());
-//     console.log("isAsync: " + s[0].isAsync());
-//     console.log("isPromiseAll: " + s[0].isPromiseAll());
-//     console.log("getPromiseIndex: " + s[0].getPromiseIndex());
-//   };
-//   Error.captureStackTrace(e);
-//   console.log(e.stack);
-//   Error.prepareStackTrace = prevPrepareStackTrace;
-// }
-
-// f1();

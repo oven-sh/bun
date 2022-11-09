@@ -70,6 +70,9 @@ void CallSite::finishCreation(VM& vm, JSC::JSGlobalObject* globalObject, JSCStac
     if (stackFrame.isConstructor()) {
         m_flags |= static_cast<unsigned int>(Flags::IsConstructor);
     }
+    if (!stackFrame.codeBlock()) {
+        m_flags |= static_cast<unsigned int>(Flags::IsNative);
+    }
 }
 
 void CallSite::visitChildren(JSC::JSCell* cell, JSC::SlotVisitor& visitor)

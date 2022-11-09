@@ -123,7 +123,7 @@ function exceptionToMarkdown(exception: JSException): string {
               // but it may not be
               var prefix = "".padStart(
                 lineText.length - lineText.trimStart().length,
-                " "
+                " ",
               );
 
               prefix +=
@@ -159,7 +159,7 @@ function exceptionToMarkdown(exception: JSException): string {
             scope,
             functionName: function_name,
             markdown: true,
-          }).length
+          }).length,
         );
       }
 
@@ -268,7 +268,7 @@ export const withBunInfo = (text) => {
         const markdown = bunInfoToMarkdown(info).trim();
         return trimmed + "\n" + markdown + "\n";
       },
-      () => trimmed + "\n"
+      () => trimmed + "\n",
     );
   }
 

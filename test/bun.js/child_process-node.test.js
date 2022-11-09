@@ -62,7 +62,7 @@ describe("ChildProcess.spawn()", () => {
           // message:
           //   'The "options" argument must be of type object.' +
           //   `${common.invalidArgTypeHelper(options)}`,
-        }
+        },
       );
     });
   });
@@ -81,7 +81,7 @@ describe("ChildProcess.spawn()", () => {
           // message:
           //   'The "options.file" property must be of type string.' +
           //   `${common.invalidArgTypeHelper(file)}`,
-        }
+        },
       );
     });
   });
@@ -104,7 +104,7 @@ describe("ChildProcess.spawn()", () => {
           // message:
           //   'The "options.envPairs" property must be an instance of Array.' +
           //   common.invalidArgTypeHelper(envPairs),
-        }
+        },
       );
     });
   });
@@ -124,7 +124,7 @@ describe("ChildProcess.spawn()", () => {
           // message:
           //   'The "options.args" property must be an instance of Array.' +
           //   common.invalidArgTypeHelper(args),
-        }
+        },
       );
     });
   });
@@ -153,7 +153,7 @@ describe("ChildProcess.spawn", () => {
       () => {
         child.kill("foo");
       },
-      { code: "ERR_UNKNOWN_SIGNAL", name: "TypeError" }
+      { code: "ERR_UNKNOWN_SIGNAL", name: "TypeError" },
     );
   });
 
@@ -194,7 +194,7 @@ describe("ChildProcess spawn bad stdio", () => {
         strictEqual(stdout, "");
         strictEqual(stderr, "");
       },
-      done
+      done,
     );
   });
 
@@ -207,7 +207,7 @@ describe("ChildProcess spawn bad stdio", () => {
         strictEqual(stdout, "");
         strictEqual(stderr, "");
       },
-      done
+      done,
     );
 
     child.emit("error", error);
@@ -221,7 +221,7 @@ describe("ChildProcess spawn bad stdio", () => {
         strictEqual(stdout, "");
         strictEqual(stderr, "");
       },
-      done
+      done,
     );
   });
 });
@@ -234,7 +234,7 @@ describe("child_process cwd", () => {
   function testCwd(
     options,
     { expectPidType, expectCode = 0, expectData },
-    done = () => {}
+    done = () => {},
   ) {
     const createDone = createDoneDotAll(done);
     const { mustCall } = createCallCheckCtx(createDone(1500));
@@ -268,7 +268,7 @@ describe("child_process cwd", () => {
       "close",
       mustCall(() => {
         expectData && strictEqual(data.trim(), expectData);
-      })
+      }),
     );
 
     return child;
@@ -326,7 +326,7 @@ describe("child_process cwd", () => {
         expectCode: 0,
         expectData: platformTmpDir,
       },
-      createDone(1500)
+      createDone(1500),
     );
     const shouldExistDir = "/dev";
     testCwd(
@@ -336,7 +336,7 @@ describe("child_process cwd", () => {
         expectCode: 0,
         expectData: shouldExistDir,
       },
-      createDone(1500)
+      createDone(1500),
     );
     testCwd(
       { cwd: Bun.pathToFileURL(tmpdir.path) },
@@ -345,7 +345,7 @@ describe("child_process cwd", () => {
         expectCode: 0,
         expectData: platformTmpDir,
       },
-      createDone(1500)
+      createDone(1500),
     );
   });
 
@@ -375,7 +375,7 @@ describe("child_process default options", () => {
       assertOk(
         response.includes(`TMPDIR=${process.env.TMPDIR}`),
         "spawn did not use process.env as default " +
-          `(process.env.TMPDIR = ${process.env.TMPDIR})`
+          `(process.env.TMPDIR = ${process.env.TMPDIR})`,
       );
       done();
     });
@@ -398,7 +398,7 @@ describe("child_process double pipe", () => {
         if (!grep.stdin.write(data)) {
           echo.stdout.pause();
         }
-      })
+      }),
     );
 
     // TODO(Derrick): We don't implement the full API for this yet,
@@ -415,28 +415,28 @@ describe("child_process double pipe", () => {
       mustCall(() => {
         debug("echo stdout end");
         grep.stdin.end();
-      })
+      }),
     );
 
     echo.on(
       "exit",
       mustCall(() => {
         debug("echo exit");
-      })
+      }),
     );
 
     grep.on(
       "exit",
       mustCall(() => {
         debug("grep exit");
-      })
+      }),
     );
 
     sed.on(
       "exit",
       mustCall(() => {
         debug("sed exit");
-      })
+      }),
     );
 
     // pipe grep | sed
@@ -447,7 +447,7 @@ describe("child_process double pipe", () => {
         if (!sed.stdin.write(data)) {
           grep.stdout.pause();
         }
-      })
+      }),
     );
 
     // // TODO(@jasnell): This does not appear to ever be
@@ -462,7 +462,7 @@ describe("child_process double pipe", () => {
       mustCall((code) => {
         debug("grep stdout end");
         sed.stdin.end();
-      })
+      }),
     );
 
     let result = "";
@@ -473,7 +473,7 @@ describe("child_process double pipe", () => {
       mustCallAtLeast((data) => {
         result += data.toString("utf8");
         debug(data);
-      })
+      }),
     );
 
     sed.stdout.on(
@@ -481,7 +481,7 @@ describe("child_process double pipe", () => {
       mustCall(() => {
         debug("result: " + result);
         strictEqual(result, `hellO\nnOde\nwOrld\n`);
-      })
+      }),
     );
   });
 });

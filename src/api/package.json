@@ -2,6 +2,6 @@
   "name": "bun-api",
   "private": true,
   "dependencies": {
-    "peechy": "latest"
+    "peechy": "0.4.32"
   }
 }

@@ -1,0 +1,18 @@
+{
+  "name": "bun-types",
+  "types": "index.d.ts",
+  "private": true,
+  "repository": "https://github.com/oven-sh/bun-types",
+  "scripts": {
+    "build": "rm -rf ./dist && bun scripts/bundle.ts ./dist && bun run fmt",
+    "docs": "bun run build && typedoc",
+    "test": "tsd"
+  },
+  "devDependencies": {
+    "tsd": "^0.22.0",
+    "typedoc": "^0.23.9"
+  },
+  "tsd": {
+    "directory": "tests"
+  }
+}

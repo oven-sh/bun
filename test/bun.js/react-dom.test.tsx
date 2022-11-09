@@ -10,7 +10,7 @@ import { heapStats } from "bun:jsc";
 import { describe, expect, it } from "bun:test";
 import { renderToReadableStream as renderToReadableStreamBrowser } from "react-dom/server.browser";
 import { gc } from "./gc";
-import { renderToReadableStream as renderToReadableStreamBun } from "./react-dom-server.bun";
+import { renderToReadableStream as renderToReadableStreamBun } from "./react-dom-server.bun.cjs";
 import React from "react";
 
 Object.defineProperty(renderToReadableStreamBrowser, "name", {
@@ -93,9 +93,11 @@ describe("React", () => {
   it("React.createContext works", () => {
     expect(typeof React.createContext).toBe("function");
     const pleaseDontThrow = React.createContext({ foo: true });
-    expect(pleaseDontThrow.$$typeof.description).toBe("react.context");
+    expect((pleaseDontThrow as any).$$typeof.description).toBe("react.context");
 
-    const pleaseDontThrow2 = React.default.createContext({ foo: true });
+    const pleaseDontThrow2 = (React as any).default.createContext({
+      foo: true,
+    });
     expect(pleaseDontThrow2.$$typeof.description).toBe("react.context");
   });
 });
@@ -117,7 +119,7 @@ describe("ReactDOM", () => {
             gc();
             expect(text.replaceAll("<!-- -->", "")).toBe(inputString);
             gc();
-          } catch (e) {
+          } catch (e: any) {
             console.log(e.stack);
             throw e;
           }
@@ -159,7 +161,7 @@ describe("ReactDOM", () => {
             gc();
             expect(text.replaceAll("<!-- -->", "")).toBe(inputString);
             gc();
-          } catch (e) {
+          } catch (e: any) {
             console.error(e.message);
             console.error(e.stack);
             throw e;
@@ -172,7 +174,7 @@ describe("ReactDOM", () => {
           const text =
             renderToReadableStream === renderToReadableStreamBun
               ? array.join("")
-              : new TextDecoder().decode(concatArrayBuffers(array));
+              : new TextDecoder().decode(concatArrayBuffers(array as any[]));
           gc();
           expect(text.replaceAll("<!-- -->", "")).toBe(inputString);
           gc();
@@ -189,7 +191,7 @@ describe("ReactDOM", () => {
         it("for await (chunk of stream)", async () => {
           const stream = await renderToReadableStream(reactElement);
           gc();
-          const chunks = [];
+          const chunks: any = [];
           for await (let chunk of stream) {
             chunks.push(chunk);
           }
@@ -202,12 +204,12 @@ describe("ReactDOM", () => {
         it("for await (chunk of stream) (arrayBuffer)", async () => {
           const stream = await renderToReadableStream(reactElement);
           gc();
-          const chunks = [];
+          const chunks: any[] = [];
           for await (let chunk of stream) {
             chunks.push(chunk);
           }
           const text = new TextDecoder().decode(
-            await new Response(chunks).arrayBuffer()
+            await new Response(chunks as any).arrayBuffer(),
           );
           gc();
           expect(text.replaceAll("<!-- -->", "")).toBe(inputString);

@@ -124,7 +124,9 @@ function encodeStackFrame(message, bb) {
     var encoded = StackFrameScope[value];
     if (encoded === void 0)
       throw new Error(
-        "Invalid value " + JSON.stringify(value) + ' for enum "StackFrameScope"'
+        "Invalid value " +
+          JSON.stringify(value) +
+          ' for enum "StackFrameScope"',
       );
     bb.writeByte(encoded);
   } else {
@@ -504,7 +506,7 @@ function encodeFallbackMessageContainer(message, bb) {
     var encoded = FallbackStep[value];
     if (encoded === void 0)
       throw new Error(
-        "Invalid value " + JSON.stringify(value) + ' for enum "FallbackStep"'
+        "Invalid value " + JSON.stringify(value) + ' for enum "FallbackStep"',
       );
     bb.writeByte(encoded);
   }
@@ -620,7 +622,7 @@ function encodeJSX(message, bb) {
     var encoded = JSXRuntime[value];
     if (encoded === void 0)
       throw new Error(
-        "Invalid value " + JSON.stringify(value) + ' for enum "JSXRuntime"'
+        "Invalid value " + JSON.stringify(value) + ' for enum "JSXRuntime"',
       );
     bb.writeByte(encoded);
   } else {
@@ -841,7 +843,7 @@ function encodeJavascriptBundle(message, bb) {
     bb.writeByteArray(value);
   } else {
     throw new Error(
-      'Missing required field "app_package_json_dependencies_hash"'
+      'Missing required field "app_package_json_dependencies_hash"',
     );
   }
 
@@ -968,7 +970,7 @@ function encodeModuleImportRecord(message, bb) {
       throw new Error(
         "Invalid value " +
           JSON.stringify(value) +
-          ' for enum "ModuleImportType"'
+          ' for enum "ModuleImportType"',
       );
     bb.writeByte(encoded);
   } else {
@@ -1098,7 +1100,7 @@ function encodeLoaderMap(message, bb) {
       var encoded = Loader[value];
       if (encoded === void 0)
         throw new Error(
-          "Invalid value " + JSON.stringify(value) + ' for enum "Loader"'
+          "Invalid value " + JSON.stringify(value) + ' for enum "Loader"',
         );
       bb.writeByte(encoded);
     }
@@ -1175,7 +1177,7 @@ function encodeLoadedEnvConfig(message, bb) {
     var encoded = DotEnvBehavior[value];
     if (encoded === void 0)
       throw new Error(
-        "Invalid value " + JSON.stringify(value) + ' for enum "DotEnvBehavior"'
+        "Invalid value " + JSON.stringify(value) + ' for enum "DotEnvBehavior"',
       );
     bb.writeVarUint(encoded);
   } else {
@@ -1280,7 +1282,9 @@ function encodeFrameworkConfig(message, bb) {
     var encoded = CSSInJSBehavior[value];
     if (encoded === void 0)
       throw new Error(
-        "Invalid value " + JSON.stringify(value) + ' for enum "CSSInJSBehavior"'
+        "Invalid value " +
+          JSON.stringify(value) +
+          ' for enum "CSSInJSBehavior"',
       );
     bb.writeByte(encoded);
   }
@@ -1316,7 +1320,7 @@ function encodeFrameworkEntryPoint(message, bb) {
       throw new Error(
         "Invalid value " +
           JSON.stringify(value) +
-          ' for enum "FrameworkEntryPointType"'
+          ' for enum "FrameworkEntryPointType"',
       );
     bb.writeByte(encoded);
   } else {
@@ -1468,7 +1472,9 @@ function encodeLoadedFramework(message, bb) {
     var encoded = CSSInJSBehavior[value];
     if (encoded === void 0)
       throw new Error(
-        "Invalid value " + JSON.stringify(value) + ' for enum "CSSInJSBehavior"'
+        "Invalid value " +
+          JSON.stringify(value) +
+          ' for enum "CSSInJSBehavior"',
       );
     bb.writeByte(encoded);
   } else {
@@ -1755,7 +1761,7 @@ function encodeTransformOptions(message, bb) {
     var encoded = ResolveMode[value];
     if (encoded === void 0)
       throw new Error(
-        "Invalid value " + JSON.stringify(value) + ' for enum "ResolveMode"'
+        "Invalid value " + JSON.stringify(value) + ' for enum "ResolveMode"',
       );
     bb.writeByte(encoded);
   }
@@ -1856,7 +1862,7 @@ function encodeTransformOptions(message, bb) {
     var encoded = Platform[value];
     if (encoded === void 0)
       throw new Error(
-        "Invalid value " + JSON.stringify(value) + ' for enum "Platform"'
+        "Invalid value " + JSON.stringify(value) + ' for enum "Platform"',
       );
     bb.writeByte(encoded);
   }
@@ -1933,7 +1939,7 @@ function encodeTransformOptions(message, bb) {
     var encoded = MessageLevel[value];
     if (encoded === void 0)
       throw new Error(
-        "Invalid value " + JSON.stringify(value) + ' for enum "MessageLevel"'
+        "Invalid value " + JSON.stringify(value) + ' for enum "MessageLevel"',
       );
     bb.writeVarUint(encoded);
   }
@@ -1944,7 +1950,7 @@ function encodeTransformOptions(message, bb) {
     var encoded = SourceMapMode[value];
     if (encoded === void 0)
       throw new Error(
-        "Invalid value " + JSON.stringify(value) + ' for enum "SourceMapMode"'
+        "Invalid value " + JSON.stringify(value) + ' for enum "SourceMapMode"',
       );
     bb.writeByte(encoded);
   }
@@ -2054,7 +2060,7 @@ function encodeTransform(message, bb) {
     var encoded = Loader[value];
     if (encoded === void 0)
       throw new Error(
-        "Invalid value " + JSON.stringify(value) + ' for enum "Loader"'
+        "Invalid value " + JSON.stringify(value) + ' for enum "Loader"',
       );
     bb.writeByte(encoded);
   }
@@ -2112,7 +2118,7 @@ function encodeScan(message, bb) {
     var encoded = Loader[value];
     if (encoded === void 0)
       throw new Error(
-        "Invalid value " + JSON.stringify(value) + ' for enum "Loader"'
+        "Invalid value " + JSON.stringify(value) + ' for enum "Loader"',
       );
     bb.writeByte(encoded);
   }
@@ -2180,7 +2186,7 @@ function encodeScannedImport(message, bb) {
     var encoded = ImportKind[value];
     if (encoded === void 0)
       throw new Error(
-        "Invalid value " + JSON.stringify(value) + ' for enum "ImportKind"'
+        "Invalid value " + JSON.stringify(value) + ' for enum "ImportKind"',
       );
     bb.writeByte(encoded);
   } else {
@@ -2281,7 +2287,7 @@ function encodeTransformResponse(message, bb) {
       throw new Error(
         "Invalid value " +
           JSON.stringify(value) +
-          ' for enum "TransformResponseStatus"'
+          ' for enum "TransformResponseStatus"',
       );
     bb.writeVarUint(encoded);
   } else {
@@ -2495,7 +2501,7 @@ function encodeMessage(message, bb) {
     var encoded = MessageLevel[value];
     if (encoded === void 0)
       throw new Error(
-        "Invalid value " + JSON.stringify(value) + ' for enum "MessageLevel"'
+        "Invalid value " + JSON.stringify(value) + ' for enum "MessageLevel"',
       );
     bb.writeVarUint(encoded);
   } else {
@@ -2661,7 +2667,7 @@ function encodeWebsocketMessage(message, bb) {
       throw new Error(
         "Invalid value " +
           JSON.stringify(value) +
-          ' for enum "WebsocketMessageKind"'
+          ' for enum "WebsocketMessageKind"',
       );
     bb.writeByte(encoded);
   } else {
@@ -2692,7 +2698,7 @@ function encodeWebsocketMessageWelcome(message, bb) {
     var encoded = Reloader[value];
     if (encoded === void 0)
       throw new Error(
-        "Invalid value " + JSON.stringify(value) + ' for enum "Reloader"'
+        "Invalid value " + JSON.stringify(value) + ' for enum "Reloader"',
       );
     bb.writeByte(encoded);
   } else {
@@ -2735,7 +2741,7 @@ function encodeWebsocketMessageFileChangeNotification(message, bb) {
     var encoded = Loader[value];
     if (encoded === void 0)
       throw new Error(
-        "Invalid value " + JSON.stringify(value) + ' for enum "Loader"'
+        "Invalid value " + JSON.stringify(value) + ' for enum "Loader"',
       );
     bb.writeByte(encoded);
   } else {
@@ -2759,7 +2765,7 @@ function encodeWebsocketCommand(message, bb) {
       throw new Error(
         "Invalid value " +
           JSON.stringify(value) +
-          ' for enum "WebsocketCommandKind"'
+          ' for enum "WebsocketCommandKind"',
       );
     bb.writeByte(encoded);
   } else {
@@ -2837,7 +2843,7 @@ function encodeWebsocketMessageBuildSuccess(message, bb) {
     var encoded = Loader[value];
     if (encoded === void 0)
       throw new Error(
-        "Invalid value " + JSON.stringify(value) + ' for enum "Loader"'
+        "Invalid value " + JSON.stringify(value) + ' for enum "Loader"',
       );
     bb.writeByte(encoded);
   } else {
@@ -2890,7 +2896,7 @@ function encodeWebsocketMessageBuildFailure(message, bb) {
     var encoded = Loader[value];
     if (encoded === void 0)
       throw new Error(
-        "Invalid value " + JSON.stringify(value) + ' for enum "Loader"'
+        "Invalid value " + JSON.stringify(value) + ' for enum "Loader"',
       );
     bb.writeByte(encoded);
   } else {

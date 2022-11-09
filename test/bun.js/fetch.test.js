@@ -5,7 +5,7 @@ import { gc } from "./gc";
 const exampleFixture = fs.readFileSync(
   import.meta.path.substring(0, import.meta.path.lastIndexOf("/")) +
     "/fetch.js.txt",
-  "utf8"
+  "utf8",
 );
 
 describe("fetch", () => {
@@ -74,7 +74,7 @@ function testBlobInterface(blobbyConstructor, hasBlobFn) {
         var response = blobbyConstructor(JSON.stringify(jsonObject));
         if (withGC) gc();
         expect(JSON.stringify(await response.json())).toBe(
-          JSON.stringify(jsonObject)
+          JSON.stringify(jsonObject),
         );
         if (withGC) gc();
       });
@@ -84,11 +84,11 @@ function testBlobInterface(blobbyConstructor, hasBlobFn) {
       } arrayBuffer -> json${withGC ? " (with gc) " : ""}`, async () => {
         if (withGC) gc();
         var response = blobbyConstructor(
-          new TextEncoder().encode(JSON.stringify(jsonObject))
+          new TextEncoder().encode(JSON.stringify(jsonObject)),
         );
         if (withGC) gc();
         expect(JSON.stringify(await response.json())).toBe(
-          JSON.stringify(jsonObject)
+          JSON.stringify(jsonObject),
         );
         if (withGC) gc();
       });
@@ -108,7 +108,7 @@ function testBlobInterface(blobbyConstructor, hasBlobFn) {
       } arrayBuffer -> text${withGC ? " (with gc) " : ""}`, async () => {
         if (withGC) gc();
         var response = blobbyConstructor(
-          new TextEncoder().encode(JSON.stringify(jsonObject))
+          new TextEncoder().encode(JSON.stringify(jsonObject)),
         );
         if (withGC) gc();
         expect(await response.text()).toBe(JSON.stringify(jsonObject));
@@ -144,7 +144,7 @@ function testBlobInterface(blobbyConstructor, hasBlobFn) {
         if (withGC) gc();
 
         var response = blobbyConstructor(
-          new TextEncoder().encode(JSON.stringify(jsonObject))
+          new TextEncoder().encode(JSON.stringify(jsonObject)),
         );
         if (withGC) gc();
 
@@ -219,13 +219,13 @@ describe("Blob", () => {
     [
       new Blob([
         new TextEncoder().encode(
-          "😀 😃 😄 😁 😆 😅 😂 🤣 🥲 ☺️ 😊 😇 🙂 🙃 😉 😌 😍 🥰 😘 😗 😙 😚 😋 😛 😝 😜 🤪 🤨 🧐 🤓 😎 🥸 🤩 🥳"
+          "😀 😃 😄 😁 😆 😅 😂 🤣 🥲 ☺️ 😊 😇 🙂 🙃 😉 😌 😍 🥰 😘 😗 😙 😚 😋 😛 😝 😜 🤪 🤨 🧐 🤓 😎 🥸 🤩 🥳",
         ),
       ]),
     ],
     [
       new TextEncoder().encode(
-        "😀 😃 😄 😁 😆 😅 😂 🤣 🥲 ☺️ 😊 😇 🙂 🙃 😉 😌 😍 🥰 😘 😗 😙 😚 😋 😛 😝 😜 🤪 🤨 🧐 🤓 😎 🥸 🤩 🥳"
+        "😀 😃 😄 😁 😆 😅 😂 🤣 🥲 ☺️ 😊 😇 🙂 🙃 😉 😌 😍 🥰 😘 😗 😙 😚 😋 😛 😝 😜 🤪 🤨 🧐 🤓 😎 🥸 🤩 🥳",
       ),
     ],
   ];
@@ -253,7 +253,7 @@ describe("Blob", () => {
             .split("")
             .map((a) => a.charCodeAt(0))}, received: ${res
             .split("")
-            .map((a) => a.charCodeAt(0))}`
+            .map((a) => a.charCodeAt(0))}`,
         );
       }
 
@@ -274,7 +274,7 @@ describe("Blob", () => {
         expect(
           await combined
             .slice(str.indexOf(part), str.indexOf(part) + part.length)
-            .text()
+            .text(),
         ).toBe(part);
         if (withGC) gc();
       }
@@ -284,7 +284,7 @@ describe("Blob", () => {
         expect(
           await combined
             .slice(str.indexOf(part), str.indexOf(part) + part.length)
-            .text()
+            .text(),
         ).toBe(part);
         if (withGC) gc();
       }
@@ -358,7 +358,7 @@ describe("Response", () => {
       let response = Response.json("hello");
       expect(response.type).toBe("basic");
       expect(response.headers.get("content-type")).toBe(
-        "application/json;charset=utf-8"
+        "application/json;charset=utf-8",
       );
       expect(response.status).toBe(200);
     });
@@ -366,7 +366,7 @@ describe("Response", () => {
       let response = Response.json("hello", 407);
       expect(response.type).toBe("basic");
       expect(response.headers.get("content-type")).toBe(
-        "application/json;charset=utf-8"
+        "application/json;charset=utf-8",
       );
       expect(response.status).toBe(407);
     });
@@ -485,7 +485,7 @@ describe("Request", () => {
 
   testBlobInterface(
     (data) => new Request("https://hello.com", { body: data }),
-    true
+    true,
   );
 });
 

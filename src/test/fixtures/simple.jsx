@@ -119,7 +119,7 @@ class SignupForm extends React.Component {
     evt.preventDefault();
 
     Router.pushRoute(
-      `/sign-up/verify?${qs.stringify({ email: this.state.email })}`
+      `/sign-up/verify?${qs.stringify({ email: this.state.email })}`,
     );
   };
 
@@ -429,7 +429,7 @@ class Homepage extends React.Component {
 }
 
 const HomepageWithStore = withRedux(initStore, null, (dispatch) =>
-  bindActionCreators({ updateEntities, setCurrentUser }, dispatch)
+  bindActionCreators({ updateEntities, setCurrentUser }, dispatch),
 )(LoginGate(Homepage));
 
 export default HomepageWithStore;

@@ -39,18 +39,18 @@ export function test() {
       <ErrorScreenRoot id="error-el">
         The react child should have this text
       </ErrorScreenRoot>,
-      reactEl
+      reactEl,
     );
 
     const style = document.querySelector("style[data-styled]");
     console.assert(style, "style tag should exist");
     console.assert(
       style.textContent.split("").every((a) => a.codePointAt(0) < 128),
-      "style tag should not contain invalid unicode codepoints"
+      "style tag should not contain invalid unicode codepoints",
     );
     console.assert(
       document.querySelector("#error-el").textContent ===
-        "The react child should have this text"
+        "The react child should have this text",
     );
 
     ReactDOM.unmountComponentAtNode(reactEl);

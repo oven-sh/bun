@@ -34,7 +34,7 @@ it("utf16 property name", () => {
   var { Database } = require("bun:sqlite");
   const db = Database.open(":memory:");
   expect(Bun.inspect(db.prepare("select '😀' as 笑").all())).toBe(
-    '[ { "笑": "😀" } ]'
+    '[ { "笑": "😀" } ]',
   );
 });
 
@@ -53,7 +53,7 @@ it("Request object", () => {
 Request (0 KB) {
   method: "GET",
   url: "https://example.com"
-}`.trim()
+}`.trim(),
   );
 });
 
@@ -62,7 +62,7 @@ it("MessageEvent", () => {
     `MessageEvent {
   type: "message",
   data: 123
-}`
+}`,
   );
 });
 
@@ -83,13 +83,13 @@ it("TypedArray prints", () => {
     const input = Bun.inspect(buffer);
 
     expect(input).toBe(
-      `${TypedArray.name}(${buffer.length}) [ 1, 2, 3, 4, 5, 6, 7, 8, 9, 10 ]`
+      `${TypedArray.name}(${buffer.length}) [ 1, 2, 3, 4, 5, 6, 7, 8, 9, 10 ]`,
     );
     for (let i = 1; i < buffer.length + 1; i++) {
       expect(Bun.inspect(buffer.subarray(i))).toBe(
         `${TypedArray.name}(${buffer.length - i}) [ ` +
           [...buffer.subarray(i)].join(", ") +
-          " ]"
+          " ]",
       );
     }
   }
@@ -101,13 +101,13 @@ it("BigIntArray", () => {
     const input = Bun.inspect(buffer);
 
     expect(input).toBe(
-      `${TypedArray.name}(${buffer.length}) [ 1n, 2n, 3n, 4n, 5n, 6n, 7n, 8n, 9n, 10n ]`
+      `${TypedArray.name}(${buffer.length}) [ 1n, 2n, 3n, 4n, 5n, 6n, 7n, 8n, 9n, 10n ]`,
     );
     for (let i = 1; i < buffer.length + 1; i++) {
       expect(Bun.inspect(buffer.subarray(i))).toBe(
         `${TypedArray.name}(${buffer.length - i}) [ ` +
           [...buffer.subarray(i)].map((a) => a.toString(10) + "n").join(", ") +
-          " ]"
+          " ]",
       );
     }
   }
@@ -120,14 +120,14 @@ it("FloatArray", () => {
 
     expect(input).toBe(
       `${TypedArray.name}(${buffer.length}) [ ${[Math.fround(42.68)].join(
-        ", "
-      )} ]`
+        ", ",
+      )} ]`,
     );
     for (let i = 1; i < buffer.length + 1; i++) {
       expect(Bun.inspect(buffer.subarray(i))).toBe(
         `${TypedArray.name}(${buffer.length - i}) [ ` +
           [...buffer.subarray(i)].join(", ") +
-          " ]"
+          " ]",
       );
     }
   }
@@ -138,7 +138,7 @@ it("jsx with two elements", () => {
     <div hello="quoted">
       <input type="text" value={"123"} />
       string inside child
-    </div>
+    </div>,
   );
 
   const output = `<div hello="quoted">
@@ -169,7 +169,7 @@ it("jsx with fragment", () => {
 
 it("inspect", () => {
   expect(Bun.inspect(new TypeError("what")).includes("TypeError: what")).toBe(
-    true
+    true,
   );
   expect("hi").toBe("hi");
   expect(Bun.inspect(1)).toBe("1");
@@ -182,10 +182,10 @@ it("inspect", () => {
   expect(Bun.inspect({ hello: 1 })).toBe("{ hello: 1 }");
   expect(Bun.inspect({ hello: 1, there: 2 })).toBe("{ hello: 1, there: 2 }");
   expect(Bun.inspect({ hello: "1", there: 2 })).toBe(
-    '{ hello: "1", there: 2 }'
+    '{ hello: "1", there: 2 }',
   );
   expect(Bun.inspect({ 'hello-"there': "1", there: 2 })).toBe(
-    '{ "hello-\\"there": "1", there: 2 }'
+    '{ "hello-\\"there": "1", there: 2 }',
   );
   var str = "123";
   while (str.length < 4096) {
@@ -204,29 +204,29 @@ it("inspect", () => {
   expect(Bun.inspect(new Set())).toBe("Set {}");
   expect(Bun.inspect(new Map())).toBe("Map {}");
   expect(Bun.inspect(new Map([["foo", "bar"]]))).toBe(
-    'Map(1) {\n  "foo": "bar",\n}'
+    'Map(1) {\n  "foo": "bar",\n}',
   );
   expect(Bun.inspect(new Set(["bar"]))).toBe('Set(1) {\n  "bar",\n}');
   expect(Bun.inspect(<div>foo</div>)).toBe("<div>foo</div>");
   expect(Bun.inspect(<div hello>foo</div>)).toBe("<div hello=true>foo</div>");
   expect(Bun.inspect(<div hello={1}>foo</div>)).toBe("<div hello=1>foo</div>");
   expect(Bun.inspect(<div hello={123}>hi</div>)).toBe(
-    "<div hello=123>hi</div>"
+    "<div hello=123>hi</div>",
   );
   expect(Bun.inspect(<div hello="quoted">quoted</div>)).toBe(
-    '<div hello="quoted">quoted</div>'
+    '<div hello="quoted">quoted</div>',
   );
   expect(
     Bun.inspect(
       <div hello="quoted">
         <input type="text" value={"123"} />
-      </div>
-    )
+      </div>,
+    ),
   ).toBe(
     `
 <div hello="quoted">
   <input type="text" value="123" />
-</div>`.trim()
+</div>`.trim(),
   );
   expect(Bun.inspect(BigInt(32))).toBe("32n");
 });

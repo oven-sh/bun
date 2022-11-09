@@ -481,19 +481,19 @@ JSC_DEFINE_HOST_FUNCTION(${name}__doClose, (JSC::JSGlobalObject * lexicalGlobalO
 /* Source for JS${name}PrototypeTableValues.lut.h
 @begin JS${name}PrototypeTable
   close      ${`${name}__doClose`.padEnd(
-    padding + 8
+    padding + 8,
   )} ReadOnly|DontDelete|Function 0
   flush      ${`${name}__flush`.padEnd(
-    padding + 8
+    padding + 8,
   )} ReadOnly|DontDelete|Function 1
   end        ${`${name}__end`.padEnd(
-    padding + 8
+    padding + 8,
   )} ReadOnly|DontDelete|Function 0
   start      ${`${name}__start`.padEnd(
-    padding + 8
+    padding + 8,
   )} ReadOnly|DontDelete|Function 1
   write      ${`${name}__write`.padEnd(
-    padding + 8
+    padding + 8,
   )} ReadOnly|DontDelete|Function 1
 @end
 */
@@ -502,19 +502,19 @@ JSC_DEFINE_HOST_FUNCTION(${name}__doClose, (JSC::JSGlobalObject * lexicalGlobalO
 /* Source for ${controllerPrototypeName}TableValues.lut.h
 @begin ${controllerPrototypeName}Table
   close        ${`${controller}__close`.padEnd(
-    protopad + 4
+    protopad + 4,
   )}  ReadOnly|DontDelete|Function 0
   flush        ${`${name}__flush`.padEnd(
-    protopad + 4
+    protopad + 4,
   )}  ReadOnly|DontDelete|Function 1
   end          ${`${controller}__end`.padEnd(
-    protopad + 4
+    protopad + 4,
   )}  ReadOnly|DontDelete|Function 0
   start        ${`${name}__start`.padEnd(
-    protopad + 4
+    protopad + 4,
   )}  ReadOnly|DontDelete|Function 1
   write        ${`${name}__write`.padEnd(
-    protopad + 4
+    protopad + 4,
   )}  ReadOnly|DontDelete|Function 1
 @end
 */
@@ -950,5 +950,5 @@ extern "C" void ${name}__onClose(JSC__JSValue controllerValue, JSC__JSValue reas
 await Bun.write(resolve(import.meta.dir + "/../bindings/JSSink.h"), header());
 await Bun.write(
   resolve(import.meta.dir + "/../bindings/JSSink.cpp"),
-  await implementation()
+  await implementation(),
 );

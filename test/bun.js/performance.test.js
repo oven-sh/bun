@@ -19,6 +19,6 @@ it("performance.now() should be monotonic", () => {
 
 it("performance.timeOrigin + performance.now() should be similar to Date.now()", () => {
   expect(
-    Math.abs(performance.timeOrigin + performance.now() - Date.now()) < 1000
+    Math.abs(performance.timeOrigin + performance.now() - Date.now()) < 1000,
   ).toBe(true);
 });

@@ -16,7 +16,7 @@ for (let i = 0; i < count; i++) {
 
 if (existsSync(tempdir)) {
   throw new Error(
-    `existsSync reports ${tempdir} exists, but it probably does not`
+    `existsSync reports ${tempdir} exists, but it probably does not`,
   );
 }
 
@@ -40,12 +40,12 @@ console.log("MKDIR " + total + " depth took:", performance.now() - start, "ms");
 
 if (!existsSync(tempdir)) {
   throw new Error(
-    "Expected directory to exist after mkdirSync, but it doesn't"
+    "Expected directory to exist after mkdirSync, but it doesn't",
   );
 }
 
 if (mkdirSync(tempdir, { recursive: true })) {
   throw new Error(
-    "mkdirSync shouldn't return directory name on existing directories"
+    "mkdirSync shouldn't return directory name on existing directories",
   );
 }

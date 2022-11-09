@@ -81,7 +81,7 @@ var Receiver = (BunWebSocket.Receiver = class Receiver {
 });
 
 var createWebSocketStream = (BunWebSocket.createWebSocketStream = function (
-  ws
+  ws,
 ) {
   throw new Error("Not supported in Bun");
 });

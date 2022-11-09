@@ -60,7 +60,7 @@ it("queueMicrotask", async () => {
 
     if (!passed)
       throw new Error(
-        "queueMicrotask should throw a TypeError if the argument is not a function"
+        "queueMicrotask should throw a TypeError if the argument is not a function",
       );
   }
 
@@ -74,7 +74,7 @@ it("queueMicrotask", async () => {
 
     if (!passed)
       throw new Error(
-        "queueMicrotask should throw a TypeError if the argument is empty"
+        "queueMicrotask should throw a TypeError if the argument is empty",
       );
   }
 });

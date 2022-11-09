@@ -1,3 +1,4 @@
+// @ts-nocheck
 import { LitElement, html, css } from "lit";
 import { customElement, property, eventOptions } from "lit/decorators.js";
 
@@ -12,7 +13,7 @@ if (document?.readyState === "loading") {
     () => {
       loadedResolve();
     },
-    { once: true }
+    { once: true },
   );
 } else {
   loadedResolve();

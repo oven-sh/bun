@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { gc, gcTick } from "gc";
+import { gc, gcTick } from "./gc";
 import {
   closeSync,
   existsSync,
@@ -31,14 +31,14 @@ describe("copyFileSync", () => {
     const tempdir = `/tmp/fs.test.js/${Date.now()}/1234/hi`;
     expect(existsSync(tempdir)).toBe(false);
     expect(tempdir.includes(mkdirSync(tempdir, { recursive: true }))).toBe(
-      true
+      true,
     );
 
     // that don't exist
     copyFileSync(import.meta.path, tempdir + "/copyFileSync.js");
     expect(existsSync(tempdir + "/copyFileSync.js")).toBe(true);
     expect(readFileSync(tempdir + "/copyFileSync.js", "utf-8")).toBe(
-      readFileSync(import.meta.path, "utf-8")
+      readFileSync(import.meta.path, "utf-8"),
     );
 
     // that do exist
@@ -53,7 +53,7 @@ describe("copyFileSync", () => {
     const tempdir = `/tmp/fs.test.js/${Date.now()}-1/1234/hi`;
     expect(existsSync(tempdir)).toBe(false);
     expect(tempdir.includes(mkdirSync(tempdir, { recursive: true }))).toBe(
-      true
+      true,
     );
     var buffer = new Int32Array(128 * 1024);
     for (let i = 0; i < buffer.length; i++) {
@@ -67,20 +67,20 @@ describe("copyFileSync", () => {
     expect(existsSync(tempdir + "/copyFileSync.src.blob")).toBe(true);
     copyFileSync(
       tempdir + "/copyFileSync.src.blob",
-      tempdir + "/copyFileSync.dest.blob"
+      tempdir + "/copyFileSync.dest.blob",
     );
 
     expect(Bun.hash(readFileSync(tempdir + "/copyFileSync.dest.blob"))).toBe(
-      hash
+      hash,
     );
     buffer[0] = 255;
     writeFileSync(tempdir + "/copyFileSync.src.blob", buffer.buffer);
     copyFileSync(
       tempdir + "/copyFileSync.src.blob",
-      tempdir + "/copyFileSync.dest.blob"
+      tempdir + "/copyFileSync.dest.blob",
     );
     expect(Bun.hash(readFileSync(tempdir + "/copyFileSync.dest.blob"))).toBe(
-      Bun.hash(buffer.buffer)
+      Bun.hash(buffer.buffer),
     );
   });
 });
@@ -90,7 +90,7 @@ describe("mkdirSync", () => {
     const tempdir = `/tmp/fs.test.js/${Date.now()}/1234/hi`;
     expect(existsSync(tempdir)).toBe(false);
     expect(tempdir.includes(mkdirSync(tempdir, { recursive: true }))).toBe(
-      true
+      true,
     );
     expect(existsSync(tempdir)).toBe(true);
   });
@@ -134,7 +134,7 @@ it("readdirSync works on empty directories", () => {
 
 it("readdirSync works on directories with under 32 files", () => {
   const path = `/tmp/fs-test-one-dir-${(Math.random() * 100000 + 100).toString(
-    32
+    32,
   )}`;
   mkdirSync(path, { recursive: true });
   writeFileSync(`${path}/a`, "a");
@@ -172,7 +172,7 @@ it("readdirSync throws when given a file path with trailing slash", () => {
 
 describe("readSync", () => {
   const firstFourBytes = new Uint32Array(
-    new TextEncoder().encode("File").buffer
+    new TextEncoder().encode("File").buffer,
   )[0];
   it("works with a position set to 0", () => {
     const fd = openSync(import.meta.dir + "/readFileSync.txt", "r");
@@ -234,7 +234,7 @@ describe("readFileSync", () => {
     gc();
     const text = readFileSync(
       new URL("file://" + import.meta.dir + "/readFileSync.txt"),
-      "utf8"
+      "utf8",
     );
     gc();
     expect(text).toBe("File read successfully");
@@ -338,7 +338,7 @@ describe("lstat", () => {
     const fileStats = lstatSync(
       new URL("./fs-stream.js", import.meta.url)
         .toString()
-        .slice("file://".length - 1)
+        .slice("file://".length - 1),
     );
     expect(fileStats.isSymbolicLink()).toBe(false);
     expect(fileStats.isFile()).toBe(true);
@@ -349,7 +349,7 @@ describe("lstat", () => {
     const fileStats = lstatSync(
       new URL("../../test", import.meta.url)
         .toString()
-        .slice("file://".length - 1)
+        .slice("file://".length - 1),
     );
     expect(fileStats.isSymbolicLink()).toBe(false);
     expect(fileStats.isFile()).toBe(false);
@@ -360,7 +360,7 @@ describe("lstat", () => {
     const linkStats = lstatSync(
       new URL("./fs-stream.link.js", import.meta.url)
         .toString()
-        .slice("file://".length - 1)
+        .slice("file://".length - 1),
     );
     expect(linkStats.isSymbolicLink()).toBe(true);
     expect(linkStats.isFile()).toBe(false);
@@ -373,7 +373,7 @@ describe("stat", () => {
     const fileStats = statSync(
       new URL("./fs-stream.js", import.meta.url)
         .toString()
-        .slice("file://".length - 1)
+        .slice("file://".length - 1),
     );
     expect(fileStats.isSymbolicLink()).toBe(false);
     expect(fileStats.isFile()).toBe(true);
@@ -384,7 +384,7 @@ describe("stat", () => {
     const fileStats = statSync(
       new URL("../../test", import.meta.url)
         .toString()
-        .slice("file://".length - 1)
+        .slice("file://".length - 1),
     );
     expect(fileStats.isSymbolicLink()).toBe(false);
     expect(fileStats.isFile()).toBe(false);
@@ -478,7 +478,7 @@ describe("createWriteStream", () => {
 
       stream.on("finish", () => {
         expect(readFileSync(path, "utf8")).toBe(
-          "Test file written successfully"
+          "Test file written successfully",
         );
         resolve(true);
       });

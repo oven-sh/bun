@@ -1,6 +1,6 @@
 import { serve } from "bun";
 import { describe, expect, it } from "bun:test";
-import { gcTick } from "gc";
+import { gcTick } from "./gc";
 
 var port = 4321;
 function getPort() {
@@ -25,7 +25,7 @@ describe("websocket server", () => {
             close(ws) {
               ws[method](
                 "all",
-                method === "publishBinary" ? Buffer.from("bye!") : "bye!"
+                method === "publishBinary" ? Buffer.from("bye!") : "bye!",
               );
             },
           },
@@ -39,16 +39,16 @@ describe("websocket server", () => {
         });
 
         try {
-          const first = await new Promise((resolve2, reject2) => {
+          const first = await new Promise<WebSocket>((resolve2, reject2) => {
             var socket = new WebSocket(
-              `ws://${server.hostname}:${server.port}`
+              `ws://${server.hostname}:${server.port}`,
             );
             socket.onopen = () => resolve2(socket);
           });
 
-          const second = await new Promise((resolve2, reject2) => {
+          const second = await new Promise<WebSocket>((resolve2, reject2) => {
             var socket = new WebSocket(
-              `ws://${server.hostname}:${server.port}`
+              `ws://${server.hostname}:${server.port}`,
             );
             socket.onmessage = (ev) => {
               var msg = ev.data;
@@ -107,7 +107,7 @@ describe("websocket server", () => {
       },
     });
 
-    await new Promise((resolve_, reject) => {
+    await new Promise<void>((resolve_, reject) => {
       resolve = resolve_;
       const websocket = new WebSocket(`ws://${server.hostname}:${server.port}`);
       websocket.onopen = () => {
@@ -138,8 +138,7 @@ describe("websocket server", () => {
           if (
             server.upgrade(req, {
               data: "hello world",
-
-              headers: 1238,
+              headers: 1238 as any,
             })
           ) {
             reject();
@@ -155,7 +154,7 @@ describe("websocket server", () => {
       },
     });
 
-    await new Promise((resolve_, reject) => {
+    await new Promise<void>((resolve_, reject) => {
       resolve = resolve_;
       const websocket = new WebSocket(`ws://${server.hostname}:${server.port}`);
       websocket.onopen = () => websocket.close();
@@ -194,7 +193,7 @@ describe("websocket server", () => {
       },
     });
 
-    await new Promise((resolve, reject) => {
+    await new Promise<void>((resolve, reject) => {
       const websocket = new WebSocket(`ws://${server.hostname}:${server.port}`);
       websocket.onopen = () => {
         websocket.send("hello world");
@@ -253,7 +252,7 @@ describe("websocket server", () => {
       },
     });
 
-    return new Promise((resolve, reject) => {
+    return new Promise<void>((resolve, reject) => {
       const websocket = new WebSocket(`ws://${server.hostname}:${server.port}`);
       websocket.onopen = () => {
         websocket.send("hello world");
@@ -312,7 +311,7 @@ describe("websocket server", () => {
         return new Response("noooooo hello world");
       },
     });
-    return new Promise((resolve, reject) => {
+    return new Promise<void>((resolve, reject) => {
       const websocket = new WebSocket(`ws://${server.hostname}:${server.port}`);
       websocket.onopen = () => {
         websocket.send("hello world");
@@ -367,7 +366,7 @@ describe("websocket server", () => {
       },
     });
 
-    await new Promise((resolve, reject) => {
+    await new Promise<boolean>((resolve, reject) => {
       var counter = 0;
       const websocket = new WebSocket(`ws://${server.hostname}:${server.port}`);
       websocket.onopen = () => {
@@ -399,7 +398,7 @@ describe("websocket server", () => {
   });
 
   it("does not upgrade for non-websocket connections", async () => {
-    await new Promise(async (resolve, reject) => {
+    await new Promise<void>(async (resolve, reject) => {
       var server = serve({
         port: getPort(),
         websocket: {
@@ -425,7 +424,7 @@ describe("websocket server", () => {
   });
 
   it("does not upgrade for non-websocket servers", async () => {
-    await new Promise(async (resolve, reject) => {
+    await new Promise<void>(async (resolve, reject) => {
       var server = serve({
         port: getPort(),
 
@@ -465,7 +464,7 @@ describe("websocket server", () => {
       },
     });
 
-    await new Promise((resolve, reject) => {
+    await new Promise<void>((resolve, reject) => {
       const websocket = new WebSocket(`ws://${server.hostname}:${server.port}`);
 
       websocket.onmessage = (e) => {
@@ -487,7 +486,7 @@ describe("websocket server", () => {
   });
 
   it("publishText()", async () => {
-    await new Promise((resolve, reject) => {
+    await new Promise<void>((resolve, reject) => {
       var server = serve({
         port: getPort(),
         websocket: {
@@ -515,7 +514,7 @@ describe("websocket server", () => {
 
   it("publishBinary()", async () => {
     const bytes = Buffer.from("hello");
-    await new Promise((resolve, reject) => {
+    await new Promise<void>((resolve, reject) => {
       var server = serve({
         port: getPort(),
         websocket: {
@@ -542,7 +541,7 @@ describe("websocket server", () => {
   });
 
   it("sendText()", async () => {
-    await new Promise((resolve, reject) => {
+    await new Promise<void>((resolve, reject) => {
       var server = serve({
         port: getPort(),
         websocket: {
@@ -570,7 +569,7 @@ describe("websocket server", () => {
 
   it("sendBinary()", async () => {
     const bytes = Buffer.from("hello");
-    await new Promise((resolve, reject) => {
+    await new Promise<void>((resolve, reject) => {
       var server = serve({
         port: getPort(),
         websocket: {
@@ -616,7 +615,7 @@ describe("websocket server", () => {
       },
     });
 
-    await new Promise((resolve, reject) => {
+    await new Promise<void>((resolve, reject) => {
       const websocket = new WebSocket(`ws://${server.hostname}:${server.port}`);
 
       websocket.onmessage = (e) => {
@@ -654,14 +653,14 @@ describe("websocket server", () => {
       fetch(req, server) {
         if (
           server.upgrade(req, {
-            count: 0,
+            data: { count: 0 },
           })
         )
           return new Response("noooooo hello world");
       },
     });
 
-    await new Promise((resolve, reject) => {
+    await new Promise<void>((resolve, reject) => {
       const websocket = new WebSocket(`ws://${server.hostname}:${server.port}`);
       websocket.onerror = (e) => {
         reject(e);
@@ -708,7 +707,7 @@ describe("websocket server", () => {
 
   it("send rope strings", async () => {
     var ropey = "hello world".repeat(10);
-    var sendQueue = [];
+    var sendQueue: any[] = [];
     for (var i = 0; i < 100; i++) {
       sendQueue.push(ropey + " " + i);
     }
@@ -737,7 +736,7 @@ describe("websocket server", () => {
       },
     });
 
-    await new Promise((resolve, reject) => {
+    await new Promise<void>((resolve, reject) => {
       const websocket = new WebSocket(`ws://${server.hostname}:${server.port}`);
       websocket.onerror = (e) => {
         reject(e);
@@ -771,7 +770,7 @@ describe("websocket server", () => {
   // this test sends 100 messages to 10 connected clients via pubsub
   it("pub/sub", async () => {
     var ropey = "hello world".repeat(10);
-    var sendQueue = [];
+    var sendQueue: any[] = [];
     for (var i = 0; i < 100; i++) {
       sendQueue.push(ropey + " " + i);
       gcTick();
@@ -817,7 +816,7 @@ describe("websocket server", () => {
     const connections = new Array(10);
     const websockets = new Array(connections.length);
     var doneCounter = 0;
-    await new Promise((done) => {
+    await new Promise<void>((done) => {
       for (var i = 0; i < connections.length; i++) {
         var j = i;
         var resolve, reject, resolveConnection, rejectConnection;
@@ -831,7 +830,7 @@ describe("websocket server", () => {
         });
         gcTick();
         const websocket = new WebSocket(
-          `ws://${server.hostname}:${server.port}`
+          `ws://${server.hostname}:${server.port}`,
         );
         websocket.onerror = (e) => {
           reject(e);

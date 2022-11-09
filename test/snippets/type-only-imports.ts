@@ -1,3 +1,4 @@
+// @ts-nocheck
 import type Bacon from "tree";
 import type { SilentSymbolCollisionsAreOkayInTypeScript } from "./app";
 

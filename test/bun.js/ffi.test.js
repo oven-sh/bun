@@ -29,8 +29,8 @@ it("ffi print", async () => {
         returns: "bool",
         args: ["ptr"],
       },
-      true
-    )
+      true,
+    ),
   );
   await Bun.write(
     import.meta.dir + "/ffi.test.fixture.receiver.c",
@@ -41,8 +41,8 @@ it("ffi print", async () => {
           args: ["float"],
         },
       },
-      false
-    )[0]
+      false,
+    )[0],
   );
   expect(
     viewSource(
@@ -50,8 +50,8 @@ it("ffi print", async () => {
         returns: "int8_t",
         args: [],
       },
-      true
-    ).length > 0
+      true,
+    ).length > 0,
   ).toBe(true);
   expect(
     viewSource(
@@ -61,8 +61,8 @@ it("ffi print", async () => {
           args: [],
         },
       },
-      false
-    ).length > 0
+      false,
+    ).length > 0,
   ).toBe(true);
 });
 
@@ -423,17 +423,17 @@ function ffiRunner(fast) {
   var bigIntArray = new BigInt64Array(bigArray.buffer);
   expect(identity_uint64_t(bigArray[0])).toBe(bigArray[0]);
   expect(identity_uint64_t(bigArray[0] - BigInt(1))).toBe(
-    bigArray[0] - BigInt(1)
+    bigArray[0] - BigInt(1),
   );
   if (fast) {
     expect(add_uint64_t(BigInt(-1) * bigArray[0], bigArray[0])).toBe(0);
     expect(
-      add_uint64_t(BigInt(-1) * bigArray[0] + BigInt(10), bigArray[0])
+      add_uint64_t(BigInt(-1) * bigArray[0] + BigInt(10), bigArray[0]),
     ).toBe(10);
   } else {
     expect(add_uint64_t(BigInt(-1) * bigArray[0], bigArray[0])).toBe(0n);
     expect(
-      add_uint64_t(BigInt(-1) * bigArray[0] + BigInt(10), bigArray[0])
+      add_uint64_t(BigInt(-1) * bigArray[0] + BigInt(10), bigArray[0]),
     ).toBe(10n);
   }
   if (fast) {
@@ -450,7 +450,7 @@ function ffiRunner(fast) {
 
     expect(identity_int64_t(bigIntArray[0])).toBe(bigIntArray[0]);
     expect(identity_int64_t(bigIntArray[0] - BigInt(1))).toBe(
-      bigIntArray[0] - BigInt(1)
+      bigIntArray[0] - BigInt(1),
     );
   }
   Bun.gc(true);
@@ -475,7 +475,7 @@ function ffiRunner(fast) {
   const buffer = toBuffer(cptr, 0, 4);
   expect(buffer.readInt32(0)).toBe(42);
   expect(new DataView(toArrayBuffer(cptr, 0, 4), 0, 4).getInt32(0, true)).toBe(
-    42
+    42,
   );
   expect(ptr(buffer)).toBe(cptr);
   expect(new CString(cptr, 0, 1).toString()).toBe("*");
@@ -515,7 +515,7 @@ function ffiRunner(fast) {
           {
             returns: returnName,
             args: [returnName],
-          }
+          },
         ).ptr,
         returns: returnName,
         args: [returnName],
@@ -531,7 +531,7 @@ function ffiRunner(fast) {
         {
           returns: "bool",
           args: ["bool"],
-        }
+        },
       );
       expect(toClose.ptr > 0).toBe(true);
       toClose.close();
@@ -559,7 +559,7 @@ function ffiRunner(fast) {
           {
             args: [name],
             threadsafe: true,
-          }
+          },
         ).ptr,
         returns: "void",
         args: [name],
@@ -603,10 +603,10 @@ it("read", () => {
   for (let i = 0; i < buffer.length; i++) {
     buffer[i] = BigInt(i);
     expect(read.intptr(addr, i * 8)).toBe(
-      Number(dataView.getBigInt64(i * 8, true))
+      Number(dataView.getBigInt64(i * 8, true)),
     );
     expect(read.ptr(addr, i * 8)).toBe(
-      Number(dataView.getBigUint64(i * 8, true))
+      Number(dataView.getBigUint64(i * 8, true)),
     );
     expect(read.f64(addr, i + 8)).toBe(dataView.getFloat64(i + 8, true));
     expect(read.i64(addr, i * 8)).toBe(dataView.getBigInt64(i * 8, true));

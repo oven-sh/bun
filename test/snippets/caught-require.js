@@ -9,7 +9,7 @@ try {
 
 import("this-package-should-not-exist").then(
   () => {},
-  () => {}
+  () => {},
 );
 
 export async function test() {
@@ -24,7 +24,7 @@ export async function test() {
 
   import("this-package-should-not-exist").then(
     () => {},
-    () => {}
+    () => {},
   );
 
   return testDone(import.meta.url);

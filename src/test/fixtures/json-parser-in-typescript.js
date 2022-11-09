@@ -3,5 +3,4 @@
 // } & {
 //   "twitter": "https://twitter.com/buildsghost"
 // }
-export default class Foo {
-}
+export default class Foo {}

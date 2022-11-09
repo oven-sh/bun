@@ -40,7 +40,7 @@ it("process", () => {
 
   if (typeof JSON.parse(JSON.stringify(process.env)).toJSON !== "undefined") {
     throw new Error(
-      "process.env should call toJSON to hide its internal state"
+      "process.env should call toJSON to hide its internal state",
     );
   }
 
@@ -72,6 +72,6 @@ it("process.release", () => {
   expect(process.release.sourceUrl).toBe(
     `https://github.com/oven-sh/bun/release/bun-v${process.versions.bun}/bun-${
       process.platform
-    }-${{ arm64: "aarch64", x64: "x64" }[process.arch] || process.arch}.zip`
+    }-${{ arm64: "aarch64", x64: "x64" }[process.arch] || process.arch}.zip`,
   );
 });

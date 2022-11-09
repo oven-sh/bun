@@ -1,3 +1,4 @@
+// @ts-nocheck
 export async function fetchSync(ctx) {
   const str = ctx.arguments[0].toString();
 

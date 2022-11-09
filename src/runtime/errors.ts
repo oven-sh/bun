@@ -1,3 +1,4 @@
+// @ts-nocheck
 var __BuildError;
 var __ResolveError;
 var __ImportKind;

@@ -12,4 +12,4 @@ export default function CodeBlock({ children, lang = "js" }) {
   return (
     <div className="CodeBlock" dangerouslySetInnerHTML={{ __html: html }} />
   );
-};
+}

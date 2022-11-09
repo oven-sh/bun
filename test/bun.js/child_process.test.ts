@@ -57,7 +57,9 @@ describe("spawn()", () => {
     let child;
     let child2;
     try {
+      // @ts-ignore
       child = spawn(123);
+      // @ts-ignore
       child2 = spawn(["echo", "hello"]);
     } catch (e) {}
     expect(!!child).toBe(false);
@@ -203,12 +205,17 @@ describe("spawn()", () => {
 describe("execFile()", () => {
   it("should execute a file", async () => {
     const result: Buffer = await new Promise((resolve, reject) => {
-      execFile("bun", ["-v"], (error, stdout, stderr) => {
-        if (error) {
-          reject(error);
-        }
-        resolve(stdout);
-      });
+      execFile(
+        "bun",
+        ["-v"],
+        { encoding: "buffer" },
+        (error, stdout, stderr) => {
+          if (error) {
+            reject(error);
+          }
+          resolve(stdout);
+        },
+      );
     });
     expect(SEMVER_REGEX.test(result.toString().trim())).toBe(true);
   });
@@ -217,7 +224,7 @@ describe("execFile()", () => {
 describe("exec()", () => {
   it("should execute a command in a shell", async () => {
     const result: Buffer = await new Promise((resolve, reject) => {
-      exec("bun -v", (error, stdout, stderr) => {
+      exec("bun -v", { encoding: "buffer" }, (error, stdout, stderr) => {
         if (error) {
           reject(error);
         }

@@ -10,7 +10,7 @@ json["application/javascript"].extensions.push(
   `cts`,
   `cjs`,
   `mjs`,
-  `js`
+  `js`,
 );
 
 delete json["application/node"];

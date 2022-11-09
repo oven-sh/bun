@@ -1,3 +1,4 @@
+// @ts-nocheck
 import { ByteBuffer } from "peechy";
 import * as API from "../api/schema";
 
@@ -178,7 +179,7 @@ if (typeof window !== "undefined") {
     private findMatchingSupportsRule(
       rule: CSSSupportsRule,
       id: number,
-      sheet: CSSStyleSheet
+      sheet: CSSStyleSheet,
     ): CSSHMRInsertionPoint | null {
       switch (rule.type) {
         // 12 is result.SUPPORTS_RULE
@@ -193,7 +194,7 @@ if (typeof window !== "undefined") {
 
           const int = parseInt(
             rule.conditionText.substring(startIndex, endIDRegion),
-            10
+            10,
           );
 
           if (int !== id) {
@@ -202,14 +203,14 @@ if (typeof window !== "undefined") {
 
           let startFileRegion = rule.conditionText.indexOf(
             '(hmr-file:"',
-            endIDRegion
+            endIDRegion,
           );
           if (startFileRegion === -1) return null;
           startFileRegion += '(hmr-file:"'.length + 1;
 
           const endFileRegion = rule.conditionText.indexOf(
             '"',
-            startFileRegion
+            startFileRegion,
           );
           if (endFileRegion === -1) return null;
           // Empty file strings are invalid
@@ -220,7 +221,7 @@ if (typeof window !== "undefined") {
           CSSLoader.cssLoadId.sheet = sheet;
           CSSLoader.cssLoadId.file = rule.conditionText.substring(
             startFileRegion - 1,
-            endFileRegion
+            endFileRegion,
           );
 
           return CSSLoader.cssLoadId;
@@ -273,23 +274,23 @@ if (typeof window !== "undefined") {
 
             const bundleIdEnd = bundleIdRule.conditionText.indexOf(
               ")",
-              "(hmr-bid:".length + 1
+              "(hmr-bid:".length + 1,
             );
             if (bundleIdEnd === -1) continue;
 
             CSSLoader.cssLoadId.bundle_id = parseInt(
               bundleIdRule.conditionText.substring(
                 "(hmr-bid:".length,
-                bundleIdEnd
+                bundleIdEnd,
               ),
-              10
+              10,
             );
 
             for (let j = 1; j < ruleCount && match === null; j++) {
               match = this.findMatchingSupportsRule(
                 cssRules[j] as CSSSupportsRule,
                 id,
-                sheet
+                sheet,
               );
             }
           }
@@ -326,20 +327,20 @@ if (typeof window !== "undefined") {
 
         const bundleIdEnd = bundleIdRule.conditionText.indexOf(
           ")",
-          "(hmr-bid:".length + 1
+          "(hmr-bid:".length + 1,
         );
         if (bundleIdEnd === -1) continue;
 
         CSSLoader.cssLoadId.bundle_id = parseInt(
           bundleIdRule.conditionText.substring("(hmr-bid:".length, bundleIdEnd),
-          10
+          10,
         );
 
         for (let j = 1; j < ruleCount && match === null; j++) {
           match = this.findMatchingSupportsRule(
             cssRules[j] as CSSSupportsRule,
             id,
-            sheet
+            sheet,
           );
         }
       }
@@ -358,7 +359,7 @@ if (typeof window !== "undefined") {
     handleBuildSuccess(
       bytes: Uint8Array,
       build: API.WebsocketMessageBuildSuccess,
-      timestamp: number
+      timestamp: number,
     ) {
       const start = performance.now();
       var update = this.findCSSLinkTag(build.id);
@@ -389,7 +390,7 @@ if (typeof window !== "undefined") {
           "Reloaded in",
           `${localDuration + fsDuration}ms`,
           "-",
-          filepath
+          filepath,
         );
 
         update = null;
@@ -445,7 +446,7 @@ if (typeof window !== "undefined") {
     }
 
     filePath(
-      file_change_notification: API.WebsocketMessageFileChangeNotification
+      file_change_notification: API.WebsocketMessageFileChangeNotification,
     ): string | null {
       if (file_change_notification.loader !== API.Loader.css) return null;
       const tag = this.findCSSLinkTag(file_change_notification.id);
@@ -481,7 +482,7 @@ if (typeof window !== "undefined") {
     start() {
       if (runOnce) {
         __hmrlog.warn(
-          "Attempted to start HMR client multiple times. This may be a bug."
+          "Attempted to start HMR client multiple times. This may be a bug.",
         );
         return;
       }
@@ -514,7 +515,7 @@ if (typeof window !== "undefined") {
 
       this.nextReconnectAttempt = setTimeout(
         this.attemptReconnect,
-        this.reconnectDelay
+        this.reconnectDelay,
       );
     };
 
@@ -608,7 +609,7 @@ if (typeof window !== "undefined") {
         case CSSImportState.Loaded: {
           promise.then(
             () => {},
-            () => {}
+            () => {},
           );
           break;
         }
@@ -672,19 +673,19 @@ if (typeof window !== "undefined") {
           link.onerror = (evt) => {
             console.error(
               `[CSS Importer] Error loading CSS file: ${urlString}\n`,
-              evt.toString()
+              evt.toString(),
             );
             reject();
           };
           document.head.appendChild(link);
-        }).then(() => Promise.resolve())
+        }).then(() => Promise.resolve()),
       );
     }
     static onError(event: ErrorEvent) {
       if ("error" in event && !!event.error) {
         BunError.render(
           event.error,
-          HMRClient.client ? HMRClient.client.cwd : ""
+          HMRClient.client ? HMRClient.client.cwd : "",
         );
       }
     }
@@ -757,7 +758,7 @@ if (typeof window !== "undefined") {
       BunError.render(failure, this.cwd);
 
       console.group(
-        `Build failed: ${failure.module_path} (${failure.log.errors} errors)`
+        `Build failed: ${failure.module_path} (${failure.log.errors} errors)`,
       );
       this.needsConsoleClear = true;
       for (let msg of failure.log.msgs) {
@@ -823,7 +824,7 @@ if (typeof window !== "undefined") {
             `Ignoring outdated update for "${build.module_path}".\n  Expected: >=`,
             currentVersion,
             `\n   Received:`,
-            build.from_timestamp
+            build.from_timestamp,
           );
         }
         return;
@@ -834,7 +835,7 @@ if (typeof window !== "undefined") {
           ? new Uint8Array(
               buffer.data.buffer,
               buffer.data.byteOffset + buffer.index,
-              build.blob_length
+              build.blob_length,
             )
           : (empty ||= new Uint8Array(0));
 
@@ -876,7 +877,7 @@ if (typeof window !== "undefined") {
 
       if (end > 4 && buffer.data.length >= end + 4) {
         new Uint8Array(this.hashBuffer.buffer).set(
-          buffer.data.subarray(end, end + 4)
+          buffer.data.subarray(end, end + 4),
         );
         hash = this.hashBuffer[0];
       }
@@ -889,7 +890,7 @@ if (typeof window !== "undefined") {
         build,
         bytes,
         ReloadBehavior.hotReload,
-        hash || 0
+        hash || 0,
       );
       bytes = null;
       reload.timings.notify = timestamp - build.from_timestamp;
@@ -911,7 +912,7 @@ if (typeof window !== "undefined") {
 
           __hmrlog.log(
             `[${formatDuration(timings.total)}ms] Reloaded`,
-            filepath
+            filepath,
           );
         },
         (err) => {
@@ -924,7 +925,7 @@ if (typeof window !== "undefined") {
           }
           __hmrlog.error("Hot Module Reload failed!", err);
           debugger;
-        }
+        },
       );
     }
 
@@ -942,7 +943,7 @@ if (typeof window !== "undefined") {
     handleFileChangeNotification(
       buffer: ByteBuffer,
       timestamp: number,
-      copy_file_path: boolean
+      copy_file_path: boolean,
     ) {
       const notification =
         API.decodeWebsocketMessageFileChangeNotification(buffer);
@@ -977,7 +978,7 @@ if (typeof window !== "undefined") {
         timestamp,
         notification,
         file_path,
-        copy_file_path
+        copy_file_path,
       );
     }
 
@@ -985,7 +986,7 @@ if (typeof window !== "undefined") {
       timestamp: number,
       notification: API.WebsocketMessageFileChangeNotification,
       file_path: string,
-      copy_file_path: boolean
+      copy_file_path: boolean,
     ) {
       const accept = file_path && file_path.length > 0;
 
@@ -1072,10 +1073,10 @@ if (typeof window !== "undefined") {
 
             const out = textEncoder.encodeInto(
               file_path,
-              writeBuffer.subarray(13)
+              writeBuffer.subarray(13),
             );
             this.socket.send(
-              this.buildCommandBufWithFilePath.subarray(0, 13 + out.written)
+              this.buildCommandBufWithFilePath.subarray(0, 13 + out.written),
             );
           } else {
             this.socket.send(this.buildCommandBuf);
@@ -1118,7 +1119,7 @@ if (typeof window !== "undefined") {
       const message_header_byte_buffer = new ByteBuffer(data);
       const header = API.decodeWebsocketMessage(message_header_byte_buffer);
       const buffer = new ByteBuffer(
-        data.subarray(message_header_byte_buffer.index)
+        data.subarray(message_header_byte_buffer.index),
       );
 
       switch (header.kind) {
@@ -1206,7 +1207,7 @@ if (typeof window !== "undefined") {
             timestamp,
             { id, loader },
             file_path,
-            true
+            true,
           );
           break;
         }
@@ -1233,7 +1234,7 @@ if (typeof window !== "undefined") {
               __hmrlog.log(
                 "HMR connected in",
                 formatDuration(now - clientStartTime),
-                "ms"
+                "ms",
               );
               break;
             }
@@ -1241,7 +1242,7 @@ if (typeof window !== "undefined") {
               __hmrlog.log(
                 "Live reload connected in",
                 formatDuration(now - clientStartTime),
-                "ms"
+                "ms",
               );
               break;
             }
@@ -1249,7 +1250,7 @@ if (typeof window !== "undefined") {
               __hmrlog.log(
                 "Bun connected in",
                 formatDuration(now - clientStartTime),
-                "ms"
+                "ms",
               );
               break;
             }
@@ -1305,7 +1306,7 @@ if (typeof window !== "undefined") {
       build: HotReload["build"],
       bytes: Uint8Array,
       reloader: ReloadBehavior,
-      hash: number
+      hash: number,
     ) {
       this.module_id = module_id;
       this.module_index = module_index;
@@ -1362,7 +1363,7 @@ if (typeof window !== "undefined") {
       try {
         const blob = new Blob(
           sourceMapURL.length > 0 ? [this.bytes, sourceMapURL] : [this.bytes],
-          { type: "text/javascript" }
+          { type: "text/javascript" },
         );
         blobURL = URL.createObjectURL(blob);
         HMRModule.dependencies.blobToID.set(blobURL, this.module_id);
@@ -1380,7 +1381,7 @@ if (typeof window !== "undefined") {
           globalThis.__BunRenderHMRError(
             exception,
             oldModule.file_path,
-            oldModule.id
+            oldModule.id,
           );
         }
 
@@ -1405,7 +1406,7 @@ if (typeof window !== "undefined") {
           HMRModule.dependencies.modules[this.module_index].file_path,
           "in",
           formatDuration(this.timings.import),
-          ". Running callbacks"
+          ". Running callbacks",
         );
       }
 
@@ -1453,7 +1454,7 @@ if (typeof window !== "undefined") {
 
             const end = Math.min(
               this.module_index + 1,
-              HMRModule.dependencies.graph_used
+              HMRModule.dependencies.graph_used,
             );
             // -- For generic hot reloading --
             // ES Modules delay execution until all imports are parsed
@@ -1516,8 +1517,8 @@ if (typeof window !== "undefined") {
             } else {
               return Promise.reject(
                 new ThrottleModuleUpdateError(
-                  `Expected pendingUpdateCount: ${currentPendingUpdateCount} but received: ${pendingUpdateCount}`
-                )
+                  `Expected pendingUpdateCount: ${currentPendingUpdateCount} but received: ${pendingUpdateCount}`,
+                ),
               );
             }
 
@@ -1538,7 +1539,7 @@ if (typeof window !== "undefined") {
           HMRModule.dependencies.modules[this.module_index].file_path,
           "in",
           formatDuration(this.timings.callbacks),
-          "ms"
+          "ms",
         );
       }
 
@@ -1625,7 +1626,7 @@ if (typeof window !== "undefined") {
       // Grow the dependencies graph
       if (HMRModule.dependencies.graph.length <= this.graph_index) {
         const new_graph = new Uint32Array(
-          HMRModule.dependencies.graph.length * 4
+          HMRModule.dependencies.graph.length * 4,
         );
         new_graph.set(HMRModule.dependencies.graph);
         HMRModule.dependencies.graph = new_graph;
@@ -1730,7 +1731,7 @@ if (typeof window !== "undefined") {
     $r_(Component: any, id: string) {
       FastRefreshLoader.RefreshRuntime.register(
         Component,
-        this.refreshRuntimeBaseID + id
+        this.refreshRuntimeBaseID + id,
       );
     }
     // $RefreshReg$(Component, Component.name || Component.displayName)

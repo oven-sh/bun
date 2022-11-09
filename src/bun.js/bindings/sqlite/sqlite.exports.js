@@ -3,7 +3,7 @@ var symbolFor = Symbol.for;
 const lazy = globalThis[symbolFor("Bun.lazy")];
 if (!lazy || typeof lazy !== "function") {
   throw new Error(
-    "Something went wrong while loading Bun. Expected 'Bun.lazy' to be defined."
+    "Something went wrong while loading Bun. Expected 'Bun.lazy' to be defined.",
   );
 }
 
@@ -185,14 +185,14 @@ export class Database {
           filenameGiven,
           typeof options === "object" && options
             ? !!options.readonly
-            : ((options | 0) & constants.SQLITE_OPEN_READONLY) != 0
+            : ((options | 0) & constants.SQLITE_OPEN_READONLY) != 0,
         );
         this.filename = ":memory:";
         return;
       }
 
       throw new TypeError(
-        `Expected 'filename' to be a string, got '${typeof filenameGiven}'`
+        `Expected 'filename' to be a string, got '${typeof filenameGiven}'`,
       );
     }
 
@@ -208,7 +208,7 @@ export class Database {
 
       if ("readOnly" in options)
         throw new TypeError(
-          'Misspelled option "readOnly" should be "readonly"'
+          'Misspelled option "readOnly" should be "readonly"',
         );
 
       if (options.create) {
@@ -316,7 +316,7 @@ export class Database {
   query(query) {
     if (typeof query !== "string") {
       throw new TypeError(
-        `Expected 'query' to be a string, got '${typeof query}'`
+        `Expected 'query' to be a string, got '${typeof query}'`,
       );
     }
 
@@ -337,7 +337,7 @@ export class Database {
         return (this.#cachedQueriesValues[index] = this.prepare(
           query,
           undefined,
-          willCache ? constants.SQLITE_PREPARE_PERSISTENT : 0
+          willCache ? constants.SQLITE_PREPARE_PERSISTENT : 0,
         ));
       }
       return stmt;
@@ -349,7 +349,7 @@ export class Database {
     var stmt = this.prepare(
       query,
       undefined,
-      willCache ? constants.SQLITE_PREPARE_PERSISTENT : 0
+      willCache ? constants.SQLITE_PREPARE_PERSISTENT : 0,
     );
 
     if (willCache) {
@@ -413,21 +413,21 @@ const getController = (db, self) => {
       (controller = {
         default: Object.assign(
           { begin: db.prepare("BEGIN", undefined, 0) },
-          shared
+          shared,
         ),
         deferred: Object.assign(
           { begin: db.prepare("BEGIN DEFERRED", undefined, 0) },
-          shared
+          shared,
         ),
         immediate: Object.assign(
           { begin: db.prepare("BEGIN IMMEDIATE", undefined, 0) },
-          shared
+          shared,
         ),
         exclusive: Object.assign(
           { begin: db.prepare("BEGIN EXCLUSIVE", undefined, 0) },
-          shared
+          shared,
         ),
-      })
+      }),
     );
   }
   return controller;
@@ -437,7 +437,7 @@ const getController = (db, self) => {
 const wrapTransaction = (
   fn,
   db,
-  { begin, commit, rollback, savepoint, release, rollbackTo }
+  { begin, commit, rollback, savepoint, release, rollbackTo },
 ) =>
   function transaction(...args) {
     let before, after, undo;

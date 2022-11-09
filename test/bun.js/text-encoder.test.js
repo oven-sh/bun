@@ -175,12 +175,12 @@ describe("TextEncoder", () => {
       it(t.encoding + " - " + t.name, () => {
         gcTrace(true);
         expect(
-          new TextDecoder(t.encoding).decode(new Uint8Array(t.input))
+          new TextDecoder(t.encoding).decode(new Uint8Array(t.input)),
         ).toBe(t.expected);
         expect(
           new TextDecoder(t.encoding).decode(
-            new Uint16Array(new Uint8Array(t.input).buffer)
-          )
+            new Uint16Array(new Uint8Array(t.input).buffer),
+          ),
         ).toBe(t.expected);
         gcTrace(true);
       });

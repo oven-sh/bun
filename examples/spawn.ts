@@ -8,7 +8,7 @@ const target = basename(repo) + "-main";
 console.log("Downloading", repo, "to", "/tmp/" + target);
 
 const archive = await fetch(
-  `https://github.com/${repo}/archive/refs/heads/main.tar.gz`
+  `https://github.com/${repo}/archive/refs/heads/main.tar.gz`,
 );
 
 // remove the directory if it already exists locally
@@ -29,14 +29,11 @@ await tar.exited;
 if (!which("vercel")) {
   console.log("Installing vercel...");
 
-  const installer = spawn(
-    { cmd: ["bun", "install", "-g", "vercel"] },
-    {
-      stderr: "inherit",
-      stdout: "inherit",
-      stdin: "inherit",
-    }
-  );
+  const installer = spawn(["bun", "install", "-g", "vercel"], {
+    stderr: "inherit",
+    stdout: "inherit",
+    stdin: "inherit",
+  });
   await installer.exited;
 
   if (!which("vercel")) {

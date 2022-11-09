@@ -283,7 +283,7 @@
           "Instead, assign to `this.state` directly or define a `state = {};` " +
           "class property with the desired state in the %s component.",
         callerName,
-        componentName
+        componentName,
       );
 
       didWarnStateUpdateForUnmountedComponent[warningKey] = true;
@@ -341,7 +341,7 @@
       publicInstance,
       completeState,
       callback,
-      callerName
+      callerName,
     ) {
       warnNoop(publicInstance, "replaceState");
     },
@@ -362,7 +362,7 @@
       publicInstance,
       partialState,
       callback,
-      callerName
+      callerName,
     ) {
       warnNoop(publicInstance, "setState");
     },
@@ -424,7 +424,7 @@
     ) {
       {
         throw Error(
-          "setState(...): takes an object of state variables to update or a function which returns an object of state variables."
+          "setState(...): takes an object of state variables to update or a function which returns an object of state variables.",
         );
       }
     }
@@ -475,7 +475,7 @@
           warn(
             "%s(...) is deprecated in plain JavaScript React classes. %s",
             info[0],
-            info[1]
+            info[1],
           );
 
           return undefined;
@@ -549,7 +549,7 @@
       if (typeof type.tag === "number") {
         error(
           "Received an unexpected object in getComponentName(). " +
-            "This is likely a bug in React. Please file an issue."
+            "This is likely a bug in React. Please file an issue.",
         );
       }
     }
@@ -672,7 +672,7 @@
               "in `undefined` being returned. If you need to access the same " +
               "value within the child component, you should pass it as a different " +
               "prop. (https://reactjs.org/link/special-props)",
-            displayName
+            displayName,
           );
         }
       }
@@ -696,7 +696,7 @@
               "in `undefined` being returned. If you need to access the same " +
               "value within the child component, you should pass it as a different " +
               "prop. (https://reactjs.org/link/special-props)",
-            displayName
+            displayName,
           );
         }
       }
@@ -728,7 +728,7 @@
               "Learn more about using refs safely here: " +
               "https://reactjs.org/link/strict-mode-string-ref",
             componentName,
-            config.ref
+            config.ref,
           );
 
           didWarnAboutStringRefs[componentName] = true;
@@ -905,7 +905,7 @@
       self,
       source,
       ReactCurrentOwner.current,
-      props
+      props,
     );
   }
   function cloneAndReplaceKey(oldElement, newKey) {
@@ -916,7 +916,7 @@
       oldElement._self,
       oldElement._source,
       oldElement._owner,
-      oldElement.props
+      oldElement.props,
     );
     return newElement;
   }
@@ -931,7 +931,7 @@
         throw Error(
           "React.cloneElement(...): The argument must be a React element, but you passed " +
             element +
-            "."
+            ".",
         );
       }
     }
@@ -1125,7 +1125,7 @@
               (mappedChild.key && (!_child || _child.key !== mappedChild.key) // $FlowFixMe Flow incorrectly thinks existing element's key can be a number
                 ? escapeUserProvidedKey("" + mappedChild.key) + "/"
                 : "") +
-              childKey
+              childKey,
           );
         }
 
@@ -1151,7 +1151,7 @@
           array,
           escapedPrefix,
           nextName,
-          callback
+          callback,
         );
       }
     } else {
@@ -1166,7 +1166,7 @@
             if (!didWarnAboutMaps) {
               warn(
                 "Using Maps as children is not supported. " +
-                  "Use an array of keyed ReactElements instead."
+                  "Use an array of keyed ReactElements instead.",
               );
             }
 
@@ -1186,7 +1186,7 @@
             array,
             escapedPrefix,
             nextName,
-            callback
+            callback,
           );
         }
       } else if (type === "object") {
@@ -1201,7 +1201,7 @@
                     Object.keys(children).join(", ") +
                     "}"
                   : childrenString) +
-                "). If you meant to render a collection of children, use an array instead."
+                "). If you meant to render a collection of children, use an array instead.",
             );
           }
         }
@@ -1272,7 +1272,7 @@
       function () {
         forEachFunc.apply(this, arguments); // Don't return anything.
       },
-      forEachContext
+      forEachContext,
     );
   }
   /**
@@ -1308,7 +1308,7 @@
     if (!isValidElement(children)) {
       {
         throw Error(
-          "React.Children.only expected to receive a single React element child."
+          "React.Children.only expected to receive a single React element child.",
         );
       }
     }
@@ -1328,7 +1328,7 @@
           error(
             "createContext: Expected the optional second argument to be a " +
               "function. Instead received: %s",
-            calculateChangedBits
+            calculateChangedBits,
           );
         }
       }
@@ -1377,7 +1377,7 @@
 
               error(
                 "Rendering <Context.Consumer.Provider> is not supported and will be removed in " +
-                  "a future major release. Did you mean to render <Context.Provider> instead?"
+                  "a future major release. Did you mean to render <Context.Provider> instead?",
               );
             }
 
@@ -1418,7 +1418,7 @@
 
               error(
                 "Rendering <Context.Consumer.Consumer> is not supported and will be removed in " +
-                  "a future major release. Did you mean to render <Context.Consumer> instead?"
+                  "a future major release. Did you mean to render <Context.Consumer> instead?",
               );
             }
 
@@ -1434,7 +1434,7 @@
               warn(
                 "Setting `displayName` on Context.Consumer has no effect. " +
                   "You should set it directly on the context with Context.displayName = '%s'.",
-                displayName
+                displayName,
               );
 
               hasWarnedAboutDisplayNameOnConsumer = true;
@@ -1479,7 +1479,7 @@
                     "Instead received: %s\n\nYour code should look like: \n  " + // Break up imports to avoid accidentally parsing them as dependencies.
                     "const MyComponent = lazy(() => imp" +
                     "ort('./MyComponent'))",
-                  moduleObject
+                  moduleObject,
                 );
               }
             } // Transition to the next state.
@@ -1496,7 +1496,7 @@
             rejected._status = Rejected;
             rejected._result = error;
           }
-        }
+        },
       );
     }
 
@@ -1534,7 +1534,7 @@
             error(
               "React.lazy(...): It is not supported to assign `defaultProps` to " +
                 "a lazy component import. Either specify them where the component " +
-                "is defined, or create a wrapping component around it."
+                "is defined, or create a wrapping component around it.",
             );
 
             defaultProps = newDefaultProps; // Match production behavior more closely:
@@ -1554,7 +1554,7 @@
             error(
               "React.lazy(...): It is not supported to assign `propTypes` to " +
                 "a lazy component import. Either specify them where the component " +
-                "is defined, or create a wrapping component around it."
+                "is defined, or create a wrapping component around it.",
             );
 
             propTypes = newPropTypes; // Match production behavior more closely:
@@ -1577,12 +1577,12 @@
         error(
           "forwardRef requires a render function but received a `memo` " +
             "component. Instead of forwardRef(memo(...)), use " +
-            "memo(forwardRef(...))."
+            "memo(forwardRef(...)).",
         );
       } else if (typeof render !== "function") {
         error(
           "forwardRef requires a render function but was given %s.",
-          render === null ? "null" : typeof render
+          render === null ? "null" : typeof render,
         );
       } else {
         if (render.length !== 0 && render.length !== 2) {
@@ -1590,7 +1590,7 @@
             "forwardRef render functions accept exactly two parameters: props and ref. %s",
             render.length === 1
               ? "Did you forget to use the ref parameter?"
-              : "Any additional parameter will be undefined."
+              : "Any additional parameter will be undefined.",
           );
         }
       }
@@ -1599,7 +1599,7 @@
         if (render.defaultProps != null || render.propTypes != null) {
           error(
             "forwardRef render functions do not support propTypes or defaultProps. " +
-              "Did you accidentally pass a React component?"
+              "Did you accidentally pass a React component?",
           );
         }
       }
@@ -1677,7 +1677,7 @@
         error(
           "memo: The first argument must be a component. Instead " +
             "received: %s",
-          type === null ? "null" : typeof type
+          type === null ? "null" : typeof type,
         );
       }
     }
@@ -1715,7 +1715,7 @@
     if (!(dispatcher !== null)) {
       {
         throw Error(
-          "Invalid hook call. Hooks can only be called inside of the body of a function component. This could happen for one of the following reasons:\n1. You might have mismatching versions of React and the renderer (such as React DOM)\n2. You might be breaking the Rules of Hooks\n3. You might have more than one copy of React in the same app\nSee https://reactjs.org/link/invalid-hook-call for tips about how to debug and fix this problem."
+          "Invalid hook call. Hooks can only be called inside of the body of a function component. This could happen for one of the following reasons:\n1. You might have mismatching versions of React and the renderer (such as React DOM)\n2. You might be breaking the Rules of Hooks\n3. You might have more than one copy of React in the same app\nSee https://reactjs.org/link/invalid-hook-call for tips about how to debug and fix this problem.",
         );
       }
     }
@@ -1738,7 +1738,7 @@
             ? "\n\nDid you call array.map(useContext)? " +
                 "Calling Hooks inside a loop is not supported. " +
                 "Learn more at https://reactjs.org/link/rules-of-hooks"
-            : ""
+            : "",
         );
       } // TODO: add a more generic warning for invalid values.
 
@@ -1749,12 +1749,12 @@
         if (realContext.Consumer === Context) {
           error(
             "Calling useContext(Context.Consumer) is not supported, may cause bugs, and will be " +
-              "removed in a future major release. Did you mean to call useContext(Context) instead?"
+              "removed in a future major release. Did you mean to call useContext(Context) instead?",
           );
         } else if (realContext.Provider === Context) {
           error(
             "Calling useContext(Context.Provider) is not supported. " +
-              "Did you mean to call useContext(Context) instead?"
+              "Did you mean to call useContext(Context) instead?",
           );
         }
       }
@@ -1892,7 +1892,7 @@
       if (disabledDepth < 0) {
         error(
           "disabledDepth fell below zero. " +
-            "This is a bug in React. Please file an issue."
+            "This is a bug in React. Please file an issue.",
         );
       }
     }
@@ -2117,7 +2117,7 @@
           return describeUnknownElementTypeFrameInDEV(
             type.type,
             source,
-            ownerFn
+            ownerFn,
           );
 
         case REACT_BLOCK_TYPE:
@@ -2133,7 +2133,7 @@
             return describeUnknownElementTypeFrameInDEV(
               init(payload),
               source,
-              ownerFn
+              ownerFn,
             );
           } catch (x) {}
         }
@@ -2153,7 +2153,7 @@
         var stack = describeUnknownElementTypeFrameInDEV(
           element.type,
           element._source,
-          owner ? owner.type : null
+          owner ? owner.type : null,
         );
         ReactDebugCurrentFrame$1.setExtraStackFrame(stack);
       } else {
@@ -2187,7 +2187,7 @@
                   "it must be a function, usually from the `prop-types` package, but received `" +
                   typeof typeSpecs[typeSpecName] +
                   "`." +
-                  "This often happens because of typos such as `PropTypes.function` instead of `PropTypes.func`."
+                  "This often happens because of typos such as `PropTypes.function` instead of `PropTypes.func`.",
               );
               err.name = "Invariant Violation";
               throw err;
@@ -2199,7 +2199,7 @@
               componentName,
               location,
               null,
-              "SECRET_DO_NOT_PASS_THIS_OR_YOU_WILL_BE_FIRED"
+              "SECRET_DO_NOT_PASS_THIS_OR_YOU_WILL_BE_FIRED",
             );
           } catch (ex) {
             error$1 = ex;
@@ -2218,7 +2218,7 @@
               componentName || "React class",
               location,
               typeSpecName,
-              typeof error$1
+              typeof error$1,
             );
 
             setCurrentlyValidatingElement(null);
@@ -2249,7 +2249,7 @@
         var stack = describeUnknownElementTypeFrameInDEV(
           element.type,
           element._source,
-          owner ? owner.type : null
+          owner ? owner.type : null,
         );
         setExtraStackFrame(stack);
       } else {
@@ -2367,7 +2367,7 @@
         'Each child in a list should have a unique "key" prop.' +
           "%s%s See https://reactjs.org/link/warning-keys for more information.",
         currentComponentErrorInfo,
-        childOwner
+        childOwner,
       );
 
       setCurrentlyValidatingElement$1(null);
@@ -2464,7 +2464,7 @@
 
         error(
           "Component %s declared `PropTypes` instead of `propTypes`. Did you misspell the property assignment?",
-          _name || "Unknown"
+          _name || "Unknown",
         );
       }
 
@@ -2474,7 +2474,7 @@
       ) {
         error(
           "getDefaultProps is only used on classic React.createClass " +
-            "definitions. Use a static property named `defaultProps` instead."
+            "definitions. Use a static property named `defaultProps` instead.",
         );
       }
     }
@@ -2497,7 +2497,7 @@
           error(
             "Invalid prop `%s` supplied to `React.Fragment`. " +
               "React.Fragment can only have `key` and `children` props.",
-            key
+            key,
           );
 
           setCurrentlyValidatingElement$1(null);
@@ -2560,7 +2560,7 @@
             "built-in components) or a class/function (for composite " +
             "components) but got: %s.%s",
           typeString,
-          info
+          info,
         );
       }
     }
@@ -2602,7 +2602,7 @@
         warn(
           "React.createFactory() is deprecated and will be removed in " +
             "a future major release. Consider using JSX " +
-            "or use React.createElement() directly instead."
+            "or use React.createElement() directly instead.",
         );
       } // Legacy hook: remove it
 
@@ -2611,7 +2611,7 @@
         get: function () {
           warn(
             "Factory.type is deprecated. Access the class directly " +
-              "before passing it to createFactory."
+              "before passing it to createFactory.",
           );
 
           Object.defineProperty(this, "type", {
@@ -2730,7 +2730,7 @@
         console["error"](
           "This browser doesn't support requestAnimationFrame. " +
             "Make sure that you load a " +
-            "polyfill in older browsers. https://reactjs.org/link/react-polyfills"
+            "polyfill in older browsers. https://reactjs.org/link/react-polyfills",
         );
       }
 
@@ -2739,7 +2739,7 @@
         console["error"](
           "This browser doesn't support cancelAnimationFrame. " +
             "Make sure that you load a " +
-            "polyfill in older browsers. https://reactjs.org/link/react-polyfills"
+            "polyfill in older browsers. https://reactjs.org/link/react-polyfills",
         );
       }
     }
@@ -2769,7 +2769,7 @@
         // Using console['error'] to evade Babel and ESLint
         console["error"](
           "forceFrameRate takes a positive int between 0 and 125, " +
-            "forcing frame rates higher than 125 fps is not supported"
+            "forcing frame rates higher than 125 fps is not supported",
         );
         return;
       }
@@ -2794,7 +2794,7 @@
         try {
           var hasMoreWork = scheduledHostCallback(
             hasTimeRemaining,
-            currentTime
+            currentTime,
           );
 
           if (!hasMoreWork) {

@@ -10,7 +10,7 @@ export const IPAddresses = () => (
           <div className="Line" key={index}>
             {ipAddress}
           </div>
-        )
+        ),
       )}
     </div>
   </div>

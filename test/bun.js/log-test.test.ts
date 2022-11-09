@@ -14,7 +14,7 @@ it("should not log .env when quiet", async () => {
     cwd: "/tmp/log-test-silent",
   });
 
-  expect(stderr.toString()).toBe("");
+  expect(stderr!.toString()).toBe("");
 });
 
 it("should log .env by default", async () => {
@@ -29,7 +29,7 @@ it("should log .env by default", async () => {
     cwd: "/tmp/log-test-silent",
   });
 
-  expect(stderr.toString().includes(".env")).toBe(true);
+  expect(stderr?.toString().includes(".env")).toBe(true);
 });
 
 function writeDirectoryTree(base, paths) {

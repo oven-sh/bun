@@ -34,7 +34,7 @@ private:
     unsigned int m_flags;
 
 public:
-    typedef JSNonFinalObject Base;
+    using Base = JSC::JSNonFinalObject;
 
     static CallSite* create(JSC::JSGlobalObject* globalObject, JSC::Structure* structure, JSCStackFrame& stackFrame, bool encounteredStrictFrame)
     {

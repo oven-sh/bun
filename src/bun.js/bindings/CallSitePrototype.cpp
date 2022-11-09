@@ -32,6 +32,9 @@ static JSC_DECLARE_HOST_FUNCTION(callSiteProtoFuncIsToplevel);
 static JSC_DECLARE_HOST_FUNCTION(callSiteProtoFuncIsEval);
 static JSC_DECLARE_HOST_FUNCTION(callSiteProtoFuncIsNative);
 static JSC_DECLARE_HOST_FUNCTION(callSiteProtoFuncIsConstructor);
+static JSC_DECLARE_HOST_FUNCTION(callSiteProtoFuncIsAsync);
+static JSC_DECLARE_HOST_FUNCTION(callSiteProtoFuncIsPromiseAll);
+static JSC_DECLARE_HOST_FUNCTION(callSiteProtoFuncGetPromiseIndex);
 
 ALWAYS_INLINE static CallSite* getCallSite(JSGlobalObject* globalObject, JSC::JSValue thisValue)
 {
@@ -62,20 +65,23 @@ ALWAYS_INLINE static CallSite* getCallSite(JSGlobalObject* globalObject, JSC::JS
 
 static const HashTableValue CallSitePrototypeTableValues[]
     = {
-          { "getThis"_s, static_cast<unsigned>(0), NoIntrinsic, { HashTableValue::NativeFunctionType, callSiteProtoFuncGetThis, 0 } },
-          { "getTypeName"_s, static_cast<unsigned>(0), NoIntrinsic, { HashTableValue::NativeFunctionType, callSiteProtoFuncGetTypeName, 0 } },
-          { "getFunction"_s, static_cast<unsigned>(0), NoIntrinsic, { HashTableValue::NativeFunctionType, callSiteProtoFuncGetFunction, 0 } },
-          { "getFunctionName"_s, static_cast<unsigned>(0), NoIntrinsic, { HashTableValue::NativeFunctionType, callSiteProtoFuncGetFunctionName, 0 } },
-          { "getMethodName"_s, static_cast<unsigned>(0), NoIntrinsic, { HashTableValue::NativeFunctionType, callSiteProtoFuncGetMethodName, 0 } },
-          { "getFileName"_s, static_cast<unsigned>(0), NoIntrinsic, { HashTableValue::NativeFunctionType, callSiteProtoFuncGetFileName, 0 } },
-          { "getLineNumber"_s, static_cast<unsigned>(0), NoIntrinsic, { HashTableValue::NativeFunctionType, callSiteProtoFuncGetLineNumber, 0 } },
-          { "getColumnNumber"_s, static_cast<unsigned>(0), NoIntrinsic, { HashTableValue::NativeFunctionType, callSiteProtoFuncGetColumnNumber, 0 } },
-          { "getEvalOrigin"_s, static_cast<unsigned>(0), NoIntrinsic, { HashTableValue::NativeFunctionType, callSiteProtoFuncGetEvalOrigin, 0 } },
-          { "getScriptNameOrSourceURL"_s, static_cast<unsigned>(0), NoIntrinsic, { HashTableValue::NativeFunctionType, callSiteProtoFuncGetScriptNameOrSourceURL, 0 } },
-          { "isToplevel"_s, static_cast<unsigned>(0), NoIntrinsic, { HashTableValue::NativeFunctionType, callSiteProtoFuncIsToplevel, 0 } },
-          { "isEval"_s, static_cast<unsigned>(0), NoIntrinsic, { HashTableValue::NativeFunctionType, callSiteProtoFuncIsEval, 0 } },
-          { "isNative"_s, static_cast<unsigned>(0), NoIntrinsic, { HashTableValue::NativeFunctionType, callSiteProtoFuncIsNative, 0 } },
-          { "isConstructor"_s, static_cast<unsigned>(0), NoIntrinsic, { HashTableValue::NativeFunctionType, callSiteProtoFuncIsConstructor, 0 } },
+          { "getThis"_s, JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::Function, NoIntrinsic, { HashTableValue::NativeFunctionType, callSiteProtoFuncGetThis, 0 } },
+          { "getTypeName"_s, JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::Function, NoIntrinsic, { HashTableValue::NativeFunctionType, callSiteProtoFuncGetTypeName, 0 } },
+          { "getFunction"_s, JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::Function, NoIntrinsic, { HashTableValue::NativeFunctionType, callSiteProtoFuncGetFunction, 0 } },
+          { "getFunctionName"_s, JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::Function, NoIntrinsic, { HashTableValue::NativeFunctionType, callSiteProtoFuncGetFunctionName, 0 } },
+          { "getMethodName"_s, JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::Function, NoIntrinsic, { HashTableValue::NativeFunctionType, callSiteProtoFuncGetMethodName, 0 } },
+          { "getFileName"_s, JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::Function, NoIntrinsic, { HashTableValue::NativeFunctionType, callSiteProtoFuncGetFileName, 0 } },
+          { "getLineNumber"_s, JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::Function, NoIntrinsic, { HashTableValue::NativeFunctionType, callSiteProtoFuncGetLineNumber, 0 } },
+          { "getColumnNumber"_s, JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::Function, NoIntrinsic, { HashTableValue::NativeFunctionType, callSiteProtoFuncGetColumnNumber, 0 } },
+          { "getEvalOrigin"_s, JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::Function, NoIntrinsic, { HashTableValue::NativeFunctionType, callSiteProtoFuncGetEvalOrigin, 0 } },
+          { "getScriptNameOrSourceURL"_s, JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::Function, NoIntrinsic, { HashTableValue::NativeFunctionType, callSiteProtoFuncGetScriptNameOrSourceURL, 0 } },
+          { "isToplevel"_s, JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::Function, NoIntrinsic, { HashTableValue::NativeFunctionType, callSiteProtoFuncIsToplevel, 0 } },
+          { "isEval"_s, JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::Function, NoIntrinsic, { HashTableValue::NativeFunctionType, callSiteProtoFuncIsEval, 0 } },
+          { "isNative"_s, JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::Function, NoIntrinsic, { HashTableValue::NativeFunctionType, callSiteProtoFuncIsNative, 0 } },
+          { "isConstructor"_s, JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::Function, NoIntrinsic, { HashTableValue::NativeFunctionType, callSiteProtoFuncIsConstructor, 0 } },
+          { "isAsync"_s, JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::Function, NoIntrinsic, { HashTableValue::NativeFunctionType, callSiteProtoFuncIsAsync, 0 } },
+          { "isPromiseAll"_s, JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::Function, NoIntrinsic, { HashTableValue::NativeFunctionType, callSiteProtoFuncIsPromiseAll, 0 } },
+          { "getPromiseIndex"_s, JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::Function, NoIntrinsic, { HashTableValue::NativeFunctionType, callSiteProtoFuncGetPromiseIndex, 0 } },
       };
 
 const JSC::ClassInfo CallSitePrototype::s_info = { "CallSite"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(CallSitePrototype) };
@@ -191,6 +197,27 @@ JSC_DEFINE_HOST_FUNCTION(callSiteProtoFuncIsConstructor, (JSGlobalObject * globa
 
     bool isConstructor = callSite->isConstructor();
     return JSC::JSValue::encode(JSC::jsBoolean(isConstructor));
+}
+
+JSC_DEFINE_HOST_FUNCTION(callSiteProtoFuncIsAsync, (JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    ENTER_PROTO_FUNC();
+
+    return JSC::JSValue::encode(JSC::jsBoolean(false));
+}
+
+JSC_DEFINE_HOST_FUNCTION(callSiteProtoFuncIsPromiseAll, (JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    ENTER_PROTO_FUNC();
+
+    return JSC::JSValue::encode(JSC::jsBoolean(false));
+}
+
+JSC_DEFINE_HOST_FUNCTION(callSiteProtoFuncGetPromiseIndex, (JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    ENTER_PROTO_FUNC();
+
+    return JSC::JSValue::encode(JSC::jsNumber(0));
 }
 
 }

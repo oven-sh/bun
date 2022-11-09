@@ -13,7 +13,7 @@ namespace Zig {
 
 class CallSitePrototype final : public JSC::JSNonFinalObject {
 public:
-    typedef JSNonFinalObject Base;
+    using Base = JSC::JSNonFinalObject;
 
     static CallSitePrototype* create(JSC::VM& vm, JSC::Structure* structure, JSC::JSGlobalObject* globalObject)
     {

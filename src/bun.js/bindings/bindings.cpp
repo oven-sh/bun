@@ -1340,6 +1340,7 @@ JSC__JSModuleLoader__loadAndEvaluateModule(JSC__JSGlobalObject* globalObject,
 
     auto* promise = JSC::loadAndEvaluateModule(globalObject, name, JSC::jsUndefined(), JSC::jsUndefined());
     if (!promise) {
+        // usually this is a GC issue
         return jsCast<JSC::JSInternalPromise*>(JSC::JSInternalPromise::rejectedPromise(globalObject, JSC::jsUndefined()));
     }
 

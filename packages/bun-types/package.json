@@ -6,10 +6,7 @@
   "scripts": {
     "build": "rm -rf ./dist && bun scripts/bundle.ts ./dist && bun run fmt",
     "docs": "bun run build && typedoc",
-    "fmt": "prettier --write './**/*.d.ts'",
-    "test": "tsd",
-    "lint": "eslint './**/*.d.ts'",
-    "lint:fix": "eslint './**/*.d.ts' --fix"
+    "test": "tsd"
   },
   "devDependencies": {
     "tsd": "^0.22.0",

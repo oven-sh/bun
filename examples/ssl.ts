@@ -1,6 +1,5 @@
 import { resolve } from "path";
 
-Bun.file;
 const development = process.env.NODE_ENV !== "production";
 export default {
   fetch(req: Request) {

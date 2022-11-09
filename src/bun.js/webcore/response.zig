@@ -5384,12 +5384,11 @@ pub const Request = struct {
 
         if (this.uws_request) |req| {
             if (this.base_url_string_for_joining.len > 0) {
-                const str = try strings.append(bun.default_allocator, this.base_url_string_for_joining, req.url());
-                this.url = str;
+                this.url = try strings.append(bun.default_allocator, this.base_url_string_for_joining, req.url());
+                this.url_was_allocated = true;
 
                 // don't keep this around when we don't need it
                 this.base_url_string_for_joining = "";
-                this.url_was_allocated = true;
             } else {
                 this.url = try bun.default_allocator.dupe(u8, req.url());
                 this.url_was_allocated = true;

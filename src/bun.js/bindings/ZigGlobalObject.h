@@ -34,6 +34,10 @@ class EventLoopTask;
 #include "DOMIsoSubspaces.h"
 #include "BunPlugin.h"
 
+#include "ErrorStackTrace.h"
+#include "CallSite.h"
+#include "CallSitePrototype.h"
+
 extern "C" void Bun__reportError(JSC__JSGlobalObject*, JSC__JSValue);
 // defined in ModuleLoader.cpp
 extern "C" JSC::EncodedJSValue jsFunctionOnLoadObjectResultResolve(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame);
@@ -57,6 +61,8 @@ extern "C" JSC::EncodedJSValue jsFunctionOnLoadObjectResultReject(JSC::JSGlobalO
 // }
 
 namespace Zig {
+
+class JSCStackTrace;
 
 using JSDOMStructureMap = HashMap<const JSC::ClassInfo*, JSC::WriteBarrier<JSC::Structure>>;
 using DOMGuardedObjectSet = HashSet<WebCore::DOMGuardedObject*>;
@@ -153,6 +159,9 @@ public:
 
     void clearDOMGuardedObjects();
 
+    static void createCallSitesFromFrames(JSC::JSGlobalObject* lexicalGlobalObject, JSC::ObjectInitializationScope& objectScope, JSCStackTrace& stackTrace, JSC::JSArray* callSites);
+    JSC::JSValue formatStackTrace(JSC::VM& vm, JSC::JSGlobalObject* lexicalGlobalObject, JSC::JSObject* errorObject, JSC::JSArray* callSites, ZigStackFrame remappedStackFrames[]);
+
     static void reportUncaughtExceptionAtEventLoop(JSGlobalObject*, JSC::Exception*);
     static JSGlobalObject* deriveShadowRealmGlobalObject(JSGlobalObject* globalObject);
     static void queueMicrotaskToEventLoop(JSC::JSGlobalObject& global, Ref<JSC::Microtask>&& task);
@@ -217,6 +226,8 @@ public:
     JSC::JSMap* readableStreamNativeMap() { return m_lazyReadableStreamPrototypeMap.getInitializedOnMainThread(this); }
     JSC::JSMap* requireMap() { return m_requireMap.getInitializedOnMainThread(this); }
     JSC::JSObject* encodeIntoObjectPrototype() { return m_encodeIntoObjectPrototype.getInitializedOnMainThread(this); }
+
+    JSC::Structure* callSiteStructure() const { return m_callSiteStructure.getInitializedOnMainThread(this); }
 
     JSC::JSObject* performanceObject() { return m_performanceObject.getInitializedOnMainThread(this); }
     JSC::JSObject* primordialsObject() { return m_primordialsObject.getInitializedOnMainThread(this); }
@@ -441,6 +452,7 @@ private:
     LazyClassStructure m_JSStringDecoderClassStructure;
     LazyClassStructure m_NapiClassStructure;
     LazyClassStructure m_OnigurumaRegExpClassStructure;
+    LazyClassStructure m_callSiteStructure;
 
     /**
      * WARNING: You must update visitChildrenImpl() if you add a new field.

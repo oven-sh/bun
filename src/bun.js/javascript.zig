@@ -1551,6 +1551,25 @@ pub const VirtualMachine = struct {
         }
     }
 
+    pub export fn Bun__remapStackFramePositions(globalObject: *JSC.JSGlobalObject, frames: [*]JSC.ZigStackFrame, frames_count: usize) void {
+        globalObject.bunVM().remapStackFramePositions(frames, frames_count);
+    }
+
+    pub fn remapStackFramePositions(this: *VirtualMachine, frames: [*]JSC.ZigStackFrame, frames_count: usize) void {
+        var i: usize = 0;
+        while (i < frames_count) : (i += 1) {
+            if (frames[i].position.isInvalid()) continue;
+            if (this.source_mappings.resolveMapping(
+                frames[i].source_url.slice(),
+                @maximum(frames[i].position.line, 0),
+                @maximum(frames[i].position.column_start, 0),
+            )) |mapping| {
+                frames[i].position.line = mapping.original.lines;
+                frames[i].position.column_start = mapping.original.columns;
+            }
+        }
+    }
+
     pub fn remapZigException(
         this: *VirtualMachine,
         exception: *ZigException,
@@ -1830,6 +1849,11 @@ pub const VirtualMachine = struct {
         } else {
             try writer.print(comptime Output.prettyFmt("<r><red>error<r>\n", allow_ansi_color), .{});
         }
+    }
+
+    comptime {
+        if (!JSC.is_bindgen)
+            _ = Bun__remapStackFramePositions;
     }
 };
 

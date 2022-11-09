@@ -980,21 +980,12 @@ pub const Encoder = struct {
                     slice = slice[0 .. slice.len - 1];
                 }
 
-                const wrote = bun.base64.urlsafe.decode(to[0..to_len], slice) catch |err| brk: {
-                    if (err == error.NoSpaceLeft) {
-                        break :brk to_len;
-                    }
-
-                    return -1;
-                };
+                const wrote = bun.base64.decodeURLSafe(to[0..to_len], slice).written;
                 return @intCast(i64, wrote);
             },
 
             JSC.Node.Encoding.base64 => {
-                var slice = strings.trim(input[0..len], "\r\n\t " ++ [_]u8{std.ascii.control_code.VT});
-                var outlen = bun.base64.decodeLen(slice);
-
-                return @intCast(i64, bun.base64.decode(to[0..outlen], slice).written);
+                return @intCast(i64, bun.base64.decode(to[0..to_len], input[0..len]).written);
             },
             // else => return 0,
         }
@@ -1140,14 +1131,7 @@ pub const Encoder = struct {
 
                 const to_len = bun.base64.urlsafe.decoder.calcSizeForSlice(slice) catch unreachable;
                 var to = allocator.alloc(u8, to_len) catch return &[_]u8{};
-
-                const wrote = bun.base64.urlsafe.decode(to[0..to_len], slice) catch |err| brk: {
-                    if (err == error.NoSpaceLeft) {
-                        break :brk to_len;
-                    }
-
-                    return &[_]u8{};
-                };
+                const wrote = bun.base64.decodeURLSafe(to[0..to_len], slice).written;
                 return to[0..wrote];
             },
 
@@ -1195,7 +1179,6 @@ pub const Encoder = struct {
             },
 
             JSC.Node.Encoding.base64 => {
-
                 // very very slow case!
                 // shouldn't really happen though
                 var transcoded = strings.toUTF8Alloc(allocator, input[0..len]) catch return &[_]u8{};

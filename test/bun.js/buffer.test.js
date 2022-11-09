@@ -590,3 +590,25 @@ for (let fn of [Buffer.prototype.slice, Buffer.prototype.subarray]) {
     expect(slice3.toString()).toBe("f");
   });
 }
+
+it("Buffer.from(base64)", () => {
+  const buf = Buffer.from("aGVsbG8gd29ybGQ=", "base64");
+  expect(buf.toString()).toBe("hello world");
+
+  expect(
+    Buffer.from(btoa('console.log("hello world")\n'), "base64").toString()
+  ).toBe('console.log("hello world")\n');
+});
+
+it("Buffer.toString(base64)", () => {
+  {
+    const buf = Buffer.from("hello world");
+    expect(buf.toString("base64")).toBe("aGVsbG8gd29ybGQ=");
+  }
+
+  {
+    expect(Buffer.from(`console.log("hello world")\n`).toString("base64")).toBe(
+      btoa('console.log("hello world")\n')
+    );
+  }
+});

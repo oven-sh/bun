@@ -5182,7 +5182,7 @@ pub const Request = struct {
 
     pub fn estimatedSize(this: *Request) callconv(.C) usize {
         return this.reported_estimated_size orelse brk: {
-            this.reported_estimated_size = @truncate(u63, this.body.estimatedSize() + this.url.len + @sizeOf(Request));
+            this.reported_estimated_size = @truncate(u63, this.body.estimatedSize() + this.sizeOfURL() + @sizeOf(Request));
             break :brk this.reported_estimated_size.?;
         };
     }
@@ -5366,6 +5366,16 @@ pub const Request = struct {
         return ZigString.init(this.url).withEncoding().toValueGC(globalObject);
     }
 
+    pub fn sizeOfURL(this: *Request) usize {
+        if (this.url.len > 0)
+            return this.url.len;
+
+        if (this.uws_request) |req| {
+            return this.base_url_string_for_joining.len + req.url().len;
+        }
+
+        return 0;
+    }
     pub fn ensureURL(this: *Request) !void {
         if (this.url.len > 0) return;
 

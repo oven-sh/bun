@@ -18,6 +18,7 @@
     "examples/macros",
     "test/bun.js/solid-dom-fixtures",
     "test/bun.js/bundled",
+    // JavaScriptCore builtins use a non-standard "@" symbol to indicate a private identifier which no other tool supports
     "src/bun.js/builtins",
     "src/api/demo",
     "test/snapshots",

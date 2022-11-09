@@ -138,7 +138,7 @@ describe("websocket server", () => {
           if (
             server.upgrade(req, {
               data: "hello world",
-              headers: 1238 as any, // why is this a number?
+              headers: 1238 as any,
             })
           ) {
             reject();
@@ -603,7 +603,7 @@ describe("websocket server", () => {
           ws.send("hello world");
         },
         message(ws, msg) {
-          ws.cork!(() => {
+          ws.cork(() => {
             ws.send("hello world");
           });
         },

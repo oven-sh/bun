@@ -6,7 +6,8 @@
       "foo/bar": [
         "baz.js"
       ]
-    }
+    },
+    "baseUrl": "."
   },
   "exclude": [
     "solid-dom-fixtures",

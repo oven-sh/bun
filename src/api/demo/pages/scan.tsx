@@ -1,9 +1,6 @@
 import Head from "next/head";
-import Image from "next/image";
 import { readFile } from "fs/promises";
 import styles from "../styles/Home.module.css";
-
-declare const globalThis: any;
 
 import React from "react";
 
@@ -18,7 +15,7 @@ export async function getStaticProps(ctx) {
       // not tested
       code: readFile(
         "/Users/jarred/Build/es-module-lexer/test/samples/magic-string.js",
-        { encoding: "utf-8" }
+        { encoding: "utf-8" },
       ),
       defaultFile: "magic-string.js",
     },
@@ -39,13 +36,13 @@ export default function Home({ code, defaultFile }) {
     (event) => {
       globalThis.Scan.transform(
         event.target.value,
-        fileNameRef?.current?.value
+        fileNameRef?.current?.value,
       ).then((result) => {
         setLexer(JSON.stringify(result.lexer, null, 2));
         setBunResult(JSON.stringify(result.bun, null, 2));
       }, console.error);
     },
-    [fileNameRef, setBunResult, setLexer]
+    [fileNameRef, setBunResult, setLexer],
   );
   return (
     <div className={styles.container}>

@@ -1031,7 +1031,7 @@ declare module "bun" {
      * you only need to call this if you are sending messages outside of those
      * callbacks or in async functions
      */
-    cork?: (callback: (ws: ServerWebSocket<T>) => any) => void | Promise<void>;
+    cork: (callback: (ws: ServerWebSocket<T>) => any) => void | Promise<void>;
 
     /**
      * Configure the {@link WebSocketHandler.message} callback to return a {@link ArrayBuffer} instead of a {@link Uint8Array}

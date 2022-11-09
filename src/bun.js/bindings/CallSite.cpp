@@ -75,26 +75,17 @@ void CallSite::finishCreation(VM& vm, JSC::JSGlobalObject* globalObject, JSCStac
     }
 }
 
-void CallSite::visitChildren(JSC::JSCell* cell, JSC::SlotVisitor& visitor)
+template<typename Visitor>
+void CallSite::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 {
-    Base::visitChildren(cell, visitor);
-
-    CallSite* thisCallSite = JSC::jsCast<CallSite*>(cell);
+    CallSite* thisCallSite = jsCast<CallSite*>(cell);
+    Base::visitChildren(thisCallSite, visitor);
     visitor.append(thisCallSite->m_thisValue);
     visitor.append(thisCallSite->m_function);
     visitor.append(thisCallSite->m_functionName);
     visitor.append(thisCallSite->m_sourceURL);
 }
 
-void CallSite::visitChildren(JSC::JSCell* cell, JSC::AbstractSlotVisitor& visitor)
-{
-    Base::visitChildren(cell, visitor);
-
-    CallSite* thisCallSite = JSC::jsCast<CallSite*>(cell);
-    visitor.append(thisCallSite->m_thisValue);
-    visitor.append(thisCallSite->m_function);
-    visitor.append(thisCallSite->m_functionName);
-    visitor.append(thisCallSite->m_sourceURL);
-}
+DEFINE_VISIT_CHILDREN(CallSite);
 
 }

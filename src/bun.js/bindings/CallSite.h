@@ -86,8 +86,7 @@ private:
 
     void finishCreation(VM& vm, JSC::JSGlobalObject* globalObject, JSCStackFrame& stackFrame, bool encounteredStrictFrame);
 
-    static void visitChildren(JSC::JSCell*, JSC::SlotVisitor&);
-    static void visitChildren(JSC::JSCell* cell, JSC::AbstractSlotVisitor& visitor);
+    DECLARE_VISIT_CHILDREN;
 };
 
 }

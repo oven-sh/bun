@@ -26,6 +26,7 @@
 /// <reference path="./timers.d.ts" />
 /// <reference path="./stream.d.ts" />
 /// <reference path="./crypto.d.ts" />
+/// <reference path="./child_process.d.ts" />
 /// <reference path="./constants.d.ts" />
 /// <reference path="./url.d.ts" />
 /// <reference path="./tty.d.ts" />

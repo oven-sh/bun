@@ -94,7 +94,7 @@ for (let [gcTick, label] of [
 
       it("check exit code from onExit", async () => {
         var exitCode1, exitCode2;
-        await new Promise((resolve) => {
+        await new Promise<void>((resolve) => {
           var counter = 0;
           spawn({
             cmd: ["ls"],

@@ -10,7 +10,7 @@ import { heapStats } from "bun:jsc";
 import { describe, expect, it } from "bun:test";
 import { renderToReadableStream as renderToReadableStreamBrowser } from "react-dom/server.browser";
 import { gc } from "./gc";
-import { renderToReadableStream as renderToReadableStreamBun } from "./react-dom-server.bun";
+import { renderToReadableStream as renderToReadableStreamBun } from "./react-dom-server.bun.cjs";
 import React from "react";
 
 Object.defineProperty(renderToReadableStreamBrowser, "name", {

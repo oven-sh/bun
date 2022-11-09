@@ -1,4 +1,5 @@
 import { test, describe, expect } from "bun:test";
+import fs from "node:fs";
 
 // this is also testing that imports with default and named imports in the same statement work
 // our transpiler transform changes this to a var with import.meta.require

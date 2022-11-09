@@ -11,6 +11,7 @@
     "allowSyntheticDefaultImports": true,
     "allowJs": true,
     "downlevelIteration": true,
+    "esModuleInterop": true,
     "skipLibCheck": true,
     "jsx": "react-jsx",
     "types": [

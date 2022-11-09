@@ -553,7 +553,8 @@ pub const Subprocess = struct {
                             // we consider a short read as being EOF
                             this.received_eof = this.received_eof or bytes_read < buf.len;
                             if (this.received_eof) {
-                                this.autoCloseFileDescriptor();
+                                // do not auto-close the file descriptor here
+                                // it's totally legit to have a short read
                                 return;
                             }
                         }

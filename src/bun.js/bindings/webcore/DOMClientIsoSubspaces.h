@@ -30,6 +30,7 @@ public:
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForReadableState;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForPendingVirtualModuleResult;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForOnigurumaRegExp;
+    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForCallSite;
 #include "ZigGeneratedClasses+DOMClientIsoSubspaces.h"
     /* --- bun --- */
 

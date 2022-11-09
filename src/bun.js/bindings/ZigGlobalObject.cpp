@@ -2307,7 +2307,7 @@ JSC_DEFINE_HOST_FUNCTION(errorConstructorFuncCaptureStackTrace, (JSC::JSGlobalOb
         errorObject->putDirect(vm, vm.propertyNames->stack, formattedStackTrace.toString(lexicalGlobalObject), JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum);
     }
 
-    RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode(scope.exception()));
+    RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode(JSValue{}));
 
     return JSC::JSValue::encode(JSC::jsUndefined());
 }

@@ -265,7 +265,7 @@ test("parameter decorators", () => {
       two: string,
       three: boolean,
       @d1 @d2 width: number,
-      @d3 height: number
+      @d3 height: number,
     ) {
       this.width = width;
       this.height = height;
@@ -337,7 +337,7 @@ test("parameter decorators", () => {
     constructor(
       @m1 private x: number,
       @m2 public y: boolean,
-      @m3 protected z: string
+      @m3 protected z: string,
     ) {}
   }
 

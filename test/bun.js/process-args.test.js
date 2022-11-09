@@ -31,7 +31,7 @@ test("args exclude run", async () => {
 
   const { stdout: s4 } = spawn(
     [exe, "run", "print-process-args.js", "arg1", "arg2"],
-    { cwd: import.meta.dir }
+    { cwd: import.meta.dir },
   );
   const t4 = JSON.parse(await new Response(s4).text());
   expect(t4[0]).toBe(arg0);

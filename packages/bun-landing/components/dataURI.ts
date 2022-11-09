@@ -10,7 +10,7 @@ export function dataURI(expr) {
     const data = readFileSync(toLoad);
 
     return `data:${Bun.file(toLoad).type};base64, ${btoa(
-      String.fromCharCode(...new Uint8Array(data.buffer))
+      String.fromCharCode(...new Uint8Array(data.buffer)),
     )}`;
   } catch (e) {
     console.error(e);

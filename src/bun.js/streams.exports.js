@@ -94,13 +94,13 @@ var ArrayIsArray = Array.isArray;
 
 function ERR_INVALID_ARG_TYPE(name, type, value) {
   return new Error(
-    `The argument '${name}' is invalid. Received '${value}' for type '${type}'`
+    `The argument '${name}' is invalid. Received '${value}' for type '${type}'`,
   );
 }
 
 function ERR_INVALID_ARG_VALUE(name, value, reason) {
   return new Error(
-    `The value '${value}' is invalid for argument '${name}'. Reason: ${reason}`
+    `The value '${value}' is invalid for argument '${name}'. Reason: ${reason}`,
   );
 }
 
@@ -220,7 +220,7 @@ var require_util = __commonJS({
       constructor(errors) {
         if (!Array.isArray(errors)) {
           throw new TypeError(
-            `Expected input to be an Array, got ${typeof errors}`
+            `Expected input to be an Array, got ${typeof errors}`,
           );
         }
         let message = "";
@@ -327,7 +327,7 @@ var require_util = __commonJS({
       isBlob,
     };
     module.exports.promisify.custom = Symbol.for(
-      "nodejs.util.promisify.custom"
+      "nodejs.util.promisify.custom",
     );
   },
 });
@@ -375,14 +375,14 @@ var require_errors = __commonJS({
       if (typeof msg === "function") {
         assert(
           msg.length <= args.length,
-          `Code: ${key}; The provided arguments length (${args.length}) does not match the required ones (${msg.length}).`
+          `Code: ${key}; The provided arguments length (${args.length}) does not match the required ones (${msg.length}).`,
         );
         return msg(...args);
       }
       const expectedLength = (msg.match(/%[dfijoOs]/g) || []).length;
       assert(
         expectedLength === args.length,
-        `Code: ${key}; The provided arguments length (${args.length}) does not match the required ones (${expectedLength}).`
+        `Code: ${key}; The provided arguments length (${args.length}) does not match the required ones (${expectedLength}).`,
       );
       if (args.length === 0) {
         return msg;
@@ -436,7 +436,7 @@ var require_errors = __commonJS({
         }
         const err = new AggregateError(
           [outerError, innerError],
-          outerError.message
+          outerError.message,
         );
         err.code = outerError.code;
         return err;
@@ -474,7 +474,7 @@ var require_errors = __commonJS({
         for (const value of expected) {
           assert(
             typeof value === "string",
-            "All expected entries have to be of type string"
+            "All expected entries have to be of type string",
           );
           if (kTypes.includes(value)) {
             types.push(value.toLowerCase());
@@ -483,7 +483,7 @@ var require_errors = __commonJS({
           } else {
             assert(
               value !== "object",
-              'The value "object" should be written as "Object"'
+              'The value "object" should be written as "Object"',
             );
             other.push(value);
           }
@@ -575,7 +575,7 @@ var require_errors = __commonJS({
         }
         return msg;
       },
-      TypeError
+      TypeError,
     );
     E(
       "ERR_INVALID_ARG_VALUE",
@@ -587,7 +587,7 @@ var require_errors = __commonJS({
         const type = name.includes(".") ? "property" : "argument";
         return `The ${type} '${name}' ${reason}. Received ${inspected}`;
       },
-      TypeError
+      TypeError,
     );
     E(
       "ERR_INVALID_RETURN_VALUE",
@@ -603,7 +603,7 @@ var require_errors = __commonJS({
             : `type ${typeof value}`;
         return `Expected ${input} to be returned from the "${name}" function but got ${type}.`;
       },
-      TypeError
+      TypeError,
     );
     E(
       "ERR_MISSING_ARGS",
@@ -630,7 +630,7 @@ var require_errors = __commonJS({
         }
         return `${msg} must be specified`;
       },
-      TypeError
+      TypeError,
     );
     E(
       "ERR_OUT_OF_RANGE",
@@ -650,32 +650,32 @@ var require_errors = __commonJS({
         }
         return `The value of "${str}" is out of range. It must be ${range}. Received ${received}`;
       },
-      RangeError
+      RangeError,
     );
     E("ERR_MULTIPLE_CALLBACK", "Callback called multiple times", Error);
     E("ERR_METHOD_NOT_IMPLEMENTED", "The %s method is not implemented", Error);
     E(
       "ERR_STREAM_ALREADY_FINISHED",
       "Cannot call %s after a stream was finished",
-      Error
+      Error,
     );
     E("ERR_STREAM_CANNOT_PIPE", "Cannot pipe, not readable", Error);
     E(
       "ERR_STREAM_DESTROYED",
       "Cannot call %s after a stream was destroyed",
-      Error
+      Error,
     );
     E(
       "ERR_STREAM_NULL_VALUES",
       "May not write null values to stream",
-      TypeError
+      TypeError,
     );
     E("ERR_STREAM_PREMATURE_CLOSE", "Premature close", Error);
     E("ERR_STREAM_PUSH_AFTER_EOF", "stream.push() after EOF", Error);
     E(
       "ERR_STREAM_UNSHIFT_AFTER_END_EVENT",
       "stream.unshift() after end event",
-      Error
+      Error,
     );
     E("ERR_STREAM_WRITE_AFTER_END", "write after end", Error);
     E("ERR_UNKNOWN_ENCODING", "Unknown encoding: %s", TypeError);
@@ -745,7 +745,7 @@ var require_validators = __commonJS({
         value,
         name,
         min = NumberMIN_SAFE_INTEGER,
-        max = NumberMAX_SAFE_INTEGER
+        max = NumberMAX_SAFE_INTEGER,
       ) => {
         if (typeof value !== "number")
           throw new ERR_INVALID_ARG_TYPE(name, "number", value);
@@ -753,7 +753,7 @@ var require_validators = __commonJS({
           throw new ERR_OUT_OF_RANGE(name, "an integer", value);
         if (value < min || value > max)
           throw new ERR_OUT_OF_RANGE(name, `>= ${min} && <= ${max}`, value);
-      }
+      },
     );
     var validateInt32 = hideStackFrames(
       (value, name, min = -2147483648, max = 2147483647) => {
@@ -769,7 +769,7 @@ var require_validators = __commonJS({
         if (value < min || value > max) {
           throw new ERR_OUT_OF_RANGE(name, `>= ${min} && <= ${max}`, value);
         }
-      }
+      },
     );
     var validateUint32 = hideStackFrames((value, name, positive) => {
       if (typeof value !== "number") {
@@ -798,9 +798,9 @@ var require_validators = __commonJS({
       if (!ArrayPrototypeIncludes(oneOf, value)) {
         const allowed = ArrayPrototypeJoin(
           ArrayPrototypeMap(oneOf, (v) =>
-            typeof v === "string" ? `'${v}'` : String2(v)
+            typeof v === "string" ? `'${v}'` : String2(v),
           ),
-          ", "
+          ", ",
         );
         const reason = "must be one of: " + allowed;
         throw new ERR_INVALID_ARG_VALUE(name, value, reason);
@@ -838,7 +838,7 @@ var require_validators = __commonJS({
       if (signals[signal] === void 0) {
         if (signals[StringPrototypeToUpperCase(signal)] !== void 0) {
           throw new ERR_UNKNOWN_SIGNAL(
-            signal + " (signals must use all capital letters)"
+            signal + " (signals must use all capital letters)",
           );
         }
         throw new ERR_UNKNOWN_SIGNAL(signal);
@@ -849,7 +849,7 @@ var require_validators = __commonJS({
         throw new ERR_INVALID_ARG_TYPE(
           name,
           ["Buffer", "TypedArray", "DataView"],
-          buffer
+          buffer,
         );
       }
     });
@@ -860,7 +860,7 @@ var require_validators = __commonJS({
         throw new ERR_INVALID_ARG_VALUE(
           "encoding",
           encoding,
-          `is invalid for data of length ${length}`
+          `is invalid for data of length ${length}`,
         );
       }
     }
@@ -927,7 +927,7 @@ var require_validators = __commonJS({
 var require_utils = __commonJS({
   "node_modules/readable-stream/lib/internal/streams/utils.js"(
     exports,
-    module
+    module,
   ) {
     "use strict";
     var {
@@ -1304,7 +1304,7 @@ var require_utils = __commonJS({
 var require_end_of_stream = __commonJS({
   "node_modules/readable-stream/lib/internal/streams/end-of-stream.js"(
     exports,
-    module
+    module,
   ) {
     "use strict";
     var { AbortError, codes } = require_errors();
@@ -1489,7 +1489,7 @@ var require_end_of_stream = __commonJS({
             stream,
             new AbortError(void 0, {
               cause: options.signal.reason,
-            })
+            }),
           );
         };
         if (options.signal.aborted) {
@@ -1525,7 +1525,7 @@ var require_end_of_stream = __commonJS({
 var require_operators = __commonJS({
   "node_modules/readable-stream/lib/internal/streams/operators.js"(
     exports,
-    module
+    module,
   ) {
     "use strict";
     var AbortController =
@@ -1738,7 +1738,7 @@ var require_operators = __commonJS({
         async (...args) => {
           return !(await fn(...args));
         },
-        options
+        options,
       ));
     }
     async function find(fn, options) {
@@ -1781,7 +1781,7 @@ var require_operators = __commonJS({
         throw new ERR_INVALID_ARG_TYPE(
           "reducer",
           ["Function", "AsyncFunction"],
-          reducer
+          reducer,
         );
       }
       if (options != null) {
@@ -1997,7 +1997,7 @@ var require_operators = __commonJS({
 var require_destroy = __commonJS({
   "node_modules/readable-stream/lib/internal/streams/destroy.js"(
     exports,
-    module
+    module,
   ) {
     "use strict";
     var {
@@ -2183,7 +2183,7 @@ var require_destroy = __commonJS({
         if (called) {
           errorOrDestroy(
             stream,
-            err !== null && err !== void 0 ? err : new ERR_MULTIPLE_CALLBACK()
+            err !== null && err !== void 0 ? err : new ERR_MULTIPLE_CALLBACK(),
           );
           return;
         }
@@ -2265,7 +2265,7 @@ var require_destroy = __commonJS({
 var require_legacy = __commonJS({
   "node_modules/readable-stream/lib/internal/streams/legacy.js"(
     exports,
-    module
+    module,
   ) {
     "use strict";
     var { ArrayIsArray, ObjectSetPrototypeOf } = require_primordials();
@@ -2349,7 +2349,7 @@ var require_legacy = __commonJS({
 var require_add_abort_signal = __commonJS({
   "node_modules/readable-stream/lib/internal/streams/add-abort-signal.js"(
     exports,
-    module
+    module,
   ) {
     "use strict";
     var { AbortError, codes } = require_errors();
@@ -2378,7 +2378,7 @@ var require_add_abort_signal = __commonJS({
         stream.destroy(
           new AbortError(void 0, {
             cause: signal.reason,
-          })
+          }),
         );
       };
       if (signal.aborted) {
@@ -2396,7 +2396,7 @@ var require_add_abort_signal = __commonJS({
 var require_state = __commonJS({
   "node_modules/readable-stream/lib/internal/streams/state.js"(
     exports,
-    module
+    module,
   ) {
     "use strict";
     var { MathFloor, NumberIsInteger } = require_primordials();
@@ -2477,7 +2477,7 @@ var require_from = __commonJS({
         PromisePrototypeThen(
           close(error),
           () => runOnNextTick(cb, error),
-          (e) => runOnNextTick(cb, e || error)
+          (e) => runOnNextTick(cb, e || error),
         );
       };
       async function close(error) {
@@ -2531,7 +2531,7 @@ var require_from = __commonJS({
 var require_readable = __commonJS({
   "node_modules/readable-stream/lib/internal/streams/readable.js"(
     exports,
-    module
+    module,
   ) {
     "use strict";
     var {
@@ -2648,7 +2648,7 @@ var require_readable = __commonJS({
 
           if (!value)
             throw new Error(
-              `Invalid value from ReadableStream reader: ${value}`
+              `Invalid value from ReadableStream reader: ${value}`,
             );
           if (ArrayIsArray(value)) {
             this.push(...value);
@@ -2698,7 +2698,7 @@ var require_readable = __commonJS({
         throw new ERR_INVALID_ARG_TYPE(
           "readableStream",
           "ReadableStream",
-          readableStream
+          readableStream,
         );
       }
 
@@ -2783,7 +2783,7 @@ var require_readable = __commonJS({
           err = new ERR_INVALID_ARG_TYPE(
             "chunk",
             ["string", "Buffer", "Uint8Array"],
-            chunk
+            chunk,
           );
         }
       }
@@ -3043,7 +3043,7 @@ var require_readable = __commonJS({
         if (!state.multiAwaitDrain) {
           state.multiAwaitDrain = true;
           state.awaitDrainWriters = new SafeSet(
-            state.awaitDrainWriters ? [state.awaitDrainWriters] : []
+            state.awaitDrainWriters ? [state.awaitDrainWriters] : [],
           );
         }
       }
@@ -3325,7 +3325,7 @@ var require_readable = __commonJS({
           error = err ? aggregateTwoErrors(error, err) : null;
           callback();
           callback = nop;
-        }
+        },
       );
       try {
         while (true) {
@@ -3530,12 +3530,12 @@ var require_readable = __commonJS({
     Readable.fromWeb = function (readableStream, options) {
       return lazyWebStreams().newStreamReadableFromReadableStream(
         readableStream,
-        options
+        options,
       );
     };
     Readable.toWeb = function (streamReadable) {
       return lazyWebStreams().newReadableStreamFromStreamReadable(
-        streamReadable
+        streamReadable,
       );
     };
     Readable.wrap = function (src, options) {
@@ -3563,7 +3563,7 @@ var require_readable = __commonJS({
 var require_writable = __commonJS({
   "node_modules/readable-stream/lib/internal/streams/writable.js"(
     exports,
-    module
+    module,
   ) {
     "use strict";
     var {
@@ -3721,7 +3721,7 @@ var require_writable = __commonJS({
           throw new ERR_INVALID_ARG_TYPE(
             "chunk",
             ["string", "Buffer", "Uint8Array"],
-            chunk
+            chunk,
           );
         }
       }
@@ -3753,7 +3753,7 @@ var require_writable = __commonJS({
       }
     };
     Writable.prototype.setDefaultEncoding = function setDefaultEncoding(
-      encoding
+      encoding,
     ) {
       if (typeof encoding === "string")
         encoding = StringPrototypeToLowerCase(encoding);
@@ -3894,7 +3894,7 @@ var require_writable = __commonJS({
         callback(
           (_state$errored = state.errored) !== null && _state$errored !== void 0
             ? _state$errored
-            : new ERR_STREAM_DESTROYED("write")
+            : new ERR_STREAM_DESTROYED("write"),
         );
       }
       const onfinishCallbacks = state[kOnFinished].splice(0);
@@ -3904,7 +3904,7 @@ var require_writable = __commonJS({
           (_state$errored2 = state.errored) !== null &&
             _state$errored2 !== void 0
             ? _state$errored2
-            : new ERR_STREAM_DESTROYED("end")
+            : new ERR_STREAM_DESTROYED("end"),
         );
       }
       resetBuffer(state);
@@ -3968,7 +3968,7 @@ var require_writable = __commonJS({
               encoding,
             },
           ],
-          cb
+          cb,
         );
       } else {
         throw new ERR_METHOD_NOT_IMPLEMENTED("_write()");
@@ -4035,7 +4035,7 @@ var require_writable = __commonJS({
         if (called) {
           errorOrDestroy(
             stream,
-            err !== null && err !== void 0 ? err : ERR_MULTIPLE_CALLBACK()
+            err !== null && err !== void 0 ? err : ERR_MULTIPLE_CALLBACK(),
           );
           return;
         }
@@ -4089,7 +4089,7 @@ var require_writable = __commonJS({
                 }
               },
               stream,
-              state
+              state,
             );
           } else if (needFinish(state)) {
             state.pendingcb++;
@@ -4238,12 +4238,12 @@ var require_writable = __commonJS({
     Writable.fromWeb = function (writableStream, options) {
       return lazyWebStreams().newStreamWritableFromWritableStream(
         writableStream,
-        options
+        options,
       );
     };
     Writable.toWeb = function (streamWritable) {
       return lazyWebStreams().newWritableStreamFromStreamWritable(
-        streamWritable
+        streamWritable,
       );
     };
   },
@@ -4253,7 +4253,7 @@ var require_writable = __commonJS({
 var require_duplexify = __commonJS({
   "node_modules/readable-stream/lib/internal/streams/duplexify.js"(
     exports,
-    module
+    module,
   ) {
     "use strict";
     var bufferModule = __require("buffer");
@@ -4356,7 +4356,7 @@ var require_duplexify = __commonJS({
             },
             (err) => {
               destroyer(d, err);
-            }
+            },
           );
           return (d = new Duplexify({
             objectMode: true,
@@ -4378,7 +4378,7 @@ var require_duplexify = __commonJS({
         throw new ERR_INVALID_RETURN_VALUE(
           "Iterable, AsyncIterable or AsyncFunction",
           name,
-          value
+          value,
         );
       }
       if (isBlob(body)) {
@@ -4399,7 +4399,7 @@ var require_duplexify = __commonJS({
         const readable =
           body !== null && body !== void 0 && body.readable
             ? isReadableNodeStream(
-                body === null || body === void 0 ? void 0 : body.readable
+                body === null || body === void 0 ? void 0 : body.readable,
               )
               ? body === null || body === void 0
                 ? void 0
@@ -4409,7 +4409,7 @@ var require_duplexify = __commonJS({
         const writable =
           body !== null && body !== void 0 && body.writable
             ? isWritableNodeStream(
-                body === null || body === void 0 ? void 0 : body.writable
+                body === null || body === void 0 ? void 0 : body.writable,
               )
               ? body === null || body === void 0
                 ? void 0
@@ -4435,7 +4435,7 @@ var require_duplexify = __commonJS({
           },
           (err) => {
             destroyer(d, err);
-          }
+          },
         );
         return (d = new Duplexify({
           objectMode: true,
@@ -4456,7 +4456,7 @@ var require_duplexify = __commonJS({
           "{ readable, writable } pair",
           "Promise",
         ],
-        body
+        body,
       );
     };
     function fromAsyncGen(fn) {
@@ -4481,7 +4481,7 @@ var require_duplexify = __commonJS({
         })(),
         {
           signal,
-        }
+        },
       );
       return {
         value,
@@ -4635,7 +4635,7 @@ var require_duplexify = __commonJS({
 var require_duplex = __commonJS({
   "node_modules/readable-stream/lib/internal/streams/duplex.js"(
     exports,
-    module
+    module,
   ) {
     "use strict";
     var {
@@ -4686,35 +4686,35 @@ var require_duplex = __commonJS({
       writable: ObjectGetOwnPropertyDescriptor(Writable.prototype, "writable"),
       writableHighWaterMark: ObjectGetOwnPropertyDescriptor(
         Writable.prototype,
-        "writableHighWaterMark"
+        "writableHighWaterMark",
       ),
       writableObjectMode: ObjectGetOwnPropertyDescriptor(
         Writable.prototype,
-        "writableObjectMode"
+        "writableObjectMode",
       ),
       writableBuffer: ObjectGetOwnPropertyDescriptor(
         Writable.prototype,
-        "writableBuffer"
+        "writableBuffer",
       ),
       writableLength: ObjectGetOwnPropertyDescriptor(
         Writable.prototype,
-        "writableLength"
+        "writableLength",
       ),
       writableFinished: ObjectGetOwnPropertyDescriptor(
         Writable.prototype,
-        "writableFinished"
+        "writableFinished",
       ),
       writableCorked: ObjectGetOwnPropertyDescriptor(
         Writable.prototype,
-        "writableCorked"
+        "writableCorked",
       ),
       writableEnded: ObjectGetOwnPropertyDescriptor(
         Writable.prototype,
-        "writableEnded"
+        "writableEnded",
       ),
       writableNeedDrain: ObjectGetOwnPropertyDescriptor(
         Writable.prototype,
-        "writableNeedDrain"
+        "writableNeedDrain",
       ),
       destroyed: {
         get() {
@@ -4742,7 +4742,7 @@ var require_duplex = __commonJS({
     Duplex.fromWeb = function (pair, options) {
       return lazyWebStreams().newStreamDuplexFromReadableWritablePair(
         pair,
-        options
+        options,
       );
     };
     Duplex.toWeb = function (duplex) {
@@ -4762,7 +4762,7 @@ var require_duplex = __commonJS({
 var require_transform = __commonJS({
   "node_modules/readable-stream/lib/internal/streams/transform.js"(
     exports,
-    module
+    module,
   ) {
     "use strict";
     var { ObjectSetPrototypeOf, Symbol: Symbol2 } = require_primordials();
@@ -4857,7 +4857,7 @@ var require_transform = __commonJS({
 var require_passthrough = __commonJS({
   "node_modules/readable-stream/lib/internal/streams/passthrough.js"(
     exports,
-    module
+    module,
   ) {
     "use strict";
     var Transform = require_transform();
@@ -4881,7 +4881,7 @@ var require_passthrough = __commonJS({
 var require_pipeline = __commonJS({
   "node_modules/readable-stream/lib/internal/streams/pipeline.js"(
     exports,
-    module
+    module,
   ) {
     "use strict";
     var {
@@ -4924,7 +4924,7 @@ var require_pipeline = __commonJS({
         },
         (err) => {
           finished = !err;
-        }
+        },
       );
       return {
         destroy: (err) => {
@@ -4932,7 +4932,7 @@ var require_pipeline = __commonJS({
           finished = true;
           destroyImpl.destroyer(
             stream,
-            err || new ERR_STREAM_DESTROYED("pipe")
+            err || new ERR_STREAM_DESTROYED("pipe"),
           );
         },
         cleanup,
@@ -4941,7 +4941,7 @@ var require_pipeline = __commonJS({
     function popCallback(streams) {
       validateFunction(
         streams[streams.length - 1],
-        "streams[stream.length - 1]"
+        "streams[stream.length - 1]",
       );
       return streams.pop();
     }
@@ -4954,7 +4954,7 @@ var require_pipeline = __commonJS({
       throw new ERR_INVALID_ARG_TYPE(
         "val",
         ["Readable", "Iterable", "AsyncIterable"],
-        val
+        val,
       );
     }
     async function* fromReadable(val) {
@@ -4996,7 +4996,7 @@ var require_pipeline = __commonJS({
         {
           readable: false,
         },
-        resume
+        resume,
       );
       try {
         if (writable.writableNeedDrain) {
@@ -5111,7 +5111,7 @@ var require_pipeline = __commonJS({
               throw new ERR_INVALID_RETURN_VALUE(
                 "Iterable, AsyncIterable or Stream",
                 "source",
-                ret
+                ret,
               );
             }
           } else if (isIterable(stream) || isReadableNodeStream(stream)) {
@@ -5129,7 +5129,7 @@ var require_pipeline = __commonJS({
               throw new ERR_INVALID_RETURN_VALUE(
                 "AsyncIterable",
                 `transform[${i - 1}]`,
-                ret
+                ret,
               );
             }
           } else {
@@ -5159,7 +5159,7 @@ var require_pipeline = __commonJS({
                 (err) => {
                   pt.destroy(err);
                   runOnNextTick(finish, err);
-                }
+                },
               );
             } else if (isIterable(ret, true)) {
               finishCount++;
@@ -5170,7 +5170,7 @@ var require_pipeline = __commonJS({
               throw new ERR_INVALID_RETURN_VALUE(
                 "AsyncIterable or Promise",
                 "destination",
-                ret
+                ret,
               );
             }
             ret = pt;
@@ -5198,7 +5198,7 @@ var require_pipeline = __commonJS({
             throw new ERR_INVALID_ARG_TYPE(
               "val",
               ["Readable", "Iterable", "AsyncIterable"],
-              ret
+              ret,
             );
           }
           ret = stream;
@@ -5243,7 +5243,7 @@ var require_pipeline = __commonJS({
           } else {
             finish(err);
           }
-        }
+        },
       );
       return eos(
         dst,
@@ -5251,7 +5251,7 @@ var require_pipeline = __commonJS({
           readable: false,
           writable: true,
         },
-        finish
+        finish,
       );
     }
     module.exports = {
@@ -5265,7 +5265,7 @@ var require_pipeline = __commonJS({
 var require_compose = __commonJS({
   "node_modules/readable-stream/lib/internal/streams/compose.js"(
     exports,
-    module
+    module,
   ) {
     "use strict";
     var { pipeline } = require_pipeline();
@@ -5299,14 +5299,14 @@ var require_compose = __commonJS({
           throw new ERR_INVALID_ARG_VALUE(
             `streams[${n}]`,
             orgStreams[n],
-            "must be readable"
+            "must be readable",
           );
         }
         if (n > 0 && !isWritable(streams[n])) {
           throw new ERR_INVALID_ARG_VALUE(
             `streams[${n}]`,
             orgStreams[n],
-            "must be writable"
+            "must be writable",
           );
         }
       }
@@ -5449,7 +5449,7 @@ var require_promises = __commonJS({
           {
             signal,
             end,
-          }
+          },
         );
       });
     }

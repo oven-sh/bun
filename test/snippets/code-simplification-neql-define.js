@@ -14,7 +14,7 @@ export var $f332019d = $$m(
   {
     "relay-runtime/lib/network/RelayQueryResponseCache.js": (
       module,
-      exports
+      exports,
     ) => {
       var RelayQueryResponseCache = function () {
         var foo = function RelayQueryResponseCache(_ref) {
@@ -26,7 +26,7 @@ export var $f332019d = $$m(
                   false,
                   "RelayQueryResponseCache: Expected the max cache size to be > 0, got " +
                     "`%s`.",
-                  size
+                  size,
                 )
               : invariant(false)
             : void 0;
@@ -35,7 +35,7 @@ export var $f332019d = $$m(
               ? invariant(
                   false,
                   "RelayQueryResponseCache: Expected the max ttl to be > 0, got `%s`.",
-                  ttl
+                  ttl,
                 )
               : invariant(false)
             : void 0;
@@ -44,7 +44,7 @@ export var $f332019d = $$m(
       };
       RelayQueryResponseCache();
     },
-  }["relay-runtime/lib/network/RelayQueryResponseCache.js"]
+  }["relay-runtime/lib/network/RelayQueryResponseCache.js"],
 );
 
 export function test() {

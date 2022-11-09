@@ -8,7 +8,7 @@ import {
 
 function getFallbackInfo(): FallbackMessageContainer {
   const binary_string = globalThis.atob(
-    document.getElementById("__bunfallback").textContent.trim()
+    document.getElementById("__bunfallback").textContent.trim(),
   );
 
   var len = binary_string.length;

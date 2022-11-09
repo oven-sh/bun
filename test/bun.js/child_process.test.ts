@@ -214,7 +214,7 @@ describe("execFile()", () => {
             reject(error);
           }
           resolve(stdout);
-        }
+        },
       );
     });
     expect(SEMVER_REGEX.test(result.toString().trim())).toBe(true);

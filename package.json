@@ -12,7 +12,8 @@
     "build-runtime": "esbuild --target=esnext  --bundle src/runtime/index.ts --format=iife --platform=browser --global-name=BUN_RUNTIME > src/runtime.out.js; cat src/runtime.footer.js >> src/runtime.out.js",
     "build-fallback": "esbuild --target=esnext  --bundle src/fallback.ts --format=iife --platform=browser --minify > src/fallback.out.js",
     "typecheck": "tsc",
-    "fmt": "prettier --write './**/*.d.ts'",
+    "fmt": "prettier --write './**/*.{ts,tsx,js,jsx}'",
+    "fmt:types": "prettier --write './packages/bun-types/*.d.ts'",
     "lint": "eslint './**/*.d.ts'",
     "lint:fix": "eslint './**/*.d.ts' --fix"
   },

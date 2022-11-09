@@ -63,7 +63,7 @@ declare module "assert" {
       calls(exact?: number): () => void;
       calls<Func extends (...args: any[]) => any>(
         fn?: Func,
-        exact?: number
+        exact?: number,
       ): Func;
       /**
        * The arrays contains information about the expected and actual number of calls of
@@ -170,7 +170,7 @@ declare module "assert" {
       message?: string | Error,
       operator?: string,
       // tslint:disable-next-line:ban-types
-      stackStartFn?: Function
+      stackStartFn?: Function,
     ): never;
     /**
      * Tests if `value` is truthy. It is equivalent to`assert.equal(!!value, true, message)`.
@@ -263,7 +263,7 @@ declare module "assert" {
     function equal(
       actual: unknown,
       expected: unknown,
-      message?: string | Error
+      message?: string | Error,
     ): void;
     /**
      * **Strict assertion mode**
@@ -296,7 +296,7 @@ declare module "assert" {
     function notEqual(
       actual: unknown,
       expected: unknown,
-      message?: string | Error
+      message?: string | Error,
     ): void;
     /**
      * **Strict assertion mode**
@@ -317,7 +317,7 @@ declare module "assert" {
     function deepEqual(
       actual: unknown,
       expected: unknown,
-      message?: string | Error
+      message?: string | Error,
     ): void;
     /**
      * **Strict assertion mode**
@@ -370,7 +370,7 @@ declare module "assert" {
     function notDeepEqual(
       actual: unknown,
       expected: unknown,
-      message?: string | Error
+      message?: string | Error,
     ): void;
     /**
      * Tests strict equality between the `actual` and `expected` parameters as
@@ -411,7 +411,7 @@ declare module "assert" {
     function strictEqual<T>(
       actual: unknown,
       expected: T,
-      message?: string | Error
+      message?: string | Error,
     ): asserts actual is T;
     /**
      * Tests strict inequality between the `actual` and `expected` parameters as
@@ -439,7 +439,7 @@ declare module "assert" {
     function notStrictEqual(
       actual: unknown,
       expected: unknown,
-      message?: string | Error
+      message?: string | Error,
     ): void;
     /**
      * Tests for deep equality between the `actual` and `expected` parameters.
@@ -449,7 +449,7 @@ declare module "assert" {
     function deepStrictEqual<T>(
       actual: unknown,
       expected: T,
-      message?: string | Error
+      message?: string | Error,
     ): asserts actual is T;
     /**
      * Tests for deep strict inequality. Opposite of {@link deepStrictEqual}.
@@ -470,7 +470,7 @@ declare module "assert" {
     function notDeepStrictEqual(
       actual: unknown,
       expected: unknown,
-      message?: string | Error
+      message?: string | Error,
     ): void;
     /**
      * Expects the function `fn` to throw an error.
@@ -660,7 +660,7 @@ declare module "assert" {
     function throws(
       block: () => unknown,
       error: AssertPredicate,
-      message?: string | Error
+      message?: string | Error,
     ): void;
     /**
      * Asserts that the function `fn` does not throw an error.
@@ -727,7 +727,7 @@ declare module "assert" {
     function doesNotThrow(
       block: () => unknown,
       error: AssertPredicate,
-      message?: string | Error
+      message?: string | Error,
     ): void;
     /**
      * Throws `value` if `value` is not `undefined` or `null`. This is useful when
@@ -826,12 +826,12 @@ declare module "assert" {
      */
     function rejects(
       block: (() => Promise<unknown>) | Promise<unknown>,
-      message?: string | Error
+      message?: string | Error,
     ): Promise<void>;
     function rejects(
       block: (() => Promise<unknown>) | Promise<unknown>,
       error: AssertPredicate,
-      message?: string | Error
+      message?: string | Error,
     ): Promise<void>;
     /**
      * Awaits the `asyncFn` promise or, if `asyncFn` is a function, immediately
@@ -876,12 +876,12 @@ declare module "assert" {
      */
     function doesNotReject(
       block: (() => Promise<unknown>) | Promise<unknown>,
-      message?: string | Error
+      message?: string | Error,
     ): Promise<void>;
     function doesNotReject(
       block: (() => Promise<unknown>) | Promise<unknown>,
       error: AssertPredicate,
-      message?: string | Error
+      message?: string | Error,
     ): Promise<void>;
     /**
      * Expects the `string` input to match the regular expression.
@@ -907,7 +907,7 @@ declare module "assert" {
     function match(
       value: string,
       regExp: RegExp,
-      message?: string | Error
+      message?: string | Error,
     ): void;
     /**
      * Expects the `string` input not to match the regular expression.

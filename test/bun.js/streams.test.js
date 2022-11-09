@@ -455,7 +455,7 @@ it("ReadableStream for Blob", async () => {
     chunks.push(new TextDecoder().decode(chunk.value));
   }
   expect(chunks.join("")).toBe(
-    new TextDecoder().decode(Buffer.from("abdefghijklmnop"))
+    new TextDecoder().decode(Buffer.from("abdefghijklmnop")),
   );
 });
 

@@ -68,7 +68,7 @@ describe("Bun.Transpiler", () => {
   it("normalizes \\r\\n", () => {
     ts.expectPrinted_(
       "console.log(`\r\n\r\n\r\n`)",
-      "console.log(`\n\n\n`);\n"
+      "console.log(`\n\n\n`);\n",
     );
   });
 
@@ -76,14 +76,14 @@ describe("Bun.Transpiler", () => {
     it("import Foo = Baz.Bar", () => {
       ts.expectPrinted_(
         "import Foo = Baz.Bar;\nexport default Foo;",
-        "const Foo = Baz.Bar;\nexport default Foo"
+        "const Foo = Baz.Bar;\nexport default Foo",
       );
     });
 
     it("import Foo = require('bar')", () => {
       ts.expectPrinted_(
         "import React = require('react')",
-        'const React = require("react")'
+        'const React = require("react")',
       );
     });
 
@@ -98,7 +98,7 @@ describe("Bun.Transpiler", () => {
     it("export import Foo = Baz.Bar", () => {
       ts.expectPrinted_(
         "export import Foo = Baz.Bar;",
-        "export const Foo = Baz.Bar"
+        "export const Foo = Baz.Bar",
       );
     });
 
@@ -472,75 +472,75 @@ export default <>hi</>
       `export var foo = jsx("div", {
   foo: true
 }, undefined, false, undefined, this);
-`
+`,
     );
     expect(bun.transformSync("export var foo = <div foo={foo} />")).toBe(
       `export var foo = jsx("div", {
   foo
 }, undefined, false, undefined, this);
-`
+`,
     );
     expect(bun.transformSync("export var foo = <div {...foo} />")).toBe(
       `export var foo = jsx("div", {
   ...foo
 }, undefined, false, undefined, this);
-`
+`,
     );
 
     expect(bun.transformSync("export var hi = <div {foo} />")).toBe(
       `export var hi = jsx("div", {
   foo
 }, undefined, false, undefined, this);
-`
+`,
     );
     expect(bun.transformSync("export var hi = <div {foo.bar.baz} />")).toBe(
       `export var hi = jsx("div", {
   baz: foo.bar.baz
 }, undefined, false, undefined, this);
-`
+`,
     );
     expect(bun.transformSync("export var hi = <div {foo?.bar?.baz} />")).toBe(
       `export var hi = jsx("div", {
   baz: foo?.bar?.baz
 }, undefined, false, undefined, this);
-`
+`,
     );
     expect(
-      bun.transformSync("export var hi = <div {foo['baz'].bar?.baz} />")
+      bun.transformSync("export var hi = <div {foo['baz'].bar?.baz} />"),
     ).toBe(
       `export var hi = jsx("div", {
   baz: foo["baz"].bar?.baz
 }, undefined, false, undefined, this);
-`
+`,
     );
 
     // cursed
     expect(
       bun.transformSync(
-        "export var hi = <div {foo[{name: () => true}.name].hi} />"
-      )
+        "export var hi = <div {foo[{name: () => true}.name].hi} />",
+      ),
     ).toBe(
       `export var hi = jsx("div", {
   hi: foo[{ name: () => true }.name].hi
 }, undefined, false, undefined, this);
-`
+`,
     );
     expect(
-      bun.transformSync("export var hi = <Foo {process.env.NODE_ENV} />")
+      bun.transformSync("export var hi = <Foo {process.env.NODE_ENV} />"),
     ).toBe(
       `export var hi = jsx(Foo, {
   NODE_ENV: "development"
 }, undefined, false, undefined, this);
-`
+`,
     );
 
     expect(
-      bun.transformSync("export var hi = <div {foo['baz'].bar?.baz} />")
+      bun.transformSync("export var hi = <div {foo['baz'].bar?.baz} />"),
     ).toBe(
       `export var hi = jsx("div", {
   baz: foo["baz"].bar?.baz
 }, undefined, false, undefined, this);
-`
+`,
     );
     try {
       bun.transformSync("export var hi = <div {foo}={foo}= />");
@@ -550,22 +550,22 @@ export default <>hi</>
     }
 
     expect(
-      bun.transformSync("export var hi = <div {Foo}><Foo></Foo></div>")
+      bun.transformSync("export var hi = <div {Foo}><Foo></Foo></div>"),
     ).toBe(
       `export var hi = jsx("div", {
   Foo,
   children: jsx(Foo, {}, undefined, false, undefined, this)
 }, undefined, false, undefined, this);
-`
+`,
     );
     expect(
-      bun.transformSync("export var hi = <div {Foo}><Foo></Foo></div>")
+      bun.transformSync("export var hi = <div {Foo}><Foo></Foo></div>"),
     ).toBe(
       `export var hi = jsx("div", {
   Foo,
   children: jsx(Foo, {}, undefined, false, undefined, this)
 }, undefined, false, undefined, this);
-`
+`,
     );
 
     expect(bun.transformSync("export var hi = <div>{123}}</div>").trim()).toBe(
@@ -575,7 +575,7 @@ export default <>hi</>
     "}"
   ]
 }, undefined, true, undefined, this);
-      `.trim()
+      `.trim(),
     );
   });
 
@@ -604,9 +604,9 @@ export var ComponentThatChecksDefaultProps = <Hello></Hello>
 export var ComponentThatChecksDefaultPropsAndHasChildren = <Hello>my child</Hello>
 export var ComponentThatHasSpreadCausesDeopt = <Hello {...spread} />
 
-`.trim()
+`.trim(),
           )
-          .trim()
+          .trim(),
       ).toBe(
         `var $$typeof = Symbol.for("react.element");
 export var hi = {
@@ -654,7 +654,7 @@ export var ComponentThatChecksDefaultPropsAndHasChildren = {
 export var ComponentThatHasSpreadCausesDeopt = jsx(Hello, {
   ...spread
 });
-`.trim()
+`.trim(),
       );
     });
   });
@@ -662,25 +662,25 @@ export var ComponentThatHasSpreadCausesDeopt = jsx(Hello, {
   it("require with a dynamic non-string expression", () => {
     var nodeTranspiler = new Bun.Transpiler({ platform: "node" });
     expect(nodeTranspiler.transformSync("require('hi' + bar)")).toBe(
-      'require("hi" + bar);\n'
+      'require("hi" + bar);\n',
     );
   });
 
   it("CommonJS", () => {
     var nodeTranspiler = new Bun.Transpiler({ platform: "node" });
     expect(nodeTranspiler.transformSync("module.require('hi' + 123)")).toBe(
-      'require("hi" + 123);\n'
+      'require("hi" + 123);\n',
     );
 
     expect(
-      nodeTranspiler.transformSync("module.require(1 ? 'foo' : 'bar')")
+      nodeTranspiler.transformSync("module.require(1 ? 'foo' : 'bar')"),
     ).toBe('require("foo");\n');
     expect(nodeTranspiler.transformSync("require(1 ? 'foo' : 'bar')")).toBe(
-      'require("foo");\n'
+      'require("foo");\n',
     );
 
     expect(
-      nodeTranspiler.transformSync("module.require(unknown ? 'foo' : 'bar')")
+      nodeTranspiler.transformSync("module.require(unknown ? 'foo' : 'bar')"),
     ).toBe('unknown ? require("foo") : require("bar");\n');
   });
 
@@ -732,7 +732,7 @@ export var ComponentThatHasSpreadCausesDeopt = jsx(Hello, {
     code,
     trim = true,
     autoExport = false,
-    transpiler_ = transpiler
+    transpiler_ = transpiler,
   ) => {
     if (autoExport) {
       code = "export default (" + code + ")";
@@ -880,7 +880,7 @@ export var ComponentThatHasSpreadCausesDeopt = jsx(Hello, {
 
       expectPrinted_(
         "async function f() { await delete x }",
-        "async function f() {\n  await delete x;\n}"
+        "async function f() {\n  await delete x;\n}",
       );
 
       // expectParseError(
@@ -892,45 +892,45 @@ export var ComponentThatHasSpreadCausesDeopt = jsx(Hello, {
     it("import assert", () => {
       expectPrinted_(
         `import json from "./foo.json" assert { type: "json" };`,
-        `import json from "./foo.json"`
+        `import json from "./foo.json"`,
       );
       expectPrinted_(
         `import json from "./foo.json";`,
-        `import json from "./foo.json"`
+        `import json from "./foo.json"`,
       );
       expectPrinted_(
         `import("./foo.json", { type: "json" });`,
-        `import("./foo.json")`
+        `import("./foo.json")`,
       );
     });
 
     it("import with unicode escape", () => {
       expectPrinted_(
         `import { name } from 'mod\\u1011';`,
-        `import {name} from "mod\\u1011"`
+        `import {name} from "mod\\u1011"`,
       );
     });
 
     it("fold string addition", () => {
       expectPrinted_(
         `export const foo = "a" + "b";`,
-        `export const foo = "ab"`
+        `export const foo = "ab"`,
       );
       expectPrinted_(
         `export const foo = "F" + "0" + "F" + "0123456789" + "ABCDEF" + "0123456789ABCDEFF0123456789ABCDEF00" + "b";`,
-        `export const foo = "F0F0123456789ABCDEF0123456789ABCDEFF0123456789ABCDEF00b"`
+        `export const foo = "F0F0123456789ABCDEF0123456789ABCDEFF0123456789ABCDEF00b"`,
       );
       expectPrinted_(
         `export const foo = "a" + 1 + "b";`,
-        `export const foo = "a" + 1 + "b"`
+        `export const foo = "a" + 1 + "b"`,
       );
       expectPrinted_(
         `export const foo = "a" + "b" + 1 + "b";`,
-        `export const foo = "ab" + 1 + "b"`
+        `export const foo = "ab" + 1 + "b"`,
       );
       expectPrinted_(
         `export const foo = "a" + "b" + 1 + "b" + "c";`,
-        `export const foo = "ab" + 1 + "bc"`
+        `export const foo = "ab" + 1 + "bc"`,
       );
     });
 
@@ -955,7 +955,7 @@ export var ComponentThatHasSpreadCausesDeopt = jsx(Hello, {
          return whatDidIPass();
         }
       `,
-        object
+        object,
       );
       expect(output).toBe(`export function foo() {
   return {
@@ -972,11 +972,11 @@ export var ComponentThatHasSpreadCausesDeopt = jsx(Hello, {
     it("rewrite string to length", () => {
       expectPrinted_(
         `export const foo = "a".length + "b".length;`,
-        `export const foo = 1 + 1`
+        `export const foo = 1 + 1`,
       );
       expectBunPrinted_(
         `export const foo = "a".length + "b".length;`,
-        `export const foo = 2`
+        `export const foo = 2`,
       );
     });
 
@@ -984,21 +984,21 @@ export var ComponentThatHasSpreadCausesDeopt = jsx(Hello, {
       it("require -> import.meta.require", () => {
         expectBunPrinted_(
           `export const foo = require('bar.node')`,
-          `export const foo = import.meta.require("bar.node")`
+          `export const foo = import.meta.require("bar.node")`,
         );
       });
 
       it("require.resolve -> import.meta.resolveSync", () => {
         expectBunPrinted_(
           `export const foo = require.resolve('bar.node')`,
-          `export const foo = import.meta.resolveSync("bar.node")`
+          `export const foo = import.meta.resolveSync("bar.node")`,
         );
       });
 
       it('require.resolve(path, {paths: ["blah"]}) -> import.meta.resolveSync', () => {
         expectBunPrinted_(
           `export const foo = require.resolve('bar.node', {paths: ["blah"]})`,
-          `export const foo = import.meta.resolveSync("bar.node", { paths: ["blah"] })`
+          `export const foo = import.meta.resolveSync("bar.node", { paths: ["blah"] })`,
         );
       });
     });
@@ -1009,7 +1009,7 @@ export var ComponentThatHasSpreadCausesDeopt = jsx(Hello, {
         // so in this test, it becomes the same path string
         expectPrinted_(
           `export const foo = require.resolve('my-module')`,
-          `export const foo = "my-module"`
+          `export const foo = "my-module"`,
         );
       });
     });
@@ -1017,16 +1017,16 @@ export var ComponentThatHasSpreadCausesDeopt = jsx(Hello, {
     it("define", () => {
       expectPrinted_(
         `export default typeof user_undefined === 'undefined';`,
-        `export default true`
+        `export default true`,
       );
       expectPrinted_(
         `export default typeof user_undefined !== 'undefined';`,
-        `export default false`
+        `export default false`,
       );
 
       expectPrinted_(
         `export default typeof user_undefined !== 'undefined';`,
-        `export default false`
+        `export default false`,
       );
       expectPrinted_(`export default !user_undefined;`, `export default true`);
     });
@@ -1055,15 +1055,15 @@ export var ComponentThatHasSpreadCausesDeopt = jsx(Hello, {
       // expectParseError("for (let x;;) ;", "");
       expectParseError(
         "for (const x;;) ;",
-        'The constant "x" must be initialized'
+        'The constant "x" must be initialized',
       );
       expectParseError(
         "for (const {};;) ;",
-        "This constant must be initialized"
+        "This constant must be initialized",
       );
       expectParseError(
         "for (const [];;) ;",
-        "This constant must be initialized"
+        "This constant must be initialized",
       );
 
       // Make sure bindings are visited during parsing
@@ -1076,23 +1076,23 @@ export var ComponentThatHasSpreadCausesDeopt = jsx(Hello, {
 
       expectPrinted_(
         "export var foo = ([...x] = []) => {}",
-        "export var foo = ([...x] = []) => {\n}"
+        "export var foo = ([...x] = []) => {\n}",
       );
 
       expectPrinted_(
         "export var foo = ({...x} = {}) => {}",
-        "export var foo = ({ ...x } = {}) => {\n}"
+        "export var foo = ({ ...x } = {}) => {\n}",
       );
 
       expectParseError("var [...x,] = []", 'Unexpected "," after rest pattern');
       expectParseError("var {...x,} = {}", 'Unexpected "," after rest pattern');
       expectParseError(
         "export default function() { return ([...x,] = []) => {} }",
-        "Unexpected trailing comma after rest element"
+        "Unexpected trailing comma after rest element",
       );
       expectParseError(
         "({...x,} = {}) => {}",
-        "Unexpected trailing comma after rest element"
+        "Unexpected trailing comma after rest element",
       );
 
       expectPrinted_("[b, ...c] = d", "[b, ...c] = d");
@@ -1123,16 +1123,16 @@ export var ComponentThatHasSpreadCausesDeopt = jsx(Hello, {
       expectParseError("({x: ({})} = {x: {}})", "Invalid assignment target");
       expectParseError(
         "(([]) = []) => {}",
-        "Unexpected parentheses in binding pattern"
+        "Unexpected parentheses in binding pattern",
       );
       expectParseError(
         "(({}) = {}) => {}",
-        "Unexpected parentheses in binding pattern"
+        "Unexpected parentheses in binding pattern",
       );
       expectParseError("function f(([]) = []) {}", "Parse error");
       expectParseError(
         "function f(({}) = {}) {}",
-        "Parse error"
+        "Parse error",
         // 'Expected identifier but found "("\n'
       );
 
@@ -1154,11 +1154,11 @@ export var ComponentThatHasSpreadCausesDeopt = jsx(Hello, {
       expectParseError("[{...a, b}] = c", 'Unexpected "," after rest pattern');
       expectParseError(
         "({x: [...a, b]} = c)",
-        'Unexpected "," after rest pattern'
+        'Unexpected "," after rest pattern',
       );
       expectParseError(
         "({x: {...a, b}} = c)",
-        'Unexpected "," after rest pattern'
+        'Unexpected "," after rest pattern',
       );
       expectParseError("[b, ...c,] = d", 'Unexpected "," after rest pattern');
       expectParseError("([b, ...c,] = d)", 'Unexpected "," after rest pattern');
@@ -1169,11 +1169,11 @@ export var ComponentThatHasSpreadCausesDeopt = jsx(Hello, {
 
       expectPrinted_(
         "for ([{a = {}}] in b) {}",
-        "for ([{ a = {} }] in b) {\n}"
+        "for ([{ a = {} }] in b) {\n}",
       );
       expectPrinted_(
         "for ([{a = {}}] of b) {}",
-        "for ([{ a = {} }] of b) {\n}"
+        "for ([{ a = {} }] of b) {\n}",
       );
       expectPrinted_("for ({a = {}} in b) {}", "for ({ a = {} } in b) {\n}");
       expectPrinted_("for ({a = {}} of b) {}", "for ({ a = {} } of b) {\n}");
@@ -1182,11 +1182,11 @@ export var ComponentThatHasSpreadCausesDeopt = jsx(Hello, {
       expectParseError("[{a = {}}]\nof()", 'Unexpected "="');
       expectParseError(
         "for ([...a, b] in c) {}",
-        'Unexpected "," after rest pattern'
+        'Unexpected "," after rest pattern',
       );
       expectParseError(
         "for ([...a, b] of c) {}",
-        'Unexpected "," after rest pattern'
+        'Unexpected "," after rest pattern',
       );
     });
 
@@ -1202,7 +1202,7 @@ export var ComponentThatHasSpreadCausesDeopt = jsx(Hello, {
 
       expectParseError(
         "/x/msuygig",
-        'Duplicate flag "g" in regular expression'
+        'Duplicate flag "g" in regular expression',
       );
     });
 
@@ -1210,11 +1210,11 @@ export var ComponentThatHasSpreadCausesDeopt = jsx(Hello, {
       expectPrinted_("var _\u0076\u0061\u0072", "var _var");
       expectParseError(
         "var \u0076\u0061\u0072",
-        'Expected identifier but found "\u0076\u0061\u0072"'
+        'Expected identifier but found "\u0076\u0061\u0072"',
       );
       expectParseError(
         "\\u0076\\u0061\\u0072 foo",
-        "Unexpected \\u0076\\u0061\\u0072"
+        "Unexpected \\u0076\\u0061\\u0072",
       );
 
       expectPrinted_("foo._\u0076\u0061\u0072", "foo._var");
@@ -1233,108 +1233,108 @@ export var ComponentThatHasSpreadCausesDeopt = jsx(Hello, {
     expectParseError("({ #foo: 1 })", 'Expected identifier but found "#foo"');
     expectParseError(
       "class Foo { x = { #foo: 1 } }",
-      'Expected identifier but found "#foo"'
+      'Expected identifier but found "#foo"',
     );
     expectParseError("class Foo { x = #foo }", 'Expected "in" but found "}"');
     expectParseError(
       "class Foo { #foo; foo() { delete this.#foo } }",
-      'Deleting the private name "#foo" is forbidden'
+      'Deleting the private name "#foo" is forbidden',
     );
     expectParseError(
       "class Foo { #foo; foo() { delete this?.#foo } }",
-      'Deleting the private name "#foo" is forbidden'
+      'Deleting the private name "#foo" is forbidden',
     );
     expectParseError(
       "class Foo extends Bar { #foo; foo() { super.#foo } }",
-      'Expected identifier but found "#foo"'
+      'Expected identifier but found "#foo"',
     );
     expectParseError(
       "class Foo { #foo = () => { for (#foo in this) ; } }",
-      "Unexpected #foo"
+      "Unexpected #foo",
     );
     expectParseError(
       "class Foo { #foo = () => { for (x = #foo in this) ; } }",
-      "Unexpected #foo"
+      "Unexpected #foo",
     );
     expectPrinted_("class Foo { #foo }", "class Foo {\n  #foo;\n}");
     expectPrinted_("class Foo { #foo = 1 }", "class Foo {\n  #foo = 1;\n}");
     expectPrinted_(
       "class Foo { #foo = #foo in this }",
-      "class Foo {\n  #foo = #foo in this;\n}"
+      "class Foo {\n  #foo = #foo in this;\n}",
     );
     expectPrinted_(
       "class Foo { #foo = #foo in (#bar in this); #bar }",
-      "class Foo {\n  #foo = #foo in (#bar in this);\n  #bar;\n}"
+      "class Foo {\n  #foo = #foo in (#bar in this);\n  #bar;\n}",
     );
     expectPrinted_(
       "class Foo { #foo() {} }",
-      "class Foo {\n  #foo() {\n  }\n}"
+      "class Foo {\n  #foo() {\n  }\n}",
     );
     expectPrinted_(
       "class Foo { get #foo() {} }",
-      "class Foo {\n  get #foo() {\n  }\n}"
+      "class Foo {\n  get #foo() {\n  }\n}",
     );
     expectPrinted_(
       "class Foo { set #foo(x) {} }",
-      "class Foo {\n  set #foo(x) {\n  }\n}"
+      "class Foo {\n  set #foo(x) {\n  }\n}",
     );
     expectPrinted_(
       "class Foo { static #foo }",
-      "class Foo {\n  static #foo;\n}"
+      "class Foo {\n  static #foo;\n}",
     );
     expectPrinted_(
       "class Foo { static #foo = 1 }",
-      "class Foo {\n  static #foo = 1;\n}"
+      "class Foo {\n  static #foo = 1;\n}",
     );
     expectPrinted_(
       "class Foo { static #foo() {} }",
-      "class Foo {\n  static #foo() {\n  }\n}"
+      "class Foo {\n  static #foo() {\n  }\n}",
     );
     expectPrinted_(
       "class Foo { static get #foo() {} }",
-      "class Foo {\n  static get #foo() {\n  }\n}"
+      "class Foo {\n  static get #foo() {\n  }\n}",
     );
     expectPrinted_(
       "class Foo { static set #foo(x) {} }",
-      "class Foo {\n  static set #foo(x) {\n  }\n}"
+      "class Foo {\n  static set #foo(x) {\n  }\n}",
     );
 
     expectParseError(
       "class Foo { #foo = #foo in #bar in this; #bar }",
-      "Unexpected #bar"
+      "Unexpected #bar",
     );
 
     expectParseError(
       "class Foo { #constructor }",
-      'Invalid field name "#constructor"'
+      'Invalid field name "#constructor"',
     );
     expectParseError(
       "class Foo { #constructor() {} }",
-      'Invalid method name "#constructor"'
+      'Invalid method name "#constructor"',
     );
     expectParseError(
       "class Foo { static #constructor }",
-      'Invalid field name "#constructor"'
+      'Invalid field name "#constructor"',
     );
     expectParseError(
       "class Foo { static #constructor() {} }",
-      'Invalid method name "#constructor"'
+      'Invalid method name "#constructor"',
     );
     expectParseError(
       "class Foo { #\\u0063onstructor }",
-      'Invalid field name "#constructor"'
+      'Invalid field name "#constructor"',
     );
     expectParseError(
       "class Foo { #\\u0063onstructor() {} }",
-      'Invalid method name "#constructor"'
+      'Invalid method name "#constructor"',
     );
     expectParseError(
       "class Foo { static #\\u0063onstructor }",
-      'Invalid field name "#constructor"'
+      'Invalid field name "#constructor"',
     );
     expectParseError(
       "class Foo { static #\\u0063onstructor() {} }",
-      'Invalid method name "#constructor"'
+      'Invalid method name "#constructor"',
     );
     const errorText = '"#foo" has already been declared';
     expectParseError("class Foo { #foo; #foo }", errorText);
@@ -1350,44 +1350,44 @@ export var ComponentThatHasSpreadCausesDeopt = jsx(Hello, {
     expectParseError("class Foo { set #foo(x) {} set #foo(x) {} }", errorText);
     expectParseError(
       "class Foo { get #foo() {} set #foo(x) {} #foo }",
-      errorText
+      errorText,
     );
     expectParseError(
       "class Foo { set #foo(x) {} get #foo() {} #foo }",
-      errorText
+      errorText,
     );
 
     expectPrinted_(
       "class Foo { get #foo() {} set #foo(x) { this.#foo } }",
-      "class Foo {\n  get #foo() {\n  }\n  set #foo(x) {\n    this.#foo;\n  }\n}"
+      "class Foo {\n  get #foo() {\n  }\n  set #foo(x) {\n    this.#foo;\n  }\n}",
     );
     expectPrinted_(
       "class Foo { set #foo(x) { this.#foo } get #foo() {} }",
-      "class Foo {\n  set #foo(x) {\n    this.#foo;\n  }\n  get #foo() {\n  }\n}"
+      "class Foo {\n  set #foo(x) {\n    this.#foo;\n  }\n  get #foo() {\n  }\n}",
     );
     expectPrinted_(
       "class Foo { #foo } class Bar { #foo }",
-      "class Foo {\n  #foo;\n}\n\nclass Bar {\n  #foo;\n}"
+      "class Foo {\n  #foo;\n}\n\nclass Bar {\n  #foo;\n}",
     );
     expectPrinted_(
       "class Foo { foo = this.#foo; #foo }",
-      "class Foo {\n  foo = this.#foo;\n  #foo;\n}"
+      "class Foo {\n  foo = this.#foo;\n  #foo;\n}",
     );
     expectPrinted_(
       "class Foo { foo = this?.#foo; #foo }",
-      "class Foo {\n  foo = this?.#foo;\n  #foo;\n}"
+      "class Foo {\n  foo = this?.#foo;\n  #foo;\n}",
     );
     expectParseError(
       "class Foo { #foo } class Bar { foo = this.#foo }",
-      'Private name "#foo" must be declared in an enclosing class'
+      'Private name "#foo" must be declared in an enclosing class',
     );
     expectParseError(
       "class Foo { #foo } class Bar { foo = this?.#foo }",
-      'Private name "#foo" must be declared in an enclosing class'
+      'Private name "#foo" must be declared in an enclosing class',
     );
     expectParseError(
       "class Foo { #foo } class Bar { foo = #foo in this }",
-      'Private name "#foo" must be declared in an enclosing class'
+      'Private name "#foo" must be declared in an enclosing class',
     );
 
     expectPrinted_(
@@ -1421,7 +1421,7 @@ export var ComponentThatHasSpreadCausesDeopt = jsx(Hello, {
       }
     };
   }
-}`
+}`,
     );
   });
 
@@ -1434,63 +1434,63 @@ export var ComponentThatHasSpreadCausesDeopt = jsx(Hello, {
     expectPrinted_("export type {default} from 'bar'", "");
     expectPrinted_(
       "export { type } from 'mod'; type",
-      'export { type } from "mod";\ntype'
+      'export { type } from "mod";\ntype',
     );
     expectPrinted_(
       "export { type, as } from 'mod'",
-      'export { type, as } from "mod"'
+      'export { type, as } from "mod"',
     );
     expectPrinted_(
       "export { x, type foo } from 'mod'; x",
-      'export { x } from "mod";\nx'
+      'export { x } from "mod";\nx',
     );
     expectPrinted_(
       "export { x, type as } from 'mod'; x",
-      'export { x } from "mod";\nx'
+      'export { x } from "mod";\nx',
     );
     expectPrinted_(
       "export { x, type foo as bar } from 'mod'; x",
-      'export { x } from "mod";\nx'
+      'export { x } from "mod";\nx',
     );
     expectPrinted_(
       "export { x, type foo as as } from 'mod'; x",
-      'export { x } from "mod";\nx'
+      'export { x } from "mod";\nx',
     );
     expectPrinted_(
       "export { type as as } from 'mod'; as",
-      'export { type as as } from "mod";\nas'
+      'export { type as as } from "mod";\nas',
     );
     expectPrinted_(
       "export { type as foo } from 'mod'; foo",
-      'export { type as foo } from "mod";\nfoo'
+      'export { type as foo } from "mod";\nfoo',
     );
     expectPrinted_(
       "export { type as type } from 'mod'; type",
-      'export { type } from "mod";\ntype'
+      'export { type } from "mod";\ntype',
     );
     expectPrinted_(
       "export { x, type as as foo } from 'mod'; x",
-      'export { x } from "mod";\nx'
+      'export { x } from "mod";\nx',
     );
     expectPrinted_(
       "export { x, type as as as } from 'mod'; x",
-      'export { x } from "mod";\nx'
+      'export { x } from "mod";\nx',
     );
     expectPrinted_(
       "export { x, type type as as } from 'mod'; x",
-      'export { x } from "mod";\nx'
+      'export { x } from "mod";\nx',
     );
     expectPrinted_(
       "export { x, \\u0074ype y }; let x, y",
-      "export { x };\nlet x, y"
+      "export { x };\nlet x, y",
     );
     expectPrinted_(
       "export { x, \\u0074ype y } from 'mod'",
-      'export { x } from "mod"'
+      'export { x } from "mod"',
     );
     expectPrinted_(
       "export { x, type if } from 'mod'",
-      'export { x } from "mod"'
+      'export { x } from "mod"',
     );
     expectPrinted_("export { x, type y as if }; let x", "export { x };\nlet x");
     expectPrinted_("export { type x };", "");
@@ -1519,78 +1519,78 @@ class Foo {
   }
   bar;
 }
-`.trim()
+`.trim(),
     );
   });
 
   it("class static blocks", () => {
     expectPrinted_(
       "class Foo { static {} }",
-      "class Foo {\n  static {\n  }\n}"
+      "class Foo {\n  static {\n  }\n}",
     );
     expectPrinted_(
       "class Foo { static {} x = 1 }",
-      "class Foo {\n  static {\n  }\n  x = 1;\n}"
+      "class Foo {\n  static {\n  }\n  x = 1;\n}",
     );
     expectPrinted_(
       "class Foo { static { this.foo() } }",
-      "class Foo {\n  static {\n    this.foo();\n  }\n}"
+      "class Foo {\n  static {\n    this.foo();\n  }\n}",
     );
 
     expectParseError(
       "class Foo { static { yield } }",
-      '"yield" is a reserved word and cannot be used in strict mode'
+      '"yield" is a reserved word and cannot be used in strict mode',
     );
     expectParseError(
       "class Foo { static { await } }",
-      'The keyword "await" cannot be used here'
+      'The keyword "await" cannot be used here',
     );
     expectParseError(
       "class Foo { static { return } }",
-      "A return statement cannot be used here"
+      "A return statement cannot be used here",
     );
     expectParseError(
       "class Foo { static { break } }",
-      'Cannot use "break" here'
+      'Cannot use "break" here',
     );
     expectParseError(
       "class Foo { static { continue } }",
-      'Cannot use "continue" here'
+      'Cannot use "continue" here',
     );
     expectParseError(
       "x: { class Foo { static { break x } } }",
-      'There is no containing label named "x"'
+      'There is no containing label named "x"',
     );
     expectParseError(
       "x: { class Foo { static { continue x } } }",
-      'There is no containing label named "x"'
+      'There is no containing label named "x"',
     );
 
     expectParseError(
       "class Foo { get #x() { this.#x = 1 } }",
-      'Writing to getter-only property "#x" will throw'
+      'Writing to getter-only property "#x" will throw',
     );
     expectParseError(
       "class Foo { get #x() { this.#x += 1 } }",
-      'Writing to getter-only property "#x" will throw'
+      'Writing to getter-only property "#x" will throw',
     );
     expectParseError(
       "class Foo { set #x(x) { this.#x } }",
-      'Reading from setter-only property "#x" will throw'
+      'Reading from setter-only property "#x" will throw',
     );
     expectParseError(
       "class Foo { set #x(x) { this.#x += 1 } }",
-      'Reading from setter-only property "#x" will throw'
+      'Reading from setter-only property "#x" will throw',
     );
 
     // Writing to method warnings
     expectParseError(
       "class Foo { #x() { this.#x = 1 } }",
-      'Writing to read-only method "#x" will throw'
+      'Writing to read-only method "#x" will throw',
     );
     expectParseError(
       "class Foo { #x() { this.#x += 1 } }",
-      'Writing to read-only method "#x" will throw'
+      'Writing to read-only method "#x" will throw',
     );
   });
 

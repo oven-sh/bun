@@ -1,0 +1,10 @@
+src/fallback.html
+src/test
+examples
+bench
+test/bun.js/solid-dom-fixtures
+test/bun.js/bundled
+src/bun.js/builtins
+src/api/demo
+test/snapshots
+test/snapshots-no-hmr

@@ -189,7 +189,7 @@ export class Bun {
     if (globalThis?.WebAssembly?.instantiateStreaming) {
       Bun.wasm_source = await globalThis.WebAssembly.instantiateStreaming(
         fetch(url),
-        { env: env, wasi_snapshot_preview1: Wasi }
+        { env: env, wasi_snapshot_preview1: Wasi },
       );
     } else if (typeof window !== "undefined") {
       const resp = await fetch(url);
@@ -198,7 +198,7 @@ export class Bun {
         {
           env: env,
           wasi_snapshot_preview1: Wasi,
-        }
+        },
       );
       // is it node?
     } else {
@@ -210,7 +210,7 @@ export class Bun {
         {
           env: env,
           wasi_snapshot_preview1: Wasi,
-        }
+        },
       );
     }
 
@@ -225,7 +225,7 @@ export class Bun {
   static transformSync(
     content: Uint8Array | string,
     file_name: string,
-    loader?: Loader
+    loader?: Loader,
   ): TransformResponse {
     if (!Bun.has_initialized) {
       throw "Please run await Bun.init(wasm_url) before using this.";
@@ -264,7 +264,7 @@ export class Bun {
         // @ts-ignore
         loader: normalizeLoader(file_name, loader),
       },
-      bb
+      bb,
     );
     const data = bb.toUint8Array();
 
@@ -285,7 +285,7 @@ export class Bun {
   static scan(
     content: Uint8Array | string,
     file_name: string,
-    loader?: Loader
+    loader?: Loader,
   ): ScanResult {
     if (!Bun.has_initialized) {
       throw "Please run await Bun.init(wasm_url) before using this.";
@@ -316,7 +316,7 @@ export class Bun {
         // @ts-ignore
         loader: normalizeLoader(file_name, loader),
       },
-      bb
+      bb,
     );
     const data = bb.toUint8Array();
 

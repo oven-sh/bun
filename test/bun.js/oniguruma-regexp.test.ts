@@ -36,20 +36,20 @@ it("repeated match calls with global regex without global flag", () => {
 it("escaped characters in character classes", () => {
   expect(
     new RegExp("[a-z]").exec("a")![0] ===
-      new OnigurumaRegExp("[a-z]").exec("a")![0]
+      new OnigurumaRegExp("[a-z]").exec("a")![0],
   ).toBe(true);
 
   Bun.gc(true);
 
   expect(
     new RegExp("[a-z]").exec("b")![0] ===
-      new OnigurumaRegExp("[a-z]").exec("b")![0]
+      new OnigurumaRegExp("[a-z]").exec("b")![0],
   ).toBe(true);
 
   Bun.gc(true);
 
   expect(new RegExp("[a-zA-Z0-9_]+").exec("B9")![0]).toBe(
-    new OnigurumaRegExp("[a-zA-Z0-9_]+").exec("B9")![0]
+    new OnigurumaRegExp("[a-zA-Z0-9_]+").exec("B9")![0],
   );
   Bun.gc(true);
   expect(new RegExp("[a-z]").exec("-")).toBe(null);
@@ -74,7 +74,7 @@ it("escaped characters in character classes", () => {
   Bun.gc(true);
 
   expect(new RegExp("[^b-c]").exec("a")![0]).toBe(
-    new OnigurumaRegExp("[^b-c]").exec("a")![0]
+    new OnigurumaRegExp("[^b-c]").exec("a")![0],
   );
   Bun.gc(true);
 
@@ -107,7 +107,7 @@ it("escaped characters in character classes", () => {
   Bun.gc(true);
   expect(
     "https://dylan-co^nway.com/profile".match(b3)![0] ===
-      "https://dylan-co^nway.com/profile".match(b4)![0]
+      "https://dylan-co^nway.com/profile".match(b4)![0],
   ).toBe(true);
   Bun.gc(true);
 
@@ -116,7 +116,7 @@ it("escaped characters in character classes", () => {
   s = "https://dylan-conway.com/profile";
   Bun.gc(true);
   expect(s.match(new OnigurumaRegExp(p, "gs"))![0]).toBe(
-    new RegExp(p, "gs").exec(s)![0]
+    new RegExp(p, "gs").exec(s)![0],
   );
   Bun.gc(true);
 
@@ -178,7 +178,7 @@ it("escaped characters in character classes", () => {
   let r1 = new RegExp("^([[(]-?[\\d]+)?,?(-?[\\d]+[\\])])?$").exec("(1,1]")!;
   Bun.gc(true);
   let r2 = new OnigurumaRegExp("^([[(]-?[\\d]+)?,?(-?[\\d]+[\\])])?$").exec(
-    "(1,1]"
+    "(1,1]",
   );
   Bun.gc(true);
   expect(r1[0]).toBe(r2[0]);
@@ -327,7 +327,7 @@ test("OnigurumaRegExp.prototype.exec() 4", () => {
     expect(new RegExpConstructor("\\x3\\x5\\j").source).toBe("\\x3\\x5\\j");
     expect(new RegExpConstructor("\\x3\\x7\\xa").source).toBe("\\x3\\x7\\xa");
     expect(new RegExpConstructor("\\j323\\x7\\xa").source).toBe(
-      "\\j323\\x7\\xa"
+      "\\j323\\x7\\xa",
     );
     expect(new RegExpConstructor("\\x56").test("V")).toBe(true);
   }
@@ -336,19 +336,19 @@ test("OnigurumaRegExp.prototype.exec() 4", () => {
 test("OnigurumaRegExp.prototype.test()", () => {
   expect(new RegExp("\\\\(?![*+?^${}(|)[\\]])", "g").test("\\")).toBe(true);
   expect(new OnigurumaRegExp("\\\\(?![*+?^${}(|)[\\]])", "g").test("\\")).toBe(
-    true
+    true,
   );
 
   expect(new RegExp("\\x56").test("V")).toBe(true);
   expect(new OnigurumaRegExp("\\x56").test("V")).toBe(true);
 
   expect(
-    new RegExp("//").compile("\\\\(?![*+?^${}(|)[\\]])", "g").test("\\")
+    new RegExp("//").compile("\\\\(?![*+?^${}(|)[\\]])", "g").test("\\"),
   ).toBe(true);
   let r = new OnigurumaRegExp("//");
   expect(r.compile("\\\\(?![*+?^${}(|)[\\]])", "g").test("\\")).toBe(true);
   expect(
-    new OnigurumaRegExp("").compile("\\\\(?![*+?^${}(|)[\\]])", "g").test("\\")
+    new OnigurumaRegExp("").compile("\\\\(?![*+?^${}(|)[\\]])", "g").test("\\"),
   ).toBe(true);
 });
 
@@ -370,7 +370,7 @@ test("OnigurumaRegExp.prototype.source", () => {
   expect(new OnigurumaRegExp("").source).toBe(new RegExp("").source);
   expect(new OnigurumaRegExp("a").source).toBe(new RegExp("a").source);
   expect(new OnigurumaRegExp("a", "g").source).toBe(
-    new RegExp("a", "g").source
+    new RegExp("a", "g").source,
   );
   expect(new OnigurumaRegExp("/").source).toBe(new RegExp("/").source);
   expect(new OnigurumaRegExp("\n").source).toBe(new RegExp("\n").source);
@@ -383,21 +383,21 @@ test("OnigurumaRegExp.prototype.toString()", () => {
   expect(new OnigurumaRegExp("").toString()).toBe(new RegExp("").toString());
   expect(new OnigurumaRegExp("a").toString()).toBe(new RegExp("a").toString());
   expect(new OnigurumaRegExp("a", "g").toString()).toBe(
-    new RegExp("a", "g").toString()
+    new RegExp("a", "g").toString(),
   );
   expect(new OnigurumaRegExp("/").toString()).toBe(new RegExp("/").toString());
   expect(new OnigurumaRegExp("\n").toString()).toBe(
-    new RegExp("\n").toString()
+    new RegExp("\n").toString(),
   );
   expect(new OnigurumaRegExp("\r").toString()).toBe(
-    new RegExp("\r").toString()
+    new RegExp("\r").toString(),
   );
   expect(
     new OnigurumaRegExp(
-      "jf/.a.,voejpjoajglz;/qwjopeiv\\//\\/jpoqaj/Zdkj"
-    ).toString()
+      "jf/.a.,voejpjoajglz;/qwjopeiv\\//\\/jpoqaj/Zdkj",
+    ).toString(),
   ).toBe(
-    new RegExp("jf/.a.,voejpjoajglz;/qwjopeiv\\//\\/jpoqaj/Zdkj").toString()
+    new RegExp("jf/.a.,voejpjoajglz;/qwjopeiv\\//\\/jpoqaj/Zdkj").toString(),
   );
 });
 
@@ -438,10 +438,10 @@ test("OnigurumaRegExp flags", () => {
   // case insensitive option
   for (const RegExpConstructor of [OnigurumaRegExp, RegExp]) {
     expect(new RegExpConstructor("Is ThIs SqL?").test("IS THIS SQL?")).toBe(
-      false
+      false,
     );
     expect(
-      new RegExpConstructor("Is ThIs SqL?", "i").test("IS THIS SQL?")
+      new RegExpConstructor("Is ThIs SqL?", "i").test("IS THIS SQL?"),
     ).toBe(true);
   }
 
@@ -516,7 +516,7 @@ test("OnigurumaRegExp errors", () => {
     r.compile(b, "g");
   } catch (e: any) {
     expect(e.message).toBe(
-      "Cannot supply flags when constructing one RegExp from another."
+      "Cannot supply flags when constructing one RegExp from another.",
     );
   }
   try {
@@ -534,28 +534,28 @@ test("OnigurumaRegExp errors", () => {
     new OnigurumaRegExp("?", "g");
   } catch (e: any) {
     expect(e.message.substring(0, invalidRegExpError.length)).toBe(
-      invalidRegExpError
+      invalidRegExpError,
     );
   }
   try {
     new OnigurumaRegExp("?");
   } catch (e: any) {
     expect(e.message.substring(0, invalidRegExpError.length)).toBe(
-      invalidRegExpError
+      invalidRegExpError,
     );
   }
   try {
     r.compile("?", "g");
   } catch (e: any) {
     expect(e.message.substring(0, invalidRegExpError.length)).toBe(
-      invalidRegExpError
+      invalidRegExpError,
     );
   }
   try {
     r.compile("?");
   } catch (e: any) {
     expect(e.message.substring(0, invalidRegExpError.length)).toBe(
-      invalidRegExpError
+      invalidRegExpError,
     );
   }
 
@@ -563,7 +563,7 @@ test("OnigurumaRegExp errors", () => {
     new OnigurumaRegExp("\\");
   } catch (e: any) {
     expect(e.message.substring(0, invalidRegExpError.length)).toBe(
-      invalidRegExpError
+      invalidRegExpError,
     );
   }
 });
@@ -645,7 +645,7 @@ it("String.prototype.replace", () => {
         expect(offset).toBe(0);
         expect(string).toBe("a");
         return "b";
-      })
+      }),
     ).toBe("b");
   }
 
@@ -720,10 +720,10 @@ it("String.prototype.split", () => {
 it("escapes characters, unicode, and hex", () => {
   for (const RegExpConstructor of [OnigurumaRegExp, RegExp]) {
     expect(new RegExpConstructor("[\\x00-\\x1F]").toString()).toBe(
-      "/[\\x00-\\x1F]/"
+      "/[\\x00-\\x1F]/",
     );
     expect(new RegExpConstructor("[\\u0000-\\u001F]").toString()).toBe(
-      "/[\\u0000-\\u001F]/"
+      "/[\\u0000-\\u001F]/",
     );
     var s = /\\x{7HHHHHHH}(?=\\u{1233})/;
     let a = new RegExpConstructor("\u{0001F46E}");
@@ -783,20 +783,20 @@ it("lookbehinds", () => {
 
   expect(
     /[\x00-\x1F\x27\x5C\x7F-\x9F]|[\uD800-\uDBFF]\(?<=[\uDC00-\uDFFF]\)|(?!.*[\uD800-\uDBFF][\uDC00-\uDFFF]).*[\uDC00-\uDFFF]/ instanceof
-      RegExp
+      RegExp,
   ).toBe(true);
   expect(
     /[\x00-\x1F\x27\x5C\x7F-\x9F]|[\uD800-\uDBFF](?<=[\uDC00-\uDFFF])|(?!.*[\uD800-\uDBFF][\uDC00-\uDFFF]).*[\uDC00-\uDFFF]/ instanceof
-      OnigurumaRegExp
+      OnigurumaRegExp,
   ).toBe(true);
 
   expect(/(?<=\1d(o))/ instanceof OnigurumaRegExp).toBe(true);
   expect(/\(?<=\1d(o)\)/ instanceof OnigurumaRegExp).toBe(false);
   expect(
-    /(?!.*[\uD800-\uDBFF][\uDC00-\uDFFF]).*[\uDC00-\uDFFF]/ instanceof RegExp
+    /(?!.*[\uD800-\uDBFF][\uDC00-\uDFFF]).*[\uDC00-\uDFFF]/ instanceof RegExp,
   ).toBe(true);
   expect(
-    /\(?!.*[\uD800-\uDBFF][\uDC00-\uDFFF]\).*[\uDC00-\uDFFF]/ instanceof RegExp
+    /\(?!.*[\uD800-\uDBFF][\uDC00-\uDFFF]\).*[\uDC00-\uDFFF]/ instanceof RegExp,
   ).toBe(true);
 
   let e = new OnigurumaRegExp("(?<=)");

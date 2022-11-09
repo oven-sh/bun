@@ -23,12 +23,12 @@ test("peek", () => {
   // - returns the error
   // - does not mark the promise as handled
   const rejected = Promise.reject<Error>(
-    new Error("Succesfully tested promise rejection")
+    new Error("Succesfully tested promise rejection"),
   );
   const peeked = peek(rejected);
   expect(peeked instanceof Error).toBe(true);
   expect((peeked as Error).message).toBe(
-    "Succesfully tested promise rejection"
+    "Succesfully tested promise rejection",
   );
 });
 

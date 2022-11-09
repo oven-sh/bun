@@ -54,7 +54,7 @@ export class CString extends String {
         ? typeof byteLength === "number" && Number.isSafeInteger(byteLength)
           ? new BunCString(ptr, byteOffset || 0, byteLength)
           : new BunCString(ptr)
-        : ""
+        : "",
     );
     this.ptr = typeof ptr === "number" ? ptr : 0;
     if (typeof byteOffset !== "undefined") {
@@ -82,7 +82,7 @@ export class CString extends String {
     return (this.#cachedArrayBuffer = toArrayBuffer(
       this.ptr,
       this.byteOffset,
-      this.byteLength
+      this.byteLength,
     ));
   }
 }
@@ -209,7 +209,7 @@ Object.defineProperty(globalThis, "__GlobalBunFFIPtrFunctionForWrapper", {
 });
 
 ffiWrappers[FFIType.cstring] = ffiWrappers[FFIType.pointer] = function pointer(
-  val
+  val,
 ) {
   if (typeof val === "number") return val;
   if (!val) {
@@ -222,7 +222,7 @@ ffiWrappers[FFIType.cstring] = ffiWrappers[FFIType.pointer] = function pointer(
 
   if (typeof val === "string") {
     throw new TypeError(
-      "To convert a string to a pointer, encode it as a buffer"
+      "To convert a string to a pointer, encode it as a buffer",
     );
   }
 
@@ -267,7 +267,7 @@ function FFIBuilder(params, returnType, functionToCall, name) {
       throw new TypeError(
         `Unsupported type ${params[i]}. Must be one of: ${Object.keys(FFIType)
           .sort()
-          .join(", ")}`
+          .join(", ")}`,
       );
     }
   }
@@ -335,7 +335,7 @@ function FFIBuilder(params, returnType, functionToCall, name) {
           arg6,
           arg7,
           arg8,
-          arg9
+          arg9,
         );
       break;
     default: {
@@ -376,7 +376,7 @@ export function dlopen(path, options) {
         //    "sqlite3_get_version() - sqlit3.so"
         path.includes("/")
           ? `${key} (${path.split("/").pop()})`
-          : `${key} (${path})`
+          : `${key} (${path})`,
       );
     } else {
       // consistentcy
@@ -400,7 +400,7 @@ export function linkSymbols(options) {
         options[key].args ?? [],
         options[key].returns ?? FFIType.void,
         symbol,
-        key
+        key,
       );
     } else {
       // consistentcy
@@ -433,7 +433,7 @@ export function CFunction(options) {
   cFunctionRegistry ||= new FinalizationRegistry(onCloseCFunction);
   cFunctionRegistry.register(
     result.symbols[identifier],
-    result.symbols[identifier].close
+    result.symbols[identifier].close,
   );
 
   return result.symbols[identifier];

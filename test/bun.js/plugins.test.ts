@@ -46,7 +46,7 @@ plugin({
     }));
     builder.onLoad(
       { filter: /.*/, namespace: "fail" },
-      () => globalThis.failingObject
+      () => globalThis.failingObject,
     );
   },
 });
@@ -107,7 +107,7 @@ plugin({
             });
           }, 1);
         });
-      }
+      },
     );
 
     builder.onResolve({ filter: /.*/, namespace: "asyncfail" }, ({ path }) => ({
@@ -122,7 +122,7 @@ plugin({
         await Promise.resolve(1);
         await 1;
         throw globalThis.asyncfail;
-      }
+      },
     );
 
     builder.onResolve({ filter: /.*/, namespace: "asyncret" }, ({ path }) => ({
@@ -137,7 +137,7 @@ plugin({
         await 100;
         await Promise.resolve(10);
         return await globalThis.asyncret;
-      }
+      },
     );
   },
 });

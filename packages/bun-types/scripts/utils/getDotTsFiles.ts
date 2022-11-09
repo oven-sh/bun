@@ -5,7 +5,7 @@ const allDotTsFiles: string[] = [];
 export const getDotTsFiles = async (
   prefix = "",
   folder: string = join(import.meta.dir, "..", ".."),
-  folderName?: string
+  folderName?: string,
 ) => {
   const files = await readdir(folder, { withFileTypes: true });
   for await (const file of files) {

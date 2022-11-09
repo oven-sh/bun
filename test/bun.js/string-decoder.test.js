@@ -16,7 +16,7 @@ it("StringDecoder-utf8", () => {
   test(
     "utf-8",
     Buffer.from([0xcb, 0xa4, 0x64, 0xe1, 0x8b, 0xa4, 0x30, 0xe3, 0x81, 0x85]),
-    "\u02e4\u0064\u12e4\u0030\u3045"
+    "\u02e4\u0064\u12e4\u0030\u3045",
   );
 });
 
@@ -39,7 +39,7 @@ it("StringDecoder-utf8-additional", () => {
 
   decoder = new StringDecoder("utf8");
   expect(decoder.write(Buffer.from("\ufffd\ufffd\ufffd"))).toBe(
-    "\ufffd\ufffd\ufffd"
+    "\ufffd\ufffd\ufffd",
   );
   expect(decoder.end()).toBe("");
 

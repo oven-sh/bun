@@ -69,7 +69,7 @@ declare module "querystring" {
     obj?: ParsedUrlQueryInput,
     sep?: string,
     eq?: string,
-    options?: StringifyOptions
+    options?: StringifyOptions,
   ): string;
   /**
    * The `querystring.parse()` method parses a URL query string (`str`) into a
@@ -106,7 +106,7 @@ declare module "querystring" {
     str: string,
     sep?: string,
     eq?: string,
-    options?: ParseOptions
+    options?: ParseOptions,
   ): ParsedUrlQuery;
   /**
    * The querystring.encode() function is an alias for querystring.stringify().

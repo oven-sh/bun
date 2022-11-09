@@ -41,7 +41,7 @@ declare module "bun" {
    */
   export function which(
     command: string,
-    options?: { PATH?: string; cwd?: string }
+    options?: { PATH?: string; cwd?: string },
   ): string;
 
   /**
@@ -81,7 +81,7 @@ declare module "bun" {
    * ```
    */
   export function serve<ServeOoptions extends Serve<any>>(
-    options: ServeOoptions
+    options: ServeOoptions,
   ): Server;
 
   /**
@@ -115,7 +115,7 @@ declare module "bun" {
   // tslint:disable-next-line:unified-signatures
   export function write(
     destination: FileBlob | PathLike,
-    input: Blob | TypedArray | ArrayBufferLike | string | BlobPart[]
+    input: Blob | TypedArray | ArrayBufferLike | string | BlobPart[],
   ): Promise<number>;
 
   /**
@@ -131,7 +131,7 @@ declare module "bun" {
    */
   export function write(
     destination: FileBlob,
-    input: Response
+    input: Response,
   ): Promise<number>;
 
   /**
@@ -148,7 +148,7 @@ declare module "bun" {
   // tslint:disable-next-line:unified-signatures
   export function write(
     destinationPath: PathLike,
-    input: Response
+    input: Response,
   ): Promise<number>;
 
   /**
@@ -173,7 +173,7 @@ declare module "bun" {
   // tslint:disable-next-line:unified-signatures
   export function write(
     destination: FileBlob,
-    input: FileBlob
+    input: FileBlob,
   ): Promise<number>;
 
   /**
@@ -198,7 +198,7 @@ declare module "bun" {
   // tslint:disable-next-line:unified-signatures
   export function write(
     destinationPath: PathLike,
-    input: FileBlob
+    input: FileBlob,
   ): Promise<number>;
 
   export interface SystemError extends Error {
@@ -240,7 +240,7 @@ declare module "bun" {
    * length of the buffer is known, it is safe to use uninitialized memory.
    */
   export function concatArrayBuffers(
-    buffers: Array<ArrayBufferView | ArrayBufferLike>
+    buffers: Array<ArrayBufferView | ArrayBufferLike>,
   ): ArrayBuffer;
 
   /**
@@ -255,7 +255,7 @@ declare module "bun" {
    * @returns A promise that resolves with the concatenated chunks or the concatenated chunks as an `ArrayBuffer`.
    */
   export function readableStreamToArrayBuffer(
-    stream: ReadableStream
+    stream: ReadableStream,
   ): Promise<ArrayBuffer> | ArrayBuffer;
 
   /**
@@ -296,7 +296,7 @@ declare module "bun" {
    *
    */
   export function readableStreamToArray<T>(
-    stream: ReadableStream
+    stream: ReadableStream,
   ): Promise<T[]> | T[];
 
   /**
@@ -336,7 +336,7 @@ declare module "bun" {
   export interface Peek {
     <T = undefined>(promise: T | Promise<T>): Promise<T> | T;
     status<T = undefined>(
-      promise: T | Promise<T>
+      promise: T | Promise<T>,
     ): "pending" | "fulfilled" | "rejected";
   }
   /**
@@ -482,38 +482,38 @@ declare module "bun" {
    */
   export const hash: ((
     data: string | ArrayBufferView | ArrayBuffer,
-    seed?: number
+    seed?: number,
   ) => number | bigint) &
     Hash;
 
   interface Hash {
     wyhash: (
       data: string | ArrayBufferView | ArrayBuffer,
-      seed?: number
+      seed?: number,
     ) => number | bigint;
     crc32: (
       data: string | ArrayBufferView | ArrayBuffer,
-      seed?: number
+      seed?: number,
     ) => number | bigint;
     adler32: (
       data: string | ArrayBufferView | ArrayBuffer,
-      seed?: number
+      seed?: number,
     ) => number | bigint;
     cityHash32: (
       data: string | ArrayBufferView | ArrayBuffer,
-      seed?: number
+      seed?: number,
     ) => number | bigint;
     cityHash64: (
       data: string | ArrayBufferView | ArrayBuffer,
-      seed?: number
+      seed?: number,
     ) => number | bigint;
     murmur32v3: (
       data: string | ArrayBufferView | ArrayBuffer,
-      seed?: number
+      seed?: number,
     ) => number | bigint;
     murmur64v2: (
       data: string | ArrayBufferView | ArrayBuffer,
-      seed?: number
+      seed?: number,
     ) => number | bigint;
   }
 
@@ -646,7 +646,7 @@ declare module "bun" {
     transformSync(
       code: StringOrBuffer,
       loader: JavaScriptLoader,
-      ctx: object
+      ctx: object,
     ): string;
     /**
      * Transpile code from TypeScript or JSX into valid JavaScript.
@@ -786,7 +786,7 @@ declare module "bun" {
      */
     send(
       data: string | ArrayBufferView | ArrayBuffer,
-      compress?: boolean
+      compress?: boolean,
     ): ServerWebSocketSendStatus;
 
     /**
@@ -898,7 +898,7 @@ declare module "bun" {
     publish(
       topic: string,
       data: string | ArrayBufferView | ArrayBuffer,
-      compress?: boolean
+      compress?: boolean,
     ): ServerWebSocketSendStatus;
 
     /**
@@ -922,7 +922,7 @@ declare module "bun" {
     publishText(
       topic: string,
       data: string,
-      compress?: boolean
+      compress?: boolean,
     ): ServerWebSocketSendStatus;
 
     /**
@@ -960,7 +960,7 @@ declare module "bun" {
     publishBinary(
       topic: string,
       data: Uint8Array,
-      compress?: boolean
+      compress?: boolean,
     ): ServerWebSocketSendStatus;
 
     /**
@@ -1102,7 +1102,7 @@ declare module "bun" {
      */
     message: (
       ws: ServerWebSocket<T>,
-      message: string | Uint8Array
+      message: string | Uint8Array,
     ) => void | Promise<void>;
 
     /**
@@ -1126,7 +1126,7 @@ declare module "bun" {
     close?: (
       ws: ServerWebSocket<T>,
       code: number,
-      message: string
+      message: string,
     ) => void | Promise<void>;
 
     /**
@@ -1247,7 +1247,7 @@ declare module "bun" {
 
     error?: (
       this: Server,
-      request: Errorlike
+      request: Errorlike,
     ) => Response | Promise<Response> | undefined | void | Promise<undefined>;
   }
 
@@ -1261,7 +1261,7 @@ declare module "bun" {
     fetch(
       this: Server,
       request: Request,
-      server: Server
+      server: Server,
     ): Response | Promise<Response>;
   }
 
@@ -1315,7 +1315,7 @@ declare module "bun" {
     fetch(
       this: Server,
       request: Request,
-      server: Server
+      server: Server,
     ): Response | undefined | Promise<Response | undefined>;
   }
 
@@ -1470,7 +1470,7 @@ declare module "bun" {
          * This value is passed to the {@link ServerWebSocket.data} property
          */
         data?: T;
-      }
+      },
     ): boolean;
 
     /**
@@ -1556,7 +1556,7 @@ declare module "bun" {
   // tslint:disable-next-line:unified-signatures
   export function file(
     path: ArrayBufferLike | Uint8Array,
-    options?: BlobPropertyBag
+    options?: BlobPropertyBag,
   ): FileBlob;
 
   /**
@@ -1576,7 +1576,7 @@ declare module "bun" {
   // tslint:disable-next-line:unified-signatures
   export function file(
     fileDescriptor: number,
-    options?: BlobPropertyBag
+    options?: BlobPropertyBag,
   ): FileBlob;
 
   /**
@@ -1994,7 +1994,7 @@ declare module "bun" {
    */
   export function deflateSync(
     data: Uint8Array,
-    options?: ZlibCompressionOptions
+    options?: ZlibCompressionOptions,
   ): Uint8Array;
   /**
    * Compresses a chunk of data with `zlib` GZIP algorithm.
@@ -2004,7 +2004,7 @@ declare module "bun" {
    */
   export function gzipSync(
     data: Uint8Array,
-    options?: ZlibCompressionOptions
+    options?: ZlibCompressionOptions,
   ): Uint8Array;
   /**
    * Decompresses a chunk of data with `zlib` INFLATE algorithm.
@@ -2115,7 +2115,7 @@ declare module "bun" {
 
   type OnLoadResult = OnLoadResultSourceCode | OnLoadResultObject;
   type OnLoadCallback = (
-    args: OnLoadArgs
+    args: OnLoadArgs,
   ) => OnLoadResult | Promise<OnLoadResult>;
 
   interface OnResolveArgs {
@@ -2181,7 +2181,7 @@ declare module "bun" {
      */
     onResolve(
       constraints: PluginConstraints,
-      callback: OnResolveCallback
+      callback: OnResolveCallback,
     ): void;
     /**
      * The current target environment
@@ -2264,7 +2264,7 @@ declare module "bun" {
          * }));
          * ```
          */
-        builder: PluginBuilder
+        builder: PluginBuilder,
       ): void | Promise<void>;
     }): ReturnType<typeof options["setup"]>;
 
@@ -2295,7 +2295,7 @@ declare module "bun" {
     write(
       data: string | BufferSource,
       byteOffset?: number,
-      byteLength?: number
+      byteLength?: number,
     ): number;
 
     /**
@@ -2311,7 +2311,7 @@ declare module "bun" {
     end(
       data?: string | BufferSource,
       byteOffset?: number,
-      byteLength?: number
+      byteLength?: number,
     ): number;
 
     /**
@@ -2425,10 +2425,10 @@ declare module "bun" {
    *
    */
   export function connect<Data = undefined>(
-    options: TCPSocketOptions<Data>
+    options: TCPSocketOptions<Data>,
   ): Promise<TCPSocketListener<typeof options>>;
   export function connect<Data = undefined>(
-    options: UnixSocketOptions<Data>
+    options: UnixSocketOptions<Data>,
   ): Promise<UnixSocketListener<typeof options>>;
 
   /**
@@ -2445,10 +2445,10 @@ declare module "bun" {
    *
    */
   export function listen<Data = undefined>(
-    options: TCPSocketOptions<Data>
+    options: TCPSocketOptions<Data>,
   ): TCPSocketListener<typeof options>;
   export function listen<Data = undefined>(
-    options: UnixSocketOptions<Data>
+    options: UnixSocketOptions<Data>,
   ): UnixSocketListener<typeof options>;
 
   namespace SpawnOptions {
@@ -2506,7 +2506,7 @@ declare module "bun" {
       stdio?: [
         SpawnOptions.Writable,
         SpawnOptions.Readable,
-        SpawnOptions.Readable
+        SpawnOptions.Readable,
       ];
       stdin?: SpawnOptions.Writable;
       stdout?: SpawnOptions.Readable;
@@ -2626,7 +2626,7 @@ declare module "bun" {
        *
        */
       cmd: string[]; // to support dynamically constructed commands
-    }
+    },
   ): Subprocess<OptionsToSubprocessIO<Opts>>;
 
   /**
@@ -2648,7 +2648,7 @@ declare module "bun" {
      * const subprocess = Bun.spawn(["echo", "hello"]);
      */
     cmds: string[],
-    options?: Opts
+    options?: Opts,
   ): Subprocess<OptionsToSubprocessIO<Opts>>;
   type OptionsToSubprocessIO<Opts extends SpawnOptions.OptionsObject> = {
     stdin?: Opts["stdin"] extends number
@@ -2685,7 +2685,7 @@ declare module "bun" {
        *
        */
       cmd: [string, ...string[]];
-    }
+    },
   ): SyncSubprocess;
 
   /**
@@ -2709,9 +2709,9 @@ declare module "bun" {
       /** One command is required */
       string,
       /** Additional arguments */
-      ...string[]
+      ...string[],
     ],
-    options?: SpawnOptions.OptionsObject
+    options?: SpawnOptions.OptionsObject,
   ): SyncSubprocess;
 
   /**

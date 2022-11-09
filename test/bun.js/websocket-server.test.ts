@@ -25,7 +25,7 @@ describe("websocket server", () => {
             close(ws) {
               ws[method](
                 "all",
-                method === "publishBinary" ? Buffer.from("bye!") : "bye!"
+                method === "publishBinary" ? Buffer.from("bye!") : "bye!",
               );
             },
           },
@@ -41,14 +41,14 @@ describe("websocket server", () => {
         try {
           const first = await new Promise<WebSocket>((resolve2, reject2) => {
             var socket = new WebSocket(
-              `ws://${server.hostname}:${server.port}`
+              `ws://${server.hostname}:${server.port}`,
             );
             socket.onopen = () => resolve2(socket);
           });
 
           const second = await new Promise<WebSocket>((resolve2, reject2) => {
             var socket = new WebSocket(
-              `ws://${server.hostname}:${server.port}`
+              `ws://${server.hostname}:${server.port}`,
             );
             socket.onmessage = (ev) => {
               var msg = ev.data;
@@ -830,7 +830,7 @@ describe("websocket server", () => {
         });
         gcTick();
         const websocket = new WebSocket(
-          `ws://${server.hostname}:${server.port}`
+          `ws://${server.hostname}:${server.port}`,
         );
         websocket.onerror = (e) => {
           reject(e);

@@ -14,7 +14,7 @@ export class PerformanceEntry {
 export class PerformanceNodeTiming {
   constructor() {
     throw new Error(
-      "PerformanceNodeTiming is not supported in this environment."
+      "PerformanceNodeTiming is not supported in this environment.",
     );
   }
 }

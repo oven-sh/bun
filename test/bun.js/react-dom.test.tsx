@@ -209,7 +209,7 @@ describe("ReactDOM", () => {
             chunks.push(chunk);
           }
           const text = new TextDecoder().decode(
-            await new Response(chunks as any).arrayBuffer()
+            await new Response(chunks as any).arrayBuffer(),
           );
           gc();
           expect(text.replaceAll("<!-- -->", "")).toBe(inputString);

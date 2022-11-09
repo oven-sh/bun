@@ -48,7 +48,7 @@ var process =
         target = process = _process;
         return Reflect.has(_process, prop, receiver);
       },
-    }
+    },
   );
 
 var Buffer =
@@ -81,5 +81,5 @@ var Buffer =
         target = Buffer = NewBuffer;
         return Reflect.has(NewBuffer, prop, receiver);
       },
-    }
+    },
   );

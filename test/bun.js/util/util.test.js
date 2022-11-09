@@ -112,7 +112,7 @@ describe("util", () => {
       strictEqual(util.isPrimitive(/regexp/), false);
       strictEqual(
         util.isPrimitive(function () {}),
-        false
+        false,
       );
       strictEqual(util.isPrimitive(new Number(1)), false);
       strictEqual(util.isPrimitive(new String("bla")), false);
@@ -210,11 +210,11 @@ describe("util", () => {
     it("all cases", () => {
       strictEqual(
         util.isFunction(() => {}),
-        true
+        true,
       );
       strictEqual(
         util.isFunction(function () {}),
-        true
+        true,
       );
       strictEqual(util.isFunction(), false);
       strictEqual(util.isFunction("string"), false);
@@ -236,7 +236,7 @@ describe("util", () => {
       strictEqual(util.types.isNativeError({}), false);
       strictEqual(
         util.types.isNativeError({ name: "Error", message: "" }),
-        false
+        false,
       );
       strictEqual(util.types.isNativeError([]), false);
       //   strictEqual( // FIXME: failing test
@@ -263,7 +263,7 @@ describe("util", () => {
       expect(util.TextEncoder === globalThis.TextEncoder).toBe(true);
     });
   });
-  
+
   describe("TextDecoder", () => {
     // test/bun.js/text-decoder.test.js covers test cases for TextDecoder
     // here we test only if we use the same via util.TextDecoder

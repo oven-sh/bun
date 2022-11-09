@@ -8,7 +8,7 @@ it("Database.open", () => {
   try {
     Database.open(
       "/this/database/does/not/exist.sqlite",
-      constants.SQLITE_OPEN_READWRITE
+      constants.SQLITE_OPEN_READWRITE,
     );
     throw new Error("Expected an error to be thrown");
   } catch (error) {
@@ -19,7 +19,7 @@ it("Database.open", () => {
   try {
     Database.open(
       `/tmp/database-${Math.random()}.sqlite`,
-      constants.SQLITE_OPEN_READWRITE
+      constants.SQLITE_OPEN_READWRITE,
     );
     throw new Error("Expected an error to be thrown");
   } catch (error) {
@@ -58,10 +58,10 @@ it("Database.open", () => {
 it("creates", () => {
   const db = Database.open(":memory:");
   db.exec(
-    "CREATE TABLE test (id INTEGER PRIMARY KEY, name TEXT, value INTEGER, created TEXT, deci FLOAT, blobby BLOB)"
+    "CREATE TABLE test (id INTEGER PRIMARY KEY, name TEXT, value INTEGER, created TEXT, deci FLOAT, blobby BLOB)",
   );
   const stmt = db.prepare(
-    "INSERT INTO test (name, value, deci, created, blobby) VALUES (?, ?, ?, ?, ?)"
+    "INSERT INTO test (name, value, deci, created, blobby) VALUES (?, ?, ?, ?, ?)",
   );
 
   stmt.run([
@@ -97,7 +97,7 @@ it("creates", () => {
       created: new Date(1995, 12, 19).toISOString(),
       deci: Math.fround(1.111),
       blobby: encode("Hello World"),
-    })
+    }),
   );
 
   expect(JSON.stringify(stmt2.all())).toBe(
@@ -126,7 +126,7 @@ it("creates", () => {
         deci: Math.fround(3.333),
         blobby: encode("Hello World"),
       },
-    ])
+    ]),
   );
   expect(stmt2.run()).toBe(undefined);
 
@@ -193,7 +193,7 @@ it("db.query supports TypedArray", () => {
     JSON.stringify({
       id: 1,
       blobby: encode("Hello World"),
-    })
+    }),
   );
 
   const stmt3 = db.prepare("SELECT * FROM test WHERE (blobby = ?)");
@@ -202,20 +202,20 @@ it("db.query supports TypedArray", () => {
     JSON.stringify({
       id: 1,
       blobby: encode("Hello World"),
-    })
+    }),
   );
 
   expect(
     JSON.stringify(
       db
         .query("SELECT * FROM test WHERE (blobby = ?)")
-        .get([encode("Hello World")])
-    )
+        .get([encode("Hello World")]),
+    ),
   ).toBe(
     JSON.stringify({
       id: 1,
       blobby: encode("Hello World"),
-    })
+    }),
   );
 
   expect(stmt3.get([encode("Hello World NOT")])).toBe(null);
@@ -235,7 +235,7 @@ it("supports serialize/deserialize", () => {
     JSON.stringify({
       id: 1,
       name: "Hello",
-    })
+    }),
   );
 
   expect(JSON.stringify(stmt.all())).toBe(
@@ -248,7 +248,7 @@ it("supports serialize/deserialize", () => {
         id: 2,
         name: "World",
       },
-    ])
+    ]),
   );
   db2.exec("insert into test (name) values ('foo')");
   expect(JSON.stringify(stmt.all())).toBe(
@@ -265,7 +265,7 @@ it("supports serialize/deserialize", () => {
         id: 3,
         name: "foo",
       },
-    ])
+    ]),
   );
 
   const db3 = new Database(input, { readonly: true });
@@ -334,15 +334,15 @@ it("db.query()", () => {
     JSON.stringify(
       db
         .query("SELECT * FROM test where (name = ? OR name = ?)")
-        .all(["Hello", "Fooooo"])
-    )
+        .all(["Hello", "Fooooo"]),
+    ),
   ).toBe(JSON.stringify([{ id: 1, name: "Hello" }]));
   expect(
     JSON.stringify(
       db
         .query("SELECT * FROM test where (name = ? OR name = ?)")
-        .all("Hello", "Fooooo")
-    )
+        .all("Hello", "Fooooo"),
+    ),
   ).toBe(JSON.stringify([{ id: 1, name: "Hello" }]));
 
   // throws if insufficeint arguments
@@ -360,8 +360,8 @@ it("db.query()", () => {
         .all({
           $hello: "Hello",
           $goodbye: "Fooooo",
-        })
-    )
+        }),
+    ),
   ).toBe(JSON.stringify([{ id: 1, name: "Hello" }]));
 
   db.close();
@@ -386,11 +386,11 @@ it("db.transaction()", () => {
   const db = Database.open(":memory:");
 
   db.exec(
-    "CREATE TABLE cats (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT UNIQUE, age INTEGER)"
+    "CREATE TABLE cats (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT UNIQUE, age INTEGER)",
   );
 
   const insert = db.prepare(
-    "INSERT INTO cats (name, age) VALUES (@name, @age)"
+    "INSERT INTO cats (name, age) VALUES (@name, @age)",
   );
 
   expect(db.inTransaction).toBe(false);

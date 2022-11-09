@@ -119,7 +119,7 @@ declare module "fs/promises" {
   function copyFile(
     src: PathLike,
     dest: PathLike,
-    mode?: number
+    mode?: number,
   ): Promise<void>;
   /**
    * Opens a `FileHandle`.
@@ -162,7 +162,7 @@ declare module "fs/promises" {
     path: PathLike,
     options: MakeDirectoryOptions & {
       recursive: true;
-    }
+    },
   ): Promise<string | undefined>;
   /**
    * Asynchronous mkdir(2) - create a directory.
@@ -177,7 +177,7 @@ declare module "fs/promises" {
       | (MakeDirectoryOptions & {
           recursive?: false | undefined;
         })
-      | null
+      | null,
   ): Promise<void>;
   /**
    * Asynchronous mkdir(2) - create a directory.
@@ -187,7 +187,7 @@ declare module "fs/promises" {
    */
   function mkdir(
     path: PathLike,
-    options?: Mode | MakeDirectoryOptions | null | undefined
+    options?: Mode | MakeDirectoryOptions | null | undefined,
   ): Promise<string | undefined>;
   /**
    * Reads the contents of a directory.
@@ -221,7 +221,7 @@ declare module "fs/promises" {
         })
       | BufferEncoding
       | undefined
-      | null
+      | null,
   ): Promise<string[]>;
   /**
    * Asynchronous readdir(3) - read a directory.
@@ -235,7 +235,7 @@ declare module "fs/promises" {
           encoding: "buffer";
           withFileTypes?: false | undefined;
         }
-      | "buffer"
+      | "buffer",
   ): Promise<Buffer[]>;
   /**
    * Asynchronous readdir(3) - read a directory.
@@ -249,7 +249,7 @@ declare module "fs/promises" {
           withFileTypes?: false | undefined;
         })
       | BufferEncoding
-      | null
+      | null,
   ): Promise<string[] | Buffer[]>;
   /**
    * Asynchronous readdir(3) - read a directory.
@@ -260,7 +260,7 @@ declare module "fs/promises" {
     path: PathLike,
     options: ObjectEncodingOptions & {
       withFileTypes: true;
-    }
+    },
   ): Promise<Dirent[]>;
   /**
    * Reads the contents of the symbolic link referred to by `path`. See the POSIX [`readlink(2)`](http://man7.org/linux/man-pages/man2/readlink.2.html) documentation for more detail. The promise is
@@ -275,7 +275,7 @@ declare module "fs/promises" {
    */
   function readlink(
     path: PathLike,
-    options?: EncodingOption | BufferEncoding | null
+    options?: EncodingOption | BufferEncoding | null,
   ): Promise<string>;
   /**
    * Asynchronous readlink(2) - read value of a symbolic link.
@@ -284,7 +284,7 @@ declare module "fs/promises" {
    */
   function readlink(
     path: PathLike,
-    options: BufferEncodingOption
+    options: BufferEncodingOption,
   ): Promise<Buffer>;
   /**
    * Asynchronous readlink(2) - read value of a symbolic link.
@@ -293,7 +293,7 @@ declare module "fs/promises" {
    */
   function readlink(
     path: PathLike,
-    options?: EncodingOption | string | null
+    options?: EncodingOption | string | null,
   ): Promise<string | Buffer>;
   /**
    * Creates a symbolic link.
@@ -308,7 +308,7 @@ declare module "fs/promises" {
   function symlink(
     target: PathLike,
     path: PathLike,
-    type?: SimlinkType
+    type?: SimlinkType,
   ): Promise<void>;
   /**
    * Equivalent to `fsPromises.stat()` unless `path` refers to a symbolic link,
@@ -323,17 +323,17 @@ declare module "fs/promises" {
       | (StatOptions & {
           bigint?: false | undefined;
         })
-      | undefined
+      | undefined,
   ): Promise<Stats>;
   function lstat(
     path: PathLike,
     options: StatOptions & {
       bigint: true;
-    }
+    },
   ): Promise<BigIntStats>;
   function lstat(
     path: PathLike,
-    options?: StatOptions
+    options?: StatOptions,
   ): Promise<Stats | BigIntStats>;
   /**
    * @since v0.0.67
@@ -345,17 +345,17 @@ declare module "fs/promises" {
       | (StatOptions & {
           bigint?: false | undefined;
         })
-      | undefined
+      | undefined,
   ): Promise<Stats>;
   function stat(
     path: PathLike,
     options: StatOptions & {
       bigint: true;
-    }
+    },
   ): Promise<BigIntStats>;
   function stat(
     path: PathLike,
-    options?: StatOptions
+    options?: StatOptions,
   ): Promise<Stats | BigIntStats>;
   /**
    * Creates a new link from the `existingPath` to the `newPath`. See the POSIX [`link(2)`](http://man7.org/linux/man-pages/man2/link.2.html) documentation for more detail.
@@ -400,7 +400,7 @@ declare module "fs/promises" {
   function lutimes(
     path: PathLike,
     atime: TimeLike,
-    mtime: TimeLike
+    mtime: TimeLike,
   ): Promise<void>;
   /**
    * Changes the ownership of a file.
@@ -422,7 +422,7 @@ declare module "fs/promises" {
   function utimes(
     path: PathLike,
     atime: TimeLike,
-    mtime: TimeLike
+    mtime: TimeLike,
   ): Promise<void>;
   /**
    * Determines the actual location of `path` using the same semantics as the`fs.realpath.native()` function.
@@ -442,7 +442,7 @@ declare module "fs/promises" {
    */
   function realpath(
     path: PathLike,
-    options?: EncodingOption | null
+    options?: EncodingOption | null,
   ): Promise<string>;
   /**
    * Asynchronous realpath(3) - return the canonicalized absolute pathname.
@@ -451,7 +451,7 @@ declare module "fs/promises" {
    */
   function realpath(
     path: PathLike,
-    options: BufferEncodingOption
+    options: BufferEncodingOption,
   ): Promise<Buffer>;
   /**
    * Asynchronous realpath(3) - return the canonicalized absolute pathname.
@@ -460,7 +460,7 @@ declare module "fs/promises" {
    */
   function realpath(
     path: PathLike,
-    options?: EncodingOption | null
+    options?: EncodingOption | null,
   ): Promise<string | Buffer>;
   /**
    * Creates a unique temporary directory. A unique directory name is generated by
@@ -491,7 +491,7 @@ declare module "fs/promises" {
    */
   function mkdtemp(
     prefix: string,
-    options?: EncodingOption | null
+    options?: EncodingOption | null,
   ): Promise<string>;
   /**
    * Asynchronously creates a unique temporary directory.
@@ -500,7 +500,7 @@ declare module "fs/promises" {
    */
   function mkdtemp(
     prefix: string,
-    options: BufferEncodingOption
+    options: BufferEncodingOption,
   ): Promise<Buffer>;
   /**
    * Asynchronously creates a unique temporary directory.
@@ -509,7 +509,7 @@ declare module "fs/promises" {
    */
   function mkdtemp(
     prefix: string,
-    options?: EncodingOption | null
+    options?: EncodingOption | null,
   ): Promise<string | Buffer>;
   /**
    * Asynchronously writes data to a file, replacing the file if it already exists.`data` can be a string, a buffer, an
@@ -564,7 +564,7 @@ declare module "fs/promises" {
   function writeFile(
     file: PathOrFileDescriptor,
     data: string | ArrayBufferView | ArrayBufferLike,
-    options?: WriteFileOptions
+    options?: WriteFileOptions,
   ): Promise<void>;
   /**
    * Asynchronously append data to a file, creating the file if it does not yet
@@ -583,7 +583,7 @@ declare module "fs/promises" {
   function appendFile(
     path: PathOrFileDescriptor,
     data: string | Uint8Array,
-    options?: WriteFileOptions
+    options?: WriteFileOptions,
   ): Promise<void>;
   /**
    * Asynchronously reads the entire contents of a file.
@@ -634,7 +634,7 @@ declare module "fs/promises" {
           encoding?: null | undefined;
           flag?: string | undefined;
         } & Abortable)
-      | null
+      | null,
   ): Promise<Buffer>;
   /**
    * Asynchronously reads the entire contents of a file.
@@ -650,7 +650,7 @@ declare module "fs/promises" {
           encoding: BufferEncoding;
           flag?: OpenMode | undefined;
         } & Abortable)
-      | BufferEncoding
+      | BufferEncoding,
   ): Promise<string>;
   /**
    * Asynchronously reads the entire contents of a file.
@@ -667,7 +667,7 @@ declare module "fs/promises" {
             flag?: OpenMode | undefined;
           })
       | BufferEncoding
-      | null
+      | null,
   ): Promise<string | Buffer>;
 }
 

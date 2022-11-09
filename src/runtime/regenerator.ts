@@ -114,7 +114,7 @@ var runtime = (function (exports) {
   GeneratorFunction.displayName = define(
     GeneratorFunctionPrototype,
     toStringTagSymbol,
-    "GeneratorFunction"
+    "GeneratorFunction",
   );
 
   // Helper for defining the .next, .throw, and .return methods of the
@@ -175,7 +175,7 @@ var runtime = (function (exports) {
             },
             function (err) {
               invoke("throw", err, resolve, reject);
-            }
+            },
           );
         }
 
@@ -191,7 +191,7 @@ var runtime = (function (exports) {
             // If a rejected Promise was yielded, throw the rejection back
             // into the async generator function so it can be handled there.
             return invoke("throw", error, resolve, reject);
-          }
+          },
         );
       }
     }
@@ -223,7 +223,7 @@ var runtime = (function (exports) {
               callInvokeWithMethodAndArg,
               // Avoid propagating failures to Promises returned by later
               // invocations of the iterator.
-              callInvokeWithMethodAndArg
+              callInvokeWithMethodAndArg,
             )
           : callInvokeWithMethodAndArg());
     }
@@ -247,7 +247,7 @@ var runtime = (function (exports) {
 
     var iter = new AsyncIterator(
       wrap(innerFn, outerFn, self, tryLocsList),
-      PromiseImpl
+      PromiseImpl,
     );
 
     return exports.isGeneratorFunction(outerFn)
@@ -359,7 +359,7 @@ var runtime = (function (exports) {
 
         context.method = "throw";
         context.arg = new TypeError(
-          "The iterator does not provide a 'throw' method"
+          "The iterator does not provide a 'throw' method",
         );
       }
 
@@ -742,7 +742,7 @@ var runtime = (function (exports) {
   // as the regeneratorRuntime namespace. Otherwise create a new empty
   // object. Either way, the resulting object will be used to initialize
   // the regeneratorRuntime variable at the top of this file.
-  typeof module === "object" ? module.exports : {}
+  typeof module === "object" ? module.exports : {},
 );
 
 try {

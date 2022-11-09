@@ -90,13 +90,13 @@ describe("streaming", () => {
                 pull(controller) {
                   throw new Error("error");
                 },
-              })
+              }),
             );
           },
         });
 
         const response = await fetch(
-          `http://${server.hostname}:${server.port}`
+          `http://${server.hostname}:${server.port}`,
         );
         if (response.status > 0) {
           expect(response.status).toBe(500);
@@ -132,13 +132,13 @@ describe("streaming", () => {
                   controller.enqueue("such fail");
                   throw new Error("error");
                 },
-              })
+              }),
             );
           },
         });
 
         const response = await fetch(
-          `http://${server.hostname}:${server.port}`
+          `http://${server.hostname}:${server.port}`,
         );
         // connection terminated
         if (response.status > 0) {
@@ -167,7 +167,7 @@ describe("streaming", () => {
               controller.enqueue(textToExpect);
               controller.close();
             },
-          })
+          }),
         );
       },
     });
@@ -192,7 +192,7 @@ describe("streaming", () => {
               controller.enqueue(textToExpect.substring(100));
               controller.close();
             },
-          })
+          }),
         );
       },
     });
@@ -214,7 +214,7 @@ describe("streaming", () => {
               start(controller) {
                 throw new TestPass("Test Passed");
               },
-            })
+            }),
           );
         },
       });
@@ -260,7 +260,7 @@ describe("streaming", () => {
               start(controller) {
                 throw new TypeError("error");
               },
-            })
+            }),
           );
         },
       });
@@ -294,7 +294,7 @@ describe("streaming", () => {
                 controller.close();
               });
             },
-          })
+          }),
         );
       },
     });
@@ -316,7 +316,7 @@ describe("streaming", () => {
               controller.enqueue(textToExpect);
               controller.close();
             },
-          })
+          }),
         );
       },
     });
@@ -342,7 +342,7 @@ describe("streaming", () => {
                 controller.close();
               });
             },
-          })
+          }),
         );
       },
     });
@@ -367,7 +367,7 @@ describe("streaming", () => {
               await Promise.resolve();
               controller.close();
             },
-          })
+          }),
         );
       },
     });
@@ -396,7 +396,7 @@ describe("streaming", () => {
               controller.enqueue(remain);
               controller.close();
             },
-          })
+          }),
         );
       },
     });

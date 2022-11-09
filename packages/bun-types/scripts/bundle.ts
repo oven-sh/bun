@@ -23,7 +23,7 @@ try {
 
 const header = await file(join(import.meta.dir, "..", "header.txt")).text();
 const filesToCat = (await getDotTsFiles("./")).filter(
-  (f) => !["./index.d.ts"].some((tf) => f === tf)
+  (f) => !["./index.d.ts"].some((tf) => f === tf),
 );
 
 const fileContents: string[] = [];
@@ -35,7 +35,7 @@ for (let i = 0; i < filesToCat.length; i++) {
       name +
       "\n\n" +
       (await file(resolve(import.meta.dir, "..", name)).text()) +
-      "\n"
+      "\n",
   );
 }
 
@@ -59,12 +59,12 @@ const packageJSON = {
 
 await write(
   resolve(folder, "package.json"),
-  JSON.stringify(packageJSON, null, 2) + "\n"
+  JSON.stringify(packageJSON, null, 2) + "\n",
 );
 
 await write(
   resolve(folder, "README.md"),
-  file(resolve(import.meta.dir, "..", "README.md"))
+  file(resolve(import.meta.dir, "..", "README.md")),
 );
 
 export {};

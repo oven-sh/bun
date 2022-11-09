@@ -928,7 +928,7 @@ export function test() {
 
     console.assert(
       elements[rawKey] === key.codePointAt(0),
-      `${key} is not ${elements[rawKey]}`
+      `${key} is not ${elements[rawKey]}`,
     );
   }
 

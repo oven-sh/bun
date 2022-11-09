@@ -36,7 +36,7 @@ console.time("Check");
 
 console.log(
   "Is it a bug or a feature that formatting numbers like %d is colored",
-  123
+  123,
 );
 console.log(globalThis);
 
@@ -46,7 +46,7 @@ console.log(
   "456",
   "%s",
   "What",
-  "okay"
+  "okay",
 );
 
 const infinteLoop = {

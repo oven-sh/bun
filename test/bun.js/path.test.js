@@ -66,7 +66,7 @@ it("path.basename", () => {
   // On unix a backslash is just treated as any other character.
   strictEqual(
     path.posix.basename("\\dir\\basename.ext"),
-    "\\dir\\basename.ext"
+    "\\dir\\basename.ext",
   );
   strictEqual(path.posix.basename("\\basename.ext"), "\\basename.ext");
   strictEqual(path.posix.basename("basename.ext"), "basename.ext");
@@ -79,7 +79,7 @@ it("path.basename", () => {
   const controlCharFilename = `Icon${String.fromCharCode(13)}`;
   strictEqual(
     path.posix.basename(`/a/b/${controlCharFilename}`),
-    controlCharFilename
+    controlCharFilename,
   );
 });
 
@@ -215,7 +215,7 @@ it("path.join", () => {
         if (actual !== expected && actualAlt !== expected) {
           const delimiter = test[0].map(JSON.stringify).join(",");
           const message = `path.${os}.join(${delimiter})\n  expect=${JSON.stringify(
-            expected
+            expected,
           )}\n  actual=${JSON.stringify(actual)}`;
           failures.push(`\n${message}`);
         }
@@ -295,7 +295,7 @@ it("path.relative", () => {
           .slice(0, 2)
           .map(JSON.stringify)
           .join(",")})\n  expect=${JSON.stringify(
-          expected
+          expected,
         )}\n  actual=${JSON.stringify(actual)}`;
         failures.push(`\n${message}`);
       }
@@ -355,7 +355,7 @@ it("path.normalize", () => {
 
   strictEqual(
     path.posix.normalize("./fixtures///b/../b/c.js"),
-    "fixtures/b/c.js"
+    "fixtures/b/c.js",
   );
   strictEqual(path.posix.normalize("/foo/../../../bar"), "/bar");
   strictEqual(path.posix.normalize("a//b//../b"), "a/b");
@@ -372,19 +372,19 @@ it("path.normalize", () => {
   strictEqual(path.posix.normalize("../.../.././.../../../bar"), "../../bar");
   strictEqual(
     path.posix.normalize("../../../foo/../../../bar"),
-    "../../../../../bar"
+    "../../../../../bar",
   );
   strictEqual(
     path.posix.normalize("../../../foo/../../../bar/../../"),
-    "../../../../../../"
+    "../../../../../../",
   );
   strictEqual(
     path.posix.normalize("../foobar/barfoo/foo/../../../bar/../../"),
-    "../../"
+    "../../",
   );
   strictEqual(
     path.posix.normalize("../.../../foobar/../../../bar/../../baz"),
-    "../../../../baz"
+    "../../../../baz",
   );
   strictEqual(path.posix.normalize("foo/bar\\baz"), "foo/bar\\baz");
 });
@@ -446,7 +446,7 @@ it("path.resolve", () => {
       const message = `path.${os}.resolve(${test
         .map(JSON.stringify)
         .join(",")})\n  expect=${JSON.stringify(
-        expected
+        expected,
       )}\n  actual=${JSON.stringify(actual)}`;
       if (actual !== expected && actualAlt !== expected) failures.push(message);
     });

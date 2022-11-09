@@ -137,7 +137,7 @@ export function spawn(file, args, options) {
     } else {
       signal.addEventListener("abort", onAbortListener, { once: true });
       child.once("exit", () =>
-        signal.removeEventListener("abort", onAbortListener)
+        signal.removeEventListener("abort", onAbortListener),
       );
     }
 
@@ -178,7 +178,7 @@ export function execFile(file, args, options, callback) {
     file,
     args,
     options,
-    callback
+    callback,
   ));
 
   options = {
@@ -332,7 +332,7 @@ export function execFile(file, args, options, callback) {
               const truncatedLen = maxBuffer - (encodedStdoutLen - actualLen);
               ArrayPrototypePush.call(
                 _stdout,
-                StringPrototypeSlice.apply(chunk, 0, truncatedLen)
+                StringPrototypeSlice.apply(chunk, 0, truncatedLen),
               );
 
               ex = new ERR_CHILD_PROCESS_STDIO_MAXBUFFER("stdout");
@@ -353,7 +353,7 @@ export function execFile(file, args, options, callback) {
             } else {
               ArrayPrototypePush.call(_stdout, chunk);
             }
-          }
+          },
     );
   }
 
@@ -383,7 +383,7 @@ export function execFile(file, args, options, callback) {
               const truncatedLen = maxBuffer - (encodedStderrLen - actualLen);
               ArrayPrototypePush.call(
                 _stderr,
-                StringPrototypeSlice.call(chunk, 0, truncatedLen)
+                StringPrototypeSlice.call(chunk, 0, truncatedLen),
               );
 
               ex = new ERR_CHILD_PROCESS_STDIO_MAXBUFFER("stderr");
@@ -399,7 +399,7 @@ export function execFile(file, args, options, callback) {
               const truncatedLen = maxBuffer - (stderrLen - chunk.length);
               ArrayPrototypePush.call(
                 _stderr,
-                StringPrototypeSlice.call(chunk, 0, truncatedLen)
+                StringPrototypeSlice.call(chunk, 0, truncatedLen),
               );
 
               ex = new ERR_CHILD_PROCESS_STDIO_MAXBUFFER("stderr");
@@ -407,7 +407,7 @@ export function execFile(file, args, options, callback) {
             } else {
               ArrayPrototypePush.call(_stderr, chunk);
             }
-          }
+          },
     );
   }
 
@@ -651,7 +651,7 @@ function sanitizeKillSignal(killSignal) {
     throw new ERR_INVALID_ARG_TYPE(
       "options.killSignal",
       ["string", "number"],
-      killSignal
+      killSignal,
     );
   }
 }
@@ -771,7 +771,7 @@ function normalizeSpawnArguments(file, args, options) {
     throw new ERR_INVALID_ARG_TYPE(
       "options.shell",
       ["boolean", "string"],
-      options.shell
+      options.shell,
     );
   }
 
@@ -1257,7 +1257,7 @@ function validateMaxBuffer(maxBuffer) {
     throw new ERR_OUT_OF_RANGE(
       "options.maxBuffer",
       "a positive number",
-      maxBuffer
+      maxBuffer,
     );
   }
 }
@@ -1267,7 +1267,7 @@ function validateArgumentNullCheck(arg, propName) {
     throw new ERR_INVALID_ARG_VALUE(
       propName,
       arg,
-      "must be a string without null bytes"
+      "must be a string without null bytes",
     );
   }
 }
@@ -1332,9 +1332,9 @@ const validateOneOf = (value, name, oneOf) => {
   if (!ArrayPrototypeIncludes.call(oneOf, value)) {
     const allowed = ArrayPrototypeJoin.call(
       ArrayPrototypeMap.call(oneOf, (v) =>
-        typeof v === "string" ? `'${v}'` : String(v)
+        typeof v === "string" ? `'${v}'` : String(v),
       ),
-      ", "
+      ", ",
     );
     const reason = "must be one of: " + allowed;
     throw new ERR_INVALID_ARG_VALUE(name, value, reason);
@@ -1417,7 +1417,7 @@ function nullCheck(path, propName, throwError = true) {
   const err = new ERR_INVALID_ARG_VALUE(
     propName,
     path,
-    "must be a string or Uint8Array without null bytes"
+    "must be a string or Uint8Array without null bytes",
   );
   if (throwError) {
     throw err;
@@ -1672,7 +1672,7 @@ function ERR_OUT_OF_RANGE(str, range, input, replaceDefaultBoolean = false) {
   // msg += ` It must be ${range}. Received ${received}`;
   // return new RangeError(msg);
   return new RangeError(
-    `The value of ${str} is out of range. It must be ${range}. Received ${input}`
+    `The value of ${str} is out of range. It must be ${range}. Received ${input}`,
   );
 }
 
@@ -1688,7 +1688,7 @@ function ERR_UNKNOWN_SIGNAL(name) {
 
 function ERR_INVALID_ARG_TYPE(name, type, value) {
   const err = new TypeError(
-    `The "${name}" argument must be of type ${type}. Received ${value}`
+    `The "${name}" argument must be of type ${type}. Received ${value}`,
   );
   err.code = "ERR_INVALID_ARG_TYPE";
   return err;
@@ -1700,7 +1700,7 @@ function ERR_INVALID_OPT_VALUE(name, value) {
 
 function ERR_INVALID_ARG_VALUE(name, value, reason) {
   return new Error(
-    `The value "${value}" is invalid for argument '${name}'. Reason: ${reason}`
+    `The value "${value}" is invalid for argument '${name}'. Reason: ${reason}`,
   );
 }
 

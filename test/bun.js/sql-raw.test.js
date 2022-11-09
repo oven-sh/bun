@@ -8,10 +8,10 @@ it("works", () => {
 
   const stmt = SQL.prepare(
     handle,
-    'SELECT * FROM "Orders" WHERE OrderDate > date($date)'
+    'SELECT * FROM "Orders" WHERE OrderDate > date($date)',
   );
   expect(stmt.toString()).toBe(
-    `SELECT * FROM "Orders" WHERE OrderDate > date(NULL)`
+    `SELECT * FROM "Orders" WHERE OrderDate > date(NULL)`,
   );
 
   expect(
@@ -19,37 +19,37 @@ it("works", () => {
       stmt.all({
         // do the conversion this way so that this test runs in multiple timezones
         $date: new Date(
-          new Date(1996, 8, 1, 0, 0, 0, 0).toUTCString()
+          new Date(1996, 8, 1, 0, 0, 0, 0).toUTCString(),
         ).toISOString(),
-      })
-    )
+      }),
+    ),
   ).toBe(true);
   expect(stmt.toString()).toBe(
-    `SELECT * FROM "Orders" WHERE OrderDate > date('1996-09-01T07:00:00.000Z')`
+    `SELECT * FROM "Orders" WHERE OrderDate > date('1996-09-01T07:00:00.000Z')`,
   );
 
   var ran = stmt.run({
     $date: new Date(
-      new Date(1997, 8, 1, 0, 0, 0, 0).toUTCString()
+      new Date(1997, 8, 1, 0, 0, 0, 0).toUTCString(),
     ).toISOString(),
   });
   expect(Array.isArray(ran)).toBe(false);
   expect(ran === undefined).toBe(true);
   expect(stmt.toString()).toBe(
-    `SELECT * FROM "Orders" WHERE OrderDate > date('1997-09-01T07:00:00.000Z')`
+    `SELECT * FROM "Orders" WHERE OrderDate > date('1997-09-01T07:00:00.000Z')`,
   );
 
   expect(
     Array.isArray(
       stmt.get({
         $date: new Date(
-          new Date(1998, 8, 1, 0, 0, 0, 0).toUTCString()
+          new Date(1998, 8, 1, 0, 0, 0, 0).toUTCString(),
         ).toISOString(),
-      })
-    )
+      }),
+    ),
   ).toBe(false);
   expect(stmt.toString()).toBe(
-    `SELECT * FROM "Orders" WHERE OrderDate > date('1998-09-01T07:00:00.000Z')`
+    `SELECT * FROM "Orders" WHERE OrderDate > date('1998-09-01T07:00:00.000Z')`,
   );
   expect(stmt.paramsCount).toBe(1);
   expect(stmt.columnsCount).toBe(14);
@@ -65,7 +65,7 @@ it("SQL.run works", () => {
   expect(
     SQL.run(handle, 'SELECT * FROM "Orders" WHERE OrderDate > date($date)', {
       $date: new Date(1996, 8, 1).toISOString(),
-    })
+    }),
   ).toBe(undefined);
 
   SQL.close(handle);

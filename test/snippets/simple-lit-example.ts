@@ -13,7 +13,7 @@ if (document?.readyState === "loading") {
     () => {
       loadedResolve();
     },
-    { once: true }
+    { once: true },
   );
 } else {
   loadedResolve();

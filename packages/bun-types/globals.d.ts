@@ -324,7 +324,7 @@ interface Headers {
   values(): IterableIterator<string>;
   forEach(
     callbackfn: (value: string, key: string, parent: Headers) => void,
-    thisArg?: any
+    thisArg?: any,
   ): void;
 }
 
@@ -418,7 +418,7 @@ interface ResponseInit {
 declare class Response implements BlobInterface {
   constructor(
     body?: ReadableStream | BlobPart | BlobPart[] | null,
-    options?: ResponseInit
+    options?: ResponseInit,
   );
 
   /**
@@ -919,7 +919,7 @@ declare class TextDecoder {
 
   constructor(
     encoding?: Encoding,
-    options?: { fatal?: boolean; ignoreBOM?: boolean }
+    options?: { fatal?: boolean; ignoreBOM?: boolean },
   );
 
   /**
@@ -1082,7 +1082,7 @@ declare function fetch(
      * removed in a future version of Bun without notice.
      */
     verbose: boolean;
-  }
+  },
 ): Promise<Response>;
 
 /**
@@ -1109,7 +1109,7 @@ declare function fetch(
      * removed in a future version of Bun without notice.
      */
     verbose: boolean;
-  }
+  },
 ): Promise<Response>;
 
 declare function queueMicrotask(callback: (...args: any[]) => void): void;
@@ -1141,22 +1141,22 @@ declare function setTimeout(
 declare function addEventListener<K extends keyof EventMap>(
   type: K,
   listener: (this: object, ev: EventMap[K]) => any,
-  options?: boolean | AddEventListenerOptions
+  options?: boolean | AddEventListenerOptions,
 ): void;
 declare function addEventListener(
   type: string,
   listener: EventListenerOrEventListenerObject,
-  options?: boolean | AddEventListenerOptions
+  options?: boolean | AddEventListenerOptions,
 ): void;
 declare function removeEventListener<K extends keyof EventMap>(
   type: K,
   listener: (this: object, ev: EventMap[K]) => any,
-  options?: boolean | EventListenerOptions
+  options?: boolean | EventListenerOptions,
 ): void;
 declare function removeEventListener(
   type: string,
   listener: EventListenerOrEventListenerObject,
-  options?: boolean | EventListenerOptions
+  options?: boolean | EventListenerOptions,
 ): void;
 
 // -----------------------
@@ -1269,7 +1269,7 @@ interface EventTarget {
   addEventListener(
     type: string,
     callback: EventListenerOrEventListenerObject | null,
-    options?: AddEventListenerOptions | boolean
+    options?: AddEventListenerOptions | boolean,
   ): void;
   /** Dispatches a synthetic event event to target and returns true if either event's cancelable attribute value is false or its preventDefault() method was not invoked, and false otherwise. */
   dispatchEvent(event: Event): boolean;
@@ -1277,7 +1277,7 @@ interface EventTarget {
   removeEventListener(
     type: string,
     callback: EventListenerOrEventListenerObject | null,
-    options?: EventListenerOptions | boolean
+    options?: EventListenerOptions | boolean,
   ): void;
 }
 
@@ -1442,7 +1442,7 @@ interface MessageEvent<T = any> extends Event {
     data?: any,
     origin?: string,
     lastEventId?: string,
-    source?: null
+    source?: null,
   ): void;
 }
 
@@ -1498,22 +1498,22 @@ interface WebSocket extends EventTarget {
   addEventListener<K extends keyof WebSocketEventMap>(
     type: K,
     listener: (this: WebSocket, ev: WebSocketEventMap[K]) => any,
-    options?: boolean | AddEventListenerOptions
+    options?: boolean | AddEventListenerOptions,
   ): void;
   addEventListener(
     type: string,
     listener: EventListenerOrEventListenerObject,
-    options?: boolean | AddEventListenerOptions
+    options?: boolean | AddEventListenerOptions,
   ): void;
   removeEventListener<K extends keyof WebSocketEventMap>(
     type: K,
     listener: (this: WebSocket, ev: WebSocketEventMap[K]) => any,
-    options?: boolean | EventListenerOptions
+    options?: boolean | EventListenerOptions,
   ): void;
   removeEventListener(
     type: string,
     listener: EventListenerOrEventListenerObject,
-    options?: boolean | EventListenerOptions
+    options?: boolean | EventListenerOptions,
   ): void;
 }
 
@@ -1568,7 +1568,7 @@ interface URLSearchParams {
   values(): IterableIterator<string>;
   forEach(
     callbackfn: (value: string, key: string, parent: URLSearchParams) => void,
-    thisArg?: any
+    thisArg?: any,
   ): void;
   /** Returns a string containing a query string suitable for use in a URL. Does not include the question mark. */
   toString(): string;
@@ -1577,7 +1577,7 @@ interface URLSearchParams {
 declare var URLSearchParams: {
   prototype: URLSearchParams;
   new (
-    init?: string[][] | Record<string, string> | string | URLSearchParams
+    init?: string[][] | Record<string, string> | string | URLSearchParams,
   ): URLSearchParams;
   toString(): string;
 };
@@ -1639,22 +1639,22 @@ interface AbortSignal extends EventTarget {
   addEventListener<K extends keyof AbortSignalEventMap>(
     type: K,
     listener: (this: AbortSignal, ev: AbortSignalEventMap[K]) => any,
-    options?: boolean | AddEventListenerOptions
+    options?: boolean | AddEventListenerOptions,
   ): void;
   addEventListener(
     type: string,
     listener: EventListenerOrEventListenerObject,
-    options?: boolean | AddEventListenerOptions
+    options?: boolean | AddEventListenerOptions,
   ): void;
   removeEventListener<K extends keyof AbortSignalEventMap>(
     type: K,
     listener: (this: AbortSignal, ev: AbortSignalEventMap[K]) => any,
-    options?: boolean | EventListenerOptions
+    options?: boolean | EventListenerOptions,
   ): void;
   removeEventListener(
     type: string,
     listener: EventListenerOrEventListenerObject,
-    options?: boolean | EventListenerOptions
+    options?: boolean | EventListenerOptions,
   ): void;
 }
 
@@ -1781,16 +1781,16 @@ interface ReadableStream<R = any> {
   getReader(): ReadableStreamDefaultReader<R>;
   pipeThrough<T>(
     transform: ReadableWritablePair<T, R>,
-    options?: StreamPipeOptions
+    options?: StreamPipeOptions,
   ): ReadableStream<T>;
   pipeTo(
     destination: WritableStream<R>,
-    options?: StreamPipeOptions
+    options?: StreamPipeOptions,
   ): Promise<void>;
   tee(): [ReadableStream<R>, ReadableStream<R>];
   forEach(
     callbackfn: (value: any, key: number, parent: ReadableStream<R>) => void,
-    thisArg?: any
+    thisArg?: any,
   ): void;
   [Symbol.asyncIterator](): AsyncIterableIterator<R>;
   values(options?: { preventCancel: boolean }): AsyncIterableIterator<R>;
@@ -1800,7 +1800,7 @@ declare var ReadableStream: {
   prototype: ReadableStream;
   new <R = any>(
     underlyingSource?: DirectUnderlyingSource<R> | UnderlyingSource<R>,
-    strategy?: QueuingStrategy<R>
+    strategy?: QueuingStrategy<R>,
   ): ReadableStream<R>;
 };
 
@@ -1897,7 +1897,7 @@ declare var WritableStream: {
   prototype: WritableStream;
   new <W = any>(
     underlyingSink?: UnderlyingSink<W>,
-    strategy?: QueuingStrategy<W>
+    strategy?: QueuingStrategy<W>,
   ): WritableStream<W>;
 };
 
@@ -1940,7 +1940,7 @@ interface TransformerStartCallback<O> {
 interface TransformerTransformCallback<I, O> {
   (
     chunk: I,
-    controller: TransformStreamDefaultController<O>
+    controller: TransformStreamDefaultController<O>,
   ): void | PromiseLike<void>;
 }
 
@@ -1959,7 +1959,7 @@ interface UnderlyingSinkStartCallback {
 interface UnderlyingSinkWriteCallback<W> {
   (
     chunk: W,
-    controller: WritableStreamDefaultController
+    controller: WritableStreamDefaultController,
   ): void | PromiseLike<void>;
 }
 
@@ -1986,7 +1986,7 @@ interface UnderlyingSource<R = any> {
 interface DirectUnderlyingSource<R = any> {
   cancel?: UnderlyingSourceCancelCallback;
   pull: (
-    controller: ReadableStreamDirectController
+    controller: ReadableStreamDirectController,
   ) => void | PromiseLike<void>;
   type: "direct";
 }
@@ -2014,7 +2014,7 @@ declare var TransformStream: {
   new <I = any, O = any>(
     transformer?: Transformer<I, O>,
     writableStrategy?: QueuingStrategy<I>,
-    readableStrategy?: QueuingStrategy<O>
+    readableStrategy?: QueuingStrategy<O>,
   ): TransformStream<I, O>;
 };
 
@@ -2272,7 +2272,7 @@ interface SubtleCrypto {
       | AesCbcParams
       | AesGcmParams,
     key: CryptoKey,
-    data: BufferSource
+    data: BufferSource,
   ): Promise<ArrayBuffer>;
   deriveBits(
     algorithm:
@@ -2281,7 +2281,7 @@ interface SubtleCrypto {
       | HkdfParams
       | Pbkdf2Params,
     baseKey: CryptoKey,
-    length: number
+    length: number,
   ): Promise<ArrayBuffer>;
   deriveKey(
     algorithm:
@@ -2297,11 +2297,11 @@ interface SubtleCrypto {
       | HkdfParams
       | Pbkdf2Params,
     extractable: boolean,
-    keyUsages: KeyUsage[]
+    keyUsages: KeyUsage[],
   ): Promise<CryptoKey>;
   digest(
     algorithm: AlgorithmIdentifier,
-    data: BufferSource
+    data: BufferSource,
   ): Promise<ArrayBuffer>;
   encrypt(
     algorithm:
@@ -2311,27 +2311,27 @@ interface SubtleCrypto {
       | AesCbcParams
       | AesGcmParams,
     key: CryptoKey,
-    data: BufferSource
+    data: BufferSource,
   ): Promise<ArrayBuffer>;
   exportKey(format: "jwk", key: CryptoKey): Promise<JsonWebKey>;
   exportKey(
     format: Exclude<KeyFormat, "jwk">,
-    key: CryptoKey
+    key: CryptoKey,
   ): Promise<ArrayBuffer>;
   generateKey(
     algorithm: RsaHashedKeyGenParams | EcKeyGenParams,
     extractable: boolean,
-    keyUsages: ReadonlyArray<KeyUsage>
+    keyUsages: ReadonlyArray<KeyUsage>,
   ): Promise<CryptoKeyPair>;
   generateKey(
     algorithm: AesKeyGenParams | HmacKeyGenParams | Pbkdf2Params,
     extractable: boolean,
-    keyUsages: ReadonlyArray<KeyUsage>
+    keyUsages: ReadonlyArray<KeyUsage>,
   ): Promise<CryptoKey>;
   generateKey(
     algorithm: AlgorithmIdentifier,
     extractable: boolean,
-    keyUsages: KeyUsage[]
+    keyUsages: KeyUsage[],
   ): Promise<CryptoKeyPair | CryptoKey>;
   importKey(
     format: "jwk",
@@ -2343,7 +2343,7 @@ interface SubtleCrypto {
       | HmacImportParams
       | AesKeyAlgorithm,
     extractable: boolean,
-    keyUsages: ReadonlyArray<KeyUsage>
+    keyUsages: ReadonlyArray<KeyUsage>,
   ): Promise<CryptoKey>;
   importKey(
     format: Exclude<KeyFormat, "jwk">,
@@ -2355,12 +2355,12 @@ interface SubtleCrypto {
       | HmacImportParams
       | AesKeyAlgorithm,
     extractable: boolean,
-    keyUsages: KeyUsage[]
+    keyUsages: KeyUsage[],
   ): Promise<CryptoKey>;
   sign(
     algorithm: AlgorithmIdentifier | RsaPssParams | EcdsaParams,
     key: CryptoKey,
-    data: BufferSource
+    data: BufferSource,
   ): Promise<ArrayBuffer>;
   unwrapKey(
     format: KeyFormat,
@@ -2379,13 +2379,13 @@ interface SubtleCrypto {
       | HmacImportParams
       | AesKeyAlgorithm,
     extractable: boolean,
-    keyUsages: KeyUsage[]
+    keyUsages: KeyUsage[],
   ): Promise<CryptoKey>;
   verify(
     algorithm: AlgorithmIdentifier | RsaPssParams | EcdsaParams,
     key: CryptoKey,
     signature: BufferSource,
-    data: BufferSource
+    data: BufferSource,
   ): Promise<boolean>;
   wrapKey(
     format: KeyFormat,
@@ -2396,7 +2396,7 @@ interface SubtleCrypto {
       | RsaOaepParams
       | AesCtrParams
       | AesCbcParams
-      | AesGcmParams
+      | AesGcmParams,
   ): Promise<ArrayBuffer>;
 }
 

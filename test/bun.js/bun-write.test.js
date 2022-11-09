@@ -6,14 +6,14 @@ import { gcTick } from "./gc";
 it("Bun.write blob", async () => {
   await Bun.write(
     Bun.file("/tmp/response-file.test.txt"),
-    Bun.file(path.join(import.meta.dir, "fetch.js.txt"))
+    Bun.file(path.join(import.meta.dir, "fetch.js.txt")),
   );
   await gcTick();
   await Bun.write(Bun.file("/tmp/response-file.test.txt"), "blah blah blha");
   await gcTick();
   await Bun.write(
     Bun.file("/tmp/response-file.test.txt"),
-    new Uint32Array(1024)
+    new Uint32Array(1024),
   );
   await gcTick();
   await Bun.write("/tmp/response-file.test.txt", new Uint32Array(1024));
@@ -21,8 +21,8 @@ it("Bun.write blob", async () => {
   expect(
     await Bun.write(
       new TextEncoder().encode("/tmp/response-file.test.txt"),
-      new Uint32Array(1024)
-    )
+      new Uint32Array(1024),
+    ),
   ).toBe(new Uint32Array(1024).byteLength);
   await gcTick();
 });
@@ -32,7 +32,7 @@ describe("large file", () => {
     [
       `/tmp/bun-test-large-file-${Date.now()}.txt`,
       "https://www.iana.org/assignments/media-types/media-types.xhtml,".repeat(
-        10000
+        10000,
       ),
     ],
   ];
@@ -59,8 +59,8 @@ describe("large file", () => {
       expect(written).toBe(bytes.byteLength);
       expect(
         new Buffer(await Bun.file(filename + ".bytes").arrayBuffer()).equals(
-          bytes
-        )
+          bytes,
+        ),
       ).toBe(true);
 
       try {
@@ -130,7 +130,7 @@ it("Bun.file -> Bun.file", async () => {
   {
     const result = await Bun.write(
       Bun.file("/tmp/fetch.js.out"),
-      Bun.file("/tmp/fetch.js.in")
+      Bun.file("/tmp/fetch.js.in"),
     );
     await gcTick();
     expect(await Bun.file("/tmp/fetch.js.out").text()).toBe(text);
@@ -140,10 +140,10 @@ it("Bun.file -> Bun.file", async () => {
   {
     await Bun.write(
       Bun.file("/tmp/fetch.js.in").slice(0, (text.length / 2) | 0),
-      Bun.file("/tmp/fetch.js.out")
+      Bun.file("/tmp/fetch.js.out"),
     );
     expect(await Bun.file("/tmp/fetch.js.in").text()).toBe(
-      text.substring(0, (text.length / 2) | 0)
+      text.substring(0, (text.length / 2) | 0),
     );
   }
 
@@ -266,8 +266,8 @@ it("Bun.write(Bun.stdout, new TextEncoder().encode('Bun.write STDOUT TEST'))", a
   expect(
     await Bun.write(
       Bun.stdout,
-      new TextEncoder().encode("\nBun.write STDOUT TEST\n\n")
-    )
+      new TextEncoder().encode("\nBun.write STDOUT TEST\n\n"),
+    ),
   ).toBe(24);
 });
 
@@ -275,8 +275,8 @@ it("Bun.write(Bun.stderr, 'new TextEncoder().encode(Bun.write STDERR TEST'))", a
   expect(
     await Bun.write(
       Bun.stderr,
-      new TextEncoder().encode("\nBun.write STDERR TEST\n\n")
-    )
+      new TextEncoder().encode("\nBun.write STDERR TEST\n\n"),
+    ),
   ).toBe(24);
 });
 
@@ -294,6 +294,6 @@ it("Bun.write('output.html', HTMLRewriter.transform(Bun.file)))", async () => {
   const outpath = `/tmp/html-rewriter.${Date.now()}.html`;
   await Bun.write(outpath, output);
   expect(await Bun.file(outpath).text()).toBe(
-    "<div><blink>it worked!</blink></div>"
+    "<div><blink>it worked!</blink></div>",
   );
 });

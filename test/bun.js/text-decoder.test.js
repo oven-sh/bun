@@ -24,7 +24,7 @@ describe("TextDecoder", () => {
     const result = [72, 101, 108, 108, 111, 32, 87, 111, 114, 108, 100, 33];
     gcTrace(true);
     expect(decoder.decode(Uint8Array.from(result))).toBe(
-      String.fromCharCode(...result)
+      String.fromCharCode(...result),
     );
     gcTrace(true);
   });

@@ -16,11 +16,7 @@ import {
   problemsToMarkdown,
   withBunInfo,
 } from "./markdown";
-import {
-  fetchAllMappings,
-  remapPosition,
-  sourceMappings,
-} from "./sourcemap";
+import { fetchAllMappings, remapPosition, sourceMappings } from "./sourcemap";
 
 export enum StackFrameScope {
   Eval = 1,
@@ -140,7 +136,7 @@ function hasColumnOrLine(filename: string) {
 function appendLineColumnIfNeeded(
   base: string,
   line?: number,
-  column?: number
+  column?: number,
 ) {
   if (hasColumnOrLine(base)) return base;
 
@@ -162,7 +158,7 @@ function appendLineColumn(base: string, line?: number, column?: number) {
 const blobFileURL = (
   filename: string,
   line?: number,
-  column?: number
+  column?: number,
 ): string => {
   var base = `/blob:${filename}`;
 
@@ -174,7 +170,7 @@ const blobFileURL = (
 const maybeBlobFileURL = (
   filename: string,
   line?: number,
-  column?: number
+  column?: number,
 ): string => {
   if (filename.includes(".bun")) {
     return blobFileURL(filename, line, column);
@@ -187,7 +183,9 @@ const maybeBlobFileURL = (
   return srcFileURL(filename, line, column);
 };
 
-const openWithoutFlashOfNewTab: React.MouseEventHandler<HTMLAnchorElement> = (event) => {
+const openWithoutFlashOfNewTab: React.MouseEventHandler<HTMLAnchorElement> = (
+  event,
+) => {
   const target = event.currentTarget;
   const href = target.getAttribute("href");
   if (!href || event.button !== 0) {
@@ -218,7 +216,7 @@ const openWithoutFlashOfNewTab: React.MouseEventHandler<HTMLAnchorElement> = (ev
     })
     .then(
       () => {},
-      (er) => {}
+      (er) => {},
     );
   return false;
 };
@@ -226,7 +224,7 @@ const openWithoutFlashOfNewTab: React.MouseEventHandler<HTMLAnchorElement> = (ev
 const srcFileURL = (
   filename: string,
   line?: number,
-  column?: number
+  column?: number,
 ): string => {
   if (filename.startsWith("http://") || filename.startsWith("https://"))
     return appendLineColumnIfNeeded(filename);
@@ -255,7 +253,7 @@ class FancyTypeError {
   constructor(exception: JSException) {
     this.runtimeType = exception.runtime_type || 0;
     this.runtimeTypeName = RuntimeType[this.runtimeType] || "undefined";
-    this.message = exception.message || '';
+    this.message = exception.message || "";
     this.explain = "";
 
     this.normalize(exception);
@@ -276,7 +274,7 @@ class FancyTypeError {
       this.runtimeTypeName = nextWord[0];
       this.runtimeTypeName = this.runtimeTypeName.substring(
         0,
-        this.runtimeTypeName.length - 1
+        this.runtimeTypeName.length - 1,
       );
       switch (this.runtimeTypeName.toLowerCase()) {
         case "undefined": {
@@ -316,7 +314,7 @@ class FancyTypeError {
       this.message = exception.message.substring(0, i);
       this.message = this.message.substring(
         0,
-        this.message.lastIndexOf("(In ")
+        this.message.lastIndexOf("(In "),
       );
     }
   }
@@ -380,11 +378,11 @@ const AsyncSourceLines = ({
         const lines = text.split("\n");
         const startLineNumber = Math.max(
           Math.min(Math.max(highlight - 4, 0), lines.length - 1),
-          0
+          0,
         );
         const endLineNumber = Math.min(startLineNumber + 8, lines.length);
         const sourceLines: SourceLine[] = new Array(
-          endLineNumber - startLineNumber
+          endLineNumber - startLineNumber,
         );
         var index = 0;
         for (let i = startLineNumber; i < endLineNumber; i++) {
@@ -399,7 +397,7 @@ const AsyncSourceLines = ({
         setSourceLines(
           index !== sourceLines.length
             ? sourceLines.slice(0, index)
-            : sourceLines
+            : sourceLines,
         );
         setLoadState(LoadState.loaded);
       })
@@ -524,7 +522,7 @@ const SourceLines = ({
           title={`Open line ${line} in editor`}
           href={buildURL(
             line,
-            classes.highlight ? highlightColumnStart : dedent
+            classes.highlight ? highlightColumnStart : dedent,
           )}
           onClickCapture={openWithoutFlashOfNewTab}
           key={"highlight-number-" + line}
@@ -572,7 +570,7 @@ const BuildErrorSourceLines = ({
   const sourceLines: SourceLine[] = [{ line, text: line_text }];
   const buildURL = React.useCallback(
     (line, column) => srcFileURL(filename, line, column),
-    [srcFileURL, filename]
+    [srcFileURL, filename],
   );
   return (
     <SourceLines
@@ -664,7 +662,7 @@ const NativeStackFrame = ({
 }: {
   frame: StackFrame;
   maxLength: number;
-  urlBuilder: typeof maybeBlobFileURL
+  urlBuilder: typeof maybeBlobFileURL;
 }) => {
   const { cwd } = useContext(ErrorGroupContext);
   const {
@@ -718,7 +716,7 @@ const NativeStackFrames = ({ frames, urlBuilder }) => {
   for (let i = 0; i < frames.length; i++) {
     maxLength = Math.max(
       getNativeStackFrameIdentifier(frames[i]).length,
-      maxLength
+      maxLength,
     );
   }
 
@@ -760,7 +758,7 @@ const NativeStackTrace = ({
   const ref = React.useRef<HTMLDivElement>(null);
   const buildURL = React.useCallback(
     (line, column) => urlBuilder(file, line, column),
-    [file, urlBuilder]
+    [file, urlBuilder],
   );
 
   return (
@@ -825,7 +823,7 @@ const JSException = ({
 }) => {
   const tag = isClient ? ErrorTagType.client : ErrorTagType.server;
   const [sourceLines, _setSourceLines] = React.useState(
-    value?.stack?.source_lines ?? []
+    value?.stack?.source_lines ?? [],
   );
   var message = value.message || "";
   var name = value.name || "";
@@ -1054,7 +1052,9 @@ const OverlayMessageContainer = ({
   reason,
   isClient = false,
 }: FallbackMessageContainer & { isClient: boolean }) => {
-  const errorCount = problems ? problems.exceptions.length + problems.build.errors : 0;
+  const errorCount = problems
+    ? problems.exceptions.length + problems.build.errors
+    : 0;
   return (
     <div id="BunErrorOverlay-container">
       <div className="BunError-content">
@@ -1149,7 +1149,7 @@ function renderWithFunc(func) {
     reactRoot.id = BUN_ERROR_CONTAINER_ID;
 
     const fallbackStyleSheet = document.querySelector(
-      "style[data-has-bun-fallback-style]"
+      "style[data-has-bun-fallback-style]",
     );
     if (!fallbackStyleSheet) {
       reactRoot.style.visibility = "hidden";
@@ -1309,9 +1309,9 @@ export function renderRuntimeError(error: Error) {
   // and don't fetch them again
   const framePromises = fetchAllMappings(
     exception.stack.frames.map((frame) =>
-      normalizedFilename(frame.file, thisCwd)
+      normalizedFilename(frame.file, thisCwd),
     ),
-    signal
+    signal,
   )
     .map((frame, i) => {
       if (stopThis.stopped) return null;
@@ -1393,7 +1393,7 @@ export function dismissError() {
 
 export const renderBuildFailure = (
   failure: WebsocketMessageBuildFailure,
-  cwd: string
+  cwd: string,
 ) => {
   thisCwd = cwd;
   renderWithFunc(() => (

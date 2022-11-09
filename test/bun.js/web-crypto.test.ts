@@ -13,7 +13,7 @@ describe("Web Crypto", () => {
         length: 256,
       },
       true,
-      ["encrypt", "decrypt"]
+      ["encrypt", "decrypt"],
     );
     const iv = crypto.getRandomValues(new Uint8Array(12));
     const data = new TextEncoder().encode("Hello World!");
@@ -23,7 +23,7 @@ describe("Web Crypto", () => {
         iv,
       },
       key,
-      data
+      data,
     );
     const decrypted = await crypto.subtle.decrypt(
       {
@@ -31,7 +31,7 @@ describe("Web Crypto", () => {
         iv,
       },
       key,
-      encrypted
+      encrypted,
     );
     expect(new TextDecoder().decode(decrypted)).toBe("Hello World!");
   });
@@ -43,7 +43,7 @@ describe("Web Crypto", () => {
         new TextEncoder().encode(secret),
         { name: "HMAC", hash: "SHA-256" },
         false,
-        ["sign", "verify"]
+        ["sign", "verify"],
       );
     }
 
@@ -52,7 +52,7 @@ describe("Web Crypto", () => {
       const signature = await crypto.subtle.sign(
         "HMAC",
         key,
-        new TextEncoder().encode(message)
+        new TextEncoder().encode(message),
       );
 
       // Convert ArrayBuffer to Base64
@@ -69,7 +69,7 @@ describe("Web Crypto", () => {
         "HMAC",
         key,
         sigBuf,
-        new TextEncoder().encode(message)
+        new TextEncoder().encode(message),
       );
     }
 

@@ -23,7 +23,7 @@ export function test() {
   }
   console.assert(
     powerLevel.description === "9001",
-    "Symbol is not exported correctly"
+    "Symbol is not exported correctly",
   );
   return testDone(import.meta.url);
 }

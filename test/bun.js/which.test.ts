@@ -15,27 +15,27 @@ test("which", () => {
     // You can override PATH
     which("myscript.sh", {
       PATH: "/tmp",
-    })
+    }),
   ).toBe("/tmp/myscript.sh");
 
   expect(
     which("myscript.sh", {
       PATH: "/not-tmp",
-    })
+    }),
   ).toBe(null);
 
   expect(
     // PATH works like the $PATH environment variable, respecting colons
     which("myscript.sh", {
       PATH: "/not-tmp:/tmp",
-    })
+    }),
   ).toBe("/tmp/myscript.sh");
 
   expect(
     // cwd is checked first
     which("myscript.sh", {
       cwd: "/tmp",
-    })
+    }),
   ).toBe("/tmp/myscript.sh");
 });
 

@@ -35,7 +35,7 @@ export function wrap({
             } finally {
               console.log(`DESCRIBE [Exit] ${label}`);
             }
-          }
+          },
     );
   };
 
@@ -63,7 +63,7 @@ export function wrap({
             } finally {
               console.log(`TEST [Exit] ${label}`);
             }
-          }
+          },
     );
   };
 
@@ -89,7 +89,7 @@ export function wrap({
             } finally {
               console.log(`BEFORE EACH [Exit]`);
             }
-          }
+          },
     );
   };
   var beforeAll = (cb: AnyFunction) => {
@@ -114,7 +114,7 @@ export function wrap({
             } finally {
               console.log(`BEFORE ALL [Exit]`);
             }
-          }
+          },
     );
   };
   var afterEach = (cb: AnyFunction) => {
@@ -139,7 +139,7 @@ export function wrap({
             } finally {
               console.log(`AFTER EACH [Exit]`);
             }
-          }
+          },
     );
   };
   var afterAll = (cb: AnyFunction) => {
@@ -164,7 +164,7 @@ export function wrap({
             } finally {
               console.log(`AFTER ALL [Exit]`);
             }
-          }
+          },
     );
   };
 

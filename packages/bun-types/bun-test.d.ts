@@ -22,7 +22,7 @@ declare module "bun:test" {
   export function it(label: string, test: () => void | Promise<any>): any;
   export function test(
     label: string,
-    test: (done: () => void) => void | Promise<any>
+    test: (done: () => void) => void | Promise<any>,
   ): any;
 
   export function expect(value: any): Expect;

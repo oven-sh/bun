@@ -191,19 +191,23 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
             const prev_start_server_on_next_tick = vm.eventLoop().start_server_on_next_tick;
             vm.eventLoop().start_server_on_next_tick = true;
             client.poll_ref.ref(vm);
-            if (Socket.connect(host_.slice(), port, @ptrCast(*uws.SocketContext, socket_ctx), HTTPClient, client, "tcp")) |out| {
-                if (comptime ssl) {
-                    const display_host = host_.slice();
-                    if (!strings.isIPAddress(display_host)) {
-                        const hostname = if (FeatureFlags.hardcode_localhost_to_127_0_0_1 and strings.eqlComptime(display_host, "localhost"))
-                            "127.0.0.1"
-                        else
-                            display_host;
+            const display_host_ = host_.slice();
+            const display_host = if (bun.FeatureFlags.hardcode_localhost_to_127_0_0_1 and strings.eqlComptime(display_host_, "localhost"))
+                "127.0.0.1"
+            else
+                display_host_;
 
-                        out.hostname = bun.default_allocator.dupeZ(
-                            u8,
-                            hostname,
-                        ) catch "";
+            if (Socket.connect(
+                display_host,
+                port,
+                @ptrCast(*uws.SocketContext, socket_ctx),
+                HTTPClient,
+                client,
+                "tcp",
+            )) |out| {
+                if (comptime ssl) {
+                    if (!strings.isIPAddress(host_.slice())) {
+                        out.hostname = bun.default_allocator.dupeZ(u8, host_.slice()) catch "";
                     }
                 }
 

@@ -297,10 +297,17 @@ pub const Subprocess = struct {
     }
 
     pub fn closePorts(this: *Subprocess) void {
+        const pidfd = this.pidfd;
+
         if (comptime Environment.isLinux) {
-            if (this.pidfd != std.math.maxInt(std.os.fd_t)) {
-                _ = std.os.close(this.pidfd);
-                this.pidfd = std.math.maxInt(std.os.fd_t);
+            this.pidfd = std.math.maxInt(std.os.fd_t);
+        }
+
+        defer {
+            if (comptime Environment.isLinux) {
+                if (pidfd != std.math.maxInt(std.os.fd_t)) {
+                    _ = std.os.close(pidfd);
+                }
             }
         }
 

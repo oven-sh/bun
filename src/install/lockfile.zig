@@ -2418,6 +2418,42 @@ pub const Package = extern struct {
                 }
             }
         }
+        bin: {
+            if (json.asProperty("bin")) |bin| {
+                switch (bin.expr.data) {
+                    .e_object => |obj| {
+                        switch (obj.properties.len) {
+                            0 => {
+                                break :bin;
+                            },
+                            1 => {},
+                            else => {},
+                        }
+
+                        for (obj.properties.slice()) |bin_prop| {
+                            string_builder.count(bin_prop.key.?.asString(allocator) orelse break :bin);
+                            string_builder.count(bin_prop.value.?.asString(allocator) orelse break :bin);
+                        }
+                    },
+                    .e_string => {
+                        if (bin.expr.asString(allocator)) |str_| {
+                            string_builder.count(str_);
+                            break :bin;
+                        }
+                    },
+                    else => {},
+                }
+            }
+
+            if (json.asProperty("directories")) |dirs| {
+                if (dirs.expr.asProperty("bin")) |bin_prop| {
+                    if (bin_prop.expr.asString(allocator)) |str_| {
+                        string_builder.count(str_);
+                        break :bin;
+                    }
+                }
+            }
+        }
 
         if (comptime features.scripts) {
             if (json.asProperty("scripts")) |scripts_prop| {
@@ -2534,6 +2570,92 @@ pub const Package = extern struct {
                 .tag = .root,
                 .value = .{ .root = .{} },
             };
+        }
+
+        bin: {
+            if (json.asProperty("bin")) |bin| {
+                switch (bin.expr.data) {
+                    .e_object => |obj| {
+                        switch (obj.properties.len) {
+                            0 => {},
+                            1 => {
+                                const bin_name = obj.properties.ptr[0].key.?.asString(allocator) orelse break :bin;
+                                const value = obj.properties.ptr[0].value.?.asString(allocator) orelse break :bin;
+
+                                package.bin = Bin{
+                                    .tag = Bin.Tag.named_file,
+                                    .value = .{
+                                        .named_file = .{
+                                            string_builder.append(String, bin_name),
+                                            string_builder.append(String, value),
+                                        },
+                                    },
+                                };
+                            },
+                            else => {
+                                const current_len = lockfile.buffers.extern_strings.items.len;
+                                const count = @as(usize, obj.properties.len * 2);
+                                try lockfile.buffers.extern_strings.ensureTotalCapacityPrecise(
+                                    lockfile.allocator,
+                                    current_len + count,
+                                );
+                                var extern_strings = lockfile.buffers.extern_strings.items.ptr[current_len .. current_len + count];
+                                lockfile.buffers.extern_strings.items.len += count;
+
+                                var i: usize = 0;
+                                for (obj.properties.slice()) |bin_prop| {
+                                    extern_strings[i] = string_builder.append(ExternalString, bin_prop.key.?.asString(allocator) orelse break :bin);
+                                    i += 1;
+                                    extern_strings[i] = string_builder.append(ExternalString, bin_prop.value.?.asString(allocator) orelse break :bin);
+                                    i += 1;
+                                }
+                                std.debug.assert(i == extern_strings.len);
+                                package.bin = Bin{
+                                    .tag = Bin.Tag.map,
+                                    .value = .{ .map = @import("./install.zig").ExternalStringList.init(lockfile.buffers.extern_strings.items, extern_strings) },
+                                };
+                            },
+                        }
+
+                        break :bin;
+                    },
+                    .e_string => |str| {
+                        if (str.data.len > 0) {
+                            package.bin = Bin{
+                                .tag = Bin.Tag.file,
+                                .value = .{
+                                    .file = string_builder.append(String, str.data),
+                                },
+                            };
+                            break :bin;
+                        }
+                    },
+                    else => {},
+                }
+            }
+
+            if (json.asProperty("directories")) |dirs| {
+                // https://docs.npmjs.com/cli/v8/configuring-npm/package-json#directoriesbin
+                // Because of the way the bin directive works,
+                // specifying both a bin path and setting
+                // directories.bin is an error. If you want to
+                // specify individual files, use bin, and for all
+                // the files in an existing bin directory, use
+                // directories.bin.
+                if (dirs.expr.asProperty("bin")) |bin_prop| {
+                    if (bin_prop.expr.asString(allocator)) |str_| {
+                        if (str_.len > 0) {
+                            package.bin = Bin{
+                                .tag = Bin.Tag.dir,
+                                .value = .{
+                                    .dir = string_builder.append(String, str_),
+                                },
+                            };
+                            break :bin;
+                        }
+                    }
+                }
+            }
         }
 
         // It is allowed for duplicate dependencies to exist in optionalDependencies and regular dependencies

@@ -126,6 +126,11 @@ test("capture stack trace limit", () => {
     let e5 = { stackTraceLimit: 2 };
     Error.captureStackTrace(e5);
     expect(e5.stack.split("\n").length).toBe(5);
+
+    let e6 = {};
+    Error.stackTraceLimit = Infinity;
+    Error.captureStackTrace(e6);
+    expect(e6.stack.split("\n").length).toBe(13);
   }
 
   f1();
@@ -155,6 +160,7 @@ test("prepare stack trace", () => {
       expect(e.message === "bad error!").toBe(true);
       expect(s.length).toBe(4);
     };
+    Error.stackTraceLimit = 10;
     Error.captureStackTrace(e);
     expect(e.stack === undefined).toBe(true);
     Error.prepareStackTrace = prevPrepareStackTrace;

@@ -2177,7 +2177,7 @@ JSC::JSValue GlobalObject::formatStackTrace(JSC::VM& vm, JSC::JSGlobalObject* le
     size_t framesCount = callSites->length();
 
     WTF::StringBuilder sb;
-    if (JSC::JSValue errorMessage = errorObject->getIfPropertyExists(lexicalGlobalObject, JSC::Identifier::fromString(vm, "message"_s))) {
+    if (JSC::JSValue errorMessage = errorObject->getIfPropertyExists(lexicalGlobalObject, vm.propertyNames->message)) {
         sb.append("Error: "_s);
         sb.append(errorMessage.getString(lexicalGlobalObject));
     } else {
@@ -2214,7 +2214,7 @@ JSC::JSValue GlobalObject::formatStackTrace(JSC::VM& vm, JSC::JSGlobalObject* le
             sb.append("<anonymous>"_s);
         }
         sb.append(" ("_s);
-        if (sourceURL->equal(lexicalGlobalObject, jsString(vm, makeString("[native code]"_s)))) {
+        if (callSite->isNative()) {
             sb.append("native"_s);
         } else {
             sb.append(sourceURL->getString(lexicalGlobalObject));
@@ -2252,11 +2252,13 @@ JSC_DEFINE_HOST_FUNCTION(errorConstructorFuncCaptureStackTrace, (JSC::JSGlobalOb
     JSValue errorValue = lexicalGlobalObject->get(lexicalGlobalObject, vm.propertyNames->Error);
     auto* errorConstructor = jsDynamicCast<JSC::JSObject*>(errorValue);
 
-    // TODO: handle infinity
-    int32_t stackTraceLimit = DEFAULT_ERROR_STACK_TRACE_LIMIT;
+    size_t stackTraceLimit = DEFAULT_ERROR_STACK_TRACE_LIMIT;
     if (JSC::JSValue stackTraceLimitProp = errorConstructor->getIfPropertyExists(lexicalGlobalObject, vm.propertyNames->stackTraceLimit)) {
         if (stackTraceLimitProp.isNumber()) {
-            stackTraceLimit = stackTraceLimitProp.asNumber();
+            stackTraceLimit = std::min(std::max(static_cast<size_t>(stackTraceLimitProp.toIntegerOrInfinity(lexicalGlobalObject)), 0ul), 2048ul);
+            if (stackTraceLimit == 0) {
+                stackTraceLimit = 2048;
+            }
         }
     }
     JSCStackTrace stackTrace = JSCStackTrace::captureCurrentJSStackTrace(globalObject, callFrame, stackTraceLimit, caller);
@@ -2307,7 +2309,7 @@ JSC_DEFINE_HOST_FUNCTION(errorConstructorFuncCaptureStackTrace, (JSC::JSGlobalOb
         errorObject->putDirect(vm, vm.propertyNames->stack, formattedStackTrace.toString(lexicalGlobalObject), JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum);
     }
 
-    RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode(JSValue{}));
+    RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode(JSValue {}));
 
     return JSC::JSValue::encode(JSC::jsUndefined());
 }

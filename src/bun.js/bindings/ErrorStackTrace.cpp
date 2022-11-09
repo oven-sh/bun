@@ -213,20 +213,25 @@ JSCStackFrame::SourcePositions* JSCStackFrame::getSourcePositions()
     return (SourcePositionsState::Calculated == m_sourcePositionsState) ? &m_sourcePositions : nullptr;
 }
 
+static auto sourceURLWasmString = MAKE_STATIC_STRING_IMPL("[wasm code]");
+static auto sourceURLNativeString = MAKE_STATIC_STRING_IMPL("[native code]");
 ALWAYS_INLINE JSC::JSString* JSCStackFrame::retrieveSourceURL()
 {
     if (m_isWasmFrame) {
-        return jsString(m_vm, makeString("[wasm code]"_s));
+        return jsOwnedString(m_vm, sourceURLWasmString);
     }
 
     if (!m_codeBlock) {
-        return jsString(m_vm, makeString("[native code]"_s));
+        return jsOwnedString(m_vm, sourceURLNativeString);
     }
 
     String sourceURL = m_codeBlock->ownerExecutable()->sourceURL();
     return sourceURL.isNull() ? m_vm.smallStrings.emptyString() : JSC::jsString(m_vm, sourceURL);
 }
 
+static auto functionNameEvalCodeString = MAKE_STATIC_STRING_IMPL("eval code");
+static auto functionNameModuleCodeString = MAKE_STATIC_STRING_IMPL("module code");
+static auto functionNameGlobalCodeString = MAKE_STATIC_STRING_IMPL("global code");
 ALWAYS_INLINE JSC::JSString* JSCStackFrame::retrieveFunctionName()
 {
     if (m_isWasmFrame) {
@@ -236,13 +241,13 @@ ALWAYS_INLINE JSC::JSString* JSCStackFrame::retrieveFunctionName()
     if (m_codeBlock) {
         switch (m_codeBlock->codeType()) {
         case JSC::EvalCode:
-            return JSC::jsString(m_vm, makeString("eval code"_s));
+            return JSC::jsOwnedString(m_vm, functionNameEvalCodeString);
         case JSC::ModuleCode:
-            return JSC::jsString(m_vm, makeString("module code"_s));
+            return JSC::jsOwnedString(m_vm, functionNameModuleCodeString);
         case JSC::FunctionCode:
             break;
         case JSC::GlobalCode:
-            return JSC::jsString(m_vm, makeString("global code"_s));
+            return JSC::jsOwnedString(m_vm, functionNameGlobalCodeString);
         default:
             ASSERT_NOT_REACHED();
         }

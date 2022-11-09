@@ -11300,7 +11300,8 @@ fn NewParser_(
                     },
                     else => {
                         // Handle the TypeScript "as" operator
-                        if (is_typescript_enabled and level.lt(.compare) and !p.lexer.has_newline_before and p.lexer.isContextualKeyword("as")) {
+                        // Handle the TypeScript "satisfies" operator
+                        if (is_typescript_enabled and level.lt(.compare) and !p.lexer.has_newline_before and (p.lexer.isContextualKeyword("as") or p.lexer.isContextualKeyword("satisfies"))) {
                             try p.lexer.next();
                             try p.skipTypeScriptType(.lowest);
 

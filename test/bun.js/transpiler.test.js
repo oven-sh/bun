@@ -105,6 +105,90 @@ describe("Bun.Transpiler", () => {
     it("export = {foo: 123}", () => {
       ts.expectPrinted_("export = {foo: 123}", "module.exports = { foo: 123 }");
     });
+
+    it("satisfies", () => {
+      ts.expectPrinted_(
+        "const t1 = { a: 1 } satisfies I1;",
+        "const t1 = { a: 1 };\n"
+      );
+      ts.expectPrinted_(
+        "const t2 = { a: 1, b: 1 } satisfies I1;",
+        "const t2 = { a: 1, b: 1 };\n"
+      );
+      ts.expectPrinted_("const t3 = { } satisfies I1;", "const t3 = {};\n");
+      ts.expectPrinted_(
+        "const t4: T1 = { a: 'a' } satisfies T1;",
+        'const t4 = { a: "a" };\n'
+      );
+      ts.expectPrinted_(
+        "const t5 = (m => m.substring(0)) satisfies T2;",
+        "const t5 = (m) => m.substring(0);\n"
+      );
+      ts.expectPrinted_(
+        "const t6 = [1, 2] satisfies [number, number];",
+        "const t6 = [1, 2];\n"
+      );
+      ts.expectPrinted_(
+        "let t7 = { a: 'test' } satisfies A;",
+        'let t7 = { a: "test" };\n'
+      );
+      ts.expectPrinted_(
+        "let t8 = { a: 'test', b: 'test' } satisfies A;",
+        'let t8 = { a: "test", b: "test" };\n'
+      );
+      ts.expectPrinted_(
+        "export default {} satisfies Foo;",
+        "export default {};\n"
+      );
+      ts.expectPrinted_(
+        "export default { a: 1 } satisfies Foo;",
+        "export default { a: 1 };\n"
+      );
+      ts.expectPrinted_(
+        "const p = { isEven: n => n % 2 === 0, isOdd: n => n % 2 === 1 } satisfies Predicates;",
+        "const p = { isEven: (n) => n % 2 === 0, isOdd: (n) => n % 2 === 1 };\n"
+      );
+      ts.expectPrinted_(
+        "let obj: { f(s: string): void } & Record<string, unknown> = { f(s) { }, g(s) { } } satisfies { g(s: string): void } & Record<string, unknown>;",
+        "let obj = { f(s) {\n}, g(s) {\n} };\n"
+      );
+      ts.expectPrinted_(
+        "const car = { start() { }, move(d) { }, stop() { } } satisfies Movable & Record<string, unknown>;",
+        "const car = { start() {\n}, move(d) {\n}, stop() {\n} };\n"
+      );
+      ts.expectPrinted_(
+        "var v = undefined satisfies 1;",
+        "var v = undefined;\n"
+      );
+      ts.expectPrinted_(
+        "const a = { x: 10 } satisfies Partial<Point2d>;",
+        "const a = { x: 10 };\n"
+      );
+      ts.expectPrinted_(
+        'const p = { a: 0, b: "hello", x: 8 } satisfies Partial<Record<Keys, unknown>>;',
+        'const p = { a: 0, b: "hello", x: 8 };\n'
+      );
+      ts.expectPrinted_(
+        'const p = { a: 0, b: "hello", x: 8 } satisfies Record<Keys, unknown>;',
+        'const p = { a: 0, b: "hello", x: 8 };\n'
+      );
+      ts.expectPrinted_(
+        'const x2 = { m: true, s: "false" } satisfies Facts;',
+        'const x2 = { m: true, s: "false" };\n'
+      );
+      ts.expectPrinted_(
+        "export const Palette = { white: { r: 255, g: 255, b: 255 }, black: { r: 0, g: 0, d: 0 }, blue: { r: 0, g: 0, b: 255 }, } satisfies Record<string, Color>;",
+        "export const Palette = { white: { r: 255, g: 255, b: 255 }, black: { r: 0, g: 0, d: 0 }, blue: { r: 0, g: 0, b: 255 } };\n"
+      );
+      ts.expectPrinted_(
+        'const a: "baz" = "foo" satisfies "foo" | "bar";',
+        'const a = "foo";\n'
+      );
+      ts.expectPrinted_(
+        'const b: { xyz: "baz" } = { xyz: "foo" } satisfies { xyz: "foo" | "bar" };',
+        'const b = { xyz: "foo" };\n'
+      );
+    });
   });
 
   describe("generated closures", () => {

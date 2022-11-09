@@ -2096,9 +2096,9 @@ var require_destroy = __commonJS({
       }
     }
     function emitErrorNT(self, err) {
-      const r = self._readableState;
-      const w = self._writableState;
-      if ((w && w.errorEmitted) || (r && r.errorEmitted)) {
+      const r = self?._readableState;
+      const w = self?._writableState;
+      if (w?.errorEmitted || r?.errorEmitted) {
         return;
       }
       if (w) {
@@ -2107,7 +2107,7 @@ var require_destroy = __commonJS({
       if (r) {
         r.errorEmitted = true;
       }
-      self.emit("error", err);
+      self?.emit?.("error", err);
     }
     function undestroy() {
       const r = this._readableState;
@@ -2138,8 +2138,8 @@ var require_destroy = __commonJS({
       }
     }
     function errorOrDestroy(stream, err, sync) {
-      const r = stream._readableState;
-      const w = stream._writableState;
+      const r = stream?._readableState;
+      const w = stream?._writableState;
       if ((w && w.destroyed) || (r && r.destroyed)) {
         return this;
       }
@@ -5561,7 +5561,7 @@ var require_stream = __commonJS({
       return value instanceof Uint8Array;
     };
     Stream._uint8ArrayToBuffer = function _uint8ArrayToBuffer(chunk) {
-      return Buffer.from(chunk.buffer, chunk.byteOffset, chunk.byteLength);
+      return new Buffer(chunk.buffer, chunk.byteOffset, chunk.byteLength);
     };
   },
 });

@@ -8,7 +8,7 @@ const target = basename(repo) + "-main";
 console.log("Downloading", repo, "to", "/tmp/" + target);
 
 const archive = await fetch(
-  `https://github.com/${repo}/archive/refs/heads/main.tar.gz`
+  `https://github.com/${repo}/archive/refs/heads/main.tar.gz`,
 );
 
 // remove the directory if it already exists locally

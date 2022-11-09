@@ -6,7 +6,7 @@ serve({
     const body = req.body;
 
     const writer = Bun.file(`upload.${Date.now()}.txt`).writer();
-    for await (const chunk of body) {
+    for await (const chunk of body!) {
       writer.write(chunk);
     }
     const wrote = await writer.end();

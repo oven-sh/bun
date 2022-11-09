@@ -13,8 +13,9 @@
   "exclude": [
     "src/test",
     "packages",
-    "examples",
     "bench",
+    "examples/react-fast-refresh-test",
+    "examples/macros",
     "test/bun.js/solid-dom-fixtures",
     "test/bun.js/bundled",
     "src/bun.js/builtins",

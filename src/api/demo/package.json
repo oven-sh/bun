@@ -14,7 +14,7 @@
     "esbuild": "^0.14.23",
     "esbuild-wasm": "^0.14.23",
     "next": "12",
-    "peechy": "latest",
+    "peechy": "0.4.32",
     "react": "17.0.2",
     "react-dom": "17.0.2",
     "sucrase": "^3.18.1"

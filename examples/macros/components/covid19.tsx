@@ -6,7 +6,7 @@ export const Covid19 = () => {
     {
       last: 100,
       columns: ["New_cases", "Date_reported", "Country"],
-    }
+    },
   );
 
   return (

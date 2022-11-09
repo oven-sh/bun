@@ -31,7 +31,7 @@ jobs:
         run: bun run lint
 
       - name: Build package
-        run: bun run generate:package
+        run: bun run build
 
       - name: Upload artifact
         uses: actions/upload-artifact@v3

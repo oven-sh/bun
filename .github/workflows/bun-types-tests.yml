@@ -30,7 +30,7 @@ jobs:
         run: bun install
 
       - name: Generate package
-        run: bun run generate:package
+        run: bun run build
 
       - name: ESLint
         run: bun run lint

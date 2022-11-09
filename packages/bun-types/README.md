@@ -47,7 +47,7 @@ Add this to your `tsconfig.json` or `jsconfig.json`:
 To run it:
 
 ```bash
-bun generate:package
+bun build
 ```
 
 # Generated docs

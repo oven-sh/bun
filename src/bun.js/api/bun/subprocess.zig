@@ -514,14 +514,20 @@ pub const Subprocess = struct {
                             return;
                         }
 
-                        // INTR is returned on macOS when the process is killed
-                        // It probably sent SIGPIPE but we have the handler for
-                        // that disabled.
-                        // We know it's the "real" INTR because we use read$NOCANCEL
-                        if (e.getErrno() == .INTR) {
-                            this.received_eof = true;
-                            this.autoCloseFileDescriptor();
-                            return;
+                        if (comptime Environment.isMac) {
+                            // INTR is returned on macOS when the process is killed
+                            // It probably sent SIGPIPE but we have the handler for
+                            // that disabled.
+                            // We know it's the "real" INTR because we use read$NOCANCEL
+                            if (e.getErrno() == .INTR) {
+                                this.received_eof = true;
+                                this.autoCloseFileDescriptor();
+                                return;
+                            }
+                        } else {
+                            if (comptime Environment.allow_assert) {
+                                std.debug.assert(e.getErrno() != .INTR); // Bun's read() function should retry on EINTR
+                            }
                         }
 
                         // fail

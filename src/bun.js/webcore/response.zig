@@ -5166,17 +5166,17 @@ pub const Body = struct {
 // https://developer.mozilla.org/en-US/docs/Web/API/Request
 pub const Request = struct {
     url: []const u8 = "",
+    url_was_allocated: bool = false,
+
     headers: ?*FetchHeaders = null,
     body: Body.Value = Body.Value{ .Empty = .{} },
     method: Method = Method.GET,
     uws_request: ?*uws.Request = null,
+    https: bool = false,
     upgrader: ?*anyopaque = null,
 
     // We must report a consistent value for this
     reported_estimated_size: ?u63 = null,
-    base_url_string_for_joining: []const u8 = "",
-
-    url_was_allocated: bool = false,
 
     pub usingnamespace JSC.Codegen.JSRequest;
 
@@ -5368,29 +5368,54 @@ pub const Request = struct {
         return ZigString.init(this.url).withEncoding().toValueGC(globalObject);
     }
 
-    pub fn sizeOfURL(this: *Request) usize {
+    pub fn sizeOfURL(this: *const Request) usize {
         if (this.url.len > 0)
             return this.url.len;
 
         if (this.uws_request) |req| {
-            return this.base_url_string_for_joining.len + req.url().len;
+            const fmt = ZigURL.HostFormatter{
+                .is_https = this.https,
+                .host = req.header("host") orelse "",
+            };
+
+            return this.getProtocol().len + req.url().len + std.fmt.count("{any}", .{fmt});
         }
 
         return 0;
+    }
+
+    pub fn getProtocol(this: *const Request) []const u8 {
+        if (this.https)
+            return "https://";
+
+        return "http://";
     }
 
     pub fn ensureURL(this: *Request) !void {
         if (this.url.len > 0) return;
 
         if (this.uws_request) |req| {
-            if (this.base_url_string_for_joining.len > 0) {
-                this.url = try strings.append(bun.default_allocator, this.base_url_string_for_joining, req.url());
+            const req_url = req.url();
+            if (req.header("host")) |host| {
+                const fmt = ZigURL.HostFormatter{
+                    .is_https = this.https,
+                    .host = host,
+                };
+                const url = try std.fmt.allocPrint(bun.default_allocator, "{s}{any}{s}", .{
+                    this.getProtocol(),
+                    fmt,
+                    req_url,
+                });
+                if (comptime Environment.allow_assert) {
+                    std.debug.assert(this.sizeOfURL() == url.len);
+                }
+                this.url = url;
                 this.url_was_allocated = true;
-
-                // don't keep this around when we don't need it
-                this.base_url_string_for_joining = "";
             } else {
-                this.url = try bun.default_allocator.dupe(u8, req.url());
+                if (comptime Environment.allow_assert) {
+                    std.debug.assert(this.sizeOfURL() == req_url.len);
+                }
+                this.url = try bun.default_allocator.dupe(u8, req_url);
                 this.url_was_allocated = true;
             }
         }

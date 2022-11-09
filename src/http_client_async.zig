@@ -1148,7 +1148,7 @@ pub fn buildRequest(this: *HTTPClient, body_len: usize) picohttp.Request {
     if (!override_host_header) {
         request_headers_buf[header_count] = picohttp.Header{
             .name = host_header_name,
-            .value = this.url.hostname,
+            .value = this.url.host,
         };
         header_count += 1;
     }

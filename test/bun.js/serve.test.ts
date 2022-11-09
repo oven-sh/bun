@@ -41,8 +41,30 @@ it("request.url should log successfully", async () => {
       return new Response(file(fixture));
     },
   });
-  expected = `http://${server.hostname}:${server.port}/helloooo`;
+  expected = `http://localhost:${server.port}/helloooo`;
   const response = await fetch(expected);
+  expect(response.url).toBe(expected);
+  expect(await response.text()).toBe(textToExpect);
+  server.stop();
+});
+
+it("request.url should be based on the Host header", async () => {
+  const fixture = resolve(import.meta.dir, "./fetch.js.txt");
+  const textToExpect = readFileSync(fixture, "utf-8");
+  var expected;
+  const server = serve({
+    port: port++,
+    fetch(req) {
+      expect(req.url).toBe("http://example.com/helloooo");
+      return new Response(file(fixture));
+    },
+  });
+  expected = `http://${server.hostname}:${server.port}/helloooo`;
+  const response = await fetch(expected, {
+    headers: {
+      Host: "example.com",
+    },
+  });
   expect(response.url).toBe(expected);
   expect(await response.text()).toBe(textToExpect);
   server.stop();

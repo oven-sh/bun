@@ -7,7 +7,7 @@ pub const archive = struct_archive;
 pub const archive_entry = struct_archive_entry;
 const mode_t = @import("std").c.mode_t;
 const FILE = @import("std").c.FILE;
-const time_t = @import("std").c.time_t;
+// const time_t = @import("std").c.time_t;
 const dev_t = @import("std").c.dev_t;
 
 pub const FileType = enum(mode_t) {
@@ -25,6 +25,7 @@ pub const SymlinkType = enum(c_int) {
     file = 1,
     directory = 2,
 };
+pub const time_t = isize;
 
 pub const ARCHIVE_VERSION_ONLY_STRING = "3.5.3dev";
 pub const ARCHIVE_VERSION_STRING = "libarchive " ++ ARCHIVE_VERSION_ONLY_STRING;

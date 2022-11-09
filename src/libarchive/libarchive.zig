@@ -222,6 +222,13 @@ pub const BufferReadStream = struct {
         _ = lib.archive_read_support_format_tar(this.archive);
         _ = lib.archive_read_support_format_gnutar(this.archive);
         _ = lib.archive_read_support_compression_gzip(this.archive);
+
+        // Ignore zeroed blocks in the archive, which occurs when multiple tar archives
+        // have been concatenated together.
+        // Without this option, only the contents of
+        // the first concatenated archive would be read.
+        _ = lib.archive_read_set_options(this.archive, "read_concatenated_archives");
+
         // _ = lib.archive_read_support_filter_none(this.archive);
 
         const rc = lib.archive_read_open_memory(this.archive, this.buf.ptr, this.buf.len);
@@ -545,12 +552,14 @@ pub const Archive = struct {
                             };
                         },
                         Kind.File => {
-                            const file = dir.createFileZ(pathname, .{ .truncate = true, .mode = @intCast(std.os.mode_t, lib.archive_entry_perm(entry)) }) catch |err| brk: {
+                            const mode = @intCast(std.os.mode_t, lib.archive_entry_perm(entry));
+                            const file = dir.createFileZ(pathname, .{ .truncate = true, .mode = mode }) catch |err| brk: {
                                 switch (err) {
                                     error.AccessDenied, error.FileNotFound => {
                                         dir.makePath(std.fs.path.dirname(slice) orelse return err) catch {};
                                         break :brk try dir.createFileZ(pathname, .{
                                             .truncate = true,
+                                            .mode = mode,
                                         });
                                     },
                                     else => {

@@ -301,11 +301,11 @@ fn NewHTTPContext(comptime ssl: bool) type {
             return null;
         }
 
-        pub fn connect(this: *@This(), client: *HTTPClient, hostname: []const u8, port: u16) !HTTPSocket {
-            // const hostname = if (FeatureFlags.hardcode_localhost_to_127_0_0_1 and strings.eqlComptime(hostname_, "localhost"))
-            //     "127.0.0.1"
-            // else
-            //     hostname_;
+        pub fn connect(this: *@This(), client: *HTTPClient, hostname_: []const u8, port: u16) !HTTPSocket {
+            const hostname = if (FeatureFlags.hardcode_localhost_to_127_0_0_1 and strings.eqlComptime(hostname_, "localhost"))
+                "127.0.0.1"
+            else
+                hostname_;
 
             client.connected_url = client.url;
             client.connected_url.hostname = hostname;

@@ -193,8 +193,17 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
             client.poll_ref.ref(vm);
             if (Socket.connect(host_.slice(), port, @ptrCast(*uws.SocketContext, socket_ctx), HTTPClient, client, "tcp")) |out| {
                 if (comptime ssl) {
-                    if (!strings.isIPAddress(host_.slice())) {
-                        out.hostname = bun.default_allocator.dupeZ(u8, host_.slice()) catch "";
+                    const display_host = host_.slice();
+                    if (!strings.isIPAddress(display_host)) {
+                        const hostname = if (FeatureFlags.hardcode_localhost_to_127_0_0_1 and strings.eqlComptime(display_host, "localhost"))
+                            "127.0.0.1"
+                        else
+                            display_host;
+
+                        out.hostname = bun.default_allocator.dupeZ(
+                            u8,
+                            hostname,
+                        ) catch "";
                     }
                 }
 

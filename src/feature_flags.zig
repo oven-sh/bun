@@ -104,4 +104,4 @@ pub const disable_lolhtml = false;
 /// on macOS that specifically impacts localhost and not
 /// other ipv4 hosts. This is a workaround for that.
 /// "localhost" fails to connect.
-pub const hardcode_localhost_to_127_0_0_1 = env.isMac;
+pub const hardcode_localhost_to_127_0_0_1 = true;

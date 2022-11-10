@@ -126,4 +126,6 @@
     _napi_unwrap;
     _napi_wrap;
     _napi_remove_wrap;
+    _napi_create_external;
+    _napi_get_value_external;
 };

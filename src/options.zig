@@ -1402,6 +1402,10 @@ pub const BundleOptions = struct {
                 // If we're not doing SSR, we want all the import paths to be absolute
                 opts.import_path_format = if (opts.import_path_format == .absolute_url) .absolute_url else .absolute_path;
                 opts.env.behavior = .load_all;
+                if (transform.extension_order.len == 0) {
+                    // we must also support require'ing .node files
+                    opts.extension_order = Defaults.ExtensionOrder ++ &[_][]const u8{".node"};
+                }
             },
             else => {},
         }

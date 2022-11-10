@@ -50,6 +50,7 @@
 #include "../modules/ObjectModule.h"
 
 #include "JavaScriptCore/JSSourceCode.h"
+#include "napi_external.h"
 
 // #include <iostream>
 using namespace JSC;
@@ -1431,5 +1432,51 @@ extern "C" napi_status napi_get_property_names(napi_env env, napi_value object,
 
     *result = toNapi(value);
 
+    return napi_ok;
+}
+
+extern "C" napi_status napi_create_external(napi_env env, void* data,
+    napi_finalize finalize_cb,
+    void* finalize_hint,
+    napi_value* result)
+{
+    if (UNLIKELY(result == nullptr)) {
+        return napi_invalid_arg;
+    }
+
+    Zig::GlobalObject* globalObject = toJS(env);
+    JSC::VM& vm = globalObject->vm();
+
+    auto* structure = Bun::NapiExternal::createStructure(vm, globalObject, globalObject->objectPrototype());
+    JSValue value = JSValue(Bun::NapiExternal::create(vm, structure, data, finalize_hint, finalize_cb));
+    JSC::EnsureStillAliveScope ensureStillAlive(value);
+    *result = toNapi(value);
+    return napi_ok;
+}
+
+extern "C" napi_status napi_get_value_external(napi_env env, napi_value value,
+    void** result)
+{
+    if (UNLIKELY(result == nullptr)) {
+        return napi_invalid_arg;
+    }
+
+    Zig::GlobalObject* globalObject = toJS(env);
+    JSC::VM& vm = globalObject->vm();
+
+    auto scope = DECLARE_CATCH_SCOPE(vm);
+    JSC::JSValue jsValue = JSC::JSValue::decode(reinterpret_cast<JSC::EncodedJSValue>(value));
+    JSC::EnsureStillAliveScope ensureStillAlive(jsValue);
+
+    if (!jsValue || !jsValue.isObject()) {
+        return napi_invalid_arg;
+    }
+
+    JSC::JSObject* object = jsValue.getObject();
+    if (!object->inherits<Bun::NapiExternal>()) {
+        return napi_invalid_arg;
+    }
+
+    *result = jsCast<Bun::NapiExternal*>(object)->value();
     return napi_ok;
 }

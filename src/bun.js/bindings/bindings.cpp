@@ -927,9 +927,11 @@ JSC__JSValue JSC__JSModuleLoader__evaluate(JSC__JSGlobalObject* globalObject, co
         promise->rejectWithCaughtException(globalObject, scope);
     }
 
-    if (promise->status(vm) == JSC::JSPromise::Status::Fulfilled) {
+    auto status = promise->status(vm);
+
+    if (status == JSC::JSPromise::Status::Fulfilled) {
         return JSC::JSValue::encode(promise->result(vm));
-    } else if (promise->status(vm) == JSC::JSPromise::Status::Rejected) {
+    } else if (status == JSC::JSPromise::Status::Rejected) {
         *arg6 = JSC::JSValue::encode(promise->result(vm));
         return JSC::JSValue::encode(JSC::jsUndefined());
     } else {

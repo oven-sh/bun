@@ -2319,13 +2319,6 @@ void GlobalObject::finishCreation(VM& vm)
     Base::finishCreation(vm);
     ASSERT(inherits(info()));
 
-    JSC::JSObject* errorConstructor = this->errorConstructor();
-    errorConstructor->putDirectNativeFunctionWithoutTransition(vm, this, JSC::Identifier::fromString(vm, "captureStackTrace"_s), 2, errorConstructorFuncCaptureStackTrace, ImplementationVisibility::Public, JSC::NoIntrinsic, PropertyAttribute::DontEnum | 0);
-
-    // JSC default is 100
-    errorConstructor->deleteProperty(this, vm.propertyNames->stackTraceLimit);
-    errorConstructor->putDirect(vm, vm.propertyNames->stackTraceLimit, jsNumber(DEFAULT_ERROR_STACK_TRACE_LIMIT), JSC::PropertyAttribute::DontEnum | 0);
-
     // Change prototype from null to object for synthetic modules.
     m_moduleNamespaceObjectStructure.initLater(
         [](const Initializer<Structure>& init) {
@@ -2579,6 +2572,12 @@ void GlobalObject::finishCreation(VM& vm)
 #endif
 
     RELEASE_ASSERT(classInfo());
+
+    JSC::JSObject* errorConstructor = this->errorConstructor();
+    errorConstructor->putDirectNativeFunctionWithoutTransition(vm, this, JSC::Identifier::fromString(vm, "captureStackTrace"_s), 2, errorConstructorFuncCaptureStackTrace, ImplementationVisibility::Public, JSC::NoIntrinsic, PropertyAttribute::DontEnum | 0);
+
+    // JSC default is 100
+    errorConstructor->putDirect(vm, vm.propertyNames->stackTraceLimit, jsNumber(DEFAULT_ERROR_STACK_TRACE_LIMIT), JSC::PropertyAttribute::DontEnum | 0);
 }
 
 JSC_DEFINE_HOST_FUNCTION(functionBunPeek,

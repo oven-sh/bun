@@ -1,7 +1,12 @@
-name: Tests
+name: bun-types tests
 on:
   push:
+    paths:
+    - packages/bun-types/**/*
   pull_request:
+    paths:
+      - packages/bun-types/**/*
+
 
 jobs:
   tests:

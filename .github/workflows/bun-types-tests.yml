@@ -1,16 +1,15 @@
-name: bun-types tests
+name: TypeScript Types
 on:
   push:
     paths:
-    - packages/bun-types/**/*
+      - packages/bun-types/**/*
   pull_request:
     paths:
       - packages/bun-types/**/*
 
-
 jobs:
   tests:
-    name: bun-types tests
+    name: Build and Test
     runs-on: ubuntu-latest
     defaults:
       run:

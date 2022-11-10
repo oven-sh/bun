@@ -5,7 +5,7 @@ on:
 
 jobs:
   tests:
-    name: Tests
+    name: bun-types tests
     runs-on: ubuntu-latest
     defaults:
       run:

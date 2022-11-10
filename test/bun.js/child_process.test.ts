@@ -202,7 +202,8 @@ describe("spawn()", () => {
 
 describe("execFile()", () => {
   it("should execute a file", async () => {
-    const result: Buffer = await new Promise((resolve, reject) => {
+    // utf8 assumed by default
+    const result: string = await new Promise((resolve, reject) => {
       execFile("bun", ["-v"], (error, stdout, stderr) => {
         if (error) {
           reject(error);
@@ -210,7 +211,7 @@ describe("execFile()", () => {
         resolve(stdout);
       });
     });
-    expect(SEMVER_REGEX.test(result.toString().trim())).toBe(true);
+    expect(SEMVER_REGEX.test(result.trim())).toBe(true);
   });
 });
 
@@ -251,6 +252,14 @@ describe("execFileSync()", () => {
   it("should execute a file synchronously", () => {
     const result = execFileSync("bun", ["-v"], { encoding: "utf8" });
     expect(SEMVER_REGEX.test(result.trim())).toBe(true);
+  });
+
+  it("should allow us to pass input to the command", () => {
+    const result = execFileSync("node", ["spawned-child.js", "STDIN"], {
+      input: "hello world!",
+      encoding: "utf8",
+    });
+    expect(result.trim()).toBe("hello world!");
   });
 });
 

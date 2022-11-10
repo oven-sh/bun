@@ -6,12 +6,10 @@ const {
   constants: { signals },
 } = import.meta.require("node:os");
 
+const { ArrayBuffer } = import.meta.primordials;
+
 const MAX_BUFFER = 1024 * 1024;
 const debug = process.env.DEBUG ? console.log : () => {};
-
-const platformTmpDir = `${process.platform === "darwin" ? "/private" : ""}${
-  process.env.TMPDIR
-}`.slice(0, -1); // remove trailing slash
 
 // Sections:
 // 1. Exported child_process functions
@@ -493,32 +491,23 @@ export function spawnSync(file, args, options) {
   // Validate and translate the kill signal, if present.
   options.killSignal = sanitizeKillSignal(options.killSignal);
 
-  // options.stdio = getValidStdio(options.stdio || "pipe", true).stdio;
-  // if (options.input) {
-  //   const stdin = (options.stdio[0] = { ...options.stdio[0] });
-  //   stdin.input = options.input;
-  // }
-  // // We may want to pass data in on any given fd, ensure it is a valid buffer
-  // for (let i = 0; i < options.stdio.length; i++) {
-  //   const input = options.stdio[i] && options.stdio[i].input;
-  //   if (input != null) {
-  //     const pipe = (options.stdio[i] = { ...options.stdio[i] });
-  //     if (isArrayBufferView(input)) {
-  //       pipe.input = input;
-  //     } else if (typeof input === "string") {
-  //       pipe.input = Buffer.from(input, options.encoding);
-  //     } else {
-  //       throw new ERR_INVALID_ARG_TYPE(
-  //         `options.stdio[${i}]`,
-  //         ["Buffer", "TypedArray", "DataView", "string"],
-  //         input
-  //       );
-  //     }
-  //   }
-  // }
-
   const stdio = options.stdio || "pipe";
-  const bunStdio = getBunStdioOptions(stdio);
+  const bunStdio = getBunStdioFromOptions(stdio);
+
+  if (options.input) {
+    if (isArrayBufferView(options.input)) {
+      bunStdio[0] = options.input;
+    } else if (typeof options.input === "string") {
+      bunStdio[0] = Buffer.from(options.input, encoding || "utf8");
+    } else {
+      throw new ERR_INVALID_ARG_TYPE(
+        `options.stdio[${i}]`,
+        ["Buffer", "TypedArray", "DataView", "string"],
+        input
+      );
+    }
+  }
+
   const { stdout, stderr, success, exitCode } = Bun.spawnSync({
     cmd: options.args,
     env: options.env || undefined,
@@ -612,11 +601,11 @@ export function execFileSync(file, args, options) {
  */
 export function execSync(command, options) {
   const opts = normalizeExecArgs(command, options, null);
-  const inheritStderr = !opts.options.stdio;
+  // const inheritStderr = !opts.options.stdio;
 
   const ret = spawnSync(opts.file, opts.options);
 
-  if (inheritStderr && ret.stderr) process.stderr.write(ret.stderr);
+  // if (inheritStderr && ret.stderr) process.stderr.write(ret.stderr); // TODO: Uncomment when we have process.stderr
 
   const err = checkExecSyncError(ret, undefined, command);
 
@@ -977,7 +966,7 @@ export class ChildProcess extends EventEmitter {
     }
 
     const stdio = options.stdio || "pipe";
-    const bunStdio = getBunStdioOptions(stdio);
+    const bunStdio = getBunStdioFromOptions(stdio);
 
     const cmd = options.args;
     this.#handle = Bun.spawn({
@@ -1138,7 +1127,7 @@ function fdToStdioName(fd) {
   }
 }
 
-function getBunStdioOptions(stdio) {
+function getBunStdioFromOptions(stdio) {
   const normalizedStdio = normalizeStdio(stdio);
   // Node options:
   // pipe: just a pipe
@@ -1162,8 +1151,8 @@ function getBunStdioOptions(stdio) {
   // ignore -> null
   // inherit -> inherit (stdin/stdout/stderr)
   // Stream -> throw err for now
-
-  return normalizedStdio.map((item) => nodeToBun(item));
+  const bunStdio = normalizedStdio.map((item) => nodeToBun(item));
+  return bunStdio;
 }
 
 function normalizeStdio(stdio) {
@@ -1467,12 +1456,19 @@ var ArrayPrototypeSlice = Array.prototype.slice;
 var ArrayPrototypeUnshift = Array.prototype.unshift;
 var ArrayIsArray = Array.isArray;
 
+// var ArrayBuffer = ArrayBuffer;
+var ArrayBufferIsView = ArrayBuffer.isView;
+
 var NumberIsInteger = Number.isInteger;
 var MathAbs = Math.abs;
 
 var StringPrototypeToUpperCase = String.prototype.toUpperCase;
 var StringPrototypeIncludes = String.prototype.includes;
 var Uint8ArrayPrototypeIncludes = Uint8Array.prototype.includes;
+
+function isArrayBufferView(value) {
+  return ArrayBufferIsView.call(value);
+}
 
 function isUint8Array(value) {
   return (

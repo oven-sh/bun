@@ -5851,6 +5851,18 @@ fn NewParser_(
                                 try p.lexer.next();
                             },
 
+                            // "{...x}"
+                            .t_dot_dot_dot => {
+                                try p.lexer.next();
+
+                                if (p.lexer.token != .t_identifier) {
+                                    try p.lexer.unexpected();
+                                }
+
+                                found_identifier = true;
+                                try p.lexer.next();
+                            },
+
                             // "{1: y}"
                             // "{'x': y}"
                             .t_string_literal, .t_numeric_literal => {

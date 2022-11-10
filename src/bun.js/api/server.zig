@@ -2632,13 +2632,14 @@ pub const ServerWebSocket = struct {
 
             if (!this.closed) {
                 this.closed = true;
-                this.websocket.end(1000, "");
+                // we un-gracefully close the connection if there was an exception
+                // we don't want any event handlers to fire after this for anything other than error()
+                // https://github.com/oven-sh/bun/issues/1480
+                this.websocket.close();
+                handler.active_connections -|= 1;
+                this_value.unprotect();
             }
 
-            _ = ServerWebSocket.dangerouslySetPtr(this_value, null);
-            handler.active_connections -|= 1;
-            this_value.unprotect();
-            bun.default_allocator.destroy(this);
             if (error_handler.isEmptyOrUndefinedOrNull()) {
                 globalObject.bunVM().runErrorHandler(result, null);
             } else {
@@ -2778,8 +2779,13 @@ pub const ServerWebSocket = struct {
     pub fn onClose(this: *ServerWebSocket, _: uws.AnyWebSocket, code: i32, message: []const u8) void {
         log("onClose", .{});
         var handler = this.handler;
+        const was_closed = this.closed;
         this.closed = true;
-        defer handler.active_connections -|= 1;
+        defer {
+            if (!was_closed) {
+                handler.active_connections -|= 1;
+            }
+        }
 
         if (handler.onClose != .zero) {
             const result = handler.onClose.call(
@@ -2806,6 +2812,7 @@ pub const ServerWebSocket = struct {
     }
 
     pub fn finalize(this: *ServerWebSocket) callconv(.C) void {
+        log("finalize", .{});
         bun.default_allocator.destroy(this);
     }
 
@@ -3612,6 +3619,8 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
         pub const RequestContext = NewRequestContext(ssl_enabled, debug_mode, @This());
 
         pub const App = uws.NewApp(ssl_enabled);
+
+        const httplog = Output.scoped(.Server, false);
 
         listener: ?*App.ListenSocket = null,
         thisObject: JSC.JSValue = JSC.JSValue.zero,

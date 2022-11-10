@@ -354,6 +354,10 @@ pub const VirtualMachine = struct {
     timer: Bun.Timer = Bun.Timer{},
     uws_event_loop: ?*uws.Loop = null,
 
+    /// hide bun:wrap from stack traces
+    /// bun:wrap is very noisy
+    hide_bun_stackframes: bool = true,
+
     is_printing_plugin: bool = false,
 
     plugin_runner: ?PluginRunner = null,
@@ -673,6 +677,9 @@ pub const VirtualMachine = struct {
 
         VirtualMachine.vm.bundler.configureLinker();
         try VirtualMachine.vm.bundler.configureFramework(false);
+
+        if (VirtualMachine.vm.bundler.env.get("BUN_SHOW_BUN_STACKFRAMES") != null)
+            VirtualMachine.vm.hide_bun_stackframes = false;
 
         vm.bundler.macro_context = js_ast.Macro.MacroContext.init(&vm.bundler);
 
@@ -1585,6 +1592,31 @@ pub const VirtualMachine = struct {
         }
 
         var frames: []JSC.ZigStackFrame = exception.stack.frames_ptr[0..exception.stack.frames_len];
+        if (this.hide_bun_stackframes) {
+            var start_index: ?usize = null;
+            for (frames) |frame, i| {
+                if (frame.source_url.eqlComptime("bun:wrap")) {
+                    start_index = i;
+                    break;
+                }
+            }
+
+            if (start_index) |k| {
+                var j = k;
+                var i: usize = k;
+                while (i < frames.len) : (i += 1) {
+                    const frame = frames[i];
+                    if (frame.source_url.eqlComptime("bun:wrap")) {
+                        continue;
+                    }
+                    frames[j] = frame;
+                    j += 1;
+                }
+                exception.stack.frames_len = @truncate(u8, j);
+                frames.len = j;
+            }
+        }
+
         if (frames.len == 0) return;
 
         var top = &frames[0];

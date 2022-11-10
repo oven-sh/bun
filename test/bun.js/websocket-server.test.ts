@@ -31,7 +31,7 @@ describe("websocket server", () => {
       },
     });
 
-    await new Promise<WebSocket>((resolve2, reject2) => {
+    await new Promise<void>((resolve2, reject2) => {
       var socket = new WebSocket(`ws://${server.hostname}:${server.port}`);
       var clientCounter = 0;
 
@@ -48,6 +48,7 @@ describe("websocket server", () => {
     server.stop();
     done();
   });
+
   for (let method of ["publish", "publishText", "publishBinary"]) {
     describe(method, () => {
       it("in close() should work", async () => {

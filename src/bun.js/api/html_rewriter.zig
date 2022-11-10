@@ -1140,7 +1140,7 @@ pub const DocType = struct {
         const str = this.doctype.?.getName().slice();
         if (str.len == 0)
             return JSValue.jsNull();
-        return ZigString.init(str).toValue(global);
+        return ZigString.init(str).toValueGC(global);
     }
 
     pub fn systemId(this: *DocType, global: *JSGlobalObject) JSValue {
@@ -1150,7 +1150,7 @@ pub const DocType = struct {
         const str = this.doctype.?.getSystemId().slice();
         if (str.len == 0)
             return JSValue.jsNull();
-        return ZigString.init(str).toValue(global);
+        return ZigString.init(str).toValueGC(global);
     }
 
     pub fn publicId(this: *DocType, global: *JSGlobalObject) JSValue {
@@ -1160,7 +1160,7 @@ pub const DocType = struct {
         const str = this.doctype.?.getPublicId().slice();
         if (str.len == 0)
             return JSValue.jsNull();
-        return ZigString.init(str).toValue(global);
+        return ZigString.init(str).toValueGC(global);
     }
 };
 
@@ -1305,7 +1305,7 @@ pub const Comment = struct {
     pub fn getText(this: *Comment, global: *JSGlobalObject) JSValue {
         if (this.comment == null)
             return JSValue.jsNull();
-        return ZigString.init(this.comment.?.getText().slice()).withEncoding().toValue(global);
+        return ZigString.init(this.comment.?.getText().slice()).withEncoding().toValueGC(global);
     }
 
     pub fn setText(
@@ -1435,7 +1435,7 @@ pub const EndTag = struct {
         if (this.end_tag == null)
             return JSC.JSValue.jsUndefined();
 
-        return ZigString.init(this.end_tag.?.getName().slice()).withEncoding().toValue(global);
+        return ZigString.init(this.end_tag.?.getName().slice()).withEncoding().toValueGC(global);
     }
 
     pub fn setName(
@@ -1649,7 +1649,7 @@ pub const Element = struct {
         if (this.element == null)
             return JSValue.jsNull();
         if (function.isUndefinedOrNull() or !function.isCallable(globalObject.vm())) {
-            return ZigString.init("Expected a function").withEncoding().toValue(globalObject);
+            return ZigString.init("Expected a function").withEncoding().toValueGC(globalObject);
         }
 
         var end_tag_handler = bun.default_allocator.create(EndTag.Handler) catch unreachable;
@@ -1861,7 +1861,7 @@ pub const Element = struct {
         if (this.element == null)
             return JSValue.jsUndefined();
 
-        return ZigString.init(std.mem.span(this.element.?.namespaceURI())).toValue(globalObject);
+        return ZigString.init(std.mem.span(this.element.?.namespaceURI())).toValueGC(globalObject);
     }
 
     pub fn getAttributes(this: *Element, globalObject: *JSGlobalObject) JSValue {

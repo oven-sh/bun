@@ -107,7 +107,7 @@ export default class RuntimeError {
       var tokens = sanitizedLine.split(/\s+/).slice(1);
       // if a location was matched, pass it to extractLocation() otherwise pop the last token
       var locationParts = this.extractLocation(
-        location ? location[1] : tokens.pop()
+        location ? location[1] : tokens.pop(),
       );
       var functionName = tokens.join(" ") || undefined;
       var fileName =
@@ -135,7 +135,7 @@ export default class RuntimeError {
       if (line.indexOf(" > eval") > -1) {
         line = line.replace(
           / line (\d+)(?: > eval line \d+)* > eval:\d+:\d+/g,
-          ":$1"
+          ":$1",
         );
       }
 
@@ -149,7 +149,7 @@ export default class RuntimeError {
         var matches = line.match(functionNameRegex);
         var functionName = matches && matches[1] ? matches[1] : undefined;
         var locationParts = this.extractLocation(
-          line.replace(functionNameRegex, "")
+          line.replace(functionNameRegex, ""),
         );
 
         return new StackFrame({

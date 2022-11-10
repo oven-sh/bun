@@ -3,38 +3,21 @@ import { describe, it, expect } from "bun:test";
 describe("url", () => {
   it("prints", () => {
     expect(Bun.inspect(new URL("https://example.com"))).toBe(
-      "https://example.com/"
+      "https://example.com/",
     );
 
     expect(
       Bun.inspect(
         new URL(
-          "https://github.com/oven-sh/bun/issues/135?hello%20i%20have%20spaces%20thank%20you%20good%20night"
-        )
-      )
+          "https://github.com/oven-sh/bun/issues/135?hello%20i%20have%20spaces%20thank%20you%20good%20night",
+        ),
+      ),
     ).toBe(
-      "https://github.com/oven-sh/bun/issues/135?hello%20i%20have%20spaces%20thank%20you%20good%20night"
+      "https://github.com/oven-sh/bun/issues/135?hello%20i%20have%20spaces%20thank%20you%20good%20night",
     );
   });
   it("works", () => {
-    const inputs: [
-      [
-        string,
-        {
-          hash: string;
-          host: string;
-          hostname: string;
-          href: string;
-          origin: string;
-          password: string;
-          pathname: string;
-          port: string;
-          protocol: string;
-          search: string;
-          username: string;
-        }
-      ]
-    ] = [
+    const inputs = [
       [
         "https://username:password@api.foo.bar.com:9999/baz/okay/i/123?ran=out&of=things#to-use-as-a-placeholder",
         {
@@ -83,7 +66,7 @@ describe("url", () => {
           username: "",
         },
       ],
-    ];
+    ] as const;
 
     for (let [url, values] of inputs) {
       const result = new URL(url);

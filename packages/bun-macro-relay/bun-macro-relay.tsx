@@ -50,7 +50,7 @@ export function graphql(node) {
     definition.kind !== "OperationDefinition"
   ) {
     throw new Error(
-      `BunMacroRelay: Expected a fragment, mutation, query, or subscription, got "${definition.kind}"`
+      `BunMacroRelay: Expected a fragment, mutation, query, or subscription, got "${definition.kind}"`,
     );
   }
 

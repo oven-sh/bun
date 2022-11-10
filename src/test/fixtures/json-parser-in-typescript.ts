@@ -7,11 +7,11 @@ type EatWhitespace<State extends string> = string extends State
 type AddKeyValue<
   Memo extends Record<string, any>,
   Key extends string,
-  Value extends any
+  Value extends any,
 > = Memo & { [K in Key]: Value };
 type ParseJsonObject<
   State extends string,
-  Memo extends Record<string, any> = {}
+  Memo extends Record<string, any> = {},
 > = string extends State
   ? ParserError<"ParseJsonObject got generic string type">
   : EatWhitespace<State> extends `}${infer State}`
@@ -27,18 +27,20 @@ type ParseJsonObject<
       : ParserError<`ParseJsonValue returned unexpected value for: ${State}`>
     : ParserError<`ParseJsonObject received unexpected token: ${State}`>
   : ParserError<`ParseJsonObject received unexpected token: ${State}`>;
-type ParseJsonArray<State extends string, Memo extends any[] = []> =
-  string extends State
-    ? ParserError<"ParseJsonArray got generic string type">
+type ParseJsonArray<
+  State extends string,
+  Memo extends any[] = [],
+> = string extends State
+  ? ParserError<"ParseJsonArray got generic string type">
+  : EatWhitespace<State> extends `]${infer State}`
+  ? [Memo, State]
+  : ParseJsonValue<State> extends [infer Value, `${infer State}`]
+  ? EatWhitespace<State> extends `,${infer State}`
+    ? ParseJsonArray<EatWhitespace<State>, [...Memo, Value]>
     : EatWhitespace<State> extends `]${infer State}`
-    ? [Memo, State]
-    : ParseJsonValue<State> extends [infer Value, `${infer State}`]
-    ? EatWhitespace<State> extends `,${infer State}`
-      ? ParseJsonArray<EatWhitespace<State>, [...Memo, Value]>
-      : EatWhitespace<State> extends `]${infer State}`
-      ? [[...Memo, Value], State]
-      : ParserError<`ParseJsonArray received unexpected token: ${State}`>
-    : ParserError<`ParseJsonValue returned unexpected value for: ${State}`>;
+    ? [[...Memo, Value], State]
+    : ParserError<`ParseJsonArray received unexpected token: ${State}`>
+  : ParserError<`ParseJsonValue returned unexpected value for: ${State}`>;
 type ParseJsonValue<State extends string> = string extends State
   ? ParserError<"ParseJsonValue got generic string type">
   : EatWhitespace<State> extends `null${infer State}`

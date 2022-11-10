@@ -23,7 +23,7 @@ const swcOptions = {
 };
 
 export async function transform(contents, file) {
-  var result = {
+  var result: any = {
     timings: {
       lexer: 0,
       bun: 0,

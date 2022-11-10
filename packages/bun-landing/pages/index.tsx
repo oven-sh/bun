@@ -52,7 +52,7 @@ const BarGraphItem = ({ type, amount = 0, label, max = 0 }) => (
     style={{ "--amount": amount, "--max": max }}
   >
     <div className="visually-hidden">{`${type}: ${fmt.format(
-      amount
+      amount,
     )} ${label}`}</div>
     <div
       style={{ "--amount": amount, "--max": max }}
@@ -171,7 +171,9 @@ const InstallBox = ({ desktop = false }) => (
       </div>
     </div>
     <div className="InstallBox-code-box">
-      <div className="InstallBox-curl">curl -fsSL https://bun.sh/install | bash</div>
+      <div className="InstallBox-curl">
+        curl -fsSL https://bun.sh/install | bash
+      </div>
       <button className="InstallBox-copy" aria-label="Copy installation script">
         copy
       </button>
@@ -369,7 +371,7 @@ export default function LandingPage() {
                     amount={(1000 / 14.22).toFixed(2)}
                     label="queries per second"
                     max={Math.ceil(
-                      Math.max(1000 / 14.22, 1000 / 42.96, 1000 / 27.37) * 1.25
+                      Math.max(1000 / 14.22, 1000 / 42.96, 1000 / 27.37) * 1.25,
                     )}
                   />
                   <BarGraphItem
@@ -377,7 +379,7 @@ export default function LandingPage() {
                     amount={(1000 / 27.37).toFixed(2)}
                     label="queries per second"
                     max={Math.ceil(
-                      Math.max(1000 / 14.22, 1000 / 42.96, 1000 / 27.37) * 1.25
+                      Math.max(1000 / 14.22, 1000 / 42.96, 1000 / 27.37) * 1.25,
                     )}
                   />
                   <BarGraphItem
@@ -385,7 +387,7 @@ export default function LandingPage() {
                     amount={(1000 / 42.96).toFixed(2)}
                     label="queries per second"
                     max={Math.ceil(
-                      Math.max(1000 / 14.22, 1000 / 42.96, 1000 / 27.37) * 1.25
+                      Math.max(1000 / 14.22, 1000 / 42.96, 1000 / 27.37) * 1.25,
                     )}
                   />
                 </ul>

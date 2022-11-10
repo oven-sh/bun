@@ -12,7 +12,7 @@ function insertGlobalStyleSheet({ detail: url }) {
       link.onabort = reject;
       link.onerror = reject;
       document.head.appendChild(link);
-    })
+    }),
   );
 }
 
@@ -27,7 +27,7 @@ function insertNextHeadCount() {
   if (!once) {
     document.head.insertAdjacentHTML(
       "beforeend",
-      `<meta name="next-head-count" content="0">`
+      `<meta name="next-head-count" content="0">`,
     );
     once = true;
   }
@@ -43,7 +43,7 @@ globalThis.__BUN_APP_STYLES = [...globalThis["__BUN"].allImportedStyles].map(
     }
 
     return style;
-  }
+  },
 );
 
 import { _boot, pageLoader } from "./client.development";
@@ -96,7 +96,7 @@ export default function render(props: FallbackMessageContainer) {
         Promise.all(pageLoader.cssQueue).finally(() => {
           renderFallbackError(props);
         });
-      }
+      },
     );
   });
 }

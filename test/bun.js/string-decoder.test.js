@@ -2,10 +2,10 @@ import { expect, it } from "bun:test";
 import { StringDecoder } from "string_decoder";
 
 it("StringDecoder-utf8", () => {
-  test('utf-8', Buffer.from('$', 'utf-8'), '$');
-  test('utf-8', Buffer.from('¢', 'utf-8'), '¢');
-  test('utf-8', Buffer.from('€', 'utf-8'), '€');
-  test('utf-8', Buffer.from('𤭢', 'utf-8'), '𤭢');
+  test("utf-8", Buffer.from("$", "utf-8"), "$");
+  test("utf-8", Buffer.from("¢", "utf-8"), "¢");
+  test("utf-8", Buffer.from("€", "utf-8"), "€");
+  test("utf-8", Buffer.from("𤭢", "utf-8"), "𤭢");
   // A mixed ascii and non-ascii string
   // Test stolen from deps/v8/test/cctest/test-strings.cc
   // U+02E4 -> CB A4
@@ -14,67 +14,69 @@ it("StringDecoder-utf8", () => {
   // U+0030 -> 30
   // U+3045 -> E3 81 85
   test(
-    'utf-8',
-    Buffer.from([0xCB, 0xA4, 0x64, 0xE1, 0x8B, 0xA4, 0x30, 0xE3, 0x81, 0x85]),
-    '\u02e4\u0064\u12e4\u0030\u3045'
+    "utf-8",
+    Buffer.from([0xcb, 0xa4, 0x64, 0xe1, 0x8b, 0xa4, 0x30, 0xe3, 0x81, 0x85]),
+    "\u02e4\u0064\u12e4\u0030\u3045",
   );
 });
 
 it("StringDecoder-ucs-2", () => {
-  test('ucs2', Buffer.from('ababc', 'ucs2'), 'ababc');
+  test("ucs2", Buffer.from("ababc", "ucs2"), "ababc");
 });
 
 it("StringDecoder-utf16le", () => {
-  test('utf16le', Buffer.from('3DD84DDC', 'hex'), '\ud83d\udc4d');
+  test("utf16le", Buffer.from("3DD84DDC", "hex"), "\ud83d\udc4d");
 });
 
 it("StringDecoder-utf8-additional", () => {
-  let decoder = new StringDecoder('utf8');
-  expect(decoder.write(Buffer.from('E18B', 'hex'))).toBe('');
-  expect(decoder.end()).toBe('\ufffd');
+  let decoder = new StringDecoder("utf8");
+  expect(decoder.write(Buffer.from("E18B", "hex"))).toBe("");
+  expect(decoder.end()).toBe("\ufffd");
 
-  decoder = new StringDecoder('utf8');
-  expect(decoder.write(Buffer.from('\ufffd'))).toBe('\ufffd');
-  expect(decoder.end()).toBe('');
+  decoder = new StringDecoder("utf8");
+  expect(decoder.write(Buffer.from("\ufffd"))).toBe("\ufffd");
+  expect(decoder.end()).toBe("");
 
-  decoder = new StringDecoder('utf8');
-  expect(decoder.write(Buffer.from('\ufffd\ufffd\ufffd'))).toBe('\ufffd\ufffd\ufffd');
-  expect(decoder.end()).toBe('');
+  decoder = new StringDecoder("utf8");
+  expect(decoder.write(Buffer.from("\ufffd\ufffd\ufffd"))).toBe(
+    "\ufffd\ufffd\ufffd",
+  );
+  expect(decoder.end()).toBe("");
 
-  decoder = new StringDecoder('utf8');
-  expect(decoder.write(Buffer.from('EFBFBDE2', 'hex'))).toBe('\ufffd');
-  expect(decoder.end()).toBe('\ufffd');
+  decoder = new StringDecoder("utf8");
+  expect(decoder.write(Buffer.from("EFBFBDE2", "hex"))).toBe("\ufffd");
+  expect(decoder.end()).toBe("\ufffd");
 
-  decoder = new StringDecoder('utf8');
-  expect(decoder.write(Buffer.from('F1', 'hex'))).toBe('');
-  expect(decoder.write(Buffer.from('41F2', 'hex'))).toBe('\ufffdA');
-  expect(decoder.end()).toBe('\ufffd');
+  decoder = new StringDecoder("utf8");
+  expect(decoder.write(Buffer.from("F1", "hex"))).toBe("");
+  expect(decoder.write(Buffer.from("41F2", "hex"))).toBe("\ufffdA");
+  expect(decoder.end()).toBe("\ufffd");
 
   // Additional utf8Text test
-  decoder = new StringDecoder('utf8');
-  expect(decoder.text(Buffer.from([0x41]), 2)).toBe('');
+  decoder = new StringDecoder("utf8");
+  expect(decoder.text(Buffer.from([0x41]), 2)).toBe("");
 });
 
 it("StringDecoder-utf16le-additional", () => {
   // Additional UTF-16LE surrogate pair tests
-  let decoder = new StringDecoder('utf16le');
-  expect(decoder.write(Buffer.from('3DD8', 'hex'))).toBe('');
-  expect(decoder.write(Buffer.from('4D', 'hex'))).toBe('');
-  expect(decoder.write(Buffer.from('DC', 'hex'))).toBe('\ud83d\udc4d');
-  expect(decoder.end()).toBe('');
+  let decoder = new StringDecoder("utf16le");
+  expect(decoder.write(Buffer.from("3DD8", "hex"))).toBe("");
+  expect(decoder.write(Buffer.from("4D", "hex"))).toBe("");
+  expect(decoder.write(Buffer.from("DC", "hex"))).toBe("\ud83d\udc4d");
+  expect(decoder.end()).toBe("");
 
-  decoder = new StringDecoder('utf16le');
-  expect(decoder.write(Buffer.from('3DD8', 'hex'))).toBe('');
-  expect(decoder.end()).toBe('\ud83d');
+  decoder = new StringDecoder("utf16le");
+  expect(decoder.write(Buffer.from("3DD8", "hex"))).toBe("");
+  expect(decoder.end()).toBe("\ud83d");
 
-  decoder = new StringDecoder('utf16le');
-  expect(decoder.write(Buffer.from('3DD8', 'hex'))).toBe('');
-  expect(decoder.write(Buffer.from('4D', 'hex'))).toBe('');
-  expect(decoder.end()).toBe('\ud83d');
+  decoder = new StringDecoder("utf16le");
+  expect(decoder.write(Buffer.from("3DD8", "hex"))).toBe("");
+  expect(decoder.write(Buffer.from("4D", "hex"))).toBe("");
+  expect(decoder.end()).toBe("\ud83d");
 
-  decoder = new StringDecoder('utf16le');
-  expect(decoder.write(Buffer.from('3DD84D', 'hex'))).toBe('\ud83d');
-  expect(decoder.end()).toBe('');
+  decoder = new StringDecoder("utf16le");
+  expect(decoder.write(Buffer.from("3DD84D", "hex"))).toBe("\ud83d");
+  expect(decoder.end()).toBe("");
 });
 
 // Test verifies that StringDecoder will correctly decode the given input
@@ -91,7 +93,7 @@ function test(encoding, input, expected, singleSequence) {
   }
   sequences.forEach((sequence) => {
     const decoder = new StringDecoder(encoding);
-    let output = '';
+    let output = "";
     sequence.forEach((write) => {
       output += decoder.write(input.slice(write[0], write[1]));
     });

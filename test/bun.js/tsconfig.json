@@ -1,15 +1,16 @@
 {
+  "extends": "../../tsconfig.base.json",
   "compilerOptions": {
-    "lib": ["ESNext"],
-    "module": "esnext",
-    "target": "esnext",
-    "noEmit": true,
-    "allowJs": true,
-    "types": ["bun-types"],
     "allowSyntheticDefaultImports": true,
-    "baseUrl": ".",
     "paths": {
-      "foo/bar": ["baz.js"]
-    }
-  }
+      "foo/bar": [
+        "baz.js"
+      ]
+    },
+    "baseUrl": "."
+  },
+  "exclude": [
+    "solid-dom-fixtures",
+    "bundled"
+  ]
 }

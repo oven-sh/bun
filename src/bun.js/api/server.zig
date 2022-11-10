@@ -4079,6 +4079,7 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
                 .vm = JSC.VirtualMachine.vm,
                 .allocator = Arena.getThreadlocalDefault(),
             };
+
             if (RequestContext.pool == null) {
                 RequestContext.pool = server.allocator.create(RequestContext.RequestContextStackAllocator) catch @panic("Out of memory!");
                 RequestContext.pool.?.* = .{
@@ -4256,11 +4257,12 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
             var ctx = this.request_pool_allocator.create(RequestContext) catch @panic("ran out of memory");
             ctx.create(this, req, resp);
             var request_object = this.allocator.create(JSC.WebCore.Request) catch unreachable;
+
             request_object.* = .{
                 .url = "",
                 .method = ctx.method,
                 .uws_request = req,
-                .base_url_string_for_joining = this.base_url_string_for_joining,
+                .https = ssl_enabled,
                 .body = .{
                     .Empty = .{},
                 },
@@ -4339,8 +4341,8 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
                 .url = "",
                 .method = ctx.method,
                 .uws_request = req,
-                .base_url_string_for_joining = this.base_url_string_for_joining,
                 .upgrader = ctx,
+                .https = ssl_enabled,
                 .body = .{
                     .Empty = .{},
                 },

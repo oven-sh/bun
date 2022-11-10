@@ -59,7 +59,7 @@ await new Promise((resolve, reject) => {
 
   if (!passed)
     throw new Error(
-      "queueMicrotask should throw a TypeError if the argument is not a function"
+      "queueMicrotask should throw a TypeError if the argument is not a function",
     );
 }
 
@@ -73,7 +73,7 @@ await new Promise((resolve, reject) => {
 
   if (!passed)
     throw new Error(
-      "queueMicrotask should throw a TypeError if the argument is empty"
+      "queueMicrotask should throw a TypeError if the argument is empty",
     );
 }
 
@@ -86,6 +86,6 @@ await new Promise((resolve, reject) => {
       resolve(true);
     },
     12345,
-    "hello"
+    "hello",
   );
 });

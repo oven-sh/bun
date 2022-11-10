@@ -41,18 +41,18 @@ function appendNextBody(documentHTML: string, pageContent: string) {
       documentHTML.substring(0, bodyRenderIdx) +
       pageContent +
       documentHTML.substring(
-        bodyRenderIdx + NEXT_12_0_BODY_RENDER_TARGET.length
+        bodyRenderIdx + NEXT_12_0_BODY_RENDER_TARGET.length,
       )
     );
   } else {
     var [renderTargetPrefix, renderTargetSuffix] = documentHTML.split(
-      "<next-js-internal-body-render-target></next-js-internal-body-render-target>"
+      "<next-js-internal-body-render-target></next-js-internal-body-render-target>",
     );
 
     if (!renderTargetPrefix || !renderTargetSuffix) {
       throw new Error(
         "Can't find where your <App /> starts or where the <Document /> ends. \nThis is probably a version incompatibility. Please mention this error in Bun's discord\n\n" +
-          documentHTML
+          documentHTML,
       );
     }
 
@@ -114,7 +114,7 @@ function getScripts(files: DocumentFiles) {
           type="module"
         />
       );
-    }
+    },
   );
   // if (entryPointIndex > 0) {
   //   const entry = scripts.splice(entryPointIndex, 1);
@@ -200,7 +200,7 @@ function renderDocument(
     scriptLoader: any;
     isPreview?: boolean;
     autoExport?: boolean;
-  }
+  },
 ): string {
   const htmlProps = {
     __NEXT_DATA__: {
@@ -259,7 +259,7 @@ function renderDocument(
         {/* @ts-expect-error */}
         <Document {...htmlProps} {...docProps}></Document>
       </HtmlContext.Provider>
-    </AmpStateContext.Provider>
+    </AmpStateContext.Provider>,
   );
 }
 
@@ -291,18 +291,18 @@ class ServerRouter implements NextRouter {
     defaultLocale?: string,
     domainLocales?: DomainLocale[],
     isPreview?: boolean,
-    isLocaleDomain?: boolean
+    isLocaleDomain?: boolean,
   ) {
     this.route = pathname.replace(/\/$/, "") || "/";
     this.pathname = new URL(
       pathname || "/",
-      Bun.origin || "http://localhost:3000"
+      Bun.origin || "http://localhost:3000",
     ).href;
 
     this.query = query;
     this.asPath = new URL(
       as || "/",
-      Bun.origin || "http://localhost:3000"
+      Bun.origin || "http://localhost:3000",
     ).href;
     this.isFallback = isFallback;
     this.basePath = basePath;
@@ -344,7 +344,7 @@ function noRouter() {
 function enhanceComponents(
   options: ComponentsEnhancer,
   App: AppType,
-  Component: NextComponentType
+  Component: NextComponentType,
 ): {
   App: AppType;
   Component: NextComponentType;
@@ -374,13 +374,13 @@ Object.defineProperty(NextDocument.Head.prototype, "getScripts", scriptsGetter);
 Object.defineProperty(
   NextDocument.NextScript.prototype,
   "getScripts",
-  scriptsGetter
+  scriptsGetter,
 );
 try {
   Object.defineProperty(
     NextDocument.default.prototype,
     "getScripts",
-    scriptsGetter
+    scriptsGetter,
   );
 } catch {}
 try {
@@ -475,19 +475,19 @@ export async function render({
       throw new Error(
         `\"export default\" missing in ${
           route.filePath
-        }.\nTry exporting one of ${reactComponents.join(", ")}\n`
+        }.\nTry exporting one of ${reactComponents.join(", ")}\n`,
       );
     } else if (reactComponents.length === 2) {
       throw new Error(
-        `\"export default\" missing in ${route.filePath}.\n\nTry exporting <${reactComponents[0]} /> or <${reactComponents[1]} />\n`
+        `\"export default\" missing in ${route.filePath}.\n\nTry exporting <${reactComponents[0]} /> or <${reactComponents[1]} />\n`,
       );
     } else if (reactComponents.length == 1) {
       throw new Error(
-        `\"export default\" missing in ${route.filePath}. Try adding this to the bottom of the file:\n\n        export default ${reactComponents[0]};\n`
+        `\"export default\" missing in ${route.filePath}. Try adding this to the bottom of the file:\n\n        export default ${reactComponents[0]};\n`,
       );
     } else if (reactComponents.length == 0) {
       throw new Error(
-        `\"export default\" missing in ${route.filePath}. Try exporting a React component.\n`
+        `\"export default\" missing in ${route.filePath}. Try exporting a React component.\n`,
       );
     }
   }
@@ -572,7 +572,7 @@ export async function render({
     null, //renderOpts.defaultLocale,
     [], // renderOpts.domainLocales,
     false,
-    false
+    false,
   );
 
   const ctx = {
@@ -593,7 +593,7 @@ export async function render({
       );
     },
     defaultGetInitialProps: async (
-      docCtx: NextDocument.DocumentContext
+      docCtx: NextDocument.DocumentContext,
     ): Promise<DocumentInitialProps> => {
       const enhanceApp = (AppComp: any) => {
         return (props: any) => <AppComp {...props} />;
@@ -643,7 +643,7 @@ export async function render({
             has(target, name) {
               return request.headers.has(name as string);
             },
-          }
+          },
         ),
       },
       res: {
@@ -715,7 +715,7 @@ export async function render({
   props.pageProps = pageProps;
 
   const renderPage: RenderPage = (
-    options: ComponentsEnhancer = {}
+    options: ComponentsEnhancer = {},
   ): RenderPageResult | Promise<RenderPageResult> => {
     if (ctx.err && ErrorDebug) {
       const htmlOrPromise = renderToString(<ErrorDebug error={ctx.err} />);
@@ -724,7 +724,7 @@ export async function render({
 
     if (dev && (props.router || props.Component)) {
       throw new Error(
-        `'router' and 'Component' can not be returned in getInitialProps from _app.js https://nextjs.org/docs/messages/cant-override-next-props`
+        `'router' and 'Component' can not be returned in getInitialProps from _app.js https://nextjs.org/docs/messages/cant-override-next-props`,
       );
     }
 
@@ -741,7 +741,7 @@ export async function render({
           {...props}
           pageProps={pageProps}
         />
-      </AppContainer>
+      </AppContainer>,
     );
 
     return { html: htmlOrPromise, head };
@@ -750,12 +750,12 @@ export async function render({
   const documentCtx = { ...ctx, renderPage };
   const docProps: DocumentInitialProps = await loadGetInitialProps(
     Document,
-    documentCtx
+    documentCtx,
   );
 
   if (!docProps || typeof docProps.html !== "string") {
     const message = `"${getDisplayName(
-      Document
+      Document,
     )}.getInitialProps()" should resolve to an object with a "html" prop set with a valid html string`;
     throw new Error(message);
   }
@@ -829,7 +829,7 @@ export async function render({
 
 export function useMaybeDeferContent(
   _name: string,
-  contentFn: () => JSX.Element
+  contentFn: () => JSX.Element,
 ): [boolean, JSX.Element] {
   return [false, contentFn()];
 }

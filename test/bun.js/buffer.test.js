@@ -9,7 +9,7 @@ it("Buffer.toJSON()", () => {
     JSON.stringify({
       type: "Buffer",
       data: [104, 101, 108, 108, 111],
-    })
+    }),
   );
 });
 
@@ -26,7 +26,7 @@ it("buffer", () => {
   expect(buf.toString("utf8", 0, "hello world ".length)).toBe("hello world ");
   gc();
   expect(buf.toString("base64url", 0, "hello world ".length)).toBe(
-    btoa("hello world ")
+    btoa("hello world "),
   );
   gc();
   expect(buf instanceof Uint8Array).toBe(true);
@@ -65,7 +65,7 @@ it("Buffer", () => {
 
 it("Buffer.byteLength", () => {
   expect(Buffer.byteLength("😀😃😄😁😆😅😂🤣☺️😊😊😇")).toBe(
-    new TextEncoder().encode("😀😃😄😁😆😅😂🤣☺️😊😊😇").byteLength
+    new TextEncoder().encode("😀😃😄😁😆😅😂🤣☺️😊😊😇").byteLength,
   );
 });
 
@@ -120,7 +120,7 @@ it("Buffer.toBuffer works", () => {
   expect(buf.toString("utf8", 0, "hello world ".length)).toBe("hello world ");
   gc();
   expect(buf.toString("base64url", 0, "hello world ".length)).toBe(
-    btoa("hello world ")
+    btoa("hello world "),
   );
   gc();
 
@@ -149,10 +149,10 @@ it("writeInt", () => {
 it("Buffer.from", () => {
   expect(Buffer.from("hello world").toString("utf8")).toBe("hello world");
   expect(Buffer.from("hello world", "ascii").toString("utf8")).toBe(
-    "hello world"
+    "hello world",
   );
   expect(Buffer.from("hello world", "latin1").toString("utf8")).toBe(
-    "hello world"
+    "hello world",
   );
   gc();
   expect(Buffer.from([254]).join(",")).toBe("254");
@@ -166,15 +166,15 @@ it("Buffer.from", () => {
 
   expect(Buffer.from(123).join(",")).toBe(Uint8Array.from(123).join(","));
   expect(Buffer.from({ length: 124 }).join(",")).toBe(
-    Uint8Array.from({ length: 124 }).join(",")
+    Uint8Array.from({ length: 124 }).join(","),
   );
 
   expect(Buffer.from(new ArrayBuffer(1024), 0, 512).join(",")).toBe(
-    new Uint8Array(512).join(",")
+    new Uint8Array(512).join(","),
   );
 
   expect(Buffer.from(new Buffer(new ArrayBuffer(1024), 0, 512)).join(",")).toBe(
-    new Uint8Array(512).join(",")
+    new Uint8Array(512).join(","),
   );
   gc();
 });
@@ -254,7 +254,7 @@ it("Buffer.compare", () => {
       [buf.slice(i), Buffer.from(s.slice(i))],
       [buf.slice(0, i), Buffer.from(s.slice(0, i))],
       [buf.slice(-i), Buffer.from(s.slice(-i))],
-      [buf.slice(0, -i), Buffer.from(s.slice(0, -i))]
+      [buf.slice(0, -i), Buffer.from(s.slice(0, -i))],
     );
   }
 
@@ -375,14 +375,14 @@ it("Buffer.concat", () => {
   array3.fill(300);
   gc();
   expect(Buffer.concat([array1, array2, array3]).join("")).toBe(
-    array1.join("") + array2.join("") + array3.join("")
+    array1.join("") + array2.join("") + array3.join(""),
   );
   expect(Buffer.concat([array1, array2, array3], 222).length).toBe(222);
   expect(
-    Buffer.concat([array1, array2, array3], 222).subarray(0, 128).join("")
+    Buffer.concat([array1, array2, array3], 222).subarray(0, 128).join(""),
   ).toBe("100".repeat(128));
   expect(
-    Buffer.concat([array1, array2, array3], 222).subarray(129, 222).join("")
+    Buffer.concat([array1, array2, array3], 222).subarray(129, 222).join(""),
   ).toBe("200".repeat(222 - 129));
 });
 

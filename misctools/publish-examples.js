@@ -16,7 +16,7 @@ var count = 0;
 
 const examplesFolderEntries = fs.readdirSync(
   path.join(process.cwd(), "examples"),
-  { withFileTypes: true }
+  { withFileTypes: true },
 );
 
 const packageNames = [];
@@ -30,7 +30,7 @@ for (let folder of examplesFolderEntries) {
   try {
     packageJSONText = fs.readFileSync(
       path.join(absolute, "package.json"),
-      "utf8"
+      "utf8",
     );
   } catch {
     continue;
@@ -72,7 +72,7 @@ for (let folder of examplesFolderEntries) {
   try {
     fs.copyFileSync(
       path.join(absolute, ".gitignore"),
-      path.join(absolute, "gitignore")
+      path.join(absolute, "gitignore"),
     );
   } catch (exception) {}
 
@@ -87,7 +87,7 @@ for (let folder of examplesFolderEntries) {
 
     fs.writeFileSync(
       path.join(absolute, "package.json"),
-      JSON.stringify(packageJSON, null, 2)
+      JSON.stringify(packageJSON, null, 2),
     );
     try {
       exec(`npm version patch --force --no-commit-hooks --no-git-tag-version`, {
@@ -95,7 +95,7 @@ for (let folder of examplesFolderEntries) {
       });
 
       packageJSON = JSON.parse(
-        fs.readFileSync(path.join(absolute, "package.json"), "utf8")
+        fs.readFileSync(path.join(absolute, "package.json"), "utf8"),
       );
       version = packageJSON.version;
     } catch (e) {
@@ -109,7 +109,7 @@ for (let folder of examplesFolderEntries) {
         `npm publish ${
           DRY_RUN ? "--dry-run" : ""
         } --access public --registry https://registry.npmjs.org/`,
-        { cwd: absolute }
+        { cwd: absolute },
       );
       packageNames.push([
         packageJSON.name,
@@ -149,13 +149,13 @@ if (packageNames.length > 0) {
   } catch (exception) {}
   fs.writeFileSync(
     path.join(dir, "package.json"),
-    JSON.stringify(packageJSON, null, 2)
+    JSON.stringify(packageJSON, null, 2),
   );
   exec(
     `npm publish ${
       DRY_RUN ? "--dry-run" : ""
     } --access public --registry https://registry.npmjs.org/`,
-    { cwd: dir }
+    { cwd: dir },
   );
 }
 

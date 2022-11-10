@@ -1,3 +1,4 @@
+// @ts-nocheck
 import { Foo } from "bacon";
 import React from "react";
 import * as Boom from "react";
@@ -5,7 +6,7 @@ import { createElement } from "react";
 export const hello: Foo = React.createElement("div");
 
 export const bacon: (foo: (what: Foo) => (the: Foo) => Foo) => Foo = (
-  foo: Foo
+  foo: Foo,
 ) => {
   return createElement(true);
 };

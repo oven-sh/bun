@@ -41,8 +41,30 @@ it("request.url should log successfully", async () => {
       return new Response(file(fixture));
     },
   });
-  expected = `http://${server.hostname}:${server.port}/helloooo`;
+  expected = `http://localhost:${server.port}/helloooo`;
   const response = await fetch(expected);
+  expect(response.url).toBe(expected);
+  expect(await response.text()).toBe(textToExpect);
+  server.stop();
+});
+
+it("request.url should be based on the Host header", async () => {
+  const fixture = resolve(import.meta.dir, "./fetch.js.txt");
+  const textToExpect = readFileSync(fixture, "utf-8");
+  var expected;
+  const server = serve({
+    port: port++,
+    fetch(req) {
+      expect(req.url).toBe("http://example.com/helloooo");
+      return new Response(file(fixture));
+    },
+  });
+  expected = `http://${server.hostname}:${server.port}/helloooo`;
+  const response = await fetch(expected, {
+    headers: {
+      Host: "example.com",
+    },
+  });
   expect(response.url).toBe(expected);
   expect(await response.text()).toBe(textToExpect);
   server.stop();
@@ -68,13 +90,13 @@ describe("streaming", () => {
                 pull(controller) {
                   throw new Error("error");
                 },
-              })
+              }),
             );
           },
         });
 
         const response = await fetch(
-          `http://${server.hostname}:${server.port}`
+          `http://${server.hostname}:${server.port}`,
         );
         if (response.status > 0) {
           expect(response.status).toBe(500);
@@ -110,13 +132,13 @@ describe("streaming", () => {
                   controller.enqueue("such fail");
                   throw new Error("error");
                 },
-              })
+              }),
             );
           },
         });
 
         const response = await fetch(
-          `http://${server.hostname}:${server.port}`
+          `http://${server.hostname}:${server.port}`,
         );
         // connection terminated
         if (response.status > 0) {
@@ -145,7 +167,7 @@ describe("streaming", () => {
               controller.enqueue(textToExpect);
               controller.close();
             },
-          })
+          }),
         );
       },
     });
@@ -170,7 +192,7 @@ describe("streaming", () => {
               controller.enqueue(textToExpect.substring(100));
               controller.close();
             },
-          })
+          }),
         );
       },
     });
@@ -192,7 +214,7 @@ describe("streaming", () => {
               start(controller) {
                 throw new TestPass("Test Passed");
               },
-            })
+            }),
           );
         },
       });
@@ -200,7 +222,7 @@ describe("streaming", () => {
       var response;
       try {
         response = await fetch(`http://${server.hostname}:${server.port}`);
-      } catch (e) {
+      } catch (e: any) {
         if (e.name !== "ConnectionClosed") {
           throw e;
         }
@@ -238,7 +260,7 @@ describe("streaming", () => {
               start(controller) {
                 throw new TypeError("error");
               },
-            })
+            }),
           );
         },
       });
@@ -272,7 +294,7 @@ describe("streaming", () => {
                 controller.close();
               });
             },
-          })
+          }),
         );
       },
     });
@@ -294,7 +316,7 @@ describe("streaming", () => {
               controller.enqueue(textToExpect);
               controller.close();
             },
-          })
+          }),
         );
       },
     });
@@ -320,7 +342,7 @@ describe("streaming", () => {
                 controller.close();
               });
             },
-          })
+          }),
         );
       },
     });
@@ -345,7 +367,7 @@ describe("streaming", () => {
               await Promise.resolve();
               controller.close();
             },
-          })
+          }),
         );
       },
     });
@@ -374,7 +396,7 @@ describe("streaming", () => {
               controller.enqueue(remain);
               controller.close();
             },
-          })
+          }),
         );
       },
     });

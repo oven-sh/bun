@@ -76,8 +76,8 @@ export default class PageLoader extends NextPageLoader {
     this.cssQueue.push(
       insertStyleSheet(event.detail).then(
         () => {},
-        () => {}
-      )
+        () => {},
+      ),
     );
   };
 

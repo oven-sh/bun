@@ -1,3 +1,4 @@
+/// <reference types="./plugins" />
 import { plugin } from "bun";
 import { describe, expect, it } from "bun:test";
 import { resolve } from "path";
@@ -45,7 +46,7 @@ plugin({
     }));
     builder.onLoad(
       { filter: /.*/, namespace: "fail" },
-      () => globalThis.failingObject
+      () => globalThis.failingObject,
     );
   },
 });
@@ -106,7 +107,7 @@ plugin({
             });
           }, 1);
         });
-      }
+      },
     );
 
     builder.onResolve({ filter: /.*/, namespace: "asyncfail" }, ({ path }) => ({
@@ -121,7 +122,7 @@ plugin({
         await Promise.resolve(1);
         await 1;
         throw globalThis.asyncfail;
-      }
+      },
     );
 
     builder.onResolve({ filter: /.*/, namespace: "asyncret" }, ({ path }) => ({
@@ -136,7 +137,7 @@ plugin({
         await 100;
         await Promise.resolve(10);
         return await globalThis.asyncret;
-      }
+      },
     );
   },
 });
@@ -170,7 +171,8 @@ describe("require", () => {
 
 describe("dynamic import", () => {
   it("SSRs `<h1>Hello world!</h1>` with Svelte", async () => {
-    const { default: App } = await import("./hello.svelte");
+    const { default: App }: any = await import("./hello.svelte");
+
     const { html } = App.render();
 
     expect(html).toBe("<h1>Hello world!</h1>");
@@ -240,7 +242,7 @@ describe("errors", () => {
       try {
         require(`fail:my-file-${loader}`);
         throw -1;
-      } catch (e) {
+      } catch (e: any) {
         if (e === -1) {
           throw new Error("Expected error");
         }
@@ -259,7 +261,7 @@ describe("errors", () => {
       try {
         require(`fail:my-file-${loader}-3`);
         throw -1;
-      } catch (e) {
+      } catch (e: any) {
         if (e === -1) {
           throw new Error("Expected error");
         }
@@ -273,7 +275,7 @@ describe("errors", () => {
       globalThis.asyncret = { wat: true };
       await import("asyncret:my-file");
       throw -1;
-    } catch (e) {
+    } catch (e: any) {
       if (e === -1) {
         throw new Error("Expected error");
       }
@@ -287,7 +289,7 @@ describe("errors", () => {
       globalThis.asyncfail = new Error("async error");
       await import("asyncfail:my-file");
       throw -1;
-    } catch (e) {
+    } catch (e: any) {
       if (e === -1) {
         throw new Error("Expected error");
       }
@@ -307,7 +309,7 @@ describe("errors", () => {
       try {
         require(`fail:my-file-${i}-2`);
         throw -1;
-      } catch (e) {
+      } catch (e: any) {
         if (e === -1) {
           throw new Error("Expected error");
         }
@@ -321,7 +323,7 @@ describe("errors", () => {
       globalThis.asyncOnLoad = `const x: string = -NaNAn../!!;`;
       await import("async:fail");
       throw -1;
-    } catch (e) {
+    } catch (e: any) {
       if (e === -1) {
         throw new Error("Expected error");
       }

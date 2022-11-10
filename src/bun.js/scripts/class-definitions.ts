@@ -6,7 +6,7 @@ export type Field =
       fn: string;
       length?: number;
       DOMJIT?: {
-        return: string;
+        returns: string;
         args?: [string, string] | [string, string, string] | [string];
       };
     }
@@ -24,6 +24,7 @@ export interface ClassDefinition {
   noConstructor?: boolean;
   estimatedSize?: boolean;
   hasPendingActivity?: boolean;
+  isEventEmitter?: boolean;
 }
 
 export function define(
@@ -35,7 +36,7 @@ export function define(
     call = false,
     construct = false,
     ...rest
-  } = {} as ClassDefinition
+  } = {} as ClassDefinition,
 ): ClassDefinition {
   return {
     ...rest,
@@ -44,10 +45,10 @@ export function define(
     estimatedSize,
     values,
     klass: Object.fromEntries(
-      Object.entries(klass).sort(([a], [b]) => a.localeCompare(b))
+      Object.entries(klass).sort(([a], [b]) => a.localeCompare(b)),
     ),
     proto: Object.fromEntries(
-      Object.entries(proto).sort(([a], [b]) => a.localeCompare(b))
+      Object.entries(proto).sort(([a], [b]) => a.localeCompare(b)),
     ),
   };
 }

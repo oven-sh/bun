@@ -1,3 +1,4 @@
+// @ts-nocheck
 type StringBool = "true" | "false";
 
 interface AnyNumber {
@@ -33,7 +34,7 @@ type Subt<T1 extends AnyNumber, T2 extends AnyNumber> = {
 
 interface SubtResult<
   TIsOverflow extends StringBool,
-  TResult extends AnyNumber
+  TResult extends AnyNumber,
 > {
   isOverflowing: TIsOverflow;
   result: TResult;
@@ -95,7 +96,7 @@ type Mod<TNumber extends AnyNumber, TModNumber extends AnyNumber> = {
 type Mod2<
   TNumber extends AnyNumber,
   TModNumber extends AnyNumber,
-  TSubtResult extends SubtResult<any, any>
+  TSubtResult extends SubtResult<any, any>,
 > = {
   true: TNumber;
   false: Mod<TSubtResult["result"], TModNumber>;
@@ -109,7 +110,7 @@ type Equals<TNumber1 extends AnyNumber, TNumber2 extends AnyNumber> = Equals2<
 type Equals2<
   TNumber1 extends AnyNumber,
   TNumber2 extends AnyNumber,
-  TSubtResult extends SubtResult<any, any>
+  TSubtResult extends SubtResult<any, any>,
 > = {
   true: "false";
   false: IsZero<TSubtResult["result"]>;

@@ -199,13 +199,13 @@ export var rmSync = fs.rmSync.bind(fs);
 // _maxListener
 var _lazyReadStream;
 var readStreamPathFastPathSymbol = Symbol.for(
-  "Bun.Node.readStreamPathFastPath"
+  "Bun.Node.readStreamPathFastPath",
 );
 const readStreamSymbol = Symbol.for("Bun.NodeReadStream");
 const readStreamPathOrFdSymbol = Symbol.for("Bun.NodeReadStreamPathOrFd");
 var writeStreamPathFastPathSymbol = Symbol.for("Bun.NodeWriteStreamFastPath");
 var writeStreamPathFastPathCallSymbol = Symbol.for(
-  "Bun.NodeWriteStreamFastPathCall"
+  "Bun.NodeWriteStreamFastPathCall",
 );
 var kIoDone = Symbol.for("kIoDone");
 
@@ -653,7 +653,7 @@ function getLazyWriteStream() {
       readStream[kIoDone] = false;
       return Bun.write(
         this[writeStreamPathFastPathSymbol],
-        readStream[readStreamPathOrFdSymbol]
+        readStream[readStreamPathOrFdSymbol],
       ).then(
         (bytesWritten) => {
           readStream[kIoDone] = this[kIoDone] = true;
@@ -666,7 +666,7 @@ function getLazyWriteStream() {
           readStream[kIoDone] = this[kIoDone] = true;
           this.#errorOrDestroy(err);
           readStream.emit("error", err);
-        }
+        },
       );
     }
 
@@ -769,7 +769,7 @@ function getLazyWriteStream() {
             this.emit(kIoDone);
 
             !err ? cb() : cb(err);
-          }
+          },
         );
       } else {
         this[kIoDone] = true;
@@ -784,7 +784,7 @@ function getLazyWriteStream() {
             this.#handleWrite(err, bytes);
             this.emit(kIoDone);
             !err ? cb() : cb(err);
-          }
+          },
         );
       }
     }

@@ -5,7 +5,7 @@ var { join } = require("path");
 const destination = join(__dirname, "../src/bun.js/bindings/headers.zig");
 const replacements = join(
   __dirname,
-  "../src/bun.js/bindings/headers-replacements.zig"
+  "../src/bun.js/bindings/headers-replacements.zig",
 );
 
 console.log("Writing to", destination);
@@ -24,7 +24,7 @@ const keep = (
     (a) =>
       /const (JSC|WTF|Web)_/gi.test(a) &&
       !a.includes("JSValue") &&
-      !a.includes("CatchScope")
+      !a.includes("CatchScope"),
   )
   .join("\n")
   .trim();
@@ -36,7 +36,7 @@ input = input.replaceAll("[*c] JSC__", "[*c]bindings.");
 input = input.replaceAll("[*c] const JSC__", "[*c]const bindings.");
 input = input.replaceAll(
   "[*c]Inspector__ScriptArguments",
-  "[*c]bindings.ScriptArguments"
+  "[*c]bindings.ScriptArguments",
 );
 
 input = input
@@ -98,5 +98,5 @@ writeFileSync(
     readFileSync(replacements, "utf8").trim() +
     "\n" +
     input.trim() +
-    "\n"
+    "\n",
 );

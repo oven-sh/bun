@@ -35,7 +35,7 @@ var Handler;
 
 try {
   Handler = await import(sourcefile);
-} catch (e) {
+} catch (e: any) {
   console.error("Error loading sourcefile:", e);
   try {
     await fetch(
@@ -51,7 +51,7 @@ try {
           errorType: e.name,
           stackTrace: e?.stack?.split("\n") ?? [],
         }),
-      }
+      },
     );
   } catch (e2) {
     console.error("Error sending error to runtime:", e2);
@@ -92,7 +92,7 @@ export default {
           errorType: e.name,
           stackTrace: e?.stack?.split("\n") ?? [],
         }),
-      }
+      },
     );
   } catch (e2) {
     console.error("Error sending error to runtime:", e2);
@@ -109,7 +109,7 @@ if ("baseURI" in Handler.default) {
 var baseURL;
 try {
   baseURL = new URL(baseURLString);
-} catch (e) {
+} catch (e: any) {
   console.error("Error parsing baseURI:", e);
   try {
     await fetch(
@@ -125,7 +125,7 @@ try {
           errorType: e.name,
           stackTrace: e?.stack?.split("\n") || [],
         }),
-      }
+      },
     );
   } catch (e2) {
     console.error("Error sending error to runtime:", e2);
@@ -147,7 +147,7 @@ async function runHandler(response: Response) {
   });
   // we are done with the Response object here
   // allow it to be GC'd
-  response = undefined;
+  (response as any) = undefined;
 
   var result: Response;
   try {
@@ -155,10 +155,10 @@ async function runHandler(response: Response) {
       console.time(`[${traceID}] Run ${request.url}`);
     }
     result = handlerFunction(request, {});
-    if (result && result.then) {
+    if (result && (result as any).then) {
       await result;
     }
-  } catch (e1) {
+  } catch (e1: any) {
     if (typeof process.env.VERBOSE !== "undefined") {
       console.error(`[${traceID}] Error running handler:`, e1);
     }
@@ -172,7 +172,7 @@ async function runHandler(response: Response) {
           errorType: e1.name,
           stackTrace: e1?.stack?.split("\n") ?? [],
         }),
-      }
+      },
     ).finally(noop);
     return;
   } finally {
@@ -191,7 +191,7 @@ async function runHandler(response: Response) {
           errorType: "ExpectedResponseObject",
           stackTrace: [],
         }),
-      }
+      },
     );
     return;
   }
@@ -202,9 +202,9 @@ async function runHandler(response: Response) {
       method: "POST",
       headers: result.headers,
       body: await result.blob(),
-    }
+    },
   );
-  result = undefined;
+  (result as any) = undefined;
 }
 
 while (true) {

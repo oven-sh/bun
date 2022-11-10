@@ -1,4 +1,4 @@
-import { file } from "bun";
+import { file, serve } from "bun";
 
 serve({
   fetch(req: Request) {

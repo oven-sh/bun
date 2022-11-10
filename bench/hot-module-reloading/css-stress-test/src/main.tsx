@@ -1,11 +1,11 @@
-export const Main = ({ productName, cssInJS }) => {
+export const Main = (props: { productName: string; cssInJS?: string }) => {
   return (
     <>
       <header>
         <div className="Title">CSS HMR Stress Test!</div>
         <p className="Description">
           This page visually tests how quickly a bundler can update{" "}
-          {cssInJS ? "CSS-in-JS" : "CSS"} over Hot Module Reloading.
+          {props.cssInJS ? "CSS-in-JS" : "CSS"} over Hot Module Reloading.
         </p>
       </header>
       <main className="main">
@@ -53,9 +53,9 @@ export const Main = ({ productName, cssInJS }) => {
         </div>
 
         <div className="Bundler-container">
-          <div className="Bundler">{productName}</div>
+          <div className="Bundler">{props.productName}</div>
           <div className="Bundler-updateRate">
-            {cssInJS ? "CSS-in-JS framework: " + cssInJS : ""}
+            {props.cssInJS ? "CSS-in-JS framework: " + props.cssInJS : ""}
           </div>
         </div>
       </footer>

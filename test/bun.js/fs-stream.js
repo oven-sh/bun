@@ -10,7 +10,7 @@ await new Promise((resolve, reject) => {
         const real = readFileSync("/tmp/fs-stream.js", "utf8");
         if (copied !== real) {
           reject(
-            new Error("fs-stream.js is not the same as fs-stream.copy.js")
+            new Error("fs-stream.js is not the same as fs-stream.copy.js"),
           );
           return;
         }

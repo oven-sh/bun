@@ -10,7 +10,7 @@ it("primordials are not here!", () => {
 
 it("import.meta.resolveSync", () => {
   expect(
-    import.meta.resolveSync("./" + import.meta.file, import.meta.path)
+    import.meta.resolveSync("./" + import.meta.file, import.meta.path),
   ).toBe(path);
   const require = Module.createRequire(import.meta.path);
   expect(require.resolve(import.meta.path)).toBe(path);
@@ -18,7 +18,7 @@ it("import.meta.resolveSync", () => {
 
   // check it works with URL objects
   expect(
-    Module.createRequire(new URL(import.meta.url)).resolve(import.meta.path)
+    Module.createRequire(new URL(import.meta.url)).resolve(import.meta.path),
   ).toBe(import.meta.path);
 });
 

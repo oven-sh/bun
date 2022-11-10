@@ -64,7 +64,7 @@ function nextDataFromBunData() {
   for (let i = 0; i < paramsList.keys.length; i++) {
     paramsMap.set(
       decodeURIComponent(paramsList.keys[i]),
-      decodeURIComponent(paramsList.values[i])
+      decodeURIComponent(paramsList.values[i]),
     );
   }
 
@@ -134,31 +134,31 @@ setConfig({
 });
 
 let asPath: string = getURL();
-const basePath = (process.env.__NEXT_ROUTER_BASEPATH as string) || ''
+const basePath = (process.env.__NEXT_ROUTER_BASEPATH as string) || "";
 
 function pathNoQueryHash(path: string) {
-  const queryIndex = path.indexOf('?')
-  const hashIndex = path.indexOf('#')
+  const queryIndex = path.indexOf("?");
+  const hashIndex = path.indexOf("#");
 
   if (queryIndex > -1 || hashIndex > -1) {
-    path = path.substring(0, queryIndex > -1 ? queryIndex : hashIndex)
+    path = path.substring(0, queryIndex > -1 ? queryIndex : hashIndex);
   }
-  return path
+  return path;
 }
 
 function hasBasePath(path: string): boolean {
-  path = pathNoQueryHash(path)
-  return path === prefix || path.startsWith(prefix + '/')
+  path = pathNoQueryHash(path);
+  return path === prefix || path.startsWith(prefix + "/");
 }
 
 function delBasePath(path: string): string {
-  path = path.slice(basePath.length)
-  if (!path.startsWith('/')) path = `/${path}`
-  return path
+  path = path.slice(basePath.length);
+  if (!path.startsWith("/")) path = `/${path}`;
+  return path;
 }
 
 // make sure not to attempt stripping basePath for 404s
-if (hasBasePath(asPath)) { 
+if (hasBasePath(asPath)) {
   asPath = delBasePath(asPath);
 }
 
@@ -214,8 +214,8 @@ class Container extends React.Component<{
           String(
             assign(
               urlQueryToSearchParams(router.query),
-              new URLSearchParams(location.search)
-            )
+              new URLSearchParams(location.search),
+            ),
           ),
         asPath,
         {
@@ -229,7 +229,7 @@ class Container extends React.Component<{
           // Other pages (strictly updating query) happens shallowly, as data
           // requirements would already be present.
           shallow: !isFallback,
-        }
+        },
       );
     }
   }
@@ -326,7 +326,7 @@ export async function _boot(EntryPointNamespace, isError) {
 
       console.assert(
         AppModule.default,
-        appSrc + " must have a default export'd React component"
+        appSrc + " must have a default export'd React component",
       );
 
       if ("default" in AppModule) {
@@ -355,7 +355,7 @@ export async function _boot(EntryPointNamespace, isError) {
           Component: info.Component || CachedComponent,
           App,
           scroll,
-        })
+        }),
       );
     },
     locale,
@@ -431,7 +431,7 @@ export function render(props) {
   } else {
     ReactDOM.render(
       <TopLevelRender {...props} />,
-      document.getElementById("__next")
+      document.getElementById("__next"),
     );
   }
 }

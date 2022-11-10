@@ -70,7 +70,7 @@ function writeSnapshot(name, code) {
           ".debug" +
           path.extname(file)
       : file,
-    code
+    code,
   );
 }
 
@@ -114,7 +114,7 @@ async function main() {
 
       var shouldClose = true;
       page.on("console", (obj) =>
-        console.log(`[console.${obj.type()}] ${obj.text()}`)
+        console.log(`[console.${obj.type()}] ${obj.text()}`),
       );
       page.exposeFunction("testFail", (error) => {
         console.log(`❌ ${error}`);
@@ -135,7 +135,7 @@ async function main() {
       } catch (err) {
         if (canRetry) {
           console.log(
-            `❌ ${key} failed once (incase it's still booting on universal binary for the first time). Retrying...`
+            `❌ ${key} failed once (incase it's still booting on universal binary for the first time). Retrying...`,
           );
           canRetry = false;
           return await runPage(key);
@@ -187,5 +187,5 @@ async function main() {
 main().catch((error) =>
   setTimeout(() => {
     throw error;
-  })
+  }),
 );

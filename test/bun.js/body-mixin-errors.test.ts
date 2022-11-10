@@ -10,7 +10,7 @@ describe("body-mixin-errors", () => {
     try {
       await res.text();
       throw new Error("should not get here");
-    } catch (e) {
+    } catch (e: any) {
       expect(e.message).toBe("Body already used");
     }
   });

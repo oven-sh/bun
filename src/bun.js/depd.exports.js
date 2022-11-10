@@ -38,7 +38,7 @@ var __toESM = (mod, isNodeMode, target) => (
     isNodeMode || !mod || !mod.__esModule
       ? __defProp(target, "default", { value: mod, enumerable: true })
       : target,
-    mod
+    mod,
   )
 );
 

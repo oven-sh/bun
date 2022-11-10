@@ -85,7 +85,7 @@ export class Server extends EventEmitter {
     } catch (err) {
       this.emit(
         "error",
-        new Error(`bun-http-polyfill: Bun.serve failed: ${err.message}`)
+        new Error(`bun-http-polyfill: Bun.serve failed: ${err.message}`),
       );
     }
   }
@@ -170,7 +170,7 @@ export class IncomingMessage extends Readable {
         this.complete = true;
       } else {
         this.push(
-          this._body.subarray(this._body_offset, (this._body_offset += size))
+          this._body.subarray(this._body_offset, (this._body_offset += size)),
         );
       }
     }
@@ -313,8 +313,8 @@ export class ServerResponse extends Writable {
           headers: this.#headers,
           status: this.statusCode,
           statusText: this.statusMessage ?? STATUS_CODES[this.statusCode],
-        }
-      )
+        },
+      ),
     );
   }
 
@@ -327,7 +327,7 @@ export class ServerResponse extends Writable {
           headers: this.#headers,
           status: this.statusCode,
           statusText: this.statusMessage ?? STATUS_CODES[this.statusCode],
-        })
+        }),
       );
       callback && callback();
       return;

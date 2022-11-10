@@ -11,14 +11,14 @@ describe("FileSink", () => {
     [
       ["abcdefghijklmnopqrstuvwxyz", "ABCDEFGHIJKLMNOPQRSTUVWXYZ"],
       new TextEncoder().encode(
-        "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
+        "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ",
       ),
       "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ",
     ],
     [
       ["😋 Get Emoji — All Emojis to ✂️ Copy and 📋 Paste 👌"],
       new TextEncoder().encode(
-        "😋 Get Emoji — All Emojis to ✂️ Copy and 📋 Paste 👌"
+        "😋 Get Emoji — All Emojis to ✂️ Copy and 📋 Paste 👌",
       ),
       "😋 Get Emoji — All Emojis to ✂️ Copy and 📋 Paste 👌",
     ],
@@ -29,7 +29,7 @@ describe("FileSink", () => {
       ],
       new TextEncoder().encode(
         "abcdefghijklmnopqrstuvwxyz" +
-          "😋 Get Emoji — All Emojis to ✂️ Copy and 📋 Paste 👌"
+          "😋 Get Emoji — All Emojis to ✂️ Copy and 📋 Paste 👌",
       ),
       "abcdefghijklmnopqrstuvwxyz" +
         "😋 Get Emoji — All Emojis to ✂️ Copy and 📋 Paste 👌",
@@ -43,7 +43,7 @@ describe("FileSink", () => {
       ],
       new TextEncoder().encode(
         "abcdefghijklmnopqrstuvwxyz" +
-          "😋 Get Emoji — All Emojis to ✂️ Copy and 📋 Paste 👌"
+          "😋 Get Emoji — All Emojis to ✂️ Copy and 📋 Paste 👌",
       ),
       "(rope) " +
         "abcdefghijklmnopqrstuvwxyz" +
@@ -58,13 +58,13 @@ describe("FileSink", () => {
       ],
       new TextEncoder().encode(
         "abcdefghijklmnopqrstuvwxyz" +
-          "😋 Get Emoji — All Emojis to ✂️ Copy and 📋 Paste 👌"
+          "😋 Get Emoji — All Emojis to ✂️ Copy and 📋 Paste 👌",
       ),
       "(array) " +
         "abcdefghijklmnopqrstuvwxyz" +
         "😋 Get Emoji — All Emojis to ✂️ Copy and 📋 Paste 👌",
     ],
-  ];
+  ] as const;
 
   for (const [input, expected, label] of fixtures) {
     it(`${JSON.stringify(label)}`, async () => {

@@ -54,7 +54,7 @@ it("crypto.getRandomValues", () => {
     var array = crypto.getRandomValues(foo);
     expect(array).toBe(foo);
     expect(array.reduce((sum, a) => (sum += a === 0), 0) != foo.length).toBe(
-      true
+      true,
     );
   }
 
@@ -66,7 +66,7 @@ it("crypto.getRandomValues", () => {
 
   // run it on a large input
   expect(
-    !!crypto.getRandomValues(new Uint8Array(8096)).find((a) => a > 0)
+    !!crypto.getRandomValues(new Uint8Array(8096)).find((a) => a > 0),
   ).toBe(true);
 
   {
@@ -74,7 +74,7 @@ it("crypto.getRandomValues", () => {
     var array = crypto.getRandomValues(foo, "unbuffered");
     expect(array).toBe(foo);
     expect(array.reduce((sum, a) => (sum += a === 0), 0) != foo.length).toBe(
-      true
+      true,
     );
   }
 });

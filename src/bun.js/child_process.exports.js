@@ -495,15 +495,15 @@ export function spawnSync(file, args, options) {
   const bunStdio = getBunStdioFromOptions(stdio);
 
   if (options.input) {
-    if (isArrayBufferView(options.input)) {
+    if (isArrayBufferView(options.input) || isUint8Array(options.input)) {
       bunStdio[0] = options.input;
     } else if (typeof options.input === "string") {
       bunStdio[0] = Buffer.from(options.input, encoding || "utf8");
     } else {
       throw new ERR_INVALID_ARG_TYPE(
-        `options.stdio[${i}]`,
+        `options.stdio[0]`,
         ["Buffer", "TypedArray", "DataView", "string"],
-        input
+        options.input
       );
     }
   }
@@ -566,10 +566,10 @@ export function spawnSync(file, args, options) {
 export function execFileSync(file, args, options) {
   ({ file, args, options } = normalizeExecFileArgs(file, args, options));
 
-  const inheritStderr = !options.stdio;
+  // const inheritStderr = !options.stdio;
   const ret = spawnSync(file, args, options);
 
-  if (inheritStderr && ret.stderr) process.stderr.write(ret.stderr);
+  // if (inheritStderr && ret.stderr) process.stderr.write(ret.stderr);
 
   const errArgs = [options.argv0 || file];
   ArrayPrototypePush.apply(errArgs, args);

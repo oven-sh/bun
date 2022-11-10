@@ -217,7 +217,7 @@ describe("execFile()", () => {
         },
       );
     });
-    expect(SEMVER_REGEX.test(result.trim())).toBe(true);
+    expect(SEMVER_REGEX.test(result.toString().trim())).toBe(true);
   });
 });
 

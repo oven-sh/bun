@@ -1090,7 +1090,7 @@ pub const TextChunk = struct {
     pub fn getText(this: *TextChunk, global: *JSGlobalObject) JSValue {
         if (this.text_chunk == null)
             return JSC.JSValue.jsUndefined();
-        return ZigString.init(this.text_chunk.?.getContent().slice()).withEncoding().toValue(global);
+        return ZigString.init(this.text_chunk.?.getContent().slice()).withEncoding().toValueGC(global);
     }
 
     pub fn removed(this: *TextChunk, _: *JSGlobalObject) JSValue {

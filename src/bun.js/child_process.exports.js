@@ -495,7 +495,7 @@ export function spawnSync(file, args, options) {
   const bunStdio = getBunStdioFromOptions(stdio);
 
   if (options.input) {
-    if (isArrayBufferView(options.input) || isUint8Array(options.input)) {
+    if (ArrayBufferIsView(options.input)) {
       bunStdio[0] = options.input;
     } else if (typeof options.input === "string") {
       bunStdio[0] = Buffer.from(options.input, encoding || "utf8");
@@ -503,7 +503,7 @@ export function spawnSync(file, args, options) {
       throw new ERR_INVALID_ARG_TYPE(
         `options.stdio[0]`,
         ["Buffer", "TypedArray", "DataView", "string"],
-        options.input
+        options.input,
       );
     }
   }
@@ -1465,10 +1465,6 @@ var MathAbs = Math.abs;
 var StringPrototypeToUpperCase = String.prototype.toUpperCase;
 var StringPrototypeIncludes = String.prototype.includes;
 var Uint8ArrayPrototypeIncludes = Uint8Array.prototype.includes;
-
-function isArrayBufferView(value) {
-  return ArrayBufferIsView.call(value);
-}
 
 function isUint8Array(value) {
   return (

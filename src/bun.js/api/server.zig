@@ -4038,6 +4038,7 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
         }
 
         pub fn finalize(this: *ThisServer) void {
+            httplog("finalize", .{});
             this.has_js_deinited = true;
             this.deinitIfWeCan();
         }
@@ -4052,6 +4053,7 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
         }
 
         pub fn deinitIfWeCan(this: *ThisServer) void {
+            httplog("deinitIfWeCan", .{});
             if (this.pending_requests == 0 and this.listener == null and this.has_js_deinited and !this.hasActiveWebSockets()) {
                 if (this.config.websocket) |*ws| {
                     ws.handler.app = null;
@@ -4074,6 +4076,7 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
         }
 
         pub fn deinit(this: *ThisServer) void {
+            httplog("deinit", .{});
             this.app.destroy();
             const allocator = this.allocator;
             allocator.destroy(this);

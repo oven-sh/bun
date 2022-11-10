@@ -1523,55 +1523,6 @@ pub const Resolver = struct {
                 var dependency_version: Dependency.Version = .{};
                 var dependency_behavior = @intToEnum(Dependency.Behavior, Dependency.Behavior.normal);
 
-                // Handle self-references
-                // for example
-                //    require.resolve("esbuild") from inside the "esbuild" package within the cache
-                const package_jsons_to_try = .{
-                    "package_json",
-                    "enclosing_package_json",
-                    "package_json_for_dependencies",
-                };
-
-                inline for (package_jsons_to_try) |package_json_field| {
-                    if (@field(dir_info, package_json_field)) |package_json| {
-                        if (strings.eqlLong(package_json.name, esm.name, true)) {
-                            if (package_json.exports) |exports_map| {
-
-                                // The condition set is determined by the kind of import
-                                const esmodule = ESModule{
-                                    .conditions = switch (kind) {
-                                        ast.ImportKind.require, ast.ImportKind.require_resolve => r.opts.conditions.require,
-                                        else => r.opts.conditions.import,
-                                    },
-                                    .allocator = r.allocator,
-                                    .debug_logs = if (r.debug_logs) |*debug| debug else null,
-                                };
-
-                                // Resolve against the path "/", then join it with the absolute
-                                // directory path. This is done because ESM package resolution uses
-                                // URLs while our path resolution uses file system paths. We don't
-                                // want problems due to Windows paths, which are very unlike URL
-                                // paths. We also want to avoid any "%" characters in the absolute
-                                // directory path accidentally being interpreted as URL escapes.
-                                const esm_resolution = esmodule.resolve("/", esm.subpath, exports_map.root);
-
-                                if (r.handleESMResolution(esm_resolution, package_json.source.path.name.dir, kind, package_json)) |result| {
-                                    return .{ .success = result };
-                                }
-
-                                return .{ .not_found = {} };
-                            }
-
-                            var _paths = [_]string{ dir_info.abs_path, import_path };
-                            const abs_path = r.fs.absBuf(&_paths, &node_modules_check_buf);
-
-                            if (r.loadAsFileOrDirectory(abs_path, kind)) |res| {
-                                return .{ .success = res };
-                            }
-                        }
-                    }
-                }
-
                 // const initial_pending_tasks = manager.pending_tasks;
                 var resolved_package_id: Install.PackageID = brk: {
                     // check if the package.json in the source directory was already added to the lockfile

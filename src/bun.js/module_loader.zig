@@ -169,6 +169,7 @@ fn dumpSource(specifier: string, printer: anytype) !void {
 }
 
 pub const ModuleLoader = struct {
+    const debug = Output.scoped(.ModuleLoader, true);
     pub const AsyncModule = struct {
 
         // This is all the state used by the printer to print the module
@@ -191,7 +192,6 @@ pub const ModuleLoader = struct {
         any_task: JSC.AnyTask = undefined,
 
         pub const Id = u32;
-        const debug = Output.scoped(.ModuleLoader, false);
 
         const PackageDownloadError = struct {
             name: []const u8,
@@ -1378,6 +1378,8 @@ pub const ModuleLoader = struct {
         JSC.markBinding(@src());
         var log = logger.Log.init(jsc_vm.bundler.allocator);
         defer log.deinit();
+        debug("transpileFile: {any}", .{specifier_ptr.*});
+
         var _specifier = specifier_ptr.toSlice(jsc_vm.allocator);
         var referrer_slice = referrer.toSlice(jsc_vm.allocator);
         defer _specifier.deinit();

@@ -12,6 +12,42 @@ function getPort() {
 }
 
 describe("websocket server", () => {
+  it("can do publish()", async (done) => {
+    var server = serve({
+      port: getPort(),
+      websocket: {
+        open(ws) {
+          ws.subscribe("all");
+        },
+        message(ws, msg) {},
+        close(ws) {},
+      },
+      fetch(req, server) {
+        if (server.upgrade(req)) {
+          return;
+        }
+
+        return new Response("success");
+      },
+    });
+
+    await new Promise<WebSocket>((resolve2, reject2) => {
+      var socket = new WebSocket(`ws://${server.hostname}:${server.port}`);
+      var clientCounter = 0;
+
+      socket.onmessage = (e) => {
+        expect(e.data).toBe("hello");
+        resolve2();
+      };
+      socket.onopen = () => {
+        queueMicrotask(() => {
+          server.publish("all", "hello");
+        });
+      };
+    });
+    server.stop();
+    done();
+  });
   for (let method of ["publish", "publishText", "publishBinary"]) {
     describe(method, () => {
       it("in close() should work", async () => {

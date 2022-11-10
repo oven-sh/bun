@@ -1474,6 +1474,42 @@ declare module "bun" {
     ): boolean;
 
     /**
+     * Send a message to all connected {@link ServerWebSocket} subscribed to a topic
+     *
+     * @param topic The topic to publish to
+     * @param data The data to send
+     * @param compress Should the data be compressed? Ignored if the client does not support compression.
+     *
+     * @returns 0 if the message was dropped, -1 if backpressure was applied, or the number of bytes sent.
+     *
+     * @example
+     *
+     * ```js
+     * server.publish("chat", "Hello World");
+     * ```
+     *
+     * @example
+     * ```js
+     * server.publish("chat", new Uint8Array([1, 2, 3, 4]));
+     * ```
+     *
+     * @example
+     * ```js
+     * server.publish("chat", new ArrayBuffer(4), true);
+     * ```
+     *
+     * @example
+     * ```js
+     * server.publish("chat", new DataView(new ArrayBuffer(4)));
+     * ```
+     */
+    publish(
+      topic: string,
+      data: string | ArrayBufferView | ArrayBuffer,
+      compress?: boolean,
+    ): ServerWebSocketSendStatus;
+
+    /**
      * How many requests are in-flight right now?
      */
     readonly pendingRequests: number;

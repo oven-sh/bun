@@ -3657,6 +3657,10 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
                 .upgrade = .{
                     .rfn = JSC.wrapSync(ThisServer, "onUpgrade"),
                 },
+
+                .publish = .{
+                    .rfn = JSC.wrapSync(ThisServer, "publish"),
+                },
             },
             .{
                 .port = .{
@@ -3679,6 +3683,63 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
                 },
             },
         );
+
+        pub fn publish(this: *ThisServer, globalThis: *JSC.JSGlobalObject, topic: ZigString, message_value: JSValue, compress_value: ?JSValue, exception: JSC.C.ExceptionRef) JSValue {
+            if (this.config.websocket == null)
+                return JSValue.jsNumber(0);
+
+            var app = this.app;
+
+            if (topic.len == 0) {
+                httplog("publish() topic invalid", .{});
+                JSC.JSError(this.vm.allocator, "publish requires a topic string", .{}, globalThis, exception);
+                return .zero;
+            }
+
+            var topic_slice = topic.toSlice(bun.default_allocator);
+            defer topic_slice.deinit();
+            if (topic_slice.len == 0) {
+                JSC.JSError(this.vm.allocator, "publish requires a non-empty topic", .{}, globalThis, exception);
+                return .zero;
+            }
+
+            const compress = (compress_value orelse JSValue.jsBoolean(true)).toBoolean();
+
+            if (message_value.isEmptyOrUndefinedOrNull()) {
+                JSC.JSError(this.vm.allocator, "publish requires a non-empty message", .{}, globalThis, exception);
+                return .zero;
+            }
+
+            if (message_value.asArrayBuffer(globalThis)) |buffer| {
+                if (buffer.len == 0) {
+                    JSC.JSError(this.vm.allocator, "publish requires a non-empty message", .{}, globalThis, exception);
+                    return .zero;
+                }
+
+                return JSValue.jsNumber(
+                    // if 0, return 0
+                    // else return number of bytes sent
+                    @as(i32, @boolToInt(uws.AnyWebSocket.publishWithOptions(ssl_enabled, app, topic_slice.slice(), buffer.slice(), .binary, compress))) * @intCast(i32, @truncate(u31, buffer.len)),
+                );
+            }
+
+            {
+                var string_slice = message_value.toSlice(globalThis, bun.default_allocator);
+                defer string_slice.deinit();
+                if (string_slice.len == 0) {
+                    return JSValue.jsNumber(0);
+                }
+
+                const buffer = string_slice.slice();
+                return JSValue.jsNumber(
+                    // if 0, return 0
+                    // else return number of bytes sent
+                    @as(i32, @boolToInt(uws.AnyWebSocket.publishWithOptions(ssl_enabled, app, topic_slice.slice(), buffer, .text, compress))) * @intCast(i32, @truncate(u31, buffer.len)),
+                );
+            }
+
+            return .zero;
+        }
 
         pub fn onUpgrade(
             this: *ThisServer,

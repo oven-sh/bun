@@ -774,7 +774,7 @@ pub const ZigException = extern struct {
     pub const namespace = shim.namespace;
 
     pub const Holder = extern struct {
-        const frame_count = 24;
+        const frame_count = 32;
         pub const source_lines_count = 6;
         source_line_numbers: [source_lines_count]i32,
         source_lines: [source_lines_count]ZigString,
@@ -2555,9 +2555,7 @@ pub const ZigConsoleClient = struct {
         _: usize,
         // args
         _: *ScriptArguments,
-    ) callconv(.C) void {
-        
-    }
+    ) callconv(.C) void {}
     pub fn profile(
         // console
         _: ZigConsoleClient.Type,

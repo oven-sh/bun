@@ -494,16 +494,17 @@ export function spawnSync(file, args, options) {
   const stdio = options.stdio || "pipe";
   const bunStdio = getBunStdioFromOptions(stdio);
 
-  if (options.input) {
-    if (ArrayBufferIsView(options.input)) {
-      bunStdio[0] = options.input;
-    } else if (typeof options.input === "string") {
-      bunStdio[0] = Buffer.from(options.input, encoding || "utf8");
+  var { input } = options;
+  if (input) {
+    if (ArrayBufferIsView(input)) {
+      bunStdio[0] = input;
+    } else if (typeof input === "string") {
+      bunStdio[0] = Buffer.from(input, encoding || "utf8");
     } else {
       throw new ERR_INVALID_ARG_TYPE(
         `options.stdio[0]`,
         ["Buffer", "TypedArray", "DataView", "string"],
-        options.input,
+        input,
       );
     }
   }

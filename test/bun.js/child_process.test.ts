@@ -259,6 +259,14 @@ describe("execFileSync()", () => {
     const result = execFileSync("bun", ["-v"], { encoding: "utf8" });
     expect(SEMVER_REGEX.test(result.trim())).toBe(true);
   });
+
+  it("should allow us to pass input to the command", () => {
+    const result = execFileSync("node", ["spawned-child.js", "STDIN"], {
+      input: "hello world!",
+      encoding: "utf8",
+    });
+    expect(result.trim()).toBe("hello world!");
+  });
 });
 
 describe("execSync()", () => {

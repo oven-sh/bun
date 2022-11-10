@@ -1633,6 +1633,8 @@ pub const JSExpect = struct {
             @compileLog("Expected Expect.toBeLessThan to be a callback");
         if (@TypeOf(Expect.toBeLessThanOrEqual) != CallbackType)
             @compileLog("Expected Expect.toBeLessThanOrEqual to be a callback");
+        if (@TypeOf(Expect.toBeTruthy) != CallbackType)
+            @compileLog("Expected Expect.toBeTruthy to be a callback");
         if (@TypeOf(Expect.toContain) != CallbackType)
             @compileLog("Expected Expect.toContain to be a callback");
         if (@TypeOf(Expect.toContainEqual) != CallbackType)
@@ -1733,6 +1735,7 @@ pub const JSExpect = struct {
             @export(Expect.toBeInstanceOf, .{ .name = "ExpectPrototype__toBeInstanceOf" });
             @export(Expect.toBeLessThan, .{ .name = "ExpectPrototype__toBeLessThan" });
             @export(Expect.toBeLessThanOrEqual, .{ .name = "ExpectPrototype__toBeLessThanOrEqual" });
+            @export(Expect.toBeTruthy, .{ .name = "ExpectPrototype__toBeTruthy" });
             @export(Expect.toContain, .{ .name = "ExpectPrototype__toContain" });
             @export(Expect.toContainEqual, .{ .name = "ExpectPrototype__toContainEqual" });
             @export(Expect.toEqual, .{ .name = "ExpectPrototype__toEqual" });

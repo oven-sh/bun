@@ -128,6 +128,10 @@ export default [
         fn: "toBeInstanceOf",
         length: 1,
       },
+      toBeTruthy: {
+        fn: "toBeTruthy",
+        length: 0,
+      },
       toContain: {
         fn: "toContain",
         length: 1,

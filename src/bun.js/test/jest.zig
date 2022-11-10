@@ -329,7 +329,7 @@ pub const Expect = struct {
             }
 
             globalObject.throw(
-                "Expected: {any}\n\tReceived: {any}",
+                "\n\tExpected: {any}\n\tReceived: {any}",
                 .{
                     left.toFmt(globalObject, &lhs_formatter),
                     right.toFmt(globalObject, &rhs_formatter),
@@ -382,6 +382,105 @@ pub const Expect = struct {
         return thisValue;
     }
 
+    pub fn toContain(
+        this: *Expect,
+        globalObject: *JSC.JSGlobalObject,
+        callFrame: *JSC.CallFrame,
+    ) callconv(.C) JSC.JSValue {
+        const thisValue = callFrame.this();
+        const arguments_ = callFrame.arguments(1);
+        const arguments = arguments_.ptr[0..arguments_.len];
+
+        if (arguments.len < 1) {
+            globalObject.throwInvalidArguments("toContain() takes 1 argument", .{});
+            return .zero;
+        }
+
+        if (this.scope.tests.items.len <= this.test_id) {
+            globalObject.throw("toContain() must be called in a test", .{});
+            return .zero;
+        }
+
+        active_test_expectation_counter.actual += 1;
+
+        const expected = arguments[0];
+        const value = JSC.Jest.Expect.capturedValueGetCached(thisValue) orelse {
+            globalObject.throw("Internal consistency error: the expect(value) was garbage collected but it should not have been!", .{});
+            return .zero;
+        };
+
+        if (value.isString()) {
+            if (expected.isString()) {
+                const valueString = (value.toString(globalObject).toSlice(globalObject, default_allocator).cloneIfNeeded(default_allocator) catch unreachable).slice();
+                const expectedString = (expected.toString(globalObject).toSlice(globalObject, default_allocator).cloneIfNeeded(default_allocator) catch unreachable).slice();
+                if (strings.contains(valueString, expectedString)) {
+                    return thisValue;
+                }
+            } else {
+                var formatter = JSC.ZigConsoleClient.Formatter{ .globalThis = globalObject };
+                globalObject.throw("Expected value ({any}) must be a string if received value (\"{any}\") is a string", .{ expected.toFmt(globalObject, &formatter), value.toFmt(globalObject, &formatter) });
+                return .zero;
+            }
+        }
+
+        if (value.isIterable(globalObject)) {
+            var itr = value.arrayIterator(globalObject);
+            if (itr.len > 0) {
+                while (itr.next()) |item| {
+                    if (item.isSameValue(expected, globalObject)) {
+                        return thisValue;
+                    }
+                }
+            }
+        }
+
+        var formatter: JSC.ZigConsoleClient.Formatter = JSC.ZigConsoleClient.Formatter{ .globalThis = globalObject };
+        globalObject.throw("Expected {any} to contain {any}", .{ value.toFmt(globalObject, &formatter), expected.toFmt(globalObject, &formatter) });
+        return .zero;
+    }
+
+    pub fn toBeTruthy(this: *Expect, globalObject: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+        const thisValue = callFrame.this();
+
+        const value = Expect.capturedValueGetCached(thisValue) orelse {
+            globalObject.throw("Internal consistency error: the expect(value) was garbage collected but it should not have been!", .{});
+            return .zero;
+        };
+
+        if (this.scope.tests.items.len <= this.test_id) {
+            globalObject.throw("toContain() must be called in a test", .{});
+            return .zero;
+        }
+
+        active_test_expectation_counter.actual += 1;
+
+        // 0 and NaN
+        if (value.isNumber()) {
+            var number = value.asNumber();
+            if (number == 0 or number != number) {
+                var formatter = JSC.ZigConsoleClient.Formatter{ .globalThis = globalObject };
+                globalObject.throw("Received value {any} is not truthy", .{value.toFmt(globalObject, &formatter)});
+                return .zero;
+            }
+        }
+
+        // BigInt 0 and boolean false
+        if ((value.isBigInt() and value.toInt64() == 0) or (value.isBoolean() and !value.asBoolean())) {
+            var formatter = JSC.ZigConsoleClient.Formatter{ .globalThis = globalObject };
+            globalObject.throw("Received value {any} is not truthy", .{value.toFmt(globalObject, &formatter)});
+            return .zero;
+        }
+
+        // undefined, null, and empty string
+        if (value.isUndefinedOrNull() or (value.isString() and value.asString().length() == 0)) {
+            var formatter = JSC.ZigConsoleClient.Formatter{ .globalThis = globalObject };
+            globalObject.throw("Received value {any} is not truthy", .{value.toFmt(globalObject, &formatter)});
+            return .zero;
+        }
+
+        return thisValue;
+    }
+
     pub const toHaveBeenCalledTimes = notImplementedJSCFn;
     pub const toHaveBeenCalledWith = notImplementedJSCFn;
     pub const toHaveBeenLastCalledWith = notImplementedJSCFn;
@@ -397,7 +496,6 @@ pub const Expect = struct {
     pub const toBeLessThan = notImplementedJSCFn;
     pub const toBeLessThanOrEqual = notImplementedJSCFn;
     pub const toBeInstanceOf = notImplementedJSCFn;
-    pub const toContain = notImplementedJSCFn;
     pub const toContainEqual = notImplementedJSCFn;
     pub const toEqual = notImplementedJSCFn;
     pub const toMatch = notImplementedJSCFn;

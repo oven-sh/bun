@@ -3012,7 +3012,7 @@ fn indexOfInterestingCharacterInStringLiteral(text_: []const u8, quote: u8) ?usi
 
         if (@reduce(.Max, any_significant) > 0) {
             const bitmask = @ptrCast(*const u16, &any_significant).*;
-            const first = @ctz(u16, bitmask);
+            const first = @ctz(@as(u16, bitmask));
             std.debug.assert(first < strings.ascii_vector_size);
             return first + (@ptrToInt(text.ptr) - @ptrToInt(text_.ptr));
         }

@@ -418,7 +418,6 @@ PLATFORM_LINKER_FLAGS = $(BUN_CFLAGS) \
 		-Wl,-z,stack-size=12800000 \
 		-static-libstdc++ \
 		-static-libgcc \
-		-fno-omit-frame-pointer \
 		-Wl,--compress-debug-sections,zlib \
 		${STATIC_MUSL_FLAG}  \
 		-Wl,-Bsymbolic-functions \

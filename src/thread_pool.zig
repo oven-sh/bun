@@ -222,23 +222,12 @@ noinline fn notifySlow(self: *ThreadPool, is_waking: bool) void {
     }
 }
 
-noinline fn wait(self: *ThreadPool, _is_waking: bool) error{Shutdown}!bool {
-    if (self.sleep_on_idle_network_thread and self.io != null) {
-        return _wait(self, _is_waking, true);
-    }
-
-    return _wait(self, _is_waking, false);
-}
-
-pub fn waitForIO(_: *ThreadPool) void {}
-
 // sleep_on_idle seems to impact `bun install` performance negatively
 // so we can just not sleep for that
-fn _wait(self: *ThreadPool, _is_waking: bool, comptime sleep_on_idle: bool) error{Shutdown}!bool {
+noinline fn wait(self: *ThreadPool, _is_waking: bool) error{Shutdown}!bool {
     var is_idle = false;
     var is_waking = _is_waking;
     var sync = @bitCast(Sync, self.sync.load(.Monotonic));
-    var checked_count: usize = 0;
 
     while (true) {
         if (sync.state == .shutdown) return error.Shutdown;
@@ -296,35 +285,6 @@ fn _wait(self: *ThreadPool, _is_waking: bool, comptime sleep_on_idle: bool) erro
                 io.tick() catch {};
             }
         } else {
-            if (self.io) |io| {
-                if (comptime Environment.isLinux)
-                    unreachable;
-
-                const HTTP = @import("http");
-                io.tick() catch {};
-
-                if (HTTP.AsyncHTTP.active_requests_count.loadUnchecked() > 0) {
-                    var remaining_ticks: isize = 5;
-
-                    while (remaining_ticks > 0 and HTTP.AsyncHTTP.active_requests_count.loadUnchecked() > HTTP.AsyncHTTP.max_simultaneous_requests) : (remaining_ticks -= 1) {
-                        io.run_for_ns(std.time.ns_per_ms * 2) catch {};
-                        io.tick() catch {};
-                    }
-                }
-
-                if (sleep_on_idle and io.hasNoWork()) {
-                    if (checked_count > 99999) {
-                        HTTP.cleanup(false);
-                        self.idle_event.waitFor(comptime std.time.ns_per_s * 60);
-                    } else {
-                        checked_count += 1;
-                    }
-                }
-
-                sync = @bitCast(Sync, self.sync.load(.Monotonic));
-                continue;
-            }
-
             self.idle_event.wait();
             sync = @bitCast(Sync, self.sync.load(.Monotonic));
         }

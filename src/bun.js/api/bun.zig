@@ -1706,7 +1706,7 @@ pub fn allocUnsafe(
     const length = @intCast(
         usize,
         @min(
-            @maximum(1, (args.nextEat() orelse JSC.JSValue.jsNumber(@as(i32, 1))).toInt32()),
+            @max(1, (args.nextEat() orelse JSC.JSValue.jsNumber(@as(i32, 1))).toInt32()),
             std.math.maxInt(i32),
         ),
     );
@@ -2434,7 +2434,7 @@ pub const Timer = struct {
 
         // We don't deal with nesting levels directly
         // but we do set the minimum timeout to be 1ms for repeating timers
-        const interval: i32 = @maximum(
+        const interval: i32 = @max(
             countdown.coerce(i32, globalThis),
             if (repeat) @as(i32, 1) else 0,
         );

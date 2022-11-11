@@ -1421,12 +1421,12 @@ pub fn NewClassWithInstanceType(
                 var middle_padding: usize = 0;
                 if (property_names.len > 0) {
                     for (property_names) |prop| {
-                        middle_padding = @maximum(prop.len, middle_padding);
+                        middle_padding = @max(prop.len, middle_padding);
                     }
                 }
                 if (function_names.len > 0) {
                     for (function_names[0..function_names.len]) |_name| {
-                        middle_padding = @maximum(std.mem.span(_name).len, middle_padding);
+                        middle_padding = @max(std.mem.span(_name).len, middle_padding);
                     }
                 }
 

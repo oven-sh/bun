@@ -73,7 +73,7 @@ pub const Loc = packed struct {
     pub const toUsize = i;
 
     pub inline fn i(self: *const Loc) usize {
-        return @intCast(usize, @maximum(self.start, 0));
+        return @intCast(usize, @max(self.start, 0));
     }
 
     pub const Empty = Loc{ .start = -1 };
@@ -1231,7 +1231,7 @@ pub const Source = struct {
 
     pub fn initErrorPosition(self: *const Source, _offset: Loc) ErrorPosition {
         var prev_code_point: i32 = 0;
-        var offset: usize = std.math.min(if (_offset.start < 0) 0 else @intCast(usize, _offset.start), @maximum(self.contents.len, 1) - 1);
+        var offset: usize = std.math.min(if (_offset.start < 0) 0 else @intCast(usize, _offset.start), @max(self.contents.len, 1) - 1);
 
         const contents = self.contents;
 

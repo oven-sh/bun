@@ -392,7 +392,7 @@ pub const StreamStart = union(Tag) {
 
                 if (value.get(globalThis, "highWaterMark")) |chunkSize| {
                     empty = false;
-                    chunk_size = @intCast(JSC.WebCore.Blob.SizeType, @maximum(0, @truncate(i51, chunkSize.toInt64())));
+                    chunk_size = @intCast(JSC.WebCore.Blob.SizeType, @max(0, @truncate(i51, chunkSize.toInt64())));
                 }
 
                 if (!empty) {
@@ -409,7 +409,7 @@ pub const StreamStart = union(Tag) {
                 var chunk_size: JSC.WebCore.Blob.SizeType = 0;
 
                 if (value.get(globalThis, "highWaterMark")) |chunkSize| {
-                    chunk_size = @intCast(JSC.WebCore.Blob.SizeType, @maximum(0, @truncate(i51, chunkSize.toInt64())));
+                    chunk_size = @intCast(JSC.WebCore.Blob.SizeType, @max(0, @truncate(i51, chunkSize.toInt64())));
                 }
 
                 if (value.get(globalThis, "path")) |path| {
@@ -445,7 +445,7 @@ pub const StreamStart = union(Tag) {
 
                 if (value.get(globalThis, "highWaterMark")) |chunkSize| {
                     empty = false;
-                    chunk_size = @intCast(JSC.WebCore.Blob.SizeType, @maximum(256, @truncate(i51, chunkSize.toInt64())));
+                    chunk_size = @intCast(JSC.WebCore.Blob.SizeType, @max(256, @truncate(i51, chunkSize.toInt64())));
                 }
 
                 if (!empty) {
@@ -2823,7 +2823,7 @@ pub const ByteStream = struct {
             return .{ .ready = void{} };
         }
 
-        return .{ .chunk_size = @maximum(this.highWaterMark, std.mem.page_size) };
+        return .{ .chunk_size = @max(this.highWaterMark, std.mem.page_size) };
     }
 
     pub fn value(this: *@This()) JSValue {
@@ -3149,7 +3149,7 @@ pub const FileBlobLoader = struct {
                     this.pending.result = .{
                         .err = Syscall.Error{
                             // this is too hacky
-                            .errno = @truncate(Syscall.Error.Int, @intCast(u16, @maximum(1, @errorToInt(err)))),
+                            .errno = @truncate(Syscall.Error.Int, @intCast(u16, @max(1, @errorToInt(err)))),
                             .syscall = .read,
                         },
                     };
@@ -3390,7 +3390,7 @@ pub const FileBlobLoader = struct {
             @as(usize, default_fifo_chunk_size);
 
         return if (file.max_size > 0)
-            if (available_to_read != std.math.maxInt(usize)) @min(chunk_size, available_to_read) else @min(@maximum(this.total_read, file.max_size) - this.total_read, chunk_size)
+            if (available_to_read != std.math.maxInt(usize)) @min(chunk_size, available_to_read) else @min(@max(this.total_read, file.max_size) - this.total_read, chunk_size)
         else
             @min(available_to_read, chunk_size);
     }
@@ -3641,9 +3641,9 @@ pub const FileBlobLoader = struct {
                 // Returns when the file pointer is not at the end of
                 // file.  data contains the offset from current position
                 // to end of file, and may be negative.
-                available_to_read = @intCast(usize, @maximum(sizeOrOffset, 0));
+                available_to_read = @intCast(usize, @max(sizeOrOffset, 0));
             } else if (std.os.S.ISCHR(this.mode) or std.os.S.ISFIFO(this.mode)) {
-                available_to_read = @intCast(usize, @maximum(sizeOrOffset, 0));
+                available_to_read = @intCast(usize, @max(sizeOrOffset, 0));
             }
         }
         if (this.finalized and this.scheduled_count == 0) {

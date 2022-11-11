@@ -134,7 +134,7 @@ pub const FolderResolution = union(Tag) {
         const len = try package_json.getEndPos();
 
         body.data.reset();
-        body.data.inflate(@maximum(len, 2048)) catch unreachable;
+        body.data.inflate(@max(len, 2048)) catch unreachable;
         body.data.list.expandToCapacity();
         const source_buf = try package_json.readAll(body.data.list.items);
 

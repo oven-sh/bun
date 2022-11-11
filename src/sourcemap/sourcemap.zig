@@ -617,7 +617,7 @@ pub const LineOffsetTable = struct {
     pub fn generate(allocator: std.mem.Allocator, contents: []const u8, approximate_line_count: i32) List {
         var list = List{};
         // Preallocate the top-level table using the approximate line count from the lexer
-        list.ensureUnusedCapacity(allocator, @intCast(usize, @maximum(approximate_line_count, 1))) catch unreachable;
+        list.ensureUnusedCapacity(allocator, @intCast(usize, @max(approximate_line_count, 1))) catch unreachable;
         var column: i32 = 0;
         var byte_offset_to_first_non_ascii: u32 = 0;
         var column_byte_offset: u32 = 0;
@@ -676,7 +676,7 @@ pub const LineOffsetTable = struct {
                 }
             } else {
                 switch (c) {
-                    (@maximum('\r', '\n') + 1)...127 => {
+                    (@max('\r', '\n') + 1)...127 => {
                         // skip ahead to the next newline or non-ascii character
                         if (strings.indexOfNewlineOrNonASCIICheckStart(remaining, @as(u32, len_), false)) |j| {
                             column += @intCast(i32, j);
@@ -1094,7 +1094,7 @@ pub const Chunk = struct {
                 b.prev_loc = loc;
                 const list = b.line_offset_tables;
                 const original_line = LineOffsetTable.findLine(list, loc);
-                const line = list.get(@intCast(usize, @maximum(original_line, 0)));
+                const line = list.get(@intCast(usize, @max(original_line, 0)));
 
                 // Use the line to compute the column
                 var original_column = loc.start - @intCast(i32, line.byte_offset_to_start_of_line);

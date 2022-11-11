@@ -428,7 +428,7 @@ pub const HTTPThread = struct {
     }
 
     fn processEvents_(this: *@This()) void {
-        this.loop.num_polls = @maximum(2, this.loop.num_polls);
+        this.loop.num_polls = @max(2, this.loop.num_polls);
 
         while (true) {
             this.drainEvents();

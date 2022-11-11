@@ -604,7 +604,7 @@ pub const VirtualMachine = struct {
             @intCast(
                 u128,
                 // handle if they set their system clock to be before epoch
-                @maximum(
+                @max(
                     std.time.nanoTimestamp(),
                     origin_relative_epoch,
                 ),
@@ -1580,8 +1580,8 @@ pub const VirtualMachine = struct {
             if (frames[i].position.isInvalid()) continue;
             if (this.source_mappings.resolveMapping(
                 frames[i].source_url.slice(),
-                @maximum(frames[i].position.line, 0),
-                @maximum(frames[i].position.column_start, 0),
+                @max(frames[i].position.line, 0),
+                @max(frames[i].position.column_start, 0),
             )) |mapping| {
                 frames[i].position.line = mapping.original.lines;
                 frames[i].position.column_start = mapping.original.columns;
@@ -1634,8 +1634,8 @@ pub const VirtualMachine = struct {
         var top = &frames[0];
         if (this.source_mappings.resolveMapping(
             top.source_url.slice(),
-            @maximum(top.position.line, 0),
-            @maximum(top.position.column_start, 0),
+            @max(top.position.line, 0),
+            @max(top.position.column_start, 0),
         )) |mapping| {
             var log = logger.Log.init(default_allocator);
             var errorable: ErrorableResolvedSource = undefined;
@@ -1684,8 +1684,8 @@ pub const VirtualMachine = struct {
                 if (frame.position.isInvalid()) continue;
                 if (this.source_mappings.resolveMapping(
                     frame.source_url.slice(),
-                    @maximum(frame.position.line, 0),
-                    @maximum(frame.position.column_start, 0),
+                    @max(frame.position.line, 0),
+                    @max(frame.position.column_start, 0),
                 )) |mapping| {
                     frame.position.line = mapping.original.lines;
                     frame.remapped = true;
@@ -1703,7 +1703,7 @@ pub const VirtualMachine = struct {
 
         var line_numbers = exception.stack.source_lines_numbers[0..exception.stack.source_lines_len];
         var max_line: i32 = -1;
-        for (line_numbers) |line| max_line = @maximum(max_line, line);
+        for (line_numbers) |line| max_line = @max(max_line, line);
         const max_line_number_pad = std.fmt.count("{d}", .{max_line});
 
         var source_lines = exception.stack.sourceLineIterator();

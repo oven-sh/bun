@@ -305,7 +305,7 @@ pub const ServerConfig = struct {
                 args.port = @intCast(
                     u16,
                     @min(
-                        @maximum(0, port_.coerce(i32, global)),
+                        @max(0, port_.coerce(i32, global)),
                         std.math.maxInt(u16),
                     ),
                 );
@@ -358,7 +358,7 @@ pub const ServerConfig = struct {
             }
 
             if (arg.getTruthy(global, "maxRequestBodySize")) |max_request_body_size| {
-                args.max_request_body_size = @intCast(u64, @maximum(0, max_request_body_size.toInt64()));
+                args.max_request_body_size = @intCast(u64, @max(0, max_request_body_size.toInt64()));
             }
 
             if (arg.getTruthy(global, "error")) |onError| {
@@ -2515,7 +2515,7 @@ pub const WebSocketServer = struct {
                     globalObject.throwInvalidArguments("websocket expects maxPayloadLength to be an integer", .{});
                     return null;
                 }
-                server.maxPayloadLength = @intCast(u32, @truncate(i33, @maximum(value.toInt64(), 0)));
+                server.maxPayloadLength = @intCast(u32, @truncate(i33, @max(value.toInt64(), 0)));
             }
         }
         if (object.get(globalObject, "idleTimeout")) |value| {
@@ -2535,7 +2535,7 @@ pub const WebSocketServer = struct {
                     return null;
                 }
 
-                server.backpressureLimit = @intCast(u32, @truncate(i33, @maximum(value.toInt64(), 0)));
+                server.backpressureLimit = @intCast(u32, @truncate(i33, @max(value.toInt64(), 0)));
             }
         }
         // if (object.get(globalObject, "sendPings")) |value| {

@@ -2509,7 +2509,7 @@ pub const NodeFS = struct {
                             // 16 KB is high end of what is okay to use for stack space
                             // good thing we ask for absurdly large stack sizes
                             var buf: [16384]u8 = undefined;
-                            var remain = @intCast(u64, @maximum(stat_.size, 0));
+                            var remain = @intCast(u64, @max(stat_.size, 0));
                             toplevel: while (remain > 0) {
                                 const amt = switch (Syscall.read(src_fd, buf[0..@min(buf.len, remain)])) {
                                     .result => |result| result,
@@ -2607,7 +2607,7 @@ pub const NodeFS = struct {
                         .err => |err| return Maybe(Return.CopyFile){ .err = err },
                     };
 
-                    var size = @intCast(usize, @maximum(stat_.size, 0));
+                    var size = @intCast(usize, @max(stat_.size, 0));
 
                     defer {
                         _ = linux.ftruncate(dest_fd, @intCast(i64, @truncate(u63, wrote)));
@@ -3374,7 +3374,7 @@ pub const NodeFS = struct {
                 };
 
                 // For certain files, the size might be 0 but the file might still have contents.
-                const size = @intCast(u64, @maximum(stat_.size, 0));
+                const size = @intCast(u64, @max(stat_.size, 0));
 
                 var buf = std.ArrayList(u8).init(bun.default_allocator);
                 buf.ensureTotalCapacityPrecise(size + 16) catch unreachable;

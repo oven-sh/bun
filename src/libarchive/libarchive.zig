@@ -569,7 +569,7 @@ pub const Archive = struct {
                             };
                             defer if (comptime close_handles) file.close();
 
-                            const entry_size = @maximum(lib.archive_entry_size(entry), 0);
+                            const entry_size = @max(lib.archive_entry_size(entry), 0);
                             const size = @intCast(usize, entry_size);
                             if (size > 0) {
                                 if (ctx) |ctx_| {

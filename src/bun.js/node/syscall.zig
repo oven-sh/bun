@@ -556,7 +556,7 @@ pub const Error = struct {
         const errno_values = std.enums.values(os.E);
         var err = @enumToInt(os.E.SUCCESS);
         for (errno_values) |errn| {
-            err = @maximum(err, @enumToInt(errn));
+            err = @max(err, @enumToInt(errn));
         }
         break :brk err;
     };

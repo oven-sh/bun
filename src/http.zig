@@ -3445,7 +3445,7 @@ pub const Server = struct {
         server.websocket_threadpool.stack_size = @truncate(
             u32,
             @min(
-                @maximum(128_000, Fs.FileSystem.RealFS.Limit.stack),
+                @max(128_000, Fs.FileSystem.RealFS.Limit.stack),
                 4_000_000,
             ),
         );

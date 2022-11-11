@@ -3154,7 +3154,7 @@ pub const PackageManager = struct {
                             entry.value_ptr.* = manifest;
 
                             if (timestamp_this_tick == null) {
-                                timestamp_this_tick = @truncate(u32, @intCast(u64, @maximum(0, std.time.timestamp()))) +| 300;
+                                timestamp_this_tick = @truncate(u32, @intCast(u64, @max(0, std.time.timestamp()))) +| 300;
                             }
 
                             entry.value_ptr.*.pkg.public_max_age = timestamp_this_tick.?;
@@ -3779,7 +3779,7 @@ pub const PackageManager = struct {
 
             if (env_loader.map.get("BUN_CONFIG_HTTP_RETRY_COUNT")) |retry_count| {
                 if (std.fmt.parseInt(i32, retry_count, 10)) |int| {
-                    this.max_retry_count = @intCast(u16, @min(@maximum(int, 0), 65355));
+                    this.max_retry_count = @intCast(u16, @min(@max(int, 0), 65355));
                 } else |_| {}
             }
 
@@ -4331,7 +4331,7 @@ pub const PackageManager = struct {
             ctx.install,
         );
 
-        manager.timestamp_for_manifest_cache_control = @truncate(u32, @intCast(u64, @maximum(std.time.timestamp(), 0)));
+        manager.timestamp_for_manifest_cache_control = @truncate(u32, @intCast(u64, @max(std.time.timestamp(), 0)));
         return manager;
     }
 
@@ -4417,7 +4417,7 @@ pub const PackageManager = struct {
             u32,
             @intCast(
                 u64,
-                @maximum(
+                @max(
                     std.time.timestamp(),
                     0,
                 ),
@@ -6623,7 +6623,7 @@ pub const PackageManager = struct {
             var printed_timestamp = false;
             if (install_summary.success > 0) {
                 // it's confusing when it shows 3 packages and says it installed 1
-                Output.pretty("\n <green>{d}<r> packages<r> installed ", .{@maximum(
+                Output.pretty("\n <green>{d}<r> packages<r> installed ", .{@max(
                     install_summary.success,
                     @truncate(
                         u32,

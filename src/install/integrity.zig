@@ -20,7 +20,7 @@ pub const Integrity = extern struct {
 
         var value: usize = 0;
         for (values) |val| {
-            value = @maximum(val, value);
+            value = @max(val, value);
         }
 
         break :brk value;

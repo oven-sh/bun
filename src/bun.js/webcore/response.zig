@@ -351,7 +351,7 @@ pub const Response = struct {
 
         if (args.nextEat()) |init| {
             if (init.isUndefinedOrNull()) {} else if (init.isNumber()) {
-                response.body.init.status_code = @intCast(u16, @min(@maximum(0, init.toInt32()), std.math.maxInt(u16)));
+                response.body.init.status_code = @intCast(u16, @min(@max(0, init.toInt32()), std.math.maxInt(u16)));
             } else {
                 if (Body.Init.init(getAllocator(globalThis), globalThis, init, init.jsType()) catch null) |_init| {
                     response.body.init = _init;
@@ -397,7 +397,7 @@ pub const Response = struct {
 
         if (args.nextEat()) |init| {
             if (init.isUndefinedOrNull()) {} else if (init.isNumber()) {
-                response.body.init.status_code = @intCast(u16, @min(@maximum(0, init.toInt32()), std.math.maxInt(u16)));
+                response.body.init.status_code = @intCast(u16, @min(@max(0, init.toInt32()), std.math.maxInt(u16)));
             } else {
                 if (Body.Init.init(getAllocator(globalThis), globalThis, init, init.jsType()) catch null) |_init| {
                     response.body.init = _init;
@@ -2205,7 +2205,7 @@ pub const Blob = struct {
 
                 if (stat.size > 0 and std.os.S.ISREG(stat.mode)) {
                     this.size = @min(
-                        @truncate(SizeType, @intCast(SizeType, @maximum(@intCast(i64, stat.size), 0))),
+                        @truncate(SizeType, @intCast(SizeType, @max(@intCast(i64, stat.size), 0))),
                         this.max_length,
                     );
                     // read up to 4k at a time if
@@ -2849,7 +2849,7 @@ pub const Blob = struct {
                 }
 
                 if (stat.size != 0) {
-                    this.max_length = @maximum(@min(@intCast(SizeType, stat.size), this.max_length), this.offset) - this.offset;
+                    this.max_length = @max(@min(@intCast(SizeType, stat.size), this.max_length), this.offset) - this.offset;
                     if (this.max_length == 0) {
                         this.doClose();
                         return;
@@ -3001,7 +3001,7 @@ pub const Blob = struct {
                 return JSValue.jsUndefined();
             }
 
-            recommended_chunk_size = @intCast(SizeType, @maximum(0, @truncate(i52, arguments[0].toInt64())));
+            recommended_chunk_size = @intCast(SizeType, @max(0, @truncate(i52, arguments[0].toInt64())));
         }
         return JSC.WebCore.ReadableStream.fromBlob(
             globalThis,
@@ -3162,7 +3162,7 @@ pub const Blob = struct {
             const start = start_.toInt64();
             if (start < 0) {
                 // If the optional start parameter is negative, let relativeStart be start + size.
-                relativeStart = @intCast(i64, @maximum(start + @intCast(i64, this.size), 0));
+                relativeStart = @intCast(i64, @max(start + @intCast(i64, this.size), 0));
             } else {
                 // Otherwise, let relativeStart be start.
                 relativeStart = @min(@intCast(i64, start), @intCast(i64, this.size));
@@ -3174,7 +3174,7 @@ pub const Blob = struct {
             // If end is negative, let relativeEnd be max((size + end), 0).
             if (end < 0) {
                 // If the optional start parameter is negative, let relativeStart be start + size.
-                relativeEnd = @intCast(i64, @maximum(end + @intCast(i64, this.size), 0));
+                relativeEnd = @intCast(i64, @max(end + @intCast(i64, this.size), 0));
             } else {
                 // Otherwise, let relativeStart be start.
                 relativeEnd = @min(@intCast(i64, end), @intCast(i64, this.size));
@@ -3193,7 +3193,7 @@ pub const Blob = struct {
             }
         }
 
-        const len = @intCast(SizeType, @maximum(relativeEnd - relativeStart, 0));
+        const len = @intCast(SizeType, @max(relativeEnd - relativeStart, 0));
 
         // This copies over the is_all_ascii flag
         // which is okay because this will only be a <= slice

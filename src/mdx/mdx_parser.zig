@@ -1797,7 +1797,7 @@ pub const MDX = struct {
         var root_children = std.ArrayListUnmanaged(Expr){};
         var first_loc = try run(this, &root_children);
 
-        first_loc.start = @maximum(first_loc.start, 0);
+        first_loc.start = @max(first_loc.start, 0);
         const args_loc = first_loc;
         first_loc.start += 1;
         const body_loc = first_loc;

@@ -843,7 +843,7 @@ fn stringPointerFromStrings(parent: string, in: string) Api.StringPointer {
     if (in_end < end) return Api.StringPointer{};
 
     return Api.StringPointer{
-        .offset = @truncate(u32, @maximum(@ptrToInt(in.ptr), @ptrToInt(parent.ptr)) - @ptrToInt(parent.ptr)),
+        .offset = @truncate(u32, @max(@ptrToInt(in.ptr), @ptrToInt(parent.ptr)) - @ptrToInt(parent.ptr)),
         .length = @truncate(u32, in.len),
     };
 }

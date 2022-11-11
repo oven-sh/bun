@@ -436,7 +436,7 @@ pub fn NewWatcher(comptime ContextType: type) type {
                         null,
                     );
 
-                    var changes = changelist[0..@intCast(usize, @maximum(0, count_))];
+                    var changes = changelist[0..@intCast(usize, @max(0, count_))];
                     var watchevents = this.watch_events[0..changes.len];
                     for (changes) |event, i| {
                         watchevents[i].fromKEvent(event);

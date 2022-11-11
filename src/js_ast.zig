@@ -1236,22 +1236,22 @@ pub const E = struct {
 
         pub inline fn toU64(self: Number) u64 {
             @setRuntimeSafety(false);
-            return @floatToInt(u64, @maximum(@trunc(self.value), 0));
+            return @floatToInt(u64, @max(@trunc(self.value), 0));
         }
 
         pub inline fn toUsize(self: Number) usize {
             @setRuntimeSafety(false);
-            return @floatToInt(usize, @maximum(@trunc(self.value), 0));
+            return @floatToInt(usize, @max(@trunc(self.value), 0));
         }
 
         pub inline fn toU32(self: Number) u32 {
             @setRuntimeSafety(false);
-            return @floatToInt(u32, @maximum(@trunc(self.value), 0));
+            return @floatToInt(u32, @max(@trunc(self.value), 0));
         }
 
         pub inline fn toU16(self: Number) u16 {
             @setRuntimeSafety(false);
-            return @floatToInt(u16, @maximum(@trunc(self.value), 0));
+            return @floatToInt(u16, @max(@trunc(self.value), 0));
         }
 
         pub fn jsonStringify(self: *const Number, opts: anytype, o: anytype) !void {
@@ -8120,7 +8120,7 @@ pub const Macro = struct {
 
             // Give it >= 256 KB stack space
             // Cast to usize to ensure we get an 8 byte aligned pointer
-            const PooledFrame = ObjectPool([@maximum(@sizeOf(@Frame(Run.runAsync)), 1024 * 1024 * 2) / @sizeOf(usize)]usize, null, true, 1);
+            const PooledFrame = ObjectPool([@max(@sizeOf(@Frame(Run.runAsync)), 1024 * 1024 * 2) / @sizeOf(usize)]usize, null, true, 1);
             var pooled_frame = PooledFrame.get(default_allocator);
             defer pooled_frame.release();
 

@@ -500,8 +500,8 @@ pub const TinyPtr = packed struct {
             std.debug.assert(end < right);
         }
 
-        const length = @maximum(end, right) - right;
-        const offset = @maximum(@ptrToInt(in.ptr), @ptrToInt(parent.ptr)) - @ptrToInt(parent.ptr);
+        const length = @max(end, right) - right;
+        const offset = @max(@ptrToInt(in.ptr), @ptrToInt(parent.ptr)) - @ptrToInt(parent.ptr);
         return TinyPtr{ .offset = @truncate(u16, offset), .len = @truncate(u16, length) };
     }
 };
@@ -1214,7 +1214,7 @@ const Pattern = struct {
                 return null;
             };
             offset = pattern.len;
-            kind = @maximum(@enumToInt(@as(Pattern.Tag, pattern.value)), kind);
+            kind = @max(@enumToInt(@as(Pattern.Tag, pattern.value)), kind);
             count += @intCast(u16, @boolToInt(@enumToInt(@as(Pattern.Tag, pattern.value)) > @enumToInt(Pattern.Tag.static)));
         }
 

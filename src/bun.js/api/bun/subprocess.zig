@@ -505,7 +505,7 @@ pub const Subprocess = struct {
         pub fn readAll(this: *BufferedOutput, comptime force: bool) void {
             // read as much as we can from the pipe
             while (this.internal_buffer.len <= this.max_internal_buffer) {
-                var buffer_: [@maximum(std.mem.page_size, 16384)]u8 = undefined;
+                var buffer_: [@max(std.mem.page_size, 16384)]u8 = undefined;
 
                 var buf: []u8 = buffer_[0..];
 

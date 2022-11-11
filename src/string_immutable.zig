@@ -958,7 +958,7 @@ pub fn toUTF16Alloc(allocator: std.mem.Allocator, bytes: []const u8, comptime fa
                 }
             }
 
-            remaining = remaining[@maximum(replacement.len, 1)..];
+            remaining = remaining[@max(replacement.len, 1)..];
             const new_len = strings.u16Len(replacement.code_point);
             try output.ensureUnusedCapacity(new_len);
             output.items.len += @as(usize, new_len);
@@ -993,7 +993,7 @@ pub fn toUTF16Alloc(allocator: std.mem.Allocator, bytes: []const u8, comptime fa
                 }
             }
 
-            remaining = remaining[@maximum(replacement.len, 1)..];
+            remaining = remaining[@max(replacement.len, 1)..];
             const new_len = j + @as(usize, strings.u16Len(replacement.code_point));
             try output.ensureUnusedCapacity(new_len);
             output.items.len += new_len;

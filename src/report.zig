@@ -69,7 +69,7 @@ pub const CrashReportWriter = struct {
         const file_path = std.fmt.bufPrintZ(
             &crash_reporter_path,
             "{s}/.bun-crash/v{s}-{d}.crash",
-            .{ base_dir, Global.package_json_version, @intCast(u64, @maximum(std.time.milliTimestamp(), 0)) },
+            .{ base_dir, Global.package_json_version, @intCast(u64, @max(std.time.milliTimestamp(), 0)) },
         ) catch return;
 
         std.fs.cwd().makeDir(std.fs.path.dirname(std.mem.span(file_path)).?) catch {};
@@ -192,7 +192,7 @@ pub fn fatal(err_: ?anyerror, msg_: ?string) void {
         if (msg_) |msg| {
             const msg_ptr = @ptrToInt(msg.ptr);
             if (msg_ptr > 0) {
-                const len = @maximum(@min(msg.len, 1024), 0);
+                const len = @max(@min(msg.len, 1024), 0);
 
                 if (len > 0) {
                     if (Output.isEmojiEnabled()) {
@@ -296,7 +296,7 @@ pub noinline fn handleCrash(signal: i32, addr: usize) void {
         }
     }
 
-    std.c._exit(128 + @truncate(u8, @intCast(u8, @maximum(signal, 0))));
+    std.c._exit(128 + @truncate(u8, @intCast(u8, @max(signal, 0))));
 }
 
 pub noinline fn globalError(err: anyerror) noreturn {

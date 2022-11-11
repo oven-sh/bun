@@ -118,7 +118,7 @@ pub const UpgradeCheckerThread = struct {
     }
 
     fn _run(env_loader: *DotEnv.Loader) anyerror!void {
-        var rand = std.rand.DefaultPrng.init(@intCast(u64, @maximum(std.time.milliTimestamp(), 0)));
+        var rand = std.rand.DefaultPrng.init(@intCast(u64, @max(std.time.milliTimestamp(), 0)));
         const delay = rand.random().intRangeAtMost(u64, 100, 10000);
         std.time.sleep(std.time.ns_per_ms * delay);
 
@@ -353,7 +353,7 @@ pub const UpgradeCommand = struct {
 
                         if (asset.asProperty("size")) |size_| {
                             if (size_.expr.data == .e_number) {
-                                version.size = @intCast(u32, @maximum(@floatToInt(i32, std.math.ceil(size_.expr.data.e_number.value)), 0));
+                                version.size = @intCast(u32, @max(@floatToInt(i32, std.math.ceil(size_.expr.data.e_number.value)), 0));
                             }
                         }
                         return version;
@@ -458,7 +458,7 @@ pub const UpgradeCommand = struct {
             refresher.refresh();
             var async_http = ctx.allocator.create(HTTP.AsyncHTTP) catch unreachable;
             var zip_file_buffer = try ctx.allocator.create(MutableString);
-            zip_file_buffer.* = try MutableString.init(ctx.allocator, @maximum(version.size, 1024));
+            zip_file_buffer.* = try MutableString.init(ctx.allocator, @max(version.size, 1024));
 
             async_http.* = HTTP.AsyncHTTP.initSync(
                 ctx.allocator,

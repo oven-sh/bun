@@ -733,10 +733,15 @@ pub const Version = extern struct {
 
         var multi_tag_warn = false;
         // TODO: support multiple tags
-        pub fn parse(_: std.mem.Allocator, sliced_string: SlicedString) TagResult {
+
+        pub fn parse(allocator: std.mem.Allocator, sliced_string: SlicedString) TagResult {
+            return parseWithPreCount(allocator, sliced_string, 0);
+        }
+
+        pub fn parseWithPreCount(_: std.mem.Allocator, sliced_string: SlicedString, initial_pre_count: u32) TagResult {
             var input = sliced_string.slice;
             var build_count: u32 = 0;
-            var pre_count: u32 = 0;
+            var pre_count: u32 = initial_pre_count;
 
             for (input) |c| {
                 switch (c) {
@@ -811,6 +816,12 @@ pub const Version = extern struct {
                     },
                     else => {},
                 }
+            }
+
+            if (state == .none and initial_pre_count > 0) {
+                state = .pre;
+                start = 0;
+                result.tag.pre = sliced_string.sub(input[start..i]).external();
             }
 
             switch (state) {
@@ -980,7 +991,20 @@ pub const Version = extern struct {
                         }
                     }
                 },
-                else => {
+                else => |c| {
+
+                    // Some weirdo npm packages in the wild have a version like "1.0.0rc.1"
+                    // npm just expects that to work...even though it has no "-" qualifier.
+                    if (result.wildcard == .none and part_i >= 2 and ((c >= 'A' and c <= 'Z') or (c >= 'a' and c <= 'z'))) {
+                        part_start_i = i;
+                        const tag_result = Tag.parseWithPreCount(allocator, sliced_string.sub(input[part_start_i..]), 1);
+                        result.version.tag = tag_result.tag;
+                        i += tag_result.len;
+                        is_done = true;
+                        last_char_i = i;
+                        break;
+                    }
+
                     last_char_i = 0;
                     result.valid = false;
                     is_done = true;
@@ -1915,6 +1939,17 @@ test "Version parsing" {
         };
         var input: string = "1.0.0-beta";
         v.tag.pre = SlicedString.init(input, input["1.0.0-".len..]).external();
+        expect.versionT(input, v, @src());
+    }
+
+    {
+        var v = Version{
+            .major = 1,
+            .minor = 0,
+            .patch = 0,
+        };
+        var input: string = "1.0.0beta";
+        v.tag.pre = SlicedString.init(input, input["1.0.0".len..]).external();
         expect.versionT(input, v, @src());
     }
 

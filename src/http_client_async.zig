@@ -512,7 +512,6 @@ pub fn onClose(
     comptime is_ssl: bool,
     socket: NewHTTPContext(is_ssl).HTTPSocket,
 ) void {
-    _ = socket;
     log("Closed  {s}\n", .{client.url.href});
 
     const in_progress = client.state.stage != .done and client.state.stage != .fail;

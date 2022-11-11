@@ -35,7 +35,7 @@ const CrashReporter = @import("./crash_reporter.zig");
 pub var start_time: i128 = 0;
 pub fn main() void {
     if (comptime Environment.isRelease)
-        CrashReporter.start(null) catch unreachable;
+        CrashReporter.start() catch unreachable;
 
     start_time = std.time.nanoTimestamp();
 

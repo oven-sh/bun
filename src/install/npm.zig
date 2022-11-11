@@ -1045,8 +1045,8 @@ pub const PackageManifest = struct {
                                     }
                                 }
                             },
-                            .e_string => |str| {
-                                package_version.cpu = Architecture.apply(Architecture.none, str.data);
+                            .e_string => |estr| {
+                                package_version.cpu = Architecture.apply(Architecture.none, estr.data);
                             },
                             else => {},
                         }

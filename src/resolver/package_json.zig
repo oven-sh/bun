@@ -1186,6 +1186,7 @@ pub const ESModule = struct {
         UndefinedNoConditionsMatch, // A more friendly error message for when no conditions are matched
         Null,
         Exact,
+        ExactEndsWithStar,
         Inexact, // This means we may need to try CommonJS-style extension suffixes
 
         /// Module specifier is an invalid URL, package name or package subpath specifier.
@@ -1202,6 +1203,9 @@ pub const ESModule = struct {
 
         /// The package or module requested does not exist.
         ModuleNotFound,
+
+        /// The user just needs to add the missing extension
+        ModuleNotFoundMissingExtension,
 
         /// The resolved path corresponds to a directory, which is not a supported target for module imports.
         UnsupportedDirectoryImport,
@@ -1383,7 +1387,7 @@ pub const ESModule = struct {
 
     pub fn finalize(result_: Resolution) Resolution {
         var result = result_;
-        if (result.status != .Exact and result.status != .Inexact) {
+        if (result.status != .Exact and result.status != .ExactEndsWithStar and result.status != .Inexact) {
             return result;
         }
 
@@ -1525,7 +1529,7 @@ pub const ESModule = struct {
                     }
 
                     var result = r.resolveTarget(package_url, target, subpath, is_imports, false);
-                    result.status = if (result.status == .Exact)
+                    result.status = if (result.status == .Exact or result.status == .ExactEndsWithStar)
                         // Return the object { resolved, exact: false }.
                         .Inexact
                     else
@@ -1645,10 +1649,14 @@ pub const ESModule = struct {
                     _ = std.mem.replace(u8, resolved_target, "*", subpath, &resolve_target_buf2);
                     const result = resolve_target_buf2[0..len];
                     if (r.debug_logs) |log| {
-                        log.addNoteFmt("Subsituted \"{s}\" for \"*\" in \".{s}\" to get \".{s}\" ", .{ subpath, resolved_target, result });
+                        log.addNoteFmt("Substituted \"{s}\" for \"*\" in \".{s}\" to get \".{s}\" ", .{ subpath, resolved_target, result });
                     }
 
-                    return Resolution{ .path = result, .status = .Exact, .debug = .{ .token = target.first_token } };
+                    const status: Status = if (strings.endsWithChar(result, '*') and strings.indexOfChar(result, '*').? == result.len - 1)
+                        .ExactEndsWithStar
+                    else
+                        .Exact;
+                    return Resolution{ .path = result, .status = status, .debug = .{ .token = target.first_token } };
                 } else {
                     var parts2 = [_]string{ package_url, str, subpath };
                     const result = resolve_path.joinStringBuf(&resolve_target_buf2, parts2, .auto);

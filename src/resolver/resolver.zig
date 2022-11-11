@@ -192,6 +192,9 @@ pub const Result = struct {
         notes: std.ArrayList(logger.Data),
         suggestion_text: string = "",
         suggestion_message: string = "",
+        suggestion_range: SuggestionRange,
+
+        pub const SuggestionRange = enum { full, end };
 
         pub fn init(allocator: std.mem.Allocator) DebugMeta {
             return DebugMeta{ .notes = std.ArrayList(logger.Data).init(allocator) };
@@ -199,7 +202,11 @@ pub const Result = struct {
 
         pub fn logErrorMsg(m: *DebugMeta, log: *logger.Log, _source: ?*const logger.Source, r: logger.Range, comptime fmt: string, args: anytype) !void {
             if (_source != null and m.suggestion_message.len > 0) {
-                const data = logger.rangeData(_source.?, r, m.suggestion_message);
+                const suggestion_range = if (m.suggestion_range == .end)
+                    logger.Range{ .loc = logger.Loc{ .start = r.endI() - 1 } }
+                else
+                    r;
+                const data = logger.rangeData(_source.?, suggestion_range, m.suggestion_message);
                 data.location.?.suggestion = m.suggestion_text;
                 try m.notes.append(data);
             }
@@ -1437,7 +1444,7 @@ pub const Resolver = struct {
                                 true,
                             );
 
-                        if (r.handleESMResolution(esm_resolution, package_json.source.path.name.dir, kind, package_json)) |result| {
+                        if (r.handleESMResolution(esm_resolution, package_json.source.path.name.dir, kind, package_json, esm_.?.subpath)) |result| {
                             return .{ .success = result };
                         }
 
@@ -1492,7 +1499,7 @@ pub const Resolver = struct {
                                 // directory path accidentally being interpreted as URL escapes.
                                 const esm_resolution = esmodule.resolve("/", esm.subpath, exports_map.root);
 
-                                if (r.handleESMResolution(esm_resolution, abs_package_path, kind, package_json)) |result| {
+                                if (r.handleESMResolution(esm_resolution, abs_package_path, kind, package_json, esm.subpath)) |result| {
                                     return .{ .success = result };
                                 }
 
@@ -1709,7 +1716,7 @@ pub const Resolver = struct {
                                 // directory path accidentally being interpreted as URL escapes.
                                 const esm_resolution = esmodule.resolve("/", esm.subpath, exports_map.root);
 
-                                if (r.handleESMResolution(esm_resolution, abs_package_path, kind, package_json)) |*result| {
+                                if (r.handleESMResolution(esm_resolution, abs_package_path, kind, package_json, esm.subpath)) |*result| {
                                     result.is_node_module = true;
                                     return .{ .success = result.* };
                                 }
@@ -1928,22 +1935,24 @@ pub const Resolver = struct {
         bun.unreachablePanic("TODO: implement enqueueDependencyToResolve for non-root packages", .{});
     }
 
-    fn handleESMResolution(r: *ThisResolver, esm_resolution_: ESModule.Resolution, abs_package_path: string, kind: ast.ImportKind, package_json: *PackageJSON) ?MatchResult {
+    fn handleESMResolution(r: *ThisResolver, esm_resolution_: ESModule.Resolution, abs_package_path: string, kind: ast.ImportKind, package_json: *PackageJSON, package_subpath: string) ?MatchResult {
         var esm_resolution = esm_resolution_;
-        if (!((esm_resolution.status == .Inexact or esm_resolution.status == .Exact) and
+        if (!((esm_resolution.status == .Inexact or esm_resolution.status == .Exact or esm_resolution.status == .ExactEndsWithStar) and
             esm_resolution.path.len > 0 and esm_resolution.path[0] == '/'))
             return null;
 
         const abs_esm_path: string = brk: {
             var parts = [_]string{
                 abs_package_path,
-                esm_resolution.path[1..],
+                strings.withoutLeadingSlash(esm_resolution.path),
             };
             break :brk r.fs.absBuf(&parts, &esm_absolute_package_path_joined);
         };
 
+        // var missing_extension = "";
+
         switch (esm_resolution.status) {
-            .Exact => {
+            .Exact, .ExactEndsWithStar => {
                 const resolved_dir_info = (r.dirInfoCached(std.fs.path.dirname(abs_esm_path).?) catch null) orelse {
                     esm_resolution.status = .ModuleNotFound;
                     return null;
@@ -1952,8 +1961,33 @@ pub const Resolver = struct {
                     esm_resolution.status = .ModuleNotFound;
                     return null;
                 };
-                const entry_query = entries.get(std.fs.path.basename(abs_esm_path)) orelse {
+                const base = std.fs.path.basename(abs_esm_path);
+                const entry_query = entries.get(base) orelse {
+                    const ends_with_star = esm_resolution.status == .ExactEndsWithStar;
                     esm_resolution.status = .ModuleNotFound;
+
+                    // Try to have a friendly error message if people forget the extension
+                    if (ends_with_star) {
+                        const extension_order = if (kind == .at or kind == .at_conditional)
+                            r.extension_order
+                        else
+                            r.opts.extension_order;
+
+                        std.mem.copy(u8, &load_as_file_buf, base);
+                        for (extension_order) |ext| {
+                            var file_name = load_as_file_buf[0 .. base.len + ext.len];
+                            std.mem.copy(u8, file_name[base.len..], ext);
+                            if (entries.get(file_name) != null) {
+                                if (r.debug_logs) |*debug| {
+                                    const parts = [_]string{ package_json.name, package_subpath };
+                                    debug.addNoteFmt("The import {s} is missing the extension {s}", .{ ResolvePath.join(parts, .auto), ext });
+                                }
+                                esm_resolution.status = .ModuleNotFoundMissingExtension;
+                                // missing_extension = ext;
+                                break;
+                            }
+                        }
+                    }
                     return null;
                 };
 

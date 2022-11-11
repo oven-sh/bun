@@ -41,6 +41,14 @@ ignore = dirty
 depth = 1
 shallow = true
 fetchRecurseSubmodules = false
+[submodule "src/deps/libbacktrace"]
+	path = src/deps/libbacktrace
+	url = https://github.com/Jarred-Sumner/libbacktrace.git
+    ignore = dirty
+    depth = 1
+    shallow = true
+    fetchRecurseSubmodules = false
+    update = none
 [submodule "src/deps/lol-html"]
 path = src/deps/lol-html
 url = https://github.com/cloudflare/lol-html

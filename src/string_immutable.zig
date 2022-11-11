@@ -1135,7 +1135,7 @@ pub fn allocateLatin1IntoUTF8WithList(list_: std.ArrayList(u8), offset_into_list
                             const mask = bytes & 0x8080808080808080;
 
                             if (mask > 0) {
-                                const first_set_byte = @ctz(Int, mask) / 8;
+                                const first_set_byte = @ctz(@as(Int, mask)) / 8;
                                 if (comptime Environment.allow_assert) {
                                     assert(latin1[first_set_byte] >= 127);
                                 }
@@ -1375,7 +1375,7 @@ pub fn copyLatin1IntoUTF8StopOnNonASCII(buf_: []u8, comptime Type: type, latin1_
                             buf[0..size].* = @bitCast([size]u8, bytes);
 
                             if (mask > 0) {
-                                const first_set_byte = @ctz(Int, mask) / 8;
+                                const first_set_byte = @ctz(@as(Int, mask)) / 8;
                                 if (comptime Environment.allow_assert) {
                                     assert(latin1[first_set_byte] >= 127);
                                 }
@@ -2609,7 +2609,7 @@ pub fn firstNonASCIIWithType(comptime Type: type, slice: Type) ?u32 {
                         const mask = bytes & 0x8080808080808080;
 
                         if (mask > 0) {
-                            const first_set_byte = @ctz(Int, mask) / 8;
+                            const first_set_byte = @ctz(@as(Int, mask)) / 8;
                             if (comptime Environment.allow_assert) {
                                 assert(remaining[first_set_byte] > 127);
                                 var j: usize = 0;
@@ -2729,7 +2729,7 @@ pub fn indexOfNewlineOrNonASCIICheckStart(slice_: []const u8, offset: u32, compt
 
             if (@reduce(.Max, cmp) > 0) {
                 const bitmask = @ptrCast(*const AsciiVectorInt, &cmp).*;
-                const first = @ctz(AsciiVectorInt, bitmask);
+                const first = @ctz(@as(AsciiVectorInt, bitmask));
 
                 return @as(u32, first) + @intCast(u32, slice.len - remaining.len) + offset;
             }
@@ -2768,7 +2768,7 @@ pub fn indexOfNeedsEscape(slice: []const u8) ?u32 {
 
             if (@reduce(.Max, cmp) > 0) {
                 const bitmask = @ptrCast(*const AsciiVectorInt, &cmp).*;
-                const first = @ctz(AsciiVectorInt, bitmask);
+                const first = @ctz(@as(AsciiVectorInt, bitmask));
 
                 return @as(u32, first) + @truncate(u32, @ptrToInt(remaining.ptr) - @ptrToInt(slice.ptr));
             }
@@ -2810,7 +2810,7 @@ pub fn indexOfChar(slice: []const u8, char: u8) ?u32 {
 
             if (@reduce(.Max, @bitCast(AsciiVectorU1, cmp)) > 0) {
                 const bitmask = @ptrCast(*const AsciiVectorInt, &cmp).*;
-                const first = @ctz(AsciiVectorInt, bitmask);
+                const first = @ctz(@as(AsciiVectorInt, bitmask));
                 return @intCast(u32, @as(u32, first) + @intCast(u32, slice.len - remaining.len));
             }
             remaining = remaining[ascii_vector_size..];
@@ -2875,7 +2875,7 @@ pub fn indexOfNotChar(slice: []const u8, char: u8) ?u32 {
             const cmp = @splat(ascii_vector_size, char) != vec;
             if (@reduce(.Max, @bitCast(AsciiVectorU1, cmp)) > 0) {
                 const bitmask = @ptrCast(*const AsciiVectorInt, &cmp).*;
-                const first = @ctz(AsciiVectorInt, bitmask);
+                const first = @ctz(@as(AsciiVectorInt, bitmask));
                 return @as(u32, first) + @intCast(u32, slice.len - remaining.len);
             }
 
@@ -3077,7 +3077,7 @@ pub fn firstNonASCII16CheckMin(comptime Slice: type, slice: Slice, comptime chec
                         const cmp = @bitCast(AsciiVectorU16U1, vec > max_u16_ascii) |
                             @bitCast(AsciiVectorU16U1, vec < min_u16_ascii);
                         const bitmask: u16 = @ptrCast(*const u16, &cmp).*;
-                        const first = @ctz(u16, bitmask);
+                        const first = @ctz(@as(u16, bitmask));
 
                         return @intCast(u32, @as(u32, first) +
                             @intCast(u32, slice.len - remaining.len));
@@ -3136,7 +3136,7 @@ pub fn @"nextUTF16NonASCIIOr$`\\"(
                 @bitCast(AsciiVectorU16U1, (vec == @splat(ascii_u16_vector_size, @as(u16, '\\'))));
 
             const bitmask = @ptrCast(*const u8, &cmp).*;
-            const first = @ctz(u8, bitmask);
+            const first = @ctz(@as(u8, bitmask));
             if (first < ascii_u16_vector_size) {
                 return @intCast(u32, @as(u32, first) +
                     @intCast(u32, slice.len - remaining.len));

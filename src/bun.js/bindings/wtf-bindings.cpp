@@ -19,7 +19,7 @@ extern "C" void Bun__crashReportWrite(void* ctx, const char* message, size_t len
 extern "C" void Bun__crashReportDumpStackTrace(void* ctx)
 {
     static constexpr int framesToShow = 32;
-    static constexpr int framesToSkip = 4;
+    static constexpr int framesToSkip = 2;
     void* stack[framesToShow + framesToSkip];
     int frames = framesToShow + framesToSkip;
     WTFGetBacktrace(stack, &frames);

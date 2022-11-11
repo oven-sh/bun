@@ -41,7 +41,6 @@ jobs:
           #   arch: aarch64
           #   tag: bun-obj-darwin-aarch64
     steps:
-      - run: git rm --cached src/deps/libbacktrace
       - uses: actions/checkout@v3
         with:
           submodules: recursive

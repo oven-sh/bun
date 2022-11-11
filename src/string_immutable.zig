@@ -1157,7 +1157,7 @@ pub fn allocateLatin1IntoUTF8WithList(list_: std.ArrayList(u8), offset_into_list
                             const mask = bytes & 0x8080808080808080;
 
                             if (mask > 0) {
-                                const first_set_byte = @ctz(Int, mask) / 8;
+                                const first_set_byte = @ctz(@as(Int, mask)) / 8;
                                 if (comptime Environment.allow_assert) {
                                     assert(latin1[first_set_byte] >= 127);
                                 }
@@ -1186,7 +1186,7 @@ pub fn allocateLatin1IntoUTF8WithList(list_: std.ArrayList(u8), offset_into_list
                 const mask = bytes & 0x8080808080808080;
 
                 if (mask > 0) {
-                    const first_set_byte = @ctz(Int, mask) / 8;
+                    const first_set_byte = @ctz(@as(Int, mask)) / 8;
                     if (comptime Environment.allow_assert) {
                         assert(latin1[first_set_byte] >= 127);
                     }
@@ -2627,7 +2627,7 @@ pub fn firstNonASCIIWithType(comptime Type: type, slice: Type) ?u32 {
                         const mask = bytes & 0x8080808080808080;
 
                         if (mask > 0) {
-                            const first_set_byte = @ctz(Int, mask) / 8;
+                            const first_set_byte = @ctz(@as(Int, mask)) / 8;
                             if (comptime Environment.allow_assert) {
                                 assert(remaining[first_set_byte] > 127);
                                 var j: usize = 0;
@@ -2672,7 +2672,7 @@ pub fn firstNonASCIIWithType(comptime Type: type, slice: Type) ?u32 {
 
                 if (mask > 0) {
                     remaining.len -= @ptrToInt(remaining.ptr) - @ptrToInt(remaining_start);
-                    const first_set_byte = @ctz(Int, mask) / 8;
+                    const first_set_byte = @ctz(@as(Int, mask)) / 8;
                     if (comptime Environment.allow_assert) {
                         assert(remaining[first_set_byte] > 127);
                         var j: usize = 0;
@@ -3088,7 +3088,7 @@ pub fn firstNonASCII16CheckMin(comptime Slice: type, slice: Slice, comptime chec
 
                         const cmp = vec > max_u16_ascii;
                         const bitmask = @ptrCast(*const u16, &cmp).*;
-                        const first = @ctz(u16, bitmask);
+                        const first = @ctz(@as(u16, bitmask));
 
                         return @intCast(u32, @as(u32, first) +
                             @intCast(u32, slice.len - remaining.len));

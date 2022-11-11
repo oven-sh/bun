@@ -397,8 +397,7 @@ MINIMUM_ARCHIVE_FILES = -L$(BUN_DEPS_OUT_DIR) \
 	-lssl \
 	-lcrypto \
 	-llolhtml \
-	-lonig \
-	$(BUN_DEPS_OUT_DIR)/libbacktrace.a \
+	-lonig
 
 ARCHIVE_FILES_WITHOUT_LIBCRYPTO = $(MINIMUM_ARCHIVE_FILES) \
 		-larchive \
@@ -497,7 +496,7 @@ builtins: ## to generate builtins
 generate-builtins: builtins
 
 .PHONY: vendor-without-check
-vendor-without-check: npm-install node-fallbacks runtime_js fallback_decoder bun_error mimalloc picohttp zlib boringssl libarchive libbacktrace lolhtml usockets uws tinycc oniguruma
+vendor-without-check: npm-install node-fallbacks runtime_js fallback_decoder bun_error mimalloc picohttp zlib boringssl libarchive lolhtml usockets uws tinycc oniguruma
 
 BUN_TYPES_REPO_PATH ?= $(realpath packages/bun-types)
 
@@ -548,13 +547,6 @@ boringssl-debug: boringssl-build-debug boringssl-copy
 .PHONY: compile-ffi-test
 compile-ffi-test:
 	clang $(OPTIMIZATION_LEVEL) -shared -undefined dynamic_lookup -o /tmp/bun-ffi-test.dylib -fPIC ./test/bun.js/ffi-test.c
-
-.PHONY: libbacktrace
-libbacktrace:
-	cd $(BUN_DEPS_DIR)/libbacktrace && \
-	CFLAGS="$(CFLAGS)" CC=$(CC) ./configure --disable-shared --enable-static  --with-pic && \
-	make -j$(CPUS) && \
-	cp ./.libs/libbacktrace.a $(BUN_DEPS_OUT_DIR)/libbacktrace.a
 
 .PHONY: oniguruma
 oniguruma:
@@ -854,7 +846,7 @@ clone-submodules:
 	git -c submodule."src/bun.js/WebKit".update=none submodule update --init --recursive --depth=1 --progress
 
 .PHONY: devcontainer
-devcontainer: $(OBJ_DIR) $(DEBUG_OBJ_DIR) clone-submodules libbacktrace mimalloc zlib libarchive boringssl picohttp identifier-cache node-fallbacks npm-install api analytics bun_error fallback_decoder bindings uws lolhtml usockets tinycc runtime_js_dev sqlite oniguruma webcrypto-debug webcrypto
+devcontainer: $(OBJ_DIR) $(DEBUG_OBJ_DIR) clone-submodules mimalloc zlib libarchive boringssl picohttp identifier-cache node-fallbacks npm-install api analytics bun_error fallback_decoder bindings uws lolhtml usockets tinycc runtime_js_dev sqlite oniguruma webcrypto-debug webcrypto
 
 .PHONY: devcontainer-build
 devcontainer-build:

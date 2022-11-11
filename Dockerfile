@@ -222,27 +222,6 @@ ENV CPU_TARGET=${CPU_TARGET}
 
 RUN install_packages libtcc-dev && cp /usr/lib/$(uname -m)-linux-gnu/libtcc.a ${BUN_DEPS_OUT_DIR}
 
-FROM bun-base as libbacktrace
-
-ARG DEBIAN_FRONTEND
-ARG GITHUB_WORKSPACE
-ARG ZIG_PATH
-# Directory extracts to "bun-webkit"
-ARG WEBKIT_DIR
-ARG BUN_RELEASE_DIR
-ARG BUN_DEPS_OUT_DIR
-ARG BUN_DIR
-ARG CPU_TARGET
-ENV CPU_TARGET=${CPU_TARGET}
-
-COPY Makefile ${BUN_DIR}/Makefile
-COPY src/deps/libbacktrace ${BUN_DIR}/src/deps/libbacktrace
-
-WORKDIR $BUN_DIR
-
-RUN cd $BUN_DIR && \
-    make libbacktrace && rm -rf src/deps/libbacktrace Makefile
-
 FROM bun-base as boringssl
 
 RUN install_packages golang
@@ -466,7 +445,6 @@ COPY --from=oniguruma ${BUN_DEPS_OUT_DIR}/*.a ${BUN_DEPS_OUT_DIR}/
 COPY --from=picohttp ${BUN_DEPS_OUT_DIR}/*.o ${BUN_DEPS_OUT_DIR}/
 COPY --from=uws ${BUN_DEPS_OUT_DIR}/*.a ${BUN_DEPS_OUT_DIR}/
 COPY --from=uws ${BUN_DEPS_OUT_DIR}/*.o ${BUN_DEPS_OUT_DIR}/
-COPY --from=libbacktrace ${BUN_DEPS_OUT_DIR}/*.a ${BUN_DEPS_OUT_DIR}/
 COPY --from=tinycc ${BUN_DEPS_OUT_DIR}/*.a ${BUN_DEPS_OUT_DIR}/
 
 # Required for `make webcrypto`
@@ -523,7 +501,6 @@ ENV LIB_ICU_PATH=${WEBKIT_DIR}/lib
 COPY --from=zlib ${BUN_DEPS_OUT_DIR}/*.a ${BUN_DEPS_OUT_DIR}/
 COPY --from=libarchive ${BUN_DEPS_OUT_DIR}/*.a ${BUN_DEPS_OUT_DIR}/
 COPY --from=boringssl ${BUN_DEPS_OUT_DIR}/*.a ${BUN_DEPS_OUT_DIR}/
-COPY --from=libbacktrace ${BUN_DEPS_OUT_DIR}/*.a ${BUN_DEPS_OUT_DIR}/
 COPY --from=lolhtml ${BUN_DEPS_OUT_DIR}/*.a ${BUN_DEPS_OUT_DIR}/
 COPY --from=mimalloc ${BUN_DEPS_OUT_DIR}/*.o ${BUN_DEPS_OUT_DIR}/
 COPY --from=oniguruma ${BUN_DEPS_OUT_DIR}/*.a ${BUN_DEPS_OUT_DIR}/

@@ -56,11 +56,6 @@ fn addInternalPackages(step: *std.build.LibExeObjStep, _: std.mem.Allocator, tar
         .source = pkgPath("src/thread_pool.zig"),
     };
 
-    var crash_reporter: std.build.Pkg = .{
-        .name = "crash_reporter",
-        .source = pkgPath("src/deps/backtrace.zig"),
-    };
-
     var picohttp: std.build.Pkg = .{
         .name = "picohttp",
         .source = pkgPath("src/deps/picohttp.zig"),
@@ -166,7 +161,6 @@ fn addInternalPackages(step: *std.build.LibExeObjStep, _: std.mem.Allocator, tar
     step.addPackage(http);
     step.addPackage(boringssl);
     step.addPackage(javascript_core);
-    step.addPackage(crash_reporter);
     step.addPackage(datetime);
     step.addPackage(lol_html);
     step.addPackage(uws);
@@ -594,7 +588,6 @@ pub fn linkObjectFiles(b: *std.build.Builder, obj: *std.build.LibExeObjStep, tar
         .{ "libJavaScriptCore.a", "libJavaScriptCore.a" },
         .{ "libWTF.a", "libWTF.a" },
         .{ "libbmalloc.a", "libbmalloc.a" },
-        .{ "libbacktrace.a", "libbacktrace.a" },
         .{ "liblolhtml.a", "liblolhtml.a" },
         .{ "uSockets.a", "uSockets.a" },
     });

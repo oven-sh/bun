@@ -30,16 +30,12 @@ pub fn panic(msg: []const u8, error_return_trace: ?*std.builtin.StackTrace) nore
     MainPanicHandler.handle_panic(msg, error_return_trace);
 }
 
-const CrashReporter = @import("crash_reporter");
-
-pub fn PLCrashReportHandler() void {
-    Report.fatal(null, null);
-}
+const CrashReporter = @import("./crash_reporter.zig");
 
 pub var start_time: i128 = 0;
 pub fn main() void {
     if (comptime Environment.isRelease)
-        CrashReporter.start(null, Report.CrashReportWriter.printFrame, Report.handleCrash) catch unreachable;
+        CrashReporter.start(null) catch unreachable;
 
     start_time = std.time.nanoTimestamp();
 

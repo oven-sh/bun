@@ -15,7 +15,7 @@ const CLI = @import("./cli.zig").Cli;
 const Features = @import("./analytics/analytics_thread.zig").Features;
 const Platform = @import("./analytics/analytics_thread.zig").GenerateHeader.GeneratePlatform;
 const HTTP = @import("http").AsyncHTTP;
-const CrashReporter = @import("crash_reporter");
+const CrashReporter = @import("./crash_reporter.zig");
 
 const Report = @This();
 
@@ -230,7 +230,11 @@ pub fn fatal(err_: ?anyerror, msg_: ?string) void {
 
         // It only is a real crash report if it's not coming from Zig
 
-        CrashReportWriter.dump();
+        if (comptime !@import("javascript_core").is_bindgen) {
+            std.mem.doNotOptimizeAway(&Bun__crashReportWrite);
+            Bun__crashReportDumpStackTrace(&crash_report_writer);
+        }
+
         crash_report_writer.flush();
 
         crash_report_writer.printPath();
@@ -243,6 +247,13 @@ pub fn fatal(err_: ?anyerror, msg_: ?string) void {
 }
 
 var globalError_ranOnce = false;
+
+export fn Bun__crashReportWrite(ctx: *CrashReportWriter, bytes_ptr: [*]const u8, len: usize) void {
+    if (len > 0)
+        ctx.print("{s}\n", .{bytes_ptr[0..len]});
+}
+
+extern "C" fn Bun__crashReportDumpStackTrace(ctx: *anyopaque) void;
 
 pub noinline fn handleCrash(signal: i32, addr: usize) void {
     const had_printed_fatal = has_printed_fatal;
@@ -263,7 +274,10 @@ pub noinline fn handleCrash(signal: i32, addr: usize) void {
         .{ @errorName(name), std.fmt.fmtSliceHexUpper(std.mem.asBytes(&addr)) },
     );
     printMetadata();
-    CrashReportWriter.dump();
+    if (comptime !@import("javascript_core").is_bindgen) {
+        std.mem.doNotOptimizeAway(&Bun__crashReportWrite);
+        Bun__crashReportDumpStackTrace(&crash_report_writer);
+    }
 
     if (!had_printed_fatal) {
         crash_report_writer.print("\nAsk for #help in https://bun.sh/discord or go to https://bun.sh/issues\n\n", .{});

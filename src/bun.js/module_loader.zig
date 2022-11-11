@@ -1357,6 +1357,7 @@ pub const ModuleLoader = struct {
             if (err == error.AsyncModule) {
                 unreachable;
             }
+
             VirtualMachine.processFetchLog(globalObject, specifier.*, referrer.*, &log, ret, err);
             return true;
         }) |builtin| {

@@ -495,7 +495,7 @@ pub const TestScope = struct {
         exception: js.ExceptionRef,
         is_only: bool,
     ) js.JSObjectRef {
-        var args = arguments[0..@minimum(arguments.len, 2)];
+        var args = arguments[0..@min(arguments.len, 2)];
         var label: string = "";
         if (args.len == 0) {
             return this;

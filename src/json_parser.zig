@@ -467,7 +467,7 @@ pub const PackageJSONVersionChecker = struct {
                         // first one wins
                         if (key.data == .e_string and value.data == .e_string) {
                             if (!p.has_found_name and strings.eqlComptime(key.data.e_string.data, "name")) {
-                                const len = @minimum(
+                                const len = @min(
                                     value.data.e_string.data.len,
                                     p.found_name_buf.len,
                                 );
@@ -476,7 +476,7 @@ pub const PackageJSONVersionChecker = struct {
                                 p.found_name = p.found_name_buf[0..len];
                                 p.has_found_name = true;
                             } else if (!p.has_found_version and strings.eqlComptime(key.data.e_string.data, "version")) {
-                                const len = @minimum(
+                                const len = @min(
                                     value.data.e_string.data.len,
                                     p.found_version_buf.len,
                                 );

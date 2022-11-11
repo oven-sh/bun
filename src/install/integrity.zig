@@ -36,7 +36,7 @@ pub const Integrity = extern struct {
 
         // e.g. "3cd0599b099384b815c10f7fa7df0092b62d534f"
         var integrity = Integrity{ .tag = Tag.sha1 };
-        const end: usize = @minimum("3cd0599b099384b815c10f7fa7df0092b62d534f".len, buf.len);
+        const end: usize = @min("3cd0599b099384b815c10f7fa7df0092b62d534f".len, buf.len);
         var out_i: usize = 0;
         var i: usize = 0;
 
@@ -117,7 +117,7 @@ pub const Integrity = extern struct {
         pub fn parse(buf: []const u8) Tag {
             const Matcher = strings.ExactSizeMatcher(8);
 
-            const i = std.mem.indexOfScalar(u8, buf[0..@minimum(buf.len, 7)], '-') orelse return Tag.unknown;
+            const i = std.mem.indexOfScalar(u8, buf[0..@min(buf.len, 7)], '-') orelse return Tag.unknown;
 
             return switch (Matcher.match(buf[0..i])) {
                 Matcher.case("sha1") => Tag.sha1,

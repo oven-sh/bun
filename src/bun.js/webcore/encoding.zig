@@ -929,13 +929,13 @@ pub const Encoder = struct {
 
         switch (comptime encoding) {
             JSC.Node.Encoding.buffer => {
-                const written = @minimum(len, to_len);
+                const written = @min(len, to_len);
                 @memcpy(to, input, written);
 
                 return @intCast(i64, written);
             },
             .latin1, .ascii => {
-                const written = @minimum(len, to_len);
+                const written = @min(len, to_len);
                 @memcpy(to, input, written);
 
                 // Hoping this gets auto vectorized
@@ -1031,7 +1031,7 @@ pub const Encoder = struct {
             .latin1, JSC.Node.Encoding.ascii, JSC.Node.Encoding.ucs2, JSC.Node.Encoding.buffer, JSC.Node.Encoding.utf16le => {
                 strings.copyU16IntoU8(to[0..to_len], []const u16, input[0..len]);
 
-                return @intCast(i64, @minimum(len, to_len));
+                return @intCast(i64, @min(len, to_len));
             },
 
             JSC.Node.Encoding.hex => {

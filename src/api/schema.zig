@@ -17,7 +17,7 @@ pub const Reader = struct {
     }
 
     pub fn read(this: *Self, count: usize) ![]u8 {
-        const read_count = @minimum(count, this.remain.len);
+        const read_count = @min(count, this.remain.len);
         if (read_count < count) {
             return error.EOF;
         }

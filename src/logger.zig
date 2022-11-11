@@ -100,7 +100,7 @@ pub const Location = struct {
     pub fn count(this: Location, builder: *StringBuilder) void {
         builder.count(this.file);
         builder.count(this.namespace);
-        if (this.line_text) |text| builder.count(text[0..@minimum(text.len, 690)]);
+        if (this.line_text) |text| builder.count(text[0..@min(text.len, 690)]);
         if (this.suggestion) |text| builder.count(text);
     }
 
@@ -556,7 +556,7 @@ pub const Range = packed struct {
     pub fn in(this: Range, buf: []const u8) []const u8 {
         if (this.loc.start < 0 or this.len <= 0) return "";
         const slice = buf[@intCast(usize, this.loc.start)..];
-        return slice[0..@minimum(@intCast(usize, this.len), buf.len)];
+        return slice[0..@min(@intCast(usize, this.len), buf.len)];
     }
 
     pub fn isEmpty(r: *const Range) bool {
@@ -656,7 +656,7 @@ pub const Log = struct {
         const msgs: []const Msg = this.msgs.items;
         var errors_stack: [256]*anyopaque = undefined;
 
-        const count = @intCast(u16, @minimum(msgs.len, errors_stack.len));
+        const count = @intCast(u16, @min(msgs.len, errors_stack.len));
         switch (count) {
             0 => return JSC.JSValue.jsUndefined(),
             1 => {

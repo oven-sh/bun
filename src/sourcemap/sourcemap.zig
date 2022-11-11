@@ -542,7 +542,7 @@ pub fn decodeVLQ(encoded: []const u8, start: usize) VLQResult {
     var vlq: u32 = 0;
 
     // hint to the compiler what the maximum value is
-    const encoded_ = encoded[start..][0..@minimum(encoded.len - start, comptime (vlq_max_in_bytes + 1))];
+    const encoded_ = encoded[start..][0..@min(encoded.len - start, comptime (vlq_max_in_bytes + 1))];
 
     // inlining helps for the 1 or 2 byte case, hurts a little for larger
     comptime var i: usize = 0;

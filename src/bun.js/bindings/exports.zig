@@ -1473,7 +1473,7 @@ pub const ZigConsoleClient = struct {
                         else
                             writer.writeLatin1(end);
                         any_non_ascii = false;
-                        slice = slice[@minimum(slice.len, i + 1)..];
+                        slice = slice[@min(slice.len, i + 1)..];
                         i = 0;
                         len = @truncate(u32, slice.len);
                         const next_value = this.remaining_values[0];
@@ -1549,11 +1549,11 @@ pub const ZigConsoleClient = struct {
             comptime Writer: type,
             writer: Writer,
         ) !void {
-            const indent = @minimum(this.indent, 8);
+            const indent = @min(this.indent, 8);
             var buf = [_]u8{' '} ** 32;
             var total_remain: usize = indent;
             while (total_remain > 0) {
-                const written = @minimum(16, total_remain);
+                const written = @min(16, total_remain);
                 try writer.writeAll(buf[0 .. written * 2]);
                 total_remain -|= written;
             }
@@ -2395,7 +2395,7 @@ pub const ZigConsoleClient = struct {
             writer.print(comptime Output.prettyFmt(fmt_, enable_ansi_colors), .{slice[0]});
             var leftover = slice[1..];
             const max = 512;
-            leftover = leftover[0..@minimum(leftover.len, max)];
+            leftover = leftover[0..@min(leftover.len, max)];
             for (leftover) |el| {
                 printComma(undefined, @TypeOf(&writer.ctx), &writer.ctx, enable_ansi_colors) catch unreachable;
                 writer.writeAll(" ");

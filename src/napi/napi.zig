@@ -409,7 +409,7 @@ pub export fn napi_get_value_string_latin1(env: napi_env, value: napi_value, buf
         result.* = @intCast(@TypeOf(result.*), wrote);
         return .ok;
     }
-    const to_copy = @minimum(zig_str.len, buf_.len);
+    const to_copy = @min(zig_str.len, buf_.len);
     @memcpy(buf, zig_str.slice().ptr, to_copy);
     buf[to_copy] = 0;
     // if zero terminated, report the length of the string without the null
@@ -476,7 +476,7 @@ pub export fn napi_get_value_string_utf8(env: napi_env, value: napi_value, buf_p
         return .ok;
     }
 
-    const to_copy = @minimum(zig_str.len, buf_.len);
+    const to_copy = @min(zig_str.len, buf_.len);
     @memcpy(buf, zig_str.slice().ptr, to_copy);
     buf[to_copy] = 0;
     if (result_ptr) |result| {
@@ -531,7 +531,7 @@ pub export fn napi_get_value_string_utf16(env: napi_env, value: napi_value, buf_
         return .ok;
     }
 
-    const to_copy = @minimum(zig_str.len, buf_.len) * 2;
+    const to_copy = @min(zig_str.len, buf_.len) * 2;
     @memcpy(std.mem.sliceAsBytes(buf_).ptr, std.mem.sliceAsBytes(zig_str.utf16SliceAligned()).ptr, to_copy);
     buf[to_copy] = 0;
     // if zero terminated, report the length of the string without the null
@@ -706,7 +706,7 @@ pub export fn napi_is_arraybuffer(_: napi_env, value: napi_value, result: *bool)
 pub export fn napi_create_arraybuffer(env: napi_env, byte_length: usize, data: [*]const u8, result: *napi_value) napi_status {
     var typed_array = JSC.C.JSObjectMakeTypedArray(env.ref(), .kJSTypedArrayTypeArrayBuffer, byte_length, TODO_EXCEPTION);
     var array_buffer = JSValue.c(typed_array).asArrayBuffer(env) orelse return .generic_failure;
-    @memcpy(array_buffer.ptr, data, @minimum(array_buffer.len, @truncate(u32, byte_length)));
+    @memcpy(array_buffer.ptr, data, @min(array_buffer.len, @truncate(u32, byte_length)));
     result.* = JSValue.c(typed_array);
     return .ok;
 }

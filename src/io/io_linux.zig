@@ -522,7 +522,7 @@ pub fn init(entries_: u12, flags: u32, waker: Waker) !IO {
         }
 
         if (limit.cur < 128 * 1024) {
-            entries = @minimum(256, entries);
+            entries = @min(256, entries);
         }
     }
 
@@ -1734,5 +1734,5 @@ fn buffer_limit(buffer_len: usize) usize {
         .macos, .ios, .watchos, .tvos => std.math.maxInt(i32),
         else => std.math.maxInt(isize),
     };
-    return @minimum(limit, buffer_len);
+    return @min(limit, buffer_len);
 }

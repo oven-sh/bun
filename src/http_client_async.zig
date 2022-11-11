@@ -794,7 +794,7 @@ pub fn hashHeaderName(name: string) u64 {
     var buf_slice: []u8 = std.mem.span(&buf);
 
     while (remain.len > 0) {
-        const end = @minimum(hasher.buf.len, remain.len);
+        const end = @min(hasher.buf.len, remain.len);
 
         hasher.update(strings.copyLowercase(std.mem.span(remain[0..end]), buf_slice));
         remain = remain[end..];
@@ -1267,7 +1267,7 @@ pub fn onWritable(this: *HTTPClient, comptime is_first_call: bool, comptime is_s
             std.debug.assert(list.items.len == writer.context.items.len);
             if (this.state.request_body.len > 0 and list.capacity - list.items.len > 0) {
                 var remain = list.items.ptr[list.items.len..list.capacity];
-                const wrote = @minimum(remain.len, this.state.request_body.len);
+                const wrote = @min(remain.len, this.state.request_body.len);
                 std.debug.assert(wrote > 0);
                 @memcpy(remain.ptr, this.state.request_body.ptr, wrote);
                 list.items.len += wrote;
@@ -1364,7 +1364,7 @@ pub fn onData(this: *HTTPClient, comptime is_ssl: bool, incoming_data: []const u
                     return;
                 }
 
-                const to_read_len = @minimum(available.len, to_read.len);
+                const to_read_len = @min(available.len, to_read.len);
                 req_msg.data.appendSliceAssumeCapacity(to_read[0..to_read_len]);
                 to_read = req_msg.data.slice();
                 pending_buffers[1] = incoming_data[to_read_len..];
@@ -1407,7 +1407,7 @@ pub fn onData(this: *HTTPClient, comptime is_ssl: bool, incoming_data: []const u
 
             this.state.pending_response = response;
 
-            pending_buffers[0] = to_read[@minimum(@intCast(usize, response.bytes_read), to_read.len)..];
+            pending_buffers[0] = to_read[@min(@intCast(usize, response.bytes_read), to_read.len)..];
             if (pending_buffers[0].len == 0 and pending_buffers[1].len > 0) {
                 pending_buffers[0] = pending_buffers[1];
                 pending_buffers[1] = "";
@@ -1721,7 +1721,7 @@ pub fn handleResponseBody(this: *HTTPClient, incoming_data: []const u8) !bool {
     }
 
     const remaining_content_length = this.state.body_size - buffer.list.items.len;
-    var remainder = incoming_data[0..@minimum(incoming_data.len, remaining_content_length)];
+    var remainder = incoming_data[0..@min(incoming_data.len, remaining_content_length)];
 
     _ = try buffer.write(remainder);
 

@@ -2004,7 +2004,7 @@ pub const RequestContext = struct {
                                     @memset(
                                         handler.message_buffer.list.items.ptr,
                                         0,
-                                        @minimum(handler.message_buffer.list.items.len, 128),
+                                        @min(handler.message_buffer.list.items.len, 128),
                                     );
                                 }
                                 const build_result = handler.builder.build(request_id, cmd.timestamp, arena.allocator()) catch |err| {
@@ -2683,11 +2683,11 @@ pub const RequestContext = struct {
 
         // This makes it Just Work if you pass a line/column number
         if (strings.indexOfChar(id, ':')) |colon| {
-            line = id[@minimum(id.len, colon + 1)..];
+            line = id[@min(id.len, colon + 1)..];
             id = id[0..colon];
 
             if (strings.indexOfChar(line, ':')) |col| {
-                column = line[@minimum(line.len, col + 1)..];
+                column = line[@min(line.len, col + 1)..];
                 line = line[0..col];
             }
         }
@@ -3444,7 +3444,7 @@ pub const Server = struct {
         defer listener.deinit();
         server.websocket_threadpool.stack_size = @truncate(
             u32,
-            @minimum(
+            @min(
                 @maximum(128_000, Fs.FileSystem.RealFS.Limit.stack),
                 4_000_000,
             ),

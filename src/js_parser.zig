@@ -4363,7 +4363,7 @@ fn NewParser_(
                     for (parts_) |part, i| {
                         if (part.tag == .none) {
                             stmts_count += part.stmts.len;
-                            first_none_part = @minimum(i, first_none_part);
+                            first_none_part = @min(i, first_none_part);
                         }
                     }
 
@@ -17151,7 +17151,7 @@ fn NewParser_(
                     {
                         var array = expr.data.e_array;
 
-                        array.items.len = @minimum(array.items.len, @truncate(u32, bound_array.items.len));
+                        array.items.len = @min(array.items.len, @truncate(u32, bound_array.items.len));
                         var slice = array.items.slice();
                         for (bound_array.items[0..array.items.len]) |item, item_i| {
                             const child_expr = slice[item_i];

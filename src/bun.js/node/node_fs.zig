@@ -2266,7 +2266,7 @@ const Return = struct {
                 ctx.ptr(),
                 &fields.bytesRead,
                 &fields.buffer,
-                JSC.JSValue.jsNumberFromUint64(@intCast(u52, @minimum(std.math.maxInt(u52), this.bytes_read))),
+                JSC.JSValue.jsNumberFromUint64(@intCast(u52, @min(std.math.maxInt(u52), this.bytes_read))),
                 this.buffer_val,
             ).asObjectRef();
         }
@@ -2290,7 +2290,7 @@ const Return = struct {
                 ctx.ptr(),
                 &fields.bytesWritten,
                 &fields.buffer,
-                JSC.JSValue.jsNumberFromUint64(@intCast(u52, @minimum(std.math.maxInt(u52), this.bytes_written))),
+                JSC.JSValue.jsNumberFromUint64(@intCast(u52, @min(std.math.maxInt(u52), this.bytes_written))),
                 if (this.buffer == .buffer)
                     this.buffer_val
                 else
@@ -2511,7 +2511,7 @@ pub const NodeFS = struct {
                             var buf: [16384]u8 = undefined;
                             var remain = @intCast(u64, @maximum(stat_.size, 0));
                             toplevel: while (remain > 0) {
-                                const amt = switch (Syscall.read(src_fd, buf[0..@minimum(buf.len, remain)])) {
+                                const amt = switch (Syscall.read(src_fd, buf[0..@min(buf.len, remain)])) {
                                     .result => |result| result,
                                     .err => |err| return Maybe(Return.CopyFile){ .err = err.withPath(src) },
                                 };
@@ -3052,7 +3052,7 @@ pub const NodeFS = struct {
 
     pub fn mkdtemp(this: *NodeFS, args: Arguments.MkdirTemp, comptime flavor: Flavor) Maybe(Return.Mkdtemp) {
         var prefix_buf = &this.sync_error_buf;
-        const len = @minimum(args.prefix.len, prefix_buf.len - 7);
+        const len = @min(args.prefix.len, prefix_buf.len - 7);
         if (len > 0) {
             @memcpy(prefix_buf, args.prefix.ptr, len);
         }
@@ -3108,8 +3108,8 @@ pub const NodeFS = struct {
             // The sync version does no allocation except when returning the path
             .sync => {
                 var buf = args.buffer.slice();
-                buf = buf[@minimum(args.offset, buf.len)..];
-                buf = buf[0..@minimum(buf.len, args.length)];
+                buf = buf[@min(args.offset, buf.len)..];
+                buf = buf[0..@min(buf.len, args.length)];
 
                 return switch (Syscall.read(args.fd, buf)) {
                     .err => |err| .{
@@ -3134,8 +3134,8 @@ pub const NodeFS = struct {
         switch (comptime flavor) {
             .sync => {
                 var buf = args.buffer.slice();
-                buf = buf[@minimum(args.offset, buf.len)..];
-                buf = buf[0..@minimum(buf.len, args.length)];
+                buf = buf[@min(args.offset, buf.len)..];
+                buf = buf[0..@min(buf.len, args.length)];
 
                 return switch (Syscall.pread(args.fd, buf, args.position.?)) {
                     .err => |err| .{
@@ -3178,8 +3178,8 @@ pub const NodeFS = struct {
         switch (comptime flavor) {
             .sync => {
                 var buf = args.buffer.slice();
-                buf = buf[@minimum(args.offset, buf.len)..];
-                buf = buf[0..@minimum(buf.len, args.length)];
+                buf = buf[@min(args.offset, buf.len)..];
+                buf = buf[0..@min(buf.len, args.length)];
 
                 return switch (Syscall.write(args.fd, buf)) {
                     .err => |err| .{
@@ -3208,8 +3208,8 @@ pub const NodeFS = struct {
         switch (comptime flavor) {
             .sync => {
                 var buf = args.buffer.slice();
-                buf = buf[@minimum(args.offset, buf.len)..];
-                buf = buf[0..@minimum(args.length, buf.len)];
+                buf = buf[@min(args.offset, buf.len)..];
+                buf = buf[0..@min(args.length, buf.len)];
 
                 return switch (Syscall.pwrite(args.fd, buf, position)) {
                     .err => |err| .{

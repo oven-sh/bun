@@ -619,7 +619,7 @@ pub const UpgradeCommand = struct {
                         Output.prettyErrorln(
                             "<r><red>error<r>: The downloaded version of bun (<red>{s}<r>) doesn't match the expected version (<b>{s}<r>)<r>. Cancelled upgrade",
                             .{
-                                version_string[0..@minimum(version_string.len, 512)],
+                                version_string[0..@min(version_string.len, 512)],
                                 version_name,
                             },
                         );

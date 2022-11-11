@@ -185,7 +185,7 @@ pub const Response = struct {
                 .minor_version = @intCast(usize, minor_version),
                 .status_code = @intCast(usize, status_code),
                 .status = status,
-                .headers = src[0..@minimum(num_headers, src.len)],
+                .headers = src[0..@min(num_headers, src.len)],
                 .bytes_read = rc,
             },
         };

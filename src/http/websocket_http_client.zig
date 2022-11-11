@@ -312,7 +312,7 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
                 }
             }
 
-            const to_write = remain[0..@minimum(remain.len, data.len)];
+            const to_write = remain[0..@min(remain.len, data.len)];
             if (data.len > 0 and to_write.len > 0) {
                 @memcpy(remain.ptr, data.ptr, to_write.len);
                 this.body_written += to_write.len;
@@ -412,17 +412,17 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
             //     return;
             // }
 
-            if (@minimum(upgrade_header.name.len, upgrade_header.value.len) == 0) {
+            if (@min(upgrade_header.name.len, upgrade_header.value.len) == 0) {
                 this.terminate(ErrorCode.missing_upgrade_header);
                 return;
             }
 
-            if (@minimum(connection_header.name.len, connection_header.value.len) == 0) {
+            if (@min(connection_header.name.len, connection_header.value.len) == 0) {
                 this.terminate(ErrorCode.missing_connection_header);
                 return;
             }
 
-            if (@minimum(websocket_accept_header.name.len, websocket_accept_header.value.len) == 0) {
+            if (@min(websocket_accept_header.name.len, websocket_accept_header.value.len) == 0) {
                 this.terminate(ErrorCode.missing_websocket_accept_header);
                 return;
             }
@@ -475,7 +475,7 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
                 this.terminate(ErrorCode.failed_to_write);
                 return;
             }
-            this.to_send = this.to_send[@minimum(@intCast(usize, wrote), this.to_send.len)..];
+            this.to_send = this.to_send[@min(@intCast(usize, wrote), this.to_send.len)..];
         }
         pub fn handleTimeout(
             this: *HTTPClient,
@@ -1087,7 +1087,7 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
                     },
 
                     .ping => {
-                        const ping_len = @minimum(data.len, @minimum(receive_body_remain, 125));
+                        const ping_len = @min(data.len, @min(receive_body_remain, 125));
                         this.ping_len = @truncate(u8, ping_len);
 
                         if (ping_len > 0) {
@@ -1102,7 +1102,7 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
                         if (data.len == 0) break;
                     },
                     .pong => {
-                        const pong_len = @minimum(data.len, @minimum(receive_body_remain, this.ping_frame_bytes.len));
+                        const pong_len = @min(data.len, @min(receive_body_remain, this.ping_frame_bytes.len));
                         data = data[pong_len..];
                         receive_state = .need_header;
                         receiving_type = last_receive_data_type;
@@ -1116,7 +1116,7 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
                         }
                         if (data.len == 0) return;
 
-                        const to_consume = @minimum(receive_body_remain, data.len);
+                        const to_consume = @min(receive_body_remain, data.len);
 
                         const consumed = this.consume(data[0..to_consume], receive_body_remain, last_receive_data_type, is_final);
                         if (consumed == 0 and last_receive_data_type == .Text) {

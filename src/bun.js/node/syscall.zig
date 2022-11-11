@@ -224,7 +224,7 @@ const max_count = switch (builtin.os.tag) {
 };
 
 pub fn write(fd: os.fd_t, bytes: []const u8) Maybe(usize) {
-    const adjusted_len = @minimum(max_count, bytes.len);
+    const adjusted_len = @min(max_count, bytes.len);
 
     while (true) {
         const rc = sys.write(fd, bytes.ptr, adjusted_len);
@@ -247,7 +247,7 @@ else
 const fcntl_symbol = system.fcntl;
 
 pub fn pread(fd: os.fd_t, buf: []u8, offset: i64) Maybe(usize) {
-    const adjusted_len = @minimum(buf.len, max_count);
+    const adjusted_len = @min(buf.len, max_count);
     const ioffset = @bitCast(i64, offset); // the OS treats this as unsigned
     while (true) {
         const rc = pread_sym(fd, buf.ptr, adjusted_len, ioffset);
@@ -266,7 +266,7 @@ else
     sys.pwrite;
 
 pub fn pwrite(fd: os.fd_t, bytes: []const u8, offset: i64) Maybe(usize) {
-    const adjusted_len = @minimum(bytes.len, max_count);
+    const adjusted_len = @min(bytes.len, max_count);
 
     const ioffset = @bitCast(i64, offset); // the OS treats this as unsigned
     while (true) {
@@ -283,7 +283,7 @@ pub fn pwrite(fd: os.fd_t, bytes: []const u8, offset: i64) Maybe(usize) {
 }
 
 pub fn read(fd: os.fd_t, buf: []u8) Maybe(usize) {
-    const adjusted_len = @minimum(buf.len, max_count);
+    const adjusted_len = @min(buf.len, max_count);
     if (comptime Environment.isMac) {
         const rc = system.@"read$NOCANCEL"(fd, buf.ptr, adjusted_len);
         if (Maybe(usize).errnoSys(rc, .read)) |err| {
@@ -526,7 +526,7 @@ pub fn mmapFile(path: [:0]const u8, flags: u32, wanted_size: ?usize, offset: usi
         },
     }), offset) catch 0;
 
-    if (wanted_size) |size_| size = @minimum(size, size_);
+    if (wanted_size) |size_| size = @min(size, size_);
 
     const map = switch (mmap(null, size, os.PROT.READ | os.PROT.WRITE, flags, fd, offset)) {
         .result => |map| map,

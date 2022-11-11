@@ -81,7 +81,7 @@ pub fn ComptimeClap(
                             "TODO: implement stop_after_positional_at on windows",
                         );
 
-                        var remaining_ = std.os.argv[@minimum(std.os.argv.len, stream.iter.args.inner.index)..];
+                        var remaining_ = std.os.argv[@min(std.os.argv.len, stream.iter.args.inner.index)..];
                         const first: []const u8 = if (remaining_.len > 0) bun.span(remaining_[0]) else "";
                         if (first.len > 0 and std.mem.eql(u8, first, "--")) {
                             remaining_ = remaining_[1..];

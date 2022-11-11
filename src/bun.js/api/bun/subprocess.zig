@@ -431,7 +431,7 @@ pub const Subprocess = struct {
                             },
                         );
 
-                        this.remain = this.remain[@minimum(bytes_written, this.remain.len)..];
+                        this.remain = this.remain[@min(bytes_written, this.remain.len)..];
                         to_write = to_write[bytes_written..];
 
                         // we are done or it accepts no more input
@@ -966,7 +966,7 @@ pub const Subprocess = struct {
                     if (!stdio_val.isEmptyOrUndefinedOrNull()) {
                         if (stdio_val.jsType().isArray()) {
                             var stdio_iter = stdio_val.arrayIterator(globalThis);
-                            stdio_iter.len = @minimum(stdio_iter.len, 3);
+                            stdio_iter.len = @min(stdio_iter.len, 3);
                             var i: usize = 0;
                             while (stdio_iter.next()) |value| : (i += 1) {
                                 if (!extractStdio(globalThis, i, value, &stdio))

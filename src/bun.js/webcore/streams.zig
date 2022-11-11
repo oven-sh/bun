@@ -1112,7 +1112,7 @@ pub const FileSink = struct {
         defer this.written = total;
         const fd = this.fd;
         var remain = this.buffer.slice();
-        remain = remain[@minimum(this.head, remain.len)..];
+        remain = remain[@min(this.head, remain.len)..];
         const initial_remain = remain;
         defer {
             std.debug.assert(total - initial == @ptrToInt(remain.ptr) - @ptrToInt(initial_remain.ptr));
@@ -1126,7 +1126,7 @@ pub const FileSink = struct {
         }
         while (remain.len > 0) {
             const max_to_write = if (std.os.S.ISFIFO(this.mode)) max_fifo_size else remain.len;
-            const write_buf = remain[0..@minimum(remain.len, max_to_write)];
+            const write_buf = remain[0..@min(remain.len, max_to_write)];
             const res = JSC.Node.Syscall.write(fd, write_buf);
             if (res == .err) {
                 const retry =
@@ -2054,7 +2054,7 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
 
             // do not write more than available
             // if we do, it will cause this to be delayed until the next call, each time
-            const to_write = @minimum(@truncate(Blob.SizeType, write_offset), @as(Blob.SizeType, this.buffer.len));
+            const to_write = @min(@truncate(Blob.SizeType, write_offset), @as(Blob.SizeType, this.buffer.len));
 
             // figure out how much data exactly to write
             const readable = this.readableSlice()[0..to_write];
@@ -2089,7 +2089,7 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
             if (!this.done and !this.requested_end and !this.hasBackpressure()) {
                 const pending = @truncate(Blob.SizeType, write_offset) -| to_write;
                 const written_after_flush = this.wrote - initial_wrote;
-                const to_report = pending - @minimum(written_after_flush, pending);
+                const to_report = pending - @min(written_after_flush, pending);
 
                 if ((written_after_flush == initial_wrote and pending == 0) or to_report > 0) {
                     this.signal.ready(to_report, null);
@@ -2709,7 +2709,7 @@ pub const ByteBlobLoader = struct {
         this.* = ByteBlobLoader{
             .offset = blobe.offset,
             .store = blobe.store.?,
-            .chunk_size = if (user_chunk_size > 0) @minimum(user_chunk_size, blobe.size) else @minimum(1024 * 1024 * 2, blobe.size),
+            .chunk_size = if (user_chunk_size > 0) @min(user_chunk_size, blobe.size) else @min(1024 * 1024 * 2, blobe.size),
             .remain = blobe.size,
             .done = false,
         };
@@ -2729,7 +2729,7 @@ pub const ByteBlobLoader = struct {
         var temporary = this.store.sharedView();
         temporary = temporary[this.offset..];
 
-        temporary = temporary[0..@minimum(buffer.len, @minimum(temporary.len, this.remain))];
+        temporary = temporary[0..@min(buffer.len, @min(temporary.len, this.remain))];
         if (temporary.len == 0) {
             this.store.deref();
             this.done = true;
@@ -2816,7 +2816,7 @@ pub const ByteStream = struct {
         }
 
         if (this.has_received_last_chunk) {
-            return .{ .chunk_size = @truncate(Blob.SizeType, @minimum(1024 * 1024 * 2, this.buffer.items.len)) };
+            return .{ .chunk_size = @truncate(Blob.SizeType, @min(1024 * 1024 * 2, this.buffer.items.len)) };
         }
 
         if (this.highWaterMark == 0) {
@@ -2874,7 +2874,7 @@ pub const ByteStream = struct {
 
         if (this.pending.state == .pending) {
             std.debug.assert(this.buffer.items.len == 0);
-            var to_copy = this.pending_buffer[0..@minimum(chunk.len, this.pending_buffer.len)];
+            var to_copy = this.pending_buffer[0..@min(chunk.len, this.pending_buffer.len)];
             const pending_buffer_len = this.pending_buffer.len;
             std.debug.assert(to_copy.ptr != chunk.ptr);
             @memcpy(to_copy.ptr, chunk.ptr, to_copy.len);
@@ -2961,7 +2961,7 @@ pub const ByteStream = struct {
 
         if (this.buffer.items.len > 0) {
             std.debug.assert(this.value() == .zero);
-            const to_write = @minimum(
+            const to_write = @min(
                 this.buffer.items.len - this.offset,
                 buffer.len,
             );
@@ -3167,7 +3167,7 @@ pub const FileBlobLoader = struct {
                 var remaining = this.buf[this.concurrent.read..];
 
                 while (remaining.len > 0) {
-                    const to_read = @minimum(@as(usize, this.concurrent.chunk_size), remaining.len);
+                    const to_read = @min(@as(usize, this.concurrent.chunk_size), remaining.len);
                     switch (Syscall.read(this.fd, remaining[0..to_read])) {
                         .err => |err| {
                             const retry = std.os.E.AGAIN;
@@ -3390,9 +3390,9 @@ pub const FileBlobLoader = struct {
             @as(usize, default_fifo_chunk_size);
 
         return if (file.max_size > 0)
-            if (available_to_read != std.math.maxInt(usize)) @minimum(chunk_size, available_to_read) else @minimum(@maximum(this.total_read, file.max_size) - this.total_read, chunk_size)
+            if (available_to_read != std.math.maxInt(usize)) @min(chunk_size, available_to_read) else @min(@maximum(this.total_read, file.max_size) - this.total_read, chunk_size)
         else
-            @minimum(available_to_read, chunk_size);
+            @min(available_to_read, chunk_size);
     }
 
     pub fn onPullInto(this: *FileBlobLoader, buffer: []u8, view: JSC.JSValue) StreamResult {
@@ -3541,7 +3541,7 @@ pub const FileBlobLoader = struct {
                         u8,
                         @intCast(
                             usize,
-                            @minimum(
+                            @min(
                                 len,
                                 1024 * 1024 * 4,
                             ),
@@ -3663,7 +3663,7 @@ pub const FileBlobLoader = struct {
         if (this.buf.len == 0) {
             return;
         } else {
-            this.buf.len = @minimum(this.buf.len, available_to_read);
+            this.buf.len = @min(this.buf.len, available_to_read);
         }
 
         this.pending.result = this.read(

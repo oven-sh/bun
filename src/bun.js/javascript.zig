@@ -1168,7 +1168,7 @@ pub const VirtualMachine = struct {
             else => {
                 var errors_stack: [256]*anyopaque = undefined;
 
-                var errors = errors_stack[0..@minimum(log.msgs.items.len, errors_stack.len)];
+                var errors = errors_stack[0..@min(log.msgs.items.len, errors_stack.len)];
 
                 for (log.msgs.items) |msg, i| {
                     errors[i] = switch (msg.metadata) {
@@ -1662,7 +1662,7 @@ pub const VirtualMachine = struct {
                 std.mem.set(ZigString, source_lines, ZigString.Empty);
                 std.mem.set(i32, source_line_numbers, 0);
 
-                var lines_ = lines[0..@minimum(lines.len, source_lines.len)];
+                var lines_ = lines[0..@min(lines.len, source_lines.len)];
                 for (lines_) |line, j| {
                     source_lines[(lines_.len - 1) - j] = ZigString.init(line);
                     source_line_numbers[j] = top.position.line - @intCast(i32, j) + 1;

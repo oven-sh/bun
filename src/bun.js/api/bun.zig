@@ -679,7 +679,7 @@ pub fn getRouteFiles(
     const router = &VirtualMachine.vm.bundler.router.?;
     const list = router.getPublicPaths() catch unreachable;
 
-    for (routes_list_strings[0..@minimum(list.len, routes_list_strings.len)]) |_, i| {
+    for (routes_list_strings[0..@min(list.len, routes_list_strings.len)]) |_, i| {
         routes_list_strings[i] = ZigString.init(list[i]);
     }
 
@@ -700,7 +700,7 @@ pub fn getRouteNames(
     const router = &VirtualMachine.vm.bundler.router.?;
     const list = router.getNames() catch unreachable;
 
-    for (routes_list_strings[0..@minimum(list.len, routes_list_strings.len)]) |_, i| {
+    for (routes_list_strings[0..@min(list.len, routes_list_strings.len)]) |_, i| {
         routes_list_strings[i] = ZigString.init(list[i]);
     }
 
@@ -1705,7 +1705,7 @@ pub fn allocUnsafe(
 
     const length = @intCast(
         usize,
-        @minimum(
+        @min(
             @maximum(1, (args.nextEat() orelse JSC.JSValue.jsNumber(@as(i32, 1))).toInt32()),
             std.math.maxInt(i32),
         ),
@@ -1733,7 +1733,7 @@ pub fn mmapFile(
     var args = JSC.Node.ArgumentsSlice.from(ctx.bunVM(), arguments);
 
     var buf: [bun.MAX_PATH_BYTES]u8 = undefined;
-    const path = getFilePath(ctx, arguments[0..@minimum(1, arguments.len)], &buf, exception) orelse return null;
+    const path = getFilePath(ctx, arguments[0..@min(1, arguments.len)], &buf, exception) orelse return null;
     args.eat();
 
     buf[path.len] = 0;

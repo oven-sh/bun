@@ -1131,8 +1131,20 @@ pub const VirtualMachine = struct {
     pub fn processFetchLog(globalThis: *JSGlobalObject, specifier: ZigString, referrer: ZigString, log: *logger.Log, ret: *ErrorableResolvedSource, err: anyerror) void {
         switch (log.msgs.items.len) {
             0 => {
-                const msg = logger.Msg{
-                    .data = logger.rangeData(null, logger.Range.None, std.fmt.allocPrint(vm.allocator, "{s} while building {s}", .{ @errorName(err), specifier.slice() }) catch unreachable),
+                const msg: logger.Msg = brk: {
+                    if (err == error.UnexpectedPendingResolution) {
+                        break :brk logger.Msg{
+                            .data = logger.rangeData(
+                                null,
+                                logger.Range.None,
+                                std.fmt.allocPrint(vm.allocator, "Unexpected pending import in \"{s}\". To automatically install npm packages with Bun, please use an import statement instead of require() or dynamic import().\nThis error can also happen if dependencies import packages which are not referenced anywhere. Worst case, run `bun install` and opt-out of the node_modules folder until we come up with a better way to handle this error.", .{specifier.slice()}) catch unreachable,
+                            ),
+                        };
+                    }
+
+                    break :brk logger.Msg{
+                        .data = logger.rangeData(null, logger.Range.None, std.fmt.allocPrint(vm.allocator, "{s} while building {s}", .{ @errorName(err), specifier.slice() }) catch unreachable),
+                    };
                 };
                 {
                     ret.* = ErrorableResolvedSource.err(err, @ptrCast(*anyopaque, BuildError.create(globalThis, vm.bundler.allocator, msg)));

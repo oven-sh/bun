@@ -313,10 +313,23 @@ pub const RunCommand = struct {
             Output.prettyErrorln("<r><red>error<r>: Failed to run \"<b>{s}<r>\" due to error <b>{s}<r>", .{ std.fs.path.basename(executable), @errorName(err) });
             Global.exit(1);
         };
-
-        if (result.Exited > 0) {
-            Output.prettyErrorln("<r><red>error<r> \"<b>{s}<r>\" exited with {d} status<r>", .{ std.fs.path.basename(executable), result.Exited });
-            Global.exit(result.Exited);
+        switch (result) {
+            .Exited => |code| {
+                Output.prettyErrorln("<r><red>error<r> \"<b>{s}<r>\" exited with {d} status<r>", .{ std.fs.path.basename(executable), code });
+                Global.exit(code);
+            },
+            .Signal => |sig| {
+                Output.prettyErrorln("<r><red>error<r> \"<b>{s}<r>\" signaled {d}<r>", .{ std.fs.path.basename(executable), sig });
+                Global.exit(1);
+            },
+            .Stopped => |sig| {
+                Output.prettyErrorln("<r><red>error<r> \"<b>{s}<r>\" stopped: {d}<r>", .{ std.fs.path.basename(executable), sig });
+                Global.exit(1);
+            },
+            .Unknown => |sig| {
+                Output.prettyErrorln("<r><red>error<r> \"<b>{s}<r>\" stopped: {d}<r>", .{ std.fs.path.basename(executable), sig });
+                Global.exit(1);
+            },
         }
 
         return true;

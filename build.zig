@@ -599,7 +599,7 @@ pub fn linkObjectFiles(b: *std.build.Builder, obj: *std.build.LibExeObjStep, tar
         obj.addLibraryPath(deps_path);
 
         while (iterator.next() catch null) |entr| {
-            const entry: std.fs.Dir.Entry = entr;
+            const entry: std.fs.IterableDir.Entry = entr;
             if (files_we_care_about.get(entry.name)) |obj_name| {
                 var has_added = try added.getOrPut(std.hash.Wyhash.hash(0, obj_name));
                 if (!has_added.found_existing) {

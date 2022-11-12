@@ -1354,6 +1354,6 @@ test "PathName.init" {
     try std.testing.expectEqualStrings(res.ext, ".ext");
 }
 
-test "" {
+test {
     @import("std").testing.refAllDecls(FileSystem);
 }

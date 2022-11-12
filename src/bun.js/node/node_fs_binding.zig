@@ -91,7 +91,6 @@ fn call(comptime Function: NodeFSFunctionEnum) NodeFSFunction {
             exception: JSC.C.ExceptionRef,
         ) JSC.C.JSValueRef {
             _ = this;
-            _ = ctx;
             _ = arguments;
             var err = JSC.SystemError{};
             exception.* = err.toErrorInstance(ctx.ptr()).asObjectRef();

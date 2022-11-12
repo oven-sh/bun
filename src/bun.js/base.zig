@@ -1373,7 +1373,6 @@ pub fn NewClassWithInstanceType(
                 \\}} // namespace Bun
                 \\
             ;
-            _ = header_file;
             const Opts = struct { name: string };
             try writer.print(header_file, Opts{
                 .name = std.mem.span(name),

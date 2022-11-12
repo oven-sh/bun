@@ -517,8 +517,6 @@ pub fn NewRequestContextStackAllocator(comptime RequestContext: type, comptime c
             buf_align: u29,
             return_address: usize,
         ) void {
-            _ = buf_align;
-            _ = return_address;
             const bytes = std.mem.asBytes(&self.buf);
             if (sliceContainsSlice(bytes, buf)) {
                 const index = if (bytes[0..buf.len].ptr != buf.ptr)

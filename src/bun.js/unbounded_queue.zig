@@ -102,7 +102,7 @@ pub fn UnboundedQueue(comptime T: type, comptime next_field: meta.FieldEnum(T)) 
             batch.front = front;
 
             var next_item = @atomicLoad(?*T, &@field(front, _next), .Acquire);
-            while (next_item) |next_node| : (next_item = @atomicLoad(?*T, &@field(next_node, next), .Acquire)) {
+            while (next_item) |next_node| : (next_item = @atomicLoad(?*T, &@field(next_node, _next), .Acquire)) {
                 batch.count += 1;
                 batch.last = front;
 

@@ -2386,7 +2386,6 @@ pub const NodeFS = struct {
                         return Maybe(Return.AppendFile).success;
                     },
                     else => {
-                        _ = this;
                         @compileError("Not implemented yet");
                     },
                 }
@@ -2415,7 +2414,6 @@ pub const NodeFS = struct {
                         return Maybe(Return.AppendFile).success;
                     },
                     else => {
-                        _ = this;
                         @compileError("Not implemented yet");
                     },
                 }
@@ -2654,9 +2652,7 @@ pub const NodeFS = struct {
                 }
             },
             else => {
-                _ = args;
                 _ = this;
-                _ = flavor;
             },
         }
 
@@ -2676,9 +2672,6 @@ pub const NodeFS = struct {
             },
             else => {},
         }
-        _ = args;
-        _ = this;
-        _ = flavor;
         return Ret.todo;
     }
 
@@ -2689,9 +2682,6 @@ pub const NodeFS = struct {
             .sync => return Syscall.chown(path, args.uid, args.gid),
             else => {},
         }
-        _ = args;
-        _ = this;
-        _ = flavor;
         return Maybe(Return.Chown).todo;
     }
 
@@ -2706,26 +2696,22 @@ pub const NodeFS = struct {
             },
             else => {},
         }
-        _ = args;
-        _ = this;
-        _ = flavor;
         return Maybe(Return.Chmod).todo;
     }
 
     /// This should almost never be async
     pub fn fchmod(this: *NodeFS, args: Arguments.FChmod, comptime flavor: Flavor) Maybe(Return.Fchmod) {
+        _ = this;
         switch (comptime flavor) {
             .sync => {
                 return Syscall.fchmod(args.fd, args.mode);
             },
             else => {},
         }
-        _ = args;
-        _ = this;
-        _ = flavor;
         return Maybe(Return.Fchmod).todo;
     }
     pub fn fchown(this: *NodeFS, args: Arguments.Fchown, comptime flavor: Flavor) Maybe(Return.Fchown) {
+        _ = this;
         switch (comptime flavor) {
             .sync => {
                 return Maybe(Return.Fchown).errnoSys(C.fchown(args.fd, args.uid, args.gid), .fchown) orelse
@@ -2733,24 +2719,20 @@ pub const NodeFS = struct {
             },
             else => {},
         }
-        _ = args;
-        _ = this;
-        _ = flavor;
         return Maybe(Return.Fchown).todo;
     }
     pub fn fdatasync(this: *NodeFS, args: Arguments.FdataSync, comptime flavor: Flavor) Maybe(Return.Fdatasync) {
+        _ = this;
         switch (comptime flavor) {
             .sync => return Maybe(Return.Fdatasync).errnoSys(system.fdatasync(args.fd), .fdatasync) orelse
                 Maybe(Return.Fdatasync).success,
             else => {},
         }
 
-        _ = args;
-        _ = this;
-        _ = flavor;
         return Maybe(Return.Fdatasync).todo;
     }
     pub fn fstat(this: *NodeFS, args: Arguments.Fstat, comptime flavor: Flavor) Maybe(Return.Fstat) {
+        _ = this;
         if (args.big_int) return Maybe(Return.Fstat).todo;
 
         switch (comptime flavor) {
@@ -2763,38 +2745,32 @@ pub const NodeFS = struct {
             else => {},
         }
 
-        _ = args;
-        _ = this;
-        _ = flavor;
         return Maybe(Return.Fstat).todo;
     }
 
     pub fn fsync(this: *NodeFS, args: Arguments.Fsync, comptime flavor: Flavor) Maybe(Return.Fsync) {
+        _ = this;
         switch (comptime flavor) {
             .sync => return Maybe(Return.Fsync).errnoSys(system.fsync(args.fd), .fsync) orelse
                 Maybe(Return.Fsync).success,
             else => {},
         }
 
-        _ = args;
-        _ = this;
-        _ = flavor;
         return Maybe(Return.Fsync).todo;
     }
 
     pub fn ftruncate(this: *NodeFS, args: Arguments.FTruncate, comptime flavor: Flavor) Maybe(Return.Ftruncate) {
+        _ = this;
         switch (comptime flavor) {
             .sync => return Maybe(Return.Ftruncate).errnoSys(system.ftruncate(args.fd, args.len orelse 0), .ftruncate) orelse
                 Maybe(Return.Ftruncate).success,
             else => {},
         }
 
-        _ = args;
-        _ = this;
-        _ = flavor;
         return Maybe(Return.Ftruncate).todo;
     }
     pub fn futimes(this: *NodeFS, args: Arguments.Futimes, comptime flavor: Flavor) Maybe(Return.Futimes) {
+        _ = this;
         var times = [2]std.os.timespec{
             .{
                 .tv_sec = args.mtime,
@@ -2814,9 +2790,6 @@ pub const NodeFS = struct {
             else => {},
         }
 
-        _ = args;
-        _ = this;
-        _ = flavor;
         return Maybe(Return.Futimes).todo;
     }
 
@@ -2830,9 +2803,6 @@ pub const NodeFS = struct {
             },
             else => {},
         }
-        _ = args;
-        _ = this;
-        _ = flavor;
         return Maybe(Return.Lchmod).todo;
     }
 
@@ -2846,9 +2816,6 @@ pub const NodeFS = struct {
             },
             else => {},
         }
-        _ = args;
-        _ = this;
-        _ = flavor;
         return Maybe(Return.Lchown).todo;
     }
     pub fn link(this: *NodeFS, args: Arguments.Link, comptime flavor: Flavor) Maybe(Return.Link) {
@@ -2864,12 +2831,10 @@ pub const NodeFS = struct {
             else => {},
         }
 
-        _ = args;
-        _ = this;
-        _ = flavor;
         return Maybe(Return.Link).todo;
     }
     pub fn lstat(this: *NodeFS, args: Arguments.Lstat, comptime flavor: Flavor) Maybe(Return.Lstat) {
+        _ = this;
         if (args.big_int) return Maybe(Return.Lstat).todo;
 
         switch (comptime flavor) {
@@ -2886,9 +2851,6 @@ pub const NodeFS = struct {
             else => {},
         }
 
-        _ = args;
-        _ = this;
-        _ = flavor;
         return Maybe(Return.Lstat).todo;
     }
 
@@ -2897,6 +2859,7 @@ pub const NodeFS = struct {
     }
     // Node doesn't absolute the path so we don't have to either
     fn mkdirNonRecursive(this: *NodeFS, args: Arguments.Mkdir, comptime flavor: Flavor) Maybe(Return.Mkdir) {
+        _ = this;
         switch (comptime flavor) {
             .sync => {
                 const path = args.path.sliceZ(&this.sync_error_buf);
@@ -2907,15 +2870,14 @@ pub const NodeFS = struct {
             },
             else => {},
         }
-        _ = args;
-        _ = this;
-        _ = flavor;
+
         return Maybe(Return.Mkdir).todo;
     }
 
     // TODO: windows
     // TODO: verify this works correctly with unicode codepoints
     fn mkdirRecursive(this: *NodeFS, args: Arguments.Mkdir, comptime flavor: Flavor) Maybe(Return.Mkdir) {
+        _ = this;
         const Option = Maybe(Return.Mkdir);
         if (comptime Environment.isWindows) @compileError("This needs to be implemented on Windows.");
 
@@ -3044,13 +3006,13 @@ pub const NodeFS = struct {
             else => {},
         }
 
-        _ = args;
-        _ = this;
-        _ = flavor;
+
         return Maybe(Return.Mkdir).todo;
     }
 
     pub fn mkdtemp(this: *NodeFS, args: Arguments.MkdirTemp, comptime flavor: Flavor) Maybe(Return.Mkdtemp) {
+        _ = this;
+
         var prefix_buf = &this.sync_error_buf;
         const len = @min(args.prefix.len, prefix_buf.len - 7);
         if (len > 0) {
@@ -3065,8 +3027,6 @@ pub const NodeFS = struct {
             else => |errno| return .{ .err = Syscall.Error{ .errno = @truncate(Syscall.Error.Int, @enumToInt(errno)), .syscall = .mkdtemp } },
         }
 
-        _ = this;
-        _ = flavor;
         return .{
             .result = PathString.init(bun.default_allocator.dupe(u8, std.mem.span(rc.?)) catch unreachable),
         };
@@ -3086,22 +3046,17 @@ pub const NodeFS = struct {
             else => {},
         }
 
-        _ = args;
-        _ = this;
-        _ = flavor;
+
         return Maybe(Return.Open).todo;
     }
     pub fn openDir(this: *NodeFS, args: Arguments.OpenDir, comptime flavor: Flavor) Maybe(Return.OpenDir) {
-        _ = args;
         _ = this;
         _ = flavor;
         return Maybe(Return.OpenDir).todo;
     }
 
     fn _read(this: *NodeFS, args: Arguments.Read, comptime flavor: Flavor) Maybe(Return.Read) {
-        _ = args;
-        _ = this;
-        _ = flavor;
+
         if (Environment.allow_assert) std.debug.assert(args.position == null);
 
         switch (comptime flavor) {
@@ -3171,9 +3126,7 @@ pub const NodeFS = struct {
         return if (args.position != null) _pwrite(this, args, flavor) else _write(this, args, flavor);
     }
     fn _write(this: *NodeFS, args: Arguments.Write, comptime flavor: Flavor) Maybe(Return.Write) {
-        _ = args;
-        _ = this;
-        _ = flavor;
+
 
         switch (comptime flavor) {
             .sync => {
@@ -3199,9 +3152,7 @@ pub const NodeFS = struct {
     }
 
     fn _pwrite(this: *NodeFS, args: Arguments.Write, comptime flavor: Flavor) Maybe(Return.Write) {
-        _ = args;
-        _ = this;
-        _ = flavor;
+
 
         const position = args.position.?;
 
@@ -3335,9 +3286,7 @@ pub const NodeFS = struct {
             else => {},
         }
 
-        _ = args;
-        _ = this;
-        _ = flavor;
+
         return Maybe(Return.Readdir).todo;
     }
     pub fn readFile(this: *NodeFS, args: Arguments.ReadFile, comptime flavor: Flavor) Maybe(Return.ReadFile) {
@@ -3457,9 +3406,7 @@ pub const NodeFS = struct {
             else => {},
         }
 
-        _ = args;
-        _ = this;
-        _ = flavor;
+
         return Maybe(Return.ReadFile).todo;
     }
 
@@ -3515,9 +3462,7 @@ pub const NodeFS = struct {
             else => {},
         }
 
-        _ = args;
-        _ = this;
-        _ = flavor;
+
         return Maybe(Return.WriteFile).todo;
     }
 
@@ -3549,9 +3494,7 @@ pub const NodeFS = struct {
             else => {},
         }
 
-        _ = args;
-        _ = this;
-        _ = flavor;
+
         return Maybe(Return.Readlink).todo;
     }
     pub fn realpath(this: *NodeFS, args: Arguments.Realpath, comptime flavor: Flavor) Maybe(Return.Realpath) {
@@ -3606,9 +3549,7 @@ pub const NodeFS = struct {
             else => {},
         }
 
-        _ = args;
-        _ = this;
-        _ = flavor;
+
         return Maybe(Return.Realpath).todo;
     }
     pub const realpathNative = realpath;
@@ -3631,9 +3572,7 @@ pub const NodeFS = struct {
             else => {},
         }
 
-        _ = args;
-        _ = this;
-        _ = flavor;
+
         return Maybe(Return.Rename).todo;
     }
     pub fn rmdir(this: *NodeFS, args: Arguments.RmDir, comptime flavor: Flavor) Maybe(Return.Rmdir) {
@@ -3647,15 +3586,11 @@ pub const NodeFS = struct {
             },
             else => {},
         }
-        _ = args;
-        _ = this;
-        _ = flavor;
+
         return Maybe(Return.Rmdir).todo;
     }
     pub fn rm(this: *NodeFS, args: Arguments.RmDir, comptime flavor: Flavor) Maybe(Return.Rm) {
-        _ = args;
-        _ = this;
-        _ = flavor;
+
         switch (comptime flavor) {
             .sync => {
                 if (comptime Environment.isMac) {
@@ -3835,9 +3770,7 @@ pub const NodeFS = struct {
             else => {},
         }
 
-        _ = args;
-        _ = this;
-        _ = flavor;
+
         return Maybe(Return.Stat).todo;
     }
 
@@ -3854,9 +3787,7 @@ pub const NodeFS = struct {
             else => {},
         }
 
-        _ = args;
-        _ = this;
-        _ = flavor;
+
         return Maybe(Return.Symlink).todo;
     }
     fn _truncate(this: *NodeFS, path: PathLike, len: JSC.WebCore.Blob.SizeType, comptime flavor: Flavor) Maybe(Return.Truncate) {
@@ -3894,15 +3825,11 @@ pub const NodeFS = struct {
             else => {},
         }
 
-        _ = args;
-        _ = this;
-        _ = flavor;
+
         return Maybe(Return.Unlink).todo;
     }
     pub fn unwatchFile(this: *NodeFS, args: Arguments.UnwatchFile, comptime flavor: Flavor) Maybe(Return.UnwatchFile) {
-        _ = args;
-        _ = this;
-        _ = flavor;
+
         return Maybe(Return.UnwatchFile).todo;
     }
     pub fn utimes(this: *NodeFS, args: Arguments.Utimes, comptime flavor: Flavor) Maybe(Return.Utimes) {
@@ -3930,9 +3857,7 @@ pub const NodeFS = struct {
             else => {},
         }
 
-        _ = args;
-        _ = this;
-        _ = flavor;
+
         return Maybe(Return.Utimes).todo;
     }
 
@@ -3961,15 +3886,10 @@ pub const NodeFS = struct {
             else => {},
         }
 
-        _ = args;
-        _ = this;
-        _ = flavor;
+
         return Maybe(Return.Lutimes).todo;
     }
     pub fn watch(this: *NodeFS, args: Arguments.Watch, comptime flavor: Flavor) Maybe(Return.Watch) {
-        _ = args;
-        _ = this;
-        _ = flavor;
         return Maybe(Return.Watch).todo;
     }
     pub fn createReadStream(_: *NodeFS, _: Arguments.CreateReadStream, comptime _: Flavor) Maybe(Return.CreateReadStream) {

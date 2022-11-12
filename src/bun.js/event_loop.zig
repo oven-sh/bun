@@ -779,7 +779,6 @@ pub const Poller = struct {
     }
 
     pub fn onTick(loop: *uws.Loop, tagged_pointer: ?*anyopaque) callconv(.C) void {
-        _ = loop;
         _ = tagged_pointer;
         if (comptime Environment.isMac)
             dispatchKQueueEvent(loop, &loop.ready_polls[@intCast(usize, loop.current_ready_poll)])

@@ -639,7 +639,7 @@ fn parseWebSocketHeader(
     // + - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - +
     // |                     Payload Data continued ...                |
     // +---------------------------------------------------------------+
-    const header = @bitCast(WebsocketHeader, @byteSwap(u16, @bitCast(u16, bytes)));
+    const header = @bitCast(WebsocketHeader, @byteSwap(@as(u16, @bitCast(u16, bytes))));
     const payload = @as(usize, header.len);
     payload_length.* = payload;
     receiving_type.* = header.opcode;

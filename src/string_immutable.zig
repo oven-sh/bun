@@ -583,7 +583,7 @@ pub fn countChar(self: string, char: u8) usize {
 
     while (remaining.len >= 16) {
         const vec: AsciiVector = remaining[0..ascii_vector_size].*;
-        const cmp = @popCount(std.meta.Int(.unsigned, ascii_vector_size), @bitCast(@Vector(ascii_vector_size, u1), vec == splatted));
+        const cmp = @popCount(@as(std.meta.Int(.unsigned, ascii_vector_size), @bitCast(@Vector(ascii_vector_size, u1), vec == splatted)));
         total += @as(usize, @reduce(.Add, cmp));
         remaining = remaining[ascii_vector_size..];
     }
@@ -1506,7 +1506,7 @@ pub fn elementLengthLatin1IntoUTF8(comptime Type: type, latin1_: Type) usize {
                     @bitCast(Int, latin1[size .. 2 * size].*) & 0x8080808080808080,
                 };
 
-                const non_ascii_count = ((@popCount(Int, bytes[0]) / 8) + (@popCount(Int, bytes[1]) / 8));
+                const non_ascii_count = ((@popCount(@as(Int, bytes[0])) / 8) + (@popCount(@as(Int, bytes[1])) / 8));
                 total_non_ascii_count += non_ascii_count;
             }
 
@@ -1516,7 +1516,7 @@ pub fn elementLengthLatin1IntoUTF8(comptime Type: type, latin1_: Type) usize {
 
         if (latin1.len >= 8) {
             const bytes = @bitCast(u64, latin1[0..8].*) & 0x8080808080808080;
-            total_non_ascii_count += @popCount(u64, bytes) / 8;
+            total_non_ascii_count += @popCount(@as(u64, bytes)) / 8;
             latin1 = latin1[8..];
         }
 

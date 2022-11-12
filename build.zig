@@ -596,7 +596,7 @@ pub fn linkObjectFiles(b: *std.build.Builder, obj: *std.build.LibExeObjStep, tar
         var deps_dir = std.fs.cwd().openIterableDir(deps_path, .{}) catch continue;
         var iterator = deps_dir.iterate();
         obj.addIncludePath(deps_path);
-        obj.addLibPath(deps_path);
+        obj.addLibraryPath(deps_path);
 
         while (iterator.next() catch null) |entr| {
             const entry: std.fs.Dir.Entry = entr;

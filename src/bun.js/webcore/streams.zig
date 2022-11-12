@@ -3670,7 +3670,7 @@ pub const FileBlobLoader = struct {
                 if (this.poll_ref) |poll| {
                     if (this.isFIFO()) {
                         if (result < buf_to_use.len) {
-                            poll.flags.insert(.eof);
+                            // do not insert .eof here
                             poll.flags.remove(.readable);
                         }
                     }

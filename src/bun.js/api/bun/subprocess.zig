@@ -610,7 +610,6 @@ pub const Subprocess = struct {
                             if (buf[bytes_read..].len > 0 or !this.canRead()) {
                                 if (!this.isWatching())
                                     this.watch(this.fd);
-                                this.poll_ref.?.flags.insert(.eof);
                                 this.poll_ref.?.flags.insert(.fifo);
                                 this.received_eof = true;
                                 return;

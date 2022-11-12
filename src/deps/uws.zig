@@ -465,17 +465,17 @@ pub const Loop = extern struct {
         uws_loop_defer(this, user_data, Handler.callback);
     }
 
-    fn NewHandler(comptime UserType: type, comptime callback: fn (UserType) void) type {
+    fn NewHandler(comptime UserType: type, comptime _callback: fn (UserType) void) type {
         return struct {
             loop: *Loop,
             pub fn removePost(handler: @This()) void {
-                return uws_loop_removePostHandler(handler.loop, callback);
+                return uws_loop_removePostHandler(handler.loop, _callback);
             }
             pub fn removePre(handler: @This()) void {
-                return uws_loop_removePostHandler(handler.loop, callback);
+                return uws_loop_removePostHandler(handler.loop, _callback);
             }
             pub fn callback(data: *anyopaque, _: *Loop) callconv(.C) void {
-                callback(@ptrCast(UserType, @alignCast(@alignOf(std.meta.Child(UserType)), data)));
+                _callback(@ptrCast(UserType, @alignCast(@alignOf(std.meta.Child(UserType)), data)));
             }
         };
     }
@@ -1139,13 +1139,13 @@ pub fn NewApp(comptime ssl: bool) type {
             port: i32,
             comptime UserData: type,
             user_data: UserData,
-            comptime handler: fn (UserData, ?*ThisApp.ListenSocket, uws_app_listen_config_t) void,
+            comptime _handler: fn (UserData, ?*ThisApp.ListenSocket, uws_app_listen_config_t) void,
         ) void {
             if (comptime is_bindgen) {
                 unreachable;
             }
             const Wrapper = struct {
-                const handler = handler;
+                const handler = _handler;
                 pub fn handle(socket: ?*uws.ListenSocket, conf: uws_app_listen_config_t, data: ?*anyopaque) callconv(.C) void {
                     if (comptime UserData == void) {
                         @call(.{ .modifier = .always_inline }, handler, .{ void{}, @ptrCast(?*ThisApp.ListenSocket, socket), conf });
@@ -1165,11 +1165,11 @@ pub fn NewApp(comptime ssl: bool) type {
             app: *ThisApp,
             comptime UserData: type,
             user_data: UserData,
-            comptime handler: fn (UserData, ?*ThisApp.ListenSocket) void,
+            comptime _handler: fn (UserData, ?*ThisApp.ListenSocket) void,
             config: uws_app_listen_config_t,
         ) void {
             const Wrapper = struct {
-                const handler = handler;
+                const handler = _handler;
 
                 pub fn handle(socket: ?*uws.ListenSocket, data: ?*anyopaque) callconv(.C) void {
                     if (comptime UserData == void) {

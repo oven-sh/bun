@@ -2834,7 +2834,6 @@ pub const NodeFS = struct {
         return Maybe(Return.Link).todo;
     }
     pub fn lstat(this: *NodeFS, args: Arguments.Lstat, comptime flavor: Flavor) Maybe(Return.Lstat) {
-        _ = this;
         if (args.big_int) return Maybe(Return.Lstat).todo;
 
         switch (comptime flavor) {
@@ -2859,7 +2858,6 @@ pub const NodeFS = struct {
     }
     // Node doesn't absolute the path so we don't have to either
     fn mkdirNonRecursive(this: *NodeFS, args: Arguments.Mkdir, comptime flavor: Flavor) Maybe(Return.Mkdir) {
-        _ = this;
         switch (comptime flavor) {
             .sync => {
                 const path = args.path.sliceZ(&this.sync_error_buf);
@@ -2877,7 +2875,6 @@ pub const NodeFS = struct {
     // TODO: windows
     // TODO: verify this works correctly with unicode codepoints
     fn mkdirRecursive(this: *NodeFS, args: Arguments.Mkdir, comptime flavor: Flavor) Maybe(Return.Mkdir) {
-        _ = this;
         const Option = Maybe(Return.Mkdir);
         if (comptime Environment.isWindows) @compileError("This needs to be implemented on Windows.");
 
@@ -3011,7 +3008,7 @@ pub const NodeFS = struct {
     }
 
     pub fn mkdtemp(this: *NodeFS, args: Arguments.MkdirTemp, comptime flavor: Flavor) Maybe(Return.Mkdtemp) {
-        _ = this;
+        _ = flavor;
 
         var prefix_buf = &this.sync_error_buf;
         const len = @min(args.prefix.len, prefix_buf.len - 7);
@@ -3051,11 +3048,13 @@ pub const NodeFS = struct {
     }
     pub fn openDir(this: *NodeFS, args: Arguments.OpenDir, comptime flavor: Flavor) Maybe(Return.OpenDir) {
         _ = this;
+        _ = args;
         _ = flavor;
         return Maybe(Return.OpenDir).todo;
     }
 
     fn _read(this: *NodeFS, args: Arguments.Read, comptime flavor: Flavor) Maybe(Return.Read) {
+        _ = this;
 
         if (Environment.allow_assert) std.debug.assert(args.position == null);
 
@@ -3126,7 +3125,7 @@ pub const NodeFS = struct {
         return if (args.position != null) _pwrite(this, args, flavor) else _write(this, args, flavor);
     }
     fn _write(this: *NodeFS, args: Arguments.Write, comptime flavor: Flavor) Maybe(Return.Write) {
-
+        _ = this;
 
         switch (comptime flavor) {
             .sync => {
@@ -3152,7 +3151,7 @@ pub const NodeFS = struct {
     }
 
     fn _pwrite(this: *NodeFS, args: Arguments.Write, comptime flavor: Flavor) Maybe(Return.Write) {
-
+        _ = this;
 
         const position = args.position.?;
 
@@ -3799,8 +3798,6 @@ pub const NodeFS = struct {
             else => {},
         }
 
-        _ = this;
-        _ = flavor;
         return Maybe(Return.Truncate).todo;
     }
     pub fn truncate(this: *NodeFS, args: Arguments.Truncate, comptime flavor: Flavor) Maybe(Return.Truncate) {
@@ -3829,7 +3826,9 @@ pub const NodeFS = struct {
         return Maybe(Return.Unlink).todo;
     }
     pub fn unwatchFile(this: *NodeFS, args: Arguments.UnwatchFile, comptime flavor: Flavor) Maybe(Return.UnwatchFile) {
-
+        _ = this;
+        _ = args;
+        _ = flavor;
         return Maybe(Return.UnwatchFile).todo;
     }
     pub fn utimes(this: *NodeFS, args: Arguments.Utimes, comptime flavor: Flavor) Maybe(Return.Utimes) {
@@ -3890,12 +3889,21 @@ pub const NodeFS = struct {
         return Maybe(Return.Lutimes).todo;
     }
     pub fn watch(this: *NodeFS, args: Arguments.Watch, comptime flavor: Flavor) Maybe(Return.Watch) {
+        _ = this;
+        _ = args;
+        _ = flavor;
         return Maybe(Return.Watch).todo;
     }
     pub fn createReadStream(_: *NodeFS, _: Arguments.CreateReadStream, comptime _: Flavor) Maybe(Return.CreateReadStream) {
+        _ = this;
+        _ = args;
+        _ = flavor;
         return Maybe(Return.CreateReadStream).todo;
     }
     pub fn createWriteStream(_: *NodeFS, _: Arguments.CreateWriteStream, comptime _: Flavor) Maybe(Return.CreateWriteStream) {
+        _ = this;
+        _ = args;
+        _ = flavor;
         return Maybe(Return.CreateWriteStream).todo;
     }
 };

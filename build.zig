@@ -6,13 +6,13 @@ fn pkgPath(comptime out: []const u8) std.build.FileSource {
     return .{ .path = outpath };
 }
 pub fn addPicoHTTP(step: *std.build.LibExeObjStep, comptime with_obj: bool) void {
-    step.addIncludeDir("src/deps");
+    step.addIncludePath("src/deps");
 
     if (with_obj) {
         step.addObjectFile("src/deps/picohttpparser.o");
     }
 
-    step.addIncludeDir("src/deps");
+    step.addIncludePath("src/deps");
 
     if (with_obj) {
         step.addObjectFile(panicIfNotFound("src/deps/picohttpparser.o"));
@@ -595,7 +595,7 @@ pub fn linkObjectFiles(b: *std.build.Builder, obj: *std.build.LibExeObjStep, tar
     for (dirs_to_search.slice()) |deps_path| {
         var deps_dir = std.fs.cwd().openDir(deps_path, .{ .iterate = true }) catch continue;
         var iterator = deps_dir.iterate();
-        obj.addIncludeDir(deps_path);
+        obj.addIncludePath(deps_path);
         obj.addLibPath(deps_path);
 
         while (iterator.next() catch null) |entr| {

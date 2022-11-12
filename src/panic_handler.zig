@@ -16,7 +16,7 @@ const Features = @import("./analytics/analytics_thread.zig").Features;
 const HTTP = @import("http").AsyncHTTP;
 const Report = @import("./report.zig");
 
-pub fn NewPanicHandler(comptime panic_func: fn handle_panic(msg: []const u8, error_return_type: ?*std.builtin.StackTrace) noreturn) type {
+pub fn NewPanicHandler(comptime panic_func: fn (msg: []const u8, error_return_type: ?*std.builtin.StackTrace) noreturn) type {
     return struct {
         panic_count: usize = 0,
         skip_next_panic: bool = false,

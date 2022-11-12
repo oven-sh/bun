@@ -3599,7 +3599,7 @@ pub const FileBlobLoader = struct {
             } else if (!is_readable and poll.isHUP()) {
                 this.finalize();
                 return .{ .done = {} };
-            } else if (!is_readable) {
+            } else if (!is_readable and poll.isRegistered()) {
                 if (view != .zero) {
                     this.view.set(this.globalThis(), view);
                     this.buf = read_buf;

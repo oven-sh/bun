@@ -24,8 +24,8 @@ pub const Mode = if (Environment.isLinux) u32 else std.os.mode_t;
 const heap_allocator = bun.default_allocator;
 pub fn DeclEnum(comptime T: type) type {
     const fieldInfos = std.meta.declarations(T);
-    var enumFields: [fieldInfos.len]std.builtin.TypeInfo.EnumField = undefined;
-    var decls = [_]std.builtin.TypeInfo.Declaration{};
+    var enumFields: [fieldInfos.len]std.builtin.Type.EnumField = undefined;
+    var decls = [_]std.builtin.Type.Declaration{};
     inline for (fieldInfos) |field, i| {
         enumFields[i] = .{
             .name = field.name,

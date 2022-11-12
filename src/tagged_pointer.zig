@@ -54,8 +54,8 @@ pub const TaggedPointer = packed struct {
 pub fn TaggedPointerUnion(comptime Types: anytype) type {
     const TagType: type = tag_break: {
         if (std.meta.trait.isIndexable(@TypeOf(Types))) {
-            var enumFields: [Types.len]std.builtin.TypeInfo.EnumField = undefined;
-            var decls = [_]std.builtin.TypeInfo.Declaration{};
+            var enumFields: [Types.len]std.builtin.Type.EnumField = undefined;
+            var decls = [_]std.builtin.Type.Declaration{};
 
             inline for (Types) |field, i| {
                 enumFields[i] = .{
@@ -74,9 +74,9 @@ pub fn TaggedPointerUnion(comptime Types: anytype) type {
                 },
             });
         } else {
-            const Fields: []const std.builtin.TypeInfo.StructField = std.meta.fields(@TypeOf(Types));
-            var enumFields: [Fields.len]std.builtin.TypeInfo.EnumField = undefined;
-            var decls = [_]std.builtin.TypeInfo.Declaration{};
+            const Fields: []const std.builtin.Type.StructField = std.meta.fields(@TypeOf(Types));
+            var enumFields: [Fields.len]std.builtin.Type.EnumField = undefined;
+            var decls = [_]std.builtin.Type.Declaration{};
 
             inline for (Fields) |field, i| {
                 enumFields[i] = .{

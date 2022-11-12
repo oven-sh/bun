@@ -5814,7 +5814,7 @@ pub const Macro = struct {
 
             pub const ids: std.EnumArray(Tag, Expr.Data) = brk: {
                 var list = std.EnumArray(Tag, Expr.Data).initFill(Expr.Data{ .e_number = E.Number{ .value = 0.0 } });
-                const fields: []const std.builtin.TypeInfo.EnumField = @typeInfo(Tag).Enum.fields;
+                const fields: []const std.builtin.Type.EnumField = @typeInfo(Tag).Enum.fields;
                 for (fields) |field| {
                     list.set(@intToEnum(Tag, field.value), Expr.Data{ .e_number = E.Number{ .value = @intToFloat(f64, field.value) } });
                 }
@@ -5990,7 +5990,7 @@ pub const Macro = struct {
             };
 
             pub const max_tag: u8 = brk: {
-                const Enum: std.builtin.TypeInfo.Enum = @typeInfo(Tag).Enum;
+                const Enum: std.builtin.Type.Enum = @typeInfo(Tag).Enum;
                 var max_value: u8 = 0;
                 for (Enum.fields) |field| {
                     max_value = std.math.max(@as(u8, field.value), max_value);
@@ -5999,7 +5999,7 @@ pub const Macro = struct {
             };
 
             pub const min_tag: u8 = brk: {
-                const Enum: std.builtin.TypeInfo.Enum = @typeInfo(Tag).Enum;
+                const Enum: std.builtin.Type.Enum = @typeInfo(Tag).Enum;
                 var min: u8 = 255;
                 for (Enum.fields) |field| {
                     min = std.math.min(@as(u8, field.value), min);

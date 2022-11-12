@@ -887,7 +887,7 @@ fn makeTest(cwd_path: string, data: anytype) !void {
     try cwd.setAsCwd();
 
     const Data = @TypeOf(data);
-    const fields: []const std.builtin.TypeInfo.StructField = comptime std.meta.fields(Data);
+    const fields: []const std.builtin.Type.StructField = comptime std.meta.fields(Data);
     inline for (fields) |field| {
         @setEvalBranchQuota(9999);
         const value = @field(data, field.name);

@@ -524,7 +524,7 @@ pub fn toAST(
     comptime Type: type,
     value: Type,
 ) anyerror!js_ast.Expr {
-    const type_info: std.builtin.TypeInfo = @typeInfo(Type);
+    const type_info: std.builtin.Type = @typeInfo(Type);
 
     switch (type_info) {
         .Bool => {
@@ -592,7 +592,7 @@ pub fn toAST(
             return Expr.init(js_ast.E.Array, js_ast.E.Array{ .items = exprs }, logger.Loc.Empty);
         },
         .Struct => |Struct| {
-            const fields: []const std.builtin.TypeInfo.StructField = Struct.fields;
+            const fields: []const std.builtin.Type.StructField = Struct.fields;
             var properties = try allocator.alloc(js_ast.G.Property, fields.len);
             var property_i: usize = 0;
             inline for (fields) |field| {

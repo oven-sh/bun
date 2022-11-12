@@ -26,7 +26,7 @@ fn callSync(comptime FunctionEnum: NodeFSFunctionEnum) NodeFSFunction {
     const Function = @field(JSC.Node.NodeFS, @tagName(FunctionEnum));
     const FunctionType = @TypeOf(Function);
 
-    const function: std.builtin.TypeInfo.Fn = comptime @typeInfo(FunctionType).Fn;
+    const function: std.builtin.Type.Fn = comptime @typeInfo(FunctionType).Fn;
     comptime if (function.args.len != 3) @compileError("Expected 3 arguments");
     const Arguments = comptime function.args[1].arg_type.?;
     const FormattedName = comptime [1]u8{std.ascii.toUpper(@tagName(FunctionEnum)[0])} ++ @tagName(FunctionEnum)[1..];
@@ -75,7 +75,7 @@ fn call(comptime Function: NodeFSFunctionEnum) NodeFSFunction {
     // const FunctionType = @TypeOf(Function);
     _ = Function;
 
-    // const function: std.builtin.TypeInfo.Fn = comptime @typeInfo(FunctionType).Fn;
+    // const function: std.builtin.Type.Fn = comptime @typeInfo(FunctionType).Fn;
     // comptime if (function.args.len != 3) @compileError("Expected 3 arguments");
     // const Arguments = comptime function.args[2].arg_type orelse @compileError(std.fmt.comptimePrint("Function {s} expected to have an arg type at [2]", .{@typeName(FunctionType)}));
     // const Result = comptime function.return_type.?;

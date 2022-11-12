@@ -36,7 +36,7 @@ pub fn Shimmer(comptime _namespace: []const u8, comptime _name: []const u8, comp
         //         return FromType;
         //     }
 
-        //     var ReturnTypeInfo: std.builtin.TypeInfo = @typeInfo(FromType);
+        //     var ReturnTypeInfo: std.builtin.Type = @typeInfo(FromType);
 
         //     if (ReturnTypeInfo == .Pointer and NewReturnType != *anyopaque) {
         //         NewReturnType = ReturnTypeInfo.Pointer.child;
@@ -110,7 +110,7 @@ pub fn Shimmer(comptime _namespace: []const u8, comptime _name: []const u8, comp
                     if (@typeInfo(Function) != .Fn) {
                         @compileError("Expected " ++ @typeName(Parent) ++ "." ++ @typeName(Function) ++ " to be a function but received " ++ @tagName(@typeInfo(Function)));
                     }
-                    var Fn: std.builtin.TypeInfo.Fn = @typeInfo(Function).Fn;
+                    var Fn: std.builtin.Type.Fn = @typeInfo(Function).Fn;
                     if (Fn.calling_convention != .C) {
                         @compileError("Expected " ++ @typeName(Parent) ++ "." ++ @typeName(Function) ++ " to have a C Calling Convention.");
                     }
@@ -139,7 +139,7 @@ pub fn Shimmer(comptime _namespace: []const u8, comptime _name: []const u8, comp
                         if (@typeInfo(Function) != .Fn) {
                             @compileError("Expected " ++ @typeName(Parent) ++ "." ++ @typeName(Function) ++ " to be a function but received " ++ @tagName(@typeInfo(Function)));
                         }
-                        var Fn: std.builtin.TypeInfo.Fn = @typeInfo(Function).Fn;
+                        var Fn: std.builtin.Type.Fn = @typeInfo(Function).Fn;
                         if (Fn.calling_convention != .C) {
                             @compileError("Expected " ++ @typeName(Parent) ++ "." ++ @typeName(Function) ++ " to have a C Calling Convention.");
                         }

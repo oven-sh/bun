@@ -1313,8 +1313,6 @@ pub fn NewClassWithInstanceType(
 
         const FunctionDeclarationsFormatter = struct {
             pub fn format(_: @This(), comptime fmt: []const u8, opts: std.fmt.FormatOptions, writer: anytype) !void {
-                _ = fmt;
-                _ = writer;
                 const definition = getDefinition();
                 if (static_functions__.len > 1) {
                     for (definition.staticFunctions[0 .. static_functions__.len - 1]) |_, i| {
@@ -1375,7 +1373,6 @@ pub fn NewClassWithInstanceType(
                 \\}} // namespace Bun
                 \\
             ;
-            _ = writer;
             _ = header_file;
             const Opts = struct { name: string };
             try writer.print(header_file, Opts{
@@ -1987,7 +1984,6 @@ pub fn NewClassWithInstanceType(
             for (function_name_literals) |function_name_literal, i| {
                 const is_read_only = options.read_only;
 
-                _ = i;
                 switch (@typeInfo(@TypeOf(@field(staticFunctions, function_name_literal)))) {
                     .Struct => {
                         const CtxField = @field(staticFunctions, function_name_literals[i]);

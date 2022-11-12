@@ -3408,7 +3408,6 @@ pub const EnvironmentVariables = struct {
 
     pub fn convertToType(ctx: js.JSContextRef, obj: js.JSObjectRef, kind: js.JSType, exception: js.ExceptionRef) callconv(.C) js.JSValueRef {
         _ = ctx;
-        _ = obj;
         _ = kind;
         _ = exception;
         return obj;

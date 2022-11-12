@@ -1132,12 +1132,12 @@ pub const PackageManifest = struct {
 
                                     break :bin;
                                 },
-                                .e_string => |str| {
-                                    if (str.data.len > 0) {
+                                .e_string => |_str| {
+                                    if (_str.data.len > 0) {
                                         package_version.bin = Bin{
                                             .tag = Bin.Tag.file,
                                             .value = .{
-                                                .file = string_builder.append(String, str.data),
+                                                .file = string_builder.append(String, _str.data),
                                             },
                                         };
                                         break :bin;

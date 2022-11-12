@@ -1067,8 +1067,8 @@ pub const PackageManifest = struct {
                                     }
                                 }
                             },
-                            .e_string => |str| {
-                                package_version.os = OperatingSystem.apply(OperatingSystem.none, str.data);
+                            .e_string => |_str| {
+                                package_version.os = OperatingSystem.apply(OperatingSystem.none, _str.data);
                             },
                             else => {},
                         }

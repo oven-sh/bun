@@ -2504,7 +2504,7 @@ pub fn ReadableStreamSource(
     comptime onStart: anytype,
     comptime onPull: anytype,
     comptime onCancel: fn (this: *Context) void,
-    comptime deinit: fn (this: *Context) void,
+    comptime _deinit: fn (this: *Context) void,
 ) type {
     return struct {
         context: Context,
@@ -2562,7 +2562,7 @@ pub fn ReadableStreamSource(
                 return;
             }
             this.deinited = true;
-            deinit(&this.context);
+            _deinit(&this.context);
         }
 
         pub fn getError(this: *This) ?Syscall.Error {

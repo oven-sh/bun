@@ -12928,10 +12928,10 @@ fn NewParser_(
         fn isValidAssignmentTarget(p: *P, expr: Expr) bool {
             return switch (expr.data) {
                 .e_identifier => |ident| !isEvalOrArguments(p.loadNameFromRef(ident.ref)),
-                .e_dot => |e| e.optional_chain == null,
-                .e_index => |e| e.optional_chain == null,
-                .e_array => |e| !e.is_parenthesized,
-                .e_object => |e| !e.is_parenthesized,
+                .e_dot => |_e| _e.optional_chain == null,
+                .e_index => |_e| _e.optional_chain == null,
+                .e_array => |_e| !_e.is_parenthesized,
+                .e_object => |_e| !_e.is_parenthesized,
                 else => false,
             };
         }

@@ -3895,15 +3895,9 @@ pub const NodeFS = struct {
         return Maybe(Return.Watch).todo;
     }
     pub fn createReadStream(_: *NodeFS, _: Arguments.CreateReadStream, comptime _: Flavor) Maybe(Return.CreateReadStream) {
-        _ = this;
-        _ = args;
-        _ = flavor;
         return Maybe(Return.CreateReadStream).todo;
     }
     pub fn createWriteStream(_: *NodeFS, _: Arguments.CreateWriteStream, comptime _: Flavor) Maybe(Return.CreateWriteStream) {
-        _ = this;
-        _ = args;
-        _ = flavor;
         return Maybe(Return.CreateWriteStream).todo;
     }
 };

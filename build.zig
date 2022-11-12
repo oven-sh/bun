@@ -593,7 +593,7 @@ pub fn linkObjectFiles(b: *std.build.Builder, obj: *std.build.LibExeObjStep, tar
     });
 
     for (dirs_to_search.slice()) |deps_path| {
-        var deps_dir = std.fs.cwd().openDir(deps_path, .{ .iterate = true }) catch continue;
+        var deps_dir = std.fs.cwd().openIterableDir(deps_path, .{}) catch continue;
         var iterator = deps_dir.iterate();
         obj.addIncludePath(deps_path);
         obj.addLibPath(deps_path);

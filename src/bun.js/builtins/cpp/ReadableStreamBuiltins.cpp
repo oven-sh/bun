@@ -567,15 +567,12 @@ const char* const s_readableStreamLockedCode =
 const JSC::ConstructAbility s_readableStreamValuesCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableStreamValuesCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_readableStreamValuesCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_readableStreamValuesCodeLength = 249;
+const int s_readableStreamValuesCodeLength = 191;
 static const JSC::Intrinsic s_readableStreamValuesCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_readableStreamValuesCode =
     "(function (options) {\n" \
     "    \"use strict\";\n" \
-    "    var prototype = this?.constructor?.prototype;\n" \
-    "    if (!prototype) {\n" \
-    "        return @undefined;\n" \
-    "    }\n" \
+    "    var prototype = @ReadableStream.prototype;\n" \
     "    @readableStreamDefineLazyIterators(prototype);\n" \
     "    return prototype.values.@call(this, options);\n" \
     "})\n" \
@@ -584,15 +581,12 @@ const char* const s_readableStreamValuesCode =
 const JSC::ConstructAbility s_readableStreamLazyAsyncIteratorCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableStreamLazyAsyncIteratorCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_readableStreamLazyAsyncIteratorCodeImplementationVisibility = JSC::ImplementationVisibility::Private;
-const int s_readableStreamLazyAsyncIteratorCodeLength = 259;
+const int s_readableStreamLazyAsyncIteratorCodeLength = 201;
 static const JSC::Intrinsic s_readableStreamLazyAsyncIteratorCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_readableStreamLazyAsyncIteratorCode =
     "(function () {\n" \
     "    \"use strict\";\n" \
-    "    var prototype = this?.constructor?.prototype;\n" \
-    "    if (!prototype) {\n" \
-    "        return @undefined;\n" \
-    "    }\n" \
+    "    var prototype = @ReadableStream.prototype;\n" \
     "    @readableStreamDefineLazyIterators(prototype);\n" \
     "    return prototype[globalThis.Symbol.asyncIterator].@call(this);\n" \
     "})\n" \

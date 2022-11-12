@@ -2154,7 +2154,6 @@ function readableStreamDefineLazyIterators(prototype) {
           }
           }
     };
-
     var createAsyncIterator = function asyncIterator() {
         return ReadableStreamAsyncIterator(this, false);
     };

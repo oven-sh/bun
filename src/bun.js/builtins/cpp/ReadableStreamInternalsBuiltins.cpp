@@ -2575,7 +2575,7 @@ const char* const s_readableStreamInternalsReadableStreamToArrayDirectCode =
 const JSC::ConstructAbility s_readableStreamInternalsReadableStreamDefineLazyIteratorsCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableStreamInternalsReadableStreamDefineLazyIteratorsCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_readableStreamInternalsReadableStreamDefineLazyIteratorsCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_readableStreamInternalsReadableStreamDefineLazyIteratorsCodeLength = 1651;
+const int s_readableStreamInternalsReadableStreamDefineLazyIteratorsCodeLength = 1650;
 static const JSC::Intrinsic s_readableStreamInternalsReadableStreamDefineLazyIteratorsCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_readableStreamInternalsReadableStreamDefineLazyIteratorsCode =
     "(function (prototype) {\n" \
@@ -2618,7 +2618,6 @@ const char* const s_readableStreamInternalsReadableStreamDefineLazyIteratorsCode
     "          }\n" \
     "          }\n" \
     "    };\n" \
-    "\n" \
     "    var createAsyncIterator = function asyncIterator() {\n" \
     "        return ReadableStreamAsyncIterator(this, false);\n" \
     "    };\n" \

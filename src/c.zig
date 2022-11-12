@@ -122,7 +122,7 @@ pub fn moveFileZWithHandle(from_handle: std.os.fd_t, from_dir: std.os.fd_t, file
 // On Linux, this will be fast because sendfile() supports copying between two file descriptors on disk
 // macOS & BSDs will be slow because
 pub fn moveFileZSlow(from_dir: std.os.fd_t, filename: [*:0]const u8, to_dir: std.os.fd_t, destination: [*:0]const u8) !void {
-    const in_handle = try std.os.openatZ(from_dir, filename, std.os.O.RDONLY | std.os.O.CLOEXEC, 0600);
+    const in_handle = try std.os.openatZ(from_dir, filename, std.os.O.RDONLY | std.os.O.CLOEXEC, 0o600);
     try moveFileZSlowWithHandle(in_handle, to_dir, destination);
 }
 
@@ -133,7 +133,7 @@ pub fn moveFileZSlowWithHandle(in_handle: std.os.fd_t, to_dir: std.os.fd_t, dest
     // ftruncate() instead didn't work.
     // this is technically racy because it could end up deleting the file without saving
     std.os.unlinkatZ(to_dir, destination, 0) catch {};
-    const out_handle = try std.os.openatZ(to_dir, destination, std.os.O.WRONLY | std.os.O.CREAT | std.os.O.CLOEXEC, 022);
+    const out_handle = try std.os.openatZ(to_dir, destination, std.os.O.WRONLY | std.os.O.CREAT | std.os.O.CLOEXEC, 0o22);
     defer std.os.close(out_handle);
     if (comptime Environment.isLinux) {
         _ = std.os.system.fallocate(out_handle, 0, 0, @intCast(i64, stat_.size));

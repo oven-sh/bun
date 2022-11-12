@@ -2480,7 +2480,7 @@ pub const PackageManager = struct {
         _ = C.fchmod(
             tmpfile.fd,
             // chmod 666,
-            0000040 | 0000004 | 0000002 | 0000400 | 0000200 | 0000020,
+            0o40 | 0o4 | 0o2 | 0o400 | 0o200 | 0o20,
         );
 
         try tmpfile.promote(tmpname, std.fs.cwd().fd, "yarn.lock");

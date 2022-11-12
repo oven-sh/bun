@@ -1524,7 +1524,7 @@ const Arguments = struct {
     pub const WriteFile = struct {
         encoding: Encoding = Encoding.utf8,
         flag: FileSystemFlags = FileSystemFlags.@"w",
-        mode: Mode = 0666,
+        mode: Mode = 0o666,
         file: PathOrFileDescriptor,
         data: StringOrBuffer,
 
@@ -2395,7 +2395,7 @@ pub const NodeFS = struct {
                 const path = path_.sliceZ(&this.sync_error_buf);
                 switch (comptime flavor) {
                     .sync => {
-                        const fd = switch (Syscall.open(path, @enumToInt(FileSystemFlags.@"a"), 000666)) {
+                        const fd = switch (Syscall.open(path, @enumToInt(FileSystemFlags.@"a"), 0o666)) {
                             .result => |result| result,
                             .err => |err| return .{ .err = err },
                         };
@@ -2480,7 +2480,7 @@ pub const NodeFS = struct {
                                 return ret.success;
                             }
                         } else {
-                            const src_fd = switch (Syscall.open(src, std.os.O.RDONLY, 0644)) {
+                            const src_fd = switch (Syscall.open(src, std.os.O.RDONLY, 0o644)) {
                                 .result => |result| result,
                                 .err => |err| return .{ .err = err.withPath(args.src.slice()) },
                             };
@@ -2579,7 +2579,7 @@ pub const NodeFS = struct {
                         return Maybe(Return.CopyFile).todo;
                     }
 
-                    const src_fd = switch (Syscall.open(src, std.os.O.RDONLY, 0644)) {
+                    const src_fd = switch (Syscall.open(src, std.os.O.RDONLY, 0o644)) {
                         .result => |result| result,
                         .err => |err| return .{ .err = err },
                     };

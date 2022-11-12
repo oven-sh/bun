@@ -1427,7 +1427,7 @@ pub fn copyLatin1IntoUTF8StopOnNonASCII(buf_: []u8, comptime Type: type, latin1_
                     const mask = bytes & 0x8080808080808080;
 
                     if (mask > 0) {
-                        const first_set_byte = @ctz(Int, mask) / 8;
+                        const first_set_byte = @ctz(@as(Int, mask)) / 8;
                         if (comptime stop) return .{ .written = std.math.maxInt(u32), .read = std.math.maxInt(u32) };
 
                         if (comptime Environment.allow_assert) {

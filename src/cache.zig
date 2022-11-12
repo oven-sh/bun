@@ -26,6 +26,8 @@ const import_record = @import("./import_record.zig");
 
 const ImportRecord = import_record.ImportRecord;
 
+const Dir = std.fs.IterableDir;
+
 pub const FsCacheEntry = struct {
     contents: string,
     fd: StoredFileDescriptorType = 0,

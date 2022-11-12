@@ -1756,7 +1756,7 @@ pub const Resolver = struct {
 
         var dir_entries_option: *Fs.FileSystem.RealFS.EntriesOption = undefined;
         var needs_iter: bool = true;
-        var open_dir = std.fs.openDirAbsolute(dir_path, .{ .iterate = true }) catch |err| {
+        var open_dir = std.fs.openIterableDirAbsolute(dir_path, .{}) catch |err| {
             switch (err) {
                 error.FileNotFound => unreachable,
                 else => {

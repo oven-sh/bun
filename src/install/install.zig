@@ -889,8 +889,8 @@ const PackageInstall = struct {
     fn installWithClonefileEachDir(this: *PackageInstall) !Result {
         const Walker = @import("../walker_skippable.zig");
 
-        var cached_package_dir = this.cache_dir.openDirZ(this.cache_dir_subpath, .{
-            .iterate = true,
+        var cached_package_dir = this.cache_dir.openIterableDirZ(this.cache_dir_subpath, .{
+
         }) catch |err| return Result{
             .fail = .{ .err = err, .step = .opening_cache_dir },
         };
@@ -1005,8 +1005,8 @@ const PackageInstall = struct {
         const Walker = @import("../walker_skippable.zig");
         const CopyFile = @import("../copy_file.zig");
 
-        var cached_package_dir = this.cache_dir.openDirZ(this.cache_dir_subpath, .{
-            .iterate = true,
+        var cached_package_dir = this.cache_dir.openIterableDirZ(this.cache_dir_subpath, .{
+
         }) catch |err| return Result{
             .fail = .{ .err = err, .step = .opening_cache_dir },
         };
@@ -1087,8 +1087,8 @@ const PackageInstall = struct {
     fn installWithHardlink(this: *PackageInstall) !Result {
         const Walker = @import("../walker_skippable.zig");
 
-        var cached_package_dir = this.cache_dir.openDirZ(this.cache_dir_subpath, .{
-            .iterate = true,
+        var cached_package_dir = this.cache_dir.openIterableDirZ(this.cache_dir_subpath, .{
+
         }) catch |err| return Result{
             .fail = .{ .err = err, .step = .opening_cache_dir },
         };
@@ -1150,8 +1150,8 @@ const PackageInstall = struct {
     fn installWithSymlink(this: *PackageInstall) !Result {
         const Walker = @import("../walker_skippable.zig");
 
-        var cached_package_dir = this.cache_dir.openDirZ(this.cache_dir_subpath, .{
-            .iterate = true,
+        var cached_package_dir = this.cache_dir.openIterableDirZ(this.cache_dir_subpath, .{
+
         }) catch |err| return Result{
             .fail = .{ .err = err, .step = .opening_cache_dir },
         };
@@ -5468,8 +5468,8 @@ pub const PackageManager = struct {
 
                 // This is where we clean dangling symlinks
                 // This could be slow if there are a lot of symlinks
-                if (cwd.openDirZ(manager.options.bin_path, .{
-                    .iterate = true,
+                if (cwd.openIterableDirZ(manager.options.bin_path, .{
+
                 })) |node_modules_bin_| {
                     var node_modules_bin: std.fs.Dir = node_modules_bin_;
                     var iter: std.fs.Dir.Iterator = node_modules_bin.iterate();
@@ -5975,8 +5975,8 @@ pub const PackageManager = struct {
                 // We deliberately do not close this folder.
                 // If the package hasn't been downloaded, we will need to install it later
                 // We use this file descriptor to know where to put it.
-                var folder = try cwd.openDirZ(node_modules.relative_path, .{
-                    .iterate = true,
+                var folder = try cwd.openIterableDirZ(node_modules.relative_path, .{
+
                 });
 
                 installer.node_modules_folder = folder;

@@ -56,6 +56,8 @@ const TOML = @import("./toml/toml_parser.zig").TOML;
 const JSC = @import("javascript_core");
 const PackageManager = @import("./install/install.zig").PackageManager;
 
+const Dir = std.fs.IterableDir;
+
 pub fn MacroJSValueType_() type {
     if (comptime JSC.is_bindgen) {
         return struct {
@@ -962,7 +964,7 @@ pub const Bundler = struct {
 
         var file: std.fs.File = undefined;
 
-        if (Outstream == std.fs.Dir) {
+        if (Outstream == Dir) {
             const output_dir = outstream;
 
             if (std.fs.path.dirname(file_path.pretty)) |dirname| {
@@ -1030,7 +1032,7 @@ pub const Bundler = struct {
 
                 file_op.is_tmpdir = false;
 
-                if (Outstream == std.fs.Dir) {
+                if (Outstream == Dir) {
                     file_op.dir = outstream.fd;
 
                     if (bundler.fs.fs.needToCloseFiles()) {
@@ -1088,7 +1090,7 @@ pub const Bundler = struct {
 
                 file_op.is_tmpdir = false;
 
-                if (Outstream == std.fs.Dir) {
+                if (Outstream == Dir) {
                     file_op.dir = outstream.fd;
 
                     if (bundler.fs.fs.needToCloseFiles()) {
@@ -1775,10 +1777,10 @@ pub const Bundler = struct {
                     if (framework.client.isEnabled()) {
                         did_start = true;
                         try switch (bundler.options.import_path_format) {
-                            .relative => bundler.processResolveQueue(.relative, true, std.fs.Dir, output_dir),
-                            .absolute_url => bundler.processResolveQueue(.absolute_url, true, std.fs.Dir, output_dir),
-                            .absolute_path => bundler.processResolveQueue(.absolute_path, true, std.fs.Dir, output_dir),
-                            .package_path => bundler.processResolveQueue(.package_path, true, std.fs.Dir, output_dir),
+                            .relative => bundler.processResolveQueue(.relative, true, Dir, output_dir),
+                            .absolute_url => bundler.processResolveQueue(.absolute_url, true, Dir, output_dir),
+                            .absolute_path => bundler.processResolveQueue(.absolute_path, true, Dir, output_dir),
+                            .package_path => bundler.processResolveQueue(.package_path, true, Dir, output_dir),
                         };
                     }
                 }
@@ -1786,10 +1788,10 @@ pub const Bundler = struct {
 
             if (!did_start) {
                 try switch (bundler.options.import_path_format) {
-                    .relative => bundler.processResolveQueue(.relative, false, std.fs.Dir, output_dir),
-                    .absolute_url => bundler.processResolveQueue(.absolute_url, false, std.fs.Dir, output_dir),
-                    .absolute_path => bundler.processResolveQueue(.absolute_path, false, std.fs.Dir, output_dir),
-                    .package_path => bundler.processResolveQueue(.package_path, false, std.fs.Dir, output_dir),
+                    .relative => bundler.processResolveQueue(.relative, false, Dir, output_dir),
+                    .absolute_url => bundler.processResolveQueue(.absolute_url, false, Dir, output_dir),
+                    .absolute_path => bundler.processResolveQueue(.absolute_path, false, Dir, output_dir),
+                    .package_path => bundler.processResolveQueue(.package_path, false, Dir, output_dir),
                 };
             }
         }

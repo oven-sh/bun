@@ -167,7 +167,7 @@ pub const Bin = extern struct {
                 var joined = Path.joinStringBuf(&this.buf, &parts, .auto);
                 this.buf[joined.len] = 0;
                 var joined_: [:0]u8 = this.buf[0..joined.len :0];
-                var child_dir = try dir.openDirZ(joined_, .{ .iterate = true });
+                var child_dir = try dir.openIterableDirZ(joined_, .{});
                 this.dir_iterator = child_dir.iterate();
             }
 
@@ -419,7 +419,7 @@ pub const Bin = extern struct {
                     var joined = Path.joinStringBuf(&target_buf, &parts, .auto);
                     @intToPtr([*]u8, @ptrToInt(joined.ptr))[joined.len] = 0;
                     var joined_: [:0]const u8 = joined.ptr[0..joined.len :0];
-                    var child_dir = dir.openDirZ(joined_, .{ .iterate = true }) catch |err| {
+                    var child_dir = dir.openIterableDirZ(joined_, .{}) catch |err| {
                         this.err = err;
                         return;
                     };
@@ -571,7 +571,7 @@ pub const Bin = extern struct {
                     var joined = Path.joinStringBuf(&target_buf, &parts, .auto);
                     @intToPtr([*]u8, @ptrToInt(joined.ptr))[joined.len] = 0;
                     var joined_: [:0]const u8 = joined.ptr[0..joined.len :0];
-                    var child_dir = dir.openDirZ(joined_, .{ .iterate = true }) catch |err| {
+                    var child_dir = dir.openIterableDirZ(joined_, .{}) catch |err| {
                         this.err = err;
                         return;
                     };

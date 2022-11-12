@@ -1,5 +1,5 @@
 const std = @import("std");
-const Dir = std.fs.Dir;
+const Dir = std.fs.IterableDir;
 const FnMeta = std.builtin.Type.Fn;
 const FnDecl = std.builtin.Type.Declaration.Data.FnDecl;
 const StructMeta = std.builtin.Type.Struct;

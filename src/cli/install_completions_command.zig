@@ -97,8 +97,8 @@ pub const InstallCompletionsCommand = struct {
                             Global.exit(fail_exit_code);
                         }
 
-                        break :found std.fs.openDirAbsolute(completions_dir, .{
-                            .iterate = true,
+                        break :found std.fs.openIterableDirAbsolute(completions_dir, .{
+
                         }) catch |err| {
                             Output.prettyErrorln("<r><red>error:<r> accessing {any} errored {any}", .{ completions_dir, @errorName(err) });
                             Global.exit(fail_exit_code);
@@ -115,7 +115,7 @@ pub const InstallCompletionsCommand = struct {
                         outer: {
                             var paths = [_]string{ std.mem.span(config_dir), "./fish/completions" };
                             completions_dir = resolve_path.joinAbsString(cwd, &paths, .auto);
-                            break :found std.fs.openDirAbsolute(completions_dir, .{ .iterate = true }) catch
+                            break :found std.fs.openIterableDirAbsolute(completions_dir, .{}) catch
                                 break :outer;
                         }
                     }
@@ -125,7 +125,7 @@ pub const InstallCompletionsCommand = struct {
                             var paths = [_]string{ std.mem.span(data_dir), "./fish/completions" };
                             completions_dir = resolve_path.joinAbsString(cwd, &paths, .auto);
 
-                            break :found std.fs.openDirAbsolute(completions_dir, .{ .iterate = true }) catch
+                            break :found std.fs.openIterableDirAbsolute(completions_dir, .{}) catch
                                 break :outer;
                         }
                     }
@@ -134,7 +134,7 @@ pub const InstallCompletionsCommand = struct {
                         outer: {
                             var paths = [_]string{ std.mem.span(home_dir), "./.config/fish/completions" };
                             completions_dir = resolve_path.joinAbsString(cwd, &paths, .auto);
-                            break :found std.fs.openDirAbsolute(completions_dir, .{ .iterate = true }) catch
+                            break :found std.fs.openIterableDirAbsolute(completions_dir, .{}) catch
                                 break :outer;
                         }
                     }
@@ -144,12 +144,12 @@ pub const InstallCompletionsCommand = struct {
                             if (!Environment.isAarch64) {
                                 // homebrew fish
                                 completions_dir = "/usr/local/share/fish/completions";
-                                break :found std.fs.openDirAbsoluteZ("/usr/local/share/fish/completions", .{ .iterate = true }) catch
+                                break :found std.fs.openIterableDirAbsoluteZ("/usr/local/share/fish/completions", .{}) catch
                                     break :outer;
                             } else {
                                 // homebrew fish
                                 completions_dir = "/opt/homebrew/share/fish/completions";
-                                break :found std.fs.openDirAbsoluteZ("/opt/homebrew/share/fish/completions", .{ .iterate = true }) catch
+                                break :found std.fs.openIterableDirAbsoluteZ("/opt/homebrew/share/fish/completions", .{}) catch
                                     break :outer;
                             }
                         }
@@ -157,7 +157,7 @@ pub const InstallCompletionsCommand = struct {
 
                     outer: {
                         completions_dir = "/etc/fish/completions";
-                        break :found std.fs.openDirAbsoluteZ("/etc/fish/completions", .{ .iterate = true }) catch break :outer;
+                        break :found std.fs.openIterableDirAbsoluteZ("/etc/fish/completions", .{}) catch break :outer;
                     }
                 },
                 .zsh => {
@@ -166,7 +166,7 @@ pub const InstallCompletionsCommand = struct {
 
                         while (splitter.next()) |dir| {
                             completions_dir = dir;
-                            break :found std.fs.openDirAbsolute(dir, .{ .iterate = true }) catch continue;
+                            break :found std.fs.openIterableDirAbsolute(dir, .{}) catch continue;
                         }
                     }
 
@@ -175,7 +175,7 @@ pub const InstallCompletionsCommand = struct {
                             var paths = [_]string{ std.mem.span(data_dir), "./zsh-completions" };
                             completions_dir = resolve_path.joinAbsString(cwd, &paths, .auto);
 
-                            break :found std.fs.openDirAbsolute(completions_dir, .{ .iterate = true }) catch
+                            break :found std.fs.openIterableDirAbsolute(completions_dir, .{}) catch
                                 break :outer;
                         }
                     }
@@ -183,7 +183,7 @@ pub const InstallCompletionsCommand = struct {
                     if (std.os.getenvZ("BUN_INSTALL")) |home_dir| {
                         outer: {
                             completions_dir = home_dir;
-                            break :found std.fs.openDirAbsolute(home_dir, .{ .iterate = true }) catch
+                            break :found std.fs.openIterableDirAbsolute(home_dir, .{}) catch
                                 break :outer;
                         }
                     }
@@ -193,7 +193,7 @@ pub const InstallCompletionsCommand = struct {
                             outer: {
                                 var paths = [_]string{ std.mem.span(home_dir), "./.oh-my-zsh/completions" };
                                 completions_dir = resolve_path.joinAbsString(cwd, &paths, .auto);
-                                break :found std.fs.openDirAbsolute(completions_dir, .{ .iterate = true }) catch
+                                break :found std.fs.openIterableDirAbsolute(completions_dir, .{}) catch
                                     break :outer;
                             }
                         }
@@ -202,7 +202,7 @@ pub const InstallCompletionsCommand = struct {
                             outer: {
                                 var paths = [_]string{ std.mem.span(home_dir), "./.bun" };
                                 completions_dir = resolve_path.joinAbsString(cwd, &paths, .auto);
-                                break :found std.fs.openDirAbsolute(completions_dir, .{ .iterate = true }) catch
+                                break :found std.fs.openIterableDirAbsolute(completions_dir, .{}) catch
                                     break :outer;
                             }
                         }
@@ -217,7 +217,7 @@ pub const InstallCompletionsCommand = struct {
 
                     for (dirs_to_try) |dir| {
                         completions_dir = dir;
-                        break :found std.fs.openDirAbsolute(dir, .{ .iterate = true }) catch continue;
+                        break :found std.fs.openIterableDirAbsolute(dir, .{}) catch continue;
                     }
                 },
                 .bash => {
@@ -225,7 +225,7 @@ pub const InstallCompletionsCommand = struct {
                         outer: {
                             var paths = [_]string{ std.mem.span(data_dir), "./bash-completion/completions" };
                             completions_dir = resolve_path.joinAbsString(cwd, &paths, .auto);
-                            break :found std.fs.openDirAbsolute(completions_dir, .{ .iterate = true }) catch
+                            break :found std.fs.openIterableDirAbsolute(completions_dir, .{}) catch
                                 break :outer;
                         }
                     }
@@ -235,7 +235,7 @@ pub const InstallCompletionsCommand = struct {
                             var paths = [_]string{ std.mem.span(config_dir), "./bash-completion/completions" };
                             completions_dir = resolve_path.joinAbsString(cwd, &paths, .auto);
 
-                            break :found std.fs.openDirAbsolute(completions_dir, .{ .iterate = true }) catch
+                            break :found std.fs.openIterableDirAbsolute(completions_dir, .{}) catch
                                 break :outer;
                         }
                     }
@@ -246,7 +246,7 @@ pub const InstallCompletionsCommand = struct {
                                 var paths = [_]string{ std.mem.span(home_dir), "./.oh-my-bash/custom/completions" };
                                 completions_dir = resolve_path.joinAbsString(cwd, &paths, .auto);
 
-                                break :found std.fs.openDirAbsolute(completions_dir, .{ .iterate = true }) catch
+                                break :found std.fs.openIterableDirAbsolute(completions_dir, .{}) catch
                                     break :outer;
                             }
                         }
@@ -255,7 +255,7 @@ pub const InstallCompletionsCommand = struct {
                                 var paths = [_]string{ std.mem.span(home_dir), "./.bash_completion.d" };
                                 completions_dir = resolve_path.joinAbsString(cwd, &paths, .auto);
 
-                                break :found std.fs.openDirAbsolute(completions_dir, .{ .iterate = true }) catch
+                                break :found std.fs.openIterableDirAbsolute(completions_dir, .{}) catch
                                     break :outer;
                             }
                         }
@@ -268,7 +268,7 @@ pub const InstallCompletionsCommand = struct {
 
                     for (dirs_to_try) |dir| {
                         completions_dir = dir;
-                        break :found std.fs.openDirAbsolute(dir, .{ .iterate = true }) catch continue;
+                        break :found std.fs.openIterableDirAbsolute(dir, .{}) catch continue;
                     }
                 },
                 else => unreachable,

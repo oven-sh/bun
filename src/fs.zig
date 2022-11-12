@@ -567,7 +567,7 @@ pub const FileSystem = struct {
                 tmpdir_path_set = true;
             }
 
-            return try std.fs.openDirAbsolute(tmpdir_path, .{ .access_sub_paths = true, .iterate = true });
+            return try std.fs.openIterableDirAbsolute(tmpdir_path, .{ .access_sub_paths = true });
         }
 
         pub fn getDefaultTempDir() string {
@@ -814,17 +814,17 @@ pub const FileSystem = struct {
         };
 
         pub fn openDir(_: *RealFS, unsafe_dir_string: string) std.fs.File.OpenError!std.fs.Dir {
-            return try std.fs.openDirAbsolute(unsafe_dir_string, std.fs.Dir.OpenDirOptions{ .iterate = true, .access_sub_paths = true, .no_follow = false });
+            return try std.fs.openIterableDirAbsolute(unsafe_dir_string, std.fs.Dir.OpenDirOptions{ .access_sub_paths = true, .no_follow = false });
         }
 
         fn readdir(
             fs: *RealFS,
             _dir: string,
-            handle: std.fs.Dir,
+            handle: std.fs.IterableDir,
             comptime Iterator: type,
             iterator: Iterator,
         ) !DirEntry {
-            var iter: std.fs.Dir.Iterator = handle.iterate();
+            var iter: std.fs.IterableDir.Iterator = handle.iterate();
             var dir = DirEntry.init(_dir);
             const allocator = fs.allocator;
             errdefer dir.deinit(allocator);
@@ -859,11 +859,11 @@ pub const FileSystem = struct {
 
         threadlocal var temp_entries_option: EntriesOption = undefined;
 
-        pub fn readDirectory(fs: *RealFS, _dir: string, _handle: ?std.fs.Dir) !*EntriesOption {
+        pub fn readDirectory(fs: *RealFS, _dir: string, _handle: ?std.fs.IterableDir) !*EntriesOption {
             return readDirectoryWithIterator(fs, _dir, _handle, void, void{});
         }
 
-        pub fn readDirectoryWithIterator(fs: *RealFS, _dir: string, _handle: ?std.fs.Dir, comptime Iterator: type, iterator: Iterator) !*EntriesOption {
+        pub fn readDirectoryWithIterator(fs: *RealFS, _dir: string, _handle: ?std.fs.IterableDir, comptime Iterator: type, iterator: Iterator) !*EntriesOption {
             var dir = _dir;
             var cache_result: ?allocators.Result = null;
             if (comptime FeatureFlags.enable_entry_cache) {

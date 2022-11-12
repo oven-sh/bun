@@ -643,7 +643,7 @@ pub fn NewWatcher(comptime ContextType: type) type {
             const fd = brk: {
                 if (fd_ > 0) break :brk fd_;
 
-                const dir = try std.fs.openDirAbsolute(file_path, .{ .iterate = true });
+                const dir = try std.fs.openIterableDirAbsolute(file_path, .{});
                 break :brk @truncate(StoredFileDescriptorType, dir.fd);
             };
 

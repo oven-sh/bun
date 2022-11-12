@@ -8,7 +8,7 @@ const builtin = @import("builtin");
 const std = @import("std");
 const os = std.os;
 
-const Dir = std.fs.Dir;
+const Dir = std.fs.IterableDir;
 const JSC = @import("../../jsc.zig");
 const PathString = JSC.PathString;
 

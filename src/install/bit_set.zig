@@ -929,7 +929,7 @@ pub const IteratorOptions = struct {
 
 // The iterator is reusable between several bit set types
 fn BitSetIterator(comptime MaskInt: type, comptime options: IteratorOptions) type {
-    //const ShiftInt = std.math.Log2Int(MaskInt);
+    const ShiftInt = std.math.Log2Int(MaskInt);
     const kind = options.kind;
     const direction = options.direction;
     return struct {

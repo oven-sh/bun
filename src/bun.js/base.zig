@@ -1,3 +1,9 @@
+// TODO(vjpr): Ambiguous references
+//
+// const C = bun.C;
+// const WebCore = @import("./webcore.zig");
+//
+
 pub const js = @import("../jsc.zig").C;
 const std = @import("std");
 const bun = @import("../global.zig");
@@ -9,12 +15,10 @@ const strings = bun.strings;
 const MutableString = bun.MutableString;
 const stringZ = bun.stringZ;
 const default_allocator = bun.default_allocator;
-const C = bun.C;
 const JavaScript = @import("./javascript.zig");
 const ResolveError = JavaScript.ResolveError;
 const BuildError = JavaScript.BuildError;
 const JSC = @import("../jsc.zig");
-const WebCore = @import("./webcore.zig");
 const Test = @import("./test/jest.zig");
 const Fetch = WebCore.Fetch;
 const Response = WebCore.Response;

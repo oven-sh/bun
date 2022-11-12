@@ -1397,7 +1397,7 @@ pub fn copyLatin1IntoUTF8StopOnNonASCII(buf_: []u8, comptime Type: type, latin1_
                             buf[0..size].* = @bitCast([size]u8, bytes);
 
                             assert(mask > 0);
-                            const first_set_byte = @ctz(Int, mask) / 8;
+                            const first_set_byte = @ctz(@as(Int, mask)) / 8;
                             if (comptime Environment.allow_assert) {
                                 assert(latin1[first_set_byte] >= 127);
                             }

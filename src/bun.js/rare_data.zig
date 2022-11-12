@@ -23,6 +23,16 @@ entropy_cache: ?*EntropyCache = null,
 tail_cleanup_hook: ?*CleanupHook = null,
 cleanup_hook: ?*CleanupHook = null,
 
+file_polls_: ?*JSC.FilePoll.HiveArray = null,
+
+pub fn filePolls(this: *RareData, vm: *JSC.VirtualMachine) *JSC.FilePoll.HiveArray {
+    return this.file_polls_ orelse {
+        this.file_polls_ = vm.allocator.create(JSC.FilePoll.HiveArray) catch unreachable;
+        this.file_polls_.?.* = JSC.FilePoll.HiveArray.init(vm.allocator);
+        return this.file_polls_.?;
+    };
+}
+
 pub fn nextUUID(this: *RareData) [16]u8 {
     if (this.entropy_cache == null) {
         this.entropy_cache = default_allocator.create(EntropyCache) catch unreachable;

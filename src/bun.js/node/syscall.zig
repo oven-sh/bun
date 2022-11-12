@@ -101,6 +101,7 @@ pub const Tag = enum(u8) {
     epoll_ctl,
     kill,
     waitpid,
+    posix_spawn,
     pub var strings = std.EnumMap(Tag, JSC.C.JSStringRef).initFull(null);
 };
 const PathString = @import("../../global.zig").PathString;

@@ -202,7 +202,7 @@ pub fn fatal(err_: ?anyerror, msg_: ?string) void {
                         );
                     } else {
                         crash_report_writer.print(
-                            "\n<r>an uh-oh: {s}\n\n",
+                            "\n<r>Panic: {s}\n\n",
                             .{msg[0..len]},
                         );
                     }

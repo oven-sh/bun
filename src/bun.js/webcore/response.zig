@@ -471,7 +471,7 @@ pub const Response = struct {
     }
 };
 
-const null_fd = std.math.maxInt(JSC.Node.FileDescriptor);
+const null_fd = JSC.Node.invalid_fd;
 
 pub const Fetch = struct {
     const headers_string = "headers";

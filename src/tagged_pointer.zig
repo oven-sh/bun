@@ -129,6 +129,10 @@ pub fn TaggedPointerUnion(comptime Types: anytype) type {
             return this.repr.data == comptime @enumToInt(@field(Tag, typeBaseName(@typeName(Type))));
         }
 
+        pub fn set(this: *@This(), _ptr: anytype) void {
+            this.* = @This().init(_ptr);
+        }
+
         pub inline fn isValidPtr(_ptr: ?*anyopaque) bool {
             return This.isValid(This.from(_ptr));
         }

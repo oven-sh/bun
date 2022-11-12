@@ -1823,7 +1823,7 @@ const Arguments = struct {
                 .file = undefined,
                 .global_object = ctx.ptr(),
             };
-            var fd: FileDescriptor = std.math.maxInt(FileDescriptor);
+            var fd: FileDescriptor = JSC.Node.invalid_fd;
 
             if (arguments.next()) |arg| {
                 arguments.eat();
@@ -1918,7 +1918,7 @@ const Arguments = struct {
                 }
             }
 
-            if (fd != std.math.maxInt(FileDescriptor)) {
+            if (fd != JSC.Node.invalid_fd) {
                 stream.file = .{ .fd = fd };
             } else if (path) |path_| {
                 stream.file = .{ .path = path_ };
@@ -1957,7 +1957,7 @@ const Arguments = struct {
                 .file = undefined,
                 .global_object = ctx.ptr(),
             };
-            var fd: FileDescriptor = std.math.maxInt(FileDescriptor);
+            var fd: FileDescriptor = JSC.Node.invalid_fd;
 
             if (arguments.next()) |arg| {
                 arguments.eat();
@@ -2044,7 +2044,7 @@ const Arguments = struct {
                 }
             }
 
-            if (fd != std.math.maxInt(FileDescriptor)) {
+            if (fd != JSC.Node.invalid_fd) {
                 stream.file = .{ .fd = fd };
             } else if (path) |path_| {
                 stream.file = .{ .path = path_ };

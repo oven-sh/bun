@@ -62,7 +62,7 @@ pub fn main() void {
 
 pub const JavaScriptVirtualMachine = JavaScript.VirtualMachine;
 
-test "" {
+test {
     @import("std").testing.refAllDecls(@This());
 
     std.mem.doNotOptimizeAway(JavaScriptVirtualMachine.fetch);

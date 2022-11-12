@@ -64,6 +64,7 @@ WEBKIT_RELEASE_DIR_LTO ?= $(WEBKIT_DIR)/WebKitBuild/ReleaseLTO
 
 NPM_CLIENT ?= $(shell which bun || which npm)
 ZIG ?= $(shell which zig || echo -e "error: Missing zig. Please make sure zig is in PATH. Or set ZIG=/path/to-zig-executable")
+ZIG_FLAGS ?= "-fstage1"
 
 # We must use the same compiler version for the JavaScriptCore bindings and JavaScriptCore
 # If we don't do this, strange memory allocation failures occur.
@@ -377,7 +378,7 @@ endif
 SHARED_LIB_EXTENSION = .so
 
 JSC_BINDINGS = $(BINDINGS_OBJ) $(JSC_FILES)
-JSC_BINDINGS_DEBUG = $(DEBUG_BINDINGS_OBJ) $(JSC_FILES_DEBUG) 
+JSC_BINDINGS_DEBUG = $(DEBUG_BINDINGS_OBJ) $(JSC_FILES_DEBUG)
 
 RELEASE_FLAGS=
 DEBUG_FLAGS=
@@ -405,7 +406,7 @@ ARCHIVE_FILES_WITHOUT_LIBCRYPTO = $(MINIMUM_ARCHIVE_FILES) \
 		-lusockets \
 		$(BUN_DEPS_OUT_DIR)/libuwsockets.o
 
-ARCHIVE_FILES = $(ARCHIVE_FILES_WITHOUT_LIBCRYPTO) 
+ARCHIVE_FILES = $(ARCHIVE_FILES_WITHOUT_LIBCRYPTO)
 
 STATIC_MUSL_FLAG ?=
 
@@ -426,9 +427,9 @@ PLATFORM_LINKER_FLAGS = $(BUN_CFLAGS) \
 		-flto \
 		-Wl,--allow-multiple-definition \
 		-rdynamic
-		
 
- 
+
+
 endif
 
 
@@ -870,7 +871,7 @@ CLANG_FORMAT := $(shell command -v clang-format 2> /dev/null)
 headers:
 	rm -f /tmp/build-jsc-headers src/bun.js/bindings/headers.zig
 	touch src/bun.js/bindings/headers.zig
-	$(ZIG) build headers-obj
+	$(ZIG) build headers-obj $(ZIG_FLAGS)
 	$(CXX) $(PLATFORM_LINKER_FLAGS) $(JSC_FILES_DEBUG) ${ICU_FLAGS} $(DEBUG_IO_FILES) $(BUN_LLD_FLAGS_WITHOUT_JSC)  -g $(DEBUG_BIN)/headers.o -W -o /tmp/build-jsc-headers -lc;
 	/tmp/build-jsc-headers
 	$(ZIG) translate-c src/bun.js/bindings/headers.h > src/bun.js/bindings/headers.zig
@@ -1681,7 +1682,7 @@ webcrypto:
 
 sizegen:
 	mkdir -p $(BUN_TMP_DIR)
-	$(CXX) src/bun.js/headergen/sizegen.cpp -Wl,-dead_strip -Wl,-dead_strip_dylibs -fuse-ld=lld -o $(BUN_TMP_DIR)/sizegen $(CLANG_FLAGS) -O1 
+	$(CXX) src/bun.js/headergen/sizegen.cpp -Wl,-dead_strip -Wl,-dead_strip_dylibs -fuse-ld=lld -o $(BUN_TMP_DIR)/sizegen $(CLANG_FLAGS) -O1
 	$(BUN_TMP_DIR)/sizegen > src/bun.js/bindings/sizes.zig
 
 

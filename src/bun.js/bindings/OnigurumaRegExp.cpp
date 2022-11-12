@@ -63,14 +63,25 @@ static WTF::String to16Bit(JSValue jsValue, JSC::JSGlobalObject* globalObject, A
     return to16Bit(jsString, globalObject);
 }
 
-static WTF::String extendMultibyteHexCharacters(const WTF::String& string)
+static WTF::String convertToOnigurumaSyntax(const WTF::String& string)
 {
     WTF::StringBuilder sb;
     uint32_t length = string.length();
     const UChar* characters = string.characters16();
     bool inCharacterClass = false;
+    bool inCharacterProperty = false;
+
+    // might need to keep track of escapes in a row:
+    // 1: /\p{Script=Latin}/u
+    // 2: /\\p{Script=Latin}/u
+    // 3: /\\\p{Script=Latin}/u
+    // 4: /\\\\p{Script=Latin}/u
+    // ...
+    // first is character property, second isn't, third is character property, fourth isn't, etc.
 
     for (int i = 0; i < length; i++) {
+
+        // extend multibyte hex characters
         while (characters[i] == '\\') {
             if (i + 1 < length && characters[i + 1] == 'x') {
                 if (i + 2 < length && isxdigit(characters[i + 2])) {
@@ -95,6 +106,58 @@ static WTF::String extendMultibyteHexCharacters(const WTF::String& string)
             break;
         }
 
+        // convert character properties
+        if (characters[i] == '{' && i - 1 >= 0 && (characters[i - 1] == 'p' || characters[i - 1] == 'P') && i - 2 >= 0 && characters[i - 2] == '\\') {
+            sb.append(characters[i]);
+            i += 1;
+            if (i == length) {
+                break;
+            }
+
+            // handle negative
+            if (characters[i] == '^') {
+                sb.append(characters[i]);
+                i += 1;
+                if (i == length) {
+                    break;
+                }
+            }
+
+            // cound be \p{propName=propValue} or \p{propValue}.
+            bool foundEquals = false;
+            WTF::StringBuilder propName;
+            while (characters[i] != '}') {
+                if (characters[i] == '=') {
+                    foundEquals = true;
+                    i += 1;
+                    if (i == length) {
+                        break;
+                    }
+                    continue;
+                }
+
+                if (foundEquals) {
+                    sb.append(characters[i]);
+                } else {
+                    propName.append(characters[i]);
+                }
+
+                i += 1;
+                if (i == length) {
+                    break;
+                }
+            }
+
+            if (!foundEquals) {
+                sb.append(propName.toString());
+            }
+        }
+
+        if (i >= length) {
+            break;
+        }
+
+        // escape brackets in character classes
         if (inCharacterClass) {
             // we know ']' will be escaped so there isn't a need to scan for the closing bracket
             if (characters[i] == '[' || characters[i] == ']') {
@@ -518,13 +581,13 @@ JSC_DEFINE_HOST_FUNCTION(onigurumaRegExpProtoFuncCompile, (JSGlobalObject * glob
             return JSValue::encode({});
         }
         thisRegExp->setPatternString(regExpObject->patternString());
-        patternStringExtended = extendMultibyteHexCharacters(thisRegExp->patternString());
+        patternStringExtended = convertToOnigurumaSyntax(thisRegExp->patternString());
         thisRegExp->setFlagsString(regExpObject->flagsString());
     } else {
         WTF::String newPatternString = to16Bit(arg0, globalObject, "(?:)"_s);
         RETURN_IF_EXCEPTION(scope, {});
 
-        patternStringExtended = extendMultibyteHexCharacters(newPatternString);
+        patternStringExtended = convertToOnigurumaSyntax(newPatternString);
 
         WTF::String newFlagsString = to16Bit(arg1, globalObject, ""_s);
         RETURN_IF_EXCEPTION(scope, {});
@@ -543,7 +606,7 @@ JSC_DEFINE_HOST_FUNCTION(onigurumaRegExpProtoFuncCompile, (JSGlobalObject * glob
     // for pattern syntax checking
     int errorCode = 0;
     OnigErrorInfo errorInfo = { 0 };
-    regex_t* onigurumaRegExp = createOnigurumaRegExp(globalObject, extendMultibyteHexCharacters(thisRegExp->patternString()), thisRegExp->flagsString(), errorCode, errorInfo);
+    regex_t* onigurumaRegExp = createOnigurumaRegExp(globalObject, convertToOnigurumaSyntax(thisRegExp->patternString()), thisRegExp->flagsString(), errorCode, errorInfo);
     if (errorCode != ONIG_NORMAL) {
         OnigUChar errorBuff[ONIG_MAX_ERROR_MESSAGE_LEN] = { 0 };
         int length = onig_error_code_to_str(errorBuff, errorCode, &errorInfo);
@@ -588,7 +651,7 @@ JSC_DEFINE_HOST_FUNCTION(onigurumaRegExpProtoFuncTest, (JSGlobalObject * globalO
 
     int errorCode = 0;
     OnigErrorInfo errorInfo = { 0 };
-    regex_t* onigurumaRegExp = createOnigurumaRegExp(globalObject, extendMultibyteHexCharacters(thisValue->patternString()), thisValue->flagsString(), errorCode, errorInfo);
+    regex_t* onigurumaRegExp = createOnigurumaRegExp(globalObject, convertToOnigurumaSyntax(thisValue->patternString()), thisValue->flagsString(), errorCode, errorInfo);
     if (errorCode != ONIG_NORMAL) {
         OnigUChar errorBuff[ONIG_MAX_ERROR_MESSAGE_LEN] = { 0 };
         int length = onig_error_code_to_str(errorBuff, errorCode, &errorInfo);
@@ -674,7 +737,7 @@ JSC_DEFINE_HOST_FUNCTION(onigurumaRegExpProtoFuncExec, (JSGlobalObject * globalO
 
     int errorCode = 0;
     OnigErrorInfo errorInfo = { 0 };
-    regex_t* onigurumaRegExp = createOnigurumaRegExp(globalObject, extendMultibyteHexCharacters(thisValue->patternString()), thisValue->flagsString(), errorCode, errorInfo);
+    regex_t* onigurumaRegExp = createOnigurumaRegExp(globalObject, convertToOnigurumaSyntax(thisValue->patternString()), thisValue->flagsString(), errorCode, errorInfo);
     if (errorCode != ONIG_NORMAL) {
         OnigUChar errorBuff[ONIG_MAX_ERROR_MESSAGE_LEN] = { 0 };
         int length = onig_error_code_to_str(errorBuff, errorCode, &errorInfo);
@@ -859,7 +922,7 @@ static JSC::EncodedJSValue constructOrCall(Zig::GlobalObject* globalObject, JSVa
     // create for pattern compilation errors, but need to create another for each exec/test
     int errorCode = 0;
     OnigErrorInfo errorInfo = { 0 };
-    regex_t* onigurumaRegExp = createOnigurumaRegExp(globalObject, extendMultibyteHexCharacters(patternString), flagsString, errorCode, errorInfo);
+    regex_t* onigurumaRegExp = createOnigurumaRegExp(globalObject, convertToOnigurumaSyntax(patternString), flagsString, errorCode, errorInfo);
     if (errorCode != ONIG_NORMAL) {
         OnigUChar errorBuff[ONIG_MAX_ERROR_MESSAGE_LEN] = { 0 };
         int length = onig_error_code_to_str(errorBuff, errorCode, &errorInfo);

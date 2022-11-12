@@ -943,7 +943,7 @@ pub const ImportScanner = struct {
                     try p.import_records_for_current_part.append(allocator, st.import_record_index);
 
                     for (st.items) |item| {
-                        const ref = item.name.ref orelse p.panic("Expected export from item to have a name {s}", .{st});
+                        const ref = item.name.ref orelse p.panic("Expected export from item to have a name {any}", .{st});
                         // Note that the imported alias is not item.Alias, which is the
                         // exported alias. This is somewhat confusing because each
                         // SExportFrom statement is basically SImport + SExportClause in one.
@@ -4266,7 +4266,7 @@ fn NewParser_(
                     const symbol_name = p.import_records.items[import_record_index].path.name.nonUniqueNameString(p.allocator);
                     const cjs_import_name = std.fmt.allocPrint(
                         p.allocator,
-                        "{s}_{x}_{d}",
+                        "{any}_{x}_{d}",
                         .{
                             symbol_name,
                             @truncate(
@@ -4520,7 +4520,7 @@ fn NewParser_(
                 unreachable;
             }
 
-            // Output.print("\nStmt: {s} - {d}\n", .{ @typeName(@TypeOf(t)), loc.start });
+            // Output.print("\nStmt: {any} - {d}\n", .{ @typeName(@TypeOf(t)), loc.start });
             if (@typeInfo(Type) == .Pointer) {
                 // ExportFrom normally becomes import records during the visiting pass
                 // However, we skip the visiting pass in this mode
@@ -4556,7 +4556,7 @@ fn NewParser_(
                 }
             }
 
-            // Output.print("\nExpr: {s} - {d}\n", .{ @typeName(@TypeOf(t)), loc.start });
+            // Output.print("\nExpr: {any} - {d}\n", .{ @typeName(@TypeOf(t)), loc.start });
             if (@typeInfo(Type) == .Pointer) {
                 if (comptime only_scan_imports_and_do_not_visit) {
                     if (Type == *E.Call) {
@@ -4642,7 +4642,7 @@ fn NewParser_(
                     // Forbid referencing "arguments" inside class bodies
                     if (scope.forbid_arguments and !did_forbid_argumen and strings.eqlComptime(name, "arguments")) {
                         const r = js_lexer.rangeOfIdentifier(p.source, loc);
-                        p.log.addRangeErrorFmt(p.source, r, allocator, "Cannot access \"{s}\" here", .{name}) catch unreachable;
+                        p.log.addRangeErrorFmt(p.source, r, allocator, "Cannot access \"{any}\" here", .{name}) catch unreachable;
                         did_forbid_argumen = true;
                     }
 
@@ -4697,7 +4697,7 @@ fn NewParser_(
                     }
                 },
                 else => {
-                    p.panic("Unexpected binding export type {s}", .{binding});
+                    p.panic("Unexpected binding export type {any}", .{binding});
                 },
             }
         }
@@ -4714,7 +4714,7 @@ fn NewParser_(
                 // Duplicate exports are an error
                 var notes = try p.allocator.alloc(logger.Data, 1);
                 notes[0] = logger.Data{
-                    .text = try std.fmt.allocPrint(p.allocator, "\"{s}\" was originally exported here", .{alias}),
+                    .text = try std.fmt.allocPrint(p.allocator, "\"{any}\" was originally exported here", .{alias}),
                     .location = logger.Location.init_or_nil(p.source, js_lexer.rangeOfIdentifier(p.source, name.alias_loc)),
                 };
                 try p.log.addRangeErrorFmtWithNotes(
@@ -4722,7 +4722,7 @@ fn NewParser_(
                     js_lexer.rangeOfIdentifier(p.source, loc),
                     p.allocator,
                     notes,
-                    "Multiple exports with the same name \"{s}\"",
+                    "Multiple exports with the same name \"{any}\"",
                     .{std.mem.trim(u8, alias, "\"'")},
                 );
             } else {
@@ -4786,7 +4786,7 @@ fn NewParser_(
             if ((opts.assign_target != .none or opts.is_delete_target) and p.symbols.items[ref.innerIndex()].kind == .import) {
                 // Create an error for assigning to an import namespace
                 const r = js_lexer.rangeOfIdentifier(p.source, loc);
-                p.log.addRangeErrorFmt(p.source, r, p.allocator, "Cannot assign to import \"{s}\"", .{
+                p.log.addRangeErrorFmt(p.source, r, p.allocator, "Cannot assign to import \"{any}\"", .{
                     p.symbols.items[ref.innerIndex()].original_name,
                 }) catch unreachable;
             }
@@ -5180,12 +5180,12 @@ fn NewParser_(
                                         r,
                                         std.fmt.allocPrint(
                                             allocator,
-                                            "{s} was originally declared here",
+                                            "{any} was originally declared here",
                                             .{existing_symbol.original_name},
                                         ) catch unreachable,
                                     );
 
-                                    p.log.addRangeErrorFmtWithNotes(p.source, js_lexer.rangeOfIdentifier(p.source, existing_member_entry.value.loc), allocator, notes, "{s} has already been declared", .{symbol.original_name}) catch unreachable;
+                                    p.log.addRangeErrorFmtWithNotes(p.source, js_lexer.rangeOfIdentifier(p.source, existing_member_entry.value.loc), allocator, notes, "{any} has already been declared", .{symbol.original_name}) catch unreachable;
                                 }
 
                                 continue :nextMember;
@@ -5223,7 +5223,7 @@ fn NewParser_(
 
             // Sanity-check that the scopes generated by the first and second passes match
             if (order.loc.start != loc.start or order.scope.kind != kind) {
-                p.panic("Expected scope ({s}, {d}) in {s}, found scope ({s}, {d})", .{ kind, loc.start, p.source.path.pretty, order.scope.kind, order.loc.start });
+                p.panic("Expected scope ({any}, {d}) in {any}, found scope ({any}, {d})", .{ kind, loc.start, p.source.path.pretty, order.scope.kind, order.loc.start });
             }
 
             p.current_scope = order.scope;
@@ -5450,7 +5450,7 @@ fn NewParser_(
             }
 
             if (errors.invalid_expr_after_question) |r| {
-                p.log.addRangeErrorFmt(p.source, r, p.allocator, "Unexpected {s}", .{p.source.contents[r.loc.i()..r.endI()]}) catch unreachable;
+                p.log.addRangeErrorFmt(p.source, r, p.allocator, "Unexpected {any}", .{p.source.contents[r.loc.i()..r.endI()]}) catch unreachable;
             }
 
             // if (errors.array_spread_feature) |err| {
@@ -6581,7 +6581,7 @@ fn NewParser_(
         }
 
         fn createDefaultName(p: *P, loc: logger.Loc) !js_ast.LocRef {
-            var identifier = try std.fmt.allocPrint(p.allocator, "{s}_default", .{try p.source.path.name.nonUniqueNameString(p.allocator)});
+            var identifier = try std.fmt.allocPrint(p.allocator, "{any}_default", .{try p.source.path.name.nonUniqueNameString(p.allocator)});
 
             const name = js_ast.LocRef{ .loc = loc, .ref = try p.newSymbol(Symbol.Kind.other, identifier) };
 
@@ -7984,7 +7984,7 @@ fn NewParser_(
                             }
                         }
                     }
-                    // Output.print("\n\nmVALUE {s}:{s}\n", .{ expr, name });
+                    // Output.print("\n\nmVALUE {any}:{any}\n", .{ expr, name });
                     try p.lexer.expectOrInsertSemicolon();
                     return p.s(S.SExpr{ .value = expr }, loc);
                 },
@@ -8253,7 +8253,7 @@ fn NewParser_(
                 } else |_| {
                     const r = p.source.rangeOfString(loc);
                     // TODO: improve error message
-                    try p.log.addRangeErrorFmt(p.source, r, p.allocator, "Invalid {s} alias because it contains an unpaired Unicode surrogate (like emoji)", .{kind});
+                    try p.log.addRangeErrorFmt(p.source, r, p.allocator, "Invalid {any} alias because it contains an unpaired Unicode surrogate (like emoji)", .{kind});
                     return p.source.textForRange(r);
                 }
             }
@@ -8336,7 +8336,7 @@ fn NewParser_(
 
                             if (isEvalOrArguments(original_name)) {
                                 const r = p.source.rangeOfString(name.loc);
-                                try p.log.addRangeErrorFmt(p.source, r, p.allocator, "Cannot use {s} as an identifier here", .{original_name});
+                                try p.log.addRangeErrorFmt(p.source, r, p.allocator, "Cannot use {any} as an identifier here", .{original_name});
                             }
 
                             try items.append(.{
@@ -8380,7 +8380,7 @@ fn NewParser_(
                     // Reject forbidden names
                     if (isEvalOrArguments(original_name)) {
                         const r = js_lexer.rangeOfIdentifier(p.source, name.loc);
-                        try p.log.addRangeErrorFmt(p.source, r, p.allocator, "Cannot use \"{s}\" as an identifier here", .{original_name});
+                        try p.log.addRangeErrorFmt(p.source, r, p.allocator, "Cannot use \"{any}\" as an identifier here", .{original_name});
                     }
 
                     try items.append(js_ast.ClauseItem{
@@ -8433,11 +8433,11 @@ fn NewParser_(
                             return;
                         }
 
-                        try p.log.addError(p.source, value.loc, comptime std.fmt.comptimePrint("for-{s} loop variables cannot have an initializer", .{loop_type}));
+                        try p.log.addError(p.source, value.loc, comptime std.fmt.comptimePrint("for-{any} loop variables cannot have an initializer", .{loop_type}));
                     }
                 },
                 else => {
-                    try p.log.addError(p.source, decls[0].binding.loc, comptime std.fmt.comptimePrint("for-{s} loops must have a single declaration", .{loop_type}));
+                    try p.log.addError(p.source, decls[0].binding.loc, comptime std.fmt.comptimePrint("for-{any} loops must have a single declaration", .{loop_type}));
                 },
             }
         }
@@ -8487,7 +8487,7 @@ fn NewParser_(
                     switch (decl.binding.data) {
                         .b_identifier => |ident| {
                             const r = js_lexer.rangeOfIdentifier(p.source, decl.binding.loc);
-                            try p.log.addRangeErrorFmt(p.source, r, p.allocator, "The constant \"{s}\" must be initialized", .{p.symbols.items[ident.ref.innerIndex()].original_name});
+                            try p.log.addRangeErrorFmt(p.source, r, p.allocator, "The constant \"{any}\" must be initialized", .{p.symbols.items[ident.ref.innerIndex()].original_name});
                             // return;/
                         },
                         else => {
@@ -9055,7 +9055,7 @@ fn NewParser_(
             // "export from" statement after all
             if (first_non_identifier_loc.start != 0 and !p.lexer.isContextualKeyword("from")) {
                 const r = js_lexer.rangeOfIdentifier(p.source, first_non_identifier_loc);
-                try p.lexer.addRangeError(r, "Expected identifier but found \"{s}\"", .{p.source.textForRange(r)}, true);
+                try p.lexer.addRangeError(r, "Expected identifier but found \"{any}\"", .{p.source.textForRange(r)}, true);
                 return error.SyntaxError;
             }
 
@@ -9210,8 +9210,8 @@ fn NewParser_(
                 .with_statement => "With statements",
                 .delete_bare_name => "\"delete\" of a bare identifier",
                 .for_in_var_init => "Variable initializers within for-in loops",
-                .eval_or_arguments => try std.fmt.allocPrint(p.allocator, "Declarations with the name {s}", .{detail}),
-                .reserved_word => try std.fmt.allocPrint(p.allocator, "\"{s}\" is a reserved word and", .{detail}),
+                .eval_or_arguments => try std.fmt.allocPrint(p.allocator, "Declarations with the name {any}", .{detail}),
+                .reserved_word => try std.fmt.allocPrint(p.allocator, "\"{any}\" is a reserved word and", .{detail}),
                 .legacy_octal_literal => "Legacy octal literals",
                 .legacy_octal_escape => "Legacy octal escape sequences",
                 .if_else_function_stmt => "Function declarations inside if statements",
@@ -9241,13 +9241,13 @@ fn NewParser_(
                     else => {},
                 }
                 if (why.len == 0) {
-                    why = try std.fmt.allocPrint(p.allocator, "This file is implicitly in strict mode because of the \"{s}\" keyword here", .{p.source.textForRange(where)});
+                    why = try std.fmt.allocPrint(p.allocator, "This file is implicitly in strict mode because of the \"{any}\" keyword here", .{p.source.textForRange(where)});
                 }
                 var notes = try p.allocator.alloc(logger.Data, 1);
                 notes[0] = logger.rangeData(p.source, where, why);
-                try p.log.addRangeErrorWithNotes(p.source, r, try std.fmt.allocPrint(p.allocator, "{s} cannot be used in strict mode", .{text}), notes);
+                try p.log.addRangeErrorWithNotes(p.source, r, try std.fmt.allocPrint(p.allocator, "{any} cannot be used in strict mode", .{text}), notes);
             } else if (!can_be_transformed and p.isStrictModeOutputFormat()) {
-                try p.log.addRangeError(p.source, r, try std.fmt.allocPrint(p.allocator, "{s} cannot be used with esm due to strict mode", .{text}));
+                try p.log.addRangeError(p.source, r, try std.fmt.allocPrint(p.allocator, "{any} cannot be used with esm due to strict mode", .{text}));
             }
         }
 
@@ -9346,7 +9346,7 @@ fn NewParser_(
                                 js_lexer.rangeOfIdentifier(p.source, existing.loc),
                                 std.fmt.allocPrint(
                                     p.allocator,
-                                    "{s} was originally declared here",
+                                    "{any} was originally declared here",
                                     .{symbol.original_name},
                                 ) catch unreachable,
                             );
@@ -9356,7 +9356,7 @@ fn NewParser_(
                                 js_lexer.rangeOfIdentifier(p.source, loc),
                                 p.allocator,
                                 notes,
-                                "\"{s}\" has already been declared",
+                                "\"{any}\" has already been declared",
                                 .{symbol.original_name},
                             ) catch unreachable;
 
@@ -10291,7 +10291,7 @@ fn NewParser_(
                     .get => {
                         if (func.args.len > 0) {
                             const r = js_lexer.rangeOfIdentifier(p.source, func.args[0].binding.loc);
-                            p.log.addRangeErrorFmt(p.source, r, p.allocator, "Getter {s} must have zero arguments", .{p.keyNameForError(key)}) catch unreachable;
+                            p.log.addRangeErrorFmt(p.source, r, p.allocator, "Getter {any} must have zero arguments", .{p.keyNameForError(key)}) catch unreachable;
                         }
                     },
                     .set => {
@@ -10300,7 +10300,7 @@ fn NewParser_(
                             if (func.args.len > 1) {
                                 r = js_lexer.rangeOfIdentifier(p.source, func.args[1].binding.loc);
                             }
-                            p.log.addRangeErrorFmt(p.source, r, p.allocator, "Setter {s} must have exactly 1 argument (there are {d})", .{ p.keyNameForError(key), func.args.len }) catch unreachable;
+                            p.log.addRangeErrorFmt(p.source, r, p.allocator, "Setter {any} must have exactly 1 argument (there are {d})", .{ p.keyNameForError(key), func.args.len }) catch unreachable;
                         }
                     },
                     else => {},
@@ -10447,7 +10447,7 @@ fn NewParser_(
 
                     // Forbid decorators on class constructors
                     if (opts.ts_decorators.len > 0) {
-                        switch ((property.key orelse p.panic("Internal error: Expected property {s} to have a key.", .{property})).data) {
+                        switch ((property.key orelse p.panic("Internal error: Expected property {any} to have a key.", .{property})).data) {
                             .e_string => |str| {
                                 if (str.eqlComptime("constructor")) {
                                     p.log.addError(p.source, first_decorator_loc, "TypeScript does not allow decorators on class constructors") catch unreachable;
@@ -11377,7 +11377,7 @@ fn NewParser_(
 
                     if (strings.eqlComptime(clause.alias, "default")) {
                         var non_unique_name = record.path.name.nonUniqueNameString(p.allocator) catch unreachable;
-                        clause.original_name = std.fmt.allocPrint(p.allocator, "{s}_default", .{non_unique_name}) catch unreachable;
+                        clause.original_name = std.fmt.allocPrint(p.allocator, "{any}_default", .{non_unique_name}) catch unreachable;
                         record.contains_default_alias = true;
                     }
                     const name_ref = p.declareSymbol(.import, this.loc, clause.original_name) catch unreachable;
@@ -11403,13 +11403,13 @@ fn NewParser_(
             p.log.printForLogLevel(
                 panic_stream.writer(),
             ) catch unreachable;
-            Global.panic("{s}", .{panic_buffer[0..panic_stream.pos]});
+            Global.panic("{any}", .{panic_buffer[0..panic_stream.pos]});
         }
 
         pub fn parsePrefix(p: *P, level: Level, errors: ?*DeferredErrors, flags: Expr.EFlags) anyerror!Expr {
             const loc = p.lexer.loc();
             const l = @enumToInt(level);
-            // Output.print("Parse Prefix {s}:{s} @{s} ", .{ p.lexer.token, p.lexer.raw(), @tagName(level) });
+            // Output.print("Parse Prefix {any}:{any} @{any} ", .{ p.lexer.token, p.lexer.raw(), @tagName(level) });
 
             switch (p.lexer.token) {
                 .t_super => {
@@ -11663,7 +11663,7 @@ fn NewParser_(
                             const private = value.data.e_index.index.data.e_private_identifier;
                             const name = p.loadNameFromRef(private.ref);
                             const range = logger.Range{ .loc = value.loc, .len = @intCast(i32, name.len) };
-                            p.log.addRangeErrorFmt(p.source, range, p.allocator, "Deleting the private name \"{s}\" is forbidden", .{name}) catch unreachable;
+                            p.log.addRangeErrorFmt(p.source, range, p.allocator, "Deleting the private name \"{any}\" is forbidden", .{name}) catch unreachable;
                         }
                     }
 
@@ -12517,7 +12517,7 @@ fn NewParser_(
                         const end_tag = try JSXTag.parse(P, p);
 
                         if (!strings.eql(end_tag.name, tag.name)) {
-                            try p.log.addRangeErrorFmt(p.source, end_tag.range, p.allocator, "Expected closing tag </{s}> to match opening tag <{s}>", .{
+                            try p.log.addRangeErrorFmt(p.source, end_tag.range, p.allocator, "Expected closing tag </{any}> to match opening tag <{any}>", .{
                                 end_tag.name,
                                 tag.name,
                             });
@@ -12788,7 +12788,7 @@ fn NewParser_(
                                         }
                                     },
                                     else => {
-                                        Global.panic("Unexpected type in export default: {s}", .{s2});
+                                        Global.panic("Unexpected type in export default: {any}", .{s2});
                                     },
                                 }
                             },
@@ -12941,7 +12941,7 @@ fn NewParser_(
                 p.log.addError(p.source, expr.loc, "Invalid assignment target") catch unreachable;
             }
 
-            // Output.print("\nVisit: {s} - {d}\n", .{ @tagName(expr.data), expr.loc.start });
+            // Output.print("\nVisit: {any} - {d}\n", .{ @tagName(expr.data), expr.loc.start });
             switch (expr.data) {
                 .e_null, .e_super, .e_boolean, .e_big_int, .e_reg_exp, .e_undefined => {},
 
@@ -13014,7 +13014,7 @@ fn NewParser_(
                     // Handle assigning to a constant
                     // if (in.assign_target != .none and p.symbols.items[result.ref.innerIndex()].kind == .cconst) {
                     //     const r = js_lexer.rangeOfIdentifier(p.source, expr.loc);
-                    //     p.log.addRangeErrorFmt(p.source, r, p.allocator, "Cannot assign to {s} because it is a constant", .{name}) catch unreachable;
+                    //     p.log.addRangeErrorFmt(p.source, r, p.allocator, "Cannot assign to {any} because it is a constant", .{name}) catch unreachable;
                     // }
 
                     var original_name: ?string = null;
@@ -13709,7 +13709,7 @@ fn NewParser_(
                                     p.source,
                                     tag.loc,
                                     p.allocator,
-                                    "<{s} /> is a void element and must not have \"children\"",
+                                    "<{any} /> is a void element and must not have \"children\"",
                                     .{tag.data.e_string.slice(p.allocator)},
                                 ) catch {};
                             }
@@ -14114,7 +14114,7 @@ fn NewParser_(
                                 const kind: Symbol.Kind = p.symbols.items[result.ref.innerIndex()].kind;
                                 if (!Symbol.isKindPrivate(kind)) {
                                     const r = logger.Range{ .loc = e_.left.loc, .len = @intCast(i32, name.len) };
-                                    p.log.addRangeErrorFmt(p.source, r, p.allocator, "Private name \"{s}\" must be declared in an enclosing class", .{name}) catch unreachable;
+                                    p.log.addRangeErrorFmt(p.source, r, p.allocator, "Private name \"{any}\" must be declared in an enclosing class", .{name}) catch unreachable;
                                 }
 
                                 e_.right = p.visitExpr(e_.right);
@@ -14156,7 +14156,7 @@ fn NewParser_(
                                                 p.source,
                                                 js_lexer.rangeOfIdentifier(p.source, tag.loc),
                                                 p.allocator,
-                                                "Invalid JSX tag: \"{s}\"",
+                                                "Invalid JSX tag: \"{any}\"",
                                                 .{tag_string},
                                             ) catch unreachable;
                                             return expr;
@@ -14181,7 +14181,7 @@ fn NewParser_(
                                                 p.source,
                                                 js_lexer.rangeOfIdentifier(p.source, tag.loc),
                                                 p.allocator,
-                                                "Invalid JSX tag: \"{s}\"",
+                                                "Invalid JSX tag: \"{any}\"",
                                                 .{tag_string},
                                             ) catch unreachable;
                                             return expr;
@@ -14554,17 +14554,17 @@ fn NewParser_(
                             var r: logger.Range = undefined;
                             if (!Symbol.isKindPrivate(kind)) {
                                 r = logger.Range{ .loc = e_.index.loc, .len = @intCast(i32, name.len) };
-                                p.log.addRangeErrorFmt(p.source, r, p.allocator, "Private name \"{s}\" must be declared in an enclosing class", .{name}) catch unreachable;
+                                p.log.addRangeErrorFmt(p.source, r, p.allocator, "Private name \"{any}\" must be declared in an enclosing class", .{name}) catch unreachable;
                             } else {
                                 if (in.assign_target != .none and (kind == .private_method or kind == .private_static_method)) {
                                     r = logger.Range{ .loc = e_.index.loc, .len = @intCast(i32, name.len) };
-                                    p.log.addRangeWarningFmt(p.source, r, p.allocator, "Writing to read-only method \"{s}\" will throw", .{name}) catch unreachable;
+                                    p.log.addRangeWarningFmt(p.source, r, p.allocator, "Writing to read-only method \"{any}\" will throw", .{name}) catch unreachable;
                                 } else if (in.assign_target != .none and (kind == .private_get or kind == .private_static_get)) {
                                     r = logger.Range{ .loc = e_.index.loc, .len = @intCast(i32, name.len) };
-                                    p.log.addRangeWarningFmt(p.source, r, p.allocator, "Writing to getter-only property \"{s}\" will throw", .{name}) catch unreachable;
+                                    p.log.addRangeWarningFmt(p.source, r, p.allocator, "Writing to getter-only property \"{any}\" will throw", .{name}) catch unreachable;
                                 } else if (in.assign_target != .replace and (kind == .private_set or kind == .private_static_set)) {
                                     r = logger.Range{ .loc = e_.index.loc, .len = @intCast(i32, name.len) };
-                                    p.log.addRangeWarningFmt(p.source, r, p.allocator, "Reading from setter-only property \"{s}\" will throw", .{name}) catch unreachable;
+                                    p.log.addRangeWarningFmt(p.source, r, p.allocator, "Reading from setter-only property \"{any}\" will throw", .{name}) catch unreachable;
                                 }
                             }
 
@@ -14628,7 +14628,7 @@ fn NewParser_(
                             p.source,
                             r,
                             p.allocator,
-                            "Cannot assign to property on import \"{s}\"",
+                            "Cannot assign to property on import \"{any}\"",
                             .{p.symbols.items[e_.target.data.e_identifier.ref.innerIndex()].original_name},
                         ) catch unreachable;
                     }
@@ -15158,7 +15158,7 @@ fn NewParser_(
                                         p.log.addError(p.source, expr.loc, "macro threw exception") catch unreachable;
                                     }
                                 } else {
-                                    p.log.addErrorFmt(p.source, expr.loc, p.allocator, "{s} error in macro", .{@errorName(err)}) catch unreachable;
+                                    p.log.addErrorFmt(p.source, expr.loc, p.allocator, "{any} error in macro", .{@errorName(err)}) catch unreachable;
                                 }
                                 return expr;
                             };
@@ -16001,7 +16001,7 @@ fn NewParser_(
                                 // non-local symbols as errors in JavaScript.
                                 if (!is_typescript_enabled) {
                                     const r = js_lexer.rangeOfIdentifier(p.source, item.name.loc);
-                                    try p.log.addRangeErrorFmt(p.source, r, p.allocator, "\"{s}\" is not declared in this file", .{name});
+                                    try p.log.addRangeErrorFmt(p.source, r, p.allocator, "\"{any}\" is not declared in this file", .{name});
                                 }
                                 continue;
                             }
@@ -16022,7 +16022,7 @@ fn NewParser_(
                                 // non-local symbols as errors in JavaScript.
                                 if (!is_typescript_enabled) {
                                     const r = js_lexer.rangeOfIdentifier(p.source, item.name.loc);
-                                    try p.log.addRangeErrorFmt(p.source, r, p.allocator, "\"{s}\" is not declared in this file", .{name});
+                                    try p.log.addRangeErrorFmt(p.source, r, p.allocator, "\"{any}\" is not declared in this file", .{name});
                                     continue;
                                 }
                                 continue;
@@ -16364,7 +16364,7 @@ fn NewParser_(
                         label.ref = res.ref;
                         if (res.found and !res.is_loop) {
                             const r = js_lexer.rangeOfIdentifier(p.source, stmt.loc);
-                            p.log.addRangeErrorFmt(p.source, r, p.allocator, "Cannot \"continue\" to label {s}", .{name}) catch unreachable;
+                            p.log.addRangeErrorFmt(p.source, r, p.allocator, "Cannot \"continue\" to label {any}", .{name}) catch unreachable;
                         }
                     } else if (!p.fn_or_arrow_data_visit.is_inside_loop) {
                         const r = js_lexer.rangeOfIdentifier(p.source, stmt.loc);
@@ -17242,7 +17242,7 @@ fn NewParser_(
                     }
                 },
                 else => {
-                    Global.panic("Unexpected binding type in namespace. This is a bug. {s}", .{binding});
+                    Global.panic("Unexpected binding type in namespace. This is a bug. {any}", .{binding});
                 },
             }
         }
@@ -17632,7 +17632,7 @@ fn NewParser_(
                     // s.Kind = p.selectLocalKind(s.Kind)
                 },
                 else => {
-                    p.panic("Unexpected stmt in visitForLoopInit: {s}", .{stmt});
+                    p.panic("Unexpected stmt in visitForLoopInit: {any}", .{stmt});
                 },
             }
 
@@ -17783,7 +17783,7 @@ fn NewParser_(
                                 p.source,
                                 js_lexer.rangeOfIdentifier(p.source, binding.loc),
                                 p.allocator,
-                                "\"{s}\" cannot be bound multiple times in the same parameter list",
+                                "\"{any}\" cannot be bound multiple times in the same parameter list",
                                 .{name},
                             ) catch unreachable;
                         }
@@ -17834,7 +17834,7 @@ fn NewParser_(
                     }
                 },
                 else => {
-                    p.panic("Unexpected binding {s}", .{binding});
+                    p.panic("Unexpected binding {any}", .{binding});
                 },
             }
         }
@@ -17903,7 +17903,7 @@ fn NewParser_(
             }
 
             const r = js_lexer.rangeOfIdentifier(p.source, loc);
-            p.log.addRangeErrorFmt(p.source, r, p.allocator, "There is no containing label named \"{s}\"", .{name}) catch unreachable;
+            p.log.addRangeErrorFmt(p.source, r, p.allocator, "There is no containing label named \"{any}\"", .{name}) catch unreachable;
 
             // Allocate an "unbound" symbol
             var ref = p.newSymbol(.unbound, name) catch unreachable;

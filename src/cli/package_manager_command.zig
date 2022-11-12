@@ -27,7 +27,7 @@ pub const PackageManagerCommand = struct {
 
         if (load_lockfile == .err) {
             if (pm.options.log_level != .silent)
-                Output.prettyError("Error loading lockfile: {s}", .{@errorName(load_lockfile.err.value)});
+                Output.prettyError("Error loading lockfile: {any}", .{@errorName(load_lockfile.err.value)});
             Global.exit(1);
         }
 
@@ -59,7 +59,7 @@ pub const PackageManagerCommand = struct {
 
         if (strings.eqlComptime(first, "bin")) {
             var output_path = Path.joinAbs(Fs.FileSystem.instance.top_level_dir, .auto, std.mem.span(pm.options.bin_path));
-            Output.prettyln("{s}", .{output_path});
+            Output.prettyln("{any}", .{output_path});
             if (Output.stdout_descriptor_type == .terminal) {
                 Output.prettyln("\n", .{});
             }
@@ -93,7 +93,7 @@ pub const PackageManagerCommand = struct {
 
             if (load_lockfile == .err) {
                 if (pm.options.log_level != .silent)
-                    Output.prettyError("Error loading lockfile: {s}", .{@errorName(load_lockfile.err.value)});
+                    Output.prettyError("Error loading lockfile: {any}", .{@errorName(load_lockfile.err.value)});
                 Global.exit(1);
             }
 
@@ -114,7 +114,7 @@ pub const PackageManagerCommand = struct {
 
             if (load_lockfile == .err) {
                 if (pm.options.log_level != .silent)
-                    Output.prettyError("Error loading lockfile: {s}", .{@errorName(load_lockfile.err.value)});
+                    Output.prettyError("Error loading lockfile: {any}", .{@errorName(load_lockfile.err.value)});
                 Global.exit(1);
             }
 
@@ -133,7 +133,7 @@ pub const PackageManagerCommand = struct {
 
             if (load_lockfile == .err) {
                 if (pm.options.log_level != .silent)
-                    Output.prettyError("Error loading lockfile: {s}", .{@errorName(load_lockfile.err.value)});
+                    Output.prettyError("Error loading lockfile: {any}", .{@errorName(load_lockfile.err.value)});
                 Global.exit(1);
             }
 
@@ -143,16 +143,16 @@ pub const PackageManagerCommand = struct {
             var dir: [bun.MAX_PATH_BYTES]u8 = undefined;
             var fd = pm.getCacheDirectory();
             var outpath = std.os.getFdPath(fd.fd, &dir) catch |err| {
-                Output.prettyErrorln("{s} getting cache directory", .{@errorName(err)});
+                Output.prettyErrorln("{any} getting cache directory", .{@errorName(err)});
                 Global.crash();
             };
 
             if (pm.options.positionals.len > 0 and strings.eqlComptime(pm.options.positionals[0], "rm")) {
                 std.fs.deleteTreeAbsolute(outpath) catch |err| {
-                    Output.prettyErrorln("{s} deleting cache directory", .{@errorName(err)});
+                    Output.prettyErrorln("{any} deleting cache directory", .{@errorName(err)});
                     Global.crash();
                 };
-                Output.prettyln("Cache directory deleted:\n  {s}", .{outpath});
+                Output.prettyln("Cache directory deleted:\n  {any}", .{outpath});
                 Global.exit(0);
             }
             Output.writer().writeAll(outpath) catch {};
@@ -161,7 +161,7 @@ pub const PackageManagerCommand = struct {
 
         Output.prettyln(
             \\bun pm - package manager related commands
-            \\   
+            \\
             \\  bun pm <b>bin<r>          print the path to bin folder
             \\  bun pm <b>-g bin<r>       print the <b>global<r> path to bin folder
             \\  bun pm <b>hash<r>         generate & print the hash of the current lockfile
@@ -173,7 +173,7 @@ pub const PackageManagerCommand = struct {
         , .{});
 
         if (first.len > 0) {
-            Output.prettyErrorln("\n<red>error<r>: \"{s}\" unknown command\n", .{first});
+            Output.prettyErrorln("\n<red>error<r>: \"{any}\" unknown command\n", .{first});
             Output.flush();
 
             Global.exit(1);

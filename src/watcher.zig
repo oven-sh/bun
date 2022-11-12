@@ -350,7 +350,7 @@ pub fn NewWatcher(comptime ContextType: type) type {
             if (FeatureFlags.verbose_watcher) Output.prettyln("Watcher started", .{});
 
             this._watchLoop() catch |err| {
-                Output.prettyErrorln("<r>Watcher crashed: <red><b>{s}<r>", .{@errorName(err)});
+                Output.prettyErrorln("<r>Watcher crashed: <red><b>{any}<r>", .{@errorName(err)});
 
                 this.watchloop_handle = null;
                 PlatformWatcher.stop();
@@ -796,9 +796,9 @@ pub fn NewWatcher(comptime ContextType: type) type {
 
             if (comptime FeatureFlags.verbose_watcher) {
                 if (strings.indexOf(file_path, this.cwd)) |i| {
-                    Output.prettyln("<r><d>Added <b>./{s}<r><d> to watch list.<r>", .{file_path[i + this.cwd.len ..]});
+                    Output.prettyln("<r><d>Added <b>./{any}<r><d> to watch list.<r>", .{file_path[i + this.cwd.len ..]});
                 } else {
-                    Output.prettyln("<r><d>Added <b>{s}<r><d> to watch list.<r>", .{file_path});
+                    Output.prettyln("<r><d>Added <b>{any}<r><d> to watch list.<r>", .{file_path});
                 }
             }
         }

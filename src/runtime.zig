@@ -284,7 +284,7 @@ pub const Runtime = struct {
         return version_hash;
     }
 
-    const bytecodeCacheFilename = std.fmt.comptimePrint("__runtime.{s}", .{version_hash});
+    const bytecodeCacheFilename = std.fmt.comptimePrint("__runtime.{any}", .{version_hash});
     var bytecodeCacheFetcher = Fs.BytecodeCacheFetcher{};
 
     pub fn byteCodeCacheFile(fs: *Fs.FileSystem.RealFS) ?bun.StoredFileDescriptorType {

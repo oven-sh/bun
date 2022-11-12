@@ -29,7 +29,7 @@ pub const CrashReportWriter = struct {
     pub fn printFrame(_: ?*anyopaque, frame: CrashReporter.StackFrame) void {
         const function_name = if (frame.function_name.len > 0) frame.function_name else "[function ?]";
         const filename = if (frame.filename.len > 0) frame.function_name else "[file ?]";
-        crash_report_writer.print("[0x{X}] - <b>{s}<r> {s}:{d}\n", .{ frame.pc, function_name, filename, frame.line_number });
+        crash_report_writer.print("[0x{X}] - <b>{any}<r> {any}:{d}\n", .{ frame.pc, function_name, filename, frame.line_number });
     }
 
     pub fn dump() void {
@@ -68,7 +68,7 @@ pub const CrashReportWriter = struct {
         }
         const file_path = std.fmt.bufPrintZ(
             &crash_reporter_path,
-            "{s}/.bun-crash/v{s}-{d}.crash",
+            "{any}/.bun-crash/v{any}-{d}.crash",
             .{ base_dir, Global.package_json_version, @intCast(u64, @max(std.time.milliTimestamp(), 0)) },
         ) catch return;
 
@@ -93,9 +93,9 @@ pub const CrashReportWriter = struct {
             }
 
             if (tilda) {
-                Output.prettyError("\nCrash report saved to:\n  <b>~{s}<r>\n", .{display_path});
+                Output.prettyError("\nCrash report saved to:\n  <b>~{any}<r>\n", .{display_path});
             } else {
-                Output.prettyError("\nCrash report saved to:\n  <b>{s}<r>\n", .{display_path});
+                Output.prettyError("\nCrash report saved to:\n  <b>{any}<r>\n", .{display_path});
             }
         }
     }
@@ -118,8 +118,8 @@ pub fn printMetadata() void {
     crash_report_writer.print(
         \\
         \\<r>----- bun meta -----
-    ++ "\nBun v" ++ Global.package_json_version_with_sha ++ " " ++ platform ++ " " ++ arch ++ " {s}\n" ++
-        \\{s}: {}
+    ++ "\nBun v" ++ Global.package_json_version_with_sha ++ " " ++ platform ++ " " ++ arch ++ " {any}\n" ++
+        \\{any}: {}
         \\
     , .{
         analytics_platform.version,
@@ -178,12 +178,12 @@ pub fn fatal(err_: ?anyerror, msg_: ?string) void {
         if (err_) |err| {
             if (Output.isEmojiEnabled()) {
                 crash_report_writer.print(
-                    "\n<r><red>error<r><d>:<r> <b>{s}<r>\n",
+                    "\n<r><red>error<r><d>:<r> <b>{any}<r>\n",
                     .{@errorName(err)},
                 );
             } else {
                 crash_report_writer.print(
-                    "\n<r>error: {s}\n\n",
+                    "\n<r>error: {any}\n\n",
                     .{@errorName(err)},
                 );
             }
@@ -197,12 +197,12 @@ pub fn fatal(err_: ?anyerror, msg_: ?string) void {
                 if (len > 0) {
                     if (Output.isEmojiEnabled()) {
                         crash_report_writer.print(
-                            "\n<r><red>uh-oh<r><d>:<r> <b>{s}<r>\n",
+                            "\n<r><red>uh-oh<r><d>:<r> <b>{any}<r>\n",
                             .{msg[0..len]},
                         );
                     } else {
                         crash_report_writer.print(
-                            "\n<r>an uh-oh: {s}\n\n",
+                            "\n<r>an uh-oh: {any}\n\n",
                             .{msg[0..len]},
                         );
                     }
@@ -250,7 +250,7 @@ var globalError_ranOnce = false;
 
 export fn Bun__crashReportWrite(ctx: *CrashReportWriter, bytes_ptr: [*]const u8, len: usize) void {
     if (len > 0)
-        ctx.print("{s}\n", .{bytes_ptr[0..len]});
+        ctx.print("{any}\n", .{bytes_ptr[0..len]});
 }
 
 extern "C" fn Bun__crashReportDumpStackTrace(ctx: *anyopaque) void;
@@ -270,7 +270,7 @@ pub noinline fn handleCrash(signal: i32, addr: usize) void {
     };
 
     crash_report_writer.print(
-        "\n<r><red>{s}<d> at 0x{any}\n\n",
+        "\n<r><red>{any}<d> at 0x{any}\n\n",
         .{ @errorName(name), std.fmt.fmtSliceHexUpper(std.mem.asBytes(&addr)) },
     );
     printMetadata();
@@ -385,8 +385,8 @@ pub noinline fn globalError(err: anyerror) noreturn {
                             \\
                             \\If that still doesn't work, you may need to add these lines to /etc/security/limits.conf:
                             \\
-                            \\ <cyan>{s} soft nofile 2147483646<r>
-                            \\ <cyan>{s} hard nofile 2147483646<r>
+                            \\ <cyan>{any} soft nofile 2147483646<r>
+                            \\ <cyan>{any} hard nofile 2147483646<r>
                             \\
                         ,
                             .{ user, user },
@@ -450,8 +450,8 @@ pub noinline fn globalError(err: anyerror) noreturn {
                             \\
                             \\If that still doesn't work, you may need to add these lines to /etc/security/limits.conf:
                             \\
-                            \\ <cyan>{s} soft nofile 2147483646<r>
-                            \\ <cyan>{s} hard nofile 2147483646<r>
+                            \\ <cyan>{any} soft nofile 2147483646<r>
+                            \\ <cyan>{any} hard nofile 2147483646<r>
                             \\
                         ,
                             .{ user, user },
@@ -490,8 +490,8 @@ pub noinline fn globalError(err: anyerror) noreturn {
                                 \\
                                 \\If that still doesn't work, you may need to add these lines to /etc/security/limits.conf:
                                 \\
-                                \\ <cyan>{s} soft nofile 2147483646<r>
-                                \\ <cyan>{s} hard nofile 2147483646<r>
+                                \\ <cyan>{any} soft nofile 2147483646<r>
+                                \\ <cyan>{any} hard nofile 2147483646<r>
                                 \\
                             ,
                                 .{

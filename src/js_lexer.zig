@@ -196,7 +196,7 @@ fn NewLexer_(
         pub fn addDefaultError(self: *LexerType, msg: []const u8) !void {
             @setCold(true);
 
-            self.addError(self.start, "{s}", .{msg}, true);
+            self.addError(self.start, "{any}", .{msg}, true);
             return Error.SyntaxError;
         }
 
@@ -816,7 +816,7 @@ fn NewLexer_(
         }
 
         pub fn addUnsupportedSyntaxError(self: *LexerType, msg: []const u8) !void {
-            self.addError(self.end, "Unsupported syntax: {s}", .{msg}, true);
+            self.addError(self.end, "Unsupported syntax: {any}", .{msg}, true);
             return Error.SyntaxError;
         }
 
@@ -936,7 +936,7 @@ fn NewLexer_(
             if (!isIdentifier(identifier)) {
                 try lexer.addRangeError(
                     .{ .loc = logger.usize2Loc(lexer.start), .len = @intCast(i32, lexer.end - lexer.start) },
-                    "Invalid identifier: \"{s}\"",
+                    "Invalid identifier: \"{any}\"",
                     .{result.contents},
                     true,
                 );
@@ -965,13 +965,13 @@ fn NewLexer_(
         pub fn expectContextualKeyword(self: *LexerType, comptime keyword: string) !void {
             if (!self.isContextualKeyword(keyword)) {
                 if (@import("builtin").mode == std.builtin.Mode.Debug) {
-                    self.addError(self.start, "Expected \"{s}\" but found \"{s}\" (token: {s})", .{
+                    self.addError(self.start, "Expected \"{any}\" but found \"{any}\" (token: {any})", .{
                         keyword,
                         self.raw(),
                         self.token,
                     }, true);
                 } else {
-                    self.addError(self.start, "Expected \"{s}\" but found \"{s}\"", .{ keyword, self.raw() }, true);
+                    self.addError(self.start, "Expected \"{any}\" but found \"{any}\"", .{ keyword, self.raw() }, true);
                 }
                 return Error.UnexpectedSyntax;
             }
@@ -1743,7 +1743,7 @@ fn NewLexer_(
                 }
             };
 
-            try lexer.addRangeError(lexer.range(), "Unexpected {s}", .{found}, true);
+            try lexer.addRangeError(lexer.range(), "Unexpected {any}", .{found}, true);
         }
 
         pub fn raw(self: *LexerType) []const u8 {
@@ -1763,7 +1763,7 @@ fn NewLexer_(
                 }
             };
 
-            try self.addRangeError(self.range(), "Expected {s} but found \"{s}\"", .{ text, found }, true);
+            try self.addRangeError(self.range(), "Expected {any} but found \"{any}\"", .{ text, found }, true);
         }
 
         fn scanCommentText(lexer: *LexerType) void {
@@ -2090,7 +2090,7 @@ fn NewLexer_(
                                         lexer.step();
                                     }
                                 } else {
-                                    try lexer.addSyntaxError(lexer.range().endI(), "Expected identifier after \"{s}\" in namespaced JSX name", .{lexer.raw()});
+                                    try lexer.addSyntaxError(lexer.range().endI(), "Expected identifier after \"{any}\" in namespaced JSX name", .{lexer.raw()});
                                 }
                             }
 
@@ -2329,10 +2329,10 @@ fn NewLexer_(
                     cursor.c = std.fmt.parseInt(i32, number, base) catch |err| brk: {
                         switch (err) {
                             error.InvalidCharacter => {
-                                lexer.addError(lexer.start, "Invalid JSX entity escape: {s}", .{entity}, false);
+                                lexer.addError(lexer.start, "Invalid JSX entity escape: {any}", .{entity}, false);
                             },
                             error.Overflow => {
-                                lexer.addError(lexer.start, "JSX entity escape is too big: {s}", .{entity}, false);
+                                lexer.addError(lexer.start, "JSX entity escape is too big: {any}", .{entity}, false);
                             },
                         }
 
@@ -2630,7 +2630,7 @@ fn NewLexer_(
                         if (std.fmt.parseFloat(f64, text)) |num| {
                             lexer.number = num;
                         } else |_| {
-                            try lexer.addSyntaxError(lexer.start, "Invalid number {s}", .{text});
+                            try lexer.addSyntaxError(lexer.start, "Invalid number {any}", .{text});
                         }
                     }
                 }

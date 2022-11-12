@@ -409,13 +409,13 @@ pub const Bundler = struct {
             };
 
             if (has_dot_slash_form) {
-                bundler.log.addErrorFmt(null, logger.Loc.Empty, bundler.allocator, "{s} resolving \"{s}\". Did you mean: \"./{s}\"", .{
+                bundler.log.addErrorFmt(null, logger.Loc.Empty, bundler.allocator, "{any} resolving \"{any}\". Did you mean: \"./{any}\"", .{
                     @errorName(err),
                     entry_point,
                     entry_point,
                 }) catch unreachable;
             } else {
-                bundler.log.addErrorFmt(null, logger.Loc.Empty, bundler.allocator, "{s} resolving \"{s}\" (entry point)", .{ @errorName(err), entry_point }) catch unreachable;
+                bundler.log.addErrorFmt(null, logger.Loc.Empty, bundler.allocator, "{any} resolving \"{any}\" (entry point)", .{ @errorName(err), entry_point }) catch unreachable;
             }
 
             return err;
@@ -1372,7 +1372,7 @@ pub const Bundler = struct {
                 true,
                 file_descriptor,
             ) catch |err| {
-                bundler.log.addErrorFmt(null, logger.Loc.Empty, bundler.allocator, "{s} reading \"{s}\"", .{ @errorName(err), path.text }) catch {};
+                bundler.log.addErrorFmt(null, logger.Loc.Empty, bundler.allocator, "{any} reading \"{any}\"", .{ @errorName(err), path.text }) catch {};
                 return null;
             };
             input_fd = entry.fd;
@@ -1511,7 +1511,7 @@ pub const Bundler = struct {
                             null,
                             logger.Loc.Empty,
                             bundler.allocator,
-                            "Invalid wasm file \"{s}\" (missing magic header)",
+                            "Invalid wasm file \"{any}\" (missing magic header)",
                             .{path.text},
                         ) catch {};
                         return null;
@@ -1526,7 +1526,7 @@ pub const Bundler = struct {
                 }
             },
             .css => {},
-            else => Global.panic("Unsupported loader {s} for path: {s}", .{ loader, source.path.text }),
+            else => Global.panic("Unsupported loader {any} for path: {any}", .{ loader, source.path.text }),
         }
 
         return null;
@@ -1680,12 +1680,12 @@ pub const Bundler = struct {
             }
 
             const result = bundler.resolver.resolve(bundler.fs.top_level_dir, entry, .entry_point) catch |err| {
-                Output.prettyError("Error resolving \"{s}\": {s}\n", .{ entry, @errorName(err) });
+                Output.prettyError("Error resolving \"{any}\": {any}\n", .{ entry, @errorName(err) });
                 continue;
             };
 
             if (result.pathConst() == null) {
-                Output.prettyError("\"{s}\" is disabled due to \"browser\" field in package.json.\n", .{
+                Output.prettyError("\"{any}\" is disabled due to \"browser\" field in package.json.\n", .{
                     entry,
                 });
                 continue;

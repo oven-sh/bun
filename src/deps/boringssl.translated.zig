@@ -18836,7 +18836,7 @@ pub const SSL = opaque {
             SSL_ERROR_SSL => {
                 if (comptime Environment.isDebug) {
                     const errdescription = std.mem.span(SSL_error_description(SSL_ERROR_SSL).?);
-                    Output.prettyError("SSL_ERROR: {s}", .{errdescription});
+                    Output.prettyError("SSL_ERROR: {any}", .{errdescription});
                 }
                 return error.SSL;
             },

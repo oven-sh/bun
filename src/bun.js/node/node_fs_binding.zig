@@ -77,10 +77,10 @@ fn call(comptime Function: NodeFSFunctionEnum) NodeFSFunction {
 
     // const function: std.builtin.Type.Fn = comptime @typeInfo(FunctionType).Fn;
     // comptime if (function.args.len != 3) @compileError("Expected 3 arguments");
-    // const Arguments = comptime function.args[2].arg_type orelse @compileError(std.fmt.comptimePrint("Function {s} expected to have an arg type at [2]", .{@typeName(FunctionType)}));
+    // const Arguments = comptime function.args[2].arg_type orelse @compileError(std.fmt.comptimePrint("Function {any} expected to have an arg type at [2]", .{@typeName(FunctionType)}));
     // const Result = comptime function.return_type.?;
-    // comptime if (Arguments != void and !fromJSTrait(Arguments)) @compileError(std.fmt.comptimePrint("{s} is missing fromJS()", .{@typeName(Arguments)}));
-    // comptime if (Result != void and !toJSTrait(Result)) @compileError(std.fmt.comptimePrint("{s} is missing toJS()", .{@typeName(Result)}));
+    // comptime if (Arguments != void and !fromJSTrait(Arguments)) @compileError(std.fmt.comptimePrint("{any} is missing fromJS()", .{@typeName(Arguments)}));
+    // comptime if (Result != void and !toJSTrait(Result)) @compileError(std.fmt.comptimePrint("{any} is missing toJS()", .{@typeName(Result)}));
     const NodeBindingClosure = struct {
         pub fn bind(
             this: *JSC.Node.NodeFS,

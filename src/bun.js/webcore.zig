@@ -275,7 +275,7 @@ pub const Prompt = struct {
             const default_string = arguments[1].?.value().toSlice(ctx.ptr(), allocator);
             defer default_string.deinit();
 
-            output.print("[{s}] ", .{default_string.slice()}) catch {
+            output.print("[{any}] ", .{default_string.slice()}) catch {
                 // 1. If we cannot show simple dialogs for this, then return false.
                 return JSC.JSValue.jsBoolean(false).asObjectRef();
             };
@@ -390,7 +390,7 @@ pub const Crypto = struct {
         }
 
         var array_buffer = arguments[0].asArrayBuffer(globalThis) orelse {
-            globalThis.throwInvalidArguments("Expected typed array but got {s}", .{@tagName(arguments[0].jsType())});
+            globalThis.throwInvalidArguments("Expected typed array but got {any}", .{@tagName(arguments[0].jsType())});
             return JSC.JSValue.jsUndefined();
         };
         var slice = array_buffer.byteSlice();

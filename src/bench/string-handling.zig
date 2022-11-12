@@ -21,9 +21,9 @@ pub fn main() anyerror!void {
         }
 
         if (index == std.math.maxInt(usize)) {
-            std.debug.print("manual        [{d} byte file] {s} NOT found in {}\n", .{ contents.len, find, std.fmt.fmtDuration(timer.read()) });
+            std.debug.print("manual        [{d} byte file] {any} NOT found in {}\n", .{ contents.len, find, std.fmt.fmtDuration(timer.read()) });
         } else {
-            std.debug.print("manual        [{d} byte file] {s} found at {d} in {}\n", .{ contents.len, find, index, std.fmt.fmtDuration(timer.read()) });
+            std.debug.print("manual        [{d} byte file] {any} found at {d} in {}\n", .{ contents.len, find, index, std.fmt.fmtDuration(timer.read()) });
         }
     }
 
@@ -38,9 +38,9 @@ pub fn main() anyerror!void {
         }
 
         if (index == std.math.maxInt(usize)) {
-            std.debug.print("memcpy      [{d} byte file] {s} NOT found in {}\n", .{ contents.len, find, std.fmt.fmtDuration(timer.read()) });
+            std.debug.print("memcpy      [{d} byte file] {any} NOT found in {}\n", .{ contents.len, find, std.fmt.fmtDuration(timer.read()) });
         } else {
-            std.debug.print("memcpy      [{d} byte file] {s} found at {d} in {}\n", .{ contents.len, find, index, std.fmt.fmtDuration(timer.read()) });
+            std.debug.print("memcpy      [{d} byte file] {any} found at {d} in {}\n", .{ contents.len, find, index, std.fmt.fmtDuration(timer.read()) });
         }
     }
 
@@ -56,9 +56,9 @@ pub fn main() anyerror!void {
         }
 
         if (index == std.math.maxInt(usize)) {
-            std.debug.print("ArrayList  [{d} byte file] {s} NOT found in {}\n", .{ contents.len, find, std.fmt.fmtDuration(timer.read()) });
+            std.debug.print("ArrayList  [{d} byte file] {any} NOT found in {}\n", .{ contents.len, find, std.fmt.fmtDuration(timer.read()) });
         } else {
-            std.debug.print("ArrayList  [{d} byte file] {s} found at {d} in {}\n", .{ contents.len, find, index, std.fmt.fmtDuration(timer.read()) });
+            std.debug.print("ArrayList  [{d} byte file] {any} found at {d} in {}\n", .{ contents.len, find, index, std.fmt.fmtDuration(timer.read()) });
         }
     }
 }

@@ -93,14 +93,14 @@ pub const InstallCompletionsCommand = struct {
                         }
 
                         if (!std.fs.path.isAbsolute(completions_dir)) {
-                            Output.prettyErrorln("<r><red>error:<r> Please pass an absolute path. {s} is invalid", .{completions_dir});
+                            Output.prettyErrorln("<r><red>error:<r> Please pass an absolute path. {any} is invalid", .{completions_dir});
                             Global.exit(fail_exit_code);
                         }
 
                         break :found std.fs.openDirAbsolute(completions_dir, .{
                             .iterate = true,
                         }) catch |err| {
-                            Output.prettyErrorln("<r><red>error:<r> accessing {s} errored {s}", .{ completions_dir, @errorName(err) });
+                            Output.prettyErrorln("<r><red>error:<r> accessing {any} errored {any}", .{ completions_dir, @errorName(err) });
                             Global.exit(fail_exit_code);
                         };
                     }
@@ -305,7 +305,7 @@ pub const InstallCompletionsCommand = struct {
         var output_file = output_dir.createFileZ(filename, .{
             .truncate = true,
         }) catch |err| {
-            Output.prettyErrorln("<r><red>error:<r> Could not open {s} for writing: {s}", .{
+            Output.prettyErrorln("<r><red>error:<r> Could not open {any} for writing: {any}", .{
                 filename,
                 @errorName(err),
             });
@@ -313,7 +313,7 @@ pub const InstallCompletionsCommand = struct {
         };
 
         output_file.writeAll(shell.completions()) catch |err| {
-            Output.prettyErrorln("<r><red>error:<r> Could not write to {s}: {s}", .{
+            Output.prettyErrorln("<r><red>error:<r> Could not write to {any}: {any}", .{
                 filename,
                 @errorName(err),
             });
@@ -394,7 +394,7 @@ pub const InstallCompletionsCommand = struct {
 
                 // We need to add it to the end of the file
                 var remaining = buf[read..];
-                var extra = std.fmt.bufPrint(remaining, "\n# bun completions\n[ -s \"{s}\" ] && source \"{s}\"\n", .{
+                var extra = std.fmt.bufPrint(remaining, "\n# bun completions\n[ -s \"{any}\" ] && source \"{any}\"\n", .{
                     completions_path,
                     completions_path,
                 }) catch unreachable;
@@ -406,14 +406,14 @@ pub const InstallCompletionsCommand = struct {
             };
 
             if (needs_to_tell_them_to_add_completions_file) {
-                Output.prettyErrorln("<r>To enable completions, add this to your .zshrc:\n      <b>[ -s \"{s}\" ] && source \"{s}\"", .{
+                Output.prettyErrorln("<r>To enable completions, add this to your .zshrc:\n      <b>[ -s \"{any}\" ] && source \"{any}\"", .{
                     completions_path,
                     completions_path,
                 });
             }
         }
 
-        Output.prettyErrorln("<r><d>Installed completions to {s}/{s}<r>\n", .{
+        Output.prettyErrorln("<r><d>Installed completions to {any}/{any}<r>\n", .{
             completions_dir,
             filename,
         });

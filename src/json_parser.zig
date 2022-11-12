@@ -271,7 +271,7 @@ fn JSONLikeParser_(
 
                             // Warn about duplicate keys
                             if (duplicate_get_or_put.found_existing) {
-                                p.log.addRangeWarningFmt(p.source(), key_range, p.allocator, "Duplicate key \"{s}\" in object literal", .{p.lexer.string_literal_slice}) catch unreachable;
+                                p.log.addRangeWarningFmt(p.source(), key_range, p.allocator, "Duplicate key \"{any}\" in object literal", .{p.lexer.string_literal_slice}) catch unreachable;
                             }
                         }
 
@@ -303,7 +303,7 @@ fn JSONLikeParser_(
 
                     try p.lexer.unexpected();
                     if (comptime Environment.isDebug) {
-                        std.io.getStdErr().writer().print("\nThis range: {d} - {d} \n{s}", .{
+                        std.io.getStdErr().writer().print("\nThis range: {any} - {any} \n{any}", .{
                             p.lexer.range().loc.start,
                             p.lexer.range().end(),
                             p.lexer.range().in(p.lexer.source.contents),
@@ -668,7 +668,7 @@ pub fn toAST(
                 @compileError("Unable to stringify untagged union '" ++ @typeName(T) ++ "'");
             }
         },
-        else => @compileError(std.fmt.comptimePrint("Unsupported type: {s} - {s}", .{ @tagName(type_info), @typeName(Type) })),
+        else => @compileError(std.fmt.comptimePrint("Unsupported type: {any} - {any}", .{ @tagName(type_info), @typeName(Type) })),
     }
 }
 
@@ -931,7 +931,7 @@ fn expectPrintedJSON(_contents: string, expected: string) !void {
     const expr = try ParseJSON(&source, &log, default_allocator);
 
     if (log.msgs.items.len > 0) {
-        Global.panic("--FAIL--\nExpr {s}\nLog: {s}\n--FAIL--", .{ expr, log.msgs.items[0].data.text });
+        Global.panic("--FAIL--\nExpr {any}\nLog: {any}\n--FAIL--", .{ expr, log.msgs.items[0].data.text });
     }
 
     var buffer_writer = try js_printer.BufferWriter.init(default_allocator);

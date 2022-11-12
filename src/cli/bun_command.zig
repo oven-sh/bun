@@ -57,7 +57,7 @@ const ServerBundleGeneratorThread = struct {
 
         server_bundler.router = router;
         server_bundler.configureDefines() catch |err| {
-            Output.prettyErrorln("<r><red>{s}<r> loading --define or .env values for node_modules.server.bun\n", .{@errorName(err)});
+            Output.prettyErrorln("<r><red>{any}<r> loading --define or .env values for node_modules.server.bun\n", .{@errorName(err)});
             return err;
         };
 
@@ -225,9 +225,9 @@ pub const BunCommand = struct {
                     Output.prettyln(indent ++ "<d>{d:6}ms elapsed", .{@intCast(u32, elapsed)});
 
                     if (generated_server) {
-                        Output.prettyln(indent ++ "<r>Saved to ./{s}, ./{s}", .{ filepath, server_bundle_filepath });
+                        Output.prettyln(indent ++ "<r>Saved to ./{any}, ./{any}", .{ filepath, server_bundle_filepath });
                     } else {
-                        Output.prettyln(indent ++ "<r>Saved to ./{s}", .{filepath});
+                        Output.prettyln(indent ++ "<r>Saved to ./{any}", .{filepath});
                     }
 
                     Output.flush();

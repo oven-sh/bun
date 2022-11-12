@@ -16,9 +16,9 @@ else
 pub const package_json_version_with_sha = if (Environment.git_sha.len == 0)
     package_json_version
 else if (Environment.isDebug)
-    std.fmt.comptimePrint(BASE_VERSION ++ ".{d}_debug ({s})", .{ build_id, Environment.git_sha[0..@min(Environment.git_sha.len, 8)] })
+    std.fmt.comptimePrint(BASE_VERSION ++ ".{d}_debug ({any})", .{ build_id, Environment.git_sha[0..@min(Environment.git_sha.len, 8)] })
 else
-    std.fmt.comptimePrint(BASE_VERSION ++ ".{d} ({s})", .{ build_id, Environment.git_sha[0..@min(Environment.git_sha.len, 8)] });
+    std.fmt.comptimePrint(BASE_VERSION ++ ".{d} ({any})", .{ build_id, Environment.git_sha[0..@min(Environment.git_sha.len, 8)] });
 
 pub const os_name = if (Environment.isWindows)
     "win32"

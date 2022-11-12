@@ -128,7 +128,7 @@ fn NewHTTPContext(comptime ssl: bool) type {
                     pending.hostname_len = @truncate(u8, hostname.len);
                     pending.port = port;
 
-                    log("- Keep-Alive release {s}:{d}", .{ hostname, port });
+                    log("- Keep-Alive release {any}:{d}", .{ hostname, port });
                     return;
                 }
             }
@@ -293,7 +293,7 @@ fn NewHTTPContext(comptime ssl: bool) type {
                         continue;
                     }
 
-                    log("+ Keep-Alive reuse {s}:{d}", .{ hostname, port });
+                    log("+ Keep-Alive reuse {any}:{d}", .{ hostname, port });
                     return http_socket;
                 }
             }
@@ -480,7 +480,7 @@ pub fn onOpen(
         std.debug.assert(is_ssl == client.url.isHTTPS());
     }
 
-    log("Connected {s} \n", .{client.url.href});
+    log("Connected {any} \n", .{client.url.href});
 
     if (comptime is_ssl) {
         var ssl: *BoringSSL.SSL = @ptrCast(*BoringSSL.SSL, socket.getNativeHandle());
@@ -512,7 +512,7 @@ pub fn onClose(
     comptime is_ssl: bool,
     socket: NewHTTPContext(is_ssl).HTTPSocket,
 ) void {
-    log("Closed  {s}\n", .{client.url.href});
+    log("Closed  {any}\n", .{client.url.href});
 
     const in_progress = client.state.stage != .done and client.state.stage != .fail;
 
@@ -545,7 +545,7 @@ pub fn onTimeout(
     socket: NewHTTPContext(is_ssl).HTTPSocket,
 ) void {
     _ = socket;
-    log("Timeout  {s}\n", .{client.url.href});
+    log("Timeout  {any}\n", .{client.url.href});
 
     if (client.state.stage != .done and client.state.stage != .fail)
         client.fail(error.Timeout);
@@ -556,7 +556,7 @@ pub fn onConnectError(
     socket: NewHTTPContext(is_ssl).HTTPSocket,
 ) void {
     _ = socket;
-    log("onConnectError  {s}\n", .{client.url.href});
+    log("onConnectError  {any}\n", .{client.url.href});
 
     if (client.state.stage != .done and client.state.stage != .fail)
         client.fail(error.ConnectionRefused);
@@ -566,7 +566,7 @@ pub fn onEnd(
     comptime is_ssl: bool,
     _: NewHTTPContext(is_ssl).HTTPSocket,
 ) void {
-    log("onEnd  {s}\n", .{client.url.href});
+    log("onEnd  {any}\n", .{client.url.href});
 
     if (client.state.stage != .done and client.state.stage != .fail)
         client.fail(error.ConnectionClosed);
@@ -1893,7 +1893,7 @@ pub fn handleResponseMetadata(
                     const original_url = this.url;
                     this.url = URL.parse(std.fmt.bufPrint(
                         &url_buf.data,
-                        "{s}://{s}{s}",
+                        "{any}://{any}{any}",
                         .{ original_url.displayProtocol(), original_url.displayHostname(), location },
                     ) catch return error.RedirectURLTooLong);
 

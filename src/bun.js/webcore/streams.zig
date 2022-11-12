@@ -2165,7 +2165,7 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
         }
 
         pub fn flushFromJS(this: *@This(), globalThis: *JSGlobalObject, wait: bool) JSC.Node.Maybe(JSValue) {
-            log("flushFromJS({s})", .{wait});
+            log("flushFromJS({any})", .{wait});
             if (!wait) {
                 return this.flushFromJSNoWait();
             }

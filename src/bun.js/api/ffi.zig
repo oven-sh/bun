@@ -331,7 +331,7 @@ pub const FFI = struct {
             // optional if the user passed "ptr"
             if (function.symbol_from_dynamic_library == null) {
                 var resolved_symbol = dylib.lookup(*anyopaque, function_name) orelse {
-                    const ret = JSC.toInvalidArguments("Symbol \"{s}\" not found in \"{s}\"", .{ std.mem.span(function_name), name_slice.slice() }, global);
+                    const ret = JSC.toInvalidArguments("Symbol \"{any}\" not found in \"{any}\"", .{ std.mem.span(function_name), name_slice.slice() }, global);
                     for (symbols.values()) |*value| {
                         allocator.free(bun.constStrToU8(std.mem.span(value.base_name.?)));
                         value.arg_types.clearAndFree(allocator);
@@ -345,7 +345,7 @@ pub const FFI = struct {
             }
 
             function.compile(allocator) catch |err| {
-                const ret = JSC.toInvalidArguments("{s} when compiling symbol \"{s}\" in \"{s}\"", .{
+                const ret = JSC.toInvalidArguments("{any} when compiling symbol \"{any}\" in \"{any}\"", .{
                     std.mem.span(@errorName(err)),
                     std.mem.span(function_name),
                     name_slice.slice(),
@@ -434,7 +434,7 @@ pub const FFI = struct {
             const function_name = function.base_name.?;
 
             if (function.symbol_from_dynamic_library == null) {
-                const ret = JSC.toInvalidArguments("Symbol for \"{s}\" not found", .{std.mem.span(function_name)}, global);
+                const ret = JSC.toInvalidArguments("Symbol for \"{any}\" not found", .{std.mem.span(function_name)}, global);
                 for (symbols.values()) |*value| {
                     allocator.free(bun.constStrToU8(std.mem.span(value.base_name.?)));
                     value.arg_types.clearAndFree(allocator);
@@ -444,7 +444,7 @@ pub const FFI = struct {
             }
 
             function.compile(allocator) catch |err| {
-                const ret = JSC.toInvalidArguments("{s} when compiling symbol \"{s}\"", .{
+                const ret = JSC.toInvalidArguments("{any} when compiling symbol \"{any}\"", .{
                     std.mem.span(@errorName(err)),
                     std.mem.span(function_name),
                 }, global);
@@ -544,7 +544,7 @@ pub const FFI = struct {
                 defer type_name.deinit();
                 abi_types.appendAssumeCapacity(ABIType.label.get(type_name.slice()) orelse {
                     abi_types.clearAndFree(allocator);
-                    return JSC.toTypeError(JSC.Node.ErrorCode.ERR_INVALID_ARG_VALUE, "Unknown type {s}", .{type_name.slice()}, global);
+                    return JSC.toTypeError(JSC.Node.ErrorCode.ERR_INVALID_ARG_VALUE, "Unknown type {any}", .{type_name.slice()}, global);
                 });
             }
         }
@@ -576,7 +576,7 @@ pub const FFI = struct {
             defer ret_slice.deinit();
             return_type = ABIType.label.get(ret_slice.slice()) orelse {
                 abi_types.clearAndFree(allocator);
-                return JSC.toTypeError(JSC.Node.ErrorCode.ERR_INVALID_ARG_VALUE, "Unknown return type {s}", .{ret_slice.slice()}, global);
+                return JSC.toTypeError(JSC.Node.ErrorCode.ERR_INVALID_ARG_VALUE, "Unknown return type {any}", .{ret_slice.slice()}, global);
             };
         }
 
@@ -1143,7 +1143,7 @@ pub const FFI = struct {
                 try this.return_type.typename(writer);
                 try writer.writeAll(" return_value = ");
             }
-            try writer.print("{s}(", .{std.mem.span(this.base_name.?)});
+            try writer.print("{any}(", .{std.mem.span(this.base_name.?)});
             first = true;
             arg_buf[0..3].* = "arg".*;
             for (this.arg_types.items) |arg, i| {
@@ -1296,7 +1296,7 @@ pub const FFI = struct {
                 const len = inner_buf.len + 1;
                 inner_buf = inner_buf_[0..len];
                 inner_buf[0] = '_';
-                try writer.print("return {s}", .{this.return_type.toCExact(inner_buf)});
+                try writer.print("return {any}", .{this.return_type.toCExact(inner_buf)});
             }
 
             try writer.writeAll(";\n}\n\n");
@@ -1449,7 +1449,7 @@ pub const FFI = struct {
                     },
                     .char, .int8_t, .uint8_t, .int16_t, .uint16_t, .int32_t, .uint32_t => {
                         if (self.exact)
-                            try writer.print("({s})", .{std.mem.span(@tagName(self.tag))});
+                            try writer.print("({any})", .{std.mem.span(@tagName(self.tag))});
 
                         try writer.writeAll("JSVALUE_TO_INT32(");
                     },
@@ -1498,31 +1498,31 @@ pub const FFI = struct {
                 switch (self.tag) {
                     .void => {},
                     .bool => {
-                        try writer.print("BOOLEAN_TO_JSVALUE({s})", .{self.symbol});
+                        try writer.print("BOOLEAN_TO_JSVALUE({any})", .{self.symbol});
                     },
                     .char, .int8_t, .uint8_t, .int16_t, .uint16_t, .int32_t => {
-                        try writer.print("INT32_TO_JSVALUE((int32_t){s})", .{self.symbol});
+                        try writer.print("INT32_TO_JSVALUE((int32_t){any})", .{self.symbol});
                     },
                     .uint32_t, .i64_fast => {
-                        try writer.print("INT64_TO_JSVALUE(JS_GLOBAL_OBJECT, (int64_t){s})", .{self.symbol});
+                        try writer.print("INT64_TO_JSVALUE(JS_GLOBAL_OBJECT, (int64_t){any})", .{self.symbol});
                     },
                     .int64_t => {
-                        try writer.print("INT64_TO_JSVALUE_SLOW(JS_GLOBAL_OBJECT, {s})", .{self.symbol});
+                        try writer.print("INT64_TO_JSVALUE_SLOW(JS_GLOBAL_OBJECT, {any})", .{self.symbol});
                     },
                     .u64_fast => {
-                        try writer.print("UINT64_TO_JSVALUE(JS_GLOBAL_OBJECT, {s})", .{self.symbol});
+                        try writer.print("UINT64_TO_JSVALUE(JS_GLOBAL_OBJECT, {any})", .{self.symbol});
                     },
                     .uint64_t => {
-                        try writer.print("UINT64_TO_JSVALUE_SLOW(JS_GLOBAL_OBJECT, {s})", .{self.symbol});
+                        try writer.print("UINT64_TO_JSVALUE_SLOW(JS_GLOBAL_OBJECT, {any})", .{self.symbol});
                     },
                     .function, .cstring, .ptr => {
-                        try writer.print("PTR_TO_JSVALUE({s})", .{self.symbol});
+                        try writer.print("PTR_TO_JSVALUE({any})", .{self.symbol});
                     },
                     .double => {
-                        try writer.print("DOUBLE_TO_JSVALUE({s})", .{self.symbol});
+                        try writer.print("DOUBLE_TO_JSVALUE({any})", .{self.symbol});
                     },
                     .float => {
-                        try writer.print("FLOAT_TO_JSVALUE({s})", .{self.symbol});
+                        try writer.print("FLOAT_TO_JSVALUE({any})", .{self.symbol});
                     },
                 }
             }

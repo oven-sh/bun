@@ -534,7 +534,7 @@ pub const Loader = struct {
                         const value: string = entry.value_ptr.*;
 
                         if (strings.startsWith(entry.key_ptr.*, prefix)) {
-                            const key_str = std.fmt.allocPrint(key_allocator, "process.env.{s}", .{entry.key_ptr.*}) catch unreachable;
+                            const key_str = std.fmt.allocPrint(key_allocator, "process.env.{any}", .{entry.key_ptr.*}) catch unreachable;
 
                             e_strings[0] = js_ast.E.String{
                                 .data = if (value.len > 0)
@@ -583,7 +583,7 @@ pub const Loader = struct {
                 } else {
                     while (iter.next()) |entry| {
                         const value: string = if (entry.value_ptr.*.len == 0) empty_string_value else entry.value_ptr.*;
-                        const key = std.fmt.allocPrint(key_allocator, "process.env.{s}", .{entry.key_ptr.*}) catch unreachable;
+                        const key = std.fmt.allocPrint(key_allocator, "process.env.{any}", .{entry.key_ptr.*}) catch unreachable;
 
                         e_strings[0] = js_ast.E.String{
                             .data = if (entry.value_ptr.*.len > 0)
@@ -720,9 +720,9 @@ pub const Loader = struct {
             if (yes) {
                 loaded_i += 1;
                 if (count == 1 or (loaded_i >= count and count > 1)) {
-                    Output.prettyError("\"{s}\"", .{all[i]});
+                    Output.prettyError("\"{any}\"", .{all[i]});
                 } else {
-                    Output.prettyError("\"{s}\", ", .{all[i]});
+                    Output.prettyError("\"{any}\", ", .{all[i]});
                 }
             }
         }
@@ -744,7 +744,7 @@ pub const Loader = struct {
                 },
                 error.FileBusy, error.DeviceBusy, error.AccessDenied, error.IsDir => {
                     if (!this.quiet) {
-                        Output.prettyErrorln("<r><red>{s}<r> error loading {s} file", .{ @errorName(err), base });
+                        Output.prettyErrorln("<r><red>{any}<r> error loading {any} file", .{ @errorName(err), base });
                     }
 
                     // prevent retrying

@@ -82,7 +82,7 @@ pub const RunCommand = struct {
     }
 
     const BUN_BIN_NAME = if (Environment.isDebug) "bun-debug" else "bun";
-    const BUN_RUN = std.fmt.comptimePrint("{s} run", .{BUN_BIN_NAME});
+    const BUN_RUN = std.fmt.comptimePrint("{any} run", .{BUN_BIN_NAME});
 
     // Look for invocations of any:
     // - yarn run
@@ -244,7 +244,7 @@ pub const RunCommand = struct {
         var child_process = std.ChildProcess.init(&argv, allocator);
 
         if (!silent) {
-            Output.prettyErrorln("<r><d><magenta>$<r> <d><b>{s}<r>", .{combined_script});
+            Output.prettyErrorln("<r><d><magenta>$<r> <d><b>{any}<r>", .{combined_script});
             Output.flush();
         }
 
@@ -257,13 +257,13 @@ pub const RunCommand = struct {
         child_process.stdout_behavior = .Inherit;
 
         const result = child_process.spawnAndWait() catch |err| {
-            Output.prettyErrorln("<r><red>error<r>: Failed to run script <b>{s}<r> due to error <b>{s}<r>", .{ name, @errorName(err) });
+            Output.prettyErrorln("<r><red>error<r>: Failed to run script <b>{any}<r> due to error <b>{any}<r>", .{ name, @errorName(err) });
             Output.flush();
             return true;
         };
 
         if (result.Exited > 0) {
-            Output.prettyErrorln("<r><red>Script error<r> <b>\"{s}\"<r> exited with {d} status<r>", .{ name, result.Exited });
+            Output.prettyErrorln("<r><red>Script error<r> <b>\"{any}\"<r> exited with {d} status<r>", .{ name, result.Exited });
             Output.flush();
 
             Global.exit(result.Exited);
@@ -304,30 +304,30 @@ pub const RunCommand = struct {
                     const rc = bun.C.stat(std.meta.assumeSentinel(executable, 0), &stat);
                     if (rc == 0) {
                         if (std.os.S.ISDIR(stat.mode)) {
-                            Output.prettyErrorln("<r><red>error<r>: Failed to run directory \"<b>{s}<r>\"\n", .{executable});
+                            Output.prettyErrorln("<r><red>error<r>: Failed to run directory \"<b>{any}<r>\"\n", .{executable});
                             Global.exit(1);
                         }
                     }
                 }
             }
-            Output.prettyErrorln("<r><red>error<r>: Failed to run \"<b>{s}<r>\" due to error <b>{s}<r>", .{ std.fs.path.basename(executable), @errorName(err) });
+            Output.prettyErrorln("<r><red>error<r>: Failed to run \"<b>{any}<r>\" due to error <b>{any}<r>", .{ std.fs.path.basename(executable), @errorName(err) });
             Global.exit(1);
         };
         switch (result) {
             .Exited => |code| {
-                Output.prettyErrorln("<r><red>error<r> \"<b>{s}<r>\" exited with {d} status<r>", .{ std.fs.path.basename(executable), code });
+                Output.prettyErrorln("<r><red>error<r> \"<b>{any}<r>\" exited with {d} status<r>", .{ std.fs.path.basename(executable), code });
                 Global.exit(code);
             },
             .Signal => |sig| {
-                Output.prettyErrorln("<r><red>error<r> \"<b>{s}<r>\" signaled {d}<r>", .{ std.fs.path.basename(executable), sig });
+                Output.prettyErrorln("<r><red>error<r> \"<b>{any}<r>\" signaled {d}<r>", .{ std.fs.path.basename(executable), sig });
                 Global.exit(1);
             },
             .Stopped => |sig| {
-                Output.prettyErrorln("<r><red>error<r> \"<b>{s}<r>\" stopped: {d}<r>", .{ std.fs.path.basename(executable), sig });
+                Output.prettyErrorln("<r><red>error<r> \"<b>{any}<r>\" stopped: {d}<r>", .{ std.fs.path.basename(executable), sig });
                 Global.exit(1);
             },
             .Unknown => |sig| {
-                Output.prettyErrorln("<r><red>error<r> \"<b>{s}<r>\" stopped: {d}<r>", .{ std.fs.path.basename(executable), sig });
+                Output.prettyErrorln("<r><red>error<r> \"<b>{any}<r>\" stopped: {d}<r>", .{ std.fs.path.basename(executable), sig });
                 Global.exit(1);
             },
         }
@@ -379,7 +379,7 @@ pub const RunCommand = struct {
             } else {
                 ctx.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), false) catch {};
             }
-            Output.prettyErrorln("Error loading directory: \"{s}\"", .{@errorName(err)});
+            Output.prettyErrorln("Error loading directory: \"{any}\"", .{@errorName(err)});
             Output.flush();
             return err;
         } orelse {
@@ -761,7 +761,7 @@ pub const RunCommand = struct {
                             // "White space after #! is optional."
                             var shebang_buf: [64]u8 = undefined;
                             const shebang_size = file.pread(&shebang_buf, 0) catch |err| {
-                                Output.prettyErrorln("<r><red>error<r>: Failed to read file <b>{s}<r> due to error <b>{s}<r>", .{ file_path, @errorName(err) });
+                                Output.prettyErrorln("<r><red>error<r>: Failed to read file <b>{any}<r> due to error <b>{any}<r>", .{ file_path, @errorName(err) });
                                 Global.exit(1);
                             };
 
@@ -786,7 +786,7 @@ pub const RunCommand = struct {
                                     ctx.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), false) catch {};
                                 }
 
-                                Output.prettyErrorln("<r><red>error<r>: Failed to run <b>{s}<r> due to error <b>{s}<r>", .{
+                                Output.prettyErrorln("<r><red>error<r>: Failed to run <b>{any}<r> due to error <b>{any}<r>", .{
                                     std.fs.path.basename(file_path),
                                     @errorName(err),
                                 });
@@ -824,11 +824,11 @@ pub const RunCommand = struct {
                         if (scripts.count() > 0) {
                             did_print = true;
 
-                            Output.prettyln("<r><blue><b>{s}<r> scripts:<r>\n", .{display_name});
+                            Output.prettyln("<r><blue><b>{any}<r> scripts:<r>\n", .{display_name});
                             while (iterator.next()) |entry| {
                                 Output.prettyln("\n", .{});
-                                Output.prettyln(" bun run <blue>{s}<r>\n", .{entry.key_ptr.*});
-                                Output.prettyln(" <d>  {s}<r>\n", .{entry.value_ptr.*});
+                                Output.prettyln(" bun run <blue>{any}<r>\n", .{entry.key_ptr.*});
+                                Output.prettyln(" <d>  {any}<r>\n", .{entry.value_ptr.*});
                             }
 
                             Output.prettyln("\n<d>{d} scripts<r>", .{scripts.count()});
@@ -837,7 +837,7 @@ pub const RunCommand = struct {
 
                             return true;
                         } else {
-                            Output.prettyln("<r><blue><b>{s}<r> has no \"scripts\" in package.json.", .{display_name});
+                            Output.prettyln("<r><blue><b>{any}<r> has no \"scripts\" in package.json.", .{display_name});
                             Output.flush();
                             return true;
                         }
@@ -845,7 +845,7 @@ pub const RunCommand = struct {
                     else => {
                         if (scripts.get(script_name_to_search)) |script_content| {
                             // allocate enough to hold "post${scriptname}"
-                            var temp_script_buffer = try std.fmt.allocPrint(ctx.allocator, "ppre{s}", .{script_name_to_search});
+                            var temp_script_buffer = try std.fmt.allocPrint(ctx.allocator, "ppre{any}", .{script_name_to_search});
 
                             if (scripts.get(temp_script_buffer[1..])) |prescript| {
                                 if (!try runPackageScript(
@@ -918,13 +918,13 @@ pub const RunCommand = struct {
                 // var file = std.fs.openFileAbsoluteZ(destination, .{ .mode = .read_only }) catch |err| {
                 //     if (!log_errors) return false;
 
-                //     Output.prettyErrorln("<r>error: <red>{s}<r> opening file: \"{s}\"", .{ err, std.mem.span(destination) });
+                //     Output.prettyErrorln("<r>error: <red>{any}<r> opening file: \"{any}\"", .{ err, std.mem.span(destination) });
                 //     Output.flush();
                 //     return err;
                 // };
                 // // var outbuf = std.os.getFdPath(file.handle, &path_buf2) catch |err| {
                 // //     if (!log_errors) return false;
-                // //     Output.prettyErrorln("<r>error: <red>{s}<r> resolving file: \"{s}\"", .{ err, std.mem.span(destination) });
+                // //     Output.prettyErrorln("<r>error: <red>{any}<r> resolving file: \"{any}\"", .{ err, std.mem.span(destination) });
                 // //     Output.flush();
                 // //     return err;
                 // // };
@@ -943,7 +943,7 @@ pub const RunCommand = struct {
         }
 
         if (comptime log_errors) {
-            Output.prettyError("<r><red>error:<r> Missing script \"<b>{s}<r>\"\n", .{script_name_to_search});
+            Output.prettyError("<r><red>error:<r> Missing script \"<b>{any}<r>\"\n", .{script_name_to_search});
             Global.exit(0);
         }
 

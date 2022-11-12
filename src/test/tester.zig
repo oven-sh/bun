@@ -42,7 +42,7 @@ pub const Tester = struct {
             stderr.writeAll(RESET) catch unreachable;
             stderr.writeAll(pad) catch unreachable;
             stderr.writeAll(DIM) catch unreachable;
-            std.fmt.format(stderr.writer(), "{s}:{d}:{d}", .{ self.source.file, self.source.line, self.source.column }) catch unreachable;
+            std.fmt.format(stderr.writer(), "{any}:{d}:{d}", .{ self.source.file, self.source.line, self.source.column }) catch unreachable;
             stderr.writeAll(RESET) catch unreachable;
             stderr.writeAll("\n") catch unreachable;
 
@@ -50,7 +50,7 @@ pub const Tester = struct {
             stderr.writeAll("Expected: ") catch unreachable;
             stderr.writeAll(RESET) catch unreachable;
             stderr.writeAll(GREEN) catch unreachable;
-            std.fmt.format(stderr.writer(), "\"{s}\"", .{self.expected}) catch unreachable;
+            std.fmt.format(stderr.writer(), "\"{any}\"", .{self.expected}) catch unreachable;
             stderr.writeAll(GREEN) catch unreachable;
             stderr.writeAll(RESET) catch unreachable;
 
@@ -59,7 +59,7 @@ pub const Tester = struct {
             stderr.writeAll("Received: ") catch unreachable;
             stderr.writeAll(RESET) catch unreachable;
             stderr.writeAll(RED) catch unreachable;
-            std.fmt.format(stderr.writer(), "\"{s}\"", .{self.result}) catch unreachable;
+            std.fmt.format(stderr.writer(), "\"{any}\"", .{self.result}) catch unreachable;
             stderr.writeAll(RED) catch unreachable;
             stderr.writeAll(RESET) catch unreachable;
             stderr.writeAll("\n") catch unreachable;
@@ -129,17 +129,17 @@ pub const Tester = struct {
                 std.log.info("No expectations.\n\n", .{});
             },
             .pass => {
-                std.fmt.format(stderr.writer(), "{s}All {d} expectations passed.{s}\n", .{ GREEN, tester.pass.items.len, GREEN }) catch unreachable;
+                std.fmt.format(stderr.writer(), "{any}All {d} expectations passed.{any}\n", .{ GREEN, tester.pass.items.len, GREEN }) catch unreachable;
                 std.fmt.format(stderr.writer(), RESET, .{}) catch unreachable;
                 std.testing.expect(true) catch std.debug.panic("Test failure", .{});
             },
             .fail => {
-                std.fmt.format(stderr.writer(), "{s}All {d} expectations failed.{s}\n\n", .{ RED, tester.fail.items.len, RED }) catch unreachable;
+                std.fmt.format(stderr.writer(), "{any}All {d} expectations failed.{any}\n\n", .{ RED, tester.fail.items.len, RED }) catch unreachable;
                 std.fmt.format(stderr.writer(), RESET, .{}) catch unreachable;
                 std.testing.expect(false) catch std.debug.panic("Test failure", .{});
             },
             .some_fail => {
-                std.fmt.format(stderr.writer(), "{s}{d} failed{s} and {s}{d} passed{s} of {d} expectations{s}\n\n", .{
+                std.fmt.format(stderr.writer(), "{any}{d} failed{any} and {any}{d} passed{any} of {d} expectations{any}\n\n", .{
                     RED,
                     tester.fail.items.len,
                     RED ++ RESET,
@@ -150,7 +150,7 @@ pub const Tester = struct {
                     RESET,
                 }) catch unreachable;
                 std.fmt.format(stderr.writer(), RESET, .{}) catch unreachable;
-                std.testing.expect(false) catch std.debug.panic("Test failure in {s}: {s}:{d}:{d}", .{ src.fn_name, src.file, src.line, src.column });
+                std.testing.expect(false) catch std.debug.panic("Test failure in {any}: {any}:{d}:{d}", .{ src.fn_name, src.file, src.line, src.column });
             },
         }
     }

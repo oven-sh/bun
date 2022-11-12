@@ -413,13 +413,13 @@ pub const ServerConfig = struct {
                 const protocol: string = if (args.ssl_config != null) "https" else "http";
 
                 args.base_uri = (if ((args.port == 80 and args.ssl_config == null) or (args.port == 443 and args.ssl_config != null))
-                    std.fmt.allocPrint(bun.default_allocator, "{s}://{s}/{s}", .{
+                    std.fmt.allocPrint(bun.default_allocator, "{any}://{any}/{any}", .{
                         protocol,
                         args.base_url.hostname,
                         strings.trimLeadingChar(args.base_url.pathname, '/'),
                     })
                 else
-                    std.fmt.allocPrint(bun.default_allocator, "{s}://{s}:{d}/{s}", .{
+                    std.fmt.allocPrint(bun.default_allocator, "{any}://{any}:{d}/{any}", .{
                         protocol,
                         args.base_url.hostname,
                         args.port,
@@ -434,12 +434,12 @@ pub const ServerConfig = struct {
             const protocol: string = if (args.ssl_config != null) "https" else "http";
 
             args.base_uri = (if ((args.port == 80 and args.ssl_config == null) or (args.port == 443 and args.ssl_config != null))
-                std.fmt.allocPrint(bun.default_allocator, "{s}://{s}/", .{
+                std.fmt.allocPrint(bun.default_allocator, "{any}://{any}/", .{
                     protocol,
                     hostname,
                 })
             else
-                std.fmt.allocPrint(bun.default_allocator, "{s}://{s}:{d}/", .{ protocol, hostname, args.port })) catch unreachable;
+                std.fmt.allocPrint(bun.default_allocator, "{any}://{any}:{d}/", .{ protocol, hostname, args.port })) catch unreachable;
 
             if (!strings.isAllASCII(hostname)) {
                 JSC.throwInvalidArguments("Unicode hostnames must already be encoded for now.\nnew URL(input).hostname should do the trick.", .{}, global, exception);
@@ -1051,7 +1051,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
 
                 if (errcode != .SUCCESS or this.aborted or this.sendfile.remain == 0 or val == 0) {
                     if (errcode != .AGAIN and errcode != .SUCCESS and errcode != .PIPE) {
-                        Output.prettyErrorln("Error: {s}", .{@tagName(errcode)});
+                        Output.prettyErrorln("Error: {any}", .{@tagName(errcode)});
                         Output.flush();
                     }
                     this.cleanupAndFinalizeAfterSendfile();
@@ -1075,7 +1075,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 this.sendfile.remain -= wrote;
                 if (errcode != .AGAIN or this.aborted or this.sendfile.remain == 0 or sbytes == 0) {
                     if (errcode != .AGAIN and errcode != .SUCCESS and errcode != .PIPE) {
-                        Output.prettyErrorln("Error: {s}", .{@tagName(errcode)});
+                        Output.prettyErrorln("Error: {any}", .{@tagName(errcode)});
                         Output.flush();
                     }
                     this.cleanupAndFinalizeAfterSendfile();
@@ -1691,7 +1691,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 }
             }
 
-            streamLog("onReject({s})", .{wrote_anything});
+            streamLog("onReject({any})", .{wrote_anything});
 
             if (req.aborted) {
                 req.finalizeForAbort();
@@ -1948,7 +1948,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                     vm.log,
                     error.ExceptionOcurred,
                     exception_list.toOwnedSlice(),
-                    "<r><red>{s}<r> - <b>{s}<r> failed",
+                    "<r><red>{any}<r> - <b>{any}<r> failed",
                     .{ @as(string, @tagName(this.method)), this.ensurePathname() },
                 );
             } else {
@@ -2055,7 +2055,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
 
                                 this.resp.writeHeader(
                                     "content-disposition",
-                                    std.fmt.bufPrint(&filename_buf, "filename=\"{s}\"", .{basename[0..@min(basename.len, 1024 - 32)]}) catch "",
+                                    std.fmt.bufPrint(&filename_buf, "filename=\"{any}\"", .{basename[0..@min(basename.len, 1024 - 32)]}) catch "",
                                 );
                             }
                         }
@@ -2667,7 +2667,7 @@ pub const ServerWebSocket = struct {
         message: []const u8,
         opcode: uws.Opcode,
     ) void {
-        log("onMessage({d}): {s}", .{
+        log("onMessage({d}): {any}", .{
             @enumToInt(opcode),
             message,
         });
@@ -4219,7 +4219,7 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
 
                 if (written > 0) {
                     var message = output_buf[0..written];
-                    zig_str = ZigString.init(std.fmt.allocPrint(bun.default_allocator, "OpenSSL {s}", .{message}) catch unreachable);
+                    zig_str = ZigString.init(std.fmt.allocPrint(bun.default_allocator, "OpenSSL {any}", .{message}) catch unreachable);
                     zig_str.withEncoding().mark();
                 }
             }

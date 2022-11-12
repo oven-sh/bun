@@ -272,7 +272,7 @@ pub const Data = struct {
             try to.writeAll(message_color);
         }
 
-        try std.fmt.format(to, comptime Output.prettyFmt("{s}<r>\n", enable_ansi_colors), .{this.text});
+        try std.fmt.format(to, comptime Output.prettyFmt("{any}<r>\n", enable_ansi_colors), .{this.text});
 
         if (this.location) |location| {
             if (location.line_text) |line_text_| {
@@ -358,7 +358,7 @@ pub const Data = struct {
                     } else {}
                 }
 
-                try std.fmt.format(to, comptime Output.prettyFmt("{s}<r>", enable_ansi_colors), .{
+                try std.fmt.format(to, comptime Output.prettyFmt("{any}<r>", enable_ansi_colors), .{
                     location.file,
                 });
 
@@ -518,7 +518,7 @@ pub const Msg = struct {
         comptime _: bool,
     ) !void {
         if (msg.data.location) |location| {
-            try writer.print("{s}: {s}\n{s}\n{s}:{}:{} ({d})", .{
+            try writer.print("{any}: {any}\n{any}\n{any}:{}:{} ({d})", .{
                 msg.kind.string(),
                 msg.data.text,
                 location.line_text,
@@ -528,7 +528,7 @@ pub const Msg = struct {
                 location.offset,
             });
         } else {
-            try writer.print("{s}: {s}", .{
+            try writer.print("{any}: {any}", .{
                 msg.kind.string(),
                 msg.data.text,
             });
@@ -536,7 +536,7 @@ pub const Msg = struct {
     }
 
     pub fn formatNoWriter(msg: *const Msg, comptime formatterFunc: @TypeOf(Global.panic)) void {
-        formatterFunc("\n\n{s}: {s}\n{s}\n{s}:{}:{} ({d})", .{
+        formatterFunc("\n\n{any}: {any}\n{any}\n{any}:{}:{} ({d})", .{
             msg.kind.string(),
             msg.data.text,
             msg.data.location.?.line_text,

@@ -49,7 +49,7 @@ pub fn main() anyerror!void {
         var file = std.os.openZ(joined_z, O_PATH | std.os.O.CLOEXEC, 0) catch |err| {
             switch (err) {
                 error.NotDir, error.FileNotFound => {
-                    Output.prettyError("<r><red>404 Not Found<r>: <b>\"{s}\"<r>", .{joined_z});
+                    Output.prettyError("<r><red>404 Not Found<r>: <b>\"{any}\"<r>", .{joined_z});
                     Global.exit(1);
                 },
                 else => {
@@ -62,5 +62,5 @@ pub fn main() anyerror!void {
         file.close();
     }
 
-    Output.print("{s}", .{path});
+    Output.print("{any}", .{path});
 }

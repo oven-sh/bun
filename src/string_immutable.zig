@@ -776,7 +776,7 @@ pub fn eqlLong(a_: string, b: string, comptime check_len: bool) bool {
 }
 
 pub inline fn append(allocator: std.mem.Allocator, self: string, other: string) ![]u8 {
-    return std.fmt.allocPrint(allocator, "{s}{s}", .{ self, other });
+    return std.fmt.allocPrint(allocator, "{any}{any}", .{ self, other });
 }
 
 pub inline fn joinBuf(out: []u8, parts: anytype, comptime parts_len: usize) []u8 {

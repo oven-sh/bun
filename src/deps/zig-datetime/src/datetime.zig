@@ -1347,7 +1347,7 @@ pub const Datetime = struct {
     // Formats a timestamp in the format used by HTTP.
     // eg "Tue, 15 Nov 1994 08:12:31 GMT"
     pub fn formatHttp(self: Datetime, allocator: Allocator) ![]const u8 {
-        return try std.fmt.allocPrint(allocator, "{s}, {d} {s} {d} {d:0>2}:{d:0>2}:{d:0>2} GMT", .{
+        return try std.fmt.allocPrint(allocator, "{any}, {d} {any} {d} {d:0>2}:{d:0>2}:{d:0>2} GMT", .{
             self.date.weekdayName()[0..3],
             self.date.day,
             self.date.monthName()[0..3],
@@ -1359,7 +1359,7 @@ pub const Datetime = struct {
     }
 
     pub fn formatHttpBuf(self: Datetime, buf: []u8) ![]const u8 {
-        return try std.fmt.bufPrint(buf, "{s}, {d} {s} {d} {d:0>2}:{d:0>2}:{d:0>2} GMT", .{
+        return try std.fmt.bufPrint(buf, "{any}, {d} {any} {d} {d:0>2}:{d:0>2}:{d:0>2} GMT", .{
             self.date.weekdayName()[0..3],
             self.date.day,
             self.date.monthName()[0..3],
@@ -1551,7 +1551,7 @@ test "file-modified-date" {
     var stat = try f.stat();
     var buf: [32]u8 = undefined;
     var str = try Datetime.formatHttpFromModifiedDate(&buf, stat.mtime);
-    std.log.warn("Modtime: {s}\n", .{str});
+    std.log.warn("Modtime: {any}\n", .{str});
 }
 
 test "readme-example" {
@@ -1566,7 +1566,7 @@ test "readme-example" {
     const now = Datetime.now();
     const now_str = try now.formatHttp(allocator);
     defer allocator.free(now_str);
-    std.log.warn("The time is now: {s}\n", .{now_str});
+    std.log.warn("The time is now: {any}\n", .{now_str});
     // The time is now: Fri, 20 Dec 2019 22:03:02 UTC
 
 }

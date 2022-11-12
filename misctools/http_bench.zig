@@ -120,12 +120,12 @@ pub const Arguments = struct {
                 var absolute_path_ = file_path_buf[0..absolute_path_len :0];
 
                 var body_file = std.fs.openFileAbsoluteZ(absolute_path_, .{ .mode = .read_only }) catch |err| {
-                    Output.printErrorln("<r><red>{s}<r> opening file {s}", .{ @errorName(err), absolute_path });
+                    Output.printErrorln("<r><red>{any}<r> opening file {any}", .{ @errorName(err), absolute_path });
                     Global.exit(1);
                 };
 
                 var file_contents = body_file.readToEndAlloc(allocator, try body_file.getEndPos()) catch |err| {
-                    Output.printErrorln("<r><red>{s}<r> reading file {s}", .{ @errorName(err), absolute_path });
+                    Output.printErrorln("<r><red>{any}<r> reading file {any}", .{ @errorName(err), absolute_path });
                     Global.exit(1);
                 };
                 body_string = file_contents;
@@ -166,11 +166,11 @@ pub const Arguments = struct {
             .concurrency = std.fmt.parseInt(u16, args.option("--max-concurrency") orelse "32", 10) catch 32,
             .turbo = args.flag("--turbo"),
             .timeout = std.fmt.parseInt(usize, args.option("--timeout") orelse "0", 10) catch |err| {
-                Output.prettyErrorln("<r><red>{s}<r> parsing timeout", .{@errorName(err)});
+                Output.prettyErrorln("<r><red>{any}<r> parsing timeout", .{@errorName(err)});
                 Global.exit(1);
             },
             .count = std.fmt.parseInt(usize, args.option("--count") orelse "10", 10) catch |err| {
-                Output.prettyErrorln("<r><red>{s}<r> parsing count", .{@errorName(err)});
+                Output.prettyErrorln("<r><red>{any}<r> parsing count", .{@errorName(err)});
                 Global.exit(1);
             },
         };
@@ -265,7 +265,7 @@ pub fn main() anyerror!void {
                 }
 
                 if (http.gzip_elapsed > 0) {
-                    Output.prettyError(" <d>{s}<r><d> - {s}<r> <d>({d} bytes, ", .{
+                    Output.prettyError(" <d>{any}<r><d> - {any}<r> <d>({d} bytes, ", .{
                         @tagName(http.client.method),
                         http.client.url.href,
                         http.response_buffer.list.items.len,
@@ -273,7 +273,7 @@ pub fn main() anyerror!void {
                     Output.printElapsed(@floatCast(f64, @intToFloat(f128, http.gzip_elapsed) / std.time.ns_per_ms));
                     Output.prettyError("<d> gzip)<r>\n", .{});
                 } else {
-                    Output.prettyError(" <d>{s}<r><d> - {s}<r> <d>({d} bytes)<r>\n", .{
+                    Output.prettyError(" <d>{any}<r><d> - {any}<r> <d>({d} bytes)<r>\n", .{
                         @tagName(http.client.method),
                         http.client.url.href,
                         http.response_buffer.list.items.len,
@@ -281,10 +281,10 @@ pub fn main() anyerror!void {
                 }
             } else if (http.err) |err| {
                 fail_count += 1;
-                Output.printError(" err: {s}\n", .{@errorName(err)});
+                Output.printError(" err: {any}\n", .{@errorName(err)});
             } else {
                 fail_count += 1;
-                Output.prettyError(" Uh-oh: {s}\n", .{@tagName(http.state.loadUnchecked())});
+                Output.prettyError(" Uh-oh: {any}\n", .{@tagName(http.state.loadUnchecked())});
             }
 
             Output.flush();

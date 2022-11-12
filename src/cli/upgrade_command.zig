@@ -92,7 +92,7 @@ pub const Version = struct {
 
     const current_version: string = "bun-v" ++ Global.package_json_version;
 
-    pub export const Bun__githubURL: [*:0]const u8 = std.fmt.comptimePrint("https://github.com/oven-sh/bun/release/bun-v{s}/{s}", .{
+    pub export const Bun__githubURL: [*:0]const u8 = std.fmt.comptimePrint("https://github.com/oven-sh/bun/release/bun-v{any}/{any}", .{
         Global.package_json_version,
         zip_filename,
     });
@@ -133,7 +133,7 @@ pub const UpgradeCheckerThread = struct {
 
         if (!version.isCurrent()) {
             if (version.name()) |name| {
-                Output.prettyErrorln("\n<r><d>bun v{s} is out. Run <b><cyan>bun upgrade<r> to upgrade.\n", .{name});
+                Output.prettyErrorln("\n<r><d>bun v{any} is out. Run <b><cyan>bun upgrade<r> to upgrade.\n", .{name});
                 Output.flush();
             }
         }
@@ -144,7 +144,7 @@ pub const UpgradeCheckerThread = struct {
     fn run(env_loader: *DotEnv.Loader) void {
         _run(env_loader) catch |err| {
             if (Environment.isDebug) {
-                std.debug.print("\n[UpgradeChecker] ERROR: {s}\n", .{@errorName(err)});
+                std.debug.print("\n[UpgradeChecker] ERROR: {any}\n", .{@errorName(err)});
             }
         };
     }
@@ -193,7 +193,7 @@ pub const UpgradeCommand = struct {
         var api_url = URL.parse(
             try std.fmt.bufPrint(
                 &github_repository_url_buf,
-                "https://{s}/repos/Jarred-Sumner/bun-releases-for-updater/releases/latest",
+                "https://{any}/repos/Jarred-Sumner/bun-releases-for-updater/releases/latest",
                 .{
                     github_api_domain,
                 },
@@ -202,7 +202,7 @@ pub const UpgradeCommand = struct {
 
         if (env_loader.map.get("GITHUB_ACCESS_TOKEN")) |access_token| {
             if (access_token.len > 0) {
-                headers_buf = try std.fmt.allocPrint(allocator, default_github_headers ++ "Access-TokenBearer {s}", .{access_token});
+                headers_buf = try std.fmt.allocPrint(allocator, default_github_headers ++ "Access-TokenBearer {any}", .{access_token});
                 try header_entries.append(
                     allocator,
                     Headers.Kv{
@@ -262,7 +262,7 @@ pub const UpgradeCommand = struct {
                     }
                     Global.exit(1);
                 } else {
-                    Output.prettyErrorln("Error parsing releases from GitHub: <r><red>{s}<r>", .{@errorName(err)});
+                    Output.prettyErrorln("Error parsing releases from GitHub: <r><red>{any}<r>", .{@errorName(err)});
                     Global.exit(1);
                 }
             }
@@ -294,7 +294,7 @@ pub const UpgradeCommand = struct {
                 refresher.refresh();
 
                 const json_type: js_ast.Expr.Tag = @as(js_ast.Expr.Tag, expr.data);
-                Output.prettyErrorln("JSON error - expected an object but received {s}", .{@tagName(json_type)});
+                Output.prettyErrorln("JSON error - expected an object but received {any}", .{@tagName(json_type)});
                 Global.exit(1);
             }
 
@@ -312,7 +312,7 @@ pub const UpgradeCommand = struct {
                 progress.end();
                 refresher.refresh();
 
-                Output.prettyErrorln("JSON Error parsing releases from GitHub: <r><red>tag_name<r> is missing?\n{s}", .{metadata_body.list.items});
+                Output.prettyErrorln("JSON Error parsing releases from GitHub: <r><red>tag_name<r> is missing?\n{any}", .{metadata_body.list.items});
                 Global.exit(1);
             }
 
@@ -327,7 +327,7 @@ pub const UpgradeCommand = struct {
                 if (asset.asProperty("content_type")) |content_type| {
                     const content_type_ = (content_type.expr.asString(allocator)) orelse continue;
                     if (comptime Environment.isDebug) {
-                        Output.prettyln("Content-type: {s}", .{content_type_});
+                        Output.prettyln("Content-type: {any}", .{content_type_});
                         Output.flush();
                     }
 
@@ -338,7 +338,7 @@ pub const UpgradeCommand = struct {
                     if (name_.expr.asString(allocator)) |name| {
                         if (comptime Environment.isDebug) {
                             const filename = if (!use_profile) Version.zip_filename else Version.profile_zip_filename;
-                            Output.prettyln("Comparing {s} vs {s}", .{ name, filename });
+                            Output.prettyln("Comparing {any} vs {any}", .{ name, filename });
                             Output.flush();
                         }
 
@@ -347,7 +347,7 @@ pub const UpgradeCommand = struct {
 
                         version.zip_url = (asset.asProperty("browser_download_url") orelse break :get_asset).expr.asString(allocator) orelse break :get_asset;
                         if (comptime Environment.isDebug) {
-                            Output.prettyln("Found Zip {s}", .{version.zip_url});
+                            Output.prettyln("Found Zip {any}", .{version.zip_url});
                             Output.flush();
                         }
 
@@ -366,7 +366,7 @@ pub const UpgradeCommand = struct {
             progress.end();
             refresher.refresh();
             if (version.name()) |name| {
-                Output.prettyErrorln("bun v{s} is out, but not for this platform ({s}) yet.", .{
+                Output.prettyErrorln("bun v{any} is out, but not for this platform ({any}) yet.", .{
                     name, Version.triplet,
                 });
             }
@@ -383,7 +383,7 @@ pub const UpgradeCommand = struct {
         @setCold(true);
 
         _exec(ctx) catch |err| {
-            Output.prettyErrorln("<r>bun upgrade failed with error: <red><b>{s}<r>\n\n<cyan>Please upgrade manually<r>:\n  <b>curl -fsSL https://bun.sh/install | bash<r>\n\n", .{@errorName(err)});
+            Output.prettyErrorln("<r>bun upgrade failed with error: <red><b>{any}<r>\n\n<cyan>Please upgrade manually<r>:\n  <b>curl -fsSL https://bun.sh/install | bash<r>\n\n", .{@errorName(err)});
             Global.exit(1);
         };
     }
@@ -425,7 +425,7 @@ pub const UpgradeCommand = struct {
 
             if (version.name() != null and version.isCurrent()) {
                 Output.prettyErrorln(
-                    "<r><green>Congrats!<r> You're already on the latest version of bun <d>(which is v{s})<r>",
+                    "<r><green>Congrats!<r> You're already on the latest version of bun <d>(which is v{any})<r>",
                     .{
                         version.name().?,
                     },
@@ -441,7 +441,7 @@ pub const UpgradeCommand = struct {
                 Global.exit(1);
             }
 
-            Output.prettyErrorln("<r><b>bun <cyan>v{s}<r> is out<r>! You're on <blue>{s}<r>\n", .{ version.name().?, Global.package_json_version });
+            Output.prettyErrorln("<r><b>bun <cyan>v{any}<r> is out<r>! You're on <blue>{any}<r>\n", .{ version.name().?, Global.package_json_version });
             Output.flush();
         } else {
             version = Version{
@@ -481,7 +481,7 @@ pub const UpgradeCommand = struct {
                             \\<r><red>error:<r> Canary builds are not available for this platform yet
                             \\
                             \\   Release: <cyan>https://github.com/oven-sh/bun/releases/tag/canary<r>
-                            \\  Filename: <b>{s}<r>
+                            \\  Filename: <b>{any}<r>
                             \\
                         , .{
                             Version.zip_filename,
@@ -529,14 +529,14 @@ pub const UpgradeCommand = struct {
                 if (use_profile) profile_exe_subpath else exe_subpath;
 
             var zip_file = save_dir.createFileZ(tmpname, .{ .truncate = true }) catch |err| {
-                Output.prettyErrorln("<r><red>error:<r> Failed to open temp file {s}", .{@errorName(err)});
+                Output.prettyErrorln("<r><red>error:<r> Failed to open temp file {any}", .{@errorName(err)});
                 Global.exit(1);
             };
 
             {
                 _ = zip_file.writeAll(bytes) catch |err| {
                     save_dir.deleteFileZ(tmpname) catch {};
-                    Output.prettyErrorln("<r><red>error:<r> Failed to write to temp file {s}", .{@errorName(err)});
+                    Output.prettyErrorln("<r><red>error:<r> Failed to write to temp file {any}", .{@errorName(err)});
                     Global.exit(1);
                 };
                 zip_file.close();
@@ -572,7 +572,7 @@ pub const UpgradeCommand = struct {
 
                 const unzip_result = unzip_process.spawnAndWait() catch |err| {
                     save_dir.deleteFileZ(tmpname) catch {};
-                    Output.prettyErrorln("<r><red>error:<r> Failed to spawn unzip due to {s}.", .{@errorName(err)});
+                    Output.prettyErrorln("<r><red>error:<r> Failed to spawn unzip due to {any}.", .{@errorName(err)});
                     Global.exit(1);
                 };
 
@@ -595,7 +595,7 @@ pub const UpgradeCommand = struct {
                     .max_output_bytes = 512,
                 }) catch |err| {
                     save_dir_.deleteTree(version_name) catch {};
-                    Output.prettyErrorln("<r><red>error<r> Failed to verify bun {s}<r>)", .{@errorName(err)});
+                    Output.prettyErrorln("<r><red>error<r> Failed to verify bun {any}<r>)", .{@errorName(err)});
                     Global.exit(1);
                 };
 
@@ -617,7 +617,7 @@ pub const UpgradeCommand = struct {
                         save_dir_.deleteTree(version_name) catch {};
 
                         Output.prettyErrorln(
-                            "<r><red>error<r>: The downloaded version of bun (<red>{s}<r>) doesn't match the expected version (<b>{s}<r>)<r>. Cancelled upgrade",
+                            "<r><red>error<r>: The downloaded version of bun (<red>{any}<r>) doesn't match the expected version (<b>{any}<r>)<r>. Cancelled upgrade",
                             .{
                                 version_string[0..@min(version_string.len, 512)],
                                 version_name,
@@ -639,7 +639,7 @@ pub const UpgradeCommand = struct {
             var target_dirname = current_executable_buf[0..target_dir_.len :0];
             var target_dir = std.fs.openDirAbsoluteZ(target_dirname, .{ .iterate = true }) catch |err| {
                 save_dir_.deleteTree(version_name) catch {};
-                Output.prettyErrorln("<r><red>error:<r> Failed to open bun's install directory {s}", .{@errorName(err)});
+                Output.prettyErrorln("<r><red>error:<r> Failed to open bun's install directory {any}", .{@errorName(err)});
                 Global.exit(1);
             };
 
@@ -648,13 +648,13 @@ pub const UpgradeCommand = struct {
                 // Check if the versions are the same
                 const target_stat = target_dir.statFile(target_filename) catch |err| {
                     save_dir_.deleteTree(version_name) catch {};
-                    Output.prettyErrorln("<r><red>error:<r> Failed to stat target bun {s}", .{@errorName(err)});
+                    Output.prettyErrorln("<r><red>error:<r> Failed to stat target bun {any}", .{@errorName(err)});
                     Global.exit(1);
                 };
 
                 const dest_stat = save_dir.statFile(exe) catch |err| {
                     save_dir_.deleteTree(version_name) catch {};
-                    Output.prettyErrorln("<r><red>error:<r> Failed to stat source bun {s}", .{@errorName(err)});
+                    Output.prettyErrorln("<r><red>error:<r> Failed to stat source bun {any}", .{@errorName(err)});
                     Global.exit(1);
                 };
 
@@ -663,13 +663,13 @@ pub const UpgradeCommand = struct {
 
                     const target_hash = std.hash.Wyhash.hash(0, target_dir.readFile(target_filename, input_buf) catch |err| {
                         save_dir_.deleteTree(version_name) catch {};
-                        Output.prettyErrorln("<r><red>error:<r> Failed to read target bun {s}", .{@errorName(err)});
+                        Output.prettyErrorln("<r><red>error:<r> Failed to read target bun {any}", .{@errorName(err)});
                         Global.exit(1);
                     });
 
                     const source_hash = std.hash.Wyhash.hash(0, save_dir.readFile(exe, input_buf) catch |err| {
                         save_dir_.deleteTree(version_name) catch {};
-                        Output.prettyErrorln("<r><red>error:<r> Failed to read source bun {s}", .{@errorName(err)});
+                        Output.prettyErrorln("<r><red>error:<r> Failed to read source bun {any}", .{@errorName(err)});
                         Global.exit(1);
                     });
 
@@ -687,7 +687,7 @@ pub const UpgradeCommand = struct {
             if (env_loader.map.get("BUN_DRY_RUN") == null) {
                 C.moveFileZ(save_dir.fd, exe, target_dir.fd, target_filename) catch |err| {
                     save_dir_.deleteTree(version_name) catch {};
-                    Output.prettyErrorln("<r><red>error:<r> Failed to move new version of bun due to {s}. You could try the install script instead:\n   curl -fsSL https://bun.sh/install | bash", .{@errorName(err)});
+                    Output.prettyErrorln("<r><red>error:<r> Failed to move new version of bun due to {any}. You could try the install script instead:\n   curl -fsSL https://bun.sh/install | bash", .{@errorName(err)});
                     Global.exit(1);
                 };
             }
@@ -724,7 +724,7 @@ pub const UpgradeCommand = struct {
                     \\
                     \\Changelog:
                     \\
-                    \\    https://github.com/oven-sh/bun/compare/{s}...main
+                    \\    https://github.com/oven-sh/bun/compare/{any}...main
                     \\
                 ,
                     .{Environment.git_sha},
@@ -735,7 +735,7 @@ pub const UpgradeCommand = struct {
                 Output.prettyErrorln(
                     \\<r> Upgraded.
                     \\
-                    \\<b><green>Welcome to bun v{s}!<r>
+                    \\<b><green>Welcome to bun v{any}!<r>
                     \\
                     \\Report any bugs:
                     \\
@@ -743,11 +743,11 @@ pub const UpgradeCommand = struct {
                     \\
                     \\What's new:
                     \\
-                    \\    <cyan>https://github.com/oven-sh/bun/releases/tag/{s}<r>
+                    \\    <cyan>https://github.com/oven-sh/bun/releases/tag/{any}<r>
                     \\
                     \\Changelog:
                     \\
-                    \\    https://github.com/oven-sh/bun/compare/{s}...{s}
+                    \\    https://github.com/oven-sh/bun/compare/{any}...{any}
                     \\
                 ,
                     .{ version_name, version.tag, bun_v, version.tag },

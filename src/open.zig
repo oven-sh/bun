@@ -19,7 +19,7 @@ const opener = switch (@import("builtin").target.os.tag) {
 
 pub fn openURL(url: string) !void {
     if (comptime Environment.isWasi) {
-        Output.prettyln("-> {s}", .{url});
+        Output.prettyln("-> {any}", .{url});
         Output.flush();
         return;
     }
@@ -257,12 +257,12 @@ pub const Editor = enum(u8) {
                 try file_path_buf_writer.writeAll(file);
                 if (line) |line_| {
                     if (line_.len > 0) {
-                        try file_path_buf_writer.print(":{s}", .{line_});
+                        try file_path_buf_writer.print(":{any}", .{line_});
 
                         if (!editor.isJetBrains()) {
                             if (column) |col| {
                                 if (col.len > 0)
-                                    try file_path_buf_writer.print(":{s}", .{col});
+                                    try file_path_buf_writer.print(":{any}", .{col});
                             }
                         }
                     }
@@ -281,11 +281,11 @@ pub const Editor = enum(u8) {
                         args_buf[i] = "--line";
                         i += 1;
 
-                        try file_path_buf_writer.print("{s}", .{line_});
+                        try file_path_buf_writer.print("{any}", .{line_});
 
                         if (column) |col| {
                             if (col.len > 0)
-                                try file_path_buf_writer.print(":{s}", .{col});
+                                try file_path_buf_writer.print(":{any}", .{col});
                         }
 
                         var line_column = file_path_buf_stream.getWritten()[file_path.len..];
@@ -339,7 +339,7 @@ pub const EditorContext = struct {
     pub fn openInEditor(this: *EditorContext, editor_: Editor, blob: []const u8, id: string, tmpdir: std.fs.Dir, line: string, column: string) void {
         _openInEditor(this.path, editor_, blob, id, tmpdir, line, column) catch |err| {
             if (editor_ != .other) {
-                Output.prettyErrorln("Error {s} opening in {s}", .{ @errorName(err), @tagName(editor_) });
+                Output.prettyErrorln("Error {any} opening in {any}", .{ @errorName(err), @tagName(editor_) });
             }
 
             this.editor = Editor.none;

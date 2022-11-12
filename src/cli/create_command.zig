@@ -87,7 +87,7 @@ const UnsupportedPackages = struct {
     pub fn print(this: UnsupportedPackages) void {
         inline for (comptime std.meta.fieldNames(UnsupportedPackages)) |field_name| {
             if (@field(this, field_name)) {
-                Output.prettyErrorln("<r><yellow>warn<r><d>:<r> <b>\"{s}\"<r> won't work in bun yet\n", .{field_name});
+                Output.prettyErrorln("<r><yellow>warn<r><d>:<r> <b>\"{any}\"<r> won't work in bun yet\n", .{field_name});
             }
         }
     }
@@ -132,9 +132,9 @@ fn execTask(allocator: std.mem.Allocator, task_: string, cwd: string, _: string,
     Output.pretty("\n<r><d>$<b>", .{});
     for (argv) |arg, i| {
         if (i > argv.len - 1) {
-            Output.print(" {s} ", .{arg});
+            Output.print(" {any} ", .{arg});
         } else {
-            Output.print(" {s}", .{arg});
+            Output.print(" {any}", .{arg});
         }
     }
     Output.pretty("<r>", .{});
@@ -285,7 +285,7 @@ pub const CreateCommand = struct {
                         var outdir_path_ = home_dir_buf[0..outdir_path.len :0];
                         std.fs.accessAbsoluteZ(outdir_path_, .{}) catch break :outer;
                         if (create_options.verbose) {
-                            Output.prettyErrorln("reading from {s}", .{outdir_path});
+                            Output.prettyErrorln("reading from {any}", .{outdir_path});
                         }
                         example_tag = Example.Tag.local_folder;
                         break :brk outdir_path;
@@ -299,7 +299,7 @@ pub const CreateCommand = struct {
                     var outdir_path_ = home_dir_buf[0..outdir_path.len :0];
                     std.fs.accessAbsoluteZ(outdir_path_, .{}) catch break :outer;
                     if (create_options.verbose) {
-                        Output.prettyErrorln("reading from {s}", .{outdir_path});
+                        Output.prettyErrorln("reading from {any}", .{outdir_path});
                     }
                     example_tag = Example.Tag.local_folder;
                     break :brk outdir_path;
@@ -313,7 +313,7 @@ pub const CreateCommand = struct {
                         var outdir_path_ = home_dir_buf[0..outdir_path.len :0];
                         std.fs.accessAbsoluteZ(outdir_path_, .{}) catch break :outer;
                         if (create_options.verbose) {
-                            Output.prettyErrorln("reading from {s}", .{outdir_path});
+                            Output.prettyErrorln("reading from {any}", .{outdir_path});
                         }
                         example_tag = Example.Tag.local_folder;
                         break :brk outdir_path;
@@ -379,7 +379,7 @@ pub const CreateCommand = struct {
         const destination = try filesystem.dirname_store.append([]const u8, resolve_path.joinAbs(filesystem.top_level_dir, .auto, dirname));
 
         var progress = std.Progress{};
-        var node = progress.start(try ProgressBuf.print("Loading {s}", .{template}), 0);
+        var node = progress.start(try ProgressBuf.print("Loading {any}", .{template}), 0);
         progress.supports_ansi_escape_codes = Output.enable_ansi_colors_stderr;
 
         // alacritty is fast
@@ -399,7 +399,7 @@ pub const CreateCommand = struct {
         var package_json_file: ?std.fs.File = null;
 
         if (create_options.verbose) {
-            Output.prettyErrorln("Downloading as {s}\n", .{@tagName(example_tag)});
+            Output.prettyErrorln("Downloading as {any}\n", .{@tagName(example_tag)});
         }
 
         switch (example_tag) {
@@ -411,7 +411,7 @@ pub const CreateCommand = struct {
                                 node.end();
                                 progress.refresh();
 
-                                Output.prettyError("\n<r><red>error:<r> <b>\"{s}\"<r> was not found. Here are templates you can use:\n\n", .{
+                                Output.prettyError("\n<r><red>error:<r> <b>\"{any}\"<r> was not found. Here are templates you can use:\n\n", .{
                                     template,
                                 });
                                 Output.flush();
@@ -444,7 +444,7 @@ pub const CreateCommand = struct {
                                 node.end();
                                 progress.refresh();
 
-                                Output.prettyError("\n<r><red>error:<r> <b>\"{s}\"<r> was not found on GitHub. Here are templates you can use:\n\n", .{
+                                Output.prettyError("\n<r><red>error:<r> <b>\"{any}\"<r> was not found on GitHub. Here are templates you can use:\n\n", .{
                                     template,
                                 });
                                 Output.flush();
@@ -466,7 +466,7 @@ pub const CreateCommand = struct {
                     else => unreachable,
                 };
 
-                node.name = try ProgressBuf.print("Decompressing {s}", .{template});
+                node.name = try ProgressBuf.print("Decompressing {any}", .{template});
                 node.setCompletedItems(0);
                 node.setEstimatedTotalItems(0);
 
@@ -479,7 +479,7 @@ pub const CreateCommand = struct {
                 try gunzip.readAll();
                 gunzip.deinit();
 
-                node.name = try ProgressBuf.print("Extracting {s}", .{template});
+                node.name = try ProgressBuf.print("Extracting {any}", .{template});
                 node.setCompletedItems(0);
                 node.setEstimatedTotalItems(0);
 
@@ -516,21 +516,21 @@ pub const CreateCommand = struct {
 
                         // Thank you create-react-app for this copy (and idea)
                         Output.prettyErrorln(
-                            "<r>\n<red>error<r><d>: <r>The directory <b><blue>{s}<r>/ contains files that could conflict:\n\n",
+                            "<r>\n<red>error<r><d>: <r>The directory <b><blue>{any}<r>/ contains files that could conflict:\n\n",
                             .{
                                 std.fs.path.basename(destination),
                             },
                         );
                         for (archive_context.overwrite_list.keys()) |path| {
                             if (strings.endsWith(path, std.fs.path.sep_str)) {
-                                Output.prettyError("<r>  <blue>{s}<r>", .{path[0 .. std.math.max(path.len, 1) - 1]});
+                                Output.prettyError("<r>  <blue>{any}<r>", .{path[0 .. std.math.max(path.len, 1) - 1]});
                                 Output.prettyErrorln(std.fs.path.sep_str, .{});
                             } else {
-                                Output.prettyErrorln("<r>  {s}", .{path});
+                                Output.prettyErrorln("<r>  {any}", .{path});
                             }
                         }
 
-                        Output.prettyErrorln("<r>\n<d>To download {s} anyway, use --force<r>", .{template});
+                        Output.prettyErrorln("<r>\n<d>To download {any} anyway, use --force<r>", .{template});
                         Global.exit(1);
                     }
                 }
@@ -568,7 +568,7 @@ pub const CreateCommand = struct {
                     node.end();
                     progress.refresh();
 
-                    Output.prettyErrorln("<r><red>{s}<r>: opening dir {s}", .{ @errorName(err), template });
+                    Output.prettyErrorln("<r><red>{any}<r>: opening dir {any}", .{ @errorName(err), template });
                     Global.exit(1);
                 };
 
@@ -578,7 +578,7 @@ pub const CreateCommand = struct {
 
                     progress.refresh();
 
-                    Output.prettyErrorln("<r><red>{s}<r>: creating dir {s}", .{ @errorName(err), destination });
+                    Output.prettyErrorln("<r><red>{any}<r>: creating dir {any}", .{ @errorName(err), destination });
                     Global.exit(1);
                 };
 
@@ -605,7 +605,7 @@ pub const CreateCommand = struct {
 
                                     progress_.refresh();
 
-                                    Output.prettyErrorln("<r><red>{s}<r>: copying file {s}", .{ @errorName(err), entry.path });
+                                    Output.prettyErrorln("<r><red>{any}<r>: copying file {any}", .{ @errorName(err), entry.path });
                                     Global.exit(1);
                                 };
                             };
@@ -625,7 +625,7 @@ pub const CreateCommand = struct {
 
                                     progress_.refresh();
 
-                                    Output.prettyErrorln("<r><red>{s}<r>: copying file {s}", .{ @errorName(err), entry.path });
+                                    Output.prettyErrorln("<r><red>{any}<r>: copying file {any}", .{ @errorName(err), entry.path });
                                     Global.exit(1);
                                 };
                             };
@@ -645,7 +645,7 @@ pub const CreateCommand = struct {
                             progress.refresh();
 
                             package_json_file = null;
-                            Output.prettyErrorln("Error reading package.json: <r><red>{s}", .{@errorName(err)});
+                            Output.prettyErrorln("Error reading package.json: <r><red>{any}", .{@errorName(err)});
                             break :read_package_json;
                         };
 
@@ -666,7 +666,7 @@ pub const CreateCommand = struct {
 
                             progress.refresh();
 
-                            Output.prettyErrorln("Error reading package.json: <r><red>{s}", .{@errorName(err)});
+                            Output.prettyErrorln("Error reading package.json: <r><red>{any}", .{@errorName(err)});
                             break :read_package_json;
                         };
                         // The printer doesn't truncate, so we must do so manually
@@ -1280,7 +1280,7 @@ pub const CreateCommand = struct {
 
                         create_react_app_entry_point_path = std.fmt.allocPrint(
                             ctx.allocator,
-                            "./{s}",
+                            "./{any}",
 
                             .{
                                 std.mem.trimLeft(
@@ -1292,7 +1292,7 @@ pub const CreateCommand = struct {
                         ) catch break :bail;
 
                         html_writer.print(
-                            "<script type=\"module\" async src=\"/{s}\"></script>\n{s}",
+                            "<script type=\"module\" async src=\"/{any}\"></script>\n{any}",
                             .{
                                 create_react_app_entry_point_path[2..],
                                 public_index_file_contents[body_closing_tag..],
@@ -1321,7 +1321,7 @@ pub const CreateCommand = struct {
                         std.os.ftruncate(public_index_html_file.handle, outfile.len + 1) catch break :bail;
                         bun_bun_for_react_scripts = true;
                         is_create_react_app = true;
-                        Output.prettyln("<r><d>[package.json] Added entry point {s} to public/index.html", .{create_react_app_entry_point_path});
+                        Output.prettyln("<r><d>[package.json] Added entry point {any} to public/index.html", .{create_react_app_entry_point_path});
                     }
                 }
 
@@ -1352,7 +1352,7 @@ pub const CreateCommand = struct {
                                         strings.contains(script, "react-scripts eject"))
                                     {
                                         if (create_options.verbose) {
-                                            Output.prettyErrorln("<r><d>[package.json] Pruned unnecessary script: {s}<r>", .{script});
+                                            Output.prettyErrorln("<r><d>[package.json] Pruned unnecessary script: {any}<r>", .{script});
                                         }
 
                                         continue;
@@ -1451,7 +1451,7 @@ pub const CreateCommand = struct {
                 var package_json_writer = JSPrinter.NewFileWriter(package_json_file.?);
 
                 const written = JSPrinter.printJSON(@TypeOf(package_json_writer), package_json_writer, package_json_expr, &source) catch |err| {
-                    Output.prettyErrorln("package.json failed to write due to error {s}", .{@errorName(err)});
+                    Output.prettyErrorln("package.json failed to write due to error {any}", .{@errorName(err)});
                     package_json_file = null;
                     break :process_package_json;
                 };
@@ -1462,7 +1462,7 @@ pub const CreateCommand = struct {
                     if (needs.bun_bun_for_nextjs) {
                         try postinstall_tasks.append(ctx.allocator, InjectionPrefill.bun_bun_for_nextjs_task);
                     } else if (bun_bun_for_react_scripts) {
-                        try postinstall_tasks.append(ctx.allocator, try std.fmt.allocPrint(ctx.allocator, "bun bun {s}", .{create_react_app_entry_point_path}));
+                        try postinstall_tasks.append(ctx.allocator, try std.fmt.allocPrint(ctx.allocator, "bun bun {any}", .{create_react_app_entry_point_path}));
                     }
                 }
             }
@@ -1505,12 +1505,12 @@ pub const CreateCommand = struct {
             const start_time = std.time.nanoTimestamp();
             const install_args = &[_]string{ npm_client.bin, "install" };
             Output.flush();
-            Output.pretty("\n<r><d>$ <b><cyan>{s}<r><d> install", .{@tagName(npm_client.tag)});
+            Output.pretty("\n<r><d>$ <b><cyan>{any}<r><d> install", .{@tagName(npm_client.tag)});
 
             if (install_args.len > 2) {
                 for (install_args[2..]) |arg| {
                     Output.pretty(" ", .{});
-                    Output.pretty("{s}", .{arg});
+                    Output.pretty("{any}", .{arg});
                 }
             }
 
@@ -1523,7 +1523,7 @@ pub const CreateCommand = struct {
             defer {
                 Output.printErrorln("\n", .{});
                 Output.printStartEnd(start_time, std.time.nanoTimestamp());
-                Output.prettyError(" <r><d>{s} install<r>\n", .{@tagName(npm_client.tag)});
+                Output.prettyError(" <r><d>{any} install<r>\n", .{@tagName(npm_client.tag)});
                 Output.flush();
 
                 Output.print("\n", .{});
@@ -1547,7 +1547,7 @@ pub const CreateCommand = struct {
 
         Output.printError("\n", .{});
         Output.printStartEnd(ctx.start_time, std.time.nanoTimestamp());
-        Output.prettyErrorln(" <r><d>bun create {s}<r>", .{template});
+        Output.prettyErrorln(" <r><d>bun create {any}<r>", .{template});
 
         Output.flush();
 
@@ -1604,13 +1604,13 @@ pub const CreateCommand = struct {
 
             Output.pretty(
                 \\
-                \\<b><green>Success!<r> <b>{s}<r> loaded into <b>{s}<r>
+                \\<b><green>Success!<r> <b>{any}<r> loaded into <b>{any}<r>
                 \\
             , .{ display_name, std.fs.path.basename(destination) });
         } else {
             Output.pretty(
                 \\
-                \\<b>Created <green>{s}<r> project successfully
+                \\<b>Created <green>{any}<r> project successfully
                 \\
             , .{std.fs.path.basename(template)});
         }
@@ -1628,7 +1628,7 @@ pub const CreateCommand = struct {
                 \\
                 \\<r><d>#<r> When dependencies change, run this to update node_modules.bun:
                 \\
-                \\  <b><cyan>bun bun {s}<r>
+                \\  <b><cyan>bun bun {any}<r>
                 \\
             , .{create_react_app_entry_point_path});
         }
@@ -1637,8 +1637,8 @@ pub const CreateCommand = struct {
             \\
             \\<d>#<r><b> To get started, run:<r>
             \\
-            \\  <b><cyan>cd {s}<r>
-            \\  <b><cyan>{s}<r>
+            \\  <b><cyan>cd {any}<r>
+            \\  <b><cyan>{any}<r>
             \\
             \\
         , .{
@@ -1698,16 +1698,16 @@ pub const Example = struct {
     var app_name_buf: [512]u8 = undefined;
     pub fn print(examples: []const Example, default_app_name: ?string) void {
         for (examples) |example| {
-            var app_name = default_app_name orelse (std.fmt.bufPrint(&app_name_buf, "./{s}-app", .{example.name[0..std.math.min(example.name.len, 492)]}) catch unreachable);
+            var app_name = default_app_name orelse (std.fmt.bufPrint(&app_name_buf, "./{any}-app", .{example.name[0..std.math.min(example.name.len, 492)]}) catch unreachable);
 
             if (example.description.len > 0) {
-                Output.pretty("  <r># {s}<r>\n  <b>bun create <cyan>{s}<r><b> {s}<r>\n<d>  \n\n", .{
+                Output.pretty("  <r># {any}<r>\n  <b>bun create <cyan>{any}<r><b> {any}<r>\n<d>  \n\n", .{
                     example.description,
                     example.name,
                     app_name,
                 });
             } else {
-                Output.pretty("  <r><b>bun create <cyan>{s}<r><b> {s}<r>\n\n", .{
+                Output.pretty("  <r><b>bun create <cyan>{any}<r><b> {any}<r>\n\n", .{
                     example.name,
                     app_name,
                 });
@@ -1802,7 +1802,7 @@ pub const Example = struct {
             repository = repository[0..i];
         }
 
-        progress.name = try ProgressBuf.pretty("<d>[github] <b>GET<r> <blue>{s}/{s}<r>", .{ owner, repository });
+        progress.name = try ProgressBuf.pretty("<d>[github] <b>GET<r> <blue>{any}/{any}<r>", .{ owner, repository });
         refresher.refresh();
 
         var github_api_domain: string = "api.github.com";
@@ -1815,7 +1815,7 @@ pub const Example = struct {
         var api_url = URL.parse(
             try std.fmt.bufPrint(
                 &github_repository_url_buf,
-                "https://{s}/repos/{s}/{s}/tarball",
+                "https://{any}/repos/{any}/{any}/tarball",
                 .{ github_api_domain, owner, repository },
             ),
         );
@@ -1825,7 +1825,7 @@ pub const Example = struct {
 
         if (env_loader.map.get("GITHUB_ACCESS_TOKEN")) |access_token| {
             if (access_token.len > 0) {
-                headers_buf = try std.fmt.allocPrint(ctx.allocator, "Access-TokenBearer {s}", .{access_token});
+                headers_buf = try std.fmt.allocPrint(ctx.allocator, "Access-TokenBearer {any}", .{access_token});
                 try header_entries.append(
                     ctx.allocator,
                     Headers.Kv{
@@ -1887,7 +1887,7 @@ pub const Example = struct {
             refresher.refresh();
 
             if (content_type.len > 0) {
-                Output.prettyErrorln("<r><red>error<r>: Unexpected content type from GitHub: {s}", .{content_type});
+                Output.prettyErrorln("<r><red>error<r>: Unexpected content type from GitHub: {any}", .{content_type});
                 Global.crash();
             } else {
                 Output.prettyErrorln("<r><red>error<r>: Invalid response from GitHub (missing content type)", .{});
@@ -1914,7 +1914,7 @@ pub const Example = struct {
         var mutable = try ctx.allocator.create(MutableString);
         mutable.* = try MutableString.init(ctx.allocator, 2048);
 
-        url = URL.parse(try std.fmt.bufPrint(&url_buf, "https://registry.npmjs.org/@bun-examples/{s}/latest", .{name}));
+        url = URL.parse(try std.fmt.bufPrint(&url_buf, "https://registry.npmjs.org/@bun-examples/{any}/latest", .{name}));
 
         // ensure very stable memory address
         var async_http: *HTTP.AsyncHTTP = ctx.allocator.create(HTTP.AsyncHTTP) catch unreachable;
@@ -1956,7 +1956,7 @@ pub const Example = struct {
                 }
                 Global.exit(1);
             } else {
-                Output.prettyErrorln("Error parsing package: <r><red>{s}<r>", .{@errorName(err)});
+                Output.prettyErrorln("Error parsing package: <r><red>{any}<r>", .{@errorName(err)});
                 Global.exit(1);
             }
         };
@@ -2058,14 +2058,14 @@ pub const Example = struct {
                     Global.exit(1);
                 },
                 else => {
-                    Output.prettyErrorln("<r><red>{s}<r> while trying to fetch examples list. Please try again", .{@errorName(err)});
+                    Output.prettyErrorln("<r><red>{any}<r> while trying to fetch examples list. Please try again", .{@errorName(err)});
                     Global.exit(1);
                 },
             }
         };
 
         if (response.status_code != 200) {
-            Output.prettyErrorln("<r><red>{d}<r> fetching examples :( {s}", .{ response.status_code, mutable.list.items });
+            Output.prettyErrorln("<r><red>{d}<r> fetching examples :( {any}", .{ response.status_code, mutable.list.items });
             Global.exit(1);
         }
 
@@ -2080,7 +2080,7 @@ pub const Example = struct {
                 }
                 Global.exit(1);
             } else {
-                Output.prettyErrorln("Error parsing examples: <r><red>{s}<r>", .{@errorName(err)});
+                Output.prettyErrorln("Error parsing examples: <r><red>{any}<r>", .{@errorName(err)});
                 Global.exit(1);
             }
         };
@@ -2114,7 +2114,7 @@ pub const Example = struct {
             }
         }
 
-        Output.prettyErrorln("Corrupt examples data: expected object but received {s}", .{@tagName(examples_object.data)});
+        Output.prettyErrorln("Corrupt examples data: expected object but received {any}", .{@tagName(examples_object.data)});
         Global.exit(1);
     }
 };
@@ -2146,7 +2146,7 @@ pub const CreateListExamplesCommand = struct {
 
         if (env_loader.map.get("HOME")) |homedir| {
             Output.prettyln(
-                "<d>This command is completely optional. To add a new local template, create a folder in {s}/.bun-create/. To publish a new template, git clone https://github.com/oven-sh/bun, add a new folder to the \"examples\" folder, and submit a PR.<r>",
+                "<d>This command is completely optional. To add a new local template, create a folder in {any}/.bun-create/. To publish a new template, git clone https://github.com/oven-sh/bun, add a new folder to the \"examples\" folder, and submit a PR.<r>",
                 .{homedir},
             );
         } else {
@@ -2171,7 +2171,7 @@ const GitHandler = struct {
         success = std.atomic.Atomic(u32).init(0);
 
         thread = std.Thread.spawn(.{}, spawnThread, .{ destination, PATH, verbose }) catch |err| {
-            Output.prettyErrorln("<r><red>{s}<r>", .{@errorName(err)});
+            Output.prettyErrorln("<r><red>{any}<r>", .{@errorName(err)});
             Global.exit(1);
         };
     }
@@ -2233,7 +2233,7 @@ const GitHandler = struct {
             };
 
             if (comptime verbose) {
-                Output.prettyErrorln("git backend: {s}", .{git});
+                Output.prettyErrorln("git backend: {any}", .{git});
             }
 
             // same names, just comptime known values

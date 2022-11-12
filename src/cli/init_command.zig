@@ -46,7 +46,7 @@ pub const InitCommand = struct {
     ) ![]const u8 {
         Output.pretty(label, .{});
         if (default.len > 0) {
-            Output.pretty("<d>({s}):<r> ", .{default});
+            Output.pretty("<d>({any}):<r> ", .{default});
         }
 
         Output.flush();
@@ -307,7 +307,7 @@ pub const InitCommand = struct {
                 js_ast.Expr{ .data = .{ .e_object = fields.object }, .loc = logger.Loc.Empty },
                 &logger.Source.initEmptyFile("package.json"),
             ) catch |err| {
-                Output.prettyErrorln("package.json failed to write due to error {s}", .{@errorName(err)});
+                Output.prettyErrorln("package.json failed to write due to error {any}", .{@errorName(err)});
                 package_json_file = null;
                 break :write_package_json;
             };
@@ -324,7 +324,7 @@ pub const InitCommand = struct {
             var entry = try std.fs.cwd().createFile(fields.entry_point, .{ .truncate = true });
             entry.writeAll("console.log(\"Hello via Bun!\");") catch {};
             entry.close();
-            Output.prettyln(" + <r><d>{s}<r>", .{fields.entry_point});
+            Output.prettyln(" + <r><d>{any}<r>", .{fields.entry_point});
             Output.flush();
         }
 
@@ -349,7 +349,7 @@ pub const InitCommand = struct {
                 var file = std.fs.cwd().createFileZ(filename, .{ .truncate = true }) catch break :brk;
                 defer file.close();
                 file.writeAll(default_tsconfig) catch break :brk;
-                Output.prettyln(" + <r><d>{s}<r><d> (for editor auto-complete)<r>", .{filename});
+                Output.prettyln(" + <r><d>{any}<r><d> (for editor auto-complete)<r>", .{filename});
                 Output.flush();
             }
         }
@@ -364,7 +364,7 @@ pub const InitCommand = struct {
                     .bunVersion = Global.version.fmt(""),
                     .entryPoint = fields.entry_point,
                 }) catch break :brk;
-                Output.prettyln(" + <r><d>{s}<r>", .{filename});
+                Output.prettyln(" + <r><d>{any}<r>", .{filename});
                 Output.flush();
             }
         }
@@ -377,7 +377,7 @@ pub const InitCommand = struct {
             )) {
                 Output.prettyln("  <r><cyan>bun run {any}<r>", .{JSPrinter.formatJSONString(fields.entry_point)});
             } else {
-                Output.prettyln("  <r><cyan>bun run {s}<r>", .{fields.entry_point});
+                Output.prettyln("  <r><cyan>bun run {any}<r>", .{fields.entry_point});
             }
         }
 

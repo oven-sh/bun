@@ -256,7 +256,7 @@ const RouteLoader = struct {
                     &source,
                     Logger.Loc.Empty,
                     this.allocator,
-                    "Route \"{s}\" is already defined by {s}",
+                    "Route \"{any}\" is already defined by {any}",
                     .{ route.name, entry.value_ptr.*.abs_path.slice() },
                 ) catch unreachable;
                 return;
@@ -280,7 +280,7 @@ const RouteLoader = struct {
                         &source,
                         Logger.Loc.Empty,
                         this.allocator,
-                        "Route \"{s}\" is already defined by {s}",
+                        "Route \"{any}\" is already defined by {any}",
                         .{ route.name, static_entry.value_ptr.*.abs_path.slice() },
                     ) catch unreachable;
 
@@ -304,7 +304,7 @@ const RouteLoader = struct {
                     &source,
                     Logger.Loc.Empty,
                     this.allocator,
-                    "Route \"{s}\" is already defined by {s}",
+                    "Route \"{any}\" is already defined by {any}",
                     .{ route.name, entry.value_ptr.* },
                 ) catch unreachable;
                 return;
@@ -719,7 +719,7 @@ pub const Route = struct {
                 route_file_buf[abs_path_str.len] = 0;
                 var buf = route_file_buf[0..abs_path_str.len :0];
                 file = std.fs.openFileAbsoluteZ(buf, .{ .mode = .read_only }) catch |err| {
-                    log.addErrorFmt(null, Logger.Loc.Empty, allocator, "{s} opening route: {s}", .{ @errorName(err), abs_path_str }) catch unreachable;
+                    log.addErrorFmt(null, Logger.Loc.Empty, allocator, "{any} opening route: {any}", .{ @errorName(err), abs_path_str }) catch unreachable;
                     return null;
                 };
                 FileSystem.setMaxFd(file.handle);
@@ -729,7 +729,7 @@ pub const Route = struct {
             }
 
             var _abs = std.os.getFdPath(file.handle, &route_file_buf) catch |err| {
-                log.addErrorFmt(null, Logger.Loc.Empty, allocator, "{s} resolving route: {s}", .{ @errorName(err), abs_path_str }) catch unreachable;
+                log.addErrorFmt(null, Logger.Loc.Empty, allocator, "{any} resolving route: {any}", .{ @errorName(err), abs_path_str }) catch unreachable;
                 return null;
             };
 
@@ -1498,7 +1498,7 @@ test "Pattern Match" {
                 const entries = part.@"1";
                 fail: {
                     if (!Pattern.match(pathname, pattern, pattern, default_allocator, *ParamListType, &parameters, true)) {
-                        Output.prettyErrorln("Expected pattern <b>\"{s}\"<r> to match <b>\"{s}\"<r>", .{ pattern, pathname });
+                        Output.prettyErrorln("Expected pattern <b>\"{any}\"<r> to match <b>\"{any}\"<r>", .{ pattern, pathname });
                         failures += 1;
                         break :fail;
                     }
@@ -1507,19 +1507,19 @@ test "Pattern Match" {
                         for (parameters.items(.name)) |entry_name, i| {
                             if (!strings.eql(entry_name, entries[i].name)) {
                                 failures += 1;
-                                Output.prettyErrorln("{s} -- Expected name <b>\"{s}\"<r> but received <b>\"{s}\"<r> for path {s}", .{ pattern, entries[i].name, parameters.get(i).name, pathname });
+                                Output.prettyErrorln("{any} -- Expected name <b>\"{any}\"<r> but received <b>\"{any}\"<r> for path {any}", .{ pattern, entries[i].name, parameters.get(i).name, pathname });
                                 break :fail;
                             }
                             if (!strings.eql(parameters.get(i).value, entries[i].value)) {
                                 failures += 1;
-                                Output.prettyErrorln("{s} -- Expected value <b>\"{s}\"<r> but received <b>\"{s}\"<r> for path {s}", .{ pattern, entries[i].value, parameters.get(i).value, pathname });
+                                Output.prettyErrorln("{any} -- Expected value <b>\"{any}\"<r> but received <b>\"{any}\"<r> for path {any}", .{ pattern, entries[i].value, parameters.get(i).value, pathname });
                                 break :fail;
                             }
                         }
                     }
 
                     if (parameters.len != entries.len) {
-                        Output.prettyErrorln("Expected parameter count for <b>\"{s}\"<r> to match <b>\"{s}\"<r>", .{ pattern, pathname });
+                        Output.prettyErrorln("Expected parameter count for <b>\"{any}\"<r> to match <b>\"{any}\"<r>", .{ pattern, pathname });
                         failures += 1;
                         break :fail;
                     }

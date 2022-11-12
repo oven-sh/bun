@@ -57,7 +57,7 @@ pub fn validatePath(
             null,
             logger.Loc.Empty,
             allocator,
-            "<r><red>{s}<r> resolving external: <b>\"{s}\"<r>",
+            "<r><red>{any}<r> resolving external: <b>\"{any}\"<r>",
             .{ @errorName(err), rel_path },
         ) catch unreachable;
         return "";
@@ -150,7 +150,7 @@ pub const ExternalModules = struct {
             const path = external;
             if (strings.indexOfChar(path, '*')) |i| {
                 if (strings.indexOfChar(path[i + 1 .. path.len], '*') != null) {
-                    log.addErrorFmt(null, logger.Loc.Empty, allocator, "External path \"{s}\" cannot have more than one \"*\" wildcard", .{external}) catch unreachable;
+                    log.addErrorFmt(null, logger.Loc.Empty, allocator, "External path \"{any}\" cannot have more than one \"*\" wildcard", .{external}) catch unreachable;
                     return result;
                 }
 
@@ -1380,7 +1380,7 @@ pub const BundleOptions = struct {
                 opts.origin = URL.parse(
                     try std.fmt.allocPrint(
                         allocator,
-                        "{s}://localhost:{s}{s}",
+                        "{any}://localhost:{any}{any}",
                         .{
                             protocol,
                             port,
@@ -1416,7 +1416,7 @@ pub const BundleOptions = struct {
             if (node_modules_bundle_existing) |node_mods| {
                 opts.node_modules_bundle = node_mods;
                 const pretty_path = fs.relativeTo(transform.node_modules_bundle_path.?);
-                opts.node_modules_bundle_url = try std.fmt.allocPrint(allocator, "{s}{s}", .{
+                opts.node_modules_bundle_url = try std.fmt.allocPrint(allocator, "{any}{any}", .{
                     opts.origin,
                     pretty_path,
                 });
@@ -1427,7 +1427,7 @@ pub const BundleOptions = struct {
                         var bundle_file = std.fs.openFileAbsolute(bundle_path, .{ .mode = .read_write }) catch |err| {
                             Output.disableBuffering();
                             defer Output.enableBuffering();
-                            Output.prettyErrorln("<r>error opening <d>\"<r><b>{s}<r><d>\":<r> <b><red>{s}<r>", .{ pretty_path, @errorName(err) });
+                            Output.prettyErrorln("<r>error opening <d>\"<r><b>{any}<r><d>\":<r> <b><red>{any}<r>", .{ pretty_path, @errorName(err) });
                             break :load_bundle;
                         };
 
@@ -1454,7 +1454,7 @@ pub const BundleOptions = struct {
                             const elapsed = @intToFloat(f64, (std.time.nanoTimestamp() - time_start)) / std.time.ns_per_ms;
                             Output.printElapsed(elapsed);
                             Output.prettyErrorln(
-                                " <b><d>\"{s}\"<r><d> - {d} modules, {d} packages<r>",
+                                " <b><d>\"{any}\"<r><d> - {d} modules, {d} packages<r>",
                                 .{
                                     pretty_path,
                                     bundle.bundle.modules.len,
@@ -1465,7 +1465,7 @@ pub const BundleOptions = struct {
                         } else |err| {
                             Output.disableBuffering();
                             Output.prettyErrorln(
-                                "<r>error reading <d>\"<r><b>{s}<r><d>\":<r> <b><red>{s}<r>, <b>deleting it<r> so you don't keep seeing this message.",
+                                "<r>error reading <d>\"<r><b>{any}<r><d>\":<r> <b><red>{any}<r>, <b>deleting it<r> so you don't keep seeing this message.",
                                 .{ pretty_path, @errorName(err) },
                             );
                             bundle_file.close();
@@ -1555,14 +1555,14 @@ pub const BundleOptions = struct {
                         },
                         error.AccessDenied => {
                             Output.prettyErrorln(
-                                "error: access denied when trying to open directory for static files: \"{s}\".\nPlease re-open bun with access to this folder or pass a different folder via \"--public-dir\". Note: --public-dir is relative to --cwd (or the process' current working directory).\n\nThe public folder is where static assets such as images, fonts, and .html files go.",
+                                "error: access denied when trying to open directory for static files: \"{any}\".\nPlease re-open bun with access to this folder or pass a different folder via \"--public-dir\". Note: --public-dir is relative to --cwd (or the process' current working directory).\n\nThe public folder is where static assets such as images, fonts, and .html files go.",
                                 .{opts.routes.static_dir},
                             );
                             std.process.exit(1);
                         },
                         else => {
                             Output.prettyErrorln(
-                                "error: \"{s}\" when accessing public folder: \"{s}\"",
+                                "error: \"{any}\" when accessing public folder: \"{any}\"",
                                 .{ @errorName(err), opts.routes.static_dir },
                             );
                             std.process.exit(1);
@@ -1584,7 +1584,7 @@ pub const BundleOptions = struct {
                         error.FileNotFound => {},
                         else => {
                             Output.prettyErrorln(
-                                "{s} when trying to open {s}/index.html. single page app routing is disabled.",
+                                "{any} when trying to open {any}/index.html. single page app routing is disabled.",
                                 .{ @errorName(err), opts.routes.static_dir },
                             );
                         },
@@ -1614,7 +1614,7 @@ pub const BundleOptions = struct {
                             error.FileNotFound => {},
                             else => {
                                 Output.prettyErrorln(
-                                    "{s} when trying to open {s}/index.html. single page app routing is disabled.",
+                                    "{any} when trying to open {any}/index.html. single page app routing is disabled.",
                                     .{ @errorName(err), fs.top_level_dir },
                                 );
                             },
@@ -1671,12 +1671,12 @@ pub const BundleOptions = struct {
 pub fn openOutputDir(output_dir: string) !std.fs.Dir {
     return std.fs.cwd().openDir(output_dir, std.fs.Dir.OpenDirOptions{ .iterate = true }) catch brk: {
         std.fs.cwd().makeDir(output_dir) catch |err| {
-            Output.printErrorln("error: Unable to mkdir \"{s}\": \"{s}\"", .{ output_dir, @errorName(err) });
+            Output.printErrorln("error: Unable to mkdir \"{any}\": \"{any}\"", .{ output_dir, @errorName(err) });
             Global.crash();
         };
 
         var handle = std.fs.cwd().openDir(output_dir, std.fs.Dir.OpenDirOptions{ .iterate = true }) catch |err2| {
-            Output.printErrorln("error: Unable to open \"{s}\": \"{s}\"", .{ output_dir, @errorName(err2) });
+            Output.printErrorln("error: Unable to open \"{any}\": \"{any}\"", .{ output_dir, @errorName(err2) });
             Global.crash();
         };
         break :brk handle;

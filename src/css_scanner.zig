@@ -1020,7 +1020,7 @@ pub fn NewWriter(
                                     writer.source,
                                     chunk.range,
                                     writer.buildCtx.allocator,
-                                    "Not Found - \"{s}\"",
+                                    "Not Found - \"{any}\"",
                                     .{import.text.utf8},
                                     import_record.ImportKind.at,
                                     err,

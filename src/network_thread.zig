@@ -90,7 +90,7 @@ pub fn onStartIOThread(waker: AsyncIO.Waker) void {
                 }
             }
 
-            Output.prettyErrorln("<r><red>error<r>: Failed to initialize network thread: <red><b>{s}<r>.\nHTTP requests will not work. Please file an issue and run strace().", .{@errorName(err)});
+            Output.prettyErrorln("<r><red>error<r>: Failed to initialize network thread: <red><b>{any}<r>.\nHTTP requests will not work. Please file an issue and run strace().", .{@errorName(err)});
         }
 
         Global.exit(1);

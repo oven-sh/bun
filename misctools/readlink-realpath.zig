@@ -35,5 +35,5 @@ pub fn main() anyerror!void {
         path = try std.os.realpathZ(to_resolve, &out_buffer);
     }
 
-    Output.print("{s}", .{path});
+    Output.print("{any}", .{path});
 }

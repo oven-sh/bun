@@ -325,7 +325,7 @@ pub const Expect = struct {
             var rhs_formatter: JSC.ZigConsoleClient.Formatter = JSC.ZigConsoleClient.Formatter{ .globalThis = globalObject };
 
             if (comptime Environment.allow_assert) {
-                Output.prettyErrorln("\nJSType: {s}\nJSType: {s}\n\n", .{ @tagName(left.jsType()), @tagName(right.jsType()) });
+                Output.prettyErrorln("\nJSType: {any}\nJSType: {any}\n\n", .{ @tagName(left.jsType()), @tagName(right.jsType()) });
             }
 
             globalObject.throw(

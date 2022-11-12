@@ -189,19 +189,19 @@ pub const URL = struct {
         var out: [2048]u8 = undefined;
         const normalized_path = joinNormalize(&out, prefix, dirname, basename, extname);
 
-        try writer.print("{s}/{s}", .{ this.origin, normalized_path });
+        try writer.print("{any}/{any}", .{ this.origin, normalized_path });
     }
 
     pub fn joinAlloc(this: *const URL, allocator: std.mem.Allocator, prefix: string, dirname: string, basename: string, extname: string, absolute_path: string) !string {
         const has_uplevels = std.mem.indexOf(u8, dirname, "../") != null;
 
         if (has_uplevels) {
-            return try std.fmt.allocPrint(allocator, "{s}/abs:{s}", .{ this.origin, absolute_path });
+            return try std.fmt.allocPrint(allocator, "{any}/abs:{any}", .{ this.origin, absolute_path });
         } else {
             var out: [2048]u8 = undefined;
 
             const normalized_path = joinNormalize(&out, prefix, dirname, basename, extname);
-            return try std.fmt.allocPrint(allocator, "{s}/{s}", .{ this.origin, normalized_path });
+            return try std.fmt.allocPrint(allocator, "{any}/{any}", .{ this.origin, normalized_path });
         }
     }
 

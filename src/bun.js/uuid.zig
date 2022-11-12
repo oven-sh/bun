@@ -73,7 +73,7 @@ pub fn format(
     var buf: [36]u8 = undefined;
     self.print(&buf);
 
-    try fmt.format(writer, "{s}", .{buf});
+    try fmt.format(writer, "{any}", .{buf});
 }
 
 pub fn print(

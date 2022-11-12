@@ -21,15 +21,15 @@ pub const Header = struct {
     pub fn format(self: Header, comptime _: []const u8, _: fmt.FormatOptions, writer: anytype) !void {
         if (Output.enable_ansi_colors) {
             if (self.isMultiline()) {
-                try fmt.format(writer, comptime Output.prettyFmt("<r><cyan>{s}", true), .{self.value});
+                try fmt.format(writer, comptime Output.prettyFmt("<r><cyan>{any}", true), .{self.value});
             } else {
-                try fmt.format(writer, comptime Output.prettyFmt("<r><cyan>{s}<r><d>: <r>{s}", true), .{ self.name, self.value });
+                try fmt.format(writer, comptime Output.prettyFmt("<r><cyan>{any}<r><d>: <r>{any}", true), .{ self.name, self.value });
             }
         } else {
             if (self.isMultiline()) {
-                try fmt.format(writer, comptime Output.prettyFmt("<r><cyan>{s}", false), .{self.value});
+                try fmt.format(writer, comptime Output.prettyFmt("<r><cyan>{any}", false), .{self.value});
             } else {
-                try fmt.format(writer, comptime Output.prettyFmt("<r><cyan>{s}<r><d>: <r>{s}", false), .{ self.name, self.value });
+                try fmt.format(writer, comptime Output.prettyFmt("<r><cyan>{any}<r><d>: <r>{any}", false), .{ self.name, self.value });
             }
         }
     }
@@ -74,10 +74,10 @@ pub const Request = struct {
     }
 
     pub fn format(self: Request, comptime _: []const u8, _: fmt.FormatOptions, writer: anytype) !void {
-        try fmt.format(writer, "{s} {s}\n", .{ self.method, self.path });
+        try fmt.format(writer, "{any} {any}\n", .{ self.method, self.path });
         for (self.headers) |header| {
             _ = try writer.write("\t");
-            try fmt.format(writer, "{s}\n", .{header});
+            try fmt.format(writer, "{any}\n", .{header});
         }
     }
 
@@ -125,10 +125,10 @@ pub const Response = struct {
     bytes_read: c_int = 0,
 
     pub fn format(self: Response, comptime _: []const u8, _: fmt.FormatOptions, writer: anytype) !void {
-        try fmt.format(writer, "< {d} {s}\n", .{ self.status_code, self.status });
+        try fmt.format(writer, "< {d} {any}\n", .{ self.status_code, self.status });
         for (self.headers) |header| {
             _ = try writer.write("< \t");
-            try fmt.format(writer, "{s}\n", .{header});
+            try fmt.format(writer, "{any}\n", .{header});
         }
     }
 
@@ -173,7 +173,7 @@ pub const Response = struct {
 
         return switch (rc) {
             -1 => if (comptime Environment.allow_assert) brk: {
-                Output.debug("Malformed HTTP response:\n{s}", .{buf});
+                Output.debug("Malformed HTTP response:\n{any}", .{buf});
                 break :brk error.Malformed_HTTP_Response;
             } else error.Malformed_HTTP_Response,
             -2 => brk: {
@@ -215,7 +215,7 @@ test "pico_http: parse response" {
 
     std.debug.print("Minor Version: {}\n", .{res.minor_version});
     std.debug.print("Status Code: {}\n", .{res.status_code});
-    std.debug.print("Status: {s}\n", .{res.status});
+    std.debug.print("Status: {any}\n", .{res.status});
 
     for (res.headers) |header| {
         std.debug.print("{}\n", .{header});
@@ -227,7 +227,7 @@ pub const Headers = struct {
 
     pub fn format(self: Headers, comptime _: []const u8, _: fmt.FormatOptions, writer: anytype) !void {
         for (self.headers) |header| {
-            try fmt.format(writer, "{s}: {s}\r\n", .{ header.name, header.value });
+            try fmt.format(writer, "{any}: {any}\r\n", .{ header.name, header.value });
         }
     }
 

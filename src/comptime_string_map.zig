@@ -390,14 +390,14 @@ const TestEnum2 = enum {
 pub fn compareString(input: []const u8) !void {
     var str = try std.heap.page_allocator.dupe(u8, input);
     if (TestEnum2.map.has(str) != TestEnum2.official.has(str)) {
-        std.debug.panic("{s} - TestEnum2.map.has(str) ({d}) != TestEnum2.official.has(str) ({d})", .{
+        std.debug.panic("{any} - TestEnum2.map.has(str) ({d}) != TestEnum2.official.has(str) ({d})", .{
             str,
             @boolToInt(TestEnum2.map.has(str)),
             @boolToInt(TestEnum2.official.has(str)),
         });
     }
 
-    std.debug.print("For string: \"{s}\" (has a match? {d})\n", .{ str, @boolToInt(TestEnum2.map.has(str)) });
+    std.debug.print("For string: \"{any}\" (has a match? {d})\n", .{ str, @boolToInt(TestEnum2.map.has(str)) });
 
     var i: usize = 0;
     var is_eql = false;

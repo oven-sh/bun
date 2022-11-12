@@ -4872,7 +4872,7 @@ pub const Macro = struct {
                             source,
                             import_range,
                             log.msgs.allocator,
-                            "Macro \"{s}\" not found",
+                            "Macro \"{any}\" not found",
                             .{import_record_path},
                             .stmt,
                             err,
@@ -4884,7 +4884,7 @@ pub const Macro = struct {
                             source,
                             import_range,
                             log.msgs.allocator,
-                            "{s} resolving macro \"{s}\"",
+                            "{any} resolving macro \"{any}\"",
                             .{ @errorName(err), import_record_path },
                         ) catch unreachable;
                         return err;
@@ -5547,7 +5547,7 @@ pub const Macro = struct {
                 },
                 else => {
                     if (comptime Environment.isDebug) {
-                        Output.prettyWarnln("initExpr fail: {s}", .{@tagName(this.data)});
+                        Output.prettyWarnln("initExpr fail: {any}", .{@tagName(this.data)});
                     }
                     return JSNode{ .loc = this.loc, .data = .{ .e_missing = .{} } };
                 },
@@ -5957,7 +5957,7 @@ pub const Macro = struct {
                             if (!@hasField(JSNode.Tag, name)) {
                                 @compileError(
                                     "JSNode.Tag does not have a \"" ++ name ++ "\" field. Valid fields are " ++ std.fmt.comptimePrint(
-                                        "{s}",
+                                        "{any}",
                                         .{
                                             std.meta.fieldNames(@TypeOf(valid_tags)),
                                         },
@@ -6709,7 +6709,7 @@ pub const Macro = struct {
                         Tag.e_super, Tag.e_null, Tag.e_undefined, Tag.e_missing, Tag.inline_true, Tag.inline_false, Tag.e_this => {
                             self.args.append(Expr{ .loc = loc, .data = Tag.ids.get(tag) }) catch unreachable;
                         },
-                        else => Global.panic("Tag \"{s}\" is not implemented yet.", .{@tagName(tag)}),
+                        else => Global.panic("Tag \"{any}\" is not implemented yet.", .{@tagName(tag)}),
                     }
 
                     return true;
@@ -6745,7 +6745,7 @@ pub const Macro = struct {
                                     tag_expr.loc,
                                 );
                             },
-                            else => Global.panic("Not implemented yet top-level jsx element: {s}", .{@tagName(tag_expr.data)}),
+                            else => Global.panic("Not implemented yet top-level jsx element: {any}", .{@tagName(tag_expr.data)}),
                         }
                     } else {
                         const loc = logger.Loc.Empty;
@@ -6783,15 +6783,15 @@ pub const Macro = struct {
 
                     const node_type: JSNode.Tag = JSNode.Tag.names.get(str.data) orelse {
                         if (!str.isUTF8()) {
-                            self.log.addErrorFmt(p.source, tag_expr.loc, p.allocator, "Tag \"{s}\" is invalid", .{strings.toUTF8Alloc(self.p.allocator, str.slice16())}) catch unreachable;
+                            self.log.addErrorFmt(p.source, tag_expr.loc, p.allocator, "Tag \"{any}\" is invalid", .{strings.toUTF8Alloc(self.p.allocator, str.slice16())}) catch unreachable;
                         } else {
-                            self.log.addErrorFmt(p.source, tag_expr.loc, p.allocator, "Tag \"{s}\" is invalid", .{str.data}) catch unreachable;
+                            self.log.addErrorFmt(p.source, tag_expr.loc, p.allocator, "Tag \"{any}\" is invalid", .{str.data}) catch unreachable;
                         }
                         return false;
                     };
 
                     if (!valid_tags.get(node_type)) {
-                        self.log.addErrorFmt(p.source, tag_expr.loc, p.allocator, "Tag \"{s}\" is invalid here", .{str.data}) catch unreachable;
+                        self.log.addErrorFmt(p.source, tag_expr.loc, p.allocator, "Tag \"{any}\" is invalid here", .{str.data}) catch unreachable;
                     }
 
                     return self.writeNodeType(node_type, element.properties.slice(), element.children.slice(), tag_expr.loc);
@@ -6805,9 +6805,9 @@ pub const Macro = struct {
 
                     const node_type: JSNode.Tag = JSNode.Tag.names.get(str.data) orelse {
                         if (!str.isUTF8()) {
-                            self.log.addErrorFmt(p.source, tag_expr.loc, p.allocator, "Tag \"{s}\" is invalid", .{strings.toUTF8Alloc(self.p.allocator, str.slice16())}) catch unreachable;
+                            self.log.addErrorFmt(p.source, tag_expr.loc, p.allocator, "Tag \"{any}\" is invalid", .{strings.toUTF8Alloc(self.p.allocator, str.slice16())}) catch unreachable;
                         } else {
-                            self.log.addErrorFmt(p.source, tag_expr.loc, p.allocator, "Tag \"{s}\" is invalid", .{str.data}) catch unreachable;
+                            self.log.addErrorFmt(p.source, tag_expr.loc, p.allocator, "Tag \"{any}\" is invalid", .{str.data}) catch unreachable;
                         }
                         return false;
                     };
@@ -7838,7 +7838,7 @@ pub const Macro = struct {
                                 this.source,
                                 this.caller.loc,
                                 this.allocator,
-                                "cannot coerce {s} to Bun's AST. Please return a valid macro using the JSX syntax",
+                                "cannot coerce {any} to Bun's AST. Please return a valid macro using the JSX syntax",
                                 .{@tagName(value.jsType())},
                             ) catch unreachable;
                             break :brk error.MacroFailed;
@@ -8085,7 +8085,7 @@ pub const Macro = struct {
                         this.source,
                         this.caller.loc,
                         this.allocator,
-                        "cannot coerce {s} to Bun's AST. Please return a valid macro using the JSX syntax",
+                        "cannot coerce {any} to Bun's AST. Please return a valid macro using the JSX syntax",
                         .{@tagName(value.jsType())},
                     ) catch unreachable;
                     return error.MacroFailed;
@@ -8106,7 +8106,7 @@ pub const Macro = struct {
             visitor: Visitor,
             javascript_object: JSC.JSValue,
         ) MacroError!Expr {
-            if (comptime Environment.isDebug) Output.prettyln("<r><d>[macro]<r> call <d><b>{s}<r>", .{function_name});
+            if (comptime Environment.isDebug) Output.prettyln("<r><d>[macro]<r> call <d><b>{any}<r>", .{function_name});
 
             exception_holder = Zig.ZigException.Holder.init();
             expr_nodes_buf[0] = JSNode.initExpr(caller);

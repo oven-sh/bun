@@ -109,9 +109,9 @@ pub const CommandLineReporter = struct {
         }
 
         if (Output.enable_ansi_colors_stderr)
-            writer.print(comptime Output.prettyFmt("<r><b> {s}<r>", true), .{display_label}) catch unreachable
+            writer.print(comptime Output.prettyFmt("<r><b> {any}<r>", true), .{display_label}) catch unreachable
         else
-            writer.print(comptime Output.prettyFmt("<r><b> {s}<r>", false), .{display_label}) catch unreachable;
+            writer.print(comptime Output.prettyFmt("<r><b> {any}<r>", false), .{display_label}) catch unreachable;
 
         writer.writeAll("\n") catch unreachable;
     }
@@ -388,7 +388,7 @@ pub const TestCommand = struct {
         if (reporter.summary.expectations > 0) Output.prettyError(" {d:5>} expect() calls\n", .{reporter.summary.expectations});
 
         Output.prettyError(
-            \\ Ran {d} tests across {d} files 
+            \\ Ran {d} tests across {d} files
         , .{
             reporter.summary.fail + reporter.summary.pass,
             test_files.len,
@@ -466,7 +466,7 @@ pub const TestCommand = struct {
         var resolution = try vm.bundler.resolveEntryPoint(file_name);
         vm.clearEntryPoint();
 
-        Output.prettyErrorln("<r>\n{s}:\n", .{resolution.path_pair.primary.name.filename});
+        Output.prettyErrorln("<r>\n{any}:\n", .{resolution.path_pair.primary.name.filename});
         Output.flush();
 
         var promise = try vm.loadEntryPoint(resolution.path_pair.primary.text);

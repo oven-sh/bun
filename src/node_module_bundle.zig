@@ -117,8 +117,8 @@ pub const NodeModuleBundle = struct {
                     Output.prettyErrorln(
                         \\<r><red>Fatal<r>: incorrect package sorting order detected in .bun file.\n
                         \\This is a bug! Please create an issue.\n
-                        \\If this bug blocks you from doing work, for now 
-                        \\please <b>avoid having multiple versions of <cyan>"{s}"<r> in the same bundle.\n
+                        \\If this bug blocks you from doing work, for now
+                        \\please <b>avoid having multiple versions of <cyan>"{any}"<r> in the same bundle.\n
                         \\\n
                         \\- Jarred"
                     ,
@@ -174,7 +174,7 @@ pub const NodeModuleBundle = struct {
     ) !string {
         return try std.fmt.allocPrint(
             allocator,
-            "{x}/{s}",
+            "{x}/{any}",
             .{
                 this.bundle.packages[to.package_id].hash,
                 this.str(to.path),
@@ -381,7 +381,7 @@ pub const NodeModuleBundle = struct {
             const modules = this.bundle.modules[pkg.modules_offset .. pkg.modules_offset + pkg.modules_length];
 
             Output.prettyln(
-                "<r><blue><b>{s}</r> v{s}",
+                "<r><blue><b>{any}</r> v{any}",
                 .{ this.str(pkg.name), this.str(pkg.version) },
             );
 
@@ -396,7 +396,7 @@ pub const NodeModuleBundle = struct {
                 Output.print(indent, .{});
                 prettySize(module.code.length, size_level, ">");
                 Output.prettyln(
-                    indent ++ "<d>{s}</r>" ++ std.fs.path.sep_str ++ "{s} <r><d>[{d}]<r>\n",
+                    indent ++ "<d>{any}</r>" ++ std.fs.path.sep_str ++ "{any} <r><d>[{d}]<r>\n",
                     .{
                         this.str(pkg.name),
                         this.str(module.path),

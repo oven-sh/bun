@@ -1147,13 +1147,13 @@ pub const VirtualMachine = struct {
                             .data = logger.rangeData(
                                 null,
                                 logger.Range.None,
-                                std.fmt.allocPrint(vm.allocator, "Unexpected pending import in \"{s}\". To automatically install npm packages with Bun, please use an import statement instead of require() or dynamic import().\nThis error can also happen if dependencies import packages which are not referenced anywhere. Worst case, run `bun install` and opt-out of the node_modules folder until we come up with a better way to handle this error.", .{specifier.slice()}) catch unreachable,
+                                std.fmt.allocPrint(vm.allocator, "Unexpected pending import in \"{any}\". To automatically install npm packages with Bun, please use an import statement instead of require() or dynamic import().\nThis error can also happen if dependencies import packages which are not referenced anywhere. Worst case, run `bun install` and opt-out of the node_modules folder until we come up with a better way to handle this error.", .{specifier.slice()}) catch unreachable,
                             ),
                         };
                     }
 
                     break :brk logger.Msg{
-                        .data = logger.rangeData(null, logger.Range.None, std.fmt.allocPrint(vm.allocator, "{s} while building {s}", .{ @errorName(err), specifier.slice() }) catch unreachable),
+                        .data = logger.rangeData(null, logger.Range.None, std.fmt.allocPrint(vm.allocator, "{any} while building {any}", .{ @errorName(err), specifier.slice() }) catch unreachable),
                     };
                 };
                 {
@@ -1198,7 +1198,7 @@ pub const VirtualMachine = struct {
                         errors.ptr,
                         @intCast(u16, errors.len),
                         &ZigString.init(
-                            std.fmt.allocPrint(vm.bundler.allocator, "{d} errors building \"{s}\"", .{
+                            std.fmt.allocPrint(vm.bundler.allocator, "{d} errors building \"{any}\"", .{
                                 errors.len,
                                 specifier.slice(),
                             }) catch unreachable,
@@ -1510,7 +1510,7 @@ pub const VirtualMachine = struct {
                 ) catch |err| {
                     if (comptime Environment.isDebug) {
                         // yo dawg
-                        Output.printErrorln("Error while printing Error-like object: {s}", .{@errorName(err)});
+                        Output.printErrorln("Error while printing Error-like object: {any}", .{@errorName(err)});
                         Output.flush();
                     }
                 };
@@ -1724,7 +1724,7 @@ pub const VirtualMachine = struct {
             last_pad = pad;
             try writer.writeByteNTimes(' ', pad);
             try writer.print(
-                comptime Output.prettyFmt("<r><d>{d} | <r>{s}\n", allow_ansi_color),
+                comptime Output.prettyFmt("<r><d>{d} | <r>{any}\n", allow_ansi_color),
                 .{
                     source.line,
                     std.mem.trim(u8, source.text, "\n"),
@@ -1743,7 +1743,7 @@ pub const VirtualMachine = struct {
 
                 try writer.print(
                     comptime Output.prettyFmt(
-                        "<r><d>- |<r> {s}\n",
+                        "<r><d>- |<r> {any}\n",
                         allow_ansi_color,
                     ),
                     .{
@@ -1762,7 +1762,7 @@ pub const VirtualMachine = struct {
 
                 try writer.print(
                     comptime Output.prettyFmt(
-                        "<r><d>{d} |<r> {s}\n",
+                        "<r><d>{d} |<r> {any}\n",
                         allow_ansi_color,
                     ),
                     .{ source.line, remainder },
@@ -1823,13 +1823,13 @@ pub const VirtualMachine = struct {
                             if (value.toStringOrNull(this.global)) |str| {
                                 var zig_str = str.toSlice(this.global, bun.default_allocator);
                                 defer zig_str.deinit();
-                                try writer.print(comptime Output.prettyFmt(" {s}<d>: <r>\"{s}\"<r>\n", allow_ansi_color), .{ field, zig_str.slice() });
+                                try writer.print(comptime Output.prettyFmt(" {any}<d>: <r>\"{any}\"<r>\n", allow_ansi_color), .{ field, zig_str.slice() });
                                 add_extra_line = true;
                             }
                         } else if (kind.isObject() or kind.isArray()) {
                             var zig_str = ZigString.init("");
                             value.jsonStringify(this.global, 2, &zig_str);
-                            try writer.print(comptime Output.prettyFmt(" {s}<d>: <r>{s}<r>\n", allow_ansi_color), .{ field, zig_str });
+                            try writer.print(comptime Output.prettyFmt(" {any}<d>: <r>{any}<r>\n", allow_ansi_color), .{ field, zig_str });
                             add_extra_line = true;
                         }
                     }
@@ -1843,7 +1843,7 @@ pub const VirtualMachine = struct {
             } else if (show.errno) {
                 try writer.writeAll(" ");
             }
-            try writer.print(comptime Output.prettyFmt(" path<d>: <r><cyan>\"{s}\"<r>\n", allow_ansi_color), .{exception.path});
+            try writer.print(comptime Output.prettyFmt(" path<d>: <r><cyan>\"{any}\"<r>\n", allow_ansi_color), .{exception.path});
         }
 
         if (show.fd) {
@@ -1862,12 +1862,12 @@ pub const VirtualMachine = struct {
             } else if (show.errno) {
                 try writer.writeAll(" ");
             }
-            try writer.print(comptime Output.prettyFmt(" code<d>: <r><cyan>\"{s}\"<r>\n", allow_ansi_color), .{exception.system_code});
+            try writer.print(comptime Output.prettyFmt(" code<d>: <r><cyan>\"{any}\"<r>\n", allow_ansi_color), .{exception.system_code});
             add_extra_line = true;
         }
 
         if (show.syscall) {
-            try writer.print(comptime Output.prettyFmt("syscall<d>: <r><cyan>\"{s}\"<r>\n", allow_ansi_color), .{exception.syscall});
+            try writer.print(comptime Output.prettyFmt("syscall<d>: <r><cyan>\"{any}\"<r>\n", allow_ansi_color), .{exception.syscall});
             add_extra_line = true;
         }
 
@@ -1888,18 +1888,18 @@ pub const VirtualMachine = struct {
         if (name.len > 0 and message.len > 0) {
             const display_name: ZigString = if (!name.is16Bit() and strings.eqlComptime(name.slice(), "Error")) ZigString.init("error") else name;
 
-            try writer.print(comptime Output.prettyFmt("<r><red>{any}<r><d>:<r> <b>{s}<r>\n", allow_ansi_color), .{
+            try writer.print(comptime Output.prettyFmt("<r><red>{any}<r><d>:<r> <b>{any}<r>\n", allow_ansi_color), .{
                 display_name,
                 message,
             });
         } else if (name.len > 0) {
             if (name.is16Bit() or !strings.hasPrefixComptime(name.slice(), "error")) {
-                try writer.print(comptime Output.prettyFmt("<r><red>error<r><d>:<r> <b>{s}<r>\n", allow_ansi_color), .{name});
+                try writer.print(comptime Output.prettyFmt("<r><red>error<r><d>:<r> <b>{any}<r>\n", allow_ansi_color), .{name});
             } else {
-                try writer.print(comptime Output.prettyFmt("<r><red>{s}<r>\n", allow_ansi_color), .{name});
+                try writer.print(comptime Output.prettyFmt("<r><red>{any}<r>\n", allow_ansi_color), .{name});
             }
         } else if (message.len > 0) {
-            try writer.print(comptime Output.prettyFmt("<r><red>error<r><d>:<r> <b>{s}<r>\n", allow_ansi_color), .{message});
+            try writer.print(comptime Output.prettyFmt("<r><red>error<r><d>:<r> <b>{any}<r>\n", allow_ansi_color), .{message});
         } else {
             try writer.print(comptime Output.prettyFmt("<r><red>error<r>\n", allow_ansi_color), .{});
         }
@@ -2085,23 +2085,23 @@ pub const ResolveError = struct {
         switch (err) {
             error.ModuleNotFound => {
                 if (Resolver.isPackagePath(specifier) and !strings.containsChar(specifier, '/')) {
-                    return try std.fmt.allocPrint(allocator, "Cannot find package \"{s}\" from \"{s}\"", .{ specifier, referrer });
+                    return try std.fmt.allocPrint(allocator, "Cannot find package \"{any}\" from \"{any}\"", .{ specifier, referrer });
                 } else {
-                    return try std.fmt.allocPrint(allocator, "Cannot find module \"{s}\" from \"{s}\"", .{ specifier, referrer });
+                    return try std.fmt.allocPrint(allocator, "Cannot find module \"{any}\" from \"{any}\"", .{ specifier, referrer });
                 }
             },
             else => {
                 if (Resolver.isPackagePath(specifier)) {
-                    return try std.fmt.allocPrint(allocator, "{s} while resolving package \"{s}\" from \"{s}\"", .{ @errorName(err), specifier, referrer });
+                    return try std.fmt.allocPrint(allocator, "{any} while resolving package \"{any}\" from \"{any}\"", .{ @errorName(err), specifier, referrer });
                 } else {
-                    return try std.fmt.allocPrint(allocator, "{s} while resolving \"{s}\" from \"{s}\"", .{ @errorName(err), specifier, referrer });
+                    return try std.fmt.allocPrint(allocator, "{any} while resolving \"{any}\" from \"{any}\"", .{ @errorName(err), specifier, referrer });
                 }
             },
         }
     }
 
     pub fn toStringFn(this: *ResolveError, ctx: js.JSContextRef) js.JSValueRef {
-        var text = std.fmt.allocPrint(default_allocator, "ResolveError: {s}", .{this.msg.data.text}) catch return null;
+        var text = std.fmt.allocPrint(default_allocator, "ResolveError: {any}", .{this.msg.data.text}) catch return null;
         var str = ZigString.init(text);
         str.setOutputEncoding();
         if (str.isUTF8()) {
@@ -2316,7 +2316,7 @@ pub const BuildError = struct {
     );
 
     pub fn toStringFn(this: *BuildError, ctx: js.JSContextRef) js.JSValueRef {
-        var text = std.fmt.allocPrint(default_allocator, "BuildError: {s}", .{this.msg.data.text}) catch return null;
+        var text = std.fmt.allocPrint(default_allocator, "BuildError: {any}", .{this.msg.data.text}) catch return null;
         var str = ZigString.init(text);
         str.setOutputEncoding();
         if (str.isUTF8()) {
@@ -2585,7 +2585,7 @@ pub const HotReloader = struct {
             const id = hashes[event.index];
 
             if (comptime Environment.isDebug) {
-                Output.prettyErrorln("[watcher] {s}: -- {}", .{ @tagName(kind), event.op });
+                Output.prettyErrorln("[watcher] {any}: -- {}", .{ @tagName(kind), event.op });
             }
 
             switch (kind) {
@@ -2600,7 +2600,7 @@ pub const HotReloader = struct {
                     }
 
                     if (comptime bun.FeatureFlags.verbose_watcher) {
-                        Output.prettyErrorln("<r><d>File changed: {s}<r>", .{fs.relativeTo(file_path)});
+                        Output.prettyErrorln("<r><d>File changed: {any}<r>", .{fs.relativeTo(file_path)});
                     }
 
                     if (event.op.write) {
@@ -2658,7 +2658,7 @@ pub const HotReloader = struct {
                                 if (last_file_hash == file_hash) continue;
                                 last_file_hash = file_hash;
 
-                                Output.prettyErrorln("<r>   <d>File change: {s}<r>", .{fs.relativeTo(abs_path)});
+                                Output.prettyErrorln("<r>   <d>File change: {any}<r>", .{fs.relativeTo(abs_path)});
                             }
                         }
                     }
@@ -2666,9 +2666,9 @@ pub const HotReloader = struct {
                     // if (event.op.delete or event.op.rename)
                     //     ctx.watcher.removeAtIndex(event.index, hashes[event.index], parent_hashes, .directory);
                     if (comptime false) {
-                        Output.prettyErrorln("<r>📁  <d>Dir change: {s}<r>", .{fs.relativeTo(file_path)});
+                        Output.prettyErrorln("<r>📁  <d>Dir change: {any}<r>", .{fs.relativeTo(file_path)});
                     } else {
-                        Output.prettyErrorln("<r>    <d>Dir change: {s}<r>", .{fs.relativeTo(file_path)});
+                        Output.prettyErrorln("<r>    <d>Dir change: {any}<r>", .{fs.relativeTo(file_path)});
                     }
                 },
             }

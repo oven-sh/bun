@@ -295,7 +295,7 @@ pub const EventLoop = struct {
                     this.virtual_machine.modules.onPoll();
                 },
                 else => if (Environment.allow_assert) {
-                    bun.Output.prettyln("\nUnexpected tag: {s}\n", .{@tagName(task.tag())});
+                    bun.Output.prettyln("\nUnexpected tag: {any}\n", .{@tagName(task.tag())});
                 } else unreachable,
             }
 

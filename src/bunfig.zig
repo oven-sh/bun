@@ -64,11 +64,11 @@ pub const Bunfig = struct {
                     // Token
                     if (url.username.len == 0 and url.password.len > 0) {
                         registry.token = url.password;
-                        registry.url = try std.fmt.allocPrint(this.allocator, "{s}://{s}/{s}", .{ url.displayProtocol(), url.displayHostname(), std.mem.trimLeft(u8, url.pathname, "/") });
+                        registry.url = try std.fmt.allocPrint(this.allocator, "{any}://{any}/{any}", .{ url.displayProtocol(), url.displayHostname(), std.mem.trimLeft(u8, url.pathname, "/") });
                     } else if (url.username.len > 0 and url.password.len > 0) {
                         registry.username = url.username;
                         registry.password = url.password;
-                        registry.url = try std.fmt.allocPrint(this.allocator, "{s}://{s}/{s}", .{ url.displayProtocol(), url.displayHostname(), std.mem.trimLeft(u8, url.pathname, "/") });
+                        registry.url = try std.fmt.allocPrint(this.allocator, "{any}://{any}/{any}", .{ url.displayProtocol(), url.displayHostname(), std.mem.trimLeft(u8, url.pathname, "/") });
                     } else {
                         registry.url = url.href;
                     }

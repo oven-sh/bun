@@ -192,7 +192,7 @@ pub fn ObjectPool(
                 }
             }
 
-            if (comptime log_allocations) std.io.getStdErr().writeAll(comptime std.fmt.comptimePrint("Allocate {s} - {d} bytes\n", .{ @typeName(Type), @sizeOf(Type) })) catch {};
+            if (comptime log_allocations) std.io.getStdErr().writeAll(comptime std.fmt.comptimePrint("Allocate {any} - {d} bytes\n", .{ @typeName(Type), @sizeOf(Type) })) catch {};
 
             var new_node = allocator.create(LinkedList.Node) catch unreachable;
             new_node.* = LinkedList.Node{
@@ -215,7 +215,7 @@ pub fn ObjectPool(
         pub fn release(node: *LinkedList.Node) void {
             if (comptime max_count > 0) {
                 if (data().count >= max_count) {
-                    if (comptime log_allocations) std.io.getStdErr().writeAll(comptime std.fmt.comptimePrint("Free {s} - {d} bytes\n", .{ @typeName(Type), @sizeOf(Type) })) catch {};
+                    if (comptime log_allocations) std.io.getStdErr().writeAll(comptime std.fmt.comptimePrint("Free {any} - {d} bytes\n", .{ @typeName(Type), @sizeOf(Type) })) catch {};
                     if (comptime std.meta.trait.isContainer(Type) and @hasDecl(Type, "deinit")) node.data.deinit();
                     node.allocator.destroy(node);
                     return;

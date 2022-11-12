@@ -166,7 +166,7 @@ const bun = @import("./global.zig");
 
 //     pub fn writeLatin1(this: *Delayer, list_: BabyList(u8), str: []const u8, allocator: std.mem.Allocator) !BabyList(u8) {
 //         var list = list_;
-//         log("writeLatin1({any}, {s})", .{ .delayer = this, .str = str });
+//         log("writeLatin1({any}, {any})", .{ .delayer = this, .str = str });
 
 //         {
 //             switch (this.last_encoding) {

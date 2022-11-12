@@ -129,7 +129,7 @@ pub const Arguments = struct {
     }
 
     pub fn fileReadError(err: anyerror, stderr: anytype, filename: string, kind: string) noreturn {
-        stderr.writer().print("Error reading file \"{s}\" for {s}: {s}", .{ filename, kind, @errorName(err) }) catch {};
+        stderr.writer().print("Error reading file \"{any}\" for {any}: {any}", .{ filename, kind, @errorName(err) }) catch {};
         std.process.exit(1);
     }
 
@@ -223,7 +223,7 @@ pub const Arguments = struct {
     fn loadConfigPath(allocator: std.mem.Allocator, auto_loaded: bool, config_path: [:0]const u8, ctx: *Command.Context, comptime cmd: Command.Tag) !void {
         var config_file = std.fs.openFileAbsoluteZ(config_path, .{ .mode = .read_only }) catch |err| {
             if (auto_loaded) return;
-            Output.prettyErrorln("<r><red>error<r>: {s} opening config \"{s}\"", .{
+            Output.prettyErrorln("<r><red>error<r>: {any} opening config \"{any}\"", .{
                 @errorName(err),
                 std.mem.span(config_path),
             });
@@ -232,7 +232,7 @@ pub const Arguments = struct {
         defer config_file.close();
         var contents = config_file.readToEndAlloc(allocator, std.math.maxInt(usize)) catch |err| {
             if (auto_loaded) return;
-            Output.prettyErrorln("<r><red>error<r>: {s} reading config \"{s}\"", .{
+            Output.prettyErrorln("<r><red>error<r>: {any} reading config \"{any}\"", .{
                 @errorName(err),
                 std.mem.span(config_path),
             });
@@ -453,7 +453,7 @@ pub const Arguments = struct {
             } else if (enum_value.len == 0) {
                 ctx.debug.global_cache = options.GlobalCache.force;
             } else {
-                Output.prettyErrorln("Invalid value for --install: \"{s}\". Must be either \"auto\", \"fallback\", \"force\", or \"disable\"\n", .{enum_value});
+                Output.prettyErrorln("Invalid value for --install: \"{any}\". Must be either \"auto\", \"fallback\", \"force\", or \"disable\"\n", .{enum_value});
                 Global.exit(1);
             }
         }
@@ -477,7 +477,7 @@ pub const Arguments = struct {
                 } else if (strings.eqlComptime(setting, "external")) {
                     opts.source_map = Api.SourceMapMode.external;
                 } else {
-                    Output.prettyErrorln("<r><red>error<r>: Invalid sourcemap setting: \"{s}\"", .{setting});
+                    Output.prettyErrorln("<r><red>error<r>: Invalid sourcemap setting: \"{any}\"", .{setting});
                     Global.crash();
                 }
             }
@@ -1225,12 +1225,12 @@ pub const Command = struct {
                 }
 
                 if (was_js_like) {
-                    Output.prettyErrorln("<r><red>error<r>: Module not found \"<b>{s}<r>\"", .{
+                    Output.prettyErrorln("<r><red>error<r>: Module not found \"<b>{any}<r>\"", .{
                         ctx.positionals[0],
                     });
                     Global.exit(1);
                 } else if (ctx.positionals.len > 0) {
-                    Output.prettyErrorln("<r><red>error<r>: File not found \"<b>{s}<r>\"", .{
+                    Output.prettyErrorln("<r><red>error<r>: File not found \"<b>{any}<r>\"", .{
                         ctx.positionals[0],
                     });
                     Global.exit(1);
@@ -1299,7 +1299,7 @@ pub const Command = struct {
                 ctx.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), false) catch {};
             }
 
-            Output.prettyErrorln("<r><red>error<r>: Failed to run <b>{s}<r> due to error <b>{s}<r>", .{
+            Output.prettyErrorln("<r><red>error<r>: Failed to run <b>{any}<r> due to error <b>{any}<r>", .{
                 std.fs.path.basename(file_path),
                 @errorName(err),
             });

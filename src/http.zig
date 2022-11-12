@@ -238,14 +238,14 @@ pub const RequestContext = struct {
                     display_port = "80";
                 }
             }
-            this.origin = ZigURL.parse(std.fmt.allocPrint(this.allocator, "{s}://{s}:{s}/", .{ display_protocol, display_host, display_port }) catch unreachable);
+            this.origin = ZigURL.parse(std.fmt.allocPrint(this.allocator, "{any}://{any}:{any}/", .{ display_protocol, display_host, display_port }) catch unreachable);
         }
     }
 
     pub fn getFullURL(this: *RequestContext) [:0]const u8 {
         if (this.full_url.len == 0) {
             if (this.origin.isAbsolute()) {
-                this.full_url = std.fmt.allocPrintZ(this.allocator, "{s}{s}", .{ this.origin.origin, this.request.path }) catch unreachable;
+                this.full_url = std.fmt.allocPrintZ(this.allocator, "{any}{any}", .{ this.origin.origin, this.request.path }) catch unreachable;
             } else {
                 this.full_url = this.allocator.dupeZ(u8, this.request.path) catch unreachable;
             }
@@ -257,9 +257,9 @@ pub const RequestContext = struct {
     pub fn getFullURLForSourceMap(this: *RequestContext) [:0]const u8 {
         if (this.full_url.len == 0) {
             if (this.origin.isAbsolute()) {
-                this.full_url = std.fmt.allocPrintZ(this.allocator, "{s}{s}.map", .{ this.origin.origin, this.request.path }) catch unreachable;
+                this.full_url = std.fmt.allocPrintZ(this.allocator, "{any}{any}.map", .{ this.origin.origin, this.request.path }) catch unreachable;
             } else {
-                this.full_url = std.fmt.allocPrintZ(this.allocator, "{s}.map", .{this.request.path}) catch unreachable;
+                this.full_url = std.fmt.allocPrintZ(this.allocator, "{any}.map", .{this.request.path}) catch unreachable;
             }
         }
 
@@ -378,7 +378,7 @@ pub const RequestContext = struct {
 
         if (this.bundler.options.node_modules_bundle_url.len > 0) {
             add_preload: {
-                const node_modules_preload_header_value = std.fmt.bufPrint(remaining, "<{s}>; rel=modulepreload", .{
+                const node_modules_preload_header_value = std.fmt.bufPrint(remaining, "<{any}>; rel=modulepreload", .{
                     this.bundler.options.node_modules_bundle_url,
                 }) catch break :add_preload;
 
@@ -480,8 +480,8 @@ pub const RequestContext = struct {
 
         // On Windows, we don't keep the directory handle open forever because Windows doesn't like that.
         const public_dir: std.fs.Dir = this.bundler.options.routes.static_dir_handle orelse std.fs.openDirAbsolute(this.bundler.options.routes.static_dir, .{}) catch |err| {
-            this.bundler.log.addErrorFmt(null, logger.Loc.Empty, this.allocator, "Opening public directory failed: {s}", .{@errorName(err)}) catch unreachable;
-            Output.printErrorln("Opening public directory failed: {s}", .{@errorName(err)});
+            this.bundler.log.addErrorFmt(null, logger.Loc.Empty, this.allocator, "Opening public directory failed: {any}", .{@errorName(err)}) catch unreachable;
+            Output.printErrorln("Opening public directory failed: {any}", .{@errorName(err)});
             this.bundler.options.routes.static_dir_enabled = false;
             return null;
         };
@@ -614,11 +614,11 @@ pub const RequestContext = struct {
             else => @compileError("Invalid code passed to printStatusLine"),
         };
 
-        return std.fmt.comptimePrint("HTTP/1.1 {d} {s}\r\n", .{ code, status_text });
+        return std.fmt.comptimePrint("HTTP/1.1 {d} {any}\r\n", .{ code, status_text });
     }
 
     pub fn printStatusLineError(err: anyerror, buf: []u8) []const u8 {
-        return std.fmt.bufPrint(buf, "HTTP/1.1 500 {s}\r\n", .{@errorName(err)}) catch unreachable;
+        return std.fmt.bufPrint(buf, "HTTP/1.1 500 {any}\r\n", .{@errorName(err)}) catch unreachable;
     }
 
     pub fn prepareToSendBody(
@@ -685,7 +685,7 @@ pub const RequestContext = struct {
                         return error.SocketClosed;
                     }
 
-                    Output.prettyErrorln("send() error: {s}", .{err.toSystemError().message.slice()});
+                    Output.prettyErrorln("send() error: {any}", .{err.toSystemError().message.slice()});
 
                     return erro;
                 },
@@ -718,12 +718,12 @@ pub const RequestContext = struct {
         ctx.status = @as(HTTPStatusCode, 500);
     }
 
-    threadlocal var status_buf: [std.fmt.count("HTTP/1.1 {d} {s}\r\n", .{ 200, "OK" })]u8 = undefined;
+    threadlocal var status_buf: [std.fmt.count("HTTP/1.1 {d} {any}\r\n", .{ 200, "OK" })]u8 = undefined;
     pub fn writeStatusSlow(ctx: *RequestContext, code: u16) !void {
         _ = try ctx.writeSocket(
             try std.fmt.bufPrint(
                 &status_buf,
-                "HTTP/1.1 {d} {s}\r\n",
+                "HTTP/1.1 {d} {any}\r\n",
                 .{ code, if (code > 299) "HM" else "OK" },
             ),
             SOCKET_FLAGS,
@@ -785,9 +785,9 @@ pub const RequestContext = struct {
     pub fn sendInternalError(ctx: *RequestContext, err: anytype) !void {
         defer ctx.done();
         try ctx.writeStatusError(err);
-        const printed = std.fmt.bufPrint(&error_buf, "error: {s}\nPlease see your terminal for more details", .{@errorName(err)}) catch |err2| brk: {
+        const printed = std.fmt.bufPrint(&error_buf, "error: {any}\nPlease see your terminal for more details", .{@errorName(err)}) catch |err2| brk: {
             if (Environment.isDebug or Environment.isTest) {
-                Global.panic("error while printing error: {s}", .{@errorName(err2)});
+                Global.panic("error while printing error: {any}", .{@errorName(err2)});
             }
 
             break :brk "Internal error";
@@ -913,7 +913,7 @@ pub const RequestContext = struct {
         defer ctx.done();
 
         const stats = file.stat() catch |err| {
-            Output.prettyErrorln("<r><red>Error {s}<r> reading index.html", .{@errorName(err)});
+            Output.prettyErrorln("<r><red>Error {any}<r> reading index.html", .{@errorName(err)});
             ctx.writeStatus(500) catch {};
             return;
         };
@@ -1223,7 +1223,7 @@ pub const RequestContext = struct {
                     step,
                     err,
 
-                    "<r>JavaScript VM failed to start due to <red>{s}<r>.",
+                    "<r>JavaScript VM failed to start due to <red>{any}<r>.",
                     .{
                         @errorName(err),
                     },
@@ -1390,7 +1390,7 @@ pub const RequestContext = struct {
                     handler.handleJSErrorFmt(
                         .load_entry_point,
                         err,
-                        "<r>JavaScript VM failed to start.\n<red>{s}:<r> while loading <r><b>\"{s}\"",
+                        "<r>JavaScript VM failed to start.\n<red>{any}:<r> while loading <r><b>\"{any}\"",
                         .{ @errorName(err), entry_point },
                     ) catch {};
                     vm.flush();
@@ -1406,7 +1406,7 @@ pub const RequestContext = struct {
                         handler.handleRuntimeJSError(
                             result,
                             .eval_entry_point,
-                            "<r>JavaScript VM failed to start.\nwhile loading <r><b>\"{s}\"",
+                            "<r>JavaScript VM failed to start.\nwhile loading <r><b>\"{any}\"",
                             .{entry_point},
                         ) catch {};
                         vm.flush();
@@ -1435,7 +1435,7 @@ pub const RequestContext = struct {
 
             if (vm.bundler.options.framework.?.display_name.len > 0) {
                 Output.prettyError(
-                    " {s} ready<d>! (powered by bun)\n<r>",
+                    " {any} ready<d>! (powered by bun)\n<r>",
                     .{
                         vm.bundler.options.framework.?.display_name,
                     },
@@ -1519,7 +1519,7 @@ pub const RequestContext = struct {
                         handler.handleJSErrorFmt(
                             .resolve_entry_point,
                             error.EntryPointDisabled,
-                            "<r>JavaScript VM failed to start due to disabled entry point: <r><b>\"{s}\"",
+                            "<r>JavaScript VM failed to start due to disabled entry point: <r><b>\"{any}\"",
                             .{resolved_entry_point.path_pair.primary.text},
                         ) catch {};
                         javascript_disabled = true;
@@ -1914,7 +1914,7 @@ pub const RequestContext = struct {
 
                 defer Output.flush();
                 handler.conn.client.getError() catch |err| {
-                    Output.prettyErrorln("<r><red>Websocket ERR:<r> <b>{s}<r>", .{err});
+                    Output.prettyErrorln("<r><red>Websocket ERR:<r> <b>{any}<r>", .{err});
                     handler.tombstone = true;
                     is_socket_closed = true;
                 };
@@ -1928,7 +1928,7 @@ pub const RequestContext = struct {
                             continue;
                         },
                         else => {
-                            Output.prettyErrorln("<r><red>Websocket ERR:<r> <b>{s}<r>", .{err});
+                            Output.prettyErrorln("<r><red>Websocket ERR:<r> <b>{any}<r>", .{err});
                         },
                     }
                     return;
@@ -1962,7 +1962,7 @@ pub const RequestContext = struct {
                                         );
 
                                     if (Watcher.getHash(file_path) != full_build.id) {
-                                        Output.prettyErrorln("<r><red>ERR:<r> <b>File path hash mismatch for {s}.<r>", .{full_build.file_path});
+                                        Output.prettyErrorln("<r><red>ERR:<r> <b>File path hash mismatch for {any}.<r>", .{full_build.file_path});
                                         continue;
                                     }
                                     // save because WebSocket's buffer is 8096
@@ -1971,7 +1971,7 @@ pub const RequestContext = struct {
                                     path_buf.ptr[path_buf.len] = 0;
                                     var file_path_z: [:0]u8 = path_buf.ptr[0..path_buf.len :0];
                                     const file = std.fs.openFileAbsoluteZ(file_path_z, .{ .mode = .read_only }) catch |err| {
-                                        Output.prettyErrorln("<r><red>ERR:<r>{s} opening file <b>{s}<r> <r>", .{ @errorName(err), full_build.file_path });
+                                        Output.prettyErrorln("<r><red>ERR:<r>{any} opening file <b>{any}<r> <r>", .{ @errorName(err), full_build.file_path });
                                         continue;
                                     };
                                     Fs.FileSystem.setMaxFd(file.handle);
@@ -2040,7 +2040,7 @@ pub const RequestContext = struct {
                                 switch (build_result.value) {
                                     .fail => {
                                         Output.prettyErrorln(
-                                            "error: <b>{s}<r><b>",
+                                            "error: <b>{any}<r><b>",
                                             .{
                                                 file_path,
                                             },
@@ -2049,7 +2049,7 @@ pub const RequestContext = struct {
                                     .success => {
                                         if (build_result.timestamp > cmd.timestamp) {
                                             Output.prettyErrorln(
-                                                "<r><b><green>{d}ms<r> <d>built<r> <b>{s}<r><b> <r><d>({d}+ LOC)",
+                                                "<r><b><green>{d}ms<r> <d>built<r> <b>{any}<r><b> <r><d>({d}+ LOC)",
                                                 .{
                                                     build_result.timestamp - cmd.timestamp,
                                                     file_path,
@@ -2123,7 +2123,7 @@ pub const RequestContext = struct {
                         _ = try handler.websocket.writeDataFrame(pong);
                     },
                     else => {
-                        Output.prettyErrorln("Websocket unknown opcode: {s}", .{@tagName(frame.header.opcode)});
+                        Output.prettyErrorln("Websocket unknown opcode: {any}", .{@tagName(frame.header.opcode)});
                     },
                 }
             }
@@ -2162,7 +2162,7 @@ pub const RequestContext = struct {
             };
             // this error is noisy
             // return std.fmt.parseInt(u8, v, 10) catch {
-            //     Output.prettyErrorln("HMR WebSocket error: Sec-WebSocket-Version is invalid {s}", .{v});
+            //     Output.prettyErrorln("HMR WebSocket error: Sec-WebSocket-Version is invalid {any}", .{v});
             //     return error.BadRequest;
             // };
         }
@@ -2173,7 +2173,7 @@ pub const RequestContext = struct {
             var request: *RequestContext = &self.ctx;
             const key = (request.header("Sec-WebSocket-Key") orelse return error.BadRequest);
             if (key.len < 8) {
-                Output.prettyErrorln("HMR WebSocket error: Sec-WebSocket-Key is less than 8 characters long: {s}", .{key});
+                Output.prettyErrorln("HMR WebSocket error: Sec-WebSocket-Key is less than 8 characters long: {any}", .{key});
                 return error.BadRequest;
             }
 
@@ -2584,7 +2584,7 @@ pub const RequestContext = struct {
                         )) {
                             if (ctx.watcher.watchloop_handle == null) {
                                 ctx.watcher.start() catch |err| {
-                                    Output.prettyErrorln("Failed to start watcher: {s}", .{@errorName(err)});
+                                    Output.prettyErrorln("Failed to start watcher: {any}", .{@errorName(err)});
                                 };
                             }
                         } else |_| {}
@@ -2982,7 +2982,7 @@ pub const RequestContext = struct {
                         if (editor != .none) {
                             editor.open(http_editor_context.path, path.text, line, column, bun.default_allocator) catch |err| {
                                 if (editor != .other) {
-                                    Output.prettyErrorln("Error {s} opening in {s}", .{ @errorName(err), @tagName(editor) });
+                                    Output.prettyErrorln("Error {any} opening in {any}", .{ @errorName(err), @tagName(editor) });
                                 }
 
                                 http_editor_context.editor = Editor.none;
@@ -3006,7 +3006,7 @@ pub const RequestContext = struct {
                     resolve_result.file_fd
                 else brk: {
                     var file = std.fs.openFileAbsoluteZ(path.textZ(), .{ .mode = .read_only }) catch |err| {
-                        Output.prettyErrorln("Failed to open {s} due to error {s}", .{ path.text, @errorName(err) });
+                        Output.prettyErrorln("Failed to open {any} due to error {any}", .{ path.text, @errorName(err) });
                         return try ctx.sendInternalError(err);
                     };
                     needs_close = true;
@@ -3021,7 +3021,7 @@ pub const RequestContext = struct {
                 const content_length = brk: {
                     var file = std.fs.File{ .handle = fd };
                     var stat = file.stat() catch |err| {
-                        Output.prettyErrorln("Failed to read {s} due to error {s}", .{ path.text, @errorName(err) });
+                        Output.prettyErrorln("Failed to read {any} due to error {any}", .{ path.text, @errorName(err) });
                         return try ctx.sendInternalError(err);
                     };
                     break :brk stat.size;
@@ -3314,7 +3314,7 @@ pub const Server = struct {
             var hinted_content_fbs = std.io.fixedBufferStream(filechange_buf_hinted[header.len..]);
 
             if (comptime Environment.isDebug) {
-                Output.prettyErrorln("[watcher] {s}: -- {}", .{ @tagName(kind), event.op });
+                Output.prettyErrorln("[watcher] {any}: -- {}", .{ @tagName(kind), event.op });
             }
 
             switch (kind) {
@@ -3328,7 +3328,7 @@ pub const Server = struct {
                         );
 
                         if (comptime FeatureFlags.verbose_watcher) {
-                            Output.prettyErrorln("<r><d>File changed: {s}<r>", .{ctx.bundler.fs.relativeTo(file_path)});
+                            Output.prettyErrorln("<r><d>File changed: {any}<r>", .{ctx.bundler.fs.relativeTo(file_path)});
                         }
                     } else {
                         const change_message = Api.WebsocketMessageFileChangeNotification{
@@ -3341,12 +3341,12 @@ pub const Server = struct {
                         const change_buf = content_fbs.getWritten();
                         const written_buf = filechange_buf[0 .. header.len + change_buf.len];
                         RequestContext.WebsocketHandler.broadcast(written_buf) catch |err| {
-                            Output.prettyErrorln("Error writing change notification: {s}<r>", .{@errorName(err)});
+                            Output.prettyErrorln("Error writing change notification: {any}<r>", .{@errorName(err)});
                         };
                         if (comptime is_emoji_enabled) {
-                            Output.prettyErrorln("<r>📜  <d>File change: {s}<r>", .{ctx.bundler.fs.relativeTo(file_path)});
+                            Output.prettyErrorln("<r>📜  <d>File change: {any}<r>", .{ctx.bundler.fs.relativeTo(file_path)});
                         } else {
-                            Output.prettyErrorln("<r>   <d>File change: {s}<r>", .{ctx.bundler.fs.relativeTo(file_path)});
+                            Output.prettyErrorln("<r>   <d>File change: {any}<r>", .{ctx.bundler.fs.relativeTo(file_path)});
                         }
                     }
                 },
@@ -3411,12 +3411,12 @@ pub const Server = struct {
                                 const change_buf = hinted_content_fbs.getWritten();
                                 const written_buf = filechange_buf_hinted[0 .. header.len + change_buf.len];
                                 RequestContext.WebsocketHandler.broadcast(written_buf) catch |err| {
-                                    Output.prettyErrorln("Error writing change notification: {s}<r>", .{@errorName(err)});
+                                    Output.prettyErrorln("Error writing change notification: {any}<r>", .{@errorName(err)});
                                 };
                                 if (comptime is_emoji_enabled) {
-                                    Output.prettyErrorln("<r>📜  <d>File change: {s}<r>", .{ctx.bundler.fs.relativeTo(abs_path)});
+                                    Output.prettyErrorln("<r>📜  <d>File change: {any}<r>", .{ctx.bundler.fs.relativeTo(abs_path)});
                                 } else {
-                                    Output.prettyErrorln("<r>   <d>File change: {s}<r>", .{ctx.bundler.fs.relativeTo(abs_path)});
+                                    Output.prettyErrorln("<r>   <d>File change: {any}<r>", .{ctx.bundler.fs.relativeTo(abs_path)});
                                 }
                             }
                         }
@@ -3425,9 +3425,9 @@ pub const Server = struct {
                     // if (event.op.delete or event.op.rename)
                     //     ctx.watcher.removeAtIndex(event.index, hashes[event.index], parent_hashes, .directory);
                     if (comptime is_emoji_enabled) {
-                        Output.prettyErrorln("<r>📁  <d>Dir change: {s}<r>", .{ctx.bundler.fs.relativeTo(file_path)});
+                        Output.prettyErrorln("<r>📁  <d>Dir change: {any}<r>", .{ctx.bundler.fs.relativeTo(file_path)});
                     } else {
-                        Output.prettyErrorln("<r>    <d>Dir change: {s}<r>", .{ctx.bundler.fs.relativeTo(file_path)});
+                        Output.prettyErrorln("<r>    <d>Dir change: {any}<r>", .{ctx.bundler.fs.relativeTo(file_path)});
                     }
                 },
             }
@@ -3480,7 +3480,7 @@ pub const Server = struct {
                             continue :restart;
                         },
                         else => {
-                            Output.prettyErrorln("<r><red>{s} while trying to start listening on port {d}.\n\n", .{ @errorName(err), port });
+                            Output.prettyErrorln("<r><red>{any} while trying to start listening on port {d}.\n\n", .{ @errorName(err), port });
                             Global.exit(1);
                         },
                     }
@@ -3537,7 +3537,7 @@ pub const Server = struct {
         if (std.mem.readIntNative(u32, &addr.ipv4.host.octets) == 0 or std.mem.readIntNative(u128, &addr.ipv6.host.octets) == 0) {
             if (server.bundler.options.routes.single_page_app_routing) {
                 Output.prettyError(
-                    " bun!! <d>v{s}<r>\n\n\n  Link:<r> <b><cyan>http://localhost:{d}<r>\n        <d>{s}/index.html<r> \n\n\n",
+                    " bun!! <d>v{any}<r>\n\n\n  Link:<r> <b><cyan>http://localhost:{d}<r>\n        <d>{any}/index.html<r> \n\n\n",
                     .{
                         Global.package_json_version_with_sha,
                         addr.ipv4.port,
@@ -3545,20 +3545,20 @@ pub const Server = struct {
                     },
                 );
             } else {
-                Output.prettyError(" bun!! <d>v{s}<r>\n\n\n<d>  Link:<r> <b><cyan>http://localhost:{d}<r>\n\n\n", .{
+                Output.prettyError(" bun!! <d>v{any}<r>\n\n\n<d>  Link:<r> <b><cyan>http://localhost:{d}<r>\n\n\n", .{
                     Global.package_json_version_with_sha,
                     addr.ipv4.port,
                 });
             }
         } else {
             if (server.bundler.options.routes.single_page_app_routing) {
-                Output.prettyError(" bun!! <d>v{s}<r>\n\n\n<d>  Link:<r> <b><cyan>http://{s}<r>\n       <d>{s}/index.html<r> \n\n\n", .{
+                Output.prettyError(" bun!! <d>v{any}<r>\n\n\n<d>  Link:<r> <b><cyan>http://{any}<r>\n       <d>{any}/index.html<r> \n\n\n", .{
                     Global.package_json_version_with_sha,
                     addr,
                     display_path,
                 });
             } else {
-                Output.prettyError(" bun!! <d>v{s}\n\n\n<d>  Link:<r> <b><cyan>http://{s}<r>\n\n\n", .{
+                Output.prettyError(" bun!! <d>v{any}\n\n\n<d>  Link:<r> <b><cyan>http://{any}<r>\n\n\n", .{
                     Global.package_json_version_with_sha,
                     addr,
                 });
@@ -3641,7 +3641,7 @@ pub const Server = struct {
         var req = picohttp.Request.parse(req_buf_node.data[0..read_size], &req_headers_buf) catch |err| {
             _ = conn.client.write(RequestContext.printStatusLine(400) ++ "\r\n\r\n", SOCKET_FLAGS) catch {};
             _ = Syscall.close(conn.client.socket.fd);
-            Output.printErrorln("ERR: {s}", .{@errorName(err)});
+            Output.printErrorln("ERR: {any}", .{@errorName(err)});
             return;
         };
 
@@ -3657,7 +3657,7 @@ pub const Server = struct {
             server.watcher,
             server.timer,
         ) catch |err| {
-            Output.prettyErrorln("<r>[<red>{s}<r>] - <b>{s}<r>: {s}", .{ @errorName(err), req.method, req.path });
+            Output.prettyErrorln("<r>[<red>{any}<r>] - <b>{any}<r>: {any}", .{ @errorName(err), req.method, req.path });
             _ = Syscall.close(conn.client.socket.fd);
             request_arena.deinit();
             return;
@@ -3682,7 +3682,7 @@ pub const Server = struct {
 
         if (req_ctx.url.needs_redirect) {
             req_ctx.handleRedirect(req_ctx.url.path) catch |err| {
-                Output.prettyErrorln("<r>[<red>{s}<r>] - <b>{s}<r>: {s}", .{ @errorName(err), req.method, req.path });
+                Output.prettyErrorln("<r>[<red>{any}<r>] - <b>{any}<r>: {any}", .{ @errorName(err), req.method, req.path });
                 conn.client.deinit();
                 return;
             };
@@ -3726,13 +3726,13 @@ pub const Server = struct {
                             200, 304, 101 => {},
 
                             201...303, 305...399 => {
-                                Output.prettyErrorln("<r><green>{d}<r><d> {s} <r>{s}<d> as {s}<r>", .{ status, @tagName(req_ctx.method), req.path, req_ctx.mime_type.value });
+                                Output.prettyErrorln("<r><green>{d}<r><d> {any} <r>{any}<d> as {any}<r>", .{ status, @tagName(req_ctx.method), req.path, req_ctx.mime_type.value });
                             },
                             400...499 => {
-                                Output.prettyErrorln("<r><yellow>{d}<r><d> {s} <r>{s}<d> as {s}<r>", .{ status, @tagName(req_ctx.method), req.path, req_ctx.mime_type.value });
+                                Output.prettyErrorln("<r><yellow>{d}<r><d> {any} <r>{any}<d> as {any}<r>", .{ status, @tagName(req_ctx.method), req.path, req_ctx.mime_type.value });
                             },
                             else => {
-                                Output.prettyErrorln("<r><red>{d}<r><d> {s} <r>{s}<d> as {s}<r>", .{ status, @tagName(req_ctx.method), req.path, req_ctx.mime_type.value });
+                                Output.prettyErrorln("<r><red>{d}<r><d> {any} <r>{any}<d> as {any}<r>", .{ status, @tagName(req_ctx.method), req.path, req_ctx.mime_type.value });
                             },
                         }
                     }
@@ -3748,13 +3748,13 @@ pub const Server = struct {
                             200, 304, 101 => {},
 
                             201...303, 305...399 => {
-                                Output.prettyErrorln("<r><green>{d}<r><d> <r>{s}<d> {s} as {s}<r>", .{ status, @tagName(req_ctx.method), req.path, req_ctx.mime_type.value });
+                                Output.prettyErrorln("<r><green>{d}<r><d> <r>{any}<d> {any} as {any}<r>", .{ status, @tagName(req_ctx.method), req.path, req_ctx.mime_type.value });
                             },
                             400...499 => {
-                                Output.prettyErrorln("<r><yellow>{d}<r><d> <r>{s}<d> {s} as {s}<r>", .{ status, @tagName(req_ctx.method), req.path, req_ctx.mime_type.value });
+                                Output.prettyErrorln("<r><yellow>{d}<r><d> <r>{any}<d> {any} as {any}<r>", .{ status, @tagName(req_ctx.method), req.path, req_ctx.mime_type.value });
                             },
                             else => {
-                                Output.prettyErrorln("<r><red>{d}<r><d> <r>{s}<d> {s} as {s}<r>", .{ status, @tagName(req_ctx.method), req.path, req_ctx.mime_type.value });
+                                Output.prettyErrorln("<r><red>{d}<r><d> <r>{any}<d> {any} as {any}<r>", .{ status, @tagName(req_ctx.method), req.path, req_ctx.mime_type.value });
                             },
                         }
                     }
@@ -3772,7 +3772,7 @@ pub const Server = struct {
         }
 
         var finished = req_ctx.handleReservedRoutes(server) catch |err| {
-            Output.printErrorln("FAIL [{s}] - {s}: {s}", .{ @errorName(err), req.method, req.path });
+            Output.printErrorln("FAIL [{any}] - {any}: {any}", .{ @errorName(err), req.method, req.path });
             did_print = true;
             return;
         };
@@ -3783,7 +3783,7 @@ pub const Server = struct {
                     if (comptime features.single_page_app_routing) {
                         if (req_ctx.url.isRoot(server.bundler.options.routes.asset_prefix_path)) {
                             req_ctx.sendSinglePageHTML() catch |err| {
-                                Output.printErrorln("FAIL [{s}] - {s}: {s}", .{ @errorName(err), req.method, req.path });
+                                Output.printErrorln("FAIL [{any}] - {any}: {any}", .{ @errorName(err), req.method, req.path });
                                 did_print = true;
                             };
                             finished = true;
@@ -3798,7 +3798,7 @@ pub const Server = struct {
                         if (req_ctx.matchPublicFolder(comptime features.public_folder == .last or features.single_page_app_routing)) |result| {
                             finished = true;
                             req_ctx.renderServeResult(result) catch |err| {
-                                Output.printErrorln("FAIL [{s}] - {s}: {s}", .{ @errorName(err), req.method, req.path });
+                                Output.printErrorln("FAIL [{any}] - {any}: {any}", .{ @errorName(err), req.method, req.path });
                                 did_print = true;
                                 return;
                             };
@@ -3816,7 +3816,7 @@ pub const Server = struct {
                     switch (err) {
                         error.ModuleNotFound => {},
                         else => {
-                            Output.printErrorln("FAIL [{s}] - {s}: {s}", .{ @errorName(err), req.method, req.path });
+                            Output.printErrorln("FAIL [{any}] - {any}: {any}", .{ @errorName(err), req.method, req.path });
                             did_print = true;
                         },
                     }
@@ -3832,7 +3832,7 @@ pub const Server = struct {
                                 break :request_handler;
                             },
                             else => {
-                                Output.printErrorln("FAIL [{s}] - {s}: {s}", .{ @errorName(err), req.method, req.path });
+                                Output.printErrorln("FAIL [{any}] - {any}: {any}", .{ @errorName(err), req.method, req.path });
                                 did_print = true;
                             },
                         }
@@ -3847,7 +3847,7 @@ pub const Server = struct {
                 if (req_ctx.matchPublicFolder(false)) |result| {
                     finished = true;
                     req_ctx.renderServeResult(result) catch |err| {
-                        Output.printErrorln("FAIL [{s}] - {s}: {s}", .{ @errorName(err), req.method, req.path });
+                        Output.printErrorln("FAIL [{any}] - {any}: {any}", .{ @errorName(err), req.method, req.path });
                         did_print = true;
                     };
                 }
@@ -3860,7 +3860,7 @@ pub const Server = struct {
             if (!finished and (req_ctx.bundler.options.routes.single_page_app_routing and req_ctx.url.extname.len == 0)) {
                 if (!finished) {
                     req_ctx.sendSinglePageHTML() catch |err| {
-                        Output.printErrorln("FAIL [{s}] - {s}: {s}", .{ @errorName(err), req.method, req.path });
+                        Output.printErrorln("FAIL [{any}] - {any}: {any}", .{ @errorName(err), req.method, req.path });
                         did_print = true;
                     };
                 }
@@ -3872,7 +3872,7 @@ pub const Server = struct {
             // if we're about to 404 and it's the favicon, use our stand-in
             if (strings.eqlComptime(req_ctx.url.path, "favicon.ico")) {
                 req_ctx.sendFavicon() catch |err| {
-                    Output.printErrorln("FAIL [{s}] - {s}: {s}", .{ @errorName(err), req.method, req.path });
+                    Output.printErrorln("FAIL [{any}] - {any}: {any}", .{ @errorName(err), req.method, req.path });
                     did_print = true;
                 };
                 return;

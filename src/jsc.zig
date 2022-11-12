@@ -56,7 +56,7 @@ const Output = @import("./output.zig");
 const __jsc_log = Output.scoped(.JSC, true);
 pub inline fn markBinding(src: std.builtin.SourceLocation) void {
     if (comptime is_bindgen) unreachable;
-    __jsc_log("{s} ({s}:{d})", .{ src.fn_name, src.file, src.line });
+    __jsc_log("{any} ({any}:{d})", .{ src.fn_name, src.file, src.line });
 }
 pub const Subprocess = @import("./bun.js/api/bun.zig").Subprocess;
 

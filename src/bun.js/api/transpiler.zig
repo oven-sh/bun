@@ -381,7 +381,7 @@ fn transformOptionsFromJSC(ctx: JSC.C.JSContextRef, temp_allocator: std.mem.Allo
                 const value_type = property_value.jsType();
 
                 if (!value_type.isStringLike()) {
-                    JSC.throwInvalidArguments("define \"{s}\" must be a JSON string", .{prop}, ctx, exception);
+                    JSC.throwInvalidArguments("define \"{any}\" must be a JSON string", .{prop}, ctx, exception);
                     return transpiler;
                 }
 
@@ -667,7 +667,7 @@ fn transformOptionsFromJSC(ctx: JSC.C.JSContextRef, temp_allocator: std.mem.Allo
                     var key = try key_.toOwnedSlice(bun.default_allocator);
 
                     if (!JSLexer.isIdentifier(key)) {
-                        JSC.throwInvalidArguments("\"{s}\" is not a valid ECMAScript identifier", .{key}, ctx, exception);
+                        JSC.throwInvalidArguments("\"{any}\" is not a valid ECMAScript identifier", .{key}, ctx, exception);
                         bun.default_allocator.free(key);
                         return transpiler;
                     }
@@ -687,7 +687,7 @@ fn transformOptionsFromJSC(ctx: JSC.C.JSContextRef, temp_allocator: std.mem.Allo
                             var replacement_name = slice.slice();
 
                             if (!JSLexer.isIdentifier(replacement_name)) {
-                                JSC.throwInvalidArguments("\"{s}\" is not a valid ECMAScript identifier", .{replacement_name}, ctx, exception);
+                                JSC.throwInvalidArguments("\"{any}\" is not a valid ECMAScript identifier", .{replacement_name}, ctx, exception);
                                 slice.deinit();
                                 return transpiler;
                             }
@@ -760,7 +760,7 @@ pub fn constructor(
             return null;
         }
 
-        JSC.throwInvalidArguments("Error creating transpiler: {s}", .{@errorName(err)}, ctx, exception);
+        JSC.throwInvalidArguments("Error creating transpiler: {any}", .{@errorName(err)}, ctx, exception);
         return null;
     };
 
@@ -773,7 +773,7 @@ pub fn constructor(
             return null;
         }
 
-        JSC.throwInvalidArguments("Failed to load define: {s}", .{@errorName(err)}, ctx, exception);
+        JSC.throwInvalidArguments("Failed to load define: {any}", .{@errorName(err)}, ctx, exception);
         return null;
     };
 
@@ -1110,7 +1110,7 @@ pub fn transformSync(
     buffer_writer.reset();
     var printer = JSPrinter.BufferPrinter.init(buffer_writer);
     _ = this.bundler.print(parse_result, @TypeOf(&printer), &printer, .esm_ascii) catch |err| {
-        JSC.JSError(bun.default_allocator, "Failed to print code: {s}", .{@errorName(err)}, ctx, exception);
+        JSC.JSError(bun.default_allocator, "Failed to print code: {any}", .{@errorName(err)}, ctx, exception);
 
         return null;
     };
@@ -1260,7 +1260,7 @@ pub fn scanImports(
             return null;
         }
 
-        JSC.throwInvalidArguments("Failed to scan imports: {s}", .{@errorName(err)}, ctx, exception);
+        JSC.throwInvalidArguments("Failed to scan imports: {any}", .{@errorName(err)}, ctx, exception);
         return null;
     };
 

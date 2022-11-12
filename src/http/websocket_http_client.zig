@@ -51,8 +51,8 @@ fn buildRequestBody(vm: *JSC.VirtualMachine, pathname: *const JSC.ZigString, hos
     const pico_headers = PicoHTTP.Headers{ .headers = headers_ };
     return try std.fmt.allocPrint(
         allocator,
-        "GET {s} HTTP/1.1\r\n" ++
-            "Host: {s}\r\n" ++
+        "GET {any} HTTP/1.1\r\n" ++
+            "Host: {any}\r\n" ++
             "Pragma: no-cache\r\n" ++
             "Cache-Control: no-cache\r\n" ++
             "Connection: Upgrade\r\n" ++
@@ -978,7 +978,7 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
 
             var header_bytes: [@sizeOf(usize)]u8 = [_]u8{0} ** @sizeOf(usize);
             while (true) {
-                log("onData ({s})", .{@tagName(receive_state)});
+                log("onData ({any})", .{@tagName(receive_state)});
 
                 switch (receive_state) {
                     // 0                   1                   2                   3

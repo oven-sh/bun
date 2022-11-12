@@ -34,7 +34,7 @@ pub const Renamer = struct {
         if (renamer.symbols.getConst(resolved)) |symbol| {
             return symbol.original_name;
         } else {
-            Global.panic("Invalid symbol {s} in {s}", .{ ref, renamer.source.path.text });
+            Global.panic("Invalid symbol {any} in {any}", .{ ref, renamer.source.path.text });
         }
     }
 };

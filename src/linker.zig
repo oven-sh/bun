@@ -174,7 +174,7 @@ pub const Linker = struct {
     pub inline fn nodeModuleBundleImportPath(this: *const ThisLinker, origin: URL) string {
         if (this.options.platform.isBun()) return "/node_modules.server.bun";
 
-        return std.fmt.allocPrint(this.allocator, "{s}://{}{s}", .{ origin.displayProtocol(), origin.displayHost(), this.options.node_modules_bundle.?.bundle.import_from_name }) catch unreachable;
+        return std.fmt.allocPrint(this.allocator, "{any}://{}{any}", .{ origin.displayProtocol(), origin.displayHost(), this.options.node_modules_bundle.?.bundle.import_from_name }) catch unreachable;
     }
 
     // pub const Scratch = struct {
@@ -509,7 +509,7 @@ pub const Linker = struct {
                                                 //     null,
                                                 //     logger.Loc.Empty,
                                                 //     linker.allocator,
-                                                //     "New dependency import: \"{s}/{s}\"\nPlease run `bun bun` to update the .bun.",
+                                                //     "New dependency import: \"{any}/{any}\"\nPlease run `bun bun` to update the .bun.",
                                                 //     .{
                                                 //         package_json.name,
                                                 //         package_relative_path,
@@ -579,7 +579,7 @@ pub const Linker = struct {
                                         &result.source,
                                         import_record.range,
                                         linker.allocator,
-                                        "Unexpected version \"{s}\" in import specifier \"{s}\". When a package.json is present, please use one of the \"dependencies\" fields in package.json for setting dependency versions",
+                                        "Unexpected version \"{any}\" in import specifier \"{any}\". When a package.json is present, please use one of the \"dependencies\" fields in package.json for setting dependency versions",
                                         .{ pkg.version, import_record.path.text },
                                         import_record.kind,
                                         err,
@@ -589,7 +589,7 @@ pub const Linker = struct {
                                         &result.source,
                                         import_record.range,
                                         linker.allocator,
-                                        "Unexpected version in import specifier \"{s}\". When a package.json is present, please use one of the \"dependencies\" fields in package.json to specify the version",
+                                        "Unexpected version in import specifier \"{any}\". When a package.json is present, please use one of the \"dependencies\" fields in package.json to specify the version",
                                         .{import_record.path.text},
                                         import_record.kind,
                                         err,
@@ -615,7 +615,7 @@ pub const Linker = struct {
                                         &result.source,
                                         import_record.range,
                                         linker.allocator,
-                                        "Version \"{s}\" not found for package \"{s}\" (while resolving \"{s}\")",
+                                        "Version \"{any}\" not found for package \"{any}\" (while resolving \"{any}\")",
                                         .{ pkg.version, package_name, import_record.path.text },
                                         import_record.kind,
                                         err,
@@ -625,7 +625,7 @@ pub const Linker = struct {
                                         &result.source,
                                         import_record.range,
                                         linker.allocator,
-                                        "Package version not found: \"{s}\"",
+                                        "Package version not found: \"{any}\"",
                                         .{import_record.path.text},
                                         import_record.kind,
                                         err,
@@ -650,7 +650,7 @@ pub const Linker = struct {
                                         &result.source,
                                         import_record.range,
                                         linker.allocator,
-                                        "Version \"{s}\" not found for package \"{s}\" (while resolving \"{s}\")",
+                                        "Version \"{any}\" not found for package \"{any}\" (while resolving \"{any}\")",
                                         .{ pkg.version, package_name, import_record.path.text },
                                         import_record.kind,
                                         err,
@@ -660,7 +660,7 @@ pub const Linker = struct {
                                         &result.source,
                                         import_record.range,
                                         linker.allocator,
-                                        "Package tag not found: \"{s}\"",
+                                        "Package tag not found: \"{any}\"",
                                         .{import_record.path.text},
                                         import_record.kind,
                                         err,
@@ -686,7 +686,7 @@ pub const Linker = struct {
                                         &result.source,
                                         import_record.range,
                                         linker.allocator,
-                                        "Package not found: \"{s}\" (while resolving \"{s}\")",
+                                        "Package not found: \"{any}\" (while resolving \"{any}\")",
                                         .{ package_name, import_record.path.text },
                                         import_record.kind,
                                         err,
@@ -696,7 +696,7 @@ pub const Linker = struct {
                                         &result.source,
                                         import_record.range,
                                         linker.allocator,
-                                        "Package not found: \"{s}\"",
+                                        "Package not found: \"{any}\"",
                                         .{package_name},
                                         import_record.kind,
                                         err,
@@ -725,7 +725,7 @@ pub const Linker = struct {
                                             &result.source,
                                             import_record.range,
                                             linker.allocator,
-                                            "Could not resolve: \"{s}\". Try setting --platform=\"node\" (after bun build exists)",
+                                            "Could not resolve: \"{any}\". Try setting --platform=\"node\" (after bun build exists)",
                                             .{import_record.path.text},
                                             import_record.kind,
                                             err,
@@ -736,7 +736,7 @@ pub const Linker = struct {
                                             &result.source,
                                             import_record.range,
                                             linker.allocator,
-                                            "Could not resolve: \"{s}\". Maybe you need to \"bun install\"?",
+                                            "Could not resolve: \"{any}\". Maybe you need to \"bun install\"?",
                                             .{import_record.path.text},
                                             import_record.kind,
                                             err,
@@ -748,7 +748,7 @@ pub const Linker = struct {
                                         &result.source,
                                         import_record.range,
                                         linker.allocator,
-                                        "Could not resolve: \"{s}\"",
+                                        "Could not resolve: \"{any}\"",
                                         .{
                                             import_record.path.text,
                                         },
@@ -765,7 +765,7 @@ pub const Linker = struct {
                                     &result.source,
                                     import_record.range,
                                     linker.allocator,
-                                    "{s} resolving \"{s}\"",
+                                    "{any} resolving \"{any}\"",
                                     .{
                                         @errorName(err),
                                         import_record.path.text,
@@ -891,7 +891,7 @@ pub const Linker = struct {
                     return Fs.Path.init(try std.fmt.allocPrint(
                         linker.allocator,
                         // assumption: already starts with "node:"
-                        "{s}/{s}",
+                        "{any}/{any}",
                         .{
                             strings.withoutTrailingSlash(origin.href),
                             strings.withoutLeadingSlash(source_path),

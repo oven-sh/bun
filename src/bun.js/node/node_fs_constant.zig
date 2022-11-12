@@ -169,7 +169,7 @@ const constants_string_format1 =
     \\  O_DSYNC: {d},
 ;
 const constants_string_format2 =
-    \\  O_SYMLINK: {s},
+    \\  O_SYMLINK: {any},
     \\  O_DIRECT: {d},
     \\  O_NONBLOCK: {d},
     \\  S_IFMT: {d},

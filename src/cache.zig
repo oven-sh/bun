@@ -117,14 +117,14 @@ pub const Fs = struct {
         const file = if (this.stream)
             rfs.readFileWithHandle(path, null, file_handle, true, shared, true) catch |err| {
                 if (comptime Environment.isDebug) {
-                    Output.printError("{s}: readFile error -- {s}", .{ path, @errorName(err) });
+                    Output.printError("{any}: readFile error -- {any}", .{ path, @errorName(err) });
                 }
                 return err;
             }
         else
             rfs.readFileWithHandle(path, null, file_handle, true, shared, false) catch |err| {
                 if (comptime Environment.isDebug) {
-                    Output.printError("{s}: readFile error -- {s}", .{ path, @errorName(err) });
+                    Output.printError("{any}: readFile error -- {any}", .{ path, @errorName(err) });
                 }
                 return err;
             };
@@ -154,7 +154,7 @@ pub const Fs = struct {
                         error.FileNotFound => {
                             const handle = try std.fs.openFileAbsolute(path, .{ .mode = .read_only });
                             Output.prettyErrorln(
-                                "<r><d>Internal error: directory mismatch for directory \"{s}\", fd {d}<r>. You don't need to do anything, but this indicates a bug.",
+                                "<r><d>Internal error: directory mismatch for directory \"{any}\", fd {d}<r>. You don't need to do anything, but this indicates a bug.",
                                 .{ path, dirname_fd },
                             );
                             break :brk handle;
@@ -176,14 +176,14 @@ pub const Fs = struct {
         const file = if (c.stream)
             rfs.readFileWithHandle(path, null, file_handle, use_shared_buffer, c.sharedBuffer(), true) catch |err| {
                 if (Environment.isDebug) {
-                    Output.printError("{s}: readFile error -- {s}", .{ path, @errorName(err) });
+                    Output.printError("{any}: readFile error -- {any}", .{ path, @errorName(err) });
                 }
                 return err;
             }
         else
             rfs.readFileWithHandle(path, null, file_handle, use_shared_buffer, c.sharedBuffer(), false) catch |err| {
                 if (Environment.isDebug) {
-                    Output.printError("{s}: readFile error -- {s}", .{ path, @errorName(err) });
+                    Output.printError("{any}: readFile error -- {any}", .{ path, @errorName(err) });
                 }
                 return err;
             };

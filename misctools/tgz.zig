@@ -48,7 +48,7 @@ pub fn main() anyerror!void {
     };
 
     const tarball_path = path_handler.joinAbsStringBuf(try std.process.getCwdAlloc(std.heap.c_allocator), &tarball_path_buf, &parts, .auto);
-    Output.prettyErrorln("Tarball Path: {s}", .{tarball_path});
+    Output.prettyErrorln("Tarball Path: {any}", .{tarball_path});
     var folder = basename;
 
     // var dir = try std.fs.cwd().makeOpenPath(folder, .{ .iterate = true });

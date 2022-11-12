@@ -2013,7 +2013,7 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
 
         fn send(this: *@This(), buf: []const u8) bool {
             std.debug.assert(!this.done);
-            defer log("send: {d} bytes (backpressure: {d})", .{ buf.len, this.has_backpressure });
+            defer log("send: {d} bytes (backpressure: {any})", .{ buf.len, this.has_backpressure });
 
             if (this.requested_end and !this.res.state().isHttpWriteCalled()) {
                 const success = this.res.tryEnd(buf, this.end_len, false);
@@ -2357,7 +2357,7 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
 
         // In this case, it's always an error
         pub fn end(this: *@This(), err: ?Syscall.Error) JSC.Node.Maybe(void) {
-            log("end({?s})", .{err});
+            log("end({any})", .{err});
 
             if (this.requested_end) {
                 return .{ .result = {} };

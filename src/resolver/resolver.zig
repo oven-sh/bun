@@ -2248,10 +2248,9 @@ pub const Resolver = struct {
                 path.ptr[queue_top.unsafe_path.len] = 0;
                 defer path.ptr[queue_top.unsafe_path.len] = prev_char;
                 var sentinel = path.ptr[0..queue_top.unsafe_path.len :0];
-                _open_dir = std.fs.openDirAbsoluteZ(
+                _open_dir = std.fs.openIterableDirAbsoluteZ(
                     sentinel,
                     .{
-                        .iterate = true,
                         .no_follow = !follow_symlinks,
                     },
                 );

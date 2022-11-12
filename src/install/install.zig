@@ -949,7 +949,7 @@ const PackageInstall = struct {
             }
         };
 
-        var subdir = this.destination_dir.makeOpenPath(std.mem.span(this.destination_dir_subpath), .{ .iterate = true }) catch |err| return Result{
+        var subdir = this.destination_dir.makeOpenPathIterable(std.mem.span(this.destination_dir_subpath), .{}) catch |err| return Result{
             .fail = .{ .err = err, .step = .opening_cache_dir },
         };
 
@@ -1069,7 +1069,7 @@ const PackageInstall = struct {
             }
         };
 
-        var subdir = this.destination_dir.makeOpenPath(std.mem.span(this.destination_dir_subpath), .{ .iterate = true }) catch |err| return Result{
+        var subdir = this.destination_dir.makeOpenPathIterable(std.mem.span(this.destination_dir_subpath), .{}) catch |err| return Result{
             .fail = .{ .err = err, .step = .opening_cache_dir },
         };
 
@@ -1126,7 +1126,7 @@ const PackageInstall = struct {
             }
         };
 
-        var subdir = this.destination_dir.makeOpenPath(std.mem.span(this.destination_dir_subpath), .{ .iterate = true }) catch |err| return Result{
+        var subdir = this.destination_dir.makeOpenPathIterable(std.mem.span(this.destination_dir_subpath), .{}) catch |err| return Result{
             .fail = .{ .err = err, .step = .opening_cache_dir },
         };
 
@@ -1221,7 +1221,7 @@ const PackageInstall = struct {
             }
         };
 
-        var subdir = this.destination_dir.makeOpenPath(std.mem.span(this.destination_dir_subpath), .{ .iterate = true }) catch |err| return Result{
+        var subdir = this.destination_dir.makeOpenPathIterable(std.mem.span(this.destination_dir_subpath), .{}) catch |err| return Result{
             .fail = .{ .err = err, .step = .opening_cache_dir },
         };
 
@@ -1655,7 +1655,7 @@ pub const PackageManager = struct {
         return this.global_link_dir orelse brk: {
             var global_dir = try Options.openGlobalDir(this.options.explicit_global_directory);
             this.global_dir = global_dir;
-            this.global_link_dir = try global_dir.makeOpenPath("node_modules", .{ .iterate = true });
+            this.global_link_dir = try global_dir.makeOpenPathIterable("node_modules", .{});
             var buf: [bun.MAX_PATH_BYTES]u8 = undefined;
             const _path = try std.os.getFdPath(this.global_link_dir.?.fd, &buf);
             this.global_link_dir_path = try Fs.FileSystem.DirnameStore.instance.append([]const u8, _path);
@@ -1765,13 +1765,13 @@ pub const PackageManager = struct {
         loop: while (true) {
             if (this.options.enable.cache) {
                 const cache_dir = fetchCacheDirectoryPath(this.env_loader);
-                return std.fs.cwd().makeOpenPath(cache_dir.path, .{ .iterate = true }) catch {
+                return std.fs.cwd().makeOpenPathIterable(cache_dir.path, .{}) catch {
                     this.options.enable.cache = false;
                     continue :loop;
                 };
             }
 
-            return std.fs.cwd().makeOpenPath("node_modules/.cache", .{ .iterate = true }) catch |err| {
+            return std.fs.cwd().makeOpenPathIterable("node_modules/.cache", .{}) catch |err| {
                 Output.prettyErrorln("<r><red>error<r>: bun is unable to write files: {s}", .{@errorName(err)});
                 Global.crash();
             };
@@ -1790,9 +1790,9 @@ pub const PackageManager = struct {
         // This makes renameat() work
         const default_tempdir = Fs.FileSystem.RealFS.getDefaultTempDir();
         var tried_dot_tmp = false;
-        var tempdir: std.fs.Dir = std.fs.cwd().makeOpenPath(default_tempdir, .{ .iterate = true }) catch brk: {
+        var tempdir: std.fs.Dir = std.fs.cwd().makeOpenPathIterable(default_tempdir, .{}) catch brk: {
             tried_dot_tmp = true;
-            break :brk cache_directory.makeOpenPath(".tmp", .{ .iterate = true }) catch |err| {
+            break :brk cache_directory.makeOpenPathIterable(".tmp", .{}) catch |err| {
                 Output.prettyErrorln("<r><red>error<r>: bun is unable to access tempdir: {s}", .{@errorName(err)});
                 Global.crash();
             };
@@ -1805,7 +1805,7 @@ pub const PackageManager = struct {
                 if (!tried_dot_tmp) {
                     tried_dot_tmp = true;
 
-                    tempdir = cache_directory.makeOpenPath(".tmp", .{ .iterate = true }) catch |err| {
+                    tempdir = cache_directory.makeOpenPathIterable(".tmp", .{}) catch |err| {
                         Output.prettyErrorln("<r><red>error<r>: bun is unable to access tempdir: {s}", .{@errorName(err)});
                         Global.crash();
                     };
@@ -1820,7 +1820,7 @@ pub const PackageManager = struct {
             std.os.renameatZ(tempdir.fd, tmpname, cache_directory.fd, tmpname) catch |err| {
                 if (!tried_dot_tmp) {
                     tried_dot_tmp = true;
-                    tempdir = cache_directory.makeOpenPath(".tmp", .{ .iterate = true }) catch |err2| {
+                    tempdir = cache_directory.makeOpenPathIterable(".tmp", .{}) catch |err2| {
                         Output.prettyErrorln("<r><red>error<r>: bun is unable to write files to tempdir: {s}", .{@errorName(err2)});
                         Global.crash();
                     };
@@ -1978,7 +1978,7 @@ pub const PackageManager = struct {
 
     pub fn getInstalledVersionsFromDiskCache(this: *PackageManager, tags_buf: *std.ArrayList(u8), package_name: []const u8, allocator: std.mem.Allocator) !std.ArrayList(Semver.Version) {
         var list = std.ArrayList(Semver.Version).init(allocator);
-        var dir = this.getCacheDirectory().openDir(package_name, .{ .iterate = true }) catch |err| {
+        var dir = this.getCacheDirectory().openDir(package_name, .{}) catch |err| {
             switch (err) {
                 error.FileNotFound, error.NotDir, error.AccessDenied, error.DeviceBusy => {
                     return list;
@@ -3533,25 +3533,25 @@ pub const PackageManager = struct {
 
         pub fn openGlobalDir(explicit_global_dir: string) !std.fs.Dir {
             if (std.os.getenvZ("BUN_INSTALL_GLOBAL_DIR")) |home_dir| {
-                return try std.fs.cwd().makeOpenPath(home_dir, .{ .iterate = true });
+                return try std.fs.cwd().makeOpenPathIterable(home_dir, .{});
             }
 
             if (explicit_global_dir.len > 0) {
-                return try std.fs.cwd().makeOpenPath(explicit_global_dir, .{ .iterate = true });
+                return try std.fs.cwd().makeOpenPathIterable(explicit_global_dir, .{});
             }
 
             if (std.os.getenvZ("BUN_INSTALL")) |home_dir| {
                 var buf: [bun.MAX_PATH_BYTES]u8 = undefined;
                 var parts = [_]string{ "install", "global" };
                 var path = Path.joinAbsStringBuf(home_dir, &buf, &parts, .auto);
-                return try std.fs.cwd().makeOpenPath(path, .{ .iterate = true });
+                return try std.fs.cwd().makeOpenPathIterable(path, .{});
             }
 
             if (std.os.getenvZ("XDG_CACHE_HOME") orelse std.os.getenvZ("HOME")) |home_dir| {
                 var buf: [bun.MAX_PATH_BYTES]u8 = undefined;
                 var parts = [_]string{ ".bun", "install", "global" };
                 var path = Path.joinAbsStringBuf(home_dir, &buf, &parts, .auto);
-                return try std.fs.cwd().makeOpenPath(path, .{ .iterate = true });
+                return try std.fs.cwd().makeOpenPathIterable(path, .{});
             }
 
             return error.@"No global directory found";
@@ -3559,13 +3559,13 @@ pub const PackageManager = struct {
 
         pub fn openGlobalBinDir(opts_: ?*const Api.BunInstall) !std.fs.Dir {
             if (std.os.getenvZ("BUN_INSTALL_BIN")) |home_dir| {
-                return try std.fs.cwd().makeOpenPath(home_dir, .{ .iterate = true });
+                return try std.fs.cwd().makeOpenPathIterable(home_dir, .{});
             }
 
             if (opts_) |opts| {
                 if (opts.global_bin_dir) |home_dir| {
                     if (home_dir.len > 0) {
-                        return try std.fs.cwd().makeOpenPath(home_dir, .{ .iterate = true });
+                        return try std.fs.cwd().makeOpenPathIterable(home_dir, .{});
                     }
                 }
             }
@@ -3576,7 +3576,7 @@ pub const PackageManager = struct {
                     "bin",
                 };
                 var path = Path.joinAbsStringBuf(home_dir, &buf, &parts, .auto);
-                return try std.fs.cwd().makeOpenPath(path, .{ .iterate = true });
+                return try std.fs.cwd().makeOpenPathIterable(path, .{});
             }
 
             if (std.os.getenvZ("XDG_CACHE_HOME") orelse std.os.getenvZ("HOME")) |home_dir| {
@@ -3586,7 +3586,7 @@ pub const PackageManager = struct {
                     "bin",
                 };
                 var path = Path.joinAbsStringBuf(home_dir, &buf, &parts, .auto);
-                return try std.fs.cwd().makeOpenPath(path, .{ .iterate = true });
+                return try std.fs.cwd().makeOpenPathIterable(path, .{});
             }
 
             return error.@"Missing global bin directory: try setting $BUN_INSTALL";
@@ -4546,7 +4546,7 @@ pub const PackageManager = struct {
 
                 try manager.setupGlobalDir(&ctx);
 
-                break :brk manager.global_dir.?.makeOpenPath("node_modules", .{ .iterate = true }) catch |err| {
+                break :brk manager.global_dir.?.makeOpenPathIterable("node_modules", .{}) catch |err| {
                     if (manager.options.log_level != .silent)
                         Output.prettyErrorln("<r><red>error:<r> failed to create node_modules in global dir due to error {s}", .{@errorName(err)});
                     Global.crash();
@@ -4709,7 +4709,7 @@ pub const PackageManager = struct {
 
                 try manager.setupGlobalDir(&ctx);
 
-                break :brk manager.global_dir.?.makeOpenPath("node_modules", .{ .iterate = true }) catch |err| {
+                break :brk manager.global_dir.?.makeOpenPathIterable("node_modules", .{}) catch |err| {
                     if (manager.options.log_level != .silent)
                         Output.prettyErrorln("<r><red>error:<r> failed to create node_modules in global dir due to error {s}", .{@errorName(err)});
                     Global.crash();
@@ -5910,13 +5910,13 @@ pub const PackageManager = struct {
         // we want to check lazily though
         // no need to download packages you've already installed!!
         var skip_verify_installed_version_number = false;
-        var node_modules_folder = std.fs.cwd().openDirZ("node_modules", .{ .iterate = true }) catch brk: {
+        var node_modules_folder = std.fs.cwd().openDirZ("node_modules", .{}) catch brk: {
             skip_verify_installed_version_number = true;
             std.fs.cwd().makeDirZ("node_modules") catch |err| {
                 Output.prettyErrorln("<r><red>error<r>: <b><red>{s}<r> creating <b>node_modules<r> folder", .{@errorName(err)});
                 Global.crash();
             };
-            break :brk std.fs.cwd().openDirZ("node_modules", .{ .iterate = true }) catch |err| {
+            break :brk std.fs.cwd().openDirZ("node_modules", .{}) catch |err| {
                 Output.prettyErrorln("<r><red>error<r>: <b><red>{s}<r> opening <b>node_modules<r> folder", .{@errorName(err)});
                 Global.crash();
             };

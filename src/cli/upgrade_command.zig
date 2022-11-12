@@ -511,7 +511,7 @@ pub const UpgradeCommand = struct {
             const version_name = version.name().?;
 
             var save_dir_ = filesystem.tmpdir();
-            var save_dir = save_dir_.makeOpenPath(version_name, .{ .iterate = true }) catch {
+            var save_dir = save_dir_.makeOpenPathIterable(version_name, .{}) catch {
                 Output.prettyErrorln("<r><red>error:<r> Failed to open temporary directory", .{});
                 Global.exit(1);
             };

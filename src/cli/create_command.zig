@@ -573,7 +573,7 @@ pub const CreateCommand = struct {
                 };
 
                 std.fs.deleteTreeAbsolute(destination) catch {};
-                const destination_dir = std.fs.cwd().makeOpenPath(destination, .{ .iterate = true }) catch |err| {
+                const destination_dir = std.fs.cwd().makeOpenPathIterable(destination, .{}) catch |err| {
                     node.end();
 
                     progress.refresh();

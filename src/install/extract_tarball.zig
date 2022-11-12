@@ -158,7 +158,7 @@ fn extract(this: *const ExtractTarball, tgz_bytes: []const u8) !string {
 
     var tmpname = try FileSystem.instance.tmpname(basename[0..@min(basename.len, 32)], &tmpname_buf, tgz_bytes.len);
     {
-        var extract_destination = tmpdir.makeOpenPath(std.mem.span(tmpname), .{ .iterate = true }) catch |err| {
+        var extract_destination = tmpdir.makeOpenPathIterable(std.mem.span(tmpname), .{}) catch |err| {
             Output.panic("err: {s} when create temporary directory named {s} (while extracting {s})", .{ @errorName(err), tmpname, name });
         };
 
@@ -277,7 +277,7 @@ fn extract(this: *const ExtractTarball, tgz_bytes: []const u8) !string {
 
     // create an index storing each version of a package installed
     create_index: {
-        var index_dir = cache_dir.makeOpenPath(name, .{ .iterate = true }) catch break :create_index;
+        var index_dir = cache_dir.makeOpenPathIterable(name, .{}) catch break :create_index;
         defer index_dir.close();
         index_dir.symLink(
             final_path,

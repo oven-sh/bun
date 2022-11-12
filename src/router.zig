@@ -880,10 +880,10 @@ pub const MockServer = struct {
 fn makeTest(cwd_path: string, data: anytype) !void {
     Output.initTest();
     std.debug.assert(cwd_path.len > 1 and !strings.eql(cwd_path, "/") and !strings.endsWith(cwd_path, "bun"));
-    const bun_tests_dir = try std.fs.cwd().makeOpenPath("bun-test-scratch", .{ .iterate = true });
+    const bun_tests_dir = try std.fs.cwd().makeOpenPathIterable("bun-test-scratch", .{});
     bun_tests_dir.deleteTree(cwd_path) catch {};
 
-    const cwd = try bun_tests_dir.makeOpenPath(cwd_path, .{ .iterate = true });
+    const cwd = try bun_tests_dir.makeOpenPathIterable(cwd_path, .{});
     try cwd.setAsCwd();
 
     const Data = @TypeOf(data);

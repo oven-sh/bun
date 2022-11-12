@@ -1,8 +1,7 @@
-// TODO(vjpr): Ambiguous references
-//
+// Commented because of `ambiguous references` error.
 // const C = bun.C;
-// const WebCore = @import("./webcore.zig");
-//
+
+const WebCore = @import("./webcore.zig");
 
 pub const js = @import("../jsc.zig").C;
 const std = @import("std");
@@ -844,7 +843,7 @@ pub fn NewConstructor(
         pub usingnamespace NewClassWithInstanceType(void, InstanceType.Class.class_options, staticFunctions, properties, InstanceType);
         const name_string = &ZigString.init(InstanceType.Class.class_options.name);
         pub fn constructor(ctx: js.JSContextRef) callconv(.C) js.JSObjectRef {
-            return JSValue.makeWithNameAndPrototype(
+            return JSC.JSValue.makeWithNameAndPrototype(
                 ctx.ptr(),
                 @This().get().*,
                 InstanceType.Class.get().*,
@@ -986,7 +985,7 @@ pub fn NewClassWithInstanceType(
             return result;
         }
 
-        pub fn putDOMCalls(globalThis: *JSC.JSGlobalObject, value: JSValue) void {
+        pub fn putDOMCalls(globalThis: *JSC.JSGlobalObject, value: JSC.JSValue) void {
             inline for (function_name_literals) |functionName| {
                 const Function = comptime @field(staticFunctions, functionName);
                 if (@TypeOf(Function) == type and @hasDecl(Function, "is_dom_call")) {
@@ -2284,7 +2283,16 @@ pub fn NewClassWithInstanceType(
 //     };
 // }
 
-const JSValue = JSC.JSValue;
+// Removed because it would create ambiguous reference.
+//
+//     base.zig: const JSValue = JSC.JSValue;
+//     base.zig: const JSC = @import("../jsc.zig");
+//        jsc.zig: pub usingnamespace @import("./bun.js/bindings/bindings.zig");
+//           bindings.zig: pub const JSValue
+//        jsc.zig: pub usingnamespace @import("./bun.js/bindings/base.zig");
+//
+// const JSValue = JSC.JSValue;
+
 const ZigString = JSC.ZigString;
 
 pub const PathString = bun.PathString;
@@ -2410,7 +2418,7 @@ pub const ArrayBuffer = extern struct {
         return Stream{ .pos = 0, .buf = this.slice() };
     }
 
-    pub fn create(globalThis: *JSC.JSGlobalObject, bytes: []const u8, comptime kind: JSC.JSValue.JSType) JSValue {
+    pub fn create(globalThis: *JSC.JSGlobalObject, bytes: []const u8, comptime kind: JSC.JSValue.JSType) JSC.JSValue {
         JSC.markBinding(@src());
         return switch (comptime kind) {
             .Uint8Array => Bun__createUint8ArrayForCopy(globalThis, bytes.ptr, bytes.len),
@@ -2419,8 +2427,8 @@ pub const ArrayBuffer = extern struct {
         };
     }
 
-    extern "C" fn Bun__createUint8ArrayForCopy(*JSC.JSGlobalObject, ptr: ?*const anyopaque, len: usize) JSValue;
-    extern "C" fn Bun__createArrayBufferForCopy(*JSC.JSGlobalObject, ptr: ?*const anyopaque, len: usize) JSValue;
+    extern "C" fn Bun__createUint8ArrayForCopy(*JSC.JSGlobalObject, ptr: ?*const anyopaque, len: usize) JSC.JSValue;
+    extern "C" fn Bun__createArrayBufferForCopy(*JSC.JSGlobalObject, ptr: ?*const anyopaque, len: usize) JSC.JSValue;
 
     pub fn fromTypedArray(ctx: JSC.C.JSContextRef, value: JSC.JSValue, _: JSC.C.ExceptionRef) ArrayBuffer {
         var out = std.mem.zeroes(ArrayBuffer);
@@ -2636,7 +2644,7 @@ pub const MarkedArrayBuffer = struct {
     }
 
     pub fn toNodeBuffer(this: MarkedArrayBuffer, ctx: js.JSContextRef) js.JSObjectRef {
-        return JSValue.createBufferWithCtx(ctx, this.buffer.byteSlice(), this.buffer.ptr, MarkedArrayBuffer_deallocator).asObjectRef();
+        return JSC.JSValue.createBufferWithCtx(ctx, this.buffer.byteSlice(), this.buffer.ptr, MarkedArrayBuffer_deallocator).asObjectRef();
     }
 
     pub fn toJSObjectRef(this: MarkedArrayBuffer, ctx: js.JSContextRef, exception: js.ExceptionRef) js.JSObjectRef {
@@ -2685,7 +2693,7 @@ pub const RefString = struct {
     pub const Hash = u32;
     pub const Map = std.HashMap(Hash, *JSC.RefString, IdentityContext(Hash), 80);
 
-    pub fn toJS(this: *RefString, global: *JSC.JSGlobalObject) JSValue {
+    pub fn toJS(this: *RefString, global: *JSC.JSGlobalObject) JSC.JSValue {
         return JSC.ZigString.init(this.slice()).external(global, this, RefString__external);
     }
 
@@ -2765,7 +2773,7 @@ pub const ExternalBuffer = struct {
     }
 
     pub fn toArrayBuffer(this: *ExternalBuffer, ctx: *JSC.JSGlobalObject) JSC.JSValue {
-        return JSValue.c(JSC.C.JSObjectMakeArrayBufferWithBytesNoCopy(ctx.ref(), this.buf.ptr, this.buf.len, ExternalBuffer_deallocator, this, null));
+        return JSC.JSValue.c(JSC.C.JSObjectMakeArrayBufferWithBytesNoCopy(ctx.ref(), this.buf.ptr, this.buf.len, ExternalBuffer_deallocator, this, null));
     }
 };
 pub export fn ExternalBuffer_deallocator(bytes_: *anyopaque, ctx: *anyopaque) callconv(.C) void {
@@ -2897,7 +2905,7 @@ pub fn getterWrap(comptime Container: type, comptime name: string) GetterType(Co
             _: js.JSStringRef,
             exception: js.ExceptionRef,
         ) js.JSObjectRef {
-            const result: JSValue = if (comptime std.meta.fields(ArgsTuple).len == 1)
+            const result: JSC.JSValue = if (comptime std.meta.fields(ArgsTuple).len == 1)
                 @call(.{}, @field(Container, name), .{
                     this,
                 })
@@ -3126,7 +3134,7 @@ pub fn DOMCall(
             thisValue: JSC.JSValue,
             arguments_ptr: [*]const JSC.JSValue,
             arguments_len: usize,
-        ) callconv(.C) JSValue {
+        ) callconv(.C) JSC.JSValue {
             return @call(.{}, @field(Container, functionName), .{
                 globalObject,
                 thisValue,
@@ -3143,7 +3151,7 @@ pub fn DOMCall(
             .@"fastpath" = fastpath,
         });
 
-        pub fn put(globalObject: *JSC.JSGlobalObject, value: JSValue) void {
+        pub fn put(globalObject: *JSC.JSGlobalObject, value: JSC.JSValue) void {
             shim.cppFn("put", .{ globalObject, value });
         }
 
@@ -3486,7 +3494,7 @@ pub fn wrapWithHasContainer(
                     },
                     js.JSObjectRef => {
                         args[i] = thisObject;
-                        if (!JSValue.fromRef(thisObject).isCell() or !JSValue.fromRef(thisObject).isObject()) {
+                        if (!JSC.JSValue.fromRef(thisObject).isCell() or !JSC.JSValue.fromRef(thisObject).isObject()) {
                             JSC.throwInvalidArguments("Expected object", .{}, ctx, exception);
                             iter.deinit();
                             return null;
@@ -3495,7 +3503,7 @@ pub fn wrapWithHasContainer(
                     js.ExceptionRef => {
                         args[i] = exception;
                     },
-                    JSValue => {
+                    JSC.JSValue => {
                         const val = eater(&iter) orelse {
                             JSC.throwInvalidArguments("Missing argument", .{}, ctx, exception);
                             iter.deinit();
@@ -3503,14 +3511,14 @@ pub fn wrapWithHasContainer(
                         };
                         args[i] = val;
                     },
-                    ?JSValue => {
+                    ?JSC.JSValue => {
                         args[i] = eater(&iter);
                     },
                     else => @compileError("Unexpected Type " ++ @typeName(ArgType)),
                 }
             }
 
-            var result: JSValue = @call(.{}, @field(Container, name), args);
+            var result: JSC.JSValue = @call(.{}, @field(Container, name), args);
             if (!result.isEmptyOrUndefinedOrNull() and result.isError()) {
                 exception.* = result.asObjectRef();
                 iter.deinit();
@@ -3680,7 +3688,7 @@ pub fn wrapInstanceMethod(
                             return JSC.JSValue.zero;
                         };
                     },
-                    JSValue => {
+                    JSC.JSValue => {
                         const val = eater(&iter) orelse {
                             globalThis.throwInvalidArguments("Missing argument", .{});
                             iter.deinit();
@@ -3688,7 +3696,7 @@ pub fn wrapInstanceMethod(
                         };
                         args[i] = val;
                     },
-                    ?JSValue => {
+                    ?JSC.JSValue => {
                         args[i] = eater(&iter);
                     },
                     else => @compileError("Unexpected Type " ++ @typeName(ArgType)),
@@ -3822,7 +3830,7 @@ pub fn wrapStaticMethod(
                             return JSC.JSValue.zero;
                         };
                     },
-                    JSValue => {
+                    JSC.JSValue => {
                         const val = eater(&iter) orelse {
                             globalThis.throwInvalidArguments("Missing argument", .{});
                             iter.deinit();
@@ -3830,7 +3838,7 @@ pub fn wrapStaticMethod(
                         };
                         args[i] = val;
                     },
-                    ?JSValue => {
+                    ?JSC.JSValue => {
                         args[i] = eater(&iter);
                     },
                     else => @compileError("Unexpected Type " ++ @typeName(ArgType)),
@@ -3883,7 +3891,7 @@ pub fn cachedBoundFunction(comptime name: [:0]const u8, comptime callback: anyty
             if (existing.isEmpty()) {
                 return ctx.ptr().putCachedObject(
                     &ZigString.init(name_slice),
-                    JSValue.fromRef(JSC.C.JSObjectMakeFunctionWithCallback(ctx, JSC.C.JSStringCreateStatic(name_slice.ptr, name_slice.len), call)),
+                    JSC.JSValue.fromRef(JSC.C.JSObjectMakeFunctionWithCallback(ctx, JSC.C.JSStringCreateStatic(name_slice.ptr, name_slice.len), call)),
                 ).asObjectRef();
             }
 
@@ -3996,7 +4004,7 @@ pub const Strong = extern struct {
         return str;
     }
 
-    pub fn get(this: *Strong) ?JSValue {
+    pub fn get(this: *Strong) ?JSC.JSValue {
         var ref = this.ref orelse return null;
         const result = ref.get();
         if (result == .zero) {
@@ -4006,7 +4014,7 @@ pub const Strong = extern struct {
         return result;
     }
 
-    pub fn swap(this: *Strong) JSValue {
+    pub fn swap(this: *Strong) JSC.JSValue {
         var ref = this.ref orelse return .zero;
         const result = ref.get();
         if (result == .zero) {
@@ -4022,7 +4030,7 @@ pub const Strong = extern struct {
         return ref.get() != .zero;
     }
 
-    pub fn trySwap(this: *Strong) ?JSValue {
+    pub fn trySwap(this: *Strong) ?JSC.JSValue {
         const result = this.swap();
         if (result == .zero) {
             return null;
@@ -4031,7 +4039,7 @@ pub const Strong = extern struct {
         return result;
     }
 
-    pub fn set(this: *Strong, globalThis: *JSC.JSGlobalObject, value: JSValue) void {
+    pub fn set(this: *Strong, globalThis: *JSC.JSGlobalObject, value: JSC.JSValue) void {
         var ref: *JSC.napi.Ref = this.ref orelse {
             if (value == .zero) return;
             this.ref = JSC.napi.Ref.create(globalThis, value);

@@ -969,7 +969,7 @@ fn doResolveWithArgs(
     }
 
     if (!errorable.success) {
-        exception.* = bun.cast(JSC.JSValueRef, errorable.result.err.ptr.?);
+        exception.* = bun.cast(js.JSValueRef, errorable.result.err.ptr.?);
         return null;
     }
 
@@ -1009,7 +1009,7 @@ export fn Bun__resolve(
     specifier: JSValue,
     source: JSValue,
 ) JSC.JSValue {
-    var exception_ = [1]JSC.JSValueRef{null};
+    var exception_ = [1]js.JSValueRef{null};
     var exception = &exception_;
     const value = doResolveWithArgs(global, specifier.getZigString(global), source.getZigString(global), exception, true) orelse {
         return JSC.JSPromise.rejectedPromiseValue(global, JSC.JSValue.fromRef(exception[0]));
@@ -1022,7 +1022,7 @@ export fn Bun__resolveSync(
     specifier: JSValue,
     source: JSValue,
 ) JSC.JSValue {
-    var exception_ = [1]JSC.JSValueRef{null};
+    var exception_ = [1]js.JSValueRef{null};
     var exception = &exception_;
     return doResolveWithArgs(global, specifier.getZigString(global), source.getZigString(global), exception, true) orelse {
         return JSC.JSValue.fromRef(exception[0]);

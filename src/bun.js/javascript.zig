@@ -13,7 +13,7 @@ const stringZ = bun.stringZ;
 const default_allocator = bun.default_allocator;
 const StoredFileDescriptorType = bun.StoredFileDescriptorType;
 const Arena = @import("../mimalloc_arena.zig").Arena;
-const C = bun.C;
+// const C = bun.C;
 const NetworkThread = @import("http").NetworkThread;
 const IO = @import("io");
 const Allocator = std.mem.Allocator;
@@ -57,7 +57,6 @@ const JSError = @import("./base.zig").JSError;
 const d = @import("./base.zig").d;
 const MarkedArrayBuffer = @import("./base.zig").MarkedArrayBuffer;
 const getAllocator = @import("./base.zig").getAllocator;
-const JSValue = @import("../jsc.zig").JSValue;
 const NewClass = @import("./base.zig").NewClass;
 const Microtask = @import("../jsc.zig").Microtask;
 const JSGlobalObject = @import("../jsc.zig").JSGlobalObject;
@@ -69,7 +68,10 @@ const ZigException = @import("../jsc.zig").ZigException;
 const ZigStackTrace = @import("../jsc.zig").ZigStackTrace;
 const ErrorableResolvedSource = @import("../jsc.zig").ErrorableResolvedSource;
 const ResolvedSource = @import("../jsc.zig").ResolvedSource;
-const JSPromise = @import("../jsc.zig").JSPromise;
+// Exported by JSC.
+// const JSPromise = @import("../jsc.zig").JSPromise;
+// const JSValue = @import("../jsc.zig").JSValue;
+// --
 const JSInternalPromise = @import("../jsc.zig").JSInternalPromise;
 const JSModuleLoader = @import("../jsc.zig").JSModuleLoader;
 const JSPromiseRejectionOperation = @import("../jsc.zig").JSPromiseRejectionOperation;
@@ -271,20 +273,28 @@ export fn Bun__readOriginTimerStart(vm: *JSC.VirtualMachine) f64 {
     return @floatCast(f64, (@intToFloat(f128, vm.origin_timestamp) + JSC.VirtualMachine.origin_relative_epoch) / 1_000_000.0);
 }
 
-comptime {
-    if (!JSC.is_bindgen) {
-        _ = Bun__getDefaultGlobal;
-        _ = Bun__getVM;
-        _ = Bun__drainMicrotasks;
-        _ = Bun__queueTask;
-        _ = Bun__queueTaskConcurrently;
-        _ = Bun__handleRejectedPromise;
-        _ = Bun__readOriginTimer;
-        _ = Bun__onDidAppendPlugin;
-        _ = Bun__readOriginTimerStart;
-        _ = Bun__reportUnhandledError;
-    }
-}
+////////////////////////////////////////////////////////////////////////////////
+//
+// TODO(vjpr): What was this for? Just to remove errors?
+//
+//   It was causing `parameter of type '*src.bun.js.javascript.VirtualMachine' must be declared comptime` in `export fn Bun__readOriginTimer(vm: *JSC.VirtualMachine) u64 {`
+//
+// comptime {
+//     if (!JSC.is_bindgen) {
+//         _ = Bun__getDefaultGlobal;
+//         _ = Bun__getVM;
+//         _ = Bun__drainMicrotasks;
+//         _ = Bun__queueTask;
+//         _ = Bun__queueTaskConcurrently;
+//         _ = Bun__handleRejectedPromise;
+//         _ = Bun__readOriginTimer;
+//         _ = Bun__onDidAppendPlugin;
+//         _ = Bun__readOriginTimerStart;
+//         _ = Bun__reportUnhandledError;
+//     }
+// }
+//
+////////////////////////////////////////////////////////////////////////////////
 
 /// This function is called on the main thread
 /// The bunVM() call will assert this
@@ -292,7 +302,7 @@ pub export fn Bun__queueTask(global: *JSGlobalObject, task: *JSC.CppTask) void {
     global.bunVM().eventLoop().enqueueTask(Task.init(task));
 }
 
-pub export fn Bun__reportUnhandledError(globalObject: *JSGlobalObject, value: JSValue) callconv(.C) JSValue {
+pub export fn Bun__reportUnhandledError(globalObject: *JSGlobalObject, value: JSC.JSValue) callconv(.C) JSC.JSValue {
     var jsc_vm = globalObject.bunVM();
     jsc_vm.onUnhandledError(globalObject, value);
     return JSC.JSValue.jsUndefined();
@@ -362,7 +372,7 @@ pub const VirtualMachine = struct {
 
     plugin_runner: ?PluginRunner = null,
     is_main_thread: bool = false,
-    last_reported_error_for_dedupe: JSValue = .zero,
+    last_reported_error_for_dedupe: JSC.JSValue = .zero,
 
     /// Do not access this field directly
     /// It exists in the VirtualMachine struct so that
@@ -1218,14 +1228,14 @@ pub const VirtualMachine = struct {
         }
     }
 
-    pub fn runErrorHandlerWithDedupe(this: *VirtualMachine, result: JSValue, exception_list: ?*ExceptionList) void {
+    pub fn runErrorHandlerWithDedupe(this: *VirtualMachine, result: JSC.JSValue, exception_list: ?*ExceptionList) void {
         if (this.last_reported_error_for_dedupe == result and !this.last_reported_error_for_dedupe.isEmptyOrUndefinedOrNull())
             return;
 
         this.runErrorHandler(result, exception_list);
     }
 
-    pub fn runErrorHandler(this: *VirtualMachine, result: JSValue, exception_list: ?*ExceptionList) void {
+    pub fn runErrorHandler(this: *VirtualMachine, result: JSC.JSValue, exception_list: ?*ExceptionList) void {
         if (!result.isEmptyOrUndefinedOrNull())
             this.last_reported_error_for_dedupe = result;
 
@@ -1365,7 +1375,7 @@ pub const VirtualMachine = struct {
     const errors_property = ZigString.init("errors");
     pub fn printErrorlikeObject(
         this: *VirtualMachine,
-        value: JSValue,
+        value: JSC.JSValue,
         exception: ?*Exception,
         exception_list: ?*ExceptionList,
         comptime Writer: type,
@@ -1404,13 +1414,13 @@ pub const VirtualMachine = struct {
                 writer: Writer,
                 current_exception_list: ?*ExceptionList = null,
 
-                pub fn iteratorWithColor(_vm: [*c]VM, globalObject: [*c]JSGlobalObject, ctx: ?*anyopaque, nextValue: JSValue) callconv(.C) void {
+                pub fn iteratorWithColor(_vm: [*c]VM, globalObject: [*c]JSGlobalObject, ctx: ?*anyopaque, nextValue: JSC.JSValue) callconv(.C) void {
                     iterator(_vm, globalObject, nextValue, ctx.?, true);
                 }
-                pub fn iteratorWithOutColor(_vm: [*c]VM, globalObject: [*c]JSGlobalObject, ctx: ?*anyopaque, nextValue: JSValue) callconv(.C) void {
+                pub fn iteratorWithOutColor(_vm: [*c]VM, globalObject: [*c]JSGlobalObject, ctx: ?*anyopaque, nextValue: JSC.JSValue) callconv(.C) void {
                     iterator(_vm, globalObject, nextValue, ctx.?, false);
                 }
-                inline fn iterator(_: [*c]VM, _: [*c]JSGlobalObject, nextValue: JSValue, ctx: ?*anyopaque, comptime color: bool) void {
+                inline fn iterator(_: [*c]VM, _: [*c]JSGlobalObject, nextValue: JSC.JSValue, ctx: ?*anyopaque, comptime color: bool) void {
                     var this_ = @intToPtr(*@This(), @ptrToInt(ctx));
                     VirtualMachine.vm.printErrorlikeObject(nextValue, null, this_.current_exception_list, Writer, this_.writer, color);
                 }
@@ -1492,7 +1502,7 @@ pub const VirtualMachine = struct {
             },
             else => {
                 this.printErrorInstance(
-                    @intToEnum(JSValue, @bitCast(JSValue.Type, (@ptrToInt(value)))),
+                    @intToEnum(JSC.JSValue, @bitCast(JSC.JSValue.Type, (@ptrToInt(value)))),
                     exception_list,
                     Writer,
                     writer,
@@ -1509,7 +1519,7 @@ pub const VirtualMachine = struct {
         }
     }
 
-    pub fn reportUncaughtException(globalObject: *JSGlobalObject, exception: *JSC.Exception) JSValue {
+    pub fn reportUncaughtException(globalObject: *JSGlobalObject, exception: *JSC.Exception) JSC.JSValue {
         var jsc_vm = globalObject.bunVM();
         jsc_vm.onUnhandledError(globalObject, exception.value());
         return JSC.JSValue.jsUndefined();
@@ -1592,7 +1602,7 @@ pub const VirtualMachine = struct {
     pub fn remapZigException(
         this: *VirtualMachine,
         exception: *ZigException,
-        error_instance: JSValue,
+        error_instance: JSC.JSValue,
         exception_list: ?*ExceptionList,
     ) void {
         error_instance.toZigException(this.global, exception);
@@ -1695,7 +1705,7 @@ pub const VirtualMachine = struct {
         }
     }
 
-    pub fn printErrorInstance(this: *VirtualMachine, error_instance: JSValue, exception_list: ?*ExceptionList, comptime Writer: type, writer: Writer, comptime allow_ansi_color: bool) !void {
+    pub fn printErrorInstance(this: *VirtualMachine, error_instance: JSC.JSValue, exception_list: ?*ExceptionList, comptime Writer: type, writer: Writer, comptime allow_ansi_color: bool) !void {
         var exception_holder = ZigException.Holder.init();
         var exception = exception_holder.zigException();
         this.remapZigException(exception, error_instance, exception_list);
@@ -1948,14 +1958,14 @@ pub const EventListenerMixin = struct {
         request_context: *http.RequestContext,
         comptime CtxType: type,
         ctx: *CtxType,
-        comptime onError: fn (ctx: *CtxType, err: anyerror, value: JSValue, request_ctx: *http.RequestContext) anyerror!void,
+        comptime onError: fn (ctx: *CtxType, err: anyerror, value: JSC.JSValue, request_ctx: *http.RequestContext) anyerror!void,
     ) !void {
         if (comptime JSC.is_bindgen) unreachable;
 
-        var listeners = vm.event_listeners.get(EventType.fetch) orelse (return onError(ctx, error.NoListeners, JSValue.jsUndefined(), request_context) catch {});
-        if (listeners.items.len == 0) return onError(ctx, error.NoListeners, JSValue.jsUndefined(), request_context) catch {};
+        var listeners = vm.event_listeners.get(EventType.fetch) orelse (return onError(ctx, error.NoListeners, JSC.JSValue.jsUndefined(), request_context) catch {});
+        if (listeners.items.len == 0) return onError(ctx, error.NoListeners, JSC.JSValue.jsUndefined(), request_context) catch {};
         const FetchEventRejectionHandler = struct {
-            pub fn onRejection(_ctx: *anyopaque, err: anyerror, fetch_event: *FetchEvent, value: JSValue) void {
+            pub fn onRejection(_ctx: *anyopaque, err: anyerror, fetch_event: *FetchEvent, value: JSC.JSValue) void {
                 onError(
                     @intToPtr(*CtxType, @ptrToInt(_ctx)),
                     err,
@@ -2005,7 +2015,7 @@ pub const EventListenerMixin = struct {
         }
 
         if (!request_context.has_called_done) {
-            onError(ctx, error.FetchHandlerRespondWithNeverCalled, JSValue.jsUndefined(), request_context) catch {};
+            onError(ctx, error.FetchHandlerRespondWithNeverCalled, JSC.JSValue.jsUndefined(), request_context) catch {};
             return;
         }
     }
@@ -2398,22 +2408,22 @@ pub const BuildError = struct {
             object.put(
                 ctx,
                 ZigString.static("line"),
-                JSValue.jsNumber(location.line),
+                JSC.JSValue.jsNumber(location.line),
             );
             object.put(
                 ctx,
                 ZigString.static("column"),
-                JSValue.jsNumber(location.column),
+                JSC.JSValue.jsNumber(location.column),
             );
             object.put(
                 ctx,
                 ZigString.static("length"),
-                JSValue.jsNumber(location.length),
+                JSC.JSValue.jsNumber(location.length),
             );
             object.put(
                 ctx,
                 ZigString.static("offset"),
-                JSValue.jsNumber(location.offset),
+                JSC.JSValue.jsNumber(location.offset),
             );
             return object.asObjectRef();
         }

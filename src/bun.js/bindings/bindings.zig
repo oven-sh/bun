@@ -1,11 +1,4 @@
-// TODO(vjpr):
-//   Commented out because of `ambiguous reference` error.
-//
-//   /Users/Vaughan/dev/fork/+bun/bun/src/jsc.zig:2:5: note: declared here
-//   pub const is_bindgen = @import("std").meta.globalOption("bindgen", bool) orelse false;
-//
-// const is_bindgen: bool = std.meta.globalOption("bindgen", bool) orelse false;
-//
+const is_bindgen: bool = std.meta.globalOption("bindgen", bool) orelse false;
 
 const std = @import("std");
 const bun = @import("../../global.zig");

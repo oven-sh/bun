@@ -1,10 +1,10 @@
 const std = @import("std");
 
-pub fn RefCount(comptime Type: type, comptime deinit_on_zero: bool) type {
+pub fn RefCount(comptime MyType: type, comptime deinit_on_zero: bool) type {
     return struct {
         const AllocatorType = if (deinit_on_zero) std.mem.Allocator else void;
 
-        value: Type,
+        value: MyType,
         count: i32 = 1,
         allocator: AllocatorType = undefined,
 
@@ -14,7 +14,7 @@ pub fn RefCount(comptime Type: type, comptime deinit_on_zero: bool) type {
 
         /// Create a new reference counted value.
         pub inline fn init(
-            value: Type,
+            value: MyType,
             allocator: std.mem.Allocator,
         ) !*@This() {
             var ptr = try allocator.create(@This());
@@ -23,7 +23,7 @@ pub fn RefCount(comptime Type: type, comptime deinit_on_zero: bool) type {
         }
 
         /// Get the value & increment the reference count.
-        pub inline fn get(this: *@This()) *Type {
+        pub inline fn get(this: *@This()) *MyType {
             std.debug.assert(this.count >= 0);
 
             this.count += 1;
@@ -31,7 +31,7 @@ pub fn RefCount(comptime Type: type, comptime deinit_on_zero: bool) type {
         }
 
         /// Get the value without incrementing the reference count.
-        pub inline fn leak(this: *@This()) *Type {
+        pub inline fn leak(this: *@This()) *MyType {
             return &this.value;
         }
 
@@ -42,7 +42,7 @@ pub fn RefCount(comptime Type: type, comptime deinit_on_zero: bool) type {
 
         pub inline fn create(
             this: *@This(),
-            value: Type,
+            value: MyType,
             allocator: AllocatorType,
         ) void {
             this.* = .{
@@ -53,7 +53,7 @@ pub fn RefCount(comptime Type: type, comptime deinit_on_zero: bool) type {
         }
 
         pub inline fn deinit(this: *@This()) void {
-            if (comptime @hasDecl(Type, "deinit")) {
+            if (comptime @hasDecl(MyType, "deinit")) {
                 this.value.deinit();
             }
 
@@ -75,6 +75,6 @@ pub fn RefCount(comptime Type: type, comptime deinit_on_zero: bool) type {
             }
         }
 
-        pub const Type = Type;
+        pub const Type = MyType;
     };
 }

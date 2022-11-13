@@ -652,7 +652,7 @@ pub const InternalState = struct {
         }
 
         if (this.compressed_body) |body| {
-            ZlibPool.instance.put(body) catch unreachable;
+            ZlibPool.put(body);
             this.compressed_body = null;
         }
 
@@ -666,12 +666,7 @@ pub const InternalState = struct {
         switch (this.encoding) {
             Encoding.gzip, Encoding.deflate => {
                 if (this.compressed_body == null) {
-                    if (!ZlibPool.loaded) {
-                        ZlibPool.instance = ZlibPool.init(default_allocator);
-                        ZlibPool.loaded = true;
-                    }
-
-                    this.compressed_body = ZlibPool.instance.get() catch unreachable;
+                    this.compressed_body = ZlibPool.get(default_allocator);
                 }
 
                 return this.compressed_body.?;
@@ -695,8 +690,8 @@ pub const InternalState = struct {
                     gzip_timer = std.time.Timer.start() catch @panic("Timer failure");
 
                 body_out_str.list.expandToCapacity();
-                defer ZlibPool.instance.put(buffer_) catch unreachable;
-                ZlibPool.decompress(buffer.list.items, body_out_str) catch |err| {
+                defer ZlibPool.put(buffer_);
+                ZlibPool.decompress(buffer_.list.items, body_out_str) catch |err| {
                     Output.prettyErrorln("<r><red>Zlib error<r>", .{});
                     Output.flush();
                     return err;
@@ -1725,7 +1720,7 @@ pub fn handleResponseBody(this: *HTTPClient, incoming_data: []const u8) !bool {
         buffer.list.ensureTotalCapacityPrecise(buffer.allocator, this.state.body_size) catch {};
     }
 
-    const remaining_content_length = this.state.body_size - buffer.list.items.len;
+    const remaining_content_length = this.state.body_size -| buffer.list.items.len;
     var remainder = incoming_data[0..@minimum(incoming_data.len, remaining_content_length)];
 
     _ = try buffer.write(remainder);

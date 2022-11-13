@@ -85,7 +85,7 @@ describe("FileSink", () => {
     } catch (e) {}
     mkfifo(path, 0o666);
     activeFIFO = (async function (stream: ReadableStream<Uint8Array>) {
-      var chunks = [];
+      var chunks: Uint8Array[] = [];
       for await (const chunk of stream) {
         chunks.push(chunk);
       }

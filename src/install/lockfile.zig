@@ -2620,7 +2620,7 @@ pub const Package = extern struct {
                         break :bin;
                     },
                     .e_string => |_str| {
-                        if (str.data.len > 0) {
+                        if (_str.data.len > 0) {
                             package.bin = Bin{
                                 .tag = Bin.Tag.file,
                                 .value = .{

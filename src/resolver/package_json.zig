@@ -370,8 +370,8 @@ pub const PackageJSON = struct {
             if (framework_object.expr.asProperty("router")) |router| {
                 if (router.expr.asProperty("dir")) |route_dir| {
                     switch (route_dir.expr.data) {
-                        .e_string => |estr| {
-                            const str = estr.string(allocator) catch unreachable;
+                        .e_string => |_str| {
+                            const str = _str.string(allocator) catch unreachable;
                             if (str.len > 0) {
                                 pair.router.dir = str;
                                 pair.router.possible_dirs = &[_]string{};

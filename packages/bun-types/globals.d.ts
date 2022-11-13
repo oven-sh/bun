@@ -369,7 +369,7 @@ declare class Blob implements BlobInterface {
   /**
    * Read the data from the blob as a ReadableStream.
    */
-  stream(): ReadableStream<Uint8Array>;
+  stream(chunkSize?: number): ReadableStream<Uint8Array>;
 
   /**
    * Read the data from the blob as an ArrayBuffer.

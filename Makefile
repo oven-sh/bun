@@ -371,7 +371,7 @@ PLATFORM_LINKER_FLAGS += -DDU_DISABLE_RENAMING=1 \
 endif
 
 ifeq ($(OS_NAME),linux)
-SYMBOLS=-Wl,--dynamic-list $(realpath src/symbols.dyn)
+SYMBOLS=-Wl,--dynamic-list $(realpath src/symbols.dyn) -Wl,--version-script=$(realpath src/linker.lds)
 endif
 
 SHARED_LIB_EXTENSION = .so

@@ -1801,6 +1801,7 @@ pub const VirtualMachine = struct {
             "url",
             "info",
             "pkg",
+            "errors",
         };
 
         if (error_instance != .zero and error_instance.isCell() and error_instance.jsType().canGet()) {

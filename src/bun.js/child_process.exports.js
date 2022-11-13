@@ -118,7 +118,7 @@ export function spawn(file, args, options) {
         }
         timeoutId = null;
       }
-    }, options.timeout);
+    });
 
     child.once("exit", () => {
       if (timeoutId) {
@@ -852,10 +852,6 @@ export class ChildProcess extends EventEmitter {
   spawnfile;
   spawnargs;
   pid;
-  stdin;
-  stdout;
-  stderr;
-  stdio;
   channel;
 
   get killed() {
@@ -875,8 +871,8 @@ export class ChildProcess extends EventEmitter {
       this.exitCode = this.#handle.exitCode;
     }
 
-    if (this.stdin) {
-      this.stdin.destroy();
+    if (this.#stdin) {
+      this.#stdin.destroy();
     }
 
     if (this.#handle) {
@@ -920,35 +916,73 @@ export class ChildProcess extends EventEmitter {
     this.#exited = true;
   }
 
-  #getBunSpawnIo(stdio, options) {
-    const result = [null];
-    switch (stdio[0]) {
-      case "pipe":
-        result[0] = new WrappedFileSink(this.#handle.stdin);
+  #getBunSpawnIo(i, encoding) {
+    const io = this.#stdioOptions[i];
+    switch (i) {
+      case 0: {
+        switch (io) {
+          case "pipe":
+            return new WrappedFileSink(this.#handle.stdin);
+          case "inherit":
+            return process.stdin || null;
+          default:
+            return null;
+        }
+      }
+      case 2:
+      case 1: {
+        switch (io) {
+          case "pipe":
+            return ReadableFromWeb(this.#handle[fdToStdioName(i)], {
+              encoding,
+            });
+            break;
+          case "inherit":
+            return process[fdToStdioName(i)] || null;
+            break;
+          default:
+            return null;
+        }
         break;
-      case "inherit":
-        result[0] = process.stdin;
-        break;
-      default:
-        result[0] = null;
-        break;
-    }
-    let i = 1;
-    for (; i < stdio.length; i++) {
-      switch (stdio[i]) {
-        case "pipe":
-          result[i] = ReadableFromWeb(this.#handle[fdToStdioName(i)], {
-            encoding: options.encoding || undefined,
-          });
-          break;
-        case "inherit":
-          result[i] = process[fdToStdioName(i)];
-          break;
-        default:
-          result[i] = null;
       }
     }
-    return result;
+  }
+
+  #stdin;
+  #stdout;
+  #stderr;
+  #stdioObject;
+  #encoding;
+  #stdioOptions;
+
+  #createStdioObject() {
+    return Object.create(null, {
+      0: {
+        get: () => this.stdin,
+      },
+      1: {
+        get: () => this.stdout,
+      },
+      2: {
+        get: () => this.stderr,
+      },
+    });
+  }
+
+  get stdin() {
+    return (this.#stdin ??= this.#getBunSpawnIo(0, this.#encoding));
+  }
+
+  get stdout() {
+    return (this.#stdout ??= this.#getBunSpawnIo(1, this.#encoding));
+  }
+
+  get stderr() {
+    return (this.#stderr ??= this.#getBunSpawnIo(2, this.#encoding));
+  }
+
+  get stdio() {
+    return (this.#stdioObject ??= this.#createStdioObject());
   }
 
   spawn(options) {
@@ -974,20 +1008,22 @@ export class ChildProcess extends EventEmitter {
     // }
 
     validateString(options.file, "options.file");
-    this.spawnfile = options.file;
+    var file;
+    file = this.spawnfile = options.file;
 
+    var spawnargs;
     if (options.args == null) {
-      this.spawnargs = [];
+      spawnargs = this.spawnargs = [];
     } else {
       validateArray(options.args, "options.args");
-      this.spawnargs = options.args;
+      spawnargs = this.spawnargs = options.args;
     }
 
-    const stdio = options.stdio || "pipe";
+    const stdio = options.stdio || ["pipe", "pipe", "pipe"];
     const bunStdio = getBunStdioFromOptions(stdio);
 
     this.#handle = Bun.spawn({
-      cmd: [options.file, ...this.spawnargs],
+      cmd: spawnargs,
       stdin: bunStdio[0],
       stdout: bunStdio[1],
       stderr: bunStdio[2],
@@ -996,15 +1032,11 @@ export class ChildProcess extends EventEmitter {
       onExit: this.#handleOnExit.bind(this),
     });
     this.#handleExited = this.#handle.exited;
-
-    this.stdio = this.#getBunSpawnIo(bunStdio, options);
-    this.stdin = this.stdio[0];
-    this.stdout = this.stdio[1];
-    this.stderr = this.stdio[2];
+    this.#encoding = options.encoding || undefined;
+    this.#stdioOptions = bunStdio;
+    this.pid = this.#handle.pid;
 
     process.nextTick(onSpawnNT, this);
-
-    this.pid = this.#handle.pid;
 
     // If no `stdio` option was given - use default
     // let stdio = options.stdio || "pipe"; // TODO: reset default

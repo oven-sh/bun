@@ -1141,6 +1141,10 @@ pub const FileSink = struct {
     }
 
     pub fn flushMaybePoll(this: *FileSink) StreamResult.Writable {
+        return flushMaybePollWithSize(this, std.math.maxInt(usize));
+    }
+
+    pub fn flushMaybePollWithSize(this: *FileSink, writable_size: usize) StreamResult.Writable {
         std.debug.assert(this.fd != JSC.Node.invalid_fd);
 
         var total: usize = this.written;
@@ -1168,12 +1172,23 @@ pub const FileSink = struct {
             }
         }
 
-        const max_to_write = if (is_fifo) this.max_write_size else remain.len;
+        const max_to_write =
+            if (is_fifo)
+        brk: {
+            if (comptime Environment.isMac) {
+                break :brk if (writable_size == std.math.maxInt(usize))
+                    max_fifo_size
+                else
+                    writable_size;
+            }
+
+            break :brk this.max_write_size;
+        } else remain.len;
 
         while (remain.len > 0) {
             const write_buf = remain[0..@minimum(remain.len, max_to_write)];
 
-            log("Write {d} bytes (fd: {d})", .{ write_buf.len, fd });
+            log("Write {d} bytes (fd: {d}, )", .{ write_buf.len, fd });
             const res = JSC.Node.Syscall.write(fd, write_buf);
             if (res == .err) {
                 const retry =
@@ -1341,7 +1356,7 @@ pub const FileSink = struct {
         return JSSink.createObject(globalThis, this);
     }
 
-    pub fn ready(this: *FileSink, _: i64) void {
+    pub fn ready(this: *FileSink, writable: i64) void {
         var remain = this.buffer.slice();
         const pending = remain[@minimum(this.head, remain.len)..].len;
         if (pending == 0) {
@@ -1352,7 +1367,11 @@ pub const FileSink = struct {
             return;
         }
 
-        _ = this.flushMaybePoll();
+        if (comptime Environment.isMac) {
+            _ = this.flushMaybePollWithSize(@intCast(usize, @maximum(writable, 0)));
+        } else {
+            _ = this.flushMaybePollWithSize(std.math.maxInt(usize));
+        }
     }
 
     pub fn write(this: *@This(), data: StreamResult) StreamResult.Writable {
@@ -2738,17 +2757,7 @@ pub fn ReadableStreamSource(
 
             pub fn load(globalThis: *JSGlobalObject) callconv(.C) JSC.JSValue {
                 if (comptime JSC.is_bindgen) unreachable;
-                if (comptime Environment.allow_assert) {
-                    // this should be cached per globals object
-                    const OnlyOnce = struct {
-                        pub threadlocal var last_globals: ?*JSGlobalObject = null;
-                    };
-                    if (OnlyOnce.last_globals) |last_globals| {
-                        std.debug.assert(last_globals != globalThis);
-                    }
-                    OnlyOnce.last_globals = globalThis;
-                }
-
+                // This is used also in Node.js streams
                 return JSC.JSArray.from(globalThis, &.{
                     JSC.NewFunction(globalThis, null, 1, JSReadableStreamSource.pull, true),
                     JSC.NewFunction(globalThis, null, 1, JSReadableStreamSource.start, true),
@@ -3665,6 +3674,10 @@ pub const FileBlobLoader = struct {
         }
 
         if (this.poll_ref) |poll| {
+            if ((available_to_read orelse 0) > 0) {
+                poll.flags.insert(.readable);
+            }
+
             const is_readable = poll.isReadable();
             if (!is_readable and poll.isEOF()) {
                 if (poll.isHUP()) {
@@ -3676,6 +3689,11 @@ pub const FileBlobLoader = struct {
                 this.finalize();
                 return .{ .done = {} };
             } else if (!is_readable and poll.isRegistered()) {
+                if (this.finished) {
+                    this.finalize();
+                    return .{ .done = {} };
+                }
+
                 if (view != .zero) {
                     this.view.set(this.globalThis(), view);
                     this.buf = read_buf;
@@ -3785,22 +3803,20 @@ pub const FileBlobLoader = struct {
 
     /// Called from Poller
     pub fn ready(this: *FileBlobLoader, sizeOrOffset: i64) void {
-        std.debug.assert(this.started);
-
         const view = this.view.get() orelse .zero;
         defer this.view.clear();
 
-        var available_to_read: usize = std.math.maxInt(usize);
-        if (comptime Environment.isMac) {
+        const available_to_read: usize = if (comptime Environment.isMac) brk: {
             if (this.isFIFO()) {
-                available_to_read = @intCast(usize, @maximum(sizeOrOffset, 0));
+                break :brk @intCast(usize, @maximum(sizeOrOffset, 0));
             } else if (std.os.S.ISREG(this.mode)) {
                 // Returns when the file pointer is not at the end of
                 // file.  data contains the offset from current position
                 // to end of file, and may be negative.
-                available_to_read = @intCast(usize, @maximum(sizeOrOffset, 0));
+                break :brk @intCast(usize, @maximum(sizeOrOffset, 0));
             }
-        }
+            break :brk std.math.maxInt(usize);
+        } else std.math.maxInt(usize);
         if (this.finalized and this.scheduled_count == 0) {
             if (this.pending.state == .pending) {
                 // should never be reached
@@ -3943,7 +3959,7 @@ pub fn NewReadyWatcher(
 
         pub fn isWatching(this: *const Context) bool {
             if (this.poll_ref) |poll| {
-                return poll.flags.contains(flag.poll());
+                return poll.flags.contains(flag.poll()) and !poll.flags.contains(.needs_rearm);
             }
 
             return false;

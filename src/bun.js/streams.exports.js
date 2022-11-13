@@ -1,6 +1,6 @@
 // "readable-stream" npm package
 // just transpiled
-var { isPromise } = import.meta.primordials;
+var { isPromise, isCallable, direct } = import.meta.primordials;
 
 var __create = Object.create;
 var __defProp = Object.defineProperty;
@@ -2605,56 +2605,96 @@ var require_readable = __commonJS({
     class ReadableFromWeb extends Readable {
       #reader;
       #closed;
+      #pendingChunks;
+      #stream;
 
-      constructor(options) {
-        const { objectMode, highWaterMark, encoding, signal, reader } = options;
+      constructor(options, stream) {
+        const { objectMode, highWaterMark, encoding, signal } = options;
         super({
           objectMode,
           highWaterMark,
           encoding,
           signal,
         });
+        this.#pendingChunks = [];
+        this.#reader = undefined;
+        this.#stream = stream;
+        this.#closed = false;
+      }
 
-        this.#reader = reader;
-        this.#reader.closed
-          .then(() => {
-            this.#closed = true;
-          })
-          .catch((error) => {
-            this.#closed = true;
-            destroy(this, error);
-          });
+      #drainPending() {
+        var pendingChunks = this.#pendingChunks,
+          pendingChunksI = 0,
+          pendingChunksCount = pendingChunks.length;
+
+        for (; pendingChunksI < pendingChunksCount; pendingChunksI++) {
+          const chunk = pendingChunks[pendingChunksI];
+          pendingChunks[pendingChunksI] = undefined;
+          if (!this.push(chunk, undefined)) {
+            this.#pendingChunks = pendingChunks.slice(pendingChunksI + 1);
+            return true;
+          }
+        }
+
+        if (pendingChunksCount > 0) {
+          this.#pendingChunks = [];
+        }
+
+        return false;
+      }
+
+      #handleDone(reader) {
+        reader.releaseLock();
+        this.#reader = undefined;
+        this.#closed = true;
+        this.push(null);
+        return;
       }
 
       async _read() {
+        var stream = this.#stream,
+          reader = this.#reader;
+        if (stream) {
+          reader = this.#reader = stream.getReader();
+          this.#stream = undefined;
+        } else if (this.#drainPending()) {
+          return;
+        }
+
         var deferredError;
         try {
-          var done, value;
-          const firstResult = this.#reader.readMany();
+          do {
+            var done = false,
+              value;
+            const firstResult = reader.readMany();
 
-          if (isPromise(firstResult)) {
-            const result = await firstResult;
-            done = result.done;
-            value = result.value;
-          } else {
-            done = firstResult.done;
-            value = firstResult.value;
-          }
+            if (isPromise(firstResult)) {
+              ({ done, value } = await firstResult);
+              if (this.#closed) {
+                this.#pendingChunks.push(...value);
+                return;
+              }
+            } else {
+              ({ done, value } = firstResult);
+            }
 
-          if (done) {
-            this.push(null);
-            return;
-          }
+            if (done) {
+              this.#handleDone(reader);
+              return;
+            }
 
-          if (!value)
-            throw new Error(
-              `Invalid value from ReadableStream reader: ${value}`,
-            );
-          if (ArrayIsArray(value)) {
-            this.push(...value);
-          } else {
-            this.push(value);
-          }
+            if (!this.push(value[0])) {
+              this.#pendingChunks = value.slice(1);
+              return;
+            }
+
+            for (let i = 1, count = value.length; i < count; i++) {
+              if (!this.push(value[i])) {
+                this.#pendingChunks = value.slice(i + 1);
+                return;
+              }
+            }
+          } while (this._readableState.flowing && !this.#closed);
         } catch (e) {
           deferredError = e;
         } finally {
@@ -2664,8 +2704,15 @@ var require_readable = __commonJS({
 
       _destroy(error, callback) {
         if (!this.#closed) {
-          this.#reader.releaseLock();
-          this.#reader.cancel(error).then(done).catch(done);
+          var reader = this.#reader;
+          if (reader) {
+            this.#reader = undefined;
+            reader.cancel(error).finally(() => {
+              this.#closed = true;
+              callback(error);
+            });
+          }
+
           return;
         }
         try {
@@ -2709,16 +2756,24 @@ var require_readable = __commonJS({
         throw new ERR_INVALID_ARG_VALUE(encoding, "options.encoding");
       validateBoolean(objectMode, "options.objectMode");
 
-      const reader = readableStream.getReader();
-      const readable = new ReadableFromWeb({
-        highWaterMark,
-        encoding,
-        objectMode,
-        signal,
-        reader,
-      });
+      const nativeStream = getNativeReadableStream(
+        Readable,
+        readableStream,
+        options,
+      );
 
-      return readable;
+      return (
+        nativeStream ||
+        new ReadableFromWeb(
+          {
+            highWaterMark,
+            encoding,
+            objectMode,
+            signal,
+          },
+          readableStream,
+        )
+      );
     }
 
     module.exports = Readable;
@@ -2726,8 +2781,15 @@ var require_readable = __commonJS({
     var { addAbortSignal } = require_add_abort_signal();
     var eos = require_end_of_stream();
     var debug = (name) => {};
-    const { maybeReadMore, resume, emitReadable, onEofChunk } =
-      globalThis[Symbol.for("Bun.lazy")]("bun:stream");
+    const {
+      maybeReadMore: _maybeReadMore,
+      resume,
+      emitReadable,
+      onEofChunk,
+    } = globalThis[Symbol.for("Bun.lazy")]("bun:stream");
+    function maybeReadMore(stream, state) {
+      process.nextTick(_maybeReadMore, stream, state);
+    }
     var destroyImpl = require_destroy();
     var {
       aggregateTwoErrors,
@@ -2984,10 +3046,17 @@ var require_readable = __commonJS({
 
         // Call internal read method
         try {
-          const result = this._read(state.highWaterMark);
-          const then = result?.then;
-          if (then && typeof then === "function") {
-            then.call(result, nop, function (err) {
+          var result = this._read(state.highWaterMark);
+          if (isPromise(result)) {
+            const peeked = Bun.peek(result);
+            if (peeked !== result) {
+              result = peeked;
+            }
+          }
+
+          var then = result?.then;
+          if (then && isCallable(then)) {
+            result.then(nop, function (err) {
               errorOrDestroy(this, err);
             });
           }
@@ -5602,6 +5671,222 @@ var require_ours = __commonJS({
     module.exports.default = module.exports;
   },
 });
+
+/**
+ * Bun native stream wrapper
+ *
+ * This glue code lets us avoid using ReadableStreams to wrap Bun internal streams
+ *
+ */
+function createNativeStream(nativeType, Readable) {
+  var [pull, start, cancel, setClose, deinit] =
+    globalThis[Symbol.for("Bun.lazy")](nativeType);
+
+  var closer = [false];
+  var handleNumberResult = function (nativeReadable, result, view, isClosed) {
+    if (result > 0) {
+      const slice = view.subarray(0, result);
+      const remainder = view.subarray(result);
+      if (remainder.byteLength > 0) {
+        nativeReadable.push(slice);
+      }
+
+      if (isClosed) {
+        nativeReadable.push(null);
+      }
+
+      return remainder.byteLength > 0 ? remainder : undefined;
+    }
+
+    if (isClosed) {
+      nativeReadable.push(null);
+    }
+  };
+
+  var handleArrayBufferViewResult = function (
+    nativeReadable,
+    result,
+    view,
+    isClosed,
+  ) {
+    if (result.byteLength > 0) {
+      nativeReadable.push(result);
+    }
+
+    if (isClosed) {
+      nativeReadable.push(null);
+    }
+
+    return view;
+  };
+
+  var handleResult = function (nativeReadable, result, view, isClosed) {
+    if (typeof result === "number") {
+      isClosed = isClosed || result === 0;
+      return handleNumberResult(nativeReadable, result, view, isClosed);
+    } else if (typeof result === "boolean" || !result) {
+      nativeReadable.push(null);
+      if (view?.byteLength > 0) return view;
+      else return undefined;
+    } else if (ArrayBuffer.isView(result)) {
+      isClosed = isClosed || result.byteLength === 0;
+      return handleArrayBufferViewResult(
+        nativeReadable,
+        result,
+        view,
+        isClosed,
+      );
+    } else {
+      throw new Error("Invalid result from pull");
+    }
+  };
+  return class NativeReadable extends Readable {
+    #ptr;
+    #constructed = false;
+    #remainingChunk = undefined;
+    #nextRead = undefined;
+    #highWaterMark;
+    constructor(ptr, options = {}) {
+      super(options);
+      if (typeof options.highWaterMark === "number") {
+        this.#highWaterMark = options.highWaterMark;
+      } else {
+        this.#highWaterMark = 256 * 1024;
+      }
+      this.#ptr = ptr;
+      this.#constructed = false;
+      this.#remainingChunk = undefined;
+      this.#nextRead = undefined;
+    }
+
+    _read(highWaterMark) {
+      var nextRead = this.#nextRead;
+      if (nextRead) {
+        this.#nextRead = undefined;
+        return nextRead;
+      }
+
+      var ptr = this.#ptr;
+      if (ptr === 0) {
+        this.push(null);
+        return;
+      }
+
+      if (!this.#constructed) {
+        this.#constructed = true;
+        start(ptr, highWaterMark || 0);
+      }
+
+      return this.#internalRead(
+        (this.#remainingChunk ||= new Buffer(this.#highWaterMark)),
+        ptr,
+      );
+    }
+
+    #internalReadIfNotClosed() {
+      var ptr = this.#ptr;
+      if (ptr === 0) return;
+
+      return this.#internalRead(
+        (this.#remainingChunk ||= new Buffer(this.#highWaterMark)),
+        ptr,
+      );
+    }
+
+    #flow() {
+      while (this._readableState?.flowing && this.#ptr !== 0) {
+        const internalReadResult = this.#internalRead(
+          (this.#remainingChunk ||= new Buffer(this.#highWaterMark)),
+          this.#ptr,
+        );
+
+        if (isPromise(internalReadResult)) {
+          var nextRead = internalReadResult.then(() =>
+            this.#internalReadIfNotClosed(),
+          );
+
+          if (this.#nextRead) {
+            this.#nextRead = this.#nextRead.then(() => nextRead);
+          } else {
+            this.#nextRead = nextRead;
+          }
+          break;
+        } else {
+          this.#nextRead = this.#internalReadIfNotClosed();
+        }
+      }
+    }
+
+    #internalRead(view, ptr) {
+      closer[0] = false;
+      var result = pull(ptr, view, closer);
+      if (isPromise(result)) {
+        return result.then(
+          (result) => {
+            this.#remainingChunk = handleResult(this, result, view, closer[0]);
+            this.#flow(result, view);
+          },
+          (reason) => errorOrDestroy(this, reason),
+        );
+      } else {
+        this.#remainingChunk = handleResult(this, result, view, closer[0]);
+        this.#flow();
+      }
+    }
+
+    _construct() {
+      this._readableState.constructed = true;
+    }
+    _destroy(error, callback) {
+      var ptr = this.#ptr;
+      if (ptr === 0) {
+        callback(error);
+        return;
+      }
+
+      this.#ptr = 0;
+      cancel(ptr, error);
+      callback(error);
+      queueMicrotask(() => {
+        deinit(ptr);
+      });
+    }
+  };
+}
+
+var nativeReadableStreamPrototypes = {
+  0: undefined,
+  1: undefined,
+  2: undefined,
+  3: undefined,
+  4: undefined,
+  5: undefined,
+};
+function getNativeReadableStreamPrototype(nativeType, Readable) {
+  return (nativeReadableStreamPrototypes[nativeType] ||= createNativeStream(
+    nativeType,
+    Readable,
+  ));
+}
+
+function getNativeReadableStream(Readable, stream, options) {
+  if (
+    !(stream && typeof stream === "object" && stream instanceof ReadableStream)
+  ) {
+    return undefined;
+  }
+
+  const native = direct(stream);
+  if (!native) {
+    return undefined;
+  }
+  const { stream: ptr, data: type } = native;
+
+  const NativeReadable = getNativeReadableStreamPrototype(type, Readable);
+
+  return new NativeReadable(ptr, options);
+}
+/** --- Bun native stream wrapper ---  */
 
 var stream_exports, wrapper;
 stream_exports = require_ours();

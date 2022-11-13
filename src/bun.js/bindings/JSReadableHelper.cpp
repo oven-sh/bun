@@ -11,7 +11,7 @@
 #include "JSDOMAttribute.h"
 #include "headers.h"
 #include "JSDOMConvertEnumeration.h"
-
+#include "JavaScriptCore/StrongInlines.h"
 namespace WebCore {
 using namespace JSC;
 
@@ -56,8 +56,7 @@ static bool callRead(JSValue stream, JSFunction* read, JSC::MarkedArgumentBuffer
     return !ret.isUndefinedOrNull();
 }
 
-static JSC_DECLARE_HOST_FUNCTION(jsReadable_maybeReadMore_);
-JSC_DEFINE_HOST_FUNCTION(jsReadable_maybeReadMore_, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+JSC_DEFINE_HOST_FUNCTION(jsReadable_maybeReadMore, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
     JSReadableHelper_EXTRACT_STREAM_STATE
 
@@ -85,18 +84,6 @@ JSC_DEFINE_HOST_FUNCTION(jsReadable_maybeReadMore_, (JSGlobalObject * lexicalGlo
     RELEASE_AND_RETURN(throwScope, JSValue::encode(jsUndefined()));
 }
 
-JSC_DEFINE_HOST_FUNCTION(jsReadable_maybeReadMore, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
-{
-    JSReadableHelper_EXTRACT_STREAM_STATE
-
-        // make this static?
-        JSFunction* maybeReadMore_
-        = JSC::JSFunction::create(vm, lexicalGlobalObject, 0, "maybeReadMore_"_s, jsReadable_maybeReadMore_, ImplementationVisibility::Public);
-
-    lexicalGlobalObject->queueMicrotask(maybeReadMore_, JSValue(stream), JSValue(state), JSValue {}, JSValue {});
-    RELEASE_AND_RETURN(throwScope, JSValue::encode(jsUndefined()));
-}
-
 void flow(JSGlobalObject* lexicalGlobalObject, JSObject* streamObj, JSReadableState* state)
 {
     VM& vm = lexicalGlobalObject->vm();
@@ -118,7 +105,6 @@ void flow(JSGlobalObject* lexicalGlobalObject, JSObject* streamObj, JSReadableSt
     }
 }
 
-static JSC_DECLARE_HOST_FUNCTION(jsReadable_resume_);
 JSC_DEFINE_HOST_FUNCTION(jsReadable_resume_, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
     JSReadableHelper_EXTRACT_STREAM_STATE
@@ -173,10 +159,10 @@ JSC_DEFINE_HOST_FUNCTION(jsReadable_resume, (JSGlobalObject * lexicalGlobalObjec
     {
         state->setBool(JSReadableState::resumeScheduled, true);
         // make this static?
-        JSFunction* resume_ = JSC::JSFunction::create(
-            vm, lexicalGlobalObject, 0, "resume_"_s, jsReadable_resume_, ImplementationVisibility::Public);
-
-        lexicalGlobalObject->queueMicrotask(resume_, JSValue(stream), JSValue(state), JSValue {}, JSValue {});
+        auto* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+        auto& vm = globalObject->vm();
+        JSFunction* resume = globalObject->jsReadableResumeFunction();
+        lexicalGlobalObject->queueMicrotask(resume, JSValue(stream), JSValue(state), JSValue {}, JSValue {});
     }
     RELEASE_AND_RETURN(throwScope, JSValue::encode(jsUndefined()));
 }

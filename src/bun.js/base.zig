@@ -4016,12 +4016,12 @@ pub const FilePoll = struct {
 
     pub fn onKQueueEvent(poll: *FilePoll, loop: *uws.Loop, kqueue_event: *const std.os.system.kevent64_s) void {
         poll.updateFlags(Flags.fromKQueueEvent(kqueue_event.*));
-        poll.onUpdate(loop);
+        poll.onUpdate(loop, kqueue_event.data);
     }
 
     pub fn onEpollEvent(poll: *FilePoll, loop: *uws.Loop, epoll_event: *std.os.linux.epoll_event) void {
         poll.updateFlags(Flags.fromEpollEvent(epoll_event.*));
-        poll.onUpdate(loop);
+        poll.onUpdate(loop, 0);
     }
 
     pub fn clearEvent(poll: *FilePoll, flag: Flags) void {
@@ -4072,7 +4072,7 @@ pub const FilePoll = struct {
         return this.flags.contains(.poll_writable) or this.flags.contains(.poll_readable) or this.flags.contains(.poll_process);
     }
 
-    pub fn onUpdate(poll: *FilePoll, loop: *uws.Loop) void {
+    pub fn onUpdate(poll: *FilePoll, loop: *uws.Loop, size_or_offset: i64) void {
         if (poll.flags.contains(.one_shot) and !poll.flags.contains(.needs_rearm)) {
             if (poll.flags.contains(.has_incremented_poll_count)) poll.deactivate(loop);
             poll.flags.insert(.needs_rearm);
@@ -4081,7 +4081,7 @@ pub const FilePoll = struct {
         switch (ptr.tag()) {
             @field(Owner.Tag, "FileBlobLoader") => {
                 log("onUpdate: FileBlobLoader", .{});
-                ptr.as(FileBlobLoader).onPoll(0, 0);
+                ptr.as(FileBlobLoader).onPoll(size_or_offset, 0);
             },
             @field(Owner.Tag, "Subprocess") => {
                 log("onUpdate: Subprocess", .{});
@@ -4092,18 +4092,18 @@ pub const FilePoll = struct {
             @field(Owner.Tag, "FileSink") => {
                 log("onUpdate: FileSink", .{});
                 var loader = ptr.as(JSC.WebCore.FileSink);
-                loader.onPoll(0, 0);
+                loader.onPoll(size_or_offset, 0);
             },
 
             @field(Owner.Tag, "BufferedInput") => {
                 log("onUpdate: BufferedInput", .{});
                 var loader = ptr.as(JSC.Subprocess.BufferedInput);
-                loader.onReady(0);
+                loader.onReady(size_or_offset);
             },
             @field(Owner.Tag, "BufferedOutput") => {
                 log("onUpdate: BufferedOutput", .{});
                 var loader = ptr.as(JSC.Subprocess.BufferedOutput);
-                loader.ready(0);
+                loader.ready(size_or_offset);
             },
             else => {},
         }
@@ -4296,11 +4296,13 @@ pub const FilePoll = struct {
         std.debug.assert(this.fd != invalid_fd);
 
         if (comptime Environment.isLinux) {
+            const one_shot_flag: u32 = if (!this.flags.contains(.one_shot)) 0 else linux.EPOLL.ONESHOT;
+
             const flags: u32 = switch (flag) {
                 .process,
                 .readable,
-                => linux.EPOLL.IN | linux.EPOLL.HUP | (if (this.flags.contains(.one_shot)) 0 else linux.EPOLL.ONESHOT),
-                .writable => linux.EPOLL.OUT | linux.EPOLL.HUP | linux.EPOLL.ERR | (if (this.flags.contains(.one_shot)) 0 else linux.EPOLL.ONESHOT),
+                => linux.EPOLL.IN | linux.EPOLL.HUP | one_shot_flag,
+                .writable => linux.EPOLL.OUT | linux.EPOLL.HUP | linux.EPOLL.ERR | one_shot_flag,
                 else => unreachable,
             };
 
@@ -4318,6 +4320,7 @@ pub const FilePoll = struct {
             }
         } else if (comptime Environment.isMac) {
             var changelist = std.mem.zeroes([2]std.os.system.kevent64_s);
+            const one_shot_flag: @TypeOf(changelist[0].flags) = if (!this.flags.contains(.one_shot)) 0 else std.c.EV_ONESHOT;
             changelist[0] = switch (flag) {
                 .readable => .{
                     .ident = @intCast(u64, fd),
@@ -4325,7 +4328,7 @@ pub const FilePoll = struct {
                     .data = 0,
                     .fflags = 0,
                     .udata = @ptrToInt(Pollable.init(this).ptr()),
-                    .flags = std.c.EV_ADD | std.c.EV_ONESHOT,
+                    .flags = std.c.EV_ADD | one_shot_flag,
                     .ext = .{ 0, 0 },
                 },
                 .writable => .{
@@ -4334,7 +4337,7 @@ pub const FilePoll = struct {
                     .data = 0,
                     .fflags = 0,
                     .udata = @ptrToInt(Pollable.init(this).ptr()),
-                    .flags = std.c.EV_ADD | std.c.EV_ONESHOT,
+                    .flags = std.c.EV_ADD | one_shot_flag,
                     .ext = .{ 0, 0 },
                 },
                 .process => .{
@@ -4343,9 +4346,10 @@ pub const FilePoll = struct {
                     .data = 0,
                     .fflags = std.c.NOTE_EXIT,
                     .udata = @ptrToInt(Pollable.init(this).ptr()),
-                    .flags = std.c.EV_ADD,
+                    .flags = std.c.EV_ADD | one_shot_flag,
                     .ext = .{ 0, 0 },
                 },
+                else => unreachable,
             };
 
             // output events only include change errors
@@ -4396,14 +4400,17 @@ pub const FilePoll = struct {
 
         if (!this.isActive()) this.activate(loop);
         this.flags.insert(switch (flag) {
-            .process, .readable => .poll_readable,
+            .readable => .poll_readable,
+            .process => if (comptime Environment.isLinux) .poll_readable else .poll_process,
             .writable => .poll_writable,
             else => unreachable,
         });
+        this.flags.remove(.needs_rearm);
+
         return JSC.Maybe(void).success;
     }
 
-    pub const invalid_fd = std.math.maxInt(u32);
+    pub const invalid_fd = JSC.Node.invalid_fd;
 
     pub fn unregister(this: *FilePoll, loop: *uws.Loop) JSC.Maybe(void) {
         if (!(this.flags.contains(.poll_readable) or this.flags.contains(.poll_writable) or this.flags.contains(.poll_process))) {
@@ -4424,6 +4431,14 @@ pub const FilePoll = struct {
             return JSC.Maybe(void).success;
         };
 
+        if (this.flags.contains(.needs_rearm)) {
+            log("unregister: {s} ({d}) skipped due to needs_rearm", .{ @tagName(flag), fd });
+            this.flags.remove(.poll_process);
+            this.flags.remove(.poll_readable);
+            this.flags.remove(.poll_process);
+            return JSC.Maybe(void).success;
+        }
+
         log("unregister: {s} ({d})", .{ @tagName(flag), fd });
 
         if (comptime Environment.isLinux) {
@@ -4441,22 +4456,22 @@ pub const FilePoll = struct {
             var changelist = std.mem.zeroes([2]std.os.system.kevent64_s);
 
             changelist[0] = switch (flag) {
-                .read => .{
+                .readable => .{
                     .ident = @intCast(u64, fd),
                     .filter = std.os.system.EVFILT_READ,
                     .data = 0,
                     .fflags = 0,
                     .udata = @ptrToInt(Pollable.init(this).ptr()),
-                    .flags = std.c.EV_DELETE | std.c.EV_ONESHOT,
+                    .flags = std.c.EV_DELETE,
                     .ext = .{ 0, 0 },
                 },
-                .write => .{
+                .writable => .{
                     .ident = @intCast(u64, fd),
                     .filter = std.os.system.EVFILT_WRITE,
                     .data = 0,
                     .fflags = 0,
                     .udata = @ptrToInt(Pollable.init(this).ptr()),
-                    .flags = std.c.EV_DELETE | std.c.EV_ONESHOT,
+                    .flags = std.c.EV_DELETE,
                     .ext = .{ 0, 0 },
                 },
                 .process => .{
@@ -4465,7 +4480,7 @@ pub const FilePoll = struct {
                     .data = 0,
                     .fflags = std.c.NOTE_EXIT,
                     .udata = @ptrToInt(Pollable.init(this).ptr()),
-                    .flags = std.c.EV_DELETE | std.c.EV_ONESHOT,
+                    .flags = std.c.EV_DELETE,
                     .ext = .{ 0, 0 },
                 },
                 else => unreachable,
@@ -4498,10 +4513,9 @@ pub const FilePoll = struct {
             }
 
             const errno = std.c.getErrno(rc);
-
             switch (rc) {
                 std.math.minInt(@TypeOf(rc))...-1 => return JSC.Maybe(void).errnoSys(@enumToInt(errno), .kevent).?,
-                else => unreachable,
+                else => {},
             }
         } else {
             @compileError("TODO: Pollable");

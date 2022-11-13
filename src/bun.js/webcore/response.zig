@@ -477,9 +477,6 @@ pub const Fetch = struct {
     const headers_string = "headers";
     const method_string = "method";
 
-    var fetch_body_string: MutableString = undefined;
-    var fetch_body_string_loaded = false;
-
     const JSType = js.JSType;
 
     pub const fetch_error_no_args = "fetch() expects a string but received no arguments.";

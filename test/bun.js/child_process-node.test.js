@@ -12,7 +12,7 @@ import { tmpdir } from "node:os";
 
 const debug = process.env.DEBUG ? console.log : () => {};
 
-const platformTmpDir = tmpdir();
+const platformTmpDir = require("fs").realpathSync(tmpdir());
 
 // Copyright Joyent, Inc. and other Node contributors.
 //
@@ -135,7 +135,7 @@ describe("ChildProcess.spawn", () => {
     child.spawn({
       file: "node",
       // file: process.execPath,
-      args: ["--interactive"],
+      args: ["node", "--interactive"],
       cwd: process.cwd(),
       stdio: ["ignore", "ignore", "ignore", "ipc"],
     });
@@ -179,8 +179,6 @@ describe("ChildProcess spawn bad stdio", () => {
 
       this.stdout.destroy();
       this.stderr.destroy();
-      this.stdout = null;
-      this.stderr = null;
 
       return err;
     };
@@ -256,7 +254,6 @@ describe("child_process cwd", () => {
     let data = "";
     child.stdout.on("data", (chunk) => {
       data += chunk;
-      console.trace("here");
     });
 
     // TODO: Test exit events
@@ -367,6 +364,8 @@ describe("child_process cwd", () => {
 
 describe("child_process default options", () => {
   it("should use process.env as default env", (done) => {
+    globalThis.process.env.TMPDIR = platformTmpDir;
+
     let child = spawn("printenv", [], {});
     let response = "";
 

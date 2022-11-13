@@ -2473,6 +2473,9 @@ pub const JSValueReprInt = i64;
 pub const JSValue = enum(JSValueReprInt) {
     zero = 0,
     @"undefined" = @bitCast(JSValueReprInt, @as(i64, 0xa)),
+    @"null" = @bitCast(JSValueReprInt, @as(i64, 0x2)),
+    @"true" = @bitCast(JSValueReprInt, @as(i64, 0x4)),
+    @"false" = @bitCast(JSValueReprInt, @as(i64, 0x6)),
     _,
 
     pub const Type = JSValueReprInt;
@@ -2997,18 +3000,21 @@ pub const JSValue = enum(JSValueReprInt) {
         return jsNumberWithType(@TypeOf(number), number);
     }
 
-    pub fn jsNull() JSValue {
-        return cppFn("jsNull", .{});
+    pub inline fn jsNull() JSValue {
+        return JSValue.@"null";
     }
     pub inline fn jsUndefined() JSValue {
         return JSValue.@"undefined";
     }
+    pub inline fn jsBoolean(i: bool) JSValue {
+        const out = cppFn("jsBoolean", .{i});
+        return out;
+    }
+
     pub fn jsTDZValue() JSValue {
         return cppFn("jsTDZValue", .{});
     }
-    pub fn jsBoolean(i: bool) JSValue {
-        return cppFn("jsBoolean", .{i});
-    }
+
     pub fn jsDoubleNumber(i: f64) JSValue {
         return cppFn("jsDoubleNumber", .{i});
     }

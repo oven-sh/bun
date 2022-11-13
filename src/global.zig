@@ -380,3 +380,19 @@ pub const HTTPThead = @import("./http_client_async.zig").HTTPThread;
 pub const Analytics = @import("./analytics/analytics_thread.zig");
 
 pub usingnamespace @import("./tagged_pointer.zig");
+
+pub fn once(comptime function: anytype, comptime ReturnType: type) ReturnType {
+    const Result = struct {
+        var value: ReturnType = undefined;
+        var ran = false;
+
+        pub fn execute() ReturnType {
+            if (ran) return value;
+            ran = true;
+            value = function();
+            return value;
+        }
+    };
+
+    return Result.execute();
+}

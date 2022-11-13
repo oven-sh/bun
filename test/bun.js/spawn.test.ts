@@ -92,6 +92,16 @@ for (let [gcTick, label] of [
         expect(exitCode2).toBe(1);
       });
 
+      it("nothing to stdout and sleeping doesn't keep process open 4ever", async () => {
+        const proc = spawn({
+          cmd: ["sleep", "0.1"],
+        });
+
+        for await (const _ of proc.stdout!) {
+          throw new Error("should not happen");
+        }
+      });
+
       it("check exit code from onExit", async () => {
         var exitCode1, exitCode2;
         await new Promise<void>((resolve) => {

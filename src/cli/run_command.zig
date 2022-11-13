@@ -315,15 +315,18 @@ pub const RunCommand = struct {
         };
         switch (result) {
             .Exited => |code| {
-                Output.prettyErrorln("<r><red>error<r> \"<b>{s}<r>\" exited with {d} status<r>", .{ std.fs.path.basename(executable), code });
+                if (code > 0)
+                    Output.prettyErrorln("<r><red>error<r> \"<b>{s}<r>\" exited with {d} status<r>", .{ std.fs.path.basename(executable), code });
                 Global.exit(code);
             },
             .Signal => |sig| {
-                Output.prettyErrorln("<r><red>error<r> \"<b>{s}<r>\" signaled {d}<r>", .{ std.fs.path.basename(executable), sig });
+                if (sig > 0)
+                    Output.prettyErrorln("<r><red>error<r> \"<b>{s}<r>\" signaled {d}<r>", .{ std.fs.path.basename(executable), sig });
                 Global.exit(1);
             },
             .Stopped => |sig| {
-                Output.prettyErrorln("<r><red>error<r> \"<b>{s}<r>\" stopped: {d}<r>", .{ std.fs.path.basename(executable), sig });
+                if (sig > 0)
+                    Output.prettyErrorln("<r><red>error<r> \"<b>{s}<r>\" stopped: {d}<r>", .{ std.fs.path.basename(executable), sig });
                 Global.exit(1);
             },
             .Unknown => |sig| {

@@ -417,7 +417,6 @@ pub const VirtualMachine = struct {
     active_tasks: usize = 0,
 
     rare_data: ?*JSC.RareData = null,
-    poller: JSC.Poller = JSC.Poller{},
     us_loop_reference_count: usize = 0,
     is_us_loop_entered: bool = false,
     pending_internal_promise: *JSC.JSInternalPromise = undefined,

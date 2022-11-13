@@ -378,3 +378,5 @@ pub const Bunfig = @import("./bunfig.zig").Bunfig;
 pub const HTTPThead = @import("./http_client_async.zig").HTTPThread;
 
 pub const Analytics = @import("./analytics/analytics_thread.zig");
+
+pub usingnamespace @import("./tagged_pointer.zig");

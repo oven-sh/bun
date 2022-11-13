@@ -218,7 +218,8 @@ it("Bun.file() read text from pipe", async () => {
 
   mkfifo("/tmp/fifo", 0o666);
 
-  const large = "HELLO!".repeat((((1024 * 512) / "HELLO!".length) | 0) + 1);
+  // 65k so its less than the max on linux
+  const large = "HELLO!".repeat((((1024 * 65) / "HELLO!".length) | 0) + 1);
 
   const chunks = [];
   var out = Bun.file("/tmp/fifo").stream();

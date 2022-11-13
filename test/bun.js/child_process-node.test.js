@@ -8,12 +8,11 @@ import {
   createCallCheckCtx,
   createDoneDotAll,
 } from "node-test-helpers";
+import { tmpdir } from "node:os";
 
 const debug = process.env.DEBUG ? console.log : () => {};
 
-const platformTmpDir = `${process.platform === "darwin" ? "/private" : ""}${
-  process.env.TMPDIR
-}`.slice(0, -1); // remove trailing slash
+const platformTmpDir = tmpdir();
 
 // Copyright Joyent, Inc. and other Node contributors.
 //
@@ -131,23 +130,29 @@ describe("ChildProcess.spawn()", () => {
 });
 
 describe("ChildProcess.spawn", () => {
-  const child = new ChildProcess();
-  child.spawn({
-    file: "bun",
-    // file: process.execPath,
-    args: ["--interactive"],
-    cwd: process.cwd(),
-    stdio: "pipe",
-  });
+  function getChild() {
+    const child = new ChildProcess();
+    child.spawn({
+      file: "node",
+      // file: process.execPath,
+      args: ["--interactive"],
+      cwd: process.cwd(),
+      stdio: ["ignore", "ignore", "ignore", "ipc"],
+    });
+    return child;
+  }
 
   it("should spawn a process", () => {
+    const child = getChild();
     // Test that we can call spawn
 
     strictEqual(Object.hasOwn(child, "pid"), true);
     assert(Number.isInteger(child.pid));
+    child.kill();
   });
 
   it("should throw error on invalid signal", () => {
+    const child = getChild();
     // Try killing with invalid signal
     throws(
       () => {
@@ -158,6 +163,7 @@ describe("ChildProcess.spawn", () => {
   });
 
   it("should die when killed", () => {
+    const child = getChild();
     strictEqual(child.kill(), true);
   });
 });
@@ -250,6 +256,7 @@ describe("child_process cwd", () => {
     let data = "";
     child.stdout.on("data", (chunk) => {
       data += chunk;
+      console.trace("here");
     });
 
     // TODO: Test exit events
@@ -315,7 +322,7 @@ describe("child_process cwd", () => {
   // });
 
   it("should work for valid given cwd", (done) => {
-    const tmpdir = { path: Bun.env.TMPDIR };
+    const tmpdir = { path: platformTmpDir };
     const createDone = createDoneDotAll(done);
 
     // Assume these exist, and 'pwd' gives us the right directory back
@@ -373,115 +380,115 @@ describe("child_process default options", () => {
     // because the process can exit before the stream is closed and the data is read
     child.stdout.on("close", () => {
       assertOk(
-        response.includes(`TMPDIR=${process.env.TMPDIR}`),
+        response.includes(`TMPDIR=${platformTmpDir}`),
         "spawn did not use process.env as default " +
-          `(process.env.TMPDIR = ${process.env.TMPDIR})`,
+          `(process.env.TMPDIR=${platformTmpDir})`,
       );
       done();
     });
   });
 });
 
-describe("child_process double pipe", () => {
-  it("should allow two pipes to be used at once", (done) => {
-    const { mustCallAtLeast, mustCall } = createCallCheckCtx(done);
-    let grep, sed, echo;
-    grep = spawn("grep", ["o"]);
-    sed = spawn("sed", ["s/o/O/"]);
-    echo = spawn("echo", ["hello\nnode\nand\nworld\n"]);
+// describe("child_process double pipe", () => {
+//   it("should allow two pipes to be used at once", (done) => {
+//     const { mustCallAtLeast, mustCall } = createCallCheckCtx(done);
+//     let grep, sed, echo;
+//     grep = spawn("grep", ["o"]);
+//     sed = spawn("sed", ["s/o/O/"]);
+//     echo = spawn("echo", ["hello\nnode\nand\nworld\n"]);
 
-    // pipe echo | grep
-    echo.stdout.on(
-      "data",
-      mustCallAtLeast((data) => {
-        debug(`grep stdin write ${data.length}`);
-        if (!grep.stdin.write(data)) {
-          echo.stdout.pause();
-        }
-      }),
-    );
+//     // pipe echo | grep
+//     echo.stdout.on(
+//       "data",
+//       mustCallAtLeast((data) => {
+//         debug(`grep stdin write ${data.length}`);
+//         if (!grep.stdin.write(data)) {
+//           echo.stdout.pause();
+//         }
+//       }),
+//     );
 
-    // TODO(Derrick): We don't implement the full API for this yet,
-    // So stdin has no 'drain' event.
-    // // TODO(@jasnell): This does not appear to ever be
-    // // emitted. It's not clear if it is necessary.
-    // grep.stdin.on("drain", (data) => {
-    //   echo.stdout.resume();
-    // });
+//     // TODO(Derrick): We don't implement the full API for this yet,
+//     // So stdin has no 'drain' event.
+//     // // TODO(@jasnell): This does not appear to ever be
+//     // // emitted. It's not clear if it is necessary.
+//     // grep.stdin.on("drain", (data) => {
+//     //   echo.stdout.resume();
+//     // });
 
-    // Propagate end from echo to grep
-    echo.stdout.on(
-      "end",
-      mustCall(() => {
-        debug("echo stdout end");
-        grep.stdin.end();
-      }),
-    );
+//     // Propagate end from echo to grep
+//     echo.stdout.on(
+//       "end",
+//       mustCall(() => {
+//         debug("echo stdout end");
+//         grep.stdin.end();
+//       }),
+//     );
 
-    echo.on(
-      "exit",
-      mustCall(() => {
-        debug("echo exit");
-      }),
-    );
+//     echo.on(
+//       "exit",
+//       mustCall(() => {
+//         debug("echo exit");
+//       }),
+//     );
 
-    grep.on(
-      "exit",
-      mustCall(() => {
-        debug("grep exit");
-      }),
-    );
+//     grep.on(
+//       "exit",
+//       mustCall(() => {
+//         debug("grep exit");
+//       }),
+//     );
 
-    sed.on(
-      "exit",
-      mustCall(() => {
-        debug("sed exit");
-      }),
-    );
+//     sed.on(
+//       "exit",
+//       mustCall(() => {
+//         debug("sed exit");
+//       }),
+//     );
 
-    // pipe grep | sed
-    grep.stdout.on(
-      "data",
-      mustCallAtLeast((data) => {
-        debug(`grep stdout ${data.length}`);
-        if (!sed.stdin.write(data)) {
-          grep.stdout.pause();
-        }
-      }),
-    );
+//     // pipe grep | sed
+//     grep.stdout.on(
+//       "data",
+//       mustCallAtLeast((data) => {
+//         debug(`grep stdout ${data.length}`);
+//         if (!sed.stdin.write(data)) {
+//           grep.stdout.pause();
+//         }
+//       }),
+//     );
 
-    // // TODO(@jasnell): This does not appear to ever be
-    // // emitted. It's not clear if it is necessary.
-    // sed.stdin.on("drain", (data) => {
-    //   grep.stdout.resume();
-    // });
+//     // // TODO(@jasnell): This does not appear to ever be
+//     // // emitted. It's not clear if it is necessary.
+//     // sed.stdin.on("drain", (data) => {
+//     //   grep.stdout.resume();
+//     // });
 
-    // Propagate end from grep to sed
-    grep.stdout.on(
-      "end",
-      mustCall((code) => {
-        debug("grep stdout end");
-        sed.stdin.end();
-      }),
-    );
+//     // Propagate end from grep to sed
+//     grep.stdout.on(
+//       "end",
+//       mustCall((code) => {
+//         debug("grep stdout end");
+//         sed.stdin.end();
+//       }),
+//     );
 
-    let result = "";
+//     let result = "";
 
-    // print sed's output
-    sed.stdout.on(
-      "data",
-      mustCallAtLeast((data) => {
-        result += data.toString("utf8");
-        debug(data);
-      }),
-    );
+//     // print sed's output
+//     sed.stdout.on(
+//       "data",
+//       mustCallAtLeast((data) => {
+//         result += data.toString("utf8");
+//         debug(data);
+//       }),
+//     );
 
-    sed.stdout.on(
-      "end",
-      mustCall(() => {
-        debug("result: " + result);
-        strictEqual(result, `hellO\nnOde\nwOrld\n`);
-      }),
-    );
-  });
-});
+//     sed.stdout.on(
+//       "end",
+//       mustCall(() => {
+//         debug("result: " + result);
+//         strictEqual(result, `hellO\nnOde\nwOrld\n`);
+//       }),
+//     );
+//   });
+// });

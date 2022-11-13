@@ -190,6 +190,11 @@ fn NewHTTPContext(comptime ssl: bool) type {
                         socket,
                     );
                 } else {
+                    // trailing zero is fine to ignore
+                    if (strings.eqlComptime(buf, "0\r\n")) {
+                        return;
+                    }
+
                     log("Unexpected data on socket", .{});
                 }
             }

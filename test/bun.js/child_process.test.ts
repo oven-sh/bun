@@ -9,12 +9,11 @@ import {
   execFileSync,
   execSync,
 } from "node:child_process";
+import { tmpdir } from "node:os";
 
 const debug = process.env.DEBUG ? console.log : () => {};
 
-const platformTmpDir = `${process.platform === "darwin" ? "/private" : ""}${
-  process.env.TMPDIR
-}`.slice(0, -1); // remove trailing slash
+const platformTmpDir = tmpdir();
 
 // Semver regex: https://gist.github.com/jhorsman/62eeea161a13b80e39f5249281e17c39?permalink_comment_id=2896416#gistcomment-2896416
 // Not 100% accurate, but good enough for this test
@@ -122,7 +121,7 @@ describe("spawn()", () => {
   });
 
   it("should allow us to set cwd", async () => {
-    const child = spawn("pwd", { cwd: process.env.TMPDIR });
+    const child = spawn("pwd", { cwd: platformTmpDir });
     const result: string = await new Promise((resolve) => {
       child.stdout.on("data", (data) => {
         resolve(data.toString());
@@ -261,10 +260,14 @@ describe("execFileSync()", () => {
   });
 
   it("should allow us to pass input to the command", () => {
-    const result = execFileSync("node", ["spawned-child.js", "STDIN"], {
-      input: "hello world!",
-      encoding: "utf8",
-    });
+    const result = execFileSync(
+      "node",
+      [import.meta.dir + "/spawned-child.js", "STDIN"],
+      {
+        input: "hello world!",
+        encoding: "utf8",
+      },
+    );
     expect(result.trim()).toBe("hello world!");
   });
 });
@@ -278,11 +281,17 @@ describe("execSync()", () => {
 
 describe("Bun.spawn()", () => {
   it("should return exit code 0 on successful execution", async () => {
+    const proc = Bun.spawn({
+      cmd: ["echo", "hello"],
+      stdout: "pipe",
+    });
+
+    for await (const chunk of proc.stdout!) {
+      const text = new TextDecoder().decode(chunk);
+      expect(text.trim()).toBe("hello");
+    }
+
     const result = await new Promise((resolve) => {
-      const proc = Bun.spawn({
-        cmd: ["echo", "hello"],
-        stdout: "inherit",
-      });
       const maybeExited = Bun.peek(proc.exited);
       if (maybeExited === proc.exited) {
         proc.exited.then((code) => resolve(code));

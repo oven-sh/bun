@@ -23,26 +23,26 @@ extern "C" void Bun__crashReportDumpStackTrace(void* ctx)
     void* stack[framesToShow + framesToSkip];
     int frames = framesToShow + framesToSkip;
     WTFGetBacktrace(stack, &frames);
+    int size = frames - framesToSkip;
     bool isFirst = true;
-    WTF::StackTraceSymbolResolver { { stack, static_cast<size_t>(frames) } }.forEach([&](int frameNumber, void* stackFrame, const char* name) {
-        if (frameNumber < framesToSkip)
-            return;
-
+    for (int frameNumber = 0; frameNumber < size; ++frameNumber) {
+        auto demangled = WTF::StackTraceSymbolResolver::demangle(stack[frameNumber]);
+      
         StringPrintStream out;
         if (isFirst) {
             isFirst = false;
-            if (name)
-                out.printf("\n%-3d %p %s", frameNumber, stackFrame, name);
+            if (demangled)
+                out.printf("\n%-3d %p %s", frameNumber, stack[frameNumber], demangled->demangledName() ? demangled->demangledName() : demangled->mangledName());
             else
-                out.printf("\n%-3d %p", frameNumber, stackFrame);
+                out.printf("\n%-3d %p", frameNumber, stack[frameNumber]);
         } else {
-            if (name)
-                out.printf("%-3d %p %s", frameNumber, stackFrame, name);
+            if (demangled)
+                out.printf("%-3d ??? %s", frameNumber, demangled->demangledName() ? demangled->demangledName() : demangled->mangledName());
             else
-                out.printf("%-3d %p", frameNumber, stackFrame);
+                out.printf("%-3d ???", frameNumber);
         }
 
         auto str = out.toCString();
         Bun__crashReportWrite(ctx, str.data(), str.length());
-    });
+    }
 }

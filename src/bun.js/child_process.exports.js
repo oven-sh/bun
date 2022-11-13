@@ -536,8 +536,13 @@ export function spawnSync(file, args, options) {
   result.stderr = result.output[2];
 
   if (!success) {
-    result.error = errnoException(result.stderr, "spawnSync " + options.file);
-    result.error.path = options.file;
+    result.error = new SystemError(
+      result.stderr,
+      options.file,
+      "spawnSync",
+      -1,
+      result.status,
+    );
     result.error.spawnargs = ArrayPrototypeSlice.call(options.args, 1);
   }
 
@@ -844,7 +849,6 @@ export class ChildProcess extends EventEmitter {
   connected = false;
   signalCode = null;
   exitCode = null;
-  killed = false;
   spawnfile;
   spawnargs;
   pid;
@@ -853,6 +857,10 @@ export class ChildProcess extends EventEmitter {
   stderr;
   stdio;
   channel;
+
+  get killed() {
+    if (this.#handle == null) return false;
+  }
 
   // constructor(options) {
   //   super(options);
@@ -877,7 +885,14 @@ export class ChildProcess extends EventEmitter {
 
     if (exitCode < 0) {
       const syscall = this.spawnfile ? "spawn " + this.spawnfile : "spawn";
-      const err = errnoException(exitCode, syscall);
+
+      const err = new SystemError(
+        `Spawned process exited with error code: ${exitCode}`,
+        undefined,
+        "spawn",
+        "EUNKNOWN",
+        "ERR_CHILD_PROCESS_UNKNOWN_ERROR",
+      );
 
       if (this.spawnfile) err.path = this.spawnfile;
 
@@ -906,15 +921,17 @@ export class ChildProcess extends EventEmitter {
   }
 
   #getBunSpawnIo(stdio, options) {
-    const result = [];
+    const result = [null];
     switch (stdio[0]) {
       case "pipe":
         result[0] = new WrappedFileSink(this.#handle.stdin);
         break;
       case "inherit":
         result[0] = process.stdin;
+        break;
       default:
         result[0] = null;
+        break;
     }
     let i = 1;
     for (; i < stdio.length; i++) {
@@ -959,7 +976,7 @@ export class ChildProcess extends EventEmitter {
     validateString(options.file, "options.file");
     this.spawnfile = options.file;
 
-    if (options.args === undefined) {
+    if (options.args == null) {
       this.spawnargs = [];
     } else {
       validateArray(options.args, "options.args");
@@ -969,9 +986,8 @@ export class ChildProcess extends EventEmitter {
     const stdio = options.stdio || "pipe";
     const bunStdio = getBunStdioFromOptions(stdio);
 
-    const cmd = options.args;
     this.#handle = Bun.spawn({
-      cmd,
+      cmd: [options.file, ...this.spawnargs],
       stdin: bunStdio[0],
       stdout: bunStdio[1],
       stderr: bunStdio[2],
@@ -1066,14 +1082,13 @@ export class ChildProcess extends EventEmitter {
       this.#handle.kill(signal);
     }
 
-    this.killed = true;
     this.emit("exit", null, signal);
     this.#maybeClose();
 
     // TODO: Make this actually ensure the process has exited before returning
     // await this.#handle.exited()
     // return this.#handle.killed;
-    return this.killed;
+    return this.#handle?.killed ?? true;
   }
 
   #maybeClose() {
@@ -1698,8 +1713,22 @@ function ERR_INVALID_ARG_VALUE(name, value, reason) {
 }
 
 // TODO: Add actual proper error implementation here
-function errnoException(err, name) {
-  return new Error(`Error: ${name}. Internal error: ${err.message}`);
+class SystemError extends Error {
+  path;
+  syscall;
+  errno;
+  code;
+  constructor(message, path, syscall, errno, code) {
+    super(message);
+    this.path = path;
+    this.syscall = syscall;
+    this.errno = errno;
+    this.code = code;
+  }
+
+  get name() {
+    return "SystemError";
+  }
 }
 
 export default {

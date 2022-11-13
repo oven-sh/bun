@@ -208,8 +208,17 @@ pub const PosixSpawn = struct {
             envp,
         );
 
-        if (Maybe(pid_t).errno(rc)) |err| {
-            return err;
+        if (comptime bun.Environment.isLinux) {
+            // rc is negative because it's libc errno
+            if (rc > 0) {
+                if (Maybe(pid_t).errnoSysP(-rc, .posix_spawn, path)) |err| {
+                    return err;
+                }
+            }
+        } else {
+            if (Maybe(pid_t).errnoSysP(rc, .posix_spawn, path)) |err| {
+                return err;
+            }
         }
 
         return Maybe(pid_t){ .result = pid };

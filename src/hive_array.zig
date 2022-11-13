@@ -64,6 +64,34 @@ pub fn HiveArray(comptime T: type, comptime capacity: u16) type {
             self.available.set(index);
             return true;
         }
+
+        pub const Fallback = struct {
+            hive: HiveArray(T, capacity),
+            allocator: std.mem.Allocator,
+
+            pub const This = @This();
+
+            pub fn init(allocator: std.mem.Allocator) This {
+                return .{
+                    .allocator = allocator,
+                    .hive = HiveArray(T, capacity).init(),
+                };
+            }
+
+            pub fn get(self: *This) *T {
+                if (self.hive.get()) |value| {
+                    return value;
+                }
+
+                return self.allocator.create(T) catch unreachable;
+            }
+
+            pub fn put(self: *This, value: *T) void {
+                if (self.hive.put(value)) return;
+
+                self.allocator.destroy(value);
+            }
+        };
     };
 }
 

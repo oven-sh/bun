@@ -198,7 +198,41 @@ const constants_string_format2 =
 
 const constants_string1 = std.fmt.comptimePrint(constants_string_format1, .{ Constants.F_OK, Constants.R_OK, Constants.W_OK, Constants.X_OK, Constants.COPYFILE_EXCL, Constants.COPYFILE_FICLONE, Constants.COPYFILE_FICLONE_FORCE, Constants.O_RDONLY, Constants.O_WRONLY, Constants.O_RDWR, Constants.O_CREAT, Constants.O_EXCL, Constants.O_NOCTTY, Constants.O_TRUNC, Constants.O_APPEND, Constants.O_DIRECTORY, Constants.O_NOATIME, Constants.O_NOFOLLOW, Constants.O_SYNC, Constants.O_DSYNC });
 
-const constants_string2 =
-    std.fmt.comptimePrint(constants_string_format2, .{ if (@TypeOf(Constants.O_SYMLINK) == void) "undefined" else std.fmt.comptimePrint("{}", .{Constants.O_SYMLINK}), Constants.O_DIRECT, Constants.O_NONBLOCK, Constants.S_IFMT, Constants.S_IFREG, Constants.S_IFDIR, Constants.S_IFCHR, Constants.S_IFBLK, Constants.S_IFIFO, Constants.S_IFLNK, Constants.S_IFSOCK, Constants.S_IRWXU, Constants.S_IRUSR, Constants.S_IWUSR, Constants.S_IXUSR, Constants.S_IRWXG, Constants.S_IRGRP, Constants.S_IWGRP, Constants.S_IXGRP, Constants.S_IRWXO, Constants.S_IROTH, Constants.S_IWOTH, Constants.S_IXOTH, Constants.UV_FS_O_FILEMAP });
+const constants_string2_opts = .{
+  if (@TypeOf(Constants.O_SYMLINK) == void)
+    "undefined"
+  else
+    // TODO(vjpr): Why was this needed? It caused an error in zig@0.10.
+    // std.fmt.comptimePrint("{}", .{Constants.O_SYMLINK}),
+    // --
+    Constants.O_SYMLINK,
+    Constants.O_DIRECT,
+    Constants.O_NONBLOCK,
+    Constants.S_IFMT,
+    Constants.S_IFREG,
+    Constants.S_IFDIR,
+    Constants.S_IFCHR,
+    Constants.S_IFBLK,
+    Constants.S_IFIFO,
+    Constants.S_IFLNK,
+    Constants.S_IFSOCK,
+    Constants.S_IRWXU,
+    Constants.S_IRUSR,
+    Constants.S_IWUSR,
+    Constants.S_IXUSR,
+    Constants.S_IRWXG,
+    Constants.S_IRGRP,
+    Constants.S_IWGRP,
+    Constants.S_IXGRP,
+    Constants.S_IRWXO,
+    Constants.S_IROTH,
+    Constants.S_IWOTH,
+    Constants.S_IXOTH,
+    Constants.UV_FS_O_FILEMAP
+};
+
+const constants_string2 = blk: {
+    break :blk std.fmt.comptimePrint(constants_string_format2, constants_string2_opts);
+};
 
 pub const constants_string = constants_string1 ++ constants_string2;

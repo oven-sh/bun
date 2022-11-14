@@ -16,6 +16,8 @@ const C = @import("../../global.zig").C;
 const linux = os.linux;
 const Maybe = JSC.Maybe;
 
+const log = bun.Output.scoped(.SYS, false);
+
 // On Linux AARCh64, zig is missing stat & lstat syscalls
 const use_libc = (Environment.isLinux and Environment.isAarch64) or Environment.isMac;
 pub const system = if (Environment.isLinux) linux else @import("io").darwin;
@@ -180,6 +182,7 @@ pub fn getErrno(rc: anytype) std.os.E {
 pub fn open(file_path: [:0]const u8, flags: JSC.Node.Mode, perm: JSC.Node.Mode) Maybe(JSC.Node.FileDescriptor) {
     while (true) {
         const rc = Syscall.system.open(file_path, flags, perm);
+        log("open({s}): {d}", .{ file_path, rc });
         return switch (Syscall.getErrno(rc)) {
             .SUCCESS => .{ .result = @intCast(JSC.Node.FileDescriptor, rc) },
             .INTR => continue,
@@ -288,16 +291,20 @@ pub fn read(fd: os.fd_t, buf: []u8) Maybe(usize) {
     if (comptime Environment.isMac) {
         const rc = system.@"read$NOCANCEL"(fd, buf.ptr, adjusted_len);
         if (Maybe(usize).errnoSys(rc, .read)) |err| {
+            log("read error: {d} ({d} bytes, {d} fd)", .{ err.err.errno, buf.len, fd });
             return err;
         }
+        log("read: {d} bytes, {d} fd", .{ rc, fd });
         return Maybe(usize){ .result = @intCast(usize, rc) };
     } else {
         while (true) {
             const rc = sys.read(fd, buf.ptr, adjusted_len);
             if (Maybe(usize).errnoSys(rc, .read)) |err| {
                 if (err.getErrno() == .INTR) continue;
+                log("read error: {d} ({d} bytes, {d} fd)", .{ err.err.errno, buf.len, fd });
                 return err;
             }
+            log("read: {d} bytes, {d} fd", .{ rc, fd });
             return Maybe(usize){ .result = @intCast(usize, rc) };
         }
     }

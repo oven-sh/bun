@@ -160,7 +160,7 @@ pub const ReadableStream = struct {
         /// ReadableByteStreamController
         /// but with a FileLoader
         /// we can skip the FileLoader and just use the underlying File
-        File: *FileBlobLoader,
+        File: *FileReader,
 
         /// This is a direct readable stream
         /// That means we can turn it into whatever we want
@@ -212,7 +212,7 @@ pub const ReadableStream = struct {
             .File => ReadableStream{
                 .value = value,
                 .ptr = .{
-                    .File = ptr.asPtr(FileBlobLoader),
+                    .File = ptr.asPtr(FileReader),
                 },
             },
 
@@ -266,7 +266,7 @@ pub const ReadableStream = struct {
                 return reader.toJS(globalThis);
             },
             .file => {
-                var reader = bun.default_allocator.create(FileBlobLoader.Source) catch unreachable;
+                var reader = bun.default_allocator.create(FileReader.Source) catch unreachable;
                 reader.* = .{
                     .context = undefined,
                 };
@@ -1188,7 +1188,7 @@ pub const FileSink = struct {
         while (remain.len > 0) {
             const write_buf = remain[0..@minimum(remain.len, max_to_write)];
 
-            log("Write {d} bytes (fd: {d}, )", .{ write_buf.len, fd });
+            log("Write {d} bytes (fd: {d}, head: {d}, {d}/{d})", .{ write_buf.len, fd, this.head, remain.len, total });
             const res = JSC.Node.Syscall.write(fd, write_buf);
             if (res == .err) {
                 const retry =
@@ -1217,7 +1217,7 @@ pub const FileSink = struct {
             remain = remain[res.result..];
             total += res.result;
 
-            log("Wrote {d} bytes (fd: {d})", .{ res.result, fd });
+            log("Wrote {d} bytes (fd: {d}, head: {d}, {d}/{d})", .{ res.result, fd, this.head, remain.len, total });
 
             if (res.result == 0) {
                 if (this.poll_ref) |poll| {
@@ -1448,7 +1448,7 @@ pub const FileSink = struct {
 
     fn isPending(this: *const FileSink) bool {
         var poll_ref = this.poll_ref orelse return false;
-        return poll_ref.isActive();
+        return poll_ref.isRegistered();
     }
 
     pub fn end(this: *FileSink, err: ?Syscall.Error) JSC.Node.Maybe(void) {
@@ -2611,6 +2611,7 @@ pub fn ReadableStreamSource(
     comptime onPull: anytype,
     comptime onCancel: fn (this: *Context) void,
     comptime deinit: fn (this: *Context) void,
+    comptime setRefUnrefFn: ?fn (this: *Context, enable: bool) void,
 ) type {
     return struct {
         context: Context,
@@ -2627,6 +2628,24 @@ pub fn ReadableStreamSource(
 
         pub fn pull(this: *This, buf: []u8) StreamResult {
             return onPull(&this.context, buf, JSValue.zero);
+        }
+
+        pub fn ref(this: *This) void {
+            if (setRefUnrefFn) |setRefUnref| {
+                setRefUnref(&this.context, true);
+            }
+        }
+
+        pub fn unref(this: *This) void {
+            if (setRefUnrefFn) |setRefUnref| {
+                setRefUnref(&this.context, false);
+            }
+        }
+
+        pub fn setRef(this: *This, value: bool) void {
+            if (setRefUnrefFn) |setRefUnref| {
+                setRefUnref(&this.context, value);
+            }
         }
 
         pub fn start(
@@ -2683,6 +2702,8 @@ pub fn ReadableStreamSource(
         pub fn toJS(this: *ReadableStreamSourceType, globalThis: *JSGlobalObject) JSC.JSValue {
             return ReadableStream.fromNative(globalThis, Context.tag, this);
         }
+
+        const supports_ref = setRefUnrefFn != null;
 
         pub const JSReadableStreamSource = struct {
             pub const shim = JSC.Shimmer(std.mem.span(name_), "JSReadableStreamSource", @This());
@@ -2743,6 +2764,13 @@ pub fn ReadableStreamSource(
                 return JSC.JSValue.jsUndefined();
             }
 
+            pub fn updateRef(_: *JSGlobalObject, callFrame: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+                var this = callFrame.argument(0).asPtr(ReadableStreamSourceType);
+                const ref_or_unref = callFrame.argument(1).asBoolean();
+                this.setRef(ref_or_unref);
+                return JSC.JSValue.jsUndefined();
+            }
+
             fn onClose(ptr: *anyopaque) void {
                 var this = bun.cast(*ReadableStreamSourceType, ptr);
                 _ = this.close_jsvalue.call(this.globalThis, &.{});
@@ -2759,11 +2787,15 @@ pub fn ReadableStreamSource(
                 if (comptime JSC.is_bindgen) unreachable;
                 // This is used also in Node.js streams
                 return JSC.JSArray.from(globalThis, &.{
-                    JSC.NewFunction(globalThis, null, 1, JSReadableStreamSource.pull, true),
-                    JSC.NewFunction(globalThis, null, 1, JSReadableStreamSource.start, true),
-                    JSC.NewFunction(globalThis, null, 1, JSReadableStreamSource.cancel, true),
-                    JSC.NewFunction(globalThis, null, 1, JSReadableStreamSource.setClose, true),
-                    JSC.NewFunction(globalThis, null, 1, JSReadableStreamSource.deinit, true),
+                    JSC.NewFunction(globalThis, null, 2, JSReadableStreamSource.pull, true),
+                    JSC.NewFunction(globalThis, null, 2, JSReadableStreamSource.start, true),
+                    JSC.NewFunction(globalThis, null, 2, JSReadableStreamSource.cancel, true),
+                    JSC.NewFunction(globalThis, null, 2, JSReadableStreamSource.setClose, true),
+                    JSC.NewFunction(globalThis, null, 2, JSReadableStreamSource.deinit, true),
+                    if (supports_ref)
+                        JSC.NewFunction(globalThis, null, 2, JSReadableStreamSource.updateRef, true)
+                    else
+                        JSC.JSValue.jsNull(),
                 });
             }
 
@@ -2779,6 +2811,7 @@ pub fn ReadableStreamSource(
                     _ = JSReadableStreamSource.cancel;
                     _ = JSReadableStreamSource.setClose;
                     _ = JSReadableStreamSource.load;
+                    _ = JSReadableStreamSource.deinit;
                 }
             }
         };
@@ -2856,7 +2889,7 @@ pub const ByteBlobLoader = struct {
         bun.default_allocator.destroy(this);
     }
 
-    pub const Source = ReadableStreamSource(@This(), "ByteBlob", onStart, onPull, onCancel, deinit);
+    pub const Source = ReadableStreamSource(@This(), "ByteBlob", onStart, onPull, onCancel, deinit, null);
 };
 
 pub const PipeFunction = fn (ctx: *anyopaque, stream: StreamResult, allocator: std.mem.Allocator) void;
@@ -3136,10 +3169,11 @@ pub const ByteStream = struct {
         bun.default_allocator.destroy(this.parent());
     }
 
-    pub const Source = ReadableStreamSource(@This(), "ByteStream", onStart, onPull, onCancel, deinit);
+    pub const Source = ReadableStreamSource(@This(), "ByteStream", onStart, onPull, onCancel, deinit, null);
 };
 
-pub const FileBlobLoader = struct {
+/// **Not** the Web "FileReader" API
+pub const FileReader = struct {
     buf: []u8 = &[_]u8{},
     view: JSC.Strong = .{},
     fd: JSC.Node.FileDescriptor = 0,
@@ -3178,17 +3212,15 @@ pub const FileBlobLoader = struct {
 
     pub usingnamespace NewReadyWatcher(@This(), .readable, ready);
 
-    pub inline fn globalThis(this: *FileBlobLoader) *JSC.JSGlobalObject {
+    pub inline fn globalThis(this: *FileReader) *JSC.JSGlobalObject {
         return this.stored_global_this_ orelse @fieldParentPtr(Source, "context", this).globalThis;
     }
-
-    const FileReader = @This();
 
     const run_on_different_thread_size = bun.huge_allocator_threshold;
 
     pub const tag = ReadableStream.Tag.File;
 
-    pub fn setupWithPoll(this: *FileBlobLoader, store: *Blob.Store, chunk_size: Blob.SizeType, poll: ?*JSC.FilePoll) void {
+    pub fn setupWithPoll(this: *FileReader, store: *Blob.Store, chunk_size: Blob.SizeType, poll: ?*JSC.FilePoll) void {
         store.ref();
         this.* = .{
             .loop = JSC.VirtualMachine.vm.eventLoop(),
@@ -3202,11 +3234,11 @@ pub const FileBlobLoader = struct {
         }
     }
 
-    pub fn setup(this: *FileBlobLoader, store: *Blob.Store, chunk_size: Blob.SizeType) void {
+    pub fn setup(this: *FileReader, store: *Blob.Store, chunk_size: Blob.SizeType) void {
         this.setupWithPoll(store, chunk_size, null);
     }
 
-    pub fn finish(this: *FileBlobLoader) void {
+    pub fn finish(this: *FileReader) void {
         if (this.finished) return;
         this.finished = true;
         this.close_on_eof = true;
@@ -3236,12 +3268,12 @@ pub const FileBlobLoader = struct {
         concurrent_task: JSC.ConcurrentTask = .{},
 
         pub fn taskCallback(task: *NetworkThread.Task) void {
-            var this = @fieldParentPtr(FileBlobLoader, "concurrent", @fieldParentPtr(Concurrent, "task", task));
+            var this = @fieldParentPtr(FileReader, "concurrent", @fieldParentPtr(Concurrent, "task", task));
             var frame = bun.default_allocator.create(@Frame(runAsync)) catch unreachable;
             _ = @asyncCall(std.mem.asBytes(frame), undefined, runAsync, .{this});
         }
 
-        pub fn onRead(this: *FileBlobLoader, completion: *HTTPClient.NetworkThread.Completion, result: AsyncIO.ReadError!usize) void {
+        pub fn onRead(this: *FileReader, completion: *HTTPClient.NetworkThread.Completion, result: AsyncIO.ReadError!usize) void {
             this.concurrent.read = @truncate(Blob.SizeType, result catch |err| {
                 if (@hasField(HTTPClient.NetworkThread.Completion, "result")) {
                     this.pending.result = .{
@@ -3267,7 +3299,7 @@ pub const FileBlobLoader = struct {
             resume this.concurrent.read_frame;
         }
 
-        pub fn scheduleRead(this: *FileBlobLoader) void {
+        pub fn scheduleRead(this: *FileReader) void {
             if (comptime Environment.isMac) {
                 var remaining = this.buf[this.concurrent.read..];
 
@@ -3305,7 +3337,7 @@ pub const FileBlobLoader = struct {
             }
 
             AsyncIO.global.read(
-                *FileBlobLoader,
+                *FileReader,
                 this,
                 onRead,
                 &this.concurrent.completion,
@@ -3325,7 +3357,7 @@ pub const FileBlobLoader = struct {
         }
 
         pub fn onJSThread(task_ctx: *anyopaque) void {
-            var this: *FileBlobLoader = bun.cast(*FileBlobLoader, task_ctx);
+            var this: *FileReader = bun.cast(*FileReader, task_ctx);
             const view = this.view.get().?;
             defer this.view.clear();
 
@@ -3361,12 +3393,12 @@ pub const FileBlobLoader = struct {
             }
         }
 
-        pub fn scheduleMainThreadTask(this: *FileBlobLoader) void {
+        pub fn scheduleMainThreadTask(this: *FileReader) void {
             this.concurrent.main_thread_task.ctx = this;
             this.loop.enqueueTaskConcurrent(this.concurrent.concurrent_task.from(&this.concurrent.main_thread_task));
         }
 
-        fn runAsync(this: *FileBlobLoader) void {
+        fn runAsync(this: *FileReader) void {
             this.concurrent.read = 0;
 
             Concurrent.scheduleRead(this);
@@ -3391,7 +3423,7 @@ pub const FileBlobLoader = struct {
     const default_fifo_chunk_size = 64 * 1024;
     const default_file_chunk_size = 1024 * 1024 * 2;
 
-    pub fn onStart(this: *FileBlobLoader) StreamStart {
+    pub fn onStart(this: *FileReader) StreamStart {
         var file = &this.store.data.file;
         std.debug.assert(!this.started);
         this.started = true;
@@ -3489,7 +3521,7 @@ pub const FileBlobLoader = struct {
         return .{ .chunk_size = @truncate(Blob.SizeType, chunk_size) };
     }
 
-    fn calculateChunkSize(this: *FileBlobLoader, available_to_read: usize) usize {
+    fn calculateChunkSize(this: *FileReader, available_to_read: usize) usize {
         const file = &this.store.data.file;
 
         const chunk_size: usize = if (this.user_chunk_size > 0)
@@ -3505,7 +3537,7 @@ pub const FileBlobLoader = struct {
             @minimum(available_to_read, chunk_size);
     }
 
-    pub fn onPullInto(this: *FileBlobLoader, buffer: []u8, view: JSC.JSValue) StreamResult {
+    pub fn onPullInto(this: *FileReader, buffer: []u8, view: JSC.JSValue) StreamResult {
         const chunk_size = this.calculateChunkSize(std.math.maxInt(usize));
         std.debug.assert(this.started);
 
@@ -3540,14 +3572,14 @@ pub const FileBlobLoader = struct {
         return this.read(buffer, view, null);
     }
 
-    fn maybeAutoClose(this: *FileBlobLoader) void {
+    fn maybeAutoClose(this: *FileReader) void {
         if (this.auto_close) {
             _ = Syscall.close(this.fd);
             this.auto_close = false;
         }
     }
 
-    fn handleReadChunk(this: *FileBlobLoader, result: usize, view: JSC.JSValue, owned: bool, buf: []u8) StreamResult {
+    fn handleReadChunk(this: *FileReader, result: usize, view: JSC.JSValue, owned: bool, buf: []u8) StreamResult {
         std.debug.assert(this.started);
 
         this.total_read += @intCast(Blob.SizeType, result);
@@ -3582,7 +3614,7 @@ pub const FileBlobLoader = struct {
     }
 
     pub fn read(
-        this: *FileBlobLoader,
+        this: *FileReader,
         read_buf: []u8,
         view: JSC.JSValue,
         /// provided via kqueue(), only on macOS
@@ -3771,6 +3803,12 @@ pub const FileBlobLoader = struct {
                         if (result < buf_to_use.len) {
                             // do not insert .eof here
                             poll.flags.remove(.readable);
+
+                            if (result > 0 and !poll.flags.contains(.hup) and !this.finished) {
+                                // partial read, but not close. be sure to ask for more data
+                                if (!this.isWatching())
+                                    this.watch(fd);
+                            }
                         }
                     }
                 }
@@ -3788,7 +3826,7 @@ pub const FileBlobLoader = struct {
                     this.view.set(this.globalThis(), view);
                     this.buf = read_buf;
                     if (!this.isWatching())
-                        this.watch(this.fd);
+                        this.watch(fd);
                     this.poll_ref.?.flags.remove(.readable);
 
                     return .{
@@ -3802,7 +3840,7 @@ pub const FileBlobLoader = struct {
     }
 
     /// Called from Poller
-    pub fn ready(this: *FileBlobLoader, sizeOrOffset: i64) void {
+    pub fn ready(this: *FileReader, sizeOrOffset: i64) void {
         const view = this.view.get() orelse .zero;
         defer this.view.clear();
 
@@ -3860,7 +3898,7 @@ pub const FileBlobLoader = struct {
         this.pending.run();
     }
 
-    pub fn finalize(this: *FileBlobLoader) void {
+    pub fn finalize(this: *FileReader) void {
         if (this.finalized)
             return;
 
@@ -3891,23 +3929,33 @@ pub const FileBlobLoader = struct {
         this.store.deref();
     }
 
-    pub fn onCancel(this: *FileBlobLoader) void {
+    pub fn onCancel(this: *FileReader) void {
         this.cancelled = true;
         this.deinit();
     }
 
-    pub fn deinit(this: *FileBlobLoader) void {
+    pub fn deinit(this: *FileReader) void {
         this.finalize();
         if (this.scheduled_count == 0 and this.pending.state == .pending) {
             this.destroy();
         }
     }
 
-    pub fn destroy(this: *FileBlobLoader) void {
+    pub fn destroy(this: *FileReader) void {
         bun.default_allocator.destroy(this);
     }
 
-    pub const Source = ReadableStreamSource(@This(), "FileBlobLoader", onStart, onPullInto, onCancel, deinit);
+    pub fn setRefOrUnref(this: *FileReader, value: bool) void {
+        if (this.poll_ref) |poll| {
+            if (value) {
+                poll.enableKeepingProcessAlive(this.globalThis().bunVM());
+            } else {
+                poll.disableKeepingProcessAlive(this.globalThis().bunVM());
+            }
+        }
+    }
+
+    pub const Source = ReadableStreamSource(@This(), "FileReader", onStart, onPullInto, onCancel, deinit, setRefOrUnref);
 };
 
 pub fn NewReadyWatcher(

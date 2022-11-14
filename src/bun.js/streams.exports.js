@@ -2145,7 +2145,7 @@ var require_destroy = __commonJS({
       }
       if ((r && r.autoDestroy) || (w && w.autoDestroy)) stream.destroy(err);
       else if (err) {
-        err.stack;
+        Error.captureStackTrace(err);
         if (w && !w.errored) {
           w.errored = err;
         }
@@ -3892,7 +3892,7 @@ var require_writable = __commonJS({
       state.length -= state.writelen;
       state.writelen = 0;
       if (er) {
-        er.stack;
+        Error.captureStackTrace(er);
         if (!state.errored) {
           state.errored = er;
         }
@@ -5679,7 +5679,7 @@ var require_ours = __commonJS({
  *
  */
 function createNativeStream(nativeType, Readable) {
-  var [pull, start, cancel, setClose, deinit] =
+  var [pull, start, cancel, setClose, deinit, updateRef] =
     globalThis[Symbol.for("Bun.lazy")](nativeType);
 
   var closer = [false];
@@ -5722,14 +5722,11 @@ function createNativeStream(nativeType, Readable) {
 
   var handleResult = function (nativeReadable, result, view, isClosed) {
     if (typeof result === "number") {
-      isClosed = isClosed || result === 0;
       return handleNumberResult(nativeReadable, result, view, isClosed);
-    } else if (typeof result === "boolean" || !result) {
+    } else if (typeof result === "boolean") {
       nativeReadable.push(null);
-      if (view?.byteLength > 0) return view;
-      else return undefined;
+      return view?.byteLength ?? 0 > 0 ? view : undefined;
     } else if (ArrayBuffer.isView(result)) {
-      isClosed = isClosed || result.byteLength === 0;
       return handleArrayBufferViewResult(
         nativeReadable,
         result,
@@ -5740,12 +5737,13 @@ function createNativeStream(nativeType, Readable) {
       throw new Error("Invalid result from pull");
     }
   };
-  return class NativeReadable extends Readable {
+  var NativeReadable = class NativeReadable extends Readable {
     #ptr;
+    #refCount = 1;
     #constructed = false;
     #remainingChunk = undefined;
-    #nextRead = undefined;
     #highWaterMark;
+    #pendingRead = false;
     constructor(ptr, options = {}) {
       super(options);
       if (typeof options.highWaterMark === "number") {
@@ -5756,15 +5754,11 @@ function createNativeStream(nativeType, Readable) {
       this.#ptr = ptr;
       this.#constructed = false;
       this.#remainingChunk = undefined;
-      this.#nextRead = undefined;
+      this.#pendingRead = false;
     }
 
     _read(highWaterMark) {
-      var nextRead = this.#nextRead;
-      if (nextRead) {
-        this.#nextRead = undefined;
-        return nextRead;
-      }
+      if (this.#pendingRead) return;
 
       var ptr = this.#ptr;
       if (ptr === 0) {
@@ -5774,68 +5768,45 @@ function createNativeStream(nativeType, Readable) {
 
       if (!this.#constructed) {
         this.#constructed = true;
-        start(ptr, highWaterMark || 0);
+        start(ptr, this.#highWaterMark);
       }
 
-      return this.#internalRead(
-        (this.#remainingChunk ||= new Buffer(this.#highWaterMark)),
-        ptr,
-      );
+      return this.#internalRead(this.#getRemainingChunk(), ptr);
     }
 
-    #internalReadIfNotClosed() {
-      var ptr = this.#ptr;
-      if (ptr === 0) return;
-
-      return this.#internalRead(
-        (this.#remainingChunk ||= new Buffer(this.#highWaterMark)),
-        ptr,
-      );
-    }
-
-    #flow() {
-      while (this._readableState?.flowing && this.#ptr !== 0) {
-        const internalReadResult = this.#internalRead(
-          (this.#remainingChunk ||= new Buffer(this.#highWaterMark)),
-          this.#ptr,
-        );
-
-        if (isPromise(internalReadResult)) {
-          var nextRead = internalReadResult.then(() =>
-            this.#internalReadIfNotClosed(),
-          );
-
-          if (this.#nextRead) {
-            this.#nextRead = this.#nextRead.then(() => nextRead);
-          } else {
-            this.#nextRead = nextRead;
-          }
-          break;
-        } else {
-          this.#nextRead = this.#internalReadIfNotClosed();
-        }
+    #getRemainingChunk() {
+      var chunk = this.#remainingChunk;
+      var highWaterMark = this.#highWaterMark;
+      if ((chunk?.byteLength ?? 0 < 512) && highWaterMark > 512) {
+        this.#remainingChunk = chunk = new Buffer(this.#highWaterMark);
       }
+
+      return chunk;
     }
 
     #internalRead(view, ptr) {
       closer[0] = false;
       var result = pull(ptr, view, closer);
       if (isPromise(result)) {
+        this.#pendingRead = true;
+        var originalFlowing = this._readableState.flowing;
+        this._readableState.flowing = false;
         return result.then(
           (result) => {
+            this._readableState.flowing = originalFlowing;
+            this.#pendingRead = false;
             this.#remainingChunk = handleResult(this, result, view, closer[0]);
-            this.#flow(result, view);
           },
           (reason) => errorOrDestroy(this, reason),
         );
       } else {
         this.#remainingChunk = handleResult(this, result, view, closer[0]);
-        this.#flow();
       }
     }
 
-    _construct() {
+    _construct(cb) {
       this._readableState.constructed = true;
+      cb();
     }
     _destroy(error, callback) {
       var ptr = this.#ptr;
@@ -5845,13 +5816,37 @@ function createNativeStream(nativeType, Readable) {
       }
 
       this.#ptr = 0;
+      if (updateRef) {
+        updateRef(ptr, false);
+      }
+      process.nextTick(deinit, ptr);
       cancel(ptr, error);
       callback(error);
-      queueMicrotask(() => {
-        deinit(ptr);
-      });
+    }
+
+    ref() {
+      var ptr = this.#ptr;
+      if (ptr === 0) return;
+      if (this.#refCount++ === 0) {
+        updateRef(ptr, true);
+      }
+    }
+
+    unref() {
+      var ptr = this.#ptr;
+      if (ptr === 0) return;
+      if (this.#refCount-- === 1) {
+        updateRef(ptr, false);
+      }
     }
   };
+
+  if (!updateRef) {
+    NativeReadable.prototype.ref = undefined;
+    NativeReadable.prototype.unref = undefined;
+  }
+
+  return NativeReadable;
 }
 
 var nativeReadableStreamPrototypes = {

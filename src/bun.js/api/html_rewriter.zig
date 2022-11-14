@@ -850,7 +850,7 @@ fn HandlerCallback(
                 switch (promise.status(this.global.vm())) {
                     JSC.JSPromise.Status.Pending => unreachable,
                     JSC.JSPromise.Status.Rejected => {
-                        JavaScript.VirtualMachine.vm.runErrorHandler(promise.result(this.global.vm()), null);
+                        JavaScript.VirtualMachine.vm.onUnhandledError(this.global, promise.result(this.global.vm()));
                         @field(zig_element, field_name) = null;
                         return false;
                     },

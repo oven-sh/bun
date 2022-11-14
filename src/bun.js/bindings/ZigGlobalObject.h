@@ -235,7 +235,7 @@ public:
     JSC::JSFunction* performMicrotaskFunction() { return m_performMicrotaskFunction.getInitializedOnMainThread(this); }
     JSC::JSFunction* performMicrotaskVariadicFunction() { return m_performMicrotaskVariadicFunction.getInitializedOnMainThread(this); }
 
-    JSC::JSFunction* jsReadableResumeFunction() { return m_JSReadableResumeFunction.getInitializedOnMainThread(this); }
+    JSC::JSFunction* emitReadableNextTickFunction() { return m_emitReadableNextTickFunction.getInitializedOnMainThread(this); }
 
     JSC::JSObject* processObject()
     {
@@ -469,7 +469,7 @@ private:
     LazyProperty<JSGlobalObject, JSC::Structure> m_pendingVirtualModuleResultStructure;
     LazyProperty<JSGlobalObject, JSFunction> m_performMicrotaskFunction;
     LazyProperty<JSGlobalObject, JSFunction> m_performMicrotaskVariadicFunction;
-    LazyProperty<JSGlobalObject, JSFunction> m_JSReadableResumeFunction;
+    LazyProperty<JSGlobalObject, JSFunction> m_emitReadableNextTickFunction;
     LazyProperty<JSGlobalObject, JSMap> m_lazyReadableStreamPrototypeMap;
     LazyProperty<JSGlobalObject, JSMap> m_requireMap;
     LazyProperty<JSGlobalObject, JSObject> m_encodeIntoObjectPrototype;

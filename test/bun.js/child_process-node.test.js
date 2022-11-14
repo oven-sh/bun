@@ -388,106 +388,106 @@ describe("child_process default options", () => {
   });
 });
 
-// describe("child_process double pipe", () => {
-//   it("should allow two pipes to be used at once", (done) => {
-//     const { mustCallAtLeast, mustCall } = createCallCheckCtx(done);
-//     let grep, sed, echo;
-//     grep = spawn("grep", ["o"]);
-//     sed = spawn("sed", ["s/o/O/"]);
-//     echo = spawn("echo", ["hello\nnode\nand\nworld\n"]);
+describe("child_process double pipe", () => {
+  it("should allow two pipes to be used at once", (done) => {
+    const { mustCallAtLeast, mustCall } = createCallCheckCtx(done);
+    let grep, sed, echo;
+    grep = spawn("grep", ["o"]);
+    sed = spawn("sed", ["s/o/O/"]);
+    echo = spawn("echo", ["hello\nnode\nand\nworld\n"]);
 
-//     // pipe echo | grep
-//     echo.stdout.on(
-//       "data",
-//       mustCallAtLeast((data) => {
-//         debug(`grep stdin write ${data.length}`);
-//         if (!grep.stdin.write(data)) {
-//           echo.stdout.pause();
-//         }
-//       }),
-//     );
+    // pipe echo | grep
+    echo.stdout.on(
+      "data",
+      mustCallAtLeast((data) => {
+        debug(`grep stdin write ${data.length}`);
+        if (!grep.stdin.write(data)) {
+          echo.stdout.pause();
+        }
+      }),
+    );
 
-//     // TODO(Derrick): We don't implement the full API for this yet,
-//     // So stdin has no 'drain' event.
-//     // // TODO(@jasnell): This does not appear to ever be
-//     // // emitted. It's not clear if it is necessary.
-//     // grep.stdin.on("drain", (data) => {
-//     //   echo.stdout.resume();
-//     // });
+    // TODO(Derrick): We don't implement the full API for this yet,
+    // So stdin has no 'drain' event.
+    // // TODO(@jasnell): This does not appear to ever be
+    // // emitted. It's not clear if it is necessary.
+    // grep.stdin.on("drain", (data) => {
+    //   echo.stdout.resume();
+    // });
 
-//     // Propagate end from echo to grep
-//     echo.stdout.on(
-//       "end",
-//       mustCall(() => {
-//         debug("echo stdout end");
-//         grep.stdin.end();
-//       }),
-//     );
+    // Propagate end from echo to grep
+    echo.stdout.on(
+      "end",
+      mustCall(() => {
+        debug("echo stdout end");
+        grep.stdin.end();
+      }),
+    );
 
-//     echo.on(
-//       "exit",
-//       mustCall(() => {
-//         debug("echo exit");
-//       }),
-//     );
+    echo.on(
+      "exit",
+      mustCall(() => {
+        debug("echo exit");
+      }),
+    );
 
-//     grep.on(
-//       "exit",
-//       mustCall(() => {
-//         debug("grep exit");
-//       }),
-//     );
+    grep.on(
+      "exit",
+      mustCall(() => {
+        debug("grep exit");
+      }),
+    );
 
-//     sed.on(
-//       "exit",
-//       mustCall(() => {
-//         debug("sed exit");
-//       }),
-//     );
+    sed.on(
+      "exit",
+      mustCall(() => {
+        debug("sed exit");
+      }),
+    );
 
-//     // pipe grep | sed
-//     grep.stdout.on(
-//       "data",
-//       mustCallAtLeast((data) => {
-//         debug(`grep stdout ${data.length}`);
-//         if (!sed.stdin.write(data)) {
-//           grep.stdout.pause();
-//         }
-//       }),
-//     );
+    // pipe grep | sed
+    grep.stdout.on(
+      "data",
+      mustCallAtLeast((data) => {
+        debug(`grep stdout ${data.length}`);
+        if (!sed.stdin.write(data)) {
+          grep.stdout.pause();
+        }
+      }),
+    );
 
-//     // // TODO(@jasnell): This does not appear to ever be
-//     // // emitted. It's not clear if it is necessary.
-//     // sed.stdin.on("drain", (data) => {
-//     //   grep.stdout.resume();
-//     // });
+    // // TODO(@jasnell): This does not appear to ever be
+    // // emitted. It's not clear if it is necessary.
+    sed.stdin.on("drain", (data) => {
+      grep.stdout.resume();
+    });
 
-//     // Propagate end from grep to sed
-//     grep.stdout.on(
-//       "end",
-//       mustCall((code) => {
-//         debug("grep stdout end");
-//         sed.stdin.end();
-//       }),
-//     );
+    // Propagate end from grep to sed
+    grep.stdout.on(
+      "end",
+      mustCall((code) => {
+        debug("grep stdout end");
+        sed.stdin.end();
+      }),
+    );
 
-//     let result = "";
+    let result = "";
 
-//     // print sed's output
-//     sed.stdout.on(
-//       "data",
-//       mustCallAtLeast((data) => {
-//         result += data.toString("utf8");
-//         debug(data);
-//       }),
-//     );
+    // print sed's output
+    sed.stdout.on(
+      "data",
+      mustCallAtLeast((data) => {
+        result += data.toString("utf8");
+        debug(data);
+      }),
+    );
 
-//     sed.stdout.on(
-//       "end",
-//       mustCall(() => {
-//         debug("result: " + result);
-//         strictEqual(result, `hellO\nnOde\nwOrld\n`);
-//       }),
-//     );
-//   });
-// });
+    sed.stdout.on(
+      "end",
+      mustCall(() => {
+        debug("result: " + result);
+        strictEqual(result, `hellO\nnOde\nwOrld\n`);
+      }),
+    );
+  });
+});

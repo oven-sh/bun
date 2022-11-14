@@ -1052,7 +1052,7 @@ JSC:
                 return ByteBlob__JSReadableStreamSource__load(globalObject);
             }
             case ReadableStreamTag::File: {
-                return FileBlobLoader__JSReadableStreamSource__load(globalObject);
+                return FileReader__JSReadableStreamSource__load(globalObject);
             }
             case ReadableStreamTag::Bytes: {
                 return ByteStream__JSReadableStreamSource__load(globalObject);
@@ -2329,15 +2329,14 @@ void GlobalObject::finishCreation(VM& vm)
         [](const Initializer<JSFunction>& init) {
             init.set(JSFunction::create(init.vm, init.owner, 4, "performMicrotask"_s, jsFunctionPerformMicrotask, ImplementationVisibility::Public));
         });
+    m_emitReadableNextTickFunction.initLater(
+        [](const Initializer<JSFunction>& init) {
+            init.set(JSFunction::create(init.vm, init.owner, 4, "emitReadable"_s, WebCore::jsReadable_emitReadable_, ImplementationVisibility::Public));
+        });
 
     m_performMicrotaskVariadicFunction.initLater(
         [](const Initializer<JSFunction>& init) {
             init.set(JSFunction::create(init.vm, init.owner, 4, "performMicrotaskVariadic"_s, jsFunctionPerformMicrotaskVariadic, ImplementationVisibility::Public));
-        });
-
-    m_JSReadableResumeFunction.initLater(
-        [](const Initializer<JSFunction>& init) {
-            init.set(JSFunction::create(init.vm, init.owner, 3, "resume"_s, WebCore::jsReadable_resume_, ImplementationVisibility::Public));
         });
 
     m_navigatorObject.initLater(
@@ -3309,7 +3308,7 @@ void GlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     thisObject->m_subtleCryptoObject.visit(visitor);
     thisObject->m_JSHTTPResponseController.visit(visitor);
     thisObject->m_callSiteStructure.visit(visitor);
-    thisObject->m_JSReadableResumeFunction.visit(visitor);
+    thisObject->m_emitReadableNextTickFunction.visit(visitor);
 
     for (auto& barrier : thisObject->m_thenables) {
         visitor.append(barrier);

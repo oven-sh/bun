@@ -7,7 +7,7 @@ import {
   createDoneDotAll,
 } from "./node-test-helpers";
 
-describe("OurAssert.throws()", () => {
+describe("NodeTestHelpers.throws()", () => {
   it("should pass when the function throws", () => {
     throws(() => {
       throw new Error("THROWN!");
@@ -27,7 +27,7 @@ describe("OurAssert.throws()", () => {
   });
 });
 
-describe("OurAssert.assert()", () => {
+describe("NodeTestHelpers.assert()", () => {
   it("should pass when the provided value is true", () => {
     assert(true);
   });
@@ -43,7 +43,7 @@ describe("OurAssert.assert()", () => {
   });
 });
 
-describe("OurAssert.strictEqual()", () => {
+describe("NodeTestHelpers.strictEqual()", () => {
   it("should pass when the provided values are deeply equal", () => {
     strictEqual(1, 1);
     strictEqual("hello", "hello");
@@ -92,7 +92,7 @@ describe("OurAssert.strictEqual()", () => {
   });
 });
 
-describe("OurAssert.createCallCheckCtx", () => {
+describe("NodeTestHelpers.createCallCheckCtx", () => {
   it("should pass when all mustCall marked callbacks have been called", (done) => {
     const { mustCall } = createCallCheckCtx(done);
     const fn1 = mustCall(() => {});
@@ -122,7 +122,7 @@ describe("OurAssert.createCallCheckCtx", () => {
   });
 });
 
-describe("OurAssert.createDoneDotAll()", () => {
+describe("NodeTestHelpers.createDoneDotAll()", () => {
   it("should pass when all dones have been called", (done) => {
     const createDone = createDoneDotAll(done);
     const done1 = createDone(600);

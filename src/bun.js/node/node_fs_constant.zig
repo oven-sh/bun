@@ -203,6 +203,7 @@ const constants_string2_opts = .{
     "undefined"
   else
     // TODO(vjpr): Why was this needed? It caused an error in zig@0.10.
+    //   It caused error due to `{any}` `{}` not being allowed during comptime.
     // std.fmt.comptimePrint("{}", .{Constants.O_SYMLINK}),
     // --
     Constants.O_SYMLINK,

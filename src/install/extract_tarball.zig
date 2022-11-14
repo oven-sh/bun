@@ -277,7 +277,7 @@ fn extract(this: *const ExtractTarball, tgz_bytes: []const u8) !string {
 
     // create an index storing each version of a package installed
     create_index: {
-        var index_dir = cache_dir.makeOpenPathIterable(name, .{}) catch break :create_index;
+        var index_dir = cache_dir.makeOpenPath(name, .{}) catch break :create_index;
         defer index_dir.close();
         index_dir.symLink(
             final_path,

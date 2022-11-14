@@ -470,7 +470,7 @@ pub const Archive = struct {
 
     pub fn extractToDir(
         file_buffer: []const u8,
-        dir: std.fs.Dir,
+        iter_dir: std.fs.IterableDir,
         ctx: ?*Archive.Context,
         comptime FilePathAppender: type,
         appender: FilePathAppender,
@@ -478,6 +478,7 @@ pub const Archive = struct {
         comptime close_handles: bool,
         comptime log: bool,
     ) !u32 {
+        const dir = iter_dir.dir;
         var entry: *lib.archive_entry = undefined;
 
         var stream: BufferReadStream = undefined;

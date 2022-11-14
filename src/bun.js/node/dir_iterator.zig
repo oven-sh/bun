@@ -46,7 +46,7 @@ pub const Iterator = switch (builtin.os.tag) {
             start_over: while (true) {
                 if (self.index >= self.end_index) {
                     const rc = os.system.__getdirentries64(
-                        self.dir.fd,
+                        self.dir.dir.fd,
                         &self.buf,
                         self.buf.len,
                         &self.seek,

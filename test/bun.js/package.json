@@ -1,0 +1,6 @@
+{
+  "name": "bun-tests",
+  "dependencies": {
+    "esbuild": "0.15.13"
+  }
+}

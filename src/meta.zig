@@ -22,5 +22,5 @@ pub fn typeBaseName(comptime fullname: []const u8) []const u8 {
     const idx = comptime std.mem.lastIndexOf(u8, fullname, ".");
 
     const name = if (idx == null) fullname else fullname[(idx.? + 1)..];
-    return comptime std.fmt.comptimePrint("{any}", .{name});
+    return comptime std.fmt.comptimePrint("{s}", .{name});
 }

@@ -200,7 +200,7 @@ pub const FileSystem = struct {
         //     // dir.data.remove(name);
         // }
 
-        pub fn addEntry(dir: *DirEntry, entry: std.fs.Dir.Entry, allocator: std.mem.Allocator, comptime Iterator: type, iterator: Iterator) !void {
+        pub fn addEntry(dir: *DirEntry, entry: std.fs.IterableDir.Entry, allocator: std.mem.Allocator, comptime Iterator: type, iterator: Iterator) !void {
             var _kind: Entry.Kind = undefined;
             switch (entry.kind) {
                 .Directory => {
@@ -813,7 +813,7 @@ pub const FileSystem = struct {
             pub const Map = allocators.BSSMap(EntriesOption, Preallocate.Counts.dir_entry, false, 256, true);
         };
 
-        pub fn openDir(_: *RealFS, unsafe_dir_string: string) std.fs.File.OpenError!std.fs.Dir {
+        pub fn openDir(_: *RealFS, unsafe_dir_string: string) std.fs.File.OpenError!std.fs.IterableDir {
             return try std.fs.openIterableDirAbsolute(unsafe_dir_string, std.fs.Dir.OpenDirOptions{ .access_sub_paths = true, .no_follow = false });
         }
 
@@ -830,8 +830,8 @@ pub const FileSystem = struct {
             errdefer dir.deinit(allocator);
 
             if (FeatureFlags.store_file_descriptors) {
-                FileSystem.setMaxFd(handle.fd);
-                dir.fd = handle.fd;
+                FileSystem.setMaxFd(handle.dir.fd);
+                dir.fd = handle.dir.fd;
             }
 
             while (try iter.next()) |_entry| {
@@ -889,7 +889,7 @@ pub const FileSystem = struct {
 
             defer {
                 if (_handle == null and fs.needToCloseFiles()) {
-                    handle.close();
+                    handle.dir.close();
                 }
             }
 

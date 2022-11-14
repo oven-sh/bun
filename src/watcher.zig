@@ -643,8 +643,8 @@ pub fn NewWatcher(comptime ContextType: type) type {
             const fd = brk: {
                 if (fd_ > 0) break :brk fd_;
 
-                const dir = try std.fs.openIterableDirAbsolute(file_path, .{});
-                break :brk @truncate(StoredFileDescriptorType, dir.fd);
+                const dir = (try std.fs.openIterableDirAbsolute(file_path, .{}));
+                break :brk @truncate(StoredFileDescriptorType, dir.dir.fd);
             };
 
             const parent_hash = Watcher.getHash(Fs.PathName.init(file_path).dirWithTrailingSlash());

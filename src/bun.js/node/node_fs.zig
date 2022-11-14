@@ -3232,7 +3232,7 @@ pub const NodeFS = struct {
                 }
 
                 var entries = std.ArrayList(ExpectedType).init(bun.default_allocator);
-                var dir = std.fs.Dir{ .fd = fd };
+                var dir = std.fs.IterableDir{ .dir = .{ .fd = fd } };
                 var iterator = DirIterator.iterate(dir);
                 var entry = iterator.next();
                 while (switch (entry) {

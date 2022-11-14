@@ -614,7 +614,7 @@ pub const RequestContext = struct {
             else => @compileError("Invalid code passed to printStatusLine"),
         };
 
-        return std.fmt.comptimePrint("HTTP/1.1 {d} {any}\r\n", .{ code, status_text });
+        return std.fmt.comptimePrint("HTTP/1.1 {d} {s}\r\n", .{ code, status_text });
     }
 
     pub fn printStatusLineError(err: anyerror, buf: []u8) []const u8 {
@@ -718,12 +718,12 @@ pub const RequestContext = struct {
         ctx.status = @as(HTTPStatusCode, 500);
     }
 
-    threadlocal var status_buf: [std.fmt.count("HTTP/1.1 {d} {any}\r\n", .{ 200, "OK" })]u8 = undefined;
+    threadlocal var status_buf: [std.fmt.count("HTTP/1.1 {d} {s}\r\n", .{ 200, "OK" })]u8 = undefined;
     pub fn writeStatusSlow(ctx: *RequestContext, code: u16) !void {
         _ = try ctx.writeSocket(
             try std.fmt.bufPrint(
                 &status_buf,
-                "HTTP/1.1 {d} {any}\r\n",
+                "HTTP/1.1 {d} {s}\r\n",
                 .{ code, if (code > 299) "HM" else "OK" },
             ),
             SOCKET_FLAGS,

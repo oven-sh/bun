@@ -1020,19 +1020,19 @@ pub const Subprocess = struct {
         }
 
         const stdin_pipe = if (stdio[0].isPiped()) os.pipe2(0) catch |err| {
-            globalThis.throw("failed to create stdin pipe: {s}", .{err});
+            globalThis.throw("failed to create stdin pipe: {any}", .{err});
             return .zero;
         } else undefined;
         errdefer if (stdio[0].isPiped()) destroyPipe(stdin_pipe);
 
         const stdout_pipe = if (stdio[1].isPiped()) os.pipe2(0) catch |err| {
-            globalThis.throw("failed to create stdout pipe: {s}", .{err});
+            globalThis.throw("failed to create stdout pipe: {any}", .{err});
             return .zero;
         } else undefined;
         errdefer if (stdio[1].isPiped()) destroyPipe(stdout_pipe);
 
         const stderr_pipe = if (stdio[2].isPiped()) os.pipe2(0) catch |err| {
-            globalThis.throw("failed to create stderr pipe: {s}", .{err});
+            globalThis.throw("failed to create stderr pipe: {any}", .{err});
             return .zero;
         } else undefined;
         errdefer if (stdio[2].isPiped()) destroyPipe(stderr_pipe);

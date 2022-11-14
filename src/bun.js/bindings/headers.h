@@ -826,7 +826,7 @@ ZIG_DECL JSC__JSValue ByteBlob__JSReadableStreamSource__load(JSC__JSGlobalObject
 
 #ifdef __cplusplus
 
-ZIG_DECL JSC__JSValue FileBlobLoader__JSReadableStreamSource__load(JSC__JSGlobalObject* arg0);
+ZIG_DECL JSC__JSValue FileReader__JSReadableStreamSource__load(JSC__JSGlobalObject* arg0);
 
 #endif
 

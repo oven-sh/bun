@@ -179,7 +179,7 @@ pub const NodePath = JSC.Node.Path;
 
 // Web Streams
 pub const JSReadableStreamBlob = JSC.WebCore.ByteBlobLoader.Source.JSReadableStreamSource;
-pub const JSReadableStreamFile = JSC.WebCore.FileBlobLoader.Source.JSReadableStreamSource;
+pub const JSReadableStreamFile = JSC.WebCore.FileReader.Source.JSReadableStreamSource;
 pub const JSReadableStreamBytes = JSC.WebCore.ByteStream.Source.JSReadableStreamSource;
 
 // Sinks

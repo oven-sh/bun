@@ -294,9 +294,8 @@ for (let [gcTick, label] of [
                 var output = "";
                 var reader = process.stdout!.getReader();
                 var done = false;
-                var value;
                 while (!done) {
-                  ({ value, done } = await reader.read());
+                  var { value, done } = await reader.read();
                   if (value) output += new TextDecoder().decode(value);
                 }
 

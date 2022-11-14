@@ -1052,7 +1052,7 @@ JSC:
                 return ByteBlob__JSReadableStreamSource__load(globalObject);
             }
             case ReadableStreamTag::File: {
-                return FileBlobLoader__JSReadableStreamSource__load(globalObject);
+                return FileReader__JSReadableStreamSource__load(globalObject);
             }
             case ReadableStreamTag::Bytes: {
                 return ByteStream__JSReadableStreamSource__load(globalObject);
@@ -2329,6 +2329,10 @@ void GlobalObject::finishCreation(VM& vm)
         [](const Initializer<JSFunction>& init) {
             init.set(JSFunction::create(init.vm, init.owner, 4, "performMicrotask"_s, jsFunctionPerformMicrotask, ImplementationVisibility::Public));
         });
+    m_emitReadableNextTickFunction.initLater(
+        [](const Initializer<JSFunction>& init) {
+            init.set(JSFunction::create(init.vm, init.owner, 4, "emitReadable"_s, WebCore::jsReadable_emitReadable_, ImplementationVisibility::Public));
+        });
 
     m_performMicrotaskVariadicFunction.initLater(
         [](const Initializer<JSFunction>& init) {
@@ -2741,6 +2745,47 @@ JSC_DEFINE_CUSTOM_GETTER(functionLazyNavigatorGetter,
     return JSC::JSValue::encode(reinterpret_cast<Zig::GlobalObject*>(globalObject)->navigatorObject());
 }
 
+JSC_DEFINE_HOST_FUNCTION(functionGetDirectStreamDetails, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
+{
+    auto* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+    JSC::VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto argCount = callFrame->argumentCount();
+    if (argCount != 1) {
+        return JSC::JSValue::encode(JSC::jsNull());
+    }
+
+    auto stream = callFrame->argument(0);
+    if (!stream.isObject()) {
+        return JSC::JSValue::encode(JSC::jsNull());
+    }
+
+    auto* streamObject = stream.getObject();
+    auto* readableStream = jsDynamicCast<WebCore::JSReadableStream*>(streamObject);
+    if (!readableStream) {
+        return JSC::JSValue::encode(JSC::jsNull());
+    }
+
+    auto clientData = WebCore::clientData(vm);
+
+    JSValue ptrValue = readableStream->get(globalObject, clientData->builtinNames().bunNativePtrPrivateName());
+    JSValue typeValue = readableStream->get(globalObject, clientData->builtinNames().bunNativeTypePrivateName());
+    auto result = ptrValue.asAnyInt();
+
+    if (result == 0 || !typeValue.isNumber()) {
+        return JSC::JSValue::encode(JSC::jsNull());
+    }
+
+    readableStream->putDirect(vm, clientData->builtinNames().bunNativePtrPrivateName(), jsUndefined(), 0);
+    readableStream->putDirect(vm, clientData->builtinNames().bunNativeTypePrivateName(), jsUndefined(), 0);
+
+    auto* resultObject = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), 2);
+    resultObject->putDirect(vm, clientData->builtinNames().streamPublicName(), ptrValue, 0);
+    resultObject->putDirect(vm, clientData->builtinNames().dataPublicName(), typeValue, 0);
+
+    return JSC::JSValue::encode(resultObject);
+}
+
 void GlobalObject::addBuiltinGlobals(JSC::VM& vm)
 {
     m_builtinInternalFunctions.initialize(*this);
@@ -2855,6 +2900,7 @@ void GlobalObject::addBuiltinGlobals(JSC::VM& vm)
     extraStaticGlobals.uncheckedAppend(GlobalPropertyInfo(builtinNames.createWritableStreamFromInternalPrivateName(), JSFunction::create(vm, this, 1, String(), createWritableStreamFromInternal, ImplementationVisibility::Public), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly));
     extraStaticGlobals.uncheckedAppend(GlobalPropertyInfo(builtinNames.fulfillModuleSyncPrivateName(), JSFunction::create(vm, this, 1, String(), functionFulfillModuleSync, ImplementationVisibility::Public), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly | PropertyAttribute::Function));
     extraStaticGlobals.uncheckedAppend(GlobalPropertyInfo(builtinNames.commonJSSymbolPrivateName(), JSC::Symbol::create(vm, vm.symbolRegistry().symbolForKey(CommonJSSymbolKey)), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly));
+    extraStaticGlobals.uncheckedAppend(GlobalPropertyInfo(builtinNames.directPrivateName(), JSFunction::create(vm, this, 1, String(), functionGetDirectStreamDetails, ImplementationVisibility::Public), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly | PropertyAttribute::Function));
 
     this->addStaticGlobals(extraStaticGlobals.data(), extraStaticGlobals.size());
 
@@ -3262,6 +3308,7 @@ void GlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     thisObject->m_subtleCryptoObject.visit(visitor);
     thisObject->m_JSHTTPResponseController.visit(visitor);
     thisObject->m_callSiteStructure.visit(visitor);
+    thisObject->m_emitReadableNextTickFunction.visit(visitor);
 
     for (auto& barrier : thisObject->m_thenables) {
         visitor.append(barrier);

@@ -112,12 +112,15 @@ const Handlers = struct {
     pub fn callErrorHandler(this: *Handlers, thisValue: JSValue, err: []const JSValue) bool {
         const onError = this.onError;
         if (onError == .zero) {
+            if (err.len > 0)
+                this.vm.onUnhandledError(this.globalObject, err[0]);
+
             return false;
         }
 
         const result = onError.callWithThis(this.globalObject, thisValue, err);
         if (!result.isEmptyOrUndefinedOrNull() and result.isAnyError(this.globalObject)) {
-            this.vm.runErrorHandler(result, null);
+            this.vm.onUnhandledError(this.globalObject, result);
         }
 
         return true;
@@ -827,8 +830,6 @@ fn NewSocket(comptime ssl: bool) type {
                 if (handlers.callErrorHandler(this_value, &[_]JSC.JSValue{ this_value, result })) {
                     return;
                 }
-
-                handlers.vm.runErrorHandler(result, null);
             }
         }
         pub fn onTimeout(
@@ -857,8 +858,6 @@ fn NewSocket(comptime ssl: bool) type {
                 if (handlers.callErrorHandler(this_value, &[_]JSC.JSValue{ this_value, result })) {
                     return;
                 }
-
-                handlers.vm.runErrorHandler(result, null);
             }
         }
         pub fn onConnectError(this: *This, socket: Socket, errno: c_int) void {
@@ -948,7 +947,6 @@ fn NewSocket(comptime ssl: bool) type {
                     return;
                 }
 
-                handlers.vm.runErrorHandler(result, null);
                 return;
             }
         }
@@ -984,8 +982,6 @@ fn NewSocket(comptime ssl: bool) type {
                 if (handlers.callErrorHandler(this_value, &[_]JSC.JSValue{ this_value, result })) {
                     return;
                 }
-
-                handlers.vm.runErrorHandler(result, null);
             }
         }
 
@@ -1015,8 +1011,6 @@ fn NewSocket(comptime ssl: bool) type {
                 if (handlers.callErrorHandler(this_value, &[_]JSC.JSValue{ this_value, result })) {
                     return;
                 }
-
-                handlers.vm.runErrorHandler(result, null);
             }
         }
 
@@ -1046,8 +1040,6 @@ fn NewSocket(comptime ssl: bool) type {
                 if (handlers.callErrorHandler(this_value, &[_]JSC.JSValue{ this_value, result })) {
                     return;
                 }
-
-                handlers.vm.runErrorHandler(result, null);
             }
         }
 

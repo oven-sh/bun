@@ -13,7 +13,7 @@ import { tmpdir } from "node:os";
 
 const debug = process.env.DEBUG ? console.log : () => {};
 
-const platformTmpDir = tmpdir();
+const platformTmpDir = require("fs").realpathSync(tmpdir());
 
 // Semver regex: https://gist.github.com/jhorsman/62eeea161a13b80e39f5249281e17c39?permalink_comment_id=2896416#gistcomment-2896416
 // Not 100% accurate, but good enough for this test
@@ -82,12 +82,12 @@ describe("spawn()", () => {
     expect(SEMVER_REGEX.test(result.trim())).toBe(true);
   });
 
-  it("should allow stdout to be read via .read() API", async () => {
+  it("should allow stdout to be read via .read() API", async (done) => {
     const child = spawn("bun", ["-v"]);
     const result: string = await new Promise((resolve) => {
       let finalData = "";
       child.stdout.on("error", (e) => {
-        console.error(e);
+        done(e);
       });
       child.stdout.on("readable", () => {
         let data;
@@ -99,6 +99,7 @@ describe("spawn()", () => {
       });
     });
     expect(SEMVER_REGEX.test(result.trim())).toBe(true);
+    done();
   });
 
   it("should accept stdio option with 'ignore' for no stdio fds", async () => {

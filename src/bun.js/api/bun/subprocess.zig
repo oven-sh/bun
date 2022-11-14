@@ -30,7 +30,6 @@ pub const Subprocess = struct {
     stderr: Readable,
 
     killed: bool = false,
-    reffer: JSC.Ref = JSC.Ref.init(),
     poll_ref: ?*JSC.FilePoll = null,
 
     exit_promise: JSC.Strong = .{},
@@ -55,13 +54,14 @@ pub const Subprocess = struct {
     globalThis: *JSC.JSGlobalObject,
 
     pub fn ref(this: *Subprocess) void {
-        this.reffer.ref(this.globalThis.bunVM());
-        if (this.poll_ref) |poll| poll.ref(this.globalThis.bunVM());
+        var vm = this.globalThis.bunVM();
+        if (this.poll_ref) |poll| poll.enableKeepingProcessAlive(vm);
     }
 
     pub fn unref(this: *Subprocess) void {
         this.this_jsvalue.clear();
-        this.unrefWithoutGC(this.globalThis.bunVM());
+        var vm = this.globalThis.bunVM();
+        if (this.poll_ref) |poll| poll.disableKeepingProcessAlive(vm);
     }
 
     pub fn constructor(
@@ -182,8 +182,6 @@ pub const Subprocess = struct {
                 .pipe => {
                     defer this.close();
 
-                    // TODO: handle when there's pending unread data in the pipe
-                    // For some reason, this currently hangs forever
                     if (!this.pipe.buffer.received_eof and this.pipe.buffer.fd != JSC.Node.invalid_fd) {
                         if (this.pipe.buffer.canRead())
                             this.pipe.buffer.readIfPossible(true);
@@ -1301,7 +1299,6 @@ pub const Subprocess = struct {
 
         if (!sync) {
             var vm = this.globalThis.bunVM();
-            this.reffer.unref(vm);
 
             // prevent duplicate notifications
             if (this.poll_ref) |poll| {
@@ -1309,15 +1306,8 @@ pub const Subprocess = struct {
                 poll.deinitWithVM(vm);
             }
 
-            this.waitpid_task = JSC.AnyTask.New(Subprocess, onExit).init(this);
-            this.has_waitpid_task = true;
-            vm.eventLoop().enqueueTask(JSC.Task.init(&this.waitpid_task));
+            this.onExit();
         }
-    }
-
-    pub fn unrefWithoutGC(this: *Subprocess, vm: *JSC.VirtualMachine) void {
-        if (this.poll_ref) |poll| poll.unref(vm);
-        this.reffer.unref(vm);
     }
 
     fn onExit(this: *Subprocess) void {
@@ -1348,7 +1338,7 @@ pub const Subprocess = struct {
             );
 
             if (result.isAnyError(this.globalThis)) {
-                this.globalThis.bunVM().runErrorHandler(result, null);
+                this.globalThis.bunVM().onUnhandledError(this.globalThis, result);
             }
         }
 

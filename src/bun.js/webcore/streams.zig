@@ -3660,7 +3660,7 @@ pub const FileReader = struct {
 
         var buf_to_use = read_buf;
         var free_buffer_on_error: bool = false;
-        var pipe_is_empty_on_linux = bun.VoidUnless(bool, Environment.isLinux, false);
+        var pipe_is_empty_on_linux = false;
         var len: c_int = available_to_read orelse 0;
 
         // if it's a pipe, we really don't know what to expect what the max size will be

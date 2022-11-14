@@ -154,4 +154,17 @@ describe("NodeTestHelpers.createDoneDotAll()", () => {
     setTimeout(() => fn1(), 200);
     setTimeout(() => fn2(), 200);
   });
+
+  it("should fail if a done is called with an error", (done) => {
+    const mockDone = (result) => {
+      expect(result instanceof Error).toBe(true);
+      done();
+    };
+    const createDone = createDoneDotAll(mockDone);
+
+    const done1 = createDone(600);
+    const done2 = createDone(600);
+    setTimeout(() => done1(), 300);
+    setTimeout(() => done2(new Error("ERROR!")), 450);
+  });
 });

@@ -3076,7 +3076,8 @@ pub fn firstNonASCII16CheckMin(comptime Slice: type, slice: Slice, comptime chec
                         // it removes a loop, but probably is slower in the end
                         const cmp = @bitCast(AsciiVectorU16U1, vec > max_u16_ascii) |
                             @bitCast(AsciiVectorU16U1, vec < min_u16_ascii);
-                        const bitmask: u16 = @ptrCast(*const u16, &cmp).*;
+                        const cmp_aligned = @alignCast(2, &cmp);
+                        const bitmask: u16 = @ptrCast(*const u16, &cmp_aligned).*;
                         const first = @ctz(@as(u16, bitmask));
 
                         return @intCast(u32, @as(u32, first) +
@@ -3087,7 +3088,8 @@ pub fn firstNonASCII16CheckMin(comptime Slice: type, slice: Slice, comptime chec
                         remaining.len -= (@ptrToInt(remaining.ptr) - @ptrToInt(remaining_start)) / 2;
 
                         const cmp = vec > max_u16_ascii;
-                        const bitmask = @ptrCast(*const u16, &cmp).*;
+                        const cmp_aligned = @alignCast(2, &cmp);
+                        const bitmask = @ptrCast(*const u16, &cmp_aligned).*;
                         const first = @ctz(@as(u16, bitmask));
 
                         return @intCast(u32, @as(u32, first) +

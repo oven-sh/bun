@@ -69,6 +69,7 @@ export var unlink = promisify(fs.unlinkSync);
 export var utimes = promisify(fs.utimesSync);
 export var lutimes = promisify(fs.lutimesSync);
 export var rm = promisify(fs.rmSync);
+export var rmdir = promisify(fs.rmdirSync);
 
 export default {
   access,
@@ -107,6 +108,6 @@ export default {
   utimes,
   lutimes,
   rm,
-
+  rmdir,
   [Symbol.for("CommonJS")]: 0,
 };

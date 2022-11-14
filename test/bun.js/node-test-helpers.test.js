@@ -22,7 +22,6 @@ describe("NodeTestHelpers.throws()", () => {
       err = e;
     }
 
-    console.log(err.code);
     expect(err instanceof Error).toBe(true);
   });
 });

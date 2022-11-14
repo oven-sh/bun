@@ -1117,26 +1117,16 @@ pub const FileSink = struct {
     }
 
     fn adjustPipeLengthOnLinux(this: *FileSink, fd: JSC.Node.FileDescriptor, remain_len: usize) void {
-        const F_SETPIPE_SZ = 1031;
-        const F_GETPIPE_SZ = 1032;
-
         // On Linux, we can adjust the pipe size to avoid blocking.
         this.has_adjusted_pipe_size_on_linux = true;
-        var pipe_len: c_int = 0;
-        _ = std.c.fcntl(fd, F_GETPIPE_SZ, &pipe_len);
-        if (pipe_len < 0) return;
 
-        // If we have a valid pipe_len, then pessimistically set it to that.
-        this.max_write_size = @intCast(usize, pipe_len);
-
-        if (pipe_len < remain_len) {
-            // If our real pipe length is less than the amount of data we have left to write,
-            // let's figure out what the maximum pipe size is and grow it to that.
-            var out_size = getMaxPipeSizeOnLinux();
-            _ = std.c.fcntl(fd, F_SETPIPE_SZ, &out_size);
-            if (out_size > 0) {
-                this.max_write_size = @intCast(usize, out_size);
-            }
+        switch (JSC.Node.Syscall.setPipeCapacityOnLinux(fd, @minimum(Syscall.getMaxPipeSizeOnLinux(), remain_len))) {
+            .result => |len| {
+                if (len > 0) {
+                    this.max_write_size = len;
+                }
+            },
+            else => {},
         }
     }
 
@@ -1184,12 +1174,10 @@ pub const FileSink = struct {
 
             break :brk this.max_write_size;
         } else remain.len;
-
         while (remain.len > 0) {
             const write_buf = remain[0..@minimum(remain.len, max_to_write)];
-
-            log("Write {d} bytes (fd: {d}, head: {d}, {d}/{d})", .{ write_buf.len, fd, this.head, remain.len, total });
             const res = JSC.Node.Syscall.write(fd, write_buf);
+
             if (res == .err) {
                 const retry =
                     std.os.E.AGAIN;
@@ -1298,13 +1286,14 @@ pub const FileSink = struct {
     }
 
     fn cleanup(this: *FileSink) void {
+        if (this.poll_ref) |poll| {
+            this.poll_ref = null;
+            poll.deinit();
+        }
+
         if (this.fd != JSC.Node.invalid_fd) {
             if (this.scheduled_count > 0) {
                 this.scheduled_count = 0;
-                if (this.poll_ref) |poll| {
-                    this.poll_ref = null;
-                    poll.deinit();
-                }
             }
 
             _ = JSC.Node.Syscall.close(this.fd);
@@ -1448,7 +1437,7 @@ pub const FileSink = struct {
 
     fn isPending(this: *const FileSink) bool {
         var poll_ref = this.poll_ref orelse return false;
-        return poll_ref.isRegistered();
+        return poll_ref.isRegistered() and !poll_ref.flags.contains(.needs_rearm);
     }
 
     pub fn end(this: *FileSink, err: ?Syscall.Error) JSC.Node.Maybe(void) {
@@ -2612,6 +2601,7 @@ pub fn ReadableStreamSource(
     comptime onCancel: fn (this: *Context) void,
     comptime deinit: fn (this: *Context) void,
     comptime setRefUnrefFn: ?fn (this: *Context, enable: bool) void,
+    comptime drainInternalBuffer: ?fn (this: *Context) bun.ByteList,
 ) type {
     return struct {
         context: Context,
@@ -2699,6 +2689,14 @@ pub fn ReadableStreamSource(
             return null;
         }
 
+        pub fn drain(this: *This) bun.ByteList {
+            if (drainInternalBuffer) |drain_fn| {
+                return drain_fn(&this.context);
+            }
+
+            return .{};
+        }
+
         pub fn toJS(this: *ReadableStreamSourceType, globalThis: *JSGlobalObject) JSC.JSValue {
             return ReadableStream.fromNative(globalThis, Context.tag, this);
         }
@@ -2783,6 +2781,15 @@ pub fn ReadableStreamSource(
                 return JSValue.jsUndefined();
             }
 
+            pub fn drain(globalThis: *JSGlobalObject, callFrame: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+                var this = callFrame.argument(0).asPtr(ReadableStreamSourceType);
+                var list = this.drain();
+                if (list.len > 0) {
+                    return JSC.ArrayBuffer.fromBytes(list.slice(), .Uint8Array).toJS(globalThis, null);
+                }
+                return JSValue.jsUndefined();
+            }
+
             pub fn load(globalThis: *JSGlobalObject) callconv(.C) JSC.JSValue {
                 if (comptime JSC.is_bindgen) unreachable;
                 // This is used also in Node.js streams
@@ -2794,6 +2801,10 @@ pub fn ReadableStreamSource(
                     JSC.NewFunction(globalThis, null, 2, JSReadableStreamSource.deinit, true),
                     if (supports_ref)
                         JSC.NewFunction(globalThis, null, 2, JSReadableStreamSource.updateRef, true)
+                    else
+                        JSC.JSValue.jsNull(),
+                    if (drainInternalBuffer != null)
+                        JSC.NewFunction(globalThis, null, 1, JSReadableStreamSource.drain, true)
                     else
                         JSC.JSValue.jsNull(),
                 });
@@ -2889,7 +2900,16 @@ pub const ByteBlobLoader = struct {
         bun.default_allocator.destroy(this);
     }
 
-    pub const Source = ReadableStreamSource(@This(), "ByteBlob", onStart, onPull, onCancel, deinit, null);
+    pub const Source = ReadableStreamSource(
+        @This(),
+        "ByteBlob",
+        onStart,
+        onPull,
+        onCancel,
+        deinit,
+        null,
+        null,
+    );
 };
 
 pub const PipeFunction = fn (ctx: *anyopaque, stream: StreamResult, allocator: std.mem.Allocator) void;
@@ -3169,7 +3189,16 @@ pub const ByteStream = struct {
         bun.default_allocator.destroy(this.parent());
     }
 
-    pub const Source = ReadableStreamSource(@This(), "ByteStream", onStart, onPull, onCancel, deinit, null);
+    pub const Source = ReadableStreamSource(
+        @This(),
+        "ByteStream",
+        onStart,
+        onPull,
+        onCancel,
+        deinit,
+        null,
+        null,
+    );
 };
 
 /// **Not** the Web "FileReader" API
@@ -3199,6 +3228,7 @@ pub const FileReader = struct {
     stored_global_this_: ?*JSC.JSGlobalObject = null,
     poll_ref: ?*JSC.FilePoll = null,
     has_adjusted_pipe_size_on_linux: bool = false,
+    is_fifo: bool = false,
     finished: bool = false,
 
     /// When we have some way of knowing that EOF truly is the write end of the
@@ -3440,9 +3470,11 @@ pub const FileReader = struct {
             },
         };
 
-        if (this.poll_ref) |poll| {
+        if (this.poll_ref != null or this.is_fifo) {
             file.seekable = false;
-            std.debug.assert(poll.fd == @intCast(@TypeOf(poll.fd), fd));
+            this.is_fifo = true;
+            if (this.poll_ref) |poll|
+                std.debug.assert(poll.fd == @intCast(@TypeOf(poll.fd), fd));
         } else {
             if (!auto_close) {
                 // ensure we have non-blocking IO set
@@ -3500,6 +3532,7 @@ pub const FileReader = struct {
             file.seekable = std.os.S.ISREG(stat.mode);
             file.mode = @intCast(JSC.Node.Mode, stat.mode);
             this.mode = file.mode;
+            this.is_fifo = std.os.S.ISFIFO(stat.mode);
 
             if (file.seekable orelse false)
                 file.max_size = @intCast(Blob.SizeType, stat.size);
@@ -3541,13 +3574,6 @@ pub const FileReader = struct {
         const chunk_size = this.calculateChunkSize(std.math.maxInt(usize));
         std.debug.assert(this.started);
 
-        if (this.buffered_data.len > 0) {
-            const data = this.buffered_data;
-            this.buffered_data.len = 0;
-            this.buffered_data.cap = 0;
-            return .{ .owned = data };
-        }
-
         switch (chunk_size) {
             0 => {
                 std.debug.assert(this.store.data.file.seekable orelse false);
@@ -3555,16 +3581,18 @@ pub const FileReader = struct {
                 return .{ .done = {} };
             },
             run_on_different_thread_size...std.math.maxInt(@TypeOf(chunk_size)) => {
-                this.view.set(this.globalThis(), view);
-                // should never be reached
-                this.pending.result = .{
-                    .err = Syscall.Error.todo,
-                };
-                this.buf = buffer;
+                if (!this.isFIFO()) {
+                    this.view.set(this.globalThis(), view);
+                    // should never be reached
+                    this.pending.result = .{
+                        .err = Syscall.Error.todo,
+                    };
+                    this.buf = buffer;
 
-                this.scheduleAsync(@truncate(Blob.SizeType, chunk_size));
+                    this.scheduleAsync(@truncate(Blob.SizeType, chunk_size));
 
-                return .{ .pending = &this.pending };
+                    return .{ .pending = &this.pending };
+                }
             },
             else => {},
         }
@@ -3632,56 +3660,41 @@ pub const FileReader = struct {
 
         var buf_to_use = read_buf;
         var free_buffer_on_error: bool = false;
+        var pipe_is_empty_on_linux = bun.VoidUnless(bool, Environment.isLinux, false);
+        var len: c_int = available_to_read orelse 0;
 
         // if it's a pipe, we really don't know what to expect what the max size will be
         // if the pipe is sending us WAY bigger data than what we can fit in the buffer
         // we allocate a new buffer of up to 4 MB
         if (this.isFIFO() and view != .zero) {
             outer: {
-                var len: c_int = available_to_read orelse 0;
 
                 // macOS FIONREAD doesn't seem to work here
                 // but we can get this information from the kqueue callback so we don't need to
                 if (comptime Environment.isLinux) {
                     if (len == 0) {
-                        const FIONREAD = if (Environment.isLinux) std.os.linux.T.FIONREAD else bun.C.FIONREAD;
-                        const rc: c_int = std.c.ioctl(fd, FIONREAD, &len);
+                        const rc: c_int = std.c.ioctl(fd, std.os.linux.T.FIONREAD, &len);
                         if (rc != 0) {
                             len = 0;
                         }
-
-                        // In  Linux  versions  before 2.6.11, the capacity of a
-                        // pipe was the same as the system page size (e.g., 4096
-                        // bytes on i386).  Since Linux 2.6.11, the pipe
-                        // capacity is 16 pages (i.e., 65,536 bytes in a system
-                        // with a page size of 4096 bytes).  Since Linux 2.6.35,
-                        // the default pipe capacity is 16 pages, but the
-                        // capacity can be queried  and  set  using  the
-                        // fcntl(2) F_GETPIPE_SZ and F_SETPIPE_SZ operations.
-                        // See fcntl(2) for more information.
-
-                        //:# define F_SETPIPE_SZ    1031    /* Set pipe page size array.
-                        const F_SETPIPE_SZ = 1031;
-                        const F_GETPIPE_SZ = 1032;
 
                         if (len > 0) {
                             if (this.poll_ref) |poll| {
                                 poll.flags.insert(.readable);
                             }
-                        } else if (this.poll_ref) |poll| {
-                            poll.flags.remove(.readable);
+                        } else {
+                            if (this.poll_ref) |poll| {
+                                poll.flags.remove(.readable);
+                            }
+
+                            pipe_is_empty_on_linux = true;
                         }
 
+                        // we do not un-mark it as readable if there's nothing in the pipe
                         if (!this.has_adjusted_pipe_size_on_linux) {
-                            if (len >= std.mem.page_size * 16) {
+                            if (len > 0 and buf_to_use.len >= std.mem.page_size * 16) {
                                 this.has_adjusted_pipe_size_on_linux = true;
-                                var pipe_len: c_int = 0;
-                                _ = std.c.fcntl(fd, F_GETPIPE_SZ, &pipe_len);
-
-                                if (pipe_len > 0 and pipe_len < std.mem.page_size * 16) {
-                                    var out_size: c_int = getMaxPipeSizeOnLinux();
-                                    _ = std.c.fcntl(fd, F_SETPIPE_SZ, &out_size);
-                                }
+                                _ = Syscall.setPipeCapacityOnLinux(fd, @minimum(buf_to_use.len * 4, Syscall.getMaxPipeSizeOnLinux()));
                             }
                         }
                     }
@@ -3706,8 +3719,10 @@ pub const FileReader = struct {
         }
 
         if (this.poll_ref) |poll| {
-            if ((available_to_read orelse 0) > 0) {
-                poll.flags.insert(.readable);
+            if (comptime Environment.isMac) {
+                if ((available_to_read orelse 0) > 0) {
+                    poll.flags.insert(.readable);
+                }
             }
 
             const is_readable = poll.isReadable();
@@ -3720,7 +3735,7 @@ pub const FileReader = struct {
             } else if (!is_readable and poll.isHUP()) {
                 this.finalize();
                 return .{ .done = {} };
-            } else if (!is_readable and poll.isRegistered()) {
+            } else if (!is_readable) {
                 if (this.finished) {
                     this.finalize();
                     return .{ .done = {} };
@@ -3730,7 +3745,7 @@ pub const FileReader = struct {
                     this.view.set(this.globalThis(), view);
                     this.buf = read_buf;
                     if (!this.isWatching())
-                        this.watch(this.fd);
+                        this.watch(fd);
                 }
 
                 return .{
@@ -3739,9 +3754,37 @@ pub const FileReader = struct {
             }
         }
 
-        const rc = Syscall.read(fd, buf_to_use);
+        if (comptime Environment.isLinux) {
+            if (pipe_is_empty_on_linux) {
+                std.debug.assert(this.poll_ref == null);
+                if (view != .zero) {
+                    this.view.set(this.globalThis(), view);
+                    this.buf = read_buf;
+                }
 
-        switch (rc) {
+                this.watch(fd);
+                return .{
+                    .pending = &this.pending,
+                };
+            }
+        }
+
+        // const rc: JSC.Node.Maybe(usize) = if (comptime Environment.isLinux) brk: {
+        //     if (len == 65536 and this.has_adjusted_pipe_size_on_linux and buf_to_use.len > len) {
+        //         var iovecs = [_]std.os.iovec{.{ .iov_base = @intToPtr([*]u8, @ptrToInt(buf_to_use.ptr)), .iov_len = @intCast(usize, buf_to_use.len) }};
+        //         const rc = bun.C.linux.vmsplice(fd, &iovecs, 1, 0);
+        //         Output.debug("vmsplice({d}, {d}) = {d}", .{ fd, buf_to_use.len, rc });
+        //         if (JSC.Node.Maybe(usize).errnoSys(rc, .read)) |err| {
+        //             break :brk err;
+        //         }
+
+        //         break :brk JSC.Node.Maybe(usize){ .result = @intCast(usize, rc) };
+        //     }
+
+        //     break :brk Syscall.read(fd, buf_to_use);
+        // } else Syscall.read(fd, buf_to_use);
+
+        switch (Syscall.read(fd, buf_to_use)) {
             .err => |err| {
                 const retry = std.os.E.AGAIN;
                 const errno = brk: {
@@ -3798,19 +3841,16 @@ pub const FileReader = struct {
                 return .{ .err = sys };
             },
             .result => |result| {
-                if (this.poll_ref) |poll| {
-                    if (this.isFIFO()) {
-                        if (result < buf_to_use.len) {
-                            // do not insert .eof here
-                            poll.flags.remove(.readable);
+                if (this.isFIFO()) {
+                    if (this.poll_ref) |poll| {
 
-                            if (result > 0 and !poll.flags.contains(.hup) and !this.finished) {
-                                // partial read, but not close. be sure to ask for more data
-                                if (!this.isWatching())
-                                    this.watch(fd);
-                            }
-                        }
+                        // do not insert .eof here
+                        if (result < buf_to_use.len)
+                            poll.flags.remove(.readable);
                     }
+
+                    if (!this.finished and !this.isWatching())
+                        this.watch(fd);
                 }
 
                 if (result == 0 and free_buffer_on_error) {
@@ -3822,13 +3862,11 @@ pub const FileReader = struct {
                     return this.handleReadChunk(result, view, true, buf_to_use);
                 }
 
-                if (result == 0 and !this.finished and !this.close_on_eof and this.isFIFO()) {
+                if (result == 0 and this.isFIFO() and view != .zero) {
                     this.view.set(this.globalThis(), view);
                     this.buf = read_buf;
-                    if (!this.isWatching())
-                        this.watch(fd);
-                    this.poll_ref.?.flags.remove(.readable);
-
+                    if (this.poll_ref) |poll|
+                        poll.flags.remove(.readable);
                     return .{
                         .pending = &this.pending,
                     };
@@ -3955,7 +3993,25 @@ pub const FileReader = struct {
         }
     }
 
-    pub const Source = ReadableStreamSource(@This(), "FileReader", onStart, onPullInto, onCancel, deinit, setRefOrUnref);
+    pub fn drainInternalBuffer(this: *FileReader) bun.ByteList {
+        var buffered = this.buffered_data;
+        if (buffered.len > 0) {
+            this.buffered_data = .{};
+        }
+
+        return buffered;
+    }
+
+    pub const Source = ReadableStreamSource(
+        @This(),
+        "FileReader",
+        onStart,
+        onPullInto,
+        onCancel,
+        deinit,
+        setRefOrUnref,
+        drainInternalBuffer,
+    );
 };
 
 pub fn NewReadyWatcher(
@@ -3970,11 +4026,15 @@ pub fn NewReadyWatcher(
         const Watcher = @This();
 
         pub inline fn isFIFO(this: *const Context) bool {
-            if (this.poll_ref) |poll| {
-                return poll.flags.contains(.fifo) or poll.flags.contains(.tty);
+            if (comptime @hasField(Context, "is_fifo")) {
+                return this.is_fifo;
             }
 
-            if (@hasField(Context, "mode")) {
+            if (this.poll_ref != null) {
+                return true;
+            }
+
+            if (comptime @hasField(Context, "mode")) {
                 return std.os.S.ISFIFO(this.mode) or std.os.S.ISCHR(this.mode);
             }
 
@@ -4046,34 +4106,3 @@ pub fn NewReadyWatcher(
 //         pub fn onError(this: *Streamer): anytype,
 //     };
 // }
-
-fn getMaxPipeSizeOnLinux() c_int {
-    return bun.once(struct {
-        fn once() c_int {
-            const default_out_size = 512 * 1024;
-            const pipe_max_size_fd = switch (JSC.Node.Syscall.open("/proc/sys/fs/pipe-max-size", std.os.O.RDONLY, 0)) {
-                .result => |fd2| fd2,
-                .err => |err| {
-                    Output.debug("Failed to open /proc/sys/fs/pipe-max-size: {d}\n", .{err.errno});
-                    return default_out_size;
-                },
-            };
-            defer _ = JSC.Node.Syscall.close(pipe_max_size_fd);
-            var max_pipe_size_buf: [128]u8 = undefined;
-            const max_pipe_size = switch (JSC.Node.Syscall.read(pipe_max_size_fd, max_pipe_size_buf[0..])) {
-                .result => |bytes_read| std.fmt.parseInt(i64, strings.trim(max_pipe_size_buf[0..bytes_read], "\n"), 10) catch |err| {
-                    Output.debug("Failed to parse /proc/sys/fs/pipe-max-size: {any}\n", .{@errorName(err)});
-                    return default_out_size;
-                },
-                .err => |err| {
-                    Output.debug("Failed to read /proc/sys/fs/pipe-max-size: {d}\n", .{err.errno});
-                    return default_out_size;
-                },
-            };
-
-            // we set the absolute max to 8 MB because honestly that's a huge pipe
-            // my current linux machine only goes up to 1 MB, so that's very unlikely to be hit
-            return @minimum(@truncate(c_int, max_pipe_size), 1024 * 1024 * 8);
-        }
-    }.once, c_int);
-}

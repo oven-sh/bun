@@ -396,3 +396,8 @@ pub fn once(comptime function: anytype, comptime ReturnType: type) ReturnType {
 
     return Result.execute();
 }
+
+pub fn VoidUnless(comptime T: type, comptime cond: bool, comptime default: T) T {
+    if (cond) return default;
+    return {};
+}

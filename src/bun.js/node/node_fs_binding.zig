@@ -243,6 +243,10 @@ pub const NodeFSBindings = JSC.NewClass(
             .name = "rm",
             .rfn = call(.rm),
         },
+        .rmdir = .{
+            .name = "rmdir",
+            .rfn = call(.rmdir),
+        },
         .realpath = .{
             .name = "realpath",
             .rfn = call(.realpath),
@@ -425,6 +429,10 @@ pub const NodeFSBindings = JSC.NewClass(
         .rmSync = .{
             .name = "rmSync",
             .rfn = callSync(.rm),
+        },
+        .rmdirSync = .{
+            .name = "rmdirSync",
+            .rfn = callSync(.rmdir),
         },
     },
     .{},

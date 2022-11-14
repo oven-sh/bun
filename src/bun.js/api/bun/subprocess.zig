@@ -108,11 +108,12 @@ pub const Subprocess = struct {
                     }
                     return this.stream.toJS();
                 }
-
+                const is_fifo = this.buffer.is_fifo;
                 const stream = this.buffer.toReadableStream(globalThis, exited);
                 this.* = .{ .stream = stream };
                 if (this.stream.ptr == .File) {
                     this.stream.ptr.File.signal = JSC.WebCore.Signal.init(readable);
+                    this.stream.ptr.File.is_fifo = is_fifo;
                 }
                 return stream.value;
             }
@@ -127,6 +128,7 @@ pub const Subprocess = struct {
                         .pipe = .{
                             .buffer = BufferedOutput{
                                 .fd = fd,
+                                .is_fifo = true,
                             },
                         },
                     };
@@ -485,10 +487,21 @@ pub const Subprocess = struct {
         received_eof: bool = false,
         pending_error: ?JSC.Node.Syscall.Error = null,
         poll_ref: ?*JSC.FilePoll = null,
+        is_fifo: bool = false,
 
         pub usingnamespace JSC.WebCore.NewReadyWatcher(BufferedOutput, .readable, ready);
 
-        pub fn ready(this: *BufferedOutput, _: i64) void {
+        pub fn ready(this: *BufferedOutput, available_to_read: i64) void {
+            if (comptime Environment.isMac) {
+                if (this.poll_ref) |poll| {
+                    if (available_to_read > 0) {
+                        poll.flags.insert(.readable);
+                    } else {
+                        poll.flags.remove(.readable);
+                    }
+                }
+            }
+
             // TODO: what happens if the task was already enqueued after unwatch()?
             this.readAll(false);
         }
@@ -516,7 +529,6 @@ pub const Subprocess = struct {
                 // and we don't want this to become an event loop ticking point
                 if (!this.canRead()) {
                     this.watch(this.fd);
-                    this.poll_ref.?.flags.insert(.fifo);
                     return;
                 }
             }
@@ -543,9 +555,7 @@ pub const Subprocess = struct {
                     this.autoCloseFileDescriptor();
                     return;
                 } else if (!is_readable) {
-                    if (comptime !force) {
-                        return;
-                    }
+                    return;
                 }
             }
 
@@ -563,7 +573,7 @@ pub const Subprocess = struct {
                 switch (JSC.Node.Syscall.read(this.fd, buf)) {
                     .err => |e| {
                         if (e.isRetry()) {
-                            if (!this.isWatching())
+                            if (!this.isWatching() and this.isFIFO())
                                 this.watch(this.fd);
                             this.poll_ref.?.flags.insert(.fifo);
                             return;
@@ -608,13 +618,15 @@ pub const Subprocess = struct {
                             if (buf[bytes_read..].len > 0 or !this.canRead()) {
                                 if (!this.isWatching())
                                     this.watch(this.fd);
-                                this.poll_ref.?.flags.insert(.fifo);
-                                this.received_eof = true;
+                                if (this.is_fifo)
+                                    this.poll_ref.?.flags.insert(.fifo)
+                                else
+                                    this.received_eof = true;
                                 return;
                             }
                         } else {
                             // we consider a short read as being EOF
-                            this.received_eof = this.received_eof or bytes_read < buf.len;
+                            this.received_eof = !this.is_fifo and this.received_eof or bytes_read < buf.len;
                             if (this.received_eof) {
                                 if (this.closeOnEOF()) {
                                     this.autoCloseFileDescriptor();
@@ -642,6 +654,9 @@ pub const Subprocess = struct {
             if (exited) {
                 // exited + received EOF => no more read()
                 if (this.received_eof) {
+                    var poll_ref = this.poll_ref;
+                    this.poll_ref = null;
+
                     this.autoCloseFileDescriptor();
 
                     // also no data at all
@@ -653,9 +668,6 @@ pub const Subprocess = struct {
                             globalThis,
                         ).?;
                     }
-
-                    var poll_ref = this.poll_ref;
-                    this.poll_ref = null;
 
                     return JSC.WebCore.ReadableStream.fromJS(
                         JSC.WebCore.ReadableStream.fromBlobWithPoll(
@@ -900,7 +912,7 @@ pub const Subprocess = struct {
             stdio[1] = .{ .pipe = null };
             stdio[2] = .{ .pipe = null };
         }
-
+        var lazy = false;
         var on_exit_callback = JSValue.zero;
         var PATH = jsc_vm.bundler.env.get("PATH") orelse "";
         var argv: std.ArrayListUnmanaged(?[*:0]const u8) = undefined;
@@ -916,6 +928,9 @@ pub const Subprocess = struct {
             if (args_type.isArray()) {
                 cmd_value = args;
                 args = secondaryArgsValue orelse JSValue.zero;
+            } else if (!args.isObject()) {
+                globalThis.throwInvalidArguments("cmd must be an array", .{});
+                return .zero;
             } else if (args.get(globalThis, "cmd")) |cmd_value_| {
                 cmd_value = cmd_value_;
             } else {
@@ -1052,6 +1067,14 @@ pub const Subprocess = struct {
                     if (args.get(globalThis, "stdout")) |value| {
                         if (!extractStdio(globalThis, std.os.STDOUT_FILENO, value, &stdio))
                             return .zero;
+                    }
+                }
+
+                if (comptime !is_sync) {
+                    if (args.get(globalThis, "lazy")) |lazy_val| {
+                        if (lazy_val.isBoolean()) {
+                            lazy = lazy_val.toBoolean();
+                        }
                     }
                 }
             }
@@ -1229,7 +1252,7 @@ pub const Subprocess = struct {
                 if (subprocess.stdout.pipe.buffer.canRead()) {
                     subprocess.stdout.pipe.buffer.readAll(true);
                 }
-            } else {
+            } else if (!lazy) {
                 subprocess.stdout.pipe.buffer.readIfPossible(false);
             }
         }
@@ -1239,7 +1262,7 @@ pub const Subprocess = struct {
                 if (subprocess.stderr.pipe.buffer.canRead()) {
                     subprocess.stderr.pipe.buffer.readAll(true);
                 }
-            } else {
+            } else if (!lazy) {
                 subprocess.stderr.pipe.buffer.readIfPossible(false);
             }
         }

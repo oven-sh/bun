@@ -78,6 +78,17 @@ const debug = process.env.DEBUG ? console.log : () => {};
 // OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE
 // USE OR OTHER DEALINGS IN THE SOFTWARE.
 
+function spawnTimeoutFunction(child, timeoutHolder) {
+  var timeoutId = timeoutHolder.timeoutId;
+  if (timeoutId > -1) {
+    try {
+      child.kill(killSignal);
+    } catch (err) {
+      child.emit("error", err);
+    }
+    timeoutHolder.timeoutId = -1;
+  }
+}
 /**
  * Spawns a new process using the given `file`.
  * @param {string} file
@@ -537,7 +548,7 @@ export function spawnSync(file, args, options) {
 
   if (!success) {
     result.error = new SystemError(
-      result.stderr,
+      result.output[2],
       options.file,
       "spawnSync",
       -1,
@@ -1030,6 +1041,7 @@ export class ChildProcess extends EventEmitter {
       cwd: options.cwd || undefined,
       env: options.envPairs || undefined,
       onExit: this.#handleOnExit.bind(this),
+      lazy: true,
     });
     this.#handleExited = this.#handle.exited;
     this.#encoding = options.encoding || undefined;

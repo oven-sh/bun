@@ -3639,11 +3639,8 @@ pub const NodeFS = struct {
     pub fn rmdir(this: *NodeFS, args: Arguments.RmDir, comptime flavor: Flavor) Maybe(Return.Rmdir) {
         switch (comptime flavor) {
             .sync => {
-                var dir = args.old_path.sliceZ(&this.sync_error_buf);
-                switch (Syscall.getErrno(system.rmdir(dir))) {
-                    .SUCCESS => return Maybe(Return.Rmdir).success,
-                    else => |err| return Maybe(Return.Rmdir).errnoSys(err, .rmdir),
-                }
+                return Maybe(Return.Rmdir).errnoSysP(system.rmdir(args.path.sliceZ(&this.sync_error_buf)), .rmdir, args.path.slice()) orelse
+                    Maybe(Return.Rmdir).success;
             },
             else => {},
         }

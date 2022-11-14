@@ -4199,6 +4199,14 @@ pub const FilePoll = struct {
         return this.flags.contains(.has_incremented_poll_count);
     }
 
+    pub inline fn isWatching(this: *const FilePoll) bool {
+        return !this.flags.contains(.needs_rearm) and (this.flags.contains(.poll_readable) or this.flags.contains(.poll_writable) or this.flags.contains(.poll_process));
+    }
+
+    pub inline fn isKeepingProcessAlive(this: *const FilePoll) bool {
+        return !this.flags.contains(.disable) and this.isActive();
+    }
+
     /// Make calling ref() on this poll into a no-op.
     pub fn disableKeepingProcessAlive(this: *FilePoll, vm: *JSC.VirtualMachine) void {
         if (this.flags.contains(.disable))

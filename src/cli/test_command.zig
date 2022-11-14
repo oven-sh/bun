@@ -504,10 +504,10 @@ pub const TestCommand = struct {
                 if (!Jest.Jest.runner.?.has_pending_tests) Jest.Jest.runner.?.drain();
                 vm.eventLoop().tick();
 
-                while (Jest.Jest.runner.?.has_pending_tests) : (vm.eventLoop().tick()) {
-                    vm.eventLoop().tick();
-                    if (!Jest.Jest.runner.?.has_pending_tests) break;
+                while (Jest.Jest.runner.?.has_pending_tests) {
                     vm.eventLoop().autoTick();
+                    if (!Jest.Jest.runner.?.has_pending_tests) break;
+                    vm.eventLoop().tick();
                 }
             }
             _ = vm.global.vm().runGC(false);

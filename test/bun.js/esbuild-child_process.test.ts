@@ -12,11 +12,14 @@ describe("child_process.spawn - esbuild", () => {
 
   it("works for input exceeding the pipe capacity", async () => {
     const hugeString = `console.log(${JSON.stringify("a".repeat(1000000))});`;
-    const result = await transform(hugeString, {
-      loader: "js",
-      target: "node12",
-    });
-    expect(result.code).toBe(hugeString + "\n");
+
+    for (let i = 0; i < 2; i++) {
+      const result = await transform(hugeString, {
+        loader: "js",
+        target: "node12",
+      });
+      expect(result.code).toBe(hugeString + "\n");
+    }
   });
 });
 
@@ -35,12 +38,12 @@ describe("child_process.spawnSync - esbuild", () => {
   // code: "13"
   // syscall: "spawnSync"
   // errno: -1
-  //   it("works for input exceeding the pipe capacity", () => {
-  //     const hugeString = `console.log(${JSON.stringify("a".repeat(100000))});`;
-  //     const result = transformSync(hugeString, {
-  //       loader: "js",
-  //       target: "node12",
-  //     });
-  //     expect(result.code).toBe(hugeString + "\n");
-  //   });
+  it("works for input exceeding the pipe capacity", () => {
+    const hugeString = `console.log(${JSON.stringify("a".repeat(100000))});`;
+    const result = transformSync(hugeString, {
+      loader: "js",
+      target: "node12",
+    });
+    expect(result.code).toBe(hugeString + "\n");
+  });
 });

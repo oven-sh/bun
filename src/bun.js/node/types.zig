@@ -161,6 +161,20 @@ pub fn Maybe(comptime ResultType: type) type {
             };
         }
 
+        pub inline fn errnoSysFd(rc: anytype, syscall: Syscall.Tag, fd: anytype) ?@This() {
+            return switch (Syscall.getErrno(rc)) {
+                .SUCCESS => null,
+                else => |err| @This(){
+                    // always truncate
+                    .err = .{
+                        .errno = @truncate(Syscall.Error.Int, @enumToInt(err)),
+                        .syscall = syscall,
+                        .fd = @intCast(i32, fd),
+                    },
+                },
+            };
+        }
+
         pub inline fn errnoSysP(rc: anytype, syscall: Syscall.Tag, path: anytype) ?@This() {
             return switch (Syscall.getErrno(rc)) {
                 .SUCCESS => null,

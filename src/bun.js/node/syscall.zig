@@ -230,15 +230,29 @@ const max_count = switch (builtin.os.tag) {
 pub fn write(fd: os.fd_t, bytes: []const u8) Maybe(usize) {
     const adjusted_len = @minimum(max_count, bytes.len);
 
-    while (true) {
-        const rc = sys.write(fd, bytes.ptr, adjusted_len);
-        if (Maybe(usize).errnoSys(rc, .write)) |err| {
-            if (err.getErrno() == .INTR) continue;
+    if (comptime Environment.isMac) {
+        const rc = system.@"write$NOCANCEL"(fd, bytes.ptr, adjusted_len);
+        log("write({d}, {d}) = {d}", .{ fd, adjusted_len, rc });
+
+        if (Maybe(usize).errnoSysFd(rc, .write, fd)) |err| {
             return err;
         }
+
         return Maybe(usize){ .result = @intCast(usize, rc) };
+    } else {
+        while (true) {
+            const rc = sys.write(fd, bytes.ptr, adjusted_len);
+            log("write({d}, {d}) = {d}", .{ fd, adjusted_len, rc });
+
+            if (Maybe(usize).errnoSysFd(rc, .write, fd)) |err| {
+                if (err.getErrno() == .INTR) continue;
+                return err;
+            }
+
+            return Maybe(usize){ .result = @intCast(usize, rc) };
+        }
+        unreachable;
     }
-    unreachable;
 }
 
 const pread_sym = if (builtin.os.tag == .linux and builtin.link_libc)
@@ -275,7 +289,7 @@ pub fn pwrite(fd: os.fd_t, bytes: []const u8, offset: i64) Maybe(usize) {
     const ioffset = @bitCast(i64, offset); // the OS treats this as unsigned
     while (true) {
         const rc = pwrite_sym(fd, bytes.ptr, adjusted_len, ioffset);
-        return if (Maybe(usize).errnoSys(rc, .pwrite)) |err| {
+        return if (Maybe(usize).errnoSysFd(rc, .pwrite, fd)) |err| {
             switch (err.getErrno()) {
                 .INTR => continue,
                 else => return err,
@@ -290,21 +304,22 @@ pub fn read(fd: os.fd_t, buf: []u8) Maybe(usize) {
     const adjusted_len = @minimum(buf.len, max_count);
     if (comptime Environment.isMac) {
         const rc = system.@"read$NOCANCEL"(fd, buf.ptr, adjusted_len);
+
+        log("read({d}, {d}) = {d}", .{ fd, adjusted_len, rc });
+
         if (Maybe(usize).errnoSys(rc, .read)) |err| {
-            log("read error: {d} ({d} bytes, {d} fd)", .{ err.err.errno, buf.len, fd });
             return err;
         }
-        log("read: {d} bytes, {d} fd", .{ rc, fd });
         return Maybe(usize){ .result = @intCast(usize, rc) };
     } else {
         while (true) {
             const rc = sys.read(fd, buf.ptr, adjusted_len);
-            if (Maybe(usize).errnoSys(rc, .read)) |err| {
+            log("read({d}, {d}) = {d}", .{ fd, adjusted_len, rc });
+
+            if (Maybe(usize).errnoSysFd(rc, .read, fd)) |err| {
                 if (err.getErrno() == .INTR) continue;
-                log("read error: {d} ({d} bytes, {d} fd)", .{ err.err.errno, buf.len, fd });
                 return err;
             }
-            log("read: {d} bytes, {d} fd", .{ rc, fd });
             return Maybe(usize){ .result = @intCast(usize, rc) };
         }
     }
@@ -321,7 +336,7 @@ pub fn recv(fd: os.fd_t, buf: []u8, flag: u32) Maybe(usize) {
     } else {
         while (true) {
             const rc = linux.recvfrom(fd, buf.ptr, buf.len, flag | os.SOCK.CLOEXEC | linux.MSG.CMSG_CLOEXEC, null, null);
-            if (Maybe(usize).errnoSys(rc, .recv)) |err| {
+            if (Maybe(usize).errnoSysFd(rc, .recv, fd)) |err| {
                 if (err.getErrno() == .INTR) continue;
                 return err;
             }

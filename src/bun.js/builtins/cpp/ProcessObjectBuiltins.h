@@ -48,13 +48,22 @@ class FunctionExecutable;
 namespace WebCore {
 
 /* ProcessObject */
+extern const char* const s_processObjectEmitWarningCode;
+extern const int s_processObjectEmitWarningCodeLength;
+extern const JSC::ConstructAbility s_processObjectEmitWarningCodeConstructAbility;
+extern const JSC::ConstructorKind s_processObjectEmitWarningCodeConstructorKind;
+extern const JSC::ImplementationVisibility s_processObjectEmitWarningCodeImplementationVisibility;
 
 #define WEBCORE_FOREACH_PROCESSOBJECT_BUILTIN_DATA(macro) \
+    macro(emitWarning, processObjectEmitWarning, 1) \
 
+#define WEBCORE_BUILTIN_PROCESSOBJECT_EMITWARNING 1
 
 #define WEBCORE_FOREACH_PROCESSOBJECT_BUILTIN_CODE(macro) \
+    macro(processObjectEmitWarningCode, emitWarning, ASCIILiteral(), s_processObjectEmitWarningCodeLength) \
 
 #define WEBCORE_FOREACH_PROCESSOBJECT_BUILTIN_FUNCTION_NAME(macro) \
+    macro(emitWarning) \
 
 #define DECLARE_BUILTIN_GENERATOR(codeName, functionName, overriddenName, argumentCount) \
     JSC::FunctionExecutable* codeName##Generator(JSC::VM&);

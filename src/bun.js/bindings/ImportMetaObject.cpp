@@ -155,6 +155,11 @@ JSObject* Zig::ImportMetaObject::createRequireFunction(VM& vm, JSGlobalObject* g
     auto clientData = WebCore::clientData(vm);
     requireFunction->putDirectCustomAccessor(vm, clientData->builtinNames().resolvePublicName(), JSC::CustomGetterSetter::create(vm, functionRequireResolveLazyGetter, functionRequireResolveLazySetter), 0);
     requireFunction->putDirect(vm, clientData->builtinNames().pathPrivateName(), jsOwnedString(vm, pathString), JSC::PropertyAttribute::DontEnum | 0);
+
+    // TODO: use a polyfill with @requireMap to Proxy it so it works for real
+    // This is just a temporary workaround
+    requireFunction->putDirect(vm, JSC::Identifier::fromString(vm, "cache"_s), JSC::constructEmptyObject(globalObject), 0);
+
     return requireFunction;
 }
 

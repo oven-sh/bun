@@ -541,11 +541,14 @@ pub const Resolver = struct {
 
     pub fn flushDebugLogs(r: *ThisResolver, flush_mode: DebugLogs.FlushMode) !void {
         if (r.debug_logs) |*debug| {
-            if (flush_mode == DebugLogs.FlushMode.fail) {
-                try r.log.addRangeDebugWithNotes(null, logger.Range{ .loc = logger.Loc{} }, debug.what, debug.notes.toOwnedSlice());
-            } else if (@enumToInt(r.log.level) <= @enumToInt(logger.Log.Level.verbose)) {
-                try r.log.addVerboseWithNotes(null, logger.Loc.Empty, debug.what, debug.notes.toOwnedSlice());
+            if (debug.notes.items.len > 0) {
+                if (flush_mode == DebugLogs.FlushMode.fail) {
+                    try r.log.addRangeDebugWithNotes(null, logger.Range{ .loc = logger.Loc{} }, debug.what, debug.notes.toOwnedSlice());
+                } else if (@enumToInt(r.log.level) <= @enumToInt(logger.Log.Level.verbose)) {
+                    try r.log.addVerboseWithNotes(null, logger.Loc.Empty, debug.what, debug.notes.toOwnedSlice());
+                }
             }
+            r.debug_logs = null;
         }
     }
     var tracing_start: i128 = if (FeatureFlags.tracing) 0 else undefined;

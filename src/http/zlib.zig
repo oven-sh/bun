@@ -23,7 +23,11 @@ pub fn put(mutable: *MutableString) void {
 }
 
 pub fn decompress(compressed_data: []const u8, output: *MutableString) Zlib.ZlibError!void {
-    var reader = try Zlib.ZlibReaderArrayList.init(compressed_data, &output.list, output.allocator);
+    var reader = try Zlib.ZlibReaderArrayList.init(
+        compressed_data,
+        &output.list,
+        output.allocator,
+    );
     try reader.readAll();
     reader.deinit();
 }

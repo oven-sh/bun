@@ -7,7 +7,7 @@
       "name": "bun test",
       "program": "bun-debug",
       "args": ["wiptest", "${file}"],
-      "cwd": "${workspaceFolder}/test",
+      "cwd": "${workspaceFolder}/test/bun.js",
       "env": {
         "FORCE_COLOR": "1"
       },
@@ -19,7 +19,7 @@
       "name": "bun test (all)",
       "program": "bun-debug",
       "args": ["wiptest"],
-      "cwd": "${workspaceFolder}/test",
+      "cwd": "${workspaceFolder}/test/bun.js",
       "env": {
         "FORCE_COLOR": "1"
       },
@@ -30,8 +30,8 @@
       "request": "launch",
       "name": "bun run current file",
       "program": "bun-debug",
-      "args": ["${file}"],
-      "cwd": "${file}/../../",
+      "args": ["-i", "${file}"],
+      "cwd": "${file}/../",
       "env": {
         "FORCE_COLOR": "1"
       },
@@ -103,6 +103,15 @@
       "program": "${workspaceFolder}/misctools/fetch",
       "args": ["https://example.com", "--verbose"],
       "cwd": "${workspaceFolder}",
+      "console": "internalConsole"
+    },
+    {
+      "type": "lldb",
+      "request": "launch",
+      "name": "bun link test",
+      "program": "bun-debug",
+      "args": ["install"],
+      "cwd": "${workspaceFolder}/test/fixtures/bun-link-to-pkg-fixture",
       "console": "internalConsole"
     }
   ]

@@ -2437,9 +2437,7 @@ fn NewLexer_(
                 else => {},
             }
 
-            if (strings.indexOfChar(text, '\r') == null) {
-                return text;
-            }
+            var i = strings.indexOfChar(text, '\r') orelse return text;
 
             // From the specification:
             //
@@ -2450,28 +2448,27 @@ fn NewLexer_(
             // <LF> for both TV and TRV. An explicit EscapeSequence is needed to
             // include a <CR> or <CR><LF> sequence.
             var bytes = MutableString.init(lexer.allocator, text.len) catch unreachable;
-            var end: usize = 0;
-            var i: usize = 0;
-            var c: u8 = '0';
-            while (i < bytes.list.items.len) {
-                c = bytes.list.items[i];
-                i += 1;
-
-                if (c == '\r') {
-                    // Convert '\r\n' into '\n'
-                    if (i < bytes.list.items.len and bytes.list.items[i] == '\n') {
-                        i += 1;
-                    }
-
-                    // Convert '\r' into '\n'
-                    c = '\n';
-                }
-
-                bytes.list.items[end] = c;
-                end += 1;
+            bytes.appendAssumeCapacity(text[0..i]) catch unreachable;
+            var remain = text[i..];
+            if (remain[0] == '\n') {
+                bytes.appendChar('\n');
+                remain = remain[1..];
             }
 
-            return bytes.toOwnedSliceLength(end + 1);
+            while (strings.indexofChar(remain, '\r')) |j| {
+                bytes.appendAssumeCapacity(remain[0..j]) catch unreachable;
+                remain = remain[j..];
+                if (remain[0] == '\n') {
+                    bytes.appendCharAssumeCapacity('\n');
+                    remain = remain[1..];
+                } else {
+                    bytes.appendCharAssumeCapacity('\r');
+                }
+            }
+
+            bytes.appendAssumeCapacity(remain) catch unreachable;
+
+            return bytes.toOwnedSlice();
         }
 
         fn parseNumericLiteralOrDot(lexer: *LexerType) !void {

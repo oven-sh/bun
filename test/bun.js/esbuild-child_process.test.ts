@@ -2,13 +2,13 @@ import { transform, transformSync } from "esbuild";
 import { describe, it, expect } from "bun:test";
 
 describe("child_process.spawn - esbuild", () => {
-  it("should transform successfully", async () => {
-    const result = await transform("console.log('hello world')", {
-      loader: "js",
-      target: "node12",
-    });
-    expect(result.code).toBe('console.log("hello world");\n');
-  });
+  // it("should transform successfully", async () => {
+  //   const result = await transform("console.log('hello world')", {
+  //     loader: "js",
+  //     target: "node12",
+  //   });
+  //   expect(result.code).toBe('console.log("hello world");\n');
+  // });
 
   it("works for input exceeding the pipe capacity", async () => {
     const hugeString = `console.log(${JSON.stringify("a".repeat(1000000))});`;

@@ -803,6 +803,7 @@ pub const Linker = struct {
             result.ast.runtime_import_record_id = @truncate(u32, new_import_records.len - 1);
             import_records = new_import_records;
         }
+        // if (comptime !is_bun) {
 
         // We _assume_ you're importing ESM.
         // But, that assumption can be wrong without parsing code of the imports.
@@ -833,6 +834,26 @@ pub const Linker = struct {
 
             result.ast.prepend_part = js_ast.Part{ .stmts = std.mem.span(&require_part_stmts) };
         }
+        // } else {
+        //     if (needs_require and !result.ast.uses_require_ref) {
+        //         result.ast.uses_require_ref = true;
+        //         var decls = try linker.allocator.alloc(js_ast.G.Decl, 1);
+        //         decls[0] = .{
+        //             .binding = js_ast.Binding.alloc(linker.allocator, js_ast.B.Identifier{ .ref = result.ast.require_ref }),
+        //         };
+        //         var require_local_statement = js_ast.Stmt.alloc(js_ast.S.Local, js_ast.S.Local{
+        //             .kind = .k_var,
+        //             .decls = decls,
+        //         });
+
+        //         require_part_stmts[0] = js_ast.Stmt{
+        //             .data = .{ .s_import = &require_part_import_statement },
+        //             .loc = logger.Loc.Empty,
+        //         };
+
+        //         result.ast.prepend_part = js_ast.Part{ .stmts = std.mem.span(&require_part_stmts) };
+        //     }
+        // }
     }
 
     const ImportPathsList = allocators.BSSStringList(512, 128);

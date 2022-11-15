@@ -104,18 +104,11 @@ pub const Bunfig = struct {
 
         fn loadLogLevel(this: *Parser, expr: js_ast.Expr) !void {
             try this.expect(expr, .e_string);
-            const Matcher = strings.ExactSizeMatcher(8);
-
-            this.bunfig.log_level = switch (Matcher.match(expr.asString(this.allocator).?)) {
-                Matcher.case("debug") => Api.MessageLevel.debug,
-                Matcher.case("error") => Api.MessageLevel.err,
-                Matcher.case("warn") => Api.MessageLevel.warn,
-                Matcher.case("info") => Api.MessageLevel.info,
-                else => {
-                    try this.addError(expr.loc, "Invalid log level, must be one of debug, error, or warn");
-                    unreachable;
-                },
+            this.ctx.debug.log_level = logger.Log.Level.Map.get(expr.asString(this.allocator).?) orelse {
+                try this.addError(expr.loc, "Invalid log level, must be one of \"debug\", \"error\", \"warn\", \"info\", \"verbose\"");
+                unreachable;
             };
+            logger.Log.default_log_level = this.ctx.debug.log_level.?;
         }
 
         pub fn parse(this: *Parser, comptime cmd: Command.Tag) !void {

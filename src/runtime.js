@@ -155,6 +155,7 @@ export var __require = (namespace) => {
 __require.d = (namespace) => {
   return namespace;
 };
+__require.cache = {};
 
 export var $$m = __commonJS;
 

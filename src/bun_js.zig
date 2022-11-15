@@ -60,6 +60,12 @@ pub const Run = struct {
         run.vm.argv = ctx.passthrough;
         run.vm.arena = &run.arena;
 
+        if (ctx.debug.log_level) |level| {
+            run.vm.bundler.options.log.level = level;
+            run.vm.bundler.resolver.log.level = level;
+            run.vm.log.level = level;
+        }
+
         run.vm.bundler.options.install = ctx.install;
         run.vm.bundler.resolver.opts.install = ctx.install;
         run.vm.bundler.resolver.opts.global_cache = ctx.debug.global_cache;

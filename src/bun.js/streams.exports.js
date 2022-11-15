@@ -2039,7 +2039,7 @@ var require_destroy = __commonJS({
         r.destroyed = true;
       }
       if (!s.constructed) {
-        this.once(kDestroy, function (er) {
+        this.once(kDestroy, (er) => {
           _destroy(this, aggregateTwoErrors(er, err), cb);
         });
       } else {
@@ -5825,6 +5825,7 @@ function createNativeStream(nativeType, Readable) {
     }
 
     _construct(cb) {
+      // TODO: why do we need to set this flag here?
       this._readableState.constructed = true;
       cb();
     }

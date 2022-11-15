@@ -22,6 +22,12 @@ it("import.meta.resolveSync", () => {
   ).toBe(import.meta.path);
 });
 
+it("require.cache", () => {
+  expect(require.cache).toBe(import.meta.require.cache);
+  expect(typeof require.cache).toBe("object");
+  expect(require.cache !== null).toBe(true);
+});
+
 it("import.meta.require (json)", () => {
   expect(import.meta.require("./require-json.json").hello).toBe(sync.hello);
   const require = Module.createRequire(import.meta.path);

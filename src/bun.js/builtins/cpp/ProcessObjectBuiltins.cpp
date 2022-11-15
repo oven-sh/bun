@@ -49,6 +49,18 @@
 
 namespace WebCore {
 
+const JSC::ConstructAbility s_processObjectEmitWarningCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
+const JSC::ConstructorKind s_processObjectEmitWarningCodeConstructorKind = JSC::ConstructorKind::None;
+const JSC::ImplementationVisibility s_processObjectEmitWarningCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
+const int s_processObjectEmitWarningCodeLength = 83;
+static const JSC::Intrinsic s_processObjectEmitWarningCodeIntrinsic = JSC::NoIntrinsic;
+const char* const s_processObjectEmitWarningCode =
+    "(function (warning) {\n" \
+    "  \"use strict\";\n" \
+    "  console.warn.apply(console, arguments);\n" \
+    "})\n" \
+;
+
 
 #define DEFINE_BUILTIN_GENERATOR(codeName, functionName, overriddenName, argumentCount) \
 JSC::FunctionExecutable* codeName##Generator(JSC::VM& vm) \

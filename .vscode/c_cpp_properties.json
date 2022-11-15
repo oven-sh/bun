@@ -4,7 +4,6 @@
       "name": "Mac",
       "forcedInclude": ["${workspaceFolder}/src/bun.js/bindings/root.h"],
       "includePath": [
-        "${workspaceFolder}/../webkit-build/include/",
         "${workspaceFolder}/src/bun.js/WebKit/WebKitBuild/Release/",
         "${workspaceFolder}/src/bun.js/WebKit/WebKitBuild/Release/ICU/Headers/",
         "${workspaceFolder}/src/bun.js/WebKit/WebKitBuild/Release/JavaScriptCore/PrivateHeaders/",
@@ -23,7 +22,6 @@
       ],
       "browse": {
         "path": [
-          "${workspaceFolder}/../webkit-build/include/",
           "${workspaceFolder}/src/bun.js/WebKit/WebKitBuild/Release/",
           "${workspaceFolder}/src/bun.js/WebKit/WebKitBuild/Release/ICU/Headers/",
           "${workspaceFolder}/src/bun.js/WebKit/WebKitBuild/Release/JavaScriptCore/PrivateHeaders/**",

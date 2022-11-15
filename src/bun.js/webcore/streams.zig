@@ -3767,22 +3767,25 @@ pub const FileReader = struct {
                     .pending = &this.pending,
                 };
             }
+        } else if (this.isFIFO() and this.poll_ref == null and available_to_read == null) {
+            // we don't know if it's readable or not
+            if (!bun.isReadable(fd)) {
+                if (free_buffer_on_error) {
+                    bun.default_allocator.free(buf_to_use);
+                    buf_to_use = read_buf;
+                }
+
+                if (view != .zero) {
+                    this.view.set(this.globalThis(), view);
+                    this.buf = read_buf;
+                }
+
+                this.watch(fd);
+                return .{
+                    .pending = &this.pending,
+                };
+            }
         }
-
-        // const rc: JSC.Node.Maybe(usize) = if (comptime Environment.isLinux) brk: {
-        //     if (len == 65536 and this.has_adjusted_pipe_size_on_linux and buf_to_use.len > len) {
-        //         var iovecs = [_]std.os.iovec{.{ .iov_base = @intToPtr([*]u8, @ptrToInt(buf_to_use.ptr)), .iov_len = @intCast(usize, buf_to_use.len) }};
-        //         const rc = bun.C.linux.vmsplice(fd, &iovecs, 1, 0);
-        //         Output.debug("vmsplice({d}, {d}) = {d}", .{ fd, buf_to_use.len, rc });
-        //         if (JSC.Node.Maybe(usize).errnoSys(rc, .read)) |err| {
-        //             break :brk err;
-        //         }
-
-        //         break :brk JSC.Node.Maybe(usize){ .result = @intCast(usize, rc) };
-        //     }
-
-        //     break :brk Syscall.read(fd, buf_to_use);
-        // } else Syscall.read(fd, buf_to_use);
 
         switch (Syscall.read(fd, buf_to_use)) {
             .err => |err| {

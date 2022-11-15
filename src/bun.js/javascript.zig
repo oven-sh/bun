@@ -1047,6 +1047,10 @@ pub const VirtualMachine = struct {
             return;
         };
 
+        if (log.msgs.items.len > 0) {
+            log.appendToWithRecycled(old_log, true) catch {};
+        }
+
         res.* = ErrorableZigString.ok(ZigString.init(result.path));
     }
 

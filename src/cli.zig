@@ -671,6 +671,9 @@ pub const Arguments = struct {
                 else => logger.Log.Level.err,
             };
             ctx.log.level = logger.Log.default_log_level;
+        } else if (ctx.debug.log_level) |level| {
+            logger.Log.default_log_level = level;
+            ctx.log.level = logger.Log.default_log_level;
         }
 
         opts.output_dir = output_dir;
@@ -815,6 +818,8 @@ pub const Command = struct {
         hot_reload: bool = false,
         global_cache: options.GlobalCache = .auto,
         offline_mode_setting: ?Bunfig.OfflineMode = null,
+
+        log_level: ?logger.Log.Level = null,
 
         // technical debt
         macros: ?MacroMap = null,

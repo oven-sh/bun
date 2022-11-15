@@ -826,7 +826,7 @@ const accept_header = picohttp.Header{ .name = "Accept", .value = "*/*" };
 const accept_header_hash = hashHeaderName("Accept");
 
 const accept_encoding_no_compression = "identity";
-const accept_encoding_compression = "deflate, gzip";
+const accept_encoding_compression = "gzip, deflate";
 const accept_encoding_header_compression = picohttp.Header{ .name = "Accept-Encoding", .value = accept_encoding_compression };
 const accept_encoding_header_no_compression = picohttp.Header{ .name = "Accept-Encoding", .value = accept_encoding_no_compression };
 

@@ -74,7 +74,7 @@ pub fn match(
                 }
 
                 // When disconencted, we still have a copy of the request data in here
-                break :brk JSC.JSValue.fromRef(fetch_event.getRequest(ctx, null, null, null));
+                break :brk JSC.JSValue.fromRef(fetch_event.getRequest(ctx, null, undefined, null));
             }
         }
         break :brk JSC.JSValue.fromRef(arguments[0]);

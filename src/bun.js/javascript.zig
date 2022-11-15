@@ -2026,14 +2026,9 @@ pub const EventListenerMixin = struct {
                 if (arguments.len == 0 or arguments.len == 1 or !js.JSValueIsString(ctx, arguments[0]) or !js.JSValueIsObject(ctx, arguments[arguments.len - 1]) or !js.JSObjectIsFunction(ctx, arguments[arguments.len - 1])) {
                     return js.JSValueMakeUndefined(ctx);
                 }
-
-                const name_len = js.JSStringGetLength(arguments[0]);
-                if (name_len > event_listener_names_buf.len) {
-                    return js.JSValueMakeUndefined(ctx);
-                }
-
-                const name_used_len = js.JSStringGetUTF8CString(arguments[0], &event_listener_names_buf, event_listener_names_buf.len);
-                const name = event_listener_names_buf[0 .. name_used_len - 1];
+                var name_slice = JSValue.c(arguments[0]).toSlice(ctx, ctx.allocator());
+                defer name_slice.deinit();
+                const name = name_slice.slice();
                 const event = EventType.match(name) orelse return js.JSValueMakeUndefined(ctx);
                 var entry = VirtualMachine.vm.event_listeners.getOrPut(event) catch unreachable;
 

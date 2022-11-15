@@ -1,3 +1,5 @@
+const bun = @import("../global.zig");
+const std = @import("std");
 const cpp = @import("./bindings/bindings.zig");
 const generic = opaque {
     pub fn value(this: *const @This()) cpp.JSValue {
@@ -14,8 +16,71 @@ pub const JSContextGroupRef = ?*const struct_OpaqueJSContextGroup;
 pub const struct_OpaqueJSContext = generic;
 pub const JSContextRef = *cpp.JSGlobalObject;
 pub const JSGlobalContextRef = ?*cpp.JSGlobalObject;
-pub const struct_OpaqueJSString = generic;
-pub const JSStringRef = ?*struct_OpaqueJSString;
+pub const OpaqueJSString = opaque {
+    pub fn len(this: *OpaqueJSString) usize {
+        return JSStringGetLength(this);
+    }
+
+    pub fn is16Bit(this: *OpaqueJSString) bool {
+        return JSStringEncoding(this) == Encoding.char8;
+    }
+
+    pub fn characters16(this: *OpaqueJSString) UTF16Ptr {
+        if (comptime bun.Environment.allow_assert)
+            std.debug.assert(this.is16Bit());
+
+        return JSStringGetCharactersPtr(this);
+    }
+
+    pub fn characters8(this: *OpaqueJSString) UTF8Ptr {
+        if (comptime bun.Environment.allow_assert)
+            std.debug.assert(!this.is16Bit());
+
+        return JSStringGetCharacters8Ptr(this);
+    }
+
+    pub fn latin1Slice(this: *OpaqueJSString) []const u8 {
+        return this.characters8()[0..this.len()];
+    }
+
+    pub fn utf16Slice(this: *OpaqueJSString) []const u16 {
+        return this.characters16()[0..this.len()];
+    }
+
+    pub fn toZigString(this: *OpaqueJSString) cpp.ZigString {
+        if (this.is16Bit()) {
+            return cpp.ZigString.init16(this.utf16Slice());
+        } else {
+            return cpp.ZigString.init(this.latin1Slice());
+        }
+    }
+
+    pub fn fromZigString(zig_str: cpp.ZigString, allocator: std.mem.Allocator) *OpaqueJSString {
+        if (zig_str.isEmpty()) {
+            return JSStringCreateWithUTF8CString("");
+        }
+
+        if (zig_str.is16Bit()) {
+            return JSStringCreateWithCharacters(zig_str.utf16SliceAligned().ptr, zig_str.len);
+        }
+
+        if (zig_str.isUTF8()) {
+            // this is super inefficient
+            if (bun.strings.toUTF16Alloc(allocator, zig_str.slice(), false) catch unreachable) |utf16| {
+                const cloned = JSStringCreateWithCharacters(utf16.ptr, utf16.len);
+                allocator.free(utf16);
+                return cloned;
+            }
+        }
+
+        // also extremely inefficient
+        var utf8Z = allocator.dupeZ(u8, zig_str.slice()) catch unreachable;
+        const cloned = JSStringCreateWithUTF8CString(utf8Z);
+        allocator.free(utf8Z);
+        return cloned;
+    }
+};
+pub const JSStringRef = *OpaqueJSString;
 pub const struct_OpaqueJSClass = opaque {
     pub const name = "JSClassRef";
     pub const is_pointer = false;
@@ -30,7 +95,7 @@ pub const JSTypedArrayBytesDeallocator = ?fn (*anyopaque, *anyopaque) callconv(.
 pub const OpaqueJSValue = generic;
 pub const JSValueRef = ?*OpaqueJSValue;
 pub const JSObjectRef = ?*OpaqueJSValue;
-pub extern fn JSEvaluateScript(ctx: JSContextRef, script: JSStringRef, thisObject: ?*anyopaque, sourceURL: JSStringRef, startingLineNumber: c_int, exception: ExceptionRef) JSValueRef;
+pub extern fn JSEvaluateScript(ctx: JSContextRef, script: JSStringRef, thisObject: ?*anyopaque, sourceURL: ?JSStringRef, startingLineNumber: c_int, exception: ExceptionRef) JSValueRef;
 pub extern fn JSCheckScriptSyntax(ctx: JSContextRef, script: JSStringRef, sourceURL: JSStringRef, startingLineNumber: c_int, exception: ExceptionRef) bool;
 pub extern fn JSGarbageCollect(ctx: JSContextRef) void;
 pub const JSType = enum(c_uint) {
@@ -269,7 +334,6 @@ pub extern fn JSObjectGetArrayBufferBytesPtr(ctx: JSContextRef, object: JSObject
 pub extern fn JSObjectGetArrayBufferByteLength(ctx: JSContextRef, object: JSObjectRef, exception: ExceptionRef) usize;
 pub const OpaqueJSContextGroup = struct_OpaqueJSContextGroup;
 pub const OpaqueJSContext = struct_OpaqueJSContext;
-pub const OpaqueJSString = struct_OpaqueJSString;
 pub const OpaqueJSClass = struct_OpaqueJSClass;
 pub const OpaqueJSPropertyNameArray = struct_OpaqueJSPropertyNameArray;
 pub const OpaqueJSPropertyNameAccumulator = struct_OpaqueJSPropertyNameAccumulator;
@@ -316,8 +380,8 @@ pub fn isObjectOfClassAndResolveIfNeeded(ctx: JSContextRef, obj: JSObjectRef, cl
     }
 }
 
-pub const UTF8Ptr = [*c]const u8;
-pub const UTF16Ptr = [*c]const u16;
+pub const UTF8Ptr = [*]const u8;
+pub const UTF16Ptr = [*]const u16;
 
 // --- Custom Methods! ----
 pub const Encoding = enum(u8) {
@@ -437,130 +501,6 @@ const JSStringIterator_ = extern struct {
     append16: JStringIteratorAppendCallback,
     write8: JStringIteratorWriteCallback,
     write16: JStringIteratorWriteCallback,
-};
-
-pub const JSString = struct {
-    pub const Callback = fn (finalize_ptr_: ?*anyopaque, ref: JSStringRef, buffer: *anyopaque, byteLength: usize) callconv(.C) void;
-    _ref: JSStringRef = null,
-    backing: Backing = .{ .gc = 0 },
-
-    pub const Backing = union(Ownership) {
-        external: ExternalString,
-        static: []const u8,
-        gc: u0,
-    };
-
-    pub fn deref(this: *JSString) void {
-        if (this._ref == null) return;
-
-        JSStringRetain(this._ref);
-    }
-
-    const ExternalString = struct {
-        callback: Callback,
-        external_callback: *anyopaque,
-        external_ptr: ?*anyopaque = null,
-        slice: []const u8,
-    };
-
-    pub fn External(comptime ExternalType: type, external_type: *ExternalType, str: []const u8, callback: fn (this: *ExternalType, buffer: []const u8) void) JSString {
-        const CallbackFunctionType = @TypeOf(callback);
-
-        const ExternalWrapper = struct {
-            pub fn finalizer_callback(finalize_ptr_: ?*anyopaque, buffer: *anyopaque, byteLength: usize) callconv(.C) void {
-                var finalize_ptr = finalize_ptr_ orelse return;
-
-                var jsstring = @ptrCast(
-                    *JSString,
-                    @alignCast(
-                        @alignOf(
-                            *JSString,
-                        ),
-                        finalize_ptr,
-                    ),
-                );
-
-                var cb = @as(CallbackFunctionType, jsstring.external_callback orelse return);
-                var raw_external_ptr = jsstring.external_ptr orelse return;
-
-                var external_ptr = @ptrCast(
-                    *ExternalType,
-                    @alignCast(
-                        @alignOf(
-                            *ExternalType,
-                        ),
-                        raw_external_ptr,
-                    ),
-                );
-
-                cb(external_ptr, @ptrCast([*]u8, buffer)[0..byteLength]);
-            }
-        };
-
-        return JSString{
-            .backing = .{
-                .external = .{
-                    .slice = str,
-                    .external_callback = callback,
-                    .external_ptr = external_type,
-                    .callback = ExternalWrapper.finalizer_callback,
-                },
-            },
-        };
-    }
-
-    // pub fn Iterator(comptime WriterType: type) type {
-    //     return struct {
-
-    //     };
-    // }
-
-    pub const Ownership = enum { external, static, gc };
-
-    pub fn Static(str: []const u8) JSString {
-        return JSString{ ._ref = null, .backing = .{ .static = str } };
-    }
-
-    pub fn ref(this: *JSString) JSStringRef {
-        if (this._ref == null) {
-            switch (this.backing) {
-                .External => |external| {
-                    this._ref = JSStringCreateExternal(external.slice, external.slice.len, this, this.external_callback.?);
-                },
-                .Static => |slice| {
-                    this._ref = JSStringCreateStatic(slice.ptr, slice.len);
-                },
-                .gc => {
-                    return null;
-                },
-            }
-        }
-
-        JSStringRetain(this._ref);
-
-        return this._ref;
-    }
-
-    pub fn finalize(this: *JSString) void {
-        this.loaded = false;
-    }
-
-    pub fn value(this: *JSString, ctx: JSContextRef) JSValueRef {
-        return JSValueMakeString(ctx, this.ref());
-    }
-
-    pub fn len(this: *const JSString) usize {
-        return JSStringGetLength(this.ref);
-    }
-
-    pub fn encoding(this: *const JSString) Encoding {
-        return JSStringEncoding(this.ref);
-    }
-
-    // pub fn eql(this: *const JSString, str: string)  {
-
-    // }
-
 };
 
 // not official api functions

@@ -3668,9 +3668,9 @@ pub const FileReader = struct {
         // we allocate a new buffer of up to 4 MB
         if (this.isFIFO() and view != .zero) {
             outer: {
-
                 // macOS FIONREAD doesn't seem to work here
-                // but we can get this information from the kqueue callback so we don't need to
+                // Kernel code implies it only is enabled for FIFOs which exist
+                // in the filesystem
                 if (comptime Environment.isLinux) {
                     if (len == 0) {
                         const rc: c_int = std.c.ioctl(fd, std.os.linux.T.FIONREAD, &len);
@@ -3843,10 +3843,16 @@ pub const FileReader = struct {
             .result => |result| {
                 if (this.isFIFO()) {
                     if (this.poll_ref) |poll| {
-
-                        // do not insert .eof here
-                        if (result < buf_to_use.len)
+                        if (comptime Environment.isLinux) {
+                            // do not insert .eof here
+                            if (result < buf_to_use.len)
+                                poll.flags.remove(.readable);
+                        } else {
+                            // Since we have no way of querying FIFO capacity
+                            // its only okay to read when kqueue says its readable
+                            // otherwise we might block the process
                             poll.flags.remove(.readable);
+                        }
                     }
 
                     if (!this.finished and !this.isWatching())
@@ -3865,8 +3871,6 @@ pub const FileReader = struct {
                 if (result == 0 and this.isFIFO() and view != .zero) {
                     this.view.set(this.globalThis(), view);
                     this.buf = read_buf;
-                    if (this.poll_ref) |poll|
-                        poll.flags.remove(.readable);
                     return .{
                         .pending = &this.pending,
                     };

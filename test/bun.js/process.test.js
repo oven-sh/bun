@@ -75,3 +75,15 @@ it("process.release", () => {
     }-${{ arm64: "aarch64", x64: "x64" }[process.arch] || process.arch}.zip`,
   );
 });
+
+it("process.env", () => {
+  process.env["LOL SMILE UTF16 😂"] = "😂";
+  expect(process.env["LOL SMILE UTF16 😂"]).toBe("😂");
+  delete process.env["LOL SMILE UTF16 😂"];
+  expect(process.env["LOL SMILE UTF16 😂"]).toBe(undefined);
+
+  process.env["LOL SMILE latin1 <abc>"] = "<abc>";
+  expect(process.env["LOL SMILE latin1 <abc>"]).toBe("<abc>");
+  delete process.env["LOL SMILE latin1 <abc>"];
+  expect(process.env["LOL SMILE latin1 <abc>"]).toBe(undefined);
+});

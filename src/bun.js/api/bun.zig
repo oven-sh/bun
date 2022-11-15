@@ -3310,17 +3310,17 @@ pub const EnvironmentVariables = struct {
         propertyName: js.JSStringRef,
         _: js.ExceptionRef,
     ) callconv(.C) js.JSValueRef {
-        const len = js.JSStringGetLength(propertyName);
-        var ptr = js.JSStringGetCharacters8Ptr(propertyName);
-        var name = ptr[0..len];
+        var name_slice = propertyName.toZigString().toSlice(ctx.allocator());
+        defer name_slice.deinit();
+        var name = name_slice.slice();
         if (VirtualMachine.vm.bundler.env.map.get(name)) |value| {
-            return ZigString.toRef(value, ctx.ptr());
+            return ZigString.init(value).withEncoding().toValueGC(ctx).asObjectRef();
         }
 
         if (Output.enable_ansi_colors) {
             // https://github.com/chalk/supports-color/blob/main/index.js
             if (strings.eqlComptime(name, "FORCE_COLOR")) {
-                return ZigString.toRef(BooleanString.@"true", ctx.ptr());
+                return ZigString.static("\"true\"").toValue(ctx).asObjectRef();
             }
         }
 
@@ -3364,46 +3364,71 @@ pub const EnvironmentVariables = struct {
     }
 
     pub fn deleteProperty(
-        _: js.JSContextRef,
+        globalThis: js.JSContextRef,
         _: js.JSObjectRef,
         propertyName: js.JSStringRef,
         _: js.ExceptionRef,
     ) callconv(.C) bool {
-        const len = js.JSStringGetLength(propertyName);
-        var ptr = js.JSStringGetCharacters8Ptr(propertyName);
-        var name = ptr[0..len];
-        _ = VirtualMachine.vm.bundler.env.map.map.swapRemove(name);
-        return true;
+        var jsc_vm = globalThis.bunVM();
+        const allocator = jsc_vm.allocator;
+
+        const zig_str = propertyName.toZigString();
+
+        var str = zig_str.toSlice(allocator);
+        defer str.deinit();
+        const name = str.slice();
+
+        if (jsc_vm.bundler.env.map.map.fetchSwapRemove(name)) |entry| {
+            allocator.free(bun.constStrToU8(entry.value));
+            allocator.free(bun.constStrToU8(entry.key));
+            return true;
+        }
+
+        return false;
     }
 
     pub fn setProperty(
-        ctx: js.JSContextRef,
+        globalThis: js.JSContextRef,
         _: js.JSObjectRef,
         propertyName: js.JSStringRef,
         value: js.JSValueRef,
-        exception: js.ExceptionRef,
+        _: js.ExceptionRef,
     ) callconv(.C) bool {
-        const len = js.JSStringGetLength(propertyName);
-        var ptr = js.JSStringGetCharacters8Ptr(propertyName);
-        var name = ptr[0..len];
-        var val = ZigString.init("");
-        JSValue.fromRef(value).toZigString(&val, ctx.ptr());
-        if (exception.* != null) return false;
-        var result = std.fmt.allocPrint(VirtualMachine.vm.allocator, "{}", .{val}) catch unreachable;
-        VirtualMachine.vm.bundler.env.map.put(name, result) catch unreachable;
+        var jsc_vm = globalThis.bunVM();
+        const allocator = jsc_vm.allocator;
+
+        const zig_str = propertyName.toZigString();
+
+        var str = zig_str.toSlice(allocator);
+        const name = str.slice();
+        var entry = jsc_vm.bundler.env.map.map.getOrPut(name) catch return false;
+        if (!entry.found_existing) {
+            const value_str = value.?.value().toSlice(globalThis, allocator).cloneIfNeeded(allocator) catch return false;
+            entry.key_ptr.* = (str.cloneIfNeeded(allocator) catch return false).slice();
+
+            entry.value_ptr.* = value_str.slice();
+        } else {
+            allocator.free(bun.constStrToU8(entry.value_ptr.*));
+            const cloned_value = value.?.value().toSlice(globalThis, allocator).cloneIfNeeded(allocator) catch return false;
+            entry.value_ptr.* = cloned_value.slice();
+        }
 
         return true;
     }
 
     pub fn hasProperty(
-        _: js.JSContextRef,
+        globalThis: js.JSContextRef,
         _: js.JSObjectRef,
         propertyName: js.JSStringRef,
     ) callconv(.C) bool {
-        const len = js.JSStringGetLength(propertyName);
-        const ptr = js.JSStringGetCharacters8Ptr(propertyName);
-        const name = ptr[0..len];
-        return VirtualMachine.vm.bundler.env.map.get(name) != null or (Output.enable_ansi_colors and strings.eqlComptime(name, "FORCE_COLOR"));
+        var jsc_vm = globalThis.bunVM();
+        const allocator = jsc_vm.allocator;
+
+        const zig_str = propertyName.toZigString();
+        var str = zig_str.toSlice(allocator);
+        defer str.deinit();
+        const name = str.slice();
+        return jsc_vm.bundler.env.map.get(name) != null or (Output.enable_ansi_colors and strings.eqlComptime(name, "FORCE_COLOR"));
     }
 
     pub fn convertToType(ctx: js.JSContextRef, obj: js.JSObjectRef, kind: js.JSType, exception: js.ExceptionRef) callconv(.C) js.JSValueRef {
@@ -3423,7 +3448,9 @@ pub const EnvironmentVariables = struct {
 
         while (iter.next()) |item| {
             const str = item.key_ptr.*;
-            js.JSPropertyNameAccumulatorAddName(props, js.JSStringCreateStatic(str.ptr, str.len));
+            var init_str = ZigString.init(str);
+            init_str.markUTF8();
+            js.JSPropertyNameAccumulatorAddName(props, JSC.C.OpaqueJSString.fromZigString(init_str, VirtualMachine.vm.allocator));
         }
     }
 };

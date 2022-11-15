@@ -38,6 +38,10 @@ class EventLoopTask;
 #include "CallSite.h"
 #include "CallSitePrototype.h"
 
+namespace WebCore {
+class SubtleCrypto;
+}
+
 extern "C" void Bun__reportError(JSC__JSGlobalObject*, JSC__JSValue);
 // defined in ModuleLoader.cpp
 extern "C" JSC::EncodedJSValue jsFunctionOnLoadObjectResultResolve(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame);
@@ -488,6 +492,9 @@ private:
 
     DOMGuardedObjectSet m_guardedObjects WTF_GUARDED_BY_LOCK(m_gcLock);
     void* m_bunVM;
+
+    WebCore::SubtleCrypto* crypto = nullptr;
+
     WTF::Vector<JSC::Strong<JSC::JSPromise>> m_aboutToBeNotifiedRejectedPromises;
     WTF::Vector<JSC::Strong<JSC::JSFunction>> m_ffiFunctions;
 };

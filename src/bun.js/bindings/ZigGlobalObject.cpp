@@ -435,6 +435,9 @@ GlobalObject::GlobalObject(JSC::VM& vm, JSC::Structure* structure)
 
 GlobalObject::~GlobalObject()
 {
+    if (crypto) {
+        delete crypto;
+    }
     scriptExecutionContext()->removeFromContextsMap();
 }
 
@@ -2374,10 +2377,12 @@ void GlobalObject::finishCreation(VM& vm)
     m_subtleCryptoObject.initLater(
         [](const JSC::LazyProperty<JSC::JSGlobalObject, JSC::JSObject>::Initializer& init) {
             auto& global = *reinterpret_cast<Zig::GlobalObject*>(init.owner);
-            RefPtr<WebCore::SubtleCrypto> crypto = WebCore::SubtleCrypto::create(global.scriptExecutionContext());
+            if (global.crypto == nullptr) {
+                global.crypto = WebCore::SubtleCrypto::createPtr(global.scriptExecutionContext());
+            }
 
             init.set(
-                toJSNewlyCreated<IDLInterface<SubtleCrypto>>(*init.owner, global, WTFMove(crypto)).getObject());
+                toJS<IDLInterface<SubtleCrypto>>(*init.owner, global, global.crypto).getObject());
         });
 
     m_primordialsObject.initLater(

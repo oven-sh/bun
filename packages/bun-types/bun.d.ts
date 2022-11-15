@@ -2391,6 +2391,11 @@ declare module "bun" {
     unref(): void;
 
     /**
+     * Flush any buffered data to the socket
+     */
+    flush(): void;
+
+    /**
      * Reset the socket's callbacks. This is useful with `bun --hot` to facilitate hot reloading.
      *
      * This will apply to all sockets from the same {@link Listener}. it is per socket only for {@link Bun.connect}.

@@ -435,9 +435,7 @@ GlobalObject::GlobalObject(JSC::VM& vm, JSC::Structure* structure)
 
 GlobalObject::~GlobalObject()
 {
-    if (crypto) {
-        delete crypto;
-    }
+    delete crypto;
     scriptExecutionContext()->removeFromContextsMap();
 }
 

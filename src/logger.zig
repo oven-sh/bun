@@ -629,6 +629,13 @@ pub const Log = struct {
             map.set(Level.err, "error");
             break :brk map;
         };
+        pub const Map = bun.ComptimeStringMap(Level, .{
+            .{ "verbose", Level.verbose },
+            .{ "debug", Level.debug },
+            .{ "info", Level.info },
+            .{ "warn", Level.warn },
+            .{ "error", Level.err },
+        });
     };
 
     pub fn init(allocator: std.mem.Allocator) Log {
@@ -714,12 +721,12 @@ pub const Log = struct {
         self.msgs.deinit();
     }
 
-    pub fn appendToMaybeRecycled(self: *Log, other: *Log, source: *const Source) !void {
+    pub fn appendToWithRecycled(self: *Log, other: *Log, recycled: bool) !void {
         try other.msgs.appendSlice(self.msgs.items);
         other.warnings += self.warnings;
         other.errors += self.errors;
 
-        if (source.contents_is_recycled) {
+        if (recycled) {
             var string_builder = StringBuilder{};
             var notes_count: usize = 0;
             {
@@ -758,11 +765,15 @@ pub const Log = struct {
             }
         }
 
-        self.msgs.deinit();
+        self.msgs.clearAndFree();
+    }
+
+    pub fn appendToMaybeRecycled(self: *Log, other: *Log, source: *const Source) !void {
+        return self.appendToWithRecycled(other, source.contents_is_recycled);
     }
 
     pub fn deinit(self: *Log) void {
-        self.msgs.deinit();
+        self.msgs.clearAndFree();
     }
 
     pub fn addVerboseWithNotes(log: *Log, source: ?*const Source, loc: Loc, text: string, notes: []Data) !void {

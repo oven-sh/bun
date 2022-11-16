@@ -609,7 +609,9 @@ function renderDecls(symbolName, typeName, proto) {
         `extern "C" JSC::EncodedJSValue ${symbolName(
           typeName,
           proto[name].getter || proto[name].accessor.getter,
-        )}(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject);`,
+        )}(void* ptr,${
+          proto[name].this!! ? " JSC::EncodedJSValue thisValue, " : ""
+        } JSC::JSGlobalObject* lexicalGlobalObject);`,
         `
     JSC_DECLARE_CUSTOM_GETTER(${symbolName(typeName, name)}GetterWrap);
     `.trim(),
@@ -625,7 +627,9 @@ function renderDecls(symbolName, typeName, proto) {
         `extern "C" bool ${symbolName(
           typeName,
           proto[name].setter || proto[name].accessor.setter,
-        )}(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::EncodedJSValue value);`,
+        )}(void* ptr,${
+          proto[name].this!! ? " JSC::EncodedJSValue thisValue, " : ""
+        } JSC::JSGlobalObject* lexicalGlobalObject, JSC::EncodedJSValue value);`,
         `
       JSC_DECLARE_CUSTOM_SETTER(${symbolName(typeName, name)}SetterWrap);
       `.trim(),
@@ -788,10 +792,9 @@ JSC_DEFINE_CUSTOM_GETTER(${symbolName(
         return JSValue::encode(cachedValue);
     
     JSC::JSValue result = JSC::JSValue::decode(
-        ${symbolName(
-          typeName,
-          proto[name].getter,
-        )}(thisObject->wrapped(), globalObject)
+        ${symbolName(typeName, proto[name].getter)}(thisObject->wrapped(),${
+          proto[name].this!! ? " thisValue, " : ""
+        } globalObject)
     );
     RETURN_IF_EXCEPTION(throwScope, {});
     thisObject->${cacheName}.set(vm, thisObject, result);
@@ -819,7 +822,9 @@ JSC_DEFINE_CUSTOM_GETTER(${symbolName(
     JSC::EncodedJSValue result = ${symbolName(
       typeName,
       proto[name].getter,
-    )}(thisObject->wrapped(), globalObject);
+    )}(thisObject->wrapped(),${
+        proto[name].this!! ? " thisValue, " : ""
+      } globalObject);
     RETURN_IF_EXCEPTION(throwScope, {});
     RELEASE_AND_RETURN(throwScope, result);
 }
@@ -846,7 +851,9 @@ JSC_DEFINE_CUSTOM_SETTER(${symbolName(
     auto result = ${symbolName(
       typeName,
       proto[name].setter || proto[name].accessor.setter,
-    )}(thisObject->wrapped(), lexicalGlobalObject, encodedValue);
+    )}(thisObject->wrapped(),${
+          proto[name].this!! ? " thisValue, " : ""
+        } lexicalGlobalObject, encodedValue);
 
     RELEASE_AND_RETURN(throwScope, result);
 }
@@ -1317,27 +1324,39 @@ function generateZig(
     }
 
     [...Object.values(proto)].forEach(
-      ({ getter, setter, accessor, fn, cache, DOMJIT }) => {
+      ({ getter, setter, accessor, fn, this: thisValue, cache, DOMJIT }) => {
         if (accessor) {
           getter = accessor.getter;
           setter = accessor.setter;
         }
 
         if (getter) {
-          output += `
-          if (@TypeOf(${typeName}.${getter}) != GetterType) 
-            @compileLog(
-              "Expected ${typeName}.${getter} to be a getter"
-            );
+          if (thisValue) {
+            output += `
+            if (@TypeOf(${typeName}.${getter}) != GetterTypeWithThisValue)
+              @compileLog("Expected ${typeName}.${getter} to be a getter with thisValue");`;
+          } else {
+            output += `
+            if (@TypeOf(${typeName}.${getter}) != GetterType)
+              @compileLog(
+                "Expected ${typeName}.${getter} to be a getter"
+                );
 `;
+          }
         }
 
         if (setter) {
-          output += `
-          if (@TypeOf(${typeName}.${setter}) != SetterType) 
-            @compileLog(
-              "Expected ${typeName}.${setter} to be a setter"
-            );`;
+          if (thisValue) {
+            output += `
+            if (@TypeOf(${typeName}.${setter}) != SetterTypeWithThisValue)
+              @compileLog("Expected ${typeName}.${setter} to be a setter with thisValue");`;
+          } else {
+            output += `
+            if (@TypeOf(${typeName}.${setter}) != SetterType)
+              @compileLog(
+                "Expected ${typeName}.${setter} to be a setter"
+              );`;
+          }
         }
 
         if (fn) {
@@ -1409,7 +1428,9 @@ function generateZig(
 pub const ${className(typeName)} = struct {
     const ${typeName} = Classes.${typeName};
     const GetterType = fn(*${typeName}, *JSC.JSGlobalObject) callconv(.C) JSC.JSValue;
+    const GetterTypeWithThisValue = fn(*${typeName}, JSC.JSValue, *JSC.JSGlobalObject) callconv(.C) JSC.JSValue;
     const SetterType = fn(*${typeName}, *JSC.JSGlobalObject, JSC.JSValue) callconv(.C) bool;
+    const SetterTypeWithThisValue = fn(*${typeName}, JSC.JSValue, *JSC.JSGlobalObject, JSC.JSValue) callconv(.C) bool;
     const CallbackType = fn(*${typeName}, *JSC.JSGlobalObject, *JSC.CallFrame) callconv(.C) JSC.JSValue;
 
     /// Return the pointer to the wrapped object.

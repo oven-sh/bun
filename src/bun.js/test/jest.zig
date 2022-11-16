@@ -419,7 +419,7 @@ pub const Expect = struct {
         return .zero;
     }
 
-    pub fn notImplementedJSCProp(_: *Expect, globalObject: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue {
+    pub fn notImplementedJSCProp(_: *Expect, _: JSC.JSValue, globalObject: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue {
         globalObject.throw("Not implemented", .{});
         return .zero;
     }

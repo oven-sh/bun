@@ -225,7 +225,7 @@ pub const URL = struct {
                     const first_at = strings.indexOfChar(base[offset..], '@') orelse 0;
                     const first_colon = strings.indexOfChar(base[offset..], ':') orelse 0;
 
-                    if (first_at > first_colon and first_at < (strings.indexOfChar(base[offset..], '/') orelse 0)) {
+                    if (first_at > first_colon and first_at < (strings.indexOfChar(base[offset..], '/') orelse std.math.maxInt(u32))) {
                         offset += url.parseUsername(base[offset..]) orelse 0;
                         offset += url.parsePassword(base[offset..]) orelse 0;
                     }
@@ -1424,6 +1424,22 @@ test "URL - parse" {
     try expectString("3000", url.port);
     try expectString("/@/example", url.path);
     try expectString("/@/example", url.pathname);
+
+    url = URL.parse("http://admin:password@0.0.0.0:3000");
+    try expectString("http", url.protocol);
+    try expectString("admin", url.username);
+    try expectString("password", url.password);
+    try expectString("0.0.0.0:3000", url.host);
+    try expectString("0.0.0.0", url.hostname);
+    try expectString("3000", url.port);
+
+    url = URL.parse("http://admin:password@0.0.0.0:3000/");
+    try expectString("http", url.protocol);
+    try expectString("admin", url.username);
+    try expectString("password", url.password);
+    try expectString("0.0.0.0:3000", url.host);
+    try expectString("0.0.0.0", url.hostname);
+    try expectString("3000", url.port);
 }
 
 test "URL - joinAlloc" {

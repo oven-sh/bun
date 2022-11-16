@@ -326,6 +326,22 @@ interface Headers {
     callbackfn: (value: string, key: string, parent: Headers) => void,
     thisArg?: any,
   ): void;
+
+  /**
+   * Convert {@link Headers} to a plain JavaScript object.
+   *
+   * About 10x faster than `Object.fromEntries(headers.entries())`
+   *
+   * Called when you run `JSON.stringify(headers)`
+   *
+   * Does not preserve insertion order. Well-known header names are lowercased. Other header names are left as-is.
+   */
+  toJSON(): Record<string, string>;
+
+  /**
+   * Get the total number of headers
+   */
+  readonly count: number;
 }
 
 declare var Headers: {

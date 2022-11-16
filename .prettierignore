@@ -1,6 +1,5 @@
 src/fallback.html
 # src/test
-bench
 test/bun.js/solid-dom-fixtures
 test/bun.js/bundled
 src/bun.js/builtins

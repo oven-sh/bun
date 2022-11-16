@@ -8,6 +8,30 @@ const exampleFixture = fs.readFileSync(
   "utf8",
 );
 
+describe("Headers", () => {
+  it(".toJSON", () => {
+    var headers = new Headers({
+      "content-length": "123",
+      "content-type": "text/plain",
+      "x-another-custom-header": "Hello World",
+      "x-custom-header": "Hello World",
+    });
+    expect(JSON.stringify(headers.toJSON(), null, 2)).toBe(
+      JSON.stringify(Object.fromEntries(headers.entries()), null, 2),
+    );
+  });
+
+  it(".count", () => {
+    var headers = new Headers({
+      "content-length": "123",
+      "content-type": "text/plain",
+      "x-another-custom-header": "Hello World",
+      "x-custom-header": "Hello World",
+    });
+    expect(headers.count).toBe(4);
+  });
+});
+
 describe("fetch", () => {
   const urls = [
     "https://example.com",

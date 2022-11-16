@@ -1409,50 +1409,16 @@ pub const Resolver = struct {
             }
         }
 
-        const esm_ = ESModule.Package.parse(import_path, &esm_subpath_buf);
+        // Find the parent directory with the "package.json" file
+        var dir_info_package_json: ?*DirInfo = dir_info;
+        while (dir_info_package_json != null and dir_info_package_json.?.package_json == null) : (dir_info_package_json = dir_info_package_json.?.getParent()) {}
 
-        if (import_path[0] == '#' and !forbid_imports) {
-            if (esm_ != null) {
-                if (dir_info.enclosing_package_json) |package_json| {
-                    load_from_imports_map: {
-                        const imports_map = package_json.imports orelse break :load_from_imports_map;
-
-                        if (import_path.len == 1 or strings.hasPrefix(import_path, "#/")) {
-                            if (r.debug_logs) |*debug| {
-                                debug.addNoteFmt("The path \"{s}\" must not equal \"#\" and must not start with \"#/\"", .{import_path});
-                            }
-                            return .{ .not_found = {} };
-                        }
-
-                        const esmodule = ESModule{
-                            .conditions = switch (kind) {
-                                ast.ImportKind.require, ast.ImportKind.require_resolve => r.opts.conditions.require,
-                                else => r.opts.conditions.import,
-                            },
-                            .allocator = r.allocator,
-                            .debug_logs = if (r.debug_logs) |*debug| debug else null,
-                        };
-
-                        const esm_resolution = esmodule.resolveImports(import_path, imports_map.root);
-
-                        if (esm_resolution.status == .PackageResolve)
-                            return r.loadNodeModules(
-                                esm_resolution.path,
-                                kind,
-                                dir_info,
-                                global_cache,
-                                true,
-                            );
-
-                        if (r.handleESMResolution(esm_resolution, package_json.source.path.name.dir, kind, package_json, esm_.?.subpath)) |result| {
-                            return .{ .success = result };
-                        }
-
-                        return .{ .not_found = {} };
-                    }
-                }
-            }
+        // Check for subpath imports: https://nodejs.org/api/packages.html#subpath-imports
+        if (dir_info_package_json != null and strings.hasPrefix(import_path, "#") and !forbid_imports and dir_info_package_json.?.package_json.?.imports != null) {
+            return r.loadPackageImports(import_path, dir_info_package_json.?, kind, global_cache);
         }
+
+        const esm_ = ESModule.Package.parse(import_path, &esm_subpath_buf);
 
         var source_dir_info = dir_info;
         var any_node_modules_folder = false;
@@ -2566,6 +2532,49 @@ pub const Resolver = struct {
         }
 
         return null;
+    }
+
+    pub fn loadPackageImports(r: *ThisResolver, import_path: string, dir_info: *DirInfo, kind: ast.ImportKind, global_cache: GlobalCache) MatchResult.Union {
+        const package_json = dir_info.package_json.?;
+        if (r.debug_logs) |*debug| {
+            debug.addNoteFmt("Looking for {s} in \"imports\" map in {s}", .{ import_path, package_json.source.key_path.text });
+            debug.increaseIndent();
+            defer debug.decreaseIndent();
+        }
+        const imports_map = package_json.imports.?;
+
+        if (import_path.len == 1 or strings.hasPrefix(import_path, "#/")) {
+            if (r.debug_logs) |*debug| {
+                debug.addNoteFmt("The path \"{s}\" must not equal \"#\" and must not start with \"#/\"", .{import_path});
+            }
+            return .{ .not_found = {} };
+        }
+
+        const esmodule = ESModule{
+            .conditions = switch (kind) {
+                ast.ImportKind.require, ast.ImportKind.require_resolve => r.opts.conditions.require,
+                else => r.opts.conditions.import,
+            },
+            .allocator = r.allocator,
+            .debug_logs = if (r.debug_logs) |*debug| debug else null,
+        };
+
+        const esm_resolution = esmodule.resolveImports(import_path, imports_map.root);
+
+        if (esm_resolution.status == .PackageResolve)
+            return r.loadNodeModules(
+                esm_resolution.path,
+                kind,
+                dir_info,
+                global_cache,
+                true,
+            );
+
+        if (r.handleESMResolution(esm_resolution, package_json.source.path.name.dir, kind, package_json, "")) |result| {
+            return .{ .success = result };
+        }
+
+        return .{ .not_found = {} };
     }
 
     const BrowserMapPath = struct {

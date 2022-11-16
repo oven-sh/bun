@@ -1,6 +1,7 @@
 // "readable-stream" npm package
 // just transpiled
 var { isPromise, isCallable, direct } = import.meta.primordials;
+var debug = process.env.DEBUG ? console.log : () => {};
 
 var __create = Object.create;
 var __defProp = Object.defineProperty;
@@ -2560,12 +2561,11 @@ var require_readable = __commonJS({
         const isDuplex = this instanceof require_duplex();
         this._readableState = new ReadableState(options, this, isDuplex);
         if (options) {
-          if (typeof options.read === "function") this._read = options.read;
-          if (typeof options.destroy === "function")
-            this._destroy = options.destroy;
-          if (typeof options.construct === "function")
-            this._construct = options.construct;
-          if (options.signal && !isDuplex) addAbortSignal(options.signal, this);
+          const { read, destroy, construct, signal } = options;
+          if (typeof read === "function") this._read = read;
+          if (typeof destroy === "function") this._destroy = destroy;
+          if (typeof construct === "function") this._construct = construct;
+          if (signal && !isDuplex) addAbortSignal(signal, this);
         }
 
         destroyImpl.construct(this, () => {
@@ -2780,7 +2780,6 @@ var require_readable = __commonJS({
 
     var { addAbortSignal } = require_add_abort_signal();
     var eos = require_end_of_stream();
-    var debug = (name) => {};
     const {
       maybeReadMore: _maybeReadMore,
       resume,

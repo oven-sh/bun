@@ -1,7 +1,11 @@
 export type Field =
-  | { getter: string; cache?: true | string }
-  | { setter: string }
-  | { accessor: { getter: string; setter: string }; cache?: true | string }
+  | { getter: string; cache?: true | string; this?: boolean }
+  | { setter: string; this?: boolean }
+  | {
+      accessor: { getter: string; setter: string };
+      cache?: true | string;
+      this?: boolean;
+    }
   | {
       fn: string;
       length?: number;

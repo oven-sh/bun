@@ -5318,13 +5318,13 @@ JSC_DECLARE_CUSTOM_GETTER(jsExpectConstructor);
 extern "C" void ExpectClass__finalize(void*);
 extern "C" JSC_DECLARE_HOST_FUNCTION(ExpectClass__call);
 
-extern "C" JSC::EncodedJSValue ExpectPrototype__getNot(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject);
+extern "C" JSC::EncodedJSValue ExpectPrototype__getNot(void* ptr, JSC::EncodedJSValue thisValue, JSC::JSGlobalObject* lexicalGlobalObject);
 JSC_DECLARE_CUSTOM_GETTER(ExpectPrototype__notGetterWrap);
 
-extern "C" JSC::EncodedJSValue ExpectPrototype__getRejects(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject);
+extern "C" JSC::EncodedJSValue ExpectPrototype__getRejects(void* ptr, JSC::EncodedJSValue thisValue, JSC::JSGlobalObject* lexicalGlobalObject);
 JSC_DECLARE_CUSTOM_GETTER(ExpectPrototype__rejectsGetterWrap);
 
-extern "C" JSC::EncodedJSValue ExpectPrototype__getResolves(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject);
+extern "C" JSC::EncodedJSValue ExpectPrototype__getResolves(void* ptr, JSC::EncodedJSValue thisValue, JSC::JSGlobalObject* lexicalGlobalObject);
 JSC_DECLARE_CUSTOM_GETTER(ExpectPrototype__resolvesGetterWrap);
 
 extern "C" EncodedJSValue ExpectPrototype__toBe(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
@@ -5468,7 +5468,7 @@ JSC_DEFINE_CUSTOM_GETTER(ExpectPrototype__notGetterWrap, (JSGlobalObject * lexic
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     JSExpect* thisObject = jsCast<JSExpect*>(JSValue::decode(thisValue));
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
-    JSC::EncodedJSValue result = ExpectPrototype__getNot(thisObject->wrapped(), globalObject);
+    JSC::EncodedJSValue result = ExpectPrototype__getNot(thisObject->wrapped(), thisValue, globalObject);
     RETURN_IF_EXCEPTION(throwScope, {});
     RELEASE_AND_RETURN(throwScope, result);
 }
@@ -5480,7 +5480,7 @@ JSC_DEFINE_CUSTOM_GETTER(ExpectPrototype__rejectsGetterWrap, (JSGlobalObject * l
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     JSExpect* thisObject = jsCast<JSExpect*>(JSValue::decode(thisValue));
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
-    JSC::EncodedJSValue result = ExpectPrototype__getRejects(thisObject->wrapped(), globalObject);
+    JSC::EncodedJSValue result = ExpectPrototype__getRejects(thisObject->wrapped(), thisValue, globalObject);
     RETURN_IF_EXCEPTION(throwScope, {});
     RELEASE_AND_RETURN(throwScope, result);
 }
@@ -5492,7 +5492,7 @@ JSC_DEFINE_CUSTOM_GETTER(ExpectPrototype__resolvesGetterWrap, (JSGlobalObject * 
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     JSExpect* thisObject = jsCast<JSExpect*>(JSValue::decode(thisValue));
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
-    JSC::EncodedJSValue result = ExpectPrototype__getResolves(thisObject->wrapped(), globalObject);
+    JSC::EncodedJSValue result = ExpectPrototype__getResolves(thisObject->wrapped(), thisValue, globalObject);
     RETURN_IF_EXCEPTION(throwScope, {});
     RELEASE_AND_RETURN(throwScope, result);
 }

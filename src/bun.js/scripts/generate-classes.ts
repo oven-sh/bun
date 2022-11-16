@@ -610,7 +610,7 @@ function renderDecls(symbolName, typeName, proto) {
           typeName,
           proto[name].getter || proto[name].accessor.getter,
         )}(void* ptr,${
-          proto[name].this!! ? " JSC::EncodedJSValue thisValue, " : ""
+          !!proto[name].this ? " JSC::EncodedJSValue thisValue, " : ""
         } JSC::JSGlobalObject* lexicalGlobalObject);`,
         `
     JSC_DECLARE_CUSTOM_GETTER(${symbolName(typeName, name)}GetterWrap);
@@ -628,7 +628,7 @@ function renderDecls(symbolName, typeName, proto) {
           typeName,
           proto[name].setter || proto[name].accessor.setter,
         )}(void* ptr,${
-          proto[name].this!! ? " JSC::EncodedJSValue thisValue, " : ""
+          !!proto[name].this ? " JSC::EncodedJSValue thisValue, " : ""
         } JSC::JSGlobalObject* lexicalGlobalObject, JSC::EncodedJSValue value);`,
         `
       JSC_DECLARE_CUSTOM_SETTER(${symbolName(typeName, name)}SetterWrap);
@@ -1324,7 +1324,15 @@ function generateZig(
     }
 
     [...Object.values(proto)].forEach(
-      ({ getter, setter, accessor, fn, this: thisValue, cache, DOMJIT }) => {
+      ({
+        getter,
+        setter,
+        accessor,
+        fn,
+        this: thisValue = false,
+        cache,
+        DOMJIT,
+      }) => {
         if (accessor) {
           getter = accessor.getter;
           setter = accessor.setter;

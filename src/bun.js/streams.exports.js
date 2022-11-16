@@ -5764,7 +5764,12 @@ function createNativeStream(nativeType, Readable) {
 
     #internalConstruct(ptr) {
       this.#constructed = true;
-      start(ptr, this.#highWaterMark);
+      const result = start(ptr, this.#highWaterMark);
+
+      if (typeof result === "number" && result > 1) {
+        this.#hasResized = true;
+        this.#highWaterMark = Math.min(this.#highWaterMark, result);
+      }
 
       if (drainFn) {
         const drainResult = drainFn(ptr);

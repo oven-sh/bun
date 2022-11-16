@@ -2929,6 +2929,18 @@ pub const ByteBlobLoader = struct {
         bun.default_allocator.destroy(this);
     }
 
+    pub fn drain(this: *ByteBlobLoader) bun.ByteList {
+        var temporary = this.store.sharedView();
+        temporary = temporary[this.offset..];
+        temporary = temporary[0..@minimum(16384, @minimum(temporary.len, this.remain))];
+
+        var cloned = bun.ByteList.init(temporary).listManaged(bun.default_allocator).clone() catch @panic("Out of memory");
+        this.offset +|= @truncate(Blob.SizeType, cloned.items.len);
+        this.remain -|= @truncate(Blob.SizeType, cloned.items.len);
+
+        return bun.ByteList.fromList(cloned);
+    }
+
     pub const Source = ReadableStreamSource(
         @This(),
         "ByteBlob",
@@ -2937,7 +2949,7 @@ pub const ByteBlobLoader = struct {
         onCancel,
         deinit,
         null,
-        null,
+        drain,
     );
 };
 

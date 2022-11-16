@@ -1,5 +1,8 @@
 const { EventEmitter } = import.meta.require("node:events");
 const { Readable, Writable } = import.meta.require("node:stream");
+
+const { newArrayWithSize, isPromise } = import.meta.primordials;
+
 export function createServer(options, callback) {
   return new Server(options, callback);
 }
@@ -93,7 +96,7 @@ export class Server extends EventEmitter {
 
 function assignHeaders(object, req) {
   var headers = req.headers.toJSON();
-  const rawHeaders = new Array(req.headers.count * 2);
+  const rawHeaders = newArrayWithSize(req.headers.count * 2);
   var i = 0;
   for (const key in headers) {
     rawHeaders[i++] = key;
@@ -102,7 +105,9 @@ function assignHeaders(object, req) {
   object.headers = headers;
   object.rawHeaders = rawHeaders;
 }
-
+function destroyBodyStreamNT(bodyStream) {
+  bodyStream.destroy();
+}
 export class IncomingMessage extends Readable {
   constructor(req) {
     const method = req.method;
@@ -111,7 +116,7 @@ export class IncomingMessage extends Readable {
 
     const url = new URL(req.url);
 
-    this._no_body =
+    this.#noBody =
       "GET" === method ||
       "HEAD" === method ||
       "TRACE" === method ||
@@ -119,13 +124,12 @@ export class IncomingMessage extends Readable {
       "OPTIONS" === method ||
       (parseInt(req.headers.get("Content-Length") || "") || 0) === 0;
 
-    this._req = req;
+    this.#req = req;
     this.method = method;
-    this.complete = !!this._no_body;
-    this._body_offset = 0;
+    this.complete = !!this.#noBody;
 
-    this._body = undefined;
-    this._socket = undefined;
+    this.#bodyStream = null;
+    this.#socket = undefined;
 
     this.url = url.pathname;
     assignHeaders(this, req);
@@ -135,53 +139,78 @@ export class IncomingMessage extends Readable {
   rawHeaders;
   _consuming = false;
   _dumped = false;
-  _body;
-  _body_offset;
-  _socket;
-  _no_body;
-  _req;
+  #bodyStream = null;
+  #socket = undefined;
+  #noBody = false;
+  #aborted = false;
+  #req;
   url;
 
   _construct(callback) {
     // TODO: streaming
-    if (this._no_body) {
+    if (this.#noBody) {
       callback();
       return;
     }
 
-    (async () => {
-      try {
-        this._body = Buffer.from(await this._req.arrayBuffer());
+    const contentLength = this.#req.headers.get("content-length");
+    const length = contentLength ? parseInt(contentLength, 10) : 0;
 
-        callback();
-      } catch (err) {
-        callback(err);
-      }
-    })();
+    if (length === 0) {
+      this.#noBody = true;
+      callback();
+      return;
+    }
+
+    callback();
+  }
+
+  #closeBodyStream() {
+    var bodyStream = this.#bodyStream;
+    if (bodyStream == null) return;
+    this.complete = true;
+    this.#bodyStream = undefined;
+    this.push(null);
+    // process.nextTick(destroyBodyStreamNT, bodyStream);
   }
 
   _read(size) {
-    if (this._no_body) {
+    if (this.#noBody) {
       this.push(null);
       this.complete = true;
+    } else if (this.#bodyStream === null) {
+      const contentLength = this.#req.headers.get("content-length");
+      var remaining = contentLength ? parseInt(contentLength, 10) : 0;
+      this.#bodyStream = Readable.fromWeb(this.#req.body, {
+        highWaterMark: Number.isFinite(remaining)
+          ? Math.min(remaining, 16384)
+          : 16384,
+      });
+
+      this.#bodyStream.on("data", (chunk) => {
+        this.push(chunk);
+        remaining -= chunk?.byteLength ?? 0;
+        if (remaining <= 0) {
+          this.#closeBodyStream();
+        }
+      });
+      this.#bodyStream.on("end", () => {
+        this.#closeBodyStream();
+      });
     } else {
-      if (this._body_offset >= this._body.length) {
-        this.push(null);
-        this.complete = true;
-      } else {
-        this.push(
-          this._body.subarray(this._body_offset, (this._body_offset += size)),
-        );
-      }
+      // this.#bodyStream.read(size);
     }
   }
 
   get aborted() {
-    return false;
+    return this.#aborted;
   }
 
   abort() {
-    throw new Error("not implemented");
+    if (this.#aborted) return;
+    this.#aborted = true;
+
+    this.#closeBodyStream();
   }
 
   get connection() {
@@ -217,10 +246,10 @@ export class IncomingMessage extends Readable {
   }
 
   get socket() {
-    var _socket = this._socket;
+    var _socket = this.#socket;
     if (_socket) return _socket;
 
-    this._socket = _socket = new EventEmitter();
+    this.#socket = _socket = new EventEmitter();
     this.on("end", () => _socket.emit("end"));
     this.on("close", () => _socket.emit("close"));
 
@@ -245,6 +274,7 @@ export class ServerResponse extends Writable {
     this.#controller = undefined;
     this.#firstWrite = undefined;
     this._writableState.decodeStrings = false;
+    this.#deferred = undefined;
   }
 
   req;
@@ -260,6 +290,8 @@ export class ServerResponse extends Writable {
   _defaultKeepAlive = false;
   _removedConnection = false;
   _removedContLen = false;
+  #deferred = undefined;
+  #finished = false;
 
   #fakeSocket;
 
@@ -307,6 +339,11 @@ export class ServerResponse extends Writable {
             if (firstWrite) controller.write(firstWrite);
             firstWrite = undefined;
             run(controller);
+            if (!this.#finished) {
+              return new Promise((resolve) => {
+                this.#deferred = resolve;
+              });
+            }
           },
         }),
         {
@@ -322,6 +359,7 @@ export class ServerResponse extends Writable {
     if (!this.headersSent) {
       var data = this.#firstWrite || "";
       this.#firstWrite = undefined;
+      this.#finished = true;
       this._reply(
         new Response(data, {
           headers: this.#headers,
@@ -333,9 +371,16 @@ export class ServerResponse extends Writable {
       return;
     }
 
+    this.#finished = true;
     this.#ensureReadableStreamController((controller) => {
-      controller.close();
+      controller.end();
+
       callback();
+      var deferred = this.#deferred;
+      if (deferred) {
+        this.#deferred = undefined;
+        deferred();
+      }
     });
   }
 

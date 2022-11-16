@@ -204,6 +204,7 @@ pub fn open(file_path: [:0]const u8, flags: JSC.Node.Mode, perm: JSC.Node.Mode) 
 // That error is not unreachable for us
 pub fn close(fd: std.os.fd_t) ?Syscall.Error {
     log("close({d})", .{fd});
+    std.debug.assert(fd != JSC.Node.invalid_fd);
     if (comptime Environment.isMac) {
         // This avoids the EINTR problem.
         return switch (system.getErrno(system.@"close$NOCANCEL"(fd))) {

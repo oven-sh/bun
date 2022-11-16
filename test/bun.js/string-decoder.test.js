@@ -1,5 +1,9 @@
 import { expect, it } from "bun:test";
-import { StringDecoder } from "string_decoder";
+var { StringDecoder } = require("string_decoder");
+
+it("require('string_decoder')", () => {
+  expect(StringDecoder1).toBe(StringDecoder);
+});
 
 it("StringDecoder-utf8", () => {
   test("utf-8", Buffer.from("$", "utf-8"), "$");

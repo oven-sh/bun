@@ -977,7 +977,7 @@ const StaticSymbolName = struct {
     pub const List = struct {
         fn NewStaticSymbol(comptime basename: string) StaticSymbolName {
             return comptime StaticSymbolName{
-                .internal = basename ++ "_" ++ std.fmt.comptimePrint("{x}", .{std.hash.Wyhash.hash(0, basename)}),
+                .internal = basename ++ "_" ++ std.fmt.comptimePrint("{any}", .{bun.fmt.x(std.hash.Wyhash.hash(0, basename))}),
                 .primary = basename,
                 .backup = "_" ++ basename ++ "$",
             };
@@ -985,7 +985,7 @@ const StaticSymbolName = struct {
 
         fn NewStaticSymbolWithBackup(comptime basename: string, comptime backup: string) StaticSymbolName {
             return comptime StaticSymbolName{
-                .internal = basename ++ "_" ++ std.fmt.comptimePrint("{x}", .{std.hash.Wyhash.hash(0, basename)}),
+                .internal = basename ++ "_" ++ std.fmt.comptimePrint("{any}", .{bun.fmt.x(std.hash.Wyhash.hash(0, basename))}),
                 .primary = basename,
                 .backup = backup,
             };
@@ -4263,19 +4263,20 @@ fn NewParser_(
                     p.import_records.items[import_record_index].was_originally_require = true;
                     p.import_records.items[import_record_index].contains_import_star = true;
 
-                    const symbol_name = p.import_records.items[import_record_index].path.name.nonUniqueNameString(p.allocator);
+                    const symbol_name = p.import_records.items[import_record_index].path.name.nonUniqueNameString(p.allocator) catch unreachable;
                     const cjs_import_name = std.fmt.allocPrint(
                         p.allocator,
-                        "{any}_{x}_{d}",
+                        "{s}_{s}_{d}",
                         .{
+                            // THIS WASN'T ERRORING BEFORE
                             symbol_name,
-                            @truncate(
+                            bun.fmt.x(@truncate(
                                 u16,
                                 std.hash.Wyhash.hash(
                                     0,
                                     p.import_records.items[import_record_index].path.text,
                                 ),
-                            ),
+                            )),
                             p.cjs_import_stmts.items.len,
                         },
                     ) catch unreachable;
@@ -4714,7 +4715,7 @@ fn NewParser_(
                 // Duplicate exports are an error
                 var notes = try p.allocator.alloc(logger.Data, 1);
                 notes[0] = logger.Data{
-                    .text = try std.fmt.allocPrint(p.allocator, "\"{any}\" was originally exported here", .{alias}),
+                    .text = try std.fmt.allocPrint(p.allocator, "\"{s}\" was originally exported here", .{alias}),
                     .location = logger.Location.init_or_nil(p.source, js_lexer.rangeOfIdentifier(p.source, name.alias_loc)),
                 };
                 try p.log.addRangeErrorFmtWithNotes(
@@ -4722,7 +4723,7 @@ fn NewParser_(
                     js_lexer.rangeOfIdentifier(p.source, loc),
                     p.allocator,
                     notes,
-                    "Multiple exports with the same name \"{any}\"",
+                    "Multiple exports with the same name \"{s}\"",
                     .{std.mem.trim(u8, alias, "\"'")},
                 );
             } else {

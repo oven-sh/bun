@@ -735,7 +735,7 @@ const DocumentHandler = struct {
             .Object, .ProxyObject, .Cell, .FinalObject => {},
             else => |kind| {
                 JSC.throwInvalidArguments(
-                    "Expected object but received {any}",
+                    "Expected object but received {s}",
                     .{@as(string, @tagName(kind))},
                     global,
                     exception,
@@ -886,7 +886,7 @@ const ElementHandler = struct {
             .Object, .ProxyObject, .Cell, .FinalObject => {},
             else => |kind| {
                 JSC.throwInvalidArguments(
-                    "Expected object but received {any}",
+                    "Expected object but received {s}",
                     .{@as(string, @tagName(kind))},
                     global,
                     exception,

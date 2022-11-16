@@ -889,10 +889,10 @@ const PackageInstall = struct {
     fn installWithClonefileEachDir(this: *PackageInstall) !Result {
         const Walker = @import("../walker_skippable.zig");
 
-        var cached_package_dir = this.cache_dir.openDirZ(this.cache_dir_subpath, .{}, true) catch |err| return Result{
+        var cached_package_dir = bun.openIterableDirZFromDir(this.cache_dir, this.cache_dir_subpath) catch |err| return Result{
             .fail = .{ .err = err, .step = .opening_cache_dir },
         };
-        defer cached_package_dir.close();
+        defer cached_package_dir.dir.close();
         var walker_ = Walker.walk(
             cached_package_dir,
             this.allocator,
@@ -921,7 +921,7 @@ const PackageInstall = struct {
                             var path: [:0]u8 = stackpath[0..entry.path.len :0];
                             var basename: [:0]u8 = stackpath[entry.path.len - entry.basename.len .. entry.path.len :0];
                             switch (C.clonefileat(
-                                entry.dir.fd,
+                                entry.dir.dir.fd,
                                 basename,
                                 destination_dir_.fd,
                                 path,
@@ -1003,7 +1003,7 @@ const PackageInstall = struct {
         const Walker = @import("../walker_skippable.zig");
         const CopyFile = @import("../copy_file.zig");
 
-        var cached_package_dir = this.cache_dir.openDirZ(this.cache_dir_subpath, .{}, true) catch |err| return Result{
+        var cached_package_dir = bun.openIterableDirZFromDir(this.cache_dir, this.cache_dir_subpath) catch |err| return Result{
             .fail = .{ .err = err, .step = .opening_cache_dir },
         };
         defer cached_package_dir.close();
@@ -1043,14 +1043,14 @@ const PackageInstall = struct {
                     };
                     defer outfile.close();
 
-                    var infile = try entry.dir.openFile(entry.basename, .{ .mode = .read_only });
+                    var infile = try entry.dir.dir.openFile(entry.basename, .{ .mode = .read_only });
                     defer infile.close();
 
                     const stat = infile.stat() catch continue;
                     _ = C.fchmod(outfile.handle, stat.mode);
 
                     CopyFile.copy(infile.handle, outfile.handle) catch {
-                        entry.dir.copyFile(entry.basename, destination_dir_, entry.path, .{}) catch |err| {
+                        entry.dir.dir.copyFile(entry.basename, destination_dir_, entry.path, .{}) catch |err| {
                             progress_.root.end();
 
                             progress_.refresh();
@@ -1083,7 +1083,7 @@ const PackageInstall = struct {
     fn installWithHardlink(this: *PackageInstall) !Result {
         const Walker = @import("../walker_skippable.zig");
 
-        var cached_package_dir = this.cache_dir.openDirZ(this.cache_dir_subpath, .{}, true) catch |err| return Result{
+        var cached_package_dir = bun.openIterableDirZFromDir(this.cache_dir, this.cache_dir_subpath) catch |err| return Result{
             .fail = .{ .err = err, .step = .opening_cache_dir },
         };
         defer cached_package_dir.close();
@@ -1109,7 +1109,7 @@ const PackageInstall = struct {
                             std.os.mkdirat(destination_dir_.fd, entry.path, 0o755) catch {};
                         },
                         .File => {
-                            try std.os.linkat(entry.dir.fd, entry.basename, destination_dir_.fd, entry.path, 0);
+                            try std.os.linkat(entry.dir.dir.fd, entry.basename, destination_dir_.fd, entry.path, 0);
                             real_file_count += 1;
                         },
                         else => {},
@@ -1144,7 +1144,7 @@ const PackageInstall = struct {
     fn installWithSymlink(this: *PackageInstall) !Result {
         const Walker = @import("../walker_skippable.zig");
 
-        var cached_package_dir = this.cache_dir.openDirZ(this.cache_dir_subpath, .{}, true) catch |err| return Result{
+        var cached_package_dir = bun.openIterableDirZFromDir(this.cache_dir, this.cache_dir_subpath) catch |err| return Result{
             .fail = .{ .err = err, .step = .opening_cache_dir },
         };
         defer cached_package_dir.close();
@@ -1221,7 +1221,7 @@ const PackageInstall = struct {
 
         this.file_count = FileCopier.copy(
             subdir.fd,
-            cached_package_dir.fd,
+            cached_package_dir.dir.fd,
             &walker_,
         ) catch |err|
             return Result{
@@ -1868,7 +1868,7 @@ pub const PackageManager = struct {
         var end: []u8 = undefined;
         if (scope.url.hostname.len > 32 or available.len < 64) {
             const visible_hostname = scope.url.hostname[0..@min(scope.url.hostname.len, 12)];
-            end = std.fmt.bufPrint(available, "@@{s}__{x}", .{ visible_hostname, String.Builder.stringHash(scope.url.href) }) catch unreachable;
+            end = std.fmt.bufPrint(available, "@@{s}__{any}", .{ visible_hostname, bun.fmt.x(String.Builder.stringHash(scope.url.href)) }) catch unreachable;
         } else {
             end = std.fmt.bufPrint(available, "@@{s}", .{scope.url.hostname}) catch unreachable;
         }
@@ -1893,14 +1893,14 @@ pub const PackageManager = struct {
         } else if (version.tag.hasPre() and version.tag.hasBuild()) {
             return std.fmt.bufPrintZ(
                 buf,
-                "{s}@{d}.{d}.{d}-{x}+{X}",
-                .{ name, version.major, version.minor, version.patch, version.tag.pre.hash, version.tag.build.hash },
+                "{s}@{d}.{d}.{d}-{any}+{X}",
+                .{ name, version.major, version.minor, version.patch, version.tag.pre.hash, bun.fmt.x(version.tag.build.hash) },
             ) catch unreachable;
         } else if (version.tag.hasPre()) {
             return std.fmt.bufPrintZ(
                 buf,
-                "{s}@{d}.{d}.{d}-{x}",
-                .{ name, version.major, version.minor, version.patch, version.tag.pre.hash },
+                "{s}@{d}.{d}.{d}-{any}",
+                .{ name, version.major, version.minor, version.patch, bun.fmt.x(version.tag.pre.hash) },
             ) catch unreachable;
         } else if (version.tag.hasBuild()) {
             return std.fmt.bufPrintZ(
@@ -5464,10 +5464,10 @@ pub const PackageManager = struct {
                 if (cwd.openDirZ(manager.options.bin_path, .{}, true)) |node_modules_bin_| {
                     var node_modules_bin: std.fs.Dir = node_modules_bin_;
                     const iterable_dir = std.fs.IterableDir{ .dir = .{ .fd = node_modules_bin.fd } };
-                    var iter: std.fs.Dir.Iterator = iterable_dir.iterate();
+                    var iter: std.fs.IterableDir.Iterator = iterable_dir.iterate();
                     iterator: while (iter.next() catch null) |entry| {
                         switch (entry.kind) {
-                            std.fs.Dir.Entry.Kind.SymLink => {
+                            std.fs.IterableDir.Entry.Kind.SymLink => {
 
                                 // any symlinks which we are unable to open are assumed to be dangling
                                 // note that using access won't work here, because access doesn't resolve symlinks
@@ -6684,7 +6684,7 @@ pub const PackageManager = struct {
                     // bun install may have installed new bins, so we need to update the PATH
                     // this can happen if node_modules/.bin didn't previously exist
                     // note: it is harmless to have the same directory in the PATH multiple times
-                    const current_path = manager.env.map.get("PATH");
+                    const current_path = manager.env.map.get("PATH") orelse "/";
 
                     // TODO: windows
                     const cwd_without_trailing_slash = if (Fs.FileSystem.instance.top_level_dir.len > 1 and Fs.FileSystem.instance.top_level_dir[Fs.FileSystem.instance.top_level_dir.len - 1] == '/')
@@ -6696,7 +6696,7 @@ pub const PackageManager = struct {
                         ctx.allocator,
                         "{s}:{s}/node_modules/.bin",
                         .{
-                            current_path,
+                            current_path ,
                             cwd_without_trailing_slash,
                         },
                     ));

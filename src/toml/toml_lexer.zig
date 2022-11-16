@@ -95,7 +95,7 @@ pub const Lexer = struct {
     pub fn addDefaultError(self: *Lexer, msg: []const u8) !void {
         @setCold(true);
 
-        self.addError(self.start, "{any}", .{msg}, true);
+        self.addError(self.start, "{s}", .{msg}, true);
         return Error.SyntaxError;
     }
 
@@ -325,7 +325,7 @@ pub const Lexer = struct {
                     if (std.fmt.parseFloat(f64, text)) |num| {
                         lexer.number = num;
                     } else |_| {
-                        try lexer.addSyntaxError(lexer.start, "Invalid number {any}", .{text});
+                        try lexer.addSyntaxError(lexer.start, "Invalid number {s}", .{text});
                     }
                 }
             }
@@ -1124,7 +1124,7 @@ pub const Lexer = struct {
             }
         };
 
-        try lexer.addRangeError(lexer.range(), "Unexpected {any}", .{found}, true);
+        try lexer.addRangeError(lexer.range(), "Unexpected {s}", .{found}, true);
     }
 
     pub fn expectedString(self: *Lexer, text: string) !void {
@@ -1136,7 +1136,7 @@ pub const Lexer = struct {
             }
         };
 
-        try self.addRangeError(self.range(), "Expected {any} but found {any}", .{ text, found }, true);
+        try self.addRangeError(self.range(), "Expected {s} but found {s}", .{ text, found }, true);
     }
 
     pub fn range(self: *Lexer) logger.Range {

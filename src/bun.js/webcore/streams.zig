@@ -3162,6 +3162,7 @@ pub const FileBlobLoader = struct {
             resume this.concurrent.read_frame;
         }
 
+        const ScheduleReadFrame = @Frame(scheduleRead);
         pub fn scheduleRead(this: *FileBlobLoader) void {
             if (comptime Environment.isMac) {
                 var remaining = this.buf[this.concurrent.read..];
@@ -3209,14 +3210,15 @@ pub const FileBlobLoader = struct {
                 null,
             );
 
-            suspend {
-                var _frame = @frame();
-                var this_frame = bun.default_allocator.create(std.meta.Child(@TypeOf(_frame))) catch unreachable;
-                this_frame.* = _frame.*;
-                this.concurrent.read_frame = this_frame;
-            }
+            // suspend {
+            //     var _frame = @frame();
+            //     var this_frame = bun.allocateFrame(ScheduleReadFrame) catch unreachable;
+            //     this_frame.* = _frame.*;
+            //     this.concurrent.read_frame = this_frame;
+            // }
+            unreachable;
 
-            scheduleMainThreadTask(this);
+            // scheduleMainThreadTask(this);
         }
 
         pub fn onJSThread(task_ctx: *anyopaque) void {

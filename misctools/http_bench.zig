@@ -120,12 +120,12 @@ pub const Arguments = struct {
                 var absolute_path_ = file_path_buf[0..absolute_path_len :0];
 
                 var body_file = std.fs.openFileAbsoluteZ(absolute_path_, .{ .mode = .read_only }) catch |err| {
-                    Output.printErrorln("<r><red>{any}<r> opening file {any}", .{ @errorName(err), absolute_path });
+                    Output.printErrorln("<r><red>{s}<r> opening file {s}", .{ @errorName(err), absolute_path });
                     Global.exit(1);
                 };
 
                 var file_contents = body_file.readToEndAlloc(allocator, try body_file.getEndPos()) catch |err| {
-                    Output.printErrorln("<r><red>{any}<r> reading file {any}", .{ @errorName(err), absolute_path });
+                    Output.printErrorln("<r><red>{s}<r> reading file {s}", .{ @errorName(err), absolute_path });
                     Global.exit(1);
                 };
                 body_string = file_contents;

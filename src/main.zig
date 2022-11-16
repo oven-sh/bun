@@ -26,9 +26,7 @@ const JavaScript = @import("bun.js/javascript.zig");
 pub const io_mode = .blocking;
 pub const bindgen = if (@import("builtin").is_test) undefined else @import("build_options").bindgen;
 const Report = @import("./report.zig");
-pub fn panic(msg: []const u8, error_return_trace: ?*std.builtin.StackTrace) noreturn {
-    MainPanicHandler.handle_panic(msg, error_return_trace);
-}
+pub const panic = MainPanicHandler.handle_panic;
 
 const CrashReporter = @import("./crash_reporter.zig");
 

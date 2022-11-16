@@ -187,7 +187,7 @@ const BunBuildOptions = struct {
 var output_dir: []const u8 = "";
 fn panicIfNotFound(comptime filepath: []const u8) []const u8 {
     var file = std.fs.cwd().openFile(filepath, .{ .mode = .read_only }) catch |err| {
-        std.debug.panic("error: {any} opening {any}. Please ensure you've downloaded git submodules, and ran `make vendor`, `make jsc`.", .{ filepath, @errorName(err) });
+        std.debug.panic("error: {s} opening {s}. Please ensure you've downloaded git submodules, and ran `make vendor`, `make jsc`.", .{ filepath, @errorName(err) });
     };
     file.close();
 
@@ -202,7 +202,7 @@ fn updateRuntime() anyerror!void {
     );
     const runtime_version_file = std.fs.cwd().createFile("src/runtime.version", .{ .truncate = true }) catch std.debug.panic("Failed to create src/runtime.version", .{});
     defer runtime_version_file.close();
-    runtime_version_file.writer().print("{x}", .{runtime_hash}) catch unreachable;
+    runtime_version_file.writer().print("{any}", .{std.fmt.fmtSliceHexLower(std.mem.asBytes(&runtime_hash))}) catch unreachable;
     var fallback_out_file = try std.fs.cwd().openFile("src/fallback.out.js", .{ .mode = .read_only });
     const fallback_hash = std.hash.Wyhash.hash(
         0,
@@ -211,7 +211,7 @@ fn updateRuntime() anyerror!void {
 
     const fallback_version_file = std.fs.cwd().createFile("src/fallback.version", .{ .truncate = true }) catch std.debug.panic("Failed to create src/fallback.version", .{});
 
-    fallback_version_file.writer().print("{x}", .{fallback_hash}) catch unreachable;
+    fallback_version_file.writer().print("{any}", .{std.fmt.fmtSliceHexLower(std.mem.asBytes(&fallback_hash))}) catch unreachable;
 
     fallback_version_file.close();
 }
@@ -274,7 +274,7 @@ pub fn build(b: *std.build.Builder) !void {
     if (std.os.getenv("OUTPUT_DIR")) |output_dir_| {
         output_dir = output_dir_;
     } else {
-        const output_dir_base = try std.fmt.bufPrint(&output_dir_buf, "{any}{any}", .{ bin_label, triplet });
+        const output_dir_base = try std.fmt.bufPrint(&output_dir_buf, "{s}{s}", .{ bin_label, triplet });
         output_dir = b.pathFromRoot(output_dir_base);
     }
 
@@ -304,9 +304,9 @@ pub fn build(b: *std.build.Builder) !void {
     else .{ .major = 0, .minor = 0, .patch = 0 };
 
     // exe.want_lto = true;
-    defer b.default_step.dependOn(&b.addLog("Output: {any}/{any}\n", .{ output_dir, bun_executable_name }).step);
+    defer b.default_step.dependOn(&b.addLog("Output: {s}/{s}\n", .{ output_dir, bun_executable_name }).step);
     defer b.default_step.dependOn(&b.addLog(
-        "Build {any} v{} - v{}\n",
+        "Build {s} v{} - v{}\n",
         .{
             triplet,
             min_version,
@@ -377,7 +377,7 @@ pub fn build(b: *std.build.Builder) !void {
 
         {
             obj_step.dependOn(&b.addLog(
-                "Build {any} v{} - v{} ({any})\n",
+                "Build {s} v{} - v{} ({s})\n",
                 .{
                     triplet,
                     min_version,
@@ -415,7 +415,7 @@ pub fn build(b: *std.build.Builder) !void {
             obj.link_function_sections = true;
         }
 
-        var log_step = b.addLog("Destination: {any}/{any}\n", .{ output_dir, bun_executable_name });
+        var log_step = b.addLog("Destination: {s}/{s}\n", .{ output_dir, bun_executable_name });
         log_step.step.dependOn(&obj.step);
     }
 
@@ -515,7 +515,7 @@ pub fn build(b: *std.build.Builder) !void {
         try linkObjectFiles(b, headers_obj, target);
 
         {
-            var before = b.addLog("\x1b[" ++ color_map.get("magenta").? ++ "\x1b[" ++ color_map.get("b").? ++ "[{any} tests]" ++ "\x1b[" ++ color_map.get("d").? ++ " ----\n\n" ++ "\x1b[0m", .{"bun"});
+            var before = b.addLog("\x1b[" ++ color_map.get("magenta").? ++ "\x1b[" ++ color_map.get("b").? ++ "[{s} tests]" ++ "\x1b[" ++ color_map.get("d").? ++ " ----\n\n" ++ "\x1b[0m", .{"bun"});
             var after = b.addLog("\x1b[" ++ color_map.get("d").? ++ "–––---\n\n" ++ "\x1b[0m", .{});
             headers_step.dependOn(&before.step);
             headers_step.dependOn(&headers_obj.step);
@@ -539,7 +539,7 @@ pub fn build(b: *std.build.Builder) !void {
                 try test_.packages.appendSlice(children);
             }
 
-            var before = b.addLog("\x1b[" ++ color_map.get("magenta").? ++ "\x1b[" ++ color_map.get("b").? ++ "[{any} tests]" ++ "\x1b[" ++ color_map.get("d").? ++ " ----\n\n" ++ "\x1b[0m", .{pkg.name});
+            var before = b.addLog("\x1b[" ++ color_map.get("magenta").? ++ "\x1b[" ++ color_map.get("b").? ++ "[{s} tests]" ++ "\x1b[" ++ color_map.get("d").? ++ " ----\n\n" ++ "\x1b[0m", .{pkg.name});
             var after = b.addLog("\x1b[" ++ color_map.get("d").? ++ "–––---\n\n" ++ "\x1b[0m", .{});
             headers_step.dependOn(&before.step);
             headers_step.dependOn(&test_.step);
@@ -557,6 +557,8 @@ pub var original_make_fn: ?fn (step: *std.build.Step) anyerror!void = null;
 pub fn linkObjectFiles(b: *std.build.Builder, obj: *std.build.LibExeObjStep, target: anytype) !void {
     if (target.getOsTag() == .freestanding)
         return;
+
+        
     var dirs_to_search = std.BoundedArray([]const u8, 32).init(0) catch unreachable;
     const arm_brew_prefix: []const u8 = "/opt/homebrew";
     const x86_brew_prefix: []const u8 = "/usr/local";

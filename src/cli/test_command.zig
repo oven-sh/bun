@@ -180,7 +180,7 @@ const Scanner = struct {
         name: strings.StringOrTinyString,
     };
 
-    fn readDirWithName(this: *Scanner, name: string, handle: ?std.fs.Dir) !*FileSystem.RealFS.EntriesOption {
+    fn readDirWithName(this: *Scanner, name: string, handle: ?std.fs.IterableDir) !*FileSystem.RealFS.EntriesOption {
         return try this.fs.fs.readDirectoryWithIterator(name, handle, *Scanner, this);
     }
 
@@ -215,9 +215,9 @@ const Scanner = struct {
             var path2 = this.fs.absBuf(parts2, &this.open_dir_buf);
             this.open_dir_buf[path2.len] = 0;
             var pathZ = this.open_dir_buf[path2.len - entry.name.slice().len .. path2.len :0];
-            var child_dir = dir.openIterableDirZ(pathZ, .{}) catch continue;
+            var child_dir = bun.openIterableDirZFromDir(dir, pathZ) catch continue;
             path2 = this.fs.dirname_store.append(string, path2) catch unreachable;
-            FileSystem.setMaxFd(child_dir.fd);
+            FileSystem.setMaxFd(child_dir.dir.fd);
             _ = this.readDirWithName(path2, child_dir) catch continue;
         }
     }

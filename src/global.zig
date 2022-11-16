@@ -31,6 +31,55 @@ pub const path = @import("./resolver/resolve_path.zig");
 pub const fmt = struct {
     pub usingnamespace std.fmt;
 
+fn formatSliceHexImpl(comptime case: fmt.Case) type {
+    const charset = "0123456789" ++ if (case == .upper) "ABCDEF" else "abcdef";
+
+    return struct {
+        pub fn f(
+            bytes: []const u8,
+            comptime _: []const u8,
+            _: std.fmt.FormatOptions,
+            writer: anytype,
+        ) !void {
+            var buf: [2]u8 = undefined;
+
+            for (bytes) |c| {
+                buf[0] = charset[c >> 4];
+                buf[1] = charset[c & 15];
+                try writer.writeAll(&buf);
+            }
+        }
+    };
+}
+
+
+const formatSliceHexLower = formatSliceHexImpl(.lower).f;
+const formatSliceHexUpper = formatSliceHexImpl(.upper).f;
+
+
+
+
+
+    pub fn x(to_lower_hex: anytype) std.fmt.Formatter(formatSliceHexLower) {
+        return std.fmt.Formatter(formatSliceHexLower){.data = asBytesWithType(@TypeOf(to_lower_hex), to_lower_hex)};
+    }
+
+    fn asBytesWithType(comptime Type: type, value: Type) []const u8 {
+        if (comptime Type == i64 or Type == u64 or Type == f64) {
+            return @bitCast([8]u8, value)[0..];
+        } else if (comptime Type == i32 or Type == u32 or Type == f32) {
+            return @bitCast([4]u8, value)[0..];
+        } else if (comptime Type == i16 or Type == u16) {
+            return @bitCast([2]u8, value)[0..];
+        } else if (comptime Type == i8 or Type == u8) {
+            return @bitCast([1]u8, value)[0..];
+        } else {
+            return std.mem.asBytes(value);
+        }
+      
+    }
+
+
     pub const SizeFormatter = struct {
         value: usize = 0,
         pub fn format(self: SizeFormatter, comptime _: []const u8, opts: fmt.FormatOptions, writer: anytype) !void {
@@ -378,3 +427,26 @@ pub const Bunfig = @import("./bunfig.zig").Bunfig;
 pub const HTTPThead = @import("./http_client_async.zig").HTTPThread;
 
 pub const Analytics = @import("./analytics/analytics_thread.zig");
+
+
+pub fn allocateFrame(comptime Type: type) error{OutOfMemory}!Type {
+    const Mimalloc = @import("./memory_allocator.zig");
+    if (Mimalloc.alignedAlloc(@sizeOf(Type), @alignOf(Type))) |ptr| {
+        return @ptrCast(*Type, ptr);
+    } else {
+        return error.OutOfMemory;
+    }
+}
+
+pub fn openIterableDirZ(fd: std.os.fd_t, path_: [:0]const u8) !std.fs.IterableDir {
+    const dir_fd = try std.os.openatZ(fd, path_, std.os.O.DIRECTORY, 0);
+    return std.fs.IterableDir{.dir = .{.fd = dir_fd} };
+}
+
+pub fn openIterableDirZFromDir(dir: std.fs.Dir, path_: [:0]const u8) !std.fs.IterableDir {
+    return openIterableDirZ(dir.fd, path_);
+}
+
+pub fn openIterableDirZFromIterableDir(dir: std.fs.IterableDir, path_: [:0]const u8) !std.fs.IterableDir {
+    return openIterableDirZFromIterableDir(dir.dir, path_);
+}

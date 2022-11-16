@@ -273,7 +273,7 @@ pub const To = struct {
                     if (comptime Info == .Struct) {
                         if (comptime @hasDecl(Type, "Class") and @hasDecl(Type.Class, "isJavaScriptCoreClass")) {
                             if (comptime !@hasDecl(Type, "finalize")) {
-                                @compileError(comptime std.fmt.comptimePrint("JSC class {any} must implement finalize to prevent memory leaks", .{Type.Class.name}));
+                                @compileError(comptime std.fmt.comptimePrint("JSC class {s} must implement finalize to prevent memory leaks", .{Type.Class.name}));
                             }
 
                             if (comptime !@hasDecl(Type, "toJS")) {
@@ -583,12 +583,12 @@ pub const d = struct {
                         }
 
                         if (no_type) {
-                            buf = buf ++ printIndented("{any}({any});\n", .{
+                            buf = buf ++ printIndented("{s}({s});\n", .{
                                 func.name,
                                 args,
                             }, indent);
                         } else {
-                            buf = buf ++ printIndented("{any}({any}): {any};\n", .{
+                            buf = buf ++ printIndented("{s}({s}): {s};\n", .{
                                 func.name,
                                 args,
                                 func.@"return",
@@ -618,12 +618,12 @@ pub const d = struct {
                         }
 
                         if (no_type) {
-                            buf = buf ++ printIndented("function {any}({any});\n", .{
+                            buf = buf ++ printIndented("function {s}({s});\n", .{
                                 func.name,
                                 args,
                             }, indent);
                         } else {
-                            buf = buf ++ printIndented("function {any}({any}): {any};\n", .{
+                            buf = buf ++ printIndented("function {s}({s}): {s};\n", .{
                                 func.name,
                                 args,
                                 func.@"return",
@@ -676,7 +676,7 @@ pub const d = struct {
                         if (klass.global) {
                             buf = buf ++ printIndented("declare global {{\n", .{}, indent);
                         } else {
-                            buf = buf ++ printIndented("declare module \"{any}\" {{\n", .{klass.path}, indent);
+                            buf = buf ++ printIndented("declare module \"{s}\" {{\n", .{klass.path}, indent);
                         }
 
                         indent += indent_level;
@@ -734,9 +734,9 @@ pub const d = struct {
                         const qualifier = if (!klass.default_export) "export " else "";
 
                         if (klass.interface) {
-                            buf = buf ++ printIndented("export interface {any} {{\n", .{klass.name}, indent);
+                            buf = buf ++ printIndented("export interface {s} {{\n", .{klass.name}, indent);
                         } else {
-                            buf = buf ++ printIndented("{any}class {any} {{\n", .{ qualifier, klass.name }, indent);
+                            buf = buf ++ printIndented("{s}class {s} {{\n", .{ qualifier, klass.name }, indent);
                         }
 
                         indent += indent_level;
@@ -781,7 +781,7 @@ pub const d = struct {
                         buf = buf ++ printIndented("}}\n", .{}, indent);
 
                         if (klass.default_export) {
-                            buf = buf ++ printIndented("export = {any};\n", .{klass.name}, indent);
+                            buf = buf ++ printIndented("export = {s};\n", .{klass.name}, indent);
                         }
 
                         break :brk;
@@ -797,14 +797,14 @@ pub const d = struct {
 
                         const first = splitter.next() orelse break :brk;
                         const second = splitter.next() orelse {
-                            buf = buf ++ printIndented("/**  {any}  */\n", .{std.mem.trim(u8, first, " ")}, indent);
+                            buf = buf ++ printIndented("/**  {s}  */\n", .{std.mem.trim(u8, first, " ")}, indent);
                             break :brk;
                         };
                         buf = buf ++ printIndented("/**\n", .{}, indent);
-                        buf = buf ++ printIndented(" *  {any}\n", .{std.mem.trim(u8, first, " ")}, indent);
-                        buf = buf ++ printIndented(" *  {any}\n", .{std.mem.trim(u8, second, " ")}, indent);
+                        buf = buf ++ printIndented(" *  {s}\n", .{std.mem.trim(u8, first, " ")}, indent);
+                        buf = buf ++ printIndented(" *  {s}\n", .{std.mem.trim(u8, second, " ")}, indent);
                         while (splitter.next()) |line| {
-                            buf = buf ++ printIndented(" *  {any}\n", .{std.mem.trim(u8, line, " ")}, indent);
+                            buf = buf ++ printIndented(" *  {s}\n", .{std.mem.trim(u8, line, " ")}, indent);
                         }
                         buf = buf ++ printIndented("*/\n", .{}, indent);
                     }
@@ -1441,7 +1441,7 @@ pub fn NewClassWithInstanceType(
                             try writer.writeAll(" ");
                         }
 
-                        try writer.print("{any} ", .{GetterNameFormatter{ .index = i }});
+                        try writer.print("{s} ", .{GetterNameFormatter{ .index = i }});
 
                         k = 0;
 
@@ -1473,7 +1473,7 @@ pub fn NewClassWithInstanceType(
                             try writer.writeAll(" ");
                         }
 
-                        try writer.print("{any} ", .{FunctionNameFormatter{ .index = i }});
+                        try writer.print("{s} ", .{FunctionNameFormatter{ .index = i }});
                         k = 0;
 
                         while (k < middle_padding - name_.len) : (k += 1) {
@@ -3278,7 +3278,7 @@ pub fn DOMCall(
                 try writer.writeAll("JSC::DOMJIT::Effect::forPure(),\n  ");
             } else if (effect.writes[0] == DOMEffect.pure.writes[0]) {
                 try writer.print(
-                    "JSC::DOMJIT::Effect::forReadKinds(JSC::DFG::AbstractHeapKind::{any}, JSC::DFG::AbstractHeapKind::{any}, JSC::DFG::AbstractHeapKind::{any}, JSC::DFG::AbstractHeapKind::{any}),\n  ",
+                    "JSC::DOMJIT::Effect::forReadKinds(JSC::DFG::AbstractHeapKind::{s}, JSC::DFG::AbstractHeapKind::{s}, JSC::DFG::AbstractHeapKind::{s}, JSC::DFG::AbstractHeapKind::{s}),\n  ",
                     .{
                         @tagName(effect.reads[0]),
                         @tagName(effect.reads[1]),
@@ -3288,7 +3288,7 @@ pub fn DOMCall(
                 );
             } else if (effect.reads[0] == DOMEffect.pure.reads[0]) {
                 try writer.print(
-                    "JSC::DOMJIT::Effect::forWriteKinds(JSC::DFG::AbstractHeapKind::{any}, JSC::DFG::AbstractHeapKind::{any}, JSC::DFG::AbstractHeapKind::{any}, JSC::DFG::AbstractHeapKind::{any}),\n  ",
+                    "JSC::DOMJIT::Effect::forWriteKinds(JSC::DFG::AbstractHeapKind::{s}, JSC::DFG::AbstractHeapKind::{s}, JSC::DFG::AbstractHeapKind::{s}, JSC::DFG::AbstractHeapKind::{s}),\n  ",
                     .{
                         @tagName(effect.writes[0]),
                         @tagName(effect.writes[1]),

@@ -667,7 +667,7 @@ fn transformOptionsFromJSC(ctx: JSC.C.JSContextRef, temp_allocator: std.mem.Allo
                     var key = try key_.toOwnedSlice(bun.default_allocator);
 
                     if (!JSLexer.isIdentifier(key)) {
-                        JSC.throwInvalidArguments("\"{any}\" is not a valid ECMAScript identifier", .{key}, ctx, exception);
+                        JSC.throwInvalidArguments("\"{s}\" is not a valid ECMAScript identifier", .{key}, ctx, exception);
                         bun.default_allocator.free(key);
                         return transpiler;
                     }

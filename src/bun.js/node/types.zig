@@ -1564,7 +1564,7 @@ pub const Path = struct {
             if (name_.isEmpty()) {
                 return JSC.ZigString.Empty.toValue(globalThis);
             }
-            const out = std.fmt.allocPrint(allocator, "{any}{any}", .{ name_, ext }) catch unreachable;
+            const out = std.fmt.allocPrint(allocator, "{s}{s}", .{ name_, ext }) catch unreachable;
             defer allocator.free(out);
 
             return JSC.ZigString.init(out).withEncoding().toValueGC(globalThis);
@@ -1573,13 +1573,13 @@ pub const Path = struct {
         if (insert_separator) {
             const separator = if (!isWindows) "/" else "\\";
             if (name_with_ext.isEmpty()) {
-                const out = std.fmt.allocPrint(allocator, "{}{any}{}{}", .{ dir, separator, name_, ext }) catch unreachable;
+                const out = std.fmt.allocPrint(allocator, "{}{s}{}{}", .{ dir, separator, name_, ext }) catch unreachable;
                 defer allocator.free(out);
                 return JSC.ZigString.init(out).withEncoding().toValueGC(globalThis);
             }
 
             {
-                const out = std.fmt.allocPrint(allocator, "{}{any}{}", .{
+                const out = std.fmt.allocPrint(allocator, "{}{s}{}", .{
                     dir,
                     separator,
                     name_with_ext,

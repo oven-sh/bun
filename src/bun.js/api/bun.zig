@@ -307,7 +307,7 @@ pub fn registerMacro(
     }
 
     if (!arguments[1].?.value().isCell() or !arguments[1].?.value().isCallable(ctx.vm())) {
-        JSError(getAllocator(ctx), "Macro must be a function. Received: {any}", .{@tagName(js.JSValueGetType(ctx, arguments[1]))}, ctx, exception);
+        JSError(getAllocator(ctx), "Macro must be a function. Received: {s}", .{@tagName(js.JSValueGetType(ctx, arguments[1]))}, ctx, exception);
         return js.JSValueMakeUndefined(ctx);
     }
 
@@ -591,26 +591,26 @@ pub fn readFileAsStringCallback(
 ) js.JSValueRef {
     const path = buf_z.ptr[0..buf_z.len];
     var file = std.fs.cwd().openFileZ(buf_z, .{ .mode = .read_only }) catch |err| {
-        JSError(getAllocator(ctx), "Opening file {any} for path: \"{any}\"", .{ @errorName(err), path }, ctx, exception);
+        JSError(getAllocator(ctx), "Opening file {s} for path: \"{s}\"", .{ @errorName(err), path }, ctx, exception);
         return js.JSValueMakeUndefined(ctx);
     };
 
     defer file.close();
 
     const stat = file.stat() catch |err| {
-        JSError(getAllocator(ctx), "Getting file size {any} for \"{any}\"", .{ @errorName(err), path }, ctx, exception);
+        JSError(getAllocator(ctx), "Getting file size {s} for \"{s}\"", .{ @errorName(err), path }, ctx, exception);
         return js.JSValueMakeUndefined(ctx);
     };
 
     if (stat.kind != .File) {
-        JSError(getAllocator(ctx), "Can't read a {any} as a string (\"{any}\")", .{ @tagName(stat.kind), path }, ctx, exception);
+        JSError(getAllocator(ctx), "Can't read a {s} as a string (\"{s}\")", .{ @tagName(stat.kind), path }, ctx, exception);
         return js.JSValueMakeUndefined(ctx);
     }
 
     var contents_buf = VirtualMachine.vm.allocator.alloc(u8, stat.size + 2) catch unreachable; // OOM
     defer VirtualMachine.vm.allocator.free(contents_buf);
     const contents_len = file.readAll(contents_buf) catch |err| {
-        JSError(getAllocator(ctx), "{any} reading file (\"{any}\")", .{ @errorName(err), path }, ctx, exception);
+        JSError(getAllocator(ctx), "{s} reading file (\"{s}\")", .{ @errorName(err), path }, ctx, exception);
         return js.JSValueMakeUndefined(ctx);
     };
 
@@ -631,26 +631,26 @@ pub fn readFileAsBytesCallback(
     const path = buf_z.ptr[0..buf_z.len];
 
     var file = std.fs.cwd().openFileZ(buf_z, .{ .mode = .read_only }) catch |err| {
-        JSError(getAllocator(ctx), "Opening file {any} for path: \"{any}\"", .{ @errorName(err), path }, ctx, exception);
+        JSError(getAllocator(ctx), "Opening file {s} for path: \"{s}\"", .{ @errorName(err), path }, ctx, exception);
         return js.JSValueMakeUndefined(ctx);
     };
 
     defer file.close();
 
     const stat = file.stat() catch |err| {
-        JSError(getAllocator(ctx), "Getting file size {any} for \"{any}\"", .{ @errorName(err), path }, ctx, exception);
+        JSError(getAllocator(ctx), "Getting file size {s} for \"{s}\"", .{ @errorName(err), path }, ctx, exception);
         return js.JSValueMakeUndefined(ctx);
     };
 
     if (stat.kind != .File) {
-        JSError(getAllocator(ctx), "Can't read a {any} as a string (\"{any}\")", .{ @tagName(stat.kind), path }, ctx, exception);
+        JSError(getAllocator(ctx), "Can't read a {s} as a string (\"{s}\")", .{ @tagName(stat.kind), path }, ctx, exception);
         return js.JSValueMakeUndefined(ctx);
     }
 
     var contents_buf = VirtualMachine.vm.allocator.alloc(u8, stat.size + 2) catch unreachable; // OOM
     errdefer VirtualMachine.vm.allocator.free(contents_buf);
     const contents_len = file.readAll(contents_buf) catch |err| {
-        JSError(getAllocator(ctx), "{any} reading file (\"{any}\")", .{ @errorName(err), path }, ctx, exception);
+        JSError(getAllocator(ctx), "{s} reading file (\"{s}\")", .{ @errorName(err), path }, ctx, exception);
         return js.JSValueMakeUndefined(ctx);
     };
 
@@ -743,7 +743,7 @@ pub fn openInEditor(
                     editor_choice = edit.editor;
                     if (editor_choice == null) {
                         edit.* = prev;
-                        JSError(getAllocator(ctx), "Could not find editor \"{any}\"", .{sliced.slice()}, ctx, exception);
+                        JSError(getAllocator(ctx), "Could not find editor \"{s}\"", .{sliced.slice()}, ctx, exception);
                         return js.JSValueMakeUndefined(ctx);
                     } else if (edit.name.ptr == edit.path.ptr) {
                         edit.name = bun.default_allocator.dupe(u8, edit.path) catch unreachable;
@@ -778,7 +778,7 @@ pub fn openInEditor(
     }
 
     editor.open(edit.path, path, line, column, bun.default_allocator) catch |err| {
-        JSC.JSError(bun.default_allocator, "Opening editor failed {any}", .{@errorName(err)}, ctx, exception);
+        JSC.JSError(bun.default_allocator, "Opening editor failed {s}", .{@errorName(err)}, ctx, exception);
         return null;
     };
 
@@ -1049,7 +1049,7 @@ pub fn readAllStdinSync(
 
     var stdin = std.io.getStdIn();
     var result = stdin.readToEndAlloc(allocator, std.math.maxInt(u32)) catch |err| {
-        JSError(undefined, "{any} reading stdin", .{@errorName(err)}, ctx, exception);
+        JSError(undefined, "{s} reading stdin", .{@errorName(err)}, ctx, exception);
         return null;
     };
     var out = ZigString.init(result);
@@ -1375,7 +1375,7 @@ pub const Crypto = struct {
                     switch (string_or_buffer) {
                         .string => |str| {
                             const encoding = JSC.Node.Encoding.from(str) orelse {
-                                globalThis.throwInvalidArguments("Unknown encoding: {any}", .{str});
+                                globalThis.throwInvalidArguments("Unknown encoding: {s}", .{str});
                                 return JSC.JSValue.zero;
                             };
 
@@ -1428,7 +1428,7 @@ pub const Crypto = struct {
                     switch (string_or_buffer) {
                         .string => |str| {
                             const encoding = JSC.Node.Encoding.from(str) orelse {
-                                globalThis.throwInvalidArguments("Unknown encoding: {any}", .{str});
+                                globalThis.throwInvalidArguments("Unknown encoding: {s}", .{str});
                                 return JSC.JSValue.zero;
                             };
 
@@ -2124,19 +2124,19 @@ pub const Unsafe = struct {
 //                 defer getAllocator(ctx).destroy(lockfile);
 //                 switch (cause.step) {
 //                     .open_file => {
-//                         JSError(undefined, "error opening lockfile: {any}", .{
+//                         JSError(undefined, "error opening lockfile: {s}", .{
 //                             @errorName(cause.value),
 //                         }, ctx, exception);
 //                         return null;
 //                     },
 //                     .parse_file => {
-//                         JSError(undefined, "error parsing lockfile: {any}", .{
+//                         JSError(undefined, "error parsing lockfile: {s}", .{
 //                             @errorName(cause.value),
 //                         }, ctx, exception);
 //                         return null;
 //                     },
 //                     .read_file => {
-//                         JSError(undefined, "error reading lockfile: {any}", .{
+//                         JSError(undefined, "error reading lockfile: {s}", .{
 //                             @errorName(cause.value),
 //                         }, ctx, exception);
 //                         return null;
@@ -2934,7 +2934,7 @@ pub const FFI = struct {
         }
 
         const array_buffer = value.asArrayBuffer(globalThis) orelse {
-            return JSC.toInvalidArguments("Expected ArrayBufferView but received {any}", .{@tagName(value.jsType())}, globalThis);
+            return JSC.toInvalidArguments("Expected ArrayBufferView but received {s}", .{@tagName(value.jsType())}, globalThis);
         };
 
         if (array_buffer.len == 0) {

@@ -21,15 +21,15 @@ pub const Header = struct {
     pub fn format(self: Header, comptime _: []const u8, _: fmt.FormatOptions, writer: anytype) !void {
         if (Output.enable_ansi_colors) {
             if (self.isMultiline()) {
-                try fmt.format(writer, comptime Output.prettyFmt("<r><cyan>{any}", true), .{self.value});
+                try fmt.format(writer, comptime Output.prettyFmt("<r><cyan>{s}", true), .{self.value});
             } else {
-                try fmt.format(writer, comptime Output.prettyFmt("<r><cyan>{any}<r><d>: <r>{any}", true), .{ self.name, self.value });
+                try fmt.format(writer, comptime Output.prettyFmt("<r><cyan>{s}<r><d>: <r>{s}", true), .{ self.name, self.value });
             }
         } else {
             if (self.isMultiline()) {
-                try fmt.format(writer, comptime Output.prettyFmt("<r><cyan>{any}", false), .{self.value});
+                try fmt.format(writer, comptime Output.prettyFmt("<r><cyan>{s}", false), .{self.value});
             } else {
-                try fmt.format(writer, comptime Output.prettyFmt("<r><cyan>{any}<r><d>: <r>{any}", false), .{ self.name, self.value });
+                try fmt.format(writer, comptime Output.prettyFmt("<r><cyan>{s}<r><d>: <r>{s}", false), .{ self.name, self.value });
             }
         }
     }
@@ -74,7 +74,7 @@ pub const Request = struct {
     }
 
     pub fn format(self: Request, comptime _: []const u8, _: fmt.FormatOptions, writer: anytype) !void {
-        try fmt.format(writer, "{any} {any}\n", .{ self.method, self.path });
+        try fmt.format(writer, "{any} {s}\n", .{ self.method, self.path });
         for (self.headers) |header| {
             _ = try writer.write("\t");
             try fmt.format(writer, "{any}\n", .{header});

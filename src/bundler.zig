@@ -253,13 +253,13 @@ pub const PluginRunner = struct {
 
         if (static_namespace) {
             return Fs.Path.initWithNamespace(
-                std.fmt.allocPrint(this.allocator, "{any}", .{file_path}) catch unreachable,
+                std.fmt.allocPrint(this.allocator, "{s}", .{file_path}) catch unreachable,
                 user_namespace.slice(),
             );
         } else {
             return Fs.Path.initWithNamespace(
-                std.fmt.allocPrint(this.allocator, "{any}", .{file_path}) catch unreachable,
-                std.fmt.allocPrint(this.allocator, "{any}", .{user_namespace}) catch unreachable,
+                std.fmt.allocPrint(this.allocator, "{s}", .{file_path}) catch unreachable,
+                std.fmt.allocPrint(this.allocator, "{s}", .{user_namespace}) catch unreachable,
             );
         }
     }
@@ -347,7 +347,7 @@ pub const PluginRunner = struct {
         // Our super slow way of cloning the string into memory owned by JSC
         var combined_string = std.fmt.allocPrint(
             this.allocator,
-            "{any}:{any}",
+            "{s}:{s}",
             .{ user_namespace, file_path },
         ) catch unreachable;
         const out = JSC.ZigString.init(combined_string).toValueGC(this.global_object).getZigString(this.global_object);
@@ -411,13 +411,13 @@ pub const Bundler = struct {
             };
 
             if (has_dot_slash_form) {
-                bundler.log.addErrorFmt(null, logger.Loc.Empty, bundler.allocator, "{any} resolving \"{any}\". Did you mean: \"./{any}\"", .{
+                bundler.log.addErrorFmt(null, logger.Loc.Empty, bundler.allocator, "{s} resolving \"{s}\". Did you mean: \"./{s}\"", .{
                     @errorName(err),
                     entry_point,
                     entry_point,
                 }) catch unreachable;
             } else {
-                bundler.log.addErrorFmt(null, logger.Loc.Empty, bundler.allocator, "{any} resolving \"{any}\" (entry point)", .{ @errorName(err), entry_point }) catch unreachable;
+                bundler.log.addErrorFmt(null, logger.Loc.Empty, bundler.allocator, "{s} resolving \"{s}\" (entry point)", .{ @errorName(err), entry_point }) catch unreachable;
             }
 
             return err;
@@ -965,7 +965,7 @@ pub const Bundler = struct {
         var file: std.fs.File = undefined;
 
         if (Outstream == Dir) {
-            const output_dir = outstream;
+            const output_dir = outstream.dir;
 
             if (std.fs.path.dirname(file_path.pretty)) |dirname| {
                 try output_dir.makePath(dirname);
@@ -1033,7 +1033,7 @@ pub const Bundler = struct {
                 file_op.is_tmpdir = false;
 
                 if (Outstream == Dir) {
-                    file_op.dir = outstream.fd;
+                    file_op.dir = outstream.dir.fd;
 
                     if (bundler.fs.fs.needToCloseFiles()) {
                         file.close();
@@ -1091,7 +1091,7 @@ pub const Bundler = struct {
                 file_op.is_tmpdir = false;
 
                 if (Outstream == Dir) {
-                    file_op.dir = outstream.fd;
+                    file_op.dir = outstream.dir.fd;
 
                     if (bundler.fs.fs.needToCloseFiles()) {
                         file.close();
@@ -1374,7 +1374,7 @@ pub const Bundler = struct {
                 true,
                 file_descriptor,
             ) catch |err| {
-                bundler.log.addErrorFmt(null, logger.Loc.Empty, bundler.allocator, "{any} reading \"{any}\"", .{ @errorName(err), path.text }) catch {};
+                bundler.log.addErrorFmt(null, logger.Loc.Empty, bundler.allocator, "{s} reading \"{s}\"", .{ @errorName(err), path.text }) catch {};
                 return null;
             };
             input_fd = entry.fd;
@@ -1513,7 +1513,7 @@ pub const Bundler = struct {
                             null,
                             logger.Loc.Empty,
                             bundler.allocator,
-                            "Invalid wasm file \"{any}\" (missing magic header)",
+                            "Invalid wasm file \"{s}\" (missing magic header)",
                             .{path.text},
                         ) catch {};
                         return null;
@@ -1528,7 +1528,7 @@ pub const Bundler = struct {
                 }
             },
             .css => {},
-            else => Global.panic("Unsupported loader {any} for path: {any}", .{ loader, source.path.text }),
+            else => Global.panic("Unsupported loader {any} for path: {s}", .{ loader, source.path.text }),
         }
 
         return null;
@@ -1682,12 +1682,12 @@ pub const Bundler = struct {
             }
 
             const result = bundler.resolver.resolve(bundler.fs.top_level_dir, entry, .entry_point) catch |err| {
-                Output.prettyError("Error resolving \"{any}\": {any}\n", .{ entry, @errorName(err) });
+                Output.prettyError("Error resolving \"{s}\": {s}\n", .{ entry, @errorName(err) });
                 continue;
             };
 
             if (result.pathConst() == null) {
-                Output.prettyError("\"{any}\" is disabled due to \"browser\" field in package.json.\n", .{
+                Output.prettyError("\"{s}\" is disabled due to \"browser\" field in package.json.\n", .{
                     entry,
                 });
                 continue;
@@ -1767,10 +1767,10 @@ pub const Bundler = struct {
                 };
             }
         } else {
-            const output_dir = bundler.options.output_dir_handle orelse {
+            const output_dir: Dir = .{.dir = bundler.options.output_dir_handle orelse {
                 Output.printError("Invalid or missing output directory.", .{});
                 Global.crash();
-            };
+            }};
 
             if (load_from_routes) {
                 if (bundler.options.framework) |*framework| {

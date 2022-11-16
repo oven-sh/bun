@@ -746,7 +746,7 @@ fn flush(self: *IO, comptime _: @Type(.EnumLiteral)) !void {
     );
 
     if (new_events_ < 0) {
-        return std.debug.panic("kevent() failed {any}", .{@tagName(std.c.getErrno(new_events_))});
+        return std.debug.panic("kevent() failed {s}", .{@tagName(std.c.getErrno(new_events_))});
     }
     const new_events = @intCast(usize, new_events_);
 

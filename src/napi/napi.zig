@@ -1030,10 +1030,10 @@ pub export fn napi_fatal_error(location_ptr: ?[*:0]const u8, location_len: usize
 
     const location = napiSpan(location_ptr, location_len);
     if (location.len > 0) {
-        bun.Global.panic("napi: {any}\n  {any}", .{ message, location });
+        bun.Global.panic("napi: {s}\n  {s}", .{ message, location });
     }
 
-    bun.Global.panic("napi: {any}", .{message});
+    bun.Global.panic("napi: {s}", .{message});
 }
 pub export fn napi_create_buffer(env: napi_env, length: usize, data: [*]*anyopaque, result: *napi_value) napi_status {
     var buf = JSC.ExternalBuffer.create(null, @ptrCast([*]u8, data)[0..length], env, null, env.bunVM().allocator) catch {

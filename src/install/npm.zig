@@ -31,6 +31,7 @@ const ObjectPool = @import("../pool.zig").ObjectPool;
 const Api = @import("../api/schema.zig").Api;
 const DotEnv = @import("../env_loader.zig");
 const ComptimeStringMap = @import("../comptime_string_map.zig").ComptimeStringMap;
+const bun = @import("../global.zig");
 
 const Npm = @This();
 
@@ -556,18 +557,18 @@ pub const PackageManifest = struct {
             var out_path_buf: ["-18446744073709551615".len + ".npm".len + 1]u8 = undefined;
             var dest_path_stream = std.io.fixedBufferStream(&dest_path_buf);
             var dest_path_stream_writer = dest_path_stream.writer();
-            try dest_path_stream_writer.print("{x}.npm-{x}", .{ file_id, @max(std.time.milliTimestamp(), 0) });
+            try dest_path_stream_writer.print("{any}.npm-{any}", .{ bun.fmt.x(file_id), bun.fmt.x(@max(std.time.milliTimestamp(), 0)) });
             try dest_path_stream_writer.writeByte(0);
             var tmp_path: [:0]u8 = dest_path_buf[0 .. dest_path_stream.pos - 1 :0];
             try writeFile(this, tmp_path, tmpdir);
-            var out_path = std.fmt.bufPrintZ(&out_path_buf, "{x}.npm", .{file_id}) catch unreachable;
+            var out_path = std.fmt.bufPrintZ(&out_path_buf, "{any}.npm", .{bun.fmt.x(file_id)}) catch unreachable;
             try std.os.renameatZ(tmpdir.fd, tmp_path, cache_dir.fd, out_path);
         }
 
         pub fn load(allocator: std.mem.Allocator, cache_dir: std.fs.Dir, package_name: string) !?PackageManifest {
             const file_id = std.hash.Wyhash.hash(0, package_name);
             var file_path_buf: [512 + 64]u8 = undefined;
-            var file_path = try std.fmt.bufPrintZ(&file_path_buf, "{x}.npm", .{file_id});
+            var file_path = try std.fmt.bufPrintZ(&file_path_buf, "{any}.npm", .{bun.fmt.x(file_id)});
             var cache_file = cache_dir.openFileZ(
                 file_path,
                 .{ .mode = .read_only },

@@ -92,7 +92,7 @@ pub fn next(self: *Walker) !?WalkerEntry {
                 }
             }
             return WalkerEntry{
-                .dir = top.iter.dir,
+                .dir = .{.dir = top.iter.dir},
                 .basename = self.name_buffer.items[dirname_len..],
                 .path = self.name_buffer.items,
                 .kind = base.kind,

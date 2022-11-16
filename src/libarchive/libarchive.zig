@@ -406,9 +406,9 @@ pub const Archive = struct {
 
             // if the destination doesn't exist, we skip the whole thing since nothing can overwrite it.
             if (std.fs.path.isAbsolute(root)) {
-                break :brk std.fs.openIterableDirAbsolute(root, .{}) catch return;
+                break :brk (std.fs.openIterableDirAbsolute(root, .{}) catch return).dir;
             } else {
-                break :brk cwd.openIterableDir(root, .{}) catch return;
+                break :brk (cwd.openIterableDir(root, .{}) catch return).dir;
             }
         };
 
@@ -648,7 +648,7 @@ pub const Archive = struct {
         comptime close_handles: bool,
         comptime log: bool,
     ) !u32 {
-        var dir: std.fs.Dir = brk: {
+        var dir: std.fs.IterableDir = brk: {
             const cwd = std.fs.cwd();
             cwd.makePath(
                 root,
@@ -661,7 +661,7 @@ pub const Archive = struct {
             }
         };
 
-        defer if (comptime close_handles) dir.close();
+        defer if (comptime close_handles) dir.dir.close();
         return try extractToDir(file_buffer, dir, ctx, FilePathAppender, appender, depth_to_skip, close_handles, log);
     }
 };

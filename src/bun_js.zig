@@ -101,7 +101,7 @@ pub const Run = struct {
                         null,
                         logger.Loc.Empty,
                         run.vm.allocator,
-                        "BUN_CONFIG_MAX_HTTP_REQUESTS value \"{any}\" is not a valid integer between 1 and 65535",
+                        "BUN_CONFIG_MAX_HTTP_REQUESTS value \"{s}\" is not a valid integer between 1 and 65535",
                         .{max_http_requests},
                     ) catch unreachable;
                     break :load;

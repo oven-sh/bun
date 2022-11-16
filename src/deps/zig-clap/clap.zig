@@ -221,13 +221,13 @@ pub const Diagnostic = struct {
             Arg{ .prefix = "", .name = diag.arg };
 
         switch (err) {
-            error.DoesntTakeValue => try stream.print("The argument '{any}{any}' does not take a value\n", .{ a.prefix, a.name }),
-            error.MissingValue => try stream.print("The argument '{any}{any}' requires a value but none was supplied\n", .{ a.prefix, a.name }),
+            error.DoesntTakeValue => try stream.print("The argument '{s}{s}' does not take a value\n", .{ a.prefix, a.name }),
+            error.MissingValue => try stream.print("The argument '{s}{s}' requires a value but none was supplied\n", .{ a.prefix, a.name }),
             error.InvalidArgument => if (a.prefix.len > 0 and a.name.len > 0)
-                try stream.print("Invalid argument '{any}{any}'\n", .{ a.prefix, a.name })
+                try stream.print("Invalid argument '{s}{s}'\n", .{ a.prefix, a.name })
             else
                 try stream.print("Failed to parse argument due to unexpected single dash\n", .{}),
-            else => try stream.print("Error while parsing arguments: {any}\n", .{@errorName(err)}),
+            else => try stream.print("Error while parsing arguments: {s}\n", .{@errorName(err)}),
         }
     }
 };
@@ -386,9 +386,9 @@ fn printParam(
 
     switch (param.takes_value) {
         .none => {},
-        .one => try stream.print(" <{any}>", .{valueText(context, param)}),
-        .one_optional => try stream.print(" <{any}>?", .{valueText(context, param)}),
-        .many => try stream.print(" <{any}>...", .{valueText(context, param)}),
+        .one => try stream.print(" <{s}>", .{try valueText(context, param)}),
+        .one_optional => try stream.print(" <{s}>?", .{try valueText(context, param)}),
+        .many => try stream.print(" <{s}>...", .{try valueText(context, param)}),
     }
 }
 
@@ -489,12 +489,12 @@ pub fn usageFull(
         if (cos.bytes_written != 0)
             try cs.writeByte(' ');
 
-        try cs.print("[{any}{any}", .{ prefix, name });
+        try cs.print("[{s}{s}", .{ prefix, name });
         switch (param.takes_value) {
             .none => {},
-            .one => try cs.print(" <{any}>", .{try valueText(context, param)}),
-            .one_optional => try cs.print(" <{any}>?", .{try valueText(context, param)}),
-            .many => try cs.print(" <{any}>...", .{try valueText(context, param)}),
+            .one => try cs.print(" <{s}>", .{try valueText(context, param)}),
+            .one_optional => try cs.print(" <{s}>?", .{try valueText(context, param)}),
+            .many => try cs.print(" <{s}>...", .{try valueText(context, param)}),
         }
 
         try cs.writeByte(']');
@@ -503,7 +503,7 @@ pub fn usageFull(
     if (positional) |p| {
         if (cos.bytes_written != 0)
             try cs.writeByte(' ');
-        try cs.print("<{any}>", .{try valueText(context, p)});
+        try cs.print("<{s}>", .{try valueText(context, p)});
     }
 }
 

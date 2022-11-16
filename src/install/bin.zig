@@ -146,7 +146,7 @@ pub const Bin = extern struct {
         bin: Bin,
         i: usize = 0,
         done: bool = false,
-        dir_iterator: ?std.fs.Dir.Iterator = null,
+        dir_iterator: ?std.fs.IterableDir.Iterator = null,
         package_name: String,
         package_installed_node_modules: std.fs.Dir = std.fs.Dir{ .fd = std.math.maxInt(std.os.fd_t) },
         buf: [bun.MAX_PATH_BYTES]u8 = undefined,
@@ -167,7 +167,7 @@ pub const Bin = extern struct {
                 var joined = Path.joinStringBuf(&this.buf, &parts, .auto);
                 this.buf[joined.len] = 0;
                 var joined_: [:0]u8 = this.buf[0..joined.len :0];
-                var child_dir = try dir.openIterableDirZ(joined_, .{});
+                var child_dir = try bun.openIterableDirZ(dir.fd, joined_);
                 this.dir_iterator = child_dir.iterate();
             }
 
@@ -419,15 +419,16 @@ pub const Bin = extern struct {
                     var joined = Path.joinStringBuf(&target_buf, &parts, .auto);
                     @intToPtr([*]u8, @ptrToInt(joined.ptr))[joined.len] = 0;
                     var joined_: [:0]const u8 = joined.ptr[0..joined.len :0];
-                    var child_dir = dir.openIterableDirZ(joined_, .{}) catch |err| {
-                        this.err = err;
-                        return;
-                    };
+                                   var child_dir = bun.openIterableDirZ(dir.fd, joined_) catch |err| {
+                                    this.err = err;
+                                    return;
+                                   };
+
                     defer child_dir.close();
 
                     var iter = child_dir.iterate();
 
-                    var basedir_path = std.os.getFdPath(child_dir.fd, &target_buf) catch |err| {
+                    var basedir_path = std.os.getFdPath(child_dir.dir.fd, &target_buf) catch |err| {
                         this.err = err;
                         return;
                     };
@@ -436,9 +437,9 @@ pub const Bin = extern struct {
                     var prev_target_buf_remain = target_buf_remain;
 
                     while (iter.next() catch null) |entry_| {
-                        const entry: std.fs.Dir.Entry = entry_;
+                        const entry: std.fs.IterableDir.Entry = entry_;
                         switch (entry.kind) {
-                            std.fs.Dir.Entry.Kind.SymLink, std.fs.Dir.Entry.Kind.File => {
+                            std.fs.IterableDir.Entry.Kind.SymLink, std.fs.IterableDir.Entry.Kind.File => {
                                 target_buf_remain = prev_target_buf_remain;
                                 std.mem.copy(u8, target_buf_remain, entry.name);
                                 target_buf_remain = target_buf_remain[entry.name.len..];
@@ -571,7 +572,7 @@ pub const Bin = extern struct {
                     var joined = Path.joinStringBuf(&target_buf, &parts, .auto);
                     @intToPtr([*]u8, @ptrToInt(joined.ptr))[joined.len] = 0;
                     var joined_: [:0]const u8 = joined.ptr[0..joined.len :0];
-                    var child_dir = dir.openIterableDirZ(joined_, .{}) catch |err| {
+                    var child_dir = bun.openIterableDirZFromDir(dir, joined_) catch |err| {
                         this.err = err;
                         return;
                     };
@@ -579,7 +580,7 @@ pub const Bin = extern struct {
 
                     var iter = child_dir.iterate();
 
-                    var basedir_path = std.os.getFdPath(child_dir.fd, &target_buf) catch |err| {
+                    var basedir_path = std.os.getFdPath(child_dir.dir.fd, &target_buf) catch |err| {
                         this.err = err;
                         return;
                     };
@@ -588,9 +589,9 @@ pub const Bin = extern struct {
                     var prev_target_buf_remain = target_buf_remain;
 
                     while (iter.next() catch null) |entry_| {
-                        const entry: std.fs.Dir.Entry = entry_;
+                        const entry: std.fs.IterableDir.Entry = entry_;
                         switch (entry.kind) {
-                            std.fs.Dir.Entry.Kind.SymLink, std.fs.Dir.Entry.Kind.File => {
+                            std.fs.IterableDir.Entry.Kind.SymLink, std.fs.IterableDir.Entry.Kind.File => {
                                 target_buf_remain = prev_target_buf_remain;
                                 std.mem.copy(u8, target_buf_remain, entry.name);
                                 target_buf_remain = target_buf_remain[entry.name.len..];

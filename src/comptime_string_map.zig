@@ -8,7 +8,7 @@ const strings = @import("./string_immutable.zig");
 ///
 /// `kvs` expects a list literal containing list literals or an array/slice of structs
 /// where `.@"0"` is the `[]const u8` key and `.@"1"` is the associated value of type `V`.
-/// TODO: https://github.com/ziglang/zig/issues/4335
+
 pub fn ComptimeStringMapWithKeyType(comptime KeyType: type, comptime V: type, comptime kvs_list: anytype) type {
     const KV = struct {
         key: []const KeyType,

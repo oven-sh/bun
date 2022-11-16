@@ -119,14 +119,14 @@ pub const Fs = struct {
         const file = if (this.stream)
             rfs.readFileWithHandle(path, null, file_handle, true, shared, true) catch |err| {
                 if (comptime Environment.isDebug) {
-                    Output.printError("{any}: readFile error -- {any}", .{ path, @errorName(err) });
+                    Output.printError("{s}: readFile error -- {s}", .{ path, @errorName(err) });
                 }
                 return err;
             }
         else
             rfs.readFileWithHandle(path, null, file_handle, true, shared, false) catch |err| {
                 if (comptime Environment.isDebug) {
-                    Output.printError("{any}: readFile error -- {any}", .{ path, @errorName(err) });
+                    Output.printError("{s}: readFile error -- {s}", .{ path, @errorName(err) });
                 }
                 return err;
             };

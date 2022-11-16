@@ -67,7 +67,7 @@ pub const BytecodeCacheFetcher = struct {
                     this.fd = @truncate(StoredFileDescriptorType, cache_file.handle);
                     return @truncate(StoredFileDescriptorType, cache_file.handle);
                 } else |err| {
-                    Output.prettyWarnln("<r><yellow>Warn<r>: Bytecode caching unavailable due to error: {any}", .{@errorName(err)});
+                    Output.prettyWarnln("<r><yellow>Warn<r>: Bytecode caching unavailable due to error: {s}", .{@errorName(err)});
                     Output.flush();
                     this.fd = 0;
                     return null;
@@ -103,7 +103,7 @@ pub const FileSystem = struct {
 
     pub fn tmpdir(fs: *FileSystem) std.fs.Dir {
         if (tmpdir_handle == null) {
-            tmpdir_handle = fs.fs.openTmpDir() catch unreachable;
+            tmpdir_handle = (fs.fs.openTmpDir() catch unreachable).dir;
         }
 
         return tmpdir_handle.?;
@@ -117,7 +117,7 @@ pub const FileSystem = struct {
 
     pub fn tmpname(_: *const FileSystem, extname: string, buf: []u8, hash: u64) ![*:0]u8 {
         // PRNG was...not so random
-        return try std.fmt.bufPrintZ(buf, ".{x}{any}", .{ @truncate(u64, @intCast(u128, hash) * @intCast(u128, std.time.nanoTimestamp())), extname });
+        return try std.fmt.bufPrintZ(buf, ".{any}{s}", .{ bun.fmt.x(@truncate(u64, @intCast(u128, hash) * @intCast(u128, std.time.nanoTimestamp()))), extname });
     }
 
     pub var max_fd: FileDescriptorType = 0;
@@ -256,16 +256,16 @@ pub const FileSystem = struct {
 
             if (comptime FeatureFlags.verbose_fs) {
                 if (_kind == .dir) {
-                    Output.prettyln("   + {any}/", .{stored_name});
+                    Output.prettyln("   + {s}/", .{stored_name});
                 } else {
-                    Output.prettyln("   + {any}", .{stored_name});
+                    Output.prettyln("   + {s}", .{stored_name});
                 }
             }
         }
 
         pub fn init(dir: string) DirEntry {
             if (comptime FeatureFlags.verbose_fs) {
-                Output.prettyln("\n  {any}", .{dir});
+                Output.prettyln("\n  {s}", .{dir});
             }
 
             return DirEntry{ .dir = dir, .data = EntryMap{} };
@@ -561,7 +561,7 @@ pub const FileSystem = struct {
 
         pub var tmpdir_path: []const u8 = undefined;
         pub var tmpdir_path_set = false;
-        pub fn openTmpDir(_: *const RealFS) !std.fs.Dir {
+        pub fn openTmpDir(_: *const RealFS) !std.fs.IterableDir {
             if (!tmpdir_path_set) {
                 tmpdir_path = std.os.getenvZ("BUN_TMPDIR") orelse std.os.getenvZ("TMPDIR") orelse PLATFORM_TMP_DIR;
                 tmpdir_path_set = true;
@@ -611,8 +611,8 @@ pub const FileSystem = struct {
                 var tmpdir_ = try rfs.openTmpDir();
 
                 const flags = std.os.O.CREAT | std.os.O.RDWR | std.os.O.CLOEXEC;
-                this.dir_fd = tmpdir_.fd;
-                this.fd = try std.os.openatZ(tmpdir_.fd, name, flags, std.os.S.IRWXO);
+                this.dir_fd = tmpdir_.dir.fd;
+                this.fd = try std.os.openatZ(tmpdir_.dir.fd, name, flags, std.os.S.IRWXO);
             }
 
             pub fn promote(this: *Tmpfile, from_name: [*:0]const u8, destination_fd: std.os.fd_t, name: [*:0]const u8) !void {
@@ -729,10 +729,10 @@ pub const FileSystem = struct {
             ) !string {
                 return try std.fmt.bufPrint(
                     &hash_name_buf,
-                    "{any}-{x}",
+                    "{s}-{any}",
                     .{
                         basename,
-                        this.hash(),
+                        bun.fmt.x(this.hash()),
                     },
                 );
             }
@@ -1285,7 +1285,7 @@ pub const Path = struct {
     }
 
     pub fn generateKey(p: *Path, allocator: std.mem.Allocator) !string {
-        return try std.fmt.allocPrint(allocator, "{any}://{any}", .{ p.namespace, p.text });
+        return try std.fmt.allocPrint(allocator, "{s}://{s}", .{ p.namespace, p.text });
     }
 
     pub fn init(text: string) Path {

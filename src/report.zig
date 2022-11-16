@@ -93,9 +93,9 @@ pub const CrashReportWriter = struct {
             }
 
             if (tilda) {
-                Output.prettyError("\nCrash report saved to:\n  <b>~{any}<r>\n", .{display_path});
+                Output.prettyError("\nCrash report saved to:\n  <b>~{s}<r>\n", .{display_path});
             } else {
-                Output.prettyError("\nCrash report saved to:\n  <b>{any}<r>\n", .{display_path});
+                Output.prettyError("\nCrash report saved to:\n  <b>{s}<r>\n", .{display_path});
             }
         }
     }
@@ -118,8 +118,8 @@ pub fn printMetadata() void {
     crash_report_writer.print(
         \\
         \\<r>----- bun meta -----
-    ++ "\nBun v" ++ Global.package_json_version_with_sha ++ " " ++ platform ++ " " ++ arch ++ " {any}\n" ++
-        \\{any}: {}
+    ++ "\nBun v" ++ Global.package_json_version_with_sha ++ " " ++ platform ++ " " ++ arch ++ " {s}\n" ++
+        \\{s}: {}
         \\
     , .{
         analytics_platform.version,

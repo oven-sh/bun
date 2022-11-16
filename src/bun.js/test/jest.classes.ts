@@ -132,6 +132,26 @@ export default [
         fn: "toBeTruthy",
         length: 0,
       },
+      toBeUndefined: {
+        fn: "toBeUndefined",
+        length: 0,
+      },
+      toBeNaN: {
+        fn: "toBeNaN",
+        length: 0,
+      },
+      toBeNull: {
+        fn: "toBeNull",
+        length: 0,
+      },
+      toBeFalsy: {
+        fn: "toBeFalsy",
+        length: 0,
+      },
+      toBeDefined: {
+        fn: "toBeDefined",
+        length: 0,
+      },
       toContain: {
         fn: "toContain",
         length: 1,

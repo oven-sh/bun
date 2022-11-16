@@ -823,7 +823,7 @@ JSC_DEFINE_CUSTOM_GETTER(${symbolName(
       typeName,
       proto[name].getter,
     )}(thisObject->wrapped(),${
-        proto[name].this!! ? " thisValue, " : ""
+        !!proto[name].this ? " thisValue, " : ""
       } globalObject);
     RETURN_IF_EXCEPTION(throwScope, {});
     RELEASE_AND_RETURN(throwScope, result);
@@ -852,7 +852,7 @@ JSC_DEFINE_CUSTOM_SETTER(${symbolName(
       typeName,
       proto[name].setter || proto[name].accessor.setter,
     )}(thisObject->wrapped(),${
-          proto[name].this!! ? " thisValue, " : ""
+          !!proto[name].this ? " thisValue: " : ""
         } lexicalGlobalObject, encodedValue);
 
     RELEASE_AND_RETURN(throwScope, result);

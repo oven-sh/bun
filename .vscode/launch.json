@@ -104,6 +104,15 @@
       "args": ["https://example.com", "--verbose"],
       "cwd": "${workspaceFolder}",
       "console": "internalConsole"
+    },
+    {
+      "type": "lldb",
+      "request": "launch",
+      "name": "Run zig unit test",
+      "program": "${workspaceFolder}/zig-out/bin/test",
+      "args": ["abc"],
+      "cwd": "${workspaceFolder}",
+      "console": "internalConsole"
     }
   ]
 }

@@ -221,7 +221,11 @@ pub const URL = struct {
 
                 // if there's no protocol or @, it's ambiguous whether the colon is a port or a username.
                 if (offset > 0) {
-                    if ((std.mem.indexOfScalar(u8, base[offset..], '@') orelse 0) > (std.mem.indexOfScalar(u8, base[offset..], ':') orelse 0)) {
+                    // see https://github.com/oven-sh/bun/issues/1390
+                    const first_at = strings.indexOfChar(base[offset..], '@') orelse 0;
+                    const first_colon = strings.indexOfChar(base[offset..], ':') orelse 0;
+
+                    if (first_at > first_colon and first_at < (strings.indexOfChar(base[offset..], '/') orelse 0)) {
                         offset += url.parseUsername(base[offset..]) orelse 0;
                         offset += url.parsePassword(base[offset..]) orelse 0;
                     }
@@ -1348,29 +1352,6 @@ test "URL - parse" {
     try expectString("/", url.pathname);
     try expectString("#include-credentials", url.hash);
 
-    url = URL.parse("example.com:8080/////#include-credentials");
-    try expectString("", url.protocol);
-    try expectString("", url.username);
-    try expectString("", url.password);
-    try expectString("example.com:8080", url.host);
-    try expectString("example.com", url.hostname);
-    try expectString("8080", url.port);
-    try expectString("/////", url.pathname);
-    try expectString("/", url.path);
-    try expectString("#include-credentials", url.hash);
-    url = URL.parse("example.com:8080/////hi?wow#include-credentials");
-    try expectString("", url.protocol);
-    try expectString("", url.username);
-    try expectString("", url.password);
-    try expectString("example.com:8080", url.host);
-    try expectString("example.com", url.hostname);
-    try expectString("8080", url.port);
-    try expectString("/hi", url.path);
-    try expectString("/////hi?wow", url.pathname);
-
-    try expectString("#include-credentials", url.hash);
-    try expectString("?wow", url.search);
-
     url = URL.parse("/src/index");
     try expectString("", url.protocol);
     try expectString("", url.username);
@@ -1403,6 +1384,46 @@ test "URL - parse" {
     // try expectString("443", url.port);
     try expectString("/WHO-COVID-19-global-data.csv", url.path);
     try expectString("/WHO-COVID-19-global-data.csv", url.pathname);
+
+    url = URL.parse("http://localhost:3000/@/example");
+    try expectString("http", url.protocol);
+    try expectString("", url.username);
+    try expectString("", url.password);
+    try expectString("localhost:3000", url.host);
+    try expectString("localhost", url.hostname);
+    try expectString("3000", url.port);
+    try expectString("/@/example", url.path);
+    try expectString("/@/example", url.pathname);
+
+    url = URL.parse("http://admin:password@localhost:3000/@/example");
+    try expectString("http", url.protocol);
+    try expectString("admin", url.username);
+    try expectString("password", url.password);
+    try expectString("localhost:3000", url.host);
+    try expectString("localhost", url.hostname);
+    try expectString("3000", url.port);
+    try expectString("/@/example", url.path);
+    try expectString("/@/example", url.pathname);
+
+    url = URL.parse("http://0.0.0.0:3000/@/example");
+    try expectString("http", url.protocol);
+    try expectString("", url.username);
+    try expectString("", url.password);
+    try expectString("0.0.0.0:3000", url.host);
+    try expectString("0.0.0.0", url.hostname);
+    try expectString("3000", url.port);
+    try expectString("/@/example", url.path);
+    try expectString("/@/example", url.pathname);
+
+    url = URL.parse("http://admin:password@0.0.0.0:3000/@/example");
+    try expectString("http", url.protocol);
+    try expectString("admin", url.username);
+    try expectString("password", url.password);
+    try expectString("0.0.0.0:3000", url.host);
+    try expectString("0.0.0.0", url.hostname);
+    try expectString("3000", url.port);
+    try expectString("/@/example", url.path);
+    try expectString("/@/example", url.pathname);
 }
 
 test "URL - joinAlloc" {

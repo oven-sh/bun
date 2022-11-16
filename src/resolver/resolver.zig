@@ -2800,7 +2800,7 @@ pub const Resolver = struct {
         };
     }
 
-    pub fn loadAsIndex(r: *ThisResolver, dir_info: *DirInfo, path: string, extension_order: []const string) ?MatchResult {
+    pub fn loadAsIndex(r: *ThisResolver, dir_info: *DirInfo, extension_order: []const string) ?MatchResult {
         var rfs = &r.fs.fs;
         // Try the "index" file with extensions
         for (extension_order) |ext| {
@@ -2813,7 +2813,7 @@ pub const Resolver = struct {
                     if (lookup.entry.kind(rfs) == .file) {
                         const out_buf = brk: {
                             if (lookup.entry.abs_path.isEmpty()) {
-                                const parts = [_]string{ path, base };
+                                const parts = [_]string{ dir_info.abs_path, base };
                                 const out_buf_ = r.fs.absBuf(&parts, &index_buf);
                                 lookup.entry.abs_path =
                                     PathString.init(r.fs.dirname_store.append(@TypeOf(out_buf_), out_buf_) catch unreachable);
@@ -2845,7 +2845,7 @@ pub const Resolver = struct {
             }
 
             if (r.debug_logs) |*debug| {
-                debug.addNoteFmt("Failed to find file: \"{s}/{s}\"", .{ path, base });
+                debug.addNoteFmt("Failed to find file: \"{s}/{s}\"", .{ dir_info.abs_path, base });
             }
         }
 
@@ -2896,7 +2896,7 @@ pub const Resolver = struct {
 
                     // Is it a directory with an index?
                     if (r.dirInfoCached(remapped_abs) catch null) |new_dir| {
-                        if (r.loadAsIndex(new_dir, remapped_abs, extension_order)) |absolute| {
+                        if (r.loadAsIndex(new_dir, extension_order)) |absolute| {
                             return absolute;
                         }
                     }
@@ -2906,7 +2906,7 @@ pub const Resolver = struct {
             }
         }
 
-        return r.loadAsIndex(dir_info, path_, extension_order);
+        return r.loadAsIndex(dir_info, extension_order);
     }
 
     pub fn loadAsFileOrDirectory(r: *ThisResolver, path: string, kind: ast.ImportKind) ?MatchResult {

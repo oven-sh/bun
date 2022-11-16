@@ -561,11 +561,20 @@ pub const Fetch = struct {
         concurrent_task: JSC.ConcurrentTask = .{},
         poll_ref: JSC.PollRef = .{},
 
+        /// Memory is owned by FetchTasklet
+        /// We always clone this one
+        url_str: []const u8 = "",
+
         pub fn init(_: std.mem.Allocator) anyerror!FetchTasklet {
             return FetchTasklet{};
         }
 
         fn clearData(this: *FetchTasklet) void {
+            if (this.url_str.len > 0) {
+                bun.default_allocator.free(bun.constStrToU8(this.url_str));
+                this.url_str.len = 0;
+            }
+
             this.request_headers.entries.deinit(bun.default_allocator);
             this.request_headers.buf.deinit(bun.default_allocator);
             this.request_headers = Headers{ .allocator = undefined };
@@ -701,6 +710,7 @@ pub const Fetch = struct {
                 .global_this = globalThis,
                 .request_headers = fetch_options.headers,
                 .ref = JSC.napi.Ref.create(globalThis, promise),
+                .url_str = fetch_options.url.href,
             };
 
             if (fetch_tasklet.request_body.store()) |store| {
@@ -806,22 +816,17 @@ pub const Fetch = struct {
             }
             body = request.body.useAsAnyBlob();
         } else if (first_arg.toStringOrNull(globalThis)) |jsstring| {
-            var url_zig_str = ZigString.init("");
-            jsstring.toZigString(globalThis, &url_zig_str);
-            var url_str = url_zig_str.slice();
+            var url_slice = jsstring.toSlice(globalThis, bun.default_allocator).cloneIfNeeded(bun.default_allocator) catch {
+                JSC.JSError(bun.default_allocator, "Out of memory", .{}, ctx, exception);
+                return null;
+            };
 
-            if (url_str.len == 0) {
+            if (url_slice.len == 0) {
                 const fetch_error = fetch_error_blank_url;
                 return JSPromise.rejectedPromiseValue(globalThis, ZigString.init(fetch_error).toErrorInstance(globalThis)).asRef();
             }
 
-            if (url_str[0] == '/') {
-                url_str = strings.append(getAllocator(ctx), VirtualMachine.vm.bundler.options.origin.origin, url_str) catch unreachable;
-            } else {
-                url_str = getAllocator(ctx).dupe(u8, url_str) catch unreachable;
-            }
-
-            url = ZigURL.parse(url_str);
+            url = ZigURL.parse(url_slice.slice());
 
             if (arguments.len >= 2) {
                 const options = arguments[1].?.value();

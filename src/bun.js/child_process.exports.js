@@ -6,7 +6,7 @@ const {
   constants: { signals },
 } = import.meta.require("node:os");
 
-const { ArrayBuffer, isPromise } = import.meta.primordials;
+const { ArrayBuffer, isPromise, isCallable } = import.meta.primordials;
 
 const MAX_BUFFER = 1024 * 1024;
 const debug = process.env.DEBUG ? console.log : () => {};
@@ -1258,7 +1258,7 @@ class WrappedFileSink extends EventEmitter {
 
   write(data) {
     const result = this.#fileSink.write(data);
-    if (isPromise(result)) {
+    if (isPromise(result) && result.then && isCallable(result.then)) {
       result.then(() => {
         this.emit("drain");
         this.#fileSink.flush(true);

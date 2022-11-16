@@ -213,8 +213,8 @@ function getStdinStream({ require }) {
           this.#onFinished(err);
         });
 
-        this.#readStream.on("data", (data) => {
-          this.push(data);
+        this.#readStream.on("readable", () => {
+          this.read();
         });
 
         this.#readStream.on("end", () => {

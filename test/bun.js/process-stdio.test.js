@@ -24,7 +24,7 @@ describe("process.stdout", () => {
   });
 });
 
-describe("process.stdout", () => {
+describe("process.stdin", () => {
   it("should allow us to write to it", (done) => {
     const stdin = _stdinInit({ require: _require });
 

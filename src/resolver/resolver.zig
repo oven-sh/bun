@@ -1949,7 +1949,7 @@ pub const Resolver = struct {
             break :brk r.fs.absBuf(&parts, &esm_absolute_package_path_joined);
         };
 
-        // var missing_extension = "";
+        var missing_suffix: string = undefined;
 
         switch (esm_resolution.status) {
             .Exact, .ExactEndsWithStar => {
@@ -1962,17 +1962,16 @@ pub const Resolver = struct {
                     return null;
                 };
                 const base = std.fs.path.basename(abs_esm_path);
+                const extension_order = if (kind == .at or kind == .at_conditional)
+                    r.extension_order
+                else
+                    r.opts.extension_order;
                 const entry_query = entries.get(base) orelse {
                     const ends_with_star = esm_resolution.status == .ExactEndsWithStar;
                     esm_resolution.status = .ModuleNotFound;
 
                     // Try to have a friendly error message if people forget the extension
                     if (ends_with_star) {
-                        const extension_order = if (kind == .at or kind == .at_conditional)
-                            r.extension_order
-                        else
-                            r.opts.extension_order;
-
                         std.mem.copy(u8, &load_as_file_buf, base);
                         for (extension_order) |ext| {
                             var file_name = load_as_file_buf[0 .. base.len + ext.len];
@@ -1983,7 +1982,7 @@ pub const Resolver = struct {
                                     debug.addNoteFmt("The import {s} is missing the extension {s}", .{ ResolvePath.join(parts, .auto), ext });
                                 }
                                 esm_resolution.status = .ModuleNotFoundMissingExtension;
-                                // missing_extension = ext;
+                                missing_suffix = ext;
                                 break;
                             }
                         }
@@ -1992,7 +1991,33 @@ pub const Resolver = struct {
                 };
 
                 if (entry_query.entry.kind(&r.fs.fs) == .dir) {
+                    const ends_with_star = esm_resolution.status == .ExactEndsWithStar;
                     esm_resolution.status = .UnsupportedDirectoryImport;
+
+                    // Try to have a friendly error message if people forget the "/index.js" suffix
+                    if (ends_with_star) {
+                        if (r.dirInfoCached(abs_esm_path) catch null) |dir_info| {
+                            if (dir_info.getEntries()) |dir_entries| {
+                                const index = "index";
+                                std.mem.copy(u8, &load_as_file_buf, index);
+                                for (extension_order) |ext| {
+                                    var file_name = load_as_file_buf[0 .. index.len + ext.len];
+                                    std.mem.copy(u8, file_name[index.len..], ext);
+                                    const index_query = dir_entries.get(file_name);
+                                    if (index_query != null and index_query.?.entry.kind(&r.fs.fs) == .file) {
+                                        missing_suffix = std.fmt.allocPrint(r.allocator, "/{s}", .{file_name}) catch unreachable;
+                                        // defer r.allocator.free(missing_suffix);
+                                        if (r.debug_logs) |*debug| {
+                                            const parts = [_]string{ package_json.name, package_subpath };
+                                            debug.addNoteFmt("The import {s} is missing the suffix {s}", .{ ResolvePath.join(parts, .auto), missing_suffix });
+                                        }
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+                    }
+
                     return null;
                 }
 

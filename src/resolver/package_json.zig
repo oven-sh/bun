@@ -732,13 +732,13 @@ pub const PackageJSON = struct {
         }
 
         if (json.asProperty("exports")) |exports_prop| {
-            if (ExportsMap.parse(r.allocator, &json_source, r.log, exports_prop.expr)) |exports_map| {
+            if (ExportsMap.parse(r.allocator, &json_source, r.log, exports_prop.expr, exports_prop.loc)) |exports_map| {
                 package_json.exports = exports_map;
             }
         }
 
         if (json.asProperty("imports")) |imports_prop| {
-            if (ExportsMap.parse(r.allocator, &json_source, r.log, imports_prop.expr)) |imports_map| {
+            if (ExportsMap.parse(r.allocator, &json_source, r.log, imports_prop.expr, imports_prop.loc)) |imports_map| {
                 package_json.imports = imports_map;
             }
         }
@@ -955,8 +955,9 @@ pub const PackageJSON = struct {
 pub const ExportsMap = struct {
     root: Entry,
     exports_range: logger.Range = logger.Range.None,
+    property_key_loc: logger.Loc,
 
-    pub fn parse(allocator: std.mem.Allocator, source: *const logger.Source, log: *logger.Log, json: js_ast.Expr) ?ExportsMap {
+    pub fn parse(allocator: std.mem.Allocator, source: *const logger.Source, log: *logger.Log, json: js_ast.Expr, property_key_loc: logger.Loc) ?ExportsMap {
         var visitor = Visitor{ .allocator = allocator, .source = source, .log = log };
 
         const root = visitor.visit(json);
@@ -968,6 +969,7 @@ pub const ExportsMap = struct {
         return ExportsMap{
             .root = root,
             .exports_range = source.rangeOfString(json.loc),
+            .property_key_loc = property_key_loc,
         };
     }
 
@@ -1209,6 +1211,9 @@ pub const ESModule = struct {
 
         /// The resolved path corresponds to a directory, which is not a supported target for module imports.
         UnsupportedDirectoryImport,
+
+        /// The user just needs to add the missing "/index.js" suffix
+        UnsupportedDirectoryImportMissingIndex,
 
         /// When a package path is explicitly set to null, that means it's not exported.
         PackagePathDisabled,

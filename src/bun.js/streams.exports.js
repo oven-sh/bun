@@ -5786,7 +5786,7 @@ function createNativeStream(nativeType, Readable) {
 
     #handleResult(result, view, isClosed) {
       if (typeof result === "number") {
-        if (result >= this.#highWaterMark && !this.#hasResized) {
+        if (result >= this.#highWaterMark && !this.#hasResized && !isClosed) {
           this.#highWaterMark *= 2;
           this.#hasResized = true;
         }
@@ -5796,7 +5796,11 @@ function createNativeStream(nativeType, Readable) {
         this.push(null);
         return view?.byteLength ?? 0 > 0 ? view : undefined;
       } else if (ArrayBuffer.isView(result)) {
-        if (result.byteLength >= this.#highWaterMark && !this.#hasResized) {
+        if (
+          result.byteLength >= this.#highWaterMark &&
+          !this.#hasResized &&
+          !isClosed
+        ) {
           this.#highWaterMark *= 2;
           this.#hasResized = true;
         }

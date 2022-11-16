@@ -62,6 +62,15 @@ inline void generateTTYSourceCode(JSC::JSGlobalObject *lexicalGlobalObject,
   tty->putDirect(vm, JSC::Identifier::fromString(vm, "WriteStream"_s), notimpl);
   exportValues.append(notimpl);
 
+  tty->putDirect(vm,
+                 PropertyName(Identifier::fromUid(
+                     vm.symbolRegistry().symbolForKey("CommonJS"_s))),
+                 jsNumber(0), 0);
+
+  for (size_t i = 0; i < exportNames.size(); i++) {
+    tty->putDirect(vm, exportNames[i], exportValues.at(i), 0);
+  }
+
   exportNames.append(vm.propertyNames->defaultKeyword);
   exportValues.append(tty);
 }

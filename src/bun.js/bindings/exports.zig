@@ -2550,12 +2550,30 @@ pub const ZigConsoleClient = struct {
         // global
         _: *JSGlobalObject,
         // chars
-        _: [*]const u8,
+        chars: [*]const u8,
         // len
-        _: usize,
+        len: usize,
         // args
         _: *ScriptArguments,
-    ) callconv(.C) void {}
+    ) callconv(.C) void {
+        if (!pending_time_logs_loaded) {
+            return;
+        }
+
+        const id = std.hash.Wyhash.hash(0, chars[0..len]);
+        var value: std.time.Timer = (pending_time_logs.get(id) orelse return) orelse return;
+        // get the duration in microseconds
+        // then display it in milliseconds
+        Output.printElapsed(@intToFloat(f64, value.read() / std.time.ns_per_us) / std.time.us_per_ms);
+        switch (len) {
+            0 => Output.printErrorln("\n", .{}),
+            else => Output.printErrorln(" {s}", .{chars[0..len]}),
+        }
+
+        Output.flush();
+
+        // TODO: print the arguments
+    }
     pub fn profile(
         // console
         _: ZigConsoleClient.Type,

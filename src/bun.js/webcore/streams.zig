@@ -3796,6 +3796,24 @@ pub const FileReader = struct {
                     .pending = &this.pending,
                 };
             }
+        } else if (this.isFIFO() and this.poll_ref == null and available_to_read == null) {
+            // we don't know if it's readable or not
+            if (!bun.isReadable(fd)) {
+                if (free_buffer_on_error) {
+                    bun.default_allocator.free(buf_to_use);
+                    buf_to_use = read_buf;
+                }
+
+                if (view != .zero) {
+                    this.view.set(this.globalThis(), view);
+                    this.buf = read_buf;
+                }
+
+                this.watch(fd);
+                return .{
+                    .pending = &this.pending,
+                };
+            }
         }
 
         switch (Syscall.read(fd, buf_to_use)) {

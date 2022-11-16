@@ -4026,6 +4026,10 @@ pub const AnyBlob = union(enum) {
             //     return owned;
             // },
             .InternalBlob => {
+                if (this.InternalBlob.bytes.items.len == 0) {
+                    return ZigString.Empty.toValue(global);
+                }
+
                 const owned = this.InternalBlob.toStringOwned(global);
                 this.* = .{ .Blob = .{} };
                 return owned;

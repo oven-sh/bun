@@ -13,7 +13,7 @@ bun is a new:
 - JavaScript/TypeScript/JSX transpiler
 - JavaScript & CSS bundler
 - Task runner for package.json scripts
-- npm-compatible package manager
+- package manager working on the `package.json` file, same as `npm` or other package managers.
 
 All in one fast &amp; easy-to-use tool. Instead of 1,000 node_modules for development, you only need bun.
 

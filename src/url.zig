@@ -1440,6 +1440,15 @@ test "URL - parse" {
     try expectString("0.0.0.0:3000", url.host);
     try expectString("0.0.0.0", url.hostname);
     try expectString("3000", url.port);
+
+    url = URL.parse("http://admin:password@0.0.0.0:3000/@bacon");
+    try expectString("http", url.protocol);
+    try expectString("admin", url.username);
+    try expectString("password", url.password);
+    try expectString("0.0.0.0:3000", url.host);
+    try expectString("0.0.0.0", url.hostname);
+    try expectString("3000", url.port);
+    try expectString("/@bacon", url.pathname);
 }
 
 test "URL - joinAlloc" {

@@ -2182,13 +2182,11 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
         }
 
         pub fn onStartStreamingRequestBody(this: *RequestContext) JSC.WebCore.DrainResult {
-            if (this.aborted or this.finalized) {
+            if (this.aborted) {
                 return JSC.WebCore.DrainResult{
                     .aborted = void{},
                 };
             }
-
-            std.debug.assert(!this.resp.hasResponded());
 
             // This means we have received part of the body but not the whole thing
             if (this.request_body_buf.items.len > 0) {

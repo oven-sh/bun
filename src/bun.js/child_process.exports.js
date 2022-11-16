@@ -6,7 +6,7 @@ const {
   constants: { signals },
 } = import.meta.require("node:os");
 
-const { ArrayBuffer } = import.meta.primordials;
+const { ArrayBuffer, isPromise } = import.meta.primordials;
 
 const MAX_BUFFER = 1024 * 1024;
 const debug = process.env.DEBUG ? console.log : () => {};
@@ -891,8 +891,6 @@ export class ChildProcess extends EventEmitter {
     }
 
     if (exitCode < 0) {
-      const syscall = this.spawnfile ? "spawn " + this.spawnfile : "spawn";
-
       const err = new SystemError(
         `Spawned process exited with error code: ${exitCode}`,
         undefined,
@@ -947,14 +945,11 @@ export class ChildProcess extends EventEmitter {
             return ReadableFromWeb(this.#handle[fdToStdioName(i)], {
               encoding,
             });
-            break;
           case "inherit":
             return process[fdToStdioName(i)] || null;
-            break;
           default:
             return null;
         }
-        break;
       }
     }
   }
@@ -1019,6 +1014,10 @@ export class ChildProcess extends EventEmitter {
     // }
 
     validateString(options.file, "options.file");
+    // NOTE: This is confusing... So node allows you to pass a file name
+    // But also allows you to pass a command in the args and it should execute
+    // To add another layer of confusion, they also give the option to pass an explicit "argv0"
+    // which overrides the actual command of the spawned process...
     var file;
     file = this.spawnfile = options.file;
 
@@ -1046,18 +1045,13 @@ export class ChildProcess extends EventEmitter {
       onExit: this.#handleOnExit.bind(this),
       lazy: true,
     });
+
     this.#handleExited = this.#handle.exited;
     this.#encoding = options.encoding || undefined;
     this.#stdioOptions = bunStdio;
     this.pid = this.#handle.pid;
 
     process.nextTick(onSpawnNT, this);
-
-    // If no `stdio` option was given - use default
-    // let stdio = options.stdio || "pipe"; // TODO: reset default
-    // let stdio = options.stdio || ["pipe", "pipe", "pipe"];
-
-    // stdio = getValidStdio(stdio, false);
 
     // const ipc = stdio.ipc;
     // const ipcFd = stdio.ipcFd;
@@ -1090,30 +1084,6 @@ export class ChildProcess extends EventEmitter {
     //       this.pid !== 0 ? stream.handle : null,
     //       i > 0
     //     );
-
-    //     if (i > 0 && this.pid !== 0) {
-    //       this._closesNeeded++;
-    //       stream.socket.on("close", () => {
-    //         maybeClose(this);
-    //       });
-    //     }
-    //   }
-    // }
-
-    // this.stdin =
-    //   stdio.length >= 1 && stdio[0].socket !== undefined ? stdio[0].socket : null;
-    // this.stdout =
-    //   stdio.length >= 2 && stdio[1].socket !== undefined ? stdio[1].socket : null;
-    // this.stderr =
-    //   stdio.length >= 3 && stdio[2].socket !== undefined ? stdio[2].socket : null;
-
-    // this.stdio = [];
-
-    // for (i = 0; i < stdio.length; i++)
-    //   ArrayPrototypePush.call(
-    //     this.stdio,
-    //     stdio[i].socket === undefined ? null : stdio[i].socket
-    //   );
 
     // // Add .send() method and start listening for IPC data
     // if (ipc !== undefined) setupChannel(this, ipc, serialization);
@@ -1287,12 +1257,20 @@ class WrappedFileSink extends EventEmitter {
   }
 
   write(data) {
-    this.#fileSink.write(data);
+    const result = this.#fileSink.write(data);
+    if (isPromise(result)) {
+      result.then(() => {
+        this.emit("drain");
+        this.#fileSink.flush(true);
+      });
+      return false;
+    }
     this.#fileSink.flush(true);
+    return true;
   }
 
   destroy() {
-    this.#fileSink.end();
+    this.end();
   }
 
   end() {

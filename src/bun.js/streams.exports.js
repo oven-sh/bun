@@ -2025,7 +2025,6 @@ var require_destroy = __commonJS({
       const r = this._readableState;
       const w = this._writableState;
       const s = w || r;
-      console.log(s);
       if ((w && w.destroyed) || (r && r.destroyed)) {
         if (typeof cb === "function") {
           cb();
@@ -3666,24 +3665,32 @@ var require_writable_readable = __commonJS({
     var { errorOrDestroy } = destroyImpl;
     var Readable = require_readable();
 
+    var destroy = destroyImpl.destroy;
     var WritableReadable = class WritableReadable extends Readable {
+      static [SymbolHasInstance](object) {
+        if (FunctionPrototypeSymbolHasInstance(this, object)) return true;
+        if (this !== WritableReadable) return false;
+        return object && object._writableState instanceof WritableState;
+      }
+      _writev = null;
       constructor(options = {}) {
         super(options);
 
         const isDuplex = this instanceof require_duplex();
-        if (!isDuplex && !FunctionPrototypeSymbolHasInstance(Writable, this))
-          return new Writable(options);
+        if (
+          !isDuplex &&
+          !FunctionPrototypeSymbolHasInstance(WritableReadable, this)
+        )
+          return new WritableReadable(options);
         this._writableState = new WritableState(options, this, isDuplex);
         if (options) {
-          if (typeof options.write === "function") this._write = options.write;
-          if (typeof options.writev === "function")
-            this._writev = options.writev;
-          if (typeof options.destroy === "function")
-            this._destroy = options.destroy;
-          if (typeof options.final === "function") this._final = options.final;
-          if (typeof options.construct === "function")
-            this._construct = options.construct;
-          if (options.signal) addAbortSignal(options.signal, this);
+          var { write, writev, destroy, final, construct, signal } = options;
+          if (typeof write === "function") this._write = write;
+          if (typeof writev === "function") this._writev = writev;
+          if (typeof destroy === "function") this._destroy = destroy;
+          if (typeof final === "function") this._final = final;
+          if (typeof construct === "function") this._construct = construct;
+          if (signal) addAbortSignal(signal, this);
         }
         destroyImpl.construct(this, () => {
           const state = this._writableState;
@@ -3693,11 +3700,158 @@ var require_writable_readable = __commonJS({
           finishMaybe(this, state);
         });
       }
+      pipe() {
+        errorOrDestroy(this, new ERR_STREAM_CANNOT_PIPE());
+      }
+      _write(chunk, encoding, cb) {
+        if (this._writev) {
+          this._writev(
+            [
+              {
+                chunk,
+                encoding,
+              },
+            ],
+            cb,
+          );
+        } else {
+          throw new ERR_METHOD_NOT_IMPLEMENTED("_write()");
+        }
+      }
+      write(chunk, encoding, cb) {
+        return _write(this, chunk, encoding, cb) === true;
+      }
+      cork() {
+        this._writableState.corked++;
+      }
+      uncork() {
+        const state = this._writableState;
+        if (state.corked) {
+          state.corked--;
+          if (!state.writing) clearBuffer(this, state);
+        }
+      }
+      setDefaultEncoding(encoding) {
+        if (typeof encoding === "string")
+          encoding = StringPrototypeToLowerCase(encoding);
+        if (!Buffer.isEncoding(encoding))
+          throw new ERR_UNKNOWN_ENCODING(encoding);
+        this._writableState.defaultEncoding = encoding;
+        return this;
+      }
+      end(chunk, encoding, cb) {
+        const state = this._writableState;
+        if (typeof chunk === "function") {
+          cb = chunk;
+          chunk = null;
+          encoding = null;
+        } else if (typeof encoding === "function") {
+          cb = encoding;
+          encoding = null;
+        }
+        let err;
+        if (chunk !== null && chunk !== void 0) {
+          const ret = _write(this, chunk, encoding);
+          if (ret instanceof Error2) {
+            err = ret;
+          }
+        }
+        if (state.corked) {
+          state.corked = 1;
+          this.uncork();
+        }
+        if (err) {
+        } else if (!state.errored && !state.ending) {
+          state.ending = true;
+          finishMaybe(this, state, true);
+          state.ended = true;
+        } else if (state.finished) {
+          err = new ERR_STREAM_ALREADY_FINISHED("end");
+        } else if (state.destroyed) {
+          err = new ERR_STREAM_DESTROYED("end");
+        }
+        if (typeof cb === "function") {
+          if (err || state.finished) {
+            runOnNextTick(cb, err);
+          } else {
+            state[kOnFinished].push(cb);
+          }
+        }
+        return this;
+      }
+      destroy(err, cb) {
+        const state = this._writableState;
+        if (
+          !state.destroyed &&
+          (state.bufferedIndex < state.buffered.length ||
+            state[kOnFinished].length)
+        ) {
+          runOnNextTick(errorBuffer, state);
+        }
+        destroy.call(this, err, cb);
+        return this;
+      }
+      _undestroy() {
+        return destroyImpl.undestroy.call(this);
+      }
+      _destroy(err, cb) {
+        cb(err);
+      }
+      [EE.captureRejectionSymbol](err) {
+        this.destroy(err);
+      }
     };
     module.exports = WritableReadable;
 
     function nop() {}
     var kOnFinished = Symbol2("kOnFinished");
+
+    function _write(stream, chunk, encoding, cb) {
+      const state = stream._writableState;
+      if (typeof encoding === "function") {
+        cb = encoding;
+        encoding = state.defaultEncoding;
+      } else {
+        if (!encoding) encoding = state.defaultEncoding;
+        else if (encoding !== "buffer" && !Buffer.isEncoding(encoding))
+          throw new ERR_UNKNOWN_ENCODING(encoding);
+        if (typeof cb !== "function") cb = nop;
+      }
+      if (chunk === null) {
+        throw new ERR_STREAM_NULL_VALUES();
+      } else if (!state.objectMode) {
+        if (typeof chunk === "string") {
+          if (state.decodeStrings !== false) {
+            chunk = Buffer.from(chunk, encoding);
+            encoding = "buffer";
+          }
+        } else if (chunk instanceof Buffer) {
+          encoding = "buffer";
+        } else if (Stream._isUint8Array(chunk)) {
+          chunk = Stream._uint8ArrayToBuffer(chunk);
+          encoding = "buffer";
+        } else {
+          throw new ERR_INVALID_ARG_TYPE(
+            "chunk",
+            ["string", "Buffer", "Uint8Array"],
+            chunk,
+          );
+        }
+      }
+      let err;
+      if (state.ending) {
+        err = new ERR_STREAM_WRITE_AFTER_END();
+      } else if (state.destroyed) {
+        err = new ERR_STREAM_DESTROYED("write");
+      }
+      if (err) {
+        runOnNextTick(cb, err);
+        errorOrDestroy(stream, err, true);
+        return err;
+      }
+      state.pendingcb++;
+      return writeOrBuffer(stream, state, chunk, encoding, cb);
+    }
     function WritableState(options, stream, isDuplex) {
       if (typeof isDuplex !== "boolean")
         isDuplex = stream instanceof require_duplex();
@@ -3753,85 +3907,6 @@ var require_writable_readable = __commonJS({
       },
     });
 
-    ObjectDefineProperty(WritableReadable, SymbolHasInstance, {
-      value: function (object) {
-        if (FunctionPrototypeSymbolHasInstance(this, object)) return true;
-        if (this !== Writable) return false;
-        return object && object._writableState instanceof WritableState;
-      },
-    });
-    WritableReadable.prototype.pipe = function () {
-      errorOrDestroy(this, new ERR_STREAM_CANNOT_PIPE());
-    };
-    function _write(stream, chunk, encoding, cb) {
-      const state = stream._writableState;
-      if (typeof encoding === "function") {
-        cb = encoding;
-        encoding = state.defaultEncoding;
-      } else {
-        if (!encoding) encoding = state.defaultEncoding;
-        else if (encoding !== "buffer" && !Buffer.isEncoding(encoding))
-          throw new ERR_UNKNOWN_ENCODING(encoding);
-        if (typeof cb !== "function") cb = nop;
-      }
-      if (chunk === null) {
-        throw new ERR_STREAM_NULL_VALUES();
-      } else if (!state.objectMode) {
-        if (typeof chunk === "string") {
-          if (state.decodeStrings !== false) {
-            chunk = Buffer.from(chunk, encoding);
-            encoding = "buffer";
-          }
-        } else if (chunk instanceof Buffer) {
-          encoding = "buffer";
-        } else if (Stream._isUint8Array(chunk)) {
-          chunk = Stream._uint8ArrayToBuffer(chunk);
-          encoding = "buffer";
-        } else {
-          throw new ERR_INVALID_ARG_TYPE(
-            "chunk",
-            ["string", "Buffer", "Uint8Array"],
-            chunk,
-          );
-        }
-      }
-      let err;
-      if (state.ending) {
-        err = new ERR_STREAM_WRITE_AFTER_END();
-      } else if (state.destroyed) {
-        err = new ERR_STREAM_DESTROYED("write");
-      }
-      if (err) {
-        runOnNextTick(cb, err);
-        errorOrDestroy(stream, err, true);
-        return err;
-      }
-      state.pendingcb++;
-      return writeOrBuffer(stream, state, chunk, encoding, cb);
-    }
-    WritableReadable.prototype.write = function (chunk, encoding, cb) {
-      return _write(this, chunk, encoding, cb) === true;
-    };
-    WritableReadable.prototype.cork = function () {
-      this._writableState.corked++;
-    };
-    WritableReadable.prototype.uncork = function () {
-      const state = this._writableState;
-      if (state.corked) {
-        state.corked--;
-        if (!state.writing) clearBuffer(this, state);
-      }
-    };
-    WritableReadable.prototype.setDefaultEncoding = function setDefaultEncoding(
-      encoding,
-    ) {
-      if (typeof encoding === "string")
-        encoding = StringPrototypeToLowerCase(encoding);
-      if (!Buffer.isEncoding(encoding))
-        throw new ERR_UNKNOWN_ENCODING(encoding);
-      this._writableState.defaultEncoding = encoding;
-      return this;
-    };
     function writeOrBuffer(stream, state, chunk, encoding, callback) {
       const len = state.objectMode ? 1 : chunk.length;
       state.length += len;
@@ -4029,62 +4104,6 @@ var require_writable_readable = __commonJS({
       }
       state.bufferProcessing = false;
     }
-    WritableReadable.prototype._write = function (chunk, encoding, cb) {
-      if (this._writev) {
-        this._writev(
-          [
-            {
-              chunk,
-              encoding,
-            },
-          ],
-          cb,
-        );
-      } else {
-        throw new ERR_METHOD_NOT_IMPLEMENTED("_write()");
-      }
-    };
-    WritableReadable.prototype._writev = null;
-    WritableReadable.prototype.end = function (chunk, encoding, cb) {
-      const state = this._writableState;
-      if (typeof chunk === "function") {
-        cb = chunk;
-        chunk = null;
-        encoding = null;
-      } else if (typeof encoding === "function") {
-        cb = encoding;
-        encoding = null;
-      }
-      let err;
-      if (chunk !== null && chunk !== void 0) {
-        const ret = _write(this, chunk, encoding);
-        if (ret instanceof Error2) {
-          err = ret;
-        }
-      }
-      if (state.corked) {
-        state.corked = 1;
-        this.uncork();
-      }
-      if (err) {
-      } else if (!state.errored && !state.ending) {
-        state.ending = true;
-        finishMaybe(this, state, true);
-        state.ended = true;
-      } else if (state.finished) {
-        err = new ERR_STREAM_ALREADY_FINISHED("end");
-      } else if (state.destroyed) {
-        err = new ERR_STREAM_DESTROYED("end");
-      }
-      if (typeof cb === "function") {
-        if (err || state.finished) {
-          runOnNextTick(cb, err);
-        } else {
-          state[kOnFinished].push(cb);
-        }
-      }
-      return this;
-    };
     function needFinish(state) {
       return (
         state.ending &&
@@ -4280,26 +4299,6 @@ var require_writable_readable = __commonJS({
         },
       },
     });
-    var destroy = destroyImpl.destroy;
-    WritableReadable.prototype.destroy = function (err, cb) {
-      const state = this._writableState;
-      if (
-        !state.destroyed &&
-        (state.bufferedIndex < state.buffered.length ||
-          state[kOnFinished].length)
-      ) {
-        runOnNextTick(errorBuffer, state);
-      }
-      destroy.call(this, err, cb);
-      return this;
-    };
-    WritableReadable.prototype._undestroy = destroyImpl.undestroy;
-    WritableReadable.prototype._destroy = function (err, cb) {
-      cb(err);
-    };
-    WritableReadable.prototype[EE.captureRejectionSymbol] = function (err) {
-      this.destroy(err);
-    };
   },
 });
 

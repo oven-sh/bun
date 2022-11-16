@@ -15,20 +15,28 @@ function _require(mod) {
 }
 
 describe("process.stdout", () => {
+  it("should allow us to write to it", () => {
+    const stdout = _stdoutInit({ require: _require });
+
+    process.stdout = stdout;
+
+    process.stdout.write("hello");
+  });
+});
+
+describe("process.stdout", () => {
   it("should allow us to write to it", (done) => {
     const stdin = _stdinInit({ require: _require });
-    const stdout = _stdoutInit({ require: _require });
-    const stderr = _stderrInit({ require: _require });
 
     process.stdin = stdin;
-    process.stdout = stdout;
-    process.stderr = stderr;
 
-    // process.stdout.pipe(process.stdin);
+    process.stdin.setEncoding("utf8");
     process.stdin.on("data", (data) => {
-      expect(data).toBe("hello");
+      console.log("received data:", data);
+      expect(data).toEqual("hello");
       done();
     });
-    process.stdout.write("hello");
+
+    process.stdin.write("hello");
   });
 });

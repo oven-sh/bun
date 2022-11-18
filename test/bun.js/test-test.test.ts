@@ -1,99 +1,22 @@
 import { expect, test } from "bun:test";
 
-test("toHaveProperty()", () => {
-  const houseForSale = {
-    bath: true,
-    bedrooms: 4,
-    kitchen: {
-      amenities: ["oven", "stove", "washer"],
-      area: 20,
-      wallColor: "white",
-      "nice.oven": true,
-    },
-    livingroom: {
-      amenities: [
-        {
-          couch: [
-            ["large", { dimensions: [20, 20] }],
-            ["small", { dimensions: [10, 10] }],
-          ],
-        },
-      ],
-    },
-    sunroom: "yes",
-    "ceiling.height": 20,
-    "no.nono": { nooooooo: "no" },
-  };
-
-  expect(houseForSale).toHaveProperty("bath");
-  expect(houseForSale).not.toHaveProperty("jacuzzi");
-  // expect(houseForSale).toHaveProperty("jacuzzi");
-  // expect(houseForSale).not.toHaveProperty("bath");
-
-  expect(houseForSale).toHaveProperty("bath", true);
-  expect(houseForSale).not.toHaveProperty("bath", false);
-  // expect(houseForSale).toHaveProperty("bath", false);
-  // expect(houseForSale).not.toHaveProperty("bath", true);
-
-  expect(houseForSale).toHaveProperty("bedrooms", 4);
-  expect(houseForSale).toHaveProperty(["sunroom"], "yes");
-
-  expect(houseForSale).toHaveProperty("kitchen.area", 20);
-  expect(houseForSale).toHaveProperty("kitchen.amenities", [
-    "oven",
-    "stove",
-    "washer",
-  ]);
-
-  expect(houseForSale).not.toHaveProperty(["kitchen", "area"], 21);
-  expect(houseForSale).toHaveProperty(["kitchen", "area"], 20);
-  expect(houseForSale).not.toHaveProperty(["kitchen", "area"], 29);
-  expect(houseForSale).toHaveProperty(
-    ["kitchen", "amenities"],
-    ["oven", "stove", "washer"],
-  );
-  expect(houseForSale).toHaveProperty("kitchen.amenities[2]", "washer");
-  expect(houseForSale).toHaveProperty(["kitchen", "amenities", 1], "stove");
-  expect(houseForSale).toHaveProperty(["kitchen", "amenities", 0], "oven");
-  expect(houseForSale).toHaveProperty(
-    "livingroom.amenities[0].couch[0][1].dimensions[0]",
-    20,
-  );
-  expect(houseForSale).toHaveProperty(["kitchen", "nice.oven"]);
-  expect(houseForSale).not.toHaveProperty(["kitchen", "open"]);
-
-  expect(houseForSale).toHaveProperty(["ceiling.height"], 20);
-
-  expect({ a: { b: 1 } }).toHaveProperty("a.b");
-  expect({ a: [2, 3, 4] }).toHaveProperty("a.0");
-  expect({ a: [2, 3, 4] }).toHaveProperty("a.1");
-  expect({ a: [2, 3, 4] }).toHaveProperty("a.2");
-
-  expect({ a: [2, 3, 4] }).toHaveProperty("a[1]");
-  expect([2, 3, 4]).toHaveProperty("1");
-  expect([2, 3, 4]).toHaveProperty("[1]");
-  expect([2, [6, 9], 4]).toHaveProperty("1.1");
-  expect([2, [6, 9], 4]).toHaveProperty("1[1]");
-  expect([2, [6, 9], 4]).toHaveProperty("[1].1");
-  expect([2, [6, 9], 4]).toHaveProperty("[1][1]");
-  expect([2, [6, 9], 4]).toHaveProperty([0], 2);
-
-  expect({ a: { b: 1 } }).toHaveProperty("a.b");
-  expect({ a: [1, 2, [3, { b: 1 }]] }).toHaveProperty("a.2.1.b");
-  expect({ a: [1, 2, [3, { b: 1 }]] }).toHaveProperty("a");
-  expect({ a: [1, 2, [3, { b: 1 }]] }).toHaveProperty("a[2][1].b");
-  expect({ a: [1, 2, [3, { b: 1 }]] }).toHaveProperty("a[2][1]");
-  expect({ a: [1, 2, [3, { b: 1 }]] }).not.toHaveProperty("a[2][1].c");
-
-  expect("test").toHaveProperty("length");
-  expect({}).toHaveProperty("constructor");
-  expect({}).toHaveProperty("constructor.name");
-  expect({}).toHaveProperty("constructor.name", "Object");
-
-  expect(new Date()).toHaveProperty("getTime");
-});
-
 test("toBe()", () => {
+  const a = 1;
+  const b = 1;
+  expect(a).toBe(a);
+  expect(a).toBe(b);
+  expect(a).toBe(1);
+  expect(1).toBe(a);
+  expect(b).toBe(a);
+
+  const c = { a: 1 };
+  const d = { a: 1 };
+  expect(c).toBe(c);
+  expect(c).not.toBe(d);
+  expect(c).not.toBe({ a: 1 });
+  expect({ a: 1 }).not.toBe(c);
+  expect(d).not.toBe(c);
+
   expect(1).toBe(1);
   // expect(1).not.toBe(1);
 
@@ -109,9 +32,20 @@ test("toContain()", () => {
   expect("test").toContain("test");
   expect(["test", "es"]).toContain("es");
   expect("").toContain("");
+  expect([""]).toContain("");
+
+  expect(["lemon", "lime"]).not.toContain("orange");
+  expect("citrus fruits").toContain("fruit");
+
+  const a = new Uint16Array([1, 2, 3]);
+  expect(a).toContain(2);
+  expect(a).not.toContain(4);
   // expect([4, 5, 6]).not.toContain(5);
 
+  expect(1).not.toContain(1);
   expect([]).not.toContain([]);
+  expect({ a: "1", b: 2 }).not.toContain("1");
+  expect({ a: "1", b: 2 }).not.toContain("a");
 });
 
 test("toBeTruthy()", () => {

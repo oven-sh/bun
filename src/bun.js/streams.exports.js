@@ -2783,11 +2783,16 @@ var require_readable = __commonJS({
     const {
       maybeReadMore: _maybeReadMore,
       resume,
-      emitReadable,
+      emitReadable: _emitReadable,
       onEofChunk,
     } = globalThis[Symbol.for("Bun.lazy")]("bun:stream");
     function maybeReadMore(stream, state) {
       process.nextTick(_maybeReadMore, stream, state);
+    }
+    // REVERT ME
+    function emitReadable(...args) {
+      debug("emitReadable");
+      _emitReadable(...args);
     }
     var destroyImpl = require_destroy();
     var {
@@ -2884,6 +2889,7 @@ var require_readable = __commonJS({
       );
     }
     function addChunk(stream, state, chunk, addToFront) {
+      debug("adding chunk");
       if (
         state.flowing &&
         state.length === 0 &&
@@ -2901,6 +2907,7 @@ var require_readable = __commonJS({
         state.length += state.objectMode ? 1 : chunk.length;
         if (addToFront) state.buffer.unshift(chunk);
         else state.buffer.push(chunk);
+        debug("needReadable @ addChunk", state.needReadable);
         if (state.needReadable) emitReadable(stream, state);
       }
       maybeReadMore(stream, state);
@@ -3073,8 +3080,11 @@ var require_readable = __commonJS({
       if (n > 0) ret = fromList(n, state);
       else ret = null;
 
+      debug("ret @ read", ret);
+
       if (ret === null) {
         state.needReadable = state.length <= state.highWaterMark;
+        debug("state.length @ needReadable", state.length);
         n = 0;
       } else {
         state.length -= n;
@@ -3548,14 +3558,18 @@ var require_readable = __commonJS({
     }
     function endReadable(stream) {
       const state = stream._readableState;
-      debug("endReadable", state.endEmitted);
+      debug("endEmitted @ endReadable", state.endEmitted);
       if (!state.endEmitted) {
         state.ended = true;
         runOnNextTick(endReadableNT, state, stream);
       }
     }
     function endReadableNT(state, stream) {
-      debug("endReadableNT", state.endEmitted, state.length);
+      debug(
+        "endReadableNT -- endEmitted, state.length",
+        state.endEmitted,
+        state.length,
+      );
       if (
         !state.errored &&
         !state.closeEmitted &&
@@ -3564,6 +3578,7 @@ var require_readable = __commonJS({
       ) {
         state.endEmitted = true;
         stream.emit("end");
+        debug("end emitted");
         if (stream.writable && stream.allowHalfOpen === false) {
           runOnNextTick(endWritableNT, stream);
         } else if (state.autoDestroy) {
@@ -3666,12 +3681,18 @@ var require_writable_readable = __commonJS({
 
     var destroy = destroyImpl.destroy;
     var WritableReadable = class WritableReadable extends Readable {
+      _writev = null;
+
       static [SymbolHasInstance](object) {
         if (FunctionPrototypeSymbolHasInstance(this, object)) return true;
         if (this !== WritableReadable) return false;
         return object && object._writableState instanceof WritableState;
       }
-      _writev = null;
+
+      [EE.captureRejectionSymbol](err) {
+        this.destroy(err);
+      }
+
       constructor(options = {}) {
         super(options);
 
@@ -3698,7 +3719,81 @@ var require_writable_readable = __commonJS({
           }
           finishMaybe(this, state);
         });
+
+        ObjectDefineProperties(this, {
+          errored: {
+            enumerable: false,
+          },
+          writableAborted: {
+            enumerable: false,
+          },
+        });
       }
+
+      get closed() {
+        return this._writableState ? this._writableState.closed : false;
+      }
+      get destroyed() {
+        return this._writableState ? this._writableState.destroyed : false;
+      }
+      set destroyed(value) {
+        if (this._writableState) {
+          this._writableState.destroyed = value;
+        }
+      }
+      get writable() {
+        const w = this._writableState;
+        return (
+          !!w &&
+          w.writable !== false &&
+          !w.destroyed &&
+          !w.errored &&
+          !w.ending &&
+          !w.ended
+        );
+      }
+      set writable(val) {
+        if (this._writableState) {
+          this._writableState.writable = !!val;
+        }
+      }
+      get writableFinished() {
+        return this._writableState ? this._writableState.finished : false;
+      }
+      get writableObjectMode() {
+        return this._writableState ? this._writableState.objectMode : false;
+      }
+      get writableBuffer() {
+        return this._writableState && this._writableState.getBuffer();
+      }
+      get writableEnded() {
+        return this._writableState ? this._writableState.ending : false;
+      }
+      get writableNeedDrain() {
+        const wState = this._writableState;
+        if (!wState) return false;
+        return !wState.destroyed && !wState.ending && wState.needDrain;
+      }
+      get writableHighWaterMark() {
+        return this._writableState && this._writableState.highWaterMark;
+      }
+      get writableCorked() {
+        return this._writableState ? this._writableState.corked : 0;
+      }
+      get writableLength() {
+        return this._writableState && this._writableState.length;
+      }
+      get errored() {
+        return this._writableState ? this._writableState.errored : null;
+      }
+      get writableAborted() {
+        return !!(
+          this._writableState.writable !== false &&
+          (this._writableState.destroyed || this._writableState.errored) &&
+          !this._writableState.finished
+        );
+      }
+
       pipe() {
         errorOrDestroy(this, new ERR_STREAM_CANNOT_PIPE());
       }
@@ -3795,9 +3890,6 @@ var require_writable_readable = __commonJS({
       }
       _destroy(err, cb) {
         cb(err);
-      }
-      [EE.captureRejectionSymbol](err) {
-        this.destroy(err);
       }
     };
     module.exports = WritableReadable;
@@ -4205,99 +4297,6 @@ var require_writable_readable = __commonJS({
         }
       }
     }
-    ObjectDefineProperties(WritableReadable.prototype, {
-      closed: {
-        get() {
-          return this._writableState ? this._writableState.closed : false;
-        },
-      },
-      destroyed: {
-        get() {
-          return this._writableState ? this._writableState.destroyed : false;
-        },
-        set(value) {
-          if (this._writableState) {
-            this._writableState.destroyed = value;
-          }
-        },
-      },
-      writable: {
-        get() {
-          const w = this._writableState;
-          return (
-            !!w &&
-            w.writable !== false &&
-            !w.destroyed &&
-            !w.errored &&
-            !w.ending &&
-            !w.ended
-          );
-        },
-        set(val) {
-          if (this._writableState) {
-            this._writableState.writable = !!val;
-          }
-        },
-      },
-      writableFinished: {
-        get() {
-          return this._writableState ? this._writableState.finished : false;
-        },
-      },
-      writableObjectMode: {
-        get() {
-          return this._writableState ? this._writableState.objectMode : false;
-        },
-      },
-      writableBuffer: {
-        get() {
-          return this._writableState && this._writableState.getBuffer();
-        },
-      },
-      writableEnded: {
-        get() {
-          return this._writableState ? this._writableState.ending : false;
-        },
-      },
-      writableNeedDrain: {
-        get() {
-          const wState = this._writableState;
-          if (!wState) return false;
-          return !wState.destroyed && !wState.ending && wState.needDrain;
-        },
-      },
-      writableHighWaterMark: {
-        get() {
-          return this._writableState && this._writableState.highWaterMark;
-        },
-      },
-      writableCorked: {
-        get() {
-          return this._writableState ? this._writableState.corked : 0;
-        },
-      },
-      writableLength: {
-        get() {
-          return this._writableState && this._writableState.length;
-        },
-      },
-      errored: {
-        enumerable: false,
-        get() {
-          return this._writableState ? this._writableState.errored : null;
-        },
-      },
-      writableAborted: {
-        enumerable: false,
-        get: function () {
-          return !!(
-            this._writableState.writable !== false &&
-            (this._writableState.destroyed || this._writableState.errored) &&
-            !this._writableState.finished
-          );
-        },
-      },
-    });
   },
 });
 
@@ -5414,9 +5413,7 @@ var require_duplex = __commonJS({
     module.exports = Duplex;
 
     {
-      const keys = ObjectKeys(WritableReadable.prototype);
-      for (let i = 0; i < keys.length; i++) {
-        const method = keys[i];
+      for (var method in WritableReadable.prototype) {
         if (!Duplex.prototype[method])
           Duplex.prototype[method] = WritableReadable.prototype[method];
       }
@@ -6428,7 +6425,11 @@ function createNativeStream(nativeType, Readable) {
     }
 
     _read(highWaterMark) {
-      if (this.#pendingRead) return;
+      debug("NativeReadable._read");
+      if (this.#pendingRead) {
+        debug("pendingRead is true");
+        return;
+      }
 
       var ptr = this.#ptr;
       if (ptr === 0) {
@@ -6437,10 +6438,28 @@ function createNativeStream(nativeType, Readable) {
       }
 
       if (!this.#constructed) {
+        debug("NativeReadable not constructed yet");
         this.#internalConstruct(ptr);
       }
 
       return this.#internalRead(this.#getRemainingChunk(), ptr);
+      // const internalReadRes = this.#internalRead(
+      //   this.#getRemainingChunk(),
+      //   ptr,
+      // );
+      // // REVERT ME
+      // const wrap = new Promise((resolve) => {
+      //   if (!this.internalReadRes?.then) {
+      //     debug("internalReadRes not promise");
+      //     resolve(internalReadRes);
+      //     return;
+      //   }
+      //   internalReadRes.then((result) => {
+      //     debug("internalReadRes done");
+      //     resolve(result);
+      //   });
+      // });
+      // return wrap;
     }
 
     #internalConstruct(ptr) {
@@ -6454,6 +6473,7 @@ function createNativeStream(nativeType, Readable) {
 
       if (drainFn) {
         const drainResult = drainFn(ptr);
+        debug("NativeReadable drain result", drainResult);
         if ((drainResult?.byteLength ?? 0) > 0) {
           this.push(drainResult);
         }
@@ -6466,7 +6486,6 @@ function createNativeStream(nativeType, Readable) {
       if ((chunk?.byteLength ?? 0 < 512) && highWaterMark > 512) {
         this.#remainingChunk = chunk = new Buffer(this.#highWaterMark);
       }
-
       return chunk;
     }
 
@@ -6475,6 +6494,7 @@ function createNativeStream(nativeType, Readable) {
     }
 
     #handleResult(result, view, isClosed) {
+      debug("result @ #handleResult", result);
       if (typeof result === "number") {
         if (result >= this.#highWaterMark && !this.#hasResized && !isClosed) {
           this.#highWaterMark *= 2;
@@ -6502,6 +6522,7 @@ function createNativeStream(nativeType, Readable) {
     }
 
     #internalRead(view, ptr) {
+      debug("#internalRead()");
       closer[0] = false;
       var result = pull(ptr, view, closer);
       if (isPromise(result)) {
@@ -6509,9 +6530,13 @@ function createNativeStream(nativeType, Readable) {
         return result.then(
           (result) => {
             this.#pendingRead = false;
+            debug("pending no longerrrrrrrr (result returned from pull)");
             this.#remainingChunk = this.#handleResult(result, view, closer[0]);
           },
-          (reason) => errorOrDestroy(this, reason),
+          (reason) => {
+            debug("error from pull", reason);
+            errorOrDestroy(this, reason);
+          },
         );
       } else {
         this.#remainingChunk = this.#handleResult(result, view, closer[0]);
@@ -6588,6 +6613,7 @@ function getNativeReadableStream(Readable, stream, options) {
 
   const native = direct(stream);
   if (!native) {
+    debug("no native readable stream");
     return undefined;
   }
   const { stream: ptr, data: type } = native;

@@ -39,6 +39,7 @@ function getStdioWriteStream({ require }) {
 
       #readable = true;
       #writable = true;
+      #fdPath;
 
       #onClose;
       #onDrain;
@@ -46,61 +47,19 @@ function getStdioWriteStream({ require }) {
       #onReadable;
 
       fd = 1;
-      isTTY = true;
+      get isTTY() {
+        return require("tty").isatty(this.fd);
+      }
 
       constructor(fd) {
         super({ readable: true, writable: true });
-        const fdPath = `/dev/fd/${fd}`;
-        this.#writeStream = createWriteStream(fdPath);
-        this.#readStream = createReadStream(fdPath);
+        this.#fdPath = `/dev/fd/${fd}`;
 
-        this.#writeStream.on("finish", () => {
-          if (this.#onFinish) {
-            const cb = this.#onFinish;
-            this.#onFinish = null;
-            cb();
-          }
+        Object.defineProperty(this, "fd", {
+          value: fd,
+          writable: false,
+          configurable: false,
         });
-
-        this.#writeStream.on("drain", () => {
-          if (this.#onDrain) {
-            const cb = this.#onDrain;
-            this.#onDrain = null;
-            cb();
-          }
-        });
-
-        eos(this.#writeStream, (err) => {
-          this.#writable = false;
-          if (err) {
-            destroy(this.#writeStream, err);
-          }
-          this.#onFinished(err);
-        });
-
-        this.#readStream.on("ready", () => {
-          if (this.#onReadable) {
-            const cb = this.#onReadable;
-            this.#onReadable = null;
-            cb();
-          } else {
-            this.read();
-          }
-        });
-
-        this.#readStream.on("end", () => {
-          this.push(null);
-        });
-
-        eos(this.#readStream, (err) => {
-          this.#readable = false;
-          if (err) {
-            destroy(this.#readStream, err);
-          }
-          this.#onFinished(err);
-        });
-
-        this.fd = fd;
       }
 
       #onFinished(err) {
@@ -126,12 +85,39 @@ function getStdioWriteStream({ require }) {
           callback(err);
         } else {
           this.#onClose = callback;
-          destroy(this.#writeStream, err);
-          destroy(this.#readStream, err);
+          if (this.#writeStream) destroy(this.#writeStream, err);
+          if (this.#readStream) destroy(this.#readStream, err);
         }
       }
 
       _write(chunk, encoding, callback) {
+        if (!this.#writeStream) {
+          this.#writeStream = createWriteStream(this.#fdPath);
+
+          this.#writeStream.on("finish", () => {
+            if (this.#onFinish) {
+              const cb = this.#onFinish;
+              this.#onFinish = null;
+              cb();
+            }
+          });
+
+          this.#writeStream.on("drain", () => {
+            if (this.#onDrain) {
+              const cb = this.#onDrain;
+              this.#onDrain = null;
+              cb();
+            }
+          });
+
+          eos(this.#writeStream, (err) => {
+            this.#writable = false;
+            if (err) {
+              destroy(this.#writeStream, err);
+            }
+            this.#onFinished(err);
+          });
+        }
         if (this.#writeStream.write(chunk, encoding)) {
           callback();
         } else {
@@ -145,6 +131,31 @@ function getStdioWriteStream({ require }) {
       }
 
       _read() {
+        if (!this.#readStream) {
+          this.#readStream = createReadStream(this.#fdPath);
+
+          this.#readStream.on("ready", () => {
+            if (this.#onReadable) {
+              const cb = this.#onReadable;
+              this.#onReadable = null;
+              cb();
+            } else {
+              this.read();
+            }
+          });
+
+          this.#readStream.on("end", () => {
+            this.push(null);
+          });
+
+          eos(this.#readStream, (err) => {
+            this.#readable = false;
+            if (err) {
+              destroy(this.#readStream, err);
+            }
+            this.#onFinished(err);
+          });
+        }
         while (true) {
           const buf = this.#readStream.read();
           if (buf === null || !this.push(buf)) {
@@ -179,57 +190,23 @@ function getStdinStream({ require }) {
       #onFinish;
       #onClose;
       #onDrain;
+      #onReadable;
 
       fd = 0;
-      isTTY = true;
+      get isTTY() {
+        return require("tty").isatty(this.fd);
+      }
 
       constructor() {
         super({ readable: true, writable: true });
 
-        this.#readStream = Readable.fromWeb(Bun.stdin.stream());
-        this.#writeStream = createWriteStream("/dev/fd/0");
-
-        this.#writeStream.on("finish", () => {
-          if (this.#onFinish) {
-            const cb = this.#onFinish;
-            this.#onFinish = null;
-            cb();
-          }
+        Object.defineProperty(this, "fd", {
+          value: 0,
+          writable: false,
+          configurable: false,
         });
 
-        this.#writeStream.on("drain", () => {
-          if (this.#onDrain) {
-            const cb = this.#onDrain;
-            this.#onDrain = null;
-            cb();
-          }
-        });
-
-        eos(this.#writeStream, (err) => {
-          this.#writable = false;
-          if (err) {
-            destroy(this.#writeStream, err);
-          }
-          this.#onFinished(err);
-        });
-
-        this.#readStream.on("readable", () => {
-          this.read();
-        });
-
-        this.#readStream.on("end", () => {
-          this.push(null);
-        });
-
-        eos(this.#readStream, (err) => {
-          this.#readable = false;
-          if (err) {
-            destroy(this.#readStream, err);
-          }
-          this.#onFinished(err);
-        });
-
-        this.fd = 0;
+        this.#onReadable = this._read.bind(this);
       }
 
       #onFinished(err) {
@@ -253,8 +230,33 @@ function getStdinStream({ require }) {
           callback(err);
         } else {
           this.#onClose = callback;
-          destroy(this.#readStream, err);
-          destroy(this.#writeStream, err);
+          if (this.#readStream) destroy(this.#readStream, err);
+          if (this.#writeStream) destroy(this.#writeStream, err);
+        }
+      }
+
+      on(ev, cb) {
+        super.on(ev, cb);
+        if (!this.#readStream && (ev === "readable" || ev === "data")) {
+          this.#readStream = Readable.fromWeb(Bun.stdin.stream());
+
+          this.#readStream.on("readable", () => {
+            const cb = this.#onReadable;
+            this.#onReadable = null;
+            cb();
+          });
+
+          this.#readStream.on("end", () => {
+            this.push(null);
+          });
+
+          eos(this.#readStream, (err) => {
+            this.#readable = false;
+            if (err) {
+              destroy(this.#readStream, err);
+            }
+            this.#onFinished(err);
+          });
         }
       }
 
@@ -262,12 +264,41 @@ function getStdinStream({ require }) {
         while (true) {
           const buf = this.#readStream.read();
           if (buf === null || !this.push(buf)) {
+            this.#onReadable = this._read.bind(this);
             return;
           }
         }
       }
 
       _write(chunk, encoding, callback) {
+        if (!this.#writeStream) {
+          this.#writeStream = createWriteStream("/dev/fd/0");
+
+          this.#writeStream.on("finish", () => {
+            if (this.#onFinish) {
+              const cb = this.#onFinish;
+              this.#onFinish = null;
+              cb();
+            }
+          });
+
+          this.#writeStream.on("drain", () => {
+            if (this.#onDrain) {
+              const cb = this.#onDrain;
+              this.#onDrain = null;
+              cb();
+            }
+          });
+
+          eos(this.#writeStream, (err) => {
+            this.#writable = false;
+            if (err) {
+              destroy(this.#writeStream, err);
+            }
+            this.#onFinished(err);
+          });
+        }
+
         if (this.#writeStream.write(chunk, encoding)) {
           callback();
         } else {
@@ -277,7 +308,7 @@ function getStdinStream({ require }) {
 
       _final(callback) {
         this.#writeStream.end();
-        this.#onFinish = callback;
+        this.#onFinish = callback.bind(this);
       }
     };
   }

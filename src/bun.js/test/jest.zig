@@ -369,9 +369,34 @@ pub const Expect = struct {
         };
         value.ensureStillAlive();
 
+        if (!value.isObject() and !value.isString()) {
+            var fmt = JSC.ZigConsoleClient.Formatter{ .globalThis = globalObject };
+            globalObject.throw("Received value does not have a length property: {any}", .{value.toFmt(globalObject, &fmt)});
+            return .zero;
+        }
+
+        var actual_length: i32 = undefined;
+        if (value.isString()) {
+            actual_length = @intCast(i32, value.asString().length());
+        } else {
+            const length_value = value.getIfPropertyExistsImpl(globalObject, "length", "length".len);
+
+            if (length_value.isEmpty()) {
+                var fmt = JSC.ZigConsoleClient.Formatter{ .globalThis = globalObject };
+                globalObject.throw("Received value does not have a length property: {any}", .{value.toFmt(globalObject, &fmt)});
+                return .zero;
+            } else if (!length_value.isNumber()) {
+                var fmt = JSC.ZigConsoleClient.Formatter{ .globalThis = globalObject };
+                globalObject.throw("Received value has non-number length property: {any}", .{length_value.toFmt(globalObject, &fmt)});
+                return .zero;
+            }
+
+            actual_length = length_value.coerce(i32, globalObject);
+        }
+
         const not = this.op.contains(.not);
         var pass = false;
-        const actual_length = value.getLengthOfArray(globalObject);
+
         if (actual_length == expected) pass = true;
 
         if (not) pass = !pass;

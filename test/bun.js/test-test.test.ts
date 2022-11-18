@@ -26,6 +26,15 @@ test("toBe()", () => {
   expect("hello test").not.toBe("hello test2");
 });
 
+test("toHaveLength()", () => {
+  expect("123").toHaveLength(3);
+  expect([1, 2, 3]).toHaveLength(3);
+  expect([1, 2, 3]).not.toHaveLength(2);
+  expect("123").not.toHaveLength(2);
+  expect({ length: 3 }).toHaveLength(3);
+  expect({ length: 3 }).not.toHaveLength(2);
+});
+
 test("toContain()", () => {
   expect("test").toContain("es");
   expect("test").toContain("est");

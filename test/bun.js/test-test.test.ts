@@ -42,10 +42,7 @@ test("toContain()", () => {
   expect(a).not.toContain(4);
   // expect([4, 5, 6]).not.toContain(5);
 
-  expect(1).not.toContain(1);
   expect([]).not.toContain([]);
-  expect({ a: "1", b: 2 }).not.toContain("1");
-  expect({ a: "1", b: 2 }).not.toContain("a");
 });
 
 test("toBeTruthy()", () => {

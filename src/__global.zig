@@ -69,8 +69,6 @@ pub const AllocatorConfiguration = struct {
     long_running: bool = false,
 };
 
-pub const Mimalloc = @import("./allocators/mimalloc.zig");
-
 pub inline fn mimalloc_cleanup(force: bool) void {
     if (comptime use_mimalloc) {
         Mimalloc.mi_collect(force);
@@ -168,3 +166,5 @@ pub export const Bun__userAgent: [*:0]const u8 = Global.user_agent;
 comptime {
     _ = Bun__userAgent;
 }
+
+const Mimalloc = @import("./global.zig").Mimalloc;

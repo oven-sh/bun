@@ -2820,7 +2820,7 @@ pub fn ReadableStreamSource(
             }
 
             pub fn load(globalThis: *JSGlobalObject) callconv(.C) JSC.JSValue {
-                if (comptime JSC.is_bindgen) unreachable;
+                JSC.markBinding(@src());
                 // This is used also in Node.js streams
                 return JSC.JSArray.from(globalThis, &.{
                     JSC.NewFunction(globalThis, null, 2, JSReadableStreamSource.pull, true),

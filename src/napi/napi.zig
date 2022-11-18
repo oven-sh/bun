@@ -613,7 +613,7 @@ pub export fn napi_strict_equals(env: napi_env, lhs: napi_value, rhs: napi_value
     return .ok;
 }
 pub export fn napi_call_function(env: napi_env, recv: napi_value, func: napi_value, argc: usize, argv: [*c]const napi_value, result: *napi_value) napi_status {
-    if (comptime JSC.is_bindgen) unreachable;
+    JSC.markBinding(@src());
     var exception = [_]JSC.C.JSValueRef{null};
     result.* =
         JSC.C.JSObjectCallAsFunctionReturnValue(
@@ -1416,7 +1416,7 @@ pub const SRC_NODE_API_TYPES_H_ = "";
 pub const NAPI_MODULE_VERSION = @as(c_int, 1);
 
 pub fn fixDeadCodeElimination() void {
-    if (comptime JSC.is_bindgen) unreachable;
+    JSC.markBinding(@src());
     std.mem.doNotOptimizeAway(&napi_get_undefined);
     std.mem.doNotOptimizeAway(&napi_get_null);
     std.mem.doNotOptimizeAway(&napi_get_boolean);

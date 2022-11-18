@@ -541,7 +541,7 @@ pub const ZigString = extern struct {
 
     inline fn assertGlobal(this: *const ZigString) void {
         if (comptime bun.Environment.allow_assert) {
-            std.debug.assert(bun.Global.Mimalloc.mi_is_in_heap_region(untagged(this.ptr)) or bun.Global.Mimalloc.mi_check_owned(untagged(this.ptr)));
+            std.debug.assert(bun.Mimalloc.mi_is_in_heap_region(untagged(this.ptr)) or bun.Mimalloc.mi_check_owned(untagged(this.ptr)));
         }
     }
 
@@ -2889,7 +2889,7 @@ pub const JSValue = enum(JSValueReprInt) {
 
     extern fn JSBuffer__isBuffer(*JSGlobalObject, JSValue) bool;
     pub fn isBuffer(value: JSValue, global: *JSGlobalObject) bool {
-        if (comptime JSC.is_bindgen) unreachable;
+        JSC.markBinding(@src());
         return JSBuffer__isBuffer(global, value);
     }
 
@@ -2938,7 +2938,7 @@ pub const JSValue = enum(JSValueReprInt) {
 
     /// Must come from globally-allocated memory if allocator is not null
     pub fn createBuffer(globalObject: *JSGlobalObject, slice: []u8, allocator: ?std.mem.Allocator) JSValue {
-        if (comptime JSC.is_bindgen) unreachable;
+        JSC.markBinding(@src());
         @setRuntimeSafety(false);
         if (allocator) |alloc| {
             return JSBuffer__bufferFromPointerAndLengthAndDeinit(globalObject, slice.ptr, slice.len, alloc.ptr, JSC.MarkedArrayBuffer_deallocator);
@@ -2948,12 +2948,12 @@ pub const JSValue = enum(JSValueReprInt) {
     }
 
     pub fn createUninitializedUint8Array(globalObject: *JSGlobalObject, len: usize) JSValue {
-        if (comptime JSC.is_bindgen) unreachable;
+        JSC.markBinding(@src());
         return shim.cppFn("createUninitializedUint8Array", .{ globalObject, len });
     }
 
     pub fn createBufferWithCtx(globalObject: *JSGlobalObject, slice: []u8, ptr: ?*anyopaque, func: JSC.C.JSTypedArrayBytesDeallocator) JSValue {
-        if (comptime JSC.is_bindgen) unreachable;
+        JSC.markBinding(@src());
         @setRuntimeSafety(false);
         return JSBuffer__bufferFromPointerAndLengthAndDeinit(globalObject, slice.ptr, slice.len, ptr, func);
     }
@@ -4252,7 +4252,7 @@ const private = struct {
 };
 
 pub fn NewFunctionPtr(globalObject: *JSGlobalObject, symbolName: ?*const ZigString, argCount: u32, functionPointer: anytype, strong: bool) *anyopaque {
-    if (comptime JSC.is_bindgen) unreachable;
+    JSC.markBinding(@src());
     return private.Bun__CreateFFIFunction(globalObject, symbolName, argCount, @ptrCast(*const anyopaque, functionPointer), strong);
 }
 
@@ -4263,17 +4263,17 @@ pub fn NewFunction(
     functionPointer: anytype,
     strong: bool,
 ) JSValue {
-    if (comptime JSC.is_bindgen) unreachable;
+    JSC.markBinding(@src());
     return private.Bun__CreateFFIFunctionValue(globalObject, symbolName, argCount, @ptrCast(*const anyopaque, functionPointer), strong);
 }
 
 pub fn getFunctionData(function: JSValue) ?*anyopaque {
-    if (comptime JSC.is_bindgen) unreachable;
+    JSC.markBinding(@src());
     return private.Bun__FFIFunction_getDataPtr(function);
 }
 
 pub fn setFunctionData(function: JSValue, value: ?*anyopaque) void {
-    if (comptime JSC.is_bindgen) unreachable;
+    JSC.markBinding(@src());
     return private.Bun__FFIFunction_setDataPtr(function, value);
 }
 
@@ -4285,7 +4285,7 @@ pub fn NewFunctionWithData(
     strong: bool,
     data: *anyopaque,
 ) JSValue {
-    if (comptime JSC.is_bindgen) unreachable;
+    JSC.markBinding(@src());
     return private.Bun__CreateFFIFunctionWithDataValue(
         globalObject,
         symbolName,
@@ -4300,7 +4300,7 @@ pub fn untrackFunction(
     globalObject: *JSGlobalObject,
     value: JSValue,
 ) bool {
-    if (comptime JSC.is_bindgen) unreachable;
+    JSC.markBinding(@src());
     return private.Bun__untrackFFIFunction(globalObject, value);
 }
 
@@ -4394,7 +4394,7 @@ pub const WTF = struct {
     /// This uses SSE2 instructions and/or ARM NEON to copy 16-bit characters efficiently
     /// See wtf/Text/ASCIIFastPath.h for details
     pub fn copyLCharsFromUCharSource(destination: [*]u8, comptime Source: type, source: Source) void {
-        if (comptime JSC.is_bindgen) unreachable;
+        JSC.markBinding(@src());
 
         // This is any alignment
         WTF__copyLCharsFromUCharSource(destination, source.ptr, source.len);
@@ -4403,7 +4403,7 @@ pub const WTF = struct {
     /// Encode a byte array to a URL-safe base64 string for use with JS
     /// Memory is managed by JavaScriptCore instead of us
     pub fn toBase64URLStringValue(bytes: []const u8, globalObject: *JSGlobalObject) JSValue {
-        if (comptime JSC.is_bindgen) unreachable;
+        JSC.markBinding(@src());
 
         return WTF__toBase64URLStringValue(bytes.ptr, bytes.len, globalObject);
     }

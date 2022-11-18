@@ -2481,7 +2481,7 @@ pub const ArrayBuffer = extern struct {
         }
 
         // If it's not a mimalloc heap buffer, we're not going to call a deallocator
-        if (this.len > 0 and !bun.Global.Mimalloc.mi_is_in_heap_region(this.ptr)) {
+        if (this.len > 0 and !bun.Mimalloc.mi_is_in_heap_region(this.ptr)) {
             if (this.typed_array_type == .ArrayBuffer) {
                 return JSC.JSValue.fromRef(JSC.C.JSObjectMakeArrayBufferWithBytesNoCopy(
                     ctx,

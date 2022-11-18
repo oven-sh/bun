@@ -3408,7 +3408,9 @@ pub const EnvironmentVariables = struct {
 
             entry.value_ptr.* = value_str.slice();
         } else {
-            allocator.free(bun.constStrToU8(entry.value_ptr.*));
+            // this can be a statically allocated string
+            if (bun.isHeapMemory(entry.value_ptr.*))
+                allocator.free(bun.constStrToU8(entry.value_ptr.*));
             const cloned_value = value.?.value().toSlice(globalThis, allocator).cloneIfNeeded(allocator) catch return false;
             entry.value_ptr.* = cloned_value.slice();
         }

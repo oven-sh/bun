@@ -46,7 +46,6 @@ pub const Node = struct {
     pub usingnamespace @import("./bun.js/node/node_os.zig");
     pub const Syscall = @import("./bun.js/node/syscall.zig");
     pub const fs = @import("./bun.js/node/node_fs_constant.zig");
-    pub const invalid_fd = std.math.maxInt(i32);
 };
 pub const Maybe = Node.Maybe;
 pub const jsNumber = @This().JSValue.jsNumber;

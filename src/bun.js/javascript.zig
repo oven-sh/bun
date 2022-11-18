@@ -1950,7 +1950,7 @@ pub const EventListenerMixin = struct {
         ctx: *CtxType,
         comptime onError: fn (ctx: *CtxType, err: anyerror, value: JSValue, request_ctx: *http.RequestContext) anyerror!void,
     ) !void {
-        if (comptime JSC.is_bindgen) unreachable;
+        JSC.markBinding(@src());
 
         var listeners = vm.event_listeners.get(EventType.fetch) orelse (return onError(ctx, error.NoListeners, JSValue.jsUndefined(), request_context) catch {});
         if (listeners.items.len == 0) return onError(ctx, error.NoListeners, JSValue.jsUndefined(), request_context) catch {};

@@ -54,19 +54,19 @@ pub fn initClient() *boring.SSL {
 
 export fn OPENSSL_memory_alloc(size: usize) ?*anyopaque {
     const global = @import("./global.zig");
-    return global.Global.Mimalloc.mi_malloc(size);
+    return global.Mimalloc.mi_malloc(size);
 }
 
 // BoringSSL always expects memory to be zero'd
 export fn OPENSSL_memory_free(ptr: *anyopaque) void {
     const global = @import("./global.zig");
-    @memset(@ptrCast([*]u8, ptr), 0, global.Global.Mimalloc.mi_usable_size(ptr));
-    global.Global.Mimalloc.mi_free(ptr);
+    @memset(@ptrCast([*]u8, ptr), 0, global.Mimalloc.mi_usable_size(ptr));
+    global.Mimalloc.mi_free(ptr);
 }
 
 export fn OPENSSL_memory_get_size(ptr: ?*const anyopaque) usize {
     const global = @import("./global.zig");
-    return global.Global.Mimalloc.mi_usable_size(ptr);
+    return global.Mimalloc.mi_usable_size(ptr);
 }
 
 test "load" {

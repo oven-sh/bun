@@ -946,7 +946,7 @@ function generateClassHeader(typeName, obj: ClassDefinition) {
         }
       `;
     weakInit = `
-    m_weakThis = JSC::Weak<${name}>(vm, this, getOwner());
+    m_weakThis = JSC::Weak<${name}>(this, getOwner());
 `;
   }
   return `
@@ -1074,7 +1074,7 @@ DEFINE_VISIT_CHILDREN(${name});
   if (hasPendingActivity) {
     output += `
     extern "C" bool ${symbolName(typeName, "hasPendingActivity")}(void* ptr);
-    ${name}::internalHasPendingActivity() {
+    bool ${name}::internalHasPendingActivity() {
         return ${symbolName(typeName, "hasPendingActivity")}(m_ctx);
     }
 `;

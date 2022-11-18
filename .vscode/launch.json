@@ -10,6 +10,7 @@
       "cwd": "${workspaceFolder}/test",
       "env": {
         "FORCE_COLOR": "1"
+        // "BUN_DEBUG_ALL": "1"
       },
       "console": "internalConsole"
     },
@@ -22,6 +23,7 @@
       "cwd": "${workspaceFolder}/test",
       "env": {
         "FORCE_COLOR": "1"
+        // "BUN_DEBUG_ALL": "1"
       },
       "console": "internalConsole"
     },

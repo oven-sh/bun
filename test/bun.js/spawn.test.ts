@@ -5,18 +5,20 @@ import { rmdirSync, unlinkSync, rmSync, writeFileSync } from "node:fs";
 
 for (let [gcTick, label] of [
   [_gcTick, "gcTick"],
-  [() => {}, "no gc tick"],
+  // [() => {}, "no gc tick"],
 ] as const) {
+  Bun.gc(true);
   describe(label, () => {
     describe("spawnSync", () => {
       const hugeString = "hello".repeat(10000).slice();
 
       it("as an array", () => {
         const { stdout } = spawnSync(["echo", "hi"]);
-
+        gcTick();
         // stdout is a Buffer
         const text = stdout!.toString();
         expect(text).toBe("hi\n");
+        gcTick();
       });
 
       it("Uint8Array works as stdin", async () => {
@@ -24,20 +26,24 @@ for (let [gcTick, label] of [
           cmd: ["cat"],
           stdin: new TextEncoder().encode(hugeString),
         });
-
+        gcTick();
         expect(stdout!.toString()).toBe(hugeString);
         expect(stderr!.byteLength).toBe(0);
+        gcTick();
       });
 
       it("check exit code", async () => {
         const { exitCode: exitCode1 } = spawnSync({
           cmd: ["ls"],
         });
+        gcTick();
         const { exitCode: exitCode2 } = spawnSync({
           cmd: ["false"],
         });
+        gcTick();
         expect(exitCode1).toBe(0);
         expect(exitCode2).toBe(1);
+        gcTick();
       });
     });
 
@@ -45,14 +51,20 @@ for (let [gcTick, label] of [
       const hugeString = "hello".repeat(10000).slice();
 
       it("as an array", async () => {
-        const { stdout, exited } = spawn(["echo", "hello"], {
-          stdout: "pipe",
-        });
         gcTick();
-        expect(await new Response(stdout).text()).toBe("hello\n");
+        await (async () => {
+          const { stdout } = spawn(["echo", "hello"], {
+            stdout: "pipe",
+          });
+          gcTick();
+          const text = await new Response(stdout).text();
+          expect(text).toBe("hello\n");
+        })();
+        gcTick();
       });
 
       it("as an array with options object", async () => {
+        gcTick();
         const { stdout } = spawn(["printenv", "FOO"], {
           cwd: "/tmp",
           env: {
@@ -61,11 +73,12 @@ for (let [gcTick, label] of [
           },
           stdin: null,
           stdout: "pipe",
-          stderr: "inherit",
+          stderr: null,
         });
-
+        gcTick();
         const text = await new Response(stdout).text();
         expect(text).toBe("bar\n");
+        gcTick();
       });
 
       it("Uint8Array works as stdin", async () => {
@@ -76,30 +89,37 @@ for (let [gcTick, label] of [
           stdin: new TextEncoder().encode(hugeString),
           stdout: Bun.file("/tmp/out.123.txt"),
         });
-
+        gcTick();
         await exited;
-        expect(await Bun.file("/tmp/out.123.txt").text()).toBe(hugeString);
+        expect(require("fs").readFileSync("/tmp/out.123.txt", "utf8")).toBe(
+          hugeString,
+        );
+        gcTick();
       });
 
       it("check exit code", async () => {
         const exitCode1 = await spawn({
           cmd: ["ls"],
         }).exited;
+        gcTick();
         const exitCode2 = await spawn({
           cmd: ["false"],
         }).exited;
+        gcTick();
         expect(exitCode1).toBe(0);
         expect(exitCode2).toBe(1);
+        gcTick();
       });
 
       it("nothing to stdout and sleeping doesn't keep process open 4ever", async () => {
         const proc = spawn({
           cmd: ["sleep", "0.1"],
         });
-
+        gcTick();
         for await (const _ of proc.stdout!) {
           throw new Error("should not happen");
         }
+        gcTick();
       });
 
       it("check exit code from onExit", async () => {
@@ -116,6 +136,7 @@ for (let [gcTick, label] of [
               }
             },
           });
+          gcTick();
           spawn({
             cmd: ["false"],
             onExit(code) {
@@ -126,9 +147,12 @@ for (let [gcTick, label] of [
               }
             },
           });
+          gcTick();
         });
+        gcTick();
         expect(exitCode1).toBe(0);
         expect(exitCode2).toBe(1);
+        gcTick();
       });
 
       it("Blob works as stdin", async () => {
@@ -292,13 +316,11 @@ for (let [gcTick, label] of [
               it("before exit (chunked)", async () => {
                 const process = callback();
                 var output = "";
-                var reader = process.stdout!.getReader();
-                var done = false;
-                while (!done) {
-                  var { value, done } = await reader.read();
-                  if (value) output += new TextDecoder().decode(value);
-                }
 
+                for await (const chunk of process.stdout) {
+                  output += new TextDecoder().decode(chunk);
+                }
+                console.log(output);
                 const expected = fixture + "\n";
                 expect(output.length).toBe(expected.length);
                 expect(output).toBe(expected);

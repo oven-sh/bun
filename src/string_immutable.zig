@@ -1085,10 +1085,12 @@ pub fn toUTF8ListWithType(list_: std.ArrayList(u8), comptime Type: type, utf16: 
         );
     }
 
-    try list.ensureTotalCapacityPrecise(utf16_remaining.len + list.items.len);
-    const old_len = list.items.len;
-    list.items.len += utf16_remaining.len;
-    copyU16IntoU8(list.items[old_len..], Type, utf16_remaining);
+    if (utf16_remaining.len > 0) {
+        try list.ensureTotalCapacityPrecise(utf16_remaining.len + list.items.len);
+        const old_len = list.items.len;
+        list.items.len += utf16_remaining.len;
+        copyU16IntoU8(list.items[old_len..], Type, utf16_remaining);
+    }
 
     return list;
 }

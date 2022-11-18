@@ -986,7 +986,7 @@ const char* const s_readableStreamInternalsIsReadableStreamDefaultControllerCode
 const JSC::ConstructAbility s_readableStreamInternalsReadDirectStreamCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableStreamInternalsReadDirectStreamCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_readableStreamInternalsReadDirectStreamCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_readableStreamInternalsReadDirectStreamCodeLength = 1582;
+const int s_readableStreamInternalsReadDirectStreamCodeLength = 1623;
 static const JSC::Intrinsic s_readableStreamInternalsReadDirectStreamCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_readableStreamInternalsReadDirectStreamCode =
     "(function (stream, sink, underlyingSource) {\n" \
@@ -1043,7 +1043,7 @@ const char* const s_readableStreamInternalsReadDirectStreamCode =
     "\n" \
     "  if (highWaterMark) {\n" \
     "    sink.start({\n" \
-    "      highWaterMark,\n" \
+    "      highWaterMark: highWaterMark < 64 ? 64 : highWaterMark,\n" \
     "    });\n" \
     "  }\n" \
     "\n" \
@@ -2273,7 +2273,7 @@ const char* const s_readableStreamInternalsReadableStreamDefaultControllerCanClo
 const JSC::ConstructAbility s_readableStreamInternalsLazyLoadStreamCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableStreamInternalsLazyLoadStreamCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_readableStreamInternalsLazyLoadStreamCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_readableStreamInternalsLazyLoadStreamCodeLength = 2614;
+const int s_readableStreamInternalsLazyLoadStreamCodeLength = 2959;
 static const JSC::Intrinsic s_readableStreamInternalsLazyLoadStreamCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_readableStreamInternalsLazyLoadStreamCode =
     "(function (stream, autoAllocateChunkSize) {\n" \
@@ -2283,7 +2283,7 @@ const char* const s_readableStreamInternalsLazyLoadStreamCode =
     "  var nativePtr = @getByIdDirectPrivate(stream, \"bunNativePtr\");\n" \
     "  var Prototype = @lazyStreamPrototypeMap.@get(nativeType);\n" \
     "  if (Prototype === @undefined) {\n" \
-    "    var [pull, start, cancel, setClose, deinit] = @lazyLoad(nativeType);\n" \
+    "    var [pull, start, cancel, setClose, deinit,  setRefOrUnref, drain] = @lazyLoad(nativeType);\n" \
     "    var closer = [false];\n" \
     "    var handleResult;\n" \
     "    function handleNativeReadableStreamPromiseResult(val) {\n" \
@@ -2326,6 +2326,9 @@ const char* const s_readableStreamInternalsLazyLoadStreamCode =
     "      constructor(tag, autoAllocateChunkSize) {\n" \
     "        this.pull = this.pull_.bind(tag);\n" \
     "        this.cancel = this.cancel_.bind(tag);\n" \
+    "        if (drain) {\n" \
+    "          this.start = this.start_.bind(tag);\n" \
+    "        }\n" \
     "        this.autoAllocateChunkSize = autoAllocateChunkSize;\n" \
     "      }\n" \
     "\n" \
@@ -2336,6 +2339,13 @@ const char* const s_readableStreamInternalsLazyLoadStreamCode =
     "      autoAllocateChunkSize = 0;\n" \
     "\n" \
     "      static startSync = start;\n" \
+    "      start;\n" \
+    "      start_(controller) {\n" \
+    "        const drainResult = drain(this);\n" \
+    "        if ((drainResult?.byteLength ?? 0) > 0) {\n" \
+    "          controller.enqueue(drainResult);\n" \
+    "        }\n" \
+    "      }\n" \
     "\n" \
     "      pull_(controller) {\n" \
     "        closer[0] = false;\n" \
@@ -2353,6 +2363,7 @@ const char* const s_readableStreamInternalsLazyLoadStreamCode =
     "      }\n" \
     "\n" \
     "      cancel_(reason) {\n" \
+    "        setRefOrUnref && setRefOrUnref(this, false);\n" \
     "        cancel(this, reason);\n" \
     "      }\n" \
     "      static deinit = deinit;\n" \

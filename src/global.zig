@@ -396,3 +396,19 @@ pub fn once(comptime function: anytype, comptime ReturnType: type) ReturnType {
 
     return Result.execute();
 }
+
+pub fn isHeapMemory(memory: anytype) bool {
+    if (comptime use_mimalloc) {
+        const Memory = @TypeOf(memory);
+        if (comptime std.meta.trait.isSingleItemPtr(Memory)) {
+            return Mimalloc.mi_is_in_heap_region(memory);
+        }
+        return Mimalloc.mi_is_in_heap_region(std.mem.sliceAsBytes(memory).ptr);
+    }
+    return false;
+}
+
+pub const Mimalloc = @import("./allocators/mimalloc.zig");
+
+pub const FileDescriptor = std.os.fd_t;
+pub const invalid_fd = std.math.maxInt(i32);

@@ -43,7 +43,7 @@ pub const Run = struct {
     arena: Arena = undefined,
 
     pub fn boot(ctx: Command.Context, file: std.fs.File, entry_path: string) !void {
-        if (comptime JSC.is_bindgen) unreachable;
+        JSC.markBinding(@src());
         @import("bun.js/javascript_core_c_api.zig").JSCInitialize();
 
         js_ast.Expr.Data.Store.create(default_allocator);

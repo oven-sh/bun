@@ -124,7 +124,7 @@ pub fn getcwd(buf: *[bun.MAX_PATH_BYTES]u8) Maybe([]const u8) {
         Result.errnoSys(0, .getcwd).?;
 }
 
-pub fn fchmod(fd: JSC.Node.FileDescriptor, mode: JSC.Node.Mode) Maybe(void) {
+pub fn fchmod(fd: bun.FileDescriptor, mode: JSC.Node.Mode) Maybe(void) {
     return Maybe(void).errnoSys(C.fchmod(fd, mode), .fchmod) orelse
         Maybe(void).success;
 }
@@ -146,7 +146,7 @@ pub fn lstat(path: [:0]const u8) Maybe(os.Stat) {
     return Maybe(os.Stat){ .result = stat_ };
 }
 
-pub fn fstat(fd: JSC.Node.FileDescriptor) Maybe(os.Stat) {
+pub fn fstat(fd: bun.FileDescriptor) Maybe(os.Stat) {
     var stat_ = mem.zeroes(os.Stat);
     if (Maybe(os.Stat).errnoSys(fstatSym(fd, &stat_), .fstat)) |err| return err;
     return Maybe(os.Stat){ .result = stat_ };
@@ -162,7 +162,7 @@ pub fn mkdir(file_path: [:0]const u8, flags: JSC.Node.Mode) Maybe(void) {
     }
 }
 
-pub fn fcntl(fd: JSC.Node.FileDescriptor, cmd: i32, arg: usize) Maybe(usize) {
+pub fn fcntl(fd: bun.FileDescriptor, cmd: i32, arg: usize) Maybe(usize) {
     const result = fcntl_symbol(fd, cmd, arg);
     if (Maybe(usize).errnoSys(result, .fcntl)) |err| return err;
     return .{ .result = @intCast(usize, result) };
@@ -179,12 +179,12 @@ pub fn getErrno(rc: anytype) std.os.E {
     };
 }
 
-pub fn open(file_path: [:0]const u8, flags: JSC.Node.Mode, perm: JSC.Node.Mode) Maybe(JSC.Node.FileDescriptor) {
+pub fn open(file_path: [:0]const u8, flags: JSC.Node.Mode, perm: JSC.Node.Mode) Maybe(bun.FileDescriptor) {
     while (true) {
         const rc = Syscall.system.open(file_path, flags, perm);
         log("open({s}): {d}", .{ file_path, rc });
         return switch (Syscall.getErrno(rc)) {
-            .SUCCESS => .{ .result = @intCast(JSC.Node.FileDescriptor, rc) },
+            .SUCCESS => .{ .result = @intCast(bun.FileDescriptor, rc) },
             .INTR => continue,
             else => |err| {
                 return Maybe(std.os.fd_t){
@@ -204,7 +204,10 @@ pub fn open(file_path: [:0]const u8, flags: JSC.Node.Mode, perm: JSC.Node.Mode) 
 // That error is not unreachable for us
 pub fn close(fd: std.os.fd_t) ?Syscall.Error {
     log("close({d})", .{fd});
-    std.debug.assert(fd != JSC.Node.invalid_fd);
+    std.debug.assert(fd != bun.invalid_fd);
+    if (comptime std.meta.trait.isSignedInt(@TypeOf(fd)))
+        std.debug.assert(fd > -1);
+
     if (comptime Environment.isMac) {
         // This avoids the EINTR problem.
         return switch (system.getErrno(system.@"close$NOCANCEL"(fd))) {
@@ -685,7 +688,7 @@ pub const Error = struct {
     }
 };
 
-pub fn setPipeCapacityOnLinux(fd: JSC.Node.FileDescriptor, capacity: usize) Maybe(usize) {
+pub fn setPipeCapacityOnLinux(fd: bun.FileDescriptor, capacity: usize) Maybe(usize) {
     if (comptime !Environment.isLinux) @compileError("Linux-only");
     std.debug.assert(capacity > 0);
 

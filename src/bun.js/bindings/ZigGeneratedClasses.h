@@ -232,12 +232,37 @@ mutable JSC::WriteBarrier<JSC::Unknown> m_unix;
             : Base(vm, structure)
         {
             m_ctx = sinkPtr;
-            
+            m_weakThis = JSC::Weak<JSSubprocess>(this, getOwner());
         }
     
         void finishCreation(JSC::VM&);
 
         
+      JSC::Weak<JSSubprocess> m_weakThis;
+      bool internalHasPendingActivity();
+      bool hasPendingActivity() {
+        if (!m_ctx)
+          return false;
+
+        return this->internalHasPendingActivity();
+      }
+
+      class Owner final : public JSC::WeakHandleOwner {
+        public:
+            bool isReachableFromOpaqueRoots(JSC::Handle<JSC::Unknown> handle, void* context, JSC::AbstractSlotVisitor&, const char**) final
+            {
+                auto* controller = JSC::jsCast<JSSubprocess*>(handle.slot()->asCell());
+                return controller->hasPendingActivity();
+            }
+            void finalize(JSC::Handle<JSC::Unknown>, void* context) final {}
+        };
+    
+        static JSC::WeakHandleOwner* getOwner()
+        {
+            static NeverDestroyed<Owner> m_owner;
+            return &m_owner.get();
+        }
+      
 
         DECLARE_VISIT_CHILDREN;
 

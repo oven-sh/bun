@@ -843,7 +843,7 @@ function readDirectStream(stream, sink, underlyingSource) {
 
   if (highWaterMark) {
     sink.start({
-      highWaterMark,
+      highWaterMark: highWaterMark < 64 ? 64 : highWaterMark,
     });
   }
 
@@ -1860,7 +1860,7 @@ function lazyLoadStream(stream, autoAllocateChunkSize) {
   var nativePtr = @getByIdDirectPrivate(stream, "bunNativePtr");
   var Prototype = @lazyStreamPrototypeMap.@get(nativeType);
   if (Prototype === @undefined) {
-    var [pull, start, cancel, setClose, deinit] = @lazyLoad(nativeType);
+    var [pull, start, cancel, setClose, deinit,  setRefOrUnref, drain] = @lazyLoad(nativeType);
     var closer = [false];
     var handleResult;
     function handleNativeReadableStreamPromiseResult(val) {
@@ -1901,20 +1901,31 @@ function lazyLoadStream(stream, autoAllocateChunkSize) {
 
     Prototype = class NativeReadableStreamSource {
       constructor(tag, autoAllocateChunkSize) {
-        this.pull = this.pull_.bind(tag);
-        this.cancel = this.cancel_.bind(tag);
+        this.pull = this.#pull.bind(tag);
+        this.cancel = this.#cancel.bind(tag);
+        if (drain) {
+          this.start = this.#start.bind(tag);
+        }
         this.autoAllocateChunkSize = autoAllocateChunkSize;
       }
 
       pull;
       cancel;
+      start;
 
       type = "bytes";
       autoAllocateChunkSize = 0;
 
       static startSync = start;
+      
+      #start(controller) {
+        const drainResult = drain(this);
+        if ((drainResult?.byteLength ?? 0) > 0) {
+          controller.enqueue(drainResult);
+        }
+      }
 
-      pull_(controller) {
+      #pull(controller) {
         closer[0] = false;
 
         var result;
@@ -1929,7 +1940,8 @@ function lazyLoadStream(stream, autoAllocateChunkSize) {
         return handleResult(result, controller, view);
       }
 
-      cancel_(reason) {
+      #cancel(reason) {
+        setRefOrUnref && setRefOrUnref(this, false);
         cancel(this, reason);
       }
       static deinit = deinit;

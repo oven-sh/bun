@@ -4,6 +4,7 @@ const Environment = @import("./env.zig");
 const Output = @import("output.zig");
 const use_mimalloc = @import("./global.zig").use_mimalloc;
 const StringTypes = @import("./string_types.zig");
+const Mimalloc = @import("./global.zig").Mimalloc;
 
 const BASE_VERSION = "0.2";
 
@@ -68,8 +69,6 @@ pub const AllocatorConfiguration = struct {
     verbose: bool = false,
     long_running: bool = false,
 };
-
-pub const Mimalloc = @import("./allocators/mimalloc.zig");
 
 pub inline fn mimalloc_cleanup(force: bool) void {
     if (comptime use_mimalloc) {

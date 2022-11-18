@@ -57,8 +57,6 @@ pub const PosixSpawn = struct {
             } else {
                 _ = system.posix_spawnattr_destroy(&self.attr);
             }
-
-            self.* = undefined;
         }
 
         pub fn get(self: Attr) !u16 {

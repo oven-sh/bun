@@ -471,7 +471,7 @@ pub const Response = struct {
     }
 };
 
-const null_fd = JSC.Node.invalid_fd;
+const null_fd = bun.invalid_fd;
 
 pub const Fetch = struct {
     const headers_string = "headers";
@@ -591,8 +591,7 @@ pub const Fetch = struct {
         }
 
         pub fn onDone(this: *FetchTasklet) void {
-            if (comptime JSC.is_bindgen)
-                unreachable;
+            JSC.markBinding(@src());
 
             const globalThis = this.global_this;
 
@@ -642,6 +641,11 @@ pub const Fetch = struct {
 
         fn toBodyValue(this: *FetchTasklet) Body.Value {
             var response_buffer = this.response_buffer.list;
+            const response = Body.Value{
+                .InternalBlob = .{
+                    .bytes = response_buffer.toManaged(bun.default_allocator),
+                },
+            };
             this.response_buffer = .{
                 .allocator = default_allocator,
                 .list = .{
@@ -655,12 +659,7 @@ pub const Fetch = struct {
             //     defer response_buffer.deinit(bun.default_allocator);
             //     return .{ .InlineBlob = inline_blob };
             // }
-
-            return .{
-                .InternalBlob = .{
-                    .bytes = response_buffer.toManaged(bun.default_allocator),
-                },
-            };
+            return response;
         }
 
         fn toResponse(this: *FetchTasklet, allocator: std.mem.Allocator) Response {
@@ -1487,7 +1486,7 @@ pub const Blob = struct {
         needs_async: *bool,
         comptime needs_open: bool,
     ) JSC.JSValue {
-        const fd: JSC.Node.FileDescriptor = if (comptime !needs_open) pathlike.fd else brk: {
+        const fd: bun.FileDescriptor = if (comptime !needs_open) pathlike.fd else brk: {
             var file_path: [bun.MAX_PATH_BYTES]u8 = undefined;
             switch (JSC.Node.Syscall.open(
                 pathlike.path.sliceZ(&file_path),
@@ -1607,7 +1606,7 @@ pub const Blob = struct {
         needs_async: *bool,
         comptime needs_open: bool,
     ) JSC.JSValue {
-        const fd: JSC.Node.FileDescriptor = if (comptime !needs_open) pathlike.fd else brk: {
+        const fd: bun.FileDescriptor = if (comptime !needs_open) pathlike.fd else brk: {
             var file_path: [bun.MAX_PATH_BYTES]u8 = undefined;
             switch (JSC.Node.Syscall.open(
                 pathlike.path.sliceZ(&file_path),
@@ -1818,16 +1817,21 @@ pub const Blob = struct {
         }
 
         pub fn deinit(this: *Blob.Store) void {
+            const allocator = this.allocator;
+
             switch (this.data) {
                 .bytes => |*bytes| {
                     bytes.deinit();
                 },
                 .file => |file| {
                     VirtualMachine.vm.removeFileBlob(file.pathlike);
+                    if (file.pathlike == .path) {
+                        allocator.free(bun.constStrToU8(file.pathlike.path.slice()));
+                    }
                 },
             }
 
-            this.allocator.destroy(this);
+            allocator.destroy(this);
         }
 
         pub fn fromArrayList(list: std.ArrayListUnmanaged(u8), allocator: std.mem.Allocator) !*Blob.Store {
@@ -1842,7 +1846,7 @@ pub const Blob = struct {
                 else
                     std.os.O.RDONLY | __opener_flags;
 
-                pub fn getFdMac(this: *This) AsyncIO.OpenError!JSC.Node.FileDescriptor {
+                pub fn getFdMac(this: *This) AsyncIO.OpenError!bun.FileDescriptor {
                     var buf: [bun.MAX_PATH_BYTES]u8 = undefined;
                     var path_string = if (@hasField(This, "file_store"))
                         this.file_store.pathlike.path
@@ -1864,7 +1868,7 @@ pub const Blob = struct {
                     return this.opened_fd;
                 }
 
-                pub fn getFd(this: *This) AsyncIO.OpenError!JSC.Node.FileDescriptor {
+                pub fn getFd(this: *This) AsyncIO.OpenError!bun.FileDescriptor {
                     if (this.opened_fd != null_fd) {
                         return this.opened_fd;
                     }
@@ -1876,7 +1880,7 @@ pub const Blob = struct {
                     }
                 }
 
-                pub fn getFdLinux(this: *This) AsyncIO.OpenError!JSC.Node.FileDescriptor {
+                pub fn getFdLinux(this: *This) AsyncIO.OpenError!bun.FileDescriptor {
                     var aio = &AsyncIO.global;
 
                     var buf: [bun.MAX_PATH_BYTES]u8 = undefined;
@@ -1914,7 +1918,7 @@ pub const Blob = struct {
                     return this.opened_fd;
                 }
 
-                pub fn onOpen(this: *This, completion: *HTTPClient.NetworkThread.Completion, result: AsyncIO.OpenError!JSC.Node.FileDescriptor) void {
+                pub fn onOpen(this: *This, completion: *HTTPClient.NetworkThread.Completion, result: AsyncIO.OpenError!bun.FileDescriptor) void {
                     this.opened_fd = result catch {
                         this.errno = AsyncIO.asError(-completion.result);
 
@@ -1980,7 +1984,7 @@ pub const Blob = struct {
             read_frame: @Frame(ReadFile.doRead) = undefined,
             close_frame: @Frame(ReadFile.doClose) = undefined,
             open_completion: HTTPClient.NetworkThread.Completion = undefined,
-            opened_fd: JSC.Node.FileDescriptor = null_fd,
+            opened_fd: bun.FileDescriptor = null_fd,
             read_completion: HTTPClient.NetworkThread.Completion = undefined,
             read_len: SizeType = 0,
             read_off: SizeType = 0,
@@ -1993,8 +1997,6 @@ pub const Blob = struct {
             errno: ?anyerror = null,
             onCompleteCtx: *anyopaque = undefined,
             onCompleteCallback: OnReadFileCallback = undefined,
-
-            convert_to_byte_blob: bool = false,
 
             pub const Read = struct {
                 buf: []u8,
@@ -2102,44 +2104,22 @@ pub const Blob = struct {
                     } });
                     return;
                 }
+
                 var store = this.store.?;
+                var buf = this.buffer;
 
-                if (this.convert_to_byte_blob and this.file_store.pathlike == .path) {
-                    VirtualMachine.vm.removeFileBlob(this.file_store.pathlike);
-                }
-
+                defer store.deref();
+                defer bun.default_allocator.destroy(this);
                 if (this.system_error) |err| {
-                    bun.default_allocator.destroy(this);
-                    store.deref();
                     cb(cb_ctx, ResultType{ .err = err });
                     return;
                 }
 
-                var buf = this.buffer;
-                const is_temporary = !this.convert_to_byte_blob;
-                if (this.convert_to_byte_blob) {
-                    if (store.data == .bytes) {
-                        bun.default_allocator.free(this.buffer);
-                        buf = store.data.bytes.slice();
-                    } else if (store.data == .file) {
-                        if (this.file_store.pathlike == .path) {
-                            if (this.file_store.pathlike.path == .string) {
-                                bun.default_allocator.free(this.file_store.pathlike.path.slice());
-                            }
-                        }
-                        store.data = .{ .bytes = ByteStore.init(buf, bun.default_allocator) };
-                    }
-                }
-
-                bun.default_allocator.destroy(this);
-
                 // Attempt to free it as soon as possible
                 if (store.ref_count > 1) {
-                    store.deref();
-                    cb(cb_ctx, .{ .result = .{ .buf = buf, .is_temporary = is_temporary } });
+                    cb(cb_ctx, .{ .result = .{ .buf = buf, .is_temporary = true } });
                 } else {
-                    cb(cb_ctx, .{ .result = .{ .buf = buf, .is_temporary = is_temporary } });
-                    store.deref();
+                    cb(cb_ctx, .{ .result = .{ .buf = buf, .is_temporary = true } });
                 }
             }
             pub fn run(this: *ReadFile, task: *ReadFileTask) void {
@@ -2237,7 +2217,6 @@ pub const Blob = struct {
                     return;
                 };
                 this.buffer = bytes;
-                this.convert_to_byte_blob = std.os.S.ISREG(stat.mode) and this.file_store.pathlike == .path;
 
                 var remain = bytes;
                 while (remain.len > 0) {
@@ -2267,7 +2246,7 @@ pub const Blob = struct {
             file_blob: Blob,
             bytes_blob: Blob,
 
-            opened_fd: JSC.Node.FileDescriptor = null_fd,
+            opened_fd: bun.FileDescriptor = null_fd,
             open_frame: OpenFrameType = undefined,
             write_frame: @Frame(WriteFile.doWrite) = undefined,
             close_frame: @Frame(WriteFile.doClose) = undefined,
@@ -2476,8 +2455,8 @@ pub const Blob = struct {
             offset: SizeType = 0,
             size: SizeType = 0,
             max_length: SizeType = Blob.max_size,
-            destination_fd: JSC.Node.FileDescriptor = null_fd,
-            source_fd: JSC.Node.FileDescriptor = null_fd,
+            destination_fd: bun.FileDescriptor = null_fd,
+            source_fd: bun.FileDescriptor = null_fd,
 
             system_error: ?SystemError = null,
 
@@ -3457,7 +3436,7 @@ pub const Blob = struct {
         }
     }
 
-    pub fn NewReadFileHandler(comptime Function: anytype, comptime lifetime: Lifetime) type {
+    pub fn NewReadFileHandler(comptime Function: anytype) type {
         return struct {
             context: Blob,
             promise: *JSPromise,
@@ -3471,14 +3450,9 @@ pub const Blob = struct {
                 switch (bytes_) {
                     .result => |result| {
                         const bytes = result.buf;
-                        const is_temporary = result.is_temporary;
                         if (blob.size > 0)
                             blob.size = @minimum(@truncate(u32, bytes.len), blob.size);
-                        if (!is_temporary) {
-                            promise.resolve(globalThis, Function(&blob, globalThis, bytes, comptime lifetime));
-                        } else {
-                            promise.resolve(globalThis, Function(&blob, globalThis, bytes, .temporary));
-                        }
+                        promise.resolve(globalThis, Function(&blob, globalThis, bytes, .transfer));
                     },
                     .err => |err| {
                         promise.reject(globalThis, err.toErrorInstance(globalThis));
@@ -3531,8 +3505,8 @@ pub const Blob = struct {
         read_file_task.schedule();
     }
 
-    pub fn doReadFile(this: *Blob, comptime Function: anytype, comptime lifetime: Lifetime, global: *JSGlobalObject) JSValue {
-        const Handler = NewReadFileHandler(Function, lifetime);
+    pub fn doReadFile(this: *Blob, comptime Function: anytype, global: *JSGlobalObject) JSValue {
+        const Handler = NewReadFileHandler(Function);
         var promise = JSPromise.create(global);
 
         var handler = Handler{
@@ -3617,7 +3591,7 @@ pub const Blob = struct {
 
     pub fn toString(this: *Blob, global: *JSGlobalObject, comptime lifetime: Lifetime) JSValue {
         if (this.needsToReadFile()) {
-            return this.doReadFile(toStringWithBytes, lifetime, global);
+            return this.doReadFile(toStringWithBytes, global);
         }
 
         const view_: []u8 =
@@ -3631,7 +3605,7 @@ pub const Blob = struct {
 
     pub fn toJSON(this: *Blob, global: *JSGlobalObject, comptime lifetime: Lifetime) JSValue {
         if (this.needsToReadFile()) {
-            return this.doReadFile(toJSONWithBytes, lifetime, global);
+            return this.doReadFile(toJSONWithBytes, global);
         }
 
         var view_ = this.sharedView();
@@ -3703,7 +3677,7 @@ pub const Blob = struct {
 
     pub fn toArrayBuffer(this: *Blob, global: *JSGlobalObject, comptime lifetime: Lifetime) JSValue {
         if (this.needsToReadFile()) {
-            return this.doReadFile(toArrayBufferWithBytes, lifetime, global);
+            return this.doReadFile(toArrayBufferWithBytes, global);
         }
 
         var view_ = this.sharedView();

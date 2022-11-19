@@ -2368,7 +2368,7 @@ pub const JSArrayIterator = struct {
         return .{
             .array = value,
             .global = global,
-            .len = @intCast(u32, value.getLengthOfArray(global)),
+            .len = @truncate(u32, value.getLengthOfArray(global)),
         };
     }
 

@@ -606,7 +606,7 @@ fn transformOptionsFromJSC(ctx: JSC.C.JSContextRef, temp_allocator: std.mem.Allo
                 var length_iter = iter;
                 while (length_iter.next()) |value| {
                     if (value.isString()) {
-                        const length = @intCast(u32, value.getLengthOfArray(globalThis));
+                        const length = @truncate(u32, value.getLengthOfArray(globalThis));
                         string_count += @as(u32, @boolToInt(length > 0));
                         total_name_buf_len += length;
                     }

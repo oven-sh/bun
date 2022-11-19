@@ -313,6 +313,11 @@ pub export fn Bun__queueTaskConcurrently(global: *JSGlobalObject, task: *JSC.Cpp
 pub export fn Bun__handleRejectedPromise(global: *JSGlobalObject, promise: *JSC.JSPromise) void {
     const result = promise.result(global.vm());
     var jsc_vm = global.bunVM();
+
+    // this seems to happen in some cases when GC is running
+    if (result == .zero)
+        return;
+
     jsc_vm.onUnhandledError(global, result);
     jsc_vm.autoGarbageCollect();
 }

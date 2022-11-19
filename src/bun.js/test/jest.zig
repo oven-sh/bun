@@ -275,7 +275,10 @@ pub const Expect = struct {
             .test_id = Jest.runner.?.pending_test.?.test_id,
         };
         const expect_js_value = expect.toJS(globalObject);
+        expect_js_value.ensureStillAlive();
         JSC.Jest.Expect.capturedValueSetCached(expect_js_value, globalObject, value);
+        expect_js_value.ensureStillAlive();
+        expect.postMatch(globalObject);
         return expect_js_value;
     }
 
@@ -294,6 +297,7 @@ pub const Expect = struct {
         globalObject: *JSC.JSGlobalObject,
         callframe: *JSC.CallFrame,
     ) callconv(.C) JSC.JSValue {
+        defer this.postMatch(globalObject);
         const thisValue = callframe.this();
         const arguments_ = callframe.arguments(1);
         const arguments = arguments_.ptr[0..arguments_.len];
@@ -346,6 +350,7 @@ pub const Expect = struct {
         globalObject: *JSC.JSGlobalObject,
         callframe: *JSC.CallFrame,
     ) callconv(.C) JSC.JSValue {
+        defer this.postMatch(globalObject);
         const thisValue = callframe.this();
         const arguments_ = callframe.arguments(1);
         const arguments = arguments_.ptr[0..arguments_.len];
@@ -431,6 +436,7 @@ pub const Expect = struct {
         globalObject: *JSC.JSGlobalObject,
         callFrame: *JSC.CallFrame,
     ) callconv(.C) JSC.JSValue {
+        defer this.postMatch(globalObject);
         const thisValue = callFrame.this();
         const arguments_ = callFrame.arguments(1);
         const arguments = arguments_.ptr[0..arguments_.len];
@@ -491,6 +497,7 @@ pub const Expect = struct {
     }
 
     pub fn toBeTruthy(this: *Expect, globalObject: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+        defer this.postMatch(globalObject);
         const thisValue = callFrame.this();
         const value: JSValue = Expect.capturedValueGetCached(thisValue) orelse {
             globalObject.throw("Internal consistency error: the expect(value) was garbage collected but it should not have been!", .{});
@@ -525,6 +532,7 @@ pub const Expect = struct {
     }
 
     pub fn toBeUndefined(this: *Expect, globalObject: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+        defer this.postMatch(globalObject);
         const thisValue = callFrame.this();
         const value: JSValue = Expect.capturedValueGetCached(thisValue) orelse {
             globalObject.throw("Interal consistency error: the expect(value) was garbage collected but it should not have been!", .{});
@@ -552,6 +560,8 @@ pub const Expect = struct {
     }
 
     pub fn toBeNaN(this: *Expect, globalObject: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+        defer this.postMatch(globalObject);
+
         const thisValue = callFrame.this();
         const value: JSValue = Expect.capturedValueGetCached(thisValue) orelse {
             globalObject.throw("Interal consistency error: the expect(value) was garbage collected but it should not have been!", .{});
@@ -582,6 +592,8 @@ pub const Expect = struct {
     }
 
     pub fn toBeNull(this: *Expect, globalObject: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+        defer this.postMatch(globalObject);
+
         const thisValue = callFrame.this();
         const value: JSValue = Expect.capturedValueGetCached(thisValue) orelse {
             globalObject.throw("Interal consistency error: the expect(value) was garbage collected but it should not have been!", .{});
@@ -607,6 +619,8 @@ pub const Expect = struct {
     }
 
     pub fn toBeDefined(this: *Expect, globalObject: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+        defer this.postMatch(globalObject);
+
         const thisValue = callFrame.this();
         const value: JSValue = Expect.capturedValueGetCached(thisValue) orelse {
             globalObject.throw("Interal consistency error: the expect(value) was garbage collected but it should not have been!", .{});
@@ -632,6 +646,8 @@ pub const Expect = struct {
     }
 
     pub fn toBeFalsy(this: *Expect, globalObject: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+        defer this.postMatch(globalObject);
+
         const thisValue = callFrame.this();
 
         const value: JSValue = Expect.capturedValueGetCached(thisValue) orelse {
@@ -733,6 +749,11 @@ pub const Expect = struct {
         globalObject.throw("Not implemented", .{});
         return .zero;
     }
+
+    pub fn postMatch(_: *Expect, globalObject: *JSC.JSGlobalObject) void {
+        var vm = globalObject.bunVM();
+        vm.autoGarbageCollect();
+    }
 };
 
 pub const TestScope = struct {
@@ -824,13 +845,15 @@ pub const TestScope = struct {
         globalThis.bunVM().runErrorHandler(err, null);
         var task: *TestRunnerTask = arguments.ptr[1].asPromisePtr(TestRunnerTask);
         task.handleResult(.{ .fail = active_test_expectation_counter.actual }, .promise);
+        globalThis.bunVM().autoGarbageCollect();
         return JSValue.jsUndefined();
     }
 
-    pub fn onResolve(_: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSValue {
+    pub fn onResolve(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSValue {
         const arguments = callframe.arguments(2);
         var task: *TestRunnerTask = arguments.ptr[1].asPromisePtr(TestRunnerTask);
         task.handleResult(.{ .pass = active_test_expectation_counter.actual }, .promise);
+        globalThis.bunVM().autoGarbageCollect();
         return JSValue.jsUndefined();
     }
 
@@ -840,6 +863,7 @@ pub const TestScope = struct {
     ) callconv(.C) JSValue {
         const function = callframe.callee();
         const args = callframe.arguments(1);
+        defer globalThis.bunVM().autoGarbageCollect();
 
         if (JSC.getFunctionData(function)) |data| {
             var task = bun.cast(*TestRunnerTask, data);
@@ -866,6 +890,7 @@ pub const TestScope = struct {
         defer {
             js.JSValueUnprotect(vm.global, callback);
             this.callback = null;
+            vm.autoGarbageCollect();
         }
         JSC.markBinding(@src());
 

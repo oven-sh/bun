@@ -31,7 +31,7 @@ pub fn ConcurrentPromiseTask(comptime Context: type) type {
         task: WorkPoolTask = .{ .callback = runFromThreadPool },
         event_loop: *JSC.EventLoop,
         allocator: std.mem.Allocator,
-        promise: JSValue,
+        promise: JSC.JSPromise.Strong = .{},
         globalThis: *JSGlobalObject,
         concurrent_task: JSC.ConcurrentTask = .{},
 
@@ -44,10 +44,10 @@ pub fn ConcurrentPromiseTask(comptime Context: type) type {
                 .event_loop = VirtualMachine.vm.event_loop,
                 .ctx = value,
                 .allocator = allocator,
-                .promise = JSValue.createInternalPromise(globalThis),
                 .globalThis = globalThis,
             };
-            this.promise.protect();
+            var promise = JSC.JSPromise.create(globalThis);
+            this.promise.strong.set(globalThis, promise.asValue(globalThis));
             this.ref.ref(this.event_loop.virtual_machine);
 
             return this;
@@ -60,18 +60,8 @@ pub fn ConcurrentPromiseTask(comptime Context: type) type {
         }
 
         pub fn runFromJS(this: *This) void {
-            var promise_value = this.promise;
+            var promise = this.promise.swap();
             this.ref.unref(this.event_loop.virtual_machine);
-
-            promise_value.ensureStillAlive();
-            promise_value.unprotect();
-
-            var promise = promise_value.asInternalPromise() orelse {
-                if (comptime @hasDecl(Context, "deinit")) {
-                    @call(.{}, Context.deinit, .{this.ctx});
-                }
-                return;
-            };
 
             var ctx = this.ctx;
 
@@ -340,8 +330,9 @@ pub const EventLoop = struct {
     }
 
     pub fn autoTick(this: *EventLoop) void {
-        if (this.virtual_machine.uws_event_loop.?.num_polls > 0 or this.virtual_machine.uws_event_loop.?.active > 0) {
-            this.virtual_machine.uws_event_loop.?.tick();
+        var loop = this.virtual_machine.uws_event_loop.?;
+        if (loop.num_polls > 0 or loop.active > 0) {
+            loop.tick();
             // this.afterUSocketsTick();
         }
     }
@@ -392,6 +383,7 @@ pub const EventLoop = struct {
             this.start_server_on_next_tick = false;
             ctx.enterUWSLoop();
             ctx.is_us_loop_entered = false;
+            ctx.autoGarbageCollect();
         }
     }
 

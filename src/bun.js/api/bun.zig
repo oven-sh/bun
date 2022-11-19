@@ -894,11 +894,7 @@ pub fn runGC(
     arguments: []const js.JSValueRef,
     _: js.ExceptionRef,
 ) js.JSValueRef {
-    // it should only force cleanup on thread exit
-
-    Global.mimalloc_cleanup(false);
-
-    return ctx.ptr().vm().runGC(arguments.len > 0 and JSValue.fromRef(arguments[0]).toBoolean()).asRef();
+    return ctx.bunVM().garbageCollect(arguments.len > 0 and JSC.JSValue.c(arguments[0]).toBoolean()).asObjectRef();
 }
 
 pub fn shrink(

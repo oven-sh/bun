@@ -4490,7 +4490,7 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
                 this.config.hostname;
 
             this.ref();
-
+            this.vm.autoGarbageCollect();
             this.app.listenWithConfig(*ThisServer, this, onListen, .{
                 .port = this.config.port,
                 .host = host,

@@ -332,12 +332,7 @@ pub const TestCommand = struct {
         try vm.bundler.configureDefines();
         vm.bundler.options.rewrite_jest_for_tests = true;
 
-        if (vm.bundler.env.map.get("BUN_OVERRIDE_MODULE_PATH")) |override_path| {
-            if (override_path.len > 0) {
-                vm.load_builtins_from_path = override_path;
-            }
-        }
-
+        vm.loadExtraEnv();
         vm.is_main_thread = true;
         JSC.VirtualMachine.is_main_thread_vm = true;
 

@@ -1,3 +1,4 @@
+import { numberOfDFGCompiles } from "bun:jsc";
 import { expect, test } from "bun:test";
 
 test("toBe()", () => {
@@ -27,12 +28,20 @@ test("toBe()", () => {
 });
 
 test("toHaveLength()", () => {
+  expect({ length: Number.MAX_SAFE_INTEGER }).toHaveLength(
+    Number.MAX_SAFE_INTEGER,
+  );
   expect("123").toHaveLength(3);
   expect([1, 2, 3]).toHaveLength(3);
   expect([1, 2, 3]).not.toHaveLength(2);
   expect("123").not.toHaveLength(2);
   expect({ length: 3 }).toHaveLength(3);
   expect({ length: 3 }).not.toHaveLength(2);
+  expect({ length: 3 }).not.toHaveLength(Number.MAX_SAFE_INTEGER);
+  expect({ length: Number.MAX_SAFE_INTEGER }).not.toHaveLength(
+    Number.MAX_SAFE_INTEGER - 1,
+  );
+  expect({ length: 3.3 }).not.toHaveLength(3);
 });
 
 test("toContain()", () => {

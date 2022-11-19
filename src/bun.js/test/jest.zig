@@ -375,16 +375,28 @@ pub const Expect = struct {
             return .zero;
         }
 
-        if (!expected.isAnyInt() or expected.toInt32() < 0) {
+        if (!expected.isNumber()) {
             var fmt = JSC.ZigConsoleClient.Formatter{ .globalThis = globalObject };
             globalObject.throw("Expected value must be a non-negative integer: {any}", .{expected.toFmt(globalObject, &fmt)});
+            return .zero;
         }
 
-        var actual_length: i32 = undefined;
+        const expected_length: f64 = expected.asNumber();
+        if (@round(expected_length) != expected_length) {
+            var fmt = JSC.ZigConsoleClient.Formatter{ .globalThis = globalObject };
+            globalObject.throw("Expected value must be a non-negative integer: {any}", .{expected.toFmt(globalObject, &fmt)});
+            return .zero;
+        }
+
+        const not = this.op.contains(.not);
+        var pass = false;
+
+        var actual_length: f64 = undefined;
         if (value.isString()) {
-            actual_length = @intCast(i32, value.asString().length());
+            actual_length = @intToFloat(f64, value.asString().length());
+            if (actual_length == expected_length) pass = true;
         } else {
-            const length_value = value.getIfPropertyExistsImpl(globalObject, "length", "length".len);
+            const length_value: JSValue = value.getIfPropertyExistsImpl(globalObject, "length", "length".len);
 
             if (length_value.isEmpty()) {
                 var fmt = JSC.ZigConsoleClient.Formatter{ .globalThis = globalObject };
@@ -396,22 +408,20 @@ pub const Expect = struct {
                 return .zero;
             }
 
-            actual_length = length_value.coerce(i32, globalObject);
+            actual_length = length_value.asNumber();
+            if (@round(actual_length) == actual_length) {
+                if (actual_length == expected_length) pass = true;
+            }
         }
-
-        const not = this.op.contains(.not);
-        var pass = false;
-
-        if (actual_length == expected.coerce(i32, globalObject)) pass = true;
 
         if (not) pass = !pass;
         if (pass) return thisValue;
 
         // handle failure
         if (not) {
-            globalObject.throw("\n\tExpected: not length {d}\n\tReceived: {d}", .{ expected, actual_length });
+            globalObject.throw("\n\tExpected: not {d}\n\tReceived: {d}", .{ expected_length, actual_length });
         } else {
-            globalObject.throw("\n\tExpected: length {d}\n\tReceived: {d}", .{ expected, actual_length });
+            globalObject.throw("\n\tExpected: {d}\n\tReceived: {d}", .{ expected_length, actual_length });
         }
         return .zero;
     }

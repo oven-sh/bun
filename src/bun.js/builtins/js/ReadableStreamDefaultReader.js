@@ -99,7 +99,9 @@ function readMany()
             for (var i = 0; i < length; i++) {
                 const buf = values[i];
                 if (!(@ArrayBuffer.@isView(buf) || buf instanceof @ArrayBuffer)) {
-                    @putByValDirect(outValues, i, @Uint8Array(buf.buffer, buf.byteOffset, buf.byteLength));
+                    @putByValDirect(outValues, i, new @Uint8Array(buf.buffer, buf.byteOffset, buf.byteLength));
+                } else {
+                    @putByValDirect(outValues, i, buf);
                 }
             }
         } else {

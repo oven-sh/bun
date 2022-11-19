@@ -269,10 +269,13 @@ pub const ReadableStream = struct {
                 var reader = bun.default_allocator.create(FileReader.Source) catch unreachable;
                 reader.* = .{
                     .globalThis = globalThis,
-                    .context = undefined,
+                    .context = .{
+                        .lazy_readable = .{
+                            .blob = store,
+                        },
+                    },
                 };
                 store.ref();
-                reader.context.lazy_readable = .{ .blob = store };
                 return reader.toJS(globalThis);
             },
         }
@@ -299,8 +302,8 @@ pub const ReadableStream = struct {
 
         if (reader.context.lazy_readable.readable.FIFO.poll_ref) |poll| {
             poll.owner.set(&reader.context.lazy_readable.readable.FIFO);
+            fifo.poll_ref = null;
         }
-
         reader.context.lazy_readable.readable.FIFO.pending.future = undefined;
         reader.context.lazy_readable.readable.FIFO.auto_sizer = null;
         reader.context.lazy_readable.readable.FIFO.pending.state = .none;
@@ -567,6 +570,15 @@ pub const StreamResult = union(Tag) {
                 handler: Handler,
             };
 
+            pub fn promise(this: *Writable.Pending, globalThis: *JSC.JSGlobalObject) *JSPromise {
+                var prom = JSPromise.create(globalThis);
+                this.future = .{
+                    .promise = .{ .promise = prom, .globalThis = globalThis },
+                };
+                this.state = .pending;
+                return prom;
+            }
+
             pub const Handler = struct {
                 ctx: *anyopaque,
                 handler: Fn,
@@ -610,6 +622,7 @@ pub const StreamResult = union(Tag) {
             promise: *JSPromise,
             globalThis: *JSGlobalObject,
         ) void {
+            promise.asValue(globalThis).unprotect();
             switch (result) {
                 .err => |err| {
                     promise.reject(globalThis, err.toJSC(globalThis));
@@ -639,14 +652,9 @@ pub const StreamResult = union(Tag) {
                 .done => JSC.JSValue.jsBoolean(true),
 
                 .pending => |pending| brk: {
-                    var promise = JSC.JSPromise.create(globalThis);
-                    pending.future = .{
-                        .promise = .{
-                            .promise = promise,
-                            .globalThis = globalThis,
-                        },
-                    };
-                    break :brk promise.asValue(globalThis);
+                    const promise_value = pending.promise(globalThis).asValue(globalThis);
+                    promise_value.protect();
+                    break :brk promise_value;
                 },
             };
         }
@@ -661,6 +669,23 @@ pub const StreamResult = union(Tag) {
         future: Future = undefined,
         result: StreamResult = .{ .done = {} },
         state: State = .none,
+
+        pub fn set(this: *Pending, comptime Context: type, ctx: *Context, comptime handler_fn: fn (*Context, StreamResult) void) void {
+            this.future.init(Context, ctx, handler_fn);
+            this.state = .pending;
+        }
+
+        pub fn promise(this: *Pending, globalObject: *JSC.JSGlobalObject) *JSC.JSPromise {
+            var prom = JSC.JSPromise.create(globalObject);
+            this.future = .{
+                .promise = .{
+                    .promise = prom,
+                    .globalThis = globalObject,
+                },
+            };
+            this.state = .pending;
+            return prom;
+        }
 
         pub const Future = union(enum) {
             promise: struct {
@@ -722,6 +747,7 @@ pub const StreamResult = union(Tag) {
     }
 
     pub fn fulfillPromise(result: StreamResult, promise: *JSC.JSPromise, globalThis: *JSC.JSGlobalObject) void {
+        promise.asValue(globalThis).unprotect();
         switch (result) {
             .err => |err| {
                 promise.reject(globalThis, err.toJSC(globalThis));
@@ -762,14 +788,9 @@ pub const StreamResult = union(Tag) {
                 return JSC.JSValue.jsNumberFromInt64(array.len);
             },
             .pending => |pending| {
-                var promise = JSC.JSPromise.create(globalThis);
-                pending.future = .{
-                    .promise = .{
-                        .promise = promise,
-                        .globalThis = globalThis,
-                    },
-                };
-                return promise.asValue(globalThis);
+                const promise = pending.promise(globalThis).asValue(globalThis);
+                promise.protect();
+                return promise;
             },
 
             .err => |err| {
@@ -2855,6 +2876,7 @@ pub fn ReadableStreamSource(
             pub const name = std.fmt.comptimePrint("{s}_JSReadableStreamSource", .{std.mem.span(name_)});
 
             pub fn pull(globalThis: *JSGlobalObject, callFrame: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+                JSC.markBinding(@src());
                 const arguments = callFrame.arguments(3);
                 var this = arguments.ptr[0].asPtr(ReadableStreamSourceType);
                 const view = arguments.ptr[1];
@@ -2868,6 +2890,7 @@ pub fn ReadableStreamSource(
                 );
             }
             pub fn start(globalThis: *JSGlobalObject, callFrame: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+                JSC.markBinding(@src());
                 var this = callFrame.argument(0).asPtr(ReadableStreamSourceType);
                 this.globalThis = globalThis;
                 switch (this.startFromJS()) {
@@ -2896,11 +2919,13 @@ pub fn ReadableStreamSource(
                 }
             }
             pub fn cancel(_: *JSGlobalObject, callFrame: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+                JSC.markBinding(@src());
                 var this = callFrame.argument(0).asPtr(ReadableStreamSourceType);
                 this.cancel();
                 return JSC.JSValue.jsUndefined();
             }
             pub fn setClose(globalThis: *JSGlobalObject, callFrame: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+                JSC.markBinding(@src());
                 var this = callFrame.argument(0).asPtr(ReadableStreamSourceType);
                 this.close_ctx = this;
                 this.close_handler = JSReadableStreamSource.onClose;
@@ -2910,6 +2935,7 @@ pub fn ReadableStreamSource(
             }
 
             pub fn updateRef(_: *JSGlobalObject, callFrame: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+                JSC.markBinding(@src());
                 var this = callFrame.argument(0).asPtr(ReadableStreamSourceType);
                 const ref_or_unref = callFrame.argument(1).asBoolean();
                 this.setRef(ref_or_unref);
@@ -2917,18 +2943,21 @@ pub fn ReadableStreamSource(
             }
 
             fn onClose(ptr: *anyopaque) void {
+                JSC.markBinding(@src());
                 var this = bun.cast(*ReadableStreamSourceType, ptr);
                 _ = this.close_jsvalue.call(this.globalThis, &.{});
                 //    this.closer
             }
 
             pub fn deinit(_: *JSGlobalObject, callFrame: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+                JSC.markBinding(@src());
                 var this = callFrame.argument(0).asPtr(ReadableStreamSourceType);
                 this.deinit();
                 return JSValue.jsUndefined();
             }
 
             pub fn drain(globalThis: *JSGlobalObject, callFrame: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+                JSC.markBinding(@src());
                 var this = callFrame.argument(0).asPtr(ReadableStreamSourceType);
                 var list = this.drain();
                 if (list.len > 0) {
@@ -2960,18 +2989,6 @@ pub fn ReadableStreamSource(
             pub const Export = shim.exportFunctions(.{
                 .@"load" = load,
             });
-
-            comptime {
-                if (!JSC.is_bindgen) {
-                    @export(load, .{ .name = Export[0].symbol_name });
-                    _ = JSReadableStreamSource.pull;
-                    _ = JSReadableStreamSource.start;
-                    _ = JSReadableStreamSource.cancel;
-                    _ = JSReadableStreamSource.setClose;
-                    _ = JSReadableStreamSource.load;
-                    _ = JSReadableStreamSource.deinit;
-                }
-            }
         };
     };
 }
@@ -3441,8 +3458,19 @@ pub const FIFO = struct {
     },
     signal: JSC.WebCore.Signal = .{},
     is_first_read: bool = true,
+    auto_close: bool = true,
 
     pub usingnamespace NewReadyWatcher(@This(), .readable, ready);
+
+    pub fn finish(this: *FIFO) void {
+        this.close_on_empty_read = true;
+        if (this.poll_ref) |poll| {
+            poll.flags.insert(.hup);
+        }
+
+        this.pending.result = .{ .done = {} };
+        this.pending.run();
+    }
 
     pub fn close(this: *FIFO) void {
         if (this.poll_ref) |poll| {
@@ -3453,7 +3481,8 @@ pub const FIFO = struct {
         const fd = this.fd;
         if (fd != bun.invalid_fd) {
             this.fd = bun.invalid_fd;
-            _ = JSC.Node.Syscall.close(fd);
+            if (this.auto_close)
+                _ = JSC.Node.Syscall.close(fd);
             this.signal.close(null);
         }
 
@@ -3500,6 +3529,12 @@ pub const FIFO = struct {
     }
 
     pub fn cannotRead(this: *FIFO, available: u32) ?ReadResult {
+        if (comptime Environment.isLinux) {
+            if (available > 0 and available != std.math.maxInt(u32)) {
+                return null;
+            }
+        }
+
         if (this.poll_ref) |poll| {
             if (comptime Environment.isMac) {
                 if (available > 0 and available != std.math.maxInt(u32)) {
@@ -3508,10 +3543,22 @@ pub const FIFO = struct {
             }
 
             const is_readable = poll.isReadable();
-            if (!is_readable and this.close_on_empty_read) {
+            if (!is_readable and (this.close_on_empty_read or poll.isHUP())) {
+                // it might be readable actually
+                this.close_on_empty_read = true;
+                if (bun.isReadable(@intCast(std.os.fd_t, poll.fd))) {
+                    return null;
+                }
+
                 return .done;
-            } else if (!is_readable) {
-                return .done;
+            } else if (!is_readable and poll.isWatching()) {
+                // this happens if we've registered a watcher but we haven't
+                // ticked the event loop since registering it
+                if (bun.isReadable(@intCast(std.os.fd_t, poll.fd))) {
+                    return null;
+                }
+
+                return .pending;
             }
         }
 
@@ -3523,6 +3570,10 @@ pub const FIFO = struct {
         } else if (available == std.math.maxInt(@TypeOf(available)) and this.poll_ref == null) {
             // we don't know if it's readable or not
             if (!bun.isReadable(this.fd)) {
+                // we hung up
+                if (this.close_on_empty_read)
+                    return .done;
+
                 return .pending;
             }
         }
@@ -3543,7 +3594,7 @@ pub const FIFO = struct {
 
     pub fn ready(this: *FIFO, sizeOrOffset: i64) void {
         const available_to_read = this.getAvailableToRead(sizeOrOffset);
-        if (this.isClosed() or this.buf.len == 0) {
+        if (this.isClosed()) {
             this.unwatch(this.poll_ref.?.fd);
             return;
         }
@@ -3595,14 +3646,13 @@ pub const FIFO = struct {
         if (read_result == .pending) {
             this.buf = buf_;
             this.view.set(globalThis, view);
+            if (!this.isWatching()) this.watch(this.fd);
+            std.debug.assert(this.isWatching());
             return .{ .pending = &this.pending };
         }
 
-        if (this.is_first_read) {
-            this.is_first_read = false;
-            if (!bun.isReadable(this.fd)) {
-                return read_result.toStreamWithIsDone(&this.pending, buf_, view, this.close_on_empty_read, true);
-            }
+        if (!this.close_on_empty_read and !this.isWatching()) {
+            this.watch(this.fd);
         }
 
         return read_result.toStream(&this.pending, buf_, view, this.close_on_empty_read);
@@ -3712,6 +3762,7 @@ pub const File = struct {
     total_read: Blob.SizeType = 0,
     mode: JSC.Node.Mode = 0,
     pending: StreamResult.Pending = .{},
+    scheduled_count: u32 = 0,
 
     pub fn close(this: *File) void {
         if (this.auto_close) {
@@ -3827,7 +3878,6 @@ pub const File = struct {
         file.seekable = this.seekable;
 
         if (this.seekable) {
-            file.seekable = std.os.S.ISREG(stat.mode);
             this.remaining_bytes = @intCast(Blob.SizeType, stat.size);
 
             if (this.remaining_bytes == 0) {
@@ -3839,6 +3889,7 @@ pub const File = struct {
             }
         }
 
+        this.fd = fd;
         this.auto_close = auto_close;
 
         return StreamStart{ .ready = {} };
@@ -3978,11 +4029,15 @@ pub const File = struct {
         }
     };
 
-    pub fn scheduleAsync(this: *File, chunk_size: Blob.SizeType) void {
+    pub fn scheduleAsync(
+        this: *File,
+        chunk_size: Blob.SizeType,
+        globalThis: *JSC.JSGlobalObject,
+    ) void {
         this.scheduled_count += 1;
-        this.poll_ref.ref(this.globalThis.bunVM());
-        std.debug.assert(this.started);
+        this.poll_ref.ref(globalThis.bunVM());
         NetworkThread.init() catch {};
+
         this.concurrent.chunk_size = chunk_size;
         NetworkThread.global.schedule(.{ .head = &this.concurrent.task, .tail = &this.concurrent.task, .len = 1 });
     }
@@ -4009,8 +4064,12 @@ pub const File = struct {
         }
 
         if (read_result == .pending) {
-            this.buf = buf;
-            this.view.set(globalThis, view);
+            if (this.scheduled_count == 0) {
+                this.buf = buf;
+                this.view.set(globalThis, view);
+                this.scheduleAsync(@truncate(Blob.SizeType, buf.len), globalThis);
+            }
+
             return .{ .pending = &this.pending };
         }
 
@@ -4085,6 +4144,15 @@ pub const FileReader = struct {
             readable: Readable,
             blob: *Blob.Store,
             empty: void,
+
+            pub fn finish(this: *Lazy) void {
+                switch (this.readable) {
+                    .FIFO => {
+                        this.readable.FIFO.finish();
+                    },
+                    .File => {},
+                }
+            }
 
             pub fn isClosed(this: *Lazy) bool {
                 switch (this.*) {
@@ -4197,13 +4265,7 @@ pub const FileReader = struct {
     }
 
     pub fn finish(this: *FileReader) void {
-        var read = this.readable();
-        if (read.* == .FIFO) {
-            read.FIFO.close_on_empty_read = true;
-            if (read.FIFO.isClosed() and this.cancelled) {
-                this.deinit();
-            }
-        }
+        this.lazy_readable.finish();
     }
 
     pub fn onStart(this: *FileReader) StreamStart {
@@ -4213,13 +4275,26 @@ pub const FileReader = struct {
             switch (this.lazy_readable) {
                 .blob => |blob| {
                     defer blob.deref();
-                    var readable_file: File = .{ .loop = undefined };
+                    var readable_file: File = .{ .loop = this.globalThis().bunVM().eventLoop() };
                     const result = readable_file.start(&blob.data.file);
                     if (result != .ready) {
                         return result;
                     }
 
-                    this.lazy_readable = .{ .readable = .{ .File = readable_file } };
+                    if (std.os.S.ISFIFO(readable_file.mode)) {
+                        this.lazy_readable = .{
+                            .readable = .{
+                                .FIFO = FIFO{
+                                    .fd = readable_file.fd,
+                                    .auto_close = readable_file.auto_close,
+                                },
+                            },
+                        };
+                    } else {
+                        this.lazy_readable = .{
+                            .readable = .{ .File = readable_file },
+                        };
+                    }
                 },
                 .readable => {},
                 .empty => return .{ .empty = {} },

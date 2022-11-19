@@ -47,6 +47,7 @@ pub const Subprocess = struct {
     finalized: bool = false,
 
     globalThis: *JSC.JSGlobalObject,
+    has_pending_activity: std.atomic.Atomic(bool) = std.atomic.Atomic(bool).init(true),
     observable_getters: std.enums.EnumSet(enum {
         stdin,
         stdout,
@@ -54,7 +55,12 @@ pub const Subprocess = struct {
     }) = .{},
 
     pub fn hasPendingActivity(this: *Subprocess) callconv(.C) bool {
-        return this.exit_code != null or this.waitpid_err != null;
+        return this.has_pending_activity.load(.SeqCst);
+    }
+
+    pub fn updateHasPendingActivityFlag(this: *Subprocess) void {
+        @fence(.SeqCst);
+        this.has_pending_activity.store(this.waitpid_err == null and this.exit_code == null, .SeqCst);
     }
 
     pub fn ref(this: *Subprocess) void {
@@ -307,13 +313,13 @@ pub const Subprocess = struct {
         if (finalizing and !this.hasCalledGetter(.stdout) and !(this.stdout == .pipe and this.stdout.pipe == .buffer)) {
             this.stdout.close();
         } else if (this.stdout == .pipe) {
-            this.stdout.pipe.finish();
+            this.stdout.pipe.done();
         }
 
         if (finalizing and !this.hasCalledGetter(.stderr) and !(this.stderr == .pipe and this.stderr.pipe == .buffer)) {
             this.stderr.close();
         } else if (this.stderr == .pipe) {
-            this.stderr.pipe.finish();
+            this.stderr.pipe.done();
         }
 
         if (finalizing and !this.hasCalledGetter(.stdin) or (this.stdin == .buffered_input and this.stdin == .pipe_to_readable_stream)) {
@@ -542,11 +548,14 @@ pub const Subprocess = struct {
                 },
                 else => {
                     const slice = result.slice();
-                    if (slice.len == 0)
-                        return;
-
                     this.internal_buffer.len += @truncate(u32, slice.len);
-                    std.debug.assert(this.internal_buffer.contains(slice));
+                    if (slice.len > 0)
+                        std.debug.assert(this.internal_buffer.contains(slice));
+
+                    if (result.isDone()) {
+                        this.status = .{ .done = {} };
+                        this.fifo.close();
+                    }
                 },
             }
         }
@@ -565,7 +574,7 @@ pub const Subprocess = struct {
 
                 switch (result) {
                     .pending => {
-                        this.fifo.pending.future.init(BufferedOutput, this, onRead);
+                        this.watch();
                         return;
                     },
                     .err => |err| {
@@ -580,19 +589,25 @@ pub const Subprocess = struct {
                         return;
                     },
                     .read => |slice| {
-                        if (slice.len == 0) {
-                            this.fifo.pending.future.init(BufferedOutput, this, onRead);
-                            return;
-                        }
-
                         if (slice.ptr == stack_buf.ptr) {
                             this.internal_buffer.append(this.auto_sizer.allocator, slice) catch @panic("out of memory");
                         } else {
                             this.internal_buffer.len += @truncate(u32, slice.len);
                         }
+
+                        if (slice.len < buf_to_use.len) {
+                            this.watch();
+                            return;
+                        }
                     },
                 }
             }
+        }
+
+        fn watch(this: *BufferedOutput) void {
+            this.fifo.pending.set(BufferedOutput, this, onRead);
+            if (!this.fifo.isWatching()) this.fifo.watch(this.fifo.fd);
+            return;
         }
 
         pub fn toBlob(this: *BufferedOutput, globalThis: *JSC.JSGlobalObject) JSC.WebCore.Blob {
@@ -631,6 +646,8 @@ pub const Subprocess = struct {
             }
 
             {
+                const internal_buffer = this.internal_buffer;
+                this.internal_buffer = bun.ByteList.init("");
 
                 // There could still be data waiting to be read in the pipe
                 // so we need to create a new stream that will read from the
@@ -639,12 +656,11 @@ pub const Subprocess = struct {
                     JSC.WebCore.ReadableStream.fromFIFO(
                         globalThis,
                         &this.fifo,
-                        this.internal_buffer,
+                        internal_buffer,
                     ),
                     globalThis,
                 ).?;
 
-                this.internal_buffer = bun.ByteList.init("");
                 return result;
             }
         }
@@ -1158,7 +1174,7 @@ pub const Subprocess = struct {
         if (comptime !is_sync) {
             var poll = JSC.FilePoll.init(jsc_vm, pidfd, .{}, Subprocess, subprocess);
             subprocess.poll_ref = poll;
-            switch (poll.register(
+            switch (subprocess.poll_ref.?.register(
                 jsc_vm.uws_event_loop.?,
                 .process,
                 true,
@@ -1232,7 +1248,7 @@ pub const Subprocess = struct {
         if (this.has_waitpid_task) {
             return;
         }
-
+        defer this.updateHasPendingActivityFlag();
         this.has_waitpid_task = true;
         const pid = this.pid;
         switch (PosixSpawn.waitpid(pid, 0)) {

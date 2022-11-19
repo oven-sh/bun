@@ -17,12 +17,17 @@ test("spawn can read from stdout multiple chunks", async () => {
     exited = proc.exited;
     gcTick(true);
     var counter = 0;
-    for await (var chunk of proc.stdout) {
-      gcTick(true);
-      expect(new TextDecoder().decode(chunk)).toBe("Wrote to stdout\n");
-      counter++;
+    try {
+      for await (var chunk of proc.stdout) {
+        gcTick(true);
+        expect(new TextDecoder().decode(chunk)).toBe("Wrote to stdout\n");
+        counter++;
 
-      if (counter > 3) break;
+        if (counter > 3) break;
+      }
+    } catch (e) {
+      console.log(e.stack);
+      throw e;
     }
     gcTick(true);
 

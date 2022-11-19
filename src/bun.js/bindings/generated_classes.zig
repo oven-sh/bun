@@ -641,6 +641,7 @@ pub const JSSubprocess = struct {
             @export(Subprocess.getStderr, .{ .name = "SubprocessPrototype__getStderr" });
             @export(Subprocess.getStdin, .{ .name = "SubprocessPrototype__getStdin" });
             @export(Subprocess.getStdout, .{ .name = "SubprocessPrototype__getStdout" });
+            @export(Subprocess.hasPendingActivity, .{ .name = "Subprocess__hasPendingActivity" });
             @export(Subprocess.kill, .{ .name = "SubprocessPrototype__kill" });
         }
     }

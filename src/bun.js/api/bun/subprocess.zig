@@ -34,10 +34,6 @@ pub const Subprocess = struct {
 
     exit_promise: JSC.Strong = .{},
 
-    /// Keep the JSValue alive until the process is done by default
-    /// Unless you call unref()
-    this_jsvalue: JSC.Strong = .{},
-
     on_exit_callback: JSC.Strong = .{},
 
     exit_code: ?u8 = null,
@@ -53,13 +49,24 @@ pub const Subprocess = struct {
 
     globalThis: *JSC.JSGlobalObject,
 
+    has_pending_activity: std.atomic.Atomic(bool) = std.atomic.Atomic(bool).init(true),
+
+    pub fn hasPendingActivity(this: *Subprocess) callconv(.C) bool {
+        @fence(.Acquire);
+        return this.has_pending_activity.load(.Acquire);
+    }
+
+    pub fn updateHasPendingActivity(this: *Subprocess) void {
+        @fence(.Release);
+        this.has_pending_activity.store(this.waitpid_err == null and this.exit_code == null, .Release);
+    }
+
     pub fn ref(this: *Subprocess) void {
         var vm = this.globalThis.bunVM();
         if (this.poll_ref) |poll| poll.enableKeepingProcessAlive(vm);
     }
 
     pub fn unref(this: *Subprocess) void {
-        this.this_jsvalue.clear();
         var vm = this.globalThis.bunVM();
         if (this.poll_ref) |poll| poll.disableKeepingProcessAlive(vm);
     }
@@ -322,8 +329,7 @@ pub const Subprocess = struct {
         this.stdin.close();
     }
 
-    pub fn doRef(this: *Subprocess, globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSValue {
-        this.this_jsvalue.set(globalThis, callframe.this());
+    pub fn doRef(this: *Subprocess, _: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSValue {
         this.ref();
         return JSC.JSValue.jsUndefined();
     }
@@ -844,9 +850,7 @@ pub const Subprocess = struct {
         this.stderr.close();
 
         this.finalized = true;
-
-        if (this.exit_code != null)
-            bun.default_allocator.destroy(this);
+        bun.default_allocator.destroy(this);
     }
 
     pub fn getExited(
@@ -1215,8 +1219,6 @@ pub const Subprocess = struct {
             subprocess.toJS(globalThis)
         else
             JSValue.zero;
-        if (comptime !is_sync)
-            subprocess.this_jsvalue.set(globalThis, out);
 
         if (comptime !is_sync) {
             var poll = JSC.FilePoll.init(jsc_vm, pidfd, .{}, Subprocess, subprocess);
@@ -1334,6 +1336,7 @@ pub const Subprocess = struct {
     }
 
     fn onExit(this: *Subprocess) void {
+        defer this.updateHasPendingActivity();
         this.closePorts();
 
         this.has_waitpid_task = false;
@@ -1379,10 +1382,6 @@ pub const Subprocess = struct {
         }
 
         this.unref();
-
-        if (this.finalized) {
-            this.finalize();
-        }
     }
 
     const os = std.os;

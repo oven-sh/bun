@@ -5,6 +5,7 @@ export default [
     name: "Subprocess",
     construct: true,
     finalize: true,
+    hasPendingActivity: true,
     klass: {},
     JSType: "0b11101110",
     proto: {

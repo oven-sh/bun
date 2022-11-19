@@ -1472,6 +1472,30 @@ pub const JSPromise = extern struct {
         Rejected = 2,
     };
 
+    pub const Strong = struct {
+        strong: JSC.Strong = .{},
+
+        pub fn init(globalThis: *JSC.JSGlobalObject) Strong {
+            return Strong{
+                .strong = JSC.Strong.create(globalThis, JSC.JSPromise.create(globalThis).asValue(globalThis)),
+            };
+        }
+
+        pub fn get(this: *Strong) *JSC.JSPromise {
+            return this.strong.get().?.asPromise().?;
+        }
+
+        pub fn value(this: *Strong) JSValue {
+            return this.strong.get().?;
+        }
+
+        pub fn swap(this: *Strong) *JSC.JSPromise {
+            var prom = this.strong.swap().asPromise().?;
+            this.strong.deinit();
+            return prom;
+        }
+    };
+
     pub fn wrap(
         globalObject: *JSGlobalObject,
         value: JSValue,

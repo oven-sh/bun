@@ -382,7 +382,7 @@ pub const Expect = struct {
         }
 
         const expected_length: f64 = expected.asNumber();
-        if (@round(expected_length) != expected_length) {
+        if (@round(expected_length) != expected_length or std.math.isInf(expected_length) or std.math.isNan(expected_length) or expected_length < 0) {
             var fmt = JSC.ZigConsoleClient.Formatter{ .globalThis = globalObject };
             globalObject.throw("Expected value must be a non-negative integer: {any}", .{expected.toFmt(globalObject, &fmt)});
             return .zero;

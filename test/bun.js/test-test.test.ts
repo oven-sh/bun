@@ -1,5 +1,4 @@
-import { numberOfDFGCompiles } from "bun:jsc";
-import { expect, test } from "bun:test";
+import { expect, test } from "@jest/globals";
 
 test("toBe()", () => {
   const a = 1;
@@ -42,6 +41,7 @@ test("toHaveLength()", () => {
     Number.MAX_SAFE_INTEGER - 1,
   );
   expect({ length: 3.3 }).not.toHaveLength(3);
+  expect("123").not.toHaveLength(-0);
 });
 
 test("toContain()", () => {

@@ -2368,7 +2368,7 @@ pub const JSArrayIterator = struct {
         return .{
             .array = value,
             .global = global,
-            .len = value.getLengthOfArray(global),
+            .len = @truncate(u32, value.getLengthOfArray(global)),
         };
     }
 
@@ -3463,6 +3463,10 @@ pub const JSValue = enum(JSValueReprInt) {
         return fromPtrAddress(@ptrToInt(addr));
     }
 
+    pub fn toBooleanSlow(this: JSValue, global: *JSGlobalObject) bool {
+        return cppFn("toBooleanSlow", .{ this, global });
+    }
+
     pub fn toBoolean(this: JSValue) bool {
         if (isUndefinedOrNull(this)) {
             return false;
@@ -3506,7 +3510,7 @@ pub const JSValue = enum(JSValueReprInt) {
         return @intCast(u32, @maximum(this.toInt32(), 0));
     }
 
-    pub fn getLengthOfArray(this: JSValue, globalThis: *JSGlobalObject) u32 {
+    pub fn getLengthOfArray(this: JSValue, globalThis: *JSGlobalObject) u64 {
         return cppFn("getLengthOfArray", .{
             this,
             globalThis,
@@ -3577,7 +3581,7 @@ pub const JSValue = enum(JSValueReprInt) {
         return this.asNullableVoid().?;
     }
 
-    pub const Extern = [_][]const u8{ "coerceToInt32", "fastGet_", "getStaticProperty", "createUninitializedUint8Array", "fromInt64NoTruncate", "fromUInt64NoTruncate", "toUInt64NoTruncate", "asPromise", "toInt64", "_then", "put", "makeWithNameAndPrototype", "parseJSON", "symbolKeyFor", "symbolFor", "getSymbolDescription", "createInternalPromise", "asInternalPromise", "asArrayBuffer_", "fromEntries", "createTypeError", "createRangeError", "createObject2", "getIfPropertyExistsImpl", "jsType", "jsonStringify", "kind_", "isTerminationException", "isSameValue", "getLengthOfArray", "toZigString", "createStringArray", "createEmptyObject", "putRecord", "asPromise", "isClass", "getNameProperty", "getClassName", "getErrorsProperty", "toInt32", "toBoolean", "isInt32", "isIterable", "forEach", "isAggregateError", "toError", "toZigException", "isException", "toWTFString", "hasProperty", "getPropertyNames", "getDirect", "putDirect", "getIfExists", "asString", "asObject", "asNumber", "isError", "jsNull", "jsUndefined", "jsTDZValue", "jsBoolean", "jsDoubleNumber", "jsNumberFromDouble", "jsNumberFromChar", "jsNumberFromU16", "jsNumberFromInt64", "isBoolean", "isAnyInt", "isUInt32AsAnyInt", "isInt32AsAnyInt", "isNumber", "isString", "isBigInt", "isHeapBigInt", "isBigInt32", "isSymbol", "isPrimitive", "isGetterSetter", "isCustomGetterSetter", "isObject", "isCell", "asCell", "toString", "toStringOrNull", "toPropertyKey", "toPropertyKeyValue", "toObject", "toString", "getPrototype", "getPropertyByPropertyName", "eqlValue", "eqlCell", "isCallable" };
+    pub const Extern = [_][]const u8{ "coerceToInt32", "fastGet_", "getStaticProperty", "createUninitializedUint8Array", "fromInt64NoTruncate", "fromUInt64NoTruncate", "toUInt64NoTruncate", "asPromise", "toInt64", "_then", "put", "makeWithNameAndPrototype", "parseJSON", "symbolKeyFor", "symbolFor", "getSymbolDescription", "createInternalPromise", "asInternalPromise", "asArrayBuffer_", "fromEntries", "createTypeError", "createRangeError", "createObject2", "getIfPropertyExistsImpl", "jsType", "jsonStringify", "kind_", "isTerminationException", "isSameValue", "getLengthOfArray", "toZigString", "createStringArray", "createEmptyObject", "putRecord", "asPromise", "isClass", "getNameProperty", "getClassName", "getErrorsProperty", "toInt32", "toBoolean", "isInt32", "isIterable", "forEach", "isAggregateError", "toError", "toZigException", "isException", "toWTFString", "hasProperty", "getPropertyNames", "getDirect", "putDirect", "getIfExists", "asString", "asObject", "asNumber", "isError", "jsNull", "jsUndefined", "jsTDZValue", "jsBoolean", "jsDoubleNumber", "jsNumberFromDouble", "jsNumberFromChar", "jsNumberFromU16", "jsNumberFromInt64", "isBoolean", "isAnyInt", "isUInt32AsAnyInt", "isInt32AsAnyInt", "isNumber", "isString", "isBigInt", "isHeapBigInt", "isBigInt32", "isSymbol", "isPrimitive", "isGetterSetter", "isCustomGetterSetter", "isObject", "isCell", "asCell", "toString", "toStringOrNull", "toPropertyKey", "toPropertyKeyValue", "toObject", "toString", "getPrototype", "getPropertyByPropertyName", "eqlValue", "eqlCell", "isCallable", "toBooleanSlow" };
 };
 
 extern "c" fn Microtask__run(*Microtask, *JSGlobalObject) void;

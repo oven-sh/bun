@@ -1623,6 +1623,10 @@ pub const JSExpect = struct {
             @compileLog("Expected Expect.toBe to be a callback");
         if (@TypeOf(Expect.toBeCloseTo) != CallbackType)
             @compileLog("Expected Expect.toBeCloseTo to be a callback");
+        if (@TypeOf(Expect.toBeDefined) != CallbackType)
+            @compileLog("Expected Expect.toBeDefined to be a callback");
+        if (@TypeOf(Expect.toBeFalsy) != CallbackType)
+            @compileLog("Expected Expect.toBeFalsy to be a callback");
         if (@TypeOf(Expect.toBeGreaterThan) != CallbackType)
             @compileLog("Expected Expect.toBeGreaterThan to be a callback");
         if (@TypeOf(Expect.toBeGreaterThanOrEqual) != CallbackType)
@@ -1633,6 +1637,14 @@ pub const JSExpect = struct {
             @compileLog("Expected Expect.toBeLessThan to be a callback");
         if (@TypeOf(Expect.toBeLessThanOrEqual) != CallbackType)
             @compileLog("Expected Expect.toBeLessThanOrEqual to be a callback");
+        if (@TypeOf(Expect.toBeNaN) != CallbackType)
+            @compileLog("Expected Expect.toBeNaN to be a callback");
+        if (@TypeOf(Expect.toBeNull) != CallbackType)
+            @compileLog("Expected Expect.toBeNull to be a callback");
+        if (@TypeOf(Expect.toBeTruthy) != CallbackType)
+            @compileLog("Expected Expect.toBeTruthy to be a callback");
+        if (@TypeOf(Expect.toBeUndefined) != CallbackType)
+            @compileLog("Expected Expect.toBeUndefined to be a callback");
         if (@TypeOf(Expect.toContain) != CallbackType)
             @compileLog("Expected Expect.toContain to be a callback");
         if (@TypeOf(Expect.toContainEqual) != CallbackType)
@@ -1728,11 +1740,17 @@ pub const JSExpect = struct {
             @export(Expect.stringMatching, .{ .name = "ExpectClass__stringMatching" });
             @export(Expect.toBe, .{ .name = "ExpectPrototype__toBe" });
             @export(Expect.toBeCloseTo, .{ .name = "ExpectPrototype__toBeCloseTo" });
+            @export(Expect.toBeDefined, .{ .name = "ExpectPrototype__toBeDefined" });
+            @export(Expect.toBeFalsy, .{ .name = "ExpectPrototype__toBeFalsy" });
             @export(Expect.toBeGreaterThan, .{ .name = "ExpectPrototype__toBeGreaterThan" });
             @export(Expect.toBeGreaterThanOrEqual, .{ .name = "ExpectPrototype__toBeGreaterThanOrEqual" });
             @export(Expect.toBeInstanceOf, .{ .name = "ExpectPrototype__toBeInstanceOf" });
             @export(Expect.toBeLessThan, .{ .name = "ExpectPrototype__toBeLessThan" });
             @export(Expect.toBeLessThanOrEqual, .{ .name = "ExpectPrototype__toBeLessThanOrEqual" });
+            @export(Expect.toBeNaN, .{ .name = "ExpectPrototype__toBeNaN" });
+            @export(Expect.toBeNull, .{ .name = "ExpectPrototype__toBeNull" });
+            @export(Expect.toBeTruthy, .{ .name = "ExpectPrototype__toBeTruthy" });
+            @export(Expect.toBeUndefined, .{ .name = "ExpectPrototype__toBeUndefined" });
             @export(Expect.toContain, .{ .name = "ExpectPrototype__toContain" });
             @export(Expect.toContainEqual, .{ .name = "ExpectPrototype__toContainEqual" });
             @export(Expect.toEqual, .{ .name = "ExpectPrototype__toEqual" });

@@ -3942,7 +3942,7 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
             _: js.ExceptionRef,
         ) js.JSObjectRef {
             var globalThis = ctx.ptr();
-
+            JSC.markBinding(@src());
             if (arguments.len == 0) {
                 const fetch_error = WebCore.Fetch.fetch_error_no_args;
                 return JSPromise.rejectedPromiseValue(globalThis, ZigString.init(fetch_error).toErrorInstance(globalThis)).asRef();

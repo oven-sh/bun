@@ -547,6 +547,7 @@ pub const ModuleLoader = struct {
         }
 
         pub fn onDone(this: *AsyncModule) void {
+            JSC.markBinding(@src());
             var jsc_vm = this.globalThis.bunVM();
             jsc_vm.modules.scheduled -= 1;
             if (jsc_vm.modules.scheduled == 0) {

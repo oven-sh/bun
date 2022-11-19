@@ -224,7 +224,7 @@ pub const TransformTask = struct {
         }
     }
 
-    pub fn then(this: *TransformTask, promise: *JSC.JSInternalPromise) void {
+    pub fn then(this: *TransformTask, promise: *JSC.JSPromise) void {
         if (this.log.hasAny() or this.err != null) {
             const error_value: JSValue = brk: {
                 if (this.err) |err| {
@@ -254,7 +254,7 @@ pub const TransformTask = struct {
         this.deinit();
     }
 
-    noinline fn finish(code: ZigString, global: *JSGlobalObject, promise: *JSC.JSInternalPromise) void {
+    noinline fn finish(code: ZigString, global: *JSGlobalObject, promise: *JSC.JSPromise) void {
         promise.resolve(global, code.toValueGC(global));
     }
 
@@ -986,7 +986,7 @@ pub fn transform(
 
     var task = TransformTask.create(this, if (code_holder == .string) arguments[0] else null, ctx.ptr(), ZigString.init(code), loader orelse this.transpiler_options.default_loader) catch return null;
     task.schedule();
-    return task.promise.asObjectRef();
+    return task.promise.value().asObjectRef();
 }
 
 pub fn transformSync(

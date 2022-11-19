@@ -1508,6 +1508,8 @@ pub fn fixDeadCodeElimination() void {
     std.mem.doNotOptimizeAway(&napi_add_finalizer);
     std.mem.doNotOptimizeAway(&napi_create_external);
     std.mem.doNotOptimizeAway(&napi_get_value_external);
+    std.mem.doNotOptimizeAway(&napi_get_instance_data);
+    std.mem.doNotOptimizeAway(&napi_set_instance_data);
 
     std.mem.doNotOptimizeAway(&@import("../bun.js/node/buffer.zig").BufferVectorized.fill);
 }

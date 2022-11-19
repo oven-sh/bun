@@ -1261,7 +1261,7 @@ class WrappedFileSink extends EventEmitter {
     var fileSink = this.#fileSink;
     var result = fileSink.write(data);
 
-    var then = result.then;
+    var then = result?.then;
     if (isPromise(result) && then && isCallable(then)) {
       var writePromises = this.#writePromises;
       var i = writePromises.length;

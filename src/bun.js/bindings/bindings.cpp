@@ -3161,3 +3161,8 @@ JSC__JSValue JSC__JSValue__fastGet_(JSC__JSValue JSValue0, JSC__JSGlobalObject* 
     return JSValue::encode(
         value.getObject()->getIfPropertyExists(globalObject, builtinNameMap(globalObject, arg2)));
 }
+
+bool JSC__JSValue__toBooleanSlow(JSC__JSValue JSValue0, JSC__JSGlobalObject* globalObject)
+{
+    return JSValue::decode(JSValue0).toBoolean(globalObject);
+}

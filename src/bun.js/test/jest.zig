@@ -506,17 +506,10 @@ pub const Expect = struct {
         active_test_expectation_counter.actual += 1;
 
         const not = this.op.contains(.not);
-        var pass = true;
+        var pass = false;
 
-        // reasons to fail: undefined, null, NaN, zero, BigInt zero, false, empty string
-        if (value.isUndefinedOrNull()) pass = false;
-        if (value.isNumber()) {
-            const number = value.asNumber();
-            if (number == 0 or number != number) pass = false;
-        }
-        if (value.isBigInt() and value.toInt64() == 0) pass = false;
-        if (value.isBoolean() and !value.asBoolean()) pass = false;
-        if (value.isString() and value.asString().length() == 0) pass = false;
+        const truthy = value.toBooleanSlow(globalObject);
+        if (truthy) pass = true;
 
         if (not) pass = !pass;
         if (pass) return thisValue;
@@ -650,15 +643,8 @@ pub const Expect = struct {
         const not = this.op.contains(.not);
         var pass = false;
 
-        // reasons to pass: undefined, null, NaN, zero, BigInt zero, false, empty string
-        if (value.isUndefinedOrNull()) pass = true;
-        if (value.isNumber()) {
-            const number = value.asNumber();
-            if (number == 0 or number != number) pass = true;
-        }
-        if (value.isBigInt() and value.toInt64() == 0) pass = true;
-        if (value.isBoolean() and !value.asBoolean()) pass = true;
-        if (value.isString() and value.asString().length() == 0) pass = true;
+        const truthy = value.toBooleanSlow(globalObject);
+        if (!truthy) pass = true;
 
         if (not) pass = !pass;
         if (pass) return thisValue;

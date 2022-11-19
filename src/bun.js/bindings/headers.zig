@@ -335,6 +335,7 @@ pub extern fn JSC__JSValue__putRecord(JSValue0: JSC__JSValue, arg1: ?*JSC__JSGlo
 pub extern fn JSC__JSValue__symbolFor(arg0: ?*JSC__JSGlobalObject, arg1: [*c]ZigString) JSC__JSValue;
 pub extern fn JSC__JSValue__symbolKeyFor(JSValue0: JSC__JSValue, arg1: ?*JSC__JSGlobalObject, arg2: [*c]ZigString) bool;
 pub extern fn JSC__JSValue__toBoolean(JSValue0: JSC__JSValue) bool;
+pub extern fn JSC__JSValue__toBooleanSlow(JSValue0: JSC__JSValue, arg1: ?*JSC__JSGlobalObject) bool;
 pub extern fn JSC__JSValue__toError(JSValue0: JSC__JSValue, arg1: ?*JSC__JSGlobalObject) JSC__JSValue;
 pub extern fn JSC__JSValue__toInt32(JSValue0: JSC__JSValue) i32;
 pub extern fn JSC__JSValue__toInt64(JSValue0: JSC__JSValue) i64;

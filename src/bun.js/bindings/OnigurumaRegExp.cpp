@@ -99,7 +99,7 @@ static WTF::String convertToOnigurumaSyntax(const WTF::String& string)
         }
 
         // convert character properties
-        if (characters[i] == '{' && i - 1 >= 0 && (characters[i - 1] == 'p' || characters[i - 1] == 'P') && i - 2 >= 0 && characters[i - 2] == '\\') {
+        if (UNLIKELY(characters[i] == '{' && i - 2 >= 0 && (characters[i - 1] == 'p' || characters[i - 1] == 'P') && characters[i - 2] == '\\')) {
             sb.append(characters[i]);
             i += 1;
             if (i == length) {

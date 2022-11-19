@@ -71,14 +71,6 @@ static WTF::String convertToOnigurumaSyntax(const WTF::String& string)
     bool inCharacterClass = false;
     bool inCharacterProperty = false;
 
-    // might need to keep track of escapes in a row:
-    // 1: /\p{Script=Latin}/u
-    // 2: /\\p{Script=Latin}/u
-    // 3: /\\\p{Script=Latin}/u
-    // 4: /\\\\p{Script=Latin}/u
-    // ...
-    // first is character property, second isn't, third is character property, fourth isn't, etc.
-
     for (int i = 0; i < length; i++) {
 
         // extend multibyte hex characters
@@ -123,7 +115,7 @@ static WTF::String convertToOnigurumaSyntax(const WTF::String& string)
                 }
             }
 
-            // cound be \p{propName=propValue} or \p{propValue}.
+            // could be \p{propName=propValue} or \p{propValue}.
             bool foundEquals = false;
             WTF::StringBuilder propName;
             while (characters[i] != '}') {

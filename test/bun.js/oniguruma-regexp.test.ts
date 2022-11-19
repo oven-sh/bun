@@ -15,7 +15,6 @@ it("character property scripts", () => {
   for (const [i, s] of s0.entries()) {
     expect(s === s1[i]).toBe(true);
   }
-  // expected output: Array ["👌"]
 
   const g2 = OnigurumaRegExp("\\P{Script_Extensions=Latin}+", "gu");
   const s2 = sentence.match(g2);
@@ -24,7 +23,6 @@ it("character property scripts", () => {
   for (const [i, s] of s2.entries()) {
     expect(s === s3[i]).toBe(true);
   }
-  // expected output: Array [" ", " ", " 大阪 ", " ¥2000 👌."]
 
   const g4 = OnigurumaRegExp("\\p{Sc}|\\p{P}", "gu");
   const s4 = sentence.match(g4);
@@ -33,18 +31,13 @@ it("character property scripts", () => {
   for (const [i, s] of s4.entries()) {
     expect(s === s5[i]).toBe(true);
   }
-  // expected output: Array ["¥", "."]
 
   expect("٢".match(new RegExp("\\p{Script=Thaana}", "u"))).toBe(null);
-  // null as Thaana is not the predominant script
-
   expect("٢".match(new RegExp("\\p{Script_Extensions=Thaana}", "u"))![0]).toBe(
     "٢",
   );
 
   expect("٢".match(new OnigurumaRegExp("\\p{Thaana}", "u"))).toBe(null);
-  // null as Thaana is not the predominant script
-
   expect(
     "٢".match(new OnigurumaRegExp("\\p{Script_Extensions=Thaana}", "u")),
   ).toBe(null);

@@ -7128,7 +7128,7 @@ pub const Macro = struct {
                         while (i < count) {
                             var nextArg = writer.eatArg() orelse return false;
                             if (js.JSValueIsArray(writer.ctx, nextArg.asRef())) {
-                                const extras = nextArg.getLengthOfArray(writer.ctx.ptr());
+                                const extras = @intCast(u32, nextArg.getLengthOfArray(writer.ctx.ptr()));
                                 count += std.math.max(@truncate(@TypeOf(count), extras), 1) - 1;
                                 items.ensureUnusedCapacity(extras) catch unreachable;
                                 items.expandToCapacity();
@@ -7511,7 +7511,7 @@ pub const Macro = struct {
                 .allocator = JSCBase.getAllocator(ctx),
                 .exception = exception,
                 .args_value = args_value,
-                .args_len = args_value.getLengthOfArray(ctx.ptr()),
+                .args_len = @intCast(u32, args_value.getLengthOfArray(ctx.ptr())),
                 .args_i = 0,
                 .errored = false,
             };

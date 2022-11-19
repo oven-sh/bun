@@ -456,7 +456,7 @@ JSC__JSValue JSC__JSValue__createEmptyObject(JSC__JSGlobalObject* globalObject,
         JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), initialCapacity));
 }
 
-uint32_t JSC__JSValue__getLengthOfArray(JSC__JSValue value, JSC__JSGlobalObject* globalObject)
+uint64_t JSC__JSValue__getLengthOfArray(JSC__JSValue value, JSC__JSGlobalObject* globalObject)
 {
     JSC::JSValue jsValue = JSC::JSValue::decode(value);
     JSC::JSObject* object = jsValue.toObject(globalObject);

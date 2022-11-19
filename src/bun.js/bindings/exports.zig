@@ -1766,7 +1766,7 @@ pub const ZigConsoleClient = struct {
                     }
                 },
                 .Array => {
-                    const len = value.getLengthOfArray(this.globalThis);
+                    const len = @intCast(u32, value.getLengthOfArray(this.globalThis));
                     if (len == 0) {
                         writer.writeAll("[]");
                         return;

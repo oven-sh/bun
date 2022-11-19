@@ -2368,7 +2368,7 @@ pub const JSArrayIterator = struct {
         return .{
             .array = value,
             .global = global,
-            .len = value.getLengthOfArray(global),
+            .len = @intCast(u32, value.getLengthOfArray(global)),
         };
     }
 
@@ -3506,7 +3506,7 @@ pub const JSValue = enum(JSValueReprInt) {
         return @intCast(u32, @maximum(this.toInt32(), 0));
     }
 
-    pub fn getLengthOfArray(this: JSValue, globalThis: *JSGlobalObject) u32 {
+    pub fn getLengthOfArray(this: JSValue, globalThis: *JSGlobalObject) u64 {
         return cppFn("getLengthOfArray", .{
             this,
             globalThis,

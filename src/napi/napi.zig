@@ -604,7 +604,7 @@ pub export fn napi_get_array_length(env: napi_env, value: napi_value, result: [*
         return .array_expected;
     }
 
-    result.* = value.getLengthOfArray(env);
+    result.* = @intCast(u32, value.getLengthOfArray(env));
     return .ok;
 }
 pub export fn napi_strict_equals(env: napi_env, lhs: napi_value, rhs: napi_value, result: *bool) napi_status {

@@ -362,7 +362,7 @@ pub const Expect = struct {
 
         active_test_expectation_counter.actual += 1;
 
-        const expected = arguments[0].coerce(i32, globalObject);
+        const expected: JSValue = arguments[0];
         const value: JSValue = JSC.Jest.Expect.capturedValueGetCached(thisValue) orelse {
             globalObject.throw("Internal consistency error: the expect(value) was garbage collected but it should not have been!", .{});
             return .zero;
@@ -373,6 +373,11 @@ pub const Expect = struct {
             var fmt = JSC.ZigConsoleClient.Formatter{ .globalThis = globalObject };
             globalObject.throw("Received value does not have a length property: {any}", .{value.toFmt(globalObject, &fmt)});
             return .zero;
+        }
+
+        if (!expected.isAnyInt() or expected.toInt32() < 0) {
+            var fmt = JSC.ZigConsoleClient.Formatter{ .globalThis = globalObject };
+            globalObject.throw("Expected value must be a non-negative integer: {any}", .{expected.toFmt(globalObject, &fmt)});
         }
 
         var actual_length: i32 = undefined;
@@ -397,7 +402,7 @@ pub const Expect = struct {
         const not = this.op.contains(.not);
         var pass = false;
 
-        if (actual_length == expected) pass = true;
+        if (actual_length == expected.coerce(i32, globalObject)) pass = true;
 
         if (not) pass = !pass;
         if (pass) return thisValue;

@@ -36,6 +36,11 @@ test("toHaveLength()", () => {
 });
 
 test("toContain()", () => {
+  const s1 = new String("123");
+  expect(s1).not.toContain("12");
+  const s2 = "123";
+  expect(s2).toContain("12");
+
   expect("test").toContain("es");
   expect("test").toContain("est");
   expect("test").toContain("test");

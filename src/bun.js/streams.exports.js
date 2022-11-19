@@ -3578,7 +3578,7 @@ var require_readable = __commonJS({
       ) {
         state.endEmitted = true;
         stream.emit("end");
-        debug("end emitted");
+        debug("end emitted @ endReadableNT");
         if (stream.writable && stream.allowHalfOpen === false) {
           runOnNextTick(endWritableNT, stream);
         } else if (state.autoDestroy) {

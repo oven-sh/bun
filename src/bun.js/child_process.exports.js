@@ -1250,6 +1250,7 @@ function abortChildProcess(child, killSignal) {
 
 class WrappedFileSink extends EventEmitter {
   #fileSink;
+  #writePromises = [];
 
   constructor(fileSink) {
     super();
@@ -1257,15 +1258,24 @@ class WrappedFileSink extends EventEmitter {
   }
 
   write(data) {
-    const result = this.#fileSink.write(data);
-    if (isPromise(result) && result.then && isCallable(result.then)) {
-      result.then(() => {
+    var fileSink = this.#fileSink;
+    var result = fileSink.write(data);
+
+    var then = result.then;
+    if (isPromise(result) && then && isCallable(then)) {
+      var writePromises = this.#writePromises;
+      var i = writePromises.length;
+      writePromises[i] = result;
+
+      then(() => {
         this.emit("drain");
-        this.#fileSink.flush(true);
+        fileSink.flush(true);
+        // We can't naively use i here because we don't know when writes will resolve necessarily
+        writePromises.splice(writePromises.indexOf(result), 1);
       });
       return false;
     }
-    this.#fileSink.flush(true);
+    fileSink.flush(true);
     return true;
   }
 
@@ -1274,7 +1284,14 @@ class WrappedFileSink extends EventEmitter {
   }
 
   end() {
-    this.#fileSink.end();
+    var writePromises = this.#writePromises;
+    if (writePromises.length) {
+      PromiseAll(writePromises).then(() => {
+        this.#fileSink.end();
+      });
+    } else {
+      this.#fileSink.end();
+    }
   }
 }
 
@@ -1480,6 +1497,9 @@ var Uint8Array = globalThis.Uint8Array;
 var String = globalThis.String;
 var Object = globalThis.Object;
 var Buffer = globalThis.Buffer;
+var Promise = globalThis.Promise;
+
+var PromiseAll = Promise.all;
 
 var ObjectPrototypeHasOwnProperty = Object.prototype.hasOwnProperty;
 var ObjectCreate = Object.create;

@@ -54,15 +54,15 @@ describe("process.stdin", () => {
     const input = "hello".repeat(numReps);
 
     let data = "";
+    child.stdout.on("end", () => {
+      expect(data).toBe(`data: ${input}`);
+      done();
+    });
     child.stdout.on("readable", () => {
       let chunk;
       while ((chunk = child.stdout.read()) !== null) {
         data += chunk.trim();
       }
-    });
-    child.stdout.on("end", () => {
-      expect(data).toBe(`data: ${input}`);
-      done();
     });
     child.stdin.write(input);
     child.stdin.end();

@@ -127,7 +127,7 @@ it("networkInterfaces", () => {
 
 it("EOL", () => {
   if (process.platform === "win32") expect(os.EOL).toBe("\\r\\n");
-  else expect(os.EOL).toBe("\\n");
+  else expect(os.EOL).toBe("\n");
 });
 
 it("devNull", () => {

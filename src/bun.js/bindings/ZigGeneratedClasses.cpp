@@ -489,9 +489,9 @@ extern "C" EncodedJSValue TCPSocket__getConstructor(Zig::GlobalObject* globalObj
 }
 
 extern "C" bool TCPSocket__hasPendingActivity(void* ptr);
-bool JSTCPSocket::internalHasPendingActivity()
+bool JSTCPSocket::hasPendingActivity(void* ctx)
 {
-    return TCPSocket__hasPendingActivity(m_ctx);
+    return TCPSocket__hasPendingActivity(ctx);
 }
 
 JSTCPSocket::~JSTCPSocket()
@@ -575,9 +575,33 @@ void JSTCPSocket::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 
     visitor.append(thisObject->m_data);
     visitor.append(thisObject->m_remoteAddress);
+    visitor.addOpaqueRoot(thisObject->wrapped());
 }
 
 DEFINE_VISIT_CHILDREN(JSTCPSocket);
+
+template<typename Visitor>
+void JSTCPSocket::visitAdditionalChildren(Visitor& visitor)
+{
+    JSTCPSocket* thisObject = this;
+    ASSERT_GC_OBJECT_INHERITS(thisObject, info());
+
+    visitor.append(thisObject->m_data);
+    visitor.append(thisObject->m_remoteAddress);
+    visitor.addOpaqueRoot(this->wrapped());
+}
+
+DEFINE_VISIT_ADDITIONAL_CHILDREN(JSTCPSocket);
+
+template<typename Visitor>
+void JSTCPSocket::visitOutputConstraintsImpl(JSCell* cell, Visitor& visitor)
+{
+    JSTCPSocket* thisObject = jsCast<JSTCPSocket*>(cell);
+    ASSERT_GC_OBJECT_INHERITS(thisObject, info());
+    thisObject->visitAdditionalChildren<Visitor>(visitor);
+}
+
+DEFINE_VISIT_OUTPUT_CONSTRAINTS(JSTCPSocket);
 class JSTLSSocketPrototype final : public JSC::JSNonFinalObject {
 public:
     using Base = JSC::JSNonFinalObject;
@@ -1040,9 +1064,9 @@ extern "C" EncodedJSValue TLSSocket__getConstructor(Zig::GlobalObject* globalObj
 }
 
 extern "C" bool TLSSocket__hasPendingActivity(void* ptr);
-bool JSTLSSocket::internalHasPendingActivity()
+bool JSTLSSocket::hasPendingActivity(void* ctx)
 {
-    return TLSSocket__hasPendingActivity(m_ctx);
+    return TLSSocket__hasPendingActivity(ctx);
 }
 
 JSTLSSocket::~JSTLSSocket()
@@ -1126,9 +1150,33 @@ void JSTLSSocket::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 
     visitor.append(thisObject->m_data);
     visitor.append(thisObject->m_remoteAddress);
+    visitor.addOpaqueRoot(thisObject->wrapped());
 }
 
 DEFINE_VISIT_CHILDREN(JSTLSSocket);
+
+template<typename Visitor>
+void JSTLSSocket::visitAdditionalChildren(Visitor& visitor)
+{
+    JSTLSSocket* thisObject = this;
+    ASSERT_GC_OBJECT_INHERITS(thisObject, info());
+
+    visitor.append(thisObject->m_data);
+    visitor.append(thisObject->m_remoteAddress);
+    visitor.addOpaqueRoot(this->wrapped());
+}
+
+DEFINE_VISIT_ADDITIONAL_CHILDREN(JSTLSSocket);
+
+template<typename Visitor>
+void JSTLSSocket::visitOutputConstraintsImpl(JSCell* cell, Visitor& visitor)
+{
+    JSTLSSocket* thisObject = jsCast<JSTLSSocket*>(cell);
+    ASSERT_GC_OBJECT_INHERITS(thisObject, info());
+    thisObject->visitAdditionalChildren<Visitor>(visitor);
+}
+
+DEFINE_VISIT_OUTPUT_CONSTRAINTS(JSTLSSocket);
 class JSListenerPrototype final : public JSC::JSNonFinalObject {
 public:
     using Base = JSC::JSNonFinalObject;
@@ -1578,6 +1626,29 @@ void JSListener::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 }
 
 DEFINE_VISIT_CHILDREN(JSListener);
+
+template<typename Visitor>
+void JSListener::visitAdditionalChildren(Visitor& visitor)
+{
+    JSListener* thisObject = this;
+    ASSERT_GC_OBJECT_INHERITS(thisObject, info());
+
+    visitor.append(thisObject->m_hostname);
+    visitor.append(thisObject->m_unix);
+    ;
+}
+
+DEFINE_VISIT_ADDITIONAL_CHILDREN(JSListener);
+
+template<typename Visitor>
+void JSListener::visitOutputConstraintsImpl(JSCell* cell, Visitor& visitor)
+{
+    JSListener* thisObject = jsCast<JSListener*>(cell);
+    ASSERT_GC_OBJECT_INHERITS(thisObject, info());
+    thisObject->visitAdditionalChildren<Visitor>(visitor);
+}
+
+DEFINE_VISIT_OUTPUT_CONSTRAINTS(JSListener);
 class JSSubprocessPrototype final : public JSC::JSNonFinalObject {
 public:
     using Base = JSC::JSNonFinalObject;
@@ -2047,9 +2118,9 @@ extern "C" EncodedJSValue Subprocess__getConstructor(Zig::GlobalObject* globalOb
 }
 
 extern "C" bool Subprocess__hasPendingActivity(void* ptr);
-bool JSSubprocess::internalHasPendingActivity()
+bool JSSubprocess::hasPendingActivity(void* ctx)
 {
-    return Subprocess__hasPendingActivity(m_ctx);
+    return Subprocess__hasPendingActivity(ctx);
 }
 
 JSSubprocess::~JSSubprocess()
@@ -2134,9 +2205,34 @@ void JSSubprocess::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     visitor.append(thisObject->m_stderr);
     visitor.append(thisObject->m_stdin);
     visitor.append(thisObject->m_stdout);
+    visitor.addOpaqueRoot(thisObject->wrapped());
 }
 
 DEFINE_VISIT_CHILDREN(JSSubprocess);
+
+template<typename Visitor>
+void JSSubprocess::visitAdditionalChildren(Visitor& visitor)
+{
+    JSSubprocess* thisObject = this;
+    ASSERT_GC_OBJECT_INHERITS(thisObject, info());
+
+    visitor.append(thisObject->m_stderr);
+    visitor.append(thisObject->m_stdin);
+    visitor.append(thisObject->m_stdout);
+    visitor.addOpaqueRoot(this->wrapped());
+}
+
+DEFINE_VISIT_ADDITIONAL_CHILDREN(JSSubprocess);
+
+template<typename Visitor>
+void JSSubprocess::visitOutputConstraintsImpl(JSCell* cell, Visitor& visitor)
+{
+    JSSubprocess* thisObject = jsCast<JSSubprocess*>(cell);
+    ASSERT_GC_OBJECT_INHERITS(thisObject, info());
+    thisObject->visitAdditionalChildren<Visitor>(visitor);
+}
+
+DEFINE_VISIT_OUTPUT_CONSTRAINTS(JSSubprocess);
 class JSSHA1Prototype final : public JSC::JSNonFinalObject {
 public:
     using Base = JSC::JSNonFinalObject;
@@ -5264,6 +5360,29 @@ void JSServerWebSocket::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 }
 
 DEFINE_VISIT_CHILDREN(JSServerWebSocket);
+
+template<typename Visitor>
+void JSServerWebSocket::visitAdditionalChildren(Visitor& visitor)
+{
+    JSServerWebSocket* thisObject = this;
+    ASSERT_GC_OBJECT_INHERITS(thisObject, info());
+
+    visitor.append(thisObject->m_data);
+    visitor.append(thisObject->m_remoteAddress);
+    ;
+}
+
+DEFINE_VISIT_ADDITIONAL_CHILDREN(JSServerWebSocket);
+
+template<typename Visitor>
+void JSServerWebSocket::visitOutputConstraintsImpl(JSCell* cell, Visitor& visitor)
+{
+    JSServerWebSocket* thisObject = jsCast<JSServerWebSocket*>(cell);
+    ASSERT_GC_OBJECT_INHERITS(thisObject, info());
+    thisObject->visitAdditionalChildren<Visitor>(visitor);
+}
+
+DEFINE_VISIT_OUTPUT_CONSTRAINTS(JSServerWebSocket);
 class JSExpectPrototype final : public JSC::JSNonFinalObject {
 public:
     using Base = JSC::JSNonFinalObject;
@@ -6301,6 +6420,29 @@ void JSExpect::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 }
 
 DEFINE_VISIT_CHILDREN(JSExpect);
+
+template<typename Visitor>
+void JSExpect::visitAdditionalChildren(Visitor& visitor)
+{
+    JSExpect* thisObject = this;
+    ASSERT_GC_OBJECT_INHERITS(thisObject, info());
+    visitor.append(thisObject->m_capturedValue);
+    visitor.append(thisObject->m_resultValue);
+
+    ;
+}
+
+DEFINE_VISIT_ADDITIONAL_CHILDREN(JSExpect);
+
+template<typename Visitor>
+void JSExpect::visitOutputConstraintsImpl(JSCell* cell, Visitor& visitor)
+{
+    JSExpect* thisObject = jsCast<JSExpect*>(cell);
+    ASSERT_GC_OBJECT_INHERITS(thisObject, info());
+    thisObject->visitAdditionalChildren<Visitor>(visitor);
+}
+
+DEFINE_VISIT_OUTPUT_CONSTRAINTS(JSExpect);
 class JSTextDecoderPrototype final : public JSC::JSNonFinalObject {
 public:
     using Base = JSC::JSNonFinalObject;
@@ -6642,6 +6784,28 @@ void JSTextDecoder::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 }
 
 DEFINE_VISIT_CHILDREN(JSTextDecoder);
+
+template<typename Visitor>
+void JSTextDecoder::visitAdditionalChildren(Visitor& visitor)
+{
+    JSTextDecoder* thisObject = this;
+    ASSERT_GC_OBJECT_INHERITS(thisObject, info());
+
+    visitor.append(thisObject->m_encoding);
+    ;
+}
+
+DEFINE_VISIT_ADDITIONAL_CHILDREN(JSTextDecoder);
+
+template<typename Visitor>
+void JSTextDecoder::visitOutputConstraintsImpl(JSCell* cell, Visitor& visitor)
+{
+    JSTextDecoder* thisObject = jsCast<JSTextDecoder*>(cell);
+    ASSERT_GC_OBJECT_INHERITS(thisObject, info());
+    thisObject->visitAdditionalChildren<Visitor>(visitor);
+}
+
+DEFINE_VISIT_OUTPUT_CONSTRAINTS(JSTextDecoder);
 class JSRequestPrototype final : public JSC::JSNonFinalObject {
 public:
     using Base = JSC::JSNonFinalObject;
@@ -7267,6 +7431,30 @@ void JSRequest::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 }
 
 DEFINE_VISIT_CHILDREN(JSRequest);
+
+template<typename Visitor>
+void JSRequest::visitAdditionalChildren(Visitor& visitor)
+{
+    JSRequest* thisObject = this;
+    ASSERT_GC_OBJECT_INHERITS(thisObject, info());
+
+    visitor.append(thisObject->m_body);
+    visitor.append(thisObject->m_headers);
+    visitor.append(thisObject->m_url);
+    ;
+}
+
+DEFINE_VISIT_ADDITIONAL_CHILDREN(JSRequest);
+
+template<typename Visitor>
+void JSRequest::visitOutputConstraintsImpl(JSCell* cell, Visitor& visitor)
+{
+    JSRequest* thisObject = jsCast<JSRequest*>(cell);
+    ASSERT_GC_OBJECT_INHERITS(thisObject, info());
+    thisObject->visitAdditionalChildren<Visitor>(visitor);
+}
+
+DEFINE_VISIT_OUTPUT_CONSTRAINTS(JSRequest);
 class JSResponsePrototype final : public JSC::JSNonFinalObject {
 public:
     using Base = JSC::JSNonFinalObject;
@@ -7857,6 +8045,31 @@ void JSResponse::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 }
 
 DEFINE_VISIT_CHILDREN(JSResponse);
+
+template<typename Visitor>
+void JSResponse::visitAdditionalChildren(Visitor& visitor)
+{
+    JSResponse* thisObject = this;
+    ASSERT_GC_OBJECT_INHERITS(thisObject, info());
+
+    visitor.append(thisObject->m_body);
+    visitor.append(thisObject->m_headers);
+    visitor.append(thisObject->m_statusText);
+    visitor.append(thisObject->m_url);
+    ;
+}
+
+DEFINE_VISIT_ADDITIONAL_CHILDREN(JSResponse);
+
+template<typename Visitor>
+void JSResponse::visitOutputConstraintsImpl(JSCell* cell, Visitor& visitor)
+{
+    JSResponse* thisObject = jsCast<JSResponse*>(cell);
+    ASSERT_GC_OBJECT_INHERITS(thisObject, info());
+    thisObject->visitAdditionalChildren<Visitor>(visitor);
+}
+
+DEFINE_VISIT_OUTPUT_CONSTRAINTS(JSResponse);
 class JSBlobPrototype final : public JSC::JSNonFinalObject {
 public:
     using Base = JSC::JSNonFinalObject;

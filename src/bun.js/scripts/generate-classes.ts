@@ -908,47 +908,48 @@ function generateClassHeader(typeName, obj: ClassDefinition) {
   const DECLARE_VISIT_CHILDREN =
     values.length ||
     obj.estimatedSize ||
+    obj.hasPendingActivity ||
     [...Object.values(klass), ...Object.values(proto)].find((a) => !!a.cache)
-      ? "DECLARE_VISIT_CHILDREN;"
+      ? "DECLARE_VISIT_CHILDREN;\ntemplate<typename Visitor> void visitAdditionalChildren(Visitor&);\nDECLARE_VISIT_OUTPUT_CONSTRAINTS;\n"
       : "";
   const sizeEstimator = obj.estimatedSize
     ? "static size_t estimatedSize(JSCell* cell, VM& vm);"
     : "";
 
   var weakOwner = "";
-  var weakInit = "";
-
+  var weakInit = ``;
   if (obj.hasPendingActivity) {
+    weakInit = `m_weakThis = JSC::Weak<${name}>(this, getOwner());`;
     weakOwner = `
-      JSC::Weak<${name}> m_weakThis;
-      bool internalHasPendingActivity();
-      bool hasPendingActivity() {
-        if (UNLIKELY(!m_ctx))
-          return false;
+    JSC::Weak<${name}> m_weakThis;
+   
 
-        return this->internalHasPendingActivity();
+    static bool hasPendingActivity(void* ctx);
+
+    class Owner final : public JSC::WeakHandleOwner {
+      public:
+          bool isReachableFromOpaqueRoots(JSC::Handle<JSC::Unknown> handle, void* context, JSC::AbstractSlotVisitor& visitor, const char** reason) final
+          {
+              auto* controller = JSC::jsCast<${name}*>(handle.slot()->asCell());
+              if (${name}::hasPendingActivity(controller->wrapped())) {
+                  if (UNLIKELY(reason))
+                    *reason = "has pending activity";
+                  return true;
+              }
+
+              return visitor.containsOpaqueRoot(context);
+          }
+          void finalize(JSC::Handle<JSC::Unknown>, void* context) final {}
+      };
+  
+      static JSC::WeakHandleOwner* getOwner()
+      {
+          static NeverDestroyed<Owner> m_owner;
+          return &m_owner.get();
       }
-
-      class Owner final : public JSC::WeakHandleOwner {
-        public:
-            bool isReachableFromOpaqueRoots(JSC::Handle<JSC::Unknown> handle, void* context, JSC::AbstractSlotVisitor&, const char**) final
-            {
-                auto* controller = JSC::jsCast<${name}*>(handle.slot()->asCell());
-                return controller->hasPendingActivity();
-            }
-            void finalize(JSC::Handle<JSC::Unknown>, void* context) final {}
-        };
-    
-        static JSC::WeakHandleOwner* getOwner()
-        {
-            static NeverDestroyed<Owner> m_owner;
-            return &m_owner.get();
-        }
       `;
-    weakInit = `
-    m_weakThis = JSC::Weak<${name}>(this, getOwner());
-`;
   }
+
   return `
   class ${name} final : public JSC::JSDestructibleObject {
     public:
@@ -1046,7 +1047,12 @@ function generateClassImpl(typeName, obj: ClassDefinition) {
     })
     .join("\n");
   var DEFINE_VISIT_CHILDREN = "";
-  if (DEFINE_VISIT_CHILDREN_LIST.length || estimatedSize || values.length) {
+  if (
+    DEFINE_VISIT_CHILDREN_LIST.length ||
+    estimatedSize ||
+    values.length ||
+    hasPendingActivity
+  ) {
     DEFINE_VISIT_CHILDREN = `
 template<typename Visitor>
 void ${name}::visitChildrenImpl(JSCell* cell, Visitor& visitor)
@@ -1063,9 +1069,33 @@ visitor.reportExtraMemoryVisited(${symbolName(obj.name, "estimatedSize")}(ptr));
         : ""
     }
 ${DEFINE_VISIT_CHILDREN_LIST}
+${hasPendingActivity ? `visitor.addOpaqueRoot(thisObject->wrapped());` : ""}
 }
 
 DEFINE_VISIT_CHILDREN(${name});
+
+template<typename Visitor>
+void ${name}::visitAdditionalChildren(Visitor& visitor)
+{
+  ${name}* thisObject = this;
+    ASSERT_GC_OBJECT_INHERITS(thisObject, info());
+    ${values}
+    ${DEFINE_VISIT_CHILDREN_LIST}
+    ${hasPendingActivity ? "visitor.addOpaqueRoot(this->wrapped())" : ""};
+}
+
+DEFINE_VISIT_ADDITIONAL_CHILDREN(${name});
+
+template<typename Visitor>
+void ${name}::visitOutputConstraintsImpl(JSCell *cell, Visitor& visitor)
+{
+    ${name}* thisObject = jsCast<${name}*>(cell);
+    ASSERT_GC_OBJECT_INHERITS(thisObject, info());
+    thisObject->visitAdditionalChildren<Visitor>(visitor);
+}
+
+DEFINE_VISIT_OUTPUT_CONSTRAINTS(${name});
+
         `.trim();
   }
 
@@ -1074,8 +1104,8 @@ DEFINE_VISIT_CHILDREN(${name});
   if (hasPendingActivity) {
     output += `
     extern "C" bool ${symbolName(typeName, "hasPendingActivity")}(void* ptr);
-    bool ${name}::internalHasPendingActivity() {
-        return ${symbolName(typeName, "hasPendingActivity")}(m_ctx);
+    bool ${name}::hasPendingActivity(void* ctx) {
+        return ${symbolName(typeName, "hasPendingActivity")}(ctx);
     }
 `;
   }

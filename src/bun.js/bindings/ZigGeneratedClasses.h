@@ -66,21 +66,21 @@ public:
     void finishCreation(JSC::VM&);
 
     JSC::Weak<JSTCPSocket> m_weakThis;
-    bool internalHasPendingActivity();
-    bool hasPendingActivity()
-    {
-        if (UNLIKELY(!m_ctx))
-            return false;
 
-        return this->internalHasPendingActivity();
-    }
+    static bool hasPendingActivity(void* ctx);
 
     class Owner final : public JSC::WeakHandleOwner {
     public:
-        bool isReachableFromOpaqueRoots(JSC::Handle<JSC::Unknown> handle, void* context, JSC::AbstractSlotVisitor&, const char**) final
+        bool isReachableFromOpaqueRoots(JSC::Handle<JSC::Unknown> handle, void* context, JSC::AbstractSlotVisitor& visitor, const char** reason) final
         {
             auto* controller = JSC::jsCast<JSTCPSocket*>(handle.slot()->asCell());
-            return controller->hasPendingActivity();
+            if (JSTCPSocket::hasPendingActivity(controller->wrapped())) {
+                if (UNLIKELY(reason))
+                    *reason = "has pending activity";
+                return true;
+            }
+
+            return visitor.containsOpaqueRoot(context);
         }
         void finalize(JSC::Handle<JSC::Unknown>, void* context) final {}
     };
@@ -92,6 +92,8 @@ public:
     }
 
     DECLARE_VISIT_CHILDREN;
+    template<typename Visitor> void visitAdditionalChildren(Visitor&);
+    DECLARE_VISIT_OUTPUT_CONSTRAINTS;
 
     mutable JSC::WriteBarrier<JSC::Unknown> m_data;
     mutable JSC::WriteBarrier<JSC::Unknown> m_remoteAddress;
@@ -148,21 +150,21 @@ public:
     void finishCreation(JSC::VM&);
 
     JSC::Weak<JSTLSSocket> m_weakThis;
-    bool internalHasPendingActivity();
-    bool hasPendingActivity()
-    {
-        if (UNLIKELY(!m_ctx))
-            return false;
 
-        return this->internalHasPendingActivity();
-    }
+    static bool hasPendingActivity(void* ctx);
 
     class Owner final : public JSC::WeakHandleOwner {
     public:
-        bool isReachableFromOpaqueRoots(JSC::Handle<JSC::Unknown> handle, void* context, JSC::AbstractSlotVisitor&, const char**) final
+        bool isReachableFromOpaqueRoots(JSC::Handle<JSC::Unknown> handle, void* context, JSC::AbstractSlotVisitor& visitor, const char** reason) final
         {
             auto* controller = JSC::jsCast<JSTLSSocket*>(handle.slot()->asCell());
-            return controller->hasPendingActivity();
+            if (JSTLSSocket::hasPendingActivity(controller->wrapped())) {
+                if (UNLIKELY(reason))
+                    *reason = "has pending activity";
+                return true;
+            }
+
+            return visitor.containsOpaqueRoot(context);
         }
         void finalize(JSC::Handle<JSC::Unknown>, void* context) final {}
     };
@@ -174,6 +176,8 @@ public:
     }
 
     DECLARE_VISIT_CHILDREN;
+    template<typename Visitor> void visitAdditionalChildren(Visitor&);
+    DECLARE_VISIT_OUTPUT_CONSTRAINTS;
 
     mutable JSC::WriteBarrier<JSC::Unknown> m_data;
     mutable JSC::WriteBarrier<JSC::Unknown> m_remoteAddress;
@@ -229,6 +233,8 @@ public:
     void finishCreation(JSC::VM&);
 
     DECLARE_VISIT_CHILDREN;
+    template<typename Visitor> void visitAdditionalChildren(Visitor&);
+    DECLARE_VISIT_OUTPUT_CONSTRAINTS;
 
     mutable JSC::WriteBarrier<JSC::Unknown> m_hostname;
     mutable JSC::WriteBarrier<JSC::Unknown> m_unix;
@@ -285,21 +291,21 @@ public:
     void finishCreation(JSC::VM&);
 
     JSC::Weak<JSSubprocess> m_weakThis;
-    bool internalHasPendingActivity();
-    bool hasPendingActivity()
-    {
-        if (UNLIKELY(!m_ctx))
-            return false;
 
-        return this->internalHasPendingActivity();
-    }
+    static bool hasPendingActivity(void* ctx);
 
     class Owner final : public JSC::WeakHandleOwner {
     public:
-        bool isReachableFromOpaqueRoots(JSC::Handle<JSC::Unknown> handle, void* context, JSC::AbstractSlotVisitor&, const char**) final
+        bool isReachableFromOpaqueRoots(JSC::Handle<JSC::Unknown> handle, void* context, JSC::AbstractSlotVisitor& visitor, const char** reason) final
         {
             auto* controller = JSC::jsCast<JSSubprocess*>(handle.slot()->asCell());
-            return controller->hasPendingActivity();
+            if (JSSubprocess::hasPendingActivity(controller->wrapped())) {
+                if (UNLIKELY(reason))
+                    *reason = "has pending activity";
+                return true;
+            }
+
+            return visitor.containsOpaqueRoot(context);
         }
         void finalize(JSC::Handle<JSC::Unknown>, void* context) final {}
     };
@@ -311,6 +317,8 @@ public:
     }
 
     DECLARE_VISIT_CHILDREN;
+    template<typename Visitor> void visitAdditionalChildren(Visitor&);
+    DECLARE_VISIT_OUTPUT_CONSTRAINTS;
 
     mutable JSC::WriteBarrier<JSC::Unknown> m_stderr;
     mutable JSC::WriteBarrier<JSC::Unknown> m_stdin;
@@ -767,6 +775,8 @@ public:
     void finishCreation(JSC::VM&);
 
     DECLARE_VISIT_CHILDREN;
+    template<typename Visitor> void visitAdditionalChildren(Visitor&);
+    DECLARE_VISIT_OUTPUT_CONSTRAINTS;
 
     mutable JSC::WriteBarrier<JSC::Unknown> m_data;
     mutable JSC::WriteBarrier<JSC::Unknown> m_remoteAddress;
@@ -822,6 +832,8 @@ public:
     void finishCreation(JSC::VM&);
 
     DECLARE_VISIT_CHILDREN;
+    template<typename Visitor> void visitAdditionalChildren(Visitor&);
+    DECLARE_VISIT_OUTPUT_CONSTRAINTS;
 
     mutable JSC::WriteBarrier<JSC::Unknown> m_capturedValue;
     mutable JSC::WriteBarrier<JSC::Unknown> m_resultValue;
@@ -877,6 +889,8 @@ public:
     void finishCreation(JSC::VM&);
 
     DECLARE_VISIT_CHILDREN;
+    template<typename Visitor> void visitAdditionalChildren(Visitor&);
+    DECLARE_VISIT_OUTPUT_CONSTRAINTS;
 
     mutable JSC::WriteBarrier<JSC::Unknown> m_encoding;
 };
@@ -931,6 +945,8 @@ public:
     void finishCreation(JSC::VM&);
 
     DECLARE_VISIT_CHILDREN;
+    template<typename Visitor> void visitAdditionalChildren(Visitor&);
+    DECLARE_VISIT_OUTPUT_CONSTRAINTS;
 
     mutable JSC::WriteBarrier<JSC::Unknown> m_body;
     mutable JSC::WriteBarrier<JSC::Unknown> m_headers;
@@ -987,6 +1003,8 @@ public:
     void finishCreation(JSC::VM&);
 
     DECLARE_VISIT_CHILDREN;
+    template<typename Visitor> void visitAdditionalChildren(Visitor&);
+    DECLARE_VISIT_OUTPUT_CONSTRAINTS;
 
     mutable JSC::WriteBarrier<JSC::Unknown> m_body;
     mutable JSC::WriteBarrier<JSC::Unknown> m_headers;

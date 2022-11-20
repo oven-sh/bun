@@ -1876,18 +1876,34 @@ pub fn handleResponseMetadata(
                 if (strings.indexOf(location, "://")) |i| {
                     var url_buf = URLBufferPool.get(default_allocator);
 
-                    const protocol_name = location[0..i];
-                    if (strings.eqlComptime(protocol_name, "http") or strings.eqlComptime(protocol_name, "https")) {} else {
+                    const is_protocol_relative = i == 0;
+                    const protocol_name = if (is_protocol_relative) this.url.displayProtocol() else location[0..i];
+                    const is_http = strings.eqlComptime(protocol_name, "http");
+                    if (is_http or strings.eqlComptime(protocol_name, "https")) {} else {
                         return error.UnsupportedRedirectProtocol;
                     }
 
-                    if (location.len > url_buf.data.len) {
+                    if ((protocol_name.len * @as(usize, @boolToInt(is_protocol_relative))) + location.len > url_buf.data.len) {
                         return error.RedirectURLTooLong;
                     }
 
                     deferred_redirect.* = this.redirect;
-                    std.mem.copy(u8, &url_buf.data, location);
-                    this.url = URL.parse(url_buf.data[0..location.len]);
+                    var url_buf_len = location.len;
+                    if (is_protocol_relative) {
+                        if (is_http) {
+                            url_buf.data[0.."http".len].* = "http".*;
+                            std.mem.copy(u8, url_buf.data["http".len..], location);
+                            url_buf_len += "http".len;
+                        } else {
+                            url_buf.data[0.."https".len].* = "https".*;
+                            std.mem.copy(u8, url_buf.data["https".len..], location);
+                            url_buf_len += "https".len;
+                        }
+                    } else {
+                        std.mem.copy(u8, &url_buf.data, location);
+                    }
+
+                    this.url = URL.parse(url_buf.data[0..url_buf_len]);
                     this.redirect = url_buf;
                 } else {
                     var url_buf = URLBufferPool.get(default_allocator);

@@ -196,11 +196,14 @@ it("fetch() with a gzip response works (multiple chunks, TCP server)", async (do
   const compressed = await Bun.file(
     import.meta.dir + "/fixture.html.gz",
   ).arrayBuffer();
+  var socketToClose;
   const server = Bun.listen({
     port: 4024,
     hostname: "0.0.0.0",
     socket: {
       async open(socket) {
+        socketToClose = socket;
+
         var corked: any[] = [];
         var cork = true;
         async function write(chunk) {
@@ -232,7 +235,7 @@ it("fetch() with a gzip response works (multiple chunks, TCP server)", async (do
           await write(compressed.slice(i - 100, i));
         }
         await write(compressed.slice(i - 100));
-        await socket.end();
+        socket.flush();
       },
       drain(socket) {},
     },
@@ -248,6 +251,7 @@ it("fetch() with a gzip response works (multiple chunks, TCP server)", async (do
       ),
     ),
   ).toBe(true);
+  socketToClose.end();
   server.stop();
   done();
 });

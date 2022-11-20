@@ -30,18 +30,8 @@ pub const MutableString = struct {
         }
     }
 
-    pub fn owns(this: *const MutableString, buffer: []const u8) bool {
-        if (this.list.capacity < buffer.len) {
-            return false;
-        }
-
-        if (@ptrToInt(this.list.items.ptr) <= @ptrToInt(buffer.ptr) and
-            @ptrToInt(buffer.ptr) + buffer.len <= @ptrToInt(this.list.items.ptr) + this.list.capacity)
-        {
-            return true;
-        }
-
-        return false;
+    pub fn owns(this: *const MutableString, slice: []const u8) bool {
+        return @import("./global.zig").isSliceInBuffer(slice, this.list.items.ptr[0..this.list.capacity]);
     }
 
     pub fn growIfNeeded(self: *MutableString, amount: usize) !void {

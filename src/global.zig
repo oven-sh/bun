@@ -409,3 +409,7 @@ pub fn isHeapMemory(memory: anytype) bool {
 }
 
 pub const Mimalloc = @import("./allocators/mimalloc.zig");
+
+pub fn isSliceInBuffer(slice: []const u8, buffer: []const u8) bool {
+    return slice.len > 0 and @ptrToInt(buffer.ptr) <= @ptrToInt(slice.ptr) and ((@ptrToInt(slice.ptr) + slice.len) <= (@ptrToInt(buffer.ptr) + buffer.len));
+}

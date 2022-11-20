@@ -774,6 +774,10 @@ fn NewSocket(comptime ssl: bool) type {
         poll_ref: JSC.PollRef = JSC.PollRef.init(),
         reffer: JSC.Ref = JSC.Ref.init(),
         last_4: [4]u8 = .{ 0, 0, 0, 0 },
+
+        // TODO: switch to something that uses `visitAggregate` and have the
+        // `Listener` keep a list of all the sockets JSValue in there
+        // This is wasteful because it means we are keeping a JSC::Weak for every single open socket
         has_pending_activity: std.atomic.Atomic(bool) = std.atomic.Atomic(bool).init(true),
 
         const This = @This();

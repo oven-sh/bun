@@ -49,6 +49,8 @@ var shared_request_headers_buf: [256]picohttp.Header = undefined;
 // this doesn't need to be stack memory because it is immediately cloned after use
 var shared_response_headers_buf: [256]picohttp.Header = undefined;
 
+const end_of_chunked_http1_1_encoding_response_body = "0\r\n\r\n";
+
 fn NewHTTPContext(comptime ssl: bool) type {
     return struct {
         const pool_size = 64;
@@ -191,7 +193,7 @@ fn NewHTTPContext(comptime ssl: bool) type {
                     );
                 } else {
                     // trailing zero is fine to ignore
-                    if (strings.eqlComptime(buf, "0\r\n")) {
+                    if (strings.eqlComptime(buf, end_of_chunked_http1_1_encoding_response_body)) {
                         return;
                     }
 
@@ -541,8 +543,9 @@ pub fn onClose(
         return;
     }
 
-    if (in_progress)
+    if (in_progress) {
         client.fail(error.ConnectionClosed);
+    }
 }
 pub fn onTimeout(
     client: *HTTPClient,
@@ -1376,7 +1379,8 @@ pub fn onData(this: *HTTPClient, comptime is_ssl: bool, incoming_data: []const u
             var amount_read: usize = 0;
             var needs_move = true;
             if (this.state.response_message_buffer.list.items.len > 0) {
-                this.state.response_message_buffer.append(incoming_data) catch @panic("Out of memory");
+                // this one probably won't be another chunk, so we use appendSliceExact() to avoid over-allocating
+                this.state.response_message_buffer.appendSliceExact(incoming_data) catch @panic("Out of memory");
                 to_read = this.state.response_message_buffer.list.items;
                 needs_move = false;
             }
@@ -1394,6 +1398,7 @@ pub fn onData(this: *HTTPClient, comptime is_ssl: bool, incoming_data: []const u
                             const to_copy = incoming_data;
 
                             if (to_copy.len > 0) {
+                                // this one will probably be another chunk, so we leave a little extra room
                                 this.state.response_message_buffer.append(to_copy) catch @panic("Out of memory");
                             }
                         }
@@ -1679,16 +1684,18 @@ pub fn toResult(this: *HTTPClient, metadata: HTTPResponseMetadata) HTTPClientRes
 const preallocate_max = 1024 * 1024 * 256;
 
 pub fn handleResponseBody(this: *HTTPClient, incoming_data: []const u8, is_only_buffer: bool) !bool {
+    std.debug.assert(this.state.transfer_encoding == .identity);
 
     // is it exactly as much as we need?
     if (is_only_buffer and incoming_data.len >= this.state.body_size) {
-        return handleResponseBodyFromSinglePacket(this, incoming_data[0..this.state.body_size]);
+        try handleResponseBodyFromSinglePacket(this, incoming_data[0..this.state.body_size]);
+        return true;
     } else {
         return handleResponseBodyFromMultiplePackets(this, incoming_data);
     }
 }
 
-fn handleResponseBodyFromSinglePacket(this: *HTTPClient, incoming_data: []const u8) !bool {
+fn handleResponseBodyFromSinglePacket(this: *HTTPClient, incoming_data: []const u8) !void {
     if (this.state.encoding.isCompressed()) {
         var body_buffer = this.state.body_out_str.?;
         if (body_buffer.list.capacity == 0) {
@@ -1718,8 +1725,6 @@ fn handleResponseBodyFromSinglePacket(this: *HTTPClient, incoming_data: []const 
     }
 
     this.state.postProcessBody(this.state.getBodyBuffer());
-
-    return true;
 }
 
 fn handleResponseBodyFromMultiplePackets(this: *HTTPClient, incoming_data: []const u8) !bool {
@@ -1759,6 +1764,17 @@ fn handleResponseBodyFromMultiplePackets(this: *HTTPClient, incoming_data: []con
 }
 
 pub fn handleResponseBodyChunkedEncoding(
+    this: *HTTPClient,
+    incoming_data: []const u8,
+) !bool {
+    if (incoming_data.len <= single_packet_small_buffer.len and this.state.getBodyBuffer().list.items.len == 0) {
+        return try this.handleResponseBodyChunkedEncodingFromSinglePacket(incoming_data);
+    } else {
+        return try this.handleResponseBodyChunkedEncodingFromMultiplePackets(incoming_data);
+    }
+}
+
+fn handleResponseBodyChunkedEncodingFromMultiplePackets(
     this: *HTTPClient,
     incoming_data: []const u8,
 ) !bool {
@@ -1805,6 +1821,74 @@ pub fn handleResponseBodyChunkedEncoding(
             if (this.progress_node) |progress| {
                 progress.activate();
                 progress.setCompletedItems(buffer.list.items.len);
+                progress.context.maybeRefresh();
+            }
+
+            return true;
+        },
+    }
+
+    unreachable;
+}
+
+// the first packet for Transfer-Encoding: chunk
+// is usually pretty small or sometimes even just a length
+// so we can avoid allocating a temporary buffer to copy the data in
+var single_packet_small_buffer: [16 * 1024]u8 = undefined;
+fn handleResponseBodyChunkedEncodingFromSinglePacket(
+    this: *HTTPClient,
+    incoming_data: []const u8,
+) !bool {
+    var decoder = &this.state.chunked_decoder;
+    std.debug.assert(incoming_data.len <= single_packet_small_buffer.len);
+
+    // set consume_trailer to 1 to discard the trailing header
+    // using content-encoding per chunk is not supported
+    decoder.consume_trailer = 1;
+
+    var buffer: []u8 = undefined;
+
+    if (
+    // if we've already copied the buffer once, we can avoid copying it again.
+    this.state.response_message_buffer.owns(incoming_data)) {
+        buffer = bun.constStrToU8(incoming_data);
+    } else {
+        buffer = single_packet_small_buffer[0..incoming_data.len];
+        @memcpy(buffer.ptr, incoming_data.ptr, incoming_data.len);
+    }
+
+    var bytes_decoded = incoming_data.len;
+    // phr_decode_chunked mutates in-place
+    const pret = picohttp.phr_decode_chunked(
+        decoder,
+        buffer.ptr + (buffer.len -| incoming_data.len),
+        &bytes_decoded,
+    );
+    buffer.len -|= incoming_data.len - bytes_decoded;
+
+    switch (pret) {
+        // Invalid HTTP response body
+        -1 => {
+            return error.InvalidHTTPResponse;
+        },
+        // Needs more data
+        -2 => {
+            if (this.progress_node) |progress| {
+                progress.activate();
+                progress.setCompletedItems(buffer.len);
+                progress.context.maybeRefresh();
+            }
+            try this.state.getBodyBuffer().appendSliceExact(buffer);
+
+            return false;
+        },
+        // Done
+        else => {
+            try this.handleResponseBodyFromSinglePacket(buffer);
+            std.debug.assert(this.state.body_out_str.?.list.items.ptr != buffer.ptr);
+            if (this.progress_node) |progress| {
+                progress.activate();
+                progress.setCompletedItems(buffer.len);
                 progress.context.maybeRefresh();
             }
 

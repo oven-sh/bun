@@ -220,22 +220,30 @@ pub const URL = struct {
                 offset += url.parsePassword(base[offset..]) orelse 0;
                 offset += url.parseHost(base[offset..]) orelse 0;
             },
-            'a'...'z', 'A'...'Z', '0'...'9', '-', '_', ':' => {
-                offset += url.parseProtocol(base[offset..]) orelse 0;
-
-                // if there's no protocol or @, it's ambiguous whether the colon is a port or a username.
-                if (offset > 0) {
-                    // see https://github.com/oven-sh/bun/issues/1390
-                    const first_at = strings.indexOfChar(base[offset..], '@') orelse 0;
-                    const first_colon = strings.indexOfChar(base[offset..], ':') orelse 0;
-
-                    if (first_at > first_colon and first_at < (strings.indexOfChar(base[offset..], '/') orelse std.math.maxInt(u32))) {
-                        offset += url.parseUsername(base[offset..]) orelse 0;
-                        offset += url.parsePassword(base[offset..]) orelse 0;
-                    }
+            '/', 'a'...'z', 'A'...'Z', '0'...'9', '-', '_', ':' => {
+                const is_protocol_relative = base.len > 1 and base[1] == '/';
+                if (is_protocol_relative) {
+                    offset += 1;
+                } else {
+                    offset += url.parseProtocol(base[offset..]) orelse 0;
                 }
 
-                offset += url.parseHost(base[offset..]) orelse 0;
+                if (!(!is_protocol_relative and base[0] == '/')) {
+
+                    // if there's no protocol or @, it's ambiguous whether the colon is a port or a username.
+                    if (offset > 0) {
+                        // see https://github.com/oven-sh/bun/issues/1390
+                        const first_at = strings.indexOfChar(base[offset..], '@') orelse 0;
+                        const first_colon = strings.indexOfChar(base[offset..], ':') orelse 0;
+
+                        if (first_at > first_colon and first_at < (strings.indexOfChar(base[offset..], '/') orelse std.math.maxInt(u32))) {
+                            offset += url.parseUsername(base[offset..]) orelse 0;
+                            offset += url.parsePassword(base[offset..]) orelse 0;
+                        }
+                    }
+
+                    offset += url.parseHost(base[offset..]) orelse 0;
+                }
             },
             else => {},
         }

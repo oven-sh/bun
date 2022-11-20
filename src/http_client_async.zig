@@ -1998,6 +1998,30 @@ pub fn handleResponseMetadata(
 
                     this.url = URL.parse(url_buf.data[0..url_buf_len]);
                     this.redirect = url_buf;
+                } else if (strings.hasPrefixComptime(location, "//")) {
+                    var url_buf = URLBufferPool.get(default_allocator);
+
+                    const protocol_name = this.url.displayProtocol();
+
+                    if (protocol_name.len + 1 + location.len > url_buf.data.len) {
+                        return error.RedirectURLTooLong;
+                    }
+
+                    deferred_redirect.* = this.redirect;
+                    var url_buf_len = location.len;
+
+                    if (strings.eqlComptime(protocol_name, "http")) {
+                        url_buf.data[0.."http:".len].* = "http:".*;
+                        std.mem.copy(u8, url_buf.data["http:".len..], location);
+                        url_buf_len += "http:".len;
+                    } else {
+                        url_buf.data[0.."https:".len].* = "https:".*;
+                        std.mem.copy(u8, url_buf.data["https:".len..], location);
+                        url_buf_len += "https:".len;
+                    }
+
+                    this.url = URL.parse(url_buf.data[0..url_buf_len]);
+                    this.redirect = url_buf;
                 } else {
                     var url_buf = URLBufferPool.get(default_allocator);
                     const original_url = this.url;

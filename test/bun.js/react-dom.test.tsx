@@ -258,6 +258,7 @@ describe("ReactDOM", () => {
         });
         const count = 4;
         it(`http server, ${count} requests`, async () => {
+          var remain = count;
           await (async function () {
             var server;
             try {
@@ -269,10 +270,9 @@ describe("ReactDOM", () => {
                   );
                 },
               });
-              var total = 0;
               gc();
-              while (total++ < count) {
-                var attempt = total;
+              while (remain--) {
+                var attempt = remain + 1;
                 const response = await fetch(
                   "http://localhost:" + server.port + "/",
                 );
@@ -293,10 +293,11 @@ describe("ReactDOM", () => {
               server.stop();
             }
           })();
-          expect(
-            heapStats().objectTypeCounts.ReadableHTTPResponseSinkController ??
-              0,
-          ).toBe(1);
+
+          const { ReadableHTTPResponseSinkController = 0 } =
+            heapStats().objectTypeCounts;
+          expect(ReadableHTTPResponseSinkController).toBe(1);
+          expect(remain + 1).toBe(0);
         });
       });
     }

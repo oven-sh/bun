@@ -138,6 +138,47 @@ it("fetch() with a gzip response works (one chunk)", async () => {
   server.stop();
 });
 
+it("fetch() with a gzip response works (one chunk, streamed, with a delay)", async () => {
+  var server = Bun.serve({
+    port: 6081,
+
+    fetch(req) {
+      return new Response(
+        new ReadableStream({
+          type: "direct",
+          async pull(controller) {
+            await 2;
+
+            const buffer = await Bun.file(
+              import.meta.dir + "/fixture.html.gz",
+            ).arrayBuffer();
+            controller.write(buffer);
+            controller.close();
+          },
+        }),
+        {
+          headers: {
+            "Content-Encoding": "gzip",
+            "Content-Type": "text/html; charset=utf-8",
+            "Content-Length": "1",
+          },
+        },
+      );
+    },
+  });
+
+  const res = await fetch(`http://${server.hostname}:${server.port}`, {});
+  const arrayBuffer = await res.arrayBuffer();
+  expect(
+    new Buffer(arrayBuffer).equals(
+      new Buffer(
+        await Bun.file(import.meta.dir + "/fixture.html").arrayBuffer(),
+      ),
+    ),
+  ).toBe(true);
+  server.stop();
+});
+
 it("fetch() with a gzip response works (multiple chunks)", async () => {
   var server = Bun.serve({
     port: 6024,

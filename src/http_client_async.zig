@@ -1831,7 +1831,7 @@ fn handleResponseBodyChunkedEncodingFromMultiplePackets(
     unreachable;
 }
 
-// the first packet for Transfer-Encoding: chunk
+// the first packet for Transfer-Encoding: chunked
 // is usually pretty small or sometimes even just a length
 // so we can avoid allocating a temporary buffer to copy the data in
 var single_packet_small_buffer: [16 * 1024]u8 = undefined;

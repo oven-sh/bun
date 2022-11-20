@@ -33,7 +33,6 @@ pub const Subprocess = struct {
     poll_ref: ?*JSC.FilePoll = null,
 
     exit_promise: JSC.Strong = .{},
-
     on_exit_callback: JSC.Strong = .{},
 
     exit_code: ?u8 = null,
@@ -851,6 +850,7 @@ pub const Subprocess = struct {
 
         this.finalized = true;
         bun.default_allocator.destroy(this);
+        log("Finalize", .{});
     }
 
     pub fn getExited(

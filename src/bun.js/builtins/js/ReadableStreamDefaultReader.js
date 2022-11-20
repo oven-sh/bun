@@ -80,11 +80,14 @@ function readMany()
         return controller.@pull(
             controller
         ).@then(
-            ({done, value}) => (
-                done ? 
-                { done: true, value: [], size: 0 } : 
-                { value: [value], size: 1, done: false }
-        ));
+            function({done, value}) {
+                return (
+                    done ? 
+                        { done: true, value: [], size: 0 } : 
+                        { value: [value], size: 1, done: false }
+                );
+            }
+        );
     }
 
     const content = queue.content;

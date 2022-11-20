@@ -795,10 +795,6 @@ function readDirectStream(stream, sink, underlyingSource) {
   @putByIdDirectPrivate(stream, "underlyingSource", @undefined);
   @putByIdDirectPrivate(stream, "start", @undefined);
 
-
-  var capturedStream = stream;
-  var reader;
-
   function close(stream, reason) {
     if (reason && underlyingSource?.cancel) {
       try {
@@ -819,7 +815,7 @@ function readDirectStream(stream, sink, underlyingSource) {
       } else {
         @putByIdDirectPrivate(stream, "state", @streamClosed);
       }
-      
+       stream = @undefined;
     }
   }
 
@@ -855,6 +851,7 @@ function readDirectStream(stream, sink, underlyingSource) {
   if (maybePromise && @isPromise(maybePromise)) {
     return maybePromise.@then(() => {});
   }
+
 
 }
 

@@ -271,11 +271,12 @@ export fn ZigString__free(raw: [*]const u8, len: usize, allocator_: ?*anyopaque)
 }
 
 export fn ZigString__free_global(ptr: [*]const u8, len: usize) void {
-    // if (comptime Environment.allow_assert) {
-    //     std.debug.assert(Mimalloc.mi_check_owned(ptr));
-    // }
+    var untagged = @intToPtr(*anyopaque, @ptrToInt(ZigString.init(ptr[0..len]).slice().ptr));
+    if (comptime Environment.allow_assert) {
+        std.debug.assert(Mimalloc.mi_is_in_heap_region(ptr));
+    }
     // we must untag the string pointer
-    Mimalloc.mi_free(@intToPtr(*anyopaque, @ptrToInt(ZigString.init(ptr[0..len]).slice().ptr)));
+    Mimalloc.mi_free(untagged);
 }
 
 export fn Zig__getAPIGlobals(count: *usize) [*]JSC.C.JSClassRef {

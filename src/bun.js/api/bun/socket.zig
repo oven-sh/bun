@@ -774,11 +774,17 @@ fn NewSocket(comptime ssl: bool) type {
         poll_ref: JSC.PollRef = JSC.PollRef.init(),
         reffer: JSC.Ref = JSC.Ref.init(),
         last_4: [4]u8 = .{ 0, 0, 0, 0 },
+        has_pending_activity: std.atomic.Atomic(bool) = std.atomic.Atomic(bool).init(true),
 
         const This = @This();
         const log = Output.scoped(.Socket, false);
 
         pub usingnamespace JSSocketType(ssl);
+
+        pub fn hasPendingActivity(this: *This) callconv(.C) bool {
+            @fence(.Acquire);
+            return this.has_pending_activity.load(.Acquire);
+        }
 
         pub fn doConnect(this: *This, connection: Listener.UnixOrHost, socket_ctx: *uws.SocketContext) !void {
             switch (connection) {
@@ -874,13 +880,13 @@ fn NewSocket(comptime ssl: bool) type {
             _ = handlers.rejectPromise(err.toErrorInstance(handlers.globalObject));
             this.reffer.unref(handlers.vm);
             handlers.markInactive(ssl, socket.context());
-            this.finalize();
         }
 
         pub fn markActive(this: *This) void {
             if (!this.reffer.has) {
                 this.handlers.markActive();
                 this.reffer.ref(this.handlers.vm);
+                this.has_pending_activity.store(true, .Release);
             }
         }
 
@@ -897,10 +903,7 @@ fn NewSocket(comptime ssl: bool) type {
 
                 this.handlers.markInactive(ssl, this.socket.context());
                 this.poll_ref.unref(vm);
-            }
-
-            if (this.this_value != .zero) {
-                this.this_value.unprotect();
+                this.has_pending_activity.store(false, .Release);
             }
         }
 
@@ -954,8 +957,8 @@ fn NewSocket(comptime ssl: bool) type {
         pub fn getThisValue(this: *This, globalObject: *JSC.JSGlobalObject) JSValue {
             if (this.this_value == .zero) {
                 const value = this.toJS(globalObject);
+                value.ensureStillAlive();
                 this.this_value = value;
-                value.protect();
                 return value;
             }
 
@@ -1346,9 +1349,9 @@ fn NewSocket(comptime ssl: bool) type {
                     if (!this.socket.isClosed()) this.socket.flush();
                     this.detached = true;
 
-                    this.markInactive();
                     if (!this.socket.isClosed())
                         this.socket.close(0, null);
+                    this.markInactive();
                 }
 
                 return JSValue.jsUndefined();
@@ -1364,9 +1367,10 @@ fn NewSocket(comptime ssl: bool) type {
             if (result != .zero and result.toInt32() > 0) {
                 this.socket.flush();
                 this.detached = true;
-                this.markInactive();
+
                 if (!this.socket.isClosed())
                     this.socket.close(0, null);
+                this.markInactive();
             }
 
             return result;

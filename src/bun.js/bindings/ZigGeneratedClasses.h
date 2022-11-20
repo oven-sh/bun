@@ -60,9 +60,36 @@ public:
         : Base(vm, structure)
     {
         m_ctx = sinkPtr;
+        m_weakThis = JSC::Weak<JSTCPSocket>(this, getOwner());
     }
 
     void finishCreation(JSC::VM&);
+
+    JSC::Weak<JSTCPSocket> m_weakThis;
+    bool internalHasPendingActivity();
+    bool hasPendingActivity()
+    {
+        if (UNLIKELY(!m_ctx))
+            return false;
+
+        return this->internalHasPendingActivity();
+    }
+
+    class Owner final : public JSC::WeakHandleOwner {
+    public:
+        bool isReachableFromOpaqueRoots(JSC::Handle<JSC::Unknown> handle, void* context, JSC::AbstractSlotVisitor&, const char**) final
+        {
+            auto* controller = JSC::jsCast<JSTCPSocket*>(handle.slot()->asCell());
+            return controller->hasPendingActivity();
+        }
+        void finalize(JSC::Handle<JSC::Unknown>, void* context) final {}
+    };
+
+    static JSC::WeakHandleOwner* getOwner()
+    {
+        static NeverDestroyed<Owner> m_owner;
+        return &m_owner.get();
+    }
 
     DECLARE_VISIT_CHILDREN;
 
@@ -115,9 +142,36 @@ public:
         : Base(vm, structure)
     {
         m_ctx = sinkPtr;
+        m_weakThis = JSC::Weak<JSTLSSocket>(this, getOwner());
     }
 
     void finishCreation(JSC::VM&);
+
+    JSC::Weak<JSTLSSocket> m_weakThis;
+    bool internalHasPendingActivity();
+    bool hasPendingActivity()
+    {
+        if (UNLIKELY(!m_ctx))
+            return false;
+
+        return this->internalHasPendingActivity();
+    }
+
+    class Owner final : public JSC::WeakHandleOwner {
+    public:
+        bool isReachableFromOpaqueRoots(JSC::Handle<JSC::Unknown> handle, void* context, JSC::AbstractSlotVisitor&, const char**) final
+        {
+            auto* controller = JSC::jsCast<JSTLSSocket*>(handle.slot()->asCell());
+            return controller->hasPendingActivity();
+        }
+        void finalize(JSC::Handle<JSC::Unknown>, void* context) final {}
+    };
+
+    static JSC::WeakHandleOwner* getOwner()
+    {
+        static NeverDestroyed<Owner> m_owner;
+        return &m_owner.get();
+    }
 
     DECLARE_VISIT_CHILDREN;
 

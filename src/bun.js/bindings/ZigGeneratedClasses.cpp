@@ -488,6 +488,12 @@ extern "C" EncodedJSValue TCPSocket__getConstructor(Zig::GlobalObject* globalObj
     return JSValue::encode(globalObject->JSTCPSocketConstructor());
 }
 
+extern "C" bool TCPSocket__hasPendingActivity(void* ptr);
+bool JSTCPSocket::internalHasPendingActivity()
+{
+    return TCPSocket__hasPendingActivity(m_ctx);
+}
+
 JSTCPSocket::~JSTCPSocket()
 {
     if (m_ctx) {
@@ -1031,6 +1037,12 @@ const ClassInfo JSTLSSocketConstructor::s_info = { "Function"_s, &Base::s_info, 
 extern "C" EncodedJSValue TLSSocket__getConstructor(Zig::GlobalObject* globalObject)
 {
     return JSValue::encode(globalObject->JSTLSSocketConstructor());
+}
+
+extern "C" bool TLSSocket__hasPendingActivity(void* ptr);
+bool JSTLSSocket::internalHasPendingActivity()
+{
+    return TLSSocket__hasPendingActivity(m_ctx);
 }
 
 JSTLSSocket::~JSTLSSocket()

@@ -1990,9 +1990,29 @@ pub const Unsafe = struct {
             .arrayBufferToString = .{
                 .rfn = arrayBufferToString,
             },
+            .gcAggressionLevel = .{
+                .rfn = JSC.wrapWithHasContainer(Unsafe, "gcAggressionLevel", false, false, false),
+            },
         },
         .{},
     );
+
+    pub fn gcAggressionLevel(
+        globalThis: *JSC.JSGlobalObject,
+        value_: ?JSValue,
+    ) JSValue {
+        const ret = JSValue.jsNumber(@as(i32, @enumToInt(globalThis.bunVM().aggressive_garbage_collection)));
+
+        if (value_) |value| {
+            switch (value.coerce(i32, globalThis)) {
+                1 => globalThis.bunVM().aggressive_garbage_collection = .mild,
+                2 => globalThis.bunVM().aggressive_garbage_collection = .aggressive,
+                0 => globalThis.bunVM().aggressive_garbage_collection = .none,
+                else => {},
+            }
+        }
+        return ret;
+    }
 
     // For testing the segfault handler
     pub fn __debug__doSegfault(

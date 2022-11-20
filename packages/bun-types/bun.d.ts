@@ -1699,6 +1699,23 @@ declare module "bun" {
 
     /** Mock bun's segfault handler. You probably don't want to use this */
     segfault(): void;
+
+    /**
+     * Force the garbage collector to run extremely often,
+     * especially inside `bun:test`.
+     *
+     * - `0`: default, disable
+     * - `1`: asynchronously call the garbage collector more often
+     * - `2`: synchronously call the garbage collector more often.
+     *
+     * This is a global setting. It's useful for debugging seemingly random crashes.
+     *
+     * `BUN_GARBAGE_COLLECTOR_LEVEL` environment variable is also supported.
+     *
+     * @param level
+     * @returns The previous level
+     */
+    gcAggressionLevel(level: 0 | 1 | 2): 0 | 1 | 2;
   }
   export const unsafe: unsafe;
 

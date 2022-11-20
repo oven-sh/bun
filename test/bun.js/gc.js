@@ -12,3 +12,13 @@ export function gcTick(trace = false) {
     setTimeout(resolve, 0);
   });
 }
+
+export function withoutAggressiveGC(block) {
+  const origGC = Bun.unsafe.gcAggressionLevel();
+  Bun.unsafe.gcAggressionLevel(0);
+  try {
+    return block();
+  } finally {
+    Bun.unsafe.gcAggressionLevel(origGC);
+  }
+}

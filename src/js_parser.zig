@@ -2531,7 +2531,7 @@ pub const Parser = struct {
 
                 {
                     const jsx_symbol = p.symbols.items[p.jsx_runtime.ref.innerIndex()];
-                    const jsx_static_symbol = p.symbols.items[p.jsxs_runtime.ref.innerIndex()];
+
                     const jsx_fragment_symbol = p.symbols.items[p.jsx_fragment.ref.innerIndex()];
                     const jsx_factory_symbol = p.symbols.items[p.jsx_factory.ref.innerIndex()];
 
@@ -2542,8 +2542,16 @@ pub const Parser = struct {
                     // So a jsx_symbol usage means a jsx_factory_symbol usage
                     // This is kind of a broken way of doing it because it wouldn't work if it was more than one level deep
                     if (FeatureFlags.jsx_runtime_is_cjs) {
-                        if (jsx_symbol.use_count_estimate > 0 or jsx_static_symbol.use_count_estimate > 0) {
+                        if (jsx_symbol.use_count_estimate > 0) {
                             p.recordUsage(p.jsx_automatic.ref);
+                        }
+
+                        if (FeatureFlags.support_jsxs_in_jsx_transform) {
+                            const jsx_static_symbol = p.symbols.items[p.jsxs_runtime.ref.innerIndex()];
+
+                            if (jsx_static_symbol.use_count_estimate > 0) {
+                                p.recordUsage(p.jsx_automatic.ref);
+                            }
                         }
 
                         if (jsx_fragment_symbol.use_count_estimate > 0) {
@@ -2576,7 +2584,11 @@ pub const Parser = struct {
                         // p.symbols may grow during this scope
                         // if it grows, the previous pointers are invalidated
                         const jsx_symbol = p.symbols.items[p.jsx_runtime.ref.innerIndex()];
-                        const jsx_static_symbol = p.symbols.items[p.jsxs_runtime.ref.innerIndex()];
+                        const jsx_static_symbol: Symbol = if (!FeatureFlags.support_jsxs_in_jsx_transform)
+                            undefined
+                        else
+                            p.symbols.items[p.jsxs_runtime.ref.innerIndex()];
+
                         const jsx_fragment_symbol = p.symbols.items[p.jsx_fragment.ref.innerIndex()];
                         const jsx_factory_symbol = p.symbols.items[p.jsx_factory.ref.innerIndex()];
 
@@ -2590,7 +2602,7 @@ pub const Parser = struct {
 
                             // "JSX"
                             @intCast(u32, @boolToInt(jsx_symbol.use_count_estimate > 0)) * 2 +
-                            @intCast(u32, @boolToInt(jsx_static_symbol.use_count_estimate > 0)) * 2 +
+                            @intCast(u32, @boolToInt(FeatureFlags.support_jsxs_in_jsx_transform and jsx_static_symbol.use_count_estimate > 0)) * 2 +
                             @intCast(u32, @boolToInt(jsx_factory_symbol.use_count_estimate > 0)) +
                             @intCast(u32, @boolToInt(jsx_fragment_symbol.use_count_estimate > 0)) +
                             @intCast(u32, @boolToInt(jsx_filename_symbol.use_count_estimate > 0));
@@ -2600,7 +2612,7 @@ pub const Parser = struct {
                             @intCast(u32, @boolToInt(jsx_classic_symbol.use_count_estimate > 0)) +
                             @intCast(u32, @boolToInt(jsx_fragment_symbol.use_count_estimate > 0)) +
                             @intCast(u32, @boolToInt(p.options.features.react_fast_refresh)) +
-                            @intCast(u32, @boolToInt(jsx_static_symbol.use_count_estimate > 0));
+                            @intCast(u32, @boolToInt(FeatureFlags.support_jsxs_in_jsx_transform and jsx_static_symbol.use_count_estimate > 0));
                         const stmts_count = imports_count + 1;
                         const symbols_count: u32 = imports_count + decls_count;
                         const loc = logger.Loc{ .start = 0 };
@@ -2663,7 +2675,7 @@ pub const Parser = struct {
                             decl_i += 1;
                         }
 
-                        if (jsx_symbol.use_count_estimate > 0 or jsx_static_symbol.use_count_estimate > 0) {
+                        if (jsx_symbol.use_count_estimate > 0 or (FeatureFlags.support_jsxs_in_jsx_transform and jsx_static_symbol.use_count_estimate > 0)) {
                             declared_symbols[declared_symbols_i] = .{ .ref = automatic_namespace_ref, .is_top_level = true };
                             declared_symbols_i += 1;
 
@@ -2711,31 +2723,32 @@ pub const Parser = struct {
                                 decl_i += 1;
                             }
 
-                            if (jsx_static_symbol.use_count_estimate > 0) {
-                                declared_symbols[declared_symbols_i] = .{ .ref = p.jsxs_runtime.ref, .is_top_level = true };
-                                declared_symbols_i += 1;
+                            if (FeatureFlags.support_jsxs_in_jsx_transform) {
+                                if (jsx_static_symbol.use_count_estimate > 0) {
+                                    declared_symbols[declared_symbols_i] = .{ .ref = p.jsxs_runtime.ref, .is_top_level = true };
+                                    declared_symbols_i += 1;
 
-                                decls[decl_i] = G.Decl{
-                                    .binding = p.b(
-                                        B.Identifier{
-                                            .ref = p.jsxs_runtime.ref,
-                                        },
-                                        loc,
-                                    ),
-                                    .value = p.e(
-                                        E.Dot{
-                                            .target = dot_call_target,
-                                            .name = p.options.jsx.jsx_static,
-                                            .name_loc = loc,
-                                            .can_be_removed_if_unused = true,
-                                        },
-                                        loc,
-                                    ),
-                                };
+                                    decls[decl_i] = G.Decl{
+                                        .binding = p.b(
+                                            B.Identifier{
+                                                .ref = p.jsxs_runtime.ref,
+                                            },
+                                            loc,
+                                        ),
+                                        .value = p.e(
+                                            E.Dot{
+                                                .target = dot_call_target,
+                                                .name = p.options.jsx.jsx_static,
+                                                .name_loc = loc,
+                                                .can_be_removed_if_unused = true,
+                                            },
+                                            loc,
+                                        ),
+                                    };
 
-                                decl_i += 1;
+                                    decl_i += 1;
+                                }
                             }
-
                             if (jsx_filename_symbol.use_count_estimate > 0) {
                                 declared_symbols[declared_symbols_i] = .{ .ref = p.jsx_filename.ref, .is_top_level = true };
                                 declared_symbols_i += 1;
@@ -5008,7 +5021,8 @@ fn NewParser_(
                     }
                     p.jsx_fragment = p.declareGeneratedSymbol(.other, "Fragment") catch unreachable;
                     p.jsx_runtime = p.declareGeneratedSymbol(.other, "jsx") catch unreachable;
-                    p.jsxs_runtime = p.declareGeneratedSymbol(.other, "jsxs") catch unreachable;
+                    if (comptime FeatureFlags.support_jsxs_in_jsx_transform)
+                        p.jsxs_runtime = p.declareGeneratedSymbol(.other, "jsxs") catch unreachable;
                     p.jsx_factory = p.declareGeneratedSymbol(.other, "Factory") catch unreachable;
 
                     if (p.options.jsx.factory.len > 1 or FeatureFlags.jsx_runtime_is_cjs) {
@@ -5105,7 +5119,8 @@ fn NewParser_(
                 }
             }
             p.resolveGeneratedSymbol(&p.jsx_runtime);
-            p.resolveGeneratedSymbol(&p.jsxs_runtime);
+            if (FeatureFlags.support_jsxs_in_jsx_transform)
+                p.resolveGeneratedSymbol(&p.jsxs_runtime);
             p.resolveGeneratedSymbol(&p.jsx_factory);
             p.resolveGeneratedSymbol(&p.jsx_fragment);
             p.resolveGeneratedSymbol(&p.jsx_classic);
@@ -15825,7 +15840,7 @@ fn NewParser_(
         }
 
         fn jsxRefToMemberExpressionAutomatic(p: *P, loc: logger.Loc, is_static: bool) Expr {
-            return p.jsxRefToMemberExpression(loc, if (is_static and !p.options.jsx.development)
+            return p.jsxRefToMemberExpression(loc, if (is_static and !p.options.jsx.development and FeatureFlags.support_jsxs_in_jsx_transform)
                 p.jsxs_runtime.ref
             else
                 p.jsx_runtime.ref);

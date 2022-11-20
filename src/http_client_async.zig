@@ -1892,17 +1892,25 @@ pub fn handleResponseMetadata(
                 } else {
                     var url_buf = URLBufferPool.get(default_allocator);
                     const original_url = this.url;
-                    this.url = URL.parse(std.fmt.bufPrint(
-                        &url_buf.data,
-                        "{s}://{s}{s}",
-                        .{ original_url.displayProtocol(), original_url.displayHostname(), location },
-                    ) catch return error.RedirectURLTooLong);
+                    const port = original_url.getPortAuto();
+
+                    if (port == original_url.getDefaultPort()) {
+                        this.url = URL.parse(std.fmt.bufPrint(
+                            &url_buf.data,
+                            "{s}://{s}{s}",
+                            .{ original_url.displayProtocol(), original_url.displayHostname(), location },
+                        ) catch return error.RedirectURLTooLong);
+                    } else {
+                        this.url = URL.parse(std.fmt.bufPrint(
+                            &url_buf.data,
+                            "{s}://{s}:{d}{s}",
+                            .{ original_url.displayProtocol(), original_url.displayHostname(), port, location },
+                        ) catch return error.RedirectURLTooLong);
+                    }
 
                     deferred_redirect.* = this.redirect;
                     this.redirect = url_buf;
                 }
-
-                // Ensure we don't up ove
 
                 // https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/303
                 if (response.status_code == 303) {

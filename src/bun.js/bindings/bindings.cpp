@@ -1431,10 +1431,28 @@ JSC__JSPromise* JSC__JSPromise__resolvedPromise(JSC__JSGlobalObject* arg0, JSC__
     return promise;
 }
 
-JSC__JSValue JSC__JSPromise__result(const JSC__JSPromise* arg0, JSC__VM* arg1)
+JSC__JSValue JSC__JSPromise__result(JSC__JSPromise* promise, JSC__VM* arg1)
 {
-    return JSC::JSValue::encode(arg0->result(reinterpret_cast<JSC::VM&>(arg1)));
+    auto& vm = *arg1;
+
+    // if the promise is rejected we automatically mark it as handled so it
+    // doesn't end up in the promise rejection tracker
+    switch (promise->status(vm)) {
+    case JSC::JSPromise::Status::Rejected: {
+        uint32_t flags = promise->internalField(JSC::JSPromise::Field::Flags).get().asUInt32();
+        if (!(flags & JSC::JSPromise::isFirstResolvingFunctionCalledFlag)) {
+            promise->internalField(JSC::JSPromise::Field::Flags).set(vm, promise, jsNumber(flags | JSC::JSPromise::isHandledFlag));
+        }
+    }
+    // fallthrough intended
+    case JSC::JSPromise::Status::Fulfilled: {
+        return JSValue::encode(promise->result(vm));
+    }
+    default:
+        return JSValue::encode(JSValue {});
+    }
 }
+
 uint32_t JSC__JSPromise__status(const JSC__JSPromise* arg0, JSC__VM* arg1)
 {
     switch (arg0->status(reinterpret_cast<JSC::VM&>(arg1))) {

@@ -1519,7 +1519,7 @@ pub const JSPromise = extern struct {
     pub fn status(this: *const JSPromise, vm: *VM) Status {
         return shim.cppFn("status", .{ this, vm });
     }
-    pub fn result(this: *const JSPromise, vm: *VM) JSValue {
+    pub fn result(this: *JSPromise, vm: *VM) JSValue {
         return cppFn("result", .{ this, vm });
     }
     pub fn isHandled(this: *const JSPromise, vm: *VM) bool {

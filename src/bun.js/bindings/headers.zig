@@ -167,7 +167,7 @@ pub extern fn JSC__JSPromise__rejectWithCaughtException(arg0: [*c]JSC__JSPromise
 pub extern fn JSC__JSPromise__resolve(arg0: [*c]JSC__JSPromise, arg1: ?*JSC__JSGlobalObject, JSValue2: JSC__JSValue) void;
 pub extern fn JSC__JSPromise__resolvedPromise(arg0: ?*JSC__JSGlobalObject, JSValue1: JSC__JSValue) [*c]JSC__JSPromise;
 pub extern fn JSC__JSPromise__resolvedPromiseValue(arg0: ?*JSC__JSGlobalObject, JSValue1: JSC__JSValue) JSC__JSValue;
-pub extern fn JSC__JSPromise__result(arg0: [*c]const JSC__JSPromise, arg1: [*c]JSC__VM) JSC__JSValue;
+pub extern fn JSC__JSPromise__result(arg0: [*c]JSC__JSPromise, arg1: [*c]JSC__VM) JSC__JSValue;
 pub extern fn JSC__JSPromise__status(arg0: [*c]const JSC__JSPromise, arg1: [*c]JSC__VM) u32;
 pub extern fn JSC__JSInternalPromise__create(arg0: ?*JSC__JSGlobalObject) [*c]JSC__JSInternalPromise;
 pub extern fn JSC__JSInternalPromise__isHandled(arg0: [*c]const JSC__JSInternalPromise, arg1: [*c]JSC__VM) bool;

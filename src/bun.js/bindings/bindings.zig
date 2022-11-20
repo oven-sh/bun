@@ -2803,6 +2803,7 @@ pub const JSValue = enum(JSValueReprInt) {
     pub fn coerce(this: JSValue, comptime T: type, globalThis: *JSC.JSGlobalObject) T {
         return switch (T) {
             ZigString => this.getZigString(globalThis),
+            bool => this.toBooleanSlow(globalThis),
             i32 => {
                 if (this.isInt32()) {
                     return this.asInt32();

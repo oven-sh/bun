@@ -120,7 +120,11 @@ pub const URL = struct {
     }
 
     pub fn getPortAuto(this: *const URL) u16 {
-        return this.getPort() orelse (if (this.isHTTPS()) @as(u16, 443) else @as(u16, 80));
+        return this.getPort() orelse this.getDefaultPort();
+    }
+
+    pub fn getDefaultPort(this: *const URL) u16 {
+        return if (this.isHTTPS()) @as(u16, 443) else @as(u16, 80);
     }
 
     pub fn hasValidPort(this: *const URL) bool {

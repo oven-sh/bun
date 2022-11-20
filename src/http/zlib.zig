@@ -22,8 +22,16 @@ pub fn put(mutable: *MutableString) void {
     node.release();
 }
 
-pub fn decompress(compressed_data: []const u8, output: *MutableString) Zlib.ZlibError!void {
-    var reader = try Zlib.ZlibReaderArrayList.init(compressed_data, &output.list, output.allocator);
+pub fn decompress(compressed_data: []const u8, output: *MutableString, allocator: std.mem.Allocator) Zlib.ZlibError!void {
+    var reader = try Zlib.ZlibReaderArrayList.initWithOptionsAndListAllocator(
+        compressed_data,
+        &output.list,
+        output.allocator,
+        allocator,
+        .{
+            .windowBits = 15 + 32,
+        },
+    );
     try reader.readAll();
     reader.deinit();
 }

@@ -436,10 +436,10 @@ pub const VirtualMachine = struct {
     modules: ModuleLoader.AsyncModule.Queue = .{},
     aggressive_garbage_collection: GCLevel = GCLevel.none,
 
-    pub const GCLevel = enum {
-        none,
-        mild,
-        aggressive,
+    pub const GCLevel = enum(u3) {
+        none = 0,
+        mild = 1,
+        aggressive = 2,
     };
 
     pub threadlocal var is_main_thread_vm: bool = false;

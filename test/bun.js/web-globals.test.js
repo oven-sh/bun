@@ -1,4 +1,6 @@
+import { unsafe } from "bun";
 import { expect, it, test } from "bun:test";
+import { withoutAggressiveGC } from "gc";
 
 test("exists", () => {
   expect(typeof URL !== "undefined").toBe(true);
@@ -58,11 +60,14 @@ it("crypto.getRandomValues", () => {
     );
   }
 
-  // run it again to check that the fast path works
-  for (var i = 0; i < 9000; i++) {
-    var array = crypto.getRandomValues(foo);
-    expect(array).toBe(foo);
-  }
+  // disable it for this block because it tends to get stuck here running the GC forever
+  withoutAggressiveGC(() => {
+    // run it again to check that the fast path works
+    for (var i = 0; i < 9000; i++) {
+      var array = crypto.getRandomValues(foo);
+      expect(array).toBe(foo);
+    }
+  });
 
   // run it on a large input
   expect(
@@ -87,15 +92,17 @@ it("crypto.randomUUID", () => {
   expect(uuid[18]).toBe("-");
   expect(uuid[23]).toBe("-");
 
-  // check that the fast path works
-  for (let i = 0; i < 9000; i++) {
-    var uuid2 = crypto.randomUUID();
-    expect(uuid2.length).toBe(36);
-    expect(uuid2[8]).toBe("-");
-    expect(uuid2[13]).toBe("-");
-    expect(uuid2[18]).toBe("-");
-    expect(uuid2[23]).toBe("-");
-  }
+  withoutAggressiveGC(() => {
+    // check that the fast path works
+    for (let i = 0; i < 9000; i++) {
+      var uuid2 = crypto.randomUUID();
+      expect(uuid2.length).toBe(36);
+      expect(uuid2[8]).toBe("-");
+      expect(uuid2[13]).toBe("-");
+      expect(uuid2[18]).toBe("-");
+      expect(uuid2[23]).toBe("-");
+    }
+  });
 });
 
 it("URL.prototype.origin", () => {

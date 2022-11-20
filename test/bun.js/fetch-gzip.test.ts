@@ -36,6 +36,82 @@ it("fetch() with a buffered gzip response works (one chunk)", async () => {
   server.stop();
 });
 
+it("fetch() with a redirect that returns a buffered gzip response works (one chunk)", async () => {
+  var server = Bun.serve({
+    port: 6020,
+
+    async fetch(req) {
+      if (req.url.endsWith("/redirect"))
+        return new Response(
+          await Bun.file(import.meta.dir + "/fixture.html.gz").arrayBuffer(),
+          {
+            headers: {
+              "Content-Encoding": "gzip",
+              "Content-Type": "text/html; charset=utf-8",
+            },
+          },
+        );
+
+      return Response.redirect("/redirect");
+    },
+  });
+
+  const res = await fetch(
+    `http://${server.hostname}:${server.port}/hey`,
+    {},
+    { verbose: true },
+  );
+  const arrayBuffer = await res.arrayBuffer();
+  expect(
+    new Buffer(arrayBuffer).equals(
+      new Buffer(
+        await Bun.file(import.meta.dir + "/fixture.html").arrayBuffer(),
+      ),
+    ),
+  ).toBe(true);
+  server.stop();
+});
+
+it("fetch() with a protocol-relative redirect that returns a buffered gzip response works (one chunk)", async () => {
+  const server = Bun.serve({
+    port: 5018,
+
+    async fetch(req, server) {
+      if (req.url.endsWith("/redirect"))
+        return new Response(
+          await Bun.file(import.meta.dir + "/fixture.html.gz").arrayBuffer(),
+          {
+            headers: {
+              "Content-Encoding": "gzip",
+              "Content-Type": "text/html; charset=utf-8",
+            },
+          },
+        );
+
+      return Response.redirect(`://${server.hostname}:${server.port}/redirect`);
+    },
+  });
+
+  const res = await fetch(
+    `http://${server.hostname}:${server.port}/hey`,
+    {},
+    { verbose: true },
+  );
+  expect(res.url).toBe(`http://${server.hostname}:${server.port}/redirect`);
+  expect(res.redirected).toBe(true);
+  expect(res.status).toBe(200);
+  const arrayBuffer = await res.arrayBuffer();
+  expect(
+    new Buffer(arrayBuffer).equals(
+      new Buffer(
+        await Bun.file(import.meta.dir + "/fixture.html").arrayBuffer(),
+      ),
+    ),
+  ).toBe(true);
+
+  server.stop();
+});
+
 it("fetch() with a gzip response works (one chunk)", async () => {
   var server = Bun.serve({
     port: 6023,

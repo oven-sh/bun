@@ -94,7 +94,7 @@ const char* const s_readableStreamDefaultReaderCancelCode =
 const JSC::ConstructAbility s_readableStreamDefaultReaderReadManyCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableStreamDefaultReaderReadManyCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_readableStreamDefaultReaderReadManyCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_readableStreamDefaultReaderReadManyCodeLength = 4212;
+const int s_readableStreamDefaultReaderReadManyCodeLength = 4661;
 static const JSC::Intrinsic s_readableStreamDefaultReaderReadManyCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_readableStreamDefaultReaderReadManyCode =
     "(function ()\n" \
@@ -142,12 +142,25 @@ const char* const s_readableStreamDefaultReaderReadManyCode =
     "    if (length > 0) {\n" \
     "        var outValues = @newArrayWithSize(length);\n" \
     "        if (@isReadableByteStreamController(controller)) {\n" \
-    "            for (var i = 0; i < length; i++) {\n" \
-    "                const buf = values[i];\n" \
+    "\n" \
+    "            {\n" \
+    "                const buf = values[0];\n" \
     "                if (!(@ArrayBuffer.@isView(buf) || buf instanceof @ArrayBuffer)) {\n" \
-    "                    @putByValDirect(outValues, i, @Uint8Array(buf.buffer, buf.byteOffset, buf.byteLength));\n" \
+    "                    @putByValDirect(outValues, 0, new @Uint8Array(buf.buffer, buf.byteOffset, buf.byteLength));\n" \
+    "                } else {\n" \
+    "                    @putByValDirect(outValues, 0, buf);\n" \
     "                }\n" \
     "            }\n" \
+    "\n" \
+    "            for (var i = 1; i < length; i++) {\n" \
+    "                const buf = values[i];\n" \
+    "                if (!(@ArrayBuffer.@isView(buf) || buf instanceof @ArrayBuffer)) {\n" \
+    "                    @putByValDirect(outValues, i, new @Uint8Array(buf.buffer, buf.byteOffset, buf.byteLength));\n" \
+    "                } else {\n" \
+    "                    @putByValDirect(outValues, i, buf);\n" \
+    "                }\n" \
+    "            }\n" \
+    "\n" \
     "        } else {\n" \
     "            @putByValDirect(outValues, 0, values[0].value);\n" \
     "            for (var i = 1; i < length; i++) {\n" \

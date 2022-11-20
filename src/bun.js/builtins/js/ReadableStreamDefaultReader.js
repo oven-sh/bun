@@ -96,12 +96,25 @@ function readMany()
     if (length > 0) {
         var outValues = @newArrayWithSize(length);
         if (@isReadableByteStreamController(controller)) {
-            for (var i = 0; i < length; i++) {
-                const buf = values[i];
+
+            {
+                const buf = values[0];
                 if (!(@ArrayBuffer.@isView(buf) || buf instanceof @ArrayBuffer)) {
-                    @putByValDirect(outValues, i, @Uint8Array(buf.buffer, buf.byteOffset, buf.byteLength));
+                    @putByValDirect(outValues, 0, new @Uint8Array(buf.buffer, buf.byteOffset, buf.byteLength));
+                } else {
+                    @putByValDirect(outValues, 0, buf);
                 }
             }
+
+            for (var i = 1; i < length; i++) {
+                const buf = values[i];
+                if (!(@ArrayBuffer.@isView(buf) || buf instanceof @ArrayBuffer)) {
+                    @putByValDirect(outValues, i, new @Uint8Array(buf.buffer, buf.byteOffset, buf.byteLength));
+                } else {
+                    @putByValDirect(outValues, i, buf);
+                }
+            }
+
         } else {
             @putByValDirect(outValues, 0, values[0].value);
             for (var i = 1; i < length; i++) {

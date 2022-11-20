@@ -218,73 +218,87 @@ describe("ReactDOM", () => {
       });
     }
   }
-  // for (let renderToReadableStream of [
-  //   renderToReadableStreamBun,
-  //   // renderToReadableStreamBrowser,
-  // ]) {
-  //   // there is an event loop bug that causes deadlocks
-  //   // the bug is with `fetch`, not with the HTTP server
-  //   for (let [inputString, reactElement] of fixtures) {
-  //     describe(`${renderToReadableStream.name}(${inputString})`, () => {
-  //       it("http server, 1 request", async () => {
-  //         var server;
-  //         try {
-  //           server = serve({
-  //             port: port++,
-  //             async fetch(req) {
-  //               return new Response(await renderToReadableStream(reactElement));
-  //             },
-  //           });
-  //           const resp = await fetch("http://localhost:" + server.port + "/");
-  //           expect((await resp.text()).replaceAll("<!-- -->", "")).toBe(
-  //             inputString
-  //           );
-  //           gc();
-  //         } catch (e) {
-  //           throw e;
-  //         } finally {
-  //           server?.stop();
-  //           gc();
-  //         }
-  //         // expect(
-  //         //   heapStats().objectTypeCounts.ReadableHTTPResponseSinkController ?? 0
-  //         // ).toBe(0);
-  //       });
-  //       // const count = 4;
-  //       // it(`http server, ${count} requests`, async () => {
-  //       //   var server;
-  //       //   try {
-  //       //     server = serve({
-  //       //       port: port++,
-  //       //       async fetch(req) {
-  //       //         return new Response(await renderToReadableStream(reactElement));
-  //       //       },
-  //       //     });
-  //       //     var total = 0;
-  //       //     gc();
-  //       //     while (total++ < count) {
-  //       //       var attempt = total;
-  //       //       const response = await fetch(
-  //       //         "http://localhost:" + server.port + "/"
-  //       //       );
-  //       //       gc();
-  //       //       const result = await response.text();
-  //       //       try {
-  //       //         expect(result.replaceAll("<!-- -->", "")).toBe(inputString);
-  //       //       } catch (e) {
-  //       //         e.message += "\nAttempt: " + attempt;
-  //       //         throw e;
-  //       //       }
+  for (let renderToReadableStream of [
+    renderToReadableStreamBun,
+    renderToReadableStreamBrowser,
+  ]) {
+    // there is an event loop bug that causes deadlocks
+    // the bug is with `fetch`, not with the HTTP server
+    for (let [inputString, reactElement] of fixtures) {
+      describe(`${renderToReadableStream.name}(${inputString})`, () => {
+        it("http server, 1 request", async () => {
+          await (async function () {
+            var server;
+            try {
+              server = serve({
+                port: port++,
+                async fetch(req) {
+                  return new Response(
+                    await renderToReadableStream(reactElement),
+                  );
+                },
+              });
+              const resp = await fetch("http://localhost:" + server.port + "/");
+              expect((await resp.text()).replaceAll("<!-- -->", "")).toBe(
+                inputString,
+              );
+              gc();
+            } catch (e) {
+              throw e;
+            } finally {
+              server?.stop();
+              gc();
+            }
+          })();
+          gc();
+          expect(
+            heapStats().objectTypeCounts.ReadableHTTPResponseSinkController ??
+              0,
+          ).toBe(1);
+        });
+        const count = 4;
+        it(`http server, ${count} requests`, async () => {
+          await (async function () {
+            var server;
+            try {
+              server = serve({
+                port: port++,
+                async fetch(req) {
+                  return new Response(
+                    await renderToReadableStream(reactElement),
+                  );
+                },
+              });
+              var total = 0;
+              gc();
+              while (total++ < count) {
+                var attempt = total;
+                const response = await fetch(
+                  "http://localhost:" + server.port + "/",
+                );
+                gc();
+                const result = await response.text();
+                try {
+                  expect(result.replaceAll("<!-- -->", "")).toBe(inputString);
+                } catch (e: any) {
+                  e.message += "\nAttempt: " + attempt;
+                  throw e;
+                }
 
-  //       //       gc();
-  //       //     }
-  //       //   } catch (e) {
-  //       //     throw e;
-  //       //   } finally {
-  //       //     server.stop();
-  //       //   }
-  //       // });
-  //     });
-  //   }
-  // }
+                gc();
+              }
+            } catch (e) {
+              throw e;
+            } finally {
+              server.stop();
+            }
+          })();
+          expect(
+            heapStats().objectTypeCounts.ReadableHTTPResponseSinkController ??
+              0,
+          ).toBe(1);
+        });
+      });
+    }
+  }
 });

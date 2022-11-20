@@ -7,9 +7,10 @@
       "name": "bun test",
       "program": "bun-debug",
       "args": ["wiptest", "${file}"],
-      "cwd": "${workspaceFolder}/test",
+      "cwd": "${workspaceFolder}/test/bun.js",
       "env": {
-        "FORCE_COLOR": "1"
+        "FORCE_COLOR": "1",
+        "BUN_GARBAGE_COLLECTOR_LEVEL": "2"
       },
       "console": "internalConsole"
     },
@@ -21,7 +22,8 @@
       "args": ["wiptest"],
       "cwd": "${workspaceFolder}/test",
       "env": {
-        "FORCE_COLOR": "1"
+        "FORCE_COLOR": "1",
+        "BUN_GARBAGE_COLLECTOR_LEVEL": "2"
       },
       "console": "internalConsole"
     },

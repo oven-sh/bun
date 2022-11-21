@@ -35,7 +35,7 @@ NATIVE_OR_OLD_MARCH = -march=westmere
 endif
 
 MIN_MACOS_VERSION ?= $(DEFAULT_MIN_MACOS_VERSION)
-BUN_BASE_VERSION = 0.2
+BUN_BASE_VERSION = 0.3
 
 AR=
 
@@ -884,7 +884,7 @@ MIMALLOC_OVERRIDE_FLAG ?=
 
 
 bump:
-	expr 0.2.0 + 1 > build-id
+	expr 0.3.0 + 1 > build-id
 
 .PHONY: identifier-cache
 identifier-cache:

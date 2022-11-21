@@ -923,7 +923,7 @@ pub const TestScope = struct {
                     return .{ .pending = .{} };
                 }
 
-                var promise = initial_value.asPromise().?;
+                var promise: *JSC.JSPromise = initial_value.asPromise().?;
                 this.task = task;
 
                 switch (promise.status(vm.global.vm())) {

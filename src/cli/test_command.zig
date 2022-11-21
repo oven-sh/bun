@@ -374,7 +374,7 @@ pub const TestCommand = struct {
 
         if (scanner.filter_names.len == 0 and test_files.len == 0) {
             Output.prettyErrorln(
-                \\<b>0 tests found<r>! Tests need ".test", "_test_", ".spec" or "_spec_" in the filename <d>(ex: "MyApp.test.ts")<r>
+                \\<b><yellow>No tests found<r>! Tests need ".test", "_test_", ".spec" or "_spec_" in the filename <d>(ex: "MyApp.test.ts")<r>
                 \\
             ,
                 .{},

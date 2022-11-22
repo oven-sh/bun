@@ -228,7 +228,9 @@ pub const URL = struct {
                     offset += url.parseProtocol(base[offset..]) orelse 0;
                 }
 
-                if (!(!is_protocol_relative and base[0] == '/')) {
+                const is_relative_path = !is_protocol_relative and base[0] == '/';
+
+                if (!is_relative_path) {
 
                     // if there's no protocol or @, it's ambiguous whether the colon is a port or a username.
                     if (offset > 0) {

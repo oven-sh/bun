@@ -83,3 +83,29 @@ it("should find files", () => {
   expect(router.match("/b").name).toBe("/b");
   expect(router.match("/abc/123").params.id).toBe("123");
 });
+
+it("should support dynamic routes", () => {
+  // set up the test
+  const tempdir = realpathSync(tmpdir()) + "/";
+  rmSync(tempdir + "fs-router-test-02", { recursive: true, force: true });
+  createTree(tempdir + "fs-router-test-02", [
+    "index.tsx",
+    "posts/[id].tsx",
+    "posts.tsx",
+  ]);
+
+  const router = new Bun.FileSystemRouter({
+    dir: tempdir + "fs-router-test-02/",
+    style: "nextjs",
+  });
+
+  const {
+    name,
+    params: { id },
+    filePath,
+  } = router.match("/posts/hello-world");
+
+  expect(id).toBe("hello-world");
+  expect(name).toBe("/posts/[id]");
+  expect(filePath).toBe(`${tempdir}fs-router-test-02/posts/[id].tsx`);
+});

@@ -352,9 +352,8 @@ void ${proto}::finishCreation(JSC::VM& vm, JSC::JSGlobalObject* globalObject)
 `;
 }
 
-function generateConstructorHeader(typeName) {
-  const name = constructorName(typeName);
-  const proto = prototypeName(typeName);
+function generatePrototypeHeader(typename) {
+  const proto = prototypeName(typename);
 
   return `
   class ${proto} final : public JSC::JSNonFinalObject {
@@ -386,8 +385,13 @@ function generateConstructorHeader(typeName) {
         }
     
         void finishCreation(JSC::VM&, JSC::JSGlobalObject*);
-    };
-    
+    };`;
+}
+
+function generateConstructorHeader(typeName) {
+  const name = constructorName(typeName);
+
+  return `
   class ${name} final : public JSC::InternalFunction {
     public:
         using Base = JSC::InternalFunction;
@@ -488,6 +492,7 @@ ${name}* ${name}::create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::St
     return ptr;
 }
 
+
 JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES ${name}::construct(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame)
 {
     Zig::GlobalObject *globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
@@ -532,23 +537,6 @@ JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES ${name}::construct(JSC::JSGlobalObj
   }
 
     return JSValue::encode(instance);
-}
-
-extern "C" EncodedJSValue ${typeName}__create(Zig::GlobalObject* globalObject, void* ptr) {
-  auto &vm = globalObject->vm();
-  JSC::Structure* structure = globalObject->${className(typeName)}Structure();
-  ${className(typeName)}* instance = ${className(
-    typeName,
-  )}::create(vm, globalObject, structure, ptr);
-  ${
-    obj.estimatedSize
-      ? `vm.heap.reportExtraMemoryAllocated(${symbolName(
-          obj.name,
-          "estimatedSize",
-        )}(ptr));`
-      : ""
-  }
-  return JSValue::encode(instance);
 }
 
 void ${name}::initializeProperties(VM& vm, JSC::JSGlobalObject* globalObject, ${prototypeName(
@@ -984,7 +972,11 @@ function generateClassHeader(typeName, obj: ClassDefinition) {
         }
     
         static JSObject* createPrototype(VM& vm, JSDOMGlobalObject* globalObject);
-        static JSObject* createConstructor(VM& vm, JSGlobalObject* globalObject, JSValue prototype);
+        ${
+          obj.noConstructor
+            ? ""
+            : `static JSObject* createConstructor(VM& vm, JSGlobalObject* globalObject, JSValue prototype)`
+        };
     
         ~${name}();
     
@@ -1192,15 +1184,19 @@ void ${name}::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
     Base::analyzeHeap(cell, analyzer);
 }
 
-JSObject* ${name}::createConstructor(VM& vm, JSGlobalObject* globalObject, JSValue prototype)
+${
+  !obj.noConstructor
+    ? `JSObject* ${name}::createConstructor(VM& vm, JSGlobalObject* globalObject, JSValue prototype)
 {
   return WebCore::${constructorName(
     typeName,
   )}::create(vm, globalObject, WebCore::${constructorName(
-    typeName,
-  )}::createStructure(vm, globalObject, globalObject->functionPrototype()), jsCast<WebCore::${prototypeName(
-    typeName,
-  )}*>(prototype));
+        typeName,
+      )}::createStructure(vm, globalObject, globalObject->functionPrototype()), jsCast<WebCore::${prototypeName(
+        typeName,
+      )}*>(prototype));
+}`
+    : ""
 }
 
 JSObject* ${name}::createPrototype(VM& vm, JSDOMGlobalObject* globalObject)
@@ -1209,8 +1205,27 @@ JSObject* ${name}::createPrototype(VM& vm, JSDOMGlobalObject* globalObject)
     typeName,
   )}::createStructure(vm, globalObject, globalObject->objectPrototype()));
 }
-      
+
+extern "C" EncodedJSValue ${typeName}__create(Zig::GlobalObject* globalObject, void* ptr) {
+  auto &vm = globalObject->vm();
+  JSC::Structure* structure = globalObject->${className(typeName)}Structure();
+  ${className(typeName)}* instance = ${className(
+    typeName,
+  )}::create(vm, globalObject, structure, ptr);
+  ${
+    obj.estimatedSize
+      ? `vm.heap.reportExtraMemoryAllocated(${symbolName(
+          obj.name,
+          "estimatedSize",
+        )}(ptr));`
+      : ""
+  }
+  return JSValue::encode(instance);
+}
+
 ${DEFINE_VISIT_CHILDREN}
+
+
  
     `.trim();
 
@@ -1224,7 +1239,10 @@ function generateHeader(typeName, obj) {
 function generateImpl(typeName, obj) {
   const proto = obj.proto;
   return [
-    generateConstructorHeader(typeName).trim() + "\n",
+    generatePrototypeHeader(typeName),
+    !obj.noConstructor
+      ? generateConstructorHeader(typeName).trim() + "\n"
+      : null,
     Object.keys(proto).length > 0 && generatePrototype(typeName, obj).trim(),
     !obj.noConstructor ? generateConstructorImpl(typeName, obj).trim() : null,
     Object.keys(proto).length > 0 && generateClassImpl(typeName, obj).trim(),
@@ -1240,7 +1258,7 @@ function generateZig(
     proto = {},
     construct,
     finalize,
-    noConstructor,
+    noConstructor = false,
     estimatedSize,
     call = false,
     values = [],
@@ -1249,7 +1267,7 @@ function generateZig(
 ) {
   const exports = new Map<string, string>();
 
-  if (construct) {
+  if (construct && !noConstructor) {
     exports.set(`constructor`, classSymbolName(typeName, "construct"));
   }
 
@@ -1337,7 +1355,7 @@ function generateZig(
       `;
     }
 
-    if (construct) {
+    if (construct && !noConstructor) {
       output += `
         if (@TypeOf(${typeName}.constructor) != (fn(*JSC.JSGlobalObject, *JSC.CallFrame) callconv(.C) ?*${typeName})) {
            @compileLog("${typeName}.constructor is not a constructor");
@@ -1603,7 +1621,10 @@ function generateLazyStructureImpl(typeName, { klass = {}, proto = {} }) {
       `.trim();
 }
 
-function generateLazyClassStructureImpl(typeName, { klass = {}, proto = {} }) {
+function generateLazyClassStructureImpl(
+  typeName,
+  { klass = {}, proto = {}, noConstructor = false },
+) {
   return `
           m_${className(typeName)}.initLater(
               [](LazyClassStructure::Initializer& init) {
@@ -1613,9 +1634,13 @@ function generateLazyClassStructureImpl(typeName, { klass = {}, proto = {} }) {
                  init.setStructure(WebCore::${className(
                    typeName,
                  )}::createStructure(init.vm, init.global, init.prototype));
-                 init.setConstructor(WebCore::${className(
-                   typeName,
-                 )}::createConstructor(init.vm, init.global, init.prototype));
+                 ${
+                   noConstructor
+                     ? ""
+                     : `init.setConstructor(WebCore::${className(
+                         typeName,
+                       )}::createConstructor(init.vm, init.global, init.prototype));`
+                 }
               });
       
   
@@ -1737,6 +1762,7 @@ function findClasses() {
     readdirSync(directory).forEach((file) => {
       if (file.endsWith(".classes.ts")) {
         const result = require(`${directory}/${file}`);
+        if (!(result?.default?.length ?? 0)) return;
         console.log("Generated", result.default.length, "classes from", file);
         for (let { name } of result.default) {
           console.log(`  - ${name}`);
@@ -1782,13 +1808,7 @@ await writeAndUnlink(`${import.meta.dir}/../bindings/ZigGeneratedClasses.cpp`, [
 ]);
 await writeAndUnlink(
   `${import.meta.dir}/../bindings/ZigGeneratedClasses+lazyStructureHeader.h`,
-  classes
-    .map((a) =>
-      !a.noConstructor
-        ? generateLazyClassStructureHeader(a.name, a)
-        : generateLazyStructureHeader(a.name, a),
-    )
-    .join("\n"),
+  classes.map((a) => generateLazyClassStructureHeader(a.name, a)).join("\n"),
 );
 
 await writeAndUnlink(
@@ -1820,11 +1840,7 @@ await writeAndUnlink(
 await writeAndUnlink(
   `${import.meta.dir}/../bindings/ZigGeneratedClasses+lazyStructureImpl.h`,
   initLazyClasses(
-    classes.map((a) =>
-      !a.noConstructor
-        ? generateLazyClassStructureImpl(a.name, a)
-        : generateLazyStructureImpl(a.name, a),
-    ),
+    classes.map((a) => generateLazyClassStructureImpl(a.name, a)),
   ) +
     "\n" +
     visitLazyClasses(classes),

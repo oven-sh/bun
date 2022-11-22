@@ -9,7 +9,23 @@ const {
 const { ArrayBuffer, isPromise, isCallable } = import.meta.primordials;
 
 const MAX_BUFFER = 1024 * 1024;
-const debug = process.env.DEBUG ? console.log : () => {};
+
+// General debug vs tracking stdio streams. Useful for stream debugging in particular
+const __DEBUG__ = process.env.DEBUG || false;
+
+// You can use this env var along with `process.env.DEBUG_TRACK_EE` to debug stdio streams
+// Just set `DEBUG_TRACK_EE=PARENT_STDOUT-0, PARENT_STDOUT-1`, etc. and `DEBUG_STDIO=1` and you will be able to track particular stdio streams
+// TODO: Add ability to track a range of IDs rather than just enumerated ones
+const __TRACK_STDIO__ = process.env.DEBUG_STDIO;
+const debug = __DEBUG__ ? console.log : () => {};
+
+if (__TRACK_STDIO__) {
+  debug("child_process: debug mode on");
+  globalThis.__lastId = null;
+  globalThis.__getId = () => {
+    return globalThis.__lastId !== null ? globalThis.__lastId++ : 0;
+  };
+}
 
 // Sections:
 // 1. Exported child_process functions
@@ -923,9 +939,19 @@ export class ChildProcess extends EventEmitter {
 
     this.#maybeClose();
     this.#exited = true;
+    this.#stdioOptions = ["destroyed", "destroyed", "destroyed"];
   }
 
   #getBunSpawnIo(i, encoding) {
+    if (__DEBUG__ && !this.#handle) {
+      if (this.#handle === null) {
+        debug(
+          "ChildProcess: getBunSpawnIo: this.#handle is null. This means the subprocess already exited",
+        );
+      } else {
+        debug("ChildProcess: getBunSpawnIo: this.#handle is undefined");
+      }
+    }
     const io = this.#stdioOptions[i];
     switch (i) {
       case 0: {
@@ -934,6 +960,8 @@ export class ChildProcess extends EventEmitter {
             return new WrappedFileSink(this.#handle.stdin);
           case "inherit":
             return process.stdin || null;
+          case "destroyed":
+            return new ShimmedStdin();
           default:
             return null;
         }
@@ -942,11 +970,21 @@ export class ChildProcess extends EventEmitter {
       case 1: {
         switch (io) {
           case "pipe":
-            return ReadableFromWeb(this.#handle[fdToStdioName(i)], {
-              encoding,
-            });
+            return ReadableFromWeb(
+              this.#handle[fdToStdioName(i)],
+              __TRACK_STDIO__
+                ? {
+                    encoding,
+                    __id: `PARENT_${fdToStdioName(
+                      i,
+                    ).toUpperCase()}-${globalThis.__getId()}`,
+                  }
+                : { encoding },
+            );
           case "inherit":
             return process[fdToStdioName(i)] || null;
+          case "destroyed":
+            return new ShimmedStdioOutStream();
           default:
             return null;
         }
@@ -1109,8 +1147,8 @@ export class ChildProcess extends EventEmitter {
   }
 
   #maybeClose() {
+    debug("Attempting to maybe close...");
     this.#closesGot++;
-
     if (this.#closesGot === this.#closesNeeded) {
       this.emit("close", this.exitCode, this.signalCode);
     }
@@ -1294,6 +1332,19 @@ class WrappedFileSink extends EventEmitter {
     }
   }
 }
+
+class ShimmedStdin extends EventEmitter {
+  constructor() {
+    super();
+  }
+  write() {
+    return false;
+  }
+  destroy() {}
+  end() {}
+}
+
+class ShimmedStdioOutStream extends EventEmitter {}
 
 //------------------------------------------------------------------------------
 // Section 5. Validators

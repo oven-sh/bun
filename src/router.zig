@@ -121,7 +121,7 @@ pub const Routes = struct {
     // We put this here to avoid loading the FrameworkConfig for the client, on the server.
     client_framework_enabled: bool = false,
 
-    pub fn matchPage(this: *Routes, _: string, url_path: URLPath, params: *Param.List) ?Match {
+    pub fn matchPageWithAllocator(this: *Routes, _: string, url_path: URLPath, params: *Param.List, allocator: std.mem.Allocator) ?Match {
         // Trim trailing slash
         var path = url_path.path;
         var redirect = false;
@@ -181,7 +181,7 @@ pub const Routes = struct {
         var matcher = MatchContextType{ .params = params.* };
         defer params.* = matcher.params;
 
-        if (this.match(this.allocator, path, *MatchContextType, &matcher)) |route| {
+        if (this.match(allocator, path, *MatchContextType, &matcher)) |route| {
             return Match{
                 .params = params,
                 .name = route.name,
@@ -196,6 +196,10 @@ pub const Routes = struct {
         }
 
         return null;
+    }
+
+    pub fn matchPage(this: *Routes, _: string, url_path: URLPath, params: *Param.List) ?Match {
+        return this.matchPageWithAllocator("", url_path, params, this.allocator);
     }
 
     fn matchDynamic(this: *Routes, allocator: std.mem.Allocator, path: string, comptime MatchContext: type, ctx: MatchContext) ?*Route {
@@ -319,6 +323,13 @@ const RouteLoader = struct {
     }
 
     pub fn loadAll(allocator: std.mem.Allocator, config: Options.RouteConfig, log: *Logger.Log, comptime ResolverType: type, resolver: *ResolverType, root_dir_info: *const DirInfo) Routes {
+        var route_dirname_len: u16 = 0;
+
+        const relative_dir = FileSystem.instance.relative(resolver.fs.top_level_dir, config.dir);
+        if (!strings.hasPrefixComptime(relative_dir, "..")) {
+            route_dirname_len = @truncate(u16, relative_dir.len + @as(usize, @boolToInt(config.dir[config.dir.len - 1] != std.fs.path.sep)));
+        }
+
         var this = RouteLoader{
             .allocator = allocator,
             .log = log,
@@ -327,7 +338,7 @@ const RouteLoader = struct {
             .static_list = std.StringHashMap(*Route).init(allocator),
             .dedupe_dynamic = std.AutoArrayHashMap(u32, string).init(allocator),
             .all_routes = .{},
-            .route_dirname_len = @truncate(u16, FileSystem.instance.relative(resolver.fs.top_level_dir, config.dir).len + @as(usize, @boolToInt(config.dir[config.dir.len - 1] != std.fs.path.sep))),
+            .route_dirname_len = route_dirname_len,
         };
         defer this.dedupe_dynamic.deinit();
         this.load(ResolverType, resolver, root_dir_info);
@@ -436,10 +447,10 @@ const RouteLoader = struct {
                                 // length is extended by one
                                 // entry.dir is a string with a trailing slash
                                 if (comptime Environment.isDebug) {
-                                    std.debug.assert(entry.dir.ptr[fs.top_level_dir.len - 1] == '/');
+                                    std.debug.assert(entry.dir.ptr[this.config.dir.len - 1] == '/');
                                 }
 
-                                const public_dir = entry.dir.ptr[fs.top_level_dir.len - 1 .. entry.dir.len];
+                                const public_dir = entry.dir.ptr[this.config.dir.len - 1 .. entry.dir.len];
 
                                 if (Route.parse(
                                     entry.base(),
@@ -636,15 +647,17 @@ pub const Route = struct {
         // the name we actually store will often be this one
         var public_path: string = brk: {
             if (base.len == 0) break :brk public_dir;
-            route_file_buf[0] = '/';
+            var buf: []u8 = &route_file_buf;
 
-            var buf: []u8 = route_file_buf[1..];
-
-            std.mem.copy(
-                u8,
-                buf,
-                public_dir,
-            );
+            if (public_dir.len > 0) {
+                route_file_buf[0] = '/';
+                buf = buf[1..];
+                std.mem.copy(
+                    u8,
+                    buf,
+                    public_dir,
+                );
+            }
             buf[public_dir.len] = '/';
             buf = buf[public_dir.len + 1 ..];
             std.mem.copy(u8, buf, base);
@@ -755,6 +768,7 @@ pub const Route = struct {
 };
 
 threadlocal var params_list: Param.List = undefined;
+
 pub fn match(app: *Router, comptime Server: type, server: Server, comptime RequestContextType: type, ctx: *RequestContextType) !void {
     ctx.matched_route = null;
 

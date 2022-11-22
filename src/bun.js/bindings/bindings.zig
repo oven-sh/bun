@@ -200,8 +200,8 @@ pub const ZigString = extern struct {
 
     pub const Slice = struct {
         allocator: NullableAllocator = .{},
-        ptr: [*]const u8,
-        len: u32,
+        ptr: [*]const u8 = undefined,
+        len: u32 = 0,
 
         pub fn fromUTF8NeverFree(input: []const u8) Slice {
             return .{
@@ -233,6 +233,11 @@ pub const ZigString = extern struct {
 
             var duped = try allocator.dupe(u8, this.ptr[0..this.len]);
             return Slice{ .allocator = NullableAllocator.init(allocator), .ptr = duped.ptr, .len = this.len };
+        }
+
+        pub fn cloneWithTrailingSlash(this: Slice, allocator: std.mem.Allocator) !Slice {
+            var duped = try std.fmt.allocPrintZ(allocator, "{s}/", .{strings.withoutTrailingSlash(this.slice())});
+            return Slice{ .allocator = NullableAllocator.init(allocator), .ptr = duped.ptr, .len = @truncate(u32, duped.len) };
         }
 
         pub fn cloneZ(this: Slice, allocator: std.mem.Allocator) !Slice {

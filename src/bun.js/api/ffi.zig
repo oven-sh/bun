@@ -31,7 +31,6 @@ const ImportKind = ast.ImportKind;
 const Analytics = @import("../../analytics/analytics_thread.zig");
 const ZigString = @import("../../jsc.zig").ZigString;
 const Runtime = @import("../../runtime.zig");
-const Router = @import("./router.zig");
 const ImportRecord = ast.ImportRecord;
 const DotEnv = @import("../../env_loader.zig");
 const ParseResult = @import("../../bundler.zig").ParseResult;

@@ -2134,6 +2134,7 @@ pub const Resolver = struct {
         return try r.dirInfoCachedMaybeLog(path, true, true);
     }
 
+    /// The path must have a trailing slash and a sentinel 0
     pub fn readDirInfo(
         r: *ThisResolver,
         path: string,

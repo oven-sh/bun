@@ -782,6 +782,125 @@ public:
     mutable JSC::WriteBarrier<JSC::Unknown> m_remoteAddress;
 };
 
+class JSFileSystemRouter final : public JSC::JSDestructibleObject {
+public:
+    using Base = JSC::JSDestructibleObject;
+    static JSFileSystemRouter* create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, void* ctx);
+
+    DECLARE_EXPORT_INFO;
+    template<typename, JSC::SubspaceAccess mode> static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
+    {
+        if constexpr (mode == JSC::SubspaceAccess::Concurrently)
+            return nullptr;
+        return WebCore::subspaceForImpl<JSFileSystemRouter, WebCore::UseCustomHeapCellType::No>(
+            vm,
+            [](auto& spaces) { return spaces.m_clientSubspaceForFileSystemRouter.get(); },
+            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForFileSystemRouter = WTFMove(space); },
+            [](auto& spaces) { return spaces.m_subspaceForFileSystemRouter.get(); },
+            [](auto& spaces, auto&& space) { spaces.m_subspaceForFileSystemRouter = WTFMove(space); });
+    }
+
+    static void destroy(JSC::JSCell*);
+    static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
+    {
+        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(static_cast<JSC::JSType>(0b11101110), StructureFlags), info());
+    }
+
+    static JSObject* createPrototype(VM& vm, JSDOMGlobalObject* globalObject);
+    static JSObject* createConstructor(VM& vm, JSGlobalObject* globalObject, JSValue prototype);
+
+    ~JSFileSystemRouter();
+
+    void* wrapped() const { return m_ctx; }
+
+    void detach()
+    {
+        m_ctx = nullptr;
+    }
+
+    static void analyzeHeap(JSCell*, JSC::HeapAnalyzer&);
+    static ptrdiff_t offsetOfWrapped() { return OBJECT_OFFSETOF(JSFileSystemRouter, m_ctx); }
+
+    void* m_ctx { nullptr };
+
+    JSFileSystemRouter(JSC::VM& vm, JSC::Structure* structure, void* sinkPtr)
+        : Base(vm, structure)
+    {
+        m_ctx = sinkPtr;
+    }
+
+    void finishCreation(JSC::VM&);
+
+    DECLARE_VISIT_CHILDREN;
+    template<typename Visitor> void visitAdditionalChildren(Visitor&);
+    DECLARE_VISIT_OUTPUT_CONSTRAINTS;
+
+    mutable JSC::WriteBarrier<JSC::Unknown> m_origin;
+    mutable JSC::WriteBarrier<JSC::Unknown> m_routes;
+    mutable JSC::WriteBarrier<JSC::Unknown> m_style;
+};
+
+class JSMatchedRoute final : public JSC::JSDestructibleObject {
+public:
+    using Base = JSC::JSDestructibleObject;
+    static JSMatchedRoute* create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, void* ctx);
+
+    DECLARE_EXPORT_INFO;
+    template<typename, JSC::SubspaceAccess mode> static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
+    {
+        if constexpr (mode == JSC::SubspaceAccess::Concurrently)
+            return nullptr;
+        return WebCore::subspaceForImpl<JSMatchedRoute, WebCore::UseCustomHeapCellType::No>(
+            vm,
+            [](auto& spaces) { return spaces.m_clientSubspaceForMatchedRoute.get(); },
+            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForMatchedRoute = WTFMove(space); },
+            [](auto& spaces) { return spaces.m_subspaceForMatchedRoute.get(); },
+            [](auto& spaces, auto&& space) { spaces.m_subspaceForMatchedRoute = WTFMove(space); });
+    }
+
+    static void destroy(JSC::JSCell*);
+    static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
+    {
+        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(static_cast<JSC::JSType>(0b11101110), StructureFlags), info());
+    }
+
+    static JSObject* createPrototype(VM& vm, JSDOMGlobalObject* globalObject);
+    ;
+
+    ~JSMatchedRoute();
+
+    void* wrapped() const { return m_ctx; }
+
+    void detach()
+    {
+        m_ctx = nullptr;
+    }
+
+    static void analyzeHeap(JSCell*, JSC::HeapAnalyzer&);
+    static ptrdiff_t offsetOfWrapped() { return OBJECT_OFFSETOF(JSMatchedRoute, m_ctx); }
+
+    void* m_ctx { nullptr };
+
+    JSMatchedRoute(JSC::VM& vm, JSC::Structure* structure, void* sinkPtr)
+        : Base(vm, structure)
+    {
+        m_ctx = sinkPtr;
+    }
+
+    void finishCreation(JSC::VM&);
+
+    DECLARE_VISIT_CHILDREN;
+    template<typename Visitor> void visitAdditionalChildren(Visitor&);
+    DECLARE_VISIT_OUTPUT_CONSTRAINTS;
+
+    mutable JSC::WriteBarrier<JSC::Unknown> m_filePath;
+    mutable JSC::WriteBarrier<JSC::Unknown> m_kind;
+    mutable JSC::WriteBarrier<JSC::Unknown> m_name;
+    mutable JSC::WriteBarrier<JSC::Unknown> m_params;
+    mutable JSC::WriteBarrier<JSC::Unknown> m_pathname;
+    mutable JSC::WriteBarrier<JSC::Unknown> m_query;
+};
+
 class JSExpect final : public JSC::JSDestructibleObject {
 public:
     using Base = JSC::JSDestructibleObject;

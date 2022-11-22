@@ -445,15 +445,16 @@ pub const QueryStringMap = struct {
 
     threadlocal var _name_count: [8]string = undefined;
     pub fn getNameCount(this: *QueryStringMap) usize {
-        if (this.name_count == null) {
-            var count: usize = 0;
-            var iterate = this.iter();
-            while (iterate.next(&_name_count) != null) {
-                count += 1;
-            }
-            this.name_count = count;
-        }
-        return this.name_count.?;
+        return this.list.len;
+        // if (this.name_count == null) {
+        //     var count: usize = 0;
+        //     var iterate = this.iter();
+        //     while (iterate.next(&_name_count) != null) {
+        //         count += 1;
+        //     }
+        //     this.name_count = count;
+        // }
+        // return this.name_count.?;
     }
 
     pub fn iter(this: *const QueryStringMap) Iterator {
@@ -484,7 +485,8 @@ pub const QueryStringMap = struct {
 
             var slice = this.map.list.slice();
             const hash = slice.items(.name_hash)[this.i];
-            var result = Result{ .name = this.map.str(slice.items(.name)[this.i]), .values = target[0..1] };
+            const name_slice = slice.items(.name)[this.i];
+            var result = Result{ .name = this.map.str(name_slice), .values = target[0..1] };
             target[0] = this.map.str(slice.items(.value)[this.i]);
 
             this.visited.set(this.i);
@@ -856,14 +858,25 @@ pub const CombinedScanner = struct {
 fn stringPointerFromStrings(parent: string, in: string) Api.StringPointer {
     if (in.len == 0 or parent.len == 0) return Api.StringPointer{};
 
-    const end = @ptrToInt(parent.ptr) + parent.len;
-    const in_end = @ptrToInt(in.ptr) + in.len;
-    if (in_end < end) return Api.StringPointer{};
+    if (bun.isSliceInBuffer(in, parent)) {
+        const end = @ptrToInt(parent.ptr) + parent.len;
+        const in_end = @ptrToInt(in.ptr) + in.len;
+        if (in_end < end) return Api.StringPointer{};
 
-    return Api.StringPointer{
-        .offset = @truncate(u32, @maximum(@ptrToInt(in.ptr), @ptrToInt(parent.ptr)) - @ptrToInt(parent.ptr)),
-        .length = @truncate(u32, in.len),
-    };
+        return Api.StringPointer{
+            .offset = @truncate(u32, @maximum(@ptrToInt(in.ptr), @ptrToInt(parent.ptr)) - @ptrToInt(parent.ptr)),
+            .length = @truncate(u32, in.len),
+        };
+    } else {
+        if (strings.indexOf(parent, in)) |i| {
+            return Api.StringPointer{
+                .offset = @truncate(u32, i),
+                .length = @truncate(u32, in.len),
+            };
+        }
+    }
+
+    return Api.StringPointer{};
 }
 
 pub const PathnameScanner = struct {
@@ -902,7 +915,7 @@ pub const PathnameScanner = struct {
             .name_needs_decoding = false,
             // TODO: fix this technical debt
             .value = stringPointerFromStrings(this.pathname, param.value),
-            .value_needs_decoding = std.mem.indexOfScalar(u8, param.value, '%') != null,
+            .value_needs_decoding = strings.containsChar(param.value, '%'),
         };
     }
 };

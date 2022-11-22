@@ -31,7 +31,7 @@ const ImportKind = ast.ImportKind;
 const Analytics = @import("../../analytics/analytics_thread.zig");
 const ZigString = @import("../../jsc.zig").ZigString;
 const Runtime = @import("../../runtime.zig");
-const Router = @import("./router.zig");
+const Router = @import("./filesystem_router.zig");
 const ImportRecord = ast.ImportRecord;
 const DotEnv = @import("../../env_loader.zig");
 const ParseResult = @import("../../bundler.zig").ParseResult;
@@ -820,6 +820,10 @@ pub fn readFileAsString(
 }
 
 pub fn getPublicPath(to: string, origin: URL, comptime Writer: type, writer: Writer) void {
+    return getPublicPathWithAssetPrefix(to, origin, VirtualMachine.vm.bundler.options.routes.asset_prefix_path, comptime Writer, writer);
+}
+
+pub fn getPublicPathWithAssetPrefix(to: string, origin: URL, asset_prefix: string, comptime Writer: type, writer: Writer) void {
     const relative_path = VirtualMachine.vm.bundler.fs.relativeTo(to);
     if (origin.isAbsolute()) {
         if (strings.hasPrefix(relative_path, "..") or strings.hasPrefix(relative_path, "./")) {
@@ -834,7 +838,7 @@ pub fn getPublicPath(to: string, origin: URL, comptime Writer: type, writer: Wri
             origin.joinWrite(
                 Writer,
                 writer,
-                VirtualMachine.vm.bundler.options.routes.asset_prefix_path,
+                asset_prefix,
                 "",
                 relative_path,
                 "",
@@ -1083,7 +1087,7 @@ pub const Class = NewClass(
     },
     .{
         .match = .{
-            .rfn = Router.match,
+            .rfn = Router.deprecatedBunGlobalMatch,
         },
         .sleepSync = .{
             .rfn = sleepSync,
@@ -1279,6 +1283,9 @@ pub const Class = NewClass(
         },
         .FFI = .{
             .get = FFI.getter,
+        },
+        .FileSystemRouter = .{
+            .get = getFileSystemRouter,
         },
     },
 );
@@ -1794,6 +1801,16 @@ pub fn getTranspilerConstructor(
     }
 
     return existing.asObjectRef();
+}
+
+pub fn getFileSystemRouter(
+    _: void,
+    ctx: js.JSContextRef,
+    _: js.JSValueRef,
+    _: js.JSStringRef,
+    _: js.ExceptionRef,
+) js.JSValueRef {
+    return JSC.API.FileSystemRouter.getConstructor(ctx).asObjectRef();
 }
 
 pub fn getHashObject(

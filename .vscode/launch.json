@@ -42,6 +42,18 @@
     {
       "type": "lldb",
       "request": "launch",
+      "name": "bun run (hot)",
+      "program": "bun-debug",
+      "args": ["--hot", "${file}"],
+      "cwd": "${file}/../../",
+      "env": {
+        "FORCE_COLOR": "1"
+      },
+      "console": "internalConsole"
+    },
+    {
+      "type": "lldb",
+      "request": "launch",
       "name": "bun run",
       "program": "bun-debug",
       "args": ["check.tsx", "-c"],
@@ -104,6 +116,15 @@
       "name": "fetch debug",
       "program": "${workspaceFolder}/misctools/fetch",
       "args": ["https://example.com", "--verbose"],
+      "cwd": "${workspaceFolder}",
+      "console": "internalConsole"
+    },
+    {
+      "type": "lldb",
+      "request": "launch",
+      "name": "Build zig unit test",
+      "program": "make",
+      "args": ["build-unit", "${file}"],
       "cwd": "${workspaceFolder}",
       "console": "internalConsole"
     },

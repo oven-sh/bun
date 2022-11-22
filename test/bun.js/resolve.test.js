@@ -1,6 +1,10 @@
 import { it, expect } from "bun:test";
 import { mkdirSync, writeFileSync } from "fs";
-import { join } from "path";
+import { join, resolve } from "path";
+
+function resolveFrom(from) {
+  return (specifier) => import.meta.resolveSync(specifier, from);
+}
 
 it("#imports", async () => {
   await writePackageJSONImportsFixture();
@@ -44,16 +48,19 @@ it("#imports", async () => {
   }
 });
 
-// this is known to be failing
 it("#imports with wildcard", async () => {
   await writePackageJSONImportsFixture();
+  const run = resolveFrom(
+    resolve(
+      import.meta.dir + "/node_modules/package-json-imports/package.json",
+    ),
+  );
 
-  // Chcek that package-json-imports/#foo/wildcard works
-  expect(
-    (
-      await import.meta.resolve("package-json-imports/#foo/wildcard.js")
-    ).endsWith("/wildcard.js"),
-  ).toBe(true);
+  const wildcard = resolve(
+    import.meta.dir + "/node_modules/package-json-imports/foo/wildcard.js",
+  );
+  expect(run("#foo/wildcard.js")).toBe(wildcard);
+  expect(run("#foo/extensionless/wildcard")).toBe(wildcard);
 });
 
 it("import.meta.resolve", async () => {
@@ -241,9 +248,11 @@ function writePackageJSONImportsFixture() {
           "./baz": "./foo/bar.js",
         },
         imports: {
-          "#foo": "./foo/private-foo.js",
           "#foo/bar": "./foo/private-foo.js",
-          "#foo/": "./foo/",
+          "#foo/*.js": "./foo/*.js",
+          "#foo/extensionless/*": "./foo/*.js",
+          "#foo": "./foo/private-foo.js",
+
           "#internal-react": "react",
         },
       },

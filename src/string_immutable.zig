@@ -3582,6 +3582,48 @@ pub fn NewLengthSorter(comptime Type: type, comptime field: string) type {
     };
 }
 
+pub fn NewGlobLengthSorter(comptime Type: type, comptime field: string) type {
+    return struct {
+        const GlobLengthSorter = @This();
+        pub fn lessThan(_: GlobLengthSorter, lhs: Type, rhs: Type) bool {
+            // Assert: keyA ends with "/" or contains only a single "*".
+            // Assert: keyB ends with "/" or contains only a single "*".
+            const key_a = @field(lhs, field);
+            const key_b = @field(rhs, field);
+
+            // Let baseLengthA be the index of "*" in keyA plus one, if keyA contains "*", or the length of keyA otherwise.
+            // Let baseLengthB be the index of "*" in keyB plus one, if keyB contains "*", or the length of keyB otherwise.
+            const star_a = indexOfChar(key_a, '*');
+            const star_b = indexOfChar(key_b, '*');
+            const base_length_a = star_a orelse key_a.len;
+            const base_length_b = star_b orelse key_b.len;
+
+            // If baseLengthA is greater than baseLengthB, return -1.
+            // If baseLengthB is greater than baseLengthA, return 1.
+            if (base_length_a > base_length_b)
+                return true;
+            if (base_length_b > base_length_a)
+                return false;
+
+            // If keyA does not contain "*", return 1.
+            // If keyB does not contain "*", return -1.
+            if (star_a == null)
+                return false;
+            if (star_b == null)
+                return true;
+
+            // If the length of keyA is greater than the length of keyB, return -1.
+            // If the length of keyB is greater than the length of keyA, return 1.
+            if (key_a.len > key_b.len)
+                return true;
+            if (key_b.len > key_a.len)
+                return false;
+
+            return false;
+        }
+    };
+}
+
 /// Update all strings in a struct pointing to "from" to point to "to".
 pub fn moveAllSlices(comptime Type: type, container: *Type, from: string, to: string) void {
     const fields_we_care_about = comptime brk: {

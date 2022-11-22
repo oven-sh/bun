@@ -732,13 +732,13 @@ pub const PackageJSON = struct {
         }
 
         if (json.asProperty("exports")) |exports_prop| {
-            if (ExportsMap.parse(r.allocator, &json_source, r.log, exports_prop.expr)) |exports_map| {
+            if (ExportsMap.parse(r.allocator, &json_source, r.log, exports_prop.expr, exports_prop.loc)) |exports_map| {
                 package_json.exports = exports_map;
             }
         }
 
         if (json.asProperty("imports")) |imports_prop| {
-            if (ExportsMap.parse(r.allocator, &json_source, r.log, imports_prop.expr)) |imports_map| {
+            if (ExportsMap.parse(r.allocator, &json_source, r.log, imports_prop.expr, imports_prop.loc)) |imports_map| {
                 package_json.imports = imports_map;
             }
         }
@@ -955,8 +955,9 @@ pub const PackageJSON = struct {
 pub const ExportsMap = struct {
     root: Entry,
     exports_range: logger.Range = logger.Range.None,
+    property_key_loc: logger.Loc,
 
-    pub fn parse(allocator: std.mem.Allocator, source: *const logger.Source, log: *logger.Log, json: js_ast.Expr) ?ExportsMap {
+    pub fn parse(allocator: std.mem.Allocator, source: *const logger.Source, log: *logger.Log, json: js_ast.Expr, property_key_loc: logger.Loc) ?ExportsMap {
         var visitor = Visitor{ .allocator = allocator, .source = source, .log = log };
 
         const root = visitor.visit(json);
@@ -968,6 +969,7 @@ pub const ExportsMap = struct {
         return ExportsMap{
             .root = root,
             .exports_range = source.rangeOfString(json.loc),
+            .property_key_loc = property_key_loc,
         };
     }
 
@@ -1050,7 +1052,7 @@ pub const ExportsMap = struct {
                         map_data_ranges[i] = key_range;
                         map_data_entries[i] = this.visit(prop.value.?);
 
-                        if (strings.endsWithAnyComptime(key, "/*")) {
+                        if (strings.endsWithComptime(key, "/") or strings.containsChar(key, '*')) {
                             expansion_keys[expansion_key_i] = Entry.Data.Map.MapEntry{
                                 .value = map_data_entries[i],
                                 .key = key,
@@ -1063,11 +1065,12 @@ pub const ExportsMap = struct {
                     // this leaks a lil, but it's fine.
                     expansion_keys = expansion_keys[0..expansion_key_i];
 
-                    // Let expansion_keys be the list of keys of matchObj ending in "/" or "*",
-                    // sorted by length descending.
-                    const LengthSorter: type = strings.NewLengthSorter(Entry.Data.Map.MapEntry, "key");
-                    var sorter = LengthSorter{};
-                    std.sort.sort(Entry.Data.Map.MapEntry, expansion_keys, sorter, LengthSorter.lessThan);
+                    // Let expansionKeys be the list of keys of matchObj either ending in "/"
+                    // or containing only a single "*", sorted by the sorting function
+                    // PATTERN_KEY_COMPARE which orders in descending order of specificity.
+                    const GlobLengthSorter: type = strings.NewGlobLengthSorter(Entry.Data.Map.MapEntry, "key");
+                    var sorter = GlobLengthSorter{};
+                    std.sort.sort(Entry.Data.Map.MapEntry, expansion_keys, sorter, GlobLengthSorter.lessThan);
 
                     return Entry{
                         .data = .{
@@ -1186,6 +1189,7 @@ pub const ESModule = struct {
         UndefinedNoConditionsMatch, // A more friendly error message for when no conditions are matched
         Null,
         Exact,
+        ExactEndsWithStar,
         Inexact, // This means we may need to try CommonJS-style extension suffixes
 
         /// Module specifier is an invalid URL, package name or package subpath specifier.
@@ -1203,8 +1207,14 @@ pub const ESModule = struct {
         /// The package or module requested does not exist.
         ModuleNotFound,
 
+        /// The user just needs to add the missing extension
+        ModuleNotFoundMissingExtension,
+
         /// The resolved path corresponds to a directory, which is not a supported target for module imports.
         UnsupportedDirectoryImport,
+
+        /// The user just needs to add the missing "/index.js" suffix
+        UnsupportedDirectoryImportMissingIndex,
 
         /// When a package path is explicitly set to null, that means it's not exported.
         PackagePathDisabled,
@@ -1383,7 +1393,7 @@ pub const ESModule = struct {
 
     pub fn finalize(result_: Resolution) Resolution {
         var result = result_;
-        if (result.status != .Exact and result.status != .Inexact) {
+        if (result.status != .Exact and result.status != .ExactEndsWithStar and result.status != .Inexact) {
             return result;
         }
 
@@ -1489,7 +1499,8 @@ pub const ESModule = struct {
             logs.addNoteFmt("Checking object path map for \"{s}\"", .{match_key});
         }
 
-        if (!strings.endsWithChar(match_key, '.')) {
+        // If matchKey is a key of matchObj and does not end in "/" or contain "*", then
+        if (!strings.endsWithChar(match_key, '/') and !strings.containsChar(match_key, '*')) {
             if (match_obj.valueForKey(match_key)) |target| {
                 if (r.debug_logs) |log| {
                     log.addNoteFmt("Found \"{s}\"", .{match_key});
@@ -1502,36 +1513,46 @@ pub const ESModule = struct {
         if (match_obj.data == .map) {
             const expansion_keys = match_obj.data.map.expansion_keys;
             for (expansion_keys) |expansion| {
-                // If expansionKey ends in "*" and matchKey starts with but is not equal to
-                // the substring of expansionKey excluding the last "*" character
-                if (strings.endsWithChar(expansion.key, '*')) {
-                    const substr = expansion.key[0 .. expansion.key.len - 1];
-                    if (strings.startsWith(match_key, substr) and !strings.eql(match_key, substr)) {
+
+                // If expansionKey contains "*", set patternBase to the substring of
+                // expansionKey up to but excluding the first "*" character
+                if (strings.indexOfChar(expansion.key, '*')) |star| {
+                    const pattern_base = expansion.key[0..star];
+                    // If patternBase is not null and matchKey starts with but is not equal
+                    // to patternBase, then
+                    if (strings.startsWith(match_key, pattern_base)) {
+                        // Let patternTrailer be the substring of expansionKey from the index
+                        // after the first "*" character.
+                        const pattern_trailer = expansion.key[star + 1 ..];
+
+                        // If patternTrailer has zero length, or if matchKey ends with
+                        // patternTrailer and the length of matchKey is greater than or
+                        // equal to the length of expansionKey, then
+                        if (pattern_trailer.len == 0 or (strings.endsWith(match_key, pattern_trailer) and match_key.len >= expansion.key.len)) {
+                            const target = expansion.value;
+                            const subpath = match_key[pattern_base.len .. match_key.len - pattern_trailer.len];
+                            if (r.debug_logs) |log| {
+                                log.addNoteFmt("The key \"{s}\" matched with \"{s}\" left over", .{ expansion.key, subpath });
+                            }
+                            return r.resolveTarget(package_url, target, subpath, is_imports, true);
+                        }
+                    }
+                } else {
+                    // Otherwise if patternBase is null and matchKey starts with
+                    // expansionKey, then
+                    if (strings.startsWith(match_key, expansion.key)) {
                         const target = expansion.value;
-                        const subpath = match_key[expansion.key.len - 1 ..];
+                        const subpath = match_key[expansion.key.len..];
                         if (r.debug_logs) |log| {
                             log.addNoteFmt("The key \"{s}\" matched with \"{s}\" left over", .{ expansion.key, subpath });
                         }
-
-                        return r.resolveTarget(package_url, target, subpath, is_imports, true);
+                        var result = r.resolveTarget(package_url, target, subpath, is_imports, false);
+                        if (result.status == .Exact or result.status == .ExactEndsWithStar) {
+                            // Return the object { resolved, exact: false }.
+                            result.status = .Inexact;
+                        }
+                        return result;
                     }
-                }
-
-                if (strings.startsWith(match_key, expansion.key)) {
-                    const target = expansion.value;
-                    const subpath = match_key[expansion.key.len..];
-                    if (r.debug_logs) |log| {
-                        log.addNoteFmt("The key \"{s}\" matched with \"{s}\" left over", .{ expansion.key, subpath });
-                    }
-
-                    var result = r.resolveTarget(package_url, target, subpath, is_imports, false);
-                    result.status = if (result.status == .Exact)
-                        // Return the object { resolved, exact: false }.
-                        .Inexact
-                    else
-                        result.status;
-
-                    return result;
                 }
 
                 if (r.debug_logs) |log| {
@@ -1645,10 +1666,14 @@ pub const ESModule = struct {
                     _ = std.mem.replace(u8, resolved_target, "*", subpath, &resolve_target_buf2);
                     const result = resolve_target_buf2[0..len];
                     if (r.debug_logs) |log| {
-                        log.addNoteFmt("Subsituted \"{s}\" for \"*\" in \".{s}\" to get \".{s}\" ", .{ subpath, resolved_target, result });
+                        log.addNoteFmt("Substituted \"{s}\" for \"*\" in \".{s}\" to get \".{s}\" ", .{ subpath, resolved_target, result });
                     }
 
-                    return Resolution{ .path = result, .status = .Exact, .debug = .{ .token = target.first_token } };
+                    const status: Status = if (strings.endsWithChar(result, '*') and strings.indexOfChar(result, '*').? == result.len - 1)
+                        .ExactEndsWithStar
+                    else
+                        .Exact;
+                    return Resolution{ .path = result, .status = status, .debug = .{ .token = target.first_token } };
                 } else {
                     var parts2 = [_]string{ package_url, str, subpath };
                     const result = resolve_path.joinStringBuf(&resolve_target_buf2, parts2, .auto);

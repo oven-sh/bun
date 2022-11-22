@@ -1399,7 +1399,7 @@ pub fn NewPrinter(
             defer if (wrap) p.print(")");
 
             assert(p.import_records.len > import_record_index);
-            const record = p.import_records[import_record_index];
+            const record = &p.import_records[import_record_index];
 
             if (comptime is_bun_platform) {
                 // "bun" is not a real module. It's just globalThis.Bun.
@@ -1444,7 +1444,7 @@ pub fn NewPrinter(
                 }
 
                 p.print("(");
-                p.printImportRecordPath(&record);
+                p.printImportRecordPath(record);
                 p.print(")");
                 return;
             }
@@ -1462,7 +1462,7 @@ pub fn NewPrinter(
 
             // Allow it to fail at runtime, if it should
             p.print("import(");
-            p.printImportRecordPath(&record);
+            p.printImportRecordPath(record);
             p.print(")");
 
             if (leading_interior_comments.len > 0) {
@@ -3713,9 +3713,11 @@ pub fn NewPrinter(
                     p.needs_semicolon = false;
                 },
                 .s_import => |s| {
+                    std.debug.assert(s.import_record_index < p.import_records.len);
 
-                    // TODO: check loader instead
-                    switch (p.import_records[s.import_record_index].print_mode) {
+                    const record: *const ImportRecord = &p.import_records[s.import_record_index];
+
+                    switch (record.print_mode) {
                         .css => {
                             switch (p.options.css_import_behavior) {
                                 .facade => {
@@ -3724,7 +3726,7 @@ pub fn NewPrinter(
                                     // To parse this, you just look for a line that starts with //@import url("
                                     p.print("//@import url(\"");
                                     // We do not URL escape here.
-                                    p.print(p.import_records[s.import_record_index].path.text);
+                                    p.print(record.path.text);
 
                                     // If they actually use the code, then we emit a facade that just echos whatever they write
                                     if (s.default_name) |name| {
@@ -3740,7 +3742,7 @@ pub fn NewPrinter(
 
                                 .auto_onimportcss, .facade_onimportcss => {
                                     p.print("globalThis.document?.dispatchEvent(new CustomEvent(\"onimportcss\", {detail: \"");
-                                    p.print(p.import_records[s.import_record_index].path.text);
+                                    p.print(record.path.text);
                                     p.print("\"}));\n");
 
                                     // If they actually use the code, then we emit a facade that just echos whatever they write
@@ -3759,14 +3761,14 @@ pub fn NewPrinter(
                                 p.print("var ");
                                 p.printSymbol(name.ref.?);
                                 p.print(" = ");
-                                p.printImportRecordPath(&p.import_records[s.import_record_index]);
+                                p.printImportRecordPath(record);
                                 p.printSemicolonAfterStatement();
-                            } else if (p.import_records[s.import_record_index].contains_import_star) {
+                            } else if (record.contains_import_star) {
                                 // this case is particularly important for running files without an extension in bun's runtime
                                 p.print("var ");
                                 p.printSymbol(s.namespace_ref);
                                 p.print(" = {default:");
-                                p.printImportRecordPath(&p.import_records[s.import_record_index]);
+                                p.printImportRecordPath(record);
                                 p.print("}");
                                 p.printSemicolonAfterStatement();
                             }
@@ -3774,24 +3776,19 @@ pub fn NewPrinter(
                         },
                         .napi_module => {
                             if (comptime is_bun_platform) {
-                                const import_record = &p.import_records[s.import_record_index];
-
-                                if (import_record.print_mode == .napi_module) {
-                                    p.printIndent();
-                                    p.print("var ");
-                                    p.printSymbol(s.namespace_ref);
-                                    p.print(" = import.meta.require(");
-                                    p.printImportRecordPath(import_record);
-                                    p.print(")");
-                                    p.printSemicolonAfterStatement();
-                                }
+                                p.printIndent();
+                                p.print("var ");
+                                p.printSymbol(s.namespace_ref);
+                                p.print(" = import.meta.require(");
+                                p.printImportRecordPath(record);
+                                p.print(")");
+                                p.printSemicolonAfterStatement();
                             }
                             return;
                         },
                         else => {},
                     }
 
-                    const record = p.import_records[s.import_record_index];
                     var item_count: usize = 0;
 
                     p.printIndent();
@@ -3816,7 +3813,7 @@ pub fn NewPrinter(
                     }
 
                     if (is_inside_bundle) {
-                        return p.printBundledImport(record, s);
+                        return p.printBundledImport(record.*, s);
                     }
 
                     if (record.do_commonjs_transform_in_printer or record.path.is_disabled) {
@@ -3937,7 +3934,7 @@ pub fn NewPrinter(
                             p.print(" = () => ({default: {}});\n");
                         }
 
-                        p.printBundledImport(record, s);
+                        p.printBundledImport(record.*, s);
                         return;
                     }
 
@@ -4009,7 +4006,7 @@ pub fn NewPrinter(
                         p.printSpace();
                     }
 
-                    p.printImportRecordPath(&p.import_records[s.import_record_index]);
+                    p.printImportRecordPath(record);
                     p.printSemicolonAfterStatement();
                 },
                 .s_block => |s| {

@@ -992,14 +992,19 @@ static inline JSC::JSValue constructResultObject(JSC::JSGlobalObject* lexicalGlo
 
         switch (sqlite3_column_type(stmt, i)) {
         case SQLITE_INTEGER: {
-            result->putDirect(vm, name, jsNumber(sqlite3_column_int(stmt, i)), 0);
+            // https://github.com/oven-sh/bun/issues/1536
+            result->putDirect(vm, name, jsNumber(sqlite3_column_int64(stmt, i)), 0);
             break;
         }
         case SQLITE_FLOAT: {
             result->putDirect(vm, name, jsNumber(sqlite3_column_double(stmt, i)), 0);
             break;
         }
-        case SQLITE_TEXT: {
+        // > Note that the SQLITE_TEXT constant was also used in SQLite version
+        // > 2 for a completely different meaning. Software that links against
+        // > both SQLite version 2 and SQLite version 3 should use SQLITE3_TEXT,
+        // > not SQLITE_TEXT.
+        case SQLITE3_TEXT: {
             size_t len = sqlite3_column_bytes(stmt, i);
             const unsigned char* text = len > 0 ? sqlite3_column_text(stmt, i) : nullptr;
 
@@ -1042,13 +1047,18 @@ static inline JSC::JSArray* constructResultRow(JSC::JSGlobalObject* lexicalGloba
 
         switch (sqlite3_column_type(stmt, i)) {
         case SQLITE_INTEGER: {
-            result->initializeIndex(scope, i, jsNumber(sqlite3_column_int(stmt, i)));
+            // https://github.com/oven-sh/bun/issues/1536
+            result->initializeIndex(scope, i, jsNumber(sqlite3_column_int64(stmt, i)));
             break;
         }
         case SQLITE_FLOAT: {
             result->initializeIndex(scope, i, jsNumber(sqlite3_column_double(stmt, i)));
             break;
         }
+        // > Note that the SQLITE_TEXT constant was also used in SQLite version
+        // > 2 for a completely different meaning. Software that links against
+        // > both SQLite version 2 and SQLite version 3 should use SQLITE3_TEXT,
+        // > not SQLITE_TEXT.
         case SQLITE_TEXT: {
             size_t len = sqlite3_column_bytes(stmt, i);
             const unsigned char* text = len > 0 ? sqlite3_column_text(stmt, i) : nullptr;

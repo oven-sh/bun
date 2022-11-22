@@ -3595,8 +3595,8 @@ pub fn NewGlobLengthSorter(comptime Type: type, comptime field: string) type {
             // Let baseLengthB be the index of "*" in keyB plus one, if keyB contains "*", or the length of keyB otherwise.
             const star_a = indexOfChar(key_a, '*');
             const star_b = indexOfChar(key_b, '*');
-            const base_length_a = if (star_a) |st_a| st_a else key_a.len;
-            const base_length_b = if (star_b) |st_b| st_b else key_b.len;
+            const base_length_a = star_a orelse key_a.len;
+            const base_length_b = star_b orelse key_b.len;
 
             // If baseLengthA is greater than baseLengthB, return -1.
             // If baseLengthB is greater than baseLengthA, return 1.

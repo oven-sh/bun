@@ -467,7 +467,7 @@ void JSC__JSObject__putRecord(JSC__JSObject* object, JSC__JSGlobalObject* global
     ZigString* values, size_t valuesLen)
 {
     auto scope = DECLARE_THROW_SCOPE(global->vm());
-    auto ident = Zig::toIdentifier(*key, global);
+    auto ident = Identifier::fromString(global->vm(), Zig::toStringCopy(*key));
     JSC::PropertyDescriptor descriptor;
 
     descriptor.setEnumerable(1);
@@ -475,7 +475,7 @@ void JSC__JSObject__putRecord(JSC__JSObject* object, JSC__JSGlobalObject* global
     descriptor.setWritable(1);
 
     if (valuesLen == 1) {
-        descriptor.setValue(JSC::jsString(global->vm(), Zig::toString(values[0])));
+        descriptor.setValue(JSC::jsString(global->vm(), Zig::toStringCopy(values[0])));
     } else {
 
         JSC::JSArray* array = nullptr;
@@ -488,7 +488,7 @@ void JSC__JSObject__putRecord(JSC__JSObject* object, JSC__JSGlobalObject* global
 
                 for (size_t i = 0; i < valuesLen; ++i) {
                     array->initializeIndexWithoutBarrier(
-                        initializationScope, i, JSC::jsString(global->vm(), Zig::toString(values[i])));
+                        initializationScope, i, JSC::jsString(global->vm(), Zig::toStringCopy(values[i])));
                 }
             }
         }

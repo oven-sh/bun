@@ -1140,9 +1140,18 @@ export class ChildProcess extends EventEmitter {
     this.emit("exit", null, signal);
     this.#maybeClose();
 
-    // TODO: Make this actually ensure the process has exited before returning
-    // await this.#handle.exited()
-    // return this.#handle.killed;
+    // TODO: Figure out how to make this conform to the Node spec...
+    // The problem is that the handle does not report killed until the process exits
+    // So we can't return whether or not the process was killed because Bun.spawn seems to handle this async instead of sync like Node does
+    // return this.#handle?.killed ?? true;
+    return true;
+  }
+
+  // TODO: Remove this at some point
+  // This is only here to report whether Bun.spawn actually killed the process
+  // OR if it didn't actually terminate properly
+  async _getIsReallyKilled() {
+    if (this.#handle) await this.#handle.exited;
     return this.#handle?.killed ?? true;
   }
 

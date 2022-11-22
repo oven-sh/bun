@@ -1900,7 +1900,7 @@ fn NewLexer_(
                                     const flag = max_flag - @intCast(u8, lexer.code_point);
                                     if (flags.isSet(flag)) {
                                         lexer.addError(
-                                            lexer.regex_flags_start.?,
+                                            lexer.current,
                                             "Duplicate flag \"{u}\" in regular expression",
                                             .{@intCast(u21, lexer.code_point)},
                                             false,
@@ -1911,7 +1911,14 @@ fn NewLexer_(
                                     lexer.step();
                                 },
                                 else => {
-                                    try lexer.syntaxError();
+                                    lexer.addError(
+                                        lexer.current,
+                                        "Invalid flag \"{u}\" in regular expression",
+                                        .{@intCast(u21, lexer.code_point)},
+                                        false,
+                                    );
+
+                                    lexer.step();
                                 },
                             }
                         }

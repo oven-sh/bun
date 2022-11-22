@@ -134,6 +134,15 @@ it("creates", () => {
   stmt2.finalize();
 });
 
+it("int52", () => {
+  const db = Database.open(":memory:");
+  db.exec("CREATE TABLE test (id INTEGER PRIMARY KEY, int64 INTEGER)");
+  db.run("INSERT INTO test (int64) VALUES (?)", Number.MAX_SAFE_INTEGER);
+  expect(db.query("SELECT * FROM test").get().int64).toBe(
+    Number.MAX_SAFE_INTEGER,
+  );
+});
+
 it("typechecks", () => {
   const db = Database.open(":memory:");
   db.exec("CREATE TABLE test (id INTEGER PRIMARY KEY, name TEXT)");

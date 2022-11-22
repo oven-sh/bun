@@ -109,3 +109,71 @@ it("should support dynamic routes", () => {
   expect(name).toBe("/posts/[id]");
   expect(filePath).toBe(`${tempdir}fs-router-test-02/posts/[id].tsx`);
 });
+
+it("should support Request & Response", async () => {
+  // set up the test
+  const tempdir = realpathSync(tmpdir()) + "/";
+  rmSync(tempdir + "fs-router-test-03", { recursive: true, force: true });
+  createTree(tempdir + "fs-router-test-03", [
+    "index.tsx",
+    "posts/[id].tsx",
+    "posts.tsx",
+  ]);
+
+  const router = new Bun.FileSystemRouter({
+    dir: tempdir + "fs-router-test-03/",
+    style: "nextjs",
+  });
+
+  for (let current of [
+    // Reuqest
+    new Request({ url: "/posts/hello-world" }),
+    new Request({ url: "http://example.com/posts/hello-world" }),
+    // Response
+    // when there's http:// it will be parsed as a URL and only the pathname is used
+    await fetch("http://example.com/posts/hello-world"),
+  ]) {
+    const {
+      name,
+      params: { id },
+      filePath,
+    } = router.match(current);
+    expect(id).toBe("hello-world");
+    expect(name).toBe("/posts/[id]");
+    expect(filePath).toBe(`${tempdir}fs-router-test-03/posts/[id].tsx`);
+  }
+});
+
+it("assetPrefix, src, and origin", async () => {
+  // set up the test
+  const tempdir = realpathSync(tmpdir()) + "/";
+  rmSync(tempdir + "fs-router-test-04", { recursive: true, force: true });
+  createTree(tempdir + "fs-router-test-04", [
+    "index.tsx",
+    "posts/[id].tsx",
+    "posts.tsx",
+  ]);
+
+  const router = new Bun.FileSystemRouter({
+    dir: tempdir + "fs-router-test-04/",
+    style: "nextjs",
+    assetPrefix: "/_next/static/",
+    origin: "https://nextjs.org",
+  });
+
+  for (let current of [
+    // Reuqest
+    new Request({ url: "/posts/hello-world" }),
+    new Request({ url: "https://nextjs.org/posts/hello-world" }),
+  ]) {
+    const {
+      name,
+      params: { id },
+      src,
+      filePath,
+    } = router.match(current);
+    expect(name).toBe("/posts/[id]");
+    expect(src).toBe("https://nextjs.org/_next/static/posts/[id].tsx");
+    expect(filePath).toBe(`${tempdir}fs-router-test-04/posts/[id].tsx`);
+  }
+});

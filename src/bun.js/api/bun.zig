@@ -820,11 +820,14 @@ pub fn readFileAsString(
 }
 
 pub fn getPublicPath(to: string, origin: URL, comptime Writer: type, writer: Writer) void {
-    return getPublicPathWithAssetPrefix(to, origin, VirtualMachine.vm.bundler.options.routes.asset_prefix_path, comptime Writer, writer);
+    return getPublicPathWithAssetPrefix(to, VirtualMachine.vm.bundler.fs.top_level_dir, origin, VirtualMachine.vm.bundler.options.routes.asset_prefix_path, comptime Writer, writer);
 }
 
-pub fn getPublicPathWithAssetPrefix(to: string, origin: URL, asset_prefix: string, comptime Writer: type, writer: Writer) void {
-    const relative_path = VirtualMachine.vm.bundler.fs.relativeTo(to);
+pub fn getPublicPathWithAssetPrefix(to: string, dir: string, origin: URL, asset_prefix: string, comptime Writer: type, writer: Writer) void {
+    const relative_path = if (strings.hasPrefix(to, dir))
+        strings.withoutTrailingSlash(to[dir.len..])
+    else
+        VirtualMachine.vm.bundler.fs.relative(dir, to);
     if (origin.isAbsolute()) {
         if (strings.hasPrefix(relative_path, "..") or strings.hasPrefix(relative_path, "./")) {
             writer.writeAll(origin.origin) catch return;

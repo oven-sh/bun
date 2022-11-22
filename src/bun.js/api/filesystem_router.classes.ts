@@ -63,6 +63,14 @@ export default [
         getter: "getFilePath",
         cache: true,
       },
+      scriptSrc: {
+        getter: "getScriptSrc",
+        cache: true,
+      },
+      src: {
+        getter: "getScriptSrc",
+        cache: "scriptSrc",
+      },
     },
     klass: {},
   }),

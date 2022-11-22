@@ -142,6 +142,7 @@ const DeprecatedGlobalRouter = struct {
             route.*,
             JSC.VirtualMachine.vm.refCountedString(JSC.VirtualMachine.vm.origin.href, null, false),
             JSC.VirtualMachine.vm.refCountedString(JSC.VirtualMachine.vm.bundler.options.routes.asset_prefix_path, null, false),
+            JSC.VirtualMachine.vm.refCountedString(JSC.VirtualMachine.vm.bundler.fs.top_level_dir, null, false),
         ) catch unreachable;
 
         return matched.toJS(ctx).asObjectRef();
@@ -150,6 +151,7 @@ const DeprecatedGlobalRouter = struct {
 
 pub const FileSystemRouter = struct {
     origin: ?*JSC.RefString = null,
+    base_dir: ?*JSC.RefString = null,
     router: Router,
     arena: *std.heap.ArenaAllocator = undefined,
     allocator: std.mem.Allocator = undefined,
@@ -279,11 +281,16 @@ pub const FileSystemRouter = struct {
         var fs_router = globalThis.allocator().create(FileSystemRouter) catch unreachable;
         fs_router.* = .{
             .origin = if (origin_str.len > 0) vm.refCountedString(origin_str.slice(), null, true) else null,
+            .base_dir = vm.refCountedString(if (root_dir_info.abs_real_path.len > 0)
+                root_dir_info.abs_real_path
+            else
+                root_dir_info.abs_path, null, true),
             .asset_prefix = if (asset_prefix_slice.len > 0) vm.refCountedString(asset_prefix_slice.slice(), null, true) else null,
             .router = router,
             .arena = arena,
             .allocator = allocator,
         };
+        fs_router.base_dir.?.ref();
         return fs_router;
     }
 
@@ -336,13 +343,13 @@ pub const FileSystemRouter = struct {
     pub fn match(this: *FileSystemRouter, globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSValue {
         const argument_ = callframe.arguments(2);
         if (argument_.len == 0) {
-            globalThis.throwInvalidArguments("Expected string or Request", .{});
+            globalThis.throwInvalidArguments("Expected string, Request or Response", .{});
             return JSValue.zero;
         }
 
         const argument = argument_.ptr[0];
         if (argument.isEmptyOrUndefinedOrNull() or !argument.isCell()) {
-            globalThis.throwInvalidArguments("Expected string or Request", .{});
+            globalThis.throwInvalidArguments("Expected string, Request or Response", .{});
             return JSValue.zero;
         }
 
@@ -356,9 +363,13 @@ pub const FileSystemRouter = struct {
                     req.ensureURL() catch unreachable;
                     break :brk ZigString.Slice.fromUTF8NeverFree(req.url).clone(globalThis.allocator()) catch unreachable;
                 }
+
+                if (argument.as(JSC.WebCore.Response)) |resp| {
+                    break :brk ZigString.Slice.fromUTF8NeverFree(resp.url).clone(globalThis.allocator()) catch unreachable;
+                }
             }
 
-            globalThis.throwInvalidArguments("Expected string or Request", .{});
+            globalThis.throwInvalidArguments("Expected string, Request or Response", .{});
             return JSValue.zero;
         };
 
@@ -366,7 +377,7 @@ pub const FileSystemRouter = struct {
             path = ZigString.Slice.fromUTF8NeverFree("/");
         }
 
-        if (strings.hasPrefixComptime(path.slice(), "http:") or strings.hasPrefixComptime(path.slice(), "https:")) {
+        if (strings.hasPrefixComptime(path.slice(), "http://") or strings.hasPrefixComptime(path.slice(), "https://") or strings.hasPrefixComptime(path.slice(), "file://")) {
             const prev_path = path;
             path = ZigString.init(URL.parse(path.slice()).pathname).toSliceFast(globalThis.allocator()).clone(globalThis.allocator()) catch unreachable;
             prev_path.deinit();
@@ -387,7 +398,13 @@ pub const FileSystemRouter = struct {
             return JSValue.jsNull();
         };
 
-        var result = MatchedRoute.init(globalThis.allocator(), route, this.origin, this.asset_prefix) catch unreachable;
+        var result = MatchedRoute.init(
+            globalThis.allocator(),
+            route,
+            this.origin,
+            this.asset_prefix,
+            this.base_dir.?,
+        ) catch unreachable;
         return result.toJS(globalThis);
     }
 
@@ -441,6 +458,10 @@ pub const FileSystemRouter = struct {
             prefix.deref();
         }
 
+        if (this.base_dir) |dir| {
+            dir.deref();
+        }
+
         this.arena.deinit();
     }
 };
@@ -454,6 +475,7 @@ pub const MatchedRoute = struct {
     origin: ?*JSC.RefString = null,
     asset_prefix: ?*JSC.RefString = null,
     needs_deinit: bool = true,
+    base_dir: ?*JSC.RefString = null,
 
     pub usingnamespace JSC.Codegen.JSMatchedRoute;
 
@@ -461,7 +483,13 @@ pub const MatchedRoute = struct {
         return ZigString.init(this.route.name).withEncoding().toValueGC(globalThis);
     }
 
-    pub fn init(allocator: std.mem.Allocator, match: Router.Match, origin: ?*JSC.RefString, asset_prefix: ?*JSC.RefString) !*MatchedRoute {
+    pub fn init(
+        allocator: std.mem.Allocator,
+        match: Router.Match,
+        origin: ?*JSC.RefString,
+        asset_prefix: ?*JSC.RefString,
+        base_dir: *JSC.RefString,
+    ) !*MatchedRoute {
         var params_list = try match.params.clone(allocator);
 
         var route = try allocator.create(MatchedRoute);
@@ -471,7 +499,9 @@ pub const MatchedRoute = struct {
             .route = undefined,
             .asset_prefix = asset_prefix,
             .origin = origin,
+            .base_dir = base_dir,
         };
+        base_dir.ref();
         route.params_list_holder = params_list;
         route.route = &route.route_holder;
         route.route_holder.params = &route.params_list_holder;
@@ -506,6 +536,9 @@ pub const MatchedRoute = struct {
         if (this.asset_prefix) |prefix| {
             prefix.deref();
         }
+
+        if (this.base_dir) |base|
+            base.deref();
 
         bun.default_allocator.destroy(this);
     }
@@ -630,7 +663,8 @@ pub const MatchedRoute = struct {
         var writer = stream.writer();
         JSC.API.Bun.getPublicPathWithAssetPrefix(
             this.route.file_path,
-            if (this.origin) |origin| URL.parse(origin) else URL{},
+            if (this.base_dir) |base_dir| base_dir.slice() else VirtualMachine.vm.bundler.fs.top_level_dir,
+            if (this.origin) |origin| URL.parse(origin.slice()) else URL{},
             if (this.asset_prefix) |prefix| prefix.slice() else "",
             @TypeOf(&writer),
             &writer,

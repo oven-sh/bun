@@ -1809,6 +1809,28 @@ pub const JSMatchedRoute = struct {
         return result;
     }
 
+    extern fn MatchedRoutePrototype__scriptSrcSetCachedValue(JSC.JSValue, *JSC.JSGlobalObject, JSC.JSValue) void;
+
+    extern fn MatchedRoutePrototype__scriptSrcGetCachedValue(JSC.JSValue) JSC.JSValue;
+
+    /// `MatchedRoute.scriptSrc` setter
+    /// This value will be visited by the garbage collector.
+    pub fn scriptSrcSetCached(thisValue: JSC.JSValue, globalObject: *JSC.JSGlobalObject, value: JSC.JSValue) void {
+        JSC.markBinding(@src());
+        MatchedRoutePrototype__scriptSrcSetCachedValue(thisValue, globalObject, value);
+    }
+
+    /// `MatchedRoute.scriptSrc` getter
+    /// This value will be visited by the garbage collector.
+    pub fn scriptSrcGetCached(thisValue: JSC.JSValue) ?JSC.JSValue {
+        JSC.markBinding(@src());
+        const result = MatchedRoutePrototype__scriptSrcGetCachedValue(thisValue);
+        if (result == .zero)
+            return null;
+
+        return result;
+    }
+
     /// Create a new instance of MatchedRoute
     pub fn toJS(this: *MatchedRoute, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
         JSC.markBinding(@src());
@@ -1863,6 +1885,12 @@ pub const JSMatchedRoute = struct {
         if (@TypeOf(MatchedRoute.getQuery) != GetterType)
             @compileLog("Expected MatchedRoute.getQuery to be a getter");
 
+        if (@TypeOf(MatchedRoute.getScriptSrc) != GetterType)
+            @compileLog("Expected MatchedRoute.getScriptSrc to be a getter");
+
+        if (@TypeOf(MatchedRoute.getScriptSrc) != GetterType)
+            @compileLog("Expected MatchedRoute.getScriptSrc to be a getter");
+
         if (!JSC.is_bindgen) {
             @export(MatchedRoute.finalize, .{ .name = "MatchedRouteClass__finalize" });
             @export(MatchedRoute.getFilePath, .{ .name = "MatchedRoutePrototype__getFilePath" });
@@ -1871,6 +1899,7 @@ pub const JSMatchedRoute = struct {
             @export(MatchedRoute.getParams, .{ .name = "MatchedRoutePrototype__getParams" });
             @export(MatchedRoute.getPathname, .{ .name = "MatchedRoutePrototype__getPathname" });
             @export(MatchedRoute.getQuery, .{ .name = "MatchedRoutePrototype__getQuery" });
+            @export(MatchedRoute.getScriptSrc, .{ .name = "MatchedRoutePrototype__getScriptSrc" });
         }
     }
 };

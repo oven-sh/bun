@@ -899,6 +899,7 @@ public:
     mutable JSC::WriteBarrier<JSC::Unknown> m_params;
     mutable JSC::WriteBarrier<JSC::Unknown> m_pathname;
     mutable JSC::WriteBarrier<JSC::Unknown> m_query;
+    mutable JSC::WriteBarrier<JSC::Unknown> m_scriptSrc;
 };
 
 class JSExpect final : public JSC::JSDestructibleObject {

@@ -486,6 +486,7 @@ pub const QueryStringMap = struct {
             var slice = this.map.list.slice();
             const hash = slice.items(.name_hash)[this.i];
             const name_slice = slice.items(.name)[this.i];
+            std.debug.assert(name_slice.length > 0);
             var result = Result{ .name = this.map.str(name_slice), .values = target[0..1] };
             target[0] = this.map.str(slice.items(.value)[this.i]);
 
@@ -859,14 +860,12 @@ fn stringPointerFromStrings(parent: string, in: string) Api.StringPointer {
     if (in.len == 0 or parent.len == 0) return Api.StringPointer{};
 
     if (bun.isSliceInBuffer(in, parent)) {
-        const end = @ptrToInt(parent.ptr) + parent.len;
-        const in_end = @ptrToInt(in.ptr) + in.len;
-        if (in_end < end) return Api.StringPointer{};
+        const offset = @minimum(
+            @maximum(@ptrToInt(in.ptr), @ptrToInt(parent.ptr)) - @minimum(@ptrToInt(in.ptr), @ptrToInt(parent.ptr)),
+            @minimum(in.len, parent.len),
+        );
 
-        return Api.StringPointer{
-            .offset = @truncate(u32, @maximum(@ptrToInt(in.ptr), @ptrToInt(parent.ptr)) - @ptrToInt(parent.ptr)),
-            .length = @truncate(u32, in.len),
-        };
+        return Api.StringPointer{ .offset = @truncate(u32, offset), .length = @truncate(u32, in.len) };
     } else {
         if (strings.indexOf(parent, in)) |i| {
             return Api.StringPointer{

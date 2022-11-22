@@ -5859,6 +5859,12 @@ JSC_DECLARE_CUSTOM_GETTER(MatchedRoutePrototype__pathnameGetterWrap);
 extern "C" JSC::EncodedJSValue MatchedRoutePrototype__getQuery(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject);
 JSC_DECLARE_CUSTOM_GETTER(MatchedRoutePrototype__queryGetterWrap);
 
+extern "C" JSC::EncodedJSValue MatchedRoutePrototype__getScriptSrc(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject);
+JSC_DECLARE_CUSTOM_GETTER(MatchedRoutePrototype__scriptSrcGetterWrap);
+
+extern "C" JSC::EncodedJSValue MatchedRoutePrototype__getScriptSrc(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject);
+JSC_DECLARE_CUSTOM_GETTER(MatchedRoutePrototype__srcGetterWrap);
+
 STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSMatchedRoutePrototype, JSMatchedRoutePrototype::Base);
 
 static const HashTableValue JSMatchedRoutePrototypeTableValues[] = {
@@ -5867,7 +5873,9 @@ static const HashTableValue JSMatchedRoutePrototypeTableValues[] = {
     { "name"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { HashTableValue::GetterSetterType, MatchedRoutePrototype__nameGetterWrap, 0 } },
     { "params"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { HashTableValue::GetterSetterType, MatchedRoutePrototype__paramsGetterWrap, 0 } },
     { "pathname"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { HashTableValue::GetterSetterType, MatchedRoutePrototype__pathnameGetterWrap, 0 } },
-    { "query"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { HashTableValue::GetterSetterType, MatchedRoutePrototype__queryGetterWrap, 0 } }
+    { "query"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { HashTableValue::GetterSetterType, MatchedRoutePrototype__queryGetterWrap, 0 } },
+    { "scriptSrc"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { HashTableValue::GetterSetterType, MatchedRoutePrototype__scriptSrcGetterWrap, 0 } },
+    { "src"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { HashTableValue::GetterSetterType, MatchedRoutePrototype__srcGetterWrap, 0 } }
 };
 
 const ClassInfo JSMatchedRoutePrototype::s_info = { "MatchedRoute"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSMatchedRoutePrototype) };
@@ -6070,6 +6078,68 @@ extern "C" EncodedJSValue MatchedRoutePrototype__queryGetCachedValue(JSC::Encode
     return JSValue::encode(thisObject->m_query.get());
 }
 
+JSC_DEFINE_CUSTOM_GETTER(MatchedRoutePrototype__scriptSrcGetterWrap, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
+{
+    auto& vm = lexicalGlobalObject->vm();
+    Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    JSMatchedRoute* thisObject = jsCast<JSMatchedRoute*>(JSValue::decode(thisValue));
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+
+    if (JSValue cachedValue = thisObject->m_scriptSrc.get())
+        return JSValue::encode(cachedValue);
+
+    JSC::JSValue result = JSC::JSValue::decode(
+        MatchedRoutePrototype__getScriptSrc(thisObject->wrapped(), globalObject));
+    RETURN_IF_EXCEPTION(throwScope, {});
+    thisObject->m_scriptSrc.set(vm, thisObject, result);
+    RELEASE_AND_RETURN(throwScope, JSValue::encode(result));
+}
+
+extern "C" void MatchedRoutePrototype__scriptSrcSetCachedValue(JSC::EncodedJSValue thisValue, JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue value)
+{
+    auto& vm = globalObject->vm();
+    auto* thisObject = jsCast<JSMatchedRoute*>(JSValue::decode(thisValue));
+    thisObject->m_scriptSrc.set(vm, thisObject, JSValue::decode(value));
+}
+
+extern "C" EncodedJSValue MatchedRoutePrototype__scriptSrcGetCachedValue(JSC::EncodedJSValue thisValue)
+{
+    auto* thisObject = jsCast<JSMatchedRoute*>(JSValue::decode(thisValue));
+    return JSValue::encode(thisObject->m_scriptSrc.get());
+}
+
+JSC_DEFINE_CUSTOM_GETTER(MatchedRoutePrototype__srcGetterWrap, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
+{
+    auto& vm = lexicalGlobalObject->vm();
+    Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    JSMatchedRoute* thisObject = jsCast<JSMatchedRoute*>(JSValue::decode(thisValue));
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+
+    if (JSValue cachedValue = thisObject->m_scriptSrc.get())
+        return JSValue::encode(cachedValue);
+
+    JSC::JSValue result = JSC::JSValue::decode(
+        MatchedRoutePrototype__getScriptSrc(thisObject->wrapped(), globalObject));
+    RETURN_IF_EXCEPTION(throwScope, {});
+    thisObject->m_scriptSrc.set(vm, thisObject, result);
+    RELEASE_AND_RETURN(throwScope, JSValue::encode(result));
+}
+
+extern "C" void MatchedRoutePrototype__srcSetCachedValue(JSC::EncodedJSValue thisValue, JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue value)
+{
+    auto& vm = globalObject->vm();
+    auto* thisObject = jsCast<JSMatchedRoute*>(JSValue::decode(thisValue));
+    thisObject->m_scriptSrc.set(vm, thisObject, JSValue::decode(value));
+}
+
+extern "C" EncodedJSValue MatchedRoutePrototype__srcGetCachedValue(JSC::EncodedJSValue thisValue)
+{
+    auto* thisObject = jsCast<JSMatchedRoute*>(JSValue::decode(thisValue));
+    return JSValue::encode(thisObject->m_scriptSrc.get());
+}
+
 void JSMatchedRoutePrototype::finishCreation(JSC::VM& vm, JSC::JSGlobalObject* globalObject)
 {
     Base::finishCreation(vm);
@@ -6166,6 +6236,7 @@ void JSMatchedRoute::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     visitor.append(thisObject->m_params);
     visitor.append(thisObject->m_pathname);
     visitor.append(thisObject->m_query);
+    visitor.append(thisObject->m_scriptSrc);
 }
 
 DEFINE_VISIT_CHILDREN(JSMatchedRoute);
@@ -6182,6 +6253,7 @@ void JSMatchedRoute::visitAdditionalChildren(Visitor& visitor)
     visitor.append(thisObject->m_params);
     visitor.append(thisObject->m_pathname);
     visitor.append(thisObject->m_query);
+    visitor.append(thisObject->m_scriptSrc);
     ;
 }
 

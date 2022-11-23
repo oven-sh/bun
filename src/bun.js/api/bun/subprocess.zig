@@ -700,6 +700,7 @@ pub const Subprocess = struct {
                         .fd = fd,
                         .buffer = bun.ByteList.init(&.{}),
                         .allocator = globalThis.bunVM().allocator,
+                        .auto_close = true,
                     };
                     if (other_fd != bun.invalid_fd) _ = JSC.Node.Syscall.close(other_fd);
                     sink.mode = std.os.S.IFIFO;

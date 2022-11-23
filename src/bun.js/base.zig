@@ -4347,7 +4347,7 @@ pub const FilePoll = struct {
             }
         } else if (comptime Environment.isMac) {
             var changelist = std.mem.zeroes([2]std.os.system.kevent64_s);
-            const one_shot_flag: c_int = 0;
+            const one_shot_flag: u16 = if (!this.flags.contains(.one_shot)) 0 else std.c.EV_ONESHOT;
             changelist[0] = switch (flag) {
                 .readable => .{
                     .ident = @intCast(u64, fd),
@@ -4355,7 +4355,7 @@ pub const FilePoll = struct {
                     .data = 0,
                     .fflags = 0,
                     .udata = @ptrToInt(Pollable.init(this).ptr()),
-                    .flags = std.c.EV_ADD | one_shot_flag | std.c.EV_RECEIPT | std.c.EV_CLEAR,
+                    .flags = std.c.EV_ADD | one_shot_flag,
                     .ext = .{ 0, 0 },
                 },
                 .writable => .{
@@ -4364,7 +4364,7 @@ pub const FilePoll = struct {
                     .data = 0,
                     .fflags = 0,
                     .udata = @ptrToInt(Pollable.init(this).ptr()),
-                    .flags = std.c.EV_ADD | one_shot_flag | std.c.EV_RECEIPT | std.c.EV_CLEAR,
+                    .flags = std.c.EV_ADD | one_shot_flag,
                     .ext = .{ 0, 0 },
                 },
                 .process => .{
@@ -4373,7 +4373,7 @@ pub const FilePoll = struct {
                     .data = 0,
                     .fflags = std.c.NOTE_EXIT,
                     .udata = @ptrToInt(Pollable.init(this).ptr()),
-                    .flags = std.c.EV_ADD | one_shot_flag | std.c.EV_RECEIPT | std.c.EV_CLEAR,
+                    .flags = std.c.EV_ADD | one_shot_flag,
                     .ext = .{ 0, 0 },
                 },
                 else => unreachable,

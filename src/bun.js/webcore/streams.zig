@@ -1662,6 +1662,11 @@ pub const FileSink = struct {
         std.debug.assert(this.next == null);
         this.requested_end = true;
 
+        if (this.fd == bun.invalid_fd) {
+            this.cleanup();
+            return .{ .result = JSValue.jsNumber(this.written) };
+        }
+
         const flushed = this.flush();
 
         if (flushed == .err) {

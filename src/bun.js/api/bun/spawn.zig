@@ -206,8 +206,8 @@ pub const PosixSpawn = struct {
             envp,
         );
         if (comptime bun.Environment.allow_assert)
-            JSC.Node.Syscall.syslog("posix_spawn({s}, \"{s}\", \"{s}\") = {d} ({d})", .{
-                path, std.mem.span(argv), std.mem.span(envp), rc, pid,
+            JSC.Node.Syscall.syslog("posix_spawn({s}) = {d} ({d})", .{
+                path, rc, pid,
             });
 
         if (comptime bun.Environment.isLinux) {

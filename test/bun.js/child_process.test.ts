@@ -203,17 +203,24 @@ describe("spawn()", () => {
   });
 
   it("should allow explicit setting of argv0", async () => {
-    const child = spawn("node", ["--help"], { argv0: "bun" });
-    const result: string = await new Promise((resolve) => {
-      let msg;
-      child.stdout.on("data", (data) => {
-        msg += data.toString();
-      });
-
-      child.stdout.on("close", () => {
-        resolve(msg);
-      });
+    var resolve;
+    const promise = new Promise((resolve1) => {
+      resolve = resolve1;
     });
+    process.env.NO_COLOR = "1";
+    const child = spawn("node", ["--help"], { argv0: "bun" });
+    delete process.env.NO_COLOR;
+    let msg = "";
+
+    child.stdout.on("data", (data) => {
+      msg += data.toString();
+    });
+
+    child.stdout.on("close", () => {
+      resolve(msg);
+    });
+
+    const result = await promise;
     expect(/Open bun's Discord server/.test(result)).toBe(true);
   });
 

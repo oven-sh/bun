@@ -32,7 +32,7 @@ const ResolvePath = @import("./resolve_path.zig");
 const NodeFallbackModules = @import("../node_fallbacks.zig");
 const Mutex = @import("../lock.zig").Lock;
 const StringBoolMap = std.StringHashMap(bool);
-const FileDescriptorType = bun.FileDescriptorType;
+const FileDescriptorType = bun.FileDescriptor;
 
 const allocators = @import("../allocators.zig");
 const Msg = logger.Msg;

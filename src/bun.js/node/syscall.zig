@@ -11,12 +11,13 @@ const JSC = @import("../../jsc.zig");
 const SystemError = JSC.SystemError;
 const bun = @import("../../global.zig");
 const MAX_PATH_BYTES = bun.MAX_PATH_BYTES;
-const fd_t = bun.FileDescriptorType;
+const fd_t = bun.FileDescriptor;
 const C = @import("../../global.zig").C;
 const linux = os.linux;
 const Maybe = JSC.Maybe;
 
 const log = bun.Output.scoped(.SYS, false);
+pub const syslog = log;
 
 // On Linux AARCh64, zig is missing stat & lstat syscalls
 const use_libc = (Environment.isLinux and Environment.isAarch64) or Environment.isMac;

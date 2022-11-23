@@ -4010,6 +4010,7 @@ pub const FilePoll = struct {
         flags.remove(.writable);
         flags.remove(.process);
         flags.remove(.eof);
+        flags.remove(.hup);
 
         flags.setUnion(updated);
         poll.flags = flags;
@@ -4096,7 +4097,9 @@ pub const FilePoll = struct {
                 loader.onPoll(size_or_offset, 0);
             },
 
-            else => {},
+            else => {
+                log("onUpdate: disconnected?", .{});
+            },
         }
     }
 
@@ -4146,15 +4149,20 @@ pub const FilePoll = struct {
             var flags = Flags.Set{};
             if (kqueue_event.filter == std.os.system.EVFILT_READ) {
                 flags.insert(Flags.readable);
+                log("readable", .{});
                 if (kqueue_event.flags & std.os.system.EV_EOF != 0) {
                     flags.insert(Flags.hup);
+                    log("hup", .{});
                 }
             } else if (kqueue_event.filter == std.os.system.EVFILT_WRITE) {
                 flags.insert(Flags.writable);
+                log("writable", .{});
                 if (kqueue_event.flags & std.os.system.EV_EOF != 0) {
                     flags.insert(Flags.hup);
+                    log("hup", .{});
                 }
             } else if (kqueue_event.filter == std.os.system.EVFILT_PROC) {
+                log("proc", .{});
                 flags.insert(Flags.process);
             }
             return flags;
@@ -4339,7 +4347,7 @@ pub const FilePoll = struct {
             }
         } else if (comptime Environment.isMac) {
             var changelist = std.mem.zeroes([2]std.os.system.kevent64_s);
-            const one_shot_flag: @TypeOf(changelist[0].flags) = if (!this.flags.contains(.one_shot)) 0 else std.c.EV_ONESHOT;
+            const one_shot_flag: c_int = 0;
             changelist[0] = switch (flag) {
                 .readable => .{
                     .ident = @intCast(u64, fd),
@@ -4347,7 +4355,7 @@ pub const FilePoll = struct {
                     .data = 0,
                     .fflags = 0,
                     .udata = @ptrToInt(Pollable.init(this).ptr()),
-                    .flags = std.c.EV_ADD | one_shot_flag,
+                    .flags = std.c.EV_ADD | one_shot_flag | std.c.EV_RECEIPT | std.c.EV_CLEAR,
                     .ext = .{ 0, 0 },
                 },
                 .writable => .{
@@ -4356,7 +4364,7 @@ pub const FilePoll = struct {
                     .data = 0,
                     .fflags = 0,
                     .udata = @ptrToInt(Pollable.init(this).ptr()),
-                    .flags = std.c.EV_ADD | one_shot_flag,
+                    .flags = std.c.EV_ADD | one_shot_flag | std.c.EV_RECEIPT | std.c.EV_CLEAR,
                     .ext = .{ 0, 0 },
                 },
                 .process => .{
@@ -4365,7 +4373,7 @@ pub const FilePoll = struct {
                     .data = 0,
                     .fflags = std.c.NOTE_EXIT,
                     .udata = @ptrToInt(Pollable.init(this).ptr()),
-                    .flags = std.c.EV_ADD | one_shot_flag,
+                    .flags = std.c.EV_ADD | one_shot_flag | std.c.EV_RECEIPT | std.c.EV_CLEAR,
                     .ext = .{ 0, 0 },
                 },
                 else => unreachable,
@@ -4399,7 +4407,7 @@ pub const FilePoll = struct {
             // processing an element of the changelist and there is enough room
             // in the eventlist, then the event will be placed in the eventlist
             // with EV_ERROR set in flags and the system error in data.
-            if (changelist[0].flags == std.c.EV_ERROR) {
+            if (changelist[0].flags == std.c.EV_ERROR and changelist[0].data != 0) {
                 return JSC.Maybe(void).errnoSys(changelist[0].data, .kevent).?;
                 // Otherwise, -1 will be returned, and errno will be set to
                 // indicate the error condition.

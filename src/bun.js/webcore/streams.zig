@@ -1604,6 +1604,28 @@ pub const FileSink = struct {
         return poll_ref.isRegistered() and !poll_ref.flags.contains(.needs_rearm);
     }
 
+    pub fn close(this: *FileSink) void {
+        if (this.done)
+            return;
+
+        this.done = true;
+        const fd = this.fd;
+        if (fd != bun.invalid_fd) {
+            if (this.poll_ref) |poll| {
+                this.poll_ref = null;
+                poll.deinit();
+            }
+
+            this.fd = bun.invalid_fd;
+            if (this.auto_close)
+                _ = JSC.Node.Syscall.close(fd);
+            this.signal.close(null);
+        }
+
+        this.pending.result = .done;
+        this.pending.run();
+    }
+
     pub fn end(this: *FileSink, err: ?Syscall.Error) JSC.Node.Maybe(void) {
         if (this.done) {
             return .{ .result = {} };
@@ -2989,6 +3011,11 @@ pub fn ReadableStreamSource(
             pub const Export = shim.exportFunctions(.{
                 .@"load" = load,
             });
+
+            comptime {
+                if (!JSC.is_bindgen)
+                    @export(load, .{ .name = Export[0].symbol_name });
+            }
         };
     };
 }
@@ -3631,6 +3658,10 @@ pub const FIFO = struct {
             return .{ .done = {} };
         }
 
+        if (!this.isWatching()) {
+            this.watch(this.fd);
+        }
+
         const read_result = this.read(buf_, this.to_read);
         if (read_result == .read and read_result.read.len == 0) {
             this.close();
@@ -3649,10 +3680,6 @@ pub const FIFO = struct {
             if (!this.isWatching()) this.watch(this.fd);
             std.debug.assert(this.isWatching());
             return .{ .pending = &this.pending };
-        }
-
-        if (!this.close_on_empty_read and !this.isWatching()) {
-            this.watch(this.fd);
         }
 
         return read_result.toStream(&this.pending, buf_, view, this.close_on_empty_read);
@@ -4458,6 +4485,7 @@ pub fn NewReadyWatcher(
                 break :brk this.poll_ref.?;
             };
             std.debug.assert(poll_ref.fd == fd);
+            std.debug.assert(!this.isWatching());
             switch (poll_ref.register(JSC.VirtualMachine.vm.uws_event_loop.?, flag, true)) {
                 .err => |err| {
                     bun.unreachablePanic("FilePoll.register failed: {d}", .{err.errno});

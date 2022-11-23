@@ -2277,7 +2277,7 @@ static void populateStackFramePosition(const JSC::StackFrame* stackFrame, ZigStr
 
     // Make sure the range is valid
     WTF::StringView sourceString = m_codeBlock->source().provider()->source();
-    if (!expressionStop || expressionStart > static_cast<int>(sourceString.length())) {
+    if (expressionStop < 1 || expressionStart > static_cast<int>(sourceString.length())) {
         return;
     }
 

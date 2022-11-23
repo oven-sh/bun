@@ -205,6 +205,10 @@ pub const PosixSpawn = struct {
             argv,
             envp,
         );
+        if (comptime bun.Environment.allow_assert)
+            JSC.Node.Syscall.syslog("posix_spawn({s}, \"{s}\", \"{s}\") = {d} ({d})", .{
+                path, std.mem.span(argv), std.mem.span(envp), rc, pid,
+            });
 
         if (comptime bun.Environment.isLinux) {
             // rc is negative because it's libc errno

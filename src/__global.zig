@@ -167,5 +167,3 @@ pub export const Bun__userAgent: [*:0]const u8 = Global.user_agent;
 comptime {
     _ = Bun__userAgent;
 }
-
-const Mimalloc = @import("./global.zig").Mimalloc;

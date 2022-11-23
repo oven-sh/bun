@@ -240,6 +240,19 @@ pub fn BabyList(comptime Type: type) type {
         len: u32 = 0,
         cap: u32 = 0,
 
+        pub fn available(this: *@This()) []Type {
+            return this.ptr[this.len..this.cap];
+        }
+
+        pub fn deinitWithAllocator(this: *@This(), allocator: std.mem.Allocator) void {
+            this.listManaged(allocator).deinit();
+            this.* = .{};
+        }
+
+        pub fn contains(this: @This(), item: []const Type) bool {
+            return @ptrToInt(item.ptr) >= @ptrToInt(this.ptr) and @ptrToInt(item.ptr) < @ptrToInt(this.ptr) + this.len;
+        }
+
         pub inline fn init(items: []const Type) ListType {
             @setRuntimeSafety(false);
             return ListType{
@@ -321,6 +334,12 @@ pub fn BabyList(comptime Type: type) type {
         pub fn push(this: *ListType, allocator: std.mem.Allocator, value: Type) OOM!void {
             var list_ = this.list();
             try list_.append(allocator, value);
+            this.update(list_);
+        }
+
+        pub fn append(this: *ListType, allocator: std.mem.Allocator, value: []const Type) OOM!void {
+            var list_ = this.list();
+            try list_.appendSlice(allocator, value);
             this.update(list_);
         }
 

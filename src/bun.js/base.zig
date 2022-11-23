@@ -3931,7 +3931,7 @@ pub const PollRef = struct {
 
     /// Make calling ref() on this poll into a no-op.
     pub fn disable(this: *PollRef) void {
-        this.unref();
+        this.unref(JSC.VirtualMachine.vm);
         this.status = .done;
     }
 
@@ -3987,6 +3987,7 @@ pub const FilePoll = struct {
 
     const FileReader = JSC.WebCore.FileReader;
     const FileSink = JSC.WebCore.FileSink;
+    const FIFO = JSC.WebCore.FIFO;
     const Subprocess = JSC.Subprocess;
     const BufferedInput = Subprocess.BufferedInput;
     const BufferedOutput = Subprocess.BufferedOutput;
@@ -3999,7 +4000,7 @@ pub const FilePoll = struct {
         FileSink,
         Subprocess,
         BufferedInput,
-        BufferedOutput,
+        FIFO,
         Deactivated,
     });
 
@@ -4009,6 +4010,7 @@ pub const FilePoll = struct {
         flags.remove(.writable);
         flags.remove(.process);
         flags.remove(.eof);
+        flags.remove(.hup);
 
         flags.setUnion(updated);
         poll.flags = flags;
@@ -4079,9 +4081,9 @@ pub const FilePoll = struct {
         }
         var ptr = poll.owner;
         switch (ptr.tag()) {
-            @field(Owner.Tag, "FileReader") => {
-                log("onUpdate: FileReader", .{});
-                ptr.as(FileReader).onPoll(size_or_offset, 0);
+            @field(Owner.Tag, "FIFO") => {
+                log("onUpdate: FIFO", .{});
+                ptr.as(FIFO).ready(size_or_offset);
             },
             @field(Owner.Tag, "Subprocess") => {
                 log("onUpdate: Subprocess", .{});
@@ -4095,17 +4097,9 @@ pub const FilePoll = struct {
                 loader.onPoll(size_or_offset, 0);
             },
 
-            @field(Owner.Tag, "BufferedInput") => {
-                log("onUpdate: BufferedInput", .{});
-                var loader = ptr.as(JSC.Subprocess.BufferedInput);
-                loader.onReady(size_or_offset);
+            else => {
+                log("onUpdate: disconnected?", .{});
             },
-            @field(Owner.Tag, "BufferedOutput") => {
-                log("onUpdate: BufferedOutput", .{});
-                var loader = ptr.as(JSC.Subprocess.BufferedOutput);
-                loader.ready(size_or_offset);
-            },
-            else => {},
         }
     }
 
@@ -4155,15 +4149,20 @@ pub const FilePoll = struct {
             var flags = Flags.Set{};
             if (kqueue_event.filter == std.os.system.EVFILT_READ) {
                 flags.insert(Flags.readable);
+                log("readable", .{});
                 if (kqueue_event.flags & std.os.system.EV_EOF != 0) {
-                    flags.insert(Flags.eof);
+                    flags.insert(Flags.hup);
+                    log("hup", .{});
                 }
             } else if (kqueue_event.filter == std.os.system.EVFILT_WRITE) {
                 flags.insert(Flags.writable);
+                log("writable", .{});
                 if (kqueue_event.flags & std.os.system.EV_EOF != 0) {
                     flags.insert(Flags.hup);
+                    log("hup", .{});
                 }
             } else if (kqueue_event.filter == std.os.system.EVFILT_PROC) {
+                log("proc", .{});
                 flags.insert(Flags.process);
             }
             return flags;
@@ -4245,17 +4244,15 @@ pub const FilePoll = struct {
         this.flags.insert(.has_incremented_poll_count);
     }
 
-    pub fn init(vm: *JSC.VirtualMachine, fd: JSC.Node.FileDescriptor, flags: Flags.Struct, comptime Type: type, owner: *Type) *FilePoll {
+    pub fn init(vm: *JSC.VirtualMachine, fd: bun.FileDescriptor, flags: Flags.Struct, comptime Type: type, owner: *Type) *FilePoll {
         return initWithOwner(vm, fd, flags, Owner.init(owner));
     }
 
-    pub fn initWithOwner(vm: *JSC.VirtualMachine, fd: JSC.Node.FileDescriptor, flags: Flags.Struct, owner: Owner) *FilePoll {
+    pub fn initWithOwner(vm: *JSC.VirtualMachine, fd: bun.FileDescriptor, flags: Flags.Struct, owner: Owner) *FilePoll {
         var poll = vm.rareData().filePolls(vm).get();
-        poll.* = .{
-            .fd = @intCast(u32, fd),
-            .flags = Flags.Set.init(flags),
-            .owner = owner,
-        };
+        poll.fd = @intCast(u32, fd);
+        poll.flags = Flags.Set.init(flags);
+        poll.owner = owner;
         return poll;
     }
 
@@ -4350,7 +4347,7 @@ pub const FilePoll = struct {
             }
         } else if (comptime Environment.isMac) {
             var changelist = std.mem.zeroes([2]std.os.system.kevent64_s);
-            const one_shot_flag: @TypeOf(changelist[0].flags) = if (!this.flags.contains(.one_shot)) 0 else std.c.EV_ONESHOT;
+            const one_shot_flag: u16 = if (!this.flags.contains(.one_shot)) 0 else std.c.EV_ONESHOT;
             changelist[0] = switch (flag) {
                 .readable => .{
                     .ident = @intCast(u64, fd),
@@ -4410,7 +4407,7 @@ pub const FilePoll = struct {
             // processing an element of the changelist and there is enough room
             // in the eventlist, then the event will be placed in the eventlist
             // with EV_ERROR set in flags and the system error in data.
-            if (changelist[0].flags == std.c.EV_ERROR) {
+            if (changelist[0].flags == std.c.EV_ERROR and changelist[0].data != 0) {
                 return JSC.Maybe(void).errnoSys(changelist[0].data, .kevent).?;
                 // Otherwise, -1 will be returned, and errno will be set to
                 // indicate the error condition.
@@ -4440,7 +4437,7 @@ pub const FilePoll = struct {
         return JSC.Maybe(void).success;
     }
 
-    pub const invalid_fd = JSC.Node.invalid_fd;
+    const invalid_fd = bun.invalid_fd;
 
     pub fn unregister(this: *FilePoll, loop: *uws.Loop) JSC.Maybe(void) {
         if (!(this.flags.contains(.poll_readable) or this.flags.contains(.poll_writable) or this.flags.contains(.poll_process))) {

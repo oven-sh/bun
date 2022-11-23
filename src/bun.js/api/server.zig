@@ -1428,10 +1428,17 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
 
             stream.value.ensureStillAlive();
 
-            if (!stream.isLocked(this.server.globalThis)) {
-                streamLog("is not locked", .{});
-                this.renderMissing();
-                return;
+            const is_in_progress = response_stream.sink.has_backpressure or !(response_stream.sink.wrote == 0 and
+                response_stream.sink.buffer.len == 0);
+
+            if (!stream.isLocked(this.server.globalThis) and !is_in_progress) {
+                if (JSC.WebCore.ReadableStream.fromJS(stream.value, this.server.globalThis)) |comparator| {
+                    if (std.meta.activeTag(comparator.ptr) == std.meta.activeTag(stream.ptr)) {
+                        streamLog("is not locked", .{});
+                        this.renderMissing();
+                        return;
+                    }
+                }
             }
 
             this.resp.onAborted(*ResponseStream, ResponseStream.onAborted, &response_stream.sink);

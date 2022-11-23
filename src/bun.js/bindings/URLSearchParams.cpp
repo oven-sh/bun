@@ -96,9 +96,11 @@ void URLSearchParams::set(const String& name, const String& value)
             return false;
         });
         updateURL();
+        needsSorting = true;
         return;
     }
     m_pairs.append({ name, value });
+    needsSorting = true;
     updateURL();
 }
 
@@ -106,6 +108,7 @@ void URLSearchParams::append(const String& name, const String& value)
 {
     m_pairs.append({ name, value });
     updateURL();
+    needsSorting = true;
 }
 
 Vector<String> URLSearchParams::getAll(const String& name) const
@@ -122,10 +125,12 @@ Vector<String> URLSearchParams::getAll(const String& name) const
 
 void URLSearchParams::remove(const String& name)
 {
-    m_pairs.removeAllMatching([&](const auto& pair) {
-        return pair.key == name;
-    });
+    if (!m_pairs.removeAllMatching([&](const auto& pair) {
+            return pair.key == name;
+        }))
+        return;
     updateURL();
+    needsSorting = true;
 }
 
 String URLSearchParams::toString() const

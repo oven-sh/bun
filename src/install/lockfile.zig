@@ -2946,7 +2946,6 @@ pub fn deinit(this: *Lockfile) void {
     this.packages.deinit(this.allocator);
     this.unique_packages.deinit(this.allocator);
     this.string_pool.deinit();
-    this.* = undefined;
 }
 
 const Buffers = struct {

@@ -43,7 +43,6 @@ pub fn DeclEnum(comptime T: type) type {
     });
 }
 
-pub const FileDescriptor = os.fd_t;
 pub const Flavor = enum {
     sync,
     promise,
@@ -602,7 +601,7 @@ pub const PathLike = union(Tag) {
 };
 
 pub const Valid = struct {
-    pub fn fileDescriptor(fd: FileDescriptor, ctx: JSC.C.JSContextRef, exception: JSC.C.ExceptionRef) bool {
+    pub fn fileDescriptor(fd: bun.FileDescriptor, ctx: JSC.C.JSContextRef, exception: JSC.C.ExceptionRef) bool {
         if (fd < 0) {
             JSC.throwInvalidArguments("Invalid file descriptor, must not be negative number", .{}, ctx, exception);
             return false;
@@ -756,14 +755,14 @@ pub const ArgumentsSlice = struct {
     }
 };
 
-pub fn fileDescriptorFromJS(ctx: JSC.C.JSContextRef, value: JSC.JSValue, exception: JSC.C.ExceptionRef) ?FileDescriptor {
+pub fn fileDescriptorFromJS(ctx: JSC.C.JSContextRef, value: JSC.JSValue, exception: JSC.C.ExceptionRef) ?bun.FileDescriptor {
     if (!value.isNumber() or value.isBigInt()) return null;
     const fd = value.toInt32();
     if (!Valid.fileDescriptor(fd, ctx, exception)) {
         return null;
     }
 
-    return @truncate(FileDescriptor, fd);
+    return @truncate(bun.FileDescriptor, fd);
 }
 
 var _get_time_prop_string: ?JSC.C.JSStringRef = null;
@@ -826,18 +825,18 @@ pub fn modeFromJS(ctx: JSC.C.JSContextRef, value: JSC.JSValue, exception: JSC.C.
 
 pub const PathOrFileDescriptor = union(Tag) {
     path: PathLike,
-    fd: FileDescriptor,
+    fd: bun.FileDescriptor,
 
     pub const Tag = enum { fd, path };
 
-    pub fn hash(this: PathOrFileDescriptor) u64 {
+    pub fn hash(this: JSC.Node.PathOrFileDescriptor) u64 {
         return switch (this) {
             .path => std.hash.Wyhash.hash(0, this.path.slice()),
             .fd => std.hash.Wyhash.hash(0, std.mem.asBytes(&this.fd)),
         };
     }
 
-    pub fn format(this: PathOrFileDescriptor, comptime fmt: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+    pub fn format(this: JSC.Node.PathOrFileDescriptor, comptime fmt: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
         if (fmt.len != 0 and fmt != "s") {
             @compileError("Unsupported format argument: '" ++ fmt ++ "'.");
         }
@@ -847,20 +846,20 @@ pub const PathOrFileDescriptor = union(Tag) {
         }
     }
 
-    pub fn fromJS(ctx: JSC.C.JSContextRef, arguments: *ArgumentsSlice, allocator: std.mem.Allocator, exception: JSC.C.ExceptionRef) ?PathOrFileDescriptor {
+    pub fn fromJS(ctx: JSC.C.JSContextRef, arguments: *ArgumentsSlice, allocator: std.mem.Allocator, exception: JSC.C.ExceptionRef) ?JSC.Node.PathOrFileDescriptor {
         const first = arguments.next() orelse return null;
 
         if (fileDescriptorFromJS(ctx, first, exception)) |fd| {
             arguments.eat();
-            return PathOrFileDescriptor{ .fd = fd };
+            return JSC.Node.PathOrFileDescriptor{ .fd = fd };
         }
 
         if (exception.* != null) return null;
 
-        return PathOrFileDescriptor{ .path = PathLike.fromJSWithAllocator(ctx, arguments, allocator, exception) orelse return null };
+        return JSC.Node.PathOrFileDescriptor{ .path = PathLike.fromJSWithAllocator(ctx, arguments, allocator, exception) orelse return null };
     }
 
-    pub fn toJS(this: PathOrFileDescriptor, ctx: JSC.C.JSContextRef, exception: JSC.C.ExceptionRef) JSC.C.JSValueRef {
+    pub fn toJS(this: JSC.Node.PathOrFileDescriptor, ctx: JSC.C.JSContextRef, exception: JSC.C.ExceptionRef) JSC.C.JSValueRef {
         return switch (this) {
             .path => this.path.toJS(ctx, exception),
             .fd => JSC.JSValue.jsNumberFromInt32(@intCast(i32, this.fd)).asRef(),
@@ -1578,6 +1577,7 @@ pub const Path = struct {
             if (name_.isEmpty()) {
                 return JSC.ZigString.Empty.toValue(globalThis);
             }
+
             const out = std.fmt.allocPrint(allocator, "{s}{s}", .{ name_, ext }) catch unreachable;
             defer allocator.free(out);
 

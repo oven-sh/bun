@@ -218,6 +218,7 @@ it("Bun.file() read text from pipe", async () => {
     unlinkSync("/tmp/fifo");
   } catch (e) {}
 
+  console.log("here");
   mkfifo("/tmp/fifo", 0o666);
 
   // 65k so its less than the max on linux
@@ -232,6 +233,8 @@ it("Bun.file() read text from pipe", async () => {
       "/tmp/fifo",
     ],
     stderr: "inherit",
+    stdout: null,
+    stdin: null,
     env: {
       FIFO_TEST: large,
     },
@@ -239,32 +242,17 @@ it("Bun.file() read text from pipe", async () => {
   const exited = proc.exited;
   proc.ref();
 
-  var prom = new Promise((resolve, reject) => {
-    setTimeout(() => {
-      (async function () {
-        var reader = out.getReader();
-        var total = 0;
-
-        while (true) {
-          const chunk = await reader.read();
-          total += chunk.value?.byteLength || 0;
-          if (chunk.value) chunks.push(chunk.value);
-
-          if (chunk.done || total >= large.length) {
-            const output = new TextDecoder()
-              .decode(new Uint8Array(Buffer.concat(chunks)))
-              .trim();
-            reader.releaseLock();
-            resolve(output);
-            break;
-          }
-        }
-      })();
-    });
-  });
+  const prom = (async function () {
+    while (chunks.length === 0) {
+      for await (const chunk of out) {
+        chunks.push(chunk);
+      }
+      console.log("done");
+    }
+  })();
 
   const [status, output] = await Promise.all([exited, prom]);
-
+  console.log("here");
   expect(output.length).toBe(large.length);
   expect(output).toBe(large);
   expect(status).toBe(0);

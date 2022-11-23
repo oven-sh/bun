@@ -22,7 +22,7 @@ const C = bun.C;
 const Ref = @import("ast/base.zig").Ref;
 const StoredFileDescriptorType = bun.StoredFileDescriptorType;
 const FeatureFlags = bun.FeatureFlags;
-const FileDescriptorType = bun.FileDescriptorType;
+const FileDescriptorType = bun.FileDescriptor;
 
 const expect = std.testing.expect;
 const ImportKind = importRecord.ImportKind;

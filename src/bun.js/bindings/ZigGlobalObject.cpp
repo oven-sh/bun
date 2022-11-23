@@ -2382,6 +2382,7 @@ void GlobalObject::finishCreation(VM& vm)
             auto& global = *reinterpret_cast<Zig::GlobalObject*>(init.owner);
             if (global.crypto == nullptr) {
                 global.crypto = WebCore::SubtleCrypto::createPtr(global.scriptExecutionContext());
+                global.crypto->ref();
             }
 
             init.set(

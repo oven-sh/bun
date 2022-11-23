@@ -1,5 +1,13 @@
-import { expect } from "bun:test";
+import { expect as expect_ } from "bun:test";
+import { gcTick } from "gc";
 import assertNode from "node:assert";
+
+const expect = (actual) => {
+  gcTick();
+  const ret = expect_(actual);
+  gcTick();
+  return ret;
+};
 
 export const strictEqual = (...args) => {
   let error = null;

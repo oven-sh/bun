@@ -1,4 +1,5 @@
-import { describe, it, expect } from "bun:test";
+import { describe, it as it_, expect as expect_ } from "bun:test";
+import { gcTick } from "gc";
 import {
   ChildProcess,
   spawn,
@@ -10,6 +11,42 @@ import {
   execSync,
 } from "node:child_process";
 import { tmpdir } from "node:os";
+
+const expect: typeof expect_ = (actual: unknown) => {
+  gcTick();
+  const ret = expect_(actual);
+  gcTick();
+  return ret;
+};
+
+const it: typeof it_ = (label, fn) => {
+  const hasDone = fn.length === 1;
+  if (fn.constructor.name === "AsyncFunction" && hasDone) {
+    return it_(label, async (done) => {
+      gcTick();
+      await fn(done);
+      gcTick();
+    });
+  } else if (hasDone) {
+    return it_(label, (done) => {
+      gcTick();
+      fn(done);
+      gcTick();
+    });
+  } else if (fn.constructor.name === "AsyncFunction") {
+    return it_(label, async () => {
+      gcTick();
+      await fn();
+      gcTick();
+    });
+  } else {
+    return it_(label, () => {
+      gcTick();
+      fn();
+      gcTick();
+    });
+  }
+};
 
 const debug = process.env.DEBUG ? console.log : () => {};
 
@@ -166,17 +203,24 @@ describe("spawn()", () => {
   });
 
   it("should allow explicit setting of argv0", async () => {
-    const child = spawn("node", ["--help"], { argv0: "bun" });
-    const result: string = await new Promise((resolve) => {
-      let msg;
-      child.stdout.on("data", (data) => {
-        msg += data.toString();
-      });
-
-      child.stdout.on("close", () => {
-        resolve(msg);
-      });
+    var resolve;
+    const promise = new Promise((resolve1) => {
+      resolve = resolve1;
     });
+    process.env.NO_COLOR = "1";
+    const child = spawn("node", ["--help"], { argv0: "bun" });
+    delete process.env.NO_COLOR;
+    let msg = "";
+
+    child.stdout.on("data", (data) => {
+      msg += data.toString();
+    });
+
+    child.stdout.on("close", () => {
+      resolve(msg);
+    });
+
+    const result = await promise;
     expect(/Open bun's Discord server/.test(result)).toBe(true);
   });
 

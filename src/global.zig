@@ -413,3 +413,14 @@ pub const Mimalloc = @import("./allocators/mimalloc.zig");
 pub fn isSliceInBuffer(slice: []const u8, buffer: []const u8) bool {
     return slice.len > 0 and @ptrToInt(buffer.ptr) <= @ptrToInt(slice.ptr) and ((@ptrToInt(slice.ptr) + slice.len) <= (@ptrToInt(buffer.ptr) + buffer.len));
 }
+
+pub fn rangeOfSliceInBuffer(slice: []const u8, buffer: []const u8) ?[2]u32 {
+    if (!isSliceInBuffer(slice, buffer)) return null;
+    const r = [_]u32{
+        @truncate(u32, @ptrToInt(slice.ptr) -| @ptrToInt(buffer.ptr)),
+        @truncate(u32, slice.len),
+    };
+    if (comptime Environment.allow_assert)
+        std.debug.assert(strings.eqlLong(slice, buffer[r[0]..][0..r[1]], false));
+    return r;
+}

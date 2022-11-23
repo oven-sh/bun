@@ -3762,3 +3762,32 @@ pub fn isIPAddress(input: []const u8) bool {
         return false;
     }
 }
+
+pub fn cloneNormalizingSeparators(
+    allocator: std.mem.Allocator,
+    input: []const u8,
+) ![]u8 {
+    // remove duplicate slashes in the file path
+    var base = withoutTrailingSlash(input);
+    var tokenized = std.mem.tokenize(u8, base, std.fs.path.sep_str);
+    var buf = try allocator.alloc(u8, base.len + 2);
+    std.debug.assert(base.len > 0);
+    if (base[0] == std.fs.path.sep) {
+        buf[0] = std.fs.path.sep;
+    }
+    var remain = buf[@as(usize, @boolToInt(base[0] == std.fs.path.sep))..];
+
+    while (tokenized.next()) |token| {
+        if (token.len == 0) continue;
+        std.mem.copy(u8, remain, token);
+        remain[token.len..][0] = std.fs.path.sep;
+        remain = remain[token.len + 1 ..];
+    }
+    if ((remain.ptr - 1) != buf.ptr and (remain.ptr - 1)[0] != std.fs.path.sep) {
+        remain[0] = std.fs.path.sep;
+        remain = remain[1..];
+    }
+    remain[0] = 0;
+
+    return buf[0 .. @ptrToInt(remain.ptr) - @ptrToInt(buf.ptr)];
+}

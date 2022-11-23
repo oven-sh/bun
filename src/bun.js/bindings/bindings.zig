@@ -236,8 +236,8 @@ pub const ZigString = extern struct {
         }
 
         pub fn cloneWithTrailingSlash(this: Slice, allocator: std.mem.Allocator) !Slice {
-            var duped = try std.fmt.allocPrintZ(allocator, "{s}/", .{strings.withoutTrailingSlash(this.slice())});
-            return Slice{ .allocator = NullableAllocator.init(allocator), .ptr = duped.ptr, .len = @truncate(u32, duped.len) };
+            var buf = try strings.cloneNormalizingSeparators(allocator, this.slice());
+            return Slice{ .allocator = NullableAllocator.init(allocator), .ptr = buf.ptr, .len = @truncate(u32, buf.len) };
         }
 
         pub fn cloneZ(this: Slice, allocator: std.mem.Allocator) !Slice {

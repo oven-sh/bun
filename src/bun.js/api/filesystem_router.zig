@@ -290,6 +290,7 @@ pub const FileSystemRouter = struct {
             .arena = arena,
             .allocator = allocator,
         };
+        router.config.dir = fs_router.base_dir.?.slice();
         fs_router.base_dir.?.ref();
         return fs_router;
     }
@@ -701,8 +702,10 @@ pub const MatchedRoute = struct {
         this: *MatchedRoute,
         globalThis: *JSC.JSGlobalObject,
     ) callconv(.C) JSC.JSValue {
-        if (this.route.query_string.len == 0) {
+        if (this.route.query_string.len == 0 and this.route.params.len == 0) {
             return JSValue.createEmptyObject(globalThis, 0);
+        } else if (this.route.query_string.len == 0) {
+            return this.getParams(globalThis);
         }
 
         if (this.query_string_map == null) {

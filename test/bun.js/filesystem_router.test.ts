@@ -101,7 +101,22 @@ it("should handle empty dirs", () => {
   expect(Object.values(routes).length).toBe(0);
 });
 
-it("should support dynamic routes", () => {
+it("should match dynamic routes", () => {
+  // set up the test
+  const { dir } = make(["index.tsx", "posts/[id].tsx", "posts.tsx"]);
+
+  const router = new Bun.FileSystemRouter({
+    dir,
+    style: "nextjs",
+  });
+
+  const { name, filePath } = router.match("/posts/hello-world");
+
+  expect(name).toBe("/posts/[id]");
+  expect(filePath).toBe(`${dir}/posts/[id].tsx`);
+});
+
+it(".params works on dynamic routes", () => {
   // set up the test
   const { dir } = make(["index.tsx", "posts/[id].tsx", "posts.tsx"]);
 
@@ -111,14 +126,10 @@ it("should support dynamic routes", () => {
   });
 
   const {
-    name,
     params: { id },
-    filePath,
   } = router.match("/posts/hello-world");
 
   expect(id).toBe("hello-world");
-  expect(name).toBe("/posts/[id]");
-  expect(filePath).toBe(`${dir}/[id].tsx`);
 });
 
 it("should support static routes", () => {
@@ -299,6 +310,80 @@ it("assetPrefix, src, and origin", async () => {
     expect(checkThisDoesntCrash).toBeUndefined();
 
     expect(src).toBe("https://nextjs.org/_next/static/posts/[id].tsx");
+    expect(filePath).toBe(`${dir}/posts/[id].tsx`);
+  }
+});
+
+it(".query works", () => {
+  // set up the test
+  const { dir } = make(["posts.tsx"]);
+
+  const router = new Bun.FileSystemRouter({
+    dir,
+    style: "nextjs",
+    assetPrefix: "/_next/static/",
+    origin: "https://nextjs.org",
+  });
+
+  for (let [current, object] of [
+    [new URL("https://example.com/posts?hello=world").href, { hello: "world" }],
+    [
+      new URL("https://example.com/posts?hello=world&second=2").href,
+      { hello: "world", second: "2" },
+    ],
+    [
+      new URL("https://example.com/posts?hello=world&second=2&third=3").href,
+      { hello: "world", second: "2", third: "3" },
+    ],
+    [new URL("https://example.com/posts").href, {}],
+  ]) {
+    const { name, src, filePath, checkThisDoesntCrash, query } =
+      router.match(current);
+    expect(name).toBe("/posts");
+
+    // check nothing is weird on the MatchedRoute object
+    expect(checkThisDoesntCrash).toBeUndefined();
+
+    expect(JSON.stringify(query)).toBe(JSON.stringify(object));
+    expect(filePath).toBe(`${dir}/posts.tsx`);
+  }
+});
+
+it(".query works with dynamic routes, including params", () => {
+  // set up the test
+  const { dir } = make(["posts/[id].tsx"]);
+
+  const router = new Bun.FileSystemRouter({
+    dir,
+    style: "nextjs",
+    assetPrefix: "/_next/static/",
+    origin: "https://nextjs.org",
+  });
+
+  for (let [current, object] of [
+    [
+      new URL("https://example.com/posts/123?hello=world").href,
+      { id: "123", hello: "world" },
+    ],
+    [
+      new URL("https://example.com/posts/123?hello=world&second=2").href,
+      { id: "123", hello: "world", second: "2" },
+    ],
+    [
+      new URL("https://example.com/posts/123?hello=world&second=2&third=3")
+        .href,
+      { id: "123", hello: "world", second: "2", third: "3" },
+    ],
+    [new URL("https://example.com/posts/123").href, { id: "123" }],
+  ]) {
+    const { name, src, filePath, checkThisDoesntCrash, query } =
+      router.match(current);
+    expect(name).toBe("/posts/[id]");
+
+    // check nothing is weird on the MatchedRoute object
+    expect(checkThisDoesntCrash).toBeUndefined();
+
+    expect(JSON.stringify(query)).toBe(JSON.stringify(object));
     expect(filePath).toBe(`${dir}/posts/[id].tsx`);
   }
 });

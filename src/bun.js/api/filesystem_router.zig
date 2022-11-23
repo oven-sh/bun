@@ -320,7 +320,7 @@ pub const FileSystemRouter = struct {
         };
 
         var router = Router.init(vm.bundler.fs, allocator, .{
-            .dir = this.router.config.dir,
+            .dir = allocator.dupe(u8, this.router.config.dir) catch unreachable,
             .extensions = allocator.dupe(string, this.router.config.extensions) catch unreachable,
             .asset_prefix_path = this.router.config.asset_prefix_path,
         }) catch unreachable;
@@ -338,6 +338,7 @@ pub const FileSystemRouter = struct {
         this.arena = arena;
         @This().routesSetCached(this_value, globalThis, JSC.JSValue.zero);
         this.allocator = allocator;
+        this.router = router;
         return this_value;
     }
 

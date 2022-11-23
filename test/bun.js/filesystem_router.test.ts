@@ -349,6 +349,22 @@ it(".query works", () => {
   }
 });
 
+it("reload() works", () => {
+  // set up the test
+  const { dir } = make(["posts.tsx"]);
+
+  const router = new Bun.FileSystemRouter({
+    dir,
+    style: "nextjs",
+    assetPrefix: "/_next/static/",
+    origin: "https://nextjs.org",
+  });
+
+  expect(router.match("/posts").name).toBe("/posts");
+  router.reload();
+  expect(router.match("/posts").name).toBe("/posts");
+});
+
 it(".query works with dynamic routes, including params", () => {
   // set up the test
   const { dir } = make(["posts/[id].tsx"]);

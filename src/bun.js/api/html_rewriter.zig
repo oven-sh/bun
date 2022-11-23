@@ -817,7 +817,7 @@ fn HandlerCallback(
 ) (fn (*HandlerType, *LOLHTMLType) bool) {
     return struct {
         pub fn callback(this: *HandlerType, value: *LOLHTMLType) bool {
- JSC.markBinding(@src());
+            JSC.markBinding(@src());
             var zig_element = bun.default_allocator.create(ZigType) catch unreachable;
             @field(zig_element, field_name) = value;
             // At the end of this scope, the value is no longer valid

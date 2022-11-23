@@ -132,7 +132,7 @@ pub fn IOTask(comptime Context: type) type {
         pub fn deinit(this: *This) void {
             var allocator = this.allocator;
             this.ref.unref(this.event_loop.virtual_machine);
-            
+
             allocator.destroy(this);
         }
     };

@@ -3,25 +3,25 @@ void GlobalObject::initGeneratedLazyClasses() {
               [](LazyClassStructure::Initializer& init) {
                  init.setPrototype(WebCore::JSTCPSocket::createPrototype(init.vm, reinterpret_cast<Zig::GlobalObject*>(init.global)));
                  init.setStructure(WebCore::JSTCPSocket::createStructure(init.vm, init.global, init.prototype));
-                 init.setConstructor(WebCore::JSTCPSocket::createConstructor(init.vm, init.global, init.prototype));
+                 
               });
     m_JSTLSSocket.initLater(
               [](LazyClassStructure::Initializer& init) {
                  init.setPrototype(WebCore::JSTLSSocket::createPrototype(init.vm, reinterpret_cast<Zig::GlobalObject*>(init.global)));
                  init.setStructure(WebCore::JSTLSSocket::createStructure(init.vm, init.global, init.prototype));
-                 init.setConstructor(WebCore::JSTLSSocket::createConstructor(init.vm, init.global, init.prototype));
+                 
               });
     m_JSListener.initLater(
               [](LazyClassStructure::Initializer& init) {
                  init.setPrototype(WebCore::JSListener::createPrototype(init.vm, reinterpret_cast<Zig::GlobalObject*>(init.global)));
                  init.setStructure(WebCore::JSListener::createStructure(init.vm, init.global, init.prototype));
-                 init.setConstructor(WebCore::JSListener::createConstructor(init.vm, init.global, init.prototype));
+                 
               });
     m_JSSubprocess.initLater(
               [](LazyClassStructure::Initializer& init) {
                  init.setPrototype(WebCore::JSSubprocess::createPrototype(init.vm, reinterpret_cast<Zig::GlobalObject*>(init.global)));
                  init.setStructure(WebCore::JSSubprocess::createStructure(init.vm, init.global, init.prototype));
-                 init.setConstructor(WebCore::JSSubprocess::createConstructor(init.vm, init.global, init.prototype));
+                 
               });
     m_JSSHA1.initLater(
               [](LazyClassStructure::Initializer& init) {

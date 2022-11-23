@@ -66,13 +66,6 @@ pub const JSTCPSocket = struct {
         return result;
     }
 
-    /// Get the TCPSocket constructor value.
-    /// This loads lazily from the global object.
-    pub fn getConstructor(globalObject: *JSC.JSGlobalObject) JSC.JSValue {
-        JSC.markBinding(@src());
-        return TCPSocket__getConstructor(globalObject);
-    }
-
     /// Create a new instance of TCPSocket
     pub fn toJS(this: *TCPSocket, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
         JSC.markBinding(@src());
@@ -105,10 +98,6 @@ pub const JSTCPSocket = struct {
     extern fn TCPSocket__dangerouslySetPtr(JSC.JSValue, ?*TCPSocket) bool;
 
     comptime {
-        if (@TypeOf(TCPSocket.constructor) != (fn (*JSC.JSGlobalObject, *JSC.CallFrame) callconv(.C) ?*TCPSocket)) {
-            @compileLog("TCPSocket.constructor is not a constructor");
-        }
-
         if (@TypeOf(TCPSocket.finalize) != (fn (*TCPSocket) callconv(.C) void)) {
             @compileLog("TCPSocket.finalize is not a finalizer");
         }
@@ -147,7 +136,6 @@ pub const JSTCPSocket = struct {
         if (@TypeOf(TCPSocket.write) != CallbackType)
             @compileLog("Expected TCPSocket.write to be a callback");
         if (!JSC.is_bindgen) {
-            @export(TCPSocket.constructor, .{ .name = "TCPSocketClass__construct" });
             @export(TCPSocket.end, .{ .name = "TCPSocketPrototype__end" });
             @export(TCPSocket.finalize, .{ .name = "TCPSocketClass__finalize" });
             @export(TCPSocket.flush, .{ .name = "TCPSocketPrototype__flush" });
@@ -226,13 +214,6 @@ pub const JSTLSSocket = struct {
         return result;
     }
 
-    /// Get the TLSSocket constructor value.
-    /// This loads lazily from the global object.
-    pub fn getConstructor(globalObject: *JSC.JSGlobalObject) JSC.JSValue {
-        JSC.markBinding(@src());
-        return TLSSocket__getConstructor(globalObject);
-    }
-
     /// Create a new instance of TLSSocket
     pub fn toJS(this: *TLSSocket, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
         JSC.markBinding(@src());
@@ -265,10 +246,6 @@ pub const JSTLSSocket = struct {
     extern fn TLSSocket__dangerouslySetPtr(JSC.JSValue, ?*TLSSocket) bool;
 
     comptime {
-        if (@TypeOf(TLSSocket.constructor) != (fn (*JSC.JSGlobalObject, *JSC.CallFrame) callconv(.C) ?*TLSSocket)) {
-            @compileLog("TLSSocket.constructor is not a constructor");
-        }
-
         if (@TypeOf(TLSSocket.finalize) != (fn (*TLSSocket) callconv(.C) void)) {
             @compileLog("TLSSocket.finalize is not a finalizer");
         }
@@ -307,7 +284,6 @@ pub const JSTLSSocket = struct {
         if (@TypeOf(TLSSocket.write) != CallbackType)
             @compileLog("Expected TLSSocket.write to be a callback");
         if (!JSC.is_bindgen) {
-            @export(TLSSocket.constructor, .{ .name = "TLSSocketClass__construct" });
             @export(TLSSocket.end, .{ .name = "TLSSocketPrototype__end" });
             @export(TLSSocket.finalize, .{ .name = "TLSSocketClass__finalize" });
             @export(TLSSocket.flush, .{ .name = "TLSSocketPrototype__flush" });
@@ -386,13 +362,6 @@ pub const JSListener = struct {
         return result;
     }
 
-    /// Get the Listener constructor value.
-    /// This loads lazily from the global object.
-    pub fn getConstructor(globalObject: *JSC.JSGlobalObject) JSC.JSValue {
-        JSC.markBinding(@src());
-        return Listener__getConstructor(globalObject);
-    }
-
     /// Create a new instance of Listener
     pub fn toJS(this: *Listener, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
         JSC.markBinding(@src());
@@ -425,10 +394,6 @@ pub const JSListener = struct {
     extern fn Listener__dangerouslySetPtr(JSC.JSValue, ?*Listener) bool;
 
     comptime {
-        if (@TypeOf(Listener.constructor) != (fn (*JSC.JSGlobalObject, *JSC.CallFrame) callconv(.C) ?*Listener)) {
-            @compileLog("Listener.constructor is not a constructor");
-        }
-
         if (@TypeOf(Listener.finalize) != (fn (*Listener) callconv(.C) void)) {
             @compileLog("Listener.finalize is not a finalizer");
         }
@@ -456,7 +421,6 @@ pub const JSListener = struct {
         if (@TypeOf(Listener.unref) != CallbackType)
             @compileLog("Expected Listener.unref to be a callback");
         if (!JSC.is_bindgen) {
-            @export(Listener.constructor, .{ .name = "ListenerClass__construct" });
             @export(Listener.finalize, .{ .name = "ListenerClass__finalize" });
             @export(Listener.getData, .{ .name = "ListenerPrototype__getData" });
             @export(Listener.getHostname, .{ .name = "ListenerPrototype__getHostname" });
@@ -551,13 +515,6 @@ pub const JSSubprocess = struct {
         return result;
     }
 
-    /// Get the Subprocess constructor value.
-    /// This loads lazily from the global object.
-    pub fn getConstructor(globalObject: *JSC.JSGlobalObject) JSC.JSValue {
-        JSC.markBinding(@src());
-        return Subprocess__getConstructor(globalObject);
-    }
-
     /// Create a new instance of Subprocess
     pub fn toJS(this: *Subprocess, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
         JSC.markBinding(@src());
@@ -590,10 +547,6 @@ pub const JSSubprocess = struct {
     extern fn Subprocess__dangerouslySetPtr(JSC.JSValue, ?*Subprocess) bool;
 
     comptime {
-        if (@TypeOf(Subprocess.constructor) != (fn (*JSC.JSGlobalObject, *JSC.CallFrame) callconv(.C) ?*Subprocess)) {
-            @compileLog("Subprocess.constructor is not a constructor");
-        }
-
         if (@TypeOf(Subprocess.finalize) != (fn (*Subprocess) callconv(.C) void)) {
             @compileLog("Subprocess.finalize is not a finalizer");
         }
@@ -632,7 +585,6 @@ pub const JSSubprocess = struct {
             @compileLog("Expected Subprocess.getStdin to be a getter");
 
         if (!JSC.is_bindgen) {
-            @export(Subprocess.constructor, .{ .name = "SubprocessClass__construct" });
             @export(Subprocess.doRef, .{ .name = "SubprocessPrototype__doRef" });
             @export(Subprocess.doUnref, .{ .name = "SubprocessPrototype__doUnref" });
             @export(Subprocess.finalize, .{ .name = "SubprocessClass__finalize" });

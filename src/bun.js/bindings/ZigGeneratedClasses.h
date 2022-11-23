@@ -40,7 +40,7 @@ public:
     }
 
     static JSObject* createPrototype(VM& vm, JSDOMGlobalObject* globalObject);
-    static JSObject* createConstructor(VM& vm, JSGlobalObject* globalObject, JSValue prototype);
+    ;
 
     ~JSTCPSocket();
 
@@ -124,7 +124,7 @@ public:
     }
 
     static JSObject* createPrototype(VM& vm, JSDOMGlobalObject* globalObject);
-    static JSObject* createConstructor(VM& vm, JSGlobalObject* globalObject, JSValue prototype);
+    ;
 
     ~JSTLSSocket();
 
@@ -208,7 +208,7 @@ public:
     }
 
     static JSObject* createPrototype(VM& vm, JSDOMGlobalObject* globalObject);
-    static JSObject* createConstructor(VM& vm, JSGlobalObject* globalObject, JSValue prototype);
+    ;
 
     ~JSListener();
 
@@ -265,7 +265,7 @@ public:
     }
 
     static JSObject* createPrototype(VM& vm, JSDOMGlobalObject* globalObject);
-    static JSObject* createConstructor(VM& vm, JSGlobalObject* globalObject, JSValue prototype);
+    ;
 
     ~JSSubprocess();
 

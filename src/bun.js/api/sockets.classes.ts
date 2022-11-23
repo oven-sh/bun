@@ -5,6 +5,7 @@ function generate(ssl) {
     name: ssl ? "TCPSocket" : "TLSSocket",
     JSType: "0b11101110",
     hasPendingActivity: true,
+    noConstructor: true,
     proto: {
       write: {
         fn: "write",
@@ -84,6 +85,7 @@ export default [
   generate(false),
   define({
     name: "Listener",
+    noConstructor: true,
     JSType: "0b11101110",
     proto: {
       stop: {

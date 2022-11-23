@@ -39,7 +39,6 @@ var __hasOwnProp = Object.prototype.hasOwnProperty;
 var __require = (x) => import.meta.require(x);
 
 var DebugEventEmitter = class DebugEventEmitter extends __require("events") {
-  _id;
   constructor(opts) {
     super(opts);
     const __id = opts.__id;
@@ -60,6 +59,18 @@ var DebugEventEmitter = class DebugEventEmitter extends __require("events") {
       debug("emit", event, ...args);
     }
     return super.emit(event, ...args);
+  }
+  on(event, handler) {
+    var __id = this.__id;
+    if (__id) {
+      debug("on", event, __id);
+    } else {
+      debug("on", event);
+    }
+    super.on(event, handler);
+  }
+  addListener(event, handler) {
+    this.on(event, handler);
   }
 };
 
@@ -3051,7 +3062,12 @@ var require_readable = __commonJS({
           : state.length > 0) ||
           state.ended)
       ) {
-        debug("read: emitReadable", state.length, state.ended, this.__id);
+        debug(
+          "read: emitReadable or endReadable",
+          state.length,
+          state.ended,
+          this.__id,
+        );
         if (state.length === 0 && state.ended) endReadable(this);
         else emitReadable(this, state);
         return null;
@@ -3061,6 +3077,12 @@ var require_readable = __commonJS({
 
       // If we've ended, and we're now clear, then finish it up.
       if (n === 0 && state.ended) {
+        debug(
+          "read: calling endReadable if length 0 -- length, state.ended",
+          state.length,
+          state.ended,
+          this.__id,
+        );
         if (state.length === 0) endReadable(this);
         return null;
       }

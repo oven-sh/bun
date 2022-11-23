@@ -288,7 +288,6 @@ export function execFile(file, args, options, callback) {
     }
 
     if (args?.length) cmd += ` ${ArrayPrototypeJoin.call(args, " ")}`;
-
     if (!ex) {
       ex = genericNodeError(`Command failed: ${cmd}\n${stderr}`, {
         // code: code < 0 ? getSystemErrorName(code) : code, // TODO: Add getSystemErrorName
@@ -1137,7 +1136,6 @@ export class ChildProcess extends EventEmitter {
       this.#handle.kill(signal);
     }
 
-    this.emit("exit", null, signal);
     this.#maybeClose();
 
     // TODO: Figure out how to make this conform to the Node spec...

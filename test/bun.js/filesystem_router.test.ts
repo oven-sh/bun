@@ -1,8 +1,9 @@
 import { FileSystemRouter } from "bun";
 import { it, expect } from "bun:test";
 import path, { dirname, resolve } from "path";
-import fs, { realpathSync, rmSync } from "fs";
+import fs, { mkdirSync, realpathSync, rmSync } from "fs";
 import { tmpdir } from "os";
+const tempdir = realpathSync(tmpdir()) + "/";
 
 function createTree(basedir, paths) {
   for (const end of paths) {
@@ -14,52 +15,63 @@ function createTree(basedir, paths) {
     fs.writeFileSync(abs, "export default " + JSON.stringify(end) + ";\n");
   }
 }
+var count = 0;
+function make(files) {
+  const dir = tempdir + `fs-router-test-${count++}`;
+  rmSync(dir, {
+    recursive: true,
+    force: true,
+  });
+
+  createTree(dir, files);
+  if (files.length === 0) mkdirSync(dir, { recursive: true });
+  return {
+    dir,
+  };
+}
 
 it("should find files", () => {
-  const tempdir = realpathSync(tmpdir()) + "/";
-
-  rmSync(tempdir + "fs-router-test-01", { recursive: true, force: true });
-
-  createTree(tempdir + "fs-router-test-01", [
-    "a.tsx",
-    "b.tsx",
-    "abc/[id].tsx",
-    "abc/index.tsx",
-    "abc/def/[id].tsx",
-    "abc/def/index.tsx",
-    "abc/def/ghi/[id].tsx",
-    "abc/def/ghi/index.tsx",
-    "abc/def/ghi/jkl/[id].tsx",
-    "abc/def/ghi/jkl/index.tsx",
-    "[id].tsx",
-    "index.tsx",
-    "foo/[id].tsx",
-    "catch-all/[...id].tsx",
+  const { dir } = make([
+    `index.tsx`,
+    `[id].tsx`,
+    `a.tsx`,
+    `abc/index.tsx`,
+    `abc/[id].tsx`,
+    `abc/def/[id].tsx`,
+    `abc/def/ghi/index.tsx`,
+    `abc/def/ghi/[id].tsx`,
+    `abc/def/ghi/jkl/index.tsx`,
+    `abc/def/ghi/jkl/[id].tsx`,
+    `abc/def/index.tsx`,
+    `b.tsx`,
+    `foo/[id].tsx`,
+    `catch-all/[[...id]].tsx`,
   ]);
 
   const router = new FileSystemRouter({
-    dir: tempdir + "fs-router-test-01/",
+    dir,
     fileExtensions: [".tsx"],
     style: "nextjs",
   });
 
   const routes = router.routes;
   const fixture = {
-    "/": `${tempdir}fs-router-test-01/index.tsx`,
-    "/[id]": `${tempdir}fs-router-test-01/[id].tsx`,
-    "/a": `${tempdir}fs-router-test-01/a.tsx`,
-    "/abc": `${tempdir}fs-router-test-01/abc/index.tsx`,
-    "/abc/[id]": `${tempdir}fs-router-test-01/abc/[id].tsx`,
-    "/abc/def/[id]": `${tempdir}fs-router-test-01/abc/def/[id].tsx`,
-    "/abc/def/ghi": `${tempdir}fs-router-test-01/abc/def/ghi/index.tsx`,
-    "/abc/def/ghi/[id]": `${tempdir}fs-router-test-01/abc/def/ghi/[id].tsx`,
-    "/abc/def/ghi/jkl": `${tempdir}fs-router-test-01/abc/def/ghi/jkl/index.tsx`,
-    "/abc/def/ghi/jkl/[id]": `${tempdir}fs-router-test-01/abc/def/ghi/jkl/[id].tsx`,
-    "/abc/def": `${tempdir}fs-router-test-01/abc/def/index.tsx`,
-    "/b": `${tempdir}fs-router-test-01/b.tsx`,
-    "/foo/[id]": `${tempdir}fs-router-test-01/foo/[id].tsx`,
-    "/catch-all/[...id]": `${tempdir}fs-router-test-01/catch-all/[...id].tsx`,
+    "/": `${dir}/index.tsx`,
+    "/[id]": `${dir}/[id].tsx`,
+    "/a": `${dir}/a.tsx`,
+    "/abc": `${dir}/abc/index.tsx`,
+    "/abc/[id]": `${dir}/abc/[id].tsx`,
+    "/abc/def/[id]": `${dir}/abc/def/[id].tsx`,
+    "/abc/def/ghi": `${dir}/abc/def/ghi/index.tsx`,
+    "/abc/def/ghi/[id]": `${dir}/abc/def/ghi/[id].tsx`,
+    "/abc/def/ghi/jkl": `${dir}/abc/def/ghi/jkl/index.tsx`,
+    "/abc/def/ghi/jkl/[id]": `${dir}/abc/def/ghi/jkl/[id].tsx`,
+    "/abc/def": `${dir}/abc/def/index.tsx`,
+    "/b": `${dir}/b.tsx`,
+    "/foo/[id]": `${dir}/foo/[id].tsx`,
+    "/catch-all/[[...id]]": `${dir}/catch-all/[[...id]].tsx`,
   };
+
   for (const route in fixture) {
     if (!(route in routes)) {
       throw new Error(`Route ${route} not found`);
@@ -69,33 +81,32 @@ it("should find files", () => {
   }
 
   expect(Object.keys(routes).length).toBe(Object.keys(fixture).length);
+  expect(Object.values(routes).length).toBe(Object.values(fixture).length);
+});
 
-  expect(router.match("/never/gonna/give/you/up")).toBe(null);
-  expect(
-    router.match(
-      "/catch-all/we-are-no-strangers-to-love/you/know/the/rules/and/so/do/i",
-    ).params.id,
-  ).toBe("we-are-no-strangers-to-love/you/know/the/rules/and/so/do/i");
-  expect(router.match("/").name).toBe("/");
-  expect(router.match("/index").name).toBe("/");
-  expect(router.match("/index/").name).toBe("/");
-  expect(router.match("/a").name).toBe("/a");
-  expect(router.match("/b").name).toBe("/b");
-  expect(router.match("/abc/123").params.id).toBe("123");
+it("should handle empty dirs", () => {
+  const { dir } = make([]);
+
+  const router = new FileSystemRouter({
+    dir,
+    fileExtensions: [".tsx"],
+    style: "nextjs",
+  });
+
+  // assert this doesn't crash
+  expect(router.bar).toBeUndefined();
+
+  const routes = router.routes;
+  expect(Object.keys(routes).length).toBe(0);
+  expect(Object.values(routes).length).toBe(0);
 });
 
 it("should support dynamic routes", () => {
   // set up the test
-  const tempdir = realpathSync(tmpdir()) + "/";
-  rmSync(tempdir + "fs-router-test-02", { recursive: true, force: true });
-  createTree(tempdir + "fs-router-test-02", [
-    "index.tsx",
-    "posts/[id].tsx",
-    "posts.tsx",
-  ]);
+  const { dir } = make(["index.tsx", "posts/[id].tsx", "posts.tsx"]);
 
   const router = new Bun.FileSystemRouter({
-    dir: tempdir + "fs-router-test-02/",
+    dir,
     style: "nextjs",
   });
 
@@ -107,55 +118,170 @@ it("should support dynamic routes", () => {
 
   expect(id).toBe("hello-world");
   expect(name).toBe("/posts/[id]");
-  expect(filePath).toBe(`${tempdir}fs-router-test-02/posts/[id].tsx`);
+  expect(filePath).toBe(`${dir}/[id].tsx`);
 });
 
-it("should support Request & Response", async () => {
+it("should support static routes", () => {
   // set up the test
-  const tempdir = realpathSync(tmpdir()) + "/";
-  rmSync(tempdir + "fs-router-test-03", { recursive: true, force: true });
-  createTree(tempdir + "fs-router-test-03", [
+  const { dir } = make([
     "index.tsx",
     "posts/[id].tsx",
     "posts.tsx",
+    "posts/hey.tsx",
   ]);
 
   const router = new Bun.FileSystemRouter({
-    dir: tempdir + "fs-router-test-03/",
+    dir,
+    style: "nextjs",
+  });
+
+  const { name, params, filePath } = router.match("/posts/hey");
+
+  expect(name).toBe("/posts/hey");
+  expect(filePath).toBe(`${dir}/posts/hey.tsx`);
+});
+
+it("should support optional catch-all routes", () => {
+  // set up the test
+  const { dir } = make([
+    "index.tsx",
+    "posts/[id].tsx",
+    "posts.tsx",
+    "posts/hey.tsx",
+    "posts/[[...id]].tsx",
+  ]);
+
+  const router = new Bun.FileSystemRouter({
+    dir,
+    style: "nextjs",
+  });
+
+  for (let fixture of [
+    "/posts/123",
+    "/posts/hey",
+    "/posts/zorp",
+    "/posts",
+    "/index",
+    "/posts/",
+  ]) {
+    expect(router.match(fixture)?.name).not.toBe("/posts/[[...id]]");
+  }
+
+  for (let fixture of [
+    "/posts/hey/there",
+    "/posts/hey/there/you",
+    "/posts/zorp/123",
+  ]) {
+    const { name, params, filePath } = router.match(fixture);
+
+    expect(name).toBe("/posts/[[...id]]");
+    expect(filePath).toBe(`${dir}/posts/[[...id]].tsx`);
+    expect(params.id).toBe(fixture.split("/").slice(2).join("/"));
+  }
+});
+
+it("should support catch-all routes", () => {
+  // set up the test
+  const { dir } = make([
+    "index.tsx",
+    "posts/[id].tsx",
+    "posts.tsx",
+    "posts/hey.tsx",
+    "posts/[...id].tsx",
+    "posts/wow/[[...id]].tsx",
+  ]);
+
+  const router = new Bun.FileSystemRouter({
+    dir,
+    style: "nextjs",
+  });
+
+  for (let fixture of [
+    "/posts/123",
+    "/posts/hey",
+    "/posts/zorp",
+    "/posts",
+    "/index",
+    "/posts/",
+  ]) {
+    expect(router.match(fixture)?.name).not.toBe("/posts/[...id]");
+  }
+
+  for (let fixture of [
+    "/posts/hey/there",
+    "/posts/hey/there/you",
+    "/posts/zorp/123",
+    "/posts/wow/hey/there",
+  ]) {
+    const { name, params, filePath } = router.match(fixture);
+
+    expect(name).toBe("/posts/[...id]");
+    expect(filePath).toBe(`${dir}/posts/[...id].tsx`);
+    expect(params.id).toBe(fixture.split("/").slice(2).join("/"));
+  }
+});
+
+it("should support index routes", () => {
+  // set up the test
+  const { dir } = make([
+    "index.tsx",
+    "posts/[id].tsx",
+    "posts.tsx",
+    "posts/hey.tsx",
+  ]);
+
+  const router = new Bun.FileSystemRouter({
+    dir,
+    style: "nextjs",
+  });
+
+  for (let route of ["/", "/index"]) {
+    const { name, params, filePath } = router.match(route);
+
+    expect(name).toBe("/");
+    expect(filePath).toBe(`${dir}/index.tsx`);
+    expect(Object.keys(params).length).toBe(0);
+  }
+
+  for (let route of ["/posts", "/posts/index", "/posts/"]) {
+    const { name, params, filePath } = router.match(route);
+
+    expect(name).toBe("/posts");
+    expect(filePath).toBe(`${dir}/posts.tsx`);
+    expect(Object.keys(params).length).toBe(0);
+  }
+});
+
+it("should support Request", async () => {
+  // set up the test
+  const { dir } = make(["index.tsx", "posts/[id].tsx", "posts.tsx"]);
+
+  const router = new Bun.FileSystemRouter({
+    dir,
     style: "nextjs",
   });
 
   for (let current of [
-    // Reuqest
     new Request({ url: "/posts/hello-world" }),
     new Request({ url: "http://example.com/posts/hello-world" }),
-    // Response
-    // when there's http:// it will be parsed as a URL and only the pathname is used
-    await fetch("http://example.com/posts/hello-world"),
   ]) {
     const {
       name,
       params: { id },
       filePath,
     } = router.match(current);
-    expect(id).toBe("hello-world");
     expect(name).toBe("/posts/[id]");
-    expect(filePath).toBe(`${tempdir}fs-router-test-03/posts/[id].tsx`);
+    expect(filePath).toBe(`${dir}/posts/[id].tsx`);
+    expect(id).toBe("hello-world");
   }
 });
 
 it("assetPrefix, src, and origin", async () => {
   // set up the test
-  const tempdir = realpathSync(tmpdir()) + "/";
-  rmSync(tempdir + "fs-router-test-04", { recursive: true, force: true });
-  createTree(tempdir + "fs-router-test-04", [
-    "index.tsx",
-    "posts/[id].tsx",
-    "posts.tsx",
-  ]);
+  const { dir } = make(["index.tsx", "posts/[id].tsx", "posts.tsx"]);
 
   const router = new Bun.FileSystemRouter({
-    dir: tempdir + "fs-router-test-04/",
+    dir,
     style: "nextjs",
     assetPrefix: "/_next/static/",
     origin: "https://nextjs.org",
@@ -166,14 +292,13 @@ it("assetPrefix, src, and origin", async () => {
     new Request({ url: "/posts/hello-world" }),
     new Request({ url: "https://nextjs.org/posts/hello-world" }),
   ]) {
-    const {
-      name,
-      params: { id },
-      src,
-      filePath,
-    } = router.match(current);
+    const { name, src, filePath, checkThisDoesntCrash } = router.match(current);
     expect(name).toBe("/posts/[id]");
+
+    // check nothing is weird on the MatchedRoute object
+    expect(checkThisDoesntCrash).toBeUndefined();
+
     expect(src).toBe("https://nextjs.org/_next/static/posts/[id].tsx");
-    expect(filePath).toBe(`${tempdir}fs-router-test-04/posts/[id].tsx`);
+    expect(filePath).toBe(`${dir}/posts/[id].tsx`);
   }
 });

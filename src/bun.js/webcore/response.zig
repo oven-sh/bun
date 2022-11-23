@@ -31,7 +31,6 @@ const GetJSPrivateData = @import("../base.zig").GetJSPrivateData;
 const Environment = @import("../../env.zig");
 const ZigString = JSC.ZigString;
 const IdentityContext = @import("../../identity_context.zig").IdentityContext;
-const JSInternalPromise = JSC.JSInternalPromise;
 const JSPromise = JSC.JSPromise;
 const JSValue = JSC.JSValue;
 const JSError = JSC.JSError;
@@ -1212,11 +1211,13 @@ pub const Blob = struct {
 
         if (destination_type == .file and source_type == .bytes) {
             var write_file_promise = bun.default_allocator.create(WriteFilePromise) catch unreachable;
+            var promise = JSC.JSPromise.create(ctx.ptr());
+            const promise_value = promise.asValue(ctx);
             write_file_promise.* = .{
-                .promise = JSC.JSPromise.create(ctx.ptr()),
                 .globalThis = ctx.ptr(),
             };
-            JSC.C.JSValueProtect(ctx, write_file_promise.promise.asValue(ctx.ptr()).asObjectRef());
+            write_file_promise.promise.strong.set(ctx, promise_value);
+            promise_value.ensureStillAlive();
 
             var file_copier = Store.WriteFile.create(
                 bun.default_allocator,
@@ -1228,7 +1229,7 @@ pub const Blob = struct {
             ) catch unreachable;
             var task = Store.WriteFile.WriteFileTask.createOnJSThread(bun.default_allocator, ctx.ptr(), file_copier) catch unreachable;
             task.schedule();
-            return write_file_promise.promise.asValue(ctx.ptr()).asObjectRef();
+            return promise_value.asObjectRef();
         }
         // If this is file <> file, we can just copy the file
         else if (destination_type == .file and source_type == .file) {
@@ -1242,7 +1243,7 @@ pub const Blob = struct {
                 ctx.ptr(),
             ) catch unreachable;
             file_copier.schedule();
-            return file_copier.promise.asObjectRef();
+            return file_copier.promise.value().asObjectRef();
         } else if (destination_type == .bytes and source_type == .bytes) {
             // If this is bytes <> bytes, we can just duplicate it
             // this is an edgecase
@@ -2508,7 +2509,7 @@ pub const Blob = struct {
                 bun.default_allocator.destroy(this);
             }
 
-            pub fn reject(this: *CopyFile, promise: *JSC.JSInternalPromise) void {
+            pub fn reject(this: *CopyFile, promise: *JSC.JSPromise) void {
                 var globalThis = this.globalThis;
                 var system_error: SystemError = this.system_error orelse SystemError{};
                 if (this.source_file_store.pathlike == .path and system_error.path.len == 0) {
@@ -2527,7 +2528,7 @@ pub const Blob = struct {
                 promise.reject(globalThis, instance);
             }
 
-            pub fn then(this: *CopyFile, promise: *JSC.JSInternalPromise) void {
+            pub fn then(this: *CopyFile, promise: *JSC.JSPromise) void {
                 this.source_store.?.deref();
 
                 if (this.system_error != null) {
@@ -3439,10 +3440,10 @@ pub const Blob = struct {
     pub fn NewReadFileHandler(comptime Function: anytype) type {
         return struct {
             context: Blob,
-            promise: *JSPromise,
+            promise: JSPromise.Strong = .{},
             globalThis: *JSGlobalObject,
             pub fn run(handler: *@This(), bytes_: Blob.Store.ReadFile.ResultType) void {
-                var promise = handler.promise;
+                var promise = handler.promise.swap();
                 var blob = handler.context;
                 blob.allocator = null;
                 var globalThis = handler.globalThis;
@@ -3463,21 +3464,19 @@ pub const Blob = struct {
     }
 
     pub const WriteFilePromise = struct {
-        promise: *JSPromise,
+        promise: JSPromise.Strong = .{},
         globalThis: *JSGlobalObject,
         pub fn run(handler: *@This(), count: Blob.Store.WriteFile.ResultType) void {
-            var promise = handler.promise;
+            var promise = handler.promise.swap();
             var globalThis = handler.globalThis;
             bun.default_allocator.destroy(handler);
             const value = promise.asValue(globalThis);
             value.ensureStillAlive();
             switch (count) {
                 .err => |err| {
-                    value.unprotect();
                     promise.reject(globalThis, err.toErrorInstance(globalThis));
                 },
                 .result => |wrote| {
-                    value.unprotect();
                     promise.resolve(globalThis, JSC.JSValue.jsNumberFromUint64(wrote));
                 },
             }
@@ -3511,9 +3510,11 @@ pub const Blob = struct {
 
         var handler = Handler{
             .context = this.*,
-            .promise = promise,
             .globalThis = global,
         };
+        const promise_value = promise.asValue(global);
+        promise_value.ensureStillAlive();
+        handler.promise.strong.set(global, promise_value);
 
         var ptr = bun.default_allocator.create(Handler) catch unreachable;
         ptr.* = handler;
@@ -3528,7 +3529,7 @@ pub const Blob = struct {
         ) catch unreachable;
         var read_file_task = Store.ReadFile.ReadFileTask.createOnJSThread(bun.default_allocator, global, file_read) catch unreachable;
         read_file_task.schedule();
-        return promise.asValue(global);
+        return promise_value;
     }
 
     pub fn needsToReadFile(this: *const Blob) bool {

@@ -362,16 +362,13 @@ const char* const s_streamInternalsEnqueueValueWithSizeCode =
 const JSC::ConstructAbility s_streamInternalsPeekQueueValueCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_streamInternalsPeekQueueValueCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_streamInternalsPeekQueueValueCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_streamInternalsPeekQueueValueCodeLength = 116;
+const int s_streamInternalsPeekQueueValueCodeLength = 81;
 static const JSC::Intrinsic s_streamInternalsPeekQueueValueCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_streamInternalsPeekQueueValueCode =
     "(function (queue)\n" \
     "{\n" \
     "    \"use strict\";\n" \
-    "\n" \
-    "    @assert(queue.content.isNotEmpty());\n" \
-    "\n" \
-    "    return queue.peek()?.value;\n" \
+    "    return queue.content.peek()?.value;\n" \
     "})\n" \
 ;
 

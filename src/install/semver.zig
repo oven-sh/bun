@@ -211,7 +211,7 @@ pub const String = extern struct {
             buf: string,
             in: string,
         ) Pointer {
-            std.debug.assert(@ptrToInt(buf.ptr) <= @ptrToInt(in.ptr) and ((@ptrToInt(in.ptr) + in.len) <= (@ptrToInt(buf.ptr) + buf.len)));
+            std.debug.assert(bun.isSliceInBuffer(in, buf));
 
             return Pointer{
                 .off = @truncate(u32, @ptrToInt(in.ptr) - @ptrToInt(buf.ptr)),

@@ -66,13 +66,6 @@ pub const JSTCPSocket = struct {
         return result;
     }
 
-    /// Get the TCPSocket constructor value.
-    /// This loads lazily from the global object.
-    pub fn getConstructor(globalObject: *JSC.JSGlobalObject) JSC.JSValue {
-        JSC.markBinding(@src());
-        return TCPSocket__getConstructor(globalObject);
-    }
-
     /// Create a new instance of TCPSocket
     pub fn toJS(this: *TCPSocket, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
         JSC.markBinding(@src());
@@ -105,10 +98,6 @@ pub const JSTCPSocket = struct {
     extern fn TCPSocket__dangerouslySetPtr(JSC.JSValue, ?*TCPSocket) bool;
 
     comptime {
-        if (@TypeOf(TCPSocket.constructor) != (fn (*JSC.JSGlobalObject, *JSC.CallFrame) callconv(.C) ?*TCPSocket)) {
-            @compileLog("TCPSocket.constructor is not a constructor");
-        }
-
         if (@TypeOf(TCPSocket.finalize) != (fn (*TCPSocket) callconv(.C) void)) {
             @compileLog("TCPSocket.finalize is not a finalizer");
         }
@@ -147,7 +136,6 @@ pub const JSTCPSocket = struct {
         if (@TypeOf(TCPSocket.write) != CallbackType)
             @compileLog("Expected TCPSocket.write to be a callback");
         if (!JSC.is_bindgen) {
-            @export(TCPSocket.constructor, .{ .name = "TCPSocketClass__construct" });
             @export(TCPSocket.end, .{ .name = "TCPSocketPrototype__end" });
             @export(TCPSocket.finalize, .{ .name = "TCPSocketClass__finalize" });
             @export(TCPSocket.flush, .{ .name = "TCPSocketPrototype__flush" });
@@ -156,6 +144,7 @@ pub const JSTCPSocket = struct {
             @export(TCPSocket.getLocalPort, .{ .name = "TCPSocketPrototype__getLocalPort" });
             @export(TCPSocket.getReadyState, .{ .name = "TCPSocketPrototype__getReadyState" });
             @export(TCPSocket.getRemoteAddress, .{ .name = "TCPSocketPrototype__getRemoteAddress" });
+            @export(TCPSocket.hasPendingActivity, .{ .name = "TCPSocket__hasPendingActivity" });
             @export(TCPSocket.ref, .{ .name = "TCPSocketPrototype__ref" });
             @export(TCPSocket.reload, .{ .name = "TCPSocketPrototype__reload" });
             @export(TCPSocket.setData, .{ .name = "TCPSocketPrototype__setData" });
@@ -225,13 +214,6 @@ pub const JSTLSSocket = struct {
         return result;
     }
 
-    /// Get the TLSSocket constructor value.
-    /// This loads lazily from the global object.
-    pub fn getConstructor(globalObject: *JSC.JSGlobalObject) JSC.JSValue {
-        JSC.markBinding(@src());
-        return TLSSocket__getConstructor(globalObject);
-    }
-
     /// Create a new instance of TLSSocket
     pub fn toJS(this: *TLSSocket, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
         JSC.markBinding(@src());
@@ -264,10 +246,6 @@ pub const JSTLSSocket = struct {
     extern fn TLSSocket__dangerouslySetPtr(JSC.JSValue, ?*TLSSocket) bool;
 
     comptime {
-        if (@TypeOf(TLSSocket.constructor) != (fn (*JSC.JSGlobalObject, *JSC.CallFrame) callconv(.C) ?*TLSSocket)) {
-            @compileLog("TLSSocket.constructor is not a constructor");
-        }
-
         if (@TypeOf(TLSSocket.finalize) != (fn (*TLSSocket) callconv(.C) void)) {
             @compileLog("TLSSocket.finalize is not a finalizer");
         }
@@ -306,7 +284,6 @@ pub const JSTLSSocket = struct {
         if (@TypeOf(TLSSocket.write) != CallbackType)
             @compileLog("Expected TLSSocket.write to be a callback");
         if (!JSC.is_bindgen) {
-            @export(TLSSocket.constructor, .{ .name = "TLSSocketClass__construct" });
             @export(TLSSocket.end, .{ .name = "TLSSocketPrototype__end" });
             @export(TLSSocket.finalize, .{ .name = "TLSSocketClass__finalize" });
             @export(TLSSocket.flush, .{ .name = "TLSSocketPrototype__flush" });
@@ -315,6 +292,7 @@ pub const JSTLSSocket = struct {
             @export(TLSSocket.getLocalPort, .{ .name = "TLSSocketPrototype__getLocalPort" });
             @export(TLSSocket.getReadyState, .{ .name = "TLSSocketPrototype__getReadyState" });
             @export(TLSSocket.getRemoteAddress, .{ .name = "TLSSocketPrototype__getRemoteAddress" });
+            @export(TLSSocket.hasPendingActivity, .{ .name = "TLSSocket__hasPendingActivity" });
             @export(TLSSocket.ref, .{ .name = "TLSSocketPrototype__ref" });
             @export(TLSSocket.reload, .{ .name = "TLSSocketPrototype__reload" });
             @export(TLSSocket.setData, .{ .name = "TLSSocketPrototype__setData" });
@@ -384,13 +362,6 @@ pub const JSListener = struct {
         return result;
     }
 
-    /// Get the Listener constructor value.
-    /// This loads lazily from the global object.
-    pub fn getConstructor(globalObject: *JSC.JSGlobalObject) JSC.JSValue {
-        JSC.markBinding(@src());
-        return Listener__getConstructor(globalObject);
-    }
-
     /// Create a new instance of Listener
     pub fn toJS(this: *Listener, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
         JSC.markBinding(@src());
@@ -423,10 +394,6 @@ pub const JSListener = struct {
     extern fn Listener__dangerouslySetPtr(JSC.JSValue, ?*Listener) bool;
 
     comptime {
-        if (@TypeOf(Listener.constructor) != (fn (*JSC.JSGlobalObject, *JSC.CallFrame) callconv(.C) ?*Listener)) {
-            @compileLog("Listener.constructor is not a constructor");
-        }
-
         if (@TypeOf(Listener.finalize) != (fn (*Listener) callconv(.C) void)) {
             @compileLog("Listener.finalize is not a finalizer");
         }
@@ -454,7 +421,6 @@ pub const JSListener = struct {
         if (@TypeOf(Listener.unref) != CallbackType)
             @compileLog("Expected Listener.unref to be a callback");
         if (!JSC.is_bindgen) {
-            @export(Listener.constructor, .{ .name = "ListenerClass__construct" });
             @export(Listener.finalize, .{ .name = "ListenerClass__finalize" });
             @export(Listener.getData, .{ .name = "ListenerPrototype__getData" });
             @export(Listener.getHostname, .{ .name = "ListenerPrototype__getHostname" });
@@ -549,13 +515,6 @@ pub const JSSubprocess = struct {
         return result;
     }
 
-    /// Get the Subprocess constructor value.
-    /// This loads lazily from the global object.
-    pub fn getConstructor(globalObject: *JSC.JSGlobalObject) JSC.JSValue {
-        JSC.markBinding(@src());
-        return Subprocess__getConstructor(globalObject);
-    }
-
     /// Create a new instance of Subprocess
     pub fn toJS(this: *Subprocess, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
         JSC.markBinding(@src());
@@ -588,10 +547,6 @@ pub const JSSubprocess = struct {
     extern fn Subprocess__dangerouslySetPtr(JSC.JSValue, ?*Subprocess) bool;
 
     comptime {
-        if (@TypeOf(Subprocess.constructor) != (fn (*JSC.JSGlobalObject, *JSC.CallFrame) callconv(.C) ?*Subprocess)) {
-            @compileLog("Subprocess.constructor is not a constructor");
-        }
-
         if (@TypeOf(Subprocess.finalize) != (fn (*Subprocess) callconv(.C) void)) {
             @compileLog("Subprocess.finalize is not a finalizer");
         }
@@ -630,7 +585,6 @@ pub const JSSubprocess = struct {
             @compileLog("Expected Subprocess.getStdin to be a getter");
 
         if (!JSC.is_bindgen) {
-            @export(Subprocess.constructor, .{ .name = "SubprocessClass__construct" });
             @export(Subprocess.doRef, .{ .name = "SubprocessPrototype__doRef" });
             @export(Subprocess.doUnref, .{ .name = "SubprocessPrototype__doUnref" });
             @export(Subprocess.finalize, .{ .name = "SubprocessClass__finalize" });
@@ -1508,6 +1462,399 @@ pub const JSServerWebSocket = struct {
         }
     }
 };
+pub const JSFileSystemRouter = struct {
+    const FileSystemRouter = Classes.FileSystemRouter;
+    const GetterType = fn (*FileSystemRouter, *JSC.JSGlobalObject) callconv(.C) JSC.JSValue;
+    const GetterTypeWithThisValue = fn (*FileSystemRouter, JSC.JSValue, *JSC.JSGlobalObject) callconv(.C) JSC.JSValue;
+    const SetterType = fn (*FileSystemRouter, *JSC.JSGlobalObject, JSC.JSValue) callconv(.C) bool;
+    const SetterTypeWithThisValue = fn (*FileSystemRouter, JSC.JSValue, *JSC.JSGlobalObject, JSC.JSValue) callconv(.C) bool;
+    const CallbackType = fn (*FileSystemRouter, *JSC.JSGlobalObject, *JSC.CallFrame) callconv(.C) JSC.JSValue;
+
+    /// Return the pointer to the wrapped object.
+    /// If the object does not match the type, return null.
+    pub fn fromJS(value: JSC.JSValue) ?*FileSystemRouter {
+        JSC.markBinding(@src());
+        return FileSystemRouter__fromJS(value);
+    }
+
+    extern fn FileSystemRouterPrototype__originSetCachedValue(JSC.JSValue, *JSC.JSGlobalObject, JSC.JSValue) void;
+
+    extern fn FileSystemRouterPrototype__originGetCachedValue(JSC.JSValue) JSC.JSValue;
+
+    /// `FileSystemRouter.origin` setter
+    /// This value will be visited by the garbage collector.
+    pub fn originSetCached(thisValue: JSC.JSValue, globalObject: *JSC.JSGlobalObject, value: JSC.JSValue) void {
+        JSC.markBinding(@src());
+        FileSystemRouterPrototype__originSetCachedValue(thisValue, globalObject, value);
+    }
+
+    /// `FileSystemRouter.origin` getter
+    /// This value will be visited by the garbage collector.
+    pub fn originGetCached(thisValue: JSC.JSValue) ?JSC.JSValue {
+        JSC.markBinding(@src());
+        const result = FileSystemRouterPrototype__originGetCachedValue(thisValue);
+        if (result == .zero)
+            return null;
+
+        return result;
+    }
+
+    extern fn FileSystemRouterPrototype__routesSetCachedValue(JSC.JSValue, *JSC.JSGlobalObject, JSC.JSValue) void;
+
+    extern fn FileSystemRouterPrototype__routesGetCachedValue(JSC.JSValue) JSC.JSValue;
+
+    /// `FileSystemRouter.routes` setter
+    /// This value will be visited by the garbage collector.
+    pub fn routesSetCached(thisValue: JSC.JSValue, globalObject: *JSC.JSGlobalObject, value: JSC.JSValue) void {
+        JSC.markBinding(@src());
+        FileSystemRouterPrototype__routesSetCachedValue(thisValue, globalObject, value);
+    }
+
+    /// `FileSystemRouter.routes` getter
+    /// This value will be visited by the garbage collector.
+    pub fn routesGetCached(thisValue: JSC.JSValue) ?JSC.JSValue {
+        JSC.markBinding(@src());
+        const result = FileSystemRouterPrototype__routesGetCachedValue(thisValue);
+        if (result == .zero)
+            return null;
+
+        return result;
+    }
+
+    extern fn FileSystemRouterPrototype__styleSetCachedValue(JSC.JSValue, *JSC.JSGlobalObject, JSC.JSValue) void;
+
+    extern fn FileSystemRouterPrototype__styleGetCachedValue(JSC.JSValue) JSC.JSValue;
+
+    /// `FileSystemRouter.style` setter
+    /// This value will be visited by the garbage collector.
+    pub fn styleSetCached(thisValue: JSC.JSValue, globalObject: *JSC.JSGlobalObject, value: JSC.JSValue) void {
+        JSC.markBinding(@src());
+        FileSystemRouterPrototype__styleSetCachedValue(thisValue, globalObject, value);
+    }
+
+    /// `FileSystemRouter.style` getter
+    /// This value will be visited by the garbage collector.
+    pub fn styleGetCached(thisValue: JSC.JSValue) ?JSC.JSValue {
+        JSC.markBinding(@src());
+        const result = FileSystemRouterPrototype__styleGetCachedValue(thisValue);
+        if (result == .zero)
+            return null;
+
+        return result;
+    }
+
+    /// Get the FileSystemRouter constructor value.
+    /// This loads lazily from the global object.
+    pub fn getConstructor(globalObject: *JSC.JSGlobalObject) JSC.JSValue {
+        JSC.markBinding(@src());
+        return FileSystemRouter__getConstructor(globalObject);
+    }
+
+    /// Create a new instance of FileSystemRouter
+    pub fn toJS(this: *FileSystemRouter, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
+        JSC.markBinding(@src());
+        if (comptime Environment.allow_assert) {
+            const value__ = FileSystemRouter__create(globalObject, this);
+            std.debug.assert(value__.as(FileSystemRouter).? == this); // If this fails, likely a C ABI issue.
+            return value__;
+        } else {
+            return FileSystemRouter__create(globalObject, this);
+        }
+    }
+
+    /// Modify the internal ptr to point to a new instance of FileSystemRouter.
+    pub fn dangerouslySetPtr(value: JSC.JSValue, ptr: ?*FileSystemRouter) bool {
+        JSC.markBinding(@src());
+        return FileSystemRouter__dangerouslySetPtr(value, ptr);
+    }
+
+    /// Detach the ptr from the thisValue
+    pub fn detachPtr(_: *FileSystemRouter, value: JSC.JSValue) void {
+        JSC.markBinding(@src());
+        std.debug.assert(FileSystemRouter__dangerouslySetPtr(value, null));
+    }
+
+    extern fn FileSystemRouter__fromJS(JSC.JSValue) ?*FileSystemRouter;
+    extern fn FileSystemRouter__getConstructor(*JSC.JSGlobalObject) JSC.JSValue;
+
+    extern fn FileSystemRouter__create(globalObject: *JSC.JSGlobalObject, ptr: ?*FileSystemRouter) JSC.JSValue;
+
+    extern fn FileSystemRouter__dangerouslySetPtr(JSC.JSValue, ?*FileSystemRouter) bool;
+
+    comptime {
+        if (@TypeOf(FileSystemRouter.constructor) != (fn (*JSC.JSGlobalObject, *JSC.CallFrame) callconv(.C) ?*FileSystemRouter)) {
+            @compileLog("FileSystemRouter.constructor is not a constructor");
+        }
+
+        if (@TypeOf(FileSystemRouter.finalize) != (fn (*FileSystemRouter) callconv(.C) void)) {
+            @compileLog("FileSystemRouter.finalize is not a finalizer");
+        }
+
+        if (@TypeOf(FileSystemRouter.match) != CallbackType)
+            @compileLog("Expected FileSystemRouter.match to be a callback");
+        if (@TypeOf(FileSystemRouter.getOrigin) != GetterType)
+            @compileLog("Expected FileSystemRouter.getOrigin to be a getter");
+
+        if (@TypeOf(FileSystemRouter.reload) != CallbackType)
+            @compileLog("Expected FileSystemRouter.reload to be a callback");
+        if (@TypeOf(FileSystemRouter.getRoutes) != GetterType)
+            @compileLog("Expected FileSystemRouter.getRoutes to be a getter");
+
+        if (@TypeOf(FileSystemRouter.getStyle) != GetterType)
+            @compileLog("Expected FileSystemRouter.getStyle to be a getter");
+
+        if (!JSC.is_bindgen) {
+            @export(FileSystemRouter.constructor, .{ .name = "FileSystemRouterClass__construct" });
+            @export(FileSystemRouter.finalize, .{ .name = "FileSystemRouterClass__finalize" });
+            @export(FileSystemRouter.getOrigin, .{ .name = "FileSystemRouterPrototype__getOrigin" });
+            @export(FileSystemRouter.getRoutes, .{ .name = "FileSystemRouterPrototype__getRoutes" });
+            @export(FileSystemRouter.getStyle, .{ .name = "FileSystemRouterPrototype__getStyle" });
+            @export(FileSystemRouter.match, .{ .name = "FileSystemRouterPrototype__match" });
+            @export(FileSystemRouter.reload, .{ .name = "FileSystemRouterPrototype__reload" });
+        }
+    }
+};
+pub const JSMatchedRoute = struct {
+    const MatchedRoute = Classes.MatchedRoute;
+    const GetterType = fn (*MatchedRoute, *JSC.JSGlobalObject) callconv(.C) JSC.JSValue;
+    const GetterTypeWithThisValue = fn (*MatchedRoute, JSC.JSValue, *JSC.JSGlobalObject) callconv(.C) JSC.JSValue;
+    const SetterType = fn (*MatchedRoute, *JSC.JSGlobalObject, JSC.JSValue) callconv(.C) bool;
+    const SetterTypeWithThisValue = fn (*MatchedRoute, JSC.JSValue, *JSC.JSGlobalObject, JSC.JSValue) callconv(.C) bool;
+    const CallbackType = fn (*MatchedRoute, *JSC.JSGlobalObject, *JSC.CallFrame) callconv(.C) JSC.JSValue;
+
+    /// Return the pointer to the wrapped object.
+    /// If the object does not match the type, return null.
+    pub fn fromJS(value: JSC.JSValue) ?*MatchedRoute {
+        JSC.markBinding(@src());
+        return MatchedRoute__fromJS(value);
+    }
+
+    extern fn MatchedRoutePrototype__filePathSetCachedValue(JSC.JSValue, *JSC.JSGlobalObject, JSC.JSValue) void;
+
+    extern fn MatchedRoutePrototype__filePathGetCachedValue(JSC.JSValue) JSC.JSValue;
+
+    /// `MatchedRoute.filePath` setter
+    /// This value will be visited by the garbage collector.
+    pub fn filePathSetCached(thisValue: JSC.JSValue, globalObject: *JSC.JSGlobalObject, value: JSC.JSValue) void {
+        JSC.markBinding(@src());
+        MatchedRoutePrototype__filePathSetCachedValue(thisValue, globalObject, value);
+    }
+
+    /// `MatchedRoute.filePath` getter
+    /// This value will be visited by the garbage collector.
+    pub fn filePathGetCached(thisValue: JSC.JSValue) ?JSC.JSValue {
+        JSC.markBinding(@src());
+        const result = MatchedRoutePrototype__filePathGetCachedValue(thisValue);
+        if (result == .zero)
+            return null;
+
+        return result;
+    }
+
+    extern fn MatchedRoutePrototype__kindSetCachedValue(JSC.JSValue, *JSC.JSGlobalObject, JSC.JSValue) void;
+
+    extern fn MatchedRoutePrototype__kindGetCachedValue(JSC.JSValue) JSC.JSValue;
+
+    /// `MatchedRoute.kind` setter
+    /// This value will be visited by the garbage collector.
+    pub fn kindSetCached(thisValue: JSC.JSValue, globalObject: *JSC.JSGlobalObject, value: JSC.JSValue) void {
+        JSC.markBinding(@src());
+        MatchedRoutePrototype__kindSetCachedValue(thisValue, globalObject, value);
+    }
+
+    /// `MatchedRoute.kind` getter
+    /// This value will be visited by the garbage collector.
+    pub fn kindGetCached(thisValue: JSC.JSValue) ?JSC.JSValue {
+        JSC.markBinding(@src());
+        const result = MatchedRoutePrototype__kindGetCachedValue(thisValue);
+        if (result == .zero)
+            return null;
+
+        return result;
+    }
+
+    extern fn MatchedRoutePrototype__nameSetCachedValue(JSC.JSValue, *JSC.JSGlobalObject, JSC.JSValue) void;
+
+    extern fn MatchedRoutePrototype__nameGetCachedValue(JSC.JSValue) JSC.JSValue;
+
+    /// `MatchedRoute.name` setter
+    /// This value will be visited by the garbage collector.
+    pub fn nameSetCached(thisValue: JSC.JSValue, globalObject: *JSC.JSGlobalObject, value: JSC.JSValue) void {
+        JSC.markBinding(@src());
+        MatchedRoutePrototype__nameSetCachedValue(thisValue, globalObject, value);
+    }
+
+    /// `MatchedRoute.name` getter
+    /// This value will be visited by the garbage collector.
+    pub fn nameGetCached(thisValue: JSC.JSValue) ?JSC.JSValue {
+        JSC.markBinding(@src());
+        const result = MatchedRoutePrototype__nameGetCachedValue(thisValue);
+        if (result == .zero)
+            return null;
+
+        return result;
+    }
+
+    extern fn MatchedRoutePrototype__paramsSetCachedValue(JSC.JSValue, *JSC.JSGlobalObject, JSC.JSValue) void;
+
+    extern fn MatchedRoutePrototype__paramsGetCachedValue(JSC.JSValue) JSC.JSValue;
+
+    /// `MatchedRoute.params` setter
+    /// This value will be visited by the garbage collector.
+    pub fn paramsSetCached(thisValue: JSC.JSValue, globalObject: *JSC.JSGlobalObject, value: JSC.JSValue) void {
+        JSC.markBinding(@src());
+        MatchedRoutePrototype__paramsSetCachedValue(thisValue, globalObject, value);
+    }
+
+    /// `MatchedRoute.params` getter
+    /// This value will be visited by the garbage collector.
+    pub fn paramsGetCached(thisValue: JSC.JSValue) ?JSC.JSValue {
+        JSC.markBinding(@src());
+        const result = MatchedRoutePrototype__paramsGetCachedValue(thisValue);
+        if (result == .zero)
+            return null;
+
+        return result;
+    }
+
+    extern fn MatchedRoutePrototype__pathnameSetCachedValue(JSC.JSValue, *JSC.JSGlobalObject, JSC.JSValue) void;
+
+    extern fn MatchedRoutePrototype__pathnameGetCachedValue(JSC.JSValue) JSC.JSValue;
+
+    /// `MatchedRoute.pathname` setter
+    /// This value will be visited by the garbage collector.
+    pub fn pathnameSetCached(thisValue: JSC.JSValue, globalObject: *JSC.JSGlobalObject, value: JSC.JSValue) void {
+        JSC.markBinding(@src());
+        MatchedRoutePrototype__pathnameSetCachedValue(thisValue, globalObject, value);
+    }
+
+    /// `MatchedRoute.pathname` getter
+    /// This value will be visited by the garbage collector.
+    pub fn pathnameGetCached(thisValue: JSC.JSValue) ?JSC.JSValue {
+        JSC.markBinding(@src());
+        const result = MatchedRoutePrototype__pathnameGetCachedValue(thisValue);
+        if (result == .zero)
+            return null;
+
+        return result;
+    }
+
+    extern fn MatchedRoutePrototype__querySetCachedValue(JSC.JSValue, *JSC.JSGlobalObject, JSC.JSValue) void;
+
+    extern fn MatchedRoutePrototype__queryGetCachedValue(JSC.JSValue) JSC.JSValue;
+
+    /// `MatchedRoute.query` setter
+    /// This value will be visited by the garbage collector.
+    pub fn querySetCached(thisValue: JSC.JSValue, globalObject: *JSC.JSGlobalObject, value: JSC.JSValue) void {
+        JSC.markBinding(@src());
+        MatchedRoutePrototype__querySetCachedValue(thisValue, globalObject, value);
+    }
+
+    /// `MatchedRoute.query` getter
+    /// This value will be visited by the garbage collector.
+    pub fn queryGetCached(thisValue: JSC.JSValue) ?JSC.JSValue {
+        JSC.markBinding(@src());
+        const result = MatchedRoutePrototype__queryGetCachedValue(thisValue);
+        if (result == .zero)
+            return null;
+
+        return result;
+    }
+
+    extern fn MatchedRoutePrototype__scriptSrcSetCachedValue(JSC.JSValue, *JSC.JSGlobalObject, JSC.JSValue) void;
+
+    extern fn MatchedRoutePrototype__scriptSrcGetCachedValue(JSC.JSValue) JSC.JSValue;
+
+    /// `MatchedRoute.scriptSrc` setter
+    /// This value will be visited by the garbage collector.
+    pub fn scriptSrcSetCached(thisValue: JSC.JSValue, globalObject: *JSC.JSGlobalObject, value: JSC.JSValue) void {
+        JSC.markBinding(@src());
+        MatchedRoutePrototype__scriptSrcSetCachedValue(thisValue, globalObject, value);
+    }
+
+    /// `MatchedRoute.scriptSrc` getter
+    /// This value will be visited by the garbage collector.
+    pub fn scriptSrcGetCached(thisValue: JSC.JSValue) ?JSC.JSValue {
+        JSC.markBinding(@src());
+        const result = MatchedRoutePrototype__scriptSrcGetCachedValue(thisValue);
+        if (result == .zero)
+            return null;
+
+        return result;
+    }
+
+    /// Create a new instance of MatchedRoute
+    pub fn toJS(this: *MatchedRoute, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
+        JSC.markBinding(@src());
+        if (comptime Environment.allow_assert) {
+            const value__ = MatchedRoute__create(globalObject, this);
+            std.debug.assert(value__.as(MatchedRoute).? == this); // If this fails, likely a C ABI issue.
+            return value__;
+        } else {
+            return MatchedRoute__create(globalObject, this);
+        }
+    }
+
+    /// Modify the internal ptr to point to a new instance of MatchedRoute.
+    pub fn dangerouslySetPtr(value: JSC.JSValue, ptr: ?*MatchedRoute) bool {
+        JSC.markBinding(@src());
+        return MatchedRoute__dangerouslySetPtr(value, ptr);
+    }
+
+    /// Detach the ptr from the thisValue
+    pub fn detachPtr(_: *MatchedRoute, value: JSC.JSValue) void {
+        JSC.markBinding(@src());
+        std.debug.assert(MatchedRoute__dangerouslySetPtr(value, null));
+    }
+
+    extern fn MatchedRoute__fromJS(JSC.JSValue) ?*MatchedRoute;
+    extern fn MatchedRoute__getConstructor(*JSC.JSGlobalObject) JSC.JSValue;
+
+    extern fn MatchedRoute__create(globalObject: *JSC.JSGlobalObject, ptr: ?*MatchedRoute) JSC.JSValue;
+
+    extern fn MatchedRoute__dangerouslySetPtr(JSC.JSValue, ?*MatchedRoute) bool;
+
+    comptime {
+        if (@TypeOf(MatchedRoute.finalize) != (fn (*MatchedRoute) callconv(.C) void)) {
+            @compileLog("MatchedRoute.finalize is not a finalizer");
+        }
+
+        if (@TypeOf(MatchedRoute.getFilePath) != GetterType)
+            @compileLog("Expected MatchedRoute.getFilePath to be a getter");
+
+        if (@TypeOf(MatchedRoute.getKind) != GetterType)
+            @compileLog("Expected MatchedRoute.getKind to be a getter");
+
+        if (@TypeOf(MatchedRoute.getName) != GetterType)
+            @compileLog("Expected MatchedRoute.getName to be a getter");
+
+        if (@TypeOf(MatchedRoute.getParams) != GetterType)
+            @compileLog("Expected MatchedRoute.getParams to be a getter");
+
+        if (@TypeOf(MatchedRoute.getPathname) != GetterType)
+            @compileLog("Expected MatchedRoute.getPathname to be a getter");
+
+        if (@TypeOf(MatchedRoute.getQuery) != GetterType)
+            @compileLog("Expected MatchedRoute.getQuery to be a getter");
+
+        if (@TypeOf(MatchedRoute.getScriptSrc) != GetterType)
+            @compileLog("Expected MatchedRoute.getScriptSrc to be a getter");
+
+        if (@TypeOf(MatchedRoute.getScriptSrc) != GetterType)
+            @compileLog("Expected MatchedRoute.getScriptSrc to be a getter");
+
+        if (!JSC.is_bindgen) {
+            @export(MatchedRoute.finalize, .{ .name = "MatchedRouteClass__finalize" });
+            @export(MatchedRoute.getFilePath, .{ .name = "MatchedRoutePrototype__getFilePath" });
+            @export(MatchedRoute.getKind, .{ .name = "MatchedRoutePrototype__getKind" });
+            @export(MatchedRoute.getName, .{ .name = "MatchedRoutePrototype__getName" });
+            @export(MatchedRoute.getParams, .{ .name = "MatchedRoutePrototype__getParams" });
+            @export(MatchedRoute.getPathname, .{ .name = "MatchedRoutePrototype__getPathname" });
+            @export(MatchedRoute.getQuery, .{ .name = "MatchedRoutePrototype__getQuery" });
+            @export(MatchedRoute.getScriptSrc, .{ .name = "MatchedRoutePrototype__getScriptSrc" });
+        }
+    }
+};
 pub const JSExpect = struct {
     const Expect = Classes.Expect;
     const GetterType = fn (*Expect, *JSC.JSGlobalObject) callconv(.C) JSC.JSValue;
@@ -1624,6 +1971,10 @@ pub const JSExpect = struct {
             @compileLog("Expected Expect.toBe to be a callback");
         if (@TypeOf(Expect.toBeCloseTo) != CallbackType)
             @compileLog("Expected Expect.toBeCloseTo to be a callback");
+        if (@TypeOf(Expect.toBeDefined) != CallbackType)
+            @compileLog("Expected Expect.toBeDefined to be a callback");
+        if (@TypeOf(Expect.toBeFalsy) != CallbackType)
+            @compileLog("Expected Expect.toBeFalsy to be a callback");
         if (@TypeOf(Expect.toBeGreaterThan) != CallbackType)
             @compileLog("Expected Expect.toBeGreaterThan to be a callback");
         if (@TypeOf(Expect.toBeGreaterThanOrEqual) != CallbackType)
@@ -1634,6 +1985,14 @@ pub const JSExpect = struct {
             @compileLog("Expected Expect.toBeLessThan to be a callback");
         if (@TypeOf(Expect.toBeLessThanOrEqual) != CallbackType)
             @compileLog("Expected Expect.toBeLessThanOrEqual to be a callback");
+        if (@TypeOf(Expect.toBeNaN) != CallbackType)
+            @compileLog("Expected Expect.toBeNaN to be a callback");
+        if (@TypeOf(Expect.toBeNull) != CallbackType)
+            @compileLog("Expected Expect.toBeNull to be a callback");
+        if (@TypeOf(Expect.toBeTruthy) != CallbackType)
+            @compileLog("Expected Expect.toBeTruthy to be a callback");
+        if (@TypeOf(Expect.toBeUndefined) != CallbackType)
+            @compileLog("Expected Expect.toBeUndefined to be a callback");
         if (@TypeOf(Expect.toContain) != CallbackType)
             @compileLog("Expected Expect.toContain to be a callback");
         if (@TypeOf(Expect.toContainEqual) != CallbackType)
@@ -1729,11 +2088,17 @@ pub const JSExpect = struct {
             @export(Expect.stringMatching, .{ .name = "ExpectClass__stringMatching" });
             @export(Expect.toBe, .{ .name = "ExpectPrototype__toBe" });
             @export(Expect.toBeCloseTo, .{ .name = "ExpectPrototype__toBeCloseTo" });
+            @export(Expect.toBeDefined, .{ .name = "ExpectPrototype__toBeDefined" });
+            @export(Expect.toBeFalsy, .{ .name = "ExpectPrototype__toBeFalsy" });
             @export(Expect.toBeGreaterThan, .{ .name = "ExpectPrototype__toBeGreaterThan" });
             @export(Expect.toBeGreaterThanOrEqual, .{ .name = "ExpectPrototype__toBeGreaterThanOrEqual" });
             @export(Expect.toBeInstanceOf, .{ .name = "ExpectPrototype__toBeInstanceOf" });
             @export(Expect.toBeLessThan, .{ .name = "ExpectPrototype__toBeLessThan" });
             @export(Expect.toBeLessThanOrEqual, .{ .name = "ExpectPrototype__toBeLessThanOrEqual" });
+            @export(Expect.toBeNaN, .{ .name = "ExpectPrototype__toBeNaN" });
+            @export(Expect.toBeNull, .{ .name = "ExpectPrototype__toBeNull" });
+            @export(Expect.toBeTruthy, .{ .name = "ExpectPrototype__toBeTruthy" });
+            @export(Expect.toBeUndefined, .{ .name = "ExpectPrototype__toBeUndefined" });
             @export(Expect.toContain, .{ .name = "ExpectPrototype__toContain" });
             @export(Expect.toContainEqual, .{ .name = "ExpectPrototype__toContainEqual" });
             @export(Expect.toEqual, .{ .name = "ExpectPrototype__toEqual" });
@@ -2401,6 +2766,8 @@ comptime {
     _ = JSSHA256;
     _ = JSSHA512_256;
     _ = JSServerWebSocket;
+    _ = JSFileSystemRouter;
+    _ = JSMatchedRoute;
     _ = JSExpect;
     _ = JSTextDecoder;
     _ = JSRequest;

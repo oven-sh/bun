@@ -30,6 +30,10 @@ pub const MutableString = struct {
         }
     }
 
+    pub fn owns(this: *const MutableString, slice: []const u8) bool {
+        return @import("./global.zig").isSliceInBuffer(slice, this.list.items.ptr[0..this.list.capacity]);
+    }
+
     pub fn growIfNeeded(self: *MutableString, amount: usize) !void {
         try self.list.ensureUnusedCapacity(self.allocator, amount);
     }
@@ -154,6 +158,15 @@ pub const MutableString = struct {
 
     pub inline fn appendSlice(self: *MutableString, slice: []const u8) !void {
         try self.list.appendSlice(self.allocator, slice);
+    }
+
+    pub inline fn appendSliceExact(self: *MutableString, slice: []const u8) !void {
+        if (slice.len == 0) return;
+
+        try self.list.ensureTotalCapacityPrecise(self.allocator, self.list.items.len + slice.len);
+        var end = self.list.items.ptr + self.list.items.len;
+        self.list.items.len += slice.len;
+        @memcpy(end, slice.ptr, slice.len);
     }
 
     pub inline fn reset(

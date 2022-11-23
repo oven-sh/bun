@@ -66,7 +66,6 @@ public:
         OPEN = 1,
         CLOSING = 2,
         CLOSED = 3,
-
     };
 
     ExceptionOr<void> connect(const String& url);
@@ -103,9 +102,10 @@ public:
     void didReceiveData(const char* data, size_t length);
     void didReceiveBinaryData(Vector<uint8_t>&&);
 
+    void updateHasPendingActivity();
     bool hasPendingActivity() const
     {
-        return m_state == State::OPEN || m_state == State::CLOSING || m_pendingActivityCount > 0;
+        return m_hasPendingActivity.load();
     }
 
 private:
@@ -118,6 +118,8 @@ private:
         Client,
         ClientSSL,
     };
+
+    std::atomic<bool> m_hasPendingActivity { true };
 
     explicit WebSocket(ScriptExecutionContext&);
     explicit WebSocket(ScriptExecutionContext&, const String& url);
@@ -141,6 +143,20 @@ private:
 
     void sendWebSocketString(const String& message);
     void sendWebSocketData(const char* data, size_t length);
+
+    void incPendingActivityCount()
+    {
+        m_pendingActivityCount++;
+        ref();
+        updateHasPendingActivity();
+    }
+
+    void decPendingActivityCount()
+    {
+        m_pendingActivityCount--;
+        deref();
+        updateHasPendingActivity();
+    }
 
     void failAsynchronously();
 

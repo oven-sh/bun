@@ -167,7 +167,7 @@ pub extern fn JSC__JSPromise__rejectWithCaughtException(arg0: [*c]JSC__JSPromise
 pub extern fn JSC__JSPromise__resolve(arg0: [*c]JSC__JSPromise, arg1: ?*JSC__JSGlobalObject, JSValue2: JSC__JSValue) void;
 pub extern fn JSC__JSPromise__resolvedPromise(arg0: ?*JSC__JSGlobalObject, JSValue1: JSC__JSValue) [*c]JSC__JSPromise;
 pub extern fn JSC__JSPromise__resolvedPromiseValue(arg0: ?*JSC__JSGlobalObject, JSValue1: JSC__JSValue) JSC__JSValue;
-pub extern fn JSC__JSPromise__result(arg0: [*c]const JSC__JSPromise, arg1: [*c]JSC__VM) JSC__JSValue;
+pub extern fn JSC__JSPromise__result(arg0: [*c]JSC__JSPromise, arg1: [*c]JSC__VM) JSC__JSValue;
 pub extern fn JSC__JSPromise__status(arg0: [*c]const JSC__JSPromise, arg1: [*c]JSC__VM) u32;
 pub extern fn JSC__JSInternalPromise__create(arg0: ?*JSC__JSGlobalObject) [*c]JSC__JSInternalPromise;
 pub extern fn JSC__JSInternalPromise__isHandled(arg0: [*c]const JSC__JSInternalPromise, arg1: [*c]JSC__VM) bool;
@@ -289,7 +289,7 @@ pub extern fn JSC__JSValue__fromUInt64NoTruncate(arg0: ?*JSC__JSGlobalObject, ar
 pub extern fn JSC__JSValue__getClassName(JSValue0: JSC__JSValue, arg1: ?*JSC__JSGlobalObject, arg2: [*c]ZigString) void;
 pub extern fn JSC__JSValue__getErrorsProperty(JSValue0: JSC__JSValue, arg1: ?*JSC__JSGlobalObject) JSC__JSValue;
 pub extern fn JSC__JSValue__getIfPropertyExistsImpl(JSValue0: JSC__JSValue, arg1: ?*JSC__JSGlobalObject, arg2: [*c]const u8, arg3: u32) JSC__JSValue;
-pub extern fn JSC__JSValue__getLengthOfArray(JSValue0: JSC__JSValue, arg1: ?*JSC__JSGlobalObject) u32;
+pub extern fn JSC__JSValue__getLengthOfArray(JSValue0: JSC__JSValue, arg1: ?*JSC__JSGlobalObject) u64;
 pub extern fn JSC__JSValue__getNameProperty(JSValue0: JSC__JSValue, arg1: ?*JSC__JSGlobalObject, arg2: [*c]ZigString) void;
 pub extern fn JSC__JSValue__getPrototype(JSValue0: JSC__JSValue, arg1: ?*JSC__JSGlobalObject) JSC__JSValue;
 pub extern fn JSC__JSValue__getSymbolDescription(JSValue0: JSC__JSValue, arg1: ?*JSC__JSGlobalObject, arg2: [*c]ZigString) void;
@@ -335,6 +335,7 @@ pub extern fn JSC__JSValue__putRecord(JSValue0: JSC__JSValue, arg1: ?*JSC__JSGlo
 pub extern fn JSC__JSValue__symbolFor(arg0: ?*JSC__JSGlobalObject, arg1: [*c]ZigString) JSC__JSValue;
 pub extern fn JSC__JSValue__symbolKeyFor(JSValue0: JSC__JSValue, arg1: ?*JSC__JSGlobalObject, arg2: [*c]ZigString) bool;
 pub extern fn JSC__JSValue__toBoolean(JSValue0: JSC__JSValue) bool;
+pub extern fn JSC__JSValue__toBooleanSlow(JSValue0: JSC__JSValue, arg1: ?*JSC__JSGlobalObject) bool;
 pub extern fn JSC__JSValue__toError(JSValue0: JSC__JSValue, arg1: ?*JSC__JSGlobalObject) JSC__JSValue;
 pub extern fn JSC__JSValue__toInt32(JSValue0: JSC__JSValue) i32;
 pub extern fn JSC__JSValue__toInt64(JSValue0: JSC__JSValue) i64;

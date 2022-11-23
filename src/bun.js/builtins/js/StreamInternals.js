@@ -256,10 +256,7 @@ function enqueueValueWithSize(queue, value, size)
 function peekQueueValue(queue)
 {
     "use strict";
-
-    @assert(queue.content.isNotEmpty());
-
-    return queue.peek()?.value;
+    return queue.content.peek()?.value;
 }
 
 function resetQueue(queue)

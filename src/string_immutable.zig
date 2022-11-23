@@ -652,6 +652,10 @@ pub fn hasPrefixComptime(self: string, comptime alt: anytype) bool {
     return self.len >= alt.len and eqlComptimeCheckLenWithType(u8, self[0..alt.len], alt, false);
 }
 
+/// Check if two strings are equal with one of the strings being a comptime-known value
+///
+///   strings.eqlComptime(input, "hello world");
+///   strings.eqlComptime(input, "hai");
 pub inline fn eqlComptimeCheckLenWithType(comptime Type: type, a: []const Type, comptime b: anytype, comptime check_len: bool) bool {
     @setEvalBranchQuota(9999);
     if (comptime check_len) {
@@ -3580,6 +3584,48 @@ pub fn NewLengthSorter(comptime Type: type, comptime field: string) type {
     };
 }
 
+pub fn NewGlobLengthSorter(comptime Type: type, comptime field: string) type {
+    return struct {
+        const GlobLengthSorter = @This();
+        pub fn lessThan(_: GlobLengthSorter, lhs: Type, rhs: Type) bool {
+            // Assert: keyA ends with "/" or contains only a single "*".
+            // Assert: keyB ends with "/" or contains only a single "*".
+            const key_a = @field(lhs, field);
+            const key_b = @field(rhs, field);
+
+            // Let baseLengthA be the index of "*" in keyA plus one, if keyA contains "*", or the length of keyA otherwise.
+            // Let baseLengthB be the index of "*" in keyB plus one, if keyB contains "*", or the length of keyB otherwise.
+            const star_a = indexOfChar(key_a, '*');
+            const star_b = indexOfChar(key_b, '*');
+            const base_length_a = star_a orelse key_a.len;
+            const base_length_b = star_b orelse key_b.len;
+
+            // If baseLengthA is greater than baseLengthB, return -1.
+            // If baseLengthB is greater than baseLengthA, return 1.
+            if (base_length_a > base_length_b)
+                return true;
+            if (base_length_b > base_length_a)
+                return false;
+
+            // If keyA does not contain "*", return 1.
+            // If keyB does not contain "*", return -1.
+            if (star_a == null)
+                return false;
+            if (star_b == null)
+                return true;
+
+            // If the length of keyA is greater than the length of keyB, return -1.
+            // If the length of keyB is greater than the length of keyA, return 1.
+            if (key_a.len > key_b.len)
+                return true;
+            if (key_b.len > key_a.len)
+                return false;
+
+            return false;
+        }
+    };
+}
+
 /// Update all strings in a struct pointing to "from" to point to "to".
 pub fn moveAllSlices(comptime Type: type, container: *Type, from: string, to: string) void {
     const fields_we_care_about = comptime brk: {
@@ -3717,4 +3763,33 @@ pub fn isIPAddress(input: []const u8) bool {
     } else |_| {
         return false;
     }
+}
+
+pub fn cloneNormalizingSeparators(
+    allocator: std.mem.Allocator,
+    input: []const u8,
+) ![]u8 {
+    // remove duplicate slashes in the file path
+    var base = withoutTrailingSlash(input);
+    var tokenized = std.mem.tokenize(u8, base, std.fs.path.sep_str);
+    var buf = try allocator.alloc(u8, base.len + 2);
+    std.debug.assert(base.len > 0);
+    if (base[0] == std.fs.path.sep) {
+        buf[0] = std.fs.path.sep;
+    }
+    var remain = buf[@as(usize, @boolToInt(base[0] == std.fs.path.sep))..];
+
+    while (tokenized.next()) |token| {
+        if (token.len == 0) continue;
+        std.mem.copy(u8, remain, token);
+        remain[token.len..][0] = std.fs.path.sep;
+        remain = remain[token.len + 1 ..];
+    }
+    if ((remain.ptr - 1) != buf.ptr and (remain.ptr - 1)[0] != std.fs.path.sep) {
+        remain[0] = std.fs.path.sep;
+        remain = remain[1..];
+    }
+    remain[0] = 0;
+
+    return buf[0 .. @ptrToInt(remain.ptr) - @ptrToInt(buf.ptr)];
 }

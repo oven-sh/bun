@@ -31,7 +31,7 @@ const ImportKind = ast.ImportKind;
 const Analytics = @import("../../analytics/analytics_thread.zig");
 const ZigString = @import("../../jsc.zig").ZigString;
 const Runtime = @import("../../runtime.zig");
-const Router = @import("./router.zig");
+const Router = @import("./filesystem_router.zig");
 const ImportRecord = ast.ImportRecord;
 const DotEnv = @import("../../env_loader.zig");
 const ParseResult = @import("../../bundler.zig").ParseResult;
@@ -820,7 +820,14 @@ pub fn readFileAsString(
 }
 
 pub fn getPublicPath(to: string, origin: URL, comptime Writer: type, writer: Writer) void {
-    const relative_path = VirtualMachine.vm.bundler.fs.relativeTo(to);
+    return getPublicPathWithAssetPrefix(to, VirtualMachine.vm.bundler.fs.top_level_dir, origin, VirtualMachine.vm.bundler.options.routes.asset_prefix_path, comptime Writer, writer);
+}
+
+pub fn getPublicPathWithAssetPrefix(to: string, dir: string, origin: URL, asset_prefix: string, comptime Writer: type, writer: Writer) void {
+    const relative_path = if (strings.hasPrefix(to, dir))
+        strings.withoutTrailingSlash(to[dir.len..])
+    else
+        VirtualMachine.vm.bundler.fs.relative(dir, to);
     if (origin.isAbsolute()) {
         if (strings.hasPrefix(relative_path, "..") or strings.hasPrefix(relative_path, "./")) {
             writer.writeAll(origin.origin) catch return;
@@ -834,7 +841,7 @@ pub fn getPublicPath(to: string, origin: URL, comptime Writer: type, writer: Wri
             origin.joinWrite(
                 Writer,
                 writer,
-                VirtualMachine.vm.bundler.options.routes.asset_prefix_path,
+                asset_prefix,
                 "",
                 relative_path,
                 "",
@@ -894,11 +901,7 @@ pub fn runGC(
     arguments: []const js.JSValueRef,
     _: js.ExceptionRef,
 ) js.JSValueRef {
-    // it should only force cleanup on thread exit
-
-    Global.mimalloc_cleanup(false);
-
-    return ctx.ptr().vm().runGC(arguments.len > 0 and JSValue.fromRef(arguments[0]).toBoolean()).asRef();
+    return ctx.bunVM().garbageCollect(arguments.len > 0 and JSC.JSValue.c(arguments[0]).toBoolean()).asObjectRef();
 }
 
 pub fn shrink(
@@ -1087,7 +1090,7 @@ pub const Class = NewClass(
     },
     .{
         .match = .{
-            .rfn = Router.match,
+            .rfn = Router.deprecatedBunGlobalMatch,
         },
         .sleepSync = .{
             .rfn = sleepSync,
@@ -1284,6 +1287,9 @@ pub const Class = NewClass(
         .FFI = .{
             .get = FFI.getter,
         },
+        .FileSystemRouter = .{
+            .get = getFileSystemRouter,
+        },
     },
 );
 
@@ -1295,7 +1301,7 @@ fn dump_mimalloc(
     _: []const JSC.C.JSValueRef,
     _: JSC.C.ExceptionRef,
 ) JSC.C.JSValueRef {
-    globalThis.bunVM().arena.dumpThreadStats();
+    globalThis.bunVM().arena.dumpStats();
     return JSC.JSValue.jsUndefined().asObjectRef();
 }
 
@@ -1800,6 +1806,16 @@ pub fn getTranspilerConstructor(
     return existing.asObjectRef();
 }
 
+pub fn getFileSystemRouter(
+    _: void,
+    ctx: js.JSContextRef,
+    _: js.JSValueRef,
+    _: js.JSStringRef,
+    _: js.ExceptionRef,
+) js.JSValueRef {
+    return JSC.API.FileSystemRouter.getConstructor(ctx).asObjectRef();
+}
+
 pub fn getHashObject(
     _: void,
     ctx: js.JSContextRef,
@@ -1994,9 +2010,29 @@ pub const Unsafe = struct {
             .arrayBufferToString = .{
                 .rfn = arrayBufferToString,
             },
+            .gcAggressionLevel = .{
+                .rfn = JSC.wrapWithHasContainer(Unsafe, "gcAggressionLevel", false, false, false),
+            },
         },
         .{},
     );
+
+    pub fn gcAggressionLevel(
+        globalThis: *JSC.JSGlobalObject,
+        value_: ?JSValue,
+    ) JSValue {
+        const ret = JSValue.jsNumber(@as(i32, @enumToInt(globalThis.bunVM().aggressive_garbage_collection)));
+
+        if (value_) |value| {
+            switch (value.coerce(i32, globalThis)) {
+                1 => globalThis.bunVM().aggressive_garbage_collection = .mild,
+                2 => globalThis.bunVM().aggressive_garbage_collection = .aggressive,
+                0 => globalThis.bunVM().aggressive_garbage_collection = .none,
+                else => {},
+            }
+        }
+        return ret;
+    }
 
     // For testing the segfault handler
     pub fn __debug__doSegfault(
@@ -3410,7 +3446,6 @@ pub const EnvironmentVariables = struct {
             // this can be a statically allocated string
             if (bun.isHeapMemory(entry.value_ptr.*))
                 allocator.free(bun.constStrToU8(entry.value_ptr.*));
-
             const cloned_value = value.?.value().toSlice(globalThis, allocator).cloneIfNeeded(allocator) catch return false;
             entry.value_ptr.* = cloned_value.slice();
         }

@@ -94,7 +94,7 @@ const char* const s_readableStreamDefaultReaderCancelCode =
 const JSC::ConstructAbility s_readableStreamDefaultReaderReadManyCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableStreamDefaultReaderReadManyCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_readableStreamDefaultReaderReadManyCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_readableStreamDefaultReaderReadManyCodeLength = 4297;
+const int s_readableStreamDefaultReaderReadManyCodeLength = 4743;
 static const JSC::Intrinsic s_readableStreamDefaultReaderReadManyCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_readableStreamDefaultReaderReadManyCode =
     "(function ()\n" \
@@ -126,11 +126,14 @@ const char* const s_readableStreamDefaultReaderReadManyCode =
     "        return controller.@pull(\n" \
     "            controller\n" \
     "        ).@then(\n" \
-    "            ({done, value}) => (\n" \
-    "                done ? \n" \
-    "                { done: true, value: [], size: 0 } : \n" \
-    "                { value: [value], size: 1, done: false }\n" \
-    "        ));\n" \
+    "            function({done, value}) {\n" \
+    "                return (\n" \
+    "                    done ? \n" \
+    "                        { done: true, value: [], size: 0 } : \n" \
+    "                        { value: [value], size: 1, done: false }\n" \
+    "                );\n" \
+    "            }\n" \
+    "        );\n" \
     "    }\n" \
     "\n" \
     "    const content = queue.content;\n" \
@@ -142,7 +145,17 @@ const char* const s_readableStreamDefaultReaderReadManyCode =
     "    if (length > 0) {\n" \
     "        var outValues = @newArrayWithSize(length);\n" \
     "        if (@isReadableByteStreamController(controller)) {\n" \
-    "            for (var i = 0; i < length; i++) {\n" \
+    "\n" \
+    "            {\n" \
+    "                const buf = values[0];\n" \
+    "                if (!(@ArrayBuffer.@isView(buf) || buf instanceof @ArrayBuffer)) {\n" \
+    "                    @putByValDirect(outValues, 0, new @Uint8Array(buf.buffer, buf.byteOffset, buf.byteLength));\n" \
+    "                } else {\n" \
+    "                    @putByValDirect(outValues, 0, buf);\n" \
+    "                }\n" \
+    "            }\n" \
+    "\n" \
+    "            for (var i = 1; i < length; i++) {\n" \
     "                const buf = values[i];\n" \
     "                if (!(@ArrayBuffer.@isView(buf) || buf instanceof @ArrayBuffer)) {\n" \
     "                    @putByValDirect(outValues, i, new @Uint8Array(buf.buffer, buf.byteOffset, buf.byteLength));\n" \
@@ -150,6 +163,7 @@ const char* const s_readableStreamDefaultReaderReadManyCode =
     "                    @putByValDirect(outValues, i, buf);\n" \
     "                }\n" \
     "            }\n" \
+    "\n" \
     "        } else {\n" \
     "            @putByValDirect(outValues, 0, values[0].value);\n" \
     "            for (var i = 1; i < length; i++) {\n" \

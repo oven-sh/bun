@@ -173,6 +173,7 @@ const Scanner = struct {
     scan_dir_buf: [bun.MAX_PATH_BYTES]u8 = undefined,
     options: *options.BundleOptions,
     has_iterated: bool = false,
+    search_count: usize = 0,
 
     const ScanEntry = struct {
         relative_dir: bun.StoredFileDescriptorType,
@@ -267,6 +268,8 @@ const Scanner = struct {
                     if (strings.eql(exclude_name, name)) return;
                 }
 
+                this.search_count += 1;
+
                 this.dirs_to_scan.writeItem(.{
                     .relative_dir = fd,
                     .name = entry.base_,
@@ -277,6 +280,7 @@ const Scanner = struct {
                 // already seen it!
                 if (!entry.abs_path.isEmpty()) return;
 
+                this.search_count += 1;
                 if (!this.couldBeTestFile(name)) return;
 
                 var parts = &[_]string{ entry.dir, entry.base() };
@@ -295,6 +299,10 @@ pub const TestCommand = struct {
     pub const name = "wiptest";
     pub fn exec(ctx: Command.Context) !void {
         if (comptime is_bindgen) unreachable;
+        // print the version so you know its doing stuff if it takes a sec
+        Output.prettyErrorln("<r><b>bun wiptest <r><d>v" ++ Global.package_json_version_with_sha ++ "<r>\n\n", .{});
+        Output.flush();
+
         var env_loader = brk: {
             var map = try ctx.allocator.create(DotEnv.Map);
             map.* = DotEnv.Map.init(ctx.allocator);
@@ -306,6 +314,7 @@ pub const TestCommand = struct {
         JSC.C.JSCInitialize();
         NetworkThread.init() catch {};
         HTTPThread.init() catch {};
+
         var reporter = try ctx.allocator.create(CommandLineReporter);
         reporter.* = CommandLineReporter{
             .jest = TestRunner{
@@ -332,12 +341,7 @@ pub const TestCommand = struct {
         try vm.bundler.configureDefines();
         vm.bundler.options.rewrite_jest_for_tests = true;
 
-        if (vm.bundler.env.map.get("BUN_OVERRIDE_MODULE_PATH")) |override_path| {
-            if (override_path.len > 0) {
-                vm.load_builtins_from_path = override_path;
-            }
-        }
-
+        vm.loadExtraEnv();
         vm.is_main_thread = true;
         JSC.VirtualMachine.is_main_thread_vm = true;
 
@@ -348,7 +352,6 @@ pub const TestCommand = struct {
             .filter_names = ctx.positionals[1..],
             .results = std.ArrayList(PathString).init(ctx.allocator),
         };
-
         scanner.scan(scanner.fs.top_level_dir);
         scanner.dirs_to_scan.deinit();
 
@@ -369,31 +372,49 @@ pub const TestCommand = struct {
 
         Output.flush();
 
-        Output.prettyError("\n", .{});
+        if (scanner.filter_names.len == 0 and test_files.len == 0) {
+            Output.prettyErrorln(
+                \\<b><yellow>No tests found<r>! Tests need ".test", "_test_", ".spec" or "_spec_" in the filename <d>(ex: "MyApp.test.ts")<r>
+                \\
+            ,
+                .{},
+            );
 
-        if (reporter.summary.pass > 0) {
-            Output.prettyError("<r><green>", .{});
-        }
-
-        Output.prettyError(" {d:5>} pass<r>\n", .{reporter.summary.pass});
-
-        if (reporter.summary.fail > 0) {
-            Output.prettyError("<r><red>", .{});
+            Output.printStartEnd(ctx.start_time, std.time.nanoTimestamp());
+            if (scanner.search_count > 0)
+                Output.prettyError(
+                    \\ {d} files searched
+                , .{
+                    scanner.search_count,
+                });
         } else {
-            Output.prettyError("<r><d>", .{});
+            Output.prettyError("\n", .{});
+
+            if (reporter.summary.pass > 0) {
+                Output.prettyError("<r><green>", .{});
+            }
+
+            Output.prettyError(" {d:5>} pass<r>\n", .{reporter.summary.pass});
+
+            if (reporter.summary.fail > 0) {
+                Output.prettyError("<r><red>", .{});
+            } else {
+                Output.prettyError("<r><d>", .{});
+            }
+
+            Output.prettyError(" {d:5>} fail<r>\n", .{reporter.summary.fail});
+
+            if (reporter.summary.expectations > 0) Output.prettyError(" {d:5>} expect() calls\n", .{reporter.summary.expectations});
+
+            Output.prettyError(
+                \\ Ran {d} tests across {d} files 
+            , .{
+                reporter.summary.fail + reporter.summary.pass,
+                test_files.len,
+            });
+            Output.printStartEnd(ctx.start_time, std.time.nanoTimestamp());
         }
 
-        Output.prettyError(" {d:5>} fail<r>\n", .{reporter.summary.fail});
-
-        if (reporter.summary.expectations > 0) Output.prettyError(" {d:5>} expect() calls\n", .{reporter.summary.expectations});
-
-        Output.prettyError(
-            \\ Ran {d} tests across {d} files 
-        , .{
-            reporter.summary.fail + reporter.summary.pass,
-            test_files.len,
-        });
-        Output.printStartEnd(ctx.start_time, std.time.nanoTimestamp());
         Output.prettyError("\n", .{});
         Output.flush();
 

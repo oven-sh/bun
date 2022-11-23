@@ -4493,7 +4493,7 @@ pub const PackageManager = struct {
         };
 
         if (manager.options.log_level != .silent) {
-            Output.prettyErrorln("<r><b>bun link <r><d>v" ++ Global.package_json_version ++ "<r>\n", .{});
+            Output.prettyErrorln("<r><b>bun link <r><d>v" ++ Global.package_json_version_with_sha ++ "<r>\n", .{});
             Output.flush();
         }
 
@@ -4643,7 +4643,7 @@ pub const PackageManager = struct {
         };
 
         if (manager.options.log_level != .silent) {
-            Output.prettyErrorln("<r><b>bun unlink <r><d>v" ++ Global.package_json_version ++ "<r>\n", .{});
+            Output.prettyErrorln("<r><b>bun unlink <r><d>v" ++ Global.package_json_version_with_sha ++ "<r>\n", .{});
             Output.flush();
         }
 
@@ -5105,7 +5105,7 @@ pub const PackageManager = struct {
         };
 
         if (manager.options.log_level != .silent) {
-            Output.prettyErrorln("<r><b>bun " ++ @tagName(op) ++ " <r><d>v" ++ Global.package_json_version ++ "<r>\n", .{});
+            Output.prettyErrorln("<r><b>bun " ++ @tagName(op) ++ " <r><d>v" ++ Global.package_json_version_with_sha ++ "<r>\n", .{});
             Output.flush();
         }
 
@@ -5513,7 +5513,7 @@ pub const PackageManager = struct {
         };
 
         if (manager.options.log_level != .silent) {
-            Output.prettyErrorln("<r><b>bun install <r><d>v" ++ Global.package_json_version ++ "<r>\n", .{});
+            Output.prettyErrorln("<r><b>bun install <r><d>v" ++ Global.package_json_version_with_sha ++ "<r>\n", .{});
             Output.flush();
         }
 

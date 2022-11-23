@@ -13,40 +13,42 @@ import { gc } from "./gc";
 beforeEach(() => gc());
 afterEach(() => gc());
 
-// This test hangs, TODO: fix it
-// describe("WritableStream", () => {
-//   it("works", async () => {
-//     try {
-//       var chunks = [];
-//       var writable = new WritableStream({
-//         write(chunk, controller) {
-//           chunks.push(chunk);
-//         },
-//         close(er) {
-//           console.log("closed");
-//           console.log(er);
-//         },
-//         abort(reason) {
-//           console.log("aborted!");
-//           console.log(reason);
-//         },
-//       });
-//       var writer = writable.getWriter();
+describe("WritableStream", () => {
+  it("works", async () => {
+    try {
+      var chunks = [];
+      var writable = new WritableStream({
+        write(chunk, controller) {
+          chunks.push(chunk);
+        },
+        close(er) {
+          console.log("closed");
+          console.log(er);
+        },
+        abort(reason) {
+          console.log("aborted!");
+          console.log(reason);
+        },
+      });
 
-//       writer.write(new Uint8Array([1, 2, 3]));
-//       writer.write(new Uint8Array([4, 5, 6]));
-//       await writer.close();
+      var writer = writable.getWriter();
 
-//       expect(JSON.stringify(Array.from(Buffer.concat(chunks)))).toBe(
-//         JSON.stringify([1, 2, 3, 4, 5, 6])
-//       );
-//     } catch (e) {
-//       console.log(e);
-//       console.log(e.stack);
-//       throw e;
-//     }
-//   });
-// });
+      writer.write(new Uint8Array([1, 2, 3]));
+
+      writer.write(new Uint8Array([4, 5, 6]));
+
+      await writer.close();
+
+      expect(JSON.stringify(Array.from(Buffer.concat(chunks)))).toBe(
+        JSON.stringify([1, 2, 3, 4, 5, 6]),
+      );
+    } catch (e) {
+      console.log(e);
+      console.log(e.stack);
+      throw e;
+    }
+  });
+});
 
 // describe("ReadableStream.prototype.tee", () => {
 //   it("class", () => {

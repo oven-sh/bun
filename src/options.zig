@@ -840,7 +840,7 @@ pub const JSX = struct {
         use_embedded_refresh_runtime: bool = false,
 
         jsx: string = Defaults.JSXFunctionDev,
-        jsx_static: string = Defaults.JSXStaticFunction,
+        // jsx_static: string = Defaults.JSXStaticFunction,
 
         development: bool = true,
         parse: bool = true,

@@ -456,7 +456,7 @@ JSC__JSValue JSC__JSValue__createEmptyObject(JSC__JSGlobalObject* globalObject,
         JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), initialCapacity));
 }
 
-uint32_t JSC__JSValue__getLengthOfArray(JSC__JSValue value, JSC__JSGlobalObject* globalObject)
+uint64_t JSC__JSValue__getLengthOfArray(JSC__JSValue value, JSC__JSGlobalObject* globalObject)
 {
     JSC::JSValue jsValue = JSC::JSValue::decode(value);
     JSC::JSObject* object = jsValue.toObject(globalObject);
@@ -467,7 +467,7 @@ void JSC__JSObject__putRecord(JSC__JSObject* object, JSC__JSGlobalObject* global
     ZigString* values, size_t valuesLen)
 {
     auto scope = DECLARE_THROW_SCOPE(global->vm());
-    auto ident = Zig::toIdentifier(*key, global);
+    auto ident = Identifier::fromString(global->vm(), Zig::toStringCopy(*key));
     JSC::PropertyDescriptor descriptor;
 
     descriptor.setEnumerable(1);
@@ -475,7 +475,7 @@ void JSC__JSObject__putRecord(JSC__JSObject* object, JSC__JSGlobalObject* global
     descriptor.setWritable(1);
 
     if (valuesLen == 1) {
-        descriptor.setValue(JSC::jsString(global->vm(), Zig::toString(values[0])));
+        descriptor.setValue(JSC::jsString(global->vm(), Zig::toStringCopy(values[0])));
     } else {
 
         JSC::JSArray* array = nullptr;
@@ -488,7 +488,7 @@ void JSC__JSObject__putRecord(JSC__JSObject* object, JSC__JSGlobalObject* global
 
                 for (size_t i = 0; i < valuesLen; ++i) {
                     array->initializeIndexWithoutBarrier(
-                        initializationScope, i, JSC::jsString(global->vm(), Zig::toString(values[i])));
+                        initializationScope, i, JSC::jsString(global->vm(), Zig::toStringCopy(values[i])));
                 }
             }
         }
@@ -1431,10 +1431,28 @@ JSC__JSPromise* JSC__JSPromise__resolvedPromise(JSC__JSGlobalObject* arg0, JSC__
     return promise;
 }
 
-JSC__JSValue JSC__JSPromise__result(const JSC__JSPromise* arg0, JSC__VM* arg1)
+JSC__JSValue JSC__JSPromise__result(JSC__JSPromise* promise, JSC__VM* arg1)
 {
-    return JSC::JSValue::encode(arg0->result(reinterpret_cast<JSC::VM&>(arg1)));
+    auto& vm = *arg1;
+
+    // if the promise is rejected we automatically mark it as handled so it
+    // doesn't end up in the promise rejection tracker
+    switch (promise->status(vm)) {
+    case JSC::JSPromise::Status::Rejected: {
+        uint32_t flags = promise->internalField(JSC::JSPromise::Field::Flags).get().asUInt32();
+        if (!(flags & JSC::JSPromise::isFirstResolvingFunctionCalledFlag)) {
+            promise->internalField(JSC::JSPromise::Field::Flags).set(vm, promise, jsNumber(flags | JSC::JSPromise::isHandledFlag));
+        }
+    }
+    // fallthrough intended
+    case JSC::JSPromise::Status::Fulfilled: {
+        return JSValue::encode(promise->result(vm));
+    }
+    default:
+        return JSValue::encode(JSValue {});
+    }
 }
+
 uint32_t JSC__JSPromise__status(const JSC__JSPromise* arg0, JSC__VM* arg1)
 {
     switch (arg0->status(reinterpret_cast<JSC::VM&>(arg1))) {
@@ -3160,4 +3178,9 @@ JSC__JSValue JSC__JSValue__fastGet_(JSC__JSValue JSValue0, JSC__JSGlobalObject* 
 
     return JSValue::encode(
         value.getObject()->getIfPropertyExists(globalObject, builtinNameMap(globalObject, arg2)));
+}
+
+bool JSC__JSValue__toBooleanSlow(JSC__JSValue JSValue0, JSC__JSGlobalObject* globalObject)
+{
+    return JSValue::decode(JSValue0).toBoolean(globalObject);
 }

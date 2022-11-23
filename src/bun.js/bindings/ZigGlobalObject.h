@@ -423,6 +423,13 @@ public:
     // To do that, we count the number of times we register a module.
     int napiModuleRegisterCallCount = 0;
 
+    // NAPI instance data
+    // This is not a correct implementation
+    // Addon modules can override each other's data
+    void* napiInstanceData = nullptr;
+    void* napiInstanceDataFinalizer = nullptr;
+    void* napiInstanceDataFinalizerHint = nullptr;
+
 #include "ZigGeneratedClasses+lazyStructureHeader.h"
 
 private:

@@ -35,7 +35,7 @@ NATIVE_OR_OLD_MARCH = -march=westmere
 endif
 
 MIN_MACOS_VERSION ?= $(DEFAULT_MIN_MACOS_VERSION)
-BUN_BASE_VERSION = 0.2
+BUN_BASE_VERSION = 0.3
 
 AR=
 
@@ -884,7 +884,7 @@ MIMALLOC_OVERRIDE_FLAG ?=
 
 
 bump:
-	expr 0.2.0 + 1 > build-id
+	expr 0.3.0 + 1 > build-id
 
 .PHONY: identifier-cache
 identifier-cache:
@@ -1458,9 +1458,11 @@ wasm-return1:
 generate-classes:
 	bun src/bun.js/scripts/generate-classes.ts
 	$(ZIG) fmt src/bun.js/bindings/generated_classes.zig
+	clang-format -i src/bun.js/bindings/ZigGeneratedClasses.h src/bun.js/bindings/ZigGeneratedClasses.cpp
 
 generate-sink:
 	bun src/bun.js/scripts/generate-jssink.js
+	clang-format -i  src/bun.js/bindings/JSSink.cpp  src/bun.js/bindings/JSSink.h
 	$(WEBKIT_DIR)/Source/JavaScriptCore/create_hash_table src/bun.js/bindings/JSSink.cpp > src/bun.js/bindings/JSSinkLookupTable.h
 	$(SED) -i -e 's/#include "Lookup.h"//' src/bun.js/bindings/JSSinkLookupTable.h
 	$(SED) -i -e 's/namespace JSC {//' src/bun.js/bindings/JSSinkLookupTable.h

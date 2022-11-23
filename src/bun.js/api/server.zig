@@ -31,7 +31,6 @@ const ImportKind = ast.ImportKind;
 const Analytics = @import("../../analytics/analytics_thread.zig");
 const ZigString = @import("javascript_core").ZigString;
 const Runtime = @import("../../runtime.zig");
-const Router = @import("./router.zig");
 const ImportRecord = ast.ImportRecord;
 const DotEnv = @import("../../env_loader.zig");
 const ParseResult = @import("../../bundler.zig").ParseResult;
@@ -3949,7 +3948,7 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
             _: js.ExceptionRef,
         ) js.JSObjectRef {
             var globalThis = ctx.ptr();
-
+            JSC.markBinding(@src());
             if (arguments.len == 0) {
                 const fetch_error = WebCore.Fetch.fetch_error_no_args;
                 return JSPromise.rejectedPromiseValue(globalThis, ZigString.init(fetch_error).toErrorInstance(globalThis)).asRef();
@@ -4497,7 +4496,7 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
                 this.config.hostname;
 
             this.ref();
-
+            this.vm.autoGarbageCollect();
             this.app.listenWithConfig(*ThisServer, this, onListen, .{
                 .port = this.config.port,
                 .host = host,

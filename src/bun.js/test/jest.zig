@@ -37,6 +37,7 @@ const JSPromise = JSC.JSPromise;
 const JSValue = JSC.JSValue;
 const JSError = JSC.JSError;
 const JSGlobalObject = JSC.JSGlobalObject;
+const JSObject = JSC.JSObject;
 
 const VirtualMachine = @import("../javascript.zig").VirtualMachine;
 const Task = @import("../javascript.zig").Task;
@@ -274,7 +275,10 @@ pub const Expect = struct {
             .test_id = Jest.runner.?.pending_test.?.test_id,
         };
         const expect_js_value = expect.toJS(globalObject);
+        expect_js_value.ensureStillAlive();
         JSC.Jest.Expect.capturedValueSetCached(expect_js_value, globalObject, value);
+        expect_js_value.ensureStillAlive();
+        expect.postMatch(globalObject);
         return expect_js_value;
     }
 
@@ -293,6 +297,7 @@ pub const Expect = struct {
         globalObject: *JSC.JSGlobalObject,
         callframe: *JSC.CallFrame,
     ) callconv(.C) JSC.JSValue {
+        defer this.postMatch(globalObject);
         const thisValue = callframe.this();
         const arguments_ = callframe.arguments(1);
         const arguments = arguments_.ptr[0..arguments_.len];
@@ -315,31 +320,29 @@ pub const Expect = struct {
             return .zero;
         };
         right.ensureStillAlive();
-        const eql = left.isSameValue(right, globalObject);
+
+        const not = this.op.contains(.not);
+        var pass = left.isSameValue(right, globalObject);
         if (comptime Environment.allow_assert) {
-            std.debug.assert(eql == JSC.C.JSValueIsStrictEqual(globalObject, left.asObjectRef(), right.asObjectRef()));
+            std.debug.assert(pass == JSC.C.JSValueIsStrictEqual(globalObject, left.asObjectRef(), right.asObjectRef()));
         }
 
-        if (!eql) {
-            var lhs_formatter: JSC.ZigConsoleClient.Formatter = JSC.ZigConsoleClient.Formatter{ .globalThis = globalObject };
-            var rhs_formatter: JSC.ZigConsoleClient.Formatter = JSC.ZigConsoleClient.Formatter{ .globalThis = globalObject };
+        if (not) pass = !pass;
+        if (pass) return thisValue;
 
-            if (comptime Environment.allow_assert) {
-                Output.prettyErrorln("\nJSType: {s}\nJSType: {s}\n\n", .{ @tagName(left.jsType()), @tagName(right.jsType()) });
-            }
-
-            globalObject.throw(
-                "Expected: {any}\n\tReceived: {any}",
-                .{
-                    left.toFmt(globalObject, &lhs_formatter),
-                    right.toFmt(globalObject, &rhs_formatter),
-                },
-            );
-
-            return .zero;
+        // handle failure
+        var lhs_fmt = JSC.ZigConsoleClient.Formatter{ .globalThis = globalObject };
+        var rhs_fmt = JSC.ZigConsoleClient.Formatter{ .globalThis = globalObject };
+        if (comptime Environment.allow_assert) {
+            Output.prettyErrorln("\nJSType: {s}\nJSType: {s}\n\n", .{ @tagName(left.jsType()), @tagName(right.jsType()) });
         }
 
-        return thisValue;
+        if (not) {
+            globalObject.throw("\n\tExpected: not {any}\n\tReceived: {any}", .{ left.toFmt(globalObject, &lhs_fmt), right.toFmt(globalObject, &rhs_fmt) });
+        } else {
+            globalObject.throw("\n\tExpected: {any}\n\tReceived: {any}", .{ left.toFmt(globalObject, &lhs_fmt), right.toFmt(globalObject, &rhs_fmt) });
+        }
+        return .zero;
     }
 
     pub fn toHaveLength(
@@ -347,6 +350,7 @@ pub const Expect = struct {
         globalObject: *JSC.JSGlobalObject,
         callframe: *JSC.CallFrame,
     ) callconv(.C) JSC.JSValue {
+        defer this.postMatch(globalObject);
         const thisValue = callframe.this();
         const arguments_ = callframe.arguments(1);
         const arguments = arguments_.ptr[0..arguments_.len];
@@ -363,25 +367,315 @@ pub const Expect = struct {
 
         active_test_expectation_counter.actual += 1;
 
-        const expected = arguments[0].coerce(i32, globalObject);
-        const value = JSC.Jest.Expect.capturedValueGetCached(thisValue) orelse {
+        const expected: JSValue = arguments[0];
+        const value: JSValue = JSC.Jest.Expect.capturedValueGetCached(thisValue) orelse {
             globalObject.throw("Internal consistency error: the expect(value) was garbage collected but it should not have been!", .{});
             return .zero;
         };
-        const actual = value.getLengthOfArray(globalObject);
-        if (expected != actual) {
-            globalObject.throw("Expected length to equal {d} but received {d}\n  Expected: {d}\n    Actual: {d}\n", .{
-                expected,
-                actual,
-                expected,
-                actual,
-            });
+        value.ensureStillAlive();
+
+        if (!value.isObject() and !value.isString()) {
+            var fmt = JSC.ZigConsoleClient.Formatter{ .globalThis = globalObject };
+            globalObject.throw("Received value does not have a length property: {any}", .{value.toFmt(globalObject, &fmt)});
             return .zero;
         }
 
-        return thisValue;
+        if (!expected.isNumber()) {
+            var fmt = JSC.ZigConsoleClient.Formatter{ .globalThis = globalObject };
+            globalObject.throw("Expected value must be a non-negative integer: {any}", .{expected.toFmt(globalObject, &fmt)});
+            return .zero;
+        }
+
+        const expected_length: f64 = expected.asNumber();
+        if (@round(expected_length) != expected_length or std.math.isInf(expected_length) or std.math.isNan(expected_length) or expected_length < 0) {
+            var fmt = JSC.ZigConsoleClient.Formatter{ .globalThis = globalObject };
+            globalObject.throw("Expected value must be a non-negative integer: {any}", .{expected.toFmt(globalObject, &fmt)});
+            return .zero;
+        }
+
+        const not = this.op.contains(.not);
+        var pass = false;
+
+        var actual_length: f64 = undefined;
+        if (value.isString()) {
+            actual_length = @intToFloat(f64, value.asString().length());
+            if (actual_length == expected_length) pass = true;
+        } else {
+            const length_value: JSValue = value.getIfPropertyExistsImpl(globalObject, "length", "length".len);
+
+            if (length_value.isEmpty()) {
+                var fmt = JSC.ZigConsoleClient.Formatter{ .globalThis = globalObject };
+                globalObject.throw("Received value does not have a length property: {any}", .{value.toFmt(globalObject, &fmt)});
+                return .zero;
+            } else if (!length_value.isNumber()) {
+                var fmt = JSC.ZigConsoleClient.Formatter{ .globalThis = globalObject };
+                globalObject.throw("Received value has non-number length property: {any}", .{length_value.toFmt(globalObject, &fmt)});
+                return .zero;
+            }
+
+            actual_length = length_value.asNumber();
+            if (@round(actual_length) == actual_length) {
+                if (actual_length == expected_length) pass = true;
+            }
+        }
+
+        if (not) pass = !pass;
+        if (pass) return thisValue;
+
+        // handle failure
+        if (not) {
+            globalObject.throw("\n\tExpected: not {d}\n\tReceived: {d}", .{ expected_length, actual_length });
+        } else {
+            globalObject.throw("\n\tExpected: {d}\n\tReceived: {d}", .{ expected_length, actual_length });
+        }
+        return .zero;
     }
 
+    pub fn toContain(
+        this: *Expect,
+        globalObject: *JSC.JSGlobalObject,
+        callFrame: *JSC.CallFrame,
+    ) callconv(.C) JSC.JSValue {
+        defer this.postMatch(globalObject);
+        const thisValue = callFrame.this();
+        const arguments_ = callFrame.arguments(1);
+        const arguments = arguments_.ptr[0..arguments_.len];
+
+        if (arguments.len < 1) {
+            globalObject.throwInvalidArguments("toContain() takes 1 argument", .{});
+            return .zero;
+        }
+
+        if (this.scope.tests.items.len <= this.test_id) {
+            globalObject.throw("toContain() must be called in a test", .{});
+            return .zero;
+        }
+
+        active_test_expectation_counter.actual += 1;
+
+        const expected = arguments[0];
+        expected.ensureStillAlive();
+        const value: JSValue = JSC.Jest.Expect.capturedValueGetCached(thisValue) orelse {
+            globalObject.throw("Internal consistency error: the expect(value) was garbage collected but it should not have been!", .{});
+            return .zero;
+        };
+        value.ensureStillAlive();
+
+        const not = this.op.contains(.not);
+        var pass = false;
+
+        if (value.isIterable(globalObject)) {
+            var itr = value.arrayIterator(globalObject);
+            while (itr.next()) |item| {
+                if (item.isSameValue(expected, globalObject)) {
+                    pass = true;
+                    break;
+                }
+            }
+        } else if (value.isString() and expected.isString()) {
+            const value_string = value.toString(globalObject).toSlice(globalObject, default_allocator).slice();
+            const expected_string = expected.toString(globalObject).toSlice(globalObject, default_allocator).slice();
+            if (strings.contains(value_string, expected_string)) {
+                pass = true;
+            }
+        } else {
+            globalObject.throw("Received value must be an array type, or both received and expected values must be strings.", .{});
+            return .zero;
+        }
+
+        if (not) pass = !pass;
+        if (pass) return thisValue;
+
+        // handle failure
+        var fmt = JSC.ZigConsoleClient.Formatter{ .globalThis = globalObject };
+        if (not) {
+            globalObject.throw("Expected to not contain \"{any}\"", .{expected.toFmt(globalObject, &fmt)});
+        } else {
+            globalObject.throw("Expected to contain \"{any}\"", .{expected.toFmt(globalObject, &fmt)});
+        }
+        return .zero;
+    }
+
+    pub fn toBeTruthy(this: *Expect, globalObject: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+        defer this.postMatch(globalObject);
+        const thisValue = callFrame.this();
+        const value: JSValue = Expect.capturedValueGetCached(thisValue) orelse {
+            globalObject.throw("Internal consistency error: the expect(value) was garbage collected but it should not have been!", .{});
+            return .zero;
+        };
+        value.ensureStillAlive();
+
+        if (this.scope.tests.items.len <= this.test_id) {
+            globalObject.throw("toBeTruthy() must be called in a test", .{});
+            return .zero;
+        }
+
+        active_test_expectation_counter.actual += 1;
+
+        const not = this.op.contains(.not);
+        var pass = false;
+
+        const truthy = value.toBooleanSlow(globalObject);
+        if (truthy) pass = true;
+
+        if (not) pass = !pass;
+        if (pass) return thisValue;
+
+        // handle failure
+        var fmt = JSC.ZigConsoleClient.Formatter{ .globalThis = globalObject };
+        if (not) {
+            globalObject.throw("Expected \"{any}\" to be not truthy.", .{value.toFmt(globalObject, &fmt)});
+        } else {
+            globalObject.throw("Expected \"{any}\" to be truthy.", .{value.toFmt(globalObject, &fmt)});
+        }
+        return .zero;
+    }
+
+    pub fn toBeUndefined(this: *Expect, globalObject: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+        defer this.postMatch(globalObject);
+        const thisValue = callFrame.this();
+        const value: JSValue = Expect.capturedValueGetCached(thisValue) orelse {
+            globalObject.throw("Interal consistency error: the expect(value) was garbage collected but it should not have been!", .{});
+            return .zero;
+        };
+        value.ensureStillAlive();
+
+        active_test_expectation_counter.actual += 1;
+
+        const not = this.op.contains(.not);
+        var pass = false;
+        if (value.isUndefined()) pass = true;
+
+        if (not) pass = !pass;
+        if (pass) return thisValue;
+
+        // handle failure
+        var fmt = JSC.ZigConsoleClient.Formatter{ .globalThis = globalObject };
+        if (not) {
+            globalObject.throw("Expected \"{any}\" to be not undefined.", .{value.toFmt(globalObject, &fmt)});
+        } else {
+            globalObject.throw("Expected \"{any}\" to be undefined.", .{value.toFmt(globalObject, &fmt)});
+        }
+        return .zero;
+    }
+
+    pub fn toBeNaN(this: *Expect, globalObject: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+        defer this.postMatch(globalObject);
+
+        const thisValue = callFrame.this();
+        const value: JSValue = Expect.capturedValueGetCached(thisValue) orelse {
+            globalObject.throw("Interal consistency error: the expect(value) was garbage collected but it should not have been!", .{});
+            return .zero;
+        };
+        value.ensureStillAlive();
+
+        active_test_expectation_counter.actual += 1;
+
+        const not = this.op.contains(.not);
+        var pass = false;
+        if (value.isNumber()) {
+            const number = value.asNumber();
+            if (number != number) pass = true;
+        }
+
+        if (not) pass = !pass;
+        if (pass) return thisValue;
+
+        // handle failure
+        var fmt = JSC.ZigConsoleClient.Formatter{ .globalThis = globalObject };
+        if (not) {
+            globalObject.throw("Expected \"{any}\" to be not NaN.", .{value.toFmt(globalObject, &fmt)});
+        } else {
+            globalObject.throw("Expected \"{any}\" to be NaN.", .{value.toFmt(globalObject, &fmt)});
+        }
+        return .zero;
+    }
+
+    pub fn toBeNull(this: *Expect, globalObject: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+        defer this.postMatch(globalObject);
+
+        const thisValue = callFrame.this();
+        const value: JSValue = Expect.capturedValueGetCached(thisValue) orelse {
+            globalObject.throw("Interal consistency error: the expect(value) was garbage collected but it should not have been!", .{});
+            return .zero;
+        };
+        value.ensureStillAlive();
+
+        active_test_expectation_counter.actual += 1;
+
+        const not = this.op.contains(.not);
+        var pass = value.isNull();
+        if (not) pass = !pass;
+        if (pass) return thisValue;
+
+        // handle failure
+        var fmt = JSC.ZigConsoleClient.Formatter{ .globalThis = globalObject };
+        if (not) {
+            globalObject.throw("Expected \"{any}\" to be not null.", .{value.toFmt(globalObject, &fmt)});
+        } else {
+            globalObject.throw("Expected \"{any}\" to be null.", .{value.toFmt(globalObject, &fmt)});
+        }
+        return .zero;
+    }
+
+    pub fn toBeDefined(this: *Expect, globalObject: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+        defer this.postMatch(globalObject);
+
+        const thisValue = callFrame.this();
+        const value: JSValue = Expect.capturedValueGetCached(thisValue) orelse {
+            globalObject.throw("Interal consistency error: the expect(value) was garbage collected but it should not have been!", .{});
+            return .zero;
+        };
+        value.ensureStillAlive();
+
+        active_test_expectation_counter.actual += 1;
+
+        const not = this.op.contains(.not);
+        var pass = !value.isUndefined();
+        if (not) pass = !pass;
+        if (pass) return thisValue;
+
+        // handle failure
+        var fmt = JSC.ZigConsoleClient.Formatter{ .globalThis = globalObject };
+        if (not) {
+            globalObject.throw("Expected \"{any}\" to be not defined.", .{value.toFmt(globalObject, &fmt)});
+        } else {
+            globalObject.throw("Expected \"{any}\" to be defined.", .{value.toFmt(globalObject, &fmt)});
+        }
+        return .zero;
+    }
+
+    pub fn toBeFalsy(this: *Expect, globalObject: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+        defer this.postMatch(globalObject);
+
+        const thisValue = callFrame.this();
+
+        const value: JSValue = Expect.capturedValueGetCached(thisValue) orelse {
+            globalObject.throw("internal consistency error: the expect(value) was garbage collected but it should not have been!", .{});
+            return .zero;
+        };
+        value.ensureStillAlive();
+
+        const not = this.op.contains(.not);
+        var pass = false;
+
+        const truthy = value.toBooleanSlow(globalObject);
+        if (!truthy) pass = true;
+
+        if (not) pass = !pass;
+        if (pass) return thisValue;
+
+        // handle failure
+        var fmt = JSC.ZigConsoleClient.Formatter{ .globalThis = globalObject };
+        if (not) {
+            globalObject.throw("Expected \"{any}\" to be not falsy.", .{value.toFmt(globalObject, &fmt)});
+        } else {
+            globalObject.throw("Expected \"{any}\" to be falsy.", .{value.toFmt(globalObject, &fmt)});
+        }
+        return .zero;
+    }
+
+    pub const toHaveProperty = notImplementedJSCFn;
     pub const toHaveBeenCalledTimes = notImplementedJSCFn;
     pub const toHaveBeenCalledWith = notImplementedJSCFn;
     pub const toHaveBeenLastCalledWith = notImplementedJSCFn;
@@ -390,14 +684,12 @@ pub const Expect = struct {
     pub const toHaveReturnedWith = notImplementedJSCFn;
     pub const toHaveLastReturnedWith = notImplementedJSCFn;
     pub const toHaveNthReturnedWith = notImplementedJSCFn;
-    pub const toHaveProperty = notImplementedJSCFn;
     pub const toBeCloseTo = notImplementedJSCFn;
     pub const toBeGreaterThan = notImplementedJSCFn;
     pub const toBeGreaterThanOrEqual = notImplementedJSCFn;
     pub const toBeLessThan = notImplementedJSCFn;
     pub const toBeLessThanOrEqual = notImplementedJSCFn;
     pub const toBeInstanceOf = notImplementedJSCFn;
-    pub const toContain = notImplementedJSCFn;
     pub const toContainEqual = notImplementedJSCFn;
     pub const toEqual = notImplementedJSCFn;
     pub const toMatch = notImplementedJSCFn;
@@ -408,6 +700,35 @@ pub const Expect = struct {
     pub const toThrow = notImplementedJSCFn;
     pub const toThrowErrorMatchingSnapshot = notImplementedJSCFn;
     pub const toThrowErrorMatchingInlineSnapshot = notImplementedJSCFn;
+
+    pub const getStaticNot = notImplementedStaticProp;
+    pub const getStaticResolves = notImplementedStaticProp;
+    pub const getStaticRejects = notImplementedStaticProp;
+
+    pub fn getNot(this: *Expect, thisValue: JSValue, globalObject: *JSGlobalObject) callconv(.C) JSValue {
+        _ = Expect.capturedValueGetCached(thisValue) orelse {
+            globalObject.throw("Internal consistency error: the expect(value) was garbage collected but it should not have been!", .{});
+            return .zero;
+        };
+
+        this.op.toggle(.not);
+
+        return thisValue;
+    }
+
+    pub const getResolves = notImplementedJSCProp;
+    pub const getRejects = notImplementedJSCProp;
+
+    pub const extend = notImplementedStaticFn;
+    pub const anything = notImplementedStaticFn;
+    pub const any = notImplementedStaticFn;
+    pub const arrayContaining = notImplementedStaticFn;
+    pub const assertions = notImplementedStaticFn;
+    pub const hasAssertions = notImplementedStaticFn;
+    pub const objectContaining = notImplementedStaticFn;
+    pub const stringContaining = notImplementedStaticFn;
+    pub const stringMatching = notImplementedStaticFn;
+    pub const addSnapshotSerializer = notImplementedStaticFn;
 
     pub fn notImplementedJSCFn(_: *Expect, globalObject: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSC.JSValue {
         globalObject.throw("Not implemented", .{});
@@ -429,23 +750,10 @@ pub const Expect = struct {
         return .zero;
     }
 
-    pub const getStaticNot = notImplementedStaticProp;
-    pub const getStaticResolves = notImplementedStaticProp;
-    pub const getStaticRejects = notImplementedStaticProp;
-    pub const getNot = notImplementedJSCProp;
-    pub const getResolves = notImplementedJSCProp;
-    pub const getRejects = notImplementedJSCProp;
-
-    pub const extend = notImplementedStaticFn;
-    pub const anything = notImplementedStaticFn;
-    pub const any = notImplementedStaticFn;
-    pub const arrayContaining = notImplementedStaticFn;
-    pub const assertions = notImplementedStaticFn;
-    pub const hasAssertions = notImplementedStaticFn;
-    pub const objectContaining = notImplementedStaticFn;
-    pub const stringContaining = notImplementedStaticFn;
-    pub const stringMatching = notImplementedStaticFn;
-    pub const addSnapshotSerializer = notImplementedStaticFn;
+    pub fn postMatch(_: *Expect, globalObject: *JSC.JSGlobalObject) void {
+        var vm = globalObject.bunVM();
+        vm.autoGarbageCollect();
+    }
 };
 
 pub const TestScope = struct {
@@ -537,13 +845,15 @@ pub const TestScope = struct {
         globalThis.bunVM().runErrorHandler(err, null);
         var task: *TestRunnerTask = arguments.ptr[1].asPromisePtr(TestRunnerTask);
         task.handleResult(.{ .fail = active_test_expectation_counter.actual }, .promise);
+        globalThis.bunVM().autoGarbageCollect();
         return JSValue.jsUndefined();
     }
 
-    pub fn onResolve(_: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSValue {
+    pub fn onResolve(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSValue {
         const arguments = callframe.arguments(2);
         var task: *TestRunnerTask = arguments.ptr[1].asPromisePtr(TestRunnerTask);
         task.handleResult(.{ .pass = active_test_expectation_counter.actual }, .promise);
+        globalThis.bunVM().autoGarbageCollect();
         return JSValue.jsUndefined();
     }
 
@@ -553,6 +863,7 @@ pub const TestScope = struct {
     ) callconv(.C) JSValue {
         const function = callframe.callee();
         const args = callframe.arguments(1);
+        defer globalThis.bunVM().autoGarbageCollect();
 
         if (JSC.getFunctionData(function)) |data| {
             var task = bun.cast(*TestRunnerTask, data);
@@ -579,6 +890,7 @@ pub const TestScope = struct {
         defer {
             js.JSValueUnprotect(vm.global, callback);
             this.callback = null;
+            vm.autoGarbageCollect();
         }
         JSC.markBinding(@src());
 
@@ -600,33 +912,35 @@ pub const TestScope = struct {
             initial_value = js.JSObjectCallAsFunctionReturnValue(vm.global, callback, null, 0, null);
         }
 
-        if (initial_value.isException(vm.global.vm()) or initial_value.isError() or initial_value.isAggregateError(vm.global)) {
-            vm.runErrorHandler(initial_value, null);
-            return .{ .fail = active_test_expectation_counter.actual };
-        }
-
-        if (!initial_value.isEmptyOrUndefinedOrNull() and (initial_value.asPromise() != null or initial_value.asInternalPromise() != null)) {
-            if (this.promise != null) {
-                return .{ .pending = .{} };
+        if (!initial_value.isEmptyOrUndefinedOrNull()) {
+            if (initial_value.isAnyError(vm.global)) {
+                vm.runErrorHandler(initial_value, null);
+                return .{ .fail = active_test_expectation_counter.actual };
             }
 
-            var promise = initial_value.asPromise().?;
-            this.task = task;
+            if (initial_value.jsType() == .JSPromise) {
+                if (this.promise != null) {
+                    return .{ .pending = .{} };
+                }
 
-            switch (promise.status(vm.global.vm())) {
-                .Rejected => {
-                    vm.runErrorHandler(promise.result(vm.global.vm()), null);
-                    return .{ .fail = active_test_expectation_counter.actual };
-                },
-                .Pending => {
-                    task.promise_state = .pending;
-                    _ = promise.asValue(vm.global).then(vm.global, task, onResolve, onReject);
-                    return .{ .pending = {} };
-                },
+                var promise: *JSC.JSPromise = initial_value.asPromise().?;
+                this.task = task;
 
-                else => {
-                    _ = promise.result(vm.global.vm());
-                },
+                switch (promise.status(vm.global.vm())) {
+                    .Rejected => {
+                        vm.runErrorHandler(promise.result(vm.global.vm()), null);
+                        return .{ .fail = active_test_expectation_counter.actual };
+                    },
+                    .Pending => {
+                        task.promise_state = .pending;
+                        _ = promise.asValue(vm.global).then(vm.global, task, onResolve, onReject);
+                        return .{ .pending = {} };
+                    },
+
+                    else => {
+                        _ = promise.result(vm.global.vm());
+                    },
+                }
             }
         }
 

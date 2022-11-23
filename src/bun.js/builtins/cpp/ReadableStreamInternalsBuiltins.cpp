@@ -986,7 +986,7 @@ const char* const s_readableStreamInternalsIsReadableStreamDefaultControllerCode
 const JSC::ConstructAbility s_readableStreamInternalsReadDirectStreamCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableStreamInternalsReadDirectStreamCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_readableStreamInternalsReadDirectStreamCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_readableStreamInternalsReadDirectStreamCodeLength = 1623;
+const int s_readableStreamInternalsReadDirectStreamCodeLength = 1557;
 static const JSC::Intrinsic s_readableStreamInternalsReadDirectStreamCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_readableStreamInternalsReadDirectStreamCode =
     "(function (stream, sink, underlyingSource) {\n" \
@@ -994,10 +994,6 @@ const char* const s_readableStreamInternalsReadDirectStreamCode =
     "  \n" \
     "  @putByIdDirectPrivate(stream, \"underlyingSource\", @undefined);\n" \
     "  @putByIdDirectPrivate(stream, \"start\", @undefined);\n" \
-    "\n" \
-    "\n" \
-    "  var capturedStream = stream;\n" \
-    "  var reader;\n" \
     "\n" \
     "  function close(stream, reason) {\n" \
     "    if (reason && underlyingSource?.cancel) {\n" \
@@ -1019,7 +1015,7 @@ const char* const s_readableStreamInternalsReadDirectStreamCode =
     "      } else {\n" \
     "        @putByIdDirectPrivate(stream, \"state\", @streamClosed);\n" \
     "      }\n" \
-    "      \n" \
+    "       stream = @undefined;\n" \
     "    }\n" \
     "  }\n" \
     "\n" \
@@ -1055,6 +1051,7 @@ const char* const s_readableStreamInternalsReadDirectStreamCode =
     "  if (maybePromise && @isPromise(maybePromise)) {\n" \
     "    return maybePromise.@then(() => {});\n" \
     "  }\n" \
+    "\n" \
     "\n" \
     "})\n" \
 ;

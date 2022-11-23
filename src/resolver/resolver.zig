@@ -192,6 +192,9 @@ pub const Result = struct {
         notes: std.ArrayList(logger.Data),
         suggestion_text: string = "",
         suggestion_message: string = "",
+        suggestion_range: SuggestionRange,
+
+        pub const SuggestionRange = enum { full, end };
 
         pub fn init(allocator: std.mem.Allocator) DebugMeta {
             return DebugMeta{ .notes = std.ArrayList(logger.Data).init(allocator) };
@@ -199,7 +202,11 @@ pub const Result = struct {
 
         pub fn logErrorMsg(m: *DebugMeta, log: *logger.Log, _source: ?*const logger.Source, r: logger.Range, comptime fmt: string, args: anytype) !void {
             if (_source != null and m.suggestion_message.len > 0) {
-                const data = logger.rangeData(_source.?, r, m.suggestion_message);
+                const suggestion_range = if (m.suggestion_range == .end)
+                    logger.Range{ .loc = logger.Loc{ .start = r.endI() - 1 } }
+                else
+                    r;
+                const data = logger.rangeData(_source.?, suggestion_range, m.suggestion_message);
                 data.location.?.suggestion = m.suggestion_text;
                 try m.notes.append(data);
             }
@@ -1402,50 +1409,16 @@ pub const Resolver = struct {
             }
         }
 
-        const esm_ = ESModule.Package.parse(import_path, &esm_subpath_buf);
+        // Find the parent directory with the "package.json" file
+        var dir_info_package_json: ?*DirInfo = dir_info;
+        while (dir_info_package_json != null and dir_info_package_json.?.package_json == null) : (dir_info_package_json = dir_info_package_json.?.getParent()) {}
 
-        if (import_path[0] == '#' and !forbid_imports) {
-            if (esm_ != null) {
-                if (dir_info.enclosing_package_json) |package_json| {
-                    load_from_imports_map: {
-                        const imports_map = package_json.imports orelse break :load_from_imports_map;
-
-                        if (import_path.len == 1 or strings.hasPrefix(import_path, "#/")) {
-                            if (r.debug_logs) |*debug| {
-                                debug.addNoteFmt("The path \"{s}\" must not equal \"#\" and must not start with \"#/\"", .{import_path});
-                            }
-                            return .{ .not_found = {} };
-                        }
-
-                        const esmodule = ESModule{
-                            .conditions = switch (kind) {
-                                ast.ImportKind.require, ast.ImportKind.require_resolve => r.opts.conditions.require,
-                                else => r.opts.conditions.import,
-                            },
-                            .allocator = r.allocator,
-                            .debug_logs = if (r.debug_logs) |*debug| debug else null,
-                        };
-
-                        const esm_resolution = esmodule.resolveImports(import_path, imports_map.root);
-
-                        if (esm_resolution.status == .PackageResolve)
-                            return r.loadNodeModules(
-                                esm_resolution.path,
-                                kind,
-                                dir_info,
-                                global_cache,
-                                true,
-                            );
-
-                        if (r.handleESMResolution(esm_resolution, package_json.source.path.name.dir, kind, package_json)) |result| {
-                            return .{ .success = result };
-                        }
-
-                        return .{ .not_found = {} };
-                    }
-                }
-            }
+        // Check for subpath imports: https://nodejs.org/api/packages.html#subpath-imports
+        if (dir_info_package_json != null and strings.hasPrefix(import_path, "#") and !forbid_imports and dir_info_package_json.?.package_json.?.imports != null) {
+            return r.loadPackageImports(import_path, dir_info_package_json.?, kind, global_cache);
         }
+
+        const esm_ = ESModule.Package.parse(import_path, &esm_subpath_buf);
 
         var source_dir_info = dir_info;
         var any_node_modules_folder = false;
@@ -1492,7 +1465,7 @@ pub const Resolver = struct {
                                 // directory path accidentally being interpreted as URL escapes.
                                 const esm_resolution = esmodule.resolve("/", esm.subpath, exports_map.root);
 
-                                if (r.handleESMResolution(esm_resolution, abs_package_path, kind, package_json)) |result| {
+                                if (r.handleESMResolution(esm_resolution, abs_package_path, kind, package_json, esm.subpath)) |result| {
                                     return .{ .success = result };
                                 }
 
@@ -1709,7 +1682,7 @@ pub const Resolver = struct {
                                 // directory path accidentally being interpreted as URL escapes.
                                 const esm_resolution = esmodule.resolve("/", esm.subpath, exports_map.root);
 
-                                if (r.handleESMResolution(esm_resolution, abs_package_path, kind, package_json)) |*result| {
+                                if (r.handleESMResolution(esm_resolution, abs_package_path, kind, package_json, esm.subpath)) |*result| {
                                     result.is_node_module = true;
                                     return .{ .success = result.* };
                                 }
@@ -1928,22 +1901,24 @@ pub const Resolver = struct {
         bun.unreachablePanic("TODO: implement enqueueDependencyToResolve for non-root packages", .{});
     }
 
-    fn handleESMResolution(r: *ThisResolver, esm_resolution_: ESModule.Resolution, abs_package_path: string, kind: ast.ImportKind, package_json: *PackageJSON) ?MatchResult {
+    fn handleESMResolution(r: *ThisResolver, esm_resolution_: ESModule.Resolution, abs_package_path: string, kind: ast.ImportKind, package_json: *PackageJSON, package_subpath: string) ?MatchResult {
         var esm_resolution = esm_resolution_;
-        if (!((esm_resolution.status == .Inexact or esm_resolution.status == .Exact) and
+        if (!((esm_resolution.status == .Inexact or esm_resolution.status == .Exact or esm_resolution.status == .ExactEndsWithStar) and
             esm_resolution.path.len > 0 and esm_resolution.path[0] == '/'))
             return null;
 
         const abs_esm_path: string = brk: {
             var parts = [_]string{
                 abs_package_path,
-                esm_resolution.path[1..],
+                strings.withoutLeadingSlash(esm_resolution.path),
             };
             break :brk r.fs.absBuf(&parts, &esm_absolute_package_path_joined);
         };
 
+        var missing_suffix: string = undefined;
+
         switch (esm_resolution.status) {
-            .Exact => {
+            .Exact, .ExactEndsWithStar => {
                 const resolved_dir_info = (r.dirInfoCached(std.fs.path.dirname(abs_esm_path).?) catch null) orelse {
                     esm_resolution.status = .ModuleNotFound;
                     return null;
@@ -1952,13 +1927,63 @@ pub const Resolver = struct {
                     esm_resolution.status = .ModuleNotFound;
                     return null;
                 };
-                const entry_query = entries.get(std.fs.path.basename(abs_esm_path)) orelse {
+                const base = std.fs.path.basename(abs_esm_path);
+                const extension_order = if (kind == .at or kind == .at_conditional)
+                    r.extension_order
+                else
+                    r.opts.extension_order;
+                const entry_query = entries.get(base) orelse {
+                    const ends_with_star = esm_resolution.status == .ExactEndsWithStar;
                     esm_resolution.status = .ModuleNotFound;
+
+                    // Try to have a friendly error message if people forget the extension
+                    if (ends_with_star) {
+                        std.mem.copy(u8, &load_as_file_buf, base);
+                        for (extension_order) |ext| {
+                            var file_name = load_as_file_buf[0 .. base.len + ext.len];
+                            std.mem.copy(u8, file_name[base.len..], ext);
+                            if (entries.get(file_name) != null) {
+                                if (r.debug_logs) |*debug| {
+                                    const parts = [_]string{ package_json.name, package_subpath };
+                                    debug.addNoteFmt("The import {s} is missing the extension {s}", .{ ResolvePath.join(parts, .auto), ext });
+                                }
+                                esm_resolution.status = .ModuleNotFoundMissingExtension;
+                                missing_suffix = ext;
+                                break;
+                            }
+                        }
+                    }
                     return null;
                 };
 
                 if (entry_query.entry.kind(&r.fs.fs) == .dir) {
+                    const ends_with_star = esm_resolution.status == .ExactEndsWithStar;
                     esm_resolution.status = .UnsupportedDirectoryImport;
+
+                    // Try to have a friendly error message if people forget the "/index.js" suffix
+                    if (ends_with_star) {
+                        if (r.dirInfoCached(abs_esm_path) catch null) |dir_info| {
+                            if (dir_info.getEntries()) |dir_entries| {
+                                const index = "index";
+                                std.mem.copy(u8, &load_as_file_buf, index);
+                                for (extension_order) |ext| {
+                                    var file_name = load_as_file_buf[0 .. index.len + ext.len];
+                                    std.mem.copy(u8, file_name[index.len..], ext);
+                                    const index_query = dir_entries.get(file_name);
+                                    if (index_query != null and index_query.?.entry.kind(&r.fs.fs) == .file) {
+                                        missing_suffix = std.fmt.allocPrint(r.allocator, "/{s}", .{file_name}) catch unreachable;
+                                        // defer r.allocator.free(missing_suffix);
+                                        if (r.debug_logs) |*debug| {
+                                            const parts = [_]string{ package_json.name, package_subpath };
+                                            debug.addNoteFmt("The import {s} is missing the suffix {s}", .{ ResolvePath.join(parts, .auto), missing_suffix });
+                                        }
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+                    }
+
                     return null;
                 }
 
@@ -2109,6 +2134,7 @@ pub const Resolver = struct {
         return try r.dirInfoCachedMaybeLog(path, true, true);
     }
 
+    /// The path must have a trailing slash and a sentinel 0
     pub fn readDirInfo(
         r: *ThisResolver,
         path: string,
@@ -2509,6 +2535,49 @@ pub const Resolver = struct {
         return null;
     }
 
+    pub fn loadPackageImports(r: *ThisResolver, import_path: string, dir_info: *DirInfo, kind: ast.ImportKind, global_cache: GlobalCache) MatchResult.Union {
+        const package_json = dir_info.package_json.?;
+        if (r.debug_logs) |*debug| {
+            debug.addNoteFmt("Looking for {s} in \"imports\" map in {s}", .{ import_path, package_json.source.key_path.text });
+            debug.increaseIndent();
+            defer debug.decreaseIndent();
+        }
+        const imports_map = package_json.imports.?;
+
+        if (import_path.len == 1 or strings.hasPrefix(import_path, "#/")) {
+            if (r.debug_logs) |*debug| {
+                debug.addNoteFmt("The path \"{s}\" must not equal \"#\" and must not start with \"#/\"", .{import_path});
+            }
+            return .{ .not_found = {} };
+        }
+
+        const esmodule = ESModule{
+            .conditions = switch (kind) {
+                ast.ImportKind.require, ast.ImportKind.require_resolve => r.opts.conditions.require,
+                else => r.opts.conditions.import,
+            },
+            .allocator = r.allocator,
+            .debug_logs = if (r.debug_logs) |*debug| debug else null,
+        };
+
+        const esm_resolution = esmodule.resolveImports(import_path, imports_map.root);
+
+        if (esm_resolution.status == .PackageResolve)
+            return r.loadNodeModules(
+                esm_resolution.path,
+                kind,
+                dir_info,
+                global_cache,
+                true,
+            );
+
+        if (r.handleESMResolution(esm_resolution, package_json.source.path.name.dir, kind, package_json, "")) |result| {
+            return .{ .success = result };
+        }
+
+        return .{ .not_found = {} };
+    }
+
     const BrowserMapPath = struct {
         remapped: string = "",
         cleaned: string = "",
@@ -2741,7 +2810,7 @@ pub const Resolver = struct {
         };
     }
 
-    pub fn loadAsIndex(r: *ThisResolver, dir_info: *DirInfo, path: string, extension_order: []const string) ?MatchResult {
+    pub fn loadAsIndex(r: *ThisResolver, dir_info: *DirInfo, extension_order: []const string) ?MatchResult {
         var rfs = &r.fs.fs;
         // Try the "index" file with extensions
         for (extension_order) |ext| {
@@ -2754,7 +2823,7 @@ pub const Resolver = struct {
                     if (lookup.entry.kind(rfs) == .file) {
                         const out_buf = brk: {
                             if (lookup.entry.abs_path.isEmpty()) {
-                                const parts = [_]string{ path, base };
+                                const parts = [_]string{ dir_info.abs_path, base };
                                 const out_buf_ = r.fs.absBuf(&parts, &index_buf);
                                 lookup.entry.abs_path =
                                     PathString.init(r.fs.dirname_store.append(@TypeOf(out_buf_), out_buf_) catch unreachable);
@@ -2786,7 +2855,7 @@ pub const Resolver = struct {
             }
 
             if (r.debug_logs) |*debug| {
-                debug.addNoteFmt("Failed to find file: \"{s}/{s}\"", .{ path, base });
+                debug.addNoteFmt("Failed to find file: \"{s}/{s}\"", .{ dir_info.abs_path, base });
             }
         }
 
@@ -2837,7 +2906,7 @@ pub const Resolver = struct {
 
                     // Is it a directory with an index?
                     if (r.dirInfoCached(remapped_abs) catch null) |new_dir| {
-                        if (r.loadAsIndex(new_dir, remapped_abs, extension_order)) |absolute| {
+                        if (r.loadAsIndex(new_dir, extension_order)) |absolute| {
                             return absolute;
                         }
                     }
@@ -2847,7 +2916,7 @@ pub const Resolver = struct {
             }
         }
 
-        return r.loadAsIndex(dir_info, path_, extension_order);
+        return r.loadAsIndex(dir_info, extension_order);
     }
 
     pub fn loadAsFileOrDirectory(r: *ThisResolver, path: string, kind: ast.ImportKind) ?MatchResult {

@@ -40,7 +40,7 @@ const ImportKind = ast.ImportKind;
 const Analytics = @import("../analytics/analytics_thread.zig");
 const ZigString = @import("../jsc.zig").ZigString;
 const Runtime = @import("../runtime.zig");
-const Router = @import("./api/router.zig");
+const Router = @import("./api/filesystem_router.zig");
 const ImportRecord = ast.ImportRecord;
 const DotEnv = @import("../env_loader.zig");
 const PackageJSON = @import("../resolver/package_json.zig").PackageJSON;
@@ -547,6 +547,7 @@ pub const ModuleLoader = struct {
         }
 
         pub fn onDone(this: *AsyncModule) void {
+            JSC.markBinding(@src());
             var jsc_vm = this.globalThis.bunVM();
             jsc_vm.modules.scheduled -= 1;
             if (jsc_vm.modules.scheduled == 0) {

@@ -200,8 +200,8 @@ pub const ZigString = extern struct {
 
     pub const Slice = struct {
         allocator: NullableAllocator = .{},
-        ptr: [*]const u8,
-        len: u32,
+        ptr: [*]const u8 = undefined,
+        len: u32 = 0,
 
         pub fn fromUTF8NeverFree(input: []const u8) Slice {
             return .{
@@ -233,6 +233,11 @@ pub const ZigString = extern struct {
 
             var duped = try allocator.dupe(u8, this.ptr[0..this.len]);
             return Slice{ .allocator = NullableAllocator.init(allocator), .ptr = duped.ptr, .len = this.len };
+        }
+
+        pub fn cloneWithTrailingSlash(this: Slice, allocator: std.mem.Allocator) !Slice {
+            var buf = try strings.cloneNormalizingSeparators(allocator, this.slice());
+            return Slice{ .allocator = NullableAllocator.init(allocator), .ptr = buf.ptr, .len = @truncate(u32, buf.len) };
         }
 
         pub fn cloneZ(this: Slice, allocator: std.mem.Allocator) !Slice {
@@ -1472,6 +1477,30 @@ pub const JSPromise = extern struct {
         Rejected = 2,
     };
 
+    pub const Strong = struct {
+        strong: JSC.Strong = .{},
+
+        pub fn init(globalThis: *JSC.JSGlobalObject) Strong {
+            return Strong{
+                .strong = JSC.Strong.create(globalThis, JSC.JSPromise.create(globalThis).asValue(globalThis)),
+            };
+        }
+
+        pub fn get(this: *Strong) *JSC.JSPromise {
+            return this.strong.get().?.asPromise().?;
+        }
+
+        pub fn value(this: *Strong) JSValue {
+            return this.strong.get().?;
+        }
+
+        pub fn swap(this: *Strong) *JSC.JSPromise {
+            var prom = this.strong.swap().asPromise().?;
+            this.strong.deinit();
+            return prom;
+        }
+    };
+
     pub fn wrap(
         globalObject: *JSGlobalObject,
         value: JSValue,
@@ -1495,7 +1524,7 @@ pub const JSPromise = extern struct {
     pub fn status(this: *const JSPromise, vm: *VM) Status {
         return shim.cppFn("status", .{ this, vm });
     }
-    pub fn result(this: *const JSPromise, vm: *VM) JSValue {
+    pub fn result(this: *JSPromise, vm: *VM) JSValue {
         return cppFn("result", .{ this, vm });
     }
     pub fn isHandled(this: *const JSPromise, vm: *VM) bool {
@@ -2368,7 +2397,7 @@ pub const JSArrayIterator = struct {
         return .{
             .array = value,
             .global = global,
-            .len = value.getLengthOfArray(global),
+            .len = @truncate(u32, value.getLengthOfArray(global)),
         };
     }
 
@@ -2779,6 +2808,7 @@ pub const JSValue = enum(JSValueReprInt) {
     pub fn coerce(this: JSValue, comptime T: type, globalThis: *JSC.JSGlobalObject) T {
         return switch (T) {
             ZigString => this.getZigString(globalThis),
+            bool => this.toBooleanSlow(globalThis),
             i32 => {
                 if (this.isInt32()) {
                     return this.asInt32();
@@ -3463,6 +3493,10 @@ pub const JSValue = enum(JSValueReprInt) {
         return fromPtrAddress(@ptrToInt(addr));
     }
 
+    pub fn toBooleanSlow(this: JSValue, global: *JSGlobalObject) bool {
+        return cppFn("toBooleanSlow", .{ this, global });
+    }
+
     pub fn toBoolean(this: JSValue) bool {
         if (isUndefinedOrNull(this)) {
             return false;
@@ -3506,7 +3540,7 @@ pub const JSValue = enum(JSValueReprInt) {
         return @intCast(u32, @maximum(this.toInt32(), 0));
     }
 
-    pub fn getLengthOfArray(this: JSValue, globalThis: *JSGlobalObject) u32 {
+    pub fn getLengthOfArray(this: JSValue, globalThis: *JSGlobalObject) u64 {
         return cppFn("getLengthOfArray", .{
             this,
             globalThis,
@@ -3577,7 +3611,7 @@ pub const JSValue = enum(JSValueReprInt) {
         return this.asNullableVoid().?;
     }
 
-    pub const Extern = [_][]const u8{ "coerceToInt32", "fastGet_", "getStaticProperty", "createUninitializedUint8Array", "fromInt64NoTruncate", "fromUInt64NoTruncate", "toUInt64NoTruncate", "asPromise", "toInt64", "_then", "put", "makeWithNameAndPrototype", "parseJSON", "symbolKeyFor", "symbolFor", "getSymbolDescription", "createInternalPromise", "asInternalPromise", "asArrayBuffer_", "fromEntries", "createTypeError", "createRangeError", "createObject2", "getIfPropertyExistsImpl", "jsType", "jsonStringify", "kind_", "isTerminationException", "isSameValue", "getLengthOfArray", "toZigString", "createStringArray", "createEmptyObject", "putRecord", "asPromise", "isClass", "getNameProperty", "getClassName", "getErrorsProperty", "toInt32", "toBoolean", "isInt32", "isIterable", "forEach", "isAggregateError", "toError", "toZigException", "isException", "toWTFString", "hasProperty", "getPropertyNames", "getDirect", "putDirect", "getIfExists", "asString", "asObject", "asNumber", "isError", "jsNull", "jsUndefined", "jsTDZValue", "jsBoolean", "jsDoubleNumber", "jsNumberFromDouble", "jsNumberFromChar", "jsNumberFromU16", "jsNumberFromInt64", "isBoolean", "isAnyInt", "isUInt32AsAnyInt", "isInt32AsAnyInt", "isNumber", "isString", "isBigInt", "isHeapBigInt", "isBigInt32", "isSymbol", "isPrimitive", "isGetterSetter", "isCustomGetterSetter", "isObject", "isCell", "asCell", "toString", "toStringOrNull", "toPropertyKey", "toPropertyKeyValue", "toObject", "toString", "getPrototype", "getPropertyByPropertyName", "eqlValue", "eqlCell", "isCallable" };
+    pub const Extern = [_][]const u8{ "coerceToInt32", "fastGet_", "getStaticProperty", "createUninitializedUint8Array", "fromInt64NoTruncate", "fromUInt64NoTruncate", "toUInt64NoTruncate", "asPromise", "toInt64", "_then", "put", "makeWithNameAndPrototype", "parseJSON", "symbolKeyFor", "symbolFor", "getSymbolDescription", "createInternalPromise", "asInternalPromise", "asArrayBuffer_", "fromEntries", "createTypeError", "createRangeError", "createObject2", "getIfPropertyExistsImpl", "jsType", "jsonStringify", "kind_", "isTerminationException", "isSameValue", "getLengthOfArray", "toZigString", "createStringArray", "createEmptyObject", "putRecord", "asPromise", "isClass", "getNameProperty", "getClassName", "getErrorsProperty", "toInt32", "toBoolean", "isInt32", "isIterable", "forEach", "isAggregateError", "toError", "toZigException", "isException", "toWTFString", "hasProperty", "getPropertyNames", "getDirect", "putDirect", "getIfExists", "asString", "asObject", "asNumber", "isError", "jsNull", "jsUndefined", "jsTDZValue", "jsBoolean", "jsDoubleNumber", "jsNumberFromDouble", "jsNumberFromChar", "jsNumberFromU16", "jsNumberFromInt64", "isBoolean", "isAnyInt", "isUInt32AsAnyInt", "isInt32AsAnyInt", "isNumber", "isString", "isBigInt", "isHeapBigInt", "isBigInt32", "isSymbol", "isPrimitive", "isGetterSetter", "isCustomGetterSetter", "isObject", "isCell", "asCell", "toString", "toStringOrNull", "toPropertyKey", "toPropertyKeyValue", "toObject", "toString", "getPrototype", "getPropertyByPropertyName", "eqlValue", "eqlCell", "isCallable", "toBooleanSlow" };
 };
 
 extern "c" fn Microtask__run(*Microtask, *JSGlobalObject) void;

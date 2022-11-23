@@ -96,7 +96,8 @@ function header() {
                                                                                                                                                                                     
             ~${className}();                                                                                                                                                       
                                                                                                                                                                                     
-            void* wrapped() const { return m_sinkPtr; }                                                                                                                             
+            void* wrapped() const { return m_sinkPtr; }    
+            DECLARE_VISIT_CHILDREN;                                                                                                                         
 
             void detach() {
                 m_sinkPtr = nullptr;
@@ -154,41 +155,19 @@ function header() {
                 DECLARE_VISIT_CHILDREN;
                                                                                                                                                                                         
                 static void analyzeHeap(JSCell*, JSC::HeapAnalyzer&);
-                                                                 
-                bool hasPendingActivity() { return m_hasPendingActivity; }
 
                 void* m_sinkPtr;
-                bool m_hasPendingActivity;
                 mutable WriteBarrier<JSC::JSFunction> m_onPull;
                 mutable WriteBarrier<JSC::JSFunction> m_onClose;
                 mutable JSC::Weak<JSObject> m_weakReadableStream;
-                JSC::Weak<${controller}> m_weakThis;
                                                                                                                                                                                         
                 ${controller}(JSC::VM& vm, JSC::Structure* structure, void* sinkPtr)                                                                                                    
                     : Base(vm, structure)                                                                                                                                               
                 {                                                                                                                                                                       
                     m_sinkPtr = sinkPtr;
-                    m_hasPendingActivity = true;
-                    m_weakThis = JSC::Weak<${controller}>(this, getOwner());
                 }                                                                                                                                                                       
                                                                                                                                                                                         
                 void finishCreation(JSC::VM&);
-
-                class Owner final : public JSC::WeakHandleOwner {
-                public:
-                    bool isReachableFromOpaqueRoots(JSC::Handle<JSC::Unknown> handle, void* context, JSC::AbstractSlotVisitor&, const char**) final
-                    {
-                        auto* controller = JSC::jsCast<${controller}*>(handle.slot()->asCell());
-                        return controller->hasPendingActivity();
-                    }
-                    void finalize(JSC::Handle<JSC::Unknown>, void* context) final {}
-                };
-            
-                static JSC::WeakHandleOwner* getOwner()
-                {
-                    static NeverDestroyed<Owner> m_owner;
-                    return &m_owner.get();
-                }
             };
 
 JSC_DECLARE_CUSTOM_GETTER(function${name}__getter);
@@ -405,8 +384,6 @@ JSC_DEFINE_HOST_FUNCTION(${controller}__close, (JSC::JSGlobalObject * lexicalGlo
 
     controller->detach();
     ${name}__close(lexicalGlobalObject, ptr);
-    // Release the controller right before close.
-    controller->m_hasPendingActivity = false;
     return JSC::JSValue::encode(JSC::jsUndefined());
 }
 
@@ -643,7 +620,7 @@ void JS${controllerName}::detach() {
     auto readableStream = m_weakReadableStream.get();
     auto onClose = m_onClose.get();
     m_onClose.clear();
-
+    
     if (readableStream && onClose) {
         JSC::JSGlobalObject *globalObject = this->globalObject();
         auto callData = JSC::getCallData(onClose);
@@ -760,10 +737,25 @@ void ${controller}::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     Base::visitChildren(thisObject, visitor);
     visitor.append(thisObject->m_onPull);
     visitor.append(thisObject->m_onClose);
-    visitor.append(thisObject->m_weakReadableStream);
+    void* ptr = thisObject->m_sinkPtr;
+    if (ptr)
+      visitor.addOpaqueRoot(ptr);
 }
 
 DEFINE_VISIT_CHILDREN(${controller});
+
+template<typename Visitor>
+void ${className}::visitChildrenImpl(JSCell* cell, Visitor& visitor)
+{
+    ${className}* thisObject = jsCast<${className}*>(cell);
+    ASSERT_GC_OBJECT_INHERITS(thisObject, info());
+    Base::visitChildren(thisObject, visitor);
+    void* ptr = thisObject->m_sinkPtr;
+    if (ptr)
+      visitor.addOpaqueRoot(ptr);
+}
+
+DEFINE_VISIT_CHILDREN(${className});
 
 
 void ${controller}::start(JSC::JSGlobalObject *globalObject, JSC::JSValue readableStream, JSC::JSFunction *onPull, JSC::JSFunction *onClose) {

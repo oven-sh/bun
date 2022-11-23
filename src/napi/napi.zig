@@ -604,7 +604,7 @@ pub export fn napi_get_array_length(env: napi_env, value: napi_value, result: [*
         return .array_expected;
     }
 
-    result.* = value.getLengthOfArray(env);
+    result.* = @truncate(u32, value.getLengthOfArray(env));
     return .ok;
 }
 pub export fn napi_strict_equals(env: napi_env, lhs: napi_value, rhs: napi_value, result: *bool) napi_status {
@@ -1508,6 +1508,8 @@ pub fn fixDeadCodeElimination() void {
     std.mem.doNotOptimizeAway(&napi_add_finalizer);
     std.mem.doNotOptimizeAway(&napi_create_external);
     std.mem.doNotOptimizeAway(&napi_get_value_external);
+    std.mem.doNotOptimizeAway(&napi_get_instance_data);
+    std.mem.doNotOptimizeAway(&napi_set_instance_data);
 
     std.mem.doNotOptimizeAway(&@import("../bun.js/node/buffer.zig").BufferVectorized.fill);
 }

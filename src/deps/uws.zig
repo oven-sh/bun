@@ -432,6 +432,10 @@ pub const Loop = extern struct {
         low_prio_head: ?*Socket,
         low_prio_budget: i32,
         iteration_nr: c_longlong,
+
+        pub fn recvSlice(this: *InternalLoopData) []u8 {
+            return this.recv_buf[0..LIBUS_RECV_BUFFER_LENGTH];
+        }
     };
 
     pub fn get() ?*Loop {
@@ -1662,7 +1666,7 @@ extern fn uws_res_upgrade(
 ) void;
 extern fn uws_res_cork(i32, res: *uws_res, ctx: *anyopaque, corker: fn (?*anyopaque) callconv(.C) void) void;
 extern fn uws_res_write_headers(i32, res: *uws_res, names: [*]const Api.StringPointer, values: [*]const Api.StringPointer, count: usize, buf: [*]const u8) void;
-pub const LIBUS_RECV_BUFFER_LENGTH = @import("std").zig.c_translation.promoteIntLiteral(i32, 524288, .decimal);
+pub const LIBUS_RECV_BUFFER_LENGTH = 524288;
 pub const LIBUS_TIMEOUT_GRANULARITY = @as(i32, 4);
 pub const LIBUS_RECV_BUFFER_PADDING = @as(i32, 32);
 pub const LIBUS_EXT_ALIGNMENT = @as(i32, 16);

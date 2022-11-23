@@ -1480,3 +1480,31 @@ extern "C" napi_status napi_get_value_external(napi_env env, napi_value value,
     *result = jsCast<Bun::NapiExternal*>(object)->value();
     return napi_ok;
 }
+
+// TODO: make this per addon instead of globally shared for ALL addons
+extern "C" napi_status napi_get_instance_data(napi_env env,
+    void** data)
+{
+    Zig::GlobalObject* globalObject = toJS(env);
+    if (data == nullptr) {
+        return napi_invalid_arg;
+    }
+
+    *data = globalObject->napiInstanceData;
+    return napi_ok;
+}
+
+extern "C" napi_status napi_set_instance_data(napi_env env,
+    void* data,
+    napi_finalize finalize_cb,
+    void* finalize_hint)
+{
+    Zig::GlobalObject* globalObject = toJS(env);
+    if (data)
+        globalObject->napiInstanceData = data;
+
+    globalObject->napiInstanceDataFinalizer = reinterpret_cast<void*>(finalize_cb);
+    globalObject->napiInstanceDataFinalizerHint = finalize_hint;
+
+    return napi_ok;
+}

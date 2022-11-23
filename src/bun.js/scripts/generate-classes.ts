@@ -352,9 +352,8 @@ void ${proto}::finishCreation(JSC::VM& vm, JSC::JSGlobalObject* globalObject)
 `;
 }
 
-function generateConstructorHeader(typeName) {
-  const name = constructorName(typeName);
-  const proto = prototypeName(typeName);
+function generatePrototypeHeader(typename) {
+  const proto = prototypeName(typename);
 
   return `
   class ${proto} final : public JSC::JSNonFinalObject {
@@ -386,8 +385,13 @@ function generateConstructorHeader(typeName) {
         }
     
         void finishCreation(JSC::VM&, JSC::JSGlobalObject*);
-    };
-    
+    };`;
+}
+
+function generateConstructorHeader(typeName) {
+  const name = constructorName(typeName);
+
+  return `
   class ${name} final : public JSC::InternalFunction {
     public:
         using Base = JSC::InternalFunction;
@@ -488,6 +492,7 @@ ${name}* ${name}::create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::St
     return ptr;
 }
 
+
 JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES ${name}::construct(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame)
 {
     Zig::GlobalObject *globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
@@ -532,23 +537,6 @@ JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES ${name}::construct(JSC::JSGlobalObj
   }
 
     return JSValue::encode(instance);
-}
-
-extern "C" EncodedJSValue ${typeName}__create(Zig::GlobalObject* globalObject, void* ptr) {
-  auto &vm = globalObject->vm();
-  JSC::Structure* structure = globalObject->${className(typeName)}Structure();
-  ${className(typeName)}* instance = ${className(
-    typeName,
-  )}::create(vm, globalObject, structure, ptr);
-  ${
-    obj.estimatedSize
-      ? `vm.heap.reportExtraMemoryAllocated(${symbolName(
-          obj.name,
-          "estimatedSize",
-        )}(ptr));`
-      : ""
-  }
-  return JSValue::encode(instance);
 }
 
 void ${name}::initializeProperties(VM& vm, JSC::JSGlobalObject* globalObject, ${prototypeName(
@@ -823,7 +811,7 @@ JSC_DEFINE_CUSTOM_GETTER(${symbolName(
       typeName,
       proto[name].getter,
     )}(thisObject->wrapped(),${
-        proto[name].this!! ? " thisValue, " : ""
+        !!proto[name].this ? " thisValue, " : ""
       } globalObject);
     RETURN_IF_EXCEPTION(throwScope, {});
     RELEASE_AND_RETURN(throwScope, result);
@@ -852,7 +840,7 @@ JSC_DEFINE_CUSTOM_SETTER(${symbolName(
       typeName,
       proto[name].setter || proto[name].accessor.setter,
     )}(thisObject->wrapped(),${
-          proto[name].this!! ? " thisValue, " : ""
+          !!proto[name].this ? " thisValue, " : ""
         } lexicalGlobalObject, encodedValue);
 
     RELEASE_AND_RETURN(throwScope, result);
@@ -908,47 +896,48 @@ function generateClassHeader(typeName, obj: ClassDefinition) {
   const DECLARE_VISIT_CHILDREN =
     values.length ||
     obj.estimatedSize ||
+    obj.hasPendingActivity ||
     [...Object.values(klass), ...Object.values(proto)].find((a) => !!a.cache)
-      ? "DECLARE_VISIT_CHILDREN;"
+      ? "DECLARE_VISIT_CHILDREN;\ntemplate<typename Visitor> void visitAdditionalChildren(Visitor&);\nDECLARE_VISIT_OUTPUT_CONSTRAINTS;\n"
       : "";
   const sizeEstimator = obj.estimatedSize
     ? "static size_t estimatedSize(JSCell* cell, VM& vm);"
     : "";
 
   var weakOwner = "";
-  var weakInit = "";
-
+  var weakInit = ``;
   if (obj.hasPendingActivity) {
+    weakInit = `m_weakThis = JSC::Weak<${name}>(this, getOwner());`;
     weakOwner = `
-      JSC::Weak<${name}> m_weakThis;
-      bool internalHasPendingActivity();
-      bool hasPendingActivity() {
-        if (!m_ctx)
-          return false;
+    JSC::Weak<${name}> m_weakThis;
+   
 
-        return this->internalHasPendingActivity();
+    static bool hasPendingActivity(void* ctx);
+
+    class Owner final : public JSC::WeakHandleOwner {
+      public:
+          bool isReachableFromOpaqueRoots(JSC::Handle<JSC::Unknown> handle, void* context, JSC::AbstractSlotVisitor& visitor, const char** reason) final
+          {
+              auto* controller = JSC::jsCast<${name}*>(handle.slot()->asCell());
+              if (${name}::hasPendingActivity(controller->wrapped())) {
+                  if (UNLIKELY(reason))
+                    *reason = "has pending activity";
+                  return true;
+              }
+
+              return visitor.containsOpaqueRoot(context);
+          }
+          void finalize(JSC::Handle<JSC::Unknown>, void* context) final {}
+      };
+  
+      static JSC::WeakHandleOwner* getOwner()
+      {
+          static NeverDestroyed<Owner> m_owner;
+          return &m_owner.get();
       }
-
-      class Owner final : public JSC::WeakHandleOwner {
-        public:
-            bool isReachableFromOpaqueRoots(JSC::Handle<JSC::Unknown> handle, void* context, JSC::AbstractSlotVisitor&, const char**) final
-            {
-                auto* controller = JSC::jsCast<${name}*>(handle.slot()->asCell());
-                return controller->hasPendingActivity();
-            }
-            void finalize(JSC::Handle<JSC::Unknown>, void* context) final {}
-        };
-    
-        static JSC::WeakHandleOwner* getOwner()
-        {
-            static NeverDestroyed<Owner> m_owner;
-            return &m_owner.get();
-        }
       `;
-    weakInit = `
-    m_weakThis = JSC::Weak<${name}>(this, getOwner());
-`;
   }
+
   return `
   class ${name} final : public JSC::JSDestructibleObject {
     public:
@@ -983,7 +972,11 @@ function generateClassHeader(typeName, obj: ClassDefinition) {
         }
     
         static JSObject* createPrototype(VM& vm, JSDOMGlobalObject* globalObject);
-        static JSObject* createConstructor(VM& vm, JSGlobalObject* globalObject, JSValue prototype);
+        ${
+          obj.noConstructor
+            ? ""
+            : `static JSObject* createConstructor(VM& vm, JSGlobalObject* globalObject, JSValue prototype)`
+        };
     
         ~${name}();
     
@@ -1046,7 +1039,12 @@ function generateClassImpl(typeName, obj: ClassDefinition) {
     })
     .join("\n");
   var DEFINE_VISIT_CHILDREN = "";
-  if (DEFINE_VISIT_CHILDREN_LIST.length || estimatedSize || values.length) {
+  if (
+    DEFINE_VISIT_CHILDREN_LIST.length ||
+    estimatedSize ||
+    values.length ||
+    hasPendingActivity
+  ) {
     DEFINE_VISIT_CHILDREN = `
 template<typename Visitor>
 void ${name}::visitChildrenImpl(JSCell* cell, Visitor& visitor)
@@ -1063,9 +1061,33 @@ visitor.reportExtraMemoryVisited(${symbolName(obj.name, "estimatedSize")}(ptr));
         : ""
     }
 ${DEFINE_VISIT_CHILDREN_LIST}
+${hasPendingActivity ? `visitor.addOpaqueRoot(thisObject->wrapped());` : ""}
 }
 
 DEFINE_VISIT_CHILDREN(${name});
+
+template<typename Visitor>
+void ${name}::visitAdditionalChildren(Visitor& visitor)
+{
+  ${name}* thisObject = this;
+    ASSERT_GC_OBJECT_INHERITS(thisObject, info());
+    ${values}
+    ${DEFINE_VISIT_CHILDREN_LIST}
+    ${hasPendingActivity ? "visitor.addOpaqueRoot(this->wrapped())" : ""};
+}
+
+DEFINE_VISIT_ADDITIONAL_CHILDREN(${name});
+
+template<typename Visitor>
+void ${name}::visitOutputConstraintsImpl(JSCell *cell, Visitor& visitor)
+{
+    ${name}* thisObject = jsCast<${name}*>(cell);
+    ASSERT_GC_OBJECT_INHERITS(thisObject, info());
+    thisObject->visitAdditionalChildren<Visitor>(visitor);
+}
+
+DEFINE_VISIT_OUTPUT_CONSTRAINTS(${name});
+
         `.trim();
   }
 
@@ -1074,8 +1096,8 @@ DEFINE_VISIT_CHILDREN(${name});
   if (hasPendingActivity) {
     output += `
     extern "C" bool ${symbolName(typeName, "hasPendingActivity")}(void* ptr);
-    bool ${name}::internalHasPendingActivity() {
-        return ${symbolName(typeName, "hasPendingActivity")}(m_ctx);
+    bool ${name}::hasPendingActivity(void* ctx) {
+        return ${symbolName(typeName, "hasPendingActivity")}(ctx);
     }
 `;
   }
@@ -1162,15 +1184,19 @@ void ${name}::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
     Base::analyzeHeap(cell, analyzer);
 }
 
-JSObject* ${name}::createConstructor(VM& vm, JSGlobalObject* globalObject, JSValue prototype)
+${
+  !obj.noConstructor
+    ? `JSObject* ${name}::createConstructor(VM& vm, JSGlobalObject* globalObject, JSValue prototype)
 {
   return WebCore::${constructorName(
     typeName,
   )}::create(vm, globalObject, WebCore::${constructorName(
-    typeName,
-  )}::createStructure(vm, globalObject, globalObject->functionPrototype()), jsCast<WebCore::${prototypeName(
-    typeName,
-  )}*>(prototype));
+        typeName,
+      )}::createStructure(vm, globalObject, globalObject->functionPrototype()), jsCast<WebCore::${prototypeName(
+        typeName,
+      )}*>(prototype));
+}`
+    : ""
 }
 
 JSObject* ${name}::createPrototype(VM& vm, JSDOMGlobalObject* globalObject)
@@ -1179,8 +1205,27 @@ JSObject* ${name}::createPrototype(VM& vm, JSDOMGlobalObject* globalObject)
     typeName,
   )}::createStructure(vm, globalObject, globalObject->objectPrototype()));
 }
-      
+
+extern "C" EncodedJSValue ${typeName}__create(Zig::GlobalObject* globalObject, void* ptr) {
+  auto &vm = globalObject->vm();
+  JSC::Structure* structure = globalObject->${className(typeName)}Structure();
+  ${className(typeName)}* instance = ${className(
+    typeName,
+  )}::create(vm, globalObject, structure, ptr);
+  ${
+    obj.estimatedSize
+      ? `vm.heap.reportExtraMemoryAllocated(${symbolName(
+          obj.name,
+          "estimatedSize",
+        )}(ptr));`
+      : ""
+  }
+  return JSValue::encode(instance);
+}
+
 ${DEFINE_VISIT_CHILDREN}
+
+
  
     `.trim();
 
@@ -1188,13 +1233,16 @@ ${DEFINE_VISIT_CHILDREN}
 }
 
 function generateHeader(typeName, obj) {
-  return generateClassHeader(typeName, obj).trim();
+  return generateClassHeader(typeName, obj).trim() + "\n\n";
 }
 
 function generateImpl(typeName, obj) {
   const proto = obj.proto;
   return [
-    generateConstructorHeader(typeName).trim() + "\n",
+    generatePrototypeHeader(typeName),
+    !obj.noConstructor
+      ? generateConstructorHeader(typeName).trim() + "\n"
+      : null,
     Object.keys(proto).length > 0 && generatePrototype(typeName, obj).trim(),
     !obj.noConstructor ? generateConstructorImpl(typeName, obj).trim() : null,
     Object.keys(proto).length > 0 && generateClassImpl(typeName, obj).trim(),
@@ -1210,7 +1258,7 @@ function generateZig(
     proto = {},
     construct,
     finalize,
-    noConstructor,
+    noConstructor = false,
     estimatedSize,
     call = false,
     values = [],
@@ -1219,7 +1267,7 @@ function generateZig(
 ) {
   const exports = new Map<string, string>();
 
-  if (construct) {
+  if (construct && !noConstructor) {
     exports.set(`constructor`, classSymbolName(typeName, "construct"));
   }
 
@@ -1307,7 +1355,7 @@ function generateZig(
       `;
     }
 
-    if (construct) {
+    if (construct && !noConstructor) {
       output += `
         if (@TypeOf(${typeName}.constructor) != (fn(*JSC.JSGlobalObject, *JSC.CallFrame) callconv(.C) ?*${typeName})) {
            @compileLog("${typeName}.constructor is not a constructor");
@@ -1573,7 +1621,10 @@ function generateLazyStructureImpl(typeName, { klass = {}, proto = {} }) {
       `.trim();
 }
 
-function generateLazyClassStructureImpl(typeName, { klass = {}, proto = {} }) {
+function generateLazyClassStructureImpl(
+  typeName,
+  { klass = {}, proto = {}, noConstructor = false },
+) {
   return `
           m_${className(typeName)}.initLater(
               [](LazyClassStructure::Initializer& init) {
@@ -1583,9 +1634,13 @@ function generateLazyClassStructureImpl(typeName, { klass = {}, proto = {} }) {
                  init.setStructure(WebCore::${className(
                    typeName,
                  )}::createStructure(init.vm, init.global, init.prototype));
-                 init.setConstructor(WebCore::${className(
-                   typeName,
-                 )}::createConstructor(init.vm, init.global, init.prototype));
+                 ${
+                   noConstructor
+                     ? ""
+                     : `init.setConstructor(WebCore::${className(
+                         typeName,
+                       )}::createConstructor(init.vm, init.global, init.prototype));`
+                 }
               });
       
   
@@ -1620,14 +1675,15 @@ const GENERATED_CLASSES_IMPL_HEADER = `
 // GENERATED CODE - DO NOT MODIFY BY HAND
 // Generated by make codegen
 #include "root.h"
- 
+
+#include "BunClientData.h"
+#include "ZigGlobalObject.h"
+
 #include <JavaScriptCore/JSFunction.h>
 #include <JavaScriptCore/InternalFunction.h>
 #include <JavaScriptCore/LazyClassStructure.h>
 #include <JavaScriptCore/LazyClassStructureInlines.h>
 #include <JavaScriptCore/FunctionPrototype.h>
-
-#include "ZigGlobalObject.h"
 
 #include <JavaScriptCore/DOMJITAbstractHeap.h>
 #include "DOMJITIDLConvert.h"
@@ -1706,6 +1762,7 @@ function findClasses() {
     readdirSync(directory).forEach((file) => {
       if (file.endsWith(".classes.ts")) {
         const result = require(`${directory}/${file}`);
+        if (!(result?.default?.length ?? 0)) return;
         console.log("Generated", result.default.length, "classes from", file);
         for (let { name } of result.default) {
           console.log(`  - ${name}`);
@@ -1751,13 +1808,7 @@ await writeAndUnlink(`${import.meta.dir}/../bindings/ZigGeneratedClasses.cpp`, [
 ]);
 await writeAndUnlink(
   `${import.meta.dir}/../bindings/ZigGeneratedClasses+lazyStructureHeader.h`,
-  classes
-    .map((a) =>
-      !a.noConstructor
-        ? generateLazyClassStructureHeader(a.name, a)
-        : generateLazyStructureHeader(a.name, a),
-    )
-    .join("\n"),
+  classes.map((a) => generateLazyClassStructureHeader(a.name, a)).join("\n"),
 );
 
 await writeAndUnlink(
@@ -1789,11 +1840,7 @@ await writeAndUnlink(
 await writeAndUnlink(
   `${import.meta.dir}/../bindings/ZigGeneratedClasses+lazyStructureImpl.h`,
   initLazyClasses(
-    classes.map((a) =>
-      !a.noConstructor
-        ? generateLazyClassStructureImpl(a.name, a)
-        : generateLazyStructureImpl(a.name, a),
-    ),
+    classes.map((a) => generateLazyClassStructureImpl(a.name, a)),
   ) +
     "\n" +
     visitLazyClasses(classes),

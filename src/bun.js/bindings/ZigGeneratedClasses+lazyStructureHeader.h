@@ -76,6 +76,18 @@ JSC::Structure* JSServerWebSocketStructure() { return m_JSServerWebSocket.getIni
   JSC::LazyClassStructure m_JSServerWebSocket;
   bool hasJSServerWebSocketSetterValue { false };
   mutable JSC::WriteBarrier<JSC::Unknown> m_JSServerWebSocketSetterValue;
+JSC::Structure* JSFileSystemRouterStructure() { return m_JSFileSystemRouter.getInitializedOnMainThread(this); }
+        JSC::JSObject* JSFileSystemRouterConstructor() { return m_JSFileSystemRouter.constructorInitializedOnMainThread(this); }
+        JSC::JSValue JSFileSystemRouterPrototype() { return m_JSFileSystemRouter.prototypeInitializedOnMainThread(this); }
+  JSC::LazyClassStructure m_JSFileSystemRouter;
+  bool hasJSFileSystemRouterSetterValue { false };
+  mutable JSC::WriteBarrier<JSC::Unknown> m_JSFileSystemRouterSetterValue;
+JSC::Structure* JSMatchedRouteStructure() { return m_JSMatchedRoute.getInitializedOnMainThread(this); }
+        JSC::JSObject* JSMatchedRouteConstructor() { return m_JSMatchedRoute.constructorInitializedOnMainThread(this); }
+        JSC::JSValue JSMatchedRoutePrototype() { return m_JSMatchedRoute.prototypeInitializedOnMainThread(this); }
+  JSC::LazyClassStructure m_JSMatchedRoute;
+  bool hasJSMatchedRouteSetterValue { false };
+  mutable JSC::WriteBarrier<JSC::Unknown> m_JSMatchedRouteSetterValue;
 JSC::Structure* JSExpectStructure() { return m_JSExpect.getInitializedOnMainThread(this); }
         JSC::JSObject* JSExpectConstructor() { return m_JSExpect.constructorInitializedOnMainThread(this); }
         JSC::JSValue JSExpectPrototype() { return m_JSExpect.prototypeInitializedOnMainThread(this); }

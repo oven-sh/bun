@@ -31,7 +31,7 @@ pub const MimeType = @import("./http/mime_type.zig");
 pub const URLPath = @import("./http/url_path.zig");
 // This becomes Arena.allocator
 pub var default_allocator: std.mem.Allocator = undefined;
-pub var default_arena: Arena = undefined;
+var default_arena: Arena = undefined;
 pub var http_thread: HTTPThread = undefined;
 const HiveArray = @import("./hive_array.zig").HiveArray;
 const Batch = NetworkThread.Batch;
@@ -48,6 +48,8 @@ var shared_request_headers_buf: [256]picohttp.Header = undefined;
 
 // this doesn't need to be stack memory because it is immediately cloned after use
 var shared_response_headers_buf: [256]picohttp.Header = undefined;
+
+const end_of_chunked_http1_1_encoding_response_body = "0\r\n\r\n";
 
 fn NewHTTPContext(comptime ssl: bool) type {
     return struct {
@@ -191,7 +193,7 @@ fn NewHTTPContext(comptime ssl: bool) type {
                     );
                 } else {
                     // trailing zero is fine to ignore
-                    if (strings.eqlComptime(buf, "0\r\n")) {
+                    if (strings.eqlComptime(buf, end_of_chunked_http1_1_encoding_response_body)) {
                         return;
                     }
 
@@ -527,11 +529,10 @@ pub fn onClose(
     // a missing 0\r\n chunk
     if (in_progress and client.state.transfer_encoding == .chunked) {
         if (picohttp.phr_decode_chunked_is_in_data(&client.state.chunked_decoder) == 0) {
-            if (client.state.compressed_body orelse client.state.body_out_str) |body| {
-                if (body.list.items.len > 0) {
-                    client.done(comptime is_ssl, if (is_ssl) &http_thread.https_context else &http_thread.http_context, socket);
-                    return;
-                }
+            var buf = client.state.getBodyBuffer();
+            if (buf.list.items.len > 0) {
+                client.done(comptime is_ssl, if (is_ssl) &http_thread.https_context else &http_thread.http_context, socket);
+                return;
             }
         }
     }
@@ -542,8 +543,9 @@ pub fn onClose(
         return;
     }
 
-    if (in_progress)
+    if (in_progress) {
         client.fail(error.ConnectionClosed);
+    }
 }
 pub fn onTimeout(
     client: *HTTPClient,
@@ -628,7 +630,7 @@ pub const HTTPStage = enum {
 };
 
 pub const InternalState = struct {
-    request_message: ?*BodyPreamblePool.Node = null,
+    response_message_buffer: MutableString = undefined,
     pending_response: picohttp.Response = undefined,
     allow_keepalive: bool = true,
     transfer_encoding: Encoding = Encoding.identity,
@@ -637,7 +639,7 @@ pub const InternalState = struct {
     chunked_decoder: picohttp.phr_chunked_decoder = .{},
     stage: Stage = Stage.pending,
     body_out_str: ?*MutableString = null,
-    compressed_body: ?*MutableString = null,
+    compressed_body: MutableString = undefined,
     body_size: usize = 0,
     request_body: []const u8 = "",
     request_sent_len: usize = 0,
@@ -645,31 +647,36 @@ pub const InternalState = struct {
     request_stage: HTTPStage = .pending,
     response_stage: HTTPStage = .pending,
 
-    pub fn reset(this: *InternalState) void {
-        if (this.request_message) |msg| {
-            msg.release();
-            this.request_message = null;
-        }
+    pub fn init(body: []const u8, body_out_str: *MutableString) InternalState {
+        return .{
+            .request_body = body,
+            .compressed_body = MutableString{ .allocator = default_allocator, .list = .{} },
+            .response_message_buffer = MutableString{ .allocator = default_allocator, .list = .{} },
+            .body_out_str = body_out_str,
+            .stage = Stage.pending,
+            .pending_response = picohttp.Response{},
+        };
+    }
 
-        if (this.compressed_body) |body| {
-            ZlibPool.put(body);
-            this.compressed_body = null;
-        }
+    pub fn reset(this: *InternalState) void {
+        this.compressed_body.deinit();
+        this.response_message_buffer.deinit();
 
         var body_msg = this.body_out_str;
+        if (body_msg) |body| body.reset();
+
         this.* = .{
             .body_out_str = body_msg,
+            .compressed_body = MutableString{ .allocator = default_allocator, .list = .{} },
+            .response_message_buffer = MutableString{ .allocator = default_allocator, .list = .{} },
+            .request_body = "",
         };
     }
 
     pub fn getBodyBuffer(this: *InternalState) *MutableString {
         switch (this.encoding) {
             Encoding.gzip, Encoding.deflate => {
-                if (this.compressed_body == null) {
-                    this.compressed_body = ZlibPool.get(default_allocator);
-                }
-
-                return this.compressed_body.?;
+                return &this.compressed_body;
             },
             else => {
                 return this.body_out_str.?;
@@ -677,32 +684,48 @@ pub const InternalState = struct {
         }
     }
 
+    fn decompress(this: *InternalState, buffer: MutableString, body_out_str: *MutableString) !void {
+        defer this.compressed_body.deinit();
+
+        var gzip_timer: std.time.Timer = undefined;
+
+        if (extremely_verbose)
+            gzip_timer = std.time.Timer.start() catch @panic("Timer failure");
+
+        body_out_str.list.expandToCapacity();
+
+        ZlibPool.decompress(buffer.list.items, body_out_str, default_allocator) catch |err| {
+            Output.prettyErrorln("<r><red>Zlib error: {s}<r>", .{std.mem.span(@errorName(err))});
+            Output.flush();
+            return err;
+        };
+
+        if (extremely_verbose)
+            this.gzip_elapsed = gzip_timer.read();
+    }
+
     pub fn processBodyBuffer(this: *InternalState, buffer: MutableString) !void {
         var body_out_str = this.body_out_str.?;
-        var buffer_ = this.getBodyBuffer();
-        buffer_.* = buffer;
 
         switch (this.encoding) {
             Encoding.gzip, Encoding.deflate => {
-                var gzip_timer: std.time.Timer = undefined;
-
-                if (extremely_verbose)
-                    gzip_timer = std.time.Timer.start() catch @panic("Timer failure");
-
-                body_out_str.list.expandToCapacity();
-                defer ZlibPool.put(buffer_);
-                ZlibPool.decompress(buffer_.list.items, body_out_str) catch |err| {
-                    Output.prettyErrorln("<r><red>Zlib error<r>", .{});
-                    Output.flush();
-                    return err;
-                };
-
-                if (extremely_verbose)
-                    this.gzip_elapsed = gzip_timer.read();
+                try this.decompress(buffer, body_out_str);
             },
-            else => {},
+            else => {
+                if (!body_out_str.owns(buffer.list.items)) {
+                    body_out_str.append(buffer.list.items) catch |err| {
+                        Output.prettyErrorln("<r><red>Failed to append to body buffer: {s}<r>", .{std.mem.span(@errorName(err))});
+                        Output.flush();
+                        return err;
+                    };
+                }
+            },
         }
 
+        this.postProcessBody(body_out_str);
+    }
+
+    pub fn postProcessBody(this: *InternalState, body_out_str: *MutableString) void {
         var response = &this.pending_response;
         // if it compressed with this header, it is no longer
         if (this.content_encoding_i < response.headers.len) {
@@ -768,6 +791,9 @@ pub fn deinit(this: *HTTPClient) void {
         redirect.release();
         this.redirect = null;
     }
+
+    this.state.compressed_body.deinit();
+    this.state.response_message_buffer.deinit();
 }
 
 const Stage = enum(u8) {
@@ -812,6 +838,14 @@ pub const Encoding = enum {
     deflate,
     brotli,
     chunked,
+
+    pub fn isCompressed(this: Encoding) bool {
+        return switch (this) {
+            // we don't support brotli yet
+            .gzip, .deflate => true,
+            else => false,
+        };
+    }
 };
 
 const content_encoding_hash = hashHeaderName("Content-Encoding");
@@ -1067,9 +1101,6 @@ pub const AsyncHTTP = struct {
     }
 };
 
-const BodyPreambleArray = std.BoundedArray(u8, 1024 * 16);
-const BodyPreamblePool = ObjectPool(BodyPreambleArray, null, false, 16);
-
 pub fn buildRequest(this: *HTTPClient, body_len: usize) picohttp.Request {
     var header_count: usize = 0;
     var header_entries = this.header_entries.slice();
@@ -1189,15 +1220,8 @@ pub fn doRedirect(this: *HTTPClient) void {
 pub fn start(this: *HTTPClient, body: []const u8, body_out_str: *MutableString) void {
     body_out_str.reset();
 
-    std.debug.assert(this.state.request_message == null);
-    this.state = InternalState{
-        .request_body = body,
-        .body_out_str = body_out_str,
-        .stage = Stage.pending,
-        .request_message = null,
-        .pending_response = picohttp.Response{},
-        .compressed_body = null,
-    };
+    std.debug.assert(this.state.response_message_buffer.list.capacity == 0);
+    this.state = InternalState.init(body, body_out_str);
 
     if (this.url.isHTTPS()) {
         this.start_(true);
@@ -1352,23 +1376,13 @@ pub fn onData(this: *HTTPClient, comptime is_ssl: bool, incoming_data: []const u
     switch (this.state.response_stage) {
         .pending, .headers => {
             var to_read = incoming_data;
-            var pending_buffers: [2]string = .{ "", "" };
             var amount_read: usize = 0;
             var needs_move = true;
-            if (this.state.request_message) |req_msg| {
-                var available = req_msg.data.unusedCapacitySlice();
-                if (available.len == 0) {
-                    this.state.request_message.?.release();
-                    this.state.request_message = null;
-                    this.closeAndFail(error.ResponseHeaderTooLarge, is_ssl, socket);
-                    return;
-                }
-
-                const to_read_len = @minimum(available.len, to_read.len);
-                req_msg.data.appendSliceAssumeCapacity(to_read[0..to_read_len]);
-                to_read = req_msg.data.slice();
-                pending_buffers[1] = incoming_data[to_read_len..];
-                needs_move = pending_buffers[1].len > 0;
+            if (this.state.response_message_buffer.list.items.len > 0) {
+                // this one probably won't be another chunk, so we use appendSliceExact() to avoid over-allocating
+                this.state.response_message_buffer.appendSliceExact(incoming_data) catch @panic("Out of memory");
+                to_read = this.state.response_message_buffer.list.items;
+                needs_move = false;
             }
 
             this.state.pending_response = picohttp.Response{};
@@ -1384,15 +1398,8 @@ pub fn onData(this: *HTTPClient, comptime is_ssl: bool, incoming_data: []const u
                             const to_copy = incoming_data;
 
                             if (to_copy.len > 0) {
-                                this.state.request_message = this.state.request_message orelse brk: {
-                                    var preamble = BodyPreamblePool.get(getAllocator());
-                                    preamble.data = .{};
-                                    break :brk preamble;
-                                };
-                                this.state.request_message.?.data.appendSlice(to_copy) catch {
-                                    this.closeAndFail(error.ResponseHeadersTooLarge, is_ssl, socket);
-                                    return;
-                                };
+                                // this one will probably be another chunk, so we leave a little extra room
+                                this.state.response_message_buffer.append(to_copy) catch @panic("Out of memory");
                             }
                         }
 
@@ -1407,11 +1414,7 @@ pub fn onData(this: *HTTPClient, comptime is_ssl: bool, incoming_data: []const u
 
             this.state.pending_response = response;
 
-            pending_buffers[0] = to_read[@minimum(@intCast(usize, response.bytes_read), to_read.len)..];
-            if (pending_buffers[0].len == 0 and pending_buffers[1].len > 0) {
-                pending_buffers[0] = pending_buffers[1];
-                pending_buffers[1] = "";
-            }
+            var body_buf = to_read[@minimum(@intCast(usize, response.bytes_read), to_read.len)..];
 
             var deferred_redirect: ?*URLBufferPool.Node = null;
             const can_continue = this.handleResponseMetadata(
@@ -1424,10 +1427,7 @@ pub fn onData(this: *HTTPClient, comptime is_ssl: bool, incoming_data: []const u
                 &deferred_redirect,
             ) catch |err| {
                 if (err == error.Redirect) {
-                    if (this.state.request_message) |msg| {
-                        msg.release();
-                        this.state.request_message = null;
-                    }
+                    this.state.response_message_buffer.deinit();
 
                     if (this.state.allow_keepalive and FeatureFlags.enable_keepalive) {
                         std.debug.assert(this.connected_url.hostname.len > 0);
@@ -1461,25 +1461,13 @@ pub fn onData(this: *HTTPClient, comptime is_ssl: bool, incoming_data: []const u
                 return;
             }
 
-            if (pending_buffers[0].len == 0) {
+            if (body_buf.len == 0) {
                 return;
             }
 
             if (this.state.response_stage == .body) {
                 {
-                    const is_done = this.handleResponseBody(pending_buffers[0]) catch |err| {
-                        this.closeAndFail(err, is_ssl, socket);
-                        return;
-                    };
-
-                    if (is_done) {
-                        this.done(is_ssl, ctx, socket);
-                        return;
-                    }
-                }
-
-                if (pending_buffers[1].len > 0) {
-                    const is_done = this.handleResponseBody(pending_buffers[1]) catch |err| {
+                    const is_done = this.handleResponseBody(body_buf, true) catch |err| {
                         this.closeAndFail(err, is_ssl, socket);
                         return;
                     };
@@ -1492,7 +1480,7 @@ pub fn onData(this: *HTTPClient, comptime is_ssl: bool, incoming_data: []const u
             } else if (this.state.response_stage == .body_chunk) {
                 this.setTimeout(socket, 500);
                 {
-                    const is_done = this.handleResponseBodyChunk(pending_buffers[0]) catch |err| {
+                    const is_done = this.handleResponseBodyChunkedEncoding(body_buf) catch |err| {
                         this.closeAndFail(err, is_ssl, socket);
                         return;
                     };
@@ -1502,27 +1490,13 @@ pub fn onData(this: *HTTPClient, comptime is_ssl: bool, incoming_data: []const u
                         return;
                     }
                 }
-
-                if (pending_buffers[1].len > 0) {
-                    const is_done = this.handleResponseBodyChunk(pending_buffers[1]) catch |err| {
-                        this.closeAndFail(err, is_ssl, socket);
-                        return;
-                    };
-
-                    if (is_done) {
-                        this.done(is_ssl, ctx, socket);
-                        return;
-                    }
-                }
-
-                this.setTimeout(socket, 60);
             }
         },
 
         .body => {
             this.setTimeout(socket, 60);
 
-            const is_done = this.handleResponseBody(incoming_data) catch |err| {
+            const is_done = this.handleResponseBody(incoming_data, false) catch |err| {
                 this.closeAndFail(err, is_ssl, socket);
                 return;
             };
@@ -1536,7 +1510,7 @@ pub fn onData(this: *HTTPClient, comptime is_ssl: bool, incoming_data: []const u
         .body_chunk => {
             this.setTimeout(socket, 500);
 
-            const is_done = this.handleResponseBodyChunk(incoming_data) catch |err| {
+            const is_done = this.handleResponseBodyChunkedEncoding(incoming_data) catch |err| {
                 this.closeAndFail(err, is_ssl, socket);
                 return;
             };
@@ -1709,7 +1683,51 @@ pub fn toResult(this: *HTTPClient, metadata: HTTPResponseMetadata) HTTPClientRes
 // never finishing sending the body
 const preallocate_max = 1024 * 1024 * 256;
 
-pub fn handleResponseBody(this: *HTTPClient, incoming_data: []const u8) !bool {
+pub fn handleResponseBody(this: *HTTPClient, incoming_data: []const u8, is_only_buffer: bool) !bool {
+    std.debug.assert(this.state.transfer_encoding == .identity);
+
+    // is it exactly as much as we need?
+    if (is_only_buffer and incoming_data.len >= this.state.body_size) {
+        try handleResponseBodyFromSinglePacket(this, incoming_data[0..this.state.body_size]);
+        return true;
+    } else {
+        return handleResponseBodyFromMultiplePackets(this, incoming_data);
+    }
+}
+
+fn handleResponseBodyFromSinglePacket(this: *HTTPClient, incoming_data: []const u8) !void {
+    if (this.state.encoding.isCompressed()) {
+        var body_buffer = this.state.body_out_str.?;
+        if (body_buffer.list.capacity == 0) {
+            const min = @minimum(@ceil(@intToFloat(f64, incoming_data.len) * 1.5), @as(f64, 1024 * 1024 * 2));
+            try body_buffer.growBy(@maximum(@floatToInt(usize, min), 32));
+        }
+
+        try ZlibPool.decompress(incoming_data, body_buffer, default_allocator);
+    } else {
+        try this.state.getBodyBuffer().appendSliceExact(incoming_data);
+    }
+
+    if (this.state.response_message_buffer.owns(incoming_data)) {
+        if (comptime Environment.allow_assert) {
+            // i'm not sure why this would happen and i haven't seen it happen
+            // but we should check
+            std.debug.assert(this.state.getBodyBuffer().list.items.ptr != this.state.response_message_buffer.list.items.ptr);
+        }
+
+        this.state.response_message_buffer.deinit();
+    }
+
+    if (this.progress_node) |progress| {
+        progress.activate();
+        progress.setCompletedItems(incoming_data.len);
+        progress.context.maybeRefresh();
+    }
+
+    this.state.postProcessBody(this.state.getBodyBuffer());
+}
+
+fn handleResponseBodyFromMultiplePackets(this: *HTTPClient, incoming_data: []const u8) !bool {
     var buffer = this.state.getBodyBuffer();
 
     if (buffer.list.items.len == 0 and
@@ -1745,7 +1763,18 @@ pub fn handleResponseBody(this: *HTTPClient, incoming_data: []const u8) !bool {
     return false;
 }
 
-pub fn handleResponseBodyChunk(
+pub fn handleResponseBodyChunkedEncoding(
+    this: *HTTPClient,
+    incoming_data: []const u8,
+) !bool {
+    if (incoming_data.len <= single_packet_small_buffer.len and this.state.getBodyBuffer().list.items.len == 0) {
+        return try this.handleResponseBodyChunkedEncodingFromSinglePacket(incoming_data);
+    } else {
+        return try this.handleResponseBodyChunkedEncodingFromMultiplePackets(incoming_data);
+    }
+}
+
+fn handleResponseBodyChunkedEncodingFromMultiplePackets(
     this: *HTTPClient,
     incoming_data: []const u8,
 ) !bool {
@@ -1762,10 +1791,11 @@ pub fn handleResponseBodyChunk(
     // phr_decode_chunked mutates in-place
     const pret = picohttp.phr_decode_chunked(
         decoder,
-        buffer.list.items.ptr + (buffer.list.items.len - incoming_data.len),
+        buffer.list.items.ptr + (buffer.list.items.len -| incoming_data.len),
         &bytes_decoded,
     );
     buffer.list.items.len -|= incoming_data.len - bytes_decoded;
+    buffer_.* = buffer;
 
     switch (pret) {
         // Invalid HTTP response body
@@ -1780,11 +1810,6 @@ pub fn handleResponseBodyChunk(
                 progress.context.maybeRefresh();
             }
 
-            if (this.state.compressed_body) |compressed| {
-                compressed.* = buffer;
-            } else {
-                this.state.body_out_str.?.* = buffer;
-            }
             return false;
         },
         // Done
@@ -1796,6 +1821,74 @@ pub fn handleResponseBodyChunk(
             if (this.progress_node) |progress| {
                 progress.activate();
                 progress.setCompletedItems(buffer.list.items.len);
+                progress.context.maybeRefresh();
+            }
+
+            return true;
+        },
+    }
+
+    unreachable;
+}
+
+// the first packet for Transfer-Encoding: chunked
+// is usually pretty small or sometimes even just a length
+// so we can avoid allocating a temporary buffer to copy the data in
+var single_packet_small_buffer: [16 * 1024]u8 = undefined;
+fn handleResponseBodyChunkedEncodingFromSinglePacket(
+    this: *HTTPClient,
+    incoming_data: []const u8,
+) !bool {
+    var decoder = &this.state.chunked_decoder;
+    std.debug.assert(incoming_data.len <= single_packet_small_buffer.len);
+
+    // set consume_trailer to 1 to discard the trailing header
+    // using content-encoding per chunk is not supported
+    decoder.consume_trailer = 1;
+
+    var buffer: []u8 = undefined;
+
+    if (
+    // if we've already copied the buffer once, we can avoid copying it again.
+    this.state.response_message_buffer.owns(incoming_data)) {
+        buffer = bun.constStrToU8(incoming_data);
+    } else {
+        buffer = single_packet_small_buffer[0..incoming_data.len];
+        @memcpy(buffer.ptr, incoming_data.ptr, incoming_data.len);
+    }
+
+    var bytes_decoded = incoming_data.len;
+    // phr_decode_chunked mutates in-place
+    const pret = picohttp.phr_decode_chunked(
+        decoder,
+        buffer.ptr + (buffer.len -| incoming_data.len),
+        &bytes_decoded,
+    );
+    buffer.len -|= incoming_data.len - bytes_decoded;
+
+    switch (pret) {
+        // Invalid HTTP response body
+        -1 => {
+            return error.InvalidHTTPResponse;
+        },
+        // Needs more data
+        -2 => {
+            if (this.progress_node) |progress| {
+                progress.activate();
+                progress.setCompletedItems(buffer.len);
+                progress.context.maybeRefresh();
+            }
+            try this.state.getBodyBuffer().appendSliceExact(buffer);
+
+            return false;
+        },
+        // Done
+        else => {
+            try this.handleResponseBodyFromSinglePacket(buffer);
+            std.debug.assert(this.state.body_out_str.?.list.items.ptr != buffer.ptr);
+            if (this.progress_node) |progress| {
+                progress.activate();
+                progress.setCompletedItems(buffer.len);
                 progress.context.maybeRefresh();
             }
 
@@ -1876,33 +1969,81 @@ pub fn handleResponseMetadata(
                 if (strings.indexOf(location, "://")) |i| {
                     var url_buf = URLBufferPool.get(default_allocator);
 
-                    const protocol_name = location[0..i];
-                    if (strings.eqlComptime(protocol_name, "http") or strings.eqlComptime(protocol_name, "https")) {} else {
+                    const is_protocol_relative = i == 0;
+                    const protocol_name = if (is_protocol_relative) this.url.displayProtocol() else location[0..i];
+                    const is_http = strings.eqlComptime(protocol_name, "http");
+                    if (is_http or strings.eqlComptime(protocol_name, "https")) {} else {
                         return error.UnsupportedRedirectProtocol;
                     }
 
-                    if (location.len > url_buf.data.len) {
+                    if ((protocol_name.len * @as(usize, @boolToInt(is_protocol_relative))) + location.len > url_buf.data.len) {
                         return error.RedirectURLTooLong;
                     }
 
                     deferred_redirect.* = this.redirect;
-                    std.mem.copy(u8, &url_buf.data, location);
-                    this.url = URL.parse(url_buf.data[0..location.len]);
+                    var url_buf_len = location.len;
+                    if (is_protocol_relative) {
+                        if (is_http) {
+                            url_buf.data[0.."http".len].* = "http".*;
+                            std.mem.copy(u8, url_buf.data["http".len..], location);
+                            url_buf_len += "http".len;
+                        } else {
+                            url_buf.data[0.."https".len].* = "https".*;
+                            std.mem.copy(u8, url_buf.data["https".len..], location);
+                            url_buf_len += "https".len;
+                        }
+                    } else {
+                        std.mem.copy(u8, &url_buf.data, location);
+                    }
+
+                    this.url = URL.parse(url_buf.data[0..url_buf_len]);
+                    this.redirect = url_buf;
+                } else if (strings.hasPrefixComptime(location, "//")) {
+                    var url_buf = URLBufferPool.get(default_allocator);
+
+                    const protocol_name = this.url.displayProtocol();
+
+                    if (protocol_name.len + 1 + location.len > url_buf.data.len) {
+                        return error.RedirectURLTooLong;
+                    }
+
+                    deferred_redirect.* = this.redirect;
+                    var url_buf_len = location.len;
+
+                    if (strings.eqlComptime(protocol_name, "http")) {
+                        url_buf.data[0.."http:".len].* = "http:".*;
+                        std.mem.copy(u8, url_buf.data["http:".len..], location);
+                        url_buf_len += "http:".len;
+                    } else {
+                        url_buf.data[0.."https:".len].* = "https:".*;
+                        std.mem.copy(u8, url_buf.data["https:".len..], location);
+                        url_buf_len += "https:".len;
+                    }
+
+                    this.url = URL.parse(url_buf.data[0..url_buf_len]);
                     this.redirect = url_buf;
                 } else {
                     var url_buf = URLBufferPool.get(default_allocator);
                     const original_url = this.url;
-                    this.url = URL.parse(std.fmt.bufPrint(
-                        &url_buf.data,
-                        "{s}://{s}{s}",
-                        .{ original_url.displayProtocol(), original_url.displayHostname(), location },
-                    ) catch return error.RedirectURLTooLong);
+                    const port = original_url.getPortAuto();
+
+                    if (port == original_url.getDefaultPort()) {
+                        this.url = URL.parse(std.fmt.bufPrint(
+                            &url_buf.data,
+                            "{s}://{s}{s}",
+                            .{ original_url.displayProtocol(), original_url.displayHostname(), location },
+                        ) catch return error.RedirectURLTooLong);
+                    } else {
+                        this.url = URL.parse(std.fmt.bufPrint(
+                            &url_buf.data,
+                            "{s}://{s}:{d}{s}",
+                            .{ original_url.displayProtocol(), original_url.displayHostname(), port, location },
+                        ) catch return error.RedirectURLTooLong);
+                    }
 
                     deferred_redirect.* = this.redirect;
                     this.redirect = url_buf;
                 }
-
-                // Ensure we don't up ove
 
                 // https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/303
                 if (response.status_code == 303) {

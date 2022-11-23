@@ -7,10 +7,10 @@
       "name": "bun test",
       "program": "bun-debug",
       "args": ["wiptest", "${file}"],
-      "cwd": "${workspaceFolder}/test",
+      "cwd": "${workspaceFolder}/test/bun.js",
       "env": {
-        "FORCE_COLOR": "1"
-        // "BUN_DEBUG_ALL": "1"
+        "FORCE_COLOR": "1",
+        "BUN_GARBAGE_COLLECTOR_LEVEL": "2"
       },
       "console": "internalConsole"
     },
@@ -22,8 +22,8 @@
       "args": ["wiptest"],
       "cwd": "${workspaceFolder}/test",
       "env": {
-        "FORCE_COLOR": "1"
-        // "BUN_DEBUG_ALL": "1"
+        "FORCE_COLOR": "1",
+        "BUN_GARBAGE_COLLECTOR_LEVEL": "2"
       },
       "console": "internalConsole"
     },
@@ -33,6 +33,18 @@
       "name": "bun run current file",
       "program": "bun-debug",
       "args": ["${file}"],
+      "cwd": "${file}/../../",
+      "env": {
+        "FORCE_COLOR": "1"
+      },
+      "console": "internalConsole"
+    },
+    {
+      "type": "lldb",
+      "request": "launch",
+      "name": "bun run (hot)",
+      "program": "bun-debug",
+      "args": ["--hot", "${file}"],
       "cwd": "${file}/../../",
       "env": {
         "FORCE_COLOR": "1"
@@ -104,6 +116,15 @@
       "name": "fetch debug",
       "program": "${workspaceFolder}/misctools/fetch",
       "args": ["https://example.com", "--verbose"],
+      "cwd": "${workspaceFolder}",
+      "console": "internalConsole"
+    },
+    {
+      "type": "lldb",
+      "request": "launch",
+      "name": "Build zig unit test",
+      "program": "make",
+      "args": ["build-unit", "${file}"],
       "cwd": "${workspaceFolder}",
       "console": "internalConsole"
     },

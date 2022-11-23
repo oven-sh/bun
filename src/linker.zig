@@ -611,15 +611,27 @@ pub const Linker = struct {
                                 var subpath_buf: [512]u8 = undefined;
                                 if (ESModule.Package.parse(import_record.path.text, &subpath_buf)) |pkg| {
                                     package_name = pkg.name;
-                                    linker.log.addResolveError(
-                                        &result.source,
-                                        import_record.range,
-                                        linker.allocator,
-                                        "Version \"{s}\" not found for package \"{s}\" (while resolving \"{s}\")",
-                                        .{ pkg.version, package_name, import_record.path.text },
-                                        import_record.kind,
-                                        err,
-                                    ) catch {};
+                                    if (pkg.version.len > 0) {
+                                        linker.log.addResolveError(
+                                            &result.source,
+                                            import_record.range,
+                                            linker.allocator,
+                                            "Version \"{s}\" not found for package \"{s}\" (while resolving \"{s}\")",
+                                            .{ pkg.version, package_name, import_record.path.text },
+                                            import_record.kind,
+                                            err,
+                                        ) catch {};
+                                    } else {
+                                        linker.log.addResolveError(
+                                            &result.source,
+                                            import_record.range,
+                                            linker.allocator,
+                                            "No matching version found for package \"{s}\" (while resolving \"{s}\")",
+                                            .{ package_name, import_record.path.text },
+                                            import_record.kind,
+                                            err,
+                                        ) catch {};
+                                    }
                                 } else {
                                     linker.log.addResolveError(
                                         &result.source,

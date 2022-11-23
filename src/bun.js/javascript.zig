@@ -40,7 +40,7 @@ const ImportKind = ast.ImportKind;
 const Analytics = @import("../analytics/analytics_thread.zig");
 const ZigString = @import("../jsc.zig").ZigString;
 const Runtime = @import("../runtime.zig");
-const Router = @import("./api/router.zig");
+const Router = @import("./api/filesystem_router.zig");
 const ImportRecord = ast.ImportRecord;
 const DotEnv = @import("../env_loader.zig");
 const PackageJSON = @import("../resolver/package_json.zig").PackageJSON;
@@ -313,7 +313,13 @@ pub export fn Bun__queueTaskConcurrently(global: *JSGlobalObject, task: *JSC.Cpp
 pub export fn Bun__handleRejectedPromise(global: *JSGlobalObject, promise: *JSC.JSPromise) void {
     const result = promise.result(global.vm());
     var jsc_vm = global.bunVM();
+
+    // this seems to happen in some cases when GC is running
+    if (result == .zero)
+        return;
+
     jsc_vm.onUnhandledError(global, result);
+    jsc_vm.autoGarbageCollect();
 }
 
 pub export fn Bun__onDidAppendPlugin(jsc_vm: *VirtualMachine, globalObject: *JSGlobalObject) void {
@@ -428,11 +434,39 @@ pub const VirtualMachine = struct {
     unhandled_error_counter: usize = 0,
 
     modules: ModuleLoader.AsyncModule.Queue = .{},
+    aggressive_garbage_collection: GCLevel = GCLevel.none,
+
+    pub const GCLevel = enum(u3) {
+        none = 0,
+        mild = 1,
+        aggressive = 2,
+    };
 
     pub threadlocal var is_main_thread_vm: bool = false;
 
     pub fn resetUnhandledRejection(this: *VirtualMachine) void {
         this.onUnhandledRejection = defaultOnUnhandledRejection;
+    }
+
+    pub fn loadExtraEnv(this: *VirtualMachine) void {
+        var map = this.bundler.env.map;
+
+        if (map.get("BUN_SHOW_BUN_STACKFRAMES") != null)
+            this.hide_bun_stackframes = false;
+
+        if (map.get("BUN_OVERRIDE_MODULE_PATH")) |override_path| {
+            if (override_path.len > 0) {
+                this.load_builtins_from_path = override_path;
+            }
+        }
+
+        if (map.get("BUN_GARBAGE_COLLECTOR_LEVEL")) |gc_level| {
+            if (strings.eqlComptime(gc_level, "1")) {
+                this.aggressive_garbage_collection = .mild;
+            } else if (strings.eqlComptime(gc_level, "2")) {
+                this.aggressive_garbage_collection = .aggressive;
+            }
+        }
     }
 
     pub fn onUnhandledError(this: *JSC.VirtualMachine, globalObject: *JSC.JSGlobalObject, value: JSC.JSValue) void {
@@ -446,6 +480,22 @@ pub const VirtualMachine = struct {
 
     pub inline fn packageManager(this: *VirtualMachine) *PackageManager {
         return this.bundler.getPackageManager();
+    }
+
+    pub fn garbageCollect(this: *const VirtualMachine, sync: bool) JSValue {
+        @setCold(true);
+        Global.mimalloc_cleanup(false);
+        if (sync)
+            return this.global.vm().runGC(true);
+
+        this.global.vm().collectAsync();
+        return JSValue.jsNumber(this.global.vm().heapSize());
+    }
+
+    pub inline fn autoGarbageCollect(this: *const VirtualMachine) void {
+        if (this.aggressive_garbage_collection != .none) {
+            _ = this.garbageCollect(this.aggressive_garbage_collection == .aggressive);
+        }
     }
 
     pub fn reload(this: *VirtualMachine) void {
@@ -676,9 +726,6 @@ pub const VirtualMachine = struct {
 
         VirtualMachine.vm.bundler.configureLinker();
         try VirtualMachine.vm.bundler.configureFramework(false);
-
-        if (VirtualMachine.vm.bundler.env.get("BUN_SHOW_BUN_STACKFRAMES") != null)
-            VirtualMachine.vm.hide_bun_stackframes = false;
 
         vm.bundler.macro_context = js_ast.Macro.MacroContext.init(&vm.bundler);
 

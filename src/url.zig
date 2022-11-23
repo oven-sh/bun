@@ -120,7 +120,11 @@ pub const URL = struct {
     }
 
     pub fn getPortAuto(this: *const URL) u16 {
-        return this.getPort() orelse (if (this.isHTTPS()) @as(u16, 443) else @as(u16, 80));
+        return this.getPort() orelse this.getDefaultPort();
+    }
+
+    pub fn getDefaultPort(this: *const URL) u16 {
+        return if (this.isHTTPS()) @as(u16, 443) else @as(u16, 80);
     }
 
     pub fn hasValidPort(this: *const URL) bool {
@@ -216,22 +220,32 @@ pub const URL = struct {
                 offset += url.parsePassword(base[offset..]) orelse 0;
                 offset += url.parseHost(base[offset..]) orelse 0;
             },
-            'a'...'z', 'A'...'Z', '0'...'9', '-', '_', ':' => {
-                offset += url.parseProtocol(base[offset..]) orelse 0;
-
-                // if there's no protocol or @, it's ambiguous whether the colon is a port or a username.
-                if (offset > 0) {
-                    // see https://github.com/oven-sh/bun/issues/1390
-                    const first_at = strings.indexOfChar(base[offset..], '@') orelse 0;
-                    const first_colon = strings.indexOfChar(base[offset..], ':') orelse 0;
-
-                    if (first_at > first_colon and first_at < (strings.indexOfChar(base[offset..], '/') orelse std.math.maxInt(u32))) {
-                        offset += url.parseUsername(base[offset..]) orelse 0;
-                        offset += url.parsePassword(base[offset..]) orelse 0;
-                    }
+            '/', 'a'...'z', 'A'...'Z', '0'...'9', '-', '_', ':' => {
+                const is_protocol_relative = base.len > 1 and base[1] == '/';
+                if (is_protocol_relative) {
+                    offset += 1;
+                } else {
+                    offset += url.parseProtocol(base[offset..]) orelse 0;
                 }
 
-                offset += url.parseHost(base[offset..]) orelse 0;
+                const is_relative_path = !is_protocol_relative and base[0] == '/';
+
+                if (!is_relative_path) {
+
+                    // if there's no protocol or @, it's ambiguous whether the colon is a port or a username.
+                    if (offset > 0) {
+                        // see https://github.com/oven-sh/bun/issues/1390
+                        const first_at = strings.indexOfChar(base[offset..], '@') orelse 0;
+                        const first_colon = strings.indexOfChar(base[offset..], ':') orelse 0;
+
+                        if (first_at > first_colon and first_at < (strings.indexOfChar(base[offset..], '/') orelse std.math.maxInt(u32))) {
+                            offset += url.parseUsername(base[offset..]) orelse 0;
+                            offset += url.parsePassword(base[offset..]) orelse 0;
+                        }
+                    }
+
+                    offset += url.parseHost(base[offset..]) orelse 0;
+                }
             },
             else => {},
         }
@@ -431,15 +445,16 @@ pub const QueryStringMap = struct {
 
     threadlocal var _name_count: [8]string = undefined;
     pub fn getNameCount(this: *QueryStringMap) usize {
-        if (this.name_count == null) {
-            var count: usize = 0;
-            var iterate = this.iter();
-            while (iterate.next(&_name_count) != null) {
-                count += 1;
-            }
-            this.name_count = count;
-        }
-        return this.name_count.?;
+        return this.list.len;
+        // if (this.name_count == null) {
+        //     var count: usize = 0;
+        //     var iterate = this.iter();
+        //     while (iterate.next(&_name_count) != null) {
+        //         count += 1;
+        //     }
+        //     this.name_count = count;
+        // }
+        // return this.name_count.?;
     }
 
     pub fn iter(this: *const QueryStringMap) Iterator {
@@ -470,7 +485,9 @@ pub const QueryStringMap = struct {
 
             var slice = this.map.list.slice();
             const hash = slice.items(.name_hash)[this.i];
-            var result = Result{ .name = this.map.str(slice.items(.name)[this.i]), .values = target[0..1] };
+            const name_slice = slice.items(.name)[this.i];
+            std.debug.assert(name_slice.length > 0);
+            var result = Result{ .name = this.map.str(name_slice), .values = target[0..1] };
             target[0] = this.map.str(slice.items(.value)[this.i]);
 
             this.visited.set(this.i);
@@ -842,14 +859,22 @@ pub const CombinedScanner = struct {
 fn stringPointerFromStrings(parent: string, in: string) Api.StringPointer {
     if (in.len == 0 or parent.len == 0) return Api.StringPointer{};
 
-    const end = @ptrToInt(parent.ptr) + parent.len;
-    const in_end = @ptrToInt(in.ptr) + in.len;
-    if (in_end < end) return Api.StringPointer{};
+    if (bun.rangeOfSliceInBuffer(in, parent)) |range| {
+        return Api.StringPointer{ .offset = range[0], .length = range[1] };
+    } else {
+        if (strings.indexOf(parent, in)) |i| {
+            if (comptime Environment.allow_assert) {
+                std.debug.assert(strings.eqlLong(parent[i..][0..in.len], in, false));
+            }
 
-    return Api.StringPointer{
-        .offset = @truncate(u32, @maximum(@ptrToInt(in.ptr), @ptrToInt(parent.ptr)) - @ptrToInt(parent.ptr)),
-        .length = @truncate(u32, in.len),
-    };
+            return Api.StringPointer{
+                .offset = @truncate(u32, i),
+                .length = @truncate(u32, in.len),
+            };
+        }
+    }
+
+    return Api.StringPointer{};
 }
 
 pub const PathnameScanner = struct {
@@ -888,7 +913,7 @@ pub const PathnameScanner = struct {
             .name_needs_decoding = false,
             // TODO: fix this technical debt
             .value = stringPointerFromStrings(this.pathname, param.value),
-            .value_needs_decoding = std.mem.indexOfScalar(u8, param.value, '%') != null,
+            .value_needs_decoding = strings.containsChar(param.value, '%'),
         };
     }
 };

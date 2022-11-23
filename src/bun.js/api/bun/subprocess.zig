@@ -32,7 +32,6 @@ pub const Subprocess = struct {
     poll_ref: ?*JSC.FilePoll = null,
 
     exit_promise: JSC.Strong = .{},
-
     on_exit_callback: JSC.Strong = .{},
 
     exit_code: ?u8 = null,
@@ -61,6 +60,18 @@ pub const Subprocess = struct {
     pub fn updateHasPendingActivityFlag(this: *Subprocess) void {
         @fence(.SeqCst);
         this.has_pending_activity.store(this.waitpid_err == null and this.exit_code == null, .SeqCst);
+    }
+
+    has_pending_activity: std.atomic.Atomic(bool) = std.atomic.Atomic(bool).init(true),
+
+    pub fn hasPendingActivity(this: *Subprocess) callconv(.C) bool {
+        @fence(.Acquire);
+        return this.has_pending_activity.load(.Acquire);
+    }
+
+    pub fn updateHasPendingActivity(this: *Subprocess) void {
+        @fence(.Release);
+        this.has_pending_activity.store(this.waitpid_err == null and this.exit_code == null, .Release);
     }
 
     pub fn ref(this: *Subprocess) void {
@@ -304,30 +315,6 @@ pub const Subprocess = struct {
             if (pidfd != std.math.maxInt(std.os.fd_t)) {
                 _ = std.os.close(pidfd);
             }
-        }
-    }
-
-    pub fn closePorts(this: *Subprocess, finalizing: bool) void {
-        this.closeProcess();
-
-        if (finalizing and !this.hasCalledGetter(.stdout) and !(this.stdout == .pipe and this.stdout.pipe == .buffer)) {
-            this.stdout.close();
-        } else if (this.stdout == .pipe) {
-            this.stdout.pipe.done();
-        }
-
-        if (finalizing and !this.hasCalledGetter(.stderr) and !(this.stderr == .pipe and this.stderr.pipe == .buffer)) {
-            this.stderr.close();
-        } else if (this.stderr == .pipe) {
-            this.stderr.pipe.done();
-        }
-
-        if (finalizing and !this.hasCalledGetter(.stdin) or (this.stdin == .buffered_input and this.stdin == .pipe_to_readable_stream)) {
-            this.stdin.close();
-        } else if (this.stdin == .pipe) {
-            this.stdin.pipe.signal.clear();
-            this.stdin.pipe.onHangup();
-            this.stdin = .ignore;
         }
     }
 
@@ -788,12 +775,9 @@ pub const Subprocess = struct {
         bun.default_allocator.destroy(this);
     }
 
-    pub fn finalizeSync(this: *Subprocess) void {
-        if (this.poll_ref) |poll| {
-            this.poll_ref = null;
-            poll.deinit();
-        }
-        this.closePorts(true);
+        this.finalized = true;
+        bun.default_allocator.destroy(this);
+        log("Finalize", .{});
     }
 
     pub fn getExited(
@@ -1286,8 +1270,9 @@ pub const Subprocess = struct {
         }
     }
 
-    fn onExit(this: *Subprocess, globalThis: *JSC.JSGlobalObject) void {
-        this.closePorts(false);
+    fn onExit(this: *Subprocess) void {
+        defer this.updateHasPendingActivity();
+        this.closePorts();
 
         this.has_waitpid_task = false;
 

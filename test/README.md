@@ -2,11 +2,44 @@
 
 Bun currently has four different kinds of tests
 
-To run the tests:
+To run all the tests:
 
 ```bash
 make test-all
+bun --cwd=test/bun.js wiptest
+```
+
+### Runtime tests
+
+To run the runtime tests:
+
+```bash
+cd test/bun.js
 bun wiptest
+```
+
+These tests are in [./bun.js](./bun.js) and are files with `.test.js` or `.test.ts` in the filename.
+
+These test that the runtime behaves as expected. These also test the transpiler, both because test files are transpiled and directly by running the transpiler via `Bun.Transpiler`.
+
+#### Adding a new test
+
+1. Create a new file in [./bun.js](./bun.js/) with `.test` in the name.
+
+These test use `bun:test` as the import (though you can also import from `vitest` or jest and it will work).
+
+This will eventually be a public test runner for bun, but the reporter isn't very good yet and it doesn't run in parallel.
+
+The syntax intends for Jest compatibility.
+
+```ts
+import { describe, expect, it } from "bun:test";
+
+describe("Example", () => {
+  it("should work", () => {
+    expect(1).toBe(1);
+  });
+});
 ```
 
 ### Browser tests
@@ -67,32 +100,6 @@ make integration-test-dev
 ```
 
 These were the first tests bun started with
-
-### Runtime tests
-
-These tests are in [./bun.js](./bun.js) and are files which are either `.test.js` or `.test.ts` files.
-
-These test that the runtime behaves as expected. These also test the transpiler, both because test files are transpiled and directly by running the transpiler via `Bun.Transpiler`.
-
-#### Adding a new test
-
-1. Create a new file in [./bun.js](./bun.js/) with `.test` in the name.
-
-These test use `bun:test` as the import (though you can also import from `vitest` or jest and it will work).
-
-This will eventually be a public test runner for bun, but the reporter isn't very good yet and it doesn't run in parallel.
-
-The syntax intends for Jest compatibility.
-
-```ts
-import { describe, expect, it } from "bun:test";
-
-describe("Example", () => {
-  it("should work", () => {
-    expect(1).toBe(1);
-  });
-});
-```
 
 #### Running the tests
 

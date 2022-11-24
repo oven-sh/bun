@@ -214,7 +214,7 @@ ENV CCACHE_DIR=/ccache
 
 WORKDIR $BUN_DIR
 
-RUN --mount=type=cache,target=/ccache make oniguruma && rm -rf src/deps/oniguruma Makefile
+RUN --mount=type=cache,target=/ccache cd ${BUN_DIR} && make oniguruma && rm -rf src/deps/oniguruma Makefile
 
 FROM bun-base as tinycc
 
@@ -253,7 +253,7 @@ WORKDIR $BUN_DIR
 
 ENV CCACHE_DIR=/ccache
 
-RUN --mount=type=cache,target=/ccache make boringssl && rm -rf src/deps/boringssl Makefile
+RUN --mount=type=cache,target=/ccache cd ${BUN_DIR} && make boringssl && rm -rf src/deps/boringssl Makefile
 
 FROM bun-base as uws
 

@@ -210,6 +210,9 @@ ENV CPU_TARGET=${CPU_TARGET}
 
 RUN install_packages autoconf automake libtool pkg-config 
 
+COPY Makefile ${BUN_DIR}/Makefile
+COPY src/deps/oniguruma ${BUN_DIR}/src/deps/oniguruma
+
 ENV CCACHE_DIR=/ccache
 
 WORKDIR $BUN_DIR
@@ -569,7 +572,7 @@ ENV LIB_ICU_PATH "${WEBKIT_DIR}/lib"
 
 CMD make headers \
     api \
-    analytiecs \
+    analytics \
     bun_error \
     fallback_decoder \
     bindings -j10 && \

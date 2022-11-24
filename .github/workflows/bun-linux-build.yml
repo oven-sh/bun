@@ -6,7 +6,9 @@ env:
 
 on:
   push:
-    branches: [main, bun-actions]
+    branches:
+      - main
+      - bun-actions
     paths:
       - "src/**/*"
       - "test/**/*"
@@ -14,7 +16,8 @@ on:
       - "Makefile"
       - "Dockerfile"
   pull_request:
-    branches: [main]
+    branches:
+      - main
     paths:
       - "src/**/*"
       - "test/**/*"

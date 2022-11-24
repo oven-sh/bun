@@ -3492,7 +3492,7 @@ pub const FIFO = struct {
     signal: JSC.WebCore.Signal = .{},
     is_first_read: bool = true,
     auto_close: bool = true,
-    adjusted_pipe_size_on_linux: bool = false,
+    has_adjusted_pipe_size_on_linux: bool = false,
 
     pub usingnamespace NewReadyWatcher(@This(), .readable, ready);
 

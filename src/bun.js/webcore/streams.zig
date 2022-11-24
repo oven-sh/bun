@@ -3552,7 +3552,7 @@ pub const FIFO = struct {
         return @intCast(u32, @maximum(len, 0));
     }
 
-    pub fn adjustCapacityOnLinux(this: *FIFO, current: u32, max: u32) u32 {
+    pub fn adjustCapacityOnLinux(this: *FIFO, current: u32, max: u32) void {
         // we do not un-mark it as readable if there's nothing in the pipe
         if (!this.has_adjusted_pipe_size_on_linux) {
             if (current > 0 and max >= std.mem.page_size * 16) {

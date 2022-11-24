@@ -271,7 +271,6 @@ for (let [gcTick, label] of [
 
         while (!done) {
           ({ value, done } = await reader.read());
-          console.log("i have ...read");
           if (value) text += new TextDecoder().decode(value);
           if (done && text.length === 0) {
             reader.releaseLock();
@@ -286,80 +285,80 @@ for (let [gcTick, label] of [
         await proc.exited;
       });
 
-      // describe("pipe", () => {
-      //   function huge() {
-      //     return spawn({
-      //       cmd: ["echo", hugeString],
-      //       stdout: "pipe",
-      //       stdin: "pipe",
-      //       stderr: "inherit",
-      //       lazy: true,
-      //     });
-      //   }
+      describe("pipe", () => {
+        function huge() {
+          return spawn({
+            cmd: ["echo", hugeString],
+            stdout: "pipe",
+            stdin: "pipe",
+            stderr: "inherit",
+            lazy: true,
+          });
+        }
 
-      //   function helloWorld() {
-      //     return spawn({
-      //       cmd: ["echo", "hello"],
-      //       stdout: "pipe",
-      //       stdin: "ignore",
-      //     });
-      //   }
+        function helloWorld() {
+          return spawn({
+            cmd: ["echo", "hello"],
+            stdout: "pipe",
+            stdin: "ignore",
+          });
+        }
 
-      //   const fixtures = [
-      //     [helloWorld, "hello"],
-      //     [huge, hugeString],
-      //   ] as const;
+        const fixtures = [
+          [helloWorld, "hello"],
+          [huge, hugeString],
+        ] as const;
 
-      //   for (const [callback, fixture] of fixtures) {
-      //     describe(fixture.slice(0, 12), () => {
-      //       describe("should should allow reading stdout", () => {
-      //         it("before exit", async () => {
-      //           const process = callback();
-      //           const output = readableStreamToText(process.stdout!);
-      //           const expected = fixture + "\n";
+        for (const [callback, fixture] of fixtures) {
+          describe(fixture.slice(0, 12), () => {
+            describe("should should allow reading stdout", () => {
+              it("before exit", async () => {
+                const process = callback();
+                const output = readableStreamToText(process.stdout!);
+                const expected = fixture + "\n";
 
-      //           await Promise.all([
-      //             process.exited,
-      //             output.then((output) => {
-      //               expect(output.length).toBe(expected.length);
-      //               expect(output).toBe(expected);
-      //             }),
-      //           ]);
-      //         });
+                await Promise.all([
+                  process.exited,
+                  output.then((output) => {
+                    expect(output.length).toBe(expected.length);
+                    expect(output).toBe(expected);
+                  }),
+                ]);
+              });
 
-      //         it("before exit (chunked)", async () => {
-      //           const process = callback();
-      //           var output = "";
-      //           const prom2 = (async function () {
-      //             for await (const chunk of process.stdout) {
-      //               output += new TextDecoder().decode(chunk);
-      //             }
-      //           })();
+              it("before exit (chunked)", async () => {
+                const process = callback();
+                var output = "";
+                const prom2 = (async function () {
+                  for await (const chunk of process.stdout) {
+                    output += new TextDecoder().decode(chunk);
+                  }
+                })();
 
-      //           const expected = fixture + "\n";
+                const expected = fixture + "\n";
 
-      //           await Promise.all([process.exited, prom2]);
-      //           expect(output.length).toBe(expected.length);
-      //           expect(output).toBe(expected);
-      //         });
+                await Promise.all([process.exited, prom2]);
+                expect(output.length).toBe(expected.length);
+                expect(output).toBe(expected);
+              });
 
-      //         it("after exit", async () => {
-      //           const process = callback();
+              it("after exit", async () => {
+                const process = callback();
 
-      //           const output = readableStreamToText(process.stdout!);
-      //           const expected = fixture + "\n";
-      //           await Promise.all([
-      //             process.exited,
-      //             output.then((output) => {
-      //               expect(output.length).toBe(expected.length);
-      //               expect(output).toBe(expected);
-      //             }),
-      //           ]);
-      //         });
-      //       });
-      //     });
-      //   }
-      // });
+                const output = readableStreamToText(process.stdout!);
+                const expected = fixture + "\n";
+                await Promise.all([
+                  process.exited,
+                  output.then((output) => {
+                    expect(output.length).toBe(expected.length);
+                    expect(output).toBe(expected);
+                  }),
+                ]);
+              });
+            });
+          });
+        }
+      });
     });
   });
 }

@@ -1174,6 +1174,7 @@ pub const ZigConsoleClient = struct {
         globalThis: *JSGlobalObject,
         indent: u32 = 0,
         quote_strings: bool = false,
+        failed: bool = false,
 
         pub const ZigFormatter = struct {
             formatter: *ZigConsoleClient.Formatter,
@@ -1511,28 +1512,40 @@ pub const ZigConsoleClient = struct {
         pub fn WrappedWriter(comptime Writer: type) type {
             return struct {
                 ctx: Writer,
+                failed: bool = false,
 
                 pub fn print(self: *@This(), comptime fmt: string, args: anytype) void {
-                    self.ctx.print(fmt, args) catch unreachable;
+                    self.ctx.print(fmt, args) catch {
+                        self.failed = true;
+                    };
                 }
 
                 pub fn writeLatin1(self: *@This(), buf: []const u8) void {
                     var remain = buf;
                     while (remain.len > 0) {
                         if (strings.firstNonASCII(remain)) |i| {
-                            if (i > 0) self.ctx.writeAll(remain[0..i]) catch unreachable;
-                            self.ctx.writeAll(&strings.latin1ToCodepointBytesAssumeNotASCII(remain[i])) catch unreachable;
+                            if (i > 0) {
+                                self.ctx.writeAll(remain[0..i]) catch {
+                                    self.failed = true;
+                                    return;
+                                };
+                            }
+                            self.ctx.writeAll(&strings.latin1ToCodepointBytesAssumeNotASCII(remain[i])) catch {
+                                self.failed = true;
+                            };
                             remain = remain[i + 1 ..];
                         } else {
                             break;
                         }
                     }
 
-                    self.ctx.writeAll(remain) catch unreachable;
+                    self.ctx.writeAll(remain) catch return;
                 }
 
                 pub inline fn writeAll(self: *@This(), buf: []const u8) void {
-                    self.ctx.writeAll(buf) catch unreachable;
+                    self.ctx.writeAll(buf) catch {
+                        self.failed = true;
+                    };
                 }
 
                 pub inline fn writeString(self: *@This(), str: ZigString) void {
@@ -1540,7 +1553,9 @@ pub const ZigConsoleClient = struct {
                 }
 
                 pub inline fn write16Bit(self: *@This(), input: []const u16) void {
-                    strings.formatUTF16Type([]const u16, input, self.ctx) catch unreachable;
+                    strings.formatUTF16Type([]const u16, input, self.ctx) catch {
+                        self.failed = true;
+                    };
                 }
             };
         }
@@ -1631,8 +1646,14 @@ pub const ZigConsoleClient = struct {
             jsType: JSValue.JSType,
             comptime enable_ansi_colors: bool,
         ) void {
+            if (this.failed)
+                return;
             var writer = WrappedWriter(Writer){ .ctx = writer_ };
-
+            defer {
+                if (writer.failed) {
+                    this.failed = true;
+                }
+            }
             if (comptime Format.canHaveCircularReferences()) {
                 if (this.map_node == null) {
                     this.map_node = Visited.Pool.get(default_allocator);

@@ -1290,7 +1290,7 @@ pub const Subprocess = struct {
         this.has_waitpid_task = true;
         const pid = this.pid;
 
-        switch (PosixSpawn.waitpid(pid, 0)) {
+        switch (PosixSpawn.waitpid(pid, if (sync) 0 else std.os.W.NOHANG)) {
             .err => |err| {
                 this.waitpid_err = err;
             },

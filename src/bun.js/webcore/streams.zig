@@ -1427,6 +1427,8 @@ pub const FileSink = struct {
     }
 
     fn cleanup(this: *FileSink) void {
+        this.done = true;
+
         if (this.poll_ref) |poll| {
             this.poll_ref = null;
             poll.deinit();
@@ -1464,7 +1466,6 @@ pub const FileSink = struct {
     }
 
     pub fn onHangup(this: *FileSink) void {
-        this.done = true;
         this.signal.clear();
         this.cleanup();
 
@@ -3634,7 +3635,8 @@ pub const FIFO = struct {
 
         const read_result = this.read(this.buf, available_to_read);
         if (read_result == .read and read_result.read.len == 0) {
-            this.unwatch(this.poll_ref.?.fd);
+            if (this.poll_ref != null)
+                this.unwatch(this.poll_ref.?.fd);
             this.close();
             return;
         }

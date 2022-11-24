@@ -189,6 +189,8 @@ COPY Makefile ${BUN_DIR}/Makefile
 COPY src/deps/libarchive ${BUN_DIR}/src/deps/libarchive
 
 ENV CCACHE_DIR=/ccache
+WORKDIR $BUN_DIR
+
 
 RUN --mount=type=cache,target=/ccache cd $BUN_DIR && \
     make libarchive && rm -rf src/deps/libarchive Makefile
@@ -209,6 +211,8 @@ ENV CPU_TARGET=${CPU_TARGET}
 RUN install_packages autoconf automake libtool pkg-config 
 
 ENV CCACHE_DIR=/ccache
+
+WORKDIR $BUN_DIR
 
 RUN --mount=type=cache,target=/ccache make oniguruma && rm -rf src/deps/oniguruma Makefile
 

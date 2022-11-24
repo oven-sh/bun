@@ -3633,6 +3633,10 @@ pub const FIFO = struct {
             return;
         }
 
+        if (this.buf.len == 0 and available_to_read != 0) {
+            return;
+        }
+
         const read_result = this.read(this.buf, available_to_read);
         if (read_result == .read and read_result.read.len == 0) {
             if (this.poll_ref != null)

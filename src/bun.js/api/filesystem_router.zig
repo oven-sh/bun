@@ -290,6 +290,7 @@ pub const FileSystemRouter = struct {
             .arena = arena,
             .allocator = allocator,
         };
+        router.config.dir = fs_router.base_dir.?.slice();
         fs_router.base_dir.?.ref();
         return fs_router;
     }
@@ -319,7 +320,7 @@ pub const FileSystemRouter = struct {
         };
 
         var router = Router.init(vm.bundler.fs, allocator, .{
-            .dir = this.router.config.dir,
+            .dir = allocator.dupe(u8, this.router.config.dir) catch unreachable,
             .extensions = allocator.dupe(string, this.router.config.extensions) catch unreachable,
             .asset_prefix_path = this.router.config.asset_prefix_path,
         }) catch unreachable;
@@ -337,6 +338,7 @@ pub const FileSystemRouter = struct {
         this.arena = arena;
         @This().routesSetCached(this_value, globalThis, JSC.JSValue.zero);
         this.allocator = allocator;
+        this.router = router;
         return this_value;
     }
 
@@ -701,8 +703,10 @@ pub const MatchedRoute = struct {
         this: *MatchedRoute,
         globalThis: *JSC.JSGlobalObject,
     ) callconv(.C) JSC.JSValue {
-        if (this.route.query_string.len == 0) {
+        if (this.route.query_string.len == 0 and this.route.params.len == 0) {
             return JSValue.createEmptyObject(globalThis, 0);
+        } else if (this.route.query_string.len == 0) {
+            return this.getParams(globalThis);
         }
 
         if (this.query_string_map == null) {

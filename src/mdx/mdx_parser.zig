@@ -98,48 +98,48 @@ pub const Block = struct {
     }
 
     pub const Tag = enum {
-        /// <body>...</body>      
+        /// <body>...</body>
         doc,
 
-        /// <blockquote>...</blockquote>      
+        /// <blockquote>...</blockquote>
         quote,
 
         /// <ul>...</ul>
-        ///Detail: Structure ul_detail.      
+        ///Detail: Structure ul_detail.
         ul,
 
         /// <ol>...</ol>
-        ///Detail: Structure ol_detail.      
+        ///Detail: Structure ol_detail.
         ol,
 
         /// <li>...</li>
-        ///Detail: Structure li_detail.      
+        ///Detail: Structure li_detail.
         li,
 
-        /// <hr>      
+        /// <hr>
         hr,
 
         /// <h1>...</h1> (for levels up to 6)
-        ///Detail: Structure h_detail.      
+        ///Detail: Structure h_detail.
         h,
 
         /// <pre><code>...</code></pre>
         ///Note the text lines within code blocks are terminated with '\n'
-        ///instead of explicit MD_TEXT_BR.      
+        ///instead of explicit MD_TEXT_BR.
         code,
 
         /// Raw HTML block. This itself does not correspond to any particular HTML
         ///tag. The contents of it _is_ raw HTML source intended to be put
-        ///in verbatim form to the HTML output.      
+        ///in verbatim form to the HTML output.
         html,
 
-        /// <p>...</p>      
+        /// <p>...</p>
         p,
 
         /// <table>...</table> and its contents.
         ///Detail: Structure table_detail (for table),
         ///        structure td_detail (for th and td)
-        ///Note all of these are used only if extension MD_FLAG_TABLES is enabled.      
+        ///Note all of these are used only if extension MD_FLAG_TABLES is enabled.
         table,
         thead,
         tbody,
@@ -164,7 +164,7 @@ pub const Block = struct {
         task: bool = false,
         /// is_task, then one of 'x', 'X' or ' '. Undefined otherwise.
         task_mark: u8 = 'x',
-        /// If is_task, then offset in the input of the char between '[' and ']'. 
+        /// If is_task, then offset in the input of the char between '[' and ']'.
         task_mark_off: u32 = 0,
     };
 
@@ -178,11 +178,11 @@ pub const Block = struct {
     };
 
     pub const Table = struct {
-        /// Count of columns in the table. 
+        /// Count of columns in the table.
         column_count: u32 = 0,
-        /// Count of rows in the table header (currently always 1) 
+        /// Count of rows in the table header (currently always 1)
         head_row_count: u32 = 1,
-        /// Count of rows in the table body 
+        /// Count of rows in the table body
         body_row_count: u32 = 0,
     };
 
@@ -250,20 +250,20 @@ pub const Span = struct {
 };
 
 pub const Text = enum {
-    /// Normal text. 
+    /// Normal text.
     normal,
     /// NULL character. CommonMark requires replacing NULL character with
-    /// the replacement char U+FFFD, so this allows caller to do that easily. 
+    /// the replacement char U+FFFD, so this allows caller to do that easily.
     nullchar,
     /// Line breaks.
     /// Note these are not sent from blocks with verbatim output (MD_BLOCK_CODE
-    /// or MD_BLOCK_HTML). In such cases, '\n' is part of the text itself. 
-    /// <br> (hard break) 
+    /// or MD_BLOCK_HTML). In such cases, '\n' is part of the text itself.
+    /// <br> (hard break)
     br,
-    /// '\n' in source text where it is not semantically meaningful (soft break) 
+    /// '\n' in source text where it is not semantically meaningful (soft break)
     softbr,
     /// Entity.
-    /// (a) Named entity, e.g. &nbsp; 
+    /// (a) Named entity, e.g. &nbsp;
     ///     (Note MD4C does not have a list of known entities.
     ///     Anything matching the regexp /&[A-Za-z][A-Za-z0-9]{1,47};/ is
     ///     treated as a named entity.)
@@ -271,19 +271,19 @@ pub const Text = enum {
     /// (c) Hexadecimal entity, e.g. &#x12AB;
     ///
     /// As MD4C is mostly encoding agnostic, application gets the verbatim
-    /// entity text into the MD_PARSER::text_callback(). 
+    /// entity text into the MD_PARSER::text_callback().
     entity,
     /// Text in a code block (inside MD_BLOCK_CODE) or inlined code (`code`).
     /// If it is inside MD_BLOCK_CODE, it includes spaces for indentation and
     /// '\n' for new lines. br and softbr are not sent for this
-    /// kind of text. 
+    /// kind of text.
     code,
     /// Text is a raw HTML. If it is contents of a raw HTML block (i.e. not
     /// an inline raw HTML), then br and softbr are not used.
-    /// The text contains verbatim '\n' for the new lines. 
+    /// The text contains verbatim '\n' for the new lines.
     html,
     /// Text is inside an equation. This is processed the same way as inlined code
-    /// spans (`code`). 
+    /// spans (`code`).
     latexmath,
 };
 pub const Align = enum(u3) {
@@ -339,15 +339,15 @@ pub const Mark = struct {
     ch: u8 = 0,
     flags: u16 = 0,
 
-    /// Maybe closer. 
+    /// Maybe closer.
     pub const potential_closer = 0x02;
-    /// Maybe opener. 
+    /// Maybe opener.
     pub const potential_opener = 0x01;
-    /// Definitely opener. 
+    /// Definitely opener.
     pub const opener = 0x04;
-    /// Definitely closer. 
+    /// Definitely closer.
     pub const closer = 0x08;
-    /// Resolved in any definite way. 
+    /// Resolved in any definite way.
     pub const resolved = 0x10;
 
     /// Helper for the "rule of 3". */
@@ -476,33 +476,33 @@ pub const MDParser = struct {
     last_list_item_starts_with_two_blank_lines: bool = false,
 
     pub const Flags = enum {
-        /// In MD_TEXT_NORMAL, collapse non-trivial whitespace into single ' ' 
+        /// In MD_TEXT_NORMAL, collapse non-trivial whitespace into single ' '
         collapse_whitespace,
-        /// Do not require space in ATX headers ( ###header ) 
+        /// Do not require space in ATX headers ( ###header )
         permissive_atxheaders,
-        /// Recognize URLs as autolinks even without '<', '>' 
+        /// Recognize URLs as autolinks even without '<', '>'
         permissive_url_autolinks,
-        /// Recognize e-mails as autolinks even without '<', '>' and 'mailto:' 
+        /// Recognize e-mails as autolinks even without '<', '>' and 'mailto:'
         permissive_email_autolinks,
-        /// Disable indented code blocks. (Only fenced code works.)  
+        /// Disable indented code blocks. (Only fenced code works.)
         noindented_codeblocks,
-        /// Disable raw HTML blocks. 
+        /// Disable raw HTML blocks.
         no_html_blocks,
-        /// Disable raw HTML (inline). 
+        /// Disable raw HTML (inline).
         no_html_spans,
-        /// Enable tables extension. 
+        /// Enable tables extension.
         tables,
-        /// Enable strikethrough extension. 
+        /// Enable strikethrough extension.
         strikethrough,
-        /// Enable WWW autolinks (even without any scheme prefix, if they begin with 'www.') 
+        /// Enable WWW autolinks (even without any scheme prefix, if they begin with 'www.')
         permissive_www_autolinks,
         /// Enable task list extension.
         tasklists,
-        /// Enable $ and $$ containing LaTeX equations. 
+        /// Enable $ and $$ containing LaTeX equations.
         latex_mathspans,
-        /// Enable wiki links extension.  
+        /// Enable wiki links extension.
         wikilinks,
-        /// Enable underline extension (and disables '_' for normal emphasis). 
+        /// Enable underline extension (and disables '_' for normal emphasis).
         underline,
 
         pub const Set = std.enums.EnumSet(Flags);

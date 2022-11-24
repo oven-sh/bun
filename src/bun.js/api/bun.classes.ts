@@ -4,6 +4,7 @@ export default [
   define({
     name: "Subprocess",
     construct: true,
+    noConstructor: true,
     finalize: true,
     hasPendingActivity: true,
     klass: {},

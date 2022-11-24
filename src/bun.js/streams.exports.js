@@ -2039,7 +2039,7 @@ var require_destroy = __commonJS({
         r.destroyed = true;
       }
       if (!s.constructed) {
-        this.once(kDestroy, function (er) {
+        this.once(kDestroy, (er) => {
           _destroy(this, aggregateTwoErrors(er, err), cb);
         });
       } else {
@@ -5725,6 +5725,8 @@ function createNativeStream(nativeType, Readable) {
   var DYNAMICALLY_ADJUST_CHUNK_SIZE =
     process.env.BUN_DISABLE_DYNAMIC_CHUNK_SIZE !== "1";
 
+  const finalizer = new FinalizationRegistry((ptr) => ptr && deinit(ptr));
+
   var NativeReadable = class NativeReadable extends Readable {
     #ptr;
     #refCount = 1;
@@ -5733,6 +5735,7 @@ function createNativeStream(nativeType, Readable) {
     #highWaterMark;
     #pendingRead = false;
     #hasResized = !DYNAMICALLY_ADJUST_CHUNK_SIZE;
+    #unregisterToken;
     constructor(ptr, options = {}) {
       super(options);
       if (typeof options.highWaterMark === "number") {
@@ -5744,6 +5747,8 @@ function createNativeStream(nativeType, Readable) {
       this.#constructed = false;
       this.#remainingChunk = undefined;
       this.#pendingRead = false;
+      this.#unregisterToken = {};
+      finalizer.register(this, this.#ptr, this.#unregisterToken);
     }
 
     _read(highWaterMark) {
@@ -5787,6 +5792,10 @@ function createNativeStream(nativeType, Readable) {
       }
 
       return chunk;
+    }
+
+    push(result, encoding) {
+      return super.push(...arguments);
     }
 
     #handleResult(result, view, isClosed) {
@@ -5844,6 +5853,7 @@ function createNativeStream(nativeType, Readable) {
         return;
       }
 
+      finalizer.unregister(this.#unregisterToken);
       this.#ptr = 0;
       if (updateRef) {
         updateRef(ptr, false);

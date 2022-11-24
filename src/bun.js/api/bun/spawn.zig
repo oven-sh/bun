@@ -57,8 +57,6 @@ pub const PosixSpawn = struct {
             } else {
                 _ = system.posix_spawnattr_destroy(&self.attr);
             }
-
-            self.* = undefined;
         }
 
         pub fn get(self: Attr) !u16 {
@@ -207,6 +205,10 @@ pub const PosixSpawn = struct {
             argv,
             envp,
         );
+        if (comptime bun.Environment.allow_assert)
+            JSC.Node.Syscall.syslog("posix_spawn({s}) = {d} ({d})", .{
+                path, rc, pid,
+            });
 
         if (comptime bun.Environment.isLinux) {
             // rc is negative because it's libc errno

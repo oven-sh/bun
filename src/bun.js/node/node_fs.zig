@@ -23,7 +23,7 @@ const linux = os.linux;
 const PathOrBuffer = JSC.Node.PathOrBuffer;
 const PathLike = JSC.Node.PathLike;
 const PathOrFileDescriptor = JSC.Node.PathOrFileDescriptor;
-const FileDescriptor = JSC.Node.FileDescriptor;
+const FileDescriptor = bun.FileDescriptor;
 const DirIterator = @import("./dir_iterator.zig");
 const Path = @import("../../resolver/resolve_path.zig");
 const FileSystem = @import("../../fs.zig").FileSystem;
@@ -1823,7 +1823,7 @@ const Arguments = struct {
                 .file = undefined,
                 .global_object = ctx.ptr(),
             };
-            var fd: FileDescriptor = JSC.Node.invalid_fd;
+            var fd: FileDescriptor = bun.invalid_fd;
 
             if (arguments.next()) |arg| {
                 arguments.eat();
@@ -1918,7 +1918,7 @@ const Arguments = struct {
                 }
             }
 
-            if (fd != JSC.Node.invalid_fd) {
+            if (fd != bun.invalid_fd) {
                 stream.file = .{ .fd = fd };
             } else if (path) |path_| {
                 stream.file = .{ .path = path_ };
@@ -1957,7 +1957,7 @@ const Arguments = struct {
                 .file = undefined,
                 .global_object = ctx.ptr(),
             };
-            var fd: FileDescriptor = JSC.Node.invalid_fd;
+            var fd: FileDescriptor = bun.invalid_fd;
 
             if (arguments.next()) |arg| {
                 arguments.eat();
@@ -2044,7 +2044,7 @@ const Arguments = struct {
                 }
             }
 
-            if (fd != JSC.Node.invalid_fd) {
+            if (fd != bun.invalid_fd) {
                 stream.file = .{ .fd = fd };
             } else if (path) |path_| {
                 stream.file = .{ .path = path_ };

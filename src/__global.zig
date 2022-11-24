@@ -4,6 +4,7 @@ const Environment = @import("./env.zig");
 const Output = @import("output.zig");
 const use_mimalloc = @import("./global.zig").use_mimalloc;
 const StringTypes = @import("./string_types.zig");
+const Mimalloc = @import("./global.zig").Mimalloc;
 
 const BASE_VERSION = "0.3";
 
@@ -166,5 +167,3 @@ pub export const Bun__userAgent: [*:0]const u8 = Global.user_agent;
 comptime {
     _ = Bun__userAgent;
 }
-
-const Mimalloc = @import("./global.zig").Mimalloc;

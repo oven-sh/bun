@@ -1,15 +1,16 @@
 import { concatArrayBuffers } from "bun";
 import { it, describe, expect } from "bun:test";
 import fs from "fs";
-import { gc } from "./gc";
+import { gc, gcTick } from "./gc";
 
 it("fetch() with a buffered gzip response works (one chunk)", async () => {
   var server = Bun.serve({
     port: 6025,
 
     async fetch(req) {
+      gcTick(true);
       return new Response(
-        await Bun.file(import.meta.dir + "/fixture.html.gz").arrayBuffer(),
+        require("fs").readFileSync(import.meta.dir + "/fixture.html.gz"),
         {
           headers: {
             "Content-Encoding": "gzip",
@@ -19,20 +20,25 @@ it("fetch() with a buffered gzip response works (one chunk)", async () => {
       );
     },
   });
+  gcTick(true);
 
   const res = await fetch(
     `http://${server.hostname}:${server.port}`,
     {},
     { verbose: true },
   );
+  gcTick(true);
   const arrayBuffer = await res.arrayBuffer();
-  expect(
-    new Buffer(arrayBuffer).equals(
-      new Buffer(
-        await Bun.file(import.meta.dir + "/fixture.html").arrayBuffer(),
-      ),
-    ),
-  ).toBe(true);
+  const clone = new Buffer(arrayBuffer);
+  gcTick(true);
+  await (async function () {
+    const second = new Buffer(
+      await Bun.file(import.meta.dir + "/fixture.html").arrayBuffer(),
+    );
+    gcTick(true);
+    expect(second.equals(clone)).toBe(true);
+  })();
+  gcTick(true);
   server.stop();
 });
 
@@ -116,27 +122,32 @@ it("fetch() with a gzip response works (one chunk)", async () => {
   var server = Bun.serve({
     port: 6023,
 
-    fetch(req) {
-      return new Response(Bun.file(import.meta.dir + "/fixture.html.gz"), {
-        headers: {
-          "Content-Encoding": "gzip",
-          "Content-Type": "text/html; charset=utf-8",
-        },
-      });
-    },
-  });
+//     fetch(req) {
+//       return new Response(Bun.file(import.meta.dir + "/fixture.html.gz"), {
+//         headers: {
+//           "Content-Encoding": "gzip",
+//           "Content-Type": "text/html; charset=utf-8",
+//         },
+//       });
+//     },
+//   });
+//   gcTick();
+//   const res = await fetch(`http://${server.hostname}:${server.port}`);
+//   const arrayBuffer = await res.arrayBuffer();
+//   expect(
+//     new Buffer(arrayBuffer).equals(
+//       new Buffer(
+//         await Bun.file(import.meta.dir + "/fixture.html").arrayBuffer(),
+//       ),
+//     ),
+//   ).toBe(true);
+//   gcTick();
+//   server.stop();
+// });
 
-  const res = await fetch(`http://${server.hostname}:${server.port}`);
-  const arrayBuffer = await res.arrayBuffer();
-  expect(
-    new Buffer(arrayBuffer).equals(
-      new Buffer(
-        await Bun.file(import.meta.dir + "/fixture.html").arrayBuffer(),
-      ),
-    ),
-  ).toBe(true);
-  server.stop();
-});
+// it("fetch() with a gzip response works (multiple chunks)", async () => {
+//   var server = Bun.serve({
+//     port: 6024,
 
 it("fetch() with a gzip response works (one chunk, streamed, with a delay)", async () => {
   var server = Bun.serve({
@@ -183,55 +194,61 @@ it("fetch() with a gzip response works (multiple chunks)", async () => {
   var server = Bun.serve({
     port: 6024,
 
-    fetch(req) {
-      return new Response(
-        new ReadableStream({
-          type: "direct",
-          async pull(controller) {
-            var chunks: ArrayBuffer[] = [];
-            const buffer = await Bun.file(
-              import.meta.dir + "/fixture.html.gz",
-            ).arrayBuffer();
-            var remaining = buffer;
-            for (var i = 100; i < buffer.byteLength; i += 100) {
-              var chunk = remaining.slice(0, i);
-              remaining = remaining.slice(i);
-              controller.write(chunk);
-              chunks.push(chunk);
-              await controller.flush();
-            }
+//             await controller.flush();
+//             // sanity check
+//             expect(
+//               new Buffer(concatArrayBuffers(chunks)).equals(new Buffer(buffer)),
+//             ).toBe(true);
+//             gcTick();
+//             controller.end();
+//           },
+//         }),
+//         {
+//           headers: {
+//             "Content-Encoding": "gzip",
+//             "Content-Type": "text/html; charset=utf-8",
+//             "Content-Length": "1",
+//           },
+//         },
+//       );
+//     },
+//   });
 
-            await controller.flush();
-            // sanity check
-            expect(
-              new Buffer(concatArrayBuffers(chunks)).equals(new Buffer(buffer)),
-            ).toBe(true);
+//   const res = await fetch(`http://${server.hostname}:${server.port}`, {});
+//   const arrayBuffer = await res.arrayBuffer();
+//   expect(
+//     new Buffer(arrayBuffer).equals(
+//       new Buffer(
+//         await Bun.file(import.meta.dir + "/fixture.html").arrayBuffer(),
+//       ),
+//     ),
+//   ).toBe(true);
+//   gcTick();
+//   server.stop();
+// });
 
-            controller.end();
-          },
-        }),
-        {
-          headers: {
-            "Content-Encoding": "gzip",
-            "Content-Type": "text/html; charset=utf-8",
-            "Content-Length": "1",
-          },
-        },
-      );
-    },
-  });
+// it("fetch() with a gzip response works (multiple chunks, TCP server)", async (done) => {
+//   const compressed = await Bun.file(
+//     import.meta.dir + "/fixture.html.gz",
+//   ).arrayBuffer();
+//   const server = Bun.listen({
+//     port: 4024,
+//     hostname: "0.0.0.0",
+//     socket: {
+//       async open(socket) {
+//         var corked: any[] = [];
+//         var cork = true;
+//         gcTick();
+//         async function write(chunk) {
+//           await new Promise<void>((resolve, reject) => {
+//             if (cork) {
+//               corked.push(chunk);
+//             }
 
-  const res = await fetch(`http://${server.hostname}:${server.port}`, {});
-  const arrayBuffer = await res.arrayBuffer();
-  expect(
-    new Buffer(arrayBuffer).equals(
-      new Buffer(
-        await Bun.file(import.meta.dir + "/fixture.html").arrayBuffer(),
-      ),
-    ),
-  ).toBe(true);
-  server.stop();
-});
+//             if (!cork && corked.length) {
+//               socket.write(corked.join(""));
+//               corked.length = 0;
+//             }
 
 it("fetch() with a gzip response works (multiple chunks, TCP server)", async (done) => {
   const compressed = await Bun.file(

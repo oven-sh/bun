@@ -91,7 +91,7 @@ describe("FileSink", () => {
       }
       return Buffer.concat(chunks).toString();
       // test it on a small chunk size
-    })(Bun.file(path).stream(4));
+    })(Bun.file(path).stream(64));
     return path;
   }
 
@@ -106,6 +106,7 @@ describe("FileSink", () => {
           for (let i = 0; i < input.length; i++) {
             sink.write(input[i]);
           }
+          console.log("close", input[0].length);
           await sink.end();
 
           if (!isPipe) {
@@ -115,6 +116,7 @@ describe("FileSink", () => {
             }
             expect(output.byteLength).toBe(expected.byteLength);
           } else {
+            console.log("reading");
             const output = await activeFIFO;
             expect(output).toBe(decoder.decode(expected));
           }

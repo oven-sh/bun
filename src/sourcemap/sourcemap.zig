@@ -569,7 +569,6 @@ pub fn decodeVLQ(encoded: []const u8, start: usize) VLQResult {
 }
 
 pub const LineOffsetTable = struct {
-
     /// The source map specification is very loose and does not specify what
     /// column numbers actually mean. The popular "source-map" library from Mozilla
     /// appears to interpret them as counts of UTF-16 code units, so we generate

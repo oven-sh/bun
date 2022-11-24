@@ -75,16 +75,18 @@ pub const ReadableStream = struct {
                 return AnyBlob{ .Blob = blob };
             },
             .File => |blobby| {
-                var blob = JSC.WebCore.Blob.initWithStore(blobby.store, globalThis);
-                blobby.store.ref();
+                if (blobby.lazy_readable == .blob) {
+                    var blob = JSC.WebCore.Blob.initWithStore(blobby.lazy_readable.blob, globalThis);
+                    blob.store.?.ref();
 
-                // it should be lazy, file shouldn't have opened yet.
-                std.debug.assert(!blobby.started);
+                    // it should be lazy, file shouldn't have opened yet.
+                    std.debug.assert(!blobby.started);
 
-                stream.detach(globalThis);
-                blobby.deinit();
-                stream.done();
-                return AnyBlob{ .Blob = blob };
+                    stream.detach(globalThis);
+                    blobby.deinit();
+                    stream.done();
+                    return AnyBlob{ .Blob = blob };
+                }
             },
             .Bytes => |bytes| {
 
@@ -100,8 +102,10 @@ pub const ReadableStream = struct {
 
                 return null;
             },
-            else => return null,
+            else => {},
         }
+
+        return null;
     }
 
     pub fn done(this: *const ReadableStream) void {
@@ -247,12 +251,7 @@ pub const ReadableStream = struct {
     }
 
     pub fn fromBlob(globalThis: *JSGlobalObject, blob: *const Blob, recommended_chunk_size: Blob.SizeType) JSC.JSValue {
-        return fromBlobWithPoll(globalThis, blob, recommended_chunk_size, null);
-    }
-
-    pub fn fromBlobWithPoll(globalThis: *JSGlobalObject, blob: *const Blob, recommended_chunk_size: Blob.SizeType, poll: ?*JSC.FilePoll) JSC.JSValue {
-        if (comptime JSC.is_bindgen)
-            unreachable;
+        JSC.markBinding(@src());
         var store = blob.store orelse {
             return ReadableStream.empty(globalThis);
         };
@@ -260,6 +259,7 @@ pub const ReadableStream = struct {
             .bytes => {
                 var reader = bun.default_allocator.create(ByteBlobLoader.Source) catch unreachable;
                 reader.* = .{
+                    .globalThis = globalThis,
                     .context = undefined,
                 };
                 reader.context.setup(blob, recommended_chunk_size);
@@ -268,17 +268,51 @@ pub const ReadableStream = struct {
             .file => {
                 var reader = bun.default_allocator.create(FileReader.Source) catch unreachable;
                 reader.* = .{
-                    .context = undefined,
+                    .globalThis = globalThis,
+                    .context = .{
+                        .lazy_readable = .{
+                            .blob = store,
+                        },
+                    },
                 };
-                reader.context.setupWithPoll(store, recommended_chunk_size, poll);
+                store.ref();
                 return reader.toJS(globalThis);
             },
         }
     }
 
+    pub fn fromFIFO(
+        globalThis: *JSGlobalObject,
+        fifo: *FIFO,
+        buffered_data: bun.ByteList,
+    ) JSC.JSValue {
+        JSC.markBinding(@src());
+        var reader = bun.default_allocator.create(FileReader.Source) catch unreachable;
+        reader.* = .{
+            .globalThis = globalThis,
+            .context = .{
+                .buffered_data = buffered_data,
+                .lazy_readable = .{
+                    .readable = .{
+                        .FIFO = fifo.*,
+                    },
+                },
+            },
+        };
+
+        if (reader.context.lazy_readable.readable.FIFO.poll_ref) |poll| {
+            poll.owner.set(&reader.context.lazy_readable.readable.FIFO);
+            fifo.poll_ref = null;
+        }
+        reader.context.lazy_readable.readable.FIFO.pending.future = undefined;
+        reader.context.lazy_readable.readable.FIFO.auto_sizer = null;
+        reader.context.lazy_readable.readable.FIFO.pending.state = .none;
+
+        return reader.toJS(globalThis);
+    }
+
     pub fn empty(globalThis: *JSGlobalObject) JSC.JSValue {
-        if (comptime JSC.is_bindgen)
-            unreachable;
+        JSC.markBinding(@src());
 
         return ReadableStream__empty(globalThis);
     }
@@ -288,7 +322,7 @@ pub const ReadableStream = struct {
         invalid = 0,
         _,
 
-        pub fn init(filedes: JSC.Node.FileDescriptor) StreamTag {
+        pub fn init(filedes: bun.FileDescriptor) StreamTag {
             var bytes = [8]u8{ 1, 0, 0, 0, 0, 0, 0, 0 };
             const filedes_ = @bitCast([8]u8, @as(usize, @truncate(u56, @intCast(usize, filedes))));
             bytes[1..8].* = filedes_[0..7].*;
@@ -296,14 +330,14 @@ pub const ReadableStream = struct {
             return @intToEnum(StreamTag, @bitCast(u64, bytes));
         }
 
-        pub fn fd(this: StreamTag) JSC.Node.FileDescriptor {
+        pub fn fd(this: StreamTag) bun.FileDescriptor {
             var bytes = @bitCast([8]u8, @enumToInt(this));
             if (bytes[0] != 1) {
-                return JSC.Node.invalid_fd;
+                return bun.invalid_fd;
             }
             var out: u64 = 0;
             @bitCast([8]u8, out)[0..7].* = bytes[1..8].*;
-            return @intCast(JSC.Node.FileDescriptor, out);
+            return @intCast(bun.FileDescriptor, out);
         }
     };
 };
@@ -439,7 +473,7 @@ pub const StreamStart = union(Tag) {
 
                 return .{
                     .FileSink = .{
-                        .input_path = .{ .fd = JSC.Node.invalid_fd },
+                        .input_path = .{ .fd = bun.invalid_fd },
                         .chunk_size = chunk_size,
                     },
                 };
@@ -523,27 +557,58 @@ pub const StreamResult = union(Tag) {
         into_array_and_done: Blob.SizeType,
 
         pub const Pending = struct {
-            frame: anyframe,
+            future: Future = undefined,
             result: Writable,
             consumed: Blob.SizeType = 0,
             state: StreamResult.Pending.State = .none,
 
-            pub fn run(this: *Writable.Pending) void {
-                if (this.state != .pending) {
-                    return;
-                }
+            pub const Future = union(enum) {
+                promise: struct {
+                    promise: *JSPromise,
+                    globalThis: *JSC.JSGlobalObject,
+                },
+                handler: Handler,
+            };
 
+            pub fn promise(this: *Writable.Pending, globalThis: *JSC.JSGlobalObject) *JSPromise {
+                var prom = JSPromise.create(globalThis);
+                this.future = .{
+                    .promise = .{ .promise = prom, .globalThis = globalThis },
+                };
+                this.state = .pending;
+                return prom;
+            }
+
+            pub const Handler = struct {
+                ctx: *anyopaque,
+                handler: Fn,
+
+                pub const Fn = fn (ctx: *anyopaque, result: StreamResult.Writable) void;
+
+                pub fn init(this: *Handler, comptime Context: type, ctx: *Context, comptime handler_fn: fn (*Context, StreamResult.Writable) void) void {
+                    this.ctx = ctx;
+                    this.handler = struct {
+                        const handler = handler_fn;
+                        pub fn onHandle(ctx_: *anyopaque, result: StreamResult.Writable) void {
+                            @call(.{ .modifier = .always_inline }, handler, .{ bun.cast(*Context, ctx_), result });
+                        }
+                    }.onHandle;
+                }
+            };
+
+            pub fn run(this: *Writable.Pending) void {
+                if (this.state != .pending) return;
                 this.state = .used;
-                resume this.frame;
+                switch (this.future) {
+                    .promise => |p| {
+                        Writable.fulfillPromise(this.result, p.promise, p.globalThis);
+                    },
+                    .handler => |h| {
+                        h.handler(h.ctx, this.result);
+                    },
+                }
             }
         };
-
-        pub fn toPromised(globalThis: *JSGlobalObject, promise: *JSPromise, pending: *Writable.Pending) void {
-            var frame = bun.default_allocator.create(@Frame(Writable.toPromisedWrap)) catch unreachable;
-            pending.state = .pending;
-            frame.* = async Writable.toPromisedWrap(globalThis, promise, pending);
-            pending.frame = frame;
-        }
 
         pub fn isDone(this: *const Writable) bool {
             return switch (this.*) {
@@ -551,11 +616,13 @@ pub const StreamResult = union(Tag) {
                 else => false,
             };
         }
-        fn toPromisedWrap(globalThis: *JSGlobalObject, promise: *JSPromise, pending: *Writable.Pending) void {
-            suspend {}
 
-            const result: Writable = pending.result;
-
+        pub fn fulfillPromise(
+            result: Writable,
+            promise: *JSPromise,
+            globalThis: *JSGlobalObject,
+        ) void {
+            promise.asValue(globalThis).unprotect();
             switch (result) {
                 .err => |err| {
                     promise.reject(globalThis, err.toJSC(globalThis));
@@ -585,9 +652,9 @@ pub const StreamResult = union(Tag) {
                 .done => JSC.JSValue.jsBoolean(true),
 
                 .pending => |pending| brk: {
-                    var promise = JSC.JSPromise.create(globalThis);
-                    Writable.toPromised(globalThis, promise, pending);
-                    break :brk promise.asValue(globalThis);
+                    const promise_value = pending.promise(globalThis).asValue(globalThis);
+                    promise_value.protect();
+                    break :brk promise_value;
                 },
             };
         }
@@ -599,9 +666,58 @@ pub const StreamResult = union(Tag) {
     };
 
     pub const Pending = struct {
-        frame: anyframe,
-        result: StreamResult,
+        future: Future = undefined,
+        result: StreamResult = .{ .done = {} },
         state: State = .none,
+
+        pub fn set(this: *Pending, comptime Context: type, ctx: *Context, comptime handler_fn: fn (*Context, StreamResult) void) void {
+            this.future.init(Context, ctx, handler_fn);
+            this.state = .pending;
+        }
+
+        pub fn promise(this: *Pending, globalObject: *JSC.JSGlobalObject) *JSC.JSPromise {
+            var prom = JSC.JSPromise.create(globalObject);
+            this.future = .{
+                .promise = .{
+                    .promise = prom,
+                    .globalThis = globalObject,
+                },
+            };
+            this.state = .pending;
+            return prom;
+        }
+
+        pub const Future = union(enum) {
+            promise: struct {
+                promise: *JSPromise,
+                globalThis: *JSC.JSGlobalObject,
+            },
+            handler: Handler,
+
+            pub fn init(this: *Future, comptime Context: type, ctx: *Context, comptime handler_fn: fn (*Context, StreamResult) void) void {
+                this.* = .{
+                    .handler = undefined,
+                };
+                this.handler.init(Context, ctx, handler_fn);
+            }
+        };
+
+        pub const Handler = struct {
+            ctx: *anyopaque,
+            handler: Fn,
+
+            pub const Fn = fn (ctx: *anyopaque, result: StreamResult) void;
+
+            pub fn init(this: *Handler, comptime Context: type, ctx: *Context, comptime handler_fn: fn (*Context, StreamResult) void) void {
+                this.ctx = ctx;
+                this.handler = struct {
+                    const handler = handler_fn;
+                    pub fn onHandle(ctx_: *anyopaque, result: StreamResult) void {
+                        @call(.{ .modifier = .always_inline }, handler, .{ bun.cast(*Context, ctx_), result });
+                    }
+                }.onHandle;
+            }
+        };
 
         pub const State = enum {
             none,
@@ -612,7 +728,14 @@ pub const StreamResult = union(Tag) {
         pub fn run(this: *Pending) void {
             if (this.state != .pending) return;
             this.state = .used;
-            resume this.frame;
+            switch (this.future) {
+                .promise => |p| {
+                    StreamResult.fulfillPromise(this.result, p.promise, p.globalThis);
+                },
+                .handler => |h| {
+                    h.handler(h.ctx, this.result);
+                },
+            }
         }
     };
 
@@ -623,11 +746,8 @@ pub const StreamResult = union(Tag) {
         };
     }
 
-    fn toPromisedWrap(globalThis: *JSGlobalObject, promise: *JSPromise, pending: *Pending) void {
-        suspend {}
-
-        const result: StreamResult = pending.result;
-
+    pub fn fulfillPromise(result: StreamResult, promise: *JSC.JSPromise, globalThis: *JSC.JSGlobalObject) void {
+        promise.asValue(globalThis).unprotect();
         switch (result) {
             .err => |err| {
                 promise.reject(globalThis, err.toJSC(globalThis));
@@ -639,13 +759,6 @@ pub const StreamResult = union(Tag) {
                 promise.resolve(globalThis, result.toJS(globalThis));
             },
         }
-    }
-
-    pub fn toPromised(globalThis: *JSGlobalObject, promise: *JSPromise, pending: *Pending) void {
-        var frame = bun.default_allocator.create(@Frame(toPromisedWrap)) catch unreachable;
-        pending.state = .pending;
-        frame.* = async toPromisedWrap(globalThis, promise, pending);
-        pending.frame = frame;
     }
 
     pub fn toJS(this: *const StreamResult, globalThis: *JSGlobalObject) JSValue {
@@ -675,9 +788,9 @@ pub const StreamResult = union(Tag) {
                 return JSC.JSValue.jsNumberFromInt64(array.len);
             },
             .pending => |pending| {
-                var promise = JSC.JSPromise.create(globalThis);
-                toPromised(globalThis, promise, pending);
-                return promise.asValue(globalThis);
+                const promise = pending.promise(globalThis).asValue(globalThis);
+                promise.protect();
+                return promise;
             },
 
             .err => |err| {
@@ -1001,15 +1114,6 @@ pub const Sink = struct {
     }
 };
 
-pub const PathOrFileDescriptor = union(enum) {
-    path: ZigString.Slice,
-    fd: JSC.Node.FileDescriptor,
-
-    pub fn deinit(this: *const PathOrFileDescriptor) void {
-        if (this.* == .path) this.path.deinit();
-    }
-};
-
 pub const FileSink = struct {
     buffer: bun.ByteList,
     allocator: std.mem.Allocator,
@@ -1018,11 +1122,10 @@ pub const FileSink = struct {
     next: ?Sink = null,
     auto_close: bool = false,
     auto_truncate: bool = false,
-    fd: JSC.Node.FileDescriptor = JSC.Node.invalid_fd,
+    fd: bun.FileDescriptor = bun.invalid_fd,
     mode: JSC.Node.Mode = 0,
     chunk_size: usize = 0,
     pending: StreamResult.Writable.Pending = StreamResult.Writable.Pending{
-        .frame = undefined,
         .result = .{ .done = {} },
     },
 
@@ -1032,12 +1135,15 @@ pub const FileSink = struct {
     requested_end: bool = false,
     has_adjusted_pipe_size_on_linux: bool = false,
     max_write_size: usize = std.math.maxInt(usize),
-    prevent_process_exit: bool = false,
     reachable_from_js: bool = true,
     poll_ref: ?*JSC.FilePoll = null,
 
     pub usingnamespace NewReadyWatcher(@This(), .writable, ready);
     const log = Output.scoped(.FileSink, false);
+
+    pub fn isReachable(this: *const FileSink) bool {
+        return this.reachable_from_js or this.signal.isDead();
+    }
 
     const max_fifo_size = 64 * 1024;
     pub fn prepare(this: *FileSink, input_path: PathOrFileDescriptor, mode: JSC.Node.Mode) JSC.Node.Maybe(void) {
@@ -1079,9 +1185,9 @@ pub const FileSink = struct {
     }
 
     pub fn start(this: *FileSink, stream_start: StreamStart) JSC.Node.Maybe(void) {
-        if (this.fd != JSC.Node.invalid_fd) {
+        if (this.fd != bun.invalid_fd) {
             _ = JSC.Node.Syscall.close(this.fd);
-            this.fd = JSC.Node.invalid_fd;
+            this.fd = bun.invalid_fd;
         }
 
         this.done = false;
@@ -1116,7 +1222,7 @@ pub const FileSink = struct {
         return flushMaybePoll(this);
     }
 
-    fn adjustPipeLengthOnLinux(this: *FileSink, fd: JSC.Node.FileDescriptor, remain_len: usize) void {
+    fn adjustPipeLengthOnLinux(this: *FileSink, fd: bun.FileDescriptor, remain_len: usize) void {
         // On Linux, we can adjust the pipe size to avoid blocking.
         this.has_adjusted_pipe_size_on_linux = true;
 
@@ -1135,7 +1241,7 @@ pub const FileSink = struct {
     }
 
     pub fn flushMaybePollWithSize(this: *FileSink, writable_size: usize) StreamResult.Writable {
-        std.debug.assert(this.fd != JSC.Node.invalid_fd);
+        std.debug.assert(this.fd != bun.invalid_fd);
 
         var total: usize = this.written;
         const initial = total;
@@ -1180,6 +1286,12 @@ pub const FileSink = struct {
                 break :brk writable_size;
 
             if (this.poll_ref) |poll| {
+                if (poll.isHUP()) {
+                    this.done = true;
+                    this.cleanup();
+                    return .{ .done = {} };
+                }
+
                 if (poll.isWritable()) {
                     break :brk this.max_write_size;
                 }
@@ -1288,11 +1400,11 @@ pub const FileSink = struct {
             }
 
             if (this.auto_truncate)
-                std.os.ftruncate(this.fd, total) catch {};
+                std.os.ftruncate(fd, total) catch {};
 
             if (this.auto_close) {
-                _ = JSC.Node.Syscall.close(this.fd);
-                this.fd = JSC.Node.invalid_fd;
+                _ = JSC.Node.Syscall.close(fd);
+                this.fd = bun.invalid_fd;
             }
         }
         this.pending.run();
@@ -1300,7 +1412,7 @@ pub const FileSink = struct {
     }
 
     pub fn flushFromJS(this: *FileSink, globalThis: *JSGlobalObject, _: bool) JSC.Node.Maybe(JSValue) {
-        if (this.isPending()) {
+        if (this.isPending() or this.done) {
             return .{ .result = JSC.JSValue.jsUndefined() };
         }
         const result = this.flush();
@@ -1315,18 +1427,22 @@ pub const FileSink = struct {
     }
 
     fn cleanup(this: *FileSink) void {
+        this.done = true;
+
         if (this.poll_ref) |poll| {
             this.poll_ref = null;
             poll.deinit();
         }
 
-        if (this.fd != JSC.Node.invalid_fd) {
-            if (this.scheduled_count > 0) {
-                this.scheduled_count = 0;
-            }
+        if (this.auto_close) {
+            if (this.fd != bun.invalid_fd) {
+                if (this.scheduled_count > 0) {
+                    this.scheduled_count = 0;
+                }
 
-            _ = JSC.Node.Syscall.close(this.fd);
-            this.fd = JSC.Node.invalid_fd;
+                _ = JSC.Node.Syscall.close(this.fd);
+                this.fd = bun.invalid_fd;
+            }
         }
 
         if (this.buffer.cap > 0) {
@@ -1345,7 +1461,15 @@ pub const FileSink = struct {
         this.cleanup();
         this.reachable_from_js = false;
 
-        if (!this.prevent_process_exit)
+        if (!this.isReachable())
+            this.allocator.destroy(this);
+    }
+
+    pub fn onHangup(this: *FileSink) void {
+        this.signal.clear();
+        this.cleanup();
+
+        if (!this.isReachable())
             this.allocator.destroy(this);
     }
 
@@ -1393,6 +1517,9 @@ pub const FileSink = struct {
     }
 
     pub fn write(this: *@This(), data: StreamResult) StreamResult.Writable {
+        if (this.done) {
+            return .{ .done = {} };
+        }
         const input = data.slice();
 
         if (!this.isPending() and this.buffer.len == 0 and input.len >= this.chunk_size) {
@@ -1422,6 +1549,10 @@ pub const FileSink = struct {
     }
     pub const writeBytes = write;
     pub fn writeLatin1(this: *@This(), data: StreamResult) StreamResult.Writable {
+        if (this.done) {
+            return .{ .done = {} };
+        }
+
         const input = data.slice();
 
         if (!this.isPending() and this.buffer.len == 0 and input.len >= this.chunk_size and strings.isAllASCII(input)) {
@@ -1450,6 +1581,10 @@ pub const FileSink = struct {
         return .{ .owned = len };
     }
     pub fn writeUTF16(this: *@This(), data: StreamResult) StreamResult.Writable {
+        if (this.done) {
+            return .{ .done = {} };
+        }
+
         if (this.next) |*next| {
             return next.writeUTF16(data);
         }
@@ -1465,11 +1600,38 @@ pub const FileSink = struct {
     }
 
     fn isPending(this: *const FileSink) bool {
+        if (this.done) return false;
         var poll_ref = this.poll_ref orelse return false;
         return poll_ref.isRegistered() and !poll_ref.flags.contains(.needs_rearm);
     }
 
+    pub fn close(this: *FileSink) void {
+        if (this.done)
+            return;
+
+        this.done = true;
+        const fd = this.fd;
+        if (fd != bun.invalid_fd) {
+            if (this.poll_ref) |poll| {
+                this.poll_ref = null;
+                poll.deinit();
+            }
+
+            this.fd = bun.invalid_fd;
+            if (this.auto_close)
+                _ = JSC.Node.Syscall.close(fd);
+            this.signal.close(null);
+        }
+
+        this.pending.result = .done;
+        this.pending.run();
+    }
+
     pub fn end(this: *FileSink, err: ?Syscall.Error) JSC.Node.Maybe(void) {
+        if (this.done) {
+            return .{ .result = {} };
+        }
+
         if (this.next) |*next| {
             return next.end(err);
         }
@@ -1500,6 +1662,11 @@ pub const FileSink = struct {
 
         std.debug.assert(this.next == null);
         this.requested_end = true;
+
+        if (this.fd == bun.invalid_fd) {
+            this.cleanup();
+            return .{ .result = JSValue.jsNumber(this.written) };
+        }
 
         const flushed = this.flush();
 
@@ -2737,6 +2904,7 @@ pub fn ReadableStreamSource(
             pub const name = std.fmt.comptimePrint("{s}_JSReadableStreamSource", .{std.mem.span(name_)});
 
             pub fn pull(globalThis: *JSGlobalObject, callFrame: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+                JSC.markBinding(@src());
                 const arguments = callFrame.arguments(3);
                 var this = arguments.ptr[0].asPtr(ReadableStreamSourceType);
                 const view = arguments.ptr[1];
@@ -2750,6 +2918,7 @@ pub fn ReadableStreamSource(
                 );
             }
             pub fn start(globalThis: *JSGlobalObject, callFrame: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+                JSC.markBinding(@src());
                 var this = callFrame.argument(0).asPtr(ReadableStreamSourceType);
                 this.globalThis = globalThis;
                 switch (this.startFromJS()) {
@@ -2778,11 +2947,13 @@ pub fn ReadableStreamSource(
                 }
             }
             pub fn cancel(_: *JSGlobalObject, callFrame: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+                JSC.markBinding(@src());
                 var this = callFrame.argument(0).asPtr(ReadableStreamSourceType);
                 this.cancel();
                 return JSC.JSValue.jsUndefined();
             }
             pub fn setClose(globalThis: *JSGlobalObject, callFrame: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+                JSC.markBinding(@src());
                 var this = callFrame.argument(0).asPtr(ReadableStreamSourceType);
                 this.close_ctx = this;
                 this.close_handler = JSReadableStreamSource.onClose;
@@ -2792,6 +2963,7 @@ pub fn ReadableStreamSource(
             }
 
             pub fn updateRef(_: *JSGlobalObject, callFrame: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+                JSC.markBinding(@src());
                 var this = callFrame.argument(0).asPtr(ReadableStreamSourceType);
                 const ref_or_unref = callFrame.argument(1).asBoolean();
                 this.setRef(ref_or_unref);
@@ -2799,18 +2971,21 @@ pub fn ReadableStreamSource(
             }
 
             fn onClose(ptr: *anyopaque) void {
+                JSC.markBinding(@src());
                 var this = bun.cast(*ReadableStreamSourceType, ptr);
                 _ = this.close_jsvalue.call(this.globalThis, &.{});
                 //    this.closer
             }
 
             pub fn deinit(_: *JSGlobalObject, callFrame: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+                JSC.markBinding(@src());
                 var this = callFrame.argument(0).asPtr(ReadableStreamSourceType);
                 this.deinit();
                 return JSValue.jsUndefined();
             }
 
             pub fn drain(globalThis: *JSGlobalObject, callFrame: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+                JSC.markBinding(@src());
                 var this = callFrame.argument(0).asPtr(ReadableStreamSourceType);
                 var list = this.drain();
                 if (list.len > 0) {
@@ -2844,15 +3019,8 @@ pub fn ReadableStreamSource(
             });
 
             comptime {
-                if (!JSC.is_bindgen) {
+                if (!JSC.is_bindgen)
                     @export(load, .{ .name = Export[0].symbol_name });
-                    _ = JSReadableStreamSource.pull;
-                    _ = JSReadableStreamSource.start;
-                    _ = JSReadableStreamSource.cancel;
-                    _ = JSReadableStreamSource.setClose;
-                    _ = JSReadableStreamSource.load;
-                    _ = JSReadableStreamSource.deinit;
-                }
             }
         };
     };
@@ -2955,6 +3123,15 @@ pub const ByteBlobLoader = struct {
 
 pub const PipeFunction = fn (ctx: *anyopaque, stream: StreamResult, allocator: std.mem.Allocator) void;
 
+pub const PathOrFileDescriptor = union(enum) {
+    path: ZigString.Slice,
+    fd: bun.FileDescriptor,
+
+    pub fn deinit(this: *const PathOrFileDescriptor) void {
+        if (this.* == .path) this.path.deinit();
+    }
+};
+
 pub const Pipe = struct {
     ctx: ?*anyopaque = null,
     onPipe: ?PipeFunction = null,
@@ -2983,7 +3160,6 @@ pub const ByteStream = struct {
     },
     has_received_last_chunk: bool = false,
     pending: StreamResult.Pending = StreamResult.Pending{
-        .frame = undefined,
         .result = .{ .done = {} },
     },
     done: bool = false,
@@ -3242,109 +3418,536 @@ pub const ByteStream = struct {
     );
 };
 
-/// **Not** the Web "FileReader" API
-pub const FileReader = struct {
+pub const ReadResult = union(enum) {
+    pending: void,
+    err: Syscall.Error,
+    done: void,
+    read: []u8,
+
+    pub fn toStream(this: ReadResult, pending: *StreamResult.Pending, buf: []u8, view: JSValue, close_on_empty: bool) StreamResult {
+        return toStreamWithIsDone(
+            this,
+            pending,
+            buf,
+            view,
+            close_on_empty,
+            false,
+        );
+    }
+    pub fn toStreamWithIsDone(this: ReadResult, pending: *StreamResult.Pending, buf: []u8, view: JSValue, close_on_empty: bool, is_done: bool) StreamResult {
+        return switch (this) {
+            .pending => .{ .pending = pending },
+            .err => .{ .err = this.err },
+            .done => .{ .done = {} },
+            .read => |slice| brk: {
+                const owned = slice.ptr != buf.ptr;
+                const done = is_done or (close_on_empty and slice.len == 0);
+
+                break :brk if (owned and done)
+                    StreamResult{ .owned_and_done = bun.ByteList.init(slice) }
+                else if (owned)
+                    StreamResult{ .owned = bun.ByteList.init(slice) }
+                else if (done)
+                    StreamResult{ .into_array_and_done = .{ .len = @truncate(Blob.SizeType, slice.len), .value = view } }
+                else
+                    StreamResult{ .into_array = .{ .len = @truncate(Blob.SizeType, slice.len), .value = view } };
+            },
+        };
+    }
+};
+
+pub const AutoSizer = struct {
+    buffer: *bun.ByteList,
+    allocator: std.mem.Allocator,
+    max: usize,
+
+    pub fn resize(this: *AutoSizer, size: usize) ![]u8 {
+        const available = this.buffer.cap - this.buffer.len;
+        if (available >= size) return this.buffer.ptr[this.buffer.len..this.buffer.cap][0..size];
+        const to_grow = size -| available;
+        if (to_grow + @as(usize, this.buffer.cap) > this.max)
+            return this.buffer.ptr[this.buffer.len..this.buffer.cap];
+
+        var list = this.buffer.listManaged(this.allocator);
+        const prev_len = list.items.len;
+        try list.ensureTotalCapacity(to_grow + @as(usize, this.buffer.cap));
+        this.buffer.update(list);
+        return this.buffer.ptr[prev_len..@as(usize, this.buffer.cap)];
+    }
+};
+
+pub const FIFO = struct {
     buf: []u8 = &[_]u8{},
     view: JSC.Strong = .{},
-    fd: JSC.Node.FileDescriptor = 0,
-    auto_close: bool = false,
-    loop: *JSC.EventLoop = undefined,
-    mode: JSC.Node.Mode = 0,
-    store: *Blob.Store,
-    total_read: Blob.SizeType = 0,
-    finalized: bool = false,
-    callback: anyframe = undefined,
-    buffered_data: bun.ByteList = .{},
-    buffered_data_max: u32 = 0,
+    poll_ref: ?*JSC.FilePoll = null,
+    fd: bun.FileDescriptor = 0,
+    to_read: ?u32 = null,
+    close_on_empty_read: bool = false,
+    auto_sizer: ?*AutoSizer = null,
     pending: StreamResult.Pending = StreamResult.Pending{
-        .frame = undefined,
+        .future = undefined,
         .state = .none,
         .result = .{ .done = {} },
     },
-    cancelled: bool = false,
-    user_chunk_size: Blob.SizeType = 0,
-    scheduled_count: u32 = 0,
-    concurrent: Concurrent = Concurrent{},
-    started: bool = false,
-    stored_global_this_: ?*JSC.JSGlobalObject = null,
-    poll_ref: ?*JSC.FilePoll = null,
-    has_adjusted_pipe_size_on_linux: bool = false,
-    is_fifo: bool = false,
-    finished: bool = false,
-
-    /// When we have some way of knowing that EOF truly is the write end of the
-    /// pipe being closed
-    /// Set this to true so we automatically mark it as done
-    /// This is used in Bun.spawn() to automatically close stdout and stderr
-    /// when the process exits
-    close_on_eof: bool = false,
-
     signal: JSC.WebCore.Signal = .{},
+    is_first_read: bool = true,
+    auto_close: bool = true,
+    has_adjusted_pipe_size_on_linux: bool = false,
 
     pub usingnamespace NewReadyWatcher(@This(), .readable, ready);
 
-    pub inline fn globalThis(this: *FileReader) *JSC.JSGlobalObject {
-        return this.stored_global_this_ orelse @fieldParentPtr(Source, "context", this).globalThis;
-    }
-
-    const run_on_different_thread_size = bun.huge_allocator_threshold;
-
-    pub const tag = ReadableStream.Tag.File;
-
-    pub fn setupWithPoll(this: *FileReader, store: *Blob.Store, chunk_size: Blob.SizeType, poll: ?*JSC.FilePoll) void {
-        store.ref();
-        this.* = .{
-            .loop = JSC.VirtualMachine.vm.eventLoop(),
-            .auto_close = store.data.file.pathlike == .path,
-            .store = store,
-            .user_chunk_size = chunk_size,
-            .poll_ref = poll,
-        };
-        if (this.poll_ref) |poll_| {
-            poll_.owner.set(this);
+    pub fn finish(this: *FIFO) void {
+        this.close_on_empty_read = true;
+        if (this.poll_ref) |poll| {
+            poll.flags.insert(.hup);
         }
+
+        this.pending.result = .{ .done = {} };
+        this.pending.run();
     }
 
-    pub fn setup(this: *FileReader, store: *Blob.Store, chunk_size: Blob.SizeType) void {
-        this.setupWithPoll(store, chunk_size, null);
+    pub fn close(this: *FIFO) void {
+        if (this.poll_ref) |poll| {
+            this.poll_ref = null;
+            poll.deinit();
+        }
+
+        const fd = this.fd;
+        if (fd != bun.invalid_fd) {
+            this.fd = bun.invalid_fd;
+            if (this.auto_close)
+                _ = JSC.Node.Syscall.close(fd);
+            this.signal.close(null);
+        }
+
+        this.to_read = null;
+        this.pending.result = .{ .done = {} };
+
+        this.pending.run();
     }
 
-    pub fn finish(this: *FileReader) void {
-        if (this.finished) return;
-        this.finished = true;
-        this.close_on_eof = true;
+    pub fn isClosed(this: *FIFO) bool {
+        return this.fd == bun.invalid_fd;
+    }
 
-        // we are done
-        // resolve any promises with done
-        // but there could still be data in the pipe
-        // so we shouldn't actually end it, just means that we no longer will retry on EGAGAIN
-        if (this.pending.state == .pending) {
-            if (this.buffered_data.len > 0) {
-                this.pending.result = .{ .owned = this.buffered_data };
-                this.buffered_data = .{};
-            } else {
-                this.pending.result = .{ .done = {} };
+    pub fn getAvailableToReadOnLinux(this: *FIFO) u32 {
+        var len: c_int = 0;
+        const rc: c_int = std.c.ioctl(this.fd, std.os.linux.T.FIONREAD, &len);
+        if (rc != 0) {
+            len = 0;
+        }
+
+        if (len > 0) {
+            if (this.poll_ref) |poll| {
+                poll.flags.insert(.readable);
             }
-            this.pending.run();
+        } else {
+            if (this.poll_ref) |poll| {
+                poll.flags.remove(.readable);
+            }
+
+            return @as(u32, 0);
         }
+
+        return @intCast(u32, @maximum(len, 0));
+    }
+
+    pub fn adjustCapacityOnLinux(this: *FIFO, current: u32, max: u32) u32 {
+        // we do not un-mark it as readable if there's nothing in the pipe
+        if (!this.has_adjusted_pipe_size_on_linux) {
+            if (current > 0 and max >= std.mem.page_size * 16) {
+                this.has_adjusted_pipe_size_on_linux = true;
+                _ = Syscall.setPipeCapacityOnLinux(this.fd, @minimum(max * 4, Syscall.getMaxPipeSizeOnLinux()));
+            }
+        }
+    }
+
+    pub fn cannotRead(this: *FIFO, available: u32) ?ReadResult {
+        if (comptime Environment.isLinux) {
+            if (available > 0 and available != std.math.maxInt(u32)) {
+                return null;
+            }
+        }
+
+        if (this.poll_ref) |poll| {
+            if (comptime Environment.isMac) {
+                if (available > 0 and available != std.math.maxInt(u32)) {
+                    poll.flags.insert(.readable);
+                }
+            }
+
+            const is_readable = poll.isReadable();
+            if (!is_readable and (this.close_on_empty_read or poll.isHUP())) {
+                // it might be readable actually
+                this.close_on_empty_read = true;
+                if (bun.isReadable(@intCast(std.os.fd_t, poll.fd))) {
+                    return null;
+                }
+
+                return .done;
+            } else if (!is_readable and poll.isWatching()) {
+                // this happens if we've registered a watcher but we haven't
+                // ticked the event loop since registering it
+                if (bun.isReadable(@intCast(std.os.fd_t, poll.fd))) {
+                    return null;
+                }
+
+                return .pending;
+            }
+        }
+
+        if (comptime Environment.isLinux) {
+            if (available == 0) {
+                std.debug.assert(this.poll_ref == null);
+                return .pending;
+            }
+        } else if (available == std.math.maxInt(@TypeOf(available)) and this.poll_ref == null) {
+            // we don't know if it's readable or not
+            if (!bun.isReadable(this.fd)) {
+                // we hung up
+                if (this.close_on_empty_read)
+                    return .done;
+
+                return .pending;
+            }
+        }
+
+        return null;
+    }
+
+    pub fn getAvailableToRead(this: *FIFO, size_or_offset: i64) ?u32 {
+        if (comptime Environment.isLinux) {
+            return this.getAvailableToReadOnLinux();
+        }
+
+        if (size_or_offset != std.math.maxInt(@TypeOf(size_or_offset)))
+            this.to_read = @intCast(u32, @maximum(size_or_offset, 0));
+
+        return this.to_read;
+    }
+
+    pub fn ready(this: *FIFO, sizeOrOffset: i64) void {
+        const available_to_read = this.getAvailableToRead(sizeOrOffset);
+        if (this.isClosed()) {
+            this.unwatch(this.poll_ref.?.fd);
+            return;
+        }
+
+        const read_result = this.read(this.buf, available_to_read);
+        if (read_result == .read and read_result.read.len == 0) {
+            if (this.poll_ref != null)
+                this.unwatch(this.poll_ref.?.fd);
+            this.close();
+            return;
+        }
+
+        if (read_result == .read) {
+            if (this.to_read) |*to_read| {
+                to_read.* = to_read.* -| @truncate(u32, read_result.read.len);
+            }
+        }
+
+        this.pending.result = read_result.toStream(
+            &this.pending,
+            this.buf,
+            this.view.get() orelse .zero,
+            this.close_on_empty_read,
+        );
+        this.pending.run();
+    }
+
+    pub fn readFromJS(
+        this: *FIFO,
+        buf_: []u8,
+        view: JSValue,
+        globalThis: *JSC.JSGlobalObject,
+    ) StreamResult {
+        if (this.isClosed()) {
+            return .{ .done = {} };
+        }
+
+        if (!this.isWatching()) {
+            this.watch(this.fd);
+        }
+
+        const read_result = this.read(buf_, this.to_read);
+        if (read_result == .read and read_result.read.len == 0) {
+            this.close();
+            return .{ .done = {} };
+        }
+
+        if (read_result == .read) {
+            if (this.to_read) |*to_read| {
+                to_read.* = to_read.* -| @truncate(u32, read_result.read.len);
+            }
+        }
+
+        if (read_result == .pending) {
+            this.buf = buf_;
+            this.view.set(globalThis, view);
+            if (!this.isWatching()) this.watch(this.fd);
+            std.debug.assert(this.isWatching());
+            return .{ .pending = &this.pending };
+        }
+
+        return read_result.toStream(&this.pending, buf_, view, this.close_on_empty_read);
+    }
+
+    pub fn read(
+        this: *FIFO,
+        buf_: []u8,
+        /// provided via kqueue(), only on macOS
+        kqueue_read_amt: ?u32,
+    ) ReadResult {
+        const available_to_read = this.getAvailableToRead(
+            if (kqueue_read_amt != null)
+                @intCast(i64, kqueue_read_amt.?)
+            else
+                std.math.maxInt(i64),
+        );
+
+        if (this.cannotRead(available_to_read orelse std.math.maxInt(u32))) |res| {
+            return switch (res) {
+                .pending => .{ .pending = {} },
+                .done => .{ .done = {} },
+                else => unreachable,
+            };
+        }
+
+        var buf = buf_;
+
+        if (available_to_read) |amt| {
+            if (amt >= buf.len) {
+                if (comptime Environment.isLinux) {
+                    this.adjustCapacityOnLinux(amt, buf.len);
+                }
+
+                if (this.auto_sizer) |sizer| {
+                    buf = sizer.resize(amt) catch buf_;
+                }
+            }
+        }
+
+        return this.doRead(buf);
+    }
+
+    fn doRead(
+        this: *FIFO,
+        buf: []u8,
+    ) ReadResult {
+        switch (Syscall.read(this.fd, buf)) {
+            .err => |err| {
+                const retry = std.os.E.AGAIN;
+                const errno = brk: {
+                    const _errno = err.getErrno();
+                    if (comptime Environment.isLinux) {
+                        // EPERM and its a FIFO on Linux? Trying to read past a FIFO which has already
+                        // sent a 0
+                        // Let's retry later.
+                        break :brk .AGAIN;
+                    }
+
+                    break :brk _errno;
+                };
+
+                switch (errno) {
+                    retry => {
+                        return .{ .pending = {} };
+                    },
+                    else => {},
+                }
+
+                return .{ .err = err };
+            },
+            .result => |result| {
+                if (this.poll_ref) |poll| {
+                    if (comptime Environment.isLinux) {
+                        // do not insert .eof here
+                        if (result < buf.len)
+                            poll.flags.remove(.readable);
+                    } else {
+                        // Since we have no way of querying FIFO capacity
+                        // its only okay to read when kqueue says its readable
+                        // otherwise we might block the process
+                        poll.flags.remove(.readable);
+                    }
+                }
+
+                if (result == 0)
+                    return .{ .read = buf[0..0] };
+
+                return .{ .read = buf[0..result] };
+            },
+        }
+    }
+};
+
+pub const File = struct {
+    buf: []u8 = &[_]u8{},
+    view: JSC.Strong = .{},
+
+    poll_ref: JSC.PollRef = .{},
+    fd: bun.FileDescriptor = bun.invalid_fd,
+    concurrent: Concurrent = .{},
+    loop: *JSC.EventLoop,
+    seekable: bool = false,
+    auto_close: bool = false,
+    remaining_bytes: Blob.SizeType = std.math.maxInt(Blob.SizeType),
+    user_chunk_size: Blob.SizeType = 0,
+    total_read: Blob.SizeType = 0,
+    mode: JSC.Node.Mode = 0,
+    pending: StreamResult.Pending = .{},
+    scheduled_count: u32 = 0,
+
+    pub fn close(this: *File) void {
+        if (this.auto_close) {
+            this.auto_close = false;
+            const fd = this.fd;
+            if (fd != bun.invalid_fd) {
+                this.fd = bun.invalid_fd;
+                _ = Syscall.close(fd);
+            }
+        }
+
+        this.poll_ref.disable();
+
+        this.view.clear();
+        this.buf.len = 0;
+
+        this.pending.result = .{ .done = {} };
+        this.pending.run();
+    }
+
+    pub fn deinit(this: *File) void {
+        this.close();
+    }
+
+    pub fn isClosed(this: *const File) bool {
+        return this.fd == bun.invalid_fd;
+    }
+
+    fn calculateChunkSize(this: *File, available_to_read: usize) usize {
+        const chunk_size: usize = if (this.user_chunk_size > 0)
+            @as(usize, this.user_chunk_size)
+        else if (this.isSeekable())
+            @as(usize, default_file_chunk_size)
+        else
+            @as(usize, default_fifo_chunk_size);
+
+        return if (this.remaining_bytes > 0 and this.isSeekable())
+            if (available_to_read != std.math.maxInt(usize))
+                @minimum(chunk_size, available_to_read)
+            else
+                @minimum(this.remaining_bytes -| this.total_read, chunk_size)
+        else
+            @minimum(available_to_read, chunk_size);
+    }
+
+    pub fn start(
+        this: *File,
+        file: *Blob.FileStore,
+    ) StreamStart {
+        var file_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
+        var auto_close = file.pathlike == .path;
+
+        var fd = if (!auto_close)
+            file.pathlike.fd
+        else switch (Syscall.open(file.pathlike.path.sliceZ(&file_buf), std.os.O.RDONLY | std.os.O.NONBLOCK | std.os.O.CLOEXEC, 0)) {
+            .result => |_fd| _fd,
+            .err => |err| {
+                return .{ .err = err.withPath(file.pathlike.path.slice()) };
+            },
+        };
+
+        if (!auto_close) {
+            // ensure we have non-blocking IO set
+            switch (Syscall.fcntl(fd, std.os.F.GETFL, 0)) {
+                .err => return .{ .err = Syscall.Error.fromCode(std.os.E.BADF, .fcntl) },
+                .result => |flags| {
+                    // if we do not, clone the descriptor and set non-blocking
+                    // it is important for us to clone it so we don't cause Weird Things to happen
+                    if ((flags & std.os.O.NONBLOCK) == 0) {
+                        auto_close = true;
+                        fd = switch (Syscall.fcntl(fd, std.os.F.DUPFD, 0)) {
+                            .result => |_fd| @intCast(@TypeOf(fd), _fd),
+                            .err => |err| return .{ .err = err },
+                        };
+
+                        switch (Syscall.fcntl(fd, std.os.F.SETFL, flags | std.os.O.NONBLOCK)) {
+                            .err => |err| return .{ .err = err },
+                            .result => |_| {},
+                        }
+                    }
+                },
+            }
+        }
+
+        const stat: std.os.Stat = switch (Syscall.fstat(fd)) {
+            .result => |result| result,
+            .err => |err| {
+                if (auto_close) {
+                    _ = Syscall.close(fd);
+                }
+                return .{ .err = err };
+            },
+        };
+
+        if (std.os.S.ISDIR(stat.mode)) {
+            if (auto_close) {
+                _ = Syscall.close(fd);
+            }
+            return .{ .err = Syscall.Error.fromCode(.ISDIR, .fstat) };
+        }
+
+        if (std.os.S.ISSOCK(stat.mode)) {
+            if (auto_close) {
+                _ = Syscall.close(fd);
+            }
+            return .{ .err = Syscall.Error.fromCode(.INVAL, .fstat) };
+        }
+
+        file.mode = @intCast(JSC.Node.Mode, stat.mode);
+        this.mode = file.mode;
+
+        this.seekable = std.os.S.ISREG(stat.mode);
+        file.seekable = this.seekable;
+
+        if (this.seekable) {
+            this.remaining_bytes = @intCast(Blob.SizeType, stat.size);
+
+            if (this.remaining_bytes == 0) {
+                if (auto_close) {
+                    _ = Syscall.close(fd);
+                }
+
+                return .{ .empty = {} };
+            }
+        }
+
+        this.fd = fd;
+        this.auto_close = auto_close;
+
+        return StreamStart{ .ready = {} };
+    }
+
+    pub fn isSeekable(this: File) bool {
+        return this.seekable;
     }
 
     const Concurrent = struct {
         read: Blob.SizeType = 0,
         task: NetworkThread.Task = .{ .callback = Concurrent.taskCallback },
         completion: AsyncIO.Completion = undefined,
-        read_frame: anyframe = undefined,
         chunk_size: Blob.SizeType = 0,
         main_thread_task: JSC.AnyTask = .{ .callback = onJSThread, .ctx = null },
         concurrent_task: JSC.ConcurrentTask = .{},
 
         pub fn taskCallback(task: *NetworkThread.Task) void {
-            var this = @fieldParentPtr(FileReader, "concurrent", @fieldParentPtr(Concurrent, "task", task));
-            var frame = bun.default_allocator.create(@Frame(runAsync)) catch unreachable;
-            _ = @asyncCall(std.mem.asBytes(frame), undefined, runAsync, .{this});
+            var this = @fieldParentPtr(File, "concurrent", @fieldParentPtr(Concurrent, "task", task));
+            runAsync(this);
         }
 
-        pub fn onRead(this: *FileReader, completion: *HTTPClient.NetworkThread.Completion, result: AsyncIO.ReadError!usize) void {
+        pub fn onRead(this: *File, completion: *HTTPClient.NetworkThread.Completion, result: AsyncIO.ReadError!usize) void {
             this.concurrent.read = @truncate(Blob.SizeType, result catch |err| {
                 if (@hasField(HTTPClient.NetworkThread.Completion, "result")) {
                     this.pending.result = .{
@@ -3363,14 +3966,14 @@ pub const FileReader = struct {
                     };
                 }
                 this.concurrent.read = 0;
-                resume this.concurrent.read_frame;
+                scheduleMainThreadTask(this);
                 return;
             });
 
-            resume this.concurrent.read_frame;
+            scheduleMainThreadTask(this);
         }
 
-        pub fn scheduleRead(this: *FileReader) void {
+        pub fn scheduleRead(this: *File) void {
             if (comptime Environment.isMac) {
                 var remaining = this.buf[this.concurrent.read..];
 
@@ -3408,7 +4011,7 @@ pub const FileReader = struct {
             }
 
             AsyncIO.global.read(
-                *FileReader,
+                *File,
                 this,
                 onRead,
                 &this.concurrent.completion,
@@ -3417,602 +4020,345 @@ pub const FileReader = struct {
                 null,
             );
 
-            suspend {
-                var _frame = @frame();
-                var this_frame = bun.default_allocator.create(std.meta.Child(@TypeOf(_frame))) catch unreachable;
-                this_frame.* = _frame.*;
-                this.concurrent.read_frame = this_frame;
-            }
-
             scheduleMainThreadTask(this);
         }
 
         pub fn onJSThread(task_ctx: *anyopaque) void {
-            var this: *FileReader = bun.cast(*FileReader, task_ctx);
+            var this: *File = bun.cast(*File, task_ctx);
             const view = this.view.get().?;
             defer this.view.clear();
 
-            if (this.finalized and this.scheduled_count > 0) {
-                this.pending.run();
-                this.scheduled_count -= 1;
-
+            if (this.isClosed()) {
                 this.deinit();
 
-                return;
-            }
-
-            if (this.pending.state == .pending and this.pending.result == .err and this.concurrent.read == 0) {
-                resume this.pending.frame;
-                this.scheduled_count -= 1;
-                this.finalize();
                 return;
             }
 
             if (this.concurrent.read == 0) {
                 this.pending.result = .{ .done = {} };
-                resume this.pending.frame;
-                this.scheduled_count -= 1;
-                this.finalize();
-                return;
+            } else if (view != .zero) {
+                this.pending.result = .{
+                    .into_array = .{
+                        .value = view,
+                        .len = @truncate(Blob.SizeType, this.concurrent.read),
+                    },
+                };
+            } else {
+                this.pending.result = .{
+                    .owned = bun.ByteList.init(this.buf),
+                };
             }
 
-            this.pending.result = this.handleReadChunk(@as(usize, this.concurrent.read), view, false, this.buf);
             this.pending.run();
-            this.scheduled_count -= 1;
-            if (this.pending.result.isDone()) {
-                this.finalize();
-            }
         }
 
-        pub fn scheduleMainThreadTask(this: *FileReader) void {
+        pub fn scheduleMainThreadTask(this: *File) void {
             this.concurrent.main_thread_task.ctx = this;
             this.loop.enqueueTaskConcurrent(this.concurrent.concurrent_task.from(&this.concurrent.main_thread_task));
         }
 
-        fn runAsync(this: *FileReader) void {
+        fn runAsync(this: *File) void {
             this.concurrent.read = 0;
 
             Concurrent.scheduleRead(this);
-
-            suspend {
-                bun.default_allocator.destroy(@frame());
-            }
         }
     };
 
-    pub fn scheduleAsync(this: *FileReader, chunk_size: Blob.SizeType) void {
+    pub fn scheduleAsync(
+        this: *File,
+        chunk_size: Blob.SizeType,
+        globalThis: *JSC.JSGlobalObject,
+    ) void {
         this.scheduled_count += 1;
-        this.pollRef().ref(this.globalThis().bunVM());
-        std.debug.assert(this.started);
+        this.poll_ref.ref(globalThis.bunVM());
         NetworkThread.init() catch {};
+
         this.concurrent.chunk_size = chunk_size;
         NetworkThread.global.schedule(.{ .head = &this.concurrent.task, .tail = &this.concurrent.task, .len = 1 });
     }
 
-    // macOS default pipe size is page_size, 16k, or 64k. It changes based on how much was written
-    // Linux default pipe size is 16 pages of memory
-    const default_fifo_chunk_size = 64 * 1024;
-    const default_file_chunk_size = 1024 * 1024 * 2;
+    pub fn read(this: *File, buf: []u8) ReadResult {
+        if (this.fd == bun.invalid_fd)
+            return .{ .done = {} };
 
-    pub fn onStart(this: *FileReader) StreamStart {
-        var file = &this.store.data.file;
-        std.debug.assert(!this.started);
-        this.started = true;
-        var file_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
-        var auto_close = this.auto_close;
-        defer this.auto_close = auto_close;
-        var fd = if (!auto_close)
-            file.pathlike.fd
-        else switch (Syscall.open(file.pathlike.path.sliceZ(&file_buf), std.os.O.RDONLY | std.os.O.NONBLOCK | std.os.O.CLOEXEC, 0)) {
-            .result => |_fd| _fd,
-            .err => |err| {
-                this.deinit();
-                return .{ .err = err.withPath(file.pathlike.path.slice()) };
-            },
-        };
+        if (this.seekable and this.remaining_bytes == 0)
+            return .{ .done = {} };
 
-        if (this.poll_ref != null or this.is_fifo) {
-            file.seekable = false;
-            this.is_fifo = true;
-            if (this.poll_ref) |poll|
-                std.debug.assert(poll.fd == @intCast(@TypeOf(poll.fd), fd));
-        } else {
-            if (!auto_close) {
-                // ensure we have non-blocking IO set
-                switch (Syscall.fcntl(fd, std.os.F.GETFL, 0)) {
-                    .err => return .{ .err = Syscall.Error.fromCode(std.os.E.BADF, .fcntl) },
-                    .result => |flags| {
-                        // if we do not, clone the descriptor and set non-blocking
-                        // it is important for us to clone it so we don't cause Weird Things to happen
-                        if ((flags & std.os.O.NONBLOCK) == 0) {
-                            auto_close = true;
-                            fd = switch (Syscall.fcntl(fd, std.os.F.DUPFD, 0)) {
-                                .result => |_fd| @intCast(@TypeOf(fd), _fd),
-                                .err => |err| return .{ .err = err },
-                            };
-
-                            switch (Syscall.fcntl(fd, std.os.F.SETFL, flags | std.os.O.NONBLOCK)) {
-                                .err => |err| return .{ .err = err },
-                                .result => |_| {},
-                            }
-                        }
-                    },
-                }
-            }
-
-            const stat: std.os.Stat = switch (Syscall.fstat(fd)) {
-                .result => |result| result,
-                .err => |err| {
-                    if (auto_close) {
-                        _ = Syscall.close(fd);
-                    }
-                    this.deinit();
-                    return .{ .err = err.withPath(file.pathlike.path.slice()) };
-                },
-            };
-
-            if (std.os.S.ISDIR(stat.mode)) {
-                const err = Syscall.Error.fromCode(.ISDIR, .fstat);
-                if (auto_close) {
-                    _ = Syscall.close(fd);
-                }
-                this.deinit();
-                return .{ .err = err };
-            }
-
-            if (std.os.S.ISSOCK(stat.mode)) {
-                const err = Syscall.Error.fromCode(.INVAL, .fstat);
-
-                if (auto_close) {
-                    _ = Syscall.close(fd);
-                }
-                this.deinit();
-                return .{ .err = err };
-            }
-
-            file.seekable = std.os.S.ISREG(stat.mode);
-            file.mode = @intCast(JSC.Node.Mode, stat.mode);
-            this.mode = file.mode;
-            this.is_fifo = std.os.S.ISFIFO(stat.mode);
-
-            if (file.seekable orelse false)
-                file.max_size = @intCast(Blob.SizeType, stat.size);
-        }
-
-        if ((file.seekable orelse false) and file.max_size == 0) {
-            if (auto_close) {
-                _ = Syscall.close(fd);
-            }
-            this.deinit();
-            return .{ .empty = {} };
-        }
-
-        this.fd = fd;
-        this.auto_close = auto_close;
-
-        const chunk_size = this.calculateChunkSize(std.math.maxInt(usize));
-        this.signal.start();
-        return .{ .chunk_size = @truncate(Blob.SizeType, chunk_size) };
+        return this.doRead(buf);
     }
 
-    fn calculateChunkSize(this: *FileReader, available_to_read: usize) usize {
-        const file = &this.store.data.file;
-
-        const chunk_size: usize = if (this.user_chunk_size > 0)
-            @as(usize, this.user_chunk_size)
-        else if (file.seekable orelse false)
-            @as(usize, default_file_chunk_size)
-        else
-            @as(usize, default_fifo_chunk_size);
-
-        return if (file.max_size > 0)
-            if (available_to_read != std.math.maxInt(usize)) @minimum(chunk_size, available_to_read) else @minimum(@maximum(this.total_read, file.max_size) - this.total_read, chunk_size)
-        else
-            @minimum(available_to_read, chunk_size);
-    }
-
-    pub fn onPullInto(this: *FileReader, buffer: []u8, view: JSC.JSValue) StreamResult {
-        const chunk_size = this.calculateChunkSize(std.math.maxInt(usize));
-        std.debug.assert(this.started);
-
-        switch (chunk_size) {
-            0 => {
-                std.debug.assert(this.store.data.file.seekable orelse false);
-                this.finalize();
-                return .{ .done = {} };
-            },
-            run_on_different_thread_size...std.math.maxInt(@TypeOf(chunk_size)) => {
-                if (!this.isFIFO()) {
-                    this.view.set(this.globalThis(), view);
-                    // should never be reached
-                    this.pending.result = .{
-                        .err = Syscall.Error.todo,
-                    };
-                    this.buf = buffer;
-
-                    this.scheduleAsync(@truncate(Blob.SizeType, chunk_size));
-
-                    return .{ .pending = &this.pending };
-                }
-            },
-            else => {},
-        }
-
-        return this.read(buffer, view, null);
-    }
-
-    fn maybeAutoClose(this: *FileReader) void {
-        if (this.auto_close) {
-            _ = Syscall.close(this.fd);
-            this.auto_close = false;
-        }
-    }
-
-    fn handleReadChunk(this: *FileReader, result: usize, view: JSC.JSValue, owned: bool, buf: []u8) StreamResult {
-        std.debug.assert(this.started);
-
-        this.total_read += @intCast(Blob.SizeType, result);
-        const remaining: Blob.SizeType = if (this.store.data.file.seekable orelse false)
-            this.store.data.file.max_size -| this.total_read
-        else
-            @as(Blob.SizeType, std.math.maxInt(Blob.SizeType));
-
-        // this handles:
-        // - empty file
-        // - stream closed for some reason
-        // - FIFO returned EOF
-        if ((result == 0 and (remaining == 0 or this.close_on_eof))) {
-            this.finalize();
+    pub fn readFromJS(this: *File, buf: []u8, view: JSValue, globalThis: *JSC.JSGlobalObject) StreamResult {
+        const read_result = this.read(buf);
+        if (read_result == .read and read_result.read.len == 0) {
+            this.close();
             return .{ .done = {} };
         }
 
-        const has_more = remaining > 0;
+        if (read_result == .read) {
+            this.remaining_bytes -|= @intCast(Blob.SizeType, read_result.read.len);
+        }
 
-        if (!has_more) {
-            if (owned) {
-                return .{ .owned_and_done = bun.ByteList.init(buf) };
+        if (read_result == .pending) {
+            if (this.scheduled_count == 0) {
+                this.buf = buf;
+                this.view.set(globalThis, view);
+                this.scheduleAsync(@truncate(Blob.SizeType, buf.len), globalThis);
             }
-            return .{ .into_array_and_done = .{ .len = @truncate(Blob.SizeType, result), .value = view } };
+
+            return .{ .pending = &this.pending };
         }
 
-        if (owned) {
-            return .{ .owned = bun.ByteList.init(buf) };
-        }
-
-        return .{ .into_array = .{ .len = @truncate(Blob.SizeType, result), .value = view } };
+        return read_result.toStream(&this.pending, buf, view, false);
     }
 
-    pub fn read(
-        this: *FileReader,
-        read_buf: []u8,
-        view: JSC.JSValue,
-        /// provided via kqueue(), only on macOS
-        available_to_read: ?c_int,
-    ) StreamResult {
-        std.debug.assert(this.started);
-        std.debug.assert(read_buf.len > 0);
-
-        const fd = this.fd;
-
-        if (fd == JSC.Node.invalid_fd) {
-            std.debug.assert(this.poll_ref == null);
-            return .{ .done = {} };
-        }
-
-        var buf_to_use = read_buf;
-        var free_buffer_on_error: bool = false;
-        var pipe_is_empty_on_linux = false;
-        var len: c_int = available_to_read orelse 0;
-
-        // if it's a pipe, we really don't know what to expect what the max size will be
-        // if the pipe is sending us WAY bigger data than what we can fit in the buffer
-        // we allocate a new buffer of up to 4 MB
-        if (this.isFIFO() and view != .zero) {
-            outer: {
-                // macOS FIONREAD doesn't seem to work here
-                // Kernel code implies it only is enabled for FIFOs which exist
-                // in the filesystem
-                if (comptime Environment.isLinux) {
-                    if (len == 0) {
-                        const rc: c_int = std.c.ioctl(fd, std.os.linux.T.FIONREAD, &len);
-                        if (rc != 0) {
-                            len = 0;
-                        }
-
-                        if (len > 0) {
-                            if (this.poll_ref) |poll| {
-                                poll.flags.insert(.readable);
-                            }
-                        } else {
-                            if (this.poll_ref) |poll| {
-                                poll.flags.remove(.readable);
-                            }
-
-                            pipe_is_empty_on_linux = true;
-                        }
-
-                        // we do not un-mark it as readable if there's nothing in the pipe
-                        if (!this.has_adjusted_pipe_size_on_linux) {
-                            if (len > 0 and buf_to_use.len >= std.mem.page_size * 16) {
-                                this.has_adjusted_pipe_size_on_linux = true;
-                                _ = Syscall.setPipeCapacityOnLinux(fd, @minimum(buf_to_use.len * 4, Syscall.getMaxPipeSizeOnLinux()));
-                            }
-                        }
-                    }
-                }
-                if (len > read_buf.len * 10 and read_buf.len < std.mem.page_size) {
-                    // then we need to allocate a buffer
-                    // to read into
-                    // this
-                    buf_to_use = bun.default_allocator.alloc(
-                        u8,
-                        @intCast(
-                            usize,
-                            @minimum(
-                                len,
-                                1024 * 1024 * 4,
-                            ),
-                        ),
-                    ) catch break :outer;
-                    free_buffer_on_error = true;
-                }
-            }
-        }
-
-        if (this.poll_ref) |poll| {
-            if (comptime Environment.isMac) {
-                if ((available_to_read orelse 0) > 0) {
-                    poll.flags.insert(.readable);
-                }
-            }
-
-            const is_readable = poll.isReadable();
-            if (!is_readable and poll.isEOF()) {
-                if (poll.isHUP()) {
-                    this.finalize();
-                }
-
-                return .{ .done = {} };
-            } else if (!is_readable and poll.isHUP()) {
-                this.finalize();
-                return .{ .done = {} };
-            } else if (!is_readable) {
-                if (this.finished) {
-                    this.finalize();
-                    return .{ .done = {} };
-                }
-
-                if (view != .zero) {
-                    this.view.set(this.globalThis(), view);
-                    this.buf = read_buf;
-                    if (!this.isWatching())
-                        this.watch(fd);
-                }
-
-                return .{
-                    .pending = &this.pending,
-                };
-            }
-        }
-
-        if (comptime Environment.isLinux) {
-            if (pipe_is_empty_on_linux) {
-                std.debug.assert(this.poll_ref == null);
-                if (view != .zero) {
-                    this.view.set(this.globalThis(), view);
-                    this.buf = read_buf;
-                }
-
-                this.watch(fd);
-                return .{
-                    .pending = &this.pending,
-                };
-            }
-        } else if (this.isFIFO() and this.poll_ref == null and available_to_read == null) {
-            // we don't know if it's readable or not
-            if (!bun.isReadable(fd)) {
-                if (free_buffer_on_error) {
-                    bun.default_allocator.free(buf_to_use);
-                    buf_to_use = read_buf;
-                }
-
-                if (view != .zero) {
-                    this.view.set(this.globalThis(), view);
-                    this.buf = read_buf;
-                }
-
-                this.watch(fd);
-                return .{
-                    .pending = &this.pending,
-                };
-            }
-        }
-
-        switch (Syscall.read(fd, buf_to_use)) {
+    pub fn doRead(this: *File, buf: []u8) ReadResult {
+        switch (Syscall.read(this.fd, buf)) {
             .err => |err| {
                 const retry = std.os.E.AGAIN;
-                const errno = brk: {
-                    const _errno = err.getErrno();
-                    if (comptime Environment.isLinux) {
-                        // EPERM and its a FIFO on Linux? Trying to read past a FIFO which has already
-                        // sent a 0
-                        // Let's retry later.
-                        if (this.isFIFO() and
-                            !this.close_on_eof and _errno == .PERM)
-                        {
-                            break :brk .AGAIN;
-                        }
-                    }
-
-                    break :brk _errno;
-                };
+                const errno = err.getErrno();
 
                 switch (errno) {
                     retry => {
-                        if (this.finished) {
-                            if (this.poll_ref) |poll| {
-                                this.poll_ref = null;
-                                poll.deinit();
-                            }
-
-                            return .{ .done = {} };
-                        }
-
-                        if (free_buffer_on_error) {
-                            bun.default_allocator.free(buf_to_use);
-                            buf_to_use = read_buf;
-                        }
-
-                        if (view != .zero) {
-                            this.view.set(this.globalThis(), view);
-                            this.buf = read_buf;
-                            if (!this.isWatching())
-                                this.watch(this.fd);
-                        }
-
-                        return .{
-                            .pending = &this.pending,
-                        };
+                        return .{ .pending = {} };
                     },
-                    else => {},
+                    else => {
+                        return .{ .err = err };
+                    },
                 }
-                const sys = if (this.store.data.file.pathlike == .path and this.store.data.file.pathlike.path.slice().len > 0)
-                    err.withPath(this.store.data.file.pathlike.path.slice())
-                else
-                    err;
-
-                this.finalize();
-                return .{ .err = sys };
             },
             .result => |result| {
-                if (this.isFIFO()) {
-                    if (this.poll_ref) |poll| {
-                        if (comptime Environment.isLinux) {
-                            // do not insert .eof here
-                            if (result < buf_to_use.len)
-                                poll.flags.remove(.readable);
-                        } else {
-                            // Since we have no way of querying FIFO capacity
-                            // its only okay to read when kqueue says its readable
-                            // otherwise we might block the process
-                            poll.flags.remove(.readable);
-                        }
-                    }
+                this.remaining_bytes -|= @truncate(@TypeOf(this.remaining_bytes), result);
 
-                    if (!this.finished and !this.isWatching())
-                        this.watch(fd);
+                if (result == 0) {
+                    return .{ .done = {} };
                 }
 
-                if (result == 0 and free_buffer_on_error) {
-                    bun.default_allocator.free(buf_to_use);
-                    buf_to_use = read_buf;
-                } else if (free_buffer_on_error) {
-                    this.view.clear();
-                    this.buf = &.{};
-                    return this.handleReadChunk(result, view, true, buf_to_use);
-                }
-
-                if (result == 0 and this.isFIFO() and view != .zero) {
-                    this.view.set(this.globalThis(), view);
-                    this.buf = read_buf;
-                    return .{
-                        .pending = &this.pending,
-                    };
-                }
-
-                return this.handleReadChunk(result, view, false, buf_to_use);
+                return .{ .read = buf[0..result] };
             },
         }
     }
+};
 
-    /// Called from Poller
-    pub fn ready(this: *FileReader, sizeOrOffset: i64) void {
-        const view = this.view.get() orelse .zero;
-        defer this.view.clear();
+// macOS default pipe size is page_size, 16k, or 64k. It changes based on how much was written
+// Linux default pipe size is 16 pages of memory
+const default_fifo_chunk_size = 64 * 1024;
+const default_file_chunk_size = 1024 * 1024 * 2;
 
-        const available_to_read: usize = if (comptime Environment.isMac) brk: {
-            if (this.isFIFO()) {
-                break :brk @intCast(usize, @maximum(sizeOrOffset, 0));
-            } else if (std.os.S.ISREG(this.mode)) {
-                // Returns when the file pointer is not at the end of
-                // file.  data contains the offset from current position
-                // to end of file, and may be negative.
-                break :brk @intCast(usize, @maximum(sizeOrOffset, 0));
-            }
-            break :brk std.math.maxInt(usize);
-        } else std.math.maxInt(usize);
-        if (this.finalized and this.scheduled_count == 0) {
-            if (this.pending.state == .pending) {
-                // should never be reached
-                this.pending.result = .{
-                    .err = Syscall.Error.todo,
-                };
-                resume this.pending.frame;
-            }
-            this.deinit();
-            return;
+/// **Not** the Web "FileReader" API
+pub const FileReader = struct {
+    buffered_data: bun.ByteList = .{},
+
+    total_read: Blob.SizeType = 0,
+    max_read: Blob.SizeType = 0,
+
+    cancelled: bool = false,
+    started: bool = false,
+    stored_global_this_: ?*JSC.JSGlobalObject = null,
+    user_chunk_size: Blob.SizeType = 0,
+    lazy_readable: Readable.Lazy = undefined,
+
+    pub fn setSignal(this: *FileReader, signal: Signal) void {
+        switch (this.lazy_readable) {
+            .readable => {
+                if (this.lazy_readable.readable == .FIFO)
+                    this.lazy_readable.readable.FIFO.signal = signal;
+            },
+            else => {},
         }
+    }
 
-        // If we do nothing here, stop watching the file descriptor
-        var unschedule = this.poll_ref != null;
-        defer {
-            if (unschedule) {
-                if (this.poll_ref) |ref| {
-                    _ = ref.unregister(this.globalThis().bunVM().uws_event_loop.?);
+    pub fn readable(this: *FileReader) *Readable {
+        return &this.lazy_readable.readable;
+    }
+
+    pub const Readable = union(enum) {
+        FIFO: FIFO,
+        File: File,
+
+        pub const Lazy = union(enum) {
+            readable: Readable,
+            blob: *Blob.Store,
+            empty: void,
+
+            pub fn finish(this: *Lazy) void {
+                switch (this.readable) {
+                    .FIFO => {
+                        this.readable.FIFO.finish();
+                    },
+                    .File => {},
                 }
             }
-        }
-        if (this.cancelled) {
-            return;
+
+            pub fn isClosed(this: *Lazy) bool {
+                switch (this.*) {
+                    .empty, .blob => {
+                        return true;
+                    },
+                    .readable => {
+                        return this.readable.isClosed();
+                    },
+                }
+            }
+
+            pub fn deinit(this: *Lazy) void {
+                switch (this.*) {
+                    .blob => |blob| {
+                        blob.deref();
+                    },
+                    .readable => {
+                        this.readable.deinit();
+                    },
+                    .empty => {},
+                }
+                this.* = .{ .empty = {} };
+            }
+        };
+
+        pub fn deinit(this: *Readable) void {
+            switch (this.*) {
+                .FIFO => {
+                    this.FIFO.close();
+                },
+                .File => {
+                    this.File.deinit();
+                },
+            }
         }
 
-        if (this.buf.len == 0) {
-            return;
-        } else {
-            this.buf.len = @minimum(this.buf.len, available_to_read);
+        pub fn isClosed(this: *Readable) bool {
+            switch (this.*) {
+                .FIFO => {
+                    return this.FIFO.isClosed();
+                },
+                .File => {
+                    return this.File.isClosed();
+                },
+            }
         }
 
-        this.pending.result = this.read(
-            this.buf,
-            view,
-            if (available_to_read == std.math.maxInt(usize))
-                null
-            else
-                @truncate(c_int, @intCast(isize, available_to_read)),
-        );
-        unschedule = false;
-        this.pending.run();
+        pub fn close(this: *Readable) void {
+            switch (this.*) {
+                .FIFO => {
+                    this.FIFO.close();
+                },
+                .File => {
+                    if (this.File.concurrent) |concurrent| {
+                        this.File.concurrent = null;
+                        concurrent.close();
+                    }
+
+                    this.File.close();
+                },
+            }
+        }
+
+        pub fn read(
+            this: *Readable,
+            read_buf: []u8,
+            view: JSC.JSValue,
+            global: *JSC.JSGlobalObject,
+        ) StreamResult {
+            return switch (std.meta.activeTag(this.*)) {
+                .FIFO => this.FIFO.readFromJS(read_buf, view, global),
+                .File => this.File.readFromJS(read_buf, view, global),
+            };
+        }
+
+        pub fn isSeekable(this: Readable) bool {
+            if (this == .File) {
+                return this.File.isSeekable();
+            }
+
+            return false;
+        }
+
+        pub fn watch(this: *Readable) void {
+            switch (this.*) {
+                .FIFO => {
+                    if (!this.FIFO.isWatching())
+                        this.FIFO.watch(this.FIFO.fd);
+                },
+            }
+        }
+    };
+
+    pub inline fn globalThis(this: *FileReader) *JSC.JSGlobalObject {
+        return this.stored_global_this_ orelse @fieldParentPtr(Source, "context", this).globalThis;
+    }
+
+    const run_on_different_thread_size = bun.huge_allocator_threshold;
+
+    pub const tag = ReadableStream.Tag.File;
+
+    pub fn fromReadable(this: *FileReader, chunk_size: Blob.SizeType, readable_: *Readable) void {
+        this.* = .{
+            .lazy_readable = .{
+                .readable = readable_.*,
+            },
+        };
+        this.user_chunk_size = chunk_size;
+    }
+
+    pub fn finish(this: *FileReader) void {
+        this.lazy_readable.finish();
+    }
+
+    pub fn onStart(this: *FileReader) StreamStart {
+        if (!this.started) {
+            this.started = true;
+
+            switch (this.lazy_readable) {
+                .blob => |blob| {
+                    defer blob.deref();
+                    var readable_file: File = .{ .loop = this.globalThis().bunVM().eventLoop() };
+                    const result = readable_file.start(&blob.data.file);
+                    if (result != .ready) {
+                        return result;
+                    }
+
+                    if (std.os.S.ISFIFO(readable_file.mode)) {
+                        this.lazy_readable = .{
+                            .readable = .{
+                                .FIFO = FIFO{
+                                    .fd = readable_file.fd,
+                                    .auto_close = readable_file.auto_close,
+                                },
+                            },
+                        };
+                    } else {
+                        this.lazy_readable = .{
+                            .readable = .{ .File = readable_file },
+                        };
+                    }
+                },
+                .readable => {},
+                .empty => return .{ .empty = {} },
+            }
+        }
+
+        if (this.readable().* == .File) {
+            const chunk_size = this.readable().File.calculateChunkSize(std.math.maxInt(usize));
+            return .{ .chunk_size = @truncate(Blob.SizeType, chunk_size) };
+        }
+
+        return .{ .chunk_size = if (this.user_chunk_size == 0) default_fifo_chunk_size else this.user_chunk_size };
+    }
+
+    pub fn onPullInto(this: *FileReader, buffer: []u8, view: JSC.JSValue) StreamResult {
+        std.debug.assert(this.started);
+        return this.readable().read(buffer, view, this.globalThis());
+    }
+
+    fn isFIFO(this: *const FileReader) bool {
+        if (this.lazy_readable == .readable) {
+            return this.lazy_readable.readable == .FIFO;
+        }
+
+        return false;
     }
 
     pub fn finalize(this: *FileReader) void {
-        if (this.finalized)
-            return;
-
-        this.signal.close(null);
-
-        if (this.buffered_data.cap > 0) {
-            this.buffered_data.listManaged(bun.default_allocator).deinit();
-            this.buffered_data.cap = 0;
-        }
-
-        this.finished = true;
-
-        if (this.poll_ref) |poll| {
-            this.poll_ref = null;
-            poll.deinit();
-        }
-
-        this.finalized = true;
-
-        this.pending.result = .{ .done = {} };
-        this.pending.run();
-
-        this.view.deinit();
-        this.buf = &.{};
-
-        this.maybeAutoClose();
-
-        this.store.deref();
+        this.lazy_readable.deinit();
     }
 
     pub fn onCancel(this: *FileReader) void {
@@ -4022,7 +4368,7 @@ pub const FileReader = struct {
 
     pub fn deinit(this: *FileReader) void {
         this.finalize();
-        if (this.scheduled_count == 0 and this.pending.state == .pending) {
+        if (this.lazy_readable.isClosed()) {
             this.destroy();
         }
     }
@@ -4032,18 +4378,30 @@ pub const FileReader = struct {
     }
 
     pub fn setRefOrUnref(this: *FileReader, value: bool) void {
-        if (this.poll_ref) |poll| {
-            if (value) {
-                poll.enableKeepingProcessAlive(this.globalThis().bunVM());
-            } else {
-                poll.disableKeepingProcessAlive(this.globalThis().bunVM());
+        if (this.lazy_readable == .readable) {
+            switch (this.lazy_readable.readable) {
+                .FIFO => {
+                    if (this.lazy_readable.readable.FIFO.poll_ref) |poll| {
+                        if (value) {
+                            poll.enableKeepingProcessAlive(this.globalThis().bunVM());
+                        } else {
+                            poll.disableKeepingProcessAlive(this.globalThis().bunVM());
+                        }
+                    }
+                },
+                .File => {
+                    if (value)
+                        this.lazy_readable.readable.File.poll_ref.ref(JSC.VirtualMachine.vm)
+                    else
+                        this.lazy_readable.readable.File.poll_ref.unref(JSC.VirtualMachine.vm);
+                },
             }
         }
     }
 
     pub fn drainInternalBuffer(this: *FileReader) bun.ByteList {
-        var buffered = this.buffered_data;
-        if (buffered.len > 0) {
+        const buffered = this.buffered_data;
+        if (buffered.cap > 0) {
             this.buffered_data = .{};
         }
 
@@ -4093,8 +4451,9 @@ pub fn NewReadyWatcher(
             ready(this, sizeOrOffset);
         }
 
-        pub fn unwatch(this: *Context, fd: JSC.Node.FileDescriptor) void {
-            std.debug.assert(@intCast(JSC.Node.FileDescriptor, this.poll_ref.?.fd) == fd);
+        pub fn unwatch(this: *Context, fd_: anytype) void {
+            const fd = @intCast(c_int, fd_);
+            std.debug.assert(@intCast(c_int, this.poll_ref.?.fd) == fd);
             std.debug.assert(
                 this.poll_ref.?.unregister(JSC.VirtualMachine.vm.uws_event_loop.?) == .result,
             );
@@ -4121,7 +4480,8 @@ pub fn NewReadyWatcher(
             return false;
         }
 
-        pub fn watch(this: *Context, fd: JSC.Node.FileDescriptor) void {
+        pub fn watch(this: *Context, fd_: anytype) void {
+            const fd = @intCast(c_int, fd_);
             var poll_ref: *JSC.FilePoll = this.poll_ref orelse brk: {
                 this.poll_ref = JSC.FilePoll.init(
                     JSC.VirtualMachine.vm,
@@ -4133,6 +4493,7 @@ pub fn NewReadyWatcher(
                 break :brk this.poll_ref.?;
             };
             std.debug.assert(poll_ref.fd == fd);
+            std.debug.assert(!this.isWatching());
             switch (poll_ref.register(JSC.VirtualMachine.vm.uws_event_loop.?, flag, true)) {
                 .err => |err| {
                     bun.unreachablePanic("FilePoll.register failed: {d}", .{err.errno});
@@ -4154,3 +4515,4 @@ pub fn NewReadyWatcher(
 //         pub fn onError(this: *Streamer): anytype,
 //     };
 // }
+

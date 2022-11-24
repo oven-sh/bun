@@ -2448,8 +2448,7 @@ pub const Timer = struct {
         }
 
         pub fn deinit(this: *Timeout) void {
-            if (comptime JSC.is_bindgen)
-                unreachable;
+            JSC.markBinding(@src());
 
             var vm = this.globalThis.bunVM();
             this.poll_ref.unref(vm);
@@ -2465,7 +2464,7 @@ pub const Timer = struct {
         countdown: JSValue,
         repeat: bool,
     ) !void {
-        if (comptime is_bindgen) unreachable;
+        JSC.markBinding(@src());
         var vm = globalThis.bunVM();
 
         // We don't deal with nesting levels directly
@@ -2534,7 +2533,7 @@ pub const Timer = struct {
         callback: JSValue,
         countdown: JSValue,
     ) callconv(.C) JSValue {
-        if (comptime is_bindgen) unreachable;
+        JSC.markBinding(@src());
         const id = globalThis.bunVM().timer.last_id;
         globalThis.bunVM().timer.last_id +%= 1;
 
@@ -2548,7 +2547,7 @@ pub const Timer = struct {
         callback: JSValue,
         countdown: JSValue,
     ) callconv(.C) JSValue {
-        if (comptime is_bindgen) unreachable;
+        JSC.markBinding(@src());
         const id = globalThis.bunVM().timer.last_id;
         globalThis.bunVM().timer.last_id +%= 1;
 
@@ -2559,7 +2558,7 @@ pub const Timer = struct {
     }
 
     pub fn clearTimer(timer_id: JSValue, _: *JSGlobalObject, repeats: bool) void {
-        if (comptime is_bindgen) unreachable;
+        JSC.markBinding(@src());
 
         var map = if (repeats) &VirtualMachine.vm.timer.interval_map else &VirtualMachine.vm.timer.timeout_map;
         const id: Timeout.ID = .{
@@ -2580,7 +2579,7 @@ pub const Timer = struct {
         globalThis: *JSGlobalObject,
         id: JSValue,
     ) callconv(.C) JSValue {
-        if (comptime is_bindgen) unreachable;
+        JSC.markBinding(@src());
         Timer.clearTimer(id, globalThis, false);
         return JSValue.jsUndefined();
     }
@@ -2588,7 +2587,7 @@ pub const Timer = struct {
         globalThis: *JSGlobalObject,
         id: JSValue,
     ) callconv(.C) JSValue {
-        if (comptime is_bindgen) unreachable;
+        JSC.markBinding(@src());
         Timer.clearTimer(id, globalThis, true);
         return JSValue.jsUndefined();
     }

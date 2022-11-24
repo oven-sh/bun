@@ -86,7 +86,7 @@ pub const fmt = struct {
 pub const Output = @import("./output.zig");
 pub const Global = @import("./__global.zig");
 
-pub const FileDescriptorType = if (Environment.isBrowser) u0 else std.os.fd_t;
+pub const FileDescriptor = if (Environment.isBrowser) u0 else std.os.fd_t;
 
 // When we are on a computer with an absurdly high number of max open file handles
 // such is often the case with macOS
@@ -340,16 +340,21 @@ pub fn ensureNonBlocking(fd: anytype) void {
     _ = std.os.fcntl(fd, std.os.F.SETFL, current | std.os.O.NONBLOCK) catch 0;
 }
 
+const global_scope_log = Output.scoped(.bun, false);
 pub fn isReadable(fd: std.os.fd_t) bool {
-    var polls = &[_]std.os.pollfd{
-        .{
-            .fd = fd,
-            .events = std.os.POLL.IN | std.os.POLL.ERR,
-            .revents = 0,
-        },
-    };
+    _ = fd;
+    return false;
+    // var polls = &[_]std.os.pollfd{
+    //     .{
+    //         .fd = fd,
+    //         .events = std.os.POLL.IN | std.os.POLL.ERR,
+    //         .revents = 0,
+    //     },
+    // };
 
-    return (std.os.poll(polls, 0) catch 0) != 0;
+    // const result = (std.os.poll(polls, 0) catch 0) != 0;
+    // global_scope_log("isReadable: {d}", .{result});
+    // return result;
 }
 
 pub fn isWritable(fd: std.os.fd_t) bool {
@@ -361,7 +366,9 @@ pub fn isWritable(fd: std.os.fd_t) bool {
         },
     };
 
-    return (std.os.poll(polls, 0) catch 0) != 0;
+    const result = (std.os.poll(polls, 0) catch 0) != 0;
+    global_scope_log("isWritable: {d}", .{result});
+    return result;
 }
 
 pub inline fn unreachablePanic(comptime fmts: []const u8, args: anytype) noreturn {
@@ -413,3 +420,16 @@ pub const Mimalloc = @import("./allocators/mimalloc.zig");
 pub fn isSliceInBuffer(slice: []const u8, buffer: []const u8) bool {
     return slice.len > 0 and @ptrToInt(buffer.ptr) <= @ptrToInt(slice.ptr) and ((@ptrToInt(slice.ptr) + slice.len) <= (@ptrToInt(buffer.ptr) + buffer.len));
 }
+
+pub fn rangeOfSliceInBuffer(slice: []const u8, buffer: []const u8) ?[2]u32 {
+    if (!isSliceInBuffer(slice, buffer)) return null;
+    const r = [_]u32{
+        @truncate(u32, @ptrToInt(slice.ptr) -| @ptrToInt(buffer.ptr)),
+        @truncate(u32, slice.len),
+    };
+    if (comptime Environment.allow_assert)
+        std.debug.assert(strings.eqlLong(slice, buffer[r[0]..][0..r[1]], false));
+    return r;
+}
+
+pub const invalid_fd = std.math.maxInt(FileDescriptor);

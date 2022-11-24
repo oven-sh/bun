@@ -859,15 +859,14 @@ pub const CombinedScanner = struct {
 fn stringPointerFromStrings(parent: string, in: string) Api.StringPointer {
     if (in.len == 0 or parent.len == 0) return Api.StringPointer{};
 
-    if (bun.isSliceInBuffer(in, parent)) {
-        const offset = @minimum(
-            @maximum(@ptrToInt(in.ptr), @ptrToInt(parent.ptr)) - @minimum(@ptrToInt(in.ptr), @ptrToInt(parent.ptr)),
-            @minimum(in.len, parent.len),
-        );
-
-        return Api.StringPointer{ .offset = @truncate(u32, offset), .length = @truncate(u32, in.len) };
+    if (bun.rangeOfSliceInBuffer(in, parent)) |range| {
+        return Api.StringPointer{ .offset = range[0], .length = range[1] };
     } else {
         if (strings.indexOf(parent, in)) |i| {
+            if (comptime Environment.allow_assert) {
+                std.debug.assert(strings.eqlLong(parent[i..][0..in.len], in, false));
+            }
+
             return Api.StringPointer{
                 .offset = @truncate(u32, i),
                 .length = @truncate(u32, in.len),

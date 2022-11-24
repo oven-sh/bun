@@ -58,43 +58,6 @@ private:
     void finishCreation(JSC::VM&, JSC::JSGlobalObject*);
 };
 
-class JSTCPSocketConstructor final : public JSC::InternalFunction {
-public:
-    using Base = JSC::InternalFunction;
-    static JSTCPSocketConstructor* create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, JSTCPSocketPrototype* prototype);
-
-    static constexpr unsigned StructureFlags = Base::StructureFlags;
-    static constexpr bool needsDestruction = false;
-
-    static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
-    {
-        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::InternalFunctionType, StructureFlags), info());
-    }
-
-    template<typename, JSC::SubspaceAccess mode> static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
-    {
-        if constexpr (mode == JSC::SubspaceAccess::Concurrently)
-            return nullptr;
-        return WebCore::subspaceForImpl<JSTCPSocketConstructor, WebCore::UseCustomHeapCellType::No>(
-            vm,
-            [](auto& spaces) { return spaces.m_clientSubspaceForTCPSocketConstructor.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForTCPSocketConstructor = WTFMove(space); },
-            [](auto& spaces) { return spaces.m_subspaceForTCPSocketConstructor.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_subspaceForTCPSocketConstructor = WTFMove(space); });
-    }
-
-    void initializeProperties(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSTCPSocketPrototype* prototype);
-
-    // Must be defined for each specialization class.
-    static JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES construct(JSC::JSGlobalObject*, JSC::CallFrame*);
-
-    DECLARE_EXPORT_INFO;
-
-private:
-    JSTCPSocketConstructor(JSC::VM& vm, JSC::Structure* structure);
-    void finishCreation(JSC::VM&, JSC::JSGlobalObject* globalObject, JSTCPSocketPrototype* prototype);
-};
-
 extern "C" void* TCPSocketClass__construct(JSC::JSGlobalObject*, JSC::CallFrame*);
 JSC_DECLARE_CUSTOM_GETTER(jsTCPSocketConstructor);
 extern "C" void TCPSocketClass__finalize(void*);
@@ -417,68 +380,6 @@ void JSTCPSocketPrototype::finishCreation(JSC::VM& vm, JSC::JSGlobalObject* glob
     JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
 }
 
-void JSTCPSocketConstructor::finishCreation(VM& vm, JSC::JSGlobalObject* globalObject, JSTCPSocketPrototype* prototype)
-{
-    Base::finishCreation(vm, 0, "TCPSocket"_s, PropertyAdditionMode::WithoutStructureTransition);
-
-    putDirectWithoutTransition(vm, vm.propertyNames->prototype, prototype, PropertyAttribute::DontEnum | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
-    ASSERT(inherits(info()));
-}
-
-JSTCPSocketConstructor::JSTCPSocketConstructor(JSC::VM& vm, JSC::Structure* structure)
-    : Base(vm, structure, construct, construct)
-{
-}
-
-JSTCPSocketConstructor* JSTCPSocketConstructor::create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, JSTCPSocketPrototype* prototype)
-{
-    JSTCPSocketConstructor* ptr = new (NotNull, JSC::allocateCell<JSTCPSocketConstructor>(vm)) JSTCPSocketConstructor(vm, structure);
-    ptr->finishCreation(vm, globalObject, prototype);
-    return ptr;
-}
-
-JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSTCPSocketConstructor::construct(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame)
-{
-    Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
-    JSC::VM& vm = globalObject->vm();
-    JSObject* newTarget = asObject(callFrame->newTarget());
-    auto* constructor = globalObject->JSTCPSocketConstructor();
-    Structure* structure = globalObject->JSTCPSocketStructure();
-    if (constructor != newTarget) {
-        auto scope = DECLARE_THROW_SCOPE(vm);
-
-        auto* functionGlobalObject = reinterpret_cast<Zig::GlobalObject*>(
-            // ShadowRealm functions belong to a different global object.
-            getFunctionRealm(globalObject, newTarget));
-        RETURN_IF_EXCEPTION(scope, {});
-        structure = InternalFunction::createSubclassStructure(
-            globalObject,
-            newTarget,
-            functionGlobalObject->JSTCPSocketStructure());
-    }
-
-    void* ptr = TCPSocketClass__construct(globalObject, callFrame);
-
-    if (UNLIKELY(!ptr)) {
-        return JSValue::encode(JSC::jsUndefined());
-    }
-
-    JSTCPSocket* instance = JSTCPSocket::create(vm, globalObject, structure, ptr);
-
-    return JSValue::encode(instance);
-}
-
-void JSTCPSocketConstructor::initializeProperties(VM& vm, JSC::JSGlobalObject* globalObject, JSTCPSocketPrototype* prototype)
-{
-}
-
-const ClassInfo JSTCPSocketConstructor::s_info = { "Function"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSTCPSocketConstructor) };
-
-extern "C" EncodedJSValue TCPSocket__getConstructor(Zig::GlobalObject* globalObject)
-{
-    return JSValue::encode(globalObject->JSTCPSocketConstructor());
-}
-
 extern "C" bool TCPSocket__hasPendingActivity(void* ptr);
 bool JSTCPSocket::hasPendingActivity(void* ctx)
 {
@@ -545,11 +446,6 @@ void JSTCPSocket::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
         //     analyzer.setLabelForCell(cell, "url " + thisObject->scriptExecutionContext()->url().string());
     }
     Base::analyzeHeap(cell, analyzer);
-}
-
-JSObject* JSTCPSocket::createConstructor(VM& vm, JSGlobalObject* globalObject, JSValue prototype)
-{
-    return WebCore::JSTCPSocketConstructor::create(vm, globalObject, WebCore::JSTCPSocketConstructor::createStructure(vm, globalObject, globalObject->functionPrototype()), jsCast<WebCore::JSTCPSocketPrototype*>(prototype));
 }
 
 JSObject* JSTCPSocket::createPrototype(VM& vm, JSDOMGlobalObject* globalObject)
@@ -631,43 +527,6 @@ private:
     }
 
     void finishCreation(JSC::VM&, JSC::JSGlobalObject*);
-};
-
-class JSTLSSocketConstructor final : public JSC::InternalFunction {
-public:
-    using Base = JSC::InternalFunction;
-    static JSTLSSocketConstructor* create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, JSTLSSocketPrototype* prototype);
-
-    static constexpr unsigned StructureFlags = Base::StructureFlags;
-    static constexpr bool needsDestruction = false;
-
-    static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
-    {
-        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::InternalFunctionType, StructureFlags), info());
-    }
-
-    template<typename, JSC::SubspaceAccess mode> static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
-    {
-        if constexpr (mode == JSC::SubspaceAccess::Concurrently)
-            return nullptr;
-        return WebCore::subspaceForImpl<JSTLSSocketConstructor, WebCore::UseCustomHeapCellType::No>(
-            vm,
-            [](auto& spaces) { return spaces.m_clientSubspaceForTLSSocketConstructor.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForTLSSocketConstructor = WTFMove(space); },
-            [](auto& spaces) { return spaces.m_subspaceForTLSSocketConstructor.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_subspaceForTLSSocketConstructor = WTFMove(space); });
-    }
-
-    void initializeProperties(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSTLSSocketPrototype* prototype);
-
-    // Must be defined for each specialization class.
-    static JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES construct(JSC::JSGlobalObject*, JSC::CallFrame*);
-
-    DECLARE_EXPORT_INFO;
-
-private:
-    JSTLSSocketConstructor(JSC::VM& vm, JSC::Structure* structure);
-    void finishCreation(JSC::VM&, JSC::JSGlobalObject* globalObject, JSTLSSocketPrototype* prototype);
 };
 
 extern "C" void* TLSSocketClass__construct(JSC::JSGlobalObject*, JSC::CallFrame*);
@@ -992,68 +851,6 @@ void JSTLSSocketPrototype::finishCreation(JSC::VM& vm, JSC::JSGlobalObject* glob
     JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
 }
 
-void JSTLSSocketConstructor::finishCreation(VM& vm, JSC::JSGlobalObject* globalObject, JSTLSSocketPrototype* prototype)
-{
-    Base::finishCreation(vm, 0, "TLSSocket"_s, PropertyAdditionMode::WithoutStructureTransition);
-
-    putDirectWithoutTransition(vm, vm.propertyNames->prototype, prototype, PropertyAttribute::DontEnum | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
-    ASSERT(inherits(info()));
-}
-
-JSTLSSocketConstructor::JSTLSSocketConstructor(JSC::VM& vm, JSC::Structure* structure)
-    : Base(vm, structure, construct, construct)
-{
-}
-
-JSTLSSocketConstructor* JSTLSSocketConstructor::create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, JSTLSSocketPrototype* prototype)
-{
-    JSTLSSocketConstructor* ptr = new (NotNull, JSC::allocateCell<JSTLSSocketConstructor>(vm)) JSTLSSocketConstructor(vm, structure);
-    ptr->finishCreation(vm, globalObject, prototype);
-    return ptr;
-}
-
-JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSTLSSocketConstructor::construct(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame)
-{
-    Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
-    JSC::VM& vm = globalObject->vm();
-    JSObject* newTarget = asObject(callFrame->newTarget());
-    auto* constructor = globalObject->JSTLSSocketConstructor();
-    Structure* structure = globalObject->JSTLSSocketStructure();
-    if (constructor != newTarget) {
-        auto scope = DECLARE_THROW_SCOPE(vm);
-
-        auto* functionGlobalObject = reinterpret_cast<Zig::GlobalObject*>(
-            // ShadowRealm functions belong to a different global object.
-            getFunctionRealm(globalObject, newTarget));
-        RETURN_IF_EXCEPTION(scope, {});
-        structure = InternalFunction::createSubclassStructure(
-            globalObject,
-            newTarget,
-            functionGlobalObject->JSTLSSocketStructure());
-    }
-
-    void* ptr = TLSSocketClass__construct(globalObject, callFrame);
-
-    if (UNLIKELY(!ptr)) {
-        return JSValue::encode(JSC::jsUndefined());
-    }
-
-    JSTLSSocket* instance = JSTLSSocket::create(vm, globalObject, structure, ptr);
-
-    return JSValue::encode(instance);
-}
-
-void JSTLSSocketConstructor::initializeProperties(VM& vm, JSC::JSGlobalObject* globalObject, JSTLSSocketPrototype* prototype)
-{
-}
-
-const ClassInfo JSTLSSocketConstructor::s_info = { "Function"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSTLSSocketConstructor) };
-
-extern "C" EncodedJSValue TLSSocket__getConstructor(Zig::GlobalObject* globalObject)
-{
-    return JSValue::encode(globalObject->JSTLSSocketConstructor());
-}
-
 extern "C" bool TLSSocket__hasPendingActivity(void* ptr);
 bool JSTLSSocket::hasPendingActivity(void* ctx)
 {
@@ -1120,11 +917,6 @@ void JSTLSSocket::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
         //     analyzer.setLabelForCell(cell, "url " + thisObject->scriptExecutionContext()->url().string());
     }
     Base::analyzeHeap(cell, analyzer);
-}
-
-JSObject* JSTLSSocket::createConstructor(VM& vm, JSGlobalObject* globalObject, JSValue prototype)
-{
-    return WebCore::JSTLSSocketConstructor::create(vm, globalObject, WebCore::JSTLSSocketConstructor::createStructure(vm, globalObject, globalObject->functionPrototype()), jsCast<WebCore::JSTLSSocketPrototype*>(prototype));
 }
 
 JSObject* JSTLSSocket::createPrototype(VM& vm, JSDOMGlobalObject* globalObject)
@@ -1206,43 +998,6 @@ private:
     }
 
     void finishCreation(JSC::VM&, JSC::JSGlobalObject*);
-};
-
-class JSListenerConstructor final : public JSC::InternalFunction {
-public:
-    using Base = JSC::InternalFunction;
-    static JSListenerConstructor* create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, JSListenerPrototype* prototype);
-
-    static constexpr unsigned StructureFlags = Base::StructureFlags;
-    static constexpr bool needsDestruction = false;
-
-    static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
-    {
-        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::InternalFunctionType, StructureFlags), info());
-    }
-
-    template<typename, JSC::SubspaceAccess mode> static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
-    {
-        if constexpr (mode == JSC::SubspaceAccess::Concurrently)
-            return nullptr;
-        return WebCore::subspaceForImpl<JSListenerConstructor, WebCore::UseCustomHeapCellType::No>(
-            vm,
-            [](auto& spaces) { return spaces.m_clientSubspaceForListenerConstructor.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForListenerConstructor = WTFMove(space); },
-            [](auto& spaces) { return spaces.m_subspaceForListenerConstructor.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_subspaceForListenerConstructor = WTFMove(space); });
-    }
-
-    void initializeProperties(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSListenerPrototype* prototype);
-
-    // Must be defined for each specialization class.
-    static JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES construct(JSC::JSGlobalObject*, JSC::CallFrame*);
-
-    DECLARE_EXPORT_INFO;
-
-private:
-    JSListenerConstructor(JSC::VM& vm, JSC::Structure* structure);
-    void finishCreation(JSC::VM&, JSC::JSGlobalObject* globalObject, JSListenerPrototype* prototype);
 };
 
 extern "C" void* ListenerClass__construct(JSC::JSGlobalObject*, JSC::CallFrame*);
@@ -1471,68 +1226,6 @@ void JSListenerPrototype::finishCreation(JSC::VM& vm, JSC::JSGlobalObject* globa
     JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
 }
 
-void JSListenerConstructor::finishCreation(VM& vm, JSC::JSGlobalObject* globalObject, JSListenerPrototype* prototype)
-{
-    Base::finishCreation(vm, 0, "Listener"_s, PropertyAdditionMode::WithoutStructureTransition);
-
-    putDirectWithoutTransition(vm, vm.propertyNames->prototype, prototype, PropertyAttribute::DontEnum | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
-    ASSERT(inherits(info()));
-}
-
-JSListenerConstructor::JSListenerConstructor(JSC::VM& vm, JSC::Structure* structure)
-    : Base(vm, structure, construct, construct)
-{
-}
-
-JSListenerConstructor* JSListenerConstructor::create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, JSListenerPrototype* prototype)
-{
-    JSListenerConstructor* ptr = new (NotNull, JSC::allocateCell<JSListenerConstructor>(vm)) JSListenerConstructor(vm, structure);
-    ptr->finishCreation(vm, globalObject, prototype);
-    return ptr;
-}
-
-JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSListenerConstructor::construct(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame)
-{
-    Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
-    JSC::VM& vm = globalObject->vm();
-    JSObject* newTarget = asObject(callFrame->newTarget());
-    auto* constructor = globalObject->JSListenerConstructor();
-    Structure* structure = globalObject->JSListenerStructure();
-    if (constructor != newTarget) {
-        auto scope = DECLARE_THROW_SCOPE(vm);
-
-        auto* functionGlobalObject = reinterpret_cast<Zig::GlobalObject*>(
-            // ShadowRealm functions belong to a different global object.
-            getFunctionRealm(globalObject, newTarget));
-        RETURN_IF_EXCEPTION(scope, {});
-        structure = InternalFunction::createSubclassStructure(
-            globalObject,
-            newTarget,
-            functionGlobalObject->JSListenerStructure());
-    }
-
-    void* ptr = ListenerClass__construct(globalObject, callFrame);
-
-    if (UNLIKELY(!ptr)) {
-        return JSValue::encode(JSC::jsUndefined());
-    }
-
-    JSListener* instance = JSListener::create(vm, globalObject, structure, ptr);
-
-    return JSValue::encode(instance);
-}
-
-void JSListenerConstructor::initializeProperties(VM& vm, JSC::JSGlobalObject* globalObject, JSListenerPrototype* prototype)
-{
-}
-
-const ClassInfo JSListenerConstructor::s_info = { "Function"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSListenerConstructor) };
-
-extern "C" EncodedJSValue Listener__getConstructor(Zig::GlobalObject* globalObject)
-{
-    return JSValue::encode(globalObject->JSListenerConstructor());
-}
-
 JSListener::~JSListener()
 {
     if (m_ctx) {
@@ -1593,11 +1286,6 @@ void JSListener::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
         //     analyzer.setLabelForCell(cell, "url " + thisObject->scriptExecutionContext()->url().string());
     }
     Base::analyzeHeap(cell, analyzer);
-}
-
-JSObject* JSListener::createConstructor(VM& vm, JSGlobalObject* globalObject, JSValue prototype)
-{
-    return WebCore::JSListenerConstructor::create(vm, globalObject, WebCore::JSListenerConstructor::createStructure(vm, globalObject, globalObject->functionPrototype()), jsCast<WebCore::JSListenerPrototype*>(prototype));
 }
 
 JSObject* JSListener::createPrototype(VM& vm, JSDOMGlobalObject* globalObject)
@@ -1678,43 +1366,6 @@ private:
     }
 
     void finishCreation(JSC::VM&, JSC::JSGlobalObject*);
-};
-
-class JSSubprocessConstructor final : public JSC::InternalFunction {
-public:
-    using Base = JSC::InternalFunction;
-    static JSSubprocessConstructor* create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, JSSubprocessPrototype* prototype);
-
-    static constexpr unsigned StructureFlags = Base::StructureFlags;
-    static constexpr bool needsDestruction = false;
-
-    static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
-    {
-        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::InternalFunctionType, StructureFlags), info());
-    }
-
-    template<typename, JSC::SubspaceAccess mode> static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
-    {
-        if constexpr (mode == JSC::SubspaceAccess::Concurrently)
-            return nullptr;
-        return WebCore::subspaceForImpl<JSSubprocessConstructor, WebCore::UseCustomHeapCellType::No>(
-            vm,
-            [](auto& spaces) { return spaces.m_clientSubspaceForSubprocessConstructor.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForSubprocessConstructor = WTFMove(space); },
-            [](auto& spaces) { return spaces.m_subspaceForSubprocessConstructor.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_subspaceForSubprocessConstructor = WTFMove(space); });
-    }
-
-    void initializeProperties(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSSubprocessPrototype* prototype);
-
-    // Must be defined for each specialization class.
-    static JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES construct(JSC::JSGlobalObject*, JSC::CallFrame*);
-
-    DECLARE_EXPORT_INFO;
-
-private:
-    JSSubprocessConstructor(JSC::VM& vm, JSC::Structure* structure);
-    void finishCreation(JSC::VM&, JSC::JSGlobalObject* globalObject, JSSubprocessPrototype* prototype);
 };
 
 extern "C" void* SubprocessClass__construct(JSC::JSGlobalObject*, JSC::CallFrame*);
@@ -2046,68 +1697,6 @@ void JSSubprocessPrototype::finishCreation(JSC::VM& vm, JSC::JSGlobalObject* glo
     JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
 }
 
-void JSSubprocessConstructor::finishCreation(VM& vm, JSC::JSGlobalObject* globalObject, JSSubprocessPrototype* prototype)
-{
-    Base::finishCreation(vm, 0, "Subprocess"_s, PropertyAdditionMode::WithoutStructureTransition);
-
-    putDirectWithoutTransition(vm, vm.propertyNames->prototype, prototype, PropertyAttribute::DontEnum | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
-    ASSERT(inherits(info()));
-}
-
-JSSubprocessConstructor::JSSubprocessConstructor(JSC::VM& vm, JSC::Structure* structure)
-    : Base(vm, structure, construct, construct)
-{
-}
-
-JSSubprocessConstructor* JSSubprocessConstructor::create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, JSSubprocessPrototype* prototype)
-{
-    JSSubprocessConstructor* ptr = new (NotNull, JSC::allocateCell<JSSubprocessConstructor>(vm)) JSSubprocessConstructor(vm, structure);
-    ptr->finishCreation(vm, globalObject, prototype);
-    return ptr;
-}
-
-JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSSubprocessConstructor::construct(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame)
-{
-    Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
-    JSC::VM& vm = globalObject->vm();
-    JSObject* newTarget = asObject(callFrame->newTarget());
-    auto* constructor = globalObject->JSSubprocessConstructor();
-    Structure* structure = globalObject->JSSubprocessStructure();
-    if (constructor != newTarget) {
-        auto scope = DECLARE_THROW_SCOPE(vm);
-
-        auto* functionGlobalObject = reinterpret_cast<Zig::GlobalObject*>(
-            // ShadowRealm functions belong to a different global object.
-            getFunctionRealm(globalObject, newTarget));
-        RETURN_IF_EXCEPTION(scope, {});
-        structure = InternalFunction::createSubclassStructure(
-            globalObject,
-            newTarget,
-            functionGlobalObject->JSSubprocessStructure());
-    }
-
-    void* ptr = SubprocessClass__construct(globalObject, callFrame);
-
-    if (UNLIKELY(!ptr)) {
-        return JSValue::encode(JSC::jsUndefined());
-    }
-
-    JSSubprocess* instance = JSSubprocess::create(vm, globalObject, structure, ptr);
-
-    return JSValue::encode(instance);
-}
-
-void JSSubprocessConstructor::initializeProperties(VM& vm, JSC::JSGlobalObject* globalObject, JSSubprocessPrototype* prototype)
-{
-}
-
-const ClassInfo JSSubprocessConstructor::s_info = { "Function"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSSubprocessConstructor) };
-
-extern "C" EncodedJSValue Subprocess__getConstructor(Zig::GlobalObject* globalObject)
-{
-    return JSValue::encode(globalObject->JSSubprocessConstructor());
-}
-
 extern "C" bool Subprocess__hasPendingActivity(void* ptr);
 bool JSSubprocess::hasPendingActivity(void* ctx)
 {
@@ -2174,11 +1763,6 @@ void JSSubprocess::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
         //     analyzer.setLabelForCell(cell, "url " + thisObject->scriptExecutionContext()->url().string());
     }
     Base::analyzeHeap(cell, analyzer);
-}
-
-JSObject* JSSubprocess::createConstructor(VM& vm, JSGlobalObject* globalObject, JSValue prototype)
-{
-    return WebCore::JSSubprocessConstructor::create(vm, globalObject, WebCore::JSSubprocessConstructor::createStructure(vm, globalObject, globalObject->functionPrototype()), jsCast<WebCore::JSSubprocessPrototype*>(prototype));
 }
 
 JSObject* JSSubprocess::createPrototype(VM& vm, JSDOMGlobalObject* globalObject)

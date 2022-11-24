@@ -63,6 +63,7 @@ export default [
         getter: "getFilePath",
         cache: true,
       },
+      // this is for compatibiltiy with bun-framework-next old versions
       scriptSrc: {
         getter: "getScriptSrc",
         cache: true,

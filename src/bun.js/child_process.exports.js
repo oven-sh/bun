@@ -1033,13 +1033,16 @@ export class ChildProcess extends EventEmitter {
     const stdio = options.stdio || ["pipe", "pipe", "pipe"];
     const bunStdio = getBunStdioFromOptions(stdio);
 
+    var env = options.envPairs || undefined;
+    if (env === process.env) env = undefined;
+
     this.#handle = Bun.spawn({
       cmd: spawnargs,
       stdin: bunStdio[0],
       stdout: bunStdio[1],
       stderr: bunStdio[2],
       cwd: options.cwd || undefined,
-      env: options.envPairs || undefined,
+      env,
       onExit: this.#handleOnExit.bind(this),
       lazy: true,
     });

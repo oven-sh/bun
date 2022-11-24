@@ -1,4 +1,4 @@
-import { beforeAll, describe, it } from "bun:test";
+import { beforeAll, describe, it as it_ } from "bun:test";
 import { ChildProcess, spawn, exec } from "node:child_process";
 import {
   strictEqual,
@@ -9,6 +9,36 @@ import {
   createDoneDotAll,
 } from "node-test-helpers";
 import { tmpdir } from "node:os";
+import { gcTick } from "gc";
+
+const it = (label, fn) => {
+  const hasDone = fn.length === 1;
+  if (fn.constructor.name === "AsyncFunction" && hasDone) {
+    return it_(label, async (done) => {
+      gcTick();
+      await fn(done);
+      gcTick();
+    });
+  } else if (hasDone) {
+    return it_(label, (done) => {
+      gcTick();
+      fn(done);
+      gcTick();
+    });
+  } else if (fn.constructor.name === "AsyncFunction") {
+    return it_(label, async () => {
+      gcTick();
+      await fn();
+      gcTick();
+    });
+  } else {
+    return it_(label, () => {
+      gcTick();
+      fn();
+      gcTick();
+    });
+  }
+};
 
 const debug = process.env.DEBUG ? console.log : () => {};
 

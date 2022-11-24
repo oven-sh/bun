@@ -279,6 +279,7 @@ pub extern fn JSC__JSValue__createRangeError(arg0: [*c]const ZigString, arg1: [*
 pub extern fn JSC__JSValue__createStringArray(arg0: ?*JSC__JSGlobalObject, arg1: [*c]ZigString, arg2: usize, arg3: bool) JSC__JSValue;
 pub extern fn JSC__JSValue__createTypeError(arg0: [*c]const ZigString, arg1: [*c]const ZigString, arg2: ?*JSC__JSGlobalObject) JSC__JSValue;
 pub extern fn JSC__JSValue__createUninitializedUint8Array(arg0: ?*JSC__JSGlobalObject, arg1: usize) JSC__JSValue;
+pub extern fn JSC__JSValue__deepEquals(JSValue0: JSC__JSValue, JSValue1: JSC__JSValue, arg2: ?*JSC__JSGlobalObject) bool;
 pub extern fn JSC__JSValue__eqlCell(JSValue0: JSC__JSValue, arg1: [*c]JSC__JSCell) bool;
 pub extern fn JSC__JSValue__eqlValue(JSValue0: JSC__JSValue, JSValue1: JSC__JSValue) bool;
 pub extern fn JSC__JSValue__fastGet_(JSValue0: JSC__JSValue, arg1: ?*JSC__JSGlobalObject, arg2: u8) JSC__JSValue;

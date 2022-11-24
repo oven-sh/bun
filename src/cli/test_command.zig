@@ -300,7 +300,7 @@ pub const TestCommand = struct {
     pub fn exec(ctx: Command.Context) !void {
         if (comptime is_bindgen) unreachable;
         // print the version so you know its doing stuff if it takes a sec
-        Output.prettyErrorln("<r><b>bun wiptest <r><d>v" ++ Global.package_json_version_with_sha ++ "<r>\n\n", .{});
+        Output.prettyErrorln("<r><b>bun wiptest <r><d>v" ++ Global.package_json_version_with_sha ++ "<r>", .{});
         Output.flush();
 
         var env_loader = brk: {

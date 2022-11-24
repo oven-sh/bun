@@ -2661,7 +2661,13 @@ var require_readable = __commonJS({
             state.readableListening = state.needReadable = true;
             state.flowing = false;
             state.emittedReadable = false;
-            debug("on readable", state.length, state.reading, this.__id);
+            debug(
+              "on readable - state.length, reading, emittedReadable",
+              state.length,
+              state.reading,
+              state.emittedReadable,
+              this.__id,
+            );
             if (state.length) {
               emitReadable(this, state);
             } else if (!state.reading) {
@@ -2866,9 +2872,9 @@ var require_readable = __commonJS({
       process.nextTick(_maybeReadMore, stream, state);
     }
     // REVERT ME
-    function emitReadable(stream, ...args) {
-      debug("emitReadable", stream.__id);
-      _emitReadable(stream, ...args);
+    function emitReadable(stream, state) {
+      debug("NativeReadable - emitReadable", stream.__id);
+      _emitReadable(stream, state);
     }
     var destroyImpl = require_destroy();
     var {
@@ -3038,7 +3044,7 @@ var require_readable = __commonJS({
     }
     // You can override either this method, or the async _read(n) below.
     Readable.prototype.read = function (n) {
-      debug("read", n, this.__id);
+      debug("read - n =", n, this.__id);
       if (!NumberIsInteger(n)) {
         n = NumberParseInt(n, 10);
       }
@@ -3151,14 +3157,10 @@ var require_readable = __commonJS({
           }
 
           if (isPromise(result) && result?.then && isCallable(result.then)) {
-            result.then(
-              __DEBUG__
-                ? () => debug("internal read promise resolved", this.__id)
-                : nop,
-              function (err) {
-                errorOrDestroy(this, err);
-              },
-            );
+            debug("async _read result.then setup", this.__id);
+            result.then(nop, function (err) {
+              errorOrDestroy(this, err);
+            });
           }
         } catch (err) {
           errorOrDestroy(this, err);
@@ -3179,7 +3181,7 @@ var require_readable = __commonJS({
 
       if (ret === null) {
         state.needReadable = state.length <= state.highWaterMark;
-        debug("state.length @ needReadable", state.length, this.__id);
+        debug("state.length while ret = null", state.length, this.__id);
         n = 0;
       } else {
         state.length -= n;
@@ -3400,7 +3402,7 @@ var require_readable = __commonJS({
       }
     }
     function nReadingNextTick(self) {
-      debug("readable nexttick read 0", self.__id);
+      debug("on readable nextTick, calling read(0)", self.__id);
       self.read(0);
     }
     Readable.prototype.resume = function () {
@@ -6600,7 +6602,7 @@ function createNativeStream(nativeType, Readable) {
     }
 
     #handleResult(result, view, isClosed) {
-      debug("result @ #handleResult", result, this.__id);
+      debug("result, isClosed @ #handleResult", result, isClosed, this.__id);
       if (typeof result === "number") {
         if (result >= this.#highWaterMark && !this.#hasResized && !isClosed) {
           this.#highWaterMark *= 2;

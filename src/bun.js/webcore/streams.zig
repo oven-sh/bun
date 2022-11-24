@@ -3738,13 +3738,15 @@ pub const FIFO = struct {
         switch (Syscall.read(this.fd, buf)) {
             .err => |err| {
                 const retry = std.os.E.AGAIN;
-                const errno = brk: {
+                const errno: std.os.E = brk: {
                     const _errno = err.getErrno();
+
                     if (comptime Environment.isLinux) {
-                        // EPERM and its a FIFO on Linux? Trying to read past a FIFO which has already
-                        // sent a 0
-                        // Let's retry later.
-                        break :brk .AGAIN;
+                        if (_errno == .PERM)
+                            // EPERM and its a FIFO on Linux? Trying to read past a FIFO which has already
+                            // sent a 0
+                            // Let's retry later.
+                            return .{ .pending = {} };
                     }
 
                     break :brk _errno;

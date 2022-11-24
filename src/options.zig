@@ -1070,7 +1070,20 @@ pub fn definesFromTransformOptions(
     );
 }
 
-pub fn loadersFromTransformOptions(allocator: std.mem.Allocator, _loaders: ?Api.LoaderMap, platform: Platform) !std.StringHashMap(Loader) {
+const default_loader_ext_bun = [_]string{".node"};
+const default_loader_ext = [_]string{
+    ".jsx",  ".json",
+    ".js",   ".mjs",
+    ".cjs",  ".css",
+
+    // https://devblogs.microsoft.com/typescript/announcing-typescript-4-5-beta/#new-file-extensions
+    ".ts",   ".tsx",
+    ".mts",  ".cts",
+
+    ".toml", ".wasm",
+};
+
+pub fn loadersFromTransformOptions(allocator: std.mem.Allocator, _loaders: ?Api.LoaderMap, platform: Platform) !std.StringArrayHashMap(Loader) {
     var input_loaders = _loaders orelse std.mem.zeroes(Api.LoaderMap);
     var loader_values = try allocator.alloc(Loader, input_loaders.loaders.len);
 
@@ -1110,36 +1123,19 @@ pub fn loadersFromTransformOptions(allocator: std.mem.Allocator, _loaders: ?Api.
     }
 
     var loaders = try stringHashMapFromArrays(
-        std.StringHashMap(Loader),
+        std.StringArrayHashMap(Loader),
         allocator,
         input_loaders.extensions,
         loader_values,
     );
-    const default_loader_ext = comptime [_]string{
-        ".jsx",  ".json",
-        ".js",   ".mjs",
-        ".cjs",  ".css",
-
-        // https://devblogs.microsoft.com/typescript/announcing-typescript-4-5-beta/#new-file-extensions
-        ".ts",   ".tsx",
-        ".mts",  ".cts",
-
-        ".toml", ".wasm",
-    };
-
-    const default_loader_ext_bun = [_]string{".node"};
 
     inline for (default_loader_ext) |ext| {
-        if (!loaders.contains(ext)) {
-            try loaders.put(ext, defaultLoaders.get(ext).?);
-        }
+        _ = try loaders.getOrPutValue(ext, defaultLoaders.get(ext).?);
     }
 
     if (platform.isBun()) {
         inline for (default_loader_ext_bun) |ext| {
-            if (!loaders.contains(ext)) {
-                try loaders.put(ext, defaultLoaders.get(ext).?);
-            }
+            _ = try loaders.getOrPutValue(ext, defaultLoaders.get(ext).?);
         }
     }
 
@@ -1182,7 +1178,7 @@ pub const BundleOptions = struct {
     footer: string = "",
     banner: string = "",
     define: *defines.Define,
-    loaders: std.StringHashMap(Loader),
+    loaders: std.StringArrayHashMap(Loader),
     resolve_dir: string = "/",
     jsx: JSX.Pragma = JSX.Pragma{},
     auto_import_jsx: bool = true,

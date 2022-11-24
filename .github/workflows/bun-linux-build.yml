@@ -71,6 +71,8 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
+      - run: |
+          mkdir -p /tmp/.buildx-cache-${{matrix.tag}}
       - name: Build and push
         uses: docker/build-push-action@v3
         with:

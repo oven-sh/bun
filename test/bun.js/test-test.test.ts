@@ -1,6 +1,12 @@
 import { expect, test } from "bun:test";
 import { OnigurumaRegExp } from "bun";
 
+function f1() {
+  return "hello!";
+}
+function f2() {
+  return "hey!";
+}
 test("deepEquals regex", () => {
   expect(new OnigurumaRegExp("s", "g")).toEqual(new OnigurumaRegExp("s", "g"));
   expect(new OnigurumaRegExp("s", "g")).not.toEqual(
@@ -11,6 +17,222 @@ test("deepEquals regex", () => {
 
   expect(new RegExp("s", "g")).toEqual(new RegExp("s", "g"));
   expect(new RegExp("s", "g")).not.toEqual(new RegExp("s", "i"));
+});
+
+test("deepEquals derived strings and strings", () => {
+  let a = new String("hello");
+  let b = "hello";
+  expect(a).toEqual(a);
+  expect(b).toEqual(b);
+  expect(a).not.toEqual(b);
+  expect(b).not.toEqual(a);
+
+  class F extends String {
+    constructor() {
+      super();
+    }
+  }
+
+  let f = new F("hello");
+  expect(f).toEqual(f);
+  expect(f).not.toEqual(b);
+  expect(b).not.toEqual(f);
+
+  let j = new String("hello");
+  expect(f).not.toEqual(j);
+
+  class G extends String {
+    constructor() {
+      super();
+      this.x = 0;
+    }
+  }
+
+  let g = new G("hello");
+  expect(g).not.toEqual(f);
+  expect(f).not.toEqual(g);
+  expect(g).toEqual(g);
+  expect(g).not.toEqual(b);
+  expect(b).not.toEqual(g);
+  expect(g).not.toEqual(a);
+});
+
+test("deepEquals throw getters", () => {
+  let a = {
+    get x() {
+      throw new Error("a");
+    },
+  };
+
+  let b = {
+    get x() {
+      return 3;
+    },
+  };
+
+  try {
+    expect(a).not.toEqual(b);
+  } catch (e) {
+    expect(e.message).toContain("a");
+  }
+
+  class B {
+    get x() {
+      throw new Error("b");
+    }
+  }
+
+  class C {
+    get x() {
+      return 3;
+    }
+  }
+
+  try {
+    expect(new B()).not.toEqual(new C());
+  } catch (e) {
+    expect(e.message).toContain("b");
+  }
+
+  let o = [
+    {
+      get x() {
+        throw new Error("c");
+      },
+    },
+  ];
+
+  let p = [
+    {
+      get x() {
+        return 3;
+      },
+    },
+  ];
+
+  try {
+    expect(o).not.toEqual(p);
+  } catch (e) {
+    expect(e.message).toContain("c");
+  }
+
+  const s = Symbol("s");
+  let q = {
+    get x() {
+      throw new Error("d");
+    },
+  };
+  q[s] = 3;
+
+  let r = {
+    get x() {
+      return 3;
+    },
+  };
+  r[s] = 3;
+
+  try {
+    expect(q).not.toEqual(r);
+  } catch (e) {
+    expect(e.message).toContain("d");
+  }
+});
+
+test("deepEquals large object", () => {
+  let o = {};
+  for (let i = 0; i < 65; i++) {
+    o["bun" + i] = i;
+  }
+  expect(o).toEqual(o);
+  let b = {};
+  for (let i = 0; i < 63; i++) {
+    b["bun" + i] = i;
+  }
+  expect(b).toEqual(b);
+  expect(o).not.toEqual(b);
+  expect(b).not.toEqual(o);
+
+  let c = { d: [Array(o)] };
+  let d = { d: [Array(b)] };
+  expect(c).toEqual(c);
+  expect(d).toEqual(d);
+  expect(c).not.toEqual(d);
+  expect(d).not.toEqual(c);
+
+  let e = { d: [Array(o), Array(o)] };
+  let f = { d: [Array(b), Array(b)] };
+  expect(e).toEqual(e);
+  expect(f).toEqual(f);
+  expect(e).not.toEqual(f);
+  expect(f).not.toEqual(e);
+
+  let p = [];
+  p[0] = {};
+  for (let i = 0; i < 1000; i++) {
+    p[0]["bun" + i] = i;
+  }
+  let q = [];
+  q[0] = {};
+  for (let i = 0; i < 1000; i++) {
+    q[0]["bun" + i] = i;
+  }
+  expect(p).toEqual(p);
+  expect(q).toEqual(q);
+
+  q[0].bun789 = 788;
+  expect(p).not.toEqual(q);
+  expect(q).not.toEqual(p);
+
+  let r = { d: {} };
+  let s = { d: {} };
+  for (let i = 0; i < 1000; i++) {
+    r.d["bun" + i] = i;
+    s.d["bun" + i] = i;
+  }
+
+  expect(r).toEqual(r);
+  expect(s).toEqual(s);
+
+  r.d.bun790 = 791;
+  expect(r).not.toEqual(s);
+  expect(s).not.toEqual(r);
+
+  let t = [];
+  t[5] = {};
+  let u = [];
+  u[5] = {};
+  for (let i = 0; i < 1000; i++) {
+    t[5]["bun" + i] = i;
+  }
+  for (let i = 0; i < 30; i++) {
+    u[5]["bun" + i] = i;
+  }
+  expect(t).toEqual(t);
+  expect(u).toEqual(u);
+  expect(t).not.toEqual(u);
+  expect(u).not.toEqual(t);
+
+  let v = { j: {} };
+  let w = { j: {} };
+  for (let i = 0; i < 1000; i++) {
+    v.j["bun" + i] = i;
+    w.j["bun" + i] = i;
+  }
+
+  expect(v).toEqual(v);
+  expect(w).toEqual(w);
+
+  v.j.bun999 = 1000;
+  expect(v).not.toEqual(w);
+  expect(w).not.toEqual(v);
+  expect(v).toEqual(v);
+
+  v.j.bun999 = 999;
+  w.j.bun0 = 1;
+  expect(v).not.toEqual(w);
+  expect(w).not.toEqual(v);
+  expect(v).toEqual(v);
+  expect(w).toEqual(w);
 });
 
 test("deepEquals - Date", () => {
@@ -26,13 +248,6 @@ test("deepEquals - Date", () => {
   date.setFullYear(1995);
   expect(new Date()).not.toEqual(date);
 });
-
-function f1() {
-  return "hello!";
-}
-function f2() {
-  return "hey!";
-}
 
 test("deepEquals toString and functions", () => {
   expect({ toString: f1 }).toEqual({

@@ -32,7 +32,6 @@
 #include "JavaScriptCore/JSString.h"
 #include "JavaScriptCore/Microtask.h"
 #include "JavaScriptCore/ObjectConstructor.h"
-#include "JavaScriptCore/ObjectConstructorInlines.h"
 #include "JavaScriptCore/ParserError.h"
 #include "JavaScriptCore/ScriptExecutable.h"
 #include "JavaScriptCore/StackFrame.h"
@@ -129,14 +128,40 @@ static void handlePromise(PromiseType* promise, JSC__JSGlobalObject* globalObjec
     }
 }
 
+static bool canPerformFastPropertyEnumerationForObjectAssignBun(Structure* s)
+{
+    if (s->typeInfo().overridesGetOwnPropertySlot())
+        return false;
+    if (s->typeInfo().overridesAnyFormOfGetOwnPropertyNames())
+        return false;
+    // FIXME: Indexed properties can be handled.
+    // https://bugs.webkit.org/show_bug.cgi?id=185358
+    if (hasIndexedProperties(s->indexingType()))
+        return false;
+    if (s->hasGetterSetterProperties())
+        return false;
+    if (s->hasReadOnlyOrGetterSetterPropertiesExcludingProto())
+        return false;
+    if (s->hasCustomGetterSetterProperties())
+        return false;
+    if (s->isUncacheableDictionary())
+        return false;
+    // Cannot perform fast [[Put]] to |target| if the property names of the |source| contain "__proto__".
+    if (s->hasUnderscoreProtoPropertyExcludingOriginalProto())
+        return false;
+    return true;
+}
+
 // adapted from underscorejs [https://underscorejs.org/docs/modules/isEqual.html]
 bool Bun__deepEquals(JSC__JSGlobalObject* globalObject, JSValue v1, JSValue v2, Vector<std::pair<JSC::JSValue, JSC::JSValue>, 16>& stack, ThrowScope* scope, bool addToStack)
 {
     VM& vm = globalObject->vm();
-
-    if (JSC::sameValue(globalObject, v1, v2)) {
+    if (!v1.isEmpty() && !v2.isEmpty() && JSC::sameValue(globalObject, v1, v2)) {
         return true;
     }
+
+    if (v1.isEmpty() || v2.isEmpty())
+        return v1.isEmpty() == v2.isEmpty();
 
     if (v1.isPrimitive() || v2.isPrimitive())
         return false;
@@ -454,7 +479,6 @@ bool Bun__deepEquals(JSC__JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
                 RETURN_IF_EXCEPTION(*scope, false);
                 JSValue right = o2->getIndexQuickly(i);
                 RETURN_IF_EXCEPTION(*scope, false);
-
                 if (!Bun__deepEquals(globalObject, left, right, stack, scope, true)) {
                     return false;
                 }
@@ -523,9 +547,9 @@ bool Bun__deepEquals(JSC__JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
     }
 
     JSC::Structure* o1Structure = o1->structure();
-    if (JSC::canPerformFastPropertyEnumerationForJSONStringify(o1Structure)) {
+    if (canPerformFastPropertyEnumerationForObjectAssignBun(o1Structure)) {
         JSC::Structure* o2Structure = o2->structure();
-        if (JSC::canPerformFastPropertyEnumerationForJSONStringify(o2Structure)) {
+        if (canPerformFastPropertyEnumerationForObjectAssignBun(o2Structure)) {
 
             size_t count1 = 0;
 

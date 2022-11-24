@@ -2650,6 +2650,80 @@ declare module "bun" {
     unref(): void;
   }
 
+  export class FileSystemRouter {
+    /**
+     * Create a new {@link FileSystemRouter}.
+     *
+     * @example
+     * ```ts
+     *const router = new FileSystemRouter({
+     *   dir: process.cwd() + "/pages",
+     *   style: "nextjs",
+     *});
+     *
+     * const {params} = router.match("/blog/2020/01/01/hello-world");
+     * console.log(params); // {year: "2020", month: "01", day: "01", slug: "hello-world"}
+     * ```
+     * @param options The options to use when creating the router
+     * @param options.dir The root directory containing the files to route
+     * @param options.style The style of router to use (only "nextjs" supported
+     * for now)
+     */
+    constructor(options: {
+      /**
+       * The root directory containing the files to route
+       *
+       * There is no default value for this option.
+       *
+       * @example
+       *   ```ts
+       *   const router = new FileSystemRouter({
+       *   dir:
+       */
+      dir: string;
+      style: "nextjs";
+
+      /** The base path to use when routing */
+      assetPrefix?: string;
+
+      origin?: string;
+    });
+
+    match(input: string | Request | Response | URL): MatchedRoute | null;
+
+    readonly assetPrefix: string;
+    readonly origin: string;
+    readonly style: string;
+    readonly routes: Record<string, string>;
+
+    reload(): void;
+  }
+
+  export interface MatchedRoute {
+    /**
+     * A map of the parameters from the route
+     *
+     * @example
+     * ```ts
+     * const router = new FileSystemRouter({
+     *   dir: "/path/to/files",
+     *   style: "nextjs",
+     * });
+     * const {params} = router.match("/blog/2020/01/01/hello-world");
+     * console.log(params.year); // "2020"
+     * console.log(params.month); // "01"
+     * console.log(params.day); // "01"
+     * console.log(params.slug); // "hello-world"
+     * ```
+     */
+    readonly params: Record<string, string>;
+    readonly pathname: string;
+    readonly query: Record<string, string>;
+    readonly name: string;
+    readonly kind: "exact" | "catch-all" | "optional-catch-all" | "dynamic";
+    readonly src: string;
+  }
+
   interface SyncSubprocess {
     stdout?: Buffer;
     stderr?: Buffer;

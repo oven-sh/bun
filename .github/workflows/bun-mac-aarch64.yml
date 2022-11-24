@@ -63,8 +63,8 @@ jobs:
           context: .
           push: false
           tags: ghcr.io/oven-sh/bun-obj:${{github.sha}}-${{matrix.cpu}}-${{matrix.arch}}-macos
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-from: type=local,src=/tmp/.buildx-cache-${{matrix.cpu}}-${matrix.arch}-macos-bun-obj
+          cache-to: type=local,dest=/tmp/.buildx-cache-${{matrix.cpu}}-${matrix.arch}-macos-bun-obj
           build-args: |
             ARCH=${{ matrix.arch }}
             BUILDARCH=amd64
@@ -151,16 +151,10 @@ jobs:
           echo "export PATH=$(brew --prefix coreutils)/libexec/gnubin:\$PATH" >> $GITHUB_ENV
           echo "export PATH=$(brew --prefix llvm@13)/bin:\$PATH" >> $GITHUB_ENV
           brew link --overwrite llvm@13
-      - name: ccache (dependencies)
+      - name: ccache
         uses: hendrikmuhs/ccache-action@v1.2
-        if: matrix.dependencies
         with:
-          key: ${{ runner.os }}-ccache-${{ matrix.tag }}-dependencies
-      - name: ccache (c++)
-        uses: hendrikmuhs/ccache-action@v1.2
-        if: matrix.compile_obj
-        with:
-          key: ${{ runner.os }}-ccache-${{ matrix.tag }}-obj
+          key: ${{ runner.os }}-ccache-${{ matrix.tag }}
       - name: Download WebKit
         if: matrix.compile_obj
         env:

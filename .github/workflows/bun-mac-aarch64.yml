@@ -6,7 +6,7 @@ env:
 
 on:
   push:
-    branches: [main, bun-actions]
+    branches: [main]
     paths:
       - "src/**/*"
       - "test/**/*"

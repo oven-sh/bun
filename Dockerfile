@@ -18,7 +18,6 @@ ARG ZIG_URL="https://github.com/oven-sh/zig/releases/download/$ZIG_TAG/zig-linux
 ARG GIT_SHA=""
 ARG BUN_BASE_VERSION=0.3
 
-
 FROM bitnami/minideb:bullseye as bun-base
 
 RUN install_packages ca-certificates curl wget lsb-release software-properties-common gnupg gnupg1 gnupg2
@@ -43,7 +42,7 @@ RUN install_packages \
     rsync \
     ruby \
     unzip \
-    bash tar gzip
+    bash tar gzip ccache
 
 ENV CXX=clang++-13
 ENV CC=clang-13
@@ -122,7 +121,9 @@ ARG BUN_DIR
 COPY Makefile ${BUN_DIR}/Makefile
 COPY src/deps/lol-html ${BUN_DIR}/src/deps/lol-html
 
-RUN export PATH=$PATH:$HOME/.cargo/bin && export CC=$(which clang-13) && cd ${BUN_DIR} && \
+ENV CCACHE_DIR=/ccache
+
+RUN --mount=type=cache,target=/ccache export PATH=$PATH:$HOME/.cargo/bin && export CC=$(which clang-13) && cd ${BUN_DIR} && \
     make lolhtml && rm -rf src/deps/lol-html Makefile
 
 FROM bun-base as mimalloc
@@ -141,7 +142,9 @@ COPY src/deps/mimalloc ${BUN_DIR}/src/deps/mimalloc
 ARG CPU_TARGET
 ENV CPU_TARGET=${CPU_TARGET}
 
-RUN cd ${BUN_DIR} && \
+ENV CCACHE_DIR=/ccache
+
+RUN --mount=type=cache,target=/ccache cd ${BUN_DIR} && \
     make mimalloc && rm -rf src/deps/mimalloc Makefile
 
 FROM bun-base as zlib
@@ -162,7 +165,9 @@ COPY src/deps/zlib ${BUN_DIR}/src/deps/zlib
 
 WORKDIR $BUN_DIR
 
-RUN cd $BUN_DIR && \
+ENV CCACHE_DIR=/ccache
+
+RUN --mount=type=cache,target=/ccache cd $BUN_DIR && \
     make zlib && rm -rf src/deps/zlib Makefile
 
 FROM bun-base as libarchive
@@ -183,7 +188,9 @@ RUN install_packages autoconf automake libtool pkg-config
 COPY Makefile ${BUN_DIR}/Makefile
 COPY src/deps/libarchive ${BUN_DIR}/src/deps/libarchive
 
-RUN cd $BUN_DIR && \
+ENV CCACHE_DIR=/ccache
+
+RUN --mount=type=cache,target=/ccache cd $BUN_DIR && \
     make libarchive && rm -rf src/deps/libarchive Makefile
 
 FROM bun-base as oniguruma
@@ -201,11 +208,9 @@ ENV CPU_TARGET=${CPU_TARGET}
 
 RUN install_packages autoconf automake libtool pkg-config 
 
-COPY Makefile ${BUN_DIR}/Makefile
-COPY src/deps/oniguruma ${BUN_DIR}/src/deps/oniguruma
+ENV CCACHE_DIR=/ccache
 
-WORKDIR $BUN_DIR
-RUN make oniguruma && rm -rf src/deps/oniguruma Makefile
+RUN --mount=type=cache,target=/ccache make oniguruma && rm -rf src/deps/oniguruma Makefile
 
 FROM bun-base as tinycc
 
@@ -242,7 +247,9 @@ COPY src/deps/boringssl ${BUN_DIR}/src/deps/boringssl
 
 WORKDIR $BUN_DIR
 
-RUN make boringssl && rm -rf src/deps/boringssl Makefile
+ENV CCACHE_DIR=/ccache
+
+RUN --mount=type=cache,target=/ccache make boringssl && rm -rf src/deps/boringssl Makefile
 
 FROM bun-base as uws
 
@@ -280,6 +287,7 @@ ARG BUN_RELEASE_DIR
 ARG BUN_DEPS_OUT_DIR
 ARG BUN_DIR
 ARG CPU_TARGET
+
 ENV CPU_TARGET=${CPU_TARGET}
 
 COPY Makefile ${BUN_DIR}/Makefile
@@ -395,7 +403,9 @@ COPY --from=node_fallbacks ${BUN_DIR}/src/node-fallbacks/out ${BUN_DIR}/src/node
 
 COPY ./build-id ${BUN_DIR}/build-id
 
-RUN cd $BUN_DIR && mkdir -p src/bun.js/bindings-obj &&  rm -rf $HOME/.cache zig-cache && make prerelease && \
+ENV CCACHE_DIR=/ccache
+
+RUN --mount=type=cache,target=/ccache cd $BUN_DIR && mkdir -p src/bun.js/bindings-obj &&  rm -rf $HOME/.cache zig-cache && make prerelease && \
     mkdir -p $BUN_RELEASE_DIR && \
     OUTPUT_DIR=/tmp $ZIG_PATH/zig build obj -Drelease-fast -Dtarget="${TRIPLET}" -Dcpu="${CPU_TARGET}" && \
     cp /tmp/bun.o /tmp/bun-${BUN_BASE_VERSION}.$(cat ${BUN_DIR}/build-id).o && cd / && rm -rf $BUN_DIR
@@ -450,7 +460,9 @@ COPY --from=tinycc ${BUN_DEPS_OUT_DIR}/*.a ${BUN_DEPS_OUT_DIR}/
 # Required for `make webcrypto`
 COPY src/deps/boringssl/include ${BUN_DIR}/src/deps/boringssl/include
 
-RUN cd $BUN_DIR && mkdir -p src/bun.js/bindings-obj &&  rm -rf $HOME/.cache zig-cache && mkdir -p $BUN_RELEASE_DIR && make webcrypto && \
+ENV CCACHE_DIR=/ccache
+
+RUN --mount=type=cache,target=/ccache cd $BUN_DIR && mkdir -p src/bun.js/bindings-obj &&  rm -rf $HOME/.cache zig-cache && mkdir -p $BUN_RELEASE_DIR && make webcrypto && \
     make release-bindings -j10 && mv ${BUN_DEPS_OUT_DIR}/libwebcrypto.a /tmp && mv src/bun.js/bindings-obj/* /tmp
 
 FROM prepare_release as sqlite
@@ -553,7 +565,7 @@ ENV LIB_ICU_PATH "${WEBKIT_DIR}/lib"
 
 CMD make headers \
     api \
-    analytics \
+    analytiecs \
     bun_error \
     fallback_decoder \
     bindings -j10 && \

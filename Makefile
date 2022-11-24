@@ -4,6 +4,15 @@ OS_NAME := $(shell uname -s | tr '[:upper:]' '[:lower:]')
 ARCH_NAME_RAW := $(shell uname -m)
 BUN_AUTO_UPDATER_REPO = Jarred-Sumner/bun-releases-for-updater
 
+CMAKE_CXX_COMPILER_LAUNCHER_FLAG ?=
+
+CCACHE_PATH ?=
+
+ifeq (,$(findstring,$(shell which ccache),ccache))
+	CCACHE_PATH := $(shell which ccache) 
+	CMAKE_CXX_COMPILER_LAUNCHER_FLAG := -DCMAKE_CXX_COMPILER_LAUNCHER=$(CCACHE_PATH)
+endif
+
 # 'make' command will trigger the help target
 .DEFAULT_GOAL := help
 
@@ -73,6 +82,8 @@ ZIG ?= $(shell which zig || echo -e "error: Missing zig. Please make sure zig is
 CC = $(shell which clang-13 || which clang)
 CXX = $(shell which clang++-13 || which clang++)
 
+CXX_WITH_CCACHE = $(CCACHE_PATH) $(CXX)
+
 ifeq ($(OS_NAME),darwin)
 # Find LLVM
 	ifeq ($(wildcard $(LLVM_PREFIX)),)
@@ -118,7 +129,7 @@ LIBICONV_PATH ?= $(BREW_PREFIX_PATH)/opt/libiconv/lib/libiconv.a
 
 OPENSSL_LINUX_DIR = $(BUN_DEPS_DIR)/openssl/openssl-OpenSSL_1_1_1l
 
-CMAKE_FLAGS_WITHOUT_RELEASE = -DCMAKE_C_COMPILER=$(CC) -DCMAKE_CXX_COMPILER=$(CXX) -DCMAKE_OSX_DEPLOYMENT_TARGET=$(MIN_MACOS_VERSION)
+CMAKE_FLAGS_WITHOUT_RELEASE = -DCMAKE_C_COMPILER=$(CC) -DCMAKE_CXX_COMPILER=$(CXX) -DCMAKE_OSX_DEPLOYMENT_TARGET=$(MIN_MACOS_VERSION) $(CMAKE_CXX_COMPILER_LAUNCHER_FLAG)
 CMAKE_FLAGS = $(CMAKE_FLAGS_WITHOUT_RELEASE) -DCMAKE_BUILD_TYPE=Release
 
 # SQLite3 is dynamically linked on macOS
@@ -1483,7 +1494,7 @@ $(DEBUG_OBJ_DIR):
 	mkdir -p $(DEBUG_OBJ_DIR)
 
 $(OBJ_DIR)/%.o: $(SRC_DIR)/%.cpp
-	$(CXX) $(CLANG_FLAGS) $(UWS_INCLUDE) \
+	$(CXX_WITH_CCACHE) $(CLANG_FLAGS) $(UWS_INCLUDE) \
 		$(MACOS_MIN_FLAG) \
 		$(OPTIMIZATION_LEVEL) \
 		-fno-exceptions \
@@ -1493,7 +1504,7 @@ $(OBJ_DIR)/%.o: $(SRC_DIR)/%.cpp
 		-c -o $@ $<
 
 $(OBJ_DIR)/%.o: src/bun.js/modules/%.cpp
-	$(CXX) $(CLANG_FLAGS) $(UWS_INCLUDE) \
+	$(CXX_WITH_CCACHE) $(CLANG_FLAGS) $(UWS_INCLUDE) \
 		$(MACOS_MIN_FLAG) \
 		$(OPTIMIZATION_LEVEL) \
 		-fno-exceptions \
@@ -1503,7 +1514,7 @@ $(OBJ_DIR)/%.o: src/bun.js/modules/%.cpp
 		-c -o $@ $<
 
 $(OBJ_DIR)/%.o: $(SRC_DIR)/webcore/%.cpp
-	$(CXX) $(CLANG_FLAGS) \
+	$(CXX_WITH_CCACHE) $(CLANG_FLAGS) \
 		$(MACOS_MIN_FLAG) \
 		$(OPTIMIZATION_LEVEL) \
 		-fno-exceptions \
@@ -1513,7 +1524,7 @@ $(OBJ_DIR)/%.o: $(SRC_DIR)/webcore/%.cpp
 		-c -o $@ $<
 
 $(OBJ_DIR)/%.o: $(SRC_DIR)/sqlite/%.cpp
-	$(CXX) $(CLANG_FLAGS) \
+	$(CXX_WITH_CCACHE) $(CLANG_FLAGS) \
 		$(MACOS_MIN_FLAG) \
 		$(OPTIMIZATION_LEVEL) \
 		-fno-exceptions \
@@ -1523,7 +1534,7 @@ $(OBJ_DIR)/%.o: $(SRC_DIR)/sqlite/%.cpp
 		-c -o $@ $<
 
 $(OBJ_DIR)/%.o: src/io/%.cpp
-	$(CXX) $(CLANG_FLAGS) \
+	$(CXX_WITH_CCACHE) $(CLANG_FLAGS) \
 		$(MACOS_MIN_FLAG) \
 		$(OPTIMIZATION_LEVEL) \
 		-fno-exceptions \
@@ -1533,7 +1544,7 @@ $(OBJ_DIR)/%.o: src/io/%.cpp
 		-c -o $@ $<
 
 $(OBJ_DIR)/%.o: $(SRC_DIR)/node_os/%.cpp
-	$(CXX) $(CLANG_FLAGS) \
+	$(CXX_WITH_CCACHE) $(CLANG_FLAGS) \
 		$(MACOS_MIN_FLAG) \
 		$(OPTIMIZATION_LEVEL) \
 		-fno-exceptions \
@@ -1543,7 +1554,7 @@ $(OBJ_DIR)/%.o: $(SRC_DIR)/node_os/%.cpp
 		-c -o $@ $<
 
 $(OBJ_DIR)/%.o: src/bun.js/builtins/%.cpp
-	$(CXX) $(CLANG_FLAGS) \
+	$(CXX_WITH_CCACHE) $(CLANG_FLAGS) \
 		$(MACOS_MIN_FLAG) \
 		$(OPTIMIZATION_LEVEL) \
 		-fno-exceptions \
@@ -1554,8 +1565,9 @@ $(OBJ_DIR)/%.o: src/bun.js/builtins/%.cpp
 
 # $(DEBUG_OBJ_DIR) is not included here because it breaks
 # detecting if a file needs to be rebuilt
+.PHONY: $(SRC_DIR)/%.cpp
 $(DEBUG_OBJ_DIR)/%.o: $(SRC_DIR)/%.cpp
-	$(CXX) $(CLANG_FLAGS) $(UWS_INCLUDE) \
+	$(CXX_WITH_CCACHE) $(CLANG_FLAGS) $(UWS_INCLUDE) \
 		$(MACOS_MIN_FLAG) \
 		$(DEBUG_OPTIMIZATION_LEVEL) \
 		-fno-exceptions \
@@ -1566,8 +1578,9 @@ $(DEBUG_OBJ_DIR)/%.o: $(SRC_DIR)/%.cpp
 
 # $(DEBUG_OBJ_DIR) is not included here because it breaks
 # detecting if a file needs to be rebuilt
+.PHONY: $(SRC_DIR)/webcore/%.cpp
 $(DEBUG_OBJ_DIR)/%.o: $(SRC_DIR)/webcore/%.cpp
-	$(CXX) $(CLANG_FLAGS) \
+	$(CXX_WITH_CCACHE) $(CLANG_FLAGS) \
 		$(MACOS_MIN_FLAG) \
 		$(DEBUG_OPTIMIZATION_LEVEL) \
 		-fno-exceptions \
@@ -1576,8 +1589,9 @@ $(DEBUG_OBJ_DIR)/%.o: $(SRC_DIR)/webcore/%.cpp
 		$(EMIT_LLVM_FOR_DEBUG) \
 		-g3 -c -o $@ $<
 
+.PHONY: src/io/%.cpp
 $(DEBUG_OBJ_DIR)/%.o: src/io/%.cpp
-	$(CXX) $(CLANG_FLAGS) \
+	$(CXX_WITH_CCACHE) $(CLANG_FLAGS) \
 		$(MACOS_MIN_FLAG) \
 		$(DEBUG_OPTIMIZATION_LEVEL) \
 		-fno-exceptions \
@@ -1589,8 +1603,9 @@ $(DEBUG_OBJ_DIR)/%.o: src/io/%.cpp
 
 # $(DEBUG_OBJ_DIR) is not included here because it breaks
 # detecting if a file needs to be rebuilt
+.PHONY: $(SRC_DIR)/sqlite/%.cpp
 $(DEBUG_OBJ_DIR)/%.o: $(SRC_DIR)/sqlite/%.cpp
-	$(CXX) $(CLANG_FLAGS) \
+	$(CXX_WITH_CCACHE) $(CLANG_FLAGS) \
 		$(MACOS_MIN_FLAG) \
 		$(DEBUG_OPTIMIZATION_LEVEL) \
 		-fno-exceptions \
@@ -1601,8 +1616,9 @@ $(DEBUG_OBJ_DIR)/%.o: $(SRC_DIR)/sqlite/%.cpp
 
 # $(DEBUG_OBJ_DIR) is not included here because it breaks
 # detecting if a file needs to be rebuilt
+.PHONY: $(SRC_DIR)/node_os/%.cpp
 $(DEBUG_OBJ_DIR)/%.o: $(SRC_DIR)/node_os/%.cpp
-	$(CXX) $(CLANG_FLAGS) \
+	$(CXX_WITH_CCACHE) $(CLANG_FLAGS) \
 		$(MACOS_MIN_FLAG) \
 		$(DEBUG_OPTIMIZATION_LEVEL) \
 		-fno-exceptions \
@@ -1613,8 +1629,9 @@ $(DEBUG_OBJ_DIR)/%.o: $(SRC_DIR)/node_os/%.cpp
 
 # $(DEBUG_OBJ_DIR) is not included here because it breaks
 # detecting if a file needs to be rebuilt
+.PHONY: src/bun.js/builtins/%.cpp
 $(DEBUG_OBJ_DIR)/%.o: src/bun.js/builtins/%.cpp
-	$(CXX) $(CLANG_FLAGS) \
+	$(CXX_WITH_CCACHE) $(CLANG_FLAGS) \
 		$(MACOS_MIN_FLAG) \
 		$(DEBUG_OPTIMIZATION_LEVEL) \
 		-fno-exceptions \
@@ -1623,8 +1640,9 @@ $(DEBUG_OBJ_DIR)/%.o: src/bun.js/builtins/%.cpp
 		$(EMIT_LLVM_FOR_DEBUG) \
 		-g3 -c -o $@ $<
 
+.PHONY: src/bun.js/modules/%.cpp
 $(DEBUG_OBJ_DIR)/%.o: src/bun.js/modules/%.cpp
-	$(CXX) $(CLANG_FLAGS) \
+	$(CXX_WITH_CCACHE) $(CLANG_FLAGS) \
 		$(MACOS_MIN_FLAG) \
 		$(DEBUG_OPTIMIZATION_LEVEL) \
 		-fno-exceptions \
@@ -1636,7 +1654,7 @@ $(DEBUG_OBJ_DIR)/%.o: src/bun.js/modules/%.cpp
 
 
 $(DEBUG_OBJ_DIR)/webcrypto/%.o: src/bun.js/bindings/webcrypto/%.cpp
-	$(CXX) $(CLANG_FLAGS) \
+	$(CXX_WITH_CCACHE) $(CLANG_FLAGS) \
 		$(MACOS_MIN_FLAG) \
 		$(DEBUG_OPTIMIZATION_LEVEL) \
 		-fno-exceptions \
@@ -1660,7 +1678,7 @@ webcrypto-debug:
 
 
 $(OBJ_DIR)/webcrypto/%.o: src/bun.js/bindings/webcrypto/%.cpp
-	$(CXX) $(CLANG_FLAGS) \
+	$(CXX_WITH_CCACHE) $(CLANG_FLAGS) \
 		$(MACOS_MIN_FLAG) \
 		$(OPTIMIZATION_LEVEL) \
 		-fno-exceptions \

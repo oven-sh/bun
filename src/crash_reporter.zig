@@ -27,7 +27,13 @@ noinline fn sigaction_handler(sig: i32, info: *const std.os.siginfo_t, _: ?*cons
     if (on_error) |handle| handle(sig, addr);
 }
 
+noinline fn sigpipe_handler(_: i32, _: *const std.os.siginfo_t, _: ?*const anyopaque) callconv(.C) void {
+    const bun = @import("./global.zig");
+    bun.Output.debug("SIGPIPE received\n", .{});
+}
+
 pub fn reloadHandlers() !void {
+    try os.sigaction(os.SIG.PIPE, null, null);
     try setup_sigactions(null);
 
     var act = os.Sigaction{
@@ -37,6 +43,18 @@ pub fn reloadHandlers() !void {
     };
 
     try setup_sigactions(&act);
+
+    var pipe = os.Sigaction{
+        .handler = .{ .sigaction = sigpipe_handler },
+        .mask = os.empty_sigset,
+        .flags = (os.SA.SIGINFO | os.SA.RESTART | os.SA.RESETHAND),
+    };
+
+    try os.sigaction(
+        os.SIG.PIPE,
+        &pipe,
+        null,
+    );
 }
 const os = std.os;
 pub fn start() !void {
@@ -47,4 +65,17 @@ pub fn start() !void {
     };
 
     try setup_sigactions(&act);
+    {
+        var pipe = os.Sigaction{
+            .handler = .{ .sigaction = sigpipe_handler },
+            .mask = os.empty_sigset,
+            .flags = (os.SA.SIGINFO | os.SA.RESTART | os.SA.RESETHAND),
+        };
+
+        try os.sigaction(
+            os.SIG.PIPE,
+            &pipe,
+            null,
+        );
+    }
 }

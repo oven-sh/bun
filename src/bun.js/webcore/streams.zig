@@ -3633,7 +3633,7 @@ pub const FIFO = struct {
             return;
         }
 
-        if (this.buf.len == 0 and available_to_read != 0) {
+        if (this.buf.len == 0 and (available_to_read orelse 1) != 0) {
             return;
         }
 

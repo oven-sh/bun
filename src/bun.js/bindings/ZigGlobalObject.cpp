@@ -1782,6 +1782,31 @@ JSC_DEFINE_HOST_FUNCTION(functionBunEscapeHTML, (JSC::JSGlobalObject * lexicalGl
     }
 }
 
+JSC_DECLARE_HOST_FUNCTION(functionBunDeepEquals);
+
+JSC_DEFINE_HOST_FUNCTION(functionBunDeepEquals, (JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    auto* global = reinterpret_cast<GlobalObject*>(globalObject);
+    JSC::VM& vm = global->vm();
+
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    if (callFrame->argumentCount() < 2) {
+        auto throwScope = DECLARE_THROW_SCOPE(vm);
+        throwTypeError(globalObject, throwScope, "Expected 2 values to compare"_s);
+        return JSValue::encode(jsUndefined());
+    }
+
+    JSC::JSValue arg1 = callFrame->argument(0);
+    JSC::JSValue arg2 = callFrame->argument(1);
+
+    Vector<std::pair<JSValue, JSValue>, 16> stack;
+
+    bool isEqual = Bun__deepEquals(globalObject, arg1, arg2, stack, &scope, true);
+    RETURN_IF_EXCEPTION(scope, {});
+    return JSValue::encode(jsBoolean(isEqual));
+}
+
 JSC_DECLARE_HOST_FUNCTION(functionBunNanoseconds);
 
 JSC_DEFINE_HOST_FUNCTION(functionBunNanoseconds, (JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
@@ -3125,6 +3150,12 @@ void GlobalObject::installAPIGlobals(JSClassRef* globals, int count, JSC::VM& vm
         {
             JSC::Identifier identifier = JSC::Identifier::fromString(vm, "nanoseconds"_s);
             object->putDirectNativeFunction(vm, this, identifier, 1, functionBunNanoseconds, ImplementationVisibility::Public, NoIntrinsic,
+                JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DontDelete | 0);
+        }
+
+        {
+            JSC::Identifier identifier = JSC::Identifier::fromString(vm, "deepEquals"_s);
+            object->putDirectNativeFunction(vm, this, identifier, 2, functionBunDeepEquals, ImplementationVisibility::Public, NoIntrinsic,
                 JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DontDelete | 0);
         }
 

@@ -675,6 +675,46 @@ pub const Expect = struct {
         return .zero;
     }
 
+    pub fn toEqual(this: *Expect, globalObject: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+        const thisValue = callFrame.this();
+        const _arguments = callFrame.arguments(1);
+        const arguments: []const JSValue = _arguments.ptr[0.._arguments.len];
+
+        if (arguments.len < 1) {
+            globalObject.throwInvalidArguments("toEqual() requires 1 argument", .{});
+            return .zero;
+        }
+
+        if (this.scope.tests.items.len <= this.test_id) {
+            globalObject.throw("toEqual() must be called in a test", .{});
+            return .zero;
+        }
+
+        active_test_expectation_counter.actual += 1;
+
+        const expected = arguments[0];
+        const value = Expect.capturedValueGetCached(thisValue) orelse {
+            globalObject.throw("Internal consistency error: the expect(value) was garbage collected but it should not have been!", .{});
+            return .zero;
+        };
+        value.ensureStillAlive();
+
+        const not = this.op.contains(.not);
+        var pass = value.deepEquals(expected, globalObject);
+
+        if (not) pass = !pass;
+        if (pass) return thisValue;
+
+        // handle failure
+        var fmt = JSC.ZigConsoleClient.Formatter{ .globalThis = globalObject };
+        if (not) {
+            globalObject.throw("Expected values to not be equal:\n\tExpected: {any}\n\tReceived: {any}", .{ expected.toFmt(globalObject, &fmt), value.toFmt(globalObject, &fmt) });
+        } else {
+            globalObject.throw("Expected values to be equal:\n\tExpected: {any}\n\tReceived: {any}", .{ expected.toFmt(globalObject, &fmt), value.toFmt(globalObject, &fmt) });
+        }
+        return .zero;
+    }
+
     pub const toHaveProperty = notImplementedJSCFn;
     pub const toHaveBeenCalledTimes = notImplementedJSCFn;
     pub const toHaveBeenCalledWith = notImplementedJSCFn;
@@ -691,7 +731,6 @@ pub const Expect = struct {
     pub const toBeLessThanOrEqual = notImplementedJSCFn;
     pub const toBeInstanceOf = notImplementedJSCFn;
     pub const toContainEqual = notImplementedJSCFn;
-    pub const toEqual = notImplementedJSCFn;
     pub const toMatch = notImplementedJSCFn;
     pub const toMatchObject = notImplementedJSCFn;
     pub const toMatchSnapshot = notImplementedJSCFn;

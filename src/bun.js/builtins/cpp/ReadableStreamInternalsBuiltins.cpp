@@ -986,7 +986,7 @@ const char* const s_readableStreamInternalsIsReadableStreamDefaultControllerCode
 const JSC::ConstructAbility s_readableStreamInternalsReadDirectStreamCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableStreamInternalsReadDirectStreamCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_readableStreamInternalsReadDirectStreamCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_readableStreamInternalsReadDirectStreamCodeLength = 1557;
+const int s_readableStreamInternalsReadDirectStreamCodeLength = 1598;
 static const JSC::Intrinsic s_readableStreamInternalsReadDirectStreamCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_readableStreamInternalsReadDirectStreamCode =
     "(function (stream, sink, underlyingSource) {\n" \
@@ -2270,7 +2270,7 @@ const char* const s_readableStreamInternalsReadableStreamDefaultControllerCanClo
 const JSC::ConstructAbility s_readableStreamInternalsLazyLoadStreamCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableStreamInternalsLazyLoadStreamCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_readableStreamInternalsLazyLoadStreamCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_readableStreamInternalsLazyLoadStreamCodeLength = 3647;
+const int s_readableStreamInternalsLazyLoadStreamCodeLength = 3703;
 static const JSC::Intrinsic s_readableStreamInternalsLazyLoadStreamCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_readableStreamInternalsLazyLoadStreamCode =
     "(function (stream, autoAllocateChunkSize) {\n" \
@@ -2302,7 +2302,7 @@ const char* const s_readableStreamInternalsLazyLoadStreamCode =
     "          (err) => controller.error(err)\n" \
     "        );\n" \
     "      } else if (typeof result === 'number') {\n" \
-    "        if (view && view.byteLength === result) {\n" \
+    "        if (view && view.byteLength === result && view.buffer === controller.byobRequest?.view?.buffer) {\n" \
     "          controller.byobRequest.respondWithNewView(view);\n" \
     "        } else {\n" \
     "          controller.byobRequest.respond(result);\n" \

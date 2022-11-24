@@ -1879,7 +1879,7 @@ function lazyLoadStream(stream, autoAllocateChunkSize) {
           (err) => controller.error(err)
         );
       } else if (typeof result === 'number') {
-        if (view && view.byteLength === result) {
+        if (view && view.byteLength === result && view.buffer === controller.byobRequest?.view?.buffer) {
           controller.byobRequest.respondWithNewView(view);
         } else {
           controller.byobRequest.respond(result);

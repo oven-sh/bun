@@ -63,9 +63,9 @@ var DebugEventEmitter = class DebugEventEmitter extends __require("events") {
   on(event, handler) {
     var __id = this.__id;
     if (__id) {
-      debug("on", event, __id);
+      debug("on", event, "added", __id);
     } else {
-      debug("on", event);
+      debug("on", event, "added");
     }
     super.on(event, handler);
   }
@@ -3142,17 +3142,23 @@ var require_readable = __commonJS({
         try {
           var result = this._read(state.highWaterMark);
           if (isPromise(result)) {
+            debug("async _read", this.__id);
             const peeked = Bun.peek(result);
+            debug("peeked promise", peeked, this.__id);
             if (peeked !== result) {
               result = peeked;
             }
           }
 
-          var then = result?.then;
-          if (then && isCallable(then)) {
-            result.then(nop, function (err) {
-              errorOrDestroy(this, err);
-            });
+          if (isPromise(result) && result?.then && isCallable(result.then)) {
+            result.then(
+              __DEBUG__
+                ? () => debug("internal read promise resolved", this.__id)
+                : nop,
+              function (err) {
+                errorOrDestroy(this, err);
+              },
+            );
           }
         } catch (err) {
           errorOrDestroy(this, err);
@@ -3164,6 +3170,7 @@ var require_readable = __commonJS({
         if (!state.reading) n = howMuchToRead(nOrig, state);
       }
 
+      debug("n @ fromList", n, this.__id);
       let ret;
       if (n > 0) ret = fromList(n, state);
       else ret = null;
@@ -6521,6 +6528,7 @@ function createNativeStream(nativeType, Readable) {
       }
 
       var ptr = this.#ptr;
+      debug("ptr @ NativeReadable._read", ptr, this.__id);
       if (ptr === 0) {
         this.push(null);
         return;
@@ -6554,9 +6562,12 @@ function createNativeStream(nativeType, Readable) {
     #internalConstruct(ptr) {
       this.#constructed = true;
       const result = start(ptr, this.#highWaterMark);
+      debug("NativeReadable internal `start` result", result, this.__id);
 
       if (typeof result === "number" && result > 1) {
         this.#hasResized = true;
+        debug("NativeReadable resized", this.__id);
+
         this.#highWaterMark = Math.min(this.#highWaterMark, result);
       }
 
@@ -6579,6 +6590,12 @@ function createNativeStream(nativeType, Readable) {
     }
 
     push(result, encoding) {
+      debug(
+        "NativeReadable push -- result, encoding",
+        result,
+        encoding,
+        this.__id,
+      );
       return super.push(...arguments);
     }
 
@@ -6653,6 +6670,7 @@ function createNativeStream(nativeType, Readable) {
         updateRef(ptr, false);
       }
       process.nextTick(deinit, ptr);
+      debug("NativeReadable destroyed", this.__id);
       cancel(ptr, error);
       callback(error);
     }

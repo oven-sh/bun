@@ -169,11 +169,13 @@ jobs:
         if: matrix.dependencies
         with:
           key: ${{ runner.os }}-ccache-${{ matrix.tag }}-dependencies
+          restore-keys: ${{ runner.os }}-ccache-${{ matrix.tag }}-dependencies
       - name: ccache (c++)
         uses: hendrikmuhs/ccache-action@v1.2
         if: matrix.compile_obj
         with:
           key: ${{ runner.os }}-ccache-${{ matrix.tag }}-obj
+          restore-keys: ${{ runner.os }}-ccache-${{ matrix.tag }}-obj
       - name: Compile dependencies
         if: matrix.dependencies
         env:
@@ -301,6 +303,7 @@ jobs:
         uses: hendrikmuhs/ccache-action@v1.2
         with:
           key: ${{ runner.os }}-ccache-${{ matrix.tag }}-link
+          restore-keys: ${{ runner.os }}-ccache-${{ matrix.tag }}-link
       - name: Link
         env:
           CPU_TARGET: ${{ matrix.cpu }}

@@ -155,6 +155,7 @@ jobs:
         uses: hendrikmuhs/ccache-action@v1.2
         with:
           key: ${{ runner.os }}-ccache-${{ matrix.tag }}
+          restore-keys: ${{ runner.os }}-ccache-${{ matrix.tag }}
       - name: Download WebKit
         if: matrix.compile_obj
         env:
@@ -270,6 +271,7 @@ jobs:
         uses: hendrikmuhs/ccache-action@v1.2
         with:
           key: ${{ runner.os }}-ccache-${{ matrix.tag }}-link
+          restore-keys: ${{ runner.os }}-ccache-${{ matrix.tag }}-link
       - name: Download WebKit
         env:
           CPU_TARGET: ${{ matrix.cpu }}

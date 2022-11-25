@@ -228,6 +228,20 @@ function testBlobInterface(blobbyConstructor, hasBlobFn) {
   }
 }
 
+describe("Bun.file", () => {
+  const tempdir = require("os").tmpdir();
+  var callCount = 0;
+  testBlobInterface((data) => {
+    const blob = new Blob([data]);
+    const buffer = Bun.peek(blob.arrayBuffer());
+    const path = tempdir + "-" + callCount++ + ".bytes";
+    require("fs").writeFileSync(path, buffer);
+    const file = Bun.file(path);
+    expect(blob.size).toBe(file.size);
+    return file;
+  });
+});
+
 describe("Blob", () => {
   testBlobInterface((data) => new Blob([data]));
 

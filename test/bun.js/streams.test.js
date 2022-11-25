@@ -225,7 +225,7 @@ it("Bun.file() read text from pipe", async () => {
   const large = "HELLO!".repeat((((1024 * 65) / "HELLO!".length) | 0) + 1);
 
   const chunks = [];
-  var out = Bun.file("/tmp/fifo").stream();
+
   const proc = Bun.spawn({
     cmd: [
       "bash",
@@ -244,17 +244,17 @@ it("Bun.file() read text from pipe", async () => {
 
   const prom = (async function () {
     while (chunks.length === 0) {
+      var out = Bun.file("/tmp/fifo").stream();
       for await (const chunk of out) {
         chunks.push(chunk);
       }
-      console.log("done");
     }
+    return Buffer.concat(chunks).toString();
   })();
 
   const [status, output] = await Promise.all([exited, prom]);
-  console.log("here");
-  expect(output.length).toBe(large.length);
-  expect(output).toBe(large);
+  expect(output.length).toBe(large.length + 1);
+  expect(output).toBe(large + "\n");
   expect(status).toBe(0);
 });
 
@@ -452,7 +452,7 @@ it("ReadableStream for Blob", async () => {
 
 it("ReadableStream for File", async () => {
   var blob = file(import.meta.dir + "/fetch.js.txt");
-  var stream = blob.stream(24);
+  var stream = blob.stream();
   const chunks = [];
   var reader = stream.getReader();
   stream = undefined;

@@ -12,30 +12,40 @@ test("spawn can write to stdin multiple chunks", async () => {
         cmd: [bunExe(), import.meta.dir + "/stdin-repro.js"],
         stdout: "pipe",
         stdin: "pipe",
-        stderr: "inherit",
+        stderr: Bun.file("/tmp/out.log"),
         env: {
           BUN_DEBUG_QUIET_LOGS: 1,
         },
       });
+      // (async function () {
+      //   for await (var chunk of proc.stderr) {
+      //     console.error("[stderr]", new TextDecoder().decode(chunk));
+      //   }
+      // })();
       exited = proc.exited;
       var counter = 0;
       var inCounter = 0;
       const prom2 = (async function () {
-        while (inCounter++ < 4) {
+        while (true) {
           await new Promise((resolve, reject) => setTimeout(resolve, 8));
           proc.stdin.write("Wrote to stdin!");
-          await proc.stdin.flush();
+          inCounter++;
+
+          if (inCounter === 4) break;
         }
-        await proc.stdin.end();
+        await new Promise((resolve) =>
+          Promise.resolve(proc.stdin.end()).then(resolve),
+        );
       })();
 
+      var chunks = [];
       const prom = (async function () {
         try {
           for await (var chunk of proc.stdout) {
-            expect(new TextDecoder().decode(chunk)).toBe("Wrote to stdin!\n");
+            chunks.push(chunk);
             counter++;
 
-            if (counter > 3) break;
+            if (counter === 4) break;
           }
         } catch (e) {
           console.log(e.stack);
@@ -43,11 +53,15 @@ test("spawn can write to stdin multiple chunks", async () => {
         }
       })();
       await Promise.all([prom, prom2]);
+      const code = await exited;
+      console.log(code);
       expect(counter).toBe(4);
+      expect(Buffer.concat(chunks).toString().trim()).toBe(
+        "Wrote to stdin!\n".repeat(4).trim(),
+      );
       //   proc.kill();
-    })();
-    await exited;
-  }
 
-  gcTick(true);
+      gcTick(true);
+    })();
+  }
 });

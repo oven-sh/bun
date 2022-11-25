@@ -102,11 +102,15 @@ function header() {
             void detach() {
                 m_sinkPtr = nullptr;
 
-            }                       
+            }
 
-            static void analyzeHeap(JSCell*, JSC::HeapAnalyzer&);                                                                                                                   
+            static void analyzeHeap(JSCell*, JSC::HeapAnalyzer&);
+
+            void ref();
+            void unref();
                                                                                                                                                                                     
             void* m_sinkPtr;
+            int m_refCount { 1 };
                                                                                                                                                                                     
             ${className}(JSC::VM& vm, JSC::Structure* structure, void* sinkPtr)                                                                                                    
                 : Base(vm, structure)                                                                                                                                               
@@ -355,6 +359,51 @@ JSC_DEFINE_HOST_FUNCTION(functionStartDirectStream, (JSC::JSGlobalObject * lexic
     const protopad = `${controller}__close`.length;
     const padding = `${name}__doClose`.length;
     templ += `
+
+  void ${className}::ref() {
+    if (!m_sinkPtr)
+      return;
+
+    m_refCount++;
+    if (m_refCount == 1) {
+      ${name}__updateRef(m_sinkPtr, true);
+    }
+  }
+
+  void ${className}::unref() {
+    if (!m_sinkPtr)
+      return;
+
+      m_refCount = std::max(0, m_refCount - 1);
+      if (!m_refCount)
+      {
+        ${name}__updateRef(m_sinkPtr, false);
+      }
+  }
+
+JSC_DEFINE_HOST_FUNCTION(${name}__ref, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame *callFrame))
+{
+    auto& vm = lexicalGlobalObject->vm();
+    auto* sink = jsDynamicCast<WebCore::${className}*>(callFrame->thisValue());
+    if (LIKELY(sink)) {
+        sink->ref();
+    }
+    return JSC::JSValue::encode(JSC::jsUndefined());
+
+}
+
+
+JSC_DEFINE_HOST_FUNCTION(${name}__unref, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame *callFrame))
+{
+    auto& vm = lexicalGlobalObject->vm();
+    auto* sink = jsDynamicCast<WebCore::${className}*>(callFrame->thisValue());
+    if (LIKELY(sink)) {
+        sink->unref();
+    }
+    return JSC::JSValue::encode(JSC::jsUndefined());
+
+}
+
 JSC_DEFINE_CUSTOM_GETTER(function${name}__getter, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, JSC::PropertyName))
 {
     auto& vm = lexicalGlobalObject->vm();
@@ -472,6 +521,12 @@ JSC_DEFINE_HOST_FUNCTION(${name}__doClose, (JSC::JSGlobalObject * lexicalGlobalO
   write      ${`${name}__write`.padEnd(
     padding + 8,
   )} ReadOnly|DontDelete|Function 1
+  ref        ${`${name}__ref`.padEnd(
+    padding + 8,
+  )} ReadOnly|DontDelete|Function 0
+  unref      ${`${name}__unref`.padEnd(
+    padding + 8,
+  )} ReadOnly|DontDelete|Function 0
 @end
 */
 
@@ -849,8 +904,7 @@ extern "C" JSC__JSValue ${name}__createObject(JSC__JSGlobalObject* arg0, void* s
 {
     auto& vm = arg0->vm();
     Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(arg0);
-    JSC::JSValue prototype = globalObject->${name}Prototype();
-    JSC::Structure* structure = WebCore::JS${name}::createStructure(vm, globalObject, prototype);
+    JSC::Structure* structure = globalObject->${name}Structure();
     return JSC::JSValue::encode(WebCore::JS${name}::create(vm, globalObject, structure, sinkPtr));
 }
 

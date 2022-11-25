@@ -1,5 +1,6 @@
 import { it, describe, expect } from "bun:test";
-import fs from "fs";
+import fs, { unlinkSync } from "fs";
+import { mkfifo } from "mkfifo";
 import { gc } from "./gc";
 
 const exampleFixture = fs.readFileSync(
@@ -239,6 +240,16 @@ describe("Bun.file", () => {
     const file = Bun.file(path);
     expect(blob.size).toBe(file.size);
     return file;
+  });
+
+  it("size is Infinity on a fifo", () => {
+    try {
+      unlinkSync("/tmp/test-fifo");
+    } catch (e) {}
+    mkfifo("/tmp/test-fifo");
+
+    const { size } = Bun.file("/tmp/test-fifo");
+    expect(size).toBe(Infinity);
   });
 });
 

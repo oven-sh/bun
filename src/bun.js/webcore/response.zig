@@ -2879,7 +2879,7 @@ pub const Blob = struct {
         is_atty: ?bool = null,
         mode: JSC.Node.Mode = 0,
         seekable: ?bool = null,
-        max_size: SizeType = 0,
+        max_size: SizeType = Blob.max_size,
 
         pub fn isSeekable(this: *const FileStore) ?bool {
             if (this.seekable) |seekable| {
@@ -3194,15 +3194,18 @@ pub const Blob = struct {
         if (this.size == Blob.max_size) {
             this.resolveSize();
             if (this.size == Blob.max_size and this.store != null) {
-                return JSValue.jsNumberFromChar(0);
+                return JSC.jsNumber(std.math.inf(f64));
+            } else if (this.size == 0 and this.store != null) {
+                if (this.store.?.data == .file and
+                    (this.store.?.data.file.seekable orelse true) == false and
+                    this.store.?.data.file.max_size == Blob.max_size)
+                {
+                    return JSC.jsNumber(std.math.inf(f64));
+                }
             }
         }
 
-        if (this.size < std.math.maxInt(i32)) {
-            return JSValue.jsNumber(this.size);
-        }
-
-        return JSC.JSValue.jsNumberFromUint64(this.size);
+        return JSValue.jsNumber(this.size);
     }
 
     pub fn resolveSize(this: *Blob) void {
@@ -3222,7 +3225,10 @@ pub const Blob = struct {
                         var buffer: [bun.MAX_PATH_BYTES]u8 = undefined;
                         switch (JSC.Node.Syscall.stat(store.data.file.pathlike.path.sliceZ(&buffer))) {
                             .result => |stat| {
-                                store.data.file.max_size = @truncate(SizeType, @intCast(u64, @maximum(stat.size, 0)));
+                                store.data.file.max_size = if (std.os.S.ISREG(stat.mode) or stat.size > 0)
+                                    @truncate(SizeType, @intCast(u64, @maximum(stat.size, 0)))
+                                else
+                                    Blob.max_size;
                                 store.data.file.mode = stat.mode;
                                 store.data.file.seekable = std.os.S.ISREG(stat.mode);
                             },
@@ -3232,7 +3238,10 @@ pub const Blob = struct {
                     } else if (store.data.file.pathlike == .fd) {
                         switch (JSC.Node.Syscall.fstat(store.data.file.pathlike.fd)) {
                             .result => |stat| {
-                                store.data.file.max_size = @truncate(SizeType, @intCast(u64, @maximum(stat.size, 0)));
+                                store.data.file.max_size = if (std.os.S.ISREG(stat.mode) or stat.size > 0)
+                                    @truncate(SizeType, @intCast(u64, @maximum(stat.size, 0)))
+                                else
+                                    Blob.max_size;
                                 store.data.file.mode = stat.mode;
                                 store.data.file.seekable = std.os.S.ISREG(stat.mode);
                             },
@@ -3242,12 +3251,12 @@ pub const Blob = struct {
                     }
                 }
 
-                if (store.data.file.seekable != null) {
+                if (store.data.file.seekable != null and store.data.file.max_size != Blob.max_size) {
                     const store_size = store.data.file.max_size;
                     const offset = this.offset;
 
                     this.offset = @minimum(store_size, offset);
-                    this.size = store_size - offset;
+                    this.size = store_size -| offset;
                     return;
                 }
             }

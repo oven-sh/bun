@@ -38,7 +38,7 @@ JSC::JSValue JSBufferList::concat(JSC::VM& vm, JSC::JSGlobalObject* lexicalGloba
     JSC::JSUint8Array* uint8Array = nullptr;
     if (length() == 0) {
         // Buffer.alloc(0)
-        uint8Array = JSC::JSUint8Array::create(lexicalGlobalObject, lexicalGlobalObject->typedArrayStructure(JSC::TypeUint8), 0);
+        uint8Array = JSC::JSUint8Array::create(lexicalGlobalObject, lexicalGlobalObject->typedArrayStructure(JSC::TypeUint8, false), 0);
         toBuffer(lexicalGlobalObject, uint8Array);
         RELEASE_AND_RETURN(throwScope, uint8Array);
     }
@@ -47,7 +47,7 @@ JSC::JSValue JSBufferList::concat(JSC::VM& vm, JSC::JSGlobalObject* lexicalGloba
     if (UNLIKELY(!arrayBuffer)) {
         return throwOutOfMemoryError(lexicalGlobalObject, throwScope);
     }
-    uint8Array = JSC::JSUint8Array::create(lexicalGlobalObject, lexicalGlobalObject->typedArrayStructure(JSC::TypeUint8), WTFMove(arrayBuffer), 0, n);
+    uint8Array = JSC::JSUint8Array::create(lexicalGlobalObject, lexicalGlobalObject->typedArrayStructure(JSC::TypeUint8, false), WTFMove(arrayBuffer), 0, n);
     toBuffer(lexicalGlobalObject, uint8Array);
 
     size_t i = 0;
@@ -56,7 +56,7 @@ JSC::JSValue JSBufferList::concat(JSC::VM& vm, JSC::JSGlobalObject* lexicalGloba
         if (!array)
             continue;
         size_t length = array->byteLength();
-        uint8Array->set(lexicalGlobalObject, i, array, 0, length);
+        uint8Array->setFromTypedArray(lexicalGlobalObject, i, array, 0, length, JSC::CopyType::Unobservable);
     }
 
     RELEASE_AND_RETURN(throwScope, uint8Array);
@@ -126,7 +126,7 @@ JSC::JSValue JSBufferList::_getBuffer(JSC::VM& vm, JSC::JSGlobalObject* lexicalG
     JSC::JSUint8Array* uint8Array = nullptr;
     if (n == 0) {
         // Buffer.alloc(0)
-        uint8Array = JSC::JSUint8Array::create(lexicalGlobalObject, lexicalGlobalObject->typedArrayStructure(JSC::TypeUint8), 0);
+        uint8Array = JSC::JSUint8Array::create(lexicalGlobalObject, lexicalGlobalObject->typedArrayStructure(JSC::TypeUint8, false), 0);
         toBuffer(lexicalGlobalObject, uint8Array);
         RELEASE_AND_RETURN(throwScope, uint8Array);
     }
@@ -135,7 +135,7 @@ JSC::JSValue JSBufferList::_getBuffer(JSC::VM& vm, JSC::JSGlobalObject* lexicalG
     if (UNLIKELY(!arrayBuffer)) {
         return throwTypeError(lexicalGlobalObject, throwScope);
     }
-    uint8Array = JSC::JSUint8Array::create(lexicalGlobalObject, lexicalGlobalObject->typedArrayStructure(JSC::TypeUint8), WTFMove(arrayBuffer), 0, n);
+    uint8Array = JSC::JSUint8Array::create(lexicalGlobalObject, lexicalGlobalObject->typedArrayStructure(JSC::TypeUint8, false), WTFMove(arrayBuffer), 0, n);
     toBuffer(lexicalGlobalObject, uint8Array);
 
     size_t offset = 0;
@@ -146,7 +146,7 @@ JSC::JSValue JSBufferList::_getBuffer(JSC::VM& vm, JSC::JSGlobalObject* lexicalG
         }
         size_t length = array->byteLength();
         if (length > n) {
-            uint8Array->set(lexicalGlobalObject, offset, array, 0, n);
+            uint8Array->setFromTypedArray(lexicalGlobalObject, offset, array, 0, n, JSC::CopyType::Unobservable);
             // create a new array of size length - n.
             // is there a faster way to do this?
             auto arrayBuffer = JSC::ArrayBuffer::tryCreateUninitialized(length - n, 1);
@@ -154,13 +154,13 @@ JSC::JSValue JSBufferList::_getBuffer(JSC::VM& vm, JSC::JSGlobalObject* lexicalG
                 return throwOutOfMemoryError(lexicalGlobalObject, throwScope);
             }
             JSC::JSUint8Array* newArray = JSC::JSUint8Array::create(
-                lexicalGlobalObject, lexicalGlobalObject->typedArrayStructure(JSC::TypeUint8), WTFMove(arrayBuffer), 0, length - n);
+                lexicalGlobalObject, lexicalGlobalObject->typedArrayStructure(JSC::TypeUint8, false), WTFMove(arrayBuffer), 0, length - n);
             toBuffer(lexicalGlobalObject, newArray);
 
             memcpy(newArray->typedVector(), array->typedVector() + n, length - n);
             iter->set(vm, this, newArray);
         } else {
-            uint8Array->set(lexicalGlobalObject, offset, array, 0, length);
+            uint8Array->setFromTypedArray(lexicalGlobalObject, offset, array, 0, length, JSC::CopyType::Unobservable);
             m_deque.removeFirst();
         }
         n -= static_cast<int32_t>(length);
@@ -364,7 +364,8 @@ void JSBufferListConstructor::finishCreation(VM& vm, JSC::JSGlobalObject* global
     ASSERT(inherits(info()));
 }
 
-JSBufferListConstructor* JSBufferListConstructor::create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, JSBufferListPrototype* prototype) {
+JSBufferListConstructor* JSBufferListConstructor::create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, JSBufferListPrototype* prototype)
+{
     JSBufferListConstructor* ptr = new (NotNull, JSC::allocateCell<JSBufferListConstructor>(vm)) JSBufferListConstructor(vm, structure, construct);
     ptr->finishCreation(vm, globalObject, prototype);
     return ptr;

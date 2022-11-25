@@ -365,7 +365,7 @@ pub const Subprocess = struct {
                 // we do this rather than epoll or kqueue()
                 // because we don't want to block the thread waiting for the write
                 switch (bun.isWritable(this.fd)) {
-                    .writable => {
+                    .ready => {
                         if (this.poll_ref) |poll_ref| {
                             poll_ref.flags.insert(.writable);
                             poll_ref.flags.insert(.fifo);
@@ -376,7 +376,7 @@ pub const Subprocess = struct {
                         this.deinit();
                         return;
                     },
-                    .not_writable => {
+                    .not_ready => {
                         if (!this.isWatching()) this.watch(this.fd);
                         return;
                     },
@@ -511,7 +511,7 @@ pub const Subprocess = struct {
         }
 
         pub fn canRead(this: *BufferedOutput) bool {
-            return bun.isReadable(this.fifo.fd);
+            return bun.isReadable(this.fifo.fd) == .ready;
         }
 
         pub fn onRead(this: *BufferedOutput, result: JSC.WebCore.StreamResult) void {

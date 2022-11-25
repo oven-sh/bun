@@ -3453,7 +3453,8 @@ pub const Blob = struct {
                         const bytes = result.buf;
                         if (blob.size > 0)
                             blob.size = @minimum(@truncate(u32, bytes.len), blob.size);
-                        promise.resolve(globalThis, Function(&blob, globalThis, bytes, .transfer));
+                        // these are now temporaries
+                        promise.resolve(globalThis, Function(&blob, globalThis, bytes, .temporary));
                     },
                     .err => |err| {
                         promise.reject(globalThis, err.toErrorInstance(globalThis));

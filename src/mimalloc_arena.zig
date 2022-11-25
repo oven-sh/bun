@@ -227,10 +227,12 @@ pub const Arena = struct {
     ) void {
         _ = buf_align;
         _ = return_address;
-        if (comptime Environment.allow_assert)
+        if (comptime Environment.allow_assert) {
             assert(mimalloc.mi_is_in_heap_region(buf.ptr));
-
-        mimalloc.mi_free(buf.ptr);
+            mimalloc.mi_free_size_aligned(buf.ptr, buf.len, buf_align);
+        } else {
+            mimalloc.mi_free(buf.ptr);
+        }
     }
 };
 

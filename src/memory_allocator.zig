@@ -109,8 +109,8 @@ const CAllocator = struct {
         // so it's faster if we don't pass that value through
         // but its good to have that assertion
         if (comptime Environment.allow_assert) {
-            assert(mimalloc.mi_is_in_heap_region(buf.ptr));
-            mimalloc.mi_free_size(buf.ptr, buf.len);
+            assert(mimalloc.mi_check_owned(buf.ptr));
+            mimalloc.mi_free_size_aligned(buf.ptr, buf.len, buf_align);
         } else {
             mimalloc.mi_free(buf.ptr);
         }

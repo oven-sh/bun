@@ -995,6 +995,14 @@ export var ComponentThatHasSpreadCausesDeopt = jsx(Hello, {
     });
 
     it("macros can return a Response body", () => {
+      // "promiseReturningCtx" is this:
+      // export function promiseReturningCtx(expr, ctx) {
+      //   return new Promise((resolve, reject) => {
+      //     setTimeout(() => {
+      //       resolve(ctx);
+      //     }, 1);
+      //   });
+      // }
       var object = Response.json({ hello: "world" });
 
       const input = `
@@ -1009,6 +1017,34 @@ export function foo() {
 export function foo() {
   return { hello: "world" };
 }
+`.trim();
+
+      expect(bunTranspiler.transformSync(input, object).trim()).toBe(output);
+    });
+
+    it("macros get dead code eliminated", () => {
+      var object = Response.json({
+        big: {
+          object: {
+            beep: "boop",
+            huge: 123,
+          },
+          blobby: {
+            beep: "boop",
+            huge: 123,
+          },
+        },
+        dead: "hello world!",
+      });
+
+      const input = `
+import {promiseReturningCtx} from 'inline';
+
+export const {dead} = promiseReturningCtx();
+`.trim();
+
+      const output = `
+export const { dead } = { dead: "hello world!" };
 `.trim();
 
       expect(bunTranspiler.transformSync(input, object).trim()).toBe(output);

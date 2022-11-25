@@ -3246,7 +3246,45 @@ pub const Blob = struct {
                     this.offset = @minimum(store_size, offset);
                     this.size = store_size - offset;
                 }
+
+                return;
+            } else if (store.data == .file) {
+                if (store.data.file.seekable == null) {
+                    if (store.data.file.pathlike == .path) {
+                        var buffer: [bun.MAX_PATH_BYTES]u8 = undefined;
+                        switch (JSC.Node.Syscall.stat(store.data.file.pathlike.path.sliceZ(&buffer))) {
+                            .result => |stat| {
+                                store.data.file.max_size = @truncate(SizeType, @intCast(u64, @maximum(stat.size, 0)));
+                                store.data.file.mode = stat.mode;
+                                store.data.file.seekable = std.os.S.ISREG(stat.mode);
+                            },
+                            // the file may not exist yet. Thats's okay.
+                            else => {},
+                        }
+                    } else if (store.data.file.pathlike == .fd) {
+                        switch (JSC.Node.Syscall.fstat(store.data.file.pathlike.fd)) {
+                            .result => |stat| {
+                                store.data.file.max_size = @truncate(SizeType, @intCast(u64, @maximum(stat.size, 0)));
+                                store.data.file.mode = stat.mode;
+                                store.data.file.seekable = std.os.S.ISREG(stat.mode);
+                            },
+                            // the file may not exist yet. Thats's okay.
+                            else => {},
+                        }
+                    }
+                }
+
+                if (store.data.file.seekable != null) {
+                    const store_size = store.data.file.max_size;
+                    const offset = this.offset;
+
+                    this.offset = @minimum(store_size, offset);
+                    this.size = store_size - offset;
+                    return;
+                }
             }
+
+            this.size = 0;
         } else {
             this.size = 0;
         }

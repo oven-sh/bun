@@ -4146,6 +4146,8 @@ pub const FilePoll = struct {
 
         disable,
 
+        nonblocking,
+
         pub fn poll(this: Flags) Flags {
             return switch (this) {
                 .readable => .poll_readable,

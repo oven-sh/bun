@@ -1,7 +1,7 @@
 import fs from "fs";
 import { it, expect, describe } from "bun:test";
 import path from "path";
-import { gcTick } from "./gc";
+import { gcTick, withoutAggressiveGC } from "./gc";
 
 it("Bun.write blob", async () => {
   await Bun.write(
@@ -171,17 +171,15 @@ it("Bun.file as a Blob", async () => {
   var blob = Bun.file(filePath);
   await gcTick();
 
-  // no size because we haven't read it from disk yet
-  expect(blob.size).toBe(0);
-  await gcTick();
   // now it reads "./fetch.js.txt" from the filesystem
   // it's lazy, only loads once we ask for it
   // if it fails, the promise will reject at this point
   expect(await blob.text()).toBe(fixture);
   await gcTick();
+  // BEHAVIOR CHANGE IN BUN V0.3.0 - size is never set
   // now that it's loaded, the size updates
-  expect(blob.size).toBe(fixture.length);
-  await gcTick();
+  // expect(blob.size).toBe(fixture.length);
+  // await gcTick();
   // and it only loads once for _all_ blobs pointing to that file path
   // until all references are released
   expect((await blob.arrayBuffer()).byteLength).toBe(fixture.length);
@@ -190,17 +188,18 @@ it("Bun.file as a Blob", async () => {
   const array = new Uint8Array(await blob.arrayBuffer());
   await gcTick();
   const text = fixture;
-  for (let i = 0; i < text.length; i++) {
-    expect(array[i]).toBe(text.charCodeAt(i));
-  }
+  withoutAggressiveGC(() => {
+    for (let i = 0; i < text.length; i++) {
+      expect(array[i]).toBe(text.charCodeAt(i));
+    }
+  });
   await gcTick();
   expect(blob.size).toBe(fixture.length);
   blob = null;
   await gcTick();
   await new Promise((resolve) => setTimeout(resolve, 1));
-  // now we're back
   var blob = Bun.file(filePath);
-  expect(blob.size).toBe(0);
+  expect(blob.size).toBe(fixture.length);
 });
 
 it("Response -> Bun.file", async () => {

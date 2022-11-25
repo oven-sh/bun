@@ -837,11 +837,9 @@ function readDirectStream(stream, sink, underlyingSource) {
   @putByIdDirectPrivate(stream, "readableStreamController", sink);
   const highWaterMark = @getByIdDirectPrivate(stream, "highWaterMark");
 
-  if (highWaterMark) {
-    sink.start({
-      highWaterMark: highWaterMark < 64 ? 64 : highWaterMark,
-    });
-  }
+  sink.start({
+    highWaterMark: !highWaterMark || highWaterMark < 64 ? 64 : highWaterMark,
+  });
 
   @startDirectStream.@call(sink, stream, underlyingSource.pull, close);
   @putByIdDirectPrivate(stream, "reader", {});
@@ -899,7 +897,7 @@ async function readStreamIntoSink(stream, sink, isNative) {
     const highWaterMark = @getByIdDirectPrivate(stream, "highWaterMark");
     if (isNative) @startDirectStream.@call(sink, stream, @undefined, () => !didThrow && @markPromiseAsHandled(stream.cancel()));
 
-    if (highWaterMark) sink.start({ highWaterMark });
+    sink.start({ highWaterMark: highWaterMark || 0 });
     
 
     for (

@@ -986,7 +986,7 @@ const char* const s_readableStreamInternalsIsReadableStreamDefaultControllerCode
 const JSC::ConstructAbility s_readableStreamInternalsReadDirectStreamCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableStreamInternalsReadDirectStreamCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_readableStreamInternalsReadDirectStreamCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_readableStreamInternalsReadDirectStreamCodeLength = 1598;
+const int s_readableStreamInternalsReadDirectStreamCodeLength = 1583;
 static const JSC::Intrinsic s_readableStreamInternalsReadDirectStreamCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_readableStreamInternalsReadDirectStreamCode =
     "(function (stream, sink, underlyingSource) {\n" \
@@ -1037,11 +1037,9 @@ const char* const s_readableStreamInternalsReadDirectStreamCode =
     "  @putByIdDirectPrivate(stream, \"readableStreamController\", sink);\n" \
     "  const highWaterMark = @getByIdDirectPrivate(stream, \"highWaterMark\");\n" \
     "\n" \
-    "  if (highWaterMark) {\n" \
-    "    sink.start({\n" \
-    "      highWaterMark: highWaterMark < 64 ? 64 : highWaterMark,\n" \
-    "    });\n" \
-    "  }\n" \
+    "  sink.start({\n" \
+    "    highWaterMark: !highWaterMark || highWaterMark < 64 ? 64 : highWaterMark,\n" \
+    "  });\n" \
     "\n" \
     "  @startDirectStream.@call(sink, stream, underlyingSource.pull, close);\n" \
     "  @putByIdDirectPrivate(stream, \"reader\", {});\n" \
@@ -1090,7 +1088,7 @@ const char* const s_readableStreamInternalsAssignToStreamCode =
 const JSC::ConstructAbility s_readableStreamInternalsReadStreamIntoSinkCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableStreamInternalsReadStreamIntoSinkCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_readableStreamInternalsReadStreamIntoSinkCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_readableStreamInternalsReadStreamIntoSinkCodeLength = 2868;
+const int s_readableStreamInternalsReadStreamIntoSinkCodeLength = 2869;
 static const JSC::Intrinsic s_readableStreamInternalsReadStreamIntoSinkCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_readableStreamInternalsReadStreamIntoSinkCode =
     "(async function (stream, sink, isNative) {\n" \
@@ -1112,7 +1110,7 @@ const char* const s_readableStreamInternalsReadStreamIntoSinkCode =
     "    const highWaterMark = @getByIdDirectPrivate(stream, \"highWaterMark\");\n" \
     "    if (isNative) @startDirectStream.@call(sink, stream, @undefined, () => !didThrow && @markPromiseAsHandled(stream.cancel()));\n" \
     "\n" \
-    "    if (highWaterMark) sink.start({ highWaterMark });\n" \
+    "    sink.start({ highWaterMark: highWaterMark || 0 });\n" \
     "    \n" \
     "\n" \
     "    for (\n" \

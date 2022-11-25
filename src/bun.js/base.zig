@@ -3980,10 +3980,20 @@ pub const PollRef = struct {
     }
 };
 
+const KQueueGenerationNumber = if (Environment.isMac and Environment.allow_assert) usize else u0;
 pub const FilePoll = struct {
+    var max_generation_number: KQueueGenerationNumber = 0;
+
     fd: u32 = invalid_fd,
     flags: Flags.Set = Flags.Set{},
     owner: Owner = Deactivated.owner,
+
+    /// We re-use FilePoll objects to avoid allocating new ones.
+    ///
+    /// That means we might run into situations where the event is stale.
+    /// on macOS kevent64 has an extra pointer field so we use it for that
+    /// linux doesn't have a field like that
+    generation_number: KQueueGenerationNumber = 0,
 
     const FileReader = JSC.WebCore.FileReader;
     const FileSink = JSC.WebCore.FileSink;
@@ -4017,6 +4027,9 @@ pub const FilePoll = struct {
     }
 
     pub fn onKQueueEvent(poll: *FilePoll, loop: *uws.Loop, kqueue_event: *const std.os.system.kevent64_s) void {
+        if (KQueueGenerationNumber != u0)
+            std.debug.assert(poll.generation_number == kqueue_event.ext[0]);
+
         poll.updateFlags(Flags.fromKQueueEvent(kqueue_event.*));
         poll.onUpdate(loop, kqueue_event.data);
     }
@@ -4253,6 +4266,10 @@ pub const FilePoll = struct {
         poll.fd = @intCast(u32, fd);
         poll.flags = Flags.Set.init(flags);
         poll.owner = owner;
+        if (KQueueGenerationNumber != u0) {
+            max_generation_number +%= 1;
+            poll.generation_number = max_generation_number;
+        }
         return poll;
     }
 
@@ -4356,7 +4373,7 @@ pub const FilePoll = struct {
                     .fflags = 0,
                     .udata = @ptrToInt(Pollable.init(this).ptr()),
                     .flags = std.c.EV_ADD | one_shot_flag,
-                    .ext = .{ 0, 0 },
+                    .ext = .{ this.generation_number, 0 },
                 },
                 .writable => .{
                     .ident = @intCast(u64, fd),
@@ -4365,7 +4382,7 @@ pub const FilePoll = struct {
                     .fflags = 0,
                     .udata = @ptrToInt(Pollable.init(this).ptr()),
                     .flags = std.c.EV_ADD | one_shot_flag,
-                    .ext = .{ 0, 0 },
+                    .ext = .{ this.generation_number, 0 },
                 },
                 .process => .{
                     .ident = @intCast(u64, fd),
@@ -4374,7 +4391,7 @@ pub const FilePoll = struct {
                     .fflags = std.c.NOTE_EXIT,
                     .udata = @ptrToInt(Pollable.init(this).ptr()),
                     .flags = std.c.EV_ADD | one_shot_flag,
-                    .ext = .{ 0, 0 },
+                    .ext = .{ this.generation_number, 0 },
                 },
                 else => unreachable,
             };

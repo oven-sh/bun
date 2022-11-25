@@ -137,7 +137,12 @@ pub fn chdir(destination: [:0]const u8) Maybe(void) {
 
 pub fn stat(path: [:0]const u8) Maybe(os.Stat) {
     var stat_ = mem.zeroes(os.Stat);
-    if (Maybe(os.Stat).errnoSys(statSym(path, &stat_), .stat)) |err| return err;
+    const rc = statSym(path, &stat_);
+
+    if (comptime Environment.allow_assert)
+        log("stat({s}) = {d}", .{ std.mem.span(path), rc });
+
+    if (Maybe(os.Stat).errnoSys(rc, .stat)) |err| return err;
     return Maybe(os.Stat){ .result = stat_ };
 }
 
@@ -149,7 +154,13 @@ pub fn lstat(path: [:0]const u8) Maybe(os.Stat) {
 
 pub fn fstat(fd: bun.FileDescriptor) Maybe(os.Stat) {
     var stat_ = mem.zeroes(os.Stat);
-    if (Maybe(os.Stat).errnoSys(fstatSym(fd, &stat_), .fstat)) |err| return err;
+
+    const rc = fstatSym(fd, &stat_);
+
+    if (comptime Environment.allow_assert)
+        log("fstat({d}) = {d}", .{ fd, rc });
+
+    if (Maybe(os.Stat).errnoSys(rc, .fstat)) |err| return err;
     return Maybe(os.Stat){ .result = stat_ };
 }
 

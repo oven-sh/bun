@@ -7790,7 +7790,7 @@ pub const Macro = struct {
                     source: *const logger.Source,
                     id: i32,
                     visitor: Visitor,
-                ) callconv(.Async) MacroError!Expr {
+                ) MacroError!Expr {
                     if (comptime is_bindgen) return undefined;
                     var macro_callback = macro.vm.macros.get(id) orelse return caller;
 
@@ -8044,9 +8044,7 @@ pub const Macro = struct {
                             return Expr.init(E.Number, E.Number{ .value = value.asNumber() }, this.caller.loc);
                         },
                         .String => {
-                            var zig_str = value.getZigString(this.global);
-                            zig_str.detectEncoding();
-                            var sliced = zig_str.toSlice(this.allocator);
+                            var sliced = value.toSlice(this.allocator).cloneIfNeeded(this.allocator) catch unreachable;
                             return Expr.init(E.String, E.String.init(sliced.slice()), this.caller.loc);
                         },
                         .Promise => {
@@ -8055,13 +8053,31 @@ pub const Macro = struct {
                                 return _entry.value_ptr.*;
                             }
 
-                            var promise = JSC.JSPromise.resolvedPromise(this.global, value);
-                            while (promise.status(this.global.vm()) == .Pending) {
-                                this.macro.vm.tick();
-                            }
+                            var promise_result = JSC.JSValue.zero;
+                            var rejected = false;
+                            if (value.asPromise()) |promise| {
+                                while (true) {
+                                    if (promise.status(this.global.vm()) != .Pending) break;
+                                    this.macro.vm.tick();
+                                    if (promise.status(this.global.vm()) != .Pending) break;
+                                    this.macro.vm.eventLoop().autoTick();
+                                }
 
-                            const rejected = promise.status(this.global.vm()) == .Rejected;
-                            const promise_result = promise.result(this.global.vm());
+                                promise_result = promise.result(this.global.vm());
+                                rejected = promise.status(this.global.vm()) == .Rejected;
+                            } else if (value.asInternalPromise()) |promise| {
+                                while (true) {
+                                    if (promise.status(this.global.vm()) != .Pending) break;
+                                    this.macro.vm.tick();
+                                    if (promise.status(this.global.vm()) != .Pending) break;
+                                    this.macro.vm.eventLoop().autoTick();
+                                }
+
+                                promise_result = promise.result(this.global.vm());
+                                rejected = promise.status(this.global.vm()) == .Rejected;
+                            } else {
+                                @panic("Unexpected promise type");
+                            }
 
                             if (promise_result.isUndefined() and this.is_top_level) {
                                 this.is_top_level = false;
@@ -8118,15 +8134,23 @@ pub const Macro = struct {
             args_buf[2] = null;
             const Run = NewRun(Visitor);
 
-            // Give it >= 256 KB stack space
-            // Cast to usize to ensure we get an 8 byte aligned pointer
-            const PooledFrame = ObjectPool([@maximum(@sizeOf(@Frame(Run.runAsync)), 1024 * 1024 * 2) / @sizeOf(usize)]usize, null, true, 1);
-            var pooled_frame = PooledFrame.get(default_allocator);
-            defer pooled_frame.release();
+            const CallFunction = @TypeOf(Run.runAsync);
+            const CallArgs = std.meta.ArgsTuple(CallFunction);
+            const CallData = struct {
+                threadlocal var call_args: CallArgs = undefined;
+                threadlocal var result: MacroError!Expr = undefined;
+                pub fn callWrapper(args: CallArgs) MacroError!Expr {
+                    call_args = args;
+                    Bun__startMacro(call, JSC.VirtualMachine.vm.global);
+                    return result;
+                }
 
-            var result: MacroError!Expr = error.MacroFailed;
+                pub fn call() callconv(.C) void {
+                    result = @call(.{}, Run.runAsync, call_args);
+                }
+            };
 
-            _ = nosuspend @asyncCall(std.mem.asBytes(&pooled_frame.data), &result, Run.runAsync, .{
+            return CallData.callWrapper(.{
                 macro,
                 log,
                 allocator,
@@ -8137,8 +8161,9 @@ pub const Macro = struct {
                 id,
                 visitor,
             });
-            return result;
         }
+
+        extern "C" fn Bun__startMacro(function: *const anyopaque, *anyopaque) void;
     };
 };
 

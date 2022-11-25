@@ -357,18 +357,25 @@ pub fn isReadable(fd: std.os.fd_t) bool {
     // return result;
 }
 
-pub fn isWritable(fd: std.os.fd_t) bool {
+pub const WritableFlag = enum { writable, not_writable, hup };
+pub fn isWritable(fd: std.os.fd_t) WritableFlag {
     var polls = &[_]std.os.pollfd{
         .{
             .fd = fd,
-            .events = std.os.POLL.OUT | std.os.POLL.ERR,
+            .events = std.os.POLL.OUT,
             .revents = 0,
         },
     };
 
     const result = (std.os.poll(polls, 0) catch 0) != 0;
-    global_scope_log("isWritable: {d}", .{result});
-    return result;
+    global_scope_log("isWritable: {d} ({d})", .{ result, polls[0].revents });
+    if (result and polls[0].revents & std.os.POLL.HUP != 0) {
+        return WritableFlag.hup;
+    } else if (result) {
+        return WritableFlag.writable;
+    } else {
+        return WritableFlag.not_writable;
+    }
 }
 
 pub inline fn unreachablePanic(comptime fmts: []const u8, args: anytype) noreturn {

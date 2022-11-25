@@ -4153,7 +4153,7 @@ pub const InternalBlob = struct {
     }
 
     pub fn deinit(this: *@This()) void {
-        this.bytes.deinit();
+        this.bytes.clearAndFree();
     }
 
     pub inline fn slice(this: @This()) []u8 {

@@ -358,29 +358,28 @@ pub const Subprocess = struct {
             this.write();
         }
 
-        pub fn canWrite(this: *BufferedInput) bool {
-            const is_writable = bun.isWritable(this.fd);
-            if (is_writable) {
-                if (this.poll_ref) |poll_ref| {
-                    poll_ref.flags.insert(.writable);
-                    poll_ref.flags.insert(.fifo);
-                    std.debug.assert(poll_ref.flags.contains(.poll_writable));
-                }
-            }
-
-            return is_writable;
-        }
-
         pub fn writeIfPossible(this: *BufferedInput, comptime is_sync: bool) void {
             if (comptime !is_sync) {
 
                 // we ask, "Is it possible to write right now?"
                 // we do this rather than epoll or kqueue()
                 // because we don't want to block the thread waiting for the write
-                if (!this.canWrite()) {
-                    this.watch(this.fd);
-                    this.poll_ref.?.flags.insert(.fifo);
-                    return;
+                switch (bun.isWritable(this.fd)) {
+                    .writable => {
+                        if (this.poll_ref) |poll_ref| {
+                            poll_ref.flags.insert(.writable);
+                            poll_ref.flags.insert(.fifo);
+                            std.debug.assert(poll_ref.flags.contains(.poll_writable));
+                        }
+                    },
+                    .hup => {
+                        this.deinit();
+                        return;
+                    },
+                    .not_writable => {
+                        if (!this.isWatching()) this.watch(this.fd);
+                        return;
+                    },
                 }
             }
 

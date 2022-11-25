@@ -333,15 +333,22 @@ pub fn read(fd: os.fd_t, buf: []u8) Maybe(usize) {
 }
 
 pub fn recv(fd: os.fd_t, buf: []u8, flag: u32) Maybe(usize) {
+    const adjusted_len = @minimum(buf.len, max_count);
+
     if (comptime Environment.isMac) {
-        const rc = system.@"recvfrom$NOCANCEL"(fd, buf.ptr, buf.len, flag, null, null);
+        const rc = system.@"recvfrom$NOCANCEL"(fd, buf.ptr, adjusted_len, flag, null, null);
+        log("recv({d}, {d}, {d}) = {d}", .{ fd, adjusted_len, flag, rc });
+
         if (Maybe(usize).errnoSys(rc, .recv)) |err| {
             return err;
         }
+
         return Maybe(usize){ .result = @intCast(usize, rc) };
     } else {
         while (true) {
-            const rc = linux.recvfrom(fd, buf.ptr, buf.len, flag | os.SOCK.CLOEXEC | linux.MSG.CMSG_CLOEXEC, null, null);
+            const rc = linux.recvfrom(fd, buf.ptr, adjusted_len, flag | os.SOCK.CLOEXEC | linux.MSG.CMSG_CLOEXEC, null, null);
+            log("recv({d}, {d}, {d}) = {d}", .{ fd, adjusted_len, flag, rc });
+
             if (Maybe(usize).errnoSysFd(rc, .recv, fd)) |err| {
                 if (err.getErrno() == .INTR) continue;
                 return err;

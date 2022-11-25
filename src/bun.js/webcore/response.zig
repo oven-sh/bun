@@ -3660,6 +3660,7 @@ pub const Blob = struct {
         // null == unknown
         // false == can't be
         const could_be_all_ascii = this.is_all_ascii orelse this.store.?.is_all_ascii;
+        defer if (comptime lifetime == .temporary) bun.default_allocator.free(bun.constStrToU8(buf));
 
         if (could_be_all_ascii == null or !could_be_all_ascii.?) {
             // if toUTF16Alloc returns null, it means there are no non-ASCII characters

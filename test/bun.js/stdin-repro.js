@@ -1,7 +1,10 @@
-var count = 5;
+var stdout = Bun.stdout.writer();
+console.error("Started");
+var count = 0;
 for await (let chunk of Bun.stdin.stream()) {
   const str = new Buffer(chunk).toString();
-  console.error("how many?", count, chunk.byteLength);
-  count -= str.split("\n").length;
-  console.log(str);
+  stdout.write(str);
+  stdout.flush();
+  count++;
 }
+console.error("Finished with", count);

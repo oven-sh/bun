@@ -275,7 +275,6 @@ pub const Subprocess = struct {
         if (this.hasKilled()) {
             return .{ .result = {} };
         }
-        this.killed = true;
 
         if (comptime Environment.isLinux) {
             // should this be handled differently?
@@ -290,9 +289,8 @@ pub const Subprocess = struct {
             if (rc != 0) {
                 const errno = std.os.linux.getErrno(rc);
                 // if the process was already killed don't throw
-                if (errno == .SRCH) return .{ .result = {} };
-
-                return .{ .err = JSC.Node.Syscall.Error.fromCode(errno, .kill) };
+                if (errno != .SRCH)
+                    return .{ .err = JSC.Node.Syscall.Error.fromCode(errno, .kill) };
             }
         } else {
             const err = std.c.kill(this.pid, sig);
@@ -300,12 +298,12 @@ pub const Subprocess = struct {
                 const errno = std.c.getErrno(err);
 
                 // if the process was already killed don't throw
-                if (errno == .SRCH) return .{ .result = {} };
-
-                return .{ .err = JSC.Node.Syscall.Error.fromCode(errno, .kill) };
+                if (errno != .SRCH)
+                    return .{ .err = JSC.Node.Syscall.Error.fromCode(errno, .kill) };
             }
         }
 
+        this.killed = true;
         return .{ .result = {} };
     }
 

@@ -1889,7 +1889,7 @@ pub const Blob = struct {
                     }
                 }
 
-                const WrappedOpenCallback = fn (this: *This, completion: *HTTPClient.NetworkThread.Completion, result: AsyncIO.OpenError!bun.FileDescriptor) void;
+                const WrappedOpenCallback = fn (*State, *HTTPClient.NetworkThread.Completion, AsyncIO.OpenError!bun.FileDescriptor) void;
                 fn OpenCallbackWrapper(comptime Callback: OpenCallback) WrappedOpenCallback {
                     return struct {
                         const callback = Callback;
@@ -1897,10 +1897,11 @@ pub const Blob = struct {
                         pub fn onOpen(state: *State, completion: *HTTPClient.NetworkThread.Completion, result: AsyncIO.OpenError!bun.FileDescriptor) void {
                             var this = state.context;
                             var path_buffer = completion.operation.open.path;
-                            defer bun.default_allocator.free(path_buffer);
+                            defer bun.default_allocator.free(bun.span(path_buffer));
                             defer bun.default_allocator.destroy(state);
                             this.opened_fd = result catch {
                                 this.errno = AsyncIO.asError(-completion.result);
+                                // do not use path_buffer here because it is a temporary
                                 var path_string = if (@hasField(This, "file_store"))
                                     this.file_store.pathlike.path
                                 else
@@ -1908,9 +1909,12 @@ pub const Blob = struct {
 
                                 this.system_error = .{
                                     .syscall = ZigString.init("open"),
-                                    .code = ZigString.init(std.mem.span(@errorName(this.errno))),
+                                    .code = ZigString.init(std.mem.span(@errorName(this.errno.?))),
                                     .path = ZigString.init(path_string.slice()),
                                 };
+
+                                // assert we never end up reusing the memory
+                                std.debug.assert(@ptrToInt(this.system_error.?.path.slice().ptr) != @ptrToInt(path_buffer));
 
                                 callback(this, null_fd);
                                 return;
@@ -1933,11 +1937,11 @@ pub const Blob = struct {
                     holder.* = .{
                         .context = this,
                     };
-                    var path_buffer = bun.default_allocator.dupeZ(path_string.slice()) catch unreachable;
+                    var path_buffer = bun.default_allocator.dupeZ(u8, path_string.slice()) catch unreachable;
                     aio.open(
                         *State,
                         holder,
-                        OpenCallbackWrapper(callback),
+                        comptime OpenCallbackWrapper(callback),
                         &holder.open_completion,
                         path_buffer,
                         open_flags_,

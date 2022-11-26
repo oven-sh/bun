@@ -4537,10 +4537,25 @@ pub fn JSPropertyIterator(comptime options: JSPropertyIteratorOptions) type {
             JSC.C.JSPropertyNameArrayRelease(self.array_ref);
         }
 
+        pub fn hasLongNames(self: *Self) bool {
+            var i = self.i;
+            const len = self.len;
+            var estimated_length: usize = 0;
+            while (i < len) : (i += 1) {
+                estimated_length += JSC.C.JSStringGetLength(JSC.C.JSPropertyNameArrayGetNameAtIndex(self.array_ref, i));
+                if (estimated_length > 14) return true;
+            }
+            return false;
+        }
+
         /// Finds the next property string and, if `options.include_value` is
         /// enabled, updates the `iter.value` to respect the latest property's
         /// value. Also note the behavior of the other options.
         pub fn next(self: *Self) ?ZigString {
+            return nextMaybeFirstValue(self, .zero);
+        }
+
+        pub fn nextMaybeFirstValue(self: *Self, first_value: JSValue) ?ZigString {
             if (self.iter_i >= self.len) {
                 self.i = self.iter_i;
                 return null;
@@ -4555,15 +4570,14 @@ pub fn JSPropertyIterator(comptime options: JSPropertyIteratorOptions) type {
                 if (len == 0) return self.next();
             }
 
-            const prop = switch (JSC.C.JSStringEncoding(property_name_ref)) {
-                .empty => ZigString.Empty,
-                // latin1
-                .char8 => ZigString.init((JSC.C.JSStringGetCharacters8Ptr(property_name_ref))[0..len]),
-                .char16 => ZigString.init16(JSC.C.JSStringGetCharactersPtr(property_name_ref)[0..len]),
-            };
+            const prop = property_name_ref.toZigString();
 
             if (comptime options.include_value) {
-                self.value = JSC.JSValue.fromRef(JSC.C.JSObjectGetProperty(self.global, self.object, property_name_ref, null));
+                if (self.i == 0 and first_value != .zero) {
+                    self.value = first_value;
+                } else {
+                    self.value = JSC.JSValue.fromRef(JSC.C.JSObjectGetProperty(self.global, self.object, property_name_ref, null));
+                }
             }
 
             return prop;

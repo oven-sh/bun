@@ -1175,6 +1175,24 @@ pub const ZigConsoleClient = struct {
         indent: u32 = 0,
         quote_strings: bool = false,
         failed: bool = false,
+        estimated_line_length: usize = 0,
+        always_newline_scope: bool = false,
+
+        pub fn goodTimeForANewLine(this: *@This()) bool {
+            if (this.estimated_line_length > 80) {
+                this.resetLine();
+                return true;
+            }
+            return false;
+        }
+
+        pub fn resetLine(this: *@This()) void {
+            this.estimated_line_length = this.indent * 2;
+        }
+
+        pub fn addForNewLine(this: *@This(), len: usize) void {
+            this.estimated_line_length +|= len;
+        }
 
         pub const ZigFormatter = struct {
             formatter: *ZigConsoleClient.Formatter,
@@ -1244,6 +1262,22 @@ pub const ZigConsoleClient = struct {
 
             JSX,
             Event,
+
+            pub fn isPrimitive(this: Tag) bool {
+                return switch (this) {
+                    .String,
+                    .StringPossiblyFormatted,
+                    .Undefined,
+                    .Double,
+                    .Integer,
+                    .Null,
+                    .Boolean,
+                    .Symbol,
+                    .BigInt,
+                    => true,
+                    else => false,
+                };
+            }
 
             pub inline fn canHaveCircularReferences(tag: Tag) bool {
                 return tag == .Array or tag == .Object or tag == .Map or tag == .Set;
@@ -1513,6 +1547,7 @@ pub const ZigConsoleClient = struct {
             return struct {
                 ctx: Writer,
                 failed: bool = false,
+                estimated_line_length: *usize = undefined,
 
                 pub fn print(self: *@This(), comptime fmt: string, args: anytype) void {
                     self.ctx.print(fmt, args) catch {
@@ -1575,8 +1610,9 @@ pub const ZigConsoleClient = struct {
             }
         }
 
-        pub fn printComma(_: *ZigConsoleClient.Formatter, comptime Writer: type, writer: Writer, comptime enable_ansi_colors: bool) !void {
+        pub fn printComma(this: *ZigConsoleClient.Formatter, comptime Writer: type, writer: Writer, comptime enable_ansi_colors: bool) !void {
             try writer.writeAll(comptime Output.prettyFmt("<r><d>,<r>", enable_ansi_colors));
+            this.estimated_line_length += 1;
         }
 
         pub fn MapIterator(comptime Writer: type, comptime enable_ansi_colors: bool) type {
@@ -1648,7 +1684,7 @@ pub const ZigConsoleClient = struct {
         ) void {
             if (this.failed)
                 return;
-            var writer = WrappedWriter(Writer){ .ctx = writer_ };
+            var writer = WrappedWriter(Writer){ .ctx = writer_, .estimated_line_length = &this.estimated_line_length };
             defer {
                 if (writer.failed) {
                     this.failed = true;
@@ -1678,6 +1714,7 @@ pub const ZigConsoleClient = struct {
                 .StringPossiblyFormatted => {
                     var str = ZigString.init("");
                     value.toZigString(&str, this.globalThis);
+                    this.addForNewLine(str.len);
 
                     if (!str.is16Bit()) {
                         const slice = str.slice();
@@ -1690,6 +1727,7 @@ pub const ZigConsoleClient = struct {
                 .String => {
                     var str = ZigString.init("");
                     value.toZigString(&str, this.globalThis);
+                    this.addForNewLine(str.len);
 
                     if (this.quote_strings and jsType != .RegExpObject) {
                         if (str.len == 0) {
@@ -1732,24 +1770,33 @@ pub const ZigConsoleClient = struct {
                     writer.print(comptime Output.prettyFmt("<r><yellow>{s}n<r>", enable_ansi_colors), .{out_str});
                 },
                 .Double => {
-                    if (std.math.isPositiveInf(value.asNumber())) {
+                    const num = value.asNumber();
+
+                    if (std.math.isPositiveInf(num)) {
+                        this.addForNewLine("Infinity".len);
                         writer.print(comptime Output.prettyFmt("<r><yellow>Infinity<r>", enable_ansi_colors), .{});
-                    } else if (std.math.isNegativeInf(value.asNumber())) {
+                    } else if (std.math.isNegativeInf(num)) {
+                        this.addForNewLine("-Infinity".len);
                         writer.print(comptime Output.prettyFmt("<r><yellow>-Infinity<r>", enable_ansi_colors), .{});
-                    } else if (std.math.isNan(value.asNumber())) {
+                    } else if (std.math.isNan(num)) {
+                        this.addForNewLine("NaN".len);
                         writer.print(comptime Output.prettyFmt("<r><yellow>NaN<r>", enable_ansi_colors), .{});
                     } else {
-                        writer.print(comptime Output.prettyFmt("<r><yellow>{d}<r>", enable_ansi_colors), .{value.asNumber()});
+                        this.addForNewLine(std.fmt.count("{d}", .{num}));
+                        writer.print(comptime Output.prettyFmt("<r><yellow>{d}<r>", enable_ansi_colors), .{num});
                     }
                 },
                 .Undefined => {
+                    this.addForNewLine(9);
                     writer.print(comptime Output.prettyFmt("<r><d>undefined<r>", enable_ansi_colors), .{});
                 },
                 .Null => {
+                    this.addForNewLine(4);
                     writer.print(comptime Output.prettyFmt("<r><yellow>null<r>", enable_ansi_colors), .{});
                 },
                 .Symbol => {
-                    var description = value.getDescription(this.globalThis);
+                    const description = value.getDescription(this.globalThis);
+                    this.addForNewLine(description.len + "Symbol".len);
 
                     if (description.len > 0) {
                         writer.print(comptime Output.prettyFmt("<r><cyan>Symbol<r><d>(<green>{}<r><d>)<r>", enable_ansi_colors), .{description});
@@ -1771,6 +1818,8 @@ pub const ZigConsoleClient = struct {
                 .Class => {
                     var printable = ZigString.init(&name_buf);
                     value.getClassName(this.globalThis, &printable);
+                    this.addForNewLine(printable.len);
+
                     if (printable.len == 0) {
                         writer.print(comptime Output.prettyFmt("[class]", enable_ansi_colors), .{});
                     } else {
@@ -1791,35 +1840,82 @@ pub const ZigConsoleClient = struct {
                     const len = @truncate(u32, value.getLengthOfArray(this.globalThis));
                     if (len == 0) {
                         writer.writeAll("[]");
+                        this.addForNewLine(2);
                         return;
                     }
 
-                    writer.writeAll("[ ");
-                    var i: u32 = 0;
-                    var ref = value.asObjectRef();
+                    var was_good_time = this.always_newline_scope;
+                    {
+                        this.indent += 1;
+                        defer this.indent -|= 1;
 
-                    var prev_quote_strings = this.quote_strings;
-                    this.quote_strings = true;
-                    defer this.quote_strings = prev_quote_strings;
-                    while (i < len) : (i += 1) {
-                        if (i > 0) {
-                            this.printComma(Writer, writer_, enable_ansi_colors) catch unreachable;
-                            writer.writeAll(" ");
+                        this.addForNewLine(2);
+
+                        var ref = value.asObjectRef();
+
+                        var prev_quote_strings = this.quote_strings;
+                        this.quote_strings = true;
+                        defer this.quote_strings = prev_quote_strings;
+
+                        {
+                            const element = JSValue.fromRef(CAPI.JSObjectGetPropertyAtIndex(this.globalThis, ref, 0, null));
+                            const tag = Tag.get(element, this.globalThis);
+
+                            was_good_time = was_good_time or !tag.tag.isPrimitive() or this.goodTimeForANewLine();
+
+                            if (was_good_time) {
+                                this.resetLine();
+                                writer.writeAll("[");
+                                writer.writeAll("\n");
+                                this.writeIndent(Writer, writer_) catch unreachable;
+                                this.addForNewLine(1);
+                            } else {
+                                writer.writeAll("[ ");
+                            }
+
+                            this.format(tag, Writer, writer_, element, this.globalThis, enable_ansi_colors);
+
+                            if (tag.cell.isStringLike()) {
+                                if (comptime enable_ansi_colors) {
+                                    writer.writeAll(comptime Output.prettyFmt("<r>", true));
+                                }
+                            }
                         }
 
-                        const element = JSValue.fromRef(CAPI.JSObjectGetPropertyAtIndex(this.globalThis, ref, i, null));
-                        const tag = Tag.get(element, this.globalThis);
+                        var i: u32 = 1;
+                        while (i < len) : (i += 1) {
+                            this.printComma(Writer, writer_, enable_ansi_colors) catch unreachable;
+                            if (this.goodTimeForANewLine()) {
+                                writer.writeAll("\n");
+                                this.writeIndent(Writer, writer_) catch unreachable;
+                            } else {
+                                writer.writeAll(" ");
+                            }
 
-                        this.format(tag, Writer, writer_, element, this.globalThis, enable_ansi_colors);
+                            const element = JSValue.fromRef(CAPI.JSObjectGetPropertyAtIndex(this.globalThis, ref, i, null));
+                            const tag = Tag.get(element, this.globalThis);
 
-                        if (tag.cell.isStringLike()) {
-                            if (comptime enable_ansi_colors) {
-                                writer.writeAll(comptime Output.prettyFmt("<r>", true));
+                            this.format(tag, Writer, writer_, element, this.globalThis, enable_ansi_colors);
+
+                            if (tag.cell.isStringLike()) {
+                                if (comptime enable_ansi_colors) {
+                                    writer.writeAll(comptime Output.prettyFmt("<r>", true));
+                                }
                             }
                         }
                     }
 
-                    writer.writeAll(" ]");
+                    if (was_good_time or this.goodTimeForANewLine()) {
+                        this.resetLine();
+                        writer.writeAll("\n");
+                        this.writeIndent(Writer, writer_) catch {};
+                        writer.writeAll("]");
+                        this.resetLine();
+                        this.addForNewLine(1);
+                    } else {
+                        writer.writeAll(" ]");
+                        this.addForNewLine(2);
+                    }
                 },
                 .Private => {
                     if (value.as(JSC.WebCore.Response)) |response| {
@@ -1852,9 +1948,14 @@ pub const ZigConsoleClient = struct {
                     return this.printAs(.Object, Writer, writer_, value, .Event, enable_ansi_colors);
                 },
                 .NativeCode => {
+                    this.addForNewLine("[native code]".len);
                     writer.writeAll("[native code]");
                 },
                 .Promise => {
+                    if (this.goodTimeForANewLine()) {
+                        writer.writeAll("\n");
+                        this.writeIndent(Writer, writer_) catch {};
+                    }
                     writer.writeAll("Promise { " ++ comptime Output.prettyFmt("<r><cyan>", enable_ansi_colors));
 
                     switch (JSPromise.status(@ptrCast(*JSPromise, value.asObjectRef().?), this.globalThis.vm())) {
@@ -1873,8 +1974,10 @@ pub const ZigConsoleClient = struct {
                 },
                 .Boolean => {
                     if (value.toBoolean()) {
+                        this.addForNewLine(5);
                         writer.writeAll(comptime Output.prettyFmt("<r><yellow>true<r>", enable_ansi_colors));
                     } else {
+                        this.addForNewLine(4);
                         writer.writeAll(comptime Output.prettyFmt("<r><yellow>false<r>", enable_ansi_colors));
                     }
                 },
@@ -1935,6 +2038,7 @@ pub const ZigConsoleClient = struct {
                 .JSON => {
                     var str = ZigString.init("");
                     value.jsonStringify(this.globalThis, this.indent, &str);
+                    this.addForNewLine(str.len);
                     if (jsType == JSValue.JSType.JSDate) {
                         // in the code for printing dates, it never exceeds this amount
                         var iso_string_buf: [36]u8 = undefined;
@@ -2261,64 +2365,157 @@ pub const ZigConsoleClient = struct {
                             return;
                         }
 
-                        writer.writeAll("{ ");
+                        // We want to figure out if we should print this object
+                        // on one line or multiple lines
+                        //
+                        // The 100% correct way would be to print everything to
+                        // a temporary buffer and then check how long each line was
+                        //
+                        // But it's important that console.log() is fast. So we
+                        // do a small compromise to avoid multiple passes over input
+                        //
+                        // We say:
+                        //
+                        //   If the object has at least 2 properties and ANY of the following conditions are met:
+                        //      - total length of all the property names is more than
+                        //        14 characters
+                        //     - the parent object is printing each property on a new line
+                        //     - The first property is a DOM object, ESM namespace, Map, Set, or Blob
+                        //
+                        //   Then, we print it each property on a new line, recursively.
+                        //
+                        const prev_always_newline_scope = this.always_newline_scope;
+                        const first_value = JSC.JSValue.fromRef(
+                            JSC.C.JSObjectGetProperty(
+                                this.globalThis,
+                                value.asObjectRef(),
+                                props_iter.array_ref.?.at(0),
+                                null,
+                            ),
+                        );
 
-                        while (props_iter.next()) |key| {
-                            var property_value = props_iter.value;
-                            const tag = Tag.get(property_value, this.globalThis);
+                        const always_newline = props_iter.len > 1 and
+                            (prev_always_newline_scope or
+                            props_iter.hasLongNames() or
+                            switch (first_value.jsTypeLoose()) {
+                            .DOMWrapper, .ModuleNamespaceObject, .JSMap, .JSSet, .Blob => true,
+                            else => false,
+                        });
 
-                            if (tag.cell.isHidden()) continue;
+                        defer this.always_newline_scope = prev_always_newline_scope;
+                        this.always_newline_scope = always_newline;
 
-                            // TODO: make this one pass?
-                            if (!key.is16Bit() and JSLexer.isLatin1Identifier(@TypeOf(key.slice()), key.slice())) {
-                                writer.print(
-                                    comptime Output.prettyFmt("{}<d>:<r> ", enable_ansi_colors),
-                                    .{key},
-                                );
-                            } else if (key.is16Bit()) {
-                                var utf16Slice = key.utf16SliceAligned();
-                                writer.writeAll("\"");
+                        const had_newline = this.always_newline_scope or this.goodTimeForANewLine();
+                        if (had_newline) {
+                            this.estimated_line_length = this.indent * 2 + 1;
+                            writer.writeAll("{\n");
+                            this.indent += 1;
+                            this.writeIndent(Writer, writer_) catch {};
+                        } else {
+                            writer.writeAll("{ ");
+                            this.estimated_line_length += 3;
+                        }
 
-                                while (strings.indexOfAny16(utf16Slice, "\"")) |j| {
-                                    writer.write16Bit(utf16Slice[0..j]);
-                                    writer.writeAll("\\\"");
-                                    utf16Slice = utf16Slice[j + 1 ..];
+                        {
+                            defer {
+                                if (had_newline) {
+                                    this.indent -|= 1;
                                 }
-
-                                writer.write16Bit(utf16Slice);
-                                writer.print(
-                                    comptime Output.prettyFmt("\"<d>:<r> ", enable_ansi_colors),
-                                    .{},
-                                );
-                            } else {
-                                writer.print(
-                                    comptime Output.prettyFmt("{s}<d>:<r> ", enable_ansi_colors),
-                                    .{JSPrinter.formatJSONString(key.slice())},
-                                );
                             }
 
-                            if (tag.cell.isStringLike()) {
-                                if (comptime enable_ansi_colors) {
-                                    writer.writeAll(comptime Output.prettyFmt("<r><green>", true));
+                            while (props_iter.nextMaybeFirstValue(first_value)) |key| {
+                                const property_value = props_iter.value;
+                                const tag = Tag.get(property_value, this.globalThis);
+
+                                if (tag.cell.isHidden()) continue;
+
+                                if (props_iter.iter_i > 1) {
+                                    if (always_newline or this.always_newline_scope or this.goodTimeForANewLine()) {
+                                        writer.writeAll("\n");
+                                        this.writeIndent(Writer, writer_) catch {};
+                                        this.resetLine();
+                                    } else {
+                                        this.estimated_line_length += 1;
+                                        writer.writeAll(" ");
+                                    }
                                 }
-                            }
 
-                            this.format(tag, Writer, writer_, property_value, this.globalThis, enable_ansi_colors);
+                                // TODO: make this one pass?
+                                if (!key.is16Bit() and JSLexer.isLatin1Identifier(@TypeOf(key.slice()), key.slice())) {
+                                    this.addForNewLine(key.len + 1);
 
-                            if (tag.cell.isStringLike()) {
-                                if (comptime enable_ansi_colors) {
-                                    writer.writeAll(comptime Output.prettyFmt("<r>", true));
+                                    writer.print(
+                                        comptime Output.prettyFmt("{}<d>:<r> ", enable_ansi_colors),
+                                        .{key},
+                                    );
+                                } else if (key.is16Bit() and JSLexer.isLatin1Identifier(@TypeOf(key.utf16SliceAligned()), key.utf16SliceAligned())) {
+                                    this.addForNewLine(key.len + 1);
+
+                                    writer.print(
+                                        comptime Output.prettyFmt("{}<d>:<r> ", enable_ansi_colors),
+                                        .{key},
+                                    );
+                                } else if (key.is16Bit()) {
+                                    var utf16Slice = key.utf16SliceAligned();
+
+                                    this.addForNewLine(utf16Slice.len + 2);
+
+                                    if (comptime enable_ansi_colors) {
+                                        writer.writeAll(comptime Output.prettyFmt("<r><green>", true));
+                                    }
+
+                                    writer.writeAll("'");
+
+                                    while (strings.indexOfAny16(utf16Slice, "'")) |j| {
+                                        writer.write16Bit(utf16Slice[0..j]);
+                                        writer.writeAll("\\'");
+                                        utf16Slice = utf16Slice[j + 1 ..];
+                                    }
+
+                                    writer.write16Bit(utf16Slice);
+
+                                    writer.print(
+                                        comptime Output.prettyFmt("'<r><d>:<r> ", enable_ansi_colors),
+                                        .{},
+                                    );
+                                } else {
+                                    this.addForNewLine(key.len + 1);
+
+                                    writer.print(
+                                        comptime Output.prettyFmt("{s}<d>:<r> ", enable_ansi_colors),
+                                        .{JSPrinter.formatJSONString(key.slice())},
+                                    );
                                 }
-                            }
 
-                            if (props_iter.i + 1 < props_iter.len) {
-                                this.printComma(Writer, writer_, enable_ansi_colors) catch unreachable;
-                                writer.writeAll(" ");
+                                if (tag.cell.isStringLike()) {
+                                    if (comptime enable_ansi_colors) {
+                                        writer.writeAll(comptime Output.prettyFmt("<r><green>", true));
+                                    }
+                                }
+
+                                this.format(tag, Writer, writer_, property_value, this.globalThis, enable_ansi_colors);
+
+                                if (tag.cell.isStringLike()) {
+                                    if (comptime enable_ansi_colors) {
+                                        writer.writeAll(comptime Output.prettyFmt("<r>", true));
+                                    }
+                                }
+
+                                if (props_iter.i + 1 < props_iter.len) {
+                                    this.printComma(Writer, writer_, enable_ansi_colors) catch unreachable;
+                                }
                             }
                         }
+                        if (had_newline) {
+                            writer.writeAll("\n");
+                            this.writeIndent(Writer, writer_) catch {};
+                            writer.writeAll("}");
+                            this.estimated_line_length += 1;
+                        } else {
+                            this.estimated_line_length += 2;
+                            writer.writeAll(" }");
+                        }
                     }
-
-                    writer.writeAll(" }");
                 },
                 .TypedArray => {
                     const arrayBuffer = value.asArrayBuffer(this.globalThis).?;

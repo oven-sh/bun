@@ -91,7 +91,6 @@ pub const Response = struct {
 
     pub fn writeFormat(this: *const Response, formatter: *JSC.Formatter, writer: anytype, comptime enable_ansi_colors: bool) !void {
         const Writer = @TypeOf(writer);
-        try formatter.writeIndent(Writer, writer);
         try writer.print("Response ({}) {{\n", .{bun.fmt.size(this.body.len())});
         {
             formatter.indent += 1;
@@ -121,11 +120,13 @@ pub const Response = struct {
             formatter.printAs(.Boolean, Writer, writer, JSC.JSValue.jsBoolean(this.redirected), .BooleanObject, enable_ansi_colors);
             formatter.printComma(Writer, writer, enable_ansi_colors) catch unreachable;
             try writer.writeAll("\n");
+            formatter.resetLine();
             try this.body.writeFormat(formatter, writer, enable_ansi_colors);
         }
         try writer.writeAll("\n");
         try formatter.writeIndent(Writer, writer);
         try writer.writeAll("}");
+        formatter.resetLine();
     }
 
     pub fn isOK(this: *const Response) bool {
@@ -5192,7 +5193,6 @@ pub const Request = struct {
 
     pub fn writeFormat(this: *Request, formatter: *JSC.Formatter, writer: anytype, comptime enable_ansi_colors: bool) !void {
         const Writer = @TypeOf(writer);
-        try formatter.writeIndent(Writer, writer);
         try writer.print("Request ({}) {{\n", .{bun.fmt.size(this.body.slice().len)});
         {
             formatter.indent += 1;

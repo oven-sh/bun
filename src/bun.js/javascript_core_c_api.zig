@@ -40,11 +40,15 @@ pub const OpaqueJSString = opaque {
     }
 
     pub fn latin1Slice(this: *OpaqueJSString) []const u8 {
-        return this.characters8()[0..this.len()];
+        const _len = this.len();
+        if (_len == 0) return "";
+        return this.characters8()[0.._len];
     }
 
     pub fn utf16Slice(this: *OpaqueJSString) []const u16 {
-        return this.characters16()[0..this.len()];
+        const _len = this.len();
+        if (_len == 0) return &[_]u16{};
+        return this.characters16()[0.._len];
     }
 
     pub fn toZigString(this: *OpaqueJSString) cpp.ZigString {
@@ -87,8 +91,12 @@ pub const struct_OpaqueJSClass = opaque {
     pub const Type = "JSClassRef";
 };
 pub const JSClassRef = ?*struct_OpaqueJSClass;
-pub const struct_OpaqueJSPropertyNameArray = generic;
-pub const JSPropertyNameArrayRef = ?*struct_OpaqueJSPropertyNameArray;
+pub const JSPropertyNameArray = opaque {
+    pub fn at(this: *@This(), i: usize) JSStringRef {
+        return JSPropertyNameArrayGetNameAtIndex(this, i);
+    }
+};
+pub const JSPropertyNameArrayRef = ?*JSPropertyNameArray;
 pub const struct_OpaqueJSPropertyNameAccumulator = generic;
 pub const JSPropertyNameAccumulatorRef = ?*struct_OpaqueJSPropertyNameAccumulator;
 pub const JSTypedArrayBytesDeallocator = ?fn (*anyopaque, *anyopaque) callconv(.C) void;
@@ -335,7 +343,6 @@ pub extern fn JSObjectGetArrayBufferByteLength(ctx: JSContextRef, object: JSObje
 pub const OpaqueJSContextGroup = struct_OpaqueJSContextGroup;
 pub const OpaqueJSContext = struct_OpaqueJSContext;
 pub const OpaqueJSClass = struct_OpaqueJSClass;
-pub const OpaqueJSPropertyNameArray = struct_OpaqueJSPropertyNameArray;
 pub const OpaqueJSPropertyNameAccumulator = struct_OpaqueJSPropertyNameAccumulator;
 
 // This is a workaround for not receiving a JSException* object

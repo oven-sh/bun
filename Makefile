@@ -78,7 +78,7 @@ REAL_CC = $(shell which clang-13 || which clang)
 REAL_CXX = $(shell which clang++-13 || which clang++)
 
 CC = $(REAL_CC)
-CXX = $(REAL_RXX)
+CXX = $(REAL_CXX)
 CCACHE_CC_OR_CC := $(REAL_CC)
 
 CCACHE_PATH := $(shell which ccache 2>/dev/null) 

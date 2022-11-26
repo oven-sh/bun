@@ -2268,7 +2268,7 @@ const char* const s_readableStreamInternalsReadableStreamDefaultControllerCanClo
 const JSC::ConstructAbility s_readableStreamInternalsLazyLoadStreamCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableStreamInternalsLazyLoadStreamCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_readableStreamInternalsLazyLoadStreamCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_readableStreamInternalsLazyLoadStreamCodeLength = 3703;
+const int s_readableStreamInternalsLazyLoadStreamCodeLength = 3827;
 static const JSC::Intrinsic s_readableStreamInternalsLazyLoadStreamCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_readableStreamInternalsLazyLoadStreamCode =
     "(function (stream, autoAllocateChunkSize) {\n" \
@@ -2328,9 +2328,11 @@ const char* const s_readableStreamInternalsLazyLoadStreamCode =
     "      return handleResult(result, controller, view);\n" \
     "    }\n" \
     "\n" \
+    "    const registry = deinit ? new FinalizationRegistry(deinit) : null;\n" \
     "    Prototype = class NativeReadableStreamSource {\n" \
     "      constructor(tag, autoAllocateChunkSize, drainValue) {\n" \
     "        this.#tag = tag;\n" \
+    "        this.#cancellationToken = {};\n" \
     "        this.pull = this.#pull.bind(this);\n" \
     "        this.cancel = this.#cancel.bind(this);\n" \
     "        this.autoAllocateChunkSize = autoAllocateChunkSize;\n" \
@@ -2338,11 +2340,15 @@ const char* const s_readableStreamInternalsLazyLoadStreamCode =
     "        if (drainValue !== @undefined) {\n" \
     "          this.start = (controller) => {\n" \
     "            controller.enqueue(drainValue);\n" \
-    "            console.log(\"chunkSize\", chunkSize);\n" \
     "          };\n" \
+    "        }\n" \
+    "\n" \
+    "        if (registry) {\n" \
+    "          registry.register(this, tag, this.#cancellationToken);\n" \
     "        }\n" \
     "      }\n" \
     "\n" \
+    "      #cancellationToken;\n" \
     "      pull;\n" \
     "      cancel;\n" \
     "      start;\n" \
@@ -2368,10 +2374,10 @@ const char* const s_readableStreamInternalsLazyLoadStreamCode =
     "      #cancel(reason) {\n" \
     "        var tag = this.#tag;\n" \
     "        setRefOrUnref && setRefOrUnref(tag, false);\n" \
+    "        registry.unregister(this.#cancellationToken);\n" \
     "        cancel(tag, reason);\n" \
     "      }\n" \
     "      static deinit = deinit;\n" \
-    "      static registry = new FinalizationRegistry(deinit);\n" \
     "      static drain = drain;\n" \
     "    };\n" \
     "    @lazyStreamPrototypeMap.@set(nativeType, Prototype);\n" \
@@ -2379,15 +2385,16 @@ const char* const s_readableStreamInternalsLazyLoadStreamCode =
     "\n" \
     "  const chunkSize = Prototype.startSync(nativePtr, autoAllocateChunkSize);\n" \
     "  var drainValue;\n" \
-    "  const drainFn = Prototype.drain;\n" \
+    "  const {drain: drainFn, deinit: deinitFn} = Prototype;\n" \
     "  if (drainFn) {\n" \
     "    drainValue = drainFn(nativePtr);\n" \
     "  }\n" \
     "\n" \
     "  //\n" \
     "  if (chunkSize === 0) {\n" \
+    "    deinit && nativePtr && @enqueueJob(deinit, nativePtr);\n" \
+    "\n" \
     "    if ((drainValue?.byteLength ?? 0) > 0) {\n" \
-    "      deinit && nativePtr && @enqueueJob(deinit, nativePtr);\n" \
     "      return {\n" \
     "        start(controller) {\n" \
     "          controller.enqueue(drainValue);\n" \
@@ -2404,9 +2411,8 @@ const char* const s_readableStreamInternalsLazyLoadStreamCode =
     "      type: \"bytes\",\n" \
     "    };\n" \
     "  }\n" \
-    "  var instance = new Prototype(nativePtr, chunkSize, drainValue);\n" \
-    "  Prototype.registry.register(instance, nativePtr);\n" \
-    "  return instance;\n" \
+    "\n" \
+    "  return new Prototype(nativePtr, chunkSize, drainValue);\n" \
     "})\n" \
 ;
 

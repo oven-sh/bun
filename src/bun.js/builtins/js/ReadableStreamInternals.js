@@ -1905,9 +1905,11 @@ function lazyLoadStream(stream, autoAllocateChunkSize) {
       return handleResult(result, controller, view);
     }
 
+    const registry = deinit ? new FinalizationRegistry(deinit) : null;
     Prototype = class NativeReadableStreamSource {
       constructor(tag, autoAllocateChunkSize, drainValue) {
         this.#tag = tag;
+        this.#cancellationToken = {};
         this.pull = this.#pull.bind(this);
         this.cancel = this.#cancel.bind(this);
         this.autoAllocateChunkSize = autoAllocateChunkSize;
@@ -1915,11 +1917,15 @@ function lazyLoadStream(stream, autoAllocateChunkSize) {
         if (drainValue !== @undefined) {
           this.start = (controller) => {
             controller.enqueue(drainValue);
-            console.log("chunkSize", chunkSize);
           };
+        }
+
+        if (registry) {
+          registry.register(this, tag, this.#cancellationToken);
         }
       }
 
+      #cancellationToken;
       pull;
       cancel;
       start;
@@ -1944,11 +1950,12 @@ function lazyLoadStream(stream, autoAllocateChunkSize) {
 
       #cancel(reason) {
         var tag = this.#tag;
+
+        registry && registry.unregister(this.#cancellationToken);
         setRefOrUnref && setRefOrUnref(tag, false);
         cancel(tag, reason);
       }
       static deinit = deinit;
-      static registry = new FinalizationRegistry(deinit);
       static drain = drain;
     };
     @lazyStreamPrototypeMap.@set(nativeType, Prototype);
@@ -1956,15 +1963,16 @@ function lazyLoadStream(stream, autoAllocateChunkSize) {
 
   const chunkSize = Prototype.startSync(nativePtr, autoAllocateChunkSize);
   var drainValue;
-  const drainFn = Prototype.drain;
+  const {drain: drainFn, deinit: deinitFn} = Prototype;
   if (drainFn) {
     drainValue = drainFn(nativePtr);
   }
 
   // empty file, no need for native back-and-forth on this
   if (chunkSize === 0) {
+    deinit && nativePtr && @enqueueJob(deinit, nativePtr);
+
     if ((drainValue?.byteLength ?? 0) > 0) {
-      deinit && nativePtr && @enqueueJob(deinit, nativePtr);
       return {
         start(controller) {
           controller.enqueue(drainValue);
@@ -1981,9 +1989,8 @@ function lazyLoadStream(stream, autoAllocateChunkSize) {
       type: "bytes",
     };
   }
-  var instance = new Prototype(nativePtr, chunkSize, drainValue);
-  Prototype.registry.register(instance, nativePtr);
-  return instance;
+
+  return new Prototype(nativePtr, chunkSize, drainValue);
 }
 
 function readableStreamIntoArray(stream) {

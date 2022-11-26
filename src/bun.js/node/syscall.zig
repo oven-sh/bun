@@ -212,9 +212,17 @@ pub fn open(file_path: [:0]const u8, flags: JSC.Node.Mode, perm: JSC.Node.Mode) 
     unreachable;
 }
 
-// The zig standard library marks BADF as unreachable
-// That error is not unreachable for us
+/// This function will prevent stdout and stderr from being closed.
 pub fn close(fd: std.os.fd_t) ?Syscall.Error {
+    if (fd == std.os.STDOUT_FILENO or fd == std.os.STDERR_FILENO) {
+        log("close({d}) SKIPPED", .{fd});
+        return null;
+    }
+
+    return closeAllowingStdoutAndStderr(fd);
+}
+
+pub fn closeAllowingStdoutAndStderr(fd: std.os.fd_t) ?Syscall.Error {
     log("close({d})", .{fd});
     std.debug.assert(fd != bun.invalid_fd);
     if (comptime std.meta.trait.isSignedInt(@TypeOf(fd)))

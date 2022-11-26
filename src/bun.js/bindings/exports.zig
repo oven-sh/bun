@@ -1770,12 +1770,14 @@ pub const ZigConsoleClient = struct {
                         if (is_negative) {
                             i = -i;
                         }
-                        const digits = bun.fmt.fastDigitCount(@intCast(u32, i)) + @as(u32, @boolToInt(is_negative));
+                        const digits = if (i != 0)
+                            bun.fmt.fastDigitCount(@intCast(usize, i)) + @as(usize, @boolToInt(is_negative))
+                        else
+                            1;
                         this.addForNewLine(digits);
                     } else {
                         this.addForNewLine(bun.fmt.count("{d}", .{int}));
                     }
-
                     writer.print(comptime Output.prettyFmt("<r><yellow>{d}<r>", enable_ansi_colors), .{int});
                 },
                 .BigInt => {

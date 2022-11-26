@@ -8044,7 +8044,7 @@ pub const Macro = struct {
                             return Expr.init(E.Number, E.Number{ .value = value.asNumber() }, this.caller.loc);
                         },
                         .String => {
-                            var sliced = value.toSlice(this.allocator).cloneIfNeeded(this.allocator) catch unreachable;
+                            var sliced = value.toSlice(this.global, this.allocator).cloneIfNeeded(this.allocator) catch unreachable;
                             return Expr.init(E.String, E.String.init(sliced.slice()), this.caller.loc);
                         },
                         .Promise => {

@@ -713,6 +713,7 @@ pub const Subprocess = struct {
                         .auto_close = true,
                     };
                     sink.mode = std.os.S.IFIFO;
+                    sink.watch(fd);
                     if (stdio == .pipe) {
                         if (stdio.pipe) |readable| {
                             return Writable{
@@ -723,7 +724,7 @@ pub const Subprocess = struct {
                             };
                         }
                     }
-                    // sink.watch(fd);
+
                     return Writable{ .pipe = sink };
                 },
                 .array_buffer, .blob => {

@@ -1494,17 +1494,10 @@ pub const FileSink = struct {
     }
 
     pub fn finalize(this: *FileSink) void {
+        this.cleanup();
         this.signal.close(null);
-        this.cleanup();
+
         this.reachable_from_js = false;
-
-        if (!this.isReachable())
-            this.allocator.destroy(this);
-    }
-
-    pub fn onHangup(this: *FileSink) void {
-        this.signal.clear();
-        this.cleanup();
 
         if (!this.isReachable())
             this.allocator.destroy(this);
@@ -1642,7 +1635,9 @@ pub const FileSink = struct {
 
         this.done = true;
         const fd = this.fd;
-        if (fd != bun.invalid_fd) {
+        const signal_close = fd != bun.invalid_fd;
+        defer if (signal_close) this.signal.close(null);
+        if (signal_close) {
             if (this.poll_ref) |poll| {
                 this.poll_ref = null;
                 poll.deinit();
@@ -1651,7 +1646,6 @@ pub const FileSink = struct {
             this.fd = bun.invalid_fd;
             if (this.auto_close)
                 _ = JSC.Node.Syscall.close(fd);
-            this.signal.close(null);
         }
 
         this.pending.result = .done;
@@ -2303,8 +2297,6 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
 
         is_listening_for_abort: bool = false,
         wrote: Blob.SizeType = 0,
-        callback: anyframe->JSC.Maybe(Blob.SizeType) = undefined,
-        has_callback: bool = false,
 
         allocator: std.mem.Allocator,
         done: bool = false,
@@ -2405,15 +2397,6 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
 
             // flush the javascript promise from calling .flush()
             this.flushPromise();
-
-            if (this.has_callback) {
-                this.has_callback = false;
-
-                var callback = this.callback;
-                this.callback = undefined;
-                // TODO: clarify what the boolean means
-                resume callback;
-            }
 
             // pending_flush or callback could have caused another send()
             // so we check again if we should report readiness
@@ -3554,11 +3537,12 @@ pub const FIFO = struct {
         }
 
         const fd = this.fd;
-        if (fd != bun.invalid_fd) {
+        const signal_close = fd != bun.invalid_fd;
+        defer if (signal_close) this.signal.close(null);
+        if (signal_close) {
             this.fd = bun.invalid_fd;
             if (this.auto_close)
                 _ = JSC.Node.Syscall.close(fd);
-            this.signal.close(null);
         }
 
         this.to_read = null;
@@ -3984,6 +3968,7 @@ pub const File = struct {
 
         if (this.seekable) {
             this.remaining_bytes = @intCast(Blob.SizeType, stat.size);
+            file.max_size = this.remaining_bytes;
 
             if (this.remaining_bytes == 0) {
                 if (auto_close) {
@@ -3992,6 +3977,8 @@ pub const File = struct {
 
                 return .{ .empty = {} };
             }
+        } else {
+            file.max_size = Blob.max_size;
         }
 
         this.fd = fd;

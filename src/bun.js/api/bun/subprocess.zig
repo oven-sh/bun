@@ -267,10 +267,15 @@ pub const Subprocess = struct {
         return JSValue.jsUndefined();
     }
 
+    pub fn hasKilled(this: *const Subprocess) bool {
+        return this.killed or this.hasExited();
+    }
+
     pub fn tryKill(this: *Subprocess, sig: i32) JSC.Node.Maybe(void) {
-        if (this.killed) {
+        if (this.hasKilled()) {
             return .{ .result = {} };
         }
+        this.killed = true;
 
         if (comptime Environment.isLinux) {
             // should this be handled differently?
@@ -283,12 +288,21 @@ pub const Subprocess = struct {
             const rc = std.os.linux.pidfd_send_signal(this.pidfd, @intCast(u8, sig), null, 0);
 
             if (rc != 0) {
-                return .{ .err = JSC.Node.Syscall.Error.fromCode(std.os.linux.getErrno(rc), .kill) };
+                const errno = std.os.linux.getErrno(rc);
+                // if the process was already killed don't throw
+                if (errno == .SRCH) return .{ .result = {} };
+
+                return .{ .err = JSC.Node.Syscall.Error.fromCode(errno, .kill) };
             }
         } else {
             const err = std.c.kill(this.pid, sig);
             if (err != 0) {
-                return .{ .err = JSC.Node.Syscall.Error.fromCode(std.c.getErrno(err), .kill) };
+                const errno = std.c.getErrno(err);
+
+                // if the process was already killed don't throw
+                if (errno == .SRCH) return .{ .result = {} };
+
+                return .{ .err = JSC.Node.Syscall.Error.fromCode(errno, .kill) };
             }
         }
 
@@ -334,7 +348,7 @@ pub const Subprocess = struct {
         this: *Subprocess,
         _: *JSGlobalObject,
     ) callconv(.C) JSValue {
-        return JSValue.jsBoolean(this.killed);
+        return JSValue.jsBoolean(this.hasKilled());
     }
 
     pub const BufferedInput = struct {

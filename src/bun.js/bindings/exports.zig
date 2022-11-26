@@ -1763,10 +1763,25 @@ pub const ZigConsoleClient = struct {
                     }
                 },
                 .Integer => {
-                    writer.print(comptime Output.prettyFmt("<r><yellow>{d}<r>", enable_ansi_colors), .{value.toInt64()});
+                    const int = value.toInt64();
+                    if (int < std.math.maxInt(u32)) {
+                        var i = int;
+                        const is_negative = i < 0;
+                        if (is_negative) {
+                            i = -i;
+                        }
+                        const digits = bun.fmt.fastDigitCount(@intCast(u32, i)) + @as(u32, @boolToInt(is_negative));
+                        this.addForNewLine(digits);
+                    } else {
+                        this.addForNewLine(bun.fmt.count("{d}", .{int}));
+                    }
+
+                    writer.print(comptime Output.prettyFmt("<r><yellow>{d}<r>", enable_ansi_colors), .{int});
                 },
                 .BigInt => {
                     var out_str = value.getZigString(this.globalThis).slice();
+                    this.addForNewLine(out_str.len);
+
                     writer.print(comptime Output.prettyFmt("<r><yellow>{s}n<r>", enable_ansi_colors), .{out_str});
                 },
                 .Double => {

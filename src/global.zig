@@ -31,6 +31,45 @@ pub const path = @import("./resolver/resolve_path.zig");
 pub const fmt = struct {
     pub usingnamespace std.fmt;
 
+    // https://lemire.me/blog/2021/06/03/computing-the-number-of-digits-of-an-integer-even-faster/
+    pub fn fastDigitCount(x: u64) u64 {
+        const table = [_]u64{
+            4294967296,
+            8589934582,
+            8589934582,
+            8589934582,
+            12884901788,
+            12884901788,
+            12884901788,
+            17179868184,
+            17179868184,
+            17179868184,
+            21474826480,
+            21474826480,
+            21474826480,
+            21474826480,
+            25769703776,
+            25769703776,
+            25769703776,
+            30063771072,
+            30063771072,
+            30063771072,
+            34349738368,
+            34349738368,
+            34349738368,
+            34349738368,
+            38554705664,
+            38554705664,
+            38554705664,
+            41949672960,
+            41949672960,
+            41949672960,
+            42949672960,
+            42949672960,
+        };
+        return x + table[std.math.log2(x)] >> 32;
+    }
+
     pub const SizeFormatter = struct {
         value: usize = 0,
         pub fn format(self: SizeFormatter, comptime _: []const u8, opts: fmt.FormatOptions, writer: anytype) !void {

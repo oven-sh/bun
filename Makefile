@@ -4,14 +4,9 @@ OS_NAME := $(shell uname -s | tr '[:upper:]' '[:lower:]')
 ARCH_NAME_RAW := $(shell uname -m)
 BUN_AUTO_UPDATER_REPO = Jarred-Sumner/bun-releases-for-updater
 
-CMAKE_CXX_COMPILER_LAUNCHER_FLAG ?=
+CMAKE_CXX_COMPILER_LAUNCHER_FLAG :=
 
-CCACHE_PATH ?=
 
-ifeq (,$(findstring,$(shell which ccache),ccache))
-	CCACHE_PATH := $(shell which ccache) 
-	CMAKE_CXX_COMPILER_LAUNCHER_FLAG := -DCMAKE_CXX_COMPILER_LAUNCHER=$(CCACHE_PATH)
-endif
 
 # 'make' command will trigger the help target
 .DEFAULT_GOAL := help
@@ -79,8 +74,24 @@ ZIG ?= $(shell which zig || echo -e "error: Missing zig. Please make sure zig is
 # This is easier to happen than you'd expect.
 # Using realpath here causes issues because clang uses clang++ as a symlink
 # so if that's resolved, it won't build for C++
-CC = $(shell which clang-13 || which clang)
-CXX = $(shell which clang++-13 || which clang++)
+REAL_CC = $(shell which clang-13 || which clang)
+REAL_CXX = $(shell which clang++-13 || which clang++)
+
+CC = $(REAL_CC)
+CXX = $(REAL_RXX)
+CCACHE_CC_OR_CC := $(REAL_CC)
+
+CCACHE_PATH := $(shell which ccache 2>/dev/null) 
+
+CCACHE_CC_FLAG = CC=$(CCACHE_CC_OR_CC)
+
+ifeq (,$(findstring,$(shell which ccache),ccache))
+	CMAKE_CXX_COMPILER_LAUNCHER_FLAG := -DCMAKE_CXX_COMPILER_LAUNCHER=$(CCACHE_PATH) -DCMAKE_C_COMPILER_LAUNCHER=$(CCACHE_PATH)
+	CCACHE_CC_OR_CC := "$(CCACHE_PATH) $(REAL_CC)"
+	export CCACHE_COMPILERTYPE = clang
+	CCACHE_CC_FLAG = CC=$(CCACHE_CC_OR_CC) CCACHE_COMPILER=$(REAL_CC)
+	CCACHE_CXX_FLAG = CXX=$(CCACHE_PATH) CCACHE_COMPILER=$(REAL_CXX)
+endif
 
 CXX_WITH_CCACHE = $(CCACHE_PATH) $(CXX)
 CC_WITH_CCACHE = $(CCACHE_PATH) $(CC)
@@ -139,13 +150,12 @@ CMAKE_FLAGS = $(CMAKE_FLAGS_WITHOUT_RELEASE) -DCMAKE_BUILD_TYPE=Release
 SQLITE_OBJECT =
 
 
-BITCODE_OR_SECTIONS=
-EMBED_OR_EMIT_BITCODE=
+
 LIBTOOL=libtoolize
 ifeq ($(OS_NAME),darwin)
 LIBTOOL=glibtoolize
 AR=$(LLVM_PREFIX)/bin/llvm-ar
-BITCODE_OR_SECTIONS=-fembed-bitcode
+BITCODE_OR_SECTIONS=
 endif
 
 ifeq ($(OS_NAME),linux)
@@ -155,8 +165,8 @@ endif
 
 OPTIMIZATION_LEVEL=-O3 $(MARCH_NATIVE)
 DEBUG_OPTIMIZATION_LEVEL= -O1 $(MARCH_NATIVE)
-CFLAGS_WITHOUT_MARCH = $(MACOS_MIN_FLAG) $(BITCODE_OR_SECTIONS) $(OPTIMIZATION_LEVEL) -fno-exceptions -fvisibility=hidden -fvisibility-inlines-hidden
-BUN_CFLAGS = $(MACOS_MIN_FLAG) $(MARCH_NATIVE) $(EMBED_OR_EMIT_BITCODE) $(OPTIMIZATION_LEVEL) -fno-exceptions -fvisibility=hidden -fvisibility-inlines-hidden
+CFLAGS_WITHOUT_MARCH = $(MACOS_MIN_FLAG) $(OPTIMIZATION_LEVEL) -fno-exceptions -fvisibility=hidden -fvisibility-inlines-hidden
+BUN_CFLAGS = $(MACOS_MIN_FLAG) $(MARCH_NATIVE)  $(OPTIMIZATION_LEVEL) -fno-exceptions -fvisibility=hidden -fvisibility-inlines-hidden
 BUN_TMP_DIR := /tmp/make-bun
 CFLAGS=$(CFLAGS_WITHOUT_MARCH) $(MARCH_NATIVE)
 
@@ -481,7 +491,7 @@ TINYCC_CFLAGS= -DTCC_LIBTCC1=\"\0\"
 tinycc:
 	cd $(TINYCC_DIR) && \
 		make clean && \
-		AR=$(AR) CC=$(CC) CFLAGS='$(CFLAGS_WITHOUT_MARCH) $(NATIVE_OR_OLD_MARCH) -mtune=native $(TINYCC_CFLAGS)' ./configure --enable-static --cc=$(CC) --ar=$(AR) --config-predefs=yes  && \
+		AR=$(AR) $(CCACHE_CC_FLAG) CFLAGS='$(CFLAGS_WITHOUT_MARCH) $(NATIVE_OR_OLD_MARCH) -mtune=native $(TINYCC_CFLAGS)' ./configure --enable-static --cc=$(CCACHE_CC_OR_CC) --ar=$(AR) --config-predefs=yes  && \
 		make -j10 && \
 		cp $(TINYCC_DIR)/*.a $(BUN_DEPS_OUT_DIR)
 
@@ -564,7 +574,7 @@ compile-ffi-test:
 oniguruma:
 	cd $(BUN_DEPS_DIR)/oniguruma && \
 	autoreconf -vfi && \
-	CFLAGS="$(CFLAGS)" CC=$(CC) ./configure && \
+	CFLAGS="$(CFLAGS)" $(CCACHE_CC_FLAG) ./configure && \
 	make -j${CPUS} && \
 	cp ./src/.libs/libonig.a $(BUN_DEPS_OUT_DIR)/libonig.a
 
@@ -577,7 +587,7 @@ libarchive:
 	(make clean || echo ""); \
 	(./build/clean.sh || echo ""); \
 	./build/autogen.sh; \
-	CFLAGS="$(CFLAGS)" CC=$(CC) ./configure --disable-shared --enable-static  --with-pic  --disable-bsdtar   --disable-bsdcat --disable-rpath --enable-posix-regex-lib  --without-xml2  --without-expat --without-openssl  --without-iconv --without-zlib; \
+	CFLAGS="$(CFLAGS)" $(CCACHE_CC_FLAG) ./configure --disable-shared --enable-static  --with-pic  --disable-bsdtar   --disable-bsdcat --disable-rpath --enable-posix-regex-lib  --without-xml2  --without-expat --without-openssl  --without-iconv --without-zlib; \
 	make -j${CPUS}; \
 	cp ./.libs/libarchive.a $(BUN_DEPS_OUT_DIR)/libarchive.a;
 
@@ -596,8 +606,7 @@ tgz-debug:
 vendor: require init-submodules vendor-without-check
 
 zlib:
-	cd $(BUN_DEPS_DIR)/zlib; CFLAGS="$(CFLAGS)" cmake $(CMAKE_FLAGS) .; CFLAGS="$(CFLAGS)" make;
-	cp $(BUN_DEPS_DIR)/zlib/libz.a $(BUN_DEPS_OUT_DIR)/libz.a
+	cd $(BUN_DEPS_DIR)/zlib; make clean; $(CCACHE_CC_FLAG) CFLAGS="$(CFLAGS)" ./configure --static && make -j${CPUS} && cp ./libz.a $(BUN_DEPS_OUT_DIR)/libz.a
 
 ifeq ($(POSIX_PKG_MANAGER), brew)
 PKGNAME_NINJA := ninja
@@ -692,7 +701,7 @@ usockets:
 	cd $(USOCKETS_DIR) && $(AR) rcvs $(BUN_DEPS_OUT_DIR)/libusockets.a $(USOCKETS_DIR)/*.{o,bc}
 
 uws: usockets
-	$(CXX_WITH_CCACHE) $(BITCODE_OR_SECTIONS) $(EMIT_LLVM_FOR_RELEASE) -fPIC -I$(BUN_DEPS_DIR)/uws/uSockets/src $(CLANG_FLAGS) $(CFLAGS) $(UWS_CXX_FLAGS) $(UWS_LDFLAGS) $(PLATFORM_LINKER_FLAGS) -c -I$(BUN_DEPS_DIR) $(BUN_DEPS_OUT_DIR)/libusockets.a $(BUN_DEPS_DIR)/libuwsockets.cpp -o $(BUN_DEPS_OUT_DIR)/libuwsockets.o
+	$(CXX_WITH_CCACHE) $(EMIT_LLVM_FOR_RELEASE) -fPIC -I$(BUN_DEPS_DIR)/uws/uSockets/src $(CLANG_FLAGS) $(CFLAGS) $(UWS_CXX_FLAGS) $(UWS_LDFLAGS) $(PLATFORM_LINKER_FLAGS) -c -I$(BUN_DEPS_DIR) $(BUN_DEPS_OUT_DIR)/libusockets.a $(BUN_DEPS_DIR)/libuwsockets.cpp -o $(BUN_DEPS_OUT_DIR)/libuwsockets.o
 
 .PHONY: sign-macos-x64
 sign-macos-x64:
@@ -1232,7 +1241,7 @@ jsc-build-mac-compile:
 			-DUSE_PTHREAD_JIT_PERMISSIONS_API=ON \
 			$(WEBKIT_DIR) \
 			$(WEBKIT_RELEASE_DIR) && \
-	CFLAGS="$(CFLAGS) $(BITCODE_OR_SECTIONS) -ffat-lto-objects" CXXFLAGS="$(CXXFLAGS) $(BITCODE_OR_SECTIONS)  -ffat-lto-objects" \
+	CFLAGS="$(CFLAGS) -ffat-lto-objects" CXXFLAGS="$(CXXFLAGS)  -ffat-lto-objects" \
 		cmake --build $(WEBKIT_RELEASE_DIR) --config Release --target jsc
 
 .PHONY: jsc-build-mac-compile-lto

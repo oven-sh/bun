@@ -956,7 +956,7 @@ pub fn toUTF16Alloc(allocator: std.mem.Allocator, bytes: []const u8, comptime fa
             else => {
                 if (fail_if_invalid) {
                     allocator.free(out);
-                    return error.InvalidUTF8;
+                    return error.InvalidByteSequence;
                 }
 
                 first_non_ascii = @truncate(u32, result.count);

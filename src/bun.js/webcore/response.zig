@@ -1017,8 +1017,6 @@ pub const Blob = struct {
     pub fn writeFormat(this: *const Blob, formatter: *JSC.Formatter, writer: anytype, comptime enable_ansi_colors: bool) !void {
         const Writer = @TypeOf(writer);
 
-        try formatter.writeIndent(Writer, writer);
-
         if (this.isDetached()) {
             try writer.writeAll(comptime Output.prettyFmt("<d>[<r>Blob<r> detached<d>]<r>", enable_ansi_colors));
             return;

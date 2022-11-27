@@ -259,12 +259,20 @@ pub fn writeJSONString(input: []const u8, comptime Writer: type, writer: Writer,
         };
         if (canPrintWithoutEscape(i32, c, false)) {
             const remain = text[@as(usize, width)..];
+            if (encoding != .utf8 and width > 0) {
+                var codepoint_bytes: [4]u8 = undefined;
+                std.mem.writeIntNative(i32, &codepoint_bytes, c);
+                try writer.writeAll(
+                    codepoint_bytes[0..strings.encodeWTF8Rune(codepoint_bytes[0..4], c)],
+                );
+            }
+
             if (strings.indexOfNeedsEscape(remain)) |j| {
-                try writer.writeAll(text[0 .. j + @as(usize, width)]);
-                text = text[j + @as(usize, width) ..];
+                try writer.writeAll(remain[0..j]);
+                text = remain[j..];
                 continue;
             } else {
-                try writer.writeAll(text);
+                try writer.writeAll(remain);
                 break;
             }
         }

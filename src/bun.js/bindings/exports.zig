@@ -1869,19 +1869,11 @@ pub const ZigConsoleClient = struct {
 
             switch (comptime Format) {
                 .StringPossiblyFormatted => {
-                    var str = ZigString.init("");
-                    value.toZigString(&str, this.globalThis);
+                    var str = value.toSlice(this.globalThis, bun.default_allocator);
+                    defer str.deinit();
                     this.addForNewLine(str.len);
-
-                    if (!str.is16Bit()) {
-                        const sliced = str.toSlice(bun.default_allocator);
-                        defer sliced.deinit();
-                        const slice = sliced.slice();
-                        this.writeWithFormatting(Writer, writer_, @TypeOf(slice), slice, this.globalThis, enable_ansi_colors);
-                    } else {
-                        // TODO: UTF16
-                        writer.print("{}", .{str});
-                    }
+                    const slice = str.slice();
+                    this.writeWithFormatting(Writer, writer_, @TypeOf(slice), slice, this.globalThis, enable_ansi_colors);
                 },
                 .String => {
                     var str = ZigString.init("");
@@ -1915,7 +1907,20 @@ pub const ZigConsoleClient = struct {
                         writer.print(comptime Output.prettyFmt("<r><red>", enable_ansi_colors), .{});
                     }
 
-                    writer.print("{}", .{str});
+                    if (str.is16Bit()) {
+                        // streaming print
+                        writer.print("{s}", .{str});
+                    } else if (strings.isAllASCII(str.slice())) {
+                        // fast path
+                        writer.writeAll(str.slice());
+                    } else if (str.len > 0) {
+                        // slow path
+                        var buf = strings.allocateLatin1IntoUTF8(bun.default_allocator, []const u8, str.slice()) catch &[_]u8{};
+                        if (buf.len > 0) {
+                            defer bun.default_allocator.free(buf);
+                            writer.writeAll(buf);
+                        }
+                    }
 
                     if (jsType == .RegExpObject and enable_ansi_colors) {
                         writer.print(comptime Output.prettyFmt("<r>", enable_ansi_colors), .{});

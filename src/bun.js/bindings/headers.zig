@@ -284,6 +284,7 @@ pub extern fn JSC__JSValue__eqlCell(JSValue0: JSC__JSValue, arg1: [*c]JSC__JSCel
 pub extern fn JSC__JSValue__eqlValue(JSValue0: JSC__JSValue, JSValue1: JSC__JSValue) bool;
 pub extern fn JSC__JSValue__fastGet_(JSValue0: JSC__JSValue, arg1: ?*JSC__JSGlobalObject, arg2: u8) JSC__JSValue;
 pub extern fn JSC__JSValue__forEach(JSValue0: JSC__JSValue, arg1: ?*JSC__JSGlobalObject, arg2: ?*anyopaque, ArgFn3: ?fn ([*c]JSC__VM, ?*JSC__JSGlobalObject, ?*anyopaque, JSC__JSValue) callconv(.C) void) void;
+pub extern fn JSC__JSValue__forEachProperty(JSValue0: JSC__JSValue, arg1: ?*JSC__JSGlobalObject, arg2: ?*anyopaque, ArgFn3: ?fn (?*JSC__JSGlobalObject, ?*anyopaque, [*c]ZigString, JSC__JSValue, bool) callconv(.C) void) void;
 pub extern fn JSC__JSValue__fromEntries(arg0: ?*JSC__JSGlobalObject, arg1: [*c]ZigString, arg2: [*c]ZigString, arg3: usize, arg4: bool) JSC__JSValue;
 pub extern fn JSC__JSValue__fromInt64NoTruncate(arg0: ?*JSC__JSGlobalObject, arg1: i64) JSC__JSValue;
 pub extern fn JSC__JSValue__fromUInt64NoTruncate(arg0: ?*JSC__JSGlobalObject, arg1: u64) JSC__JSValue;

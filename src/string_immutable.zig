@@ -1600,10 +1600,10 @@ pub fn copyLatin1IntoUTF16(comptime Buffer: type, buf_: Buffer, comptime Type: t
 
         latin1 = latin1[to_write..];
         buf = buf[to_write..];
-        if (latin1.len > 0 and buf.len >= 2) {
-            buf[0..2].* = latin1ToCodepointBytesAssumeNotASCII16(latin1[0]);
+        if (latin1.len > 0 and buf.len >= 1) {
+            buf[0] = latin1ToCodepointBytesAssumeNotASCII16(latin1[0]);
             latin1 = latin1[1..];
-            buf = buf[2..];
+            buf = buf[1..];
         }
     }
 
@@ -2308,27 +2308,54 @@ test "copyLatin1IntoUTF8 - latin1" {
 pub fn latin1ToCodepointAssumeNotASCII(char: u8, comptime CodePointType: type) CodePointType {
     return @intCast(
         CodePointType,
-        @bitCast(
-            u16,
-            latin1ToCodepointBytesAssumeNotASCII(char),
-        ),
+        latin1ToCodepointBytesAssumeNotASCII16(char),
     );
 }
 
-pub fn latin1ToCodepointBytesAssumeNotASCIIWIthCharType(comptime Char: type, char: u32) [2]Char {
-    assert(char > 127);
-    return [2]Char{
-        @as(Char, @truncate(u8, 0xc0 | char >> 6)),
-        @as(Char, @truncate(u8, 0x80 | (char & 0x3f))),
-    };
-}
+const latin1_to_utf16_conversion_table = [256]u16{
+    0x0000, 0x0001, 0x0002, 0x0003, 0x0004, 0x0005, 0x0006, 0x0007, // 00-07
+    0x0008, 0x0009, 0x000A, 0x000B, 0x000C, 0x000D, 0x000E, 0x000F, // 08-0F
+    0x0010, 0x0011, 0x0012, 0x0013, 0x0014, 0x0015, 0x0016, 0x0017, // 10-17
+    0x0018, 0x0019, 0x001A, 0x001B, 0x001C, 0x001D, 0x001E, 0x001F, // 18-1F
+    0x0020, 0x0021, 0x0022, 0x0023, 0x0024, 0x0025, 0x0026, 0x0027, // 20-27
+    0x0028, 0x0029, 0x002A, 0x002B, 0x002C, 0x002D, 0x002E, 0x002F, // 28-2F
+    0x0030, 0x0031, 0x0032, 0x0033, 0x0034, 0x0035, 0x0036, 0x0037, // 30-37
+    0x0038, 0x0039, 0x003A, 0x003B, 0x003C, 0x003D, 0x003E, 0x003F, // 38-3F
+    0x0040, 0x0041, 0x0042, 0x0043, 0x0044, 0x0045, 0x0046, 0x0047, // 40-47
+    0x0048, 0x0049, 0x004A, 0x004B, 0x004C, 0x004D, 0x004E, 0x004F, // 48-4F
+    0x0050, 0x0051, 0x0052, 0x0053, 0x0054, 0x0055, 0x0056, 0x0057, // 50-57
+    0x0058, 0x0059, 0x005A, 0x005B, 0x005C, 0x005D, 0x005E, 0x005F, // 58-5F
+    0x0060, 0x0061, 0x0062, 0x0063, 0x0064, 0x0065, 0x0066, 0x0067, // 60-67
+    0x0068, 0x0069, 0x006A, 0x006B, 0x006C, 0x006D, 0x006E, 0x006F, // 68-6F
+    0x0070, 0x0071, 0x0072, 0x0073, 0x0074, 0x0075, 0x0076, 0x0077, // 70-77
+    0x0078, 0x0079, 0x007A, 0x007B, 0x007C, 0x007D, 0x007E, 0x007F, // 78-7F
+    0x20AC, 0x0081, 0x201A, 0x0192, 0x201E, 0x2026, 0x2020, 0x2021, // 80-87
+    0x02C6, 0x2030, 0x0160, 0x2039, 0x0152, 0x008D, 0x017D, 0x008F, // 88-8F
+    0x0090, 0x2018, 0x2019, 0x201C, 0x201D, 0x2022, 0x2013, 0x2014, // 90-97
+    0x02DC, 0x2122, 0x0161, 0x203A, 0x0153, 0x009D, 0x017E, 0x0178, // 98-9F
+    0x00A0, 0x00A1, 0x00A2, 0x00A3, 0x00A4, 0x00A5, 0x00A6, 0x00A7, // A0-A7
+    0x00A8, 0x00A9, 0x00AA, 0x00AB, 0x00AC, 0x00AD, 0x00AE, 0x00AF, // A8-AF
+    0x00B0, 0x00B1, 0x00B2, 0x00B3, 0x00B4, 0x00B5, 0x00B6, 0x00B7, // B0-B7
+    0x00B8, 0x00B9, 0x00BA, 0x00BB, 0x00BC, 0x00BD, 0x00BE, 0x00BF, // B8-BF
+    0x00C0, 0x00C1, 0x00C2, 0x00C3, 0x00C4, 0x00C5, 0x00C6, 0x00C7, // C0-C7
+    0x00C8, 0x00C9, 0x00CA, 0x00CB, 0x00CC, 0x00CD, 0x00CE, 0x00CF, // C8-CF
+    0x00D0, 0x00D1, 0x00D2, 0x00D3, 0x00D4, 0x00D5, 0x00D6, 0x00D7, // D0-D7
+    0x00D8, 0x00D9, 0x00DA, 0x00DB, 0x00DC, 0x00DD, 0x00DE, 0x00DF, // D8-DF
+    0x00E0, 0x00E1, 0x00E2, 0x00E3, 0x00E4, 0x00E5, 0x00E6, 0x00E7, // E0-E7
+    0x00E8, 0x00E9, 0x00EA, 0x00EB, 0x00EC, 0x00ED, 0x00EE, 0x00EF, // E8-EF
+    0x00F0, 0x00F1, 0x00F2, 0x00F3, 0x00F4, 0x00F5, 0x00F6, 0x00F7, // F0-F7
+    0x00F8, 0x00F9, 0x00FA, 0x00FB, 0x00FC, 0x00FD, 0x00FE, 0x00FF, // F8-FF
+};
 
 pub fn latin1ToCodepointBytesAssumeNotASCII(char: u32) [2]u8 {
-    return latin1ToCodepointBytesAssumeNotASCIIWIthCharType(u8, char);
+    const as_utf16 = latin1ToCodepointBytesAssumeNotASCII16(char);
+    var bytes = [4]u8{ 0, 0, 0, 0 };
+    _ = encodeWTF8Rune(&bytes, @intCast(i32, as_utf16));
+    return bytes[0..2].*;
 }
 
-pub fn latin1ToCodepointBytesAssumeNotASCII16(char: u32) [2]u16 {
-    return latin1ToCodepointBytesAssumeNotASCIIWIthCharType(u16, char);
+pub fn latin1ToCodepointBytesAssumeNotASCII16(char: u32) u16 {
+    return latin1_to_utf16_conversion_table[@truncate(u8, char)];
 }
 
 pub fn copyUTF16IntoUTF8(buf: []u8, comptime Type: type, utf16: Type) EncodeIntoResult {
@@ -2339,7 +2366,11 @@ pub fn copyUTF16IntoUTF8(buf: []u8, comptime Type: type, utf16: Type) EncodeInto
     if (comptime Type == []const u16) {
         if (bun.FeatureFlags.use_simdutf) {
             const trimmed = bun.simdutf.trim.utf16(utf16_remaining);
-            const out_len = bun.simdutf.length.utf8.from.utf16.le(trimmed);
+            const out_len = if (buf.len <= (trimmed.len * 3 + 2))
+                bun.simdutf.length.utf8.from.utf16.le(trimmed)
+            else
+                buf.len;
+
             if (remaining.len >= out_len) {
                 const result = bun.simdutf.convert.utf16.to.utf8.with_errors.le(trimmed, remaining[0..out_len]);
                 return EncodeIntoResult{
@@ -2831,7 +2862,7 @@ pub fn indexOfNeedsEscape(slice: []const u8) ?u32 {
     if (remaining.len == 0)
         return null;
 
-    if (remaining[0] > 127 or remaining[0] < 0x20 or remaining[0] == '\\' or remaining[0] == '"') {
+    if (remaining[0] >= 127 or remaining[0] < 0x20 or remaining[0] == '\\' or remaining[0] == '"') {
         return 0;
     }
 

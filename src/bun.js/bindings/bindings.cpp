@@ -3874,6 +3874,8 @@ void JSC__JSValue__forEachProperty(JSC__JSValue JSValue0, JSC__JSGlobalObject* g
             properties.data()->propertyNameVector().shrink(0);
             if (iterating->isCallable())
                 break;
+            if (iterating == globalObject)
+                break;
             iterating = iterating->getPrototype(vm, globalObject).getObject();
         }
     }

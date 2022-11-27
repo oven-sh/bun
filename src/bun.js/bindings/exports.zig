@@ -2173,7 +2173,6 @@ pub const ZigConsoleClient = struct {
                     writer.writeAll(comptime Output.prettyFmt("<cyan>[this.globalThis]<r>", enable_ansi_colors));
                 },
                 .Map => {
-                    this.writeIndent(Writer, writer_) catch {};
                     const length_value = value.get(this.globalThis, "size") orelse JSC.JSValue.jsNumberFromInt32(0);
                     const length = length_value.toInt32();
 

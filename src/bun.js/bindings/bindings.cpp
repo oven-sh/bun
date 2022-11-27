@@ -47,7 +47,7 @@
 #include "wtf/text/StringImpl.h"
 #include "wtf/text/StringView.h"
 #include "wtf/text/WTFString.h"
-
+#include "JavaScriptCore/FunctionPrototype.h"
 #include "JSFetchHeaders.h"
 #include "FetchHeaders.h"
 #include "DOMURL.h"
@@ -128,7 +128,7 @@ static void handlePromise(PromiseType* promise, JSC__JSGlobalObject* globalObjec
     }
 }
 
-static bool canPerformFastPropertyEnumerationForObjectAssignBun(Structure* s)
+static bool canPerformFastPropertyEnumerationForIterationBun(Structure* s)
 {
     if (s->typeInfo().overridesGetOwnPropertySlot())
         return false;
@@ -448,7 +448,6 @@ bool Bun__deepEquals(JSC__JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
     case JSFunctionType: {
         return false;
     }
-
     default: {
         break;
     }
@@ -547,14 +546,14 @@ bool Bun__deepEquals(JSC__JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
     }
 
     JSC::Structure* o1Structure = o1->structure();
-    if (canPerformFastPropertyEnumerationForObjectAssignBun(o1Structure)) {
+    if (canPerformFastPropertyEnumerationForIterationBun(o1Structure)) {
         JSC::Structure* o2Structure = o2->structure();
-        if (canPerformFastPropertyEnumerationForObjectAssignBun(o2Structure)) {
+        if (canPerformFastPropertyEnumerationForIterationBun(o2Structure)) {
 
             size_t count1 = 0;
 
             bool result = true;
-            if (o2Structure->maxOffset() != o1Structure->maxOffset()) {
+            if (o2Structure->inlineSize() + o2Structure->outOfLineSize() != o1Structure->inlineSize() + o1Structure->outOfLineSize()) {
                 return false;
             }
 
@@ -1819,7 +1818,15 @@ void JSC__JSValue__toZigString(JSC__JSValue JSValue0, ZigString* arg1, JSC__JSGl
     //   return;
     // }
 
-    auto str = value.toWTFString(arg2);
+    auto* strValue = value.toStringOrNull(arg2);
+
+    if (UNLIKELY(!strValue)) {
+        arg1->len = 0;
+        arg1->ptr = nullptr;
+        return;
+    }
+
+    auto str = strValue->value(arg2);
 
     if (str.is8Bit()) {
         arg1->ptr = str.characters8();
@@ -3723,4 +3730,160 @@ JSC__JSValue JSC__JSValue__fastGet_(JSC__JSValue JSValue0, JSC__JSGlobalObject* 
 bool JSC__JSValue__toBooleanSlow(JSC__JSValue JSValue0, JSC__JSGlobalObject* globalObject)
 {
     return JSValue::decode(JSValue0).toBoolean(globalObject);
+}
+
+void JSC__JSValue__forEachProperty(JSC__JSValue JSValue0, JSC__JSGlobalObject* globalObject, void* arg2, void (*iter)(JSC__JSGlobalObject* arg0, void* ctx, ZigString* arg2, JSC__JSValue JSValue3, bool isSymbol))
+{
+    JSC::JSValue value = JSC::JSValue::decode(JSValue0);
+    JSC::JSObject* object = value.getObject();
+    if (!object)
+        return;
+
+    JSC::VM& vm = globalObject->vm();
+    auto scope = DECLARE_CATCH_SCOPE(vm);
+
+    JSC::Structure* structure = object->structure();
+    bool fast = canPerformFastPropertyEnumerationForIterationBun(structure);
+    if (fast) {
+        if (structure->outOfLineSize() == 0 && structure->inlineSize() == 0) {
+            fast = false;
+            if (JSValue proto = object->getPrototype(vm, globalObject)) {
+                if (structure = proto.structureOrNull()) {
+                    fast = canPerformFastPropertyEnumerationForIterationBun(structure);
+                }
+            }
+        }
+    }
+
+    if (fast) {
+        bool anyHits = false;
+
+        structure->forEachProperty(vm, [&](const PropertyTableEntry& entry) -> bool {
+            if (entry.attributes() & PropertyAttribute::DontEnum) {
+
+                if ((entry.attributes() & PropertyAttribute::Accessor) != 0) {
+                    return true;
+                }
+                if (!(entry.attributes() & (PropertyAttribute::BuiltinOrFunction | PropertyAttribute::CustomAccessorOrValue))) {
+                    return true;
+                }
+
+                // ignore constructor
+                if (entry.key() == vm.propertyNames->constructor) {
+                    return true;
+                }
+            }
+
+            ZigString key = toZigString(entry.key());
+
+            JSC::JSValue propertyValue = object->getDirect(entry.offset());
+            if (!propertyValue) {
+                propertyValue = object->get(globalObject, entry.key());
+            }
+
+            if (scope.exception())
+                scope.clearException();
+
+            if (!propertyValue)
+                return true;
+
+            anyHits = true;
+            JSC::EnsureStillAliveScope ensureStillAliveScope(propertyValue);
+            iter(globalObject, arg2, &key, JSC::JSValue::encode(propertyValue), entry.key()->isSymbol());
+            return true;
+        });
+        if (anyHits) {
+            if (scope.exception()) {
+                scope.clearException();
+                return;
+            }
+            return;
+        }
+    }
+
+    JSC::PropertyNameArray properties(vm, PropertyNameMode::StringsAndSymbols, PrivateSymbolMode::Exclude);
+
+    {
+        auto scope = DECLARE_THROW_SCOPE(vm);
+
+        JSObject* iterating = object;
+        unsigned prototypeCount = 0;
+        size_t count = 0;
+
+        while (count == 0) {
+            iterating->methodTable()->getOwnPropertyNames(iterating, globalObject, properties, DontEnumPropertiesMode::Include);
+            RETURN_IF_EXCEPTION(scope, void());
+
+            for (auto& property : properties) {
+                if (UNLIKELY(property.isEmpty() || property.isNull()))
+                    continue;
+
+                // ignore constructor
+                if (property == vm.propertyNames->constructor) {
+                    continue;
+                }
+
+                JSC::PropertySlot slot(object, PropertySlot::InternalMethodType::Get);
+                if (!object->getPropertySlot(globalObject, property, slot))
+                    continue;
+
+                if ((slot.attributes() & PropertyAttribute::Accessor) != 0) {
+                    continue;
+                }
+
+                if ((slot.attributes() & PropertyAttribute::DontEnum) != 0) {
+                    if (property == vm.propertyNames->length || property == vm.propertyNames->name || property == vm.propertyNames->underscoreProto)
+                        continue;
+                }
+
+                ZigString key = toZigString(property.isSymbol() ? property.impl() : property.string());
+
+                JSC::JSValue propertyValue = jsUndefined();
+
+                if ((slot.attributes() & PropertyAttribute::DontEnum) != 0) {
+                    if (slot.attributes() & PropertyAttribute::BuiltinOrFunction) {
+                        propertyValue = slot.getValue(globalObject, property);
+                    } else if (slot.isCustom()) {
+                        propertyValue = slot.internalMethodType() == PropertySlot::InternalMethodType::Get || slot.internalMethodType() == PropertySlot::InternalMethodType::HasProperty ? slot.getValue(globalObject, property) : jsUndefined();
+                    } else if (slot.isValue()) {
+                        propertyValue = slot.getValue(globalObject, property);
+                    } else if (object->getOwnPropertySlot(object, globalObject, property, slot)) {
+                        propertyValue = slot.getValue(globalObject, property);
+                    }
+                } else {
+                    propertyValue = slot.getValue(globalObject, property);
+                }
+
+                if (scope.exception()) {
+                    scope.clearException();
+                    propertyValue = jsUndefined();
+                }
+
+                JSC::EnsureStillAliveScope ensureStillAliveScope(propertyValue);
+                count++;
+                iter(globalObject, arg2, &key, JSC::JSValue::encode(propertyValue), property.isSymbol());
+            }
+            // reuse memory
+            properties.data()->propertyNameVector().shrink(0);
+
+            JSValue prototype = iterating->getPrototype(vm, globalObject);
+            RETURN_IF_EXCEPTION(scope, void());
+            if (prototype.isNull() || prototype == JSValue(globalObject->functionPrototype()) || prototype == JSValue(globalObject->objectPrototype()) || prototype == JSValue(globalObject->objectPrototype()))
+                break;
+
+            if (++prototypeCount > 1) {
+                break;
+            }
+
+            iterating = asObject(prototype);
+            if (iterating->structure()->typeInfo().overridesAnyFormOfGetOwnPropertyNames())
+                break;
+        }
+    }
+    properties.releaseData();
+
+    if (scope.exception()) {
+        scope.clearException();
+        return;
+    }
 }

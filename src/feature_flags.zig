@@ -111,3 +111,5 @@ pub const hardcode_localhost_to_127_0_0_1 = true;
 /// But it's very easy to end up importing it accidentally, causing an error at runtime
 /// so we just disable it
 pub const support_jsxs_in_jsx_transform = false;
+
+pub const use_simdutf = true;

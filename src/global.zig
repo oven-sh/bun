@@ -482,3 +482,5 @@ pub fn rangeOfSliceInBuffer(slice: []const u8, buffer: []const u8) ?[2]u32 {
 }
 
 pub const invalid_fd = std.math.maxInt(FileDescriptor);
+
+pub const simdutf = @import("./bun.js/bindings/bun-simdutf.zig");

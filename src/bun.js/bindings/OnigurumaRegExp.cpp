@@ -465,12 +465,18 @@ JSC_DEFINE_CUSTOM_GETTER(onigurumaRegExpProtoGetterFlags, (JSGlobalObject * glob
 JSC_DEFINE_CUSTOM_GETTER(onigurumaRegExpProtoGetterLastIndex, (JSGlobalObject * globalObject, EncodedJSValue encodedThis, PropertyName))
 {
     auto* thisValue = jsDynamicCast<OnigurumaRegEx*>(JSValue::decode(encodedThis));
+    if (UNLIKELY(!thisValue)) {
+        return JSValue::encode(jsUndefined());
+    }
     return JSValue::encode(jsNumber(thisValue->m_lastIndex));
 }
 
 JSC_DEFINE_CUSTOM_SETTER(onigurumaRegExpProtoSetterLastIndex, (JSGlobalObject * globalObject, EncodedJSValue encodedThis, EncodedJSValue encodedValue, PropertyName))
 {
     auto* thisValue = jsDynamicCast<OnigurumaRegEx*>(JSValue::decode(encodedThis));
+    if (UNLIKELY(!thisValue)) {
+        return JSValue::encode(jsUndefined());
+    }
     auto throwScope = DECLARE_THROW_SCOPE(globalObject->vm());
     JSValue value = JSValue::decode(encodedValue);
     if (!value.isAnyInt()) {

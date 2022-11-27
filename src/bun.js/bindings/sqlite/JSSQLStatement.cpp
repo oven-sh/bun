@@ -286,10 +286,13 @@ static inline bool rebindValue(JSC::JSGlobalObject* lexicalGlobalObject, sqlite3
             return false;
         }
 
-        if (roped.is8Bit()) {
+        if (roped.is8Bit() && roped.isAllASCII()) {
             CHECK_BIND(sqlite3_bind_text(stmt, i, reinterpret_cast<const char*>(roped.characters8()), roped.length(), transientOrStatic));
-        } else {
+        } else if (!roped.is8Bit()) {
             CHECK_BIND(sqlite3_bind_text16(stmt, i, roped.characters16(), roped.length() * 2, transientOrStatic));
+        } else {
+            auto utf8 = roped.utf8();
+            CHECK_BIND(sqlite3_bind_text(stmt, i, utf8.data(), utf8.length(), SQLITE_TRANSIENT));
         }
 
     } else if (UNLIKELY(value.isHeapBigInt())) {

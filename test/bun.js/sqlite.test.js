@@ -494,3 +494,29 @@ it("inlineCapacity #987", async () => {
 
   expect(Object.keys(db.query(query).all()[0]).length).toBe(99);
 });
+
+// https://github.com/oven-sh/bun/issues/1553
+it("latin1 supplement chars", () => {
+  const db = new Database();
+  db.run(
+    "CREATE TABLE IF NOT EXISTS foo (id INTEGER PRIMARY KEY AUTOINCREMENT, greeting TEXT)",
+  );
+  db.run("INSERT INTO foo (greeting) VALUES (?)", "Welcome to bun!");
+  db.run("INSERT INTO foo (greeting) VALUES (?)", "Español");
+  db.run("INSERT INTO foo (greeting) VALUES (?)", "¿Qué sucedió?");
+
+  expect(db.query("SELECT * FROM foo").all()).toEqual([
+    {
+      id: 1,
+      greeting: "Welcome to bun!",
+    },
+    {
+      id: 2,
+      greeting: "Español",
+    },
+    {
+      id: 3,
+      greeting: "¿Qué sucedió?",
+    },
+  ]);
+});

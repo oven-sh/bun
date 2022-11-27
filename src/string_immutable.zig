@@ -1085,8 +1085,8 @@ pub fn utf16Codepoint(comptime Type: type, input: Type) UTF16Replacement {
 pub fn toUTF8AllocWithType(allocator: std.mem.Allocator, comptime Type: type, utf16: Type) ![]u8 {
     if (bun.FeatureFlags.use_simdutf and comptime Type == []const u16) {
         const length = bun.simdutf.length.utf8.from.utf16.le(utf16);
-        const list = try std.ArrayList(u8).initCapacity(allocator, length);
-        list.items.len += bun.simdutf.convert.utf16.to.utf8.le(utf16, list.items.ptr[0..length]);
+        var list = try allocator.alloc(u8, length);
+        _ = bun.simdutf.convert.utf16.to.utf8.le(utf16, list);
         return list;
     }
 

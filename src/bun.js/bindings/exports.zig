@@ -1717,7 +1717,9 @@ pub const ZigConsoleClient = struct {
                     this.addForNewLine(str.len);
 
                     if (!str.is16Bit()) {
-                        const slice = str.slice();
+                        const sliced = str.toSlice(bun.default_allocator);
+                        defer sliced.deinit();
+                        const slice = sliced.slice();
                         this.writeWithFormatting(Writer, writer_, @TypeOf(slice), slice, this.globalThis, enable_ansi_colors);
                     } else {
                         // TODO: UTF16
@@ -2543,63 +2545,63 @@ pub const ZigConsoleClient = struct {
                     writer.print("({d}) [ ", .{arrayBuffer.len});
                     if (slice.len > 0) {
                         switch (jsType) {
-                            .Int8Array => writeTypedArray(
+                            .Int8Array => this.writeTypedArray(
                                 *@TypeOf(writer),
                                 &writer,
                                 i8,
                                 @alignCast(std.meta.alignment([]i8), std.mem.bytesAsSlice(i8, slice)),
                                 enable_ansi_colors,
                             ),
-                            .Int16Array => writeTypedArray(
+                            .Int16Array => this.writeTypedArray(
                                 *@TypeOf(writer),
                                 &writer,
                                 i16,
                                 @alignCast(std.meta.alignment([]i16), std.mem.bytesAsSlice(i16, slice)),
                                 enable_ansi_colors,
                             ),
-                            .Uint16Array => writeTypedArray(
+                            .Uint16Array => this.writeTypedArray(
                                 *@TypeOf(writer),
                                 &writer,
                                 u16,
                                 @alignCast(std.meta.alignment([]u16), std.mem.bytesAsSlice(u16, slice)),
                                 enable_ansi_colors,
                             ),
-                            .Int32Array => writeTypedArray(
+                            .Int32Array => this.writeTypedArray(
                                 *@TypeOf(writer),
                                 &writer,
                                 i32,
                                 @alignCast(std.meta.alignment([]i32), std.mem.bytesAsSlice(i32, slice)),
                                 enable_ansi_colors,
                             ),
-                            .Uint32Array => writeTypedArray(
+                            .Uint32Array => this.writeTypedArray(
                                 *@TypeOf(writer),
                                 &writer,
                                 u32,
                                 @alignCast(std.meta.alignment([]u32), std.mem.bytesAsSlice(u32, slice)),
                                 enable_ansi_colors,
                             ),
-                            .Float32Array => writeTypedArray(
+                            .Float32Array => this.writeTypedArray(
                                 *@TypeOf(writer),
                                 &writer,
                                 f32,
                                 @alignCast(std.meta.alignment([]f32), std.mem.bytesAsSlice(f32, slice)),
                                 enable_ansi_colors,
                             ),
-                            .Float64Array => writeTypedArray(
+                            .Float64Array => this.writeTypedArray(
                                 *@TypeOf(writer),
                                 &writer,
                                 f64,
                                 @alignCast(std.meta.alignment([]f64), std.mem.bytesAsSlice(f64, slice)),
                                 enable_ansi_colors,
                             ),
-                            .BigInt64Array => writeTypedArray(
+                            .BigInt64Array => this.writeTypedArray(
                                 *@TypeOf(writer),
                                 &writer,
                                 i64,
                                 @alignCast(std.meta.alignment([]i64), std.mem.bytesAsSlice(i64, slice)),
                                 enable_ansi_colors,
                             ),
-                            .BigUint64Array => writeTypedArray(
+                            .BigUint64Array => this.writeTypedArray(
                                 *@TypeOf(writer),
                                 &writer,
                                 u64,
@@ -2608,7 +2610,7 @@ pub const ZigConsoleClient = struct {
                             ),
 
                             // Uint8Array, Uint8ClampedArray, DataView
-                            else => writeTypedArray(*@TypeOf(writer), &writer, u8, slice, enable_ansi_colors),
+                            else => this.writeTypedArray(*@TypeOf(writer), &writer, u8, slice, enable_ansi_colors),
                         }
                     }
 
@@ -2618,7 +2620,7 @@ pub const ZigConsoleClient = struct {
             }
         }
 
-        fn writeTypedArray(comptime Writer: type, writer: Writer, comptime Number: type, slice: []const Number, comptime enable_ansi_colors: bool) void {
+        fn writeTypedArray(this: *ZigConsoleClient.Formatter, comptime Writer: type, writer: Writer, comptime Number: type, slice: []const Number, comptime enable_ansi_colors: bool) void {
             const fmt_ = if (Number == i64 or Number == u64)
                 "<r><yellow>{d}n<r>"
             else
@@ -2633,7 +2635,7 @@ pub const ZigConsoleClient = struct {
             const max = 512;
             leftover = leftover[0..@minimum(leftover.len, max)];
             for (leftover) |el| {
-                printComma(undefined, @TypeOf(&writer.ctx), &writer.ctx, enable_ansi_colors) catch unreachable;
+                this.printComma(@TypeOf(&writer.ctx), &writer.ctx, enable_ansi_colors) catch unreachable;
                 writer.writeAll(" ");
 
                 writer.print(comptime Output.prettyFmt(fmt_, enable_ansi_colors), .{el});

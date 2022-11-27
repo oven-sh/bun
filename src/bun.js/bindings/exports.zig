@@ -1416,6 +1416,7 @@ pub const ZigConsoleClient = struct {
                         .ModuleNamespaceObject,
                         => .Object,
 
+                        .ArrayBuffer,
                         JSValue.JSType.Int8Array,
                         JSValue.JSType.Uint8Array,
                         JSValue.JSType.Uint8ClampedArray,

@@ -8140,6 +8140,7 @@ pub const Macro = struct {
                 threadlocal var call_args: CallArgs = undefined;
                 threadlocal var result: MacroError!Expr = undefined;
                 pub fn callWrapper(args: CallArgs) MacroError!Expr {
+                    JSC.markBinding(@src());
                     call_args = args;
                     Bun__startMacro(call, JSC.VirtualMachine.vm.global);
                     return result;

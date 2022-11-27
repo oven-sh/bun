@@ -3755,6 +3755,8 @@ void JSC__JSValue__forEachProperty(JSC__JSValue JSValue0, JSC__JSGlobalObject* g
         }
     }
 
+    auto* clientData = WebCore::clientData(vm);
+
     if (fast) {
         bool anyHits = false;
 
@@ -3769,10 +3771,12 @@ void JSC__JSValue__forEachProperty(JSC__JSValue JSValue0, JSC__JSGlobalObject* g
                 }
 
                 // ignore constructor
-                if (entry.key() == vm.propertyNames->constructor) {
+                if (entry.key() == vm.propertyNames->constructor)
                     return true;
-                }
             }
+
+            if (clientData->builtinNames().bunNativePtrPrivateName() == entry.key())
+                return true;
 
             ZigString key = toZigString(entry.key());
 
@@ -3815,13 +3819,12 @@ void JSC__JSValue__forEachProperty(JSC__JSValue JSValue0, JSC__JSGlobalObject* g
             RETURN_IF_EXCEPTION(scope, void());
 
             for (auto& property : properties) {
-                if (UNLIKELY(property.isEmpty() || property.isNull()))
+                if (UNLIKELY(property.isEmpty() || property.isNull() || property.isPrivateName()))
                     continue;
 
                 // ignore constructor
-                if (property == vm.propertyNames->constructor) {
+                if (property == vm.propertyNames->constructor || clientData->builtinNames().bunNativePtrPrivateName() == property)
                     continue;
-                }
 
                 JSC::PropertySlot slot(object, PropertySlot::InternalMethodType::Get);
                 if (!object->getPropertySlot(globalObject, property, slot))

@@ -1380,6 +1380,13 @@ pub const ZigConsoleClient = struct {
                     };
                 }
 
+                if (js_type == .PureForwardingProxy) {
+                    return Tag.get(
+                        JSC.JSValue.c(JSC.C.JSObjectGetProxyTarget(value.asObjectRef())),
+                        globalThis,
+                    );
+                }
+
                 // Is this a react element?
                 if (js_type.isObject()) {
                     if (value.get(globalThis, "$$typeof")) |typeof_symbol| {

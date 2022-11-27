@@ -1,5 +1,5 @@
 import { expect, it, describe } from "bun:test";
-import { gc as gcTrace } from "./gc";
+import { gc as gcTrace, withoutAggressiveGC } from "./gc";
 
 const getByteLength = (str) => {
   // returns the byte length of an utf8 string
@@ -74,10 +74,12 @@ describe("TextDecoder", () => {
 
     it("DOMJIT call", () => {
       const array = new Uint8Array(bytes.buffer);
-      for (let i = 0; i < 100_000; i++) {
-        const decoded = decoder.decode(array);
-        expect(decoded).toBe(text);
-      }
+      withoutAggressiveGC(() => {
+        for (let i = 0; i < 100_000; i++) {
+          const decoded = decoder.decode(array);
+          expect(decoded).toBe(text);
+        }
+      });
     });
   });
 

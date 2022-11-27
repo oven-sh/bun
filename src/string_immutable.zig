@@ -935,7 +935,36 @@ const strings = @This();
 /// If there are no non-ascii characters, this returns null
 /// This is intended to be used for strings that go to JavaScript
 pub fn toUTF16Alloc(allocator: std.mem.Allocator, bytes: []const u8, comptime fail_if_invalid: bool) !?[]u16 {
-    if (strings.firstNonASCII(bytes)) |i| {
+    var first_non_ascii: ?u32 = null;
+
+    if (bun.FeatureFlags.use_simdutf) {
+        if (bytes.len == 0)
+            return &[_]u16{};
+
+        if (bun.simdutf.validate.ascii(bytes))
+            return null;
+
+        const trimmed = bun.simdutf.trim.utf8(bytes);
+        const out_length = bun.simdutf.length.utf16.from.utf8.le(trimmed);
+        var out = try allocator.alloc(u16, out_length);
+
+        const result = bun.simdutf.convert.utf8.to.utf16.with_errors.le(trimmed, out);
+        switch (result.status) {
+            .success => {
+                return out;
+            },
+            else => {
+                if (fail_if_invalid) {
+                    allocator.free(out);
+                    return error.InvalidUTF8;
+                }
+
+                first_non_ascii = @truncate(u32, result.count);
+            },
+        }
+    }
+
+    if (first_non_ascii orelse strings.firstNonASCII(bytes)) |i| {
         const ascii = bytes[0..i];
         const chunk = bytes[i..];
         var output = try std.ArrayList(u16).initCapacity(allocator, ascii.len + 2);
@@ -1054,12 +1083,31 @@ pub fn utf16Codepoint(comptime Type: type, input: Type) UTF16Replacement {
 }
 
 pub fn toUTF8AllocWithType(allocator: std.mem.Allocator, comptime Type: type, utf16: Type) ![]u8 {
+    if (bun.FeatureFlags.use_simdutf and comptime Type == []const u16) {
+        const length = bun.simdutf.length.utf8.from.utf16.le(utf16);
+        const list = try std.ArrayList(u8).initCapacity(allocator, length);
+        list.items.len += bun.simdutf.convert.utf16.to.utf8.le(utf16, list.items.ptr[0..length]);
+        return list;
+    }
+
     var list = try std.ArrayList(u8).initCapacity(allocator, utf16.len);
     list = try toUTF8ListWithType(list, Type, utf16);
     return list.items;
 }
 
 pub fn toUTF8ListWithType(list_: std.ArrayList(u8), comptime Type: type, utf16: Type) !std.ArrayList(u8) {
+    if (bun.FeatureFlags.use_simdutf and comptime Type == []const u16) {
+        var list = list_;
+        const length = bun.simdutf.length.utf8.from.utf16.le(utf16);
+        try list.ensureTotalCapacityPrecise(length);
+        list.items.len += bun.simdutf.convert.utf16.to.utf8.le(utf16, list.items.ptr[0..length]);
+        return list;
+    }
+
+    return toUTF8ListWithTypeBun(list_, Type, utf16);
+}
+
+pub fn toUTF8ListWithTypeBun(list_: std.ArrayList(u8), comptime Type: type, utf16: Type) !std.ArrayList(u8) {
     var list = list_;
     var utf16_remaining = utf16;
 
@@ -2288,6 +2336,20 @@ pub fn copyUTF16IntoUTF8(buf: []u8, comptime Type: type, utf16: Type) EncodeInto
     var utf16_remaining = utf16;
     var ended_on_non_ascii = false;
 
+    if (comptime Type == []const u16) {
+        if (bun.FeatureFlags.use_simdutf) {
+            const trimmed = bun.simdutf.trim.utf16(utf16_remaining);
+            const out_len = bun.simdutf.length.utf8.from.utf16.le(trimmed);
+            if (remaining.len >= out_len) {
+                const result = bun.simdutf.convert.utf16.to.utf8.with_errors.le(trimmed, remaining[0..out_len]);
+                return EncodeIntoResult{
+                    .read = @truncate(u32, trimmed.len),
+                    .written = @truncate(u32, result.count),
+                };
+            }
+        }
+    }
+
     while (firstNonASCII16(Type, utf16_remaining)) |i| {
         const end = @minimum(i, remaining.len);
         if (end > 0) copyU16IntoU8(remaining, Type, utf16_remaining[0..end]);
@@ -2324,6 +2386,10 @@ pub fn copyUTF16IntoUTF8(buf: []u8, comptime Type: type, utf16: Type) EncodeInto
 }
 
 pub fn elementLengthUTF16IntoUTF8(comptime Type: type, utf16: Type) usize {
+    if (bun.FeatureFlags.use_simdutf) {
+        return bun.simdutf.length.utf8.from.utf16.le(utf16);
+    }
+
     var utf16_remaining = utf16;
     var count: usize = 0;
 
@@ -2344,6 +2410,10 @@ pub fn elementLengthUTF16IntoUTF8(comptime Type: type, utf16: Type) usize {
 pub fn elementLengthUTF8IntoUTF16(comptime Type: type, utf8: Type) usize {
     var utf8_remaining = utf8;
     var count: usize = 0;
+
+    if (bun.FeatureFlags.use_simdutf) {
+        return bun.simdutf.length.utf16.from.utf8.le(utf8);
+    }
 
     while (firstNonASCII(utf8_remaining)) |i| {
         count += i;

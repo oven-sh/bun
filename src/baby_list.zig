@@ -374,7 +374,7 @@ pub fn BabyList(comptime Type: type) type {
             const initial = this.len;
             {
                 defer this.update(list_);
-                try list_.ensureTotalCapacityPrecise(list_.items.len + str.len + 4);
+                try list_.ensureTotalCapacityPrecise(list_.items.len + strings.elementLengthUTF16IntoUTF8([]const u16, str));
 
                 var remain = str;
                 while (remain.len > 0) {
@@ -384,10 +384,6 @@ pub fn BabyList(comptime Type: type) type {
                     const result = strings.copyUTF16IntoUTF8(slice_, []const u16, remain);
                     remain = remain[result.read..];
                     list_.items.len += @as(usize, result.written);
-                    if (remain.len > 0) {
-                        try list_.ensureTotalCapacityPrecise(list_.items.len + strings.elementLengthUTF16IntoUTF8([]const u16, remain));
-                        continue;
-                    }
                     if (result.read == 0 or result.written == 0) break;
                 }
             }

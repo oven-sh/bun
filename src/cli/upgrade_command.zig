@@ -123,7 +123,7 @@ pub const UpgradeCheckerThread = struct {
         std.time.sleep(std.time.ns_per_ms * delay);
 
         Output.Source.configureThread();
-        NetworkThread.init() catch unreachable;
+        HTTP.HTTPThread.init() catch unreachable;
 
         defer {
             js_ast.Expr.Data.Store.deinit();
@@ -389,7 +389,7 @@ pub const UpgradeCommand = struct {
     }
 
     fn _exec(ctx: Command.Context) !void {
-        try NetworkThread.init();
+        try HTTP.HTTPThread.init();
 
         var filesystem = try fs.FileSystem.init1(ctx.allocator, null);
         var env_loader: DotEnv.Loader = brk: {

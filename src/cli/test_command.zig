@@ -312,7 +312,6 @@ pub const TestCommand = struct {
             break :brk loader;
         };
         JSC.C.JSCInitialize();
-        NetworkThread.init() catch {};
         HTTPThread.init() catch {};
 
         var reporter = try ctx.allocator.create(CommandLineReporter);

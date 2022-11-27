@@ -2268,7 +2268,7 @@ const char* const s_readableStreamInternalsReadableStreamDefaultControllerCanClo
 const JSC::ConstructAbility s_readableStreamInternalsLazyLoadStreamCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableStreamInternalsLazyLoadStreamCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_readableStreamInternalsLazyLoadStreamCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_readableStreamInternalsLazyLoadStreamCodeLength = 3827;
+const int s_readableStreamInternalsLazyLoadStreamCodeLength = 3840;
 static const JSC::Intrinsic s_readableStreamInternalsLazyLoadStreamCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_readableStreamInternalsLazyLoadStreamCode =
     "(function (stream, autoAllocateChunkSize) {\n" \
@@ -2373,8 +2373,9 @@ const char* const s_readableStreamInternalsLazyLoadStreamCode =
     "\n" \
     "      #cancel(reason) {\n" \
     "        var tag = this.#tag;\n" \
+    "\n" \
+    "        registry && registry.unregister(this.#cancellationToken);\n" \
     "        setRefOrUnref && setRefOrUnref(tag, false);\n" \
-    "        registry.unregister(this.#cancellationToken);\n" \
     "        cancel(tag, reason);\n" \
     "      }\n" \
     "      static deinit = deinit;\n" \

@@ -480,12 +480,14 @@ const char* const s_readableStreamPipeThroughCode =
 const JSC::ConstructAbility s_readableStreamPipeToCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableStreamPipeToCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_readableStreamPipeToCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_readableStreamPipeToCodeLength = 1523;
+const int s_readableStreamPipeToCodeLength = 1628;
 static const JSC::Intrinsic s_readableStreamPipeToCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_readableStreamPipeToCode =
     "(function (destination)\n" \
     "{\n" \
     "    \"use strict\";\n" \
+    "    if (!@isReadableStream(readable))\n" \
+    "        throw @makeTypeError(\"readable should be ReadableStream\");\n" \
     "\n" \
     "    //\n" \
     "    //\n" \

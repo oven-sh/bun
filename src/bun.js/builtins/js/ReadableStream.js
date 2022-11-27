@@ -380,6 +380,8 @@ function pipeThrough(streams, options)
 function pipeTo(destination)
 {
     "use strict";
+    if (!@isReadableStream(readable))
+        throw @makeTypeError("readable should be ReadableStream");
 
     // FIXME: https://bugs.webkit.org/show_bug.cgi?id=159869.
     // Built-in generator should be able to parse function signature to compute the function length correctly.

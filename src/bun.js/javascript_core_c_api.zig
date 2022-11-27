@@ -64,17 +64,16 @@ pub const OpaqueJSString = opaque {
             return JSStringCreateWithUTF8CString("");
         }
 
-        if (zig_str.is16Bit()) {
-            return JSStringCreateWithCharacters(zig_str.utf16SliceAligned().ptr, zig_str.len);
+        if (zig_str.isUTF8()) {
+            return JSValueToStringCopy(
+                bun.JSC.VirtualMachine.vm.global,
+                zig_str.toValueGC(bun.JSC.VirtualMachine.vm.global).asObjectRef(),
+                null,
+            );
         }
 
-        if (zig_str.isUTF8()) {
-            // this is super inefficient
-            if (bun.strings.toUTF16Alloc(allocator, zig_str.slice(), false) catch unreachable) |utf16| {
-                const cloned = JSStringCreateWithCharacters(utf16.ptr, utf16.len);
-                allocator.free(utf16);
-                return cloned;
-            }
+        if (zig_str.is16Bit()) {
+            return JSStringCreateWithCharacters(zig_str.utf16SliceAligned().ptr, zig_str.len);
         }
 
         // also extremely inefficient
@@ -512,3 +511,5 @@ const JSStringIterator_ = extern struct {
 
 // not official api functions
 pub extern "c" fn JSCInitialize() void;
+
+pub extern "c" fn JSObjectGetProxyTarget(JSObjectRef) JSObjectRef;

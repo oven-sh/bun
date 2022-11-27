@@ -4337,6 +4337,7 @@ pub const Body = struct {
         if (this.value == .Blob) {
             try formatter.printComma(Writer, writer, enable_ansi_colors);
             try writer.writeAll("\n");
+            try formatter.writeIndent(Writer, writer);
             try this.value.Blob.writeFormat(formatter, writer, enable_ansi_colors);
         } else if (this.value == .InternalBlob) {
             try formatter.printComma(Writer, writer, enable_ansi_colors);
@@ -4347,6 +4348,7 @@ pub const Body = struct {
             if (this.value.Locked.readable) |stream| {
                 try formatter.printComma(Writer, writer, enable_ansi_colors);
                 try writer.writeAll("\n");
+                try formatter.writeIndent(Writer, writer);
                 formatter.printAs(.Object, Writer, writer, stream.value, stream.value.jsType(), enable_ansi_colors);
             }
         }

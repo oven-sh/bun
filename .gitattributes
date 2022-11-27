@@ -6,3 +6,5 @@ src/bun.js/bindings/sqlite/sqlite3.c linguist-vendored
 src/bun.js/bindings/sqlite/sqlite3_local.h linguist-vendored
 *.lockb binary diff=lockb
 *.zig text eol=lf
+src/bun.js/bindings/simdutf8.cpp linguist-vendored
+src/bun.js/bindings/simdutf8.h linguist-vendored

@@ -3762,7 +3762,7 @@ void JSC__JSValue__forEachProperty(JSC__JSValue JSValue0, JSC__JSGlobalObject* g
     }
 
     auto* clientData = WebCore::clientData(vm);
-
+restart:
     if (fast) {
         bool anyHits = false;
         structure->forEachProperty(vm, [&](const PropertyTableEntry& entry) -> bool {
@@ -3770,21 +3770,20 @@ void JSC__JSValue__forEachProperty(JSC__JSValue JSValue0, JSC__JSGlobalObject* g
                 return true;
             }
 
-            if ((entry.attributes() & (PropertyAttribute::Function)) == 0) {
-
-                if (!(entry.attributes() & (PropertyAttribute::Builtin | PropertyAttribute::CustomAccessorOrValue))) {
-                    return true;
-                }
-
-                // ignore constructor
-                if (entry.key() == vm.propertyNames->constructor)
-                    return true;
+            if ((entry.attributes() & (PropertyAttribute::Function)) == 0 && (entry.attributes() & (PropertyAttribute::Builtin)) != 0) {
+                return true;
             }
+
+            if (entry.key() == vm.propertyNames->constructor)
+                return true;
 
             if (clientData->builtinNames().bunNativePtrPrivateName() == entry.key())
                 return true;
 
             ZigString key = toZigString(entry.key());
+
+            if (key.len == 0)
+                return true;
 
             JSC::JSValue propertyValue = object->getDirect(entry.offset());
             if (!propertyValue || propertyValue.isGetterSetter()) {
@@ -3802,11 +3801,23 @@ void JSC__JSValue__forEachProperty(JSC__JSValue JSValue0, JSC__JSGlobalObject* g
             iter(globalObject, arg2, &key, JSC::JSValue::encode(propertyValue), entry.key()->isSymbol());
             return true;
         });
-        if (anyHits) {
-            if (scope.exception()) {
-                scope.clearException();
-            }
+        if (scope.exception()) {
+            scope.clearException();
+        }
 
+        fast = false;
+
+        if (anyHits) {
+
+            if (prototypeCount++ < 3) {
+                if (JSValue proto = prototypeObject.getPrototype(globalObject)) {
+                    if ((structure = proto.structureOrNull())) {
+                        prototypeObject = proto;
+                        fast = canPerformFastPropertyEnumerationForIterationBun(structure);
+                        goto restart;
+                    }
+                }
+            }
             return;
         }
     }
@@ -3817,13 +3828,11 @@ void JSC__JSValue__forEachProperty(JSC__JSValue JSValue0, JSC__JSGlobalObject* g
 
         JSObject* iterating = prototypeObject.getObject();
 
-        size_t count = 0;
-
-        while (count == 0 && iterating && prototypeCount++ < 2) {
+        while (iterating && prototypeCount++ < 3 && !(iterating == globalObject->objectPrototype() || iterating == globalObject->functionPrototype())) {
             iterating->methodTable()->getOwnPropertyNames(iterating, globalObject, properties, DontEnumPropertiesMode::Include);
             RETURN_IF_EXCEPTION(scope, void());
             for (auto& property : properties) {
-                if (UNLIKELY(property.isEmpty() || property.isNull() || property.isPrivateName()))
+                if (UNLIKELY(property.isEmpty() || property.isNull()))
                     continue;
 
                 // ignore constructor
@@ -3843,7 +3852,10 @@ void JSC__JSValue__forEachProperty(JSC__JSValue JSValue0, JSC__JSGlobalObject* g
                         continue;
                 }
 
-                ZigString key = toZigString(property.isSymbol() ? property.impl() : property.string());
+                ZigString key = toZigString(property.isSymbol() && !property.isPrivateName() ? property.impl() : property.string());
+
+                if (key.len == 0)
+                    continue;
 
                 JSC::JSValue propertyValue = jsUndefined();
 
@@ -3867,7 +3879,6 @@ void JSC__JSValue__forEachProperty(JSC__JSValue JSValue0, JSC__JSGlobalObject* g
                 }
 
                 JSC::EnsureStillAliveScope ensureStillAliveScope(propertyValue);
-                count++;
                 iter(globalObject, arg2, &key, JSC::JSValue::encode(propertyValue), property.isSymbol());
             }
             // reuse memory

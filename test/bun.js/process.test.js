@@ -87,3 +87,7 @@ it("process.env", () => {
   delete process.env["LOL SMILE latin1 <abc>"];
   expect(process.env["LOL SMILE latin1 <abc>"]).toBe(undefined);
 });
+
+it("process.version starts with v", () => {
+  expect(process.version.startsWith("v")).toBeTruthy();
+});

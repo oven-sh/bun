@@ -3765,6 +3765,7 @@ void JSC__JSValue__forEachProperty(JSC__JSValue JSValue0, JSC__JSGlobalObject* g
 restart:
     if (fast) {
         bool anyHits = false;
+        JSC::JSObject* objectToUse = prototypeObject.getObject();
         structure->forEachProperty(vm, [&](const PropertyTableEntry& entry) -> bool {
             if ((entry.attributes() & PropertyAttribute::Accessor) != 0 && (entry.attributes() & PropertyAttribute::DontEnum) != 0) {
                 return true;
@@ -3785,9 +3786,9 @@ restart:
             if (key.len == 0)
                 return true;
 
-            JSC::JSValue propertyValue = object->getDirect(entry.offset());
+            JSC::JSValue propertyValue = objectToUse->getDirect(entry.offset());
             if (!propertyValue || propertyValue.isGetterSetter()) {
-                propertyValue = object->get(globalObject, entry.key());
+                propertyValue = objectToUse->get(globalObject, entry.key());
             }
 
             if (scope.exception())
@@ -3809,12 +3810,14 @@ restart:
 
         if (anyHits) {
 
-            if (prototypeCount++ < 3) {
+            if (prototypeCount++ < 5) {
                 if (JSValue proto = prototypeObject.getPrototype(globalObject)) {
-                    if ((structure = proto.structureOrNull())) {
-                        prototypeObject = proto;
-                        fast = canPerformFastPropertyEnumerationForIterationBun(structure);
-                        goto restart;
+                    if (!(proto == globalObject->objectPrototype() || proto == globalObject->functionPrototype())) {
+                        if ((structure = proto.structureOrNull())) {
+                            prototypeObject = proto;
+                            fast = canPerformFastPropertyEnumerationForIterationBun(structure);
+                            goto restart;
+                        }
                     }
                 }
             }
@@ -3828,7 +3831,7 @@ restart:
 
         JSObject* iterating = prototypeObject.getObject();
 
-        while (iterating && prototypeCount++ < 3 && !(iterating == globalObject->objectPrototype() || iterating == globalObject->functionPrototype())) {
+        while (iterating && !(iterating == globalObject->objectPrototype() || iterating == globalObject->functionPrototype()) && prototypeCount++ < 5) {
             iterating->methodTable()->getOwnPropertyNames(iterating, globalObject, properties, DontEnumPropertiesMode::Include);
             RETURN_IF_EXCEPTION(scope, void());
             for (auto& property : properties) {
@@ -3839,8 +3842,8 @@ restart:
                 if (property == vm.propertyNames->constructor || clientData->builtinNames().bunNativePtrPrivateName() == property)
                     continue;
 
-                JSC::PropertySlot slot(object, PropertySlot::InternalMethodType::Get);
-                if (!object->getPropertySlot(globalObject, property, slot))
+                JSC::PropertySlot slot(iterating, PropertySlot::InternalMethodType::Get);
+                if (!iterating->getPropertySlot(globalObject, property, slot))
                     continue;
 
                 if ((slot.attributes() & PropertyAttribute::Accessor) != 0) {

@@ -273,3 +273,51 @@ describe("latin1 supplemental", () => {
     // });
   }
 });
+
+const fixture = [
+  () => Bun.file("/tmp/log.txt").stream(),
+  () => Bun.file("/tmp/log.1.txt").stream().getReader(),
+  () => Bun.file("/tmp/log.2.txt").writer(),
+  () =>
+    new WritableStream({
+      write(chunk) {},
+    }),
+  () => require("events"),
+  () => {
+    return new import.meta.require("events").EventEmitter();
+  },
+  async () => await import("node:assert"),
+  async () => await import("./empty.js"),
+  () => import.meta.require("./empty.js"),
+  () => new Proxy({ yolo: 1 }, {}),
+  () =>
+    new Proxy(
+      { yolo: 1 },
+      {
+        get(target, prop) {
+          return prop + "!";
+        },
+        has(target, prop) {
+          return true;
+        },
+        ownKeys() {
+          return ["foo"];
+        },
+      },
+    ),
+];
+
+describe("crash testing", () => {
+  for (let input of fixture) {
+    it(`inspecting "${input
+      .toString()
+      .slice(0, 20)
+      .replaceAll("\n", "\\n")}" doesn't crash`, async () => {
+      try {
+        Bun.inspect(await input());
+      } catch (e) {
+        // this can throw its fine
+      }
+    });
+  }
+});

@@ -1141,14 +1141,28 @@ static inline JSC::EncodedJSValue jsBufferPrototypeFunction_toStringBody(JSC::JS
 
     switch (encoding) {
     case WebCore::BufferEncodingType::latin1: {
-        ret = JSC::JSValue::encode(JSC::jsString(vm, WTF::StringImpl::create(reinterpret_cast<const UChar*>(castedThis->typedVector() + offset), length)));
+        LChar* data = nullptr;
+        auto str = String::createUninitialized(length, data);
+        memcpy(data, reinterpret_cast<const char*>(castedThis->typedVector() + offset), length);
+        ret = JSC::JSValue::encode(JSC::jsString(vm, WTFMove(str)));
         break;
     }
+
+    case WebCore::BufferEncodingType::ucs2:
+    case WebCore::BufferEncodingType::utf16le: {
+        UChar* data = nullptr;
+        size_t u16length = length > 1 ? length / 2 : 1;
+        auto str = String::createUninitialized(u16length, data);
+        // always zero out the last byte of the string incase the buffer is not a multiple of 2
+        data[u16length - 1] = 0;
+        memcpy(data, reinterpret_cast<const char*>(castedThis->typedVector() + offset), length);
+        ret = JSC::JSValue::encode(JSC::jsString(vm, WTFMove(str)));
+        break;
+    }
+
     case WebCore::BufferEncodingType::buffer:
     case WebCore::BufferEncodingType::utf8:
     case WebCore::BufferEncodingType::ascii:
-    case WebCore::BufferEncodingType::ucs2:
-    case WebCore::BufferEncodingType::utf16le:
     case WebCore::BufferEncodingType::base64:
     case WebCore::BufferEncodingType::base64url:
     case WebCore::BufferEncodingType::hex: {

@@ -600,6 +600,33 @@ it("Buffer.from(base64)", () => {
   ).toBe('console.log("hello world")\n');
 });
 
+it("Buffer.toString regessions", () => {
+  expect(
+    Buffer.from([65, 0])
+      .toString("utf16le")
+      .split("")
+      .map((x) => x.charCodeAt(0)),
+  ).toEqual([65]);
+  expect(Buffer.from([65, 0]).toString("base64")).toBe("QQA=");
+  expect(
+    Buffer.from('{"alg":"RS256","typ":"JWT"}', "latin1").toString("latin1"),
+  ).toBe('{"alg":"RS256","typ":"JWT"}');
+  expect(
+    Buffer.from('{"alg":"RS256","typ":"JWT"}', "utf8").toString("utf8"),
+  ).toBe('{"alg":"RS256","typ":"JWT"}');
+});
+
+it("Buffer.toString(utf16le)", () => {
+  const buf = Buffer.from("hello world", "utf16le");
+  expect(buf.toString("utf16le")).toBe("hello world");
+  expect(buf.toString("utf16le", 0, 5)).toBe("he");
+});
+
+it("Buffer.toString(binary)", () => {
+  var x = Buffer.from("<?xm", "binary");
+  expect(x.toString("binary")).toBe("<?xm");
+});
+
 it("Buffer.toString(base64)", () => {
   {
     const buf = Buffer.from("hello world");

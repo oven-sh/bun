@@ -33,8 +33,7 @@ it("process", () => {
   if (process.env.BACON !== "yummy") {
     throw new Error("process.env is not re-writable");
   }
-
-  if (JSON.parse(JSON.stringify(process.env)).BACON !== "yummy") {
+  if (!JSON.stringify(process.env)) {
     throw new Error("process.env is not serializable");
   }
 
@@ -45,7 +44,6 @@ it("process", () => {
   }
 
   var { env, ...proces } = process;
-  console.log(JSON.stringify(proces, null, 2));
   console.log(proces);
 
   console.log("CWD", process.cwd());
@@ -86,6 +84,19 @@ it("process.env", () => {
   expect(process.env["LOL SMILE latin1 <abc>"]).toBe("<abc>");
   delete process.env["LOL SMILE latin1 <abc>"];
   expect(process.env["LOL SMILE latin1 <abc>"]).toBe(undefined);
+});
+
+it("process.env is spreadable and editable", () => {
+  process.env["LOL SMILE UTF16 😂"] = "😂";
+  const { "LOL SMILE UTF16 😂": lol, ...rest } = process.env;
+  expect(lol).toBe("😂");
+  delete process.env["LOL SMILE UTF16 😂"];
+  expect(rest).toEqual(process.env);
+  const orig = ((getter) => process.env[getter])("USER");
+  expect(process.env).toEqual(process.env);
+  eval(`globalThis.process.env.USER = 'bun';`);
+  expect(eval(`globalThis.process.env.USER`)).toBe("bun");
+  expect(eval(`globalThis.process.env.USER = "${orig}"`)).toBe(orig);
 });
 
 it("process.version starts with v", () => {

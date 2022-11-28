@@ -3411,7 +3411,10 @@ pub const EnvironmentVariables = struct {
         const name = str.slice();
 
         if (jsc_vm.bundler.env.map.map.fetchSwapRemove(name)) |entry| {
-            allocator.free(bun.constStrToU8(entry.value));
+            // this can be a statically allocated string
+            if (bun.isHeapMemory(entry.value))
+                allocator.free(bun.constStrToU8(entry.value));
+
             allocator.free(bun.constStrToU8(entry.key));
             return true;
         }

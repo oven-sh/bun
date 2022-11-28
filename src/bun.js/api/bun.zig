@@ -3301,16 +3301,13 @@ pub const EnvironmentVariables = struct {
             .deleteProperty = .{
                 .rfn = deleteProperty,
             },
-            .convertToType = .{ .rfn = convertToType },
-            .hasProperty = .{
-                .rfn = hasProperty,
-            },
             .getPropertyNames = .{
                 .rfn = getPropertyNames,
             },
             .toJSON = .{
                 .rfn = toJSON,
                 .name = "toJSON",
+                .enumerable = false,
             },
         },
         .{},
@@ -3443,6 +3440,7 @@ pub const EnvironmentVariables = struct {
 
             entry.value_ptr.* = value_str.slice();
         } else {
+            defer str.deinit();
             // this can be a statically allocated string
             if (bun.isHeapMemory(entry.value_ptr.*))
                 allocator.free(bun.constStrToU8(entry.value_ptr.*));
@@ -3451,29 +3449,6 @@ pub const EnvironmentVariables = struct {
         }
 
         return true;
-    }
-
-    pub fn hasProperty(
-        globalThis: js.JSContextRef,
-        _: js.JSObjectRef,
-        propertyName: js.JSStringRef,
-    ) callconv(.C) bool {
-        var jsc_vm = globalThis.bunVM();
-        const allocator = jsc_vm.allocator;
-
-        const zig_str = propertyName.toZigString();
-        var str = zig_str.toSlice(allocator);
-        defer str.deinit();
-        const name = str.slice();
-        return jsc_vm.bundler.env.map.get(name) != null or (Output.enable_ansi_colors and strings.eqlComptime(name, "FORCE_COLOR"));
-    }
-
-    pub fn convertToType(ctx: js.JSContextRef, obj: js.JSObjectRef, kind: js.JSType, exception: js.ExceptionRef) callconv(.C) js.JSValueRef {
-        _ = ctx;
-        _ = obj;
-        _ = kind;
-        _ = exception;
-        return obj;
     }
 
     pub fn getPropertyNames(

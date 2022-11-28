@@ -3289,7 +3289,6 @@ pub const EnvironmentVariables = struct {
         void,
         .{
             .name = "DotEnv",
-            .read_only = true,
         },
         .{
             .getProperty = .{
@@ -3303,11 +3302,6 @@ pub const EnvironmentVariables = struct {
             },
             .getPropertyNames = .{
                 .rfn = getPropertyNames,
-            },
-            .toJSON = .{
-                .rfn = toJSON,
-                .name = "toJSON",
-                .enumerable = false,
             },
         },
         .{},
@@ -3345,8 +3339,21 @@ pub const EnvironmentVariables = struct {
         var name_slice = propertyName.toZigString().toSlice(ctx.allocator());
         defer name_slice.deinit();
         var name = name_slice.slice();
+        if (strings.eqlComptime(name, "toJSON")) {
+            var existing = ctx.ptr().getCachedObject(ZigString.static("Bun.env.toJSON"));
+            if (existing.isEmpty()) {
+                return ctx.ptr().putCachedObject(
+                    ZigString.static("Bun.env.toJSON"),
+                    // TODO: stage2 change this to a ptr
+                    JSC.NewFunction(ctx, ZigString.static("toJSON"), 0, toJSON, false),
+                ).asObjectRef();
+            }
+
+            return existing.asObjectRef();
+        }
+
         if (VirtualMachine.vm.bundler.env.map.get(name)) |value| {
-            return ZigString.init(value).withEncoding().toValueGC(ctx).asObjectRef();
+            return ZigString.initUTF8(value).toValueGC(ctx).asObjectRef();
         }
 
         if (Output.enable_ansi_colors) {
@@ -3360,14 +3367,10 @@ pub const EnvironmentVariables = struct {
     }
 
     pub fn toJSON(
-        _: void,
-        ctx: js.JSContextRef,
-        _: js.JSObjectRef,
-        _: js.JSObjectRef,
-        _: []const js.JSValueRef,
-        _: js.ExceptionRef,
-    ) js.JSValueRef {
-        var map = VirtualMachine.vm.bundler.env.map.map;
+        globalThis: *JSC.JSGlobalObject,
+        _: *JSC.CallFrame,
+    ) callconv(.C) JSC.JSValue {
+        var map = globalThis.bunVM().bundler.env.map.map;
         var keys = map.keys();
         var values = map.values();
         const StackFallback = std.heap.StackFallbackAllocator(32 * 2 * @sizeOf(ZigString));
@@ -3382,13 +3385,11 @@ pub const EnvironmentVariables = struct {
         var value_strings = key_strings_[keys.len..];
 
         for (keys) |key, i| {
-            key_strings[i] = ZigString.init(key);
-            key_strings[i].detectEncoding();
-            value_strings[i] = ZigString.init(values[i]);
-            value_strings[i].detectEncoding();
+            key_strings[i] = ZigString.initUTF8(key);
+            value_strings[i] = ZigString.initUTF8(values[i]);
         }
 
-        var result = JSValue.fromEntries(ctx.ptr(), key_strings.ptr, value_strings.ptr, keys.len, false).asObjectRef();
+        var result = JSValue.fromEntries(globalThis, key_strings.ptr, value_strings.ptr, keys.len, false);
         allocator.free(key_strings_);
         return result;
         // }

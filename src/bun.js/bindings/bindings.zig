@@ -333,6 +333,12 @@ pub const ZigString = extern struct {
         return ZigString{ .ptr = slice_.ptr, .len = slice_.len };
     }
 
+    pub fn initUTF8(slice_: []const u8) ZigString {
+        var out = init(slice_);
+        out.markUTF8();
+        return out;
+    }
+
     pub fn static(comptime slice_: []const u8) *const ZigString {
         const Holder = struct {
             pub const value = ZigString{ .ptr = slice_.ptr, .len = slice_.len };

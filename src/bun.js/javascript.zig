@@ -109,9 +109,6 @@ pub const GlobalClasses = [_]type{
     WebCore.Alert.Class,
     WebCore.Confirm.Class,
     WebCore.Prompt.Class,
-
-    // The last item in this array becomes "process.env"
-    Bun.EnvironmentVariables.Class,
 };
 const TaggedPointerUnion = @import("../tagged_pointer.zig").TaggedPointerUnion;
 const Task = JSC.Task;

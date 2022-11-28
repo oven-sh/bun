@@ -1352,16 +1352,6 @@ pub const ZigConsoleClient = struct {
                 const callable = js_type != .Object and value.isCallable(globalThis.vm());
 
                 if (value.isClass(globalThis) and !callable) {
-                    // Temporary workaround
-                    // console.log(process.env) shows up as [class JSCallbackObject]
-                    // We want to print it like an object
-                    if (CAPI.JSValueIsObjectOfClass(globalThis, value.asObjectRef(), JSC.API.Bun.EnvironmentVariables.Class.get().?[0])) {
-                        return .{
-                            .tag = .Object,
-                            .cell = js_type,
-                        };
-                    }
-
                     return .{
                         .tag = .Object,
                         .cell = js_type,

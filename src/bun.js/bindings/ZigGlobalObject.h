@@ -26,6 +26,7 @@ class EventLoopTask;
 #include "JavaScriptCore/JSTypeInfo.h"
 #include "JavaScriptCore/Structure.h"
 #include "WebCoreJSBuiltinInternals.h"
+#include "JSEnvironmentVariableMap.h"
 
 #include "ZigConsoleClient.h"
 

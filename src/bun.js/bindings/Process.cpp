@@ -5,6 +5,7 @@
 #include <dlfcn.h>
 #include "ZigGlobalObject.h"
 #include "headers.h"
+#include "JSEnvironmentVariableMap.h"
 
 #pragma mark - Node.js Process
 
@@ -292,6 +293,7 @@ void Process::finishCreation(JSC::VM& vm)
 {
     Base::finishCreation(vm);
     auto clientData = WebCore::clientData(vm);
+    auto* globalObject = reinterpret_cast<Zig::GlobalObject*>(this->globalObject());
 
     putDirectCustomAccessor(vm, clientData->builtinNames().pidPublicName(),
         JSC::CustomGetterSetter::create(vm, Process_getPID, nullptr),
@@ -313,27 +315,27 @@ void Process::finishCreation(JSC::VM& vm)
         JSC::jsString(vm, makeAtomString(Bun__version_sha)), 0);
 
     this->putDirect(vm, clientData->builtinNames().nextTickPublicName(),
-        JSC::JSFunction::create(vm, JSC::jsCast<JSC::JSGlobalObject*>(globalObject()), 1,
+        JSC::JSFunction::create(vm, globalObject, 1,
             MAKE_STATIC_STRING_IMPL("nextTick"), Process_functionNextTick, ImplementationVisibility::Public),
         PropertyAttribute::Function | 0);
 
     this->putDirect(vm, JSC::Identifier::fromString(vm, "dlopen"_s),
-        JSC::JSFunction::create(vm, JSC::jsCast<JSC::JSGlobalObject*>(globalObject()), 1,
+        JSC::JSFunction::create(vm, globalObject, 1,
             MAKE_STATIC_STRING_IMPL("dlopen"), Process_functionDlopen, ImplementationVisibility::Public),
         PropertyAttribute::Function | 0);
 
     this->putDirect(vm, clientData->builtinNames().cwdPublicName(),
-        JSC::JSFunction::create(vm, JSC::jsCast<JSC::JSGlobalObject*>(globalObject()), 0,
+        JSC::JSFunction::create(vm, globalObject, 0,
             MAKE_STATIC_STRING_IMPL("cwd"), Process_functionCwd, ImplementationVisibility::Public),
         PropertyAttribute::Function | 0);
 
     this->putDirect(vm, clientData->builtinNames().chdirPublicName(),
-        JSC::JSFunction::create(vm, JSC::jsCast<JSC::JSGlobalObject*>(globalObject()), 0,
+        JSC::JSFunction::create(vm, globalObject, 0,
             MAKE_STATIC_STRING_IMPL("chdir"), Process_functionChdir, ImplementationVisibility::Public),
         PropertyAttribute::Function | 0);
 
     this->putDirect(vm, JSC::Identifier::fromString(vm, "exit"_s),
-        JSC::JSFunction::create(vm, JSC::jsCast<JSC::JSGlobalObject*>(globalObject()), 0,
+        JSC::JSFunction::create(vm, globalObject, 0,
             MAKE_STATIC_STRING_IMPL("exit"), Process_functionExit, ImplementationVisibility::Public),
         PropertyAttribute::Function | 0);
 
@@ -376,10 +378,10 @@ void Process::finishCreation(JSC::VM& vm)
         JSC::jsString(this->vm(), makeAtomString("arm64")));
 #endif
 
-    JSC::JSFunction* hrtime = JSC::JSFunction::create(vm, JSC::jsCast<JSC::JSGlobalObject*>(globalObject()), 0,
+    JSC::JSFunction* hrtime = JSC::JSFunction::create(vm, globalObject, 0,
         MAKE_STATIC_STRING_IMPL("hrtime"), Process_functionHRTime, ImplementationVisibility::Public);
 
-    JSC::JSFunction* hrtimeBigInt = JSC::JSFunction::create(vm, JSC::jsCast<JSC::JSGlobalObject*>(globalObject()), 0,
+    JSC::JSFunction* hrtimeBigInt = JSC::JSFunction::create(vm, globalObject, 0,
         MAKE_STATIC_STRING_IMPL("bigint"), Process_functionHRTimeBigInt, ImplementationVisibility::Public);
 
     hrtime->putDirect(vm, JSC::Identifier::fromString(vm, "bigint"_s), hrtimeBigInt);

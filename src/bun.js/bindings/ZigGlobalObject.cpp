@@ -2462,13 +2462,7 @@ void GlobalObject::finishCreation(VM& vm)
 
     m_processEnvObject.initLater(
         [](const JSC::LazyProperty<JSC::JSGlobalObject, JSC::JSObject>::Initializer& init) {
-            auto jsClass = reinterpret_cast<Zig::GlobalObject*>(init.owner)->m_dotEnvClassRef;
-
-            JSC::JSCallbackObject<JSNonFinalObject>* object = JSC::JSCallbackObject<JSNonFinalObject>::create(
-                init.owner, init.owner->callbackObjectStructure(), jsClass, nullptr);
-            if (JSObject* prototype = jsClass->prototype(init.owner))
-                object->setPrototypeDirect(init.vm, prototype);
-            init.set(object);
+            init.set(Bun::createEnvironmentVariablesMap(reinterpret_cast<Zig::GlobalObject*>(init.owner)).getObject());
         });
 
     m_processObject.initLater(
@@ -3173,6 +3167,16 @@ void GlobalObject::installAPIGlobals(JSClassRef* globals, int count, JSC::VM& vm
             JSC::Identifier identifier = JSC::Identifier::fromString(vm, "revision"_s);
             object->putDirect(vm, PropertyName(identifier), JSC::jsOwnedString(vm, makeString(Bun__version_sha)),
                 JSC::PropertyAttribute::DontDelete | 0);
+        }
+
+        {
+
+            JSC::Identifier identifier = JSC::Identifier::fromString(vm, "env"_s);
+            object->putDirectCustomAccessor(vm, identifier,
+                JSC::CustomGetterSetter::create(vm, lazyProcessEnvGetter, lazyProcessEnvSetter),
+                JSC::PropertyAttribute::DontDelete
+                    | JSC::PropertyAttribute::CustomValue
+                    | 0);
         }
 
         {

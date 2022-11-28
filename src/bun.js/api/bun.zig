@@ -1241,10 +1241,6 @@ pub const Class = NewClass(
         .argv = .{
             .get = getArgv,
         },
-        .env = .{
-            .get = EnvironmentVariables.getter,
-        },
-
         .enableANSIColors = .{
             .get = enableANSIColors,
         },
@@ -3285,189 +3281,34 @@ pub const UnsafeCString = struct {
 /// Also, you can't iterate over process.env normally since it only exists at build-time otherwise
 // This is aliased to Bun.env
 pub const EnvironmentVariables = struct {
-    pub const Class = NewClass(
-        void,
-        .{
-            .name = "DotEnv",
-        },
-        .{
-            .getProperty = .{
-                .rfn = getProperty,
-            },
-            .setProperty = .{
-                .rfn = setProperty,
-            },
-            .deleteProperty = .{
-                .rfn = deleteProperty,
-            },
-            .getPropertyNames = .{
-                .rfn = getPropertyNames,
-            },
-        },
-        .{},
-    );
-
-    pub fn getter(
-        _: void,
-        ctx: js.JSContextRef,
-        _: js.JSValueRef,
-        _: js.JSStringRef,
-        _: js.ExceptionRef,
-    ) js.JSValueRef {
-        var existing = ctx.ptr().getCachedObject(ZigString.static("Bun.env"));
-        if (existing.isEmpty()) {
-            return ctx.ptr().putCachedObject(
-                ZigString.static("Bun.env"),
-                JSValue.fromRef(js.JSObjectMake(ctx, EnvironmentVariables.Class.get().*, null)),
-            ).asObjectRef();
-        }
-
-        return existing.asObjectRef();
+    pub export fn Bun__getEnvNames(globalObject: *JSC.JSGlobalObject, names: [*]ZigString, max: usize) usize {
+        return getEnvNames(globalObject, names[0..max]);
     }
 
-    pub const BooleanString = struct {
-        pub const @"true": string = "true";
-        pub const @"false": string = "false";
-    };
-
-    pub fn getProperty(
-        ctx: js.JSContextRef,
-        _: js.JSObjectRef,
-        propertyName: js.JSStringRef,
-        _: js.ExceptionRef,
-    ) callconv(.C) js.JSValueRef {
-        var name_slice = propertyName.toZigString().toSlice(ctx.allocator());
-        defer name_slice.deinit();
-        var name = name_slice.slice();
-        if (strings.eqlComptime(name, "toJSON")) {
-            var existing = ctx.ptr().getCachedObject(ZigString.static("Bun.env.toJSON"));
-            if (existing.isEmpty()) {
-                return ctx.ptr().putCachedObject(
-                    ZigString.static("Bun.env.toJSON"),
-                    // TODO: stage2 change this to a ptr
-                    JSC.NewFunction(ctx, ZigString.static("toJSON"), 0, toJSON, false),
-                ).asObjectRef();
-            }
-
-            return existing.asObjectRef();
-        }
-
-        if (VirtualMachine.vm.bundler.env.map.get(name)) |value| {
-            return ZigString.initUTF8(value).toValueGC(ctx).asObjectRef();
-        }
-
-        if (Output.enable_ansi_colors) {
-            // https://github.com/chalk/supports-color/blob/main/index.js
-            if (strings.eqlComptime(name, "FORCE_COLOR")) {
-                return ZigString.static("\"true\"").toValue(ctx).asObjectRef();
-            }
-        }
-
-        return js.JSValueMakeUndefined(ctx);
-    }
-
-    pub fn toJSON(
-        globalThis: *JSC.JSGlobalObject,
-        _: *JSC.CallFrame,
-    ) callconv(.C) JSC.JSValue {
-        var map = globalThis.bunVM().bundler.env.map.map;
-        var keys = map.keys();
-        var values = map.values();
-        const StackFallback = std.heap.StackFallbackAllocator(32 * 2 * @sizeOf(ZigString));
-        var stack = StackFallback{
-            .buffer = undefined,
-            .fallback_allocator = bun.default_allocator,
-            .fixed_buffer_allocator = undefined,
-        };
-        var allocator = stack.get();
-        var key_strings_ = allocator.alloc(ZigString, keys.len * 2) catch unreachable;
-        var key_strings = key_strings_[0..keys.len];
-        var value_strings = key_strings_[keys.len..];
-
-        for (keys) |key, i| {
-            key_strings[i] = ZigString.initUTF8(key);
-            value_strings[i] = ZigString.initUTF8(values[i]);
-        }
-
-        var result = JSValue.fromEntries(globalThis, key_strings.ptr, value_strings.ptr, keys.len, false);
-        allocator.free(key_strings_);
-        return result;
-        // }
-        // ZigConsoleClient.Formatter.format(this: *Formatter, result: Tag.Result, comptime Writer: type, writer: Writer, value: JSValue, globalThis: *JSGlobalObject, comptime enable_ansi_colors: bool)
-    }
-
-    pub fn deleteProperty(
-        globalThis: js.JSContextRef,
-        _: js.JSObjectRef,
-        propertyName: js.JSStringRef,
-        _: js.ExceptionRef,
-    ) callconv(.C) bool {
-        var jsc_vm = globalThis.bunVM();
-        const allocator = jsc_vm.allocator;
-
-        const zig_str = propertyName.toZigString();
-
-        var str = zig_str.toSlice(allocator);
-        defer str.deinit();
-        const name = str.slice();
-
-        if (jsc_vm.bundler.env.map.map.fetchSwapRemove(name)) |entry| {
-            // this can be a statically allocated string
-            if (bun.isHeapMemory(entry.value))
-                allocator.free(bun.constStrToU8(entry.value));
-
-            allocator.free(bun.constStrToU8(entry.key));
+    pub export fn Bun__getEnvValue(globalObject: *JSC.JSGlobalObject, name: *ZigString, value: *ZigString) bool {
+        if (getEnvValue(globalObject, name.*)) |val| {
+            value.* = val;
             return true;
         }
 
         return false;
     }
 
-    pub fn setProperty(
-        globalThis: js.JSContextRef,
-        _: js.JSObjectRef,
-        propertyName: js.JSStringRef,
-        value: js.JSValueRef,
-        _: js.ExceptionRef,
-    ) callconv(.C) bool {
-        var jsc_vm = globalThis.bunVM();
-        const allocator = jsc_vm.allocator;
-
-        const zig_str = propertyName.toZigString();
-
-        var str = zig_str.toSlice(allocator);
-        const name = str.slice();
-        var entry = jsc_vm.bundler.env.map.map.getOrPut(name) catch return false;
-        if (!entry.found_existing) {
-            const value_str = value.?.value().toSlice(globalThis, allocator).cloneIfNeeded(allocator) catch return false;
-            entry.key_ptr.* = (str.cloneIfNeeded(allocator) catch return false).slice();
-
-            entry.value_ptr.* = value_str.slice();
-        } else {
-            defer str.deinit();
-            // this can be a statically allocated string
-            if (bun.isHeapMemory(entry.value_ptr.*))
-                allocator.free(bun.constStrToU8(entry.value_ptr.*));
-            const cloned_value = value.?.value().toSlice(globalThis, allocator).cloneIfNeeded(allocator) catch return false;
-            entry.value_ptr.* = cloned_value.slice();
+    pub fn getEnvNames(globalObject: *JSC.JSGlobalObject, names: []ZigString) usize {
+        var vm = globalObject.bunVM();
+        const keys = vm.bundler.env.map.map.keys();
+        const max = @minimum(names.len, keys.len);
+        for (keys[0..max]) |key, i| {
+            names[i] = ZigString.initUTF8(key);
         }
-
-        return true;
+        return keys.len;
     }
-
-    pub fn getPropertyNames(
-        _: js.JSContextRef,
-        _: js.JSObjectRef,
-        props: js.JSPropertyNameAccumulatorRef,
-    ) callconv(.C) void {
-        var iter = VirtualMachine.vm.bundler.env.map.iter();
-
-        while (iter.next()) |item| {
-            const str = item.key_ptr.*;
-            var init_str = ZigString.init(str);
-            init_str.markUTF8();
-            js.JSPropertyNameAccumulatorAddName(props, JSC.C.OpaqueJSString.fromZigString(init_str, VirtualMachine.vm.allocator));
-        }
+    pub fn getEnvValue(globalObject: *JSC.JSGlobalObject, name: ZigString) ?ZigString {
+        var vm = globalObject.bunVM();
+        var sliced = name.toSlice(vm.allocator);
+        defer sliced.deinit();
+        const value = vm.bundler.env.map.map.get(sliced.slice()) orelse return null;
+        return ZigString.initUTF8(value);
     }
 };
 
@@ -3478,6 +3319,8 @@ export fn Bun__reportError(_: *JSGlobalObject, err: JSC.JSValue) void {
 comptime {
     if (!is_bindgen) {
         _ = Bun__reportError;
+        _ = EnvironmentVariables.Bun__getEnvNames;
+        _ = EnvironmentVariables.Bun__getEnvValue;
     }
 }
 

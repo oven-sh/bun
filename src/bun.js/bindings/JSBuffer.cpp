@@ -968,6 +968,8 @@ static int64_t indexOf(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame*
 
     if (callFrame->argumentCount() > 1) {
         auto byteOffset_ = callFrame->uncheckedArgument(1).toNumber(lexicalGlobalObject);
+        RETURN_IF_EXCEPTION(scope, -1);
+
         if (std::isnan(byteOffset_) || std::isinf(byteOffset_)) {
             byteOffset = last ? length - 1 : 0;
         } else if (byteOffset_ < 0) {
@@ -1002,7 +1004,9 @@ static int64_t indexOf(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame*
     }
 
     if (value.isString()) {
-        auto* str = value.toString(lexicalGlobalObject);
+        auto* str = value.toStringOrNull(lexicalGlobalObject);
+        RETURN_IF_EXCEPTION(scope, -1);
+
         JSC::EncodedJSValue encodedBuffer = constructFromEncoding(lexicalGlobalObject, str, encoding);
         auto* arrayValue = JSC::jsDynamicCast<JSC::JSUint8Array*>(JSC::JSValue::decode(encodedBuffer));
         int64_t lengthValue = static_cast<int64_t>(arrayValue->byteLength());
@@ -1013,7 +1017,9 @@ static int64_t indexOf(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame*
             return indexOf(typedVector, length, typedVectorValue, lengthValue, byteOffset);
         }
     } else if (value.isNumber()) {
-        uint8_t byteValue = static_cast<uint8_t>(value.toNumber(lexicalGlobalObject));
+        uint8_t byteValue = static_cast<uint8_t>((value.toInt32(lexicalGlobalObject)) % 256);
+        RETURN_IF_EXCEPTION(scope, -1);
+
         if (last) {
             for (int64_t i = byteOffset; i >= 0; --i) {
                 if (byteValue == typedVector[i]) {
@@ -1021,12 +1027,12 @@ static int64_t indexOf(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame*
                 }
             }
         } else {
-            for (int64_t i = byteOffset; i < length; ++i) {
-                if (byteValue == typedVector[i]) {
-                    return i;
-                }
+            const void* offset = memchr(reinterpret_cast<const void*>(typedVector + byteOffset), byteValue, length - byteOffset);
+            if (offset != NULL) {
+                return static_cast<int64_t>(static_cast<const uint8_t*>(offset) - typedVector);
             }
         }
+
         return -1;
     } else if (auto* arrayValue = JSC::jsDynamicCast<JSC::JSUint8Array*>(value)) {
         size_t lengthValue = arrayValue->byteLength();

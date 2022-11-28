@@ -292,48 +292,52 @@ pub const length = struct {
 
 pub const trim = struct {
     pub fn utf8_len(buf: []const u8) usize {
-        if (buf.len < 3) {
-            switch (buf.len) {
+        const len = buf.len;
+
+        if (len < 3) {
+            switch (len) {
                 2 => {
-                    if (buf[buf.len - 1] >= 0b11000000) {
-                        return buf.len - 1;
+                    if (buf[len - 1] >= 0b11000000) {
+                        return len - 1;
                     } // 2-, 3- and 4-byte characters with only 1 byte left
-                    if (buf[buf.len - 2] >= 0b11100000) {
-                        return buf.len - 2;
+                    if (buf[len - 2] >= 0b11100000) {
+                        return len - 2;
                     } // 3- and 4-byte characters with only 2 bytes left
-                    return buf.len;
+                    return len;
                 },
                 1 => {
-                    if (buf[buf.len - 1] >= 0b11000000) {
-                        return buf.len - 1;
+                    if (buf[len - 1] >= 0b11000000) {
+                        return len - 1;
                     } // 2-, 3- and 4-byte characters with only 1 byte left
-                    return buf.len;
+                    return len;
                 },
-                0 => return buf.len,
+                0 => return len,
                 else => unreachable,
             }
         }
 
-        if (buf[buf.len - 1] >= 0b11000000) {
-            return buf.len - 1;
+        if (buf[len - 1] >= 0b11000000) {
+            return len - 1;
         } // 2-, 3- and 4-byte characters with only 1 byte left
-        if (buf[buf.len - 2] >= 0b11100000) {
-            return buf.len - 2;
+        if (buf[len - 2] >= 0b11100000) {
+            return len - 2;
         } // 3- and 4-byte characters with only 1 byte left
-        if (buf[buf.len - 3] >= 0b11110000) {
-            return buf.len - 3;
+        if (buf[len - 3] >= 0b11110000) {
+            return len - 3;
         } // 4-byte characters with only 3 bytes left
-        return buf.len;
+        return len;
     }
 
     pub fn utf16_len(buf: []const u16) usize {
-        if (buf.len == 0) {
+        const len = buf.len;
+
+        if (len == 0) {
             return 0;
         }
-        if ((buf[buf.len - 1] >= 0xD800) and (buf[buf.len - 1] <= 0xDBFF)) {
-            return buf.len - 1;
+        if ((buf[len - 1] >= 0xD800) and (buf[len - 1] <= 0xDBFF)) {
+            return len - 1;
         }
-        return buf.len;
+        return len;
     }
 
     pub fn utf16(buf: []const u16) []const u16 {

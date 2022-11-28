@@ -875,7 +875,6 @@ pub const Encoder = struct {
                 return ZigString.init(to).toExternalValue(global);
             },
             .buffer, .utf8 => {
-                // JSC only supports UTF-16 strings for non-ascii text
                 const converted = strings.toUTF16Alloc(allocator, input, false) catch return ZigString.init("Out of memory").toErrorInstance(global);
                 if (converted) |utf16| {
                     return ZigString.toExternalU16(utf16.ptr, utf16.len, global);
@@ -886,11 +885,11 @@ pub const Encoder = struct {
                 return ZigString.init(input).toValueGC(global);
             },
             .ucs2, .utf16le => {
-                var output = allocator.alloc(u16, len / 2) catch return ZigString.init("Out of memory").toErrorInstance(global);
-                var i: usize = 0;
-                while (i < len / 2) : (i += 1) {
-                    output[i] = (@intCast(u16, input[2 * i + 1]) << 8) + @intCast(u16, input[2 * i]);
-                }
+                var output = allocator.alloc(u16, @maximum(len / 2, 1)) catch return ZigString.init("Out of memory").toErrorInstance(global);
+                var output_bytes = std.mem.sliceAsBytes(output);
+                output_bytes[output_bytes.len - 1] = 0;
+
+                @memcpy(output_bytes.ptr, input_ptr, output_bytes.len);
                 return ZigString.toExternalU16(output.ptr, output.len, global);
             },
 

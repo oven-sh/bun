@@ -936,19 +936,26 @@ const strings = @This();
 /// This is intended to be used for strings that go to JavaScript
 pub fn toUTF16Alloc(allocator: std.mem.Allocator, bytes: []const u8, comptime fail_if_invalid: bool) !?[]u16 {
     var first_non_ascii: ?u32 = null;
+    var output_: ?std.ArrayList(u16) = null;
 
     if (bun.FeatureFlags.use_simdutf) {
         if (bytes.len == 0)
             return &[_]u16{};
 
-        if (bun.simdutf.validate.ascii(bytes))
+        const validated = bun.simdutf.validate.with_errors.ascii(bytes);
+        if (validated.status == .success)
             return null;
 
-        const trimmed = bun.simdutf.trim.utf8(bytes);
-        const out_length = bun.simdutf.length.utf16.from.utf8.le(trimmed);
-        var out = try allocator.alloc(u16, out_length);
+        const offset = @truncate(u32, validated.count);
 
-        const result = bun.simdutf.convert.utf8.to.utf16.with_errors.le(trimmed, out);
+        const trimmed = bun.simdutf.trim.utf8(bytes[offset..]);
+        const out_length = bun.simdutf.length.utf16.from.utf8.le(trimmed);
+        var out = try allocator.alloc(u16, out_length + offset);
+
+        if (offset > 0)
+            strings.copyU8IntoU16(out[0..offset], bytes[0..offset]);
+
+        const result = bun.simdutf.convert.utf8.to.utf16.with_errors.le(trimmed, out[offset..]);
         switch (result.status) {
             .success => {
                 return out;
@@ -959,7 +966,12 @@ pub fn toUTF16Alloc(allocator: std.mem.Allocator, bytes: []const u8, comptime fa
                     return error.InvalidByteSequence;
                 }
 
-                first_non_ascii = @truncate(u32, result.count);
+                first_non_ascii = @truncate(u32, result.count) + offset;
+                output_ = std.ArrayList(u16){
+                    .items = out[0..first_non_ascii.?],
+                    .capacity = out.len,
+                    .allocator = allocator,
+                };
             },
         }
     }
@@ -967,10 +979,11 @@ pub fn toUTF16Alloc(allocator: std.mem.Allocator, bytes: []const u8, comptime fa
     if (first_non_ascii orelse strings.firstNonASCII(bytes)) |i| {
         const ascii = bytes[0..i];
         const chunk = bytes[i..];
-        var output = try std.ArrayList(u16).initCapacity(allocator, ascii.len + 2);
+        var output = output_ orelse try std.ArrayList(u16).initCapacity(allocator, ascii.len + 2);
         errdefer output.deinit();
         output.items.len = ascii.len;
-        strings.copyU8IntoU16(output.items, ascii);
+        if (first_non_ascii == null)
+            strings.copyU8IntoU16(output.items, ascii);
 
         var remaining = chunk;
 

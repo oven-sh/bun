@@ -4154,19 +4154,16 @@ pub const InternalBlob = struct {
     was_string: bool = false,
 
     pub fn toStringOwned(this: *@This(), globalThis: *JSC.JSGlobalObject) JSValue {
-        var str = ZigString.init(this.sliceConst());
-
-        if (strings.isAllASCII(this.sliceConst())) {
-            this.bytes.items = &.{};
-            this.bytes.capacity = 0;
+        if (strings.toUTF16Alloc(globalThis.allocator(), this.bytes.items, false) catch &[_]u16{}) |out| {
+            const return_value = ZigString.toExternalU16(out.ptr, out.len, globalThis);
+            return_value.ensureStillAlive();
+            this.deinit();
+            return return_value;
+        } else {
+            var str = ZigString.init(this.toOwnedSlice());
+            str.mark();
             return str.toExternalValue(globalThis);
         }
-
-        str.markUTF8();
-        const out = str.toValueGC(globalThis);
-        out.ensureStillAlive();
-        this.deinit();
-        return out;
     }
 
     pub inline fn sliceConst(this: *const @This()) []const u8 {

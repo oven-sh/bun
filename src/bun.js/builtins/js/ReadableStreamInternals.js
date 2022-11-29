@@ -1866,6 +1866,14 @@ function lazyLoadStream(stream, autoAllocateChunkSize) {
       handleResult(val, c, v);
     }
 
+    function callClose(controller) {
+      try {
+        controller.close();
+      } catch(e) {
+        globalThis.reportError(e);
+      }
+    }
+
     handleResult = function handleResult(result, controller, view) {
       "use strict";
       if (result && @isPromise(result)) {
@@ -1887,7 +1895,7 @@ function lazyLoadStream(stream, autoAllocateChunkSize) {
       }
 
       if (closer[0] || result === false) {
-        @enqueueJob(() => controller.close());
+        @enqueueJob(callClose, controller);
         closer[0] = false;
       }
     };

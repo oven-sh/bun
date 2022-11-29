@@ -248,7 +248,7 @@ comptime {
 /// https://encoding.spec.whatwg.org/encodings.json
 pub const EncodingLabel = enum {
     @"UTF-8",
-    @"IBM866",
+    IBM866,
     @"ISO-8859-2",
     @"ISO-8859-3",
     @"ISO-8859-4",
@@ -264,7 +264,7 @@ pub const EncodingLabel = enum {
     @"ISO-8859-16",
     @"KOI8-R",
     @"KOI8-U",
-    @"macintosh",
+    macintosh,
     @"windows-874",
     @"windows-1250",
     @"windows-1251",
@@ -279,10 +279,10 @@ pub const EncodingLabel = enum {
     @"windows-1257",
     @"windows-1258",
     @"x-mac-cyrillic",
-    @"Big5",
+    Big5,
     @"EUC-JP",
     @"ISO-2022-JP",
-    @"Shift_JIS",
+    Shift_JIS,
     @"EUC-KR",
     @"UTF-16BE",
     @"UTF-16LE",
@@ -587,7 +587,7 @@ pub const TextDecoder = struct {
         }
 
         switch (this.encoding) {
-            EncodingLabel.@"latin1" => {
+            EncodingLabel.latin1 => {
                 return ZigString.init(array_buffer.byteSlice()).toValueGC(globalThis);
             },
             EncodingLabel.@"UTF-8" => {
@@ -654,7 +654,7 @@ pub const TextDecoder = struct {
     pub fn decodeWithoutTypeChecks(this: *TextDecoder, globalThis: *JSC.JSGlobalObject, uint8array: *JSC.JSUint8Array) callconv(.C) JSValue {
         const buffer_slice = uint8array.slice();
         switch (this.encoding) {
-            EncodingLabel.@"latin1" => {
+            EncodingLabel.latin1 => {
                 return ZigString.init(buffer_slice).toValueGC(globalThis);
             },
             EncodingLabel.@"UTF-8" => {

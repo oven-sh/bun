@@ -2507,10 +2507,10 @@ pub const String = extern struct {
 pub const JSValueReprInt = i64;
 pub const JSValue = enum(JSValueReprInt) {
     zero = 0,
-    @"undefined" = @bitCast(JSValueReprInt, @as(i64, 0xa)),
-    @"null" = @bitCast(JSValueReprInt, @as(i64, 0x2)),
-    @"true" = @bitCast(JSValueReprInt, @as(i64, 0x4)),
-    @"false" = @bitCast(JSValueReprInt, @as(i64, 0x6)),
+    undefined = @bitCast(JSValueReprInt, @as(i64, 0xa)),
+    null = @bitCast(JSValueReprInt, @as(i64, 0x2)),
+    true = @bitCast(JSValueReprInt, @as(i64, 0x4)),
+    false = @bitCast(JSValueReprInt, @as(i64, 0x6)),
     _,
 
     pub const Type = JSValueReprInt;
@@ -3054,10 +3054,10 @@ pub const JSValue = enum(JSValueReprInt) {
     }
 
     pub inline fn jsNull() JSValue {
-        return JSValue.@"null";
+        return JSValue.null;
     }
     pub inline fn jsUndefined() JSValue {
-        return JSValue.@"undefined";
+        return JSValue.undefined;
     }
     pub inline fn jsBoolean(i: bool) JSValue {
         const out = cppFn("jsBoolean", .{i});
@@ -4626,20 +4626,20 @@ pub fn JSPropertyIterator(comptime options: JSPropertyIteratorOptions) type {
 
 // DOMCall Fields
 pub const __DOMCall_ptr = @import("../api/bun.zig").FFI.Class.functionDefinitions.ptr;
-pub const __DOMCall__reader_u8 = @import("../api/bun.zig").FFI.Reader.Class.functionDefinitions.@"u8";
-pub const __DOMCall__reader_u16 = @import("../api/bun.zig").FFI.Reader.Class.functionDefinitions.@"u16";
-pub const __DOMCall__reader_u32 = @import("../api/bun.zig").FFI.Reader.Class.functionDefinitions.@"u32";
-pub const __DOMCall__reader_ptr = @import("../api/bun.zig").FFI.Reader.Class.functionDefinitions.@"ptr";
-pub const __DOMCall__reader_i8 = @import("../api/bun.zig").FFI.Reader.Class.functionDefinitions.@"i8";
-pub const __DOMCall__reader_i16 = @import("../api/bun.zig").FFI.Reader.Class.functionDefinitions.@"i16";
-pub const __DOMCall__reader_i32 = @import("../api/bun.zig").FFI.Reader.Class.functionDefinitions.@"i32";
-pub const __DOMCall__reader_f32 = @import("../api/bun.zig").FFI.Reader.Class.functionDefinitions.@"f32";
-pub const __DOMCall__reader_f64 = @import("../api/bun.zig").FFI.Reader.Class.functionDefinitions.@"f64";
-pub const __DOMCall__reader_i64 = @import("../api/bun.zig").FFI.Reader.Class.functionDefinitions.@"i64";
-pub const __DOMCall__reader_u64 = @import("../api/bun.zig").FFI.Reader.Class.functionDefinitions.@"u64";
-pub const __DOMCall__reader_intptr = @import("../api/bun.zig").FFI.Reader.Class.functionDefinitions.@"intptr";
-pub const __Crypto_getRandomValues = @import("../webcore.zig").Crypto.Class.functionDefinitions.@"getRandomValues";
-pub const __Crypto_randomUUID = @import("../webcore.zig").Crypto.Class.functionDefinitions.@"randomUUID";
+pub const __DOMCall__reader_u8 = @import("../api/bun.zig").FFI.Reader.Class.functionDefinitions.u8;
+pub const __DOMCall__reader_u16 = @import("../api/bun.zig").FFI.Reader.Class.functionDefinitions.u16;
+pub const __DOMCall__reader_u32 = @import("../api/bun.zig").FFI.Reader.Class.functionDefinitions.u32;
+pub const __DOMCall__reader_ptr = @import("../api/bun.zig").FFI.Reader.Class.functionDefinitions.ptr;
+pub const __DOMCall__reader_i8 = @import("../api/bun.zig").FFI.Reader.Class.functionDefinitions.i8;
+pub const __DOMCall__reader_i16 = @import("../api/bun.zig").FFI.Reader.Class.functionDefinitions.i16;
+pub const __DOMCall__reader_i32 = @import("../api/bun.zig").FFI.Reader.Class.functionDefinitions.i32;
+pub const __DOMCall__reader_f32 = @import("../api/bun.zig").FFI.Reader.Class.functionDefinitions.f32;
+pub const __DOMCall__reader_f64 = @import("../api/bun.zig").FFI.Reader.Class.functionDefinitions.f64;
+pub const __DOMCall__reader_i64 = @import("../api/bun.zig").FFI.Reader.Class.functionDefinitions.i64;
+pub const __DOMCall__reader_u64 = @import("../api/bun.zig").FFI.Reader.Class.functionDefinitions.u64;
+pub const __DOMCall__reader_intptr = @import("../api/bun.zig").FFI.Reader.Class.functionDefinitions.intptr;
+pub const __Crypto_getRandomValues = @import("../webcore.zig").Crypto.Class.functionDefinitions.getRandomValues;
+pub const __Crypto_randomUUID = @import("../webcore.zig").Crypto.Class.functionDefinitions.randomUUID;
 pub const DOMCalls = .{
     @import("../api/bun.zig").FFI,
     @import("../api/bun.zig").FFI.Reader,

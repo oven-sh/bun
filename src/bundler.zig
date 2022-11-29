@@ -1525,7 +1525,7 @@ pub const Bundler = struct {
                 }
             },
             .css => {},
-            else => Global.panic("Unsupported loader {s} for path: {s}", .{ loader, source.path.text }),
+            else => Global.panic("Unsupported loader {s} for path: {s}", .{ @tagName(loader), source.path.text }),
         }
 
         return null;

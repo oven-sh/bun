@@ -93,7 +93,7 @@ pub const InitCommand = struct {
 
     const PackageJSONFields = struct {
         name: string = "project",
-        @"type": string = "module",
+        type: string = "module",
         object: *js_ast.E.Object = undefined,
         entry_point: string = "",
     };

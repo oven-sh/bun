@@ -1133,23 +1133,23 @@ test "QueryStringMap (full)" {
     const url = "?cards_platform=Web-12&include_cards=1&include_ext_alt_text=true&include_quote_count=true&include_reply_count=1&tweet_mode=extended&dm_users=false&include_groups=true&include_inbox_timelines=true&include_ext_media_color=true&supports_reactions=true&muting_enabled=false&nsfw_filtering_enabled=false&cursor=GRwmkMCq6fLUnMAnFpDAquny1JzAJyUAAAA&filter_low_quality=true&include_quality=all&ext=mediaColor&ext=altText&ext=mediaStats&ext=highlightedLabel&ext=voiceInfo";
     // from chrome's devtools
     const fixture = .{
-        .@"cards_platform" = "Web-12",
-        .@"include_cards" = "1",
-        .@"include_ext_alt_text" = "true",
-        .@"include_quote_count" = "true",
-        .@"include_reply_count" = "1",
-        .@"tweet_mode" = "extended",
-        .@"dm_users" = "false",
-        .@"include_groups" = "true",
-        .@"include_inbox_timelines" = "true",
-        .@"include_ext_media_color" = "true",
-        .@"supports_reactions" = "true",
-        .@"muting_enabled" = "false",
-        .@"nsfw_filtering_enabled" = "false",
-        .@"cursor" = "GRwmkMCq6fLUnMAnFpDAquny1JzAJyUAAAA",
-        .@"filter_low_quality" = "true",
-        .@"include_quality" = "all",
-        .@"ext" = &[_]string{ "mediaColor", "altText", "mediaStats", "highlightedLabel", "voiceInfo" },
+        .cards_platform = "Web-12",
+        .include_cards = "1",
+        .include_ext_alt_text = "true",
+        .include_quote_count = "true",
+        .include_reply_count = "1",
+        .tweet_mode = "extended",
+        .dm_users = "false",
+        .include_groups = "true",
+        .include_inbox_timelines = "true",
+        .include_ext_media_color = "true",
+        .supports_reactions = "true",
+        .muting_enabled = "false",
+        .nsfw_filtering_enabled = "false",
+        .cursor = "GRwmkMCq6fLUnMAnFpDAquny1JzAJyUAAAA",
+        .filter_low_quality = "true",
+        .include_quality = "all",
+        .ext = &[_]string{ "mediaColor", "altText", "mediaStats", "highlightedLabel", "voiceInfo" },
     };
 
     var map = (try QueryStringMap.init(std.testing.allocator, url)) orelse return try std.testing.expect(false);
@@ -1186,8 +1186,8 @@ test "QueryStringMap (full)" {
 test "QueryStringMap not encoded" {
     const url = "?hey=1&wow=true";
     const fixture = .{
-        .@"hey" = "1",
-        .@"wow" = "true",
+        .hey = "1",
+        .wow = "true",
     };
     const url_slice = std.mem.span(url);
     var map = (try QueryStringMap.init(std.testing.allocator, url_slice)) orelse return try std.testing.expect(false);
@@ -1205,23 +1205,23 @@ test "QueryStringMap Iterator" {
     const url = "?cards_platform=Web-12&include_cards=1&include_ext_alt_text=true&include_quote_count=true&include_reply_count=1&tweet_mode=extended&dm_users=false&include_groups=true&include_inbox_timelines=true&include_ext_media_color=true&supports_reactions=true&muting_enabled=false&nsfw_filtering_enabled=false&cursor=GRwmkMCq6fLUnMAnFpDAquny1JzAJyUAAAA&filter_low_quality=true&ext=voiceInfo&include_quality=all&ext=mediaColor&ext=altText&ext=mediaStats&ext=highlightedLabel";
     // from chrome's devtools
     const fixture = .{
-        .@"cards_platform" = "Web-12",
-        .@"include_cards" = "1",
-        .@"include_ext_alt_text" = "true",
-        .@"include_quote_count" = "true",
-        .@"include_reply_count" = "1",
-        .@"tweet_mode" = "extended",
-        .@"dm_users" = "false",
-        .@"include_groups" = "true",
-        .@"include_inbox_timelines" = "true",
-        .@"include_ext_media_color" = "true",
-        .@"supports_reactions" = "true",
-        .@"muting_enabled" = "false",
-        .@"nsfw_filtering_enabled" = "false",
-        .@"cursor" = "GRwmkMCq6fLUnMAnFpDAquny1JzAJyUAAAA",
-        .@"filter_low_quality" = "true",
-        .@"include_quality" = "all",
-        .@"ext" = &[_]string{
+        .cards_platform = "Web-12",
+        .include_cards = "1",
+        .include_ext_alt_text = "true",
+        .include_quote_count = "true",
+        .include_reply_count = "1",
+        .tweet_mode = "extended",
+        .dm_users = "false",
+        .include_groups = "true",
+        .include_inbox_timelines = "true",
+        .include_ext_media_color = "true",
+        .supports_reactions = "true",
+        .muting_enabled = "false",
+        .nsfw_filtering_enabled = "false",
+        .cursor = "GRwmkMCq6fLUnMAnFpDAquny1JzAJyUAAAA",
+        .filter_low_quality = "true",
+        .include_quality = "all",
+        .ext = &[_]string{
             "voiceInfo",
             "mediaColor",
             "altText",

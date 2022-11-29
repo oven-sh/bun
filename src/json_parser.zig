@@ -85,7 +85,7 @@ const HashMapPool = struct {
 };
 
 // This hack fixes using LLDB
-fn JSONLikeParser(opts: js_lexer.JSONOptions) type {
+fn JSONLikeParser(comptime opts: js_lexer.JSONOptions) type {
     return JSONLikeParser_(
         opts.is_json,
         opts.allow_comments,
@@ -98,13 +98,13 @@ fn JSONLikeParser(opts: js_lexer.JSONOptions) type {
 }
 
 fn JSONLikeParser_(
-    opts_is_json: bool,
-    opts_allow_comments: bool,
-    opts_allow_trailing_commas: bool,
-    opts_ignore_leading_escape_sequences: bool,
-    opts_ignore_trailing_escape_sequences: bool,
-    opts_json_warn_duplicate_keys: bool,
-    opts_was_originally_macro: bool,
+    comptime opts_is_json: bool,
+    comptime opts_allow_comments: bool,
+    comptime opts_allow_trailing_commas: bool,
+    comptime opts_ignore_leading_escape_sequences: bool,
+    comptime opts_ignore_trailing_escape_sequences: bool,
+    comptime opts_json_warn_duplicate_keys: bool,
+    comptime opts_was_originally_macro: bool,
 ) type {
     const opts = js_lexer.JSONOptions{
         .is_json = opts_is_json,
@@ -305,7 +305,7 @@ fn JSONLikeParser_(
                     if (comptime Environment.isDebug) {
                         std.io.getStdErr().writer().print("\nThis range: {d} - {d} \n{s}", .{
                             p.lexer.range().loc.start,
-                            p.lexer.range().end(),
+                            p.lexer.range().end().start,
                             p.lexer.range().in(p.lexer.source.contents),
                         }) catch {};
 
@@ -524,7 +524,7 @@ pub fn toAST(
     comptime Type: type,
     value: Type,
 ) anyerror!js_ast.Expr {
-    const type_info: std.builtin.TypeInfo = @typeInfo(Type);
+    const type_info: std.builtin.Type = @typeInfo(Type);
 
     switch (type_info) {
         .Bool => {
@@ -592,7 +592,7 @@ pub fn toAST(
             return Expr.init(js_ast.E.Array, js_ast.E.Array{ .items = exprs }, logger.Loc.Empty);
         },
         .Struct => |Struct| {
-            const fields: []const std.builtin.TypeInfo.StructField = Struct.fields;
+            const fields: []const std.builtin.Type.StructField = Struct.fields;
             var properties = try allocator.alloc(js_ast.G.Property, fields.len);
             var property_i: usize = 0;
             inline for (fields) |field| {

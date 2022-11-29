@@ -968,7 +968,7 @@ fn NewLexer_(
                     self.addError(self.start, "Expected \"{s}\" but found \"{s}\" (token: {s})", .{
                         keyword,
                         self.raw(),
-                        self.token,
+                        @tagName(self.token),
                     }, true);
                 } else {
                     self.addError(self.start, "Expected \"{s}\" but found \"{s}\"", .{ keyword, self.raw() }, true);
@@ -3019,7 +3019,7 @@ fn indexOfInterestingCharacterInStringLiteral(text_: []const u8, quote: u8) ?usi
 
         if (@reduce(.Max, any_significant) > 0) {
             const bitmask = @ptrCast(*const u16, &any_significant).*;
-            const first = @ctz( bitmask);
+            const first = @ctz(bitmask);
             std.debug.assert(first < strings.ascii_vector_size);
             return first + (@ptrToInt(text.ptr) - @ptrToInt(text_.ptr));
         }

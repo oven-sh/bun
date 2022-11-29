@@ -5,8 +5,8 @@ const MainPanicHandler = panicky.NewPanicHandler(std.builtin.default_panic);
 
 pub const io_mode = .blocking;
 
-pub fn panic(msg: []const u8, error_return_trace: ?*std.builtin.StackTrace) noreturn {
-    MainPanicHandler.handle_panic(msg, error_return_trace);
+pub fn panic(msg: []const u8, error_return_trace: ?*std.builtin.StackTrace, addr: ?usize) noreturn {
+    MainPanicHandler.handle_panic(msg, error_return_trace, addr);
 }
 
 const CrashReporter = @import("./crash_reporter.zig");

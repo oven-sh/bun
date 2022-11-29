@@ -65,16 +65,16 @@ pub const napi_default_method: c_int = 5;
 pub const napi_default_jsproperty: c_int = 7;
 pub const napi_property_attributes = c_uint;
 pub const napi_valuetype = enum(c_uint) {
-    @"undefined" = 0,
-    @"null" = 1,
-    @"boolean" = 2,
-    @"number" = 3,
-    @"string" = 4,
-    @"symbol" = 5,
-    @"object" = 6,
-    @"function" = 7,
-    @"external" = 8,
-    @"bigint" = 9,
+    undefined = 0,
+    null = 1,
+    boolean = 2,
+    number = 3,
+    string = 4,
+    symbol = 5,
+    object = 6,
+    function = 7,
+    external = 8,
+    bigint = 9,
 };
 pub const napi_typedarray_type = enum(c_uint) {
     int8_array = 0,
@@ -288,17 +288,17 @@ pub extern fn napi_create_type_error(env: napi_env, code: napi_value, msg: napi_
 pub extern fn napi_create_range_error(env: napi_env, code: napi_value, msg: napi_value, result: *napi_value) napi_status;
 pub export fn napi_typeof(env: napi_env, value: napi_value, result: *napi_valuetype) napi_status {
     if (value.isEmpty()) {
-        result.* = .@"undefined";
+        result.* = .undefined;
         return .ok;
     }
 
     if (value.isUndefined()) {
-        result.* = .@"undefined";
+        result.* = .undefined;
         return .ok;
     }
 
     if (value.isNull()) {
-        result.* = .@"null";
+        result.* = .null;
         return .ok;
     }
 

@@ -111,15 +111,15 @@ pub const ZigGlobalObject = extern struct {
 
     pub const Export = shim.exportFunctions(
         .{
-            .@"import" = import,
-            .@"resolve" = resolve,
-            .@"fetch" = fetch,
+            .import = import,
+            .resolve = resolve,
+            .fetch = fetch,
             // .@"eval" = eval,
-            .@"promiseRejectionTracker" = promiseRejectionTracker,
-            .@"reportUncaughtException" = reportUncaughtException,
-            .@"createImportMetaProperties" = createImportMetaProperties,
-            .@"onCrash" = onCrash,
-            .@"queueMicrotaskToEventLoop" = queueMicrotaskToEventLoop,
+            .promiseRejectionTracker = promiseRejectionTracker,
+            .reportUncaughtException = reportUncaughtException,
+            .createImportMetaProperties = createImportMetaProperties,
+            .onCrash = onCrash,
+            .queueMicrotaskToEventLoop = queueMicrotaskToEventLoop,
         },
     );
 
@@ -165,7 +165,7 @@ pub const ZigErrorType = extern struct {
     }
 
     pub const Export = shim.exportFunctions(.{
-        .@"isPrivateData" = isPrivateData,
+        .isPrivateData = isPrivateData,
     });
 
     comptime {
@@ -415,12 +415,12 @@ pub const Process = extern struct {
     pub const exit = JSC.Node.Process.exit;
 
     pub const Export = shim.exportFunctions(.{
-        .@"getTitle" = getTitle,
-        .@"setTitle" = setTitle,
-        .@"getArgv" = getArgv,
-        .@"getCwd" = getCwd,
-        .@"setCwd" = setCwd,
-        .@"exit" = exit,
+        .getTitle = getTitle,
+        .setTitle = setTitle,
+        .getArgv = getArgv,
+        .getCwd = getCwd,
+        .setCwd = setCwd,
+        .exit = exit,
     });
 
     comptime {
@@ -2914,19 +2914,19 @@ pub const ZigConsoleClient = struct {
     ) callconv(.C) void {}
 
     pub const Export = shim.exportFunctions(.{
-        .@"messageWithTypeAndLevel" = messageWithTypeAndLevel,
-        .@"count" = count,
-        .@"countReset" = countReset,
-        .@"time" = time,
-        .@"timeLog" = timeLog,
-        .@"timeEnd" = timeEnd,
-        .@"profile" = profile,
-        .@"profileEnd" = profileEnd,
-        .@"takeHeapSnapshot" = takeHeapSnapshot,
-        .@"timeStamp" = timeStamp,
-        .@"record" = record,
-        .@"recordEnd" = recordEnd,
-        .@"screenshot" = screenshot,
+        .messageWithTypeAndLevel = messageWithTypeAndLevel,
+        .count = count,
+        .countReset = countReset,
+        .time = time,
+        .timeLog = timeLog,
+        .timeEnd = timeEnd,
+        .profile = profile,
+        .profileEnd = profileEnd,
+        .takeHeapSnapshot = takeHeapSnapshot,
+        .timeStamp = timeStamp,
+        .record = record,
+        .recordEnd = recordEnd,
+        .screenshot = screenshot,
     });
 
     comptime {

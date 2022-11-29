@@ -1304,7 +1304,7 @@ fn dump_mimalloc(
 pub const Crypto = struct {
     const Hashers = @import("../../sha.zig");
 
-    fn CryptoHasher(comptime Hasher: type, name: [:0]const u8) type {
+    fn CryptoHasher(comptime Hasher: type, comptime name: [:0]const u8) type {
         return struct {
             hashing: Hasher = Hasher{},
 
@@ -2596,11 +2596,11 @@ pub const Timer = struct {
     pub const namespace = shim.namespace;
 
     pub const Export = shim.exportFunctions(.{
-        .@"setTimeout" = setTimeout,
-        .@"setInterval" = setInterval,
-        .@"clearTimeout" = clearTimeout,
-        .@"clearInterval" = clearInterval,
-        .@"getNextID" = getNextID,
+        .setTimeout = setTimeout,
+        .setInterval = setInterval,
+        .clearTimeout = clearTimeout,
+        .clearInterval = clearInterval,
+        .getNextID = getNextID,
     });
 
     comptime {
@@ -2658,18 +2658,18 @@ pub const FFI = struct {
             void,
             .{ .name = "FFI", .has_dom_calls = true },
             .{
-                .@"u8" = JSC.DOMCall("Reader", @This(), "u8", i32, JSC.DOMEffect.forRead(.World)),
-                .@"u16" = JSC.DOMCall("Reader", @This(), "u16", i32, JSC.DOMEffect.forRead(.World)),
-                .@"u32" = JSC.DOMCall("Reader", @This(), "u32", i32, JSC.DOMEffect.forRead(.World)),
-                .@"ptr" = JSC.DOMCall("Reader", @This(), "ptr", i52, JSC.DOMEffect.forRead(.World)),
-                .@"i8" = JSC.DOMCall("Reader", @This(), "i8", i32, JSC.DOMEffect.forRead(.World)),
-                .@"i16" = JSC.DOMCall("Reader", @This(), "i16", i32, JSC.DOMEffect.forRead(.World)),
-                .@"i32" = JSC.DOMCall("Reader", @This(), "i32", i32, JSC.DOMEffect.forRead(.World)),
-                .@"i64" = JSC.DOMCall("Reader", @This(), "i64", i64, JSC.DOMEffect.forRead(.World)),
-                .@"u64" = JSC.DOMCall("Reader", @This(), "u64", u64, JSC.DOMEffect.forRead(.World)),
-                .@"intptr" = JSC.DOMCall("Reader", @This(), "intptr", i52, JSC.DOMEffect.forRead(.World)),
-                .@"f32" = JSC.DOMCall("Reader", @This(), "f32", f64, JSC.DOMEffect.forRead(.World)),
-                .@"f64" = JSC.DOMCall("Reader", @This(), "f64", f64, JSC.DOMEffect.forRead(.World)),
+                .u8 = JSC.DOMCall("Reader", @This(), "u8", i32, JSC.DOMEffect.forRead(.World)),
+                .u16 = JSC.DOMCall("Reader", @This(), "u16", i32, JSC.DOMEffect.forRead(.World)),
+                .u32 = JSC.DOMCall("Reader", @This(), "u32", i32, JSC.DOMEffect.forRead(.World)),
+                .ptr = JSC.DOMCall("Reader", @This(), "ptr", i52, JSC.DOMEffect.forRead(.World)),
+                .i8 = JSC.DOMCall("Reader", @This(), "i8", i32, JSC.DOMEffect.forRead(.World)),
+                .i16 = JSC.DOMCall("Reader", @This(), "i16", i32, JSC.DOMEffect.forRead(.World)),
+                .i32 = JSC.DOMCall("Reader", @This(), "i32", i32, JSC.DOMEffect.forRead(.World)),
+                .i64 = JSC.DOMCall("Reader", @This(), "i64", i64, JSC.DOMEffect.forRead(.World)),
+                .u64 = JSC.DOMCall("Reader", @This(), "u64", u64, JSC.DOMEffect.forRead(.World)),
+                .intptr = JSC.DOMCall("Reader", @This(), "intptr", i52, JSC.DOMEffect.forRead(.World)),
+                .f32 = JSC.DOMCall("Reader", @This(), "f32", f64, JSC.DOMEffect.forRead(.World)),
+                .f64 = JSC.DOMCall("Reader", @This(), "f64", f64, JSC.DOMEffect.forRead(.World)),
             },
             .{},
         );
@@ -2701,7 +2701,7 @@ pub const FFI = struct {
             const value = @intToPtr(*align(1) u32, addr).*;
             return JSValue.jsNumber(value);
         }
-        pub fn @"ptr"(
+        pub fn ptr(
             _: *JSGlobalObject,
             _: JSValue,
             arguments: []const JSValue,
@@ -2737,7 +2737,7 @@ pub const FFI = struct {
             const value = @intToPtr(*align(1) i32, addr).*;
             return JSValue.jsNumber(value);
         }
-        pub fn @"intptr"(
+        pub fn intptr(
             _: *JSGlobalObject,
             _: JSValue,
             arguments: []const JSValue,
@@ -2787,7 +2787,7 @@ pub const FFI = struct {
             return JSValue.fromUInt64NoTruncate(global, value);
         }
 
-        pub fn @"u8WithoutTypeChecks"(
+        pub fn u8WithoutTypeChecks(
             _: *JSGlobalObject,
             _: *anyopaque,
             raw_addr: i64,
@@ -2797,7 +2797,7 @@ pub const FFI = struct {
             const value = @intToPtr(*align(1) u8, addr).*;
             return JSValue.jsNumber(value);
         }
-        pub fn @"u16WithoutTypeChecks"(
+        pub fn u16WithoutTypeChecks(
             _: *JSGlobalObject,
             _: *anyopaque,
             raw_addr: i64,
@@ -2807,7 +2807,7 @@ pub const FFI = struct {
             const value = @intToPtr(*align(1) u16, addr).*;
             return JSValue.jsNumber(value);
         }
-        pub fn @"u32WithoutTypeChecks"(
+        pub fn u32WithoutTypeChecks(
             _: *JSGlobalObject,
             _: *anyopaque,
             raw_addr: i64,
@@ -2817,7 +2817,7 @@ pub const FFI = struct {
             const value = @intToPtr(*align(1) u32, addr).*;
             return JSValue.jsNumber(value);
         }
-        pub fn @"ptrWithoutTypeChecks"(
+        pub fn ptrWithoutTypeChecks(
             _: *JSGlobalObject,
             _: *anyopaque,
             raw_addr: i64,
@@ -2827,7 +2827,7 @@ pub const FFI = struct {
             const value = @intToPtr(*align(1) u64, addr).*;
             return JSValue.jsNumber(value);
         }
-        pub fn @"i8WithoutTypeChecks"(
+        pub fn i8WithoutTypeChecks(
             _: *JSGlobalObject,
             _: *anyopaque,
             raw_addr: i64,
@@ -2837,7 +2837,7 @@ pub const FFI = struct {
             const value = @intToPtr(*align(1) i8, addr).*;
             return JSValue.jsNumber(value);
         }
-        pub fn @"i16WithoutTypeChecks"(
+        pub fn i16WithoutTypeChecks(
             _: *JSGlobalObject,
             _: *anyopaque,
             raw_addr: i64,
@@ -2847,7 +2847,7 @@ pub const FFI = struct {
             const value = @intToPtr(*align(1) i16, addr).*;
             return JSValue.jsNumber(value);
         }
-        pub fn @"i32WithoutTypeChecks"(
+        pub fn i32WithoutTypeChecks(
             _: *JSGlobalObject,
             _: *anyopaque,
             raw_addr: i64,
@@ -2857,7 +2857,7 @@ pub const FFI = struct {
             const value = @intToPtr(*align(1) i32, addr).*;
             return JSValue.jsNumber(value);
         }
-        pub fn @"intptrWithoutTypeChecks"(
+        pub fn intptrWithoutTypeChecks(
             _: *JSGlobalObject,
             _: *anyopaque,
             raw_addr: i64,
@@ -2868,7 +2868,7 @@ pub const FFI = struct {
             return JSValue.jsNumber(value);
         }
 
-        pub fn @"f32WithoutTypeChecks"(
+        pub fn f32WithoutTypeChecks(
             _: *JSGlobalObject,
             _: *anyopaque,
             raw_addr: i64,
@@ -2879,7 +2879,7 @@ pub const FFI = struct {
             return JSValue.jsNumber(value);
         }
 
-        pub fn @"f64WithoutTypeChecks"(
+        pub fn f64WithoutTypeChecks(
             _: *JSGlobalObject,
             _: *anyopaque,
             raw_addr: i64,
@@ -2890,7 +2890,7 @@ pub const FFI = struct {
             return JSValue.jsNumber(value);
         }
 
-        pub fn @"u64WithoutTypeChecks"(
+        pub fn u64WithoutTypeChecks(
             global: *JSGlobalObject,
             _: *anyopaque,
             raw_addr: i64,
@@ -2901,7 +2901,7 @@ pub const FFI = struct {
             return JSValue.fromUInt64NoTruncate(global, value);
         }
 
-        pub fn @"i64WithoutTypeChecks"(
+        pub fn i64WithoutTypeChecks(
             global: *JSGlobalObject,
             _: *anyopaque,
             raw_addr: i64,

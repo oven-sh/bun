@@ -1,5 +1,4 @@
 const std = @import("std");
-const resolve_path = @import("./src/resolver/resolve_path.zig");
 
 fn pkgPath(comptime out: []const u8) std.build.FileSource {
     const outpath = comptime std.fs.path.dirname(@src().file).? ++ std.fs.path.sep_str ++ out;
@@ -344,7 +343,7 @@ pub fn build(b: *std.build.Builder) !void {
         const headers_step = b.step("headers-obj", "Build JavaScriptCore headers");
         var headers_obj: *std.build.LibExeObjStep = b.addObject("headers", "src/bindgen.zig");
         defer headers_step.dependOn(&headers_obj.step);
-        try configureObjectStep(b, headers_obj, target, obj.main_pkg_path.?);
+        try configureObjectStep(b, headers_obj, @TypeOf(target), target, obj.main_pkg_path.?);
         var headers_build_options = default_build_options;
         headers_build_options.bindgen = true;
         headers_obj.addOptions("build_options", default_build_options.step(b));
@@ -359,14 +358,14 @@ pub fn build(b: *std.build.Builder) !void {
         // wasm_step.link_function_sections = true;
         // wasm_step.link_emit_relocs = true;
         // wasm_step.single_threaded = true;
-        try configureObjectStep(b, wasm_step, target, obj.main_pkg_path.?);
+        try configureObjectStep(b, wasm_step, @TypeOf(target), target, obj.main_pkg_path.?);
     }
 
     {
         const headers_step = b.step("httpbench-obj", "Build HTTPBench tool (object files)");
         var headers_obj: *std.build.LibExeObjStep = b.addObject("httpbench", "misctools/http_bench.zig");
         defer headers_step.dependOn(&headers_obj.step);
-        try configureObjectStep(b, headers_obj, target, obj.main_pkg_path.?);
+        try configureObjectStep(b, headers_obj, @TypeOf(target), target, obj.main_pkg_path.?);
         headers_obj.addOptions("build_options", default_build_options.step(b));
     }
 
@@ -374,7 +373,7 @@ pub fn build(b: *std.build.Builder) !void {
         const headers_step = b.step("machbench-obj", "Build Machbench tool (object files)");
         var headers_obj: *std.build.LibExeObjStep = b.addObject("machbench", "misctools/machbench.zig");
         defer headers_step.dependOn(&headers_obj.step);
-        try configureObjectStep(b, headers_obj, target, obj.main_pkg_path.?);
+        try configureObjectStep(b, headers_obj, @TypeOf(target), target, obj.main_pkg_path.?);
         headers_obj.addOptions("build_options", default_build_options.step(b));
     }
 
@@ -382,7 +381,7 @@ pub fn build(b: *std.build.Builder) !void {
         const headers_step = b.step("fetch-obj", "Build fetch (object files)");
         var headers_obj: *std.build.LibExeObjStep = b.addObject("fetch", "misctools/fetch.zig");
         defer headers_step.dependOn(&headers_obj.step);
-        try configureObjectStep(b, headers_obj, target, obj.main_pkg_path.?);
+        try configureObjectStep(b, headers_obj, @TypeOf(target), target, obj.main_pkg_path.?);
         headers_obj.addOptions("build_options", default_build_options.step(b));
     }
 
@@ -390,7 +389,7 @@ pub fn build(b: *std.build.Builder) !void {
         const headers_step = b.step("string-bench", "Build string bench");
         var headers_obj: *std.build.LibExeObjStep = b.addExecutable("string-bench", "src/bench/string-handling.zig");
         defer headers_step.dependOn(&headers_obj.step);
-        try configureObjectStep(b, headers_obj, target, obj.main_pkg_path.?);
+        try configureObjectStep(b, headers_obj, @TypeOf(target), target, obj.main_pkg_path.?);
         headers_obj.addOptions("build_options", default_build_options.step(b));
     }
 
@@ -398,7 +397,7 @@ pub fn build(b: *std.build.Builder) !void {
         const headers_step = b.step("sha-bench-obj", "Build sha bench");
         var headers_obj: *std.build.LibExeObjStep = b.addObject("sha", "src/sha.zig");
         defer headers_step.dependOn(&headers_obj.step);
-        try configureObjectStep(b, headers_obj, target, obj.main_pkg_path.?);
+        try configureObjectStep(b, headers_obj, @TypeOf(target), target, obj.main_pkg_path.?);
         headers_obj.addOptions("build_options", default_build_options.step(b));
     }
 
@@ -406,7 +405,7 @@ pub fn build(b: *std.build.Builder) !void {
         const headers_step = b.step("vlq-bench", "Build vlq bench");
         var headers_obj: *std.build.LibExeObjStep = b.addExecutable("vlq-bench", "src/sourcemap/vlq_bench.zig");
         defer headers_step.dependOn(&headers_obj.step);
-        try configureObjectStep(b, headers_obj, target, obj.main_pkg_path.?);
+        try configureObjectStep(b, headers_obj, @TypeOf(target), target, obj.main_pkg_path.?);
         headers_obj.addOptions("build_options", default_build_options.step(b));
     }
 
@@ -414,7 +413,7 @@ pub fn build(b: *std.build.Builder) !void {
         const headers_step = b.step("tgz-obj", "Build tgz (object files)");
         var headers_obj: *std.build.LibExeObjStep = b.addObject("tgz", "misctools/tgz.zig");
         defer headers_step.dependOn(&headers_obj.step);
-        try configureObjectStep(b, headers_obj, target, obj.main_pkg_path.?);
+        try configureObjectStep(b, headers_obj, @TypeOf(target), target, obj.main_pkg_path.?);
         headers_obj.addOptions("build_options", default_build_options.step(b));
     }
 
@@ -432,7 +431,7 @@ pub fn build(b: *std.build.Builder) !void {
             if (std.fs.path.dirname(test_bin)) |dir| headers_obj.setOutputDir(dir);
         }
 
-        try configureObjectStep(b, headers_obj, target, obj.main_pkg_path.?);
+        try configureObjectStep(b, headers_obj, @TypeOf(target), target, obj.main_pkg_path.?);
         try linkObjectFiles(b, headers_obj, target);
 
         {
@@ -451,7 +450,7 @@ pub fn build(b: *std.build.Builder) !void {
 
             test_.setMainPkgPath(obj.main_pkg_path.?);
             test_.setTarget(target);
-            try configureObjectStep(b, test_, target, obj.main_pkg_path.?);
+            try configureObjectStep(b, test_, @TypeOf(target), target, obj.main_pkg_path.?);
             try linkObjectFiles(b, test_, target);
             test_.addOptions("build_options", default_build_options.step(b));
 
@@ -532,7 +531,7 @@ pub fn linkObjectFiles(b: *std.build.Builder, obj: *std.build.LibExeObjStep, tar
     }
 }
 
-pub fn configureObjectStep(_: *std.build.Builder, obj: *std.build.LibExeObjStep, target: anytype, main_pkg_path: []const u8) !void {
+pub fn configureObjectStep(_: *std.build.Builder, obj: *std.build.LibExeObjStep, comptime Target: type, target: Target, main_pkg_path: []const u8) !void {
     obj.setMainPkgPath(main_pkg_path);
 
     obj.setTarget(target);

@@ -678,7 +678,7 @@ pub const Comment = opaque {
 };
 
 pub const Directive = enum(c_uint) {
-    @"stop" = 0,
+    stop = 0,
     @"continue" = 1,
 };
 pub const lol_html_comment_handler_t = fn (*Comment, ?*anyopaque) callconv(.C) Directive;

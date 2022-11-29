@@ -451,7 +451,7 @@ pub fn BSSStringList(comptime _count: usize, comptime _item_length: usize) type 
     };
 }
 
-pub fn BSSMap(comptime ValueType: type, comptime count: anytype, store_keys: bool, estimated_key_length: usize, remove_trailing_slashes: bool) type {
+pub fn BSSMap(comptime ValueType: type, comptime count: anytype, comptime store_keys: bool, comptime estimated_key_length: usize, comptime remove_trailing_slashes: bool) type {
     const max_index = count - 1;
     const BSSMapType = struct {
         const Allocator = std.mem.Allocator;

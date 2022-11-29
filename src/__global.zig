@@ -8,7 +8,7 @@ const Mimalloc = @import("bun").Mimalloc;
 
 const BASE_VERSION = "0.3";
 
-pub const build_id = std.fmt.parseInt(u64, std.mem.trim(u8, @embedFile("../build-id"), "\n \r\t"), 10) catch unreachable;
+pub const build_id = std.fmt.parseInt(u64, std.mem.trim(u8, @embedFile("./build-id"), "\n \r\t"), 10) catch unreachable;
 pub const package_json_version = if (Environment.isDebug)
     std.fmt.comptimePrint(BASE_VERSION ++ ".{d}_debug", .{build_id})
 else

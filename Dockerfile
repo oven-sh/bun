@@ -370,7 +370,7 @@ COPY ./src ${BUN_DIR}/src
 COPY ./build.zig ${BUN_DIR}/build.zig
 COPY ./completions ${BUN_DIR}/completions
 COPY ./packages ${BUN_DIR}/packages
-COPY ./build-id ${BUN_DIR}/build-id
+COPY ./src/build-id ${BUN_DIR}/src/build-id
 COPY ./package.json ${BUN_DIR}/package.json
 COPY ./misctools ${BUN_DIR}/misctools
 COPY Makefile ${BUN_DIR}/Makefile
@@ -408,14 +408,14 @@ ENV GIT_SHA=${GIT_SHA}
 COPY --from=identifier_cache ${BUN_DIR}/src/js_lexer/*.blob ${BUN_DIR}/src/js_lexer/
 COPY --from=node_fallbacks ${BUN_DIR}/src/node-fallbacks/out ${BUN_DIR}/src/node-fallbacks/out
 
-COPY ./build-id ${BUN_DIR}/build-id
+COPY ./src/build-id ${BUN_DIR}/src/build-id
 
 ENV CCACHE_DIR=/ccache
 
 RUN --mount=type=cache,target=/ccache cd $BUN_DIR && mkdir -p src/bun.js/bindings-obj &&  rm -rf $HOME/.cache zig-cache && make prerelease && \
     mkdir -p $BUN_RELEASE_DIR && \
     OUTPUT_DIR=/tmp $ZIG_PATH/zig build obj -Drelease-fast -Dtarget="${TRIPLET}" -Dcpu="${CPU_TARGET}" && \
-    cp /tmp/bun.o /tmp/bun-${BUN_BASE_VERSION}.$(cat ${BUN_DIR}/build-id).o && cd / && rm -rf $BUN_DIR
+    cp /tmp/bun.o /tmp/bun-${BUN_BASE_VERSION}.$(cat ${BUN_DIR}/src/build-id).o && cd / && rm -rf $BUN_DIR
 
 FROM scratch as build_release_obj
 

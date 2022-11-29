@@ -962,7 +962,7 @@ pub const ExportsMap = struct {
 
         const root = visitor.visit(json);
 
-        if (root.data == .@"null") {
+        if (root.data == .null) {
             return null;
         }
 
@@ -983,7 +983,7 @@ pub const ExportsMap = struct {
 
             switch (expr.data) {
                 .e_null => {
-                    return Entry{ .first_token = js_lexer.rangeOfIdentifier(this.source, expr.loc), .data = .{ .@"null" = void{} } };
+                    return Entry{ .first_token = js_lexer.rangeOfIdentifier(this.source, expr.loc), .data = .{ .null = void{} } };
                 },
                 .e_string => |str| {
                     return Entry{
@@ -1109,14 +1109,14 @@ pub const ExportsMap = struct {
 
         pub const Data = union(Tag) {
             invalid: void,
-            @"null": void,
+            null: void,
             boolean: bool,
-            @"string": string,
+            string: string,
             array: []const Entry,
             map: Map,
 
             pub const Tag = enum {
-                @"null",
+                null,
                 string,
                 boolean,
                 array,
@@ -1449,7 +1449,7 @@ pub const ESModule = struct {
         }
 
         if (strings.eqlComptime(subpath, ".")) {
-            var main_export = ExportsMap.Entry{ .data = .{ .@"null" = void{} }, .first_token = logger.Range.None };
+            var main_export = ExportsMap.Entry{ .data = .{ .null = void{} }, .first_token = logger.Range.None };
             if (switch (exports.data) {
                 .string,
                 .array,
@@ -1464,7 +1464,7 @@ pub const ESModule = struct {
                 }
             }
 
-            if (main_export.data != .@"null") {
+            if (main_export.data != .null) {
                 const result = r.resolveTarget(package_url, main_export, "", false, false);
                 if (result.status != .Null and result.status != .Undefined) {
                     return result;
@@ -1802,7 +1802,7 @@ pub const ESModule = struct {
 
                 return Resolution{ .path = "", .status = last_exception, .debug = last_debug };
             },
-            .@"null" => {
+            .null => {
                 if (r.debug_logs) |log| {
                     log.addNoteFmt("The path \"{s}\" is null", .{subpath});
                 }

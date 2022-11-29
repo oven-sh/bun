@@ -541,7 +541,7 @@ pub const Fetch = struct {
         void,
         .{ .name = "fetch" },
         .{
-            .@"call" = .{
+            .call = .{
                 .rfn = Fetch.call,
                 .ts = d.ts{},
             },
@@ -5689,7 +5689,7 @@ pub const FetchEvent = struct {
             .ts = .{ .class = d.ts.class{ .interface = true } },
         },
         .{
-            .@"respondWith" = .{
+            .respondWith = .{
                 .rfn = respondWith,
                 .ts = d.ts{
                     .tsdoc = "Render the response in the active HTTP request",
@@ -5699,20 +5699,20 @@ pub const FetchEvent = struct {
                     },
                 },
             },
-            .@"waitUntil" = waitUntil,
+            .waitUntil = waitUntil,
             .finalize = finalize,
         },
         .{
-            .@"client" = .{
-                .@"get" = getClient,
+            .client = .{
+                .get = getClient,
                 .ro = true,
                 .ts = d.ts{
                     .tsdoc = "HTTP client metadata. This is not implemented yet, do not use.",
                     .@"return" = "undefined",
                 },
             },
-            .@"request" = .{
-                .@"get" = getRequest,
+            .request = .{
+                .get = getRequest,
                 .ro = true,
                 .ts = d.ts{
                     .tsdoc = "HTTP request",

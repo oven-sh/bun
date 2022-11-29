@@ -1493,7 +1493,7 @@ pub fn NewPrinter(
         }
 
         fn printClauseItem(p: *Printer, item: js_ast.ClauseItem) void {
-            return printClauseItemAs(p, item, .@"import");
+            return printClauseItemAs(p, item, .import);
         }
 
         fn printExportClauseItem(p: *Printer, item: js_ast.ClauseItem) void {
@@ -1503,7 +1503,7 @@ pub fn NewPrinter(
         fn printClauseItemAs(p: *Printer, item: js_ast.ClauseItem, comptime as: @Type(.EnumLiteral)) void {
             const name = p.renamer.nameForSymbol(item.name.ref.?);
 
-            if (comptime as == .@"import") {
+            if (comptime as == .import) {
                 p.printClauseAlias(item.alias);
 
                 if (!strings.eql(name, item.alias)) {
@@ -1928,7 +1928,7 @@ pub fn NewPrinter(
 
                     if (e.func.name) |sym| {
                         p.maybePrintSpace();
-                        p.printSymbol(sym.ref orelse Global.panic("internal error: expected E.Function's name symbol to have a ref\n{s}", .{e.func}));
+                        p.printSymbol(sym.ref orelse Global.panic("internal error: expected E.Function's name symbol to have a ref\n{any}", .{e.func}));
                     }
 
                     p.printFunc(e.func);
@@ -1948,7 +1948,7 @@ pub fn NewPrinter(
                     if (e.class_name) |name| {
                         p.maybePrintSpace();
                         p.addSourceMapping(name.loc);
-                        p.printSymbol(name.ref orelse Global.panic("internal error: expected E.Class's name symbol to have a ref\n{s}", .{e}));
+                        p.printSymbol(name.ref orelse Global.panic("internal error: expected E.Class's name symbol to have a ref\n{any}", .{e}));
                         p.maybePrintSpace();
                     }
                     p.printClass(e.*);
@@ -2375,7 +2375,7 @@ pub fn NewPrinter(
                     }
                 },
                 else => {
-                    // Global.panic("Unexpected expression of type {s}", .{std.meta.activeTag(expr.data});
+                    // Global.panic("Unexpected expression of type {any}", .{std.meta.activeTag(expr.data});
                 },
             }
         }
@@ -2928,7 +2928,7 @@ pub fn NewPrinter(
                     p.print("}");
                 },
                 else => {
-                    Global.panic("Unexpected binding of type {s}", .{binding});
+                    Global.panic("Unexpected binding of type {any}", .{binding});
                 },
             }
         }
@@ -2957,8 +2957,8 @@ pub fn NewPrinter(
                 .s_function => |s| {
                     p.printIndent();
                     p.printSpaceBeforeIdentifier();
-                    const name = s.func.name orelse Global.panic("Internal error: expected func to have a name ref\n{s}", .{s});
-                    const nameRef = name.ref orelse Global.panic("Internal error: expected func to have a name\n{s}", .{s});
+                    const name = s.func.name orelse Global.panic("Internal error: expected func to have a name ref\n{any}", .{s});
+                    const nameRef = name.ref orelse Global.panic("Internal error: expected func to have a name\n{any}", .{s});
 
                     if (s.func.flags.contains(.is_export)) {
                         if (!rewrite_esm_to_cjs) {
@@ -3115,7 +3115,7 @@ pub fn NewPrinter(
 
                                     if (class.class.class_name) |name| {
                                         p.print("class ");
-                                        p.printSymbol(name.ref orelse Global.panic("Internal error: Expected class to have a name ref\n{s}", .{class}));
+                                        p.printSymbol(name.ref orelse Global.panic("Internal error: Expected class to have a name ref\n{any}", .{class}));
                                     } else {
                                         p.print("class");
                                     }
@@ -3137,7 +3137,7 @@ pub fn NewPrinter(
                                     }
                                 },
                                 else => {
-                                    Global.panic("Internal error: unexpected export default stmt data {s}", .{s});
+                                    Global.panic("Internal error: unexpected export default stmt data {any}", .{s});
                                 },
                             }
                         },
@@ -3604,7 +3604,7 @@ pub fn NewPrinter(
                 },
                 .s_label => |s| {
                     p.printIndent();
-                    p.printSymbol(s.name.ref orelse Global.panic("Internal error: expected label to have a name {s}", .{s}));
+                    p.printSymbol(s.name.ref orelse Global.panic("Internal error: expected label to have a name {any}", .{s}));
                     p.print(":");
                     p.printBody(s.stmt);
                 },
@@ -4089,7 +4089,7 @@ pub fn NewPrinter(
                     const to_print: []const u8 = if (slice.len > 1024) slice[slice.len - 1024 ..] else slice;
 
                     if (to_print.len > 0) {
-                        Global.panic("\n<r><red>voluntary crash<r> while printing:<r>\n{s}\n---This is a <b>bug<r>. Not your fault.\n", .{to_print});
+                        Global.panic("\n<r><red>voluntary crash<r> while printing:<r>\n{any}\n---This is a <b>bug<r>. Not your fault.\n", .{to_print});
                     } else {
                         Global.panic("\n<r><red>voluntary crash<r> while printing. This is a <b>bug<r>. Not your fault.\n", .{});
                     }
@@ -4321,7 +4321,7 @@ pub fn NewPrinter(
                 // for(;)
                 .s_empty => {},
                 else => {
-                    Global.panic("Internal error: Unexpected stmt in for loop {s}", .{initSt});
+                    Global.panic("Internal error: Unexpected stmt in for loop {any}", .{initSt});
                 },
             }
         }

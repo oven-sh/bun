@@ -1,10 +1,10 @@
 const std = @import("std");
 const Dir = std.fs.Dir;
-const FnMeta = std.builtin.TypeInfo.Fn;
-const FnDecl = std.builtin.TypeInfo.Declaration.Data.FnDecl;
-const StructMeta = std.builtin.TypeInfo.Struct;
-const EnumMeta = std.builtin.TypeInfo.Enum;
-const UnionMeta = std.builtin.TypeInfo.Union;
+const FnMeta = std.builtin.Type.Fn;
+const FnDecl = std.builtin.Type.Declaration.Data.FnDecl;
+const StructMeta = std.builtin.Type.Struct;
+const EnumMeta = std.builtin.Type.Enum;
+const UnionMeta = std.builtin.Type.Union;
 const warn = std.debug.warn;
 const StaticExport = @import("./static_export.zig");
 const typeBaseName = @import("../../meta.zig").typeBaseName;
@@ -178,7 +178,7 @@ pub const C_Generator = struct {
 
         self.write(")");
         defer self.write(";\n");
-        // const ReturnTypeInfo: std.builtin.TypeInfo = comptime @typeInfo(func.return_type);
+        // const ReturnTypeInfo: std.builtin.Type = comptime @typeInfo(func.return_type);
         // switch (comptime ReturnTypeInfo) {
         //     .Pointer => |Pointer| {
         //         self.write(" __attribute__((returns_nonnull))");
@@ -193,7 +193,7 @@ pub const C_Generator = struct {
         comptime Function: type,
         comptime name: []const u8,
     ) void {
-        const func: std.builtin.TypeInfo.Fn = @typeInfo(Function).Fn;
+        const func: std.builtin.Type.Fn = @typeInfo(Function).Fn;
         self.writeType(func.return_type orelse void);
         self.write(" (*" ++ name ++ ")(");
         inline for (func.args) |arg, i| {
@@ -215,7 +215,7 @@ pub const C_Generator = struct {
         }
 
         self.write(")");
-        // const ReturnTypeInfo: std.builtin.TypeInfo = comptime @typeInfo(func.return_type);
+        // const ReturnTypeInfo: std.builtin.Type = comptime @typeInfo(func.return_type);
         // switch (comptime ReturnTypeInfo) {
         //     .Pointer => |Pointer| {
         //         self.write(" __attribute__((returns_nonnull))");
@@ -554,7 +554,7 @@ pub fn HeaderGen(comptime first_import: type, comptime second_import: type, comp
             _: anytype,
             gen: *C_Generator,
             comptime ParentType: type,
-            comptime _: std.builtin.TypeInfo.Declaration,
+            comptime _: std.builtin.Type.Declaration,
             comptime name: []const u8,
             comptime prefix: []const u8,
         ) void {
@@ -722,7 +722,7 @@ pub fn HeaderGen(comptime first_import: type, comptime second_import: type, comp
                         @setEvalBranchQuota(99999);
                         const Type = @field(BaseType, _decls.name);
                         if (@TypeOf(Type) == type) {
-                            const TypeTypeInfo: std.builtin.TypeInfo = @typeInfo(@field(BaseType, _decls.name));
+                            const TypeTypeInfo: std.builtin.Type = @typeInfo(@field(BaseType, _decls.name));
                             const is_container_type = switch (TypeTypeInfo) {
                                 .Opaque, .Struct, .Enum => true,
                                 else => false,

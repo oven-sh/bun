@@ -1444,7 +1444,7 @@ pub fn saveToDisk(this: *Lockfile, filename: stringZ) void {
     _ = C.fchmod(
         tmpfile.fd,
         // chmod 777
-        0000010 | 0000100 | 0000001 | 0001000 | 0000040 | 0000004 | 0000002 | 0000400 | 0000200 | 0000020,
+        0o0000010 | 0o0000100 | 0o0000001 | 0o0001000 | 0o0000040 | 0o0000004 | 0o0000002 | 0o0000400 | 0o0000200 | 0o0000020,
     );
 
     tmpfile.promote(tmpname, std.fs.cwd().fd, filename) catch |err| {
@@ -2619,12 +2619,12 @@ pub const Package = extern struct {
 
                         break :bin;
                     },
-                    .e_string => |str| {
-                        if (str.data.len > 0) {
+                    .e_string => |stri| {
+                        if (stri.data.len > 0) {
                             package.bin = Bin{
                                 .tag = Bin.Tag.file,
                                 .value = .{
-                                    .file = string_builder.append(String, str.data),
+                                    .file = string_builder.append(String, stri.data),
                                 },
                             };
                             break :bin;

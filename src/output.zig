@@ -239,7 +239,7 @@ pub fn flush() void {
 }
 
 inline fn printElapsedToWithCtx(elapsed: f64, comptime printerFn: anytype, comptime has_ctx: bool, ctx: anytype) void {
-    switch (elapsed) {
+    switch (@floatToInt(i64, @round(elapsed))) {
         0...1500 => {
             const fmt = "<r><d>[<b>{d:>.2}ms<r><d>]<r>";
             const args = .{elapsed};

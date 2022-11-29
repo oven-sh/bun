@@ -1737,7 +1737,7 @@ pub const ModuleLoader = struct {
                         .hash = 0,
                     };
                 },
-                .@"ws" => {
+                .ws => {
                     return ResolvedSource{
                         .allocator = null,
                         .source_code = ZigString.init(
@@ -1792,7 +1792,7 @@ pub const ModuleLoader = struct {
                         .hash = 0,
                     };
                 },
-                .@"undici" => {
+                .undici => {
                     return ResolvedSource{
                         .allocator = null,
                         .source_code = ZigString.init(
@@ -1825,7 +1825,7 @@ pub const ModuleLoader = struct {
                         .hash = 0,
                     };
                 },
-                .@"depd" => {
+                .depd => {
                     return ResolvedSource{
                         .allocator = null,
                         .source_code = ZigString.init(
@@ -1941,7 +1941,7 @@ pub const HardcodedModule = enum {
     @"bun:jsc",
     @"bun:main",
     @"bun:sqlite",
-    @"depd",
+    depd,
     @"detect-libc",
     @"node:assert",
     @"node:buffer",
@@ -1967,8 +1967,8 @@ pub const HardcodedModule = enum {
     @"node:timers/promises",
     @"node:tty",
     @"node:url",
-    @"undici",
-    @"ws",
+    undici,
+    ws,
     /// Already resolved modules go in here.
     /// This does not remap the module name, it is just a hash table.
     /// Do not put modules that have aliases in here
@@ -1981,7 +1981,7 @@ pub const HardcodedModule = enum {
             .{ "bun:jsc", HardcodedModule.@"bun:jsc" },
             .{ "bun:main", HardcodedModule.@"bun:main" },
             .{ "bun:sqlite", HardcodedModule.@"bun:sqlite" },
-            .{ "depd", HardcodedModule.@"depd" },
+            .{ "depd", HardcodedModule.depd },
             .{ "detect-libc", HardcodedModule.@"detect-libc" },
             .{ "node:assert", HardcodedModule.@"node:assert" },
             .{ "node:buffer", HardcodedModule.@"node:buffer" },
@@ -2007,8 +2007,8 @@ pub const HardcodedModule = enum {
             .{ "node:timers/promises", HardcodedModule.@"node:timers/promises" },
             .{ "node:tty", HardcodedModule.@"node:tty" },
             .{ "node:url", HardcodedModule.@"node:url" },
-            .{ "undici", HardcodedModule.@"undici" },
-            .{ "ws", HardcodedModule.@"ws" },
+            .{ "undici", HardcodedModule.undici },
+            .{ "ws", HardcodedModule.ws },
         },
     );
     pub const Aliases = bun.ComptimeStringMap(

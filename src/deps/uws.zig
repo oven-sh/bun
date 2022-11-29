@@ -470,7 +470,7 @@ pub const Loop = extern struct {
         uws_loop_defer(this, user_data, Handler.callback);
     }
 
-    fn NewHandler(comptime UserType: type, comptime callback: fn (UserType) void) type {
+    fn NewHandler(comptime UserType: type, comptime callback_fn: fn (UserType) void) type {
         return struct {
             loop: *Loop,
             pub fn removePost(handler: @This()) void {
@@ -480,7 +480,7 @@ pub const Loop = extern struct {
                 return uws_loop_removePostHandler(handler.loop, callback);
             }
             pub fn callback(data: *anyopaque, _: *Loop) callconv(.C) void {
-                callback(@ptrCast(UserType, @alignCast(@alignOf(std.meta.Child(UserType)), data)));
+                callback_fn(@ptrCast(UserType, @alignCast(@alignOf(std.meta.Child(UserType)), data)));
             }
         };
     }
@@ -1150,7 +1150,7 @@ pub fn NewApp(comptime ssl: bool) type {
                 unreachable;
             }
             const Wrapper = struct {
-                const handler = handler;
+            
                 pub fn handle(socket: ?*uws.ListenSocket, conf: uws_app_listen_config_t, data: ?*anyopaque) callconv(.C) void {
                     if (comptime UserData == void) {
                         @call(.{ .modifier = .always_inline }, handler, .{ void{}, @ptrCast(?*ThisApp.ListenSocket, socket), conf });
@@ -1174,7 +1174,6 @@ pub fn NewApp(comptime ssl: bool) type {
             config: uws_app_listen_config_t,
         ) void {
             const Wrapper = struct {
-                const handler = handler;
 
                 pub fn handle(socket: ?*uws.ListenSocket, data: ?*anyopaque) callconv(.C) void {
                     if (comptime UserData == void) {

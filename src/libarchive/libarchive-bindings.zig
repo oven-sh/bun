@@ -11,13 +11,13 @@ const FILE = @import("std").c.FILE;
 const dev_t = @import("std").c.dev_t;
 
 pub const FileType = enum(mode_t) {
-    regular = 0100000,
-    link = 0120000,
-    socket = 0140000,
-    character_oriented_device = 0020000,
-    block_oriented_device = 0060000,
-    directory = 0040000,
-    fifo = 0010000,
+    regular = 0o100000,
+    link = 0o120000,
+    socket = 0o140000,
+    character_oriented_device = 0o020000,
+    block_oriented_device = 0o060000,
+    directory = 0o040000,
+    fifo = 0o010000,
 };
 
 pub const SymlinkType = enum(c_int) {

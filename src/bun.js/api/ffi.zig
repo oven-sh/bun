@@ -548,7 +548,7 @@ pub const FFI = struct {
             }
         }
         // var function
-        var return_type = ABIType.@"void";
+        var return_type = ABIType.void;
 
         var threadsafe = false;
 
@@ -579,7 +579,7 @@ pub const FFI = struct {
             };
         }
 
-        if (function.threadsafe and return_type != ABIType.@"void") {
+        if (function.threadsafe and return_type != ABIType.void) {
             abi_types.clearAndFree(allocator);
             return ZigString.static("Threadsafe functions must return void").toErrorInstance(global);
         }
@@ -643,7 +643,7 @@ pub const FFI = struct {
         base_name: ?[:0]const u8 = null,
         state: ?*TCC.TCCState = null,
 
-        return_type: ABIType = ABIType.@"void",
+        return_type: ABIType = ABIType.void,
         arg_types: std.ArrayListUnmanaged(ABIType) = .{},
         step: Step = Step{ .pending = {} },
         threadsafe: bool = false,
@@ -1325,7 +1325,7 @@ pub const FFI = struct {
 
         ptr = 12,
 
-        @"void" = 13,
+        void = 13,
 
         cstring = 14,
 
@@ -1376,8 +1376,8 @@ pub const FFI = struct {
             .{ "void*", ABIType.ptr },
             .{ "ptr", ABIType.ptr },
             .{ "pointer", ABIType.ptr },
-            .{ "void", ABIType.@"void" },
-            .{ "cstring", ABIType.@"cstring" },
+            .{ "void", ABIType.void },
+            .{ "cstring", ABIType.cstring },
             .{ "i64_fast", ABIType.i64_fast },
             .{ "u64_fast", ABIType.u64_fast },
             .{ "function", ABIType.function },

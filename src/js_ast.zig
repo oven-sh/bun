@@ -70,7 +70,7 @@ pub fn NewBaseStore(comptime Union: anytype, comptime count: usize) type {
             const UsedSize = std.math.IntFittingRange(0, max + 1);
             used: UsedSize = 0,
             allocated: UsedSize = 0,
-            allocator: Allocator,
+            allocator: Allocator = default_allocator,
             ptrs: [max]*Block = undefined,
 
             pub fn tail(this: *Overflow) *Block {
@@ -301,14 +301,14 @@ pub const Binding = struct {
     data: B,
 
     const Serializable = struct {
-        @"type": Tag,
+        type: Tag,
         object: string,
         value: B,
         loc: logger.Loc,
     };
 
     pub fn jsonStringify(self: *const @This(), options: anytype, writer: anytype) !void {
-        return try std.json.stringify(Serializable{ .@"type" = std.meta.activeTag(self.data), .object = "binding", .value = self.data, .loc = self.loc }, options, writer);
+        return try std.json.stringify(Serializable{ .type = std.meta.activeTag(self.data), .object = "binding", .value = self.data, .loc = self.loc }, options, writer);
     }
 
     pub fn ToExpr(comptime expr_type: type, comptime func_type: anytype) type {
@@ -1958,14 +1958,14 @@ pub const Stmt = struct {
     data: Data,
 
     const Serializable = struct {
-        @"type": Tag,
+        type: Tag,
         object: string,
         value: Data,
         loc: logger.Loc,
     };
 
     pub fn jsonStringify(self: *const Stmt, options: anytype, writer: anytype) !void {
-        return try std.json.stringify(Serializable{ .@"type" = std.meta.activeTag(self.data), .object = "stmt", .value = self.data, .loc = self.loc }, options, writer);
+        return try std.json.stringify(Serializable{ .type = std.meta.activeTag(self.data), .object = "stmt", .value = self.data, .loc = self.loc }, options, writer);
     }
 
     pub fn isTypeScript(self: *Stmt) bool {
@@ -2430,7 +2430,7 @@ pub const Expr = struct {
     pub const EFlags = enum { none, ts_decorator };
 
     const Serializable = struct {
-        @"type": Tag,
+        type: Tag,
         object: string,
         value: Data,
         loc: logger.Loc,
@@ -2555,7 +2555,7 @@ pub const Expr = struct {
     }
 
     pub fn jsonStringify(self: *const @This(), options: anytype, writer: anytype) !void {
-        return try std.json.stringify(Serializable{ .@"type" = std.meta.activeTag(self.data), .object = "expr", .value = self.data, .loc = self.loc }, options, writer);
+        return try std.json.stringify(Serializable{ .type = std.meta.activeTag(self.data), .object = "expr", .value = self.data, .loc = self.loc }, options, writer);
     }
 
     pub fn extractNumericValues(left: Expr.Data, right: Expr.Data) ?[2]f64 {
@@ -3525,20 +3525,20 @@ pub const Expr = struct {
     pub const PrimitiveType = enum {
         unknown,
         mixed,
-        @"null",
-        @"undefined",
+        null,
+        undefined,
         boolean,
         number,
-        @"string",
+        string,
         bigint,
 
         pub const static = std.enums.EnumSet(PrimitiveType).init(.{
-            .@"mixed" = true,
-            .@"null" = true,
-            .@"undefined" = true,
-            .@"boolean" = true,
-            .@"number" = true,
-            .@"string" = true,
+            .mixed = true,
+            .null = true,
+            .undefined = true,
+            .boolean = true,
+            .number = true,
+            .string = true,
             // for our purposes, bigint is dynamic
             // it is technically static though
             // .@"bigint" = true,
@@ -3614,11 +3614,11 @@ pub const Expr = struct {
             return switch (data) {
                 .e_big_int => .bigint,
                 .e_boolean => .boolean,
-                .e_null => .@"null",
+                .e_null => .null,
                 .e_number => .number,
-                .e_string => .@"string",
-                .e_undefined => .@"undefined",
-                .e_template => if (data.e_template.tag == null) PrimitiveType.@"string" else PrimitiveType.unknown,
+                .e_string => .string,
+                .e_undefined => .undefined,
+                .e_template => if (data.e_template.tag == null) PrimitiveType.string else PrimitiveType.unknown,
                 .e_if => mergeKnownPrimitive(data.e_if.yes.data, data.e_if.no.data),
                 .e_binary => |binary| brk: {
                     switch (binary.op) {
@@ -3638,7 +3638,7 @@ pub const Expr = struct {
                         .bin_nullish_coalescing => {
                             const left = binary.left.data.knownPrimitive();
                             const right = binary.right.data.knownPrimitive();
-                            if (left == .@"null" or left == .@"undefined")
+                            if (left == .null or left == .undefined)
                                 break :brk right;
 
                             if (left != .unknown) {
@@ -3654,8 +3654,8 @@ pub const Expr = struct {
                             const left = binary.left.data.knownPrimitive();
                             const right = binary.right.data.knownPrimitive();
 
-                            if (left == .@"string" or right == .@"string")
-                                break :brk PrimitiveType.@"string";
+                            if (left == .string or right == .string)
+                                break :brk PrimitiveType.string;
 
                             if (left == .bigint or right == .bigint)
                                 break :brk PrimitiveType.bigint;
@@ -3707,8 +3707,8 @@ pub const Expr = struct {
                 },
 
                 .e_unary => switch (data.e_unary.op) {
-                    .un_void => PrimitiveType.@"undefined",
-                    .un_typeof => PrimitiveType.@"string",
+                    .un_void => PrimitiveType.undefined,
+                    .un_typeof => PrimitiveType.string,
                     .un_not, .un_delete => PrimitiveType.boolean,
                     .un_pos => PrimitiveType.number, // Cannot be bigint because that throws an exception
                     .un_neg, .un_cpl => switch (data.e_unary.value.data.knownPrimitive()) {
@@ -5814,7 +5814,7 @@ pub const Macro = struct {
 
             pub const ids: std.EnumArray(Tag, Expr.Data) = brk: {
                 var list = std.EnumArray(Tag, Expr.Data).initFill(Expr.Data{ .e_number = E.Number{ .value = 0.0 } });
-                const fields: []const std.builtin.TypeInfo.EnumField = @typeInfo(Tag).Enum.fields;
+                const fields: []const std.builtin.Type.EnumField = @typeInfo(Tag).Enum.fields;
                 for (fields) |field| {
                     list.set(@intToEnum(Tag, field.value), Expr.Data{ .e_number = E.Number{ .value = @intToFloat(f64, field.value) } });
                 }
@@ -5990,7 +5990,7 @@ pub const Macro = struct {
             };
 
             pub const max_tag: u8 = brk: {
-                const Enum: std.builtin.TypeInfo.Enum = @typeInfo(Tag).Enum;
+                const Enum: std.builtin.Type.Enum = @typeInfo(Tag).Enum;
                 var max_value: u8 = 0;
                 for (Enum.fields) |field| {
                     max_value = std.math.max(@as(u8, field.value), max_value);
@@ -5999,7 +5999,7 @@ pub const Macro = struct {
             };
 
             pub const min_tag: u8 = brk: {
-                const Enum: std.builtin.TypeInfo.Enum = @typeInfo(Tag).Enum;
+                const Enum: std.builtin.Type.Enum = @typeInfo(Tag).Enum;
                 var min: u8 = 255;
                 for (Enum.fields) |field| {
                     min = std.math.min(@as(u8, field.value), min);
@@ -6375,14 +6375,14 @@ pub const Macro = struct {
                                 },
                                 // null is cooerced to "null"
                                 .e_null => {
-                                    self.args.appendAssumeCapacity(Expr{ .loc = value.loc, .data = .{ .e_string = &E.String.@"null" } });
+                                    self.args.appendAssumeCapacity(Expr{ .loc = value.loc, .data = .{ .e_string = &E.String.null } });
                                 },
                                 // undefined is cooerced to "undefined"
                                 .e_undefined => {
-                                    self.args.appendAssumeCapacity(Expr{ .loc = value.loc, .data = .{ .e_string = &E.String.@"undefined" } });
+                                    self.args.appendAssumeCapacity(Expr{ .loc = value.loc, .data = .{ .e_string = &E.String.undefined } });
                                 },
                                 .e_boolean => |boolean| {
-                                    self.args.appendAssumeCapacity(Expr{ .loc = value.loc, .data = .{ .e_string = if (boolean.value) &E.String.@"true" else &E.String.@"false" } });
+                                    self.args.appendAssumeCapacity(Expr{ .loc = value.loc, .data = .{ .e_string = if (boolean.value) &E.String.true else &E.String.false } });
                                 },
                                 // these ones are not statically analyzable so we just leave them in as-is
                                 .e_template, .e_if, .e_identifier, .e_import_identifier, .e_index, .e_call, .e_private_identifier, .e_dot, .e_unary, .e_binary => {
@@ -6783,7 +6783,7 @@ pub const Macro = struct {
 
                     const node_type: JSNode.Tag = JSNode.Tag.names.get(str.data) orelse {
                         if (!str.isUTF8()) {
-                            self.log.addErrorFmt(p.source, tag_expr.loc, p.allocator, "Tag \"{s}\" is invalid", .{strings.toUTF8Alloc(self.p.allocator, str.slice16())}) catch unreachable;
+                            self.log.addErrorFmt(p.source, tag_expr.loc, p.allocator, "Tag \"{s}\" is invalid", .{strings.toUTF8Alloc(self.p.allocator, str.slice16()) catch unreachable}) catch unreachable;
                         } else {
                             self.log.addErrorFmt(p.source, tag_expr.loc, p.allocator, "Tag \"{s}\" is invalid", .{str.data}) catch unreachable;
                         }
@@ -6805,7 +6805,9 @@ pub const Macro = struct {
 
                     const node_type: JSNode.Tag = JSNode.Tag.names.get(str.data) orelse {
                         if (!str.isUTF8()) {
-                            self.log.addErrorFmt(p.source, tag_expr.loc, p.allocator, "Tag \"{s}\" is invalid", .{strings.toUTF8Alloc(self.p.allocator, str.slice16())}) catch unreachable;
+                            self.log.addErrorFmt(p.source, tag_expr.loc, p.allocator, "Tag \"{s}\" is invalid", .{
+                                strings.toUTF8Alloc(self.p.allocator, str.slice16()) catch unreachable,
+                            }) catch unreachable;
                         } else {
                             self.log.addErrorFmt(p.source, tag_expr.loc, p.allocator, "Tag \"{s}\" is invalid", .{str.data}) catch unreachable;
                         }

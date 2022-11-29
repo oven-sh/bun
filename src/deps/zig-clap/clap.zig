@@ -386,9 +386,9 @@ fn printParam(
 
     switch (param.takes_value) {
         .none => {},
-        .one => try stream.print(" <{s}>", .{valueText(context, param)}),
-        .one_optional => try stream.print(" <{s}>?", .{valueText(context, param)}),
-        .many => try stream.print(" <{s}>...", .{valueText(context, param)}),
+        .one => try stream.print(" <{s}>", .{try valueText(context, param)}),
+        .one_optional => try stream.print(" <{s}>?", .{try valueText(context, param)}),
+        .many => try stream.print(" <{s}>...", .{try valueText(context, param)}),
     }
 }
 

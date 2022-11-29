@@ -10,7 +10,7 @@ pub const CachedBitset = extern struct {
 };
 
 pub fn setMasks(masks: [*:0]const u8, comptime MaskType: type, masky: MaskType) void {
-    const FieldInfo: std.builtin.TypeInfo.StructField = std.meta.fieldInfo(MaskType, "masks");
+    const FieldInfo: std.builtin.Type.StructField = std.meta.fieldInfo(MaskType, "masks");
     masky.masks = @bitCast(masks, FieldInfo.field_type);
 }
 

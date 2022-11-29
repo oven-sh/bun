@@ -19,7 +19,7 @@ pub const Alert = struct {
         void,
         .{ .name = "alert" },
         .{
-            .@"call" = .{ .rfn = call },
+            .call = .{ .rfn = call },
         },
         .{},
     );
@@ -87,7 +87,7 @@ pub const Confirm = struct {
         void,
         .{ .name = "confirm" },
         .{
-            .@"call" = .{ .rfn = call },
+            .call = .{ .rfn = call },
         },
         .{},
     );
@@ -179,7 +179,7 @@ pub const Prompt = struct {
         void,
         .{ .name = "prompt" },
         .{
-            .@"call" = .{ .rfn = call },
+            .call = .{ .rfn = call },
         },
         .{},
     );

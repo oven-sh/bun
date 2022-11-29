@@ -36,7 +36,7 @@ fn NewEVP(
     comptime MDName: []const u8,
 ) type {
     return struct {
-        ctx: BoringSSL.EVP_MD_CTX,
+        ctx: BoringSSL.EVP_MD_CTX = undefined,
 
         pub const Digest = [digest_size]u8;
         pub const digest: comptime_int = digest_size;

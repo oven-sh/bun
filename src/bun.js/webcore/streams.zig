@@ -2672,7 +2672,7 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
 
         // In this case, it's always an error
         pub fn end(this: *@This(), err: ?Syscall.Error) JSC.Node.Maybe(void) {
-            log("end({s})", .{err});
+            log("end({any})", .{err});
 
             if (this.requested_end) {
                 return .{ .result = {} };

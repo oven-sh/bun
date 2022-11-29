@@ -603,15 +603,12 @@ const IO_CTL_RELATED = struct {
         return _IOC(IOC_VOID, g, n, @as(c_int, 0));
     }
     pub inline fn _IOR(g: anytype, n: anytype, t: anytype) @TypeOf(_IOC(IOC_OUT, g, n, @import("std").zig.c_translation.sizeof(t))) {
-        _ = t;
         return _IOC(IOC_OUT, g, n, @import("std").zig.c_translation.sizeof(t));
     }
     pub inline fn _IOW(g: anytype, n: anytype, t: anytype) @TypeOf(_IOC(IOC_IN, g, n, @import("std").zig.c_translation.sizeof(t))) {
-        _ = t;
         return _IOC(IOC_IN, g, n, @import("std").zig.c_translation.sizeof(t));
     }
     pub inline fn _IOWR(g: anytype, n: anytype, t: anytype) @TypeOf(_IOC(IOC_INOUT, g, n, @import("std").zig.c_translation.sizeof(t))) {
-        _ = t;
         return _IOC(IOC_INOUT, g, n, @import("std").zig.c_translation.sizeof(t));
     }
     pub const TIOCMODG = _IOR('t', @as(c_int, 3), c_int);

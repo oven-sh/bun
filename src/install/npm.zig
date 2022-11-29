@@ -1045,8 +1045,8 @@ pub const PackageManifest = struct {
                                     }
                                 }
                             },
-                            .e_string => |str| {
-                                package_version.cpu = Architecture.apply(Architecture.none, str.data);
+                            .e_string => |stri| {
+                                package_version.cpu = Architecture.apply(Architecture.none, stri.data);
                             },
                             else => {},
                         }
@@ -1067,8 +1067,8 @@ pub const PackageManifest = struct {
                                     }
                                 }
                             },
-                            .e_string => |str| {
-                                package_version.os = OperatingSystem.apply(OperatingSystem.none, str.data);
+                            .e_string => |stri| {
+                                package_version.os = OperatingSystem.apply(OperatingSystem.none, stri.data);
                             },
                             else => {},
                         }
@@ -1132,12 +1132,12 @@ pub const PackageManifest = struct {
 
                                     break :bin;
                                 },
-                                .e_string => |str| {
-                                    if (str.data.len > 0) {
+                                .e_string => |stri| {
+                                    if (stri.data.len > 0) {
                                         package_version.bin = Bin{
                                             .tag = Bin.Tag.file,
                                             .value = .{
-                                                .file = string_builder.append(String, str.data),
+                                                .file = string_builder.append(String, stri.data),
                                             },
                                         };
                                         break :bin;

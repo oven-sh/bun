@@ -305,7 +305,7 @@ pub const BIO_METHOD = struct_bio_method_st;
 pub const BIO = struct_bio_st;
 pub const bio_info_cb = ?fn ([*c]BIO, c_int, [*c]const u8, c_int, c_long, c_long) callconv(.C) c_long;
 pub const struct_bio_method_st = extern struct {
-    @"type": c_int,
+    type: c_int,
     name: [*c]const u8,
     bwrite: ?fn ([*c]BIO, [*c]const u8, c_int) callconv(.C) c_int,
     bread: ?fn ([*c]BIO, [*c]u8, c_int) callconv(.C) c_int,

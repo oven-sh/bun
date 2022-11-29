@@ -24,8 +24,8 @@ pub const Mode = if (Environment.isLinux) u32 else std.os.mode_t;
 const heap_allocator = bun.default_allocator;
 pub fn DeclEnum(comptime T: type) type {
     const fieldInfos = std.meta.declarations(T);
-    var enumFields: [fieldInfos.len]std.builtin.TypeInfo.EnumField = undefined;
-    var decls = [_]std.builtin.TypeInfo.Declaration{};
+    var enumFields: [fieldInfos.len]std.builtin.Type.EnumField = undefined;
+    var decls = [_]std.builtin.Type.Declaration{};
     inline for (fieldInfos) |field, i| {
         enumFields[i] = .{
             .name = field.name,
@@ -869,7 +869,7 @@ pub const PathOrFileDescriptor = union(Tag) {
 
 pub const FileSystemFlags = enum(Mode) {
     /// Open file for appending. The file is created if it does not exist.
-    @"a" = std.os.O.APPEND | std.os.O.WRONLY | std.os.O.CREAT,
+    a = std.os.O.APPEND | std.os.O.WRONLY | std.os.O.CREAT,
     /// Like 'a' but fails if the path exists.
     // @"ax" = std.os.O.APPEND | std.os.O.EXCL,
     /// Open file for reading and appending. The file is created if it does not exist.
@@ -881,7 +881,7 @@ pub const FileSystemFlags = enum(Mode) {
     /// Open file for reading and appending in synchronous mode. The file is created if it does not exist.
     // @"as+" = std.os.O.APPEND | std.os.O.RDWR,
     /// Open file for reading. An exception occurs if the file does not exist.
-    @"r" = std.os.O.RDONLY,
+    r = std.os.O.RDONLY,
     /// Open file for reading and writing. An exception occurs if the file does not exist.
     // @"r+" = std.os.O.RDWR,
     /// Open file for reading and writing in synchronous mode. Instructs the operating system to bypass the local file system cache.
@@ -889,7 +889,7 @@ pub const FileSystemFlags = enum(Mode) {
     /// This doesn't turn fs.open() or fsPromises.open() into a synchronous blocking call. If synchronous operation is desired, something like fs.openSync() should be used.
     // @"rs+" = std.os.O.RDWR,
     /// Open file for writing. The file is created (if it does not exist) or truncated (if it exists).
-    @"w" = std.os.O.WRONLY | std.os.O.CREAT,
+    w = std.os.O.WRONLY | std.os.O.CREAT,
     /// Like 'w' but fails if the path exists.
     // @"wx" = std.os.O.WRONLY | std.os.O.TRUNC,
     // ///  Open file for reading and writing. The file is created (if it does not exist) or truncated (if it exists).
@@ -1819,16 +1819,16 @@ pub const Path = struct {
     }
 
     pub const Export = shim.exportFunctions(.{
-        .@"basename" = basename,
-        .@"dirname" = dirname,
-        .@"extname" = extname,
-        .@"format" = format,
-        .@"isAbsolute" = isAbsolute,
-        .@"join" = join,
-        .@"normalize" = normalize,
-        .@"parse" = parse,
-        .@"relative" = relative,
-        .@"resolve" = resolve,
+        .basename = basename,
+        .dirname = dirname,
+        .extname = extname,
+        .format = format,
+        .isAbsolute = isAbsolute,
+        .join = join,
+        .normalize = normalize,
+        .parse = parse,
+        .relative = relative,
+        .resolve = resolve,
     });
 
     pub const Extern = [_][]const u8{"create"};

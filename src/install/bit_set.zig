@@ -154,7 +154,7 @@ pub fn IntegerBitSet(comptime size: u16) type {
         pub fn findFirstSet(self: Self) ?usize {
             const mask = self.mask;
             if (mask == 0) return null;
-            return @ctz( mask);
+            return @ctz(mask);
         }
 
         /// Finds the index of the first set bit, and unsets it.
@@ -162,7 +162,7 @@ pub fn IntegerBitSet(comptime size: u16) type {
         pub fn toggleFirstSet(self: *Self) ?usize {
             const mask = self.mask;
             if (mask == 0) return null;
-            const index = @ctz( mask);
+            const index = @ctz(mask);
             self.mask = mask & (mask - 1);
             return index;
         }
@@ -197,7 +197,7 @@ pub fn IntegerBitSet(comptime size: u16) type {
 
                     switch (direction) {
                         .forward => {
-                            const next_index = @ctz( self.bits_remain);
+                            const next_index = @ctz(self.bits_remain);
                             self.bits_remain &= self.bits_remain - 1;
                             return next_index;
                         },
@@ -227,7 +227,7 @@ pub fn IntegerBitSet(comptime size: u16) type {
 /// This set is good for sets with a larger size, but may use
 /// more bytes than necessary if your set is small.
 pub fn ArrayBitSet(comptime MaskIntType: type, comptime size: usize) type {
-    const mask_info: std.builtin.TypeInfo = @typeInfo(MaskIntType);
+    const mask_info: std.builtin.Type = @typeInfo(MaskIntType);
 
     // Make sure the mask int is indeed an int
     if (mask_info != .Int) @compileError("ArrayBitSet can only operate on integer masks, but was passed " ++ @typeName(MaskIntType));
@@ -322,7 +322,7 @@ pub fn ArrayBitSet(comptime MaskIntType: type, comptime size: usize) type {
         pub fn count(self: Self) usize {
             var total: usize = 0;
             for (self.masks) |mask| {
-                total += @popCount(MaskInt, mask);
+                total += @popCount(mask);
             }
             return total;
         }
@@ -405,7 +405,7 @@ pub fn ArrayBitSet(comptime MaskIntType: type, comptime size: usize) type {
                 if (mask != 0) break mask;
                 offset += @bitSizeOf(MaskInt);
             } else return null;
-            return offset + @ctz( mask);
+            return offset + @ctz(mask);
         }
 
         /// Finds the index of the first set bit, and unsets it.
@@ -416,7 +416,7 @@ pub fn ArrayBitSet(comptime MaskIntType: type, comptime size: usize) type {
                 if (mask.* != 0) break mask;
                 offset += @bitSizeOf(MaskInt);
             } else return null;
-            const index = @ctz( mask.*);
+            const index = @ctz(mask.*);
             mask.* &= (mask.* - 1);
             return offset + index;
         }
@@ -587,7 +587,7 @@ pub const DynamicBitSetUnmanaged = struct {
         var total: usize = 0;
         for (self.masks[0..num_masks]) |mask| {
             // Note: This is where we depend on padding bits being zero
-            total += @popCount(MaskInt, mask);
+            total += @popCount(mask);
         }
         return total;
     }
@@ -712,7 +712,7 @@ pub const DynamicBitSetUnmanaged = struct {
             mask += 1;
             offset += @bitSizeOf(MaskInt);
         } else return null;
-        return offset + @ctz( mask[0]);
+        return offset + @ctz(mask[0]);
     }
 
     /// Finds the index of the first set bit, and unsets it.
@@ -725,7 +725,7 @@ pub const DynamicBitSetUnmanaged = struct {
             mask += 1;
             offset += @bitSizeOf(MaskInt);
         } else return null;
-        const index = @ctz( mask[0]);
+        const index = @ctz(mask[0]);
         mask[0] &= (mask[0] - 1);
         return offset + index;
     }
@@ -978,7 +978,7 @@ fn BitSetIterator(comptime MaskInt: type, comptime options: IteratorOptions) typ
 
             switch (direction) {
                 .forward => {
-                    const next_index = @ctz( self.bits_remain) + self.bit_offset;
+                    const next_index = @ctz(self.bits_remain) + self.bit_offset;
                     self.bits_remain &= self.bits_remain - 1;
                     return next_index;
                 },

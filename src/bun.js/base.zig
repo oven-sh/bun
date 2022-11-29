@@ -190,9 +190,9 @@ pub const To = struct {
                 JSC.C.JSValueRef => value,
 
                 else => {
-                    const Info: std.builtin.TypeInfo = comptime @typeInfo(Type);
+                    const Info: std.builtin.Type = comptime @typeInfo(Type);
                     if (comptime Info == .Enum) {
-                        const Enum: std.builtin.TypeInfo.Enum = Info.Enum;
+                        const Enum: std.builtin.Type.Enum = Info.Enum;
                         if (comptime !std.meta.trait.isNumber(Enum.tag_type)) {
                             zig_str = JSC.ZigString.init(@tagName(value));
                             return zig_str.toValue(context.ptr()).asObjectRef();
@@ -1229,7 +1229,6 @@ pub fn NewClassWithInstanceType(
             for (function_name_literals) |function_name_literal, i| {
                 const is_read_only = options.read_only;
 
-                _ = i;
                 switch (@typeInfo(@TypeOf(@field(staticFunctions, function_name_literal)))) {
                     .Struct => {
                         const CtxField = @field(staticFunctions, function_name_literals[i]);
@@ -1242,7 +1241,7 @@ pub fn NewClassWithInstanceType(
                             def.callAsFunction = To.JS.Callback(ZigType, staticFunctions.call.rfn).rfn;
                         } else if (strings.eqlComptime(function_name_literal, "callAsFunction")) {
                             const ctxfn = @field(staticFunctions, function_name_literal).rfn;
-                            const Func: std.builtin.TypeInfo.Fn = @typeInfo(@TypeOf(ctxfn)).Fn;
+                            const Func: std.builtin.Type.Fn = @typeInfo(@TypeOf(ctxfn)).Fn;
 
                             const PointerType = std.meta.Child(Func.args[0].arg_type.?);
 
@@ -1267,7 +1266,7 @@ pub fn NewClassWithInstanceType(
                                 @compileError("Expected " ++ options.name ++ "." ++ function_name_literal ++ " to have .rfn");
                             }
                             const ctxfn = CtxField.rfn;
-                            const Func: std.builtin.TypeInfo.Fn = @typeInfo(@TypeOf(ctxfn)).Fn;
+                            const Func: std.builtin.Type.Fn = @typeInfo(@TypeOf(ctxfn)).Fn;
 
                             var attributes: c_uint = @enumToInt(js.JSPropertyAttributes.kJSPropertyAttributeNone);
 
@@ -2130,7 +2129,7 @@ pub const JSPropertyNameIterator = struct {
 pub fn getterWrap(comptime Container: type, comptime name: string) GetterType(Container) {
     return struct {
         const FunctionType = @TypeOf(@field(Container, name));
-        const FunctionTypeInfo: std.builtin.TypeInfo.Fn = @typeInfo(FunctionType).Fn;
+        const FunctionTypeInfo: std.builtin.Type.Fn = @typeInfo(FunctionType).Fn;
         const ArgsTuple = std.meta.ArgsTuple(FunctionType);
 
         pub fn callback(
@@ -2159,7 +2158,7 @@ pub fn getterWrap(comptime Container: type, comptime name: string) GetterType(Co
 pub fn setterWrap(comptime Container: type, comptime name: string) SetterType(Container) {
     return struct {
         const FunctionType = @TypeOf(@field(Container, name));
-        const FunctionTypeInfo: std.builtin.TypeInfo.Fn = @typeInfo(FunctionType).Fn;
+        const FunctionTypeInfo: std.builtin.Type.Fn = @typeInfo(FunctionType).Fn;
 
         pub fn callback(
             this: *Container,
@@ -2382,8 +2381,8 @@ pub fn DOMCall(
         pub const Arguments = std.meta.ArgsTuple(Fastpath);
 
         pub const Export = shim.exportFunctions(.{
-            .@"slowpath" = slowpath,
-            .@"fastpath" = fastpath,
+            .slowpath = slowpath,
+            .fastpath = fastpath,
         });
 
         pub fn put(globalObject: *JSC.JSGlobalObject, value: JSValue) void {
@@ -2608,7 +2607,7 @@ pub fn wrapWithHasContainer(
 ) MethodType(Container, has_container) {
     return struct {
         const FunctionType = @TypeOf(@field(Container, name));
-        const FunctionTypeInfo: std.builtin.TypeInfo.Fn = @typeInfo(FunctionType).Fn;
+        const FunctionTypeInfo: std.builtin.Type.Fn = @typeInfo(FunctionType).Fn;
         const Args = std.meta.ArgsTuple(FunctionType);
         const eater = if (auto_protect) JSC.Node.ArgumentsSlice.protectEatNext else JSC.Node.ArgumentsSlice.nextEat;
 
@@ -2806,7 +2805,7 @@ pub fn wrapInstanceMethod(
 ) InstanceMethodType(Container) {
     return struct {
         const FunctionType = @TypeOf(@field(Container, name));
-        const FunctionTypeInfo: std.builtin.TypeInfo.Fn = @typeInfo(FunctionType).Fn;
+        const FunctionTypeInfo: std.builtin.Type.Fn = @typeInfo(FunctionType).Fn;
         const Args = std.meta.ArgsTuple(FunctionType);
         const eater = if (auto_protect) JSC.Node.ArgumentsSlice.protectEatNext else JSC.Node.ArgumentsSlice.nextEat;
 
@@ -2952,7 +2951,7 @@ pub fn wrapStaticMethod(
 ) JSC.Codegen.StaticCallbackType {
     return struct {
         const FunctionType = @TypeOf(@field(Container, name));
-        const FunctionTypeInfo: std.builtin.TypeInfo.Fn = @typeInfo(FunctionType).Fn;
+        const FunctionTypeInfo: std.builtin.Type.Fn = @typeInfo(FunctionType).Fn;
         const Args = std.meta.ArgsTuple(FunctionType);
         const eater = if (auto_protect) JSC.Node.ArgumentsSlice.protectEatNext else JSC.Node.ArgumentsSlice.nextEat;
 

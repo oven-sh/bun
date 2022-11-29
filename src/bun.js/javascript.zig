@@ -2095,7 +2095,7 @@ pub const EventListenerMixin = struct {
                 .read_only = true,
             },
             .{
-                .@"callAsFunction" = .{
+                .callAsFunction = .{
                     .rfn = Handler.addListener,
                 },
             },
@@ -2183,32 +2183,32 @@ pub const ResolveError = struct {
             .convertToType = .{ .rfn = convertToType },
         },
         .{
-            .@"referrer" = .{
-                .@"get" = getReferrer,
+            .referrer = .{
+                .get = getReferrer,
                 .ro = true,
             },
-            .@"code" = .{
-                .@"get" = getCode,
+            .code = .{
+                .get = getCode,
                 .ro = true,
             },
-            .@"message" = .{
-                .@"get" = getMessage,
+            .message = .{
+                .get = getMessage,
                 .ro = true,
             },
-            .@"name" = .{
-                .@"get" = getName,
+            .name = .{
+                .get = getName,
                 .ro = true,
             },
-            .@"specifier" = .{
-                .@"get" = getSpecifier,
+            .specifier = .{
+                .get = getSpecifier,
                 .ro = true,
             },
-            .@"importKind" = .{
-                .@"get" = getImportKind,
+            .importKind = .{
+                .get = getImportKind,
                 .ro = true,
             },
-            .@"position" = .{
-                .@"get" = getPosition,
+            .position = .{
+                .get = getPosition,
                 .ro = true,
             },
         },
@@ -2328,17 +2328,17 @@ pub const BuildError = struct {
             .toString = .{ .rfn = toString },
         },
         .{
-            .@"message" = .{
-                .@"get" = getMessage,
+            .message = .{
+                .get = getMessage,
                 .ro = true,
             },
-            .@"name" = .{
-                .@"get" = getName,
+            .name = .{
+                .get = getName,
                 .ro = true,
             },
             // This is called "position" instead of "location" because "location" may be confused with Location.
-            .@"position" = .{
-                .@"get" = getPosition,
+            .position = .{
+                .get = getPosition,
                 .ro = true,
             },
         },

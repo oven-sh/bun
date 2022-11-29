@@ -79,9 +79,9 @@ pub fn stringHashMapFromArrays(comptime t: type, allocator: std.mem.Allocator, k
 }
 
 pub const ExternalModules = struct {
-    node_modules: std.BufSet,
-    abs_paths: std.BufSet,
-    patterns: []const WildcardPattern,
+    node_modules: std.BufSet = undefined,
+    abs_paths: std.BufSet = undefined,
+    patterns: []const WildcardPattern = undefined,
     pub const WildcardPattern = struct {
         prefix: string,
         suffix: string,
@@ -1160,7 +1160,7 @@ pub const SourceMapOption = enum {
     pub fn toAPI(source_map: ?SourceMapOption) Api.SourceMapMode {
         return switch (source_map orelse .none) {
             .external => .external,
-            .@"inline" => .@"inline_into_file",
+            .@"inline" => .inline_into_file,
             else => ._none,
         };
     }
@@ -1168,7 +1168,7 @@ pub const SourceMapOption = enum {
     pub const map = ComptimeStringMap(SourceMapOption, .{
         .{ "none", .none },
         .{ "inline", .@"inline" },
-        .{ "external", .@"external" },
+        .{ "external", .external },
     });
 };
 
@@ -1413,7 +1413,7 @@ pub const BundleOptions = struct {
                 opts.node_modules_bundle = node_mods;
                 const pretty_path = fs.relativeTo(transform.node_modules_bundle_path.?);
                 opts.node_modules_bundle_url = try std.fmt.allocPrint(allocator, "{s}{s}", .{
-                    opts.origin,
+                    opts.origin.href,
                     pretty_path,
                 });
             } else if (transform.node_modules_bundle_path) |bundle_path| {

@@ -1,8 +1,9 @@
 const std = @import("std");
 
-pub fn RefCount(comptime Type: type, comptime deinit_on_zero: bool) type {
+pub fn RefCount(comptime TypeName: type, comptime deinit_on_zero: bool) type {
     return struct {
         const AllocatorType = if (deinit_on_zero) std.mem.Allocator else void;
+        
 
         value: Type,
         count: i32 = 1,
@@ -75,6 +76,6 @@ pub fn RefCount(comptime Type: type, comptime deinit_on_zero: bool) type {
             }
         }
 
-        pub const Type = Type;
+        pub const Type = TypeName;
     };
 }

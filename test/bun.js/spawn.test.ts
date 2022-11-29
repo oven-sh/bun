@@ -130,38 +130,46 @@ for (let [gcTick, label] of [
         gcTick();
       });
 
-      // it("check exit code from onExit", async () => {
-      //   for (let i = 0; i < 1000; i++) {
-      //     var exitCode1, exitCode2;
-      //     await new Promise<void>((resolve) => {
-      //       var counter = 0;
-      //       spawn({
-      //         cmd: ["ls"],
-      //         onExit(code) {
-      //           exitCode1 = code;
-      //           counter++;
-      //           if (counter === 2) {
-      //             resolve();
-      //           }
-      //         },
-      //       });
+      it("check exit code from onExit", async () => {
+        for (let i = 0; i < 1000; i++) {
+          var exitCode1, exitCode2;
+          await new Promise<void>((resolve) => {
+            var counter = 0;
+            spawn({
+              cmd: ["ls"],
+              stdin: "ignore",
+              stdout: "ignore",
+              stderr: "ignore",
+              onExit(code) {
+                console.log("first");
+                exitCode1 = code;
+                counter++;
+                if (counter === 2) {
+                  resolve();
+                }
+              },
+            });
 
-      //       spawn({
-      //         cmd: ["false"],
-      //         onExit(code) {
-      //           exitCode2 = code;
-      //           counter++;
-      //           if (counter === 2) {
-      //             resolve();
-      //           }
-      //         },
-      //       });
-      //     });
+            spawn({
+              cmd: ["false"],
+              stdin: "ignore",
+              stdout: "ignore",
+              stderr: "ignore",
+              onExit(code) {
+                console.log("second");
+                exitCode2 = code;
+                counter++;
+                if (counter === 2) {
+                  resolve();
+                }
+              },
+            });
+          });
 
-      //     expect(exitCode1).toBe(0);
-      //     expect(exitCode2).toBe(1);
-      //   }
-      // });
+          expect(exitCode1).toBe(0);
+          expect(exitCode2).toBe(1);
+        }
+      });
 
       it("Blob works as stdin", async () => {
         rmSync("/tmp/out.123.txt", { force: true });

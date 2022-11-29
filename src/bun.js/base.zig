@@ -3656,7 +3656,9 @@ pub const FilePoll = struct {
                         1,
                         // The same array may be used for the changelist and eventlist.
                         &changelist,
-                        1,
+                        // we set 0 here so that if we get an error on
+                        // registration, it becomes errno
+                        0,
                         KEVENT_FLAG_ERROR_EVENTS,
                         &timeout,
                     );
@@ -3679,10 +3681,9 @@ pub const FilePoll = struct {
             const errno = std.c.getErrno(rc);
 
             if (errno != .SUCCESS) {
-                switch (rc) {
-                    std.math.minInt(@TypeOf(rc))...-1 => return JSC.Maybe(void).errnoSys(@enumToInt(errno), .kevent).?,
-                    else => unreachable,
-                }
+                return JSC.Maybe(void){
+                    .err = JSC.Node.Syscall.Error.fromCode(errno, .kqueue),
+                };
             }
         } else {
             @compileError("TODO: Pollable");

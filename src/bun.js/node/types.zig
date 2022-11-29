@@ -787,7 +787,7 @@ pub fn timeLikeFromJS(ctx: JSC.C.JSContextRef, value_: JSC.JSValue, exception: J
         return null;
     }
 
-    return @floatToInt(TimeLike, @maximum(@floor(seconds), std.math.minInt(TimeLike)));
+    return @floatToInt(TimeLike, @max(@floor(seconds), std.math.minInt(TimeLike)));
 }
 
 pub fn modeFromJS(ctx: JSC.C.JSContextRef, value: JSC.JSValue, exception: JSC.C.ExceptionRef) ?Mode {
@@ -933,7 +933,7 @@ pub const FileSystemFlags = enum(Mode) {
             val.toZigString(&zig_str, ctx.ptr());
 
             var buf: [4]u8 = .{ 0, 0, 0, 0 };
-            @memcpy(&buf, zig_str.ptr, @minimum(buf.len, zig_str.len));
+            @memcpy(&buf, zig_str.ptr, @min(buf.len, zig_str.len));
             const Matcher = strings.ExactSizeMatcher(4);
 
             // https://github.com/nodejs/node/blob/8c3637cd35cca352794e2c128f3bc5e6b6c41380/lib/internal/fs/utils.js#L565
@@ -1141,9 +1141,9 @@ fn StatsLike(comptime name: [:0]const u8, comptime T: type) type {
                 .atime_ms = @truncate(T, @intCast(i64, if (atime.tv_nsec > 0) (@intCast(usize, atime.tv_nsec) / std.time.ns_per_ms) else 0)),
                 .mtime_ms = @truncate(T, @intCast(i64, if (mtime.tv_nsec > 0) (@intCast(usize, mtime.tv_nsec) / std.time.ns_per_ms) else 0)),
                 .ctime_ms = @truncate(T, @intCast(i64, if (ctime.tv_nsec > 0) (@intCast(usize, ctime.tv_nsec) / std.time.ns_per_ms) else 0)),
-                .atime = @intToEnum(Date, @intCast(u64, @maximum(atime.tv_sec, 0))),
-                .mtime = @intToEnum(Date, @intCast(u64, @maximum(mtime.tv_sec, 0))),
-                .ctime = @intToEnum(Date, @intCast(u64, @maximum(ctime.tv_sec, 0))),
+                .atime = @intToEnum(Date, @intCast(u64, @max(atime.tv_sec, 0))),
+                .mtime = @intToEnum(Date, @intCast(u64, @max(mtime.tv_sec, 0))),
+                .ctime = @intToEnum(Date, @intCast(u64, @max(ctime.tv_sec, 0))),
 
                 // Linux doesn't include this info in stat
                 // maybe it does in statx, but do you really need birthtime? If you do please file an issue.
@@ -1155,7 +1155,7 @@ fn StatsLike(comptime name: [:0]const u8, comptime T: type) type {
                 .birthtime = if (Environment.isLinux)
                     @intToEnum(Date, 0)
                 else
-                    @intToEnum(Date, @intCast(u64, @maximum(stat_.birthtime().tv_sec, 0))),
+                    @intToEnum(Date, @intCast(u64, @max(stat_.birthtime().tv_sec, 0))),
             };
         }
 
@@ -1645,7 +1645,7 @@ pub const Path = struct {
             if (u16_slice.len > 3)
                 buf[3] = u16_slice[3];
 
-            return std.fs.path.isAbsoluteWindowsWTF16(buf[0..@minimum(u16_slice.len, buf.len)]);
+            return std.fs.path.isAbsoluteWindowsWTF16(buf[0..@min(u16_slice.len, buf.len)]);
         }
 
         return std.fs.path.isAbsoluteWindows(zig_str.slice());
@@ -1963,7 +1963,7 @@ pub const Process = struct {
     }
 
     pub fn exit(_: *JSC.JSGlobalObject, code: i32) callconv(.C) void {
-        std.os.exit(@truncate(u8, @intCast(u32, @maximum(code, 0))));
+        std.os.exit(@truncate(u8, @intCast(u32, @max(code, 0))));
     }
 
     pub export const Bun__version: [:0]const u8 = "v" ++ bun.Global.package_json_version;

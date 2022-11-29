@@ -303,8 +303,8 @@ pub const ServerConfig = struct {
             if (arg.getTruthy(global, "port")) |port_| {
                 args.port = @intCast(
                     u16,
-                    @minimum(
-                        @maximum(0, port_.coerce(i32, global)),
+                    @min(
+                        @max(0, port_.coerce(i32, global)),
                         std.math.maxInt(u16),
                     ),
                 );
@@ -357,7 +357,7 @@ pub const ServerConfig = struct {
             }
 
             if (arg.getTruthy(global, "maxRequestBodySize")) |max_request_body_size| {
-                args.max_request_body_size = @intCast(u64, @maximum(0, max_request_body_size.toInt64()));
+                args.max_request_body_size = @intCast(u64, @max(0, max_request_body_size.toInt64()));
             }
 
             if (arg.getTruthy(global, "error")) |onError| {
@@ -1105,8 +1105,8 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 return false;
             }
 
-            const adjusted_count_temporary = @minimum(@as(u64, this.sendfile.remain), @as(u63, std.math.maxInt(u63)));
-            // TODO we should not need this int cast; improve the return type of `@minimum`
+            const adjusted_count_temporary = @min(@as(u64, this.sendfile.remain), @as(u63, std.math.maxInt(u63)));
+            // TODO we should not need this int cast; improve the return type of `@min`
             const adjusted_count = @intCast(u63, adjusted_count_temporary);
 
             if (Environment.isLinux) {
@@ -1184,7 +1184,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
         pub fn sendWritableBytesForBlob(this: *RequestContext, bytes_: []const u8, write_offset: c_ulong, resp: *App.Response) bool {
             std.debug.assert(this.resp == resp);
 
-            var bytes = bytes_[@minimum(bytes_.len, @truncate(usize, write_offset))..];
+            var bytes = bytes_[@min(bytes_.len, @truncate(usize, write_offset))..];
             if (resp.tryEnd(bytes, bytes_.len, this.shouldCloseConnection())) {
                 this.finalize();
                 return true;
@@ -1197,7 +1197,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
         pub fn sendWritableBytesForCompleteResponseBuffer(this: *RequestContext, bytes_: []const u8, write_offset: c_ulong, resp: *App.Response) bool {
             std.debug.assert(this.resp == resp);
 
-            var bytes = bytes_[@minimum(bytes_.len, @truncate(usize, write_offset))..];
+            var bytes = bytes_[@min(bytes_.len, @truncate(usize, write_offset))..];
             if (resp.tryEnd(bytes, bytes_.len, this.shouldCloseConnection())) {
                 this.response_buf_owned.items.len = 0;
                 this.finalize();
@@ -2134,7 +2134,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
 
                                 this.resp.writeHeader(
                                     "content-disposition",
-                                    std.fmt.bufPrint(&filename_buf, "filename=\"{s}\"", .{basename[0..@minimum(basename.len, 1024 - 32)]}) catch "",
+                                    std.fmt.bufPrint(&filename_buf, "filename=\"{s}\"", .{basename[0..@min(basename.len, 1024 - 32)]}) catch "",
                                 );
                             }
                         }
@@ -2252,7 +2252,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             }
 
             if (this.request_body_buf.capacity == 0) {
-                this.request_body_buf.ensureTotalCapacityPrecise(this.allocator, @minimum(this.request_body_content_len, max_request_body_preallocate_length)) catch @panic("Out of memory while allocating request body buffer");
+                this.request_body_buf.ensureTotalCapacityPrecise(this.allocator, @min(this.request_body_content_len, max_request_body_preallocate_length)) catch @panic("Out of memory while allocating request body buffer");
             }
 
             this.request_body_buf.appendSlice(this.allocator, chunk) catch @panic("Out of memory while allocating request body");
@@ -2590,7 +2590,7 @@ pub const WebSocketServer = struct {
                     globalObject.throwInvalidArguments("websocket expects maxPayloadLength to be an integer", .{});
                     return null;
                 }
-                server.maxPayloadLength = @intCast(u32, @truncate(i33, @maximum(value.toInt64(), 0)));
+                server.maxPayloadLength = @intCast(u32, @truncate(i33, @max(value.toInt64(), 0)));
             }
         }
         if (object.get(globalObject, "idleTimeout")) |value| {
@@ -2610,7 +2610,7 @@ pub const WebSocketServer = struct {
                     return null;
                 }
 
-                server.backpressureLimit = @intCast(u32, @truncate(i33, @maximum(value.toInt64(), 0)));
+                server.backpressureLimit = @intCast(u32, @truncate(i33, @max(value.toInt64(), 0)));
             }
         }
         // if (object.get(globalObject, "sendPings")) |value| {

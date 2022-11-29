@@ -1330,7 +1330,7 @@ pub const ESModule = struct {
                 }
                 package.name = specifier[0 .. at + offset];
 
-                parseSubpath(&package.subpath, specifier[@minimum(package.name.len + package.version.len + 1, specifier.len)..], subpath_buf);
+                parseSubpath(&package.subpath, specifier[@min(package.name.len + package.version.len + 1, specifier.len)..], subpath_buf);
             } else {
                 parseSubpath(&package.subpath, specifier[package.name.len..], subpath_buf);
             }

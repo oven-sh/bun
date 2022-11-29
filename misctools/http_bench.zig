@@ -252,8 +252,8 @@ pub fn main() anyerror!void {
                     fail_count += 1;
                 }
 
-                max_duration = @maximum(max_duration, http.elapsed);
-                min_duration = @minimum(min_duration, http.elapsed);
+                max_duration = @max(max_duration, http.elapsed);
+                min_duration = @min(min_duration, http.elapsed);
 
                 switch (resp.status_code) {
                     200, 202, 302 => {

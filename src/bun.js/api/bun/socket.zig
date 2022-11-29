@@ -1164,7 +1164,7 @@ fn NewSocket(comptime ssl: bool) type {
             var buf: [512]u8 = undefined;
             var length: i32 = 512;
             this.socket.remoteAddress(&buf, &length);
-            const address = buf[0..@intCast(usize, @minimum(length, 0))];
+            const address = buf[0..@intCast(usize, @min(length, 0))];
 
             if (address.len == 0) {
                 return JSValue.jsUndefined();
@@ -1197,7 +1197,7 @@ fn NewSocket(comptime ssl: bool) type {
                         return .zero;
                     }
 
-                    const offset = @minimum(args.ptr[1].toUInt64NoTruncate(), slice.len);
+                    const offset = @min(args.ptr[1].toUInt64NoTruncate(), slice.len);
                     slice = slice[offset..];
 
                     if (args.len > 2) {
@@ -1206,7 +1206,7 @@ fn NewSocket(comptime ssl: bool) type {
                             return .zero;
                         }
 
-                        const length = @minimum(args.ptr[2].toUInt64NoTruncate(), slice.len);
+                        const length = @min(args.ptr[2].toUInt64NoTruncate(), slice.len);
                         slice = slice[0..length];
                     }
                 }
@@ -1252,7 +1252,7 @@ fn NewSocket(comptime ssl: bool) type {
                             return .zero;
                         }
 
-                        const offset = @minimum(args.ptr[1].toUInt64NoTruncate(), slice.len);
+                        const offset = @min(args.ptr[1].toUInt64NoTruncate(), slice.len);
                         slice = slice[offset..];
 
                         if (args.len > 2) {
@@ -1261,7 +1261,7 @@ fn NewSocket(comptime ssl: bool) type {
                                 return .zero;
                             }
 
-                            const length = @minimum(args.ptr[2].toUInt64NoTruncate(), slice.len);
+                            const length = @min(args.ptr[2].toUInt64NoTruncate(), slice.len);
                             slice = slice[0..length];
                         }
                     }
@@ -1287,7 +1287,7 @@ fn NewSocket(comptime ssl: bool) type {
                         return .zero;
                     }
 
-                    const offset = @minimum(args.ptr[1].toUInt64NoTruncate(), slice.len);
+                    const offset = @min(args.ptr[1].toUInt64NoTruncate(), slice.len);
                     slice = slice[offset..];
 
                     if (args.len > 2) {
@@ -1296,7 +1296,7 @@ fn NewSocket(comptime ssl: bool) type {
                             return .zero;
                         }
 
-                        const length = @minimum(args.ptr[2].toUInt64NoTruncate(), slice.len);
+                        const length = @min(args.ptr[2].toUInt64NoTruncate(), slice.len);
                         slice = slice[0..length];
                     }
                 }

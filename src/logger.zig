@@ -73,7 +73,7 @@ pub const Loc = packed struct {
     pub const toUsize = i;
 
     pub inline fn i(self: *const Loc) usize {
-        return @intCast(usize, @maximum(self.start, 0));
+        return @intCast(usize, @max(self.start, 0));
     }
 
     pub const Empty = Loc{ .start = -1 };
@@ -100,7 +100,7 @@ pub const Location = struct {
     pub fn count(this: Location, builder: *StringBuilder) void {
         builder.count(this.file);
         builder.count(this.namespace);
-        if (this.line_text) |text| builder.count(text[0..@minimum(text.len, 690)]);
+        if (this.line_text) |text| builder.count(text[0..@min(text.len, 690)]);
         if (this.suggestion) |text| builder.count(text);
     }
 
@@ -556,7 +556,7 @@ pub const Range = packed struct {
     pub fn in(this: Range, buf: []const u8) []const u8 {
         if (this.loc.start < 0 or this.len <= 0) return "";
         const slice = buf[@intCast(usize, this.loc.start)..];
-        return slice[0..@minimum(@intCast(usize, this.len), buf.len)];
+        return slice[0..@min(@intCast(usize, this.len), buf.len)];
     }
 
     pub fn isEmpty(r: *const Range) bool {
@@ -663,7 +663,7 @@ pub const Log = struct {
         const msgs: []const Msg = this.msgs.items;
         var errors_stack: [256]*anyopaque = undefined;
 
-        const count = @intCast(u16, @minimum(msgs.len, errors_stack.len));
+        const count = @intCast(u16, @min(msgs.len, errors_stack.len));
         switch (count) {
             0 => return JSC.JSValue.jsUndefined(),
             1 => {
@@ -1242,7 +1242,7 @@ pub const Source = struct {
 
     pub fn initErrorPosition(self: *const Source, _offset: Loc) ErrorPosition {
         var prev_code_point: i32 = 0;
-        var offset: usize = std.math.min(if (_offset.start < 0) 0 else @intCast(usize, _offset.start), @maximum(self.contents.len, 1) - 1);
+        var offset: usize = std.math.min(if (_offset.start < 0) 0 else @intCast(usize, _offset.start), @max(self.contents.len, 1) - 1);
 
         const contents = self.contents;
 

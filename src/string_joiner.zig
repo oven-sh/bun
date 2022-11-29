@@ -40,7 +40,7 @@ pub fn done(this: *Joiner, allocator: std.mem.Allocator) ![]u8 {
         const to_join = join.data.slice[join.data.offset..];
         @memcpy(remaining.ptr, to_join.ptr, to_join.len);
 
-        remaining = remaining[@minimum(remaining.len, to_join.len)..];
+        remaining = remaining[@min(remaining.len, to_join.len)..];
 
         var prev = join;
         el_ = join.next;

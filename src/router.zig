@@ -511,8 +511,8 @@ pub const TinyPtr = packed struct {
             std.debug.assert(end < right);
         }
 
-        const length = @maximum(end, right) - right;
-        const offset = @maximum(@ptrToInt(in.ptr), @ptrToInt(parent.ptr)) - @ptrToInt(parent.ptr);
+        const length = @max(end, right) - right;
+        const offset = @max(@ptrToInt(in.ptr), @ptrToInt(parent.ptr)) - @ptrToInt(parent.ptr);
         return TinyPtr{ .offset = @truncate(u16, offset), .len = @truncate(u16, length) };
     }
 };
@@ -569,7 +569,7 @@ pub const Route = struct {
         pub fn sortByNameString(_: @This(), lhs: string, rhs: string) bool {
             const math = std.math;
 
-            const n = @minimum(lhs.len, rhs.len);
+            const n = @min(lhs.len, rhs.len);
             var i: usize = 0;
             while (i < n) : (i += 1) {
                 switch (math.order(sort_table[lhs[i]], sort_table[rhs[i]])) {
@@ -1228,7 +1228,7 @@ const Pattern = struct {
                 return null;
             };
             offset = pattern.len;
-            kind = @maximum(@enumToInt(@as(Pattern.Tag, pattern.value)), kind);
+            kind = @max(@enumToInt(@as(Pattern.Tag, pattern.value)), kind);
             count += @intCast(u16, @boolToInt(@enumToInt(@as(Pattern.Tag, pattern.value)) > @enumToInt(Pattern.Tag.static)));
         }
 
@@ -1273,7 +1273,7 @@ const Pattern = struct {
 
         if (input.len == 0 or input.len <= @as(usize, offset)) return Pattern{
             .value = .{ .static = HashedString.empty },
-            .len = @truncate(RoutePathInt, @minimum(input.len, @as(usize, offset))),
+            .len = @truncate(RoutePathInt, @min(input.len, @as(usize, offset))),
         };
 
         var i: RoutePathInt = offset;
@@ -1286,7 +1286,7 @@ const Pattern = struct {
         while (i <= end) : (i += 1) {
             switch (input[i]) {
                 '/' => {
-                    return Pattern{ .len = @minimum(i + 1, end), .value = .{ .static = initHashedString(input[offset..i]) } };
+                    return Pattern{ .len = @min(i + 1, end), .value = .{ .static = initHashedString(input[offset..i]) } };
                 },
                 '[' => {
                     if (i > offset) {
@@ -1353,7 +1353,7 @@ const Pattern = struct {
                     if (@enumToInt(tag) > @enumToInt(Tag.dynamic) and i <= end) return error.CatchAllMustBeAtTheEnd;
 
                     return Pattern{
-                        .len = @minimum(i + 1, end),
+                        .len = @min(i + 1, end),
                         .value = switch (tag) {
                             .dynamic => .{
                                 .dynamic = param,

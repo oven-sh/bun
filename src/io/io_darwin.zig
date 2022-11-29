@@ -860,7 +860,7 @@ fn flush_timeouts(self: *IO) ?u64 {
 
         const timeout_ns = expires - now;
         if (min_timeout) |min_ns| {
-            min_timeout = @minimum(min_ns, timeout_ns);
+            min_timeout = @min(min_ns, timeout_ns);
         } else {
             min_timeout = timeout_ns;
         }
@@ -1605,7 +1605,7 @@ fn buffer_limit(buffer_len: usize) usize {
         .macos, .ios, .watchos, .tvos => std.math.maxInt(i32),
         else => std.math.maxInt(isize),
     };
-    return @minimum(limit, buffer_len);
+    return @min(limit, buffer_len);
 }
 
 pub var global: IO = undefined;

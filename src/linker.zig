@@ -369,7 +369,7 @@ pub const Linker = struct {
                                 }
                                 if (package_name.len != text.len) {
                                     if (node_modules_bundle.getPackage(package_name)) |pkg| {
-                                        const import_path = text[@minimum(text.len, package_name.len + 1)..];
+                                        const import_path = text[@min(text.len, package_name.len + 1)..];
                                         if (node_modules_bundle.findModuleIDInPackageIgnoringExtension(pkg, import_path)) |found_module| {
                                             import_record.is_bundled = true;
                                             node_module_bundle_import_path = node_module_bundle_import_path orelse
@@ -397,7 +397,7 @@ pub const Linker = struct {
                                         const package_name = runtime[0 .. strings.indexOfChar(runtime, '/') orelse runtime.len];
 
                                         if (node_modules_bundle.getPackage(package_name)) |pkg| {
-                                            const import_path = runtime[@minimum(runtime.len, package_name.len + 1)..];
+                                            const import_path = runtime[@min(runtime.len, package_name.len + 1)..];
                                             if (node_modules_bundle.findModuleInPackage(pkg, import_path)) |found_module| {
                                                 import_record.is_bundled = true;
                                                 node_module_bundle_import_path = node_module_bundle_import_path orelse

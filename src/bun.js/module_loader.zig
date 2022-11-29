@@ -1434,7 +1434,7 @@ pub const ModuleLoader = struct {
         const after_namespace = if (namespace.len == 0)
             specifier
         else
-            specifier[@minimum(namespace.len + 1, specifier.len)..];
+            specifier[@min(namespace.len + 1, specifier.len)..];
 
         return globalObject.runOnLoadPlugins(ZigString.init(namespace), ZigString.init(after_namespace), .bun) orelse return JSValue.zero;
     }

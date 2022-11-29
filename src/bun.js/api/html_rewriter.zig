@@ -307,7 +307,7 @@ pub const HTMLRewriter = struct {
                 doc.ctx = this;
             }
 
-            const chunk_size = @maximum(size_hint orelse 16384, 1024);
+            const chunk_size = @max(size_hint orelse 16384, 1024);
             this.rewriter = builder.build(
                 .UTF8,
                 .{
@@ -417,7 +417,7 @@ pub const HTMLRewriter = struct {
                     .preallocated_parsing_buffer_size = if (input_size == JSC.WebCore.Blob.max_size)
                         1024
                     else
-                        @maximum(input_size, 1024),
+                        @max(input_size, 1024),
                     .max_allowed_memory_usage = std.math.maxInt(u32),
                 },
                 false,
@@ -593,7 +593,7 @@ pub const HTMLRewriter = struct {
     //         sink.rewriter = builder.build(
     //             .UTF8,
     //             .{
-    //                 .preallocated_parsing_buffer_size = @maximum(original.body.len(), 1024),
+    //                 .preallocated_parsing_buffer_size = @max(original.body.len(), 1024),
     //                 .max_allowed_memory_usage = std.math.maxInt(u32),
     //             },
     //             false,

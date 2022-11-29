@@ -351,7 +351,7 @@ pub const Response = struct {
 
         if (args.nextEat()) |init| {
             if (init.isUndefinedOrNull()) {} else if (init.isNumber()) {
-                response.body.init.status_code = @intCast(u16, @minimum(@maximum(0, init.toInt32()), std.math.maxInt(u16)));
+                response.body.init.status_code = @intCast(u16, @min(@max(0, init.toInt32()), std.math.maxInt(u16)));
             } else {
                 if (Body.Init.init(getAllocator(globalThis), globalThis, init, init.jsType()) catch null) |_init| {
                     response.body.init = _init;
@@ -397,7 +397,7 @@ pub const Response = struct {
 
         if (args.nextEat()) |init| {
             if (init.isUndefinedOrNull()) {} else if (init.isNumber()) {
-                response.body.init.status_code = @intCast(u16, @minimum(@maximum(0, init.toInt32()), std.math.maxInt(u16)));
+                response.body.init.status_code = @intCast(u16, @min(@max(0, init.toInt32()), std.math.maxInt(u16)));
             } else {
                 if (Body.Init.init(getAllocator(globalThis), globalThis, init, init.jsType()) catch null) |_init| {
                     response.body.init = _init;
@@ -2058,7 +2058,7 @@ pub const Blob = struct {
                     onRead,
                     &this.read_completion,
                     this.opened_fd,
-                    remaining[0..@minimum(remaining.len, this.max_length - this.read_off)],
+                    remaining[0..@min(remaining.len, this.max_length - this.read_off)],
                     this.offset + this.read_off,
                 );
             }
@@ -2177,8 +2177,8 @@ pub const Blob = struct {
                 }
 
                 if (stat.size > 0 and std.os.S.ISREG(stat.mode)) {
-                    this.size = @minimum(
-                        @truncate(SizeType, @intCast(SizeType, @maximum(@intCast(i64, stat.size), 0))),
+                    this.size = @min(
+                        @truncate(SizeType, @intCast(SizeType, @max(@intCast(i64, stat.size), 0))),
                         this.max_length,
                     );
                     // read up to 4k at a time if
@@ -2219,7 +2219,7 @@ pub const Blob = struct {
 
             fn doReadLoop(this: *ReadFile) void {
                 this.read_off += this.read_len;
-                var remain = this.buffer[@minimum(this.read_off, @truncate(Blob.SizeType, this.buffer.len))..];
+                var remain = this.buffer[@min(this.read_off, @truncate(Blob.SizeType, this.buffer.len))..];
 
                 if (remain.len > 0 and this.errno == null) {
                     this.doRead();
@@ -2391,7 +2391,7 @@ pub const Blob = struct {
                 var file_offset = this.file_blob.offset;
 
                 const this_tick = file_offset + this.wrote;
-                remain = remain[@minimum(this.wrote, remain.len)..];
+                remain = remain[@min(this.wrote, remain.len)..];
 
                 if (remain.len > 0 and this.errno == null) {
                     this.doWrite(remain, this_tick);
@@ -2802,7 +2802,7 @@ pub const Blob = struct {
                 }
 
                 if (stat.size != 0) {
-                    this.max_length = @maximum(@minimum(@intCast(SizeType, stat.size), this.max_length), this.offset) - this.offset;
+                    this.max_length = @max(@min(@intCast(SizeType, stat.size), this.max_length), this.offset) - this.offset;
                     if (this.max_length == 0) {
                         this.doClose();
                         return;
@@ -2954,7 +2954,7 @@ pub const Blob = struct {
                 return JSValue.jsUndefined();
             }
 
-            recommended_chunk_size = @intCast(SizeType, @maximum(0, @truncate(i52, arguments[0].toInt64())));
+            recommended_chunk_size = @intCast(SizeType, @max(0, @truncate(i52, arguments[0].toInt64())));
         }
         return JSC.WebCore.ReadableStream.fromBlob(
             globalThis,
@@ -3115,10 +3115,10 @@ pub const Blob = struct {
             const start = start_.toInt64();
             if (start < 0) {
                 // If the optional start parameter is negative, let relativeStart be start + size.
-                relativeStart = @intCast(i64, @maximum(start + @intCast(i64, this.size), 0));
+                relativeStart = @intCast(i64, @max(start + @intCast(i64, this.size), 0));
             } else {
                 // Otherwise, let relativeStart be start.
-                relativeStart = @minimum(@intCast(i64, start), @intCast(i64, this.size));
+                relativeStart = @min(@intCast(i64, start), @intCast(i64, this.size));
             }
         }
 
@@ -3127,10 +3127,10 @@ pub const Blob = struct {
             // If end is negative, let relativeEnd be max((size + end), 0).
             if (end < 0) {
                 // If the optional start parameter is negative, let relativeStart be start + size.
-                relativeEnd = @intCast(i64, @maximum(end + @intCast(i64, this.size), 0));
+                relativeEnd = @intCast(i64, @max(end + @intCast(i64, this.size), 0));
             } else {
                 // Otherwise, let relativeStart be start.
-                relativeEnd = @minimum(@intCast(i64, end), @intCast(i64, this.size));
+                relativeEnd = @min(@intCast(i64, end), @intCast(i64, this.size));
             }
         }
 
@@ -3146,7 +3146,7 @@ pub const Blob = struct {
             }
         }
 
-        const len = @intCast(SizeType, @maximum(relativeEnd - relativeStart, 0));
+        const len = @intCast(SizeType, @max(relativeEnd - relativeStart, 0));
 
         // This copies over the is_all_ascii flag
         // which is okay because this will only be a <= slice
@@ -3217,7 +3217,7 @@ pub const Blob = struct {
                 const offset = this.offset;
                 const store_size = store.size();
                 if (store_size != Blob.max_size) {
-                    this.offset = @minimum(store_size, offset);
+                    this.offset = @min(store_size, offset);
                     this.size = store_size - offset;
                 }
 
@@ -3229,7 +3229,7 @@ pub const Blob = struct {
                         switch (JSC.Node.Syscall.stat(store.data.file.pathlike.path.sliceZ(&buffer))) {
                             .result => |stat| {
                                 store.data.file.max_size = if (std.os.S.ISREG(stat.mode) or stat.size > 0)
-                                    @truncate(SizeType, @intCast(u64, @maximum(stat.size, 0)))
+                                    @truncate(SizeType, @intCast(u64, @max(stat.size, 0)))
                                 else
                                     Blob.max_size;
                                 store.data.file.mode = stat.mode;
@@ -3242,7 +3242,7 @@ pub const Blob = struct {
                         switch (JSC.Node.Syscall.fstat(store.data.file.pathlike.fd)) {
                             .result => |stat| {
                                 store.data.file.max_size = if (std.os.S.ISREG(stat.mode) or stat.size > 0)
-                                    @truncate(SizeType, @intCast(u64, @maximum(stat.size, 0)))
+                                    @truncate(SizeType, @intCast(u64, @max(stat.size, 0)))
                                 else
                                     Blob.max_size;
                                 store.data.file.mode = stat.mode;
@@ -3258,7 +3258,7 @@ pub const Blob = struct {
                     const store_size = store.data.file.max_size;
                     const offset = this.offset;
 
-                    this.offset = @minimum(store_size, offset);
+                    this.offset = @min(store_size, offset);
                     this.size = store_size -| offset;
                     return;
                 }
@@ -3439,7 +3439,7 @@ pub const Blob = struct {
         if (slice_.len == 0) return "";
         slice_ = slice_[this.offset..];
 
-        return slice_[0..@minimum(slice_.len, @as(usize, this.size))];
+        return slice_[0..@min(slice_.len, @as(usize, this.size))];
     }
 
     pub const Lifetime = JSC.WebCore.Lifetime;
@@ -3470,7 +3470,7 @@ pub const Blob = struct {
                     .result => |result| {
                         const bytes = result.buf;
                         if (blob.size > 0)
-                            blob.size = @minimum(@truncate(u32, bytes.len), blob.size);
+                            blob.size = @min(@truncate(u32, bytes.len), blob.size);
                         // these are now temporaries
                         promise.resolve(globalThis, Function(&blob, globalThis, bytes, .temporary));
                     },

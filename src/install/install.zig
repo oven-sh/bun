@@ -112,11 +112,11 @@ pub fn ExternalSliceAligned(comptime Type: type, comptime alignment_: ?u29) type
 
         pub inline fn get(this: Slice, in: []const Type) []const Type {
             // it should be impossible to address this out of bounds due to the minimum here
-            return in.ptr[this.off..@minimum(in.len, this.off + this.len)];
+            return in.ptr[this.off..@min(in.len, this.off + this.len)];
         }
 
         pub inline fn mut(this: Slice, in: []Type) []Type {
-            return in.ptr[this.off..@minimum(in.len, this.off + this.len)];
+            return in.ptr[this.off..@min(in.len, this.off + this.len)];
         }
 
         pub fn init(buf: []const Type, in: []const Type) Slice {
@@ -157,7 +157,7 @@ pub const Aligner = struct {
     pub fn write(comptime Type: type, comptime Writer: type, writer: Writer, pos: usize) !usize {
         const to_write = skipAmount(Type, pos);
 
-        var remainder: string = alignment_bytes_to_repeat_buffer[0..@minimum(to_write, alignment_bytes_to_repeat_buffer.len)];
+        var remainder: string = alignment_bytes_to_repeat_buffer[0..@min(to_write, alignment_bytes_to_repeat_buffer.len)];
         try writer.writeAll(remainder);
 
         return to_write;
@@ -810,7 +810,7 @@ const PackageInstall = struct {
 
         // Heuristic: most package.jsons will be less than 2048 bytes.
         read = package_json_file.read(mutable.list.items[total..]) catch return false;
-        var remain = mutable.list.items[@minimum(total, read)..];
+        var remain = mutable.list.items[@min(total, read)..];
         if (read > 0 and remain.len < 1024) {
             mutable.growBy(4096) catch return false;
             mutable.list.expandToCapacity();
@@ -1875,7 +1875,7 @@ pub const PackageManager = struct {
         var available = buf[spanned.len..];
         var end: []u8 = undefined;
         if (scope.url.hostname.len > 32 or available.len < 64) {
-            const visible_hostname = scope.url.hostname[0..@minimum(scope.url.hostname.len, 12)];
+            const visible_hostname = scope.url.hostname[0..@min(scope.url.hostname.len, 12)];
             end = std.fmt.bufPrint(available, "@@{s}__{x}", .{ visible_hostname, String.Builder.stringHash(scope.url.href) }) catch unreachable;
         } else {
             end = std.fmt.bufPrint(available, "@@{s}", .{scope.url.hostname}) catch unreachable;
@@ -3154,7 +3154,7 @@ pub const PackageManager = struct {
                             entry.value_ptr.* = manifest;
 
                             if (timestamp_this_tick == null) {
-                                timestamp_this_tick = @truncate(u32, @intCast(u64, @maximum(0, std.time.timestamp()))) +| 300;
+                                timestamp_this_tick = @truncate(u32, @intCast(u64, @max(0, std.time.timestamp()))) +| 300;
                             }
 
                             entry.value_ptr.*.pkg.public_max_age = timestamp_this_tick.?;
@@ -3779,7 +3779,7 @@ pub const PackageManager = struct {
 
             if (env_loader.map.get("BUN_CONFIG_HTTP_RETRY_COUNT")) |retry_count| {
                 if (std.fmt.parseInt(i32, retry_count, 10)) |int| {
-                    this.max_retry_count = @intCast(u16, @minimum(@maximum(int, 0), 65355));
+                    this.max_retry_count = @intCast(u16, @min(@max(int, 0), 65355));
                 } else |_| {}
             }
 
@@ -4278,7 +4278,7 @@ pub const PackageManager = struct {
 
         if (env_loader.map.get("GOMAXPROCS")) |max_procs| {
             if (std.fmt.parseInt(u32, max_procs, 10)) |cpu_count_| {
-                cpu_count = @minimum(cpu_count, cpu_count_);
+                cpu_count = @min(cpu_count, cpu_count_);
             } else |_| {}
         }
 
@@ -4331,7 +4331,7 @@ pub const PackageManager = struct {
             ctx.install,
         );
 
-        manager.timestamp_for_manifest_cache_control = @truncate(u32, @intCast(u64, @maximum(std.time.timestamp(), 0)));
+        manager.timestamp_for_manifest_cache_control = @truncate(u32, @intCast(u64, @max(std.time.timestamp(), 0)));
         return manager;
     }
 
@@ -4350,7 +4350,7 @@ pub const PackageManager = struct {
 
         if (env_loader.map.get("GOMAXPROCS")) |max_procs| {
             if (std.fmt.parseInt(u32, max_procs, 10)) |cpu_count_| {
-                cpu_count = @minimum(cpu_count, cpu_count_);
+                cpu_count = @min(cpu_count, cpu_count_);
             } else |_| {}
         }
 
@@ -4417,7 +4417,7 @@ pub const PackageManager = struct {
             u32,
             @intCast(
                 u64,
-                @maximum(
+                @max(
                     std.time.timestamp(),
                     0,
                 ),
@@ -6623,7 +6623,7 @@ pub const PackageManager = struct {
             var printed_timestamp = false;
             if (install_summary.success > 0) {
                 // it's confusing when it shows 3 packages and says it installed 1
-                Output.pretty("\n <green>{d}<r> packages<r> installed ", .{@maximum(
+                Output.pretty("\n <green>{d}<r> packages<r> installed ", .{@max(
                     install_summary.success,
                     @truncate(
                         u32,

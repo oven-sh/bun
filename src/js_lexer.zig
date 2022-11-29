@@ -735,7 +735,7 @@ fn NewLexer_(
 
             // Reset string literal
             const base = if (comptime quote == 0) lexer.start else lexer.start + 1;
-            lexer.string_literal_slice = lexer.source.contents[base..@minimum(lexer.source.contents.len, lexer.end - @as(usize, string_literal_details.suffix_len))];
+            lexer.string_literal_slice = lexer.source.contents[base..@min(lexer.source.contents.len, lexer.end - @as(usize, string_literal_details.suffix_len))];
             lexer.string_literal_is_ascii = !string_literal_details.needs_slow_path;
             lexer.string_literal_buffer.shrinkRetainingCapacity(0);
             if (string_literal_details.needs_slow_path) {

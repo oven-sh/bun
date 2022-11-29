@@ -105,10 +105,10 @@ pub const ZigString = extern struct {
 
     pub fn substring(this: ZigString, offset: usize) ZigString {
         if (this.is16Bit()) {
-            return ZigString.from16Slice(this.utf16SliceAligned()[@minimum(this.len, offset)..]);
+            return ZigString.from16Slice(this.utf16SliceAligned()[@min(this.len, offset)..]);
         }
 
-        var out = ZigString.init(this.slice()[@minimum(this.len, offset)..]);
+        var out = ZigString.init(this.slice()[@min(this.len, offset)..]);
         if (this.isUTF8()) {
             out.markUTF8();
         }
@@ -178,7 +178,7 @@ pub const ZigString = extern struct {
     }
 
     pub fn trunc(this: ZigString, len: usize) ZigString {
-        return .{ .ptr = this.ptr, .len = @minimum(len, this.len) };
+        return .{ .ptr = this.ptr, .len = @min(len, this.len) };
     }
 
     pub fn eqlComptime(this: ZigString, comptime other: []const u8) bool {
@@ -449,7 +449,7 @@ pub const ZigString = extern struct {
     }
 
     pub fn slice(this: *const ZigString) []const u8 {
-        return untagged(this.ptr)[0..@minimum(this.len, std.math.maxInt(u32))];
+        return untagged(this.ptr)[0..@min(this.len, std.math.maxInt(u32))];
     }
 
     pub fn dupe(this: ZigString, allocator: std.mem.Allocator) ![]const u8 {
@@ -2858,7 +2858,7 @@ pub const JSValue = enum(JSValueReprInt) {
             ?*JSInternalPromise => asInternalPromise(this),
             ?*JSPromise => asPromise(this),
 
-            u52 => @truncate(u52, @intCast(u64, @maximum(this.toInt64(), 0))),
+            u52 => @truncate(u52, @intCast(u64, @max(this.toInt64(), 0))),
             u64 => toUInt64NoTruncate(this),
             u8 => @truncate(u8, toU32(this)),
             i16 => @truncate(i16, toInt32(this)),
@@ -3580,7 +3580,7 @@ pub const JSValue = enum(JSValueReprInt) {
     }
 
     pub inline fn toU32(this: JSValue) u32 {
-        return @intCast(u32, @maximum(this.toInt32(), 0));
+        return @intCast(u32, @max(this.toInt32(), 0));
     }
 
     pub fn getLengthOfArray(this: JSValue, globalThis: *JSGlobalObject) u64 {
@@ -4024,7 +4024,7 @@ pub const CallFrame = opaque {
         var buf: [max]JSC.JSValue = std.mem.zeroes([max]JSC.JSValue);
         const len = self.argumentsCount();
         var ptr = self.argumentsPtr();
-        switch (@minimum(len, max)) {
+        switch (@min(len, max)) {
             0 => {
                 return .{ .ptr = buf, .len = 0 };
             },

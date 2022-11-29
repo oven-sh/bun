@@ -40,7 +40,7 @@ inline fn @"is ../"(slice: []const u8) bool {
 pub fn longestCommonPathGeneric(input: []const []const u8, comptime separator: u8, comptime isPathSeparator: IsSeparatorFunc) []const u8 {
     var min_length: usize = std.math.maxInt(usize);
     for (input) |str| {
-        min_length = @minimum(str.len, min_length);
+        min_length = @min(str.len, min_length);
     }
 
     var index: usize = 0;
@@ -192,7 +192,7 @@ pub fn relativeToCommonPath(
 
     const common_path = if (has_leading_separator) _common_path[1..] else _common_path;
 
-    const shortest = @minimum(normalized_from.len, normalized_to.len);
+    const shortest = @min(normalized_from.len, normalized_to.len);
 
     var last_common_separator = std.mem.lastIndexOfScalar(u8, _common_path, separator) orelse 0;
 

@@ -184,7 +184,7 @@ pub inline fn indexOf(self: string, str: string) ?usize {
 //     var start: usize = end - n;
 //     while (end < buf.len) {
 //         start = end - n;
-//         const last_end = @minimum(end + k - 1, buf.len);
+//         const last_end = @min(end + k - 1, buf.len);
 //         const last_start = last_end - n;
 
 //         // Look for the first character in the delimter
@@ -200,7 +200,7 @@ pub inline fn indexOf(self: string, str: string) ?usize {
 //                 }
 //             }
 //         }
-//         end = @minimum(end + n, buf.len);
+//         end = @min(end + n, buf.len);
 //     }
 //     if (start < buf.len) return std.mem.indexOfPos(T, buf, start_index, delimiter);
 //     return null; // Not found
@@ -835,7 +835,7 @@ pub inline fn copyU8IntoU16(output_: []u16, input_: []const u8) void {
     var input_ptr = input.ptr;
     var output_ptr = output.ptr;
 
-    const last_input_ptr = input_ptr + @minimum(input.len, output.len);
+    const last_input_ptr = input_ptr + @min(input.len, output.len);
 
     while (last_input_ptr != input_ptr) {
         output_ptr[0] = input_ptr[0];
@@ -919,7 +919,7 @@ pub inline fn copyU16IntoU8(output_: []u8, comptime InputType: type, input_: Inp
         var input_ptr = input.ptr;
         var output_ptr = output.ptr;
 
-        const last_input_ptr = input_ptr + @minimum(input.len, output.len);
+        const last_input_ptr = input_ptr + @min(input.len, output.len);
 
         while (last_input_ptr != input_ptr) {
             output_ptr[0] = @truncate(u8, input_ptr[0]);
@@ -1004,7 +1004,7 @@ pub fn toUTF16Alloc(allocator: std.mem.Allocator, bytes: []const u8, comptime fa
                 }
             }
 
-            remaining = remaining[@maximum(replacement.len, 1)..];
+            remaining = remaining[@max(replacement.len, 1)..];
             const new_len = strings.u16Len(replacement.code_point);
             try output.ensureUnusedCapacity(new_len);
             output.items.len += @as(usize, new_len);
@@ -1039,7 +1039,7 @@ pub fn toUTF16Alloc(allocator: std.mem.Allocator, bytes: []const u8, comptime fa
                 }
             }
 
-            remaining = remaining[@maximum(replacement.len, 1)..];
+            remaining = remaining[@max(replacement.len, 1)..];
             const new_len = j + @as(usize, strings.u16Len(replacement.code_point));
             try output.ensureUnusedCapacity(new_len);
             output.items.len += new_len;
@@ -1413,7 +1413,7 @@ pub fn copyLatin1IntoUTF8(buf_: []u8, comptime Type: type, latin1_: Type) Encode
 
 pub fn copyLatin1IntoUTF8StopOnNonASCII(buf_: []u8, comptime Type: type, latin1_: Type, comptime stop: bool) EncodeIntoResult {
     if (comptime bun.FeatureFlags.latin1_is_now_ascii) {
-        const to_copy = @truncate(u32, @minimum(buf_.len, latin1_.len));
+        const to_copy = @truncate(u32, @min(buf_.len, latin1_.len));
         @memcpy(buf_.ptr, latin1_.ptr, to_copy);
         return .{ .written = to_copy, .read = to_copy };
     }
@@ -1422,7 +1422,7 @@ pub fn copyLatin1IntoUTF8StopOnNonASCII(buf_: []u8, comptime Type: type, latin1_
     var latin1 = latin1_;
     while (buf.len > 0 and latin1.len > 0) {
         inner: {
-            var remaining_runs = @minimum(buf.len, latin1.len) / ascii_vector_size;
+            var remaining_runs = @min(buf.len, latin1.len) / ascii_vector_size;
             while (remaining_runs > 0) : (remaining_runs -= 1) {
                 const vec: AsciiVector = latin1[0..ascii_vector_size].*;
 
@@ -1485,7 +1485,7 @@ pub fn copyLatin1IntoUTF8StopOnNonASCII(buf_: []u8, comptime Type: type, latin1_
             {
                 const Int = u64;
                 const size = @sizeOf(Int);
-                while (@minimum(buf.len, latin1.len) >= size) {
+                while (@min(buf.len, latin1.len) >= size) {
                     const bytes = @bitCast(Int, latin1[0..size].*);
                     buf[0..size].* = @bitCast([size]u8, bytes);
 
@@ -1513,7 +1513,7 @@ pub fn copyLatin1IntoUTF8StopOnNonASCII(buf_: []u8, comptime Type: type, latin1_
             }
 
             {
-                const end = latin1.ptr + @minimum(buf.len, latin1.len);
+                const end = latin1.ptr + @min(buf.len, latin1.len);
                 assert(@ptrToInt(latin1.ptr + 8) > @ptrToInt(end));
                 const start_ptr = @ptrToInt(buf.ptr);
                 const start_ptr_latin1 = @ptrToInt(latin1.ptr);
@@ -2395,12 +2395,12 @@ pub fn copyUTF16IntoUTF8(buf: []u8, comptime Type: type, utf16: Type) EncodeInto
     }
 
     while (firstNonASCII16(Type, utf16_remaining)) |i| {
-        const end = @minimum(i, remaining.len);
+        const end = @min(i, remaining.len);
         if (end > 0) copyU16IntoU8(remaining, Type, utf16_remaining[0..end]);
         remaining = remaining[end..];
         utf16_remaining = utf16_remaining[end..];
 
-        if (@minimum(utf16_remaining.len, remaining.len) == 0)
+        if (@min(utf16_remaining.len, remaining.len) == 0)
             break;
 
         const replacement = utf16Codepoint(Type, utf16_remaining);
@@ -2417,7 +2417,7 @@ pub fn copyUTF16IntoUTF8(buf: []u8, comptime Type: type, utf16: Type) EncodeInto
     }
 
     if (remaining.len > 0 and !ended_on_non_ascii and utf16_remaining.len > 0) {
-        const len = @minimum(remaining.len, utf16_remaining.len);
+        const len = @min(remaining.len, utf16_remaining.len);
         copyU16IntoU8(remaining[0..len], Type, utf16_remaining[0..len]);
         utf16_remaining = utf16_remaining[len..];
         remaining = remaining[len..];
@@ -2467,7 +2467,7 @@ pub fn elementLengthUTF8IntoUTF16(comptime Type: type, utf8: Type) usize {
         const replacement = utf16Codepoint(Type, utf8_remaining);
 
         count += replacement.len;
-        utf8_remaining = utf8_remaining[@minimum(replacement.utf8Width(), utf8_remaining.len)..];
+        utf8_remaining = utf8_remaining[@min(replacement.utf8Width(), utf8_remaining.len)..];
     }
 
     return count + utf8_remaining.len;
@@ -3377,7 +3377,7 @@ pub fn formatLatin1(slice_: []const u8, writer: anytype) !void {
             try writer.writeAll(slice[0..i]);
             slice = slice[i..];
         }
-        const result = strings.copyLatin1IntoUTF8(&chunk, @TypeOf(slice), slice[0..@minimum(chunk.len, slice.len)]);
+        const result = strings.copyLatin1IntoUTF8(&chunk, @TypeOf(slice), slice[0..@min(chunk.len, slice.len)]);
         if (result.read == 0 or result.written == 0)
             break;
         try writer.writeAll(chunk[0..result.written]);
@@ -3613,7 +3613,7 @@ pub fn NewCodePointIterator(comptime CodePointType: type, comptime zeroValue: co
 
             const cp_len = utf8ByteSequenceLength(bytes[next_]);
             it.next_width = cp_len;
-            it.i = @minimum(next_, bytes.len);
+            it.i = @min(next_, bytes.len);
 
             const slice = bytes[prev..][0..cp_len];
             it.width = @intCast(u3, slice.len);

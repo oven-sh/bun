@@ -585,7 +585,7 @@ pub fn NewPrinter(
 
             var remaining: usize = n;
             while (remaining > 0) {
-                const to_write = @minimum(remaining, bytes.len);
+                const to_write = @min(remaining, bytes.len);
                 try self.writeAll(bytes[0..to_write]);
                 remaining -= to_write;
             }
@@ -4729,7 +4729,7 @@ pub fn NewWriter(
         pub const Error = error{FormatError};
 
         pub fn writeAll(writer: *Self, bytes: anytype) Error!usize {
-            const written = @maximum(writer.written, 0);
+            const written = @max(writer.written, 0);
             writer.print(@TypeOf(bytes), bytes);
             return @intCast(usize, writer.written) - @intCast(usize, written);
         }
@@ -5085,7 +5085,7 @@ pub fn printAst(
 
     try printer.writer.done();
 
-    return @intCast(usize, @maximum(printer.writer.written, 0));
+    return @intCast(usize, @max(printer.writer.written, 0));
 }
 
 pub fn printJSON(
@@ -5119,7 +5119,7 @@ pub fn printJSON(
     }
     try printer.writer.done();
 
-    return @intCast(usize, @maximum(printer.writer.written, 0));
+    return @intCast(usize, @max(printer.writer.written, 0));
 }
 
 pub fn printCommonJS(
@@ -5177,7 +5177,7 @@ pub fn printCommonJS(
 
     try printer.writer.done();
 
-    return @intCast(usize, @maximum(printer.writer.written, 0));
+    return @intCast(usize, @max(printer.writer.written, 0));
 }
 
 pub const WriteResult = struct {
@@ -5262,7 +5262,7 @@ pub fn printCommonJSThreaded(
         @atomicStore(u32, end_off_ptr, result.end_off, .SeqCst);
     }
 
-    result.len = @intCast(usize, @maximum(printer.writer.written, 0));
+    result.len = @intCast(usize, @max(printer.writer.written, 0));
 
     return result;
 }

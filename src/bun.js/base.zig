@@ -207,7 +207,7 @@ pub const To = struct {
                         if (value.len <= prefill) {
                             var array: [prefill]JSC.C.JSValueRef = undefined;
                             var i: u8 = 0;
-                            const len = @minimum(@intCast(u8, value.len), prefill);
+                            const len = @min(@intCast(u8, value.len), prefill);
                             while (i < len and exception.* == null) : (i += 1) {
                                 array[i] = if (comptime Child == JSC.C.JSValueRef)
                                     value[i]

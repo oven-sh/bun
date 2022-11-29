@@ -1248,7 +1248,7 @@ pub fn NewBundler(
             try this.writer.done();
 
             return CodeCount{
-                .written = @intCast(usize, @maximum(this.writer.written - start_count, 0)),
+                .written = @intCast(usize, @max(this.writer.written - start_count, 0)),
                 .approximate_newline_count = lines_of_code,
             };
         }

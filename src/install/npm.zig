@@ -208,7 +208,7 @@ pub const Registry = struct {
             package_name,
             newly_last_modified,
             new_etag,
-            @truncate(u32, @intCast(u64, @maximum(0, std.time.timestamp()))) + 300,
+            @truncate(u32, @intCast(u64, @max(0, std.time.timestamp()))) + 300,
         )) |package| {
             if (package_manager.options.enable.manifest_cache) {
                 PackageManifest.Serializer.save(&package, package_manager.getTemporaryDirectory(), package_manager.getCacheDirectory()) catch {};
@@ -556,7 +556,7 @@ pub const PackageManifest = struct {
             var out_path_buf: ["-18446744073709551615".len + ".npm".len + 1]u8 = undefined;
             var dest_path_stream = std.io.fixedBufferStream(&dest_path_buf);
             var dest_path_stream_writer = dest_path_stream.writer();
-            try dest_path_stream_writer.print("{x}.npm-{x}", .{ file_id, @maximum(std.time.milliTimestamp(), 0) });
+            try dest_path_stream_writer.print("{x}.npm-{x}", .{ file_id, @max(std.time.milliTimestamp(), 0) });
             try dest_path_stream_writer.writeByte(0);
             var tmp_path: [:0]u8 = dest_path_buf[0 .. dest_path_stream.pos - 1 :0];
             try writeFile(this, tmp_path, tmpdir);

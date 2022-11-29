@@ -127,7 +127,7 @@ pub const FileSystem = struct {
             return;
         }
 
-        max_fd = @maximum(fd, max_fd);
+        max_fd = @max(fd, max_fd);
     }
     pub var instance_loaded: bool = false;
     pub var instance: FileSystem = undefined;

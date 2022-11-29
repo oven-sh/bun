@@ -708,7 +708,7 @@ pub const StreamResult = union(Tag) {
             ctx: *anyopaque,
             handler: Fn,
 
-            pub const Fn = fn (ctx: *anyopaque, result: StreamResult) void;
+            pub const Fn = bun.FnPtr(fn (ctx: *anyopaque, result: StreamResult) void);
 
             pub fn init(this: *Handler, comptime Context: type, ctx: *Context, comptime handler_fn: fn (*Context, StreamResult) void) void {
                 this.ctx = ctx;

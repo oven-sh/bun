@@ -157,7 +157,7 @@ const BunJSX = struct {
 };
 pub fn ExpressionTransposer(
     comptime Kontext: type,
-    visitor: fn (ptr: *Kontext, arg: Expr, state: anytype) Expr,
+    comptime visitor: fn (ptr: *Kontext, arg: Expr, state: anytype) Expr,
 ) type {
     return struct {
         pub const Context = Kontext;

@@ -304,8 +304,8 @@ pub fn HashMap(
 pub fn HashMapUnmanaged(
     comptime K: type,
     comptime V: type,
-    hashFn: fn (key: K) u64,
-    eqlFn: fn (a: K, b: K) bool,
+    comptime hashFn: fn (key: K) u64,
+    comptime eqlFn: fn (a: K, b: K) bool,
     comptime max_load_percentage: u64,
 ) type {
     comptime assert(max_load_percentage > 0 and max_load_percentage < 100);

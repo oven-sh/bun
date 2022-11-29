@@ -1966,15 +1966,15 @@ pub const Process = struct {
         std.os.exit(@truncate(u8, @intCast(u32, @max(code, 0))));
     }
 
-    pub export const Bun__version: [:0]const u8 = "v" ++ bun.Global.package_json_version;
-    pub export const Bun__versions_mimalloc: [:0]const u8 = bun.Global.versions.mimalloc;
-    pub export const Bun__versions_webkit: [:0]const u8 = bun.Global.versions.webkit;
-    pub export const Bun__versions_libarchive: [:0]const u8 = bun.Global.versions.libarchive;
-    pub export const Bun__versions_picohttpparser: [:0]const u8 = bun.Global.versions.picohttpparser;
-    pub export const Bun__versions_boringssl: [:0]const u8 = bun.Global.versions.boringssl;
-    pub export const Bun__versions_zlib: [:0]const u8 = bun.Global.versions.zlib;
-    pub export const Bun__versions_zig: [:0]const u8 = bun.Global.versions.zig;
-    pub export const Bun__version_sha: [:0]const u8 = bun.Environment.git_sha;
+    pub export const Bun__version: [*:0]const u8 = "v" ++ bun.Global.package_json_version;
+    pub export const Bun__versions_mimalloc: [*:0]const u8 = bun.Global.versions.mimalloc;
+    pub export const Bun__versions_webkit: [*:0]const u8 = bun.Global.versions.webkit;
+    pub export const Bun__versions_libarchive: [*:0]const u8 = bun.Global.versions.libarchive;
+    pub export const Bun__versions_picohttpparser: [*:0]const u8 = bun.Global.versions.picohttpparser;
+    pub export const Bun__versions_boringssl: [*:0]const u8 = bun.Global.versions.boringssl;
+    pub export const Bun__versions_zlib: [*:0]const u8 = bun.Global.versions.zlib;
+    pub export const Bun__versions_zig: [*:0]const u8 = bun.Global.versions.zig;
+    pub export const Bun__version_sha: [*:0]const u8 = bun.Environment.git_sha;
 };
 
 comptime {

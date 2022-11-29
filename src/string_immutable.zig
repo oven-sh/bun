@@ -709,7 +709,11 @@ inline fn eqlComptimeCheckLenWithKnownType(comptime Type: type, a: []const Type,
 ///   strings.eqlComptime(input, "hello world");
 ///   strings.eqlComptime(input, "hai");
 pub inline fn eqlComptimeCheckLenWithType(comptime Type: type, a: []const Type, comptime b: anytype, comptime check_len: bool) bool {
-    return eqlComptimeCheckLenWithKnownType(comptime Type, a, comptime std.mem.span(b), comptime check_len);
+    if (@typeInfo(@TypeOf(b)) != .Pointer) {
+        return eqlComptimeCheckLenWithKnownType(comptime Type, a, &b, comptime check_len);
+    } else {
+        return eqlComptimeCheckLenWithKnownType(comptime Type, a, b, comptime check_len);
+    }
 }
 
 pub fn eqlCaseInsensitiveASCII(a: string, comptime b: anytype, comptime check_len: bool) bool {

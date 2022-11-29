@@ -268,20 +268,20 @@ export fn Bun__readOriginTimerStart(vm: *JSC.VirtualMachine) f64 {
     return @floatCast(f64, (@intToFloat(f128, vm.origin_timestamp) + JSC.VirtualMachine.origin_relative_epoch) / 1_000_000.0);
 }
 
-comptime {
-    if (!JSC.is_bindgen) {
-        _ = Bun__getDefaultGlobal;
-        _ = Bun__getVM;
-        _ = Bun__drainMicrotasks;
-        _ = Bun__queueTask;
-        _ = Bun__queueTaskConcurrently;
-        _ = Bun__handleRejectedPromise;
-        _ = Bun__readOriginTimer;
-        _ = Bun__onDidAppendPlugin;
-        _ = Bun__readOriginTimerStart;
-        _ = Bun__reportUnhandledError;
-    }
-}
+// comptime {
+//     if (!JSC.is_bindgen) {
+//         _ = Bun__getDefaultGlobal;
+//         _ = Bun__getVM;
+//         _ = Bun__drainMicrotasks;
+//         _ = Bun__queueTask;
+//         _ = Bun__queueTaskConcurrently;
+//         _ = Bun__handleRejectedPromise;
+//         _ = Bun__readOriginTimer;
+//         _ = Bun__onDidAppendPlugin;
+//         _ = Bun__readOriginTimerStart;
+//         _ = Bun__reportUnhandledError;
+//     }
+// }
 
 /// This function is called on the main thread
 /// The bunVM() call will assert this

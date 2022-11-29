@@ -73,7 +73,7 @@ pub fn deinit(self: *ThreadPool) void {
 /// The user provides a `callback` which is invoked when the *Task can run on a thread.
 pub const Task = struct {
     node: Node = .{},
-    callback: fn (*Task) void,
+    callback: bun.FnPtr(fn (*Task) void),
 };
 
 /// An unordered collection of Tasks which can be submitted for scheduling as a group.

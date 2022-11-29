@@ -140,7 +140,7 @@ pub fn IOTask(comptime Context: type) type {
 
 pub const AnyTask = struct {
     ctx: ?*anyopaque,
-    callback: fn (*anyopaque) void,
+    callback: bun.FnPtr(fn (*anyopaque) void),
 
     pub fn run(this: *AnyTask) void {
         @setRuntimeSafety(false);

@@ -396,7 +396,7 @@ const Timer = @import("../system_timer.zig").Timer;
 
 pub const AnyResolveWatcher = struct {
     context: *anyopaque,
-    callback: fn (*anyopaque, dir_path: string, dir_fd: StoredFileDescriptorType) void = undefined,
+    callback: bun.FnPtr(fn (*anyopaque, dir_path: string, dir_fd: StoredFileDescriptorType) void) = undefined,
 
     pub fn watch(this: @This(), dir_path: string, fd: StoredFileDescriptorType) void {
         return this.callback(this.context, dir_path, fd);

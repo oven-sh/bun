@@ -126,7 +126,7 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
         body_buf: ?*BodyBuf = null,
         body_written: usize = 0,
         websocket_protocol: u64 = 0,
-        hostname: [:0]u8 = "",
+        hostname: [:0]const u8 = "",
         poll_ref: JSC.PollRef = .{},
 
         pub const name = if (ssl) "WebSocketHTTPSClient" else "WebSocketHTTPClient";

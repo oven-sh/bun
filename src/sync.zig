@@ -1,5 +1,6 @@
 const std = @import("std");
 const system = std.system;
+const bun = @import("bun");
 
 // https://gist.github.com/kprotty/0d2dc3da4840341d6ff361b27bdac7dc
 pub const ThreadPool = struct {
@@ -352,7 +353,7 @@ pub const ThreadPool = struct {
     const List = std.TailQueue(Runnable);
     const RunNode = List.Node;
     const Runnable = struct {
-        runFn: fn (*Runnable) void,
+        runFn: bun.FnPtr(fn (*Runnable) void),
     };
 };
 

@@ -4020,47 +4020,37 @@ pub const CallFrame = opaque {
         return (@ptrCast([*]const JSC.JSValue, @alignCast(alignment, self)) + Sizes.Bun_CallFrame__callee)[0];
     }
 
-    pub fn arguments(self: *const CallFrame, comptime max: usize) struct { ptr: [max]JSC.JSValue, len: usize } {
-        var buf: [max]JSC.JSValue = std.mem.zeroes([max]JSC.JSValue);
+    fn Arguments(comptime max: usize) type {
+        return struct {
+            ptr: [max]JSC.JSValue,
+            len: usize,
+            pub inline fn init(comptime i: usize, ptr: [*]const JSC.JSValue) @This() {
+                var args: [max]JSC.JSValue = std.mem.zeroes([max]JSC.JSValue);
+                args[0..comptime i].* = ptr[0..i].*;
+
+                return @This(){
+                    .ptr = args,
+                    .len = i,
+                };
+            }
+        };
+    }
+
+    pub fn arguments(self: *const CallFrame, comptime max: usize) Arguments(max) {
         const len = self.argumentsCount();
         var ptr = self.argumentsPtr();
-        switch (@min(len, max)) {
-            0 => {
-                return .{ .ptr = buf, .len = 0 };
-            },
-            1 => {
-                buf[0..1].* = ptr[0..1].*;
-                return .{ .ptr = buf, .len = 1 };
-            },
-            2 => {
-                buf[0..2].* = ptr[0..2].*;
-                return .{ .ptr = buf, .len = 2 };
-            },
-            3 => {
-                buf[0..3].* = ptr[0..3].*;
-                return .{ .ptr = buf, .len = 3 };
-            },
-            4 => {
-                buf[0..4].* = ptr[0..4].*;
-                return .{ .ptr = buf, .len = 4 };
-            },
-            5 => {
-                buf[0..5].* = ptr[0..5].*;
-                return .{ .ptr = buf, .len = 5 };
-            },
-            6 => {
-                buf[0..6].* = ptr[0..6].*;
-                return .{ .ptr = buf, .len = 6 };
-            },
-            7 => {
-                buf[0..7].* = ptr[0..7].*;
-                return .{ .ptr = buf, .len = 7 };
-            },
-            else => {
-                buf[0..8].* = ptr[0..8].*;
-                return .{ .ptr = buf, .len = 8 };
-            },
-        }
+        return switch (@min(len, max)) {
+            0 => .{ .ptr = undefined, .len = 0 },
+            1 => Arguments(max).init(1, ptr),
+            2 => Arguments(max).init(2, ptr),
+            3 => Arguments(max).init(3, ptr),
+            4 => Arguments(max).init(4, ptr),
+            5 => Arguments(max).init(5, ptr),
+            6 => Arguments(max).init(6, ptr),
+            7 => Arguments(max).init(7, ptr),
+            8 => Arguments(max).init(8, ptr),
+            else => unreachable,
+        };
     }
 
     pub fn argument(self: *const CallFrame, comptime i: comptime_int) JSC.JSValue {

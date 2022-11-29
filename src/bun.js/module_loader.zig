@@ -1586,7 +1586,16 @@ pub const ModuleLoader = struct {
                             .source_url = ZigString.init("node:fs"),
                             .hash = 0,
                         };
+                    } else if (jsc_vm.load_builtins_from_path.len != 0) {
+                        return ResolvedSource{
+                            .allocator = null,
+                            .source_code = ZigString.init(strings.append(bun.default_allocator, jsModuleFromFile(jsc_vm.load_builtins_from_path, "fs.exports.js"), JSC.Node.fs.constants_string) catch unreachable),
+                            .specifier = ZigString.init("node:fs"),
+                            .source_url = ZigString.init("node:fs"),
+                            .hash = 0,
+                        };
                     }
+
                     return ResolvedSource{
                         .allocator = null,
                         .source_code = ZigString.init(@embedFile("fs.exports.js") ++ JSC.Node.fs.constants_string),

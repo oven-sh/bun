@@ -4643,6 +4643,177 @@ Yes. `bun install` creates a ordinary node_modules folder. It's designed to be c
 - `DISABLE_BUN_ANALYTICS=1` this disables bun’s analytics. bun records bundle timings (so we can answer with data, "is bun getting faster?") and feature usage (e.g., "are people actually using macros?"). The request body size is about 60 bytes, so it’s not a lot of data
 - `TMPDIR`: Before `bun bun` completes, it stores the new `.bun` in `$TMPDIR`. If unset, `TMPDIR` defaults to the platform-specific temporary directory (on Linux, `/tmp` and on macOS `/private/tmp`)
 
+## Profiling Bun
+
+To precisely measure time, Bun offers two runtime APIs functions:
+
+1. The web-standard [`performance.now()`](https://developer.mozilla.org/en-US/docs/Web/API/Performance/now) function
+2. `Bun.nanoseconds()` which is similar to `performance.now()` except it returns the current time since the application started in nanoseconds. You can use `performance.timeOrigin` to convert this to a Unix timestamp.
+
+### Benchmarking `Bun.serve`
+
+You will need an HTTP client which is at least as fast as `Bun.serve()`.
+
+That means popular Node.js-based benchmarking tools like **autocannon is not fast enough**.
+
+Recommended HTTP clients:
+
+- [`bombardier`](https://github.com/codesenberg/bombardier)
+- [`oha`](https://github.com/hatoo/oha)
+- [`http_load_test`](https://github.com/uNetworking/uSockets/blob/master/examples/http_load_test.c)
+
+### Measuring memory usage
+
+Bun has two heaps. One heap is for the JavaScript runtime and the other heap is for everything else.
+
+#### JavaScript heap stats
+
+The `bun:jsc` module exposes a few functions for measuring memory usage:
+
+```ts
+import { heapStats } from "bun:jsc";
+console.log(heapStats());
+
+// will show something like this:
+{
+  heapSize: 1657575,
+  heapCapacity: 2872775,
+  extraMemorySize: 598199,
+  objectCount: 13790,
+  protectedObjectCount: 62,
+  globalObjectCount: 1,
+  protectedGlobalObjectCount: 1,
+  // A count of every object type in the heap
+  objectTypeCounts: {
+    CallbackObject: 25,
+    FunctionExecutable: 2078,
+    AsyncGeneratorFunction: 2,
+    'RegExp String Iterator': 1,
+    FunctionCodeBlock: 188,
+    ModuleProgramExecutable: 13,
+    String: 1,
+    UnlinkedModuleProgramCodeBlock: 13,
+    JSON: 1,
+    AsyncGenerator: 1,
+    Symbol: 1,
+    GetterSetter: 68,
+    ImportMeta: 10,
+    DOMAttributeGetterSetter: 1,
+    UnlinkedFunctionCodeBlock: 174,
+    RegExp: 52,
+    ModuleLoader: 1,
+    Intl: 1,
+    WeakMap: 4,
+    Generator: 2,
+    PropertyTable: 95,
+    'Array Iterator': 1,
+    JSLexicalEnvironment: 75,
+    UnlinkedFunctionExecutable: 2067,
+    WeakSet: 1,
+    console: 1,
+    Map: 23,
+    SparseArrayValueMap: 14,
+    StructureChain: 19,
+    Set: 18,
+    'String Iterator': 1,
+    FunctionRareData: 3,
+    JSGlobalLexicalEnvironment: 1,
+    Object: 481,
+    BigInt: 2,
+    StructureRareData: 55,
+    Array: 179,
+    AbortController: 2,
+    ModuleNamespaceObject: 11,
+    ShadowRealm: 1,
+    'Immutable Butterfly': 103,
+    Primordials: 1,
+    'Set Iterator': 1,
+    JSProxy: 1,
+    AsyncFromSyncIterator: 1,
+    ModuleRecord: 13,
+    FinalizationRegistry: 1,
+    AsyncIterator: 1,
+    InternalPromise: 22,
+    Iterator: 1,
+    CustomGetterSetter: 65,
+    Promise: 19,
+    WeakRef: 1,
+    InternalPromisePrototype: 1,
+    Function: 2381,
+    AsyncFunction: 2,
+    GlobalObject: 1,
+    ArrayBuffer: 2,
+    Boolean: 1,
+    Math: 1,
+    CallbackConstructor: 1,
+    Error: 2,
+    JSModuleEnvironment: 13,
+    WebAssembly: 1,
+    HashMapBucket: 300,
+    Callee: 3,
+    symbol: 37,
+    string: 2484,
+    Performance: 1,
+    ModuleProgramCodeBlock: 12,
+    JSSourceCode: 13,
+    JSPropertyNameEnumerator: 3,
+    NativeExecutable: 290,
+    Number: 1,
+    Structure: 1550,
+    SymbolTable: 108,
+    GeneratorFunction: 2,
+    'Map Iterator': 1
+  },
+  protectedObjectTypeCounts: {
+    CallbackConstructor: 1,
+    BigInt: 1,
+    RegExp: 2,
+    GlobalObject: 1,
+    UnlinkedModuleProgramCodeBlock: 13,
+    HashMapBucket: 2,
+    Structure: 41,
+    JSPropertyNameEnumerator: 1
+  }
+}
+```
+
+JavaScript is a garbage-collected language, not reference counted. It's normal and correct for objects to not be freed immediately in all cases, though it's not normal for objects to never be freed.
+
+You can force garbage collection to run manually by calling:
+
+```js
+const synchronously = true;
+Bun.gc(synchronously);
+```
+
+#### JavaScript heap snapshot
+
+You can also take a heap snapshot of the JavaScript heap. This is useful for debugging memory leaks.
+
+```ts
+import { generateHeapSnapshot } from "bun:jsc";
+
+const snapshot = generateHeapSnapshot();
+await Bun.write("heap.json", JSON.stringify(snapshot, null, 2));
+```
+
+To view the snapshot, open the `heap.json` file in Safari's Developer Tools (or WebKit GTK)
+
+1. Open the Developer Tools
+2. Click "Timeline"
+3. Click "JavaScript Allocations" in the menu on the left. It might not be visible until you click the pencil icon to show all the timelines
+4. Click "Import" and select your heap snapshot JSON
+
+![image](https://user-images.githubusercontent.com/709451/204428943-ba999e8f-8984-4f23-97cb-b4e3e280363e.png)
+
+On success, it will look something like this:
+
+<img width="1324" alt="image" src="https://user-images.githubusercontent.com/709451/204429337-b0d8935f-3509-4071-b991-217794d1fb27.png">
+
+#### Native heap stats
+
+Bun uses mimalloc for the other heap. To report a summary of non-JavaScript memory usage, set the `MIMALLOC_SHOW_STATS=1` environment variable.
+
 ## Credits
 
 - While written in Zig instead of Go, bun’s JS transpiler, CSS lexer, and node module resolver source code is based on [@evanw](https://github.com/evanw)’s [esbuild](https://github.com/evanw/esbuild) project. Evan did a fantastic job with esbuild.

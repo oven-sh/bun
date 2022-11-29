@@ -78,13 +78,11 @@ const CAllocator = struct {
     fn resize(
         _: *anyopaque,
         buf: []u8,
-        buf_align: u29,
+        _: u29,
         new_len: usize,
         len_align: u29,
-        return_address: usize,
+        _: usize,
     ) ?usize {
-        _ = buf_align;
-        _ = return_address;
         if (new_len <= buf.len) {
             return mem.alignAllocLen(buf.len, new_len, len_align);
         }
@@ -101,10 +99,8 @@ const CAllocator = struct {
         _: *anyopaque,
         buf: []u8,
         buf_align: u29,
-        return_address: usize,
+        _: usize,
     ) void {
-        _ = buf_align;
-        _ = return_address;
         // mi_free_size internally just asserts the size
         // so it's faster if we don't pass that value through
         // but its good to have that assertion

@@ -1353,7 +1353,3 @@ test "PathName.init" {
     try std.testing.expectEqualStrings(res.base, "file");
     try std.testing.expectEqualStrings(res.ext, ".ext");
 }
-
-test "" {
-    @import("std").testing.refAllDecls(FileSystem);
-}

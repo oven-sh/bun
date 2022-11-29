@@ -6,13 +6,13 @@ fn pkgPath(comptime out: []const u8) std.build.FileSource {
     return .{ .path = outpath };
 }
 pub fn addPicoHTTP(step: *std.build.LibExeObjStep, comptime with_obj: bool) void {
-    step.addIncludeDir("src/deps");
+    step.addIncludePath("src/deps");
 
     if (with_obj) {
         step.addObjectFile("src/deps/picohttpparser.o");
     }
 
-    step.addIncludeDir("src/deps");
+    step.addIncludePath("src/deps");
 
     if (with_obj) {
         step.addObjectFile(panicIfNotFound("src/deps/picohttpparser.o"));
@@ -514,13 +514,13 @@ pub fn linkObjectFiles(b: *std.build.Builder, obj: *std.build.LibExeObjStep, tar
     });
 
     for (dirs_to_search.slice()) |deps_path| {
-        var deps_dir = std.fs.cwd().openDir(deps_path, .{ .iterate = true }) catch continue;
+        var deps_dir = std.fs.cwd().openIterableDir(deps_path, .{}) catch continue;
         var iterator = deps_dir.iterate();
-        obj.addIncludeDir(deps_path);
-        obj.addLibPath(deps_path);
+        obj.addIncludePath(deps_path);
+        obj.addLibraryPath(deps_path);
 
         while (iterator.next() catch null) |entr| {
-            const entry: std.fs.Dir.Entry = entr;
+            const entry: std.fs.IterableDir.Entry = entr;
             if (files_we_care_about.get(entry.name)) |obj_name| {
                 var has_added = try added.getOrPut(std.hash.Wyhash.hash(0, obj_name));
                 if (!has_added.found_existing) {

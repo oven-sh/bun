@@ -1256,7 +1256,3 @@ test "longestCommonPath" {
     _ = t.expect("/app/", longestCommonPath(&more), @src());
     _ = t.expect("/app/public/", longestCommonPath(more[0..2]), @src());
 }
-
-test "" {
-    @import("std").testing.refAllDecls(@This());
-}

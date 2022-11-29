@@ -2224,15 +2224,15 @@ pub fn NewJSSink(comptime SinkType: type, comptime name_: []const u8) type {
         }
 
         pub const Export = shim.exportFunctions(.{
-            .@"finalize" = finalize,
-            .@"write" = write,
-            .@"close" = close,
-            .@"flush" = flush,
-            .@"start" = start,
-            .@"end" = end,
-            .@"construct" = construct,
-            .@"endWithSink" = endWithSink,
-            .@"updateRef" = updateRef,
+            .finalize = finalize,
+            .write = write,
+            .close = close,
+            .flush = flush,
+            .start = start,
+            .end = end,
+            .construct = construct,
+            .endWithSink = endWithSink,
+            .updateRef = updateRef,
         });
 
         pub fn updateRef(ptr: *anyopaque, value: bool) callconv(.C) void {
@@ -2819,7 +2819,7 @@ pub fn ReadableStreamSource(
     comptime onStart: anytype,
     comptime onPull: anytype,
     comptime onCancel: fn (this: *Context) void,
-    comptime deinit: fn (this: *Context) void,
+    comptime deinit_fn: fn (this: *Context) void,
     comptime setRefUnrefFn: ?fn (this: *Context, enable: bool) void,
     comptime drainInternalBuffer: ?fn (this: *Context) bun.ByteList,
 ) type {
@@ -2897,7 +2897,7 @@ pub fn ReadableStreamSource(
                 return;
             }
             this.deinited = true;
-            deinit(&this.context);
+            deinit_fn(&this.context);
         }
 
         pub fn getError(this: *This) ?Syscall.Error {
@@ -3039,7 +3039,7 @@ pub fn ReadableStreamSource(
             }
 
             pub const Export = shim.exportFunctions(.{
-                .@"load" = load,
+                .load = load,
             });
 
             comptime {

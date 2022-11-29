@@ -4788,7 +4788,11 @@ Bun.gc(synchronously);
 
 #### JavaScript heap snapshot
 
-You can also take a heap snapshot of the JavaScript heap. This is useful for debugging memory leaks.
+Heap snapshots let you inspect what objects are not being freed. You can use the `bun:jsc` module to take a heap snapshot and then view it with Safari or WebKit GTK developer tools.
+
+<img width="1324" alt="image" src="https://user-images.githubusercontent.com/709451/204429337-b0d8935f-3509-4071-b991-217794d1fb27.png">
+
+To generate a heap snapshot:
 
 ```ts
 import { generateHeapSnapshot } from "bun:jsc";
@@ -4805,10 +4809,6 @@ To view the snapshot, open the `heap.json` file in Safari's Developer Tools (or 
 4. Click "Import" and select your heap snapshot JSON
 
 ![image](https://user-images.githubusercontent.com/709451/204428943-ba999e8f-8984-4f23-97cb-b4e3e280363e.png)
-
-On success, it will look something like this:
-
-<img width="1324" alt="image" src="https://user-images.githubusercontent.com/709451/204429337-b0d8935f-3509-4071-b991-217794d1fb27.png">
 
 #### Native heap stats
 

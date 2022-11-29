@@ -290,6 +290,7 @@ pub extern fn JSC__JSValue__fromInt64NoTruncate(arg0: ?*JSC__JSGlobalObject, arg
 pub extern fn JSC__JSValue__fromUInt64NoTruncate(arg0: ?*JSC__JSGlobalObject, arg1: u64) JSC__JSValue;
 pub extern fn JSC__JSValue__getClassName(JSValue0: JSC__JSValue, arg1: ?*JSC__JSGlobalObject, arg2: [*c]ZigString) void;
 pub extern fn JSC__JSValue__getErrorsProperty(JSValue0: JSC__JSValue, arg1: ?*JSC__JSGlobalObject) JSC__JSValue;
+pub extern fn JSC__JSValue__getIfPropertyExistsFromPath(JSValue0: JSC__JSValue, arg1: ?*JSC__JSGlobalObject, JSValue2: JSC__JSValue) JSC__JSValue;
 pub extern fn JSC__JSValue__getIfPropertyExistsImpl(JSValue0: JSC__JSValue, arg1: ?*JSC__JSGlobalObject, arg2: [*c]const u8, arg3: u32) JSC__JSValue;
 pub extern fn JSC__JSValue__getLengthOfArray(JSValue0: JSC__JSValue, arg1: ?*JSC__JSGlobalObject) u64;
 pub extern fn JSC__JSValue__getNameProperty(JSValue0: JSC__JSValue, arg1: ?*JSC__JSGlobalObject, arg2: [*c]ZigString) void;

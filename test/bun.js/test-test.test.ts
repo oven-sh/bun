@@ -648,7 +648,7 @@ test("properties with the same circularity are equal", () => {
   expect(c).toEqual(d);
 });
 
-test("arrays", () => {
+test("toEqual() - arrays", () => {
   expect([1, 2, 3]).toEqual([1, 2, 3]);
   expect([1, 2, 3, 4]).not.toEqual([1, 2, 3]);
 });
@@ -899,118 +899,337 @@ test("testing Bun.deepEquals() using isEqual()", () => {
   expect(-Infinity).toEqual(-1 / 0);
 });
 
-// test("toHaveProperty()", () => {
-//   const a = new Array(["a", "b", "c"]);
-//   // expect(a).toHaveProperty("0.1", "b");
-//   const b = new Array("a", "b", "c");
-//   expect({ a: { b: { c: 1 } } }).toHaveProperty(b);
-//   const c = {
-//     a: { b: 1 },
-//     "a.b": 2,
-//   };
-//   const d = new Array("a.b");
-//   expect(c).toHaveProperty(d, 2);
-//   const houseForSale = {
-//     bath: true,
-//     bedrooms: 4,
-//     kitchen: {
-//       amenities: ["oven", "stove", "washer"],
-//       area: 20,
-//       wallColor: "white",
-//       "nice.oven": true,
-//     },
-//     livingroom: {
-//       amenities: [
-//         {
-//           couch: [
-//             ["large", { dimensions: [20, 20] }],
-//             ["small", { dimensions: [10, 10] }],
-//           ],
-//         },
-//       ],
-//     },
-//     sunroom: "yes",
-//     "ceiling.height": 20,
-//     "nono.nooooo": 3,
-//     nono: { nooooo: 5 },
-//   };
-//   expect(houseForSale).toHaveProperty("nono.nooooo");
-//   expect(houseForSale).toHaveProperty(["nono", "nooooo"]);
-//   expect(houseForSale).toHaveProperty(["nono.nooooo"]);
-//   expect(houseForSale).not.toHaveProperty(".");
-//   expect(houseForSale).not.toHaveProperty("]");
-//   expect(houseForSale).not.toHaveProperty("[");
-//   expect(houseForSale).not.toHaveProperty("[]");
-//   expect(houseForSale).not.toHaveProperty("[[]]");
-//   expect(houseForSale).not.toHaveProperty("[[");
-//   expect(houseForSale).not.toHaveProperty("]]");
-//   expect(houseForSale).not.toHaveProperty("[]]");
-//   expect(houseForSale).not.toHaveProperty("[[]");
-//   expect(houseForSale).not.toHaveProperty(".]");
-//   expect(houseForSale).not.toHaveProperty(".[");
-//   expect(houseForSale).not.toHaveProperty("[.");
-//   expect(houseForSale).not.toHaveProperty("].");
-//   expect(houseForSale).not.toHaveProperty("].[");
-//   expect(houseForSale).not.toHaveProperty("].]");
-//   expect(houseForSale).not.toHaveProperty("[.]");
-//   expect(houseForSale).not.toHaveProperty("[.[");
-//   expect(houseForSale).toHaveProperty("bath");
-//   expect(houseForSale).not.toHaveProperty("jacuzzi");
-//   // // expect(houseForSale).toHaveProperty("jacuzzi");
-//   // // // expect(houseForSale).not.toHaveProperty("bath");
-//   expect(houseForSale).toHaveProperty("bath", true);
-//   expect(houseForSale).not.toHaveProperty("bath", false);
-//   // // // expect(houseForSale).toHaveProperty("bath", false);
-//   // // // expect(houseForSale).not.toHaveProperty("bath", true);
-//   expect(houseForSale).toHaveProperty("bedrooms", 4);
-//   expect(houseForSale).toHaveProperty(["sunroom"], "yes");
-//   expect(houseForSale).toHaveProperty("kitchen.area", 20);
-//   expect(houseForSale).toHaveProperty("kitchen.amenities", [
-//     "oven",
-//     "stove",
-//     "washer",
-//   ]);
-//   expect(houseForSale).not.toHaveProperty(["kitchen", "area"], 21);
-//   expect(houseForSale).toHaveProperty(["kitchen", "area"], 20);
-//   expect(houseForSale).not.toHaveProperty(["kitchen", "area"], 29);
-//   expect(houseForSale).toHaveProperty(
-//     ["kitchen", "amenities"],
-//     ["oven", "stove", "washer"],
-//   );
-//   expect(houseForSale).toHaveProperty("kitchen.amenities[2]", "washer");
-//   expect(houseForSale).toHaveProperty(["kitchen", "amenities", 1], "stove");
-//   expect(houseForSale).toHaveProperty(["kitchen", "amenities", 0], "oven");
-//   expect(houseForSale).toHaveProperty(
-//     "livingroom.amenities[0].couch[0][1].dimensions[0]",
-//     20,
-//   );
-//   expect(houseForSale).toHaveProperty(["kitchen", "nice.oven"]);
-//   expect(houseForSale).not.toHaveProperty(["kitchen", "open"]);
-//   expect(houseForSale).toHaveProperty(["ceiling.height"], 20);
-//   expect({ a: { b: 1 } }).toHaveProperty("a.b");
-//   expect({ a: [2, 3, 4] }).toHaveProperty("a.0");
-//   expect({ a: [2, 3, 4] }).toHaveProperty("a.1");
-//   expect({ a: [2, 3, 4] }).toHaveProperty("a.2");
-//   expect({ a: [2, 3, 4] }).toHaveProperty("a[1]");
-//   expect([2, 3, 4]).toHaveProperty("1");
-//   expect([2, 3, 4]).toHaveProperty("[1]");
-//   expect([2, [6, 9], 4]).toHaveProperty("1.1");
-//   expect([2, [6, 9], 4]).toHaveProperty("1[1]");
-//   expect([2, [6, 9], 4]).toHaveProperty("[1].1");
-//   expect([2, [6, 9], 4]).toHaveProperty("[1][1]");
-//   expect([2, [6, 9], 4]).toHaveProperty([0], 2);
-//   expect({ a: { b: 1 } }).toHaveProperty("a.b");
-//   expect({ a: [1, 2, [3, { b: 1 }]] }).toHaveProperty("a.2.1.b");
-//   expect({ a: [1, 2, [3, { b: 1 }]] }).toHaveProperty("a");
-//   expect({ a: [1, 2, [3, { b: 1 }]] }).toHaveProperty("a[2][1].b");
-//   expect({ a: [1, 2, [3, { b: 1 }]] }).toHaveProperty("a[2][1]");
-//   expect({ a: [1, 2, [3, { b: 1 }]] }).not.toHaveProperty("a[2][1].c");
-//   expect("test").toHaveProperty("length");
-//   expect({}).toHaveProperty("constructor");
-//   expect({}).toHaveProperty("constructor.name");
-//   expect({}).toHaveProperty("constructor.name", "Object");
-//   expect(new Date()).toHaveProperty("getTime");
-// });
+test("toHaveProperty() - emojis", () => {
+  expect({ "👍": "thumbs up" }).toHaveProperty("👍", "thumbs up");
+  expect({ "👩‍👩‍👧‍👧": "family" }).toHaveProperty("👩‍👩‍👧‍👧", "family");
+  expect({ "😶‍🌫️": "fog" }).toHaveProperty("😶‍🌫️", "fog");
+  expect({ "👩‍❤️‍👨": "couple" }).toHaveProperty("👩‍❤️‍👨", "couple");
+  expect({ "👩‍❤️‍👨‍👨‍👧‍👧": "family" }).toHaveProperty("👩‍❤️‍👨‍👨‍👧‍👧", "family");
+  expect({ "👩‍❤️‍👨‍👨‍👧": "family" }).toHaveProperty("👩‍❤️‍👨‍👨‍👧", "family");
+  expect({ "👩‍❤️‍👨‍👨‍👧": "family" }).not.toHaveProperty("👩‍❤️‍👨‍👨‍👧‍👧", "family");
+
+  // emojis in array
+  expect(["👍", "👎"]).toHaveProperty("0", "👍");
+  expect(["👍", "👎"]).toHaveProperty("1", "👎");
+  expect(["👍", "👎"]).not.toHaveProperty("0", "👎");
+  expect(["👍", "👎"]).not.toHaveProperty("1", "👍");
+  expect(["👩‍❤️‍👨‍👨‍👧‍👧"]).toHaveProperty("0", "👩‍❤️‍👨‍👨‍👧‍👧");
+  expect(["👩‍❤️‍👨‍👨‍👧‍👧"]).toHaveProperty([0], "👩‍❤️‍👨‍👨‍👧‍👧");
+  expect(["😶‍🌫️"]).toHaveProperty([0], "😶‍🌫️");
+});
+
+test("toHaveProperty() - dot and bracket notation edge cases", () => {
+  expect({ a: 1 }).not.toHaveProperty(".");
+  expect({ a: 1 }).not.toHaveProperty("]");
+  expect({ a: 1 }).not.toHaveProperty("[");
+  expect({ a: 1 }).not.toHaveProperty("[]");
+  expect({ a: 1 }).not.toHaveProperty("[[]]");
+  expect({ a: 1 }).not.toHaveProperty("[[");
+  expect({ a: 1 }).not.toHaveProperty("]]");
+  expect({ a: 1 }).not.toHaveProperty("[]]");
+  expect({ a: 1 }).not.toHaveProperty("[[]");
+  expect({ a: 1 }).not.toHaveProperty(".]");
+  expect({ a: 1 }).not.toHaveProperty(".[");
+  expect({ "": 1 }).toHaveProperty("[.", 1);
+  expect({ a: 1 }).not.toHaveProperty("[.");
+  expect({ a: 1 }).not.toHaveProperty("].");
+  expect({ a: 1 }).not.toHaveProperty("].[");
+  expect({ a: 1 }).not.toHaveProperty("].]");
+  expect({ a: 1 }).not.toHaveProperty("[.]");
+  expect({ a: 1 }).not.toHaveProperty("[.[");
+
+  expect([1]).toHaveProperty("[0]", 1);
+  expect([1]).toHaveProperty("[0][", 1);
+  expect([1]).toHaveProperty("[0]]", 1);
+  expect([1]).toHaveProperty("[0][[", 1);
+  expect([1]).toHaveProperty("[][[[0]", 1);
+  expect([1]).toHaveProperty("[][[[]][[][][.0", 1);
+  expect([1]).toHaveProperty("[][[[]][[][][.[][[][[[][][0", 1);
+  expect([1]).not.toHaveProperty("......1.............", 1);
+  expect([1]).not.toHaveProperty("......0.............", 1);
+  expect([1]).not.toHaveProperty(".0", 1);
+  expect([1]).not.toHaveProperty("0.", 1);
+  expect([{ "": 1 }]).toHaveProperty("0.", 1);
+  expect({ "": { "": 1 } }).toHaveProperty(".", 1);
+  expect({ "": { "": { "": 1 } } }).toHaveProperty("..", 1);
+  expect({ "": { "": { "": 1 } } }).not.toHaveProperty(".", 1);
+  expect({ "": { "": { "": 1 } } }).not.toHaveProperty("...", 1);
+  expect({ "": { "": { "": 1 } } }).not.toHaveProperty("....", 1);
+  expect([1]).toHaveProperty("0.[[[][][]][[[][[]]]]", 1);
+  expect([1]).not.toHaveProperty("[0].", 1);
+  expect([1]).toHaveProperty("0", 1);
+  expect([1]).toHaveProperty("[].0", 1);
+  expect([1]).toHaveProperty("[.0", 1);
+  expect([1]).toHaveProperty("].0", 1);
+  expect([1]).toHaveProperty("0[]][[[]", 1);
+  expect([1]).toHaveProperty("[[]][[[][][0", 1);
+  expect([1]).toHaveProperty("0", 1);
+  expect([1]).toHaveProperty("0.[", 1);
+  expect([1]).not.toHaveProperty("0........[", 1);
+  expect([1]).not.toHaveProperty("0..[", 1);
+  expect([1]).not.toHaveProperty(".0", 1);
+  expect([1]).toHaveProperty("[].0", 1);
+  expect([1]).not.toHaveProperty("[]..0", 1);
+  expect([1]).toHaveProperty("[.][.[[.]]]]].[.[].].]]]]].].].0", 1);
+  expect([1]).not.toHaveProperty("[.][.[[.]]]]].[.[].].]]0]]].].].", 1);
+  expect([1]).toHaveProperty("[.][.[[.]]]]].[.[].].]]0]]].].]", 1);
+  expect([1]).not.toHaveProperty("[.][.[[..]]]]].[.[].].]]0]]].].]", 1);
+  expect([1]).toHaveProperty("[.][.[[.]]]]].[.[].].0.]]]]].].]", 1);
+  expect([1]).not.toHaveProperty("[.][.[[.]]]]].[.[].].0.]]] ]].].]", 1);
+  expect([1]).not.toHaveProperty("0      ", 1);
+  expect([1]).not.toHaveProperty("   0      ", 1);
+  expect([1]).not.toHaveProperty("   0[]      ", 1);
+  expect([1]).not.toHaveProperty("   0]      ", 1);
+  expect([1]).not.toHaveProperty(" .[0]", 1);
+
+  expect({ "": 1 }).not.toHaveProperty(".", 1);
+  expect({ "": 1 }).not.toHaveProperty("]", 1);
+  expect({ "": 1 }).not.toHaveProperty("[", 1);
+  expect({ "": 1 }).toHaveProperty("", 1);
+
+  expect({ "": 1 }).not.toHaveProperty("..", 1);
+  expect({ "": { "": 1 } }).not.toHaveProperty("..", 1);
+  expect([{ "": 1 }]).toHaveProperty("0.", 1);
+  expect([{ "": 1 }]).not.toHaveProperty(".0.", 1);
+  expect({ "": [1] }).toHaveProperty(".0", 1);
+  expect({ "": [1] }).not.toHaveProperty("..0", 1);
+  expect([{ "": 1 }]).not.toHaveProperty("0..", 1);
+  expect([{ "": { "": 1 } }]).toHaveProperty("0..", 1);
+
+  expect([1]).not.toHaveProperty("[0].", 1);
+  expect([1]).not.toHaveProperty("[0][0]", 1);
+  expect({ a: [1] }).toHaveProperty("a[[[[[[[[[0]]]", 1);
+  expect({ "[[[": 0 }).not.toHaveProperty("[[[", 0);
+});
+
+test("toHaveProperty() - with string or array", () => {
+  const a = new Array(["a", "b", "c"]);
+  expect(a).toHaveProperty("0.1", "b");
+  const b = new Array("a", "b", "c");
+  expect({ a: { b: { c: 1 } } }).toHaveProperty(b);
+  const c = {
+    a: { b: 1 },
+    "a.b": 2,
+  };
+  const d = new Array("a.b");
+  expect(c).toHaveProperty(d, 2);
+  const houseForSale = {
+    bath: true,
+    bedrooms: 4,
+    kitchen: {
+      amenities: ["oven", "stove", "washer"],
+      area: 20,
+      wallColor: "white",
+      "nice.oven": true,
+    },
+    livingroom: {
+      amenities: [
+        {
+          couch: [
+            ["large", { dimensions: [20, 20] }],
+            ["small", { dimensions: [10, 10] }],
+          ],
+        },
+      ],
+    },
+    sunroom: "yes",
+    "ceiling.height": 20,
+    "entrance.window": 3,
+    entrance: { window: 5 },
+  };
+  expect(houseForSale).toHaveProperty("entrance.window", 5);
+  expect(houseForSale).toHaveProperty(["entrance", "window"], 5);
+  expect(houseForSale).toHaveProperty(["entrance.window"], 3);
+  expect(houseForSale).toHaveProperty("bath");
+  expect(houseForSale).not.toHaveProperty("jacuzzi");
+  // expect(houseForSale).toHaveProperty("jacuzzi");
+  // expect(houseForSale).not.toHaveProperty("bath");
+  expect(houseForSale).toHaveProperty("bath", true);
+  expect(houseForSale).not.toHaveProperty("bath", false);
+  // expect(houseForSale).toHaveProperty("bath", false);
+  // expect(houseForSale).not.toHaveProperty("bath", true);
+  expect(houseForSale).toHaveProperty("bedrooms", 4);
+  expect(houseForSale).toHaveProperty(["sunroom"], "yes");
+  expect(houseForSale).toHaveProperty("kitchen.area", 20);
+  expect(houseForSale).toHaveProperty("kitchen.amenities", [
+    "oven",
+    "stove",
+    "washer",
+  ]);
+  expect(houseForSale).not.toHaveProperty(["kitchen", "area"], 21);
+  expect(houseForSale).toHaveProperty(["kitchen", "area"], 20);
+  expect(houseForSale).not.toHaveProperty(["kitchen", "area"], 29);
+  expect(houseForSale).toHaveProperty(
+    ["kitchen", "amenities"],
+    ["oven", "stove", "washer"],
+  );
+  expect(houseForSale).toHaveProperty("kitchen.amenities[2]", "washer");
+  expect(houseForSale).toHaveProperty(["kitchen", "amenities", 1], "stove");
+  expect(houseForSale).toHaveProperty(["kitchen", "amenities", 0], "oven");
+  expect(houseForSale).toHaveProperty(
+    "livingroom.amenities[0].couch[0][1].dimensions[0]",
+    20,
+  );
+  expect(houseForSale).toHaveProperty(["kitchen", "nice.oven"]);
+  expect(houseForSale).not.toHaveProperty(["kitchen", "open"]);
+  expect(houseForSale).toHaveProperty(["ceiling.height"], 20);
+  expect({ a: { b: 1 } }).toHaveProperty("a.b");
+  expect({ a: [2, 3, 4] }).toHaveProperty("a.0");
+  expect({ a: [2, 3, 4] }).toHaveProperty("a.1");
+  expect({ a: [2, 3, 4] }).toHaveProperty("a.2");
+  expect({ a: [2, 3, 4] }).toHaveProperty("a[1]");
+  expect([2, 3, 4]).toHaveProperty("1");
+  expect([2, 3, 4]).toHaveProperty("[1]");
+  expect([2, [6, 9], 4]).toHaveProperty("1.1");
+  expect([2, [6, 9], 4]).toHaveProperty("1[1]");
+  expect([2, [6, 9], 4]).toHaveProperty("[1].1");
+  expect([2, [6, 9], 4]).toHaveProperty("[1][1]");
+  expect([2, [6, 9], 4]).toHaveProperty([0], 2);
+  expect({ a: { b: 1 } }).toHaveProperty("a.b");
+  expect({ a: [1, 2, [3, { b: 1 }]] }).toHaveProperty("a.2.1.b");
+  expect({ a: [1, 2, [3, { b: 1 }]] }).toHaveProperty("a");
+  expect({ a: [1, 2, [3, { b: 1 }]] }).toHaveProperty("a[2][1].b");
+  expect({ a: [1, 2, [3, { b: 1 }]] }).toHaveProperty("a[2][1]");
+  expect({ a: [1, 2, [3, { b: 1 }]] }).not.toHaveProperty("a[2][1].c");
+  expect("test").toHaveProperty("length");
+  expect({}).toHaveProperty("constructor");
+  expect({}).toHaveProperty("constructor.name");
+  expect({}).toHaveProperty("constructor.name", "Object");
+  expect(new Date()).toHaveProperty("getTime");
+});
+
+test("toHaveProperty() - all", () => {
+  expect({ a: 1 }).toHaveProperty("a");
+  expect({ a: 1 }).toHaveProperty("a", 1);
+  expect({ a: 1 }).not.toHaveProperty("b");
+  expect({ a: 1 }).not.toHaveProperty("a", 2);
+
+  // test with object with property "a" with all types of values (including undefined)
+  expect({ a: undefined }).toHaveProperty("a");
+  expect({ a: null }).toHaveProperty("a");
+  expect({ a: 0 }).toHaveProperty("a");
+  expect({ a: false }).toHaveProperty("a");
+  expect({ a: "" }).toHaveProperty("a");
+  expect({ a: {} }).toHaveProperty("a");
+  expect({ a: [] }).toHaveProperty("a");
+  expect({ a: () => {} }).toHaveProperty("a");
+
+  // test with object with property "a" with all types of values (including undefined)
+  expect({ a: undefined }).toHaveProperty("a", undefined);
+  expect({ a: null }).toHaveProperty("a", null);
+  expect({ a: 0 }).toHaveProperty("a", 0);
+  expect({ a: false }).toHaveProperty("a", false);
+  expect({ a: "" }).toHaveProperty("a", "");
+  expect({ a: {} }).toHaveProperty("a", {});
+  expect({ a: [] }).toHaveProperty("a", []);
+  expect({ a: () => {} }).not.toHaveProperty("a", () => {});
+
+  // test with object with property "a" with all types of values (including undefined)
+
+  expect({ a: undefined }).not.toHaveProperty("a", null);
+  expect({ a: null }).not.toHaveProperty("a", undefined);
+  expect({ a: 0 }).not.toHaveProperty("a", null);
+  expect({ a: false }).not.toHaveProperty("a", null);
+  expect({ a: "" }).not.toHaveProperty("a", null);
+  expect({ a: {} }).not.toHaveProperty("a", null);
+  expect({ a: [] }).not.toHaveProperty("a", null);
+  expect({ a: () => {} }).not.toHaveProperty("a", null);
+
+  expect({ a: undefined }).not.toHaveProperty("a", 0);
+  expect({ a: null }).not.toHaveProperty("a", 0);
+  expect({ a: 0 }).not.toHaveProperty("a", 1);
+  expect({ a: false }).not.toHaveProperty("a", 0);
+  expect({ a: "" }).not.toHaveProperty("a", 0);
+  expect({ a: {} }).not.toHaveProperty("a", 0);
+  expect({ a: [] }).not.toHaveProperty("a", 0);
+  expect({ a: () => {} }).not.toHaveProperty("a", 0);
+
+  expect({ a: undefined }).not.toHaveProperty("a", false);
+  expect({ a: null }).not.toHaveProperty("a", false);
+  expect({ a: 0 }).not.toHaveProperty("a", false);
+  expect({ a: false }).not.toHaveProperty("a", true);
+  expect({ a: "" }).not.toHaveProperty("a", false);
+  expect({ a: {} }).not.toHaveProperty("a", false);
+  expect({ a: [] }).not.toHaveProperty("a", false);
+  expect({ a: () => {} }).not.toHaveProperty("a", false);
+
+  expect({ a: undefined }).not.toHaveProperty("a", "");
+  expect({ a: null }).not.toHaveProperty("a", "");
+  expect({ a: 0 }).not.toHaveProperty("a", "");
+  expect({ a: false }).not.toHaveProperty("a", "");
+  expect({ a: "" }).not.toHaveProperty("a", "a");
+  expect({ a: {} }).not.toHaveProperty("a", "");
+  expect({ a: [] }).not.toHaveProperty("a", "");
+  expect({ a: () => {} }).not.toHaveProperty("a", "");
+
+  expect({ a: undefined }).not.toHaveProperty("a", {});
+  expect({ a: null }).not.toHaveProperty("a", {});
+  expect({ a: 0 }).not.toHaveProperty("a", {});
+  expect({ a: false }).not.toHaveProperty("a", {});
+  expect({ a: "" }).not.toHaveProperty("a", {});
+  expect({ a: {} }).not.toHaveProperty("a", { a: 1 });
+  expect({ a: [] }).not.toHaveProperty("a", {});
+  expect({ a: () => {} }).not.toHaveProperty("a", {});
+
+  // test object with property "a" with value set, map, string
+  expect({ a: new Set([1, 2, 3]) }).toHaveProperty("a", new Set([3, 2, 1]));
+  expect({ a: new Map([{ a: 1 }, { b: 2 }, { c: 3 }]) }).toHaveProperty(
+    "a",
+    new Map([{ c: 3 }, { b: 2 }, { a: 1 }]),
+  );
+  expect({ a: new String("a") }).toHaveProperty("a", new String("a"));
+  expect({ a: new String("a") }).not.toHaveProperty("a", "a");
+  expect({ a: new String("a") }).not.toHaveProperty("a", "b");
+  expect({ a: new String("a") }).not.toHaveProperty("a", new String("b"));
+  expect({ a: new String("a") }).not.toHaveProperty("a", new Number(1));
+  expect({ a: new String("a") }).not.toHaveProperty("a", new Boolean(true));
+  expect({ a: new String("a") }).not.toHaveProperty("a", new Boolean(false));
+  expect({ a: new String("a") }).not.toHaveProperty("a", new Object());
+  expect({ a: new String("a") }).not.toHaveProperty("a", new Array());
+  expect({ a: new String("a") }).not.toHaveProperty("a", new Function());
+  expect({ a: new String("a") }).not.toHaveProperty("a", new Date());
+  expect({ a: new String("a") }).not.toHaveProperty("a", new RegExp());
+  expect({ a: new String("a") }).not.toHaveProperty("a", new Error());
+  expect({ a: new String("a") }).not.toHaveProperty("a", new Promise(() => {}));
+  expect({ a: new String("a") }).not.toHaveProperty("a", new WeakSet());
+  expect({ a: new String("a") }).not.toHaveProperty("a", new WeakMap());
+  expect({ a: new String("a") }).not.toHaveProperty("a", Symbol("a"));
+  expect({ a: new String("a") }).not.toHaveProperty("a", new Int8Array());
+  expect({ a: new String("a") }).not.toHaveProperty("a", new Uint8Array());
+  expect({ a: new String("a") }).not.toHaveProperty(
+    "a",
+    new Uint8ClampedArray(),
+  );
+  expect({ a: new String("a") }).not.toHaveProperty("a", new Int16Array());
+  expect({ a: new String("a") }).not.toHaveProperty("a", new Uint16Array());
+  expect({ a: new String("a") }).not.toHaveProperty("a", new Int32Array());
+  expect({ a: new String("a") }).not.toHaveProperty("a", new Uint32Array());
+  expect({ a: new String("a") }).not.toHaveProperty("a", new Float32Array());
+  expect({ a: new String("a") }).not.toHaveProperty("a", new Float64Array());
+  expect({ a: new String("a") }).not.toHaveProperty("a", new BigInt64Array());
+  expect({ a: new String("a") }).not.toHaveProperty("a", new BigUint64Array());
+  expect({ a: new String("a") }).not.toHaveProperty("a", new ArrayBuffer());
+  expect({ a: new String("a") }).not.toHaveProperty(
+    "a",
+    new SharedArrayBuffer(),
+  );
+  expect({ a: new String("a") }).not.toHaveProperty(
+    "a",
+    new DataView(new ArrayBuffer(1)),
+  );
+
+  // test property equality with sets, maps, objects, arrays, and String
+  expect({ a: new Set([1, 2, 3]) }).toHaveProperty("a", new Set([1, 2, 3]));
+  expect({ a: new Map([{ a: 1 }, { b: 2 }, { c: 3 }]) }).toHaveProperty(
+    "a",
+    new Map([{ a: 1 }, { b: 2 }, { c: 3 }]),
+  );
+  expect({ a: { a: 1, b: 2, c: 3 } }).toHaveProperty("a", { a: 1, b: 2, c: 3 });
+  expect({ a: [1, 2, 3] }).toHaveProperty("a", [1, 2, 3]);
+  expect({ a: "a" }).toHaveProperty("a", "a");
+  expect({ a: new String("a") }).toHaveProperty("a", new String("a"));
+  expect({ a: new String("a") }).not.toHaveProperty("a", "a");
+});
 
 test("toBe()", () => {
   const a = 1;

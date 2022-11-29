@@ -3135,6 +3135,14 @@ pub const JSValue = enum(JSValueReprInt) {
     }
 
     pub fn toInt64(this: JSValue) i64 {
+        if (this.isInt32()) {
+            return this.asInt32();
+        }
+
+        if (this.isNumber()) {
+            return @floatToInt(i64, this.asDouble());
+        }
+
         return cppFn("toInt64", .{this});
     }
 

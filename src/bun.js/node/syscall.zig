@@ -326,11 +326,12 @@ pub fn pwrite(fd: os.fd_t, bytes: []const u8, offset: i64) Maybe(usize) {
 }
 
 pub fn read(fd: os.fd_t, buf: []u8) Maybe(usize) {
+    const debug_timer = bun.Output.DebugTimer.start();
     const adjusted_len = @minimum(buf.len, max_count);
     if (comptime Environment.isMac) {
         const rc = system.@"read$NOCANCEL"(fd, buf.ptr, adjusted_len);
 
-        log("read({d}, {d}) = {d}", .{ fd, adjusted_len, rc });
+        log("read({d}, {d}) = {d} ({any})", .{ fd, adjusted_len, rc, debug_timer });
 
         if (Maybe(usize).errnoSys(rc, .read)) |err| {
             return err;
@@ -339,7 +340,7 @@ pub fn read(fd: os.fd_t, buf: []u8) Maybe(usize) {
     } else {
         while (true) {
             const rc = sys.read(fd, buf.ptr, adjusted_len);
-            log("read({d}, {d}) = {d}", .{ fd, adjusted_len, rc });
+            log("read({d}, {d}) = {d} ({any})", .{ fd, adjusted_len, rc, debug_timer });
 
             if (Maybe(usize).errnoSysFd(rc, .read, fd)) |err| {
                 if (err.getErrno() == .INTR) continue;

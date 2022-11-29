@@ -617,3 +617,33 @@ pub fn printError(comptime fmt: string, args: anytype) void {
             std.fmt.format(source.error_stream.writer(), fmt, args) catch {};
     }
 }
+
+pub const DebugTimer = struct {
+    timer: @import("global.zig").DebugOnly(std.time.Timer) = undefined,
+
+    pub fn start() DebugTimer {
+        if (comptime Environment.isDebug) {
+            return DebugTimer{
+                .timer = std.time.Timer.start() catch unreachable,
+            };
+        } else {
+            return .{};
+        }
+    }
+
+    pub const WriteError = error{};
+
+    pub fn format(self: DebugTimer, comptime _: []const u8, opts: std.fmt.FormatOptions, writer_: anytype) WriteError!void {
+        if (comptime Environment.isDebug) {
+            var timer = self.timer;
+            var _opts = opts;
+            _opts.precision = 3;
+            std.fmt.formatFloatDecimal(
+                @floatCast(f64, @intToFloat(f128, timer.read()) / std.time.ns_per_ms),
+                _opts,
+                writer_,
+            ) catch unreachable;
+            writer_.writeAll("ms") catch unreachable;
+        }
+    }
+};

@@ -4812,7 +4812,32 @@ To view the snapshot, open the `heap.json` file in Safari's Developer Tools (or 
 
 #### Native heap stats
 
-Bun uses mimalloc for the other heap. To report a summary of non-JavaScript memory usage, set the `MIMALLOC_SHOW_STATS=1` environment variable.
+Bun uses mimalloc for the other heap. To report a summary of non-JavaScript memory usage, set the `MIMALLOC_SHOW_STATS=1` environment variable. and stats will print on exit.
+
+```js
+MIMALLOC_SHOW_STATS=1 bun script.js
+
+# will show something like this:
+heap stats:    peak      total      freed    current       unit      count
+  reserved:   64.0 MiB   64.0 MiB      0       64.0 MiB                        not all freed!
+ committed:   64.0 MiB   64.0 MiB      0       64.0 MiB                        not all freed!
+     reset:      0          0          0          0                            ok
+   touched:  128.5 KiB  128.5 KiB    5.4 MiB   -5.3 MiB                        ok
+  segments:      1          1          0          1                            not all freed!
+-abandoned:      0          0          0          0                            ok
+   -cached:      0          0          0          0                            ok
+     pages:      0          0         53        -53                            ok
+-abandoned:      0          0          0          0                            ok
+ -extended:      0
+ -noretire:      0
+     mmaps:      0
+   commits:      0
+   threads:      0          0          0          0                            ok
+  searches:     0.0 avg
+numa nodes:       1
+   elapsed:       0.068 s
+   process: user: 0.061 s, system: 0.014 s, faults: 0, rss: 57.4 MiB, commit: 64.0 MiB
+```
 
 ## Credits
 

@@ -1,4 +1,10 @@
-import { readableStreamToText, spawn, spawnSync, write } from "bun";
+import {
+  ArrayBufferSink,
+  readableStreamToText,
+  spawn,
+  spawnSync,
+  write,
+} from "bun";
 import { describe, expect, it } from "bun:test";
 import { gcTick as _gcTick } from "./gc";
 import { rmdirSync, unlinkSync, rmSync, writeFileSync } from "node:fs";
@@ -9,43 +15,43 @@ for (let [gcTick, label] of [
 ] as const) {
   Bun.gc(true);
   describe(label, () => {
-    // describe("spawnSync", () => {
-    //   const hugeString = "hello".repeat(10000).slice();
+    describe("spawnSync", () => {
+      const hugeString = "hello".repeat(10000).slice();
 
-    //   it("as an array", () => {
-    //     const { stdout } = spawnSync(["echo", "hi"]);
-    //     gcTick();
-    //     // stdout is a Buffer
-    //     const text = stdout!.toString();
-    //     expect(text).toBe("hi\n");
-    //     gcTick();
-    //   });
+      it("as an array", () => {
+        const { stdout } = spawnSync(["echo", "hi"]);
+        gcTick();
+        // stdout is a Buffer
+        const text = stdout!.toString();
+        expect(text).toBe("hi\n");
+        gcTick();
+      });
 
-    //   it("Uint8Array works as stdin", async () => {
-    //     const { stdout, stderr } = spawnSync({
-    //       cmd: ["cat"],
-    //       stdin: new TextEncoder().encode(hugeString),
-    //     });
-    //     gcTick();
-    //     expect(stdout!.toString()).toBe(hugeString);
-    //     expect(stderr!.byteLength).toBe(0);
-    //     gcTick();
-    //   });
+      it("Uint8Array works as stdin", async () => {
+        const { stdout, stderr } = spawnSync({
+          cmd: ["cat"],
+          stdin: new TextEncoder().encode(hugeString),
+        });
+        gcTick();
+        expect(stdout!.toString()).toBe(hugeString);
+        expect(stderr!.byteLength).toBe(0);
+        gcTick();
+      });
 
-    //   it("check exit code", async () => {
-    //     const { exitCode: exitCode1 } = spawnSync({
-    //       cmd: ["ls"],
-    //     });
-    //     gcTick();
-    //     const { exitCode: exitCode2 } = spawnSync({
-    //       cmd: ["false"],
-    //     });
-    //     gcTick();
-    //     expect(exitCode1).toBe(0);
-    //     expect(exitCode2).toBe(1);
-    //     gcTick();
-    //   });
-    // });
+      it("check exit code", async () => {
+        const { exitCode: exitCode1 } = spawnSync({
+          cmd: ["ls"],
+        });
+        gcTick();
+        const { exitCode: exitCode2 } = spawnSync({
+          cmd: ["false"],
+        });
+        gcTick();
+        expect(exitCode1).toBe(0);
+        expect(exitCode2).toBe(1);
+        gcTick();
+      });
+    });
 
     describe("spawn", () => {
       const hugeString = "hello".repeat(10000).slice();
@@ -124,38 +130,38 @@ for (let [gcTick, label] of [
         gcTick();
       });
 
-      it("check exit code from onExit", async () => {
-        var exitCode1, exitCode2;
-        await new Promise<void>((resolve) => {
-          var counter = 0;
-          spawn({
-            cmd: ["ls"],
-            onExit(code) {
-              exitCode1 = code;
-              counter++;
-              if (counter === 2) {
-                resolve();
-              }
-            },
-          });
-          gcTick();
-          spawn({
-            cmd: ["false"],
-            onExit(code) {
-              exitCode2 = code;
-              counter++;
-              if (counter === 2) {
-                resolve();
-              }
-            },
-          });
-          gcTick();
-        });
-        gcTick();
-        expect(exitCode1).toBe(0);
-        expect(exitCode2).toBe(1);
-        gcTick();
-      });
+      // it("check exit code from onExit", async () => {
+      //   for (let i = 0; i < 1000; i++) {
+      //     var exitCode1, exitCode2;
+      //     await new Promise<void>((resolve) => {
+      //       var counter = 0;
+      //       spawn({
+      //         cmd: ["ls"],
+      //         onExit(code) {
+      //           exitCode1 = code;
+      //           counter++;
+      //           if (counter === 2) {
+      //             resolve();
+      //           }
+      //         },
+      //       });
+
+      //       spawn({
+      //         cmd: ["false"],
+      //         onExit(code) {
+      //           exitCode2 = code;
+      //           counter++;
+      //           if (counter === 2) {
+      //             resolve();
+      //           }
+      //         },
+      //       });
+      //     });
+
+      //     expect(exitCode1).toBe(0);
+      //     expect(exitCode2).toBe(1);
+      //   }
+      // });
 
       it("Blob works as stdin", async () => {
         rmSync("/tmp/out.123.txt", { force: true });
@@ -314,46 +320,57 @@ for (let [gcTick, label] of [
             describe("should should allow reading stdout", () => {
               it("before exit", async () => {
                 const process = callback();
-                const output = readableStreamToText(process.stdout!);
+                const output = await readableStreamToText(process.stdout!);
+                await process.exited;
                 const expected = fixture + "\n";
 
-                await Promise.all([
-                  process.exited,
-                  output.then((output) => {
-                    expect(output.length).toBe(expected.length);
-                    expect(output).toBe(expected);
-                  }),
-                ]);
+                expect(output.length).toBe(expected.length);
+                expect(output).toBe(expected);
               });
 
               it("before exit (chunked)", async () => {
                 const process = callback();
-                var output = "";
-                const prom2 = (async function () {
-                  for await (const chunk of process.stdout) {
-                    output += new TextDecoder().decode(chunk);
+                var sink = new ArrayBufferSink();
+                var any = false;
+                await (async function () {
+                  var reader = process.stdout?.getReader();
+
+                  reader?.closed.then(
+                    (a) => {
+                      console.log("Closed!");
+                    },
+                    (err) => {
+                      console.log("Closed!", err);
+                    },
+                  );
+                  var done = false,
+                    value;
+                  while (!done) {
+                    ({ value, done } = await reader!.read());
+
+                    if (value) {
+                      any = true;
+                      sink.write(value);
+                    }
                   }
                 })();
+                expect(any).toBe(true);
 
                 const expected = fixture + "\n";
 
-                await Promise.all([process.exited, prom2]);
+                const output = await new Response(sink.end()).text();
                 expect(output.length).toBe(expected.length);
+                await process.exited;
                 expect(output).toBe(expected);
               });
 
               it("after exit", async () => {
                 const process = callback();
-
-                const output = readableStreamToText(process.stdout!);
+                await process.exited;
+                const output = await readableStreamToText(process.stdout!);
                 const expected = fixture + "\n";
-                await Promise.all([
-                  process.exited,
-                  output.then((output) => {
-                    expect(output.length).toBe(expected.length);
-                    expect(output).toBe(expected);
-                  }),
-                ]);
+                expect(output.length).toBe(expected.length);
+                expect(output).toBe(expected);
               });
             });
           });

@@ -390,7 +390,7 @@ pub fn isReadable(fd: std.os.fd_t) PollFlag {
     };
 
     const result = (std.os.poll(polls, 0) catch 0) != 0;
-    global_scope_log("isReadable: {d} ({d})", .{ result, polls[0].revents });
+    global_scope_log("poll({d}) readable: {d} ({d})", .{ fd, result, polls[0].revents });
     return if (result and polls[0].revents & std.os.POLL.HUP != 0)
         PollFlag.hup
     else if (result)
@@ -410,7 +410,7 @@ pub fn isWritable(fd: std.os.fd_t) PollFlag {
     };
 
     const result = (std.os.poll(polls, 0) catch 0) != 0;
-    global_scope_log("isWritable: {d} ({d})", .{ result, polls[0].revents });
+    global_scope_log("poll({d}) writable: {d} ({d})", .{ fd, result, polls[0].revents });
     if (result and polls[0].revents & std.os.POLL.HUP != 0) {
         return PollFlag.hup;
     } else if (result) {

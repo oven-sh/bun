@@ -3329,6 +3329,8 @@ pub const FilePoll = struct {
         return this.flags.contains(.poll_writable) or this.flags.contains(.poll_readable) or this.flags.contains(.poll_process);
     }
 
+    const kqueue_or_epoll = if (Environment.isMac) "kevent" else "epoll";
+
     pub fn onUpdate(poll: *FilePoll, loop: *uws.Loop, size_or_offset: i64) void {
         if (poll.flags.contains(.one_shot) and !poll.flags.contains(.needs_rearm)) {
             if (poll.flags.contains(.has_incremented_poll_count)) poll.deactivate(loop);
@@ -3337,23 +3339,23 @@ pub const FilePoll = struct {
         var ptr = poll.owner;
         switch (ptr.tag()) {
             @field(Owner.Tag, "FIFO") => {
-                log("onUpdate: FIFO", .{});
-                ptr.as(FIFO).ready(size_or_offset);
+                log("onUpdate " ++ kqueue_or_epoll ++ " (fd: {d}) FIFO", .{poll.fd});
+                ptr.as(FIFO).ready(size_or_offset, poll.flags.contains(.hup));
             },
             @field(Owner.Tag, "Subprocess") => {
-                log("onUpdate: Subprocess", .{});
+                log("onUpdate " ++ kqueue_or_epoll ++ " (fd: {d}) Subprocess", .{poll.fd});
                 var loader = ptr.as(JSC.Subprocess);
 
                 loader.onExitNotification();
             },
             @field(Owner.Tag, "FileSink") => {
-                log("onUpdate: FileSink", .{});
+                log("onUpdate " ++ kqueue_or_epoll ++ " (fd: {d}) FileSink", .{poll.fd});
                 var loader = ptr.as(JSC.WebCore.FileSink);
                 loader.onPoll(size_or_offset, 0);
             },
 
             else => {
-                log("onUpdate: disconnected?", .{});
+                log("onUpdate " ++ kqueue_or_epoll ++ " (fd: {d}) disconnected?", .{poll.fd});
             },
         }
     }

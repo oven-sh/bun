@@ -458,17 +458,13 @@ it("ReadableStream for File", async () => {
   stream = undefined;
   while (true) {
     const chunk = await reader.read();
-    gc(true);
     if (chunk.done) break;
     chunks.push(chunk.value);
-    expect(chunk.value.byteLength <= 24).toBe(true);
-    gc(true);
   }
   reader = undefined;
   const output = new Uint8Array(await blob.arrayBuffer()).join("");
   const input = chunks.map((a) => a.join("")).join("");
   expect(output).toBe(input);
-  gc(true);
 });
 
 it("ReadableStream for File errors", async () => {

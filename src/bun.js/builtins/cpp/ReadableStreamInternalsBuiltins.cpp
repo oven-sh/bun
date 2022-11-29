@@ -2268,7 +2268,7 @@ const char* const s_readableStreamInternalsReadableStreamDefaultControllerCanClo
 const JSC::ConstructAbility s_readableStreamInternalsLazyLoadStreamCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableStreamInternalsLazyLoadStreamCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_readableStreamInternalsLazyLoadStreamCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_readableStreamInternalsLazyLoadStreamCodeLength = 3840;
+const int s_readableStreamInternalsLazyLoadStreamCodeLength = 3983;
 static const JSC::Intrinsic s_readableStreamInternalsLazyLoadStreamCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_readableStreamInternalsLazyLoadStreamCode =
     "(function (stream, autoAllocateChunkSize) {\n" \
@@ -2287,6 +2287,14 @@ const char* const s_readableStreamInternalsLazyLoadStreamCode =
     "      this.c = @undefined;\n" \
     "      this.v = @undefined;\n" \
     "      handleResult(val, c, v);\n" \
+    "    }\n" \
+    "\n" \
+    "    function callClose(controller) {\n" \
+    "      try {\n" \
+    "        controller.close();\n" \
+    "      } catch(e) {\n" \
+    "        globalThis.reportError(e);\n" \
+    "      }\n" \
     "    }\n" \
     "\n" \
     "    handleResult = function handleResult(result, controller, view) {\n" \
@@ -2310,7 +2318,7 @@ const char* const s_readableStreamInternalsLazyLoadStreamCode =
     "      }\n" \
     "\n" \
     "      if (closer[0] || result === false) {\n" \
-    "        @enqueueJob(() => controller.close());\n" \
+    "        @enqueueJob(callClose, controller);\n" \
     "        closer[0] = false;\n" \
     "      }\n" \
     "    };\n" \

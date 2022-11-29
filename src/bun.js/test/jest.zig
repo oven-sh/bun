@@ -676,6 +676,8 @@ pub const Expect = struct {
     }
 
     pub fn toEqual(this: *Expect, globalObject: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+        defer this.postMatch(globalObject);
+
         const thisValue = callFrame.this();
         const _arguments = callFrame.arguments(1);
         const arguments: []const JSValue = _arguments.ptr[0.._arguments.len];
@@ -715,7 +717,75 @@ pub const Expect = struct {
         return .zero;
     }
 
-    pub const toHaveProperty = notImplementedJSCFn;
+    pub fn toHaveProperty(this: *Expect, globalObject: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+        defer this.postMatch(globalObject);
+
+        const thisValue = callFrame.this();
+        const _arguments = callFrame.arguments(2);
+        const arguments: []const JSValue = _arguments.ptr[0.._arguments.len];
+
+        if (arguments.len < 1) {
+            globalObject.throwInvalidArguments("toHaveProperty() requires at least 1 argument", .{});
+            return .zero;
+        }
+
+        if (this.scope.tests.items.len <= this.test_id) {
+            globalObject.throw("toHaveProperty must be called in a test", .{});
+            return .zero;
+        }
+
+        active_test_expectation_counter.actual += 1;
+
+        const expected_property_path = arguments[0];
+        expected_property_path.ensureStillAlive();
+        const expected_value: ?JSValue = if (arguments.len > 1) arguments[1] else null;
+        if (expected_value) |ev| ev.ensureStillAlive();
+
+        const value = Expect.capturedValueGetCached(thisValue) orelse {
+            globalObject.throw("Internal consistency error: the expect(value) was garbage collected but it should not have been!", .{});
+            return .zero;
+        };
+        value.ensureStillAlive();
+
+        if (!expected_property_path.isString() and !expected_property_path.isIterable(globalObject)) {
+            globalObject.throw("Expected path must be a string or an array", .{});
+            return .zero;
+        }
+
+        const not = this.op.contains(.not);
+        var path_string = ZigString.Empty;
+        expected_property_path.toZigString(&path_string, globalObject);
+
+        const expected_property = value.getIfPropertyExistsFromPath(globalObject, expected_property_path);
+
+        var pass = !expected_property.isEmpty();
+
+        if (pass and expected_value != null) {
+            pass = expected_property.deepEquals(expected_value.?, globalObject);
+        }
+
+        if (not) pass = !pass;
+        if (pass) return thisValue;
+
+        // handle failure
+        var fmt = JSC.ZigConsoleClient.Formatter{ .globalThis = globalObject };
+        if (not) {
+            if (!expected_property.isEmpty() and expected_value != null) {
+                globalObject.throw("Expected property \"{any}\" to not be equal to: {any}", .{ expected_property.toFmt(globalObject, &fmt), expected_value.?.toFmt(globalObject, &fmt) });
+            } else {
+                globalObject.throw("Expected \"{any}\" to not have property: {any}", .{ value.toFmt(globalObject, &fmt), expected_property_path.toFmt(globalObject, &fmt) });
+            }
+        } else {
+            if (!expected_property.isEmpty() and expected_value != null) {
+                globalObject.throw("Expected property \"{any}\" to be equal to: {any}", .{ expected_property.toFmt(globalObject, &fmt), expected_value.?.toFmt(globalObject, &fmt) });
+            } else {
+                globalObject.throw("Expected \"{any}\" to have property: {any}", .{ value.toFmt(globalObject, &fmt), expected_property_path.toFmt(globalObject, &fmt) });
+            }
+        }
+
+        return .zero;
+    }
+
     pub const toHaveBeenCalledTimes = notImplementedJSCFn;
     pub const toHaveBeenCalledWith = notImplementedJSCFn;
     pub const toHaveBeenLastCalledWith = notImplementedJSCFn;

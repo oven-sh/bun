@@ -102,7 +102,7 @@ export default [
       },
       toHaveProperty: {
         fn: "toHaveProperty",
-        length: 1,
+        length: 2,
       },
       toBeCloseTo: {
         fn: "toBeCloseTo",

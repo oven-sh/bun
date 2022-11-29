@@ -2609,6 +2609,125 @@ JSC__JSValue JSC__JSValue__getIfPropertyExistsImpl(JSC__JSValue JSValue0,
     return JSC::JSValue::encode(object->getIfPropertyExists(globalObject, propertyName));
 }
 
+JSC__JSValue JSC__JSValue__getIfPropertyExistsFromPath(JSC__JSValue JSValue0, JSC__JSGlobalObject* globalObject, JSC__JSValue arg1)
+{
+    VM& vm = globalObject->vm();
+    ThrowScope scope = DECLARE_THROW_SCOPE(vm);
+    JSValue value = JSValue::decode(JSValue0);
+    JSValue path = JSValue::decode(arg1);
+
+    if (path.isString()) {
+        String pathString = path.toWTFString(globalObject);
+        uint32_t length = pathString.length();
+
+        if (length == 0) {
+            JSValue prop = value.toObject(globalObject)->getIfPropertyExists(globalObject, PropertyName(Identifier::EmptyIdentifier));
+            RETURN_IF_EXCEPTION(scope, {});
+            return JSValue::encode(prop);
+        }
+
+        // Jest doesn't check for valid dot/bracket notation. It will skip all "[" and "]", and search for
+        // an empty string for "." when it's the first or last character of the path, or if there are
+        // two in a row.
+
+        JSValue currProp = value;
+        uint32_t i = 0;
+        uint32_t j = 0;
+
+        // if "." is the only character, it will search for an empty string twice.
+        if (pathString.characterAt(0) == '.') {
+            currProp = currProp.toObject(globalObject)->getIfPropertyExists(globalObject, PropertyName(Identifier::EmptyIdentifier));
+            RETURN_IF_EXCEPTION(scope, {});
+            if (currProp.isEmpty()) {
+                return JSValue::encode(currProp);
+            }
+        }
+
+        while (i < length) {
+            UChar ic = pathString.characterAt(i);
+            while (ic == '[' || ic == ']' || ic == '.') {
+                i += 1;
+                if (i == length) {
+
+                    if (ic == '.') {
+                        currProp = currProp.toObject(globalObject)->getIfPropertyExists(globalObject, PropertyName(Identifier::EmptyIdentifier));
+                        RETURN_IF_EXCEPTION(scope, {});
+                        return JSValue::encode(currProp);
+                    }
+
+                    // nothing found.
+                    if (j == 0) {
+                        return JSValue::encode({});
+                    }
+
+                    return JSValue::encode(currProp);
+                }
+
+                UChar previous = ic;
+                ic = pathString.characterAt(i);
+                if (previous == '.' && ic == '.') {
+                    currProp = currProp.toObject(globalObject)->getIfPropertyExists(globalObject, PropertyName(Identifier::EmptyIdentifier));
+                    RETURN_IF_EXCEPTION(scope, {});
+                    if (currProp.isEmpty()) {
+                        return JSValue::encode(currProp);
+                    }
+                    continue;
+                }
+            }
+
+            j = i;
+            UChar jc = pathString.characterAt(j);
+            while (!(jc == '[' || jc == ']' || jc == '.')) {
+                j += 1;
+                if (j == length) {
+                    // break and search for property
+                    break;
+                }
+                jc = pathString.characterAt(j);
+            }
+
+            PropertyName propName = PropertyName(Identifier::fromString(vm, pathString.substring(i, j - i)));
+            currProp = currProp.toObject(globalObject)->getIfPropertyExists(globalObject, propName);
+            RETURN_IF_EXCEPTION(scope, {});
+            if (currProp.isEmpty()) {
+                return JSValue::encode(currProp);
+            }
+
+            i = j;
+        }
+
+        return JSValue::encode(currProp);
+    }
+
+    if (isArray(globalObject, path)) {
+        // each item in array is property name, ignore dot/bracket notation
+        JSValue currProp = value;
+        forEachInArrayLike(globalObject, path.toObject(globalObject), [&](JSValue item) -> bool {
+            if (!(item.isString() || item.isNumber())) {
+                currProp = {};
+                return false;
+            }
+
+            JSString* propNameString = item.toString(globalObject);
+            RETURN_IF_EXCEPTION(scope, false);
+            PropertyName propName = PropertyName(propNameString->toIdentifier(globalObject));
+            RETURN_IF_EXCEPTION(scope, false);
+
+            currProp = currProp.toObject(globalObject)->getIfPropertyExists(globalObject, propName);
+            RETURN_IF_EXCEPTION(scope, false);
+            if (currProp.isEmpty()) {
+                return false;
+            }
+
+            return true;
+        });
+
+        return JSValue::encode(currProp);
+    }
+
+    return JSValue::encode({});
+}
+
 void JSC__JSValue__getSymbolDescription(JSC__JSValue symbolValue_, JSC__JSGlobalObject* arg1, ZigString* arg2)
 
 {

@@ -6065,7 +6065,7 @@ static const HashTableValue JSExpectPrototypeTableValues[] = {
     { "toHaveLastReturnedWith"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, ExpectPrototype__toHaveLastReturnedWithCallback, 1 } },
     { "toHaveLength"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, ExpectPrototype__toHaveLengthCallback, 1 } },
     { "toHaveNthReturnedWith"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, ExpectPrototype__toHaveNthReturnedWithCallback, 1 } },
-    { "toHaveProperty"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, ExpectPrototype__toHavePropertyCallback, 1 } },
+    { "toHaveProperty"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, ExpectPrototype__toHavePropertyCallback, 2 } },
     { "toHaveReturnedTimes"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, ExpectPrototype__toHaveReturnedTimesCallback, 1 } },
     { "toHaveReturnedWith"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, ExpectPrototype__toHaveReturnedWithCallback, 1 } },
     { "toMatch"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, ExpectPrototype__toMatchCallback, 1 } },

@@ -486,7 +486,7 @@ const Task = struct {
     request: Request,
     data: Data,
     status: Status = Status.waiting,
-    threadpool_task: ThreadPool.Task = ThreadPool.Task{ .callback = callback },
+    threadpool_task: ThreadPool.Task = ThreadPool.Task{ .callback = bun.fnptr(callback) },
     log: logger.Log,
     id: u64,
     err: ?anyerror = null,
@@ -656,7 +656,7 @@ const PackageInstall = struct {
     };
 
     pub const Task = struct {
-        task: ThreadPool.Task = .{ .callback = callback },
+        task: ThreadPool.Task = .{ .callback = bun.fnptr(callback) },
         result: Result = Result{ .pending = void{} },
         package_install: PackageInstall = undefined,
         package_id: PackageID,

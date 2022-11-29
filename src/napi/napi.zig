@@ -887,7 +887,7 @@ const WorkPoolTask = @import("../work_pool.zig").Task;
 
 /// must be globally allocated
 pub const napi_async_work = struct {
-    task: WorkPoolTask = .{ .callback = runFromThreadPool },
+    task: WorkPoolTask = .{ .callback = bun.fnptr(runFromThreadPool) },
     concurrent_task: JSC.ConcurrentTask = .{},
     completion_task: ?*anyopaque = null,
     event_loop: *JSC.EventLoop,

@@ -4901,8 +4901,8 @@ const FileWriterInternal = struct {
 
 pub const BufferWriter = struct {
     buffer: MutableString = undefined,
-    written: []u8 = "",
-    sentinel: [:0]u8 = "",
+    written: []u8 = &[_]u8{},
+    sentinel: [:0]const u8 = "",
     append_null_byte: bool = false,
     append_newline: bool = false,
     approximate_newline_count: usize = 0,

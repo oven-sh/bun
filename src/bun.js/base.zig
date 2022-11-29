@@ -1132,31 +1132,39 @@ pub fn NewClassWithInstanceType(
             props: js.JSPropertyNameAccumulatorRef,
         ) callconv(.C) void {
             if (comptime property_name_refs.len > 0) {
-                comptime var i: usize = 0;
                 if (!property_name_refs_set) {
+                    comptime var i: usize = 0;
                     property_name_refs_set = true;
-                    inline while (i < property_name_refs.len) : (i += 1) {
+                    inline while (i < comptime property_name_refs.len) : (i += 1) {
                         property_name_refs[i] = js.JSStringCreateStatic(property_names[i].ptr, property_names[i].len);
                     }
                     comptime i = 0;
-                }
-                inline while (i < property_name_refs.len) : (i += 1) {
-                    js.JSPropertyNameAccumulatorAddName(props, property_name_refs[i]);
+                } else {
+                    comptime var i: usize = 0;
+                    inline while (i < property_name_refs.len) : (i += 1) {
+                        js.JSPropertyNameAccumulatorAddName(props, property_name_refs[i]);
+                    }
                 }
             }
 
+            const ref_len = comptime function_name_refs.len;
             if (comptime function_name_refs.len > 0) {
-                comptime var j: usize = 0;
                 if (!function_name_refs_set) {
+                    comptime var j: usize = 0;
                     function_name_refs_set = true;
-                    inline while (j < function_name_refs.len) : (j += 1) {
+                    inline while (j < ref_len) : (j += 1) {
                         function_name_refs[j] = js.JSStringCreateStatic(function_names[j].ptr, function_names[j].len);
                     }
                     comptime j = 0;
-                }
 
-                inline while (j < function_name_refs.len) : (j += 1) {
-                    js.JSPropertyNameAccumulatorAddName(props, function_name_refs[j]);
+                    inline while (j < ref_len) : (j += 1) {
+                        js.JSPropertyNameAccumulatorAddName(props, function_name_refs[j]);
+                    }
+                } else {
+                    comptime var j: usize = 0;
+                    inline while (j < ref_len) : (j += 1) {
+                        js.JSPropertyNameAccumulatorAddName(props, function_name_refs[j]);
+                    }
                 }
             }
         }
@@ -1173,10 +1181,10 @@ pub fn NewClassWithInstanceType(
                     .attributes = js.JSPropertyAttributes.kJSPropertyAttributeNone,
                 },
             );
-            for (property_name_literals) |_, i| {
+            for (property_name_literals) |lit, i| {
                 props[i] = brk2: {
                     var static_prop = JSC.C.JSStaticValue{
-                        .name = property_names[i][0.. :0].ptr,
+                        .name = lit.ptr[0..lit.len :0],
                         .getProperty = null,
                         .setProperty = null,
                         .attributes = @intToEnum(js.JSPropertyAttributes, 0),
@@ -1356,7 +1364,7 @@ pub fn NewClassWithInstanceType(
                 def.staticValues = static_values_ptr;
             }
 
-            def.className = class_name_str;
+            def.className = class_name_str.ptr;
             // def.getProperty = getPropertyCallback;
 
             if (def.callAsConstructor == null) {
@@ -3227,7 +3235,7 @@ pub const FilePoll = struct {
 
     fd: u32 = invalid_fd,
     flags: Flags.Set = Flags.Set{},
-    owner: Owner = Deactivated.owner,
+    owner: Owner = undefined,
 
     /// We re-use FilePoll objects to avoid allocating new ones.
     ///
@@ -3243,7 +3251,7 @@ pub const FilePoll = struct {
     const BufferedInput = Subprocess.BufferedInput;
     const BufferedOutput = Subprocess.BufferedOutput;
     const Deactivated = opaque {
-        pub var owner = Owner.init(@intToPtr(*Deactivated, @as(usize, 0xDEADBEEF)));
+        pub var owner: Owner = Owner.init(@intToPtr(*Deactivated, @as(usize, 0xDEADBEEF)));
     };
 
     pub const Owner = bun.TaggedPointerUnion(.{

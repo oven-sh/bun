@@ -1684,7 +1684,7 @@ pub const RequestContext = struct {
             try ctx.bundler.clone(server.allocator, &clone.bundler);
             ctx.bundler = &clone.bundler;
 
-            clone.task = .{ .callback = onTask };
+            clone.task = .{ .callback = bun.fnptr(onTask) };
             clone.message_buffer = try MutableString.init(server.allocator, 0);
             clone.ctx.conn = &clone.conn;
             clone.ctx.log = logger.Log.init(server.allocator);

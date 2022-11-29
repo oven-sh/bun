@@ -381,7 +381,7 @@ pub const FFI = struct {
                 },
                 .compiled => |*compiled| {
                     const str = ZigString.init(std.mem.span(function_name));
-                    const cb = JSC.NewFunction(
+                    const cb = JSC.NewRuntimeFunction(
                         global,
                         &str,
                         @intCast(u32, function.arg_types.items.len),
@@ -477,7 +477,7 @@ pub const FFI = struct {
                 .compiled => |*compiled| {
                     const name = &ZigString.init(std.mem.span(function_name));
 
-                    const cb = JSC.NewFunction(
+                    const cb = JSC.NewRuntimeFunction(
                         global,
                         name,
                         @intCast(u32, function.arg_types.items.len),

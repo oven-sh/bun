@@ -375,13 +375,17 @@ pub const HTTPThread = struct {
             .timer = std.time.Timer.start() catch unreachable,
         };
 
-        var thread = try std.Thread.spawn(.{
-            .stack_size = 4 * 1024 * 1024,
-        }, onStart, .{});
+        var thread = try std.Thread.spawn(
+            .{
+                .stack_size = 4 * 1024 * 1024,
+            },
+            bun.fnptr(onStart),
+            .{@as(u32, 123)},
+        );
         thread.detach();
     }
 
-    pub fn onStart() void {
+    pub fn onStart(_: u32) void {
         Output.Source.configureNamedThread("HTTP Client");
         default_arena = Arena.init() catch unreachable;
         default_allocator = default_arena.allocator();
@@ -917,7 +921,7 @@ pub const AsyncHTTP = struct {
     real: ?*AsyncHTTP = null,
     next: ?*AsyncHTTP = null,
 
-    task: ThreadPool.Task = ThreadPool.Task{ .callback = startAsyncHTTP },
+    task: ThreadPool.Task = ThreadPool.Task{ .callback = bun.fnptr(startAsyncHTTP) },
     completion_callback: HTTPClientResult.Callback = undefined,
 
     /// Timeout in nanoseconds

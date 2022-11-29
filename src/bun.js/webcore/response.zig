@@ -4592,7 +4592,7 @@ pub const Body = struct {
             Error,
         };
 
-        pub const empty = Value{ .Empty = .{} };
+        pub const empty = Value{ .Empty = void{} };
 
         pub fn toReadableStream(this: *Value, globalThis: *JSGlobalObject) JSValue {
             JSC.markBinding(@src());

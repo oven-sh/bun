@@ -852,9 +852,9 @@ pub const Signal = struct {
     }
 
     pub const VTable = struct {
-        pub const OnCloseFn = fn (this: *anyopaque, err: ?Syscall.Error) void;
-        pub const OnReadyFn = fn (this: *anyopaque, amount: ?Blob.SizeType, offset: ?Blob.SizeType) void;
-        pub const OnStartFn = fn (this: *anyopaque) void;
+        pub const OnCloseFn = bun.FnPtr(fn (this: *anyopaque, err: ?Syscall.Error) void);
+        pub const OnReadyFn = bun.FnPtr(fn (this: *anyopaque, amount: ?Blob.SizeType, offset: ?Blob.SizeType) void);
+        pub const OnStartFn = bun.FnPtr(fn (this: *anyopaque) void);
         close: OnCloseFn,
         ready: OnReadyFn,
         start: OnStartFn,
@@ -1007,11 +1007,11 @@ pub const Sink = struct {
     };
 
     pub const VTable = struct {
-        pub const WriteUTF16Fn = fn (this: *anyopaque, data: StreamResult) StreamResult.Writable;
-        pub const WriteUTF8Fn = fn (this: *anyopaque, data: StreamResult) StreamResult.Writable;
-        pub const WriteLatin1Fn = fn (this: *anyopaque, data: StreamResult) StreamResult.Writable;
-        pub const EndFn = fn (this: *anyopaque, err: ?Syscall.Error) JSC.Node.Maybe(void);
-        pub const ConnectFn = fn (this: *anyopaque, signal: Signal) JSC.Node.Maybe(void);
+        pub const WriteUTF16Fn = bun.FnPtr(fn (this: *anyopaque, data: StreamResult) StreamResult.Writable);
+        pub const WriteUTF8Fn = bun.FnPtr(fn (this: *anyopaque, data: StreamResult) StreamResult.Writable);
+        pub const WriteLatin1Fn = bun.FnPtr(fn (this: *anyopaque, data: StreamResult) StreamResult.Writable);
+        pub const EndFn = bun.FnPtr(fn (this: *anyopaque, err: ?Syscall.Error) JSC.Node.Maybe(void));
+        pub const ConnectFn = bun.FnPtr(fn (this: *anyopaque, signal: Signal) JSC.Node.Maybe(void));
 
         connect: ConnectFn,
         write: WriteUTF8Fn,

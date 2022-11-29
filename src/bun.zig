@@ -540,3 +540,10 @@ pub const Fn = struct {
     pub const Ptr = FnPtr;
     pub const Opt = FnPtrOptional;
 };
+
+pub fn fnptr(comptime T: anytype) FnPtr(@TypeOf(T)) {
+    if (comptime is_stage1)
+        return T;
+
+    return &T;
+}

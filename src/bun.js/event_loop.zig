@@ -28,7 +28,7 @@ pub fn ConcurrentPromiseTask(comptime Context: type) type {
     return struct {
         const This = @This();
         ctx: *Context,
-        task: WorkPoolTask = .{ .callback = runFromThreadPool },
+        task: WorkPoolTask = .{ .callback = bun.fnptr(runFromThreadPool) },
         event_loop: *JSC.EventLoop,
         allocator: std.mem.Allocator,
         promise: JSC.JSPromise.Strong = .{},
@@ -86,7 +86,7 @@ pub fn IOTask(comptime Context: type) type {
     return struct {
         const This = @This();
         ctx: *Context,
-        task: NetworkThread.Task = .{ .callback = runFromThreadPool },
+        task: NetworkThread.Task = .{ .callback = bun.fnptr(runFromThreadPool) },
         event_loop: *JSC.EventLoop,
         allocator: std.mem.Allocator,
         globalThis: *JSGlobalObject,

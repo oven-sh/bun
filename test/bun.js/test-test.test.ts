@@ -899,6 +899,25 @@ test("testing Bun.deepEquals() using isEqual()", () => {
   expect(-Infinity).toEqual(-1 / 0);
 });
 
+test("toHaveProperty() - emojis", () => {
+  expect({ "👍": "thumbs up" }).toHaveProperty("👍", "thumbs up");
+  expect({ "👩‍👩‍👧‍👧": "family" }).toHaveProperty("👩‍👩‍👧‍👧", "family");
+  expect({ "😶‍🌫️": "fog" }).toHaveProperty("😶‍🌫️", "fog");
+  expect({ "👩‍❤️‍👨": "couple" }).toHaveProperty("👩‍❤️‍👨", "couple");
+  expect({ "👩‍❤️‍👨‍👨‍👧‍👧": "family" }).toHaveProperty("👩‍❤️‍👨‍👨‍👧‍👧", "family");
+  expect({ "👩‍❤️‍👨‍👨‍👧": "family" }).toHaveProperty("👩‍❤️‍👨‍👨‍👧", "family");
+  expect({ "👩‍❤️‍👨‍👨‍👧": "family" }).not.toHaveProperty("👩‍❤️‍👨‍👨‍👧‍👧", "family");
+
+  // emojis in array
+  expect(["👍", "👎"]).toHaveProperty("0", "👍");
+  expect(["👍", "👎"]).toHaveProperty("1", "👎");
+  expect(["👍", "👎"]).not.toHaveProperty("0", "👎");
+  expect(["👍", "👎"]).not.toHaveProperty("1", "👍");
+  expect(["👩‍❤️‍👨‍👨‍👧‍👧"]).toHaveProperty("0", "👩‍❤️‍👨‍👨‍👧‍👧");
+  expect(["👩‍❤️‍👨‍👨‍👧‍👧"]).toHaveProperty([0], "👩‍❤️‍👨‍👨‍👧‍👧");
+  expect(["😶‍🌫️"]).toHaveProperty([0], "😶‍🌫️");
+});
+
 test("toHaveProperty() - dot and bracket notation edge cases", () => {
   expect({ a: 1 }).not.toHaveProperty(".");
   expect({ a: 1 }).not.toHaveProperty("]");

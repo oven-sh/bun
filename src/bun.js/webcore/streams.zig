@@ -2337,7 +2337,7 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
 
         fn send(this: *@This(), buf: []const u8) bool {
             std.debug.assert(!this.done);
-            defer log("send: {d} bytes (backpressure: {d})", .{ buf.len, this.has_backpressure });
+            defer log("send: {d} bytes (backpressure: {any})", .{ buf.len, this.has_backpressure });
 
             if (this.requested_end and !this.res.state().isHttpWriteCalled()) {
                 const success = this.res.tryEnd(buf, this.end_len, false);
@@ -2480,7 +2480,7 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
         }
 
         pub fn flushFromJS(this: *@This(), globalThis: *JSGlobalObject, wait: bool) JSC.Node.Maybe(JSValue) {
-            log("flushFromJS({s})", .{wait});
+            log("flushFromJS({any})", .{wait});
             if (!wait) {
                 return this.flushFromJSNoWait();
             }

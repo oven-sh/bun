@@ -1768,7 +1768,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 }
             }
 
-            streamLog("onReject({s})", .{wrote_anything});
+            streamLog("onReject({any})", .{wrote_anything});
 
             if (req.aborted) {
                 req.finalizeForAbort();

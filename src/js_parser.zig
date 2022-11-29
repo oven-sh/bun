@@ -4276,7 +4276,7 @@ fn NewParser_(
                     p.import_records.items[import_record_index].was_originally_require = true;
                     p.import_records.items[import_record_index].contains_import_star = true;
 
-                    const symbol_name = p.import_records.items[import_record_index].path.name.nonUniqueNameString(p.allocator);
+                    const symbol_name = p.import_records.items[import_record_index].path.name.nonUniqueNameString(p.allocator) catch unreachable;
                     const cjs_import_name = std.fmt.allocPrint(
                         p.allocator,
                         "{s}_{x}_{d}",
@@ -10462,7 +10462,7 @@ fn NewParser_(
 
                     // Forbid decorators on class constructors
                     if (opts.ts_decorators.len > 0) {
-                        switch ((property.key orelse p.panic("Internal error: Expected property {s} to have a key.", .{property})).data) {
+                        switch ((property.key orelse p.panic("Internal error: Expected property {any} to have a key.", .{property})).data) {
                             .e_string => |str| {
                                 if (str.eqlComptime("constructor")) {
                                     p.log.addError(p.source, first_decorator_loc, "TypeScript does not allow decorators on class constructors") catch unreachable;
@@ -12803,7 +12803,7 @@ fn NewParser_(
                                         }
                                     },
                                     else => {
-                                        Global.panic("Unexpected type in export default: {s}", .{s2});
+                                        Global.panic("Unexpected type in export default: {any}", .{s2});
                                     },
                                 }
                             },
@@ -17647,7 +17647,7 @@ fn NewParser_(
                     // s.Kind = p.selectLocalKind(s.Kind)
                 },
                 else => {
-                    p.panic("Unexpected stmt in visitForLoopInit: {s}", .{stmt});
+                    p.panic("Unexpected stmt in visitForLoopInit: {any}", .{stmt});
                 },
             }
 

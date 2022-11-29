@@ -20,7 +20,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsGetterEnvironmentVariable, (JSGlobalObject * globalOb
     if (UNLIKELY(!thisObject))
         return JSValue::encode(jsUndefined());
 
-    ZigString name = gettoZigString(propertyName.publicName());
+    ZigString name = toZigString(propertyName.publicName());
     ZigString value = { nullptr, 0 };
 
     if (UNLIKELY(name.len == 0))

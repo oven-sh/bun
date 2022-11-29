@@ -3629,7 +3629,8 @@ pub const FIFO = struct {
                     },
                     .hup => {
                         poll.flags.insert(.hup);
-                        return .done;
+                        poll.flags.insert(.readable);
+                        return null;
                     },
                     else => {
                         return .pending;

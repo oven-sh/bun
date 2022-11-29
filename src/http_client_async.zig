@@ -379,7 +379,7 @@ pub const HTTPThread = struct {
             .{
                 .stack_size = 4 * 1024 * 1024,
             },
-            bun.fnptr(onStart),
+            onStart,
             .{@as(u32, 123)},
         );
         thread.detach();

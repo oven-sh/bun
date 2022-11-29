@@ -4042,13 +4042,13 @@ pub const CallFrame = opaque {
         return switch (@min(len, max)) {
             0 => .{ .ptr = undefined, .len = 0 },
             1 => Arguments(max).init(1, ptr),
-            2 => Arguments(max).init(2, ptr),
-            3 => Arguments(max).init(3, ptr),
-            4 => Arguments(max).init(4, ptr),
-            5 => Arguments(max).init(5, ptr),
-            6 => Arguments(max).init(6, ptr),
-            7 => Arguments(max).init(7, ptr),
-            8 => Arguments(max).init(8, ptr),
+            2 => Arguments(max).init(@min(2, max), ptr),
+            3 => Arguments(max).init(@min(3, max), ptr),
+            4 => Arguments(max).init(@min(4, max), ptr),
+            5 => Arguments(max).init(@min(5, max), ptr),
+            6 => Arguments(max).init(@min(6, max), ptr),
+            7 => Arguments(max).init(@min(7, max), ptr),
+            8 => Arguments(max).init(@min(8, max), ptr),
             else => unreachable,
         };
     }

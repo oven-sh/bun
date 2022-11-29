@@ -98,7 +98,7 @@ pub const JSPropertyNameArray = opaque {
 pub const JSPropertyNameArrayRef = ?*JSPropertyNameArray;
 pub const struct_OpaqueJSPropertyNameAccumulator = generic;
 pub const JSPropertyNameAccumulatorRef = ?*struct_OpaqueJSPropertyNameAccumulator;
-pub const JSTypedArrayBytesDeallocator = ?fn (*anyopaque, *anyopaque) callconv(.C) void;
+pub const JSTypedArrayBytesDeallocator = bun.FnPtrOptional(fn (*anyopaque, *anyopaque) callconv(.C) void);
 pub const OpaqueJSValue = generic;
 pub const JSValueRef = ?*OpaqueJSValue;
 pub const JSObjectRef = ?*OpaqueJSValue;
@@ -218,25 +218,25 @@ pub const JSClassAttributes = enum(c_uint) {
 
 pub const kJSClassAttributeNone = @enumToInt(JSClassAttributes.kJSClassAttributeNone);
 pub const kJSClassAttributeNoAutomaticPrototype = @enumToInt(JSClassAttributes.kJSClassAttributeNoAutomaticPrototype);
-pub const JSObjectInitializeCallback = ?fn (JSContextRef, JSObjectRef) callconv(.C) void;
-pub const JSObjectFinalizeCallback = ?fn (JSObjectRef) callconv(.C) void;
-pub const JSObjectHasPropertyCallback = ?fn (JSContextRef, JSObjectRef, JSStringRef) callconv(.C) bool;
-pub const JSObjectGetPropertyCallback = ?fn (JSContextRef, JSObjectRef, JSStringRef, ExceptionRef) callconv(.C) JSValueRef;
-pub const JSObjectSetPropertyCallback = ?fn (JSContextRef, JSObjectRef, JSStringRef, JSValueRef, ExceptionRef) callconv(.C) bool;
-pub const JSObjectDeletePropertyCallback = ?fn (JSContextRef, JSObjectRef, JSStringRef, ExceptionRef) callconv(.C) bool;
-pub const JSObjectGetPropertyNamesCallback = ?fn (JSContextRef, JSObjectRef, JSPropertyNameAccumulatorRef) callconv(.C) void;
+pub const JSObjectInitializeCallback = bun.FnPtrOptional(fn (JSContextRef, JSObjectRef) callconv(.C) void);
+pub const JSObjectFinalizeCallback = bun.FnPtrOptional(fn (JSObjectRef) callconv(.C) void);
+pub const JSObjectHasPropertyCallback = bun.FnPtrOptional(fn (JSContextRef, JSObjectRef, JSStringRef) callconv(.C) bool);
+pub const JSObjectGetPropertyCallback = bun.FnPtrOptional(fn (JSContextRef, JSObjectRef, JSStringRef, ExceptionRef) callconv(.C) JSValueRef);
+pub const JSObjectSetPropertyCallback = bun.FnPtrOptional(fn (JSContextRef, JSObjectRef, JSStringRef, JSValueRef, ExceptionRef) callconv(.C) bool);
+pub const JSObjectDeletePropertyCallback = bun.FnPtrOptional(fn (JSContextRef, JSObjectRef, JSStringRef, ExceptionRef) callconv(.C) bool);
+pub const JSObjectGetPropertyNamesCallback = bun.FnPtrOptional(fn (JSContextRef, JSObjectRef, JSPropertyNameAccumulatorRef) callconv(.C) void);
 pub const ExceptionRef = [*c]JSValueRef;
-pub const JSObjectCallAsFunctionCallback = ?fn (
+pub const JSObjectCallAsFunctionCallback = bun.FnPtrOptional(fn (
     ctx: JSContextRef,
     function: JSObjectRef,
     thisObject: JSObjectRef,
     argumentCount: usize,
     arguments: [*c]const JSValueRef,
     exception: ExceptionRef,
-) callconv(.C) JSValueRef;
-pub const JSObjectCallAsConstructorCallback = ?fn (JSContextRef, JSObjectRef, usize, [*c]const JSValueRef, ExceptionRef) callconv(.C) JSObjectRef;
-pub const JSObjectHasInstanceCallback = ?fn (JSContextRef, JSObjectRef, JSValueRef, ExceptionRef) callconv(.C) bool;
-pub const JSObjectConvertToTypeCallback = ?fn (JSContextRef, JSObjectRef, JSType, ExceptionRef) callconv(.C) JSValueRef;
+) callconv(.C) JSValueRef);
+pub const JSObjectCallAsConstructorCallback = bun.FnPtrOptional(fn (JSContextRef, JSObjectRef, usize, [*c]const JSValueRef, ExceptionRef) callconv(.C) JSObjectRef);
+pub const JSObjectHasInstanceCallback = bun.FnPtrOptional(fn (JSContextRef, JSObjectRef, JSValueRef, ExceptionRef) callconv(.C) bool);
+pub const JSObjectConvertToTypeCallback = bun.FnPtrOptional(fn (JSContextRef, JSObjectRef, JSType, ExceptionRef) callconv(.C) JSValueRef);
 pub const JSStaticValue = extern struct {
     name: [*c]const u8,
     getProperty: JSObjectGetPropertyCallback,

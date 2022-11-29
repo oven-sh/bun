@@ -1922,7 +1922,7 @@ pub const RefString = struct {
     allocator: std.mem.Allocator,
 
     ctx: ?*anyopaque = null,
-    onBeforeDeinit: ?Callback = null,
+    onBeforeDeinit: bun.FnPtrOptional(Callback) = null,
 
     pub const Hash = u32;
     pub const Map = std.HashMap(Hash, *JSC.RefString, IdentityContext(Hash), 80);

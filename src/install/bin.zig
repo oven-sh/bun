@@ -3,14 +3,14 @@ const Semver = @import("./semver.zig");
 const ExternalString = Semver.ExternalString;
 const String = Semver.String;
 const std = @import("std");
-const strings = @import("strings");
+const strings = @import("bun").strings;
 const Environment = @import("../env.zig");
 const Path = @import("../resolver/resolve_path.zig");
 const C = @import("../c.zig");
 const Fs = @import("../fs.zig");
-const stringZ = @import("../global.zig").stringZ;
+const stringZ = @import("bun").stringZ;
 const Resolution = @import("./resolution.zig").Resolution;
-const bun = @import("../global.zig");
+const bun = @import("bun");
 /// Normalized `bin` field in [package.json](https://docs.npmjs.com/cli/v8/configuring-npm/package-json#bin)
 /// Can be a:
 /// - file path (relative to the package root)

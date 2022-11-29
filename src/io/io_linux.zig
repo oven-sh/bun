@@ -1,6 +1,6 @@
 const std = @import("std");
 const assert = std.debug.assert;
-const Platform = @import("analytics").GenerateHeader.GeneratePlatform;
+const Platform = @import("bun").analytics.GenerateHeader.GeneratePlatform;
 const os = struct {
     pub usingnamespace std.os;
     pub const EPERM = 1;

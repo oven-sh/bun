@@ -11,15 +11,15 @@ const ExternalStringMap = @import("./install.zig").ExternalStringMap;
 const ExternalStringList = @import("./install.zig").ExternalStringList;
 const ExternalSlice = @import("./install.zig").ExternalSlice;
 const initializeStore = @import("./install.zig").initializeStore;
-const logger = @import("../logger.zig");
-const Output = @import("../global.zig").Output;
+const logger = @import("bun").logger;
+const Output = @import("bun").Output;
 const Integrity = @import("./integrity.zig").Integrity;
 const Bin = @import("./bin.zig").Bin;
-const Environment = @import("../global.zig").Environment;
+const Environment = @import("bun").Environment;
 const Aligner = @import("./install.zig").Aligner;
-const HTTPClient = @import("http");
+const HTTPClient = @import("bun").HTTP;
 const json_parser = @import("../json_parser.zig");
-const default_allocator = @import("../global.zig").default_allocator;
+const default_allocator = @import("bun").default_allocator;
 const IdentityContext = @import("../identity_context.zig").IdentityContext;
 const ArrayIdentityContext = @import("../identity_context.zig").ArrayIdentityContext;
 const SlicedString = Semver.SlicedString;
@@ -155,7 +155,7 @@ pub const Registry = struct {
         not_found: void,
     };
 
-    const Pico = @import("picohttp");
+    const Pico = @import("bun").picohttp;
     pub fn getPackageMetadata(
         allocator: std.mem.Allocator,
         response: Pico.Response,

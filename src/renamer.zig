@@ -1,5 +1,5 @@
 const js_ast = @import("js_ast.zig");
-const bun = @import("global.zig");
+const bun = @import("bun");
 const string = bun.string;
 const Output = bun.Output;
 const Global = bun.Global;
@@ -11,7 +11,7 @@ const default_allocator = bun.default_allocator;
 const C = bun.C;
 const std = @import("std");
 const Ref = @import("./ast/base.zig").Ref;
-const logger = @import("logger.zig");
+const logger = @import("bun").logger;
 
 // This is...poorly named
 // It does not rename

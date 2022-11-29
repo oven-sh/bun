@@ -1,4 +1,4 @@
-const BoringSSL = @import("boringssl");
+const BoringSSL = @import("bun").BoringSSL;
 const std = @import("std");
 
 fn NewHasher(comptime digest_size: comptime_int, comptime ContextType: type, comptime Full: anytype, comptime Init: anytype, comptime Update: anytype, comptime Final: anytype) type {
@@ -237,3 +237,4 @@ pub fn main() anyerror!void {
 //     std.crypto.hash.sha2.Sha256.hash(value, &hash2, .{});
 //     try std.testing.expectEqual(hash, hash2);
 // }
+

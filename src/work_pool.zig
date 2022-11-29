@@ -1,4 +1,4 @@
-const ThreadPool = @import("thread_pool");
+const ThreadPool = @import("bun").ThreadPool;
 const std = @import("std");
 
 pub const Batch = ThreadPool.Batch;

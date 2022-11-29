@@ -23,7 +23,6 @@ pub const huge_allocator_threshold: comptime_int = @import("./memory_allocator.z
 pub const C = @import("c.zig");
 
 pub const FeatureFlags = @import("feature_flags.zig");
-const root = @import("root");
 pub const meta = @import("./meta.zig");
 pub const ComptimeStringMap = @import("./comptime_string_map.zig").ComptimeStringMap;
 pub const base64 = @import("./base64/base64.zig");
@@ -362,7 +361,6 @@ pub fn hash(content: []const u8) u64 {
 pub const HiveArray = @import("./hive_array.zig").HiveArray;
 
 pub fn rand(bytes: []u8) void {
-    const BoringSSL = @import("boringssl");
     _ = BoringSSL.RAND_bytes(bytes.ptr, bytes.len);
 }
 
@@ -486,3 +484,17 @@ pub const invalid_fd = std.math.maxInt(FileDescriptor);
 pub const simdutf = @import("./bun.js/bindings/bun-simdutf.zig");
 
 pub const JSC = @import("javascript_core");
+pub const AsyncIO = @import("async_io");
+
+pub const logger = @import("./logger.zig");
+pub const HTTP = @import("./http_client_async.zig");
+pub const ThreadPool = @import("./thread_pool.zig");
+pub const picohttp = @import("./deps/picohttp.zig");
+pub const uws = @import("./deps/uws.zig");
+pub const BoringSSL = @import("./boringssl.zig");
+pub const LOLHTML = @import("./deps/lol-html.zig");
+pub const clap = @import("./deps/zig-clap/clap.zig");
+pub const analytics = @import("./analytics.zig");
+pub const DateTime = @import("./deps/zig-datetime/src/datetime.zig");
+
+pub var start_time: i128 = 0;

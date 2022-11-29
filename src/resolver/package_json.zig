@@ -1,4 +1,4 @@
-const bun = @import("../global.zig");
+const bun = @import("bun");
 const string = bun.string;
 const Output = bun.Output;
 const Global = bun.Global;
@@ -13,7 +13,7 @@ const Api = @import("../api/schema.zig").Api;
 const std = @import("std");
 const options = @import("../options.zig");
 const cache = @import("../cache.zig");
-const logger = @import("../logger.zig");
+const logger = @import("bun").logger;
 const js_ast = @import("../js_ast.zig");
 
 const fs = @import("../fs.zig");

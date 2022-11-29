@@ -1,8 +1,8 @@
 const std = @import("std");
 const Api = @import("./api/schema.zig").Api;
-const js = @import("javascript_core");
+const js = @import("bun").JSC;
 const ImportKind = @import("./import_record.zig").ImportKind;
-const bun = @import("./global.zig");
+const bun = @import("bun");
 const string = bun.string;
 const Output = bun.Output;
 const Global = bun.Global;
@@ -12,7 +12,7 @@ const MutableString = bun.MutableString;
 const stringZ = bun.stringZ;
 const default_allocator = bun.default_allocator;
 const C = bun.C;
-const JSC = @import("javascript_core");
+const JSC = @import("bun").JSC;
 const fs = @import("fs.zig");
 const unicode = std.unicode;
 

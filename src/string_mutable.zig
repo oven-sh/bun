@@ -31,7 +31,7 @@ pub const MutableString = struct {
     }
 
     pub fn owns(this: *const MutableString, slice: []const u8) bool {
-        return @import("./global.zig").isSliceInBuffer(slice, this.list.items.ptr[0..this.list.capacity]);
+        return @import("bun").isSliceInBuffer(slice, this.list.items.ptr[0..this.list.capacity]);
     }
 
     pub fn growIfNeeded(self: *MutableString, amount: usize) !void {

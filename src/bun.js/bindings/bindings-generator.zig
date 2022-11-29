@@ -15,7 +15,7 @@ const Allocator = std.mem.Allocator;
 
 pub const bindgen = true;
 
-const JSC = @import("../../jsc.zig");
+const JSC = @import("bun").JSC;
 
 const Classes = JSC.GlobalClasses;
 

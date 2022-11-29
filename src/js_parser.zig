@@ -1,5 +1,5 @@
 pub const std = @import("std");
-pub const logger = @import("./logger.zig");
+pub const logger = @import("bun").logger;
 pub const js_lexer = @import("./js_lexer.zig");
 pub const importRecord = @import("./import_record.zig");
 pub const js_ast = @import("./js_ast.zig");
@@ -12,7 +12,7 @@ pub const RuntimeFeatures = _runtime.Runtime.Features;
 pub const RuntimeNames = _runtime.Runtime.Names;
 pub const fs = @import("./fs.zig");
 const _hash_map = @import("./hash_map.zig");
-const bun = @import("./global.zig");
+const bun = @import("bun");
 const string = bun.string;
 const Output = bun.Output;
 const Global = bun.Global;
@@ -39,7 +39,7 @@ pub const ExprNodeList = js_ast.ExprNodeList;
 pub const StmtNodeList = js_ast.StmtNodeList;
 pub const BindingNodeList = js_ast.BindingNodeList;
 const ComptimeStringMap = @import("./comptime_string_map.zig").ComptimeStringMap;
-const JSC = @import("javascript_core");
+const JSC = @import("bun").JSC;
 
 fn _disabledAssert(_: bool) void {
     if (!Environment.allow_assert) @compileLog("assert is missing an if (Environment.allow_assert)");

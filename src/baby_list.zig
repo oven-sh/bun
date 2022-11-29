@@ -1,7 +1,7 @@
 const std = @import("std");
 const Environment = @import("./env.zig");
 const strings = @import("./string_immutable.zig");
-const bun = @import("./global.zig");
+const bun = @import("bun");
 
 // -- Failed Experiment --
 // Delete this code later

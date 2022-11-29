@@ -1,4 +1,4 @@
-const JSC = @import("javascript_core");
+const JSC = @import("bun").JSC;
 const Classes = @import("./generated_classes_list.zig").Classes;
 const Environment = @import("../../env.zig");
 const std = @import("std");

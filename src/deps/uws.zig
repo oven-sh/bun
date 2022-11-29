@@ -1,7 +1,8 @@
 pub const is_bindgen = @import("std").meta.globalOption("bindgen", bool) orelse false;
-const Api = @import("../api/schema.zig").Api;
+const bun = @import("bun");
+const Api = bun.ApiSchema;
 const std = @import("std");
-const Environment = @import("../env.zig");
+const Environment = bun.Environment;
 pub const u_int8_t = u8;
 pub const u_int16_t = c_ushort;
 pub const u_int32_t = c_uint;
@@ -9,10 +10,10 @@ pub const u_int64_t = c_ulonglong;
 pub const LIBUS_LISTEN_DEFAULT: i32 = 0;
 pub const LIBUS_LISTEN_EXCLUSIVE_PORT: i32 = 1;
 pub const Socket = opaque {};
-const bun = @import("../global.zig");
+
 const uws = @This();
 
-const BoringSSL = @import("boringssl");
+const BoringSSL = @import("bun").BoringSSL;
 fn NativeSocketHandleType(comptime ssl: bool) type {
     if (ssl) {
         return BoringSSL.SSL;

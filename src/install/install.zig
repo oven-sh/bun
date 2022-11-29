@@ -1,4 +1,4 @@
-const bun = @import("../global.zig");
+const bun = @import("bun");
 const string = bun.string;
 const Output = bun.Output;
 const Global = bun.Global;
@@ -11,14 +11,14 @@ const C = bun.C;
 const std = @import("std");
 
 const JSLexer = @import("../js_lexer.zig");
-const logger = @import("../logger.zig");
+const logger = @import("bun").logger;
 
 const js_parser = @import("../js_parser.zig");
 const json_parser = @import("../json_parser.zig");
 const JSPrinter = @import("../js_printer.zig");
 
 const linker = @import("../linker.zig");
-const panicky = @import("../panic_handler.zig");
+
 const sync = @import("../sync.zig");
 const Api = @import("../api/schema.zig").Api;
 const Path = @import("../resolver/resolve_path.zig");
@@ -30,25 +30,25 @@ const NodeModuleBundle = @import("../node_module_bundle.zig").NodeModuleBundle;
 const DotEnv = @import("../env_loader.zig");
 const which = @import("../which.zig").which;
 const Run = @import("../bun_js.zig").Run;
-const HeaderBuilder = @import("http").HeaderBuilder;
+const HeaderBuilder = @import("bun").HTTP.HeaderBuilder;
 const Fs = @import("../fs.zig");
 const FileSystem = Fs.FileSystem;
 const Lock = @import("../lock.zig").Lock;
 var path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
 var path_buf2: [bun.MAX_PATH_BYTES]u8 = undefined;
 const URL = @import("../url.zig").URL;
-const AsyncHTTP = @import("http").AsyncHTTP;
-const HTTPChannel = @import("http").HTTPChannel;
-const NetworkThread = @import("http").NetworkThread;
-const HTTP = @import("http");
+const AsyncHTTP = @import("bun").HTTP.AsyncHTTP;
+const HTTPChannel = @import("bun").HTTP.HTTPChannel;
+const NetworkThread = @import("bun").HTTP.NetworkThread;
+const HTTP = @import("bun").HTTP;
 
 const Integrity = @import("./integrity.zig").Integrity;
-const clap = @import("clap");
+const clap = @import("bun").clap;
 const ExtractTarball = @import("./extract_tarball.zig");
 const Npm = @import("./npm.zig");
 const Bitset = @import("./bit_set.zig").DynamicBitSetUnmanaged;
 const z_allocator = @import("../memory_allocator.zig").z_allocator;
-const Syscall = @import("javascript_core").Node.Syscall;
+const Syscall = @import("bun").JSC.Node.Syscall;
 const RunCommand = @import("../cli/run_command.zig").RunCommand;
 threadlocal var initialized_store = false;
 const Futex = @import("../futex.zig");
@@ -1423,7 +1423,7 @@ const TaskCallbackList = std.ArrayListUnmanaged(TaskCallbackContext);
 const TaskDependencyQueue = std.HashMapUnmanaged(u64, TaskCallbackList, IdentityContext(u64), 80);
 const TaskChannel = sync.Channel(Task, .{ .Static = 4096 });
 const NetworkChannel = sync.Channel(*NetworkTask, .{ .Static = 8192 });
-const ThreadPool = @import("thread_pool");
+const ThreadPool = @import("bun").ThreadPool;
 const PackageManifestMap = std.HashMapUnmanaged(PackageNameHash, Npm.PackageManifest, IdentityContext(PackageNameHash), 80);
 
 pub const CacheLevel = struct {
@@ -1431,7 +1431,7 @@ pub const CacheLevel = struct {
     use_etag: bool,
     use_last_modified: bool,
 };
-const AsyncIO = @import("io");
+const AsyncIO = @import("bun").AsyncIO;
 const Waker = AsyncIO.Waker;
 
 // We can't know all the packages we need until we've downloaded all the packages

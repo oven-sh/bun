@@ -1,10 +1,10 @@
 const Lock = @import("../lock.zig").Lock;
 const std = @import("std");
-const MutableString = @import("../global.zig").MutableString;
+const MutableString = @import("bun").MutableString;
 const getAllocator = @import("../http_client_async.zig").getAllocator;
 const ZlibPool = @This();
 const Zlib = @import("../zlib.zig");
-const bun = @import("../global.zig");
+const bun = @import("bun");
 
 fn initMutableString(allocator: std.mem.Allocator) anyerror!MutableString {
     return MutableString.initEmpty(allocator);

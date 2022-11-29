@@ -1,6 +1,6 @@
 // const c = @import("./c.zig");
 const std = @import("std");
-const bun = @import("global.zig");
+const bun = @import("bun");
 const string = bun.string;
 const Output = bun.Output;
 const Global = bun.Global;
@@ -19,7 +19,7 @@ const ByteApiWriter = @import("./api/schema.zig").ByteWriter;
 const NewApiWriter = @import("./api/schema.zig").Writer;
 const js_ast = @import("./js_ast.zig");
 const bundler = @import("bundler.zig");
-const logger = @import("logger.zig");
+const logger = @import("bun").logger;
 const Fs = @import("./fs.zig");
 const Options = @import("./options.zig");
 const Fallback = @import("./runtime.zig").Fallback;
@@ -37,8 +37,8 @@ const Analytics = @import("./analytics/analytics_thread.zig");
 const Arena = std.heap.ArenaAllocator;
 const ThreadlocalArena = @import("./mimalloc_arena.zig").Arena;
 const JSON = @import("./json_parser.zig");
-const DateTime = @import("datetime");
-const ThreadPool = @import("thread_pool");
+const DateTime = bun.DateTime;
+const ThreadPool = @import("bun").ThreadPool;
 const SourceMap = @import("./sourcemap/sourcemap.zig");
 const ObjectPool = @import("./pool.zig").ObjectPool;
 const Lock = @import("./lock.zig").Lock;
@@ -58,7 +58,7 @@ const IPv6 = std.x.os.IPv6;
 const Socket = std.x.os.Socket;
 const os = std.os;
 
-const picohttp = @import("picohttp");
+const picohttp = @import("bun").picohttp;
 const Header = picohttp.Header;
 const Request = picohttp.Request;
 const Response = picohttp.Response;
@@ -71,7 +71,7 @@ const watcher = @import("./watcher.zig");
 threadlocal var req_headers_buf: [100]picohttp.Header = undefined;
 threadlocal var res_headers_buf: [100]picohttp.Header = undefined;
 const sync = @import("./sync.zig");
-const JavaScript = @import("javascript_core");
+const JavaScript = @import("bun").JSC;
 const JavaScriptCore = JavaScriptCore.C;
 const Syscall = JavaScript.Node.Syscall;
 const Router = @import("./router.zig");
@@ -673,7 +673,7 @@ pub const RequestContext = struct {
         _ = try ctx.writeSocket(writer.getWritten(), SOCKET_FLAGS);
     }
 
-    const AsyncIO = @import("io");
+    const AsyncIO = @import("bun").AsyncIO;
     pub fn writeSocket(ctx: *RequestContext, buf_: anytype, _: anytype) !usize {
         var total: usize = 0;
         var buf: []const u8 = buf_;

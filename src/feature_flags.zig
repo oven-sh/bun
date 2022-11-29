@@ -112,4 +112,4 @@ pub const hardcode_localhost_to_127_0_0_1 = true;
 /// so we just disable it
 pub const support_jsxs_in_jsx_transform = false;
 
-pub const use_simdutf = !@import("./global.zig").JSC.is_bindgen;
+pub const use_simdutf = !@import("bun").JSC.is_bindgen;

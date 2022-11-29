@@ -1,4 +1,4 @@
-const bun = @import("global.zig");
+const bun = @import("bun");
 const string = bun.string;
 const Output = bun.Output;
 const Global = bun.Global;
@@ -13,13 +13,13 @@ const Ref = @import("./ast/base.zig").Ref;
 
 const std = @import("std");
 const lex = @import("js_lexer.zig");
-const logger = @import("logger.zig");
+const logger = @import("bun").logger;
 const Options = @import("options.zig");
 const js_parser = @import("js_parser.zig");
 const json_parser = @import("json_parser.zig");
 const js_printer = @import("js_printer.zig");
 const js_ast = @import("js_ast.zig");
-const panicky = @import("panic_handler.zig");
+
 const Fs = @import("fs.zig");
 const Api = @import("api/schema.zig").Api;
 const Resolver = @import("./resolver/resolver.zig");
@@ -37,7 +37,7 @@ const ResolverType = Resolver.Resolver;
 const ESModule = @import("./resolver/package_json.zig").ESModule;
 const Runtime = @import("./runtime.zig").Runtime;
 const URL = @import("url.zig").URL;
-const JSC = @import("javascript_core");
+const JSC = @import("bun").JSC;
 const PluginRunner = @import("./bundler.zig").PluginRunner;
 pub const CSSResolveError = error{ResolveError};
 

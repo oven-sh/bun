@@ -3,7 +3,7 @@ const Allocator = @import("std").mem.Allocator;
 const assert = @import("std").debug.assert;
 const copy = @import("std").mem.copy;
 const Env = @import("./env.zig");
-const bun = @import("./global.zig");
+const bun = @import("bun");
 const StringBuilder = @This();
 const DebugHashTable = if (Env.allow_assert) std.AutoHashMapUnmanaged(u64, void) else void;
 

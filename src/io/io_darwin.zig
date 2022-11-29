@@ -259,7 +259,7 @@ const fd_t = os.fd_t;
 const mem = std.mem;
 const assert = std.debug.assert;
 const c = std.c;
-const bun = @import("../global.zig");
+const bun = @import("bun");
 pub const darwin = struct {
     pub usingnamespace os.darwin;
     pub extern "c" fn @"recvfrom$NOCANCEL"(sockfd: c.fd_t, noalias buf: *anyopaque, len: usize, flags: u32, noalias src_addr: ?*c.sockaddr, noalias addrlen: ?*c.socklen_t) isize;

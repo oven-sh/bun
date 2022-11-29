@@ -1,25 +1,25 @@
 const std = @import("std");
 const Api = @import("../../api/schema.zig").Api;
-const bun = @import("../../global.zig");
+const bun = @import("bun");
 const RequestContext = @import("../../http.zig").RequestContext;
 const MimeType = @import("../../http.zig").MimeType;
 const ZigURL = @import("../../url.zig").URL;
-const HTTPClient = @import("http");
+const HTTPClient = @import("bun").HTTP;
 const NetworkThread = HTTPClient.NetworkThread;
 const AsyncIO = NetworkThread.AsyncIO;
-const JSC = @import("javascript_core");
+const JSC = @import("bun").JSC;
 const js = JSC.C;
 
 const Method = @import("../../http/method.zig").Method;
 const FetchHeaders = JSC.FetchHeaders;
 const ObjectPool = @import("../../pool.zig").ObjectPool;
 const SystemError = JSC.SystemError;
-const Output = @import("../../global.zig").Output;
-const MutableString = @import("../../global.zig").MutableString;
-const strings = @import("../../global.zig").strings;
-const string = @import("../../global.zig").string;
-const default_allocator = @import("../../global.zig").default_allocator;
-const FeatureFlags = @import("../../global.zig").FeatureFlags;
+const Output = @import("bun").Output;
+const MutableString = @import("bun").MutableString;
+const strings = @import("bun").strings;
+const string = @import("bun").string;
+const default_allocator = @import("bun").default_allocator;
+const FeatureFlags = @import("bun").FeatureFlags;
 const ArrayBuffer = @import("../base.zig").ArrayBuffer;
 const Properties = @import("../base.zig").Properties;
 const NewClass = @import("../base.zig").NewClass;
@@ -40,9 +40,9 @@ const NullableAllocator = @import("../../nullable_allocator.zig").NullableAlloca
 const VirtualMachine = @import("../javascript.zig").VirtualMachine;
 const Task = JSC.Task;
 const JSPrinter = @import("../../js_printer.zig");
-const picohttp = @import("picohttp");
+const picohttp = @import("bun").picohttp;
 const StringJoiner = @import("../../string_joiner.zig");
-const uws = @import("uws");
+const uws = @import("bun").uws;
 
 pub const Response = struct {
     pub usingnamespace JSC.Codegen.JSResponse;

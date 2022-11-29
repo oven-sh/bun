@@ -1,5 +1,5 @@
 const fs = @import("fs.zig");
-const logger = @import("logger.zig");
+const logger = @import("bun").logger;
 const std = @import("std");
 const Ref = @import("ast/base.zig").Ref;
 const Api = @import("./api/schema.zig").Api;

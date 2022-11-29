@@ -1,4 +1,4 @@
-const JSC = @import("javascript_core");
+const JSC = @import("bun").JSC;
 
 pub const Classes = struct {
     pub const Request = JSC.WebCore.Request;

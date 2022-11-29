@@ -2,11 +2,11 @@
 // for interacting with the filesystem from JavaScript.
 // The top-level functions assume the arguments are already validated
 const std = @import("std");
-const bun = @import("../../global.zig");
+const bun = @import("bun");
 const strings = bun.strings;
 const string = bun.string;
-const AsyncIO = @import("io");
-const JSC = @import("../../jsc.zig");
+const AsyncIO = @import("bun").AsyncIO;
+const JSC = @import("bun").JSC;
 const PathString = JSC.PathString;
 const Environment = bun.Environment;
 const C = bun.C;

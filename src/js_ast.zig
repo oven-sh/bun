@@ -1,8 +1,8 @@
 const std = @import("std");
-const logger = @import("logger.zig");
+const logger = @import("bun").logger;
 const JSXRuntime = @import("options.zig").JSX.Runtime;
 const Runtime = @import("runtime.zig").Runtime;
-const bun = @import("global.zig");
+const bun = @import("bun");
 const string = bun.string;
 const Output = bun.Output;
 const Global = bun.Global;
@@ -17,8 +17,8 @@ const RefHashCtx = @import("ast/base.zig").RefHashCtx;
 const ObjectPool = @import("./pool.zig").ObjectPool;
 const ImportRecord = @import("import_record.zig").ImportRecord;
 const allocators = @import("allocators.zig");
-const JSC = @import("javascript_core");
-const HTTP = @import("http");
+const JSC = @import("bun").JSC;
+const HTTP = @import("bun").HTTP;
 const RefCtx = @import("./ast/base.zig").RefCtx;
 const _hash_map = @import("hash_map.zig");
 const JSONParser = @import("./json_parser.zig");
@@ -4797,7 +4797,7 @@ pub const BunPlugin = struct {
 };
 
 pub const Macro = struct {
-    const JavaScript = @import("javascript_core");
+    const JavaScript = @import("bun").JSC;
     const JSCBase = @import("./bun.js/base.zig");
     const Resolver = @import("./resolver/resolver.zig").Resolver;
     const isPackagePath = @import("./resolver/resolver.zig").isPackagePath;

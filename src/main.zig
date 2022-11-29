@@ -1,43 +1,27 @@
 const std = @import("std");
-const lex = @import("js_lexer.zig");
-const logger = @import("logger.zig");
-const options = @import("options.zig");
-const js_parser = @import("js_parser.zig");
-const json_parser = @import("json_parser.zig");
-const js_printer = @import("js_printer.zig");
-const js_ast = @import("js_ast.zig");
-const linker = @import("linker.zig");
-const bun = @import("global.zig");
-const string = bun.string;
-const Output = bun.Output;
-const Global = bun.Global;
-const Environment = bun.Environment;
-const strings = bun.strings;
-const MutableString = bun.MutableString;
-const stringZ = bun.stringZ;
-pub const JSC = @import("javascript_core");
-const default_allocator = bun.default_allocator;
-const C = bun.C;
-const panicky = @import("panic_handler.zig");
-const cli = @import("cli.zig");
-pub const MainPanicHandler = panicky.NewPanicHandler(std.builtin.default_panic);
-const js = @import("bun.js/bindings/bindings.zig");
-const JavaScript = @import("bun.js/javascript.zig");
+
+const panicky = @import("./panic_handler.zig");
+const MainPanicHandler = panicky.NewPanicHandler(std.builtin.default_panic);
+
 pub const io_mode = .blocking;
-pub const bindgen = if (@import("builtin").is_test) undefined else @import("build_options").bindgen;
-const Report = @import("./report.zig");
+
 pub fn panic(msg: []const u8, error_return_trace: ?*std.builtin.StackTrace) noreturn {
     MainPanicHandler.handle_panic(msg, error_return_trace);
 }
 
 const CrashReporter = @import("./crash_reporter.zig");
 
-pub var start_time: i128 = 0;
 pub fn main() void {
+    const bun = @import("bun");
+    const Output = bun.Output;
+    const Environment = bun.Environment;
+
+    const cli = @import("cli.zig");
+
     if (comptime Environment.isRelease)
         CrashReporter.start() catch unreachable;
 
-    start_time = std.time.nanoTimestamp();
+    bun.start_time = std.time.nanoTimestamp();
 
     // The memory allocator makes a massive difference.
     // std.heap.raw_c_allocator and default_allocator perform similarly.
@@ -53,23 +37,11 @@ pub fn main() void {
     Output.Source.set(&output_source);
     defer Output.flush();
 
-    cli.Cli.start(default_allocator, stdout, stderr, MainPanicHandler);
-
-    std.mem.doNotOptimizeAway(JavaScriptVirtualMachine.fetch);
-    std.mem.doNotOptimizeAway(JavaScriptVirtualMachine.init);
-    std.mem.doNotOptimizeAway(JavaScriptVirtualMachine.resolve);
-}
-
-pub const JavaScriptVirtualMachine = JavaScript.VirtualMachine;
-
-test "" {
-    @import("std").testing.refAllDecls(@This());
-
-    std.mem.doNotOptimizeAway(JavaScriptVirtualMachine.fetch);
-    std.mem.doNotOptimizeAway(JavaScriptVirtualMachine.init);
-    std.mem.doNotOptimizeAway(JavaScriptVirtualMachine.resolve);
+    cli.Cli.start(bun.default_allocator, stdout, stderr, MainPanicHandler);
 }
 
 test "panic" {
     panic("woah", null);
 }
+
+pub usingnamespace @import("./bun.zig");

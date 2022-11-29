@@ -1,27 +1,27 @@
 const std = @import("std");
-const bun = @import("../../global.zig");
+const bun = @import("bun");
 const Api = @import("../../api/schema.zig").Api;
 const RequestContext = @import("../../http.zig").RequestContext;
 const MimeType = @import("../../http.zig").MimeType;
 const ZigURL = @import("../../url.zig").URL;
-const HTTPClient = @import("http");
+const HTTPClient = @import("bun").HTTP;
 const NetworkThread = HTTPClient.NetworkThread;
 const Environment = @import("../../env.zig");
 
-const JSC = @import("../../jsc.zig");
+const JSC = @import("bun").JSC;
 const js = JSC.C;
 
-const logger = @import("../../logger.zig");
+const logger = @import("bun").logger;
 const Method = @import("../../http/method.zig").Method;
 
 const ObjectPool = @import("../../pool.zig").ObjectPool;
 
-const Output = @import("../../global.zig").Output;
-const MutableString = @import("../../global.zig").MutableString;
-const strings = @import("../../global.zig").strings;
-const string = @import("../../global.zig").string;
-const default_allocator = @import("../../global.zig").default_allocator;
-const FeatureFlags = @import("../../global.zig").FeatureFlags;
+const Output = @import("bun").Output;
+const MutableString = @import("bun").MutableString;
+const strings = @import("bun").strings;
+const string = @import("bun").string;
+const default_allocator = @import("bun").default_allocator;
+const FeatureFlags = @import("bun").FeatureFlags;
 const ArrayBuffer = @import("../base.zig").ArrayBuffer;
 const Properties = @import("../base.zig").Properties;
 const NewClass = @import("../base.zig").NewClass;

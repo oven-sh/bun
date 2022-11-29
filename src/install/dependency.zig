@@ -7,11 +7,11 @@ const SlicedString = Semver.SlicedString;
 const PackageNameHash = @import("./install.zig").PackageNameHash;
 const Features = @import("./install.zig").Features;
 const Install = @import("./install.zig");
-const logger = @import("../logger.zig");
+const logger = @import("bun").logger;
 const Dependency = @This();
 const string = @import("../string_types.zig").string;
 const strings = @import("../string_immutable.zig");
-const bun = @import("../global.zig");
+const bun = @import("bun");
 
 pub const Pair = struct {
     resolution_id: Install.PackageID = Install.invalid_package_id,

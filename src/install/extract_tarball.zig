@@ -1,4 +1,4 @@
-const Output = @import("../global.zig").Output;
+const Output = @import("bun").Output;
 const strings = @import("../string_immutable.zig");
 const string = @import("../string_types.zig").string;
 const Resolution = @import("./resolution.zig").Resolution;
@@ -10,9 +10,9 @@ const PackageManager = @import("./install.zig").PackageManager;
 const std = @import("std");
 const Npm = @import("./npm.zig");
 const ExtractTarball = @This();
-const default_allocator = @import("../global.zig").default_allocator;
-const Global = @import("../global.zig").Global;
-const bun = @import("../global.zig");
+const default_allocator = @import("bun").default_allocator;
+const Global = @import("bun").Global;
+const bun = @import("bun");
 name: strings.StringOrTinyString,
 resolution: Resolution,
 registry: string,

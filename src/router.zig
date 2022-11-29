@@ -7,7 +7,7 @@ const Router = @This();
 
 const Api = @import("./api/schema.zig").Api;
 const std = @import("std");
-const bun = @import("global.zig");
+const bun = @import("bun");
 const string = bun.string;
 const Output = bun.Output;
 const Global = bun.Global;
@@ -919,7 +919,7 @@ const expect = std.testing.expect;
 const expectEqual = std.testing.expectEqual;
 const expectEqualStrings = std.testing.expectEqualStrings;
 const expectStr = std.testing.expectEqualStrings;
-const Logger = @import("./logger.zig");
+const Logger = @import("bun").logger;
 
 pub const Test = struct {
     pub fn makeRoutes(comptime testName: string, data: anytype) !Routes {

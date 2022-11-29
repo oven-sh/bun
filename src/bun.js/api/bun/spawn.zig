@@ -1,5 +1,5 @@
-const JSC = @import("javascript_core");
-const bun = @import("../../../global.zig");
+const JSC = @import("bun").JSC;
+const bun = @import("bun");
 const string = bun.string;
 const std = @import("std");
 

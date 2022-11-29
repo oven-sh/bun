@@ -1,4 +1,4 @@
-const bun = @import("../global.zig");
+const bun = @import("bun");
 const std = @import("std");
 const cpp = @import("./bindings/bindings.zig");
 const generic = opaque {
@@ -6,7 +6,7 @@ const generic = opaque {
         return @bitCast(cpp.JSValue.Type, @ptrToInt(this));
     }
 
-    pub inline fn bunVM(this: *@This()) *@import("javascript_core").VirtualMachine {
+    pub inline fn bunVM(this: *@This()) *@import("bun").JSC.VirtualMachine {
         return this.ptr().bunVM();
     }
 };
@@ -174,13 +174,13 @@ pub extern fn JSValueToNumber(ctx: JSContextRef, value: JSValueRef, exception: E
 pub extern fn JSValueToStringCopy(ctx: JSContextRef, value: JSValueRef, exception: ExceptionRef) JSStringRef;
 pub extern fn JSValueToObject(ctx: JSContextRef, value: JSValueRef, exception: ExceptionRef) JSObjectRef;
 
-const log_protection = @import("../global.zig").Environment.allow_assert and false;
+const log_protection = @import("bun").Environment.allow_assert and false;
 pub inline fn JSValueUnprotect(ctx: JSContextRef, value: JSValueRef) void {
     const Wrapped = struct {
         pub extern fn JSValueUnprotect(ctx: JSContextRef, value: JSValueRef) void;
     };
     if (comptime log_protection) {
-        const Output = @import("../global.zig").Output;
+        const Output = @import("bun").Output;
         Output.debug("[unprotect] {d}\n", .{@ptrToInt(value)});
     }
     // wrapper exists to make it easier to set a breakpoint
@@ -192,7 +192,7 @@ pub inline fn JSValueProtect(ctx: JSContextRef, value: JSValueRef) void {
         pub extern fn JSValueProtect(ctx: JSContextRef, value: JSValueRef) void;
     };
     if (comptime log_protection) {
-        const Output = @import("../global.zig").Output;
+        const Output = @import("bun").Output;
         Output.debug("[protect] {d}\n", .{@ptrToInt(value)});
     }
     // wrapper exists to make it easier to set a breakpoint

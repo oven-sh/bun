@@ -1743,7 +1743,7 @@ void GlobalObject::visitGeneratedLazyClasses(GlobalObject *thisObject, Visitor& 
 }
 
 const ZIG_GENERATED_CLASSES_HEADER = `
-const JSC = @import("javascript_core");
+const JSC = @import("bun").JSC;
 const Classes = @import("./generated_classes_list.zig").Classes;
 const Environment = @import("../../env.zig");
 const std = @import("std");

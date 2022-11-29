@@ -1,8 +1,8 @@
 const std = @import("std");
-const bun = @import("../../../global.zig");
+const bun = @import("bun");
 const string = bun.string;
 const Environment = bun.Environment;
-const JSC = @import("../../../jsc.zig");
+const JSC = @import("bun").JSC;
 
 const ConstantType = enum { ERRNO, ERRNO_WIN, SIG, DLOPEN, OTHER };
 

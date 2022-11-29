@@ -41,42 +41,22 @@ const color_map = std.ComptimeStringMap([]const u8, .{
 });
 
 fn addInternalPackages(step: *std.build.LibExeObjStep, _: std.mem.Allocator, target: anytype) !void {
-    var boringssl: std.build.Pkg = .{
-        .name = "boringssl",
-        .source = pkgPath("src/boringssl.zig"),
-    };
-
-    var datetime: std.build.Pkg = .{
-        .name = "datetime",
-        .source = pkgPath("src/deps/zig-datetime/src/datetime.zig"),
-    };
-
-    var thread_pool: std.build.Pkg = .{
-        .name = "thread_pool",
-        .source = pkgPath("src/thread_pool.zig"),
-    };
-
-    var picohttp: std.build.Pkg = .{
-        .name = "picohttp",
-        .source = pkgPath("src/deps/picohttp.zig"),
+    var bun = std.build.Pkg{
+        .name = "bun",
+        .source = pkgPath("src/bun_redirect.zig"),
     };
 
     var io_darwin: std.build.Pkg = .{
-        .name = "io",
+        .name = "async_io",
         .source = pkgPath("src/io/io_darwin.zig"),
     };
     var io_linux: std.build.Pkg = .{
-        .name = "io",
+        .name = "async_io",
         .source = pkgPath("src/io/io_linux.zig"),
     };
     var io_stub: std.build.Pkg = .{
-        .name = "io",
+        .name = "async_io",
         .source = pkgPath("src/io/io_stub.zig"),
-    };
-
-    var lol_html: std.build.Pkg = .{
-        .name = "lolhtml",
-        .source = pkgPath("src/deps/lol-html.zig"),
     };
 
     var io = if (target.isDarwin())
@@ -85,21 +65,6 @@ fn addInternalPackages(step: *std.build.LibExeObjStep, _: std.mem.Allocator, tar
         io_linux
     else
         io_stub;
-
-    var strings: std.build.Pkg = .{
-        .name = "strings",
-        .source = pkgPath("src/string_immutable.zig"),
-    };
-
-    var clap: std.build.Pkg = .{
-        .name = "clap",
-        .source = pkgPath("src/deps/zig-clap/clap.zig"),
-    };
-
-    var http: std.build.Pkg = .{
-        .name = "http",
-        .source = pkgPath("src/http_client_async.zig"),
-    };
 
     var javascript_core_real: std.build.Pkg = .{
         .name = "javascript_core",
@@ -111,59 +76,15 @@ fn addInternalPackages(step: *std.build.LibExeObjStep, _: std.mem.Allocator, tar
         .source = pkgPath("src/jsc_stub.zig"),
     };
 
-    var uws: std.build.Pkg = .{
-        .name = "uws",
-        .source = pkgPath("src/deps/uws.zig"),
-    };
-
     var javascript_core = if (target.getOsTag() == .freestanding)
         javascript_core_stub
     else
         javascript_core_real;
-
-    var analytics: std.build.Pkg = .{
-        .name = "analytics",
-        .source = pkgPath("src/analytics.zig"),
-    };
-
-    io.dependencies = &.{analytics};
-    uws.dependencies = &.{boringssl};
-    javascript_core.dependencies = &.{ http, strings, picohttp, io, uws };
-    http.dependencies = &.{
-        strings,
-        picohttp,
-        io,
-        boringssl,
-        thread_pool,
-        uws,
-    };
-    thread_pool.dependencies = &.{ io, http };
-    http.dependencies = &.{
-        strings,
-        picohttp,
-        io,
-        boringssl,
-        thread_pool,
-        uws,
-    };
-    thread_pool.dependencies = &.{ io, http };
-
-    thread_pool.dependencies = &.{
-        io,
-        http,
-    };
-
-    step.addPackage(thread_pool);
-    step.addPackage(picohttp);
+    io.dependencies = &[_]std.build.Pkg{bun};
+    javascript_core.dependencies = &[_]std.build.Pkg{bun};
     step.addPackage(io);
-    step.addPackage(strings);
-    step.addPackage(clap);
-    step.addPackage(http);
-    step.addPackage(boringssl);
     step.addPackage(javascript_core);
-    step.addPackage(datetime);
-    step.addPackage(lol_html);
-    step.addPackage(uws);
+    step.addPackage(bun);
 }
 
 const BunBuildOptions = struct {

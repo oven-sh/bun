@@ -8,7 +8,7 @@ const copy = @import("std").mem.copy;
 const Env = @import("./env.zig");
 const ObjectPool = @import("./pool.zig").ObjectPool;
 
-const default_allocator = @import("./global.zig").default_allocator;
+const default_allocator = @import("bun").default_allocator;
 
 const Joinable = struct {
     offset: u31 = 0,

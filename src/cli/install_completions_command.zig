@@ -1,4 +1,4 @@
-const bun = @import("../global.zig");
+const bun = @import("bun");
 const string = bun.string;
 const Output = bun.Output;
 const Global = bun.Global;
@@ -11,13 +11,13 @@ const C = bun.C;
 const std = @import("std");
 
 const lex = @import("../js_lexer.zig");
-const logger = @import("../logger.zig");
+const logger = @import("bun").logger;
 
 const options = @import("../options.zig");
 const js_parser = @import("../js_parser.zig");
 const js_ast = @import("../js_ast.zig");
 const linker = @import("../linker.zig");
-const panicky = @import("../panic_handler.zig");
+
 const allocators = @import("../allocators.zig");
 const sync = @import("../sync.zig");
 const Api = @import("../api/schema.zig").Api;
@@ -35,9 +35,9 @@ const JSPrinter = @import("../js_printer.zig");
 const DotEnv = @import("../env_loader.zig");
 const NPMClient = @import("../which_npm_client.zig").NPMClient;
 const which = @import("../which.zig").which;
-const clap = @import("clap");
+const clap = @import("bun").clap;
 const Lock = @import("../lock.zig").Lock;
-const Headers = @import("http").Headers;
+const Headers = @import("bun").HTTP.Headers;
 const CopyFile = @import("../copy_file.zig");
 const ShellCompletions = @import("./shell_completions.zig");
 

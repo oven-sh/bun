@@ -1,4 +1,4 @@
-const bun = @import("../global.zig");
+const bun = @import("bun");
 const string = bun.string;
 const constStrToU8 = bun.constStrToU8;
 const Output = bun.Output;
@@ -12,13 +12,13 @@ const C = bun.C;
 const std = @import("std");
 
 const lex = @import("../js_lexer.zig");
-const logger = @import("../logger.zig");
+const logger = @import("bun").logger;
 
 const options = @import("../options.zig");
 const js_parser = @import("../js_parser.zig");
 const js_ast = @import("../js_ast.zig");
 const linker = @import("../linker.zig");
-const panicky = @import("../panic_handler.zig");
+
 const allocators = @import("../allocators.zig");
 const sync = @import("../sync.zig");
 const Api = @import("../api/schema.zig").Api;
@@ -29,7 +29,7 @@ const bundler = @import("../bundler.zig");
 const NodeModuleBundle = @import("../node_module_bundle.zig").NodeModuleBundle;
 const fs = @import("../fs.zig");
 const URL = @import("../url.zig").URL;
-const HTTP = @import("http");
+const HTTP = @import("bun").HTTP;
 const NetworkThread = HTTP.NetworkThread;
 const ParseJSON = @import("../json_parser.zig").ParseJSONUTF8;
 const Archive = @import("../libarchive/libarchive.zig").Archive;
@@ -38,9 +38,9 @@ const JSPrinter = @import("../js_printer.zig");
 const DotEnv = @import("../env_loader.zig");
 const NPMClient = @import("../which_npm_client.zig").NPMClient;
 const which = @import("../which.zig").which;
-const clap = @import("clap");
+const clap = @import("bun").clap;
 const Lock = @import("../lock.zig").Lock;
-const Headers = @import("http").Headers;
+const Headers = @import("bun").HTTP.Headers;
 const CopyFile = @import("../copy_file.zig");
 var bun_path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
 const Futex = @import("../futex.zig");
@@ -1671,7 +1671,7 @@ const Commands = .{
     &[_]string{""},
     &[_]string{""},
 };
-const picohttp = @import("picohttp");
+const picohttp = @import("bun").picohttp;
 
 pub const DownloadedExample = struct {
     tarball_bytes: MutableString,

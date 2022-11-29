@@ -1,10 +1,10 @@
 const std = @import("std");
-const JSC = @import("javascript_core");
+const JSC = @import("bun").JSC;
 const JSGlobalObject = JSC.JSGlobalObject;
 const VirtualMachine = JSC.VirtualMachine;
 const Lock = @import("../lock.zig").Lock;
 const Microtask = JSC.Microtask;
-const bun = @import("../global.zig");
+const bun = @import("bun");
 const Environment = bun.Environment;
 const Fetch = JSC.WebCore.Fetch;
 const WebCore = JSC.WebCore;
@@ -21,8 +21,8 @@ const JSValue = JSC.JSValue;
 const js = JSC.C;
 pub const WorkPool = @import("../work_pool.zig").WorkPool;
 pub const WorkPoolTask = @import("../work_pool.zig").Task;
-const NetworkThread = @import("http").NetworkThread;
-const uws = @import("uws");
+const NetworkThread = @import("bun").HTTP.NetworkThread;
+const uws = @import("bun").uws;
 
 pub fn ConcurrentPromiseTask(comptime Context: type) type {
     return struct {
@@ -209,7 +209,7 @@ pub const ConcurrentTask = struct {
     }
 };
 
-const AsyncIO = @import("io");
+const AsyncIO = @import("bun").AsyncIO;
 
 pub const EventLoop = struct {
     tasks: Queue = undefined,

@@ -2,9 +2,9 @@ const std = @import("std");
 const Environment = @import("./env.zig");
 
 const Output = @import("output.zig");
-const use_mimalloc = @import("./global.zig").use_mimalloc;
+const use_mimalloc = @import("bun").use_mimalloc;
 const StringTypes = @import("./string_types.zig");
-const Mimalloc = @import("./global.zig").Mimalloc;
+const Mimalloc = @import("bun").Mimalloc;
 
 const BASE_VERSION = "0.3";
 
@@ -43,7 +43,7 @@ else
 
 pub inline fn getStartTime() i128 {
     if (Environment.isTest) return 0;
-    return @import("root").start_time;
+    return @import("bun").start_time;
 }
 
 pub const version: @import("./install/semver.zig").Version = .{
@@ -134,7 +134,7 @@ pub fn crash() noreturn {
 }
 
 const Global = @This();
-const string = @import("./global.zig").string;
+const string = @import("bun").string;
 
 pub const BunInfo = struct {
     bun_version: string,

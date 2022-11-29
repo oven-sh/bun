@@ -1,7 +1,5 @@
 const std = @import("std");
-const logger = @import("logger.zig");
-const root = @import("root");
-const bun = @import("global.zig");
+const bun = @import("bun");
 const string = bun.string;
 const Output = bun.Output;
 const Global = bun.Global;
@@ -13,19 +11,19 @@ const default_allocator = bun.default_allocator;
 const C = bun.C;
 const CLI = @import("./cli.zig").Cli;
 const Features = @import("./analytics/analytics_thread.zig").Features;
-const HTTP = @import("http").AsyncHTTP;
+const HTTP = @import("bun").HTTP.AsyncHTTP;
 const Report = @import("./report.zig");
 
 pub fn NewPanicHandler(comptime panic_func: fn handle_panic(msg: []const u8, error_return_type: ?*std.builtin.StackTrace) noreturn) type {
     return struct {
         panic_count: usize = 0,
         skip_next_panic: bool = false,
-        log: *logger.Log,
+        log: *bun.logger.Log,
 
         pub var Singleton: ?*Handler = null;
         const Handler = @This();
 
-        pub fn init(log: *logger.Log) Handler {
+        pub fn init(log: *bun.logger.Log) Handler {
             return Handler{
                 .log = log,
             };

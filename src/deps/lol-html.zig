@@ -7,7 +7,7 @@ pub const MemorySettings = extern struct {
 };
 
 inline fn auto_disable() void {
-    if (comptime @import("../feature_flags.zig").disable_lolhtml)
+    if (comptime @import("bun").FeatureFlags.disable_lolhtml)
         unreachable;
 }
 

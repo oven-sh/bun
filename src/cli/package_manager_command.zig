@@ -2,12 +2,12 @@ const Command = @import("../cli.zig").Command;
 const PackageManager = @import("../install/install.zig").PackageManager;
 const ComamndLineArguments = PackageManager.CommandLineArguments;
 const std = @import("std");
-const strings = @import("strings");
-const Global = @import("../global.zig").Global;
-const Output = @import("../global.zig").Output;
+const strings = @import("bun").strings;
+const Global = @import("bun").Global;
+const Output = @import("bun").Output;
 const Fs = @import("../fs.zig");
 const Path = @import("../resolver/resolve_path.zig");
-const bun = @import("../global.zig");
+const bun = @import("bun");
 pub const PackageManagerCommand = struct {
     pub fn printHelp(_: std.mem.Allocator) void {}
     pub fn printHash(ctx: Command.Context, lockfile_: []const u8) !void {

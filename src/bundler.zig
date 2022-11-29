@@ -1,4 +1,4 @@
-const bun = @import("global.zig");
+const bun = @import("bun");
 const string = bun.string;
 const Output = bun.Output;
 const Global = bun.Global;
@@ -12,7 +12,7 @@ const FeatureFlags = bun.FeatureFlags;
 const C = bun.C;
 const std = @import("std");
 const lex = @import("js_lexer.zig");
-const logger = @import("logger.zig");
+const logger = @import("bun").logger;
 const options = @import("options.zig");
 const js_parser = @import("js_parser.zig");
 const json_parser = @import("json_parser.zig");
@@ -24,7 +24,6 @@ const Define = @import("defines.zig").Define;
 const DebugOptions = @import("./cli.zig").Command.DebugOptions;
 const ThreadPoolLib = @import("./thread_pool.zig");
 
-const panicky = @import("panic_handler.zig");
 const Fs = @import("fs.zig");
 const schema = @import("api/schema.zig");
 const Api = schema.Api;
@@ -53,7 +52,7 @@ const Report = @import("./report.zig");
 const Linker = linker.Linker;
 const Resolver = _resolver.Resolver;
 const TOML = @import("./toml/toml_parser.zig").TOML;
-const JSC = @import("javascript_core");
+const JSC = @import("bun").JSC;
 const PackageManager = @import("./install/install.zig").PackageManager;
 
 pub fn MacroJSValueType_() type {

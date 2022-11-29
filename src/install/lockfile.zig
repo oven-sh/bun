@@ -1,4 +1,4 @@
-const bun = @import("../global.zig");
+const bun = @import("bun");
 const string = bun.string;
 const Output = bun.Output;
 const Global = bun.Global;
@@ -11,7 +11,7 @@ const C = bun.C;
 const std = @import("std");
 
 const JSLexer = @import("../js_lexer.zig");
-const logger = @import("../logger.zig");
+const logger = @import("bun").logger;
 
 const js_parser = @import("../js_parser.zig");
 const Expr = @import("../js_ast.zig").Expr;
@@ -19,7 +19,7 @@ const json_parser = @import("../json_parser.zig");
 const JSPrinter = @import("../js_printer.zig");
 
 const linker = @import("../linker.zig");
-const panicky = @import("../panic_handler.zig");
+
 const sync = @import("../sync.zig");
 const Api = @import("../api/schema.zig").Api;
 const Path = @import("../resolver/resolve_path.zig");
@@ -31,19 +31,19 @@ const NodeModuleBundle = @import("../node_module_bundle.zig").NodeModuleBundle;
 const DotEnv = @import("../env_loader.zig");
 const which = @import("../which.zig").which;
 const Run = @import("../bun_js.zig").Run;
-const HeaderBuilder = @import("http").HeaderBuilder;
+const HeaderBuilder = @import("bun").HTTP.HeaderBuilder;
 const Fs = @import("../fs.zig");
 const FileSystem = Fs.FileSystem;
 const Lock = @import("../lock.zig").Lock;
 var path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
 var path_buf2: [bun.MAX_PATH_BYTES]u8 = undefined;
 const URL = @import("../url.zig").URL;
-const AsyncHTTP = @import("http").AsyncHTTP;
-const HTTPChannel = @import("http").HTTPChannel;
-const NetworkThread = @import("http").NetworkThread;
+const AsyncHTTP = @import("bun").HTTP.AsyncHTTP;
+const HTTPChannel = @import("bun").HTTP.HTTPChannel;
+const NetworkThread = @import("bun").HTTP.NetworkThread;
 
 const Integrity = @import("./integrity.zig").Integrity;
-const clap = @import("clap");
+const clap = @import("bun").clap;
 const ExtractTarball = @import("./extract_tarball.zig");
 const Npm = @import("./npm.zig");
 const Bitset = @import("./bit_set.zig").DynamicBitSetUnmanaged;

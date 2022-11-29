@@ -1,8 +1,8 @@
 const std = @import("std");
-const logger = @import("../logger.zig");
+const logger = @import("bun").logger;
 const js_ast = @import("../js_ast.zig");
 
-const bun = @import("../global.zig");
+const bun = @import("bun");
 const string = bun.string;
 const Output = bun.Output;
 const Global = bun.Global;

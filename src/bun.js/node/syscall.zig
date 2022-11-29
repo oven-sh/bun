@@ -5,14 +5,14 @@ const os = std.os;
 const builtin = @import("builtin");
 
 const Syscall = @This();
-const Environment = @import("../../global.zig").Environment;
-const default_allocator = @import("../../global.zig").default_allocator;
-const JSC = @import("../../jsc.zig");
+const Environment = @import("bun").Environment;
+const default_allocator = @import("bun").default_allocator;
+const JSC = @import("bun").JSC;
 const SystemError = JSC.SystemError;
-const bun = @import("../../global.zig");
+const bun = @import("bun");
 const MAX_PATH_BYTES = bun.MAX_PATH_BYTES;
 const fd_t = bun.FileDescriptor;
-const C = @import("../../global.zig").C;
+const C = @import("bun").C;
 const linux = os.linux;
 const Maybe = JSC.Maybe;
 
@@ -21,7 +21,7 @@ pub const syslog = log;
 
 // On Linux AARCh64, zig is missing stat & lstat syscalls
 const use_libc = (Environment.isLinux and Environment.isAarch64) or Environment.isMac;
-pub const system = if (Environment.isLinux) linux else @import("io").darwin;
+pub const system = if (Environment.isLinux) linux else @import("bun").AsyncIO.darwin;
 pub const S = struct {
     pub usingnamespace if (Environment.isLinux) linux.S else std.os.S;
 };
@@ -107,7 +107,7 @@ pub const Tag = enum(u8) {
     posix_spawn,
     pub var strings = std.EnumMap(Tag, JSC.C.JSStringRef).initFull(null);
 };
-const PathString = @import("../../global.zig").PathString;
+const PathString = @import("bun").PathString;
 
 const mode_t = os.mode_t;
 

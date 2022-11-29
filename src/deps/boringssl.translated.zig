@@ -18801,8 +18801,8 @@ pub const SSL = opaque {
         };
     }
 
-    const Output = @import("../global.zig").Output;
-    const Environment = @import("../global.zig").Environment;
+    const Output = @import("bun").Output;
+    const Environment = @import("bun").Environment;
 
     pub fn read(this: *SSL, buf: []u8) Error!usize {
         const rc = SSL_read(this, buf.ptr, @intCast(c_int, buf.len));

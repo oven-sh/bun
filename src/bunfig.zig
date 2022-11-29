@@ -1,5 +1,5 @@
 const std = @import("std");
-const bun = @import("./global.zig");
+const bun = @import("bun");
 const string = bun.string;
 const Output = bun.Output;
 const Global = bun.Global;
@@ -11,7 +11,7 @@ const default_allocator = bun.default_allocator;
 const URL = @import("./url.zig").URL;
 const C = bun.C;
 const options = @import("./options.zig");
-const logger = @import("./logger.zig");
+const logger = @import("bun").logger;
 const js_ast = @import("./js_ast.zig");
 const js_lexer = @import("./js_lexer.zig");
 const Defines = @import("./defines.zig");

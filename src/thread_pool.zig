@@ -2,17 +2,15 @@
 // https://github.com/kprotty/zap/blob/blog/src/thread_pool.zig
 
 const std = @import("std");
-const bun = @import("./global.zig");
+const bun = @import("bun");
 const ThreadPool = @This();
 const Futex = @import("./futex.zig");
-const AsyncIO = @import("io");
 
 const Environment = bun.Environment;
 const assert = std.debug.assert;
 const Atomic = std.atomic.Atomic;
 pub const OnSpawnCallback = fn (ctx: ?*anyopaque) ?*anyopaque;
 
-io: ?*AsyncIO = null,
 sleep_on_idle_network_thread: bool = true,
 /// executed on the thread
 on_thread_spawn: ?OnSpawnCallback = null,
@@ -250,18 +248,8 @@ noinline fn wait(self: *ThreadPool, _is_waking: bool) error{Shutdown}!bool {
                 .Acquire,
                 .Monotonic,
             ) orelse {
-                if (self.io) |io| {
-                    io.tick() catch {};
-                }
-
                 return is_waking or (sync.state == .signaled);
             });
-
-            // No notification to consume.
-            // Mark this thread as idle before sleeping on the idle_event.
-            if (self.io) |io| {
-                io.tick() catch {};
-            }
         } else if (!is_idle) {
             var new_sync = sync;
             new_sync.idle += 1;
@@ -278,12 +266,6 @@ noinline fn wait(self: *ThreadPool, _is_waking: bool) error{Shutdown}!bool {
                 is_idle = true;
                 continue;
             });
-
-            // Wait for a signal by either notify() or shutdown() without wasting cpu cycles.
-            // TODO: Add I/O polling here.
-            if (self.io) |io| {
-                io.tick() catch {};
-            }
         } else {
             self.idle_event.wait();
             sync = @bitCast(Sync, self.sync.load(.Monotonic));
@@ -369,7 +351,7 @@ fn join(self: *ThreadPool) void {
     thread.join_event.notify();
 }
 
-const Output = @import("./global.zig").Output;
+const Output = @import("bun").Output;
 
 pub const Thread = struct {
     next: ?*Thread = null,
@@ -431,11 +413,6 @@ pub const Thread = struct {
         // Then the global queue
         if (self.run_buffer.consume(&thread_pool.run_queue)) |stole| {
             return stole;
-        }
-
-        // TODO: add optimistic I/O polling here
-        if (thread_pool.io) |io| {
-            io.tick() catch {};
         }
 
         // Then try work stealing from other threads

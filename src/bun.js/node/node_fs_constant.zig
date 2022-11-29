@@ -1,4 +1,4 @@
-const bun = @import("../../global.zig");
+const bun = @import("bun");
 const Environment = bun.Environment;
 const std = @import("std");
 

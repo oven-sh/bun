@@ -1,7 +1,6 @@
 const std = @import("std");
-const logger = @import("logger.zig");
-const root = @import("root");
-const bun = @import("global.zig");
+const logger = @import("bun").logger;
+const bun = @import("bun");
 const string = bun.string;
 const Output = bun.Output;
 const Global = bun.Global;
@@ -14,7 +13,7 @@ const C = bun.C;
 const CLI = @import("./cli.zig").Cli;
 const Features = @import("./analytics/analytics_thread.zig").Features;
 const Platform = @import("./analytics/analytics_thread.zig").GenerateHeader.GeneratePlatform;
-const HTTP = @import("http").AsyncHTTP;
+const HTTP = @import("bun").HTTP.AsyncHTTP;
 const CrashReporter = @import("./crash_reporter.zig");
 
 const Report = @This();
@@ -230,7 +229,7 @@ pub fn fatal(err_: ?anyerror, msg_: ?string) void {
 
         // It only is a real crash report if it's not coming from Zig
 
-        if (comptime !@import("javascript_core").is_bindgen) {
+        if (comptime !@import("bun").JSC.is_bindgen) {
             std.mem.doNotOptimizeAway(&Bun__crashReportWrite);
             Bun__crashReportDumpStackTrace(&crash_report_writer);
         }
@@ -274,7 +273,7 @@ pub noinline fn handleCrash(signal: i32, addr: usize) void {
         .{ @errorName(name), std.fmt.fmtSliceHexUpper(std.mem.asBytes(&addr)) },
     );
     printMetadata();
-    if (comptime !@import("javascript_core").is_bindgen) {
+    if (comptime !@import("bun").JSC.is_bindgen) {
         std.mem.doNotOptimizeAway(&Bun__crashReportWrite);
         Bun__crashReportDumpStackTrace(&crash_report_writer);
     }

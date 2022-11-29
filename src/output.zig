@@ -1,13 +1,13 @@
 const Output = @This();
 const std = @import("std");
 const Environment = @import("./env.zig");
-const string = @import("./global.zig").string;
-const root = @import("root");
-const strings = @import("./global.zig").strings;
-const StringTypes = @import("./global.zig").StringTypes;
-const Global = @import("./global.zig").Global;
-const ComptimeStringMap = @import("./global.zig").ComptimeStringMap;
-const use_mimalloc = @import("./global.zig").use_mimalloc;
+const string = @import("bun").string;
+const root = @import("bun");
+const strings = @import("bun").strings;
+const StringTypes = @import("bun").StringTypes;
+const Global = @import("bun").Global;
+const ComptimeStringMap = @import("bun").ComptimeStringMap;
+const use_mimalloc = @import("bun").use_mimalloc;
 
 const SystemTimer = @import("./system_timer.zig").Timer;
 
@@ -619,7 +619,7 @@ pub fn printError(comptime fmt: string, args: anytype) void {
 }
 
 pub const DebugTimer = struct {
-    timer: @import("global.zig").DebugOnly(std.time.Timer) = undefined,
+    timer: @import("bun").DebugOnly(std.time.Timer) = undefined,
 
     pub fn start() DebugTimer {
         if (comptime Environment.isDebug) {

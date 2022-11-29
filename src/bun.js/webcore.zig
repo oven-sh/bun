@@ -2,9 +2,9 @@ pub usingnamespace @import("./webcore/response.zig");
 pub usingnamespace @import("./webcore/encoding.zig");
 pub usingnamespace @import("./webcore/streams.zig");
 
-const JSC = @import("../jsc.zig");
+const JSC = @import("bun").JSC;
 const std = @import("std");
-const bun = @import("../global.zig");
+const bun = @import("bun");
 
 pub const Lifetime = enum {
     clone,
@@ -358,7 +358,7 @@ pub const Prompt = struct {
 
 pub const Crypto = struct {
     const UUID = @import("./uuid.zig");
-    const BoringSSL = @import("boringssl");
+    const BoringSSL = @import("bun").BoringSSL;
     pub const Class = JSC.NewClass(
         void,
         .{ .name = "crypto" },

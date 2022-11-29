@@ -1,12 +1,12 @@
 const std = @import("std");
-const logger = @import("logger.zig");
+const logger = @import("bun").logger;
 const js_lexer = @import("js_lexer.zig");
 const importRecord = @import("import_record.zig");
 const js_ast = @import("js_ast.zig");
 const options = @import("options.zig");
 
 const fs = @import("fs.zig");
-const bun = @import("global.zig");
+const bun = @import("bun");
 const string = bun.string;
 const Output = bun.Output;
 const Global = bun.Global;

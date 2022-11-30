@@ -3612,18 +3612,7 @@ JSC::JSValue GlobalObject::moduleLoaderEvaluate(JSGlobalObject* globalObject,
     return result;
 }
 
-void GlobalObject::queueMicrotaskToEventLoop(JSC::JSGlobalObject& global,
-    Ref<JSC::Microtask>&& task)
-{
-    auto& globalObject = reinterpret_cast<GlobalObject&>(global);
-    if (globalObject.isThreadLocalDefaultGlobalObject) {
-        Zig__GlobalObject__queueMicrotaskToEventLoop(
-            &global, reinterpret_cast<JSMicrotaskCallback*>(&JSMicrotaskCallbackDefaultGlobal::create(WTFMove(task)).leakRef()));
-    } else {
-        Zig__GlobalObject__queueMicrotaskToEventLoop(
-            &global, &JSMicrotaskCallback::create(global, WTFMove(task)).leakRef());
-    }
-}
+
 
 #include "ZigGeneratedClasses+lazyStructureImpl.h"
 

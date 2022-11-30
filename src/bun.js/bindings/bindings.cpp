@@ -1373,10 +1373,6 @@ JSC__JSObject* JSC__JSCell__getObject(JSC__JSCell* arg0)
 {
     return arg0->getObject();
 }
-bWTF__String JSC__JSCell__getString(JSC__JSCell* arg0, JSC__JSGlobalObject* arg1)
-{
-    return Wrap<WTF__String, bWTF__String>::wrap(arg0->getString(arg1));
-}
 unsigned char JSC__JSCell__getType(JSC__JSCell* arg0) { return arg0->type(); }
 
 #pragma mark - JSC::JSString
@@ -1386,16 +1382,7 @@ void JSC__JSString__toZigString(JSC__JSString* arg0, JSC__JSGlobalObject* arg1, 
     *arg2 = Zig::toZigString(arg0->value(arg1));
 }
 
-JSC__JSString* JSC__JSString__createFromOwnedString(JSC__VM* arg0, const WTF__String* arg1)
-{
-    return JSC::jsOwnedString(reinterpret_cast<JSC__VM&>(arg0),
-        reinterpret_cast<const WTF__String&>(arg1));
-}
-JSC__JSString* JSC__JSString__createFromString(JSC__VM* arg0, const WTF__String* arg1)
-{
-    return JSC::jsString(reinterpret_cast<JSC__VM&>(arg0),
-        reinterpret_cast<const WTF__String&>(arg1));
-}
+
 bool JSC__JSString__eql(const JSC__JSString* arg0, JSC__JSGlobalObject* obj, JSC__JSString* arg2)
 {
     return arg0->equal(obj, arg2);
@@ -1407,10 +1394,7 @@ JSC__JSObject* JSC__JSString__toObject(JSC__JSString* arg0, JSC__JSGlobalObject*
     return arg0->toObject(arg1);
 }
 
-bWTF__String JSC__JSString__value(JSC__JSString* arg0, JSC__JSGlobalObject* arg1)
-{
-    return Wrap<WTF__String, bWTF__String>::wrap(arg0->value(arg1));
-}
+
 
 #pragma mark - JSC::JSModuleLoader
 
@@ -1430,20 +1414,7 @@ void Microtask__run_default(void* microtask, void* global)
     reinterpret_cast<Zig::JSMicrotaskCallbackDefaultGlobal*>(microtask)->call(reinterpret_cast<Zig::GlobalObject*>(global));
 }
 
-bool JSC__JSModuleLoader__checkSyntax(JSC__JSGlobalObject* arg0, const JSC__SourceCode* arg1,
-    bool arg2)
-{
-    JSC::ParserError error;
-    bool result = false;
-    if (arg2) {
-        result = JSC::checkModuleSyntax(arg0, reinterpret_cast<const JSC::SourceCode&>(arg1), error);
-    } else {
-        result = JSC::checkSyntax(reinterpret_cast<JSC__VM&>(arg0->vm()),
-            reinterpret_cast<const JSC::SourceCode&>(arg1), error);
-    }
 
-    return result;
-}
 JSC__JSValue JSC__JSModuleLoader__evaluate(JSC__JSGlobalObject* globalObject, const unsigned char* arg1,
     size_t arg2, const unsigned char* originUrlPtr, size_t originURLLen, const unsigned char* referrerUrlPtr, size_t referrerUrlLen,
     JSC__JSValue JSValue5, JSC__JSValue* arg6)
@@ -1476,16 +1447,6 @@ JSC__JSValue JSC__JSModuleLoader__evaluate(JSC__JSGlobalObject* globalObject, co
     } else {
         return JSC::JSValue::encode(promise);
     }
-}
-JSC__JSInternalPromise* JSC__JSModuleLoader__importModule(JSC__JSGlobalObject* arg0,
-    const JSC__Identifier* arg1)
-{
-    return JSC::importModule(arg0, *arg1, JSC::JSValue {}, JSC::JSValue {}, JSC::JSValue {});
-}
-JSC__JSValue JSC__JSModuleLoader__linkAndEvaluateModule(JSC__JSGlobalObject* arg0,
-    const JSC__Identifier* arg1)
-{
-    return JSC::JSValue::encode(JSC::linkAndEvaluateModule(arg0, *arg1, JSC::JSValue {}));
 }
 
 static JSC::Identifier jsValueToModuleKey(JSC::JSGlobalObject* lexicalGlobalObject,
@@ -1918,21 +1879,6 @@ JSC__JSModuleLoader__loadAndEvaluateModule(JSC__JSGlobalObject* globalObject,
 
     return result;
 }
-JSC__JSInternalPromise*
-JSC__JSModuleLoader__loadAndEvaluateModuleEntryPoint(JSC__JSGlobalObject* arg0,
-    const JSC__SourceCode* arg1)
-{
-    return JSC::loadAndEvaluateModule(arg0, *arg1, JSC::JSValue {});
-}
-
-#pragma mark - JSC::JSModuleRecord
-
-bJSC__SourceCode JSC__JSModuleRecord__sourceCode(JSC__JSModuleRecord* arg0)
-{
-    Wrap<JSC::SourceCode, bJSC__SourceCode> wrapped = Wrap<JSC::SourceCode, bJSC__SourceCode>(arg0->sourceCode());
-    return wrapped.result;
-}
-
 #pragma mark - JSC::JSPromise
 
 void JSC__JSPromise__reject(JSC__JSPromise* arg0, JSC__JSGlobalObject* arg1,
@@ -2091,98 +2037,8 @@ bool JSC__JSInternalPromise__isHandled(const JSC__JSInternalPromise* arg0, JSC__
     return arg0->isHandled(reinterpret_cast<JSC::VM&>(arg1));
 }
 
-// static JSC::JSFunction* nativeFunctionCallback(JSC__JSGlobalObject* globalObject, void* ctx, JSC__JSValue (*Callback)(void* arg0, JSC__JSGlobalObject* arg1, JSC__JSValue* arg2, size_t arg3));
 
-// static JSC::JSFunction* nativeFunctionCallback(JSC__JSGlobalObject* globalObject, void* ctx, JSC__JSValue (*Callback)(void* arg0, JSC__JSGlobalObject* arg1, JSC__JSValue* arg2, size_t arg3))
-// {
-//     return JSC::JSNativeStdFunction::create(
-//         globalObject->vm(), globalObject, 1, String(), [&ctx, &Callback](JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame) -> JSC::EncodedJSValue {
-//             size_t argumentCount = callFrame->argumentCount();
-//             Vector<JSC__JSValue, 16> arguments;
-//             arguments.reserveInitialCapacity(argumentCount);
-//             for (size_t i = 0; i < argumentCount; ++i)
-//                 arguments.uncheckedAppend(JSC::JSValue::encode(callFrame->uncheckedArgument(i)));
 
-//             return Callback(ctx, globalObject, arguments.data(), argumentCount);
-//         });
-// }
-
-// JSC__JSInternalPromise* JSC__JSInternalPromise__then_(JSC__JSInternalPromise* promise, JSC__JSGlobalObject* global, void* resolveCtx, JSC__JSValue (*onResolve)(void* arg0, JSC__JSGlobalObject* arg1, JSC__JSValue* arg2, size_t arg3), void* arg4, JSC__JSValue (*ArgFn5)(void* arg0, JSC__JSGlobalObject* arg1, JSC__JSValue* arg2, size_t arg3))
-// {
-
-//     return promise->then(global, nativeFunctionCallback(global, resolveCtx, onResolve), nativeFunctionCallback(global, arg4, ArgFn5));
-// }
-// JSC__JSInternalPromise* JSC__JSInternalPromise__thenReject_(JSC__JSInternalPromise* promise, JSC__JSGlobalObject* global, void* arg2, JSC__JSValue (*ArgFn3)(void* arg0, JSC__JSGlobalObject* arg1, JSC__JSValue* arg2, size_t arg3))
-// {
-//     return promise->then(global, nullptr, nativeFunctionCallback(global, arg2, ArgFn3));
-// }
-// JSC__JSInternalPromise* JSC__JSInternalPromise__thenResolve_(JSC__JSInternalPromise* promise, JSC__JSGlobalObject* global, void* arg2, JSC__JSValue (*ArgFn3)(void* arg0, JSC__JSGlobalObject* arg1, JSC__JSValue* arg2, size_t arg3))
-// {
-//     return promise->then(global, nativeFunctionCallback(global, arg2, ArgFn3), nullptr);
-// }
-// bool JSC__JSPromise__isInternal(JSC__JSPromise* arg0, JSC__VM* arg1) {
-//     return arg0->inf
-// }
-
-#pragma mark - JSC::SourceOrigin
-
-bJSC__SourceOrigin JSC__SourceOrigin__fromURL(const WTF__URL* arg0)
-{
-
-    Wrap<JSC::SourceOrigin, bJSC__SourceOrigin> wrap;
-    wrap.cpp = new (&wrap.result.bytes) JSC::SourceOrigin(WTF::URL(*arg0));
-    return wrap.result;
-}
-
-#pragma mark - JSC::SourceCode
-
-// class StringSourceProvider : public JSC::SourceProvider {
-//     public:
-//         unsigned hash() const override
-//         {
-//             return m_source->hash();
-//         }
-
-//         StringView source() const override
-//         {
-//             return WTF::StringView(m_source);
-//         }
-
-//         ~StringSourceProvider() {
-
-//         }
-//         WTF::StringImpl *m_source;
-
-//         StringSourceProvider(const WTF::String& source, const
-//         JSC::SourceOrigin& sourceOrigin, WTF::String&& sourceURL, const
-//         WTF::TextPosition& startPosition, JSC::SourceProviderSourceType
-//         sourceType)
-//             : JSC::SourceProvider(sourceOrigin, WTFMove(sourceURL),
-//             startPosition, sourceType) , m_source(source.isNull() ?
-//             WTF::StringImpl::empty() : source.impl())
-//         {
-//         }
-// };
-
-void JSC__SourceCode__fromString(JSC__SourceCode* arg0, const WTF__String* arg1,
-    const JSC__SourceOrigin* arg2, WTF__String* arg3,
-    unsigned char SourceType4) {}
-
-bWTF__String JSC__JSFunction__displayName(JSC__JSFunction* arg0, JSC__VM* arg1)
-{
-    auto wrap = Wrap<WTF::String, bWTF__String>(arg0->displayName(reinterpret_cast<JSC::VM&>(arg1)));
-    return wrap.result;
-};
-bWTF__String JSC__JSFunction__getName(JSC__JSFunction* arg0, JSC__VM* arg1)
-{
-    auto wrap = Wrap<WTF::String, bWTF__String>(arg0->name(reinterpret_cast<JSC::VM&>(arg1)));
-    return wrap.result;
-};
-bWTF__String JSC__JSFunction__calculatedDisplayName(JSC__JSFunction* arg0, JSC__VM* arg1)
-{
-    auto wrap = Wrap<WTF::String, bWTF__String>(arg0->calculatedDisplayName(reinterpret_cast<JSC::VM&>(arg1)));
-    return wrap.result;
-};
 #pragma mark - JSC::JSGlobalObject
 
 JSC__JSValue JSC__JSGlobalObject__generateHeapSnapshot(JSC__JSGlobalObject* globalObject)
@@ -2201,109 +2057,6 @@ JSC__JSValue JSC__JSGlobalObject__generateHeapSnapshot(JSC__JSGlobalObject* glob
     scope.releaseAssertNoException();
     return result;
 }
-
-JSC__ArrayIteratorPrototype*
-JSC__JSGlobalObject__arrayIteratorPrototype(JSC__JSGlobalObject* arg0)
-{
-    return arg0->arrayIteratorPrototype();
-};
-JSC__ArrayPrototype* JSC__JSGlobalObject__arrayPrototype(JSC__JSGlobalObject* arg0)
-{
-    return arg0->arrayPrototype();
-};
-JSC__AsyncFunctionPrototype*
-JSC__JSGlobalObject__asyncFunctionPrototype(JSC__JSGlobalObject* arg0)
-{
-    return arg0->asyncFunctionPrototype();
-};
-JSC__AsyncGeneratorFunctionPrototype*
-JSC__JSGlobalObject__asyncGeneratorFunctionPrototype(JSC__JSGlobalObject* arg0)
-{
-    return arg0->asyncGeneratorFunctionPrototype();
-};
-JSC__AsyncGeneratorPrototype*
-JSC__JSGlobalObject__asyncGeneratorPrototype(JSC__JSGlobalObject* arg0)
-{
-    return arg0->asyncGeneratorPrototype();
-};
-JSC__AsyncIteratorPrototype*
-JSC__JSGlobalObject__asyncIteratorPrototype(JSC__JSGlobalObject* arg0)
-{
-    return arg0->asyncIteratorPrototype();
-};
-JSC__BigIntPrototype* JSC__JSGlobalObject__bigIntPrototype(JSC__JSGlobalObject* arg0)
-{
-    return arg0->bigIntPrototype();
-};
-JSC__JSObject* JSC__JSGlobalObject__booleanPrototype(JSC__JSGlobalObject* arg0)
-{
-    return arg0->booleanPrototype();
-};
-JSC__JSObject* JSC__JSGlobalObject__datePrototype(JSC__JSGlobalObject* arg0)
-{
-    return arg0->datePrototype();
-};
-JSC__JSObject* JSC__JSGlobalObject__errorPrototype(JSC__JSGlobalObject* arg0)
-{
-    return arg0->errorPrototype();
-};
-JSC__FunctionPrototype* JSC__JSGlobalObject__functionPrototype(JSC__JSGlobalObject* arg0)
-{
-    return arg0->functionPrototype();
-};
-JSC__GeneratorFunctionPrototype*
-JSC__JSGlobalObject__generatorFunctionPrototype(JSC__JSGlobalObject* arg0)
-{
-    return arg0->generatorFunctionPrototype();
-};
-JSC__GeneratorPrototype* JSC__JSGlobalObject__generatorPrototype(JSC__JSGlobalObject* arg0)
-{
-    return arg0->generatorPrototype();
-};
-JSC__IteratorPrototype* JSC__JSGlobalObject__iteratorPrototype(JSC__JSGlobalObject* arg0)
-{
-    return arg0->iteratorPrototype();
-};
-JSC__JSObject* JSC__JSGlobalObject__jsSetPrototype(JSC__JSGlobalObject* arg0)
-{
-    return arg0->jsSetPrototype();
-};
-JSC__MapIteratorPrototype* JSC__JSGlobalObject__mapIteratorPrototype(JSC__JSGlobalObject* arg0)
-{
-    return arg0->mapIteratorPrototype();
-};
-JSC__JSObject* JSC__JSGlobalObject__mapPrototype(JSC__JSGlobalObject* arg0)
-{
-    return arg0->mapPrototype();
-};
-JSC__JSObject* JSC__JSGlobalObject__numberPrototype(JSC__JSGlobalObject* arg0)
-{
-    return arg0->numberPrototype();
-};
-JSC__ObjectPrototype* JSC__JSGlobalObject__objectPrototype(JSC__JSGlobalObject* arg0)
-{
-    return arg0->objectPrototype();
-};
-JSC__JSPromisePrototype* JSC__JSGlobalObject__promisePrototype(JSC__JSGlobalObject* arg0)
-{
-    return arg0->promisePrototype();
-};
-JSC__RegExpPrototype* JSC__JSGlobalObject__regExpPrototype(JSC__JSGlobalObject* arg0)
-{
-    return arg0->regExpPrototype();
-};
-JSC__SetIteratorPrototype* JSC__JSGlobalObject__setIteratorPrototype(JSC__JSGlobalObject* arg0)
-{
-    return arg0->setIteratorPrototype();
-};
-JSC__StringPrototype* JSC__JSGlobalObject__stringPrototype(JSC__JSGlobalObject* arg0)
-{
-    return arg0->stringPrototype();
-};
-JSC__JSObject* JSC__JSGlobalObject__symbolPrototype(JSC__JSGlobalObject* arg0)
-{
-    return arg0->symbolPrototype();
-};
 
 JSC__VM* JSC__JSGlobalObject__vm(JSC__JSGlobalObject* arg0) { return &arg0->vm(); };
 // JSC__JSObject* JSC__JSGlobalObject__createError(JSC__JSGlobalObject* arg0,
@@ -2797,17 +2550,7 @@ JSC__JSObject* JSC__JSValue__toObject(JSC__JSValue JSValue0, JSC__JSGlobalObject
     return value.toObject(arg1);
 }
 
-bJSC__Identifier JSC__JSValue__toPropertyKey(JSC__JSValue JSValue0, JSC__JSGlobalObject* arg1)
-{
-    JSC::JSValue value = JSC::JSValue::decode(JSValue0);
-    auto ident = value.toPropertyKey(arg1);
-    return cast<bJSC__Identifier>(&ident);
-}
-JSC__JSValue JSC__JSValue__toPropertyKeyValue(JSC__JSValue JSValue0, JSC__JSGlobalObject* arg1)
-{
-    JSC::JSValue value = JSC::JSValue::decode(JSValue0);
-    return JSC::JSValue::encode(value.toPropertyKeyValue(arg1));
-}
+
 JSC__JSString* JSC__JSValue__toString(JSC__JSValue JSValue0, JSC__JSGlobalObject* arg1)
 {
     JSC::JSValue value = JSC::JSValue::decode(JSValue0);
@@ -2818,11 +2561,7 @@ JSC__JSString* JSC__JSValue__toStringOrNull(JSC__JSValue JSValue0, JSC__JSGlobal
     JSC::JSValue value = JSC::JSValue::decode(JSValue0);
     return value.toStringOrNull(arg1);
 }
-bWTF__String JSC__JSValue__toWTFString(JSC__JSValue JSValue0, JSC__JSGlobalObject* arg1)
-{
-    JSC::JSValue value = JSC::JSValue::decode(JSValue0);
-    return Wrap<WTF::String, bWTF__String>::wrap(value.toWTFString(arg1));
-};
+
 
 static void populateStackFrameMetadata(JSC::VM& vm, const JSC::StackFrame* stackFrame, ZigStackFrame* frame)
 {
@@ -3319,21 +3058,6 @@ void JSC__Exception__getStackTrace(JSC__Exception* arg0, ZigStackTrace* trace)
     populateStackTrace(arg0->vm(), arg0->stack(), trace);
 }
 
-#pragma mark - JSC::PropertyName
-
-bool JSC__PropertyName__eqlToIdentifier(JSC__PropertyName* arg0, const JSC__Identifier* arg1)
-{
-    return (*arg0) == (*arg1);
-};
-bool JSC__PropertyName__eqlToPropertyName(JSC__PropertyName* arg0, const JSC__PropertyName* arg1)
-{
-    return (*arg0) == (*arg1);
-};
-const WTF__StringImpl* JSC__PropertyName__publicName(JSC__PropertyName* arg0)
-{
-    return arg0->publicName();
-};
-const WTF__StringImpl* JSC__PropertyName__uid(JSC__PropertyName* arg0) { return arg0->uid(); };
 
 #pragma mark - JSC::VM
 
@@ -3469,307 +3193,8 @@ bJSC__CatchScope JSC__CatchScope__declare(JSC__VM* arg0, unsigned char* arg1, un
 }
 JSC__Exception* JSC__CatchScope__exception(JSC__CatchScope* arg0) { return arg0->exception(); }
 
-#pragma mark - JSC::Identifier
 
-void JSC__Identifier__deinit(const JSC__Identifier* arg0)
-{
-}
 
-bool JSC__Identifier__eqlIdent(const JSC__Identifier* arg0, const JSC__Identifier* arg1)
-{
-    return arg0 == arg1;
-};
-bool JSC__Identifier__eqlStringImpl(const JSC__Identifier* arg0, const WTF__StringImpl* arg1)
-{
-    return JSC::Identifier::equal(arg0->string().impl(), arg1);
-};
-bool JSC__Identifier__eqlUTF8(const JSC__Identifier* arg0, const unsigned char* arg1, size_t arg2)
-{
-    return JSC::Identifier::equal(arg0->string().impl(), reinterpret_cast<const LChar*>(arg1), arg2);
-};
-bool JSC__Identifier__neqlIdent(const JSC__Identifier* arg0, const JSC__Identifier* arg1)
-{
-    return arg0 != arg1;
-}
-bool JSC__Identifier__neqlStringImpl(const JSC__Identifier* arg0, const WTF__StringImpl* arg1)
-{
-    return !JSC::Identifier::equal(arg0->string().impl(), arg1);
-};
-
-bJSC__Identifier JSC__Identifier__fromSlice(JSC__VM* arg0, const unsigned char* arg1, size_t arg2)
-{
-    JSC::Identifier ident = JSC::Identifier::fromString(reinterpret_cast<JSC__VM&>(arg0),
-        reinterpret_cast<const LChar*>(arg1), static_cast<int>(arg2));
-    return cast<bJSC__Identifier>(&ident);
-};
-bJSC__Identifier JSC__Identifier__fromString(JSC__VM* arg0, const WTF__String* arg1)
-{
-    JSC::Identifier ident = JSC::Identifier::fromString(reinterpret_cast<JSC__VM&>(arg0),
-        reinterpret_cast<const WTF__String&>(arg1));
-    return cast<bJSC__Identifier>(&ident);
-};
-// bJSC__Identifier JSC__Identifier__fromUid(JSC__VM* arg0, const
-// WTF__StringImpl* arg1) {
-//     auto ident = JSC::Identifier::fromUid(&arg0, &arg1);
-//     return *cast<bJSC__Identifier>(&ident);
-// };
-bool JSC__Identifier__isEmpty(const JSC__Identifier* arg0) { return arg0->isEmpty(); };
-bool JSC__Identifier__isNull(const JSC__Identifier* arg0) { return arg0->isNull(); };
-bool JSC__Identifier__isPrivateName(const JSC__Identifier* arg0) { return arg0->isPrivateName(); };
-bool JSC__Identifier__isSymbol(const JSC__Identifier* arg0) { return arg0->isSymbol(); };
-size_t JSC__Identifier__length(const JSC__Identifier* arg0) { return arg0->length(); };
-
-bWTF__String JSC__Identifier__toString(const JSC__Identifier* arg0)
-{
-    auto string = arg0->string();
-    return cast<bWTF__String>(&string);
-};
-
-#pragma mark - WTF::StringView
-
-const uint16_t* WTF__StringView__characters16(const WTF__StringView* arg0)
-{
-    WTF::StringView* view = (WTF::StringView*)arg0;
-    return reinterpret_cast<const uint16_t*>(view->characters16());
-}
-const unsigned char* WTF__StringView__characters8(const WTF__StringView* arg0)
-{
-    return reinterpret_cast<const unsigned char*>(arg0->characters8());
-};
-
-bool WTF__StringView__is16Bit(const WTF__StringView* arg0) { return !arg0->is8Bit(); };
-bool WTF__StringView__is8Bit(const WTF__StringView* arg0) { return arg0->is8Bit(); };
-bool WTF__StringView__isEmpty(const WTF__StringView* arg0) { return arg0->isEmpty(); };
-size_t WTF__StringView__length(const WTF__StringView* arg0) { return arg0->length(); };
-
-#pragma mark - WTF::StringImpl
-
-const uint16_t* WTF__StringImpl__characters16(const WTF__StringImpl* arg0)
-{
-    return reinterpret_cast<const uint16_t*>(arg0->characters16());
-}
-const unsigned char* WTF__StringImpl__characters8(const WTF__StringImpl* arg0)
-{
-    return reinterpret_cast<const unsigned char*>(arg0->characters8());
-}
-
-void WTF__StringView__from8Bit(WTF__StringView* arg0, const unsigned char* arg1, size_t arg2)
-{
-    *arg0 = WTF::StringView(arg1, arg2);
-}
-
-bool WTF__StringImpl__is16Bit(const WTF__StringImpl* arg0) { return !arg0->is8Bit(); }
-bool WTF__StringImpl__is8Bit(const WTF__StringImpl* arg0) { return arg0->is8Bit(); }
-bool WTF__StringImpl__isEmpty(const WTF__StringImpl* arg0) { return arg0->isEmpty(); }
-bool WTF__StringImpl__isExternal(const WTF__StringImpl* arg0) { return arg0->isExternal(); }
-bool WTF__StringImpl__isStatic(const WTF__StringImpl* arg0) { return arg0->isStatic(); }
-size_t WTF__StringImpl__length(const WTF__StringImpl* arg0) { return arg0->length(); }
-
-#pragma mark - WTF::ExternalStringImpl
-
-const uint16_t* WTF__ExternalStringImpl__characters16(const WTF__ExternalStringImpl* arg0)
-{
-    return reinterpret_cast<const uint16_t*>(arg0->characters16());
-}
-const unsigned char* WTF__ExternalStringImpl__characters8(const WTF__ExternalStringImpl* arg0)
-{
-    return reinterpret_cast<const unsigned char*>(arg0->characters8());
-}
-
-bool WTF__ExternalStringImpl__is16Bit(const WTF__ExternalStringImpl* arg0)
-{
-    return !arg0->is8Bit();
-}
-bool WTF__ExternalStringImpl__is8Bit(const WTF__ExternalStringImpl* arg0) { return arg0->is8Bit(); }
-bool WTF__ExternalStringImpl__isEmpty(const WTF__ExternalStringImpl* arg0)
-{
-    return arg0->isEmpty();
-}
-bool WTF__ExternalStringImpl__isExternal(const WTF__ExternalStringImpl* arg0)
-{
-    return arg0->isExternal();
-}
-bool WTF__ExternalStringImpl__isStatic(const WTF__ExternalStringImpl* arg0)
-{
-    return arg0->isStatic();
-}
-size_t WTF__ExternalStringImpl__length(const WTF__ExternalStringImpl* arg0)
-{
-    return arg0->length();
-}
-
-#pragma mark - WTF::String
-
-const uint16_t* WTF__String__characters16(WTF__String* arg0)
-{
-    return reinterpret_cast<const uint16_t*>(arg0->characters16());
-};
-const unsigned char* WTF__String__characters8(WTF__String* arg0)
-{
-    return reinterpret_cast<const unsigned char*>(arg0->characters8());
-};
-
-bool WTF__String__eqlSlice(WTF__String* arg0, const unsigned char* arg1, size_t arg2)
-{
-    return WTF::equal(arg0->impl(), reinterpret_cast<const LChar*>(arg1), arg2);
-}
-bool WTF__String__eqlString(WTF__String* arg0, const WTF__String* arg1) { return arg0 == arg1; }
-const WTF__StringImpl* WTF__String__impl(WTF__String* arg0) { return arg0->impl(); }
-
-bool WTF__String__is16Bit(WTF__String* arg0) { return !arg0->is8Bit(); }
-bool WTF__String__is8Bit(WTF__String* arg0) { return arg0->is8Bit(); }
-bool WTF__String__isEmpty(WTF__String* arg0) { return arg0->isEmpty(); }
-bool WTF__String__isExternal(WTF__String* arg0) { return arg0->impl()->isExternal(); }
-bool WTF__String__isStatic(WTF__String* arg0) { return arg0->impl()->isStatic(); }
-size_t WTF__String__length(WTF__String* arg0) { return arg0->length(); }
-
-bWTF__String WTF__String__createFromExternalString(bWTF__ExternalStringImpl arg0)
-{
-    auto external = Wrap<WTF::ExternalStringImpl, bWTF__ExternalStringImpl>(arg0);
-    return Wrap<WTF::String, bWTF__String>(WTF::String(external.cpp)).result;
-};
-
-void WTF__String__createWithoutCopyingFromPtr(WTF__String* str, const unsigned char* arg0,
-    size_t arg1)
-{
-    auto new_str = new (reinterpret_cast<char*>(str)) WTF::String(arg0, arg1);
-    new_str->impl()->ref();
-}
-
-#pragma mark - WTF::URL
-
-bWTF__StringView WTF__URL__encodedPassword(WTF__URL* arg0)
-{
-    auto result = arg0->encodedPassword();
-    return cast<bWTF__StringView>(&result);
-};
-bWTF__StringView WTF__URL__encodedUser(WTF__URL* arg0)
-{
-    auto result = arg0->encodedUser();
-    return cast<bWTF__StringView>(&result);
-};
-bWTF__String WTF__URL__fileSystemPath(WTF__URL* arg0)
-{
-    auto result = arg0->fileSystemPath();
-    return cast<bWTF__String>(&result);
-};
-bWTF__StringView WTF__URL__fragmentIdentifier(WTF__URL* arg0)
-{
-    auto result = arg0->fragmentIdentifier();
-    return cast<bWTF__StringView>(&result);
-};
-bWTF__StringView WTF__URL__fragmentIdentifierWithLeadingNumberSign(WTF__URL* arg0)
-{
-    auto result = arg0->fragmentIdentifierWithLeadingNumberSign();
-    return cast<bWTF__StringView>(&result);
-};
-void WTF__URL__fromFileSystemPath(WTF::URL* result, bWTF__StringView arg0)
-{
-    Wrap<WTF::StringView, bWTF__StringView> fsPath = Wrap<WTF::StringView, bWTF__StringView>(&arg0);
-    *result = WTF::URL::fileURLWithFileSystemPath(*fsPath.cpp);
-    result->string().impl()->ref();
-};
-bWTF__URL WTF__URL__fromString(bWTF__String arg0, bWTF__String arg1)
-{
-    WTF::URL url = WTF::URL(WTF::URL(), cast<WTF::String>(&arg1));
-    return cast<bWTF__URL>(&url);
-};
-bWTF__StringView WTF__URL__host(WTF__URL* arg0)
-{
-    auto result = arg0->host();
-    return cast<bWTF__StringView>(&result);
-};
-bWTF__String WTF__URL__hostAndPort(WTF__URL* arg0)
-{
-    auto result = arg0->hostAndPort();
-    return cast<bWTF__String>(&result);
-};
-bool WTF__URL__isEmpty(const WTF__URL* arg0) { return arg0->isEmpty(); };
-bool WTF__URL__isValid(const WTF__URL* arg0) { return arg0->isValid(); };
-bWTF__StringView WTF__URL__lastPathComponent(WTF__URL* arg0)
-{
-    auto result = arg0->lastPathComponent();
-    return cast<bWTF__StringView>(&result);
-};
-bWTF__String WTF__URL__password(WTF__URL* arg0)
-{
-    auto result = arg0->password();
-    return cast<bWTF__String>(&result);
-};
-bWTF__StringView WTF__URL__path(WTF__URL* arg0)
-{
-    auto wrap = Wrap<WTF::StringView, bWTF__StringView>(arg0->path());
-    return wrap.result;
-};
-bWTF__StringView WTF__URL__protocol(WTF__URL* arg0)
-{
-    auto result = arg0->protocol();
-    return cast<bWTF__StringView>(&result);
-};
-bWTF__String WTF__URL__protocolHostAndPort(WTF__URL* arg0)
-{
-    auto result = arg0->protocolHostAndPort();
-    return cast<bWTF__String>(&result);
-};
-bWTF__StringView WTF__URL__query(WTF__URL* arg0)
-{
-    auto result = arg0->query();
-    return cast<bWTF__StringView>(&result);
-};
-bWTF__StringView WTF__URL__queryWithLeadingQuestionMark(WTF__URL* arg0)
-{
-    auto result = arg0->queryWithLeadingQuestionMark();
-    return cast<bWTF__StringView>(&result);
-};
-bWTF__String WTF__URL__stringWithoutFragmentIdentifier(WTF__URL* arg0)
-{
-    auto result = arg0->stringWithoutFragmentIdentifier();
-    return cast<bWTF__String>(&result);
-};
-bWTF__StringView WTF__URL__stringWithoutQueryOrFragmentIdentifier(WTF__URL* arg0)
-{
-    auto result = arg0->viewWithoutQueryOrFragmentIdentifier();
-    return cast<bWTF__StringView>(&result);
-};
-bWTF__URL WTF__URL__truncatedForUseAsBase(WTF__URL* arg0)
-{
-    auto result = arg0->truncatedForUseAsBase();
-    return cast<bWTF__URL>(&result);
-};
-bWTF__String WTF__URL__user(WTF__URL* arg0)
-{
-    auto result = arg0->user();
-    return cast<bWTF__String>(&result);
-};
-
-void WTF__URL__setHost(WTF__URL* arg0, bWTF__StringView arg1)
-{
-    arg0->setHost(*Wrap<WTF::StringView, bWTF__StringView>::unwrap(&arg1));
-};
-void WTF__URL__setHostAndPort(WTF__URL* arg0, bWTF__StringView arg1)
-{
-    arg0->setHostAndPort(*Wrap<WTF::StringView, bWTF__StringView>::unwrap(&arg1));
-};
-void WTF__URL__setPassword(WTF__URL* arg0, bWTF__StringView arg1)
-{
-    arg0->setPassword(*Wrap<WTF::StringView, bWTF__StringView>::unwrap(&arg1));
-};
-void WTF__URL__setPath(WTF__URL* arg0, bWTF__StringView arg1)
-{
-    arg0->setPath(*Wrap<WTF::StringView, bWTF__StringView>::unwrap(&arg1));
-};
-void WTF__URL__setProtocol(WTF__URL* arg0, bWTF__StringView arg1)
-{
-    arg0->setProtocol(*Wrap<WTF::StringView, bWTF__StringView>::unwrap(&arg1));
-};
-void WTF__URL__setQuery(WTF__URL* arg0, bWTF__StringView arg1)
-{
-    arg0->setQuery(*Wrap<WTF::StringView, bWTF__StringView>::unwrap(&arg1));
-};
-void WTF__URL__setUser(WTF__URL* arg0, bWTF__StringView arg1)
-{
-    arg0->setUser(*Wrap<WTF::StringView, bWTF__StringView>::unwrap(&arg1));
-};
 
 JSC__JSValue JSC__JSPromise__rejectedPromiseValue(JSC__JSGlobalObject* arg0,
     JSC__JSValue JSValue1)

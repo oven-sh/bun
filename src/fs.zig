@@ -117,7 +117,7 @@ pub const FileSystem = struct {
 
     pub fn tmpname(_: *const FileSystem, extname: string, buf: []u8, hash: u64) ![*:0]u8 {
         // PRNG was...not so random
-        return try std.fmt.bufPrintZ(buf, ".{x}{s}", .{ @truncate(u64, @intCast(u128, hash) * @intCast(u128, std.time.nanoTimestamp())), extname });
+        return try std.fmt.bufPrintZ(buf, ".{any}{s}", .{ bun.fmt.hexInt(@truncate(u64, @intCast(u128, hash) * @intCast(u128, std.time.nanoTimestamp()))), extname });
     }
 
     pub var max_fd: FileDescriptorType = 0;
@@ -567,9 +567,7 @@ pub const FileSystem = struct {
                 tmpdir_path_set = true;
             }
 
-            return (try std.fs.cwd().openIterableDir(tmpdir_path, .{
-                .access_sub_paths = true,
-            })).dir;
+            return (try std.fs.cwd().openIterableDir(tmpdir_path, .{ .access_sub_paths = true,})).dir;
         }
 
         pub fn getDefaultTempDir() string {
@@ -731,10 +729,10 @@ pub const FileSystem = struct {
             ) !string {
                 return try std.fmt.bufPrint(
                     &hash_name_buf,
-                    "{s}-{x}",
+                    "{s}-{any}",
                     .{
                         basename,
-                        this.hash(),
+                        bun.fmt.hexInt( this.hash()),
                     },
                 );
             }
@@ -1358,3 +1356,4 @@ test "PathName.init" {
     try std.testing.expectEqualStrings(res.base, "file");
     try std.testing.expectEqualStrings(res.ext, ".ext");
 }
+

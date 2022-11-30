@@ -581,7 +581,7 @@ pub const CreateCommand = struct {
                     Output.prettyErrorln("<r><red>{s}<r>: creating dir {s}", .{ @errorName(err), destination });
                     Global.exit(1);
                 };
-const destination_dir = destination_dir__.dir;
+                const destination_dir = destination_dir__.dir;
                 const Walker = @import("../walker_skippable.zig");
                 var walker_ = try Walker.walk(template_dir, ctx.allocator, skip_files, skip_dirs);
                 defer walker_.deinit();
@@ -1721,7 +1721,15 @@ pub const Example = struct {
 
         var examples = std.ArrayList(Example).fromOwnedSlice(ctx.allocator, remote_examples);
         {
-            var folders = [3]std.fs.IterableDir{ .{.dir = .{ .fd = 0 },}, .{.dir = .{ .fd = 0 },}, .{.dir = .{ .fd = 0 }}, };
+            var folders = [3]std.fs.IterableDir{
+                .{
+                    .dir = .{ .fd = 0 },
+                },
+                .{
+                    .dir = .{ .fd = 0 },
+                },
+                .{ .dir = .{ .fd = 0 } },
+            };
             if (env_loader.map.get("BUN_CREATE_DIR")) |home_dir| {
                 var parts = [_]string{home_dir};
                 var outdir_path = filesystem.absBuf(&parts, &home_dir_buf);
@@ -1746,7 +1754,7 @@ pub const Example = struct {
 
                 if (folder_.fd != 0) {
                     const folder: std.fs.Dir = folder_;
-                    var iter = (std.fs.IterableDir{.dir = folder}).iterate();
+                    var iter = (std.fs.IterableDir{ .dir = folder }).iterate();
 
                     loop: while (iter.next() catch null) |entry_| {
                         const entry: std.fs.IterableDir.Entry = entry_;

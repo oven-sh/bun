@@ -1195,7 +1195,7 @@ pub const FFI = struct {
             context_ptr: ?*anyopaque,
             writer: anytype,
         ) !void {
-            try writer.print("#define JS_GLOBAL_OBJECT (void*)0x{X}UL\n", .{@ptrToInt(globalObject)});
+            try writer.print("#define JS_GLOBAL_OBJECT (void*)0x{any}UL\n", .{bun.fmt.hexIntUp(@ptrToInt(globalObject))});
             try writer.writeAll("#define IS_CALLBACK 1\n");
 
             brk: {
@@ -1277,15 +1277,15 @@ pub const FFI = struct {
             if (this.arg_types.items.len > 0) {
                 inner_buf = try std.fmt.bufPrint(
                     inner_buf_[1..],
-                    "FFI_Callback_call((void*)0x{X}UL, {d}, arguments)",
-                    .{ @ptrToInt(context_ptr), this.arg_types.items.len },
+                    "FFI_Callback_call((void*)0x{any}UL, {d}, arguments)",
+                    .{ @ptrToInt(context_ptr), bun.fmt.hexIntUp(this.arg_types.items.len) },
                 );
             } else {
                 inner_buf = try std.fmt.bufPrint(
                     inner_buf_[1..],
-                    "FFI_Callback_call((void*)0x{X}UL, 0, (ZIG_REPR_TYPE*)0)",
+                    "FFI_Callback_call((void*)0x{any}UL, 0, (ZIG_REPR_TYPE*)0)",
                     .{
-                        @ptrToInt(context_ptr),
+                        bun.fmt.hexInt(@ptrToInt(context_ptr)),
                     },
                 );
             }

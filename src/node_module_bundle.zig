@@ -174,9 +174,9 @@ pub const NodeModuleBundle = struct {
     ) !string {
         return try std.fmt.allocPrint(
             allocator,
-            "{x}/{s}",
+            "{any}/{s}",
             .{
-                this.bundle.packages[to.package_id].hash,
+                bun.fmt.hexInt(this.bundle.packages[to.package_id].hash),
                 this.str(to.path),
                 123,
             },

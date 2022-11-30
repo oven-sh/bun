@@ -936,7 +936,7 @@ pub const Linker = struct {
 
                             return Fs.Path.init(try origin.joinAlloc(
                                 linker.allocator,
-                                std.fmt.bufPrint(&hash_buf, "hash:{x}/", .{modkey.hash()}) catch unreachable,
+                                std.fmt.bufPrint(&hash_buf, "hash:{any}/", .{bun.fmt.hexInt(modkey.hash())}) catch unreachable,
                                 dirname,
                                 basename,
                                 absolute_pathname.ext,

@@ -1868,7 +1868,7 @@ pub const PackageManager = struct {
         var end: []u8 = undefined;
         if (scope.url.hostname.len > 32 or available.len < 64) {
             const visible_hostname = scope.url.hostname[0..@min(scope.url.hostname.len, 12)];
-            end = std.fmt.bufPrint(available, "@@{s}__{x}", .{ visible_hostname, String.Builder.stringHash(scope.url.href) }) catch unreachable;
+            end = std.fmt.bufPrint(available, "@@{s}__{any}", .{ visible_hostname, bun.fmt.hexInt(String.Builder.stringHash(scope.url.href)) }) catch unreachable;
         } else {
             end = std.fmt.bufPrint(available, "@@{s}", .{scope.url.hostname}) catch unreachable;
         }
@@ -1893,20 +1893,20 @@ pub const PackageManager = struct {
         } else if (version.tag.hasPre() and version.tag.hasBuild()) {
             return std.fmt.bufPrintZ(
                 buf,
-                "{s}@{d}.{d}.{d}-{x}+{X}",
-                .{ name, version.major, version.minor, version.patch, version.tag.pre.hash, version.tag.build.hash },
+                "{s}@{d}.{d}.{d}-{any}+{any}",
+                .{ name, version.major, version.minor, version.patch, bun.fmt.hexInt(version.tag.pre.hash), bun.fmt.hexIntUp(version.tag.build.hash) },
             ) catch unreachable;
         } else if (version.tag.hasPre()) {
             return std.fmt.bufPrintZ(
                 buf,
-                "{s}@{d}.{d}.{d}-{x}",
-                .{ name, version.major, version.minor, version.patch, version.tag.pre.hash },
+                "{s}@{d}.{d}.{d}-{any}",
+                .{ name, version.major, version.minor, version.patch, bun.fmt.hexInt(version.tag.pre.hash) },
             ) catch unreachable;
         } else if (version.tag.hasBuild()) {
             return std.fmt.bufPrintZ(
                 buf,
-                "{s}@{d}.{d}.{d}+{X}",
-                .{ name, version.major, version.minor, version.patch, version.tag.build.hash },
+                "{s}@{d}.{d}.{d}+{any}",
+                .{ name, version.major, version.minor, version.patch, bun.fmt.hexIntUp(version.tag.build.hash) },
             ) catch unreachable;
         } else {
             unreachable;

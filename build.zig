@@ -114,6 +114,18 @@ fn panicIfNotFound(comptime filepath: []const u8) []const u8 {
     return filepath;
 }
 
+const fmt = struct {
+    pub usingnamespace @import("std").fmt;
+
+    pub fn hexInt(value: anytype) @TypeOf(std.fmt.fmtSliceHexLower("")) {
+        return std.fmt.fmtSliceHexLower(std.mem.asBytes(&value));
+    }
+
+    pub fn hexIntUp(value: anytype) @TypeOf(std.fmt.fmtSliceHexUpper("")) {
+        return std.fmt.fmtSliceHexUpper(std.mem.asBytes(&value));
+    }
+};
+
 fn updateRuntime() anyerror!void {
     var runtime_out_file = try std.fs.cwd().openFile("src/runtime.out.js", .{ .mode = .read_only });
     const runtime_hash = std.hash.Wyhash.hash(
@@ -122,7 +134,7 @@ fn updateRuntime() anyerror!void {
     );
     const runtime_version_file = std.fs.cwd().createFile("src/runtime.version", .{ .truncate = true }) catch std.debug.panic("Failed to create src/runtime.version", .{});
     defer runtime_version_file.close();
-    runtime_version_file.writer().print("{x}", .{runtime_hash}) catch unreachable;
+    runtime_version_file.writer().print("{any}", .{fmt.hexInt(runtime_hash)}) catch unreachable;
     var fallback_out_file = try std.fs.cwd().openFile("src/fallback.out.js", .{ .mode = .read_only });
     const fallback_hash = std.hash.Wyhash.hash(
         0,
@@ -131,7 +143,7 @@ fn updateRuntime() anyerror!void {
 
     const fallback_version_file = std.fs.cwd().createFile("src/fallback.version", .{ .truncate = true }) catch std.debug.panic("Failed to create src/fallback.version", .{});
 
-    fallback_version_file.writer().print("{x}", .{fallback_hash}) catch unreachable;
+    fallback_version_file.writer().print("{any}", .{fmt.hexInt(fallback_hash)}) catch unreachable;
 
     fallback_version_file.close();
 }

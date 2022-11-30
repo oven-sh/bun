@@ -1485,7 +1485,7 @@ pub const ZigConsoleClient = struct {
                         if (!any_non_ascii)
                             writer.writeAll(end)
                         else
-                            writer.writeLatin1(end);
+                            writer.writeAll(end);
                         any_non_ascii = false;
                         slice = slice[@minimum(slice.len, i + 1)..];
                         i = 0;
@@ -1518,7 +1518,7 @@ pub const ZigConsoleClient = struct {
                 }
             }
 
-            if (slice.len > 0) writer.writeLatin1(slice);
+            if (slice.len > 0) writer.writeAll(slice);
         }
 
         pub fn WrappedWriter(comptime Writer: type) type {

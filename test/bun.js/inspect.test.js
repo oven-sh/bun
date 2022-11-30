@@ -321,3 +321,7 @@ describe("crash testing", () => {
     });
   }
 });
+
+it("possibly formatted emojis log", () => {
+  expect(Bun.inspect("✔", "hey")).toBe("✔ hey");
+});

@@ -1,44 +1,6 @@
 import { expect, test } from "bun:test";
 import { OnigurumaRegExp } from "bun";
 
-test("debugging", () => {
-  const s1 = Symbol("test1");
-  const s2 = Symbol("test2");
-
-  let a = { a: 1, b: 2 };
-  let b = { a: 1, b: 2 };
-  a[s1] = 1;
-  b[s1] = 1;
-  a[s2] = undefined;
-  b[s2] = null;
-  expect(a).not.toEqual(b);
-  class F extends String {
-    constructor() {
-      super();
-    }
-  }
-
-  let f = new F("hello");
-  let j = new String("hello");
-  expect(f).not.toEqual(j);
-  class LaCroix {
-    constructor(flavor) {
-      this.flavor = flavor;
-    }
-  }
-  expect(new LaCroix("pamplemousse")).not.toStrictEqual({
-    flavor: "pamplemousse",
-  });
-  expect(new LaCroix("pamplemousse")).toEqual({ flavor: "pamplemousse" });
-
-  expect([, 1]).not.toStrictEqual([undefined, 1]);
-
-  expect([0, , 2]).toEqual([0, undefined, 2]);
-  expect([, "boo2"]).toEqual([undefined, "boo2"]);
-  expect([, "boo"]).toEqual([, "boo"]);
-  expect([, 1]).toEqual([undefined, 1]);
-});
-
 test("toStrictEqual() vs toEqual()", () => {
   class C {
     hi = 34;

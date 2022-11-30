@@ -3235,7 +3235,7 @@ void GlobalObject::installAPIGlobals(JSClassRef* globals, int count, JSC::VM& vm
         this->putDirect(vm, JSC::Identifier::fromString(vm, "crypto"_s), object, JSC::PropertyAttribute::DontDelete | 0);
     }
 
-    for (j = 2; j < count - 1; j++) {
+    for (j = 2; j < count; j++) {
         auto jsClass = globals[j];
 
         JSC::JSCallbackObject<JSNonFinalObject>* object = JSC::JSCallbackObject<JSNonFinalObject>::create(this, this->callbackObjectStructure(),
@@ -3245,10 +3245,6 @@ void GlobalObject::installAPIGlobals(JSClassRef* globals, int count, JSC::VM& vm
 
         this->putDirect(vm, JSC::Identifier::fromString(vm, jsClass->className()), JSC::JSValue(object), JSC::PropertyAttribute::DontDelete | 0);
     }
-
-    // The last one must be "process.env"
-    // Runtime-support is for if they change
-    this->m_dotEnvClassRef = globals[j];
 
     // // The last one must be "process.env"
     // // Runtime-support is for if they change

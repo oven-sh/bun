@@ -976,7 +976,7 @@ fn doResolveWithArgs(
         return null;
     }
 
-    return errorable.result.value.toValue(ctx.ptr());
+    return errorable.result.value.toJS(ctx);
 }
 
 pub fn resolveSync(

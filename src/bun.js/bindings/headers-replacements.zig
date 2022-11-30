@@ -16,6 +16,7 @@ pub const struct_JSC__AsyncGeneratorPrototype = bindings.AsyncGeneratorPrototype
 pub const struct_JSC__AsyncGeneratorFunctionPrototype = bindings.AsyncGeneratorFunctionPrototype;
 pub const struct_JSC__AsyncFunctionPrototype = bindings.AsyncFunctionPrototype;
 pub const struct_JSC__ArrayPrototype = bindings.ArrayPrototype;
+pub const BunString = @import("bun").String;
 
 pub const struct_JSC__ArrayIteratorPrototype = bindings.ArrayIteratorPrototype;
 pub const bWTF__URL = bindings.URL;

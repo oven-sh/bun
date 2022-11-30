@@ -134,12 +134,13 @@ pub fn ComptimeStringMapWithKeyType(comptime KeyType: type, comptime V: type, co
         }
 
         pub fn getWithEql(input: anytype, comptime eql: anytype) ?V {
-            if (input.len < precomputed.min_len or input.len > precomputed.max_len)
+            const length = input.length();
+            if (length < precomputed.min_len or length > precomputed.max_len)
                 return null;
 
             comptime var i: usize = precomputed.min_len;
             inline while (i <= precomputed.max_len) : (i += 1) {
-                if (input.len == i) {
+                if (length == i) {
                     return getWithLengthAndEql(input, i, eql);
                 }
             }

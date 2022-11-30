@@ -1382,7 +1382,6 @@ void JSC__JSString__toZigString(JSC__JSString* arg0, JSC__JSGlobalObject* arg1, 
     *arg2 = Zig::toZigString(arg0->value(arg1));
 }
 
-
 bool JSC__JSString__eql(const JSC__JSString* arg0, JSC__JSGlobalObject* obj, JSC__JSString* arg2)
 {
     return arg0->equal(obj, arg2);
@@ -1393,8 +1392,6 @@ JSC__JSObject* JSC__JSString__toObject(JSC__JSString* arg0, JSC__JSGlobalObject*
 {
     return arg0->toObject(arg1);
 }
-
-
 
 #pragma mark - JSC::JSModuleLoader
 
@@ -1413,7 +1410,6 @@ void Microtask__run_default(void* microtask, void* global)
 {
     reinterpret_cast<Zig::JSMicrotaskCallbackDefaultGlobal*>(microtask)->call(reinterpret_cast<Zig::GlobalObject*>(global));
 }
-
 
 JSC__JSValue JSC__JSModuleLoader__evaluate(JSC__JSGlobalObject* globalObject, const unsigned char* arg1,
     size_t arg2, const unsigned char* originUrlPtr, size_t originURLLen, const unsigned char* referrerUrlPtr, size_t referrerUrlLen,
@@ -2037,8 +2033,6 @@ bool JSC__JSInternalPromise__isHandled(const JSC__JSInternalPromise* arg0, JSC__
     return arg0->isHandled(reinterpret_cast<JSC::VM&>(arg1));
 }
 
-
-
 #pragma mark - JSC::JSGlobalObject
 
 JSC__JSValue JSC__JSGlobalObject__generateHeapSnapshot(JSC__JSGlobalObject* globalObject)
@@ -2550,7 +2544,6 @@ JSC__JSObject* JSC__JSValue__toObject(JSC__JSValue JSValue0, JSC__JSGlobalObject
     return value.toObject(arg1);
 }
 
-
 JSC__JSString* JSC__JSValue__toString(JSC__JSValue JSValue0, JSC__JSGlobalObject* arg1)
 {
     JSC::JSValue value = JSC::JSValue::decode(JSValue0);
@@ -2561,7 +2554,6 @@ JSC__JSString* JSC__JSValue__toStringOrNull(JSC__JSValue JSValue0, JSC__JSGlobal
     JSC::JSValue value = JSC::JSValue::decode(JSValue0);
     return value.toStringOrNull(arg1);
 }
-
 
 static void populateStackFrameMetadata(JSC::VM& vm, const JSC::StackFrame* stackFrame, ZigStackFrame* frame)
 {
@@ -3058,7 +3050,6 @@ void JSC__Exception__getStackTrace(JSC__Exception* arg0, ZigStackTrace* trace)
     populateStackTrace(arg0->vm(), arg0->stack(), trace);
 }
 
-
 #pragma mark - JSC::VM
 
 JSC__JSValue JSC__VM__runGC(JSC__VM* vm, bool sync)
@@ -3192,9 +3183,6 @@ bJSC__CatchScope JSC__CatchScope__declare(JSC__VM* arg0, unsigned char* arg1, un
     return cast<bJSC__CatchScope>(&scope);
 }
 JSC__Exception* JSC__CatchScope__exception(JSC__CatchScope* arg0) { return arg0->exception(); }
-
-
-
 
 JSC__JSValue JSC__JSPromise__rejectedPromiseValue(JSC__JSGlobalObject* arg0,
     JSC__JSValue JSValue1)
@@ -3443,5 +3431,113 @@ restart:
     if (scope.exception()) {
         scope.clearException();
         return;
+    }
+}
+
+extern "C" void Bun__WTFStringImpl__deref(WTF::StringImpl* impl)
+{
+    impl->deref();
+}
+extern "C" void Bun__WTFStringImpl__ref(WTF::StringImpl* impl)
+{
+    impl->ref();
+}
+
+extern "C" bool BunString__fromJS(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue encodedValue, BunString* bunString)
+{
+    JSC::JSValue value = JSC::JSValue::decode(encodedValue);
+    *bunString = Bun::fromJS(globalObject, value);
+    return bunString->tag != BunStringTag::Dead;
+}
+
+namespace Bun {
+JSC::JSValue toJS(JSC::JSGlobalObject* globalObject, BunString bunString)
+{
+    if (bunString.tag == BunStringTag::Empty || bunString.tag == BunStringTag::Dead) {
+        return JSValue(JSC::jsEmptyString(globalObject->vm()));
+    }
+    if (bunString.tag == BunStringTag::WTFStringImpl) {
+        return JSValue(jsString(globalObject->vm(), String(bunString.impl.wtf)));
+    }
+
+    if (bunString.tag == BunStringTag::StaticZigString) {
+        return JSValue(jsOwnedString(globalObject->vm(), Zig::toStringStatic(bunString.impl.zig)));
+    }
+
+    return JSValue(Zig::toJSStringGC(bunString.impl.zig, globalObject));
+}
+
+WTF::String toWTFString(BunString& bunString)
+{
+    if (bunString.tag == BunStringTag::ZigString) {
+        if (Zig::isTaggedUTF8Ptr(bunString.impl.zig.ptr)) {
+            return Zig::toStringCopy(bunString.impl.zig);
+        } else {
+            return Zig::toString(bunString.impl.zig);
+        }
+
+    } else if (bunString.tag == BunStringTag::StaticZigString) {
+        return Zig::toStringStatic(bunString.impl.zig);
+    }
+
+    if (bunString.tag == BunStringTag::WTFStringImpl) {
+        return WTF::String(bunString.impl.wtf);
+    }
+
+    return WTF::String();
+}
+
+BunString fromJS(JSC::JSGlobalObject* globalObject, JSValue value)
+{
+    JSC::JSString* str = value.toStringOrNull(globalObject);
+    if (UNLIKELY(!str)) {
+        return { BunStringTag::Dead };
+    }
+
+    if (str->length() == 0) {
+        return { BunStringTag::Empty };
+    }
+
+    auto wtfString = str->value(globalObject);
+
+    return { BunStringTag::WTFStringImpl, { .wtf = wtfString.impl() } };
+}
+
+BunString fromString(WTF::String& wtfString)
+{
+    if (wtfString.length() == 0)
+        return { BunStringTag::Empty };
+
+    return { BunStringTag::WTFStringImpl, { .wtf = wtfString.impl() } };
+}
+
+BunString fromString(WTF::StringImpl* wtfString)
+{
+    if (wtfString->length() == 0)
+        return { BunStringTag::Empty };
+
+    return { BunStringTag::WTFStringImpl, { .wtf = wtfString } };
+}
+
+}
+
+extern "C" JSC::EncodedJSValue BunString__toJS(JSC::JSGlobalObject* globalObject, BunString* bunString)
+{
+    return JSValue::encode(Bun::toJS(globalObject, *bunString));
+}
+
+extern "C" void BunString__toWTFString(BunString* bunString)
+{
+    if (bunString->tag == BunStringTag::ZigString) {
+        if (Zig::isTaggedUTF8Ptr(bunString->impl.zig.ptr)) {
+            bunString->impl.wtf = Zig::toStringCopy(bunString->impl.zig).impl();
+        } else {
+            bunString->impl.wtf = Zig::toString(bunString->impl.zig).impl();
+        }
+
+        bunString->tag = BunStringTag::WTFStringImpl;
+    } else if (bunString->tag == BunStringTag::StaticZigString) {
+        bunString->impl.wtf = Zig::toStringStatic(bunString->impl.zig).impl();
+        bunString->tag = BunStringTag::WTFStringImpl;
     }
 }

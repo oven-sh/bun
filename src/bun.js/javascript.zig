@@ -75,6 +75,7 @@ const JSModuleLoader = @import("bun").JSC.JSModuleLoader;
 const JSPromiseRejectionOperation = @import("bun").JSC.JSPromiseRejectionOperation;
 const Exception = @import("bun").JSC.Exception;
 const ErrorableZigString = @import("bun").JSC.ErrorableZigString;
+const ErrorableString = @import("bun").JSC.ErrorableString;
 const ZigGlobalObject = @import("bun").JSC.ZigGlobalObject;
 const VM = @import("bun").JSC.VM;
 const JSFunction = @import("bun").JSC.JSFunction;
@@ -86,6 +87,7 @@ const EventLoop = JSC.EventLoop;
 const PendingResolution = @import("../resolver/resolver.zig").PendingResolution;
 const ThreadSafeFunction = JSC.napi.ThreadSafeFunction;
 const PackageManager = @import("../install/install.zig").PackageManager;
+const String = bun.String;
 
 const ModuleLoader = JSC.ModuleLoader;
 const FetchFlags = JSC.FetchFlags;
@@ -753,11 +755,6 @@ pub const VirtualMachine = struct {
         return VirtualMachine.vm;
     }
 
-    // dynamic import
-    // pub fn import(global: *JSGlobalObject, specifier: ZigString, source: ZigString) callconv(.C) ErrorableZigString {
-
-    // }
-
     pub threadlocal var source_code_printer: ?*js_printer.BufferPrinter = null;
 
     pub fn clearRefString(_: *anyopaque, ref_string: *JSC.RefString) void {
@@ -880,6 +877,7 @@ pub const VirtualMachine = struct {
     pub const ResolveFunctionResult = struct {
         result: ?Resolver.Result,
         path: string,
+        static: bool = false,
     };
 
     fn _resolve(
@@ -898,25 +896,31 @@ pub const VirtualMachine = struct {
 
         if (jsc_vm.node_modules == null and strings.eqlComptime(std.fs.path.basename(specifier), Runtime.Runtime.Imports.alt_name)) {
             ret.path = Runtime.Runtime.Imports.Name;
+            ret.static = true;
             return;
         } else if (jsc_vm.node_modules != null and strings.eqlComptime(specifier, bun_file_import_path)) {
             ret.path = bun_file_import_path;
+            ret.static = true;
             return;
         } else if (strings.eqlComptime(specifier, main_file_name)) {
             ret.result = null;
             ret.path = jsc_vm.entry_point.source.path.text;
+            ret.static = true;
             return;
         } else if (specifier.len > js_ast.Macro.namespaceWithColon.len and strings.eqlComptimeIgnoreLen(specifier[0..js_ast.Macro.namespaceWithColon.len], js_ast.Macro.namespaceWithColon)) {
             ret.result = null;
             ret.path = specifier;
+            ret.static = true;
             return;
         } else if (specifier.len > "/bun-vfs/node_modules/".len and strings.eqlComptimeIgnoreLen(specifier[0.."/bun-vfs/node_modules/".len], "/bun-vfs/node_modules/")) {
             ret.result = null;
             ret.path = specifier;
+            ret.static = true;
             return;
         } else if (JSC.HardcodedModule.Map.get(specifier)) |result| {
             ret.result = null;
             ret.path = @as(string, @tagName(result));
+            ret.static = true;
             return;
         }
 
@@ -985,6 +989,7 @@ pub const VirtualMachine = struct {
                         if (node_modules_bundle.findModuleIDInPackage(package, package_relative_path) == null) break :node_module_checker;
 
                         ret.path = bun_file_import_path;
+                        ret.static = true;
                         return;
                     }
                 }
@@ -1008,40 +1013,51 @@ pub const VirtualMachine = struct {
         }
     }
 
-    pub fn resolveForAPI(res: *ErrorableZigString, global: *JSGlobalObject, specifier: ZigString, source: ZigString) void {
-        resolveMaybeNeedsTrailingSlash(res, global, specifier, source, false, true);
+    pub fn resolveForAPI(res: *ErrorableString, global: *JSGlobalObject, specifier: ZigString, source: ZigString) void {
+        resolveMaybeNeedsTrailingSlash(res, global, String.init(specifier), String.init(source), false, true);
     }
 
-    pub fn resolveFilePathForAPI(res: *ErrorableZigString, global: *JSGlobalObject, specifier: ZigString, source: ZigString) void {
-        resolveMaybeNeedsTrailingSlash(res, global, specifier, source, true, true);
+    pub fn resolveFilePathForAPI(res: *ErrorableString, global: *JSGlobalObject, specifier: ZigString, source: ZigString) void {
+        resolveMaybeNeedsTrailingSlash(res, global, String.init(specifier), String.init(source), true, true);
     }
 
-    pub fn resolve(res: *ErrorableZigString, global: *JSGlobalObject, specifier: ZigString, source: ZigString) void {
+    pub fn resolve(res: *ErrorableString, global: *JSGlobalObject, specifier: bun.String, source: bun.String) void {
         resolveMaybeNeedsTrailingSlash(res, global, specifier, source, true, false);
     }
 
-    pub fn resolveMaybeNeedsTrailingSlash(res: *ErrorableZigString, global: *JSGlobalObject, specifier: ZigString, source: ZigString, comptime is_a_file_path: bool, comptime realpath: bool) void {
+    pub fn resolveMaybeNeedsTrailingSlash(res: *ErrorableString, global: *JSGlobalObject, specifier: String, source: String, comptime is_a_file_path: bool, comptime realpath: bool) void {
         var result = ResolveFunctionResult{ .path = "", .result = null };
         var jsc_vm = vm;
+
         if (jsc_vm.plugin_runner) |plugin_runner| {
-            if (PluginRunner.couldBePlugin(specifier.slice())) {
-                const namespace = PluginRunner.extractNamespace(specifier.slice());
+            const specifier_slice = specifier.toUTF8(jsc_vm.allocator);
+            defer specifier_slice.deinit();
+            if (PluginRunner.couldBePlugin(specifier_slice.slice())) {
+                const namespace = PluginRunner.extractNamespace(specifier_slice.slice());
                 const after_namespace = if (namespace.len == 0)
                     specifier
                 else
                     specifier.substring(namespace.len + 1);
 
-                if (plugin_runner.onResolveJSC(ZigString.init(namespace), after_namespace, source, .bun)) |resolved_path| {
-                    res.* = resolved_path;
+                if (plugin_runner.onResolveJSC(ZigString.init(namespace), after_namespace.toZigString(), source.toZigString(), .bun)) |resolved_path| {
+                    res.* = if (resolved_path.success) ErrorableString.ok(String.init(resolved_path.result.value)) else ErrorableString{
+                        .result = .{ .err = resolved_path.result.err },
+                        .success = false,
+                    };
                     return;
                 }
             }
         }
 
-        if (JSC.HardcodedModule.Aliases.getWithEql(specifier, ZigString.eqlComptime)) |hardcoded| {
-            res.* = ErrorableZigString.ok(ZigString.init(hardcoded));
+        if (JSC.HardcodedModule.Aliases.getWithEql(specifier, String.eqlComptime)) |hardcoded| {
+            res.* = ErrorableString.ok(String.static(hardcoded));
             return;
         }
+
+        const specifier_slice = specifier.toUTF8(jsc_vm.allocator);
+        const source_slice = source.toUTF8(jsc_vm.allocator);
+        defer source_slice.deinit();
+
         var old_log = jsc_vm.log;
         var log = logger.Log.init(jsc_vm.allocator);
         defer log.deinit();
@@ -1053,7 +1069,7 @@ pub const VirtualMachine = struct {
             jsc_vm.bundler.linker.log = old_log;
             jsc_vm.bundler.resolver.log = old_log;
         }
-        _resolve(&result, global, specifier.slice(), source.slice(), is_a_file_path, realpath) catch |err_| {
+        _resolve(&result, global, specifier_slice.slice(), source_slice.slice(), is_a_file_path, realpath) catch |err_| {
             var err = err_;
             const msg: logger.Msg = brk: {
                 var msgs: []logger.Msg = log.msgs.items;
@@ -1067,8 +1083,8 @@ pub const VirtualMachine = struct {
 
                 const printed = ResolveError.fmt(
                     jsc_vm.allocator,
-                    specifier.slice(),
-                    source.slice(),
+                    specifier_slice.slice(),
+                    source_slice.slice(),
                     err,
                 ) catch unreachable;
                 break :brk logger.Msg{
@@ -1079,19 +1095,24 @@ pub const VirtualMachine = struct {
                     ),
                     .metadata = .{
                         // import_kind is wrong probably
-                        .resolve = .{ .specifier = logger.BabyString.in(printed, specifier.slice()), .import_kind = .stmt },
+                        .resolve = .{ .specifier = logger.BabyString.in(printed, specifier_slice.slice()), .import_kind = .stmt },
                     },
                 };
             };
 
             {
-                res.* = ErrorableZigString.err(err, @ptrCast(*anyopaque, ResolveError.create(global, vm.allocator, msg, source.slice())));
+                res.* = ErrorableString.err(err, @ptrCast(*anyopaque, ResolveError.create(global, vm.allocator, msg, source_slice.slice())));
             }
 
             return;
         };
-
-        res.* = ErrorableZigString.ok(ZigString.init(result.path));
+        if (result.static) {
+            res.* = ErrorableString.ok(String.static(result.path));
+        } else if (strings.eqlLong(specifier_slice.slice(), result.path)) {
+            res.* = ErrorableString.ok(specifier);
+        } else {
+            res.* = ErrorableString.ok(String.fromBytes(result.path));
+        }
     }
 
     // // This double prints
@@ -1106,31 +1127,31 @@ pub const VirtualMachine = struct {
 
     pub const main_file_name: string = "bun:main";
 
-    pub fn fetch(ret: *ErrorableResolvedSource, global: *JSGlobalObject, specifier: ZigString, source: ZigString) callconv(.C) void {
+    pub fn fetch(ret: *ErrorableResolvedSource, global: *JSGlobalObject, specifier: String, source: String) callconv(.C) void {
         var jsc_vm: *VirtualMachine = if (comptime Environment.isLinux)
             vm
         else
             global.bunVM();
 
         var log = logger.Log.init(vm.bundler.allocator);
-        var spec = specifier.toSlice(jsc_vm.allocator);
+        var spec = specifier.toUTF8(jsc_vm.allocator);
         defer spec.deinit();
-        var refer = source.toSlice(jsc_vm.allocator);
+        var refer = source.toUTF8(jsc_vm.allocator);
         defer refer.deinit();
 
         const result = if (!jsc_vm.bundler.options.disable_transpilation)
             @call(.{ .modifier = .always_inline }, fetchWithoutOnLoadPlugins, .{ jsc_vm, global, spec.slice(), refer.slice(), &log, ret, .transpile }) catch |err| {
-                processFetchLog(global, specifier, source, &log, ret, err);
+                processFetchLog(global, spec.toZigString(), refer.toZigString(), &log, ret, err);
                 return;
             }
         else
             fetchWithoutOnLoadPlugins(jsc_vm, global, spec.slice(), refer.slice(), &log, ret, .print_source_and_clone) catch |err| {
-                processFetchLog(global, specifier, source, &log, ret, err);
+                processFetchLog(global, spec.toZigString(), refer.toZigString(), &log, ret, err);
                 return;
             };
 
         if (log.errors > 0) {
-            processFetchLog(global, specifier, source, &log, ret, error.LinkError);
+            processFetchLog(global, spec.toZigString(), refer.toZigString(), &log, ret, error.LinkError);
             return;
         }
 

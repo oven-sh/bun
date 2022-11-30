@@ -89,6 +89,7 @@ const PackageManager = @import("../install/install.zig").PackageManager;
 const Install = @import("../install/install.zig");
 const VirtualMachine = JSC.VirtualMachine;
 const Dependency = @import("../install/dependency.zig");
+const String = bun.String;
 
 // This exists to make it so we can reload these quicker in development
 fn jsModuleFromFile(from_path: string, comptime input: string) string {
@@ -871,9 +872,9 @@ pub const ModuleLoader = struct {
         ) void;
     };
 
-    pub export fn Bun__getDefaultLoader(global: *JSC.JSGlobalObject, str: *ZigString) Api.Loader {
+    pub export fn Bun__getDefaultLoader(global: *JSC.JSGlobalObject, str: *String) Api.Loader {
         var jsc_vm = global.bunVM();
-        const filename = str.toSlice(jsc_vm.allocator);
+        const filename = str.toUTF8(jsc_vm.allocator);
         defer filename.deinit();
         const loader = jsc_vm.bundler.options.loader(Fs.PathName.init(filename.slice()).ext).toAPI();
         if (loader == .file) {
@@ -898,7 +899,6 @@ pub const ModuleLoader = struct {
         comptime flags: FetchFlags,
     ) !ResolvedSource {
         const disable_transpilying = comptime flags.disableTranspiling();
-
         switch (loader) {
             .js, .jsx, .ts, .tsx, .json, .toml => {
                 jsc_vm.transpiled_count += 1;
@@ -1347,19 +1347,22 @@ pub const ModuleLoader = struct {
     pub export fn Bun__fetchBuiltinModule(
         jsc_vm: *VirtualMachine,
         globalObject: *JSC.JSGlobalObject,
-        specifier: *ZigString,
-        referrer: *ZigString,
+        specifier: *String,
+        referrer: *String,
         ret: *ErrorableResolvedSource,
     ) bool {
         JSC.markBinding(@src());
         var log = logger.Log.init(jsc_vm.bundler.allocator);
         defer log.deinit();
-        if (ModuleLoader.fetchBuiltinModule(jsc_vm, specifier.slice(), &log, false) catch |err| {
+        const specifier_slice = specifier.toUTF8(jsc_vm.allocator);
+        defer specifier_slice.deinit();
+        if (ModuleLoader.fetchBuiltinModule(jsc_vm, specifier_slice.slice(), &log, false) catch |err| {
             if (err == error.AsyncModule) {
                 unreachable;
             }
-
-            VirtualMachine.processFetchLog(globalObject, specifier.*, referrer.*, &log, ret, err);
+            const referrer_slice = referrer.toUTF8(jsc_vm.allocator);
+            defer referrer_slice.deinit();
+            VirtualMachine.processFetchLog(globalObject, specifier_slice.toZigString(), referrer_slice.toZigString(), &log, ret, err);
             return true;
         }) |builtin| {
             ret.* = ErrorableResolvedSource.ok(builtin);
@@ -1372,28 +1375,33 @@ pub const ModuleLoader = struct {
     pub export fn Bun__transpileFile(
         jsc_vm: *VirtualMachine,
         globalObject: *JSC.JSGlobalObject,
-        specifier_ptr: *ZigString,
-        referrer: *ZigString,
+        specifier_ptr: *String,
+        referrer: *String,
         ret: *ErrorableResolvedSource,
         allow_promise: bool,
     ) ?*anyopaque {
         JSC.markBinding(@src());
+        const allocator = jsc_vm.allocator;
         var log = logger.Log.init(jsc_vm.bundler.allocator);
         defer log.deinit();
         debug("transpileFile: {any}", .{specifier_ptr.*});
-
-        var _specifier = specifier_ptr.toSlice(jsc_vm.allocator);
-        var referrer_slice = referrer.toSlice(jsc_vm.allocator);
-        defer _specifier.deinit();
+        // these should already be encoded as utf8
+        // see https://github.com/oven-sh/bun/issues/1562
+        var specifier_slice = specifier_ptr.toUTF8(allocator);
+        var referrer_slice = referrer.toUTF8(allocator);
+        defer specifier_slice.deinit();
         defer referrer_slice.deinit();
-        var specifier = normalizeSpecifier(jsc_vm, _specifier.slice());
+
+        const _specifier = specifier_slice.slice();
+
+        var specifier = normalizeSpecifier(jsc_vm, _specifier);
         const path = Fs.Path.init(specifier);
         const loader = jsc_vm.bundler.options.loaders.get(path.name.ext) orelse options.Loader.js;
         var promise: ?*JSC.JSInternalPromise = null;
         ret.* = ErrorableResolvedSource.ok(
             ModuleLoader.transpileSourceCode(
                 jsc_vm,
-                specifier,
+                specifier_slice.slice(),
                 referrer_slice.slice(),
                 path,
                 loader,
@@ -1413,18 +1421,20 @@ pub const ModuleLoader = struct {
                 if (err == error.PluginError) {
                     return null;
                 }
-                VirtualMachine.processFetchLog(globalObject, specifier_ptr.*, referrer.*, &log, ret, err);
+                VirtualMachine.processFetchLog(globalObject, specifier_slice.toZigString(), referrer_slice.toZigString(), &log, ret, err);
                 return null;
             },
         );
         return promise;
     }
 
-    export fn Bun__runVirtualModule(globalObject: *JSC.JSGlobalObject, specifier_ptr: *ZigString) JSValue {
+    export fn Bun__runVirtualModule(globalObject: *JSC.JSGlobalObject, specifier_ptr: *String) JSValue {
         JSC.markBinding(@src());
         if (globalObject.bunVM().plugin_runner == null) return JSValue.zero;
 
-        const specifier = specifier_ptr.slice();
+        const specifier_ = specifier_ptr.toUTF8(globalObject.allocator());
+        defer specifier_.deinit();
+        const specifier = specifier_.slice();
 
         if (!PluginRunner.couldBePlugin(specifier)) {
             return JSValue.zero;

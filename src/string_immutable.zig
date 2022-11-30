@@ -743,10 +743,12 @@ pub fn eqlLong(a_: string, b: string, comptime check_len: bool) bool {
     const len = b.len;
     var dword_length = b.len >> 3;
     var b_ptr: usize = 0;
+    const slice = b.ptr;
     const a = a_.ptr;
+    if (slice == a)
+        return true;
 
     while (dword_length > 0) : (dword_length -= 1) {
-        const slice = b.ptr;
         if (@bitCast(usize, a[b_ptr..len][0..@sizeOf(usize)].*) != @bitCast(usize, (slice[b_ptr..b.len])[0..@sizeOf(usize)].*))
             return false;
         b_ptr += @sizeOf(usize);
@@ -755,7 +757,6 @@ pub fn eqlLong(a_: string, b: string, comptime check_len: bool) bool {
 
     if (comptime @sizeOf(usize) == 8) {
         if ((len & 4) != 0) {
-            const slice = b.ptr;
             if (@bitCast(u32, a[b_ptr..len][0..@sizeOf(u32)].*) != @bitCast(u32, (slice[b_ptr..b.len])[0..@sizeOf(u32)].*))
                 return false;
 
@@ -1093,6 +1094,27 @@ pub fn utf16Codepoint(comptime Type: type, input: Type) UTF16Replacement {
     } else {
         return .{ .code_point = c0, .len = 1 };
     }
+}
+
+pub fn toUTF8FromLatin1(allocator: std.mem.Allocator, latin1: []const u8) !?std.ArrayList(u8) {
+    if (bun.JSC.is_bindgen)
+        unreachable;
+
+    if (!bun.FeatureFlags.use_simdutf) {
+        @compileError("TODO");
+    }
+
+    const is_ascii = bun.simdutf.validate.with_errors.ascii(latin1);
+    if (is_ascii.status == .success) {
+        return null;
+    }
+
+    var list = try std.ArrayList(u8).initCapacity(allocator, latin1.len);
+    if (is_ascii.count > 0)
+        @memcpy(list.items.ptr, latin1.ptr, is_ascii.count);
+    list.items.len = is_ascii.count;
+    std.debug.assert(is_ascii.count < latin1.len);
+    return try allocateLatin1IntoUTF8WithList(list, is_ascii.count, []const u8, latin1);
 }
 
 pub fn toUTF8AllocWithType(allocator: std.mem.Allocator, comptime Type: type, utf16: Type) ![]u8 {
@@ -2640,6 +2662,9 @@ pub const AsciiU16Vector = std.meta.Vector(ascii_u16_vector_size, u16);
 pub const max_4_ascii = @splat(4, @as(u8, 127));
 pub fn isAllASCII(slice: []const u8) bool {
     var remaining = slice;
+    if (comptime bun.FeatureFlags.use_simdutf) {
+        return bun.simdutf.validate.ascii(slice);
+    }
 
     // The NEON SIMD unit is 128-bit wide and includes 16 128-bit registers that can be used as 32 64-bit registers
     if (comptime Environment.enableSIMD) {

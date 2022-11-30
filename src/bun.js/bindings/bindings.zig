@@ -17,6 +17,7 @@ const JSC = @import("bun").JSC;
 const Shimmer = JSC.Shimmer;
 const FFI = @import("./FFI.zig");
 const NullableAllocator = @import("../../nullable_allocator.zig").NullableAllocator;
+const String = bun.String;
 
 pub const JSObject = extern struct {
     pub const shim = Shimmer("JSC", "JSObject", @This());
@@ -90,6 +91,14 @@ pub const ZigString = extern struct {
     // That would improve perf a bit
     ptr: [*]const u8,
     len: usize,
+
+    pub fn byteSlice(this: ZigString) []const u8 {
+        if (this.is16Bit()) {
+            return std.mem.sliceAsBytes(this.utf16SliceAligned());
+        }
+
+        return this.slice();
+    }
 
     pub fn clone(this: ZigString, allocator: std.mem.Allocator) !ZigString {
         var sliced = this.toSlice(allocator);
@@ -198,6 +207,10 @@ pub const ZigString = extern struct {
 
     pub const shim = Shimmer("", "ZigString", @This());
 
+    pub inline fn length(this: ZigString) usize {
+        return this.len;
+    }
+
     pub const Slice = struct {
         allocator: NullableAllocator = .{},
         ptr: [*]const u8 = undefined,
@@ -209,6 +222,24 @@ pub const ZigString = extern struct {
                 .len = @truncate(u32, input.len),
                 .allocator = .{},
             };
+        }
+
+        pub fn init(allocator: std.mem.Allocator, input: []const u8) Slice {
+            return .{
+                .ptr = input.ptr,
+                .len = @truncate(u32, input.len),
+                .allocator = NullableAllocator.init(allocator),
+            };
+        }
+
+        pub fn toZigString(this: Slice) ZigString {
+            if (this.isAllocated())
+                return ZigString.initUTF8(this.ptr[0..this.len]);
+            return ZigString.init(this.slice());
+        }
+
+        pub inline fn length(this: Slice) usize {
+            return this.len;
         }
 
         pub const empty = Slice{ .ptr = undefined, .len = 0 };
@@ -282,6 +313,12 @@ pub const ZigString = extern struct {
         /// Does nothing if the slice is not allocated
         pub fn deinit(this: *const Slice) void {
             if (this.allocator.get()) |allocator| {
+                if (bun.String.isWTFAllocator(allocator)) {
+                    // workaround for https://github.com/ziglang/zig/issues/4298
+                    bun.String.StringImplAllocator.free(allocator.ptr, bun.constStrToU8(this.slice()), 0, 0);
+                    return;
+                }
+
                 allocator.free(this.slice());
             }
         }
@@ -339,10 +376,16 @@ pub const ZigString = extern struct {
         return out;
     }
 
+    pub fn fromBytes(slice_: []const u8) ZigString {
+        if (!strings.isAllASCII(slice_))
+            return fromUTF8(slice_);
+
+        return init(slice_);
+    }
+
     pub fn fromUTF8(slice_: []const u8) ZigString {
         var out = init(slice_);
-        if (strings.isAllASCII(slice_))
-            out.markUTF8();
+        out.markUTF8();
 
         return out;
     }
@@ -407,6 +450,14 @@ pub const ZigString = extern struct {
 
     pub fn markUTF8(this: *ZigString) void {
         this.ptr = @intToPtr([*]const u8, @ptrToInt(this.ptr) | (1 << 61));
+    }
+
+    pub fn markStatic(this: *ZigString) void {
+        this.ptr = @intToPtr([*]const u8, @ptrToInt(this.ptr) | (1 << 60));
+    }
+
+    pub fn isStatic(this: *const ZigString) bool {
+        return @ptrToInt(this.ptr) & (1 << 60) != 0;
     }
 
     pub fn markUTF16(this: *ZigString) void {
@@ -1245,14 +1296,14 @@ pub fn NewGlobalObject(comptime Type: type) type {
             }
             return ErrorableZigString.err(error.ImportFailed, ZigString.init(importNotImpl).toErrorInstance(global).asVoid());
         }
-        pub fn resolve(res: *ErrorableZigString, global: *JSGlobalObject, specifier: *ZigString, source: *ZigString) callconv(.C) void {
+        pub fn resolve(res: *ErrorableString, global: *JSGlobalObject, specifier: *String, source: *String) callconv(.C) void {
             if (comptime @hasDecl(Type, "resolve")) {
                 @call(.{ .modifier = .always_inline }, Type.resolve, .{ res, global, specifier.*, source.* });
                 return;
             }
-            res.* = ErrorableZigString.err(error.ResolveFailed, ZigString.init(resolveNotImpl).toErrorInstance(global).asVoid());
+            res.* = ErrorableString.err(error.ResolveFailed, ZigString.init(resolveNotImpl).toErrorInstance(global).asVoid());
         }
-        pub fn fetch(ret: *ErrorableResolvedSource, global: *JSGlobalObject, specifier: *ZigString, source: *ZigString) callconv(.C) void {
+        pub fn fetch(ret: *ErrorableResolvedSource, global: *JSGlobalObject, specifier: *String, source: *String) callconv(.C) void {
             if (comptime @hasDecl(Type, "fetch")) {
                 @call(.{ .modifier = .always_inline }, Type.fetch, .{ ret, global, specifier.*, source.* });
                 return;
@@ -2399,6 +2450,10 @@ pub const JSValue = enum(JSValueReprInt) {
 
     pub fn call(this: JSValue, globalThis: *JSGlobalObject, args: []const JSC.JSValue) JSC.JSValue {
         return callWithThis(this, globalThis, JSC.JSValue.jsUndefined(), args);
+    }
+
+    pub fn toBunString(this: JSValue, globalObject: *JSC.JSGlobalObject) bun.String {
+        return bun.String.fromJS(this, globalObject);
     }
 
     pub fn callWithThis(this: JSValue, globalThis: *JSGlobalObject, thisValue: JSC.JSValue, args: []const JSC.JSValue) JSC.JSValue {
@@ -3844,3 +3899,4 @@ pub const DOMCalls = .{
     @import("../api/bun.zig").FFI.Reader,
     @import("../webcore.zig").Crypto,
 };
+const ErrorableString = bun.JSC.ErrorableString;

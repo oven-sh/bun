@@ -3455,8 +3455,15 @@ JSC::Identifier GlobalObject::moduleLoaderResolve(JSGlobalObject* globalObject,
 {
     ErrorableZigString res;
     res.success = false;
-    ZigString keyZ = toZigString(key, globalObject);
-    ZigString referrerZ = referrer && !referrer.isUndefinedOrNull() && referrer.isString() ? toZigString(referrer, globalObject) : ZigStringEmpty;
+    BunString keyZ = Bun::fromJS(globalObject, key);
+    BunString referrerZ;
+
+    if (referrer && !referrer.isUndefinedOrNull() && referrer.isString()) {
+        referrerZ = Bun::fromJS(globalObject, referrer);
+    } else {
+        referrerZ = BunString { BunStringTag::Empty };
+    }
+
     Zig__GlobalObject__resolve(&res, globalObject, &keyZ, &referrerZ);
 
     if (res.success) {
@@ -3482,8 +3489,12 @@ JSC::JSInternalPromise* GlobalObject::moduleLoaderImportModule(JSGlobalObject* g
 
     auto sourceURL = sourceOrigin.url();
     ErrorableZigString resolved;
-    auto moduleNameZ = toZigString(moduleNameValue, globalObject);
-    auto sourceOriginZ = sourceURL.isEmpty() ? ZigStringCwd : toZigString(sourceURL.fileSystemPath());
+    auto moduleNameZ = Bun::fromJS(globalObject, moduleNameValue);
+    WTF::String fsPath;
+    if (!sourceURL.isEmpty()) {
+        fsPath = sourceURL.fileSystemPath();
+    }
+    auto sourceOriginZ = sourceURL.isEmpty() ? BunString { BunStringTag::StaticZigString, { .zig = ZigStringCwd } } : Bun::fromString(fsPath);
     resolved.success = false;
     Zig__GlobalObject__resolve(&resolved, globalObject, &moduleNameZ, &sourceOriginZ);
     if (!resolved.success) {
@@ -3514,7 +3525,7 @@ static JSC_DEFINE_HOST_FUNCTION(functionFulfillModuleSync,
         return JSValue::encode(JSC::jsUndefined());
     }
 
-    auto specifier = Zig::toZigString(moduleKey);
+    auto specifier = Bun::fromString(moduleKey);
     ErrorableResolvedSource res;
     res.success = false;
     res.result.err.code = 0;
@@ -3559,8 +3570,8 @@ JSC::JSInternalPromise* GlobalObject::moduleLoaderFetch(JSGlobalObject* globalOb
         return rejectedInternalPromise(globalObject, createTypeError(globalObject, "To load Node-API modules, use require() or process.dlopen instead of import."_s));
     }
 
-    auto moduleKeyZig = toZigString(moduleKey);
-    auto source = Zig::toZigString(value1, globalObject);
+    auto moduleKeyZig = Bun::fromString(moduleKey);
+    auto source = Bun::fromJS(globalObject, value1);
     ErrorableResolvedSource res;
     res.success = false;
     res.result.err.code = 0;
@@ -3611,8 +3622,6 @@ JSC::JSValue GlobalObject::moduleLoaderEvaluate(JSGlobalObject* globalObject,
 
     return result;
 }
-
-
 
 #include "ZigGeneratedClasses+lazyStructureImpl.h"
 

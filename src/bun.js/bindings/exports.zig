@@ -60,13 +60,13 @@ pub const ZigGlobalObject = extern struct {
 
         return @call(.{ .modifier = .always_inline }, Interface.import, .{ global, specifier, source });
     }
-    pub fn resolve(res: *ErrorableZigString, global: *JSGlobalObject, specifier: *ZigString, source: *ZigString) callconv(.C) void {
+    pub fn resolve(res: *ErrorableZigString, global: *JSGlobalObject, specifier: *bun.String, source: *bun.String) callconv(.C) void {
         if (comptime is_bindgen) {
             unreachable;
         }
         @call(.{ .modifier = .always_inline }, Interface.resolve, .{ res, global, specifier, source });
     }
-    pub fn fetch(ret: *ErrorableResolvedSource, global: *JSGlobalObject, specifier: *ZigString, source: *ZigString) callconv(.C) void {
+    pub fn fetch(ret: *ErrorableResolvedSource, global: *JSGlobalObject, specifier: *bun.String, source: *bun.String) callconv(.C) void {
         if (comptime is_bindgen) {
             unreachable;
         }
@@ -214,7 +214,7 @@ pub const ResolvedSource = extern struct {
     pub const name = "ResolvedSource";
     pub const namespace = shim.namespace;
 
-    specifier: ZigString,
+    specifier: bun.String,
     source_code: ZigString,
     source_url: ZigString,
     hash: u32,
@@ -857,6 +857,7 @@ pub const ZigException = extern struct {
 
 pub const ErrorableResolvedSource = Errorable(ResolvedSource);
 pub const ErrorableZigString = Errorable(ZigString);
+pub const ErrorableString = Errorable(bun.String);
 pub const ErrorableJSValue = Errorable(JSValue);
 
 pub const ZigConsoleClient = struct {

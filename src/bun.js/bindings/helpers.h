@@ -78,7 +78,7 @@ namespace Zig {
 static const unsigned char* untag(const unsigned char* ptr)
 {
     return reinterpret_cast<const unsigned char*>(
-        ((reinterpret_cast<uintptr_t>(ptr) & ~(static_cast<uint64_t>(1) << 63) & ~(static_cast<uint64_t>(1) << 62)) & ~(static_cast<uint64_t>(1) << 61)));
+        (((reinterpret_cast<uintptr_t>(ptr) & ~(static_cast<uint64_t>(1) << 63) & ~(static_cast<uint64_t>(1) << 62)) & ~(static_cast<uint64_t>(1) << 61)) & ~(static_cast<uint64_t>(1) << 60)));
 }
 
 static void* untagVoid(const unsigned char* ptr)
@@ -146,6 +146,26 @@ static const WTF::String toString(ZigString str)
         ? WTF::String(WTF::StringImpl::createWithoutCopying(untag(str.ptr), str.len))
         : WTF::String(WTF::StringImpl::createWithoutCopying(
             reinterpret_cast<const UChar*>(untag(str.ptr)), str.len));
+}
+
+static const WTF::String toStringStatic(ZigString str)
+{
+    if (str.len == 0 || str.ptr == nullptr) {
+        return WTF::String();
+    }
+    if (UNLIKELY(isTaggedUTF8Ptr(str.ptr))) {
+        abort();
+    }
+
+    if (isTaggedUTF16Ptr(str.ptr)) {
+        return WTF::String(WTF::ExternalStringImpl::createStatic(untag(str.ptr), str.len));
+    }
+    
+    
+    return WTF::String(WTF::ExternalStringImpl::createStatic(
+                reinterpret_cast<const UChar*>(untag(str.ptr)), str.len));
+
+  
 }
 
 static WTF::AtomString toAtomString(ZigString str)

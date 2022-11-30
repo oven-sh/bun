@@ -182,6 +182,7 @@ typedef void WebSocketClientTLS;
 #ifndef __cplusplus
 typedef struct Bun__ArrayBuffer Bun__ArrayBuffer;
 typedef struct Uint8Array_alias Uint8Array_alias;
+typedef struct BunString BunString;
 #endif
 
 #ifdef __cplusplus
@@ -209,6 +210,39 @@ enum SyntheticModuleType : uint64_t {
     TTY = 1029,
 };
 
+enum class BunStringTag : uint8_t {
+    Dead = 0,
+    WTFStringImpl = 1,
+    ZigString = 2,
+    StaticZigString = 3,
+    Empty = 4,
+};
+
+typedef union BunStringImpl {
+    ZigString zig;
+    WTF::StringImpl* wtf;
+} BunStringImpl;
+
+typedef struct BunString {
+    BunStringTag tag;
+    BunStringImpl impl;
+} BunString;
+
+extern "C" void Bun__WTFStringImpl__deref(WTF::StringImpl* impl);
+extern "C" void Bun__WTFStringImpl__ref(WTF::StringImpl* impl);
+extern "C" bool BunString__fromJS(JSC::JSGlobalObject*, JSC::EncodedJSValue, BunString*);
+extern "C" JSC::EncodedJSValue BunString__toJS(JSC::JSGlobalObject*, BunString*);
+extern "C" void BunString__toWTFString(BunString*);
+
+namespace Bun {
+JSC::JSValue toJS(JSC::JSGlobalObject*, BunString);
+BunString fromJS(JSC::JSGlobalObject* globalObject, JSC::JSValue value);
+WTF::String toWTFString(BunString& bunString);
+BunString fromString(WTF::String& wtfString);
+BunString fromString(const WTF::String& wtfString);
+BunString fromString(WTF::StringImpl* wtfString);
+}
+
 extern "C" const char* Bun__userAgent;
 
 extern "C" ZigErrorCode Zig_ErrorCodeParserError;
@@ -219,21 +253,21 @@ extern "C" void Microtask__run_default(void* ptr, void* global);
 
 extern "C" bool Bun__transpileVirtualModule(
     JSC::JSGlobalObject* global,
-    ZigString* specifier,
-    ZigString* referrer,
+    BunString* specifier,
+    BunString* referrer,
     ZigString* sourceCode,
     BunLoaderType loader,
     ErrorableResolvedSource* result);
 
 extern "C" JSC::EncodedJSValue Bun__runVirtualModule(
     JSC::JSGlobalObject* global,
-    ZigString* specifier);
+    BunString* specifier);
 
 extern "C" void* Bun__transpileFile(
     void* bunVM,
     JSC::JSGlobalObject* global,
-    ZigString* specifier,
-    ZigString* referrer,
+    BunString* specifier,
+    BunString* referrer,
     ErrorableResolvedSource* result, bool allowPromise);
 
 extern "C" JSC::EncodedJSValue CallbackJob__onResolve(JSC::JSGlobalObject*, JSC::CallFrame*);
@@ -242,8 +276,8 @@ extern "C" JSC::EncodedJSValue CallbackJob__onReject(JSC::JSGlobalObject*, JSC::
 extern "C" bool Bun__fetchBuiltinModule(
     void* bunVM,
     JSC::JSGlobalObject* global,
-    ZigString* specifier,
-    ZigString* referrer,
+    BunString* specifier,
+    BunString* referrer,
     ErrorableResolvedSource* result);
 
 // Used in process.version

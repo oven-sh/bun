@@ -611,7 +611,7 @@ pub const RwLock = if (@import("builtin").os.tag != .windows and @import("builti
             .netbsd => extern struct {
                 ptr_magic: c_uint = 0x99990009,
                 ptr_interlock: switch (@import("builtin").target.cpu.arch) {
-                    .aarch64, .sparc, .x86_64, .i386 => u8,
+                    .aarch64, .sparc, .x86_64  => u8,
                     .arm, .powerpc => c_int,
                     else => unreachable,
                 } = 0,

@@ -511,7 +511,7 @@ pub const UpgradeCommand = struct {
             const version_name = version.name().?;
 
             var save_dir_ = filesystem.tmpdir();
-            var save_dir = save_dir_.makeOpenPath(version_name, .{ .iterate = true }) catch {
+            var save_dir = save_dir_.makeOpenPathIterable(version_name, .{  }) catch {
                 Output.prettyErrorln("<r><red>error:<r> Failed to open temporary directory", .{});
                 Global.exit(1);
             };
@@ -637,7 +637,7 @@ pub const UpgradeCommand = struct {
             // safe because the slash will no longer be in use
             current_executable_buf[target_dir_.len] = 0;
             var target_dirname = current_executable_buf[0..target_dir_.len :0];
-            var target_dir = std.fs.openDirAbsoluteZ(target_dirname, .{ .iterate = true }) catch |err| {
+            var target_dir = std.fs.openIterableDirZ(target_dirname, .{  }) catch |err| {
                 save_dir_.deleteTree(version_name) catch {};
                 Output.prettyErrorln("<r><red>error:<r> Failed to open bun's install directory {s}", .{@errorName(err)});
                 Global.exit(1);

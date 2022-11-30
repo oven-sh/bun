@@ -240,7 +240,7 @@ pub const DirEntryResolveQueueItem = struct {
 };
 
 threadlocal var _dir_entry_paths_to_resolve: [256]DirEntryResolveQueueItem = undefined;
-threadlocal var _open_dirs: [256]std.fs.Dir = undefined;
+threadlocal var _open_dirs: [256]std.fs.IterableDir = undefined;
 threadlocal var resolve_without_remapping_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
 threadlocal var index_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
 threadlocal var dir_info_uncached_filename_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
@@ -1729,7 +1729,7 @@ pub const Resolver = struct {
 
         var dir_entries_option: *Fs.FileSystem.RealFS.EntriesOption = undefined;
         var needs_iter: bool = true;
-        var open_dir = std.fs.openDirAbsolute(dir_path, .{ .iterate = true }) catch |err| {
+        var open_dir = std.fs.cwd().openIterableDir(dir_path, .{  }) catch |err| {
             switch (err) {
                 error.FileNotFound => unreachable,
                 else => {
@@ -1754,8 +1754,8 @@ pub const Resolver = struct {
             }) catch unreachable;
 
             if (FeatureFlags.store_file_descriptors) {
-                Fs.FileSystem.setMaxFd(open_dir.fd);
-                dir_entries_option.entries.fd = open_dir.fd;
+                Fs.FileSystem.setMaxFd(open_dir.dir.fd);
+                dir_entries_option.entries.fd = open_dir.dir.fd;
             }
             var dir_iterator = open_dir.iterate();
             while (dir_iterator.next() catch null) |_value| {
@@ -1777,7 +1777,7 @@ pub const Resolver = struct {
             // to check for a parent package.json
             null,
             allocators.NotFound,
-            open_dir.fd,
+            open_dir.dir.fd,
             package_id,
         );
         return dir_info_ptr;
@@ -2238,9 +2238,9 @@ pub const Resolver = struct {
 
             // Anything
             if (open_dir_count > 0 and r.fs.fs.needToCloseFiles()) {
-                var open_dirs: []std.fs.Dir = _open_dirs[0..open_dir_count];
+                var open_dirs: []std.fs.IterableDir = _open_dirs[0..open_dir_count];
                 for (open_dirs) |*open_dir| {
-                    open_dir.close();
+                    open_dir.dir.close();
                 }
             }
         }
@@ -2265,7 +2265,7 @@ pub const Resolver = struct {
             defer top_parent = queue_top.result;
             queue_slice.len -= 1;
 
-            var _open_dir: anyerror!std.fs.Dir = undefined;
+            var _open_dir: anyerror!std.fs.IterableDir = undefined;
             if (queue_top.fd == 0) {
 
                 // This saves us N copies of .toPosixPath
@@ -2274,17 +2274,16 @@ pub const Resolver = struct {
                 path.ptr[queue_top.unsafe_path.len] = 0;
                 defer path.ptr[queue_top.unsafe_path.len] = prev_char;
                 var sentinel = path.ptr[0..queue_top.unsafe_path.len :0];
-                _open_dir = std.fs.openDirAbsoluteZ(
+                _open_dir = std.fs.openIterableDirAbsoluteZ(
                     sentinel,
                     .{
-                        .iterate = true,
                         .no_follow = !follow_symlinks,
                     },
                 );
                 // }
             }
 
-            const open_dir = if (queue_top.fd != 0) std.fs.Dir{ .fd = queue_top.fd } else (_open_dir catch |err| {
+            const open_dir = if (queue_top.fd != 0) std.fs.IterableDir{ .dir = .{ .fd = queue_top.fd } } else (_open_dir catch |err| {
                 switch (err) {
                     error.EACCESS => {},
 
@@ -2329,7 +2328,7 @@ pub const Resolver = struct {
             });
 
             if (queue_top.fd == 0) {
-                Fs.FileSystem.setMaxFd(open_dir.fd);
+                Fs.FileSystem.setMaxFd(open_dir.dir.fd);
                 // these objects mostly just wrap the file descriptor, so it's fine to keep it.
                 _open_dirs[open_dir_count] = open_dir;
                 open_dir_count += 1;
@@ -2379,8 +2378,8 @@ pub const Resolver = struct {
                 });
 
                 if (FeatureFlags.store_file_descriptors) {
-                    Fs.FileSystem.setMaxFd(open_dir.fd);
-                    dir_entries_option.entries.fd = open_dir.fd;
+                    Fs.FileSystem.setMaxFd(open_dir.dir.fd);
+                    dir_entries_option.entries.fd = open_dir.dir.fd;
                 }
                 var dir_iterator = open_dir.iterate();
                 while (try dir_iterator.next()) |_value| {
@@ -2400,7 +2399,7 @@ pub const Resolver = struct {
                 cached_dir_entry_result.index,
                 r.dir_cache.atIndex(top_parent.index),
                 top_parent.index,
-                open_dir.fd,
+                open_dir.dir.fd,
                 null,
             );
 
@@ -3297,7 +3296,7 @@ pub const Resolver = struct {
                         }
 
                         const this_dir = std.fs.Dir{ .fd = fd };
-                        var file = this_dir.openDirZ("node_modules/.bin", .{}) catch break :append_bin_dir;
+                        var file = this_dir.openDirZ("node_modules/.bin", .{}, true) catch break :append_bin_dir;
                         defer file.close();
                         var bin_path = std.os.getFdPath(file.fd, &node_bin_path) catch break :append_bin_dir;
                         bin_folders_lock.lock();
@@ -3322,7 +3321,7 @@ pub const Resolver = struct {
                             }
 
                             const this_dir = std.fs.Dir{ .fd = fd };
-                            var file = this_dir.openDirZ(".bin", .{}) catch break :append_bin_dir;
+                            var file = this_dir.openDirZ(".bin", .{}, false) catch break :append_bin_dir;
                             defer file.close();
                             var bin_path = std.os.getFdPath(file.fd, &node_bin_path) catch break :append_bin_dir;
                             bin_folders_lock.lock();

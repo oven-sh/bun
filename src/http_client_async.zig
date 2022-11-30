@@ -359,6 +359,10 @@ pub const HTTPThread = struct {
     timer: std.time.Timer = undefined,
     const threadlog = Output.scoped(.HTTPThread, true);
 
+     const FakeStruct = struct {
+            trash: i64 = 0,
+        };
+        
     pub fn init() !void {
         if (http_thread_loaded.swap(true, .SeqCst)) {
             return;
@@ -375,17 +379,21 @@ pub const HTTPThread = struct {
             .timer = std.time.Timer.start() catch unreachable,
         };
 
-        var thread = try std.Thread.spawn(
+   
+
+        const thread = try std.Thread.spawn(
             .{
                 .stack_size = 4 * 1024 * 1024,
             },
-            onStart,
-            .{@as(u32, 123)},
+        comptime    onStart,
+          .{
+            FakeStruct{},
+          },  
         );
         thread.detach();
     }
 
-    pub fn onStart(_: u32) void {
+    pub fn onStart(_:   FakeStruct) void {
         Output.Source.configureNamedThread("HTTP Client");
         default_arena = Arena.init() catch unreachable;
         default_allocator = default_arena.allocator();

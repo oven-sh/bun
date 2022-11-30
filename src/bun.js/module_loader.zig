@@ -153,18 +153,18 @@ inline fn jsSyntheticModule(comptime name: ResolvedSource.Tag) ResolvedSource {
 
 fn dumpSource(specifier: string, printer: anytype) !void {
     const BunDebugHolder = struct {
-        pub var dir: ?std.fs.Dir = null;
+        pub var dir: ?std.fs.IterableDir = null;
     };
     if (BunDebugHolder.dir == null) {
-        BunDebugHolder.dir = try std.fs.cwd().makeOpenPath("/tmp/bun-debug-src/", .{ .iterate = true });
+        BunDebugHolder.dir = try std.fs.cwd().makeOpenPathIterable("/tmp/bun-debug-src/", .{  });
     }
 
     if (std.fs.path.dirname(specifier)) |dir_path| {
-        var parent = try BunDebugHolder.dir.?.makeOpenPath(dir_path[1..], .{ .iterate = true });
+        var parent = try BunDebugHolder.dir.?.dir.makeOpenPathIterable(dir_path[1..], .{  });
         defer parent.close();
-        try parent.writeFile(std.fs.path.basename(specifier), printer.ctx.getWritten());
+        try parent.dir.writeFile(std.fs.path.basename(specifier), printer.ctx.getWritten());
     } else {
-        try BunDebugHolder.dir.?.writeFile(std.fs.path.basename(specifier), printer.ctx.getWritten());
+        try BunDebugHolder.dir.?.dir.writeFile(std.fs.path.basename(specifier), printer.ctx.getWritten());
     }
 }
 

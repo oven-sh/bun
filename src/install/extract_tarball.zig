@@ -158,7 +158,7 @@ fn extract(this: *const ExtractTarball, tgz_bytes: []const u8) !string {
 
     var tmpname = try FileSystem.instance.tmpname(basename[0..@min(basename.len, 32)], &tmpname_buf, tgz_bytes.len);
     {
-        var extract_destination = tmpdir.makeOpenPath(std.mem.span(tmpname), .{ .iterate = true }) catch |err| {
+        var extract_destination = tmpdir.makeOpenPathIterable(std.mem.span(tmpname), .{}) catch |err| {
             Output.panic("err: {s} when create temporary directory named {s} (while extracting {s})", .{ @errorName(err), tmpname, name });
         };
 
@@ -248,7 +248,7 @@ fn extract(this: *const ExtractTarball, tgz_bytes: []const u8) !string {
 
     // We return a resolved absolute absolute file path to the cache dir.
     // To get that directory, we open the directory again.
-    var final_dir = cache_dir.openDirZ(folder_name, .{ .iterate = false }) catch |err| {
+    var final_dir = cache_dir.openDirZ(folder_name, .{  }, true) catch |err| {
         Output.prettyErrorln(
             "<r><red>Error {s}<r> failed to verify cache dir for {s}",
             .{
@@ -277,9 +277,9 @@ fn extract(this: *const ExtractTarball, tgz_bytes: []const u8) !string {
 
     // create an index storing each version of a package installed
     create_index: {
-        var index_dir = cache_dir.makeOpenPath(name, .{ .iterate = true }) catch break :create_index;
+        var index_dir = cache_dir.makeOpenPathIterable(name, .{  }) catch break :create_index;
         defer index_dir.close();
-        index_dir.symLink(
+        index_dir.dir.symLink(
             final_path,
             // trim "name@" from the prefix
             folder_name[name.len + 1 ..],

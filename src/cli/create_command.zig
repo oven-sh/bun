@@ -564,7 +564,7 @@ pub const CreateCommand = struct {
                 node.name = "Copying files";
                 progress.refresh();
 
-                const template_dir = std.fs.openDirAbsolute(filesystem.abs(&template_parts), .{ .iterate = true }) catch |err| {
+                const template_dir = std.fs.openIterableDir(filesystem.abs(&template_parts), .{ }) catch |err| {
                     node.end();
                     progress.refresh();
 
@@ -573,7 +573,7 @@ pub const CreateCommand = struct {
                 };
 
                 std.fs.deleteTreeAbsolute(destination) catch {};
-                const destination_dir = std.fs.cwd().makeOpenPath(destination, .{ .iterate = true }) catch |err| {
+                const destination_dir = std.fs.cwd().makeOpenPathIterable(destination, .{ }) catch |err| {
                     node.end();
 
                     progress.refresh();
@@ -1725,29 +1725,31 @@ pub const Example = struct {
             if (env_loader.map.get("BUN_CREATE_DIR")) |home_dir| {
                 var parts = [_]string{home_dir};
                 var outdir_path = filesystem.absBuf(&parts, &home_dir_buf);
-                folders[0] = std.fs.openDirAbsolute(outdir_path, .{ .iterate = true }) catch std.fs.Dir{ .fd = 0 };
+                folders[0] = std.fs.openIterableDir(outdir_path, .{  }) catch .{.dir = .{ .fd = 0 }};
             }
 
             {
                 var parts = [_]string{ filesystem.top_level_dir, BUN_CREATE_DIR };
                 var outdir_path = filesystem.absBuf(&parts, &home_dir_buf);
-                folders[1] = std.fs.openDirAbsolute(outdir_path, .{ .iterate = true }) catch std.fs.Dir{ .fd = 0 };
+                folders[1] = std.fs.openIterableDir(outdir_path, .{  }) catch .{.dir = .{ .fd = 0 }};
             }
 
             if (env_loader.map.get("HOME")) |home_dir| {
                 var parts = [_]string{ home_dir, BUN_CREATE_DIR };
                 var outdir_path = filesystem.absBuf(&parts, &home_dir_buf);
-                folders[2] = std.fs.openDirAbsolute(outdir_path, .{ .iterate = true }) catch std.fs.Dir{ .fd = 0 };
+                folders[2] = std.fs.openIterableDir(outdir_path, .{  }) catch .{.dir = .{ .fd = 0 }};
             }
 
             // subfolders with package.json
-            for (folders) |folder_| {
+            for (folders) |folder__| {
+                const folder_ = folder__.dir;
+
                 if (folder_.fd != 0) {
                     const folder: std.fs.Dir = folder_;
                     var iter = folder.iterate();
 
                     loop: while (iter.next() catch null) |entry_| {
-                        const entry: std.fs.Dir.Entry = entry_;
+                        const entry: std.fs.IterableDir.Entry = entry_;
 
                         switch (entry.kind) {
                             .Directory => {

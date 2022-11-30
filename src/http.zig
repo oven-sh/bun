@@ -1914,8 +1914,8 @@ pub const RequestContext = struct {
 
                 defer Output.flush();
                 handler.conn.client.getError() catch |err| {
-                    Output.prettyErrorln("<r><red>Websocket ERR:<r> <b>{s}<r>", .{err});
                     handler.tombstone = true;
+                    Output.prettyErrorln("<r><red>Websocket ERR:<r> <b>{s}<r>", .{@errorName(err)});
                     is_socket_closed = true;
                 };
 
@@ -1928,7 +1928,7 @@ pub const RequestContext = struct {
                             continue;
                         },
                         else => {
-                            Output.prettyErrorln("<r><red>Websocket ERR:<r> <b>{s}<r>", .{err});
+                            Output.prettyErrorln("<r><red>Websocket ERR:<r> <b>{s}<r>", .{@errorName(err)});
                         },
                     }
                     return;
@@ -3552,13 +3552,13 @@ pub const Server = struct {
             }
         } else {
             if (server.bundler.options.routes.single_page_app_routing) {
-                Output.prettyError(" bun!! <d>v{s}<r>\n\n\n<d>  Link:<r> <b><cyan>http://{s}<r>\n       <d>{s}/index.html<r> \n\n\n", .{
+                Output.prettyError(" bun!! <d>v{s}<r>\n\n\n<d>  Link:<r> <b><cyan>http://{any}<r>\n       <d>{s}/index.html<r> \n\n\n", .{
                     Global.package_json_version_with_sha,
                     addr,
                     display_path,
                 });
             } else {
-                Output.prettyError(" bun!! <d>v{s}\n\n\n<d>  Link:<r> <b><cyan>http://{s}<r>\n\n\n", .{
+                Output.prettyError(" bun!! <d>v{s}\n\n\n<d>  Link:<r> <b><cyan>http://{any}<r>\n\n\n", .{
                     Global.package_json_version_with_sha,
                     addr,
                 });

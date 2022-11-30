@@ -401,14 +401,14 @@ pub const Archive = struct {
         defer stream.deinit();
         _ = stream.openRead();
         var archive = stream.archive;
-        const dir: std.fs.Dir = brk: {
+        const dir: std.fs.IterableDir = brk: {
             const cwd = std.fs.cwd();
 
             // if the destination doesn't exist, we skip the whole thing since nothing can overwrite it.
             if (std.fs.path.isAbsolute(root)) {
-                break :brk std.fs.openDirAbsolute(root, .{ .iterate = true }) catch return;
+                break :brk std.fs.openIterableDirAbsolute(root, .{ }) catch return;
             } else {
-                break :brk cwd.openDir(root, .{ .iterate = true }) catch return;
+                break :brk cwd.openIterableDir(root, .{ }) catch return;
             }
         };
 
@@ -470,7 +470,7 @@ pub const Archive = struct {
 
     pub fn extractToDir(
         file_buffer: []const u8,
-        dir: std.fs.Dir,
+        dir_: std.fs.IterableDir,
         ctx: ?*Archive.Context,
         comptime FilePathAppender: type,
         appender: FilePathAppender,
@@ -486,6 +486,8 @@ pub const Archive = struct {
         _ = stream.openRead();
         var archive = stream.archive;
         var count: u32 = 0;
+        const dir = dir_.dir;
+        const dir_fd = dir.fd;
 
         loop: while (true) {
             const r = @intToEnum(Status, lib.archive_read_next_header(archive, &entry));
@@ -530,20 +532,20 @@ pub const Archive = struct {
                             if ((mode & 0o4) != 0)
                                 mode |= 0o1;
 
-                            std.os.mkdiratZ(dir.fd, pathname, @intCast(u32, mode)) catch |err| {
+                            std.os.mkdiratZ(dir_fd, pathname, @intCast(u32, mode)) catch |err| {
                                 if (err == error.PathAlreadyExists or err == error.NotDir) break;
                                 try dir.makePath(std.fs.path.dirname(slice) orelse return err);
-                                try std.os.mkdiratZ(dir.fd, pathname, 0o777);
+                                try std.os.mkdiratZ(dir_fd, pathname, 0o777);
                             };
                         },
                         Kind.SymLink => {
                             const link_target = lib.archive_entry_symlink(entry).?;
 
-                            std.os.symlinkatZ(link_target, dir.fd, pathname) catch |err| brk: {
+                            std.os.symlinkatZ(link_target, dir_fd, pathname) catch |err| brk: {
                                 switch (err) {
                                     error.AccessDenied, error.FileNotFound => {
                                         dir.makePath(std.fs.path.dirname(slice) orelse return err) catch {};
-                                        break :brk try std.os.symlinkatZ(link_target, dir.fd, pathname);
+                                        break :brk try std.os.symlinkatZ(link_target, dir_fd, pathname);
                                     },
                                     else => {
                                         return err;
@@ -647,16 +649,16 @@ pub const Archive = struct {
         comptime close_handles: bool,
         comptime log: bool,
     ) !u32 {
-        var dir: std.fs.Dir = brk: {
+        var dir: std.fs.IterableDir = brk: {
             const cwd = std.fs.cwd();
             cwd.makePath(
                 root,
             ) catch {};
 
             if (std.fs.path.isAbsolute(root)) {
-                break :brk try std.fs.openDirAbsolute(root, .{ .iterate = true });
+                break :brk try std.fs.openIterableDirAbsolute(root, .{});
             } else {
-                break :brk try cwd.openDir(root, .{ .iterate = true });
+                break :brk try cwd.openIterableDir(root, .{});
             }
         };
 

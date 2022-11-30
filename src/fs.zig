@@ -200,7 +200,7 @@ pub const FileSystem = struct {
         //     // dir.data.remove(name);
         // }
 
-        pub fn addEntry(dir: *DirEntry, entry: std.fs.Dir.Entry, allocator: std.mem.Allocator, comptime Iterator: type, iterator: Iterator) !void {
+        pub fn addEntry(dir: *DirEntry, entry: std.fs.IterableDir.Entry, allocator: std.mem.Allocator, comptime Iterator: type, iterator: Iterator) !void {
             var _kind: Entry.Kind = undefined;
             switch (entry.kind) {
                 .Directory => {
@@ -567,7 +567,7 @@ pub const FileSystem = struct {
                 tmpdir_path_set = true;
             }
 
-            return try std.fs.openDirAbsolute(tmpdir_path, .{ .access_sub_paths = true, .iterate = true });
+            return (try std.fs.cwd().openIterableDir(tmpdir_path, .{ .access_sub_paths = true,})).dir;
         }
 
         pub fn getDefaultTempDir() string {
@@ -814,7 +814,10 @@ pub const FileSystem = struct {
         };
 
         pub fn openDir(_: *RealFS, unsafe_dir_string: string) std.fs.File.OpenError!std.fs.Dir {
-            return try std.fs.openDirAbsolute(unsafe_dir_string, std.fs.Dir.OpenDirOptions{ .iterate = true, .access_sub_paths = true, .no_follow = false });
+            const dir = try std.os.open(unsafe_dir_string, std.os.O.DIRECTORY, 0);
+            return std.fs.Dir{
+                .fd = dir,
+            };
         }
 
         fn readdir(
@@ -824,7 +827,7 @@ pub const FileSystem = struct {
             comptime Iterator: type,
             iterator: Iterator,
         ) !DirEntry {
-            var iter: std.fs.Dir.Iterator = handle.iterate();
+            var iter = (std.fs.IterableDir{ .dir = handle }).iterate();
             var dir = DirEntry.init(_dir);
             const allocator = fs.allocator;
             errdefer dir.deinit(allocator);

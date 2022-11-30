@@ -541,8 +541,8 @@ pub const PackageManifest = struct {
             }
         }
 
-        fn writeFile(this: *const PackageManifest, tmp_path: [:0]const u8, tmpdir: std.fs.Dir) !void {
-            var tmpfile = try tmpdir.createFileZ(tmp_path, .{
+        fn writeFile(this: *const PackageManifest, tmp_path: [:0]const u8, tmpdir: std.fs.IterableDir) !void {
+            var tmpfile = try tmpdir.dir.createFileZ(tmp_path, .{
                 .truncate = true,
             });
             defer tmpfile.close();
@@ -550,7 +550,7 @@ pub const PackageManifest = struct {
             try Serializer.write(this, @TypeOf(writer), writer);
         }
 
-        pub fn save(this: *const PackageManifest, tmpdir: std.fs.Dir, cache_dir: std.fs.Dir) !void {
+        pub fn save(this: *const PackageManifest, tmpdir: std.fs.IterableDir, cache_dir: std.fs.IterableDir) !void {
             const file_id = std.hash.Wyhash.hash(0, this.name());
             var dest_path_buf: [512 + 64]u8 = undefined;
             var out_path_buf: ["-18446744073709551615".len + ".npm".len + 1]u8 = undefined;
@@ -561,14 +561,14 @@ pub const PackageManifest = struct {
             var tmp_path: [:0]u8 = dest_path_buf[0 .. dest_path_stream.pos - 1 :0];
             try writeFile(this, tmp_path, tmpdir);
             var out_path = std.fmt.bufPrintZ(&out_path_buf, "{x}.npm", .{file_id}) catch unreachable;
-            try std.os.renameatZ(tmpdir.fd, tmp_path, cache_dir.fd, out_path);
+            try std.os.renameatZ(tmpdir.dir.fd, tmp_path, cache_dir.dir.fd, out_path);
         }
 
-        pub fn load(allocator: std.mem.Allocator, cache_dir: std.fs.Dir, package_name: string) !?PackageManifest {
+        pub fn load(allocator: std.mem.Allocator, cache_dir: std.fs.IterableDir, package_name: string) !?PackageManifest {
             const file_id = std.hash.Wyhash.hash(0, package_name);
             var file_path_buf: [512 + 64]u8 = undefined;
             var file_path = try std.fmt.bufPrintZ(&file_path_buf, "{x}.npm", .{file_id});
-            var cache_file = cache_dir.openFileZ(
+            var cache_file = cache_dir.dir.openFileZ(
                 file_path,
                 .{ .mode = .read_only },
             ) catch return null;

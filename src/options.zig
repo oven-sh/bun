@@ -1544,7 +1544,7 @@ pub const BundleOptions = struct {
             if (!disabled_static) {
                 var _dirs = [_]string{chosen_dir};
                 opts.routes.static_dir = try fs.absAlloc(allocator, &_dirs);
-                opts.routes.static_dir_handle = std.fs.openDirAbsolute(opts.routes.static_dir, .{ .iterate = true }) catch |err| brk: {
+                const static_dir = std.fs.openIterableDirAbsolute(opts.routes.static_dir, .{ }) catch |err| brk: {
                     switch (err) {
                         error.FileNotFound => {
                             opts.routes.static_dir_enabled = false;
@@ -1567,6 +1567,9 @@ pub const BundleOptions = struct {
 
                     break :brk null;
                 };
+                if (static_dir) |handle| {
+                    opts.routes.static_dir_handle = handle.dir;
+                }
                 opts.routes.static_dir_enabled = opts.routes.static_dir_handle != null;
             }
 
@@ -1665,13 +1668,13 @@ pub const BundleOptions = struct {
 };
 
 pub fn openOutputDir(output_dir: string) !std.fs.Dir {
-    return std.fs.cwd().openDir(output_dir, std.fs.Dir.OpenDirOptions{ .iterate = true }) catch brk: {
+    return std.fs.cwd().openDir(output_dir,.{}) catch brk: {
         std.fs.cwd().makeDir(output_dir) catch |err| {
             Output.printErrorln("error: Unable to mkdir \"{s}\": \"{s}\"", .{ output_dir, @errorName(err) });
             Global.crash();
         };
 
-        var handle = std.fs.cwd().openDir(output_dir, std.fs.Dir.OpenDirOptions{ .iterate = true }) catch |err2| {
+        var handle = std.fs.cwd().openDir(output_dir, .{}) catch |err2| {
             Output.printErrorln("error: Unable to open \"{s}\": \"{s}\"", .{ output_dir, @errorName(err2) });
             Global.crash();
         };

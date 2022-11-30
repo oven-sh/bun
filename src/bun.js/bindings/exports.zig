@@ -18,12 +18,11 @@ const string = bun.string;
 const JSValue = JSC.JSValue;
 const Output = bun.Output;
 const Environment = bun.Environment;
-const ScriptArguments = JSC.ScriptArguments;
+const ScriptArguments = opaque {};
 const JSPromise = JSC.JSPromise;
 const JSPromiseRejectionOperation = JSC.JSPromiseRejectionOperation;
 const Exception = JSC.Exception;
 const JSModuleLoader = JSC.JSModuleLoader;
-const JSModuleRecord = JSC.JSModuleRecord;
 const Microtask = JSC.Microtask;
 const JSPrivateDataPtr = @import("../base.zig").JSPrivateDataPtr;
 const Backtrace = @import("../../crash_reporter.zig");
@@ -88,25 +87,11 @@ pub const ZigGlobalObject = extern struct {
         return @call(.{ .modifier = .always_inline }, Interface.reportUncaughtException, .{ global, exception });
     }
 
-    pub fn createImportMetaProperties(global: *JSGlobalObject, loader: *JSModuleLoader, obj: JSValue, record: *JSModuleRecord, specifier: JSValue) callconv(.C) JSValue {
-        if (comptime is_bindgen) {
-            unreachable;
-        }
-        return @call(.{ .modifier = .always_inline }, Interface.createImportMetaProperties, .{ global, loader, obj, record, specifier });
-    }
-
     pub fn onCrash() callconv(.C) void {
         if (comptime is_bindgen) {
             unreachable;
         }
         return @call(.{ .modifier = .always_inline }, Interface.onCrash, .{});
-    }
-
-    pub fn queueMicrotaskToEventLoop(global: *JSGlobalObject, microtask: *Microtask) callconv(.C) void {
-        if (comptime is_bindgen) {
-            unreachable;
-        }
-        return @call(.{ .modifier = .always_inline }, Interface.queueMicrotaskToEventLoop, .{ global, microtask });
     }
 
     pub const Export = shim.exportFunctions(
@@ -117,9 +102,7 @@ pub const ZigGlobalObject = extern struct {
             // .@"eval" = eval,
             .@"promiseRejectionTracker" = promiseRejectionTracker,
             .@"reportUncaughtException" = reportUncaughtException,
-            .@"createImportMetaProperties" = createImportMetaProperties,
             .@"onCrash" = onCrash,
-            .@"queueMicrotaskToEventLoop" = queueMicrotaskToEventLoop,
         },
     );
 
@@ -131,9 +114,7 @@ pub const ZigGlobalObject = extern struct {
         @export(fetch, .{ .name = Export[2].symbol_name });
         @export(promiseRejectionTracker, .{ .name = Export[3].symbol_name });
         @export(reportUncaughtException, .{ .name = Export[4].symbol_name });
-        @export(createImportMetaProperties, .{ .name = Export[5].symbol_name });
-        @export(onCrash, .{ .name = Export[6].symbol_name });
-        @export(queueMicrotaskToEventLoop, .{ .name = Export[7].symbol_name });
+        @export(onCrash, .{ .name = Export[5].symbol_name });
     }
 };
 

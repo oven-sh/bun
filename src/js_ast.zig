@@ -7220,20 +7220,18 @@ pub const Macro = struct {
                         return true;
                     },
                     .e_string => {
-                        var wtf_string = JSC.JSValue.toWTFString(writer.nextJSValue() orelse return false, writer.ctx.ptr());
-                        if (wtf_string.isEmpty()) {
+                        var str = (writer.nextJSValue() orelse return false).toSlice(writer.ctx.ptr(), writer.allocator);
+                        if (str.len == 0) {
                             expr.* = Expr{
                                 .loc = writer.loc,
                                 .data = .{
                                     .e_string = &E.String.empty,
                                 },
                             };
-                        } else if (wtf_string.is8Bit()) {
-                            expr.* = Expr.init(E.String, E.String.init(wtf_string.characters8()[0..wtf_string.length()]), writer.loc);
-                        } else if (wtf_string.is16Bit()) {
-                            expr.* = Expr.init(E.String, E.String.init(wtf_string.characters16()[0..wtf_string.length()]), writer.loc);
                         } else {
-                            unreachable;
+                            expr.* = Expr.init(E.String, E.String.init(
+                                (str.cloneIfNeeded(writer.allocator) catch unreachable).slice(),
+                            ), writer.loc);
                         }
                         return true;
                     },

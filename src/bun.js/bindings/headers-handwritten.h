@@ -273,4 +273,10 @@ extern "C" int64_t Bun__encoding__constructFromUTF16(void*, const UChar* ptr, si
 
 bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSC::JSValue v1, JSC::JSValue v2, Vector<std::pair<JSC::JSValue, JSC::JSValue>, 16>& stack, JSC::ThrowScope* scope, bool addToStack);
 
+namespace JSC {
+class ScriptArguments;
+}
+
+using ScriptArguments = JSC::ScriptArguments;
+
 #endif

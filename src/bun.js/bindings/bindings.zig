@@ -339,6 +339,14 @@ pub const ZigString = extern struct {
         return out;
     }
 
+    pub fn fromUTF8(slice_: []const u8) ZigString {
+        var out = init(slice_);
+        if (strings.isAllASCII(slice_))
+            out.markUTF8();
+
+        return out;
+    }
+
     pub fn static(comptime slice_: []const u8) *const ZigString {
         const Holder = struct {
             pub const value = ZigString{ .ptr = slice_.ptr, .len = slice_.len };
@@ -1150,17 +1158,13 @@ pub const JSCell = extern struct {
         return shim.cppFn("getObject", .{this});
     }
 
-    pub fn getString(this: *JSCell, globalObject: *JSGlobalObject) String {
-        return shim.cppFn("getString", .{ this, globalObject });
-    }
-
     pub fn getType(this: *JSCell) u8 {
         return shim.cppFn("getType", .{
             this,
         });
     }
 
-    pub const Extern = [_][]const u8{ "getObject", "getString", "getType" };
+    pub const Extern = [_][]const u8{ "getObject", "getType" };
 };
 
 pub const JSString = extern struct {
@@ -1193,10 +1197,6 @@ pub const JSString = extern struct {
         return shim.cppFn("eql", .{ this, global, other });
     }
 
-    pub fn value(this: *JSString, globalObject: *JSGlobalObject) String {
-        return shim.cppFn("value", .{ this, globalObject });
-    }
-
     pub fn iterator(this: *JSString, globalObject: *JSGlobalObject, iter: *anyopaque) void {
         return shim.cppFn("iterator", .{ this, globalObject, iter });
     }
@@ -1210,18 +1210,6 @@ pub const JSString = extern struct {
     pub fn is8Bit(this: *const JSString) bool {
         return shim.cppFn("is8Bit", .{
             this,
-        });
-    }
-
-    pub fn createFromOwnedString(vm: *VM, str: *const String) *JSString {
-        return shim.cppFn("createFromOwnedString", .{
-            vm, str,
-        });
-    }
-
-    pub fn createFromString(vm: *VM, str: *const String) *JSString {
-        return shim.cppFn("createFromString", .{
-            vm, str,
         });
     }
 
@@ -1244,48 +1232,6 @@ pub const JSString = extern struct {
 pub const JSPromiseRejectionOperation = enum(u32) {
     Reject = 0,
     Handle = 1,
-};
-
-pub const ScriptArguments = extern struct {
-    pub const shim = Shimmer("Inspector", "ScriptArguments", @This());
-    bytes: shim.Bytes,
-    const cppFn = shim.cppFn;
-    pub const include = "JavaScriptCore/ScriptArguments.h";
-    pub const name = "Inspector::ScriptArguments";
-    pub const namespace = "Inspector";
-
-    pub fn argumentAt(this: *ScriptArguments, i: usize) JSValue {
-        return cppFn("argumentAt", .{
-            this,
-            i,
-        });
-    }
-    pub fn argumentCount(this: *ScriptArguments) usize {
-        return cppFn("argumentCount", .{
-            this,
-        });
-    }
-    pub fn getFirstArgumentAsString(this: *ScriptArguments) String {
-        return cppFn("getFirstArgumentAsString", .{
-            this,
-        });
-    }
-
-    pub fn isEqual(this: *ScriptArguments, other: *ScriptArguments) bool {
-        return cppFn("isEqual", .{ this, other });
-    }
-
-    pub fn release(this: *ScriptArguments) void {
-        return cppFn("release", .{this});
-    }
-
-    pub const Extern = [_][]const u8{
-        "argumentAt",
-        "argumentCount",
-        "getFirstArgumentAsString",
-        "isEqual",
-        "release",
-    };
 };
 
 pub fn NewGlobalObject(comptime Type: type) type {
@@ -1325,19 +1271,6 @@ pub fn NewGlobalObject(comptime Type: type) type {
                 return @call(.{ .modifier = .always_inline }, Type.reportUncaughtException, .{ global, exception });
             }
             return JSValue.jsUndefined();
-        }
-
-        pub fn createImportMetaProperties(global: *JSGlobalObject, loader: *JSModuleLoader, obj: JSValue, record: *JSModuleRecord, specifier: JSValue) callconv(.C) JSValue {
-            if (comptime @hasDecl(Type, "createImportMetaProperties")) {
-                return @call(.{ .modifier = .always_inline }, Type.createImportMetaProperties, .{ global, loader, obj, record, specifier });
-            }
-            return JSValue.jsUndefined();
-        }
-
-        pub fn queueMicrotaskToEventLoop(global: *JSGlobalObject, microtask: *Microtask) callconv(.C) void {
-            if (comptime @hasDecl(Type, "queueMicrotaskToEventLoop")) {
-                @call(.{ .modifier = .always_inline }, Type.queueMicrotaskToEventLoop, .{ global, microtask });
-            }
         }
 
         pub fn onCrash() callconv(.C) void {
@@ -1384,39 +1317,10 @@ pub const JSModuleLoader = extern struct {
         });
     }
 
-    pub fn loadAndEvaluateModuleEntryPoint(globalObject: *JSGlobalObject, source_code: *const SourceCode) *JSInternalPromise {
-        return shim.cppFn("loadAndEvaluateModuleEntryPoint", .{
-            globalObject,
-            source_code,
-        });
-    }
-
     pub fn loadAndEvaluateModule(globalObject: *JSGlobalObject, module_name: *const ZigString) *JSInternalPromise {
         return shim.cppFn("loadAndEvaluateModule", .{
             globalObject,
             module_name,
-        });
-    }
-
-    pub fn importModule(globalObject: *JSGlobalObject, key: *const Identifier) *JSInternalPromise {
-        return shim.cppFn("importModule", .{
-            globalObject,
-            key,
-        });
-    }
-
-    pub fn linkAndEvaluateModule(globalObject: *JSGlobalObject, key: *const Identifier) JSValue {
-        return shim.cppFn("linkAndEvaluateModule", .{
-            globalObject,
-            key,
-        });
-    }
-
-    pub fn checkSyntax(globalObject: *JSGlobalObject, source_code: *const SourceCode, is_module: bool) bool {
-        return shim.cppFn("checkSyntax", .{
-            globalObject,
-            source_code,
-            is_module,
         });
     }
 
@@ -1425,12 +1329,9 @@ pub const JSModuleLoader = extern struct {
     // }
 
     pub const Extern = [_][]const u8{
-        // "dependencyKeysIfEvaluated",
         "evaluate",
-        "loadAndEvaluateModuleEntryPoint",
         "loadAndEvaluateModule",
         "importModule",
-        "linkAndEvaluateModule",
         "checkSyntax",
     };
 };
@@ -1449,25 +1350,6 @@ pub fn PromiseCallback(comptime Type: type, comptime CallbackFunction: fn (*Type
         }
     }.callback;
 }
-
-pub const JSModuleRecord = extern struct {
-    pub const shim = Shimmer("JSC", "JSModuleRecord", @This());
-    bytes: shim.Bytes,
-    const cppFn = shim.cppFn;
-    pub const include = "JavaScriptCore/JSModuleRecord.h";
-    pub const name = "JSC::JSModuleRecord";
-    pub const namespace = "JSC";
-
-    pub fn sourceCode(this: *JSModuleRecord) SourceCode {
-        return shim.cppFn("sourceCode", .{
-            this,
-        });
-    }
-
-    pub const Extern = [_][]const u8{
-        "sourceCode",
-    };
-};
 
 pub const JSPromise = extern struct {
     pub const shim = Shimmer("JSC", "JSPromise", @This());
@@ -1824,40 +1706,6 @@ pub const SourceType = enum(u8) {
     WebAssembly = 2,
 };
 
-pub const SourceOrigin = extern struct {
-    pub const shim = Shimmer("JSC", "SourceOrigin", @This());
-    bytes: shim.Bytes,
-    const cppFn = shim.cppFn;
-    pub const include = "JavaScriptCore/SourceOrigin.h";
-    pub const name = "JSC::SourceOrigin";
-    pub const namespace = "JSC";
-
-    pub fn fromURL(url: *const URL) SourceOrigin {
-        return cppFn("fromURL", .{url});
-    }
-
-    pub const Extern = [_][]const u8{
-        "fromURL",
-    };
-};
-
-pub const SourceCode = extern struct {
-    pub const shim = Shimmer("JSC", "SourceCode", @This());
-    bytes: shim.Bytes,
-    const cppFn = shim.cppFn;
-    pub const include = "JavaScriptCore/SourceProvider.h";
-    pub const name = "JSC::SourceCode";
-    pub const namespace = "JSC";
-
-    pub fn fromString(result: *SourceCode, source: *const String, origin: ?*const SourceOrigin, filename: ?*String, source_type: SourceType) void {
-        cppFn("fromString", .{ result, source, origin, filename, @enumToInt(source_type) });
-    }
-
-    pub const Extern = [_][]const u8{
-        "fromString",
-    };
-};
-
 pub const Thenables = opaque {};
 
 pub const JSFunction = extern struct {
@@ -1889,16 +1737,6 @@ pub const JSFunction = extern struct {
     //         exception,
     //     });
     // }
-
-    pub fn getName(this: *JSFunction, vm: *VM) String {
-        return cppFn("getName", .{ this, vm });
-    }
-    pub fn displayName(this: *JSFunction, vm: *VM) String {
-        return cppFn("displayName", .{ this, vm });
-    }
-    pub fn calculatedDisplayName(this: *JSFunction, vm: *VM) String {
-        return cppFn("calculatedDisplayName", .{ this, vm });
-    }
 
     pub fn optimizeSoon(value: JSValue) void {
         cppFn("optimizeSoon", .{value});
@@ -2062,79 +1900,6 @@ pub const JSGlobalObject = extern struct {
         return this;
     }
 
-    pub fn objectPrototype(this: *JSGlobalObject) *ObjectPrototype {
-        return cppFn("objectPrototype", .{this});
-    }
-    pub fn functionPrototype(this: *JSGlobalObject) *FunctionPrototype {
-        return cppFn("functionPrototype", .{this});
-    }
-    pub fn arrayPrototype(this: *JSGlobalObject) *ArrayPrototype {
-        return cppFn("arrayPrototype", .{this});
-    }
-    pub fn booleanPrototype(this: *JSGlobalObject) *JSObject {
-        return cppFn("booleanPrototype", .{this});
-    }
-    pub fn stringPrototype(this: *JSGlobalObject) *StringPrototype {
-        return cppFn("stringPrototype", .{this});
-    }
-    pub fn numberPrototype(this: *JSGlobalObject) *JSObject {
-        return cppFn("numberPrototype", .{this});
-    }
-    pub fn bigIntPrototype(this: *JSGlobalObject) *BigIntPrototype {
-        return cppFn("bigIntPrototype", .{this});
-    }
-    pub fn datePrototype(this: *JSGlobalObject) *JSObject {
-        return cppFn("datePrototype", .{this});
-    }
-    pub fn symbolPrototype(this: *JSGlobalObject) *JSObject {
-        return cppFn("symbolPrototype", .{this});
-    }
-    pub fn regExpPrototype(this: *JSGlobalObject) *RegExpPrototype {
-        return cppFn("regExpPrototype", .{this});
-    }
-    pub fn errorPrototype(this: *JSGlobalObject) *JSObject {
-        return cppFn("errorPrototype", .{this});
-    }
-    pub fn iteratorPrototype(this: *JSGlobalObject) *IteratorPrototype {
-        return cppFn("iteratorPrototype", .{this});
-    }
-    pub fn asyncIteratorPrototype(this: *JSGlobalObject) *AsyncIteratorPrototype {
-        return cppFn("asyncIteratorPrototype", .{this});
-    }
-    pub fn generatorFunctionPrototype(this: *JSGlobalObject) *GeneratorFunctionPrototype {
-        return cppFn("generatorFunctionPrototype", .{this});
-    }
-    pub fn generatorPrototype(this: *JSGlobalObject) *GeneratorPrototype {
-        return cppFn("generatorPrototype", .{this});
-    }
-    pub fn asyncFunctionPrototype(this: *JSGlobalObject) *AsyncFunctionPrototype {
-        return cppFn("asyncFunctionPrototype", .{this});
-    }
-    pub fn arrayIteratorPrototype(this: *JSGlobalObject) *ArrayIteratorPrototype {
-        return cppFn("arrayIteratorPrototype", .{this});
-    }
-    pub fn mapIteratorPrototype(this: *JSGlobalObject) *MapIteratorPrototype {
-        return cppFn("mapIteratorPrototype", .{this});
-    }
-    pub fn setIteratorPrototype(this: *JSGlobalObject) *SetIteratorPrototype {
-        return cppFn("setIteratorPrototype", .{this});
-    }
-    pub fn mapPrototype(this: *JSGlobalObject) *JSObject {
-        return cppFn("mapPrototype", .{this});
-    }
-    pub fn jsSetPrototype(this: *JSGlobalObject) *JSObject {
-        return cppFn("jsSetPrototype", .{this});
-    }
-    pub fn promisePrototype(this: *JSGlobalObject) *JSPromisePrototype {
-        return cppFn("promisePrototype", .{this});
-    }
-    pub fn asyncGeneratorPrototype(this: *JSGlobalObject) *AsyncGeneratorPrototype {
-        return cppFn("asyncGeneratorPrototype", .{this});
-    }
-    pub fn asyncGeneratorFunctionPrototype(this: *JSGlobalObject) *AsyncGeneratorFunctionPrototype {
-        return cppFn("asyncGeneratorFunctionPrototype", .{this});
-    }
-
     pub fn createAggregateError(globalObject: *JSGlobalObject, errors: [*]*anyopaque, errors_len: u16, message: *const ZigString) JSValue {
         return cppFn("createAggregateError", .{ globalObject, errors, errors_len, message });
     }
@@ -2220,31 +1985,9 @@ pub const JSGlobalObject = extern struct {
         "putCachedObject",
         "getCachedObject",
         "createAggregateError",
-        "objectPrototype",
-        "functionPrototype",
-        "arrayPrototype",
-        "booleanPrototype",
-        "stringPrototype",
-        "numberPrototype",
-        "bigIntPrototype",
-        "datePrototype",
-        "symbolPrototype",
-        "regExpPrototype",
-        "errorPrototype",
-        "iteratorPrototype",
-        "asyncIteratorPrototype",
+
         "deleteModuleRegistryEntry",
-        "generatorFunctionPrototype",
-        "generatorPrototype",
-        "asyncFunctionPrototype",
-        "arrayIteratorPrototype",
-        "mapIteratorPrototype",
-        "setIteratorPrototype",
-        "mapPrototype",
-        "jsSetPrototype",
-        "promisePrototype",
-        "asyncGeneratorPrototype",
-        "asyncGeneratorFunctionPrototype",
+
         "vm",
         "generateHeapSnapshot",
         "startRemoteInspector",
@@ -2255,143 +1998,7 @@ pub const JSGlobalObject = extern struct {
     };
 };
 
-fn _JSCellStub(comptime str: []const u8) type {
-    if (is_bindgen) {
-        return opaque {
-            pub const name = "JSC::" ++ str ++ "";
-        };
-    } else {
-        return opaque {};
-    }
-}
-
-fn _Bun(comptime str: []const u8) type {
-    if (is_bindgen) {
-        return opaque {
-            pub const name = "WebCore::" ++ str ++ "";
-        };
-    } else {
-        return opaque {};
-    }
-}
-
-fn _WTF(comptime str: []const u8) type {
-    if (is_bindgen) {
-        return opaque {
-            pub const name = "WTF::" ++ str ++ "";
-        };
-    } else {
-        return opaque {};
-    }
-}
 pub const JSNativeFn = fn (*JSGlobalObject, *CallFrame) callconv(.C) JSValue;
-
-pub const URL = extern struct {
-    pub const shim = Shimmer("WTF", "URL", @This());
-    bytes: shim.Bytes,
-    const cppFn = shim.cppFn;
-    pub const include = "wtf/URL.h";
-    pub const name = "WTF::URL";
-    pub const namespace = "WTF";
-
-    pub fn fromString(base: String, relative: String) URL {
-        return cppFn("fromString", .{ base, relative });
-    }
-
-    pub fn fromFileSystemPath(result: *URL, file_system_path: StringView) void {
-        cppFn("fromFileSystemPath", .{ result, file_system_path });
-    }
-
-    pub fn isEmpty(this: *const URL) bool {
-        return cppFn("isEmpty", .{this});
-    }
-    pub fn isValid(this: *const URL) bool {
-        return cppFn("isValid", .{this});
-    }
-
-    pub fn protocol(this: *URL) StringView {
-        return cppFn("protocol", .{this});
-    }
-    pub fn encodedUser(this: *URL) StringView {
-        return cppFn("encodedUser", .{this});
-    }
-    pub fn encodedPassword(this: *URL) StringView {
-        return cppFn("encodedPassword", .{this});
-    }
-    pub fn host(this: *URL) StringView {
-        return cppFn("host", .{this});
-    }
-    pub fn path(this: *URL) StringView {
-        return cppFn("path", .{this});
-    }
-    pub fn lastPathComponent(this: *URL) StringView {
-        return cppFn("lastPathComponent", .{this});
-    }
-    pub fn query(this: *URL) StringView {
-        return cppFn("query", .{this});
-    }
-    pub fn fragmentIdentifier(this: *URL) StringView {
-        return cppFn("fragmentIdentifier", .{this});
-    }
-    pub fn queryWithLeadingQuestionMark(this: *URL) StringView {
-        return cppFn("queryWithLeadingQuestionMark", .{this});
-    }
-    pub fn fragmentIdentifierWithLeadingNumberSign(this: *URL) StringView {
-        return cppFn("fragmentIdentifierWithLeadingNumberSign", .{this});
-    }
-    pub fn stringWithoutQueryOrFragmentIdentifier(this: *URL) StringView {
-        return cppFn("stringWithoutQueryOrFragmentIdentifier", .{this});
-    }
-    pub fn stringWithoutFragmentIdentifier(this: *URL) String {
-        return cppFn("stringWithoutFragmentIdentifier", .{this});
-    }
-    pub fn protocolHostAndPort(this: *URL) String {
-        return cppFn("protocolHostAndPort", .{this});
-    }
-    pub fn hostAndPort(this: *URL) String {
-        return cppFn("hostAndPort", .{this});
-    }
-    pub fn user(this: *URL) String {
-        return cppFn("user", .{this});
-    }
-    pub fn password(this: *URL) String {
-        return cppFn("password", .{this});
-    }
-    pub fn fileSystemPath(this: *URL) String {
-        return cppFn("fileSystemPath", .{this});
-    }
-
-    pub fn setProtocol(this: *URL, protocol_value: StringView) void {
-        return cppFn("setProtocol", .{ this, protocol_value });
-    }
-    pub fn setHost(this: *URL, host_value: StringView) void {
-        return cppFn("setHost", .{ this, host_value });
-    }
-    pub fn setHostAndPort(this: *URL, host_and_port_value: StringView) void {
-        return cppFn("setHostAndPort", .{ this, host_and_port_value });
-    }
-    pub fn setUser(this: *URL, user_value: StringView) void {
-        return cppFn("setUser", .{ this, user_value });
-    }
-    pub fn setPassword(this: *URL, password_value: StringView) void {
-        return cppFn("setPassword", .{ this, password_value });
-    }
-    pub fn setPath(this: *URL, path_value: StringView) void {
-        return cppFn("setPath", .{ this, path_value });
-    }
-    pub fn setQuery(this: *URL, query_value: StringView) void {
-        return cppFn("setQuery", .{ this, query_value });
-    }
-
-    pub fn truncatedForUseAsBase(
-        this: *URL,
-    ) URL {
-        return cppFn("truncatedForUseAsBase", .{
-            this,
-        });
-    }
-    pub const Extern = [_][]const u8{ "fromFileSystemPath", "fromString", "isEmpty", "isValid", "protocol", "encodedUser", "encodedPassword", "host", "path", "lastPathComponent", "query", "fragmentIdentifier", "queryWithLeadingQuestionMark", "fragmentIdentifierWithLeadingNumberSign", "stringWithoutQueryOrFragmentIdentifier", "stringWithoutFragmentIdentifier", "protocolHostAndPort", "hostAndPort", "user", "password", "fileSystemPath", "setProtocol", "setHost", "setHostAndPort", "setUser", "setPassword", "setPath", "setQuery", "truncatedForUseAsBase" };
-};
 
 pub const JSArrayIterator = struct {
     i: u32 = 0,
@@ -2415,93 +2022,6 @@ pub const JSArrayIterator = struct {
         this.i += 1;
         return JSObject.getIndex(this.array, this.global, i);
     }
-};
-
-pub const String = extern struct {
-    pub const shim = Shimmer("WTF", "String", @This());
-    bytes: shim.Bytes,
-    const cppFn = shim.cppFn;
-    pub const include = "wtf/text/WTFString.h";
-    pub const name = "WTF::String";
-    pub const namespace = "WTF";
-
-    pub fn createWithoutCopyingFromPtr(out: *String, str: [*c]const u8, len: usize) void {
-        return cppFn("createWithoutCopyingFromPtr", .{ out, str, len });
-    }
-
-    pub fn createFromExternalString(str: ExternalStringImpl) String {
-        return cppFn("createFromExternalString", .{
-            str,
-        });
-    }
-
-    pub fn createWithoutCopying(str: []const u8) String {
-        var bytes = String{ .bytes = undefined };
-        @call(.{ .modifier = .always_inline }, createWithoutCopyingFromPtr, .{ &bytes, str.ptr, str.len });
-        return bytes;
-    }
-
-    pub fn is8Bit(this: *String) bool {
-        return cppFn("is8Bit", .{this});
-    }
-    pub fn is16Bit(this: *String) bool {
-        return cppFn("is16Bit", .{this});
-    }
-    pub fn isExternal(this: *String) bool {
-        return cppFn("isExternal", .{this});
-    }
-    pub fn isStatic(this: *String) bool {
-        return cppFn("isStatic", .{this});
-    }
-    pub fn isEmpty(this: *String) bool {
-        return cppFn("isEmpty", .{this});
-    }
-    pub fn length(this: *String) usize {
-        return cppFn("length", .{this});
-    }
-    pub fn characters8(this: *String) [*]const u8 {
-        return cppFn("characters8", .{this});
-    }
-    pub fn characters16(this: *String) [*]const u16 {
-        return cppFn("characters16", .{this});
-    }
-
-    pub fn eqlString(this: *String, other: *const String) bool {
-        return cppFn("eqlString", .{ this, other });
-    }
-
-    pub fn eqlSlice(this: *String, other: [*]const u8, other_len: usize) bool {
-        return cppFn("eqlSlice", .{ this, other, other_len });
-    }
-
-    pub fn impl(
-        this: *String,
-    ) *const StringImpl {
-        return cppFn("impl", .{
-            this,
-        });
-    }
-
-    pub fn slice(this: *String) []const u8 {
-        const len = this.length();
-        return if (len > 0) this.characters8()[0..len] else "";
-    }
-
-    pub const Extern = [_][]const u8{
-        "is8Bit",
-        "is16Bit",
-        "isExternal",
-        "isStatic",
-        "isEmpty",
-        "length",
-        "characters8",
-        "characters16",
-        "createWithoutCopyingFromPtr",
-        "eqlString",
-        "eqlSlice",
-        "impl",
-        "createFromExternalString",
-    };
 };
 
 pub const JSValueReprInt = i64;
@@ -3336,10 +2856,6 @@ pub const JSValue = enum(JSValueReprInt) {
         return cppFn("toString", .{ this, globalThis });
     }
 
-    pub fn toWTFString(this: JSValue, globalThis: *JSGlobalObject) String {
-        return cppFn("toWTFString", .{ this, globalThis });
-    }
-
     pub fn jsonStringify(this: JSValue, globalThis: *JSGlobalObject, indent: u32, out: *ZigString) void {
         return cppFn("jsonStringify", .{ this, globalThis, indent, out });
     }
@@ -3348,12 +2864,7 @@ pub const JSValue = enum(JSValueReprInt) {
     pub fn toStringOrNull(this: JSValue, globalThis: *JSGlobalObject) ?*JSString {
         return cppFn("toStringOrNull", .{ this, globalThis });
     }
-    pub fn toPropertyKey(this: JSValue, globalThis: *JSGlobalObject) Identifier {
-        return cppFn("toPropertyKey", .{ this, globalThis });
-    }
-    pub fn toPropertyKeyValue(this: JSValue, globalThis: *JSGlobalObject) JSValue {
-        return cppFn("toPropertyKeyValue", .{ this, globalThis });
-    }
+
     pub fn toObject(this: JSValue, globalThis: *JSGlobalObject) *JSObject {
         return cppFn("toObject", .{ this, globalThis });
     }
@@ -3654,7 +3165,7 @@ pub const JSValue = enum(JSValueReprInt) {
         return this.asNullableVoid().?;
     }
 
-    pub const Extern = [_][]const u8{ "forEachProperty", "coerceToInt32", "fastGet_", "getStaticProperty", "createUninitializedUint8Array", "fromInt64NoTruncate", "fromUInt64NoTruncate", "toUInt64NoTruncate", "asPromise", "toInt64", "_then", "put", "makeWithNameAndPrototype", "parseJSON", "symbolKeyFor", "symbolFor", "getSymbolDescription", "createInternalPromise", "asInternalPromise", "asArrayBuffer_", "fromEntries", "createTypeError", "createRangeError", "createObject2", "getIfPropertyExistsImpl", "jsType", "jsonStringify", "kind_", "isTerminationException", "isSameValue", "getLengthOfArray", "toZigString", "createStringArray", "createEmptyObject", "putRecord", "asPromise", "isClass", "getNameProperty", "getClassName", "getErrorsProperty", "toInt32", "toBoolean", "isInt32", "isIterable", "forEach", "isAggregateError", "toError", "toZigException", "isException", "toWTFString", "hasProperty", "getPropertyNames", "getDirect", "putDirect", "getIfExists", "asString", "asObject", "asNumber", "isError", "jsNull", "jsUndefined", "jsTDZValue", "jsBoolean", "jsDoubleNumber", "jsNumberFromDouble", "jsNumberFromChar", "jsNumberFromU16", "jsNumberFromInt64", "isBoolean", "isAnyInt", "isUInt32AsAnyInt", "isInt32AsAnyInt", "isNumber", "isString", "isBigInt", "isHeapBigInt", "isBigInt32", "isSymbol", "isPrimitive", "isGetterSetter", "isCustomGetterSetter", "isObject", "isCell", "asCell", "toString", "toStringOrNull", "toPropertyKey", "toPropertyKeyValue", "toObject", "toString", "getPrototype", "getPropertyByPropertyName", "eqlValue", "eqlCell", "isCallable", "toBooleanSlow", "deepEquals", "getIfPropertyExistsFromPath" };
+    pub const Extern = [_][]const u8{ "forEachProperty", "coerceToInt32", "fastGet_", "getStaticProperty", "createUninitializedUint8Array", "fromInt64NoTruncate", "fromUInt64NoTruncate", "toUInt64NoTruncate", "asPromise", "toInt64", "_then", "put", "makeWithNameAndPrototype", "parseJSON", "symbolKeyFor", "symbolFor", "getSymbolDescription", "createInternalPromise", "asInternalPromise", "asArrayBuffer_", "fromEntries", "createTypeError", "createRangeError", "createObject2", "getIfPropertyExistsImpl", "jsType", "jsonStringify", "kind_", "isTerminationException", "isSameValue", "getLengthOfArray", "toZigString", "createStringArray", "createEmptyObject", "putRecord", "asPromise", "isClass", "getNameProperty", "getClassName", "getErrorsProperty", "toInt32", "toBoolean", "isInt32", "isIterable", "forEach", "isAggregateError", "toError", "toZigException", "isException", "toWTFString", "hasProperty", "getPropertyNames", "getDirect", "putDirect", "getIfExists", "asString", "asObject", "asNumber", "isError", "jsNull", "jsUndefined", "jsTDZValue", "jsBoolean", "jsDoubleNumber", "jsNumberFromDouble", "jsNumberFromChar", "jsNumberFromU16", "jsNumberFromInt64", "isBoolean", "isAnyInt", "isUInt32AsAnyInt", "isInt32AsAnyInt", "isNumber", "isString", "isBigInt", "isHeapBigInt", "isBigInt32", "isSymbol", "isPrimitive", "isGetterSetter", "isCustomGetterSetter", "isObject", "isCell", "asCell", "toString", "toStringOrNull", "toPropertyKeyValue", "toObject", "toString", "getPrototype", "getPropertyByPropertyName", "eqlValue", "eqlCell", "isCallable", "toBooleanSlow", "deepEquals", "getIfPropertyExistsFromPath" };
 };
 
 extern "c" fn Microtask__run(*Microtask, *JSGlobalObject) void;
@@ -3681,39 +3192,6 @@ pub const MicrotaskForDefaultGlobalObject = opaque {
 
         return Microtask__run_default(this, global_object);
     }
-};
-
-pub const PropertyName = extern struct {
-    pub const shim = Shimmer("JSC", "PropertyName", @This());
-    bytes: shim.Bytes,
-
-    const cppFn = shim.cppFn;
-
-    pub const include = "JavaScriptCore/PropertyName.h";
-    pub const name = "JSC::PropertyName";
-    pub const namespace = "JSC";
-
-    pub fn eqlToPropertyName(property_name: *PropertyName, other: *const PropertyName) bool {
-        return cppFn("eqlToPropertyName", .{ property_name, other });
-    }
-
-    pub fn eqlToIdentifier(property_name: *PropertyName, other: *const Identifier) bool {
-        return cppFn("eqlToIdentifier", .{ property_name, other });
-    }
-
-    pub fn publicName(property_name: *PropertyName) ?*const StringImpl {
-        return cppFn("publicName", .{
-            property_name,
-        });
-    }
-
-    pub fn uid(property_name: *PropertyName) ?*const StringImpl {
-        return cppFn("uid", .{
-            property_name,
-        });
-    }
-
-    pub const Extern = [_][]const u8{ "eqlToPropertyName", "eqlToIdentifier", "publicName", "uid" };
 };
 
 pub const Exception = extern struct {
@@ -3753,26 +3231,6 @@ pub const Exception = extern struct {
     }
 
     pub const Extern = [_][]const u8{ "create", "value", "getStackTrace" };
-};
-
-pub const JSLock = extern struct {
-    pub const shim = Shimmer("JSC", "Exception", @This());
-    bytes: shim.Bytes,
-
-    const cppFn = shim.cppFn;
-
-    pub const include = "JavaScriptCore/JSLock.h";
-    pub const name = "JSC::JSLock";
-    pub const namespace = "JSC";
-
-    pub fn lock(this: *JSLock) void {
-        return cppFn("lock", .{this});
-    }
-    pub fn unlock(this: *JSLock) void {
-        return cppFn("unlock", .{this});
-    }
-
-    pub const Extern = [_][]const u8{ "lock", "unlock" };
 };
 
 pub const VM = extern struct {
@@ -4110,183 +3568,7 @@ pub const EncodedJSValue = extern union {
     asDouble: f64,
 };
 
-pub const Identifier = extern struct {
-    pub const shim = Shimmer("JSC", "Identifier", @This());
-    bytes: shim.Bytes,
-    const cppFn = shim.cppFn;
-
-    pub const include = "JavaScriptCore/Identifier.h";
-    pub const name = "JSC::Identifier";
-    pub const namespace = "JSC";
-
-    pub fn fromString(vm: *VM, other: *const String) Identifier {
-        return cppFn("fromString", .{ vm, other });
-    }
-
-    pub fn fromSlice(vm: *VM, ptr: [*]const u8, len: usize) Identifier {
-        return cppFn("fromSlice", .{ vm, ptr, len });
-    }
-
-    // pub fn fromUid(vm: *VM, other: *const StringImpl) Identifier {
-    //     return cppFn("fromUid", .{ vm, other });
-    // }
-
-    pub fn deinit(this: *const Identifier) void {
-        return cppFn("deinit", .{this});
-    }
-
-    pub fn toString(identifier: *const Identifier) String {
-        return cppFn("toString", .{identifier});
-    }
-
-    pub fn length(identifier: *const Identifier) usize {
-        return cppFn("length", .{identifier});
-    }
-
-    pub fn isNull(this: *const Identifier) bool {
-        return cppFn("isNull", .{this});
-    }
-    pub fn isEmpty(this: *const Identifier) bool {
-        return cppFn("isEmpty", .{this});
-    }
-    pub fn isSymbol(this: *const Identifier) bool {
-        return cppFn("isSymbol", .{this});
-    }
-    pub fn isPrivateName(this: *const Identifier) bool {
-        return cppFn("isPrivateName", .{this});
-    }
-
-    pub fn eqlIdent(this: *const Identifier, other: *const Identifier) bool {
-        return cppFn("eqlIdent", .{ this, other });
-    }
-
-    pub fn neqlIdent(this: *const Identifier, other: *const Identifier) bool {
-        return cppFn("neqlIdent", .{ this, other });
-    }
-
-    pub fn eqlStringImpl(this: *const Identifier, other: *const StringImpl) bool {
-        return cppFn("eqlStringImpl", .{ this, other });
-    }
-
-    pub fn neqlStringImpl(this: *const Identifier, other: *const StringImpl) bool {
-        return cppFn("neqlStringImpl", .{ this, other });
-    }
-
-    pub fn eqlUTF8(this: *const Identifier, other: [*]const u8, other_len: usize) bool {
-        return cppFn("eqlUTF8", .{ this, other, other_len });
-    }
-
-    pub const Extern = [_][]const u8{
-        "fromString",
-        "fromSlice",
-        // "fromUid",
-        "deinit",
-        "toString",
-        "length",
-        "isNull",
-        "isEmpty",
-        "isSymbol",
-        "isPrivateName",
-        "eqlIdent",
-        "neqlIdent",
-        "eqlStringImpl",
-        "neqlStringImpl",
-        "eqlUTF8",
-    };
-};
-
 const DeinitFunction = fn (ctx: *anyopaque, buffer: [*]u8, len: usize) callconv(.C) void;
-
-pub const StringImpl = extern struct {
-    pub const shim = Shimmer("WTF", "StringImpl", @This());
-    bytes: shim.Bytes,
-    const cppFn = shim.cppFn;
-
-    pub const include = "wtf/text/StringImpl.h";
-    pub const name = "WTF::StringImpl";
-    pub const namespace = "WTF";
-
-    pub fn is8Bit(this: *const StringImpl) bool {
-        return cppFn("is8Bit", .{this});
-    }
-    pub fn is16Bit(this: *const StringImpl) bool {
-        return cppFn("is16Bit", .{this});
-    }
-    pub fn isExternal(this: *const StringImpl) bool {
-        return cppFn("isExternal", .{this});
-    }
-    pub fn isStatic(this: *const StringImpl) bool {
-        return cppFn("isStatic", .{this});
-    }
-    pub fn isEmpty(this: *const StringImpl) bool {
-        return cppFn("isEmpty", .{this});
-    }
-    pub fn length(this: *const StringImpl) usize {
-        return cppFn("length", .{this});
-    }
-    pub fn characters8(this: *const StringImpl) [*]const u8 {
-        return cppFn("characters8", .{this});
-    }
-    pub fn characters16(this: *const StringImpl) [*]const u16 {
-        return cppFn("characters16", .{this});
-    }
-
-    pub const slice = SliceFn(@This());
-
-    pub const Extern = [_][]const u8{
-        "is8Bit",
-        "is16Bit",
-        "isExternal",
-        "isStatic",
-        "isEmpty",
-        "length",
-        "characters8",
-        "characters16",
-    };
-};
-
-pub const ExternalStringImpl = extern struct {
-    pub const shim = Shimmer("WTF", "ExternalStringImpl", @This());
-    bytes: shim.Bytes,
-    const cppFn = shim.cppFn;
-
-    pub const include = "wtf/text/ExternalStringImpl.h";
-    pub const name = "WTF::ExternalStringImpl";
-    pub const namespace = "WTF";
-
-    pub fn create(ptr: [*]const u8, len: usize, deinit: DeinitFunction) ExternalStringImpl {
-        return cppFn("create", .{ ptr, len, deinit });
-    }
-
-    pub fn is8Bit(this: *const ExternalStringImpl) bool {
-        return cppFn("is8Bit", .{this});
-    }
-    pub fn is16Bit(this: *const ExternalStringImpl) bool {
-        return cppFn("is16Bit", .{this});
-    }
-    pub fn isEmpty(this: *const ExternalStringImpl) bool {
-        return cppFn("isEmpty", .{this});
-    }
-    pub fn length(this: *const ExternalStringImpl) usize {
-        return cppFn("length", .{this});
-    }
-    pub fn characters8(this: *const ExternalStringImpl) [*]const u8 {
-        return cppFn("characters8", .{this});
-    }
-    pub fn characters16(this: *const ExternalStringImpl) [*]const u16 {
-        return cppFn("characters16", .{this});
-    }
-
-    pub const Extern = [_][]const u8{
-        "create",
-        "is8Bit",
-        "is16Bit",
-        "isEmpty",
-        "length",
-        "characters8",
-        "characters16",
-    };
-};
 
 pub const JSArray = struct {
     pub fn from(globalThis: *JSGlobalObject, arguments: []const JSC.JSValue) JSValue {
@@ -4380,89 +3662,6 @@ pub fn untrackFunction(
     JSC.markBinding(@src());
     return private.Bun__untrackFFIFunction(globalObject, value);
 }
-
-pub const ObjectPrototype = _JSCellStub("ObjectPrototype");
-pub const FunctionPrototype = _JSCellStub("FunctionPrototype");
-pub const ArrayPrototype = _JSCellStub("ArrayPrototype");
-pub const StringPrototype = _JSCellStub("StringPrototype");
-pub const BigIntPrototype = _JSCellStub("BigIntPrototype");
-pub const RegExpPrototype = _JSCellStub("RegExpPrototype");
-pub const IteratorPrototype = _JSCellStub("IteratorPrototype");
-pub const AsyncIteratorPrototype = _JSCellStub("AsyncIteratorPrototype");
-pub const GeneratorFunctionPrototype = _JSCellStub("GeneratorFunctionPrototype");
-pub const GeneratorPrototype = _JSCellStub("GeneratorPrototype");
-pub const AsyncFunctionPrototype = _JSCellStub("AsyncFunctionPrototype");
-pub const ArrayIteratorPrototype = _JSCellStub("ArrayIteratorPrototype");
-pub const MapIteratorPrototype = _JSCellStub("MapIteratorPrototype");
-pub const SetIteratorPrototype = _JSCellStub("SetIteratorPrototype");
-pub const JSPromisePrototype = _JSCellStub("JSPromisePrototype");
-pub const AsyncGeneratorPrototype = _JSCellStub("AsyncGeneratorPrototype");
-pub const AsyncGeneratorFunctionPrototype = _JSCellStub("AsyncGeneratorFunctionPrototype");
-pub fn SliceFn(comptime Type: type) type {
-    const SliceStruct = struct {
-        pub fn slice(this: *const Type) []const u8 {
-            if (this.isEmpty()) {
-                return "";
-            }
-
-            return this.characters8()[0..this.length()];
-        }
-    };
-
-    return @TypeOf(SliceStruct.slice);
-}
-
-pub const StringView = extern struct {
-    pub const shim = Shimmer("WTF", "StringView", @This());
-    bytes: u64,
-    bytesA: u64,
-    const cppFn = shim.cppFn;
-
-    pub const include = "wtf/text/StringView.h";
-    pub const name = "WTF::StringView";
-    pub const namespace = "WTF";
-
-    pub fn from8Bit(view: *StringView, ptr: [*]const u8, len: usize) void {
-        return cppFn("from8Bit", .{ view, ptr, len });
-    }
-
-    pub fn fromSlice(value: []const u8) StringView {
-        var view = std.mem.zeroes(StringView);
-        from8Bit(&view, value.ptr, value.len);
-        return view;
-    }
-
-    pub fn is8Bit(this: *const StringView) bool {
-        return cppFn("is8Bit", .{this});
-    }
-    pub fn is16Bit(this: *const StringView) bool {
-        return cppFn("is16Bit", .{this});
-    }
-    pub fn isEmpty(this: *const StringView) bool {
-        return cppFn("isEmpty", .{this});
-    }
-    pub fn length(this: *const StringView) usize {
-        return cppFn("length", .{this});
-    }
-    pub fn characters8(this: *const StringView) [*]const u8 {
-        return cppFn("characters8", .{this});
-    }
-    pub fn characters16(this: *const StringView) [*]const u16 {
-        return cppFn("characters16", .{this});
-    }
-
-    pub const slice = SliceFn(@This());
-
-    pub const Extern = [_][]const u8{
-        "from8Bit",
-        "is8Bit",
-        "is16Bit",
-        "isEmpty",
-        "length",
-        "characters8",
-        "characters16",
-    };
-};
 
 pub const WTF = struct {
     extern fn WTF__copyLCharsFromUCharSource(dest: [*]u8, source: *const anyopaque, len: usize) void;

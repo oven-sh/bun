@@ -152,7 +152,7 @@ static bool canPerformFastPropertyEnumerationForIterationBun(Structure* s)
     return true;
 }
 
-bool Bun__deepEquals(JSC__JSGlobalObject* globalObject, JSValue v1, JSValue v2, Vector<std::pair<JSC::JSValue, JSC::JSValue>, 16>& stack, ThrowScope* scope, bool addToStack)
+bool Bun__deepEquals(JSC__JSGlobalObject* globalObject, JSValue v1, JSValue v2, Vector<std::pair<JSC::JSValue, JSC::JSValue>, 16>& stack, ThrowScope* scope, bool addToStack, bool strict)
 {
     VM& vm = globalObject->vm();
     if (!v1.isEmpty() && !v2.isEmpty() && JSC::sameValue(globalObject, v1, v2)) {
@@ -184,6 +184,8 @@ bool Bun__deepEquals(JSC__JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
 
     JSCell* c1 = v1.asCell();
     JSCell* c2 = v2.asCell();
+    JSObject* o1 = v1.getObject();
+    JSObject* o2 = v2.getObject();
     JSC::JSType c1Type = c1->type();
     JSC::JSType c2Type = c2->type();
 
@@ -223,7 +225,7 @@ bool Bun__deepEquals(JSC__JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
                 RETURN_IF_EXCEPTION(*scope, false);
 
                 // set has unique values, no need to count
-                if (Bun__deepEquals(globalObject, nextValue1, nextValue2, stack, scope, false)) {
+                if (Bun__deepEquals(globalObject, nextValue1, nextValue2, stack, scope, false, strict)) {
                     found = true;
                     if (!nextValue1.isPrimitive()) {
                         stack.append({ nextValue1, nextValue2 });
@@ -303,8 +305,8 @@ bool Bun__deepEquals(JSC__JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
                 JSValue value2 = nextValueObject2->getIndex(globalObject, static_cast<unsigned>(1));
                 RETURN_IF_EXCEPTION(*scope, false);
 
-                if (Bun__deepEquals(globalObject, key1, key2, stack, scope, false)) {
-                    if (Bun__deepEquals(globalObject, nextValue1, nextValue2, stack, scope, false)) {
+                if (Bun__deepEquals(globalObject, key1, key2, stack, scope, false, strict)) {
+                    if (Bun__deepEquals(globalObject, nextValue1, nextValue2, stack, scope, false, strict)) {
                         found = true;
                         if (!nextValue1.isPrimitive()) {
                             stack.append({ nextValue1, nextValue2 });
@@ -443,7 +445,12 @@ bool Bun__deepEquals(JSC__JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
 
         return (memcmp(vector, rightVector, byteLength) == 0);
     }
-
+    case StringObjectType: {
+        if (!equal(JSObject::calculatedClassName(o1), JSObject::calculatedClassName(o2))) {
+            return false;
+        }
+        break;
+    }
     case JSFunctionType: {
         return false;
     }
@@ -457,46 +464,44 @@ bool Bun__deepEquals(JSC__JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
     bool v2Array = isArray(globalObject, v2);
     RETURN_IF_EXCEPTION(*scope, false);
 
-    JSObject* o1 = v1.getObject();
-    JSObject* o2 = v2.getObject();
-
     if (v1Array != v2Array)
         return false;
 
     if (v1Array && v2Array) {
         JSC::JSArray* array1 = JSC::jsCast<JSC::JSArray*>(v1);
         JSC::JSArray* array2 = JSC::jsCast<JSC::JSArray*>(v2);
+
         size_t length = array1->length();
         if (length != array2->length()) {
             return false;
         }
 
-        if (array1->canDoFastIndexedAccess() && array2->canDoFastIndexedAccess()) {
-            for (size_t i = 0; i < length; i++) {
-                JSValue left = o1->getIndexQuickly(i);
-                RETURN_IF_EXCEPTION(*scope, false);
-                JSValue right = o2->getIndexQuickly(i);
-                RETURN_IF_EXCEPTION(*scope, false);
-                if (!Bun__deepEquals(globalObject, left, right, stack, scope, true)) {
+        for (size_t i = 0; i < length; i++) {
+            // handles holes in array
+            JSValue left = o1->tryGetIndexQuickly(static_cast<uint64_t>(i));
+            RETURN_IF_EXCEPTION(*scope, false);
+
+            JSValue right = o2->tryGetIndexQuickly(static_cast<uint64_t>(i));
+            RETURN_IF_EXCEPTION(*scope, false);
+
+            if (strict) {
+                if (left.isEmpty() && right.isEmpty()) {
+                    continue;
+                }
+                if (left.isEmpty() || right.isEmpty()) {
                     return false;
                 }
-
-                RETURN_IF_EXCEPTION(*scope, false);
             }
 
-        } else {
-            for (size_t i = 0; i < length; i++) {
-                JSValue left = o1->getIndex(globalObject, i);
-                RETURN_IF_EXCEPTION(*scope, false);
-                JSValue right = o2->getIndex(globalObject, i);
-                RETURN_IF_EXCEPTION(*scope, false);
-
-                if (!Bun__deepEquals(globalObject, left, right, stack, scope, true)) {
-                    return false;
-                }
-
-                RETURN_IF_EXCEPTION(*scope, false);
+            if (!strict && ((left.isEmpty() || right.isEmpty()) && (left.isUndefined() || right.isUndefined()))) {
+                continue;
             }
+
+            if (!Bun__deepEquals(globalObject, left, right, stack, scope, true, strict)) {
+                return false;
+            }
+
+            RETURN_IF_EXCEPTION(*scope, false);
         }
 
         JSC::PropertyNameArray a1(vm, PropertyNameMode::Symbols, PrivateSymbolMode::Include);
@@ -505,7 +510,7 @@ bool Bun__deepEquals(JSC__JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
         JSObject::getOwnPropertyNames(o2, globalObject, a2, DontEnumPropertiesMode::Exclude);
 
         size_t propertyLength = a1.size();
-        if (propertyLength != a2.size()) {
+        if (strict && propertyLength != a2.size()) {
             return false;
         }
 
@@ -524,11 +529,15 @@ bool Bun__deepEquals(JSC__JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
             JSValue prop2 = o2->getIfPropertyExists(globalObject, propertyName1);
             RETURN_IF_EXCEPTION(*scope, false);
 
+            if (!strict && prop1.isUndefined() && prop2.isEmpty()) {
+                continue;
+            }
+
             if (!prop2) {
                 return false;
             }
 
-            if (!Bun__deepEquals(globalObject, prop1, prop2, stack, scope, true)) {
+            if (!Bun__deepEquals(globalObject, prop1, prop2, stack, scope, true, strict)) {
                 return false;
             }
 
@@ -544,6 +553,10 @@ bool Bun__deepEquals(JSC__JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
         return true;
     }
 
+    if (strict && !equal(JSObject::calculatedClassName(o1), JSObject::calculatedClassName(o2))) {
+        return false;
+    }
+
     JSC::Structure* o1Structure = o1->structure();
     if (canPerformFastPropertyEnumerationForIterationBun(o1Structure)) {
         JSC::Structure* o2Structure = o2->structure();
@@ -552,8 +565,10 @@ bool Bun__deepEquals(JSC__JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
             size_t count1 = 0;
 
             bool result = true;
-            if (o2Structure->inlineSize() + o2Structure->outOfLineSize() != o1Structure->inlineSize() + o1Structure->outOfLineSize()) {
-                return false;
+            if (strict) {
+                if (o2Structure->inlineSize() + o2Structure->outOfLineSize() != o1Structure->inlineSize() + o1Structure->outOfLineSize()) {
+                    return false;
+                }
             }
 
             o1Structure->forEachProperty(vm, [&](const PropertyTableEntry& entry) -> bool {
@@ -562,19 +577,23 @@ bool Bun__deepEquals(JSC__JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
                 }
                 count1++;
 
+                JSValue left = o1->getDirect(entry.offset());
                 JSValue right = o2->getDirect(vm, JSC::PropertyName(entry.key()));
+
+                if (!strict && left.isUndefined() && right.isEmpty()) {
+                    return true;
+                }
 
                 if (!right) {
                     result = false;
                     return false;
                 }
 
-                JSValue left = o1->getDirect(entry.offset());
                 if (left == right || JSC::sameValue(globalObject, left, right)) {
                     return true;
                 }
 
-                if (!Bun__deepEquals(globalObject, left, right, stack, scope, true)) {
+                if (!Bun__deepEquals(globalObject, left, right, stack, scope, true, strict)) {
                     result = false;
                     return false;
                 }
@@ -586,6 +605,10 @@ bool Bun__deepEquals(JSC__JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
                 size_t remain = count1;
                 o2Structure->forEachProperty(vm, [&](const PropertyTableEntry& entry) -> bool {
                     if (entry.attributes() & PropertyAttribute::DontEnum) {
+                        return true;
+                    }
+
+                    if (!strict && o2->getDirect(entry.offset()).isUndefined()) {
                         return true;
                     }
 
@@ -612,13 +635,13 @@ bool Bun__deepEquals(JSC__JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
     o1->getPropertyNames(globalObject, a1, DontEnumPropertiesMode::Exclude);
     o2->getPropertyNames(globalObject, a2, DontEnumPropertiesMode::Exclude);
 
-    size_t propertyLength = a1.size();
-    if (propertyLength != a2.size()) {
+    size_t propertyArrayLength = a1.size();
+    if (strict && propertyArrayLength != a2.size()) {
         return false;
     }
 
     // take a property name from one, try to get it from both
-    for (size_t i = 0; i < propertyLength; i++) {
+    for (size_t i = 0; i < propertyArrayLength; i++) {
         Identifier i1 = a1[i];
         PropertyName propertyName1 = PropertyName(i1);
 
@@ -632,11 +655,15 @@ bool Bun__deepEquals(JSC__JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
         JSValue prop2 = o2->getIfPropertyExists(globalObject, propertyName1);
         RETURN_IF_EXCEPTION(*scope, false);
 
+        if (!strict && prop1.isUndefined() && prop2.isEmpty()) {
+            continue;
+        }
+
         if (!prop2) {
             return false;
         }
 
-        if (!Bun__deepEquals(globalObject, prop1, prop2, stack, scope, true)) {
+        if (!Bun__deepEquals(globalObject, prop1, prop2, stack, scope, true, strict)) {
             return false;
         }
 
@@ -1236,12 +1263,22 @@ bool JSC__JSValue__isSameValue(JSC__JSValue JSValue0, JSC__JSValue JSValue1,
 
 bool JSC__JSValue__deepEquals(JSC__JSValue JSValue0, JSC__JSValue JSValue1, JSC__JSGlobalObject* globalObject)
 {
-    JSC::JSValue v1 = JSC::JSValue::decode(JSValue0);
-    JSC::JSValue v2 = JSC::JSValue::decode(JSValue1);
+    JSValue v1 = JSValue::decode(JSValue0);
+    JSValue v2 = JSValue::decode(JSValue1);
 
     ThrowScope scope = DECLARE_THROW_SCOPE(globalObject->vm());
-    Vector<std::pair<JSC::JSValue, JSC::JSValue>, 16> stack;
-    return Bun__deepEquals(globalObject, v1, v2, stack, &scope, true);
+    Vector<std::pair<JSValue, JSValue>, 16> stack;
+    return Bun__deepEquals(globalObject, v1, v2, stack, &scope, true, false);
+}
+
+bool JSC__JSValue__strictDeepEquals(JSC__JSValue JSValue0, JSC__JSValue JSValue1, JSC__JSGlobalObject* globalObject)
+{
+    JSValue v1 = JSValue::decode(JSValue0);
+    JSValue v2 = JSValue::decode(JSValue1);
+
+    ThrowScope scope = DECLARE_THROW_SCOPE(globalObject->vm());
+    Vector<std::pair<JSValue, JSValue>, 16> stack;
+    return Bun__deepEquals(globalObject, v1, v2, stack, &scope, true, true);
 }
 
 // This is the same as the C API version, except it returns a JSValue which may be a *Exception

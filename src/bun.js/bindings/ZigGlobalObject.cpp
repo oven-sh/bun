@@ -1803,7 +1803,7 @@ JSC_DEFINE_HOST_FUNCTION(functionBunDeepEquals, (JSGlobalObject * globalObject, 
 
     Vector<std::pair<JSValue, JSValue>, 16> stack;
 
-    bool isEqual = Bun__deepEquals(globalObject, arg1, arg2, stack, &scope, true);
+    bool isEqual = Bun__deepEquals(globalObject, arg1, arg2, stack, &scope, true, false);
     RETURN_IF_EXCEPTION(scope, {});
     return JSValue::encode(jsBoolean(isEqual));
 }

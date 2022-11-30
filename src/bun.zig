@@ -547,3 +547,8 @@ pub fn fnptr(comptime T: anytype) FnPtr(@TypeOf(T)) {
 
     return &T;
 }
+
+pub fn openDir(dir: std.fs.Dir, path_: [:0]const u8) !std.fs.IterableDir {
+    const fd = try std.os.openatZ(dir.fd, path_, std.os.O.DIRECTORY | 0, 0);
+    return std.fs.IterableDir{ .dir = .{ .fd = fd } };
+}

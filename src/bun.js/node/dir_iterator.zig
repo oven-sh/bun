@@ -1,4 +1,4 @@
-// This is copied from std.fs.Dir.Iterator
+// This is copied from std.fs.IterableDir.Iterator
 // The differences are:
 // - it returns errors in the expected format
 // - doesn't mark BADF as unreachable

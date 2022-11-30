@@ -190,7 +190,7 @@ pub const Websocket = struct {
 
     // Close and send the status
     pub fn close(self: *Websocket, code: u16) !void {
-        const c = if (native_endian == .Big) code else @byteSwap( code);
+        const c = if (native_endian == .Big) code else @byteSwap(code);
         const data = @bitCast([2]u8, c);
         _ = try self.writeMessage(.Close, &data);
     }

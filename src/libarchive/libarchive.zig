@@ -406,9 +406,9 @@ pub const Archive = struct {
 
             // if the destination doesn't exist, we skip the whole thing since nothing can overwrite it.
             if (std.fs.path.isAbsolute(root)) {
-                break :brk std.fs.openIterableDirAbsolute(root, .{ }) catch return;
+                break :brk std.fs.openIterableDirAbsolute(root, .{}) catch return;
             } else {
-                break :brk cwd.openIterableDir(root, .{ }) catch return;
+                break :brk cwd.openIterableDir(root, .{}) catch return;
             }
         };
 
@@ -436,7 +436,7 @@ pub const Archive = struct {
 
                     const size = @intCast(usize, std.math.max(lib.archive_entry_size(entry), 0));
                     if (size > 0) {
-                        var opened = dir.openFileZ(pathname, .{ .mode = .write_only }) catch continue :loop;
+                        var opened = dir.dir.openFileZ(pathname, .{ .mode = .write_only }) catch continue :loop;
                         var stat = try opened.stat();
 
                         if (stat.size > 0) {

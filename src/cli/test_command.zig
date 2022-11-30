@@ -216,10 +216,10 @@ const Scanner = struct {
             var path2 = this.fs.absBuf(parts2, &this.open_dir_buf);
             this.open_dir_buf[path2.len] = 0;
             var pathZ = this.open_dir_buf[path2.len - entry.name.slice().len .. path2.len :0];
-            var child_dir = dir.openIterableDirZ(pathZ, .{ }) catch continue;
+            var child_dir = bun.openDir(dir, pathZ) catch continue;
             path2 = this.fs.dirname_store.append(string, path2) catch unreachable;
-            FileSystem.setMaxFd(child_dir.fd);
-            _ = this.readDirWithName(path2, child_dir) catch continue;
+            FileSystem.setMaxFd(child_dir.dir.fd);
+            _ = this.readDirWithName(path2, child_dir.dir) catch continue;
         }
     }
 

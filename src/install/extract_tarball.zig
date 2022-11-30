@@ -248,7 +248,7 @@ fn extract(this: *const ExtractTarball, tgz_bytes: []const u8) !string {
 
     // We return a resolved absolute absolute file path to the cache dir.
     // To get that directory, we open the directory again.
-    var final_dir = cache_dir.openDirZ(folder_name, .{  }, true) catch |err| {
+    var final_dir = cache_dir.openDirZ(folder_name, .{}, true) catch |err| {
         Output.prettyErrorln(
             "<r><red>Error {s}<r> failed to verify cache dir for {s}",
             .{
@@ -277,7 +277,7 @@ fn extract(this: *const ExtractTarball, tgz_bytes: []const u8) !string {
 
     // create an index storing each version of a package installed
     create_index: {
-        var index_dir = cache_dir.makeOpenPathIterable(name, .{  }) catch break :create_index;
+        var index_dir = cache_dir.makeOpenPathIterable(name, .{}) catch break :create_index;
         defer index_dir.close();
         index_dir.dir.symLink(
             final_path,

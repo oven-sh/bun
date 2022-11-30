@@ -156,11 +156,11 @@ fn dumpSource(specifier: string, printer: anytype) !void {
         pub var dir: ?std.fs.IterableDir = null;
     };
     if (BunDebugHolder.dir == null) {
-        BunDebugHolder.dir = try std.fs.cwd().makeOpenPathIterable("/tmp/bun-debug-src/", .{  });
+        BunDebugHolder.dir = try std.fs.cwd().makeOpenPathIterable("/tmp/bun-debug-src/", .{});
     }
 
     if (std.fs.path.dirname(specifier)) |dir_path| {
-        var parent = try BunDebugHolder.dir.?.dir.makeOpenPathIterable(dir_path[1..], .{  });
+        var parent = try BunDebugHolder.dir.?.dir.makeOpenPathIterable(dir_path[1..], .{});
         defer parent.close();
         try parent.dir.writeFile(std.fs.path.basename(specifier), printer.ctx.getWritten());
     } else {

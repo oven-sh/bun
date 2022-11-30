@@ -567,7 +567,9 @@ pub const FileSystem = struct {
                 tmpdir_path_set = true;
             }
 
-            return (try std.fs.cwd().openIterableDir(tmpdir_path, .{ .access_sub_paths = true,})).dir;
+            return (try std.fs.cwd().openIterableDir(tmpdir_path, .{
+                .access_sub_paths = true,
+            })).dir;
         }
 
         pub fn getDefaultTempDir() string {

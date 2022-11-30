@@ -511,10 +511,11 @@ pub const UpgradeCommand = struct {
             const version_name = version.name().?;
 
             var save_dir_ = filesystem.tmpdir();
-            var save_dir = save_dir_.makeOpenPathIterable(version_name, .{  }) catch {
+            var save_dir_it = save_dir_.makeOpenPathIterable(version_name, .{}) catch {
                 Output.prettyErrorln("<r><red>error:<r> Failed to open temporary directory", .{});
                 Global.exit(1);
             };
+            const save_dir = save_dir_it.dir;
             var tmpdir_path = std.os.getFdPath(save_dir.fd, &tmpdir_path_buf) catch {
                 Output.prettyErrorln("<r><red>error:<r> Failed to read temporary directory", .{});
                 Global.exit(1);
@@ -637,11 +638,12 @@ pub const UpgradeCommand = struct {
             // safe because the slash will no longer be in use
             current_executable_buf[target_dir_.len] = 0;
             var target_dirname = current_executable_buf[0..target_dir_.len :0];
-            var target_dir = std.fs.openIterableDirZ(target_dirname, .{  }) catch |err| {
+            var target_dir_it = std.fs.openIterableDirAbsoluteZ(target_dirname, .{}) catch |err| {
                 save_dir_.deleteTree(version_name) catch {};
                 Output.prettyErrorln("<r><red>error:<r> Failed to open bun's install directory {s}", .{@errorName(err)});
                 Global.exit(1);
             };
+            var target_dir = target_dir_it.dir;
 
             if (use_canary) {
 

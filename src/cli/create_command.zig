@@ -564,7 +564,7 @@ pub const CreateCommand = struct {
                 node.name = "Copying files";
                 progress.refresh();
 
-                const template_dir = std.fs.openIterableDir(filesystem.abs(&template_parts), .{ }) catch |err| {
+                const template_dir = std.fs.cwd().openIterableDir(filesystem.abs(&template_parts), .{}) catch |err| {
                     node.end();
                     progress.refresh();
 
@@ -573,7 +573,7 @@ pub const CreateCommand = struct {
                 };
 
                 std.fs.deleteTreeAbsolute(destination) catch {};
-                const destination_dir = std.fs.cwd().makeOpenPathIterable(destination, .{ }) catch |err| {
+                const destination_dir__ = std.fs.cwd().makeOpenPathIterable(destination, .{}) catch |err| {
                     node.end();
 
                     progress.refresh();
@@ -581,7 +581,7 @@ pub const CreateCommand = struct {
                     Output.prettyErrorln("<r><red>{s}<r>: creating dir {s}", .{ @errorName(err), destination });
                     Global.exit(1);
                 };
-
+const destination_dir = destination_dir__.dir;
                 const Walker = @import("../walker_skippable.zig");
                 var walker_ = try Walker.walk(template_dir, ctx.allocator, skip_files, skip_dirs);
                 defer walker_.deinit();
@@ -612,7 +612,7 @@ pub const CreateCommand = struct {
                             defer outfile.close();
                             defer node_.completeOne();
 
-                            var infile = try entry.dir.openFile(entry.basename, .{ .mode = .read_only });
+                            var infile = try entry.dir.dir.openFile(entry.basename, .{ .mode = .read_only });
                             defer infile.close();
 
                             // Assumption: you only really care about making sure something that was executable is still executable
@@ -620,7 +620,7 @@ pub const CreateCommand = struct {
                             _ = C.fchmod(outfile.handle, stat.mode);
 
                             CopyFile.copy(infile.handle, outfile.handle) catch {
-                                entry.dir.copyFile(entry.basename, destination_dir_, entry.path, .{}) catch |err| {
+                                entry.dir.dir.copyFile(entry.basename, destination_dir_, entry.path, .{}) catch |err| {
                                     node_.end();
 
                                     progress_.refresh();
@@ -1721,23 +1721,23 @@ pub const Example = struct {
 
         var examples = std.ArrayList(Example).fromOwnedSlice(ctx.allocator, remote_examples);
         {
-            var folders = [3]std.fs.Dir{ std.fs.Dir{ .fd = 0 }, std.fs.Dir{ .fd = 0 }, std.fs.Dir{ .fd = 0 } };
+            var folders = [3]std.fs.IterableDir{ .{.dir = .{ .fd = 0 },}, .{.dir = .{ .fd = 0 },}, .{.dir = .{ .fd = 0 }}, };
             if (env_loader.map.get("BUN_CREATE_DIR")) |home_dir| {
                 var parts = [_]string{home_dir};
                 var outdir_path = filesystem.absBuf(&parts, &home_dir_buf);
-                folders[0] = std.fs.openIterableDir(outdir_path, .{  }) catch .{.dir = .{ .fd = 0 }};
+                folders[0] = std.fs.cwd().openIterableDir(outdir_path, .{}) catch .{ .dir = .{ .fd = 0 } };
             }
 
             {
                 var parts = [_]string{ filesystem.top_level_dir, BUN_CREATE_DIR };
                 var outdir_path = filesystem.absBuf(&parts, &home_dir_buf);
-                folders[1] = std.fs.openIterableDir(outdir_path, .{  }) catch .{.dir = .{ .fd = 0 }};
+                folders[1] = std.fs.cwd().openIterableDir(outdir_path, .{}) catch .{ .dir = .{ .fd = 0 } };
             }
 
             if (env_loader.map.get("HOME")) |home_dir| {
                 var parts = [_]string{ home_dir, BUN_CREATE_DIR };
                 var outdir_path = filesystem.absBuf(&parts, &home_dir_buf);
-                folders[2] = std.fs.openIterableDir(outdir_path, .{  }) catch .{.dir = .{ .fd = 0 }};
+                folders[2] = std.fs.cwd().openIterableDir(outdir_path, .{}) catch .{ .dir = .{ .fd = 0 } };
             }
 
             // subfolders with package.json
@@ -1746,7 +1746,7 @@ pub const Example = struct {
 
                 if (folder_.fd != 0) {
                     const folder: std.fs.Dir = folder_;
-                    var iter = folder.iterate();
+                    var iter = (std.fs.IterableDir{.dir = folder}).iterate();
 
                     loop: while (iter.next() catch null) |entry_| {
                         const entry: std.fs.IterableDir.Entry = entry_;

@@ -97,8 +97,7 @@ pub const InstallCompletionsCommand = struct {
                             Global.exit(fail_exit_code);
                         }
 
-                        break :found std.fs.openIterableDirAbsolute(completions_dir, .{
-                        }) catch |err| {
+                        break :found std.fs.openIterableDirAbsolute(completions_dir, .{}) catch |err| {
                             Output.prettyErrorln("<r><red>error:<r> accessing {s} errored {s}", .{ completions_dir, @errorName(err) });
                             Global.exit(fail_exit_code);
                         };
@@ -143,12 +142,12 @@ pub const InstallCompletionsCommand = struct {
                             if (!Environment.isAarch64) {
                                 // homebrew fish
                                 completions_dir = "/usr/local/share/fish/completions";
-                                break :found std.fs.openIterableDirAbsolute("/usr/local/share/fish/completions", .{  }) catch
+                                break :found std.fs.openIterableDirAbsolute("/usr/local/share/fish/completions", .{}) catch
                                     break :outer;
                             } else {
                                 // homebrew fish
                                 completions_dir = "/opt/homebrew/share/fish/completions";
-                                break :found std.fs.openIterableDirAbsolute("/opt/homebrew/share/fish/completions", .{  }) catch
+                                break :found std.fs.openIterableDirAbsolute("/opt/homebrew/share/fish/completions", .{}) catch
                                     break :outer;
                             }
                         }
@@ -156,7 +155,7 @@ pub const InstallCompletionsCommand = struct {
 
                     outer: {
                         completions_dir = "/etc/fish/completions";
-                        break :found std.fs.openIterableDirAbsolute("/etc/fish/completions", .{  }) catch break :outer;
+                        break :found std.fs.openIterableDirAbsolute("/etc/fish/completions", .{}) catch break :outer;
                     }
                 },
                 .zsh => {

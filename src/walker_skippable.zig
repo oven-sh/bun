@@ -78,7 +78,7 @@ pub fn next(self: *Walker) !?WalkerEntry {
             self.name_buffer.shrinkRetainingCapacity(cur_len);
 
             if (base.kind == .Directory) {
-                var new_dir = top.iter.dir.openIterableDir(base.name, .{ }) catch |err| switch (err) {
+                var new_dir = top.iter.dir.openIterableDir(base.name, .{}) catch |err| switch (err) {
                     error.NameTooLong => unreachable, // no path sep in base.name
                     else => |e| return e,
                 };
@@ -92,7 +92,7 @@ pub fn next(self: *Walker) !?WalkerEntry {
                 }
             }
             return WalkerEntry{
-                .dir = top.iter.dir,
+                .dir = .{ .dir = top.iter.dir },
                 .basename = self.name_buffer.items[dirname_len..],
                 .path = self.name_buffer.items,
                 .kind = base.kind,

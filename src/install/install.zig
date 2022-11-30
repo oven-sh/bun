@@ -793,7 +793,7 @@ const PackageInstall = struct {
         var package_json_path: [:0]u8 = this.destination_dir_subpath_buf[0 .. this.destination_dir_subpath.len + std.fs.path.sep_str.len + "package.json".len :0];
         defer this.destination_dir_subpath_buf[this.destination_dir_subpath.len] = 0;
 
-        var package_json_file = this.destination_dir.openFileZ(package_json_path, .{ .mode = .read_only }) catch return false;
+        var package_json_file = this.destination_dir.dir.openFileZ(package_json_path, .{ .mode = .read_only }) catch return false;
         defer package_json_file.close();
 
         var body_pool = Npm.Registry.BodyPool.get(allocator);
@@ -889,8 +889,7 @@ const PackageInstall = struct {
     fn installWithClonefileEachDir(this: *PackageInstall) !Result {
         const Walker = @import("../walker_skippable.zig");
 
-        var cached_package_dir = this.cache_dir.openIterableDirZ(this.cache_dir_subpath, .{
-        }) catch |err| return Result{
+        var cached_package_dir = bun.openDir(this.cache_dir.dir, this.cache_dir_subpath) catch |err| return Result{
             .fail = .{ .err = err, .step = .opening_cache_dir },
         };
         defer cached_package_dir.close();
@@ -914,7 +913,7 @@ const PackageInstall = struct {
                 while (try walker.next()) |entry| {
                     switch (entry.kind) {
                         .Directory => {
-                            std.os.mkdirat(destination_dir_.fd, entry.path, 0o755) catch {};
+                            std.os.mkdirat(destination_dir_.dir.fd, entry.path, 0o755) catch {};
                         },
                         .File => {
                             std.mem.copy(u8, &stackpath, entry.path);
@@ -922,9 +921,9 @@ const PackageInstall = struct {
                             var path: [:0]u8 = stackpath[0..entry.path.len :0];
                             var basename: [:0]u8 = stackpath[entry.path.len - entry.basename.len .. entry.path.len :0];
                             switch (C.clonefileat(
-                                entry.dir.fd,
+                                entry.dir.dir.fd,
                                 basename,
-                                destination_dir_.fd,
+                                destination_dir_.dir.fd,
                                 path,
                                 0,
                             )) {
@@ -948,11 +947,9 @@ const PackageInstall = struct {
             }
         };
 
-        var subdir = this.destination_dir.makeOpenPathIterable(std.mem.span(this.destination_dir_subpath), .{  }) catch |err| return Result{
+        var subdir = this.destination_dir.dir.makeOpenPathIterable(std.mem.span(this.destination_dir_subpath), .{}) catch |err| return Result{
             .fail = .{ .err = err, .step = .opening_cache_dir },
         };
-
-
 
         defer subdir.close();
 
@@ -977,15 +974,15 @@ const PackageInstall = struct {
             if (strings.indexOfChar(current, std.fs.path.sep)) |slash| {
                 this.destination_dir_subpath_buf[slash] = 0;
                 var subdir = this.destination_dir_subpath_buf[0..slash :0];
-                this.destination_dir.makeDirZ(subdir) catch {};
+                this.destination_dir.dir.makeDirZ(subdir) catch {};
                 this.destination_dir_subpath_buf[slash] = std.fs.path.sep;
             }
         }
 
         return switch (C.clonefileat(
-            this.cache_dir.fd,
+            this.cache_dir.dir.fd,
             this.cache_dir_subpath,
-            this.destination_dir.fd,
+            this.destination_dir.dir.fd,
             this.destination_dir_subpath,
             0,
         )) {
@@ -1006,8 +1003,7 @@ const PackageInstall = struct {
         const Walker = @import("../walker_skippable.zig");
         const CopyFile = @import("../copy_file.zig");
 
-        var cached_package_dir = this.cache_dir.openIterableDirZ(this.cache_dir_subpath, .{
-        }) catch |err| return Result{
+        var cached_package_dir = bun.openDir(this.cache_dir.dir, this.cache_dir_subpath) catch |err| return Result{
             .fail = .{ .err = err, .step = .opening_cache_dir },
         };
         defer cached_package_dir.close();
@@ -1023,7 +1019,7 @@ const PackageInstall = struct {
 
         const FileCopier = struct {
             pub fn copy(
-                destination_dir_: std.fs.IterableDir,
+                destination_dir_: std.fs.Dir,
                 walker: *Walker,
                 progress_: *Progress,
             ) !u32 {
@@ -1047,14 +1043,14 @@ const PackageInstall = struct {
                     };
                     defer outfile.close();
 
-                    var infile = try entry.dir.openFile(entry.basename, .{ .mode = .read_only });
+                    var infile = try entry.dir.dir.openFile(entry.basename, .{ .mode = .read_only });
                     defer infile.close();
 
                     const stat = infile.stat() catch continue;
                     _ = C.fchmod(outfile.handle, stat.mode);
 
                     CopyFile.copy(infile.handle, outfile.handle) catch {
-                        entry.dir.copyFile(entry.basename, destination_dir_, entry.path, .{}) catch |err| {
+                        entry.dir.dir.copyFile(entry.basename, destination_dir_, entry.path, .{}) catch |err| {
                             progress_.root.end();
 
                             progress_.refresh();
@@ -1069,13 +1065,13 @@ const PackageInstall = struct {
             }
         };
 
-        var subdir = this.destination_dir.makeOpenPathIterable(std.mem.span(this.destination_dir_subpath), .{  }) catch |err| return Result{
+        var subdir = this.destination_dir.dir.makeOpenPathIterable(std.mem.span(this.destination_dir_subpath), .{}) catch |err| return Result{
             .fail = .{ .err = err, .step = .opening_cache_dir },
         };
 
-        defer subdir.close();
+        defer subdir.dir.close();
 
-        this.file_count = FileCopier.copy(subdir, &walker_, this.progress) catch |err| return Result{
+        this.file_count = FileCopier.copy(subdir.dir, &walker_, this.progress) catch |err| return Result{
             .fail = .{ .err = err, .step = .copying_files },
         };
 
@@ -1087,8 +1083,7 @@ const PackageInstall = struct {
     fn installWithHardlink(this: *PackageInstall) !Result {
         const Walker = @import("../walker_skippable.zig");
 
-        var cached_package_dir = this.cache_dir.openIterableDirZ(this.cache_dir_subpath, .{
-        }) catch |err| return Result{
+        var cached_package_dir = bun.openDir(this.cache_dir.dir, this.cache_dir_subpath) catch |err| return Result{
             .fail = .{ .err = err, .step = .opening_cache_dir },
         };
         defer cached_package_dir.close();
@@ -1111,10 +1106,10 @@ const PackageInstall = struct {
                 while (try walker.next()) |entry| {
                     switch (entry.kind) {
                         .Directory => {
-                            std.os.mkdirat(destination_dir_.fd, entry.path, 0o755) catch {};
+                            std.os.mkdirat(destination_dir_.dir.fd, entry.path, 0o755) catch {};
                         },
                         .File => {
-                            try std.os.linkat(entry.dir.fd, entry.basename, destination_dir_.fd, entry.path, 0);
+                            try std.os.linkat(entry.dir.dir.fd, entry.basename, destination_dir_.dir.fd, entry.path, 0);
                             real_file_count += 1;
                         },
                         else => {},
@@ -1125,7 +1120,7 @@ const PackageInstall = struct {
             }
         };
 
-        var subdir = this.destination_dir.makeOpenPathIterable(std.mem.span(this.destination_dir_subpath), .{  }) catch |err| return Result{
+        var subdir = bun.openDir(this.destination_dir.dir, this.destination_dir_subpath) catch |err| return Result{
             .fail = .{ .err = err, .step = .opening_cache_dir },
         };
 
@@ -1149,8 +1144,7 @@ const PackageInstall = struct {
     fn installWithSymlink(this: *PackageInstall) !Result {
         const Walker = @import("../walker_skippable.zig");
 
-        var cached_package_dir = this.cache_dir.openIterableDirZ(this.cache_dir_subpath, .{
-        }) catch |err| return Result{
+        var cached_package_dir = bun.openDir(this.cache_dir.dir, this.cache_dir_subpath) catch |err| return Result{
             .fail = .{ .err = err, .step = .opening_cache_dir },
         };
         defer cached_package_dir.close();
@@ -1219,15 +1213,15 @@ const PackageInstall = struct {
             }
         };
 
-        var subdir = this.destination_dir.makeOpenPathIterable(std.mem.span(this.destination_dir_subpath), .{  }) catch |err| return Result{
+        var subdir = this.destination_dir.dir.makeOpenPathIterable(std.mem.span(this.destination_dir_subpath), .{}) catch |err| return Result{
             .fail = .{ .err = err, .step = .opening_cache_dir },
         };
 
         defer subdir.close();
 
         this.file_count = FileCopier.copy(
-            subdir.fd,
-            cached_package_dir.fd,
+            subdir.dir.fd,
+            cached_package_dir.dir.fd,
             &walker_,
         ) catch |err|
             return Result{
@@ -1243,7 +1237,7 @@ const PackageInstall = struct {
     }
 
     pub fn uninstall(this: *PackageInstall) !void {
-        try this.destination_dir.deleteTree(std.mem.span(this.destination_dir_subpath));
+        try this.destination_dir.dir.deleteTree(std.mem.span(this.destination_dir_subpath));
     }
 
     fn isDanglingSymlink(path: [:0]const u8) bool {
@@ -1278,7 +1272,7 @@ const PackageInstall = struct {
         // cache_dir_subpath in here is actually the full path to the symlink pointing to the linked package
         const symlinked_path = this.cache_dir_subpath;
 
-        std.os.symlinkatZ(symlinked_path, this.destination_dir.fd, this.destination_dir_subpath) catch |err| {
+        std.os.symlinkatZ(symlinked_path, this.destination_dir.dir.fd, this.destination_dir_subpath) catch |err| {
             return Result{
                 .fail = .{
                     .err = err,
@@ -1653,7 +1647,7 @@ pub const PackageManager = struct {
         return this.global_link_dir orelse brk: {
             var global_dir = try Options.openGlobalDir(this.options.explicit_global_directory);
             this.global_dir = global_dir;
-            this.global_link_dir = try global_dir.dir.makeOpenPathIterable("node_modules", .{  });
+            this.global_link_dir = try global_dir.dir.makeOpenPathIterable("node_modules", .{});
             var buf: [bun.MAX_PATH_BYTES]u8 = undefined;
             const _path = try std.os.getFdPath(this.global_link_dir.?.dir.fd, &buf);
             this.global_link_dir_path = try Fs.FileSystem.DirnameStore.instance.append([]const u8, _path);
@@ -1763,13 +1757,13 @@ pub const PackageManager = struct {
         loop: while (true) {
             if (this.options.enable.cache) {
                 const cache_dir = fetchCacheDirectoryPath(this.env_loader);
-                return std.fs.cwd().makeOpenPathIterable(cache_dir.path, .{  }) catch {
+                return std.fs.cwd().makeOpenPathIterable(cache_dir.path, .{}) catch {
                     this.options.enable.cache = false;
                     continue :loop;
                 };
             }
 
-            return std.fs.cwd().makeOpenPathIterable("node_modules/.cache", .{  }) catch |err| {
+            return std.fs.cwd().makeOpenPathIterable("node_modules/.cache", .{}) catch |err| {
                 Output.prettyErrorln("<r><red>error<r>: bun is unable to write files: {s}", .{@errorName(err)});
                 Global.crash();
             };
@@ -1788,9 +1782,9 @@ pub const PackageManager = struct {
         // This makes renameat() work
         const default_tempdir = Fs.FileSystem.RealFS.getDefaultTempDir();
         var tried_dot_tmp = false;
-        var tempdir: std.fs.IterableDir = std.fs.cwd().makeOpenPathIterable(default_tempdir, .{  }) catch brk: {
+        var tempdir: std.fs.IterableDir = std.fs.cwd().makeOpenPathIterable(default_tempdir, .{}) catch brk: {
             tried_dot_tmp = true;
-            break :brk cache_directory.dir.makeOpenPathIterable(".tmp", .{  }) catch |err| {
+            break :brk cache_directory.dir.makeOpenPathIterable(".tmp", .{}) catch |err| {
                 Output.prettyErrorln("<r><red>error<r>: bun is unable to access tempdir: {s}", .{@errorName(err)});
                 Global.crash();
             };
@@ -1803,7 +1797,7 @@ pub const PackageManager = struct {
                 if (!tried_dot_tmp) {
                     tried_dot_tmp = true;
 
-                    tempdir = cache_directory.dir.makeOpenPathIterable(".tmp", .{  }) catch |err| {
+                    tempdir = cache_directory.dir.makeOpenPathIterable(".tmp", .{}) catch |err| {
                         Output.prettyErrorln("<r><red>error<r>: bun is unable to access tempdir: {s}", .{@errorName(err)});
                         Global.crash();
                     };
@@ -1818,7 +1812,7 @@ pub const PackageManager = struct {
             std.os.renameatZ(tempdir.dir.fd, tmpname, cache_directory.dir.fd, tmpname) catch |err| {
                 if (!tried_dot_tmp) {
                     tried_dot_tmp = true;
-                    tempdir = cache_directory.dir.makeOpenPathIterable(".tmp", .{  }) catch |err2| {
+                    tempdir = cache_directory.dir.makeOpenPathIterable(".tmp", .{}) catch |err2| {
                         Output.prettyErrorln("<r><red>error<r>: bun is unable to write files to tempdir: {s}", .{@errorName(err2)});
                         Global.crash();
                     };
@@ -1923,7 +1917,7 @@ pub const PackageManager = struct {
 
     pub fn isFolderInCache(this: *PackageManager, folder_path: stringZ) bool {
         // TODO: is this slow?
-        var dir = this.getCacheDirectory().dir.openDirZ(folder_path, .{  }, true) catch return false;
+        var dir = this.getCacheDirectory().dir.openDirZ(folder_path, .{}, true) catch return false;
         dir.close();
         return true;
     }
@@ -1976,7 +1970,7 @@ pub const PackageManager = struct {
 
     pub fn getInstalledVersionsFromDiskCache(this: *PackageManager, tags_buf: *std.ArrayList(u8), package_name: []const u8, allocator: std.mem.Allocator) !std.ArrayList(Semver.Version) {
         var list = std.ArrayList(Semver.Version).init(allocator);
-        var dir = this.getCacheDirectory().dir.openIterableDir(package_name, .{  }) catch |err| {
+        var dir = this.getCacheDirectory().dir.openIterableDir(package_name, .{}) catch |err| {
             switch (err) {
                 error.FileNotFound, error.NotDir, error.AccessDenied, error.DeviceBusy => {
                     return list;
@@ -3438,7 +3432,7 @@ pub const PackageManager = struct {
         log_level: LogLevel = LogLevel.default,
         global: bool = false,
 
-        global_bin_dir: std.fs.IterableDir = std.fs.IterableDir{ .dir = .{.fd = std.math.maxInt(std.os.fd_t)} },
+        global_bin_dir: std.fs.IterableDir = std.fs.IterableDir{ .dir = .{ .fd = std.math.maxInt(std.os.fd_t) } },
         explicit_global_directory: string = "",
         /// destination directory to link bins into
         // must be a variable due to global installs and bunx
@@ -3531,25 +3525,25 @@ pub const PackageManager = struct {
 
         pub fn openGlobalDir(explicit_global_dir: string) !std.fs.IterableDir {
             if (std.os.getenvZ("BUN_INSTALL_GLOBAL_DIR")) |home_dir| {
-                return try std.fs.cwd().makeOpenPathIterable(home_dir, .{  });
+                return try std.fs.cwd().makeOpenPathIterable(home_dir, .{});
             }
 
             if (explicit_global_dir.len > 0) {
-                return try std.fs.cwd().makeOpenPathIterable(explicit_global_dir, .{  });
+                return try std.fs.cwd().makeOpenPathIterable(explicit_global_dir, .{});
             }
 
             if (std.os.getenvZ("BUN_INSTALL")) |home_dir| {
                 var buf: [bun.MAX_PATH_BYTES]u8 = undefined;
                 var parts = [_]string{ "install", "global" };
                 var path = Path.joinAbsStringBuf(home_dir, &buf, &parts, .auto);
-                return try std.fs.cwd().makeOpenPathIterable(path, .{  });
+                return try std.fs.cwd().makeOpenPathIterable(path, .{});
             }
 
             if (std.os.getenvZ("XDG_CACHE_HOME") orelse std.os.getenvZ("HOME")) |home_dir| {
                 var buf: [bun.MAX_PATH_BYTES]u8 = undefined;
                 var parts = [_]string{ ".bun", "install", "global" };
                 var path = Path.joinAbsStringBuf(home_dir, &buf, &parts, .auto);
-                return try std.fs.cwd().makeOpenPathIterable(path, .{  });
+                return try std.fs.cwd().makeOpenPathIterable(path, .{});
             }
 
             return error.@"No global directory found";
@@ -3557,13 +3551,13 @@ pub const PackageManager = struct {
 
         pub fn openGlobalBinDir(opts_: ?*const Api.BunInstall) !std.fs.IterableDir {
             if (std.os.getenvZ("BUN_INSTALL_BIN")) |home_dir| {
-                return try std.fs.cwd().makeOpenPathIterable(home_dir, .{  });
+                return try std.fs.cwd().makeOpenPathIterable(home_dir, .{});
             }
 
             if (opts_) |opts| {
                 if (opts.global_bin_dir) |home_dir| {
                     if (home_dir.len > 0) {
-                        return try std.fs.cwd().makeOpenPathIterable(home_dir, .{  });
+                        return try std.fs.cwd().makeOpenPathIterable(home_dir, .{});
                     }
                 }
             }
@@ -3574,7 +3568,7 @@ pub const PackageManager = struct {
                     "bin",
                 };
                 var path = Path.joinAbsStringBuf(home_dir, &buf, &parts, .auto);
-                return try std.fs.cwd().makeOpenPathIterable(path, .{  });
+                return try std.fs.cwd().makeOpenPathIterable(path, .{});
             }
 
             if (std.os.getenvZ("XDG_CACHE_HOME") orelse std.os.getenvZ("HOME")) |home_dir| {
@@ -3584,7 +3578,7 @@ pub const PackageManager = struct {
                     "bin",
                 };
                 var path = Path.joinAbsStringBuf(home_dir, &buf, &parts, .auto);
-                return try std.fs.cwd().makeOpenPathIterable(path, .{  });
+                return try std.fs.cwd().makeOpenPathIterable(path, .{});
             }
 
             return error.@"Missing global bin directory: try setting $BUN_INSTALL";
@@ -4544,7 +4538,7 @@ pub const PackageManager = struct {
 
                 try manager.setupGlobalDir(&ctx);
 
-                break :brk manager.global_dir.?.makeOpenPathIterable("node_modules", .{  }) catch |err| {
+                break :brk manager.global_dir.?.dir.makeOpenPathIterable("node_modules", .{}) catch |err| {
                     if (manager.options.log_level != .silent)
                         Output.prettyErrorln("<r><red>error:<r> failed to create node_modules in global dir due to error {s}", .{@errorName(err)});
                     Global.crash();
@@ -4554,10 +4548,10 @@ pub const PackageManager = struct {
             // Step 3a. symlink to the node_modules folder
             {
                 // delete it if it exists
-                node_modules.deleteTree(name) catch {};
+                node_modules.dir.deleteTree(name) catch {};
 
                 // create the symlink
-                node_modules.symLink(Fs.FileSystem.instance.topLevelDirWithoutTrailingSlash(), name, .{ .is_directory = true }) catch |err| {
+                node_modules.dir.symLink(Fs.FileSystem.instance.topLevelDirWithoutTrailingSlash(), name, .{ .is_directory = true }) catch |err| {
                     if (manager.options.log_level != .silent)
                         Output.prettyErrorln("<r><red>error:<r> failed to create symlink to node_modules in global dir due to error {s}", .{@errorName(err)});
                     Global.crash();
@@ -4568,12 +4562,12 @@ pub const PackageManager = struct {
             if (package.bin.tag != .none) {
                 var bin_linker = Bin.Linker{
                     .bin = package.bin,
-                    .package_installed_node_modules = node_modules.fd,
+                    .package_installed_node_modules = node_modules.dir.fd,
                     .global_bin_path = manager.options.bin_path,
-                    .global_bin_dir = manager.options.global_bin_dir,
+                    .global_bin_dir = manager.options.global_bin_dir.dir,
 
                     // .destination_dir_subpath = destination_dir_subpath,
-                    .root_node_modules_folder = node_modules.fd,
+                    .root_node_modules_folder = node_modules.dir.fd,
                     .package_name = strings.StringOrTinyString.init(name),
                     .string_buf = lockfile.buffers.string_bytes.items,
                     .extern_string_buf = lockfile.buffers.extern_strings.items,
@@ -4707,7 +4701,7 @@ pub const PackageManager = struct {
 
                 try manager.setupGlobalDir(&ctx);
 
-                break :brk manager.global_dir.?.makeOpenPathIterable("node_modules", .{  }) catch |err| {
+                break :brk manager.global_dir.?.dir.makeOpenPathIterable("node_modules", .{}) catch |err| {
                     if (manager.options.log_level != .silent)
                         Output.prettyErrorln("<r><red>error:<r> failed to create node_modules in global dir due to error {s}", .{@errorName(err)});
                     Global.crash();
@@ -4718,12 +4712,12 @@ pub const PackageManager = struct {
             if (package.bin.tag != .none) {
                 var bin_linker = Bin.Linker{
                     .bin = package.bin,
-                    .package_installed_node_modules = node_modules.fd,
+                    .package_installed_node_modules = node_modules.dir.fd,
                     .global_bin_path = manager.options.bin_path,
-                    .global_bin_dir = manager.options.global_bin_dir,
+                    .global_bin_dir = manager.options.global_bin_dir.dir,
 
                     // .destination_dir_subpath = destination_dir_subpath,
-                    .root_node_modules_folder = node_modules.fd,
+                    .root_node_modules_folder = node_modules.dir.fd,
                     .package_name = strings.StringOrTinyString.init(name),
                     .string_buf = lockfile.buffers.string_bytes.items,
                     .extern_string_buf = lockfile.buffers.extern_strings.items,
@@ -4732,7 +4726,7 @@ pub const PackageManager = struct {
             }
 
             // delete it if it exists
-            node_modules.deleteTree(name) catch |err| {
+            node_modules.dir.deleteTree(name) catch |err| {
                 if (manager.options.log_level != .silent)
                     Output.prettyErrorln("<r><red>error:<r> failed to unlink package in global dir due to error {s}", .{@errorName(err)});
                 Global.crash();
@@ -5466,9 +5460,7 @@ pub const PackageManager = struct {
 
                 // This is where we clean dangling symlinks
                 // This could be slow if there are a lot of symlinks
-                if (cwd.openIterableDir(manager.options.bin_path, .{
-                    
-                })) |node_modules_bin_| {
+                if (cwd.openIterableDir(manager.options.bin_path, .{})) |node_modules_bin_| {
                     var node_modules_bin: std.fs.IterableDir = node_modules_bin_;
                     var iter: std.fs.IterableDir.Iterator = node_modules_bin.iterate();
                     iterator: while (iter.next() catch null) |entry| {
@@ -5481,8 +5473,8 @@ pub const PackageManager = struct {
                                 node_modules_buf[entry.name.len] = 0;
                                 var buf: [:0]u8 = node_modules_buf[0..entry.name.len :0];
 
-                                var file = node_modules_bin.openFileZ(buf, .{ .mode = .read_only }) catch {
-                                    node_modules_bin.deleteFileZ(buf) catch {};
+                                var file = node_modules_bin.dir.openFileZ(buf, .{ .mode = .read_only }) catch {
+                                    node_modules_bin.dir.deleteFileZ(buf) catch {};
                                     continue :iterator;
                                 };
 
@@ -5588,7 +5580,7 @@ pub const PackageManager = struct {
                 defer this.node_modules_folder = prev_node_modules_folder;
                 for (callbacks.items) |cb| {
                     const node_modules_folder = cb.node_modules_folder;
-                    this.node_modules_folder = std.fs.Dir{ .fd = @intCast(std.os.fd_t, node_modules_folder) };
+                    this.node_modules_folder = .{ .dir = .{ .fd = @intCast(bun.FileDescriptor, node_modules_folder) } };
                     this.installPackageWithNameAndResolution(package_id, log_level, name, resolution);
                 }
             }
@@ -5632,12 +5624,12 @@ pub const PackageManager = struct {
                     //   "mineflayer": "file:."
                     if (folder.len == 0 or (folder.len == 1 and folder[0] == '.')) {
                         installer.cache_dir_subpath = ".";
-                        installer.cache_dir = std.fs.cwd();
+                        installer.cache_dir = .{ .dir = std.fs.cwd() };
                     } else {
                         @memcpy(&this.folder_path_buf, folder.ptr, folder.len);
                         this.folder_path_buf[folder.len] = 0;
                         installer.cache_dir_subpath = std.meta.assumeSentinel(this.folder_path_buf[0..folder.len], 0);
-                        installer.cache_dir = std.fs.cwd();
+                        installer.cache_dir = .{ .dir = std.fs.cwd() };
                     }
                 },
                 .symlink => {
@@ -5670,7 +5662,7 @@ pub const PackageManager = struct {
 
                     if (folder.len == 0 or (folder.len == 1 and folder[0] == '.')) {
                         installer.cache_dir_subpath = ".";
-                        installer.cache_dir = std.fs.cwd();
+                        installer.cache_dir = .{ .dir = std.fs.cwd() };
                     } else {
                         const global_link_dir = this.manager.globalLinkDirPath() catch unreachable;
                         var ptr = &this.folder_path_buf;
@@ -5718,7 +5710,7 @@ pub const PackageManager = struct {
                             if (!this.has_created_bin) {
                                 Bin.Linker.umask = C.umask(0);
                                 if (!this.options.global)
-                                    this.node_modules_folder.makeDirZ(".bin") catch {};
+                                    this.node_modules_folder.dir.makeDirZ(".bin") catch {};
 
                                 this.has_created_bin = true;
                             }
@@ -5737,12 +5729,12 @@ pub const PackageManager = struct {
 
                                     var bin_linker = Bin.Linker{
                                         .bin = bin,
-                                        .package_installed_node_modules = this.node_modules_folder.fd,
+                                        .package_installed_node_modules = this.node_modules_folder.dir.fd,
                                         .global_bin_path = this.options.bin_path,
-                                        .global_bin_dir = this.options.global_bin_dir,
+                                        .global_bin_dir = this.options.global_bin_dir.dir,
 
                                         // .destination_dir_subpath = destination_dir_subpath,
-                                        .root_node_modules_folder = this.root_node_modules_folder.fd,
+                                        .root_node_modules_folder = this.root_node_modules_folder.dir.fd,
                                         .package_name = strings.StringOrTinyString.init(name),
                                         .string_buf = buf,
                                         .extern_string_buf = extern_string_buf,
@@ -5785,7 +5777,7 @@ pub const PackageManager = struct {
                                         resolution.value.npm.version,
                                         resolution.value.npm.url.slice(buf),
                                         .{
-                                            .node_modules_folder = @intCast(u32, this.node_modules_folder.fd),
+                                            .node_modules_folder = @intCast(u32, this.node_modules_folder.dir.fd),
                                         },
                                     );
                                 },
@@ -5908,13 +5900,13 @@ pub const PackageManager = struct {
         // we want to check lazily though
         // no need to download packages you've already installed!!
         var skip_verify_installed_version_number = false;
-        var node_modules_folder = std.fs.cwd().openIterableDir("node_modules", .{  }) catch brk: {
+        var node_modules_folder = std.fs.cwd().openIterableDir("node_modules", .{}) catch brk: {
             skip_verify_installed_version_number = true;
             std.fs.cwd().makeDirZ("node_modules") catch |err| {
                 Output.prettyErrorln("<r><red>error<r>: <b><red>{s}<r> creating <b>node_modules<r> folder", .{@errorName(err)});
                 Global.crash();
             };
-            break :brk std.fs.cwd().openIterableDir("node_modules", .{  }) catch |err| {
+            break :brk std.fs.cwd().openIterableDir("node_modules", .{}) catch |err| {
                 Output.prettyErrorln("<r><red>error<r>: <b><red>{s}<r> opening <b>node_modules<r> folder", .{@errorName(err)});
                 Global.crash();
             };
@@ -5973,8 +5965,7 @@ pub const PackageManager = struct {
                 // We deliberately do not close this folder.
                 // If the package hasn't been downloaded, we will need to install it later
                 // We use this file descriptor to know where to put it.
-                var folder = try cwd.openIterableDirZ(node_modules.relative_path, .{
-                });
+                var folder = try cwd.openIterableDir(node_modules.relative_path, .{});
 
                 installer.node_modules_folder = folder;
 
@@ -6068,7 +6059,7 @@ pub const PackageManager = struct {
 
                     if (!installer.has_created_bin) {
                         if (!this.options.global) {
-                            node_modules_folder.makeDirZ(".bin") catch {};
+                            node_modules_folder.dir.makeDirZ(".bin") catch {};
                         }
                         Bin.Linker.umask = C.umask(0);
                         installer.has_created_bin = true;
@@ -6076,10 +6067,10 @@ pub const PackageManager = struct {
 
                     var bin_linker = Bin.Linker{
                         .bin = original_bin,
-                        .package_installed_node_modules = folder.fd,
-                        .root_node_modules_folder = node_modules_folder.fd,
+                        .package_installed_node_modules = folder.dir.fd,
+                        .root_node_modules_folder = node_modules_folder.dir.fd,
                         .global_bin_path = this.options.bin_path,
-                        .global_bin_dir = this.options.global_bin_dir,
+                        .global_bin_dir = this.options.global_bin_dir.dir,
 
                         .package_name = strings.StringOrTinyString.init(name),
                         .string_buf = lockfile.buffers.string_bytes.items,
@@ -6691,7 +6682,7 @@ pub const PackageManager = struct {
                     // bun install may have installed new bins, so we need to update the PATH
                     // this can happen if node_modules/.bin didn't previously exist
                     // note: it is harmless to have the same directory in the PATH multiple times
-                    const current_path = manager.env.map.get("PATH");
+                    const current_path: []const u8 = manager.env.map.get("PATH") orelse "/";
 
                     // TODO: windows
                     const cwd_without_trailing_slash = if (Fs.FileSystem.instance.top_level_dir.len > 1 and Fs.FileSystem.instance.top_level_dir[Fs.FileSystem.instance.top_level_dir.len - 1] == '/')

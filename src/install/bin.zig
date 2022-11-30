@@ -146,7 +146,7 @@ pub const Bin = extern struct {
         bin: Bin,
         i: usize = 0,
         done: bool = false,
-        dir_iterator: ?std.fs.Dir.Iterator = null,
+        dir_iterator: ?std.fs.IterableDir.Iterator = null,
         package_name: String,
         package_installed_node_modules: std.fs.Dir = std.fs.Dir{ .fd = std.math.maxInt(std.os.fd_t) },
         buf: [bun.MAX_PATH_BYTES]u8 = undefined,
@@ -167,7 +167,7 @@ pub const Bin = extern struct {
                 var joined = Path.joinStringBuf(&this.buf, &parts, .auto);
                 this.buf[joined.len] = 0;
                 var joined_: [:0]u8 = this.buf[0..joined.len :0];
-                var child_dir = try dir.openIterableDirZ(joined_, .{  });
+                var child_dir = try bun.openDir(dir, joined_);
                 this.dir_iterator = child_dir.iterate();
             }
 
@@ -419,7 +419,7 @@ pub const Bin = extern struct {
                     var joined = Path.joinStringBuf(&target_buf, &parts, .auto);
                     @intToPtr([*]u8, @ptrToInt(joined.ptr))[joined.len] = 0;
                     var joined_: [:0]const u8 = joined.ptr[0..joined.len :0];
-                    var child_dir = dir.openIterableDirZ(joined_, .{ }) catch |err| {
+                    var child_dir = bun.openDir(dir, joined_) catch |err| {
                         this.err = err;
                         return;
                     };
@@ -427,7 +427,7 @@ pub const Bin = extern struct {
 
                     var iter = child_dir.iterate();
 
-                    var basedir_path = std.os.getFdPath(child_dir.fd, &target_buf) catch |err| {
+                    var basedir_path = std.os.getFdPath(child_dir.dir.fd, &target_buf) catch |err| {
                         this.err = err;
                         return;
                     };
@@ -571,7 +571,7 @@ pub const Bin = extern struct {
                     var joined = Path.joinStringBuf(&target_buf, &parts, .auto);
                     @intToPtr([*]u8, @ptrToInt(joined.ptr))[joined.len] = 0;
                     var joined_: [:0]const u8 = joined.ptr[0..joined.len :0];
-                    var child_dir = dir.openIterableDirZ(joined_, .{ }) catch |err| {
+                    var child_dir = bun.openDir(dir, joined_) catch |err| {
                         this.err = err;
                         return;
                     };
@@ -579,7 +579,7 @@ pub const Bin = extern struct {
 
                     var iter = child_dir.iterate();
 
-                    var basedir_path = std.os.getFdPath(child_dir.fd, &target_buf) catch |err| {
+                    var basedir_path = std.os.getFdPath(child_dir.dir.fd, &target_buf) catch |err| {
                         this.err = err;
                         return;
                     };

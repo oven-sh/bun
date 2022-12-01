@@ -4169,6 +4169,8 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
         }
 
         pub fn onRequestComplete(this: *ThisServer) void {
+            this.vm.eventLoop().processGCTimer();
+
             this.pending_requests -= 1;
             this.deinitIfWeCan();
         }
@@ -4567,7 +4569,14 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
                 this.config.hostname;
 
             this.ref();
-            this.vm.autoGarbageCollect();
+
+            // Starting up an HTTP server is a good time to GC
+            if (this.vm.aggressive_garbage_collection == .aggressive) {
+                this.vm.autoGarbageCollect();
+            } else {
+                this.vm.eventLoop().performGC();
+            }
+
             this.app.listenWithConfig(*ThisServer, this, onListen, .{
                 .port = this.config.port,
                 .host = host,

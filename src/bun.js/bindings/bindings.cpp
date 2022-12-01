@@ -152,7 +152,8 @@ static bool canPerformFastPropertyEnumerationForIterationBun(Structure* s)
     return true;
 }
 
-bool Bun__deepEquals(JSC__JSGlobalObject* globalObject, JSValue v1, JSValue v2, Vector<std::pair<JSC::JSValue, JSC::JSValue>, 16>& stack, ThrowScope* scope, bool addToStack, bool strict)
+template<bool isStrict>
+bool Bun__deepEquals(JSC__JSGlobalObject* globalObject, JSValue v1, JSValue v2, Vector<std::pair<JSC::JSValue, JSC::JSValue>, 16>& stack, ThrowScope* scope, bool addToStack)
 {
     VM& vm = globalObject->vm();
     if (!v1.isEmpty() && !v2.isEmpty() && JSC::sameValue(globalObject, v1, v2)) {
@@ -225,7 +226,7 @@ bool Bun__deepEquals(JSC__JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
                 RETURN_IF_EXCEPTION(*scope, false);
 
                 // set has unique values, no need to count
-                if (Bun__deepEquals(globalObject, nextValue1, nextValue2, stack, scope, false, strict)) {
+                if (Bun__deepEquals<isStrict>(globalObject, nextValue1, nextValue2, stack, scope, false)) {
                     found = true;
                     if (!nextValue1.isPrimitive()) {
                         stack.append({ nextValue1, nextValue2 });
@@ -305,8 +306,8 @@ bool Bun__deepEquals(JSC__JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
                 JSValue value2 = nextValueObject2->getIndex(globalObject, static_cast<unsigned>(1));
                 RETURN_IF_EXCEPTION(*scope, false);
 
-                if (Bun__deepEquals(globalObject, key1, key2, stack, scope, false, strict)) {
-                    if (Bun__deepEquals(globalObject, nextValue1, nextValue2, stack, scope, false, strict)) {
+                if (Bun__deepEquals<isStrict>(globalObject, key1, key2, stack, scope, false)) {
+                    if (Bun__deepEquals<isStrict>(globalObject, nextValue1, nextValue2, stack, scope, false)) {
                         found = true;
                         if (!nextValue1.isPrimitive()) {
                             stack.append({ nextValue1, nextValue2 });
@@ -488,7 +489,7 @@ bool Bun__deepEquals(JSC__JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
                 : o2->tryGetIndexQuickly(i);
             RETURN_IF_EXCEPTION(*scope, false);
 
-            if (strict) {
+            if constexpr (isStrict) {
                 if (left.isEmpty() && right.isEmpty()) {
                     continue;
                 }
@@ -497,11 +498,13 @@ bool Bun__deepEquals(JSC__JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
                 }
             }
 
-            if (!strict && ((left.isEmpty() || right.isEmpty()) && (left.isUndefined() || right.isUndefined()))) {
-                continue;
+            if constexpr (!isStrict) {
+                if (((left.isEmpty() || right.isEmpty()) && (left.isUndefined() || right.isUndefined()))) {
+                    continue;
+                }
             }
 
-            if (!Bun__deepEquals(globalObject, left, right, stack, scope, true, strict)) {
+            if (!Bun__deepEquals<isStrict>(globalObject, left, right, stack, scope, true)) {
                 return false;
             }
 
@@ -514,8 +517,10 @@ bool Bun__deepEquals(JSC__JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
         JSObject::getOwnPropertyNames(o2, globalObject, a2, DontEnumPropertiesMode::Exclude);
 
         size_t propertyLength = a1.size();
-        if (strict && propertyLength != a2.size()) {
-            return false;
+        if constexpr (isStrict) {
+            if (propertyLength != a2.size()) {
+                return false;
+            }
         }
 
         // take a property name from one, try to get it from both
@@ -533,15 +538,17 @@ bool Bun__deepEquals(JSC__JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
             JSValue prop2 = o2->getIfPropertyExists(globalObject, propertyName1);
             RETURN_IF_EXCEPTION(*scope, false);
 
-            if (!strict && prop1.isUndefined() && prop2.isEmpty()) {
-                continue;
+            if constexpr (!isStrict) {
+                if (prop1.isUndefined() && prop2.isEmpty()) {
+                    continue;
+                }
             }
 
             if (!prop2) {
                 return false;
             }
 
-            if (!Bun__deepEquals(globalObject, prop1, prop2, stack, scope, true, strict)) {
+            if (!Bun__deepEquals<isStrict>(globalObject, prop1, prop2, stack, scope, true)) {
                 return false;
             }
 
@@ -557,8 +564,10 @@ bool Bun__deepEquals(JSC__JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
         return true;
     }
 
-    if (strict && !equal(JSObject::calculatedClassName(o1), JSObject::calculatedClassName(o2))) {
-        return false;
+    if constexpr (isStrict) {
+        if (!equal(JSObject::calculatedClassName(o1), JSObject::calculatedClassName(o2))) {
+            return false;
+        }
     }
 
     JSC::Structure* o1Structure = o1->structure();
@@ -569,7 +578,7 @@ bool Bun__deepEquals(JSC__JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
             size_t count1 = 0;
 
             bool result = true;
-            if (strict) {
+            if constexpr (isStrict) {
                 if (o2Structure->inlineSize() + o2Structure->outOfLineSize() != o1Structure->inlineSize() + o1Structure->outOfLineSize()) {
                     return false;
                 }
@@ -584,8 +593,10 @@ bool Bun__deepEquals(JSC__JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
                 JSValue left = o1->getDirect(entry.offset());
                 JSValue right = o2->getDirect(vm, JSC::PropertyName(entry.key()));
 
-                if (!strict && left.isUndefined() && right.isEmpty()) {
-                    return true;
+                if constexpr (!isStrict) {
+                    if (left.isUndefined() && right.isEmpty()) {
+                        return true;
+                    }
                 }
 
                 if (!right) {
@@ -597,7 +608,7 @@ bool Bun__deepEquals(JSC__JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
                     return true;
                 }
 
-                if (!Bun__deepEquals(globalObject, left, right, stack, scope, true, strict)) {
+                if (!Bun__deepEquals<isStrict>(globalObject, left, right, stack, scope, true)) {
                     result = false;
                     return false;
                 }
@@ -612,8 +623,10 @@ bool Bun__deepEquals(JSC__JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
                         return true;
                     }
 
-                    if (!strict && o2->getDirect(entry.offset()).isUndefined()) {
-                        return true;
+                    if constexpr (!isStrict) {
+                        if (o2->getDirect(entry.offset()).isUndefined()) {
+                            return true;
+                        }
                     }
 
                     if (remain == 0) {
@@ -639,9 +652,11 @@ bool Bun__deepEquals(JSC__JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
     o1->getPropertyNames(globalObject, a1, DontEnumPropertiesMode::Exclude);
     o2->getPropertyNames(globalObject, a2, DontEnumPropertiesMode::Exclude);
 
-    size_t propertyArrayLength = a1.size();
-    if (strict && propertyArrayLength != a2.size()) {
-        return false;
+    const size_t propertyArrayLength = a1.size();
+    if constexpr (isStrict) {
+        if (propertyArrayLength != a2.size()) {
+            return false;
+        }
     }
 
     // take a property name from one, try to get it from both
@@ -659,15 +674,17 @@ bool Bun__deepEquals(JSC__JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
         JSValue prop2 = o2->getIfPropertyExists(globalObject, propertyName1);
         RETURN_IF_EXCEPTION(*scope, false);
 
-        if (!strict && prop1.isUndefined() && prop2.isEmpty()) {
-            continue;
+        if constexpr (!isStrict) {
+            if (prop1.isUndefined() && prop2.isEmpty()) {
+                continue;
+            }
         }
 
         if (!prop2) {
             return false;
         }
 
-        if (!Bun__deepEquals(globalObject, prop1, prop2, stack, scope, true, strict)) {
+        if (!Bun__deepEquals<isStrict>(globalObject, prop1, prop2, stack, scope, true)) {
             return false;
         }
 
@@ -1272,7 +1289,7 @@ bool JSC__JSValue__deepEquals(JSC__JSValue JSValue0, JSC__JSValue JSValue1, JSC_
 
     ThrowScope scope = DECLARE_THROW_SCOPE(globalObject->vm());
     Vector<std::pair<JSValue, JSValue>, 16> stack;
-    return Bun__deepEquals(globalObject, v1, v2, stack, &scope, true, false);
+    return Bun__deepEquals<false>(globalObject, v1, v2, stack, &scope, true);
 }
 
 bool JSC__JSValue__strictDeepEquals(JSC__JSValue JSValue0, JSC__JSValue JSValue1, JSC__JSGlobalObject* globalObject)
@@ -1282,7 +1299,7 @@ bool JSC__JSValue__strictDeepEquals(JSC__JSValue JSValue0, JSC__JSValue JSValue1
 
     ThrowScope scope = DECLARE_THROW_SCOPE(globalObject->vm());
     Vector<std::pair<JSValue, JSValue>, 16> stack;
-    return Bun__deepEquals(globalObject, v1, v2, stack, &scope, true, true);
+    return Bun__deepEquals<true>(globalObject, v1, v2, stack, &scope, true);
 }
 
 // This is the same as the C API version, except it returns a JSValue which may be a *Exception

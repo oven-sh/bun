@@ -1803,7 +1803,7 @@ JSC_DEFINE_HOST_FUNCTION(functionBunDeepEquals, (JSGlobalObject * globalObject, 
 
     Vector<std::pair<JSValue, JSValue>, 16> stack;
 
-    bool isEqual = Bun__deepEquals(globalObject, arg1, arg2, stack, &scope, true, false);
+    bool isEqual = Bun__deepEquals<false>(globalObject, arg1, arg2, stack, &scope, true);
     RETURN_IF_EXCEPTION(scope, {});
     return JSValue::encode(jsBoolean(isEqual));
 }
@@ -3607,8 +3607,6 @@ JSC::JSValue GlobalObject::moduleLoaderEvaluate(JSGlobalObject* globalObject,
 
     return result;
 }
-
-
 
 #include "ZigGeneratedClasses+lazyStructureImpl.h"
 

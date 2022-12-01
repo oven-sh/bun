@@ -3432,3 +3432,20 @@ restart:
         return;
     }
 }
+
+extern "C" size_t JSC__VM__blockBytesAllocated(JSC__VM* vm)
+{
+#if ENABLE(RESOURCE_USAGE)
+    return vm->heap.blockBytesAllocated();
+#else
+    return 0;
+#endif
+}
+extern "C" size_t JSC__VM__externalMemorySize(JSC__VM* vm)
+{
+#if ENABLE(RESOURCE_USAGE)
+    return vm->heap.externalMemorySize();
+#else
+    return 0;
+#endif
+}

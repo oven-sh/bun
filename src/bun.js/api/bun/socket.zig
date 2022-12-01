@@ -409,6 +409,7 @@ pub const Listener = struct {
             ctx_opts.ssl_prefer_low_memory_usage = @boolToInt(ssl_config.low_memory_mode);
         }
 
+        globalObject.bunVM().eventLoop().ensureWaker();
         socket.socket_context = uws.us_create_socket_context(@boolToInt(ssl_enabled), uws.Loop.get().?, @sizeOf(usize), ctx_opts);
 
         if (ssl) |ssl_config| {
@@ -660,6 +661,8 @@ pub const Listener = struct {
                 ctx_opts.passphrase = ssl_config.passphrase;
             ctx_opts.ssl_prefer_low_memory_usage = @boolToInt(ssl_config.low_memory_mode);
         }
+
+        globalObject.bunVM().eventLoop().ensureWaker();
 
         var socket_context = uws.us_create_socket_context(@boolToInt(ssl_enabled), uws.Loop.get().?, @sizeOf(usize), ctx_opts).?;
         var connection: Listener.UnixOrHost = if (port) |port_| .{

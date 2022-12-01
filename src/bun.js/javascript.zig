@@ -1333,6 +1333,7 @@ pub const VirtualMachine = struct {
 
         // pending_internal_promise can change if hot module reloading is enabled
         if (this.bun_watcher != null) {
+            this.eventLoop().performGC();
             switch (this.pending_internal_promise.status(this.global.vm())) {
                 JSC.JSPromise.Status.Pending => {
                     while (this.pending_internal_promise.status(this.global.vm()) == .Pending) {
@@ -1346,6 +1347,7 @@ pub const VirtualMachine = struct {
                 else => {},
             }
         } else {
+            this.eventLoop().performGC();
             this.waitForPromise(promise);
         }
 

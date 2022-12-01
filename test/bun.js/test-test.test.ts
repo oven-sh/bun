@@ -2,6 +2,12 @@ import { expect, test } from "bun:test";
 import { OnigurumaRegExp } from "bun";
 
 test("toStrictEqual() vs toEqual()", () => {
+  expect([1, , 3]).toEqual([1, , 3]);
+  expect({}).toEqual({});
+  expect({}).toStrictEqual({});
+  expect({}).toEqual({ a: undefined });
+  expect({}).not.toStrictEqual({ a: undefined });
+
   class C {
     hi = 34;
   }

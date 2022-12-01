@@ -476,12 +476,16 @@ bool Bun__deepEquals(JSC__JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
             return false;
         }
 
-        for (size_t i = 0; i < length; i++) {
-            // handles holes in array
-            JSValue left = o1->tryGetIndexQuickly(static_cast<uint64_t>(i));
+        for (uint64_t i = 0; i < length; i++) {
+            // array holes come back as empty values with tryGetIndexQuickly()
+            JSValue left = o1->canGetIndexQuickly(i)
+                ? o1->getIndexQuickly(i)
+                : o1->tryGetIndexQuickly(i);
             RETURN_IF_EXCEPTION(*scope, false);
 
-            JSValue right = o2->tryGetIndexQuickly(static_cast<uint64_t>(i));
+            JSValue right = o2->canGetIndexQuickly(i)
+                ? o2->getIndexQuickly(i)
+                : o2->tryGetIndexQuickly(i);
             RETURN_IF_EXCEPTION(*scope, false);
 
             if (strict) {

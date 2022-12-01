@@ -365,7 +365,8 @@ pub const EventLoop = struct {
 
         switch (this.gc_timer_state) {
             .run_on_next_tick => {
-                if (this_heap_size > prev) {
+                // When memory usage is not stable, run the GC more.
+                if (this_heap_size != prev) {
                     this.scheduleGCTimer();
                     this.updateGCRepeatTimer(.fast);
                 } else {
@@ -375,7 +376,7 @@ pub const EventLoop = struct {
                 this.gc_last_heap_size = this_heap_size;
             },
             .pending => {
-                if (this_heap_size > prev) {
+                if (this_heap_size != prev) {
                     this.updateGCRepeatTimer(.fast);
 
                     if (this_heap_size > prev * 2) {

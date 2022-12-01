@@ -1,7 +1,7 @@
 // @ts-ignore
 import { OnigurumaRegExp } from "bun";
 import { expect, it, test } from "bun:test";
-import { gc as gcTrace } from "./gc";
+import { gc as gcTrace, withoutAggressiveGC } from "./gc";
 
 it("character property scripts", () => {
   // oniguruma does not support \p{Script=<script value>}
@@ -50,33 +50,39 @@ it("character property scripts", () => {
 });
 
 it("repeated match and exec calls", () => {
-  for (let i = 0; i < 20000; i++) {
-    let r1 = new OnigurumaRegExp("//.+?/[^?]+", "sg");
-    let r2 = new RegExp("//.+?/[^?]+", "sg");
-    let s1 = "https://dylan-conway.com/profile";
-    expect(s1.match(r1)![0] === s1.match(r2)![0]).toBe(true);
-    expect(r1.exec(s1)![0] === r2.exec(s1)![0]).toBe(true);
-  }
+  withoutAggressiveGC(() => {
+    for (let i = 0; i < 20000; i++) {
+      let r1 = new OnigurumaRegExp("//.+?/[^?]+", "sg");
+      let r2 = new RegExp("//.+?/[^?]+", "sg");
+      let s1 = "https://dylan-conway.com/profile";
+      expect(s1.match(r1)![0] === s1.match(r2)![0]).toBe(true);
+      expect(r1.exec(s1)![0] === r2.exec(s1)![0]).toBe(true);
+    }
+  });
 });
 
 it("repeated match and exec calls no global flag", () => {
-  for (let i = 0; i < 20000; i++) {
-    let r1 = new OnigurumaRegExp("//.+?/[^?]+", "s");
-    let r2 = new RegExp("//.+?/[^?]+", "s");
-    let s1 = "https://dylan-conway.com/profile";
-    expect(r1.exec(s1)![0] === r2.exec(s1)![0]).toBe(true);
-    expect(s1.match(r1)![0] === s1.match(r2)![0]).toBe(true);
-  }
+  withoutAggressiveGC(() => {
+    for (let i = 0; i < 20000; i++) {
+      let r1 = new OnigurumaRegExp("//.+?/[^?]+", "s");
+      let r2 = new RegExp("//.+?/[^?]+", "s");
+      let s1 = "https://dylan-conway.com/profile";
+      expect(r1.exec(s1)![0] === r2.exec(s1)![0]).toBe(true);
+      expect(s1.match(r1)![0] === s1.match(r2)![0]).toBe(true);
+    }
+  });
 });
 
 const rb1 = new OnigurumaRegExp("//.+?/[^?]+", "s");
 const rb2 = new RegExp("//.+?/[^?]+", "s");
 it("repeated match calls with global regex without global flag", () => {
-  for (let i = 0; i < 20000; i++) {
-    let s1 = "https://dylan-conway.com/profile";
-    expect(rb1.exec(s1)![0] === rb2.exec(s1)![0]).toBe(true);
-    expect(s1.match(rb1)![0] === s1.match(rb2)![0]).toBe(true);
-  }
+  withoutAggressiveGC(() => {
+    for (let i = 0; i < 20000; i++) {
+      let s1 = "https://dylan-conway.com/profile";
+      expect(rb1.exec(s1)![0] === rb2.exec(s1)![0]).toBe(true);
+      expect(s1.match(rb1)![0] === s1.match(rb2)![0]).toBe(true);
+    }
+  });
 });
 
 it("escaped characters in character classes", () => {

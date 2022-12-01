@@ -3436,7 +3436,7 @@ restart:
 extern "C" size_t JSC__VM__blockBytesAllocated(JSC__VM* vm)
 {
 #if ENABLE(RESOURCE_USAGE)
-    return vm->heap.blockBytesAllocated();
+    return vm->heap.blockBytesAllocated() + vm->heap.extraMemorySize();
 #else
     return 0;
 #endif

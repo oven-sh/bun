@@ -4795,7 +4795,7 @@ Heap snapshots let you inspect what objects are not being freed. You can use the
 To generate a heap snapshot:
 
 ```ts
-import { generateHeapSnapshot } from "bun:jsc";
+import { generateHeapSnapshot } from "bun";
 
 const snapshot = generateHeapSnapshot();
 await Bun.write("heap.json", JSON.stringify(snapshot, null, 2));

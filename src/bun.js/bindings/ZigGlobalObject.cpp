@@ -2490,12 +2490,18 @@ void GlobalObject::finishCreation(VM& vm)
             init.set(map);
         });
 
-    m_encodeIntoObjectPrototype.initLater(
-        [](const JSC::LazyProperty<JSC::JSGlobalObject, JSC::JSObject>::Initializer& init) {
-            JSC::JSObject* object = JSC::constructEmptyObject(init.owner, init.owner->objectPrototype(), 2);
-            object->putDirect(init.vm, JSC::Identifier::fromString(init.vm, "read"_s), JSC::jsNumber(0), 0);
-            object->putDirect(init.vm, JSC::Identifier::fromString(init.vm, "written"_s), JSC::jsNumber(0), 0);
-            init.set(object);
+    m_encodeIntoObjectStructure.initLater(
+        [](const JSC::LazyProperty<JSC::JSGlobalObject, JSC::Structure>::Initializer& init) {
+            auto& vm = init.vm;
+            auto& globalObject = *init.owner;
+            Structure* structure = globalObject.structureCache().emptyObjectStructureForPrototype(&globalObject, globalObject.objectPrototype(), 2);
+            PropertyOffset offset;
+            auto clientData = WebCore::clientData(vm);
+            structure = Structure::addPropertyTransition(vm, structure, clientData->builtinNames().readPublicName(), 0, offset);
+            RELEASE_ASSERT(offset == 0);
+            structure = Structure::addPropertyTransition(vm, structure, clientData->builtinNames().writtenPublicName(), 0, offset);
+            RELEASE_ASSERT(offset == 1);
+            init.set(structure);
         });
 
     m_JSFileSinkClassStructure.initLater(
@@ -3337,7 +3343,7 @@ void GlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     thisObject->m_performMicrotaskVariadicFunction.visit(visitor);
     thisObject->m_lazyReadableStreamPrototypeMap.visit(visitor);
     thisObject->m_requireMap.visit(visitor);
-    thisObject->m_encodeIntoObjectPrototype.visit(visitor);
+    thisObject->m_encodeIntoObjectStructure.visit(visitor);
     thisObject->m_JSArrayBufferControllerPrototype.visit(visitor);
     thisObject->m_JSFileSinkControllerPrototype.visit(visitor);
     thisObject->m_JSHTTPSResponseControllerPrototype.visit(visitor);
@@ -3607,8 +3613,6 @@ JSC::JSValue GlobalObject::moduleLoaderEvaluate(JSGlobalObject* globalObject,
 
     return result;
 }
-
-
 
 #include "ZigGeneratedClasses+lazyStructureImpl.h"
 

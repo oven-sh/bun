@@ -1703,9 +1703,6 @@ pub const Blob = struct {
 
     pub fn findOrCreateFileFromPath(path_: JSC.Node.PathOrFileDescriptor, globalThis: *JSGlobalObject) Blob {
         var vm = globalThis.bunVM();
-        if (vm.getFileBlob(path_)) |blob| {
-            blob.ref();
-            return Blob.initWithStore(blob, globalThis);
         }
 
         var allocator = globalThis.bunVM().allocator;
@@ -1743,9 +1740,7 @@ pub const Blob = struct {
             }
         };
 
-        const result = Blob.initWithStore(Blob.Store.initFile(path, null, allocator) catch unreachable, globalThis);
-        vm.putFileBlob(path, result.store.?) catch unreachable;
-        return result;
+        return Blob.initWithStore(Blob.Store.initFile(path, null, allocator) catch unreachable, globalThis);
     }
 
     pub const Store = struct {

@@ -764,21 +764,6 @@ pub const VirtualMachine = struct {
         _ = VirtualMachine.vm.ref_strings.remove(ref_string.hash);
     }
 
-    pub fn getFileBlob(this: *VirtualMachine, pathlike: JSC.Node.PathOrFileDescriptor) ?*JSC.WebCore.Blob.Store {
-        const hash = pathlike.hash();
-        return this.file_blobs.get(hash);
-    }
-
-    pub fn putFileBlob(this: *VirtualMachine, pathlike: JSC.Node.PathOrFileDescriptor, store: *JSC.WebCore.Blob.Store) !void {
-        const hash = pathlike.hash();
-        try this.file_blobs.put(hash, store);
-    }
-
-    pub fn removeFileBlob(this: *VirtualMachine, pathlike: JSC.Node.PathOrFileDescriptor) void {
-        const hash = pathlike.hash();
-        _ = this.file_blobs.remove(hash);
-    }
-
     pub fn refCountedResolvedSource(this: *VirtualMachine, code: []const u8, specifier: []const u8, source_url: []const u8, hash_: ?u32) ResolvedSource {
         var source = this.refCountedString(code, hash_, true);
 

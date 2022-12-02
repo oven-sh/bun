@@ -2,9 +2,12 @@ import { it, test, expect } from "bun:test";
 import { spawn } from "bun";
 import { bunExe } from "./bunExe";
 import { gcTick } from "gc";
+import { closeSync, openSync } from "fs";
 
 test("spawn can read from stdout multiple chunks", async () => {
   gcTick(true);
+  const maxFD = openSync("/dev/null", "w");
+  closeSync(maxFD);
 
   for (let i = 0; i < 10; i++)
     await (async function () {
@@ -33,4 +36,8 @@ test("spawn can read from stdout multiple chunks", async () => {
       expect(counter).toBe(4);
       await exited;
     })();
+
+  const newMaxFD = openSync("/dev/null", "w");
+  closeSync(newMaxFD);
+  expect(newMaxFD).toBe(maxFD);
 });

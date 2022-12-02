@@ -1729,3 +1729,230 @@ test("toBeGreaterThanOrEqual()", () => {
 
   expect(1).not.toBeGreaterThanOrEqual(BigInt(Number.MAX_VALUE));
 });
+
+test("toBeLessThan()", () => {
+  expect(3n).not.toBeLessThan(2);
+  expect(Number.MAX_VALUE).not.toBeLessThan(Number.MAX_VALUE);
+  expect(1).toBeLessThan(BigInt(Number.MAX_VALUE));
+  expect(1).toBeLessThan(Number.MAX_SAFE_INTEGER);
+  expect(1).toBeLessThan(BigInt(Number.MAX_SAFE_INTEGER));
+  expect(Number.MAX_SAFE_INTEGER).not.toBeLessThan(Number.MAX_SAFE_INTEGER);
+  expect(BigInt(Number.MAX_SAFE_INTEGER)).not.toBeLessThan(
+    BigInt(Number.MAX_SAFE_INTEGER),
+  );
+
+  expect(Number.MAX_VALUE).not.toBeLessThan(BigInt(Number.MAX_VALUE));
+
+  expect(NaN).not.toBeLessThan(NaN);
+  expect(NaN).not.toBeLessThan(-Infinity);
+
+  expect(10).not.toBeLessThan(9);
+  expect(10).not.toBeLessThan(10);
+  expect(10).toBeLessThan(11);
+  expect(10).toBeLessThan(Infinity);
+  expect(10).not.toBeLessThan(-Infinity);
+  expect(10).not.toBeLessThan(NaN);
+  expect(10).not.toBeLessThan(0);
+  expect(10).not.toBeLessThan(-0);
+  expect(10).not.toBeLessThan(0.1);
+  expect(10).not.toBeLessThan(-0.1);
+  expect(10).not.toBeLessThan(0.9);
+  expect(10).not.toBeLessThan(-0.9);
+  expect(10).not.toBeLessThan(1);
+  expect(10).not.toBeLessThan(-1);
+  // switch the order
+  expect(9).toBeLessThan(10);
+  expect(10).not.toBeLessThan(10);
+  expect(11).not.toBeLessThan(10);
+  expect(Infinity).not.toBeLessThan(10);
+  expect(-Infinity).toBeLessThan(10);
+  expect(NaN).not.toBeLessThan(10);
+  expect(0).toBeLessThan(10);
+  expect(-0).toBeLessThan(10);
+  expect(0.1).toBeLessThan(10);
+  expect(-0.1).toBeLessThan(10);
+  expect(0.9).toBeLessThan(10);
+  expect(-0.9).toBeLessThan(10);
+  expect(1).toBeLessThan(10);
+  expect(-1).toBeLessThan(10);
+
+  // same tests but use bigints
+  expect(10n).not.toBeLessThan(9n);
+  expect(10n).not.toBeLessThan(10n);
+  expect(10n).toBeLessThan(11n);
+  expect(10n).toBeLessThan(Infinity);
+  expect(10n).not.toBeLessThan(-Infinity);
+  expect(10n).not.toBeLessThan(NaN);
+  expect(10n).not.toBeLessThan(0n);
+  expect(10n).not.toBeLessThan(-0n);
+  expect(10n).not.toBeLessThan(1n);
+  expect(10n).not.toBeLessThan(-1n);
+  // switch the order
+  expect(9n).toBeLessThan(10n);
+  expect(10n).not.toBeLessThan(10n);
+  expect(11n).not.toBeLessThan(10n);
+  expect(Infinity).not.toBeLessThan(10n);
+  expect(-Infinity).toBeLessThan(10n);
+  expect(NaN).not.toBeLessThan(10n);
+  expect(0n).toBeLessThan(10n);
+  expect(-0n).toBeLessThan(10n);
+  expect(1n).toBeLessThan(10n);
+  expect(-1n).toBeLessThan(10n);
+
+  // use bigints and numbers
+  expect(10n).not.toBeLessThan(9);
+  expect(10n).not.toBeLessThan(10);
+  expect(10n).toBeLessThan(11);
+  expect(10n).toBeLessThan(Infinity);
+  expect(10n).not.toBeLessThan(-Infinity);
+  expect(10n).not.toBeLessThan(NaN);
+  expect(10n).not.toBeLessThan(0);
+  expect(10n).not.toBeLessThan(-0);
+  expect(10n).not.toBeLessThan(0.1);
+  expect(10n).not.toBeLessThan(-0.1);
+  expect(10n).not.toBeLessThan(0.9);
+  expect(10n).not.toBeLessThan(-0.9);
+  expect(10n).not.toBeLessThan(1);
+  expect(10n).not.toBeLessThan(-1);
+  // switch the order
+  expect(9n).toBeLessThan(10);
+  expect(10n).not.toBeLessThan(10);
+  expect(11n).not.toBeLessThan(10);
+  expect(Infinity).not.toBeLessThan(10n);
+  expect(-Infinity).toBeLessThan(10n);
+  expect(NaN).not.toBeLessThan(10n);
+  expect(0n).toBeLessThan(10);
+  expect(-0n).toBeLessThan(10);
+  expect(1n).toBeLessThan(10);
+  expect(-1n).toBeLessThan(10);
+
+  expect(1n).not.toBeLessThan(1);
+  expect(1n).toBeLessThan(Number.MAX_SAFE_INTEGER);
+  expect(1n).toBeLessThan(Number.MAX_VALUE);
+  expect(1).not.toBeLessThan(1n);
+  expect(Number.MAX_SAFE_INTEGER).not.toBeLessThan(1n);
+  expect(Number.MAX_VALUE).not.toBeLessThan(1n);
+
+  expect(BigInt(Number.MAX_SAFE_INTEGER)).not.toBeLessThan(1n);
+  expect(BigInt(Number.MAX_VALUE)).not.toBeLessThan(1n);
+  expect(1n).toBeLessThan(BigInt(Number.MAX_SAFE_INTEGER));
+  expect(1n).toBeLessThan(BigInt(Number.MAX_VALUE));
+
+  expect(BigInt(Number.MAX_SAFE_INTEGER)).not.toBeLessThan(1);
+  expect(BigInt(Number.MAX_VALUE)).not.toBeLessThan(1);
+  expect(1).toBeLessThan(BigInt(Number.MAX_SAFE_INTEGER));
+});
+
+test("toBeLessThanOrEqual()", () => {
+  expect(3n).not.toBeLessThanOrEqual(2);
+  expect(Number.MAX_VALUE).toBeLessThanOrEqual(Number.MAX_VALUE);
+  expect(1).toBeLessThanOrEqual(BigInt(Number.MAX_VALUE));
+  expect(1).toBeLessThanOrEqual(Number.MAX_SAFE_INTEGER);
+  expect(1).toBeLessThanOrEqual(BigInt(Number.MAX_SAFE_INTEGER));
+  expect(Number.MAX_SAFE_INTEGER).toBeLessThanOrEqual(Number.MAX_SAFE_INTEGER);
+  expect(BigInt(Number.MAX_SAFE_INTEGER)).toBeLessThanOrEqual(
+    BigInt(Number.MAX_SAFE_INTEGER),
+  );
+
+  expect(Number.MAX_VALUE).toBeLessThanOrEqual(BigInt(Number.MAX_VALUE));
+  expect(BigInt(Number.MAX_VALUE)).toBeLessThanOrEqual(Number.MAX_VALUE);
+
+  expect(NaN).not.toBeLessThanOrEqual(NaN);
+  expect(NaN).not.toBeLessThanOrEqual(-Infinity);
+
+  expect(10).not.toBeLessThanOrEqual(9);
+  expect(10).toBeLessThanOrEqual(10);
+  expect(10).toBeLessThanOrEqual(11);
+  expect(10).toBeLessThanOrEqual(Infinity);
+  expect(10).not.toBeLessThanOrEqual(-Infinity);
+  expect(10).not.toBeLessThanOrEqual(NaN);
+  expect(10).not.toBeLessThanOrEqual(0);
+  expect(10).not.toBeLessThanOrEqual(-0);
+  expect(10).not.toBeLessThanOrEqual(0.1);
+  expect(10).not.toBeLessThanOrEqual(-0.1);
+  expect(10).not.toBeLessThanOrEqual(0.9);
+  expect(10).not.toBeLessThanOrEqual(-0.9);
+  expect(10).not.toBeLessThanOrEqual(1);
+  expect(10).not.toBeLessThanOrEqual(-1);
+  // switch the order
+  expect(9).toBeLessThanOrEqual(10);
+  expect(10).toBeLessThanOrEqual(10);
+  expect(11).not.toBeLessThanOrEqual(10);
+  expect(Infinity).not.toBeLessThanOrEqual(10);
+  expect(-Infinity).toBeLessThanOrEqual(10);
+  expect(NaN).not.toBeLessThanOrEqual(10);
+  expect(0).toBeLessThanOrEqual(10);
+  expect(-0).toBeLessThanOrEqual(10);
+  expect(0.1).toBeLessThanOrEqual(10);
+  expect(-0.1).toBeLessThanOrEqual(10);
+  expect(0.9).toBeLessThanOrEqual(10);
+  expect(-0.9).toBeLessThanOrEqual(10);
+  expect(1).toBeLessThanOrEqual(10);
+  expect(-1).toBeLessThanOrEqual(10);
+
+  // same tests but use bigints
+  expect(10n).not.toBeLessThanOrEqual(9n);
+  expect(10n).toBeLessThanOrEqual(10n);
+  expect(10n).toBeLessThanOrEqual(11n);
+  expect(10n).toBeLessThanOrEqual(Infinity);
+  expect(10n).not.toBeLessThanOrEqual(-Infinity);
+  expect(10n).not.toBeLessThanOrEqual(NaN);
+  expect(10n).not.toBeLessThanOrEqual(0n);
+  expect(10n).not.toBeLessThanOrEqual(-0n);
+  expect(10n).not.toBeLessThanOrEqual(1n);
+  expect(10n).not.toBeLessThanOrEqual(-1n);
+  // switch the order
+  expect(9n).toBeLessThanOrEqual(10n);
+  expect(10n).toBeLessThanOrEqual(10n);
+  expect(11n).not.toBeLessThanOrEqual(10n);
+  expect(Infinity).not.toBeLessThanOrEqual(10n);
+  expect(-Infinity).toBeLessThanOrEqual(10n);
+  expect(NaN).not.toBeLessThanOrEqual(10n);
+  expect(0n).toBeLessThanOrEqual(10n);
+  expect(-0n).toBeLessThanOrEqual(10n);
+  expect(1n).toBeLessThanOrEqual(10n);
+  expect(-1n).toBeLessThanOrEqual(10n);
+
+  // use bigints and numbers
+  expect(10n).not.toBeLessThanOrEqual(9);
+  expect(10n).toBeLessThanOrEqual(10);
+  expect(10n).toBeLessThanOrEqual(11);
+  expect(10n).toBeLessThanOrEqual(Infinity);
+  expect(10n).not.toBeLessThanOrEqual(-Infinity);
+  expect(10n).not.toBeLessThanOrEqual(NaN);
+  expect(10n).not.toBeLessThanOrEqual(0);
+  expect(10n).not.toBeLessThanOrEqual(-0);
+  expect(10n).not.toBeLessThanOrEqual(0.1);
+  expect(10n).not.toBeLessThanOrEqual(-0.1);
+  expect(10n).not.toBeLessThanOrEqual(0.9);
+  expect(10n).not.toBeLessThanOrEqual(-0.9);
+  expect(10n).not.toBeLessThanOrEqual(1);
+  expect(10n).not.toBeLessThanOrEqual(-1);
+  // switch the order
+  expect(9n).toBeLessThanOrEqual(10);
+  expect(10n).toBeLessThanOrEqual(10);
+  expect(11n).not.toBeLessThanOrEqual(10);
+  expect(Infinity).not.toBeLessThanOrEqual(10n);
+  expect(-Infinity).toBeLessThanOrEqual(10n);
+  expect(NaN).not.toBeLessThanOrEqual(10n);
+  expect(0n).toBeLessThanOrEqual(10);
+  expect(-0n).toBeLessThanOrEqual(10);
+  expect(1n).toBeLessThanOrEqual(10);
+  expect(-1n).toBeLessThanOrEqual(10);
+
+  expect(1n).toBeLessThanOrEqual(1);
+  expect(1n).toBeLessThanOrEqual(Number.MAX_SAFE_INTEGER);
+  expect(1n).toBeLessThanOrEqual(Number.MAX_VALUE);
+  expect(1).toBeLessThanOrEqual(1n);
+  expect(Number.MAX_SAFE_INTEGER).not.toBeLessThanOrEqual(1n);
+  expect(Number.MAX_VALUE).not.toBeLessThanOrEqual(1n);
+
+  expect(BigInt(Number.MAX_SAFE_INTEGER)).not.toBeLessThanOrEqual(1n);
+  expect(BigInt(Number.MAX_VALUE)).not.toBeLessThanOrEqual(1n);
+  expect(1n).toBeLessThanOrEqual(BigInt(Number.MAX_SAFE_INTEGER));
+  expect(1n).toBeLessThanOrEqual(BigInt(Number.MAX_VALUE));
+
+  expect(BigInt(Number.MAX_SAFE_INTEGER)).not.toBeLessThanOrEqual(1);
+  expect(BigInt(Number.MAX_VALUE)).not.toBeLessThanOrEqual(1);
+  expect(1).toBeLessThanOrEqual(BigInt(Number.MAX_SAFE_INTEGER));
+});

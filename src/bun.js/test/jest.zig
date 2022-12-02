@@ -899,12 +899,12 @@ pub const Expect = struct {
         const arguments: []const JSValue = _arguments.ptr[0.._arguments.len];
 
         if (arguments.len < 1) {
-            globalObject.throwInvalidArguments("toBeGreaterThan() requires 1 argument", .{});
+            globalObject.throwInvalidArguments("toBeGreaterThanOrEqual() requires 1 argument", .{});
             return .zero;
         }
 
         if (this.scope.tests.items.len <= this.test_id) {
-            globalObject.throw("toBeGreaterThan() must be called in a test", .{});
+            globalObject.throw("toBeGreaterThanOrEqual() must be called in a test", .{});
             return .zero;
         }
 
@@ -947,9 +947,135 @@ pub const Expect = struct {
         // handle failure
         var fmt = JSC.ZigConsoleClient.Formatter{ .globalThis = globalObject };
         if (not) {
-            globalObject.throw("Expected {any} to not be greater than {any}", .{ value.toFmt(globalObject, &fmt), lesser_value.toFmt(globalObject, &fmt) });
+            globalObject.throw("Expected {any} to not be greater than or equal to {any}", .{ value.toFmt(globalObject, &fmt), lesser_value.toFmt(globalObject, &fmt) });
         } else {
-            globalObject.throw("Expected {any} to be greater than {any}", .{ value.toFmt(globalObject, &fmt), lesser_value.toFmt(globalObject, &fmt) });
+            globalObject.throw("Expected {any} to be greater than or equal to {any}", .{ value.toFmt(globalObject, &fmt), lesser_value.toFmt(globalObject, &fmt) });
+        }
+        return .zero;
+    }
+
+    pub fn toBeLessThan(this: *Expect, globalObject: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) callconv(.C) JSValue {
+        defer this.postMatch(globalObject);
+
+        const thisValue = callFrame.this();
+        const _arguments = callFrame.arguments(1);
+        const arguments: []const JSValue = _arguments.ptr[0.._arguments.len];
+
+        if (arguments.len < 1) {
+            globalObject.throwInvalidArguments("toBeLessThan() requires 1 argument", .{});
+            return .zero;
+        }
+
+        if (this.scope.tests.items.len <= this.test_id) {
+            globalObject.throw("toBeLessThan() must be called in a test", .{});
+            return .zero;
+        }
+
+        active_test_expectation_counter.actual += 1;
+
+        const lesser_value = arguments[0];
+        lesser_value.ensureStillAlive();
+
+        const value = Expect.capturedValueGetCached(thisValue) orelse {
+            globalObject.throw("Internal consistency error: thie expect(value) was garbage collected but it should not have been!", .{});
+            return .zero;
+        };
+        value.ensureStillAlive();
+
+        if ((!value.isNumber() and !value.isBigInt()) or (!lesser_value.isNumber() and !lesser_value.isBigInt())) {
+            globalObject.throw("Expected and actual values must be numbers or bigints", .{});
+            return .zero;
+        }
+
+        const not = this.op.contains(.not);
+        var pass = false;
+
+        if (!value.isBigInt() and !lesser_value.isBigInt()) {
+            pass = value.asNumber() < lesser_value.asNumber();
+        } else if (value.isBigInt()) {
+            switch (value.asBigIntCompare(globalObject, lesser_value)) {
+                .less_than => pass = true,
+                else => {},
+            }
+        } else {
+            switch (lesser_value.asBigIntCompare(globalObject, value)) {
+                .greater_than => pass = true,
+                else => {},
+            }
+        }
+
+        if (not) pass = !pass;
+        if (pass) return thisValue;
+
+        // handle failure
+        var fmt = JSC.ZigConsoleClient.Formatter{ .globalThis = globalObject };
+        if (not) {
+            globalObject.throw("Expected {any} to not be less than {any}", .{ value.toFmt(globalObject, &fmt), lesser_value.toFmt(globalObject, &fmt) });
+        } else {
+            globalObject.throw("Expected {any} to be less than {any}", .{ value.toFmt(globalObject, &fmt), lesser_value.toFmt(globalObject, &fmt) });
+        }
+        return .zero;
+    }
+
+    pub fn toBeLessThanOrEqual(this: *Expect, globalObject: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) callconv(.C) JSValue {
+        defer this.postMatch(globalObject);
+
+        const thisValue = callFrame.this();
+        const _arguments = callFrame.arguments(1);
+        const arguments: []const JSValue = _arguments.ptr[0.._arguments.len];
+
+        if (arguments.len < 1) {
+            globalObject.throwInvalidArguments("toBeLessThanOrEqual() requires 1 argument", .{});
+            return .zero;
+        }
+
+        if (this.scope.tests.items.len <= this.test_id) {
+            globalObject.throw("toBeLessThanOrEqual() must be called in a test", .{});
+            return .zero;
+        }
+
+        active_test_expectation_counter.actual += 1;
+
+        const lesser_value = arguments[0];
+        lesser_value.ensureStillAlive();
+
+        const value = Expect.capturedValueGetCached(thisValue) orelse {
+            globalObject.throw("Internal consistency error: thie expect(value) was garbage collected but it should not have been!", .{});
+            return .zero;
+        };
+        value.ensureStillAlive();
+
+        if ((!value.isNumber() and !value.isBigInt()) or (!lesser_value.isNumber() and !lesser_value.isBigInt())) {
+            globalObject.throw("Expected and actual values must be numbers or bigints", .{});
+            return .zero;
+        }
+
+        const not = this.op.contains(.not);
+        var pass = false;
+
+        if (!value.isBigInt() and !lesser_value.isBigInt()) {
+            pass = value.asNumber() <= lesser_value.asNumber();
+        } else if (value.isBigInt()) {
+            switch (value.asBigIntCompare(globalObject, lesser_value)) {
+                .less_than, .equal => pass = true,
+                else => {},
+            }
+        } else {
+            switch (lesser_value.asBigIntCompare(globalObject, value)) {
+                .greater_than, .equal => pass = true,
+                else => {},
+            }
+        }
+
+        if (not) pass = !pass;
+        if (pass) return thisValue;
+
+        // handle failure
+        var fmt = JSC.ZigConsoleClient.Formatter{ .globalThis = globalObject };
+        if (not) {
+            globalObject.throw("Expected {any} to not be less than or equal to {any}", .{ value.toFmt(globalObject, &fmt), lesser_value.toFmt(globalObject, &fmt) });
+        } else {
+            globalObject.throw("Expected {any} to be less than or equal to {any}", .{ value.toFmt(globalObject, &fmt), lesser_value.toFmt(globalObject, &fmt) });
         }
         return .zero;
     }
@@ -963,8 +1089,6 @@ pub const Expect = struct {
     pub const toHaveLastReturnedWith = notImplementedJSCFn;
     pub const toHaveNthReturnedWith = notImplementedJSCFn;
     pub const toBeCloseTo = notImplementedJSCFn;
-    pub const toBeLessThan = notImplementedJSCFn;
-    pub const toBeLessThanOrEqual = notImplementedJSCFn;
     pub const toBeInstanceOf = notImplementedJSCFn;
     pub const toContainEqual = notImplementedJSCFn;
     pub const toMatch = notImplementedJSCFn;

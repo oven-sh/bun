@@ -60,6 +60,48 @@ describe("fetch", () => {
       expect(exampleFixture).toBe(text);
     });
   }
+
+  it(`"redirect: "manual"`, async () => {
+    const server = Bun.serve({
+      port: 4082,
+      fetch(req) {
+        return new Response(null, {
+          status: 302,
+          headers: {
+            Location: "https://example.com",
+          },
+        });
+      },
+    });
+    const response = await fetch(`http://${server.hostname}:${server.port}`, {
+      redirect: "manual",
+    });
+    expect(response.status).toBe(302);
+    expect(response.headers.get("location")).toBe("https://example.com");
+    expect(response.redirected).toBe(true);
+    server.stop();
+  });
+
+  it(`"redirect: "follow"`, async () => {
+    const server = Bun.serve({
+      port: 4083,
+      fetch(req) {
+        return new Response(null, {
+          status: 302,
+          headers: {
+            Location: "https://example.com",
+          },
+        });
+      },
+    });
+    const response = await fetch(`http://${server.hostname}:${server.port}`, {
+      redirect: "follow",
+    });
+    expect(response.status).toBe(200);
+    expect(response.headers.get("location")).toBe(null);
+    expect(response.redirected).toBe(true);
+    server.stop();
+  });
 });
 
 it("simultaneous HTTPS fetch", async () => {

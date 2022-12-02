@@ -732,6 +732,11 @@ pub const Fetch = struct {
                     fetch_tasklet,
                 ),
             );
+
+            if (!fetch_options.follow_redirects) {
+                fetch_tasklet.http.?.client.remaining_redirect_count = 0;
+            }
+
             fetch_tasklet.http.?.client.disable_timeout = fetch_options.disable_timeout;
             fetch_tasklet.http.?.client.verbose = fetch_options.verbose;
             fetch_tasklet.http.?.client.disable_keepalive = fetch_options.disable_keepalive;
@@ -747,6 +752,7 @@ pub const Fetch = struct {
             disable_keepalive: bool,
             url: ZigURL,
             verbose: bool = false,
+            follow_redirects: bool = true,
         };
 
         pub fn queue(
@@ -807,6 +813,7 @@ pub const Fetch = struct {
         var disable_timeout = false;
         var disable_keepalive = false;
         var verbose = false;
+        var follow_redirects = true;
         if (first_arg.as(Request)) |request| {
             url = ZigURL.parse(getAllocator(ctx).dupe(u8, request.url) catch unreachable);
             method = request.method;
@@ -865,6 +872,12 @@ pub const Fetch = struct {
                         }
                     }
 
+                    if (options.get(ctx, "redirect")) |redirect_value| {
+                        if (redirect_value.getZigString(globalThis).eqlComptime("manual")) {
+                            follow_redirects = false;
+                        }
+                    }
+
                     if (options.get(ctx, "keepalive")) |keepalive_value| {
                         if (keepalive_value.isBoolean()) {
                             disable_keepalive = !keepalive_value.asBoolean();
@@ -906,6 +919,7 @@ pub const Fetch = struct {
                 .timeout = std.time.ns_per_hour,
                 .disable_keepalive = disable_keepalive,
                 .disable_timeout = disable_timeout,
+                .follow_redirects = follow_redirects,
                 .verbose = verbose,
             },
             JSC.JSValue.fromRef(deferred_promise),

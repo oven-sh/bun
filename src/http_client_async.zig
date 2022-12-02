@@ -750,6 +750,7 @@ allocator: std.mem.Allocator,
 verbose: bool = Environment.isTest,
 remaining_redirect_count: i8 = default_redirect_count,
 allow_retry: bool = false,
+follow_redirects: bool = true,
 redirect: ?*URLBufferPool.Node = null,
 timeout: usize = 0,
 progress_node: ?*std.Progress.Node = null,
@@ -1208,6 +1209,7 @@ pub fn buildRequest(this: *HTTPClient, body_len: usize) picohttp.Request {
 pub fn doRedirect(this: *HTTPClient) void {
     var body_out_str = this.state.body_out_str.?;
     this.remaining_redirect_count -|= 1;
+    std.debug.assert(this.follow_redirects);
 
     if (this.remaining_redirect_count == 0) {
         this.fail(error.TooManyRedirects);
@@ -1963,7 +1965,9 @@ pub fn handleResponseMetadata(
         this.state.pending_response.status_code = 304;
     }
 
-    if (location.len > 0 and this.remaining_redirect_count > 0) {
+    const is_redirect = this.state.pending_response.status_code >= 300 and this.state.pending_response.status_code <= 399;
+
+    if (location.len > 0 and this.remaining_redirect_count > 0 and this.follow_redirects) {
         switch (this.state.pending_response.status_code) {
             302, 301, 307, 308, 303 => {
                 if (strings.indexOf(location, "://")) |i| {
@@ -2057,6 +2061,9 @@ pub fn handleResponseMetadata(
     }
 
     this.state.response_stage = if (this.state.transfer_encoding == .chunked) .body_chunk else .body;
+
+    if (is_redirect and !this.follow_redirects)
+        return true;
 
     return this.method.hasBody() and (this.state.body_size > 0 or this.state.transfer_encoding == .chunked);
 }

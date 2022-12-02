@@ -691,6 +691,7 @@ pub const Bundler = struct {
                         dir_info,
                         Resolver,
                         &this.resolver,
+                        this.fs.top_level_dir,
                     );
                     this.router.?.routes.client_framework_enabled = this.options.isFrontendFrameworkEnabled();
                     return;
@@ -703,7 +704,13 @@ pub const Bundler = struct {
             this.options.routes.dir = dir_info.abs_path;
 
             this.router = try Router.init(this.fs, this.allocator, this.options.routes);
-            try this.router.?.loadRoutes(this.log, dir_info, Resolver, &this.resolver);
+            try this.router.?.loadRoutes(
+                this.log,
+                dir_info,
+                Resolver,
+                &this.resolver,
+                this.fs.top_level_dir,
+            );
             this.router.?.routes.client_framework_enabled = this.options.isFrontendFrameworkEnabled();
             return;
         }

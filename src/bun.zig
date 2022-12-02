@@ -498,3 +498,4 @@ pub const analytics = @import("./analytics.zig");
 pub const DateTime = @import("./deps/zig-datetime/src/datetime.zig");
 
 pub var start_time: i128 = 0;
+pub const MimallocArena = @import("./mimalloc_arena.zig").Arena;

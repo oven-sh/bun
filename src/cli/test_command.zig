@@ -451,8 +451,10 @@ pub const TestCommand = struct {
             }
         };
 
+        var arena = bun.MimallocArena.init() catch @panic("Unexpected error in mimalloc");
         vm_.eventLoop().ensureWaker();
-
+        vm_.arena = &arena;
+        vm_.allocator = arena.allocator();
         var ctx = Context{ .reporter = reporter_, .vm = vm_, .files = files_, .allocator = allocator_ };
         vm_.runWithAPILock(Context, &ctx, Context.begin);
     }

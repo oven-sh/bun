@@ -1703,9 +1703,7 @@ pub const Blob = struct {
 
     pub fn findOrCreateFileFromPath(path_: JSC.Node.PathOrFileDescriptor, globalThis: *JSGlobalObject) Blob {
         var vm = globalThis.bunVM();
-        }
-
-        var allocator = globalThis.bunVM().allocator;
+        const allocator = vm.allocator;
 
         const path: JSC.Node.PathOrFileDescriptor = brk: {
             switch (path_) {
@@ -1766,6 +1764,7 @@ pub const Blob = struct {
         };
 
         pub fn ref(this: *Store) void {
+            std.debug.assert(this.ref_count > 0);
             this.ref_count += 1;
         }
 
@@ -1778,23 +1777,25 @@ pub const Blob = struct {
         pub fn initFile(pathlike: JSC.Node.PathOrFileDescriptor, mime_type: ?HTTPClient.MimeType, allocator: std.mem.Allocator) !*Store {
             var store = try allocator.create(Blob.Store);
             store.* = .{
-                .data = .{ .file = FileStore.init(
-                    pathlike,
-                    mime_type orelse brk: {
-                        if (pathlike == .path) {
-                            const sliced = pathlike.path.slice();
-                            if (sliced.len > 0) {
-                                var extname = std.fs.path.extension(sliced);
-                                extname = std.mem.trim(u8, extname, ".");
-                                if (HTTPClient.MimeType.byExtensionNoDefault(extname)) |mime| {
-                                    break :brk mime;
+                .data = .{
+                    .file = FileStore.init(
+                        pathlike,
+                        mime_type orelse brk: {
+                            if (pathlike == .path) {
+                                const sliced = pathlike.path.slice();
+                                if (sliced.len > 0) {
+                                    var extname = std.fs.path.extension(sliced);
+                                    extname = std.mem.trim(u8, extname, ".");
+                                    if (HTTPClient.MimeType.byExtensionNoDefault(extname)) |mime| {
+                                        break :brk mime;
+                                    }
                                 }
                             }
-                        }
 
-                        break :brk null;
-                    },
-                ) },
+                            break :brk null;
+                        },
+                    ),
+                },
                 .allocator = allocator,
                 .ref_count = 1,
             };
@@ -1819,6 +1820,7 @@ pub const Blob = struct {
         }
 
         pub fn deref(this: *Blob.Store) void {
+            std.debug.assert(this.ref_count >= 1);
             this.ref_count -= 1;
             if (this.ref_count == 0) {
                 this.deinit();
@@ -1833,7 +1835,6 @@ pub const Blob = struct {
                     bytes.deinit();
                 },
                 .file => |file| {
-                    VirtualMachine.vm.removeFileBlob(file.pathlike);
                     if (file.pathlike == .path) {
                         allocator.free(bun.constStrToU8(file.pathlike.path.slice()));
                     }
@@ -3480,8 +3481,14 @@ pub const Blob = struct {
                         const bytes = result.buf;
                         if (blob.size > 0)
                             blob.size = @minimum(@truncate(u32, bytes.len), blob.size);
-                        // these are now temporaries
-                        promise.resolve(globalThis, Function(&blob, globalThis, bytes, .temporary));
+                        const value = Function(&blob, globalThis, bytes, .temporary);
+
+                        // invalid JSON needs to be rejected
+                        if (value.isAnyError(globalThis)) {
+                            promise.reject(globalThis, value);
+                        } else {
+                            promise.resolve(globalThis, value);
+                        }
                     },
                     .err => |err| {
                         promise.reject(globalThis, err.toErrorInstance(globalThis));
@@ -3653,23 +3660,23 @@ pub const Blob = struct {
         defer if (comptime lifetime == .temporary) bun.default_allocator.free(bun.constStrToU8(buf));
 
         if (could_be_all_ascii == null or !could_be_all_ascii.?) {
+            var stack_fallback = std.heap.stackFallback(4096, bun.default_allocator);
+            const allocator = stack_fallback.get();
             // if toUTF16Alloc returns null, it means there are no non-ASCII characters
-            if (strings.toUTF16Alloc(bun.default_allocator, buf, false) catch null) |external| {
+            if (strings.toUTF16Alloc(allocator, buf, false) catch null) |external| {
                 if (comptime lifetime != .temporary) this.setIsASCIIFlag(false);
-                return ZigString.toExternalU16(external.ptr, external.len, global).parseJSON(global);
+                const result = ZigString.init16(external).toJSONObject(global);
+                allocator.free(external);
+                return result;
             }
 
             if (comptime lifetime != .temporary) this.setIsASCIIFlag(true);
         }
 
         if (comptime lifetime == .temporary) {
-            return ZigString.init(buf).toExternalValue(
-                global,
-            ).parseJSON(global);
+            return ZigString.init(buf).toJSONObject(global);
         } else {
-            return ZigString.init(buf).toValue(
-                global,
-            ).parseJSON(global);
+            return ZigString.init(buf).toJSONObject(global);
         }
     }
 
@@ -4010,14 +4017,14 @@ pub const AnyBlob = union(enum) {
                     return JSValue.jsNull();
                 }
 
-                var str = this.InternalBlob.toStringOwned(global);
+                const str = this.InternalBlob.toJSON(global);
 
                 // the GC will collect the string
                 this.* = .{
                     .Blob = .{},
                 };
 
-                return str.parseJSON(global);
+                return str;
             },
         }
     }
@@ -4173,6 +4180,13 @@ pub const InternalBlob = struct {
             str.mark();
             return str.toExternalValue(globalThis);
         }
+    }
+
+    pub fn toJSON(this: *@This(), globalThis: *JSC.JSGlobalObject) JSValue {
+        const str_bytes = ZigString.init(this.bytes.items).withEncoding();
+        const json = str_bytes.toJSONObject(globalThis);
+        this.deinit();
+        return json;
     }
 
     pub inline fn sliceConst(this: *const @This()) []const u8 {

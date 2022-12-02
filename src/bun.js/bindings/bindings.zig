@@ -103,6 +103,12 @@ pub const ZigString = extern struct {
         return this;
     }
 
+    extern fn ZigString__toJSONObject(this: *const ZigString, *JSC.JSGlobalObject) callconv(.C) JSC.JSValue;
+    pub fn toJSONObject(this: ZigString, globalThis: *JSC.JSGlobalObject) JSValue {
+        JSC.markBinding(@src());
+        return ZigString__toJSONObject(&this, globalThis);
+    }
+
     pub fn substring(this: ZigString, offset: usize) ZigString {
         if (this.is16Bit()) {
             return ZigString.from16Slice(this.utf16SliceAligned()[@minimum(this.len, offset)..]);

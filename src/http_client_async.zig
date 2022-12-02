@@ -1967,7 +1967,7 @@ pub fn handleResponseMetadata(
 
     const is_redirect = this.state.pending_response.status_code >= 300 and this.state.pending_response.status_code <= 399;
 
-    if (location.len > 0 and this.remaining_redirect_count > 0 and this.follow_redirects) {
+    if (is_redirect and this.follow_redirects and location.len > 0 and this.remaining_redirect_count > 0) {
         switch (this.state.pending_response.status_code) {
             302, 301, 307, 308, 303 => {
                 if (strings.indexOf(location, "://")) |i| {
@@ -2049,8 +2049,23 @@ pub fn handleResponseMetadata(
                     this.redirect = url_buf;
                 }
 
+                // Note: RFC 1945 and RFC 2068 specify that the client is not allowed to change
+                // the method on the redirected request. However, most existing user agent
+                // implementations treat 302 as if it were a 303 response, performing a GET on
+                // the Location field-value regardless of the original request method. The
+                // status codes 303 and 307 have been added for servers that wish to make
+                // unambiguously clear which kind of reaction is expected of the client.
+                if (response.status_code == 302) {
+                    switch (this.method) {
+                        .GET, .HEAD => {},
+                        else => {
+                            this.method = .GET;
+                        },
+                    }
+                }
+
                 // https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/303
-                if (response.status_code == 303) {
+                if (response.status_code == 303 and this.method != .HEAD) {
                     this.method = .GET;
                 }
 

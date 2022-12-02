@@ -4439,6 +4439,18 @@ pub const FileReader = struct {
 
     pub fn onPullInto(this: *FileReader, buffer: []u8, view: JSC.JSValue) StreamResult {
         std.debug.assert(this.started);
+
+        // this state isn't really supposed to happen
+        // but we handle it just in-case
+        if (this.lazy_readable == .empty) {
+            if (this.buffered_data.len == 0) {
+                return .{ .done = {} };
+            }
+
+            return .{ .owned_and_done = this.drainInternalBuffer() };
+        }
+
+
         return this.readable().read(buffer, view, this.globalThis());
     }
 

@@ -1,6 +1,131 @@
 import { expect, test } from "bun:test";
 import { OnigurumaRegExp } from "bun";
 
+test("toStrictEqual() vs toEqual()", () => {
+  expect([1, , 3]).toEqual([1, , 3]);
+  expect({}).toEqual({});
+  expect({}).toStrictEqual({});
+  expect({}).toEqual({ a: undefined });
+  expect({}).not.toStrictEqual({ a: undefined });
+
+  class C {
+    hi = 34;
+  }
+  class D {
+    hi = 34;
+  }
+  let c = new C();
+  let d = new D();
+
+  expect(d).toEqual(c);
+  expect(d).not.toStrictEqual(c);
+  expect({ a: 1, b: undefined }).toEqual({ a: 1 });
+  expect({ a: 1 }).toEqual({ a: 1, b: undefined });
+  expect({ a: 1, b: undefined }).toEqual({ a: 1, b: undefined });
+
+  expect({ a: 1, b: undefined }).not.toStrictEqual({ a: 1 });
+  expect({ a: 1 }).not.toStrictEqual({ a: 1, b: undefined });
+  expect({ a: 1, b: undefined }).toStrictEqual({ a: 1, b: undefined });
+
+  expect({ a: 1, b: null }).not.toEqual({ a: 1 });
+  expect({ a: 1 }).not.toEqual({ a: 1, b: null });
+  expect({ a: 1, b: null }).toEqual({ a: 1, b: null });
+
+  expect({ a: 1 }).not.toEqual({ a: true });
+  expect({ a: 1 }).not.toEqual({ a: "1" });
+  expect({ a: 1 }).not.toEqual({ a: 1, b: 2 });
+  expect({ a: 1, b: 2 }).not.toEqual({ a: 1 });
+  expect({ a: 1 }).not.toStrictEqual({ a: true });
+  expect({ a: 1 }).not.toStrictEqual({ a: "1" });
+  expect({ a: 1 }).not.toStrictEqual({ a: 1, b: 2 });
+  expect({ a: 1, b: 2 }).not.toStrictEqual({ a: 1 });
+  expect({ a: 1 }).toStrictEqual({ a: 1 });
+
+  expect([1, undefined, 3]).toEqual([1, undefined, 3]);
+  expect([1, undefined, 3]).toStrictEqual([1, undefined, 3]);
+  expect([1, undefined, 3]).not.toEqual([1, 2, 3]);
+  expect([1, undefined, 3]).not.toStrictEqual([1, 2, 3]);
+  expect([1, undefined, 3]).not.toEqual([1, 2]);
+  expect([1, undefined, 3]).not.toStrictEqual([1, 2]);
+  expect([1, undefined, 3]).not.toEqual([1]);
+  expect([1, undefined, 3]).not.toStrictEqual([1]);
+  expect([1, undefined, 3]).not.toEqual([]);
+  expect([1, undefined, 3]).not.toStrictEqual([]);
+  expect([1, undefined, 3]).not.toEqual([1, 3]);
+  expect([1, undefined, 3]).not.toStrictEqual([1, 3]);
+
+  expect([1, null, 3]).toEqual([1, null, 3]);
+  expect([1, null, 3]).toStrictEqual([1, null, 3]);
+  expect([1, null, 3]).not.toEqual([1, 2, 3]);
+  expect([1, null, 3]).not.toStrictEqual([1, 2, 3]);
+  expect([1, null, 3]).not.toEqual([1, 2]);
+  expect([1, null, 3]).not.toStrictEqual([1, 2]);
+  expect([1, null, 3]).not.toEqual([1]);
+  expect([1, null, 3]).not.toStrictEqual([1]);
+  expect([1, null, 3]).not.toEqual([]);
+  expect([1, null, 3]).not.toStrictEqual([]);
+  expect([1, null, 3]).not.toEqual([1, 3]);
+  expect([1, null, 3]).not.toStrictEqual([1, 3]);
+
+  expect([, 1]).toEqual([, 1]);
+  expect([, 1]).toStrictEqual([, 1]);
+  expect([, 1]).not.toEqual([1]);
+  expect([1]).not.toEqual([, 1]);
+  expect([, 1]).not.toStrictEqual([1]);
+  expect([1]).not.toStrictEqual([, 1]);
+  expect([, 1]).toEqual([undefined, 1]);
+  expect([, 1]).not.toStrictEqual([undefined, 1]);
+  expect([, 1]).not.toEqual([null, 1]);
+  expect([, 1]).not.toStrictEqual([null, 1]);
+  expect([undefined, 1]).toEqual([, 1]);
+  expect([undefined, 1]).not.toStrictEqual([, 1]);
+  expect([null, 1]).not.toEqual([, 1]);
+  expect([null, 1]).not.toStrictEqual([, 1]);
+  expect([undefined, 1]).toEqual([undefined, 1]);
+  expect([undefined, 1]).toStrictEqual([undefined, 1]);
+
+  expect([0, , 2]).toEqual([0, undefined, 2]);
+  expect([, "boo2"]).toEqual([undefined, "boo2"]);
+  expect([, "boo"]).toEqual([, "boo"]);
+  expect([, 1]).toEqual([undefined, 1]);
+
+  const s1 = Symbol("test1");
+  const s2 = Symbol("test2");
+
+  let a = { a: 1, b: 2 };
+  let b = { a: 1, b: 2 };
+  a[s1] = 1;
+  b[s1] = 1;
+  a[s2] = undefined;
+  b[s2] = null;
+  expect(a).not.toEqual(b);
+  class F extends String {
+    constructor() {
+      super();
+    }
+  }
+
+  let f = new F("hello");
+  let j = new String("hello");
+  expect(f).not.toEqual(j);
+  class LaCroix {
+    constructor(flavor) {
+      this.flavor = flavor;
+    }
+  }
+  expect(new LaCroix("pamplemousse")).not.toStrictEqual({
+    flavor: "pamplemousse",
+  });
+  expect(new LaCroix("pamplemousse")).toEqual({ flavor: "pamplemousse" });
+
+  expect([, 1]).not.toStrictEqual([undefined, 1]);
+
+  expect([0, , 2]).toEqual([0, undefined, 2]);
+  expect([, "boo2"]).toEqual([undefined, "boo2"]);
+  expect([, "boo"]).toEqual([, "boo"]);
+  expect([, 1]).toEqual([undefined, 1]);
+});
+
 function f1() {
   return "hello!";
 }

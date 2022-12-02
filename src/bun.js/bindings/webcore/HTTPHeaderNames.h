@@ -334,12 +334,11 @@ static StaticStringImpl* staticHeaderNames[] = {
     MAKE_STATIC_STRING_IMPL("x-xss-protection"),
 };
 
-static WTF::StaticStringImpl* httpHeaderNameStringImpl(WebCore::HTTPHeaderName headerName) {
+static WTF::StaticStringImpl* httpHeaderNameStringImpl(WebCore::HTTPHeaderName headerName)
+{
     return staticHeaderNames[static_cast<size_t>(headerName)];
 }
 
-
 } // namespace WTF
-
 
 #endif // HTTPHeaderNames_h

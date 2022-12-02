@@ -342,6 +342,42 @@ interface Headers {
    * Get the total number of headers
    */
   readonly count: number;
+
+  /**
+   * Get all headers matching the name
+   *
+   * Only supports `"Set-Cookie"`. All other headers are empty arrays.
+   *
+   * @param name - The header name to get
+   *
+   * @returns An array of header values
+   *
+   * @example
+   * ```ts
+   * const headers = new Headers();
+   * headers.append("Set-Cookie", "foo=bar");
+   * headers.append("Set-Cookie", "baz=qux");
+   * headers.getAll("Set-Cookie"); // ["foo=bar", "baz=qux"]
+   * ```
+   */
+  getAll(name: string): string[];
+
+  /**
+   * Returns the `Set-Cookie` header as an array of strings
+   *
+   * Based on https://github.com/whatwg/fetch/pull/1346
+   *
+   * @returns An array of `Set-Cookie` header values
+   *
+   * @example
+   * ```ts
+   * const headers = new Headers();
+   * headers.append("Set-Cookie", "foo=bar");
+   * headers.append("Set-Cookie", "baz=qux");
+   * headers.getSetCookie(); // ["foo=bar", "baz=qux"]
+   * ```
+   */
+  getSetCookie(): string[];
 }
 
 declare var Headers: {

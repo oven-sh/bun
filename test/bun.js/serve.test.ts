@@ -599,6 +599,31 @@ it("should support reloading", async () => {
   server.stop();
 });
 
+it("should support multiple Set-Cookie headers", async () => {
+  const server = serve({
+    port: port++,
+    fetch(req) {
+      return new Response("hello", {
+        headers: [
+          ["Another-Header", "1"],
+          ["Set-Cookie", "foo=bar"],
+          ["Set-Cookie", "baz=qux"],
+        ],
+      });
+    },
+  });
+
+  const response = await fetch(`http://${server.hostname}:${server.port}`);
+  server.stop();
+
+  expect(response.headers.getAll("Set-Cookie")).toEqual(["foo=bar", "baz=qux"]);
+  expect(response.headers.getSetCookie()).toEqual(["foo=bar", "baz=qux"]);
+
+  const cloned = response.clone().headers;
+  expect(cloned.getAll("Set-Cookie")).toEqual(["foo=bar", "baz=qux"]);
+  expect(cloned.getSetCookie()).toEqual(["foo=bar", "baz=qux"]);
+});
+
 describe("status code text", () => {
   const fixture = {
     200: "OK",

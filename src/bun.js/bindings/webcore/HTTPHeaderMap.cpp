@@ -36,17 +36,26 @@
 #include <wtf/CrossThreadCopier.h>
 #include <wtf/text/StringView.h>
 
+static StringView extractCookieName(const StringView& cookie)
+{
+    auto nameEnd = cookie.find('=');
+    if (nameEnd == notFound)
+        return String();
+    return cookie.substring(0, nameEnd);
+}
+
 namespace WebCore {
 
 HTTPHeaderMap::HTTPHeaderMap()
 {
 }
 
-HTTPHeaderMap HTTPHeaderMap::isolatedCopy() const &
+HTTPHeaderMap HTTPHeaderMap::isolatedCopy() const&
 {
     HTTPHeaderMap map;
     map.m_commonHeaders = crossThreadCopy(m_commonHeaders);
     map.m_uncommonHeaders = crossThreadCopy(m_uncommonHeaders);
+    map.m_setCookieHeaders = crossThreadCopy(m_setCookieHeaders);
     return map;
 }
 
@@ -55,6 +64,7 @@ HTTPHeaderMap HTTPHeaderMap::isolatedCopy() &&
     HTTPHeaderMap map;
     map.m_commonHeaders = crossThreadCopy(WTFMove(m_commonHeaders));
     map.m_uncommonHeaders = crossThreadCopy(WTFMove(m_uncommonHeaders));
+    map.m_setCookieHeaders = crossThreadCopy(WTFMove(m_setCookieHeaders));
     return map;
 }
 
@@ -153,10 +163,14 @@ void HTTPHeaderMap::append(const String& name, const String& value)
     ASSERT(!contains(name));
 
     HTTPHeaderName headerName;
-    if (findHTTPHeaderName(name, headerName))
-        m_commonHeaders.append(CommonHeader { headerName, value });
-    else
+    if (findHTTPHeaderName(name, headerName)) {
+        if (headerName == HTTPHeaderName::SetCookie)
+            m_setCookieHeaders.append(value);
+        else
+            m_commonHeaders.append(CommonHeader { headerName, value });
+    } else {
         m_uncommonHeaders.append(UncommonHeader { name, value });
+    }
 }
 
 bool HTTPHeaderMap::addIfNotPresent(HTTPHeaderName headerName, const String& value)
@@ -181,6 +195,7 @@ bool HTTPHeaderMap::contains(const String& name) const
 
 bool HTTPHeaderMap::remove(const String& name)
 {
+
     HTTPHeaderName headerName;
     if (findHTTPHeaderName(name, headerName))
         return remove(headerName);
@@ -192,6 +207,26 @@ bool HTTPHeaderMap::remove(const String& name)
 
 String HTTPHeaderMap::get(HTTPHeaderName name) const
 {
+    if (name == HTTPHeaderName::SetCookie) {
+        unsigned count = m_setCookieHeaders.size();
+        switch (count) {
+        case 0:
+            return String();
+        case 1:
+            return m_setCookieHeaders[0];
+        default: {
+            StringBuilder builder;
+            builder.reserveCapacity(m_setCookieHeaders[0].length() * count + (count - 1));
+            builder.append(m_setCookieHeaders[0]);
+            for (unsigned i = 1; i < count; ++i) {
+                builder.append(", "_s);
+                builder.append(m_setCookieHeaders[i]);
+            }
+            return builder.toString();
+        }
+        }
+    }
+
     auto index = m_commonHeaders.findIf([&](auto& header) {
         return header.key == name;
     });
@@ -200,6 +235,20 @@ String HTTPHeaderMap::get(HTTPHeaderName name) const
 
 void HTTPHeaderMap::set(HTTPHeaderName name, const String& value)
 {
+    if (name == HTTPHeaderName::SetCookie) {
+        auto cookieName = extractCookieName(value);
+        size_t length = m_setCookieHeaders.size();
+        const auto& cookies = m_setCookieHeaders.data();
+        for (size_t i = 0; i < length; ++i) {
+            if (extractCookieName(cookies[i]) == cookieName) {
+                m_setCookieHeaders[i] = value;
+                return;
+            }
+        }
+        m_setCookieHeaders.append(value);
+        return;
+    }
+
     auto index = m_commonHeaders.findIf([&](auto& header) {
         return header.key == name;
     });
@@ -211,6 +260,9 @@ void HTTPHeaderMap::set(HTTPHeaderName name, const String& value)
 
 bool HTTPHeaderMap::contains(HTTPHeaderName name) const
 {
+    if (name == HTTPHeaderName::SetCookie)
+        return !m_setCookieHeaders.isEmpty();
+
     return m_commonHeaders.findIf([&](auto& header) {
         return header.key == name;
     }) != notFound;
@@ -218,6 +270,12 @@ bool HTTPHeaderMap::contains(HTTPHeaderName name) const
 
 bool HTTPHeaderMap::remove(HTTPHeaderName name)
 {
+    if (name == HTTPHeaderName::SetCookie) {
+        bool any = m_setCookieHeaders.size() > 0;
+        m_setCookieHeaders.clear();
+        return any;
+    }
+
     return m_commonHeaders.removeFirstMatching([&](auto& header) {
         return header.key == name;
     });
@@ -225,6 +283,22 @@ bool HTTPHeaderMap::remove(HTTPHeaderName name)
 
 void HTTPHeaderMap::add(HTTPHeaderName name, const String& value)
 {
+    if (name == HTTPHeaderName::SetCookie) {
+        auto cookieName = extractCookieName(value);
+
+        size_t length = m_setCookieHeaders.size();
+        const auto& cookies = m_setCookieHeaders.data();
+        for (size_t i = 0; i < length; ++i) {
+            if (extractCookieName(cookies[i]) == cookieName) {
+                m_setCookieHeaders[i] = value;
+                return;
+            }
+        }
+        m_setCookieHeaders.append(value);
+
+        return;
+    }
+
     auto index = m_commonHeaders.findIf([&](auto& header) {
         return header.key == name;
     });

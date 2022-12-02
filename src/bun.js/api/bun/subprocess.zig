@@ -1375,7 +1375,7 @@ pub const Subprocess = struct {
             )) {
                 .result => {},
                 .err => |err| {
-                    if (err.getErrno() == .SRCH) {
+                    if (err.getErrno() != .SRCH) {
                         @panic("This shouldn't happen");
                     }
 

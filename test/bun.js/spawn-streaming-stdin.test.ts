@@ -2,9 +2,11 @@ import { it, test, expect } from "bun:test";
 import { spawn } from "bun";
 import { bunExe } from "./bunExe";
 import { gcTick } from "gc";
+import { closeSync, openSync } from "fs";
 
 const N = 100;
 test("spawn can write to stdin multiple chunks", async () => {
+  const maxFD = openSync("/dev/null", "w");
   for (let i = 0; i < N; i++) {
     var exited;
     await (async function () {
@@ -47,10 +49,14 @@ test("spawn can write to stdin multiple chunks", async () => {
       expect(Buffer.concat(chunks).toString().trim()).toBe(
         "Wrote to stdin!\n".repeat(4).trim(),
       );
-      //   proc.kill();
-
-      gcTick(true);
-      await 1;
+      await proc.exited;
     })();
   }
+
+  closeSync(maxFD);
+  const newMaxFD = openSync("/dev/null", "w");
+  closeSync(newMaxFD);
+
+  // assert we didn't leak any file descriptors
+  expect(newMaxFD).toBe(maxFD);
 });

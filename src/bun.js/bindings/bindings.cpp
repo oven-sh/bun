@@ -950,6 +950,20 @@ void WebCore__DOMURL__pathname_(WebCore__DOMURL* domURL, ZigString* arg1)
     *arg1 = Zig::toZigString(pathname);
 }
 
+extern "C" JSC__JSValue ZigString__toJSONObject(const ZigString* strPtr, JSC::JSGlobalObject* globalObject)
+{
+    auto str = Zig::toString(*strPtr);
+    auto throwScope = DECLARE_THROW_SCOPE(globalObject->vm());
+    auto scope = DECLARE_CATCH_SCOPE(globalObject->vm());
+    JSValue result = JSONParseWithException(globalObject, str);
+    if (auto* exception = scope.exception()) {
+        scope.clearException();
+        RELEASE_AND_RETURN(throwScope, JSC::JSValue::encode(exception->value()));
+    }
+
+    RELEASE_AND_RETURN(throwScope, JSValue::encode(result));
+}
+
 JSC__JSValue SystemError__toErrorInstance(const SystemError* arg0,
     JSC__JSGlobalObject* globalObject)
 {

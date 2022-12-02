@@ -433,6 +433,8 @@ pub const VirtualMachine = struct {
     modules: ModuleLoader.AsyncModule.Queue = .{},
     aggressive_garbage_collection: GCLevel = GCLevel.none,
 
+    gc_controller: JSC.GarbageCollectionController = .{},
+
     pub const GCLevel = enum(u3) {
         none = 0,
         mild = 1,

@@ -1364,6 +1364,7 @@ pub const Subprocess = struct {
                 subprocess.stdin.buffered_input.writeIfPossible(true);
             }
         }
+        subprocess.closeIO(.stdin);
 
         {
             var poll = JSC.FilePoll.init(jsc_vm, pidfd, .{}, Subprocess, subprocess);
@@ -1387,6 +1388,14 @@ pub const Subprocess = struct {
         }
 
         while (!subprocess.hasExited()) {
+            if (subprocess.stderr == .pipe and subprocess.stderr.pipe == .buffer) {
+                subprocess.stderr.pipe.buffer.readAll();
+            }
+
+            if (subprocess.stdout == .pipe and subprocess.stdout.pipe == .buffer) {
+                subprocess.stdout.pipe.buffer.readAll();
+            }
+
             jsc_vm.tick();
             jsc_vm.eventLoop().autoTick();
         }

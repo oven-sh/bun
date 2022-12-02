@@ -60,9 +60,6 @@ static void sqlite_free_typed_array(void* ctx, void* buf)
     sqlite3_free((void*)buf);
 }
 
-/** This is like a 3x perf improvement for allocating objects **/
-#define SQL_USE_PROTOTYPE 1
-
 static int DEFAULT_SQLITE_FLAGS
     = SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE;
 static unsigned int DEFAULT_SQLITE_PREPARE_FLAGS = SQLITE_PREPARE_PERSISTENT;
@@ -154,6 +151,7 @@ public:
     bool hasExecuted = false;
     std::unique_ptr<PropertyNameArray> columnNames;
     mutable WriteBarrier<JSC::JSObject> _prototype;
+    mutable WriteBarrier<JSC::Structure> _structure;
 
 protected:
     JSSQLStatement(JSC::Structure* structure, JSDOMGlobalObject& globalObject, sqlite3_stmt* stmt, VersionSqlite3* version_db)
@@ -161,6 +159,7 @@ protected:
         , stmt(stmt)
         , version_db(version_db)
         , columnNames(new PropertyNameArray(globalObject.vm(), PropertyNameMode::Strings, PrivateSymbolMode::Exclude))
+        , _structure(globalObject.vm(), this, nullptr)
         , _prototype(globalObject.vm(), this, nullptr)
     {
     }
@@ -185,50 +184,82 @@ static void initializeColumnNames(JSC::JSGlobalObject* lexicalGlobalObject, JSSQ
 
     auto* stmt = castedThis->stmt;
 
+    castedThis->_structure.clear();
+    castedThis->_prototype.clear();
+
     int count = sqlite3_column_count(stmt);
     if (count == 0)
         return;
-    JSC::ObjectInitializationScope initializationScope(vm);
 
-    // 64 is the maximum we can preallocate here
-    // see https://github.com/oven-sh/bun/issues/987
-    JSC::JSObject* object = JSC::constructEmptyObject(lexicalGlobalObject, lexicalGlobalObject->objectPrototype(), std::min(count, 64));
+    if (count > 63) {
+        JSC::ObjectInitializationScope initializationScope(vm);
 
-    for (int i = 0; i < count; i++) {
-        const char* name = sqlite3_column_name(stmt, i);
+        // 64 is the maximum we can preallocate here
+        // see https://github.com/oven-sh/bun/issues/987
+        JSC::JSObject* object = JSC::constructEmptyObject(lexicalGlobalObject, lexicalGlobalObject->objectPrototype(), std::min(count, 64));
 
-        if (name == nullptr)
-            break;
+        for (int i = 0; i < count; i++) {
+            const char* name = sqlite3_column_name(stmt, i);
 
-        size_t len = strlen(name);
-        if (len == 0)
-            break;
-
-        auto wtfString = WTF::String::fromUTF8(name, len);
-        auto str = JSValue(jsString(vm, wtfString));
-        auto key = str.toPropertyKey(lexicalGlobalObject);
-        JSC::JSValue primitive = JSC::jsUndefined();
-        auto decl = sqlite3_column_decltype(stmt, i);
-        if (decl != nullptr) {
-            switch (decl[0]) {
-            case 'F':
-            case 'D':
-            case 'I': {
-                primitive = jsNumber(0);
+            if (name == nullptr)
                 break;
-            }
-            case 'V':
-            case 'T': {
-                primitive = jsEmptyString(vm);
+
+            size_t len = strlen(name);
+            if (len == 0)
                 break;
+
+            auto wtfString = WTF::String::fromUTF8(name, len);
+            auto str = JSValue(jsString(vm, wtfString));
+            auto key = str.toPropertyKey(lexicalGlobalObject);
+            JSC::JSValue primitive = JSC::jsUndefined();
+            auto decl = sqlite3_column_decltype(stmt, i);
+            if (decl != nullptr) {
+                switch (decl[0]) {
+                case 'F':
+                case 'D':
+                case 'I': {
+                    primitive = jsNumber(0);
+                    break;
+                }
+                case 'V':
+                case 'T': {
+                    primitive = jsEmptyString(vm);
+                    break;
+                }
+                }
             }
-            }
+
+            object->putDirect(vm, key, primitive, 0);
+            castedThis->columnNames->add(key);
         }
+        castedThis->_prototype.set(vm, castedThis, object);
+    } else {
+        // 64 is the maximum we can preallocate here
+        // see https://github.com/oven-sh/bun/issues/987
+        auto& globalObject = *lexicalGlobalObject;
+        Structure* structure = globalObject.structureCache().emptyObjectStructureForPrototype(&globalObject, globalObject.objectPrototype(), count);
+        PropertyOffset offset;
 
-        object->putDirect(vm, key, primitive, 0);
-        castedThis->columnNames->add(key);
+        for (int i = 0; i < count; i++) {
+            const char* name = sqlite3_column_name(stmt, i);
+
+            if (name == nullptr)
+                break;
+
+            size_t len = strlen(name);
+            if (len == 0)
+                break;
+
+            auto wtfString = WTF::String::fromUTF8(name, len);
+            auto str = JSValue(jsString(vm, wtfString));
+            auto key = str.toPropertyKey(lexicalGlobalObject);
+            structure = Structure::addPropertyTransition(vm, structure, key, 0, offset);
+            castedThis->columnNames->add(key);
+        }
+        castedThis->_structure.set(vm, castedThis, structure);
+        JSC::JSObject* object = JSC::constructEmptyObject(vm, structure);
+        castedThis->_prototype.set(vm, castedThis, object);
     }
-    castedThis->_prototype.set(vm, castedThis, object);
 }
 
 void JSSQLStatement::destroy(JSC::JSCell* cell)
@@ -978,59 +1009,105 @@ static inline JSC::JSValue constructResultObject(JSC::JSGlobalObject* lexicalGlo
 
     // 64 is the maximum we can preallocate here
     // see https://github.com/oven-sh/bun/issues/987
-#if SQL_USE_PROTOTYPE == 1
     JSC::JSObject* result;
-    if (count <= 64) {
-        result = JSC::JSFinalObject::create(vm, castedThis->_prototype.get()->structure());
-    } else {
-        result = JSC::JSFinalObject::create(vm, JSC::JSFinalObject::createStructure(vm, lexicalGlobalObject, lexicalGlobalObject->objectPrototype(), std::min(count, 64)));
-    }
-#else
-    JSC::JSObject* result = JSC::JSFinalObject::create(vm, JSC::JSFinalObject::createStructure(vm, lexicalGlobalObject, lexicalGlobalObject->objectPrototype(), std::min(count, 64)));
-#endif
+
     auto* stmt = castedThis->stmt;
 
-    for (int i = 0; i < count; i++) {
-        auto name = columnNames[i];
+    if (auto* structure = castedThis->_structure.get()) {
+        RELEASE_ASSERT(count <= 64);
+        result = JSC::constructEmptyObject(vm, structure);
 
-        switch (sqlite3_column_type(stmt, i)) {
-        case SQLITE_INTEGER: {
-            // https://github.com/oven-sh/bun/issues/1536
-            result->putDirect(vm, name, jsNumber(sqlite3_column_int64(stmt, i)), 0);
-            break;
-        }
-        case SQLITE_FLOAT: {
-            result->putDirect(vm, name, jsNumber(sqlite3_column_double(stmt, i)), 0);
-            break;
-        }
-        // > Note that the SQLITE_TEXT constant was also used in SQLite version
-        // > 2 for a completely different meaning. Software that links against
-        // > both SQLite version 2 and SQLite version 3 should use SQLITE3_TEXT,
-        // > not SQLITE_TEXT.
-        case SQLITE3_TEXT: {
-            size_t len = sqlite3_column_bytes(stmt, i);
-            const unsigned char* text = len > 0 ? sqlite3_column_text(stmt, i) : nullptr;
+        for (int i = 0; i < count; i++) {
 
-            if (len > 64) {
-                result->putDirect(vm, name, JSC::JSValue::decode(Bun__encoding__toStringUTF8(text, len, lexicalGlobalObject)), 0);
-                continue;
+            switch (sqlite3_column_type(stmt, i)) {
+            case SQLITE_INTEGER: {
+                // https://github.com/oven-sh/bun/issues/1536
+                result->putDirectOffset(vm, i, jsNumber(sqlite3_column_int64(stmt, i)));
+                break;
             }
+            case SQLITE_FLOAT: {
+                result->putDirectOffset(vm, i, jsNumber(sqlite3_column_double(stmt, i)));
+                break;
+            }
+            // > Note that the SQLITE_TEXT constant was also used in SQLite version
+            // > 2 for a completely different meaning. Software that links against
+            // > both SQLite version 2 and SQLite version 3 should use SQLITE3_TEXT,
+            // > not SQLITE_TEXT.
+            case SQLITE3_TEXT: {
+                size_t len = sqlite3_column_bytes(stmt, i);
+                const unsigned char* text = len > 0 ? sqlite3_column_text(stmt, i) : nullptr;
 
-            result->putDirect(vm, name, jsString(vm, WTF::String::fromUTF8(text, len)), 0);
-            break;
+                if (len > 64) {
+                    result->putDirectOffset(vm, i, JSC::JSValue::decode(Bun__encoding__toStringUTF8(text, len, lexicalGlobalObject)));
+                    continue;
+                }
+
+                result->putDirectOffset(vm, i, jsString(vm, WTF::String::fromUTF8(text, len)));
+                break;
+            }
+            case SQLITE_BLOB: {
+                size_t len = sqlite3_column_bytes(stmt, i);
+                const void* blob = len > 0 ? sqlite3_column_blob(stmt, i) : nullptr;
+                JSC::JSUint8Array* array = JSC::JSUint8Array::createUninitialized(lexicalGlobalObject, lexicalGlobalObject->m_typedArrayUint8.get(lexicalGlobalObject), len);
+                memcpy(array->vector(), blob, len);
+                result->putDirectOffset(vm, i, array);
+                break;
+            }
+            default: {
+                result->putDirectOffset(vm, i, jsNull());
+                break;
+            }
+            }
         }
-        case SQLITE_BLOB: {
-            size_t len = sqlite3_column_bytes(stmt, i);
-            const void* blob = len > 0 ? sqlite3_column_blob(stmt, i) : nullptr;
-            JSC::JSUint8Array* array = JSC::JSUint8Array::createUninitialized(lexicalGlobalObject, lexicalGlobalObject->m_typedArrayUint8.get(lexicalGlobalObject), len);
-            memcpy(array->vector(), blob, len);
-            result->putDirect(vm, name, array, 0);
-            break;
+    } else {
+        if (count <= 64) {
+            result = JSC::JSFinalObject::create(vm, castedThis->_prototype.get()->structure());
+        } else {
+            result = JSC::JSFinalObject::create(vm, JSC::JSFinalObject::createStructure(vm, lexicalGlobalObject, lexicalGlobalObject->objectPrototype(), std::min(count, 64)));
         }
-        default: {
-            result->putDirect(vm, name, jsNull(), 0);
-            break;
-        }
+
+        for (int i = 0; i < count; i++) {
+            auto name = columnNames[i];
+
+            switch (sqlite3_column_type(stmt, i)) {
+            case SQLITE_INTEGER: {
+                // https://github.com/oven-sh/bun/issues/1536
+                result->putDirect(vm, name, jsNumber(sqlite3_column_int64(stmt, i)), 0);
+                break;
+            }
+            case SQLITE_FLOAT: {
+                result->putDirect(vm, name, jsNumber(sqlite3_column_double(stmt, i)), 0);
+                break;
+            }
+            // > Note that the SQLITE_TEXT constant was also used in SQLite version
+            // > 2 for a completely different meaning. Software that links against
+            // > both SQLite version 2 and SQLite version 3 should use SQLITE3_TEXT,
+            // > not SQLITE_TEXT.
+            case SQLITE3_TEXT: {
+                size_t len = sqlite3_column_bytes(stmt, i);
+                const unsigned char* text = len > 0 ? sqlite3_column_text(stmt, i) : nullptr;
+
+                if (len > 64) {
+                    result->putDirect(vm, name, JSC::JSValue::decode(Bun__encoding__toStringUTF8(text, len, lexicalGlobalObject)), 0);
+                    continue;
+                }
+
+                result->putDirect(vm, name, jsString(vm, WTF::String::fromUTF8(text, len)), 0);
+                break;
+            }
+            case SQLITE_BLOB: {
+                size_t len = sqlite3_column_bytes(stmt, i);
+                const void* blob = len > 0 ? sqlite3_column_blob(stmt, i) : nullptr;
+                JSC::JSUint8Array* array = JSC::JSUint8Array::createUninitialized(lexicalGlobalObject, lexicalGlobalObject->m_typedArrayUint8.get(lexicalGlobalObject), len);
+                memcpy(array->vector(), blob, len);
+                result->putDirect(vm, name, array, 0);
+                break;
+            }
+            default: {
+                result->putDirect(vm, name, jsNull(), 0);
+                break;
+            }
+            }
         }
     }
 
@@ -1506,6 +1583,7 @@ void JSSQLStatement::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     JSSQLStatement* thisObject = jsCast<JSSQLStatement*>(cell);
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
+    visitor.append(thisObject->_structure);
     visitor.append(thisObject->_prototype);
 }
 

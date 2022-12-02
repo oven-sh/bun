@@ -45,6 +45,7 @@ declare module "bun:test" {
     toBeUndefined(): void;
     toBeNaN(): void;
     toBeNull(): void;
+    toBeGreaterThan(value: number | bigint): void;
   }
 }
 

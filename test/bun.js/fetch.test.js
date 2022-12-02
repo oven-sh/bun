@@ -245,12 +245,14 @@ function testBlobInterface(blobbyConstructor, hasBlobFn) {
         const compare = new Uint8Array(await response.arrayBuffer());
         if (withGC) gc();
 
-        for (let i = 0; i < compare.length; i++) {
-          if (withGC) gc();
+        withoutAggressiveGC(() => {
+          for (let i = 0; i < compare.length; i++) {
+            if (withGC) gc();
 
-          expect(compare[i]).toBe(bytes[i]);
-          if (withGC) gc();
-        }
+            expect(compare[i]).toBe(bytes[i]);
+            if (withGC) gc();
+          }
+        });
         if (withGC) gc();
       });
 

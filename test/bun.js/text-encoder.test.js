@@ -1,5 +1,5 @@
 import { expect, it, describe } from "bun:test";
-import { gc as gcTrace } from "./gc";
+import { gc as gcTrace, withoutAggressiveGC } from "./gc";
 
 const getByteLength = (str) => {
   // returns the byte length of an utf8 string
@@ -86,7 +86,6 @@ describe("TextEncoder", () => {
     gcTrace(true);
     expect(out.read).toBe(text.length);
     expect(out.written).toBe(encoded.length);
-
     expect(encoded instanceof Uint8Array).toBe(true);
     const result = [72, 101, 108, 108, 111, 32, 87, 111, 114, 108, 100, 33];
     for (let i = 0; i < result.length; i++) {
@@ -122,6 +121,12 @@ describe("TextEncoder", () => {
     }
     expect(encoded.length).toBe(result.length);
     expect(out.written).toBe(encoded.length);
+
+    withoutAggressiveGC(() => {
+      for (let i = 0; i < 10_000; i++) {
+        expect(encoder.encodeInto(text, into)).toEqual(out);
+      }
+    });
   });
 
   it("should encode utf-16 text", () => {

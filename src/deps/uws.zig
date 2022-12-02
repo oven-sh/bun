@@ -351,6 +351,15 @@ pub const Timer = opaque {
         return us_create_timer(loop, 0, @sizeOf(Type));
     }
 
+    pub fn createFallthrough(loop: *Loop, ptr: anytype) *Timer {
+        const Type = @TypeOf(ptr);
+
+        // never fallthrough poll
+        // the problem is uSockets hardcodes it on the other end
+        // so we can never free non-fallthrough polls
+        return us_create_timer(loop, 1, @sizeOf(Type));
+    }
+
     pub fn set(this: *Timer, ptr: anytype, cb: ?fn (*Timer) callconv(.C) void, ms: i32, repeat_ms: i32) void {
         us_timer_set(this, cb, ms, repeat_ms);
         var value_ptr = us_timer_ext(this);

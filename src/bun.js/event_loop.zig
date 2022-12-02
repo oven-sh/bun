@@ -308,10 +308,7 @@ pub const EventLoop = struct {
             global_vm.drainMicrotasks();
         }
 
-        if (this.tasks.count == 0) {
-            this.tasks.head = 0;
-        }
-
+        this.tasks.head = if (this.tasks.count == 0) 0 else this.tasks.head;
         return @truncate(u32, counter);
     }
 
@@ -484,8 +481,8 @@ pub const EventLoop = struct {
         if (this.virtual_machine.uws_event_loop == null) {
             var actual = uws.Loop.get().?;
             this.virtual_machine.uws_event_loop = actual;
-            this.gc_timer = uws.Timer.create(actual, this);
-            this.gc_repeating_timer = uws.Timer.create(actual, this);
+            this.gc_timer = uws.Timer.createFallthrough(actual, this);
+            this.gc_repeating_timer = uws.Timer.createFallthrough(actual, this);
 
             var gc_timer_interval: i32 = 1000;
             if (this.virtual_machine.bundler.env.map.get("BUN_GC_TIMER_INTERVAL")) |timer| {

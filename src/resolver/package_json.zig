@@ -568,10 +568,12 @@ pub const PackageJSON = struct {
         input_path: string,
         dirname_fd: StoredFileDescriptorType,
         package_id: ?Install.PackageID,
-        comptime include_scripts: bool,
+        comptime include_scripts_: @Type(.EnumLiteral),
         comptime include_dependencies: @Type(.EnumLiteral),
-        comptime generate_hash: bool,
+        comptime generate_hash_: @Type(.EnumLiteral),
     ) ?PackageJSON {
+        const generate_hash = generate_hash_ == .generate_hash;
+        const include_scripts = include_scripts_ == .include_scripts;
 
         // TODO: remove this extra copy
         const parts = [_]string{ input_path, "package.json" };

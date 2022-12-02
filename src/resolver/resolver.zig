@@ -2106,9 +2106,9 @@ pub const Resolver = struct {
                 file,
                 dirname_fd,
                 package_id,
-                true,
+                .ignore_scripts,
                 if (allow_dependencies) .local else .none,
-                false,
+                .generate_hash,
             ) orelse return null;
         } else {
             pkg = PackageJSON.parse(
@@ -2116,9 +2116,9 @@ pub const Resolver = struct {
                 file,
                 dirname_fd,
                 package_id,
-                true,
+                .include_scripts,
                 if (allow_dependencies) .local else .none,
-                true,
+                .generate_hash,
             ) orelse return null;
         }
 

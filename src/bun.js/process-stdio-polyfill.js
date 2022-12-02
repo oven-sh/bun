@@ -134,7 +134,7 @@ function getStdioWriteStream({ require }) {
         if (!this.#readStream) {
           this.#readStream = createReadStream(this.#fdPath);
 
-          this.#readStream.on("ready", () => {
+          this.#readStream.on("readable", () => {
             if (this.#onReadable) {
               const cb = this.#onReadable;
               this.#onReadable = null;

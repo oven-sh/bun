@@ -3933,6 +3933,7 @@ var require_writable_readable = __commonJS({
       }
       end(chunk, encoding, cb) {
         const state = this._writableState;
+        debug("end", state, this.__id);
         if (typeof chunk === "function") {
           cb = chunk;
           chunk = null;
@@ -4293,8 +4294,8 @@ var require_writable_readable = __commonJS({
       }
       state.bufferProcessing = false;
     }
-    function needFinish(state) {
-      return (
+    function needFinish(state, tag) {
+      var needFinish =
         state.ending &&
         !state.destroyed &&
         state.constructed &&
@@ -4304,8 +4305,9 @@ var require_writable_readable = __commonJS({
         !state.finished &&
         !state.writing &&
         !state.errorEmitted &&
-        !state.closeEmitted
-      );
+        !state.closeEmitted;
+      debug("needFinish", needFinish, tag);
+      return needFinish;
     }
     function callFinal(stream, state) {
       let called = false;
@@ -4353,7 +4355,7 @@ var require_writable_readable = __commonJS({
       }
     }
     function finishMaybe(stream, state, sync) {
-      if (needFinish(state)) {
+      if (needFinish(state, stream.__id)) {
         prefinish(stream, state);
         if (state.pendingcb === 0) {
           if (sync) {
@@ -4813,8 +4815,9 @@ var require_writable = __commonJS({
       }
     };
     Writable.prototype._writev = null;
-    Writable.prototype.end = function (chunk, encoding, cb) {
+    Writable.prototype.end = function (chunk, encoding, cb, native = false) {
       const state = this._writableState;
+      debug("end", state, this.__id);
       if (typeof chunk === "function") {
         cb = chunk;
         chunk = null;
@@ -4825,7 +4828,12 @@ var require_writable = __commonJS({
       }
       let err;
       if (chunk !== null && chunk !== void 0) {
-        const ret = _write(this, chunk, encoding);
+        let ret;
+        if (!native) {
+          ret = _write(this, chunk, encoding);
+        } else {
+          ret = this.write(chunk, encoding);
+        }
         if (ret instanceof Error2) {
           err = ret;
         }
@@ -4835,6 +4843,7 @@ var require_writable = __commonJS({
         this.uncork();
       }
       if (err) {
+        this.emit("error", err);
       } else if (!state.errored && !state.ending) {
         state.ending = true;
         finishMaybe(this, state, true);
@@ -4853,8 +4862,8 @@ var require_writable = __commonJS({
       }
       return this;
     };
-    function needFinish(state) {
-      return (
+    function needFinish(state, tag) {
+      var needFinish =
         state.ending &&
         !state.destroyed &&
         state.constructed &&
@@ -4864,8 +4873,9 @@ var require_writable = __commonJS({
         !state.finished &&
         !state.writing &&
         !state.errorEmitted &&
-        !state.closeEmitted
-      );
+        !state.closeEmitted;
+      debug("needFinish", needFinish, tag);
+      return needFinish;
     }
     function callFinal(stream, state) {
       let called = false;
@@ -4913,26 +4923,26 @@ var require_writable = __commonJS({
       }
     }
     function finishMaybe(stream, state, sync) {
-      if (needFinish(state)) {
-        prefinish(stream, state);
-        if (state.pendingcb === 0) {
-          if (sync) {
-            state.pendingcb++;
-            runOnNextTick(
-              (stream2, state2) => {
-                if (needFinish(state2)) {
-                  finish(stream2, state2);
-                } else {
-                  state2.pendingcb--;
-                }
-              },
-              stream,
-              state,
-            );
-          } else if (needFinish(state)) {
-            state.pendingcb++;
-            finish(stream, state);
-          }
+      debug("finishMaybe -- state, sync", state, sync, stream.__id);
+      if (!needFinish(state, stream.__id)) return;
+      prefinish(stream, state);
+      if (state.pendingcb === 0) {
+        if (sync) {
+          state.pendingcb++;
+          runOnNextTick(
+            (stream2, state2) => {
+              if (needFinish(state2)) {
+                finish(stream2, state2);
+              } else {
+                state2.pendingcb--;
+              }
+            },
+            stream,
+            state,
+          );
+        } else if (needFinish(state)) {
+          state.pendingcb++;
+          finish(stream, state);
         }
       }
     }
@@ -6431,6 +6441,10 @@ var require_ours = __commonJS({
     module.exports.pipeline = CustomStream.pipeline;
     module.exports.compose = CustomStream.compose;
 
+    module.exports._getNativeReadableStreamPrototype =
+      getNativeReadableStreamPrototype;
+    module.exports.NativeWritable = NativeWritable;
+
     Object.defineProperty(CustomStream, "promises", {
       configurable: true,
       enumerable: true,
@@ -6449,7 +6463,7 @@ var require_ours = __commonJS({
  * This glue code lets us avoid using ReadableStreams to wrap Bun internal streams
  *
  */
-function createNativeStream(nativeType, Readable) {
+function createNativeStreamReadable(nativeType, Readable) {
   var [pull, start, cancel, setClose, deinit, updateRef, drainFn] =
     globalThis[Symbol.for("Bun.lazy")](nativeType);
 
@@ -6497,7 +6511,7 @@ function createNativeStream(nativeType, Readable) {
     process.env.BUN_DISABLE_DYNAMIC_CHUNK_SIZE !== "1";
 
   const finalizer = new FinalizationRegistry((ptr) => ptr && deinit(ptr));
-
+  const MIN_BUFFER_SIZE = 256;
   var NativeReadable = class NativeReadable extends Readable {
     #ptr;
     #refCount = 1;
@@ -6522,7 +6536,10 @@ function createNativeStream(nativeType, Readable) {
       finalizer.register(this, this.#ptr, this.#unregisterToken);
     }
 
-    _read(highWaterMark) {
+    // maxToRead is by default the highWaterMark passed from the Readable.read call to this fn
+    // However, in the case of an fs.ReadStream, we can pass the number of bytes we want to read
+    // which may be significantly less than the actual highWaterMark
+    _read(maxToRead) {
       debug("NativeReadable._read", this.__id);
       if (this.#pendingRead) {
         debug("pendingRead is true", this.__id);
@@ -6541,7 +6558,7 @@ function createNativeStream(nativeType, Readable) {
         this.#internalConstruct(ptr);
       }
 
-      return this.#internalRead(this.#getRemainingChunk(), ptr);
+      return this.#internalRead(this.#getRemainingChunk(maxToRead), ptr);
       // const internalReadRes = this.#internalRead(
       //   this.#getRemainingChunk(),
       //   ptr,
@@ -6582,11 +6599,15 @@ function createNativeStream(nativeType, Readable) {
       }
     }
 
-    #getRemainingChunk() {
+    // maxToRead can be the highWaterMark (by default) or the remaining amount of the stream to read
+    // This is so the the consumer of the stream can terminate the stream early if they know
+    // how many bytes they want to read (ie. when reading only part of a file)
+    #getRemainingChunk(maxToRead = this.#highWaterMark) {
       var chunk = this.#remainingChunk;
-      var highWaterMark = this.#highWaterMark;
-      if ((chunk?.byteLength ?? 0 < 512) && highWaterMark > 512) {
-        this.#remainingChunk = chunk = new Buffer(this.#highWaterMark);
+      debug("chunk @ #getRemainingChunk", chunk, this.__id);
+      if (chunk?.byteLength ?? 0 < MIN_BUFFER_SIZE) {
+        var size = maxToRead > MIN_BUFFER_SIZE ? maxToRead : MIN_BUFFER_SIZE;
+        this.#remainingChunk = chunk = new Buffer(size);
       }
       return chunk;
     }
@@ -6626,6 +6647,7 @@ function createNativeStream(nativeType, Readable) {
 
         return handleArrayBufferViewResult(this, result, view, isClosed);
       } else {
+        debug("Unknown result type", result, this.__id);
         throw new Error("Invalid result from pull");
       }
     }
@@ -6711,10 +6733,8 @@ var nativeReadableStreamPrototypes = {
   5: undefined,
 };
 function getNativeReadableStreamPrototype(nativeType, Readable) {
-  return (nativeReadableStreamPrototypes[nativeType] ||= createNativeStream(
-    nativeType,
-    Readable,
-  ));
+  return (nativeReadableStreamPrototypes[nativeType] ||=
+    createNativeStreamReadable(nativeType, Readable));
 }
 
 function getNativeReadableStream(Readable, stream, options) {
@@ -6736,6 +6756,102 @@ function getNativeReadableStream(Readable, stream, options) {
   return new NativeReadable(ptr, options);
 }
 /** --- Bun native stream wrapper ---  */
+
+var Writable = require_writable();
+var NativeWritable = class NativeWritable extends Writable {
+  #writePromises = [];
+  #pathOrFd;
+  #fileSink;
+  #native = true;
+
+  _construct;
+  _destroy;
+  _final;
+
+  constructor(pathOrFd, options = {}) {
+    super(options);
+
+    this._construct = this.#internalConstruct;
+    this._destroy = this.#internalDestroy;
+    this._final = this.#internalFinal;
+
+    this.#pathOrFd = pathOrFd;
+  }
+
+  // These are confusingly two different fns for construct which initially were the same thing because
+  // `_construct` is part of the lifecycle of Writable and is not called lazily,
+  // so we need to separate our _construct for Writable state and actual construction of the write stream
+  #internalConstruct(cb) {
+    this._writableState.constructed = true;
+    this.constructed = true;
+    cb();
+  }
+
+  #lazyConstruct() {
+    this.#fileSink = Bun.file(this.#pathOrFd).writer();
+  }
+
+  write(chunk, encoding, cb, native = this.#native) {
+    if (!native) {
+      this.#native = false;
+      return super.write(chunk, encoding, cb);
+    }
+
+    if (!this.#fileSink) {
+      this.#lazyConstruct();
+    }
+    var fileSink = this.#fileSink;
+    var result = fileSink.write(chunk);
+
+    var then = result?.then;
+    if (isPromise(result) && then && isCallable(then)) {
+      var writePromises = this.#writePromises;
+      var i = writePromises.length;
+      writePromises[i] = result;
+
+      then(() => {
+        this.emit("drain");
+        fileSink.flush(true);
+        // We can't naively use i here because we don't know when writes will resolve necessarily
+        writePromises.splice(writePromises.indexOf(result), 1);
+      });
+      return false;
+    }
+    fileSink.flush(true);
+    // TODO: Should we just have a calculation based on encoding and length of chunk?
+    if (cb) cb(null, chunk.byteLength);
+    return true;
+  }
+
+  end(chunk, encoding, cb, native = this.#native) {
+    return super.end(chunk, encoding, cb, native);
+  }
+
+  #internalDestroy(error, cb) {
+    this._writableState.destroyed = true;
+    if (cb) cb(error);
+  }
+
+  #internalFinal(cb) {
+    if (this.#fileSink) {
+      this.#fileSink.end();
+    }
+    if (cb) cb();
+  }
+
+  ref() {
+    // TODO: Is this right? Should we construct the stream if we call ref?
+    if (!this.#fileSink) {
+      this.#lazyConstruct();
+    }
+    this.#fileSink.ref();
+  }
+
+  unref() {
+    if (!this.#fileSink) return;
+    this.#fileSink.unref();
+  }
+};
 
 var stream_exports, wrapper;
 stream_exports = require_ours();
@@ -6765,3 +6881,6 @@ export var pipeline = stream_exports.pipeline;
 export var compose = stream_exports.compose;
 export var Stream = stream_exports.Stream;
 export var eos = (stream_exports["eos"] = require_end_of_stream);
+export var _getNativeReadableStreamPrototype =
+  stream_exports._getNativeReadableStreamPrototype;
+export var NativeWritable = stream_exports.NativeWritable;

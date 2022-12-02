@@ -136,7 +136,10 @@ export function createDoneDotAll(done) {
   let completed = 0;
   function createDoneCb(timeout) {
     toComplete += 1;
-    const timer = setTimeout(() => done(new Error("Timed out!")), timeout);
+    const timer = setTimeout(() => {
+      console.log("Timeout");
+      done(new Error("Timed out!"));
+    }, timeout);
     return (result) => {
       clearTimeout(timer);
       if (result instanceof Error) {

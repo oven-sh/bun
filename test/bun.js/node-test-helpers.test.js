@@ -7,7 +7,7 @@ import {
   createDoneDotAll,
 } from "./node-test-helpers";
 
-describe("OurAssert.throws()", () => {
+describe("NodeTestHelpers.throws()", () => {
   it("should pass when the function throws", () => {
     throws(() => {
       throw new Error("THROWN!");
@@ -22,12 +22,11 @@ describe("OurAssert.throws()", () => {
       err = e;
     }
 
-    console.log(err.code);
     expect(err instanceof Error).toBe(true);
   });
 });
 
-describe("OurAssert.assert()", () => {
+describe("NodeTestHelpers.assert()", () => {
   it("should pass when the provided value is true", () => {
     assert(true);
   });
@@ -43,7 +42,7 @@ describe("OurAssert.assert()", () => {
   });
 });
 
-describe("OurAssert.strictEqual()", () => {
+describe("NodeTestHelpers.strictEqual()", () => {
   it("should pass when the provided values are deeply equal", () => {
     strictEqual(1, 1);
     strictEqual("hello", "hello");
@@ -92,7 +91,7 @@ describe("OurAssert.strictEqual()", () => {
   });
 });
 
-describe("OurAssert.createCallCheckCtx", () => {
+describe("NodeTestHelpers.createCallCheckCtx", () => {
   it("should pass when all mustCall marked callbacks have been called", (done) => {
     const { mustCall } = createCallCheckCtx(done);
     const fn1 = mustCall(() => {});
@@ -122,7 +121,7 @@ describe("OurAssert.createCallCheckCtx", () => {
   });
 });
 
-describe("OurAssert.createDoneDotAll()", () => {
+describe("NodeTestHelpers.createDoneDotAll()", () => {
   it("should pass when all dones have been called", (done) => {
     const createDone = createDoneDotAll(done);
     const done1 = createDone(600);
@@ -153,5 +152,18 @@ describe("OurAssert.createDoneDotAll()", () => {
     setTimeout(() => done2(), 450);
     setTimeout(() => fn1(), 200);
     setTimeout(() => fn2(), 200);
+  });
+
+  it("should fail if a done is called with an error", (done) => {
+    const mockDone = (result) => {
+      expect(result instanceof Error).toBe(true);
+      done();
+    };
+    const createDone = createDoneDotAll(mockDone);
+
+    const done1 = createDone(600);
+    const done2 = createDone(600);
+    setTimeout(() => done1(), 300);
+    setTimeout(() => done2(new Error("ERROR!")), 450);
   });
 });

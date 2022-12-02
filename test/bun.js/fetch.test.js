@@ -160,6 +160,28 @@ function testBlobInterface(blobbyConstructor, hasBlobFn) {
         if (withGC) gc();
       });
 
+      it(`${
+        jsonObject.hello === true ? "latin1" : "utf16"
+      } arrayBuffer -> invalid json${
+        withGC ? " (with gc) " : ""
+      }`, async () => {
+        if (withGC) gc();
+        var response = blobbyConstructor(
+          new TextEncoder().encode(
+            JSON.stringify(jsonObject) + " NOW WE ARE INVALID JSON",
+          ),
+        );
+        if (withGC) gc();
+        var failed = false;
+        try {
+          await response.json();
+        } catch (e) {
+          failed = true;
+        }
+        expect(failed).toBe(true);
+        if (withGC) gc();
+      });
+
       it(`${jsonObject.hello === true ? "latin1" : "utf16"} text${
         withGC ? " (with gc) " : ""
       }`, async () => {

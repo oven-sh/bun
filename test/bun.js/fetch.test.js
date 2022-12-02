@@ -1,7 +1,7 @@
 import { it, describe, expect } from "bun:test";
 import fs, { unlinkSync } from "fs";
 import { mkfifo } from "mkfifo";
-import { gc } from "./gc";
+import { gc, withoutAggressiveGC } from "./gc";
 
 const exampleFixture = fs.readFileSync(
   import.meta.path.substring(0, import.meta.path.lastIndexOf("/")) +
@@ -218,12 +218,14 @@ function testBlobInterface(blobbyConstructor, hasBlobFn) {
         const compare = new Uint8Array(await response.arrayBuffer());
         if (withGC) gc();
 
-        for (let i = 0; i < compare.length; i++) {
-          if (withGC) gc();
+        withoutAggressiveGC(() => {
+          for (let i = 0; i < compare.length; i++) {
+            if (withGC) gc();
 
-          expect(compare[i]).toBe(bytes[i]);
-          if (withGC) gc();
-        }
+            expect(compare[i]).toBe(bytes[i]);
+            if (withGC) gc();
+          }
+        });
         if (withGC) gc();
       });
 

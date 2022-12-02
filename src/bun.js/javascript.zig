@@ -560,7 +560,7 @@ pub const VirtualMachine = struct {
         this.eventLoop().tick();
     }
 
-    pub fn waitForPromise(this: *VirtualMachine, promise: *JSC.JSInternalPromise) void {
+    pub fn waitForPromise(this: *VirtualMachine, promise: anytype) void {
         this.eventLoop().waitForPromise(promise);
     }
 

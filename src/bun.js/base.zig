@@ -2763,23 +2763,13 @@ pub fn wrapWithHasContainer(
             if (comptime maybe_async) {
                 if (result.asPromise() != null or result.asInternalPromise() != null) {
                     var vm = ctx.ptr().bunVM();
-                    vm.tick();
-                    var promise = JSC.JSInternalPromise.resolvedPromise(ctx.ptr(), result);
 
-                    switch (promise.status(ctx.ptr().vm())) {
-                        JSC.JSPromise.Status.Pending => {
-                            while (promise.status(ctx.ptr().vm()) == .Pending) {
-                                vm.tick();
-                            }
-                            result = promise.result(ctx.ptr().vm());
-                        },
-                        JSC.JSPromise.Status.Rejected => {
-                            result = promise.result(ctx.ptr().vm());
-                            exception.* = result.asObjectRef();
-                        },
-                        JSC.JSPromise.Status.Fulfilled => {
-                            result = promise.result(ctx.ptr().vm());
-                        },
+                    if (result.asPromise()) |promise| {
+                        vm.waitForPromise(promise);
+                        result = promise.result(ctx.vm());
+                    } else if (result.asInternalPromise()) |promise| {
+                        vm.waitForPromise(promise);
+                        result = promise.result(ctx.vm());
                     }
                 }
             }

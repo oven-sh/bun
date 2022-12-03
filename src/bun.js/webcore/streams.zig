@@ -1196,11 +1196,6 @@ pub const FileSink = struct {
     }
 
     pub fn start(this: *FileSink, stream_start: StreamStart) JSC.Node.Maybe(void) {
-        if (this.fd != bun.invalid_fd) {
-            _ = JSC.Node.Syscall.close(this.fd);
-            this.fd = bun.invalid_fd;
-        }
-
         this.done = false;
         this.written = 0;
         this.auto_close = false;

@@ -8,6 +8,7 @@ const {
 } = import.meta.require("node:os");
 
 const { ArrayBuffer } = import.meta.primordials;
+var runOnNextTick = (fn, ...args) => setImmediate(() => fn(...args));
 
 const MAX_BUFFER = 1024 * 1024;
 
@@ -159,7 +160,7 @@ export function spawn(file, args, options) {
   if (options.signal) {
     const signal = options.signal;
     if (signal.aborted) {
-      process.nextTick(onAbortListener);
+      runOnNextTick(onAbortListener);
     } else {
       signal.addEventListener("abort", onAbortListener, { once: true });
       child.once("exit", () =>
@@ -925,7 +926,7 @@ export class ChildProcess extends EventEmitter {
     // Do it on nextTick so that the user has one last chance
     // to consume the output, if for example they only want to
     // start reading the data once the process exits.
-    process.nextTick(flushStdio, this);
+    runOnNextTick(flushStdio, this);
 
     this.#maybeClose();
     this.#exited = true;

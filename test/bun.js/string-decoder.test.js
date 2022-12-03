@@ -1,4 +1,5 @@
-import { expect, it } from "bun:test";
+import { describe, expect, it } from "bun:test";
+import { withoutAggressiveGC } from "gc";
 var { StringDecoder } = require("string_decoder");
 
 it("require('string_decoder')", async () => {
@@ -89,20 +90,22 @@ it("StringDecoder-utf16le-additional", () => {
 // singleSequence allows for easy debugging of a specific sequence which is
 // useful in case of test failures.
 function test(encoding, input, expected, singleSequence) {
-  let sequences;
-  if (!singleSequence) {
-    sequences = writeSequences(input.length);
-  } else {
-    sequences = [singleSequence];
-  }
-  sequences.forEach((sequence) => {
-    const decoder = new StringDecoder(encoding);
-    let output = "";
-    sequence.forEach((write) => {
-      output += decoder.write(input.slice(write[0], write[1]));
+  withoutAggressiveGC(() => {
+    let sequences;
+    if (!singleSequence) {
+      sequences = writeSequences(input.length);
+    } else {
+      sequences = [singleSequence];
+    }
+    sequences.forEach((sequence) => {
+      const decoder = new StringDecoder(encoding);
+      let output = "";
+      sequence.forEach((write) => {
+        output += decoder.write(input.slice(write[0], write[1]));
+      });
+      output += decoder.end();
+      expect(output).toBe(expected);
     });
-    output += decoder.end();
-    expect(output).toBe(expected);
   });
 }
 
@@ -131,3 +134,112 @@ function writeSequences(length, start, sequence) {
   }
   return sequences;
 }
+
+describe("StringDecoder.end", () => {
+  const encodings = ["base64", "base64url", "hex", "utf8", "utf16le", "ucs2"];
+
+  const bufs = ["☃💩", "asdf"].map((b) => Buffer.from(b));
+
+  // Also test just arbitrary bytes from 0-15.
+  for (let i = 1; i <= 16; i++) {
+    const bytes = "."
+      .repeat(i - 1)
+      .split(".")
+      .map((_, j) => j + 0x78);
+    bufs.push(Buffer.from(bytes));
+  }
+
+  encodings.forEach(testEncoding);
+
+  testEnd("utf8", Buffer.of(0xe2), Buffer.of(0x61), "\uFFFDa");
+  testEnd("utf8", Buffer.of(0xe2), Buffer.of(0x82), "\uFFFD\uFFFD");
+  testEnd("utf8", Buffer.of(0xe2), Buffer.of(0xe2), "\uFFFD\uFFFD");
+  testEnd("utf8", Buffer.of(0xe2, 0x82), Buffer.of(0x61), "\uFFFDa");
+  testEnd("utf8", Buffer.of(0xe2, 0x82), Buffer.of(0xac), "\uFFFD\uFFFD");
+  testEnd("utf8", Buffer.of(0xe2, 0x82), Buffer.of(0xe2), "\uFFFD\uFFFD");
+  testEnd("utf8", Buffer.of(0xe2, 0x82, 0xac), Buffer.of(0x61), "€a");
+
+  testEnd("utf16le", Buffer.of(0x3d), Buffer.of(0x61, 0x00), "a");
+  testEnd("utf16le", Buffer.of(0x3d), Buffer.of(0xd8, 0x4d, 0xdc), "\u4DD8");
+  testEnd("utf16le", Buffer.of(0x3d, 0xd8), Buffer.of(), "\uD83D");
+  testEnd("utf16le", Buffer.of(0x3d, 0xd8), Buffer.of(0x61, 0x00), "\uD83Da");
+  testEnd(
+    "utf16le",
+    Buffer.of(0x3d, 0xd8),
+    Buffer.of(0x4d, 0xdc),
+    "\uD83D\uDC4D",
+  );
+  testEnd("utf16le", Buffer.of(0x3d, 0xd8, 0x4d), Buffer.of(), "\uD83D");
+  testEnd(
+    "utf16le",
+    Buffer.of(0x3d, 0xd8, 0x4d),
+    Buffer.of(0x61, 0x00),
+    "\uD83Da",
+  );
+  testEnd("utf16le", Buffer.of(0x3d, 0xd8, 0x4d), Buffer.of(0xdc), "\uD83D");
+  testEnd(
+    "utf16le",
+    Buffer.of(0x3d, 0xd8, 0x4d, 0xdc),
+    Buffer.of(0x61, 0x00),
+    "👍a",
+  );
+
+  testEnd("base64", Buffer.of(0x61), Buffer.of(), "YQ==");
+  testEnd("base64", Buffer.of(0x61), Buffer.of(0x61), "YQ==YQ==");
+  testEnd("base64", Buffer.of(0x61, 0x61), Buffer.of(), "YWE=");
+  testEnd("base64", Buffer.of(0x61, 0x61), Buffer.of(0x61), "YWE=YQ==");
+  testEnd("base64", Buffer.of(0x61, 0x61, 0x61), Buffer.of(), "YWFh");
+  testEnd("base64", Buffer.of(0x61, 0x61, 0x61), Buffer.of(0x61), "YWFhYQ==");
+
+  testEnd("base64url", Buffer.of(0x61), Buffer.of(), "YQ");
+  testEnd("base64url", Buffer.of(0x61), Buffer.of(0x61), "YQYQ");
+  testEnd("base64url", Buffer.of(0x61, 0x61), Buffer.of(), "YWE");
+  testEnd("base64url", Buffer.of(0x61, 0x61), Buffer.of(0x61), "YWEYQ");
+  testEnd("base64url", Buffer.of(0x61, 0x61, 0x61), Buffer.of(), "YWFh");
+  testEnd("base64url", Buffer.of(0x61, 0x61, 0x61), Buffer.of(0x61), "YWFhYQ");
+
+  function testEncoding(encoding) {
+    it(encoding + " testbuf", () => {
+      bufs.forEach((buf) => {
+        testBuf(encoding, buf);
+      });
+    });
+  }
+
+  function testBuf(encoding, buf) {
+    // Write one byte at a time.
+    let s = new StringDecoder(encoding);
+    let res1 = "";
+    for (let i = 0; i < buf.length; i++) {
+      res1 += s.write(buf.slice(i, i + 1));
+    }
+    res1 += s.end();
+
+    // Write the whole buffer at once.
+    let res2 = "";
+    s = new StringDecoder(encoding);
+    res2 += s.write(buf);
+    res2 += s.end();
+
+    // .toString() on the buffer
+    const res3 = buf.toString(encoding);
+
+    // One byte at a time should match toString
+    expect(res1).toEqual(res3);
+    // All bytes at once should match toString
+    expect(res2).toEqual(res3);
+  }
+
+  function testEnd(encoding, incomplete, next, expected) {
+    it(`${encoding} partial ${JSON.stringify(expected)}`, () => {
+      let res = "";
+      const s = new StringDecoder(encoding);
+      res += s.write(incomplete);
+      res += s.end();
+      res += s.write(next);
+      res += s.end();
+
+      expect(res).toEqual(expected);
+    });
+  }
+});

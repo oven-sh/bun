@@ -360,24 +360,7 @@ interface Headers {
    * headers.getAll("Set-Cookie"); // ["foo=bar", "baz=qux"]
    * ```
    */
-  getAll(name: string): string[];
-
-  /**
-   * Returns the `Set-Cookie` header as an array of strings
-   *
-   * Based on https://github.com/whatwg/fetch/pull/1346
-   *
-   * @returns An array of `Set-Cookie` header values
-   *
-   * @example
-   * ```ts
-   * const headers = new Headers();
-   * headers.append("Set-Cookie", "foo=bar");
-   * headers.append("Set-Cookie", "baz=qux");
-   * headers.getSetCookie(); // ["foo=bar", "baz=qux"]
-   * ```
-   */
-  getSetCookie(): string[];
+  getAll(name: "set-cookie" | "Set-Cookie"): string[];
 }
 
 declare var Headers: {

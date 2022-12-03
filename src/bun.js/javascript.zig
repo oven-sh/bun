@@ -1639,7 +1639,9 @@ pub const VirtualMachine = struct {
         if (this.hide_bun_stackframes) {
             var start_index: ?usize = null;
             for (frames) |frame, i| {
-                if (frame.source_url.eqlComptime("bun:wrap")) {
+                if (frame.source_url.eqlComptime("bun:wrap") or
+                    frame.function_name.eqlComptime("::bunternal::"))
+                {
                     start_index = i;
                     break;
                 }
@@ -1650,7 +1652,9 @@ pub const VirtualMachine = struct {
                 var i: usize = k;
                 while (i < frames.len) : (i += 1) {
                     const frame = frames[i];
-                    if (frame.source_url.eqlComptime("bun:wrap")) {
+                    if (frame.source_url.eqlComptime("bun:wrap") or
+                        frame.function_name.eqlComptime("::bunternal::"))
+                    {
                         continue;
                     }
                     frames[j] = frame;

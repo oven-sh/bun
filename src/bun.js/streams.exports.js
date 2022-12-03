@@ -4158,7 +4158,7 @@ var require_writable_readable = __commonJS({
       state.length -= state.writelen;
       state.writelen = 0;
       if (er) {
-        er.stack;
+        Error.captureStackTrace(er);
         if (!state.errored) {
           state.errored = er;
         }

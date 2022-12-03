@@ -1819,7 +1819,6 @@ function ERR_INVALID_ARG_VALUE(name, value, reason) {
   );
 }
 
-// TODO: Add actual proper error implementation here
 class SystemError extends Error {
   path;
   syscall;

@@ -6803,7 +6803,7 @@ var NativeWritable = class NativeWritable extends Writable {
     var result = fileSink.write(chunk);
 
     var then = result?.then;
-    if (isPromise(result) && then && isCallable(then)) {
+    if (isPromise(result)) {
       var writePromises = this.#writePromises;
       var i = writePromises.length;
       writePromises[i] = result;

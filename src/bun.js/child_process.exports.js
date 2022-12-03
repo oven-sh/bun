@@ -947,9 +947,7 @@ export class ChildProcess extends EventEmitter {
       case 0: {
         switch (io) {
           case "pipe":
-            return new NativeWritable(this.#handle.stdin, {
-              __id: `child-stdin-1`,
-            });
+            return new NativeWritable(this.#handle.stdin);
           case "inherit":
             return process.stdin || null;
           case "destroyed":

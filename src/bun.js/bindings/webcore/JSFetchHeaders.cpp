@@ -203,7 +203,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFetchHeadersPrototypeFunction_getAll, (JSGlobalObject
 
     auto& impl = castedThis->wrapped();
     if (name.length() != "set-cookie"_s.length() || name.convertToASCIILowercase() != "set-cookie"_s) {
-        return JSValue::encode(JSC::constructEmptyArray(lexicalGlobalObject, nullptr, 0));
+        throwTypeError(lexicalGlobalObject, scope, "Only \"set-cookie\" is supported."_s);
     }
 
     auto values = impl.getSetCookieHeaders();

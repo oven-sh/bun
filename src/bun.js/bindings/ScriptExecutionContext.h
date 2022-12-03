@@ -132,6 +132,15 @@ public:
         reinterpret_cast<Zig::GlobalObject*>(m_globalObject)->queueTask(task);
     } // Executes the task on context's thread asynchronously.
 
+    void postTaskOnTimeout(EventLoopTask* task, Seconds timeout)
+    {
+        reinterpret_cast<Zig::GlobalObject*>(m_globalObject)->queueTaskOnTimeout(task, static_cast<int>(timeout.milliseconds()));
+    } // Executes the task on context's thread asynchronously.
+    void postTaskOnTimeout(Function<void(ScriptExecutionContext&)>&& lambda, Seconds timeout)
+    {
+        auto* task = new EventLoopTask(WTFMove(lambda));
+        postTaskOnTimeout(task, timeout);
+    }
     template<typename... Arguments>
     void postCrossThreadTask(Arguments&&... arguments)
     {

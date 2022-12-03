@@ -566,6 +566,20 @@ pub const EventLoop = struct {
         this.tasks.writeItem(task) catch unreachable;
     }
 
+    pub fn enqueueTaskWithTimeout(this: *EventLoop, task: Task, timeout: i32) void {
+        // TODO: make this more efficient!
+        var loop = this.virtual_machine.uws_event_loop orelse @panic("EventLoop.enqueueTaskWithTimeout: uSockets event loop is not initialized");
+        var timer = uws.Timer.createFallthrough(loop, task.ptr());
+        timer.set(task.ptr(), callTask, timeout, 0);
+    }
+
+    pub fn callTask(timer: *uws.Timer) callconv(.C) void {
+        var task = Task.from(timer.as(*anyopaque));
+        timer.deinit();
+
+        JSC.VirtualMachine.vm.enqueueTask(task);
+    }
+
     pub fn ensureWaker(this: *EventLoop) void {
         JSC.markBinding(@src());
         if (this.virtual_machine.uws_event_loop == null) {

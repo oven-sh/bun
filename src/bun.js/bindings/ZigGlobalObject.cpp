@@ -3368,6 +3368,7 @@ void GlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 }
 
 extern "C" void Bun__queueTask(JSC__JSGlobalObject*, WebCore::EventLoopTask* task);
+extern "C" void Bun__queueTaskWithTimeout(JSC__JSGlobalObject*, WebCore::EventLoopTask* task, int timeout);
 extern "C" void Bun__queueTaskConcurrently(JSC__JSGlobalObject*, WebCore::EventLoopTask* task);
 extern "C" void Bun__performTask(Zig::GlobalObject* globalObject, WebCore::EventLoopTask* task)
 {
@@ -3377,6 +3378,11 @@ extern "C" void Bun__performTask(Zig::GlobalObject* globalObject, WebCore::Event
 void GlobalObject::queueTask(WebCore::EventLoopTask* task)
 {
     Bun__queueTask(this, task);
+}
+
+void GlobalObject::queueTaskOnTimeout(WebCore::EventLoopTask* task, int timeout)
+{
+    Bun__queueTaskWithTimeout(this, task, timeout);
 }
 
 void GlobalObject::queueTaskConcurrently(WebCore::EventLoopTask* task)

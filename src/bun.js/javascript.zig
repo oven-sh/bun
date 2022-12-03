@@ -280,6 +280,7 @@ comptime {
         _ = Bun__onDidAppendPlugin;
         _ = Bun__readOriginTimerStart;
         _ = Bun__reportUnhandledError;
+        _ = Bun__queueTaskWithTimeout;
     }
 }
 
@@ -287,6 +288,10 @@ comptime {
 /// The bunVM() call will assert this
 pub export fn Bun__queueTask(global: *JSGlobalObject, task: *JSC.CppTask) void {
     global.bunVM().eventLoop().enqueueTask(Task.init(task));
+}
+
+pub export fn Bun__queueTaskWithTimeout(global: *JSGlobalObject, task: *JSC.CppTask, milliseconds: i32) void {
+    global.bunVM().eventLoop().enqueueTaskWithTimeout(Task.init(task), milliseconds);
 }
 
 pub export fn Bun__reportUnhandledError(globalObject: *JSGlobalObject, value: JSValue) callconv(.C) JSValue {

@@ -46,8 +46,6 @@ static ExceptionOr<bool> canWriteHeader(const HTTPHeaderName name, const String&
         return Exception { TypeError, makeString("Header '", name, "' has invalid value: '", value, "'") };
     if (guard == FetchHeaders::Guard::Immutable)
         return Exception { TypeError, "Headers object's guard is 'immutable'"_s };
-    if (guard == FetchHeaders::Guard::RequestNoCors && !combinedValue.isEmpty())
-        return false;
     return true;
 }
 
@@ -60,12 +58,6 @@ static ExceptionOr<bool> canWriteHeader(const String& name, const String& value,
         return Exception { TypeError, makeString("Header '", name, "' has invalid value: '", value, "'") };
     if (guard == FetchHeaders::Guard::Immutable)
         return Exception { TypeError, "Headers object's guard is 'immutable'"_s };
-    if (guard == FetchHeaders::Guard::Request && isForbiddenHeaderName(name))
-        return false;
-    if (guard == FetchHeaders::Guard::RequestNoCors && !combinedValue.isEmpty() && !isSimpleHeader(name, combinedValue))
-        return false;
-    if (guard == FetchHeaders::Guard::Response && isForbiddenResponseHeaderName(name))
-        return false;
     return true;
 }
 
@@ -173,6 +165,16 @@ ExceptionOr<void> FetchHeaders::fill(const Init& headerInit)
 
 ExceptionOr<void> FetchHeaders::fill(const FetchHeaders& otherHeaders)
 {
+    if (this->size() == 0) {
+        HTTPHeaderMap headers;
+        headers.commonHeaders().appendVector(otherHeaders.m_headers.commonHeaders());
+        headers.uncommonHeaders().appendVector(otherHeaders.m_headers.uncommonHeaders());
+        headers.getSetCookieHeaders().appendVector(otherHeaders.m_headers.getSetCookieHeaders());
+        setInternalHeaders(WTFMove(headers));
+        m_updateCounter++;
+        return {};
+    }
+
     for (auto& header : otherHeaders.m_headers) {
         auto result = appendToHeaderMap(header, m_headers, m_guard);
         if (result.hasException())

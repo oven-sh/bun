@@ -220,10 +220,12 @@ public:
     template<size_t length> bool remove(const char (&)[length]) = delete;
 
     const Vector<String, 0> &getSetCookieHeaders() const { return m_setCookieHeaders; }
+
     const CommonHeadersVector &commonHeaders() const { return m_commonHeaders; }
     const UncommonHeadersVector &uncommonHeaders() const { return m_uncommonHeaders; }
     CommonHeadersVector &commonHeaders() { return m_commonHeaders; }
     UncommonHeadersVector &uncommonHeaders() { return m_uncommonHeaders; }
+    Vector<String, 0> &getSetCookieHeaders() { return m_setCookieHeaders; }
 
     const_iterator begin() const { return const_iterator(*this, m_commonHeaders.begin(), m_uncommonHeaders.begin(), m_setCookieHeaders.begin()); }
     const_iterator end() const { return const_iterator(*this, m_commonHeaders.end(), m_uncommonHeaders.end(), m_setCookieHeaders.end()); }

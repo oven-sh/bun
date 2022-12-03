@@ -1471,6 +1471,19 @@ pub const Subprocess = struct {
         defer this.updateHasPendingActivity();
         this.has_waitpid_task = false;
 
+        if (this.exit_promise.trySwap()) |promise| {
+            if (this.exit_code) |code| {
+                promise.asPromise().?.resolve(globalThis, JSValue.jsNumber(code));
+            } else if (this.waitpid_err) |err| {
+                this.waitpid_err = null;
+                promise.asPromise().?.reject(globalThis, err.toJSC(globalThis));
+            } else {
+                // crash in debug mode
+                if (comptime Environment.allow_assert)
+                    unreachable;
+            }
+        }
+
         if (this.on_exit_callback.trySwap()) |callback| {
             const exit_value: JSValue = if (this.exit_code) |code|
                 JSC.JSValue.jsNumber(code)
@@ -1495,19 +1508,6 @@ pub const Subprocess = struct {
 
             if (result.isAnyError(globalThis)) {
                 globalThis.bunVM().onUnhandledError(globalThis, result);
-            }
-        }
-
-        if (this.exit_promise.trySwap()) |promise| {
-            if (this.exit_code) |code| {
-                promise.asPromise().?.resolve(globalThis, JSValue.jsNumber(code));
-            } else if (this.waitpid_err) |err| {
-                this.waitpid_err = null;
-                promise.asPromise().?.reject(globalThis, err.toJSC(globalThis));
-            } else {
-                // crash in debug mode
-                if (comptime Environment.allow_assert)
-                    unreachable;
             }
         }
 

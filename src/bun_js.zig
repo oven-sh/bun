@@ -165,7 +165,7 @@ pub const Run = struct {
         {
             while (this.vm.eventLoop().tasks.count > 0 or this.vm.active_tasks > 0 or this.vm.uws_event_loop.?.active > 0) {
                 this.vm.tick();
-                this.vm.eventLoop().autoTick();
+                this.vm.eventLoop().autoTickActive();
             }
 
             if (this.vm.log.msgs.items.len > 0) {

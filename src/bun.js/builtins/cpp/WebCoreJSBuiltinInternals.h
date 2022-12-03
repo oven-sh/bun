@@ -40,6 +40,7 @@ namespace Zig { class GlobalObject; }
 
 #pragma once
 
+#include "ProcessObjectInternalsBuiltins.h"
 #include "ReadableByteStreamInternalsBuiltins.h"
 #include "ReadableStreamInternalsBuiltins.h"
 #include "StreamInternalsBuiltins.h"
@@ -59,6 +60,7 @@ public:
     template<typename Visitor> void visit(Visitor&);
     void initialize(JSDOMGlobalObject&);
 
+    ProcessObjectInternalsBuiltinFunctions& processObjectInternals() { return m_processObjectInternals; }
     ReadableByteStreamInternalsBuiltinFunctions& readableByteStreamInternals() { return m_readableByteStreamInternals; }
     ReadableStreamInternalsBuiltinFunctions& readableStreamInternals() { return m_readableStreamInternals; }
     StreamInternalsBuiltinFunctions& streamInternals() { return m_streamInternals; }
@@ -67,6 +69,7 @@ public:
 
 private:
     JSC::VM& m_vm;
+    ProcessObjectInternalsBuiltinFunctions m_processObjectInternals;
     ReadableByteStreamInternalsBuiltinFunctions m_readableByteStreamInternals;
     ReadableStreamInternalsBuiltinFunctions m_readableStreamInternals;
     StreamInternalsBuiltinFunctions m_streamInternals;

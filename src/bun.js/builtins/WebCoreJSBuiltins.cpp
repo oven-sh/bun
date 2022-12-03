@@ -40,7 +40,7 @@
 #include "JSBufferConstructorBuiltins.cpp"
 #include "JSBufferPrototypeBuiltins.cpp"
 #include "OnigurumaRegExpPrototypeBuiltins.cpp"
-#include "ProcessObjectBuiltins.cpp"
+#include "ProcessObjectInternalsBuiltins.cpp"
 #include "ReadableByteStreamControllerBuiltins.cpp"
 #include "ReadableByteStreamInternalsBuiltins.cpp"
 #include "ReadableStreamBYOBReaderBuiltins.cpp"

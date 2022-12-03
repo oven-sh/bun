@@ -467,6 +467,15 @@ pub const EventLoop = struct {
         }
     }
 
+    pub fn autoTickActive(this: *EventLoop) void {
+        var loop = this.virtual_machine.uws_event_loop.?;
+        if (loop.active > 0) {
+            loop.tick();
+            this.processGCTimer();
+            // this.afterUSocketsTick();
+        }
+    }
+
     pub fn processGCTimer(this: *EventLoop) void {
         this.virtual_machine.gc_controller.processGCTimer();
     }

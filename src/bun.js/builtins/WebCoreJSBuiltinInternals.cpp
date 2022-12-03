@@ -52,6 +52,7 @@ namespace WebCore {
 
 JSBuiltinInternalFunctions::JSBuiltinInternalFunctions(JSC::VM& vm)
     : m_vm(vm)
+    , m_processObjectInternals(m_vm)
     , m_readableByteStreamInternals(m_vm)
     , m_readableStreamInternals(m_vm)
     , m_streamInternals(m_vm)
@@ -64,6 +65,7 @@ JSBuiltinInternalFunctions::JSBuiltinInternalFunctions(JSC::VM& vm)
 template<typename Visitor>
 void JSBuiltinInternalFunctions::visit(Visitor& visitor)
 {
+    m_processObjectInternals.visit(visitor);
     m_readableByteStreamInternals.visit(visitor);
     m_readableStreamInternals.visit(visitor);
     m_streamInternals.visit(visitor);
@@ -78,6 +80,7 @@ template void JSBuiltinInternalFunctions::visit(SlotVisitor&);
 SUPPRESS_ASAN void JSBuiltinInternalFunctions::initialize(JSDOMGlobalObject& globalObject)
 {
     UNUSED_PARAM(globalObject);
+    m_processObjectInternals.init(globalObject);
     m_readableByteStreamInternals.init(globalObject);
     m_readableStreamInternals.init(globalObject);
     m_streamInternals.init(globalObject);
@@ -86,6 +89,11 @@ SUPPRESS_ASAN void JSBuiltinInternalFunctions::initialize(JSDOMGlobalObject& glo
 
     JSVMClientData& clientData = *static_cast<JSVMClientData*>(m_vm.clientData);
     JSDOMGlobalObject::GlobalPropertyInfo staticGlobals[] = {
+#define DECLARE_GLOBAL_STATIC(name) \
+    JSDOMGlobalObject::GlobalPropertyInfo( \
+        clientData.builtinFunctions().processObjectInternalsBuiltins().name##PrivateName(), processObjectInternals().m_##name##Function.get() , JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly),
+    WEBCORE_FOREACH_PROCESSOBJECTINTERNALS_BUILTIN_FUNCTION_NAME(DECLARE_GLOBAL_STATIC)
+#undef DECLARE_GLOBAL_STATIC
 #define DECLARE_GLOBAL_STATIC(name) \
     JSDOMGlobalObject::GlobalPropertyInfo( \
         clientData.builtinFunctions().readableByteStreamInternalsBuiltins().name##PrivateName(), readableByteStreamInternals().m_##name##Function.get() , JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly),

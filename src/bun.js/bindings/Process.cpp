@@ -6,7 +6,7 @@
 #include "ZigGlobalObject.h"
 #include "headers.h"
 #include "JSEnvironmentVariableMap.h"
-
+#include "ImportMetaObject.h"
 #pragma mark - Node.js Process
 
 namespace Zig {
@@ -38,6 +38,78 @@ static JSC_DECLARE_CUSTOM_GETTER(Process_getPID);
 static JSC_DECLARE_CUSTOM_GETTER(Process_getPPID);
 
 static JSC_DECLARE_HOST_FUNCTION(Process_functionCwd);
+
+static JSValue constructStdioWriteStream(JSC::JSGlobalObject* globalObject, int fd)
+{
+    auto& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto* thisObject = reinterpret_cast<Zig::GlobalObject*>(globalObject);
+    JSC::JSFunction* getStdioWriteStream = JSC::JSFunction::create(vm, processObjectInternalsGetStdioWriteStreamCodeGenerator(vm), globalObject);
+    JSC::MarkedArgumentBuffer args;
+    WTF::String process = WTF::String("node:process"_s);
+    JSC::JSValue requireFunction = Zig::ImportMetaObject::createRequireFunction(
+        vm,
+        globalObject,
+        process);
+
+    args.append(JSC::jsNumber(fd));
+    args.append(requireFunction);
+
+    auto clientData = WebCore::clientData(vm);
+    JSC::CallData callData = JSC::getCallData(getStdioWriteStream);
+
+    NakedPtr<JSC::Exception> returnedException = nullptr;
+    auto result = JSC::call(globalObject, getStdioWriteStream, callData, globalObject->globalThis(), args, returnedException);
+    RETURN_IF_EXCEPTION(scope, {});
+
+    if (returnedException) {
+        throwException(globalObject, scope, returnedException.get());
+        return {};
+    }
+
+    return result;
+}
+
+JSC_DEFINE_CUSTOM_GETTER(
+    Process_lazyStdinGetter,
+    (JSGlobalObject * globalObject, EncodedJSValue thisValue, PropertyName property))
+{
+}
+
+JSC_DEFINE_CUSTOM_GETTER(
+    Process_lazyStdoutGetter,
+    (JSGlobalObject * globalObject, EncodedJSValue thisValue, PropertyName property))
+{
+    JSValue value = JSValue::decode(thisValue);
+    auto& vm = globalObject->vm();
+    JSC::JSObject* thisObject = value.toObject(globalObject);
+    JSC::JSValue stream = constructStdioWriteStream(globalObject, 1);
+    thisObject->putDirect(vm, property, stream, 0);
+    return JSValue::encode(stream);
+}
+
+JSC_DEFINE_CUSTOM_GETTER(
+    Process_lazyStderrGetter, (JSGlobalObject * globalObject, EncodedJSValue thisValue, PropertyName property))
+{
+    JSValue value = JSValue::decode(thisValue);
+    auto& vm = globalObject->vm();
+    JSC::JSObject* thisObject = value.toObject(globalObject);
+    JSC::JSValue stream = constructStdioWriteStream(globalObject, 2);
+    thisObject->putDirect(vm, property, stream, 0);
+    return JSValue::encode(stream);
+}
+
+JSC_DEFINE_CUSTOM_SETTER(Process_defaultSetter,
+    (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue,
+        JSC::EncodedJSValue value, JSC::PropertyName propertyName))
+{
+    JSC::VM& vm = globalObject->vm();
+
+    JSC::JSObject* thisObject = JSC::jsDynamicCast<JSC::JSObject*>(JSValue::decode(thisValue));
+    thisObject->putDirect(vm, propertyName, JSValue::decode(value), 0);
+
+    return true;
+}
 
 JSC_DECLARE_HOST_FUNCTION(Process_functionNextTick);
 JSC_DEFINE_HOST_FUNCTION(Process_functionNextTick,
@@ -241,7 +313,6 @@ static JSC_DECLARE_HOST_FUNCTION(Process_functionChdir);
 static JSC_DEFINE_HOST_FUNCTION(Process_functionChdir,
     (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
-
     auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
 
     ZigString str = ZigString { nullptr, 0 };
@@ -389,6 +460,12 @@ void Process::finishCreation(JSC::VM& vm)
 
     this->putDirectCustomAccessor(vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "release"_s)),
         JSC::CustomGetterSetter::create(vm, Process_getterRelease, Process_setterRelease), 0);
+
+    this->putDirectCustomAccessor(vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "stdout"_s)),
+        JSC::CustomGetterSetter::create(vm, Process_lazyStdoutGetter, Process_defaultSetter), 0);
+
+    this->putDirectCustomAccessor(vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "stderr"_s)),
+        JSC::CustomGetterSetter::create(vm, Process_lazyStderrGetter, Process_defaultSetter), 0);
 }
 
 const JSC::ClassInfo Process::s_info = { "Process"_s, &Base::s_info, nullptr, nullptr,
@@ -522,7 +599,6 @@ JSC_DEFINE_CUSTOM_SETTER(Process_setVersionsLazy,
     (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue,
         JSC::EncodedJSValue value, JSC::PropertyName))
 {
-
     JSC::VM& vm = globalObject->vm();
     auto clientData = WebCore::clientData(vm);
 
@@ -540,7 +616,6 @@ JSC_DEFINE_CUSTOM_SETTER(Process_setVersionsLazy,
 static JSC_DEFINE_HOST_FUNCTION(Process_functionCwd,
     (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
-
     auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
     JSC::JSValue result = JSC::JSValue::decode(Bun__Process__getCwd(globalObject));
     JSC::JSObject* obj = result.getObject();

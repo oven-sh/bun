@@ -42,7 +42,7 @@
 #include "JSBufferConstructorBuiltins.h"
 #include "JSBufferPrototypeBuiltins.h"
 #include "OnigurumaRegExpPrototypeBuiltins.h"
-#include "ProcessObjectBuiltins.h"
+#include "ProcessObjectInternalsBuiltins.h"
 #include "ReadableByteStreamControllerBuiltins.h"
 #include "ReadableByteStreamInternalsBuiltins.h"
 #include "ReadableStreamBYOBReaderBuiltins.h"
@@ -72,7 +72,7 @@ public:
         , m_jsBufferConstructorBuiltins(m_vm)
         , m_jsBufferPrototypeBuiltins(m_vm)
         , m_onigurumaRegExpPrototypeBuiltins(m_vm)
-        , m_processObjectBuiltins(m_vm)
+        , m_processObjectInternalsBuiltins(m_vm)
         , m_readableByteStreamControllerBuiltins(m_vm)
         , m_readableByteStreamInternalsBuiltins(m_vm)
         , m_readableStreamBuiltins(m_vm)
@@ -89,6 +89,7 @@ public:
         , m_writableStreamDefaultWriterBuiltins(m_vm)
         , m_writableStreamInternalsBuiltins(m_vm)
     {
+        m_processObjectInternalsBuiltins.exportNames();
         m_readableByteStreamInternalsBuiltins.exportNames();
         m_readableStreamInternalsBuiltins.exportNames();
         m_streamInternalsBuiltins.exportNames();
@@ -102,7 +103,7 @@ public:
     JSBufferConstructorBuiltinsWrapper& jsBufferConstructorBuiltins() { return m_jsBufferConstructorBuiltins; }
     JSBufferPrototypeBuiltinsWrapper& jsBufferPrototypeBuiltins() { return m_jsBufferPrototypeBuiltins; }
     OnigurumaRegExpPrototypeBuiltinsWrapper& onigurumaRegExpPrototypeBuiltins() { return m_onigurumaRegExpPrototypeBuiltins; }
-    ProcessObjectBuiltinsWrapper& processObjectBuiltins() { return m_processObjectBuiltins; }
+    ProcessObjectInternalsBuiltinsWrapper& processObjectInternalsBuiltins() { return m_processObjectInternalsBuiltins; }
     ReadableByteStreamControllerBuiltinsWrapper& readableByteStreamControllerBuiltins() { return m_readableByteStreamControllerBuiltins; }
     ReadableByteStreamInternalsBuiltinsWrapper& readableByteStreamInternalsBuiltins() { return m_readableByteStreamInternalsBuiltins; }
     ReadableStreamBuiltinsWrapper& readableStreamBuiltins() { return m_readableStreamBuiltins; }
@@ -127,7 +128,7 @@ private:
     JSBufferConstructorBuiltinsWrapper m_jsBufferConstructorBuiltins;
     JSBufferPrototypeBuiltinsWrapper m_jsBufferPrototypeBuiltins;
     OnigurumaRegExpPrototypeBuiltinsWrapper m_onigurumaRegExpPrototypeBuiltins;
-    ProcessObjectBuiltinsWrapper m_processObjectBuiltins;
+    ProcessObjectInternalsBuiltinsWrapper m_processObjectInternalsBuiltins;
     ReadableByteStreamControllerBuiltinsWrapper m_readableByteStreamControllerBuiltins;
     ReadableByteStreamInternalsBuiltinsWrapper m_readableByteStreamInternalsBuiltins;
     ReadableStreamBuiltinsWrapper m_readableStreamBuiltins;

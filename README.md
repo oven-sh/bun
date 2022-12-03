@@ -2797,9 +2797,9 @@ test("peek", () => {
   // - returns the error
   // - does not mark the promise as handled
   const rejected = Promise.reject(
-    new Error("Succesfully tested promise rejection"),
+    new Error("Successfully tested promise rejection"),
   );
-  expect(peek(rejected).message).toBe("Succesfully tested promise rejection");
+  expect(peek(rejected).message).toBe("Successfully tested promise rejection");
 });
 ```
 

@@ -847,8 +847,8 @@ pub const Expect = struct {
 
         active_test_expectation_counter.actual += 1;
 
-        const lesser_value = arguments[0];
-        lesser_value.ensureStillAlive();
+        const other_value = arguments[0];
+        other_value.ensureStillAlive();
 
         const value = Expect.capturedValueGetCached(thisValue) orelse {
             globalObject.throw("Internal consistency error: thie expect(value) was garbage collected but it should not have been!", .{});
@@ -856,7 +856,7 @@ pub const Expect = struct {
         };
         value.ensureStillAlive();
 
-        if ((!value.isNumber() and !value.isBigInt()) or (!lesser_value.isNumber() and !lesser_value.isBigInt())) {
+        if ((!value.isNumber() and !value.isBigInt()) or (!other_value.isNumber() and !other_value.isBigInt())) {
             globalObject.throw("Expected and actual values must be numbers or bigints", .{});
             return .zero;
         }
@@ -864,18 +864,18 @@ pub const Expect = struct {
         const not = this.op.contains(.not);
         var pass = false;
 
-        if (!value.isBigInt() and !lesser_value.isBigInt()) {
-            pass = value.asNumber() > lesser_value.asNumber();
+        if (!value.isBigInt() and !other_value.isBigInt()) {
+            pass = value.asNumber() > other_value.asNumber();
         } else if (value.isBigInt()) {
-            switch (value.asBigIntCompare(globalObject, lesser_value)) {
-                .greater_than => pass = true,
-                else => {},
-            }
+            pass = switch (value.asBigIntCompare(globalObject, other_value)) {
+                .greater_than => true,
+                else => pass,
+            };
         } else {
-            switch (lesser_value.asBigIntCompare(globalObject, value)) {
-                .less_than => pass = true,
-                else => {},
-            }
+            pass = switch (other_value.asBigIntCompare(globalObject, value)) {
+                .less_than => true,
+                else => pass,
+            };
         }
 
         if (not) pass = !pass;
@@ -884,9 +884,9 @@ pub const Expect = struct {
         // handle failure
         var fmt = JSC.ZigConsoleClient.Formatter{ .globalThis = globalObject };
         if (not) {
-            globalObject.throw("Expected {any} to not be greater than {any}", .{ value.toFmt(globalObject, &fmt), lesser_value.toFmt(globalObject, &fmt) });
+            globalObject.throw("Expected {any} to not be greater than {any}", .{ value.toFmt(globalObject, &fmt), other_value.toFmt(globalObject, &fmt) });
         } else {
-            globalObject.throw("Expected {any} to be greater than {any}", .{ value.toFmt(globalObject, &fmt), lesser_value.toFmt(globalObject, &fmt) });
+            globalObject.throw("Expected {any} to be greater than {any}", .{ value.toFmt(globalObject, &fmt), other_value.toFmt(globalObject, &fmt) });
         }
         return .zero;
     }
@@ -910,8 +910,8 @@ pub const Expect = struct {
 
         active_test_expectation_counter.actual += 1;
 
-        const lesser_value = arguments[0];
-        lesser_value.ensureStillAlive();
+        const other_value = arguments[0];
+        other_value.ensureStillAlive();
 
         const value = Expect.capturedValueGetCached(thisValue) orelse {
             globalObject.throw("Internal consistency error: thie expect(value) was garbage collected but it should not have been!", .{});
@@ -919,7 +919,7 @@ pub const Expect = struct {
         };
         value.ensureStillAlive();
 
-        if ((!value.isNumber() and !value.isBigInt()) or (!lesser_value.isNumber() and !lesser_value.isBigInt())) {
+        if ((!value.isNumber() and !value.isBigInt()) or (!other_value.isNumber() and !other_value.isBigInt())) {
             globalObject.throw("Expected and actual values must be numbers or bigints", .{});
             return .zero;
         }
@@ -927,18 +927,18 @@ pub const Expect = struct {
         const not = this.op.contains(.not);
         var pass = false;
 
-        if (!value.isBigInt() and !lesser_value.isBigInt()) {
-            pass = value.asNumber() >= lesser_value.asNumber();
+        if (!value.isBigInt() and !other_value.isBigInt()) {
+            pass = value.asNumber() >= other_value.asNumber();
         } else if (value.isBigInt()) {
-            switch (value.asBigIntCompare(globalObject, lesser_value)) {
-                .greater_than, .equal => pass = true,
-                else => {},
-            }
+            pass = switch (value.asBigIntCompare(globalObject, other_value)) {
+                .greater_than, .equal => true,
+                else => pass,
+            };
         } else {
-            switch (lesser_value.asBigIntCompare(globalObject, value)) {
-                .less_than, .equal => pass = true,
-                else => {},
-            }
+            pass = switch (other_value.asBigIntCompare(globalObject, value)) {
+                .less_than, .equal => true,
+                else => pass,
+            };
         }
 
         if (not) pass = !pass;
@@ -947,9 +947,9 @@ pub const Expect = struct {
         // handle failure
         var fmt = JSC.ZigConsoleClient.Formatter{ .globalThis = globalObject };
         if (not) {
-            globalObject.throw("Expected {any} to not be greater than or equal to {any}", .{ value.toFmt(globalObject, &fmt), lesser_value.toFmt(globalObject, &fmt) });
+            globalObject.throw("Expected {any} to not be greater than or equal to {any}", .{ value.toFmt(globalObject, &fmt), other_value.toFmt(globalObject, &fmt) });
         } else {
-            globalObject.throw("Expected {any} to be greater than or equal to {any}", .{ value.toFmt(globalObject, &fmt), lesser_value.toFmt(globalObject, &fmt) });
+            globalObject.throw("Expected {any} to be greater than or equal to {any}", .{ value.toFmt(globalObject, &fmt), other_value.toFmt(globalObject, &fmt) });
         }
         return .zero;
     }
@@ -973,8 +973,8 @@ pub const Expect = struct {
 
         active_test_expectation_counter.actual += 1;
 
-        const lesser_value = arguments[0];
-        lesser_value.ensureStillAlive();
+        const other_value = arguments[0];
+        other_value.ensureStillAlive();
 
         const value = Expect.capturedValueGetCached(thisValue) orelse {
             globalObject.throw("Internal consistency error: thie expect(value) was garbage collected but it should not have been!", .{});
@@ -982,7 +982,7 @@ pub const Expect = struct {
         };
         value.ensureStillAlive();
 
-        if ((!value.isNumber() and !value.isBigInt()) or (!lesser_value.isNumber() and !lesser_value.isBigInt())) {
+        if ((!value.isNumber() and !value.isBigInt()) or (!other_value.isNumber() and !other_value.isBigInt())) {
             globalObject.throw("Expected and actual values must be numbers or bigints", .{});
             return .zero;
         }
@@ -990,18 +990,18 @@ pub const Expect = struct {
         const not = this.op.contains(.not);
         var pass = false;
 
-        if (!value.isBigInt() and !lesser_value.isBigInt()) {
-            pass = value.asNumber() < lesser_value.asNumber();
+        if (!value.isBigInt() and !other_value.isBigInt()) {
+            pass = value.asNumber() < other_value.asNumber();
         } else if (value.isBigInt()) {
-            switch (value.asBigIntCompare(globalObject, lesser_value)) {
-                .less_than => pass = true,
-                else => {},
-            }
+            pass = switch (value.asBigIntCompare(globalObject, other_value)) {
+                .less_than => true,
+                else => pass,
+            };
         } else {
-            switch (lesser_value.asBigIntCompare(globalObject, value)) {
-                .greater_than => pass = true,
-                else => {},
-            }
+            pass = switch (other_value.asBigIntCompare(globalObject, value)) {
+                .greater_than => true,
+                else => pass,
+            };
         }
 
         if (not) pass = !pass;
@@ -1010,9 +1010,9 @@ pub const Expect = struct {
         // handle failure
         var fmt = JSC.ZigConsoleClient.Formatter{ .globalThis = globalObject };
         if (not) {
-            globalObject.throw("Expected {any} to not be less than {any}", .{ value.toFmt(globalObject, &fmt), lesser_value.toFmt(globalObject, &fmt) });
+            globalObject.throw("Expected {any} to not be less than {any}", .{ value.toFmt(globalObject, &fmt), other_value.toFmt(globalObject, &fmt) });
         } else {
-            globalObject.throw("Expected {any} to be less than {any}", .{ value.toFmt(globalObject, &fmt), lesser_value.toFmt(globalObject, &fmt) });
+            globalObject.throw("Expected {any} to be less than {any}", .{ value.toFmt(globalObject, &fmt), other_value.toFmt(globalObject, &fmt) });
         }
         return .zero;
     }
@@ -1036,8 +1036,8 @@ pub const Expect = struct {
 
         active_test_expectation_counter.actual += 1;
 
-        const lesser_value = arguments[0];
-        lesser_value.ensureStillAlive();
+        const other_value = arguments[0];
+        other_value.ensureStillAlive();
 
         const value = Expect.capturedValueGetCached(thisValue) orelse {
             globalObject.throw("Internal consistency error: thie expect(value) was garbage collected but it should not have been!", .{});
@@ -1045,7 +1045,7 @@ pub const Expect = struct {
         };
         value.ensureStillAlive();
 
-        if ((!value.isNumber() and !value.isBigInt()) or (!lesser_value.isNumber() and !lesser_value.isBigInt())) {
+        if ((!value.isNumber() and !value.isBigInt()) or (!other_value.isNumber() and !other_value.isBigInt())) {
             globalObject.throw("Expected and actual values must be numbers or bigints", .{});
             return .zero;
         }
@@ -1053,18 +1053,18 @@ pub const Expect = struct {
         const not = this.op.contains(.not);
         var pass = false;
 
-        if (!value.isBigInt() and !lesser_value.isBigInt()) {
-            pass = value.asNumber() <= lesser_value.asNumber();
+        if (!value.isBigInt() and !other_value.isBigInt()) {
+            pass = value.asNumber() <= other_value.asNumber();
         } else if (value.isBigInt()) {
-            switch (value.asBigIntCompare(globalObject, lesser_value)) {
-                .less_than, .equal => pass = true,
-                else => {},
-            }
+            pass = switch (value.asBigIntCompare(globalObject, other_value)) {
+                .less_than, .equal => true,
+                else => pass,
+            };
         } else {
-            switch (lesser_value.asBigIntCompare(globalObject, value)) {
-                .greater_than, .equal => pass = true,
-                else => {},
-            }
+            pass = switch (other_value.asBigIntCompare(globalObject, value)) {
+                .greater_than, .equal => true,
+                else => pass,
+            };
         }
 
         if (not) pass = !pass;
@@ -1073,9 +1073,9 @@ pub const Expect = struct {
         // handle failure
         var fmt = JSC.ZigConsoleClient.Formatter{ .globalThis = globalObject };
         if (not) {
-            globalObject.throw("Expected {any} to not be less than or equal to {any}", .{ value.toFmt(globalObject, &fmt), lesser_value.toFmt(globalObject, &fmt) });
+            globalObject.throw("Expected {any} to not be less than or equal to {any}", .{ value.toFmt(globalObject, &fmt), other_value.toFmt(globalObject, &fmt) });
         } else {
-            globalObject.throw("Expected {any} to be less than or equal to {any}", .{ value.toFmt(globalObject, &fmt), lesser_value.toFmt(globalObject, &fmt) });
+            globalObject.throw("Expected {any} to be less than or equal to {any}", .{ value.toFmt(globalObject, &fmt), other_value.toFmt(globalObject, &fmt) });
         }
         return .zero;
     }

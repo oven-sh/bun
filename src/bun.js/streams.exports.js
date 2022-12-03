@@ -6758,8 +6758,7 @@ function getNativeReadableStream(Readable, stream, options) {
 
 var Writable = require_writable();
 var NativeWritable = class NativeWritable extends Writable {
-  #writePromises = [];
-  #pathOrFd;
+  #pathOrFdOrSink;
   #fileSink;
   #native = true;
 
@@ -6767,14 +6766,14 @@ var NativeWritable = class NativeWritable extends Writable {
   _destroy;
   _final;
 
-  constructor(pathOrFd, options = {}) {
+  constructor(pathOrFdOrSink, options = {}) {
     super(options);
 
     this._construct = this.#internalConstruct;
     this._destroy = this.#internalDestroy;
     this._final = this.#internalFinal;
 
-    this.#pathOrFd = pathOrFd;
+    this.#pathOrFdOrSink = pathOrFdOrSink;
   }
 
   // These are confusingly two different fns for construct which initially were the same thing because
@@ -6787,7 +6786,16 @@ var NativeWritable = class NativeWritable extends Writable {
   }
 
   #lazyConstruct() {
-    this.#fileSink = Bun.file(this.#pathOrFd).writer();
+    // TODO: Turn this check into check for instanceof FileSink
+    if (typeof this.#pathOrFdOrSink === "object") {
+      if (typeof this.#pathOrFdOrSink.write === "function") {
+        this.#fileSink = this.#pathOrFdOrSink;
+      } else {
+        throw new Error("Invalid FileSink");
+      }
+    } else {
+      this.#fileSink = Bun.file(this.#pathOrFdOrSink).writer();
+    }
   }
 
   write(chunk, encoding, cb, native = this.#native) {
@@ -6802,17 +6810,15 @@ var NativeWritable = class NativeWritable extends Writable {
     var fileSink = this.#fileSink;
     var result = fileSink.write(chunk);
 
-    var then = result?.then;
     if (isPromise(result)) {
-      var writePromises = this.#writePromises;
-      var i = writePromises.length;
-      writePromises[i] = result;
-
-      then(() => {
+      // var writePromises = this.#writePromises;
+      // var i = writePromises.length;
+      // writePromises[i] = result;
+      result.then(() => {
         this.emit("drain");
         fileSink.flush(true);
-        // We can't naively use i here because we don't know when writes will resolve necessarily
-        writePromises.splice(writePromises.indexOf(result), 1);
+        // // We can't naively use i here because we don't know when writes will resolve necessarily
+        // writePromises.splice(writePromises.indexOf(result), 1);
       });
       return false;
     }
@@ -6839,7 +6845,6 @@ var NativeWritable = class NativeWritable extends Writable {
   }
 
   ref() {
-    // TODO: Is this right? Should we construct the stream if we call ref?
     if (!this.#fileSink) {
       this.#lazyConstruct();
     }

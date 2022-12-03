@@ -1,12 +1,13 @@
 const EventEmitter = import.meta.require("node:events");
 const {
   Readable: { fromWeb: ReadableFromWeb },
+  NativeWritable,
 } = import.meta.require("node:stream");
 const {
   constants: { signals },
 } = import.meta.require("node:os");
 
-const { ArrayBuffer, isPromise, isCallable } = import.meta.primordials;
+const { ArrayBuffer } = import.meta.primordials;
 
 const MAX_BUFFER = 1024 * 1024;
 
@@ -946,7 +947,9 @@ export class ChildProcess extends EventEmitter {
       case 0: {
         switch (io) {
           case "pipe":
-            return new WrappedFileSink(this.#handle.stdin);
+            return new NativeWritable(this.#handle.stdin, {
+              __id: `child-stdin-1`,
+            });
           case "inherit":
             return process.stdin || null;
           case "destroyed":
@@ -1267,7 +1270,6 @@ function normalizeStdio(stdio) {
 
 function flushStdio(subprocess) {
   const stdio = subprocess.stdio;
-
   if (stdio == null) return;
 
   for (let i = 0; i < stdio.length; i++) {
@@ -1297,53 +1299,6 @@ function abortChildProcess(child, killSignal) {
   }
 }
 
-class WrappedFileSink extends EventEmitter {
-  #fileSink;
-  #writePromises = [];
-
-  constructor(fileSink) {
-    super();
-    this.#fileSink = fileSink;
-  }
-
-  write(data) {
-    var fileSink = this.#fileSink;
-    var result = fileSink.write(data);
-
-    var then = result?.then;
-    if (isPromise(result) && then && isCallable(then)) {
-      var writePromises = this.#writePromises;
-      var i = writePromises.length;
-      writePromises[i] = result;
-
-      then(() => {
-        this.emit("drain");
-        fileSink.flush(true);
-        // We can't naively use i here because we don't know when writes will resolve necessarily
-        writePromises.splice(writePromises.indexOf(result), 1);
-      });
-      return false;
-    }
-    fileSink.flush(true);
-    return true;
-  }
-
-  destroy() {
-    this.end();
-  }
-
-  end() {
-    var writePromises = this.#writePromises;
-    if (writePromises.length) {
-      PromiseAll(writePromises).then(() => {
-        this.#fileSink.end();
-      });
-    } else {
-      this.#fileSink.end();
-    }
-  }
-}
-
 class ShimmedStdin extends EventEmitter {
   constructor() {
     super();
@@ -1353,9 +1308,12 @@ class ShimmedStdin extends EventEmitter {
   }
   destroy() {}
   end() {}
+  pipe() {}
 }
 
-class ShimmedStdioOutStream extends EventEmitter {}
+class ShimmedStdioOutStream extends EventEmitter {
+  pipe() {}
+}
 
 //------------------------------------------------------------------------------
 // Section 5. Validators

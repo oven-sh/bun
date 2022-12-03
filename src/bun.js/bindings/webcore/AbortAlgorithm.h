@@ -35,7 +35,7 @@ class AbortAlgorithm : public ThreadSafeRefCounted<AbortAlgorithm>, public Activ
 public:
     using ActiveDOMCallback::ActiveDOMCallback;
 
-    virtual CallbackResult<void> handleEvent() = 0;
+    virtual CallbackResult<void> handleEvent(JSC::JSValue) = 0;
 };
 
 } // namespace WebCore

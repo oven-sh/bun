@@ -336,7 +336,7 @@ const char* const s_readableStreamInternalsReadableStreamDefaultControllerStartC
 const JSC::ConstructAbility s_readableStreamInternalsReadableStreamPipeToWritableStreamCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableStreamInternalsReadableStreamPipeToWritableStreamCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_readableStreamInternalsReadableStreamPipeToWritableStreamCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_readableStreamInternalsReadableStreamPipeToWritableStreamCodeLength = 3326;
+const int s_readableStreamInternalsReadableStreamPipeToWritableStreamCodeLength = 3229;
 static const JSC::Intrinsic s_readableStreamInternalsReadableStreamPipeToWritableStreamCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_readableStreamInternalsReadableStreamPipeToWritableStreamCode =
     "(function (\n" \
@@ -385,13 +385,8 @@ const char* const s_readableStreamInternalsReadableStreamPipeToWritableStreamCod
     "  pipeState.pendingWritePromise = @Promise.@resolve();\n" \
     "\n" \
     "  if (signal !== @undefined) {\n" \
-    "    const algorithm = () => {\n" \
+    "    const algorithm = (reason) => {\n" \
     "      if (pipeState.finalized) return;\n" \
-    "\n" \
-    "      const error = @makeDOMException(\n" \
-    "        \"AbortError\",\n" \
-    "        \"abort pipeTo from signal\"\n" \
-    "      );\n" \
     "\n" \
     "      @pipeToShutdownWithAction(\n" \
     "        pipeState,\n" \
@@ -401,7 +396,7 @@ const char* const s_readableStreamInternalsReadableStreamPipeToWritableStreamCod
     "            @getByIdDirectPrivate(pipeState.destination, \"state\") ===\n" \
     "              \"writable\";\n" \
     "          const promiseDestination = shouldAbortDestination\n" \
-    "            ? @writableStreamAbort(pipeState.destination, error)\n" \
+    "            ? @writableStreamAbort(pipeState.destination, reason)\n" \
     "            : @Promise.@resolve();\n" \
     "\n" \
     "          const shouldAbortSource =\n" \
@@ -409,7 +404,7 @@ const char* const s_readableStreamInternalsReadableStreamPipeToWritableStreamCod
     "            @getByIdDirectPrivate(pipeState.source, \"state\") ===\n" \
     "              @streamReadable;\n" \
     "          const promiseSource = shouldAbortSource\n" \
-    "            ? @readableStreamCancel(pipeState.source, error)\n" \
+    "            ? @readableStreamCancel(pipeState.source, reason)\n" \
     "            : @Promise.@resolve();\n" \
     "\n" \
     "          let promiseCapability = @newPromiseCapability(@Promise);\n" \
@@ -431,7 +426,7 @@ const char* const s_readableStreamInternalsReadableStreamPipeToWritableStreamCod
     "          promiseSource.@then(handleResolvedPromise, handleRejectedPromise);\n" \
     "          return promiseCapability.@promise;\n" \
     "        },\n" \
-    "        error\n" \
+    "        reason\n" \
     "      );\n" \
     "    };\n" \
     "    if (@whenSignalAborted(signal, algorithm))\n" \

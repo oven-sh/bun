@@ -31,7 +31,7 @@ describe("Headers", () => {
       "Set-Cookie": "foo=bar; Path=/; HttpOnly",
     });
     expect(headers.count).toBe(5);
-    expect(headers.getSetCookie()).toEqual(["foo=bar; Path=/; HttpOnly"]);
+    expect(headers.getAll("set-cookie")).toEqual(["foo=bar; Path=/; HttpOnly"]);
   });
 
   it(".getSetCookie() with array", () => {
@@ -44,7 +44,7 @@ describe("Headers", () => {
       ["Set-Cookie", "foo2=bar2; Path=/; HttpOnly"],
     ]);
     expect(headers.count).toBe(6);
-    expect(headers.getSetCookie()).toEqual([
+    expect(headers.getAll("set-cookie")).toEqual([
       "foo=bar; Path=/; HttpOnly",
       "foo2=bar2; Path=/; HttpOnly",
     ]);

@@ -2354,6 +2354,52 @@ int64_t JSC__JSValue__toInt64(JSC__JSValue val)
     return _val.asAnyInt();
 }
 
+uint8_t JSC__JSValue__asBigIntCompare(JSC__JSValue JSValue0, JSC__JSGlobalObject* globalObject, JSC__JSValue JSValue1)
+{
+    JSValue v1 = JSValue::decode(JSValue0);
+    JSValue v2 = JSValue::decode(JSValue1);
+    ASSERT(v1.isHeapBigInt() || v1.isBigInt32());
+
+#if USE(BIGINT32)
+    if (v1.isBigInt32()) {
+        int32_t v1Int = v1.bigInt32AsInt32();
+        if (v2.isHeapBigInt()) {
+            return static_cast<uint8_t>(JSBigInt::compare(v1Int, v2.asHeapBigInt()));
+        } else if (v2.isBigInt32()) {
+            return static_cast<uint8_t>(JSBigInt::compare(v1Int, v2.bigInt32AsInt32()));
+        }
+
+        double v2Double = v2.asNumber();
+        if (v1Int == v2Double) {
+            return static_cast<uint8_t>(JSBigInt::ComparisonResult::Equal);
+        }
+        if (v1Int < v2Double) {
+            return static_cast<uint8_t>(JSBigInt::ComparisonResult::LessThan);
+        }
+
+        return static_cast<uint8_t>(JSBigInt::ComparisonResult::GreaterThan);
+    }
+#endif
+
+    if (v1.isHeapBigInt()) {
+        JSBigInt* v1BigInt = v1.asHeapBigInt();
+        if (v2.isHeapBigInt()) {
+            return static_cast<uint8_t>(JSBigInt::compare(v1BigInt, v2.asHeapBigInt()));
+        }
+
+#if USE(BIGINT32)
+        if (v2.isBigInt32()) {
+            return static_cast<uint8_t>(JSBigInt::compare(v1BigInt, v2.toInt32(globalObject)));
+        }
+#endif
+
+        return static_cast<uint8_t>(JSBigInt::compareToDouble(v1BigInt, v2.asNumber()));
+    }
+
+    ASSERT_NOT_REACHED();
+    return static_cast<uint8_t>(JSBigInt::ComparisonResult::Undefined);
+}
+
 JSC__JSValue JSC__JSValue__fromInt64NoTruncate(JSC__JSGlobalObject* globalObject, int64_t val)
 {
     return JSC::JSValue::encode(JSC::JSValue(JSC::JSBigInt::createFrom(globalObject, val)));

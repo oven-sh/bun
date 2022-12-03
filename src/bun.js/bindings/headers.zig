@@ -168,6 +168,7 @@ pub extern fn JSC__JSGlobalObject__startRemoteInspector(arg0: ?*JSC__JSGlobalObj
 pub extern fn JSC__JSGlobalObject__vm(arg0: ?*JSC__JSGlobalObject) [*c]JSC__VM;
 pub extern fn JSC__JSValue___then(JSValue0: JSC__JSValue, arg1: ?*JSC__JSGlobalObject, JSValue2: JSC__JSValue, ArgFn3: ?fn (?*JSC__JSGlobalObject, ?*bindings.CallFrame) callconv(.C) JSC__JSValue, ArgFn4: ?fn (?*JSC__JSGlobalObject, ?*bindings.CallFrame) callconv(.C) JSC__JSValue) void;
 pub extern fn JSC__JSValue__asArrayBuffer_(JSValue0: JSC__JSValue, arg1: ?*JSC__JSGlobalObject, arg2: ?*Bun__ArrayBuffer) bool;
+pub extern fn JSC__JSValue__asBigIntCompare(JSValue0: JSC__JSValue, arg1: ?*JSC__JSGlobalObject, JSValue2: JSC__JSValue) u8;
 pub extern fn JSC__JSValue__asCell(JSValue0: JSC__JSValue) [*c]JSC__JSCell;
 pub extern fn JSC__JSValue__asInternalPromise(JSValue0: JSC__JSValue) [*c]JSC__JSInternalPromise;
 pub extern fn JSC__JSValue__asNumber(JSValue0: JSC__JSValue) f64;

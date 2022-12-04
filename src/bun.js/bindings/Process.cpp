@@ -84,7 +84,10 @@ JSC_DEFINE_CUSTOM_GETTER(
     auto& vm = globalObject->vm();
     JSC::JSObject* thisObject = value.toObject(globalObject);
     JSC::JSValue stream = constructStdioWriteStream(globalObject, 1);
-    thisObject->putDirect(vm, property, stream, 0);
+
+    if (stream)
+        thisObject->putDirect(vm, property, stream, 0);
+
     return JSValue::encode(stream);
 }
 
@@ -95,7 +98,10 @@ JSC_DEFINE_CUSTOM_GETTER(
     auto& vm = globalObject->vm();
     JSC::JSObject* thisObject = value.toObject(globalObject);
     JSC::JSValue stream = constructStdioWriteStream(globalObject, 2);
-    thisObject->putDirect(vm, property, stream, 0);
+
+    if (stream)
+        thisObject->putDirect(vm, property, stream, 0);
+
     return JSValue::encode(stream);
 }
 
@@ -106,7 +112,8 @@ JSC_DEFINE_CUSTOM_SETTER(Process_defaultSetter,
     JSC::VM& vm = globalObject->vm();
 
     JSC::JSObject* thisObject = JSC::jsDynamicCast<JSC::JSObject*>(JSValue::decode(thisValue));
-    thisObject->putDirect(vm, propertyName, JSValue::decode(value), 0);
+    if (value)
+        thisObject->putDirect(vm, propertyName, JSValue::decode(value), 0);
 
     return true;
 }

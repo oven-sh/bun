@@ -2118,21 +2118,48 @@ Bun.serve({
 });
 ```
 
-### Sending files with Bun.serve()
+### Streaming files with Bun.serve()
 
-`Bun.serve()` lets you send files fast.
+`Bun.serve()` lets you stream files fast.
 
-To send a file, return a `Response` object with a `Bun.file(pathOrFd)` object as the body.
+To stream a file, return a `Response` object with a `Bun.file(pathOrFd)` object as the body.
 
 ```ts
-Bun.serve({
+import { serve, file } from "bun";
+
+serve({
   fetch(req) {
-    return new Response(Bun.file("./hello.txt"));
+    return new Response(file("./hello.txt"));
   },
 });
 ```
 
-Under the hood, when TLS is not enabled, Bun automatically uses the sendfile(2) system call. This enables zero-copy file transfers, which is faster than reading the file into memory and sending it.
+Bun automatically uses the [`sendfile(2)`](https://man7.org/linux/man-pages/man2/sendfile.2.html) system call when possible, enabling zero-copy file transfers in the kernel &mdash; the fastest way to send files.
+
+Note: You can also read the files into memory and send it manually, but that is slower.
+
+**Sending only part of a file**
+
+<sup>Available in Bun v0.3.0</sup>
+
+`Bun.serve()` has builtin support for the `Content-Range` header
+
+To stream up to the first N bytes of a file, call [`slice(start, end)`](https://developer.mozilla.org/en-US/docs/Web/API/Blob/slice) on the `Bun.file` object:
+
+```ts
+import { serve, file } from "bun";
+
+serve({
+  fetch(req) {
+    const [start = 0, end = Infinity] =
+      req.headers.get("Range").split("=").at(-1).split("-") ?? [];
+
+    return new Response(
+      file("./my-big-video-to-stream.mp4").slice(Number(start), Number(end)),
+    );
+  },
+});
+```
 
 ### WebSockets with Bun.serve()
 

@@ -80,7 +80,7 @@ const TCC = @import("../../tcc.zig");
 
 pub const FFI = struct {
     dylib: ?std.DynLib = null,
-    functions: std.StringArrayHashMapUnmanaged(Function) = .{},
+    functions: bun.StringArrayHashMapUnmanaged(Function) = .{},
     closed: bool = false,
 
     pub const Class = JSC.NewClass(
@@ -206,7 +206,7 @@ pub const FFI = struct {
             return JSC.toInvalidArguments("Expected an options object with symbol names", .{}, global);
         }
 
-        var symbols = std.StringArrayHashMapUnmanaged(Function){};
+        var symbols = bun.StringArrayHashMapUnmanaged(Function){};
         if (generateSymbols(global, &symbols, object) catch JSC.JSValue.zero) |val| {
             // an error while validating symbols
             for (symbols.keys()) |key| {
@@ -264,7 +264,7 @@ pub const FFI = struct {
     //         return JSC.toInvalidArguments("Expected an options object with symbol names", .{}, global);
     //     }
 
-    //     var symbols = std.StringArrayHashMapUnmanaged(Function){};
+    //     var symbols = bun.StringArrayHashMapUnmanaged(Function){};
     //     if (generateSymbols(global, &symbols, object) catch JSC.JSValue.zero) |val| {
     //         // an error while validating symbols
     //         for (symbols.keys()) |key| {
@@ -291,7 +291,7 @@ pub const FFI = struct {
         }
 
         const name = name_slice.sliceZ();
-        var symbols = std.StringArrayHashMapUnmanaged(Function){};
+        var symbols = bun.StringArrayHashMapUnmanaged(Function){};
         if (generateSymbols(global, &symbols, object) catch JSC.JSValue.zero) |val| {
             // an error while validating symbols
             for (symbols.keys()) |key| {
@@ -413,7 +413,7 @@ pub const FFI = struct {
             return JSC.toInvalidArguments("Expected an options object with symbol names", .{}, global);
         }
 
-        var symbols = std.StringArrayHashMapUnmanaged(Function){};
+        var symbols = bun.StringArrayHashMapUnmanaged(Function){};
         if (generateSymbols(global, &symbols, object) catch JSC.JSValue.zero) |val| {
             // an error while validating symbols
             for (symbols.keys()) |key| {
@@ -606,7 +606,7 @@ pub const FFI = struct {
 
         return null;
     }
-    pub fn generateSymbols(global: *JSGlobalObject, symbols: *std.StringArrayHashMapUnmanaged(Function), object: JSC.JSValue) !?JSValue {
+    pub fn generateSymbols(global: *JSGlobalObject, symbols: *bun.StringArrayHashMapUnmanaged(Function), object: JSC.JSValue) !?JSValue {
         JSC.markBinding(@src());
         const allocator = VirtualMachine.vm.allocator;
 

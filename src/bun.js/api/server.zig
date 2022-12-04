@@ -2235,7 +2235,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                         // change between requests and this potentially leaks
                         // PII undesirably
                         "bytes {d}-{d}/*",
-                        .{ this.sendfile.offset, this.sendfile.offset + this.sendfile.remain },
+                        .{ this.sendfile.offset, this.sendfile.offset + (this.sendfile.remain -| 1) },
                     ) catch "bytes */*",
                 );
                 this.needs_content_range = false;

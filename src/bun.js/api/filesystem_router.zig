@@ -24,7 +24,7 @@ const strings = @import("bun").strings;
 const NewClass = Base.NewClass;
 const To = Base.To;
 const Request = WebCore.Request;
-const d = Base.d;
+
 const FetchEvent = WebCore.FetchEvent;
 const URLPath = @import("../../http/url_path.zig");
 const URL = @import("../../url.zig").URL;

@@ -3439,7 +3439,7 @@ restart:
             if (key.len == 0)
                 return true;
 
-            JSC::JSValue propertyValue = objectToUse->getDirect(entry.offset());
+            JSC::JSValue propertyValue = objectToUse == object ? objectToUse->getDirect(entry.offset()) : JSValue();
             if (!propertyValue || propertyValue.isGetterSetter()) {
                 propertyValue = objectToUse->get(globalObject, entry.key());
             }
@@ -3495,8 +3495,8 @@ restart:
                 if (property == vm.propertyNames->constructor || clientData->builtinNames().bunNativePtrPrivateName() == property)
                     continue;
 
-                JSC::PropertySlot slot(iterating, PropertySlot::InternalMethodType::Get);
-                if (!iterating->getPropertySlot(globalObject, property, slot))
+                JSC::PropertySlot slot(object, PropertySlot::InternalMethodType::Get);
+                if (!object->getPropertySlot(globalObject, property, slot))
                     continue;
 
                 if ((slot.attributes() & PropertyAttribute::Accessor) != 0) {
@@ -3519,7 +3519,7 @@ restart:
                     if (slot.attributes() & PropertyAttribute::BuiltinOrFunction) {
                         propertyValue = slot.getValue(globalObject, property);
                     } else if (slot.isCustom()) {
-                        propertyValue = slot.internalMethodType() == PropertySlot::InternalMethodType::Get || slot.internalMethodType() == PropertySlot::InternalMethodType::HasProperty ? slot.getValue(globalObject, property) : jsUndefined();
+                        propertyValue = slot.getValue(globalObject, property);
                     } else if (slot.isValue()) {
                         propertyValue = slot.getValue(globalObject, property);
                     } else if (object->getOwnPropertySlot(object, globalObject, property, slot)) {

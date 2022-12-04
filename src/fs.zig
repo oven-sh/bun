@@ -563,7 +563,7 @@ pub const FileSystem = struct {
         pub var tmpdir_path_set = false;
         pub fn openTmpDir(_: *const RealFS) !std.fs.Dir {
             if (!tmpdir_path_set) {
-                tmpdir_path = std.os.getenvZ("BUN_TMPDIR") orelse std.os.getenvZ("TMPDIR") orelse PLATFORM_TMP_DIR;
+                tmpdir_path = bun.getenvZ("BUN_TMPDIR") orelse bun.getenvZ("TMPDIR") orelse PLATFORM_TMP_DIR;
                 tmpdir_path_set = true;
             }
 
@@ -571,7 +571,7 @@ pub const FileSystem = struct {
         }
 
         pub fn getDefaultTempDir() string {
-            return std.os.getenvZ("BUN_TMPDIR") orelse std.os.getenvZ("TMPDIR") orelse PLATFORM_TMP_DIR;
+            return bun.getenvZ("BUN_TMPDIR") orelse bun.getenvZ("TMPDIR") orelse PLATFORM_TMP_DIR;
         }
 
         pub fn setTempdir(path: ?string) void {

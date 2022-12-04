@@ -67,7 +67,7 @@ pub const PackageManagerCommand = struct {
             if (pm.options.global) {
                 warner: {
                     if (Output.enable_ansi_colors_stderr) {
-                        if (std.os.getenvZ("PATH")) |path| {
+                        if (bun.getenvZ("PATH")) |path| {
                             var path_splitter = std.mem.split(u8, path, ":");
                             while (path_splitter.next()) |entry| {
                                 if (strings.eql(entry, output_path)) {

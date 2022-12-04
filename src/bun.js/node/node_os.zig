@@ -127,9 +127,9 @@ pub const Os = struct {
 
         var dir: string = "unknown";
         if (comptime Environment.isWindows)
-            dir = std.os.getenv("USERPROFILE") orelse "unknown"
+            dir = bun.getenvZ("USERPROFILE") orelse "unknown"
         else
-            dir = std.os.getenv("HOME") orelse "unknown";
+            dir = bun.getenvZ("HOME") orelse "unknown";
 
         return JSC.ZigString.init(dir).withEncoding().toValueGC(globalThis);
     }
@@ -240,17 +240,17 @@ pub const Os = struct {
 
         var dir: string = "unknown";
         if (comptime Environment.isWindows) {
-            if (std.os.getenv("TEMP") orelse std.os.getenv("TMP")) |tmpdir_| {
+            if (bun.getenvZ("TEMP") orelse bun.getenvZ("TMP")) |tmpdir_| {
                 dir = tmpdir_;
             }
 
-            if (std.os.getenv("SYSTEMROOT") orelse std.os.getenv("WINDIR")) |systemdir_| {
+            if (bun.getenvZ("SYSTEMROOT") orelse bun.getenvZ("WINDIR")) |systemdir_| {
                 dir = systemdir_ + "\\temp";
             }
 
             dir = "unknown";
         } else {
-            dir = std.os.getenv("TMPDIR") orelse std.os.getenv("TMP") orelse std.os.getenv("TEMP") orelse "/tmp";
+            dir = bun.getenvZ("TMPDIR") orelse bun.getenvZ("TMP") orelse bun.getenvZ("TEMP") orelse "/tmp";
         }
 
         return JSC.ZigString.init(dir).withEncoding().toValueGC(globalThis);
@@ -287,15 +287,15 @@ pub const Os = struct {
         result.put(globalThis, JSC.ZigString.static("homedir"), homedir(globalThis, callframe));
 
         if (comptime Environment.isWindows) {
-            result.put(globalThis, JSC.ZigString.static("username"), JSC.ZigString.init(std.os.getenv("USERNAME") orelse "unknown").withEncoding().toValueGC(globalThis));
+            result.put(globalThis, JSC.ZigString.static("username"), JSC.ZigString.init(bun.getenvZ("USERNAME") orelse "unknown").withEncoding().toValueGC(globalThis));
             result.put(globalThis, JSC.ZigString.static("uid"), JSC.JSValue.jsNumber(-1));
             result.put(globalThis, JSC.ZigString.static("gid"), JSC.JSValue.jsNumber(-1));
             result.put(globalThis, JSC.ZigString.static("shell"), JSC.JSValue.jsNull());
         } else {
-            const username = std.os.getenv("USER") orelse "unknown";
+            const username = bun.getenvZ("USER") orelse "unknown";
 
             result.put(globalThis, JSC.ZigString.static("username"), JSC.ZigString.init(username).withEncoding().toValueGC(globalThis));
-            result.put(globalThis, JSC.ZigString.static("shell"), JSC.ZigString.init(std.os.getenv("SHELL") orelse "unknown").withEncoding().toValueGC(globalThis));
+            result.put(globalThis, JSC.ZigString.static("shell"), JSC.ZigString.init(bun.getenvZ("SHELL") orelse "unknown").withEncoding().toValueGC(globalThis));
 
             if (comptime Environment.isLinux) {
                 result.put(globalThis, JSC.ZigString.static("uid"), JSC.JSValue.jsNumber(std.os.linux.getuid()));

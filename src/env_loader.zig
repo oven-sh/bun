@@ -1067,7 +1067,7 @@ test "DotEnv Process" {
     var loader = Loader.init(&map, default_allocator);
     loader.loadProcess();
 
-    try expectString(loader.map.get("TMPDIR").?, std.os.getenvZ("TMPDIR").?);
+    try expectString(loader.map.get("TMPDIR").?, bun.getenvZ("TMPDIR").?);
     try expect(loader.map.get("TMPDIR").?.len > 0);
 
     try expectString(loader.map.get("USER").?, process.get("USER").?);

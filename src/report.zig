@@ -60,9 +60,9 @@ pub const CrashReportWriter = struct {
         if (this.file != null) return;
 
         var base_dir: []const u8 = ".";
-        if (std.os.getenv("BUN_INSTALL")) |install_dir| {
+        if (bun.getenvZ("BUN_INSTALL")) |install_dir| {
             base_dir = std.mem.trimRight(u8, install_dir, std.fs.path.sep_str);
-        } else if (std.os.getenv("HOME")) |home_dir| {
+        } else if (bun.getenvZ("HOME")) |home_dir| {
             base_dir = std.mem.trimRight(u8, home_dir, std.fs.path.sep_str);
         }
         const file_path = std.fmt.bufPrintZ(
@@ -84,7 +84,7 @@ pub const CrashReportWriter = struct {
 
         if (this.file_path.len > 0) {
             var tilda = false;
-            if (std.os.getenv("HOME")) |home_dir| {
+            if (bun.getenvZ("HOME")) |home_dir| {
                 if (strings.hasPrefix(display_path, home_dir)) {
                     display_path = display_path[home_dir.len..];
                     tilda = true;
@@ -378,7 +378,7 @@ pub noinline fn globalError(err: anyerror) noreturn {
                     },
                 );
 
-                if (std.os.getenv("USER")) |user| {
+                if (bun.getenvZ("USER")) |user| {
                     if (user.len > 0) {
                         Output.prettyError(
                             \\
@@ -443,7 +443,7 @@ pub noinline fn globalError(err: anyerror) noreturn {
                     },
                 );
 
-                if (std.os.getenv("USER")) |user| {
+                if (bun.getenvZ("USER")) |user| {
                     if (user.len > 0) {
                         Output.prettyError(
                             \\
@@ -483,7 +483,7 @@ pub noinline fn globalError(err: anyerror) noreturn {
                 );
 
                 if (Environment.isLinux) {
-                    if (std.os.getenv("USER")) |user| {
+                    if (bun.getenvZ("USER")) |user| {
                         if (user.len > 0) {
                             Output.prettyError(
                                 \\

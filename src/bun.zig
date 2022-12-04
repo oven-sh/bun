@@ -499,3 +499,10 @@ pub const DateTime = @import("./deps/zig-datetime/src/datetime.zig");
 
 pub var start_time: i128 = 0;
 pub const MimallocArena = @import("./mimalloc_arena.zig").Arena;
+
+/// This wrapper exists to avoid the call to sliceTo(0)
+/// Zig's sliceTo(0) is scalar
+pub fn getenvZ(path_: [:0]const u8) ?[]const u8 {
+    const ptr = std.c.getenv(path_.ptr) orelse return null;
+    return span(ptr);
+}

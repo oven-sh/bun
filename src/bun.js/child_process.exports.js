@@ -867,7 +867,6 @@ function checkExecSyncError(ret, args, cmd) {
 //------------------------------------------------------------------------------
 export class ChildProcess extends EventEmitter {
   #handle;
-  #handleExited;
   #exited = false;
   #closesNeeded = 1;
   #closesGot = 0;
@@ -1061,28 +1060,37 @@ export class ChildProcess extends EventEmitter {
     const bunStdio = getBunStdioFromOptions(stdio);
 
     var env = options.envPairs || undefined;
-    if (env === process.env) env = undefined;
 
+    this.#encoding = options.encoding || undefined;
+    this.#stdioOptions = bunStdio;
+    var hasEmittedSpawn = false;
     this.#handle = Bun.spawn({
       cmd: spawnargs,
       stdin: bunStdio[0],
       stdout: bunStdio[1],
       stderr: bunStdio[2],
       cwd: options.cwd || undefined,
-      env,
+      env: env || process.env,
       onExit: (handle, exitCode, signalCode, err) => {
         this.#handle = handle;
-        this.#handleOnExit(exitCode, signalCode, err);
+        this.pid = this.#handle.pid;
+
+        if (!hasEmittedSpawn) {
+          hasEmittedSpawn = true;
+          process.nextTick(onSpawnNT, this);
+          process.nextTick(this.#handleOnExit, exitCode, signalCode, err);
+        } else {
+          this.#handleOnExit(exitCode, signalCode, err);
+        }
       },
       lazy: true,
     });
-
-    this.#handleExited = this.#handle.exited;
-    this.#encoding = options.encoding || undefined;
-    this.#stdioOptions = bunStdio;
     this.pid = this.#handle.pid;
 
-    process.nextTick(onSpawnNT, this);
+    if (!hasEmittedSpawn) {
+      process.nextTick(onSpawnNT, this);
+      hasEmittedSpawn = true;
+    }
 
     // const ipc = stdio.ipc;
     // const ipcFd = stdio.ipcFd;

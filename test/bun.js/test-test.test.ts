@@ -918,6 +918,9 @@ test("testing Bun.deepEquals() using isEqual()", () => {
   const t = new Uint8Array([1, 2, 3, 4, 5]);
   expect(t).toEqual(t.slice());
 
+  expect(t.subarray(1)).toEqual(t.slice(1));
+  expect(t.subarray(1, 9)).toEqual(t.slice().subarray(1, 9));
+
   var a = { foo: 1, bar: 2, baz: null };
   var b = { foo: 1, bar: 2, baz: null };
   a.baz = a;

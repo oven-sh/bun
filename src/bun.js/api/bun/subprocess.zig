@@ -35,6 +35,7 @@ pub const Subprocess = struct {
     on_exit_callback: JSC.Strong = .{},
 
     exit_code: ?u8 = null,
+    signal_code: ?SignalCode = null,
     waitpid_err: ?JSC.Node.Syscall.Error = null,
 
     has_waitpid_task: bool = false,
@@ -58,9 +59,45 @@ pub const Subprocess = struct {
     }) = .{},
     has_pending_activity: std.atomic.Atomic(bool) = std.atomic.Atomic(bool).init(true),
     is_sync: bool = false,
+    this_jsvalue: JSC.JSValue = .zero,
+
+    pub const SignalCode = enum(u8) {
+        SIGHUP = 1,
+        SIGINT = 2,
+        SIGQUIT = 3,
+        SIGILL = 4,
+        SIGTRAP = 5,
+        SIGABRT = 6,
+        SIGBUS = 7,
+        SIGFPE = 8,
+        SIGKILL = 9,
+        SIGUSR1 = 10,
+        SIGSEGV = 11,
+        SIGUSR2 = 12,
+        SIGPIPE = 13,
+        SIGALRM = 14,
+        SIGTERM = 15,
+        SIG16 = 16,
+        SIGCHLD = 17,
+        SIGCONT = 18,
+        SIGSTOP = 19,
+        SIGTSTP = 20,
+        SIGTTIN = 21,
+        SIGTTOU = 22,
+        SIGURG = 23,
+        SIGXCPU = 24,
+        SIGXFSZ = 25,
+        SIGVTALRM = 26,
+        SIGPROF = 27,
+        SIGWINCH = 28,
+        SIGIO = 29,
+        SIGPWR = 30,
+        SIGSYS = 31,
+        _,
+    };
 
     pub fn hasExited(this: *const Subprocess) bool {
-        return this.exit_code != null or this.waitpid_err != null;
+        return this.exit_code != null or this.waitpid_err != null or this.signal_code != null;
     }
 
     pub fn updateHasPendingActivityFlag(this: *Subprocess) void {
@@ -308,6 +345,8 @@ pub const Subprocess = struct {
         globalThis: *JSGlobalObject,
         callframe: *JSC.CallFrame,
     ) callconv(.C) JSValue {
+        this.this_jsvalue = callframe.this();
+
         var arguments = callframe.arguments(1);
         // If signal is 0, then no actual signal is sent, but error checking
         // is still performed.
@@ -945,6 +984,21 @@ pub const Subprocess = struct {
         return JSC.JSValue.jsNull();
     }
 
+    pub fn getSignalCode(
+        this: *Subprocess,
+        global: *JSGlobalObject,
+    ) callconv(.C) JSValue {
+        if (this.signal_code) |signal| {
+            const value = @enumToInt(signal);
+            if (value < @enumToInt(SignalCode.SIGSYS) + 1)
+                return JSC.ZigString.init(std.mem.span(@tagName(signal))).toValueGC(global)
+            else
+                return JSC.JSValue.jsNumber(value);
+        }
+
+        return JSC.JSValue.jsNull();
+    }
+
     pub fn spawn(globalThis: *JSC.JSGlobalObject, args: JSValue, secondaryArgsValue: ?JSValue) JSValue {
         return spawnMaybeSync(globalThis, args, secondaryArgsValue, false);
     }
@@ -1309,6 +1363,7 @@ pub const Subprocess = struct {
             subprocess.toJS(globalThis)
         else
             JSValue.zero;
+        subprocess.this_jsvalue = out;
 
         if (comptime !is_sync) {
             var poll = JSC.FilePoll.init(jsc_vm, pidfd, .{}, Subprocess, subprocess);
@@ -1421,6 +1476,26 @@ pub const Subprocess = struct {
     }
 
     pub fn wait(this: *Subprocess, sync: bool) void {
+        return this.waitWithJSValue(sync, this.this_jsvalue);
+    }
+
+    pub fn watch(this: *Subprocess) void {
+        if (this.poll_ref) |poll| {
+            _ = poll.register(
+                this.globalThis.bunVM().uws_event_loop.?,
+                .process,
+                true,
+            );
+        } else {
+            @panic("Internal Bun error: poll_ref in Subprocess is null unexpectedly. Please file a bug report.");
+        }
+    }
+
+    pub fn waitWithJSValue(
+        this: *Subprocess,
+        sync: bool,
+        this_jsvalue: JSC.JSValue,
+    ) void {
         if (this.has_waitpid_task) {
             return;
         }
@@ -1433,24 +1508,24 @@ pub const Subprocess = struct {
                 this.waitpid_err = err;
             },
             .result => |result| {
-                this.exit_code = @truncate(
-                    u8,
-                    brk: {
-                        if (std.os.W.IFEXITED(result.status)) {
-                            break :brk std.os.W.EXITSTATUS(result.status);
-                        } else if (std.os.W.IFSIGNALED(result.status)) {
-                            break :brk std.os.W.TERMSIG(result.status);
-                        } else if (std.os.W.IFSTOPPED(result.status)) {
-                            break :brk std.os.W.STOPSIG(result.status);
-                        } else {
-                            break :brk 1;
-                        }
-                    },
-                );
+                if (std.os.W.IFEXITED(result.status)) {
+                    this.exit_code = @truncate(u8, std.os.W.EXITSTATUS(result.status));
+                }
+
+                if (std.os.W.IFSIGNALED(result.status)) {
+                    this.signal_code = @intToEnum(SignalCode, @truncate(u8, std.os.W.TERMSIG(result.status)));
+                } else if (std.os.W.IFSTOPPED(result.status)) {
+                    this.signal_code = @intToEnum(SignalCode, @truncate(u8, std.os.W.STOPSIG(result.status)));
+                }
+
+                if (!this.hasExited()) {
+                    this.watch();
+                }
             },
         }
+        this.has_waitpid_task = false;
 
-        if (!sync) {
+        if (!sync and this.hasExited()) {
             var vm = this.globalThis.bunVM();
 
             // prevent duplicate notifications
@@ -1459,37 +1534,37 @@ pub const Subprocess = struct {
                 poll.deinitWithVM(vm);
             }
 
-            this.onExit(this.globalThis);
+            this.onExit(this.globalThis, this_jsvalue);
         }
     }
 
-    fn onExit(this: *Subprocess, globalThis: *JSC.JSGlobalObject) void {
-        // this.stdin.close();
-        // this.stdout.close();
-        // this.stderr.close();
-
+    fn onExit(
+        this: *Subprocess,
+        globalThis: *JSC.JSGlobalObject,
+        this_jsvalue: JSC.JSValue,
+    ) void {
         defer this.updateHasPendingActivity();
+        this_jsvalue.ensureStillAlive();
         this.has_waitpid_task = false;
 
-        if (this.exit_promise.trySwap()) |promise| {
-            if (this.exit_code) |code| {
-                promise.asPromise().?.resolve(globalThis, JSValue.jsNumber(code));
-            } else if (this.waitpid_err) |err| {
-                this.waitpid_err = null;
-                promise.asPromise().?.reject(globalThis, err.toJSC(globalThis));
-            } else {
-                // crash in debug mode
-                if (comptime Environment.allow_assert)
-                    unreachable;
+        if (this.hasExited()) {
+            if (this.exit_promise.trySwap()) |promise| {
+                if (this.exit_code) |code| {
+                    promise.asPromise().?.resolve(globalThis, JSValue.jsNumber(code));
+                } else if (this.signal_code != null) {
+                    promise.asPromise().?.resolve(globalThis, this.getSignalCode(globalThis));
+                } else if (this.waitpid_err) |err| {
+                    this.waitpid_err = null;
+                    promise.asPromise().?.reject(globalThis, err.toJSC(globalThis));
+                } else {
+                    // crash in debug mode
+                    if (comptime Environment.allow_assert)
+                        unreachable;
+                }
             }
         }
 
         if (this.on_exit_callback.trySwap()) |callback| {
-            const exit_value: JSValue = if (this.exit_code) |code|
-                JSC.JSValue.jsNumber(code)
-            else
-                JSC.JSValue.jsNumber(@as(i32, -1));
-
             const waitpid_value: JSValue =
                 if (this.waitpid_err) |err|
                 err.toJSC(globalThis)
@@ -1511,7 +1586,8 @@ pub const Subprocess = struct {
             }
         }
 
-        this.unref();
+        if (this.hasExited())
+            this.unref();
     }
 
     const os = std.os;
@@ -1638,7 +1714,7 @@ pub const Subprocess = struct {
             } else if (str.eqlComptime("pipe")) {
                 stdio_array[i] = Stdio{ .pipe = null };
             } else {
-                globalThis.throwInvalidArguments("stdio must be an array of 'inherit', 'ignore', or null", .{});
+                globalThis.throwInvalidArguments("stdio must be an array of 'inherit', 'pipe', 'ignore', Bun.file(pathOrFd), number, or null", .{});
                 return false;
             }
 

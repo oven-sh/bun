@@ -55,6 +55,9 @@ export default [
       exitCode: {
         getter: "getExitCode",
       },
+      signalCode: {
+        getter: "getSignalCode",
+      },
 
       exited: {
         getter: "getExited",

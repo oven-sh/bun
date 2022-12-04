@@ -2364,7 +2364,7 @@ pub const JSValue = enum(JSValueReprInt) {
                 }
 
                 if (this.isNumber()) {
-                    return @truncate(i32, @floatToInt(i64, this.asDouble()));
+                    return @truncate(i32, this.coerceDoubleTruncatingIntoInt64());
                 }
 
                 return this.coerceToInt32(globalThis);
@@ -2660,13 +2660,33 @@ pub const JSValue = enum(JSValueReprInt) {
         return jsNumberFromDouble(@intToFloat(f64, @intCast(i52, @truncate(u51, i))));
     }
 
+    pub fn coerceDoubleTruncatingIntoInt64(this: JSValue) i64 {
+        const double_value = this.asDouble();
+
+        if (std.math.isNan(double_value))
+            return std.math.minInt(i64);
+
+        // coerce NaN or Infinity to either -maxInt or maxInt
+        if (std.math.isInf(double_value)) {
+            return if (double_value < 0) @as(i64, std.math.minInt(i64)) else @as(i64, std.math.maxInt(i64));
+        }
+
+        return @floatToInt(
+            i64,
+            double_value,
+        );
+    }
+
+    /// Decimal values are truncated without rounding.
+    /// `-Infinity` and `NaN` coerce to -minInt(64)
+    /// `Infinity` coerces to maxInt(64)
     pub fn toInt64(this: JSValue) i64 {
         if (this.isInt32()) {
             return this.asInt32();
         }
 
         if (this.isNumber()) {
-            return @floatToInt(i64, this.asDouble());
+            return this.coerceDoubleTruncatingIntoInt64();
         }
 
         return cppFn("toInt64", .{this});

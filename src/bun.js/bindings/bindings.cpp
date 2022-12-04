@@ -3428,7 +3428,7 @@ restart:
                 return true;
             }
 
-            if (entry.key() == vm.propertyNames->constructor)
+            if (entry.key() == vm.propertyNames->constructor || entry.key() == vm.propertyNames->length || entry.key() == vm.propertyNames->name || entry.key() == vm.propertyNames->underscoreProto || entry.key() == vm.propertyNames->toStringTagSymbol)
                 return true;
 
             if (clientData->builtinNames().bunNativePtrPrivateName() == entry.key())
@@ -3499,12 +3499,12 @@ restart:
                 if (!object->getPropertySlot(globalObject, property, slot))
                     continue;
 
-                if ((slot.attributes() & PropertyAttribute::Accessor) != 0) {
-                    continue;
-                }
-
                 if ((slot.attributes() & PropertyAttribute::DontEnum) != 0) {
-                    if (property == vm.propertyNames->length || property == vm.propertyNames->name || property == vm.propertyNames->underscoreProto)
+                    if ((slot.attributes() & PropertyAttribute::Accessor) != 0) {
+                        continue;
+                    }
+
+                    if (property == vm.propertyNames->length || property == vm.propertyNames->name || property == vm.propertyNames->underscoreProto || property == vm.propertyNames->toStringTagSymbol)
                         continue;
                 }
 

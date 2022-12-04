@@ -4067,7 +4067,7 @@ pub const AnyBlob = union(enum) {
             // },
             .InternalBlob => {
                 if (this.InternalBlob.bytes.items.len == 0) {
-                    return JSC.ArrayBuffer.empty.toJS(global, null);
+                    return JSC.ArrayBuffer.create(global, "", .ArrayBuffer);
                 }
 
                 var bytes = this.InternalBlob.toOwnedSlice();

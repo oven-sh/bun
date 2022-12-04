@@ -4445,7 +4445,6 @@ pub const FileReader = struct {
             return .{ .owned_and_done = this.drainInternalBuffer() };
         }
 
-
         return this.readable().read(buffer, view, this.globalThis());
     }
 

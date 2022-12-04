@@ -2118,6 +2118,22 @@ Bun.serve({
 });
 ```
 
+### Sending files with Bun.serve()
+
+`Bun.serve()` lets you send files fast.
+
+To send a file, return a `Response` object with a `Bun.file(pathOrFd)` object as the body.
+
+```ts
+Bun.serve({
+  fetch(req) {
+    return new Response(Bun.file("./hello.txt"));
+  },
+});
+```
+
+Under the hood, when TLS is not enabled, Bun automatically uses the sendfile(2) system call. This enables zero-copy file transfers, which is faster than reading the file into memory and sending it.
+
 ### WebSockets with Bun.serve()
 
 `Bun.serve()` has builtin support for server-side websockets (as of Bun v0.2.1).

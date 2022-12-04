@@ -2010,6 +2010,7 @@ pub const Blob = struct {
             pub const Read = struct {
                 buf: []u8,
                 is_temporary: bool = false,
+                total_size: SizeType = 0,
             };
             pub const ResultType = SystemError.Maybe(Read);
 
@@ -2105,7 +2106,7 @@ pub const Blob = struct {
                     return;
                 }
 
-                cb(cb_ctx, .{ .result = .{ .buf = buf, .is_temporary = true } });
+                cb(cb_ctx, .{ .result = .{ .buf = buf, .total_size = this.size, .is_temporary = true } });
             }
             pub fn run(this: *ReadFile, task: *ReadFileTask) void {
                 this.runAsync(task);
@@ -2153,6 +2154,8 @@ pub const Blob = struct {
                 const fd = this.opened_fd;
                 const file = &this.file_store;
                 const needs_close = fd != null_fd and file.pathlike == .path and fd > 2;
+
+                this.size = @maximum(this.read_len, this.size);
 
                 if (needs_close) {
                     this.doClose();

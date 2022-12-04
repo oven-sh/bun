@@ -1,3 +1,5 @@
+import { SignalConstants } from "os";
+
 interface VoidFunction {
   (): void;
 }
@@ -2617,13 +2619,21 @@ declare module "bun" {
        * ```ts
        * const subprocess = spawn({
        *  cmd: ["echo", "hello"],
-       *  onExit: (code) => {
+       *  onExit: (subprocess, code) => {
        *    console.log(`Process exited with code ${code}`);
        *   },
        * });
        * ```
        */
-      onExit?: (exitCode: number) => void | Promise<void>;
+      onExit?(
+        subprocess: Subprocess,
+        exitCode: number | null,
+        signalCode: number | null,
+        /**
+         * If an error occured in the call to waitpid2, this will be the error.
+         */
+        error?: Errorlike,
+      ): void | Promise<void>;
     }
   }
 
@@ -2659,6 +2669,25 @@ declare module "bun" {
      * The promise will resolve when the process exits
      */
     readonly exited: Promise<number>;
+
+    /**
+     * Synchronously get the exit code of the process
+     *
+     * If the process hasn't exited yet, this will return `null`
+     */
+    readonly exitCode: number | null;
+
+    /**
+     * Synchronously get the signal code of the process
+     *
+     * If the process never sent a signal code, this will return `null`
+     *
+     * To receive signal code changes, use the `onExit` callback.
+     *
+     * If the signal code is unknown, it will return the original signal code
+     * number, but that case should essentially never happen.
+     */
+    readonly signalCode: Signals | null;
 
     /**
      * Has the process exited?

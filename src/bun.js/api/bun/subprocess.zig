@@ -1571,14 +1571,20 @@ pub const Subprocess = struct {
             else
                 JSC.JSValue.jsUndefined();
 
+            const this_value = if (this_jsvalue.isEmptyOrUndefinedOrNull()) JSC.JSValue.jsUndefined() else this_jsvalue;
+            this_value.ensureStillAlive();
+
             const args = [_]JSValue{
-                exit_value,
+                this_value,
+                this.getExitCode(globalThis),
+                this.getSignalCode(globalThis),
                 waitpid_value,
             };
 
-            const result = callback.call(
+            const result = callback.callWithThis(
                 globalThis,
-                args[0 .. @as(usize, @boolToInt(this.exit_code != null)) + @as(usize, @boolToInt(this.waitpid_err != null))],
+                this_value,
+                &args,
             );
 
             if (result.isAnyError(globalThis)) {

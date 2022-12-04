@@ -2612,7 +2612,11 @@ declare module "bun" {
       /**
        * Callback that runs when the {@link Subprocess} exits
        *
-       * You can also do `await subprocess.exited` to wait for the process to exit.
+       * This is called even if the process exits with a non-zero exit code.
+       *
+       * Warning: this may run before the `Bun.spawn` function returns.
+       *
+       * A simple alternative is `await subprocess.exited`.
        *
        * @example
        *

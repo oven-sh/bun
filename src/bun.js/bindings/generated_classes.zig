@@ -570,6 +570,9 @@ pub const JSSubprocess = struct {
 
         if (@TypeOf(Subprocess.doRef) != CallbackType)
             @compileLog("Expected Subprocess.doRef to be a callback");
+        if (@TypeOf(Subprocess.getSignalCode) != GetterType)
+            @compileLog("Expected Subprocess.getSignalCode to be a getter");
+
         if (@TypeOf(Subprocess.getStderr) != GetterType)
             @compileLog("Expected Subprocess.getStderr to be a getter");
 
@@ -592,6 +595,7 @@ pub const JSSubprocess = struct {
             @export(Subprocess.getExited, .{ .name = "SubprocessPrototype__getExited" });
             @export(Subprocess.getKilled, .{ .name = "SubprocessPrototype__getKilled" });
             @export(Subprocess.getPid, .{ .name = "SubprocessPrototype__getPid" });
+            @export(Subprocess.getSignalCode, .{ .name = "SubprocessPrototype__getSignalCode" });
             @export(Subprocess.getStderr, .{ .name = "SubprocessPrototype__getStderr" });
             @export(Subprocess.getStdin, .{ .name = "SubprocessPrototype__getStdin" });
             @export(Subprocess.getStdout, .{ .name = "SubprocessPrototype__getStdout" });

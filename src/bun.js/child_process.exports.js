@@ -889,13 +889,10 @@ export class ChildProcess extends EventEmitter {
   //   this.#handle[owner_symbol] = this;
   // }
 
-  async #handleOnExit(exitCode, signalCode) {
+  #handleOnExit(exitCode, signalCode, err) {
     if (this.#exited) return;
-    if (signalCode) {
-      this.signalCode = signalCode;
-    } else {
-      this.exitCode = this.#handle.exitCode;
-    }
+    this.exitCode = this.#handle.exitCode;
+    this.signalCode = exitCode > 0 ? signalCode : null;
 
     if (this.#stdin) {
       this.#stdin.destroy();
@@ -919,12 +916,6 @@ export class ChildProcess extends EventEmitter {
       err.spawnargs = ArrayPrototypeSlice.call(this.spawnargs, 1);
       this.emit("error", err);
     } else {
-      const maybeExited = Bun.peek(this.#handleExited);
-      if (maybeExited === this.#handleExited) {
-        this.exitCode = await this.#handleExited;
-      } else {
-        this.exitCode = maybeExited;
-      }
       this.emit("exit", this.exitCode, this.signalCode);
     }
 
@@ -1079,7 +1070,10 @@ export class ChildProcess extends EventEmitter {
       stderr: bunStdio[2],
       cwd: options.cwd || undefined,
       env,
-      onExit: this.#handleOnExit.bind(this),
+      onExit: (handle, exitCode, signalCode, err) => {
+        this.#handle = handle;
+        this.#handleOnExit(exitCode, signalCode, err);
+      },
       lazy: true,
     });
 

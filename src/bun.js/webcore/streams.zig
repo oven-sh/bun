@@ -257,7 +257,7 @@ pub const ReadableStream = struct {
         };
         switch (store.data) {
             .bytes => {
-                var reader = bun.default_allocator.create(ByteBlobLoader.Source) catch unreachable;
+                var reader = globalThis.allocator().create(ByteBlobLoader.Source) catch unreachable;
                 reader.* = .{
                     .globalThis = globalThis,
                     .context = undefined,
@@ -266,7 +266,7 @@ pub const ReadableStream = struct {
                 return reader.toJS(globalThis);
             },
             .file => {
-                var reader = bun.default_allocator.create(FileReader.Source) catch unreachable;
+                var reader = globalThis.allocator().create(FileReader.Source) catch unreachable;
                 reader.* = .{
                     .globalThis = globalThis,
                     .context = .{
@@ -287,7 +287,7 @@ pub const ReadableStream = struct {
         buffered_data: bun.ByteList,
     ) JSC.JSValue {
         JSC.markBinding(@src());
-        var reader = bun.default_allocator.create(FileReader.Source) catch unreachable;
+        var reader = globalThis.allocator().create(FileReader.Source) catch unreachable;
         reader.* = .{
             .globalThis = globalThis,
             .context = .{

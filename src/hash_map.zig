@@ -22,7 +22,7 @@ pub fn getAutoHashFn(comptime K: type) (fn (K) u64) {
             @compileError("std.auto_hash.autoHash does not allow slices here (" ++
                 @typeName(K) ++
                 ") because the intent is unclear. " ++
-                "Consider using std.StringHashMap for hashing the contents of []const u8. " ++
+                "Consider using bun.StringHashMap for hashing the contents of []const u8. " ++
                 "Alternatively, consider using std.auto_hash.hash or providing your own hash function instead.");
         }
     }

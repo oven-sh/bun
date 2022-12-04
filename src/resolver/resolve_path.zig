@@ -194,7 +194,7 @@ pub fn relativeToCommonPath(
 
     const shortest = @minimum(normalized_from.len, normalized_to.len);
 
-    var last_common_separator = std.mem.lastIndexOfScalar(u8, _common_path, separator) orelse 0;
+    var last_common_separator = strings.lastIndexOfChar(_common_path, separator) orelse 0;
 
     if (shortest == common_path.len) {
         if (normalized_to.len > normalized_from.len) {

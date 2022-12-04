@@ -19,7 +19,7 @@ const ComptimeStringMap = @import("../comptime_string_map.zig").ComptimeStringMa
 // Heuristic: you probably don't have 100 of these
 // Probably like 5-10
 // Array iteration is faster and deterministically ordered in that case.
-const PathsMap = std.StringArrayHashMap([]string);
+const PathsMap = bun.StringArrayHashMap([]string);
 
 fn FlagSet(comptime Type: type) type {
     return std.EnumSet(std.meta.FieldEnum(Type));

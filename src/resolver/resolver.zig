@@ -31,7 +31,7 @@ const Wyhash = std.hash.Wyhash;
 const ResolvePath = @import("./resolve_path.zig");
 const NodeFallbackModules = @import("../node_fallbacks.zig");
 const Mutex = @import("../lock.zig").Lock;
-const StringBoolMap = std.StringHashMap(bool);
+const StringBoolMap = bun.StringHashMap(bool);
 const FileDescriptorType = bun.FileDescriptor;
 
 const allocators = @import("../allocators.zig");
@@ -443,9 +443,9 @@ pub const Resolver = struct {
 
     // These are sets that represent various conditions for the "exports" field
     // in package.json.
-    // esm_conditions_default: std.StringHashMap(bool),
-    // esm_conditions_import: std.StringHashMap(bool),
-    // esm_conditions_require: std.StringHashMap(bool),
+    // esm_conditions_default: bun.StringHashMap(bool),
+    // esm_conditions_import: bun.StringHashMap(bool),
+    // esm_conditions_require: bun.StringHashMap(bool),
 
     // A special filtered import order for CSS "@import" imports.
     //

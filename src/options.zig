@@ -355,7 +355,7 @@ pub const BundlePackage = enum {
     always,
     never,
 
-    pub const Map = std.StringArrayHashMapUnmanaged(BundlePackage);
+    pub const Map = bun.StringArrayHashMapUnmanaged(BundlePackage);
 };
 
 pub const ModuleType = enum {
@@ -478,8 +478,8 @@ pub const Platform = enum {
         };
     };
 
-    pub fn outExtensions(platform: Platform, allocator: std.mem.Allocator) std.StringHashMap(string) {
-        var exts = std.StringHashMap(string).init(allocator);
+    pub fn outExtensions(platform: Platform, allocator: std.mem.Allocator) bun.StringHashMap(string) {
+        var exts = bun.StringHashMap(string).init(allocator);
 
         const js = Extensions.Out.JavaScript[0];
         const mjs = Extensions.Out.JavaScript[1];
@@ -1083,7 +1083,7 @@ const default_loader_ext = [_]string{
     ".toml", ".wasm",
 };
 
-pub fn loadersFromTransformOptions(allocator: std.mem.Allocator, _loaders: ?Api.LoaderMap, platform: Platform) !std.StringArrayHashMap(Loader) {
+pub fn loadersFromTransformOptions(allocator: std.mem.Allocator, _loaders: ?Api.LoaderMap, platform: Platform) !bun.StringArrayHashMap(Loader) {
     var input_loaders = _loaders orelse std.mem.zeroes(Api.LoaderMap);
     var loader_values = try allocator.alloc(Loader, input_loaders.loaders.len);
 
@@ -1123,7 +1123,7 @@ pub fn loadersFromTransformOptions(allocator: std.mem.Allocator, _loaders: ?Api.
     }
 
     var loaders = try stringHashMapFromArrays(
-        std.StringArrayHashMap(Loader),
+        bun.StringArrayHashMap(Loader),
         allocator,
         input_loaders.extensions,
         loader_values,
@@ -1178,7 +1178,7 @@ pub const BundleOptions = struct {
     footer: string = "",
     banner: string = "",
     define: *defines.Define,
-    loaders: std.StringArrayHashMap(Loader),
+    loaders: bun.StringArrayHashMap(Loader),
     resolve_dir: string = "/",
     jsx: JSX.Pragma = JSX.Pragma{},
     auto_import_jsx: bool = true,
@@ -1217,7 +1217,7 @@ pub const BundleOptions = struct {
     entry_points: []const string,
     extension_order: []const string = &Defaults.ExtensionOrder,
     esm_extension_order: []const string = &Defaults.ModuleExtensionOrder,
-    out_extensions: std.StringHashMap(string),
+    out_extensions: bun.StringHashMap(string),
     import_path_format: ImportPathFormat = ImportPathFormat.relative,
     framework: ?Framework = null,
     routes: RouteConfig = RouteConfig.zero(),
@@ -1682,7 +1682,7 @@ pub fn openOutputDir(output_dir: string) !std.fs.Dir {
 pub const TransformOptions = struct {
     footer: string = "",
     banner: string = "",
-    define: std.StringHashMap(string),
+    define: bun.StringHashMap(string),
     loader: Loader = Loader.js,
     resolve_dir: string = "/",
     jsx: ?JSX.Pragma,
@@ -1710,7 +1710,7 @@ pub const TransformOptions = struct {
             cwd = try std.process.getCwdAlloc(allocator);
         }
 
-        var define = std.StringHashMap(string).init(allocator);
+        var define = bun.StringHashMap(string).init(allocator);
         try define.ensureTotalCapacity(1);
 
         define.putAssumeCapacity("process.env.NODE_ENV", "development");

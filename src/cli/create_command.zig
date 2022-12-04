@@ -493,7 +493,7 @@ pub const CreateCommand = struct {
                 var archive_context = Archive.Context{
                     .pluckers = pluckers[0..@intCast(usize, @boolToInt(!create_options.skip_package_json))],
                     .all_files = undefined,
-                    .overwrite_list = std.StringArrayHashMap(void).init(ctx.allocator),
+                    .overwrite_list = bun.StringArrayHashMap(void).init(ctx.allocator),
                 };
 
                 if (!create_options.overwrite) {

@@ -845,7 +845,7 @@ pub const Parser = struct {
 };
 
 pub const Map = struct {
-    const HashTable = std.StringArrayHashMap(string);
+    const HashTable = bun.StringArrayHashMap(string);
 
     map: HashTable,
 
@@ -1077,7 +1077,7 @@ test "DotEnv Process" {
 }
 
 test "DotEnv Loader - copyForDefine" {
-    const UserDefine = std.StringArrayHashMap(string);
+    const UserDefine = bun.StringArrayHashMap(string);
     const UserDefinesArray = @import("./defines.zig").UserDefinesArray;
     var map = Map.init(default_allocator);
     var loader = Loader.init(&map, default_allocator);

@@ -4433,7 +4433,7 @@ pub const Ast = struct {
     export_star_import_records: []u32 = &([_]u32{}),
 
     pub const NamedImports = std.ArrayHashMap(Ref, NamedImport, RefHashCtx, true);
-    pub const NamedExports = std.StringArrayHashMap(NamedExport);
+    pub const NamedExports = bun.StringArrayHashMap(NamedExport);
 
     pub fn initTest(parts: []Part) Ast {
         return Ast{

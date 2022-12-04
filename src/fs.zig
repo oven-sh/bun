@@ -190,7 +190,7 @@ pub const FileSystem = struct {
     }
 
     pub const DirEntry = struct {
-        pub const EntryMap = std.StringHashMapUnmanaged(*Entry);
+        pub const EntryMap = bun.StringHashMapUnmanaged(*Entry);
         pub const EntryStore = allocators.BSSList(Entry, Preallocate.Counts.files);
         dir: string,
         fd: StoredFileDescriptorType = 0,

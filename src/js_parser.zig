@@ -1941,7 +1941,7 @@ const StmtList = ListManaged(Stmt);
 
 const StringVoidMap = struct {
     allocator: Allocator,
-    map: std.StringHashMapUnmanaged(void) = std.StringHashMapUnmanaged(void){},
+    map: bun.StringHashMapUnmanaged(void) = bun.StringHashMapUnmanaged(void){},
 
     /// Returns true if the map already contained the given key.
     pub fn getOrPutContains(this: *StringVoidMap, key: string) bool {
@@ -1975,7 +1975,7 @@ const StringVoidMap = struct {
 };
 const RefCtx = @import("./ast/base.zig").RefCtx;
 const SymbolUseMap = std.HashMapUnmanaged(Ref, js_ast.Symbol.Use, RefCtx, 80);
-const StringBoolMap = std.StringHashMapUnmanaged(bool);
+const StringBoolMap = bun.StringHashMapUnmanaged(bool);
 const RefMap = std.HashMapUnmanaged(Ref, void, RefCtx, 80);
 const RefArrayMap = std.ArrayHashMapUnmanaged(Ref, void, @import("./ast/base.zig").RefHashCtx, false);
 
@@ -2150,7 +2150,7 @@ const PropertyOpts = struct {
 pub const ScanPassResult = struct {
     pub const ParsePassSymbolUse = struct { ref: Ref, used: bool = false, import_record_index: u32 };
     pub const NamespaceCounter = struct { count: u16, import_record_index: u32 };
-    pub const ParsePassSymbolUsageMap = std.StringArrayHashMap(ParsePassSymbolUse);
+    pub const ParsePassSymbolUsageMap = bun.StringArrayHashMap(ParsePassSymbolUse);
     import_records: ListManaged(ImportRecord),
     named_imports: js_ast.Ast.NamedImports,
     used_symbols: ParsePassSymbolUsageMap,
@@ -3877,7 +3877,7 @@ const ParserFeatures = struct {
 // Instead of creating a globally-scoped
 const FastRefresh = struct {};
 
-const ImportItemForNamespaceMap = std.StringArrayHashMap(LocRef);
+const ImportItemForNamespaceMap = bun.StringArrayHashMap(LocRef);
 
 pub const MacroState = struct {
     refs: MacroRefs,

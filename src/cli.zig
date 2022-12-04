@@ -819,7 +819,7 @@ pub const Command = struct {
         // technical debt
         macros: ?MacroMap = null,
         editor: string = "",
-        package_bundle_map: std.StringArrayHashMapUnmanaged(options.BundlePackage) = std.StringArrayHashMapUnmanaged(options.BundlePackage){},
+        package_bundle_map: bun.StringArrayHashMapUnmanaged(options.BundlePackage) = bun.StringArrayHashMapUnmanaged(options.BundlePackage){},
     };
 
     pub const Context = struct {

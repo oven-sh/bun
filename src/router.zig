@@ -54,7 +54,7 @@ pub fn init(
         .routes = Routes{
             .config = config,
             .allocator = allocator,
-            .static = std.StringHashMap(*Route).init(allocator),
+            .static = bun.StringHashMap(*Route).init(allocator),
         },
         .fs = fs,
         .allocator = allocator,
@@ -108,7 +108,7 @@ pub const Routes = struct {
     /// `"dashboard"`
     /// `"profiles"`
     /// this is a fast path?
-    static: std.StringHashMap(*Route),
+    static: bun.StringHashMap(*Route),
 
     /// Corresponds to "index.js" on the filesystem
     index: ?*Route = null,
@@ -237,7 +237,7 @@ const RouteLoader = struct {
     dedupe_dynamic: std.AutoArrayHashMap(u32, string),
     log: *Logger.Log,
     index: ?*Route = null,
-    static_list: std.StringHashMap(*Route),
+    static_list: bun.StringHashMap(*Route),
     all_routes: std.ArrayListUnmanaged(*Route),
 
     pub fn appendRoute(this: *RouteLoader, route: Route) void {
@@ -343,7 +343,7 @@ const RouteLoader = struct {
             .log = log,
             .fs = resolver.fs,
             .config = config,
-            .static_list = std.StringHashMap(*Route).init(allocator),
+            .static_list = bun.StringHashMap(*Route).init(allocator),
             .dedupe_dynamic = std.AutoArrayHashMap(u32, string).init(allocator),
             .all_routes = .{},
             .route_dirname_len = route_dirname_len,
@@ -972,7 +972,7 @@ pub const Test = struct {
             .log = &logger,
             .routes = router.config,
             .entry_points = &.{},
-            .out_extensions = std.StringHashMap(string).init(default_allocator),
+            .out_extensions = bun.StringHashMap(string).init(default_allocator),
             .transform_options = std.mem.zeroes(Api.TransformOptions),
             .external = Options.ExternalModules.init(
                 default_allocator,
@@ -1029,7 +1029,7 @@ pub const Test = struct {
             .log = &logger,
             .routes = router.config,
             .entry_points = &.{},
-            .out_extensions = std.StringHashMap(string).init(default_allocator),
+            .out_extensions = bun.StringHashMap(string).init(default_allocator),
             .transform_options = std.mem.zeroes(Api.TransformOptions),
             .external = Options.ExternalModules.init(
                 default_allocator,

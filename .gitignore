@@ -104,3 +104,4 @@ src/runtime.version
 *.database
 *.db
 misctools/machbench
+*.big

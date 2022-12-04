@@ -275,6 +275,7 @@ describe("latin1 supplemental", () => {
 });
 
 const fixture = [
+  () => globalThis,
   () => Bun.file("/tmp/log.txt").stream(),
   () => Bun.file("/tmp/log.1.txt").stream().getReader(),
   () => Bun.file("/tmp/log.2.txt").writer(),

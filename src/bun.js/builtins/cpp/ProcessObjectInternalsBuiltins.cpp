@@ -52,7 +52,7 @@ namespace WebCore {
 const JSC::ConstructAbility s_processObjectInternalsGetStdioWriteStreamCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_processObjectInternalsGetStdioWriteStreamCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_processObjectInternalsGetStdioWriteStreamCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_processObjectInternalsGetStdioWriteStreamCodeLength = 9885;
+const int s_processObjectInternalsGetStdioWriteStreamCodeLength = 9968;
 static const JSC::Intrinsic s_processObjectInternalsGetStdioWriteStreamCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_processObjectInternalsGetStdioWriteStreamCode =
     "(function (fd_, rawRequire) {\n" \
@@ -235,10 +235,10 @@ const char* const s_processObjectInternalsGetStdioWriteStreamCode =
     "      normalied === \"utf8\" ||\n" \
     "      normalied === \"utf-8\" ||\n" \
     "      normalied === \"buffer\" ||\n" \
-    "      normalied === \"binary\" ||\n" \
-    "      normalized === \"\"\n" \
+    "      normalied === \"binary\"\n" \
     "    );\n" \
     "  }\n" \
+    "\n" \
     "  var FastStdioWriteStream = class StdioWriteStream extends EventEmitter {\n" \
     "    #fd;\n" \
     "    #innerStream;\n" \
@@ -288,6 +288,14 @@ const char* const s_processObjectInternalsGetStdioWriteStreamCode =
     "\n" \
     "    get isTTY() {\n" \
     "      return (this.#isTTY ??= require(\"node:tty\").isatty(this.#fd));\n" \
+    "    }\n" \
+    "\n" \
+    "    ref() {\n" \
+    "      this.#getWriter().ref();\n" \
+    "    }\n" \
+    "\n" \
+    "    unref() {\n" \
+    "      this.#getWriter().unref();\n" \
     "    }\n" \
     "\n" \
     "    on(event, listener) {\n" \
@@ -342,7 +350,7 @@ const char* const s_processObjectInternalsGetStdioWriteStreamCode =
     "      var writer = this.#getWriter();\n" \
     "      const writeResult = writer.write(chunk);\n" \
     "      this.bytesWritten += writeResult;\n" \
-    "      const flushResult = writer.flush();\n" \
+    "      const flushResult = writer.flush(false);\n" \
     "      return !!(writeResult || flushResult);\n" \
     "    }\n" \
     "\n" \

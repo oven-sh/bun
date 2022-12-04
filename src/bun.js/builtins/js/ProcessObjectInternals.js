@@ -23,8 +23,6 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-// @internal
-
 function getStdioWriteStream(fd_, rawRequire) {
   var module = { path: "node:process", require: rawRequire };
   var require = (path) => module.require(path);
@@ -203,10 +201,10 @@ function getStdioWriteStream(fd_, rawRequire) {
       normalied === "utf8" ||
       normalied === "utf-8" ||
       normalied === "buffer" ||
-      normalied === "binary" ||
-      normalized === ""
+      normalied === "binary"
     );
   }
+
   var FastStdioWriteStream = class StdioWriteStream extends EventEmitter {
     #fd;
     #innerStream;
@@ -256,6 +254,14 @@ function getStdioWriteStream(fd_, rawRequire) {
 
     get isTTY() {
       return (this.#isTTY ??= require("node:tty").isatty(this.#fd));
+    }
+
+    ref() {
+      this.#getWriter().ref();
+    }
+
+    unref() {
+      this.#getWriter().unref();
     }
 
     on(event, listener) {
@@ -310,7 +316,7 @@ function getStdioWriteStream(fd_, rawRequire) {
       var writer = this.#getWriter();
       const writeResult = writer.write(chunk);
       this.bytesWritten += writeResult;
-      const flushResult = writer.flush();
+      const flushResult = writer.flush(false);
       return !!(writeResult || flushResult);
     }
 

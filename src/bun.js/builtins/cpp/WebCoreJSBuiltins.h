@@ -89,7 +89,6 @@ public:
         , m_writableStreamDefaultWriterBuiltins(m_vm)
         , m_writableStreamInternalsBuiltins(m_vm)
     {
-        m_processObjectInternalsBuiltins.exportNames();
         m_readableByteStreamInternalsBuiltins.exportNames();
         m_readableStreamInternalsBuiltins.exportNames();
         m_streamInternalsBuiltins.exportNames();

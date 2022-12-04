@@ -135,41 +135,4 @@ inline void ProcessObjectInternalsBuiltinsWrapper::exportNames()
 #undef EXPORT_FUNCTION_NAME
 }
 
-class ProcessObjectInternalsBuiltinFunctions {
-public:
-    explicit ProcessObjectInternalsBuiltinFunctions(JSC::VM& vm) : m_vm(vm) { }
-
-    void init(JSC::JSGlobalObject&);
-    template<typename Visitor> void visit(Visitor&);
-
-public:
-    JSC::VM& m_vm;
-
-#define DECLARE_BUILTIN_SOURCE_MEMBERS(functionName) \
-    JSC::WriteBarrier<JSC::JSFunction> m_##functionName##Function;
-    WEBCORE_FOREACH_PROCESSOBJECTINTERNALS_BUILTIN_FUNCTION_NAME(DECLARE_BUILTIN_SOURCE_MEMBERS)
-#undef DECLARE_BUILTIN_SOURCE_MEMBERS
-};
-
-inline void ProcessObjectInternalsBuiltinFunctions::init(JSC::JSGlobalObject& globalObject)
-{
-#define EXPORT_FUNCTION(codeName, functionName, overriddenName, length)\
-    m_##functionName##Function.set(m_vm, &globalObject, JSC::JSFunction::create(m_vm, codeName##Generator(m_vm), &globalObject));
-    WEBCORE_FOREACH_PROCESSOBJECTINTERNALS_BUILTIN_CODE(EXPORT_FUNCTION)
-#undef EXPORT_FUNCTION
-}
-
-template<typename Visitor>
-inline void ProcessObjectInternalsBuiltinFunctions::visit(Visitor& visitor)
-{
-#define VISIT_FUNCTION(name) visitor.append(m_##name##Function);
-    WEBCORE_FOREACH_PROCESSOBJECTINTERNALS_BUILTIN_FUNCTION_NAME(VISIT_FUNCTION)
-#undef VISIT_FUNCTION
-}
-
-template void ProcessObjectInternalsBuiltinFunctions::visit(JSC::AbstractSlotVisitor&);
-template void ProcessObjectInternalsBuiltinFunctions::visit(JSC::SlotVisitor&);
-
-
-
 } // namespace WebCore

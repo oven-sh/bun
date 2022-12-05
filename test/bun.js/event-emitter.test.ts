@@ -60,3 +60,62 @@ describe("EventEmitter", () => {
     setTimeout(() => emitter.emit("wow"), 1);
   });
 });
+
+const waysOfCreating = [
+  () => Object.create(EventEmitter.prototype),
+  () => new EventEmitter(),
+  () => new (class extends EventEmitter {})(),
+  () => {
+    class MyEmitter extends EventEmitter {}
+    return new MyEmitter();
+  },
+  () => {
+    var foo = {};
+    Object.setPrototypeOf(foo, EventEmitter.prototype);
+    return foo;
+  },
+  () => {
+    const FakeEmitter = function FakeEmitter() {
+      return EventEmitter.call(this);
+    };
+    Object.setPrototypeOf(FakeEmitter.prototype, EventEmitter.prototype);
+    Object.setPrototypeOf(FakeEmitter, EventEmitter);
+    return new FakeEmitter();
+  },
+  () => {
+    const FakeEmitter = function FakeEmitter() {
+      EventEmitter.call(this);
+    };
+    Object.assign(FakeEmitter.prototype, EventEmitter.prototype);
+    Object.assign(FakeEmitter, EventEmitter);
+    return new FakeEmitter();
+  },
+  () => {
+    var foo = {};
+    Object.assign(foo, EventEmitter.prototype);
+    return foo;
+  },
+];
+
+for (let create of waysOfCreating) {
+  it(`${create
+    .toString()
+    .slice(10, 40)
+    .replaceAll("\n", "\\n")
+    .trim()} should work`, () => {
+    var myEmitter = create();
+    var called = false;
+
+    myEmitter.once("event", () => {
+      called = true;
+    });
+    var firstEvents = myEmitter._events;
+    expect(myEmitter.listenerCount("event")).toBe(1);
+
+    expect(myEmitter.emit("event")).toBe(true);
+    expect(myEmitter.listenerCount("event")).toBe(0);
+
+    expect(firstEvents).toBe(myEmitter._events);
+    expect(called).toBe(true);
+  });
+}

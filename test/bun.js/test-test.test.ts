@@ -1959,3 +1959,11 @@ test("toBeLessThanOrEqual()", () => {
   expect(BigInt(Number.MAX_VALUE)).not.toBeLessThanOrEqual(1);
   expect(1).toBeLessThanOrEqual(BigInt(Number.MAX_SAFE_INTEGER));
 });
+
+try {
+  test("test this doesnt crash");
+} catch (e) {}
+
+try {
+  test();
+} catch (e) {}

@@ -7,6 +7,7 @@ const CodePoint = @import("string_types.zig").CodePoint;
 const bun = @import("bun");
 pub const joiner = @import("./string_joiner.zig");
 const assert = std.debug.assert;
+const log = bun.Output.scoped(.STR, true);
 
 pub const Encoding = enum {
     ascii,
@@ -981,7 +982,7 @@ pub fn toUTF16Alloc(allocator: std.mem.Allocator, bytes: []const u8, comptime fa
         const trimmed = bun.simdutf.trim.utf8(bytes[offset..]);
         const out_length = bun.simdutf.length.utf16.from.utf8.le(trimmed);
         var out = try allocator.alloc(u16, out_length + offset);
-
+        log("toUTF16 {d} UTF8 -> {d} UTF16", .{ bytes.len, out_length });
         if (offset > 0)
             strings.copyU8IntoU16(out[0..offset], bytes[0..offset]);
 
@@ -1187,6 +1188,8 @@ pub fn toUTF8ListWithTypeBun(list_: std.ArrayList(u8), comptime Type: type, utf1
         copyU16IntoU8(list.items[old_len..], Type, utf16_remaining);
     }
 
+    log("UTF16 {d} -> {d} UTF8", .{ utf16.len, list.items.len });
+
     return list;
 }
 
@@ -1324,6 +1327,8 @@ pub fn allocateLatin1IntoUTF8WithList(list_: std.ArrayList(u8), offset_into_list
         list.items.len = i;
     }
 
+    log("Latin1 {d} -> UTF8 {d}", .{ latin1_.len, i });
+
     return list;
 }
 
@@ -1450,6 +1455,9 @@ pub fn copyLatin1IntoUTF8StopOnNonASCII(buf_: []u8, comptime Type: type, latin1_
 
     var buf = buf_;
     var latin1 = latin1_;
+
+    log("latin1 encode {d} -> {d}", .{ buf.len, latin1.len });
+
     while (buf.len > 0 and latin1.len > 0) {
         inner: {
             var remaining_runs = @minimum(buf.len, latin1.len) / ascii_vector_size;
@@ -2413,6 +2421,8 @@ pub fn copyUTF16IntoUTF8(buf: []u8, comptime Type: type, utf16: Type) EncodeInto
                 bun.simdutf.length.utf8.from.utf16.le(trimmed)
             else
                 buf.len;
+
+            log("UTF16 {d} -> UTF8 {d}", .{ utf16.len, out_len });
 
             if (remaining.len >= out_len) {
                 const result = bun.simdutf.convert.utf16.to.utf8.with_errors.le(trimmed, remaining[0..out_len]);

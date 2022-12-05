@@ -74,6 +74,41 @@ JSC_DEFINE_CUSTOM_GETTER(
     Process_lazyStdinGetter,
     (JSGlobalObject * globalObject, EncodedJSValue thisValue, PropertyName property))
 {
+    auto& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSC::JSValue value = JSC::JSValue::decode(thisValue);
+    if (!value || value.isUndefinedOrNull() || !value.isObject())
+        return JSValue::encode(jsUndefined());
+
+    auto* thisObject = reinterpret_cast<Zig::GlobalObject*>(globalObject);
+    JSC::JSFunction* getStdioWriteStream = JSC::JSFunction::create(vm, processObjectInternalsGetStdinStreamCodeGenerator(vm), globalObject);
+    JSC::MarkedArgumentBuffer args;
+    WTF::String process = WTF::String("node:process"_s);
+    JSC::JSValue requireFunction = Zig::ImportMetaObject::createRequireFunction(
+        vm,
+        globalObject,
+        process);
+
+    args.append(JSC::jsNumber(STDIN_FILENO));
+    args.append(requireFunction);
+    args.append(thisObject->get(globalObject, PropertyName(JSC::Identifier::fromString(vm, "Bun"_s))));
+
+    auto clientData = WebCore::clientData(vm);
+    JSC::CallData callData = JSC::getCallData(getStdioWriteStream);
+
+    NakedPtr<JSC::Exception> returnedException = nullptr;
+    auto result = JSC::call(globalObject, getStdioWriteStream, callData, globalObject->globalThis(), args, returnedException);
+    RETURN_IF_EXCEPTION(scope, {});
+
+    if (UNLIKELY(returnedException)) {
+        throwException(globalObject, scope, returnedException.get());
+        return {};
+    }
+
+    if (LIKELY(result))
+        value.getObject()->putDirect(vm, property, result, 0);
+
+    return JSValue::encode(result);
 }
 
 JSC_DEFINE_CUSTOM_GETTER(
@@ -367,6 +402,93 @@ JSC_DEFINE_CUSTOM_SETTER(Process_setterRelease,
     return true;
 }
 
+static const NeverDestroyed<String> signalNames[] = {
+    MAKE_STATIC_STRING_IMPL("SIGHUP"),
+    MAKE_STATIC_STRING_IMPL("SIGINT"),
+    MAKE_STATIC_STRING_IMPL("SIGQUIT"),
+    MAKE_STATIC_STRING_IMPL("SIGILL"),
+    MAKE_STATIC_STRING_IMPL("SIGTRAP"),
+    MAKE_STATIC_STRING_IMPL("SIGABRT"),
+    MAKE_STATIC_STRING_IMPL("SIGIOT"),
+    MAKE_STATIC_STRING_IMPL("SIGBUS"),
+    MAKE_STATIC_STRING_IMPL("SIGFPE"),
+    MAKE_STATIC_STRING_IMPL("SIGKILL"),
+    MAKE_STATIC_STRING_IMPL("SIGUSR1"),
+    MAKE_STATIC_STRING_IMPL("SIGSEGV"),
+    MAKE_STATIC_STRING_IMPL("SIGUSR2"),
+    MAKE_STATIC_STRING_IMPL("SIGPIPE"),
+    MAKE_STATIC_STRING_IMPL("SIGALRM"),
+    MAKE_STATIC_STRING_IMPL("SIGTERM"),
+    MAKE_STATIC_STRING_IMPL("SIGCHLD"),
+    MAKE_STATIC_STRING_IMPL("SIGCONT"),
+    MAKE_STATIC_STRING_IMPL("SIGSTOP"),
+    MAKE_STATIC_STRING_IMPL("SIGTSTP"),
+    MAKE_STATIC_STRING_IMPL("SIGTTIN"),
+    MAKE_STATIC_STRING_IMPL("SIGTTOU"),
+    MAKE_STATIC_STRING_IMPL("SIGURG"),
+    MAKE_STATIC_STRING_IMPL("SIGXCPU"),
+    MAKE_STATIC_STRING_IMPL("SIGXFSZ"),
+    MAKE_STATIC_STRING_IMPL("SIGVTALRM"),
+    MAKE_STATIC_STRING_IMPL("SIGPROF"),
+    MAKE_STATIC_STRING_IMPL("SIGWINCH"),
+    MAKE_STATIC_STRING_IMPL("SIGIO"),
+    MAKE_STATIC_STRING_IMPL("SIGINFO"),
+    MAKE_STATIC_STRING_IMPL("SIGSYS"),
+};
+static const int signalNumbers[] = {
+    SIGHUP,
+    SIGINT,
+    SIGQUIT,
+    SIGILL,
+    SIGTRAP,
+    SIGABRT,
+    SIGIOT,
+    SIGBUS,
+    SIGFPE,
+    SIGKILL,
+    SIGUSR1,
+    SIGSEGV,
+    SIGUSR2,
+    SIGPIPE,
+    SIGALRM,
+    SIGTERM,
+    SIGCHLD,
+    SIGCONT,
+    SIGSTOP,
+    SIGTSTP,
+    SIGTTIN,
+    SIGTTOU,
+    SIGURG,
+    SIGXCPU,
+    SIGXFSZ,
+    SIGVTALRM,
+    SIGPROF,
+    SIGWINCH,
+    SIGIO,
+    SIGINFO,
+    SIGSYS,
+};
+
+JSC_DEFINE_HOST_FUNCTION(jsFunctionProcessOn, (JSGlobalObject * globalObject, CallFrame* callFrame))
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    if (callFrame->argumentCount() < 2) {
+        throwVMError(globalObject, scope, "Not enough arguments"_s);
+        return JSValue::encode(jsUndefined());
+    }
+
+    String eventName = callFrame->uncheckedArgument(0).toWTFString(globalObject);
+    RETURN_IF_EXCEPTION(scope, encodedJSValue());
+}
+
+Process::~Process()
+{
+    for (auto& listener : this->wrapped().eventListenerMap().entries()) {
+    }
+}
+
 void Process::finishCreation(JSC::VM& vm)
 {
     Base::finishCreation(vm);
@@ -473,6 +595,9 @@ void Process::finishCreation(JSC::VM& vm)
 
     this->putDirectCustomAccessor(vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "stderr"_s)),
         JSC::CustomGetterSetter::create(vm, Process_lazyStderrGetter, Process_defaultSetter), 0);
+
+    this->putDirectCustomAccessor(vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "stdin"_s)),
+        JSC::CustomGetterSetter::create(vm, Process_lazyStdinGetter, Process_defaultSetter), 0);
 }
 
 const JSC::ClassInfo Process::s_info = { "Process"_s, &Base::s_info, nullptr, nullptr,

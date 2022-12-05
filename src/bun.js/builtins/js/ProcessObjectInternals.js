@@ -464,7 +464,7 @@ function getStdinStream(fd, rawRequire, Bun) {
     constructor() {
       super({ readable: true, writable: true });
 
-      this.#onReadable = this._read.bind(this);
+      this.#onReadable = (...args) => this._read(...args);
     }
 
     #onFinished(err) {
@@ -522,11 +522,10 @@ function getStdinStream(fd, rawRequire, Bun) {
         Bun.stdin.stream(),
       ));
 
-      readStream.on("readable", () => {
-        const cb = this.#onReadable;
-        this.#onReadable = null;
-        cb();
+      readStream.on("data", (data) => {
+        this.push(data);
       });
+      readStream.ref();
 
       readStream.on("end", () => {
         this.push(null);
@@ -541,16 +540,14 @@ function getStdinStream(fd, rawRequire, Bun) {
       });
     }
 
-    _read() {
-      var readStream = this.#readStream;
-      while (true) {
-        const buf = readStream.read();
-        if (buf === null || !this.push(buf)) {
-          this.#onReadable = this._read.bind(this);
-          return;
-        }
-      }
+    ref() {
+      this.#readStream?.ref?.();
     }
+    unref() {
+      this.#readStream?.unref?.();
+    }
+
+    _read(encoding, callback) {}
 
     #constructWriteStream() {
       var { createWriteStream } = require("node:fs");
@@ -598,7 +595,7 @@ function getStdinStream(fd, rawRequire, Bun) {
 
     _final(callback) {
       this.#writeStream.end();
-      this.#onFinish = callback.bind(this);
+      this.#onFinish = (...args) => callback(...args);
     }
   };
 

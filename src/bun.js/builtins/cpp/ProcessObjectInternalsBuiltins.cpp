@@ -473,7 +473,7 @@ const char* const s_processObjectInternalsGetStdioWriteStreamCode =
 const JSC::ConstructAbility s_processObjectInternalsGetStdinStreamCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_processObjectInternalsGetStdinStreamCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_processObjectInternalsGetStdinStreamCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_processObjectInternalsGetStdinStreamCodeLength = 3915;
+const int s_processObjectInternalsGetStdinStreamCodeLength = 3786;
 static const JSC::Intrinsic s_processObjectInternalsGetStdinStreamCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_processObjectInternalsGetStdinStreamCode =
     "(function (fd, rawRequire, Bun) {\n" \
@@ -505,7 +505,7 @@ const char* const s_processObjectInternalsGetStdinStreamCode =
     "    constructor() {\n" \
     "      super({ readable: true, writable: true });\n" \
     "\n" \
-    "      this.#onReadable = this._read.bind(this);\n" \
+    "      this.#onReadable = (...args) => this._read(...args);\n" \
     "    }\n" \
     "\n" \
     "    #onFinished(err) {\n" \
@@ -565,11 +565,10 @@ const char* const s_processObjectInternalsGetStdinStreamCode =
     "        Bun.stdin.stream(),\n" \
     "      ));\n" \
     "\n" \
-    "      readStream.on(\"readable\", () => {\n" \
-    "        const cb = this.#onReadable;\n" \
-    "        this.#onReadable = null;\n" \
-    "        cb();\n" \
+    "      readStream.on(\"data\", (data) => {\n" \
+    "        this.push(data);\n" \
     "      });\n" \
+    "      readStream.ref();\n" \
     "\n" \
     "      readStream.on(\"end\", () => {\n" \
     "        this.push(null);\n" \
@@ -584,16 +583,14 @@ const char* const s_processObjectInternalsGetStdinStreamCode =
     "      });\n" \
     "    }\n" \
     "\n" \
-    "    _read() {\n" \
-    "      var readStream = this.#readStream;\n" \
-    "      while (true) {\n" \
-    "        const buf = readStream.read();\n" \
-    "        if (buf === null || !this.push(buf)) {\n" \
-    "          this.#onReadable = this._read.bind(this);\n" \
-    "          return;\n" \
-    "        }\n" \
-    "      }\n" \
+    "    ref() {\n" \
+    "      this.#readStream?.ref?.();\n" \
     "    }\n" \
+    "    unref() {\n" \
+    "      this.#readStream?.unref?.();\n" \
+    "    }\n" \
+    "\n" \
+    "    _read(encoding, callback) {}\n" \
     "\n" \
     "    #constructWriteStream() {\n" \
     "      var { createWriteStream } = require(\"node:fs\");\n" \
@@ -641,7 +638,7 @@ const char* const s_processObjectInternalsGetStdinStreamCode =
     "\n" \
     "    _final(callback) {\n" \
     "      this.#writeStream.end();\n" \
-    "      this.#onFinish = callback.bind(this);\n" \
+    "      this.#onFinish = (...args) => callback(...args);\n" \
     "    }\n" \
     "  };\n" \
     "\n" \

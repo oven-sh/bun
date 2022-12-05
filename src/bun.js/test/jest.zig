@@ -1201,20 +1201,27 @@ pub const TestScope = struct {
         exception: js.ExceptionRef,
         is_only: bool,
     ) js.JSObjectRef {
-        var args = arguments[0..@minimum(arguments.len, 2)];
+        var args = bun.cast([]const JSC.JSValue, arguments[0..@minimum(arguments.len, 2)]);
         var label: string = "";
         if (args.len == 0) {
             return this;
         }
 
-        if (js.JSValueIsString(ctx, args[0])) {
-            const allocator = getAllocator(ctx);
-            label = (JSC.JSValue.fromRef(arguments[0]).toSlice(ctx, allocator).cloneIfNeeded(allocator) catch unreachable).slice();
-            args = args[1..];
+        var label_value = args[0];
+        var function_value = if (args.len > 1) args[1] else JSC.JSValue.zero;
+
+        if (label_value.isEmptyOrUndefinedOrNull() or !label_value.isString()) {
+            function_value = label_value;
+            label_value = .zero;
         }
 
-        var function = args[0].?.value();
-        if (!function.isCell() or !function.isCallable(ctx.vm())) {
+        if (label_value != .zero) {
+            const allocator = getAllocator(ctx);
+            label = (label_value.toSlice(ctx, allocator).cloneIfNeeded(allocator) catch unreachable).slice();
+        }
+
+        const function = function_value;
+        if (function.isEmptyOrUndefinedOrNull() or !function.isCell() or !function.isCallable(ctx.vm())) {
             JSError(getAllocator(ctx), "test() expects a function", .{}, ctx, exception);
             return this;
         }

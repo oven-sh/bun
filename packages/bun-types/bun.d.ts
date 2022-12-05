@@ -2929,6 +2929,16 @@ declare module "bun" {
    * "a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2"
    */
   export const revision: string;
+
+  /**
+   * Find the index of a newline character in potentially ill-formed UTF-8 text.
+   *
+   * This is sort of like readline() except without the IO.
+   */
+  export function indexOfLine(
+    buffer: ArrayBufferView | ArrayBufferLike,
+    offset?: number,
+  ): number;
 }
 
 type TypedArray =

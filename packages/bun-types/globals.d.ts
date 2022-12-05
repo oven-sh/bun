@@ -64,9 +64,51 @@ type Signals =
   | "SIGLOST"
   | "SIGINFO";
 
+interface ArrayConstructor {
+  fromAsync(
+    asyncItems: AsyncIterable | Iterable | ArrayLike,
+    mapfn?: (value: any, index: number) => any,
+    thisArg?: any,
+  ): Array;
+}
+
 interface console {
-  assert(condition?: boolean, ...data: any[]): void;
+  /**
+   * Asynchronously read lines from standard input (fd 0)
+   *
+   * ```ts
+   * for await (const line of console) {
+   *   console.log(line);
+   * }
+   * ```
+   */
+  [Symbol.asyncIterator](): AsyncIterableIterator<string>;
+
+  /**
+   * Write text or bytes to stdout
+   *
+   * Unlike {@link console.log}, this does no formatting and doesn't add a
+   * newline or spaces between arguments. You can pass it strings or bytes or
+   * any combination of the two.
+   *
+   * ```ts
+   * console.write("hello world!", "\n"); // "hello world\n"
+   * ```
+   *
+   * @param data - The data to write
+   * @returns The number of bytes written
+   *
+   * This function is not available in the browser.
+   */
+  write(...data: Array<string | ArrayBufferView | ArrayBuffer>): number;
+
+  /**
+   * Clear the console
+   */
   clear(): void;
+
+  assert(condition?: boolean, ...data: any[]): void;
+
   /**
    * Increment a [count](https://www.youtube.com/watch?v=2AoxCkySv34&t=22s)
    * @param label label counter

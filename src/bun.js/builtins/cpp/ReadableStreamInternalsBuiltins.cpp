@@ -2621,7 +2621,7 @@ const char* const s_readableStreamInternalsReadableStreamToArrayDirectCode =
 const JSC::ConstructAbility s_readableStreamInternalsReadableStreamDefineLazyIteratorsCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableStreamInternalsReadableStreamDefineLazyIteratorsCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_readableStreamInternalsReadableStreamDefineLazyIteratorsCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_readableStreamInternalsReadableStreamDefineLazyIteratorsCodeLength = 1650;
+const int s_readableStreamInternalsReadableStreamDefineLazyIteratorsCodeLength = 1478;
 static const JSC::Intrinsic s_readableStreamInternalsReadableStreamDefineLazyIteratorsCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_readableStreamInternalsReadableStreamDefineLazyIteratorsCode =
     "(function (prototype) {\n" \
@@ -2632,37 +2632,34 @@ const char* const s_readableStreamInternalsReadableStreamDefineLazyIteratorsCode
     "    var ReadableStreamAsyncIterator = async function* ReadableStreamAsyncIterator(stream, preventCancel) {\n" \
     "        var reader = stream.getReader();\n" \
     "        var deferredError;\n" \
-    "          try {\n" \
-    "              while (true) {\n" \
-    "                  var done, value;\n" \
-    "                  const firstResult = reader.readMany();\n" \
-    "                  if (@isPromise(firstResult)) {\n" \
-    "                      const result = await firstResult;\n" \
-    "                      done = result.done;\n" \
-    "                      value = result.value;\n" \
-    "                  } else {\n" \
-    "                      done = firstResult.done;\n" \
-    "                      value = firstResult.value;\n" \
-    "                  }\n" \
+    "        try {\n" \
+    "            while (true) {\n" \
+    "                var done, value;\n" \
+    "                const firstResult = reader.readMany();\n" \
+    "                if (@isPromise(firstResult)) {\n" \
+    "                    ({done, value} = await firstResult);\n" \
+    "                } else {\n" \
+    "                    ({done, value} = firstResult);\n" \
+    "                }\n" \
     "\n" \
-    "                  if (done) {\n" \
-    "                      return;\n" \
-    "                  }\n" \
-    "                  yield* value;\n" \
-    "              }\n" \
-    "          } catch(e) {\n" \
-    "            deferredError = e;\n" \
-    "          } finally {\n" \
-    "            reader.releaseLock();\n" \
-    "\n" \
-    "            if (!preventCancel) {\n" \
-    "                stream.cancel(deferredError);\n" \
+    "                if (done) {\n" \
+    "                    return;\n" \
+    "                }\n" \
+    "                yield* value;\n" \
     "            }\n" \
+    "        } catch(e) {\n" \
+    "          deferredError = e;\n" \
+    "        } finally {\n" \
+    "          reader.releaseLock();\n" \
     "\n" \
-    "            if (deferredError) {\n" \
+    "          if (!preventCancel) {\n" \
+    "              stream.cancel(deferredError);\n" \
+    "          }\n" \
+    "\n" \
+    "          if (deferredError) {\n" \
     "            throw deferredError;\n" \
     "          }\n" \
-    "          }\n" \
+    "        }\n" \
     "    };\n" \
     "    var createAsyncIterator = function asyncIterator() {\n" \
     "        return ReadableStreamAsyncIterator(this, false);\n" \

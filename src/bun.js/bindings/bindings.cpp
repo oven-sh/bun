@@ -3555,6 +3555,11 @@ restart:
     }
 }
 
+extern "C" JSC__JSValue JSC__JSValue__createRopeString(JSC__JSValue JSValue0, JSC__JSValue JSValue1, JSC__JSGlobalObject* globalObject)
+{
+    return JSValue::encode(JSC::jsString(globalObject, JSC::JSValue::decode(JSValue0).toString(globalObject), JSC::JSValue::decode(JSValue1).toString(globalObject)));
+}
+
 extern "C" size_t JSC__VM__blockBytesAllocated(JSC__VM* vm)
 {
 #if ENABLE(RESOURCE_USAGE)

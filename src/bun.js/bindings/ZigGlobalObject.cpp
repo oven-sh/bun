@@ -239,6 +239,42 @@ extern "C" JSC__JSGlobalObject* Zig__GlobalObject__create(JSClassRef* globalObje
     return globalObject;
 }
 
+JSC_DEFINE_HOST_FUNCTION(functionFulfillModuleSync,
+    (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+
+    auto& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSC::JSValue key = callFrame->argument(0);
+
+    auto moduleKey = key.toWTFString(globalObject);
+    RETURN_IF_EXCEPTION(scope, JSValue::encode(JSC::jsUndefined()));
+
+    if (moduleKey.endsWith(".node"_s)) {
+        throwException(globalObject, scope, createTypeError(globalObject, "To load Node-API modules, use require() or process.dlopen instead of importSync."_s));
+        return JSValue::encode(JSC::jsUndefined());
+    }
+
+    auto specifier = Zig::toZigString(moduleKey);
+    ErrorableResolvedSource res;
+    res.success = false;
+    res.result.err.code = 0;
+    res.result.err.ptr = nullptr;
+
+    JSValue result = Bun::fetchSourceCodeSync(
+        reinterpret_cast<Zig::GlobalObject*>(globalObject),
+        &res,
+        &specifier,
+        &specifier);
+
+    if (result.isUndefined() || !result) {
+        return JSValue::encode(result);
+    }
+
+    globalObject->moduleLoader()->provideFetch(globalObject, key, jsCast<JSC::JSSourceCode*>(result)->sourceCode());
+    RELEASE_AND_RETURN(scope, JSValue::encode(JSC::jsUndefined()));
+}
+
 extern "C" void* Zig__GlobalObject__getModuleRegistryMap(JSC__JSGlobalObject* arg0)
 {
     if (JSC::JSObject* loader = JSC::jsDynamicCast<JSC::JSObject*>(arg0->moduleLoader())) {
@@ -496,8 +532,6 @@ void GlobalObject::setConsole(void* console)
 
 #pragma mark - Globals
 
-static JSC_DECLARE_HOST_FUNCTION(functionFulfillModuleSync);
-
 JSC_DECLARE_CUSTOM_GETTER(functionLazyLoadStreamPrototypeMap_getter);
 
 JSC_DEFINE_CUSTOM_GETTER(functionLazyLoadStreamPrototypeMap_getter,
@@ -676,8 +710,6 @@ JSC_DEFINE_CUSTOM_GETTER(lazyProcessEnvGetter,
         globalObject->processEnvObject());
 }
 
-static JSC_DECLARE_HOST_FUNCTION(functionQueueMicrotask);
-
 static JSC_DEFINE_HOST_FUNCTION(functionQueueMicrotask,
     (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
@@ -705,8 +737,6 @@ static JSC_DEFINE_HOST_FUNCTION(functionQueueMicrotask,
 
     return JSC::JSValue::encode(JSC::jsUndefined());
 }
-
-static JSC_DECLARE_HOST_FUNCTION(functionSetTimeout);
 
 static JSC_DEFINE_HOST_FUNCTION(functionSetTimeout,
     (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
@@ -737,8 +767,6 @@ static JSC_DEFINE_HOST_FUNCTION(functionSetTimeout,
     return Bun__Timer__setTimeout(globalObject, JSC::JSValue::encode(job), JSC::JSValue::encode(num));
 }
 
-static JSC_DECLARE_HOST_FUNCTION(functionSetInterval);
-
 static JSC_DEFINE_HOST_FUNCTION(functionSetInterval,
     (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
@@ -763,8 +791,6 @@ static JSC_DEFINE_HOST_FUNCTION(functionSetInterval,
         JSC::JSValue::encode(num));
 }
 
-static JSC_DECLARE_HOST_FUNCTION(functionClearInterval);
-
 static JSC_DEFINE_HOST_FUNCTION(functionClearInterval,
     (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
@@ -781,8 +807,6 @@ static JSC_DEFINE_HOST_FUNCTION(functionClearInterval,
     return Bun__Timer__clearInterval(globalObject, JSC::JSValue::encode(num));
 }
 
-static JSC_DECLARE_HOST_FUNCTION(functionClearTimeout);
-
 static JSC_DEFINE_HOST_FUNCTION(functionClearTimeout,
     (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
@@ -798,8 +822,6 @@ static JSC_DEFINE_HOST_FUNCTION(functionClearTimeout,
 
     return Bun__Timer__clearTimeout(globalObject, JSC::JSValue::encode(num));
 }
-
-static JSC_DECLARE_HOST_FUNCTION(functionBTOA);
 
 static JSC_DEFINE_HOST_FUNCTION(functionBTOA,
     (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
@@ -827,8 +849,6 @@ static JSC_DEFINE_HOST_FUNCTION(functionBTOA,
 
     return JSC::JSValue::encode(JSC::jsString(vm, WTF::base64EncodeToString(stringToEncode.latin1())));
 }
-
-static JSC_DECLARE_HOST_FUNCTION(functionATOB);
 
 static JSC_DEFINE_HOST_FUNCTION(functionATOB,
     (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
@@ -862,8 +882,6 @@ static JSC_DEFINE_HOST_FUNCTION(functionATOB,
     return JSC::JSValue::encode(JSC::jsString(vm, WTF::String(decodedData->data(), decodedData->size())));
 }
 
-static JSC_DECLARE_HOST_FUNCTION(functionHashCode);
-
 static JSC_DEFINE_HOST_FUNCTION(functionHashCode,
     (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
@@ -877,7 +895,6 @@ static JSC_DEFINE_HOST_FUNCTION(functionHashCode,
     return JSC::JSValue::encode(jsNumber(view.hash()));
 }
 
-static JSC_DECLARE_HOST_FUNCTION(functionReportError);
 static JSC_DEFINE_HOST_FUNCTION(functionReportError,
     (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
@@ -1025,7 +1042,6 @@ enum ReadableStreamTag : int32_t {
 };
 
 // we're trying out a new way to do this lazy loading
-static JSC_DECLARE_HOST_FUNCTION(functionLazyLoad);
 static JSC_DEFINE_HOST_FUNCTION(functionLazyLoad,
     (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
@@ -2617,6 +2633,12 @@ void GlobalObject::finishCreation(VM& vm)
 
     // JSC default is 100
     errorConstructor->putDirect(vm, vm.propertyNames->stackTraceLimit, jsNumber(DEFAULT_ERROR_STACK_TRACE_LIMIT), JSC::PropertyAttribute::DontEnum | 0);
+
+    JSC::JSValue console = this->get(this, JSC::Identifier::fromString(vm, "console"_s));
+    JSC::JSObject* consoleObject = console.getObject();
+    consoleObject->putDirectBuiltinFunction(vm, this, vm.propertyNames->asyncIteratorSymbol, consoleObjectAsyncIteratorCodeGenerator(vm), PropertyAttribute::Builtin | PropertyAttribute::DontDelete);
+    auto clientData = WebCore::clientData(vm);
+    consoleObject->putDirectBuiltinFunction(vm, this, clientData->builtinNames().writePublicName(), consoleObjectWriteCodeGenerator(vm), PropertyAttribute::Builtin | PropertyAttribute::ReadOnly | PropertyAttribute::DontDelete);
 }
 
 JSC_DEFINE_HOST_FUNCTION(functionBunPeek,
@@ -2718,7 +2740,6 @@ extern "C" void Bun__setOnEachMicrotaskTick(JSC::VM* vm, void* ptr, void (*callb
 // This implementation works the same as setTimeout(myFunction, 0)
 // TODO: make it more efficient
 // https://developer.mozilla.org/en-US/docs/Web/API/Window/setImmediate
-static JSC_DECLARE_HOST_FUNCTION(functionSetImmediate);
 static JSC_DEFINE_HOST_FUNCTION(functionSetImmediate,
     (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
@@ -3501,42 +3522,6 @@ JSC::JSInternalPromise* GlobalObject::moduleLoaderImportModule(JSGlobalObject* g
     RETURN_IF_EXCEPTION(scope, promise->rejectWithCaughtException(globalObject, scope));
 
     return result;
-}
-
-static JSC_DEFINE_HOST_FUNCTION(functionFulfillModuleSync,
-    (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
-{
-
-    auto& vm = globalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    JSC::JSValue key = callFrame->argument(0);
-
-    auto moduleKey = key.toWTFString(globalObject);
-    RETURN_IF_EXCEPTION(scope, JSValue::encode(JSC::jsUndefined()));
-
-    if (moduleKey.endsWith(".node"_s)) {
-        throwException(globalObject, scope, createTypeError(globalObject, "To load Node-API modules, use require() or process.dlopen instead of importSync."_s));
-        return JSValue::encode(JSC::jsUndefined());
-    }
-
-    auto specifier = Zig::toZigString(moduleKey);
-    ErrorableResolvedSource res;
-    res.success = false;
-    res.result.err.code = 0;
-    res.result.err.ptr = nullptr;
-
-    JSValue result = Bun::fetchSourceCodeSync(
-        reinterpret_cast<Zig::GlobalObject*>(globalObject),
-        &res,
-        &specifier,
-        &specifier);
-
-    if (result.isUndefined() || !result) {
-        return JSValue::encode(result);
-    }
-
-    globalObject->moduleLoader()->provideFetch(globalObject, key, jsCast<JSC::JSSourceCode*>(result)->sourceCode());
-    RELEASE_AND_RETURN(scope, JSValue::encode(JSC::jsUndefined()));
 }
 
 static JSC::JSInternalPromise* rejectedInternalPromise(JSC::JSGlobalObject* globalObject, JSC::JSValue value)

@@ -35,6 +35,7 @@
 // builtins by the script: Source/JavaScriptCore/Scripts/generate-js-builtins.py
 
 #include "ByteLengthQueuingStrategyBuiltins.cpp"
+#include "ConsoleObjectBuiltins.cpp"
 #include "CountQueuingStrategyBuiltins.cpp"
 #include "ImportMetaObjectBuiltins.cpp"
 #include "JSBufferConstructorBuiltins.cpp"

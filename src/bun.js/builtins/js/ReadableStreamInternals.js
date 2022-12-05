@@ -2168,37 +2168,34 @@ function readableStreamDefineLazyIterators(prototype) {
     var ReadableStreamAsyncIterator = async function* ReadableStreamAsyncIterator(stream, preventCancel) {
         var reader = stream.getReader();
         var deferredError;
-          try {
-              while (true) {
-                  var done, value;
-                  const firstResult = reader.readMany();
-                  if (@isPromise(firstResult)) {
-                      const result = await firstResult;
-                      done = result.done;
-                      value = result.value;
-                  } else {
-                      done = firstResult.done;
-                      value = firstResult.value;
-                  }
+        try {
+            while (true) {
+                var done, value;
+                const firstResult = reader.readMany();
+                if (@isPromise(firstResult)) {
+                    ({done, value} = await firstResult);
+                } else {
+                    ({done, value} = firstResult);
+                }
 
-                  if (done) {
-                      return;
-                  }
-                  yield* value;
-              }
-          } catch(e) {
-            deferredError = e;
-          } finally {
-            reader.releaseLock();
-
-            if (!preventCancel) {
-                stream.cancel(deferredError);
+                if (done) {
+                    return;
+                }
+                yield* value;
             }
+        } catch(e) {
+          deferredError = e;
+        } finally {
+          reader.releaseLock();
 
-            if (deferredError) {
+          if (!preventCancel) {
+              stream.cancel(deferredError);
+          }
+
+          if (deferredError) {
             throw deferredError;
           }
-          }
+        }
     };
     var createAsyncIterator = function asyncIterator() {
         return ReadableStreamAsyncIterator(this, false);

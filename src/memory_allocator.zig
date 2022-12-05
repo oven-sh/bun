@@ -39,7 +39,7 @@ const CAllocator = struct {
     const MI_MAX_ALIGN_SIZE = 16;
     inline fn mi_malloc_satisfies_alignment(alignment: usize, size: usize) bool {
         return (alignment == @sizeOf(*anyopaque) or
-            (alignment == MI_MAX_ALIGN_SIZE and size > (MI_MAX_ALIGN_SIZE / 2)));
+            (alignment == MI_MAX_ALIGN_SIZE and size >= (MI_MAX_ALIGN_SIZE / 2)));
     }
 
     fn alignedAlloc(len: usize, alignment: usize) ?[*]u8 {
@@ -136,7 +136,7 @@ const ZAllocator = struct {
     const MI_MAX_ALIGN_SIZE = 16;
     inline fn mi_malloc_satisfies_alignment(alignment: usize, size: usize) bool {
         return (alignment == @sizeOf(*anyopaque) or
-            (alignment == MI_MAX_ALIGN_SIZE and size > (MI_MAX_ALIGN_SIZE / 2)));
+            (alignment == MI_MAX_ALIGN_SIZE and size >= (MI_MAX_ALIGN_SIZE / 2)));
     }
 
     fn alignedAlloc(len: usize, alignment: usize) ?[*]u8 {

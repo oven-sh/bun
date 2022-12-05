@@ -3039,6 +3039,11 @@ pub const Blob = struct {
         var arguments_ = callframe.arguments(1);
         var arguments = arguments_.ptr[0..arguments_.len];
 
+        if (!arguments.ptr[0].isEmptyOrUndefinedOrNull() and !arguments.ptr[0].isObject()) {
+            globalThis.throwInvalidArguments("options must be an object or undefined", .{});
+            return JSValue.jsUndefined();
+        }
+
         var store = this.store orelse {
             globalThis.throwInvalidArguments("Blob is detached", .{});
             return JSValue.jsUndefined();
@@ -3075,7 +3080,7 @@ pub const Blob = struct {
             },
         };
 
-        if (arguments.len > 0) {
+        if (arguments.len > 0 and arguments.ptr[0].isObject()) {
             stream_start = JSC.WebCore.StreamStart.fromJSWithTag(globalThis, arguments[0], .FileSink);
             stream_start.FileSink.input_path = input_path;
         }

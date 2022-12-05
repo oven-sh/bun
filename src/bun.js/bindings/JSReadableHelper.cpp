@@ -115,9 +115,9 @@ JSC_DEFINE_HOST_FUNCTION(jsReadable_resume, (JSGlobalObject * lexicalGlobalObjec
     JSReadableHelper_EXTRACT_STREAM_STATE
 
         auto* jsEmitterWrap
-        = jsDynamicCast<JSEventEmitter*>(stream);
+        = jsEventEmitterCastFast(vm, lexicalGlobalObject, stream);
 
-    if (!jsEmitterWrap) {
+    if (UNLIKELY(!jsEmitterWrap)) {
         throwTypeError(lexicalGlobalObject, throwScope, "stream is not EventEmitter"_s);
         return JSValue::encode(jsUndefined());
     }
@@ -169,8 +169,9 @@ EncodedJSValue emitReadable_(JSGlobalObject* lexicalGlobalObject, JSObject* stre
 
         auto eventType = clientData->builtinNames().readablePublicName();
         MarkedArgumentBuffer args;
-        auto emitter = jsDynamicCast<JSEventEmitter*>(stream);
-        if (!emitter) {
+        auto* emitter
+            = jsEventEmitterCastFast(vm, lexicalGlobalObject, stream);
+        if (UNLIKELY(!emitter)) {
             throwTypeError(lexicalGlobalObject, throwScope, "stream is not EventEmitter"_s);
             return JSValue::encode(jsUndefined());
         }

@@ -619,15 +619,9 @@ pub const CreateCommand = struct {
                             const stat = infile.stat() catch continue;
                             _ = C.fchmod(outfile.handle, stat.mode);
 
-                            CopyFile.copy(infile.handle, outfile.handle) catch {
-                                entry.dir.copyFile(entry.basename, destination_dir_, entry.path, .{}) catch |err| {
-                                    node_.end();
-
-                                    progress_.refresh();
-
-                                    Output.prettyErrorln("<r><red>{s}<r>: copying file {s}", .{ @errorName(err), entry.path });
-                                    Global.exit(1);
-                                };
+                            CopyFile.copyFile(infile.handle, outfile.handle) catch |err| {
+                                Output.prettyErrorln("<r><red>{s}<r>: copying file {s}", .{ @errorName(err), entry.path });
+                                Global.exit(1);
                             };
                         }
                     }

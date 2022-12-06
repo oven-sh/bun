@@ -252,6 +252,8 @@ JSC_DEFINE_HOST_FUNCTION(functionNeverInlineFunction, (JSGlobalObject * globalOb
     return JSValue::encode(setNeverInline(globalObject, callFrame));
 }
 
+extern "C" bool Bun__mkdirp(JSC::JSGlobalObject*, const char*);
+
 JSC_DECLARE_HOST_FUNCTION(functionStartSamplingProfiler);
 JSC_DEFINE_HOST_FUNCTION(functionStartSamplingProfiler, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
@@ -267,11 +269,13 @@ JSC_DEFINE_HOST_FUNCTION(functionStartSamplingProfiler, (JSC::JSGlobalObject * g
         auto path = directoryValue.toWTFString(globalObject);
         if (!path.isEmpty()) {
             StringPrintStream pathOut;
-            if (!WTF::FileSystemImpl::makeAllDirectories(path)) {
+            const char* optionCString = toCString(String(optionString + path)).data();
+
+            if (!Bun__mkdirp(globalObject, optionCString)) {
                 throwVMError(globalObject, scope, createTypeError(globalObject, "directory couldn't be created"_s));
                 return JSC::JSValue::encode(jsUndefined());
             }
-            const char* optionCString = toCString(String(optionString + path)).data();
+
             Options::setOption(optionCString);
             samplingProfiler.registerForReportAtExit();
         }

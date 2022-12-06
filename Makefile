@@ -442,7 +442,8 @@ WRAP_SYMBOLS_ON_LINUX = -Wl,--wrap=fcntl -Wl,--wrap=fcntl64 -Wl,--wrap=stat64 -W
 	-Wl,--wrap=fstat64 \
 	-Wl,--wrap=fstatat64 \
 	-Wl,--wrap=mknod \
-	-Wl,--wrap=mknodat
+	-Wl,--wrap=mknodat \
+	-Wl,--wrap=statx
 
 PLATFORM_LINKER_FLAGS = $(BUN_CFLAGS) \
 		-fuse-ld=lld \
@@ -1595,6 +1596,7 @@ $(DEBUG_OBJ_DIR)/%.o: $(SRC_DIR)/%.cpp
 		-fno-exceptions \
 		-fno-rtti \
 		-ferror-limit=1000 \
+		-DBUN_DEBUG \
 		$(EMIT_LLVM_FOR_DEBUG) \
 		-g3 -c -o $@ $<
 
@@ -1609,6 +1611,7 @@ $(DEBUG_OBJ_DIR)/%.o: $(SRC_DIR)/webcore/%.cpp
 		-fno-rtti \
 		-ferror-limit=1000 \
 		$(EMIT_LLVM_FOR_DEBUG) \
+		-DBUN_DEBUG \
 		-g3 -c -o $@ $<
 
 .PHONY: src/io/%.cpp
@@ -1619,6 +1622,7 @@ $(DEBUG_OBJ_DIR)/%.o: src/io/%.cpp
 		-fno-exceptions \
 		-fno-rtti \
 		-ferror-limit=1000 \
+		-DBUN_DEBUG \
 		$(EMIT_LLVM_FOR_DEBUG) \
 		-g3 -c -o $@ $<
 
@@ -1634,6 +1638,7 @@ $(DEBUG_OBJ_DIR)/%.o: $(SRC_DIR)/sqlite/%.cpp
 		-fno-rtti \
 		-ferror-limit=1000 \
 		$(EMIT_LLVM_FOR_DEBUG) \
+		-DBUN_DEBUG \
 		-g3 -c -o $@ $<
 
 # $(DEBUG_OBJ_DIR) is not included here because it breaks
@@ -1647,6 +1652,7 @@ $(DEBUG_OBJ_DIR)/%.o: $(SRC_DIR)/node_os/%.cpp
 		-fno-rtti \
 		-ferror-limit=1000 \
 		$(EMIT_LLVM_FOR_DEBUG) \
+		-DBUN_DEBUG \
 		-g3 -c -o $@ $<
 
 # $(DEBUG_OBJ_DIR) is not included here because it breaks
@@ -1660,6 +1666,7 @@ $(DEBUG_OBJ_DIR)/%.o: src/bun.js/builtins/%.cpp
 		-fno-rtti \
 		-ferror-limit=1000 \
 		$(EMIT_LLVM_FOR_DEBUG) \
+		-DBUN_DEBUG \
 		-g3 -c -o $@ $<
 
 .PHONY: src/bun.js/modules/%.cpp
@@ -1671,6 +1678,7 @@ $(DEBUG_OBJ_DIR)/%.o: src/bun.js/modules/%.cpp
 		-fno-rtti \
 		-ferror-limit=1000 \
 		$(EMIT_LLVM_FOR_DEBUG) \
+		-DBUN_DEBUG \
 		-g3 -c -o $@ $<
 
 
@@ -1684,6 +1692,7 @@ $(DEBUG_OBJ_DIR)/webcrypto/%.o: src/bun.js/bindings/webcrypto/%.cpp
 		-fno-rtti \
 		-ferror-limit=1000 \
 		$(EMIT_LLVM_FOR_DEBUG) \
+		-DBUN_DEBUG \
 		-g3 -c -o $@ $<
 
 

@@ -17,6 +17,22 @@
 #endif
 #endif
 
+#if defined(__x86_64__)
+// force older pow
+__asm__(".symver pow,pow@GLIBC_2.2.5");
+#endif
+
+// ban statx, for now
+extern "C" int __wrap_statx(int fd, const char* path, int flags,
+    unsigned int mask, struct statx* buf)
+{
+    errno = ENOSYS;
+#ifdef BUN_DEBUG
+    abort();
+#endif
+    return -1;
+}
+
 extern "C" int __real_fcntl(int fd, int cmd, ...);
 extern "C" double __real_pow(double x, double y);
 extern "C" double __real_exp(double x);

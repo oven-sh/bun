@@ -2764,6 +2764,15 @@ pub fn firstNonASCII(slice: []const u8) ?u32 {
 pub fn firstNonASCIIWithType(comptime Type: type, slice: Type) ?u32 {
     var remaining = slice;
 
+    if (comptime bun.FeatureFlags.use_simdutf) {
+        const result = bun.simdutf.validate.with_errors.ascii(slice);
+        if (result.status == .success) {
+            return null;
+        }
+
+        return @truncate(u32, result.count);
+    }
+
     if (comptime Environment.enableSIMD) {
         if (remaining.len >= ascii_vector_size) {
             const remaining_start = remaining.ptr;

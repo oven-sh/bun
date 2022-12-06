@@ -1584,7 +1584,7 @@ JSC__JSValue JSC__JSValue__createTypeError(const ZigString* message, const ZigSt
     typeError->putDirect(
         vm, vm.propertyNames->name,
         JSC::JSValue(JSC::jsOwnedString(
-            vm, WTF::String(WTF::StringImpl::createWithoutCopying(range_error_name, 10)))),
+            vm, WTF::String(WTF::StringImpl::createWithoutCopying(range_error_name, 9)))),
         0);
 
     if (code.len > 0) {

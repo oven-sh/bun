@@ -1,8 +1,3 @@
-GLIBC_2.2.5 {
-   fcntl;
-};
-
-
 BUN_0.3 {
     global:
 	napi*;

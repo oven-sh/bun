@@ -5,6 +5,8 @@
 //#include <sys/stat.h>
 #include <stdarg.h>
 #include <math.h>
+#include <errno.h>
+#include <sys/syscall.h>
 
 #ifndef _STAT_VER
 #if defined(__aarch64__)
@@ -81,9 +83,6 @@ extern "C" double __real_log(double x);
 
 extern "C" int __wrap_fcntl(int fd, int cmd, ...)
 {
-    // fcntl has 2 or 3 args, and I don't know whether it's safe to
-    // just define it with 3... glibc itself always seems to access that arg
-    // as a pointer using va_arg, although the man page says it can be an int!
     va_list va;
     va_start(va, cmd);
     return fcntl(fd, cmd, va_arg(va, void*));

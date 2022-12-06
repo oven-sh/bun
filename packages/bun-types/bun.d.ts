@@ -573,6 +573,13 @@ declare module "bun" {
 
   export type JavaScriptLoader = "jsx" | "js" | "ts" | "tsx";
 
+  /**
+   * Fast deep-equality check two objects.
+   *
+   * This also powers expect().toEqual in `bun:test`
+   */
+  export function deepEquals(a: any, b: any): boolean;
+
   export interface TranspilerOptions {
     /**
      * Replace key with value. Value must be a JSON string.

@@ -1078,7 +1078,9 @@ export class ChildProcess extends EventEmitter {
         if (!hasEmittedSpawn) {
           hasEmittedSpawn = true;
           process.nextTick(onSpawnNT, this);
-          process.nextTick(this.#handleOnExit, exitCode, signalCode, err);
+          process.nextTick((exitCode, signalCode, err) =>
+            this.#handleOnExit(exitCode, signalCode, err),
+          );
         } else {
           this.#handleOnExit(exitCode, signalCode, err);
         }

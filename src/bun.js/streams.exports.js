@@ -6693,7 +6693,6 @@ function createNativeStreamReadable(nativeType, Readable) {
       if (updateRef) {
         updateRef(ptr, false);
       }
-      process.nextTick(deinit, ptr);
       debug("NativeReadable destroyed", this.__id);
       cancel(ptr, error);
       callback(error);

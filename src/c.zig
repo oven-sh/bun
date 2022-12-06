@@ -416,7 +416,7 @@ pub fn dlsym(comptime Type: type, comptime name: [:0]const u8) ?Type {
         const RTLD_DEFAULT = if (bun.Environment.isMac)
             @intToPtr(?*anyopaque, @bitCast(usize, @as(isize, -2)))
         else
-            @intToPtr(?*anyopaque, @bitCast(usize, 0));
+            @intToPtr(?*anyopaque, @as(usize, 0));
         const result = std.c.dlsym(RTLD_DEFAULT, name);
 
         if (result) |ptr| {

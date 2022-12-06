@@ -72,11 +72,11 @@ fn canUseCopyFileRangeSyscall() bool {
     if (result == 0) {
         const kernel = Platform.kernelVersion();
         if (kernel.orderWithoutTag(.{ .major = 4, .minor = 5 }).compare(.gte)) {
-            bun.Output.debug("copy_file_range is supported");
+            bun.Output.debug("copy_file_range is supported", .{});
             can_use_copy_file_range.store(1, .Monotonic);
             return true;
         } else {
-            bun.Output.debug("copy_file_range is NOT supported");
+            bun.Output.debug("copy_file_range is NOT supported", .{});
             can_use_copy_file_range.store(-1, .Monotonic);
             return false;
         }
@@ -109,7 +109,7 @@ pub fn copyFileRange(fd_in: fd_t, off_in: u64, fd_out: fd_t, off_out: u64, len: 
             .XDEV => {},
             // syscall added in Linux 4.5, use fallback
             .NOSYS => {
-                bun.Output.debug("copy_file_range is NOT supported");
+                bun.Output.debug("copy_file_range is NOT supported", .{});
                 can_use_copy_file_range.store(-1, .Monotonic);
             },
             else => |err| return os.unexpectedErrno(err),
@@ -123,43 +123,4 @@ pub fn copyFileRange(fd_in: fd_t, off_in: u64, fd_out: fd_t, off_out: u64, len: 
     // error: integer value 0 cannot be coerced to type 'os.PWriteError!usize'
     if (amt_read == 0) return @as(usize, 0);
     return os.pwrite(fd_out, buf[0..amt_read], off_out);
-}
-
-// always use our copy_file_range wrapper
-// we hope it never is actually used but we want to prevent the symbol from being loaded from glibc
-// ssize_t copy_file_range(int fd_in, off64_t *off_in,
-//                        int fd_out, off64_t *off_out,
-//                        size_t len, unsigned int flags);
-pub fn copy_file_range(fd_in: i32, off_in: *i64, fd_out: i32, off_out: *i64, len: usize, flags: u32) callconv(.C) isize {
-    if (canUseCopyFileRangeSyscall()) {
-        var off_in_copy = @bitCast(i64, off_in);
-        var off_out_copy = @bitCast(i64, off_out);
-
-        const rc = std.os.linux.copy_file_range(fd_in, &off_in_copy, fd_out, &off_out_copy, len, flags);
-        const errno = std.os.linux.getErrno(rc);
-        if (errno != .SUCCESS)
-            std.c._errno().* = @enumToInt(errno);
-        return @bitCast(isize, rc);
-    }
-
-    var buf: [8 * 4096]u8 = undefined;
-    const adjusted_count = @minimum(buf.len, len);
-    const amt_read = os.pread(fd_in, buf[0..adjusted_count], off_in) catch {
-        return -1;
-    };
-    // TODO without @as the line below fails to compile for wasm32-wasi:
-    // error: integer value 0 cannot be coerced to type 'os.PWriteError!usize'
-    if (amt_read == 0) return @as(usize, 0);
-    return @intCast(
-        isize,
-        os.pwrite(fd_out, buf[0..amt_read], off_out) catch {
-            return -1;
-        },
-    );
-}
-
-comptime {
-    if (bun.Environment.isLinux) {
-        @export(copy_file_range, .{ .name = "copy_file_range" });
-    }
 }

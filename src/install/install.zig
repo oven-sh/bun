@@ -1003,7 +1003,6 @@ const PackageInstall = struct {
     }
     fn installWithCopyfile(this: *PackageInstall) Result {
         const Walker = @import("../walker_skippable.zig");
-        const CopyFile = @import("../copy_file.zig");
 
         var cached_package_dir = this.cache_dir.openDirZ(this.cache_dir_subpath, .{
             .iterate = true,
@@ -1053,15 +1052,13 @@ const PackageInstall = struct {
                     const stat = infile.stat() catch continue;
                     _ = C.fchmod(outfile.handle, stat.mode);
 
-                    CopyFile.copy(infile.handle, outfile.handle) catch {
-                        entry.dir.copyFile(entry.basename, destination_dir_, entry.path, .{}) catch |err| {
-                            progress_.root.end();
+                    bun.copyFile(infile.handle, outfile.handle) catch |err| {
+                        progress_.root.end();
 
-                            progress_.refresh();
+                        progress_.refresh();
 
-                            Output.prettyErrorln("<r><red>{s}<r>: copying file {s}", .{ @errorName(err), entry.path });
-                            Global.exit(1);
-                        };
+                        Output.prettyErrorln("<r><red>{s}<r>: copying file {s}", .{ @errorName(err), entry.path });
+                        Global.exit(1);
                     };
                 }
 

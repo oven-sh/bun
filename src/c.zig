@@ -1,4 +1,5 @@
 const std = @import("std");
+const bun = @import("bun");
 const Environment = @import("./env.zig");
 
 const PlatformSpecific = switch (@import("builtin").target.os.tag) {
@@ -399,3 +400,38 @@ pub fn getRelease(buf: []u8) []const u8 {
 
 pub extern fn memmem(haystack: [*]const u8, haystacklen: usize, needle: [*]const u8, needlelen: usize) ?[*]const u8;
 pub extern fn cfmakeraw(*std.os.termios) void;
+
+const LazyStatus = enum {
+    pending,
+    loaded,
+    failed,
+};
+pub fn dlsym(comptime Type: type, comptime name: [:0]const u8) ?Type {
+    const Wrapper = struct {
+        pub var function: Type = undefined;
+        pub var loaded: LazyStatus = LazyStatus.pending;
+    };
+
+    if (Wrapper.loaded == .pending) {
+        const RTLD_DEFAULT = if (bun.Environment.isMac)
+            @intToPtr(?*anyopaque, @bitCast(usize, @as(isize, -2)))
+        else
+            @intToPtr(?*anyopaque, @as(usize, 0));
+        const result = std.c.dlsym(RTLD_DEFAULT, name);
+
+        if (result) |ptr| {
+            Wrapper.function = bun.cast(Type, ptr);
+            Wrapper.loaded = .loaded;
+            return Wrapper.function;
+        } else {
+            Wrapper.loaded = .failed;
+            return null;
+        }
+    }
+
+    if (Wrapper.loaded == .loaded) {
+        return Wrapper.function;
+    }
+
+    return null;
+}

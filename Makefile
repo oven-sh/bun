@@ -432,6 +432,18 @@ ARCHIVE_FILES = $(ARCHIVE_FILES_WITHOUT_LIBCRYPTO)
 STATIC_MUSL_FLAG ?=
 
 ifeq ($(OS_NAME), linux)
+WRAP_SYMBOLS_ON_LINUX = -Wl,--wrap=fcntl -Wl,--wrap=fcntl64 -Wl,--wrap=stat64 -Wl,--wrap=pow -Wl,--wrap=exp -Wl,--wrap=log \
+	-Wl,--wrap=lstat \
+	-Wl,--wrap=stat \
+	-Wl,--wrap=fstat \
+	-Wl,--wrap=fstatat \
+	-Wl,--wrap=lstat64 \
+	-Wl,--wrap=stat64 \
+	-Wl,--wrap=fstat64 \
+	-Wl,--wrap=fstatat64 \
+	-Wl,--wrap=mknod \
+	-Wl,--wrap=mknodat
+
 PLATFORM_LINKER_FLAGS = $(BUN_CFLAGS) \
 		-fuse-ld=lld \
 		-Wl,-z,now \
@@ -447,8 +459,8 @@ PLATFORM_LINKER_FLAGS = $(BUN_CFLAGS) \
 		-fno-semantic-interposition \
 		-flto \
 		-Wl,--allow-multiple-definition \
-		-rdynamic
-		
+		-rdynamic \
+		$(WRAP_SYMBOLS_ON_LINUX)
 
  
 endif

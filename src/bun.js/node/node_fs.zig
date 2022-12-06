@@ -2915,7 +2915,7 @@ pub const NodeFS = struct {
 
     // TODO: windows
     // TODO: verify this works correctly with unicode codepoints
-    fn mkdirRecursive(this: *NodeFS, args: Arguments.Mkdir, comptime flavor: Flavor) Maybe(Return.Mkdir) {
+    pub fn mkdirRecursive(this: *NodeFS, args: Arguments.Mkdir, comptime flavor: Flavor) Maybe(Return.Mkdir) {
         const Option = Maybe(Return.Mkdir);
         if (comptime Environment.isWindows) @compileError("This needs to be implemented on Windows.");
 
@@ -3976,3 +3976,18 @@ pub const NodeFS = struct {
         return Maybe(Return.CreateWriteStream).todo;
     }
 };
+
+pub export fn Bun__mkdirp(globalThis: *JSC.JSGlobalObject, path: [*:0]const u8) bool {
+    return globalThis.bunVM().nodeFS().mkdirRecursive(
+        Arguments.Mkdir{
+            .path = PathLike{ .string = PathString.init(bun.span(path)) },
+            .recursive = true,
+        },
+        .sync,
+    ) != .err;
+}
+
+comptime {
+    if (!JSC.is_bindgen)
+        _ = Bun__mkdirp;
+}

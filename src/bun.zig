@@ -541,3 +541,7 @@ pub fn StringHashMap(comptime Type: type) type {
 pub fn StringHashMapUnmanaged(comptime Type: type) type {
     return std.HashMapUnmanaged([]const u8, Type, StringHashMapContext, std.hash_map.default_max_load_percentage);
 }
+
+const CopyFile = @import("./copy_file.zig");
+pub const copyFileRange = CopyFile.copyFileRange;
+pub const copyFile = CopyFile.copyFile;

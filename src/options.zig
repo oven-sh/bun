@@ -1838,42 +1838,7 @@ pub const OutputFile = struct {
             }
         }
 
-        const os = std.os;
-
-        if (comptime @import("builtin").target.isDarwin()) {
-            const rc = os.system.fcopyfile(fd_in, fd_out, null, os.system.COPYFILE_DATA);
-            if (rc == 0) {
-                return;
-            }
-        }
-
-        if (@import("builtin").target.os.tag == .linux) {
-            // Try copy_file_range first as that works at the FS level and is the
-            // most efficient method (if available).
-            var offset: u64 = 0;
-            cfr_loop: while (true) {
-                const math = std.math;
-                // The kernel checks the u64 value `offset+count` for overflow, use
-                // a 32 bit value so that the syscall won't return EINVAL except for
-                // impossibly large files (> 2^64-1 - 2^32-1).
-                const amt = try os.copy_file_range(fd_in, offset, fd_out, offset, math.maxInt(u32), 0);
-                // Terminate when no data was copied
-                if (amt == 0) break :cfr_loop;
-                offset += amt;
-            }
-            return;
-        }
-
-        // Sendfile is a zero-copy mechanism iff the OS supports it, otherwise the
-        // fallback code will copy the contents chunk by chunk.
-        const empty_iovec = [0]os.iovec_const{};
-        var offset: u64 = 0;
-        sendfile_loop: while (true) {
-            const amt = try os.sendfile(fd_out, fd_in, offset, 0, &empty_iovec, &empty_iovec, 0);
-            // Terminate when no data was copied
-            if (amt == 0) break :sendfile_loop;
-            offset += amt;
-        }
+        try bun.copyFile(fd_in, fd_out);
     }
 };
 

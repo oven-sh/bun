@@ -66,14 +66,15 @@
  * @see [source](https://github.com/nodejs/node/blob/v18.0.0/lib/child_process.js)
  */
 declare module "child_process" {
-  import { BunSpawnOptions } from "bun";
+  import { SpawnOptions } from "bun";
   import { ObjectEncodingOptions } from "node:fs";
   import { EventEmitter, Abortable } from "node:events";
-  import * as net from "node:net";
+
   import { Writable, Readable, Stream, Pipe } from "node:stream";
   import { URL } from "node:url";
   type Serializable = string | object | number | boolean | bigint;
-  type SendHandle = net.Socket | net.Server;
+  // import * as net from "node:net";
+  // type SendHandle = net.Socket | net.Server;
   /**
    * Instances of the `ChildProcess` represent spawned child processes.
    *
@@ -84,7 +85,7 @@ declare module "child_process" {
    */
   class ChildProcess extends EventEmitter {
     spawn(
-      options: BunSpawnOptions & { cmd: string[] },
+      options: SpawnOptions.OptionsObject & { args: string[]; file?: string },
     ): ChildProcessWithoutNullStreams;
 
     /**
@@ -460,21 +461,21 @@ declare module "child_process" {
      * @since v0.5.9
      * @param options The `options` argument, if present, is an object used to parameterize the sending of certain types of handles. `options` supports the following properties:
      */
-    send(
-      message: Serializable,
-      callback?: (error: Error | null) => void,
-    ): boolean;
-    send(
-      message: Serializable,
-      sendHandle?: SendHandle,
-      callback?: (error: Error | null) => void,
-    ): boolean;
-    send(
-      message: Serializable,
-      sendHandle?: SendHandle,
-      options?: MessageOptions,
-      callback?: (error: Error | null) => void,
-    ): boolean;
+    // send(
+    //   message: Serializable,
+    //   callback?: (error: Error | null) => void,
+    // ): boolean;
+    // send(
+    //   message: Serializable,
+    //   sendHandle?: SendHandle,
+    //   callback?: (error: Error | null) => void,
+    // ): boolean;
+    // send(
+    //   message: Serializable,
+    //   sendHandle?: SendHandle,
+    //   options?: MessageOptions,
+    //   callback?: (error: Error | null) => void,
+    // ): boolean;
     /**
      * Closes the IPC channel between parent and child, allowing the child to exit
      * gracefully once there are no other connections keeping it alive. After calling
@@ -550,10 +551,10 @@ declare module "child_process" {
       event: "exit",
       listener: (code: number | null, signal: NodeJS.Signals | null) => void,
     ): this;
-    addListener(
-      event: "message",
-      listener: (message: Serializable, sendHandle: SendHandle) => void,
-    ): this;
+    // addListener(
+    //   event: "message",
+    //   listener: (message: Serializable, sendHandle: SendHandle) => void,
+    // ): this;
     addListener(event: "spawn", listener: () => void): this;
     emit(event: string | symbol, ...args: any[]): boolean;
     emit(
@@ -568,11 +569,11 @@ declare module "child_process" {
       code: number | null,
       signal: NodeJS.Signals | null,
     ): boolean;
-    emit(
-      event: "message",
-      message: Serializable,
-      sendHandle: SendHandle,
-    ): boolean;
+    // emit(
+    //   event: "message",
+    //   message: Serializable,
+    //   sendHandle: SendHandle,
+    // ): boolean;
     emit(event: "spawn", listener: () => void): boolean;
     on(event: string, listener: (...args: any[]) => void): this;
     on(
@@ -585,10 +586,10 @@ declare module "child_process" {
       event: "exit",
       listener: (code: number | null, signal: NodeJS.Signals | null) => void,
     ): this;
-    on(
-      event: "message",
-      listener: (message: Serializable, sendHandle: SendHandle) => void,
-    ): this;
+    // on(
+    //   event: "message",
+    //   listener: (message: Serializable, sendHandle: SendHandle) => void,
+    // ): this;
     on(event: "spawn", listener: () => void): this;
     once(event: string, listener: (...args: any[]) => void): this;
     once(
@@ -601,10 +602,10 @@ declare module "child_process" {
       event: "exit",
       listener: (code: number | null, signal: NodeJS.Signals | null) => void,
     ): this;
-    once(
-      event: "message",
-      listener: (message: Serializable, sendHandle: SendHandle) => void,
-    ): this;
+    // once(
+    //   event: "message",
+    //   listener: (message: Serializable, sendHandle: SendHandle) => void,
+    // ): this;
     once(event: "spawn", listener: () => void): this;
     prependListener(event: string, listener: (...args: any[]) => void): this;
     prependListener(
@@ -617,10 +618,10 @@ declare module "child_process" {
       event: "exit",
       listener: (code: number | null, signal: NodeJS.Signals | null) => void,
     ): this;
-    prependListener(
-      event: "message",
-      listener: (message: Serializable, sendHandle: SendHandle) => void,
-    ): this;
+    // prependListener(
+    //   event: "message",
+    //   listener: (message: Serializable, sendHandle: SendHandle) => void,
+    // ): this;
     prependListener(event: "spawn", listener: () => void): this;
     prependOnceListener(
       event: string,
@@ -636,10 +637,10 @@ declare module "child_process" {
       event: "exit",
       listener: (code: number | null, signal: NodeJS.Signals | null) => void,
     ): this;
-    prependOnceListener(
-      event: "message",
-      listener: (message: Serializable, sendHandle: SendHandle) => void,
-    ): this;
+    // prependOnceListener(
+    //   event: "message",
+    //   listener: (message: Serializable, sendHandle: SendHandle) => void,
+    // ): this;
     prependOnceListener(event: "spawn", listener: () => void): this;
   }
   // return this object when stdio option is undefined or not specified
@@ -703,7 +704,7 @@ declare module "child_process" {
     uid?: number | undefined;
     gid?: number | undefined;
     cwd?: string | URL | undefined;
-    env?: NodeJS.ProcessEnv | undefined;
+    env?: BunJS.Env | undefined;
   }
   interface CommonOptions extends ProcessEnvOptions {
     /**
@@ -1172,7 +1173,7 @@ declare module "child_process" {
   interface ExecFileOptionsWithOtherEncoding extends ExecFileOptions {
     encoding: BufferEncoding;
   }
-  type ExecFileException = ExecException & NodeJS.ErrnoException;
+  type ExecFileException = ExecException & ErrnoException;
   /**
    * The `child_process.execFile()` function is similar to {@link exec} except that it does not spawn a shell by default. Rather, the specified
    * executable `file` is spawned directly as a new process making it slightly more
@@ -1527,7 +1528,7 @@ declare module "child_process" {
     options?: ForkOptions,
   ): ChildProcess;
   interface SpawnSyncOptions extends CommonSpawnOptions {
-    input?: string | NodeJS.ArrayBufferView | undefined;
+    input?: string | ArrayBufferView | undefined;
     maxBuffer?: number | undefined;
     encoding?: BufferEncoding | "buffer" | null | undefined;
   }
@@ -1594,7 +1595,7 @@ declare module "child_process" {
     options?: SpawnSyncOptions,
   ): SpawnSyncReturns<string | Buffer>;
   interface CommonExecOptions extends CommonOptions {
-    input?: string | NodeJS.ArrayBufferView | undefined;
+    input?: string | ArrayBufferView | undefined;
     stdio?: StdioOptions | undefined;
     killSignal?: NodeJS.Signals | number | undefined;
     maxBuffer?: number | undefined;

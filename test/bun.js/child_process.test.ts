@@ -204,7 +204,7 @@ describe("spawn()", () => {
 
   it("should allow explicit setting of argv0", async () => {
     var resolve;
-    const promise = new Promise((resolve1) => {
+    const promise = new Promise<string>((resolve1) => {
       resolve = resolve1;
     });
     process.env.NO_COLOR = "1";

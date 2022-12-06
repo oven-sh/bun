@@ -1,7 +1,9 @@
-import { SignalConstants } from "os";
-
 interface VoidFunction {
   (): void;
+}
+
+declare namespace BunJS {
+  interface Env extends Dict<string> {}
 }
 
 /**
@@ -30,7 +32,7 @@ declare module "bun" {
    * Changes to `process.env` at runtime won't automatically be reflected in the default value. For that, you can pass `process.env` explicitly.
    *
    */
-  export const env: Record<string, string>;
+  export const env: BunJS.Env;
   export const origin: string;
 
   /**
@@ -2974,7 +2976,4 @@ interface BufferEncodingOption {
   encoding?: BufferEncoding;
 }
 
-// declare var Bun: typeof import("bun");
-declare namespace Bun {
-  export * from "bun";
-}
+declare var Bun: typeof import("bun");

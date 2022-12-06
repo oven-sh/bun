@@ -4,9 +4,11 @@
   "private": true,
   "repository": "https://github.com/oven-sh/bun-types",
   "scripts": {
-    "build": "rm -rf ./dist && bun scripts/bundle.ts ./dist && bun run fmt",
+    "build": "rm -rf ./dist && bun run bundle && bun run fmt",
+    "bundle": "bun scripts/bundle.ts ./dist",
     "docs": "bun run build && typedoc",
-    "test": "tsd"
+    "test": "tsd",
+    "fmt": "prettier --write './**/*.{ts,tsx,js,jsx}'"
   },
   "devDependencies": {
     "tsd": "^0.22.0",

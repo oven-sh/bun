@@ -65,11 +65,11 @@ type Signals =
   | "SIGINFO";
 
 interface ArrayConstructor {
-  fromAsync(
-    asyncItems: AsyncIterable | Iterable | ArrayLike,
+  fromAsync<T>(
+    asyncItems: AsyncIterable<T> | Iterable<T> | ArrayLike<T>,
     mapfn?: (value: any, index: number) => any,
     thisArg?: any,
-  ): Array;
+  ): Array<T>;
 }
 
 interface console {
@@ -184,6 +184,44 @@ declare namespace NodeJS {
     (id: string): any;
     resolve: RequireResolve;
   }
+  type Signals =
+    | "SIGABRT"
+    | "SIGALRM"
+    | "SIGBUS"
+    | "SIGCHLD"
+    | "SIGCONT"
+    | "SIGFPE"
+    | "SIGHUP"
+    | "SIGILL"
+    | "SIGINT"
+    | "SIGIO"
+    | "SIGIOT"
+    | "SIGKILL"
+    | "SIGPIPE"
+    | "SIGPOLL"
+    | "SIGPROF"
+    | "SIGPWR"
+    | "SIGQUIT"
+    | "SIGSEGV"
+    | "SIGSTKFLT"
+    | "SIGSTOP"
+    | "SIGSYS"
+    | "SIGTERM"
+    | "SIGTRAP"
+    | "SIGTSTP"
+    | "SIGTTIN"
+    | "SIGTTOU"
+    | "SIGUNUSED"
+    | "SIGURG"
+    | "SIGUSR1"
+    | "SIGUSR2"
+    | "SIGVTALRM"
+    | "SIGWINCH"
+    | "SIGXCPU"
+    | "SIGXFSZ"
+    | "SIGBREAK"
+    | "SIGLOST"
+    | "SIGINFO";
 }
 
 interface ImportMeta {
@@ -297,9 +335,7 @@ interface Process {
   platform: Platform;
   argv: string[];
   // execArgv: string[];
-  env: Record<string, string> & {
-    NODE_ENV: string;
-  };
+  env: BunJS.Env;
 
   /** Whether you are using Bun */
   isBun: 1; // FIXME: this should actually return a boolean

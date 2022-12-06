@@ -3,13 +3,13 @@
     "lib": [
       "ESNext"
     ],
-    "skipLibCheck": true,
+    "skipLibCheck": false,
     "strict": true,
     "target": "esnext",
     "module": "esnext",
     "moduleResolution": "node",
     "allowSyntheticDefaultImports": true,
-    "disableSolutionSearching": true
+    "disableSolutionSearching": true,
   },
   "exclude": [
     "dist",

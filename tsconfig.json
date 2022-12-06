@@ -4,11 +4,12 @@
     "experimentalDecorators": true,
     "allowSyntheticDefaultImports": true,
     "noEmit": true,
-    "skipLibCheck": true,
+    // "skipLibCheck": true,
     "allowJs": true
   },
   "include": [
-    "."
+    ".",
+    "**/*.d.ts"
   ],
   "exclude": [
     "src/test",

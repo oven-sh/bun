@@ -885,8 +885,10 @@ fn NewSocket(comptime ssl: bool) type {
                 .syscall = ZigString.init("connect"),
             };
             _ = handlers.rejectPromise(err.toErrorInstance(handlers.globalObject));
-            this.reffer.unref(handlers.vm);
-            handlers.markInactive(ssl, socket.context());
+            if (this.reffer.has) {
+                this.reffer.unref(handlers.vm);
+                handlers.markInactive(ssl, socket.context());
+            }
         }
 
         pub fn markActive(this: *This) void {

@@ -3420,7 +3420,7 @@ restart:
         bool anyHits = false;
         JSC::JSObject* objectToUse = prototypeObject.getObject();
         structure->forEachProperty(vm, [&](const PropertyTableEntry& entry) -> bool {
-            if ((entry.attributes() & PropertyAttribute::Accessor) != 0 && (entry.attributes() & PropertyAttribute::DontEnum) != 0) {
+            if ((entry.attributes() & PropertyAttribute::Accessor) != 0) {
                 return true;
             }
 
@@ -3499,10 +3499,11 @@ restart:
                 if (!object->getPropertySlot(globalObject, property, slot))
                     continue;
 
+                if ((slot.attributes() & PropertyAttribute::Accessor) != 0) {
+                    continue;
+                }
+
                 if ((slot.attributes() & PropertyAttribute::DontEnum) != 0) {
-                    if ((slot.attributes() & PropertyAttribute::Accessor) != 0) {
-                        continue;
-                    }
 
                     if (property == vm.propertyNames->length || property == vm.propertyNames->name || property == vm.propertyNames->underscoreProto || property == vm.propertyNames->toStringTagSymbol)
                         continue;

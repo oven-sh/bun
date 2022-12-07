@@ -2659,8 +2659,8 @@ var require_readable = __commonJS({
       if (ev === "data") {
         state.readableListening = this.listenerCount("readable") > 0;
         if (state.flowing !== false) {
+          debug("in flowing mode!", this.__id);
           this.resume();
-          debug("in flowing mode!");
         } else {
           debug("in readable mode!", this.__id);
         }
@@ -2739,6 +2739,7 @@ var require_readable = __commonJS({
       }
 
       async _read() {
+        debug("ReadableFromWeb _read()", this.__id);
         var stream = this.#stream,
           reader = this.#reader;
         if (stream) {
@@ -2782,7 +2783,7 @@ var require_readable = __commonJS({
                 return;
               }
             }
-          } while (this._readableState.flowing && !this.#closed);
+          } while (!this.#closed);
         } catch (e) {
           deferredError = e;
         } finally {
@@ -2838,11 +2839,31 @@ var require_readable = __commonJS({
       }
 
       validateObject(options, "options");
-      const { highWaterMark, encoding, objectMode = false, signal } = options;
+      const {
+        highWaterMark,
+        encoding,
+        objectMode = false,
+        signal,
+        // native = true,
+      } = options;
 
       if (encoding !== undefined && !Buffer.isEncoding(encoding))
         throw new ERR_INVALID_ARG_VALUE(encoding, "options.encoding");
       validateBoolean(objectMode, "options.objectMode");
+
+      // validateBoolean(native, "options.native");
+
+      // if (!native) {
+      //   return new ReadableFromWeb(
+      //     {
+      //       highWaterMark,
+      //       encoding,
+      //       objectMode,
+      //       signal,
+      //     },
+      //     readableStream,
+      //   );
+      // }
 
       const nativeStream = getNativeReadableStream(
         Readable,
@@ -3141,6 +3162,7 @@ var require_readable = __commonJS({
         state.errored ||
         !state.constructed
       ) {
+        debug("state.constructed?", state.constructed, this.__id);
         doRead = false;
         debug("reading, ended or constructing", doRead, this.__id);
       } else if (doRead) {
@@ -4966,15 +4988,18 @@ var require_transform = __commonJS({
     var Duplex = require_duplex();
     function Transform(options) {
       if (!(this instanceof Transform)) return new Transform(options);
+      Duplex.call(this, options);
+
       this._readableState.sync = false;
       this[kCallback] = null;
+
       if (options) {
         if (typeof options.transform === "function")
           this._transform = options.transform;
         if (typeof options.flush === "function") this._flush = options.flush;
       }
+
       this.on("prefinish", prefinish);
-      Duplex.call(this, options);
     }
     ObjectSetPrototypeOf(Transform.prototype, Duplex.prototype);
     ObjectSetPrototypeOf(Transform, Duplex);

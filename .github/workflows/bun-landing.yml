@@ -26,7 +26,7 @@ jobs:
           node-version: ${{ matrix.node }}
 
       - name: Install bun
-        uses: xhyrom/setup-bun
+        uses: xhyrom/setup-bun@latest
         with:
           bun-version: latest
 

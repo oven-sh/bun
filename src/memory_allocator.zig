@@ -147,7 +147,7 @@ const ZAllocator = struct {
         else
             mimalloc.mi_zalloc_aligned(len, alignment);
 
-        return @ptrCast([*]u8, ptr orelse null);
+        return @ptrCast([*]u8, ptr orelse return null);
     }
 
     fn alignedAllocSize(ptr: [*]u8) usize {

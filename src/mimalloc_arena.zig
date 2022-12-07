@@ -163,10 +163,12 @@ pub const Arena = struct {
     fn alignedAlloc(heap: *mimalloc.Heap, len: usize, alignment: usize) ?[*]u8 {
         if (comptime FeatureFlags.log_allocations) std.debug.print("Malloc: {d}\n", .{len});
 
-        // this is the logic that posix_memalign does
-        var ptr = mimalloc.mi_heap_malloc_aligned(heap, len, alignment);
+        var ptr = if (mi_malloc_satisfies_alignment(alignment, len))
+            mimalloc.mi_heap_malloc(heap, len)
+        else
+            mimalloc.mi_heap_malloc_aligned(heap, len, alignment);
 
-        return @ptrCast([*]u8, ptr orelse null);
+        return @ptrCast([*]u8, ptr orelse return null);
     }
 
     pub fn alloc(

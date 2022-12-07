@@ -72,7 +72,7 @@ interface ArrayConstructor {
   ): Array<T>;
 }
 
-interface console {
+interface Console {
   /**
    * Asynchronously read lines from standard input (fd 0)
    *
@@ -172,7 +172,7 @@ interface console {
   warn(...data: any[]): void;
 }
 
-declare var console: console;
+declare var console: Console;
 
 declare namespace NodeJS {
   interface RequireResolve {
@@ -2678,9 +2678,25 @@ interface ArrayBufferConstructor {
   new (params: { byteLength: number; maxByteLength?: 2048 }): ArrayBuffer;
 }
 interface ArrayBuffer {
+  /**
+   * Read-only. The length of the ArrayBuffer (in bytes).
+   */
+  readonly byteLength: number;
+  /**
+   * Resize an ArrayBuffer in-place.
+   */
   resize(byteLength: number): ArrayBuffer;
+
+  /**
+   * Returns a section of an ArrayBuffer.
+   */
+  slice(begin: number, end?: number): ArrayBuffer;
+  readonly [Symbol.toStringTag]: string;
 }
 
 interface SharedArrayBuffer {
+  /**
+   * Grow the SharedArrayBuffer in-place.
+   */
   grow(size: number): SharedArrayBuffer;
 }

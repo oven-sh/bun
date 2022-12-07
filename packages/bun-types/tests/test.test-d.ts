@@ -1,0 +1,1 @@
+test.test - d.ts;

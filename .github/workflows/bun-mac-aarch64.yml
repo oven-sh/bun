@@ -59,15 +59,32 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
       - name: Build and push
         uses: docker/build-push-action@v3
+        if: env.RUNNER_ARCH == 'X64'
         with:
           context: .
           push: false
-          tags: ghcr.io/oven-sh/bun-obj:${{github.sha}}-${{matrix.cpu}}-${{matrix.arch}}-macos
-          cache-from: type=local,src=/tmp/.buildx-cache-${{matrix.cpu}}-${matrix.arch}-macos-bun-obj
-          cache-to: type=local,dest=/tmp/.buildx-cache-${{matrix.cpu}}-${matrix.arch}-macos-bun-obj
+          cache-from: type=gha
+          cache-to: type=gha,mode=min
           build-args: |
             ARCH=${{ matrix.arch }}
             BUILDARCH=amd64
+            CPU_TARGET=${{ matrix.cpu }}
+            TRIPLET=${{matrix.arch}}-macos-none
+            GIT_SHA=${{github.sha}}
+          platforms: linux/amd64
+          target: build_release_obj
+          outputs: type=local,dest=${{runner.temp}}/release
+      - name: Build and push
+        uses: docker/build-push-action@v3
+        if: env.RUNNER_ARCH == 'ARM64'
+        with:
+          context: .
+          push: false
+          cache-from: type=gha
+          cache-to: type=gha,mode=min
+          build-args: |
+            ARCH=${{ matrix.arch }}
+            BUILDARCH=aarch64
             CPU_TARGET=${{ matrix.cpu }}
             TRIPLET=${{matrix.arch}}-macos-none
             GIT_SHA=${{github.sha}}

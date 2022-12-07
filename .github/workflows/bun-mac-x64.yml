@@ -59,6 +59,7 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
       - name: Build and push
         uses: docker/build-push-action@v3
+        if: env.RUNNER_ARCH == 'X64'
         with:
           context: .
           push: false
@@ -71,6 +72,23 @@ jobs:
             TRIPLET=${{matrix.arch}}-macos-none
             GIT_SHA=${{github.sha}}
           platforms: linux/amd64
+          target: build_release_obj
+          outputs: type=local,dest=${{runner.temp}}/release
+      - name: Build and push
+        uses: docker/build-push-action@v3
+        if: env.RUNNER_ARCH == 'ARM64'
+        with:
+          context: .
+          push: false
+          cache-from: type=gha
+          cache-to: type=gha,mode=min
+          build-args: |
+            ARCH=${{ matrix.arch }}
+            BUILDARCH=aarch64
+            CPU_TARGET=${{ matrix.cpu }}
+            TRIPLET=${{matrix.arch}}-macos-none
+            GIT_SHA=${{github.sha}}
+          platforms: linux/arm64
           target: build_release_obj
           outputs: type=local,dest=${{runner.temp}}/release
       - uses: actions/upload-artifact@v3

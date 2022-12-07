@@ -2675,7 +2675,7 @@ interface CallSite {
 }
 
 interface ArrayBufferConstructor {
-  new (params: { byteLength: number; maxByteLength?: 2048 }): ArrayBuffer;
+  new (params: { byteLength: number; maxByteLength?: number }): ArrayBuffer;
 }
 interface ArrayBuffer {
   /**

@@ -8,6 +8,10 @@
 #include <errno.h>
 #include <dlfcn.h>
 
+#ifndef UNLIKELY
+#define UNLIKELY(x) __builtin_expect(!!(x), 0)
+#endif
+
 #ifndef _STAT_VER
 #if defined(__aarch64__)
 #define _STAT_VER 0

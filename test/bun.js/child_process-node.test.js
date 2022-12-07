@@ -195,12 +195,6 @@ describe("ChildProcess.spawn", () => {
       { code: "ERR_UNKNOWN_SIGNAL", name: TYPE_ERR_NAME },
     );
   });
-
-  it("should die when killed", async () => {
-    const child = getChild();
-    strictEqual(child.kill(), true);
-    strictEqual(await child._getIsReallyKilled(), true);
-  });
 });
 
 describe("ChildProcess spawn bad stdio", () => {

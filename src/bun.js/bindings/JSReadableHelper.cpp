@@ -68,10 +68,16 @@ JSC_DEFINE_HOST_FUNCTION(jsReadable_maybeReadMore, (JSGlobalObject * lexicalGlob
     auto callData = JSC::getCallData(read);
     if (callData.type == CallData::Type::None) {
         throwException(lexicalGlobalObject, throwScope, createNotAFunctionError(lexicalGlobalObject, read));
-        return JSValue::encode(jsUndefined());
+        return JSValue::encode({});
     }
 
-    auto& emitter = jsDynamicCast<JSEventEmitter*>(stream)->wrapped();
+    auto* jsEmitter = jsEventEmitterCastFast(vm, lexicalGlobalObject, stream);
+    RETURN_IF_EXCEPTION(throwScope, {});
+    if (UNLIKELY(!jsEmitter)) {
+        throwTypeError(lexicalGlobalObject, throwScope, "Stream must be an EventEmitter"_s);
+        return JSValue::encode(JSValue {});
+    }
+    auto& emitter = jsEmitter->wrapped();
 
     while (
         !state->getBool(JSReadableState::reading) && !state->getBool(JSReadableState::ended) && (state->m_length < state->m_highWaterMark || (state->m_flowing > 0 && state->m_length == 0))) {
@@ -102,10 +108,14 @@ void flow(JSGlobalObject* lexicalGlobalObject, JSObject* streamObj, JSReadableSt
         return;
     }
 
-    while (state->m_flowing > 0) {
+    if (state->m_flowing > 0) {
+        WebCore::EventEmitter& emitter = jsEventEmitterCastFast(vm, lexicalGlobalObject, streamObj)->wrapped();
 
-        if (!callRead(streamObj, jsCast<JSFunction*>(read), MarkedArgumentBuffer(), vm, lexicalGlobalObject, jsCast<JSEventEmitter*>(streamObj)->wrapped())) {
-            break;
+        while (state->m_flowing > 0) {
+
+            if (!callRead(streamObj, jsCast<JSFunction*>(read), MarkedArgumentBuffer(), vm, lexicalGlobalObject, emitter)) {
+                break;
+            }
         }
     }
 }
@@ -118,8 +128,8 @@ JSC_DEFINE_HOST_FUNCTION(jsReadable_resume, (JSGlobalObject * lexicalGlobalObjec
         = jsEventEmitterCastFast(vm, lexicalGlobalObject, stream);
 
     if (UNLIKELY(!jsEmitterWrap)) {
-        throwTypeError(lexicalGlobalObject, throwScope, "stream is not EventEmitter"_s);
-        return JSValue::encode(jsUndefined());
+        throwTypeError(lexicalGlobalObject, throwScope, "Stream must be an EventEmitter"_s);
+        return JSValue::encode(JSValue {});
     }
 
     auto& emitter = jsEmitterWrap->wrapped();
@@ -172,8 +182,8 @@ EncodedJSValue emitReadable_(JSGlobalObject* lexicalGlobalObject, JSObject* stre
         auto* emitter
             = jsEventEmitterCastFast(vm, lexicalGlobalObject, stream);
         if (UNLIKELY(!emitter)) {
-            throwTypeError(lexicalGlobalObject, throwScope, "stream is not EventEmitter"_s);
-            return JSValue::encode(jsUndefined());
+            throwTypeError(lexicalGlobalObject, throwScope, "Stream must be an EventEmitter"_s);
+            return JSValue::encode(JSValue {});
         }
         emitter->wrapped().emitForBindings(eventType, args);
 

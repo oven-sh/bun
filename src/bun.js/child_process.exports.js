@@ -1150,14 +1150,6 @@ export class ChildProcess extends EventEmitter {
     return true;
   }
 
-  // TODO: Remove this at some point
-  // This is only here to report whether Bun.spawn actually killed the process
-  // OR if it didn't actually terminate properly
-  async _getIsReallyKilled() {
-    if (this.#handle) await this.#handle.exited;
-    return this.#handle?.killed ?? true;
-  }
-
   #maybeClose() {
     debug("Attempting to maybe close...");
     this.#closesGot++;

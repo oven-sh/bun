@@ -119,3 +119,13 @@ for (let create of waysOfCreating) {
     expect(called).toBe(true);
   });
 }
+
+test("EventEmitter.on", () => {
+  var myEmitter = new EventEmitter();
+  expect(myEmitter.on("foo", () => {})).toBe(myEmitter);
+});
+
+test("EventEmitter.off", () => {
+  var myEmitter = new EventEmitter();
+  expect(myEmitter.off("foo", () => {})).toBe(myEmitter);
+});

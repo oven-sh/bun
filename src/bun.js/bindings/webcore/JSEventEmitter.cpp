@@ -237,7 +237,7 @@ static inline JSC::EncodedJSValue addListener(JSC::JSGlobalObject* lexicalGlobal
     auto result = JSValue::encode(toJS<IDLUndefined>(*lexicalGlobalObject, throwScope, [&]() -> decltype(auto) { return impl.addListenerForBindings(WTFMove(eventType), WTFMove(listener), once, prepend); }));
     RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
     vm.writeBarrier(&static_cast<JSObject&>(*castedThis), argument1.value());
-    return result;
+    RELEASE_AND_RETURN(throwScope, JSValue::encode(castedThis));
 }
 
 static inline JSC::EncodedJSValue jsEventEmitterPrototypeFunction_addListenerBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSEventEmitter>::ClassParameter castedThis)
@@ -332,7 +332,7 @@ static inline JSC::EncodedJSValue jsEventEmitterPrototypeFunction_removeListener
     auto result = JSValue::encode(toJS<IDLUndefined>(*lexicalGlobalObject, throwScope, [&]() -> decltype(auto) { return impl.removeListenerForBindings(WTFMove(eventType), WTFMove(listener)); }));
     RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
     vm.writeBarrier(&static_cast<JSObject&>(*castedThis), argument1.value());
-    return result;
+    RELEASE_AND_RETURN(throwScope, JSValue::encode(castedThis));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsEventEmitterPrototypeFunction_removeListener, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
@@ -573,10 +573,9 @@ JSC_DEFINE_HOST_FUNCTION(Events_functionOnce,
     EnsureStillAliveScope argument2 = callFrame->uncheckedArgument(2);
     auto listener = convert<IDLNullable<IDLEventListener<JSEventListener>>>(*lexicalGlobalObject, argument2.value(), *argument0, [](JSC::JSGlobalObject& lexicalGlobalObject, JSC::ThrowScope& scope) { throwArgumentMustBeObjectError(lexicalGlobalObject, scope, 2, "listener", "EventEmitter", "removeListener"); });
     RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
-    auto result = JSValue::encode(toJS<IDLUndefined>(*lexicalGlobalObject, throwScope, [&]() -> decltype(auto) { return impl.addListenerForBindings(WTFMove(eventType), WTFMove(listener), true, false); }));
     RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
     vm.writeBarrier(argument0, argument2.value());
-    return result;
+    RELEASE_AND_RETURN(throwScope, JSC::JSValue::encode(argument0));
 }
 
 JSC_DEFINE_HOST_FUNCTION(Events_functionOn,

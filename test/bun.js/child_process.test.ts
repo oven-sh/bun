@@ -36,13 +36,13 @@ const it: typeof it_ = (label, fn) => {
   } else if (fn.constructor.name === "AsyncFunction") {
     return it_(label, async () => {
       gcTick();
-      await fn();
+      await fn(() => {});
       gcTick();
     });
   } else {
     return it_(label, () => {
       gcTick();
-      fn();
+      fn(() => {});
       gcTick();
     });
   }

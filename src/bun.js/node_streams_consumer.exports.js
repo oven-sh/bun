@@ -8,3 +8,12 @@ export const buffer = async (readableStream) => {
 };
 
 export const blob = Bun.readableStreamToBlob;
+
+export default {
+  [Symbol.for("CommonJS")]: 0,
+  arrayBuffer,
+  text,
+  json,
+  buffer,
+  blob,
+};

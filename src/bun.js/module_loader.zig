@@ -1781,14 +1781,14 @@ pub const ModuleLoader = struct {
                         .hash = 0,
                     };
                 },
-                .@"node:stream/consumer" => {
+                .@"node:stream/consumers" => {
                     return ResolvedSource{
                         .allocator = null,
                         .source_code = ZigString.init(
                             @as(string, jsModuleFromFile(jsc_vm.load_builtins_from_path, "./node_streams_consumer.exports.js")),
                         ),
-                        .specifier = ZigString.init("node:stream/consumer"),
-                        .source_url = ZigString.init("node:stream/consumer"),
+                        .specifier = ZigString.init("node:stream/consumers"),
+                        .source_url = ZigString.init("node:stream/consumers"),
                         .hash = 0,
                     };
                 },
@@ -1960,7 +1960,7 @@ pub const HardcodedModule = enum {
     @"node:perf_hooks",
     @"node:process",
     @"node:stream",
-    @"node:stream/consumer",
+    @"node:stream/consumers",
     @"node:stream/web",
     @"node:string_decoder",
     @"node:timers",
@@ -2000,7 +2000,7 @@ pub const HardcodedModule = enum {
             .{ "node:perf_hooks", HardcodedModule.@"node:perf_hooks" },
             .{ "node:process", HardcodedModule.@"node:process" },
             .{ "node:stream", HardcodedModule.@"node:stream" },
-            .{ "node:stream/consumer", HardcodedModule.@"node:stream/consumer" },
+            .{ "node:stream/consumers", HardcodedModule.@"node:stream/consumers" },
             .{ "node:stream/web", HardcodedModule.@"node:stream/web" },
             .{ "node:string_decoder", HardcodedModule.@"node:string_decoder" },
             .{ "node:timers", HardcodedModule.@"node:timers" },
@@ -2050,7 +2050,7 @@ pub const HardcodedModule = enum {
             .{ "node:perf_hooks", "node:perf_hooks" },
             .{ "node:process", "node:process" },
             .{ "node:stream", "node:stream" },
-            .{ "node:stream/consumer", "node:stream/consumer" },
+            .{ "node:stream/consumers", "node:stream/consumers" },
             .{ "node:stream/web", "node:stream/web" },
             .{ "node:string_decoder", "node:string_decoder" },
             .{ "node:timers", "node:timers" },
@@ -2064,10 +2064,10 @@ pub const HardcodedModule = enum {
             .{ "perf_hooks", "node:perf_hooks" },
             .{ "process", "node:process" },
             .{ "readable-stream", "node:stream" },
-            .{ "readable-stream/consumer", "node:stream/consumer" },
+            .{ "readable-stream/consumer", "node:stream/consumers" },
             .{ "readable-stream/web", "node:stream/web" },
             .{ "stream", "node:stream" },
-            .{ "stream/consumer", "node:stream/consumer" },
+            .{ "stream/consumers", "node:stream/consumers" },
             .{ "stream/web", "node:stream/web" },
             .{ "string_decoder", "node:string_decoder" },
             .{ "timers", "node:timers" },

@@ -2,7 +2,7 @@ interface VoidFunction {
   (): void;
 }
 
-declare namespace BunJS {
+declare namespace Bun {
   interface Env extends Dict<string> {}
 }
 
@@ -32,7 +32,7 @@ declare module "bun" {
    * Changes to `process.env` at runtime won't automatically be reflected in the default value. For that, you can pass `process.env` explicitly.
    *
    */
-  export const env: BunJS.Env;
+  export const env: Bun.Env;
   export const origin: string;
 
   /**

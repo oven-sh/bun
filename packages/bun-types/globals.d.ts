@@ -335,7 +335,7 @@ interface Process {
   platform: Platform;
   argv: string[];
   // execArgv: string[];
-  env: BunJS.Env;
+  env: Bun.Env;
 
   /** Whether you are using Bun */
   isBun: 1; // FIXME: this should actually return a boolean
@@ -2672,4 +2672,11 @@ interface CallSite {
    * Is this a constructor call?
    */
   isConstructor(): boolean;
+}
+
+interface ArrayBufferConstructor {
+  new (params: { byteLength: number; maxByteLength?: 2048 }): ArrayBuffer;
+}
+interface ArrayBuffer {
+  resize(byteLength: number): ArrayBuffer;
 }

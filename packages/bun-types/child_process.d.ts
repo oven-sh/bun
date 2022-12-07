@@ -704,7 +704,7 @@ declare module "child_process" {
     uid?: number | undefined;
     gid?: number | undefined;
     cwd?: string | URL | undefined;
-    env?: BunJS.Env | undefined;
+    env?: Bun.Env | undefined;
   }
   interface CommonOptions extends ProcessEnvOptions {
     /**

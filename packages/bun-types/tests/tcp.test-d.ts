@@ -116,7 +116,7 @@ const listener = Bun.listen({
   unix: "asdf",
 });
 
-listener.data.arg = "asdf";
+listener.data!.arg = "asdf";
 // @ts-expect-error arg is string
 listener.data.arg = 234;
 

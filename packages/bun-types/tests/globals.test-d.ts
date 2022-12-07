@@ -1,11 +1,6 @@
 import { ZlibCompressionOptions } from "bun";
 import { expectAssignable, expectType } from "tsd";
-import Bun, { fs, fsPromises } from ".";
-// import Bun from "bun";
-// import fs from "fs";
-// import fsPromises from "fs/promises";
-
-// Testing ../bun.d.ts
+import Bun, { fs, fsPromises } from "./exports";
 
 // FileBlob
 expectType<ReadableStream<Uint8Array>>(Bun.file("index.test-d.ts").stream());

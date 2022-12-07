@@ -37,6 +37,7 @@ declare module "bun:test" {
     toBe(value: any): void;
     toContain(value: any): void;
     toEqual(value: any): void;
+    toStrictEqual(value: any): void;
     toHaveLength(value: number): void;
     toHaveProperty(key: string, value?: any): void;
     toBeTruthy(): void;

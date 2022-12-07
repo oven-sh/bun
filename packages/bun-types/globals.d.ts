@@ -65,14 +65,14 @@ type Signals =
   | "SIGINFO";
 
 interface ArrayConstructor {
-  fromAsync(
-    asyncItems: AsyncIterable | Iterable | ArrayLike,
+  fromAsync<T>(
+    asyncItems: AsyncIterable<T> | Iterable<T> | ArrayLike<T>,
     mapfn?: (value: any, index: number) => any,
     thisArg?: any,
-  ): Array;
+  ): Array<T>;
 }
 
-interface console {
+interface Console {
   /**
    * Asynchronously read lines from standard input (fd 0)
    *
@@ -172,7 +172,7 @@ interface console {
   warn(...data: any[]): void;
 }
 
-declare var console: console;
+declare var console: Console;
 
 declare namespace NodeJS {
   interface RequireResolve {
@@ -184,6 +184,44 @@ declare namespace NodeJS {
     (id: string): any;
     resolve: RequireResolve;
   }
+  type Signals =
+    | "SIGABRT"
+    | "SIGALRM"
+    | "SIGBUS"
+    | "SIGCHLD"
+    | "SIGCONT"
+    | "SIGFPE"
+    | "SIGHUP"
+    | "SIGILL"
+    | "SIGINT"
+    | "SIGIO"
+    | "SIGIOT"
+    | "SIGKILL"
+    | "SIGPIPE"
+    | "SIGPOLL"
+    | "SIGPROF"
+    | "SIGPWR"
+    | "SIGQUIT"
+    | "SIGSEGV"
+    | "SIGSTKFLT"
+    | "SIGSTOP"
+    | "SIGSYS"
+    | "SIGTERM"
+    | "SIGTRAP"
+    | "SIGTSTP"
+    | "SIGTTIN"
+    | "SIGTTOU"
+    | "SIGUNUSED"
+    | "SIGURG"
+    | "SIGUSR1"
+    | "SIGUSR2"
+    | "SIGVTALRM"
+    | "SIGWINCH"
+    | "SIGXCPU"
+    | "SIGXFSZ"
+    | "SIGBREAK"
+    | "SIGLOST"
+    | "SIGINFO";
 }
 
 interface ImportMeta {
@@ -297,9 +335,7 @@ interface Process {
   platform: Platform;
   argv: string[];
   // execArgv: string[];
-  env: Record<string, string> & {
-    NODE_ENV: string;
-  };
+  env: Bun.Env;
 
   /** Whether you are using Bun */
   isBun: 1; // FIXME: this should actually return a boolean
@@ -315,6 +351,9 @@ interface Process {
   getuid(): number;
   setuid(id: number | string): void;
   dlopen(module: { exports: any }, filename: string, flags?: number): void;
+  stdin: import("stream").Duplex;
+  stdout: import("stream").Writable;
+  stderr: import("stream").Writable;
 }
 
 declare var process: Process;
@@ -2636,4 +2675,31 @@ interface CallSite {
    * Is this a constructor call?
    */
   isConstructor(): boolean;
+}
+
+interface ArrayBufferConstructor {
+  new (params: { byteLength: number; maxByteLength?: number }): ArrayBuffer;
+}
+interface ArrayBuffer {
+  /**
+   * Read-only. The length of the ArrayBuffer (in bytes).
+   */
+  readonly byteLength: number;
+  /**
+   * Resize an ArrayBuffer in-place.
+   */
+  resize(byteLength: number): ArrayBuffer;
+
+  /**
+   * Returns a section of an ArrayBuffer.
+   */
+  slice(begin: number, end?: number): ArrayBuffer;
+  readonly [Symbol.toStringTag]: string;
+}
+
+interface SharedArrayBuffer {
+  /**
+   * Grow the SharedArrayBuffer in-place.
+   */
+  grow(size: number): SharedArrayBuffer;
 }

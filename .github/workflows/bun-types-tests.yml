@@ -20,7 +20,7 @@ jobs:
         uses: actions/checkout@v2
 
       - name: Install bun
-        uses: xhyrom/setup-bun
+        uses: xhyrom/setup-bun@latest
         with:
           bun-version: latest
           github-token: ${{ secrets.GITHUB_TOKEN }}

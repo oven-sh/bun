@@ -14,9 +14,9 @@ jobs:
       - uses: actions/checkout@v3
 
       - name: Install bun
-        uses: xhyrom/setup-bun@latest
+        uses: xhyrom/setup-bun@v0.1.8
         with:
-          bun-version: latest
+          bun-version: canary
           github-token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Install node
@@ -88,9 +88,9 @@ jobs:
           scope: '@oven-sh'
 
       - name: Install bun
-        uses: xhyrom/setup-bun@latest
+        uses: xhyrom/setup-bun@v0.1.8
         with:
-          bun-version: latest
+          bun-version: canary
           github-token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Download all artifacts

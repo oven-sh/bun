@@ -461,10 +461,10 @@ declare module "child_process" {
      * @since v0.5.9
      * @param options The `options` argument, if present, is an object used to parameterize the sending of certain types of handles. `options` supports the following properties:
      */
-    // send(
-    //   message: Serializable,
-    //   callback?: (error: Error | null) => void,
-    // ): boolean;
+    send(
+      message: Serializable,
+      callback?: (error: Error | null) => void,
+    ): boolean;
     // send(
     //   message: Serializable,
     //   sendHandle?: SendHandle,

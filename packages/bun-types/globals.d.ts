@@ -2680,3 +2680,7 @@ interface ArrayBufferConstructor {
 interface ArrayBuffer {
   resize(byteLength: number): ArrayBuffer;
 }
+
+interface SharedArrayBuffer {
+  grow(size: number): SharedArrayBuffer;
+}

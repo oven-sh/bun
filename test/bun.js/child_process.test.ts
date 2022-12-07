@@ -313,7 +313,7 @@ describe("execFileSync()", () => {
         encoding: "utf8",
       },
     );
-    expect(result.trim()).toBe("hello world!");
+    expect(result.trim()).toBe("data: hello world!");
   });
 });
 

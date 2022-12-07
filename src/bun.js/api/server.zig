@@ -3804,7 +3804,7 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
         listen_callback: JSC.AnyTask = undefined,
         allocator: std.mem.Allocator,
         poll_ref: JSC.PollRef = .{},
-
+        deinit_scheduled: bool = false,
         temporary_url_buffer: std.ArrayListUnmanaged(u8) = .{},
 
         pub const Class = JSC.NewClass(
@@ -4291,7 +4291,7 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
                     ws.handler.app = null;
                 }
                 this.unref();
-                this.deinit();
+                this.scheduleDeinit();
             }
         }
 
@@ -4305,6 +4305,16 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
         pub fn stop(this: *ThisServer) void {
             this.stopListening();
             this.deinitIfWeCan();
+        }
+
+        pub fn scheduleDeinit(this: *ThisServer) void {
+            if (this.deinit_scheduled)
+                return;
+            this.deinit_scheduled = true;
+            httplog("scheduleDeinit", .{});
+            var task = bun.default_allocator.create(JSC.AnyTask) catch unreachable;
+            task.* = JSC.AnyTask.New(ThisServer, deinit).init(this);
+            this.vm.enqueueTask(JSC.Task.init(task));
         }
 
         pub fn deinit(this: *ThisServer) void {

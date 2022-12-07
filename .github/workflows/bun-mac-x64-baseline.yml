@@ -59,7 +59,7 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
       - name: Build and push
         uses: docker/build-push-action@v3
-        if: env.RUNNER_ARCH == 'X64'
+        if: runner.arch == 'X64'
         with:
           context: .
           push: false
@@ -76,7 +76,7 @@ jobs:
           outputs: type=local,dest=${{runner.temp}}/release
       - name: Build and push
         uses: docker/build-push-action@v3
-        if: env.RUNNER_ARCH == 'ARM64'
+        if: runner.arch == 'ARM64'
         with:
           context: .
           push: false

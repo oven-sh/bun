@@ -351,7 +351,7 @@ interface Process {
   getuid(): number;
   setuid(id: number | string): void;
   dlopen(module: { exports: any }, filename: string, flags?: number): void;
-  stdin: import("stream").Readable;
+  stdin: import("stream").Duplex;
   stdout: import("stream").Writable;
   stderr: import("stream").Writable;
 }

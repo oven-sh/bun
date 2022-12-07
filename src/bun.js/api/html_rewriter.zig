@@ -820,6 +820,8 @@ fn HandlerCallback(
             JSC.markBinding(@src());
             var zig_element = bun.default_allocator.create(ZigType) catch unreachable;
             @field(zig_element, field_name) = value;
+            defer @field(zig_element, field_name) = null;
+
             // At the end of this scope, the value is no longer valid
             var args = [1]JSC.C.JSObjectRef{
                 ZigType.Class.make(this.global, zig_element),
@@ -834,33 +836,28 @@ fn HandlerCallback(
                 1,
                 &args,
             );
-            var promise_: ?*JSC.JSInternalPromise = null;
-            while (!result.isUndefinedOrNull()) {
+
+            if (!result.isUndefinedOrNull()) {
                 if (result.isError() or result.isAggregateError(this.global)) {
-                    @field(zig_element, field_name) = null;
                     return true;
                 }
 
-                var promise = promise_ orelse JSC.JSInternalPromise.resolvedPromise(this.global, result);
-                promise_ = promise;
-                JavaScript.VirtualMachine.vm.event_loop.waitForPromise(promise);
-
-                switch (promise.status(this.global.vm())) {
-                    JSC.JSPromise.Status.Pending => unreachable,
-                    JSC.JSPromise.Status.Rejected => {
-                        JavaScript.VirtualMachine.vm.onUnhandledError(this.global, promise.result(this.global.vm()));
-                        @field(zig_element, field_name) = null;
-                        return false;
-                    },
-                    JSC.JSPromise.Status.Fulfilled => {
-                        result = promise.result(this.global.vm());
-                        break;
-                    },
+                if (result.asPromise()) |promise| {
+                    this.global.bunVM().waitForPromise(promise);
+                    const fail = promise.status(this.global.vm()) == .Rejected;
+                    if (fail) {
+                        this.global.bunVM().runErrorHandler(promise.result(this.global.vm()), null);
+                    }
+                    return fail;
+                } else if (result.asInternalPromise()) |promise| {
+                    this.global.bunVM().waitForPromise(promise);
+                    const fail = promise.status(this.global.vm()) == .Rejected;
+                    if (fail) {
+                        this.global.bunVM().runErrorHandler(promise.result(this.global.vm()), null);
+                    }
+                    return fail;
                 }
-
-                break;
             }
-            @field(zig_element, field_name) = null;
             return false;
         }
     }.callback;
@@ -976,7 +973,7 @@ pub const ContentOptions = struct {
 
 const getterWrap = JSC.getterWrap;
 const setterWrap = JSC.setterWrap;
-const wrap = JSC.wrapAsync;
+const wrap = JSC.wrapSync;
 
 pub fn free_html_writer_string(_: ?*anyopaque, ptr: ?*anyopaque, len: usize) callconv(.C) void {
     var str = LOLHTML.HTMLString{ .ptr = bun.cast([*]const u8, ptr.?), .len = len };

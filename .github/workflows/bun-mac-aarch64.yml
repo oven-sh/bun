@@ -84,7 +84,7 @@ jobs:
           cache-to: type=gha,mode=min
           build-args: |
             ARCH=${{ matrix.arch }}
-            BUILDARCH=aarch64
+            BUILDARCH=arm64
             CPU_TARGET=${{ matrix.cpu }}
             TRIPLET=${{matrix.arch}}-macos-none
             GIT_SHA=${{github.sha}}

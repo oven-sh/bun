@@ -980,8 +980,7 @@ pub fn toUTF16Alloc(allocator: std.mem.Allocator, bytes: []const u8, comptime fa
             const offset = @truncate(u32, validated.count);
 
             const trimmed = bun.simdutf.trim.utf8(bytes[offset..]);
-            if (trimmed.len == 0 and offset == 0)
-                return &[_]u16{};
+            first_non_ascii = offset;
 
             if (trimmed.len == 0)
                 break :use_simdutf;

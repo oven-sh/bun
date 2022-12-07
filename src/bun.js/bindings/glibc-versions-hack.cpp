@@ -6,6 +6,7 @@
 #include <stdarg.h>
 #include <math.h>
 #include <errno.h>
+#include <dlfcn.h>
 
 #ifndef _STAT_VER
 #if defined(__aarch64__)
@@ -34,7 +35,6 @@ extern "C" int __wrap_statx(int fd, const char* path, int flags,
 }
 
 extern "C" int __real_fcntl(int fd, int cmd, ...);
-extern "C" double __real_pow(double x, double y);
 extern "C" double __real_exp(double x);
 extern "C" double __real_log(double x);
 
@@ -54,13 +54,14 @@ extern "C" int __wrap_fcntl64(int fd, int cmd, ...)
     va_end(va);
 }
 
-// I couldn't figure out what has changed in pow, exp, log in glibc 2.29.
-// Interestingly despite compiling with -fno-omit-frame-pointer, GCC
-// optimises the following to a jmp anyway.
-
 extern "C" double __wrap_pow(double x, double y)
 {
-    return __real_pow(x, y);
+    static void* pow_ptr = nullptr;
+    if (UNLIKELY(pow_ptr == nullptr)) {
+        pow_ptr = dlsym(RTLD_DEFAULT, "pow");
+    }
+
+    return ((double (*)(double, double))pow_ptr)(x, y);
 }
 
 extern "C" double __wrap_exp(double x)

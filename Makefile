@@ -486,7 +486,7 @@ CLANG_VERSION = $(shell $(CC) --version | awk '/version/ {for(i=1; i<=NF; i++){i
 
 bun:
 
-npm-install:
+npm-install: ## to npm install dependencies
 	$(NPM_CLIENT) install
 
 print-%  : ; @echo $* = $($*)
@@ -501,7 +501,7 @@ TINYCC_CFLAGS= -DTCC_LIBTCC1=\"\0\"
 # That means we can't compile for a newer microarchitecture than native
 # We compile for an older microarchitecture on x64 to ensure compatibility
 .PHONY: tinycc
-tinycc:
+tinycc: ## to compile for an older microarchitecture on x64 to ensure compatibility
 	cd $(TINYCC_DIR) && \
 		make clean && \
 		AR=$(AR) $(CCACHE_CC_FLAG) CFLAGS='$(CFLAGS_WITHOUT_MARCH) $(NATIVE_OR_OLD_MARCH) -mtune=native $(TINYCC_CFLAGS)' ./configure --enable-static --cc=$(CCACHE_CC_OR_CC) --ar=$(AR) --config-predefs=yes  && \
@@ -640,11 +640,12 @@ require:
 	@which ninja > /dev/null || (echo -e "ERROR: Ninja is required. Install with:\n\n    $(POSIX_PKG_MANAGER) install $(PKGNAME_NINJA)"; exit 1)
 	@echo "You have the dependencies installed! Woo"
 
+.PHONY: init-submodules
 init-submodules:
 	git submodule update --init --recursive --progress --depth=1
 
 .PHONY: build-obj
-build-obj:
+build-obj: ## to build as obj
 	$(ZIG) build obj -Drelease-fast -Dcpu="$(CPU_TARGET)"
 
 .PHONY: dev-build-obj-wasm
@@ -681,7 +682,7 @@ build-obj-wasm-small:
 	cp packages/bun-freestanding-wasm32/bun-wasm.wasm src/api/demo/public/bun-wasm.wasm
 
 .PHONY: wasm
-wasm: api build-obj-wasm-small
+wasm: api build-obj-wasm-small ## to build the webAssembly bundle
 	@rm -rf packages/bun-wasm/*.{d.ts,js,wasm,cjs,mjs,tsbuildinfo}
 	@cp packages/bun-freestanding-wasm32/bun-wasm.wasm packages/bun-wasm/bun.wasm
 	@cp src/api/schema.d.ts packages/bun-wasm/schema.d.ts
@@ -727,7 +728,8 @@ sign-macos-aarch64:
 cls:
 	@echo "\n\n---\n\n"
 
-jsc-check:
+.PHONY: jsc-check
+jsc-check: ## to perform jsc checks
 	@ls $(JSC_BASE_DIR)  >/dev/null 2>&1 || (echo "Failed to access WebKit build. Please compile the WebKit submodule using the Dockerfile at $(shell pwd)/src/javascript/WebKit/Dockerfile and then copy from /output in the Docker container to $(JSC_BASE_DIR). You can override the directory via JSC_BASE_DIR. \n\n 	DOCKER_BUILDKIT=1 docker build -t bun-webkit $(shell pwd)/src/bun.js/WebKit -f $(shell pwd)/src/bun.js/WebKit/Dockerfile --progress=plain\n\n 	docker container create bun-webkit\n\n 	# Get the container ID\n	docker container ls\n\n 	docker cp DOCKER_CONTAINER_ID_YOU_JUST_FOUND:/output $(JSC_BASE_DIR)" && exit 1)
 	@ls $(JSC_INCLUDE_DIR)  >/dev/null 2>&1 || (echo "Failed to access WebKit include directory at $(JSC_INCLUDE_DIR)." && exit 1)
 	@ls $(JSC_LIB)  >/dev/null 2>&1 || (echo "Failed to access WebKit lib directory at $(JSC_LIB)." && exit 1)
@@ -761,7 +763,7 @@ fmt-zig:
 fmt: fmt-cpp fmt-zig
 
 .PHONY: api
-api:
+api: ## to run the api
 	./node_modules/.bin/peechy --schema src/api/schema.peechy --esm src/api/schema.js --ts src/api/schema.d.ts --zig src/api/schema.zig
 	$(ZIG) fmt src/api/schema.zig
 	$(PRETTIER) --write src/api/schema.js
@@ -1182,8 +1184,10 @@ test-dev-bun-run:
 test-dev-all: test-install test-dev-bun-snapshot test-dev-with-hmr test-dev-no-hmr test-dev-create-next test-dev-create-react test-dev-bun-run test-dev-bun-install test-dev-bun-dev test-dev-bun-init
 test-dev-bunjs:
 
+.PHONY: test-dev
 test-dev: test-dev-with-hmr
 
+.PHONY: jsc-copy-headers
 jsc-copy-headers:
 	cp $(WEBKIT_DIR)/Source/JavaScriptCore/heap/WeakHandleOwner.h $(WEBKIT_RELEASE_DIR)/JavaScriptCore/PrivateHeaders/JavaScriptCore/WeakHandleOwner.h
 	cp $(WEBKIT_DIR)/Source/JavaScriptCore/runtime/LazyClassStructureInlines.h $(WEBKIT_RELEASE_DIR)/JavaScriptCore/PrivateHeaders/JavaScriptCore/LazyClassStructureInlines.h
@@ -1343,8 +1347,11 @@ jsc-build-mac-copy:
 	cp $(WEBKIT_RELEASE_DIR)/lib/libWTF.a $(BUN_DEPS_OUT_DIR)/libWTF.a
 	cp $(WEBKIT_RELEASE_DIR)/lib/libbmalloc.a $(BUN_DEPS_OUT_DIR)/libbmalloc.a
 
+.PHONY: clean-jsc
 clean-jsc:
 	cd src/bun.js/WebKit && rm -rf **/CMakeCache.txt **/CMakeFiles && rm -rf src/bun.js/WebKit/WebKitBuild
+
+.PHONY: clean-bindings
 clean-bindings:
 	rm -rf $(OBJ_DIR)/*.o $(DEBUG_OBJ_DIR)/*.o $(DEBUG_OBJ_DIR)/webcore/*.o $(DEBUG_BINDINGS_OBJ) $(OBJ_DIR)/webcore/*.o $(BINDINGS_OBJ)
 
@@ -1417,6 +1424,7 @@ mimalloc-wasm:
 	cd $(BUN_DEPS_DIR)/mimalloc; emcmake cmake -DMI_BUILD_SHARED=OFF -DMI_BUILD_STATIC=ON -DMI_BUILD_TESTS=OFF -DMI_BUILD_OBJECT=ON ${MIMALLOC_OVERRIDE_FLAG} -DMI_USE_CXX=ON .; emmake make;
 	cp $(BUN_DEPS_DIR)/mimalloc/$(MIMALLOC_INPUT_PATH) $(BUN_DEPS_OUT_DIR)/$(MIMALLOC_FILE).wasm
 
+.PHONY: bun-link-lld-debug
 bun-link-lld-debug:
 	$(CXX) $(BUN_LLD_FLAGS_DEBUG) $(DEBUG_FLAGS) $(SYMBOLS) \
 		-g \
@@ -1424,6 +1432,7 @@ bun-link-lld-debug:
 		-W \
 		-o $(DEBUG_BIN)/bun-debug
 
+.PHONY: bun-link-lld-debug-no-jsc
 bun-link-lld-debug-no-jsc:
 	$(CXX) $(BUN_LLD_FLAGS_WITHOUT_JSC) $(SYMBOLS) \
 		-g \
@@ -1431,7 +1440,7 @@ bun-link-lld-debug-no-jsc:
 		-W \
 		-o $(DEBUG_BIN)/bun-debug
 
-
+.PHONY: bun-link-lld-release-no-jsc
 bun-link-lld-release-no-jsc:
 	$(CXX) $(BUN_LLD_FLAGS_WITHOUT_JSC) $(SYMBOLS) \
 		-g \
@@ -1439,10 +1448,12 @@ bun-link-lld-release-no-jsc:
 		-W \
 		-o $(BUN_RELEASE_BIN) -Wl,-undefined,dynamic_lookup -Wl,-why_load
 
+.PHONY: bun-relink-copy
 bun-relink-copy:
 	mkdir -p $(PACKAGE_DIR)
 	cp $(BUN_DEPLOY_DIR).o $(BUN_RELEASE_BIN).o
 
+.PHONY: bun-link-lld-release
 bun-link-lld-release:
 	$(CXX) $(BUN_LLD_FLAGS) $(SYMBOLS) \
 		$(BUN_RELEASE_BIN).o \
@@ -1452,10 +1463,12 @@ bun-link-lld-release:
 	rm -rf $(BUN_RELEASE_BIN).dSYM
 	cp $(BUN_RELEASE_BIN) $(BUN_RELEASE_BIN)-profile
 
+.PHONY: bun-release-copy-obj
 bun-release-copy-obj:
 	cp $(BUN_RELEASE_BIN).o $(BUN_DEPLOY_DIR).o
 	cp $(BUN_RELEASE_BIN).o /tmp/bun-current.o
 
+.PHONY: bun-link-lld-release-no-lto
 bun-link-lld-release-no-lto:
 	$(CXX) $(BUN_LLD_FLAGS_FAST) $(SYMBOLS) \
 		$(BUN_RELEASE_BIN).o \
@@ -1483,7 +1496,9 @@ copy-to-bun-release-dir-dsym:
 
 endif
 
+.PHONY: bun-relink
 bun-relink: bun-relink-copy bun-link-lld-release bun-link-lld-release-dsym
+.PHONY: bun-relink-fast
 bun-relink-fast: bun-relink-copy bun-link-lld-release-no-lto
 
 wasm-return1:
@@ -1747,11 +1762,13 @@ endif
 picohttp:
 	 $(CC) $(CFLAGS) $(OPTIMIZATION_LEVEL) -g -fPIC -c $(BUN_DEPS_DIR)/picohttpparser/picohttpparser.c -I$(BUN_DEPS_DIR) -o $(BUN_DEPS_OUT_DIR)/picohttpparser.o; cd ../../
 
-analytics:
+.PHONY: analytics
+analytics: ## to run analytics
 	./node_modules/.bin/peechy --schema src/analytics/schema.peechy --zig src/analytics/analytics_schema.zig
 	$(ZIG) fmt src/analytics/analytics_schema.zig
 
-analytics-features:
+.PHONY: analytics-features
+analytics-features: ## to run analytics-features
 	@cd misctools; $(ZIG) run --main-pkg-path ../ ./features.zig
 
 find-unused-zig-files:
@@ -1763,6 +1780,7 @@ generate-unit-tests:
 fmt-all:
 	find src -name "*.zig" -exec $(ZIG) fmt {} \;
 
+.PHONY: unit-tests
 unit-tests: generate-unit-tests run-unit-tests
 
 ifeq (test, $(firstword $(MAKECMDGOALS)))
@@ -1886,11 +1904,14 @@ test: build-unit run-unit
 integration-test-dev: ## to run integration tests
 	USE_EXISTING_PROCESS=true TEST_SERVER_URL=http://localhost:3000 node test/scripts/browser.js
 
+.PHONY: copy-install
 copy-install:
 	cp src/cli/install.sh ../bun.sh/docs/install.html
 
+.PHONY: copy-to-bun-release-dir
 copy-to-bun-release-dir: copy-to-bun-release-dir-bin copy-to-bun-release-dir-dsym
 
+.PHONY: copy-to-bun-release-dir-bin
 copy-to-bun-release-dir-bin:
 	cp -r $(PACKAGE_DIR)/bun $(BUN_RELEASE_DIR)/bun
 	cp -r $(PACKAGE_DIR)/bun-profile $(BUN_RELEASE_DIR)/bun-profile

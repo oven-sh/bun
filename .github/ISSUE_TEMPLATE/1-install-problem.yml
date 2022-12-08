@@ -15,7 +15,7 @@ body:
     attributes:
       label: What platform is your computer?
       description: |
-        For MacOS and Linux: copy the output of `uname -mprsv`
+        For MacOS and Linux: copy the output of `uname -mprs`
         For Windows: copy the output of `"$([Environment]::OSVersion | ForEach-Object VersionString) $(if ([Environment]::Is64BitOperatingSystem) { "x64" } else { "x86" })"` in the PowerShell console
   - type: textarea
     attributes:

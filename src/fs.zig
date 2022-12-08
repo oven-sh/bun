@@ -567,7 +567,9 @@ pub const FileSystem = struct {
                 tmpdir_path_set = true;
             }
 
-            return (try std.fs.cwd().openIterableDir(tmpdir_path, .{ .access_sub_paths = true,})).dir;
+            return (try std.fs.cwd().openIterableDir(tmpdir_path, .{
+                .access_sub_paths = true,
+            })).dir;
         }
 
         pub fn getDefaultTempDir() string {
@@ -732,7 +734,7 @@ pub const FileSystem = struct {
                     "{s}-{any}",
                     .{
                         basename,
-                        bun.fmt.hexInt( this.hash()),
+                        bun.fmt.hexInt(this.hash()),
                     },
                 );
             }
@@ -1356,4 +1358,3 @@ test "PathName.init" {
     try std.testing.expectEqualStrings(res.base, "file");
     try std.testing.expectEqualStrings(res.ext, ".ext");
 }
-

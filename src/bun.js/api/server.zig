@@ -1305,7 +1305,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             this.blob.Blob.size = if (std.os.S.ISREG(stat.mode))
                 stat_size
             else
-                @minimum(original_size, stat_size);
+                @min(original_size, stat_size);
 
             this.needs_content_length = true;
 
@@ -1326,8 +1326,8 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
 
             // we know the bounds when we are sending a regular file
             if (std.os.S.ISREG(stat.mode)) {
-                this.sendfile.offset = @minimum(this.sendfile.offset, stat_size);
-                this.sendfile.remain = @minimum(@maximum(this.sendfile.remain, this.sendfile.offset), stat_size) -| this.sendfile.offset;
+                this.sendfile.offset = @min(this.sendfile.offset, stat_size);
+                this.sendfile.remain = @min(@max(this.sendfile.remain, this.sendfile.offset), stat_size) -| this.sendfile.offset;
             }
 
             this.resp.runCorkedWithType(*RequestContext, renderMetadataAndNewline, this);
@@ -1385,7 +1385,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 this.blob.Blob.size = if (original_size == 0 or original_size == Blob.max_size)
                     stat_size
                 else
-                    @minimum(original_size, stat_size);
+                    @min(original_size, stat_size);
 
                 if (!this.has_written_status)
                     this.needs_content_range = true;

@@ -100,9 +100,9 @@ pub const ZigGlobalObject = extern struct {
             .resolve = resolve,
             .fetch = fetch,
             // .@"eval" = eval,
-            .@"promiseRejectionTracker" = promiseRejectionTracker,
-            .@"reportUncaughtException" = reportUncaughtException,
-            .@"onCrash" = onCrash,
+            .promiseRejectionTracker = promiseRejectionTracker,
+            .reportUncaughtException = reportUncaughtException,
+            .onCrash = onCrash,
         },
     );
 

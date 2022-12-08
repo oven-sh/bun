@@ -2155,7 +2155,7 @@ pub const Blob = struct {
                 const file = &this.file_store;
                 const needs_close = fd != null_fd and file.pathlike == .path and fd > 2;
 
-                this.size = @maximum(this.read_len, this.size);
+                this.size = @max(this.read_len, this.size);
 
                 if (needs_close) {
                     this.doClose();

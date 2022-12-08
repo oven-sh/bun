@@ -117,7 +117,7 @@ pub fn copyFileRange(fd_in: fd_t, off_in: u64, fd_out: fd_t, off_out: u64, len: 
     }
 
     var buf: [8 * 4096]u8 = undefined;
-    const adjusted_count = @minimum(buf.len, len);
+    const adjusted_count = @min(buf.len, len);
     const amt_read = try os.pread(fd_in, buf[0..adjusted_count], off_in);
     // TODO without @as the line below fails to compile for wasm32-wasi:
     // error: integer value 0 cannot be coerced to type 'os.PWriteError!usize'

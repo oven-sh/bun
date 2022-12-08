@@ -1326,7 +1326,7 @@ pub fn indexOfLine(
     if (arguments.len > 1) {
         offset = @intCast(
             usize,
-            @maximum(
+            @max(
                 arguments[1].to(u32),
                 0,
             ),
@@ -1341,7 +1341,7 @@ pub fn indexOfLine(
         if (strings.indexOfNewlineOrNonASCII(bytes, @truncate(u32, current_offset))) |i| {
             const byte = bytes[i];
             if (byte > 0x7F) {
-                current_offset += @maximum(strings.wtf8ByteSequenceLength(byte), 1);
+                current_offset += @max(strings.wtf8ByteSequenceLength(byte), 1);
                 continue;
             }
 

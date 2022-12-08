@@ -270,7 +270,7 @@ pub const To = struct {
                     if (comptime Info == .Struct) {
                         if (comptime @hasDecl(Type, "Class") and @hasDecl(Type.Class, "isJavaScriptCoreClass")) {
                             if (comptime !@hasDecl(Type, "finalize")) {
-                                @compileError(comptime std.fmt.comptimePrint("JSC class {s} must implement finalize to prevent memory leaks", .{Type.Class.name}));
+                                @compileError(std.fmt.comptimePrint("JSC class {s} must implement finalize to prevent memory leaks", .{Type.Class.name}));
                             }
 
                             if (comptime !@hasDecl(Type, "toJS")) {

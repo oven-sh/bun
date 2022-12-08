@@ -57,42 +57,21 @@ const CAllocator = struct {
         return CAllocator.malloc_size(ptr);
     }
 
-    fn alloc(
-        _: *anyopaque,
-        len: usize,
-        alignment: u29,
-        len_align: u29,
-        return_address: usize,
-    ) error{OutOfMemory}![]u8 {
-        _ = return_address;
-        assert(len > 0);
-        assert(std.math.isPowerOfTwo(alignment));
-
-        var ptr = alignedAlloc(len, alignment) orelse return error.OutOfMemory;
-        if (len_align == 0) {
-            return ptr[0..len];
-        }
-        return ptr[0..mem.alignBackwardAnyAlign(mimalloc.mi_usable_size(ptr), len_align)];
+    fn alloc(_: *anyopaque, len: usize, ptr_align: u8, _: usize) ?[*]u8 {
+        return alignedAlloc(len, ptr_align);
     }
 
-    fn resize(
-        _: *anyopaque,
-        buf: []u8,
-        _: u29,
-        new_len: usize,
-        len_align: u29,
-        _: usize,
-    ) ?usize {
+    fn resize(_: *anyopaque, buf: []u8, _: u8, new_len: usize, _: usize) bool {
         if (new_len <= buf.len) {
-            return mem.alignAllocLen(buf.len, new_len, len_align);
+            return true;
         }
 
         const full_len = alignedAllocSize(buf.ptr);
         if (new_len <= full_len) {
-            return mem.alignAllocLen(full_len, new_len, len_align);
+            return true;
         }
 
-        return null;
+        return false;
     }
 
     fn free(
@@ -118,12 +97,11 @@ pub const c_allocator = Allocator{
     .vtable = &c_allocator_vtable,
 };
 const c_allocator_vtable = Allocator.VTable{
-    .alloc = CAllocator.alloc,
-    .resize = CAllocator.resize,
-    .free = CAllocator.free,
+    .alloc = &CAllocator.alloc,
+    .resize = &CAllocator.resize,
+    .free = &CAllocator.free,
 };
 
-// This is a memory allocator which always writes zero instead of undefined
 const ZAllocator = struct {
     const malloc_size = c.malloc_size;
     pub const supports_posix_memalign = true;
@@ -143,62 +121,45 @@ const ZAllocator = struct {
         else
             mimalloc.mi_zalloc_aligned(len, alignment);
 
-        return @ptrCast([*]u8, ptr orelse return null);
+        return @ptrCast([*]u8, ptr orelse null);
     }
 
     fn alignedAllocSize(ptr: [*]u8) usize {
-        return ZAllocator.malloc_size(ptr);
+        return CAllocator.malloc_size(ptr);
     }
 
-    fn alloc(
-        _: *anyopaque,
-        len: usize,
-        alignment: u29,
-        len_align: u29,
-        return_address: usize,
-    ) error{OutOfMemory}![]u8 {
-        _ = return_address;
-        assert(len > 0);
-        assert(std.math.isPowerOfTwo(alignment));
-
-        var ptr = alignedAlloc(len, alignment) orelse return error.OutOfMemory;
-        if (len_align == 0) {
-            return ptr[0..len];
-        }
-        return ptr[0..mem.alignBackwardAnyAlign(mimalloc.mi_usable_size(ptr), len_align)];
+    fn alloc(_: *anyopaque, len: usize, ptr_align: u8, _: usize) ?[*]u8 {
+        return alignedAlloc(len, ptr_align);
     }
 
-    fn resize(
-        _: *anyopaque,
-        buf: []u8,
-        buf_align: u29,
-        new_len: usize,
-        len_align: u29,
-        return_address: usize,
-    ) ?usize {
-        _ = buf_align;
-        _ = return_address;
+    fn resize(_: *anyopaque, buf: []u8, _: u8, new_len: usize, _: usize) bool {
         if (new_len <= buf.len) {
-            return mem.alignAllocLen(buf.len, new_len, len_align);
+            return true;
         }
 
         const full_len = alignedAllocSize(buf.ptr);
         if (new_len <= full_len) {
-            return mem.alignAllocLen(full_len, new_len, len_align);
+            return true;
         }
 
-        return null;
+        return false;
     }
 
     fn free(
         _: *anyopaque,
         buf: []u8,
         buf_align: u29,
-        return_address: usize,
+        _: usize,
     ) void {
-        _ = buf_align;
-        _ = return_address;
-        mimalloc.mi_free(buf.ptr);
+        // mi_free_size internally just asserts the size
+        // so it's faster if we don't pass that value through
+        // but its good to have that assertion
+        if (comptime Environment.allow_assert) {
+            assert(mimalloc.mi_is_in_heap_region(buf.ptr));
+            mimalloc.mi_free_size_aligned(buf.ptr, buf.len, buf_align);
+        } else {
+            mimalloc.mi_free(buf.ptr);
+        }
     }
 };
 
@@ -207,9 +168,9 @@ pub const z_allocator = Allocator{
     .vtable = &z_allocator_vtable,
 };
 const z_allocator_vtable = Allocator.VTable{
-    .alloc = ZAllocator.alloc,
-    .resize = ZAllocator.resize,
-    .free = ZAllocator.free,
+    .alloc = &ZAllocator.alloc,
+    .resize = &ZAllocator.resize,
+    .free = &ZAllocator.free,
 };
 const HugeAllocator = struct {
     fn alloc(

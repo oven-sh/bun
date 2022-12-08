@@ -837,7 +837,7 @@ pub const PathOrFileDescriptor = union(Tag) {
     }
 
     pub fn format(this: JSC.Node.PathOrFileDescriptor, comptime fmt: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
-        if (fmt.len != 0 and fmt != "s") {
+        if (fmt.len != 0 and fmt[0] != 's') {
             @compileError("Unsupported format argument: '" ++ fmt ++ "'.");
         }
         switch (this) {

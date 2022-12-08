@@ -152,15 +152,17 @@ pub const Arena = struct {
     pub fn ownsPtr(this: Arena, ptr: *const anyopaque) bool {
         return mimalloc.mi_heap_check_owned(this.heap.?, ptr);
     }
+    const malloc_size = c.malloc_size;
+    pub const supports_posix_memalign = true;
 
-    // Copied from rust
+    // This is copied from Rust's mimalloc integration
     const MI_MAX_ALIGN_SIZE = 16;
     inline fn mi_malloc_satisfies_alignment(alignment: usize, size: usize) bool {
         return (alignment == @sizeOf(*anyopaque) or
             (alignment == MI_MAX_ALIGN_SIZE and size >= (MI_MAX_ALIGN_SIZE / 2)));
     }
 
-    fn alignedAlloc(heap: *mimalloc.Heap, len: usize, alignment: usize) ?[*]u8 {
+    fn alignedAlloc(heap: *anyopaque, len: usize, alignment: usize) ?[*]u8 {
         if (comptime FeatureFlags.log_allocations) std.debug.print("Malloc: {d}\n", .{len});
 
         var ptr = if (mi_malloc_satisfies_alignment(alignment, len))
@@ -168,65 +170,42 @@ pub const Arena = struct {
         else
             mimalloc.mi_heap_malloc_aligned(heap, len, alignment);
 
-        return @ptrCast([*]u8, ptr orelse return null);
+        return @ptrCast([*]u8, ptr orelse null);
     }
 
-    pub fn alloc(
-        arena: *anyopaque,
-        len: usize,
-        alignment: u29,
-        len_align: u29,
-        return_address: usize,
-    ) error{OutOfMemory}![]u8 {
-        _ = return_address;
-        assert(len > 0);
-        assert(std.math.isPowerOfTwo(alignment));
-
-        var ptr = alignedAlloc(@ptrCast(*mimalloc.Heap, arena), len, alignment) orelse return error.OutOfMemory;
-        if (len_align == 0) {
-            return ptr[0..len];
-        }
-
-        // std.mem.Allocator asserts this, we do it here so we can see the metadata
-        if (comptime Environment.allow_assert) {
-            const size = mem.alignBackwardAnyAlign(mimalloc.mi_usable_size(ptr), len_align);
-
-            assert(size >= len);
-            return ptr[0..size];
-        } else {
-            return ptr[0..mem.alignBackwardAnyAlign(mimalloc.mi_usable_size(ptr), len_align)];
-        }
+    fn alignedAllocSize(ptr: [*]u8) usize {
+        return CAllocator.malloc_size(ptr);
     }
 
-    pub fn resize(
-        _: *anyopaque,
-        buf: []u8,
-        buf_align: u29,
-        new_len: usize,
-        len_align: u29,
-        return_address: usize,
-    ) ?usize {
-        _ = buf_align;
-        _ = return_address;
+    fn alloc(arena: *anyopaque, len: usize, ptr_align: u8, _: usize) ?[*]u8 {
+        var this = bun.cast(*Arena, arena);
+        return alignedAlloc(this.heap, len, ptr_align);
+    }
+
+    fn resize(arena: *anyopaque, buf: []u8, _: u8, new_len: usize, _: usize) bool {
+        var this = bun.cast(*Arena, arena);
 
         if (new_len <= buf.len) {
-            return mem.alignAllocLen(buf.len, new_len, len_align);
+            return true;
         }
 
-        const full_len = mimalloc.mi_usable_size(buf.ptr);
+        const full_len = alignedAllocSize(this.heap, buf.ptr);
         if (new_len <= full_len) {
-            return mem.alignAllocLen(full_len, new_len, len_align);
+            return true;
         }
 
-        return null;
+        return false;
     }
 
-    pub fn free(
+    fn free(
         _: *anyopaque,
         buf: []u8,
         buf_align: u29,
         _: usize,
     ) void {
+        // mi_free_size internally just asserts the size
+        // so it's faster if we don't pass that value through
+        // but its good to have that assertion
         if (comptime Environment.allow_assert) {
             assert(mimalloc.mi_is_in_heap_region(buf.ptr));
             mimalloc.mi_free_size_aligned(buf.ptr, buf.len, buf_align);
@@ -237,7 +216,7 @@ pub const Arena = struct {
 };
 
 const c_allocator_vtable = Allocator.VTable{
-    .alloc = Arena.alloc,
-    .resize = Arena.resize,
-    .free = Arena.free,
+    .alloc = &Arena.alloc,
+    .resize = &Arena.resize,
+    .free = &Arena.free,
 };

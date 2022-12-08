@@ -185,10 +185,7 @@ fish)
     if [[ -w $fish_config ]]; then
         {
             echo -e '\n# bun'
-
-            for command in "${commands[@]}"; do
-                echo "$command"
-            done
+            printf "%s\n" ${commands[@]}
         } >>"$fish_config"
 
         info "Added \"$tilde_bin_dir\" to \$PATH in \"$tilde_fish_config\""
@@ -197,9 +194,7 @@ fish)
     else
         echo "Manually add the directory to $tilde_fish_config (or similar):"
 
-        for command in "${commands[@]}"; do
-            info_bold "  $command"
-        done
+        printf "$(info_bold  %s)\n" ${commands[@]}
     fi
     ;;
 zsh)
@@ -217,10 +212,7 @@ zsh)
     if [[ -w $zsh_config ]]; then
         {
             echo -e '\n# bun'
-
-            for command in "${commands[@]}"; do
-                echo "$command"
-            done
+            printf "%s\n" ${commands[@]}
         } >>"$zsh_config"
 
         info "Added \"$tilde_bin_dir\" to \$PATH in \"$tilde_zsh_config\""
@@ -228,10 +220,7 @@ zsh)
         refresh_command="exec $SHELL"
     else
         echo "Manually add the directory to $tilde_zsh_config (or similar):"
-
-        for command in "${commands[@]}"; do
-            info_bold "  $command"
-        done
+        printf "$(info_bold  %s)\n" ${commands[@]}
     fi
     ;;
 bash)

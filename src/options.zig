@@ -2079,7 +2079,7 @@ pub const Framework = struct {
     from_bundle: bool = false,
 
     resolved_dir: string = "",
-    override_modules: Api.StringMap = Api.StringMap{},
+    override_modules: Api.StringMap,
     override_modules_hashes: []u64 = &[_]u64{},
 
     client_css_in_js: Api.CssInJsBehavior = .auto_onimportcss,
@@ -2198,7 +2198,7 @@ pub const RouteConfig = struct {
     // I think it's fine to hardcode as .json for now, but if I personally were writing a framework
     // I would consider using a custom binary format to minimize request size
     // maybe like CBOR
-    extensions: []const string = &[_][]const string{},
+    extensions: []const string = &[_]string{},
     routes_enabled: bool = false,
 
     static_dir: string = "",

@@ -19,7 +19,7 @@ export function SpreadWithTheKey({ className }) {
 export function test() {
   console.assert(React.isValidElement(jsx(SpreadWithTheKey, {
     className: "foo"
-  }, undefined, false, undefined, this)));
+  })));
   return testDone(import.meta.url);
 }
 

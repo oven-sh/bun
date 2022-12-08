@@ -3186,26 +3186,72 @@ pub const Parser = struct {
 
         const has_cjs_imports = p.cjs_import_stmts.items.len > 0 and p.options.transform_require_to_import;
 
-        p.resolveCommonJSSymbols();
-
-        // - don't import runtime if we're bundling, it's already included
-        // - when HMR is enabled, we always need to import the runtime for HMRClient and HMRModule.
-        // - when HMR is not enabled, we only need any runtime imports if we're importing require()
-        if (p.options.features.allow_runtime and
-            !p.options.enable_bundling and
-            (p.has_called_runtime or p.options.features.hot_module_reloading or has_cjs_imports))
         {
-            const before_start = before.items.len;
-            if (p.options.features.hot_module_reloading) {
-                p.resolveHMRSymbols();
+            // "did they actually use require?"
+            // well, if they didn't, in the linker later, we might need to inject it
+            // but we don't know what name we can use there
+            // so instead, we pessimistically assume they did in fact use require _somewhere_
+            // and we set the name to something that won't conflict.
+            // however, at this stage, we don't want to inject the import statement for the require
+            // since it won't be actually used yet.
+            const had_require = p.runtime_imports.contains("__require");
+            p.resolveCommonJSSymbols();
 
-                if (runtime_imports_iter.next()) |entry| {
-                    std.debug.assert(entry.key == 0);
+            const copy_of_runtime_require = p.runtime_imports.__require.?;
+            if (!had_require) {
+                p.runtime_imports.__require = null;
+            }
+            defer {
+                if (!had_require) {
+                    p.runtime_imports.__require = copy_of_runtime_require;
+                }
+            }
 
-                    // HMRClient.activate(true)
-                    var args_list: []Expr = if (Environment.isDebug) &Prefill.HotModuleReloading.DebugEnabledArgs else &Prefill.HotModuleReloading.DebugDisabled;
+            // - don't import runtime if we're bundling, it's already included
+            // - when HMR is enabled, we always need to import the runtime for HMRClient and HMRModule.
+            // - when HMR is not enabled, we only need any runtime imports if we're importing require()
+            if (p.options.features.allow_runtime and
+                !p.options.enable_bundling and
+                (p.has_called_runtime or p.options.features.hot_module_reloading or has_cjs_imports))
+            {
+                const before_start = before.items.len;
+                if (p.options.features.hot_module_reloading) {
+                    p.resolveHMRSymbols();
 
-                    var hmr_module_class_ident = p.e(E.Identifier{ .ref = p.runtime_imports.__HMRClient.?.ref }, logger.Loc.Empty);
+                    if (runtime_imports_iter.next()) |entry| {
+                        std.debug.assert(entry.key == 0);
+
+                        // HMRClient.activate(true)
+                        var args_list: []Expr = if (Environment.isDebug) &Prefill.HotModuleReloading.DebugEnabledArgs else &Prefill.HotModuleReloading.DebugDisabled;
+
+                        var hmr_module_class_ident = p.e(E.Identifier{ .ref = p.runtime_imports.__HMRClient.?.ref }, logger.Loc.Empty);
+                        const imports = [_]u16{entry.key};
+                        // TODO: remove these unnecessary allocations
+                        p.generateImportStmt(
+                            RuntimeImports.Name,
+                            &imports,
+                            &before,
+                            p.runtime_imports,
+                            p.s(
+                                S.SExpr{
+                                    .value = p.e(E.Call{
+                                        .target = p.e(E.Dot{
+                                            .target = hmr_module_class_ident,
+                                            .name = "activate",
+                                            .name_loc = logger.Loc.Empty,
+                                        }, logger.Loc.Empty),
+                                        .args = ExprNodeList.init(args_list),
+                                    }, logger.Loc.Empty),
+                                },
+                                logger.Loc.Empty,
+                            ),
+                            "import_",
+                            true,
+                        ) catch unreachable;
+                    }
+                }
+
+                while (runtime_imports_iter.next()) |entry| {
                     const imports = [_]u16{entry.key};
                     // TODO: remove these unnecessary allocations
                     p.generateImportStmt(
@@ -3213,46 +3259,20 @@ pub const Parser = struct {
                         &imports,
                         &before,
                         p.runtime_imports,
-                        p.s(
-                            S.SExpr{
-                                .value = p.e(E.Call{
-                                    .target = p.e(E.Dot{
-                                        .target = hmr_module_class_ident,
-                                        .name = "activate",
-                                        .name_loc = logger.Loc.Empty,
-                                    }, logger.Loc.Empty),
-                                    .args = ExprNodeList.init(args_list),
-                                }, logger.Loc.Empty),
-                            },
-                            logger.Loc.Empty,
-                        ),
+                        null,
                         "import_",
                         true,
                     ) catch unreachable;
                 }
-            }
-
-            while (runtime_imports_iter.next()) |entry| {
-                const imports = [_]u16{entry.key};
-                // TODO: remove these unnecessary allocations
-                p.generateImportStmt(
-                    RuntimeImports.Name,
-                    &imports,
-                    &before,
-                    p.runtime_imports,
-                    null,
-                    "import_",
-                    true,
-                ) catch unreachable;
-            }
-            // If we import JSX, we might call require.
-            // We need to import require before importing JSX.
-            // But a runtime import may not be necessary until we import JSX.
-            // So we have to swap it after the fact, instead of just moving this above the JSX import.
-            if (before_start > 0) {
-                var j: usize = 0;
-                while (j < before_start) : (j += 1) {
-                    std.mem.swap(js_ast.Part, &before.items[j], &before.items[before.items.len - j - 1]);
+                // If we import JSX, we might call require.
+                // We need to import require before importing JSX.
+                // But a runtime import may not be necessary until we import JSX.
+                // So we have to swap it after the fact, instead of just moving this above the JSX import.
+                if (before_start > 0) {
+                    var j: usize = 0;
+                    while (j < before_start) : (j += 1) {
+                        std.mem.swap(js_ast.Part, &before.items[j], &before.items[before.items.len - j - 1]);
+                    }
                 }
             }
         }
@@ -5077,15 +5097,21 @@ fn NewParser_(
             }
         }
 
+        fn ensureRequireSymbol(p: *P) void {
+            if (p.runtime_imports.__require != null) return;
+            p.runtime_imports.__require = GeneratedSymbol{
+                .backup = declareSymbolMaybeGenerated(p, .other, logger.Loc.Empty, StaticSymbolName.List.__require.backup, true) catch unreachable,
+                .primary = p.require_ref,
+                .ref = declareSymbolMaybeGenerated(p, .other, logger.Loc.Empty, StaticSymbolName.List.__require.internal, true) catch unreachable,
+            };
+            p.runtime_imports.put("__require", p.runtime_imports.__require.?);
+        }
+
         pub fn resolveCommonJSSymbols(p: *P) void {
             if (p.runtime_imports.__require) |*require| {
                 p.resolveGeneratedSymbol(require);
-            } else if (p.symbols.items[p.require_ref.innerIndex()].use_count_estimate == 0 and
-                p.symbols.items[p.require_ref.innerIndex()].link.isNull())
-            {
-                // ensure our unused require() never collides with require()
-                p.symbols.items[p.require_ref.innerIndex()].original_name = "__require";
             }
+            p.ensureRequireSymbol();
         }
 
         pub fn resolveBundlingSymbols(p: *P) void {
@@ -18163,12 +18189,7 @@ fn NewParser_(
             if (!p.runtime_imports.contains(name)) {
                 ref = brk: {
                     if (comptime strings.eqlComptime(name, "__require")) {
-                        p.runtime_imports.__require = GeneratedSymbol{
-                            .backup = declareSymbolMaybeGenerated(p, .other, logger.Loc.Empty, StaticSymbolName.List.__require.backup, true) catch unreachable,
-                            .primary = p.require_ref,
-                            .ref = declareSymbolMaybeGenerated(p, .other, logger.Loc.Empty, StaticSymbolName.List.__require.internal, true) catch unreachable,
-                        };
-                        p.runtime_imports.put(name, p.runtime_imports.__require.?);
+                        p.ensureRequireSymbol();
                         break :brk p.runtime_imports.__require.?.ref;
                     }
                     const generated_symbol = p.declareGeneratedSymbol(.other, name) catch unreachable;

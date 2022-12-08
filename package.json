@@ -12,8 +12,8 @@
     "build-fallback": "esbuild --target=esnext  --bundle src/fallback.ts --format=iife --platform=browser --minify > src/fallback.out.js",
     "typecheck": "tsc",
     "fmt": "prettier --write './**/*.{ts,tsx,js,jsx}'",
-    "lint": "eslint './**/*.d.ts'",
-    "lint:fix": "eslint './**/*.d.ts' --fix"
+    "lint": "eslint './**/*.d.ts' --cache",
+    "lint:fix": "eslint './**/*.d.ts' --cache --fix"
   },
   "devDependencies": {
     "@types/react": "^18.0.25",

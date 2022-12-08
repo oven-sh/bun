@@ -14632,7 +14632,7 @@ fn NewParser_(
                         // delete process.env["NODE_ENV"]
                         // shouldn't be transformed into
                         // delete undefined
-                        if (!is_delete_target and !is_call_target) {
+                        if (!is_delete_target and !is_call_target and in.assign_target == .none) {
                             // We check for defines here as well
                             // esbuild doesn't do this
                             // In a lot of codebases, people will sometimes do:
@@ -14785,9 +14785,11 @@ fn NewParser_(
                     if (p.define.dots.get(e_.name)) |parts| {
                         for (parts) |define| {
                             if (p.isDotDefineMatch(expr, define.parts)) {
-                                // Substitute user-specified defines
-                                if (!define.data.isUndefined()) {
-                                    return p.valueForDefine(expr.loc, in.assign_target, is_delete_target, &define.data);
+                                if (in.assign_target == .none) {
+                                    // Substitute user-specified defines
+                                    if (!define.data.isUndefined()) {
+                                        return p.valueForDefine(expr.loc, in.assign_target, is_delete_target, &define.data);
+                                    }
                                 }
 
                                 // Copy the side effect flags over in case this expression is unused

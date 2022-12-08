@@ -8,8 +8,8 @@ const UnionMeta = std.builtin.Type.Union;
 const warn = std.debug.warn;
 const StaticExport = @import("./static_export.zig");
 const typeBaseName = @import("../../meta.zig").typeBaseName;
-
-const TypeNameMap = std.StringHashMap([]const u8);
+const bun = @import("bun");
+const TypeNameMap = bun.StringHashMap([]const u8);
 
 fn isCppObject(comptime Type: type) bool {
     return switch (@typeInfo(Type)) {
@@ -76,8 +76,8 @@ var impl_writer = impl_buffer.writer();
 var bufset = std.BufSet.init(std.heap.c_allocator);
 var type_names = TypeNameMap.init(std.heap.c_allocator);
 var opaque_types = std.BufSet.init(std.heap.c_allocator);
-var size_map = std.StringHashMap(u32).init(std.heap.c_allocator);
-var align_map = std.StringHashMap(u29).init(std.heap.c_allocator);
+var size_map = bun.StringHashMap(u32).init(std.heap.c_allocator);
+var align_map = bun.StringHashMap(u29).init(std.heap.c_allocator);
 
 pub const C_Generator = struct {
     filebase: []const u8,
@@ -934,7 +934,7 @@ pub fn HeaderGen(comptime first_import: type, comptime second_import: type, comp
                 dom_buffer.items,
             }) catch unreachable;
 
-            const NamespaceMap = std.StringArrayHashMap(std.BufMap);
+            const NamespaceMap = bun.StringArrayHashMap(std.BufMap);
             var namespaces = NamespaceMap.init(std.heap.c_allocator);
 
             var size_iter = size_map.iterator();

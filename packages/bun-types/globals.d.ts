@@ -64,9 +64,51 @@ type Signals =
   | "SIGLOST"
   | "SIGINFO";
 
-interface console {
-  assert(condition?: boolean, ...data: any[]): void;
+interface ArrayConstructor {
+  fromAsync<T>(
+    asyncItems: AsyncIterable<T> | Iterable<T> | ArrayLike<T>,
+    mapfn?: (value: any, index: number) => any,
+    thisArg?: any,
+  ): Array<T>;
+}
+
+interface Console {
+  /**
+   * Asynchronously read lines from standard input (fd 0)
+   *
+   * ```ts
+   * for await (const line of console) {
+   *   console.log(line);
+   * }
+   * ```
+   */
+  [Symbol.asyncIterator](): AsyncIterableIterator<string>;
+
+  /**
+   * Write text or bytes to stdout
+   *
+   * Unlike {@link console.log}, this does no formatting and doesn't add a
+   * newline or spaces between arguments. You can pass it strings or bytes or
+   * any combination of the two.
+   *
+   * ```ts
+   * console.write("hello world!", "\n"); // "hello world\n"
+   * ```
+   *
+   * @param data - The data to write
+   * @returns The number of bytes written
+   *
+   * This function is not available in the browser.
+   */
+  write(...data: Array<string | ArrayBufferView | ArrayBuffer>): number;
+
+  /**
+   * Clear the console
+   */
   clear(): void;
+
+  assert(condition?: boolean, ...data: any[]): void;
+
   /**
    * Increment a [count](https://www.youtube.com/watch?v=2AoxCkySv34&t=22s)
    * @param label label counter
@@ -130,7 +172,7 @@ interface console {
   warn(...data: any[]): void;
 }
 
-declare var console: console;
+declare var console: Console;
 
 declare namespace NodeJS {
   interface RequireResolve {
@@ -142,6 +184,44 @@ declare namespace NodeJS {
     (id: string): any;
     resolve: RequireResolve;
   }
+  type Signals =
+    | "SIGABRT"
+    | "SIGALRM"
+    | "SIGBUS"
+    | "SIGCHLD"
+    | "SIGCONT"
+    | "SIGFPE"
+    | "SIGHUP"
+    | "SIGILL"
+    | "SIGINT"
+    | "SIGIO"
+    | "SIGIOT"
+    | "SIGKILL"
+    | "SIGPIPE"
+    | "SIGPOLL"
+    | "SIGPROF"
+    | "SIGPWR"
+    | "SIGQUIT"
+    | "SIGSEGV"
+    | "SIGSTKFLT"
+    | "SIGSTOP"
+    | "SIGSYS"
+    | "SIGTERM"
+    | "SIGTRAP"
+    | "SIGTSTP"
+    | "SIGTTIN"
+    | "SIGTTOU"
+    | "SIGUNUSED"
+    | "SIGURG"
+    | "SIGUSR1"
+    | "SIGUSR2"
+    | "SIGVTALRM"
+    | "SIGWINCH"
+    | "SIGXCPU"
+    | "SIGXFSZ"
+    | "SIGBREAK"
+    | "SIGLOST"
+    | "SIGINFO";
 }
 
 interface ImportMeta {
@@ -255,9 +335,7 @@ interface Process {
   platform: Platform;
   argv: string[];
   // execArgv: string[];
-  env: Record<string, string> & {
-    NODE_ENV: string;
-  };
+  env: Bun.Env;
 
   /** Whether you are using Bun */
   isBun: 1; // FIXME: this should actually return a boolean
@@ -273,6 +351,9 @@ interface Process {
   getuid(): number;
   setuid(id: number | string): void;
   dlopen(module: { exports: any }, filename: string, flags?: number): void;
+  stdin: import("stream").Duplex;
+  stdout: import("stream").Writable;
+  stderr: import("stream").Writable;
 }
 
 declare var process: Process;
@@ -342,6 +423,25 @@ interface Headers {
    * Get the total number of headers
    */
   readonly count: number;
+
+  /**
+   * Get all headers matching the name
+   *
+   * Only supports `"Set-Cookie"`. All other headers are empty arrays.
+   *
+   * @param name - The header name to get
+   *
+   * @returns An array of header values
+   *
+   * @example
+   * ```ts
+   * const headers = new Headers();
+   * headers.append("Set-Cookie", "foo=bar");
+   * headers.append("Set-Cookie", "baz=qux");
+   * headers.getAll("Set-Cookie"); // ["foo=bar", "baz=qux"]
+   * ```
+   */
+  getAll(name: "set-cookie" | "Set-Cookie"): string[];
 }
 
 declare var Headers: {
@@ -2575,4 +2675,31 @@ interface CallSite {
    * Is this a constructor call?
    */
   isConstructor(): boolean;
+}
+
+interface ArrayBufferConstructor {
+  new (params: { byteLength: number; maxByteLength?: number }): ArrayBuffer;
+}
+interface ArrayBuffer {
+  /**
+   * Read-only. The length of the ArrayBuffer (in bytes).
+   */
+  readonly byteLength: number;
+  /**
+   * Resize an ArrayBuffer in-place.
+   */
+  resize(byteLength: number): ArrayBuffer;
+
+  /**
+   * Returns a section of an ArrayBuffer.
+   */
+  slice(begin: number, end?: number): ArrayBuffer;
+  readonly [Symbol.toStringTag]: string;
+}
+
+interface SharedArrayBuffer {
+  /**
+   * Grow the SharedArrayBuffer in-place.
+   */
+  grow(size: number): SharedArrayBuffer;
 }

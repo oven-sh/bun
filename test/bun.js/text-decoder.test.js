@@ -101,3 +101,36 @@ describe("TextDecoder", () => {
     gcTrace(true);
   });
 });
+
+it("truncated sequences", () => {
+  const assert_equals = (a, b) => expect(a).toBe(b);
+
+  // Truncated sequences
+  assert_equals(new TextDecoder().decode(new Uint8Array([0xf0])), "\uFFFD");
+  assert_equals(
+    new TextDecoder().decode(new Uint8Array([0xf0, 0x9f])),
+    "\uFFFD",
+  );
+  assert_equals(
+    new TextDecoder().decode(new Uint8Array([0xf0, 0x9f, 0x92])),
+    "\uFFFD",
+  );
+
+  // Errors near end-of-queue
+  assert_equals(
+    new TextDecoder().decode(new Uint8Array([0xf0, 0x9f, 0x41])),
+    "\uFFFDA",
+  );
+  assert_equals(
+    new TextDecoder().decode(new Uint8Array([0xf0, 0x41, 0x42])),
+    "\uFFFDAB",
+  );
+  assert_equals(
+    new TextDecoder().decode(new Uint8Array([0xf0, 0x41, 0xf0])),
+    "\uFFFDA\uFFFD",
+  );
+  assert_equals(
+    new TextDecoder().decode(new Uint8Array([0xf0, 0x8f, 0x92])),
+    "\uFFFD\uFFFD\uFFFD",
+  );
+});

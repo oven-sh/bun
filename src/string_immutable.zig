@@ -7,6 +7,7 @@ const CodePoint = @import("string_types.zig").CodePoint;
 const bun = @import("bun");
 pub const joiner = @import("./string_joiner.zig");
 const assert = std.debug.assert;
+const log = bun.Output.scoped(.STR, true);
 
 pub const Encoding = enum {
     ascii,
@@ -166,7 +167,22 @@ pub inline fn lastIndexOf(self: string, str: string) ?usize {
 }
 
 pub inline fn indexOf(self: string, str: string) ?usize {
-    return std.mem.indexOf(u8, self, str);
+    const self_ptr = self.ptr;
+    const self_len = self.len;
+
+    const str_ptr = str.ptr;
+    const str_len = str.len;
+
+    // > Both old and new libc's have the bug that if needle is empty,
+    // > haystack-1 (instead of haystack) is returned. And glibc 2.0 makes it
+    // > worse, returning a pointer to the last byte of haystack. This is fixed
+    // > in glibc 2.1.
+    if (self_len == 0 or str_len == 0 or self_len < str_len)
+        return null;
+
+    const start = bun.C.memmem(self_ptr, self_len, str_ptr, str_len) orelse return null;
+
+    return @ptrToInt(start) - @ptrToInt(self_ptr);
 }
 
 // --
@@ -737,58 +753,73 @@ pub fn eqlCaseInsensitiveASCII(a: string, comptime b: anytype, comptime check_le
     return true;
 }
 
-pub fn eqlLong(a_: string, b: string, comptime check_len: bool) bool {
+pub fn eqlLong(a_str: string, b_str: string, comptime check_len: bool) bool {
+    const len = b_str.len;
+
     if (comptime check_len) {
-        if (a_.len == 0) {
-            return b.len == 0;
+        if (len == 0) {
+            return a_str.len == 0;
         }
 
-        if (a_.len != b.len) {
+        if (a_str.len != len) {
             return false;
         }
+    } else {
+        std.debug.assert(b_str.len == a_str.len);
     }
 
-    const len = b.len;
-    var dword_length = b.len >> 3;
-    var b_ptr: usize = 0;
-    const a = a_.ptr;
+    const end = b_str.ptr + len;
+    var a = a_str.ptr;
+    var b = b_str.ptr;
 
-    while (dword_length > 0) : (dword_length -= 1) {
-        const slice = b.ptr;
-        if (@bitCast(usize, a[b_ptr..len][0..@sizeOf(usize)].*) != @bitCast(usize, (slice[b_ptr..b.len])[0..@sizeOf(usize)].*))
-            return false;
-        b_ptr += @sizeOf(usize);
-        if (b_ptr == b.len) return true;
+    if (a == b)
+        return true;
+
+    {
+        var dword_length = len >> 3;
+        while (dword_length > 0) : (dword_length -= 1) {
+            if (@bitCast(usize, a[0..@sizeOf(usize)].*) != @bitCast(usize, b[0..@sizeOf(usize)].*))
+                return false;
+            b += @sizeOf(usize);
+            if (b == end) return true;
+            a += @sizeOf(usize);
+        }
     }
 
     if (comptime @sizeOf(usize) == 8) {
         if ((len & 4) != 0) {
-            const slice = b.ptr;
-            if (@bitCast(u32, a[b_ptr..len][0..@sizeOf(u32)].*) != @bitCast(u32, (slice[b_ptr..b.len])[0..@sizeOf(u32)].*))
+            if (@bitCast(u32, a[0..@sizeOf(u32)].*) != @bitCast(u32, b[0..@sizeOf(u32)].*))
                 return false;
 
-            b_ptr += @sizeOf(u32);
-
-            if (b_ptr == b.len) return true;
+            b += @sizeOf(u32);
+            if (b == end) return true;
+            a += @sizeOf(u32);
         }
     }
 
     if ((len & 2) != 0) {
-        if (@bitCast(u16, a[b_ptr..len][0..@sizeOf(u16)].*) != @bitCast(u16, b.ptr[b_ptr..len][0..@sizeOf(u16)].*))
+        if (@bitCast(u16, a[0..@sizeOf(u16)].*) != @bitCast(u16, b[0..@sizeOf(u16)].*))
             return false;
 
-        b_ptr += @sizeOf(u16);
+        b += @sizeOf(u16);
 
-        if (b_ptr == b.len) return true;
+        if (b == end) return true;
+
+        a += @sizeOf(u16);
     }
 
-    if (((len & 1) != 0) and a[b_ptr] != b[b_ptr]) return false;
+    if (((len & 1) != 0) and a[0] != b[0]) return false;
 
     return true;
 }
 
 pub inline fn append(allocator: std.mem.Allocator, self: string, other: string) ![]u8 {
-    return std.fmt.allocPrint(allocator, "{s}{s}", .{ self, other });
+    var buf = try allocator.alloc(u8, self.len + other.len);
+    if (self.len > 0)
+        @memcpy(buf.ptr, self.ptr, self.len);
+    if (other.len > 0)
+        @memcpy(buf.ptr + self.len, other.ptr, other.len);
+    return buf;
 }
 
 pub inline fn joinBuf(out: []u8, parts: anytype, comptime parts_len: usize) []u8 {
@@ -806,7 +837,7 @@ pub inline fn joinBuf(out: []u8, parts: anytype, comptime parts_len: usize) []u8
 }
 
 pub fn index(self: string, str: string) i32 {
-    if (std.mem.indexOf(u8, self, str)) |i| {
+    if (strings.indexOf(self, str)) |i| {
         return @intCast(i32, i);
     } else {
         return -1;
@@ -949,38 +980,47 @@ pub fn toUTF16Alloc(allocator: std.mem.Allocator, bytes: []const u8, comptime fa
     if (bun.FeatureFlags.use_simdutf) {
         if (bytes.len == 0)
             return &[_]u16{};
+        use_simdutf: {
+            const validated = bun.simdutf.validate.with_errors.ascii(bytes);
+            if (validated.status == .success)
+                return null;
 
-        const validated = bun.simdutf.validate.with_errors.ascii(bytes);
-        if (validated.status == .success)
-            return null;
+            const offset = @truncate(u32, validated.count);
 
-        const offset = @truncate(u32, validated.count);
+            const trimmed = bun.simdutf.trim.utf8(bytes[offset..]);
 
-        const trimmed = bun.simdutf.trim.utf8(bytes[offset..]);
-        const out_length = bun.simdutf.length.utf16.from.utf8.le(trimmed);
-        var out = try allocator.alloc(u16, out_length + offset);
+            if (trimmed.len == 0)
+                break :use_simdutf;
 
-        if (offset > 0)
-            strings.copyU8IntoU16(out[0..offset], bytes[0..offset]);
+            const out_length = bun.simdutf.length.utf16.from.utf8.le(trimmed);
 
-        const result = bun.simdutf.convert.utf8.to.utf16.with_errors.le(trimmed, out[offset..]);
-        switch (result.status) {
-            .success => {
-                return out;
-            },
-            else => {
-                if (fail_if_invalid) {
-                    allocator.free(out);
-                    return error.InvalidByteSequence;
-                }
+            if (out_length != trimmed.len)
+                break :use_simdutf;
 
-                first_non_ascii = @truncate(u32, result.count) + offset;
-                output_ = std.ArrayList(u16){
-                    .items = out[0..first_non_ascii.?],
-                    .capacity = out.len,
-                    .allocator = allocator,
-                };
-            },
+            var out = try allocator.alloc(u16, out_length + offset);
+            log("toUTF16 {d} UTF8 -> {d} UTF16", .{ bytes.len, out_length });
+            if (offset > 0)
+                strings.copyU8IntoU16(out[0..offset], bytes[0..offset]);
+
+            const result = bun.simdutf.convert.utf8.to.utf16.with_errors.le(trimmed, out[offset..]);
+            switch (result.status) {
+                .success => {
+                    return out;
+                },
+                else => {
+                    if (fail_if_invalid) {
+                        allocator.free(out);
+                        return error.InvalidByteSequence;
+                    }
+
+                    first_non_ascii = @truncate(u32, result.count) + offset;
+                    output_ = std.ArrayList(u16){
+                        .items = out[0..first_non_ascii.?],
+                        .capacity = out.len,
+                        .allocator = allocator,
+                    };
+                },
+            }
         }
     }
 
@@ -1165,6 +1205,8 @@ pub fn toUTF8ListWithTypeBun(list_: std.ArrayList(u8), comptime Type: type, utf1
         copyU16IntoU8(list.items[old_len..], Type, utf16_remaining);
     }
 
+    log("UTF16 {d} -> {d} UTF8", .{ utf16.len, list.items.len });
+
     return list;
 }
 
@@ -1302,6 +1344,8 @@ pub fn allocateLatin1IntoUTF8WithList(list_: std.ArrayList(u8), offset_into_list
         list.items.len = i;
     }
 
+    log("Latin1 {d} -> UTF8 {d}", .{ latin1_.len, i });
+
     return list;
 }
 
@@ -1428,6 +1472,9 @@ pub fn copyLatin1IntoUTF8StopOnNonASCII(buf_: []u8, comptime Type: type, latin1_
 
     var buf = buf_;
     var latin1 = latin1_;
+
+    log("latin1 encode {d} -> {d}", .{ buf.len, latin1.len });
+
     while (buf.len > 0 and latin1.len > 0) {
         inner: {
             var remaining_runs = @min(buf.len, latin1.len) / ascii_vector_size;
@@ -2392,6 +2439,8 @@ pub fn copyUTF16IntoUTF8(buf: []u8, comptime Type: type, utf16: Type) EncodeInto
             else
                 buf.len;
 
+            log("UTF16 {d} -> UTF8 {d}", .{ utf16.len, out_len });
+
             if (remaining.len >= out_len) {
                 const result = bun.simdutf.convert.utf16.to.utf8.with_errors.le(trimmed, remaining[0..out_len]);
                 return EncodeIntoResult{
@@ -2647,6 +2696,9 @@ pub const AsciiVectorU16U1 = std.meta.Vector(ascii_u16_vector_size, u1);
 pub const AsciiU16Vector = std.meta.Vector(ascii_u16_vector_size, u16);
 pub const max_4_ascii = @splat(4, @as(u8, 127));
 pub fn isAllASCII(slice: []const u8) bool {
+    if (bun.FeatureFlags.use_simdutf)
+        return bun.simdutf.validate.ascii(slice);
+
     var remaining = slice;
 
     // The NEON SIMD unit is 128-bit wide and includes 16 128-bit registers that can be used as 32 64-bit registers
@@ -2717,6 +2769,15 @@ pub fn firstNonASCII(slice: []const u8) ?u32 {
 
 pub fn firstNonASCIIWithType(comptime Type: type, slice: Type) ?u32 {
     var remaining = slice;
+
+    if (comptime bun.FeatureFlags.use_simdutf) {
+        const result = bun.simdutf.validate.with_errors.ascii(slice);
+        if (result.status == .success) {
+            return null;
+        }
+
+        return @truncate(u32, result.count);
+    }
 
     if (comptime Environment.enableSIMD) {
         if (remaining.len >= ascii_vector_size) {

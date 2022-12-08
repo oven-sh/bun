@@ -47,28 +47,46 @@ class FunctionExecutable;
 
 namespace WebCore {
 
-/* ProcessObject */
+/* ProcessObjectInternals */
+extern const char* const s_processObjectInternalsGetStdioWriteStreamCode;
+extern const int s_processObjectInternalsGetStdioWriteStreamCodeLength;
+extern const JSC::ConstructAbility s_processObjectInternalsGetStdioWriteStreamCodeConstructAbility;
+extern const JSC::ConstructorKind s_processObjectInternalsGetStdioWriteStreamCodeConstructorKind;
+extern const JSC::ImplementationVisibility s_processObjectInternalsGetStdioWriteStreamCodeImplementationVisibility;
+extern const char* const s_processObjectInternalsGetStdinStreamCode;
+extern const int s_processObjectInternalsGetStdinStreamCodeLength;
+extern const JSC::ConstructAbility s_processObjectInternalsGetStdinStreamCodeConstructAbility;
+extern const JSC::ConstructorKind s_processObjectInternalsGetStdinStreamCodeConstructorKind;
+extern const JSC::ImplementationVisibility s_processObjectInternalsGetStdinStreamCodeImplementationVisibility;
 
-#define WEBCORE_FOREACH_PROCESSOBJECT_BUILTIN_DATA(macro) \
+#define WEBCORE_FOREACH_PROCESSOBJECTINTERNALS_BUILTIN_DATA(macro) \
+    macro(getStdioWriteStream, processObjectInternalsGetStdioWriteStream, 2) \
+    macro(getStdinStream, processObjectInternalsGetStdinStream, 3) \
 
+#define WEBCORE_BUILTIN_PROCESSOBJECTINTERNALS_GETSTDIOWRITESTREAM 1
+#define WEBCORE_BUILTIN_PROCESSOBJECTINTERNALS_GETSTDINSTREAM 1
 
-#define WEBCORE_FOREACH_PROCESSOBJECT_BUILTIN_CODE(macro) \
+#define WEBCORE_FOREACH_PROCESSOBJECTINTERNALS_BUILTIN_CODE(macro) \
+    macro(processObjectInternalsGetStdioWriteStreamCode, getStdioWriteStream, ASCIILiteral(), s_processObjectInternalsGetStdioWriteStreamCodeLength) \
+    macro(processObjectInternalsGetStdinStreamCode, getStdinStream, ASCIILiteral(), s_processObjectInternalsGetStdinStreamCodeLength) \
 
-#define WEBCORE_FOREACH_PROCESSOBJECT_BUILTIN_FUNCTION_NAME(macro) \
+#define WEBCORE_FOREACH_PROCESSOBJECTINTERNALS_BUILTIN_FUNCTION_NAME(macro) \
+    macro(getStdinStream) \
+    macro(getStdioWriteStream) \
 
 #define DECLARE_BUILTIN_GENERATOR(codeName, functionName, overriddenName, argumentCount) \
     JSC::FunctionExecutable* codeName##Generator(JSC::VM&);
 
-WEBCORE_FOREACH_PROCESSOBJECT_BUILTIN_CODE(DECLARE_BUILTIN_GENERATOR)
+WEBCORE_FOREACH_PROCESSOBJECTINTERNALS_BUILTIN_CODE(DECLARE_BUILTIN_GENERATOR)
 #undef DECLARE_BUILTIN_GENERATOR
 
-class ProcessObjectBuiltinsWrapper : private JSC::WeakHandleOwner {
+class ProcessObjectInternalsBuiltinsWrapper : private JSC::WeakHandleOwner {
 public:
-    explicit ProcessObjectBuiltinsWrapper(JSC::VM& vm)
+    explicit ProcessObjectInternalsBuiltinsWrapper(JSC::VM& vm)
         : m_vm(vm)
-        WEBCORE_FOREACH_PROCESSOBJECT_BUILTIN_FUNCTION_NAME(INITIALIZE_BUILTIN_NAMES)
+        WEBCORE_FOREACH_PROCESSOBJECTINTERNALS_BUILTIN_FUNCTION_NAME(INITIALIZE_BUILTIN_NAMES)
 #define INITIALIZE_BUILTIN_SOURCE_MEMBERS(name, functionName, overriddenName, length) , m_##name##Source(JSC::makeSource(StringImpl::createWithoutCopying(s_##name, length), { }))
-        WEBCORE_FOREACH_PROCESSOBJECT_BUILTIN_CODE(INITIALIZE_BUILTIN_SOURCE_MEMBERS)
+        WEBCORE_FOREACH_PROCESSOBJECTINTERNALS_BUILTIN_CODE(INITIALIZE_BUILTIN_SOURCE_MEMBERS)
 #undef INITIALIZE_BUILTIN_SOURCE_MEMBERS
     {
     }
@@ -76,28 +94,28 @@ public:
 #define EXPOSE_BUILTIN_EXECUTABLES(name, functionName, overriddenName, length) \
     JSC::UnlinkedFunctionExecutable* name##Executable(); \
     const JSC::SourceCode& name##Source() const { return m_##name##Source; }
-    WEBCORE_FOREACH_PROCESSOBJECT_BUILTIN_CODE(EXPOSE_BUILTIN_EXECUTABLES)
+    WEBCORE_FOREACH_PROCESSOBJECTINTERNALS_BUILTIN_CODE(EXPOSE_BUILTIN_EXECUTABLES)
 #undef EXPOSE_BUILTIN_EXECUTABLES
 
-    WEBCORE_FOREACH_PROCESSOBJECT_BUILTIN_FUNCTION_NAME(DECLARE_BUILTIN_IDENTIFIER_ACCESSOR)
+    WEBCORE_FOREACH_PROCESSOBJECTINTERNALS_BUILTIN_FUNCTION_NAME(DECLARE_BUILTIN_IDENTIFIER_ACCESSOR)
 
     void exportNames();
 
 private:
     JSC::VM& m_vm;
 
-    WEBCORE_FOREACH_PROCESSOBJECT_BUILTIN_FUNCTION_NAME(DECLARE_BUILTIN_NAMES)
+    WEBCORE_FOREACH_PROCESSOBJECTINTERNALS_BUILTIN_FUNCTION_NAME(DECLARE_BUILTIN_NAMES)
 
 #define DECLARE_BUILTIN_SOURCE_MEMBERS(name, functionName, overriddenName, length) \
     JSC::SourceCode m_##name##Source;\
     JSC::Weak<JSC::UnlinkedFunctionExecutable> m_##name##Executable;
-    WEBCORE_FOREACH_PROCESSOBJECT_BUILTIN_CODE(DECLARE_BUILTIN_SOURCE_MEMBERS)
+    WEBCORE_FOREACH_PROCESSOBJECTINTERNALS_BUILTIN_CODE(DECLARE_BUILTIN_SOURCE_MEMBERS)
 #undef DECLARE_BUILTIN_SOURCE_MEMBERS
 
 };
 
 #define DEFINE_BUILTIN_EXECUTABLES(name, functionName, overriddenName, length) \
-inline JSC::UnlinkedFunctionExecutable* ProcessObjectBuiltinsWrapper::name##Executable() \
+inline JSC::UnlinkedFunctionExecutable* ProcessObjectInternalsBuiltinsWrapper::name##Executable() \
 {\
     if (!m_##name##Executable) {\
         JSC::Identifier executableName = functionName##PublicName();\
@@ -107,13 +125,13 @@ inline JSC::UnlinkedFunctionExecutable* ProcessObjectBuiltinsWrapper::name##Exec
     }\
     return m_##name##Executable.get();\
 }
-WEBCORE_FOREACH_PROCESSOBJECT_BUILTIN_CODE(DEFINE_BUILTIN_EXECUTABLES)
+WEBCORE_FOREACH_PROCESSOBJECTINTERNALS_BUILTIN_CODE(DEFINE_BUILTIN_EXECUTABLES)
 #undef DEFINE_BUILTIN_EXECUTABLES
 
-inline void ProcessObjectBuiltinsWrapper::exportNames()
+inline void ProcessObjectInternalsBuiltinsWrapper::exportNames()
 {
 #define EXPORT_FUNCTION_NAME(name) m_vm.propertyNames->appendExternalName(name##PublicName(), name##PrivateName());
-    WEBCORE_FOREACH_PROCESSOBJECT_BUILTIN_FUNCTION_NAME(EXPORT_FUNCTION_NAME)
+    WEBCORE_FOREACH_PROCESSOBJECTINTERNALS_BUILTIN_FUNCTION_NAME(EXPORT_FUNCTION_NAME)
 #undef EXPORT_FUNCTION_NAME
 }
 

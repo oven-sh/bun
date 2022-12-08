@@ -140,8 +140,7 @@ for (let [gcTick, label] of [
               stdin: "ignore",
               stdout: "ignore",
               stderr: "ignore",
-              onExit(code) {
-                console.log("first");
+              onExit(subprocess, code) {
                 exitCode1 = code;
                 counter++;
                 if (counter === 2) {
@@ -155,10 +154,10 @@ for (let [gcTick, label] of [
               stdin: "ignore",
               stdout: "ignore",
               stderr: "ignore",
-              onExit(code) {
-                console.log("second");
+              onExit(subprocess, code) {
                 exitCode2 = code;
                 counter++;
+
                 if (counter === 2) {
                   resolve();
                 }

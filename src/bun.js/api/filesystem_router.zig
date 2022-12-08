@@ -24,7 +24,7 @@ const strings = @import("bun").strings;
 const NewClass = Base.NewClass;
 const To = Base.To;
 const Request = WebCore.Request;
-const d = Base.d;
+
 const FetchEvent = WebCore.FetchEvent;
 const URLPath = @import("../../http/url_path.zig");
 const URL = @import("../../url.zig").URL;
@@ -258,7 +258,7 @@ pub const FileSystemRouter = struct {
             .extensions = if (extensions.items.len > 0) extensions.items else default_extensions,
             .asset_prefix_path = asset_prefix_slice.slice(),
         }) catch unreachable;
-        router.loadRoutes(&log, root_dir_info, Resolver, &vm.bundler.resolver) catch {
+        router.loadRoutes(&log, root_dir_info, Resolver, &vm.bundler.resolver, router.config.dir) catch {
             globalThis.throwValue(log.toJS(globalThis, globalThis.allocator(), "loading routes"));
             origin_str.deinit();
             arena.deinit();
@@ -324,7 +324,7 @@ pub const FileSystemRouter = struct {
             .extensions = allocator.dupe(string, this.router.config.extensions) catch unreachable,
             .asset_prefix_path = this.router.config.asset_prefix_path,
         }) catch unreachable;
-        router.loadRoutes(&log, root_dir_info, Resolver, &vm.bundler.resolver) catch {
+        router.loadRoutes(&log, root_dir_info, Resolver, &vm.bundler.resolver, router.config.dir) catch {
             globalThis.throwValue(log.toJS(globalThis, globalThis.allocator(), "loading routes"));
 
             arena.deinit();

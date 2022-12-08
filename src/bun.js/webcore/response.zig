@@ -732,6 +732,11 @@ pub const Fetch = struct {
                     fetch_tasklet,
                 ),
             );
+
+            if (!fetch_options.follow_redirects) {
+                fetch_tasklet.http.?.client.remaining_redirect_count = 0;
+            }
+
             fetch_tasklet.http.?.client.disable_timeout = fetch_options.disable_timeout;
             fetch_tasklet.http.?.client.verbose = fetch_options.verbose;
             fetch_tasklet.http.?.client.disable_keepalive = fetch_options.disable_keepalive;
@@ -747,6 +752,7 @@ pub const Fetch = struct {
             disable_keepalive: bool,
             url: ZigURL,
             verbose: bool = false,
+            follow_redirects: bool = true,
         };
 
         pub fn queue(
@@ -807,6 +813,7 @@ pub const Fetch = struct {
         var disable_timeout = false;
         var disable_keepalive = false;
         var verbose = false;
+        var follow_redirects = true;
         if (first_arg.as(Request)) |request| {
             url = ZigURL.parse(getAllocator(ctx).dupe(u8, request.url) catch unreachable);
             method = request.method;
@@ -865,6 +872,12 @@ pub const Fetch = struct {
                         }
                     }
 
+                    if (options.get(ctx, "redirect")) |redirect_value| {
+                        if (redirect_value.getZigString(globalThis).eqlComptime("manual")) {
+                            follow_redirects = false;
+                        }
+                    }
+
                     if (options.get(ctx, "keepalive")) |keepalive_value| {
                         if (keepalive_value.isBoolean()) {
                             disable_keepalive = !keepalive_value.asBoolean();
@@ -906,6 +919,7 @@ pub const Fetch = struct {
                 .timeout = std.time.ns_per_hour,
                 .disable_keepalive = disable_keepalive,
                 .disable_timeout = disable_timeout,
+                .follow_redirects = follow_redirects,
                 .verbose = verbose,
             },
             JSC.JSValue.fromRef(deferred_promise),
@@ -1689,12 +1703,7 @@ pub const Blob = struct {
 
     pub fn findOrCreateFileFromPath(path_: JSC.Node.PathOrFileDescriptor, globalThis: *JSGlobalObject) Blob {
         var vm = globalThis.bunVM();
-        if (vm.getFileBlob(path_)) |blob| {
-            blob.ref();
-            return Blob.initWithStore(blob, globalThis);
-        }
-
-        var allocator = globalThis.bunVM().allocator;
+        const allocator = vm.allocator;
 
         const path: JSC.Node.PathOrFileDescriptor = brk: {
             switch (path_) {
@@ -1729,9 +1738,7 @@ pub const Blob = struct {
             }
         };
 
-        const result = Blob.initWithStore(Blob.Store.initFile(path, null, allocator) catch unreachable, globalThis);
-        vm.putFileBlob(path, result.store.?) catch unreachable;
-        return result;
+        return Blob.initWithStore(Blob.Store.initFile(path, null, allocator) catch unreachable, globalThis);
     }
 
     pub const Store = struct {
@@ -1757,6 +1764,7 @@ pub const Blob = struct {
         };
 
         pub fn ref(this: *Store) void {
+            std.debug.assert(this.ref_count > 0);
             this.ref_count += 1;
         }
 
@@ -1769,23 +1777,25 @@ pub const Blob = struct {
         pub fn initFile(pathlike: JSC.Node.PathOrFileDescriptor, mime_type: ?HTTPClient.MimeType, allocator: std.mem.Allocator) !*Store {
             var store = try allocator.create(Blob.Store);
             store.* = .{
-                .data = .{ .file = FileStore.init(
-                    pathlike,
-                    mime_type orelse brk: {
-                        if (pathlike == .path) {
-                            const sliced = pathlike.path.slice();
-                            if (sliced.len > 0) {
-                                var extname = std.fs.path.extension(sliced);
-                                extname = std.mem.trim(u8, extname, ".");
-                                if (HTTPClient.MimeType.byExtensionNoDefault(extname)) |mime| {
-                                    break :brk mime;
+                .data = .{
+                    .file = FileStore.init(
+                        pathlike,
+                        mime_type orelse brk: {
+                            if (pathlike == .path) {
+                                const sliced = pathlike.path.slice();
+                                if (sliced.len > 0) {
+                                    var extname = std.fs.path.extension(sliced);
+                                    extname = std.mem.trim(u8, extname, ".");
+                                    if (HTTPClient.MimeType.byExtensionNoDefault(extname)) |mime| {
+                                        break :brk mime;
+                                    }
                                 }
                             }
-                        }
 
-                        break :brk null;
-                    },
-                ) },
+                            break :brk null;
+                        },
+                    ),
+                },
                 .allocator = allocator,
                 .ref_count = 1,
             };
@@ -1810,6 +1820,7 @@ pub const Blob = struct {
         }
 
         pub fn deref(this: *Blob.Store) void {
+            std.debug.assert(this.ref_count >= 1);
             this.ref_count -= 1;
             if (this.ref_count == 0) {
                 this.deinit();
@@ -1824,7 +1835,6 @@ pub const Blob = struct {
                     bytes.deinit();
                 },
                 .file => |file| {
-                    VirtualMachine.vm.removeFileBlob(file.pathlike);
                     if (file.pathlike == .path) {
                         allocator.free(bun.constStrToU8(file.pathlike.path.slice()));
                     }
@@ -2000,6 +2010,7 @@ pub const Blob = struct {
             pub const Read = struct {
                 buf: []u8,
                 is_temporary: bool = false,
+                total_size: SizeType = 0,
             };
             pub const ResultType = SystemError.Maybe(Read);
 
@@ -2095,7 +2106,7 @@ pub const Blob = struct {
                     return;
                 }
 
-                cb(cb_ctx, .{ .result = .{ .buf = buf, .is_temporary = true } });
+                cb(cb_ctx, .{ .result = .{ .buf = buf, .total_size = this.size, .is_temporary = true } });
             }
             pub fn run(this: *ReadFile, task: *ReadFileTask) void {
                 this.runAsync(task);
@@ -2143,6 +2154,8 @@ pub const Blob = struct {
                 const fd = this.opened_fd;
                 const file = &this.file_store;
                 const needs_close = fd != null_fd and file.pathlike == .path and fd > 2;
+
+                this.size = @maximum(this.read_len, this.size);
 
                 if (needs_close) {
                     this.doClose();
@@ -3026,6 +3039,11 @@ pub const Blob = struct {
         var arguments_ = callframe.arguments(1);
         var arguments = arguments_.ptr[0..arguments_.len];
 
+        if (!arguments.ptr[0].isEmptyOrUndefinedOrNull() and !arguments.ptr[0].isObject()) {
+            globalThis.throwInvalidArguments("options must be an object or undefined", .{});
+            return JSValue.jsUndefined();
+        }
+
         var store = this.store orelse {
             globalThis.throwInvalidArguments("Blob is detached", .{});
             return JSValue.jsUndefined();
@@ -3062,7 +3080,7 @@ pub const Blob = struct {
             },
         };
 
-        if (arguments.len > 0) {
+        if (arguments.len > 0 and arguments.ptr[0].isObject()) {
             stream_start = JSC.WebCore.StreamStart.fromJSWithTag(globalThis, arguments[0], .FileSink);
             stream_start.FileSink.input_path = input_path;
         }
@@ -3471,8 +3489,14 @@ pub const Blob = struct {
                         const bytes = result.buf;
                         if (blob.size > 0)
                             blob.size = @min(@truncate(u32, bytes.len), blob.size);
-                        // these are now temporaries
-                        promise.resolve(globalThis, Function(&blob, globalThis, bytes, .temporary));
+                        const value = Function(&blob, globalThis, bytes, .temporary);
+
+                        // invalid JSON needs to be rejected
+                        if (value.isAnyError(globalThis)) {
+                            promise.reject(globalThis, value);
+                        } else {
+                            promise.resolve(globalThis, value);
+                        }
                     },
                     .err => |err| {
                         promise.reject(globalThis, err.toErrorInstance(globalThis));
@@ -3644,23 +3668,23 @@ pub const Blob = struct {
         defer if (comptime lifetime == .temporary) bun.default_allocator.free(bun.constStrToU8(buf));
 
         if (could_be_all_ascii == null or !could_be_all_ascii.?) {
+            var stack_fallback = std.heap.stackFallback(4096, bun.default_allocator);
+            const allocator = stack_fallback.get();
             // if toUTF16Alloc returns null, it means there are no non-ASCII characters
-            if (strings.toUTF16Alloc(bun.default_allocator, buf, false) catch null) |external| {
+            if (strings.toUTF16Alloc(allocator, buf, false) catch null) |external| {
                 if (comptime lifetime != .temporary) this.setIsASCIIFlag(false);
-                return ZigString.toExternalU16(external.ptr, external.len, global).parseJSON(global);
+                const result = ZigString.init16(external).toJSONObject(global);
+                allocator.free(external);
+                return result;
             }
 
             if (comptime lifetime != .temporary) this.setIsASCIIFlag(true);
         }
 
         if (comptime lifetime == .temporary) {
-            return ZigString.init(buf).toExternalValue(
-                global,
-            ).parseJSON(global);
+            return ZigString.init(buf).toJSONObject(global);
         } else {
-            return ZigString.init(buf).toValue(
-                global,
-            ).parseJSON(global);
+            return ZigString.init(buf).toJSONObject(global);
         }
     }
 
@@ -4001,14 +4025,14 @@ pub const AnyBlob = union(enum) {
                     return JSValue.jsNull();
                 }
 
-                var str = this.InternalBlob.toStringOwned(global);
+                const str = this.InternalBlob.toJSON(global);
 
                 // the GC will collect the string
                 this.* = .{
                     .Blob = .{},
                 };
 
-                return str.parseJSON(global);
+                return str;
             },
         }
     }
@@ -4051,7 +4075,7 @@ pub const AnyBlob = union(enum) {
             // },
             .InternalBlob => {
                 if (this.InternalBlob.bytes.items.len == 0) {
-                    return JSC.ArrayBuffer.empty.toJS(global, null);
+                    return JSC.ArrayBuffer.create(global, "", .ArrayBuffer);
                 }
 
                 var bytes = this.InternalBlob.toOwnedSlice();
@@ -4164,6 +4188,13 @@ pub const InternalBlob = struct {
             str.mark();
             return str.toExternalValue(globalThis);
         }
+    }
+
+    pub fn toJSON(this: *@This(), globalThis: *JSC.JSGlobalObject) JSValue {
+        const str_bytes = ZigString.init(this.bytes.items).withEncoding();
+        const json = str_bytes.toJSONObject(globalThis);
+        this.deinit();
+        return json;
     }
 
     pub inline fn sliceConst(this: *const @This()) []const u8 {

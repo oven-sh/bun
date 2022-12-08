@@ -25,7 +25,7 @@ const strings = @import("bun").strings;
 const NewClass = Base.NewClass;
 const To = Base.To;
 const Request = WebCore.Request;
-const d = Base.d;
+
 const FetchEvent = WebCore.FetchEvent;
 const MacroMap = @import("../../resolver/package_json.zig").MacroMap;
 const TSConfigJSON = @import("../../resolver/tsconfig_json.zig").TSConfigJSON;

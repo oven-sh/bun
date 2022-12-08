@@ -26,7 +26,7 @@ pub const BundledPackageID = u32;
 
 const PackageIDMap = std.AutoHashMap(BundledPackageHash, BundledPackageID);
 
-const PackageNameMap = std.StringHashMap([]BundledPackageID);
+const PackageNameMap = bun.StringHashMap([]BundledPackageID);
 
 pub const AllocatedString = struct {
     str: string,

@@ -570,3 +570,50 @@ pub fn openDir(dir: std.fs.Dir, path_: [:0]const u8) !std.fs.IterableDir {
     const fd = try std.os.openatZ(dir.fd, path_, std.os.O.DIRECTORY | 0, 0);
     return std.fs.IterableDir{ .dir = .{ .fd = fd } };
 }
+pub const MimallocArena = @import("./mimalloc_arena.zig").Arena;
+
+/// This wrapper exists to avoid the call to sliceTo(0)
+/// Zig's sliceTo(0) is scalar
+pub fn getenvZ(path_: [:0]const u8) ?[]const u8 {
+    const ptr = std.c.getenv(path_.ptr) orelse return null;
+    return span(ptr);
+}
+
+// These wrappers exist to use our strings.eqlLong function
+pub const StringArrayHashMapContext = struct {
+    pub fn hash(_: @This(), s: []const u8) u32 {
+        return @truncate(u32, std.hash.Wyhash.hash(0, s));
+    }
+    pub fn eql(_: @This(), a: []const u8, b: []const u8, _: usize) bool {
+        return strings.eqlLong(a, b, true);
+    }
+};
+
+pub const StringHashMapContext = struct {
+    pub fn hash(_: @This(), s: []const u8) u64 {
+        return std.hash.Wyhash.hash(0, s);
+    }
+    pub fn eql(_: @This(), a: []const u8, b: []const u8) bool {
+        return strings.eqlLong(a, b, true);
+    }
+};
+
+pub fn StringArrayHashMap(comptime Type: type) type {
+    return std.ArrayHashMap([]const u8, Type, StringArrayHashMapContext, true);
+}
+
+pub fn StringArrayHashMapUnmanaged(comptime Type: type) type {
+    return std.ArrayHashMapUnmanaged([]const u8, Type, StringArrayHashMapContext, true);
+}
+
+pub fn StringHashMap(comptime Type: type) type {
+    return std.HashMap([]const u8, Type, StringHashMapContext, std.hash_map.default_max_load_percentage);
+}
+
+pub fn StringHashMapUnmanaged(comptime Type: type) type {
+    return std.HashMapUnmanaged([]const u8, Type, StringHashMapContext, std.hash_map.default_max_load_percentage);
+}
+
+const CopyFile = @import("./copy_file.zig");
+pub const copyFileRange = CopyFile.copyFileRange;
+pub const copyFile = CopyFile.copyFile;

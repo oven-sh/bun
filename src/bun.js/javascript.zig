@@ -289,6 +289,10 @@ pub export fn Bun__queueTask(global: *JSGlobalObject, task: *JSC.CppTask) void {
     global.bunVM().eventLoop().enqueueTask(Task.init(task));
 }
 
+pub export fn Bun__queueTaskWithTimeout(global: *JSGlobalObject, task: *JSC.CppTask, milliseconds: i32) void {
+    global.bunVM().eventLoop().enqueueTaskWithTimeout(Task.init(task), milliseconds);
+}
+
 pub export fn Bun__reportUnhandledError(globalObject: *JSGlobalObject, value: JSValue) callconv(.C) JSValue {
     var jsc_vm = globalObject.bunVM();
     jsc_vm.onUnhandledError(globalObject, value);
@@ -433,6 +437,8 @@ pub const VirtualMachine = struct {
     modules: ModuleLoader.AsyncModule.Queue = .{},
     aggressive_garbage_collection: GCLevel = GCLevel.none,
 
+    gc_controller: JSC.GarbageCollectionController = .{},
+
     pub const GCLevel = enum(u3) {
         none = 0,
         mild = 1,
@@ -558,7 +564,7 @@ pub const VirtualMachine = struct {
         this.eventLoop().tick();
     }
 
-    pub fn waitForPromise(this: *VirtualMachine, promise: *JSC.JSInternalPromise) void {
+    pub fn waitForPromise(this: *VirtualMachine, promise: anytype) void {
         this.eventLoop().waitForPromise(promise);
     }
 
@@ -762,21 +768,6 @@ pub const VirtualMachine = struct {
 
     pub fn clearRefString(_: *anyopaque, ref_string: *JSC.RefString) void {
         _ = VirtualMachine.vm.ref_strings.remove(ref_string.hash);
-    }
-
-    pub fn getFileBlob(this: *VirtualMachine, pathlike: JSC.Node.PathOrFileDescriptor) ?*JSC.WebCore.Blob.Store {
-        const hash = pathlike.hash();
-        return this.file_blobs.get(hash);
-    }
-
-    pub fn putFileBlob(this: *VirtualMachine, pathlike: JSC.Node.PathOrFileDescriptor, store: *JSC.WebCore.Blob.Store) !void {
-        const hash = pathlike.hash();
-        try this.file_blobs.put(hash, store);
-    }
-
-    pub fn removeFileBlob(this: *VirtualMachine, pathlike: JSC.Node.PathOrFileDescriptor) void {
-        const hash = pathlike.hash();
-        _ = this.file_blobs.remove(hash);
     }
 
     pub fn refCountedResolvedSource(this: *VirtualMachine, code: []const u8, specifier: []const u8, source_url: []const u8, hash_: ?u32) ResolvedSource {
@@ -1333,6 +1324,7 @@ pub const VirtualMachine = struct {
 
         // pending_internal_promise can change if hot module reloading is enabled
         if (this.bun_watcher != null) {
+            this.eventLoop().performGC();
             switch (this.pending_internal_promise.status(this.global.vm())) {
                 JSC.JSPromise.Status.Pending => {
                     while (this.pending_internal_promise.status(this.global.vm()) == .Pending) {
@@ -1346,6 +1338,7 @@ pub const VirtualMachine = struct {
                 else => {},
             }
         } else {
+            this.eventLoop().performGC();
             this.waitForPromise(promise);
         }
 
@@ -1650,7 +1643,9 @@ pub const VirtualMachine = struct {
         if (this.hide_bun_stackframes) {
             var start_index: ?usize = null;
             for (frames) |frame, i| {
-                if (frame.source_url.eqlComptime("bun:wrap")) {
+                if (frame.source_url.eqlComptime("bun:wrap") or
+                    frame.function_name.eqlComptime("::bunternal::"))
+                {
                     start_index = i;
                     break;
                 }
@@ -1661,7 +1656,9 @@ pub const VirtualMachine = struct {
                 var i: usize = k;
                 while (i < frames.len) : (i += 1) {
                     const frame = frames[i];
-                    if (frame.source_url.eqlComptime("bun:wrap")) {
+                    if (frame.source_url.eqlComptime("bun:wrap") or
+                        frame.function_name.eqlComptime("::bunternal::"))
+                    {
                         continue;
                     }
                     frames[j] = frame;

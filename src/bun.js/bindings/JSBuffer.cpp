@@ -1151,12 +1151,17 @@ static inline JSC::EncodedJSValue jsBufferPrototypeFunction_toStringBody(JSC::JS
     case WebCore::BufferEncodingType::ucs2:
     case WebCore::BufferEncodingType::utf16le: {
         UChar* data = nullptr;
-        size_t u16length = length > 1 ? length / 2 : 1;
-        auto str = String::createUninitialized(u16length, data);
-        // always zero out the last byte of the string incase the buffer is not a multiple of 2
-        data[u16length - 1] = 0;
-        memcpy(data, reinterpret_cast<const char*>(castedThis->typedVector() + offset), length);
-        ret = JSC::JSValue::encode(JSC::jsString(vm, WTFMove(str)));
+        size_t u16length = length / 2;
+        if (u16length == 0) {
+            ret = JSC::JSValue::encode(JSC::jsEmptyString(vm));
+        } else {
+            auto str = String::createUninitialized(u16length, data);
+            // always zero out the last byte of the string incase the buffer is not a multiple of 2
+            data[u16length - 1] = 0;
+            memcpy(data, reinterpret_cast<const char*>(castedThis->typedVector() + offset), length);
+            ret = JSC::JSValue::encode(JSC::jsString(vm, WTFMove(str)));
+        }
+
         break;
     }
 

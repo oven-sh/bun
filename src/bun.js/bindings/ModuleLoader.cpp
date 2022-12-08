@@ -475,7 +475,7 @@ static JSValue fetchSourceCode(
     }
 
     auto provider = Zig::SourceProvider::create(res->result.value);
-    return rejectOrResolve(JSC::JSSourceCode::create(vm, JSC::SourceCode(provider)));
+    return rejectOrResolve(JSC::JSSourceCode::create(vm, JSC::SourceCode(WTFMove(provider))));
 }
 
 extern "C" JSC::EncodedJSValue jsFunctionOnLoadObjectResultResolve(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame)

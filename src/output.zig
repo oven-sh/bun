@@ -1,4 +1,5 @@
 const Output = @This();
+const bun = @import("bun");
 const std = @import("std");
 const Environment = @import("./env.zig");
 const string = @import("bun").string;
@@ -93,9 +94,12 @@ pub const Source = struct {
         configureThread();
     }
 
-    fn isForceColor() ?bool {
-        if (std.os.getenvZ("NO_COLOR") != null) return false;
-        const force_color_str = std.os.getenvZ("FORCE_COLOR") orelse return null;
+    pub fn isNoColor() bool {
+        return bun.getenvZ("NO_COLOR") != null;
+    }
+
+    pub fn isForceColor() ?bool {
+        const force_color_str = bun.getenvZ("FORCE_COLOR") orelse return null;
         return force_color_str.len == 0 or
             strings.eqlComptime(force_color_str, "TRUE") or
             strings.eqlComptime(force_color_str, "ON") or
@@ -104,11 +108,11 @@ pub const Source = struct {
             strings.eqlComptime(force_color_str, " ");
     }
 
-    fn isColorTerminal() bool {
+    pub fn isColorTerminal() bool {
         if (isForceColor()) |val| return val;
-        if (std.os.getenvZ("COLOR_TERM")) |color_term| return !strings.eqlComptime(color_term, "0");
+        if (bun.getenvZ("COLORTERM")) |color_term| return !strings.eqlComptime(color_term, "0");
 
-        if (std.os.getenvZ("TERM")) |term| {
+        if (bun.getenvZ("TERM")) |term| {
             if (strings.eqlComptime(term, "dumb")) return false;
 
             return true;
@@ -372,11 +376,11 @@ pub fn scoped(comptime tag: @Type(.EnumLiteral), comptime disabled: bool) _log_f
         pub inline fn log(comptime fmt: string, args: anytype) void {
             if (!evaluated_disable) {
                 evaluated_disable = true;
-                if (std.os.getenv("BUN_DEBUG_ALL") != null or
-                    std.os.getenv("BUN_DEBUG_" ++ @tagName(tag)) != null)
+                if (bun.getenvZ("BUN_DEBUG_ALL") != null or
+                    bun.getenvZ("BUN_DEBUG_" ++ @tagName(tag)) != null)
                 {
                     really_disable = false;
-                } else if (std.os.getenv("BUN_DEBUG_QUIET_LOGS") != null) {
+                } else if (bun.getenvZ("BUN_DEBUG_QUIET_LOGS") != null) {
                     really_disable = true;
                 }
             }

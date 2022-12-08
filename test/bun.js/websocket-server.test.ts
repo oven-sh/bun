@@ -524,6 +524,7 @@ describe("websocket server", () => {
 
   it("publishText()", async () => {
     await new Promise<void>((resolve, reject) => {
+      var websocket;
       var server = serve({
         port: getPort(),
         websocket: {
@@ -531,6 +532,7 @@ describe("websocket server", () => {
             // we don't care about the data
             // we just want to make sure the DOMJIT call doesn't crash
             for (let i = 0; i < 40_000; i++) ws.publishText("hello", "world");
+            websocket.close();
             resolve();
           },
           message(ws, msg) {},
@@ -543,15 +545,15 @@ describe("websocket server", () => {
         },
       });
 
-      const websocket = new WebSocket(`ws://${server.hostname}:${server.port}`);
-      websocket.onmessage = () => {};
-      websocket.onerror = () => {};
+      websocket = new WebSocket(`ws://${server.hostname}:${server.port}`);
     });
   });
 
   it("publishBinary()", async () => {
     const bytes = Buffer.from("hello");
+
     await new Promise<void>((resolve, reject) => {
+      var websocket;
       var server = serve({
         port: getPort(),
         websocket: {
@@ -560,6 +562,7 @@ describe("websocket server", () => {
             // we just want to make sure the DOMJIT call doesn't crash
             for (let i = 0; i < 40_000; i++) ws.publishBinary("hello", bytes);
             resolve();
+            websocket.close();
           },
           message(ws, msg) {},
         },
@@ -571,14 +574,13 @@ describe("websocket server", () => {
         },
       });
 
-      const websocket = new WebSocket(`ws://${server.hostname}:${server.port}`);
-      websocket.onmessage = () => {};
-      websocket.onerror = () => {};
+      websocket = new WebSocket(`ws://${server.hostname}:${server.port}`);
     });
   });
 
   it("sendText()", async () => {
     await new Promise<void>((resolve, reject) => {
+      var websocket;
       var server = serve({
         port: getPort(),
         websocket: {
@@ -587,6 +589,7 @@ describe("websocket server", () => {
             // we just want to make sure the DOMJIT call doesn't crash
             for (let i = 0; i < 40_000; i++) ws.sendText("hello world", true);
             resolve();
+            websocket.close();
           },
           message(ws, msg) {},
         },
@@ -597,16 +600,14 @@ describe("websocket server", () => {
           return new Response("noooooo hello world");
         },
       });
-
-      const websocket = new WebSocket(`ws://${server.hostname}:${server.port}`);
-      websocket.onmessage = () => {};
-      websocket.onerror = () => {};
+      websocket = new WebSocket(`ws://${server.hostname}:${server.port}`);
     });
   });
 
   it("sendBinary()", async () => {
     const bytes = Buffer.from("hello");
     await new Promise<void>((resolve, reject) => {
+      var websocket;
       var server = serve({
         port: getPort(),
         websocket: {
@@ -614,6 +615,7 @@ describe("websocket server", () => {
             // we don't care about the data
             // we just want to make sure the DOMJIT call doesn't crash
             for (let i = 0; i < 40_000; i++) ws.sendBinary(bytes, true);
+            websocket.close();
             resolve();
           },
           message(ws, msg) {},
@@ -626,9 +628,7 @@ describe("websocket server", () => {
         },
       });
 
-      const websocket = new WebSocket(`ws://${server.hostname}:${server.port}`);
-      websocket.onmessage = () => {};
-      websocket.onerror = () => {};
+      websocket = new WebSocket(`ws://${server.hostname}:${server.port}`);
     });
   });
 

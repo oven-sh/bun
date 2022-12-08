@@ -254,7 +254,7 @@ pub const Arguments = struct {
     }
 
     fn getHomeConfigPath(buf: *[bun.MAX_PATH_BYTES]u8) ?[:0]const u8 {
-        if (std.os.getenvZ("XDG_CONFIG_HOME") orelse std.os.getenvZ("HOME")) |data_dir| {
+        if (bun.getenvZ("XDG_CONFIG_HOME") orelse bun.getenvZ("HOME")) |data_dir| {
             var paths = [_]string{".bunfig.toml"};
             var outbuf = resolve_path.joinAbsStringBuf(data_dir, buf, &paths, .auto);
             buf[outbuf.len] = 0;
@@ -819,7 +819,7 @@ pub const Command = struct {
         // technical debt
         macros: ?MacroMap = null,
         editor: string = "",
-        package_bundle_map: std.StringArrayHashMapUnmanaged(options.BundlePackage) = std.StringArrayHashMapUnmanaged(options.BundlePackage){},
+        package_bundle_map: bun.StringArrayHashMapUnmanaged(options.BundlePackage) = bun.StringArrayHashMapUnmanaged(options.BundlePackage){},
     };
 
     pub const Context = struct {

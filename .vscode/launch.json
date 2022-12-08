@@ -9,8 +9,7 @@
       "args": ["wiptest", "${file}"],
       "cwd": "${workspaceFolder}/test/bun.js",
       "env": {
-        "FORCE_COLOR": "1",
-        "BUN_GARBAGE_COLLECTOR_LEVEL": "2"
+        "FORCE_COLOR": "1"
       },
       "console": "internalConsole"
     },

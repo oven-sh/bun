@@ -167,6 +167,7 @@ pub fn stderr(rare: *RareData) *Blob.Store {
                 },
             },
         };
+
         rare.stderr_store = store;
         break :brk store;
     };

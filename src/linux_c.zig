@@ -1,5 +1,6 @@
 const std = @import("std");
 const sysResource = @cImport(@cInclude("sys/resource.h"));
+const bun = @import("bun");
 pub const SystemErrno = enum(u8) {
     SUCCESS = 0,
     EPERM = 1,
@@ -456,11 +457,21 @@ pub const POSIX_SPAWN_SETSIGMASK = @as(c_int, 0x08);
 pub const POSIX_SPAWN_SETSCHEDPARAM = @as(c_int, 0x10);
 pub const POSIX_SPAWN_SETSCHEDULER = @as(c_int, 0x20);
 
-pub extern "c" fn posix_spawn_file_actions_addfchdir_np(actions: *posix_spawn_file_actions_t, filedes: fd_t) c_int;
+const posix_spawn_file_actions_addfchdir_np_type = fn (actions: *posix_spawn_file_actions_t, filedes: fd_t) c_int;
+const posix_spawn_file_actions_addchdir_np_type = fn (actions: *posix_spawn_file_actions_t, path: [*:0]const u8) c_int;
 
-// not available in linux
-// pub extern "c" fn posix_spawn_file_actions_addinherit_np(actions: *posix_spawn_file_actions_t, filedes: fd_t) c_int;
+/// When not available, these functions will return 0.
+pub fn posix_spawn_file_actions_addfchdir_np(actions: *posix_spawn_file_actions_t, filedes: std.os.fd_t) c_int {
+    var function = bun.C.dlsym(posix_spawn_file_actions_addfchdir_np_type, "posix_spawn_file_actions_addfchdir_np") orelse
+        return 0;
+    return function(actions, filedes);
+}
 
-pub extern "c" fn posix_spawn_file_actions_addchdir_np(actions: *posix_spawn_file_actions_t, path: [*:0]const u8) c_int;
+/// When not available, these functions will return 0.
+pub fn posix_spawn_file_actions_addchdir_np(actions: *posix_spawn_file_actions_t, path: [*:0]const u8) c_int {
+    var function = bun.C.dlsym(posix_spawn_file_actions_addchdir_np_type, "posix_spawn_file_actions_addchdir_np") orelse
+        return 0;
+    return function(actions, path);
+}
 
 pub extern fn vmsplice(fd: c_int, iovec: [*]const std.os.iovec, iovec_count: usize, flags: u32) isize;

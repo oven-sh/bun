@@ -26,9 +26,9 @@ jobs:
           node-version: ${{ matrix.node }}
 
       - name: Install bun
-        uses: xhyrom/setup-bun@v0.1.2
+        uses: xhyrom/setup-bun@v0.1.8
         with:
-          bun-version: latest
+          bun-version: canary
 
       - name: Install global dependencies
         run: bun install

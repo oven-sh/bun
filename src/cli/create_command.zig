@@ -493,7 +493,7 @@ pub const CreateCommand = struct {
                 var archive_context = Archive.Context{
                     .pluckers = pluckers[0..@intCast(usize, @boolToInt(!create_options.skip_package_json))],
                     .all_files = undefined,
-                    .overwrite_list = std.StringArrayHashMap(void).init(ctx.allocator),
+                    .overwrite_list = bun.StringArrayHashMap(void).init(ctx.allocator),
                 };
 
                 if (!create_options.overwrite) {
@@ -619,15 +619,9 @@ pub const CreateCommand = struct {
                             const stat = infile.stat() catch continue;
                             _ = C.fchmod(outfile.handle, stat.mode);
 
-                            CopyFile.copy(infile.handle, outfile.handle) catch {
-                                entry.dir.dir.copyFile(entry.basename, destination_dir_, entry.path, .{}) catch |err| {
-                                    node_.end();
-
-                                    progress_.refresh();
-
-                                    Output.prettyErrorln("<r><red>{s}<r>: copying file {s}", .{ @errorName(err), entry.path });
-                                    Global.exit(1);
-                                };
+                            CopyFile.copyFile(infile.handle, outfile.handle) catch |err| {
+                                Output.prettyErrorln("<r><red>{s}<r>: copying file {s}", .{ @errorName(err), entry.path });
+                                Global.exit(1);
                             };
                         }
                     }

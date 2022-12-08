@@ -1,6 +1,7 @@
 const EventEmitter = import.meta.require("node:events");
 const {
   Readable: { fromWeb: ReadableFromWeb },
+  NativeWritable,
 } = import.meta.require("node:stream");
 const {
   constants: { signals },
@@ -9,7 +10,23 @@ const {
 const { ArrayBuffer } = import.meta.primordials;
 
 const MAX_BUFFER = 1024 * 1024;
-const debug = process.env.DEBUG ? console.log : () => {};
+
+// General debug vs tracking stdio streams. Useful for stream debugging in particular
+const __DEBUG__ = process.env.DEBUG || false;
+
+// You can use this env var along with `process.env.DEBUG_TRACK_EE` to debug stdio streams
+// Just set `DEBUG_TRACK_EE=PARENT_STDOUT-0, PARENT_STDOUT-1`, etc. and `DEBUG_STDIO=1` and you will be able to track particular stdio streams
+// TODO: Add ability to track a range of IDs rather than just enumerated ones
+const __TRACK_STDIO__ = process.env.DEBUG_STDIO;
+const debug = __DEBUG__ ? console.log : () => {};
+
+if (__TRACK_STDIO__) {
+  debug("child_process: debug mode on");
+  globalThis.__lastId = null;
+  globalThis.__getId = () => {
+    return globalThis.__lastId !== null ? globalThis.__lastId++ : 0;
+  };
+}
 
 // Sections:
 // 1. Exported child_process functions
@@ -272,7 +289,6 @@ export function execFile(file, args, options, callback) {
     }
 
     if (args?.length) cmd += ` ${ArrayPrototypeJoin.call(args, " ")}`;
-
     if (!ex) {
       ex = genericNodeError(`Command failed: ${cmd}\n${stderr}`, {
         // code: code < 0 ? getSystemErrorName(code) : code, // TODO: Add getSystemErrorName
@@ -852,7 +868,6 @@ function checkExecSyncError(ret, args, cmd) {
 //------------------------------------------------------------------------------
 export class ChildProcess extends EventEmitter {
   #handle;
-  #handleExited;
   #exited = false;
   #closesNeeded = 1;
   #closesGot = 0;
@@ -874,13 +889,10 @@ export class ChildProcess extends EventEmitter {
   //   this.#handle[owner_symbol] = this;
   // }
 
-  async #handleOnExit(exitCode, signalCode) {
+  #handleOnExit(exitCode, signalCode, err) {
     if (this.#exited) return;
-    if (signalCode) {
-      this.signalCode = signalCode;
-    } else {
-      this.exitCode = this.#handle.exitCode;
-    }
+    this.exitCode = this.#handle.exitCode;
+    this.signalCode = exitCode > 0 ? signalCode : null;
 
     if (this.#stdin) {
       this.#stdin.destroy();
@@ -891,8 +903,6 @@ export class ChildProcess extends EventEmitter {
     }
 
     if (exitCode < 0) {
-      const syscall = this.spawnfile ? "spawn " + this.spawnfile : "spawn";
-
       const err = new SystemError(
         `Spawned process exited with error code: ${exitCode}`,
         undefined,
@@ -906,12 +916,6 @@ export class ChildProcess extends EventEmitter {
       err.spawnargs = ArrayPrototypeSlice.call(this.spawnargs, 1);
       this.emit("error", err);
     } else {
-      const maybeExited = Bun.peek(this.#handleExited);
-      if (maybeExited === this.#handleExited) {
-        this.exitCode = await this.#handleExited;
-      } else {
-        this.exitCode = maybeExited;
-      }
       this.emit("exit", this.exitCode, this.signalCode);
     }
 
@@ -925,17 +929,29 @@ export class ChildProcess extends EventEmitter {
 
     this.#maybeClose();
     this.#exited = true;
+    this.#stdioOptions = ["destroyed", "destroyed", "destroyed"];
   }
 
   #getBunSpawnIo(i, encoding) {
+    if (__DEBUG__ && !this.#handle) {
+      if (this.#handle === null) {
+        debug(
+          "ChildProcess: getBunSpawnIo: this.#handle is null. This means the subprocess already exited",
+        );
+      } else {
+        debug("ChildProcess: getBunSpawnIo: this.#handle is undefined");
+      }
+    }
     const io = this.#stdioOptions[i];
     switch (i) {
       case 0: {
         switch (io) {
           case "pipe":
-            return new WrappedFileSink(this.#handle.stdin);
+            return new NativeWritable(this.#handle.stdin);
           case "inherit":
             return process.stdin || null;
+          case "destroyed":
+            return new ShimmedStdin();
           default:
             return null;
         }
@@ -944,17 +960,24 @@ export class ChildProcess extends EventEmitter {
       case 1: {
         switch (io) {
           case "pipe":
-            return ReadableFromWeb(this.#handle[fdToStdioName(i)], {
-              encoding,
-            });
-            break;
+            return ReadableFromWeb(
+              this.#handle[fdToStdioName(i)],
+              __TRACK_STDIO__
+                ? {
+                    encoding,
+                    __id: `PARENT_${fdToStdioName(
+                      i,
+                    ).toUpperCase()}-${globalThis.__getId()}`,
+                  }
+                : { encoding },
+            );
           case "inherit":
             return process[fdToStdioName(i)] || null;
-            break;
+          case "destroyed":
+            return new ShimmedStdioOutStream();
           default:
             return null;
         }
-        break;
       }
     }
   }
@@ -1019,6 +1042,10 @@ export class ChildProcess extends EventEmitter {
     // }
 
     validateString(options.file, "options.file");
+    // NOTE: This is confusing... So node allows you to pass a file name
+    // But also allows you to pass a command in the args and it should execute
+    // To add another layer of confusion, they also give the option to pass an explicit "argv0"
+    // which overrides the actual command of the spawned process...
     var file;
     file = this.spawnfile = options.file;
 
@@ -1034,30 +1061,39 @@ export class ChildProcess extends EventEmitter {
     const bunStdio = getBunStdioFromOptions(stdio);
 
     var env = options.envPairs || undefined;
-    if (env === process.env) env = undefined;
 
+    this.#encoding = options.encoding || undefined;
+    this.#stdioOptions = bunStdio;
+    var hasEmittedSpawn = false;
     this.#handle = Bun.spawn({
       cmd: spawnargs,
       stdin: bunStdio[0],
       stdout: bunStdio[1],
       stderr: bunStdio[2],
       cwd: options.cwd || undefined,
-      env,
-      onExit: this.#handleOnExit.bind(this),
+      env: env || process.env,
+      onExit: (handle, exitCode, signalCode, err) => {
+        this.#handle = handle;
+        this.pid = this.#handle.pid;
+
+        if (!hasEmittedSpawn) {
+          hasEmittedSpawn = true;
+          process.nextTick(onSpawnNT, this);
+          process.nextTick((exitCode, signalCode, err) =>
+            this.#handleOnExit(exitCode, signalCode, err),
+          );
+        } else {
+          this.#handleOnExit(exitCode, signalCode, err);
+        }
+      },
       lazy: true,
     });
-    this.#handleExited = this.#handle.exited;
-    this.#encoding = options.encoding || undefined;
-    this.#stdioOptions = bunStdio;
     this.pid = this.#handle.pid;
 
-    process.nextTick(onSpawnNT, this);
-
-    // If no `stdio` option was given - use default
-    // let stdio = options.stdio || "pipe"; // TODO: reset default
-    // let stdio = options.stdio || ["pipe", "pipe", "pipe"];
-
-    // stdio = getValidStdio(stdio, false);
+    if (!hasEmittedSpawn) {
+      process.nextTick(onSpawnNT, this);
+      hasEmittedSpawn = true;
+    }
 
     // const ipc = stdio.ipc;
     // const ipcFd = stdio.ipcFd;
@@ -1091,30 +1127,6 @@ export class ChildProcess extends EventEmitter {
     //       i > 0
     //     );
 
-    //     if (i > 0 && this.pid !== 0) {
-    //       this._closesNeeded++;
-    //       stream.socket.on("close", () => {
-    //         maybeClose(this);
-    //       });
-    //     }
-    //   }
-    // }
-
-    // this.stdin =
-    //   stdio.length >= 1 && stdio[0].socket !== undefined ? stdio[0].socket : null;
-    // this.stdout =
-    //   stdio.length >= 2 && stdio[1].socket !== undefined ? stdio[1].socket : null;
-    // this.stderr =
-    //   stdio.length >= 3 && stdio[2].socket !== undefined ? stdio[2].socket : null;
-
-    // this.stdio = [];
-
-    // for (i = 0; i < stdio.length; i++)
-    //   ArrayPrototypePush.call(
-    //     this.stdio,
-    //     stdio[i].socket === undefined ? null : stdio[i].socket
-    //   );
-
     // // Add .send() method and start listening for IPC data
     // if (ipc !== undefined) setupChannel(this, ipc, serialization);
   }
@@ -1129,18 +1141,18 @@ export class ChildProcess extends EventEmitter {
       this.#handle.kill(signal);
     }
 
-    this.emit("exit", null, signal);
     this.#maybeClose();
 
-    // TODO: Make this actually ensure the process has exited before returning
-    // await this.#handle.exited()
-    // return this.#handle.killed;
-    return this.#handle?.killed ?? true;
+    // TODO: Figure out how to make this conform to the Node spec...
+    // The problem is that the handle does not report killed until the process exits
+    // So we can't return whether or not the process was killed because Bun.spawn seems to handle this async instead of sync like Node does
+    // return this.#handle?.killed ?? true;
+    return true;
   }
 
   #maybeClose() {
+    debug("Attempting to maybe close...");
     this.#closesGot++;
-
     if (this.#closesGot === this.#closesNeeded) {
       this.emit("close", this.exitCode, this.signalCode);
     }
@@ -1248,7 +1260,6 @@ function normalizeStdio(stdio) {
 
 function flushStdio(subprocess) {
   const stdio = subprocess.stdio;
-
   if (stdio == null) return;
 
   for (let i = 0; i < stdio.length; i++) {
@@ -1278,26 +1289,20 @@ function abortChildProcess(child, killSignal) {
   }
 }
 
-class WrappedFileSink extends EventEmitter {
-  #fileSink;
-
-  constructor(fileSink) {
+class ShimmedStdin extends EventEmitter {
+  constructor() {
     super();
-    this.#fileSink = fileSink;
   }
+  write() {
+    return false;
+  }
+  destroy() {}
+  end() {}
+  pipe() {}
+}
 
-  write(data) {
-    this.#fileSink.write(data);
-    this.#fileSink.flush(true);
-  }
-
-  destroy() {
-    this.#fileSink.end();
-  }
-
-  end() {
-    this.#fileSink.end();
-  }
+class ShimmedStdioOutStream extends EventEmitter {
+  pipe() {}
 }
 
 //------------------------------------------------------------------------------
@@ -1502,6 +1507,9 @@ var Uint8Array = globalThis.Uint8Array;
 var String = globalThis.String;
 var Object = globalThis.Object;
 var Buffer = globalThis.Buffer;
+var Promise = globalThis.Promise;
+
+var PromiseAll = Promise.all;
 
 var ObjectPrototypeHasOwnProperty = Object.prototype.hasOwnProperty;
 var ObjectCreate = Object.create;
@@ -1759,7 +1767,6 @@ function ERR_INVALID_ARG_VALUE(name, value, reason) {
   );
 }
 
-// TODO: Add actual proper error implementation here
 class SystemError extends Error {
   path;
   syscall;

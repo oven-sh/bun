@@ -54,7 +54,7 @@ pub fn init(
         .routes = Routes{
             .config = config,
             .allocator = allocator,
-            .static = std.StringHashMap(*Route).init(allocator),
+            .static = bun.StringHashMap(*Route).init(allocator),
         },
         .fs = fs,
         .allocator = allocator,
@@ -108,7 +108,7 @@ pub const Routes = struct {
     /// `"dashboard"`
     /// `"profiles"`
     /// this is a fast path?
-    static: std.StringHashMap(*Route),
+    static: bun.StringHashMap(*Route),
 
     /// Corresponds to "index.js" on the filesystem
     index: ?*Route = null,
@@ -237,7 +237,7 @@ const RouteLoader = struct {
     dedupe_dynamic: std.AutoArrayHashMap(u32, string),
     log: *Logger.Log,
     index: ?*Route = null,
-    static_list: std.StringHashMap(*Route),
+    static_list: bun.StringHashMap(*Route),
     all_routes: std.ArrayListUnmanaged(*Route),
 
     pub fn appendRoute(this: *RouteLoader, route: Route) void {
@@ -322,10 +322,18 @@ const RouteLoader = struct {
         }
     }
 
-    pub fn loadAll(allocator: std.mem.Allocator, config: Options.RouteConfig, log: *Logger.Log, comptime ResolverType: type, resolver: *ResolverType, root_dir_info: *const DirInfo) Routes {
+    pub fn loadAll(
+        allocator: std.mem.Allocator,
+        config: Options.RouteConfig,
+        log: *Logger.Log,
+        comptime ResolverType: type,
+        resolver: *ResolverType,
+        root_dir_info: *const DirInfo,
+        base_dir: []const u8,
+    ) Routes {
         var route_dirname_len: u16 = 0;
 
-        const relative_dir = FileSystem.instance.relative(resolver.fs.top_level_dir, config.dir);
+        const relative_dir = FileSystem.instance.relative(base_dir, config.dir);
         if (!strings.hasPrefixComptime(relative_dir, "..")) {
             route_dirname_len = @truncate(u16, relative_dir.len + @as(usize, @boolToInt(config.dir[config.dir.len - 1] != std.fs.path.sep)));
         }
@@ -335,13 +343,13 @@ const RouteLoader = struct {
             .log = log,
             .fs = resolver.fs,
             .config = config,
-            .static_list = std.StringHashMap(*Route).init(allocator),
+            .static_list = bun.StringHashMap(*Route).init(allocator),
             .dedupe_dynamic = std.AutoArrayHashMap(u32, string).init(allocator),
             .all_routes = .{},
             .route_dirname_len = route_dirname_len,
         };
         defer this.dedupe_dynamic.deinit();
-        this.load(ResolverType, resolver, root_dir_info);
+        this.load(ResolverType, resolver, root_dir_info, base_dir);
         if (this.all_routes.items.len == 0) return Routes{
             .static = this.static_list,
             .config = config,
@@ -406,7 +414,13 @@ const RouteLoader = struct {
         };
     }
 
-    pub fn load(this: *RouteLoader, comptime ResolverType: type, resolver: *ResolverType, root_dir_info: *const DirInfo) void {
+    pub fn load(
+        this: *RouteLoader,
+        comptime ResolverType: type,
+        resolver: *ResolverType,
+        root_dir_info: *const DirInfo,
+        base_dir: []const u8,
+    ) void {
         var fs = this.fs;
 
         if (root_dir_info.getEntriesConst()) |entries| {
@@ -433,6 +447,7 @@ const RouteLoader = struct {
                                 ResolverType,
                                 resolver,
                                 dir_info,
+                                base_dir,
                             );
                         }
                     },
@@ -447,10 +462,10 @@ const RouteLoader = struct {
                                 // length is extended by one
                                 // entry.dir is a string with a trailing slash
                                 if (comptime Environment.isDebug) {
-                                    std.debug.assert(entry.dir.ptr[this.config.dir.len - 1] == '/');
+                                    std.debug.assert(entry.dir.ptr[base_dir.len - 1] == '/');
                                 }
 
-                                const public_dir = entry.dir.ptr[this.config.dir.len - 1 .. entry.dir.len];
+                                const public_dir = entry.dir.ptr[base_dir.len - 1 .. entry.dir.len];
 
                                 if (Route.parse(
                                     entry.base(),
@@ -481,9 +496,10 @@ pub fn loadRoutes(
     root_dir_info: *const DirInfo,
     comptime ResolverType: type,
     resolver: *ResolverType,
+    base_dir: []const u8,
 ) anyerror!void {
     if (this.loaded_routes) return;
-    this.routes = RouteLoader.loadAll(this.allocator, this.config, log, ResolverType, resolver, root_dir_info);
+    this.routes = RouteLoader.loadAll(this.allocator, this.config, log, ResolverType, resolver, root_dir_info, base_dir);
     this.loaded_routes = true;
 }
 
@@ -956,7 +972,7 @@ pub const Test = struct {
             .log = &logger,
             .routes = router.config,
             .entry_points = &.{},
-            .out_extensions = std.StringHashMap(string).init(default_allocator),
+            .out_extensions = bun.StringHashMap(string).init(default_allocator),
             .transform_options = std.mem.zeroes(Api.TransformOptions),
             .external = Options.ExternalModules.init(
                 default_allocator,
@@ -1013,7 +1029,7 @@ pub const Test = struct {
             .log = &logger,
             .routes = router.config,
             .entry_points = &.{},
-            .out_extensions = std.StringHashMap(string).init(default_allocator),
+            .out_extensions = bun.StringHashMap(string).init(default_allocator),
             .transform_options = std.mem.zeroes(Api.TransformOptions),
             .external = Options.ExternalModules.init(
                 default_allocator,
@@ -1028,7 +1044,13 @@ pub const Test = struct {
         var resolver = Resolver.init1(default_allocator, &logger, &FileSystem.instance, opts);
 
         var root_dir = (try resolver.readDirInfo(pages_dir)).?;
-        try router.loadRoutes(&logger, root_dir, Resolver, &resolver);
+        try router.loadRoutes(
+            &logger,
+            root_dir,
+            Resolver,
+            &resolver,
+            FileSystem.instance.top_level_dir,
+        );
         var entry_points = try router.getEntryPoints();
 
         try expectEqual(std.meta.fieldNames(@TypeOf(data)).len, entry_points.len);

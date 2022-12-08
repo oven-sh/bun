@@ -519,4 +519,22 @@ it("latin1 supplement chars", () => {
       greeting: "¿Qué sucedió?",
     },
   ]);
+
+  // test that it doesn't break when we do a structure transition
+  db.query("SELECT * FROM foo").all()[0].booop = true;
+  db.query("SELECT * FROM foo").all()[0].beep = true;
+  expect(db.query("SELECT * FROM foo").all()).toEqual([
+    {
+      id: 1,
+      greeting: "Welcome to bun!",
+    },
+    {
+      id: 2,
+      greeting: "Español",
+    },
+    {
+      id: 3,
+      greeting: "¿Qué sucedió?",
+    },
+  ]);
 });

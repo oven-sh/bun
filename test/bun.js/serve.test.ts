@@ -1,6 +1,6 @@
 import { file, gc, serve } from "bun";
 import { afterEach, describe, it, expect } from "bun:test";
-import { readFileSync } from "fs";
+import { readFile, readFileSync, writeFileSync } from "fs";
 import { resolve } from "path";
 
 afterEach(() => Bun.gc(true));
@@ -675,6 +675,197 @@ describe("status code text", () => {
       expect(response.status).toBe(parseInt(code));
       expect(response.statusText).toBe(fixture[code]);
       server.stop();
+    });
+  }
+});
+
+it("should support multiple Set-Cookie headers", async () => {
+  const server = serve({
+    port: port++,
+    fetch(req) {
+      return new Response("hello", {
+        headers: [
+          ["Another-Header", "1"],
+          ["Set-Cookie", "foo=bar"],
+          ["Set-Cookie", "baz=qux"],
+        ],
+      });
+    },
+  });
+
+  const response = await fetch(`http://${server.hostname}:${server.port}`);
+  server.stop();
+
+  expect(response.headers.getAll("Set-Cookie")).toEqual(["foo=bar", "baz=qux"]);
+  expect(response.headers.get("Set-Cookie")).toEqual("foo=bar, baz=qux");
+
+  const cloned = response.clone().headers;
+  expect(response.headers.getAll("Set-Cookie")).toEqual(["foo=bar", "baz=qux"]);
+
+  response.headers.delete("Set-Cookie");
+  expect(response.headers.getAll("Set-Cookie")).toEqual([]);
+  response.headers.delete("Set-Cookie");
+  expect(cloned.getAll("Set-Cookie")).toEqual(["foo=bar", "baz=qux"]);
+  expect(new Headers(cloned).getAll("Set-Cookie")).toEqual([
+    "foo=bar",
+    "baz=qux",
+  ]);
+});
+
+describe("should support Content-Range with Bun.file()", () => {
+  var server;
+  var full;
+
+  const fixture = resolve(import.meta.dir + "/fetch.js.txt") + ".big";
+
+  // this must be a big file so we can test potentially multiple chunks
+  // more than 65 KB
+  function getFull() {
+    if (full) return full;
+    console.log("here");
+    const fixture = resolve(import.meta.dir + "/fetch.js.txt");
+    const chunk = readFileSync(fixture);
+    var whole = new Uint8Array(chunk.byteLength * 128);
+    for (var i = 0; i < 128; i++) {
+      whole.set(chunk, i * chunk.byteLength);
+    }
+    writeFileSync(fixture + ".big", whole);
+    return (full = whole);
+  }
+
+  function getServer() {
+    server ||= serve({
+      port: port++,
+      fetch(req) {
+        const { searchParams } = new URL(req.url);
+        const start = Number(searchParams.get("start"));
+        const end = Number(searchParams.get("end"));
+        return new Response(Bun.file(fixture).slice(start, end));
+      },
+    });
+  }
+
+  describe("good range", () => {
+    getFull();
+
+    const good = [
+      [0, 1],
+      [1, 2],
+      [0, 10],
+      [10, 20],
+      [0, Infinity],
+      [NaN, Infinity],
+      [full.byteLength - 10, full.byteLength],
+      [full.byteLength - 10, full.byteLength - 1],
+      [full.byteLength - 1, full.byteLength],
+      [0, full.byteLength],
+    ] as const;
+
+    for (let [start, end] of good) {
+      const last = start === good.at(-1)![0] && end === good.at(-1)![1];
+
+      it(`range: ${start} - ${end}`, async () => {
+        try {
+          getFull();
+          getServer();
+
+          await 1;
+          const response = await fetch(
+            `http://${server.hostname}:${server.port}/?start=${start}&end=${end}`,
+            {},
+            { verbose: true },
+          );
+          expect(await response.arrayBuffer()).toEqual(
+            full.buffer.slice(start, end),
+          );
+          expect(response.status).toBe(
+            end - start === full.byteLength ? 200 : 206,
+          );
+        } catch (e) {
+          throw e;
+        } finally {
+          if (last) {
+            server.stop();
+            server = null;
+          }
+        }
+      });
+    }
+  });
+
+  const emptyRanges = [
+    [0, 0],
+    [1, 1],
+    [10, 10],
+    [-Infinity, -Infinity],
+    [Infinity, Infinity],
+    [NaN, NaN],
+    [(full.byteLength / 2) | 0, (full.byteLength / 2) | 0],
+    [full.byteLength, full.byteLength],
+    [full.byteLength - 1, full.byteLength - 1],
+  ];
+
+  for (let [start, end] of emptyRanges) {
+    it(`empty range: ${start} - ${end}`, async () => {
+      const last =
+        start === emptyRanges.at(-1)[0] && end === emptyRanges.at(-1)[1];
+
+      try {
+        getFull();
+        getServer();
+
+        const response = await fetch(
+          `http://${server.hostname}:${server.port}/?start=${start}&end=${end}`,
+        );
+        const out = await response.arrayBuffer();
+        expect(out).toEqual(new ArrayBuffer(0));
+        expect(response.status).toBe(206);
+      } catch (e) {
+        throw e;
+      } finally {
+        if (last) {
+          server.stop();
+          server = null;
+        }
+      }
+    });
+  }
+
+  getFull();
+
+  const badRanges = [
+    [10, NaN],
+    [10, -Infinity],
+    [-(full.byteLength / 2) | 0, Infinity],
+    [-(full.byteLength / 2) | 0, -Infinity],
+    [full.byteLength + 100, full.byteLength],
+    [full.byteLength + 100, full.byteLength + 100],
+    [full.byteLength + 100, full.byteLength + 1],
+    [full.byteLength + 100, -full.byteLength],
+  ];
+
+  for (let [start, end] of badRanges) {
+    it(`bad range: ${start} - ${end}`, async () => {
+      const last = start === badRanges.at(-1)[0] && end === badRanges.at(-1)[1];
+
+      try {
+        getFull();
+        getServer();
+
+        const response = await fetch(
+          `http://${server.hostname}:${server.port}/?start=${start}&end=${end}`,
+        );
+        const out = await response.arrayBuffer();
+        expect(out).toEqual(new ArrayBuffer(0));
+        expect(response.status).toBe(206);
+      } catch (e) {
+        throw e;
+      } finally {
+        if (last) {
+          server.stop();
+          server = null;
+        }
+      }
     });
   }
 });

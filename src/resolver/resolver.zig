@@ -31,7 +31,7 @@ const Wyhash = std.hash.Wyhash;
 const ResolvePath = @import("./resolve_path.zig");
 const NodeFallbackModules = @import("../node_fallbacks.zig");
 const Mutex = @import("../lock.zig").Lock;
-const StringBoolMap = std.StringHashMap(bool);
+const StringBoolMap = bun.StringHashMap(bool);
 const FileDescriptorType = bun.FileDescriptor;
 
 const allocators = @import("../allocators.zig");
@@ -443,9 +443,9 @@ pub const Resolver = struct {
 
     // These are sets that represent various conditions for the "exports" field
     // in package.json.
-    // esm_conditions_default: std.StringHashMap(bool),
-    // esm_conditions_import: std.StringHashMap(bool),
-    // esm_conditions_require: std.StringHashMap(bool),
+    // esm_conditions_default: bun.StringHashMap(bool),
+    // esm_conditions_import: bun.StringHashMap(bool),
+    // esm_conditions_require: bun.StringHashMap(bool),
 
     // A special filtered import order for CSS "@import" imports.
     //
@@ -2106,9 +2106,9 @@ pub const Resolver = struct {
                 file,
                 dirname_fd,
                 package_id,
-                true,
+                .ignore_scripts,
                 if (allow_dependencies) .local else .none,
-                false,
+                .generate_hash,
             ) orelse return null;
         } else {
             pkg = PackageJSON.parse(
@@ -2116,9 +2116,9 @@ pub const Resolver = struct {
                 file,
                 dirname_fd,
                 package_id,
-                true,
+                .include_scripts,
                 if (allow_dependencies) .local else .none,
-                true,
+                .generate_hash,
             ) orelse return null;
         }
 

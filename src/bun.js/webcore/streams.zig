@@ -257,7 +257,7 @@ pub const ReadableStream = struct {
         };
         switch (store.data) {
             .bytes => {
-                var reader = bun.default_allocator.create(ByteBlobLoader.Source) catch unreachable;
+                var reader = globalThis.allocator().create(ByteBlobLoader.Source) catch unreachable;
                 reader.* = .{
                     .globalThis = globalThis,
                     .context = undefined,
@@ -266,7 +266,7 @@ pub const ReadableStream = struct {
                 return reader.toJS(globalThis);
             },
             .file => {
-                var reader = bun.default_allocator.create(FileReader.Source) catch unreachable;
+                var reader = globalThis.allocator().create(FileReader.Source) catch unreachable;
                 reader.* = .{
                     .globalThis = globalThis,
                     .context = .{
@@ -287,7 +287,7 @@ pub const ReadableStream = struct {
         buffered_data: bun.ByteList,
     ) JSC.JSValue {
         JSC.markBinding(@src());
-        var reader = bun.default_allocator.create(FileReader.Source) catch unreachable;
+        var reader = globalThis.allocator().create(FileReader.Source) catch unreachable;
         reader.* = .{
             .globalThis = globalThis,
             .context = .{
@@ -1196,11 +1196,6 @@ pub const FileSink = struct {
     }
 
     pub fn start(this: *FileSink, stream_start: StreamStart) JSC.Node.Maybe(void) {
-        if (this.fd != bun.invalid_fd) {
-            _ = JSC.Node.Syscall.close(this.fd);
-            this.fd = bun.invalid_fd;
-        }
-
         this.done = false;
         this.written = 0;
         this.auto_close = false;
@@ -3937,7 +3932,15 @@ pub const File = struct {
             },
         };
 
-        if (!auto_close) {
+        if ((file.is_atty orelse false) or (fd < 3 and std.os.isatty(fd))) {
+            var termios = std.mem.zeroes(std.os.termios);
+            _ = std.c.tcgetattr(fd, &termios);
+            bun.C.cfmakeraw(&termios);
+            file.is_atty = true;
+        }
+
+        if (!auto_close and !(file.is_atty orelse false)) {
+
             // ensure we have non-blocking IO set
             switch (Syscall.fcntl(fd, std.os.F.GETFL, 0)) {
                 .err => return .{ .err = Syscall.Error.fromCode(std.os.E.BADF, .fcntl) },
@@ -4400,12 +4403,14 @@ pub const FileReader = struct {
                 .blob => |blob| {
                     defer blob.deref();
                     var readable_file: File = .{ .loop = this.globalThis().bunVM().eventLoop() };
+
                     const result = readable_file.start(&blob.data.file);
                     if (result != .ready) {
                         return result;
                     }
 
-                    if (std.os.S.ISFIFO(readable_file.mode)) {
+                    // for our purposes, ISCHR and ISFIFO are the same
+                    if (std.os.S.ISFIFO(readable_file.mode) or std.os.S.ISCHR(readable_file.mode)) {
                         this.lazy_readable = .{
                             .readable = .{
                                 .FIFO = FIFO{
@@ -4416,7 +4421,10 @@ pub const FileReader = struct {
                             },
                         };
                         this.lazy_readable.readable.FIFO.watch(readable_file.fd);
-                        this.lazy_readable.readable.FIFO.poll_ref.?.flags.insert(.nonblocking);
+                        this.lazy_readable.readable.FIFO.pollRef().ref(this.globalThis().bunVM());
+                        if (!(blob.data.file.is_atty orelse false)) {
+                            this.lazy_readable.readable.FIFO.poll_ref.?.flags.insert(.nonblocking);
+                        }
                     } else {
                         this.lazy_readable = .{
                             .readable = .{ .File = readable_file },
@@ -4439,6 +4447,17 @@ pub const FileReader = struct {
 
     pub fn onPullInto(this: *FileReader, buffer: []u8, view: JSC.JSValue) StreamResult {
         std.debug.assert(this.started);
+
+        // this state isn't really supposed to happen
+        // but we handle it just in-case
+        if (this.lazy_readable == .empty) {
+            if (this.buffered_data.len == 0) {
+                return .{ .done = {} };
+            }
+
+            return .{ .owned_and_done = this.drainInternalBuffer() };
+        }
+
         return this.readable().read(buffer, view, this.globalThis());
     }
 
@@ -4537,7 +4556,7 @@ pub fn NewReadyWatcher(
             }
 
             if (comptime @hasField(Context, "mode")) {
-                return std.os.S.ISFIFO(this.mode);
+                return std.os.S.ISFIFO(this.mode) or std.os.S.ISCHR(this.mode);
             }
 
             return false;

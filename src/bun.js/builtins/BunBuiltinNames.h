@@ -247,6 +247,7 @@ using namespace JSC;
     macro(writer) \
     macro(writing) \
     macro(written) \
+    macro(_events) \
     BUN_ADDITIONAL_PRIVATE_IDENTIFIERS(macro) \
 
 class BunBuiltinNames {

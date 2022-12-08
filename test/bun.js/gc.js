@@ -14,6 +14,8 @@ export function gcTick(trace = false) {
 }
 
 export function withoutAggressiveGC(block) {
+  if (!Bun.unsafe.gcAggressionLevel) return block();
+
   const origGC = Bun.unsafe.gcAggressionLevel();
   Bun.unsafe.gcAggressionLevel(0);
   try {

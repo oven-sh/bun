@@ -304,13 +304,8 @@ function readableStreamPipeToWritableStream(
   pipeState.pendingWritePromise = @Promise.@resolve();
 
   if (signal !== @undefined) {
-    const algorithm = () => {
+    const algorithm = (reason) => {
       if (pipeState.finalized) return;
-
-      const error = @makeDOMException(
-        "AbortError",
-        "abort pipeTo from signal"
-      );
 
       @pipeToShutdownWithAction(
         pipeState,
@@ -320,7 +315,7 @@ function readableStreamPipeToWritableStream(
             @getByIdDirectPrivate(pipeState.destination, "state") ===
               "writable";
           const promiseDestination = shouldAbortDestination
-            ? @writableStreamAbort(pipeState.destination, error)
+            ? @writableStreamAbort(pipeState.destination, reason)
             : @Promise.@resolve();
 
           const shouldAbortSource =
@@ -328,7 +323,7 @@ function readableStreamPipeToWritableStream(
             @getByIdDirectPrivate(pipeState.source, "state") ===
               @streamReadable;
           const promiseSource = shouldAbortSource
-            ? @readableStreamCancel(pipeState.source, error)
+            ? @readableStreamCancel(pipeState.source, reason)
             : @Promise.@resolve();
 
           let promiseCapability = @newPromiseCapability(@Promise);
@@ -350,7 +345,7 @@ function readableStreamPipeToWritableStream(
           promiseSource.@then(handleResolvedPromise, handleRejectedPromise);
           return promiseCapability.@promise;
         },
-        error
+        reason
       );
     };
     if (@whenSignalAborted(signal, algorithm))
@@ -2173,37 +2168,34 @@ function readableStreamDefineLazyIterators(prototype) {
     var ReadableStreamAsyncIterator = async function* ReadableStreamAsyncIterator(stream, preventCancel) {
         var reader = stream.getReader();
         var deferredError;
-          try {
-              while (true) {
-                  var done, value;
-                  const firstResult = reader.readMany();
-                  if (@isPromise(firstResult)) {
-                      const result = await firstResult;
-                      done = result.done;
-                      value = result.value;
-                  } else {
-                      done = firstResult.done;
-                      value = firstResult.value;
-                  }
+        try {
+            while (true) {
+                var done, value;
+                const firstResult = reader.readMany();
+                if (@isPromise(firstResult)) {
+                    ({done, value} = await firstResult);
+                } else {
+                    ({done, value} = firstResult);
+                }
 
-                  if (done) {
-                      return;
-                  }
-                  yield* value;
-              }
-          } catch(e) {
-            deferredError = e;
-          } finally {
-            reader.releaseLock();
-
-            if (!preventCancel) {
-                stream.cancel(deferredError);
+                if (done) {
+                    return;
+                }
+                yield* value;
             }
+        } catch(e) {
+          deferredError = e;
+        } finally {
+          reader.releaseLock();
 
-            if (deferredError) {
+          if (!preventCancel) {
+              stream.cancel(deferredError);
+          }
+
+          if (deferredError) {
             throw deferredError;
           }
-          }
+        }
     };
     var createAsyncIterator = function asyncIterator() {
         return ReadableStreamAsyncIterator(this, false);

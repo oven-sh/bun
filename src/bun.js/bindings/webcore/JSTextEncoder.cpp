@@ -296,11 +296,9 @@ JSC_DEFINE_JIT_OPERATION(jsTextEncoderPrototypeFunction_encodeIntoWithoutTypeChe
     }
 
     Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
-    auto clientData = WebCore::clientData(vm);
-
-    auto* result = JSC::constructEmptyObject(globalObject, globalObject->encodeIntoObjectPrototype(), 2);
-    result->putDirect(vm, clientData->builtinNames().readPublicName(), JSC::jsNumber(static_cast<uint32_t>(res)), 0);
-    result->putDirect(vm, clientData->builtinNames().writtenPublicName(), JSC::jsNumber(static_cast<uint32_t>(res >> 32)), 0);
+    auto* result = JSC::constructEmptyObject(vm, globalObject->encodeIntoObjectStructure());
+    result->putDirectOffset(vm, 0, JSC::jsNumber(static_cast<uint32_t>(res)));
+    result->putDirectOffset(vm, 1, JSC::jsNumber(static_cast<uint32_t>(res >> 32)));
 
     return JSValue::encode(result);
 }
@@ -416,15 +414,13 @@ static inline JSC::EncodedJSValue jsTextEncoderPrototypeFunction_encodeIntoBody(
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
-    UNUSED_PARAM(throwScope);
-    UNUSED_PARAM(callFrame);
     if (UNLIKELY(callFrame->argumentCount() < 2))
         return throwVMError(lexicalGlobalObject, throwScope, createNotEnoughArgumentsError(lexicalGlobalObject));
     EnsureStillAliveScope argument0 = callFrame->uncheckedArgument(0);
     auto source = argument0.value().toWTFString(lexicalGlobalObject);
     RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
     EnsureStillAliveScope argument1 = callFrame->uncheckedArgument(1);
-    auto* destination = JSC::jsDynamicCast<JSC::JSUint8Array*>(argument1.value());
+    auto* destination = JSC::jsDynamicCast<JSC::JSArrayBufferView*>(argument1.value());
     if (!destination) {
         throwVMTypeError(lexicalGlobalObject, throwScope, "Expected Uint8Array"_s);
         return encodedJSValue();
@@ -438,11 +434,10 @@ static inline JSC::EncodedJSValue jsTextEncoderPrototypeFunction_encodeIntoBody(
     }
 
     Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
-    auto clientData = WebCore::clientData(vm);
 
-    auto* result = JSC::constructEmptyObject(globalObject, globalObject->encodeIntoObjectPrototype(), 2);
-    result->putDirect(vm, clientData->builtinNames().readPublicName(), JSC::jsNumber(static_cast<uint32_t>(res)), 0);
-    result->putDirect(vm, clientData->builtinNames().writtenPublicName(), JSC::jsNumber(static_cast<uint32_t>(res >> 32)), 0);
+    auto* result = JSC::constructEmptyObject(vm, globalObject->encodeIntoObjectStructure());
+    result->putDirectOffset(vm, 0, JSC::jsNumber(static_cast<uint32_t>(res)));
+    result->putDirectOffset(vm, 1, JSC::jsNumber(static_cast<uint32_t>(res >> 32)));
 
     return JSValue::encode(result);
 }

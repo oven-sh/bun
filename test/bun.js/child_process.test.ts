@@ -36,13 +36,13 @@ const it: typeof it_ = (label, fn) => {
   } else if (fn.constructor.name === "AsyncFunction") {
     return it_(label, async () => {
       gcTick();
-      await fn();
+      await fn(() => {});
       gcTick();
     });
   } else {
     return it_(label, () => {
       gcTick();
-      fn();
+      fn(() => {});
       gcTick();
     });
   }
@@ -204,7 +204,7 @@ describe("spawn()", () => {
 
   it("should allow explicit setting of argv0", async () => {
     var resolve;
-    const promise = new Promise((resolve1) => {
+    const promise = new Promise<string>((resolve1) => {
       resolve = resolve1;
     });
     process.env.NO_COLOR = "1";
@@ -313,7 +313,7 @@ describe("execFileSync()", () => {
         encoding: "utf8",
       },
     );
-    expect(result.trim()).toBe("hello world!");
+    expect(result.trim()).toBe("data: hello world!");
   });
 });
 

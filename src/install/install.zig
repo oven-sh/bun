@@ -1001,7 +1001,6 @@ const PackageInstall = struct {
     }
     fn installWithCopyfile(this: *PackageInstall) Result {
         const Walker = @import("../walker_skippable.zig");
-        const CopyFile = @import("../copy_file.zig");
 
         var cached_package_dir = bun.openDir(this.cache_dir.dir, this.cache_dir_subpath) catch |err| return Result{
             .fail = .{ .err = err, .step = .opening_cache_dir },
@@ -1049,15 +1048,13 @@ const PackageInstall = struct {
                     const stat = infile.stat() catch continue;
                     _ = C.fchmod(outfile.handle, stat.mode);
 
-                    CopyFile.copy(infile.handle, outfile.handle) catch {
-                        entry.dir.dir.copyFile(entry.basename, destination_dir_, entry.path, .{}) catch |err| {
-                            progress_.root.end();
+                    bun.copyFile(infile.handle, outfile.handle) catch |err| {
+                        progress_.root.end();
 
-                            progress_.refresh();
+                        progress_.refresh();
 
-                            Output.prettyErrorln("<r><red>{s}<r>: copying file {s}", .{ @errorName(err), entry.path });
-                            Global.exit(1);
-                        };
+                        Output.prettyErrorln("<r><red>{s}<r>: copying file {s}", .{ @errorName(err), entry.path });
+                        Global.exit(1);
                     };
                 }
 
@@ -3471,7 +3468,7 @@ pub const PackageManager = struct {
         pub fn isBinPathInPATH(this: *const Options) bool {
             // must be absolute
             if (this.bin_path[0] != std.fs.path.sep) return false;
-            var tokenizer = std.mem.split(std.os.getenvZ("PATH") orelse "", ":");
+            var tokenizer = std.mem.split(bun.getenvZ("PATH") orelse "", ":");
             const spanned = std.mem.span(this.bin_path);
             while (tokenizer.next()) |token| {
                 if (strings.eql(token, spanned)) return true;
@@ -3524,7 +3521,7 @@ pub const PackageManager = struct {
         };
 
         pub fn openGlobalDir(explicit_global_dir: string) !std.fs.IterableDir {
-            if (std.os.getenvZ("BUN_INSTALL_GLOBAL_DIR")) |home_dir| {
+            if (bun.getenvZ("BUN_INSTALL_GLOBAL_DIR")) |home_dir| {
                 return try std.fs.cwd().makeOpenPathIterable(home_dir, .{});
             }
 
@@ -3532,14 +3529,14 @@ pub const PackageManager = struct {
                 return try std.fs.cwd().makeOpenPathIterable(explicit_global_dir, .{});
             }
 
-            if (std.os.getenvZ("BUN_INSTALL")) |home_dir| {
+            if (bun.getenvZ("BUN_INSTALL")) |home_dir| {
                 var buf: [bun.MAX_PATH_BYTES]u8 = undefined;
                 var parts = [_]string{ "install", "global" };
                 var path = Path.joinAbsStringBuf(home_dir, &buf, &parts, .auto);
                 return try std.fs.cwd().makeOpenPathIterable(path, .{});
             }
 
-            if (std.os.getenvZ("XDG_CACHE_HOME") orelse std.os.getenvZ("HOME")) |home_dir| {
+            if (bun.getenvZ("XDG_CACHE_HOME") orelse bun.getenvZ("HOME")) |home_dir| {
                 var buf: [bun.MAX_PATH_BYTES]u8 = undefined;
                 var parts = [_]string{ ".bun", "install", "global" };
                 var path = Path.joinAbsStringBuf(home_dir, &buf, &parts, .auto);
@@ -3550,7 +3547,7 @@ pub const PackageManager = struct {
         }
 
         pub fn openGlobalBinDir(opts_: ?*const Api.BunInstall) !std.fs.IterableDir {
-            if (std.os.getenvZ("BUN_INSTALL_BIN")) |home_dir| {
+            if (bun.getenvZ("BUN_INSTALL_BIN")) |home_dir| {
                 return try std.fs.cwd().makeOpenPathIterable(home_dir, .{});
             }
 
@@ -3562,7 +3559,7 @@ pub const PackageManager = struct {
                 }
             }
 
-            if (std.os.getenvZ("BUN_INSTALL")) |home_dir| {
+            if (bun.getenvZ("BUN_INSTALL")) |home_dir| {
                 var buf: [bun.MAX_PATH_BYTES]u8 = undefined;
                 var parts = [_]string{
                     "bin",
@@ -3571,7 +3568,7 @@ pub const PackageManager = struct {
                 return try std.fs.cwd().makeOpenPathIterable(path, .{});
             }
 
-            if (std.os.getenvZ("XDG_CACHE_HOME") orelse std.os.getenvZ("HOME")) |home_dir| {
+            if (bun.getenvZ("XDG_CACHE_HOME") orelse bun.getenvZ("HOME")) |home_dir| {
                 var buf: [bun.MAX_PATH_BYTES]u8 = undefined;
                 var parts = [_]string{
                     ".bun",

@@ -252,11 +252,19 @@ await write(
 // bun ./cat.js ./path-to-file
 ```
 
+Read lines from standard input:
+
+```ts
+// As of Bun v0.3.0, console is an AsyncIterable
+for await (const line of console) {
+  // line of text from stdin
+  console.log(line);
+}
+```
+
 Server-side render React:
 
 ```js
-// requires Bun v0.1.0 or later
-// react-ssr.tsx
 import { renderToReadableStream } from "react-dom/server";
 
 const dt = new Intl.DateTimeFormat();
@@ -279,8 +287,14 @@ export default {
     );
   },
 };
+```
 
-// bun react-ssr.tsx
+Write to stdout with `console.write`:
+
+```js
+// no trailing newline
+// works with strings and typed arrays
+console.write("Hello World!");
 ```
 
 There are some more examples in the [examples](./examples) folder.
@@ -2118,6 +2132,49 @@ Bun.serve({
 });
 ```
 
+### Streaming files with Bun.serve()
+
+`Bun.serve()` lets you stream files fast.
+
+To stream a file, return a `Response` object with a `Bun.file(pathOrFd)` object as the body.
+
+```ts
+import { serve, file } from "bun";
+
+serve({
+  fetch(req) {
+    return new Response(file("./hello.txt"));
+  },
+});
+```
+
+Bun automatically uses the [`sendfile(2)`](https://man7.org/linux/man-pages/man2/sendfile.2.html) system call when possible, enabling zero-copy file transfers in the kernel &mdash; the fastest way to send files.
+
+Note: You can also read the files into memory and send it manually, but that is slower.
+
+**Sending only part of a file**
+
+<sup>Available in Bun v0.3.0</sup>
+
+`Bun.serve()` has builtin support for the `Content-Range` header
+
+To stream up to the first N bytes of a file, call [`slice(start, end)`](https://developer.mozilla.org/en-US/docs/Web/API/Blob/slice) on the `Bun.file` object:
+
+```ts
+import { serve, file } from "bun";
+
+serve({
+  fetch(req) {
+    const [start = 0, end = Infinity] =
+      req.headers.get("Range").split("=").at(-1).split("-") ?? [];
+
+    return new Response(
+      file("./my-big-video-to-stream.mp4").slice(Number(start), Number(end)),
+    );
+  },
+});
+```
+
 ### WebSockets with Bun.serve()
 
 `Bun.serve()` has builtin support for server-side websockets (as of Bun v0.2.1).
@@ -2797,9 +2854,9 @@ test("peek", () => {
   // - returns the error
   // - does not mark the promise as handled
   const rejected = Promise.reject(
-    new Error("Succesfully tested promise rejection"),
+    new Error("Successfully tested promise rejection"),
   );
-  expect(peek(rejected).message).toBe("Succesfully tested promise rejection");
+  expect(peek(rejected).message).toBe("Successfully tested promise rejection");
 });
 ```
 
@@ -3830,7 +3887,7 @@ const [major, minor, patch] = [
 
 #### Callbacks (`JSCallback`)
 
-Bun v0.2.3 added `JSCallback` which lets you create JavaScript callback functions that you can pass to C/FFI functions. The C/FFI function can call into the JavaScript/TypeScript code. This is useful for asynchronous code or otherwise when you want to call into JavaScript code from C.
+Bun v0.3.0 added `JSCallback` which lets you create JavaScript callback functions that you can pass to C/FFI functions. The C/FFI function can call into the JavaScript/TypeScript code. This is useful for asynchronous code or otherwise when you want to call into JavaScript code from C.
 
 ```ts
 import { dlopen, JSCallback, ptr, CString } from "bun:ffi";
@@ -4175,15 +4232,12 @@ Bun doesn't currently support dynamic requires, but `import.meta.require` is an 
 
 `Bun.Transpiler` lets you use Bun's transpiler from JavaScript (available in Bun.js)
 
-````ts
+```ts
 type Loader = "jsx" | "js" | "ts" | "tsx";
 
 interface TranspilerOptions {
   // Replace key with value. Value must be a JSON string.
-  // @example
-  // ```
   // { "process.env.NODE_ENV": "\"production\"" }
-  // ```
   define: Record<string, string>,
 
   // What is the default loader used for this transpiler?
@@ -4203,14 +4257,11 @@ interface TranspilerOptions {
 
 // This lets you use macros
 interface MacroMap {
-  // @example
-  // ```
   // {
   //   "react-relay": {
   //     "graphql": "bun-macro-relay/bun-macro-relay.tsx"
   //   }
   // }
-  // ```
   [packagePath: string]: {
     [importItemName: string]: string,
   },
@@ -4242,14 +4293,15 @@ type Import = {
   // url() in CSS
   | "url-token"
   // The import was injected by Bun
-  | "internal"
+  | "internal" 
   // Entry point
   // Probably won't see this one
   | "entry-point"
 }
 
 const transpiler = new Bun.Transpiler({ loader: "jsx" });
-````
+
+```
 
 #### `Bun.Transpiler.transformSync`
 
@@ -4479,7 +4531,7 @@ You can also use `jsconfig.json` if you don't want to use TypeScript.
 
 ### Bun's Module Resolution Algorithm
 
-<small>Added in Bun v0.2.3</small>
+<small>Added in Bun v0.3.0</small>
 
 Bun's module resolution algorithm is a lot like Node's except one key difference: `node_modules` folder is optional and `package.json` is optional.
 
@@ -4795,7 +4847,7 @@ Heap snapshots let you inspect what objects are not being freed. You can use the
 To generate a heap snapshot:
 
 ```ts
-import { generateHeapSnapshot } from "bun:jsc";
+import { generateHeapSnapshot } from "bun";
 
 const snapshot = generateHeapSnapshot();
 await Bun.write("heap.json", JSON.stringify(snapshot, null, 2));

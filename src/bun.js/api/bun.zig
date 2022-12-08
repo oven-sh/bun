@@ -1143,6 +1143,10 @@ pub const Class = NewClass(
             .rfn = @import("../test/jest.zig").Jest.call,
             .enumerable = false,
         },
+        .indexOfLine = .{
+            .rfn = Bun.indexOfLine,
+            .enumerable = false,
+        },
         .gc = .{
             .rfn = Bun.runGC,
         },
@@ -1299,6 +1303,63 @@ fn dump_mimalloc(
 ) JSC.C.JSValueRef {
     globalThis.bunVM().arena.dumpStats();
     return JSC.JSValue.jsUndefined().asObjectRef();
+}
+
+pub fn indexOfLine(
+    _: void,
+    globalThis: JSC.C.JSContextRef,
+    _: JSC.C.JSObjectRef,
+    _: JSC.C.JSObjectRef,
+    args: []const JSC.C.JSValueRef,
+    _: JSC.C.ExceptionRef,
+) JSC.C.JSValueRef {
+    const arguments = bun.cast([]const JSC.JSValue, args);
+    if (arguments.len == 0) {
+        return JSC.JSValue.jsNumberFromInt32(-1).asObjectRef();
+    }
+
+    var buffer = arguments[0].asArrayBuffer(globalThis) orelse {
+        return JSC.JSValue.jsNumberFromInt32(-1).asObjectRef();
+    };
+
+    var offset: usize = 0;
+    if (arguments.len > 1) {
+        offset = @intCast(
+            usize,
+            @maximum(
+                arguments[1].to(u32),
+                0,
+            ),
+        );
+    }
+
+    const bytes = buffer.byteSlice();
+    var current_offset = offset;
+    const end = @truncate(u32, bytes.len);
+
+    while (current_offset < end) {
+        if (strings.indexOfNewlineOrNonASCII(bytes, @truncate(u32, current_offset))) |i| {
+            const byte = bytes[i];
+            if (byte > 0x7F) {
+                current_offset += @maximum(strings.wtf8ByteSequenceLength(byte), 1);
+                continue;
+            }
+
+            if (byte == '\r') {
+                if (i + 1 < bytes.len and bytes[i + 1] == '\n') {
+                    return JSC.JSValue.jsNumber(i + 1).asObjectRef();
+                }
+            } else if (byte == '\n') {
+                return JSC.JSValue.jsNumber(i).asObjectRef();
+            }
+
+            current_offset = i + 1;
+        } else {
+            break;
+        }
+    }
+
+    return JSC.JSValue.jsNumberFromInt32(-1).asObjectRef();
 }
 
 pub const Crypto = struct {

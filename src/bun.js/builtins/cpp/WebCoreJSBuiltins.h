@@ -37,12 +37,13 @@
 #pragma once
 
 #include "ByteLengthQueuingStrategyBuiltins.h"
+#include "ConsoleObjectBuiltins.h"
 #include "CountQueuingStrategyBuiltins.h"
 #include "ImportMetaObjectBuiltins.h"
 #include "JSBufferConstructorBuiltins.h"
 #include "JSBufferPrototypeBuiltins.h"
 #include "OnigurumaRegExpPrototypeBuiltins.h"
-#include "ProcessObjectBuiltins.h"
+#include "ProcessObjectInternalsBuiltins.h"
 #include "ReadableByteStreamControllerBuiltins.h"
 #include "ReadableByteStreamInternalsBuiltins.h"
 #include "ReadableStreamBYOBReaderBuiltins.h"
@@ -67,12 +68,13 @@ public:
     explicit JSBuiltinFunctions(JSC::VM& vm)
         : m_vm(vm)
         , m_byteLengthQueuingStrategyBuiltins(m_vm)
+        , m_consoleObjectBuiltins(m_vm)
         , m_countQueuingStrategyBuiltins(m_vm)
         , m_importMetaObjectBuiltins(m_vm)
         , m_jsBufferConstructorBuiltins(m_vm)
         , m_jsBufferPrototypeBuiltins(m_vm)
         , m_onigurumaRegExpPrototypeBuiltins(m_vm)
-        , m_processObjectBuiltins(m_vm)
+        , m_processObjectInternalsBuiltins(m_vm)
         , m_readableByteStreamControllerBuiltins(m_vm)
         , m_readableByteStreamInternalsBuiltins(m_vm)
         , m_readableStreamBuiltins(m_vm)
@@ -97,12 +99,13 @@ public:
     }
 
     ByteLengthQueuingStrategyBuiltinsWrapper& byteLengthQueuingStrategyBuiltins() { return m_byteLengthQueuingStrategyBuiltins; }
+    ConsoleObjectBuiltinsWrapper& consoleObjectBuiltins() { return m_consoleObjectBuiltins; }
     CountQueuingStrategyBuiltinsWrapper& countQueuingStrategyBuiltins() { return m_countQueuingStrategyBuiltins; }
     ImportMetaObjectBuiltinsWrapper& importMetaObjectBuiltins() { return m_importMetaObjectBuiltins; }
     JSBufferConstructorBuiltinsWrapper& jsBufferConstructorBuiltins() { return m_jsBufferConstructorBuiltins; }
     JSBufferPrototypeBuiltinsWrapper& jsBufferPrototypeBuiltins() { return m_jsBufferPrototypeBuiltins; }
     OnigurumaRegExpPrototypeBuiltinsWrapper& onigurumaRegExpPrototypeBuiltins() { return m_onigurumaRegExpPrototypeBuiltins; }
-    ProcessObjectBuiltinsWrapper& processObjectBuiltins() { return m_processObjectBuiltins; }
+    ProcessObjectInternalsBuiltinsWrapper& processObjectInternalsBuiltins() { return m_processObjectInternalsBuiltins; }
     ReadableByteStreamControllerBuiltinsWrapper& readableByteStreamControllerBuiltins() { return m_readableByteStreamControllerBuiltins; }
     ReadableByteStreamInternalsBuiltinsWrapper& readableByteStreamInternalsBuiltins() { return m_readableByteStreamInternalsBuiltins; }
     ReadableStreamBuiltinsWrapper& readableStreamBuiltins() { return m_readableStreamBuiltins; }
@@ -122,12 +125,13 @@ public:
 private:
     JSC::VM& m_vm;
     ByteLengthQueuingStrategyBuiltinsWrapper m_byteLengthQueuingStrategyBuiltins;
+    ConsoleObjectBuiltinsWrapper m_consoleObjectBuiltins;
     CountQueuingStrategyBuiltinsWrapper m_countQueuingStrategyBuiltins;
     ImportMetaObjectBuiltinsWrapper m_importMetaObjectBuiltins;
     JSBufferConstructorBuiltinsWrapper m_jsBufferConstructorBuiltins;
     JSBufferPrototypeBuiltinsWrapper m_jsBufferPrototypeBuiltins;
     OnigurumaRegExpPrototypeBuiltinsWrapper m_onigurumaRegExpPrototypeBuiltins;
-    ProcessObjectBuiltinsWrapper m_processObjectBuiltins;
+    ProcessObjectInternalsBuiltinsWrapper m_processObjectInternalsBuiltins;
     ReadableByteStreamControllerBuiltinsWrapper m_readableByteStreamControllerBuiltins;
     ReadableByteStreamInternalsBuiltinsWrapper m_readableByteStreamInternalsBuiltins;
     ReadableStreamBuiltinsWrapper m_readableStreamBuiltins;

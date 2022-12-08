@@ -885,7 +885,10 @@ pub const Encoder = struct {
                 return ZigString.init(input).toValueGC(global);
             },
             .ucs2, .utf16le => {
-                var output = allocator.alloc(u16, @max(len / 2, 1)) catch return ZigString.init("Out of memory").toErrorInstance(global);
+                // Avoid incomplete characters
+                if (len / 2 == 0) return ZigString.Empty.toValue(global);
+
+                var output = allocator.alloc(u16, len / 2) catch return ZigString.init("Out of memory").toErrorInstance(global);
                 var output_bytes = std.mem.sliceAsBytes(output);
                 output_bytes[output_bytes.len - 1] = 0;
 

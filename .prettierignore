@@ -2,7 +2,7 @@ src/fallback.html
 # src/test
 test/bun.js/solid-dom-fixtures
 test/bun.js/bundled
-src/bun.js/builtins
+#src/bun.js/builtins
 # src/api/demo
 test/snapshots
 test/snapshots-no-hmr

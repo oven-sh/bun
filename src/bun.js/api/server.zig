@@ -644,6 +644,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
         has_sendfile_ctx: bool = false,
         has_called_error_handler: bool = false,
         needs_content_length: bool = false,
+        needs_content_range: bool = false,
         sendfile: SendfileContext = undefined,
         request_js_object: JSC.C.JSObjectRef = null,
         request_body_buf: std.ArrayListUnmanaged(u8) = .{},
@@ -879,6 +880,28 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             resp.end("", this.shouldCloseConnection());
             this.finalize();
             return false;
+        }
+
+        // TODO: should we cork?
+        pub fn onWritableCompleteResponseBufferAndMetadata(this: *RequestContext, write_offset: c_ulong, resp: *App.Response) callconv(.C) bool {
+            std.debug.assert(this.resp == resp);
+
+            if (this.aborted) {
+                this.finalizeForAbort();
+                return false;
+            }
+
+            if (!this.has_written_status) {
+                this.renderMetadata();
+            }
+
+            if (this.method == .HEAD) {
+                resp.end("", this.shouldCloseConnection());
+                this.finalize();
+                return false;
+            }
+
+            return this.sendWritableBytesForCompleteResponseBuffer(this.response_buf_owned.items, write_offset, resp);
         }
 
         pub fn onWritableCompleteResponseBuffer(this: *RequestContext, write_offset: c_ulong, resp: *App.Response) callconv(.C) bool {
@@ -1117,7 +1140,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
 
                 const errcode = linux.getErrno(val);
 
-                this.sendfile.remain -= @intCast(Blob.SizeType, this.sendfile.offset - start);
+                this.sendfile.remain -|= @intCast(Blob.SizeType, this.sendfile.offset -| start);
 
                 if (errcode != .SUCCESS or this.aborted or this.sendfile.remain == 0 or val == 0) {
                     if (errcode != .AGAIN and errcode != .SUCCESS and errcode != .PIPE) {
@@ -1130,7 +1153,6 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             } else {
                 var sbytes: std.os.off_t = adjusted_count;
                 const signed_offset = @bitCast(i64, @as(u64, this.sendfile.offset));
-
                 const errcode = std.c.getErrno(std.c.sendfile(
                     this.sendfile.fd,
                     this.sendfile.socket_fd,
@@ -1141,8 +1163,8 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                     0,
                 ));
                 const wrote = @intCast(Blob.SizeType, sbytes);
-                this.sendfile.offset += wrote;
-                this.sendfile.remain -= wrote;
+                this.sendfile.offset +|= wrote;
+                this.sendfile.remain -|= wrote;
                 if (errcode != .AGAIN or this.aborted or this.sendfile.remain == 0 or sbytes == 0) {
                     if (errcode != .AGAIN and errcode != .SUCCESS and errcode != .PIPE) {
                         Output.prettyErrorln("Error: {s}", .{@tagName(errcode)});
@@ -1278,19 +1300,39 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 }
             }
 
-            this.blob.Blob.size = @intCast(Blob.SizeType, stat.size);
+            const original_size = this.blob.Blob.size;
+            const stat_size = @intCast(Blob.SizeType, stat.size);
+            this.blob.Blob.size = if (std.os.S.ISREG(stat.mode))
+                stat_size
+            else
+                @minimum(original_size, stat_size);
+
             this.needs_content_length = true;
 
             this.sendfile = .{
                 .fd = fd,
-                .remain = this.blob.Blob.size,
+                .remain = this.blob.Blob.offset + original_size,
+                .offset = this.blob.Blob.offset,
                 .auto_close = auto_close,
                 .socket_fd = if (!this.aborted) this.resp.getNativeHandle() else -999,
             };
 
+            // if we are sending only part of a file, include the content-range header
+            // only include content-range automatically when using a file path instead of an fd
+            // this is to better support manually controlling the behavior
+            if (std.os.S.ISREG(stat.mode) and auto_close) {
+                this.needs_content_range = (this.sendfile.remain -| this.sendfile.offset) != stat_size;
+            }
+
+            // we know the bounds when we are sending a regular file
+            if (std.os.S.ISREG(stat.mode)) {
+                this.sendfile.offset = @minimum(this.sendfile.offset, stat_size);
+                this.sendfile.remain = @minimum(@maximum(this.sendfile.remain, this.sendfile.offset), stat_size) -| this.sendfile.offset;
+            }
+
             this.resp.runCorkedWithType(*RequestContext, renderMetadataAndNewline, this);
 
-            if (this.blob.Blob.size == 0) {
+            if (this.sendfile.remain == 0 or !this.method.hasBody()) {
                 this.cleanupAndFinalizeAfterSendfile();
                 return;
             }
@@ -1337,9 +1379,28 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 this.blob.Blob.resolveSize();
                 this.doRenderBlob();
             } else {
-                this.blob.Blob.size = @truncate(Blob.SizeType, result.result.buf.len);
+                const stat_size = @intCast(Blob.SizeType, result.result.total_size);
+                const original_size = this.blob.Blob.size;
+
+                this.blob.Blob.size = if (original_size == 0 or original_size == Blob.max_size)
+                    stat_size
+                else
+                    @minimum(original_size, stat_size);
+
+                if (!this.has_written_status)
+                    this.needs_content_range = true;
+
+                // this is used by content-range
+                this.sendfile = .{
+                    .fd = @truncate(i32, bun.invalid_fd),
+                    .remain = @truncate(Blob.SizeType, result.result.buf.len),
+                    .offset = this.blob.Blob.offset,
+                    .auto_close = false,
+                    .socket_fd = -999,
+                };
+
                 this.response_buf_owned = .{ .items = result.result.buf, .capacity = result.result.buf.len };
-                this.resp.onWritable(*RequestContext, onWritableCompleteResponseBuffer, this);
+                this.resp.onWritable(*RequestContext, onWritableCompleteResponseBufferAndMetadata, this);
             }
         }
 
@@ -2076,13 +2137,18 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
         pub fn renderMetadata(this: *RequestContext) void {
             var response: *JSC.WebCore.Response = this.response_ptr.?;
             var status = response.statusCode();
-            const size = this.blob.size();
+            var needs_content_range = this.needs_content_range;
+
+            const size = if (needs_content_range)
+                this.sendfile.remain
+            else
+                this.blob.size();
+
             status = if (status == 200 and size == 0 and !this.blob.isDetached())
                 204
             else
                 status;
 
-            this.writeStatus(status);
             var needs_content_type = true;
             const content_type: MimeType = brk: {
                 if (response.body.init.headers) |headers_| {
@@ -2103,12 +2169,23 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             };
 
             var has_content_disposition = false;
-
             if (response.body.init.headers) |headers_| {
-                this.writeHeaders(headers_);
                 has_content_disposition = headers_.fastHas(.ContentDisposition);
+                needs_content_range = needs_content_range and headers_.fastHas(.ContentRange);
+                if (needs_content_range) {
+                    status = 206;
+                }
+
+                this.writeStatus(status);
+                this.writeHeaders(headers_);
+
                 response.body.init.headers = null;
                 headers_.deref();
+            } else if (needs_content_range) {
+                status = 206;
+                this.writeStatus(status);
+            } else {
+                this.writeStatus(status);
             }
 
             if (needs_content_type and
@@ -2143,6 +2220,23 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             if (this.needs_content_length) {
                 this.resp.writeHeaderInt("content-length", size);
                 this.needs_content_length = false;
+            }
+
+            if (needs_content_range) {
+                var content_range_buf: [1024]u8 = undefined;
+
+                this.resp.writeHeader(
+                    "content-range",
+                    std.fmt.bufPrint(
+                        &content_range_buf,
+                        // we omit the full size of the Blob because it could
+                        // change between requests and this potentially leaks
+                        // PII undesirably
+                        "bytes {d}-{d}/*",
+                        .{ this.sendfile.offset, this.sendfile.offset + (this.sendfile.remain -| 1) },
+                    ) catch "bytes */*",
+                );
+                this.needs_content_range = false;
             }
         }
 
@@ -3708,7 +3802,7 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
         listen_callback: JSC.AnyTask = undefined,
         allocator: std.mem.Allocator,
         poll_ref: JSC.PollRef = .{},
-
+        deinit_scheduled: bool = false,
         temporary_url_buffer: std.ArrayListUnmanaged(u8) = .{},
 
         pub const Class = JSC.NewClass(
@@ -4167,6 +4261,8 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
         }
 
         pub fn onRequestComplete(this: *ThisServer) void {
+            this.vm.eventLoop().processGCTimer();
+
             this.pending_requests -= 1;
             this.deinitIfWeCan();
         }
@@ -4193,7 +4289,7 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
                     ws.handler.app = null;
                 }
                 this.unref();
-                this.deinit();
+                this.scheduleDeinit();
             }
         }
 
@@ -4207,6 +4303,16 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
         pub fn stop(this: *ThisServer) void {
             this.stopListening();
             this.deinitIfWeCan();
+        }
+
+        pub fn scheduleDeinit(this: *ThisServer) void {
+            if (this.deinit_scheduled)
+                return;
+            this.deinit_scheduled = true;
+            httplog("scheduleDeinit", .{});
+            var task = bun.default_allocator.create(JSC.AnyTask) catch unreachable;
+            task.* = JSC.AnyTask.New(ThisServer, deinit).init(this);
+            this.vm.enqueueTask(JSC.Task.init(task));
         }
 
         pub fn deinit(this: *ThisServer) void {
@@ -4565,7 +4671,14 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
                 this.config.hostname;
 
             this.ref();
-            this.vm.autoGarbageCollect();
+
+            // Starting up an HTTP server is a good time to GC
+            if (this.vm.aggressive_garbage_collection == .aggressive) {
+                this.vm.autoGarbageCollect();
+            } else {
+                this.vm.eventLoop().performGC();
+            }
+
             this.app.listenWithConfig(*ThisServer, this, onListen, .{
                 .port = this.config.port,
                 .host = host,

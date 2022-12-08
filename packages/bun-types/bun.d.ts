@@ -2,6 +2,12 @@ interface VoidFunction {
   (): void;
 }
 
+declare namespace Bun {
+  interface Env extends Dict<string> {
+    NODE_ENV: string;
+  }
+}
+
 /**
  *
  * Bun.js runtime APIs
@@ -28,7 +34,7 @@ declare module "bun" {
    * Changes to `process.env` at runtime won't automatically be reflected in the default value. For that, you can pass `process.env` explicitly.
    *
    */
-  export const env: Record<string, string>;
+  export const env: Bun.Env;
   export const origin: string;
 
   /**
@@ -570,6 +576,13 @@ declare module "bun" {
     | "neutral";
 
   export type JavaScriptLoader = "jsx" | "js" | "ts" | "tsx";
+
+  /**
+   * Fast deep-equality check two objects.
+   *
+   * This also powers expect().toEqual in `bun:test`
+   */
+  export function deepEquals(a: any, b: any): boolean;
 
   export interface TranspilerOptions {
     /**
@@ -2610,20 +2623,32 @@ declare module "bun" {
       /**
        * Callback that runs when the {@link Subprocess} exits
        *
-       * You can also do `await subprocess.exited` to wait for the process to exit.
+       * This is called even if the process exits with a non-zero exit code.
+       *
+       * Warning: this may run before the `Bun.spawn` function returns.
+       *
+       * A simple alternative is `await subprocess.exited`.
        *
        * @example
        *
        * ```ts
        * const subprocess = spawn({
        *  cmd: ["echo", "hello"],
-       *  onExit: (code) => {
+       *  onExit: (subprocess, code) => {
        *    console.log(`Process exited with code ${code}`);
        *   },
        * });
        * ```
        */
-      onExit?: (exitCode: number) => void | Promise<void>;
+      onExit?(
+        subprocess: Subprocess,
+        exitCode: number | null,
+        signalCode: number | null,
+        /**
+         * If an error occured in the call to waitpid2, this will be the error.
+         */
+        error?: Errorlike,
+      ): void | Promise<void>;
     }
   }
 
@@ -2659,6 +2684,25 @@ declare module "bun" {
      * The promise will resolve when the process exits
      */
     readonly exited: Promise<number>;
+
+    /**
+     * Synchronously get the exit code of the process
+     *
+     * If the process hasn't exited yet, this will return `null`
+     */
+    readonly exitCode: number | null;
+
+    /**
+     * Synchronously get the signal code of the process
+     *
+     * If the process never sent a signal code, this will return `null`
+     *
+     * To receive signal code changes, use the `onExit` callback.
+     *
+     * If the signal code is unknown, it will return the original signal code
+     * number, but that case should essentially never happen.
+     */
+    readonly signalCode: Signals | null;
 
     /**
      * Has the process exited?
@@ -2896,6 +2940,16 @@ declare module "bun" {
    * "a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2"
    */
   export const revision: string;
+
+  /**
+   * Find the index of a newline character in potentially ill-formed UTF-8 text.
+   *
+   * This is sort of like readline() except without the IO.
+   */
+  export function indexOfLine(
+    buffer: ArrayBufferView | ArrayBufferLike,
+    offset?: number,
+  ): number;
 }
 
 type TypedArray =
@@ -2931,7 +2985,4 @@ interface BufferEncodingOption {
   encoding?: BufferEncoding;
 }
 
-// declare var Bun: typeof import("bun");
-declare namespace Bun {
-  export * from "bun";
-}
+declare var Bun: typeof import("bun");

@@ -33,8 +33,23 @@ declare module "bun:test" {
   export function beforeEach(fn: () => void): void;
 
   interface Expect {
+    not: Expect;
     toBe(value: any): void;
     toContain(value: any): void;
+    toEqual(value: any): void;
+    toStrictEqual(value: any): void;
+    toHaveLength(value: number): void;
+    toHaveProperty(key: string, value?: any): void;
+    toBeTruthy(): void;
+    toBeFalsy(): void;
+    toBeDefined(): void;
+    toBeUndefined(): void;
+    toBeNaN(): void;
+    toBeNull(): void;
+    toBeGreaterThan(value: number | bigint): void;
+    toBeGreaterThanOrEqual(value: number | bigint): void;
+    toBeLessThan(value: number | bigint): void;
+    toBeLessThanOrEqual(value: number | bigint): void;
   }
 }
 

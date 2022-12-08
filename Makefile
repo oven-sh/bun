@@ -432,6 +432,19 @@ ARCHIVE_FILES = $(ARCHIVE_FILES_WITHOUT_LIBCRYPTO)
 STATIC_MUSL_FLAG ?=
 
 ifeq ($(OS_NAME), linux)
+WRAP_SYMBOLS_ON_LINUX = -Wl,--wrap=fcntl -Wl,--wrap=fcntl64 -Wl,--wrap=stat64 -Wl,--wrap=pow -Wl,--wrap=exp -Wl,--wrap=log \
+	-Wl,--wrap=lstat \
+	-Wl,--wrap=stat \
+	-Wl,--wrap=fstat \
+	-Wl,--wrap=fstatat \
+	-Wl,--wrap=lstat64 \
+	-Wl,--wrap=stat64 \
+	-Wl,--wrap=fstat64 \
+	-Wl,--wrap=fstatat64 \
+	-Wl,--wrap=mknod \
+	-Wl,--wrap=mknodat \
+	-Wl,--wrap=statx
+
 PLATFORM_LINKER_FLAGS = $(BUN_CFLAGS) \
 		-fuse-ld=lld \
 		-Wl,-z,now \
@@ -447,8 +460,8 @@ PLATFORM_LINKER_FLAGS = $(BUN_CFLAGS) \
 		-fno-semantic-interposition \
 		-flto \
 		-Wl,--allow-multiple-definition \
-		-rdynamic
-		
+		-rdynamic \
+		$(WRAP_SYMBOLS_ON_LINUX)
 
  
 endif
@@ -1583,6 +1596,7 @@ $(DEBUG_OBJ_DIR)/%.o: $(SRC_DIR)/%.cpp
 		-fno-exceptions \
 		-fno-rtti \
 		-ferror-limit=1000 \
+		-DBUN_DEBUG \
 		$(EMIT_LLVM_FOR_DEBUG) \
 		-g3 -c -o $@ $<
 
@@ -1597,6 +1611,7 @@ $(DEBUG_OBJ_DIR)/%.o: $(SRC_DIR)/webcore/%.cpp
 		-fno-rtti \
 		-ferror-limit=1000 \
 		$(EMIT_LLVM_FOR_DEBUG) \
+		-DBUN_DEBUG \
 		-g3 -c -o $@ $<
 
 .PHONY: src/io/%.cpp
@@ -1607,6 +1622,7 @@ $(DEBUG_OBJ_DIR)/%.o: src/io/%.cpp
 		-fno-exceptions \
 		-fno-rtti \
 		-ferror-limit=1000 \
+		-DBUN_DEBUG \
 		$(EMIT_LLVM_FOR_DEBUG) \
 		-g3 -c -o $@ $<
 
@@ -1622,6 +1638,7 @@ $(DEBUG_OBJ_DIR)/%.o: $(SRC_DIR)/sqlite/%.cpp
 		-fno-rtti \
 		-ferror-limit=1000 \
 		$(EMIT_LLVM_FOR_DEBUG) \
+		-DBUN_DEBUG \
 		-g3 -c -o $@ $<
 
 # $(DEBUG_OBJ_DIR) is not included here because it breaks
@@ -1635,6 +1652,7 @@ $(DEBUG_OBJ_DIR)/%.o: $(SRC_DIR)/node_os/%.cpp
 		-fno-rtti \
 		-ferror-limit=1000 \
 		$(EMIT_LLVM_FOR_DEBUG) \
+		-DBUN_DEBUG \
 		-g3 -c -o $@ $<
 
 # $(DEBUG_OBJ_DIR) is not included here because it breaks
@@ -1648,6 +1666,7 @@ $(DEBUG_OBJ_DIR)/%.o: src/bun.js/builtins/%.cpp
 		-fno-rtti \
 		-ferror-limit=1000 \
 		$(EMIT_LLVM_FOR_DEBUG) \
+		-DBUN_DEBUG \
 		-g3 -c -o $@ $<
 
 .PHONY: src/bun.js/modules/%.cpp
@@ -1659,6 +1678,7 @@ $(DEBUG_OBJ_DIR)/%.o: src/bun.js/modules/%.cpp
 		-fno-rtti \
 		-ferror-limit=1000 \
 		$(EMIT_LLVM_FOR_DEBUG) \
+		-DBUN_DEBUG \
 		-g3 -c -o $@ $<
 
 
@@ -1672,6 +1692,7 @@ $(DEBUG_OBJ_DIR)/webcrypto/%.o: src/bun.js/bindings/webcrypto/%.cpp
 		-fno-rtti \
 		-ferror-limit=1000 \
 		$(EMIT_LLVM_FOR_DEBUG) \
+		-DBUN_DEBUG \
 		-g3 -c -o $@ $<
 
 
@@ -1874,7 +1895,7 @@ copy-to-bun-release-dir-bin:
 	cp -r $(PACKAGE_DIR)/bun $(BUN_RELEASE_DIR)/bun
 	cp -r $(PACKAGE_DIR)/bun-profile $(BUN_RELEASE_DIR)/bun-profile
 
-PACKAGE_MAP = --pkg-begin thread_pool $(BUN_DIR)/src/thread_pool.zig --pkg-begin io $(BUN_DIR)/src/io/io_$(OS_NAME).zig --pkg-end --pkg-begin http $(BUN_DIR)/src/http_client_async.zig --pkg-begin strings $(BUN_DIR)/src/string_immutable.zig --pkg-end --pkg-begin picohttp $(BUN_DIR)/src/deps/picohttp.zig --pkg-end --pkg-begin io $(BUN_DIR)/src/io/io_darwin.zig --pkg-end --pkg-begin boringssl $(BUN_DIR)/src/boringssl.zig --pkg-end --pkg-begin thread_pool $(BUN_DIR)/src/thread_pool.zig --pkg-begin io $(BUN_DIR)/src/io/io_darwin.zig --pkg-end --pkg-begin http $(BUN_DIR)/src/http_client_async.zig --pkg-begin strings $(BUN_DIR)/src/string_immutable.zig --pkg-end --pkg-begin picohttp $(BUN_DIR)/src/deps/picohttp.zig --pkg-end --pkg-begin io $(BUN_DIR)/src/io/io_darwin.zig --pkg-end --pkg-begin boringssl $(BUN_DIR)/src/boringssl.zig --pkg-end --pkg-begin thread_pool $(BUN_DIR)/src/thread_pool.zig --pkg-end --pkg-end --pkg-end --pkg-end --pkg-end --pkg-begin picohttp $(BUN_DIR)/src/deps/picohttp.zig --pkg-end --pkg-begin io $(BUN_DIR)/src/io/io_darwin.zig --pkg-end --pkg-begin strings $(BUN_DIR)/src/string_immutable.zig --pkg-end --pkg-begin clap $(BUN_DIR)/src/deps/zig-clap/clap.zig --pkg-end --pkg-begin http $(BUN_DIR)/src/http_client_async.zig --pkg-begin strings $(BUN_DIR)/src/string_immutable.zig --pkg-end --pkg-begin picohttp $(BUN_DIR)/src/deps/picohttp.zig --pkg-end --pkg-begin io $(BUN_DIR)/src/io/io_darwin.zig --pkg-end --pkg-begin boringssl $(BUN_DIR)/src/boringssl.zig --pkg-end --pkg-begin thread_pool $(BUN_DIR)/src/thread_pool.zig --pkg-begin io $(BUN_DIR)/src/io/io_darwin.zig --pkg-end --pkg-begin http $(BUN_DIR)/src/http_client_async.zig --pkg-begin strings $(BUN_DIR)/src/string_immutable.zig --pkg-end --pkg-begin picohttp $(BUN_DIR)/src/deps/picohttp.zig --pkg-end --pkg-begin io $(BUN_DIR)/src/io/io_darwin.zig --pkg-end --pkg-begin boringssl $(BUN_DIR)/src/boringssl.zig --pkg-end --pkg-begin thread_pool $(BUN_DIR)/src/thread_pool.zig --pkg-end --pkg-end --pkg-end --pkg-end --pkg-begin boringssl $(BUN_DIR)/src/boringssl.zig --pkg-end --pkg-begin javascript_core $(BUN_DIR)/src/jsc.zig --pkg-begin http $(BUN_DIR)/src/http_client_async.zig --pkg-end --pkg-begin strings $(BUN_DIR)/src/string_immutable.zig --pkg-end --pkg-begin picohttp $(BUN_DIR)/src/deps/picohttp.zig --pkg-end --pkg-end
+PACKAGE_MAP = --pkg-begin async_io $(BUN_DIR)/src/io/io_darwin.zig --pkg-begin bun $(BUN_DIR)/src/bun_redirect.zig --pkg-end --pkg-end --pkg-begin javascript_core $(BUN_DIR)/src/jsc.zig --pkg-begin bun $(BUN_DIR)/src/bun_redirect.zig --pkg-end --pkg-end --pkg-begin bun $(BUN_DIR)/src/bun_redirect.zig --pkg-end
 
 .PHONY: bun
 bun: vendor identifier-cache build-obj bun-link-lld-release bun-codesign-release-local

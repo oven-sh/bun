@@ -357,7 +357,7 @@ pub const Archive = struct {
 
     pub const Context = struct {
         pluckers: []Plucker = &[_]Plucker{},
-        overwrite_list: std.StringArrayHashMap(void),
+        overwrite_list: bun.StringArrayHashMap(void),
         all_files: EntryMap,
         pub const EntryMap = std.ArrayHashMap(u64, [*c]u8, U64Context, false);
 

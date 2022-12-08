@@ -30,6 +30,7 @@ test("peek", () => {
   expect((peeked as Error).message).toBe(
     "Succesfully tested promise rejection",
   );
+  rejected.catch(() => {});
 });
 
 test("peek.status", () => {

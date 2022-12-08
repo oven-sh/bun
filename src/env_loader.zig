@@ -845,7 +845,7 @@ pub const Parser = struct {
 };
 
 pub const Map = struct {
-    const HashTable = std.StringArrayHashMap(string);
+    const HashTable = bun.StringArrayHashMap(string);
 
     map: HashTable,
 
@@ -1067,7 +1067,7 @@ test "DotEnv Process" {
     var loader = Loader.init(&map, default_allocator);
     loader.loadProcess();
 
-    try expectString(loader.map.get("TMPDIR").?, std.os.getenvZ("TMPDIR").?);
+    try expectString(loader.map.get("TMPDIR").?, bun.getenvZ("TMPDIR").?);
     try expect(loader.map.get("TMPDIR").?.len > 0);
 
     try expectString(loader.map.get("USER").?, process.get("USER").?);
@@ -1077,7 +1077,7 @@ test "DotEnv Process" {
 }
 
 test "DotEnv Loader - copyForDefine" {
-    const UserDefine = std.StringArrayHashMap(string);
+    const UserDefine = bun.StringArrayHashMap(string);
     const UserDefinesArray = @import("./defines.zig").UserDefinesArray;
     var map = Map.init(default_allocator);
     var loader = Loader.init(&map, default_allocator);

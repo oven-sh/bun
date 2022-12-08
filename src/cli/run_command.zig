@@ -557,7 +557,7 @@ pub const RunCommand = struct {
             }
         }
 
-        const ResultList = std.StringArrayHashMap(void);
+        const ResultList = bun.StringArrayHashMap(void);
 
         if (this_bundler.env.map.get("SHELL")) |shell| {
             shell_out.shell = ShellCompletions.Shell.fromEnv(@TypeOf(shell), shell);

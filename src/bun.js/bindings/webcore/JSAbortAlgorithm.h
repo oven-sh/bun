@@ -40,7 +40,7 @@ public:
     JSCallbackDataStrong* callbackData() { return m_data; }
 
     // Functions
-    CallbackResult<typename IDLUndefined::ImplementationType> handleEvent() override;
+    CallbackResult<typename IDLUndefined::ImplementationType> handleEvent(JSValue) override;
 
 private:
     JSAbortAlgorithm(JSC::VM&, JSC::JSObject* callback);

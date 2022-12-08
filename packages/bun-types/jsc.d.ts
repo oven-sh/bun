@@ -57,4 +57,9 @@ declare module "bun:jsc" {
    * This is untested. May not be supported yet on macOS
    */
   export function startRemoteDebugger(host?: string, port?: number): void;
+
+  /**
+   * Run JavaScriptCore's sampling profiler
+   */
+  export function startSamplingProfiler(optionalDirectory?: string): void;
 }

@@ -332,7 +332,7 @@ pub const Runtime = struct {
                 value: JSAst.Expr,
             },
 
-            pub const Map = std.StringArrayHashMapUnmanaged(ReplaceableExport);
+            pub const Map = bun.StringArrayHashMapUnmanaged(ReplaceableExport);
         };
     };
 

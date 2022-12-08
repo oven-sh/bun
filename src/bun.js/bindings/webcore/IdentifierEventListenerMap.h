@@ -46,6 +46,8 @@ public:
     bool contains(const JSC::Identifier& eventType) const { return find(eventType); }
     bool containsActive(const JSC::Identifier& eventType) const;
 
+    const Vector<std::pair<JSC::Identifier, SimpleEventListenerVector>>& entries() const { return m_entries; }
+
     void clear();
 
     void replace(const JSC::Identifier& eventType, EventListener& oldListener, Ref<EventListener>&& newListener, bool once);

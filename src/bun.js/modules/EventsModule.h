@@ -32,6 +32,10 @@ inline void generateEventsSourceCode(JSC::JSGlobalObject *lexicalGlobalObject,
   exportValues.append(JSC::JSFunction::create(
       vm, lexicalGlobalObject, 0, MAKE_STATIC_STRING_IMPL("on"),
       Events_functionOn, ImplementationVisibility::Public));
+  exportNames.append(
+      JSC::Identifier::fromString(vm, "captureRejectionSymbol"_s));
+  exportValues.append(Symbol::create(
+      vm, vm.symbolRegistry().symbolForKey("nodejs.rejection"_s)));
 
   JSFunction *eventEmitterModuleCJS =
       jsCast<JSFunction *>(WebCore::JSEventEmitter::getConstructor(

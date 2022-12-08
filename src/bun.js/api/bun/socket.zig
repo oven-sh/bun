@@ -409,6 +409,7 @@ pub const Listener = struct {
             ctx_opts.ssl_prefer_low_memory_usage = @boolToInt(ssl_config.low_memory_mode);
         }
 
+        globalObject.bunVM().eventLoop().ensureWaker();
         socket.socket_context = uws.us_create_socket_context(@boolToInt(ssl_enabled), uws.Loop.get().?, @sizeOf(usize), ctx_opts);
 
         if (ssl) |ssl_config| {
@@ -661,6 +662,8 @@ pub const Listener = struct {
             ctx_opts.ssl_prefer_low_memory_usage = @boolToInt(ssl_config.low_memory_mode);
         }
 
+        globalObject.bunVM().eventLoop().ensureWaker();
+
         var socket_context = uws.us_create_socket_context(@boolToInt(ssl_enabled), uws.Loop.get().?, @sizeOf(usize), ctx_opts).?;
         var connection: Listener.UnixOrHost = if (port) |port_| .{
             .host = .{ .host = (hostname_or_unix.cloneIfNeeded(bun.default_allocator) catch unreachable).slice(), .port = port_ },
@@ -882,8 +885,10 @@ fn NewSocket(comptime ssl: bool) type {
                 .syscall = ZigString.init("connect"),
             };
             _ = handlers.rejectPromise(err.toErrorInstance(handlers.globalObject));
-            this.reffer.unref(handlers.vm);
-            handlers.markInactive(ssl, socket.context());
+            if (this.reffer.has) {
+                this.reffer.unref(handlers.vm);
+                handlers.markInactive(ssl, socket.context());
+            }
         }
 
         pub fn markActive(this: *This) void {

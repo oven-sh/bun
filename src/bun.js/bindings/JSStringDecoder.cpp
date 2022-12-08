@@ -146,7 +146,8 @@ JSC::JSValue JSStringDecoder::text(JSC::VM& vm, JSC::JSGlobalObject* globalObjec
             memmove(m_lastChar, bufPtr + end, std::min(4U, length - end));
         RELEASE_AND_RETURN(throwScope, JSC::JSValue::decode(Bun__encoding__toString(bufPtr + offset, end - offset, globalObject, static_cast<uint8_t>(m_encoding))));
     }
-    case BufferEncodingType::base64: {
+    case BufferEncodingType::base64:
+    case BufferEncodingType::base64url: {
         uint32_t n = (length - offset) % 3;
         if (n == 0)
             RELEASE_AND_RETURN(throwScope, JSC::JSValue::decode(Bun__encoding__toString(bufPtr + offset, length - offset, globalObject, static_cast<uint8_t>(m_encoding))));
@@ -177,7 +178,8 @@ JSC::JSValue JSStringDecoder::write(JSC::VM& vm, JSC::JSGlobalObject* globalObje
     case BufferEncodingType::ucs2:
     case BufferEncodingType::utf16le:
     case BufferEncodingType::utf8:
-    case BufferEncodingType::base64: {
+    case BufferEncodingType::base64:
+    case BufferEncodingType::base64url: {
         uint32_t offset = 0;
         if (m_lastNeed) {
             JSString* firstHalf = fillLast(vm, globalObject, bufPtr, length).toString(globalObject);
@@ -233,7 +235,8 @@ JSC::JSValue JSStringDecoder::end(JSC::VM& vm, JSC::JSGlobalObject* globalObject
         RETURN_IF_EXCEPTION(throwScope, JSC::jsUndefined());
         RELEASE_AND_RETURN(throwScope, m_lastNeed ? JSC::jsString(globalObject, firstHalf, WTF::String(u"\uFFFD", 1)) : firstHalf);
     }
-    case BufferEncodingType::base64: {
+    case BufferEncodingType::base64:
+    case BufferEncodingType::base64url: {
         if (length == 0) {
             if (m_lastNeed) {
                 RELEASE_AND_RETURN(throwScope, JSC::JSValue::decode(Bun__encoding__toString(m_lastChar, 3 - m_lastNeed, globalObject, static_cast<uint8_t>(m_encoding))));

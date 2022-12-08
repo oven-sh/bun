@@ -22,12 +22,12 @@ const js_lexer = @import("../js_lexer.zig");
 const resolve_path = @import("./resolve_path.zig");
 // Assume they're not going to have hundreds of main fields or browser map
 // so use an array-backed hash table instead of bucketed
-const MainFieldMap = std.StringArrayHashMap(string);
-pub const BrowserMap = std.StringArrayHashMap(string);
-pub const MacroImportReplacementMap = std.StringArrayHashMap(string);
-pub const MacroMap = std.StringArrayHashMapUnmanaged(MacroImportReplacementMap);
+const MainFieldMap = bun.StringArrayHashMap(string);
+pub const BrowserMap = bun.StringArrayHashMap(string);
+pub const MacroImportReplacementMap = bun.StringArrayHashMap(string);
+pub const MacroMap = bun.StringArrayHashMapUnmanaged(MacroImportReplacementMap);
 
-const ScriptsMap = std.StringArrayHashMap(string);
+const ScriptsMap = bun.StringArrayHashMap(string);
 const Semver = @import("../install/semver.zig");
 const Dependency = @import("../install/dependency.zig");
 const String = @import("../install/semver.zig").String;
@@ -568,10 +568,12 @@ pub const PackageJSON = struct {
         input_path: string,
         dirname_fd: StoredFileDescriptorType,
         package_id: ?Install.PackageID,
-        comptime include_scripts: bool,
+        comptime include_scripts_: @Type(.EnumLiteral),
         comptime include_dependencies: @Type(.EnumLiteral),
-        comptime generate_hash: bool,
+        comptime generate_hash_: @Type(.EnumLiteral),
     ) ?PackageJSON {
+        const generate_hash = generate_hash_ == .generate_hash;
+        const include_scripts = include_scripts_ == .include_scripts;
 
         // TODO: remove this extra copy
         const parts = [_]string{ input_path, "package.json" };
@@ -1164,7 +1166,7 @@ pub const ExportsMap = struct {
 };
 
 pub const ESModule = struct {
-    pub const ConditionsMap = std.StringArrayHashMap(void);
+    pub const ConditionsMap = bun.StringArrayHashMap(void);
 
     debug_logs: ?*resolver.DebugLogs = null,
     conditions: ConditionsMap,

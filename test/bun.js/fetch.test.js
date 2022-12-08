@@ -1,7 +1,7 @@
 import { it, describe, expect } from "bun:test";
 import fs, { unlinkSync } from "fs";
 import { mkfifo } from "mkfifo";
-import { gc } from "./gc";
+import { gc, withoutAggressiveGC } from "./gc";
 
 const exampleFixture = fs.readFileSync(
   import.meta.path.substring(0, import.meta.path.lastIndexOf("/")) +
@@ -22,14 +22,88 @@ describe("Headers", () => {
     );
   });
 
-  it(".count", () => {
+  it(".getSetCookie() with object", () => {
     var headers = new Headers({
       "content-length": "123",
       "content-type": "text/plain",
       "x-another-custom-header": "Hello World",
       "x-custom-header": "Hello World",
+      "Set-Cookie": "foo=bar; Path=/; HttpOnly",
     });
-    expect(headers.count).toBe(4);
+    expect(headers.count).toBe(5);
+    expect(headers.getAll("set-cookie")).toEqual(["foo=bar; Path=/; HttpOnly"]);
+  });
+
+  it(".getSetCookie() with array", () => {
+    var headers = new Headers([
+      ["content-length", "123"],
+      ["content-type", "text/plain"],
+      ["x-another-custom-header", "Hello World"],
+      ["x-custom-header", "Hello World"],
+      ["Set-Cookie", "foo=bar; Path=/; HttpOnly"],
+      ["Set-Cookie", "foo2=bar2; Path=/; HttpOnly"],
+    ]);
+    expect(headers.count).toBe(6);
+    expect(headers.getAll("set-cookie")).toEqual([
+      "foo=bar; Path=/; HttpOnly",
+      "foo2=bar2; Path=/; HttpOnly",
+    ]);
+  });
+
+  it("Set-Cookies init", () => {
+    const headers = new Headers([
+      ["Set-Cookie", "foo=bar"],
+      ["Set-Cookie", "bar=baz"],
+      ["X-bun", "abc"],
+      ["X-bun", "def"],
+    ]);
+    const actual = [...headers];
+    expect(actual).toEqual([
+      ["set-cookie", "foo=bar"],
+      ["set-cookie", "bar=baz"],
+      ["x-bun", "abc, def"],
+    ]);
+    expect([...headers.values()]).toEqual(["foo=bar", "bar=baz", "abc, def"]);
+  });
+
+  it("Headers append multiple", () => {
+    const headers = new Headers([
+      ["Set-Cookie", "foo=bar"],
+      ["X-bun", "foo"],
+    ]);
+    headers.append("Set-Cookie", "bar=baz");
+    headers.append("x-bun", "bar");
+    const actual = [...headers];
+
+    // we do not preserve the order
+    // which is kind of bad
+    expect(actual).toEqual([
+      ["set-cookie", "foo=bar"],
+      ["set-cookie", "bar=baz"],
+      ["x-bun", "foo, bar"],
+    ]);
+  });
+
+  it("append duplicate set cookie key", () => {
+    const headers = new Headers([["Set-Cookie", "foo=bar"]]);
+    headers.append("set-Cookie", "foo=baz");
+    headers.append("Set-cookie", "baz=bar");
+    const actual = [...headers];
+    expect(actual).toEqual([
+      ["set-cookie", "foo=baz"],
+      ["set-cookie", "baz=bar"],
+    ]);
+  });
+
+  it("set duplicate cookie key", () => {
+    const headers = new Headers([["Set-Cookie", "foo=bar"]]);
+    headers.set("set-Cookie", "foo=baz");
+    headers.set("set-cookie", "bar=qat");
+    const actual = [...headers];
+    expect(actual).toEqual([
+      ["set-cookie", "foo=baz"],
+      ["set-cookie", "bar=qat"],
+    ]);
   });
 });
 
@@ -60,6 +134,48 @@ describe("fetch", () => {
       expect(exampleFixture).toBe(text);
     });
   }
+
+  it(`"redirect: "manual"`, async () => {
+    const server = Bun.serve({
+      port: 4082,
+      fetch(req) {
+        return new Response(null, {
+          status: 302,
+          headers: {
+            Location: "https://example.com",
+          },
+        });
+      },
+    });
+    const response = await fetch(`http://${server.hostname}:${server.port}`, {
+      redirect: "manual",
+    });
+    expect(response.status).toBe(302);
+    expect(response.headers.get("location")).toBe("https://example.com");
+    expect(response.redirected).toBe(true);
+    server.stop();
+  });
+
+  it(`"redirect: "follow"`, async () => {
+    const server = Bun.serve({
+      port: 4083,
+      fetch(req) {
+        return new Response(null, {
+          status: 302,
+          headers: {
+            Location: "https://example.com",
+          },
+        });
+      },
+    });
+    const response = await fetch(`http://${server.hostname}:${server.port}`, {
+      redirect: "follow",
+    });
+    expect(response.status).toBe(200);
+    expect(response.headers.get("location")).toBe(null);
+    expect(response.redirected).toBe(true);
+    server.stop();
+  });
 });
 
 it("simultaneous HTTPS fetch", async () => {
@@ -118,6 +234,28 @@ function testBlobInterface(blobbyConstructor, hasBlobFn) {
         if (withGC) gc();
       });
 
+      it(`${
+        jsonObject.hello === true ? "latin1" : "utf16"
+      } arrayBuffer -> invalid json${
+        withGC ? " (with gc) " : ""
+      }`, async () => {
+        if (withGC) gc();
+        var response = blobbyConstructor(
+          new TextEncoder().encode(
+            JSON.stringify(jsonObject) + " NOW WE ARE INVALID JSON",
+          ),
+        );
+        if (withGC) gc();
+        var failed = false;
+        try {
+          await response.json();
+        } catch (e) {
+          failed = true;
+        }
+        expect(failed).toBe(true);
+        if (withGC) gc();
+      });
+
       it(`${jsonObject.hello === true ? "latin1" : "utf16"} text${
         withGC ? " (with gc) " : ""
       }`, async () => {
@@ -154,12 +292,14 @@ function testBlobInterface(blobbyConstructor, hasBlobFn) {
         const compare = new Uint8Array(await response.arrayBuffer());
         if (withGC) gc();
 
-        for (let i = 0; i < compare.length; i++) {
-          if (withGC) gc();
+        withoutAggressiveGC(() => {
+          for (let i = 0; i < compare.length; i++) {
+            if (withGC) gc();
 
-          expect(compare[i]).toBe(bytes[i]);
-          if (withGC) gc();
-        }
+            expect(compare[i]).toBe(bytes[i]);
+            if (withGC) gc();
+          }
+        });
         if (withGC) gc();
       });
 
@@ -179,12 +319,14 @@ function testBlobInterface(blobbyConstructor, hasBlobFn) {
         const compare = new Uint8Array(await response.arrayBuffer());
         if (withGC) gc();
 
-        for (let i = 0; i < compare.length; i++) {
-          if (withGC) gc();
+        withoutAggressiveGC(() => {
+          for (let i = 0; i < compare.length; i++) {
+            if (withGC) gc();
 
-          expect(compare[i]).toBe(bytes[i]);
-          if (withGC) gc();
-        }
+            expect(compare[i]).toBe(bytes[i]);
+            if (withGC) gc();
+          }
+        });
         if (withGC) gc();
       });
 

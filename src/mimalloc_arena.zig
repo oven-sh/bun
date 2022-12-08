@@ -152,7 +152,6 @@ pub const Arena = struct {
     pub fn ownsPtr(this: Arena, ptr: *const anyopaque) bool {
         return mimalloc.mi_heap_check_owned(this.heap.?, ptr);
     }
-    const malloc_size = c.malloc_size;
     pub const supports_posix_memalign = true;
 
     // This is copied from Rust's mimalloc integration
@@ -174,7 +173,7 @@ pub const Arena = struct {
     }
 
     fn alignedAllocSize(ptr: [*]u8) usize {
-        return CAllocator.malloc_size(ptr);
+        return mimalloc.mi_malloc_usable_size(ptr);
     }
 
     fn alloc(arena: *anyopaque, len: usize, ptr_align: u8, _: usize) ?[*]u8 {
@@ -200,7 +199,7 @@ pub const Arena = struct {
     fn free(
         _: *anyopaque,
         buf: []u8,
-        buf_align: u29,
+        buf_align: u8,
         _: usize,
     ) void {
         // mi_free_size internally just asserts the size

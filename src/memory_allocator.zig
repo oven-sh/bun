@@ -77,7 +77,7 @@ const CAllocator = struct {
     fn free(
         _: *anyopaque,
         buf: []u8,
-        buf_align: u29,
+        buf_align: u8,
         _: usize,
     ) void {
         // mi_free_size internally just asserts the size
@@ -148,7 +148,7 @@ const ZAllocator = struct {
     fn free(
         _: *anyopaque,
         buf: []u8,
-        buf_align: u29,
+        buf_align: u8,
         _: usize,
     ) void {
         // mi_free_size internally just asserts the size

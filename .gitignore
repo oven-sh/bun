@@ -105,3 +105,4 @@ src/runtime.version
 *.db
 misctools/machbench
 *.big
+.eslintcache

@@ -1502,7 +1502,7 @@ pub const Path = struct {
 
         const base_slice = path.slice();
 
-        const out = if (!isWindows)
+        const out = if (isWindows)
             std.fs.path.dirnameWindows(base_slice) orelse "C:\\"
         else
             std.fs.path.dirnamePosix(base_slice) orelse "/";

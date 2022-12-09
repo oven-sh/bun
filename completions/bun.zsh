@@ -1,3 +1,4 @@
+#compdef bun
 _bun() {
     zstyle ':completion:*:*:bun:*' group-name ''
     zstyle ':completion:*:*:bun-grouped:*' group-name ''
@@ -20,10 +21,11 @@ _bun() {
         local -a scripts_list
         IFS=$'\n' scripts_list=($(SHELL=zsh bun getcompletes i))
         scripts="scripts:scripts:(($scripts_list))"
+        IFS=$'\n' files_list=($(SHELL=zsh bun getcompletes j))
 
         main_commands=('add\:"Add a dependency to package.json" bun\:"Generate a bundle" create\:"Create a new project" dev\:"Start a dev server" help\:"Show command help" install\:"Install packages from package.json" remove\:"Remove a dependency from package.json" run\:"Run a script or package bin" upgrade\:"Upgrade to the latest version of bun"')
         main_commands=($main_commands)
-        _alternative "$scripts" "args:bun:(($main_commands))"
+        _alternative "$scripts" "args:command:(($main_commands))" "files:files:(($files_list))"
         ;;
     args)
         case $line[1] in

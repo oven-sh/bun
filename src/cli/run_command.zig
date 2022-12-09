@@ -619,6 +619,8 @@ pub const RunCommand = struct {
                         if (name[0] != '.' and this_bundler.options.loader(std.fs.path.extension(name)).isJavaScriptLike() and
                             !strings.contains(name, ".config") and
                             !strings.contains(name, ".d.ts") and
+                            !strings.contains(name, ".d.mts") and
+                            !strings.contains(name, ".d.cts") and
                             value.kind(&this_bundler.fs.fs) == .file)
                         {
                             _ = try results.getOrPut(this_bundler.fs.filename_store.append(@TypeOf(name), name) catch continue);

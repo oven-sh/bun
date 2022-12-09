@@ -223,6 +223,7 @@ static inline JSC::EncodedJSValue addListener(JSC::JSGlobalObject* lexicalGlobal
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
+    JSC::JSValue actualThis = callFrame->thisValue();
     UNUSED_PARAM(throwScope);
     UNUSED_PARAM(callFrame);
     auto& impl = castedThis->wrapped();
@@ -237,7 +238,7 @@ static inline JSC::EncodedJSValue addListener(JSC::JSGlobalObject* lexicalGlobal
     auto result = JSValue::encode(toJS<IDLUndefined>(*lexicalGlobalObject, throwScope, [&]() -> decltype(auto) { return impl.addListenerForBindings(WTFMove(eventType), WTFMove(listener), once, prepend); }));
     RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
     vm.writeBarrier(&static_cast<JSObject&>(*castedThis), argument1.value());
-    RELEASE_AND_RETURN(throwScope, JSValue::encode(castedThis));
+    RELEASE_AND_RETURN(throwScope, JSValue::encode(actualThis));
 }
 
 static inline JSC::EncodedJSValue jsEventEmitterPrototypeFunction_addListenerBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSEventEmitter>::ClassParameter castedThis)
@@ -318,6 +319,7 @@ static inline JSC::EncodedJSValue jsEventEmitterPrototypeFunction_removeListener
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
+    JSC::JSValue actualThis = callFrame->thisValue();
     UNUSED_PARAM(throwScope);
     UNUSED_PARAM(callFrame);
     auto& impl = castedThis->wrapped();
@@ -332,7 +334,7 @@ static inline JSC::EncodedJSValue jsEventEmitterPrototypeFunction_removeListener
     auto result = JSValue::encode(toJS<IDLUndefined>(*lexicalGlobalObject, throwScope, [&]() -> decltype(auto) { return impl.removeListenerForBindings(WTFMove(eventType), WTFMove(listener)); }));
     RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
     vm.writeBarrier(&static_cast<JSObject&>(*castedThis), argument1.value());
-    RELEASE_AND_RETURN(throwScope, JSValue::encode(castedThis));
+    RELEASE_AND_RETURN(throwScope, JSValue::encode(actualThis));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsEventEmitterPrototypeFunction_removeListener, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))

@@ -3461,7 +3461,6 @@ pub const PackageManager = struct {
         dry_run: bool = false,
         remote_package_features: Features = Features{ .peer_dependencies = false, .optional_dependencies = true },
         local_package_features: Features = Features{ .peer_dependencies = false, .dev_dependencies = true },
-        allowed_install_scripts: []const PackageNameHash = &default_allowed_install_scripts,
         // The idea here is:
         // 1. package has a platform-specific binary to install
         // 2. To prevent downloading & installing incompatible versions, they stick the "real" one in optionalDependencies
@@ -3487,19 +3486,7 @@ pub const PackageManager = struct {
         const default_native_bin_link_allowlist = [_]PackageNameHash{
             String.Builder.stringHash("esbuild"),
             String.Builder.stringHash("turbo"),
-        };
-
-        const install_scripts_package_count = 5;
-        const default_allowed_install_scripts: [install_scripts_package_count]PackageNameHash = brk: {
-            const names = std.mem.span(@embedFile("install-scripts-allowlist.txt"));
-            var hashes: [install_scripts_package_count]PackageNameHash = undefined;
-            var splitter = std.mem.split(u8, names, "\n");
-            var i: usize = 0;
-            while (splitter.next()) |item| {
-                hashes[i] = String.Builder.stringHash(item);
-                i += 1;
-            }
-            break :brk hashes;
+            String.Builder.stringHash("bun"),
         };
 
         pub const LogLevel = enum {

@@ -7752,6 +7752,7 @@ pub const Macro = struct {
             var _vm = try JavaScript.VirtualMachine.init(default_allocator, resolver.opts.transform_options, null, log, env);
 
             _vm.enableMacroMode();
+            _vm.eventLoop().ensureWaker();
 
             try _vm.bundler.configureDefines();
             break :brk _vm;

@@ -104,6 +104,12 @@ pub const AllocatedNamesPool = ObjectPool(
     4,
 );
 
+const Substitution = union(enum) {
+    success: Expr,
+    failure: Expr,
+    continue_: Expr,
+};
+
 fn foldStringAddition(lhs: Expr, rhs: Expr) ?Expr {
     switch (lhs.data) {
         .e_string => |left| {
@@ -1701,6 +1707,34 @@ pub const SideEffects = enum(u1) {
                             return result;
                         }
                     },
+                    .bin_gt => {
+                        if (e_.right.data.toFiniteNumber()) |left_num| {
+                            if (e_.left.data.toFiniteNumber()) |right_num| {
+                                return Result{ .ok = true, .value = left_num > right_num, .side_effects = .no_side_effects };
+                            }
+                        }
+                    },
+                    .bin_lt => {
+                        if (e_.right.data.toFiniteNumber()) |left_num| {
+                            if (e_.left.data.toFiniteNumber()) |right_num| {
+                                return Result{ .ok = true, .value = left_num < right_num, .side_effects = .no_side_effects };
+                            }
+                        }
+                    },
+                    .bin_le => {
+                        if (e_.right.data.toFiniteNumber()) |left_num| {
+                            if (e_.left.data.toFiniteNumber()) |right_num| {
+                                return Result{ .ok = true, .value = left_num <= right_num, .side_effects = .no_side_effects };
+                            }
+                        }
+                    },
+                    .bin_ge => {
+                        if (e_.right.data.toFiniteNumber()) |left_num| {
+                            if (e_.left.data.toFiniteNumber()) |right_num| {
+                                return Result{ .ok = true, .value = left_num >= right_num, .side_effects = .no_side_effects };
+                            }
+                        }
+                    },
                     else => {},
                 }
             },
@@ -3088,7 +3122,7 @@ pub const Parser = struct {
             const had_require = p.runtime_imports.contains("__require");
             p.resolveCommonJSSymbols();
 
-            const copy_of_runtime_require = p.runtime_imports.__require.?;
+            const copy_of_runtime_require = p.runtime_imports.__require;
             if (!had_require) {
                 p.runtime_imports.__require = null;
             }
@@ -3662,6 +3696,7 @@ fn NewParser_(
         loop_body: Stmt.Data,
         module_scope: *js_ast.Scope = undefined,
         is_control_flow_dead: bool = false,
+        is_substituting: bool = false,
 
         // Inside a TypeScript namespace, an "export declare" statement can be used
         // to cause a namespace to be emitted even though it has no other observable
@@ -4321,6 +4356,7 @@ fn NewParser_(
         }
 
         pub fn recordUsage(p: *P, ref: Ref) void {
+            if (p.is_substituting) return;
             // The use count stored in the symbol is used for generating symbol names
             // during minification. These counts shouldn't include references inside dead
             // code regions since those will be culled.
@@ -4486,6 +4522,492 @@ fn NewParser_(
                 .import_record_indices = import_records,
                 .tag = .runtime,
             }) catch unreachable;
+        }
+
+        fn substituteSingleUseSymbolInStmt(p: *P, stmt: Stmt, ref: Ref, replacement: Expr) bool {
+            var expr: *Expr = brk: {
+                switch (stmt.data) {
+                    .s_expr => |exp| {
+                        break :brk &exp.value;
+                    },
+                    .s_throw => |throw| {
+                        break :brk &throw.value;
+                    },
+                    .s_return => |ret| {
+                        if (ret.value) |*value| {
+                            break :brk value;
+                        }
+                    },
+                    .s_if => |if_stmt| {
+                        break :brk &if_stmt.test_;
+                    },
+                    .s_switch => |switch_stmt| {
+                        break :brk &switch_stmt.test_;
+                    },
+                    .s_local => |local| {
+                        if (local.decls.len > 0) {
+                            var first: *Decl = &local.decls[0];
+                            if (first.value) |*value| {
+                                if (first.binding.data == .b_identifier) {
+                                    break :brk value;
+                                }
+                            }
+                        }
+                    },
+                    else => {},
+                }
+
+                return false;
+            };
+
+            // Only continue trying to insert this replacement into sub-expressions
+            // after the first one if the replacement has no side effects:
+            //
+            //   // Substitution is ok
+            //   let replacement = 123;
+            //   return x + replacement;
+            //
+            //   // Substitution is not ok because "fn()" may change "x"
+            //   let replacement = fn();
+            //   return x + replacement;
+            //
+            //   // Substitution is not ok because "x == x" may change "x" due to "valueOf()" evaluation
+            //   let replacement = [x];
+            //   return (x == x) + replacement;
+            //
+            const replacement_can_be_removed = p.exprCanBeRemovedIfUnused(&replacement);
+            switch (p.substituteSingleUseSymbolInExpr(expr.*, ref, replacement, replacement_can_be_removed)) {
+                .success => |result| {
+                    if (result.data == .e_binary or result.data == .e_unary or result.data == .e_if) {
+                        const prev_substituting = p.is_substituting;
+                        p.is_substituting = true;
+                        defer p.is_substituting = prev_substituting;
+                        expr.* = p.visitExpr(result);
+                    } else {
+                        expr.* = result;
+                    }
+
+                    return true;
+                },
+                else => {},
+            }
+
+            return false;
+        }
+
+        fn substituteSingleUseSymbolInExpr(
+            p: *P,
+            expr: Expr,
+            ref: Ref,
+            replacement: Expr,
+            replacement_can_be_removed: bool,
+        ) Substitution {
+            outer: {
+                switch (expr.data) {
+                    .e_identifier => |ident| {
+                        if (ident.ref.eql(ref) or p.symbols.items[ident.ref.innerIndex()].link.eql(ref)) {
+                            p.ignoreUsage(ref);
+                            return .{ .success = replacement };
+                        }
+                    },
+                    .e_new => |new| {
+                        switch (p.substituteSingleUseSymbolInExpr(new.target, ref, replacement, replacement_can_be_removed)) {
+                            .continue_ => {},
+                            .success => |result| {
+                                new.target = result;
+                                return .{ .success = expr };
+                            },
+                            .failure => |result| {
+                                new.target = result;
+                                return .{ .failure = expr };
+                            },
+                        }
+
+                        if (replacement_can_be_removed) {
+                            for (new.args.slice()) |*arg| {
+                                switch (p.substituteSingleUseSymbolInExpr(arg.*, ref, replacement, replacement_can_be_removed)) {
+                                    .continue_ => {},
+                                    .success => |result| {
+                                        arg.* = result;
+                                        return .{ .success = expr };
+                                    },
+                                    .failure => |result| {
+                                        arg.* = result;
+                                        return .{ .failure = expr };
+                                    },
+                                }
+                            }
+                        }
+                    },
+                    .e_spread => |spread| {
+                        switch (p.substituteSingleUseSymbolInExpr(spread.value, ref, replacement, replacement_can_be_removed)) {
+                            .continue_ => {},
+                            .success => |result| {
+                                spread.value = result;
+                                return .{ .success = expr };
+                            },
+                            .failure => |result| {
+                                spread.value = result;
+                                return .{ .failure = expr };
+                            },
+                        }
+                    },
+                    .e_await => |await_expr| {
+                        switch (p.substituteSingleUseSymbolInExpr(await_expr.value, ref, replacement, replacement_can_be_removed)) {
+                            .continue_ => {},
+                            .success => |result| {
+                                await_expr.value = result;
+                                return .{ .success = expr };
+                            },
+                            .failure => |result| {
+                                await_expr.value = result;
+                                return .{ .failure = expr };
+                            },
+                        }
+                    },
+                    .e_yield => |yield| {
+                        switch (p.substituteSingleUseSymbolInExpr(yield.value orelse Expr{ .data = .{ .e_missing = .{} }, .loc = expr.loc }, ref, replacement, replacement_can_be_removed)) {
+                            .continue_ => {},
+                            .success => |result| {
+                                yield.value = result;
+                                return .{ .success = expr };
+                            },
+                            .failure => |result| {
+                                yield.value = result;
+                                return .{ .failure = expr };
+                            },
+                        }
+                    },
+                    .e_import => |import| {
+                        switch (p.substituteSingleUseSymbolInExpr(import.expr, ref, replacement, replacement_can_be_removed)) {
+                            .continue_ => {},
+                            .success => |result| {
+                                import.expr = result;
+                                return .{ .success = expr };
+                            },
+                            .failure => |result| {
+                                import.expr = result;
+                                return .{ .failure = expr };
+                            },
+                        }
+
+                        // The "import()" expression has side effects but the side effects are
+                        // always asynchronous so there is no way for the side effects to modify
+                        // the replacement value. So it's ok to reorder the replacement value
+                        // past the "import()" expression assuming everything else checks out.
+
+                        if (replacement_can_be_removed and p.exprCanBeRemovedIfUnused(&import.expr)) {
+                            return .{ .continue_ = expr };
+                        }
+                    },
+                    .e_unary => |e| {
+                        switch (e.op) {
+                            .un_pre_inc, .un_post_inc, .un_pre_dec, .un_post_dec, .un_delete => {
+                                // Do not substitute into an assignment position
+                            },
+                            else => {
+                                switch (p.substituteSingleUseSymbolInExpr(e.value, ref, replacement, replacement_can_be_removed)) {
+                                    .continue_ => {},
+                                    .success => |result| {
+                                        e.value = result;
+                                        return .{ .success = expr };
+                                    },
+                                    .failure => |result| {
+                                        e.value = result;
+                                        return .{ .failure = expr };
+                                    },
+                                }
+                            },
+                        }
+                    },
+                    .e_dot => |e| {
+                        switch (p.substituteSingleUseSymbolInExpr(e.target, ref, replacement, replacement_can_be_removed)) {
+                            .continue_ => {},
+                            .success => |result| {
+                                e.target = result;
+                                return .{ .success = expr };
+                            },
+                            .failure => |result| {
+                                e.target = result;
+                                return .{ .failure = expr };
+                            },
+                        }
+                    },
+                    .e_binary => |e| {
+                        // Do not substitute into an assignment position
+                        if (e.op.binaryAssignTarget() == .none) {
+                            switch (p.substituteSingleUseSymbolInExpr(e.left, ref, replacement, replacement_can_be_removed)) {
+                                .continue_ => {},
+                                .success => |result| {
+                                    e.left = result;
+
+                                    return .{ .success = expr };
+                                },
+                                .failure => |result| {
+                                    e.left = result;
+                                    return .{ .failure = expr };
+                                },
+                            }
+                        } else if (!p.exprCanBeRemovedIfUnused(&e.left)) {
+                            // Do not reorder past a side effect in an assignment target, as that may
+                            // change the replacement value. For example, "fn()" may change "a" here:
+                            //
+                            //   let a = 1;
+                            //   foo[fn()] = a;
+                            //
+                            return .{ .failure = expr };
+                        } else if (e.op.binaryAssignTarget() == .update and !replacement_can_be_removed) {
+                            // If this is a read-modify-write assignment and the replacement has side
+                            // effects, don't reorder it past the assignment target. The assignment
+                            // target is being read so it may be changed by the side effect. For
+                            // example, "fn()" may change "foo" here:
+                            //
+                            //   let a = fn();
+                            //   foo += a;
+                            //
+                            return .{ .failure = expr };
+                        }
+
+                        // If we get here then it should be safe to attempt to substitute the
+                        // replacement past the left operand into the right operand.
+                        switch (p.substituteSingleUseSymbolInExpr(e.right, ref, replacement, replacement_can_be_removed)) {
+                            .continue_ => {},
+                            .success => |result| {
+                                e.right = result;
+                                return .{ .success = expr };
+                            },
+                            .failure => |result| {
+                                e.right = result;
+                                return .{ .failure = expr };
+                            },
+                        }
+                    },
+                    .e_if => |e| {
+                        switch (p.substituteSingleUseSymbolInExpr(expr.data.e_if.test_, ref, replacement, replacement_can_be_removed)) {
+                            .continue_ => {},
+                            .success => |result| {
+                                e.test_ = result;
+                                return .{ .success = expr };
+                            },
+                            .failure => |result| {
+                                e.test_ = result;
+                                return .{ .failure = expr };
+                            },
+                        }
+
+                        // Do not substitute our unconditionally-executed value into a branch
+                        // unless the value itself has no side effects
+                        if (replacement_can_be_removed) {
+                            // Unlike other branches in this function such as "a && b" or "a?.[b]",
+                            // the "a ? b : c" form has potential code evaluation along both control
+                            // flow paths. Handle this by allowing substitution into either branch.
+                            // Side effects in one branch should not prevent the substitution into
+                            // the other branch.
+
+                            const yes = p.substituteSingleUseSymbolInExpr(e.yes, ref, replacement, replacement_can_be_removed);
+                            if (yes == .success) {
+                                e.yes = yes.success;
+                                return .{ .success = expr };
+                            }
+
+                            const no = p.substituteSingleUseSymbolInExpr(e.no, ref, replacement, replacement_can_be_removed);
+                            if (no == .success) {
+                                e.no = no.success;
+                                return .{ .success = expr };
+                            }
+
+                            // Side effects in either branch should stop us from continuing to try to
+                            // substitute the replacement after the control flow branches merge again.
+                            if (yes != .continue_ or no != .continue_) {
+                                return .{ .failure = expr };
+                            }
+                        }
+                    },
+                    .e_index => |index| {
+                        switch (p.substituteSingleUseSymbolInExpr(index.target, ref, replacement, replacement_can_be_removed)) {
+                            .continue_ => {},
+                            .success => |result| {
+                                index.target = result;
+                                return .{ .success = expr };
+                            },
+                            .failure => |result| {
+                                index.target = result;
+                                return .{ .failure = expr };
+                            },
+                        }
+
+                        // Do not substitute our unconditionally-executed value into a branch
+                        // unless the value itself has no side effects
+                        if (replacement_can_be_removed or index.optional_chain == null) {
+                            switch (p.substituteSingleUseSymbolInExpr(index.index, ref, replacement, replacement_can_be_removed)) {
+                                .continue_ => {},
+                                .success => |result| {
+                                    index.index = result;
+                                    return .{ .success = expr };
+                                },
+                                .failure => |result| {
+                                    index.index = result;
+                                    return .{ .failure = expr };
+                                },
+                            }
+                        }
+                    },
+
+                    .e_call => |e| {
+                        // Don't substitute something into a call target that could change "this"
+                        switch (replacement.data) {
+                            .e_dot, .e_index => {
+                                if (e.target.data == .e_identifier and e.target.data.e_identifier.ref.eql(ref)) {
+                                    break :outer;
+                                }
+                            },
+                            else => {},
+                        }
+
+                        switch (p.substituteSingleUseSymbolInExpr(e.target, ref, replacement, replacement_can_be_removed)) {
+                            .continue_ => {},
+                            .success => |result| {
+                                e.target = result;
+                                return .{ .success = expr };
+                            },
+                            .failure => |result| {
+                                e.target = result;
+                                return .{ .failure = expr };
+                            },
+                        }
+
+                        // Do not substitute our unconditionally-executed value into a branch
+                        // unless the value itself has no side effects
+                        if (replacement_can_be_removed or e.optional_chain == null) {
+                            for (e.args.slice()) |*arg| {
+                                switch (p.substituteSingleUseSymbolInExpr(arg.*, ref, replacement, replacement_can_be_removed)) {
+                                    .continue_ => {},
+                                    .success => |result| {
+                                        arg.* = result;
+                                        return .{ .success = expr };
+                                    },
+                                    .failure => |result| {
+                                        arg.* = result;
+                                        return .{ .failure = expr };
+                                    },
+                                }
+                            }
+                        }
+                    },
+
+                    .e_array => |e| {
+                        for (e.items.slice()) |*item| {
+                            switch (p.substituteSingleUseSymbolInExpr(item.*, ref, replacement, replacement_can_be_removed)) {
+                                .continue_ => {},
+                                .success => |result| {
+                                    item.* = result;
+                                    return .{ .success = expr };
+                                },
+                                .failure => |result| {
+                                    item.* = result;
+                                    return .{ .failure = expr };
+                                },
+                            }
+                        }
+                    },
+
+                    .e_object => |e| {
+                        for (e.properties.slice()) |*property| {
+                            // Check the key
+
+                            if (property.flags.contains(.is_computed)) {
+                                switch (p.substituteSingleUseSymbolInExpr(property.key.?, ref, replacement, replacement_can_be_removed)) {
+                                    .continue_ => {},
+                                    .success => |result| {
+                                        property.key = result;
+                                        return .{ .success = expr };
+                                    },
+                                    .failure => |result| {
+                                        property.key = result;
+                                        return .{ .failure = expr };
+                                    },
+                                }
+
+                                // Stop now because both computed keys and property spread have side effects
+                                return .{ .failure = expr };
+                            }
+
+                            // Check the value
+                            if (property.value) |value| {
+                                switch (p.substituteSingleUseSymbolInExpr(value, ref, replacement, replacement_can_be_removed)) {
+                                    .continue_ => {},
+                                    .success => |result| {
+                                        if (result.data == .e_missing) {
+                                            property.value = null;
+                                        } else {
+                                            property.value = result;
+                                        }
+                                        return .{ .success = expr };
+                                    },
+                                    .failure => |result| {
+                                        if (result.data == .e_missing) {
+                                            property.value = null;
+                                        } else {
+                                            property.value = result;
+                                        }
+                                        return .{ .failure = expr };
+                                    },
+                                }
+                            }
+                        }
+                    },
+
+                    .e_template => |e| {
+                        if (e.tag) |*tag| {
+                            switch (p.substituteSingleUseSymbolInExpr(tag.*, ref, replacement, replacement_can_be_removed)) {
+                                .continue_ => {},
+                                .success => |result| {
+                                    tag.* = result;
+                                    return .{ .success = expr };
+                                },
+                                .failure => |result| {
+                                    tag.* = result;
+                                    return .{ .failure = expr };
+                                },
+                            }
+                        }
+
+                        for (e.parts) |*part| {
+                            switch (p.substituteSingleUseSymbolInExpr(part.value, ref, replacement, replacement_can_be_removed)) {
+                                .continue_ => {},
+                                .success => |result| {
+                                    part.value = result;
+
+                                    // todo: mangle template parts
+
+                                    return .{ .success = expr };
+                                },
+                                .failure => |result| {
+                                    part.value = result;
+                                    return .{ .failure = expr };
+                                },
+                            }
+                        }
+                    },
+                    else => {},
+                }
+            }
+
+            // If both the replacement and this expression have no observable side
+            // effects, then we can reorder the replacement past this expression
+            if (replacement_can_be_removed and p.exprCanBeRemovedIfUnused(&expr)) {
+                return .{ .continue_ = expr };
+            }
+
+            const tag: Expr.Tag = @as(Expr.Tag, expr.data);
+
+            // We can always reorder past primitive values
+            if (tag.isPrimitiveLiteral()) {
+                return .{ .continue_ = expr };
+            }
+
+            // Otherwise we should stop trying to substitute past this point
+            return .{ .failure = expr };
         }
 
         pub fn prepareForVisitPass(p: *P) !void {
@@ -4657,7 +5179,8 @@ fn NewParser_(
             if (p.runtime_imports.__require) |*require| {
                 p.resolveGeneratedSymbol(require);
             }
-            p.ensureRequireSymbol();
+            if (p.options.features.allow_runtime)
+                p.ensureRequireSymbol();
         }
 
         pub fn resolveBundlingSymbols(p: *P) void {
@@ -14849,7 +15372,7 @@ fn NewParser_(
         }
 
         pub fn ignoreUsage(p: *P, ref: Ref) void {
-            if (!p.is_control_flow_dead) {
+            if (!p.is_control_flow_dead and !p.is_substituting) {
                 if (comptime Environment.allow_assert) assert(@as(usize, ref.innerIndex()) < p.symbols.items.len);
                 p.symbols.items[ref.innerIndex()].use_count_estimate -|= 1;
                 var use = p.symbol_uses.get(ref) orelse return;
@@ -17094,85 +17617,186 @@ fn NewParser_(
                 @compileError("only_scan_imports_and_do_not_visit must not run this.");
             }
 
-            // Save the current control-flow liveness. This represents if we are
-            // currently inside an "if (false) { ... }" block.
-            var old_is_control_flow_dead = p.is_control_flow_dead;
-            defer p.is_control_flow_dead = old_is_control_flow_dead;
+            {
 
-            // visit all statements first
-            var visited = try ListManaged(Stmt).initCapacity(p.allocator, stmts.items.len);
-            var before = ListManaged(Stmt).init(p.allocator);
-            var after = ListManaged(Stmt).init(p.allocator);
+                // Save the current control-flow liveness. This represents if we are
+                // currently inside an "if (false) { ... }" block.
+                var old_is_control_flow_dead = p.is_control_flow_dead;
+                defer p.is_control_flow_dead = old_is_control_flow_dead;
 
-            if (p.current_scope == p.module_scope) {
-                p.macro.prepend_stmts = &before;
-            }
+                var before = ListManaged(Stmt).init(p.allocator);
+                var after = ListManaged(Stmt).init(p.allocator);
 
-            defer before.deinit();
-            defer visited.deinit();
-            defer after.deinit();
-
-            for (stmts.items) |*stmt| {
-                const list = list_getter: {
-                    switch (stmt.data) {
-                        .s_export_equals => {
-                            // TypeScript "export = value;" becomes "module.exports = value;". This
-                            // must happen at the end after everything is parsed because TypeScript
-                            // moves this statement to the end when it generates code.
-                            break :list_getter &after;
-                        },
-                        .s_function => |data| {
-                            // Manually hoist block-level function declarations to preserve semantics.
-                            // This is only done for function declarations that are not generators
-                            // or async functions, since this is a backwards-compatibility hack from
-                            // Annex B of the JavaScript standard.
-                            if (!p.current_scope.kindStopsHoisting() and p.symbols.items[data.func.name.?.ref.?.innerIndex()].kind == .hoisted_function) {
-                                break :list_getter &before;
-                            }
-                        },
-                        else => {},
-                    }
-                    break :list_getter &visited;
-                };
-                try p.visitAndAppendStmt(list, stmt);
-            }
-
-            var visited_count = visited.items.len;
-            if (p.is_control_flow_dead) {
-                var end: usize = 0;
-                for (visited.items) |item| {
-                    if (!SideEffects.shouldKeepStmtInDeadControlFlow(item, p.allocator)) {
-                        continue;
-                    }
-
-                    visited.items[end] = item;
-                    end += 1;
+                if (p.current_scope == p.module_scope) {
+                    p.macro.prepend_stmts = &before;
                 }
-                visited_count = end;
+
+                // visit all statements first
+                var visited = try ListManaged(Stmt).initCapacity(p.allocator, stmts.items.len);
+
+                defer before.deinit();
+                defer visited.deinit();
+                defer after.deinit();
+
+                for (stmts.items) |*stmt| {
+                    const list = list_getter: {
+                        switch (stmt.data) {
+                            .s_export_equals => {
+                                // TypeScript "export = value;" becomes "module.exports = value;". This
+                                // must happen at the end after everything is parsed because TypeScript
+                                // moves this statement to the end when it generates code.
+                                break :list_getter &after;
+                            },
+                            .s_function => |data| {
+                                // Manually hoist block-level function declarations to preserve semantics.
+                                // This is only done for function declarations that are not generators
+                                // or async functions, since this is a backwards-compatibility hack from
+                                // Annex B of the JavaScript standard.
+                                if (!p.current_scope.kindStopsHoisting() and p.symbols.items[data.func.name.?.ref.?.innerIndex()].kind == .hoisted_function) {
+                                    break :list_getter &before;
+                                }
+                            },
+                            else => {},
+                        }
+                        break :list_getter &visited;
+                    };
+                    try p.visitAndAppendStmt(list, stmt);
+                }
+
+                var visited_count = visited.items.len;
+                if (p.is_control_flow_dead) {
+                    var end: usize = 0;
+                    for (visited.items) |item| {
+                        if (!SideEffects.shouldKeepStmtInDeadControlFlow(item, p.allocator)) {
+                            continue;
+                        }
+
+                        visited.items[end] = item;
+                        end += 1;
+                    }
+                    visited_count = end;
+                }
+
+                const total_size = visited_count + before.items.len + after.items.len;
+
+                if (total_size != stmts.items.len) {
+                    try stmts.resize(total_size);
+                }
+
+                var i: usize = 0;
+
+                for (before.items) |item| {
+                    stmts.items[i] = item;
+                    i += 1;
+                }
+
+                const visited_slice = visited.items[0..visited_count];
+                for (visited_slice) |item| {
+                    stmts.items[i] = item;
+                    i += 1;
+                }
+
+                for (after.items) |item| {
+                    stmts.items[i] = item;
+                    i += 1;
+                }
             }
 
-            const total_size = visited_count + before.items.len + after.items.len;
-
-            if (total_size != stmts.items.len) {
-                try stmts.resize(total_size);
+            if (!p.options.features.inlining) {
+                return;
             }
 
-            var i: usize = 0;
+            // Inline single-use variable declarations where possible:
+            //
+            //   // Before
+            //   let x = fn();
+            //   return x.y();
+            //
+            //   // After
+            //   return fn().y();
+            //
+            // The declaration must not be exported. We can't just check for the
+            // "export" keyword because something might do "export {id};" later on.
+            // Instead we just ignore all top-level declarations for now. That means
+            // this optimization currently only applies in nested scopes.
+            //
+            // Ignore declarations if the scope is shadowed by a direct "eval" call.
+            // The eval'd code may indirectly reference this symbol and the actual
+            // use count may be greater than 1.
+            if (p.current_scope != p.module_scope and !p.current_scope.contains_direct_eval) {
+                var output = ListManaged(Stmt).initCapacity(p.allocator, stmts.items.len) catch unreachable;
 
-            for (before.items) |item| {
-                stmts.items[i] = item;
-                i += 1;
-            }
+                for (stmts.items) |stmt| {
 
-            const visited_slice = visited.items[0..visited_count];
-            for (visited_slice) |item| {
-                stmts.items[i] = item;
-                i += 1;
-            }
+                    // Keep inlining variables until a failure or until there are none left.
+                    // That handles cases like this:
+                    //
+                    //   // Before
+                    //   let x = fn();
+                    //   let y = x.prop;
+                    //   return y;
+                    //
+                    //   // After
+                    //   return fn().prop;
+                    //
+                    inner: while (output.items.len > 0) {
+                        // Ignore "var" declarations since those have function-level scope and
+                        // we may not have visited all of their uses yet by this point. We
+                        // should have visited all the uses of "let" and "const" declarations
+                        // by now since they are scoped to this block which we just finished
+                        // visiting.
+                        var prev_statement = &output.items[output.items.len - 1];
+                        switch (prev_statement.data) {
+                            .s_local => {
+                                var local = prev_statement.data.s_local;
+                                if (!(local.decls.len == 0 or local.kind == .k_var)) {
+                                    var last: *Decl = &local.decls[local.decls.len - 1];
+                                    // The variable must be initialized, since we will be substituting
+                                    // the value into the usage.
 
-            for (after.items) |item| {
-                stmts.items[i] = item;
-                i += 1;
+                                    // The binding must be an identifier that is only used once.
+                                    // Ignore destructuring bindings since that's not the simple case.
+                                    // Destructuring bindings could potentially execute side-effecting
+                                    // code which would invalidate reordering.
+                                    if (!(last.value == null or last.binding.data != .b_identifier)) {
+                                        const id = last.binding.data.b_identifier.ref;
+
+                                        const symbol: *const Symbol = &p.symbols.items[id.innerIndex()];
+
+                                        // Try to substitute the identifier with the initializer. This will
+                                        // fail if something with side effects is in between the declaration
+                                        // and the usage.
+                                        if (symbol.use_count_estimate == 1) {
+                                            if (p.substituteSingleUseSymbolInStmt(stmt, id, last.value.?)) {
+                                                switch (local.decls.len) {
+                                                    1 => {
+                                                        local.decls.len = 0;
+                                                        output.items.len -= 1;
+                                                        continue :inner;
+                                                    },
+                                                    else => {
+                                                        local.decls.len -= 1;
+                                                        continue :inner;
+                                                    },
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            },
+                            else => {},
+                        }
+                        break;
+                    }
+
+                    if (stmt.data != .s_empty) {
+                        output.appendAssumeCapacity(
+                            stmt,
+                        );
+                    }
+                }
+                stmts.deinit();
+                stmts.* = output;
             }
         }
 

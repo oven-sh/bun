@@ -1415,6 +1415,7 @@ pub const Bundler = struct {
                 opts.can_import_from_bundle = bundler.options.node_modules_bundle != null;
 
                 opts.tree_shaking = bundler.options.tree_shaking;
+                opts.features.inlining = bundler.options.inlining;
 
                 // HMR is enabled when devserver is running
                 // unless you've explicitly disabled it

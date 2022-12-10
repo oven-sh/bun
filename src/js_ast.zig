@@ -2948,6 +2948,14 @@ pub const Expr = struct {
         // This should never make it to the printer
         inline_identifier,
 
+        // object, regex and array may have had side effects
+        pub fn isPrimitiveLiteral(tag: Tag) bool {
+            return switch (tag) {
+                .e_null, .e_undefined, .e_string, .e_boolean, .e_number, .e_big_int => true,
+                else => false,
+            };
+        }
+
         pub fn typeof(tag: Tag) ?string {
             return switch (tag) {
                 .e_array, .e_object, .e_null, .e_reg_exp => "object",
@@ -3741,6 +3749,17 @@ pub const Expr = struct {
                 .e_undefined => std.math.nan_f64,
                 .e_boolean => @as(f64, if (data.e_boolean.value) 1.0 else 0.0),
                 .e_number => data.e_number.value,
+                else => null,
+            };
+        }
+
+        pub fn toFiniteNumber(data: Expr.Data) ?f64 {
+            return switch (data) {
+                .e_boolean => @as(f64, if (data.e_boolean.value) 1.0 else 0.0),
+                .e_number => if (std.math.isFinite(data.e_number.value))
+                    data.e_number.value
+                else
+                    null,
                 else => null,
             };
         }

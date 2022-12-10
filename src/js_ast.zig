@@ -1735,13 +1735,13 @@ pub const E = struct {
                 switch (_t) {
                     @This() => {
                         if (other.isUTF8()) {
-                            return strings.eql(s.data, other.data);
+                            return strings.eqlLong(s.data, other.data, true);
                         } else {
                             return strings.utf16EqlString(other.slice16(), s.data);
                         }
                     },
                     bun.string => {
-                        return strings.eql(s.data, other);
+                        return strings.eqlLong(s.data, other, true);
                     },
                     []u16, []const u16 => {
                         return strings.utf16EqlString(other, s.data);
@@ -3769,7 +3769,11 @@ pub const Expr = struct {
         // Returns "equal, ok". If "ok" is false, then nothing is known about the two
         // values. If "ok" is true, the equality or inequality of the two values is
         // stored in "equal".
-        pub fn eql(left: Expr.Data, right: Expr.Data) Equality {
+        pub fn eql(
+            left: Expr.Data,
+            right: Expr.Data,
+            allocator: std.mem.Allocator,
+        ) Equality {
             var equality = Equality{};
             switch (left) {
                 .e_null => {
@@ -3795,7 +3799,9 @@ pub const Expr = struct {
                 .e_string => |l| {
                     equality.ok = @as(Expr.Tag, right) == Expr.Tag.e_string;
                     if (equality.ok) {
-                        const r = right.e_string;
+                        var r = right.e_string;
+                        r.resovleRopeIfNeeded(allocator);
+                        l.resovleRopeIfNeeded(allocator);
                         equality.equal = r.eql(E.String, l);
                     }
                 },

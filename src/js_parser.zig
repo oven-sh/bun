@@ -1708,29 +1708,29 @@ pub const SideEffects = enum(u1) {
                         }
                     },
                     .bin_gt => {
-                        if (e_.right.data.toFiniteNumber()) |left_num| {
-                            if (e_.left.data.toFiniteNumber()) |right_num| {
+                        if (e_.left.data.toFiniteNumber()) |left_num| {
+                            if (e_.right.data.toFiniteNumber()) |right_num| {
                                 return Result{ .ok = true, .value = left_num > right_num, .side_effects = .no_side_effects };
                             }
                         }
                     },
                     .bin_lt => {
-                        if (e_.right.data.toFiniteNumber()) |left_num| {
-                            if (e_.left.data.toFiniteNumber()) |right_num| {
+                        if (e_.left.data.toFiniteNumber()) |left_num| {
+                            if (e_.right.data.toFiniteNumber()) |right_num| {
                                 return Result{ .ok = true, .value = left_num < right_num, .side_effects = .no_side_effects };
                             }
                         }
                     },
                     .bin_le => {
-                        if (e_.right.data.toFiniteNumber()) |left_num| {
-                            if (e_.left.data.toFiniteNumber()) |right_num| {
+                        if (e_.left.data.toFiniteNumber()) |left_num| {
+                            if (e_.right.data.toFiniteNumber()) |right_num| {
                                 return Result{ .ok = true, .value = left_num <= right_num, .side_effects = .no_side_effects };
                             }
                         }
                     },
                     .bin_ge => {
-                        if (e_.right.data.toFiniteNumber()) |left_num| {
-                            if (e_.left.data.toFiniteNumber()) |right_num| {
+                        if (e_.left.data.toFiniteNumber()) |left_num| {
+                            if (e_.right.data.toFiniteNumber()) |right_num| {
                                 return Result{ .ok = true, .value = left_num >= right_num, .side_effects = .no_side_effects };
                             }
                         }

@@ -1,8 +1,8 @@
 import {
-__require
+__require as require_ab102cbd93061951
 } from "http://localhost:8080/bun:wrap";
 import * as $75175720 from "http://localhost:8080/node_modules/lodash/lodash.js";
-var { shuffle} = __require($75175720);
+var { shuffle} = require_ab102cbd93061951($75175720);
 export function test() {
   const foo = [1, 2, 3, 4, 6];
   const bar = shuffle(foo);

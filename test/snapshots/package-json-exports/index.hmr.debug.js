@@ -1,5 +1,5 @@
 import {
-__require
+__require as require
 } from "http://localhost:8080/bun:wrap";
 import {
 __HMRClient as Bun
@@ -12,13 +12,13 @@ import {
 __FastRefreshRuntime as FastRefresh
 } from "http://localhost:8080/bun:wrap";
 import * as $a4de9925 from "http://localhost:8080/package-json-exports/node_modules/inexact/browser/index.js";
-var InexactRoot = __require($a4de9925);
+var InexactRoot = require($a4de9925);
 import * as $725c641 from "http://localhost:8080/package-json-exports/node_modules/inexact/browser/dir/file.js";
-var InexactFile = __require($725c641);
+var InexactFile = require($725c641);
 import * as $fbe61cb7 from "http://localhost:8080/package-json-exports/node_modules/inexact/browser/foo.js";
-var ExactFile = __require($fbe61cb7);
+var ExactFile = require($fbe61cb7);
 import * as $6a256e60 from "http://localhost:8080/package-json-exports/node_modules/js-only-exports/browser/js-file.js";
-var JSFileExtensionOnly = __require($6a256e60);
+var JSFileExtensionOnly = require($6a256e60);
 var hmr = new FastHMR(879772149, "package-json-exports/index.js", FastRefresh), exports = hmr.exports;
 (hmr._load = function() {
   async function test() {

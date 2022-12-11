@@ -511,10 +511,10 @@ function getStdinStream(fd, rawRequire, Bun) {
     }
 
     on(ev, cb) {
-      super.on(ev, cb);
       if (!this.#readStream && (ev === "readable" || ev === "data")) {
         this.#loadReadStream();
       }
+      return super.on(ev, cb);
     }
 
     #loadReadStream() {

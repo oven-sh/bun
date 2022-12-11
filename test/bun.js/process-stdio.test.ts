@@ -3,6 +3,12 @@ import { describe, expect, it, test } from "bun:test";
 import { bunExe } from "bunExe";
 import { isatty } from "tty";
 
+test("process.stdin", () => {
+  expect(process.stdin).toBeDefined();
+  expect(process.stdin.on("close", function() {})).toBe(process.stdin);
+  expect(process.stdin.once("end", function() {})).toBe(process.stdin);
+});
+
 test("process.stdout", () => {
   expect(process.stdout).toBeDefined();
   expect(process.stdout.isTTY).toBe(isatty(1));

@@ -4,21 +4,11 @@ import { spawn, execSync } from "node:child_process";
 const CHILD_PROCESS_FILE = import.meta.dir + "/spawned-child.js";
 const OUT_FILE = import.meta.dir + "/stdio-test-out.txt";
 
-// describe("process.stdout", () => {
-//   // it("should allow us to write to it", () => {
-//   //   process.stdout.write("Bun is cool\n");
-//   // });
-//   // it("should allow us to use a file as stdout", () => {
-//   //   const output = "Bun is cool\n";
-//   //   execSync(`rm -f ${OUT_FILE}`);
-//   //   const result = execSync(`bun ${CHILD_PROCESS_FILE} STDOUT > ${OUT_FILE}`, {
-//   //     encoding: "utf8",
-//   //     stdin,
-//   //   });
-//   //   expect(result).toBe(output);
-//   //   expect(readSync(OUT_FILE)).toBe(output);
-//   // });
-// });
+describe("process.stdout", () => {
+  it("should allow us to write to it", () => {
+    process.stdout.write("Bun is cool\n");
+  });
+});
 
 describe("process.stdin", () => {
   it("should allow us to read from stdin in readable mode", (done) => {
@@ -75,6 +65,6 @@ describe("process.stdin", () => {
       }/readFileSync.txt`,
       { encoding: "utf8" },
     );
-    expect(result.trim()).toEqual("File read successfully");
+    expect(result.trim()).toEqual("data: File read successfully");
   });
 });

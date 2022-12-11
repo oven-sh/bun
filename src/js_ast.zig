@@ -1976,6 +1976,15 @@ pub const Stmt = struct {
         return Stmt{ .data = .{ .s_empty = None }, .loc = logger.Loc{} };
     }
 
+    pub fn toEmpty(this: Stmt) Stmt {
+        return .{
+            .data = .{
+                .s_empty = None,
+            },
+            .loc = this.loc,
+        };
+    }
+
     const None = S.Empty{};
 
     pub var icount: usize = 0;
@@ -2250,6 +2259,10 @@ pub const Expr = struct {
                 .stmts = stmts,
             },
         }, this.loc);
+    }
+
+    pub fn canBeConstValue(this: Expr) bool {
+        return this.data.canBeConstValue();
     }
 
     pub fn fromBlob(
@@ -3618,6 +3631,15 @@ pub const Expr = struct {
         // If it ends up in JSParser or JSPrinter, it is a bug.
         inline_identifier: i32,
 
+        pub fn canBeConstValue(this: Expr.Data) bool {
+            return switch (this) {
+                .e_reg_exp, .e_string, .e_number, .e_boolean, .e_null, .e_undefined => true,
+                .e_array => |array| array.was_originally_macro,
+                .e_object => |object| object.was_originally_macro,
+                else => false,
+            };
+        }
+
         pub fn knownPrimitive(data: Expr.Data) PrimitiveType {
             return switch (data) {
                 .e_big_int => .bigint,
@@ -4663,6 +4685,8 @@ pub const Scope = struct {
     forbid_arguments: bool = false,
 
     strict_mode: StrictModeKind = StrictModeKind.sloppy_mode,
+
+    is_after_const_local_prefix: bool = false,
 
     pub fn reset(this: *Scope) void {
         this.children.clearRetainingCapacity();

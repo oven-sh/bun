@@ -65,12 +65,16 @@ pub const Op = js_ast.Op;
 pub const Scope = js_ast.Scope;
 pub const locModuleScope = logger.Loc{ .start = -100 };
 const Ref = @import("./ast/base.zig").Ref;
+const RefHashCtx = @import("./ast/base.zig").RefHashCtx;
 
 pub const StringHashMap = _hash_map.StringHashMap;
 pub const AutoHashMap = _hash_map.AutoHashMap;
 const StringHashMapUnamanged = _hash_map.StringHashMapUnamanged;
 const ObjectPool = @import("./pool.zig").ObjectPool;
 const NodeFallbackModules = @import("./node_fallbacks.zig");
+
+const RefExprMap = std.ArrayHashMapUnmanaged(Ref, Expr, RefHashCtx, false);
+
 // Dear reader,
 // There are some things you should know about this file to make it easier for humans to read
 // "P" is the internal parts of the parser
@@ -3802,7 +3806,7 @@ fn NewParser_(
 
         scope_order_to_visit: []ScopeOrder = &([_]ScopeOrder{}),
 
-        import_refs_to_always_trim_if_unused: RefArrayMap = .{},
+        const_values: RefExprMap = .{},
 
         pub fn transposeImport(p: *P, arg: Expr, state: anytype) Expr {
             // The argument must be a string
@@ -4409,6 +4413,12 @@ fn NewParser_(
         pub fn handleIdentifier(p: *P, loc: logger.Loc, ident: E.Identifier, _original_name: ?string, opts: IdentifierOpts) Expr {
             const ref = ident.ref;
 
+            if (p.options.features.inlining) {
+                if (p.const_values.get(ref)) |replacement| {
+                    return replacement;
+                }
+            }
+
             if ((opts.assign_target != .none or opts.is_delete_target) and p.symbols.items[ref.innerIndex()].kind == .import) {
                 // Create an error for assigning to an import namespace
                 const r = js_lexer.rangeOfIdentifier(p.source, loc);
@@ -4582,6 +4592,8 @@ fn NewParser_(
                         const prev_substituting = p.is_substituting;
                         p.is_substituting = true;
                         defer p.is_substituting = prev_substituting;
+                        // O(n^2) and we will need to think more carefully about
+                        // this once we implement syntax compression
                         expr.* = p.visitExpr(result);
                     } else {
                         expr.* = result;
@@ -13720,7 +13732,7 @@ fn NewParser_(
                             // notimpl();
                         },
                         .bin_loose_eq => {
-                            const equality = e_.left.data.eql(e_.right.data);
+                            const equality = e_.left.data.eql(e_.right.data, p.allocator);
                             if (equality.ok) {
                                 return p.e(
                                     E.Boolean{ .value = equality.equal },
@@ -13734,7 +13746,7 @@ fn NewParser_(
 
                         },
                         .bin_strict_eq => {
-                            const equality = e_.left.data.eql(e_.right.data);
+                            const equality = e_.left.data.eql(e_.right.data, p.allocator);
                             if (equality.ok) {
                                 return p.e(E.Boolean{ .value = equality.equal }, expr.loc);
                             }
@@ -13744,7 +13756,7 @@ fn NewParser_(
                             // TODO: warn about typeof string
                         },
                         .bin_loose_ne => {
-                            const equality = e_.left.data.eql(e_.right.data);
+                            const equality = e_.left.data.eql(e_.right.data, p.allocator);
                             if (equality.ok) {
                                 return p.e(E.Boolean{ .value = !equality.equal }, expr.loc);
                             }
@@ -13758,7 +13770,7 @@ fn NewParser_(
                             }
                         },
                         .bin_strict_ne => {
-                            const equality = e_.left.data.eql(e_.right.data);
+                            const equality = e_.left.data.eql(e_.right.data, p.allocator);
                             if (equality.ok) {
                                 return p.e(E.Boolean{ .value = !equality.equal }, expr.loc);
                             }
@@ -15362,6 +15374,10 @@ fn NewParser_(
                 .e_string => |str| {
                     // minify "long-string".length to 11
                     if (strings.eqlComptime(name, "length")) {
+                        // don't handle UTF-16 strings for now
+                        if (str.is_utf16)
+                            return null;
+
                         return p.e(E.Number{ .value = @intToFloat(f64, str.len()) }, loc);
                     }
                 },
@@ -15389,17 +15405,23 @@ fn NewParser_(
         }
 
         fn visitAndAppendStmt(p: *P, stmts: *ListManaged(Stmt), stmt: *Stmt) !void {
+            // By default any statement ends the const local prefix
+            const was_after_after_const_local_prefix = p.current_scope.is_after_const_local_prefix;
+            p.current_scope.is_after_const_local_prefix = true;
+
             switch (stmt.data) {
                 // These don't contain anything to traverse
 
-                .s_debugger, .s_empty, .s_comment => {},
+                .s_debugger, .s_empty, .s_comment => {
+                    p.current_scope.is_after_const_local_prefix = was_after_after_const_local_prefix;
+                },
                 .s_type_script => {
-
+                    p.current_scope.is_after_const_local_prefix = was_after_after_const_local_prefix;
                     // Erase TypeScript constructs from the output completely
                     return;
                 },
                 .s_directive => {
-
+                    p.current_scope.is_after_const_local_prefix = was_after_after_const_local_prefix;
                     //         	if p.isStrictMode() && s.LegacyOctalLoc.Start > 0 {
                     // 	p.markStrictModeFeature(legacyOctalEscape, p.source.RangeOfLegacyOctalEscape(s.LegacyOctalLoc), "")
                     // }
@@ -15829,10 +15851,12 @@ fn NewParser_(
                     p.popScope();
                 },
                 .s_local => |data| {
+                    // Local statements do not end the const local prefix
+                    p.current_scope.is_after_const_local_prefix = was_after_after_const_local_prefix;
                     const decls_len = if (!(data.is_export and p.options.features.replace_exports.entries.len > 0))
-                        p.visitDecls(data.decls, false)
+                        p.visitDecls(data.decls, data.kind == .k_const, false)
                     else
-                        p.visitDecls(data.decls, true);
+                        p.visitDecls(data.decls, data.kind == .k_const, true);
 
                     const is_now_dead = data.decls.len > 0 and decls_len == 0;
                     if (is_now_dead) {
@@ -16418,7 +16442,7 @@ fn NewParser_(
             return p.options.features.replace_exports.contains(symbol_name);
         }
 
-        fn visitDecls(p: *P, decls: []G.Decl, comptime is_possibly_decl_to_remove: bool) usize {
+        fn visitDecls(p: *P, decls: []G.Decl, was_const: bool, comptime is_possibly_decl_to_remove: bool) usize {
             var i: usize = 0;
             const count = decls.len;
             var j: usize = 0;
@@ -16462,6 +16486,7 @@ fn NewParser_(
                     p.visitDecl(
                         &decls[i],
                         was_anonymous_named_expr,
+                        was_const and !p.current_scope.is_after_const_local_prefix,
                         if (comptime allow_macros)
                             prev_macro_call_count != p.macro_call_count
                         else
@@ -16473,6 +16498,7 @@ fn NewParser_(
                             if (!p.replaceDeclAndPossiblyRemove(&decls[i], ptr)) {
                                 p.visitDecl(
                                     &decls[i],
+                                    was_const and !p.current_scope.is_after_const_local_prefix,
                                     false,
                                     false,
                                 );
@@ -16575,7 +16601,13 @@ fn NewParser_(
                                 if (object.asProperty(name)) |query| {
                                     switch (query.expr.data) {
                                         .e_object, .e_array => p.visitBindingAndExprForMacro(property.value, query.expr),
-                                        else => {},
+                                        else => {
+                                            if (p.options.features.inlining) {
+                                                if (property.value.data == .b_identifier) {
+                                                    p.const_values.put(p.allocator, property.value.data.b_identifier.ref, query.expr) catch unreachable;
+                                                }
+                                            }
+                                        },
                                     }
                                     output_properties[end] = output_properties[query.i];
                                     end += 1;
@@ -16605,14 +16637,28 @@ fn NewParser_(
                         }
                     }
                 },
+                .b_identifier => |id| {
+                    if (p.options.features.inlining) {
+                        p.const_values.put(p.allocator, id.ref, expr) catch unreachable;
+                    }
+                },
                 else => {},
             }
         }
 
-        fn visitDecl(p: *P, decl: *Decl, was_anonymous_named_expr: bool, could_be_macro: bool) void {
+        fn visitDecl(p: *P, decl: *Decl, was_anonymous_named_expr: bool, could_be_const_value: bool, could_be_macro: bool) void {
             // Optionally preserve the name
             switch (decl.binding.data) {
                 .b_identifier => |id| {
+                    if (could_be_const_value or (allow_macros and could_be_macro)) {
+                        if (decl.value != null) {
+                            if (decl.value.?.canBeConstValue()) {
+                                p.const_values.put(p.allocator, id.ref, decl.value.?) catch unreachable;
+                            }
+                        }
+                    } else {
+                        p.current_scope.is_after_const_local_prefix = true;
+                    }
                     decl.value = p.maybeKeepExprSymbolName(
                         decl.value.?,
                         p.symbols.items[id.ref.innerIndex()].original_name,
@@ -17706,6 +17752,46 @@ fn NewParser_(
                 return;
             }
 
+            if (p.current_scope.parent != null and !p.current_scope.contains_direct_eval) {
+
+                // Remove inlined constants now that we know whether any of these statements
+                // contained a direct eval() or not. This can't be done earlier when we
+                // encounter the constant because we haven't encountered the eval() yet.
+                // Inlined constants are not removed if they are in a top-level scope or
+                // if they are exported (which could be in a nested TypeScript namespace).
+                if (p.const_values.count() > 0) {
+                    var items: []Stmt = stmts.items;
+                    for (items) |*stmt| {
+                        switch (stmt.data) {
+                            .s_empty, .s_comment, .s_directive, .s_debugger, .s_type_script => continue,
+                            .s_local => |local| {
+                                if (!local.is_export and local.kind == .k_const) {
+                                    var decls: []Decl = local.decls;
+                                    var end: usize = 0;
+                                    for (decls) |decl| {
+                                        if (decl.binding.data == .b_identifier) {
+                                            if (p.const_values.contains(decl.binding.data.b_identifier.ref)) {
+                                                continue;
+                                            }
+                                        }
+                                        decls[end] = decl;
+                                        end += 1;
+                                    }
+                                    local.decls.len = end;
+                                    if (end == 0) {
+                                        stmt.* = stmt.*.toEmpty();
+                                    }
+                                    continue;
+                                }
+                            },
+                            else => {},
+                        }
+
+                        break;
+                    }
+                }
+            }
+
             // Inline single-use variable declarations where possible:
             //
             //   // Before
@@ -17749,17 +17835,24 @@ fn NewParser_(
                         switch (prev_statement.data) {
                             .s_local => {
                                 var local = prev_statement.data.s_local;
-                                if (!(local.decls.len == 0 or local.kind == .k_var)) {
-                                    var last: *Decl = &local.decls[local.decls.len - 1];
-                                    // The variable must be initialized, since we will be substituting
-                                    // the value into the usage.
+                                if (local.decls.len == 0 or local.kind == .k_var) {
+                                    break;
+                                }
 
-                                    // The binding must be an identifier that is only used once.
-                                    // Ignore destructuring bindings since that's not the simple case.
-                                    // Destructuring bindings could potentially execute side-effecting
-                                    // code which would invalidate reordering.
-                                    if (!(last.value == null or last.binding.data != .b_identifier)) {
-                                        const id = last.binding.data.b_identifier.ref;
+                                var last: *Decl = &local.decls[local.decls.len - 1];
+                                // The variable must be initialized, since we will be substituting
+                                // the value into the usage.
+                                if (last.value == null)
+                                    break;
+
+                                // The binding must be an identifier that is only used once.
+                                // Ignore destructuring bindings since that's not the simple case.
+                                // Destructuring bindings could potentially execute side-effecting
+                                // code which would invalidate reordering.
+
+                                switch (last.binding.data) {
+                                    .b_identifier => |ident| {
+                                        const id = ident.ref;
 
                                         const symbol: *const Symbol = &p.symbols.items[id.innerIndex()];
 
@@ -17781,7 +17874,8 @@ fn NewParser_(
                                                 }
                                             }
                                         }
-                                    }
+                                    },
+                                    else => {},
                                 }
                             },
                             else => {},

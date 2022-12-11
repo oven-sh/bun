@@ -1680,6 +1680,90 @@ class Foo {
       expectPrinted("a = !(b, c)", "a = (b , !c)");
     });
 
+    it("const inlining", () => {
+      var transpiler = new Bun.Transpiler({
+        inline: true,
+        platform: "bun",
+        allowBunRuntime: false,
+      });
+
+      function check(input, output) {
+        expect(
+          transpiler
+            .transformSync("export function hello() {\n" + input + "\n}")
+            .trim()
+            .replaceAll(/^  /gm, ""),
+        ).toBe(
+          "export function hello() {\n" +
+            output +
+            "\n}".replaceAll(/^  /gm, ""),
+        );
+      }
+
+      check("const x = 1; return x", "return 1;");
+      check("const x = 1; return x + 1", "return 2;");
+      check("const x = 1; return x + x", "return 2;");
+      check("const x = 1; return x + x + 1", "return 3;");
+      check("const x = 1; return x + x + x", "return 3;");
+      check(
+        `const foo = "foo"; const bar = "bar"; return foo + bar`,
+        `return "foobar";`,
+      );
+
+      // check that it doesn't inline after "var"
+      check(
+        `
+      const x = 1;
+      const y = 2;
+      var hey = "yo";
+      const z = 3;
+      console.log(x + y + z);
+      `,
+        `
+var hey = "yo";
+const z = 3;
+console.log(3 + z);
+        `.trim(),
+      );
+
+      // check that nested scopes can inline from parent scopes
+      check(
+        `
+      const x = 1;
+      const y = 2;
+      var hey = "yo";
+      const z = 3;
+      function hey() {
+        const boom = 3;
+        return x + y + boom + hey;
+      }
+      hey();
+      `,
+        `
+var hey = "yo";
+const z = 3;
+function hey() {
+  return 6 + hey;
+}
+hey();
+        `.trim(),
+      );
+
+      // check that we don't inline objects or arrays that aren't from macros
+      check(
+        `
+        const foo = { bar: true };
+        const array = [1];
+        console.log(foo, array);
+        `,
+        `
+const foo = { bar: true };
+const array = [1];
+console.log(foo, array);
+          `.trim(),
+      );
+    });
+
     it("substitution", () => {
       var transpiler = new Bun.Transpiler({
         inline: true,

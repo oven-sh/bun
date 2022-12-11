@@ -351,9 +351,9 @@ interface Process {
   getuid(): number;
   setuid(id: number | string): void;
   dlopen(module: { exports: any }, filename: string, flags?: number): void;
-  stdin: import("stream").Duplex;
-  stdout: import("stream").Writable;
-  stderr: import("stream").Writable;
+  stdin: import("stream").Duplex & { isTTY: boolean };
+  stdout: import("stream").Writable & { isTTY: boolean };
+  stderr: import("stream").Writable & { isTTY: boolean };
 }
 
 declare var process: Process;

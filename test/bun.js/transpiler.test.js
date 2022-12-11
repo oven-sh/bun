@@ -1764,6 +1764,54 @@ console.log(foo, array);
       );
     });
 
+    it("constant folding scopes", () => {
+      var transpiler = new Bun.Transpiler({
+        inline: true,
+        platform: "bun",
+        allowBunRuntime: false,
+      });
+
+      // Check that pushing/popping scopes doesn't cause a crash
+      // We panic at runtime if the scopes are unbalanced, so this test just checks we don't have any crashes
+      function check(input) {
+        transpiler.transformSync(input);
+      }
+
+      check("var x; 1 ? 0 : ()=>{}; (()=>{})()");
+      check("var x; 0 ? ()=>{} : 1; (()=>{})()");
+      check("var x; 0 && (()=>{}); (()=>{})()");
+      check("var x; 1 || (()=>{}); (()=>{})()");
+      check("if (1) 0; else ()=>{}; (()=>{})()");
+      check("if (0) ()=>{}; else 1; (()=>{})()");
+      check(`
+      var func = () => {};
+      var x;
+      1 ? 0 : func;
+      (() => {})();
+      switch (1) {
+        case 0: {
+          class Foo {
+            static {
+              function hey() {
+                return class {
+                  static {
+                    var foo = class {
+                      hey(arg) {
+                        return 1;
+                      }
+                    };
+                    new foo();
+                  }
+                };
+              }
+            }
+          }
+          new Foo();
+        }
+      }      
+      `);
+    });
+
     it("substitution", () => {
       var transpiler = new Bun.Transpiler({
         inline: true,

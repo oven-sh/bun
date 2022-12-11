@@ -3700,7 +3700,9 @@ fn NewParser_(
         loop_body: Stmt.Data,
         module_scope: *js_ast.Scope = undefined,
         is_control_flow_dead: bool = false,
-        is_substituting: bool = false,
+
+        /// We must be careful to avoid revisiting nodes that have scopes.
+        is_revisit_for_substitution: bool = false,
 
         // Inside a TypeScript namespace, an "export declare" statement can be used
         // to cause a namespace to be emitted even though it has no other observable
@@ -4360,7 +4362,7 @@ fn NewParser_(
         }
 
         pub fn recordUsage(p: *P, ref: Ref) void {
-            if (p.is_substituting) return;
+            if (p.is_revisit_for_substitution) return;
             // The use count stored in the symbol is used for generating symbol names
             // during minification. These counts shouldn't include references inside dead
             // code regions since those will be culled.
@@ -4589,9 +4591,9 @@ fn NewParser_(
             switch (p.substituteSingleUseSymbolInExpr(expr.*, ref, replacement, replacement_can_be_removed)) {
                 .success => |result| {
                     if (result.data == .e_binary or result.data == .e_unary or result.data == .e_if) {
-                        const prev_substituting = p.is_substituting;
-                        p.is_substituting = true;
-                        defer p.is_substituting = prev_substituting;
+                        const prev_substituting = p.is_revisit_for_substitution;
+                        p.is_revisit_for_substitution = true;
+                        defer p.is_revisit_for_substitution = prev_substituting;
                         // O(n^2) and we will need to think more carefully about
                         // this once we implement syntax compression
                         expr.* = p.visitExpr(result);
@@ -14633,6 +14635,10 @@ fn NewParser_(
                     }
                 },
                 .e_arrow => |e_| {
+                    if (p.is_revisit_for_substitution) {
+                        return expr;
+                    }
+
                     const old_fn_or_arrow_data = std.mem.toBytes(p.fn_or_arrow_data_visit);
                     p.fn_or_arrow_data_visit = FnOrArrowDataVisit{
                         .is_arrow = true,
@@ -14668,12 +14674,19 @@ fn NewParser_(
                     p.fn_or_arrow_data_visit = std.mem.bytesToValue(@TypeOf(p.fn_or_arrow_data_visit), &old_fn_or_arrow_data);
                 },
                 .e_function => |e_| {
+                    if (p.is_revisit_for_substitution) {
+                        return expr;
+                    }
+
                     e_.func = p.visitFunc(e_.func, expr.loc);
                     if (e_.func.name) |name| {
                         return p.keepExprSymbolName(expr, p.symbols.items[name.ref.?.innerIndex()].original_name);
                     }
                 },
                 .e_class => |e_| {
+                    if (p.is_revisit_for_substitution) {
+                        return expr;
+                    }
 
                     // This might be wrong.
                     _ = p.visitClass(expr.loc, e_);
@@ -15388,7 +15401,7 @@ fn NewParser_(
         }
 
         pub fn ignoreUsage(p: *P, ref: Ref) void {
-            if (!p.is_control_flow_dead and !p.is_substituting) {
+            if (!p.is_control_flow_dead and !p.is_revisit_for_substitution) {
                 if (comptime Environment.allow_assert) assert(@as(usize, ref.innerIndex()) < p.symbols.items.len);
                 p.symbols.items[ref.innerIndex()].use_count_estimate -|= 1;
                 var use = p.symbol_uses.get(ref) orelse return;

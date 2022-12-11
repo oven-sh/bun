@@ -77,7 +77,7 @@ DebugEventEmitter.prototype.on = function (event, handler) {
   return _EE.prototype.on.call(this, event, handler);
 };
 DebugEventEmitter.prototype.addListener = function (event, handler) {
-  this.on(event, handler);
+  return this.on(event, handler);
 };
 
 var __commonJS = (cb, mod) =>
@@ -3261,7 +3261,7 @@ var require_readable = __commonJS({
       else src.once("end", endFn);
       dest.on("unpipe", onunpipe);
       function onunpipe(readable, unpipeInfo) {
-        debug("onunpipe", this.__id);
+        debug("onunpipe", src.__id);
         if (readable === src) {
           if (unpipeInfo && unpipeInfo.hasUnpiped === false) {
             unpipeInfo.hasUnpiped = true;

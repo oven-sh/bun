@@ -17859,7 +17859,7 @@ fn NewParser_(
                         switch (prev_statement.data) {
                             .s_local => {
                                 var local = prev_statement.data.s_local;
-                                if (local.decls.len == 0 or local.kind == .k_var) {
+                                if (local.decls.len == 0 or local.kind == .k_var or local.is_export) {
                                     break;
                                 }
 

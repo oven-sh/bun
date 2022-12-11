@@ -473,7 +473,7 @@ const char* const s_processObjectInternalsGetStdioWriteStreamCode =
 const JSC::ConstructAbility s_processObjectInternalsGetStdinStreamCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_processObjectInternalsGetStdinStreamCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_processObjectInternalsGetStdinStreamCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_processObjectInternalsGetStdinStreamCodeLength = 3793;
+const int s_processObjectInternalsGetStdinStreamCodeLength = 4099;
 static const JSC::Intrinsic s_processObjectInternalsGetStdinStreamCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_processObjectInternalsGetStdinStreamCode =
     "(function (fd, rawRequire, Bun) {\n" \
@@ -554,10 +554,21 @@ const char* const s_processObjectInternalsGetStdinStreamCode =
     "    }\n" \
     "\n" \
     "    on(ev, cb) {\n" \
+    "      super.on(ev, cb);\n" \
     "      if (!this.#readStream && (ev === \"readable\" || ev === \"data\")) {\n" \
     "        this.#loadReadStream();\n" \
     "      }\n" \
-    "      return super.on(ev, cb);\n" \
+    "\n" \
+    "      return this;\n" \
+    "    }\n" \
+    "\n" \
+    "    once(ev, cb) {\n" \
+    "      super.once(ev, cb);\n" \
+    "      if (!this.#readStream && (ev === \"readable\" || ev === \"data\")) {\n" \
+    "        this.#loadReadStream();\n" \
+    "      }\n" \
+    "\n" \
+    "      return this;\n" \
     "    }\n" \
     "\n" \
     "    #loadReadStream() {\n" \
@@ -590,7 +601,11 @@ const char* const s_processObjectInternalsGetStdinStreamCode =
     "      this.#readStream?.unref?.();\n" \
     "    }\n" \
     "\n" \
-    "    _read(encoding, callback) {}\n" \
+    "    _read(encoding, callback) {\n" \
+    "      if (!this.#readStream) this.#loadReadStream();\n" \
+    "\n" \
+    "      return this.#readStream._read(...arguments);\n" \
+    "    }\n" \
     "\n" \
     "    #constructWriteStream() {\n" \
     "      var { createWriteStream } = require(\"node:fs\");\n" \

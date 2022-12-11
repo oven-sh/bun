@@ -511,10 +511,21 @@ function getStdinStream(fd, rawRequire, Bun) {
     }
 
     on(ev, cb) {
+      super.on(ev, cb);
       if (!this.#readStream && (ev === "readable" || ev === "data")) {
         this.#loadReadStream();
       }
-      return super.on(ev, cb);
+
+      return this;
+    }
+
+    once(ev, cb) {
+      super.once(ev, cb);
+      if (!this.#readStream && (ev === "readable" || ev === "data")) {
+        this.#loadReadStream();
+      }
+
+      return this;
     }
 
     #loadReadStream() {
@@ -547,7 +558,11 @@ function getStdinStream(fd, rawRequire, Bun) {
       this.#readStream?.unref?.();
     }
 
-    _read(encoding, callback) {}
+    _read(encoding, callback) {
+      if (!this.#readStream) this.#loadReadStream();
+
+      return this.#readStream._read(...arguments);
+    }
 
     #constructWriteStream() {
       var { createWriteStream } = require("node:fs");

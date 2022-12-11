@@ -17453,157 +17453,159 @@ fn NewParser_(
                 class.extends = p.visitExpr(extends);
             }
 
-            p.pushScopeForVisitPass(.class_body, class.body_loc) catch unreachable;
-            defer {
-                p.popScope();
-                p.enclosing_class_keyword = old_enclosing_class_keyword;
-            }
-
-            var i: usize = 0;
-            var constructor_function: ?*E.Function = null;
-            while (i < class.properties.len) : (i += 1) {
-                var property = &class.properties[i];
-
-                if (property.kind == .class_static_block) {
-                    var old_fn_or_arrow_data = p.fn_or_arrow_data_visit;
-                    var old_fn_only_data = p.fn_only_data_visit;
-                    p.fn_or_arrow_data_visit = .{};
-                    p.fn_only_data_visit = .{ .is_this_nested = true, .is_new_target_allowed = true };
-
-                    p.pushScopeForVisitPass(.class_static_init, property.class_static_block.?.loc) catch unreachable;
-
-                    // Make it an error to use "arguments" in a static class block
-                    p.current_scope.forbid_arguments = true;
-
-                    var list = property.class_static_block.?.stmts.listManaged(p.allocator);
-                    p.visitStmts(&list, .fn_body) catch unreachable;
-                    property.class_static_block.?.stmts = js_ast.BabyList(Stmt).fromList(list);
+            {
+                p.pushScopeForVisitPass(.class_body, class.body_loc) catch unreachable;
+                defer {
                     p.popScope();
-
-                    p.fn_or_arrow_data_visit = old_fn_or_arrow_data;
-                    p.fn_only_data_visit = old_fn_only_data;
-
-                    continue;
-                }
-                property.ts_decorators = p.visitTSDecorators(property.ts_decorators);
-                const is_private = if (property.key != null) @as(Expr.Tag, property.key.?.data) == .e_private_identifier else false;
-
-                // Special-case EPrivateIdentifier to allow it here
-
-                if (is_private) {
-                    p.recordDeclaredSymbol(property.key.?.data.e_private_identifier.ref) catch unreachable;
-                } else if (property.key) |key| {
-                    class.properties[i].key = p.visitExpr(key);
+                    p.enclosing_class_keyword = old_enclosing_class_keyword;
                 }
 
-                // Make it an error to use "arguments" in a class body
-                p.current_scope.forbid_arguments = true;
-                defer p.current_scope.forbid_arguments = false;
+                var i: usize = 0;
+                var constructor_function: ?*E.Function = null;
+                while (i < class.properties.len) : (i += 1) {
+                    var property = &class.properties[i];
 
-                // The value of "this" is shadowed inside property values
-                const old_is_this_captured = p.fn_only_data_visit.is_this_nested;
-                const old_this = p.fn_only_data_visit.this_class_static_ref;
-                p.fn_only_data_visit.is_this_nested = true;
-                p.fn_only_data_visit.is_new_target_allowed = true;
-                p.fn_only_data_visit.this_class_static_ref = null;
-                defer p.fn_only_data_visit.is_this_nested = old_is_this_captured;
-                defer p.fn_only_data_visit.this_class_static_ref = old_this;
+                    if (property.kind == .class_static_block) {
+                        var old_fn_or_arrow_data = p.fn_or_arrow_data_visit;
+                        var old_fn_only_data = p.fn_only_data_visit;
+                        p.fn_or_arrow_data_visit = .{};
+                        p.fn_only_data_visit = .{ .is_this_nested = true, .is_new_target_allowed = true };
 
-                // We need to explicitly assign the name to the property initializer if it
-                // will be transformed such that it is no longer an inline initializer.
+                        p.pushScopeForVisitPass(.class_static_init, property.class_static_block.?.loc) catch unreachable;
 
-                var constructor_function_: ?*E.Function = null;
+                        // Make it an error to use "arguments" in a static class block
+                        p.current_scope.forbid_arguments = true;
 
-                var name_to_keep: ?string = null;
-                if (is_private) {} else if (!property.flags.contains(.is_method) and !property.flags.contains(.is_computed)) {
-                    if (property.key) |key| {
-                        if (@as(Expr.Tag, key.data) == .e_string) {
-                            name_to_keep = key.data.e_string.string(p.allocator) catch unreachable;
-                        }
+                        var list = property.class_static_block.?.stmts.listManaged(p.allocator);
+                        p.visitStmts(&list, .fn_body) catch unreachable;
+                        property.class_static_block.?.stmts = js_ast.BabyList(Stmt).fromList(list);
+                        p.popScope();
+
+                        p.fn_or_arrow_data_visit = old_fn_or_arrow_data;
+                        p.fn_only_data_visit = old_fn_only_data;
+
+                        continue;
                     }
-                } else if (property.flags.contains(.is_method)) {
-                    if (comptime is_typescript_enabled) {
-                        if (property.value.?.data == .e_function and property.key.?.data == .e_string and
-                            property.key.?.data.e_string.eqlComptime("constructor"))
-                        {
-                            constructor_function_ = property.value.?.data.e_function;
-                            constructor_function = constructor_function_;
-                        }
-                    }
-                }
+                    property.ts_decorators = p.visitTSDecorators(property.ts_decorators);
+                    const is_private = if (property.key != null) @as(Expr.Tag, property.key.?.data) == .e_private_identifier else false;
 
-                if (property.value) |val| {
-                    if (name_to_keep) |name| {
-                        const was_anon = p.isAnonymousNamedExpr(val);
-                        property.value = p.maybeKeepExprSymbolName(p.visitExpr(val), name, was_anon);
-                    } else {
-                        property.value = p.visitExpr(val);
+                    // Special-case EPrivateIdentifier to allow it here
+
+                    if (is_private) {
+                        p.recordDeclaredSymbol(property.key.?.data.e_private_identifier.ref) catch unreachable;
+                    } else if (property.key) |key| {
+                        class.properties[i].key = p.visitExpr(key);
                     }
 
-                    if (comptime is_typescript_enabled) {
-                        if (constructor_function_ != null and property.value != null and property.value.?.data == .e_function) {
-                            constructor_function = property.value.?.data.e_function;
-                        }
-                    }
-                }
+                    // Make it an error to use "arguments" in a class body
+                    p.current_scope.forbid_arguments = true;
+                    defer p.current_scope.forbid_arguments = false;
 
-                if (property.initializer) |val| {
-                    // if (property.flags.is_static and )
-                    if (name_to_keep) |name| {
-                        const was_anon = p.isAnonymousNamedExpr(val);
-                        property.initializer = p.maybeKeepExprSymbolName(p.visitExpr(val), name, was_anon);
-                    } else {
-                        property.initializer = p.visitExpr(val);
-                    }
-                }
-            }
+                    // The value of "this" is shadowed inside property values
+                    const old_is_this_captured = p.fn_only_data_visit.is_this_nested;
+                    const old_this = p.fn_only_data_visit.this_class_static_ref;
+                    p.fn_only_data_visit.is_this_nested = true;
+                    p.fn_only_data_visit.is_new_target_allowed = true;
+                    p.fn_only_data_visit.this_class_static_ref = null;
+                    defer p.fn_only_data_visit.is_this_nested = old_is_this_captured;
+                    defer p.fn_only_data_visit.this_class_static_ref = old_this;
 
-            // note: our version assumes useDefineForClassFields is true
-            if (comptime is_typescript_enabled) {
-                if (constructor_function) |constructor| {
-                    var to_add: usize = 0;
-                    for (constructor.func.args) |arg| {
-                        to_add += @boolToInt(arg.is_typescript_ctor_field and arg.binding.data == .b_identifier);
-                    }
+                    // We need to explicitly assign the name to the property initializer if it
+                    // will be transformed such that it is no longer an inline initializer.
 
-                    if (to_add > 0) {
-                        // to match typescript behavior, we also must prepend to the class body
-                        var stmts = std.ArrayList(Stmt).fromOwnedSlice(p.allocator, constructor.func.body.stmts);
-                        stmts.ensureUnusedCapacity(to_add) catch unreachable;
-                        var class_body = std.ArrayList(G.Property).fromOwnedSlice(p.allocator, class.properties);
-                        class_body.ensureUnusedCapacity(to_add) catch unreachable;
-                        var j: usize = 0;
+                    var constructor_function_: ?*E.Function = null;
 
-                        for (constructor.func.args) |arg| {
-                            if (arg.is_typescript_ctor_field) {
-                                switch (arg.binding.data) {
-                                    .b_identifier => |id| {
-                                        const name = p.symbols.items[id.ref.innerIndex()].original_name;
-                                        const ident = p.e(E.Identifier{ .ref = id.ref }, arg.binding.loc);
-                                        stmts.appendAssumeCapacity(
-                                            Expr.assignStmt(
-                                                p.e(E.Dot{
-                                                    .target = p.e(E.This{}, arg.binding.loc),
-                                                    .name = name,
-                                                    .name_loc = arg.binding.loc,
-                                                }, arg.binding.loc),
-                                                ident,
-                                                p.allocator,
-                                            ),
-                                        );
-                                        // O(N)
-                                        class_body.items.len += 1;
-                                        std.mem.copyBackwards(G.Property, class_body.items[j + 1 .. class_body.items.len], class_body.items[j .. class_body.items.len - 1]);
-                                        class_body.items[j] = G.Property{ .key = ident };
-                                        j += 1;
-                                    },
-                                    else => {},
-                                }
+                    var name_to_keep: ?string = null;
+                    if (is_private) {} else if (!property.flags.contains(.is_method) and !property.flags.contains(.is_computed)) {
+                        if (property.key) |key| {
+                            if (@as(Expr.Tag, key.data) == .e_string) {
+                                name_to_keep = key.data.e_string.string(p.allocator) catch unreachable;
                             }
                         }
+                    } else if (property.flags.contains(.is_method)) {
+                        if (comptime is_typescript_enabled) {
+                            if (property.value.?.data == .e_function and property.key.?.data == .e_string and
+                                property.key.?.data.e_string.eqlComptime("constructor"))
+                            {
+                                constructor_function_ = property.value.?.data.e_function;
+                                constructor_function = constructor_function_;
+                            }
+                        }
+                    }
 
-                        class.properties = class_body.toOwnedSlice();
-                        constructor.func.body.stmts = stmts.toOwnedSlice();
+                    if (property.value) |val| {
+                        if (name_to_keep) |name| {
+                            const was_anon = p.isAnonymousNamedExpr(val);
+                            property.value = p.maybeKeepExprSymbolName(p.visitExpr(val), name, was_anon);
+                        } else {
+                            property.value = p.visitExpr(val);
+                        }
+
+                        if (comptime is_typescript_enabled) {
+                            if (constructor_function_ != null and property.value != null and property.value.?.data == .e_function) {
+                                constructor_function = property.value.?.data.e_function;
+                            }
+                        }
+                    }
+
+                    if (property.initializer) |val| {
+                        // if (property.flags.is_static and )
+                        if (name_to_keep) |name| {
+                            const was_anon = p.isAnonymousNamedExpr(val);
+                            property.initializer = p.maybeKeepExprSymbolName(p.visitExpr(val), name, was_anon);
+                        } else {
+                            property.initializer = p.visitExpr(val);
+                        }
+                    }
+                }
+
+                // note: our version assumes useDefineForClassFields is true
+                if (comptime is_typescript_enabled) {
+                    if (constructor_function) |constructor| {
+                        var to_add: usize = 0;
+                        for (constructor.func.args) |arg| {
+                            to_add += @boolToInt(arg.is_typescript_ctor_field and arg.binding.data == .b_identifier);
+                        }
+
+                        if (to_add > 0) {
+                            // to match typescript behavior, we also must prepend to the class body
+                            var stmts = std.ArrayList(Stmt).fromOwnedSlice(p.allocator, constructor.func.body.stmts);
+                            stmts.ensureUnusedCapacity(to_add) catch unreachable;
+                            var class_body = std.ArrayList(G.Property).fromOwnedSlice(p.allocator, class.properties);
+                            class_body.ensureUnusedCapacity(to_add) catch unreachable;
+                            var j: usize = 0;
+
+                            for (constructor.func.args) |arg| {
+                                if (arg.is_typescript_ctor_field) {
+                                    switch (arg.binding.data) {
+                                        .b_identifier => |id| {
+                                            const name = p.symbols.items[id.ref.innerIndex()].original_name;
+                                            const ident = p.e(E.Identifier{ .ref = id.ref }, arg.binding.loc);
+                                            stmts.appendAssumeCapacity(
+                                                Expr.assignStmt(
+                                                    p.e(E.Dot{
+                                                        .target = p.e(E.This{}, arg.binding.loc),
+                                                        .name = name,
+                                                        .name_loc = arg.binding.loc,
+                                                    }, arg.binding.loc),
+                                                    ident,
+                                                    p.allocator,
+                                                ),
+                                            );
+                                            // O(N)
+                                            class_body.items.len += 1;
+                                            std.mem.copyBackwards(G.Property, class_body.items[j + 1 .. class_body.items.len], class_body.items[j .. class_body.items.len - 1]);
+                                            class_body.items[j] = G.Property{ .key = ident };
+                                            j += 1;
+                                        },
+                                        else => {},
+                                    }
+                                }
+                            }
+
+                            class.properties = class_body.toOwnedSlice();
+                            constructor.func.body.stmts = stmts.toOwnedSlice();
+                        }
                     }
                 }
             }
@@ -17621,6 +17623,9 @@ fn NewParser_(
                     p.recordDeclaredSymbol(class_name_ref) catch unreachable;
                 }
             }
+
+            // class name scope
+            p.popScope();
 
             return shadow_ref;
         }
@@ -17675,6 +17680,8 @@ fn NewParser_(
             if (only_scan_imports_and_do_not_visit) {
                 @compileError("only_scan_imports_and_do_not_visit must not run this.");
             }
+
+            var initial_scope: *Scope = if (comptime Environment.allow_assert) p.current_scope else undefined;
 
             {
 
@@ -17760,6 +17767,10 @@ fn NewParser_(
                     i += 1;
                 }
             }
+
+            if (comptime Environment.allow_assert)
+                // if this fails it means that scope pushing/popping is not balanced
+                assert(p.current_scope == initial_scope);
 
             if (!p.options.features.inlining) {
                 return;

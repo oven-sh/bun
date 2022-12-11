@@ -473,7 +473,7 @@ const char* const s_processObjectInternalsGetStdioWriteStreamCode =
 const JSC::ConstructAbility s_processObjectInternalsGetStdinStreamCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_processObjectInternalsGetStdinStreamCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_processObjectInternalsGetStdinStreamCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_processObjectInternalsGetStdinStreamCodeLength = 3786;
+const int s_processObjectInternalsGetStdinStreamCodeLength = 3793;
 static const JSC::Intrinsic s_processObjectInternalsGetStdinStreamCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_processObjectInternalsGetStdinStreamCode =
     "(function (fd, rawRequire, Bun) {\n" \
@@ -554,10 +554,10 @@ const char* const s_processObjectInternalsGetStdinStreamCode =
     "    }\n" \
     "\n" \
     "    on(ev, cb) {\n" \
-    "      super.on(ev, cb);\n" \
     "      if (!this.#readStream && (ev === \"readable\" || ev === \"data\")) {\n" \
     "        this.#loadReadStream();\n" \
     "      }\n" \
+    "      return super.on(ev, cb);\n" \
     "    }\n" \
     "\n" \
     "    #loadReadStream() {\n" \

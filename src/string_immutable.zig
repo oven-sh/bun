@@ -2419,18 +2419,33 @@ pub fn latin1ToCodepointBytesAssumeNotASCII16(char: u32) u16 {
 }
 
 pub fn copyUTF16IntoUTF8(buf: []u8, comptime Type: type, utf16: Type) EncodeIntoResult {
+    if (comptime Type == []const u16) {
+        if (bun.FeatureFlags.use_simdutf) {
+            if (utf16.len == 0)
+                return .{ .read = 0, .written = 0 };
+            const trimmed = bun.simdutf.trim.utf16(utf16);
+            if (trimmed.len == 0)
+                return .{ .read = 0, .written = 0 };
+
+            const out_len = if (buf.len <= (trimmed.len * 3 + 2))
+                bun.simdutf.length.utf8.from.utf16.le(trimmed)
+            else
+                buf.len;
+
+            return copyUTF16IntoUTF8WithBuffer(buf, Type, utf16, trimmed, out_len);
+        }
+    }
+
+    return copyUTF16IntoUTF8WithBuffer(buf, Type, utf16, utf16, utf16.len);
+}
+
+pub fn copyUTF16IntoUTF8WithBuffer(buf: []u8, comptime Type: type, utf16: Type, trimmed: Type, out_len: usize) EncodeIntoResult {
     var remaining = buf;
     var utf16_remaining = utf16;
     var ended_on_non_ascii = false;
 
     if (comptime Type == []const u16) {
         if (bun.FeatureFlags.use_simdutf) {
-            const trimmed = bun.simdutf.trim.utf16(utf16_remaining);
-            const out_len = if (buf.len <= (trimmed.len * 3 + 2))
-                bun.simdutf.length.utf8.from.utf16.le(trimmed)
-            else
-                buf.len;
-
             log("UTF16 {d} -> UTF8 {d}", .{ utf16.len, out_len });
 
             if (remaining.len >= out_len) {

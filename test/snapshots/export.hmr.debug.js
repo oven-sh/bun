@@ -9,7 +9,7 @@ import {
 __FastRefreshRuntime as FastRefresh
 } from "http://localhost:8080/bun:wrap";
 import what from "http://localhost:8080/_auth.js";
-import * as where from "http://localhost:8080/_auth.js";
+import* as where from "http://localhost:8080/_auth.js";
 var hmr = new FastHMR(1805832743, "export.js", FastRefresh), exports = hmr.exports;
 (hmr._load = function() {
   var yoyoyo = "yoyoyo";

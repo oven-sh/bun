@@ -1,5 +1,5 @@
 import {
-__require as require
+__require as require_ab102cbd93061951
 } from "http://localhost:8080/bun:wrap";
 import {
 __HMRClient as Bun

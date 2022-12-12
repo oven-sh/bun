@@ -22,10 +22,9 @@ var hmr = new FastHMR(4175696745, "react-context-value-func.tsx", FastRefresh), 
   const ContextProvider = ({ children }) => {
     const [cb, setCB] = React.useState(function() {
     });
-    const foo = true;
     return jsx(Context.Provider, {
       value: cb,
-      children: children(foo)
+      children: children(true)
     });
   };
   const ContextValue = ({}) => jsx(Context.Consumer, {

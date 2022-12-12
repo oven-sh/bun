@@ -20,10 +20,9 @@ var { default: React} = require($a66742df);
 var hmr = new FastHMR(1094129250, "spread_with_key.tsx", FastRefresh), exports = hmr.exports;
 (hmr._load = function() {
   function SpreadWithTheKey({ className }) {
-    const rest = {};
     return jsxEl("div", {
       className,
-      ...rest,
+      ...{},
       onClick: () => console.log("click"),
       key: "spread-with-the-key"
     }, "Rendered component containing warning");

@@ -656,6 +656,20 @@ declare module "bun" {
     treeShaking?: boolean;
     trimUnusedImports?: boolean;
     jsxOptimizationInline?: boolean;
+
+    /**
+     * This does two things (and possibly more in the future):
+     * 1. `const` declarations to primitive types (excluding Object/Array) at the top of a scope before any `let` or `var` declarations will be inlined into their usages.
+     * 2. `let` and `const` declarations only used once are inlined into their usages.
+     *
+     * JavaScript engines typically do these optimizations internally, however
+     * it might only happen much later in the compilation pipeline, after code
+     * has been executed many many times.
+     *
+     * This will typically shrink the output size of code, but it might increase
+     * it in some cases. Do your own benchmarks!
+     */
+    inline?: boolean;
   }
 
   /**

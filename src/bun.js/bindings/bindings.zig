@@ -3726,6 +3726,21 @@ pub fn untrackFunction(
 pub const WTF = struct {
     extern fn WTF__copyLCharsFromUCharSource(dest: [*]u8, source: *const anyopaque, len: usize) void;
     extern fn WTF__toBase64URLStringValue(bytes: [*]const u8, length: usize, globalObject: *JSGlobalObject) JSValue;
+    extern fn WTF__parseDouble(bytes: [*]const u8, length: usize, counted: *usize) f64;
+
+    pub fn parseDouble(buf: []const u8) !f64 {
+        JSC.markBinding(@src());
+
+        if (buf.len == 0)
+            return error.InvalidCharacter;
+
+        var count: usize = 0;
+        const res = WTF__parseDouble(buf.ptr, buf.len, &count);
+
+        if (count == 0)
+            return error.InvalidCharacter;
+        return res;
+    }
 
     /// This uses SSE2 instructions and/or ARM NEON to copy 16-bit characters efficiently
     /// See wtf/Text/ASCIIFastPath.h for details

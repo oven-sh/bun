@@ -2,6 +2,12 @@
 #include "wtf/text/Base64.h"
 
 #include "wtf/StackTrace.h"
+#include "wtf/dtoa.h"
+
+extern "C" double WTF__parseDouble(const LChar* string, size_t length, size_t* position)
+{
+    return WTF::parseDouble(string, length, *position);
+}
 
 extern "C" void WTF__copyLCharsFromUCharSource(LChar* destination, const UChar* source, size_t length)
 {
@@ -27,7 +33,7 @@ extern "C" void Bun__crashReportDumpStackTrace(void* ctx)
     bool isFirst = true;
     for (int frameNumber = 0; frameNumber < size; ++frameNumber) {
         auto demangled = WTF::StackTraceSymbolResolver::demangle(stack[frameNumber]);
-      
+
         StringPrintStream out;
         if (isFirst) {
             isFirst = false;

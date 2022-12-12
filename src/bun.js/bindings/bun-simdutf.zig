@@ -1,3 +1,5 @@
+const JSC = @import("bun").JSC;
+
 pub const SIMDUTFResult = extern struct {
     status: Status,
     count: usize = 0,
@@ -237,6 +239,7 @@ pub const length = struct {
         pub const from = struct {
             pub const utf16 = struct {
                 pub fn le(input: []const u16) usize {
+                    JSC.markBinding(@src());
                     return simdutf__utf8_length_from_utf16le(input.ptr, input.len);
                 }
                 pub fn be(input: []const u16) usize {

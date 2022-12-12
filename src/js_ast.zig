@@ -20,11 +20,7 @@ const allocators = @import("allocators.zig");
 const JSC = @import("bun").JSC;
 const HTTP = @import("bun").HTTP;
 const RefCtx = @import("./ast/base.zig").RefCtx;
-const _hash_map = @import("hash_map.zig");
 const JSONParser = @import("./json_parser.zig");
-const StringHashMap = _hash_map.StringHashMap;
-const AutoHashMap = _hash_map.AutoHashMap;
-const StringHashMapUnmanaged = _hash_map.StringHashMapUnmanaged;
 const is_bindgen = std.meta.globalOption("bindgen", bool) orelse false;
 const ComptimeStringMap = bun.ComptimeStringMap;
 const JSPrinter = @import("./js_printer.zig");
@@ -4664,12 +4660,13 @@ pub const StrictModeKind = enum(u7) {
 };
 
 pub const Scope = struct {
+    pub const MemberHashMap = bun.StringHashMapUnmanaged(Member);
+
     id: usize = 0,
     kind: Kind = Kind.block,
     parent: ?*Scope,
     children: std.ArrayListUnmanaged(*Scope) = .{},
-    // This is a special hash table that allows us to pass in the hash directly
-    members: StringHashMapUnmanaged(Member) = .{},
+    members: MemberHashMap = .{},
     generated: std.ArrayListUnmanaged(Ref) = .{},
 
     // This is used to store the ref of the label symbol for ScopeLabel scopes.
@@ -4687,6 +4684,31 @@ pub const Scope = struct {
     strict_mode: StrictModeKind = StrictModeKind.sloppy_mode,
 
     is_after_const_local_prefix: bool = false,
+
+    pub fn getMemberHash(name: []const u8) u64 {
+        return bun.StringHashMapContext.hash(.{}, name);
+    }
+
+    pub fn getMemberWithHash(this: *const Scope, name: []const u8, hash_value: u64) ?Member {
+        const hashed = bun.StringHashMapContext.Prehashed{
+            .value = hash_value,
+            .input = name,
+        };
+        return this.members.getAdapted(name, hashed);
+    }
+
+    pub fn getOrPutMemberWithHash(
+        this: *Scope,
+        allocator: std.mem.Allocator,
+        name: []const u8,
+        hash_value: u64,
+    ) !MemberHashMap.GetOrPutResult {
+        const hashed = bun.StringHashMapContext.Prehashed{
+            .value = hash_value,
+            .input = name,
+        };
+        return this.members.getOrPutContextAdapted(allocator, name, hashed, .{});
+    }
 
     pub fn reset(this: *Scope) void {
         this.children.clearRetainingCapacity();
@@ -4829,7 +4851,7 @@ pub const Scope = struct {
         }
     }
 
-    pub fn kindStopsHoisting(s: *Scope) bool {
+    pub inline fn kindStopsHoisting(s: *const Scope) bool {
         return @enumToInt(s.kind) >= @enumToInt(Kind.entry);
     }
 };

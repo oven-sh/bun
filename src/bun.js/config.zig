@@ -19,7 +19,6 @@ const Api = @import("../api/schema.zig").Api;
 const options = @import("../options.zig");
 const Bundler = @import("../bundler.zig").ServeBundler;
 const js_printer = @import("../js_printer.zig");
-const hash_map = @import("../hash_map.zig");
 const http = @import("../http.zig");
 
 pub const DefaultBunDefines = struct {

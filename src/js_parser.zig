@@ -11,7 +11,6 @@ pub const RuntimeImports = _runtime.Runtime.Imports;
 pub const RuntimeFeatures = _runtime.Runtime.Features;
 pub const RuntimeNames = _runtime.Runtime.Names;
 pub const fs = @import("./fs.zig");
-const _hash_map = @import("./hash_map.zig");
 const bun = @import("bun");
 const string = bun.string;
 const Output = bun.Output;
@@ -67,9 +66,9 @@ pub const locModuleScope = logger.Loc{ .start = -100 };
 const Ref = @import("./ast/base.zig").Ref;
 const RefHashCtx = @import("./ast/base.zig").RefHashCtx;
 
-pub const StringHashMap = _hash_map.StringHashMap;
-pub const AutoHashMap = _hash_map.AutoHashMap;
-const StringHashMapUnamanged = _hash_map.StringHashMapUnamanged;
+pub const StringHashMap = bun.StringHashMap;
+pub const AutoHashMap = bun.AutoHashMap;
+const StringHashMapUnamanged = bun.StringHashMapUnmanaged;
 const ObjectPool = @import("./pool.zig").ObjectPool;
 const NodeFallbackModules = @import("./node_fallbacks.zig");
 
@@ -1940,7 +1939,7 @@ const StrictModeFeature = enum {
     if_else_function_stmt,
 };
 
-const Map = _hash_map.AutoHashMapUnmanaged;
+const Map = std.AutoHashMapUnmanaged;
 
 const List = std.ArrayListUnmanaged;
 const ListManaged = std.ArrayList;
@@ -3617,7 +3616,7 @@ fn NewParser_(
         should_fold_numeric_constants: bool = false,
         emitted_namespace_vars: RefMap = RefMap{},
         is_exported_inside_namespace: RefRefMap = .{},
-        known_enum_values: Map(Ref, _hash_map.StringHashMapUnmanaged(f64)) = .{},
+        known_enum_values: Map(Ref, StringHashMapUnamanged(f64)) = .{},
         local_type_names: StringBoolMap = StringBoolMap{},
 
         // This is the reference to the generated function argument for the namespace,
@@ -4255,7 +4254,7 @@ fn NewParser_(
             // This function can show up in profiling.
             // That's part of why we do this.
             // Instead of rehashing `name` for every scope, we do it just once.
-            const hash = @TypeOf(p.module_scope.members).getHash(name);
+            const hash = Scope.getMemberHash(name);
             const allocator = p.allocator;
 
             const ref: Ref = brk: {
@@ -4278,7 +4277,7 @@ fn NewParser_(
                     }
 
                     // Is the symbol a member of this scope?
-                    if (scope.members.getWithHash(name, hash)) |member| {
+                    if (scope.getMemberWithHash(name, hash)) |member| {
                         declare_loc = member.loc;
                         break :brk member.ref;
                     }
@@ -4288,7 +4287,7 @@ fn NewParser_(
                 p.checkForNonBMPCodePoint(loc, name);
                 const _ref = p.newSymbol(.unbound, name) catch unreachable;
                 declare_loc = loc;
-                p.module_scope.members.putWithHash(allocator, name, hash, js_ast.Scope.Member{ .ref = _ref, .loc = logger.Loc.Empty }) catch unreachable;
+                p.module_scope.members.putNoClobber(allocator, name, js_ast.Scope.Member{ .ref = _ref, .loc = logger.Loc.Empty }) catch unreachable;
 
                 break :brk _ref;
             };
@@ -5080,7 +5079,7 @@ fn NewParser_(
             }
 
             try p.module_scope.generated.ensureUnusedCapacity(p.allocator, generated_symbols_count * 3);
-            try p.module_scope.members.ensureCapacity(p.allocator, generated_symbols_count * 3 + p.module_scope.members.count());
+            try p.module_scope.members.ensureUnusedCapacity(p.allocator, generated_symbols_count * 3 + p.module_scope.members.count());
 
             p.exports_ref = try p.declareCommonJSSymbol(.hoisted, "exports");
             p.module_ref = try p.declareCommonJSSymbol(.hoisted, "module");
@@ -5242,7 +5241,8 @@ fn NewParser_(
                 var iter = scope.members.iterator();
                 const allocator = p.allocator;
                 nextMember: while (iter.next()) |res| {
-                    var symbol = &p.symbols.items[res.value.ref.innerIndex()];
+                    const value = res.value_ptr.*;
+                    var symbol = &p.symbols.items[value.ref.innerIndex()];
                     if (!symbol.isHoisted()) {
                         continue :nextMember;
                     }
@@ -5250,10 +5250,7 @@ fn NewParser_(
                     // Check for collisions that would prevent to hoisting "var" symbols up to the enclosing function scope
                     var __scope = scope.parent;
 
-                    var hash: u64 = undefined;
-                    if (__scope) |_scope| {
-                        hash = @TypeOf(_scope.members).getHash(symbol.original_name);
-                    }
+                    const hash: u64 = Scope.getMemberHash(symbol.original_name);
 
                     while (__scope) |_scope| {
                         // Variable declarations hoisted past a "with" statement may actually end
@@ -5270,9 +5267,25 @@ fn NewParser_(
                             symbol.must_not_be_renamed = true;
                         }
 
-                        if (_scope.members.getEntryWithHash(symbol.original_name, hash)) |existing_member_entry| {
-                            const existing_member = &existing_member_entry.value;
-                            const existing_symbol: *const Symbol = &p.symbols.items[existing_member.ref.innerIndex()];
+                        var member_ptr: *Scope.Member = undefined;
+                        const member_in_scope_: ?Scope.Member = brk: {
+                            if (_scope.kindStopsHoisting()) {
+                                var entry = _scope.getOrPutMemberWithHash(allocator, symbol.original_name, hash) catch unreachable;
+                                member_ptr = entry.value_ptr;
+
+                                if (!entry.found_existing) {
+                                    entry.key_ptr.* = symbol.original_name;
+                                    break :brk null;
+                                } else {
+                                    break :brk member_ptr.*;
+                                }
+                            } else {
+                                break :brk _scope.getMemberWithHash(symbol.original_name, hash);
+                            }
+                        };
+
+                        if (member_in_scope_) |member_in_scope| {
+                            const existing_symbol: *const Symbol = &p.symbols.items[member_in_scope.ref.innerIndex()];
 
                             // We can hoist the symbol from the child scope into the symbol in
                             // this scope if:
@@ -5286,7 +5299,7 @@ fn NewParser_(
                                 (Symbol.isKindFunction(existing_symbol.kind) and (_scope.kind == .entry or _scope.kind == .function_body)))
                             {
                                 // Silently merge this symbol into the existing symbol
-                                symbol.link = existing_member.ref;
+                                symbol.link = member_in_scope.ref;
                                 continue :nextMember;
                             }
 
@@ -5296,7 +5309,7 @@ fn NewParser_(
                                 // An identifier binding from a catch statement and a function
                                 // declaration can both silently shadow another hoisted symbol
                                 if (symbol.kind != .catch_identifier and symbol.kind != .hoisted_function) {
-                                    const r = js_lexer.rangeOfIdentifier(p.source, res.value.loc);
+                                    const r = js_lexer.rangeOfIdentifier(p.source, value.loc);
                                     var notes = allocator.alloc(logger.Data, 1) catch unreachable;
                                     notes[0] =
                                         logger.rangeData(
@@ -5309,7 +5322,7 @@ fn NewParser_(
                                         ) catch unreachable,
                                     );
 
-                                    p.log.addRangeErrorFmtWithNotes(p.source, js_lexer.rangeOfIdentifier(p.source, existing_member_entry.value.loc), allocator, notes, "{s} has already been declared", .{symbol.original_name}) catch unreachable;
+                                    p.log.addRangeErrorFmtWithNotes(p.source, js_lexer.rangeOfIdentifier(p.source, member_in_scope.loc), allocator, notes, "{s} has already been declared", .{symbol.original_name}) catch unreachable;
                                 }
 
                                 continue :nextMember;
@@ -5317,9 +5330,9 @@ fn NewParser_(
                         }
 
                         if (_scope.kindStopsHoisting()) {
-                            _scope.members.putWithHash(allocator, symbol.original_name, hash, res.value) catch unreachable;
-                            break;
+                            member_ptr.* = value;
                         }
+
                         __scope = _scope.parent;
                     }
                 }
@@ -5398,11 +5411,12 @@ fn NewParser_(
 
                 var iter = scope.parent.?.members.iterator();
                 while (iter.next()) |entry| {
-                    // 	// Don't copy down the optional function expression name. Re-declaring
-                    // 	// the name of a function expression is allowed.
-                    const adjacent_kind = p.symbols.items[entry.value.ref.innerIndex()].kind;
+                    // Don't copy down the optional function expression name. Re-declaring
+                    // the name of a function expression is allowed.
+                    const value = entry.value_ptr.*;
+                    const adjacent_kind = p.symbols.items[value.ref.innerIndex()].kind;
                     if (adjacent_kind != .hoisted_function) {
-                        try scope.members.put(allocator, entry.key, entry.value);
+                        try scope.members.put(allocator, entry.key_ptr.*, value);
                     }
                 }
             }
@@ -9384,8 +9398,8 @@ fn NewParser_(
         }
 
         pub fn declareCommonJSSymbol(p: *P, comptime kind: Symbol.Kind, comptime name: string) !Ref {
-            const name_hash = comptime @TypeOf(p.module_scope.members).getHash(name);
-            const member = p.module_scope.members.getWithHash(name, name_hash);
+            const name_hash = comptime Scope.getMemberHash(name);
+            const member = p.module_scope.getMemberWithHash(name, name_hash);
 
             // If the code declared this symbol using "var name", then this is actually
             // not a collision. For example, node will let you do this:
@@ -9415,7 +9429,7 @@ fn NewParser_(
             const ref = try p.newSymbol(kind, name);
 
             if (member == null) {
-                try p.module_scope.members.putWithHash(p.allocator, name, name_hash, Scope.Member{ .ref = ref, .loc = logger.Loc.Empty });
+                try p.module_scope.members.put(p.allocator, name, Scope.Member{ .ref = ref, .loc = logger.Loc.Empty });
                 return ref;
             }
 
@@ -9457,7 +9471,7 @@ fn NewParser_(
             const scope = p.current_scope;
             var entry = try scope.members.getOrPut(p.allocator, name);
             if (entry.found_existing) {
-                const existing = entry.entry.value;
+                const existing = entry.value_ptr.*;
                 var symbol: *Symbol = &p.symbols.items[existing.ref.innerIndex()];
 
                 if (comptime !is_generated) {
@@ -9513,8 +9527,8 @@ fn NewParser_(
                     p.symbols.items[ref.innerIndex()].link = existing.ref;
                 }
             }
-
-            entry.entry.value = js_ast.Scope.Member{ .ref = ref, .loc = loc };
+            entry.key_ptr.* = name;
+            entry.value_ptr.* = js_ast.Scope.Member{ .ref = ref, .loc = loc };
             if (comptime is_generated) {
                 try p.module_scope.generated.append(p.allocator, ref);
             }
@@ -9992,7 +10006,7 @@ fn NewParser_(
                     //     continue;
                     // }
 
-                    p.symbols.items[member.value.ref.innerIndex()].must_not_be_renamed = true;
+                    p.symbols.items[member.value_ptr.ref.innerIndex()].must_not_be_renamed = true;
                 }
             }
 
@@ -16308,7 +16322,7 @@ fn NewParser_(
 
                     // Track values so they can be used by constant folding. We need to follow
                     // links here in case the enum was merged with a preceding namespace
-                    var values_so_far = _hash_map.StringHashMapUnmanaged(f64){};
+                    var values_so_far = StringHashMapUnamanged(f64){};
 
                     p.known_enum_values.put(allocator, data.name.ref orelse p.panic("Expected data.name.ref", .{}), values_so_far) catch unreachable;
                     p.known_enum_values.put(allocator, data.arg, values_so_far) catch unreachable;

@@ -34,7 +34,6 @@ const allocators = @import("./allocators.zig");
 const MimeType = @import("./http/mime_type.zig");
 const resolve_path = @import("./resolver/resolve_path.zig");
 const runtime = @import("./runtime.zig");
-const hash_map = @import("hash_map.zig");
 const PackageJSON = @import("./resolver/package_json.zig").PackageJSON;
 const MacroRemap = @import("./resolver/package_json.zig").MacroMap;
 const DebugLogs = _resolver.DebugLogs;

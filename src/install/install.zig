@@ -1306,7 +1306,7 @@ const PackageInstall = struct {
         // we'll catch it the next error
         if (!skip_delete and !strings.eqlComptime(this.destination_dir_subpath, ".")) this.uninstall() catch {};
 
-        const supported_method_to_use = if (strings.eqlComptime(this.cache_dir_subpath, ".") or strings.hasPrefixComptime(this.cache_dir_subpath, ".."))
+        var supported_method_to_use = if (strings.eqlComptime(this.cache_dir_subpath, ".") or strings.hasPrefixComptime(this.cache_dir_subpath, ".."))
             Method.symlink
         else
             supported_method;
@@ -1323,6 +1323,7 @@ const PackageInstall = struct {
                         switch (err) {
                             error.NotSupported => {
                                 supported_method = .copyfile;
+                                supported_method_to_use = .copyfile;
                             },
                             error.FileNotFound => return Result{
                                 .fail = .{ .err = error.FileNotFound, .step = .opening_cache_dir },
@@ -1342,6 +1343,7 @@ const PackageInstall = struct {
                         switch (err) {
                             error.NotSupported => {
                                 supported_method = .copyfile;
+                                supported_method_to_use = .copyfile;
                             },
                             error.FileNotFound => return Result{
                                 .fail = .{ .err = error.FileNotFound, .step = .opening_cache_dir },
@@ -1360,6 +1362,7 @@ const PackageInstall = struct {
                     switch (err) {
                         error.NotSameFileSystem => {
                             supported_method = .copyfile;
+                            supported_method_to_use = .copyfile;
                         },
                         error.FileNotFound => return Result{
                             .fail = .{ .err = error.FileNotFound, .step = .opening_cache_dir },

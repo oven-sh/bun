@@ -4285,9 +4285,21 @@ fn NewParser_(
 
                 // Allocate an "unbound" symbol
                 p.checkForNonBMPCodePoint(loc, name);
+                var gpe = p.module_scope.getOrPutMemberWithHash(allocator, name, hash) catch unreachable;
+
+                // I don't think this happens?
+                if (gpe.found_existing) {
+                    const existing = gpe.value_ptr.*;
+                    declare_loc = existing.loc;
+                    break :brk existing.ref;
+                }
+
                 const _ref = p.newSymbol(.unbound, name) catch unreachable;
+
+                gpe.key_ptr.* = name;
+                gpe.value_ptr.* = js_ast.Scope.Member{ .ref = _ref, .loc = loc };
+
                 declare_loc = loc;
-                p.module_scope.members.putNoClobber(allocator, name, js_ast.Scope.Member{ .ref = _ref, .loc = logger.Loc.Empty }) catch unreachable;
 
                 break :brk _ref;
             };
@@ -5250,7 +5262,8 @@ fn NewParser_(
                     // Check for collisions that would prevent to hoisting "var" symbols up to the enclosing function scope
                     var __scope = scope.parent;
 
-                    const hash: u64 = Scope.getMemberHash(symbol.original_name);
+                    const name = symbol.original_name;
+                    const hash: u64 = Scope.getMemberHash(name);
 
                     while (__scope) |_scope| {
                         // Variable declarations hoisted past a "with" statement may actually end
@@ -5267,25 +5280,8 @@ fn NewParser_(
                             symbol.must_not_be_renamed = true;
                         }
 
-                        var member_ptr: *Scope.Member = undefined;
-                        const member_in_scope_: ?Scope.Member = brk: {
-                            if (_scope.kindStopsHoisting()) {
-                                var entry = _scope.getOrPutMemberWithHash(allocator, symbol.original_name, hash) catch unreachable;
-                                member_ptr = entry.value_ptr;
-
-                                if (!entry.found_existing) {
-                                    entry.key_ptr.* = symbol.original_name;
-                                    break :brk null;
-                                } else {
-                                    break :brk member_ptr.*;
-                                }
-                            } else {
-                                break :brk _scope.getMemberWithHash(symbol.original_name, hash);
-                            }
-                        };
-
-                        if (member_in_scope_) |member_in_scope| {
-                            const existing_symbol: *const Symbol = &p.symbols.items[member_in_scope.ref.innerIndex()];
+                        if (_scope.getMemberWithHash(name, hash)) |member_in_scope| {
+                            var existing_symbol: *Symbol = &p.symbols.items[member_in_scope.ref.innerIndex()];
 
                             // We can hoist the symbol from the child scope into the symbol in
                             // this scope if:
@@ -5300,11 +5296,17 @@ fn NewParser_(
                             {
                                 // Silently merge this symbol into the existing symbol
                                 symbol.link = member_in_scope.ref;
+                                var entry = _scope.getOrPutMemberWithHash(p.allocator, name, hash) catch unreachable;
+                                entry.value_ptr.* = value;
+                                entry.key_ptr.* = name;
                                 continue :nextMember;
                             }
 
+                            // An identifier binding from a catch statement and a function
+                            // declaration can both silently shadow another hoisted symbol
+
                             // Otherwise if this isn't a catch identifier, it's a collision
-                            if (existing_symbol.kind != .catch_identifier) {
+                            if (existing_symbol.kind != .catch_identifier and existing_symbol.kind != .arguments) {
 
                                 // An identifier binding from a catch statement and a function
                                 // declaration can both silently shadow another hoisted symbol
@@ -5318,19 +5320,25 @@ fn NewParser_(
                                         std.fmt.allocPrint(
                                             allocator,
                                             "{s} was originally declared here",
-                                            .{existing_symbol.original_name},
+                                            .{name},
                                         ) catch unreachable,
                                     );
 
-                                    p.log.addRangeErrorFmtWithNotes(p.source, js_lexer.rangeOfIdentifier(p.source, member_in_scope.loc), allocator, notes, "{s} has already been declared", .{symbol.original_name}) catch unreachable;
+                                    p.log.addRangeErrorFmtWithNotes(p.source, js_lexer.rangeOfIdentifier(p.source, member_in_scope.loc), allocator, notes, "{s} has already been declared", .{name}) catch unreachable;
+                                    continue :nextMember;
                                 }
 
-                                continue :nextMember;
+                                // If this is a catch identifier, silently merge the existing symbol
+                                // into this symbol but continue hoisting past this catch scope
+                                existing_symbol.link = member_in_scope.ref;
                             }
                         }
 
                         if (_scope.kindStopsHoisting()) {
-                            member_ptr.* = value;
+                            var entry = _scope.getOrPutMemberWithHash(p.allocator, name, hash) catch unreachable;
+                            entry.value_ptr.* = value;
+                            entry.key_ptr.* = name;
+                            break;
                         }
 
                         __scope = _scope.parent;

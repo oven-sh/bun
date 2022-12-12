@@ -90,6 +90,33 @@ pub fn canPrintWithoutEscape(comptime CodePointType: type, c: CodePointType, com
 
 const indentation_buf = [_]u8{' '} ** 128;
 
+const Whitespacer = struct {
+    normal: []const u8,
+    minify: []const u8,
+};
+
+fn ws(comptime str: []const u8) Whitespacer {
+    const Static = struct {
+        pub const with = str;
+
+        pub const without = brk: {
+            var buf = [_]u8{0} ** str.len;
+            var i: usize = 0;
+            var buf_i: usize = 0;
+            while (i < str.len) : (i += 1) {
+                if (str[i] != ' ') {
+                    buf[buf_i] = str[i];
+                    buf_i += 1;
+                }
+            }
+
+            break :brk buf[0..buf_i];
+        };
+    };
+
+    return .{ .normal = Static.with, .minify = Static.without };
+}
+
 pub fn estimateLengthForJSON(input: []const u8, comptime ascii_only: bool) usize {
     var remaining = input;
     var len: u32 = 2; // for quotes
@@ -618,6 +645,10 @@ pub fn NewPrinter(
             p.writer.advance(written.len);
         }
 
+        pub fn printBuffer(p: *Printer, str: []const u8) void {
+            p.writer.print([]const u8, str);
+        }
+
         pub fn print(p: *Printer, str: anytype) void {
             const StringType = @TypeOf(str);
             switch (comptime StringType) {
@@ -731,9 +762,7 @@ pub fn NewPrinter(
             }
 
             if (import.items.len > 0) {
-                p.print("var ");
-                p.print("{");
-                p.printSpace();
+                p.printWhitespacer(ws("var {"));
 
                 if (!import.is_single_line) {
                     p.printNewline();
@@ -762,24 +791,17 @@ pub fn NewPrinter(
                     p.printSpace();
                 }
 
-                if (import.star_name_loc == null and import.default_name == null) {
-                    p.print("}");
-                    p.@"print = "();
+                p.printWhitespacer(ws("} = "));
 
+                if (import.star_name_loc == null and import.default_name == null) {
                     if (comptime Statement == void) {
                         p.printRequireOrImportExpr(import.import_record_index, &.{}, Level.lowest, ExprFlag.None());
                     } else {
                         p.print(statement);
                     }
                 } else if (import.default_name) |name| {
-                    p.print("}");
-                    p.printSpace();
-                    p.print("=");
                     p.printSymbol(name.ref.?);
                 } else {
-                    p.print("}");
-                    p.printSpace();
-                    p.print("=");
                     p.printSymbol(import.namespace_ref);
                 }
 
@@ -883,9 +905,7 @@ pub fn NewPrinter(
                 p.printBinding(decl.binding);
 
                 if (decl.value) |value| {
-                    p.printSpace();
-                    p.print("=");
-                    p.printSpace();
+                    p.printWhitespacer(ws(" = "));
                     p.printExpr(value, .comma, flags);
                 }
             }
@@ -944,9 +964,7 @@ pub fn NewPrinter(
                 p.printBinding(arg.binding);
 
                 if (arg.default) |default| {
-                    p.printSpace();
-                    p.print("=");
-                    p.printSpace();
+                    p.printWhitespacer(ws(" = "));
                     p.printExpr(default, .comma, ExprFlag.None());
                 }
             }
@@ -1009,6 +1027,14 @@ pub fn NewPrinter(
                 return p.bestQuoteCharForString(str.data, allow_backtick);
             } else {
                 return p.bestQuoteCharForString(str.slice16(), allow_backtick);
+            }
+        }
+
+        pub fn printWhitespacer(this: *Printer, spacer: Whitespacer) void {
+            if (this.options.minify_whitespace) {
+                this.print(spacer.minify);
+            } else {
+                this.print(spacer.normal);
             }
         }
 
@@ -1909,9 +1935,7 @@ pub fn NewPrinter(
                     }
 
                     p.printFnArgs(if (e.is_async) null else expr.loc, e.args, e.has_rest_arg, true);
-                    p.printSpace();
-                    p.print("=>");
-                    p.printSpace();
+                    p.printWhitespacer(ws(" => "));
 
                     var wasPrinted = false;
 
@@ -2232,7 +2256,7 @@ pub fn NewPrinter(
                                 }
 
                                 if (wrap) {
-                                    p.print("(0, ");
+                                    p.printWhitespacer(ws("(0, "));
                                 }
                                 p.addSourceMapping(expr.loc);
                                 p.printNamespaceAlias(import_record, namespace);
@@ -2574,7 +2598,8 @@ pub fn NewPrinter(
                     p.printQuotedUTF16(buf, q);
                     p.print(q);
                     if (flags.len > 0) {
-                        p.print(", ");
+                        p.print(",");
+                        p.printSpace();
                         p.printQuotedUTF8(flags, true);
                     }
                     p.print("))");
@@ -2999,7 +3024,6 @@ pub fn NewPrinter(
             if (property.default_value) |default| {
                 p.printSpace();
                 p.print("=");
-                p.printSpace();
                 p.printExpr(default, .comma, ExprFlag.None());
             }
         }
@@ -3239,19 +3263,14 @@ pub fn NewPrinter(
                     }
                     p.printIndent();
                     p.printSpaceBeforeIdentifier();
-                    p.print("export");
-                    p.printSpace();
-                    p.print("*");
-                    p.printSpace();
+                    p.printWhitespacer(ws("export * "));
                     if (s.alias) |alias| {
-                        p.print("as");
-                        p.printSpace();
+                        p.printWhitespacer(ws("as "));
                         p.printClauseAlias(alias.original_name);
-                        p.printSpace();
-                        p.printSpaceBeforeIdentifier();
+                        p.print(" ");
                     }
-                    p.print("from");
-                    p.printSpace();
+
+                    p.printWhitespacer(ws("from "));
                     p.printImportRecordPath(&p.import_records[s.import_record_index]);
                     p.printSemicolonAfterStatement();
                 },
@@ -3502,9 +3521,7 @@ pub fn NewPrinter(
                             p.printImportRecordPath(&import_record);
                             p.print(")");
                             p.printSemicolonAfterStatement();
-                            p.print("export");
-                            p.printSpace();
-                            p.print("{");
+                            p.printWhitespacer(ws("export {"));
 
                             // reset symbol counter back
                             symbol_counter = p.symbol_counter;
@@ -3521,7 +3538,7 @@ pub fn NewPrinter(
                                 var buf: [16]u8 = undefined;
                                 p.print(std.fmt.bufPrint(&buf, "{}", .{std.fmt.fmtSliceHexLower(&@bitCast([4]u8, symbol_counter))}) catch unreachable);
                                 symbol_counter +|= 1;
-                                p.print(" as ");
+                                p.printWhitespacer(ws(" as "));
                                 p.print(item.alias);
                             }
 
@@ -3532,9 +3549,7 @@ pub fn NewPrinter(
                         }
                     }
 
-                    p.print("export");
-                    p.printSpace();
-                    p.print("{");
+                    p.printWhitespacer(ws("export {"));
 
                     if (!s.is_single_line) {
                         p.options.indent += 1;
@@ -3565,10 +3580,7 @@ pub fn NewPrinter(
                         p.printSpace();
                     }
 
-                    p.print("}");
-                    p.printSpace();
-                    p.print("from");
-                    p.printSpace();
+                    p.printWhitespacer(ws("} from "));
                     p.printImportRecordPath(&import_record);
                     p.printSemicolonAfterStatement();
                 },
@@ -3901,12 +3913,13 @@ pub fn NewPrinter(
                         const module_id = record.module_id;
 
                         if (!record.path.is_disabled and std.mem.indexOfScalar(u32, p.imported_module_ids.items, module_id) == null) {
-                            p.print("import * as ");
+                            p.printWhitespacer(ws("import * as "));
                             p.printModuleId(module_id);
-                            p.print(" from \"");
+                            p.printWhitespacer(ws(" from "));
+                            p.print("\"");
                             p.print(record.path.text);
-                            p.print("\";");
-                            p.printNewline();
+                            p.print("\"");
+                            p.printSemicolonAfterStatement();
                             try p.imported_module_ids.append(module_id);
                         }
 
@@ -3930,9 +3943,7 @@ pub fn NewPrinter(
                         if (s.items.len > 0 or s.default_name != null) {
                             p.printIndent();
                             p.printSpaceBeforeIdentifier();
-                            p.print("var");
-                            p.printSpace();
-                            p.print("{");
+                            p.printWhitespacer(ws("var {"));
 
                             if (s.default_name) |default_name| {
                                 p.printSpace();
@@ -3987,9 +3998,7 @@ pub fn NewPrinter(
                         if (!record.path.is_disabled) {
                             if (!p.has_printed_bundled_import_statement) {
                                 p.has_printed_bundled_import_statement = true;
-                                p.print("import");
-                                p.printSpace();
-                                p.print("{");
+                                p.printWhitespacer(ws("import { "));
 
                                 const last = p.import_records.len - 1;
                                 var needs_comma = false;
@@ -4017,7 +4026,7 @@ pub fn NewPrinter(
                                     needs_comma = true;
                                 }
 
-                                p.print("}from ");
+                                p.printWhitespacer(ws("} from "));
 
                                 p.printQuotedUTF8(record.path.text, false);
                                 p.printSemicolonAfterStatement();
@@ -4026,12 +4035,8 @@ pub fn NewPrinter(
                             p.print("var ");
 
                             p.printLoadFromBundleWithoutCall(s.import_record_index);
-                            if (p.options.minify_whitespace) {
-                                p.print("=()=>({default: {}})");
-                                p.printSemicolonIfNeeded();
-                            } else {
-                                p.print(" = () => ({default: {}});\n");
-                            }
+                            p.printWhitespacer(ws("= () => ({ default: {}})"));
+                            p.printSemicolonAfterStatement();
                         }
 
                         p.printBundledImport(record.*, s);
@@ -4092,15 +4097,13 @@ pub fn NewPrinter(
                             p.printSpace();
                         }
 
-                        p.print("*");
-                        p.printSpace();
-                        p.print("as ");
+                        p.printWhitespacer(ws("* as "));
                         p.printSymbol(s.namespace_ref);
                         item_count += 1;
                     }
 
                     if (item_count > 0) {
-                        p.print(" from ");
+                        p.printWhitespacer(ws(" from "));
                     }
 
                     p.printImportRecordPath(record);
@@ -4276,11 +4279,11 @@ pub fn NewPrinter(
                         if (!is_bun_platform) {
                             p.print("(");
                             p.printSymbol(s.namespace_ref);
-                            p.print(" && \"default\" in ");
+                            p.printWhitespacer(ws(" && \"default\" in "));
                             p.printSymbol(s.namespace_ref);
-                            p.print(" ? ");
+                            p.printWhitespacer(ws(" ? "));
                             p.printSymbol(s.namespace_ref);
-                            p.print(".default : ");
+                            p.printWhitespacer(ws(".default : "));
                             p.printSymbol(s.namespace_ref);
                             p.print(")");
                         } else {
@@ -4365,9 +4368,9 @@ pub fn NewPrinter(
             p.print(",");
             p.printQuotedUTF8(name, true);
 
-            p.print(",{get: () => (");
+            p.printWhitespacer(ws(",{get: () => ("));
             p.printLoadFromBundle(import_record_index);
-            p.print("), enumerable: true, configurable: true})");
+            p.printWhitespacer(ws("), enumerable: true, configurable: true})"));
         }
 
         // We must use Object.defineProperty() to handle re-exports from ESM -> CJS

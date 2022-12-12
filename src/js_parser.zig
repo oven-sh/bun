@@ -5252,96 +5252,112 @@ fn NewParser_(
             if (!scope.kindStopsHoisting()) {
                 var iter = scope.members.iterator();
                 const allocator = p.allocator;
-                nextMember: while (iter.next()) |res| {
-                    const value = res.value_ptr.*;
-                    var symbol = &p.symbols.items[value.ref.innerIndex()];
-                    if (!symbol.isHoisted()) {
-                        continue :nextMember;
+                var symbols = p.symbols.items;
+                const orig_capacity = p.symbols.capacity;
+                // assert we don't modify the symbols array while iterating
+                defer {
+                    if (comptime Environment.allow_assert) {
+                        assert(orig_capacity == p.symbols.capacity);
+                        assert(symbols.ptr == p.symbols.items.ptr);
                     }
+                }
 
-                    // Check for collisions that would prevent to hoisting "var" symbols up to the enclosing function scope
-                    var __scope = scope.parent;
-
-                    const name = symbol.original_name;
-                    const hash: u64 = Scope.getMemberHash(name);
-
-                    while (__scope) |_scope| {
-                        // Variable declarations hoisted past a "with" statement may actually end
-                        // up overwriting a property on the target of the "with" statement instead
-                        // of initializing the variable. We must not rename them or we risk
-                        // causing a behavior change.
-                        //
-                        //   var obj = { foo: 1 }
-                        //   with (obj) { var foo = 2 }
-                        //   assert(foo === undefined)
-                        //   assert(obj.foo === 2)
-                        //
-                        if (_scope.kind == .with) {
-                            symbol.must_not_be_renamed = true;
+                // Check for collisions that would prevent to hoisting "var" symbols up to the enclosing function scope
+                if (scope.parent != null) {
+                    nextMember: while (iter.next()) |res| {
+                        const value = res.value_ptr.*;
+                        var symbol: *Symbol = &symbols[value.ref.innerIndex()];
+                        if (!symbol.isHoisted()) {
+                            continue :nextMember;
                         }
 
-                        if (_scope.getMemberWithHash(name, hash)) |member_in_scope| {
-                            var existing_symbol: *Symbol = &p.symbols.items[member_in_scope.ref.innerIndex()];
+                        var __scope = scope.parent;
+                        assert(__scope != null);
+                        const name = symbol.original_name;
 
-                            // We can hoist the symbol from the child scope into the symbol in
-                            // this scope if:
+                        const hash: u64 = Scope.getMemberHash(name);
+
+                        while (__scope) |_scope| {
+                            const scope_kind = _scope.kind;
+
+                            // Variable declarations hoisted past a "with" statement may actually end
+                            // up overwriting a property on the target of the "with" statement instead
+                            // of initializing the variable. We must not rename them or we risk
+                            // causing a behavior change.
                             //
-                            //   - The symbol is unbound (i.e. a global variable access)
-                            //   - The symbol is also another hoisted variable
-                            //   - The symbol is a function of any kind and we're in a function or module scope
+                            //   var obj = { foo: 1 }
+                            //   with (obj) { var foo = 2 }
+                            //   assert(foo === undefined)
+                            //   assert(obj.foo === 2)
                             //
-                            // Is this unbound (i.e. a global access) or also hoisted?
-                            if (existing_symbol.kind == .unbound or existing_symbol.kind == .hoisted or
-                                (Symbol.isKindFunction(existing_symbol.kind) and (_scope.kind == .entry or _scope.kind == .function_body)))
-                            {
-                                // Silently merge this symbol into the existing symbol
-                                symbol.link = member_in_scope.ref;
-                                var entry = _scope.getOrPutMemberWithHash(p.allocator, name, hash) catch unreachable;
-                                entry.value_ptr.* = value;
-                                entry.key_ptr.* = name;
-                                continue :nextMember;
+                            if (scope_kind == .with) {
+                                symbol.must_not_be_renamed = true;
                             }
 
-                            // An identifier binding from a catch statement and a function
-                            // declaration can both silently shadow another hoisted symbol
+                            if (_scope.getMemberWithHash(name, hash)) |member_in_scope| {
+                                var existing_symbol: *Symbol = &symbols[member_in_scope.ref.innerIndex()];
+                                const existing_kind = existing_symbol.kind;
 
-                            // Otherwise if this isn't a catch identifier, it's a collision
-                            if (existing_symbol.kind != .catch_identifier and existing_symbol.kind != .arguments) {
-
-                                // An identifier binding from a catch statement and a function
-                                // declaration can both silently shadow another hoisted symbol
-                                if (symbol.kind != .catch_identifier and symbol.kind != .hoisted_function) {
-                                    const r = js_lexer.rangeOfIdentifier(p.source, value.loc);
-                                    var notes = allocator.alloc(logger.Data, 1) catch unreachable;
-                                    notes[0] =
-                                        logger.rangeData(
-                                        p.source,
-                                        r,
-                                        std.fmt.allocPrint(
-                                            allocator,
-                                            "{s} was originally declared here",
-                                            .{name},
-                                        ) catch unreachable,
-                                    );
-
-                                    p.log.addRangeErrorFmtWithNotes(p.source, js_lexer.rangeOfIdentifier(p.source, member_in_scope.loc), allocator, notes, "{s} has already been declared", .{name}) catch unreachable;
+                                // We can hoist the symbol from the child scope into the symbol in
+                                // this scope if:
+                                //
+                                //   - The symbol is unbound (i.e. a global variable access)
+                                //   - The symbol is also another hoisted variable
+                                //   - The symbol is a function of any kind and we're in a function or module scope
+                                //
+                                // Is this unbound (i.e. a global access) or also hoisted?
+                                if (existing_kind == .unbound or existing_kind == .hoisted or
+                                    (Symbol.isKindFunction(existing_kind) and (scope_kind == .entry or scope_kind == .function_body)))
+                                {
+                                    // Silently merge this symbol into the existing symbol
+                                    symbol.link = member_in_scope.ref;
+                                    var entry = _scope.getOrPutMemberWithHash(p.allocator, name, hash) catch unreachable;
+                                    entry.value_ptr.* = value;
+                                    entry.key_ptr.* = name;
                                     continue :nextMember;
                                 }
 
-                                // If this is a catch identifier, silently merge the existing symbol
-                                // into this symbol but continue hoisting past this catch scope
-                                existing_symbol.link = member_in_scope.ref;
+                                // An identifier binding from a catch statement and a function
+                                // declaration can both silently shadow another hoisted symbol
+
+                                // Otherwise if this isn't a catch identifier, it's a collision
+                                if (existing_kind != .catch_identifier and existing_kind != .arguments) {
+
+                                    // An identifier binding from a catch statement and a function
+                                    // declaration can both silently shadow another hoisted symbol
+                                    if (symbol.kind != .catch_identifier and symbol.kind != .hoisted_function) {
+                                        const r = js_lexer.rangeOfIdentifier(p.source, value.loc);
+                                        var notes = allocator.alloc(logger.Data, 1) catch unreachable;
+                                        notes[0] =
+                                            logger.rangeData(
+                                            p.source,
+                                            r,
+                                            std.fmt.allocPrint(
+                                                allocator,
+                                                "{s} was originally declared here",
+                                                .{name},
+                                            ) catch unreachable,
+                                        );
+
+                                        p.log.addRangeErrorFmtWithNotes(p.source, js_lexer.rangeOfIdentifier(p.source, member_in_scope.loc), allocator, notes, "{s} has already been declared", .{name}) catch unreachable;
+                                        continue :nextMember;
+                                    }
+
+                                    // If this is a catch identifier, silently merge the existing symbol
+                                    // into this symbol but continue hoisting past this catch scope
+                                    existing_symbol.link = member_in_scope.ref;
+                                }
                             }
-                        }
 
-                        if (_scope.kindStopsHoisting()) {
-                            var entry = _scope.getOrPutMemberWithHash(p.allocator, name, hash) catch unreachable;
-                            entry.value_ptr.* = value;
-                            entry.key_ptr.* = name;
-                            break;
-                        }
+                            if (_scope.kindStopsHoisting()) {
+                                var entry = _scope.getOrPutMemberWithHash(allocator, name, hash) catch unreachable;
+                                entry.value_ptr.* = value;
+                                entry.key_ptr.* = name;
+                                break;
+                            }
 
-                        __scope = _scope.parent;
+                            __scope = _scope.parent;
+                        }
                     }
                 }
             }

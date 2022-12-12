@@ -1242,6 +1242,7 @@ pub const BundleOptions = struct {
     install: ?*Api.BunInstall = null,
 
     inlining: bool = false,
+    minify_whitespace: bool = false,
 
     pub inline fn cssImportBehavior(this: *const BundleOptions) Api.CssInJsBehavior {
         switch (this.platform) {

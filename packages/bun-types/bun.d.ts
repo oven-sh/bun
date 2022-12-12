@@ -658,6 +658,13 @@ declare module "bun" {
     jsxOptimizationInline?: boolean;
 
     /**
+     * **Experimental**
+     *
+     * Minify whitespace and comments from the output.
+     */
+    minifyWhitespace?: boolean;
+
+    /**
      * This does two things (and possibly more in the future):
      * 1. `const` declarations to primitive types (excluding Object/Array) at the top of a scope before any `let` or `var` declarations will be inlined into their usages.
      * 2. `let` and `const` declarations only used once are inlined into their usages.

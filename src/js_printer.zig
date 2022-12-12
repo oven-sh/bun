@@ -88,6 +88,8 @@ pub fn canPrintWithoutEscape(comptime CodePointType: type, c: CodePointType, com
     }
 }
 
+const indentation_buf = [_]u8{' '} ** 128;
+
 pub fn estimateLengthForJSON(input: []const u8, comptime ascii_only: bool) usize {
     var remaining = input;
     var len: u32 = 2; // for quotes
@@ -410,6 +412,8 @@ pub const Options = struct {
     source_map_handler: ?SourceMapHandler = null,
     css_import_behavior: Api.CssInJsBehavior = Api.CssInJsBehavior.facade,
 
+    minify_whitespace: bool = false,
+
     // TODO: remove this
     // The reason for this is:
     // 1. You're bundling a React component
@@ -635,31 +639,46 @@ pub fn NewPrinter(
         }
 
         pub fn printIndent(p: *Printer) void {
-            if (p.options.indent == 0) {
+            if (p.options.indent == 0 or p.options.minify_whitespace) {
                 return;
             }
 
-            // p.js.growBy(p.options.indent * "  ".len) catch unreachable;
-            var i: usize = 0;
+            var i: usize = p.options.indent * 2;
 
-            while (i < p.options.indent) : (i += 1) {
-                p.unsafePrint("  ");
+            while (i > 0) {
+                const amt = @minimum(i, indentation_buf.len);
+                p.print(indentation_buf[0..amt]);
+                i -= amt;
             }
         }
 
         pub inline fn printSpace(p: *Printer) void {
-            p.print(" ");
+            if (!p.options.minify_whitespace)
+                p.print(" ");
         }
         pub inline fn printNewline(p: *Printer) void {
-            p.print("\n");
+            if (!p.options.minify_whitespace)
+                p.print("\n");
         }
         pub inline fn printSemicolonAfterStatement(p: *Printer) void {
-            p.print(";\n");
+            if (!p.options.minify_whitespace) {
+                p.print(";\n");
+            } else {
+                p.needs_semicolon = true;
+            }
         }
         pub fn printSemicolonIfNeeded(p: *Printer) void {
             if (p.needs_semicolon) {
                 p.print(";");
                 p.needs_semicolon = false;
+            }
+        }
+
+        fn @"print = "(p: *Printer) void {
+            if (p.options.minify_whitespace) {
+                p.print("=");
+            } else {
+                p.print(" = ");
             }
         }
 
@@ -702,10 +721,10 @@ pub fn NewPrinter(
                 p.print("var ");
                 p.printSymbol(default.ref.?);
                 if (comptime Statement == void) {
-                    p.print(" = ");
+                    p.@"print = "();
                     p.printRequireOrImportExpr(import.import_record_index, &.{}, Level.lowest, ExprFlag.None());
                 } else {
-                    p.print(" = ");
+                    p.@"print = "();
                     p.print(statement);
                 }
                 p.printSemicolonAfterStatement();
@@ -713,10 +732,11 @@ pub fn NewPrinter(
 
             if (import.items.len > 0) {
                 p.print("var ");
-                p.print("{ ");
+                p.print("{");
+                p.printSpace();
 
                 if (!import.is_single_line) {
-                    p.print("\n");
+                    p.printNewline();
                     p.options.indent += 1;
                     p.printIndent();
                 }
@@ -727,7 +747,7 @@ pub fn NewPrinter(
                         p.printSpace();
 
                         if (!import.is_single_line) {
-                            p.print("\n");
+                            p.printNewline();
                             p.printIndent();
                         }
                     }
@@ -736,27 +756,30 @@ pub fn NewPrinter(
                 }
 
                 if (!import.is_single_line) {
-                    p.print("\n");
-                    p.options.indent -= 1;
+                    p.printNewline();
+                    p.options.unindent();
                 } else {
                     p.printSpace();
                 }
 
                 if (import.star_name_loc == null and import.default_name == null) {
+                    p.print("}");
+                    p.@"print = "();
+
                     if (comptime Statement == void) {
-                        p.print("} = ");
                         p.printRequireOrImportExpr(import.import_record_index, &.{}, Level.lowest, ExprFlag.None());
                     } else {
-                        p.print("} = ");
                         p.print(statement);
                     }
                 } else if (import.default_name) |name| {
-                    p.print("} =");
-                    p.printSpaceBeforeIdentifier();
+                    p.print("}");
+                    p.printSpace();
+                    p.print("=");
                     p.printSymbol(name.ref.?);
                 } else {
-                    p.print("} =");
-                    p.printSpaceBeforeIdentifier();
+                    p.print("}");
+                    p.printSpace();
+                    p.print("=");
                     p.printSymbol(import.namespace_ref);
                 }
 
@@ -800,11 +823,6 @@ pub fn NewPrinter(
                 .s_block => |block| {
                     p.printSpace();
                     p.printBlock(stmt.loc, block.stmts);
-                    p.printNewline();
-                },
-                .s_empty => {
-                    p.printSpace();
-                    p.printBlock(stmt.loc, &.{});
                     p.printNewline();
                 },
                 else => {
@@ -898,6 +916,7 @@ pub fn NewPrinter(
 
         pub fn printFnArgs(
             p: *Printer,
+            open_paren_loc: ?logger.Loc,
             args: []G.Arg,
             has_rest_arg: bool,
             // is_arrow can be used for minifying later
@@ -906,6 +925,9 @@ pub fn NewPrinter(
             const wrap = true;
 
             if (wrap) {
+                if (open_paren_loc) |loc| {
+                    p.addSourceMapping(loc);
+                }
                 p.print("(");
             }
 
@@ -935,7 +957,7 @@ pub fn NewPrinter(
         }
 
         pub fn printFunc(p: *Printer, func: G.Fn) void {
-            p.printFnArgs(func.args, func.flags.contains(.has_rest_arg), false);
+            p.printFnArgs(func.open_parens_loc, func.args, func.flags.contains(.has_rest_arg), false);
             p.printSpace();
             p.printBlock(func.body.loc, func.body.stmts);
         }
@@ -1468,6 +1490,7 @@ pub fn NewPrinter(
             }
             p.addSourceMapping(record.range.loc);
 
+            p.printSpaceBeforeIdentifier();
             // Allow it to fail at runtime, if it should
             p.print("import(");
             p.printImportRecordPath(record);
@@ -1507,7 +1530,9 @@ pub fn NewPrinter(
                 p.printClauseAlias(item.alias);
 
                 if (!strings.eql(name, item.alias)) {
-                    p.print(" as ");
+                    p.print(" as");
+                    p.printSpace();
+                    p.addSourceMapping(item.alias_loc);
                     p.printIdentifier(name);
                 }
             } else if (comptime as == .@"var") {
@@ -1516,13 +1541,16 @@ pub fn NewPrinter(
                 if (!strings.eql(name, item.alias)) {
                     p.print(":");
                     p.printSpace();
+
                     p.printIdentifier(name);
                 }
             } else if (comptime as == .@"export") {
                 p.printIdentifier(name);
 
                 if (!strings.eql(name, item.alias)) {
-                    p.print(" as ");
+                    p.print(" as");
+                    p.printSpace();
+                    p.addSourceMapping(item.alias_loc);
                     p.printClauseAlias(item.alias);
                 }
             } else {
@@ -1549,38 +1577,42 @@ pub fn NewPrinter(
         }
 
         pub fn printExpr(p: *Printer, expr: Expr, level: Level, _flags: ExprFlag.Set) void {
-            p.addSourceMapping(expr.loc);
             var flags = _flags;
 
             switch (expr.data) {
                 .e_missing => {},
                 .e_undefined => {
-                    p.printSpaceBeforeIdentifier();
-
+                    p.addSourceMapping(expr.loc);
                     p.printUndefined(level);
                 },
                 .e_super => {
                     p.printSpaceBeforeIdentifier();
+                    p.addSourceMapping(expr.loc);
                     p.print("super");
                 },
                 .e_null => {
                     p.printSpaceBeforeIdentifier();
+                    p.addSourceMapping(expr.loc);
                     p.print("null");
                 },
                 .e_this => {
                     p.printSpaceBeforeIdentifier();
+                    p.addSourceMapping(expr.loc);
                     p.print("this");
                 },
                 .e_spread => |e| {
+                    p.addSourceMapping(expr.loc);
                     p.print("...");
                     p.printExpr(e.value, .comma, ExprFlag.None());
                 },
                 .e_new_target => {
                     p.printSpaceBeforeIdentifier();
+                    p.addSourceMapping(expr.loc);
                     p.print("new.target");
                 },
                 .e_import_meta => {
                     p.printSpaceBeforeIdentifier();
+                    p.addSourceMapping(expr.loc);
                     p.print("import.meta");
                 },
                 .e_new => |e| {
@@ -1596,6 +1628,7 @@ pub fn NewPrinter(
                     }
 
                     p.printSpaceBeforeIdentifier();
+                    p.addSourceMapping(expr.loc);
                     p.print("new");
                     p.printSpace();
                     p.printExpr(e.target, .new, ExprFlag.ForbidCall());
@@ -1724,6 +1757,7 @@ pub fn NewPrinter(
                         }
 
                         p.printSpaceBeforeIdentifier();
+                        p.addSourceMapping(expr.loc);
                         p.print("import(");
                         if (e.leading_interior_comments.len > 0) {
                             p.printNewline();
@@ -1827,11 +1861,12 @@ pub fn NewPrinter(
                             if (!is_optional_chain_start) {
                                 p.print(".");
                             }
-
+                            p.addSourceMapping(e.index.loc);
                             p.printSymbol(priv.ref);
                         },
                         else => {
                             p.print("[");
+                            p.addSourceMapping(e.index.loc);
                             p.printExpr(e.index, .lowest, ExprFlag.None());
                             p.print("]");
                         },
@@ -1867,12 +1902,13 @@ pub fn NewPrinter(
                     }
 
                     if (e.is_async) {
+                        p.addSourceMapping(expr.loc);
                         p.printSpaceBeforeIdentifier();
                         p.print("async");
                         p.printSpace();
                     }
 
-                    p.printFnArgs(e.args, e.has_rest_arg, true);
+                    p.printFnArgs(if (e.is_async) null else expr.loc, e.args, e.has_rest_arg, true);
                     p.printSpace();
                     p.print("=>");
                     p.printSpace();
@@ -1918,6 +1954,7 @@ pub fn NewPrinter(
 
                     p.printSpaceBeforeIdentifier();
                     if (e.func.flags.contains(.is_async)) {
+                        p.addSourceMapping(expr.loc);
                         p.print("async ");
                     }
                     p.print("function");
@@ -1927,7 +1964,8 @@ pub fn NewPrinter(
                     }
 
                     if (e.func.name) |sym| {
-                        p.maybePrintSpace();
+                        p.printSpaceBeforeIdentifier();
+                        p.addSourceMapping(sym.loc);
                         p.printSymbol(sym.ref orelse Global.panic("internal error: expected E.Function's name symbol to have a ref\n{s}", .{e.func}));
                     }
 
@@ -1944,12 +1982,12 @@ pub fn NewPrinter(
                     }
 
                     p.printSpaceBeforeIdentifier();
+                    p.addSourceMapping(expr.loc);
                     p.print("class");
                     if (e.class_name) |name| {
-                        p.maybePrintSpace();
+                        p.print(" ");
                         p.addSourceMapping(name.loc);
                         p.printSymbol(name.ref orelse Global.panic("internal error: expected E.Class's name symbol to have a ref\n{s}", .{e}));
-                        p.maybePrintSpace();
                     }
                     p.printClass(e.*);
                     if (wrap) {
@@ -1957,6 +1995,7 @@ pub fn NewPrinter(
                     }
                 },
                 .e_array => |e| {
+                    p.addSourceMapping(expr.loc);
                     p.print("[");
                     const items = e.items.slice();
                     if (items.len > 0) {
@@ -2006,6 +2045,7 @@ pub fn NewPrinter(
                     if (wrap) {
                         p.print("(");
                     }
+                    p.addSourceMapping(expr.loc);
                     p.print("{");
                     const props = e.properties.slice();
                     if (props.len > 0) {
@@ -2043,10 +2083,12 @@ pub fn NewPrinter(
                 },
                 .e_boolean => |e| {
                     p.printSpaceBeforeIdentifier();
+                    p.addSourceMapping(expr.loc);
                     p.print(if (e.value) "true" else "false");
                 },
                 .e_string => |e| {
                     e.resovleRopeIfNeeded(p.options.allocator);
+                    p.addSourceMapping(expr.loc);
 
                     // If this was originally a template literal, print it as one as long as we're not minifying
                     if (e.prefer_template) {
@@ -2057,12 +2099,14 @@ pub fn NewPrinter(
                     }
 
                     const c = p.bestQuoteCharForEString(e, true);
+
                     p.print(c);
                     p.printStringContent(e, c);
                     p.print(c);
                 },
                 .e_template => |e| {
                     if (e.tag) |tag| {
+                        p.addSourceMapping(expr.loc);
                         // Optional chains are forbidden in template tags
                         if (expr.isOptionalChain()) {
                             p.print("(");
@@ -2071,6 +2115,8 @@ pub fn NewPrinter(
                         } else {
                             p.printExpr(tag, .postfix, ExprFlag.None());
                         }
+                    } else {
+                        p.addSourceMapping(expr.loc);
                     }
 
                     p.print("`");
@@ -2092,10 +2138,12 @@ pub fn NewPrinter(
                     p.print("`");
                 },
                 .e_reg_exp => |e| {
+                    p.addSourceMapping(expr.loc);
                     p.printRegExpLiteral(e);
                 },
                 .e_big_int => |e| {
                     p.printSpaceBeforeIdentifier();
+                    p.addSourceMapping(expr.loc);
                     p.print(e.value);
                     p.print('n');
                 },
@@ -2106,19 +2154,24 @@ pub fn NewPrinter(
 
                     if (std.math.isNan(value)) {
                         p.printSpaceBeforeIdentifier();
+                        p.addSourceMapping(expr.loc);
                         p.print("NaN");
                     } else if (std.math.isPositiveInf(value)) {
                         p.printSpaceBeforeIdentifier();
+                        p.addSourceMapping(expr.loc);
                         p.print("Infinity");
                     } else if (std.math.isNegativeInf(value)) {
                         if (level.gte(.prefix)) {
+                            p.addSourceMapping(expr.loc);
                             p.print("(-Infinity)");
                         } else {
                             p.printSpaceBeforeIdentifier();
+                            p.addSourceMapping(expr.loc);
                             p.print("(-Infinity)");
                         }
                     } else if (!std.math.signbit(value)) {
                         p.printSpaceBeforeIdentifier();
+                        p.addSourceMapping(expr.loc);
                         p.printNonNegativeFloat(absValue);
 
                         // Remember the end of the latest number
@@ -2129,11 +2182,13 @@ pub fn NewPrinter(
                         // "!isNaN(value)" because we need this to be true for "-0" and "-0 < 0"
                         // is false.
                         p.print("(-");
+                        p.addSourceMapping(expr.loc);
                         p.printNonNegativeFloat(absValue);
                         p.print(")");
                     } else {
                         p.printSpaceBeforeOperator(Op.Code.un_neg);
                         p.print("-");
+                        p.addSourceMapping(expr.loc);
                         p.printNonNegativeFloat(absValue);
 
                         // Remember the end of the latest number
@@ -2149,6 +2204,7 @@ pub fn NewPrinter(
                     }
 
                     p.printSpaceBeforeIdentifier();
+                    p.addSourceMapping(expr.loc);
                     p.printIdentifier(name);
 
                     if (wrap) {
@@ -2161,6 +2217,7 @@ pub fn NewPrinter(
 
                     if (p.symbols.getWithLink(e.ref)) |symbol| {
                         if (symbol.import_item_status == .missing) {
+                            p.addSourceMapping(expr.loc);
                             p.printUndefined(level);
                             didPrint = true;
                         } else if (symbol.namespace_alias) |namespace| {
@@ -2177,13 +2234,15 @@ pub fn NewPrinter(
                                 if (wrap) {
                                     p.print("(0, ");
                                 }
-
+                                p.addSourceMapping(expr.loc);
                                 p.printNamespaceAlias(import_record, namespace);
 
                                 if (wrap) {
                                     p.print(")");
                                 }
                             } else if (import_record.was_originally_require and import_record.path.is_disabled) {
+                                p.addSourceMapping(expr.loc);
+
                                 if (import_record.handles_import_errors) {
                                     p.printRequireError(import_record.path.text);
                                 } else {
@@ -2195,6 +2254,7 @@ pub fn NewPrinter(
                     }
 
                     if (!didPrint) {
+                        p.addSourceMapping(expr.loc);
                         p.printSymbol(e.ref);
                     }
                 },
@@ -2206,6 +2266,7 @@ pub fn NewPrinter(
                     }
 
                     p.printSpaceBeforeIdentifier();
+                    p.addSourceMapping(expr.loc);
                     p.print("await");
                     p.printSpace();
                     p.printExpr(e.value, Level.sub(.prefix, 1), ExprFlag.None());
@@ -2221,6 +2282,7 @@ pub fn NewPrinter(
                     }
 
                     p.printSpaceBeforeIdentifier();
+                    p.addSourceMapping(expr.loc);
                     p.print("yield");
 
                     if (e.value) |val| {
@@ -2776,11 +2838,11 @@ pub fn NewPrinter(
         }
 
         pub fn printBinding(p: *Printer, binding: Binding) void {
-            p.addSourceMapping(binding.loc);
-
             switch (binding.data) {
                 .b_missing => {},
                 .b_identifier => |b| {
+                    p.printSpaceBeforeIdentifier();
+                    p.addSourceMapping(binding.loc);
                     p.printSymbol(b.ref);
                 },
                 .b_array => |b| {
@@ -2974,7 +3036,8 @@ pub fn NewPrinter(
                         p.printSpace();
                     }
 
-                    p.printSpace();
+                    p.printSpaceBeforeIdentifier();
+                    p.addSourceMapping(name.loc);
                     p.printSymbol(nameRef);
                     p.printFunc(s.func);
 
@@ -2982,7 +3045,7 @@ pub fn NewPrinter(
                     //     p.printSemicolonAfterStatement();
                     //     p.print("var ");
                     //     p.printSymbol(nameRef);
-                    //     p.print(" = ");
+                    //     p.@"print = "();
                     //     p.printSymbol(nameRef);
                     //     p.printSemicolonAfterStatement();
                     // } else {
@@ -3011,6 +3074,7 @@ pub fn NewPrinter(
                     }
 
                     p.print("class ");
+                    p.addSourceMapping(s.class.class_name.?.loc);
                     p.printSymbol(nameRef);
                     p.printClass(s.class);
 
@@ -3050,7 +3114,7 @@ pub fn NewPrinter(
                             // this is still necessary for JSON
                             if (is_inside_bundle) {
                                 p.printModuleExportSymbol();
-                                p.print(" = ");
+                                p.@"print = "();
                             }
 
                             // Functions and classes must be wrapped to avoid confusion with their statement forms
@@ -3067,7 +3131,7 @@ pub fn NewPrinter(
                                     if (is_inside_bundle) {
                                         if (func.func.name == null) {
                                             p.printModuleExportSymbol();
-                                            p.print(" = ");
+                                            p.@"print = "();
                                         }
                                     }
 
@@ -3109,7 +3173,7 @@ pub fn NewPrinter(
                                     if (is_inside_bundle) {
                                         if (class.class.class_name == null) {
                                             p.printModuleExportSymbol();
-                                            p.print(" = ");
+                                            p.@"print = "();
                                         }
                                     }
 
@@ -3212,7 +3276,9 @@ pub fn NewPrinter(
 
                                 p.print("(");
                                 p.printModuleExportSymbol();
-                                p.print(", {");
+                                p.print(",");
+                                p.printSpace();
+                                p.print("{");
                                 p.printSpace();
                                 const last = s.items.len - 1;
                                 for (s.items) |item, i| {
@@ -3296,7 +3362,7 @@ pub fn NewPrinter(
                                         if (import_record.is_bundled or (comptime is_inside_bundle) or namespace.was_originally_property_access) {
                                             p.print("var ");
                                             p.printSymbol(item.name.ref.?);
-                                            p.print(" = ");
+                                            p.@"print = "();
                                             p.printNamespaceAlias(import_record, namespace);
                                             p.printSemicolonAfterStatement();
                                             _ = array.swapRemove(i);
@@ -3436,7 +3502,9 @@ pub fn NewPrinter(
                             p.printImportRecordPath(&import_record);
                             p.print(")");
                             p.printSemicolonAfterStatement();
-                            p.print("export {");
+                            p.print("export");
+                            p.printSpace();
+                            p.print("{");
 
                             // reset symbol counter back
                             symbol_counter = p.symbol_counter;
@@ -3768,14 +3836,15 @@ pub fn NewPrinter(
                             if (s.default_name) |name| {
                                 p.print("var ");
                                 p.printSymbol(name.ref.?);
-                                p.print(" = ");
+                                p.@"print = "();
                                 p.printImportRecordPath(record);
                                 p.printSemicolonAfterStatement();
                             } else if (record.contains_import_star) {
                                 // this case is particularly important for running files without an extension in bun's runtime
                                 p.print("var ");
                                 p.printSymbol(s.namespace_ref);
-                                p.print(" = {default:");
+                                p.@"print = "();
+                                p.print("{default:");
                                 p.printImportRecordPath(record);
                                 p.print("}");
                                 p.printSemicolonAfterStatement();
@@ -3787,7 +3856,9 @@ pub fn NewPrinter(
                                 p.printIndent();
                                 p.print("var ");
                                 p.printSymbol(s.namespace_ref);
-                                p.print(" = import.meta.require(");
+                                p.@"print = "();
+
+                                p.print("import.meta.require(");
                                 p.printImportRecordPath(record);
                                 p.print(")");
                                 p.printSemicolonAfterStatement();
@@ -3834,20 +3905,22 @@ pub fn NewPrinter(
                             p.printModuleId(module_id);
                             p.print(" from \"");
                             p.print(record.path.text);
-                            p.print("\";\n");
+                            p.print("\";");
+                            p.printNewline();
                             try p.imported_module_ids.append(module_id);
                         }
 
                         if (record.contains_import_star) {
                             p.print("var ");
                             p.printSymbol(s.namespace_ref);
-                            p.print(" = ");
+                            p.@"print = "();
                             if (!record.path.is_disabled) {
                                 p.printSymbol(require_ref.?);
                                 p.print("(");
                                 p.printModuleId(module_id);
 
-                                p.print(");\n");
+                                p.print(");");
+                                p.printNewline();
                             } else {
                                 p.printDisabledImport();
                                 p.printSemicolonAfterStatement();
@@ -3857,19 +3930,26 @@ pub fn NewPrinter(
                         if (s.items.len > 0 or s.default_name != null) {
                             p.printIndent();
                             p.printSpaceBeforeIdentifier();
-                            p.print("var { ");
+                            p.print("var");
+                            p.printSpace();
+                            p.print("{");
 
                             if (s.default_name) |default_name| {
-                                p.print("default: ");
+                                p.printSpace();
+                                p.print("default:");
+                                p.printSpace();
                                 p.printSymbol(default_name.ref.?);
 
                                 if (s.items.len > 0) {
-                                    p.print(", ");
+                                    p.printSpace();
+                                    p.print(",");
+                                    p.printSpace();
                                     for (s.items) |item, i| {
                                         p.printClauseItemAs(item, .@"var");
 
                                         if (i < s.items.len - 1) {
-                                            p.print(", ");
+                                            p.print(",");
+                                            p.printSpace();
                                         }
                                     }
                                 }
@@ -3878,21 +3958,24 @@ pub fn NewPrinter(
                                     p.printClauseItemAs(item, .@"var");
 
                                     if (i < s.items.len - 1) {
-                                        p.print(", ");
+                                        p.print(",");
+                                        p.printSpace();
                                     }
                                 }
                             }
 
-                            p.print("} = ");
+                            p.print("}");
+                            p.@"print = "();
 
                             if (record.contains_import_star) {
                                 p.printSymbol(s.namespace_ref);
-                                p.print(";\n");
+                                p.printSemicolonAfterStatement();
                             } else if (!record.path.is_disabled) {
                                 p.printSymbol(require_ref.?);
                                 p.print("(");
                                 p.printModuleId(module_id);
-                                p.print(");\n");
+                                p.print(")");
+                                p.printSemicolonAfterStatement();
                             } else {
                                 p.printDisabledImport();
                                 p.printSemicolonAfterStatement();
@@ -3904,7 +3987,9 @@ pub fn NewPrinter(
                         if (!record.path.is_disabled) {
                             if (!p.has_printed_bundled_import_statement) {
                                 p.has_printed_bundled_import_statement = true;
-                                p.print("import {");
+                                p.print("import");
+                                p.printSpace();
+                                p.print("{");
 
                                 const last = p.import_records.len - 1;
                                 var needs_comma = false;
@@ -3924,12 +4009,15 @@ pub fn NewPrinter(
                                         }
                                     }
 
-                                    if (needs_comma) p.print(", ");
+                                    if (needs_comma) {
+                                        p.print(",");
+                                        p.printSpace();
+                                    }
                                     p.printLoadFromBundleWithoutCall(@truncate(u32, i));
                                     needs_comma = true;
                                 }
 
-                                p.print("} from ");
+                                p.print("}from ");
 
                                 p.printQuotedUTF8(record.path.text, false);
                                 p.printSemicolonAfterStatement();
@@ -3938,8 +4026,12 @@ pub fn NewPrinter(
                             p.print("var ");
 
                             p.printLoadFromBundleWithoutCall(s.import_record_index);
-
-                            p.print(" = () => ({default: {}});\n");
+                            if (p.options.minify_whitespace) {
+                                p.print("=()=>({default: {}})");
+                                p.printSemicolonIfNeeded();
+                            } else {
+                                p.print(" = () => ({default: {}});\n");
+                            }
                         }
 
                         p.printBundledImport(record.*, s);
@@ -3951,9 +4043,9 @@ pub fn NewPrinter(
                     }
 
                     p.print("import");
-                    p.printSpace();
 
                     if (s.default_name) |name| {
+                        p.print(" ");
                         p.printSymbol(name.ref.?);
                         item_count += 1;
                     }
@@ -3961,8 +4053,8 @@ pub fn NewPrinter(
                     if (s.items.len > 0) {
                         if (item_count > 0) {
                             p.print(",");
-                            p.printSpace();
                         }
+                        p.printSpace();
 
                         p.print("{");
                         if (!s.is_single_line) {
@@ -4008,10 +4100,7 @@ pub fn NewPrinter(
                     }
 
                     if (item_count > 0) {
-                        p.printSpace();
-                        p.printSpaceBeforeIdentifier();
-                        p.print("from");
-                        p.printSpace();
+                        p.print(" from ");
                     }
 
                     p.printImportRecordPath(record);
@@ -4144,7 +4233,7 @@ pub fn NewPrinter(
                     if (!is_disabled) {
                         p.print("var $");
                         p.printModuleId(module_id);
-                        p.print(" = ");
+                        p.@"print = "();
                         p.printLoadFromBundle(s.import_record_index);
 
                         if (s.default_name) |default_name| {
@@ -4165,7 +4254,7 @@ pub fn NewPrinter(
                         if (s.default_name) |default_name| {
                             p.print("var ");
                             p.printSymbol(default_name.ref.?);
-                            p.print(" = ");
+                            p.@"print = "();
                             p.printDisabledImport();
                         }
                     }
@@ -4175,13 +4264,14 @@ pub fn NewPrinter(
                 .import_star_and_import_default => {
                     p.print("var ");
                     p.printSymbol(s.namespace_ref);
-                    p.print(" = ");
+                    p.@"print = "();
                     p.printLoadFromBundle(s.import_record_index);
 
                     if (s.default_name) |default_name| {
-                        p.print(", ");
+                        p.print(",");
+                        p.printSpace();
                         p.printSymbol(default_name.ref.?);
-                        p.print(" = ");
+                        p.@"print = "();
 
                         if (!is_bun_platform) {
                             p.print("(");
@@ -4202,7 +4292,7 @@ pub fn NewPrinter(
                 .import_star => {
                     p.print("var ");
                     p.printSymbol(s.namespace_ref);
-                    p.print(" = ");
+                    p.@"print = "();
                     p.printLoadFromBundle(s.import_record_index);
                     p.printSemicolonAfterStatement();
                 },
@@ -4210,7 +4300,7 @@ pub fn NewPrinter(
                 else => {
                     p.print("var $");
                     p.printModuleIdAssumeEnabled(module_id);
-                    p.print(" = ");
+                    p.@"print = "();
                     p.printLoadFromBundle(s.import_record_index);
                     p.printSemicolonAfterStatement();
                 },
@@ -4444,7 +4534,7 @@ pub fn NewPrinter(
                     p.print(p.options.source_path.?.pretty);
                     p.print("\nexport var $");
                     std.fmt.formatInt(p.options.module_hash, 16, .lower, .{}, p) catch unreachable;
-                    p.print(" = ");
+                    p.@"print = "();
                     p.printExpr(decls[0].value.?, .comma, ExprFlag.None());
                     p.printSemicolonAfterStatement();
                     return;
@@ -4466,24 +4556,35 @@ pub fn NewPrinter(
                     p.print("(");
                     p.printSpaceBeforeIdentifier();
                     p.printModuleExportSymbol();
-                    p.print(", ");
+                    p.print(",");
+                    p.printSpace();
+
                     switch (decl.binding.data) {
                         .b_identifier => |ident| {
-                            p.print("{ ");
+                            p.print("{");
+                            p.printSpace();
                             p.printSymbol(ident.ref);
-                            p.print(": () => (");
+                            if (p.options.minify_whitespace)
+                                p.print(":()=>(")
+                            else
+                                p.print(": () => (");
                             p.printSymbol(ident.ref);
                             p.print(") }");
                         },
                         .b_object => |obj| {
-                            p.print("{ ");
+                            p.print("{");
+                            p.printSpace();
                             for (obj.properties) |prop| {
                                 switch (prop.value.data) {
                                     .b_identifier => |ident| {
                                         p.printSymbol(ident.ref);
-                                        p.print(": () => (");
+                                        if (p.options.minify_whitespace)
+                                            p.print(":()=>(")
+                                        else
+                                            p.print(": () => (");
                                         p.printSymbol(ident.ref);
-                                        p.print("),\n");
+                                        p.print("),");
+                                        p.printNewline();
                                     },
                                     else => {},
                                 }
@@ -4800,6 +4901,7 @@ pub const DirectWriter = struct {
 //   Buffered     4k     55ms
 const FileWriterInternal = struct {
     file: std.fs.File,
+    last_bytes: [2]u8 = [_]u8{ 0, 0 },
     threadlocal var buffer: MutableString = undefined;
     threadlocal var has_loaded_buffer: bool = false;
 
@@ -4820,12 +4922,19 @@ const FileWriterInternal = struct {
             .file = file,
         };
     }
-    pub fn writeByte(_: *FileWriterInternal, byte: u8) anyerror!usize {
+    pub fn writeByte(this: *FileWriterInternal, byte: u8) anyerror!usize {
         try buffer.appendChar(byte);
+
+        this.last_bytes = .{ this.last_bytes[1], byte };
         return 1;
     }
-    pub fn writeAll(_: *FileWriterInternal, bytes: anytype) anyerror!usize {
+    pub fn writeAll(this: *FileWriterInternal, bytes: anytype) anyerror!usize {
         try buffer.append(bytes);
+        if (bytes.len >= 2) {
+            this.last_bytes = bytes[bytes.len - 2 ..][0..2].*;
+        } else if (bytes.len >= 1) {
+            this.last_bytes = .{ this.last_bytes[1], bytes[bytes.len - 1] };
+        }
         return bytes.len;
     }
 
@@ -4833,22 +4942,27 @@ const FileWriterInternal = struct {
         return buffer.list.items;
     }
 
-    pub fn getLastByte(_: *const FileWriterInternal) u8 {
-        return if (buffer.list.items.len > 0) buffer.list.items[buffer.list.items.len - 1] else 0;
+    pub fn getLastByte(this: *const FileWriterInternal) u8 {
+        return this.last_bytes[1];
     }
 
-    pub fn getLastLastByte(_: *const FileWriterInternal) u8 {
-        return if (buffer.list.items.len > 1) buffer.list.items[buffer.list.items.len - 2] else 0;
+    pub fn getLastLastByte(this: *const FileWriterInternal) u8 {
+        return this.last_bytes[0];
     }
 
     pub fn reserveNext(_: *FileWriterInternal, count: u32) anyerror![*]u8 {
         try buffer.growIfNeeded(count);
         return @ptrCast([*]u8, &buffer.list.items.ptr[buffer.list.items.len]);
     }
-    pub fn advanceBy(_: *FileWriterInternal, count: u32) void {
+    pub fn advanceBy(this: *FileWriterInternal, count: u32) void {
         if (comptime Environment.isDebug) std.debug.assert(buffer.list.items.len + count <= buffer.list.capacity);
 
         buffer.list.items = buffer.list.items.ptr[0 .. buffer.list.items.len + count];
+        if (count >= 2) {
+            this.last_bytes = buffer.list.items[buffer.list.items.len - 2 ..][0..2].*;
+        } else if (count >= 1) {
+            this.last_bytes = .{ this.last_bytes[1], buffer.list.items[buffer.list.items.len - 1] };
+        }
     }
 
     pub fn done(
@@ -4906,6 +5020,7 @@ pub const BufferWriter = struct {
     append_null_byte: bool = false,
     append_newline: bool = false,
     approximate_newline_count: usize = 0,
+    last_bytes: [2]u8 = [_]u8{ 0, 0 },
 
     pub fn getWritten(this: *BufferWriter) []u8 {
         return this.buffer.list.items;
@@ -4922,11 +5037,19 @@ pub const BufferWriter = struct {
     pub fn writeByte(ctx: *BufferWriter, byte: u8) anyerror!usize {
         try ctx.buffer.appendChar(byte);
         ctx.approximate_newline_count += @boolToInt(byte == '\n');
+        ctx.last_bytes = .{ ctx.last_bytes[1], byte };
         return 1;
     }
     pub fn writeAll(ctx: *BufferWriter, bytes: anytype) anyerror!usize {
         try ctx.buffer.append(bytes);
         ctx.approximate_newline_count += @boolToInt(bytes.len > 0 and bytes[bytes.len - 1] == '\n');
+
+        if (bytes.len >= 2) {
+            ctx.last_bytes = bytes[bytes.len - 2 ..][0..2].*;
+        } else if (bytes.len >= 1) {
+            ctx.last_bytes = .{ ctx.last_bytes[1], bytes[bytes.len - 1] };
+        }
+
         return bytes.len;
     }
 
@@ -4935,11 +5058,11 @@ pub const BufferWriter = struct {
     }
 
     pub fn getLastByte(ctx: *const BufferWriter) u8 {
-        return if (ctx.buffer.list.items.len > 0) ctx.buffer.list.items[ctx.buffer.list.items.len - 1] else 0;
+        return ctx.last_bytes[1];
     }
 
     pub fn getLastLastByte(ctx: *const BufferWriter) u8 {
-        return if (ctx.buffer.list.items.len > 1) ctx.buffer.list.items[ctx.buffer.list.items.len - 2] else 0;
+        return ctx.last_bytes[0];
     }
 
     pub fn reserveNext(ctx: *BufferWriter, count: u32) anyerror![*]u8 {
@@ -4950,6 +5073,12 @@ pub const BufferWriter = struct {
         if (comptime Environment.isDebug) std.debug.assert(ctx.buffer.list.items.len + count <= ctx.buffer.list.capacity);
 
         ctx.buffer.list.items = ctx.buffer.list.items.ptr[0 .. ctx.buffer.list.items.len + count];
+
+        if (count >= 2) {
+            ctx.last_bytes = ctx.buffer.list.items[ctx.buffer.list.items.len - 2 ..][0..2].*;
+        } else if (count >= 1) {
+            ctx.last_bytes = .{ ctx.last_bytes[1], ctx.buffer.list.items[ctx.buffer.list.items.len - 1] };
+        }
     }
 
     pub fn reset(ctx: *BufferWriter) void {
@@ -5061,6 +5190,7 @@ pub fn printAst(
     }
     if (tree.prepend_part) |part| {
         for (part.stmts) |stmt| {
+            printer.printSemicolonIfNeeded();
             try printer.printStmt(stmt);
             if (printer.writer.getError()) {} else |err| {
                 return err;
@@ -5070,6 +5200,7 @@ pub fn printAst(
 
     for (tree.parts) |part| {
         for (part.stmts) |stmt| {
+            printer.printSemicolonIfNeeded();
             try printer.printStmt(stmt);
             if (printer.writer.getError()) {} else |err| {
                 return err;
@@ -5151,6 +5282,7 @@ pub fn printCommonJS(
 
     if (tree.prepend_part) |part| {
         for (part.stmts) |stmt| {
+            printer.printSemicolonIfNeeded();
             try printer.printStmt(stmt);
             if (printer.writer.getError()) {} else |err| {
                 return err;
@@ -5159,6 +5291,7 @@ pub fn printCommonJS(
     }
     for (tree.parts) |part| {
         for (part.stmts) |stmt| {
+            printer.printSemicolonIfNeeded();
             try printer.printStmt(stmt);
             if (printer.writer.getError()) {} else |err| {
                 return err;
@@ -5219,6 +5352,7 @@ pub fn printCommonJSThreaded(
     }
     if (tree.prepend_part) |part| {
         for (part.stmts) |stmt| {
+            printer.printSemicolonIfNeeded();
             try printer.printStmt(stmt);
             if (printer.writer.getError()) {} else |err| {
                 return err;
@@ -5228,6 +5362,7 @@ pub fn printCommonJSThreaded(
 
     for (tree.parts) |part| {
         for (part.stmts) |stmt| {
+            printer.printSemicolonIfNeeded();
             try printer.printStmt(stmt);
             if (printer.writer.getError()) {} else |err| {
                 return err;

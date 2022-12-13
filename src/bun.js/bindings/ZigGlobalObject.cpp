@@ -3254,6 +3254,7 @@ void GlobalObject::installAPIGlobals(JSClassRef* globals, int count, JSC::VM& vm
 
         Crypto__getRandomValues__put(this, JSValue::encode(object));
         Crypto__randomUUID__put(this, JSValue::encode(object));
+        Crypto__timingSafeEqual__put(this, JSValue::encode(object));
         object->putDirectCustomAccessor(vm, JSC::Identifier::fromString(vm, "subtle"_s), JSC::CustomGetterSetter::create(vm, getterSubtleCrypto, nullptr),
             JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontDelete | 0);
         this->putDirect(vm, JSC::Identifier::fromString(vm, "crypto"_s), object, JSC::PropertyAttribute::DontDelete | 0);

@@ -655,5 +655,48 @@ extern "C" void Crypto__randomUUID__put(JSC::JSGlobalObject *globalObject, JSC::
 }
 
 
+
+extern "C" JSC_DECLARE_HOST_FUNCTION(Crypto__timingSafeEqual__slowpathWrapper);
+extern "C" JSC_DECLARE_JIT_OPERATION_WITHOUT_WTF_INTERNAL(Crypto__timingSafeEqual__fastpathWrapper, EncodedJSValue, (JSC::JSGlobalObject* lexicalGlobalObject, void* thisValue, JSC::JSUint8Array*, JSC::JSUint8Array*));
+
+JSC_DEFINE_JIT_OPERATION(Crypto__timingSafeEqual__fastpathWrapper, EncodedJSValue, (JSC::JSGlobalObject* lexicalGlobalObject, void* thisValue, JSC::JSUint8Array* arg1, JSC::JSUint8Array* arg2)) {
+VM& vm = JSC::getVM(lexicalGlobalObject);
+IGNORE_WARNINGS_BEGIN("frame-address")
+CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
+IGNORE_WARNINGS_END
+JSC::JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
+return Crypto__timingSafeEqual__fastpath(lexicalGlobalObject, thisValue, arg1, arg2);
+}
+JSC_DEFINE_HOST_FUNCTION(Crypto__timingSafeEqual__slowpathWrapper, (JSC::JSGlobalObject *globalObject, JSC::CallFrame* frame)) {
+    return Crypto__timingSafeEqual__slowpath(globalObject, JSValue::encode(frame->thisValue()), reinterpret_cast<JSC::EncodedJSValue*>(frame->addressOfArgumentsStart()), frame->argumentCount());
+}
+
+extern "C" void Crypto__timingSafeEqual__put(JSC::JSGlobalObject *globalObject, JSC::EncodedJSValue value) {
+  JSC::JSObject *thisObject = JSC::jsCast<JSC::JSObject *>(JSC::JSValue::decode(value));
+  static const JSC::DOMJIT::Signature DOMJIT_timingSafeEqual_signature(
+    Crypto__timingSafeEqual__fastpathWrapper,
+    thisObject->classInfo(),
+    JSC::DOMJIT::Effect::forReadWrite(JSC::DOMJIT::HeapRange::top(), JSC::DOMJIT::HeapRange::top()),
+  JSC::SpecHeapTop,
+  JSC::SpecUint8Array,
+  JSC::SpecUint8Array
+  );
+                  JSFunction* function = JSFunction::create(
+                    globalObject->vm(),
+                    globalObject,
+                    2,
+                    String("timingSafeEqual"_s),
+                    Crypto__timingSafeEqual__slowpathWrapper, ImplementationVisibility::Public, NoIntrinsic, Crypto__timingSafeEqual__slowpathWrapper,
+                    &DOMJIT_timingSafeEqual_signature
+                );
+           thisObject->putDirect(
+             globalObject->vm(),
+             Identifier::fromString(globalObject->vm(), "timingSafeEqual"_s),
+             function,
+             JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DOMJITFunction | 0
+           );
+}
+
+
   /* -- END DOMCall DEFINITIONS-- */
 

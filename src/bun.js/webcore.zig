@@ -365,6 +365,7 @@ pub const Crypto = struct {
         .{
             .getRandomValues = JSC.DOMCall("Crypto", @This(), "getRandomValues", JSC.JSValue, JSC.DOMEffect.top),
             .randomUUID = JSC.DOMCall("Crypto", @This(), "randomUUID", *JSC.JSString, JSC.DOMEffect.top),
+            .timingSafeEqual = JSC.DOMCall("Crypto", @This(), "timingSafeEqual", JSC.JSValue, JSC.DOMEffect.top),
         },
         .{},
     );
@@ -378,6 +379,54 @@ pub const Crypto = struct {
         },
         .{},
     );
+
+    pub fn timingSafeEqual(
+        globalThis: *JSC.JSGlobalObject,
+        _: JSC.JSValue,
+        arguments: []const JSC.JSValue,
+    ) JSC.JSValue {
+        if (arguments.len < 2) {
+            globalThis.throwInvalidArguments("Expected 2 typed arrays but got nothing", .{});
+            return JSC.JSValue.jsUndefined();
+        }
+
+        const array_buffer_a = arguments[0].asArrayBuffer(globalThis) orelse {
+            globalThis.throwInvalidArguments("Expected typed array but got {s}", .{@tagName(arguments[0].jsType())});
+            return JSC.JSValue.jsUndefined();
+        };
+        const a = array_buffer_a.byteSlice();
+
+        const array_buffer_b = arguments[1].asArrayBuffer(globalThis) orelse {
+            globalThis.throwInvalidArguments("Expected typed array but got {s}", .{@tagName(arguments[1].jsType())});
+            return JSC.JSValue.jsUndefined();
+        };
+        const b = array_buffer_b.byteSlice();
+
+        const len = a.len;
+        if (b.len != len) {
+            globalThis.throw("Input buffers must have the same byte length", .{});
+            return JSC.JSValue.jsUndefined();
+        }
+        return JSC.jsBoolean(len == 0 or bun.BoringSSL.CRYPTO_memcmp(a.ptr, b.ptr, len) == 0);
+    }
+
+    pub fn timingSafeEqualWithoutTypeChecks(
+        globalThis: *JSC.JSGlobalObject,
+        _: *anyopaque,
+        array_a: *JSC.JSUint8Array,
+        array_b: *JSC.JSUint8Array,
+    ) callconv(.C) JSC.JSValue {
+        const a = array_a.slice();
+        const b = array_b.slice();
+
+        const len = a.len;
+        if (b.len != len) {
+            globalThis.throw("Input buffers must have the same byte length", .{});
+            return .zero;
+        }
+
+        return JSC.jsBoolean(len == 0 or bun.BoringSSL.CRYPTO_memcmp(a.ptr, b.ptr, len) == 0);
+    }
 
     pub fn getRandomValues(
         globalThis: *JSC.JSGlobalObject,

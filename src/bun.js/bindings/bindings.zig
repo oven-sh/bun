@@ -1837,20 +1837,40 @@ pub const JSGlobalObject = extern struct {
         createSyntheticModule_(this, &export_names, names.len, &export_values, names.len);
     }
 
+    pub fn createErrorInstance(this: *JSGlobalObject, comptime fmt: string, args: anytype) JSValue {
+        if (comptime std.meta.fieldNames(@TypeOf(args)).len > 0) {
+            var stack_fallback = std.heap.stackFallback(1024 * 4, this.allocator());
+            var buf = bun.MutableString.init2048(stack_fallback.get()) catch unreachable;
+            defer buf.deinit();
+            var writer = buf.writer();
+            writer.print(fmt, args) catch
+            // if an exception occurs in the middle of formatting the error message, it's better to just return the formatting string than an error about an error
+                return ZigString.static(fmt).toErrorInstance(this);
+            var str = ZigString.fromUTF8(buf.toOwnedSliceLeaky());
+            return str.toErrorInstance(this);
+        } else {
+            return ZigString.static(fmt).toErrorInstance(this);
+        }
+    }
+
+    pub fn createRangeError(this: *JSGlobalObject, comptime fmt: string, args: anytype) JSValue {
+        const err = createErrorInstance(this, fmt, args);
+        err.put(this, ZigString.static("code"), ZigString.static(@tagName(JSC.Node.ErrorCode.ERR_OUT_OF_RANGE)).toValue(this));
+        return err;
+    }
+
+    pub fn createInvalidArgs(this: *JSGlobalObject, comptime fmt: string, args: anytype) JSValue {
+        const err = createErrorInstance(this, fmt, args);
+        err.put(this, ZigString.static("code"), ZigString.static(@tagName(JSC.Node.ErrorCode.ERR_INVALID_ARG_TYPE)).toValue(this));
+        return err;
+    }
+
     pub fn throw(
         this: *JSGlobalObject,
         comptime fmt: string,
         args: anytype,
     ) void {
-        if (comptime std.meta.fieldNames(@TypeOf(args)).len > 0) {
-            var str = ZigString.init(std.fmt.allocPrint(this.bunVM().allocator, fmt, args) catch return);
-            str.markUTF8();
-            var err = str.toErrorInstance(this);
-            this.vm().throwError(this, err);
-            this.bunVM().allocator.free(ZigString.untagged(str.ptr)[0..str.len]);
-        } else {
-            this.vm().throwError(this, ZigString.static(fmt).toValue(this));
-        }
+        this.vm().throwError(this, this.createErrorInstance(fmt, args));
     }
 
     pub fn throwValue(

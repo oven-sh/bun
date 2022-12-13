@@ -347,7 +347,7 @@ pub const ZigString = extern struct {
 
     pub fn fromUTF8(slice_: []const u8) ZigString {
         var out = init(slice_);
-        if (strings.isAllASCII(slice_))
+        if (!strings.isAllASCII(slice_))
             out.markUTF8();
 
         return out;

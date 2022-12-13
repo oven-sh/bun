@@ -5272,7 +5272,8 @@ fn NewParser_(
                         }
 
                         var __scope = scope.parent;
-                        assert(__scope != null);
+                        if (comptime Environment.allow_assert)
+                            assert(__scope != null);
                         const name = symbol.original_name;
 
                         const hash: u64 = Scope.getMemberHash(name);

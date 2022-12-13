@@ -3024,6 +3024,7 @@ pub fn NewPrinter(
             if (property.default_value) |default| {
                 p.printSpace();
                 p.print("=");
+                p.printSpace();
                 p.printExpr(default, .comma, ExprFlag.None());
             }
         }

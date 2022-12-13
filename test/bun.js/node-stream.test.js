@@ -1,5 +1,31 @@
 import { expect, describe, it } from "bun:test";
-import { Duplex, Transform, PassThrough } from "node:stream";
+import {
+  Readable,
+  Writable,
+  Duplex,
+  Transform,
+  PassThrough,
+} from "node:stream";
+
+describe("Readable", () => {
+  it("should be able to be piped via .pipe", () => {
+    const readable = new Readable({
+      _read() {
+        this.push("Hello World!");
+        this.push(null);
+      },
+    });
+
+    const writable = new Writable({
+      _write(chunk, encoding, callback) {
+        expect(chunk.toString()).toBe("Hello World!");
+        callback();
+      },
+    });
+
+    readable.pipe(writable);
+  });
+});
 
 describe("Duplex", () => {
   it("should allow subclasses to be derived via .call() on class", () => {

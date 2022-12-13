@@ -2651,7 +2651,7 @@ pub const ZigConsoleClient = struct {
             const max = 512;
             leftover = leftover[0..@minimum(leftover.len, max)];
             for (leftover) |el| {
-                this.printComma(@TypeOf(&writer.ctx), &writer.ctx, enable_ansi_colors) catch unreachable;
+                this.printComma(@TypeOf(&writer.ctx), &writer.ctx, enable_ansi_colors) catch return;
                 writer.writeAll(" ");
 
                 writer.print(comptime Output.prettyFmt(fmt_, enable_ansi_colors), .{el});

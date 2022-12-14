@@ -1178,9 +1178,27 @@ pub const ModuleLoader = struct {
             //     };
             // },
             else => {
+                var stack_buf = std.heap.stackFallback(4096, jsc_vm.allocator);
+                var allocator = stack_buf.get();
+                var buf = MutableString.init2048(allocator) catch unreachable;
+                defer buf.deinit();
+                var writer = buf.writer();
+                if (!jsc_vm.origin.isEmpty()) {
+                    writer.writeAll("export default `") catch unreachable;
+                    // TODO: escape backtick char, though we might already do that
+                    @import("./api/bun.zig").getPublicPath(specifier, jsc_vm.origin, @TypeOf(&writer), &writer);
+                    writer.writeAll("`;\n") catch unreachable;
+                } else {
+                    writer.writeAll("export default ") catch unreachable;
+                    buf = js_printer.quoteForJSON(specifier, buf, true) catch @panic("out of memory");
+                    writer = buf.writer();
+                    writer.writeAll(";\n") catch unreachable;
+                }
+
+                const public_url = ZigString.fromUTF8(jsc_vm.allocator.dupe(u8, buf.toOwnedSliceLeaky()) catch @panic("out of memory"));
                 return ResolvedSource{
                     .allocator = &jsc_vm.allocator,
-                    .source_code = ZigString.init(try strings.quotedAlloc(jsc_vm.allocator, path.pretty)),
+                    .source_code = public_url,
                     .specifier = ZigString.init(path.text),
                     .source_url = ZigString.init(path.text),
                     .hash = 0,

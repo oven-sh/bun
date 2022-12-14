@@ -439,10 +439,12 @@ function getStdinStream(fd, rawRequire, Bun) {
   var module = { path: "node:process", require: rawRequire };
   var require = (path) => module.require(path);
 
-  var { Readable, Duplex, eos, destroy } = require("node:stream");
+  var { Duplex, eos, destroy } = require("node:stream");
 
   var StdinStream = class StdinStream extends Duplex {
-    #readStream;
+    #reader;
+    // TODO: investigate https://github.com/oven-sh/bun/issues/1607
+    #readRef;
     #writeStream;
 
     #readable = true;
@@ -451,7 +453,6 @@ function getStdinStream(fd, rawRequire, Bun) {
     #onFinish;
     #onClose;
     #onDrain;
-    #onReadable;
 
     get isTTY() {
       return require("tty").isatty(fd);
@@ -461,10 +462,13 @@ function getStdinStream(fd, rawRequire, Bun) {
       return fd_;
     }
 
+    // TODO: investigate https://github.com/oven-sh/bun/issues/1608
+    _construct(callback) {
+      callback();
+    }
+
     constructor() {
       super({ readable: true, writable: true });
-
-      this.#onReadable = (...args) => this._read(...args);
     }
 
     #onFinished(err) {
@@ -505,63 +509,45 @@ function getStdinStream(fd, rawRequire, Bun) {
         callback(err);
       } else {
         this.#onClose = callback;
-        if (this.#readStream) destroy(this.#readStream, err);
         if (this.#writeStream) destroy(this.#writeStream, err);
       }
     }
 
-    on(ev, cb) {
-      super.on(ev, cb);
-      if (!this.#readStream && (ev === "readable" || ev === "data")) {
-        this.#loadReadStream();
-      }
-
-      return this;
+    pause() {
+      this.unref();
+      return super.pause();
     }
 
-    once(ev, cb) {
-      super.once(ev, cb);
-      if (!this.#readStream && (ev === "readable" || ev === "data")) {
-        this.#loadReadStream();
-      }
-
-      return this;
-    }
-
-    #loadReadStream() {
-      var readStream = (this.#readStream = Readable.fromWeb(
-        Bun.stdin.stream(),
-      ));
-
-      readStream.on("data", (data) => {
-        this.push(data);
-      });
-      readStream.ref();
-
-      readStream.on("end", () => {
-        this.push(null);
-      });
-
-      eos(readStream, (err) => {
-        this.#readable = false;
-        if (err) {
-          destroy(readStream, err);
-        }
-        this.#onFinished(err);
-      });
+    resume() {
+      this.#reader = Bun.stdin.stream().getReader();
+      this.ref();
+      return super.resume();
     }
 
     ref() {
-      this.#readStream?.ref?.();
+      this.#readRef ??= setInterval(() => {}, 1 << 30);
     }
     unref() {
-      this.#readStream?.unref?.();
+      if (this.#readRef) {
+        clearInterval(this.#readRef);
+        this.#readRef = null;
+      }
     }
 
-    _read(encoding, callback) {
-      if (!this.#readStream) this.#loadReadStream();
-
-      return this.#readStream._read(...arguments);
+    _read(size) {
+      this.#reader.read().then((data) => {
+        if (data.done) {
+          this.push(null);
+          this.pause();
+          this.#readable = false;
+          this.#onFinished();
+        } else {
+          this.push(data.value);
+        }
+      }).catch((err) => {
+        this.#readable = false;
+        this.#onFinished(err);
+      });
     }
 
     #constructWriteStream() {

@@ -473,17 +473,19 @@ const char* const s_processObjectInternalsGetStdioWriteStreamCode =
 const JSC::ConstructAbility s_processObjectInternalsGetStdinStreamCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_processObjectInternalsGetStdinStreamCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_processObjectInternalsGetStdinStreamCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_processObjectInternalsGetStdinStreamCodeLength = 4099;
+const int s_processObjectInternalsGetStdinStreamCodeLength = 3773;
 static const JSC::Intrinsic s_processObjectInternalsGetStdinStreamCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_processObjectInternalsGetStdinStreamCode =
     "(function (fd, rawRequire, Bun) {\n" \
     "  var module = { path: \"node:process\", require: rawRequire };\n" \
     "  var require = (path) => module.require(path);\n" \
     "\n" \
-    "  var { Readable, Duplex, eos, destroy } = require(\"node:stream\");\n" \
+    "  var { Duplex, eos, destroy } = require(\"node:stream\");\n" \
     "\n" \
     "  var StdinStream = class StdinStream extends Duplex {\n" \
-    "    #readStream;\n" \
+    "    #reader;\n" \
+    "    //\n" \
+    "    #readRef;\n" \
     "    #writeStream;\n" \
     "\n" \
     "    #readable = true;\n" \
@@ -492,7 +494,6 @@ const char* const s_processObjectInternalsGetStdinStreamCode =
     "    #onFinish;\n" \
     "    #onClose;\n" \
     "    #onDrain;\n" \
-    "    #onReadable;\n" \
     "\n" \
     "    get isTTY() {\n" \
     "      return require(\"tty\").isatty(fd);\n" \
@@ -502,10 +503,13 @@ const char* const s_processObjectInternalsGetStdinStreamCode =
     "      return fd_;\n" \
     "    }\n" \
     "\n" \
+    "    //\n" \
+    "    _construct(callback) {\n" \
+    "      callback();\n" \
+    "    }\n" \
+    "\n" \
     "    constructor() {\n" \
     "      super({ readable: true, writable: true });\n" \
-    "\n" \
-    "      this.#onReadable = (...args) => this._read(...args);\n" \
     "    }\n" \
     "\n" \
     "    #onFinished(err) {\n" \
@@ -548,63 +552,51 @@ const char* const s_processObjectInternalsGetStdinStreamCode =
     "        callback(err);\n" \
     "      } else {\n" \
     "        this.#onClose = callback;\n" \
-    "        if (this.#readStream) destroy(this.#readStream, err);\n" \
     "        if (this.#writeStream) destroy(this.#writeStream, err);\n" \
     "      }\n" \
     "    }\n" \
     "\n" \
-    "    on(ev, cb) {\n" \
-    "      super.on(ev, cb);\n" \
-    "      if (!this.#readStream && (ev === \"readable\" || ev === \"data\")) {\n" \
-    "        this.#loadReadStream();\n" \
-    "      }\n" \
-    "\n" \
-    "      return this;\n" \
+    "    pause() {\n" \
+    "      this.unref();\n" \
+    "      return super.pause();\n" \
     "    }\n" \
     "\n" \
-    "    once(ev, cb) {\n" \
-    "      super.once(ev, cb);\n" \
-    "      if (!this.#readStream && (ev === \"readable\" || ev === \"data\")) {\n" \
-    "        this.#loadReadStream();\n" \
-    "      }\n" \
-    "\n" \
-    "      return this;\n" \
-    "    }\n" \
-    "\n" \
-    "    #loadReadStream() {\n" \
-    "      var readStream = (this.#readStream = Readable.fromWeb(\n" \
-    "        Bun.stdin.stream(),\n" \
-    "      ));\n" \
-    "\n" \
-    "      readStream.on(\"data\", (data) => {\n" \
-    "        this.push(data);\n" \
-    "      });\n" \
-    "      readStream.ref();\n" \
-    "\n" \
-    "      readStream.on(\"end\", () => {\n" \
-    "        this.push(null);\n" \
-    "      });\n" \
-    "\n" \
-    "      eos(readStream, (err) => {\n" \
-    "        this.#readable = false;\n" \
-    "        if (err) {\n" \
-    "          destroy(readStream, err);\n" \
-    "        }\n" \
-    "        this.#onFinished(err);\n" \
-    "      });\n" \
+    "    resume() {\n" \
+    "      this.#reader = Bun.stdin.stream().getReader();\n" \
+    "      this.ref();\n" \
+    "      return super.resume();\n" \
     "    }\n" \
     "\n" \
     "    ref() {\n" \
-    "      this.#readStream?.ref?.();\n" \
+    "      this.#readRef ??= setInterval(() => {}, 1 << 30);\n" \
     "    }\n" \
     "    unref() {\n" \
-    "      this.#readStream?.unref?.();\n" \
+    "      if (this.#readRef) {\n" \
+    "        clearInterval(this.#readRef);\n" \
+    "        this.#readRef = null;\n" \
+    "      }\n" \
     "    }\n" \
     "\n" \
-    "    _read(encoding, callback) {\n" \
-    "      if (!this.#readStream) this.#loadReadStream();\n" \
+    "    async #readInternal() {\n" \
+    "      try {\n" \
+    "        const { done, value } = await this.#reader.read();\n" \
     "\n" \
-    "      return this.#readStream._read(...arguments);\n" \
+    "        if (!done) {\n" \
+    "          this.push(value);\n" \
+    "        } else {\n" \
+    "          this.push(null);\n" \
+    "          this.pause();\n" \
+    "          this.#readable = false;\n" \
+    "          this.#onFinished();\n" \
+    "        }\n" \
+    "      } catch (err) {\n" \
+    "        this.#readable = false;\n" \
+    "        this.#onFinished(err);\n" \
+    "      }\n" \
+    "    }\n" \
+    "\n" \
+    "    _read(size) {\n" \
+    "      this.#readInternal();\n" \
     "    }\n" \
     "\n" \
     "    #constructWriteStream() {\n" \

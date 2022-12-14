@@ -534,20 +534,26 @@ function getStdinStream(fd, rawRequire, Bun) {
       }
     }
 
-    _read(size) {
-      this.#reader.read().then((data) => {
-        if (data.done) {
+    async #readInternal() {
+      try {
+        const { done, value } = await this.#reader.read();
+
+        if (!done) {
+          this.push(value);
+        } else {
           this.push(null);
           this.pause();
           this.#readable = false;
           this.#onFinished();
-        } else {
-          this.push(data.value);
         }
-      }).catch((err) => {
+      } catch (err) {
         this.#readable = false;
         this.#onFinished(err);
-      });
+      }
+    }
+
+    _read(size) {
+      this.#readInternal();
     }
 
     #constructWriteStream() {

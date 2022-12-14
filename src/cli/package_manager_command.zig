@@ -264,15 +264,15 @@ fn printNodeModulesFolderStructure(
         while (i < depth) : (i += 1) {
             if (i == depth - 1) {
                 if (more_packages[i]) {
-                    Output.pretty("├──", .{});
+                    Output.pretty("<d>├──<r>", .{});
                 } else if (directories.items.len == 1) {
-                    Output.pretty("└──", .{});
+                    Output.pretty("<d>└──<r>", .{});
                 } else {
-                    Output.pretty("┬──", .{});
+                    Output.pretty("<d>┬──<r>", .{});
                 }
             } else {
                 if (more_packages[i]) {
-                    Output.pretty("│   ", .{});
+                    Output.pretty("<d>│<r>   ", .{});
                 } else {
                     Output.pretty("    ", .{});
                 }
@@ -294,9 +294,9 @@ fn printNodeModulesFolderStructure(
             }
             const directory_version = std.fmt.bufPrint(&resolution_buf, "{}", .{resolutions[id].fmt(string_bytes)}) catch unreachable;
             if (std.mem.indexOf(u8, path, "node_modules")) |j| {
-                Output.prettyln("{s}@{s}", .{ path[0 .. j - 1], directory_version });
+                Output.prettyln("{s}<d>@{s}<r>", .{ path[0 .. j - 1], directory_version });
             } else {
-                Output.prettyln("{s}@{s}", .{ path, directory_version });
+                Output.prettyln("{s}<d>@{s}<r>", .{ path, directory_version });
             }
         } else {
             var cwd_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
@@ -347,20 +347,20 @@ fn printNodeModulesFolderStructure(
         var i: usize = 0;
         while (i < depth) : (i += 1) {
             if (more_packages[i]) {
-                Output.pretty("│   ", .{});
+                Output.pretty("<d>│<r>   ", .{});
             } else {
                 Output.pretty("    ", .{});
             }
         }
 
         if (more_packages[depth]) {
-            Output.pretty("├── ", .{});
+            Output.pretty("<d>├──<r> ", .{});
         } else {
-            Output.pretty("└── ", .{});
+            Output.pretty("<d>└──<r> ", .{});
         }
 
         var resolution_buf: [512]u8 = undefined;
         const package_version = std.fmt.bufPrint(&resolution_buf, "{}", .{resolutions[package_id].fmt(string_bytes)}) catch unreachable;
-        Output.prettyln("{s}@{s}", .{ package_name, package_version });
+        Output.prettyln("{s}<d>@{s}<r>", .{ package_name, package_version });
     }
 }

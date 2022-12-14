@@ -245,7 +245,7 @@ pub const Tree = struct {
 
     const SubtreeError = error{ OutOfMemory, DependencyLoop };
 
-    const NodeModulesFolder = struct {
+    pub const NodeModulesFolder = struct {
         relative_path: stringZ,
         in: PackageID,
         packages: []const PackageID,

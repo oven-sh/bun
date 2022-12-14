@@ -2814,13 +2814,6 @@ var require_readable = __commonJS({
           globalThis.reportError(error);
         }
       }
-
-      // NOTE(Derrick): For whatever reason this seems to be necessary to make this work
-      // I couldn't find out why .constructed was getting set to false
-      // even though construct() was getting called
-      _construct() {
-        this._readableState.constructed = true;
-      }
     }
 
     /**
@@ -6080,10 +6073,6 @@ function createNativeStreamReadable(nativeType, Readable) {
       }
     }
 
-    _construct(cb) {
-      this._readableState.constructed = true;
-      cb();
-    }
     _destroy(error, callback) {
       var ptr = this.#ptr;
       if (ptr === 0) {

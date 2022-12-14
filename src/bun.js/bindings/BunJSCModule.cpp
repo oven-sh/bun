@@ -265,18 +265,16 @@ JSC_DEFINE_HOST_FUNCTION(functionStartSamplingProfiler, (JSC::JSGlobalObject * g
 
     auto scope = DECLARE_THROW_SCOPE(vm);
     if (directoryValue.isString()) {
-        WTF::String optionString = WTF::String::fromUTF8("samplingProfilerPath=");
         auto path = directoryValue.toWTFString(globalObject);
         if (!path.isEmpty()) {
             StringPrintStream pathOut;
-            const char* optionCString = toCString(String(optionString + path)).data();
-
-            if (!Bun__mkdirp(globalObject, optionCString)) {
+            auto pathCString = toCString(String(path));
+            if (!Bun__mkdirp(globalObject, pathCString.data())) {
                 throwVMError(globalObject, scope, createTypeError(globalObject, "directory couldn't be created"_s));
                 return JSC::JSValue::encode(jsUndefined());
             }
 
-            Options::setOption(optionCString);
+            Options::samplingProfilerPath() = pathCString.data();
             samplingProfiler.registerForReportAtExit();
         }
     }

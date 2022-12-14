@@ -109,6 +109,10 @@ void JSReadableState::finishCreation(JSC::VM& vm, JSC::JSGlobalObject* globalObj
         }
     }
 
+    // ReadableState.constructed is set to false during construction when a _construct method is implemented
+    // this is here so that the ReadableState behavior tracks the behavior in node, and that calling Readable.read
+    // will work when we return early from construct because there is no Readable._construct implemented
+    // See: https://github.com/nodejs/node/blob/main/lib/internal/streams/readable.js
     setBool(JSReadableState::Mask::constructed, true);
 }
 

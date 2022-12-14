@@ -253,6 +253,10 @@ fn printNodeModulesFolderStructure(
     more_packages_: [16]bool,
 ) void {
     const allocator = lockfile.allocator;
+    defer {
+        allocator.free(directory.relative_path);
+        allocator.free(directory.packages);
+    }
     var more_packages = more_packages_;
     const parts = lockfile.packages.slice();
     const names = parts.items(.name);
@@ -265,10 +269,8 @@ fn printNodeModulesFolderStructure(
             if (i == depth - 1) {
                 if (more_packages[i]) {
                     Output.pretty("<d>├──<r>", .{});
-                } else if (directories.items.len == 1) {
-                    Output.pretty("<d>└──<r>", .{});
                 } else {
-                    Output.pretty("<d>┬──<r>", .{});
+                    Output.pretty("<d>└──<r>", .{});
                 }
             } else {
                 if (more_packages[i]) {

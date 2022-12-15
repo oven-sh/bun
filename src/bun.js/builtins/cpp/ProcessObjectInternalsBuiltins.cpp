@@ -473,7 +473,7 @@ const char* const s_processObjectInternalsGetStdioWriteStreamCode =
 const JSC::ConstructAbility s_processObjectInternalsGetStdinStreamCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_processObjectInternalsGetStdinStreamCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_processObjectInternalsGetStdinStreamCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_processObjectInternalsGetStdinStreamCodeLength = 3773;
+const int s_processObjectInternalsGetStdinStreamCodeLength = 4076;
 static const JSC::Intrinsic s_processObjectInternalsGetStdinStreamCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_processObjectInternalsGetStdinStreamCode =
     "(function (fd, rawRequire, Bun) {\n" \
@@ -485,6 +485,7 @@ const char* const s_processObjectInternalsGetStdinStreamCode =
     "  var StdinStream = class StdinStream extends Duplex {\n" \
     "    #reader;\n" \
     "    //\n" \
+    "\n" \
     "    #readRef;\n" \
     "    #writeStream;\n" \
     "\n" \
@@ -579,10 +580,24 @@ const char* const s_processObjectInternalsGetStdinStreamCode =
     "\n" \
     "    async #readInternal() {\n" \
     "      try {\n" \
-    "        const { done, value } = await this.#reader.read();\n" \
+    "        var done, value;\n" \
+    "        const read = this.#reader.readMany();\n" \
+    "\n" \
+    "        //\n" \
+    "        if (!read?.then) {\n" \
+    "          ({ done, value } = read);\n" \
+    "        } else {\n" \
+    "          ({ done, value } = await read);\n" \
+    "        }\n" \
     "\n" \
     "        if (!done) {\n" \
-    "          this.push(value);\n" \
+    "          this.push(value[0]);\n" \
+    "\n" \
+    "          //\n" \
+    "          const length = value.length;\n" \
+    "          for (let i = 1; i < length; i++) {\n" \
+    "            this.push(value[i]);\n" \
+    "          }\n" \
     "        } else {\n" \
     "          this.push(null);\n" \
     "          this.pause();\n" \

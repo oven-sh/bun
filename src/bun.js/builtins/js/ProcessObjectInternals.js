@@ -444,6 +444,7 @@ function getStdinStream(fd, rawRequire, Bun) {
   var StdinStream = class StdinStream extends Duplex {
     #reader;
     // TODO: investigate https://github.com/oven-sh/bun/issues/1607
+
     #readRef;
     #writeStream;
 
@@ -531,10 +532,24 @@ function getStdinStream(fd, rawRequire, Bun) {
 
     async #readInternal() {
       try {
-        const { done, value } = await this.#reader.read();
+        var done, value;
+        const read = this.#reader.readMany();
+
+        // read same-tick if possible
+        if (!read?.then) {
+          ({ done, value } = read);
+        } else {
+          ({ done, value } = await read);
+        }
 
         if (!done) {
-          this.push(value);
+          this.push(value[0]);
+
+          // shouldn't actually happen, but just in case
+          const length = value.length;
+          for (let i = 1; i < length; i++) {
+            this.push(value[i]);
+          }
         } else {
           this.push(null);
           this.pause();

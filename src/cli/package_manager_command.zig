@@ -253,10 +253,6 @@ fn printNodeModulesFolderStructure(
     more_packages_: [16]bool,
 ) void {
     const allocator = lockfile.allocator;
-    defer {
-        allocator.free(directory.relative_path);
-        allocator.free(directory.packages);
-    }
     var more_packages = more_packages_;
     const parts = lockfile.packages.slice();
     const names = parts.items(.name);

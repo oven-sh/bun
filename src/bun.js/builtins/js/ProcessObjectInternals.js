@@ -462,11 +462,6 @@ function getStdinStream(fd, rawRequire, Bun) {
       return fd_;
     }
 
-    // TODO: investigate https://github.com/oven-sh/bun/issues/1608
-    _construct(callback) {
-      callback();
-    }
-
     constructor() {
       super({ readable: true, writable: true });
     }

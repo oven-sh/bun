@@ -6549,6 +6549,7 @@ pub const PackageManager = struct {
                     manager.env,
                     &ORIGINAL_PATH,
                     log_level != .silent,
+                    false,
                 );
             }
 
@@ -6676,6 +6677,7 @@ pub const PackageManager = struct {
                         manager.env,
                         &ORIGINAL_PATH,
                         log_level != .silent,
+                        false,
                     );
                 } else {
                     // bun install may have installed new bins, so we need to update the PATH

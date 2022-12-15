@@ -163,6 +163,7 @@ pub const Arguments = struct {
 
     const public_params = [_]ParamType{
         clap.parseParam("--use <STR>                       Choose a framework, e.g. \"--use next\". It checks first for a package named \"bun-framework-packagename\" and then \"packagename\".") catch unreachable,
+        clap.parseParam("-b, --bun                         Force a script or package to use Bun.js instead of Node.js (via symlinking node)") catch unreachable,
         clap.parseParam("--bunfile <STR>                   Use a .bun file (default: node_modules.bun)") catch unreachable,
         clap.parseParam("--server-bunfile <STR>            Use a .server.bun file (default: node_modules.server.bun)") catch unreachable,
         clap.parseParam("--cwd <STR>                       Absolute path to resolve files & entry points from. This just changes the process' cwd.") catch unreachable,
@@ -178,7 +179,7 @@ pub const Arguments = struct {
         clap.parseParam("--main-fields <STR>...            Main fields to lookup in package.json. Defaults to --platform dependent") catch unreachable,
         clap.parseParam("--no-summary                     Don't print a summary (when generating .bun") catch unreachable,
         clap.parseParam("-v, --version                    Print version and exit") catch unreachable,
-        clap.parseParam("--platform <STR>                  \"browser\" or \"node\". Defaults to \"browser\"") catch unreachable,
+        clap.parseParam("--platform <STR>                  \"bun\" or \"browser\" or \"node\", used when building or bundling") catch unreachable,
         // clap.parseParam("--production                      [not implemented] generate production code") catch unreachable,
         clap.parseParam("--public-dir <STR>                Top-level directory for .html files, fonts or anything external. Defaults to \"<cwd>/public\", to match create-react-app and Next.js") catch unreachable,
         clap.parseParam("--tsconfig-override <STR>         Load tsconfig from path instead of cwd/tsconfig.json") catch unreachable,
@@ -618,7 +619,11 @@ pub const Arguments = struct {
                 PlatformMatcher.case("bun") => Api.Platform.bun,
                 else => invalidPlatform(&diag, _platform),
             };
+
+            ctx.debug.run_in_bun = opts.platform.? == .bun;
         }
+
+        ctx.debug.run_in_bun = args.flag("--bun") or ctx.debug.run_in_bun;
 
         if (jsx_factory != null or
             jsx_fragment != null or
@@ -815,6 +820,7 @@ pub const Command = struct {
         hot_reload: bool = false,
         global_cache: options.GlobalCache = .auto,
         offline_mode_setting: ?Bunfig.OfflineMode = null,
+        run_in_bun: bool = false,
 
         // technical debt
         macros: ?MacroMap = null,
@@ -1207,12 +1213,21 @@ pub const Command = struct {
                     break :brk null;
                 };
 
+                const force_using_bun = ctx.debug.run_in_bun;
+                var did_check = false;
                 if (default_loader) |loader| {
                     if (loader.isJavaScriptLike()) {
                         was_js_like = true;
                         if (maybeOpenWithBunJS(&ctx)) {
                             return;
                         }
+                        did_check = true;
+                    }
+                }
+
+                if (force_using_bun and !did_check) {
+                    if (maybeOpenWithBunJS(&ctx)) {
+                        return;
                     }
                 }
 
@@ -1243,6 +1258,9 @@ pub const Command = struct {
     }
 
     fn maybeOpenWithBunJS(ctx: *const Command.Context) bool {
+        if (ctx.args.entry_points.len == 0)
+            return false;
+
         const script_name_to_search = ctx.args.entry_points[0];
 
         var file_path = script_name_to_search;

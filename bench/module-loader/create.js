@@ -23,7 +23,7 @@ export const hello${i} = "hello${i}";
 ${saveStack ? `globalThis.evaluationOrder.push("${file}");` : ""}
 globalThis.counter++;
 `,
-    "utf8"
+    "utf8",
   );
   var file2 = output + "/file" + i + ".js";
 
@@ -39,7 +39,7 @@ module.exports.hello${i} = "hello${i}";
 ${saveStack ? `globalThis.evaluationOrder.push("${file2}");` : ""}
 globalThis.counter++;
 `,
-    "utf8"
+    "utf8",
   );
 }
 
@@ -53,7 +53,7 @@ fs.writeFileSync(
       : ""
   }    
 `,
-  "utf8"
+  "utf8",
 );
 
 fs.writeFileSync(
@@ -66,7 +66,7 @@ fs.writeFileSync(
           : ""
       }
       `,
-  "utf8"
+  "utf8",
 );
 
 fs.writeFileSync(
@@ -79,7 +79,7 @@ fs.writeFileSync(
   console.timeEnd("import");
   ${saveStack ? `console.log(globalThis.evaluationOrder.join("\\n"));` : ""}
   console.log("Loaded", globalThis.counter, "files", "totaling", new Intl.NumberFormat().format(globalThis.exportCounter), 'exports');`,
-  "utf8"
+  "utf8",
 );
 
 fs.writeFileSync(
@@ -92,7 +92,7 @@ export const THE_END = Foo.THE_END;
 console.timeEnd("import.meta.require");
 ${saveStack ? `console.log(globalThis.evaluationOrder.join("\\n"));` : ""}
 console.log("Loaded", globalThis.counter, "files", "totaling", new Intl.NumberFormat().format(globalThis.exportCounter), 'exports');`,
-  "utf8"
+  "utf8",
 );
 
 fs.writeFileSync(
@@ -106,7 +106,7 @@ fs.writeFileSync(
   console.timeEnd("import.meta.require");
   ${saveStack ? `console.log(globalThis.evaluationOrder.join("\\n"));` : ""}
   console.log("Loaded", globalThis.counter, "files", "totaling", new Intl.NumberFormat().format(globalThis.exportCounter), 'exports');`,
-  "utf8"
+  "utf8",
 );
 
 fs.writeFileSync(
@@ -120,7 +120,7 @@ fs.writeFileSync(
   ${saveStack ? `console.log(globalThis.evaluationOrder.join("\\n"));` : ""}
   console.log("Loaded", globalThis.counter, "files", "totaling", new Intl.NumberFormat().format(globalThis.exportCounter), 'exports');
   `,
-  "utf8"
+  "utf8",
 );
 
 console.log(`

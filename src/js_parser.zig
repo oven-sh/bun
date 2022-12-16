@@ -14569,6 +14569,13 @@ fn NewParser_(
                         }
 
                         if (p.options.features.dynamic_require) {
+                            // Ignore calls to require() if the control flow is provably
+                            // dead here. We don't want to spend time scanning the required files
+                            // if they will never be used.
+                            if (p.is_control_flow_dead) {
+                                return p.e(E.Null{}, expr.loc);
+                            }
+
                             p.ignoreUsage(p.require_ref);
                             return p.e(
                                 E.Call{

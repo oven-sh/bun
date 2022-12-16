@@ -9314,6 +9314,7 @@ fn NewParser_(
                     }
                 }
 
+                var skip = stmt.data == .s_empty;
                 // Parse one or more directives at the beginning
                 if (isDirectivePrologue) {
                     isDirectivePrologue = false;
@@ -9325,9 +9326,11 @@ fn NewParser_(
                                         isDirectivePrologue = true;
 
                                         if (str.eqlComptime("use strict")) {
+                                            skip = p.options.features.dynamic_require or skip;
                                             // Track "use strict" directives
                                             p.current_scope.strict_mode = .explicit_strict_mode;
                                         } else if (str.eqlComptime("use asm")) {
+                                            skip = p.options.features.dynamic_require or skip;
                                             stmt.data = Prefill.Data.SEmpty;
                                         }
                                     }
@@ -9339,7 +9342,8 @@ fn NewParser_(
                     }
                 }
 
-                try stmts.append(stmt);
+                if (!skip)
+                    try stmts.append(stmt);
 
                 // Warn about ASI and return statements. Here's an example of code with
                 // this problem: https://github.com/rollup/rollup/issues/3729

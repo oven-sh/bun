@@ -1000,7 +1000,7 @@ const StaticSymbolName = struct {
             };
         }
 
-        pub const jsx = NewStaticSymbol("jsx");
+        pub const jsx = NewStaticSymbol("$jsx");
         pub const jsxs = NewStaticSymbol("jsxs");
         pub const ImportSource = NewStaticSymbol("JSX");
         pub const ClassicImportSource = NewStaticSymbol("JSXClassic");

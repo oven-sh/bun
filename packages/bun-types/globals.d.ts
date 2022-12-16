@@ -354,6 +354,11 @@ interface Process {
   stdin: import("stream").Duplex & { isTTY: boolean };
   stdout: import("stream").Writable & { isTTY: boolean };
   stderr: import("stream").Writable & { isTTY: boolean };
+
+  /**
+   * exit the process with a fatal exception, sending SIGABRT
+   */
+  abort(): never;
 }
 
 declare var process: Process;

@@ -489,6 +489,12 @@ Process::~Process()
     }
 }
 
+JSC_DEFINE_HOST_FUNCTION(Process_functionAbort, (JSGlobalObject * globalObject, CallFrame*))
+{
+    abort();
+    __builtin_unreachable();
+}
+
 void Process::finishCreation(JSC::VM& vm)
 {
     Base::finishCreation(vm);
@@ -598,6 +604,9 @@ void Process::finishCreation(JSC::VM& vm)
 
     this->putDirectCustomAccessor(vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "stdin"_s)),
         JSC::CustomGetterSetter::create(vm, Process_lazyStdinGetter, Process_defaultSetter), 0);
+
+    this->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(this->vm(), "abort"_s),
+        0, Process_functionAbort, ImplementationVisibility::Public, NoIntrinsic, 0);
 }
 
 const JSC::ClassInfo Process::s_info = { "Process"_s, &Base::s_info, nullptr, nullptr,

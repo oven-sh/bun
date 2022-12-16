@@ -495,6 +495,30 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionAbort, (JSGlobalObject * globalObject, 
     __builtin_unreachable();
 }
 
+JSC_DEFINE_CUSTOM_GETTER(Process_lazyArgv0Getter, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::PropertyName name))
+{
+    JSC::JSObject* thisObject = JSValue::decode(thisValue).getObject();
+    EncodedJSValue ret = Bun__Process__getArgv0(globalObject);
+
+    if (LIKELY(thisObject)) {
+        thisObject->putDirect(globalObject->vm(), name, JSValue::decode(ret), 0);
+    }
+
+    return ret;
+}
+
+JSC_DEFINE_CUSTOM_GETTER(Process_lazyExecPathGetter, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::PropertyName name))
+{
+    JSC::JSObject* thisObject = JSValue::decode(thisValue).getObject();
+    EncodedJSValue ret = Bun__Process__getExecPath(globalObject);
+
+    if (LIKELY(thisObject)) {
+        thisObject->putDirect(globalObject->vm(), name, JSValue::decode(ret), 0);
+    }
+
+    return ret;
+}
+
 void Process::finishCreation(JSC::VM& vm)
 {
     Base::finishCreation(vm);
@@ -607,6 +631,12 @@ void Process::finishCreation(JSC::VM& vm)
 
     this->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(this->vm(), "abort"_s),
         0, Process_functionAbort, ImplementationVisibility::Public, NoIntrinsic, 0);
+
+    this->putDirectCustomAccessor(vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "argv0"_s)),
+        JSC::CustomGetterSetter::create(vm, Process_lazyArgv0Getter, Process_defaultSetter), 0);
+
+    this->putDirectCustomAccessor(vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "execPath"_s)),
+        JSC::CustomGetterSetter::create(vm, Process_lazyExecPathGetter, Process_defaultSetter), 0);
 }
 
 const JSC::ClassInfo Process::s_info = { "Process"_s, &Base::s_info, nullptr, nullptr,

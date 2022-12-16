@@ -1,4 +1,6 @@
+import { resolveSync } from "bun";
 import { describe, expect, it } from "bun:test";
+import { realpathSync } from "fs";
 
 it("process", () => {
   // this property isn't implemented yet but it should at least return a string
@@ -101,4 +103,12 @@ it("process.env is spreadable and editable", () => {
 
 it("process.version starts with v", () => {
   expect(process.version.startsWith("v")).toBeTruthy();
+});
+
+it("process.argv0", () => {
+  expect(process.argv0).toBe(process.argv[0]);
+});
+
+it("process.execPath", () => {
+  expect(process.execPath).toBe(realpathSync(process.argv0));
 });

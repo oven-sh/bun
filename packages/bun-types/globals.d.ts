@@ -359,6 +359,15 @@ interface Process {
    * exit the process with a fatal exception, sending SIGABRT
    */
   abort(): never;
+
+  /**
+   * Resolved absolute file path to the current Bun executable that is running
+   */
+  readonly execPath: string;
+  /**
+   * The original argv[0] passed to Bun
+   */
+  readonly argv0: string;
 }
 
 declare var process: Process;

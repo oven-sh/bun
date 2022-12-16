@@ -2666,7 +2666,7 @@ declare module "bun" {
         exitCode: number | null,
         signalCode: number | null,
         /**
-         * If an error occured in the call to waitpid2, this will be the error.
+         * If an error occurred in the call to waitpid2, this will be the error.
          */
         error?: Errorlike,
       ): void | Promise<void>;

@@ -1556,8 +1556,7 @@ pub fn NewPrinter(
                 p.printClauseAlias(item.alias);
 
                 if (!strings.eql(name, item.alias)) {
-                    p.print(" as");
-                    p.printSpace();
+                    p.print(" as ");
                     p.addSourceMapping(item.alias_loc);
                     p.printIdentifier(name);
                 }
@@ -1574,8 +1573,7 @@ pub fn NewPrinter(
                 p.printIdentifier(name);
 
                 if (!strings.eql(name, item.alias)) {
-                    p.print(" as");
-                    p.printSpace();
+                    p.print(" as ");
                     p.addSourceMapping(item.alias_loc);
                     p.printClauseAlias(item.alias);
                 }

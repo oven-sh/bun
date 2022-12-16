@@ -1236,16 +1236,20 @@ pub const Command = struct {
                         return;
                     }
 
+                    Output.prettyErrorln("<r><red>error<r><d>:<r> script not found \"<b>{s}<r>\"", .{
+                        ctx.positionals[0],
+                    });
+
                     Global.exit(1);
                 }
 
                 if (was_js_like) {
-                    Output.prettyErrorln("<r><red>error<r>: Module not found \"<b>{s}<r>\"", .{
+                    Output.prettyErrorln("<r><red>error<r><d>:<r> module not found \"<b>{s}<r>\"", .{
                         ctx.positionals[0],
                     });
                     Global.exit(1);
                 } else if (ctx.positionals.len > 0) {
-                    Output.prettyErrorln("<r><red>error<r>: File not found \"<b>{s}<r>\"", .{
+                    Output.prettyErrorln("<r><red>error<r><d>:<r> file not found \"<b>{s}<r>\"", .{
                         ctx.positionals[0],
                     });
                     Global.exit(1);

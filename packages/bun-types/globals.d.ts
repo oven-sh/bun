@@ -341,8 +341,6 @@ interface Process {
   isBun: 1; // FIXME: this should actually return a boolean
   /** The current git sha of Bun **/
   revision: string;
-  // execPath: string;
-  // abort(): void;
   chdir(directory: string): void;
   cwd(): string;
   exit(code?: number): void;

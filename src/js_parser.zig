@@ -14824,6 +14824,8 @@ fn NewParser_(
 
         pub fn fnBodyContainsUseStrict(body: []Stmt) ?logger.Loc {
             for (body) |stmt| {
+                // "use strict" has to appear at the top of the function body
+                // but we can allow comments
                 switch (stmt.data) {
                     .s_comment => {
                         continue;
@@ -14833,7 +14835,8 @@ fn NewParser_(
                             return stmt.loc;
                         }
                     },
-                    else => {},
+                    .s_empty => {},
+                    else => return null,
                 }
             }
 

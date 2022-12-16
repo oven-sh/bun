@@ -8357,6 +8357,14 @@ fn NewParser_(
 
         // This assumes the caller has already parsed the "import" token
 
+        fn importMetaRequire(p: *P, loc: logger.Loc) Expr {
+            return p.e(E.Dot{
+                .target = p.e(E.ImportMeta{}, loc),
+                .name = "require",
+                .name_loc = loc,
+            }, loc);
+        }
+
         fn parseTypeScriptImportEqualsStmt(p: *P, loc: logger.Loc, opts: *ParseStatementOptions, default_name_loc: logger.Loc, default_name: string) anyerror!Stmt {
             try p.lexer.expect(.t_equals);
 
@@ -13095,7 +13103,7 @@ fn NewParser_(
                 },
                 .e_identifier => {
                     var e_ = expr.data.e_identifier;
-                    const is_delete_target = @as(Expr.Tag, p.delete_target) == .e_identifier and expr.data.e_identifier.ref.eql(p.delete_target.e_identifier.ref);
+                    const is_delete_target = @as(Expr.Tag, p.delete_target) == .e_identifier and e_.ref.eql(p.delete_target.e_identifier.ref);
 
                     const name = p.loadNameFromRef(e_.ref);
                     if (p.isStrictMode() and js_lexer.StrictModeReservedWords.has(name)) {
@@ -13140,6 +13148,15 @@ fn NewParser_(
                             }
                             if (def.call_can_be_unwrapped_if_unused and !p.options.ignore_dce_annotations) {
                                 e_.call_can_be_unwrapped_if_unused = true;
+                            }
+                        }
+
+                        if (!p.options.enable_bundling and p.options.features.dynamic_require) {
+                            const is_call_target = @as(Expr.Tag, p.call_target) == .e_identifier and expr.data.e_identifier.ref.eql(p.call_target.e_identifier.ref);
+                            if (!is_call_target and p.require_ref.eql(e_.ref)) {
+                                // Substitute "require" for import.meta.require
+                                p.ignoreUsage(e_.ref);
+                                return p.importMetaRequire(expr.loc);
                             }
                         }
                     }
@@ -14555,11 +14572,7 @@ fn NewParser_(
                             p.ignoreUsage(p.require_ref);
                             return p.e(
                                 E.Call{
-                                    .target = p.e(E.Dot{
-                                        .target = p.e(E.ImportMeta{}, expr.loc),
-                                        .name = "require",
-                                        .name_loc = expr.loc,
-                                    }, expr.loc),
+                                    .target = p.importMetaRequire(expr.loc),
                                     .args = e_.args,
                                     .close_paren_loc = e_.close_paren_loc,
                                     .optional_chain = e_.optional_chain,

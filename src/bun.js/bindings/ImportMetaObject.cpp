@@ -124,7 +124,7 @@ JSC_DEFINE_CUSTOM_GETTER(functionRequireResolveLazyGetter,
 
     JSC::JSFunction* resolverFunction
         = JSC::JSNativeStdFunction::create(
-            globalObject->vm(), globalObject, 1, "resolve"_s, [pathString_ = WTFMove(pathString)](JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame) -> const JSC::EncodedJSValue {
+            globalObject->vm(), globalObject, 2, "resolve"_s, [pathString_ = WTFMove(pathString)](JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame) -> const JSC::EncodedJSValue {
                 return functionRequireResolve(globalObject, callFrame, JSValue::encode(pathString_.get()));
             });
     require->putDirect(vm, builtinNames.resolvePrivateName(), resolverFunction, 0);

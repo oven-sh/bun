@@ -219,19 +219,6 @@ pub const RunCommand = struct {
         passthrough: []const string,
         silent: bool,
     ) !bool {
-        return runPackageScriptWithIsLast(allocator, original_script, name, cwd, env, passthrough, silent, false);
-    }
-
-    pub fn runPackageScriptWithIsLast(
-        allocator: std.mem.Allocator,
-        original_script: string,
-        name: string,
-        cwd: string,
-        env: *DotEnv.Loader,
-        passthrough: []const string,
-        silent: bool,
-        is_last: bool,
-    ) !bool {
         const shell_bin = findShell(env.map.get("PATH") orelse "", cwd) orelse return error.MissingShell;
 
         var script = original_script;
@@ -251,7 +238,7 @@ pub const RunCommand = struct {
             for (passthrough) |p| {
                 combined_script_len += p.len + 1;
             }
-            var combined_script_buf = try allocator.alloc(u8, combined_script_len + @as(usize, @boolToInt(is_last)));
+            var combined_script_buf = try allocator.alloc(u8, combined_script_len);
             std.mem.copy(u8, combined_script_buf, script);
             var remaining_script_buf = combined_script_buf[script.len..];
             for (passthrough) |part| {
@@ -270,69 +257,47 @@ pub const RunCommand = struct {
             Output.flush();
         }
 
-        if (!is_last) {
-            var child_process = std.ChildProcess.init(&argv, allocator);
-            var buf_map = try env.map.cloneToEnvMap(allocator);
+        var child_process = std.ChildProcess.init(&argv, allocator);
+        var buf_map = try env.map.cloneToEnvMap(allocator);
 
-            child_process.env_map = &buf_map;
-            child_process.cwd = cwd;
-            child_process.stderr_behavior = .Inherit;
-            child_process.stdin_behavior = .Inherit;
-            child_process.stdout_behavior = .Inherit;
+        child_process.env_map = &buf_map;
+        child_process.cwd = cwd;
+        child_process.stderr_behavior = .Inherit;
+        child_process.stdin_behavior = .Inherit;
+        child_process.stdout_behavior = .Inherit;
 
-            const result = child_process.spawnAndWait() catch |err| {
-                Output.prettyErrorln("<r><red>error<r>: Failed to run script <b>{s}<r> due to error <b>{s}<r>", .{ name, @errorName(err) });
-                Output.flush();
-                return true;
-            };
-
-            switch (result) {
-                .Exited => |code| {
-                    if (code > 0) {
-                        Output.prettyErrorln("<r><red>Script error<r> <b>\"{s}\"<r> exited with {d} status<r>", .{ name, code });
-                        Output.flush();
-
-                        Global.exit(code);
-                    }
-                },
-                .Signal => |signal| {
-                    Output.prettyErrorln("<r><red>Script error<r> <b>\"{s}\"<r> was terminated by signal {d}<r>", .{ name, signal });
-                    Output.flush();
-
-                    Global.exit(1);
-                },
-                .Stopped => |signal| {
-                    Output.prettyErrorln("<r><red>Script error<r> <b>\"{s}\"<r> was stopped by signal {d}<r>", .{ name, signal });
-                    Output.flush();
-
-                    Global.exit(1);
-                },
-
-                else => {},
-            }
-
+        const result = child_process.spawnAndWait() catch |err| {
+            Output.prettyErrorln("<r><red>error<r>: Failed to run script <b>{s}<r> due to error <b>{s}<r>", .{ name, @errorName(err) });
+            Output.flush();
             return true;
-        } else {
-            // extra byte added above
-            combined_script.ptr[combined_script.len] = 0;
-            var combined_script_z = combined_script.ptr[0..combined_script.len :0];
-            var binZ = allocator.dupeZ(u8, shell_bin) catch unreachable;
-            var argvZ = [_]?[*:0]const u8{ binZ, "-c", combined_script_z, "" };
-            argvZ[argvZ.len - 1] = null;
+        };
 
-            var map = env.map.createNullDelimitedEnvMap(allocator) catch |err| {
-                Output.prettyErrorln("<r><red>error<r>: Failed to run script <b>{s}<r> due to error <b>{s}<r>", .{ name, @errorName(err) });
-                Output.flush();
-                return true;
-            };
+        switch (result) {
+            .Exited => |code| {
+                if (code > 0) {
+                    Output.prettyErrorln("<r><red>error<r><d>:<r> script <b>\"{s}\"<r> exited with {any}<r>", .{ name, bun.SignalCode.from(code) });
+                    Output.flush();
 
-            {
-                const err = std.os.execveZ(binZ, @ptrCast([*:null]const ?[*:0]const u8, &argvZ), map);
-                Output.prettyErrorln("<r><red>error<r>: Failed to run script <b>{s}<r> due to error <b>{s}<r>", .{ name, @errorName(err) });
+                    Global.exit(code);
+                }
+            },
+            .Signal => |signal| {
+                Output.prettyErrorln("<r><red>error<r><d>:<r> script <b>\"{s}\"<r> exited with {any}<r>", .{ name, bun.SignalCode.from(signal) });
                 Output.flush();
-                return true;
-            }
+
+                Global.exit(1);
+            },
+            .Stopped => |signal| {
+                Output.prettyErrorln("<r><red>error<r><d>:<r> script <b>\"{s}\"<r> was stopped by signal {any}<r>", .{ name, bun.SignalCode.from(signal) });
+                Output.flush();
+
+                Global.exit(1);
+            },
+
+            else => {},
         }
+
+        return true;
     }
     pub fn runBinary(
         ctx: Command.Context,
@@ -377,20 +342,21 @@ pub const RunCommand = struct {
             Global.exit(1);
         };
         switch (result) {
-            .Exited => |code| {
-                if (code > 0)
-                    Output.prettyErrorln("<r><red>error<r> \"<b>{s}<r>\" exited with {d} status<r>", .{ std.fs.path.basename(executable), code });
-                Global.exit(code);
+            .Exited => |sig| {
+                if (sig > 0)
+                    Output.prettyErrorln("<r><red>error<r><d>:<r> \"<b>{s}<r>\" exited with <b>{any}<r>", .{ std.fs.path.basename(executable), bun.SignalCode.from(sig) });
+                Global.exit(sig);
             },
             .Signal => |sig| {
-                if (sig > 0)
-                    Output.prettyErrorln("<r><red>error<r> \"<b>{s}<r>\" signaled {d}<r>", .{ std.fs.path.basename(executable), sig });
-                Global.exit(1);
+                if (sig > 0) {
+                    Output.prettyErrorln("<r><red>error<r><d>:<r> \"<b>{s}<r>\" exited with <b>{any}<r>", .{ std.fs.path.basename(executable), bun.SignalCode.from(sig) });
+                }
+                Global.exit(std.mem.asBytes(&sig)[0]);
             },
             .Stopped => |sig| {
                 if (sig > 0)
-                    Output.prettyErrorln("<r><red>error<r> \"<b>{s}<r>\" stopped: {d}<r>", .{ std.fs.path.basename(executable), sig });
-                Global.exit(1);
+                    Output.prettyErrorln("<r><red>error<r> \"<b>{s}<r>\" stopped with {any}<r>", .{ std.fs.path.basename(executable), bun.SignalCode.from(sig) });
+                Global.exit(std.mem.asBytes(&sig)[0]);
             },
             .Unknown => |sig| {
                 Output.prettyErrorln("<r><red>error<r> \"<b>{s}<r>\" stopped: {d}<r>", .{ std.fs.path.basename(executable), sig });
@@ -1041,10 +1007,7 @@ pub const RunCommand = struct {
                                 }
                             }
 
-                            std.mem.copy(u8, temp_script_buffer, "post");
-                            const postscript_ = scripts.get(temp_script_buffer);
-
-                            if (!try runPackageScriptWithIsLast(
+                            if (!try runPackageScript(
                                 ctx.allocator,
                                 script_content,
                                 script_name_to_search,
@@ -1052,11 +1015,12 @@ pub const RunCommand = struct {
                                 this_bundler.env,
                                 passthrough,
                                 ctx.debug.silent,
-                                postscript_ == null,
                             )) return false;
 
-                            if (postscript_) |postscript| {
-                                if (!try runPackageScriptWithIsLast(
+                            std.mem.copy(u8, temp_script_buffer, "post");
+
+                            if (scripts.get(temp_script_buffer)) |postscript| {
+                                if (!try runPackageScript(
                                     ctx.allocator,
                                     postscript,
                                     temp_script_buffer,
@@ -1064,7 +1028,6 @@ pub const RunCommand = struct {
                                     this_bundler.env,
                                     passthrough,
                                     ctx.debug.silent,
-                                    true,
                                 )) {
                                     return false;
                                 }

@@ -563,3 +563,58 @@ pub const copyFile = CopyFile.copyFile;
 pub fn parseDouble(input: []const u8) !f64 {
     return JSC.WTF.parseDouble(input);
 }
+
+pub const SignalCode = enum(u8) {
+    SIGHUP = 1,
+    SIGINT = 2,
+    SIGQUIT = 3,
+    SIGILL = 4,
+    SIGTRAP = 5,
+    SIGABRT = 6,
+    SIGBUS = 7,
+    SIGFPE = 8,
+    SIGKILL = 9,
+    SIGUSR1 = 10,
+    SIGSEGV = 11,
+    SIGUSR2 = 12,
+    SIGPIPE = 13,
+    SIGALRM = 14,
+    SIGTERM = 15,
+    SIG16 = 16,
+    SIGCHLD = 17,
+    SIGCONT = 18,
+    SIGSTOP = 19,
+    SIGTSTP = 20,
+    SIGTTIN = 21,
+    SIGTTOU = 22,
+    SIGURG = 23,
+    SIGXCPU = 24,
+    SIGXFSZ = 25,
+    SIGVTALRM = 26,
+    SIGPROF = 27,
+    SIGWINCH = 28,
+    SIGIO = 29,
+    SIGPWR = 30,
+    SIGSYS = 31,
+    _,
+
+    pub fn name(value: SignalCode) ?[]const u8 {
+        if (@enumToInt(value) <= @enumToInt(SignalCode.SIGSYS)) {
+            return std.mem.span(@tagName(value));
+        }
+
+        return null;
+    }
+
+    pub fn from(value: anytype) SignalCode {
+        return @intToEnum(SignalCode, @truncate(u7, std.mem.asBytes(&value)[0]));
+    }
+
+    pub fn format(self: SignalCode, comptime _: []const u8, _: fmt.FormatOptions, writer: anytype) !void {
+        if (self.name()) |str| {
+            try std.fmt.format(writer, "code {d} ({s})", .{ @enumToInt(self), str });
+        } else {
+            try std.fmt.format(writer, "code {d}", .{@enumToInt(self)});
+        }
+    }
+};

@@ -17,12 +17,14 @@ _napi_create_arraybuffer
 _napi_create_async_work
 _napi_create_bigint_int64
 _napi_create_bigint_uint64
+_napi_create_bigint_words
 _napi_create_buffer
 _napi_create_buffer_copy
 _napi_create_dataview
 _napi_create_date
 _napi_create_double
 _napi_create_error
+_napi_create_external
 _napi_create_external_arraybuffer
 _napi_create_external_buffer
 _napi_create_function
@@ -75,6 +77,7 @@ _napi_get_value_bigint_int64
 _napi_get_value_bigint_uint64
 _napi_get_value_bool
 _napi_get_value_double
+_napi_get_value_external
 _napi_get_value_int32
 _napi_get_value_int64
 _napi_get_value_string_latin1
@@ -110,6 +113,7 @@ _napi_reject_deferred
 _napi_release_threadsafe_function
 _napi_remove_async_cleanup_hook
 _napi_remove_env_cleanup_hook
+_napi_remove_wrap
 _napi_resolve_deferred
 _napi_run_script
 _napi_set_element
@@ -124,6 +128,3 @@ _napi_typeof
 _napi_unref_threadsafe_function
 _napi_unwrap
 _napi_wrap
-_napi_remove_wrap
-_napi_create_external
-_napi_get_value_external

@@ -46,6 +46,7 @@
 #include "JavaScriptCore/GetterSetter.h"
 #include "JavaScriptCore/JSSourceCode.h"
 #include "JavaScriptCore/JSNativeStdFunction.h"
+#include "JavaScriptCore/BigIntObject.h"
 
 #include "../modules/ObjectModule.h"
 
@@ -1506,5 +1507,34 @@ extern "C" napi_status napi_set_instance_data(napi_env env,
     globalObject->napiInstanceDataFinalizer = reinterpret_cast<void*>(finalize_cb);
     globalObject->napiInstanceDataFinalizerHint = finalize_hint;
 
+    return napi_ok;
+}
+
+extern "C" napi_status napi_create_bigint_words(napi_env env,
+    int sign_bit,
+    size_t word_count,
+    const uint64_t* words,
+    napi_value* result)
+{
+    Zig::GlobalObject* globalObject = toJS(env);
+    JSC::VM& vm = globalObject->vm();
+    auto* bigint = JSC::JSBigInt::tryCreateWithLength(vm, word_count);
+    if (UNLIKELY(!bigint)) {
+        return napi_generic_failure;
+    }
+
+    // TODO: verify sign bit is consistent
+    bigint->setSign(sign_bit);
+
+    if (words != nullptr) {
+        const uint64_t* word = words;
+        // TODO: add fast path that uses memcpy here instead of setDigit
+        // we need to add this to JSC. V8 has this optimization
+        for (size_t i = 0; i < word_count; i++) {
+            bigint->setDigit(i, *word++);
+        }
+    }
+
+    *result = toNapi(bigint);
     return napi_ok;
 }

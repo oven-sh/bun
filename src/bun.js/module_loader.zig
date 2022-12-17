@@ -1810,6 +1810,17 @@ pub const ModuleLoader = struct {
                         .hash = 0,
                     };
                 },
+                .@"node:util" => {
+                    return ResolvedSource{
+                        .allocator = null,
+                        .source_code = ZigString.init(
+                            @as(string, jsModuleFromFile(jsc_vm.load_builtins_from_path, "./util.exports.js")),
+                        ),
+                        .specifier = ZigString.init("node:util"),
+                        .source_url = ZigString.init("node:util"),
+                        .hash = 0,
+                    };
+                },
                 .@"undici" => {
                     return ResolvedSource{
                         .allocator = null,
@@ -1985,6 +1996,7 @@ pub const HardcodedModule = enum {
     @"node:timers/promises",
     @"node:tty",
     @"node:url",
+    @"node:util",
     @"node:util/types",
     @"undici",
     @"ws",
@@ -2026,6 +2038,7 @@ pub const HardcodedModule = enum {
             .{ "node:timers/promises", HardcodedModule.@"node:timers/promises" },
             .{ "node:tty", HardcodedModule.@"node:tty" },
             .{ "node:url", HardcodedModule.@"node:url" },
+            .{ "node:util", HardcodedModule.@"node:util" },
             .{ "node:util/types", HardcodedModule.@"node:util/types" },
             .{ "undici", HardcodedModule.@"undici" },
             .{ "ws", HardcodedModule.@"ws" },
@@ -2036,11 +2049,11 @@ pub const HardcodedModule = enum {
         .{
             .{ "assert", "node:assert" },
             .{ "buffer", "node:buffer" },
+            .{ "bun", "bun" },
             .{ "bun:ffi", "bun:ffi" },
             .{ "bun:jsc", "bun:jsc" },
             .{ "bun:sqlite", "bun:sqlite" },
             .{ "bun:wrap", "bun:wrap" },
-            .{ "bun", "bun" },
             .{ "child_process", "node:child_process" },
             .{ "depd", "depd" },
             .{ "detect-libc", "detect-libc" },
@@ -2078,6 +2091,7 @@ pub const HardcodedModule = enum {
             .{ "node:tty", "node:tty" },
             .{ "node:url", "node:url" },
             .{ "node:util", "node:util" },
+            .{ "node:util/types", "node:util/types" },
             .{ "os", "node:os" },
             .{ "path", "node:path" },
             .{ "path/posix", "node:path/posix" },
@@ -2097,6 +2111,7 @@ pub const HardcodedModule = enum {
             .{ "undici", "undici" },
             .{ "url", "node:url" },
             .{ "util", "node:util" },
+            .{ "util/types", "node:util/types" },
             .{ "ws", "ws" },
             .{ "ws/lib/websocket", "ws" },
         },

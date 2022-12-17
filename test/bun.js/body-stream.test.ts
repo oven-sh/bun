@@ -5,7 +5,7 @@ import { readFileSync } from "fs";
 
 // afterEach(() => Bun.gc(true));
 
-var port = 4020;
+var port = 4021;
 
 {
   const BodyMixin = [
@@ -175,12 +175,13 @@ var port = 4020;
   }
 }
 
+var existingServer;
 async function runInServer(
   opts: ServeOptions,
   cb: (url: string) => void | Promise<void>,
 ) {
   var server;
-  server = Bun.serve({
+  const handler = {
     ...opts,
     port: port++,
     fetch(req) {
@@ -197,17 +198,20 @@ async function runInServer(
       console.log(err.stack);
       throw err;
     },
-  });
+  };
+
+  if (!existingServer) {
+    existingServer = server = Bun.serve(handler);
+  } else {
+    server = existingServer;
+    server.reload(handler);
+  }
+
   try {
     await cb(`http://${server.hostname}:${server.port}`);
   } catch (e) {
     throw e;
   } finally {
-    server && server.stop();
-    server = undefined;
-    if (port > 4200) {
-      port = 4120;
-    }
   }
 }
 

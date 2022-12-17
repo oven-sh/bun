@@ -614,6 +614,11 @@ pub export fn napi_strict_equals(env: napi_env, lhs: napi_value, rhs: napi_value
 }
 pub export fn napi_call_function(env: napi_env, recv: napi_value, func: napi_value, argc: usize, argv: [*c]const napi_value, result: *napi_value) napi_status {
     JSC.markBinding(@src());
+
+    if (argc > 0 and argv == null) {
+        return .invalid_arg;
+    }
+
     var exception = [_]JSC.C.JSValueRef{null};
     result.* =
         JSC.C.JSObjectCallAsFunctionReturnValue(
@@ -621,7 +626,10 @@ pub export fn napi_call_function(env: napi_env, recv: napi_value, func: napi_val
         func.asObjectRef(),
         recv.asObjectRef(),
         argc,
-        @ptrCast([*]const JSC.C.JSValueRef, argv),
+        if (argv != null)
+            @ptrCast([*]const JSC.C.JSValueRef, argv)
+        else
+            null,
     );
     if (exception[0] != null) {
         return .generic_failure;
@@ -630,13 +638,22 @@ pub export fn napi_call_function(env: napi_env, recv: napi_value, func: napi_val
     return .ok;
 }
 pub export fn napi_new_instance(env: napi_env, constructor: napi_value, argc: usize, argv: [*c]const napi_value, result: *napi_value) napi_status {
+    JSC.markBinding(@src());
+
+    if (argc > 0 and argv == null) {
+        return .invalid_arg;
+    }
+
     var exception = [_]JSC.C.JSValueRef{null};
     result.* = JSValue.c(
         JSC.C.JSObjectCallAsConstructor(
             env.ref(),
             constructor.asObjectRef(),
             argc,
-            @ptrCast([*]const JSC.C.JSValueRef, argv),
+            if (argv != null)
+                @ptrCast([*]const JSC.C.JSValueRef, argv)
+            else
+                null,
             &exception,
         ),
     );
@@ -648,7 +665,7 @@ pub export fn napi_new_instance(env: napi_env, constructor: napi_value, argc: us
 }
 pub export fn napi_instanceof(env: napi_env, object: napi_value, constructor: napi_value, result: *bool) napi_status {
     // TODO: does this throw object_expected in node?
-    result.* = object.isInstanceOf(env, constructor);
+    result.* = object.isCell() and object.isInstanceOf(env, constructor);
     return .ok;
 }
 pub extern fn napi_get_cb_info(env: napi_env, cbinfo: napi_callback_info, argc: [*c]usize, argv: *napi_value, this_arg: *napi_value, data: [*]*anyopaque) napi_status;

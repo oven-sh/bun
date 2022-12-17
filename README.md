@@ -329,9 +329,9 @@ bun add bun-types
 }
 ```
 
-You can also [view the types here](https://github.com/oven-sh/bun-types).
+You can also [view the types here](https://github.com/oven-sh/bun/tree/main/packages/bun-types).
 
-To contribute to the types, head over to [oven-sh/bun-types](https://github.com/oven-sh/bun-types).
+To contribute to the types, head over to [packages/bun-types](https://github.com/oven-sh/bun/tree/main/packages/bun-types).
 
 ### Fast paths for Web APIs
 

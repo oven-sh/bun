@@ -2560,10 +2560,10 @@ pub const Parser = struct {
         // Auto-import & post-process JSX
         switch (comptime ParserType.jsx_transform_type) {
             .react => {
-                const jsx_filename_symbol = if (p.options.jsx.development)
-                    p.symbols.items[p.jsx_filename.ref.innerIndex()]
-                else
-                    Symbol{ .original_name = "" };
+                // const jsx_filename_symbol = if (p.options.jsx.development)
+                //     p.symbols.items[p.jsx_filename.ref.innerIndex()]
+                // else
+                //     Symbol{ .original_name = "" };
 
                 {
                     const jsx_symbol = p.symbols.items[p.jsx_runtime.ref.innerIndex()];
@@ -2640,8 +2640,8 @@ pub const Parser = struct {
                             @intCast(u32, @boolToInt(jsx_symbol.use_count_estimate > 0)) * 2 +
                             @intCast(u32, @boolToInt(FeatureFlags.support_jsxs_in_jsx_transform and jsx_static_symbol.use_count_estimate > 0)) * 2 +
                             @intCast(u32, @boolToInt(jsx_factory_symbol.use_count_estimate > 0)) +
-                            @intCast(u32, @boolToInt(jsx_fragment_symbol.use_count_estimate > 0)) +
-                            @intCast(u32, @boolToInt(jsx_filename_symbol.use_count_estimate > 0));
+                            @intCast(u32, @boolToInt(jsx_fragment_symbol.use_count_estimate > 0));
+                        // @intCast(u32, @boolToInt(jsx_filename_symbol.use_count_estimate > 0));
 
                         const imports_count =
                             @intCast(u32, @boolToInt(jsx_symbol.use_count_estimate > 0)) +
@@ -2785,20 +2785,20 @@ pub const Parser = struct {
                                     decl_i += 1;
                                 }
                             }
-                            if (jsx_filename_symbol.use_count_estimate > 0) {
-                                declared_symbols[declared_symbols_i] = .{ .ref = p.jsx_filename.ref, .is_top_level = true };
-                                declared_symbols_i += 1;
-                                decls[decl_i] = G.Decl{
-                                    .binding = p.b(
-                                        B.Identifier{
-                                            .ref = p.jsx_filename.ref,
-                                        },
-                                        loc,
-                                    ),
-                                    .value = p.e(E.String{ .data = p.source.path.pretty }, loc),
-                                };
-                                decl_i += 1;
-                            }
+                            // if (jsx_filename_symbol.use_count_estimate > 0) {
+                            //     declared_symbols[declared_symbols_i] = .{ .ref = p.jsx_filename.ref, .is_top_level = true };
+                            //     declared_symbols_i += 1;
+                            //     decls[decl_i] = G.Decl{
+                            //         .binding = p.b(
+                            //             B.Identifier{
+                            //                 .ref = p.jsx_filename.ref,
+                            //             },
+                            //             loc,
+                            //         ),
+                            //         .value = p.e(E.String{ .data = p.source.path.pretty }, loc),
+                            //     };
+                            //     decl_i += 1;
+                            // }
 
                             p.import_records.items[import_record_id].tag = .jsx_import;
                             if (dot_call_target.data != .e_require) {
@@ -3638,7 +3638,7 @@ fn NewParser_(
         react_element_type: GeneratedSymbol = GeneratedSymbol{ .ref = Ref.None, .primary = Ref.None, .backup = Ref.None },
         /// Symbol object
         es6_symbol_global: GeneratedSymbol = GeneratedSymbol{ .ref = Ref.None, .primary = Ref.None, .backup = Ref.None },
-        jsx_filename: GeneratedSymbol = GeneratedSymbol{ .ref = Ref.None, .primary = Ref.None, .backup = Ref.None },
+        // jsx_filename: GeneratedSymbol = GeneratedSymbol{ .ref = Ref.None, .primary = Ref.None, .backup = Ref.None },
         jsx_runtime: GeneratedSymbol = GeneratedSymbol{ .ref = Ref.None, .primary = Ref.None, .backup = Ref.None },
         jsx_factory: GeneratedSymbol = GeneratedSymbol{ .ref = Ref.None, .primary = Ref.None, .backup = Ref.None },
         jsx_fragment: GeneratedSymbol = GeneratedSymbol{ .ref = Ref.None, .primary = Ref.None, .backup = Ref.None },
@@ -5241,7 +5241,7 @@ fn NewParser_(
             p.resolveGeneratedSymbol(&p.jsx_fragment);
             p.resolveGeneratedSymbol(&p.jsx_classic);
             p.resolveGeneratedSymbol(&p.jsx_automatic);
-            p.resolveGeneratedSymbol(&p.jsx_filename);
+            // p.resolveGeneratedSymbol(&p.jsx_filename);
         }
 
         fn hoistSymbols(p: *P, scope: *js_ast.Scope) void {
@@ -13488,7 +13488,6 @@ fn NewParser_(
                                             };
 
                                             args[4] = p.e(E.Undefined{}, expr.loc);
-
                                             args[5] = Expr{ .data = Prefill.Data.This, .loc = expr.loc };
                                         }
 

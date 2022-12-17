@@ -581,8 +581,14 @@ declare module "bun" {
    * Fast deep-equality check two objects.
    *
    * This also powers expect().toEqual in `bun:test`
+   *
    */
-  export function deepEquals(a: any, b: any): boolean;
+  export function deepEquals(
+    a: any,
+    b: any,
+    /** @default false */
+    strict?: boolean,
+  ): boolean;
 
   export interface TranspilerOptions {
     /**

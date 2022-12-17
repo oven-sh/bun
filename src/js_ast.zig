@@ -1846,33 +1846,6 @@ pub const E = struct {
 
         pub var empty = RegExp{ .value = "" };
 
-        pub fn usesLookBehindAssertion(this: *const RegExp) bool {
-            var pat = this.pattern();
-            while (pat.len > 0) {
-                const start = strings.indexOfChar(pat, '?') orelse return false;
-                if (start == 0) {
-                    pat = pat[1..];
-                    continue;
-                }
-                const l_paren = pat[start - 1];
-                if (start > 1 and pat[start - 2] == '\\') {
-                    pat = pat[start..];
-                    continue;
-                }
-                if (l_paren != '(' or pat.len < start + 1) {
-                    pat = pat[start..];
-                    continue;
-                }
-                const op = pat[start + 1];
-                if (op == '<') {
-                    return true;
-                }
-                pat = pat[start + 1 ..];
-            }
-
-            return false;
-        }
-
         pub fn pattern(this: RegExp) string {
 
             // rewind until we reach the /foo/gim

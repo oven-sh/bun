@@ -167,8 +167,6 @@ using JSBuffer = WebCore::JSBuffer;
 #include "webcrypto/JSCryptoKey.h"
 #include "webcrypto/JSSubtleCrypto.h"
 
-#include "OnigurumaRegExp.h"
-
 constexpr size_t DEFAULT_ERROR_STACK_TRACE_LIMIT = 10;
 
 #ifdef __APPLE__
@@ -2579,17 +2577,6 @@ void GlobalObject::finishCreation(VM& vm)
             init.setConstructor(constructor);
         });
 
-    m_OnigurumaRegExpClassStructure.initLater(
-        [](LazyClassStructure::Initializer& init) {
-            auto* prototype = OnigurumaRegExpConstructor::createPrototype(init.global);
-            auto* structure = OnigurumaRegExpConstructor::createClassStructure(init.global, prototype);
-            auto* constructor = OnigurumaRegExpConstructor::create(
-                init.vm, init.global, OnigurumaRegExpConstructor::createStructure(init.vm, init.global, init.global->functionPrototype()), prototype);
-            init.setPrototype(prototype);
-            init.setStructure(structure);
-            init.setConstructor(constructor);
-        });
-
     m_callSiteStructure.initLater(
         [](LazyClassStructure::Initializer& init) {
             auto* prototype = CallSitePrototype::create(init.vm, CallSitePrototype::createStructure(init.vm, init.global, init.global->objectPrototype()), init.global);
@@ -3224,11 +3211,6 @@ void GlobalObject::installAPIGlobals(JSClassRef* globals, int count, JSC::VM& vm
         }
 
         {
-            JSC::Identifier identifier = JSC::Identifier::fromString(vm, "OnigurumaRegExp"_s);
-            object->putDirectCustomAccessor(vm, identifier, JSC::CustomGetterSetter::create(vm, jsFunctionGetOnigurumaRegExpConstructor, nullptr), JSC::PropertyAttribute::CustomAccessor | 0);
-        }
-
-        {
             JSC::Identifier identifier = JSC::Identifier::fromString(vm, "stringHashCode"_s);
             object->putDirectNativeFunction(vm, this, identifier, 1, functionHashCode, ImplementationVisibility::Public, NoIntrinsic,
                 JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DontDelete | 0);
@@ -3362,7 +3344,6 @@ void GlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     thisObject->m_JSReadableStateClassStructure.visit(visitor);
     thisObject->m_JSStringDecoderClassStructure.visit(visitor);
     thisObject->m_NapiClassStructure.visit(visitor);
-    thisObject->m_OnigurumaRegExpClassStructure.visit(visitor);
 
     thisObject->m_pendingVirtualModuleResultStructure.visit(visitor);
     thisObject->m_performMicrotaskFunction.visit(visitor);

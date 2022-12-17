@@ -1,5 +1,4 @@
 import { expect, test } from "bun:test";
-import { OnigurumaRegExp } from "bun";
 
 test("toStrictEqual() vs toEqual()", () => {
   expect([1, , 3]).toEqual([1, , 3]);
@@ -133,10 +132,6 @@ function f2() {
   return "hey!";
 }
 test("deepEquals regex", () => {
-  expect(new OnigurumaRegExp("s", "g")).toEqual(new OnigurumaRegExp("s", "g"));
-  expect(new OnigurumaRegExp("s", "g")).not.toEqual(
-    new OnigurumaRegExp("s", "i"),
-  );
   expect(/a/imu).toEqual(/a/imu);
   expect(/a/imu).not.toEqual(/ab/imu);
 

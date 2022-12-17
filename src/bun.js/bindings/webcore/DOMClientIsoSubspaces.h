@@ -29,7 +29,6 @@ public:
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForStringDecoder;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForReadableState;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForPendingVirtualModuleResult;
-    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForOnigurumaRegExp;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForCallSite;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForNapiExternal;
 #include "ZigGeneratedClasses+DOMClientIsoSubspaces.h"

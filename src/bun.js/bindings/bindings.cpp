@@ -82,7 +82,6 @@
 #include "JavaScriptCore/PropertyNameArray.h"
 #include "JavaScriptCore/HashMapImpl.h"
 #include "JavaScriptCore/HashMapImplInlines.h"
-#include "OnigurumaRegExp.h"
 
 template<typename UWSResponse>
 static void copyToUWS(WebCore::FetchHeaders* headers, UWSResponse* res)
@@ -382,22 +381,7 @@ bool Bun__deepEquals(JSC__JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
             return false;
         }
 
-        if (OnigurumaRegEx* left = jsDynamicCast<OnigurumaRegEx*>(v1)) {
-            OnigurumaRegEx* right = jsDynamicCast<OnigurumaRegEx*>(v2);
-            if (UNLIKELY(!right)) {
-                return false;
-            }
-
-            if (!equal(left->patternString(), right->patternString())) {
-                return false;
-            }
-
-            if (!equal(left->flagsString(), right->flagsString())) {
-                return false;
-            }
-
-            return true;
-        } else if (JSC::RegExpObject* left = jsDynamicCast<JSC::RegExpObject*>(v1)) {
+        if (JSC::RegExpObject* left = jsDynamicCast<JSC::RegExpObject*>(v1)) {
             JSC::RegExpObject* right = jsDynamicCast<JSC::RegExpObject*>(v2);
 
             if (UNLIKELY(!right)) {

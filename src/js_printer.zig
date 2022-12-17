@@ -2581,32 +2581,7 @@ pub fn NewPrinter(
                 p.print(" ");
             }
 
-            if (comptime is_bun_platform) {
-                if (e.value.len > 2 and e.usesLookBehindAssertion()) {
-                    p.print("(new globalThis.Bun.OnigurumaRegExp(");
-                    const pattern = e.pattern();
-                    const flags = e.flags();
-                    std.debug.assert(pattern.len > 0);
-                    var buf = bun.default_allocator.alloc(u16, strings.elementLengthUTF8IntoUTF16([]const u8, pattern)) catch unreachable;
-                    defer bun.default_allocator.free(buf);
-                    const buf_len = std.unicode.utf8ToUtf16Le(buf, pattern) catch unreachable;
-                    std.debug.assert(buf_len == buf.len);
-                    const q = p.bestQuoteCharForString(buf, true);
-                    p.print(q);
-                    p.printQuotedUTF16(buf, q);
-                    p.print(q);
-                    if (flags.len > 0) {
-                        p.print(",");
-                        p.printSpace();
-                        p.printQuotedUTF8(flags, true);
-                    }
-                    p.print("))");
-                } else {
-                    p.print(e.value);
-                }
-            } else {
-                p.print(e.value);
-            }
+            p.print(e.value);
 
             // Need a space before the next identifier to avoid it turning into flags
             p.prev_reg_exp_end = p.writer.written;

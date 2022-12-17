@@ -224,10 +224,6 @@ public:
     JSC::JSObject* JSReadableState() { return m_JSReadableStateClassStructure.constructorInitializedOnMainThread(this); }
     JSC::JSValue JSReadableStatePrototype() { return m_JSReadableStateClassStructure.prototypeInitializedOnMainThread(this); }
 
-    JSC::Structure* OnigurumaRegExpStructure() { return m_OnigurumaRegExpClassStructure.getInitializedOnMainThread(this); }
-    JSC::JSValue OnigurumaRegExpPrototype() { return m_OnigurumaRegExpClassStructure.prototypeInitializedOnMainThread(this); }
-    JSC::JSObject* OnigurumaRegExpConstructor() { return m_OnigurumaRegExpClassStructure.constructorInitializedOnMainThread(this); }
-
     JSC::JSMap* readableStreamNativeMap() { return m_lazyReadableStreamPrototypeMap.getInitializedOnMainThread(this); }
     JSC::JSMap* requireMap() { return m_requireMap.getInitializedOnMainThread(this); }
     JSC::Structure* encodeIntoObjectStructure() { return m_encodeIntoObjectStructure.getInitializedOnMainThread(this); }
@@ -465,7 +461,6 @@ private:
     LazyClassStructure m_JSReadableStateClassStructure;
     LazyClassStructure m_JSStringDecoderClassStructure;
     LazyClassStructure m_NapiClassStructure;
-    LazyClassStructure m_OnigurumaRegExpClassStructure;
     LazyClassStructure m_callSiteStructure;
 
     /**

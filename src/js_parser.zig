@@ -5135,10 +5135,6 @@ fn NewParser_(
 
             switch (comptime jsx_transform_type) {
                 .react => {
-                    if (p.options.jsx.development) {
-                        p.jsx_filename = p.declareGeneratedSymbol(.other, "jsxFilename") catch unreachable;
-                    }
-
                     if (p.options.features.jsx_optimization_inline) {
                         p.react_element_type = p.declareGeneratedSymbol(.other, "REACT_ELEMENT_TYPE") catch unreachable;
                         p.es6_symbol_global = p.declareGeneratedSymbol(.unbound, "Symbol") catch unreachable;
@@ -13459,7 +13455,6 @@ fn NewParser_(
                                         // Either:
                                         // jsxDEV(type, arguments, key, isStaticChildren, source, self)
                                         // jsx(type, arguments, key)
-                                        const include_filename = FeatureFlags.include_filename_in_jsx and p.options.jsx.development;
                                         const args = p.allocator.alloc(Expr, if (p.options.jsx.development) @as(usize, 6) else @as(usize, 2) + @as(usize, @boolToInt(e_.key != null))) catch unreachable;
                                         args[0] = tag;
 
@@ -13492,42 +13487,7 @@ fn NewParser_(
                                                 },
                                             };
 
-                                            if (include_filename) {
-                                                var source = p.allocator.alloc(G.Property, 2) catch unreachable;
-                                                p.recordUsage(p.jsx_filename.ref);
-                                                source[0] = G.Property{
-                                                    .key = Expr{ .loc = expr.loc, .data = Prefill.Data.Filename },
-                                                    .value = p.e(E.Identifier{
-                                                        .ref = p.jsx_filename.ref,
-                                                        .can_be_removed_if_unused = true,
-                                                    }, expr.loc),
-                                                };
-
-                                                source[1] = G.Property{
-                                                    .key = Expr{ .loc = expr.loc, .data = Prefill.Data.LineNumber },
-                                                    .value = p.e(E.Number{ .value = @intToFloat(f64, expr.loc.start) }, expr.loc),
-                                                };
-
-                                                // Officially, they ask for columnNumber. But I don't see any usages of it in the code!
-                                                // source[2] = G.Property{
-                                                //     .key = Expr{ .loc = expr.loc, .data = Prefill.Data.ColumnNumber },
-                                                //     .value = p.e(E.Number{ .value = @intToFloat(f64, expr.loc.start) }, expr.loc),
-                                                // };
-                                                args[4] = p.e(E.Object{
-                                                    .properties = G.Property.List.init(source),
-                                                }, expr.loc);
-
-                                                // When disabled, this must specifically be undefined
-                                                // Not an empty object
-                                                // See this code from react:
-                                                // >  if (source !== undefined) {
-                                                // >     var fileName = source.fileName.replace(/^.*[\\\/]/, "");
-                                                // >     var lineNumber = source.lineNumber;
-                                                // >     return "\n\nCheck your code at " + fileName + ":" + lineNumber + ".";
-                                                // > }
-                                            } else {
-                                                args[4] = p.e(E.Undefined{}, expr.loc);
-                                            }
+                                            args[4] = p.e(E.Undefined{}, expr.loc);
 
                                             args[5] = Expr{ .data = Prefill.Data.This, .loc = expr.loc };
                                         }

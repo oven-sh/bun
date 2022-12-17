@@ -34,6 +34,7 @@
 #include "../modules/ObjectModule.h"
 #include "../modules/NodeModuleModule.h"
 #include "../modules/TTYModule.h"
+#include "node_util_types.h"
 
 namespace Bun {
 using namespace Zig;
@@ -422,6 +423,13 @@ static JSValue fetchSourceCode(
         case SyntheticModuleType::TTY: {
             auto source = JSC::SourceCode(
                 JSC::SyntheticSourceProvider::create(generateTTYSourceCode,
+                    JSC::SourceOrigin(), WTFMove(moduleKey)));
+
+            return rejectOrResolve(JSSourceCode::create(vm, WTFMove(source)));
+        }
+        case SyntheticModuleType::NodeUtilTypes: {
+            auto source = JSC::SourceCode(
+                JSC::SyntheticSourceProvider::create(Bun::generateNodeUtilTypesSourceCode,
                     JSC::SourceOrigin(), WTFMove(moduleKey)));
 
             return rejectOrResolve(JSSourceCode::create(vm, WTFMove(source)));

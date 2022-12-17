@@ -1627,6 +1627,7 @@ pub const ModuleLoader = struct {
                 .@"node:events" => return jsSyntheticModule(.@"node:events"),
                 .@"node:process" => return jsSyntheticModule(.@"node:process"),
                 .@"node:tty" => return jsSyntheticModule(.@"node:tty"),
+                .@"node:util/types" => return jsSyntheticModule(.@"node:util/types"),
                 .@"node:stream" => {
                     return ResolvedSource{
                         .allocator = null,
@@ -1984,6 +1985,7 @@ pub const HardcodedModule = enum {
     @"node:timers/promises",
     @"node:tty",
     @"node:url",
+    @"node:util/types",
     @"undici",
     @"ws",
     /// Already resolved modules go in here.
@@ -2024,6 +2026,7 @@ pub const HardcodedModule = enum {
             .{ "node:timers/promises", HardcodedModule.@"node:timers/promises" },
             .{ "node:tty", HardcodedModule.@"node:tty" },
             .{ "node:url", HardcodedModule.@"node:url" },
+            .{ "node:util/types", HardcodedModule.@"node:util/types" },
             .{ "undici", HardcodedModule.@"undici" },
             .{ "ws", HardcodedModule.@"ws" },
         },
@@ -2074,6 +2077,7 @@ pub const HardcodedModule = enum {
             .{ "node:timers/promises", "node:timers/promises" },
             .{ "node:tty", "node:tty" },
             .{ "node:url", "node:url" },
+            .{ "node:util", "node:util" },
             .{ "os", "node:os" },
             .{ "path", "node:path" },
             .{ "path/posix", "node:path/posix" },
@@ -2092,6 +2096,7 @@ pub const HardcodedModule = enum {
             .{ "tty", "node:tty" },
             .{ "undici", "undici" },
             .{ "url", "node:url" },
+            .{ "util", "node:util" },
             .{ "ws", "ws" },
             .{ "ws/lib/websocket", "ws" },
         },

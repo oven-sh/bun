@@ -235,6 +235,7 @@ pub const ResolvedSource = extern struct {
         @"node:string_decoder" = 1027,
         @"node:module" = 1028,
         @"node:tty" = 1029,
+        @"node:util/types" = 1030,
     };
 };
 

@@ -473,7 +473,7 @@ const char* const s_processObjectInternalsGetStdioWriteStreamCode =
 const JSC::ConstructAbility s_processObjectInternalsGetStdinStreamCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_processObjectInternalsGetStdinStreamCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_processObjectInternalsGetStdinStreamCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_processObjectInternalsGetStdinStreamCodeLength = 4076;
+const int s_processObjectInternalsGetStdinStreamCodeLength = 4019;
 static const JSC::Intrinsic s_processObjectInternalsGetStdinStreamCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_processObjectInternalsGetStdinStreamCode =
     "(function (fd, rawRequire, Bun) {\n" \
@@ -502,11 +502,6 @@ const char* const s_processObjectInternalsGetStdinStreamCode =
     "\n" \
     "    get fd() {\n" \
     "      return fd_;\n" \
-    "    }\n" \
-    "\n" \
-    "    //\n" \
-    "    _construct(callback) {\n" \
-    "      callback();\n" \
     "    }\n" \
     "\n" \
     "    constructor() {\n" \
@@ -563,7 +558,7 @@ const char* const s_processObjectInternalsGetStdinStreamCode =
     "    }\n" \
     "\n" \
     "    resume() {\n" \
-    "      this.#reader = Bun.stdin.stream().getReader();\n" \
+    "      this.#reader ??= Bun.stdin.stream().getReader();\n" \
     "      this.ref();\n" \
     "      return super.resume();\n" \
     "    }\n" \

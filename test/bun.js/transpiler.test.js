@@ -471,38 +471,38 @@ export default <>hi</>
       },
     });
     expect(bun.transformSync("export var foo = <div foo />")).toBe(
-      `export var foo = jsx("div", {
+      `export var foo = $jsx("div", {
   foo: true
 }, undefined, false, undefined, this);
 `,
     );
     expect(bun.transformSync("export var foo = <div foo={foo} />")).toBe(
-      `export var foo = jsx("div", {
+      `export var foo = $jsx("div", {
   foo
 }, undefined, false, undefined, this);
 `,
     );
     expect(bun.transformSync("export var foo = <div {...foo} />")).toBe(
-      `export var foo = jsx("div", {
+      `export var foo = $jsx("div", {
   ...foo
 }, undefined, false, undefined, this);
 `,
     );
 
     expect(bun.transformSync("export var hi = <div {foo} />")).toBe(
-      `export var hi = jsx("div", {
+      `export var hi = $jsx("div", {
   foo
 }, undefined, false, undefined, this);
 `,
     );
     expect(bun.transformSync("export var hi = <div {foo.bar.baz} />")).toBe(
-      `export var hi = jsx("div", {
+      `export var hi = $jsx("div", {
   baz: foo.bar.baz
 }, undefined, false, undefined, this);
 `,
     );
     expect(bun.transformSync("export var hi = <div {foo?.bar?.baz} />")).toBe(
-      `export var hi = jsx("div", {
+      `export var hi = $jsx("div", {
   baz: foo?.bar?.baz
 }, undefined, false, undefined, this);
 `,
@@ -510,7 +510,7 @@ export default <>hi</>
     expect(
       bun.transformSync("export var hi = <div {foo['baz'].bar?.baz} />"),
     ).toBe(
-      `export var hi = jsx("div", {
+      `export var hi = $jsx("div", {
   baz: foo["baz"].bar?.baz
 }, undefined, false, undefined, this);
 `,
@@ -522,7 +522,7 @@ export default <>hi</>
         "export var hi = <div {foo[{name: () => true}.name].hi} />",
       ),
     ).toBe(
-      `export var hi = jsx("div", {
+      `export var hi = $jsx("div", {
   hi: foo[{ name: () => true }.name].hi
 }, undefined, false, undefined, this);
 `,
@@ -530,7 +530,7 @@ export default <>hi</>
     expect(
       bun.transformSync("export var hi = <Foo {process.env.NODE_ENV} />"),
     ).toBe(
-      `export var hi = jsx(Foo, {
+      `export var hi = $jsx(Foo, {
   NODE_ENV: "development"
 }, undefined, false, undefined, this);
 `,
@@ -539,7 +539,7 @@ export default <>hi</>
     expect(
       bun.transformSync("export var hi = <div {foo['baz'].bar?.baz} />"),
     ).toBe(
-      `export var hi = jsx("div", {
+      `export var hi = $jsx("div", {
   baz: foo["baz"].bar?.baz
 }, undefined, false, undefined, this);
 `,
@@ -554,24 +554,24 @@ export default <>hi</>
     expect(
       bun.transformSync("export var hi = <div {Foo}><Foo></Foo></div>"),
     ).toBe(
-      `export var hi = jsx("div", {
+      `export var hi = $jsx("div", {
   Foo,
-  children: jsx(Foo, {}, undefined, false, undefined, this)
+  children: $jsx(Foo, {}, undefined, false, undefined, this)
 }, undefined, false, undefined, this);
 `,
     );
     expect(
       bun.transformSync("export var hi = <div {Foo}><Foo></Foo></div>"),
     ).toBe(
-      `export var hi = jsx("div", {
+      `export var hi = $jsx("div", {
   Foo,
-  children: jsx(Foo, {}, undefined, false, undefined, this)
+  children: $jsx(Foo, {}, undefined, false, undefined, this)
 }, undefined, false, undefined, this);
 `,
     );
 
     expect(bun.transformSync("export var hi = <div>{123}}</div>").trim()).toBe(
-      `export var hi = jsx("div", {
+      `export var hi = $jsx("div", {
   children: [
     123,
     "}"
@@ -631,7 +631,7 @@ export var hiWithKey = {
   },
   _owner: null
 };
-export var hiWithRef = jsx("div", {
+export var hiWithRef = $jsx("div", {
   ref: foo,
   children: 123
 });
@@ -653,7 +653,7 @@ export var ComponentThatChecksDefaultPropsAndHasChildren = {
   }, Hello.defaultProps),
   _owner: null
 };
-export var ComponentThatHasSpreadCausesDeopt = jsx(Hello, {
+export var ComponentThatHasSpreadCausesDeopt = $jsx(Hello, {
   ...spread
 });
 `.trim(),
@@ -1127,6 +1127,13 @@ console.log(resolve.length)
         `export default false`,
       );
       expectPrinted_(`export default !user_undefined;`, `export default true`);
+    });
+
+    it("jsx symbol should work", () => {
+      expectBunPrinted_(
+        `var x = jsx; export default x;`,
+        "var x = jsx;\nexport default x",
+      );
     });
 
     it("decls", () => {

@@ -515,7 +515,7 @@ function getStdinStream(fd, rawRequire, Bun) {
     }
 
     resume() {
-      this.#reader = Bun.stdin.stream().getReader();
+      this.#reader ??= Bun.stdin.stream().getReader();
       this.ref();
       return super.resume();
     }

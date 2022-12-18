@@ -271,9 +271,12 @@ interface ImportMeta {
   resolveSync(moduleId: string, parent?: string): string;
 
   /**
-   * Resolve a module ID the same as if you imported it
+   * Load a CommonJS module
    *
-   * The `parent` argument is optional, and defaults to the current module's path.
+   * Internally, this is a synchronous version of ESModule's `import()`, with extra code for handling:
+   * - CommonJS modules
+   * - *.node files
+   * - *.json files
    *
    * Warning: **This API is not stable** and may change in the future. Use at your
    * own risk. Usually, you should use `require` instead and Bun's transpiler

@@ -274,6 +274,11 @@ interface ImportMeta {
    * Resolve a module ID the same as if you imported it
    *
    * The `parent` argument is optional, and defaults to the current module's path.
+   *
+   * Warning: **This API is not stable** and may change in the future. Use at your
+   * own risk. Usually, you should use `require` instead and Bun's transpiler
+   * will automatically rewrite your code to use `import.meta.require` if
+   * relevant.
    */
   require: NodeJS.Require;
 }

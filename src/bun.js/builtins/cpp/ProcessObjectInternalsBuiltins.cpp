@@ -472,10 +472,10 @@ const char* const s_processObjectInternalsGetStdioWriteStreamCode =
 const JSC::ConstructAbility s_processObjectInternalsGetStdinStreamCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_processObjectInternalsGetStdinStreamCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_processObjectInternalsGetStdinStreamCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_processObjectInternalsGetStdinStreamCodeLength = 4019;
+const int s_processObjectInternalsGetStdinStreamCodeLength = 4391;
 static const JSC::Intrinsic s_processObjectInternalsGetStdinStreamCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_processObjectInternalsGetStdinStreamCode =
-    "(function (fd, rawRequire, Bun) {\n" \
+    "(function (fd_, rawRequire, Bun) {\n" \
     "  var module = { path: \"node:process\", require: rawRequire };\n" \
     "  var require = (path) => module.require(path);\n" \
     "\n" \
@@ -489,6 +489,7 @@ const char* const s_processObjectInternalsGetStdinStreamCode =
     "    #writeStream;\n" \
     "\n" \
     "    #readable = true;\n" \
+    "    #unrefOnRead = false;\n" \
     "    #writable = true;\n" \
     "\n" \
     "    #onFinish;\n" \
@@ -496,7 +497,7 @@ const char* const s_processObjectInternalsGetStdinStreamCode =
     "    #onDrain;\n" \
     "\n" \
     "    get isTTY() {\n" \
-    "      return require(\"tty\").isatty(fd);\n" \
+    "      return require(\"tty\").isatty(fd_);\n" \
     "    }\n" \
     "\n" \
     "    get fd() {\n" \
@@ -551,20 +552,38 @@ const char* const s_processObjectInternalsGetStdinStreamCode =
     "      }\n" \
     "    }\n" \
     "\n" \
+    "    on(name, callback) {\n" \
+    "      //\n" \
+    "      //\n" \
+    "      //\n" \
+    "      //\n" \
+    "      //\n" \
+    "      //\n" \
+    "      //\n" \
+    "      //\n" \
+    "      //\n" \
+    "      if (name === \"readable\") {\n" \
+    "        this.ref();\n" \
+    "        this.#unrefOnRead = true;\n" \
+    "      }\n" \
+    "      return super.on(name, callback);\n" \
+    "    }\n" \
+    "\n" \
     "    pause() {\n" \
     "      this.unref();\n" \
     "      return super.pause();\n" \
     "    }\n" \
     "\n" \
     "    resume() {\n" \
-    "      this.#reader ??= Bun.stdin.stream().getReader();\n" \
     "      this.ref();\n" \
     "      return super.resume();\n" \
     "    }\n" \
     "\n" \
     "    ref() {\n" \
+    "      this.#reader ??= Bun.stdin.stream().getReader();\n" \
     "      this.#readRef ??= setInterval(() => {}, 1 << 30);\n" \
     "    }\n" \
+    "\n" \
     "    unref() {\n" \
     "      if (this.#readRef) {\n" \
     "        clearInterval(this.#readRef);\n" \
@@ -605,6 +624,10 @@ const char* const s_processObjectInternalsGetStdinStreamCode =
     "    }\n" \
     "\n" \
     "    _read(size) {\n" \
+    "      if (this.#unrefOnRead) {\n" \
+    "        this.unref();\n" \
+    "        this.#unrefOnRead = false;\n" \
+    "      }\n" \
     "      this.#readInternal();\n" \
     "    }\n" \
     "\n" \

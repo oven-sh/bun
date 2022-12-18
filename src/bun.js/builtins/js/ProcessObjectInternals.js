@@ -435,7 +435,7 @@ function getStdioWriteStream(fd_, rawRequire) {
   return new FastStdioWriteStream(fd_);
 }
 
-function getStdinStream(fd, rawRequire, Bun) {
+function getStdinStream(fd_, rawRequire, Bun) {
   var module = { path: "node:process", require: rawRequire };
   var require = (path) => module.require(path);
 
@@ -449,6 +449,7 @@ function getStdinStream(fd, rawRequire, Bun) {
     #writeStream;
 
     #readable = true;
+    #unrefOnRead = false;
     #writable = true;
 
     #onFinish;
@@ -456,7 +457,7 @@ function getStdinStream(fd, rawRequire, Bun) {
     #onDrain;
 
     get isTTY() {
-      return require("tty").isatty(fd);
+      return require("tty").isatty(fd_);
     }
 
     get fd() {
@@ -509,20 +510,38 @@ function getStdinStream(fd, rawRequire, Bun) {
       }
     }
 
+    on(name, callback) {
+      // Streams don't generally required to present any data when only
+      // `readable` events are present, i.e. `readableFlowing === false`
+      //
+      // However, Node.js has a this quirk whereby `process.stdin.read()`
+      // blocks under TTY mode, thus looping `.read()` in this particular
+      // case would not result in truncation.
+      //
+      // Therefore the following hack is only specific to `process.stdin`
+      // and does not apply to the underlying Stream implementation.
+      if (name === "readable") {
+        this.ref();
+        this.#unrefOnRead = true;
+      }
+      return super.on(name, callback);
+    }
+
     pause() {
       this.unref();
       return super.pause();
     }
 
     resume() {
-      this.#reader ??= Bun.stdin.stream().getReader();
       this.ref();
       return super.resume();
     }
 
     ref() {
+      this.#reader ??= Bun.stdin.stream().getReader();
       this.#readRef ??= setInterval(() => {}, 1 << 30);
     }
+
     unref() {
       if (this.#readRef) {
         clearInterval(this.#readRef);
@@ -563,6 +582,10 @@ function getStdinStream(fd, rawRequire, Bun) {
     }
 
     _read(size) {
+      if (this.#unrefOnRead) {
+        this.unref();
+        this.#unrefOnRead = false;
+      }
       this.#readInternal();
     }
 

@@ -1,6 +1,8 @@
 const { EventEmitter } = import.meta.require("node:events");
 const { Readable, Writable, Stream } = import.meta.require("node:stream");
 
+const { URL, urlToHttpOptions } = import.meta.require("node:url");
+
 const { newArrayWithSize, isPromise } = import.meta.primordials;
 
 export class OutgoingMessage extends Writable {
@@ -96,14 +98,32 @@ export class OutgoingMessage extends Writable {
   }
 }
 
-export class ClientRequest extends Writable {
-  constructor(url, cb) {
-    // self.on("continue", () => {});
-    // self.on("information", () => {});
-    // self.on("response", () => {});
-    // self.on("timeout", () => {});
+export class ClientRequest extends OutgoingMessage {
+  constructor(opts, cb) {
+    super();
+
+    if (cb) this.once("response", cb);
+
+    if (opts.auth) {
+      this.setHeader(
+        "Authorization",
+        "Basic " + Buffer.from(opts.auth).toString("base64"),
+      );
+    }
+
+    if (opts.headers) {
+      for (const key in opts.headers) {
+        this.appendHeader(key, opts.headers[key]);
+      }
+    }
   }
 
+  _writev() {
+    throw new Error("not implemented");
+  }
+
+  #req;
+  #res;
   aborted;
   host;
   protocol;
@@ -111,6 +131,45 @@ export class ClientRequest extends Writable {
   maxHeadersCount;
   method;
   path;
+
+  abort() {
+    throw new Error("not implemented");
+  }
+
+  onSocket() {
+    throw new Error("not implemented");
+  }
+
+  setNoDelay(noDelay) {
+    throw new Error("not implemented");
+  }
+
+  setSocketKeepAlive(enable, initialDelay) {
+    throw new Error("not implemented");
+  }
+
+  getRawHeaderNames() {
+    throw new Error("not implemented");
+  }
+}
+
+export function request(url, opts, cb) {
+  let httpOptions;
+
+  if (url instanceof URL) {
+    httpOptions = urlToHttpOptions(url);
+  } else if (typeof url === "string") {
+    httpOptions = urlToHttpOptions(new URL(url));
+  } else {
+    httpOptions = url;
+  }
+
+  if (opts && typeof opts === "object") {
+    httpOptions = { ...httpOptions, ...opts };
+    return new ClientRequest(httpOptions, cb);
+  }
+
+  return new ClientRequest(httpOptions, opts);
 }
 
 export function createServer(options, callback) {
@@ -243,6 +302,7 @@ export class IncomingMessage extends Readable {
 
     this.url = url.pathname;
     assignHeaders(this, req);
+    console.log("ASSIGNED HEADERS");
   }
 
   headers;
@@ -719,6 +779,7 @@ var defaultObject = {
   IncomingMessage,
   ClientRequest,
   OutgoingMessage,
+  request,
 };
 
 var wrapper =

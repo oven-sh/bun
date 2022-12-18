@@ -1,7 +1,117 @@
 const { EventEmitter } = import.meta.require("node:events");
-const { Readable, Writable } = import.meta.require("node:stream");
+const { Readable, Writable, Stream } = import.meta.require("node:stream");
 
 const { newArrayWithSize, isPromise } = import.meta.primordials;
+
+export class OutgoingMessage extends Writable {
+  #headers = new Headers();
+  #socket = undefined;
+  headersSent = false;
+  sendDate = true;
+  req;
+
+  // So that headers are accessible outside of `OutgoingMessage`
+  get _headers() {
+    return this.#headers;
+  }
+
+  get shouldKeepAlive() {
+    return true;
+  }
+
+  get chunkedEncoding() {
+    return false;
+  }
+
+  set chunkedEncoding(value) {
+    // throw new Error('not implemented');
+  }
+
+  set shouldKeepAlive(value) {
+    // throw new Error('not implemented');
+  }
+
+  get useChunkedEncodingByDefault() {
+    return true;
+  }
+
+  set useChunkedEncodingByDefault(value) {
+    // throw new Error('not implemented');
+  }
+
+  get socket() {
+    var _socket = this.#socket;
+    if (_socket) return _socket;
+
+    this.#socket = _socket = new EventEmitter();
+    this.on("end", () => _socket.emit("end"));
+    this.on("close", () => _socket.emit("close"));
+
+    return _socket;
+  }
+
+  get connection() {
+    return this.socket;
+  }
+
+  appendHeader(name, value) {
+    this.#headers.append(name, value);
+  }
+
+  flushHeaders() {}
+
+  getHeader(name) {
+    return this.#headers.get(name);
+  }
+
+  getHeaders() {
+    if (!this.#headers) return {};
+    return this.#headers.toJSON();
+  }
+
+  getHeaderNames() {
+    var headers = this.#headers;
+    return Array.from(headers.keys());
+  }
+
+  removeHeader(name) {
+    this.#headers.delete(name);
+  }
+
+  setHeader(name, value) {
+    this.#headers.set(name, value);
+    return this;
+  }
+
+  hasHeader(name) {
+    return this.#headers.has(name);
+  }
+
+  addTrailers(headers) {
+    throw new Error("not implemented");
+  }
+
+  setTimeout(msecs, callback) {
+    throw new Error("not implemented");
+  }
+}
+
+export class ClientRequest extends Writable {
+  constructor(url, cb) {
+    // self.on("continue", () => {});
+    // self.on("information", () => {});
+    // self.on("response", () => {});
+    // self.on("timeout", () => {});
+  }
+
+  aborted;
+  host;
+  protocol;
+  reusedSocket;
+  maxHeadersCount;
+  method;
+  path;
+}
 
 export function createServer(options, callback) {
   return new Server(options, callback);
@@ -261,14 +371,12 @@ export class IncomingMessage extends Readable {
   }
 }
 
-export class ServerResponse extends Writable {
+export class ServerResponse extends OutgoingMessage {
   constructor({ req, reply }) {
     super();
     this.req = req;
     this._reply = reply;
-    this.sendDate = true;
     this.statusCode = 200;
-    this.#headers = new Headers();
     this.headersSent = false;
     this.statusMessage = undefined;
     this.#controller = undefined;
@@ -277,12 +385,8 @@ export class ServerResponse extends Writable {
     this.#deferred = undefined;
   }
 
-  req;
   _reply;
-  sendDate;
   statusCode;
-  #headers;
-  headersSent = false;
   statusMessage;
   #controller;
   #firstWrite;
@@ -292,8 +396,6 @@ export class ServerResponse extends Writable {
   _removedContLen = false;
   #deferred = undefined;
   #finished = false;
-
-  #fakeSocket;
 
   _write(chunk, encoding, callback) {
     if (!this.#firstWrite && !this.headersSent) {
@@ -347,7 +449,7 @@ export class ServerResponse extends Writable {
           },
         }),
         {
-          headers: this.#headers,
+          headers: this._headers,
           status: this.statusCode,
           statusText: this.statusMessage ?? STATUS_CODES[this.statusCode],
         },
@@ -362,7 +464,7 @@ export class ServerResponse extends Writable {
       this.#finished = true;
       this._reply(
         new Response(data, {
-          headers: this.#headers,
+          headers: this._headers,
           status: this.statusCode,
           statusText: this.statusMessage ?? STATUS_CODES[this.statusCode],
         }),
@@ -384,23 +486,11 @@ export class ServerResponse extends Writable {
     });
   }
 
-  get socket() {
-    if (!this.#fakeSocket) {
-      this.#fakeSocket = Object.create(this);
-    }
-
-    return this.#fakeSocket;
-  }
-
-  get connection() {
-    throw new Error("not implemented");
-  }
-
   writeProcessing() {
     throw new Error("not implemented");
   }
 
-  addTrailers(headers) {
+  writeEarlyHints(hints, callback) {
     throw new Error("not implemented");
   }
 
@@ -416,73 +506,10 @@ export class ServerResponse extends Writable {
     throw new Error("not implemented");
   }
 
-  setTimeout(msecs, callback) {
-    throw new Error("not implemented");
-  }
-
-  get shouldKeepAlive() {
-    return true;
-  }
-
-  get chunkedEncoding() {
-    return false;
-  }
-
-  set chunkedEncoding(value) {
-    // throw new Error('not implemented');
-  }
-
-  set shouldKeepAlive(value) {
-    // throw new Error('not implemented');
-  }
-
-  get useChunkedEncodingByDefault() {
-    return true;
-  }
-
-  set useChunkedEncodingByDefault(value) {
-    // throw new Error('not implemented');
-  }
-
-  flushHeaders() {}
-
-  removeHeader(name) {
-    var headers = this.#headers;
-    headers.delete(name);
-  }
-
-  getHeader(name) {
-    var headers = this.#headers;
-    return headers.get(name);
-  }
-
-  hasHeader(name) {
-    var headers = this.#headers;
-    return headers.has(name);
-  }
-
-  getHeaderNames() {
-    var headers = this.#headers;
-    return Array.from(headers.keys());
-  }
-
-  setHeader(name, value) {
-    var headers = this.#headers;
-
-    headers.set(name, value);
-
-    return this;
-  }
-
   writeHead(statusCode, statusMessage, headers) {
     _writeHead(statusCode, statusMessage, headers, this);
 
     return this;
-  }
-
-  getHeaders() {
-    if (!this.#headers) return {};
-    return this.#headers.toJSON();
   }
 }
 
@@ -690,6 +717,8 @@ var defaultObject = {
   createServer,
   ServerResponse,
   IncomingMessage,
+  ClientRequest,
+  OutgoingMessage,
 };
 
 var wrapper =

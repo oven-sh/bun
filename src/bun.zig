@@ -334,7 +334,7 @@ pub fn clone(val: anytype, allocator: std.mem.Allocator) !@TypeOf(val) {
 }
 pub const StringBuilder = @import("./string_builder.zig");
 
-pub inline fn assertDefined(val: anytype) void {
+pub fn assertDefined(val: anytype) void {
     if (comptime !Environment.allow_assert) return;
     const Type = @TypeOf(val);
 

@@ -44,7 +44,7 @@ const ServerBundleGeneratorThread = struct {
         server_conf: Api.LoadedFramework,
         route_conf_: ?Api.LoadedRouteConfig,
         router: ?Router,
-    ) !void {
+    ) anyerror!void {
         var server_bundler = try bundler.Bundler.init(
             allocator_,
             logs,

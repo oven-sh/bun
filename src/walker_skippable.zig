@@ -108,7 +108,7 @@ pub fn next(self: *Walker) !?WalkerEntry {
 }
 
 pub fn deinit(self: *Walker) void {
-    while (self.stack.popOrNull()) |*item| {
+    for (self.stack.items[1..]) |*item| {
         if (self.stack.items.len != 0) {
             item.iter.dir.close();
         }

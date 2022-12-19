@@ -553,26 +553,33 @@ pub fn NewRequestContextStackAllocator(comptime RequestContext: type, comptime c
 
         pub fn get(this: *@This()) std.mem.Allocator {
             this.unused = Set.initFull();
-            return std.mem.Allocator.init(this, alloc, resize, free);
+            return .{
+                .ptr = this,
+                .vtable = &.{
+                    .alloc = alloc,
+                    .resize = resize,
+                    .free = free,
+                },
+            };
         }
 
-        fn alloc(self: *@This(), a: usize, b: u29, c: u29, d: usize) ![]u8 {
+        fn alloc(self_: *anyopaque, a: usize, b: u8, d: usize) ?[*]u8 {
+            const self = @ptrCast(*@This(), @alignCast(@alignOf(@This()), self_));
             if (self.unused.findFirstSet()) |i| {
                 self.unused.unset(i);
                 return std.mem.asBytes(&self.buf[i]);
             }
 
-            return try self.fallback_allocator.rawAlloc(a, b, c, d);
+            return self.fallback_allocator.rawAlloc(a, b, d);
         }
 
         fn resize(
-            _: *@This(),
+            _: *anyopaque,
             _: []u8,
-            _: u29,
+            _: u8,
             _: usize,
-            _: u29,
             _: usize,
-        ) ?usize {
+        ) bool {
             unreachable;
         }
 
@@ -582,11 +589,12 @@ pub fn NewRequestContextStackAllocator(comptime RequestContext: type, comptime c
         }
 
         fn free(
-            self: *@This(),
+            self_: *anyopaque,
             buf: []u8,
-            buf_align: u29,
+            buf_align: u8,
             return_address: usize,
         ) void {
+            const self = @ptrCast(*@This(), @alignCast(@alignOf(@This()), self_));
             const bytes = std.mem.asBytes(&self.buf);
             if (sliceContainsSlice(bytes, buf)) {
                 const index = if (bytes[0..buf.len].ptr != buf.ptr)
@@ -2085,7 +2093,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 this.renderDefaultError(
                     vm.log,
                     error.ExceptionOcurred,
-                    try exception_list.toOwnedSlice(),
+                    exception_list.toOwnedSlice() catch @panic("TODO"),
                     "<r><red>{s}<r> - <b>{s}<r> failed",
                     .{ @as(string, @tagName(this.method)), this.ensurePathname() },
                 );
@@ -2390,7 +2398,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                     if (request.as(Request)) |req| {
                         var old = req.body;
                         old.Locked.onReceiveValue = null;
-                        req.body = .{ .Empty = .{} };
+                        req.body = .{ .Empty = {} };
                         old.resolve(&req.body, this.server.globalThis);
                         return;
                     }
@@ -2401,7 +2409,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                     if (request.as(Request)) |req| {
                         var old = req.body;
                         old.Locked.onReceiveValue = null;
-                        req.body = .{ .Empty = .{} };
+                        req.body = .{ .Empty = {} };
                         old.toError(error.RequestBodyTooLarge, this.server.globalThis);
                         return;
                     }
@@ -2418,7 +2426,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 if (request.as(Request)) |req| {
                     var old = req.body;
                     old.Locked.onReceiveValue = null;
-                    req.body = .{ .Empty = .{} };
+                    req.body = .{ .Empty = {} };
                     old.resolve(&req.body, this.server.globalThis);
                     return;
                 }
@@ -4124,7 +4132,7 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
 
             var url: URL = undefined;
             var first_arg = args.nextEat().?;
-            var body: JSC.WebCore.Body.Value = .{ .Empty = .{} };
+            var body: JSC.WebCore.Body.Value = .{ .Empty = {} };
             var existing_request: ?WebCore.Request = null;
             // TODO: set Host header
             // TODO: set User-Agent header
@@ -4401,7 +4409,8 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
                 if (written > 0) {
                     var message = output_buf[0..written];
                     zig_str = ZigString.init(std.fmt.allocPrint(bun.default_allocator, "OpenSSL {s}", .{message}) catch unreachable);
-                    zig_str.withEncoding().mark();
+                    var encoded_str = zig_str.withEncoding();
+                    encoded_str.mark();
                 }
             }
 
@@ -4516,7 +4525,7 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
                 .uws_request = req,
                 .https = ssl_enabled,
                 .body = .{
-                    .Empty = .{},
+                    .Empty = {},
                 },
             };
 
@@ -4596,7 +4605,7 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
                 .upgrader = ctx,
                 .https = ssl_enabled,
                 .body = .{
-                    .Empty = .{},
+                    .Empty = {},
                 },
             };
             ctx.upgrade_context = upgrade_ctx;

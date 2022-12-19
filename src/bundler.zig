@@ -417,6 +417,8 @@ pub const Bundler = struct {
                 bundler.log.addErrorFmt(null, logger.Loc.Empty, bundler.allocator, "{s} resolving \"{s}\" (entry point)", .{ @errorName(err), entry_point }) catch unreachable;
             }
 
+            if (true) @panic("TODO");
+
             return err;
         };
     }
@@ -1822,7 +1824,7 @@ pub const Bundler = struct {
             );
         }
 
-        var final_result = try options.TransformResult.init(try allocator.dupe(u8, bundler.result.outbase),try bundler.output_files.toOwnedSlice(), log, allocator);
+        var final_result = try options.TransformResult.init(try allocator.dupe(u8, bundler.result.outbase), try bundler.output_files.toOwnedSlice(), log, allocator);
         final_result.root_dir = bundler.options.output_dir_handle;
         return final_result;
     }

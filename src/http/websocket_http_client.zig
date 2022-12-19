@@ -739,7 +739,8 @@ const Copy = union(enum) {
                 std.debug.assert(@as(usize, encode_into_result.read) == utf16.len);
                 header.len = WebsocketHeader.packLength(encode_into_result.written);
                 header.opcode = Opcode.Text;
-                header.writeHeader(std.io.fixedBufferStream(buf).writer(), encode_into_result.written) catch unreachable;
+                var fib = std.io.fixedBufferStream(buf);
+                header.writeHeader(fib.writer(), encode_into_result.written) catch unreachable;
 
                 Mask.fill(globalThis, buf[mask_offset..][0..4], to_mask[0..content_byte_len], to_mask[0..content_byte_len]);
             },
@@ -749,13 +750,15 @@ const Copy = union(enum) {
                 std.debug.assert(@as(usize, encode_into_result.read) == latin1.len);
                 header.len = WebsocketHeader.packLength(encode_into_result.written);
                 header.opcode = Opcode.Text;
-                header.writeHeader(std.io.fixedBufferStream(buf).writer(), encode_into_result.written) catch unreachable;
+                var fib = std.io.fixedBufferStream(buf);
+                header.writeHeader(fib.writer(), encode_into_result.written) catch unreachable;
                 Mask.fill(globalThis, buf[mask_offset..][0..4], to_mask[0..content_byte_len], to_mask[0..content_byte_len]);
             },
             .bytes => |bytes| {
                 header.len = WebsocketHeader.packLength(bytes.len);
                 header.opcode = Opcode.Binary;
-                header.writeHeader(std.io.fixedBufferStream(buf).writer(), bytes.len) catch unreachable;
+                var fib = std.io.fixedBufferStream(buf);
+                header.writeHeader(fib.writer(), bytes.len) catch unreachable;
                 Mask.fill(globalThis, buf[mask_offset..][0..4], to_mask[0..content_byte_len], bytes);
             },
             .raw => unreachable,
@@ -1254,7 +1257,7 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
 
             header.mask = to_mask.len > 0;
             header.len = @truncate(u7, this.ping_len);
-            this.ping_frame_bytes[0..2].* = @bitCast(u16, header);
+            this.ping_frame_bytes[0..2].* = @bitCast([2]u8, header);
 
             if (to_mask.len > 0) {
                 Mask.fill(this.globalThis, this.ping_frame_bytes[2..6], to_mask, to_mask);

@@ -169,7 +169,7 @@ pub const ExternalModules = struct {
             }
         }
 
-        result.patterns = try patterns.toOwnedSlice();
+        result.patterns = patterns.toOwnedSlice() catch @panic("TODO");
 
         return result;
     }

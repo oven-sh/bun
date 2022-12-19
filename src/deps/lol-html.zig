@@ -700,15 +700,15 @@ pub const DocEnd = opaque {
 };
 
 fn DirectiveFunctionType(comptime Container: type) type {
-    return fn (*Container, ?*anyopaque) callconv(.C) Directive;
+    return *const fn (*Container, ?*anyopaque) callconv(.C) Directive;
 }
 
 fn DirectiveFunctionTypeForHandler(comptime Container: type, comptime UserDataType: type) type {
-    return fn (*UserDataType, *Container) bool;
+    return *const fn (*UserDataType, *Container) bool;
 }
 
 fn DocTypeHandlerCallback(comptime UserDataType: type) type {
-    return fn (*DocType, *UserDataType) bool;
+    return *const fn (*DocType, *UserDataType) bool;
 }
 
 pub fn DirectiveHandler(comptime Container: type, comptime UserDataType: type, comptime Callback: (fn (this: *UserDataType, container: *Container) bool)) DirectiveFunctionType(Container) {

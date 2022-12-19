@@ -319,7 +319,7 @@ pub const Response = struct {
                 .init = Body.Init{
                     .status_code = 200,
                 },
-                .value = Body.Value.empty,
+                .value = .{ .Empty = {} },
             },
             .allocator = getAllocator(globalThis),
             .url = "",
@@ -380,7 +380,7 @@ pub const Response = struct {
                 .init = Body.Init{
                     .status_code = 302,
                 },
-                .value = Body.Value.empty,
+                .value = .{ .Empty = {} },
             },
             .allocator = getAllocator(globalThis),
             .url = "",
@@ -424,7 +424,7 @@ pub const Response = struct {
                 .init = Body.Init{
                     .status_code = 0,
                 },
-                .value = Body.Value.empty,
+                .value = .{ .Empty = {} },
             },
             .allocator = getAllocator(globalThis),
             .url = "",
@@ -854,7 +854,8 @@ pub const Fetch = struct {
                     }
 
                     if (options.fastGet(ctx.ptr(), .body)) |body__| {
-                        if (Body.Value.fromJS(ctx.ptr(), body__)) |*body_value| {
+                        if (Body.Value.fromJS(ctx.ptr(), body__)) |body_const| {
+                            var body_value = body_const;
                             // TODO: buffer ReadableStream?
                             // we have to explicitly check for InternalBlob
                             body = body_value.useAsAnyBlob();
@@ -1583,7 +1584,7 @@ pub const Blob = struct {
                 }
             }
         } else {
-            var decoded = try str.toOwnedSlice(jsc_vm.allocator) catch {
+            var decoded = str.toOwnedSlice(jsc_vm.allocator) catch {
                 return JSC.JSPromise.rejectedPromiseValue(globalThis, ZigString.static("Out of memory").toErrorInstance(globalThis));
             };
             defer jsc_vm.allocator.free(decoded);
@@ -4078,7 +4079,7 @@ pub const AnyBlob = union(enum) {
                     return JSC.ArrayBuffer.create(global, "", .ArrayBuffer);
                 }
 
-                var bytes = try this.InternalBlob.toOwnedSlice();
+                var bytes = this.InternalBlob.toOwnedSlice();
                 this.* = .{ .Blob = .{} };
                 const value = JSC.ArrayBuffer.fromBytes(
                     bytes,
@@ -4184,7 +4185,7 @@ pub const InternalBlob = struct {
             this.deinit();
             return return_value;
         } else {
-            var str = try ZigString.init(this.toOwnedSlice());
+            var str = ZigString.init(this.toOwnedSlice());
             str.mark();
             return str.toExternalValue(globalThis);
         }
@@ -4770,7 +4771,7 @@ pub const Body = struct {
                 //     }
                 // }
 
-                var buffer = try str.toOwnedSlice(bun.default_allocator) catch {
+                var buffer = str.toOwnedSlice(bun.default_allocator) catch {
                     globalThis.vm().throwError(globalThis, ZigString.static("Failed to clone string").toErrorInstance(globalThis));
                     return null;
                 };
@@ -4956,12 +4957,12 @@ pub const Body = struct {
                 .Blob => {
                     var new_blob = this.Blob;
                     std.debug.assert(new_blob.allocator == null); // owned by Body
-                    this.* = .{ .Used = .{} };
+                    this.* = .{ .Used = {} };
                     return new_blob;
                 },
                 .InternalBlob => {
                     var new_blob = Blob.init(
-                        try this.InternalBlob.toOwnedSlice(),
+                        this.InternalBlob.toOwnedSlice(),
                         // we will never resize it from here
                         // we have to use the default allocator
                         // even if it was actually allocated on a different thread
@@ -4972,7 +4973,7 @@ pub const Body = struct {
                         new_blob.content_type = MimeType.text.value;
                     }
 
-                    this.* = .{ .Used = .{} };
+                    this.* = .{ .Used = {} };
                     return new_blob;
                 },
                 // .InlineBlob => {
@@ -4984,7 +4985,7 @@ pub const Body = struct {
                 //         this.InlineBlob.was_string,
                 //     );
 
-                //     this.* = .{ .Used = .{} };
+                //     this.* = .{ .Used = {} };
                 //     return new_blob;
                 // },
                 else => {
@@ -5002,7 +5003,7 @@ pub const Body = struct {
                 else => return null,
             };
 
-            this.* = .{ .Used = .{} };
+            this.* = .{ .Used = {} };
             return any_blob;
         }
 
@@ -5082,12 +5083,12 @@ pub const Body = struct {
 
             if (tag == .InternalBlob) {
                 this.InternalBlob.clearAndFree();
-                this.* = Value.empty;
+                this.* = Value{ .Empty = {} }; //Value.empty;
             }
 
             if (tag == .Blob) {
                 this.Blob.deinit();
-                this.* = Value.empty;
+                this.* = Value{ .Empty = {} }; //Value.empty;
             }
 
             if (tag == .Error) {
@@ -5100,7 +5101,7 @@ pub const Body = struct {
                 var internal_blob = this.InternalBlob;
                 this.* = .{
                     .Blob = Blob.init(
-                        try internal_blob.toOwnedSlice(),
+                        internal_blob.toOwnedSlice(),
                         internal_blob.bytes.allocator,
                         globalThis,
                     ),
@@ -5115,7 +5116,7 @@ pub const Body = struct {
                 return Value{ .Blob = this.Blob.dupe() };
             }
 
-            return Value{ .Empty = .{} };
+            return Value{ .Empty = {} };
         }
     };
 
@@ -5125,7 +5126,7 @@ pub const Body = struct {
                 .headers = null,
                 .status_code = 404,
             },
-            .value = Value.empty,
+            .value = Value{ .Empty = {} }, //Value.empty,
         };
     }
 
@@ -5134,7 +5135,7 @@ pub const Body = struct {
             .init = Init{
                 .status_code = 200,
             },
-            .value = Value.empty,
+            .value = Value{ .Empty = {} }, //Value.empty,
         };
     }
 
@@ -5175,6 +5176,7 @@ pub const Body = struct {
         init_type: JSC.JSValue.JSType,
     ) ?Body {
         var body = Body{
+            .value = Value{ .Empty = {} },
             .init = Init{ .headers = null, .status_code = 200 },
         };
         var allocator = getAllocator(globalThis);
@@ -5201,7 +5203,7 @@ pub const Request = struct {
     url_was_allocated: bool = false,
 
     headers: ?*FetchHeaders = null,
-    body: Body.Value = Body.Value{ .Empty = .{} },
+    body: Body.Value = Body.Value{ .Empty = {} },
     method: Method = Method.GET,
     uws_request: ?*uws.Request = null,
     https: bool = false,
@@ -5267,7 +5269,7 @@ pub const Request = struct {
     pub fn fromRequestContext(ctx: *RequestContext) !Request {
         var req = Request{
             .url = std.mem.span(ctx.getFullURL()),
-            .body = Body.Value.empty,
+            .body = .{ .Empty = {} },
             .method = ctx.method,
             .headers = FetchHeaders.createFromPicoHeaders(ctx.request.headers),
             .url_was_allocated = true,

@@ -350,7 +350,7 @@ pub fn print(comptime fmt: string, args: anytype) void {
 ///   BUN_DEBUG_foo=1
 /// To enable all logs, set the environment variable
 ///   BUN_DEBUG_ALL=1
-const _log_fn = fn (comptime fmt: string, args: anytype) callconv(.Inline) void;
+const _log_fn = fn (comptime fmt: string, args: anytype) void;
 pub fn scoped(comptime tag: @Type(.EnumLiteral), comptime disabled: bool) _log_fn {
     if (comptime !Environment.isDebug) {
         return struct {
@@ -373,7 +373,7 @@ pub fn scoped(comptime tag: @Type(.EnumLiteral), comptime disabled: bool) _log_f
         ///   BUN_DEBUG_foo=1
         /// To enable all logs, set the environment variable
         ///   BUN_DEBUG_ALL=1
-        pub inline fn log(comptime fmt: string, args: anytype) void {
+        pub fn log(comptime fmt: string, args: anytype) void {
             if (!evaluated_disable) {
                 evaluated_disable = true;
                 if (bun.getenvZ("BUN_DEBUG_ALL") != null or

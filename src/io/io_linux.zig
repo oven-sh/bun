@@ -709,7 +709,7 @@ pub const Completion = struct {
     // This is one of the usecases for anyopaque outside of C code and as such anyopaque will
     // be replaced with anyopaque eventually: https://github.com/ziglang/zig/issues/323
     context: ?*anyopaque,
-    callback: fn (context: ?*anyopaque, completion: *Completion, result: *const anyopaque) void,
+    callback: *const fn (context: ?*anyopaque, completion: *Completion, result: *const anyopaque) void,
 
     fn prep(completion: *Completion, sqe: *io_uring_sqe) void {
         switch (completion.operation) {

@@ -340,10 +340,11 @@ pub const RequestContext = struct {
                 .jsx = bundler_.options.jsx,
             };
 
-            if (bundler_.parse(
+            var tmp = bundler_.parse(
                 bundler_parse_options,
                 @as(?*bundler.FallbackEntryPoint, &fallback_entry_point),
-            )) |*result| {
+            );
+            if (tmp) |*result| {
                 try bundler_.linker.linkAllowImportingFromBundle(
                     fallback_entry_point.source.path,
                     result,
@@ -1827,9 +1828,6 @@ pub const RequestContext = struct {
                         defer is_socket_closed = true;
 
                         try ctx.sendBadRequest();
-                    },
-                    else => {
-                        return err;
                     },
                 }
             };
@@ -3331,9 +3329,10 @@ pub const Server = struct {
                             Output.prettyErrorln("<r><d>File changed: {s}<r>", .{ctx.bundler.fs.relativeTo(file_path)});
                         }
                     } else {
+                        var tmp = ctx.bundler.options.loaders.get(path.ext) orelse .file;
                         const change_message = Api.WebsocketMessageFileChangeNotification{
                             .id = id,
-                            .loader = (ctx.bundler.options.loaders.get(path.ext) orelse .file).toAPI(),
+                            .loader = tmp.toAPI(),
                         };
 
                         var content_writer = ByteApiWriter.init(&content_fbs);
@@ -3629,7 +3628,7 @@ pub const Server = struct {
 
         // https://stackoverflow.com/questions/686217/maximum-on-http-header-values
         var read_size = conn.client.read(&req_buf_node.data, SOCKET_FLAGS) catch {
-            _ = conn.client.write(RequestContext.printStatusLine(400) ++ "\r\n\r\n", SOCKET_FLAGS) catch {};
+            _ = conn.client.write(comptime RequestContext.printStatusLine(400) ++ "\r\n\r\n", SOCKET_FLAGS) catch {};
             return;
         };
 
@@ -3639,7 +3638,7 @@ pub const Server = struct {
         }
 
         var req = picohttp.Request.parse(req_buf_node.data[0..read_size], &req_headers_buf) catch |err| {
-            _ = conn.client.write(RequestContext.printStatusLine(400) ++ "\r\n\r\n", SOCKET_FLAGS) catch {};
+            _ = conn.client.write(comptime RequestContext.printStatusLine(400) ++ "\r\n\r\n", SOCKET_FLAGS) catch {};
             _ = Syscall.close(conn.client.socket.fd);
             Output.printErrorln("ERR: {s}", .{@errorName(err)});
             return;

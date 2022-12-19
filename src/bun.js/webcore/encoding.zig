@@ -560,7 +560,7 @@ pub const TextDecoder = struct {
             }
         }
 
-        var full = try buffer.toOwnedSlice(allocator);
+        var full = buffer.toOwnedSlice(allocator) catch @panic("TODO");
 
         var out = ZigString.init("");
         out.ptr = @ptrCast([*]u8, full.ptr);

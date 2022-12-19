@@ -651,6 +651,7 @@ pub fn readFileAsBytesCallback(
     errdefer VirtualMachine.vm.allocator.free(contents_buf);
     const contents_len = file.readAll(contents_buf) catch |err| {
         JSError(getAllocator(ctx), "{s} reading file (\"{s}\")", .{ @errorName(err), path }, ctx, exception);
+        if (true) @panic("todo??");
         return js.JSValueMakeUndefined(ctx);
     };
 
@@ -3459,7 +3460,7 @@ pub const JSZlib = struct {
             }
             return ZigString.init("Zlib returned an error").toErrorInstance(globalThis);
         };
-        reader.list = .{ .items = try reader.list.toOwnedSlice(allocator) };
+        reader.list = .{ .items = reader.list.toOwnedSlice(allocator) catch @panic("TODO") };
         reader.list.capacity = reader.list.items.len;
         reader.list_ptr = &reader.list;
 
@@ -3491,7 +3492,7 @@ pub const JSZlib = struct {
             }
             return ZigString.init("Zlib returned an error").toErrorInstance(globalThis);
         };
-        reader.list = .{ .items = try reader.list.toOwnedSlice(allocator) };
+        reader.list = .{ .items = reader.list.toOwnedSlice(allocator) catch @panic("TODO") };
         reader.list.capacity = reader.list.items.len;
         reader.list_ptr = &reader.list;
 
@@ -3521,7 +3522,7 @@ pub const JSZlib = struct {
             }
             return ZigString.init("Zlib returned an error").toErrorInstance(globalThis);
         };
-        reader.list = .{ .items = try reader.list.toOwnedSlice(allocator) };
+        reader.list = .{ .items = reader.list.toOwnedSlice(allocator) catch @panic("TODO") };
         reader.list.capacity = reader.list.items.len;
         reader.list_ptr = &reader.list;
 

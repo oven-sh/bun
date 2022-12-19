@@ -2286,7 +2286,7 @@ pub const Expr = struct {
         if (mime_type.category.isTextLike()) {
             var output = MutableString.initEmpty(allocator);
             output = try JSPrinter.quoteForJSON(bytes, output, true);
-            var list = try output.toOwnedSlice();
+            var list = output.toOwnedSlice();
             // remove the quotes
             if (list.len > 0) {
                 list = list[1 .. list.len - 1];
@@ -5102,7 +5102,7 @@ pub const Macro = struct {
                 _: js.JSStringRef,
                 exception: js.ExceptionRef,
             ) js.JSObjectRef {
-                const args = if (this.data == .e_object) this.data.e_object.properties.slice() else &[_]G.Property{};
+                const args: []G.Property = if (this.data == .e_object) this.data.e_object.properties.slice() else &[_]G.Property{};
 
                 switch (args.len) {
                     0 => return js.JSObjectMakeArray(ctx, 0, null, exception),
@@ -7081,7 +7081,7 @@ pub const Macro = struct {
                                 if (!JSLexer.isIdentifier(alias)) throwTypeError(writer.ctx, "import alias must be an identifier", writer.exception);
 
                                 import.import.items[import_item_i] = ClauseItem{
-                                    .alias = try name.toOwnedSlice(writer.allocator) catch return false,
+                                    .alias = name.toOwnedSlice(writer.allocator) catch return false,
                                     .original_name = alias,
                                     .name = .{ .loc = writer.loc, .ref = Ref.None },
                                     .alias_loc = writer.loc,
@@ -7359,7 +7359,7 @@ pub const Macro = struct {
                                     }
                                 }
                             }
-                            return JSNode{ .data = .{ .inline_inject = try writer.inject.toOwnedSlice() }, .loc = writer.loc };
+                            return JSNode{ .data = .{ .inline_inject = writer.inject.toOwnedSlice() catch @panic("TODO") }, .loc = writer.loc };
                         }
 
                         if (tag == Tag.s_import) {
@@ -7403,7 +7403,7 @@ pub const Macro = struct {
                                 fragment.append(node) catch unreachable;
                             }
 
-                            return JSNode{ .data = .{ .fragment = try fragment.toOwnedSlice() }, .loc = writer.loc };
+                            return JSNode{ .data = .{ .fragment = fragment.toOwnedSlice() catch @panic("TODO") }, .loc = writer.loc };
                         }
 
                         var expr: Expr = Expr{ .loc = writer.loc, .data = .{ .e_null = E.Null{} } };
@@ -8012,7 +8012,7 @@ pub const Macro = struct {
 
                             while (object_iter.next()) |prop| {
                                 properties[object_iter.i] = G.Property{
-                                    .key = Expr.init(E.String, try E.String.init(prop.toOwnedSlice(this.allocator) catch unreachable), this.caller.loc),
+                                    .key = Expr.init(E.String, E.String.init(prop.toOwnedSlice(this.allocator) catch unreachable), this.caller.loc),
                                     .value = try this.run(object_iter.value),
                                 };
                             }

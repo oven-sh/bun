@@ -321,7 +321,8 @@ pub fn copyLowercase(in: string, out: []u8) string {
         for (in_slice) |c, i| {
             switch (c) {
                 'A'...'Z' => {
-                    @memcpy(out_slice.ptr, in_slice.ptr, i);
+                    // @memcpy(out_slice.ptr, in_slice.ptr, i);
+                    std.mem.copy(u8, out_slice, in_slice);
                     out_slice[i] = std.ascii.toLower(c);
                     const end = i + 1;
                     if (end >= out_slice.len) break :begin;
@@ -1781,6 +1782,7 @@ pub fn escapeHTMLForLatin1Input(allocator: std.mem.Allocator, latin1: []const u8
             return Escaped(u8){ .allocated = output };
         }
     };
+    @setEvalBranchQuota(5000);
     switch (latin1.len) {
         0 => return Escaped(u8){ .static = "" },
         1 => return switch (latin1[0]) {

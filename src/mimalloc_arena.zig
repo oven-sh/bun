@@ -23,7 +23,14 @@ pub const GlobalArena = struct {
     }
 
     pub fn allocator(this: *GlobalArena) Allocator {
-        return std.mem.Allocator.init(this, alloc, resize, free);
+        return .{
+            .ptr = this,
+            .vtable = &.{
+                .alloc = alloc,
+                .resize = resize,
+                .free = free,
+            },
+        };
     }
 
     fn alloc(
@@ -34,7 +41,7 @@ pub const GlobalArena = struct {
         return_address: usize,
     ) error{OutOfMemory}![]u8 {
         return self.arena.alloc(len, ptr_align, len_align, return_address) catch
-            return self.fallback_allocator.rawAlloc(len, ptr_align, len_align, return_address);
+            return self.fallback_allocator.rawAlloc(len, ptr_align, return_address) orelse return error.OutOfMemory;
     }
 
     fn resize(
@@ -165,9 +172,9 @@ pub const Arena = struct {
         if (comptime FeatureFlags.log_allocations) std.debug.print("Malloc: {d}\n", .{len});
 
         var ptr = if (mi_malloc_satisfies_alignment(alignment, len))
-            mimalloc.mi_heap_malloc(heap, len)
+            mimalloc.mi_heap_malloc(@ptrCast(*mimalloc.Heap, heap), len)
         else
-            mimalloc.mi_heap_malloc_aligned(heap, len, alignment);
+            mimalloc.mi_heap_malloc_aligned(@ptrCast(*mimalloc.Heap, heap), len, alignment);
 
         return @ptrCast([*]u8, ptr orelse null);
     }
@@ -178,17 +185,18 @@ pub const Arena = struct {
 
     fn alloc(arena: *anyopaque, len: usize, ptr_align: u8, _: usize) ?[*]u8 {
         var this = bun.cast(*Arena, arena);
-        return alignedAlloc(this.heap, len, ptr_align);
+        return alignedAlloc(this.heap.?, len, ptr_align);
     }
 
     fn resize(arena: *anyopaque, buf: []u8, _: u8, new_len: usize, _: usize) bool {
         var this = bun.cast(*Arena, arena);
+        _ = this;
 
         if (new_len <= buf.len) {
             return true;
         }
 
-        const full_len = alignedAllocSize(this.heap, buf.ptr);
+        const full_len = alignedAllocSize(buf.ptr);
         if (new_len <= full_len) {
             return true;
         }

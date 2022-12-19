@@ -476,7 +476,7 @@ pub const HTMLRewriter = struct {
                     if (sink.response.body.value == .Locked and @ptrToInt(sink.response.body.value.Locked.task) == @ptrToInt(sink) and
                         sink.response.body.value.Locked.promise == null)
                     {
-                        sink.response.body.value = .{ .Empty = .{} };
+                        sink.response.body.value = .{ .Empty = {} };
                         // is there a pending promise?
                         // we will need to reject it
                     } else if (sink.response.body.value == .Locked and @ptrToInt(sink.response.body.value.Locked.task) == @ptrToInt(sink) and

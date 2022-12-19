@@ -853,7 +853,7 @@ const PackageInstall = struct {
         skip: void,
         fail: struct {
             err: anyerror,
-            step: Step = Step.clone,
+            step: Step,
 
             pub inline fn isPackageMissingFromCache(this: @This()) bool {
                 return this.err == error.FileNotFound and this.step == .opening_cache_dir;
@@ -1504,8 +1504,8 @@ pub const PackageManager = struct {
     pub const WakeHandler = struct {
         // handler: fn (ctx: *anyopaque, pm: *PackageManager) void = undefined,
         // onDependencyError: fn (ctx: *anyopaque, Dependency, PackageID, anyerror) void = undefined,
-        handler: *anyopaque = undefined,
-        onDependencyError: *anyopaque = undefined,
+        handler: *const anyopaque = undefined,
+        onDependencyError: *const anyopaque = undefined,
         context: ?*anyopaque = null,
 
         pub inline fn getHandler(t: @This()) *const fn (ctx: *anyopaque, pm: *PackageManager) void {
@@ -1521,7 +1521,7 @@ pub const PackageManager = struct {
         if (this.dynamic_root_dependencies) |*dynamic| {
             dynamic.items[dependency_id].failed = err;
             if (this.onWake.context) |ctx| {
-                this.onWake.onDependencyError(
+                this.onWake.getonDependencyError()(
                     ctx,
                     dependency,
                     dependency_id,
@@ -2186,6 +2186,7 @@ pub const PackageManager = struct {
         try network_task.forTarball(
             this.allocator,
             ExtractTarball{
+                .package_manager = &PackageManager.instance, // https://github.com/ziglang/zig/issues/14005
                 .name = if (package.name.len() >= strings.StringOrTinyString.Max)
                     strings.StringOrTinyString.init(
                         try FileSystem.FilenameStore.instance.append(
@@ -2382,6 +2383,7 @@ pub const PackageManager = struct {
     ) *ThreadPool.Task {
         var task = this.allocator.create(Task) catch unreachable;
         task.* = Task{
+            .package_manager = &PackageManager.instance, // https://github.com/ziglang/zig/issues/14005
             .log = logger.Log.init(this.allocator),
             .tag = Task.Tag.package_manifest,
             .request = .{
@@ -2403,6 +2405,7 @@ pub const PackageManager = struct {
     ) *ThreadPool.Task {
         var task = this.allocator.create(Task) catch unreachable;
         task.* = Task{
+            .package_manager = &PackageManager.instance, // https://github.com/ziglang/zig/issues/14005
             .log = logger.Log.init(this.allocator),
             .tag = Task.Tag.extract,
             .request = .{
@@ -2454,7 +2457,8 @@ pub const PackageManager = struct {
         var tmpfile = FileSystem.RealFS.Tmpfile{};
         var secret: [32]u8 = undefined;
         std.mem.writeIntNative(u64, secret[0..8], @intCast(u64, std.time.milliTimestamp()));
-        var rng = std.rand.Xoodoo.init(secret).random();
+        var state = std.rand.Xoodoo.init(secret);
+        const rng = state.random();
         var base64_bytes: [64]u8 = undefined;
         rng.bytes(&base64_bytes);
 
@@ -2691,6 +2695,7 @@ pub const PackageManager = struct {
 
                                 var network_task = this.getNetworkTask();
                                 network_task.* = NetworkTask{
+                                    .package_manager = &PackageManager.instance, // https://github.com/ziglang/zig/issues/14005
                                     .callback = undefined,
                                     .task_id = task_id,
                                     .allocator = this.allocator,
@@ -2730,7 +2735,7 @@ pub const PackageManager = struct {
                     successFn,
                 ) catch |err| brk: {
                     if (err == error.MissingPackageJSON) {
-                        break :brk null;
+                        break :brk @as(?ResolvedPackageResult, null);
                     }
 
                     return err;
@@ -5396,7 +5401,7 @@ pub const PackageManager = struct {
         var new_package_json_source = try ctx.allocator.dupe(u8, package_json_writer.ctx.writtenWithoutTrailingZero());
 
         // Do not free the old package.json AST nodes
-        var old_ast_nodes = try JSAst.Expr.Data.Store.toOwnedSlice();
+        var old_ast_nodes = JSAst.Expr.Data.Store.toOwnedSlice();
         // haha unless
         defer if (auto_free) bun.default_allocator.free(old_ast_nodes);
 
@@ -6179,7 +6184,7 @@ pub const PackageManager = struct {
                 manager.options.lockfile_path,
             )
         else
-            Lockfile.LoadFromDiskResult{ .not_found = .{} };
+            Lockfile.LoadFromDiskResult{ .not_found = {} };
 
         var root = Lockfile.Package{};
         var maybe_root: Lockfile.Package = undefined;

@@ -42,7 +42,7 @@ pub const Bin = extern struct {
 
     pub fn clone(this: Bin, buf: []const u8, prev_external_strings: []const ExternalString, all_extern_strings: []ExternalString, extern_strings_slice: []ExternalString, comptime StringBuilder: type, builder: StringBuilder) Bin {
         return switch (this.tag) {
-            .none => Bin{ .tag = .none, .value = .{ .none = .{} } },
+            .none => Bin{ .tag = .none, .value = .{ .none = {} } },
             .file => Bin{
                 .tag = .file,
                 .value = .{ .file = builder.append(String, this.value.file.slice(buf)) },

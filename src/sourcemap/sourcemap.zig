@@ -701,7 +701,7 @@ pub const LineOffsetTable = struct {
                         continue;
                     }
 
-                    var owned = try columns_for_non_ascii.toOwnedSlice();
+                    var owned = columns_for_non_ascii.toOwnedSlice();
                     if (stack_fallback.fixed_buffer_allocator.ownsSlice(std.mem.sliceAsBytes(owned))) {
                         owned = allocator.dupe(i32, owned) catch unreachable;
                     }

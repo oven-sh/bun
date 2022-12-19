@@ -219,7 +219,7 @@ pub fn NewSocketHandler(comptime ssl: bool) type {
             comptime ContextType: type,
             comptime Fields: anytype,
         ) void {
-            const type = comptime if (@TypeOf(Fields) != type) @TypeOf(Fields) else Fields;
+            const @"type" = comptime if (@TypeOf(Fields) != type) @TypeOf(Fields) else Fields;
 
             const SocketHandler = struct {
                 const alignment = if (ContextType == anyopaque)
@@ -302,19 +302,19 @@ pub fn NewSocketHandler(comptime ssl: bool) type {
                 }
             };
 
-            if (comptime @hasDecl(type, "onOpen") and @typeInfo(@TypeOf(type.onOpen)) != .Null)
+            if (comptime @hasDecl(@"type", "onOpen") and @typeInfo(@TypeOf(@"type".onOpen)) != .Null)
                 us_socket_context_on_open(ssl_int, ctx, SocketHandler.on_open);
-            if (comptime @hasDecl(type, "onClose") and @typeInfo(@TypeOf(type.onClose)) != .Null)
+            if (comptime @hasDecl(@"type", "onClose") and @typeInfo(@TypeOf(@"type".onClose)) != .Null)
                 us_socket_context_on_close(ssl_int, ctx, SocketHandler.on_close);
-            if (comptime @hasDecl(type, "onData") and @typeInfo(@TypeOf(type.onData)) != .Null)
+            if (comptime @hasDecl(@"type", "onData") and @typeInfo(@TypeOf(@"type".onData)) != .Null)
                 us_socket_context_on_data(ssl_int, ctx, SocketHandler.on_data);
-            if (comptime @hasDecl(type, "onWritable") and @typeInfo(@TypeOf(type.onWritable)) != .Null)
+            if (comptime @hasDecl(@"type", "onWritable") and @typeInfo(@TypeOf(@"type".onWritable)) != .Null)
                 us_socket_context_on_writable(ssl_int, ctx, SocketHandler.on_writable);
-            if (comptime @hasDecl(type, "onTimeout") and @typeInfo(@TypeOf(type.onTimeout)) != .Null)
+            if (comptime @hasDecl(@"type", "onTimeout") and @typeInfo(@TypeOf(@"type".onTimeout)) != .Null)
                 us_socket_context_on_timeout(ssl_int, ctx, SocketHandler.on_timeout);
-            if (comptime @hasDecl(type, "onConnectError") and @typeInfo(@TypeOf(type.onConnectError)) != .Null)
+            if (comptime @hasDecl(@"type", "onConnectError") and @typeInfo(@TypeOf(@"type".onConnectError)) != .Null)
                 us_socket_context_on_connect_error(ssl_int, ctx, SocketHandler.on_connect_error);
-            if (comptime @hasDecl(type, "onEnd") and @typeInfo(@TypeOf(type.onEnd)) != .Null)
+            if (comptime @hasDecl(@"type", "onEnd") and @typeInfo(@TypeOf(@"type".onEnd)) != .Null)
                 us_socket_context_on_end(ssl_int, ctx, SocketHandler.on_end);
         }
 
@@ -562,13 +562,13 @@ extern fn us_socket_context_on_server_name(ssl: i32, context: ?*SocketContext, c
 extern fn us_socket_context_get_native_handle(ssl: i32, context: ?*SocketContext) ?*anyopaque;
 pub extern fn us_create_socket_context(ssl: i32, loop: ?*Loop, ext_size: i32, options: us_socket_context_options_t) ?*SocketContext;
 pub extern fn us_socket_context_free(ssl: i32, context: ?*SocketContext) void;
-extern fn us_socket_context_on_open(ssl: i32, context: ?*SocketContext, on_open: fn (*Socket, i32, [*c]u8, i32) callconv(.C) ?*Socket) void;
-extern fn us_socket_context_on_close(ssl: i32, context: ?*SocketContext, on_close: fn (*Socket, i32, ?*anyopaque) callconv(.C) ?*Socket) void;
-extern fn us_socket_context_on_data(ssl: i32, context: ?*SocketContext, on_data: fn (*Socket, [*c]u8, i32) callconv(.C) ?*Socket) void;
-extern fn us_socket_context_on_writable(ssl: i32, context: ?*SocketContext, on_writable: fn (*Socket) callconv(.C) ?*Socket) void;
-extern fn us_socket_context_on_timeout(ssl: i32, context: ?*SocketContext, on_timeout: fn (*Socket) callconv(.C) ?*Socket) void;
-extern fn us_socket_context_on_connect_error(ssl: i32, context: ?*SocketContext, on_connect_error: fn (*Socket, i32) callconv(.C) ?*Socket) void;
-extern fn us_socket_context_on_end(ssl: i32, context: ?*SocketContext, on_end: fn (*Socket) callconv(.C) ?*Socket) void;
+extern fn us_socket_context_on_open(ssl: i32, context: ?*SocketContext, on_open: *const fn (*Socket, i32, [*c]u8, i32) callconv(.C) ?*Socket) void;
+extern fn us_socket_context_on_close(ssl: i32, context: ?*SocketContext, on_close: *const fn (*Socket, i32, ?*anyopaque) callconv(.C) ?*Socket) void;
+extern fn us_socket_context_on_data(ssl: i32, context: ?*SocketContext, on_data: *const fn (*Socket, [*c]u8, i32) callconv(.C) ?*Socket) void;
+extern fn us_socket_context_on_writable(ssl: i32, context: ?*SocketContext, on_writable: *const fn (*Socket) callconv(.C) ?*Socket) void;
+extern fn us_socket_context_on_timeout(ssl: i32, context: ?*SocketContext, on_timeout: *const fn (*Socket) callconv(.C) ?*Socket) void;
+extern fn us_socket_context_on_connect_error(ssl: i32, context: ?*SocketContext, on_connect_error: *const fn (*Socket, i32) callconv(.C) ?*Socket) void;
+extern fn us_socket_context_on_end(ssl: i32, context: ?*SocketContext, on_end: *const fn (*Socket) callconv(.C) ?*Socket) void;
 extern fn us_socket_context_ext(ssl: i32, context: ?*SocketContext) ?*anyopaque;
 
 pub extern fn us_socket_context_listen(ssl: i32, context: ?*SocketContext, host: [*c]const u8, port: i32, options: i32, socket_ext_size: i32) ?*ListenSocket;
@@ -836,9 +836,9 @@ pub const WebSocketBehavior = extern struct {
                 var ws = @unionInit(AnyWebSocket, active_field_name, @ptrCast(*WebSocket, raw_ws));
                 var this = ws.as(Type).?;
                 @call(
-                    .{ .modifier = .always_inline },
+                    .always_inline,
                     Type.onMessage,
-                    .{ this, ws, if (length > 0) message.?[0..length] else "", opcode },
+                    .{ this, ws, if (length > 0) message[0..length] else "", opcode },
                 );
             }
             pub fn _drain(raw_ws: *RawWebSocket) callconv(.C) void {
@@ -855,7 +855,7 @@ pub const WebSocketBehavior = extern struct {
                 @call(.always_inline, Type.onPing, .{
                     this,
                     ws,
-                    if (length > 0) message.?[0..length] else "",
+                    if (length > 0) message[0..length] else "",
                 });
             }
             pub fn _pong(raw_ws: *RawWebSocket, message: [*c]const u8, length: usize) callconv(.C) void {
@@ -864,26 +864,26 @@ pub const WebSocketBehavior = extern struct {
                 @call(.always_inline, Type.onPong, .{
                     this,
                     ws,
-                    if (length > 0) message.?[0..length] else "",
+                    if (length > 0) message[0..length] else "",
                 });
             }
             pub fn _close(raw_ws: *RawWebSocket, code: i32, message: [*c]const u8, length: usize) callconv(.C) void {
                 var ws = @unionInit(AnyWebSocket, active_field_name, @ptrCast(*WebSocket, raw_ws));
                 var this = ws.as(Type).?;
                 @call(
-                    .{ .modifier = .always_inline },
+                    .always_inline,
                     Type.onClose,
                     .{
                         this,
                         ws,
                         code,
-                        if (length > 0) message.?[0..length] else "",
+                        if (length > 0) message[0..length] else "",
                     },
                 );
             }
             pub fn _upgrade(ptr: *anyopaque, res: *uws_res, req: *Request, context: *uws_socket_context_t, id: usize) callconv(.C) void {
                 @call(
-                    .{ .modifier = .always_inline },
+                    .always_inline,
                     Server.onWebSocketUpgrade,
                     .{ bun.cast(*Server, ptr), @ptrCast(*NewApp(is_ssl).Response, res), req, context, id },
                 );
@@ -996,7 +996,7 @@ pub fn NewApp(comptime ssl: bool) type {
 
                     if (comptime UserDataType == void) {
                         return @call(
-                            .{ .modifier = .always_inline },
+                            .always_inline,
                             handler,
                             .{
                                 void{},
@@ -1006,7 +1006,7 @@ pub fn NewApp(comptime ssl: bool) type {
                         );
                     } else {
                         return @call(
-                            .{ .modifier = .always_inline },
+                            .always_inline,
                             handler,
                             .{
                                 @ptrCast(UserDataType, @alignCast(@alignOf(UserDataType), user_data.?)),

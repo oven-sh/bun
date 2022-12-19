@@ -1028,7 +1028,7 @@ pub const Subprocess = struct {
         var cwd = jsc_vm.bundler.fs.top_level_dir;
 
         var stdio = [3]Stdio{
-            .{ .ignore = .{} },
+            .{ .ignore = {} },
             .{ .pipe = null },
             .{ .inherit = {} },
         };
@@ -1762,7 +1762,8 @@ pub const Subprocess = struct {
         } else if (value.as(JSC.WebCore.Response)) |req| {
             req.getBodyValue().toBlobIfPossible();
             return extractStdioBlob(globalThis, req.getBodyValue().useAsAnyBlob(), i, stdio_array);
-        } else if (JSC.WebCore.ReadableStream.fromJS(value, globalThis)) |*req| {
+        } else if (JSC.WebCore.ReadableStream.fromJS(value, globalThis)) |req_const| {
+            var req = req_const;
             if (i == std.os.STDIN_FILENO) {
                 if (req.toAnyBlob(globalThis)) |blob| {
                     return extractStdioBlob(globalThis, blob, i, stdio_array);
@@ -1776,7 +1777,7 @@ pub const Subprocess = struct {
                             return false;
                         }
 
-                        stdio_array[i] = .{ .pipe = req.* };
+                        stdio_array[i] = .{ .pipe = req };
                         return true;
                     },
                     else => {},

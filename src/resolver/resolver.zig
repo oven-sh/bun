@@ -803,7 +803,8 @@ pub const Resolver = struct {
         // defer r.mutex.unlock();
         errdefer (r.flushDebugLogs(.fail) catch {});
 
-        switch (r.resolveWithoutSymlinks(source_dir, import_path, kind, global_cache)) {
+        var tmp = r.resolveWithoutSymlinks(source_dir, import_path, kind, global_cache);
+        switch (tmp) {
             .success => |*result| {
                 if (!strings.eqlComptime(result.path_pair.primary.namespace, "node"))
                     r.finalizeResult(result, kind) catch |err| return .{ .failure = err };
@@ -1682,9 +1683,10 @@ pub const Resolver = struct {
                                 // directory path accidentally being interpreted as URL escapes.
                                 const esm_resolution = esmodule.resolve("/", esm.subpath, exports_map.root);
 
-                                if (r.handleESMResolution(esm_resolution, abs_package_path, kind, package_json, esm.subpath)) |*result| {
-                                    result.is_node_module = true;
-                                    return .{ .success = result.* };
+                                if (r.handleESMResolution(esm_resolution, abs_package_path, kind, package_json, esm.subpath)) |result| {
+                                    var result_copy = result;
+                                    result_copy.is_node_module = true;
+                                    return .{ .success = result_copy };
                                 }
 
                                 return .{ .not_found = {} };
@@ -1697,7 +1699,8 @@ pub const Resolver = struct {
                             debug.addNoteFmt("Checking for a package in the directory \"{s}\"", .{abs_path});
                         }
 
-                        if (r.loadAsFileOrDirectory(abs_path, kind)) |*res| {
+                        var tmp = r.loadAsFileOrDirectory(abs_path, kind);
+                        if (tmp) |*res| {
                             res.is_node_module = true;
                             return .{ .success = res.* };
                         }
@@ -2011,10 +2014,11 @@ pub const Resolver = struct {
                 // If this was resolved against an expansion key ending in a "/"
                 // instead of a "*", we need to try CommonJS-style implicit
                 // extension and/or directory detection.
-                if (r.loadAsFileOrDirectory(abs_esm_path, kind)) |*res| {
-                    res.is_node_module = true;
-                    res.package_json = res.package_json orelse package_json;
-                    return res.*;
+                if (r.loadAsFileOrDirectory(abs_esm_path, kind)) |res| {
+                    var res_copy = res;
+                    res_copy.is_node_module = true;
+                    res_copy.package_json = res.package_json orelse package_json;
+                    return res_copy;
                 }
                 esm_resolution.status = .ModuleNotFound;
                 return null;
@@ -3057,9 +3061,10 @@ pub const Resolver = struct {
         }
 
         // Look for an "index" file with known extensions
-        if (r.loadAsIndexWithBrowserRemapping(dir_info, path, extension_order)) |*res| {
-            res.package_json = res.package_json orelse package_json;
-            return res.*;
+        if (r.loadAsIndexWithBrowserRemapping(dir_info, path, extension_order)) |res| {
+            var res_copy = res;
+            res_copy.package_json = res.package_json orelse package_json;
+            return res_copy;
         }
 
         return null;

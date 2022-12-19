@@ -93,7 +93,7 @@ pub const Resolution = extern struct {
                 .gitlab => Resolution.Value{
                     .gitlab = this.value.gitlab.clone(buf, Builder, builder),
                 },
-                .root => Resolution.Value{ .root = .{} },
+                .root => Resolution.Value{ .root = {} },
                 else => unreachable,
             },
         };

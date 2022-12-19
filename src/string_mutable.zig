@@ -198,7 +198,7 @@ pub const MutableString = struct {
     }
 
     pub fn toOwnedSlice(self: *MutableString) string {
-        return try self.list.toOwnedSlice(self.allocator);
+        return self.list.toOwnedSlice(self.allocator) catch @panic("TODO");
     }
 
     pub fn toOwnedSliceLeaky(self: *MutableString) []u8 {
@@ -218,7 +218,7 @@ pub const MutableString = struct {
 
     pub fn toOwnedSliceLength(self: *MutableString, length: usize) string {
         self.list.shrinkAndFree(self.allocator, length);
-        return try self.list.toOwnedSlice(self.allocator);
+        return self.list.toOwnedSlice(self.allocator) catch @panic("TODO");
     }
 
     // pub fn deleteAt(self: *MutableString, i: usize)  {
@@ -430,5 +430,5 @@ test "MutableString BufferedWriter" {
     try writer.writeAll("hello world hello world hello world hello world hello world hello world");
     try writer.context.flush();
     str = writer.context.context.*;
-    try std.testing.expectEqualStrings("hello world hello world hello world hello world hello world hello world", try str.toOwnedSlice());
+    try std.testing.expectEqualStrings("hello world hello world hello world hello world hello world hello world", str.toOwnedSlice());
 }

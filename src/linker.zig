@@ -386,6 +386,7 @@ pub const Linker = struct {
                         }
                     }
 
+                    if (true) @panic("TODO");
                     var resolved_import_ = brk: {
                         switch (import_record.tag) {
                             else => {},

@@ -743,10 +743,10 @@ pub const FFI = struct {
         extern fn pthread_jit_write_protect_np(enable: bool) callconv(.C) void;
 
         const MyFunctionSStructWorkAround = struct {
-            JSVALUE_TO_INT64: fn (JSValue0: JSC.JSValue) callconv(.C) i64,
-            JSVALUE_TO_UINT64: fn (JSValue0: JSC.JSValue) callconv(.C) u64,
-            INT64_TO_JSVALUE: fn (arg0: [*c]JSC.JSGlobalObject, arg1: i64) callconv(.C) JSC.JSValue,
-            UINT64_TO_JSVALUE: fn (arg0: [*c]JSC.JSGlobalObject, arg1: u64) callconv(.C) JSC.JSValue,
+            JSVALUE_TO_INT64: *const fn (JSValue0: JSC.JSValue) callconv(.C) i64,
+            JSVALUE_TO_UINT64: *const fn (JSValue0: JSC.JSValue) callconv(.C) u64,
+            INT64_TO_JSVALUE: *const fn (arg0: [*c]JSC.JSGlobalObject, arg1: i64) callconv(.C) JSC.JSValue,
+            UINT64_TO_JSVALUE: *const fn (arg0: [*c]JSC.JSGlobalObject, arg1: u64) callconv(.C) JSC.JSValue,
             bun_call: *const @TypeOf(JSC.C.JSObjectCallAsFunction),
         };
         const headers = @import("../bindings/headers.zig");
@@ -832,7 +832,7 @@ pub const FFI = struct {
                 return;
             }
 
-            var bytes: []u8 = try allocator.rawAlloc(@intCast(usize, relocation_size), 16, 16, 0);
+            var bytes: []u8 = try allocator.alloc(u8, @intCast(usize, relocation_size));
             defer {
                 if (this.step == .failed) {
                     allocator.free(bytes);
@@ -992,7 +992,7 @@ pub const FFI = struct {
                 return;
             }
 
-            var bytes: []u8 = try allocator.rawAlloc(@intCast(usize, relocation_size), 16, 16, 0);
+            var bytes: []u8 = try allocator.alloc(u8, @intCast(usize, relocation_size));
             defer {
                 if (this.step == .failed) {
                     allocator.free(bytes);

@@ -191,7 +191,7 @@ pub fn getSelfExeSharedLibPaths(allocator: std.mem.Allocator) error{OutOfMemory}
         => {
             var paths = List.init(allocator);
             errdefer {
-                const slice = try paths.toOwnedSlice();
+                const slice = paths.toOwnedSlice() catch &.{};
                 for (slice) |item| {
                     allocator.free(item);
                 }
@@ -213,7 +213,7 @@ pub fn getSelfExeSharedLibPaths(allocator: std.mem.Allocator) error{OutOfMemory}
         .macos, .ios, .watchos, .tvos => {
             var paths = List.init(allocator);
             errdefer {
-                const slice = try paths.toOwnedSlice();
+                const slice = paths.toOwnedSlice() catch &.{};
                 for (slice) |item| {
                     allocator.free(item);
                 }
@@ -233,7 +233,7 @@ pub fn getSelfExeSharedLibPaths(allocator: std.mem.Allocator) error{OutOfMemory}
         .haiku => {
             var paths = List.init(allocator);
             errdefer {
-                const slice = try paths.toOwnedSlice();
+                const slice = paths.toOwnedSlice() catch &.{};
                 for (slice) |item| {
                     allocator.free(item);
                 }

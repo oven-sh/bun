@@ -1376,7 +1376,7 @@ pub const SideEffects = enum(u1) {
                     findIdentifiers(decl.binding, &decls);
                 }
 
-                local.decls = try decls.toOwnedSlice();
+                local.decls = decls.toOwnedSlice() catch @panic("TODO");
                 return true;
             },
 
@@ -2789,7 +2789,7 @@ pub const Parser = struct {
                                     .import_record_index = import_record_id,
                                 },
                             ) catch unreachable;
-                            p.is_import_item.put(p.allocator, automatic_namespace_ref, .{}) catch unreachable;
+                            p.is_import_item.put(p.allocator, automatic_namespace_ref, {}) catch unreachable;
                             import_records[import_record_i] = import_record_id;
                             import_record_i += 1;
                         }
@@ -2872,7 +2872,7 @@ pub const Parser = struct {
                                     .import_record_index = import_record_id,
                                 },
                             ) catch unreachable;
-                            p.is_import_item.put(p.allocator, classic_namespace_ref, .{}) catch unreachable;
+                            p.is_import_item.put(p.allocator, classic_namespace_ref, {}) catch unreachable;
                             import_records[import_record_i] = import_record_id;
                             declared_symbols[declared_symbols_i] = .{ .ref = classic_namespace_ref, .is_top_level = true };
                             declared_symbols_i += 1;
@@ -2907,7 +2907,7 @@ pub const Parser = struct {
                                         .import_record_index = import_record_id,
                                     },
                                 ) catch unreachable;
-                                p.is_import_item.put(p.allocator, p.jsx_refresh_runtime.ref, .{}) catch unreachable;
+                                p.is_import_item.put(p.allocator, p.jsx_refresh_runtime.ref, {}) catch unreachable;
                                 import_records[import_record_i] = import_record_id;
                             }
                             p.recordUsage(p.jsx_refresh_runtime.ref);
@@ -3053,7 +3053,7 @@ pub const Parser = struct {
                                 .import_record_index = import_record_id,
                             },
                         ) catch unreachable;
-                        p.is_import_item.put(p.allocator, p.jsx_refresh_runtime.ref, .{}) catch unreachable;
+                        p.is_import_item.put(p.allocator, p.jsx_refresh_runtime.ref, {}) catch unreachable;
                         var import_records = try p.allocator.alloc(@TypeOf(import_record_id), 1);
                         import_records[0] = import_record_id;
                         declared_symbols[0] = .{ .ref = p.jsx_refresh_runtime.ref, .is_top_level = true };
@@ -3133,7 +3133,7 @@ pub const Parser = struct {
                                         .import_record_index = import_record_id,
                                     },
                                 );
-                                p.is_import_item.putAssumeCapacity(ref, .{});
+                                p.is_import_item.putAssumeCapacity(ref, {});
                                 j += 1;
                             }
                         }
@@ -4882,7 +4882,7 @@ fn NewParser_(
                     .name = LocRef{ .ref = ref, .loc = logger.Loc{} },
                 };
                 declared_symbols[i] = js_ast.DeclaredSymbol{ .ref = ref, .is_top_level = true };
-                try p.is_import_item.put(allocator, ref, .{});
+                try p.is_import_item.put(allocator, ref, {});
                 try p.named_imports.put(ref, js_ast.NamedImport{
                     .alias = alias_name,
                     .alias_loc = logger.Loc{},
@@ -6370,14 +6370,14 @@ fn NewParser_(
                 if (stmt.default_name) |name_loc| {
                     const name = p.loadNameFromRef(name_loc.ref.?);
                     const ref = try p.declareSymbol(.other, name_loc.loc, name);
-                    try p.is_import_item.put(p.allocator, ref, .{});
+                    try p.is_import_item.put(p.allocator, ref, {});
                     try p.macro.refs.put(ref, id);
                 }
 
                 for (stmt.items) |item| {
                     const name = p.loadNameFromRef(item.name.ref.?);
                     const ref = try p.declareSymbol(.other, item.name.loc, name);
-                    try p.is_import_item.put(p.allocator, ref, .{});
+                    try p.is_import_item.put(p.allocator, ref, {});
                     try p.macro.refs.put(ref, id);
                 }
 
@@ -6393,7 +6393,7 @@ fn NewParser_(
                     if (strings.eqlComptime(item.alias, "plugin")) {
                         const name = p.loadNameFromRef(item.name.ref.?);
                         const ref = try p.declareSymbol(.other, item.name.loc, name);
-                        try p.is_import_item.put(p.allocator, ref, .{});
+                        try p.is_import_item.put(p.allocator, ref, {});
                         p.bun_plugin.ref = ref;
                         plugin_i = i;
                         break;
@@ -6459,7 +6459,7 @@ fn NewParser_(
                     const name = p.loadNameFromRef(name_loc.ref.?);
                     const ref = try p.declareSymbol(.import, name_loc.loc, name);
                     name_loc.ref = ref;
-                    try p.is_import_item.put(p.allocator, ref, .{});
+                    try p.is_import_item.put(p.allocator, ref, {});
 
                     if (macro_remap) |*remap| {
                         if (remap.get("default")) |remapped_path| {
@@ -6510,7 +6510,7 @@ fn NewParser_(
                 const ref = try p.declareSymbol(.import, item.name.loc, name);
                 item.name.ref = ref;
 
-                try p.is_import_item.put(p.allocator, ref, .{});
+                try p.is_import_item.put(p.allocator, ref, {});
                 p.checkForNonBMPCodePoint(item.alias_loc, item.alias);
 
                 if (macro_remap) |*remap| {
@@ -9400,7 +9400,7 @@ fn NewParser_(
                 } else {
                     // Ensure that EImportIdentifier is created for the symbol in handleIdentifier
                     if (symbol.kind == .import and kind != .import) {
-                        try p.is_import_item.put(p.allocator, ref, .{});
+                        try p.is_import_item.put(p.allocator, ref, {});
                     }
 
                     p.symbols.items[ref.innerIndex()].link = existing.ref;
@@ -11182,7 +11182,7 @@ fn NewParser_(
                         left = p.newExpr(E.Binary{ .op = Op.Code.bin_logical_or, .left = left, .right = right }, left.loc);
 
                         if (level.lt(.nullish_coalescing)) {
-                            left = try p.parseSuffix(left, Level.nullish_coalescing.add(1), null, flags);
+                            left = try p.parseSuffix(left, Level.nullish_coalescing.addF(1), null, flags);
 
                             if (p.lexer.token == .t_question_question) {
                                 try p.lexer.unexpected();
@@ -11214,7 +11214,7 @@ fn NewParser_(
 
                         // Prevent "&&" inside "??" from the left
                         if (level.lt(.nullish_coalescing)) {
-                            left = try p.parseSuffix(left, Level.nullish_coalescing.add(1), null, flags);
+                            left = try p.parseSuffix(left, Level.nullish_coalescing.addF(1), null, flags);
 
                             if (p.lexer.token == .t_question_question) {
                                 try p.lexer.unexpected();
@@ -11400,7 +11400,7 @@ fn NewParser_(
                     const name_ref = p.declareSymbol(.import, this.loc, clause.original_name) catch unreachable;
                     clause.name = LocRef{ .loc = this.loc, .ref = name_ref };
 
-                    p.is_import_item.putAssumeCapacity(name_ref, .{});
+                    p.is_import_item.putAssumeCapacity(name_ref, {});
 
                     p.macro.imports.putAssumeCapacity(js_ast.Macro.JSNode.SymbolMap.generateImportHash(import_hash_name, import_data.path), name_ref);
 
@@ -12902,7 +12902,7 @@ fn NewParser_(
             var stmts = ListManaged(Stmt).fromOwnedSlice(p.allocator, body.stmts);
             var temp_opts = PrependTempRefsOpts{ .kind = StmtsKind.fn_body, .fn_body_loc = body.loc };
             p.visitStmtsAndPrependTempRefs(&stmts, &temp_opts) catch unreachable;
-            func.body = G.FnBody{ .stmts = try stmts.toOwnedSlice(), .loc = body.loc };
+            func.body = G.FnBody{ .stmts = stmts.toOwnedSlice() catch @panic("TODO"), .loc = body.loc };
 
             p.popScope();
             p.popScope();
@@ -13581,10 +13581,10 @@ fn NewParser_(
 
                                         // we need to wrap the template in a function
                                         const ret = p.newExpr(E.Identifier{ .ref = solid.component_body_decls.items[0].binding.data.b_identifier.ref }, expr.loc);
-                                        solid.component_body.items[0] = p.s(S.Local{ .decls = try solid.component_body_decls.toOwnedSlice(p.allocator) }, expr.loc);
+                                        solid.component_body.items[0] = p.s(S.Local{ .decls = solid.component_body_decls.toOwnedSlice(p.allocator) catch @panic("TODO") }, expr.loc);
                                         solid.component_body.append(p.allocator, p.s(S.Return{ .value = ret }, expr.loc)) catch unreachable;
                                         return p.newExpr(
-                                            E.Arrow{ .args = &[_]G.Arg{}, .body = G.FnBody{ .stmts = try solid.component_body.toOwnedSlice(p.allocator), .loc = expr.loc } },
+                                            E.Arrow{ .args = &[_]G.Arg{}, .body = G.FnBody{ .stmts = solid.component_body.toOwnedSlice(p.allocator) catch @panic("TODO"), .loc = expr.loc } },
                                             expr.loc,
                                         );
                                         // we don't need to return anything because it's a static element that will live in the template
@@ -15224,7 +15224,7 @@ fn NewParser_(
                     var temp_opts = PrependTempRefsOpts{ .kind = StmtsKind.fn_body };
                     p.visitStmtsAndPrependTempRefs(&stmts_list, &temp_opts) catch unreachable;
                     p.allocator.free(e_.body.stmts);
-                    e_.body.stmts = try stmts_list.toOwnedSlice();
+                    e_.body.stmts = stmts_list.toOwnedSlice() catch @panic("TODO");
                     p.popScope();
                     p.popScope();
 
@@ -16145,7 +16145,7 @@ fn NewParser_(
 
                         var items = try List(js_ast.ClauseItem).initCapacity(p.allocator, 1);
                         items.appendAssumeCapacity(js_ast.ClauseItem{ .alias = alias.original_name, .original_name = alias.original_name, .alias_loc = alias.loc, .name = LocRef{ .loc = alias.loc, .ref = data.namespace_ref } });
-                        stmts.appendAssumeCapacity(p.s(S.ExportClause{ .items = try items.toOwnedSlice(p.allocator), .is_single_line = true }, stmt.loc));
+                        stmts.appendAssumeCapacity(p.s(S.ExportClause{ .items = items.toOwnedSlice(p.allocator) catch @panic("TODO"), .is_single_line = true }, stmt.loc));
                         return;
                     }
                 },
@@ -16494,7 +16494,7 @@ fn NewParser_(
                         const kind = if (std.meta.eql(p.loop_body, stmt.data)) StmtsKind.loop_body else StmtsKind.none;
                         var _stmts = ListManaged(Stmt).fromOwnedSlice(p.allocator, data.stmts);
                         p.visitStmts(&_stmts, kind) catch unreachable;
-                        data.stmts = try _stmts.toOwnedSlice();
+                        data.stmts = _stmts.toOwnedSlice() catch @panic("TODO");
                         p.popScope();
                     }
 
@@ -16674,7 +16674,7 @@ fn NewParser_(
                         p.fn_or_arrow_data_visit.try_body_count += 1;
                         p.visitStmts(&_stmts, StmtsKind.none) catch unreachable;
                         p.fn_or_arrow_data_visit.try_body_count -= 1;
-                        data.body = try _stmts.toOwnedSlice();
+                        data.body = _stmts.toOwnedSlice() catch @panic("TODO");
                     }
                     p.popScope();
 
@@ -16686,7 +16686,7 @@ fn NewParser_(
                             }
                             var _stmts = ListManaged(Stmt).fromOwnedSlice(p.allocator, catch_.body);
                             p.visitStmts(&_stmts, StmtsKind.none) catch unreachable;
-                            catch_.body = try _stmts.toOwnedSlice();
+                            catch_.body = _stmts.toOwnedSlice() catch @panic("TODO");
                         }
                         p.popScope();
                     }
@@ -16696,7 +16696,7 @@ fn NewParser_(
                         {
                             var _stmts = ListManaged(Stmt).fromOwnedSlice(p.allocator, finally.stmts);
                             p.visitStmts(&_stmts, StmtsKind.none) catch unreachable;
-                            finally.stmts = try _stmts.toOwnedSlice();
+                            finally.stmts = _stmts.toOwnedSlice() catch @panic("TODO");
                         }
                         p.popScope();
                     }
@@ -16720,7 +16720,7 @@ fn NewParser_(
                             }
                             var _stmts = ListManaged(Stmt).fromOwnedSlice(p.allocator, case.body);
                             p.visitStmts(&_stmts, StmtsKind.none) catch unreachable;
-                            data.cases[i].body = try _stmts.toOwnedSlice();
+                            data.cases[i].body = _stmts.toOwnedSlice() catch @panic("TODO");
                         }
                     }
                     // TODO: duplicate case checker
@@ -16965,7 +16965,7 @@ fn NewParser_(
                     p.enclosing_namespace_arg_ref = data.arg;
                     p.pushScopeForVisitPass(.entry, stmt.loc) catch unreachable;
                     p.recordDeclaredSymbol(data.arg) catch unreachable;
-                    p.visitStmtsAndPrependTempRefs(&prepend_list, &prepend_temp_refs) catch unreachable;
+                    if (false) p.visitStmtsAndPrependTempRefs(&prepend_list, &prepend_temp_refs) catch unreachable;
                     p.popScope();
                     p.enclosing_namespace_arg_ref = old_enclosing_namespace_arg_ref;
 
@@ -17287,7 +17287,7 @@ fn NewParser_(
             // Make sure to only emit a variable once for a given namespace, since there
             // can be multiple namespace blocks for the same namespace
             if (symbol.kind == .ts_namespace or symbol.kind == .ts_enum and !p.emitted_namespace_vars.contains(name_ref)) {
-                p.emitted_namespace_vars.put(allocator, name_ref, .{}) catch unreachable;
+                p.emitted_namespace_vars.put(allocator, name_ref, {}) catch unreachable;
 
                 var decls = allocator.alloc(G.Decl, 1) catch unreachable;
                 decls[0] = G.Decl{ .binding = p.b(B.Identifier{ .ref = name_ref }, name_loc) };
@@ -17884,7 +17884,7 @@ fn NewParser_(
                 p.popScope();
             }
 
-            return p.stmtsToSingleStmt(stmt.loc, try stmts.toOwnedSlice());
+            return p.stmtsToSingleStmt(stmt.loc, stmts.toOwnedSlice() catch @panic("TODO"));
         }
 
         // One statement could potentially expand to several statements
@@ -18119,8 +18119,8 @@ fn NewParser_(
                             }
                         }
 
-                        class.properties = try class_body.toOwnedSlice();
-                        constructor.func.body.stmts = try stmts.toOwnedSlice();
+                        class.properties = class_body.toOwnedSlice() catch @panic("TODO");
+                        constructor.func.body.stmts = stmts.toOwnedSlice() catch @panic("TODO");
                     }
                 }
             }
@@ -18627,7 +18627,7 @@ fn NewParser_(
                 var new_stmts_list = allocator.alloc(Stmt, exports_from_count + imports_count + 1) catch unreachable;
                 var imports_list = new_stmts_list[0..imports_count];
 
-                var exports_list = if (exports_from_count > 0) new_stmts_list[imports_list.len + 1 ..] else &[_]Stmt{};
+                var exports_list: []Stmt = if (exports_from_count > 0) new_stmts_list[imports_list.len + 1 ..] else &[_]Stmt{};
 
                 require_function_args[0] = G.Arg{ .binding = p.b(B.Identifier{ .ref = p.module_ref }, logger.Loc.Empty) };
                 require_function_args[1] = G.Arg{ .binding = p.b(B.Identifier{ .ref = p.exports_ref }, logger.Loc.Empty) };

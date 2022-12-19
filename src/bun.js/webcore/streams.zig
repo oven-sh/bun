@@ -1871,7 +1871,7 @@ pub const ArrayBufferSink = struct {
         this.done = true;
         this.signal.close(null);
         return .{ .result = ArrayBuffer.fromBytes(
-            try list.toOwnedSlice(),
+            list.toOwnedSlice() catch @panic("TODO"),
             if (this.as_uint8array)
                 .Uint8Array
             else
@@ -1896,7 +1896,7 @@ pub fn NewJSSink(comptime SinkType: type, comptime name_: []const u8) type {
         pub const name = std.fmt.comptimePrint("{s}", .{std.mem.span(name_)});
 
         // This attaches it to JS
-        pub const SinkSignal = struct {
+        pub const SinkSignal = extern struct {
             cpp: JSValue,
 
             pub fn init(cpp: JSValue) Signal {

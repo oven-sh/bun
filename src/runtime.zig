@@ -34,7 +34,7 @@ pub const ErrorCSS = struct {
     const ErrorCSSPath = "packages/bun-error/dist/bun-error.css";
     const ErrorCSSPathDev = "packages/bun-error/bun-error.css";
 
-    pub const ProdSourceContent = @embedFile("../" ++ ErrorCSSPath);
+    pub const ProdSourceContent = ("../" ++ ErrorCSSPath);
 
     pub inline fn sourceContent() string {
         if (comptime Environment.isDebug) {
@@ -61,7 +61,7 @@ pub const ReactRefresh = @embedFile("./react-refresh.js");
 pub const ErrorJS = struct {
     const ErrorJSPath = "packages/bun-error/dist/index.js";
 
-    pub const ProdSourceContent = @embedFile("../" ++ ErrorJSPath);
+    pub const ProdSourceContent = ("../" ++ ErrorJSPath);
 
     pub inline fn sourceContent() string {
         if (comptime Environment.isDebug) {
@@ -84,9 +84,9 @@ pub const ErrorJS = struct {
 };
 
 pub const Fallback = struct {
-    pub const ProdSourceContent = @embedFile("./fallback.out.js");
-    pub const HTMLTemplate = @embedFile("./fallback.html");
-    pub const HTMLBackendTemplate = @embedFile("./fallback-backend.html");
+    pub const ProdSourceContent = ("./fallback.out.js");
+    pub const HTMLTemplate = ("./fallback.html");
+    pub const HTMLBackendTemplate = ("./fallback-backend.html");
 
     const Base64FallbackMessage = struct {
         msg: *const Api.FallbackMessageContainer,
@@ -124,6 +124,7 @@ pub const Fallback = struct {
     };
 
     pub inline fn scriptContent() string {
+        if (true) return;
         if (comptime Environment.isDebug) {
             var dirpath = std.fs.path.dirname(@src().file).?;
             var env = std.process.getEnvMap(default_allocator) catch unreachable;
@@ -173,6 +174,7 @@ pub const Fallback = struct {
             fallback: string,
             entry_point: string,
         };
+        if (true) return;
         try writer.print(HTMLTemplate, PrintArgs{
             .blob = Base64FallbackMessage{ .msg = msg, .allocator = allocator },
             .preload = preload,
@@ -194,6 +196,7 @@ pub const Fallback = struct {
             fallback: string,
             bun_error_page_css: string,
         };
+        if (true) return;
         try writer.print(HTMLBackendTemplate, PrintArgs{
             .blob = Base64FallbackMessage{ .msg = msg, .allocator = allocator },
             .bun_error_css = ErrorCSS.sourceContent(),
@@ -205,10 +208,10 @@ pub const Fallback = struct {
 };
 
 pub const Runtime = struct {
-    pub const ProdSourceContent = @embedFile("./runtime.out.js");
-    pub const ProdSourceContentNode = @embedFile("./runtime.node.out.js");
-    pub const ProdSourceContentBun = @embedFile("./runtime.bun.out.js");
-    pub const ProdSourceContentWithRefresh = @embedFile("./runtime.out.refresh.js");
+    pub const ProdSourceContent = ("./runtime.out.js");
+    pub const ProdSourceContentNode = ("./runtime.node.out.js");
+    pub const ProdSourceContentBun = ("./runtime.bun.out.js");
+    pub const ProdSourceContentWithRefresh = ("./runtime.out.refresh.js");
 
     pub inline fn sourceContentWithoutRefresh() string {
         if (comptime Environment.isDebug) {
@@ -271,7 +274,7 @@ pub const Runtime = struct {
         }
     }
 
-    pub const version_hash = @embedFile("./runtime.version");
+    pub const version_hash = ("./runtime.version");
     var version_hash_int: u32 = 0;
     pub fn versionHash() u32 {
         if (version_hash_int == 0) {

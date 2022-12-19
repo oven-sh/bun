@@ -502,7 +502,7 @@ pub fn onOpen(
     if (comptime is_ssl) {
         var ssl: *BoringSSL.SSL = @ptrCast(*BoringSSL.SSL, socket.getNativeHandle());
         if (!ssl.isInitFinished()) {
-            var hostname: [:0]u8 = "";
+            var hostname: [:0]const u8 = "";
             var hostname_needs_free = false;
             if (!strings.isIPAddress(client.url.hostname)) {
                 if (client.url.hostname.len < temp_hostname.len) {

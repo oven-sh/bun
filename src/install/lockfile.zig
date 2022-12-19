@@ -171,7 +171,7 @@ pub fn loadFromDisk(this: *Lockfile, allocator: std.mem.Allocator, log: *logger.
     if (filename.len > 0)
         file = std.fs.cwd().openFileZ(filename, .{ .mode = .read_only }) catch |err| {
             return switch (err) {
-                error.FileNotFound, error.AccessDenied, error.BadPathName => LoadFromDiskResult{ .not_found = .{} },
+                error.FileNotFound, error.AccessDenied, error.BadPathName => LoadFromDiskResult{ .not_found = {} },
                 else => LoadFromDiskResult{ .err = .{ .step = .open_file, .value = err } },
             };
         };
@@ -2568,7 +2568,7 @@ pub const Package = extern struct {
         } else {
             package.resolution = .{
                 .tag = .root,
-                .value = .{ .root = .{} },
+                .value = .{ .root = {} },
             };
         }
 

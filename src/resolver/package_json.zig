@@ -419,7 +419,8 @@ pub const PackageJSON = struct {
                 }
 
                 if (router.expr.asProperty("extensions")) |extensions_expr| {
-                    if (extensions_expr.expr.asArray()) |*array| {
+                    if (extensions_expr.expr.asArray()) |array_const| {
+                        var array = array_const;
                         var valid_count: usize = 0;
 
                         while (array.next()) |expr| {
@@ -774,7 +775,8 @@ pub const PackageJSON = struct {
                 }
                 if (json.get("cpu")) |os_field| {
                     var first = true;
-                    if (os_field.asArray()) |*array| {
+                    if (os_field.asArray()) |array_const| {
+                        var array = array_const;
                         while (array.next()) |item| {
                             if (item.asString(bun.default_allocator)) |str| {
                                 if (first) {
@@ -789,7 +791,8 @@ pub const PackageJSON = struct {
 
                 if (json.get("os")) |os_field| {
                     var first = true;
-                    if (os_field.asArray()) |*array| {
+                    var tmp = os_field.asArray();
+                    if (tmp) |*array| {
                         while (array.next()) |item| {
                             if (item.asString(bun.default_allocator)) |str| {
                                 if (first) {

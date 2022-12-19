@@ -3,17 +3,17 @@ const Classes = @import("./generated_classes_list.zig").Classes;
 const Environment = @import("../../env.zig");
 const std = @import("std");
 
-pub const StaticGetterType = *const fn (*JSC.JSGlobalObject, JSC.JSValue, JSC.JSValue) callconv(.C) JSC.JSValue;
-pub const StaticSetterType = *const fn (*JSC.JSGlobalObject, JSC.JSValue, JSC.JSValue, JSC.JSValue) callconv(.C) bool;
-pub const StaticCallbackType = *const fn (*JSC.JSGlobalObject, *JSC.CallFrame) callconv(.C) JSC.JSValue;
+pub const StaticGetterType = fn (*JSC.JSGlobalObject, JSC.JSValue, JSC.JSValue) callconv(.C) JSC.JSValue;
+pub const StaticSetterType = fn (*JSC.JSGlobalObject, JSC.JSValue, JSC.JSValue, JSC.JSValue) callconv(.C) bool;
+pub const StaticCallbackType = fn (*JSC.JSGlobalObject, *JSC.CallFrame) callconv(.C) JSC.JSValue;
 
 pub const JSTCPSocket = struct {
     const TCPSocket = Classes.TCPSocket;
-    const GetterType = *const fn (*TCPSocket, *JSC.JSGlobalObject) callconv(.C) JSC.JSValue;
-    const GetterTypeWithThisValue = *const fn (*TCPSocket, JSC.JSValue, *JSC.JSGlobalObject) callconv(.C) JSC.JSValue;
-    const SetterType = *const fn (*TCPSocket, *JSC.JSGlobalObject, JSC.JSValue) callconv(.C) bool;
-    const SetterTypeWithThisValue = *const fn (*TCPSocket, JSC.JSValue, *JSC.JSGlobalObject, JSC.JSValue) callconv(.C) bool;
-    const CallbackType = *const fn (*TCPSocket, *JSC.JSGlobalObject, *JSC.CallFrame) callconv(.C) JSC.JSValue;
+    const GetterType = fn (*TCPSocket, *JSC.JSGlobalObject) callconv(.C) JSC.JSValue;
+    const GetterTypeWithThisValue = fn (*TCPSocket, JSC.JSValue, *JSC.JSGlobalObject) callconv(.C) JSC.JSValue;
+    const SetterType = fn (*TCPSocket, *JSC.JSGlobalObject, JSC.JSValue) callconv(.C) bool;
+    const SetterTypeWithThisValue = fn (*TCPSocket, JSC.JSValue, *JSC.JSGlobalObject, JSC.JSValue) callconv(.C) bool;
+    const CallbackType = fn (*TCPSocket, *JSC.JSGlobalObject, *JSC.CallFrame) callconv(.C) JSC.JSValue;
 
     /// Return the pointer to the wrapped object.
     /// If the object does not match the type, return null.
@@ -157,11 +157,11 @@ pub const JSTCPSocket = struct {
 };
 pub const JSTLSSocket = struct {
     const TLSSocket = Classes.TLSSocket;
-    const GetterType = *const fn (*TLSSocket, *JSC.JSGlobalObject) callconv(.C) JSC.JSValue;
-    const GetterTypeWithThisValue = *const fn (*TLSSocket, JSC.JSValue, *JSC.JSGlobalObject) callconv(.C) JSC.JSValue;
-    const SetterType = *const fn (*TLSSocket, *JSC.JSGlobalObject, JSC.JSValue) callconv(.C) bool;
-    const SetterTypeWithThisValue = *const fn (*TLSSocket, JSC.JSValue, *JSC.JSGlobalObject, JSC.JSValue) callconv(.C) bool;
-    const CallbackType = *const fn (*TLSSocket, *JSC.JSGlobalObject, *JSC.CallFrame) callconv(.C) JSC.JSValue;
+    const GetterType = fn (*TLSSocket, *JSC.JSGlobalObject) callconv(.C) JSC.JSValue;
+    const GetterTypeWithThisValue = fn (*TLSSocket, JSC.JSValue, *JSC.JSGlobalObject) callconv(.C) JSC.JSValue;
+    const SetterType = fn (*TLSSocket, *JSC.JSGlobalObject, JSC.JSValue) callconv(.C) bool;
+    const SetterTypeWithThisValue = fn (*TLSSocket, JSC.JSValue, *JSC.JSGlobalObject, JSC.JSValue) callconv(.C) bool;
+    const CallbackType = fn (*TLSSocket, *JSC.JSGlobalObject, *JSC.CallFrame) callconv(.C) JSC.JSValue;
 
     /// Return the pointer to the wrapped object.
     /// If the object does not match the type, return null.
@@ -305,11 +305,11 @@ pub const JSTLSSocket = struct {
 };
 pub const JSListener = struct {
     const Listener = Classes.Listener;
-    const GetterType = *const fn (*Listener, *JSC.JSGlobalObject) callconv(.C) JSC.JSValue;
-    const GetterTypeWithThisValue = *const fn (*Listener, JSC.JSValue, *JSC.JSGlobalObject) callconv(.C) JSC.JSValue;
-    const SetterType = *const fn (*Listener, *JSC.JSGlobalObject, JSC.JSValue) callconv(.C) bool;
-    const SetterTypeWithThisValue = *const fn (*Listener, JSC.JSValue, *JSC.JSGlobalObject, JSC.JSValue) callconv(.C) bool;
-    const CallbackType = *const fn (*Listener, *JSC.JSGlobalObject, *JSC.CallFrame) callconv(.C) JSC.JSValue;
+    const GetterType = fn (*Listener, *JSC.JSGlobalObject) callconv(.C) JSC.JSValue;
+    const GetterTypeWithThisValue = fn (*Listener, JSC.JSValue, *JSC.JSGlobalObject) callconv(.C) JSC.JSValue;
+    const SetterType = fn (*Listener, *JSC.JSGlobalObject, JSC.JSValue) callconv(.C) bool;
+    const SetterTypeWithThisValue = fn (*Listener, JSC.JSValue, *JSC.JSGlobalObject, JSC.JSValue) callconv(.C) bool;
+    const CallbackType = fn (*Listener, *JSC.JSGlobalObject, *JSC.CallFrame) callconv(.C) JSC.JSValue;
 
     /// Return the pointer to the wrapped object.
     /// If the object does not match the type, return null.
@@ -436,11 +436,11 @@ pub const JSListener = struct {
 };
 pub const JSSubprocess = struct {
     const Subprocess = Classes.Subprocess;
-    const GetterType = *const fn (*Subprocess, *JSC.JSGlobalObject) callconv(.C) JSC.JSValue;
-    const GetterTypeWithThisValue = *const fn (*Subprocess, JSC.JSValue, *JSC.JSGlobalObject) callconv(.C) JSC.JSValue;
-    const SetterType = *const fn (*Subprocess, *JSC.JSGlobalObject, JSC.JSValue) callconv(.C) bool;
-    const SetterTypeWithThisValue = *const fn (*Subprocess, JSC.JSValue, *JSC.JSGlobalObject, JSC.JSValue) callconv(.C) bool;
-    const CallbackType = *const fn (*Subprocess, *JSC.JSGlobalObject, *JSC.CallFrame) callconv(.C) JSC.JSValue;
+    const GetterType = fn (*Subprocess, *JSC.JSGlobalObject) callconv(.C) JSC.JSValue;
+    const GetterTypeWithThisValue = fn (*Subprocess, JSC.JSValue, *JSC.JSGlobalObject) callconv(.C) JSC.JSValue;
+    const SetterType = fn (*Subprocess, *JSC.JSGlobalObject, JSC.JSValue) callconv(.C) bool;
+    const SetterTypeWithThisValue = fn (*Subprocess, JSC.JSValue, *JSC.JSGlobalObject, JSC.JSValue) callconv(.C) bool;
+    const CallbackType = fn (*Subprocess, *JSC.JSGlobalObject, *JSC.CallFrame) callconv(.C) JSC.JSValue;
 
     /// Return the pointer to the wrapped object.
     /// If the object does not match the type, return null.
@@ -606,11 +606,11 @@ pub const JSSubprocess = struct {
 };
 pub const JSSHA1 = struct {
     const SHA1 = Classes.SHA1;
-    const GetterType = *const fn (*SHA1, *JSC.JSGlobalObject) callconv(.C) JSC.JSValue;
-    const GetterTypeWithThisValue = *const fn (*SHA1, JSC.JSValue, *JSC.JSGlobalObject) callconv(.C) JSC.JSValue;
-    const SetterType = *const fn (*SHA1, *JSC.JSGlobalObject, JSC.JSValue) callconv(.C) bool;
-    const SetterTypeWithThisValue = *const fn (*SHA1, JSC.JSValue, *JSC.JSGlobalObject, JSC.JSValue) callconv(.C) bool;
-    const CallbackType = *const fn (*SHA1, *JSC.JSGlobalObject, *JSC.CallFrame) callconv(.C) JSC.JSValue;
+    const GetterType = fn (*SHA1, *JSC.JSGlobalObject) callconv(.C) JSC.JSValue;
+    const GetterTypeWithThisValue = fn (*SHA1, JSC.JSValue, *JSC.JSGlobalObject) callconv(.C) JSC.JSValue;
+    const SetterType = fn (*SHA1, *JSC.JSGlobalObject, JSC.JSValue) callconv(.C) bool;
+    const SetterTypeWithThisValue = fn (*SHA1, JSC.JSValue, *JSC.JSGlobalObject, JSC.JSValue) callconv(.C) bool;
+    const CallbackType = fn (*SHA1, *JSC.JSGlobalObject, *JSC.CallFrame) callconv(.C) JSC.JSValue;
 
     /// Return the pointer to the wrapped object.
     /// If the object does not match the type, return null.
@@ -691,11 +691,11 @@ pub const JSSHA1 = struct {
 };
 pub const JSMD5 = struct {
     const MD5 = Classes.MD5;
-    const GetterType = *const fn (*MD5, *JSC.JSGlobalObject) callconv(.C) JSC.JSValue;
-    const GetterTypeWithThisValue = *const fn (*MD5, JSC.JSValue, *JSC.JSGlobalObject) callconv(.C) JSC.JSValue;
-    const SetterType = *const fn (*MD5, *JSC.JSGlobalObject, JSC.JSValue) callconv(.C) bool;
-    const SetterTypeWithThisValue = *const fn (*MD5, JSC.JSValue, *JSC.JSGlobalObject, JSC.JSValue) callconv(.C) bool;
-    const CallbackType = *const fn (*MD5, *JSC.JSGlobalObject, *JSC.CallFrame) callconv(.C) JSC.JSValue;
+    const GetterType = fn (*MD5, *JSC.JSGlobalObject) callconv(.C) JSC.JSValue;
+    const GetterTypeWithThisValue = fn (*MD5, JSC.JSValue, *JSC.JSGlobalObject) callconv(.C) JSC.JSValue;
+    const SetterType = fn (*MD5, *JSC.JSGlobalObject, JSC.JSValue) callconv(.C) bool;
+    const SetterTypeWithThisValue = fn (*MD5, JSC.JSValue, *JSC.JSGlobalObject, JSC.JSValue) callconv(.C) bool;
+    const CallbackType = fn (*MD5, *JSC.JSGlobalObject, *JSC.CallFrame) callconv(.C) JSC.JSValue;
 
     /// Return the pointer to the wrapped object.
     /// If the object does not match the type, return null.
@@ -776,11 +776,11 @@ pub const JSMD5 = struct {
 };
 pub const JSMD4 = struct {
     const MD4 = Classes.MD4;
-    const GetterType = *const fn (*MD4, *JSC.JSGlobalObject) callconv(.C) JSC.JSValue;
-    const GetterTypeWithThisValue = *const fn (*MD4, JSC.JSValue, *JSC.JSGlobalObject) callconv(.C) JSC.JSValue;
-    const SetterType = *const fn (*MD4, *JSC.JSGlobalObject, JSC.JSValue) callconv(.C) bool;
-    const SetterTypeWithThisValue = *const fn (*MD4, JSC.JSValue, *JSC.JSGlobalObject, JSC.JSValue) callconv(.C) bool;
-    const CallbackType = *const fn (*MD4, *JSC.JSGlobalObject, *JSC.CallFrame) callconv(.C) JSC.JSValue;
+    const GetterType = fn (*MD4, *JSC.JSGlobalObject) callconv(.C) JSC.JSValue;
+    const GetterTypeWithThisValue = fn (*MD4, JSC.JSValue, *JSC.JSGlobalObject) callconv(.C) JSC.JSValue;
+    const SetterType = fn (*MD4, *JSC.JSGlobalObject, JSC.JSValue) callconv(.C) bool;
+    const SetterTypeWithThisValue = fn (*MD4, JSC.JSValue, *JSC.JSGlobalObject, JSC.JSValue) callconv(.C) bool;
+    const CallbackType = fn (*MD4, *JSC.JSGlobalObject, *JSC.CallFrame) callconv(.C) JSC.JSValue;
 
     /// Return the pointer to the wrapped object.
     /// If the object does not match the type, return null.
@@ -861,11 +861,11 @@ pub const JSMD4 = struct {
 };
 pub const JSSHA224 = struct {
     const SHA224 = Classes.SHA224;
-    const GetterType = *const fn (*SHA224, *JSC.JSGlobalObject) callconv(.C) JSC.JSValue;
-    const GetterTypeWithThisValue = *const fn (*SHA224, JSC.JSValue, *JSC.JSGlobalObject) callconv(.C) JSC.JSValue;
-    const SetterType = *const fn (*SHA224, *JSC.JSGlobalObject, JSC.JSValue) callconv(.C) bool;
-    const SetterTypeWithThisValue = *const fn (*SHA224, JSC.JSValue, *JSC.JSGlobalObject, JSC.JSValue) callconv(.C) bool;
-    const CallbackType = *const fn (*SHA224, *JSC.JSGlobalObject, *JSC.CallFrame) callconv(.C) JSC.JSValue;
+    const GetterType = fn (*SHA224, *JSC.JSGlobalObject) callconv(.C) JSC.JSValue;
+    const GetterTypeWithThisValue = fn (*SHA224, JSC.JSValue, *JSC.JSGlobalObject) callconv(.C) JSC.JSValue;
+    const SetterType = fn (*SHA224, *JSC.JSGlobalObject, JSC.JSValue) callconv(.C) bool;
+    const SetterTypeWithThisValue = fn (*SHA224, JSC.JSValue, *JSC.JSGlobalObject, JSC.JSValue) callconv(.C) bool;
+    const CallbackType = fn (*SHA224, *JSC.JSGlobalObject, *JSC.CallFrame) callconv(.C) JSC.JSValue;
 
     /// Return the pointer to the wrapped object.
     /// If the object does not match the type, return null.
@@ -946,11 +946,11 @@ pub const JSSHA224 = struct {
 };
 pub const JSSHA512 = struct {
     const SHA512 = Classes.SHA512;
-    const GetterType = *const fn (*SHA512, *JSC.JSGlobalObject) callconv(.C) JSC.JSValue;
-    const GetterTypeWithThisValue = *const fn (*SHA512, JSC.JSValue, *JSC.JSGlobalObject) callconv(.C) JSC.JSValue;
-    const SetterType = *const fn (*SHA512, *JSC.JSGlobalObject, JSC.JSValue) callconv(.C) bool;
-    const SetterTypeWithThisValue = *const fn (*SHA512, JSC.JSValue, *JSC.JSGlobalObject, JSC.JSValue) callconv(.C) bool;
-    const CallbackType = *const fn (*SHA512, *JSC.JSGlobalObject, *JSC.CallFrame) callconv(.C) JSC.JSValue;
+    const GetterType = fn (*SHA512, *JSC.JSGlobalObject) callconv(.C) JSC.JSValue;
+    const GetterTypeWithThisValue = fn (*SHA512, JSC.JSValue, *JSC.JSGlobalObject) callconv(.C) JSC.JSValue;
+    const SetterType = fn (*SHA512, *JSC.JSGlobalObject, JSC.JSValue) callconv(.C) bool;
+    const SetterTypeWithThisValue = fn (*SHA512, JSC.JSValue, *JSC.JSGlobalObject, JSC.JSValue) callconv(.C) bool;
+    const CallbackType = fn (*SHA512, *JSC.JSGlobalObject, *JSC.CallFrame) callconv(.C) JSC.JSValue;
 
     /// Return the pointer to the wrapped object.
     /// If the object does not match the type, return null.
@@ -1031,11 +1031,11 @@ pub const JSSHA512 = struct {
 };
 pub const JSSHA384 = struct {
     const SHA384 = Classes.SHA384;
-    const GetterType = *const fn (*SHA384, *JSC.JSGlobalObject) callconv(.C) JSC.JSValue;
-    const GetterTypeWithThisValue = *const fn (*SHA384, JSC.JSValue, *JSC.JSGlobalObject) callconv(.C) JSC.JSValue;
-    const SetterType = *const fn (*SHA384, *JSC.JSGlobalObject, JSC.JSValue) callconv(.C) bool;
-    const SetterTypeWithThisValue = *const fn (*SHA384, JSC.JSValue, *JSC.JSGlobalObject, JSC.JSValue) callconv(.C) bool;
-    const CallbackType = *const fn (*SHA384, *JSC.JSGlobalObject, *JSC.CallFrame) callconv(.C) JSC.JSValue;
+    const GetterType = fn (*SHA384, *JSC.JSGlobalObject) callconv(.C) JSC.JSValue;
+    const GetterTypeWithThisValue = fn (*SHA384, JSC.JSValue, *JSC.JSGlobalObject) callconv(.C) JSC.JSValue;
+    const SetterType = fn (*SHA384, *JSC.JSGlobalObject, JSC.JSValue) callconv(.C) bool;
+    const SetterTypeWithThisValue = fn (*SHA384, JSC.JSValue, *JSC.JSGlobalObject, JSC.JSValue) callconv(.C) bool;
+    const CallbackType = fn (*SHA384, *JSC.JSGlobalObject, *JSC.CallFrame) callconv(.C) JSC.JSValue;
 
     /// Return the pointer to the wrapped object.
     /// If the object does not match the type, return null.
@@ -1116,11 +1116,11 @@ pub const JSSHA384 = struct {
 };
 pub const JSSHA256 = struct {
     const SHA256 = Classes.SHA256;
-    const GetterType = *const fn (*SHA256, *JSC.JSGlobalObject) callconv(.C) JSC.JSValue;
-    const GetterTypeWithThisValue = *const fn (*SHA256, JSC.JSValue, *JSC.JSGlobalObject) callconv(.C) JSC.JSValue;
-    const SetterType = *const fn (*SHA256, *JSC.JSGlobalObject, JSC.JSValue) callconv(.C) bool;
-    const SetterTypeWithThisValue = *const fn (*SHA256, JSC.JSValue, *JSC.JSGlobalObject, JSC.JSValue) callconv(.C) bool;
-    const CallbackType = *const fn (*SHA256, *JSC.JSGlobalObject, *JSC.CallFrame) callconv(.C) JSC.JSValue;
+    const GetterType = fn (*SHA256, *JSC.JSGlobalObject) callconv(.C) JSC.JSValue;
+    const GetterTypeWithThisValue = fn (*SHA256, JSC.JSValue, *JSC.JSGlobalObject) callconv(.C) JSC.JSValue;
+    const SetterType = fn (*SHA256, *JSC.JSGlobalObject, JSC.JSValue) callconv(.C) bool;
+    const SetterTypeWithThisValue = fn (*SHA256, JSC.JSValue, *JSC.JSGlobalObject, JSC.JSValue) callconv(.C) bool;
+    const CallbackType = fn (*SHA256, *JSC.JSGlobalObject, *JSC.CallFrame) callconv(.C) JSC.JSValue;
 
     /// Return the pointer to the wrapped object.
     /// If the object does not match the type, return null.
@@ -1201,11 +1201,11 @@ pub const JSSHA256 = struct {
 };
 pub const JSSHA512_256 = struct {
     const SHA512_256 = Classes.SHA512_256;
-    const GetterType = *const fn (*SHA512_256, *JSC.JSGlobalObject) callconv(.C) JSC.JSValue;
-    const GetterTypeWithThisValue = *const fn (*SHA512_256, JSC.JSValue, *JSC.JSGlobalObject) callconv(.C) JSC.JSValue;
-    const SetterType = *const fn (*SHA512_256, *JSC.JSGlobalObject, JSC.JSValue) callconv(.C) bool;
-    const SetterTypeWithThisValue = *const fn (*SHA512_256, JSC.JSValue, *JSC.JSGlobalObject, JSC.JSValue) callconv(.C) bool;
-    const CallbackType = *const fn (*SHA512_256, *JSC.JSGlobalObject, *JSC.CallFrame) callconv(.C) JSC.JSValue;
+    const GetterType = fn (*SHA512_256, *JSC.JSGlobalObject) callconv(.C) JSC.JSValue;
+    const GetterTypeWithThisValue = fn (*SHA512_256, JSC.JSValue, *JSC.JSGlobalObject) callconv(.C) JSC.JSValue;
+    const SetterType = fn (*SHA512_256, *JSC.JSGlobalObject, JSC.JSValue) callconv(.C) bool;
+    const SetterTypeWithThisValue = fn (*SHA512_256, JSC.JSValue, *JSC.JSGlobalObject, JSC.JSValue) callconv(.C) bool;
+    const CallbackType = fn (*SHA512_256, *JSC.JSGlobalObject, *JSC.CallFrame) callconv(.C) JSC.JSValue;
 
     /// Return the pointer to the wrapped object.
     /// If the object does not match the type, return null.
@@ -1286,11 +1286,11 @@ pub const JSSHA512_256 = struct {
 };
 pub const JSServerWebSocket = struct {
     const ServerWebSocket = Classes.ServerWebSocket;
-    const GetterType = *const fn (*ServerWebSocket, *JSC.JSGlobalObject) callconv(.C) JSC.JSValue;
-    const GetterTypeWithThisValue = *const fn (*ServerWebSocket, JSC.JSValue, *JSC.JSGlobalObject) callconv(.C) JSC.JSValue;
-    const SetterType = *const fn (*ServerWebSocket, *JSC.JSGlobalObject, JSC.JSValue) callconv(.C) bool;
-    const SetterTypeWithThisValue = *const fn (*ServerWebSocket, JSC.JSValue, *JSC.JSGlobalObject, JSC.JSValue) callconv(.C) bool;
-    const CallbackType = *const fn (*ServerWebSocket, *JSC.JSGlobalObject, *JSC.CallFrame) callconv(.C) JSC.JSValue;
+    const GetterType = fn (*ServerWebSocket, *JSC.JSGlobalObject) callconv(.C) JSC.JSValue;
+    const GetterTypeWithThisValue = fn (*ServerWebSocket, JSC.JSValue, *JSC.JSGlobalObject) callconv(.C) JSC.JSValue;
+    const SetterType = fn (*ServerWebSocket, *JSC.JSGlobalObject, JSC.JSValue) callconv(.C) bool;
+    const SetterTypeWithThisValue = fn (*ServerWebSocket, JSC.JSValue, *JSC.JSGlobalObject, JSC.JSValue) callconv(.C) bool;
+    const CallbackType = fn (*ServerWebSocket, *JSC.JSGlobalObject, *JSC.CallFrame) callconv(.C) JSC.JSValue;
 
     /// Return the pointer to the wrapped object.
     /// If the object does not match the type, return null.
@@ -1410,11 +1410,11 @@ pub const JSServerWebSocket = struct {
             @compileLog("Expected ServerWebSocket.isSubscribed to be a callback");
         if (@TypeOf(ServerWebSocket.publish) != CallbackType)
             @compileLog("Expected ServerWebSocket.publish to be a callback");
-        if (@TypeOf(ServerWebSocket.publishBinaryWithoutTypeChecks) != *const fn (*ServerWebSocket, *JSC.JSGlobalObject, *JSC.JSString, *JSC.JSUint8Array) callconv(.C) JSC.JSValue)
+        if (@TypeOf(ServerWebSocket.publishBinaryWithoutTypeChecks) != fn (*ServerWebSocket, *JSC.JSGlobalObject, *JSC.JSString, *JSC.JSUint8Array) callconv(.C) JSC.JSValue)
             @compileLog("Expected ServerWebSocket.publishBinaryWithoutTypeChecks to be a DOMJIT function");
         if (@TypeOf(ServerWebSocket.publishBinary) != CallbackType)
             @compileLog("Expected ServerWebSocket.publishBinary to be a callback");
-        if (@TypeOf(ServerWebSocket.publishTextWithoutTypeChecks) != *const fn (*ServerWebSocket, *JSC.JSGlobalObject, *JSC.JSString, *JSC.JSString) callconv(.C) JSC.JSValue)
+        if (@TypeOf(ServerWebSocket.publishTextWithoutTypeChecks) != fn (*ServerWebSocket, *JSC.JSGlobalObject, *JSC.JSString, *JSC.JSString) callconv(.C) JSC.JSValue)
             @compileLog("Expected ServerWebSocket.publishTextWithoutTypeChecks to be a DOMJIT function");
         if (@TypeOf(ServerWebSocket.publishText) != CallbackType)
             @compileLog("Expected ServerWebSocket.publishText to be a callback");
@@ -1426,11 +1426,11 @@ pub const JSServerWebSocket = struct {
 
         if (@TypeOf(ServerWebSocket.send) != CallbackType)
             @compileLog("Expected ServerWebSocket.send to be a callback");
-        if (@TypeOf(ServerWebSocket.sendBinaryWithoutTypeChecks) != *const fn (*ServerWebSocket, *JSC.JSGlobalObject, *JSC.JSUint8Array, bool) callconv(.C) JSC.JSValue)
+        if (@TypeOf(ServerWebSocket.sendBinaryWithoutTypeChecks) != fn (*ServerWebSocket, *JSC.JSGlobalObject, *JSC.JSUint8Array, bool) callconv(.C) JSC.JSValue)
             @compileLog("Expected ServerWebSocket.sendBinaryWithoutTypeChecks to be a DOMJIT function");
         if (@TypeOf(ServerWebSocket.sendBinary) != CallbackType)
             @compileLog("Expected ServerWebSocket.sendBinary to be a callback");
-        if (@TypeOf(ServerWebSocket.sendTextWithoutTypeChecks) != *const fn (*ServerWebSocket, *JSC.JSGlobalObject, *JSC.JSString, bool) callconv(.C) JSC.JSValue)
+        if (@TypeOf(ServerWebSocket.sendTextWithoutTypeChecks) != fn (*ServerWebSocket, *JSC.JSGlobalObject, *JSC.JSString, bool) callconv(.C) JSC.JSValue)
             @compileLog("Expected ServerWebSocket.sendTextWithoutTypeChecks to be a DOMJIT function");
         if (@TypeOf(ServerWebSocket.sendText) != CallbackType)
             @compileLog("Expected ServerWebSocket.sendText to be a callback");
@@ -1468,11 +1468,11 @@ pub const JSServerWebSocket = struct {
 };
 pub const JSFileSystemRouter = struct {
     const FileSystemRouter = Classes.FileSystemRouter;
-    const GetterType = *const fn (*FileSystemRouter, *JSC.JSGlobalObject) callconv(.C) JSC.JSValue;
-    const GetterTypeWithThisValue = *const fn (*FileSystemRouter, JSC.JSValue, *JSC.JSGlobalObject) callconv(.C) JSC.JSValue;
-    const SetterType = *const fn (*FileSystemRouter, *JSC.JSGlobalObject, JSC.JSValue) callconv(.C) bool;
-    const SetterTypeWithThisValue = *const fn (*FileSystemRouter, JSC.JSValue, *JSC.JSGlobalObject, JSC.JSValue) callconv(.C) bool;
-    const CallbackType = *const fn (*FileSystemRouter, *JSC.JSGlobalObject, *JSC.CallFrame) callconv(.C) JSC.JSValue;
+    const GetterType = fn (*FileSystemRouter, *JSC.JSGlobalObject) callconv(.C) JSC.JSValue;
+    const GetterTypeWithThisValue = fn (*FileSystemRouter, JSC.JSValue, *JSC.JSGlobalObject) callconv(.C) JSC.JSValue;
+    const SetterType = fn (*FileSystemRouter, *JSC.JSGlobalObject, JSC.JSValue) callconv(.C) bool;
+    const SetterTypeWithThisValue = fn (*FileSystemRouter, JSC.JSValue, *JSC.JSGlobalObject, JSC.JSValue) callconv(.C) bool;
+    const CallbackType = fn (*FileSystemRouter, *JSC.JSGlobalObject, *JSC.CallFrame) callconv(.C) JSC.JSValue;
 
     /// Return the pointer to the wrapped object.
     /// If the object does not match the type, return null.
@@ -1620,11 +1620,11 @@ pub const JSFileSystemRouter = struct {
 };
 pub const JSMatchedRoute = struct {
     const MatchedRoute = Classes.MatchedRoute;
-    const GetterType = *const fn (*MatchedRoute, *JSC.JSGlobalObject) callconv(.C) JSC.JSValue;
-    const GetterTypeWithThisValue = *const fn (*MatchedRoute, JSC.JSValue, *JSC.JSGlobalObject) callconv(.C) JSC.JSValue;
-    const SetterType = *const fn (*MatchedRoute, *JSC.JSGlobalObject, JSC.JSValue) callconv(.C) bool;
-    const SetterTypeWithThisValue = *const fn (*MatchedRoute, JSC.JSValue, *JSC.JSGlobalObject, JSC.JSValue) callconv(.C) bool;
-    const CallbackType = *const fn (*MatchedRoute, *JSC.JSGlobalObject, *JSC.CallFrame) callconv(.C) JSC.JSValue;
+    const GetterType = fn (*MatchedRoute, *JSC.JSGlobalObject) callconv(.C) JSC.JSValue;
+    const GetterTypeWithThisValue = fn (*MatchedRoute, JSC.JSValue, *JSC.JSGlobalObject) callconv(.C) JSC.JSValue;
+    const SetterType = fn (*MatchedRoute, *JSC.JSGlobalObject, JSC.JSValue) callconv(.C) bool;
+    const SetterTypeWithThisValue = fn (*MatchedRoute, JSC.JSValue, *JSC.JSGlobalObject, JSC.JSValue) callconv(.C) bool;
+    const CallbackType = fn (*MatchedRoute, *JSC.JSGlobalObject, *JSC.CallFrame) callconv(.C) JSC.JSValue;
 
     /// Return the pointer to the wrapped object.
     /// If the object does not match the type, return null.
@@ -1861,11 +1861,11 @@ pub const JSMatchedRoute = struct {
 };
 pub const JSExpect = struct {
     const Expect = Classes.Expect;
-    const GetterType = *const fn (*Expect, *JSC.JSGlobalObject) callconv(.C) JSC.JSValue;
-    const GetterTypeWithThisValue = *const fn (*Expect, JSC.JSValue, *JSC.JSGlobalObject) callconv(.C) JSC.JSValue;
-    const SetterType = *const fn (*Expect, *JSC.JSGlobalObject, JSC.JSValue) callconv(.C) bool;
-    const SetterTypeWithThisValue = *const fn (*Expect, JSC.JSValue, *JSC.JSGlobalObject, JSC.JSValue) callconv(.C) bool;
-    const CallbackType = *const fn (*Expect, *JSC.JSGlobalObject, *JSC.CallFrame) callconv(.C) JSC.JSValue;
+    const GetterType = fn (*Expect, *JSC.JSGlobalObject) callconv(.C) JSC.JSValue;
+    const GetterTypeWithThisValue = fn (*Expect, JSC.JSValue, *JSC.JSGlobalObject) callconv(.C) JSC.JSValue;
+    const SetterType = fn (*Expect, *JSC.JSGlobalObject, JSC.JSValue) callconv(.C) bool;
+    const SetterTypeWithThisValue = fn (*Expect, JSC.JSValue, *JSC.JSGlobalObject, JSC.JSValue) callconv(.C) bool;
+    const CallbackType = fn (*Expect, *JSC.JSGlobalObject, *JSC.CallFrame) callconv(.C) JSC.JSValue;
 
     /// Return the pointer to the wrapped object.
     /// If the object does not match the type, return null.
@@ -2129,11 +2129,11 @@ pub const JSExpect = struct {
 };
 pub const JSTextDecoder = struct {
     const TextDecoder = Classes.TextDecoder;
-    const GetterType = *const fn (*TextDecoder, *JSC.JSGlobalObject) callconv(.C) JSC.JSValue;
-    const GetterTypeWithThisValue = *const fn (*TextDecoder, JSC.JSValue, *JSC.JSGlobalObject) callconv(.C) JSC.JSValue;
-    const SetterType = *const fn (*TextDecoder, *JSC.JSGlobalObject, JSC.JSValue) callconv(.C) bool;
-    const SetterTypeWithThisValue = *const fn (*TextDecoder, JSC.JSValue, *JSC.JSGlobalObject, JSC.JSValue) callconv(.C) bool;
-    const CallbackType = *const fn (*TextDecoder, *JSC.JSGlobalObject, *JSC.CallFrame) callconv(.C) JSC.JSValue;
+    const GetterType = fn (*TextDecoder, *JSC.JSGlobalObject) callconv(.C) JSC.JSValue;
+    const GetterTypeWithThisValue = fn (*TextDecoder, JSC.JSValue, *JSC.JSGlobalObject) callconv(.C) JSC.JSValue;
+    const SetterType = fn (*TextDecoder, *JSC.JSGlobalObject, JSC.JSValue) callconv(.C) bool;
+    const SetterTypeWithThisValue = fn (*TextDecoder, JSC.JSValue, *JSC.JSGlobalObject, JSC.JSValue) callconv(.C) bool;
+    const CallbackType = fn (*TextDecoder, *JSC.JSGlobalObject, *JSC.CallFrame) callconv(.C) JSC.JSValue;
 
     /// Return the pointer to the wrapped object.
     /// If the object does not match the type, return null.
@@ -2211,7 +2211,7 @@ pub const JSTextDecoder = struct {
             @compileLog("TextDecoder.finalize is not a finalizer");
         }
 
-        if (@TypeOf(TextDecoder.decodeWithoutTypeChecks) != *const fn (*TextDecoder, *JSC.JSGlobalObject, *JSC.JSUint8Array) callconv(.C) JSC.JSValue)
+        if (@TypeOf(TextDecoder.decodeWithoutTypeChecks) != fn (*TextDecoder, *JSC.JSGlobalObject, *JSC.JSUint8Array) callconv(.C) JSC.JSValue)
             @compileLog("Expected TextDecoder.decodeWithoutTypeChecks to be a DOMJIT function");
         if (@TypeOf(TextDecoder.decode) != CallbackType)
             @compileLog("Expected TextDecoder.decode to be a callback");
@@ -2233,11 +2233,11 @@ pub const JSTextDecoder = struct {
 };
 pub const JSRequest = struct {
     const Request = Classes.Request;
-    const GetterType = *const fn (*Request, *JSC.JSGlobalObject) callconv(.C) JSC.JSValue;
-    const GetterTypeWithThisValue = *const fn (*Request, JSC.JSValue, *JSC.JSGlobalObject) callconv(.C) JSC.JSValue;
-    const SetterType = *const fn (*Request, *JSC.JSGlobalObject, JSC.JSValue) callconv(.C) bool;
-    const SetterTypeWithThisValue = *const fn (*Request, JSC.JSValue, *JSC.JSGlobalObject, JSC.JSValue) callconv(.C) bool;
-    const CallbackType = *const fn (*Request, *JSC.JSGlobalObject, *JSC.CallFrame) callconv(.C) JSC.JSValue;
+    const GetterType = fn (*Request, *JSC.JSGlobalObject) callconv(.C) JSC.JSValue;
+    const GetterTypeWithThisValue = fn (*Request, JSC.JSValue, *JSC.JSGlobalObject) callconv(.C) JSC.JSValue;
+    const SetterType = fn (*Request, *JSC.JSGlobalObject, JSC.JSValue) callconv(.C) bool;
+    const SetterTypeWithThisValue = fn (*Request, JSC.JSValue, *JSC.JSGlobalObject, JSC.JSValue) callconv(.C) bool;
+    const CallbackType = fn (*Request, *JSC.JSGlobalObject, *JSC.CallFrame) callconv(.C) JSC.JSValue;
 
     /// Return the pointer to the wrapped object.
     /// If the object does not match the type, return null.
@@ -2417,33 +2417,33 @@ pub const JSRequest = struct {
             @export(Request.doClone, .{ .name = "RequestPrototype__doClone" });
             @export(Request.estimatedSize, .{ .name = "Request__estimatedSize" });
             @export(Request.finalize, .{ .name = "RequestClass__finalize" });
-            @export(Request.getArrayBuffer, .{ .name = "RequestPrototype__getArrayBuffer" });
-            @export(Request.getBlob, .{ .name = "RequestPrototype__getBlob" });
-            @export(Request.getBody, .{ .name = "RequestPrototype__getBody" });
-            @export(Request.getBodyUsed, .{ .name = "RequestPrototype__getBodyUsed" });
-            @export(Request.getCache, .{ .name = "RequestPrototype__getCache" });
-            @export(Request.getCredentials, .{ .name = "RequestPrototype__getCredentials" });
-            @export(Request.getDestination, .{ .name = "RequestPrototype__getDestination" });
-            @export(Request.getHeaders, .{ .name = "RequestPrototype__getHeaders" });
-            @export(Request.getIntegrity, .{ .name = "RequestPrototype__getIntegrity" });
-            @export(Request.getJSON, .{ .name = "RequestPrototype__getJSON" });
-            @export(Request.getMethod, .{ .name = "RequestPrototype__getMethod" });
-            @export(Request.getMode, .{ .name = "RequestPrototype__getMode" });
-            @export(Request.getRedirect, .{ .name = "RequestPrototype__getRedirect" });
-            @export(Request.getReferrer, .{ .name = "RequestPrototype__getReferrer" });
-            @export(Request.getReferrerPolicy, .{ .name = "RequestPrototype__getReferrerPolicy" });
-            @export(Request.getText, .{ .name = "RequestPrototype__getText" });
-            @export(Request.getUrl, .{ .name = "RequestPrototype__getUrl" });
+            // @export(Request.getArrayBuffer, .{ .name = "RequestPrototype__getArrayBuffer" });
+            // @export(Request.getBlob, .{ .name = "RequestPrototype__getBlob" });
+            // @export(Request.getBody, .{ .name = "RequestPrototype__getBody" });
+            // @export(Request.getBodyUsed, .{ .name = "RequestPrototype__getBodyUsed" });
+            // @export(Request.getCache, .{ .name = "RequestPrototype__getCache" });
+            // @export(Request.getCredentials, .{ .name = "RequestPrototype__getCredentials" });
+            // @export(Request.getDestination, .{ .name = "RequestPrototype__getDestination" });
+            // @export(Request.getHeaders, .{ .name = "RequestPrototype__getHeaders" });
+            // @export(Request.getIntegrity, .{ .name = "RequestPrototype__getIntegrity" });
+            // @export(Request.getJSON, .{ .name = "RequestPrototype__getJSON" });
+            // @export(Request.getMethod, .{ .name = "RequestPrototype__getMethod" });
+            // @export(Request.getMode, .{ .name = "RequestPrototype__getMode" });
+            // @export(Request.getRedirect, .{ .name = "RequestPrototype__getRedirect" });
+            // @export(Request.getReferrer, .{ .name = "RequestPrototype__getReferrer" });
+            // @export(Request.getReferrerPolicy, .{ .name = "RequestPrototype__getReferrerPolicy" });
+            // @export(Request.getText, .{ .name = "RequestPrototype__getText" });
+            // @export(Request.getUrl, .{ .name = "RequestPrototype__getUrl" });
         }
     }
 };
 pub const JSResponse = struct {
     const Response = Classes.Response;
-    const GetterType = *const fn (*Response, *JSC.JSGlobalObject) callconv(.C) JSC.JSValue;
-    const GetterTypeWithThisValue = *const fn (*Response, JSC.JSValue, *JSC.JSGlobalObject) callconv(.C) JSC.JSValue;
-    const SetterType = *const fn (*Response, *JSC.JSGlobalObject, JSC.JSValue) callconv(.C) bool;
-    const SetterTypeWithThisValue = *const fn (*Response, JSC.JSValue, *JSC.JSGlobalObject, JSC.JSValue) callconv(.C) bool;
-    const CallbackType = *const fn (*Response, *JSC.JSGlobalObject, *JSC.CallFrame) callconv(.C) JSC.JSValue;
+    const GetterType = fn (*Response, *JSC.JSGlobalObject) callconv(.C) JSC.JSValue;
+    const GetterTypeWithThisValue = fn (*Response, JSC.JSValue, *JSC.JSGlobalObject) callconv(.C) JSC.JSValue;
+    const SetterType = fn (*Response, *JSC.JSGlobalObject, JSC.JSValue) callconv(.C) bool;
+    const SetterTypeWithThisValue = fn (*Response, JSC.JSValue, *JSC.JSGlobalObject, JSC.JSValue) callconv(.C) bool;
+    const CallbackType = fn (*Response, *JSC.JSGlobalObject, *JSC.CallFrame) callconv(.C) JSC.JSValue;
 
     /// Return the pointer to the wrapped object.
     /// If the object does not match the type, return null.
@@ -2642,29 +2642,29 @@ pub const JSResponse = struct {
             @export(Response.doClone, .{ .name = "ResponsePrototype__doClone" });
             @export(Response.estimatedSize, .{ .name = "Response__estimatedSize" });
             @export(Response.finalize, .{ .name = "ResponseClass__finalize" });
-            @export(Response.getArrayBuffer, .{ .name = "ResponsePrototype__getArrayBuffer" });
-            @export(Response.getBlob, .{ .name = "ResponsePrototype__getBlob" });
-            @export(Response.getBody, .{ .name = "ResponsePrototype__getBody" });
-            @export(Response.getBodyUsed, .{ .name = "ResponsePrototype__getBodyUsed" });
-            @export(Response.getHeaders, .{ .name = "ResponsePrototype__getHeaders" });
-            @export(Response.getJSON, .{ .name = "ResponsePrototype__getJSON" });
-            @export(Response.getOK, .{ .name = "ResponsePrototype__getOK" });
-            @export(Response.getRedirected, .{ .name = "ResponsePrototype__getRedirected" });
-            @export(Response.getResponseType, .{ .name = "ResponsePrototype__getResponseType" });
-            @export(Response.getStatus, .{ .name = "ResponsePrototype__getStatus" });
-            @export(Response.getStatusText, .{ .name = "ResponsePrototype__getStatusText" });
-            @export(Response.getText, .{ .name = "ResponsePrototype__getText" });
-            @export(Response.getURL, .{ .name = "ResponsePrototype__getURL" });
+            // @export(Response.getArrayBuffer, .{ .name = "ResponsePrototype__getArrayBuffer" });
+            // @export(Response.getBlob, .{ .name = "ResponsePrototype__getBlob" });
+            // @export(Response.getBody, .{ .name = "ResponsePrototype__getBody" });
+            // @export(Response.getBodyUsed, .{ .name = "ResponsePrototype__getBodyUsed" });
+            // @export(Response.getHeaders, .{ .name = "ResponsePrototype__getHeaders" });
+            // @export(Response.getJSON, .{ .name = "ResponsePrototype__getJSON" });
+            // @export(Response.getOK, .{ .name = "ResponsePrototype__getOK" });
+            // @export(Response.getRedirected, .{ .name = "ResponsePrototype__getRedirected" });
+            // @export(Response.getResponseType, .{ .name = "ResponsePrototype__getResponseType" });
+            // @export(Response.getStatus, .{ .name = "ResponsePrototype__getStatus" });
+            // @export(Response.getStatusText, .{ .name = "ResponsePrototype__getStatusText" });
+            // @export(Response.getText, .{ .name = "ResponsePrototype__getText" });
+            // @export(Response.getURL, .{ .name = "ResponsePrototype__getURL" });
         }
     }
 };
 pub const JSBlob = struct {
     const Blob = Classes.Blob;
-    const GetterType = *const fn (*Blob, *JSC.JSGlobalObject) callconv(.C) JSC.JSValue;
-    const GetterTypeWithThisValue = *const fn (*Blob, JSC.JSValue, *JSC.JSGlobalObject) callconv(.C) JSC.JSValue;
-    const SetterType = *const fn (*Blob, *JSC.JSGlobalObject, JSC.JSValue) callconv(.C) bool;
-    const SetterTypeWithThisValue = *const fn (*Blob, JSC.JSValue, *JSC.JSGlobalObject, JSC.JSValue) callconv(.C) bool;
-    const CallbackType = *const fn (*Blob, *JSC.JSGlobalObject, *JSC.CallFrame) callconv(.C) JSC.JSValue;
+    const GetterType = fn (*Blob, *JSC.JSGlobalObject) callconv(.C) JSC.JSValue;
+    const GetterTypeWithThisValue = fn (*Blob, JSC.JSValue, *JSC.JSGlobalObject) callconv(.C) JSC.JSValue;
+    const SetterType = fn (*Blob, *JSC.JSGlobalObject, JSC.JSValue) callconv(.C) bool;
+    const SetterTypeWithThisValue = fn (*Blob, JSC.JSValue, *JSC.JSGlobalObject, JSC.JSValue) callconv(.C) bool;
+    const CallbackType = fn (*Blob, *JSC.JSGlobalObject, *JSC.CallFrame) callconv(.C) JSC.JSValue;
 
     /// Return the pointer to the wrapped object.
     /// If the object does not match the type, return null.

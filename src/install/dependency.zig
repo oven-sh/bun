@@ -189,7 +189,7 @@ pub const Version = struct {
 
     pub fn isLessThan(string_buf: []const u8, lhs: Dependency.Version, rhs: Dependency.Version) bool {
         std.debug.assert(lhs.tag == rhs.tag);
-        return strings.cmpStringsAsc(.{}, lhs.literal.slice(string_buf), rhs.literal.slice(string_buf));
+        return strings.cmpStringsAsc({}, lhs.literal.slice(string_buf), rhs.literal.slice(string_buf));
     }
 
     pub const External = [9]u8;

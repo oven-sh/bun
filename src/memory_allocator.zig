@@ -239,21 +239,20 @@ const AutoSizeAllocator = struct {
         len_align: u29,
         return_address: usize,
     ) error{OutOfMemory}![]u8 {
+        _ = len_align;
         if (len >= huge_threshold) {
             return huge_allocator.rawAlloc(
                 len,
                 alignment,
-                len_align,
                 return_address,
-            );
+            ) orelse return error.OutOfMemory;
         }
 
         return c_allocator.rawAlloc(
             len,
             alignment,
-            len_align,
             return_address,
-        );
+        ) orelse return error.OutOfMemory;
     }
 
     fn resize(

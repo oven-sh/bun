@@ -2535,7 +2535,7 @@ pub const HotReloader = struct {
             javascript_callback: JSC.Strong,
             zig_callback: struct {
                 ptr: *anyopaque,
-                function: FunctionSignature,
+                function: *const FunctionSignature,
             },
         };
     }

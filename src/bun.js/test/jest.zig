@@ -1325,7 +1325,7 @@ pub const TestScope = struct {
 
             if (initial_value.jsType() == .JSPromise) {
                 if (this.promise != null) {
-                    return .{ .pending = .{} };
+                    return .{ .pending = {} };
                 }
 
                 var promise: *JSC.JSPromise = initial_value.asPromise().?;

@@ -600,7 +600,7 @@ pub fn HashMapUnmanaged(
                 return null;
             }
 
-            return @call(.{ .modifier = .always_inline }, _getEntryWithHash, .{ self, key, hash });
+            return @call(.always_inline, _getEntryWithHash, .{ self, key, hash });
         }
 
         fn _getEntryWithHash(self: Self, key: K, hash: u64) ?*Entry {
@@ -628,7 +628,7 @@ pub fn HashMapUnmanaged(
                 return null;
             }
 
-            return @call(.{ .modifier = .always_inline }, _getEntryWithHash, .{ self, key, hashFn(key) });
+            return @call(.always_inline, _getEntryWithHash, .{ self, key, hashFn(key) });
         }
 
         /// Insert an entry if the associated key is not already present, otherwise update preexisting value.
@@ -712,7 +712,7 @@ pub fn HashMapUnmanaged(
         }
 
         pub fn getOrPutAssumeCapacity(self: *Self, key: K) GetOrPutResult {
-            return @call(.{ .modifier = .always_inline }, Self.getOrPutAssumeCapacityWithHash, .{ self, key, hashFn(key) });
+            return @call(.always_inline, Self.getOrPutAssumeCapacityWithHash, .{ self, key, hashFn(key) });
         }
 
         pub fn getOrPutAssumeCapacityWithHash(self: *Self, key: K, hash: u64) GetOrPutResult {

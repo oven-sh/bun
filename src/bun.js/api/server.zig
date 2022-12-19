@@ -2085,7 +2085,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 this.renderDefaultError(
                     vm.log,
                     error.ExceptionOcurred,
-                    exception_list.toOwnedSlice(),
+                    try exception_list.toOwnedSlice(),
                     "<r><red>{s}<r> - <b>{s}<r> failed",
                     .{ @as(string, @tagName(this.method)), this.ensurePathname() },
                 );

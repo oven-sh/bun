@@ -64,7 +64,6 @@ pub fn TaggedPointerUnion(comptime Types: anytype) type {
 
             break :tag_break @Type(.{
                 .Enum = .{
-                    .layout = .Auto,
                     .tag_type = TagSize,
                     .fields = &enumFields,
                     .decls = &decls,
@@ -85,7 +84,6 @@ pub fn TaggedPointerUnion(comptime Types: anytype) type {
 
             break :tag_break @Type(.{
                 .Enum = .{
-                    .layout = .Auto,
                     .tag_type = TagSize,
                     .fields = &enumFields,
                     .decls = &decls,

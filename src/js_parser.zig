@@ -1376,7 +1376,7 @@ pub const SideEffects = enum(u1) {
                     findIdentifiers(decl.binding, &decls);
                 }
 
-                local.decls = decls.toOwnedSlice();
+                local.decls = try decls.toOwnedSlice();
                 return true;
             },
 
@@ -8904,7 +8904,7 @@ fn NewParser_(
             return p.s(S.Enum{
                 .name = name,
                 .arg = arg_ref,
-                .values = values.toOwnedSlice(),
+                .values = try values.toOwnedSlice(),
                 .is_export = opts.is_export,
             }, loc);
         }
@@ -9218,7 +9218,7 @@ fn NewParser_(
                 }
             }
 
-            return stmts.toOwnedSlice();
+            return try stmts.toOwnedSlice();
         }
 
         fn markStrictModeFeature(p: *P, feature: StrictModeFeature, r: logger.Range, detail: string) !void {
@@ -9330,7 +9330,7 @@ fn NewParser_(
         }
 
         fn declareSymbol(p: *P, kind: Symbol.Kind, loc: logger.Loc, name: string) !Ref {
-            return try @call(.{ .modifier = .always_inline }, declareSymbolMaybeGenerated, .{ p, kind, loc, name, false });
+            return try @call(.always_inline, declareSymbolMaybeGenerated, .{ p, kind, loc, name, false });
         }
 
         fn declareSymbolMaybeGenerated(p: *P, kind: Symbol.Kind, loc: logger.Loc, name: string, comptime is_generated: bool) !Ref {
@@ -10496,7 +10496,7 @@ fn NewParser_(
                 .ts_decorators = ExprNodeList.init(class_opts.ts_decorators),
                 .class_keyword = class_keyword,
                 .body_loc = body_loc,
-                .properties = properties.toOwnedSlice(),
+                .properties = try properties.toOwnedSlice(),
                 .has_decorators = has_decorators or class_opts.ts_decorators.len > 0,
             };
         }
@@ -10555,7 +10555,7 @@ fn NewParser_(
 
             p.allow_in = oldAllowIn;
 
-            return parts.toOwnedSlice();
+            return try parts.toOwnedSlice();
         }
 
         // This assumes the caller has already checked for TStringLiteral or TNoSubstitutionTemplateLiteral
@@ -12165,7 +12165,7 @@ fn NewParser_(
 
             p.lexer.preserve_all_comments_before = true;
             try p.lexer.expect(.t_open_paren);
-            const comments = p.lexer.comments_to_preserve_before.toOwnedSlice();
+            const comments = try p.lexer.comments_to_preserve_before.toOwnedSlice();
             p.lexer.preserve_all_comments_before = false;
 
             const value = try p.parseExpr(.comma);
@@ -12634,7 +12634,7 @@ fn NewParser_(
             }
 
             if (partStmts.items.len > 0) {
-                const _stmts = partStmts.toOwnedSlice();
+                const _stmts = try partStmts.toOwnedSlice();
 
                 // -- hoist_bun_plugin --
                 if (_stmts.len == 1 and p.options.features.hoist_bun_plugin and !p.bun_plugin.ref.isNull()) {
@@ -12682,13 +12682,13 @@ fn NewParser_(
                 try parts.append(js_ast.Part{
                     .stmts = _stmts,
                     .symbol_uses = p.symbol_uses,
-                    .declared_symbols = p.declared_symbols.toOwnedSlice(
+                    .declared_symbols = try p.declared_symbols.toOwnedSlice(
                         p.allocator,
                     ),
-                    .import_record_indices = p.import_records_for_current_part.toOwnedSlice(
+                    .import_record_indices = try p.import_records_for_current_part.toOwnedSlice(
                         p.allocator,
                     ),
-                    .scopes = p.scopes_for_current_part.toOwnedSlice(p.allocator),
+                    .scopes = try p.scopes_for_current_part.toOwnedSlice(p.allocator),
                     .can_be_removed_if_unused = p.stmtsCanBeRemovedIfUnused(_stmts),
                 });
                 p.symbol_uses = .{};
@@ -12902,7 +12902,7 @@ fn NewParser_(
             var stmts = ListManaged(Stmt).fromOwnedSlice(p.allocator, body.stmts);
             var temp_opts = PrependTempRefsOpts{ .kind = StmtsKind.fn_body, .fn_body_loc = body.loc };
             p.visitStmtsAndPrependTempRefs(&stmts, &temp_opts) catch unreachable;
-            func.body = G.FnBody{ .stmts = stmts.toOwnedSlice(), .loc = body.loc };
+            func.body = G.FnBody{ .stmts = try stmts.toOwnedSlice(), .loc = body.loc };
 
             p.popScope();
             p.popScope();
@@ -13581,10 +13581,10 @@ fn NewParser_(
 
                                         // we need to wrap the template in a function
                                         const ret = p.newExpr(E.Identifier{ .ref = solid.component_body_decls.items[0].binding.data.b_identifier.ref }, expr.loc);
-                                        solid.component_body.items[0] = p.s(S.Local{ .decls = solid.component_body_decls.toOwnedSlice(p.allocator) }, expr.loc);
+                                        solid.component_body.items[0] = p.s(S.Local{ .decls = try solid.component_body_decls.toOwnedSlice(p.allocator) }, expr.loc);
                                         solid.component_body.append(p.allocator, p.s(S.Return{ .value = ret }, expr.loc)) catch unreachable;
                                         return p.newExpr(
-                                            E.Arrow{ .args = &[_]G.Arg{}, .body = G.FnBody{ .stmts = solid.component_body.toOwnedSlice(p.allocator), .loc = expr.loc } },
+                                            E.Arrow{ .args = &[_]G.Arg{}, .body = G.FnBody{ .stmts = try solid.component_body.toOwnedSlice(p.allocator), .loc = expr.loc } },
                                             expr.loc,
                                         );
                                         // we don't need to return anything because it's a static element that will live in the template
@@ -15224,7 +15224,7 @@ fn NewParser_(
                     var temp_opts = PrependTempRefsOpts{ .kind = StmtsKind.fn_body };
                     p.visitStmtsAndPrependTempRefs(&stmts_list, &temp_opts) catch unreachable;
                     p.allocator.free(e_.body.stmts);
-                    e_.body.stmts = stmts_list.toOwnedSlice();
+                    e_.body.stmts = try stmts_list.toOwnedSlice();
                     p.popScope();
                     p.popScope();
 
@@ -16145,7 +16145,7 @@ fn NewParser_(
 
                         var items = try List(js_ast.ClauseItem).initCapacity(p.allocator, 1);
                         items.appendAssumeCapacity(js_ast.ClauseItem{ .alias = alias.original_name, .original_name = alias.original_name, .alias_loc = alias.loc, .name = LocRef{ .loc = alias.loc, .ref = data.namespace_ref } });
-                        stmts.appendAssumeCapacity(p.s(S.ExportClause{ .items = items.toOwnedSlice(p.allocator), .is_single_line = true }, stmt.loc));
+                        stmts.appendAssumeCapacity(p.s(S.ExportClause{ .items = try items.toOwnedSlice(p.allocator), .is_single_line = true }, stmt.loc));
                         return;
                     }
                 },
@@ -16494,7 +16494,7 @@ fn NewParser_(
                         const kind = if (std.meta.eql(p.loop_body, stmt.data)) StmtsKind.loop_body else StmtsKind.none;
                         var _stmts = ListManaged(Stmt).fromOwnedSlice(p.allocator, data.stmts);
                         p.visitStmts(&_stmts, kind) catch unreachable;
-                        data.stmts = _stmts.toOwnedSlice();
+                        data.stmts = try _stmts.toOwnedSlice();
                         p.popScope();
                     }
 
@@ -16674,7 +16674,7 @@ fn NewParser_(
                         p.fn_or_arrow_data_visit.try_body_count += 1;
                         p.visitStmts(&_stmts, StmtsKind.none) catch unreachable;
                         p.fn_or_arrow_data_visit.try_body_count -= 1;
-                        data.body = _stmts.toOwnedSlice();
+                        data.body = try _stmts.toOwnedSlice();
                     }
                     p.popScope();
 
@@ -16686,7 +16686,7 @@ fn NewParser_(
                             }
                             var _stmts = ListManaged(Stmt).fromOwnedSlice(p.allocator, catch_.body);
                             p.visitStmts(&_stmts, StmtsKind.none) catch unreachable;
-                            catch_.body = _stmts.toOwnedSlice();
+                            catch_.body = try _stmts.toOwnedSlice();
                         }
                         p.popScope();
                     }
@@ -16696,7 +16696,7 @@ fn NewParser_(
                         {
                             var _stmts = ListManaged(Stmt).fromOwnedSlice(p.allocator, finally.stmts);
                             p.visitStmts(&_stmts, StmtsKind.none) catch unreachable;
-                            finally.stmts = _stmts.toOwnedSlice();
+                            finally.stmts = try _stmts.toOwnedSlice();
                         }
                         p.popScope();
                     }
@@ -16720,7 +16720,7 @@ fn NewParser_(
                             }
                             var _stmts = ListManaged(Stmt).fromOwnedSlice(p.allocator, case.body);
                             p.visitStmts(&_stmts, StmtsKind.none) catch unreachable;
-                            data.cases[i].body = _stmts.toOwnedSlice();
+                            data.cases[i].body = try _stmts.toOwnedSlice();
                         }
                     }
                     // TODO: duplicate case checker
@@ -16936,7 +16936,7 @@ fn NewParser_(
                         data.name.loc,
                         data.name.ref.?,
                         data.arg,
-                        value_stmts.toOwnedSlice(),
+                        try value_stmts.toOwnedSlice(),
                     );
                     return;
                 },
@@ -17884,7 +17884,7 @@ fn NewParser_(
                 p.popScope();
             }
 
-            return p.stmtsToSingleStmt(stmt.loc, stmts.toOwnedSlice());
+            return p.stmtsToSingleStmt(stmt.loc, try stmts.toOwnedSlice());
         }
 
         // One statement could potentially expand to several statements
@@ -18119,8 +18119,8 @@ fn NewParser_(
                             }
                         }
 
-                        class.properties = class_body.toOwnedSlice();
-                        constructor.func.body.stmts = stmts.toOwnedSlice();
+                        class.properties = try class_body.toOwnedSlice();
+                        constructor.func.body.stmts = try stmts.toOwnedSlice();
                     }
                 }
             }
@@ -18559,7 +18559,7 @@ fn NewParser_(
                     kept_import_equals = kept_import_equals or result.kept_import_equals;
                     removed_import_equals = removed_import_equals or result.removed_import_equals;
                     part.import_record_indices = part.import_record_indices;
-                    part.declared_symbols = p.declared_symbols.toOwnedSlice(allocator);
+                    part.declared_symbols = try p.declared_symbols.toOwnedSlice(allocator);
                     part.stmts = result.stmts;
                     if (part.stmts.len > 0) {
                         if (p.module_scope.contains_direct_eval and part.declared_symbols.len > 0) {

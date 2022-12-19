@@ -585,14 +585,14 @@ pub const StreamResult = union(Tag) {
                 ctx: *anyopaque,
                 handler: Fn,
 
-                pub const Fn = fn (ctx: *anyopaque, result: StreamResult.Writable) void;
+                pub const Fn = *const fn (ctx: *anyopaque, result: StreamResult.Writable) void;
 
                 pub fn init(this: *Handler, comptime Context: type, ctx: *Context, comptime handler_fn: fn (*Context, StreamResult.Writable) void) void {
                     this.ctx = ctx;
                     this.handler = struct {
                         const handler = handler_fn;
                         pub fn onHandle(ctx_: *anyopaque, result: StreamResult.Writable) void {
-                            @call(.{ .modifier = .always_inline }, handler, .{ bun.cast(*Context, ctx_), result });
+                            @call(.always_inline, handler, .{ bun.cast(*Context, ctx_), result });
                         }
                     }.onHandle;
                 }
@@ -715,7 +715,7 @@ pub const StreamResult = union(Tag) {
                 this.handler = struct {
                     const handler = handler_fn;
                     pub fn onHandle(ctx_: *anyopaque, result: StreamResult) void {
-                        @call(.{ .modifier = .always_inline }, handler, .{ bun.cast(*Context, ctx_), result });
+                        @call(.always_inline, handler, .{ bun.cast(*Context, ctx_), result });
                     }
                 }.onHandle;
             }
@@ -1852,7 +1852,7 @@ pub const ArrayBufferSink = struct {
         var list = this.bytes.listManaged(this.allocator);
         this.bytes = bun.ByteList.init("");
         return ArrayBuffer.fromBytes(
-            list.toOwnedSlice(),
+            try list.toOwnedSlice(),
             if (as_uint8array)
                 .Uint8Array
             else
@@ -1871,7 +1871,7 @@ pub const ArrayBufferSink = struct {
         this.done = true;
         this.signal.close(null);
         return .{ .result = ArrayBuffer.fromBytes(
-            list.toOwnedSlice(),
+            try list.toOwnedSlice(),
             if (this.as_uint8array)
                 .Uint8Array
             else
@@ -2823,7 +2823,7 @@ pub fn ReadableStreamSource(
         cancelled: bool = false,
         deinited: bool = false,
         pending_err: ?Syscall.Error = null,
-        close_handler: ?fn (*anyopaque) void = null,
+        close_handler: ?*const fn (*anyopaque) void = null,
         close_ctx: ?*anyopaque = null,
         close_jsvalue: JSValue = JSValue.zero,
         globalThis: *JSGlobalObject = undefined,
@@ -3141,7 +3141,7 @@ pub const ByteBlobLoader = struct {
     );
 };
 
-pub const PipeFunction = fn (ctx: *anyopaque, stream: StreamResult, allocator: std.mem.Allocator) void;
+pub const PipeFunction = *const fn (ctx: *anyopaque, stream: StreamResult, allocator: std.mem.Allocator) void;
 
 pub const PathOrFileDescriptor = union(enum) {
     path: ZigString.Slice,

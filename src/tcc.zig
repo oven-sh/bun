@@ -1,5 +1,5 @@
 pub const TCCState = opaque {};
-pub const TCCErrorFunc = ?fn (?*anyopaque, [*c]const u8) callconv(.C) void;
+pub const TCCErrorFunc = ?*const fn (?*anyopaque, [*c]const u8) callconv(.C) void;
 pub extern fn tcc_new() ?*TCCState;
 pub extern fn tcc_delete(s: *TCCState) void;
 pub extern fn tcc_set_lib_path(s: *TCCState, path: [*c]const u8) void;
@@ -21,7 +21,7 @@ pub extern fn tcc_output_file(s: *TCCState, filename: [*c]const u8) c_int;
 pub extern fn tcc_run(s: *TCCState, argc: c_int, argv: [*c][*c]u8) c_int;
 pub extern fn tcc_relocate(s1: *TCCState, ptr: ?*anyopaque) c_int;
 pub extern fn tcc_get_symbol(s: *TCCState, name: [*c]const u8) ?*anyopaque;
-pub extern fn tcc_list_symbols(s: *TCCState, ctx: ?*anyopaque, symbol_cb: ?fn (?*anyopaque, [*c]const u8, ?*const anyopaque) callconv(.C) void) void;
+pub extern fn tcc_list_symbols(s: *TCCState, ctx: ?*anyopaque, symbol_cb: ?*const fn (?*anyopaque, [*c]const u8, ?*const anyopaque) callconv(.C) void) void;
 pub const TCC_OUTPUT_MEMORY = @as(c_int, 1);
 pub const TCC_OUTPUT_EXE = @as(c_int, 2);
 pub const TCC_OUTPUT_DLL = @as(c_int, 3);

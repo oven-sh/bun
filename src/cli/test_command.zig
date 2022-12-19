@@ -354,7 +354,7 @@ pub const TestCommand = struct {
         scanner.scan(scanner.fs.top_level_dir);
         scanner.dirs_to_scan.deinit();
 
-        const test_files = scanner.results.toOwnedSlice();
+        const test_files = try scanner.results.toOwnedSlice();
         if (test_files.len > 0) {
             // vm.bundler.fs.fs.readDirectory(_dir: string, _handle: ?std.fs.Dir)
             runAllTests(reporter, vm, test_files, ctx.allocator);

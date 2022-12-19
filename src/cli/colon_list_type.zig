@@ -10,7 +10,7 @@ const default_allocator = bun.default_allocator;
 const C = bun.C;
 const std = @import("std");
 
-pub fn ColonListType(comptime t: type, value_resolver: anytype) type {
+pub fn ColonListType(comptime t: type, comptime value_resolver: anytype) type {
     return struct {
         pub fn init(allocator: std.mem.Allocator, count: usize) !@This() {
             var keys = try allocator.alloc(string, count);

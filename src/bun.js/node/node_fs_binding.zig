@@ -9,7 +9,7 @@ const FeatureFlags = @import("bun").FeatureFlags;
 const Args = JSC.Node.NodeFS.Arguments;
 const d = JSC.d;
 
-const NodeFSFunction = fn (
+const NodeFSFunction = *const fn (
     *JSC.Node.NodeFS,
     JSC.C.JSContextRef,
     JSC.C.JSObjectRef,
@@ -27,8 +27,8 @@ fn callSync(comptime FunctionEnum: NodeFSFunctionEnum) NodeFSFunction {
     const FunctionType = @TypeOf(Function);
 
     const function: std.builtin.Type.Fn = comptime @typeInfo(FunctionType).Fn;
-    comptime if (function.args.len != 3) @compileError("Expected 3 arguments");
-    const Arguments = comptime function.args[1].arg_type.?;
+    comptime if (function.params.len != 3) @compileError("Expected 3 arguments");
+    const Arguments = comptime function.params[1].type.?;
     const FormattedName = comptime [1]u8{std.ascii.toUpper(@tagName(FunctionEnum)[0])} ++ @tagName(FunctionEnum)[1..];
     const Result = comptime JSC.Maybe(@field(JSC.Node.NodeFS.ReturnType, FormattedName));
 
@@ -77,7 +77,7 @@ fn call(comptime Function: NodeFSFunctionEnum) NodeFSFunction {
 
     // const function: std.builtin.Type.Fn = comptime @typeInfo(FunctionType).Fn;
     // comptime if (function.args.len != 3) @compileError("Expected 3 arguments");
-    // const Arguments = comptime function.args[2].arg_type orelse @compileError(std.fmt.comptimePrint("Function {s} expected to have an arg type at [2]", .{@typeName(FunctionType)}));
+    // const Arguments = comptime function.args[2].type orelse @compileError(std.fmt.comptimePrint("Function {s} expected to have an arg type at [2]", .{@typeName(FunctionType)}));
     // const Result = comptime function.return_type.?;
     // comptime if (Arguments != void and !fromJSTrait(Arguments)) @compileError(std.fmt.comptimePrint("{s} is missing fromJS()", .{@typeName(Arguments)}));
     // comptime if (Result != void and !toJSTrait(Result)) @compileError(std.fmt.comptimePrint("{s} is missing toJS()", .{@typeName(Result)}));

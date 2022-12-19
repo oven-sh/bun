@@ -94,7 +94,7 @@ pub const Lexer = struct {
                     last_flush = i;
                     const name = variable.value[start + curly_braces_offset .. i - curly_braces_offset];
 
-                    if (@call(.{ .modifier = .always_inline }, getter, .{ ctx, name })) |new_value| {
+                    if (@call(.always_inline, getter, .{ ctx, name })) |new_value| {
                         if (new_value.len > 0) {
                             try writer.writeAll(new_value);
                         }

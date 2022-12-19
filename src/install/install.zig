@@ -175,7 +175,7 @@ const NetworkTask = struct {
     allocator: std.mem.Allocator,
     request_buffer: MutableString = undefined,
     response_buffer: MutableString = undefined,
-    package_manager: *PackageManager = &PackageManager.instance,
+    package_manager: *PackageManager,
     callback: union(Task.Tag) {
         package_manifest: struct {
             loaded_manifest: ?Npm.PackageManifest = null,
@@ -490,7 +490,7 @@ const Task = struct {
     log: logger.Log,
     id: u64,
     err: ?anyerror = null,
-    package_manager: *PackageManager = &PackageManager.instance,
+    package_manager: *PackageManager,
 
     /// An ID that lets us register a callback without keeping the same pointer around
     pub const Id = struct {
@@ -1502,9 +1502,19 @@ pub const PackageManager = struct {
     );
 
     pub const WakeHandler = struct {
-        handler: fn (ctx: *anyopaque, pm: *PackageManager) void = undefined,
-        onDependencyError: fn (ctx: *anyopaque, Dependency, PackageID, anyerror) void = undefined,
+        // handler: fn (ctx: *anyopaque, pm: *PackageManager) void = undefined,
+        // onDependencyError: fn (ctx: *anyopaque, Dependency, PackageID, anyerror) void = undefined,
+        handler: *anyopaque = undefined,
+        onDependencyError: *anyopaque = undefined,
         context: ?*anyopaque = null,
+
+        pub inline fn getHandler(t: @This()) *const fn (ctx: *anyopaque, pm: *PackageManager) void {
+            return @ptrCast(*const fn (ctx: *anyopaque, pm: *PackageManager) void, t.handler);
+        }
+
+        pub inline fn getonDependencyError(t: @This()) *const fn (ctx: *anyopaque, Dependency, PackageID, anyerror) void {
+            return @ptrCast(*const fn (ctx: *anyopaque, Dependency, PackageID, anyerror) void, t.handler);
+        }
     };
 
     pub fn failRootResolution(this: *PackageManager, dependency: Dependency, dependency_id: PackageID, err: anyerror) void {
@@ -1526,7 +1536,7 @@ pub const PackageManager = struct {
 
     pub fn wake(this: *PackageManager) void {
         if (this.onWake.context != null) {
-            this.onWake.handler(this.onWake.context.?, this);
+            this.onWake.getHandler()(this.onWake.context.?, this);
             return;
         }
 
@@ -2266,8 +2276,8 @@ pub const PackageManager = struct {
         this.network_task_fifo.writeItemAssumeCapacity(task);
     }
 
-    const SuccessFn = fn (*PackageManager, PackageID, PackageID) void;
-    const FailFn = fn (*PackageManager, Dependency, PackageID, anyerror) void;
+    const SuccessFn = *const fn (*PackageManager, PackageID, PackageID) void;
+    const FailFn = *const fn (*PackageManager, Dependency, PackageID, anyerror) void;
     fn assignResolution(this: *PackageManager, dependency_id: PackageID, package_id: PackageID) void {
         this.lockfile.buffers.resolutions.items[dependency_id] = package_id;
     }
@@ -5386,7 +5396,7 @@ pub const PackageManager = struct {
         var new_package_json_source = try ctx.allocator.dupe(u8, package_json_writer.ctx.writtenWithoutTrailingZero());
 
         // Do not free the old package.json AST nodes
-        var old_ast_nodes = JSAst.Expr.Data.Store.toOwnedSlice();
+        var old_ast_nodes = try JSAst.Expr.Data.Store.toOwnedSlice();
         // haha unless
         defer if (auto_free) bun.default_allocator.free(old_ast_nodes);
 

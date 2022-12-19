@@ -58,40 +58,40 @@ pub const ZigGlobalObject = extern struct {
             unreachable;
         }
 
-        return @call(.{ .modifier = .always_inline }, Interface.import, .{ global, specifier, source });
+        return @call(.always_inline, Interface.import, .{ global, specifier, source });
     }
     pub fn resolve(res: *ErrorableZigString, global: *JSGlobalObject, specifier: *ZigString, source: *ZigString) callconv(.C) void {
         if (comptime is_bindgen) {
             unreachable;
         }
-        @call(.{ .modifier = .always_inline }, Interface.resolve, .{ res, global, specifier, source });
+        @call(.always_inline, Interface.resolve, .{ res, global, specifier, source });
     }
     pub fn fetch(ret: *ErrorableResolvedSource, global: *JSGlobalObject, specifier: *ZigString, source: *ZigString) callconv(.C) void {
         if (comptime is_bindgen) {
             unreachable;
         }
-        @call(.{ .modifier = .always_inline }, Interface.fetch, .{ ret, global, specifier, source });
+        @call(.always_inline, Interface.fetch, .{ ret, global, specifier, source });
     }
 
     pub fn promiseRejectionTracker(global: *JSGlobalObject, promise: *JSPromise, rejection: JSPromiseRejectionOperation) callconv(.C) JSValue {
         if (comptime is_bindgen) {
             unreachable;
         }
-        return @call(.{ .modifier = .always_inline }, Interface.promiseRejectionTracker, .{ global, promise, rejection });
+        return @call(.always_inline, Interface.promiseRejectionTracker, .{ global, promise, rejection });
     }
 
     pub fn reportUncaughtException(global: *JSGlobalObject, exception: *Exception) callconv(.C) JSValue {
         if (comptime is_bindgen) {
             unreachable;
         }
-        return @call(.{ .modifier = .always_inline }, Interface.reportUncaughtException, .{ global, exception });
+        return @call(.always_inline, Interface.reportUncaughtException, .{ global, exception });
     }
 
     pub fn onCrash() callconv(.C) void {
         if (comptime is_bindgen) {
             unreachable;
         }
-        return @call(.{ .modifier = .always_inline }, Interface.onCrash, .{});
+        return @call(.always_inline, Interface.onCrash, .{});
     }
 
     pub const Export = shim.exportFunctions(

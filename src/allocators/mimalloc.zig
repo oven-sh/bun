@@ -14,11 +14,11 @@ pub extern fn mi_reallocn(p: ?*anyopaque, count: usize, size: usize) ?*anyopaque
 pub extern fn mi_reallocf(p: ?*anyopaque, newsize: usize) ?*anyopaque;
 pub extern fn mi_usable_size(p: ?*const anyopaque) usize;
 pub extern fn mi_good_size(size: usize) usize;
-pub const mi_deferred_free_fun = fn (bool, c_ulonglong, ?*anyopaque) callconv(.C) void;
+pub const mi_deferred_free_fun = *const fn (bool, c_ulonglong, ?*anyopaque) callconv(.C) void;
 pub extern fn mi_register_deferred_free(deferred_free: ?mi_deferred_free_fun, arg: ?*anyopaque) void;
-pub const mi_output_fun = fn ([*:0]const u8, ?*anyopaque) callconv(.C) void;
+pub const mi_output_fun = *const fn ([*:0]const u8, ?*anyopaque) callconv(.C) void;
 pub extern fn mi_register_output(out: ?mi_output_fun, arg: ?*anyopaque) void;
-pub const mi_error_fun = fn (c_int, ?*anyopaque) callconv(.C) void;
+pub const mi_error_fun = *const fn (c_int, ?*anyopaque) callconv(.C) void;
 pub extern fn mi_register_error(fun: ?mi_error_fun, arg: ?*anyopaque) void;
 pub extern fn mi_collect(force: bool) void;
 pub extern fn mi_version() c_int;
@@ -118,7 +118,7 @@ pub const struct_mi_heap_area_s = extern struct {
     full_block_size: usize,
 };
 pub const mi_heap_area_t = struct_mi_heap_area_s;
-pub const mi_block_visit_fun = fn (?*const Heap, [*c]const mi_heap_area_t, ?*anyopaque, usize, ?*anyopaque) callconv(.C) bool;
+pub const mi_block_visit_fun = *const fn (?*const Heap, [*c]const mi_heap_area_t, ?*anyopaque, usize, ?*anyopaque) callconv(.C) bool;
 pub extern fn mi_heap_visit_blocks(heap: ?*const Heap, visit_all_blocks: bool, visitor: ?mi_block_visit_fun, arg: ?*anyopaque) bool;
 pub extern fn mi_is_in_heap_region(p: ?*const anyopaque) bool;
 pub extern fn mi_is_redirected() bool;

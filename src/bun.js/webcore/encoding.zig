@@ -402,7 +402,7 @@ pub const TextDecoder = struct {
     scratch_memory: []u8 = &[_]u8{},
     ignore_bom: bool = false,
     fatal: bool = false,
-    encoding: EncodingLabel = EncodingLabel.utf8,
+    encoding: EncodingLabel = EncodingLabel.@"UTF-8",
 
     pub fn finalize(this: *TextDecoder) callconv(.C) void {
         bun.default_allocator.destroy(this);
@@ -560,7 +560,7 @@ pub const TextDecoder = struct {
             }
         }
 
-        var full = buffer.toOwnedSlice(allocator);
+        var full = try buffer.toOwnedSlice(allocator);
 
         var out = ZigString.init("");
         out.ptr = @ptrCast([*]u8, full.ptr);
@@ -608,10 +608,6 @@ pub const TextDecoder = struct {
                                 globalThis.throw("Out of memory", .{});
                                 return JSValue.zero;
                             },
-                            else => {
-                                globalThis.throw("Unknown error", .{});
-                                return JSValue.zero;
-                            },
                         }
                     }
                 } else {
@@ -623,10 +619,6 @@ pub const TextDecoder = struct {
                         switch (err) {
                             error.OutOfMemory => {
                                 globalThis.throw("Out of memory", .{});
-                                return JSValue.zero;
-                            },
-                            else => {
-                                globalThis.throw("Unknown error", .{});
                                 return JSValue.zero;
                             },
                         }
@@ -673,10 +665,6 @@ pub const TextDecoder = struct {
                                 globalThis.throw("Out of memory", .{});
                                 return JSValue.zero;
                             },
-                            else => {
-                                globalThis.throw("Unknown error", .{});
-                                return JSValue.zero;
-                            },
                         }
                     }
                 } else {
@@ -688,10 +676,6 @@ pub const TextDecoder = struct {
                         switch (err) {
                             error.OutOfMemory => {
                                 globalThis.throw("Out of memory", .{});
-                                return JSValue.zero;
-                            },
-                            else => {
-                                globalThis.throw("Unknown error", .{});
                                 return JSValue.zero;
                             },
                         }
@@ -972,7 +956,7 @@ pub const Encoder = struct {
             },
 
             JSC.Node.Encoding.base64url => {
-                var slice = strings.trim(input[0..len], "\r\n\t " ++ [_]u8{std.ascii.control_code.VT});
+                var slice = strings.trim(input[0..len], "\r\n\t " ++ [_]u8{std.ascii.control_code.vt});
                 if (slice.len == 0)
                     return 0;
 
@@ -1121,7 +1105,7 @@ pub const Encoder = struct {
             },
 
             JSC.Node.Encoding.base64url => {
-                var slice = strings.trim(input[0..len], "\r\n\t " ++ [_]u8{std.ascii.control_code.VT});
+                var slice = strings.trim(input[0..len], "\r\n\t " ++ [_]u8{std.ascii.control_code.vt});
                 if (slice.len == 0)
                     return &[_]u8{};
 
@@ -1138,7 +1122,7 @@ pub const Encoder = struct {
             },
 
             JSC.Node.Encoding.base64 => {
-                var slice = strings.trim(input[0..len], "\r\n\t " ++ [_]u8{std.ascii.control_code.VT});
+                var slice = strings.trim(input[0..len], "\r\n\t " ++ [_]u8{std.ascii.control_code.vt});
                 var outlen = bun.base64.decodeLen(slice);
 
                 var to = allocator.alloc(u8, outlen) catch return &[_]u8{};

@@ -313,7 +313,7 @@ pub const To = struct {
                     _: js.JSStringRef,
                     exception: js.ExceptionRef,
                 ) js.JSValueRef {
-                    return withType(std.meta.fieldInfo(Type, field).field_type, @field(this, @tagName(field)), ctx, exception);
+                    return withType(std.meta.fieldInfo(Type, field).type, @field(this, @tagName(field)), ctx, exception);
                 }
             }.rfn;
         }
@@ -1064,7 +1064,7 @@ pub fn NewClassWithInstanceType(
                                 js.ExceptionRef,
                             ) js.JSValueRef;
 
-                            if (Func.Fn.args.len == @typeInfo(WithPropFn).Fn.args.len) {
+                            if (Func.Fn.params.len == @typeInfo(WithPropFn).Fn.params.len) {
                                 return func(
                                     this,
                                     ctx,
@@ -1234,6 +1234,8 @@ pub fn NewClassWithInstanceType(
                 };
             }
 
+            @setEvalBranchQuota(50_000);
+
             for (function_name_literals) |function_name_literal, i| {
                 const is_read_only = options.read_only;
 
@@ -1249,9 +1251,9 @@ pub fn NewClassWithInstanceType(
                             def.callAsFunction = To.JS.Callback(ZigType, staticFunctions.call.rfn).rfn;
                         } else if (strings.eqlComptime(function_name_literal, "callAsFunction")) {
                             const ctxfn = @field(staticFunctions, function_name_literal).rfn;
-                            const Func: std.builtin.Type.Fn = @typeInfo(@TypeOf(ctxfn)).Fn;
+                            const Func: std.builtin.Type.Fn = @typeInfo(@TypeOf(if (@typeInfo(@TypeOf(ctxfn)) == .Pointer) ctxfn.* else ctxfn)).Fn;
 
-                            const PointerType = std.meta.Child(Func.args[0].arg_type.?);
+                            const PointerType = std.meta.Child(Func.params[0].type.?);
 
                             def.callAsFunction = if (Func.calling_convention == .C) ctxfn else To.JS.Callback(
                                 PointerType,
@@ -1274,7 +1276,7 @@ pub fn NewClassWithInstanceType(
                                 @compileError("Expected " ++ options.name ++ "." ++ function_name_literal ++ " to have .rfn");
                             }
                             const ctxfn = CtxField.rfn;
-                            const Func: std.builtin.Type.Fn = @typeInfo(@TypeOf(ctxfn)).Fn;
+                            const Func: std.builtin.Type.Fn = @typeInfo(@TypeOf(if (@typeInfo(@TypeOf(ctxfn)) == .Pointer) ctxfn.* else ctxfn)).Fn;
 
                             var attributes: c_uint = @enumToInt(js.JSPropertyAttributes.kJSPropertyAttributeNone);
 
@@ -1288,13 +1290,19 @@ pub fn NewClassWithInstanceType(
 
                             var PointerType = void;
 
-                            if (Func.args[0].arg_type.? != void) {
-                                PointerType = std.meta.Child(Func.args[0].arg_type.?);
+                            if (Func.params[0].type.? != void) {
+                                PointerType = std.meta.Child(Func.params[0].type.?);
+                            }
+
+                            if (true) {
+                                __static_functions[count] = undefined;
+                                count += 1;
+                                continue;
                             }
 
                             __static_functions[count] = js.JSStaticFunction{
                                 .name = @ptrCast([*c]const u8, function_names[i].ptr),
-                                .callAsFunction = if (Func.calling_convention == .C) ctxfn else To.JS.Callback(
+                                .callAsFunction = if (Func.calling_convention == .C) CtxField.rfn else To.JS.Callback(
                                     PointerType,
                                     ctxfn,
                                 ).rfn,
@@ -2148,11 +2156,11 @@ pub fn getterWrap(comptime Container: type, comptime name: string) GetterType(Co
             exception: js.ExceptionRef,
         ) js.JSObjectRef {
             const result: JSValue = if (comptime std.meta.fields(ArgsTuple).len == 1)
-                @call(.{}, @field(Container, name), .{
+                @call(.auto, @field(Container, name), .{
                     this,
                 })
             else
-                @call(.{}, @field(Container, name), .{ this, ctx.ptr() });
+                @call(.auto, @field(Container, name), .{ this, ctx.ptr() });
             if (!result.isUndefinedOrNull() and result.isError()) {
                 exception.* = result.asObjectRef();
                 return null;
@@ -2176,7 +2184,7 @@ pub fn setterWrap(comptime Container: type, comptime name: string) SetterType(Co
             value: js.JSValueRef,
             exception: js.ExceptionRef,
         ) bool {
-            @call(.{}, @field(Container, name), .{ this, JSC.JSValue.fromRef(value), exception, ctx.ptr() });
+            @call(.auto, @field(Container, name), .{ this, JSC.JSValue.fromRef(value), exception, ctx.ptr() });
             return exception.* == null;
         }
     }.callback;
@@ -2377,7 +2385,7 @@ pub fn DOMCall(
             arguments_ptr: [*]const JSC.JSValue,
             arguments_len: usize,
         ) callconv(.C) JSValue {
-            return @call(.{}, @field(Container, functionName), .{
+            return @call(.auto, @field(Container, functionName), .{
                 globalObject,
                 thisValue,
                 arguments_ptr[0..arguments_len],
@@ -2428,14 +2436,14 @@ pub fn DOMCall(
                     },
                     1 => {
                         try writer.writeAll(", ");
-                        try writer.writeAll(DOMCallArgumentTypeWrapper(Fields[2].field_type));
+                        try writer.writeAll(DOMCallArgumentTypeWrapper(Fields[2].type));
                         try writer.writeAll("));\n");
                     },
                     2 => {
                         try writer.writeAll(", ");
-                        try writer.writeAll(DOMCallArgumentTypeWrapper(Fields[2].field_type));
+                        try writer.writeAll(DOMCallArgumentTypeWrapper(Fields[2].type));
                         try writer.writeAll(", ");
-                        try writer.writeAll(DOMCallArgumentTypeWrapper(Fields[3].field_type));
+                        try writer.writeAll(DOMCallArgumentTypeWrapper(Fields[3].type));
                         try writer.writeAll("));\n");
                     },
                     else => @compileError("Must be <= 3 arguments"),
@@ -2456,14 +2464,14 @@ pub fn DOMCall(
                     },
                     1 => {
                         try writer.writeAll(", ");
-                        try writer.writeAll(DOMCallArgumentTypeWrapper(Fields[2].field_type));
+                        try writer.writeAll(DOMCallArgumentTypeWrapper(Fields[2].type));
                         try writer.writeAll(" arg1)) {\n");
                     },
                     2 => {
                         try writer.writeAll(", ");
-                        try writer.writeAll(DOMCallArgumentTypeWrapper(Fields[2].field_type));
+                        try writer.writeAll(DOMCallArgumentTypeWrapper(Fields[2].type));
                         try writer.writeAll(" arg1, ");
-                        try writer.writeAll(DOMCallArgumentTypeWrapper(Fields[3].field_type));
+                        try writer.writeAll(DOMCallArgumentTypeWrapper(Fields[3].type));
                         try writer.writeAll(" arg2)) {\n");
                     },
                     else => @compileError("Must be <= 3 arguments"),
@@ -2550,14 +2558,14 @@ pub fn DOMCall(
                 0 => {},
                 1 => {
                     try writer.writeAll(",\n  ");
-                    try writer.writeAll(DOMCallArgumentType(Fields[2].field_type));
+                    try writer.writeAll(DOMCallArgumentType(Fields[2].type));
                     try writer.writeAll("\n  ");
                 },
                 2 => {
                     try writer.writeAll(",\n  ");
-                    try writer.writeAll(DOMCallArgumentType(Fields[2].field_type));
+                    try writer.writeAll(DOMCallArgumentType(Fields[2].type));
                     try writer.writeAll(",\n  ");
-                    try writer.writeAll(DOMCallArgumentType(Fields[3].field_type));
+                    try writer.writeAll(DOMCallArgumentType(Fields[3].type));
                     try writer.writeAll("\n  ");
                 },
                 else => @compileError("Must be <= 3 arguments"),
@@ -2631,8 +2639,8 @@ pub fn wrapWithHasContainer(
             var args: Args = undefined;
 
             comptime var i: usize = 0;
-            inline while (i < FunctionTypeInfo.args.len) : (i += 1) {
-                const ArgType = comptime FunctionTypeInfo.args[i].arg_type.?;
+            inline while (i < FunctionTypeInfo.params.len) : (i += 1) {
+                const ArgType = comptime FunctionTypeInfo.params[i].type.?;
 
                 switch (comptime ArgType) {
                     *Container => {
@@ -2760,7 +2768,7 @@ pub fn wrapWithHasContainer(
                 }
             }
 
-            var result: JSValue = @call(.{}, @field(Container, name), args);
+            var result: JSValue = @call(.auto, @field(Container, name), args);
             if (!result.isEmptyOrUndefinedOrNull() and result.isError()) {
                 exception.* = result.asObjectRef();
                 iter.deinit();
@@ -2812,13 +2820,13 @@ pub fn wrapInstanceMethod(
             globalThis: *JSC.JSGlobalObject,
             callframe: *JSC.CallFrame,
         ) callconv(.C) JSC.JSValue {
-            const arguments = callframe.arguments(FunctionTypeInfo.args.len);
+            const arguments = callframe.arguments(FunctionTypeInfo.params.len);
             var iter = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments.ptr[0..arguments.len]);
             var args: Args = undefined;
 
             comptime var i: usize = 0;
-            inline while (i < FunctionTypeInfo.args.len) : (i += 1) {
-                const ArgType = comptime FunctionTypeInfo.args[i].arg_type.?;
+            inline while (i < FunctionTypeInfo.params.len) : (i += 1) {
+                const ArgType = comptime FunctionTypeInfo.params[i].type.?;
 
                 switch (comptime ArgType) {
                     *Container => {
@@ -2937,7 +2945,7 @@ pub fn wrapInstanceMethod(
 
             defer iter.deinit();
 
-            return @call(.{}, @field(Container, name), args);
+            return @call(.auto, @field(Container, name), args);
         }
     }.method;
 }
@@ -2957,13 +2965,13 @@ pub fn wrapStaticMethod(
             globalThis: *JSC.JSGlobalObject,
             callframe: *JSC.CallFrame,
         ) callconv(.C) JSC.JSValue {
-            const arguments = callframe.arguments(FunctionTypeInfo.args.len);
+            const arguments = callframe.arguments(FunctionTypeInfo.params.len);
             var iter = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments.ptr[0..arguments.len]);
             var args: Args = undefined;
 
             comptime var i: usize = 0;
-            inline while (i < FunctionTypeInfo.args.len) : (i += 1) {
-                const ArgType = comptime FunctionTypeInfo.args[i].arg_type.?;
+            inline while (i < FunctionTypeInfo.params.len) : (i += 1) {
+                const ArgType = comptime FunctionTypeInfo.params[i].type.?;
 
                 switch (comptime ArgType) {
                     *JSC.JSGlobalObject => {
@@ -3079,7 +3087,7 @@ pub fn wrapStaticMethod(
 
             defer iter.deinit();
 
-            return @call(.{}, @field(Container, name), args);
+            return @call(.auto, @field(Container, name), args);
         }
     }.method;
 }

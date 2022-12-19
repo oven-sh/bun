@@ -480,7 +480,7 @@ pub fn build(b: *std.build.Builder) !void {
     }
 }
 
-pub var original_make_fn: ?fn (step: *std.build.Step) anyerror!void = null;
+pub var original_make_fn: ?*const fn (step: *std.build.Step) anyerror!void = null;
 
 // Due to limitations in std.build.Builder
 // we cannot use this with debugging

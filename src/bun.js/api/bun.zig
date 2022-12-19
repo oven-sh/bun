@@ -273,7 +273,7 @@ pub fn inspect(
     // // when it's a big thing, we will manage it
     // {
     //     writer.context.flush() catch {};
-    //     var slice = writer.context.context.toOwnedSlice();
+    //     var slice =try writer.context.context.toOwnedSlice();
 
     //     var zig_str = ZigString.init(slice).withEncoding();
     //     if (!zig_str.isUTF8()) {
@@ -2008,7 +2008,7 @@ pub const Hash = struct {
                         function_args[0] = input;
                     }
 
-                    const value = @call(.{}, Function, function_args);
+                    const value = @call(.auto, Function, function_args);
 
                     if (@TypeOf(value) == u32) {
                         return JSC.JSValue.jsNumber(@bitCast(i32, value)).asObjectRef();
@@ -3459,7 +3459,7 @@ pub const JSZlib = struct {
             }
             return ZigString.init("Zlib returned an error").toErrorInstance(globalThis);
         };
-        reader.list = .{ .items = reader.list.toOwnedSlice(allocator) };
+        reader.list = .{ .items = try reader.list.toOwnedSlice(allocator) };
         reader.list.capacity = reader.list.items.len;
         reader.list_ptr = &reader.list;
 
@@ -3491,7 +3491,7 @@ pub const JSZlib = struct {
             }
             return ZigString.init("Zlib returned an error").toErrorInstance(globalThis);
         };
-        reader.list = .{ .items = reader.list.toOwnedSlice(allocator) };
+        reader.list = .{ .items = try reader.list.toOwnedSlice(allocator) };
         reader.list.capacity = reader.list.items.len;
         reader.list_ptr = &reader.list;
 
@@ -3521,7 +3521,7 @@ pub const JSZlib = struct {
             }
             return ZigString.init("Zlib returned an error").toErrorInstance(globalThis);
         };
-        reader.list = .{ .items = reader.list.toOwnedSlice(allocator) };
+        reader.list = .{ .items = try reader.list.toOwnedSlice(allocator) };
         reader.list.capacity = reader.list.items.len;
         reader.list_ptr = &reader.list;
 

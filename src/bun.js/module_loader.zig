@@ -506,8 +506,8 @@ pub const ModuleLoader = struct {
 
         pub fn init(opts: anytype, globalObject: *JSC.JSGlobalObject) !AsyncModule {
             var promise = JSC.Strong{};
-            var stmt_blocks = js_ast.Stmt.Data.Store.toOwnedSlice();
-            var expr_blocks = js_ast.Expr.Data.Store.toOwnedSlice();
+            var stmt_blocks = try js_ast.Stmt.Data.Store.toOwnedSlice();
+            var expr_blocks = try js_ast.Expr.Data.Store.toOwnedSlice();
             const this_promise = JSValue.createInternalPromise(globalObject);
             promise.set(globalObject, this_promise);
 

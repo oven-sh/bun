@@ -598,7 +598,7 @@ pub fn toAST(
             inline for (fields) |field| {
                 properties[property_i] = G.Property{
                     .key = Expr.init(E.String, E.String{ .data = field.name }, logger.Loc.Empty),
-                    .value = try toAST(allocator, field.field_type, @field(value, field.name)),
+                    .value = try toAST(allocator, field.type, @field(value, field.name)),
                 };
                 property_i += 1;
             }
@@ -644,7 +644,7 @@ pub fn toAST(
                                     .fields = &.{
                                         .{
                                             .name = u_field.name,
-                                            .field_type = @TypeOf(
+                                            .type = @TypeOf(
                                                 @field(value, u_field.name),
                                             ),
                                             .is_comptime = false,

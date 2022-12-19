@@ -285,7 +285,7 @@ pub const RunCommand = struct {
             var array_list = std.ArrayList(string).init(ctx.allocator);
             try array_list.append(executable);
             try array_list.appendSlice(passthrough);
-            argv = array_list.toOwnedSlice();
+            argv = try array_list.toOwnedSlice();
         }
 
         var child_process = std.ChildProcess.init(argv, ctx.allocator);
@@ -714,7 +714,7 @@ pub const RunCommand = struct {
 
         strings.sortAsc(all_keys);
         shell_out.commands = all_keys;
-        shell_out.descriptions = descriptions.toOwnedSlice();
+        shell_out.descriptions = try descriptions.toOwnedSlice();
 
         return shell_out;
     }

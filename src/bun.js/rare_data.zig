@@ -117,7 +117,7 @@ pub const CleanupHook = struct {
         };
     }
 
-    pub const Function = fn (?*anyopaque) callconv(.C) void;
+    pub const Function = *const fn (?*anyopaque) callconv(.C) void;
 };
 
 pub fn pushCleanupHook(

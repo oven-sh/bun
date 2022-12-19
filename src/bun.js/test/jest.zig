@@ -126,9 +126,9 @@ pub const TestRunner = struct {
     }
 
     pub const Callback = struct {
-        pub const OnUpdateCount = fn (this: *Callback, delta: u32, total: u32) void;
-        pub const OnTestStart = fn (this: *Callback, test_id: Test.ID) void;
-        pub const OnTestUpdate = fn (this: *Callback, test_id: Test.ID, file: string, label: string, expectations: u32, parent: ?*DescribeScope) void;
+        pub const OnUpdateCount = *const fn (this: *Callback, delta: u32, total: u32) void;
+        pub const OnTestStart = *const fn (this: *Callback, test_id: Test.ID) void;
+        pub const OnTestUpdate = *const fn (this: *Callback, test_id: Test.ID, file: string, label: string, expectations: u32, parent: ?*DescribeScope) void;
         onUpdateCount: OnUpdateCount,
         onTestStart: OnTestStart,
         onTestPass: OnTestUpdate,
@@ -1430,7 +1430,7 @@ pub const DescribeScope = struct {
     pub threadlocal var active: *DescribeScope = undefined;
     pub threadlocal var module: *DescribeScope = undefined;
 
-    const CallbackFn = fn (
+    const CallbackFn = *const fn (
         this: *DescribeScope,
         ctx: js.JSContextRef,
         _: js.JSObjectRef,

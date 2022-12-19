@@ -9,7 +9,7 @@ const Futex = @import("./futex.zig");
 const Environment = bun.Environment;
 const assert = std.debug.assert;
 const Atomic = std.atomic.Atomic;
-pub const OnSpawnCallback = fn (ctx: ?*anyopaque) ?*anyopaque;
+pub const OnSpawnCallback = *const fn (ctx: ?*anyopaque) ?*anyopaque;
 
 sleep_on_idle_network_thread: bool = true,
 /// executed on the thread

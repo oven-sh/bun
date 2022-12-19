@@ -1652,7 +1652,7 @@ pub const HTTPClientResult = struct {
         ctx: *anyopaque,
         function: Function,
 
-        pub const Function = fn (*anyopaque, HTTPClientResult) void;
+        pub const Function = *const fn (*anyopaque, HTTPClientResult) void;
 
         pub fn run(self: Callback, result: HTTPClientResult) void {
             self.function(self.ctx, result);
@@ -1669,7 +1669,7 @@ pub const HTTPClientResult = struct {
 
                 pub fn wrapped_callback(ptr: *anyopaque, result: HTTPClientResult) void {
                     var casted = @ptrCast(Type, @alignCast(std.meta.alignment(Type), ptr));
-                    @call(.{ .modifier = .always_inline }, callback, .{ casted, result });
+                    @call(.always_inline, callback, .{ casted, result });
                 }
             };
         }

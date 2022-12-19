@@ -191,7 +191,7 @@ pub fn getSelfExeSharedLibPaths(allocator: std.mem.Allocator) error{OutOfMemory}
         => {
             var paths = List.init(allocator);
             errdefer {
-                const slice = paths.toOwnedSlice();
+                const slice = try paths.toOwnedSlice();
                 for (slice) |item| {
                     allocator.free(item);
                 }
@@ -208,12 +208,12 @@ pub fn getSelfExeSharedLibPaths(allocator: std.mem.Allocator) error{OutOfMemory}
                     }
                 }
             }.callback);
-            return paths.toOwnedSlice();
+            return try paths.toOwnedSlice();
         },
         .macos, .ios, .watchos, .tvos => {
             var paths = List.init(allocator);
             errdefer {
-                const slice = paths.toOwnedSlice();
+                const slice = try paths.toOwnedSlice();
                 for (slice) |item| {
                     allocator.free(item);
                 }
@@ -227,13 +227,13 @@ pub fn getSelfExeSharedLibPaths(allocator: std.mem.Allocator) error{OutOfMemory}
                 errdefer allocator.free(item);
                 try paths.append(item);
             }
-            return paths.toOwnedSlice();
+            return try paths.toOwnedSlice();
         },
         // revisit if Haiku implements dl_iterat_phdr (https://dev.haiku-os.org/ticket/15743)
         .haiku => {
             var paths = List.init(allocator);
             errdefer {
-                const slice = paths.toOwnedSlice();
+                const slice = try paths.toOwnedSlice();
                 for (slice) |item| {
                     allocator.free(item);
                 }
@@ -245,7 +245,7 @@ pub fn getSelfExeSharedLibPaths(allocator: std.mem.Allocator) error{OutOfMemory}
             errdefer allocator.free(item);
             try paths.append(item);
 
-            return paths.toOwnedSlice();
+            return try paths.toOwnedSlice();
         },
         else => @compileError("getSelfExeSharedLibPaths unimplemented for this target"),
     }

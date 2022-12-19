@@ -167,7 +167,7 @@ pub const Integrity = extern struct {
     }
 
     pub fn verify(this: *const Integrity, bytes: []const u8) bool {
-        return @call(.{ .modifier = .always_inline }, verifyByTag, .{ this.tag, bytes, &this.value });
+        return @call(.always_inline, verifyByTag, .{ this.tag, bytes, &this.value });
     }
 
     pub fn verifyByTag(tag: Tag, bytes: []const u8, sum: []const u8) bool {

@@ -2286,7 +2286,7 @@ pub const Expr = struct {
         if (mime_type.category.isTextLike()) {
             var output = MutableString.initEmpty(allocator);
             output = try JSPrinter.quoteForJSON(bytes, output, true);
-            var list = output.toOwnedSlice();
+            var list = try output.toOwnedSlice();
             // remove the quotes
             if (list.len > 0) {
                 list = list[1 .. list.len - 1];
@@ -4279,7 +4279,7 @@ pub const Op = struct {
             return @intToEnum(Level, @enumToInt(self) - i);
         }
 
-        pub inline fn add(self: Level, i: anytype) Level {
+        pub inline fn addF(self: Level, i: anytype) Level {
             return @intToEnum(Level, @enumToInt(self) + i);
         }
     };
@@ -4660,7 +4660,7 @@ pub const Scope = struct {
         loc: logger.Loc,
 
         pub fn eql(a: Member, b: Member) bool {
-            return @call(.{ .modifier = .always_inline }, Ref.eql, .{ a.ref, b.ref }) and a.loc.start == b.loc.start;
+            return @call(.always_inline, Ref.eql, .{ a.ref, b.ref }) and a.loc.start == b.loc.start;
         }
     };
 
@@ -5311,7 +5311,7 @@ pub const Macro = struct {
                 ctx: js.JSContextRef,
                 exception: js.ExceptionRef,
             ) js.JSValueRef {
-                return @call(.{ .modifier = .always_inline }, toPrimitiveAllowRecursion, .{ this, ctx, exception, false });
+                return @call(.always_inline, toPrimitiveAllowRecursion, .{ this, ctx, exception, false });
             }
 
             fn toPrimitiveWithRecursion(
@@ -5319,7 +5319,7 @@ pub const Macro = struct {
                 ctx: js.JSContextRef,
                 exception: js.ExceptionRef,
             ) js.JSValueRef {
-                return @call(.{ .modifier = .always_inline }, toPrimitiveAllowRecursion, .{ this, ctx, exception, true });
+                return @call(.always_inline, toPrimitiveAllowRecursion, .{ this, ctx, exception, true });
             }
 
             fn toPrimitiveAllowRecursion(this: *JSNode, ctx: js.JSContextRef, exception: js.ExceptionRef, comptime _: bool) js.JSValueRef {
@@ -6875,7 +6875,7 @@ pub const Macro = struct {
                         js.JSType.kJSTypeNumber => {
                             const tag_int = @floatToInt(u8, JSC.JSValue.fromRef(value).asNumber());
                             if (tag_int < Tag.min_tag or tag_int > Tag.max_tag) {
-                                return TagOrJSNode{ .invalid = .{} };
+                                return TagOrJSNode{ .invalid = {} };
                             }
                             return TagOrJSNode{ .tag = @intToEnum(JSNode.Tag, tag_int) };
                         },
@@ -6884,10 +6884,10 @@ pub const Macro = struct {
                                 return TagOrJSNode{ .node = node.* };
                             }
 
-                            return TagOrJSNode{ .invalid = .{} };
+                            return TagOrJSNode{ .invalid = {} };
                         },
                         else => {
-                            return TagOrJSNode{ .invalid = .{} };
+                            return TagOrJSNode{ .invalid = {} };
                         },
                     }
                 }
@@ -6899,7 +6899,7 @@ pub const Macro = struct {
                             if (tag_int < Tag.min_tag or tag_int > Tag.max_tag) {
                                 throwTypeError(ctx, "Node type has invalid value", writer.exception);
                                 writer.errored = true;
-                                return TagOrJSNode{ .invalid = .{} };
+                                return TagOrJSNode{ .invalid = {} };
                             }
                             return TagOrJSNode{ .tag = @intToEnum(JSNode.Tag, tag_int) };
                         },
@@ -6908,11 +6908,11 @@ pub const Macro = struct {
                                 return TagOrJSNode{ .node = node.* };
                             }
 
-                            return TagOrJSNode{ .invalid = .{} };
+                            return TagOrJSNode{ .invalid = {} };
                         },
                         else => {
                             throwTypeError(writer.ctx, "Invalid bun AST", writer.exception);
-                            return TagOrJSNode{ .invalid = .{} };
+                            return TagOrJSNode{ .invalid = {} };
                         },
                     }
                 }
@@ -7081,7 +7081,7 @@ pub const Macro = struct {
                                 if (!JSLexer.isIdentifier(alias)) throwTypeError(writer.ctx, "import alias must be an identifier", writer.exception);
 
                                 import.import.items[import_item_i] = ClauseItem{
-                                    .alias = name.toOwnedSlice(writer.allocator) catch return false,
+                                    .alias = try name.toOwnedSlice(writer.allocator) catch return false,
                                     .original_name = alias,
                                     .name = .{ .loc = writer.loc, .ref = Ref.None },
                                     .alias_loc = writer.loc,
@@ -7359,7 +7359,7 @@ pub const Macro = struct {
                                     }
                                 }
                             }
-                            return JSNode{ .data = .{ .inline_inject = writer.inject.toOwnedSlice() }, .loc = writer.loc };
+                            return JSNode{ .data = .{ .inline_inject = try writer.inject.toOwnedSlice() }, .loc = writer.loc };
                         }
 
                         if (tag == Tag.s_import) {
@@ -7403,7 +7403,7 @@ pub const Macro = struct {
                                 fragment.append(node) catch unreachable;
                             }
 
-                            return JSNode{ .data = .{ .fragment = fragment.toOwnedSlice() }, .loc = writer.loc };
+                            return JSNode{ .data = .{ .fragment = try fragment.toOwnedSlice() }, .loc = writer.loc };
                         }
 
                         var expr: Expr = Expr{ .loc = writer.loc, .data = .{ .e_null = E.Null{} } };
@@ -8012,7 +8012,7 @@ pub const Macro = struct {
 
                             while (object_iter.next()) |prop| {
                                 properties[object_iter.i] = G.Property{
-                                    .key = Expr.init(E.String, E.String.init(prop.toOwnedSlice(this.allocator) catch unreachable), this.caller.loc),
+                                    .key = Expr.init(E.String, try E.String.init(prop.toOwnedSlice(this.allocator) catch unreachable), this.caller.loc),
                                     .value = try this.run(object_iter.value),
                                 };
                             }
@@ -8147,7 +8147,7 @@ pub const Macro = struct {
                 }
 
                 pub fn call() callconv(.C) void {
-                    result = @call(.{}, Run.runAsync, call_args);
+                    result = @call(.auto, Run.runAsync, call_args);
                 }
             };
 

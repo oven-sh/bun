@@ -55,8 +55,8 @@ pub const Values = enum {
 ///     * Positional parameters must take a value.
 pub fn Param(comptime Id: type) type {
     return struct {
-        id: Id = Id{},
-        names: Names = Names{},
+        id: Id = std.mem.zeroes(Id),
+        names: Names = std.mem.zeroes(Names),
         takes_value: Values = .none,
     };
 }
@@ -398,12 +398,12 @@ pub fn helpEx(
     stream: anytype,
     comptime Id: type,
     params: []const Param(Id),
-    helpText: fn (Param(Id)) []const u8,
-    valueText: fn (Param(Id)) []const u8,
+    helpText: *const fn (Param(Id)) []const u8,
+    valueText: *const fn (Param(Id)) []const u8,
 ) !void {
     const Context = struct {
-        helpText: fn (Param(Id)) []const u8,
-        valueText: fn (Param(Id)) []const u8,
+        helpText: *const fn (Param(Id)) []const u8,
+        valueText: *const fn (Param(Id)) []const u8,
 
         pub fn help(c: @This(), p: Param(Id)) error{}![]const u8 {
             return c.helpText(p);

@@ -150,12 +150,12 @@ pub fn quoteForJSON(text: []const u8, output_: MutableString, comptime ascii_onl
                 try bytes.appendSlice("\\n");
                 i += 1;
             },
-            std.ascii.control_code.CR => {
+            std.ascii.control_code.cr => {
                 try bytes.appendSlice("\\r");
                 i += 1;
             },
             // \v
-            std.ascii.control_code.VT => {
+            std.ascii.control_code.vt => {
                 try bytes.appendSlice("\\v");
                 i += 1;
             },
@@ -297,12 +297,12 @@ pub fn writeJSONString(input: []const u8, comptime Writer: type, writer: Writer,
                 try writer.writeAll("\\n");
                 text = text[1..];
             },
-            std.ascii.control_code.CR => {
+            std.ascii.control_code.cr => {
                 try writer.writeAll("\\r");
                 text = text[1..];
             },
             // \v
-            std.ascii.control_code.VT => {
+            std.ascii.control_code.vt => {
                 try writer.writeAll("\\v");
                 text = text[1..];
             },
@@ -377,7 +377,7 @@ pub const SourceMapHandler = struct {
     ctx: *anyopaque,
     callback: Callback,
 
-    const Callback = (fn (*anyopaque, chunk: SourceMap.Chunk, source: logger.Source) anyerror!void);
+    const Callback = *const fn (*anyopaque, chunk: SourceMap.Chunk, source: logger.Source) anyerror!void;
     pub fn onSourceMapChunk(self: *const @This(), chunk: SourceMap.Chunk, source: logger.Source) anyerror!void {
         try self.callback(self.ctx, chunk, source);
     }
@@ -1207,13 +1207,13 @@ pub fn NewPrinter(
                         }
                     },
                     // we never print \r un-escaped
-                    std.ascii.control_code.CR => {
+                    std.ascii.control_code.cr => {
                         e.print("\\r");
                     },
                     // \v
-                    std.ascii.control_code.VT => {
+                    std.ascii.control_code.vt => {
                         if (quote == '`') {
-                            e.print(std.ascii.control_code.VT);
+                            e.print(std.ascii.control_code.vt);
                         } else {
                             e.print("\\v");
                         }
@@ -4232,7 +4232,7 @@ pub fn NewPrinter(
                 return;
             }
 
-            @call(.{ .modifier = .always_inline }, printModuleId, .{ p, p.import_records[import_record_index].module_id });
+            @call(.always_inline, printModuleId, .{ p, p.import_records[import_record_index].module_id });
         }
 
         pub fn printCallModuleID(p: *Printer, module_id: u32) void {
@@ -4710,11 +4710,11 @@ pub fn NewWriter(
         }
 
         pub inline fn prevChar(writer: *const Self) u8 {
-            return @call(.{ .modifier = .always_inline }, getLastByte, .{&writer.ctx});
+            return @call(.always_inline, getLastByte, .{&writer.ctx});
         }
 
         pub inline fn prevPrevChar(writer: *const Self) u8 {
-            return @call(.{ .modifier = .always_inline }, getLastLastByte, .{&writer.ctx});
+            return @call(.always_inline, getLastLastByte, .{&writer.ctx});
         }
 
         pub fn reserve(writer: *Self, count: u32) anyerror![*]u8 {

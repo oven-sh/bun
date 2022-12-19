@@ -169,7 +169,7 @@ pub const ExternalModules = struct {
             }
         }
 
-        result.patterns = patterns.toOwnedSlice();
+        result.patterns = try patterns.toOwnedSlice();
 
         return result;
     }
@@ -1874,8 +1874,8 @@ pub const TransformResult = struct {
         return TransformResult{
             .outbase = outbase,
             .output_files = output_files,
-            .errors = errors.toOwnedSlice(),
-            .warnings = warnings.toOwnedSlice(),
+            .errors = try errors.toOwnedSlice(),
+            .warnings = try warnings.toOwnedSlice(),
         };
     }
 };

@@ -37,7 +37,7 @@ pub fn NewPanicHandler(comptime panic_func: fn ([]const u8, ?*std.builtin.StackT
             Output.disableBuffering();
 
             // // We want to always inline the panic handler so it doesn't show up in the stacktrace.
-            @call(.{ .modifier = .always_inline }, panic_func, .{ msg, error_return_type, addr });
+            @call(.always_inline, panic_func, .{ msg, error_return_type, addr });
         }
     };
 }

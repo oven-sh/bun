@@ -1689,7 +1689,7 @@ pub const StringBuilder = struct {
     }
 
     pub fn append(this: *StringBuilder, comptime Type: type, slice: string) Type {
-        return @call(.{ .modifier = .always_inline }, appendWithHash, .{ this, Type, slice, stringHash(slice) });
+        return @call(.always_inline, appendWithHash, .{ this, Type, slice, stringHash(slice) });
     }
 
     // SlicedString is not supported due to inline strings.
@@ -2831,10 +2831,10 @@ pub const Package = extern struct {
             var data: [fields.len]Data = undefined;
             for (fields) |field_info, i| {
                 data[i] = .{
-                    .size = @sizeOf(field_info.field_type),
+                    .size = @sizeOf(field_info.type),
                     .size_index = i,
-                    .Type = field_info.field_type,
-                    .alignment = if (@sizeOf(field_info.field_type) == 0) 1 else field_info.alignment,
+                    .Type = field_info.type,
+                    .alignment = if (@sizeOf(field_info.type) == 0) 1 else field_info.alignment,
                 };
             }
             const Sort = struct {
@@ -2979,16 +2979,16 @@ const Buffers = struct {
         const Data = struct {
             size: usize,
             name: []const u8,
-            field_type: type,
+            type: type,
             alignment: usize,
         };
         var data: [fields.len]Data = undefined;
         for (fields) |field_info, i| {
             data[i] = .{
-                .size = @sizeOf(field_info.field_type),
+                .size = @sizeOf(field_info.type),
                 .name = field_info.name,
-                .alignment = if (@sizeOf(field_info.field_type) == 0) 1 else field_info.alignment,
-                .field_type = field_info.field_type.Slice,
+                .alignment = if (@sizeOf(field_info.type) == 0) 1 else field_info.alignment,
+                .type = field_info.type.Slice,
             };
         }
         const Sort = struct {
@@ -3005,7 +3005,7 @@ const Buffers = struct {
         for (data) |elem, i| {
             sizes_bytes[i] = elem.size;
             names[i] = elem.name;
-            types[i] = elem.field_type;
+            types[i] = elem.type;
         }
         break :blk .{
             .bytes = sizes_bytes,

@@ -12,7 +12,7 @@ pub fn decode(destination: []u8, source: []const u8) DecodeResult {
         '\n',
         '\r',
         '\t',
-        std.ascii.control_code.VT,
+        std.ascii.control_code.vt,
     }).decode(destination, source, &wrote) catch {
         return .{
             .written = wrote,
@@ -58,7 +58,7 @@ pub fn encodeLen(source: anytype) usize {
 pub const urlsafe = zig_base64.Base64DecoderWithIgnore.init(
     zig_base64.url_safe_alphabet_chars,
     null,
-    "= \t\r\n" ++ [_]u8{ std.ascii.control_code.VT, std.ascii.control_code.FF },
+    "= \t\r\n" ++ [_]u8{ std.ascii.control_code.vt, std.ascii.control_code.ff },
 );
 
 pub const urlsafeEncoder = zig_base64.url_safe_no_pad.Encoder;

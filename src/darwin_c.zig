@@ -406,7 +406,7 @@ pub const struct_CFRunLoopSourceContext = extern struct {
     version: CFIndex,
     info: ?*anyopaque,
     pad: [7]?*anyopaque,
-    perform: ?fn (?*anyopaque) callconv(.C) void,
+    perform: ?*const fn (?*anyopaque) callconv(.C) void,
 };
 pub const struct_FSEventStreamContext = extern struct {
     version: CFIndex,
@@ -444,7 +444,7 @@ pub const io_iterator_t = c_uint;
 pub const io_object_t = c_uint;
 pub const io_service_t = c_uint;
 pub const io_registry_entry_t = c_uint;
-pub const FSEventStreamCallback = ?fn (FSEventStreamRef, ?*anyopaque, c_int, ?*anyopaque, [*c]const FSEventStreamEventFlags, [*c]const FSEventStreamEventId) callconv(.C) void;
+pub const FSEventStreamCallback = ?*const fn (FSEventStreamRef, ?*anyopaque, c_int, ?*anyopaque, [*c]const FSEventStreamEventFlags, [*c]const FSEventStreamEventId) callconv(.C) void;
 pub const kCFStringEncodingUTF8: CFStringEncoding = @bitCast(CFStringEncoding, @as(c_int, 134217984));
 pub const noErr: OSStatus = 0;
 pub const kFSEventStreamEventIdSinceNow: FSEventStreamEventId = @bitCast(FSEventStreamEventId, @as(c_longlong, -@as(c_int, 1)));

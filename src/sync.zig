@@ -62,7 +62,7 @@ pub const ThreadPool = struct {
             fn runFn(runnable: *Runnable) void {
                 const run_node = @fieldParentPtr(RunNode, "data", runnable);
                 const closure = @fieldParentPtr(@This(), "run_node", run_node);
-                _ = @call(.{}, func, closure.func_args);
+                _ = @call(.auto, func, closure.func_args);
                 closure.allocator.destroy(closure);
             }
         };

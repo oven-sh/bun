@@ -116,12 +116,12 @@ const Blob = @import("../blob.zig");
 pub const Buffer = MarkedArrayBuffer;
 const Lock = @import("../lock.zig").Lock;
 
-pub const OpaqueCallback = fn (current: ?*anyopaque) callconv(.C) void;
+pub const OpaqueCallback = *const fn (current: ?*anyopaque) callconv(.C) void;
 pub fn OpaqueWrap(comptime Context: type, comptime Function: fn (this: *Context) void) OpaqueCallback {
     return struct {
         pub fn callback(ctx: ?*anyopaque) callconv(.C) void {
             var context: *Context = @ptrCast(*Context, @alignCast(@alignOf(Context), ctx.?));
-            @call(.{}, Function, .{context});
+            @call(.auto, Function, .{context});
         }
     }.callback;
 }
@@ -247,6 +247,7 @@ pub const SavedSourceMap = struct {
 const uws = @import("bun").uws;
 
 pub export fn Bun__getDefaultGlobal() *JSGlobalObject {
+    _ = @sizeOf(JSC.VirtualMachine) + 1;
     return JSC.VirtualMachine.vm.global;
 }
 
@@ -430,7 +431,7 @@ pub const VirtualMachine = struct {
     auto_install_dependencies: bool = false,
     load_builtins_from_path: []const u8 = "",
 
-    onUnhandledRejection: fn (*VirtualMachine, globalObject: *JSC.JSGlobalObject, JSC.JSValue) void = defaultOnUnhandledRejection,
+    onUnhandledRejection: *const fn (*VirtualMachine, globalObject: *JSC.JSGlobalObject, JSC.JSValue) void = defaultOnUnhandledRejection,
     onUnhandledRejectionCtx: ?*anyopaque = null,
     unhandled_error_counter: usize = 0,
 
@@ -1110,7 +1111,7 @@ pub const VirtualMachine = struct {
         defer refer.deinit();
 
         const result = if (!jsc_vm.bundler.options.disable_transpilation)
-            @call(.{ .modifier = .always_inline }, fetchWithoutOnLoadPlugins, .{ jsc_vm, global, spec.slice(), refer.slice(), &log, ret, .transpile }) catch |err| {
+            @call(.always_inline, fetchWithoutOnLoadPlugins, .{ jsc_vm, global, spec.slice(), refer.slice(), &log, ret, .transpile }) catch |err| {
                 processFetchLog(global, specifier, source, &log, ret, err);
                 return;
             }
@@ -1942,14 +1943,14 @@ pub const VirtualMachine = struct {
     }
 };
 
-const GetterFn = fn (
+const GetterFn = *const fn (
     this: anytype,
     ctx: js.JSContextRef,
     thisObject: js.JSValueRef,
     prop: js.JSStringRef,
     exception: js.ExceptionRef,
 ) js.JSValueRef;
-const SetterFn = fn (
+const SetterFn = *const fn (
     this: anytype,
     ctx: js.JSContextRef,
     thisObject: js.JSValueRef,

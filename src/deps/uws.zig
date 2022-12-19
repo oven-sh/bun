@@ -219,7 +219,7 @@ pub fn NewSocketHandler(comptime ssl: bool) type {
             comptime ContextType: type,
             comptime Fields: anytype,
         ) void {
-            const field_type = comptime if (@TypeOf(Fields) != type) @TypeOf(Fields) else Fields;
+            const type = comptime if (@TypeOf(Fields) != type) @TypeOf(Fields) else Fields;
 
             const SocketHandler = struct {
                 const alignment = if (ContextType == anyopaque)
@@ -302,19 +302,19 @@ pub fn NewSocketHandler(comptime ssl: bool) type {
                 }
             };
 
-            if (comptime @hasDecl(field_type, "onOpen") and @typeInfo(@TypeOf(field_type.onOpen)) != .Null)
+            if (comptime @hasDecl(type, "onOpen") and @typeInfo(@TypeOf(type.onOpen)) != .Null)
                 us_socket_context_on_open(ssl_int, ctx, SocketHandler.on_open);
-            if (comptime @hasDecl(field_type, "onClose") and @typeInfo(@TypeOf(field_type.onClose)) != .Null)
+            if (comptime @hasDecl(type, "onClose") and @typeInfo(@TypeOf(type.onClose)) != .Null)
                 us_socket_context_on_close(ssl_int, ctx, SocketHandler.on_close);
-            if (comptime @hasDecl(field_type, "onData") and @typeInfo(@TypeOf(field_type.onData)) != .Null)
+            if (comptime @hasDecl(type, "onData") and @typeInfo(@TypeOf(type.onData)) != .Null)
                 us_socket_context_on_data(ssl_int, ctx, SocketHandler.on_data);
-            if (comptime @hasDecl(field_type, "onWritable") and @typeInfo(@TypeOf(field_type.onWritable)) != .Null)
+            if (comptime @hasDecl(type, "onWritable") and @typeInfo(@TypeOf(type.onWritable)) != .Null)
                 us_socket_context_on_writable(ssl_int, ctx, SocketHandler.on_writable);
-            if (comptime @hasDecl(field_type, "onTimeout") and @typeInfo(@TypeOf(field_type.onTimeout)) != .Null)
+            if (comptime @hasDecl(type, "onTimeout") and @typeInfo(@TypeOf(type.onTimeout)) != .Null)
                 us_socket_context_on_timeout(ssl_int, ctx, SocketHandler.on_timeout);
-            if (comptime @hasDecl(field_type, "onConnectError") and @typeInfo(@TypeOf(field_type.onConnectError)) != .Null)
+            if (comptime @hasDecl(type, "onConnectError") and @typeInfo(@TypeOf(type.onConnectError)) != .Null)
                 us_socket_context_on_connect_error(ssl_int, ctx, SocketHandler.on_connect_error);
-            if (comptime @hasDecl(field_type, "onEnd") and @typeInfo(@TypeOf(field_type.onEnd)) != .Null)
+            if (comptime @hasDecl(type, "onEnd") and @typeInfo(@TypeOf(type.onEnd)) != .Null)
                 us_socket_context_on_end(ssl_int, ctx, SocketHandler.on_end);
         }
 
@@ -360,7 +360,7 @@ pub const Timer = opaque {
         return us_create_timer(loop, 1, @sizeOf(Type));
     }
 
-    pub fn set(this: *Timer, ptr: anytype, cb: ?fn (*Timer) callconv(.C) void, ms: i32, repeat_ms: i32) void {
+    pub fn set(this: *Timer, ptr: anytype, cb: ?*const fn (*Timer) callconv(.C) void, ms: i32, repeat_ms: i32) void {
         us_timer_set(this, cb, ms, repeat_ms);
         var value_ptr = us_timer_ext(this);
         @setRuntimeSafety(false);
@@ -543,7 +543,7 @@ const uintmax_t = c_ulong;
 extern fn us_create_timer(loop: ?*Loop, fallthrough: i32, ext_size: c_uint) *Timer;
 extern fn us_timer_ext(timer: ?*Timer) *?*anyopaque;
 extern fn us_timer_close(timer: ?*Timer) void;
-extern fn us_timer_set(timer: ?*Timer, cb: ?fn (*Timer) callconv(.C) void, ms: i32, repeat_ms: i32) void;
+extern fn us_timer_set(timer: ?*Timer, cb: ?*const fn (*Timer) callconv(.C) void, ms: i32, repeat_ms: i32) void;
 extern fn us_timer_loop(t: ?*Timer) ?*Loop;
 pub const us_socket_context_options_t = extern struct {
     key_file_name: [*c]const u8 = null,
@@ -558,7 +558,7 @@ pub const us_socket_context_options_t = extern struct {
 extern fn SocketContextimestamp(ssl: i32, context: ?*SocketContext) c_ushort;
 pub extern fn us_socket_context_add_server_name(ssl: i32, context: ?*SocketContext, hostname_pattern: [*c]const u8, options: us_socket_context_options_t, ?*anyopaque) void;
 extern fn us_socket_context_remove_server_name(ssl: i32, context: ?*SocketContext, hostname_pattern: [*c]const u8) void;
-extern fn us_socket_context_on_server_name(ssl: i32, context: ?*SocketContext, cb: ?fn (?*SocketContext, [*c]const u8) callconv(.C) void) void;
+extern fn us_socket_context_on_server_name(ssl: i32, context: ?*SocketContext, cb: ?*const fn (?*SocketContext, [*c]const u8) callconv(.C) void) void;
 extern fn us_socket_context_get_native_handle(ssl: i32, context: ?*SocketContext) ?*anyopaque;
 pub extern fn us_create_socket_context(ssl: i32, loop: ?*Loop, ext_size: i32, options: us_socket_context_options_t) ?*SocketContext;
 pub extern fn us_socket_context_free(ssl: i32, context: ?*SocketContext) void;
@@ -646,7 +646,7 @@ pub const Poll = opaque {
     }
 
     // (void* userData, int fd, int events, int error, struct us_poll_t *poll)
-    pub const CallbackType = fn (?*anyopaque, i32, i32, i32, *Poll) callconv(.C) void;
+    pub const CallbackType = *const fn (?*anyopaque, i32, i32, i32, *Poll) callconv(.C) void;
     extern fn us_create_poll(loop: ?*Loop, fallthrough: i32, ext_size: c_uint) *Poll;
     extern fn us_poll_set(poll: *Poll, events: i32, callback: CallbackType) *Poll;
     extern fn us_poll_free(p: ?*Poll, loop: ?*Loop) void;
@@ -726,7 +726,7 @@ pub const AnyWebSocket = union(enum) {
         const ContextType = @TypeOf(ctx);
         const Wrapper = struct {
             pub fn wrap(user_data: ?*anyopaque) callconv(.C) void {
-                @call(.{ .modifier = .always_inline }, callback, .{bun.cast(ContextType, user_data.?)});
+                @call(.always_inline, callback, .{bun.cast(ContextType, user_data.?)});
             }
         };
 
@@ -754,7 +754,7 @@ pub const AnyWebSocket = union(enum) {
         };
     }
     // pub fn iterateTopics(this: AnyWebSocket) {
-    //     return uws_ws_iterate_topics(ssl_flag, this.raw(), callback: ?fn ([*c]const u8, usize, ?*anyopaque) callconv(.C) void, user_data: ?*anyopaque) void;
+    //     return uws_ws_iterate_topics(ssl_flag, this.raw(), callback: ?*const fn ([*c]const u8, usize, ?*anyopaque) callconv(.C) void, user_data: ?*anyopaque) void;
     // }
     pub fn publish(this: AnyWebSocket, topic: []const u8, message: []const u8) bool {
         return switch (this) {
@@ -791,12 +791,12 @@ pub const AnyWebSocket = union(enum) {
 
 pub const RawWebSocket = opaque {};
 
-pub const uws_websocket_handler = ?fn (*RawWebSocket) callconv(.C) void;
-pub const uws_websocket_message_handler = ?fn (*RawWebSocket, [*c]const u8, usize, Opcode) callconv(.C) void;
-pub const uws_websocket_close_handler = ?fn (*RawWebSocket, i32, [*c]const u8, usize) callconv(.C) void;
-pub const uws_websocket_upgrade_handler = ?fn (*anyopaque, *uws_res, *Request, *uws_socket_context_t, usize) callconv(.C) void;
+pub const uws_websocket_handler = ?*const fn (*RawWebSocket) callconv(.C) void;
+pub const uws_websocket_message_handler = ?*const fn (*RawWebSocket, [*c]const u8, usize, Opcode) callconv(.C) void;
+pub const uws_websocket_close_handler = ?*const fn (*RawWebSocket, i32, [*c]const u8, usize) callconv(.C) void;
+pub const uws_websocket_upgrade_handler = ?*const fn (*anyopaque, *uws_res, *Request, *uws_socket_context_t, usize) callconv(.C) void;
 
-pub const uws_websocket_ping_pong_handler = ?fn (*RawWebSocket, [*c]const u8, usize) callconv(.C) void;
+pub const uws_websocket_ping_pong_handler = ?*const fn (*RawWebSocket, [*c]const u8, usize) callconv(.C) void;
 
 pub const WebSocketBehavior = extern struct {
     compression: uws_compress_options_t = 0,
@@ -830,7 +830,7 @@ pub const WebSocketBehavior = extern struct {
             pub fn _open(raw_ws: *RawWebSocket) callconv(.C) void {
                 var ws = @unionInit(AnyWebSocket, active_field_name, @ptrCast(*WebSocket, raw_ws));
                 var this = ws.as(Type).?;
-                @call(.{ .modifier = .always_inline }, Type.onOpen, .{ this, ws });
+                @call(.always_inline, Type.onOpen, .{ this, ws });
             }
             pub fn _message(raw_ws: *RawWebSocket, message: [*c]const u8, length: usize, opcode: Opcode) callconv(.C) void {
                 var ws = @unionInit(AnyWebSocket, active_field_name, @ptrCast(*WebSocket, raw_ws));
@@ -844,7 +844,7 @@ pub const WebSocketBehavior = extern struct {
             pub fn _drain(raw_ws: *RawWebSocket) callconv(.C) void {
                 var ws = @unionInit(AnyWebSocket, active_field_name, @ptrCast(*WebSocket, raw_ws));
                 var this = ws.as(Type).?;
-                @call(.{ .modifier = .always_inline }, Type.onDrain, .{
+                @call(.always_inline, Type.onDrain, .{
                     this,
                     ws,
                 });
@@ -852,7 +852,7 @@ pub const WebSocketBehavior = extern struct {
             pub fn _ping(raw_ws: *RawWebSocket, message: [*c]const u8, length: usize) callconv(.C) void {
                 var ws = @unionInit(AnyWebSocket, active_field_name, @ptrCast(*WebSocket, raw_ws));
                 var this = ws.as(Type).?;
-                @call(.{ .modifier = .always_inline }, Type.onPing, .{
+                @call(.always_inline, Type.onPing, .{
                     this,
                     ws,
                     if (length > 0) message.?[0..length] else "",
@@ -861,7 +861,7 @@ pub const WebSocketBehavior = extern struct {
             pub fn _pong(raw_ws: *RawWebSocket, message: [*c]const u8, length: usize) callconv(.C) void {
                 var ws = @unionInit(AnyWebSocket, active_field_name, @ptrCast(*WebSocket, raw_ws));
                 var this = ws.as(Type).?;
-                @call(.{ .modifier = .always_inline }, Type.onPong, .{
+                @call(.always_inline, Type.onPong, .{
                     this,
                     ws,
                     if (length > 0) message.?[0..length] else "",
@@ -911,10 +911,10 @@ pub const WebSocketBehavior = extern struct {
         };
     }
 };
-pub const uws_listen_handler = ?fn (?*ListenSocket, ?*anyopaque) callconv(.C) void;
-pub const uws_method_handler = ?fn (*uws_res, *Request, ?*anyopaque) callconv(.C) void;
-pub const uws_filter_handler = ?fn (*uws_res, i32, ?*anyopaque) callconv(.C) void;
-pub const uws_missing_server_handler = ?fn ([*c]const u8, ?*anyopaque) callconv(.C) void;
+pub const uws_listen_handler = ?*const fn (?*ListenSocket, ?*anyopaque) callconv(.C) void;
+pub const uws_method_handler = ?*const fn (*uws_res, *Request, ?*anyopaque) callconv(.C) void;
+pub const uws_filter_handler = ?*const fn (*uws_res, i32, ?*anyopaque) callconv(.C) void;
+pub const uws_missing_server_handler = ?*const fn ([*c]const u8, ?*anyopaque) callconv(.C) void;
 
 pub const Request = opaque {
     pub fn isAncient(req: *Request) bool {
@@ -1167,9 +1167,9 @@ pub fn NewApp(comptime ssl: bool) type {
             const Wrapper = struct {
                 pub fn handle(socket: ?*uws.ListenSocket, conf: uws_app_listen_config_t, data: ?*anyopaque) callconv(.C) void {
                     if (comptime UserData == void) {
-                        @call(.{ .modifier = .always_inline }, handler, .{ void{}, @ptrCast(?*ThisApp.ListenSocket, socket), conf });
+                        @call(.always_inline, handler, .{ void{}, @ptrCast(?*ThisApp.ListenSocket, socket), conf });
                     } else {
-                        @call(.{ .modifier = .always_inline }, handler, .{
+                        @call(.always_inline, handler, .{
                             @ptrCast(UserData, @alignCast(@alignOf(UserData), data.?)),
                             @ptrCast(?*ThisApp.ListenSocket, socket),
                             conf,
@@ -1190,9 +1190,9 @@ pub fn NewApp(comptime ssl: bool) type {
             const Wrapper = struct {
                 pub fn handle(socket: ?*uws.ListenSocket, data: ?*anyopaque) callconv(.C) void {
                     if (comptime UserData == void) {
-                        @call(.{ .modifier = .always_inline }, handler, .{ void{}, @ptrCast(?*ThisApp.ListenSocket, socket) });
+                        @call(.always_inline, handler, .{ void{}, @ptrCast(?*ThisApp.ListenSocket, socket) });
                     } else {
-                        @call(.{ .modifier = .always_inline }, handler, .{
+                        @call(.always_inline, handler, .{
                             @ptrCast(UserData, @alignCast(@alignOf(UserData), data.?)),
                             @ptrCast(?*ThisApp.ListenSocket, socket),
                         });
@@ -1310,9 +1310,9 @@ pub fn NewApp(comptime ssl: bool) type {
                 const Wrapper = struct {
                     pub fn handle(this: *uws_res, amount: uintmax_t, data: ?*anyopaque) callconv(.C) bool {
                         if (comptime UserDataType == void) {
-                            return @call(.{ .modifier = .always_inline }, handler, .{ void{}, amount, castRes(this) });
+                            return @call(.always_inline, handler, .{ void{}, amount, castRes(this) });
                         } else {
-                            return @call(.{ .modifier = .always_inline }, handler, .{
+                            return @call(.always_inline, handler, .{
                                 @ptrCast(UserDataType, @alignCast(@alignOf(UserDataType), data.?)),
                                 amount,
                                 castRes(this),
@@ -1331,9 +1331,9 @@ pub fn NewApp(comptime ssl: bool) type {
                 const Wrapper = struct {
                     pub fn handle(this: *uws_res, user_data: ?*anyopaque) callconv(.C) void {
                         if (comptime UserDataType == void) {
-                            @call(.{ .modifier = .always_inline }, handler, .{ void{}, castRes(this), void{} });
+                            @call(.always_inline, handler, .{ void{}, castRes(this), void{} });
                         } else {
-                            @call(.{ .modifier = .always_inline }, handler, .{ @ptrCast(UserDataType, @alignCast(@alignOf(UserDataType), user_data.?)), castRes(this) });
+                            @call(.always_inline, handler, .{ @ptrCast(UserDataType, @alignCast(@alignOf(UserDataType), user_data.?)), castRes(this) });
                         }
                     }
                 };
@@ -1353,14 +1353,14 @@ pub fn NewApp(comptime ssl: bool) type {
                 const Wrapper = struct {
                     pub fn handle(this: *uws_res, chunk_ptr: [*c]const u8, len: usize, last: bool, user_data: ?*anyopaque) callconv(.C) void {
                         if (comptime UserDataType == void) {
-                            @call(.{ .modifier = .always_inline }, handler, .{
+                            @call(.always_inline, handler, .{
                                 void{},
                                 castRes(this),
                                 if (len > 0) chunk_ptr[0..len] else "",
                                 last,
                             });
                         } else {
-                            @call(.{ .modifier = .always_inline }, handler, .{
+                            @call(.always_inline, handler, .{
                                 @ptrCast(UserDataType, @alignCast(@alignOf(UserDataType), user_data.?)),
                                 castRes(this),
                                 if (len > 0) chunk_ptr[0..len] else "",
@@ -1386,7 +1386,7 @@ pub fn NewApp(comptime ssl: bool) type {
                     opts: @TypeOf(args),
                     result: @typeInfo(@TypeOf(Function)).Fn.return_type.? = undefined,
                     pub fn run(this: *@This()) void {
-                        this.result = @call(.{}, Function, this.opts);
+                        this.result = @call(.auto, Function, this.opts);
                     }
                 };
                 var wrapped = Wrapper{
@@ -1406,11 +1406,11 @@ pub fn NewApp(comptime ssl: bool) type {
                 const Wrapper = struct {
                     pub fn handle(user_data: ?*anyopaque) callconv(.C) void {
                         if (comptime UserDataType == void) {
-                            @call(.{ .modifier = .always_inline }, handler, .{
+                            @call(.always_inline, handler, .{
                                 void{},
                             });
                         } else {
-                            @call(.{ .modifier = .always_inline }, handler, .{
+                            @call(.always_inline, handler, .{
                                 @ptrCast(UserDataType, @alignCast(@alignOf(UserDataType), user_data.?)),
                             });
                         }
@@ -1429,12 +1429,12 @@ pub fn NewApp(comptime ssl: bool) type {
             //     const Wrapper = struct {
             //         pub fn handle(user_data: ?*anyopaque, fd: i32) callconv(.C) void {
             //             if (comptime UserDataType == void) {
-            //                 @call(.{ .modifier = .always_inline }, handler, .{
+            //                 @call(.always_inline, handler, .{
             //                     void{},
             //                     fd,
             //                 });
             //             } else {
-            //                 @call(.{ .modifier = .always_inline }, handler, .{
+            //                 @call(.always_inline, handler, .{
             //                     @ptrCast(
             //                         UserDataType,
             //                         @alignCast(@alignOf(UserDataType), user_data.?),
@@ -1448,12 +1448,12 @@ pub fn NewApp(comptime ssl: bool) type {
             //     const OnWritable = struct {
             //         pub fn handle(socket: *Socket) callconv(.C) ?*Socket {
             //             if (comptime UserDataType == void) {
-            //                 @call(.{ .modifier = .always_inline }, handler, .{
+            //                 @call(.always_inline, handler, .{
             //                     void{},
             //                     fd,
             //                 });
             //             } else {
-            //                 @call(.{ .modifier = .always_inline }, handler, .{
+            //                 @call(.always_inline, handler, .{
             //                     @ptrCast(
             //                         UserDataType,
             //                         @alignCast(@alignOf(UserDataType), user_data.?),
@@ -1541,7 +1541,7 @@ pub fn NewApp(comptime ssl: bool) type {
                 const ContextType = @TypeOf(ctx);
                 const Wrapper = struct {
                     pub fn wrap(user_data: ?*anyopaque) callconv(.C) void {
-                        @call(.{ .modifier = .always_inline }, callback, .{bun.cast(ContextType, user_data.?)});
+                        @call(.always_inline, callback, .{bun.cast(ContextType, user_data.?)});
                     }
                 };
 
@@ -1557,7 +1557,7 @@ pub fn NewApp(comptime ssl: bool) type {
                 return uws_ws_is_subscribed(ssl_flag, this.raw(), topic.ptr, topic.len);
             }
             // pub fn iterateTopics(this: *WebSocket) {
-            //     return uws_ws_iterate_topics(ssl_flag, this.raw(), callback: ?fn ([*c]const u8, usize, ?*anyopaque) callconv(.C) void, user_data: ?*anyopaque) void;
+            //     return uws_ws_iterate_topics(ssl_flag, this.raw(), callback: ?*const fn ([*c]const u8, usize, ?*anyopaque) callconv(.C) void, user_data: ?*anyopaque) void;
             // }
             pub fn publish(this: *WebSocket, topic: []const u8, message: []const u8) bool {
                 return uws_ws_publish(ssl_flag, this.raw(), topic.ptr, topic.len, message.ptr, message.len);
@@ -1625,11 +1625,11 @@ extern fn uws_ws_send_first_fragment(ssl: i32, ws: ?*RawWebSocket, message: [*c]
 extern fn uws_ws_send_first_fragment_with_opcode(ssl: i32, ws: ?*RawWebSocket, message: [*c]const u8, length: usize, opcode: Opcode, compress: bool) SendStatus;
 extern fn uws_ws_send_last_fragment(ssl: i32, ws: ?*RawWebSocket, message: [*c]const u8, length: usize, compress: bool) SendStatus;
 extern fn uws_ws_end(ssl: i32, ws: ?*RawWebSocket, code: i32, message: [*c]const u8, length: usize) void;
-extern fn uws_ws_cork(ssl: i32, ws: ?*RawWebSocket, handler: ?fn (?*anyopaque) callconv(.C) void, user_data: ?*anyopaque) void;
+extern fn uws_ws_cork(ssl: i32, ws: ?*RawWebSocket, handler: ?*const fn (?*anyopaque) callconv(.C) void, user_data: ?*anyopaque) void;
 extern fn uws_ws_subscribe(ssl: i32, ws: ?*RawWebSocket, topic: [*c]const u8, length: usize) bool;
 extern fn uws_ws_unsubscribe(ssl: i32, ws: ?*RawWebSocket, topic: [*c]const u8, length: usize) bool;
 extern fn uws_ws_is_subscribed(ssl: i32, ws: ?*RawWebSocket, topic: [*c]const u8, length: usize) bool;
-extern fn uws_ws_iterate_topics(ssl: i32, ws: ?*RawWebSocket, callback: ?fn ([*c]const u8, usize, ?*anyopaque) callconv(.C) void, user_data: ?*anyopaque) void;
+extern fn uws_ws_iterate_topics(ssl: i32, ws: ?*RawWebSocket, callback: ?*const fn ([*c]const u8, usize, ?*anyopaque) callconv(.C) void, user_data: ?*anyopaque) void;
 extern fn uws_ws_publish(ssl: i32, ws: ?*RawWebSocket, topic: [*c]const u8, topic_length: usize, message: [*c]const u8, message_length: usize) bool;
 extern fn uws_ws_publish_with_options(ssl: i32, ws: ?*RawWebSocket, topic: [*c]const u8, topic_length: usize, message: [*c]const u8, message_length: usize, opcode: Opcode, compress: bool) bool;
 extern fn uws_ws_get_buffered_amount(ssl: i32, ws: ?*RawWebSocket) c_uint;
@@ -1657,12 +1657,12 @@ extern fn uws_res_write(ssl: i32, res: *uws_res, data: [*c]const u8, length: usi
 extern fn uws_res_get_write_offset(ssl: i32, res: *uws_res) uintmax_t;
 extern fn uws_res_override_write_offset(ssl: i32, res: *uws_res, uintmax_t) void;
 extern fn uws_res_has_responded(ssl: i32, res: *uws_res) bool;
-extern fn uws_res_on_writable(ssl: i32, res: *uws_res, handler: ?fn (*uws_res, uintmax_t, ?*anyopaque) callconv(.C) bool, user_data: ?*anyopaque) void;
-extern fn uws_res_on_aborted(ssl: i32, res: *uws_res, handler: ?fn (*uws_res, ?*anyopaque) callconv(.C) void, opcional_data: ?*anyopaque) void;
+extern fn uws_res_on_writable(ssl: i32, res: *uws_res, handler: ?*const fn (*uws_res, uintmax_t, ?*anyopaque) callconv(.C) bool, user_data: ?*anyopaque) void;
+extern fn uws_res_on_aborted(ssl: i32, res: *uws_res, handler: ?*const fn (*uws_res, ?*anyopaque) callconv(.C) void, opcional_data: ?*anyopaque) void;
 extern fn uws_res_on_data(
     ssl: i32,
     res: *uws_res,
-    handler: ?fn (*uws_res, [*c]const u8, usize, bool, ?*anyopaque) callconv(.C) void,
+    handler: ?*const fn (*uws_res, [*c]const u8, usize, bool, ?*anyopaque) callconv(.C) void,
     opcional_data: ?*anyopaque,
 ) void;
 extern fn uws_res_upgrade(

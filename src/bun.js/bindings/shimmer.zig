@@ -182,17 +182,17 @@ pub fn Shimmer(comptime _namespace: []const u8, comptime _name: []const u8, comp
                 unreachable;
             } else {
                 const Fn = comptime @field(headers, symbolName(typeName));
-                if (@typeInfo(@TypeOf(Fn)).Fn.args.len > 0)
+                if (@typeInfo(@TypeOf(Fn)).Fn.params.len > 0)
                     return matchNullable(
                         comptime @typeInfo(@TypeOf(@field(Parent, typeName))).Fn.return_type.?,
                         comptime @typeInfo(@TypeOf(Fn)).Fn.return_type.?,
-                        @call(.{}, Fn, args),
+                        @call(.auto, Fn, args),
                     );
 
                 return matchNullable(
                     comptime @typeInfo(@TypeOf(@field(Parent, typeName))).Fn.return_type.?,
                     comptime @typeInfo(@TypeOf(Fn)).Fn.return_type.?,
-                    @call(.{}, Fn, .{}),
+                    @call(.auto, Fn, .{}),
                 );
             }
         }

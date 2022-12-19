@@ -146,14 +146,14 @@ pub const C_Generator = struct {
         }
 
         inline for (meta.args) |arg, i| {
-            const ArgType = comptime arg.arg_type.?;
+            const ArgType = comptime arg.type.?;
 
             switch (@typeInfo(ArgType)) {
                 .Fn => {
-                    self.gen_closure(comptime arg.arg_type.?, comptime std.fmt.comptimePrint(" ArgFn{d}", .{i}));
+                    self.gen_closure(comptime arg.type.?, comptime std.fmt.comptimePrint(" ArgFn{d}", .{i}));
                 },
                 else => {
-                    self.writeType(comptime arg.arg_type.?);
+                    self.writeType(comptime arg.type.?);
 
                     switch (@typeInfo(ArgType)) {
                         .Enum => {
@@ -197,11 +197,11 @@ pub const C_Generator = struct {
         self.writeType(func.return_type orelse void);
         self.write(" (*" ++ name ++ ")(");
         inline for (func.args) |arg, i| {
-            self.writeType(arg.arg_type.?);
+            self.writeType(arg.type.?);
             // if (comptime func.arg_names.len > 0 and func.arg_names.len > i) {
             //     self.write(comptime arg_names[i]);
             // } else {
-            const ArgType = arg.arg_type.?;
+            const ArgType = arg.type.?;
             if (@typeInfo(ArgType) == .Enum) {
                 self.write(comptime std.fmt.comptimePrint(" {s}{d}", .{ typeBaseName(@typeName(ArgType)), i }));
             } else {
@@ -241,7 +241,7 @@ pub const C_Generator = struct {
         inline for (meta.fields) |field| {
             self.write("   ");
 
-            const info = @typeInfo(field.field_type);
+            const info = @typeInfo(field.type);
 
             if (info == .Array) {
                 const PrintType = comptime brk: {
@@ -257,12 +257,12 @@ pub const C_Generator = struct {
             } else {
                 const PrintType = comptime brk: {
                     for (static_types) |static_type| {
-                        if (static_type.Type == field.field_type) {
+                        if (static_type.Type == field.type) {
                             break :brk static_type.Type;
                         }
                     }
 
-                    break :brk field.field_type;
+                    break :brk field.type;
                 };
                 self.writeType(PrintType);
             }

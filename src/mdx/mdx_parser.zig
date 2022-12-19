@@ -1785,7 +1785,7 @@ pub const MDX = struct {
 
     pub fn parse(this: *MDX) !js_ast.Result {
         try this._parse();
-        return try runVisitPassAndFinish(JSParser, &this.parser, this.stmts.toOwnedSlice(this.allocator));
+        return try runVisitPassAndFinish(JSParser, &this.parser, try this.stmts.toOwnedSlice(this.allocator));
     }
 
     fn run(this: *MDX) anyerror!logger.Loc {

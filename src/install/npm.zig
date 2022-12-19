@@ -169,7 +169,7 @@ pub const Registry = struct {
         switch (response.status_code) {
             400 => return error.BadRequest,
             429 => return error.TooManyRequests,
-            404 => return PackageVersionResponse{ .not_found = .{} },
+            404 => return PackageVersionResponse{ .not_found = {} },
             500...599 => return error.HTTPInternalServerError,
             304 => return PackageVersionResponse{
                 .cached = loaded_manifest.?,
@@ -465,9 +465,9 @@ pub const PackageManifest = struct {
             var data: [fields.len]Data = undefined;
             for (fields) |field_info, i| {
                 data[i] = .{
-                    .size = @sizeOf(field_info.field_type),
+                    .size = @sizeOf(field_info.type),
                     .name = field_info.name,
-                    .alignment = if (@sizeOf(field_info.field_type) == 0) 1 else field_info.alignment,
+                    .alignment = if (@sizeOf(field_info.type) == 0) 1 else field_info.alignment,
                 };
             }
             const Sort = struct {
@@ -937,13 +937,13 @@ pub const PackageManifest = struct {
             string_builder.count(etag);
         }
 
-        var versioned_packages = try allocator.allocAdvanced(PackageVersion, null, release_versions_len + pre_versions_len, .exact);
-        var all_semver_versions = try allocator.allocAdvanced(Semver.Version, null, release_versions_len + pre_versions_len + dist_tags_count, .exact);
-        var all_extern_strings = try allocator.allocAdvanced(ExternalString, null, extern_string_count + tarball_urls_count, .exact);
-        var version_extern_strings = try allocator.allocAdvanced(ExternalString, null, dependency_sum, .exact);
-        var extern_strings_bin_entries = try allocator.allocAdvanced(ExternalString, null, extern_string_count_bin, .exact);
+        var versioned_packages = try allocator.alloc(PackageVersion, release_versions_len + pre_versions_len);
+        var all_semver_versions = try allocator.alloc(Semver.Version, release_versions_len + pre_versions_len + dist_tags_count);
+        var all_extern_strings = try allocator.alloc(ExternalString, extern_string_count + tarball_urls_count);
+        var version_extern_strings = try allocator.alloc(ExternalString, dependency_sum);
+        var extern_strings_bin_entries = try allocator.alloc(ExternalString, extern_string_count_bin);
         var all_extern_strings_bin_entries = extern_strings_bin_entries;
-        var all_tarball_url_strings = try allocator.allocAdvanced(ExternalString, null, tarball_urls_count, .exact);
+        var all_tarball_url_strings = try allocator.alloc(ExternalString, tarball_urls_count);
         var tarball_url_strings = all_tarball_url_strings;
 
         if (versioned_packages.len > 0) {

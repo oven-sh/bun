@@ -245,7 +245,7 @@ pub const Define = struct {
                         // TODO: do we need to allocate this?
                         .parts = parts,
                     });
-                    try define.dots.put(tail, list.toOwnedSlice());
+                    try define.dots.put(tail, try list.toOwnedSlice());
                 }
             } else {
 
@@ -283,7 +283,7 @@ pub const Define = struct {
                         .data = value_define,
                     });
 
-                    define.dots.putAssumeCapacity(key, list.toOwnedSlice());
+                    define.dots.putAssumeCapacity(key, try list.toOwnedSlice());
                 } else {
                     var list = try std.ArrayList(DotDefine).initCapacity(allocator, 1);
                     list.appendAssumeCapacity(DotDefine{
@@ -291,7 +291,7 @@ pub const Define = struct {
                         .data = value_define,
                     });
 
-                    define.dots.putAssumeCapacity(key, list.toOwnedSlice());
+                    define.dots.putAssumeCapacity(key, try list.toOwnedSlice());
                 }
             }
         }

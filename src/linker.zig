@@ -41,7 +41,7 @@ const JSC = @import("bun").JSC;
 const PluginRunner = @import("./bundler.zig").PluginRunner;
 pub const CSSResolveError = error{ResolveError};
 
-pub const OnImportCallback = fn (resolve_result: *const Resolver.Result, import_record: *ImportRecord, origin: URL) void;
+pub const OnImportCallback = *const fn (resolve_result: *const Resolver.Result, import_record: *ImportRecord, origin: URL) void;
 
 pub const Linker = struct {
     const HashedFileNameMap = std.AutoHashMap(u64, string);
@@ -795,7 +795,7 @@ pub const Linker = struct {
             else => {},
         }
         if (had_resolve_errors) return error.ResolveError;
-        result.ast.externals = externals.toOwnedSlice();
+        result.ast.externals = try externals.toOwnedSlice();
 
         if (result.ast.needs_runtime and result.ast.runtime_import_record_id == null) {
             var new_import_records = try linker.allocator.alloc(ImportRecord, import_records.len + 1);

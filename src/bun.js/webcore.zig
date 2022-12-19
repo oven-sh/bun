@@ -41,7 +41,8 @@ pub const Alert = struct {
 
         // 2. If the method was invoked with no arguments, then let message be the empty string; otherwise, let message be the method's first argument.
         if (has_message) {
-            const allocator = std.heap.stackFallback(2048, bun.default_allocator).get();
+            var state = std.heap.stackFallback(2048, bun.default_allocator);
+            const allocator = state.get();
             const message = arguments[0].?.value().toSlice(ctx.ptr(), allocator);
             defer message.deinit();
 
@@ -108,7 +109,8 @@ pub const Confirm = struct {
         const has_message = arguments.len != 0;
 
         if (has_message) {
-            const allocator = std.heap.stackFallback(1024, bun.default_allocator).get();
+            var state = std.heap.stackFallback(1024, bun.default_allocator);
+            const allocator = state.get();
             // 2. Set message to the result of normalizing newlines given message.
             // *  Not pertinent to a server runtime so we will just let the terminal handle this.
 
@@ -237,7 +239,8 @@ pub const Prompt = struct {
         arguments: []const JSC.C.JSValueRef,
         _: JSC.C.ExceptionRef,
     ) JSC.C.JSValueRef {
-        var allocator = std.heap.stackFallback(2048, bun.default_allocator).get();
+        var state = std.heap.stackFallback(2048, bun.default_allocator);
+        const allocator = state.get();
         var output = bun.Output.writer();
         const has_message = arguments.len != 0;
         const has_default = arguments.len >= 2;

@@ -197,7 +197,7 @@ pub fn len(value: anytype) usize {
             .Many => {
                 const sentinel_ptr = info.sentinel orelse
                     @compileError("length of pointer with no sentinel");
-                const sentinel = @ptrCast(*const info.child, sentinel_ptr).*;
+                const sentinel = @ptrCast(*align(1) const info.child, sentinel_ptr).*;
 
                 return indexOfSentinel(info.child, sentinel, value);
             },
@@ -226,7 +226,7 @@ pub fn span(ptr: anytype) std.mem.Span(@TypeOf(ptr)) {
     const l = len(ptr);
     const ptr_info = @typeInfo(Result).Pointer;
     if (ptr_info.sentinel) |s_ptr| {
-        const s = @ptrCast(*const ptr_info.child, s_ptr).*;
+        const s = @ptrCast(*align(1) const ptr_info.child, s_ptr).*;
         return ptr[0..l :s];
     } else {
         return ptr[0..l];

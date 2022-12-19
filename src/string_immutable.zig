@@ -333,7 +333,8 @@ pub fn copyLowercase(in: string, out: []u8) string {
             }
         }
 
-        @memcpy(out_slice.ptr, in_slice.ptr, in_slice.len);
+        // @memcpy(out_slice.ptr, in_slice.ptr, in_slice.len);
+        std.mem.copy(u8, out_slice, in_slice);
         break :begin;
     }
 
@@ -518,7 +519,7 @@ pub fn startsWith(self: string, str: string) bool {
 }
 
 pub inline fn endsWith(self: string, str: string) bool {
-    return str.len == 0 or @call(.{ .modifier = .always_inline }, std.mem.endsWith, .{ u8, self, str });
+    return str.len == 0 or @call(.always_inline, std.mem.endsWith, .{ u8, self, str });
 }
 
 pub inline fn endsWithComptime(self: string, comptime str: anytype) bool {
@@ -1222,7 +1223,8 @@ pub fn allocateLatin1IntoUTF8(allocator: std.mem.Allocator, comptime Type: type,
     }
 
     var list = try std.ArrayList(u8).initCapacity(allocator, latin1_.len);
-    return (try allocateLatin1IntoUTF8WithList(list, 0, Type, latin1_)).toOwnedSlice();
+    var foo = try allocateLatin1IntoUTF8WithList(list, 0, Type, latin1_);
+    return try foo.toOwnedSlice();
 }
 
 pub fn allocateLatin1IntoUTF8WithList(list_: std.ArrayList(u8), offset_into_list: usize, comptime Type: type, latin1_: Type) !std.ArrayList(u8) {
@@ -2033,7 +2035,7 @@ pub fn escapeHTMLForLatin1Input(allocator: std.mem.Allocator, latin1: []const u8
                 return Escaped(u8){ .original = void{} };
             }
 
-            return Escaped(u8){ .allocated = buf.toOwnedSlice() };
+            return Escaped(u8){ .allocated = try buf.toOwnedSlice() };
         },
     }
 }
@@ -2336,7 +2338,7 @@ pub fn escapeHTMLForUTF16Input(allocator: std.mem.Allocator, utf16: []const u16)
                 return Escaped(u16){ .original = {} };
             }
 
-            return Escaped(u16){ .allocated = buf.toOwnedSlice() };
+            return Escaped(u16){ .allocated = try buf.toOwnedSlice() };
         },
     }
 }
@@ -2574,9 +2576,7 @@ pub fn utf16EqlString(text: []const u16, str: string) bool {
 // WTF-8 instead. See https://simonsapin.github.io/wtf-8/ for more info.
 pub fn encodeWTF8Rune(p: *[4]u8, r: i32) u3 {
     return @call(
-        .{
-            .modifier = .always_inline,
-        },
+        .always_inline,
         encodeWTF8RuneT,
         .{
             p,
@@ -3600,7 +3600,7 @@ pub fn sortDesc(in: []string) void {
 }
 
 pub fn isASCIIHexDigit(c: u8) bool {
-    return std.ascii.isDigit(c) or std.ascii.isXDigit(c);
+    return std.ascii.isHex(c);
 }
 
 pub fn toASCIIHexValue(character: u8) u8 {
@@ -3814,7 +3814,7 @@ pub fn moveAllSlices(comptime Type: type, container: *Type, from: string, to: st
     const fields_we_care_about = comptime brk: {
         var count: usize = 0;
         for (std.meta.fields(Type)) |field| {
-            if (std.meta.trait.isSlice(field.field_type) and std.meta.Child(field.field_type) == u8) {
+            if (std.meta.trait.isSlice(field.type) and std.meta.Child(field.type) == u8) {
                 count += 1;
             }
         }
@@ -3822,7 +3822,7 @@ pub fn moveAllSlices(comptime Type: type, container: *Type, from: string, to: st
         var fields: [count][]const u8 = undefined;
         count = 0;
         for (std.meta.fields(Type)) |field| {
-            if (std.meta.trait.isSlice(field.field_type) and std.meta.Child(field.field_type) == u8) {
+            if (std.meta.trait.isSlice(field.type) and std.meta.Child(field.type) == u8) {
                 fields[count] = field.name;
                 count += 1;
             }

@@ -768,7 +768,7 @@ pub const Lexer = struct {
                         } else {
                             try lexer.decodeEscapeSequences(start, text, false, @TypeOf(array_list), &array_list);
                         }
-                        lexer.string_literal_slice = array_list.toOwnedSlice();
+                        lexer.string_literal_slice = try array_list.toOwnedSlice();
                     }
 
                     lexer.token = T.t_string_literal;

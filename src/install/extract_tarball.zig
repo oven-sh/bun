@@ -22,7 +22,7 @@ package_id: PackageID,
 skip_verify: bool = false,
 integrity: Integrity = Integrity{},
 url: string = "",
-package_manager: *PackageManager = &PackageManager.instance,
+package_manager: *PackageManager,
 
 pub inline fn run(this: ExtractTarball, bytes: []const u8) !string {
     if (!this.skip_verify and this.integrity.tag.isSupported()) {

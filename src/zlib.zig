@@ -60,8 +60,8 @@ const z_crc_t = c_uint;
 // typedef voidpf (*alloc_func) OF((voidpf opaque, uInt items, uInt size));
 // typedef void   (*free_func)  OF((voidpf opaque, voidpf address));
 
-pub const z_alloc_fn = ?fn (*anyopaque, uInt, uInt) callconv(.C) voidpf;
-pub const z_free_fn = ?fn (*anyopaque, *anyopaque) callconv(.C) void;
+pub const z_alloc_fn = ?*const fn (*anyopaque, uInt, uInt) callconv(.C) voidpf;
+pub const z_free_fn = ?*const fn (*anyopaque, *anyopaque) callconv(.C) void;
 
 pub const struct_internal_state = extern struct {
     dummy: c_int,

@@ -1583,7 +1583,7 @@ pub const Blob = struct {
                 }
             }
         } else {
-            var decoded = str.toOwnedSlice(jsc_vm.allocator) catch {
+            var decoded = try str.toOwnedSlice(jsc_vm.allocator) catch {
                 return JSC.JSPromise.rejectedPromiseValue(globalThis, ZigString.static("Out of memory").toErrorInstance(globalThis));
             };
             defer jsc_vm.allocator.free(decoded);
@@ -1883,7 +1883,7 @@ pub const Blob = struct {
                     return this.opened_fd;
                 }
 
-                pub const OpenCallback = fn (*This, bun.FileDescriptor) void;
+                pub const OpenCallback = *const fn (*This, bun.FileDescriptor) void;
 
                 pub fn getFd(this: *This, comptime Callback: OpenCallback) void {
                     if (this.opened_fd != null_fd) {
@@ -1898,7 +1898,7 @@ pub const Blob = struct {
                     }
                 }
 
-                const WrappedOpenCallback = fn (*State, *HTTPClient.NetworkThread.Completion, AsyncIO.OpenError!bun.FileDescriptor) void;
+                const WrappedOpenCallback = *const fn (*State, *HTTPClient.NetworkThread.Completion, AsyncIO.OpenError!bun.FileDescriptor) void;
                 fn OpenCallbackWrapper(comptime Callback: OpenCallback) WrappedOpenCallback {
                     return struct {
                         const callback = Callback;
@@ -2014,7 +2014,7 @@ pub const Blob = struct {
             };
             pub const ResultType = SystemError.Maybe(Read);
 
-            pub const OnReadFileCallback = fn (ctx: *anyopaque, bytes: ResultType) void;
+            pub const OnReadFileCallback = *const fn (ctx: *anyopaque, bytes: ResultType) void;
 
             pub usingnamespace FileOpenerMixin(ReadFile);
             pub usingnamespace FileCloserMixin(ReadFile);
@@ -2262,7 +2262,7 @@ pub const Blob = struct {
             wrote: usize = 0,
 
             pub const ResultType = SystemError.Maybe(SizeType);
-            pub const OnWriteFileCallback = fn (ctx: *anyopaque, count: ResultType) void;
+            pub const OnWriteFileCallback = *const fn (ctx: *anyopaque, count: ResultType) void;
 
             pub usingnamespace FileOpenerMixin(WriteFile);
             pub usingnamespace FileCloserMixin(WriteFile);
@@ -2452,7 +2452,7 @@ pub const Blob = struct {
 
             pub const ResultType = anyerror!SizeType;
 
-            pub const Callback = fn (ctx: *anyopaque, len: ResultType) void;
+            pub const Callback = *const fn (ctx: *anyopaque, len: ResultType) void;
             pub const CopyFilePromiseTask = JSC.ConcurrentPromiseTask(CopyFile);
             pub const CopyFilePromiseTaskEventLoopTask = CopyFilePromiseTask.EventLoopTask;
 
@@ -4078,7 +4078,7 @@ pub const AnyBlob = union(enum) {
                     return JSC.ArrayBuffer.create(global, "", .ArrayBuffer);
                 }
 
-                var bytes = this.InternalBlob.toOwnedSlice();
+                var bytes = try this.InternalBlob.toOwnedSlice();
                 this.* = .{ .Blob = .{} };
                 const value = JSC.ArrayBuffer.fromBytes(
                     bytes,
@@ -4184,7 +4184,7 @@ pub const InternalBlob = struct {
             this.deinit();
             return return_value;
         } else {
-            var str = ZigString.init(this.toOwnedSlice());
+            var str = try ZigString.init(this.toOwnedSlice());
             str.mark();
             return str.toExternalValue(globalThis);
         }
@@ -4322,7 +4322,7 @@ pub const InlineBlob = extern struct {
 // https://developer.mozilla.org/en-US/docs/Web/API/Body
 pub const Body = struct {
     init: Init = Init{ .headers = null, .status_code = 200 },
-    value: Value = Value.empty,
+    value: Value, // = Value.empty,
 
     pub inline fn len(this: *const Body) Blob.SizeType {
         return this.value.size();
@@ -4465,13 +4465,13 @@ pub const Body = struct {
         task: ?*anyopaque = null,
 
         /// runs after the data is available.
-        onReceiveValue: ?fn (ctx: *anyopaque, value: *Value) void = null,
+        onReceiveValue: ?*const fn (ctx: *anyopaque, value: *Value) void = null,
 
         /// conditionally runs when requesting data
         /// used in HTTP server to ignore request bodies unless asked for it
-        onStartBuffering: ?fn (ctx: *anyopaque) void = null,
+        onStartBuffering: ?*const fn (ctx: *anyopaque) void = null,
 
-        onStartStreaming: ?fn (ctx: *anyopaque) JSC.WebCore.DrainResult = null,
+        onStartStreaming: ?*const fn (ctx: *anyopaque) JSC.WebCore.DrainResult = null,
 
         deinit: bool = false,
         action: Action = Action.none,
@@ -4623,7 +4623,7 @@ pub const Body = struct {
             Error,
         };
 
-        pub const empty = Value{ .Empty = void{} };
+        // pub const empty = Value{ .Empty = void{} };
 
         pub fn toReadableStream(this: *Value, globalThis: *JSGlobalObject) JSValue {
             JSC.markBinding(@src());
@@ -4770,7 +4770,7 @@ pub const Body = struct {
                 //     }
                 // }
 
-                var buffer = str.toOwnedSlice(bun.default_allocator) catch {
+                var buffer = try str.toOwnedSlice(bun.default_allocator) catch {
                     globalThis.vm().throwError(globalThis, ZigString.static("Failed to clone string").toErrorInstance(globalThis));
                     return null;
                 };
@@ -4961,7 +4961,7 @@ pub const Body = struct {
                 },
                 .InternalBlob => {
                     var new_blob = Blob.init(
-                        this.InternalBlob.toOwnedSlice(),
+                        try this.InternalBlob.toOwnedSlice(),
                         // we will never resize it from here
                         // we have to use the default allocator
                         // even if it was actually allocated on a different thread
@@ -5100,7 +5100,7 @@ pub const Body = struct {
                 var internal_blob = this.InternalBlob;
                 this.* = .{
                     .Blob = Blob.init(
-                        internal_blob.toOwnedSlice(),
+                        try internal_blob.toOwnedSlice(),
                         internal_blob.bytes.allocator,
                         globalThis,
                     ),
@@ -5709,7 +5709,7 @@ pub const FetchEvent = struct {
     pending_promise: JSValue = JSValue.zero,
 
     onPromiseRejectionCtx: *anyopaque = undefined,
-    onPromiseRejectionHandler: ?fn (ctx: *anyopaque, err: anyerror, fetch_event: *FetchEvent, value: JSValue) void = null,
+    onPromiseRejectionHandler: ?*const fn (ctx: *anyopaque, err: anyerror, fetch_event: *FetchEvent, value: JSValue) void = null,
     rejected: bool = false,
 
     pub const Class = NewClass(

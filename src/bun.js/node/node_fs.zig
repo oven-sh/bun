@@ -2153,7 +2153,7 @@ const Arguments = struct {
     };
 
     pub const Copy = struct {
-        pub const FilterCallback = fn (source: string, destination: string) bool;
+        pub const FilterCallback = *const fn (source: string, destination: string) bool;
         /// Dereference symlinks
         /// @default false
         dereference: bool = false,

@@ -32,7 +32,7 @@ pub const JSObject = extern struct {
         });
     }
 
-    const InitializeCallback = fn (ctx: ?*anyopaque, obj: [*c]JSObject, global: [*c]JSGlobalObject) callconv(.C) void;
+    const InitializeCallback = *const fn (ctx: ?*anyopaque, obj: [*c]JSObject, global: [*c]JSGlobalObject) callconv(.C) void;
     pub fn create(global_object: *JSGlobalObject, length: usize, ctx: *anyopaque, initializer: InitializeCallback) JSValue {
         return cppFn("create", .{
             global_object,
@@ -45,7 +45,7 @@ pub const JSObject = extern struct {
     pub fn Initializer(comptime Ctx: type, comptime func: fn (*Ctx, obj: *JSObject, global: *JSGlobalObject) void) type {
         return struct {
             pub fn call(this: ?*anyopaque, obj: [*c]JSObject, global: [*c]JSGlobalObject) callconv(.C) void {
-                @call(.{ .modifier = .always_inline }, func, .{ @ptrCast(*Ctx, @alignCast(@alignOf(*Ctx), this.?)), obj.?, global.? });
+                @call(.always_inline, func, .{ @ptrCast(*Ctx, @alignCast(@alignOf(*Ctx), this.?)), obj.?, global.? });
             }
         };
     }
@@ -583,7 +583,7 @@ pub const ZigString = extern struct {
     pub fn toExternalValueWithCallback(
         this: *const ZigString,
         global: *JSGlobalObject,
-        callback: fn (ctx: ?*anyopaque, ptr: ?*anyopaque, len: usize) callconv(.C) void,
+        callback: *const fn (ctx: ?*anyopaque, ptr: ?*anyopaque, len: usize) callconv(.C) void,
     ) JSValue {
         return shim.cppFn("toExternalValueWithCallback", .{ this, global, callback });
     }
@@ -592,7 +592,7 @@ pub const ZigString = extern struct {
         this: *const ZigString,
         global: *JSGlobalObject,
         ctx: ?*anyopaque,
-        callback: fn (ctx: ?*anyopaque, ptr: ?*anyopaque, len: usize) callconv(.C) void,
+        callback: *const fn (ctx: ?*anyopaque, ptr: ?*anyopaque, len: usize) callconv(.C) void,
     ) JSValue {
         return shim.cppFn("external", .{ this, global, ctx, callback });
     }
@@ -1219,10 +1219,10 @@ pub const JSString = extern struct {
         });
     }
 
-    pub const JStringIteratorAppend8Callback = fn (*Iterator, [*]const u8, u32) callconv(.C) void;
-    pub const JStringIteratorAppend16Callback = fn (*Iterator, [*]const u16, u32) callconv(.C) void;
-    pub const JStringIteratorWrite8Callback = fn (*Iterator, [*]const u8, u32, u32) callconv(.C) void;
-    pub const JStringIteratorWrite16Callback = fn (*Iterator, [*]const u16, u32, u32) callconv(.C) void;
+    pub const JStringIteratorAppend8Callback = *const fn (*Iterator, [*]const u8, u32) callconv(.C) void;
+    pub const JStringIteratorAppend16Callback = *const fn (*Iterator, [*]const u16, u32) callconv(.C) void;
+    pub const JStringIteratorWrite8Callback = *const fn (*Iterator, [*]const u8, u32, u32) callconv(.C) void;
+    pub const JStringIteratorWrite16Callback = *const fn (*Iterator, [*]const u16, u32, u32) callconv(.C) void;
     pub const Iterator = extern struct {
         data: ?*anyopaque,
         stop: u8,
@@ -1247,41 +1247,41 @@ pub fn NewGlobalObject(comptime Type: type) type {
         const moduleNotImpl = "Module fetch not implemented";
         pub fn import(global: *JSGlobalObject, specifier: *ZigString, source: *ZigString) callconv(.C) ErrorableZigString {
             if (comptime @hasDecl(Type, "import")) {
-                return @call(.{ .modifier = .always_inline }, Type.import, .{ global, specifier.*, source.* });
+                return @call(.always_inline, Type.import, .{ global, specifier.*, source.* });
             }
             return ErrorableZigString.err(error.ImportFailed, ZigString.init(importNotImpl).toErrorInstance(global).asVoid());
         }
         pub fn resolve(res: *ErrorableZigString, global: *JSGlobalObject, specifier: *ZigString, source: *ZigString) callconv(.C) void {
             if (comptime @hasDecl(Type, "resolve")) {
-                @call(.{ .modifier = .always_inline }, Type.resolve, .{ res, global, specifier.*, source.* });
+                @call(.always_inline, Type.resolve, .{ res, global, specifier.*, source.* });
                 return;
             }
             res.* = ErrorableZigString.err(error.ResolveFailed, ZigString.init(resolveNotImpl).toErrorInstance(global).asVoid());
         }
         pub fn fetch(ret: *ErrorableResolvedSource, global: *JSGlobalObject, specifier: *ZigString, source: *ZigString) callconv(.C) void {
             if (comptime @hasDecl(Type, "fetch")) {
-                @call(.{ .modifier = .always_inline }, Type.fetch, .{ ret, global, specifier.*, source.* });
+                @call(.always_inline, Type.fetch, .{ ret, global, specifier.*, source.* });
                 return;
             }
             ret.* = ErrorableResolvedSource.err(error.FetchFailed, ZigString.init(moduleNotImpl).toErrorInstance(global).asVoid());
         }
         pub fn promiseRejectionTracker(global: *JSGlobalObject, promise: *JSPromise, rejection: JSPromiseRejectionOperation) callconv(.C) JSValue {
             if (comptime @hasDecl(Type, "promiseRejectionTracker")) {
-                return @call(.{ .modifier = .always_inline }, Type.promiseRejectionTracker, .{ global, promise, rejection });
+                return @call(.always_inline, Type.promiseRejectionTracker, .{ global, promise, rejection });
             }
             return JSValue.jsUndefined();
         }
 
         pub fn reportUncaughtException(global: *JSGlobalObject, exception: *Exception) callconv(.C) JSValue {
             if (comptime @hasDecl(Type, "reportUncaughtException")) {
-                return @call(.{ .modifier = .always_inline }, Type.reportUncaughtException, .{ global, exception });
+                return @call(.always_inline, Type.reportUncaughtException, .{ global, exception });
             }
             return JSValue.jsUndefined();
         }
 
         pub fn onCrash() callconv(.C) void {
             if (comptime @hasDecl(Type, "onCrash")) {
-                return @call(.{ .modifier = .always_inline }, Type.onCrash, .{});
+                return @call(.always_inline, Type.onCrash, .{});
             }
 
             Output.flush();
@@ -1537,7 +1537,7 @@ pub const JSInternalPromise = extern struct {
     pub fn rejectAsHandledException(this: *JSInternalPromise, globalThis: *JSGlobalObject, value: *Exception) void {
         cppFn("rejectAsHandledException", .{ this, globalThis, value });
     }
-    // pub const PromiseCallbackPrimitive = fn (
+    // pub const PromiseCallbackPrimitive = *const fn (
     //     ctx: ?*anyopaque,
     //     globalThis: *JSGlobalObject,
     //     arguments: [*]const JSValue,
@@ -2004,7 +2004,7 @@ pub const JSGlobalObject = extern struct {
     };
 };
 
-pub const JSNativeFn = fn (*JSGlobalObject, *CallFrame) callconv(.C) JSValue;
+pub const JSNativeFn = *const fn (*JSGlobalObject, *CallFrame) callconv(.C) JSValue;
 
 pub const JSArrayIterator = struct {
     i: u32 = 0,
@@ -2337,7 +2337,7 @@ pub const JSValue = enum(JSValueReprInt) {
         return cppFn("coerceToInt32", .{ this, globalThis });
     }
 
-    const PropertyIteratorFn = fn (
+    const PropertyIteratorFn = *const fn (
         globalObject_: [*c]JSGlobalObject,
         ctx_ptr: ?*anyopaque,
         key: *ZigString,
@@ -2459,7 +2459,7 @@ pub const JSValue = enum(JSValueReprInt) {
             return FetchHeaders.cast(value);
         }
 
-        if (comptime @hasDecl(ZigType, "fromJS") and @TypeOf(ZigType.fromJS) == fn (JSC.JSValue) ?*ZigType) {
+        if (comptime @hasDecl(ZigType, "fromJS") and @TypeOf(ZigType.fromJS) == *const fn (JSC.JSValue) ?*ZigType) {
             return ZigType.fromJS(value);
         }
 
@@ -3158,7 +3158,7 @@ pub const JSValue = enum(JSValueReprInt) {
         this: JSValue,
         globalObject: *JSGlobalObject,
         ctx: ?*anyopaque,
-        callback: fn (vm: [*c]VM, globalObject: [*c]JSGlobalObject, ctx: ?*anyopaque, nextValue: JSValue) callconv(.C) void,
+        callback: *const fn (vm: [*c]VM, globalObject: [*c]JSGlobalObject, ctx: ?*anyopaque, nextValue: JSValue) callconv(.C) void,
     ) void {
         return cppFn("forEach", .{ this, globalObject, ctx, callback });
     }
@@ -3308,11 +3308,11 @@ pub const VM = extern struct {
         return cppFn("isJITEnabled", .{});
     }
 
-    pub fn holdAPILock(this: *VM, ctx: ?*anyopaque, callback: fn (ctx: ?*anyopaque) callconv(.C) void) void {
+    pub fn holdAPILock(this: *VM, ctx: ?*anyopaque, callback: *const fn (ctx: ?*anyopaque) callconv(.C) void) void {
         cppFn("holdAPILock", .{ this, ctx, callback });
     }
 
-    pub fn deferGC(this: *VM, ctx: ?*anyopaque, callback: fn (ctx: ?*anyopaque) callconv(.C) void) void {
+    pub fn deferGC(this: *VM, ctx: ?*anyopaque, callback: *const fn (ctx: ?*anyopaque) callconv(.C) void) void {
         cppFn("deferGC", .{ this, ctx, callback });
     }
 
@@ -3325,7 +3325,7 @@ pub const VM = extern struct {
 
     extern fn Bun__setOnEachMicrotaskTick(vm: *VM, ptr: ?*anyopaque, callback: ?(fn (*anyopaque) callconv(.C) void)) void;
 
-    pub fn onEachMicrotask(vm: *VM, comptime Ptr: type, ptr: *Ptr, comptime callback: fn (*Ptr) void) void {
+    pub fn onEachMicrotask(vm: *VM, comptime Ptr: type, ptr: *Ptr, comptime callback: *const fn (*Ptr) void) void {
         if (comptime is_bindgen) {
             return;
         }
@@ -3351,7 +3351,7 @@ pub const VM = extern struct {
 
     pub fn whenIdle(
         vm: *VM,
-        callback: fn (...) callconv(.C) void,
+        callback: *const fn (...) callconv(.C) void,
     ) void {
         return cppFn("whenIdle", .{ vm, callback });
     }
@@ -3618,7 +3618,7 @@ pub const EncodedJSValue = extern union {
     asDouble: f64,
 };
 
-const DeinitFunction = fn (ctx: *anyopaque, buffer: [*]u8, len: usize) callconv(.C) void;
+const DeinitFunction = *const fn (ctx: *anyopaque, buffer: [*]u8, len: usize) callconv(.C) void;
 
 pub const JSArray = struct {
     pub fn from(globalThis: *JSGlobalObject, arguments: []const JSC.JSValue) JSValue {

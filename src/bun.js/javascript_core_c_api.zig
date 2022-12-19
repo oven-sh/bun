@@ -3,7 +3,7 @@ const std = @import("std");
 const cpp = @import("./bindings/bindings.zig");
 const generic = opaque {
     pub fn value(this: *const @This()) cpp.JSValue {
-        return @bitCast(cpp.JSValue.Type, @ptrToInt(this));
+        return @intToEnum(cpp.JSValue, @bitCast(cpp.JSValue.Type, @ptrToInt(this)));
     }
 
     pub inline fn bunVM(this: *@This()) *@import("bun").JSC.VirtualMachine {
@@ -486,7 +486,7 @@ pub const CellType = enum(u8) {
         };
     }
 };
-pub const ExternalStringFinalizer = fn (finalize_ptr: ?*anyopaque, ref: JSStringRef, buffer: *anyopaque, byteLength: usize) callconv(.C) void;
+pub const ExternalStringFinalizer = *const fn (finalize_ptr: ?*anyopaque, ref: JSStringRef, buffer: *anyopaque, byteLength: usize) callconv(.C) void;
 pub extern fn JSStringCreate(string: UTF8Ptr, length: usize) JSStringRef;
 pub extern fn JSStringCreateStatic(string: UTF8Ptr, length: usize) JSStringRef;
 pub extern fn JSStringCreateExternal(string: UTF8Ptr, length: usize, finalize_ptr: ?*anyopaque, finalizer: ExternalStringFinalizer) JSStringRef;
@@ -497,8 +497,8 @@ pub extern fn JSCellType(cell: JSCellValue) CellType;
 pub extern fn JSStringIsStatic(ref: JSStringRef) bool;
 pub extern fn JSStringIsExternal(ref: JSStringRef) bool;
 
-pub const JStringIteratorAppendCallback = fn (ctx: *JSStringIterator_, ptr: *anyopaque, length: u32) callconv(.C) anyopaque;
-pub const JStringIteratorWriteCallback = fn (ctx: *JSStringIterator_, ptr: *anyopaque, length: u32, offset: u32) callconv(.C) anyopaque;
+pub const JStringIteratorAppendCallback = *const fn (ctx: *JSStringIterator_, ptr: *anyopaque, length: u32) callconv(.C) anyopaque;
+pub const JStringIteratorWriteCallback = *const fn (ctx: *JSStringIterator_, ptr: *anyopaque, length: u32, offset: u32) callconv(.C) anyopaque;
 const JSStringIterator_ = extern struct {
     ctx: *anyopaque,
     stop: u8,

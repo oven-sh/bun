@@ -384,7 +384,7 @@ fn transformOptionsFromJSC(ctx: JSC.C.JSContextRef, temp_allocator: std.mem.Allo
                     return transpiler;
                 }
 
-                names[define_iter.i] = prop.toOwnedSlice(allocator) catch unreachable;
+                names[define_iter.i] = try prop.toOwnedSlice(allocator) catch unreachable;
                 var val = JSC.ZigString.init("");
                 property_value.toZigString(&val, globalThis);
                 if (val.len == 0) {

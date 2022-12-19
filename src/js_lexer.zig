@@ -2139,7 +2139,7 @@ fn NewLexer_(
                         // JSX string literals do not support escaping
                         // They're "pre" escaped
                         switch (lexer.code_point) {
-                            'u', 0x0C, 0, '\t', std.ascii.control_code.VT, 0x08 => {
+                            'u', 0x0C, 0, '\t', std.ascii.control_code.vt, 0x08 => {
                                 needs_decode = true;
                             },
                             else => {},

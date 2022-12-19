@@ -530,7 +530,7 @@ pub noinline fn globalError(err: anyerror) noreturn {
                 var debug_info = std.debug.getSelfDebugInfo() catch break :print_stacktrace;
                 var trace = @errorReturnTrace() orelse break :print_stacktrace;
                 Output.disableBuffering();
-                std.debug.writeStackTrace(trace.*, Output.errorWriter(), default_allocator, debug_info, std.debug.detectTTYConfig()) catch break :print_stacktrace;
+                std.debug.writeStackTrace(trace.*, Output.errorWriter(), default_allocator, debug_info, std.debug.detectTTYConfig(std.io.getStdErr())) catch break :print_stacktrace;
             }
 
             Global.exit(1);
@@ -554,7 +554,7 @@ pub noinline fn globalError(err: anyerror) noreturn {
         var debug_info = std.debug.getSelfDebugInfo() catch break :print_stacktrace;
         var trace = @errorReturnTrace() orelse break :print_stacktrace;
         Output.disableBuffering();
-        std.debug.writeStackTrace(trace.*, Output.errorWriter(), default_allocator, debug_info, std.debug.detectTTYConfig()) catch break :print_stacktrace;
+        std.debug.writeStackTrace(trace.*, Output.errorWriter(), default_allocator, debug_info, std.debug.detectTTYConfig(std.io.getStdErr())) catch break :print_stacktrace;
     }
 
     Global.exit(1);

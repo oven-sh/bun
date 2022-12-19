@@ -3073,7 +3073,7 @@ pub const RequestContext = struct {
                 const result = try ctx.buildFile(
                     ctx.url.path["abs:".len..],
                 );
-                try @call(.{ .modifier = .always_inline }, RequestContext.renderServeResult, .{ ctx, result });
+                try @call(.always_inline, RequestContext.renderServeResult, .{ ctx, result });
             },
             else => {
                 try ctx.sendNotFound();
@@ -3144,7 +3144,7 @@ pub const RequestContext = struct {
         const result = try ctx.buildFile(
             ctx.url.pathWithoutAssetPrefix(ctx.bundler.options.routes.asset_prefix_path),
         );
-        try @call(.{ .modifier = .always_inline }, RequestContext.renderServeResult, .{ ctx, result });
+        try @call(.always_inline, RequestContext.renderServeResult, .{ ctx, result });
     }
 
     pub fn handleRequest(ctx: *RequestContext) !void {

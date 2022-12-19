@@ -318,7 +318,7 @@ pub fn BSSStringList(comptime _count: usize, comptime _item_length: usize) type 
         }
 
         pub fn appendMutable(self: *Self, comptime AppendType: type, _value: AppendType) ![]u8 {
-            const appended = try @call(.{ .modifier = .always_inline }, append, .{ self, AppendType, _value });
+            const appended = try @call(.always_inline, append, .{ self, AppendType, _value });
             return constStrToU8(appended);
         }
 
@@ -634,11 +634,11 @@ pub fn BSSMap(comptime ValueType: type, comptime count: anytype, comptime store_
             return try self.map.getOrPut(key);
         }
         pub fn get(self: *Self, key: []const u8) ?*ValueType {
-            return @call(.{ .modifier = .always_inline }, BSSMapType.get, .{ self.map, key });
+            return @call(.always_inline, BSSMapType.get, .{ self.map, key });
         }
 
         pub fn atIndex(self: *Self, index: IndexType) ?*ValueType {
-            return @call(.{ .modifier = .always_inline }, BSSMapType.atIndex, .{ self.map, index });
+            return @call(.always_inline, BSSMapType.atIndex, .{ self.map, index });
         }
 
         pub fn keyAtIndex(_: *Self, index: IndexType) ?[]const u8 {

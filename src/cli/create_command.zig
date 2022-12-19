@@ -1308,7 +1308,7 @@ pub const CreateCommand = struct {
                         //     std.fs.accessAbsolute(index_css_file_path, .{}) catch break :inject_css;
                         //     var list = std.ArrayList(u8).fromOwnedSlice(ctx.allocator, outfile);
                         //     list.insertSlice(head_i + "<head>".len, "<link rel=\"stylesheet\" href=\"/src/index.css\">\n") catch break :inject_css;
-                        //     outfile = list.toOwnedSlice();
+                        //     outfile =try list.toOwnedSlice();
                         // }
 
                         public_index_html_file.pwriteAll(outfile, 0) catch break :bail;

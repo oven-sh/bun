@@ -445,15 +445,15 @@ pub const FileSystem = struct {
 
     // }
     pub fn normalize(_: *@This(), str: string) string {
-        return @call(.{ .modifier = .always_inline }, path_handler.normalizeString, .{ str, true, .auto });
+        return @call(.always_inline, path_handler.normalizeString, .{ str, true, .auto });
     }
 
     pub fn normalizeBuf(_: *@This(), buf: []u8, str: string) string {
-        return @call(.{ .modifier = .always_inline }, path_handler.normalizeStringBuf, .{ str, buf, false, .auto, false });
+        return @call(.always_inline, path_handler.normalizeStringBuf, .{ str, buf, false, .auto, false });
     }
 
     pub fn join(_: *@This(), parts: anytype) string {
-        return @call(.{ .modifier = .always_inline }, path_handler.joinStringBuf, .{
+        return @call(.always_inline, path_handler.joinStringBuf, .{
             &join_buf,
             parts,
             .auto,
@@ -461,7 +461,7 @@ pub const FileSystem = struct {
     }
 
     pub fn joinBuf(_: *@This(), parts: anytype, buf: []u8) string {
-        return @call(.{ .modifier = .always_inline }, path_handler.joinStringBuf, .{
+        return @call(.always_inline, path_handler.joinStringBuf, .{
             buf,
             parts,
             .auto,
@@ -469,21 +469,21 @@ pub const FileSystem = struct {
     }
 
     pub fn relative(_: *@This(), from: string, to: string) string {
-        return @call(.{ .modifier = .always_inline }, path_handler.relative, .{
+        return @call(.always_inline, path_handler.relative, .{
             from,
             to,
         });
     }
 
     pub fn relativeTo(f: *@This(), to: string) string {
-        return @call(.{ .modifier = .always_inline }, path_handler.relative, .{
+        return @call(.always_inline, path_handler.relative, .{
             f.top_level_dir,
             to,
         });
     }
 
     pub fn relativeFrom(f: *@This(), from: string) string {
-        return @call(.{ .modifier = .always_inline }, path_handler.relative, .{
+        return @call(.always_inline, path_handler.relative, .{
             from,
             f.top_level_dir,
         });

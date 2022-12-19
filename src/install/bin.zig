@@ -18,7 +18,7 @@ const bun = @import("bun");
 /// - map where keys are names of the binaries and values are file paths to the binaries
 pub const Bin = extern struct {
     tag: Tag = Tag.none,
-    value: Value = Value{ .none = .{} },
+    value: Value = Value{ .none = {} },
 
     pub fn count(this: Bin, buf: []const u8, extern_strings: []const ExternalString, comptime StringBuilder: type, builder: StringBuilder) u32 {
         switch (this.tag) {

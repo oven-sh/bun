@@ -618,3 +618,23 @@ pub const SignalCode = enum(u8) {
         }
     }
 };
+
+pub fn isMissingIOUring() bool {
+    if (comptime !Environment.isLinux)
+        // it is not missing when it was not supposed to be there in the first place
+        return false;
+
+    // cache the boolean value
+    const Missing = struct {
+        pub var is_missing_io_uring: ?bool = null;
+    };
+
+    return Missing.is_missing_io_uring orelse brk: {
+        const kernel = Analytics.GenerateHeader.GeneratePlatform.kernelVersion();
+        // io_uring was introduced in earlier versions of Linux, but it was not
+        // really usable for us until 5.3
+        const result = kernel.major < 5 or (kernel.major == 5 and kernel.minor < 3);
+        Missing.is_missing_io_uring = result;
+        break :brk result;
+    };
+}

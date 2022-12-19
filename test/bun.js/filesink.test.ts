@@ -106,7 +106,6 @@ describe("FileSink", () => {
           for (let i = 0; i < input.length; i++) {
             sink.write(input[i]);
           }
-          console.log("close", input[0].length);
           await sink.end();
 
           if (!isPipe) {

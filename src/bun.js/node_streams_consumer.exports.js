@@ -1,3 +1,5 @@
+const { Bun } = import.meta.primordials;
+
 export const arrayBuffer = Bun.readableStreamToArrayBuffer;
 export const text = Bun.readableStreamToText;
 export const json = (stream) =>

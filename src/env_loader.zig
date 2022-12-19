@@ -431,13 +431,17 @@ pub const Loader = struct {
             this.map.get("bamboo.buildKey")) != null;
     }
 
-    pub fn loadNodeJSConfig(this: *Loader, fs: *Fs.FileSystem) !void {
+    pub fn loadNodeJSConfig(this: *Loader, fs: *Fs.FileSystem, override_node: []const u8) !bool {
         var buf: Fs.PathBuffer = undefined;
 
-        var node = this.getNodePath(fs, &buf) orelse return;
-        var cloned = try fs.dirname_store.append([]const u8, std.mem.span(node));
-        try this.map.put("NODE", cloned);
-        try this.map.put("npm_node_execpath", cloned);
+        var node_path_to_use = override_node;
+        if (node_path_to_use.len == 0) {
+            var node = this.getNodePath(fs, &buf) orelse return false;
+            node_path_to_use = try fs.dirname_store.append([]const u8, std.mem.span(node));
+        }
+        try this.map.put("NODE", node_path_to_use);
+        try this.map.put("npm_node_execpath", node_path_to_use);
+        return true;
     }
 
     pub fn get(this: *const Loader, key: string) ?string {

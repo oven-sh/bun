@@ -34,7 +34,6 @@ const allocators = @import("./allocators.zig");
 const MimeType = @import("./http/mime_type.zig");
 const resolve_path = @import("./resolver/resolve_path.zig");
 const runtime = @import("./runtime.zig");
-const hash_map = @import("hash_map.zig");
 const PackageJSON = @import("./resolver/package_json.zig").PackageJSON;
 const MacroRemap = @import("./resolver/package_json.zig").MacroMap;
 const DebugLogs = _resolver.DebugLogs;
@@ -1158,6 +1157,7 @@ pub const Bundler = struct {
                     .css_import_behavior = bundler.options.cssImportBehavior(),
                     .source_map_handler = source_map_context,
                     .rewrite_require_resolve = bundler.options.platform != .node,
+                    .minify_whitespace = bundler.options.minify_whitespace,
                 },
                 Linker,
                 &bundler.linker,
@@ -1179,6 +1179,7 @@ pub const Bundler = struct {
                     .source_map_handler = source_map_context,
                     .css_import_behavior = bundler.options.cssImportBehavior(),
                     .rewrite_require_resolve = bundler.options.platform != .node,
+                    .minify_whitespace = bundler.options.minify_whitespace,
                 },
                 Linker,
                 &bundler.linker,
@@ -1200,6 +1201,7 @@ pub const Bundler = struct {
                         .css_import_behavior = bundler.options.cssImportBehavior(),
                         .source_map_handler = source_map_context,
                         .rewrite_require_resolve = bundler.options.platform != .node,
+                        .minify_whitespace = bundler.options.minify_whitespace,
                     },
                     Linker,
                     &bundler.linker,
@@ -1221,6 +1223,7 @@ pub const Bundler = struct {
                         .css_import_behavior = bundler.options.cssImportBehavior(),
                         .source_map_handler = source_map_context,
                         .rewrite_require_resolve = bundler.options.platform != .node,
+                        .minify_whitespace = bundler.options.minify_whitespace,
                     },
                     Linker,
                     &bundler.linker,
@@ -1242,6 +1245,7 @@ pub const Bundler = struct {
                         .css_import_behavior = bundler.options.cssImportBehavior(),
                         .source_map_handler = source_map_context,
                         .rewrite_require_resolve = bundler.options.platform != .node,
+                        .minify_whitespace = bundler.options.minify_whitespace,
                     },
                     Linker,
                     &bundler.linker,
@@ -1263,6 +1267,7 @@ pub const Bundler = struct {
                         .css_import_behavior = bundler.options.cssImportBehavior(),
                         .source_map_handler = source_map_context,
                         .rewrite_require_resolve = bundler.options.platform != .node,
+                        .minify_whitespace = bundler.options.minify_whitespace,
                     },
                     Linker,
                     &bundler.linker,
@@ -1417,6 +1422,7 @@ pub const Bundler = struct {
                 opts.can_import_from_bundle = bundler.options.node_modules_bundle != null;
 
                 opts.tree_shaking = bundler.options.tree_shaking;
+                opts.features.inlining = bundler.options.inlining;
 
                 // HMR is enabled when devserver is running
                 // unless you've explicitly disabled it
@@ -1718,6 +1724,14 @@ pub const Bundler = struct {
         try bundler.configureRouter(false);
         try bundler.configureDefines();
         bundler.macro_context = js_ast.Macro.MacroContext.init(&bundler);
+
+        if (bundler.env.map.get("BUN_CONFIG_MINIFY_WHITESPACE") != null) {
+            bundler.options.minify_whitespace = true;
+        }
+
+        if (bundler.env.map.get("BUN_CONFIG_INLINE") != null) {
+            bundler.options.inlining = true;
+        }
 
         var skip_normalize = false;
         var load_from_routes = false;

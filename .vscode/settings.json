@@ -10,7 +10,7 @@
   "[zig]": {
     "editor.tabSize": 4,
     "editor.useTabStops": false,
-    "editor.defaultFormatter": "AugusteRame.zls-vscode",
+    "editor.defaultFormatter": "tiehuis.zig",
     "editor.formatOnSave": true
   },
   "[ts]": {
@@ -181,7 +181,5 @@
   },
   "cmake.configureOnOpen": false,
   "C_Cpp.errorSquiggles": "Enabled",
-  "eslint.workingDirectories": [
-    "packages/bun-types"
-  ]
+  "eslint.workingDirectories": ["packages/bun-types"]
 }

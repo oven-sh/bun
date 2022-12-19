@@ -17,7 +17,7 @@ line4 no trailing space 'single quote' \\t\\f\\v\\uF000 \`template string\`
 line6 no trailing space
 line7 trailing newline that \${terminates} the string literal
 `
-  }, undefined, false, undefined, this));
+  }));
   const el = document.createElement("textarea");
   el.innerHTML = _bun;
   const bun = el.value;

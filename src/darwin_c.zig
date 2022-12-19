@@ -1,6 +1,6 @@
 const std = @import("std");
 const builtin = @import("builtin");
-const sysResource = @cImport(@cInclude("sys/resource.h"));
+const imports = @cImport(@cInclude("sys/resource.h"));
 const os = std.os;
 const mem = std.mem;
 const Stat = std.fs.File.Stat;
@@ -540,11 +540,11 @@ pub extern fn getuid(...) std.os.uid_t;
 pub extern fn getgid(...) std.os.gid_t;
 
 pub fn get_process_priority(pid: c_uint) i32 {
-    return sysResource.getpriority(sysResource.PRIO_PROCESS, pid);
+    return imports.getpriority(imports.PRIO_PROCESS, pid);
 }
 
 pub fn set_process_priority(pid: c_uint, priority: c_int) i32 {
-    return sysResource.setpriority(sysResource.PRIO_PROCESS, pid, priority);
+    return imports.setpriority(imports.PRIO_PROCESS, pid, priority);
 }
 
 pub fn get_version(buf: []u8) []const u8 {

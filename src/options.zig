@@ -1241,6 +1241,9 @@ pub const BundleOptions = struct {
     prefer_latest_install: bool = false,
     install: ?*Api.BunInstall = null,
 
+    inlining: bool = false,
+    minify_whitespace: bool = false,
+
     pub inline fn cssImportBehavior(this: *const BundleOptions) Api.CssInJsBehavior {
         switch (this.platform) {
             .neutral, .browser => {
@@ -1642,6 +1645,7 @@ pub const BundleOptions = struct {
         }
 
         opts.tree_shaking = opts.serve or opts.platform.isBun() or opts.production or is_generating_bundle;
+        opts.inlining = opts.tree_shaking;
 
         if (opts.origin.isAbsolute()) {
             opts.import_path_format = ImportPathFormat.absolute_url;

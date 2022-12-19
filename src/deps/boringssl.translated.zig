@@ -1457,7 +1457,34 @@ pub extern fn EVP_PKEY_print_private(out: [*c]BIO, pkey: [*c]const EVP_PKEY, ind
 pub extern fn EVP_PKEY_print_params(out: [*c]BIO, pkey: [*c]const EVP_PKEY, indent: c_int, pctx: ?*ASN1_PCTX) c_int;
 pub extern fn PKCS5_PBKDF2_HMAC(password: [*c]const u8, password_len: usize, salt: [*c]const u8, salt_len: usize, iterations: c_uint, digest: ?*const EVP_MD, key_len: usize, out_key: [*c]u8) c_int;
 pub extern fn PKCS5_PBKDF2_HMAC_SHA1(password: [*c]const u8, password_len: usize, salt: [*c]const u8, salt_len: usize, iterations: c_uint, key_len: usize, out_key: [*c]u8) c_int;
-pub extern fn EVP_PBE_scrypt(password: [*c]const u8, password_len: usize, salt: [*c]const u8, salt_len: usize, N: u64, r: u64, p: u64, max_mem: usize, out_key: [*c]u8, key_len: usize) c_int;
+/// EVP_PBE_scrypt expands |password| into a secret key of length |key_len| using
+/// scrypt, as described in RFC 7914, and writes the result to |out_key|. It
+/// returns one on success and zero on allocation failure, if the memory required
+/// for the operation exceeds |max_mem|, or if any of the parameters are invalid
+/// as described below.
+///
+/// |N|, |r|, and |p| are as described in RFC 7914 section 6. They determine the
+/// cost of the operation. If |max_mem| is zero, a defult limit of 32MiB will be
+/// used.
+///
+/// The parameters are considered invalid under any of the following conditions:
+/// - |r| or |p| are zero
+/// - |p| > (2^30 - 1) / |r|
+/// - |N| is not a power of two
+/// - |N| > 2^32
+/// - |N| > 2^(128 * |r| / 8)
+pub extern fn EVP_PBE_scrypt(
+    password: [*c]const u8,
+    password_len: usize,
+    salt: [*c]const u8,
+    salt_len: usize,
+    N: u64,
+    r: u64,
+    p: u64,
+    max_mem: usize,
+    out_key: [*c]u8,
+    key_len: usize,
+) c_int;
 pub extern fn EVP_PKEY_CTX_new(pkey: [*c]EVP_PKEY, e: ?*ENGINE) ?*EVP_PKEY_CTX;
 pub extern fn EVP_PKEY_CTX_new_id(id: c_int, e: ?*ENGINE) ?*EVP_PKEY_CTX;
 pub extern fn EVP_PKEY_CTX_free(ctx: ?*EVP_PKEY_CTX) void;

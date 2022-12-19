@@ -245,7 +245,7 @@ pub const Tree = struct {
 
     const SubtreeError = error{ OutOfMemory, DependencyLoop };
 
-    const NodeModulesFolder = struct {
+    pub const NodeModulesFolder = struct {
         relative_path: stringZ,
         in: PackageID,
         packages: []const PackageID,
@@ -1558,8 +1558,9 @@ pub fn getOrPutID(this: *Lockfile, id: PackageID, name_hash: PackageNameHash) !v
                 for (ids[2..7]) |_, i| {
                     ids[i + 2] = invalid_package_id - 1;
                 }
-                ids[7] = invalid_package_id;
+
                 // stage1 compiler doesn't like this
+                ids[7] = invalid_package_id;
                 var ids_sentinel = ids.ptr[0 .. ids.len - 1 :invalid_package_id];
                 index.* = .{
                     .PackageIDMultiple = ids_sentinel,
@@ -1576,13 +1577,16 @@ pub fn getOrPutID(this: *Lockfile, id: PackageID, name_hash: PackageNameHash) !v
 
                 var new_ids = try this.allocator.alloc(PackageID, ids.len + 8);
                 defer this.allocator.free(ids);
-                std.mem.set(PackageID, new_ids, invalid_package_id - 1);
                 for (ids) |id2, i| {
                     new_ids[i] = id2;
                 }
-                new_ids[new_ids.len - 1] = invalid_package_id;
+                new_ids[ids.len - 1] = id;
+                for (new_ids[ids.len .. new_ids.len - 2]) |_, i| {
+                    new_ids[i + ids.len] = invalid_package_id - 1;
+                }
 
                 // stage1 compiler doesn't like this
+                new_ids[new_ids.len - 1] = invalid_package_id;
                 var new_ids_sentinel = new_ids.ptr[0 .. new_ids.len - 1 :invalid_package_id];
                 index.* = .{
                     .PackageIDMultiple = new_ids_sentinel,

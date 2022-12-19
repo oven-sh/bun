@@ -1,8 +1,8 @@
 import {
 __require as require
 } from "http://localhost:8080/bun:wrap";
-import * as $f1431544 from "http://localhost:8080/node_modules/@emotion/react/jsx-dev-runtime/dist/emotion-react-jsx-dev-runtime.browser.cjs.js";
-var JSX = require($f1431544);
+import * as $db639b27 from "http://localhost:8080/node_modules/@emotion/react/jsx-dev-runtime/dist/emotion-react-jsx-dev-runtime.browser.esm.js";
+var JSX = require($db639b27);
 var jsx = require(JSX).jsxDEV;
 import * as $12d4369 from "http://localhost:8080/node_modules/react-dom/index.js";
 var ReactDOM = require($12d4369);

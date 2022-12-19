@@ -20,11 +20,7 @@ const allocators = @import("allocators.zig");
 const JSC = @import("bun").JSC;
 const HTTP = @import("bun").HTTP;
 const RefCtx = @import("./ast/base.zig").RefCtx;
-const _hash_map = @import("hash_map.zig");
 const JSONParser = @import("./json_parser.zig");
-const StringHashMap = _hash_map.StringHashMap;
-const AutoHashMap = _hash_map.AutoHashMap;
-const StringHashMapUnmanaged = _hash_map.StringHashMapUnmanaged;
 const is_bindgen = std.meta.globalOption("bindgen", bool) orelse false;
 const ComptimeStringMap = bun.ComptimeStringMap;
 const JSPrinter = @import("./js_printer.zig");
@@ -1735,13 +1731,13 @@ pub const E = struct {
                 switch (_t) {
                     @This() => {
                         if (other.isUTF8()) {
-                            return strings.eql(s.data, other.data);
+                            return strings.eqlLong(s.data, other.data, true);
                         } else {
                             return strings.utf16EqlString(other.slice16(), s.data);
                         }
                     },
                     bun.string => {
-                        return strings.eql(s.data, other);
+                        return strings.eqlLong(s.data, other, true);
                     },
                     []u16, []const u16 => {
                         return strings.utf16EqlString(other, s.data);
@@ -1850,33 +1846,6 @@ pub const E = struct {
 
         pub var empty = RegExp{ .value = "" };
 
-        pub fn usesLookBehindAssertion(this: *const RegExp) bool {
-            var pat = this.pattern();
-            while (pat.len > 0) {
-                const start = strings.indexOfChar(pat, '?') orelse return false;
-                if (start == 0) {
-                    pat = pat[1..];
-                    continue;
-                }
-                const l_paren = pat[start - 1];
-                if (start > 1 and pat[start - 2] == '\\') {
-                    pat = pat[start..];
-                    continue;
-                }
-                if (l_paren != '(' or pat.len < start + 1) {
-                    pat = pat[start..];
-                    continue;
-                }
-                const op = pat[start + 1];
-                if (op == '<') {
-                    return true;
-                }
-                pat = pat[start + 1 ..];
-            }
-
-            return false;
-        }
-
         pub fn pattern(this: RegExp) string {
 
             // rewind until we reach the /foo/gim
@@ -1974,6 +1943,15 @@ pub const Stmt = struct {
 
     pub fn empty() Stmt {
         return Stmt{ .data = .{ .s_empty = None }, .loc = logger.Loc{} };
+    }
+
+    pub fn toEmpty(this: Stmt) Stmt {
+        return .{
+            .data = .{
+                .s_empty = None,
+            },
+            .loc = this.loc,
+        };
     }
 
     const None = S.Empty{};
@@ -2250,6 +2228,10 @@ pub const Expr = struct {
                 .stmts = stmts,
             },
         }, this.loc);
+    }
+
+    pub fn canBeConstValue(this: Expr) bool {
+        return this.data.canBeConstValue();
     }
 
     pub fn fromBlob(
@@ -2948,6 +2930,14 @@ pub const Expr = struct {
         // This should never make it to the printer
         inline_identifier,
 
+        // object, regex and array may have had side effects
+        pub fn isPrimitiveLiteral(tag: Tag) bool {
+            return switch (tag) {
+                .e_null, .e_undefined, .e_string, .e_boolean, .e_number, .e_big_int => true,
+                else => false,
+            };
+        }
+
         pub fn typeof(tag: Tag) ?string {
             return switch (tag) {
                 .e_array, .e_object, .e_null, .e_reg_exp => "object",
@@ -3610,6 +3600,15 @@ pub const Expr = struct {
         // If it ends up in JSParser or JSPrinter, it is a bug.
         inline_identifier: i32,
 
+        pub fn canBeConstValue(this: Expr.Data) bool {
+            return switch (this) {
+                .e_reg_exp, .e_string, .e_number, .e_boolean, .e_null, .e_undefined => true,
+                .e_array => |array| array.was_originally_macro,
+                .e_object => |object| object.was_originally_macro,
+                else => false,
+            };
+        }
+
         pub fn knownPrimitive(data: Expr.Data) PrimitiveType {
             return switch (data) {
                 .e_big_int => .bigint,
@@ -3745,12 +3744,27 @@ pub const Expr = struct {
             };
         }
 
+        pub fn toFiniteNumber(data: Expr.Data) ?f64 {
+            return switch (data) {
+                .e_boolean => @as(f64, if (data.e_boolean.value) 1.0 else 0.0),
+                .e_number => if (std.math.isFinite(data.e_number.value))
+                    data.e_number.value
+                else
+                    null,
+                else => null,
+            };
+        }
+
         pub const Equality = struct { equal: bool = false, ok: bool = false };
 
         // Returns "equal, ok". If "ok" is false, then nothing is known about the two
         // values. If "ok" is true, the equality or inequality of the two values is
         // stored in "equal".
-        pub fn eql(left: Expr.Data, right: Expr.Data) Equality {
+        pub fn eql(
+            left: Expr.Data,
+            right: Expr.Data,
+            allocator: std.mem.Allocator,
+        ) Equality {
             var equality = Equality{};
             switch (left) {
                 .e_null => {
@@ -3776,7 +3790,9 @@ pub const Expr = struct {
                 .e_string => |l| {
                     equality.ok = @as(Expr.Tag, right) == Expr.Tag.e_string;
                     if (equality.ok) {
-                        const r = right.e_string;
+                        var r = right.e_string;
+                        r.resovleRopeIfNeeded(allocator);
+                        l.resovleRopeIfNeeded(allocator);
                         equality.equal = r.eql(E.String, l);
                     }
                 },
@@ -4617,12 +4633,13 @@ pub const StrictModeKind = enum(u7) {
 };
 
 pub const Scope = struct {
+    pub const MemberHashMap = bun.StringHashMapUnmanaged(Member);
+
     id: usize = 0,
     kind: Kind = Kind.block,
     parent: ?*Scope,
     children: std.ArrayListUnmanaged(*Scope) = .{},
-    // This is a special hash table that allows us to pass in the hash directly
-    members: StringHashMapUnmanaged(Member) = .{},
+    members: MemberHashMap = .{},
     generated: std.ArrayListUnmanaged(Ref) = .{},
 
     // This is used to store the ref of the label symbol for ScopeLabel scopes.
@@ -4638,6 +4655,33 @@ pub const Scope = struct {
     forbid_arguments: bool = false,
 
     strict_mode: StrictModeKind = StrictModeKind.sloppy_mode,
+
+    is_after_const_local_prefix: bool = false,
+
+    pub fn getMemberHash(name: []const u8) u64 {
+        return bun.StringHashMapContext.hash(.{}, name);
+    }
+
+    pub fn getMemberWithHash(this: *const Scope, name: []const u8, hash_value: u64) ?Member {
+        const hashed = bun.StringHashMapContext.Prehashed{
+            .value = hash_value,
+            .input = name,
+        };
+        return this.members.getAdapted(name, hashed);
+    }
+
+    pub fn getOrPutMemberWithHash(
+        this: *Scope,
+        allocator: std.mem.Allocator,
+        name: []const u8,
+        hash_value: u64,
+    ) !MemberHashMap.GetOrPutResult {
+        const hashed = bun.StringHashMapContext.Prehashed{
+            .value = hash_value,
+            .input = name,
+        };
+        return this.members.getOrPutContextAdapted(allocator, name, hashed, .{});
+    }
 
     pub fn reset(this: *Scope) void {
         this.children.clearRetainingCapacity();
@@ -4780,7 +4824,7 @@ pub const Scope = struct {
         }
     }
 
-    pub fn kindStopsHoisting(s: *Scope) bool {
+    pub inline fn kindStopsHoisting(s: *const Scope) bool {
         return @enumToInt(s.kind) >= @enumToInt(Kind.entry);
     }
 };
@@ -7729,6 +7773,7 @@ pub const Macro = struct {
             var _vm = try JavaScript.VirtualMachine.init(default_allocator, resolver.opts.transform_options, null, log, env);
 
             _vm.enableMacroMode();
+            _vm.eventLoop().ensureWaker();
 
             try _vm.bundler.configureDefines();
             break :brk _vm;

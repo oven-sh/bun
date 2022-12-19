@@ -84,6 +84,44 @@ it("crypto.getRandomValues", () => {
   }
 });
 
+// not actually a web global
+it("crypto.timingSafeEqual", () => {
+  const crypto = import.meta.require("node:crypto");
+  var uuidStr = crypto.randomUUID();
+  expect(uuidStr.length).toBe(36);
+  expect(uuidStr[8]).toBe("-");
+  expect(uuidStr[13]).toBe("-");
+  expect(uuidStr[18]).toBe("-");
+  expect(uuidStr[23]).toBe("-");
+  const uuid = Buffer.from(uuidStr);
+
+  expect(crypto.timingSafeEqual(uuid, uuid)).toBe(true);
+  expect(crypto.timingSafeEqual(uuid, uuid.slice())).toBe(true);
+  try {
+    crypto.timingSafeEqual(uuid, uuid.slice(1));
+    expect(false).toBe(true);
+  } catch (e) {}
+
+  try {
+    crypto.timingSafeEqual(uuid, uuid.slice(0, uuid.length - 2));
+    expect(false).toBe(true);
+  } catch (e) {
+    expect(e.message).toBe("Input buffers must have the same length");
+  }
+
+  try {
+    expect(crypto.timingSafeEqual(uuid, crypto.randomUUID())).toBe(false);
+    expect(false).toBe(true);
+  } catch (e) {
+    expect(e.name).toBe("TypeError");
+  }
+
+  var shorter = uuid.slice(0, 1);
+  for (let i = 0; i < 9000; i++) {
+    if (!crypto.timingSafeEqual(shorter, shorter)) throw new Error("fail");
+  }
+});
+
 it("crypto.randomUUID", () => {
   var uuid = crypto.randomUUID();
   expect(uuid.length).toBe(36);

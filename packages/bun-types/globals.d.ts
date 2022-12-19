@@ -271,9 +271,17 @@ interface ImportMeta {
   resolveSync(moduleId: string, parent?: string): string;
 
   /**
-   * Resolve a module ID the same as if you imported it
+   * Load a CommonJS module
    *
-   * The `parent` argument is optional, and defaults to the current module's path.
+   * Internally, this is a synchronous version of ESModule's `import()`, with extra code for handling:
+   * - CommonJS modules
+   * - *.node files
+   * - *.json files
+   *
+   * Warning: **This API is not stable** and may change in the future. Use at your
+   * own risk. Usually, you should use `require` instead and Bun's transpiler
+   * will automatically rewrite your code to use `import.meta.require` if
+   * relevant.
    */
   require: NodeJS.Require;
 }
@@ -341,8 +349,6 @@ interface Process {
   isBun: 1; // FIXME: this should actually return a boolean
   /** The current git sha of Bun **/
   revision: string;
-  // execPath: string;
-  // abort(): void;
   chdir(directory: string): void;
   cwd(): string;
   exit(code?: number): void;
@@ -351,9 +357,23 @@ interface Process {
   getuid(): number;
   setuid(id: number | string): void;
   dlopen(module: { exports: any }, filename: string, flags?: number): void;
-  stdin: import("stream").Duplex;
-  stdout: import("stream").Writable;
-  stderr: import("stream").Writable;
+  stdin: import("stream").Duplex & { isTTY: boolean };
+  stdout: import("stream").Writable & { isTTY: boolean };
+  stderr: import("stream").Writable & { isTTY: boolean };
+
+  /**
+   * exit the process with a fatal exception, sending SIGABRT
+   */
+  abort(): never;
+
+  /**
+   * Resolved absolute file path to the current Bun executable that is running
+   */
+  readonly execPath: string;
+  /**
+   * The original argv[0] passed to Bun
+   */
+  readonly argv0: string;
 }
 
 declare var process: Process;

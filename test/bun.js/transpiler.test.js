@@ -471,38 +471,38 @@ export default <>hi</>
       },
     });
     expect(bun.transformSync("export var foo = <div foo />")).toBe(
-      `export var foo = jsx("div", {
+      `export var foo = $jsx("div", {
   foo: true
 }, undefined, false, undefined, this);
 `,
     );
     expect(bun.transformSync("export var foo = <div foo={foo} />")).toBe(
-      `export var foo = jsx("div", {
+      `export var foo = $jsx("div", {
   foo
 }, undefined, false, undefined, this);
 `,
     );
     expect(bun.transformSync("export var foo = <div {...foo} />")).toBe(
-      `export var foo = jsx("div", {
+      `export var foo = $jsx("div", {
   ...foo
 }, undefined, false, undefined, this);
 `,
     );
 
     expect(bun.transformSync("export var hi = <div {foo} />")).toBe(
-      `export var hi = jsx("div", {
+      `export var hi = $jsx("div", {
   foo
 }, undefined, false, undefined, this);
 `,
     );
     expect(bun.transformSync("export var hi = <div {foo.bar.baz} />")).toBe(
-      `export var hi = jsx("div", {
+      `export var hi = $jsx("div", {
   baz: foo.bar.baz
 }, undefined, false, undefined, this);
 `,
     );
     expect(bun.transformSync("export var hi = <div {foo?.bar?.baz} />")).toBe(
-      `export var hi = jsx("div", {
+      `export var hi = $jsx("div", {
   baz: foo?.bar?.baz
 }, undefined, false, undefined, this);
 `,
@@ -510,7 +510,7 @@ export default <>hi</>
     expect(
       bun.transformSync("export var hi = <div {foo['baz'].bar?.baz} />"),
     ).toBe(
-      `export var hi = jsx("div", {
+      `export var hi = $jsx("div", {
   baz: foo["baz"].bar?.baz
 }, undefined, false, undefined, this);
 `,
@@ -522,7 +522,7 @@ export default <>hi</>
         "export var hi = <div {foo[{name: () => true}.name].hi} />",
       ),
     ).toBe(
-      `export var hi = jsx("div", {
+      `export var hi = $jsx("div", {
   hi: foo[{ name: () => true }.name].hi
 }, undefined, false, undefined, this);
 `,
@@ -530,7 +530,7 @@ export default <>hi</>
     expect(
       bun.transformSync("export var hi = <Foo {process.env.NODE_ENV} />"),
     ).toBe(
-      `export var hi = jsx(Foo, {
+      `export var hi = $jsx(Foo, {
   NODE_ENV: "development"
 }, undefined, false, undefined, this);
 `,
@@ -539,7 +539,7 @@ export default <>hi</>
     expect(
       bun.transformSync("export var hi = <div {foo['baz'].bar?.baz} />"),
     ).toBe(
-      `export var hi = jsx("div", {
+      `export var hi = $jsx("div", {
   baz: foo["baz"].bar?.baz
 }, undefined, false, undefined, this);
 `,
@@ -554,24 +554,24 @@ export default <>hi</>
     expect(
       bun.transformSync("export var hi = <div {Foo}><Foo></Foo></div>"),
     ).toBe(
-      `export var hi = jsx("div", {
+      `export var hi = $jsx("div", {
   Foo,
-  children: jsx(Foo, {}, undefined, false, undefined, this)
+  children: $jsx(Foo, {}, undefined, false, undefined, this)
 }, undefined, false, undefined, this);
 `,
     );
     expect(
       bun.transformSync("export var hi = <div {Foo}><Foo></Foo></div>"),
     ).toBe(
-      `export var hi = jsx("div", {
+      `export var hi = $jsx("div", {
   Foo,
-  children: jsx(Foo, {}, undefined, false, undefined, this)
+  children: $jsx(Foo, {}, undefined, false, undefined, this)
 }, undefined, false, undefined, this);
 `,
     );
 
     expect(bun.transformSync("export var hi = <div>{123}}</div>").trim()).toBe(
-      `export var hi = jsx("div", {
+      `export var hi = $jsx("div", {
   children: [
     123,
     "}"
@@ -631,7 +631,7 @@ export var hiWithKey = {
   },
   _owner: null
 };
-export var hiWithRef = jsx("div", {
+export var hiWithRef = $jsx("div", {
   ref: foo,
   children: 123
 });
@@ -653,7 +653,7 @@ export var ComponentThatChecksDefaultPropsAndHasChildren = {
   }, Hello.defaultProps),
   _owner: null
 };
-export var ComponentThatHasSpreadCausesDeopt = jsx(Hello, {
+export var ComponentThatHasSpreadCausesDeopt = $jsx(Hello, {
   ...spread
 });
 `.trim(),
@@ -1067,19 +1067,36 @@ export const { dead } = { dead: "hello world!" };
           `export const foo = require('bar.node')`,
           `export const foo = import.meta.require("bar.node")`,
         );
-      });
-
-      it("require.resolve -> import.meta.resolveSync", () => {
         expectBunPrinted_(
-          `export const foo = require.resolve('bar.node')`,
-          `export const foo = import.meta.resolveSync("bar.node")`,
+          `export const foo = require('bar.node')`,
+          `export const foo = import.meta.require("bar.node")`,
         );
       });
 
-      it('require.resolve(path, {paths: ["blah"]}) -> import.meta.resolveSync', () => {
+      it("require.resolve -> import.meta.require.resolve", () => {
+        expectBunPrinted_(
+          `export const foo = require.resolve('bar.node')`,
+          `export const foo = import.meta.require.resolve("bar.node")`,
+        );
+      });
+
+      it('require.resolve(path, {paths: ["blah"]}) -> import.meta.require.resolve', () => {
         expectBunPrinted_(
           `export const foo = require.resolve('bar.node', {paths: ["blah"]})`,
-          `export const foo = import.meta.resolveSync("bar.node", { paths: ["blah"] })`,
+          `export const foo = import.meta.require.resolve("bar.node", { paths: ["blah"] })`,
+        );
+      });
+
+      it("require is defined", () => {
+        expectBunPrinted_(
+          `
+const {resolve} = require;
+console.log(resolve.length)
+          `.trim(),
+          `
+const { resolve } = import.meta.require;
+console.log(resolve.length)
+          `.trim(),
         );
       });
     });
@@ -1110,6 +1127,13 @@ export const { dead } = { dead: "hello world!" };
         `export default false`,
       );
       expectPrinted_(`export default !user_undefined;`, `export default true`);
+    });
+
+    it("jsx symbol should work", () => {
+      expectBunPrinted_(
+        `var x = jsx; export default x;`,
+        "var x = jsx;\nexport default x",
+      );
     });
 
     it("decls", () => {
@@ -1678,6 +1702,567 @@ class Foo {
   describe("simplification", () => {
     it("unary operator", () => {
       expectPrinted("a = !(b, c)", "a = (b , !c)");
+    });
+
+    it("const inlining", () => {
+      var transpiler = new Bun.Transpiler({
+        inline: true,
+        platform: "bun",
+        allowBunRuntime: false,
+      });
+
+      function check(input, output) {
+        expect(
+          transpiler
+            .transformSync("export function hello() {\n" + input + "\n}")
+            .trim()
+            .replaceAll(/^  /gm, ""),
+        ).toBe(
+          "export function hello() {\n" +
+            output +
+            "\n}".replaceAll(/^  /gm, ""),
+        );
+      }
+
+      check("const x = 1; return x", "return 1;");
+      check("const x = 1; return x + 1", "return 2;");
+      check("const x = 1; return x + x", "return 2;");
+      check("const x = 1; return x + x + 1", "return 3;");
+      check("const x = 1; return x + x + x", "return 3;");
+      check(
+        `const foo = "foo"; const bar = "bar"; return foo + bar`,
+        `return "foobar";`,
+      );
+
+      // check that it doesn't inline after "var"
+      check(
+        `
+      const x = 1;
+      const y = 2;
+      var hey = "yo";
+      const z = 3;
+      console.log(x + y + z);
+      `,
+        `
+var hey = "yo";
+const z = 3;
+console.log(3 + z);
+        `.trim(),
+      );
+
+      // check that nested scopes can inline from parent scopes
+      check(
+        `
+      const x = 1;
+      const y = 2;
+      var hey = "yo";
+      const z = 3;
+      function hey() {
+        const boom = 3;
+        return x + y + boom + hey;
+      }
+      hey();
+      `,
+        `
+var hey = "yo";
+const z = 3;
+function hey() {
+  return 6 + hey;
+}
+hey();
+        `.trim(),
+      );
+
+      // check that we don't inline objects or arrays that aren't from macros
+      check(
+        `
+        const foo = { bar: true };
+        const array = [1];
+        console.log(foo, array);
+        `,
+        `
+const foo = { bar: true };
+const array = [1];
+console.log(foo, array);
+          `.trim(),
+      );
+    });
+
+    it("constant folding scopes", () => {
+      var transpiler = new Bun.Transpiler({
+        inline: true,
+        platform: "bun",
+        allowBunRuntime: false,
+      });
+
+      // Check that pushing/popping scopes doesn't cause a crash
+      // We panic at runtime if the scopes are unbalanced, so this test just checks we don't have any crashes
+      function check(input) {
+        transpiler.transformSync(input);
+      }
+
+      check("var x; 1 ? 0 : ()=>{}; (()=>{})()");
+      check("var x; 0 ? ()=>{} : 1; (()=>{})()");
+      check("var x; 0 && (()=>{}); (()=>{})()");
+      check("var x; 1 || (()=>{}); (()=>{})()");
+      check("if (1) 0; else ()=>{}; (()=>{})()");
+      check("if (0) ()=>{}; else 1; (()=>{})()");
+      check(`
+      var func = () => {};
+      var x;
+      1 ? 0 : func;
+      (() => {})();
+      switch (1) {
+        case 0: {
+          class Foo {
+            static {
+              function hey() {
+                return class {
+                  static {
+                    var foo = class {
+                      hey(arg) {
+                        return 1;
+                      }
+                    };
+                    new foo();
+                  }
+                };
+              }
+            }
+          }
+          new Foo();
+        }
+      }      
+      `);
+    });
+
+    it("substitution", () => {
+      var transpiler = new Bun.Transpiler({
+        inline: true,
+        platform: "bun",
+        allowBunRuntime: false,
+      });
+      function check(input, output) {
+        expect(
+          transpiler
+            .transformSync("export function hello() {\n" + input + "\n}")
+            .trim()
+            .replaceAll(/^  /gm, ""),
+        ).toBe(
+          "export function hello() {\n" +
+            output +
+            "\n}".replaceAll(/^  /gm, ""),
+        );
+      }
+      check("var x = 1; return x", "var x = 1;\nreturn x;");
+      check("let x = 1; return x", "return 1;");
+      check("const x = 1; return x", "return 1;");
+
+      check("let x = 1; if (false) x++; return x", "return 1;");
+      // TODO: comma operator
+      // check("let x = 1; if (true) x++; return x", "let x = 1;\nreturn x++, x;");
+      check("let x = 1; return x + x", "let x = 1;\nreturn x + x;");
+
+      // Can substitute into normal unary operators
+      check("let x = 1; return +x", "return 1;");
+      check("let x = 1; return -x", "return -1;");
+      check("let x = 1; return !x", "return false;");
+      check("let x = 1; return ~x", "return ~1;");
+      // TODO: remove needless return undefined;
+      // check("let x = 1; return void x", "let x = 1;");
+
+      // esbuild does this:
+      // check("let x = 1; return typeof x", "return typeof 1;");
+      // we do:
+      check("let x = 1; return typeof x", 'return "number";');
+
+      // Check substituting a side-effect free value into normal binary operators
+      // esbuild does this:
+      // check("let x = 1; return x + 2", "return 1 + 2;");
+      // we do:
+      check("let x = 1; return x + 2", "return 3;");
+      check("let x = 1; return 2 + x", "return 3;");
+      check("let x = 1; return x + arg0", "return 1 + arg0;");
+      // check("let x = 1; return arg0 + x", "return arg0 + 1;");
+      check("let x = 1; return x + fn()", "return 1 + fn();");
+      check("let x = 1; return fn() + x", "let x = 1;\nreturn fn() + x;");
+      check("let x = 1; return x + undef", "return 1 + undef;");
+      check("let x = 1; return undef + x", "let x = 1;\nreturn undef + x;");
+
+      // Check substituting a value with side-effects into normal binary operators
+      check("let x = fn(); return x + 2", "return fn() + 2;");
+      check("let x = fn(); return 2 + x", "return 2 + fn();");
+      check("let x = fn(); return x + arg0", "return fn() + arg0;");
+      check("let x = fn(); return arg0 + x", "let x = fn();\nreturn arg0 + x;");
+      check("let x = fn(); return x + fn2()", "return fn() + fn2();");
+      check(
+        "let x = fn(); return fn2() + x",
+        "let x = fn();\nreturn fn2() + x;",
+      );
+      check("let x = fn(); return x + undef", "return fn() + undef;");
+      check(
+        "let x = fn(); return undef + x",
+        "let x = fn();\nreturn undef + x;",
+      );
+
+      // Cannot substitute into mutating unary operators
+      check("let x = 1; ++x", "let x = 1;\n++x;");
+      check("let x = 1; --x", "let x = 1;\n--x;");
+      check("let x = 1; x++", "let x = 1;\nx++;");
+      check("let x = 1; x--", "let x = 1;\nx--;");
+      check("let x = 1; delete x", "let x = 1;\ndelete x;");
+
+      // Cannot substitute into mutating binary operators
+      check("let x = 1; x = 2", "let x = 1;\nx = 2;");
+      check("let x = 1; x += 2", "let x = 1;\nx += 2;");
+      check("let x = 1; x ||= 2", "let x = 1;\nx ||= 2;");
+
+      // Can substitute past mutating binary operators when the left operand has no side effects
+      // check("let x = 1; arg0 = x", "arg0 = 1;");
+      // check("let x = 1; arg0 += x", "arg0 += 1;");
+      // check("let x = 1; arg0 ||= x", "arg0 ||= 1;");
+      // check("let x = fn(); arg0 = x", "arg0 = fn();");
+      // check("let x = fn(); arg0 += x", "let x = fn();\narg0 += x;");
+      // check("let x = fn(); arg0 ||= x", "let x = fn();\narg0 ||= x;");
+
+      // Cannot substitute past mutating binary operators when the left operand has side effects
+      check("let x = 1; y.z = x", "let x = 1;\ny.z = x;");
+      check("let x = 1; y.z += x", "let x = 1;\ny.z += x;");
+      check("let x = 1; y.z ||= x", "let x = 1;\ny.z ||= x;");
+      check("let x = fn(); y.z = x", "let x = fn();\ny.z = x;");
+      check("let x = fn(); y.z += x", "let x = fn();\ny.z += x;");
+      check("let x = fn(); y.z ||= x", "let x = fn();\ny.z ||= x;");
+
+      // TODO:
+      // Can substitute code without side effects into branches
+      // check("let x = arg0; return x ? y : z;", "return arg0 ? y : z;");
+      // check("let x = arg0; return arg1 ? x : y;", "return arg1 ? arg0 : y;");
+      // check("let x = arg0; return arg1 ? y : x;", "return arg1 ? y : arg0;");
+      // check("let x = arg0; return x || y;", "return arg0 || y;");
+      // check("let x = arg0; return x && y;", "return arg0 && y;");
+      // check("let x = arg0; return x ?? y;", "return arg0 ?? y;");
+      // check("let x = arg0; return arg1 || x;", "return arg1 || arg0;");
+      // check("let x = arg0; return arg1 && x;", "return arg1 && arg0;");
+      // check("let x = arg0; return arg1 ?? x;", "return arg1 ?? arg0;");
+
+      // Can substitute code without side effects into branches past an expression with side effects
+      // check(
+      //   "let x = arg0; return y ? x : z;",
+      //   "let x = arg0;\nreturn y ? x : z;",
+      // );
+      // check(
+      //   "let x = arg0; return y ? z : x;",
+      //   "let x = arg0;\nreturn y ? z : x;",
+      // );
+      // check("let x = arg0; return (arg1 ? 1 : 2) ? x : 3;", "return arg0;");
+      // check(
+      //   "let x = arg0; return (arg1 ? 1 : 2) ? 3 : x;",
+      //   "let x = arg0;\nreturn 3;",
+      // );
+      // check(
+      //   "let x = arg0; return (arg1 ? y : 1) ? x : 2;",
+      //   "let x = arg0;\nreturn !arg1 || y ? x : 2;",
+      // );
+      // check(
+      //   "let x = arg0; return (arg1 ? 1 : y) ? x : 2;",
+      //   "let x = arg0;\nreturn arg1 || y ? x : 2;",
+      // );
+      // check(
+      //   "let x = arg0; return (arg1 ? y : 1) ? 2 : x;",
+      //   "let x = arg0;\nreturn !arg1 || y ? 2 : x;",
+      // );
+      // check(
+      //   "let x = arg0; return (arg1 ? 1 : y) ? 2 : x;",
+      //   "let x = arg0;\nreturn arg1 || y ? 2 : x;",
+      // );
+      // check("let x = arg0; return y || x;", "let x = arg0;\nreturn y || x;");
+      // check("let x = arg0; return y && x;", "let x = arg0;\nreturn y && x;");
+      // check("let x = arg0; return y ?? x;", "let x = arg0;\nreturn y ?? x;");
+
+      // Cannot substitute code with side effects into branches
+      check("let x = fn(); return x ? arg0 : y;", "return fn() ? arg0 : y;");
+      check(
+        "let x = fn(); return arg0 ? x : y;",
+        "let x = fn();\nreturn arg0 ? x : y;",
+      );
+      check(
+        "let x = fn(); return arg0 ? y : x;",
+        "let x = fn();\nreturn arg0 ? y : x;",
+      );
+      check("let x = fn(); return x || arg0;", "return fn() || arg0;");
+      check("let x = fn(); return x && arg0;", "return fn() && arg0;");
+      check("let x = fn(); return x ?? arg0;", "return fn() ?? arg0;");
+      check(
+        "let x = fn(); return arg0 || x;",
+        "let x = fn();\nreturn arg0 || x;",
+      );
+      check(
+        "let x = fn(); return arg0 && x;",
+        "let x = fn();\nreturn arg0 && x;",
+      );
+      check(
+        "let x = fn(); return arg0 ?? x;",
+        "let x = fn();\nreturn arg0 ?? x;",
+      );
+
+      // Test chaining
+      check(
+        "let x = fn(); let y = x[prop]; let z = y.val; throw z",
+        "throw fn()[prop].val;",
+      );
+      check(
+        "let x = fn(), y = x[prop], z = y.val; throw z",
+        "throw fn()[prop].val;",
+      );
+
+      // Can substitute an initializer with side effects
+      check("let x = 0; let y = ++x; return y", "let x = 0;\nreturn ++x;");
+
+      // Can substitute an initializer without side effects past an expression without side effects
+      check(
+        "let x = 0; let y = x; return [x, y]",
+        "let x = 0;\nreturn [x, x];",
+      );
+
+      // TODO: merge s_local
+      // Cannot substitute an initializer with side effects past an expression without side effects
+      // check(
+      //   "let x = 0; let y = ++x; return [x, y]",
+      //   "let x = 0, y = ++x;\nreturn [x, y];",
+      // );
+
+      // Cannot substitute an initializer without side effects past an expression with side effects
+      // TODO: merge s_local
+      // check(
+      //   "let x = 0; let y = {valueOf() { x = 1 }}; let z = x; return [y == 1, z]",
+      //   "let x = 0, y = { valueOf() {\n  x = 1;\n} }, z = x;\nreturn [y == 1, z];",
+      // );
+
+      // Cannot inline past a spread operator, since that evaluates code
+      check("let x = arg0; return [...x];", "return [...arg0];");
+      check("let x = arg0; return [x, ...arg1];", "return [arg0, ...arg1];");
+      check(
+        "let x = arg0; return [...arg1, x];",
+        "let x = arg0;\nreturn [...arg1, x];",
+      );
+      // TODO: preserve call here
+      // check("let x = arg0; return arg1(...x);", "return arg1(...arg0);");
+      // check(
+      //   "let x = arg0; return arg1(x, ...arg1);",
+      //   "return arg1(arg0, ...arg1);",
+      // );
+      check(
+        "let x = arg0; return arg1(...arg1, x);",
+        "let x = arg0;\nreturn arg1(...arg1, x);",
+      );
+
+      // Test various statement kinds
+      // TODO:
+      // check("let x = arg0; arg1(x);", "arg1(arg0);");
+
+      check("let x = arg0; throw x;", "throw arg0;");
+      check("let x = arg0; return x;", "return arg0;");
+      check("let x = arg0; if (x) return 1;", "if (arg0)\n  return 1;");
+      check(
+        "let x = arg0; switch (x) { case 0: return 1; }",
+        "switch (arg0) {\n  case 0:\n    return 1;\n}",
+      );
+      check(
+        "let x = arg0; let y = x; return y + y;",
+        "let y = arg0;\nreturn y + y;",
+      );
+
+      // Loops must not be substituted into because they evaluate multiple times
+      check(
+        "let x = arg0; do {} while (x);",
+        "let x = arg0;\ndo\n  ;\nwhile (x);",
+      );
+
+      // TODO: convert while(x) to for (;x;)
+      check(
+        "let x = arg0; while (x) return 1;",
+        "let x = arg0;\nwhile (x)\n  return 1;",
+        // "let x = arg0;\nfor (; x; )\n  return 1;",
+      );
+      check(
+        "let x = arg0; for (; x; ) return 1;",
+        "let x = arg0;\nfor (;x; )\n  return 1;",
+      );
+
+      // Can substitute an expression without side effects into a branch due to optional chaining
+      // TODO:
+      // check("let x = arg0; return arg1?.[x];", "return arg1?.[arg0];");
+      // check("let x = arg0; return arg1?.(x);", "return arg1?.(arg0);");
+
+      // Cannot substitute an expression with side effects into a branch due to optional chaining,
+      // since that would change the expression with side effects from being unconditionally
+      // evaluated to being conditionally evaluated, which is a behavior change
+      check(
+        "let x = fn(); return arg1?.[x];",
+        "let x = fn();\nreturn arg1?.[x];",
+      );
+      check(
+        "let x = fn(); return arg1?.(x);",
+        "let x = fn();\nreturn arg1?.(x);",
+      );
+
+      // Can substitute an expression past an optional chaining operation, since it has side effects
+      check(
+        "let x = arg0; return arg1?.a === x;",
+        "let x = arg0;\nreturn arg1?.a === x;",
+      );
+      check(
+        "let x = arg0; return arg1?.[0] === x;",
+        "let x = arg0;\nreturn arg1?.[0] === x;",
+      );
+      check(
+        "let x = arg0; return arg1?.(0) === x;",
+        "let x = arg0;\nreturn arg1?.(0) === x;",
+      );
+      check(
+        "let x = arg0; return arg1?.a[x];",
+        "let x = arg0;\nreturn arg1?.a[x];",
+      );
+      check(
+        "let x = arg0; return arg1?.a(x);",
+        "let x = arg0;\nreturn arg1?.a(x);",
+      );
+      // TODO:
+      // check(
+      //   "let x = arg0; return arg1?.[a][x];",
+      //   "let x = arg0;\nreturn arg1?.[a][x];",
+      // );
+      check(
+        "let x = arg0; return arg1?.[a](x);",
+        "let x = arg0;\nreturn (arg1?.[a])(x);",
+      );
+      check(
+        "let x = arg0; return arg1?.(a)[x];",
+        "let x = arg0;\nreturn (arg1?.(a))[x];",
+      );
+      check(
+        "let x = arg0; return arg1?.(a)(x);",
+        "let x = arg0;\nreturn (arg1?.(a))(x);",
+      );
+
+      // Can substitute into an object as long as there are no side effects
+      // beforehand. Note that computed properties must call "toString()" which
+      // can have side effects.
+      check("let x = arg0; return {x};", "return { x: arg0 };");
+      check(
+        "let x = arg0; return {x: y, y: x};",
+        "let x = arg0;\nreturn { x: y, y: x };",
+      );
+      // TODO:
+      // check(
+      //   "let x = arg0; return {x: arg1, y: x};",
+      //   "return { x: arg1, y: arg0 };",
+      // );
+      check("let x = arg0; return {[x]: 0};", "return { [arg0]: 0 };");
+      check(
+        "let x = arg0; return {[y]: x};",
+        "let x = arg0;\nreturn { [y]: x };",
+      );
+      check(
+        "let x = arg0; return {[arg1]: x};",
+        "let x = arg0;\nreturn { [arg1]: x };",
+      );
+      // TODO:
+      // check(
+      //   "let x = arg0; return {y() {}, x};",
+      //   "return { y() {\n}, x: arg0 };",
+      // );
+      check(
+        "let x = arg0; return {[y]() {}, x};",
+        "let x = arg0;\nreturn { [y]() {\n}, x };",
+      );
+      check("let x = arg0; return {...x};", "return { ...arg0 };");
+      check("let x = arg0; return {...x, y};", "return { ...arg0, y };");
+      check("let x = arg0; return {x, ...y};", "return { x: arg0, ...y };");
+      check(
+        "let x = arg0; return {...y, x};",
+        "let x = arg0;\nreturn { ...y, x };",
+      );
+
+      // TODO:
+      // Check substitutions into template literals
+      // check("let x = arg0; return `a${x}b${y}c`;", "return `a${arg0}b${y}c`;");
+      // check(
+      //   "let x = arg0; return `a${y}b${x}c`;",
+      //   "let x = arg0;\nreturn `a${y}b${x}c`;",
+      // );
+      // check(
+      //   "let x = arg0; return `a${arg1}b${x}c`;",
+      //   "return `a${arg1}b${arg0}c`;",
+      // );
+      // check("let x = arg0; return x`y`;", "return arg0`y`;");
+      // check(
+      //   "let x = arg0; return y`a${x}b`;",
+      //   "let x = arg0;\nreturn y`a${x}b`;",
+      // );
+      // check("let x = arg0; return arg1`a${x}b`;", "return arg1`a${arg0}b`;");
+      // check("let x = 'x'; return `a${x}b`;", "return `axb`;");
+
+      // Check substitutions into import expressions
+      // TODO:
+      // check("let x = arg0; return import(x);", "return import(arg0);");
+      // check(
+      //   "let x = arg0; return [import(y), x];",
+      //   "let x = arg0;\nreturn [import(y), x];",
+      // );
+      // check(
+      //   "let x = arg0; return [import(arg1), x];",
+      //   "return [import(arg1), arg0];",
+      // );
+
+      // Check substitutions into await expressions
+      check(
+        "return async () => { let x = arg0; await x; };",
+        "return async () => {\n  await arg0;\n};",
+      );
+
+      // TODO: combine with comma operator
+      // check(
+      //   "return async () => { let x = arg0; await y; return x; };",
+      //   "return async () => {\n  let x = arg0;\n  return await y, x;\n};",
+      // );
+      // check(
+      //   "return async () => { let x = arg0; await arg1; return x; };",
+      //   "return async () => {\n  let x = arg0;\n  return await arg1, x;\n};",
+      // );
+
+      // Check substitutions into yield expressions
+      check(
+        "return function* () { let x = arg0; yield x; };",
+        "return function* () {\n  yield arg0;\n};",
+      );
+      // TODO: combine with comma operator
+      // check(
+      //   "return function* () { let x = arg0; yield; return x; };",
+      //   "return function* () {\n  let x = arg0;\n  yield ; \n  return x;\n};",
+      // );
+      // check(
+      //   "return function* () { let x = arg0; yield y; return x; };",
+      //   "return function* () {\n  let x = arg0;\n  return yield y, x;\n};",
+      // );
+      // check(
+      //   "return function* () { let x = arg0; yield arg1; return x; };",
+      //   "return function* () {\n  let x = arg0;\n  return yield arg1, x;\n};",
+      // );
+
+      // Cannot substitute into call targets when it would change "this"
+      check("let x = arg0; x()", "arg0();");
+      // check("let x = arg0; (0, x)()", "arg0();");
+      check("let x = arg0.foo; x.bar()", "arg0.foo.bar();");
+      check("let x = arg0.foo; x[bar]()", "arg0.foo[bar]();");
+      check("let x = arg0.foo; x()", "let x = arg0.foo;\nx();");
+      check("let x = arg0[foo]; x()", "let x = arg0[foo];\nx();");
+      check("let x = arg0?.foo; x()", "let x = arg0?.foo;\nx();");
+      check("let x = arg0?.[foo]; x()", "let x = arg0?.[foo];\nx();");
+      // check("let x = arg0.foo; (0, x)()", "let x = arg0.foo;\nx();");
+      // check("let x = arg0[foo]; (0, x)()", "let x = arg0[foo];\nx();");
+      // check("let x = arg0?.foo; (0, x)()", "let x = arg0?.foo;\nx();");
+      // check("let x = arg0?.[foo]; (0, x)()", "let x = arg0?.[foo];\nx();");
     });
 
     it("constant folding", () => {

@@ -8,10 +8,9 @@ var JSXClassic = require($a66742df);
 var jsx = require(JSX).jsxDEV, jsxEl = require(JSXClassic).createElement;
 var { default: React} = require($a66742df);
 export function SpreadWithTheKey({ className }) {
-  const rest = {};
   return jsxEl("div", {
     className,
-    ...rest,
+    ...{},
     onClick: () => console.log("click"),
     key: "spread-with-the-key"
   }, "Rendered component containing warning");
@@ -19,7 +18,7 @@ export function SpreadWithTheKey({ className }) {
 export function test() {
   console.assert(React.isValidElement(jsx(SpreadWithTheKey, {
     className: "foo"
-  }, undefined, false, undefined, this)));
+  })));
   return testDone(import.meta.url);
 }
 

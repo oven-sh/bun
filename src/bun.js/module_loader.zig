@@ -33,7 +33,6 @@ const ServerEntryPoint = @import("../bundler.zig").ServerEntryPoint;
 const js_printer = @import("../js_printer.zig");
 const js_parser = @import("../js_parser.zig");
 const js_ast = @import("../js_ast.zig");
-const hash_map = @import("../hash_map.zig");
 const http = @import("../http.zig");
 const NodeFallbackModules = @import("../node_fallbacks.zig");
 const ImportKind = ast.ImportKind;
@@ -1179,9 +1178,27 @@ pub const ModuleLoader = struct {
             //     };
             // },
             else => {
+                var stack_buf = std.heap.stackFallback(4096, jsc_vm.allocator);
+                var allocator = stack_buf.get();
+                var buf = MutableString.init2048(allocator) catch unreachable;
+                defer buf.deinit();
+                var writer = buf.writer();
+                if (!jsc_vm.origin.isEmpty()) {
+                    writer.writeAll("export default `") catch unreachable;
+                    // TODO: escape backtick char, though we might already do that
+                    @import("./api/bun.zig").getPublicPath(specifier, jsc_vm.origin, @TypeOf(&writer), &writer);
+                    writer.writeAll("`;\n") catch unreachable;
+                } else {
+                    writer.writeAll("export default ") catch unreachable;
+                    buf = js_printer.quoteForJSON(specifier, buf, true) catch @panic("out of memory");
+                    writer = buf.writer();
+                    writer.writeAll(";\n") catch unreachable;
+                }
+
+                const public_url = ZigString.fromUTF8(jsc_vm.allocator.dupe(u8, buf.toOwnedSliceLeaky()) catch @panic("out of memory"));
                 return ResolvedSource{
                     .allocator = &jsc_vm.allocator,
-                    .source_code = ZigString.init(try strings.quotedAlloc(jsc_vm.allocator, path.pretty)),
+                    .source_code = public_url,
                     .specifier = ZigString.init(path.text),
                     .source_url = ZigString.init(path.text),
                     .hash = 0,
@@ -1610,6 +1627,7 @@ pub const ModuleLoader = struct {
                 .@"node:events" => return jsSyntheticModule(.@"node:events"),
                 .@"node:process" => return jsSyntheticModule(.@"node:process"),
                 .@"node:tty" => return jsSyntheticModule(.@"node:tty"),
+                .@"node:util/types" => return jsSyntheticModule(.@"node:util/types"),
                 .@"node:stream" => {
                     return ResolvedSource{
                         .allocator = null,
@@ -1792,7 +1810,18 @@ pub const ModuleLoader = struct {
                         .hash = 0,
                     };
                 },
-                .undici => {
+                .@"node:util" => {
+                    return ResolvedSource{
+                        .allocator = null,
+                        .source_code = ZigString.init(
+                            @as(string, jsModuleFromFile(jsc_vm.load_builtins_from_path, "./util.exports.js")),
+                        ),
+                        .specifier = ZigString.init("node:util"),
+                        .source_url = ZigString.init("node:util"),
+                        .hash = 0,
+                    };
+                },
+                .@"undici" => {
                     return ResolvedSource{
                         .allocator = null,
                         .source_code = ZigString.init(
@@ -1967,8 +1996,10 @@ pub const HardcodedModule = enum {
     @"node:timers/promises",
     @"node:tty",
     @"node:url",
-    undici,
-    ws,
+    @"node:util",
+    @"node:util/types",
+    @"undici",
+    @"ws",
     /// Already resolved modules go in here.
     /// This does not remap the module name, it is just a hash table.
     /// Do not put modules that have aliases in here
@@ -2007,8 +2038,10 @@ pub const HardcodedModule = enum {
             .{ "node:timers/promises", HardcodedModule.@"node:timers/promises" },
             .{ "node:tty", HardcodedModule.@"node:tty" },
             .{ "node:url", HardcodedModule.@"node:url" },
-            .{ "undici", HardcodedModule.undici },
-            .{ "ws", HardcodedModule.ws },
+            .{ "node:util", HardcodedModule.@"node:util" },
+            .{ "node:util/types", HardcodedModule.@"node:util/types" },
+            .{ "undici", HardcodedModule.@"undici" },
+            .{ "ws", HardcodedModule.@"ws" },
         },
     );
     pub const Aliases = bun.ComptimeStringMap(
@@ -2016,11 +2049,11 @@ pub const HardcodedModule = enum {
         .{
             .{ "assert", "node:assert" },
             .{ "buffer", "node:buffer" },
+            .{ "bun", "bun" },
             .{ "bun:ffi", "bun:ffi" },
             .{ "bun:jsc", "bun:jsc" },
             .{ "bun:sqlite", "bun:sqlite" },
             .{ "bun:wrap", "bun:wrap" },
-            .{ "bun", "bun" },
             .{ "child_process", "node:child_process" },
             .{ "depd", "depd" },
             .{ "detect-libc", "detect-libc" },
@@ -2057,6 +2090,8 @@ pub const HardcodedModule = enum {
             .{ "node:timers/promises", "node:timers/promises" },
             .{ "node:tty", "node:tty" },
             .{ "node:url", "node:url" },
+            .{ "node:util", "node:util" },
+            .{ "node:util/types", "node:util/types" },
             .{ "os", "node:os" },
             .{ "path", "node:path" },
             .{ "path/posix", "node:path/posix" },
@@ -2075,6 +2110,8 @@ pub const HardcodedModule = enum {
             .{ "tty", "node:tty" },
             .{ "undici", "undici" },
             .{ "url", "node:url" },
+            .{ "util", "node:util" },
+            .{ "util/types", "node:util/types" },
             .{ "ws", "ws" },
             .{ "ws/lib/websocket", "ws" },
         },

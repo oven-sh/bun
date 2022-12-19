@@ -67,8 +67,7 @@ var hmr = new HMR(350135693, "simple-lit-example.ts"), exports = hmr.exports;
     setup();
     await loadedPromise;
     let element = document.getElementById("my-element-id");
-    let shadowRoot = element.shadowRoot;
-    let planet = shadowRoot.getElementById("planet-id");
+    let planet = element.shadowRoot.getElementById("planet-id");
     if (element.__planet !== "Earth")
       throw new Error("Unexpected planet name: " + element.__planet);
     planet.click();

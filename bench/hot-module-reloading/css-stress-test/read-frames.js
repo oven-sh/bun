@@ -70,9 +70,9 @@ fs.writeFileSync(
       `${process.platform}-${
         process.arch === "arm64" ? "aarch64" : process.arch
       }` +
-      ".json"
+      ".json",
   ),
-  JSON.stringify(report, null, 2)
+  JSON.stringify(report, null, 2),
 );
 
 console.log(
@@ -101,7 +101,7 @@ console.log(
   TOTAL_FRAMES,
   "(" +
     Math.round(
-      Math.max(Math.min(1.0, timings.length / TOTAL_FRAMES), 0) * 100
+      Math.max(Math.min(1.0, timings.length / TOTAL_FRAMES), 0) * 100,
     ) +
-    "%)"
+    "%)",
 );

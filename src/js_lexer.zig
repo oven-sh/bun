@@ -2769,8 +2769,8 @@ fn NewLexer_(
                     }
                     lexer.number = @intToFloat(f64, number);
                 } else {
-                    // Parse a double-precision floating-point number;
-                    if (std.fmt.parseFloat(f64, text)) |num| {
+                    // Parse a double-precision floating-point number
+                    if (bun.parseDouble(text)) |num| {
                         lexer.number = num;
                     } else |_| {
                         try lexer.addSyntaxError(lexer.start, "Invalid number", .{});

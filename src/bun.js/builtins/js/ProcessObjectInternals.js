@@ -435,26 +435,29 @@ function getStdioWriteStream(fd_, rawRequire) {
   return new FastStdioWriteStream(fd_);
 }
 
-function getStdinStream(fd, rawRequire, Bun) {
+function getStdinStream(fd_, rawRequire, Bun) {
   var module = { path: "node:process", require: rawRequire };
   var require = (path) => module.require(path);
 
-  var { Readable, Duplex, eos, destroy } = require("node:stream");
+  var { Duplex, eos, destroy } = require("node:stream");
 
   var StdinStream = class StdinStream extends Duplex {
-    #readStream;
+    #reader;
+    // TODO: investigate https://github.com/oven-sh/bun/issues/1607
+
+    #readRef;
     #writeStream;
 
     #readable = true;
+    #unrefOnRead = false;
     #writable = true;
 
     #onFinish;
     #onClose;
     #onDrain;
-    #onReadable;
 
     get isTTY() {
-      return require("tty").isatty(fd);
+      return require("tty").isatty(fd_);
     }
 
     get fd() {
@@ -463,8 +466,6 @@ function getStdinStream(fd, rawRequire, Bun) {
 
     constructor() {
       super({ readable: true, writable: true });
-
-      this.#onReadable = (...args) => this._read(...args);
     }
 
     #onFinished(err) {
@@ -505,49 +506,88 @@ function getStdinStream(fd, rawRequire, Bun) {
         callback(err);
       } else {
         this.#onClose = callback;
-        if (this.#readStream) destroy(this.#readStream, err);
         if (this.#writeStream) destroy(this.#writeStream, err);
       }
     }
 
-    on(ev, cb) {
-      super.on(ev, cb);
-      if (!this.#readStream && (ev === "readable" || ev === "data")) {
-        this.#loadReadStream();
+    on(name, callback) {
+      // Streams don't generally required to present any data when only
+      // `readable` events are present, i.e. `readableFlowing === false`
+      //
+      // However, Node.js has a this quirk whereby `process.stdin.read()`
+      // blocks under TTY mode, thus looping `.read()` in this particular
+      // case would not result in truncation.
+      //
+      // Therefore the following hack is only specific to `process.stdin`
+      // and does not apply to the underlying Stream implementation.
+      if (name === "readable") {
+        this.ref();
+        this.#unrefOnRead = true;
       }
+      return super.on(name, callback);
     }
 
-    #loadReadStream() {
-      var readStream = (this.#readStream = Readable.fromWeb(
-        Bun.stdin.stream(),
-      ));
+    pause() {
+      this.unref();
+      return super.pause();
+    }
 
-      readStream.on("data", (data) => {
-        this.push(data);
-      });
-      readStream.ref();
-
-      readStream.on("end", () => {
-        this.push(null);
-      });
-
-      eos(readStream, (err) => {
-        this.#readable = false;
-        if (err) {
-          destroy(readStream, err);
-        }
-        this.#onFinished(err);
-      });
+    resume() {
+      this.ref();
+      return super.resume();
     }
 
     ref() {
-      this.#readStream?.ref?.();
-    }
-    unref() {
-      this.#readStream?.unref?.();
+      this.#reader ??= Bun.stdin.stream().getReader();
+      this.#readRef ??= setInterval(() => {}, 1 << 30);
     }
 
-    _read(encoding, callback) {}
+    unref() {
+      if (this.#readRef) {
+        clearInterval(this.#readRef);
+        this.#readRef = null;
+      }
+    }
+
+    async #readInternal() {
+      try {
+        var done, value;
+        const read = this.#reader.readMany();
+
+        // read same-tick if possible
+        if (!read?.then) {
+          ({ done, value } = read);
+        } else {
+          ({ done, value } = await read);
+        }
+
+        if (!done) {
+          this.push(value[0]);
+
+          // shouldn't actually happen, but just in case
+          const length = value.length;
+          for (let i = 1; i < length; i++) {
+            this.push(value[i]);
+          }
+        } else {
+          this.push(null);
+          this.pause();
+          this.#readable = false;
+          this.#onFinished();
+        }
+      } catch (err) {
+        this.#readable = false;
+        this.#onFinished(err);
+      }
+    }
+
+    _read(size) {
+      if (this.#unrefOnRead) {
+        this.unref();
+        this.#unrefOnRead = false;
+      }
+      this.#readInternal();
+    }
 
     #constructWriteStream() {
       var { createWriteStream } = require("node:fs");

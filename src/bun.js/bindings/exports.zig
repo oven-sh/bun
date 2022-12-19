@@ -235,6 +235,7 @@ pub const ResolvedSource = extern struct {
         @"node:string_decoder" = 1027,
         @"node:module" = 1028,
         @"node:tty" = 1029,
+        @"node:util/types" = 1030,
     };
 };
 
@@ -394,14 +395,18 @@ pub const Process = extern struct {
     pub const getCwd = JSC.Node.Process.getCwd;
     pub const setCwd = JSC.Node.Process.setCwd;
     pub const exit = JSC.Node.Process.exit;
+    pub const getArgv0 = JSC.Node.Process.getArgv0;
+    pub const getExecPath = JSC.Node.Process.getExecPath;
 
     pub const Export = shim.exportFunctions(.{
-        .getTitle = getTitle,
-        .setTitle = setTitle,
-        .getArgv = getArgv,
-        .getCwd = getCwd,
-        .setCwd = setCwd,
-        .exit = exit,
+        .@"getTitle" = getTitle,
+        .@"setTitle" = setTitle,
+        .@"getArgv" = getArgv,
+        .@"getCwd" = getCwd,
+        .@"setCwd" = setCwd,
+        .@"exit" = exit,
+        .@"getArgv0" = getArgv0,
+        .@"getExecPath" = getExecPath,
     });
 
     comptime {
@@ -423,6 +428,12 @@ pub const Process = extern struct {
             });
             @export(exit, .{
                 .name = Export[5].symbol_name,
+            });
+            @export(getArgv0, .{
+                .name = Export[6].symbol_name,
+            });
+            @export(getExecPath, .{
+                .name = Export[7].symbol_name,
             });
         }
     }
@@ -2651,7 +2662,7 @@ pub const ZigConsoleClient = struct {
             const max = 512;
             leftover = leftover[0..@min(leftover.len, max)];
             for (leftover) |el| {
-                this.printComma(@TypeOf(&writer.ctx), &writer.ctx, enable_ansi_colors) catch unreachable;
+                this.printComma(@TypeOf(&writer.ctx), &writer.ctx, enable_ansi_colors) catch return;
                 writer.writeAll(" ");
 
                 writer.print(comptime Output.prettyFmt(fmt_, enable_ansi_colors), .{el});

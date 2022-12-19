@@ -301,6 +301,8 @@ pub const Runtime = struct {
         top_level_await: bool = false,
         auto_import_jsx: bool = false,
         allow_runtime: bool = true,
+        inlining: bool = false,
+
         /// Instead of jsx("div", {}, void 0)
         /// ->
         /// {

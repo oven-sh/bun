@@ -265,18 +265,16 @@ JSC_DEFINE_HOST_FUNCTION(functionStartSamplingProfiler, (JSC::JSGlobalObject * g
 
     auto scope = DECLARE_THROW_SCOPE(vm);
     if (directoryValue.isString()) {
-        WTF::String optionString = WTF::String::fromUTF8("samplingProfilerPath=");
         auto path = directoryValue.toWTFString(globalObject);
         if (!path.isEmpty()) {
             StringPrintStream pathOut;
-            const char* optionCString = toCString(String(optionString + path)).data();
-
-            if (!Bun__mkdirp(globalObject, optionCString)) {
+            auto pathCString = toCString(String(path));
+            if (!Bun__mkdirp(globalObject, pathCString.data())) {
                 throwVMError(globalObject, scope, createTypeError(globalObject, "directory couldn't be created"_s));
                 return JSC::JSValue::encode(jsUndefined());
             }
 
-            Options::setOption(optionCString);
+            Options::samplingProfilerPath() = pathCString.data();
             samplingProfiler.registerForReportAtExit();
         }
     }
@@ -423,6 +421,58 @@ JSC_DEFINE_HOST_FUNCTION(functionDrainMicrotasks, (JSGlobalObject * globalObject
     return JSValue::encode(jsUndefined());
 }
 
+JSC_DEFINE_HOST_FUNCTION(functionRunProfiler, (JSGlobalObject * globalObject, CallFrame* callFrame))
+{
+    JSC::VM& vm = globalObject->vm();
+    JSC::SamplingProfiler& samplingProfiler = vm.ensureSamplingProfiler(WTF::Stopwatch::create());
+
+    JSC::JSValue callbackValue = callFrame->argument(0);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    if (callbackValue.isUndefinedOrNull() || !callbackValue.isCallable()) {
+        throwException(globalObject, throwScope, createTypeError(globalObject, "First argument must be a function."_s));
+        return JSValue::encode(JSValue {});
+    }
+
+    JSC::JSFunction* function = jsCast<JSC::JSFunction*>(callbackValue);
+
+    JSC::JSValue sampleValue = callFrame->argument(1);
+    if (sampleValue.isNumber()) {
+        unsigned sampleInterval = sampleValue.toUInt32(globalObject);
+        samplingProfiler.setTimingInterval(Seconds::fromMicroseconds(sampleInterval));
+    }
+
+    JSC::CallData callData = JSC::getCallData(function);
+    MarkedArgumentBuffer args;
+
+    samplingProfiler.noticeCurrentThreadAsJSCExecutionThread();
+    samplingProfiler.start();
+    JSC::call(globalObject, function, callData, JSC::jsUndefined(), args);
+    samplingProfiler.pause();
+    if (throwScope.exception()) {
+        samplingProfiler.shutdown();
+        samplingProfiler.clearData();
+        return JSValue::encode(JSValue {});
+    }
+
+    StringPrintStream topFunctions;
+    samplingProfiler.reportTopFunctions(topFunctions);
+
+    StringPrintStream byteCodes;
+    samplingProfiler.reportTopBytecodes(byteCodes);
+
+    JSValue stackTraces = JSONParse(globalObject, samplingProfiler.stackTracesAsJSON());
+
+    samplingProfiler.shutdown();
+    samplingProfiler.clearData();
+
+    JSObject* result = constructEmptyObject(globalObject, globalObject->objectPrototype(), 3);
+    result->putDirect(vm, Identifier::fromString(vm, "functions"_s), jsString(vm, topFunctions.toString()));
+    result->putDirect(vm, Identifier::fromString(vm, "bytecodes"_s), jsString(vm, byteCodes.toString()));
+    result->putDirect(vm, Identifier::fromString(vm, "stackTraces"_s), stackTraces);
+
+    return JSValue::encode(result);
+}
+
 JSC_DECLARE_HOST_FUNCTION(functionGenerateHeapSnapshotForDebugging);
 JSC_DEFINE_HOST_FUNCTION(functionGenerateHeapSnapshotForDebugging, (JSGlobalObject * globalObject, CallFrame*))
 {
@@ -478,6 +528,7 @@ JSC::JSObject* createJSCModule(JSC::JSGlobalObject* globalObject)
         object->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "totalCompileTime"_s), 1, functionTotalCompileTime, ImplementationVisibility::Public, NoIntrinsic, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontDelete | 0);
         object->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "getProtectedObjects"_s), 1, functionGetProtectedObjects, ImplementationVisibility::Public, NoIntrinsic, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontDelete | 0);
         object->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "generateHeapSnapshotForDebugging"_s), 0, functionGenerateHeapSnapshotForDebugging, ImplementationVisibility::Public, NoIntrinsic, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontDelete | 0);
+        object->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "profile"_s), 0, functionRunProfiler, ImplementationVisibility::Public, NoIntrinsic, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontDelete | 0);
     }
 
     return object;

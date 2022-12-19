@@ -43,7 +43,7 @@ if (process.env.PROJECT === "bun") {
       },
 
       shell: false,
-    }
+    },
   );
 }
 
@@ -114,5 +114,5 @@ async function main() {
 main().catch((error) =>
   setTimeout(() => {
     throw error;
-  })
+  }),
 );

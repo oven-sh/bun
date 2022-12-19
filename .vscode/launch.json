@@ -112,6 +112,19 @@
     {
       "type": "lldb",
       "request": "launch",
+      "name": "bun build debug",
+      "program": "bun-debug",
+      "args": ["build", "--platform=bun", "--outdir=/tmp/testout", "${file}"],
+      "cwd": "${file}/../../",
+      "console": "internalConsole",
+      "env": {
+        "BUN_CONFIG_MINIFY_WHITESPACE": "1"
+      }
+    },
+
+    {
+      "type": "lldb",
+      "request": "launch",
       "name": "fetch debug",
       "program": "${workspaceFolder}/misctools/fetch",
       "args": ["https://example.com", "--verbose"],

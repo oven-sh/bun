@@ -27,4 +27,5 @@ export const totalCompileTime = jsc.totalCompileTime;
 export const getProtectedObjects = jsc.getProtectedObjects;
 export const generateHeapSnapshotForDebugging =
   jsc.generateHeapSnapshotForDebugging;
+export const profile = jsc.profile;
 export default jsc;

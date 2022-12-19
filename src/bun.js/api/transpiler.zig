@@ -103,6 +103,10 @@ const TranspilerOptions = struct {
     runtime: Runtime.Features = Runtime.Features{ .top_level_await = true },
     tree_shaking: bool = false,
     trim_unused_imports: ?bool = null,
+    inlining: bool = false,
+
+    minify_whitespace: bool = false,
+    minify_identifiers: bool = false,
 };
 
 // Mimalloc gets unstable if we try to move this to a different thread
@@ -555,6 +559,14 @@ fn transformOptionsFromJSC(ctx: JSC.C.JSContextRef, temp_allocator: std.mem.Allo
         }
     }
 
+    if (object.get(globalThis, "inline")) |flag| {
+        transpiler.runtime.inlining = flag.toBoolean();
+    }
+
+    if (object.get(globalThis, "minifyWhitespace")) |flag| {
+        transpiler.minify_whitespace = flag.toBoolean();
+    }
+
     if (object.get(globalThis, "sourcemap")) |flag| {
         if (flag.isBoolean() or flag.isUndefinedOrNull()) {
             if (flag.toBoolean()) {
@@ -780,10 +792,12 @@ pub fn constructor(
         bundler.options.macro_remap = transpiler_options.macro_map;
     }
 
+    bundler.options.minify_whitespace = transpiler_options.minify_whitespace;
     bundler.options.tree_shaking = transpiler_options.tree_shaking;
     bundler.options.trim_unused_imports = transpiler_options.trim_unused_imports;
     bundler.options.allow_runtime = transpiler_options.runtime.allow_runtime;
     bundler.options.auto_import_jsx = transpiler_options.runtime.auto_import_jsx;
+    bundler.options.inlining = transpiler_options.runtime.inlining;
     bundler.options.hot_module_reloading = transpiler_options.runtime.hot_module_reloading;
     bundler.options.jsx.supports_fast_refresh = bundler.options.hot_module_reloading and
         bundler.options.allow_runtime and transpiler_options.runtime.react_fast_refresh;

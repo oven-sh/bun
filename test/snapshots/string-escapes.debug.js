@@ -23,7 +23,7 @@ var obj = {
   "\uD83D\uDD75\uD83C\uDFFD\u200D\u2642\uFE0F": "\uD83D\uDD75\uD83C\uDFFD\u200D\u2642\uFE0F",
   "\u32E1": "\u32E1",
   "\u263A": "\u263A",
-  シ: "\u30B7",
+  "シ": "\u30B7",
   "\uD83D\uDC4B": "\uD83D\uDC4B",
   f,
   "\u2639": "\u2639",
@@ -322,125 +322,125 @@ export const jsxVariants = jsx(JSXFrag, {
     '"\\r\\n": "\\r\\n", "\\n": "\\n", "\\t": "\\t", "\\f": "\\f", "\\v": "\\v", "\\u2028": "\\u2028", "\\u2029": "\\u2029", "\uD83D\uDE0A": "\uD83D\uDE0A", "\uD83D\uDE03": "\uD83D\uDE03", "\uD83D\uDD75\uD83C\uDFFD\u200D\u2642\uFE0F": "\uD83D\uDD75\uD83C\uDFFD\u200D\u2642\uFE0F", "\u32E1": "\u32E1", "\u263A": "\u263A", \u30B7: "\u30B7", "\uD83D\uDC4B": "\uD83D\uDC4B", f: f, "\u2639": "\u2639", "\u263B": "\u263B", children: 123,',
     jsx("div", {
       data: "\r\n"
-    }, undefined, false, undefined, this),
+    }),
     jsx("div", {
       data: "\n"
-    }, undefined, false, undefined, this),
+    }),
     jsx("div", {
       data: "\t"
-    }, undefined, false, undefined, this),
+    }),
     jsx("div", {
       data: "\f"
-    }, undefined, false, undefined, this),
+    }),
     jsx("div", {
       data: "\v"
-    }, undefined, false, undefined, this),
+    }),
     jsx("div", {
       data: "\\u2028"
-    }, undefined, false, undefined, this),
+    }),
     jsx("div", {
       data: "\\u2029"
-    }, undefined, false, undefined, this),
+    }),
     jsx("div", {
       data: "\uD83D\uDE0A"
-    }, undefined, false, undefined, this),
+    }),
     jsx("div", {
       data: "\uD83D\uDE03"
-    }, undefined, false, undefined, this),
+    }),
     jsx("div", {
       data: "\uD83D\uDD75\uD83C\uDFFD\u200D\u2642\uFE0F"
-    }, undefined, false, undefined, this),
+    }),
     jsx("div", {
       data: "\u32E1"
-    }, undefined, false, undefined, this),
+    }),
     jsx("div", {
       data: "\u263A"
-    }, undefined, false, undefined, this),
+    }),
     jsx("div", {
       data: "\u30B7"
-    }, undefined, false, undefined, this),
+    }),
     jsx("div", {
       data: "\uD83D\uDC4B"
-    }, undefined, false, undefined, this),
+    }),
     jsx("div", {
       data: "\u2639"
-    }, undefined, false, undefined, this),
+    }),
     jsx("div", {
       data: "\u263B"
-    }, undefined, false, undefined, this),
+    }),
     jsx("div", {
       data: "123"
-    }, undefined, false, undefined, this),
-    jsx("div", {}, "\r\n", false, undefined, this),
+    }),
+    jsx("div", {}, "\r\n"),
     jsx("div", {
       children: "\r\n"
-    }, undefined, false, undefined, this),
-    jsx("div", {}, "\n", false, undefined, this),
+    }),
+    jsx("div", {}, "\n"),
     jsx("div", {
       children: "\n"
-    }, undefined, false, undefined, this),
-    jsx("div", {}, "\t", false, undefined, this),
+    }),
+    jsx("div", {}, "\t"),
     jsx("div", {
       children: "\t"
-    }, undefined, false, undefined, this),
-    jsx("div", {}, "\f", false, undefined, this),
+    }),
+    jsx("div", {}, "\f"),
     jsx("div", {
       children: "\f"
-    }, undefined, false, undefined, this),
-    jsx("div", {}, "\v", false, undefined, this),
+    }),
+    jsx("div", {}, "\v"),
     jsx("div", {
       children: "\v"
-    }, undefined, false, undefined, this),
-    jsx("div", {}, "\\u2028", false, undefined, this),
+    }),
+    jsx("div", {}, "\\u2028"),
     jsx("div", {
       children: "\u2028"
-    }, undefined, false, undefined, this),
-    jsx("div", {}, "\\u2029", false, undefined, this),
+    }),
+    jsx("div", {}, "\\u2029"),
     jsx("div", {
       children: "\u2029"
-    }, undefined, false, undefined, this),
-    jsx("div", {}, "\uD83D\uDE0A", false, undefined, this),
+    }),
+    jsx("div", {}, "\uD83D\uDE0A"),
     jsx("div", {
       children: "\uD83D\uDE0A"
-    }, undefined, false, undefined, this),
-    jsx("div", {}, "\uD83D\uDE03", false, undefined, this),
+    }),
+    jsx("div", {}, "\uD83D\uDE03"),
     jsx("div", {
       children: "\uD83D\uDE03"
-    }, undefined, false, undefined, this),
-    jsx("div", {}, "\uD83D\uDD75\uD83C\uDFFD\u200D\u2642\uFE0F", false, undefined, this),
+    }),
+    jsx("div", {}, "\uD83D\uDD75\uD83C\uDFFD\u200D\u2642\uFE0F"),
     jsx("div", {
       children: "\uD83D\uDD75\uD83C\uDFFD\u200D\u2642\uFE0F"
-    }, undefined, false, undefined, this),
-    jsx("div", {}, "\u32E1", false, undefined, this),
+    }),
+    jsx("div", {}, "\u32E1"),
     jsx("div", {
       children: "\u32E1"
-    }, undefined, false, undefined, this),
-    jsx("div", {}, "\u263A", false, undefined, this),
+    }),
+    jsx("div", {}, "\u263A"),
     jsx("div", {
       children: "\u263A"
-    }, undefined, false, undefined, this),
-    jsx("div", {}, "\u30B7", false, undefined, this),
+    }),
+    jsx("div", {}, "\u30B7"),
     jsx("div", {
       children: "\u30B7"
-    }, undefined, false, undefined, this),
-    jsx("div", {}, "\uD83D\uDC4B", false, undefined, this),
+    }),
+    jsx("div", {}, "\uD83D\uDC4B"),
     jsx("div", {
       children: "\uD83D\uDC4B"
-    }, undefined, false, undefined, this),
-    jsx("div", {}, "\u2639", false, undefined, this),
+    }),
+    jsx("div", {}, "\u2639"),
     jsx("div", {
       children: "\u2639"
-    }, undefined, false, undefined, this),
-    jsx("div", {}, "\u263B", false, undefined, this),
+    }),
+    jsx("div", {}, "\u263B"),
     jsx("div", {
       children: "\u263B"
-    }, undefined, false, undefined, this),
-    jsx("div", {}, "123", false, undefined, this),
+    }),
+    jsx("div", {}, "123"),
     jsx("div", {
       children: "123"
-    }, undefined, false, undefined, this)
+    })
   ]
-}, undefined, true, undefined, this);
+});
 const foo = () => {
 };
 const Bar = foo("a", {

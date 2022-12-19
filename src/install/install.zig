@@ -1298,7 +1298,7 @@ const PackageInstall = struct {
         // we'll catch it the next error
         if (!skip_delete and !strings.eqlComptime(this.destination_dir_subpath, ".")) this.uninstall() catch {};
 
-        const supported_method_to_use = if (strings.eqlComptime(this.cache_dir_subpath, ".") or strings.hasPrefixComptime(this.cache_dir_subpath, ".."))
+        var supported_method_to_use = if (strings.eqlComptime(this.cache_dir_subpath, ".") or strings.hasPrefixComptime(this.cache_dir_subpath, ".."))
             Method.symlink
         else
             supported_method;
@@ -1315,6 +1315,7 @@ const PackageInstall = struct {
                         switch (err) {
                             error.NotSupported => {
                                 supported_method = .copyfile;
+                                supported_method_to_use = .copyfile;
                             },
                             error.FileNotFound => return Result{
                                 .fail = .{ .err = error.FileNotFound, .step = .opening_cache_dir },
@@ -1334,6 +1335,7 @@ const PackageInstall = struct {
                         switch (err) {
                             error.NotSupported => {
                                 supported_method = .copyfile;
+                                supported_method_to_use = .copyfile;
                             },
                             error.FileNotFound => return Result{
                                 .fail = .{ .err = error.FileNotFound, .step = .opening_cache_dir },
@@ -1352,6 +1354,7 @@ const PackageInstall = struct {
                     switch (err) {
                         error.NotSameFileSystem => {
                             supported_method = .copyfile;
+                            supported_method_to_use = .copyfile;
                         },
                         error.FileNotFound => return Result{
                             .fail = .{ .err = error.FileNotFound, .step = .opening_cache_dir },
@@ -3468,7 +3471,6 @@ pub const PackageManager = struct {
         dry_run: bool = false,
         remote_package_features: Features = Features{ .peer_dependencies = false, .optional_dependencies = true },
         local_package_features: Features = Features{ .peer_dependencies = false, .dev_dependencies = true },
-        allowed_install_scripts: []const PackageNameHash = &default_allowed_install_scripts,
         // The idea here is:
         // 1. package has a platform-specific binary to install
         // 2. To prevent downloading & installing incompatible versions, they stick the "real" one in optionalDependencies
@@ -3494,19 +3496,7 @@ pub const PackageManager = struct {
         const default_native_bin_link_allowlist = [_]PackageNameHash{
             String.Builder.stringHash("esbuild"),
             String.Builder.stringHash("turbo"),
-        };
-
-        const install_scripts_package_count = 5;
-        const default_allowed_install_scripts: [install_scripts_package_count]PackageNameHash = brk: {
-            const names = std.mem.span(@embedFile("install-scripts-allowlist.txt"));
-            var hashes: [install_scripts_package_count]PackageNameHash = undefined;
-            var splitter = std.mem.split(u8, names, "\n");
-            var i: usize = 0;
-            while (splitter.next()) |item| {
-                hashes[i] = String.Builder.stringHash(item);
-                i += 1;
-            }
-            break :brk hashes;
+            String.Builder.stringHash("bun"),
         };
 
         pub const LogLevel = enum {
@@ -6562,6 +6552,7 @@ pub const PackageManager = struct {
                     manager.env,
                     &ORIGINAL_PATH,
                     log_level != .silent,
+                    false,
                 );
             }
 
@@ -6689,6 +6680,7 @@ pub const PackageManager = struct {
                         manager.env,
                         &ORIGINAL_PATH,
                         log_level != .silent,
+                        false,
                     );
                 } else {
                     // bun install may have installed new bins, so we need to update the PATH

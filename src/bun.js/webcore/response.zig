@@ -1317,7 +1317,7 @@ pub const Blob = struct {
         if (data.isString()) {
             const len = data.getLengthOfArray(ctx);
 
-            if (len < 256 * 1024) {
+            if (len < 256 * 1024 or bun.isMissingIOUring()) {
                 const str = data.getZigString(ctx);
 
                 const pathlike: JSC.Node.PathOrFileDescriptor = if (path_or_blob == .path)
@@ -1350,7 +1350,7 @@ pub const Blob = struct {
                 }
             }
         } else if (data.asArrayBuffer(ctx)) |buffer_view| {
-            if (buffer_view.byte_len < 256 * 1024) {
+            if (buffer_view.byte_len < 256 * 1024 or bun.isMissingIOUring()) {
                 const pathlike: JSC.Node.PathOrFileDescriptor = if (path_or_blob == .path)
                     path_or_blob.path
                 else

@@ -729,6 +729,7 @@ pub const HelpCommand = struct {
     };
 
     pub fn printWithReason(comptime reason: Reason) void {
+        // the spacing between commands here is intentional
         const fmt =
             \\> <r> <b><magenta>run     <r><d>  ./my-script.ts        <r>Run JavaScript with bun, a package.json script, or a bin<r>
             \\> <r> <b><green>x     <r>    <d>bun-repl        <r>      Install and execute a package bin <d>(bunx)<r>
@@ -891,7 +892,7 @@ pub const Command = struct {
         const argv0 = args_iter.next() orelse return .HelpCommand;
 
         // symlink is argv[0]
-        if (strings.eqlComptime(argv0, "bunx"))
+        if (strings.endsWithComptime(argv0, "bunx"))
             return .BunxCommand;
 
         var next_arg = ((args_iter.next()) orelse return .AutoCommand);

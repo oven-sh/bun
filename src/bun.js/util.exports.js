@@ -578,10 +578,7 @@ function callbackify(original) {
     throw new TypeError('The "original" argument must be of type Function');
   }
   function callbackified() {
-    var args = [];
-    for (var i = 0; i < arguments.length; i++) {
-      args.push(arguments[i]);
-    }
+    var args = Array.prototype.slice.call(arguments);
     var maybeCb = args.pop();
     if (typeof maybeCb !== "function") {
       throw new TypeError("The last argument must be of type Function");

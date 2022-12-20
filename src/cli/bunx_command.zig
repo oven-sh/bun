@@ -55,7 +55,7 @@ pub const BunxCommand = struct {
         );
 
         if (update_requests.len == 0) {
-            Output.prettyErrorln("<r><red>error<r><d>:<r> Please specify a package to install & run", .{});
+            Output.prettyErrorln("Welcome to bunx!\nbunx quickly runs an npm package executable, automatically installing if missing.\nTo get started, specify a package to install & run.\n\nexample<d>:<r>\n  <cyan>bunx bun-repl<r>\n", .{});
             Global.exit(1);
         }
 
@@ -182,7 +182,7 @@ pub const BunxCommand = struct {
             Global.exit(0);
         }
 
-        Output.prettyErrorln("<r><red>error<r><d>:<r> Could not find binary for package <r><b>{s}<r>", .{package_name_for_bin});
+        Output.prettyErrorln("<r><red>error<r><d>:<r> could not determine executable to run for package <r><b>{s}<r>", .{package_name_for_bin});
         Global.exit(1);
     }
 };

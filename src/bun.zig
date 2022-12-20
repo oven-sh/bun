@@ -638,3 +638,11 @@ pub fn isMissingIOUring() bool {
         break :brk result;
     };
 }
+
+pub const CLI = @import("./cli.zig");
+
+pub const PackageManager = @import("./install/install.zig").PackageManager;
+
+pub const fs = @import("./fs.zig");
+pub const Bundler = @import("./bundler.zig").Bundler;
+pub const which = @import("./which.zig").which;

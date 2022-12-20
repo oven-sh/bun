@@ -53,6 +53,7 @@ const RunCommand = @import("./cli/run_command.zig").RunCommand;
 const ShellCompletions = @import("./cli/shell_completions.zig");
 const TestCommand = @import("./cli/test_command.zig").TestCommand;
 const UpgradeCommand = @import("./cli/upgrade_command.zig").UpgradeCommand;
+const BunxCommand = @import("./cli/bunx_command.zig").BunxCommand;
 
 const MacroMap = @import("./resolver/package_json.zig").MacroMap;
 
@@ -717,29 +718,32 @@ pub const HelpCommand = struct {
     };
 
     pub const packages_to_add_filler = [_]string{
-        "astro",
+        "elysia",
+        "@shumai/shumai",
+        "hono",
         "react",
-        "next@^12",
-        "tailwindcss",
-        "wrangler",
-        "@compiled/react",
+        "lyra",
         "@remix-run/dev",
-        "contentlayer",
+        "@evan/duckdb",
+        "@zarfjs/zarf",
     };
 
     pub fn printWithReason(comptime reason: Reason) void {
         const fmt =
-            \\> <r> <b><green>dev     <r><d>  ./a.ts ./b.jsx<r>        Start a bun Dev Server
-            \\> <r> <b><magenta>bun     <r><d>  ./a.ts ./b.jsx<r>        Bundle dependencies of input files into a <r><magenta>.bun<r>
+            \\> <r> <b><magenta>run     <r><d>  ./my-script.ts        <r>Run JavaScript with bun, a package.json script, or a bin<r>
+            \\> <r> <b><green>x     <r>    <d>bun-repl        <r>      Install and execute a package bin <d>(bunx)<r>
             \\
             \\> <r> <b><cyan>init<r>                            Start an empty Bun project from a blank template<r>
             \\> <r> <b><cyan>create    <r><d>next ./app<r>            Create a new project from a template <d>(bun c)<r>
-            \\> <r> <b><magenta>run     <r><d>  test        <r>          Run JavaScript with bun, a package.json script, or a bin<r>
             \\> <r> <b><green>install<r>                         Install dependencies for a package.json <d>(bun i)<r>
             \\> <r> <b><blue>add     <r><d>  {s:<16}<r>      Add a dependency to package.json <d>(bun a)<r>
             \\> <r> <b><blue>link <r>                           Link an npm package globally<r>
             \\> <r> remove  <r><d>  {s:<16}<r>      Remove a dependency from package.json <d>(bun rm)<r>
             \\> <r> unlink  <r>                        Globally unlink an npm package
+            \\> <r> pm  <r>                            More commands for managing packages
+            \\
+            \\> <r> <b><green>dev     <r><d>  ./a.ts ./b.jsx<r>        Start a bun (frontend) Dev Server
+            \\> <r> <b><magenta>bun     <r><d>  ./a.ts ./b.jsx<r>        Bundle dependencies of input files into a <r><magenta>.bun<r>
             \\
             \\> <r> <b><blue>upgrade <r>                        Get the latest version of bun
             \\> <r> <b><d>completions<r>                     Install shell completions for tab-completion
@@ -883,11 +887,12 @@ pub const Command = struct {
     pub fn which() Tag {
         var args_iter = ArgsIterator{ .buf = std.os.argv };
         // first one is the executable name
-        const skipped = args_iter.skip();
 
-        if (!skipped) {
-            return .HelpCommand;
-        }
+        const argv0 = args_iter.next() orelse return .HelpCommand;
+
+        // symlink is argv[0]
+        if (strings.eqlComptime(argv0, "bunx"))
+            return .BunxCommand;
 
         var next_arg = ((args_iter.next()) orelse return .AutoCommand);
         while (next_arg[0] == '-') {
@@ -906,6 +911,7 @@ pub const Command = struct {
             RootCommandMatcher.case("getcompletes") => .GetCompletionsCommand,
             RootCommandMatcher.case("link") => .LinkCommand,
             RootCommandMatcher.case("unlink") => .UnlinkCommand,
+            RootCommandMatcher.case("x") => .BunxCommand,
 
             RootCommandMatcher.case("i"), RootCommandMatcher.case("install") => brk: {
                 for (args_iter.buf) |arg| {
@@ -996,6 +1002,12 @@ pub const Command = struct {
                 const ctx = try Command.Context.create(allocator, log, .AddCommand);
 
                 try AddCommand.exec(ctx);
+                return;
+            },
+            .BunxCommand => {
+                const ctx = try Command.Context.create(allocator, log, .BunxCommand);
+
+                try BunxCommand.exec(ctx);
                 return;
             },
             .RemoveCommand => {
@@ -1331,9 +1343,11 @@ pub const Command = struct {
     }
 
     pub const Tag = enum {
+        AddCommand,
         AutoCommand,
         BuildCommand,
         BunCommand,
+        BunxCommand,
         CreateCommand,
         DevCommand,
         DiscordCommand,
@@ -1341,15 +1355,14 @@ pub const Command = struct {
         HelpCommand,
         InitCommand,
         InstallCommand,
-        AddCommand,
-        RemoveCommand,
         InstallCompletionsCommand,
-        RunCommand,
-        UpgradeCommand,
-        PackageManagerCommand,
-        TestCommand,
         LinkCommand,
+        PackageManagerCommand,
+        RemoveCommand,
+        RunCommand,
+        TestCommand,
         UnlinkCommand,
+        UpgradeCommand,
 
         pub fn params(comptime cmd: Tag) []const Arguments.ParamType {
             return &comptime switch (cmd) {
@@ -1360,14 +1373,14 @@ pub const Command = struct {
 
         pub fn readGlobalConfig(this: Tag) bool {
             return switch (this) {
-                .PackageManagerCommand, .InstallCommand, .AddCommand, .RemoveCommand => true,
+                .BunxCommand, .PackageManagerCommand, .InstallCommand, .AddCommand, .RemoveCommand => true,
                 else => false,
             };
         }
 
         pub fn isNPMRelated(this: Tag) bool {
             return switch (this) {
-                .LinkCommand, .UnlinkCommand, .PackageManagerCommand, .InstallCommand, .AddCommand, .RemoveCommand => true,
+                .BunxCommand, .LinkCommand, .UnlinkCommand, .PackageManagerCommand, .InstallCommand, .AddCommand, .RemoveCommand => true,
                 else => false,
             };
         }
@@ -1388,6 +1401,7 @@ pub const Command = struct {
             cares.set(.RemoveCommand, true);
             cares.set(.LinkCommand, true);
             cares.set(.UnlinkCommand, true);
+            cares.set(.BunxCommand, true);
             break :brk cares;
         };
         pub const always_loads_config: std.EnumArray(Tag, bool) = std.EnumArray(Tag, bool).initDefault(false, .{
@@ -1399,6 +1413,7 @@ pub const Command = struct {
             .AddCommand = true,
             .RemoveCommand = true,
             .PackageManagerCommand = true,
+            .BunxCommand = true,
         });
 
         pub const uses_global_options: std.EnumArray(Tag, bool) = std.EnumArray(Tag, bool).initDefault(true, .{
@@ -1409,6 +1424,7 @@ pub const Command = struct {
             .PackageManagerCommand = false,
             .LinkCommand = false,
             .UnlinkCommand = false,
+            .BunxCommand = false,
         });
     };
 };

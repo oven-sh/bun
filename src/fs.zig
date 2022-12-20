@@ -553,7 +553,7 @@ pub const FileSystem = struct {
 
         pub var tmpdir_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
 
-        const PLATFORM_TMP_DIR: string = switch (@import("builtin").target.os.tag) {
+        pub const PLATFORM_TMP_DIR: string = switch (@import("builtin").target.os.tag) {
             .windows => "TMPDIR",
             .macos => "/private/tmp",
             else => "/tmp",

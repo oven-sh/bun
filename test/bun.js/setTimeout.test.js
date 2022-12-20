@@ -5,22 +5,28 @@ it("setTimeout", async () => {
   const result = await new Promise((resolve, reject) => {
     var numbers = [];
 
-    for (let i = 1; i < 100; i++) {
-      const id = setTimeout(() => {
+    for (let i = 0; i < 10; i++) {
+      const id = setTimeout((...args) => {
         numbers.push(i);
-        if (i === 99) {
+        if (i === 9) {
           resolve(numbers);
         }
-      }, i);
+        try {
+          expect(args.length).toBe(1);
+          expect(args[0]).toBe("foo");
+        } catch (err) {
+          reject(err);
+        }
+      }, i, "foo");
       expect(id > lastID).toBe(true);
       lastID = id;
     }
   });
 
   for (let j = 0; j < result.length; j++) {
-    expect(result[j]).toBe(j + 1);
+    expect(result[j]).toBe(j);
   }
-  expect(result.length).toBe(99);
+  expect(result.length).toBe(10);
 });
 
 it("clearTimeout", async () => {
@@ -35,9 +41,7 @@ it("clearTimeout", async () => {
   clearTimeout(id);
 
   await new Promise((resolve, reject) => {
-    setTimeout(() => {
-      resolve();
-    }, 10);
+    setTimeout(resolve, 10);
   });
   expect(called).toBe(false);
 });

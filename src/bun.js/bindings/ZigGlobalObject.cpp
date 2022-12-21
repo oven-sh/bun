@@ -766,7 +766,7 @@ static JSC_DEFINE_HOST_FUNCTION(functionSetTimeout,
     size_t argumentCount = callFrame->argumentCount() - 2;
     if (argumentCount > 0) {
         JSC::ObjectInitializationScope initializationScope(globalObject->vm());
-        JSC::JSArray* argumentsArray = argumentsArray = JSC::JSArray::tryCreateUninitializedRestricted(
+        JSC::JSArray* argumentsArray = JSC::JSArray::tryCreateUninitializedRestricted(
             initializationScope, nullptr,
             globalObject->arrayStructureForIndexingTypeDuringAllocation(JSC::ArrayWithContiguous),
             argumentCount);
@@ -810,7 +810,7 @@ static JSC_DEFINE_HOST_FUNCTION(functionSetInterval,
     size_t argumentCount = callFrame->argumentCount() - 2;
     if (argumentCount > 0) {
         JSC::ObjectInitializationScope initializationScope(globalObject->vm());
-        JSC::JSArray* argumentsArray = argumentsArray = JSC::JSArray::tryCreateUninitializedRestricted(
+        JSC::JSArray* argumentsArray = JSC::JSArray::tryCreateUninitializedRestricted(
             initializationScope, nullptr,
             globalObject->arrayStructureForIndexingTypeDuringAllocation(JSC::ArrayWithContiguous),
             argumentCount);
@@ -2798,7 +2798,7 @@ static JSC_DEFINE_HOST_FUNCTION(functionSetImmediate,
     size_t argumentCount = callFrame->argumentCount() - 1;
     if (argumentCount > 0) {
         JSC::ObjectInitializationScope initializationScope(globalObject->vm());
-        JSC::JSArray* argumentsArray = argumentsArray = JSC::JSArray::tryCreateUninitializedRestricted(
+        JSC::JSArray* argumentsArray = JSC::JSArray::tryCreateUninitializedRestricted(
             initializationScope, nullptr,
             globalObject->arrayStructureForIndexingTypeDuringAllocation(JSC::ArrayWithContiguous),
             argumentCount);

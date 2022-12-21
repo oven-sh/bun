@@ -762,7 +762,27 @@ static JSC_DEFINE_HOST_FUNCTION(functionSetTimeout,
     }
 
     JSC::JSValue num = callFrame->argument(1);
-    return Bun__Timer__setTimeout(globalObject, JSC::JSValue::encode(job), JSC::JSValue::encode(num));
+    JSC::JSValue arguments = {};
+    size_t argumentCount = callFrame->argumentCount() - 2;
+    if (argumentCount > 0) {
+        JSC::ObjectInitializationScope initializationScope(globalObject->vm());
+        JSC::JSArray* argumentsArray = argumentsArray = JSC::JSArray::tryCreateUninitializedRestricted(
+            initializationScope, nullptr,
+            globalObject->arrayStructureForIndexingTypeDuringAllocation(JSC::ArrayWithContiguous),
+            argumentCount);
+
+        if (!argumentsArray) {
+            auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+            JSC::throwOutOfMemoryError(globalObject, scope);
+            return JSC::JSValue::encode(JSC::JSValue {});
+        }
+
+        for (size_t i = 0; i < argumentCount; i++) {
+            argumentsArray->putDirectIndex(globalObject, i, callFrame->uncheckedArgument(i + 2));
+        }
+        arguments = JSValue(argumentsArray);
+    }
+    return Bun__Timer__setTimeout(globalObject, JSC::JSValue::encode(job), JSC::JSValue::encode(num), JSValue::encode(arguments));
 }
 
 static JSC_DEFINE_HOST_FUNCTION(functionSetInterval,
@@ -785,8 +805,29 @@ static JSC_DEFINE_HOST_FUNCTION(functionSetInterval,
     }
 
     JSC::JSValue num = callFrame->argument(1);
+
+    JSC::JSValue arguments = {};
+    size_t argumentCount = callFrame->argumentCount() - 2;
+    if (argumentCount > 0) {
+        JSC::ObjectInitializationScope initializationScope(globalObject->vm());
+        JSC::JSArray* argumentsArray = argumentsArray = JSC::JSArray::tryCreateUninitializedRestricted(
+            initializationScope, nullptr,
+            globalObject->arrayStructureForIndexingTypeDuringAllocation(JSC::ArrayWithContiguous),
+            argumentCount);
+
+        if (!argumentsArray) {
+            auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+            JSC::throwOutOfMemoryError(globalObject, scope);
+            return JSC::JSValue::encode(JSC::JSValue {});
+        }
+
+        for (size_t i = 0; i < argumentCount; i++) {
+            argumentsArray->putDirectIndex(globalObject, i, callFrame->uncheckedArgument(i + 2));
+        }
+        arguments = JSValue(argumentsArray);
+    }
     return Bun__Timer__setInterval(globalObject, JSC::JSValue::encode(job),
-        JSC::JSValue::encode(num));
+        JSC::JSValue::encode(num), JSValue::encode(arguments));
 }
 
 static JSC_DEFINE_HOST_FUNCTION(functionClearInterval,
@@ -2753,7 +2794,27 @@ static JSC_DEFINE_HOST_FUNCTION(functionSetImmediate,
         return JSC::JSValue::encode(JSC::JSValue {});
     }
 
-    return Bun__Timer__setTimeout(globalObject, JSC::JSValue::encode(job), JSC::JSValue::encode(jsNumber(0)));
+    JSC::JSValue arguments = {};
+    size_t argumentCount = callFrame->argumentCount() - 1;
+    if (argumentCount > 0) {
+        JSC::ObjectInitializationScope initializationScope(globalObject->vm());
+        JSC::JSArray* argumentsArray = argumentsArray = JSC::JSArray::tryCreateUninitializedRestricted(
+            initializationScope, nullptr,
+            globalObject->arrayStructureForIndexingTypeDuringAllocation(JSC::ArrayWithContiguous),
+            argumentCount);
+
+        if (!argumentsArray) {
+            auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+            JSC::throwOutOfMemoryError(globalObject, scope);
+            return JSC::JSValue::encode(JSC::JSValue {});
+        }
+
+        for (size_t i = 0; i < argumentCount; i++) {
+            argumentsArray->putDirectIndex(globalObject, i, callFrame->uncheckedArgument(i + 1));
+        }
+        arguments = JSValue(argumentsArray);
+    }
+    return Bun__Timer__setTimeout(globalObject, JSC::JSValue::encode(job), JSC::JSValue::encode(jsNumber(0)), JSValue::encode(arguments));
 }
 
 JSC_DEFINE_CUSTOM_GETTER(JSModuleLoader_getter, (JSGlobalObject * globalObject, EncodedJSValue thisValue, PropertyName))

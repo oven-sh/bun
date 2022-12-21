@@ -2427,6 +2427,17 @@ pub const JSValue = enum(JSValueReprInt) {
         return callWithThis(this, globalThis, JSC.JSValue.jsUndefined(), args);
     }
 
+    pub fn callWithGlobalThis(this: JSValue, globalThis: *JSGlobalObject, args: []const JSC.JSValue) JSC.JSValue {
+        JSC.markBinding(@src());
+        return JSC.C.JSObjectCallAsFunctionReturnValue(
+            globalThis,
+            this.asObjectRef(),
+            @ptrCast(JSC.C.JSValueRef, globalThis),
+            args.len,
+            @ptrCast(?[*]const JSC.C.JSValueRef, args.ptr),
+        );
+    }
+
     pub fn callWithThis(this: JSValue, globalThis: *JSGlobalObject, thisValue: JSC.JSValue, args: []const JSC.JSValue) JSC.JSValue {
         JSC.markBinding(@src());
         return JSC.C.JSObjectCallAsFunctionReturnValue(

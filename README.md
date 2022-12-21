@@ -1353,6 +1353,20 @@ bun run relay-compiler --schema foo.graphql
 
 `bun run` supports lifecycle hooks like `post${task}` and `pre{task}`. If they exist, they will run, matching the behavior of npm clients. If the `pre${task}` fails, the next task will not be run. There is currently no flag to skip these lifecycle tasks if they exist, if you want that file an issue.
 
+#### Run in Bun's JavaScript runtime
+
+When given a JavaScript/TypeScript-like file, by default `bun run` will run it in Bun's JavaScript runtime.
+
+With one caveat: if there's a `#!/usr/bin/env node` shebang, it will run it with Node.js instead by default.
+
+To always run in Bun, use `--bun`:
+
+```bash
+bun run --bun my-script
+```
+
+This remaps `node` in `$PATH` for the duration of the task to `bun` so that anything trying to execute `node` will runs in Bun's JavaScript runtime instead.
+
 ### `bun --hot`
 
 `bun --hot` enables hot reloading of code in Bun's JavaScript runtime. This is a very experimental feature available in Bun v0.2.0.

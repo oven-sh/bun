@@ -15,6 +15,21 @@ const bun = @import("bun");
 const StringBuilder = bun.StringBuilder;
 const string = bun.string;
 const stringZ = bun.stringZ;
+
+fn handleLoadLockfileErrors(load_lockfile: Lockfile.LoadFromDiskResult, pm: *PackageManager) void {
+    if (load_lockfile == .not_found) {
+        if (pm.options.log_level != .silent)
+            Output.prettyErrorln("Lockfile not found", .{});
+        Global.exit(1);
+    }
+
+    if (load_lockfile == .err) {
+        if (pm.options.log_level != .silent)
+            Output.prettyErrorln("Error loading lockfile: {s}", .{@errorName(load_lockfile.err.value)});
+        Global.exit(1);
+    }
+}
+
 pub const PackageManagerCommand = struct {
     pub fn printHelp(_: std.mem.Allocator) void {}
     pub fn printHash(ctx: Command.Context, lockfile_: []const u8) !void {
@@ -26,17 +41,7 @@ pub const PackageManagerCommand = struct {
         var pm = try PackageManager.init(ctx, null, &PackageManager.install_params);
 
         const load_lockfile = pm.lockfile.loadFromDisk(ctx.allocator, ctx.log, lockfile);
-        if (load_lockfile == .not_found) {
-            if (pm.options.log_level != .silent)
-                Output.prettyError("Lockfile not found", .{});
-            Global.exit(1);
-        }
-
-        if (load_lockfile == .err) {
-            if (pm.options.log_level != .silent)
-                Output.prettyError("Error loading lockfile: {s}", .{@errorName(load_lockfile.err.value)});
-            Global.exit(1);
-        }
+        handleLoadLockfileErrors(load_lockfile, pm);
 
         Output.flush();
         Output.disableBuffering();
@@ -45,26 +50,46 @@ pub const PackageManagerCommand = struct {
         Global.exit(0);
     }
 
+    fn getSubcommand(args_ptr: *[]const string) []const u8 {
+        var args = args_ptr.*;
+        defer args_ptr.* = args;
+
+        var subcommand: []const u8 = if (args.len > 0)
+            args[0]
+        else
+            "";
+
+        if (strings.eqlComptime(subcommand, "pm")) {
+            subcommand = "";
+            if (args.len > 1) {
+                args = args[1..];
+                return args[0];
+            }
+        }
+
+        return subcommand;
+    }
+
     pub fn exec(ctx: Command.Context) !void {
         var args = try std.process.argsAlloc(ctx.allocator);
         args = args[1..];
 
-        var pm = try PackageManager.init(ctx, null, &PackageManager.install_params);
+        var pm = PackageManager.init(ctx, null, &PackageManager.install_params) catch |err| {
+            // TODO: error messages here
+            // if (err == error.MissingPackageJSON) {
+            //     // TODO: error messages
+            //     // var cli = try PackageManager.CommandLineArguments.parse(ctx.allocator, &PackageManager.install_params, &_ctx);
+            // }
 
-        var first: []const u8 = if (pm.options.positionals.len > 0) pm.options.positionals[0] else "";
-        if (strings.eqlComptime(first, "pm")) {
-            first = "";
-            if (pm.options.positionals.len > 1) {
-                pm.options.positionals = pm.options.positionals[1..];
-                first = pm.options.positionals[0];
-            }
-        }
+            return err;
+        };
 
+        const subcommand = getSubcommand(&pm.options.positionals);
         if (pm.options.global) {
             try pm.setupGlobalDir(&ctx);
         }
 
-        if (strings.eqlComptime(first, "bin")) {
+        if (strings.eqlComptime(subcommand, "bin")) {
             var output_path = Path.joinAbs(Fs.FileSystem.instance.top_level_dir, .auto, std.mem.span(pm.options.bin_path));
             Output.prettyln("{s}", .{output_path});
             if (Output.stdout_descriptor_type == .terminal) {
@@ -90,19 +115,9 @@ pub const PackageManagerCommand = struct {
 
             Output.flush();
             return;
-        } else if (strings.eqlComptime(first, "hash")) {
+        } else if (strings.eqlComptime(subcommand, "hash")) {
             const load_lockfile = pm.lockfile.loadFromDisk(ctx.allocator, ctx.log, "bun.lockb");
-            if (load_lockfile == .not_found) {
-                if (pm.options.log_level != .silent)
-                    Output.prettyError("Lockfile not found", .{});
-                Global.exit(1);
-            }
-
-            if (load_lockfile == .err) {
-                if (pm.options.log_level != .silent)
-                    Output.prettyError("Error loading lockfile: {s}", .{@errorName(load_lockfile.err.value)});
-                Global.exit(1);
-            }
+            handleLoadLockfileErrors(load_lockfile, pm);
 
             _ = try pm.lockfile.hasMetaHashChanged(false);
 
@@ -111,42 +126,22 @@ pub const PackageManagerCommand = struct {
             try Output.writer().print("{}", .{load_lockfile.ok.fmtMetaHash()});
             Output.enableBuffering();
             Global.exit(0);
-        } else if (strings.eqlComptime(first, "hash-print")) {
+        } else if (strings.eqlComptime(subcommand, "hash-print")) {
             const load_lockfile = pm.lockfile.loadFromDisk(ctx.allocator, ctx.log, "bun.lockb");
-            if (load_lockfile == .not_found) {
-                if (pm.options.log_level != .silent)
-                    Output.prettyError("Lockfile not found", .{});
-                Global.exit(1);
-            }
-
-            if (load_lockfile == .err) {
-                if (pm.options.log_level != .silent)
-                    Output.prettyError("Error loading lockfile: {s}", .{@errorName(load_lockfile.err.value)});
-                Global.exit(1);
-            }
+            handleLoadLockfileErrors(load_lockfile, pm);
 
             Output.flush();
             Output.disableBuffering();
             try Output.writer().print("{}", .{load_lockfile.ok.fmtMetaHash()});
             Output.enableBuffering();
             Global.exit(0);
-        } else if (strings.eqlComptime(first, "hash-string")) {
+        } else if (strings.eqlComptime(subcommand, "hash-string")) {
             const load_lockfile = pm.lockfile.loadFromDisk(ctx.allocator, ctx.log, "bun.lockb");
-            if (load_lockfile == .not_found) {
-                if (pm.options.log_level != .silent)
-                    Output.prettyError("Lockfile not found", .{});
-                Global.exit(1);
-            }
-
-            if (load_lockfile == .err) {
-                if (pm.options.log_level != .silent)
-                    Output.prettyError("Error loading lockfile: {s}", .{@errorName(load_lockfile.err.value)});
-                Global.exit(1);
-            }
+            handleLoadLockfileErrors(load_lockfile, pm);
 
             _ = try pm.lockfile.hasMetaHashChanged(true);
             Global.exit(0);
-        } else if (strings.eqlComptime(first, "cache")) {
+        } else if (strings.eqlComptime(subcommand, "cache")) {
             var dir: [bun.MAX_PATH_BYTES]u8 = undefined;
             var fd = pm.getCacheDirectory();
             var outpath = std.os.getFdPath(fd.fd, &dir) catch |err| {
@@ -164,19 +159,9 @@ pub const PackageManagerCommand = struct {
             }
             Output.writer().writeAll(outpath) catch {};
             Global.exit(0);
-        } else if (strings.eqlComptime(first, "ls")) {
+        } else if (strings.eqlComptime(subcommand, "ls")) {
             const load_lockfile = pm.lockfile.loadFromDisk(ctx.allocator, ctx.log, "bun.lockb");
-            if (load_lockfile == .not_found) {
-                if (pm.options.log_level != .silent)
-                    Output.prettyError("Lockfile not found", .{});
-                Global.exit(1);
-            }
-
-            if (load_lockfile == .err) {
-                if (pm.options.log_level != .silent)
-                    Output.prettyError("Error loading lockfile: {s}", .{@errorName(load_lockfile.err.value)});
-                Global.exit(1);
-            }
+            handleLoadLockfileErrors(load_lockfile, pm);
 
             Output.flush();
             Output.disableBuffering();
@@ -224,17 +209,17 @@ pub const PackageManagerCommand = struct {
             \\   
             \\  bun pm <b>bin<r>          print the path to bin folder
             \\  bun pm <b>-g bin<r>       print the <b>global<r> path to bin folder
+            \\  bun pm <b>ls<r>           list the dependency tree according to the current lockfile
             \\  bun pm <b>hash<r>         generate & print the hash of the current lockfile
             \\  bun pm <b>hash-string<r>  print the string used to hash the lockfile
             \\  bun pm <b>hash-print<r>   print the hash stored in the current lockfile
             \\  bun pm <b>cache<r>        print the path to the cache folder
             \\  bun pm <b>cache rm<r>     clear the cache
-            \\  bun pm <b>ls<r>           list the directory structure of the current lockfile
             \\
         , .{});
 
-        if (first.len > 0) {
-            Output.prettyErrorln("\n<red>error<r>: \"{s}\" unknown command\n", .{first});
+        if (subcommand.len > 0) {
+            Output.prettyErrorln("\n<red>error<r>: \"{s}\" unknown command\n", .{subcommand});
             Output.flush();
 
             Global.exit(1);

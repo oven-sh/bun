@@ -390,6 +390,15 @@ describe("stat", () => {
     expect(fileStats.isFile()).toBe(false);
     expect(fileStats.isDirectory()).toBe(true);
   });
+
+  it("stat returns ENOENT", () => {
+    try {
+      statSync("/tmp/doesntexist");
+      throw "statSync should throw";
+    } catch (e) {
+      expect(e.code).toBe("ENOENT");
+    }
+  });
 });
 
 describe("rm", () => {

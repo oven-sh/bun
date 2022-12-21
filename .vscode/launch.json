@@ -121,6 +121,18 @@
         "BUN_CONFIG_MINIFY_WHITESPACE": "1"
       }
     },
+    {
+      "type": "lldb",
+      "request": "launch",
+      "name": "bunx debug",
+      "program": "bun-debug",
+      "args": ["--bun", "x", "tsc", "--help"],
+      "cwd": "${workspaceFolder}",
+      "console": "internalConsole",
+      "env": {
+        "BUN_DEBUG_QUIET_LOGS": "1"
+      }
+    },
 
     {
       "type": "lldb",

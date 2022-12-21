@@ -771,7 +771,7 @@ static JSC_DEFINE_HOST_FUNCTION(functionSetTimeout,
             globalObject->arrayStructureForIndexingTypeDuringAllocation(JSC::ArrayWithContiguous),
             argumentCount);
 
-        if (!argumentsArray) {
+        if (UNLIKELY(!argumentsArray)) {
             auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
             JSC::throwOutOfMemoryError(globalObject, scope);
             return JSC::JSValue::encode(JSC::JSValue {});
@@ -815,7 +815,7 @@ static JSC_DEFINE_HOST_FUNCTION(functionSetInterval,
             globalObject->arrayStructureForIndexingTypeDuringAllocation(JSC::ArrayWithContiguous),
             argumentCount);
 
-        if (!argumentsArray) {
+        if (UNLIKELY(!argumentsArray)) {
             auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
             JSC::throwOutOfMemoryError(globalObject, scope);
             return JSC::JSValue::encode(JSC::JSValue {});
@@ -2803,7 +2803,7 @@ static JSC_DEFINE_HOST_FUNCTION(functionSetImmediate,
             globalObject->arrayStructureForIndexingTypeDuringAllocation(JSC::ArrayWithContiguous),
             argumentCount);
 
-        if (!argumentsArray) {
+        if (UNLIKELY(!argumentsArray)) {
             auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
             JSC::throwOutOfMemoryError(globalObject, scope);
             return JSC::JSValue::encode(JSC::JSValue {});

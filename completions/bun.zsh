@@ -267,7 +267,6 @@ _bun() {
             _arguments -s -C \
                 '1: :->cmd' \
                 '2: :->cmd2' \
-                # ':::(ls)' \
                 '*: :->args' &&
                 ret=0
             ;;

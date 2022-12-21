@@ -895,6 +895,11 @@ pub const Command = struct {
         if (strings.endsWithComptime(argv0, "bunx"))
             return .BunxCommand;
 
+        if (comptime Environment.isDebug) {
+            if (strings.endsWithComptime(argv0, "bunx-debug"))
+                return .BunxCommand;
+        }
+
         var next_arg = ((args_iter.next()) orelse return .AutoCommand);
         while (next_arg[0] == '-') {
             next_arg = ((args_iter.next()) orelse return .AutoCommand);

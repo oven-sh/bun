@@ -126,12 +126,23 @@ pub const BunxCommand = struct {
         var package_name_for_update_request = [1]string{""};
         {
             var argv = std.mem.span(std.os.argv)[1..];
-            if (argv.len > 0 and strings.eqlComptime(bun.span(argv[0]), "x"))
-                argv = argv[1..];
+
+            var found_subcommand_name = false;
 
             for (argv) |positional_| {
                 const positional = bun.span(positional_);
-                if (!run_in_bun) {
+
+                if (positional.len == 0) continue;
+
+                if (positional[0] != '-') {
+                    if (!found_subcommand_name) {
+                        found_subcommand_name = true;
+                        if (positional.len == 1 and positional[0] == 'x')
+                            continue;
+                    }
+                }
+
+                if (!run_in_bun and !found_subcommand_name) {
                     if (strings.eqlComptime(positional, "--bun")) {
                         run_in_bun = true;
                         continue;
@@ -159,14 +170,18 @@ pub const BunxCommand = struct {
 
         if (update_requests.len == 0) {
             Output.prettyErrorln(
-                \\usage<r><d>:<r> <cyan>bunx [--bun] package[@version] [...flags or arguments]<r>
+                \\usage<r><d>:<r> <cyan>bunx <r><d>[<r><blue>--bun<r><d>]<r><cyan> package<r><d>[@version] [...flags or arguments to pass through]<r>
                 \\
-                \\bunx quickly runs an npm package executable, automatically installing into a global shared cache if not installed in the current location.
+                \\bunx runs an npm package executable, automatically installing into a global shared cache if not installed in node_modules.
                 \\
                 \\example<d>:<r>
                 \\
                 \\  <cyan>bunx bun-repl<r>
                 \\  <cyan>bunx prettier foo.js<r>
+                \\
+                \\The <blue>--bun<r> flag forces the package to run in Bun's JavaScript runtime, even when it tries to use Node.js.
+                \\
+                \\  <cyan>bunx <r><blue>--bun<r><cyan> tsc --version<r>
                 \\
             , .{});
             Global.exit(1);
@@ -178,7 +193,19 @@ pub const BunxCommand = struct {
             Global.exit(1);
         }
 
-        const update_request = update_requests[0];
+        var update_request = update_requests[0];
+
+        // if you type "tsc" and TypeScript is not installed:
+        // 1. Install TypeScript
+        // 2. Run tsc
+        if (strings.eqlComptime(update_request.name, "tsc")) {
+            update_request.name = "typescript";
+        }
+
+        const initial_bin_name = if (strings.eqlComptime(update_request.name, "typescript"))
+            "tsc"
+        else
+            update_request.name;
 
         // fast path: they're actually using this interchangably with `bun run`
         // so we use Bun.which to check
@@ -218,8 +245,9 @@ pub const BunxCommand = struct {
         }
         try this_bundler.env.map.put("PATH", PATH);
         const bunx_cache_dir = PATH[0 .. bun.fs.FileSystem.RealFS.PLATFORM_TMP_DIR.len + "/--bunx@/node_modules/.bin".len + update_request.name.len + display_version.len];
+
         var absolute_in_cache_dir_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
-        var absolute_in_cache_dir = std.fmt.bufPrint(&absolute_in_cache_dir_buf, "{s}/{s}", .{ bunx_cache_dir, update_request.name }) catch unreachable;
+        var absolute_in_cache_dir = std.fmt.bufPrint(&absolute_in_cache_dir_buf, "{s}/{s}", .{ bunx_cache_dir, initial_bin_name }) catch unreachable;
 
         // Similar to "npx":
         //
@@ -228,7 +256,7 @@ pub const BunxCommand = struct {
             &path_buf,
             PATH_FOR_BIN_DIRS,
             this_bundler.fs.top_level_dir,
-            update_request.name,
+            initial_bin_name,
         ) orelse bun.which(
             &path_buf,
             bunx_cache_dir,
@@ -248,9 +276,9 @@ pub const BunxCommand = struct {
         }
 
         // 2. The "bin" is possibly not the same as the package name, so we load the package.json to figure out what "bin" to use
-        if (getBinName(&this_bundler, root_dir_info.getFileDescriptor(), bunx_cache_dir, update_request.name)) |package_name_for_bin| {
+        if (getBinName(&this_bundler, root_dir_info.getFileDescriptor(), bunx_cache_dir, initial_bin_name)) |package_name_for_bin| {
             // if we check the bin name and its actually the same, we don't need to check $PATH here again
-            if (!strings.eqlLong(package_name_for_bin, update_request.name, true)) {
+            if (!strings.eqlLong(package_name_for_bin, initial_bin_name, true)) {
                 absolute_in_cache_dir = std.fmt.bufPrint(&absolute_in_cache_dir_buf, "{s}/{s}", .{ bunx_cache_dir, package_name_for_bin }) catch unreachable;
 
                 if (bun.which(
@@ -346,7 +374,7 @@ pub const BunxCommand = struct {
             &path_buf,
             PATH_FOR_BIN_DIRS,
             this_bundler.fs.top_level_dir,
-            update_request.name,
+            initial_bin_name,
         ) orelse bun.which(
             &path_buf,
             bunx_cache_dir,
@@ -369,7 +397,7 @@ pub const BunxCommand = struct {
         if (getBinNameFromTempDirectory(&this_bundler, bunx_cache_dir, update_request.name)) |package_name_for_bin| {
 
             // if we check the bin name and its actually the same, we don't need to check $PATH here again
-            if (!strings.eqlLong(package_name_for_bin, update_request.name, true)) {
+            if (!strings.eqlLong(package_name_for_bin, initial_bin_name, true)) {
                 absolute_in_cache_dir = std.fmt.bufPrint(&absolute_in_cache_dir_buf, "{s}/{s}", .{ bunx_cache_dir, package_name_for_bin }) catch unreachable;
 
                 if (bun.which(
@@ -395,12 +423,7 @@ pub const BunxCommand = struct {
                     Global.exit(0);
                 }
             }
-        } else |err| {
-            if (err == error.NoBinFound) {
-                Output.prettyErrorln("<r><red>error<r><d>:<r> could not determine executable to run for package <r><b>{s}<r>", .{update_request.name});
-                Global.exit(1);
-            }
-        }
+        } else |_| {}
 
         Output.prettyErrorln("<r><red>error<r><d>:<r> could not determine executable to run for package <r><b>{s}<r>", .{update_request.name});
         Global.exit(1);

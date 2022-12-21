@@ -1431,18 +1431,19 @@ pub const DescribeScope = struct {
     pub threadlocal var module: *DescribeScope = undefined;
 
     const CallbackFn = fn (
-        this: *DescribeScope,
+        _: void,
         ctx: js.JSContextRef,
         _: js.JSObjectRef,
         _: js.JSObjectRef,
         arguments: []const js.JSValueRef,
         exception: js.ExceptionRef,
     ) js.JSObjectRef;
+
     fn createCallback(comptime hook: LifecycleHook) CallbackFn {
         return struct {
             const this_hook = hook;
             pub fn run(
-                _: *DescribeScope,
+                _: void,
                 ctx: js.JSContextRef,
                 _: js.JSObjectRef,
                 _: js.JSObjectRef,

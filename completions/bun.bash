@@ -1,7 +1,5 @@
 #/usr/bin/env bash
 
-echo "Bashy!"
-
 _file_arguments() {
     shopt -s extglob globstar
     local extensions="${1}";
@@ -99,7 +97,6 @@ _bun_completions() {
 
     PM_OPTIONS[LONG_OPTIONS]="--config --yarn --production --no-save --dry-run --lockfile --force --cache-dir --no-cache --silent --verbose --no-progress --no-summary --no-verify --ignore-scripts --global --cwd --backend --link-native-bins --help"
     PM_OPTIONS[SHORT_OPTIONS]="-c -y -p -f -g"
-    
      
     local cur_word="${COMP_WORDS[${COMP_CWORD}]}";
     local prev="${COMP_WORDS[$(( COMP_CWORD - 1 ))]}";

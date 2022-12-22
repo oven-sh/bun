@@ -629,5 +629,4 @@ __bun_dynamic_comp() {
     return $comp
 }
 
-autoload -U compinit && compinit
 compdef _bun bun

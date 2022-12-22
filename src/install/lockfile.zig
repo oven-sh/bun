@@ -427,6 +427,7 @@ pub const Tree = struct {
         const max_package_id = builder.name_hashes.len;
 
         for (resolutions) |pid, j| {
+            // Do not download/install "peerDependencies"
             if (pid >= max_package_id or dependencies[j].behavior.isPeer()) continue;
 
             const destination = next.addDependency(true, pid, builder, package_lists, trees, builder.allocator);
@@ -442,7 +443,6 @@ pub const Tree = struct {
         }
     }
 
-    // todo: use error type when it no longer takes up extra stack space
     pub fn addDependency(
         this: *Tree,
         comptime as_defined: bool,
@@ -452,33 +452,14 @@ pub const Tree = struct {
         trees: []Tree,
         allocator: std.mem.Allocator,
     ) Id {
+        const name_hashes = builder.name_hashes;
+        const name_hash = name_hashes[package_id];
         const this_packages = this.packages.get(lists[this.id].items);
-        const name_hash = builder.name_hashes[package_id];
-        const max_package_id = builder.name_hashes.len;
 
         for (this_packages) |pid| {
-            if (builder.name_hashes[pid] == name_hash) {
-                if (pid != package_id) return dependency_loop;
-                return hoisted;
-            }
-            if (as_defined) continue;
-
-            // As we try to move the package up directory levels, make sure that
-            // previously placed packages resolve to their correct versions of
-            // dependencies
-            const resolution_list = builder.resolution_lists[pid];
-            const resolutions: []const PackageID = resolution_list.get(builder.resolutions);
-
-            if (resolutions.len == 0) continue;
-
-            const dependencies: []const Dependency = builder.dependencies[resolution_list.off .. resolution_list.off + resolution_list.len];
-
-            for (resolutions) |dep_pid, j| {
-                if (dep_pid >= max_package_id or dependencies[j].behavior.isPeer()) continue;
-                if (builder.name_hashes[dep_pid] == name_hash and dep_pid != package_id) {
-                    return dependency_loop;
-                }
-            }
+            if (name_hashes[pid] != name_hash) continue;
+            if (pid != package_id) return dependency_loop;
+            return hoisted;
         }
 
         if (this.parent < error_id) {
@@ -493,7 +474,27 @@ pub const Tree = struct {
             switch (id) {
                 // If there is a dependency loop, we've reached the highest point
                 // Therefore, we resolve the dependency loop by appending to ourself
-                Tree.dependency_loop => {},
+                Tree.dependency_loop => brk: {
+                    if (as_defined) break :brk;
+
+                    // As we try to move package up directory levels, make sure
+                    // previously placed packages still resolve to their stated
+                    // dependency versions
+                    const max_package_id = name_hashes.len;
+                    const resolution_list = builder.resolution_lists[this.package_id];
+                    const resolutions: []const PackageID = resolution_list.get(builder.resolutions);
+
+                    if (resolutions.len == 0) break :brk;
+
+                    for (resolutions) |pid| {
+                        // Here we take "peerDependencies" into account to avoid
+                        // potential versioning conflicts
+                        if (pid >= max_package_id) continue;
+                        if (name_hashes[pid] == name_hash and pid != package_id) {
+                            return dependency_loop;
+                        }
+                    }
+                },
                 Tree.hoisted => return hoisted,
                 else => return id,
             }

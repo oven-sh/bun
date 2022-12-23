@@ -220,9 +220,9 @@ pub const PackageManagerCommand = struct {
                     if (package_id >= lockfile.packages.len) continue;
 
                     if (i == package_ids.len - 1) {
-                        Output.prettyln("└── {s}<r><d>@{any}<r>\n", .{ names[package_id].slice(string_bytes), lockfile.packages.items(.resolution)[package_id].fmt(string_bytes) });
+                        Output.prettyln("<d>└──<r> {s}<r><d>@{any}<r>\n", .{ names[package_id].slice(string_bytes), lockfile.packages.items(.resolution)[package_id].fmt(string_bytes) });
                     } else {
-                        Output.prettyln("├── {s}<r><d>@{any}<r>\n", .{ names[package_id].slice(string_bytes), lockfile.packages.items(.resolution)[package_id].fmt(string_bytes) });
+                        Output.prettyln("<d>├──<r> {s}<r><d>@{any}<r>\n", .{ names[package_id].slice(string_bytes), lockfile.packages.items(.resolution)[package_id].fmt(string_bytes) });
                     }
                 }
             }

@@ -6627,7 +6627,7 @@ pub const PackageManager = struct {
 
                 if (install_summary.success > 0) {
                     // it's confusing when it shows 3 packages and says it installed 1
-                    Output.pretty("\n <green>{d}<r> packages<r> installed ", .{@maximum(
+                    Output.pretty("\n <green>{d}<r> packages<r> installed ", .{@max(
                         install_summary.success,
                         @truncate(
                             u32,

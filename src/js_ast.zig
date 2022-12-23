@@ -7789,8 +7789,6 @@ pub const Macro = struct {
             return error.MacroLoadError;
         }
 
-        JavaScript.VirtualMachine.isLoaded() = true;
-
         // We don't need to do anything with the result.
         // We just want to make sure the promise is finished.
         _ = loaded_result.result(vm.global.vm());

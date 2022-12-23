@@ -444,7 +444,7 @@ pub const VirtualMachine = struct {
     };
 
     pub inline fn get() *VirtualMachine {
-        return VMHolder.vm;
+        return VMHolder.vm.?;
     }
 
     pub const GCLevel = enum(u3) {
@@ -759,7 +759,6 @@ pub const VirtualMachine = struct {
         );
         VirtualMachine.get().regular_event_loop.global = VirtualMachine.get().global;
         VirtualMachine.get().regular_event_loop.virtual_machine = VirtualMachine.get();
-        VirtualMachine.isLoaded() = true;
 
         if (source_code_printer == null) {
             var writer = try js_printer.BufferWriter.init(allocator);

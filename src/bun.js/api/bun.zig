@@ -628,38 +628,38 @@ pub fn readFileAsBytesCallback(
     exception: js.ExceptionRef,
 ) js.JSValueRef {
     const path = buf_z.ptr[0..buf_z.len];
+    const allocator = VirtualMachine.get().allocator;
 
     var file = std.fs.cwd().openFileZ(buf_z, .{ .mode = .read_only }) catch |err| {
-        JSError(getAllocator(ctx), "Opening file {s} for path: \"{s}\"", .{ @errorName(err), path }, ctx, exception);
+        JSError(allocator, "Opening file {s} for path: \"{s}\"", .{ @errorName(err), path }, ctx, exception);
         return js.JSValueMakeUndefined(ctx);
     };
 
     defer file.close();
 
     const stat = file.stat() catch |err| {
-        JSError(getAllocator(ctx), "Getting file size {s} for \"{s}\"", .{ @errorName(err), path }, ctx, exception);
+        JSError(allocator, "Getting file size {s} for \"{s}\"", .{ @errorName(err), path }, ctx, exception);
         return js.JSValueMakeUndefined(ctx);
     };
 
     if (stat.kind != .File) {
-        JSError(getAllocator(ctx), "Can't read a {s} as a string (\"{s}\")", .{ @tagName(stat.kind), path }, ctx, exception);
+        JSError(allocator, "Can't read a {s} as a string (\"{s}\")", .{ @tagName(stat.kind), path }, ctx, exception);
         return js.JSValueMakeUndefined(ctx);
     }
 
-    var contents_buf = VirtualMachine.get().allocator.alloc(u8, stat.size + 2) catch unreachable; // OOM
-    errdefer VirtualMachine.get().allocator.free(contents_buf);
+    var contents_buf = allocator.alloc(u8, stat.size + 2) catch unreachable; // OOM
+    errdefer allocator.free(contents_buf);
     const contents_len = file.readAll(contents_buf) catch |err| {
-        JSError(getAllocator(ctx), "{s} reading file (\"{s}\")", .{ @errorName(err), path }, ctx, exception);
-        if (true) @panic("todo??");
+        JSError(allocator, "{s} reading file (\"{s}\")", .{ @errorName(err), path }, ctx, exception);
         return js.JSValueMakeUndefined(ctx);
     };
 
     contents_buf[contents_len] = 0;
 
-    var marked_array_buffer = VirtualMachine.get().allocator.create(MarkedArrayBuffer) catch unreachable;
+    var marked_array_buffer = allocator.create(MarkedArrayBuffer) catch unreachable;
     marked_array_buffer.* = MarkedArrayBuffer.fromBytes(
         contents_buf[0..contents_len],
-        VirtualMachine.get().allocator,
+        allocator,
         .Uint8Array,
     );
 

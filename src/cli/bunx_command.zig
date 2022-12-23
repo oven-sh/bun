@@ -318,7 +318,7 @@ pub const BunxCommand = struct {
         );
 
         // TODO: fix this after zig upgrade
-        var bunx_install_iterable_dir = try std.fs.cwd().makeOpenPathIterable(bunx_install_dir_path, .{ .iterate = true });
+        var bunx_install_iterable_dir = try std.fs.cwd().makeOpenPathIterable(bunx_install_dir_path, .{});
         var bunx_install_dir = bunx_install_iterable_dir.dir;
 
         create_package_json: {

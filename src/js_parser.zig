@@ -3152,7 +3152,7 @@ pub const Parser = struct {
                         // HMRClient.activate(true)
                         var args_list: []Expr = if (Environment.isDebug) &Prefill.HotModuleReloading.DebugEnabledArgs else &Prefill.HotModuleReloading.DebugDisabled;
 
-                        var hmr_module_class_ident = p.e(E.Identifier{ .ref = p.runtime_imports.__HMRClient.?.ref }, logger.Loc.Empty);
+                        var hmr_module_class_ident = p.newExpr(E.Identifier{ .ref = p.runtime_imports.__HMRClient.?.ref }, logger.Loc.Empty);
                         const imports = [_]u16{entry.key};
                         // TODO: remove these unnecessary allocations
                         p.generateImportStmt(
@@ -3162,8 +3162,8 @@ pub const Parser = struct {
                             p.runtime_imports,
                             p.s(
                                 S.SExpr{
-                                    .value = p.e(E.Call{
-                                        .target = p.e(E.Dot{
+                                    .value = p.newExpr(E.Call{
+                                        .target = p.newExpr(E.Dot{
                                             .target = hmr_module_class_ident,
                                             .name = "activate",
                                             .name_loc = logger.Loc.Empty,

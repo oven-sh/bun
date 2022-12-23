@@ -677,7 +677,7 @@ pub fn NewPrinter(
             var i: usize = p.options.indent * 2;
 
             while (i > 0) {
-                const amt = @minimum(i, indentation_buf.len);
+                const amt = @min(i, indentation_buf.len);
                 p.print(indentation_buf[0..amt]);
                 i -= amt;
             }

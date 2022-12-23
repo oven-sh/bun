@@ -411,7 +411,7 @@ pub const RunCommand = struct {
                 argv0 = std.os.argv[0];
             } else if (optional_bun_path.len == 0) {
                 // otherwise, ask the OS for the absolute path
-                var self = std.fs.selfExePath(&self_exe_bin_path_buf) catch "";
+                var self = std.fs.selfExePath(&self_exe_bin_path_buf) catch unreachable;
                 if (self.len > 0) {
                     self.ptr[self.len] = 0;
                     argv0 = std.meta.assumeSentinel(self, 0).ptr;

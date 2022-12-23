@@ -1,7 +1,7 @@
 {
   "name": "bench",
   "dependencies": {
-    "better-sqlite3": "^7.6.0"
+    "better-sqlite3": "^8.0.1"
   },
   "scripts": {
     "build": "exit 0",

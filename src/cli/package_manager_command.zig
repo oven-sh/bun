@@ -347,7 +347,7 @@ fn printNodeModulesFolderStructure(
                     temp_path = temp_path[j + "node_modules".len ..];
                 }
 
-                if (package_index < directory.packages.len) more_packages[new_depth] = true;
+                more_packages[new_depth] = true;
                 printNodeModulesFolderStructure(&next, package_id, new_depth, directories, lockfile, more_packages);
             }
         }

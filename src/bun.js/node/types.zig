@@ -1961,14 +1961,14 @@ pub const Process = struct {
                 // When we update the cwd from JS, we have to update the bundler's version as well
                 // However, this might be called many times in a row, so we use a pre-allocated buffer
                 // that way we don't have to worry about garbage collector
-                JSC.VirtualMachine.vm.bundler.fs.top_level_dir = std.os.getcwd(&JSC.VirtualMachine.vm.bundler.fs.top_level_dir_buf) catch {
-                    _ = Syscall.chdir(std.meta.assumeSentinel(JSC.VirtualMachine.vm.bundler.fs.top_level_dir, 0));
+                JSC.VirtualMachine.get().bundler.fs.top_level_dir = std.os.getcwd(&JSC.VirtualMachine.get().bundler.fs.top_level_dir_buf) catch {
+                    _ = Syscall.chdir(std.meta.assumeSentinel(JSC.VirtualMachine.get().bundler.fs.top_level_dir, 0));
                     return JSC.toInvalidArguments("Invalid path", .{}, globalObject.ref());
                 };
 
-                JSC.VirtualMachine.vm.bundler.fs.top_level_dir_buf[JSC.VirtualMachine.vm.bundler.fs.top_level_dir.len] = std.fs.path.sep;
-                JSC.VirtualMachine.vm.bundler.fs.top_level_dir_buf[JSC.VirtualMachine.vm.bundler.fs.top_level_dir.len + 1] = 0;
-                JSC.VirtualMachine.vm.bundler.fs.top_level_dir = JSC.VirtualMachine.vm.bundler.fs.top_level_dir_buf[0 .. JSC.VirtualMachine.vm.bundler.fs.top_level_dir.len + 1];
+                JSC.VirtualMachine.get().bundler.fs.top_level_dir_buf[JSC.VirtualMachine.get().bundler.fs.top_level_dir.len] = std.fs.path.sep;
+                JSC.VirtualMachine.get().bundler.fs.top_level_dir_buf[JSC.VirtualMachine.get().bundler.fs.top_level_dir.len + 1] = 0;
+                JSC.VirtualMachine.get().bundler.fs.top_level_dir = JSC.VirtualMachine.get().bundler.fs.top_level_dir_buf[0 .. JSC.VirtualMachine.get().bundler.fs.top_level_dir.len + 1];
 
                 return JSC.JSValue.jsUndefined();
             },

@@ -105,7 +105,7 @@ pub const FFI = struct {
             return JSC.toInvalidArguments("Expected callback function", .{}, globalThis);
         }
 
-        const allocator = VirtualMachine.vm.allocator;
+        const allocator = VirtualMachine.get().allocator;
         var function: Function = .{};
         var func = &function;
 
@@ -158,7 +158,7 @@ pub const FFI = struct {
             this.dylib = null;
         }
 
-        const allocator = VirtualMachine.vm.allocator;
+        const allocator = VirtualMachine.get().allocator;
 
         for (this.functions.values()) |*val| {
             val.deinit(globalThis, allocator);
@@ -170,7 +170,7 @@ pub const FFI = struct {
 
     pub fn printCallback(global: *JSGlobalObject, object: JSC.JSValue) JSValue {
         JSC.markBinding(@src());
-        const allocator = VirtualMachine.vm.allocator;
+        const allocator = VirtualMachine.get().allocator;
 
         if (object.isEmptyOrUndefinedOrNull() or !object.isObject()) {
             return JSC.toInvalidArguments("Expected an object", .{}, global);
@@ -194,7 +194,7 @@ pub const FFI = struct {
     }
 
     pub fn print(global: *JSGlobalObject, object: JSC.JSValue, is_callback_val: ?JSC.JSValue) JSValue {
-        const allocator = VirtualMachine.vm.allocator;
+        const allocator = VirtualMachine.get().allocator;
         if (is_callback_val) |is_callback| {
             if (is_callback.toBoolean()) {
                 return printCallback(global, object);
@@ -257,7 +257,7 @@ pub const FFI = struct {
     }
 
     // pub fn dlcompile(global: *JSGlobalObject, object: JSC.JSValue) JSValue {
-    //     const allocator = VirtualMachine.vm.allocator;
+    //     const allocator = VirtualMachine.get().allocator;
 
     //     if (object.isEmptyOrUndefinedOrNull() or !object.isObject()) {
     //         return JSC.toInvalidArguments("Expected an options object with symbol names", .{}, global);
@@ -277,7 +277,7 @@ pub const FFI = struct {
 
     pub fn open(global: *JSGlobalObject, name_str: ZigString, object: JSC.JSValue) JSC.JSValue {
         JSC.markBinding(@src());
-        const allocator = VirtualMachine.vm.allocator;
+        const allocator = VirtualMachine.get().allocator;
         var name_slice = name_str.toSlice(allocator);
         defer name_slice.deinit();
 
@@ -406,7 +406,7 @@ pub const FFI = struct {
 
     pub fn linkSymbols(global: *JSGlobalObject, object: JSC.JSValue) JSC.JSValue {
         JSC.markBinding(@src());
-        const allocator = VirtualMachine.vm.allocator;
+        const allocator = VirtualMachine.get().allocator;
 
         if (object.isEmptyOrUndefinedOrNull() or !object.isObject()) {
             return JSC.toInvalidArguments("Expected an options object with symbol names", .{}, global);
@@ -607,7 +607,7 @@ pub const FFI = struct {
     }
     pub fn generateSymbols(global: *JSGlobalObject, symbols: *bun.StringArrayHashMapUnmanaged(Function), object: JSC.JSValue) !?JSValue {
         JSC.markBinding(@src());
-        const allocator = VirtualMachine.vm.allocator;
+        const allocator = VirtualMachine.get().allocator;
 
         var symbols_iter = JSC.JSPropertyIterator(.{
             .skip_empty_name = true,
@@ -736,7 +736,7 @@ pub const FFI = struct {
                 msg = msg[offset..];
             }
 
-            this.step = .{ .failed = .{ .msg = VirtualMachine.vm.allocator.dupe(u8, msg) catch unreachable, .allocated = true } };
+            this.step = .{ .failed = .{ .msg = VirtualMachine.get().allocator.dupe(u8, msg) catch unreachable, .allocated = true } };
         }
 
         extern fn pthread_jit_write_protect_np(enable: bool) callconv(.C) void;

@@ -992,7 +992,7 @@ pub const ZigConsoleClient = struct {
         var exception = holder.zigException();
         var err = ZigString.init("trace output").toErrorInstance(global);
         err.toZigException(global, exception);
-        JS.VirtualMachine.vm.remapZigException(exception, err, null);
+        JS.VirtualMachine.get().remapZigException(exception, err, null);
 
         if (Output.enable_ansi_colors_stderr)
             JS.VirtualMachine.printStackTrace(
@@ -1969,7 +1969,7 @@ pub const ZigConsoleClient = struct {
                     }
                 },
                 .Error => {
-                    JS.VirtualMachine.vm.printErrorlikeObject(
+                    JS.VirtualMachine.get().printErrorlikeObject(
                         value,
                         null,
                         null,

@@ -66,8 +66,8 @@ pub const OpaqueJSString = opaque {
 
         if (zig_str.isUTF8()) {
             return JSValueToStringCopy(
-                bun.JSC.VirtualMachine.vm.global,
-                zig_str.toValueGC(bun.JSC.VirtualMachine.vm.global).asObjectRef(),
+                bun.JSC.VirtualMachine.get().global,
+                zig_str.toValueGC(bun.JSC.VirtualMachine.get().global).asObjectRef(),
                 null,
             );
         }

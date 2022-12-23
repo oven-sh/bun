@@ -1150,9 +1150,9 @@ pub const FileSink = struct {
     pub fn updateRef(this: *FileSink, value: bool) void {
         if (this.poll_ref) |poll| {
             if (value)
-                poll.enableKeepingProcessAlive(JSC.VirtualMachine.vm)
+                poll.enableKeepingProcessAlive(JSC.VirtualMachine.get())
             else
-                poll.disableKeepingProcessAlive(JSC.VirtualMachine.vm);
+                poll.disableKeepingProcessAlive(JSC.VirtualMachine.get());
         }
     }
 
@@ -4503,9 +4503,9 @@ pub const FileReader = struct {
                 },
                 .File => {
                     if (value)
-                        this.lazy_readable.readable.File.poll_ref.ref(JSC.VirtualMachine.vm)
+                        this.lazy_readable.readable.File.poll_ref.ref(JSC.VirtualMachine.get())
                     else
-                        this.lazy_readable.readable.File.poll_ref.unref(JSC.VirtualMachine.vm);
+                        this.lazy_readable.readable.File.poll_ref.unref(JSC.VirtualMachine.get());
                 },
             }
         }
@@ -4570,14 +4570,14 @@ pub fn NewReadyWatcher(
             const fd = @intCast(c_int, fd_);
             std.debug.assert(@intCast(c_int, this.poll_ref.?.fd) == fd);
             std.debug.assert(
-                this.poll_ref.?.unregister(JSC.VirtualMachine.vm.uws_event_loop.?) == .result,
+                this.poll_ref.?.unregister(JSC.VirtualMachine.get().uws_event_loop.?) == .result,
             );
         }
 
         pub fn pollRef(this: *Context) *JSC.FilePoll {
             return this.poll_ref orelse brk: {
                 this.poll_ref = JSC.FilePoll.init(
-                    JSC.VirtualMachine.vm,
+                    JSC.VirtualMachine.get(),
                     this.fd,
                     .{},
                     Context,
@@ -4599,7 +4599,7 @@ pub fn NewReadyWatcher(
             const fd = @intCast(c_int, fd_);
             var poll_ref: *JSC.FilePoll = this.poll_ref orelse brk: {
                 this.poll_ref = JSC.FilePoll.init(
-                    JSC.VirtualMachine.vm,
+                    JSC.VirtualMachine.get(),
                     fd,
                     .{},
                     Context,
@@ -4609,7 +4609,7 @@ pub fn NewReadyWatcher(
             };
             std.debug.assert(poll_ref.fd == fd);
             std.debug.assert(!this.isWatching());
-            switch (poll_ref.register(JSC.VirtualMachine.vm.uws_event_loop.?, flag, true)) {
+            switch (poll_ref.register(JSC.VirtualMachine.get().uws_event_loop.?, flag, true)) {
                 .err => |err| {
                     bun.unreachablePanic("FilePoll.register failed: {d}", .{err.errno});
                 },

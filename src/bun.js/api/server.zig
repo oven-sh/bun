@@ -806,7 +806,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 .message = std.fmt.allocPrint(allocator, comptime Output.prettyFmt(fmt, false), args) catch unreachable,
                 .router = null,
                 .reason = .fetch_event_handler,
-                .cwd = VirtualMachine.vm.bundler.fs.top_level_dir,
+                .cwd = VirtualMachine.get().bundler.fs.top_level_dir,
                 .problems = Api.Problems{
                     .code = @truncate(u16, @errorToInt(err)),
                     .name = @errorName(err),
@@ -4335,7 +4335,7 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
                 .globalThis = globalThis,
                 .config = config,
                 .base_url_string_for_joining = bun.default_allocator.dupe(u8, strings.trim(config.base_url.href, "/")) catch unreachable,
-                .vm = JSC.VirtualMachine.vm,
+                .vm = JSC.VirtualMachine.get(),
                 .allocator = Arena.getThreadlocalDefault(),
             };
 
@@ -4464,7 +4464,7 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
             _ = js_printer.printJSON(
                 *js_printer.BufferPrinter,
                 &writer,
-                bun.Global.BunInfo.generate(*Bundler, &JSC.VirtualMachine.vm.bundler, allocator) catch unreachable,
+                bun.Global.BunInfo.generate(*Bundler, &JSC.VirtualMachine.get().bundler, allocator) catch unreachable,
                 &source,
             ) catch unreachable;
 
@@ -4487,8 +4487,8 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
                 return;
             }
 
-            var ctx = &JSC.VirtualMachine.vm.rareData().editor_context;
-            ctx.autoDetectEditor(JSC.VirtualMachine.vm.bundler.env);
+            var ctx = &JSC.VirtualMachine.get().rareData().editor_context;
+            ctx.autoDetectEditor(JSC.VirtualMachine.get().bundler.env);
             var line: ?string = req.header("editor-line");
             var column: ?string = req.header("editor-column");
 

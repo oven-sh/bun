@@ -247,15 +247,15 @@ const uws = @import("bun").uws;
 
 pub export fn Bun__getDefaultGlobal() *JSGlobalObject {
     _ = @sizeOf(JSC.VirtualMachine) + 1;
-    return JSC.VirtualMachine.vm.global;
+    return JSC.VirtualMachine.get().global;
 }
 
 pub export fn Bun__getVM() *JSC.VirtualMachine {
-    return JSC.VirtualMachine.vm;
+    return JSC.VirtualMachine.get();
 }
 
 pub export fn Bun__drainMicrotasks() void {
-    JSC.VirtualMachine.vm.eventLoop().tick();
+    JSC.VirtualMachine.get().eventLoop().tick();
 }
 
 export fn Bun__readOriginTimer(vm: *JSC.VirtualMachine) u64 {
@@ -439,6 +439,14 @@ pub const VirtualMachine = struct {
 
     gc_controller: JSC.GarbageCollectionController = .{},
 
+    const VMHolder = struct {
+        pub threadlocal var vm: ?*VirtualMachine = null;
+    };
+
+    pub inline fn get() *VirtualMachine {
+        return VMHolder.vm;
+    }
+
     pub const GCLevel = enum(u3) {
         none = 0,
         mild = 1,
@@ -621,16 +629,16 @@ pub const VirtualMachine = struct {
     pub fn getAPIConstructors(globalObject: *JSGlobalObject) []const JSC.JSValue {
         if (is_bindgen)
             return &[_]JSC.JSValue{};
-        const is_first = !VirtualMachine.vm.has_loaded_constructors;
+        const is_first = !VirtualMachine.get().has_loaded_constructors;
         if (is_first) {
-            VirtualMachine.vm.global = globalObject;
-            VirtualMachine.vm.has_loaded_constructors = true;
+            VirtualMachine.get().global = globalObject;
+            VirtualMachine.get().has_loaded_constructors = true;
         }
 
         var slice = if (is_first)
-            @as([]JSC.JSValue, &JSC.VirtualMachine.vm.global_api_constructors)
+            @as([]JSC.JSValue, &JSC.VirtualMachine.get().global_api_constructors)
         else
-            VirtualMachine.vm.allocator.alloc(JSC.JSValue, GlobalConstructors.len) catch unreachable;
+            VirtualMachine.get().allocator.alloc(JSC.JSValue, GlobalConstructors.len) catch unreachable;
 
         inline for (GlobalConstructors) |Class, i| {
             var ref = Class.constructor(globalObject.ref()).?;
@@ -664,6 +672,10 @@ pub const VirtualMachine = struct {
         );
     }
 
+    pub inline fn isLoaded() bool {
+        return VMHolder.vm != null;
+    }
+
     pub fn init(
         allocator: std.mem.Allocator,
         _args: Api.TransformOptions,
@@ -679,7 +691,7 @@ pub const VirtualMachine = struct {
             log.* = logger.Log.init(allocator);
         }
 
-        VirtualMachine.vm = try allocator.create(VirtualMachine);
+        VMHolder.vm = try allocator.create(VirtualMachine);
         var console = try allocator.create(ZigConsoleClient);
         console.* = ZigConsoleClient.init(Output.errorWriter(), Output.writer());
         const bundler = try Bundler.init(
@@ -690,7 +702,7 @@ pub const VirtualMachine = struct {
             env_loader,
         );
 
-        VirtualMachine.vm.* = VirtualMachine{
+        VMHolder.vm.?.* = VirtualMachine{
             .global = undefined,
             .allocator = allocator,
             .entry_point = ServerEntryPoint{},
@@ -705,49 +717,49 @@ pub const VirtualMachine = struct {
             .saved_source_map_table = SavedSourceMap.HashTable.init(allocator),
             .source_mappings = undefined,
             .macros = MacroMap.init(allocator),
-            .macro_entry_points = @TypeOf(VirtualMachine.vm.macro_entry_points).init(allocator),
+            .macro_entry_points = @TypeOf(VirtualMachine.get().macro_entry_points).init(allocator),
             .origin_timer = std.time.Timer.start() catch @panic("Please don't mess with timers."),
             .origin_timestamp = getOriginTimestamp(),
             .ref_strings = JSC.RefString.Map.init(allocator),
             .file_blobs = JSC.WebCore.Blob.Store.Map.init(allocator),
         };
-        VirtualMachine.vm.source_mappings = .{ .map = &VirtualMachine.vm.saved_source_map_table };
-        VirtualMachine.vm.regular_event_loop.tasks = EventLoop.Queue.init(
+        VirtualMachine.get().source_mappings = .{ .map = &VirtualMachine.get().saved_source_map_table };
+        VirtualMachine.get().regular_event_loop.tasks = EventLoop.Queue.init(
             default_allocator,
         );
-        VirtualMachine.vm.regular_event_loop.tasks.ensureUnusedCapacity(64) catch unreachable;
-        VirtualMachine.vm.regular_event_loop.concurrent_tasks = .{};
-        VirtualMachine.vm.event_loop = &VirtualMachine.vm.regular_event_loop;
+        VirtualMachine.get().regular_event_loop.tasks.ensureUnusedCapacity(64) catch unreachable;
+        VirtualMachine.get().regular_event_loop.concurrent_tasks = .{};
+        VirtualMachine.get().event_loop = &VirtualMachine.get().regular_event_loop;
 
         vm.bundler.macro_context = null;
 
-        VirtualMachine.vm.bundler.resolver.onWakePackageManager = .{
-            .context = &VirtualMachine.vm.modules,
+        VirtualMachine.get().bundler.resolver.onWakePackageManager = .{
+            .context = &VirtualMachine.get().modules,
             .handler = ModuleLoader.AsyncModule.Queue.onWakeHandler,
             .onDependencyError = JSC.ModuleLoader.AsyncModule.Queue.onDependencyError,
         };
 
-        VirtualMachine.vm.bundler.configureLinker();
-        try VirtualMachine.vm.bundler.configureFramework(false);
+        VirtualMachine.get().bundler.configureLinker();
+        try VirtualMachine.get().bundler.configureFramework(false);
 
         vm.bundler.macro_context = js_ast.Macro.MacroContext.init(&vm.bundler);
 
         if (_args.serve orelse false) {
-            VirtualMachine.vm.bundler.linker.onImportCSS = Bun.onImportCSS;
+            VirtualMachine.get().bundler.linker.onImportCSS = Bun.onImportCSS;
         }
 
         var global_classes: [GlobalClasses.len]js.JSClassRef = undefined;
         inline for (GlobalClasses) |Class, i| {
             global_classes[i] = Class.get().*;
         }
-        VirtualMachine.vm.global = ZigGlobalObject.create(
+        VirtualMachine.get().global = ZigGlobalObject.create(
             &global_classes,
             @intCast(i32, global_classes.len),
             vm.console,
         );
-        VirtualMachine.vm.regular_event_loop.global = VirtualMachine.vm.global;
-        VirtualMachine.vm.regular_event_loop.virtual_machine = VirtualMachine.vm;
-        VirtualMachine.vm_loaded = true;
+        VirtualMachine.get().regular_event_loop.global = VirtualMachine.get().global;
+        VirtualMachine.get().regular_event_loop.virtual_machine = VirtualMachine.get();
+        VirtualMachine.isLoaded() = true;
 
         if (source_code_printer == null) {
             var writer = try js_printer.BufferWriter.init(allocator);
@@ -756,7 +768,7 @@ pub const VirtualMachine = struct {
             source_code_printer.?.ctx.append_null_byte = false;
         }
 
-        return VirtualMachine.vm;
+        return VirtualMachine.get();
     }
 
     // dynamic import
@@ -767,7 +779,7 @@ pub const VirtualMachine = struct {
     pub threadlocal var source_code_printer: ?*js_printer.BufferPrinter = null;
 
     pub fn clearRefString(_: *anyopaque, ref_string: *JSC.RefString) void {
-        _ = VirtualMachine.vm.ref_strings.remove(ref_string.hash);
+        _ = VirtualMachine.get().ref_strings.remove(ref_string.hash);
     }
 
     pub fn refCountedResolvedSource(this: *VirtualMachine, code: []const u8, specifier: []const u8, source_url: []const u8, hash_: ?u32) ResolvedSource {
@@ -836,7 +848,7 @@ pub const VirtualMachine = struct {
         ret: *ErrorableResolvedSource,
         comptime flags: FetchFlags,
     ) !ResolvedSource {
-        std.debug.assert(VirtualMachine.vm_loaded);
+        std.debug.assert(VirtualMachine.isLoaded());
 
         if (try ModuleLoader.fetchBuiltinModule(jsc_vm, _specifier, log, comptime flags.disableTranspiling())) |builtin| {
             return builtin;
@@ -881,7 +893,7 @@ pub const VirtualMachine = struct {
         comptime is_a_file_path: bool,
         comptime realpath: bool,
     ) !void {
-        std.debug.assert(VirtualMachine.vm_loaded);
+        std.debug.assert(VirtualMachine.isLoaded());
         // macOS threadlocal vars are very slow
         // we won't change threads in this function
         // so we can copy it here
@@ -989,7 +1001,7 @@ pub const VirtualMachine = struct {
         microtask: *Microtask,
     ) void {
         if (comptime Environment.allow_assert)
-            std.debug.assert(VirtualMachine.vm_loaded);
+            std.debug.assert(VirtualMachine.isLoaded());
 
         var vm_ = globalObject.bunVM();
         if (vm_.global == globalObject) {
@@ -1088,8 +1100,8 @@ pub const VirtualMachine = struct {
     // // This double prints
     // pub fn promiseRejectionTracker(global: *JSGlobalObject, promise: *JSPromise, _: JSPromiseRejectionOperation) callconv(.C) JSValue {
     //     const result = promise.result(global.vm());
-    //     if (@enumToInt(VirtualMachine.vm.last_error_jsvalue) != @enumToInt(result)) {
-    //         VirtualMachine.vm.runErrorHandler(result, null);
+    //     if (@enumToInt(VirtualMachine.get().last_error_jsvalue) != @enumToInt(result)) {
+    //         VirtualMachine.get().runErrorHandler(result, null);
     //     }
 
     //     return JSValue.jsUndefined();
@@ -1146,8 +1158,8 @@ pub const VirtualMachine = struct {
 
         if (vm.blobs) |blobs| {
             const specifier_blob = brk: {
-                if (strings.hasPrefix(spec.slice(), VirtualMachine.vm.bundler.fs.top_level_dir)) {
-                    break :brk spec.slice()[VirtualMachine.vm.bundler.fs.top_level_dir.len..];
+                if (strings.hasPrefix(spec.slice(), VirtualMachine.get().bundler.fs.top_level_dir)) {
+                    break :brk spec.slice()[VirtualMachine.get().bundler.fs.top_level_dir.len..];
                 }
                 break :brk spec.slice();
             };
@@ -1448,7 +1460,7 @@ pub const VirtualMachine = struct {
                 }
                 inline fn iterator(_: [*c]VM, _: [*c]JSGlobalObject, nextValue: JSValue, ctx: ?*anyopaque, comptime color: bool) void {
                     var this_ = @intToPtr(*@This(), @ptrToInt(ctx));
-                    VirtualMachine.vm.printErrorlikeObject(nextValue, null, this_.current_exception_list, Writer, this_.writer, color);
+                    VirtualMachine.get().printErrorlikeObject(nextValue, null, this_.current_exception_list, Writer, this_.writer, color);
                 }
             };
             var iter = AggregateErrorIterator{ .writer = writer, .current_exception_list = exception_list };
@@ -2071,10 +2083,10 @@ pub const EventListenerMixin = struct {
                 defer name_slice.deinit();
                 const name = name_slice.slice();
                 const event = EventType.match(name) orelse return js.JSValueMakeUndefined(ctx);
-                var entry = VirtualMachine.vm.event_listeners.getOrPut(event) catch unreachable;
+                var entry = VirtualMachine.get().event_listeners.getOrPut(event) catch unreachable;
 
                 if (!entry.found_existing) {
-                    entry.value_ptr.* = List.initCapacity(VirtualMachine.vm.allocator, 1) catch unreachable;
+                    entry.value_ptr.* = List.initCapacity(VirtualMachine.get().allocator, 1) catch unreachable;
                 }
 
                 var callback = arguments[arguments.len - 1];

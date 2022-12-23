@@ -1481,7 +1481,7 @@ pub const RequestContext = struct {
 
             vm.is_from_devserver = true;
             vm.bundler.log = handler.log;
-            std.debug.assert(JavaScript.VirtualMachine.vm_loaded);
+            std.debug.assert(JavaScript.VirtualMachine.isLoaded());
             javascript_vm = vm;
             vm.bundler.options.origin = handler.origin;
             const boot = vm.bundler.options.framework.?.server.path;
@@ -1548,11 +1548,11 @@ pub const RequestContext = struct {
 
             while (true) {
                 __arena = ThreadlocalArena.init() catch unreachable;
-                JavaScript.VirtualMachine.vm.arena = &__arena;
-                JavaScript.VirtualMachine.vm.has_loaded = true;
-                JavaScript.VirtualMachine.vm.tick();
+                JavaScript.VirtualMachine.get().arena = &__arena;
+                JavaScript.VirtualMachine.get().has_loaded = true;
+                JavaScript.VirtualMachine.get().tick();
                 defer {
-                    JavaScript.VirtualMachine.vm.flush();
+                    JavaScript.VirtualMachine.get().flush();
                     std.debug.assert(
                         JavaScript.ZigGlobalObject.resetModuleRegistryMap(vm.global, module_map),
                     );
@@ -1560,13 +1560,13 @@ pub const RequestContext = struct {
                     js_ast.Expr.Data.Store.reset();
                     JavaScript.API.Bun.flushCSSImports();
                     Output.flush();
-                    JavaScript.VirtualMachine.vm.arena.deinit();
-                    JavaScript.VirtualMachine.vm.has_loaded = false;
+                    JavaScript.VirtualMachine.get().arena.deinit();
+                    JavaScript.VirtualMachine.get().has_loaded = false;
                 }
 
                 var handler: *JavaScriptHandler = try channel.readItem();
-                JavaScript.VirtualMachine.vm.tick();
-                JavaScript.VirtualMachine.vm.preflush();
+                JavaScript.VirtualMachine.get().tick();
+                JavaScript.VirtualMachine.get().preflush();
                 const original_origin = vm.origin;
                 vm.origin = handler.ctx.origin;
                 defer vm.origin = original_origin;
@@ -1581,7 +1581,7 @@ pub const RequestContext = struct {
                     HandlerThread.handleFetchEventError,
                 ) catch {};
                 Server.current.releaseRequestDataPoolNode(req_body);
-                JavaScript.VirtualMachine.vm.tick();
+                JavaScript.VirtualMachine.get().tick();
                 handler.deinit();
             }
         }
@@ -2708,8 +2708,8 @@ pub const RequestContext = struct {
                 }
             }
 
-            if (JavaScript.VirtualMachine.vm_loaded) {
-                var vm = JavaScript.VirtualMachine.vm;
+            if (JavaScript.VirtualMachine.isLoaded()) {
+                var vm = JavaScript.VirtualMachine.get();
                 if (vm.blobs.?.get(id)) |blob| {
                     break :brk blob;
                 }

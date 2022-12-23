@@ -7549,7 +7549,7 @@ pub const Macro = struct {
             const args_value = JSC.JSValue.fromRef(arguments[0]);
             var writer = Writer{
                 .inject = std.ArrayList(JSNode).init(JSCBase.getAllocator(ctx)),
-                .log = JavaScript.VirtualMachine.vm.log,
+                .log = JavaScript.VirtualMachine.get().log,
                 .ctx = ctx,
                 .loc = logger.Loc.Empty,
                 .allocator = JSCBase.getAllocator(ctx),
@@ -7763,8 +7763,8 @@ pub const Macro = struct {
     ) !Macro {
         const path = resolved.path_pair.primary;
 
-        var vm: *JavaScript.VirtualMachine = if (JavaScript.VirtualMachine.vm_loaded)
-            JavaScript.VirtualMachine.vm
+        var vm: *JavaScript.VirtualMachine = if (JavaScript.VirtualMachine.isLoaded())
+            JavaScript.VirtualMachine.get()
         else brk: {
             var old_transform_options = resolver.opts.transform_options;
             resolver.opts.transform_options.node_modules_bundle_path = null;
@@ -7789,7 +7789,7 @@ pub const Macro = struct {
             return error.MacroLoadError;
         }
 
-        JavaScript.VirtualMachine.vm_loaded = true;
+        JavaScript.VirtualMachine.isLoaded() = true;
 
         // We don't need to do anything with the result.
         // We just want to make sure the promise is finished.
@@ -8187,7 +8187,7 @@ pub const Macro = struct {
                 pub fn callWrapper(args: CallArgs) MacroError!Expr {
                     JSC.markBinding(@src());
                     call_args = args;
-                    Bun__startMacro(call, JSC.VirtualMachine.vm.global);
+                    Bun__startMacro(call, JSC.VirtualMachine.get().global);
                     return result;
                 }
 

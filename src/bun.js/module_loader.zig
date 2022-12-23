@@ -772,7 +772,7 @@ pub const ModuleLoader = struct {
             debug("resumeLoadingModule: {s}", .{this.specifier});
             var parse_result = this.parse_result;
             var path = this.path;
-            var jsc_vm = JSC.VirtualMachine.vm;
+            var jsc_vm = JSC.VirtualMachine.get();
             var specifier = this.specifier;
             var old_log = jsc_vm.log;
 

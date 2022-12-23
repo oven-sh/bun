@@ -226,7 +226,7 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
             this.input_body_buf.len = 0;
         }
         pub fn clearData(this: *HTTPClient) void {
-            this.poll_ref.unref(JSC.VirtualMachine.vm);
+            this.poll_ref.unref(JSC.VirtualMachine.get());
 
             this.clearInput();
             if (this.body_buf) |buf| {

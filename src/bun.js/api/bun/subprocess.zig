@@ -134,7 +134,7 @@ pub const Subprocess = struct {
                 .pipe => {
                     if (this.pipe == .buffer) {
                         if (this.pipe.buffer.fifo.poll_ref) |poll| {
-                            poll.enableKeepingProcessAlive(JSC.VirtualMachine.vm);
+                            poll.enableKeepingProcessAlive(JSC.VirtualMachine.get());
                         }
                     }
                 },
@@ -147,7 +147,7 @@ pub const Subprocess = struct {
                 .pipe => {
                     if (this.pipe == .buffer) {
                         if (this.pipe.buffer.fifo.poll_ref) |poll| {
-                            poll.disableKeepingProcessAlive(JSC.VirtualMachine.vm);
+                            poll.disableKeepingProcessAlive(JSC.VirtualMachine.get());
                         }
                     }
                 },
@@ -762,7 +762,7 @@ pub const Subprocess = struct {
             switch (this.*) {
                 .pipe => {
                     if (this.pipe.poll_ref) |poll| {
-                        poll.enableKeepingProcessAlive(JSC.VirtualMachine.vm);
+                        poll.enableKeepingProcessAlive(JSC.VirtualMachine.get());
                     }
                 },
                 else => {},
@@ -773,7 +773,7 @@ pub const Subprocess = struct {
             switch (this.*) {
                 .pipe => {
                     if (this.pipe.poll_ref) |poll| {
-                        poll.disableKeepingProcessAlive(JSC.VirtualMachine.vm);
+                        poll.disableKeepingProcessAlive(JSC.VirtualMachine.get());
                     }
                 },
                 else => {},

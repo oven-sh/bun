@@ -1405,7 +1405,7 @@ fn NewSocket(comptime ssl: bool) type {
                 this.socket.close(0, null);
             }
             this.markInactive();
-            if (this.poll_ref.isActive()) this.poll_ref.unref(JSC.VirtualMachine.vm);
+            if (this.poll_ref.isActive()) this.poll_ref.unref(JSC.VirtualMachine.get());
         }
 
         pub fn reload(this: *This, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSValue {

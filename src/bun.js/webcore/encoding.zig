@@ -499,7 +499,7 @@ pub const TextDecoder = struct {
 
         var buffer = std.ArrayListAlignedUnmanaged(u16, @alignOf(@TypeOf(slice.ptr))){};
         // copy the allocator to reduce the number of threadlocal accesses
-        const allocator = VirtualMachine.vm.allocator;
+        const allocator = VirtualMachine.get().allocator;
         buffer.ensureTotalCapacity(allocator, slice.len) catch unreachable;
         buffer.items.len = i;
 
@@ -836,7 +836,7 @@ pub const Encoder = struct {
             return ZigString.Empty.toValue(global);
 
         const input = input_ptr[0..len];
-        const allocator = VirtualMachine.vm.allocator;
+        const allocator = VirtualMachine.get().allocator;
 
         switch (comptime encoding) {
             .ascii => {
@@ -1068,7 +1068,7 @@ pub const Encoder = struct {
         if (len == 0)
             return &[_]u8{};
 
-        const allocator = VirtualMachine.vm.allocator;
+        const allocator = VirtualMachine.get().allocator;
 
         switch (comptime encoding) {
             JSC.Node.Encoding.buffer => {
@@ -1137,7 +1137,7 @@ pub const Encoder = struct {
         if (len == 0)
             return &[_]u8{};
 
-        const allocator = VirtualMachine.vm.allocator;
+        const allocator = VirtualMachine.get().allocator;
 
         switch (comptime encoding) {
             .utf8 => {

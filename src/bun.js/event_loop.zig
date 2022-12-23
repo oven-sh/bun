@@ -41,7 +41,7 @@ pub fn ConcurrentPromiseTask(comptime Context: type) type {
         pub fn createOnJSThread(allocator: std.mem.Allocator, globalThis: *JSGlobalObject, value: *Context) !*This {
             var this = try allocator.create(This);
             this.* = .{
-                .event_loop = VirtualMachine.vm.event_loop,
+                .event_loop = VirtualMachine.get().event_loop,
                 .ctx = value,
                 .allocator = allocator,
                 .globalThis = globalThis,
@@ -586,7 +586,7 @@ pub const EventLoop = struct {
         var task = Task.from(timer.as(*anyopaque));
         timer.deinit();
 
-        JSC.VirtualMachine.vm.enqueueTask(task);
+        JSC.VirtualMachine.get().enqueueTask(task);
     }
 
     pub fn ensureWaker(this: *EventLoop) void {

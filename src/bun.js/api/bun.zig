@@ -95,7 +95,7 @@ pub fn onImportCSS(
 ) void {
     if (!css_imports_buf_loaded) {
         css_imports_buf = std.ArrayList(u8).initCapacity(
-            VirtualMachine.vm.allocator,
+            VirtualMachine.get().allocator,
             import_record.path.text.len,
         ) catch unreachable;
         css_imports_buf_loaded = true;
@@ -310,7 +310,7 @@ pub fn registerMacro(
         return js.JSValueMakeUndefined(ctx);
     }
 
-    var get_or_put_result = VirtualMachine.vm.macros.getOrPut(id) catch unreachable;
+    var get_or_put_result = VirtualMachine.get().macros.getOrPut(id) catch unreachable;
     if (get_or_put_result.found_existing) {
         js.JSValueUnprotect(ctx, get_or_put_result.value_ptr.*);
     }
@@ -328,7 +328,7 @@ pub fn getCWD(
     _: js.JSStringRef,
     _: js.ExceptionRef,
 ) js.JSValueRef {
-    return ZigString.init(VirtualMachine.vm.bundler.fs.top_level_dir).toValue(ctx.ptr()).asRef();
+    return ZigString.init(VirtualMachine.get().bundler.fs.top_level_dir).toValue(ctx.ptr()).asRef();
 }
 
 pub fn getOrigin(
@@ -338,7 +338,7 @@ pub fn getOrigin(
     _: js.JSStringRef,
     _: js.ExceptionRef,
 ) js.JSValueRef {
-    return ZigString.init(VirtualMachine.vm.origin.origin).toValue(ctx.ptr()).asRef();
+    return ZigString.init(VirtualMachine.get().origin.origin).toValue(ctx.ptr()).asRef();
 }
 
 pub fn getStdin(
@@ -350,7 +350,7 @@ pub fn getStdin(
 ) js.JSValueRef {
     var existing = ctx.ptr().getCachedObject(ZigString.static("BunSTDIN"));
     if (existing.isEmpty()) {
-        var rare_data = JSC.VirtualMachine.vm.rareData();
+        var rare_data = JSC.VirtualMachine.get().rareData();
         var store = rare_data.stdin();
         var blob = bun.default_allocator.create(JSC.WebCore.Blob) catch unreachable;
         blob.* = JSC.WebCore.Blob.initWithStore(store, ctx.ptr());
@@ -373,7 +373,7 @@ pub fn getStderr(
 ) js.JSValueRef {
     var existing = ctx.ptr().getCachedObject(ZigString.static("BunSTDERR"));
     if (existing.isEmpty()) {
-        var rare_data = JSC.VirtualMachine.vm.rareData();
+        var rare_data = JSC.VirtualMachine.get().rareData();
         var store = rare_data.stderr();
         var blob = bun.default_allocator.create(JSC.WebCore.Blob) catch unreachable;
         blob.* = JSC.WebCore.Blob.initWithStore(store, ctx.ptr());
@@ -396,7 +396,7 @@ pub fn getStdout(
 ) js.JSValueRef {
     var existing = ctx.ptr().getCachedObject(ZigString.static("BunSTDOUT"));
     if (existing.isEmpty()) {
-        var rare_data = JSC.VirtualMachine.vm.rareData();
+        var rare_data = JSC.VirtualMachine.get().rareData();
         var store = rare_data.stdout();
         var blob = bun.default_allocator.create(JSC.WebCore.Blob) catch unreachable;
         blob.* = JSC.WebCore.Blob.initWithStore(store, ctx.ptr());
@@ -426,7 +426,7 @@ pub fn getMain(
     _: js.JSStringRef,
     _: js.ExceptionRef,
 ) js.JSValueRef {
-    return ZigString.init(VirtualMachine.vm.main).toValue(ctx.ptr()).asRef();
+    return ZigString.init(VirtualMachine.get().main).toValue(ctx.ptr()).asRef();
 }
 
 pub fn getAssetPrefix(
@@ -436,7 +436,7 @@ pub fn getAssetPrefix(
     _: js.JSStringRef,
     _: js.ExceptionRef,
 ) js.JSValueRef {
-    return ZigString.init(VirtualMachine.vm.bundler.options.routes.asset_prefix_path).toValue(ctx.ptr()).asRef();
+    return ZigString.init(VirtualMachine.get().bundler.options.routes.asset_prefix_path).toValue(ctx.ptr()).asRef();
 }
 
 pub fn getArgv(
@@ -468,11 +468,11 @@ pub fn getRoutesDir(
     _: js.JSStringRef,
     _: js.ExceptionRef,
 ) js.JSValueRef {
-    if (!VirtualMachine.vm.bundler.options.routes.routes_enabled or VirtualMachine.vm.bundler.options.routes.dir.len == 0) {
+    if (!VirtualMachine.get().bundler.options.routes.routes_enabled or VirtualMachine.get().bundler.options.routes.dir.len == 0) {
         return js.JSValueMakeUndefined(ctx);
     }
 
-    return ZigString.init(VirtualMachine.vm.bundler.options.routes.dir).toValue(ctx.ptr()).asRef();
+    return ZigString.init(VirtualMachine.get().bundler.options.routes.dir).toValue(ctx.ptr()).asRef();
 }
 
 pub fn getFilePath(ctx: js.JSContextRef, arguments: []const js.JSValueRef, buf: []u8, exception: js.ExceptionRef) ?string {
@@ -495,7 +495,7 @@ pub fn getFilePath(ctx: js.JSContextRef, arguments: []const js.JSValueRef, buf: 
 
         var parts = [_]string{out_slice};
         // This does the equivalent of Node's path.normalize(path.join(cwd, out_slice))
-        var res = VirtualMachine.vm.bundler.fs.absBuf(&parts, buf);
+        var res = VirtualMachine.get().bundler.fs.absBuf(&parts, buf);
 
         return res;
     } else if (js.JSValueIsArray(ctx, value)) {
@@ -536,7 +536,7 @@ pub fn getFilePath(ctx: js.JSContextRef, arguments: []const js.JSValueRef, buf: 
             return null;
         }
 
-        return VirtualMachine.vm.bundler.fs.absBuf(temp_strings_list[0..temp_strings_list_len], buf);
+        return VirtualMachine.get().bundler.fs.absBuf(temp_strings_list[0..temp_strings_list_len], buf);
     } else {
         JSError(getAllocator(ctx), "Expected a file path as a string or an array of strings to be part of a file path.", .{}, ctx, exception);
         return null;
@@ -606,8 +606,8 @@ pub fn readFileAsStringCallback(
         return js.JSValueMakeUndefined(ctx);
     }
 
-    var contents_buf = VirtualMachine.vm.allocator.alloc(u8, stat.size + 2) catch unreachable; // OOM
-    defer VirtualMachine.vm.allocator.free(contents_buf);
+    var contents_buf = VirtualMachine.get().allocator.alloc(u8, stat.size + 2) catch unreachable; // OOM
+    defer VirtualMachine.get().allocator.free(contents_buf);
     const contents_len = file.readAll(contents_buf) catch |err| {
         JSError(getAllocator(ctx), "{s} reading file (\"{s}\")", .{ @errorName(err), path }, ctx, exception);
         return js.JSValueMakeUndefined(ctx);
@@ -646,8 +646,8 @@ pub fn readFileAsBytesCallback(
         return js.JSValueMakeUndefined(ctx);
     }
 
-    var contents_buf = VirtualMachine.vm.allocator.alloc(u8, stat.size + 2) catch unreachable; // OOM
-    errdefer VirtualMachine.vm.allocator.free(contents_buf);
+    var contents_buf = VirtualMachine.get().allocator.alloc(u8, stat.size + 2) catch unreachable; // OOM
+    errdefer VirtualMachine.get().allocator.free(contents_buf);
     const contents_len = file.readAll(contents_buf) catch |err| {
         JSError(getAllocator(ctx), "{s} reading file (\"{s}\")", .{ @errorName(err), path }, ctx, exception);
         if (true) @panic("todo??");
@@ -656,10 +656,10 @@ pub fn readFileAsBytesCallback(
 
     contents_buf[contents_len] = 0;
 
-    var marked_array_buffer = VirtualMachine.vm.allocator.create(MarkedArrayBuffer) catch unreachable;
+    var marked_array_buffer = VirtualMachine.get().allocator.create(MarkedArrayBuffer) catch unreachable;
     marked_array_buffer.* = MarkedArrayBuffer.fromBytes(
         contents_buf[0..contents_len],
-        VirtualMachine.vm.allocator,
+        VirtualMachine.get().allocator,
         .Uint8Array,
     );
 
@@ -674,9 +674,9 @@ pub fn getRouteFiles(
     _: []const js.JSValueRef,
     _: js.ExceptionRef,
 ) js.JSValueRef {
-    if (VirtualMachine.vm.bundler.router == null) return js.JSObjectMakeArray(ctx, 0, null, null);
+    if (VirtualMachine.get().bundler.router == null) return js.JSObjectMakeArray(ctx, 0, null, null);
 
-    const router = &VirtualMachine.vm.bundler.router.?;
+    const router = &VirtualMachine.get().bundler.router.?;
     const list = router.getPublicPaths() catch unreachable;
 
     for (routes_list_strings[0..@min(list.len, routes_list_strings.len)]) |_, i| {
@@ -695,9 +695,9 @@ pub fn getRouteNames(
     _: []const js.JSValueRef,
     _: js.ExceptionRef,
 ) js.JSValueRef {
-    if (VirtualMachine.vm.bundler.router == null) return js.JSObjectMakeArray(ctx, 0, null, null);
+    if (VirtualMachine.get().bundler.router == null) return js.JSObjectMakeArray(ctx, 0, null, null);
 
-    const router = &VirtualMachine.vm.bundler.router.?;
+    const router = &VirtualMachine.get().bundler.router.?;
     const list = router.getNames() catch unreachable;
 
     for (routes_list_strings[0..@min(list.len, routes_list_strings.len)]) |_, i| {
@@ -717,7 +717,7 @@ pub fn openInEditor(
     args: []const js.JSValueRef,
     exception: js.ExceptionRef,
 ) js.JSValueRef {
-    var edit = &VirtualMachine.vm.rareData().editor_context;
+    var edit = &VirtualMachine.get().rareData().editor_context;
 
     var arguments = JSC.Node.ArgumentsSlice.from(ctx.bunVM(), args);
     defer arguments.deinit();
@@ -739,7 +739,7 @@ pub fn openInEditor(
                 if (!strings.eqlLong(prev_name, sliced.slice(), true)) {
                     var prev = edit.*;
                     edit.name = sliced.slice();
-                    edit.detectEditor(VirtualMachine.vm.bundler.env);
+                    edit.detectEditor(VirtualMachine.get().bundler.env);
                     editor_choice = edit.editor;
                     if (editor_choice == null) {
                         edit.* = prev;
@@ -763,7 +763,7 @@ pub fn openInEditor(
     }
 
     const editor = editor_choice orelse edit.editor orelse brk: {
-        edit.autoDetectEditor(VirtualMachine.vm.bundler.env);
+        edit.autoDetectEditor(VirtualMachine.get().bundler.env);
         if (edit.editor == null) {
             JSC.JSError(bun.default_allocator, "Failed to auto-detect editor", .{}, ctx, exception);
             return null;
@@ -820,14 +820,14 @@ pub fn readFileAsString(
 }
 
 pub fn getPublicPath(to: string, origin: URL, comptime Writer: type, writer: Writer) void {
-    return getPublicPathWithAssetPrefix(to, VirtualMachine.vm.bundler.fs.top_level_dir, origin, VirtualMachine.vm.bundler.options.routes.asset_prefix_path, comptime Writer, writer);
+    return getPublicPathWithAssetPrefix(to, VirtualMachine.get().bundler.fs.top_level_dir, origin, VirtualMachine.get().bundler.options.routes.asset_prefix_path, comptime Writer, writer);
 }
 
 pub fn getPublicPathWithAssetPrefix(to: string, dir: string, origin: URL, asset_prefix: string, comptime Writer: type, writer: Writer) void {
     const relative_path = if (strings.hasPrefix(to, dir))
         strings.withoutTrailingSlash(to[dir.len..])
     else
-        VirtualMachine.vm.bundler.fs.relative(dir, to);
+        VirtualMachine.get().bundler.fs.relative(dir, to);
     if (origin.isAbsolute()) {
         if (strings.hasPrefix(relative_path, "..") or strings.hasPrefix(relative_path, "./")) {
             writer.writeAll(origin.origin) catch return;
@@ -835,7 +835,7 @@ pub fn getPublicPathWithAssetPrefix(to: string, dir: string, origin: URL, asset_
             if (std.fs.path.isAbsolute(to)) {
                 writer.writeAll(to) catch return;
             } else {
-                writer.writeAll(VirtualMachine.vm.bundler.fs.abs(&[_]string{to})) catch return;
+                writer.writeAll(VirtualMachine.get().bundler.fs.abs(&[_]string{to})) catch return;
             }
         } else {
             origin.joinWrite(
@@ -878,7 +878,7 @@ pub fn createNodeFS(
 ) js.JSValueRef {
     return Node.NodeFSBindings.make(
         ctx,
-        VirtualMachine.vm.nodeFS(),
+        VirtualMachine.get().nodeFS(),
     );
 }
 
@@ -1077,7 +1077,7 @@ pub fn getPublicPathJS(
 
     var stream = std.io.fixedBufferStream(&public_path_temp_str);
     var writer = stream.writer();
-    getPublicPath(to, VirtualMachine.vm.origin, @TypeOf(&writer), &writer);
+    getPublicPath(to, VirtualMachine.get().origin, @TypeOf(&writer), &writer);
 
     return ZigString.init(stream.buffer[0..stream.pos]).toValueGC(ctx.ptr()).asObjectRef();
 }
@@ -1398,7 +1398,7 @@ pub const Crypto = struct {
             ) JSC.JSValue {
                 var output_digest_buf: Hasher.Digest = undefined;
 
-                Hasher.hash(input.slice(), &output_digest_buf, JSC.VirtualMachine.vm.rareData().boringEngine());
+                Hasher.hash(input.slice(), &output_digest_buf, JSC.VirtualMachine.get().rareData().boringEngine());
 
                 return encoding.encodeWithSize(globalThis, Hasher.digest, &output_digest_buf);
             }
@@ -1419,7 +1419,7 @@ pub const Crypto = struct {
                     output_digest_slice = bytes[0..Hasher.digest];
                 }
 
-                Hasher.hash(input.slice(), output_digest_slice, JSC.VirtualMachine.vm.rareData().boringEngine());
+                Hasher.hash(input.slice(), output_digest_slice, JSC.VirtualMachine.get().rareData().boringEngine());
 
                 if (output) |output_buf| {
                     return output_buf.value;
@@ -1560,7 +1560,7 @@ pub const Crypto = struct {
             }
 
             pub fn finalize(this: *@This()) callconv(.C) void {
-                VirtualMachine.vm.allocator.destroy(this);
+                VirtualMachine.get().allocator.destroy(this);
             }
         };
     }
@@ -1583,7 +1583,7 @@ pub fn nanoseconds(
     _: []const JSC.C.JSValueRef,
     _: JSC.C.ExceptionRef,
 ) JSC.C.JSValueRef {
-    const ns = JSC.VirtualMachine.vm.origin_timer.read();
+    const ns = JSC.VirtualMachine.get().origin_timer.read();
     return JSC.JSValue.jsNumberFromUint64(ns).asObjectRef();
 }
 
@@ -2327,8 +2327,8 @@ pub const Timer = struct {
     );
 
     pub fn getNextID() callconv(.C) i32 {
-        VirtualMachine.vm.timer.last_id +%= 1;
-        return VirtualMachine.vm.timer.last_id;
+        VirtualMachine.get().timer.last_id +%= 1;
+        return VirtualMachine.get().timer.last_id;
     }
 
     const uws = @import("bun").uws;
@@ -2477,7 +2477,7 @@ pub const Timer = struct {
 
             // use the threadlocal despite being slow on macOS
             // to handle the timeout being cancelled after already enqueued
-            var vm = JSC.VirtualMachine.vm;
+            var vm = JSC.VirtualMachine.get();
 
             const repeats = timer_id.repeat > 0;
 
@@ -2674,7 +2674,7 @@ pub const Timer = struct {
     pub fn clearTimer(timer_id: JSValue, _: *JSGlobalObject, repeats: bool) void {
         JSC.markBinding(@src());
 
-        var map = if (repeats) &VirtualMachine.vm.timer.interval_map else &VirtualMachine.vm.timer.timeout_map;
+        var map = if (repeats) &VirtualMachine.get().timer.interval_map else &VirtualMachine.get().timer.timeout_map;
         const id: Timeout.ID = .{
             .id = timer_id.toInt32(),
             .repeat = @as(u32, @boolToInt(repeats)),
@@ -3431,7 +3431,7 @@ pub const EnvironmentVariables = struct {
 };
 
 export fn Bun__reportError(_: *JSGlobalObject, err: JSC.JSValue) void {
-    JSC.VirtualMachine.vm.runErrorHandler(err, null);
+    JSC.VirtualMachine.get().runErrorHandler(err, null);
 }
 
 comptime {
@@ -3499,7 +3499,7 @@ pub const JSZlib = struct {
         }
 
         var compressed = buffer.slice();
-        const allocator = JSC.VirtualMachine.vm.allocator;
+        const allocator = JSC.VirtualMachine.get().allocator;
         var list = std.ArrayListUnmanaged(u8).initCapacity(allocator, if (compressed.len > 512) compressed.len else 32) catch unreachable;
         var reader = zlib.ZlibCompressorArrayList.init(compressed, &list, allocator, opts) catch |err| {
             if (err == error.InvalidArgument) {
@@ -3529,7 +3529,7 @@ pub const JSZlib = struct {
         buffer: JSC.Node.StringOrBuffer,
     ) JSValue {
         var compressed = buffer.slice();
-        const allocator = JSC.VirtualMachine.vm.allocator;
+        const allocator = JSC.VirtualMachine.get().allocator;
         var list = std.ArrayListUnmanaged(u8).initCapacity(allocator, if (compressed.len > 512) compressed.len else 32) catch unreachable;
         var reader = zlib.ZlibReaderArrayList.initWithOptions(compressed, &list, allocator, .{
             .windowBits = -15,
@@ -3561,7 +3561,7 @@ pub const JSZlib = struct {
         buffer: JSC.Node.StringOrBuffer,
     ) JSValue {
         var compressed = buffer.slice();
-        const allocator = JSC.VirtualMachine.vm.allocator;
+        const allocator = JSC.VirtualMachine.get().allocator;
         var list = std.ArrayListUnmanaged(u8).initCapacity(allocator, if (compressed.len > 512) compressed.len else 32) catch unreachable;
         var reader = zlib.ZlibReaderArrayList.init(compressed, &list, allocator) catch |err| {
             if (err == error.InvalidArgument) {

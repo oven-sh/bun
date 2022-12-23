@@ -4967,7 +4967,7 @@ pub const Body = struct {
                         // we have to use the default allocator
                         // even if it was actually allocated on a different thread
                         bun.default_allocator,
-                        JSC.VirtualMachine.vm.global,
+                        JSC.VirtualMachine.get().global,
                     );
                     if (this.InternalBlob.was_string) {
                         new_blob.content_type = MimeType.text.value;
@@ -4981,7 +4981,7 @@ pub const Body = struct {
                 //     const new_blob = Blob.create(
                 //         cloned[0..this.InlineBlob.len],
                 //         bun.default_allocator,
-                //         JSC.VirtualMachine.vm.global,
+                //         JSC.VirtualMachine.get().global,
                 //         this.InlineBlob.was_string,
                 //     );
 
@@ -5092,7 +5092,7 @@ pub const Body = struct {
             }
 
             if (tag == .Error) {
-                JSC.C.JSValueUnprotect(VirtualMachine.vm.global, this.Error.asObjectRef());
+                JSC.C.JSValueUnprotect(VirtualMachine.get().global, this.Error.asObjectRef());
             }
         }
 
@@ -5758,7 +5758,7 @@ pub const FetchEvent = struct {
     pub fn finalize(
         this: *FetchEvent,
     ) void {
-        VirtualMachine.vm.allocator.destroy(this);
+        VirtualMachine.get().allocator.destroy(this);
     }
 
     pub fn getClient(
@@ -5879,15 +5879,15 @@ pub const FetchEvent = struct {
         };
 
         defer {
-            if (!VirtualMachine.vm.had_errors) {
+            if (!VirtualMachine.get().had_errors) {
                 Output.printElapsed(@intToFloat(f64, (request_context.timer.lap())) / std.time.ns_per_ms);
 
                 Output.prettyError(
                     " <b>{s}<r><d> - <b>{d}<r> <d>transpiled, <d><b>{d}<r> <d>imports<r>\n",
                     .{
                         request_context.matched_route.?.name,
-                        VirtualMachine.vm.transpiled_count,
-                        VirtualMachine.vm.resolved_count,
+                        VirtualMachine.get().transpiled_count,
+                        VirtualMachine.get().resolved_count,
                     },
                 );
             }

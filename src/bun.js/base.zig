@@ -3178,7 +3178,7 @@ pub const PollRef = struct {
 
     /// Make calling ref() on this poll into a no-op.
     pub fn disable(this: *PollRef) void {
-        this.unref(JSC.VirtualMachine.vm);
+        this.unref(JSC.VirtualMachine.get());
         this.status = .done;
     }
 
@@ -3315,7 +3315,7 @@ pub const FilePoll = struct {
     }
 
     pub fn deinit(this: *FilePoll) void {
-        var vm = JSC.VirtualMachine.vm;
+        var vm = JSC.VirtualMachine.get();
         this.deinitWithVM(vm);
     }
 

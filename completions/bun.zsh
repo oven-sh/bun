@@ -629,5 +629,8 @@ __bun_dynamic_comp() {
     return $comp
 }
 
-autoload -U compinit && compinit
+if ! command -v compinit >/dev/null; then
+    autoload -U compinit && compinit
+fi
+
 compdef _bun bun

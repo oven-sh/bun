@@ -412,47 +412,48 @@ pub const Tree = struct {
             .packages = .{},
         });
 
-        var list_slice = builder.list.slice();
-        var trees = list_slice.items(.tree);
-        var package_lists = list_slice.items(.packages);
-        var next: *Tree = &trees[builder.list.len - 1];
+        const list_slice = builder.list.slice();
+        const trees = list_slice.items(.tree);
+        const package_lists = list_slice.items(.packages);
+        const next: *Tree = &trees[builder.list.len - 1];
 
         const resolution_list = builder.resolution_lists[package_id];
         const resolutions: []const PackageID = resolution_list.get(builder.resolutions);
-        if (resolutions.len == 0) {
-            return;
-        }
-        const dependencies: []const Dependency = builder.dependencies[resolution_list.off .. resolution_list.off + resolution_list.len];
 
-        const max_package_id = builder.name_hashes.len;
+        if (resolutions.len == 0) return;
+
+        const name_hashes: []const PackageNameHash = builder.name_hashes;
+        const max_package_id = name_hashes.len;
+        const dependencies: []const Dependency = builder.dependencies[resolution_list.off .. resolution_list.off + resolution_list.len];
 
         for (resolutions) |pid, j| {
             // Do not download/install "peerDependencies"
             if (pid >= max_package_id or dependencies[j].behavior.isPeer()) continue;
 
-            const destination = next.addDependency(true, pid, builder, package_lists, trees, builder.allocator);
+            const destination = next.addDependency(true, pid, name_hashes, package_lists, trees, builder.allocator);
             switch (destination) {
                 Tree.dependency_loop => return error.DependencyLoop,
                 Tree.hoisted => continue,
-                else => {},
-            }
-
-            if (builder.resolution_lists[pid].len > 0) {
-                try builder.queue.writeItem([2]PackageID{ pid, destination });
+                else => if (builder.resolution_lists[pid].len > 0) {
+                    try builder.queue.writeItem([2]PackageID{ pid, destination });
+                },
             }
         }
     }
 
+    // This function does one of three things:
+    // - de-duplicate (skip) the package
+    // - move the package to the top directory
+    // - leave the package at the same (relative) directory
     pub fn addDependency(
         this: *Tree,
         comptime as_defined: bool,
         package_id: PackageID,
-        builder: *Builder,
+        name_hashes: []const PackageNameHash,
         lists: []Lockfile.PackageIDList,
         trees: []Tree,
         allocator: std.mem.Allocator,
     ) Id {
-        const name_hashes = builder.name_hashes;
         const name_hash = name_hashes[package_id];
         const this_packages = this.packages.get(lists[this.id].items);
 
@@ -466,38 +467,12 @@ pub const Tree = struct {
             const id = trees[this.parent].addDependency(
                 false,
                 package_id,
-                builder,
+                name_hashes,
                 lists,
                 trees,
                 allocator,
             );
-            switch (id) {
-                // If there is a dependency loop, we've reached the highest point
-                // Therefore, we resolve the dependency loop by appending to ourself
-                Tree.dependency_loop => brk: {
-                    if (as_defined) break :brk;
-
-                    // As we try to move package up directory levels, make sure
-                    // previously placed packages still resolve to their stated
-                    // dependency versions
-                    const max_package_id = name_hashes.len;
-                    const resolution_list = builder.resolution_lists[this.package_id];
-                    const resolutions: []const PackageID = resolution_list.get(builder.resolutions);
-
-                    if (resolutions.len == 0) break :brk;
-
-                    for (resolutions) |pid| {
-                        // Here we take "peerDependencies" into account to avoid
-                        // potential versioning conflicts
-                        if (pid >= max_package_id) continue;
-                        if (name_hashes[pid] == name_hash and pid != package_id) {
-                            return dependency_loop;
-                        }
-                    }
-                },
-                Tree.hoisted => return hoisted,
-                else => return id,
-            }
+            if (!as_defined or id != dependency_loop) return id;
         }
 
         lists[this.id].append(allocator, package_id) catch unreachable;

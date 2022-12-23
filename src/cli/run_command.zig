@@ -178,6 +178,20 @@ pub const RunCommand = struct {
                                 }
                             }
                         }
+
+                        const npx_i = entry_i + "px ".len;
+                        if (npx_i < script.len) {
+                            const base = script[start..];
+                            if (base.len > "px ".len) {
+                                const remainder = base[0.."px ".len];
+                                if (strings.eqlComptimeIgnoreLen(remainder, "px ")) {
+                                    try copy_script.appendSlice("bunx" ++ " ");
+                                    entry_i += remainder.len;
+                                    delimiter = 0;
+                                    continue;
+                                }
+                            }
+                        }
                     }
 
                     delimiter = 0;

@@ -199,8 +199,34 @@ pub const PackageManagerCommand = struct {
             // TODO: find max depth beforehand
             var more_packages = [_]bool{false} ** 16;
             if (first_directory.packages.len > 1) more_packages[0] = true;
-            printNodeModulesFolderStructure(&first_directory, null, 0, &directories, lockfile, more_packages);
-            Output.enableBuffering();
+            const recurse = strings.leftHasAnyInRight(args, &.{ "-A", "-a", "--all" });
+
+            if (recurse) {
+                printNodeModulesFolderStructure(&first_directory, null, 0, &directories, lockfile, more_packages);
+                Output.enableBuffering();
+            } else {
+                var cwd_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+                const path = std.os.getcwd(&cwd_buf) catch {
+                    Output.prettyErrorln("<r><red>error<r>: Could not get current working directory", .{});
+                    Global.exit(1);
+                };
+                const package_ids = lockfile.packages.items(.resolutions)[0].get(lockfile.buffers.resolutions.items);
+
+                Output.println("{s} node_modules ({d})", .{ path, package_ids.len });
+                Output.enableBuffering();
+                const string_bytes = lockfile.buffers.string_bytes.items;
+
+                for (package_ids) |package_id, i| {
+                    if (package_id >= lockfile.packages.len) continue;
+
+                    if (i == package_ids.len - 1) {
+                        Output.prettyln("└── {s}<r><d>@{any}<r>\n", .{ names[package_id].slice(string_bytes), lockfile.packages.items(.resolution)[package_id].fmt(string_bytes) });
+                    } else {
+                        Output.prettyln("├── {s}<r><d>@{any}<r>\n", .{ names[package_id].slice(string_bytes), lockfile.packages.items(.resolution)[package_id].fmt(string_bytes) });
+                    }
+                }
+            }
+
             Global.exit(0);
         }
 
@@ -210,6 +236,7 @@ pub const PackageManagerCommand = struct {
             \\  bun pm <b>bin<r>          print the path to bin folder
             \\  bun pm <b>-g bin<r>       print the <b>global<r> path to bin folder
             \\  bun pm <b>ls<r>           list the dependency tree according to the current lockfile
+            \\  bun pm <b>ls --all<r>     list the entire dependency tree according to the current lockfile
             \\  bun pm <b>hash<r>         generate & print the hash of the current lockfile
             \\  bun pm <b>hash-string<r>  print the string used to hash the lockfile
             \\  bun pm <b>hash-print<r>   print the hash stored in the current lockfile

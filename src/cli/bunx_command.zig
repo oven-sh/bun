@@ -365,7 +365,7 @@ pub const BunxCommand = struct {
             },
         }
 
-        absolute_in_cache_dir = std.fmt.bufPrint(&absolute_in_cache_dir_buf, "{s}/{s}", .{ bunx_cache_dir, update_request.name }) catch unreachable;
+        absolute_in_cache_dir = std.fmt.bufPrint(&absolute_in_cache_dir_buf, "{s}/node_modules/.bin/{s}", .{ bunx_cache_dir, update_request.name }) catch unreachable;
 
         // Similar to "npx":
         //

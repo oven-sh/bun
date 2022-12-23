@@ -275,8 +275,10 @@ pub const RunCommand = struct {
         switch (result) {
             .Exited => |code| {
                 if (code > 0) {
-                    Output.prettyErrorln("<r><red>error<r><d>:<r> script <b>\"{s}\"<r> exited with {any}<r>", .{ name, bun.SignalCode.from(code) });
-                    Output.flush();
+                    if (code != 2) {
+                        Output.prettyErrorln("<r><red>error<r><d>:<r> script <b>\"{s}\"<r> exited with {any}<r>", .{ name, bun.SignalCode.from(code) });
+                        Output.flush();
+                    }
 
                     Global.exit(code);
                 }
@@ -343,12 +345,14 @@ pub const RunCommand = struct {
         };
         switch (result) {
             .Exited => |sig| {
-                if (sig > 0)
+                // 2 is SIGINT, which is CTRL + C so that's kind of annoying to show
+                if (sig > 0 and sig != 2)
                     Output.prettyErrorln("<r><red>error<r><d>:<r> \"<b>{s}<r>\" exited with <b>{any}<r>", .{ std.fs.path.basename(executable), bun.SignalCode.from(sig) });
                 Global.exit(sig);
             },
             .Signal => |sig| {
-                if (sig > 0) {
+                // 2 is SIGINT, which is CTRL + C so that's kind of annoying to show
+                if (sig > 0 and sig != 2) {
                     Output.prettyErrorln("<r><red>error<r><d>:<r> \"<b>{s}<r>\" exited with <b>{any}<r>", .{ std.fs.path.basename(executable), bun.SignalCode.from(sig) });
                 }
                 Global.exit(std.mem.asBytes(&sig)[0]);

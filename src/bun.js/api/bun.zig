@@ -2341,6 +2341,7 @@ pub const Timer = struct {
         ref: JSC.Ref = JSC.Ref.init(),
         globalThis: *JSC.JSGlobalObject,
         callback: JSC.Strong = .{},
+        arguments: JSC.Strong = .{},
         repeat: bool = false,
 
         pub const Task = JSC.AnyTask.New(CallbackJob, perform);
@@ -2370,6 +2371,7 @@ pub const Timer = struct {
 
         pub fn deinit(this: *CallbackJob) void {
             this.callback.deinit();
+            this.arguments.deinit();
             this.ref.unref(this.globalThis.bunVM());
             bun.default_allocator.destroy(this);
         }
@@ -2396,9 +2398,34 @@ pub const Timer = struct {
                 }
             }
 
-            const callback = this.callback.get() orelse @panic("Expected CallbackJob to have a callback function");
+            var args_buf: [8]JSC.JSValue = undefined;
+            var args: []JSC.JSValue = &.{};
+            var args_needs_deinit = false;
+            defer if (args_needs_deinit) bun.default_allocator.free(args);
 
-            const result = callback.call(globalThis, &.{});
+            const callback = this.callback.get() orelse @panic("Expected CallbackJob to have a callback function");
+            if (this.arguments.trySwap()) |arguments| {
+                const count = arguments.getLengthOfArray(globalThis);
+                if (count > 0) {
+                    if (count > args_buf.len) {
+                        args = bun.default_allocator.alloc(JSC.JSValue, count) catch unreachable;
+                        args_needs_deinit = true;
+                    } else {
+                        args = args_buf[0..count];
+                    }
+                    var arg = args.ptr;
+                    var i: u32 = 0;
+                    while (i < count) : (i += 1) {
+                        arg[0] = JSC.JSObject.getIndex(arguments, globalThis, @truncate(u32, i));
+                        arg += 1;
+                    }
+                }
+            }
+
+            const result = callback.callWithGlobalThis(
+                globalThis,
+                args,
+            );
 
             if (result.isEmptyOrUndefinedOrNull() or !result.isCell()) {
                 this.deinit();
@@ -2436,6 +2463,7 @@ pub const Timer = struct {
         globalThis: *JSC.JSGlobalObject,
         timer: *uws.Timer,
         poll_ref: JSC.PollRef = JSC.PollRef.init(),
+        arguments: JSC.Strong = .{},
 
         // this is sized to be the same as one pointer
         pub const ID = extern struct {
@@ -2479,6 +2507,21 @@ pub const Timer = struct {
                     )
                 else
                     this.callback,
+                .arguments = if (repeats and this.arguments.has())
+                    JSC.Strong.create(
+                        this.arguments.get() orelse {
+                            // if the arguments freed, that's an error
+                            if (comptime Environment.allow_assert)
+                                unreachable;
+
+                            this.deinit();
+                            _ = map.swapRemove(timer_id.id);
+                            return;
+                        },
+                        globalThis,
+                    )
+                else
+                    this.arguments,
                 .globalThis = globalThis,
                 .id = timer_id.id,
                 .repeat = timer_id.repeat > 0,
@@ -2489,6 +2532,7 @@ pub const Timer = struct {
             //  - reuse the JSC.Strong
             if (!repeats) {
                 this.callback = .{};
+                this.arguments = .{};
                 map.put(vm.allocator, timer_id.id, null) catch unreachable;
                 this.deinit();
             }
@@ -2508,9 +2552,11 @@ pub const Timer = struct {
             JSC.markBinding(@src());
 
             var vm = this.globalThis.bunVM();
+
             this.poll_ref.unref(vm);
             this.timer.deinit();
             this.callback.deinit();
+            this.arguments.deinit();
         }
     };
 
@@ -2519,6 +2565,7 @@ pub const Timer = struct {
         globalThis: *JSGlobalObject,
         callback: JSValue,
         countdown: JSValue,
+        arguments_array_or_zero: JSValue,
         repeat: bool,
     ) !void {
         JSC.markBinding(@src());
@@ -2546,6 +2593,10 @@ pub const Timer = struct {
                 .repeat = false,
             };
 
+            if (arguments_array_or_zero != .zero) {
+                cb.arguments = JSC.Strong.create(arguments_array_or_zero, globalThis);
+            }
+
             var job = vm.allocator.create(CallbackJob) catch @panic(
                 "Out of memory while allocating Timeout",
             );
@@ -2571,6 +2622,10 @@ pub const Timer = struct {
             ),
         };
 
+        if (arguments_array_or_zero != .zero) {
+            timeout.arguments = JSC.Strong.create(arguments_array_or_zero, globalThis);
+        }
+
         timeout.poll_ref.ref(vm);
         map.put(vm.allocator, id, timeout) catch unreachable;
 
@@ -2589,12 +2644,13 @@ pub const Timer = struct {
         globalThis: *JSGlobalObject,
         callback: JSValue,
         countdown: JSValue,
+        arguments: JSValue,
     ) callconv(.C) JSValue {
         JSC.markBinding(@src());
         const id = globalThis.bunVM().timer.last_id;
         globalThis.bunVM().timer.last_id +%= 1;
 
-        Timer.set(id, globalThis, callback, countdown, false) catch
+        Timer.set(id, globalThis, callback, countdown, arguments, false) catch
             return JSValue.jsUndefined();
 
         return JSValue.jsNumberWithType(i32, id);
@@ -2603,12 +2659,13 @@ pub const Timer = struct {
         globalThis: *JSGlobalObject,
         callback: JSValue,
         countdown: JSValue,
+        arguments: JSValue,
     ) callconv(.C) JSValue {
         JSC.markBinding(@src());
         const id = globalThis.bunVM().timer.last_id;
         globalThis.bunVM().timer.last_id +%= 1;
 
-        Timer.set(id, globalThis, callback, countdown, true) catch
+        Timer.set(id, globalThis, callback, countdown, arguments, true) catch
             return JSValue.jsUndefined();
 
         return JSValue.jsNumberWithType(i32, id);

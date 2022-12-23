@@ -3482,6 +3482,10 @@ pub const PackageManager = struct {
         native_bin_link_allowlist: []const PackageNameHash = &default_native_bin_link_allowlist,
         max_retry_count: u16 = 5,
 
+        pub fn shouldPrintCommandName(this: *const Options) bool {
+            return this.log_level != .silent and this.do.summary;
+        }
+
         pub fn isBinPathInPATH(this: *const Options) bool {
             // must be absolute
             if (this.bin_path[0] != std.fs.path.sep) return false;
@@ -3852,6 +3856,10 @@ pub const PackageManager = struct {
                     this.do.save_lockfile = false;
                 }
 
+                if (cli.no_summary) {
+                    this.do.summary = false;
+                }
+
                 if (cli.no_cache) {
                     this.enable.manifest_cache = false;
                     this.enable.manifest_cache_control = false;
@@ -3939,6 +3947,7 @@ pub const PackageManager = struct {
             save_yarn_lock: bool = false,
             print_meta_hash_string: bool = false,
             verify_integrity: bool = true,
+            summary: bool = true,
         };
 
         pub const Enable = struct {
@@ -4486,7 +4495,7 @@ pub const PackageManager = struct {
             unreachable;
         };
 
-        if (manager.options.log_level != .silent) {
+        if (manager.options.shouldPrintCommandName()) {
             Output.prettyErrorln("<r><b>bun link <r><d>v" ++ Global.package_json_version_with_sha ++ "<r>\n", .{});
             Output.flush();
         }
@@ -4636,7 +4645,7 @@ pub const PackageManager = struct {
             unreachable;
         };
 
-        if (manager.options.log_level != .silent) {
+        if (manager.options.shouldPrintCommandName()) {
             Output.prettyErrorln("<r><b>bun unlink <r><d>v" ++ Global.package_json_version_with_sha ++ "<r>\n", .{});
             Output.flush();
         }
@@ -4761,6 +4770,7 @@ pub const PackageManager = struct {
         clap.parseParam("--silent                          Don't log anything") catch unreachable,
         clap.parseParam("--verbose                         Excessively verbose logging") catch unreachable,
         clap.parseParam("--no-progress                     Disable the progress bar") catch unreachable,
+        clap.parseParam("--no-summary                      Don't print a summary") catch unreachable,
         clap.parseParam("--no-verify                       Skip verifying integrity of newly downloaded packages") catch unreachable,
         clap.parseParam("--ignore-scripts                  Skip lifecycle scripts in the project's package.json (dependency scripts are never run)") catch unreachable,
         clap.parseParam("-g, --global                      Install globally") catch unreachable,
@@ -4822,6 +4832,7 @@ pub const PackageManager = struct {
         no_progress: bool = false,
         no_verify: bool = false,
         ignore_scripts: bool = false,
+        no_summary: bool = false,
 
         link_native_bins: []const string = &[_]string{},
 
@@ -4885,6 +4896,7 @@ pub const PackageManager = struct {
             cli.silent = args.flag("--silent");
             cli.verbose = args.flag("--verbose");
             cli.ignore_scripts = args.flag("--ignore-scripts");
+            cli.no_summary = args.flag("--no-summary");
             if (comptime @TypeOf(args).hasFlag("--save")) {
                 cli.no_save = true;
 
@@ -5098,7 +5110,7 @@ pub const PackageManager = struct {
             unreachable;
         };
 
-        if (manager.options.log_level != .silent) {
+        if (manager.options.shouldPrintCommandName()) {
             Output.prettyErrorln("<r><b>bun " ++ @tagName(op) ++ " <r><d>v" ++ Global.package_json_version_with_sha ++ "<r>\n", .{});
             Output.flush();
         }
@@ -5504,7 +5516,7 @@ pub const PackageManager = struct {
             return err;
         };
 
-        if (manager.options.log_level != .silent) {
+        if (manager.options.shouldPrintCommandName()) {
             Output.prettyErrorln("<r><b>bun install <r><d>v" ++ Global.package_json_version_with_sha ++ "<r>\n", .{});
             Output.flush();
         }
@@ -6591,139 +6603,146 @@ pub const PackageManager = struct {
             }
         }
 
+        var printed_timestamp = false;
         if (comptime log_level != .silent) {
-            var printer = Lockfile.Printer{
-                .lockfile = manager.lockfile,
-                .options = manager.options,
-                .updates = manager.package_json_updates,
-                .successfully_installed = install_summary.successfully_installed,
-            };
+            if (manager.options.do.summary) {
+                var printer = Lockfile.Printer{
+                    .lockfile = manager.lockfile,
+                    .options = manager.options,
+                    .updates = manager.package_json_updates,
+                    .successfully_installed = install_summary.successfully_installed,
+                };
 
-            if (Output.enable_ansi_colors) {
-                try Lockfile.Printer.Tree.print(&printer, Output.WriterType, Output.writer(), true);
-            } else {
-                try Lockfile.Printer.Tree.print(&printer, Output.WriterType, Output.writer(), false);
-            }
-
-            if (!did_meta_hash_change) {
-                manager.summary.remove = 0;
-                manager.summary.add = 0;
-                manager.summary.update = 0;
-            }
-
-            var printed_timestamp = false;
-            if (install_summary.success > 0) {
-                // it's confusing when it shows 3 packages and says it installed 1
-                Output.pretty("\n <green>{d}<r> packages<r> installed ", .{@max(
-                    install_summary.success,
-                    @truncate(
-                        u32,
-                        manager.package_json_updates.len,
-                    ),
-                )});
-                Output.printStartEndStdout(ctx.start_time, std.time.nanoTimestamp());
-                printed_timestamp = true;
-                Output.pretty("<r>\n", .{});
-
-                if (manager.summary.remove > 0) {
-                    Output.pretty("  Removed: <cyan>{d}<r>\n", .{manager.summary.remove});
+                if (Output.enable_ansi_colors) {
+                    try Lockfile.Printer.Tree.print(&printer, Output.WriterType, Output.writer(), true);
+                } else {
+                    try Lockfile.Printer.Tree.print(&printer, Output.WriterType, Output.writer(), false);
                 }
-            } else if (manager.summary.remove > 0) {
-                if (manager.to_remove.len > 0) {
-                    for (manager.to_remove) |update| {
-                        Output.prettyln(" <r><red>-<r> {s}", .{update.name});
+
+                if (!did_meta_hash_change) {
+                    manager.summary.remove = 0;
+                    manager.summary.add = 0;
+                    manager.summary.update = 0;
+                }
+
+                if (install_summary.success > 0) {
+                    // it's confusing when it shows 3 packages and says it installed 1
+                    Output.pretty("\n <green>{d}<r> packages<r> installed ", .{@maximum(
+                        install_summary.success,
+                        @truncate(
+                            u32,
+                            manager.package_json_updates.len,
+                        ),
+                    )});
+                    Output.printStartEndStdout(ctx.start_time, std.time.nanoTimestamp());
+                    printed_timestamp = true;
+                    Output.pretty("<r>\n", .{});
+
+                    if (manager.summary.remove > 0) {
+                        Output.pretty("  Removed: <cyan>{d}<r>\n", .{manager.summary.remove});
+                    }
+                } else if (manager.summary.remove > 0) {
+                    if (manager.to_remove.len > 0) {
+                        for (manager.to_remove) |update| {
+                            Output.prettyln(" <r><red>-<r> {s}", .{update.name});
+                        }
+                    }
+
+                    Output.pretty("\n <r><b>{d}<r> packages removed ", .{manager.summary.remove});
+                    Output.printStartEndStdout(ctx.start_time, std.time.nanoTimestamp());
+                    printed_timestamp = true;
+                    Output.pretty("<r>\n", .{});
+                } else if (install_summary.skipped > 0 and install_summary.fail == 0 and manager.package_json_updates.len == 0) {
+                    Output.pretty("\n", .{});
+
+                    const count = @truncate(PackageID, manager.lockfile.packages.len);
+                    if (count != install_summary.skipped) {
+                        Output.pretty("Checked <green>{d} installs<r> across {d} packages <d>(no changes)<r> ", .{
+                            install_summary.skipped,
+                            count,
+                        });
+                        Output.printStartEndStdout(ctx.start_time, std.time.nanoTimestamp());
+                        printed_timestamp = true;
+                        Output.pretty("<r>\n", .{});
+                    } else {
+                        Output.pretty("<r> <green>Done<r>! Checked {d} packages<r> <d>(no changes)<r> ", .{
+                            install_summary.skipped,
+                        });
+                        Output.printStartEndStdout(ctx.start_time, std.time.nanoTimestamp());
+                        printed_timestamp = true;
+                        Output.pretty("<r>\n", .{});
                     }
                 }
 
-                Output.pretty("\n <r><b>{d}<r> packages removed ", .{manager.summary.remove});
-                Output.printStartEndStdout(ctx.start_time, std.time.nanoTimestamp());
-                printed_timestamp = true;
-                Output.pretty("<r>\n", .{});
-            } else if (install_summary.skipped > 0 and install_summary.fail == 0 and manager.package_json_updates.len == 0) {
-                Output.pretty("\n", .{});
-
-                const count = @truncate(PackageID, manager.lockfile.packages.len);
-                if (count != install_summary.skipped) {
-                    Output.pretty("Checked <green>{d} installs<r> across {d} packages <d>(no changes)<r> ", .{
-                        install_summary.skipped,
-                        count,
-                    });
-                    Output.printStartEndStdout(ctx.start_time, std.time.nanoTimestamp());
-                    printed_timestamp = true;
-                    Output.pretty("<r>\n", .{});
-                } else {
-                    Output.pretty("<r> <green>Done<r>! Checked {d} packages<r> <d>(no changes)<r> ", .{
-                        install_summary.skipped,
-                    });
-                    Output.printStartEndStdout(ctx.start_time, std.time.nanoTimestamp());
-                    printed_timestamp = true;
-                    Output.pretty("<r>\n", .{});
+                if (install_summary.fail > 0) {
+                    Output.prettyln("<r>Failed to install <red><b>{d}<r> packages\n", .{install_summary.fail});
+                    Output.flush();
                 }
-            }
-
-            if (install_summary.fail > 0) {
-                Output.prettyln("<r>Failed to install <red><b>{d}<r> packages\n", .{install_summary.fail});
-                Output.flush();
-            }
-
-            if (run_lifecycle_scripts and install_summary.fail == 0) {
-                // We need to figure out the PATH and other environment variables
-                // to do that, we re-use the code from bun run
-                // this is expensive, it traverses the entire directory tree going up to the root
-                // so we really only want to do it when strictly necessary
-                if (needs_configure_bundler_for_run) {
-                    var this_bundler: bundler.Bundler = undefined;
-                    var ORIGINAL_PATH: string = "";
-                    _ = try RunCommand.configureEnvForRun(
-                        ctx,
-                        &this_bundler,
-                        manager.env,
-                        &ORIGINAL_PATH,
-                        log_level != .silent,
-                        false,
-                    );
-                } else {
-                    // bun install may have installed new bins, so we need to update the PATH
-                    // this can happen if node_modules/.bin didn't previously exist
-                    // note: it is harmless to have the same directory in the PATH multiple times
-                    const current_path: []const u8 = manager.env.map.get("PATH") orelse "/";
-
-                    // TODO: windows
-                    const cwd_without_trailing_slash = if (Fs.FileSystem.instance.top_level_dir.len > 1 and Fs.FileSystem.instance.top_level_dir[Fs.FileSystem.instance.top_level_dir.len - 1] == '/')
-                        Fs.FileSystem.instance.top_level_dir[0 .. Fs.FileSystem.instance.top_level_dir.len - 1]
-                    else
-                        Fs.FileSystem.instance.top_level_dir;
-
-                    try manager.env.map.put("PATH", try std.fmt.allocPrint(
-                        ctx.allocator,
-                        "{s}:{s}/node_modules/.bin",
-                        .{
-                            current_path,
-                            cwd_without_trailing_slash,
-                        },
-                    ));
-                }
-
-                // 1. preinstall
-                // 2. install
-                // 3. postinstall
-                try manager.lockfile.scripts.run(manager.allocator, manager.env, log_level != .silent, "install");
-                try manager.lockfile.scripts.run(manager.allocator, manager.env, log_level != .silent, "postinstall");
-
-                // 4. preprepare
-                // 5. prepare
-                // 6. postprepare
-                try manager.lockfile.scripts.run(manager.allocator, manager.env, log_level != .silent, "preprepare");
-                try manager.lockfile.scripts.run(manager.allocator, manager.env, log_level != .silent, "prepare");
-                try manager.lockfile.scripts.run(manager.allocator, manager.env, log_level != .silent, "postprepare");
-            }
-
-            if (!printed_timestamp) {
-                Output.printStartEndStdout(ctx.start_time, std.time.nanoTimestamp());
-                Output.prettyln("<d> done<r>", .{});
-                printed_timestamp = true;
             }
         }
+
+        if (run_lifecycle_scripts and install_summary.fail == 0) {
+            // We need to figure out the PATH and other environment variables
+            // to do that, we re-use the code from bun run
+            // this is expensive, it traverses the entire directory tree going up to the root
+            // so we really only want to do it when strictly necessary
+            if (needs_configure_bundler_for_run) {
+                var this_bundler: bundler.Bundler = undefined;
+                var ORIGINAL_PATH: string = "";
+                _ = try RunCommand.configureEnvForRun(
+                    ctx,
+                    &this_bundler,
+                    manager.env,
+                    &ORIGINAL_PATH,
+                    log_level != .silent,
+                    false,
+                );
+            } else {
+                // bun install may have installed new bins, so we need to update the PATH
+                // this can happen if node_modules/.bin didn't previously exist
+                // note: it is harmless to have the same directory in the PATH multiple times
+                const current_path = manager.env.map.get("PATH");
+
+                // TODO: windows
+                const cwd_without_trailing_slash = if (Fs.FileSystem.instance.top_level_dir.len > 1 and Fs.FileSystem.instance.top_level_dir[Fs.FileSystem.instance.top_level_dir.len - 1] == '/')
+                    Fs.FileSystem.instance.top_level_dir[0 .. Fs.FileSystem.instance.top_level_dir.len - 1]
+                else
+                    Fs.FileSystem.instance.top_level_dir;
+
+                try manager.env.map.put("PATH", try std.fmt.allocPrint(
+                    ctx.allocator,
+                    "{s}:{s}/node_modules/.bin",
+                    .{
+                        current_path,
+                        cwd_without_trailing_slash,
+                    },
+                ));
+            }
+
+            // 1. preinstall
+            // 2. install
+            // 3. postinstall
+            try manager.lockfile.scripts.run(manager.allocator, manager.env, log_level != .silent, "install");
+            try manager.lockfile.scripts.run(manager.allocator, manager.env, log_level != .silent, "postinstall");
+
+            // 4. preprepare
+            // 5. prepare
+            // 6. postprepare
+            try manager.lockfile.scripts.run(manager.allocator, manager.env, log_level != .silent, "preprepare");
+            try manager.lockfile.scripts.run(manager.allocator, manager.env, log_level != .silent, "prepare");
+            try manager.lockfile.scripts.run(manager.allocator, manager.env, log_level != .silent, "postprepare");
+        }
+
+        if (comptime log_level != .silent) {
+            if (manager.options.do.summary) {
+                if (!printed_timestamp) {
+                    Output.printStartEndStdout(ctx.start_time, std.time.nanoTimestamp());
+                    Output.prettyln("<d> done<r>", .{});
+                    printed_timestamp = true;
+                }
+            }
+        }
+
         Output.flush();
     }
 };

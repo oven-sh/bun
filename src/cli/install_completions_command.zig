@@ -43,14 +43,78 @@ const ShellCompletions = @import("./shell_completions.zig");
 
 pub const InstallCompletionsCommand = struct {
     pub fn testPath(_: string) !std.fs.Dir {}
+
+    fn installBunxSymlink(allocator: std.mem.Allocator, cwd: []const u8) !void {
+        var buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+        const bunx_name = if (Environment.isDebug) "bunx-debug" else "bunx";
+
+        // don't install it if it's already there
+        if (bun.which(&buf, bun.getenvZ("PATH") orelse cwd, cwd, bunx_name) != null)
+            return;
+
+        // first try installing the symlink into the same directory as the bun executable
+        var exe = try std.fs.selfExePathAlloc(allocator);
+        var target_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+        var target = std.fmt.bufPrint(&target_buf, "{s}/" ++ bunx_name, .{std.fs.path.dirname(exe).?}) catch unreachable;
+        std.os.symlink(exe, target) catch {
+            outer: {
+                if (bun.getenvZ("BUN_INSTALL")) |install_dir| {
+                    target = std.fmt.bufPrint(&target_buf, "{s}/bin/" ++ bunx_name, .{install_dir}) catch unreachable;
+                    std.os.symlink(exe, target) catch break :outer;
+                    return;
+                }
+            }
+
+            // if that fails, try $HOME/.bun/bin
+            outer: {
+                if (bun.getenvZ("HOME")) |home_dir| {
+                    target = std.fmt.bufPrint(&target_buf, "{s}/.bun/bin/" ++ bunx_name, .{home_dir}) catch unreachable;
+                    std.os.symlink(exe, target) catch break :outer;
+                    return;
+                }
+            }
+
+            // if that fails, try $HOME/.local/bin
+            outer: {
+                if (bun.getenvZ("HOME")) |home_dir| {
+                    target = std.fmt.bufPrint(&target_buf, "{s}/.local/bin/" ++ bunx_name, .{home_dir}) catch unreachable;
+                    std.os.symlink(exe, target) catch break :outer;
+                    return;
+                }
+            }
+
+            // otherwise...give up?
+
+        };
+    }
+
     pub fn exec(allocator: std.mem.Allocator) !void {
+        // Fail silently on auto-update.
+        const fail_exit_code: u8 = if (bun.getenvZ("IS_BUN_AUTO_UPDATE") == null) 1 else 0;
+
+        var cwd_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+
+        var stdout = std.io.getStdOut();
+
         var shell = ShellCompletions.Shell.unknown;
         if (bun.getenvZ("SHELL")) |shell_name| {
             shell = ShellCompletions.Shell.fromEnv(@TypeOf(shell_name), shell_name);
         }
 
-        // Fail silently on auto-update.
-        const fail_exit_code: u8 = if (bun.getenvZ("IS_BUN_AUTO_UPDATE") == null) 1 else 0;
+        var cwd = std.os.getcwd(&cwd_buf) catch {
+            // don't fail on this if we don't actually need to
+            if (fail_exit_code == 1) {
+                if (!stdout.isTty()) {
+                    try stdout.writeAll(shell.completions());
+                    Global.exit(0);
+                }
+            }
+
+            Output.prettyErrorln("<r><red>error<r>: Could not get current working directory", .{});
+            Global.exit(fail_exit_code);
+        };
+
+        installBunxSymlink(allocator, cwd) catch {};
 
         switch (shell) {
             .unknown => {
@@ -59,8 +123,6 @@ pub const InstallCompletionsCommand = struct {
             },
             else => {},
         }
-
-        var stdout = std.io.getStdOut();
 
         if (bun.getenvZ("IS_BUN_AUTO_UPDATE") == null) {
             if (!stdout.isTty()) {
@@ -71,12 +133,6 @@ pub const InstallCompletionsCommand = struct {
 
         var completions_dir: string = "";
         var output_dir: std.fs.IterableDir = found: {
-            var cwd_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
-            var cwd = std.os.getcwd(&cwd_buf) catch {
-                Output.prettyErrorln("<r><red>error<r>: Could not get current working directory", .{});
-                Global.exit(fail_exit_code);
-            };
-
             for (std.os.argv) |arg, i| {
                 if (strings.eqlComptime(std.mem.span(arg), "completions")) {
                     if (std.os.argv.len > i + 1) {

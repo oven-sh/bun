@@ -6,7 +6,7 @@ const use_mimalloc = @import("bun").use_mimalloc;
 const StringTypes = @import("./string_types.zig");
 const Mimalloc = @import("bun").Mimalloc;
 
-const BASE_VERSION = "0.3";
+const BASE_VERSION = "0.4";
 
 pub const build_id = std.fmt.parseInt(u64, std.mem.trim(u8, @embedFile("./build-id"), "\n \r\t"), 10) catch unreachable;
 pub const package_json_version = if (Environment.isDebug)
@@ -48,7 +48,7 @@ pub inline fn getStartTime() i128 {
 
 pub const version: @import("./install/semver.zig").Version = .{
     .major = 0,
-    .minor = 3,
+    .minor = 4,
     .patch = build_id,
 };
 

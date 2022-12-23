@@ -6,13 +6,20 @@ it("setInterval", async () => {
   const result = await new Promise((resolve, reject) => {
     start = performance.now();
 
-    var id = setInterval(() => {
+    var id = setInterval((...args) => {
       counter++;
       if (counter === 10) {
         resolve(counter);
         clearInterval(id);
       }
-    }, 1);
+      try {
+        expect(args.length).toBe(1);
+        expect(args[0]).toBe("foo");
+      } catch (err) {
+        reject(err);
+        clearInterval(id);
+      }
+    }, 1, "foo");
   });
 
   expect(result).toBe(10);

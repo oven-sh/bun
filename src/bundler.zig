@@ -399,7 +399,7 @@ pub const Bundler = struct {
         this.resolver.allocator = allocator;
     }
 
-    pub inline fn resolveEntryPoint(bundler: *Bundler, entry_point: string) !_resolver.Result {
+    pub inline fn resolveEntryPoint(bundler: *Bundler, entry_point: string) anyerror!_resolver.Result {
         return bundler.resolver.resolve(bundler.fs.top_level_dir, entry_point, .entry_point) catch |err| {
             const has_dot_slash_form = !strings.hasPrefix(entry_point, "./") and brk: {
                 _ = bundler.resolver.resolve(bundler.fs.top_level_dir, try strings.append(bundler.allocator, "./", entry_point), .entry_point) catch break :brk false;
@@ -415,8 +415,6 @@ pub const Bundler = struct {
             } else {
                 bundler.log.addErrorFmt(null, logger.Loc.Empty, bundler.allocator, "{s} resolving \"{s}\" (entry point)", .{ @errorName(err), entry_point }) catch unreachable;
             }
-
-            if (true) @panic("TODO");
 
             return err;
         };

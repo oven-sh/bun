@@ -354,7 +354,7 @@ const _log_fn = fn (comptime fmt: string, args: anytype) void;
 pub fn scoped(comptime tag: @Type(.EnumLiteral), comptime disabled: bool) _log_fn {
     if (comptime !Environment.isDebug) {
         return struct {
-            pub inline fn log(comptime _: string, _: anytype) void {}
+            pub fn log(comptime _: string, _: anytype) void {}
         }.log;
     }
 

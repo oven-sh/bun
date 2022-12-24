@@ -45,6 +45,7 @@ const StringJoiner = @import("../../string_joiner.zig");
 const uws = @import("bun").uws;
 
 pub const Response = struct {
+    const ResponseMixin = BodyMixin(@This());
     pub usingnamespace JSC.Codegen.JSResponse;
 
     allocator: std.mem.Allocator,
@@ -55,6 +56,13 @@ pub const Response = struct {
 
     // We must report a consistent value for this
     reported_estimated_size: ?u63 = null,
+
+    pub const getText = ResponseMixin.getText;
+    pub const getBody = ResponseMixin.getBody;
+    pub const getBodyUsed = ResponseMixin.getBodyUsed;
+    pub const getJSON = ResponseMixin.getJSON;
+    pub const getArrayBuffer = ResponseMixin.getArrayBuffer;
+    pub const getBlob = ResponseMixin.getBlob;
 
     pub fn estimatedSize(this: *Response) callconv(.C) usize {
         return this.reported_estimated_size orelse brk: {
@@ -228,8 +236,6 @@ pub const Response = struct {
         this.cloneInto(new_response, allocator, globalThis);
         return new_response;
     }
-
-    pub usingnamespace BodyMixin(@This());
 
     pub fn getStatus(
         this: *Response,
@@ -5212,7 +5218,15 @@ pub const Request = struct {
     // We must report a consistent value for this
     reported_estimated_size: ?u63 = null,
 
+    const RequestMixin = BodyMixin(@This());
     pub usingnamespace JSC.Codegen.JSRequest;
+
+    pub const getText = RequestMixin.getText;
+    pub const getBody = RequestMixin.getBody;
+    pub const getBodyUsed = RequestMixin.getBodyUsed;
+    pub const getJSON = RequestMixin.getJSON;
+    pub const getArrayBuffer = RequestMixin.getArrayBuffer;
+    pub const getBlob = RequestMixin.getBlob;
 
     pub fn estimatedSize(this: *Request) callconv(.C) usize {
         return this.reported_estimated_size orelse brk: {
@@ -5534,8 +5548,6 @@ pub const Request = struct {
     ) *Body.Value {
         return &this.body;
     }
-
-    pub usingnamespace BodyMixin(@This());
 
     pub fn doClone(
         this: *Request,

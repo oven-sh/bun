@@ -961,6 +961,8 @@ pub const Command = struct {
         "bun",
         "upgrade",
         "discord",
+        "pm",
+        "x",
     };
 
     const reject_list = default_completions_list ++ [_]string{

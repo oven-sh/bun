@@ -279,7 +279,7 @@ pub const BunxCommand = struct {
         if (getBinName(&this_bundler, root_dir_info.getFileDescriptor(), bunx_cache_dir, initial_bin_name)) |package_name_for_bin| {
             // if we check the bin name and its actually the same, we don't need to check $PATH here again
             if (!strings.eqlLong(package_name_for_bin, initial_bin_name, true)) {
-                absolute_in_cache_dir = std.fmt.bufPrint(&absolute_in_cache_dir_buf, "{s}/{s}", .{ bunx_cache_dir, package_name_for_bin }) catch unreachable;
+                absolute_in_cache_dir = std.fmt.bufPrint(&absolute_in_cache_dir_buf, "{s}/node_modules/.bin/{s}", .{ bunx_cache_dir, package_name_for_bin }) catch unreachable;
 
                 if (bun.which(
                     &path_buf,
@@ -366,7 +366,7 @@ pub const BunxCommand = struct {
             },
         }
 
-        absolute_in_cache_dir = std.fmt.bufPrint(&absolute_in_cache_dir_buf, "{s}/{s}", .{ bunx_cache_dir, update_request.name }) catch unreachable;
+        absolute_in_cache_dir = std.fmt.bufPrint(&absolute_in_cache_dir_buf, "{s}/node_modules/.bin/{s}", .{ bunx_cache_dir, update_request.name }) catch unreachable;
 
         // Similar to "npx":
         //
@@ -399,7 +399,7 @@ pub const BunxCommand = struct {
 
             // if we check the bin name and its actually the same, we don't need to check $PATH here again
             if (!strings.eqlLong(package_name_for_bin, initial_bin_name, true)) {
-                absolute_in_cache_dir = std.fmt.bufPrint(&absolute_in_cache_dir_buf, "{s}/{s}", .{ bunx_cache_dir, package_name_for_bin }) catch unreachable;
+                absolute_in_cache_dir = std.fmt.bufPrint(&absolute_in_cache_dir_buf, "{s}/node_modules/.bin/{s}", .{ bunx_cache_dir, package_name_for_bin }) catch unreachable;
 
                 if (bun.which(
                     &path_buf,

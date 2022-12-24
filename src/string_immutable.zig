@@ -3993,3 +3993,12 @@ pub fn cloneNormalizingSeparators(
 
     return buf[0 .. @ptrToInt(remain.ptr) - @ptrToInt(buf.ptr)];
 }
+
+pub fn leftHasAnyInRight(to_check: []const string, against: []const string) bool {
+    for (to_check) |check| {
+        for (against) |item| {
+            if (eqlLong(check, item, true)) return true;
+        }
+    }
+    return false;
+}

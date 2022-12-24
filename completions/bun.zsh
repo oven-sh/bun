@@ -23,7 +23,7 @@ _bun() {
         scripts="scripts:scripts:(($scripts_list))"
         IFS=$'\n' files_list=($(SHELL=zsh bun getcompletes j))
 
-        main_commands=('add\:"Add a dependency to package.json" bun\:"Generate a bundle" create\:"Create a new project" dev\:"Start a dev server" help\:"Show command help" install\:"Install packages from package.json" remove\:"Remove a dependency from package.json" run\:"Run a script or package bin" upgrade\:"Upgrade to the latest version of bun"')
+        main_commands=('add\:"Add a dependency to package.json" bun\:"Generate a bundle" create\:"Create a new project" dev\:"Start a dev server" help\:"Show command help" install\:"Install packages from package.json" x\:"Run a command from a local or remote NPM package" pm\:"Manage local packages" remove\:"Remove a dependency from package.json" run\:"Run a script or package bin" upgrade\:"Upgrade to the latest version of bun"')
         main_commands=($main_commands)
         _alternative "$scripts" "args:command:(($main_commands))" "files:files:(($files_list))"
         ;;
@@ -263,7 +263,83 @@ _bun() {
 
             ;;
 
-        help)
+        x)
+            _arguments -s -C \
+                '1: :->cmd' \
+                '2: :->cmd2' \
+                '*: :->args' &&
+                ret=0
+            ;;
+        pm)
+
+            pmargs=('-c[Load config (bunfig.toml)]'
+                '--config[Load config (bunfig.toml)]'
+                '-y[Write a yarn.lock file (yarn v1)]'
+                '--yarn[Write a yarn.lock file (yarn v1)]'
+                '-p[Do not install devDependencies]'
+                '--production[Do not install devDependencies]'
+                '--no-save[Do not save a lockfile]'
+                '--dry-run[Do not install anything]'
+                '--lockfile[Store & load a lockfile at a specific filepath]'
+                '-f[Always request the latest versions from the registry & reinstall all dependencies]'
+                '--force[Always request the latest versions from the registry & reinstall all dependencies]'
+                '--cache-dir[Store & load cached data from a specific directory path]'
+                '--no-cache[Ignore manifest cache entirely]'
+                '--silent[Do not log anything]'
+                '--verbose[Excessively verbose logging]'
+                '--no-progress[Disable the progress bar]'
+                '--no-summary[Do not print a summary]'
+                '--no-verify[Skip verifying integrity of newly downloaded packages]'
+                '--ignore-scripts[Skip lifecycle scripts in the package.json (dependency scripts are never run)]'
+                '-g[Install globally]'
+                '--global[Install globally]'
+                '--cwd[Set a specific cwd]'
+                '--backend[Platform-specific optimizations for installing dependencies. Possible values: "clonefile" (default), "hardlink", "symlink", "copyfile"]'
+                '--link-native-bins[Link "bin" from a matching platform-specific "optionalDependencies" instead. Default: esbuild, turbo]'
+                '--help[Print this help menu]'
+            )
+
+            # ---- Command: help
+            _arguments -s -C \
+                '1: :->cmd' \
+                '2: :->cmd2' \
+                '*: :->args' &&
+                ret=0
+
+            case $state in
+            cmd2)
+                _alternative 'args:cmd3:((bin ls cache hash hash-print hash-string))'
+                ;;
+
+            args)
+
+                case $line[2] in
+                cache)
+
+                    _arguments -s -C \
+                        '1: :->cmd' \
+                        '2: :->cmd2' \
+                        ':::(rm)' \
+                        $pmargs &&
+                        ret=0
+                    ;;
+                *)
+
+                    _arguments -s -C \
+                        '1: :->cmd' \
+                        '2: :->cmd2' \
+                        $pmargs &&
+                        ret=0
+                    ;;
+                esac
+                ;;
+
+            esac
+            ;;
+
+        \
+            \
+            help)
 
             # ---- Command: help
             _arguments -s -C \
@@ -629,5 +705,8 @@ __bun_dynamic_comp() {
     return $comp
 }
 
-autoload -U compinit && compinit
+if ! command -v compinit >/dev/null; then
+    autoload -U compinit && compinit
+fi
+
 compdef _bun bun

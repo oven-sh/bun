@@ -375,7 +375,11 @@ function getLazyReadStream() {
     [readStreamPathFastPathSymbol];
 
     _construct(callback) {
-      callback();
+      if (super._construct) {
+        super._construct(callback);
+      } else {
+        callback();
+      }
       this.emit("open", this.fd);
       this.emit("ready");
     }

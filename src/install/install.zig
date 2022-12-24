@@ -3501,6 +3501,7 @@ pub const PackageManager = struct {
             String.Builder.stringHash("esbuild"),
             String.Builder.stringHash("turbo"),
             String.Builder.stringHash("bun"),
+            String.Builder.stringHash("rome"),
         };
 
         pub const LogLevel = enum {

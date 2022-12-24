@@ -1882,3 +1882,27 @@ pub const Result = union(TestRunner.Test.Status) {
     pass: u32, // assertion count
     pending: void,
 };
+
+pub const Mock = struct {
+    count: u32,
+
+    pub usingnamespace JSC.Codegen.JSMock;
+
+    pub fn constructor(globalThis: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) ?*Mock {
+        var mock = globalThis.allocator().create(Mock) catch unreachable;
+        mock.* = .{
+            .count = 0,
+        };
+        return mock;
+    }
+
+    pub fn fn1(_: *Mock, _: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSValue {
+        return JSValue.zero;
+    }
+
+    pub fn finalize(
+        this: *Mock,
+    ) callconv(.C) void {
+        VirtualMachine.vm.allocator.destroy(this);
+    }
+};

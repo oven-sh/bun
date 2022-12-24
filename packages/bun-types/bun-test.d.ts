@@ -51,6 +51,11 @@ declare module "bun:test" {
     toBeLessThan(value: number | bigint): void;
     toBeLessThanOrEqual(value: number | bigint): void;
   }
+
+  export class Mock {
+    constructor();
+    fn1(): void;
+  }
 }
 
 declare module "test" {

@@ -27,6 +27,891 @@ namespace WebCore {
 using namespace JSC;
 using namespace Zig;
 
+class JSFileSystemRouterPrototype final : public JSC::JSNonFinalObject {
+public:
+    using Base = JSC::JSNonFinalObject;
+
+    static JSFileSystemRouterPrototype* create(JSC::VM& vm, JSGlobalObject* globalObject, JSC::Structure* structure)
+    {
+        JSFileSystemRouterPrototype* ptr = new (NotNull, JSC::allocateCell<JSFileSystemRouterPrototype>(vm)) JSFileSystemRouterPrototype(vm, globalObject, structure);
+        ptr->finishCreation(vm, globalObject);
+        return ptr;
+    }
+
+    DECLARE_INFO;
+    template<typename CellType, JSC::SubspaceAccess>
+    static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
+    {
+        return &vm.plainObjectSpace();
+    }
+    static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
+    {
+        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
+    }
+
+private:
+    JSFileSystemRouterPrototype(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure)
+        : Base(vm, structure)
+    {
+    }
+
+    void finishCreation(JSC::VM&, JSC::JSGlobalObject*);
+};
+
+class JSFileSystemRouterConstructor final : public JSC::InternalFunction {
+public:
+    using Base = JSC::InternalFunction;
+    static JSFileSystemRouterConstructor* create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, JSFileSystemRouterPrototype* prototype);
+
+    static constexpr unsigned StructureFlags = Base::StructureFlags;
+    static constexpr bool needsDestruction = false;
+
+    static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
+    {
+        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::InternalFunctionType, StructureFlags), info());
+    }
+
+    template<typename, JSC::SubspaceAccess mode> static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
+    {
+        if constexpr (mode == JSC::SubspaceAccess::Concurrently)
+            return nullptr;
+        return WebCore::subspaceForImpl<JSFileSystemRouterConstructor, WebCore::UseCustomHeapCellType::No>(
+            vm,
+            [](auto& spaces) { return spaces.m_clientSubspaceForFileSystemRouterConstructor.get(); },
+            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForFileSystemRouterConstructor = WTFMove(space); },
+            [](auto& spaces) { return spaces.m_subspaceForFileSystemRouterConstructor.get(); },
+            [](auto& spaces, auto&& space) { spaces.m_subspaceForFileSystemRouterConstructor = WTFMove(space); });
+    }
+
+    void initializeProperties(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSFileSystemRouterPrototype* prototype);
+
+    // Must be defined for each specialization class.
+    static JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES construct(JSC::JSGlobalObject*, JSC::CallFrame*);
+
+    DECLARE_EXPORT_INFO;
+
+private:
+    JSFileSystemRouterConstructor(JSC::VM& vm, JSC::Structure* structure);
+    void finishCreation(JSC::VM&, JSC::JSGlobalObject* globalObject, JSFileSystemRouterPrototype* prototype);
+};
+
+extern "C" void* FileSystemRouterClass__construct(JSC::JSGlobalObject*, JSC::CallFrame*);
+JSC_DECLARE_CUSTOM_GETTER(jsFileSystemRouterConstructor);
+extern "C" void FileSystemRouterClass__finalize(void*);
+
+extern "C" EncodedJSValue FileSystemRouterPrototype__match(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
+JSC_DECLARE_HOST_FUNCTION(FileSystemRouterPrototype__matchCallback);
+
+extern "C" JSC::EncodedJSValue FileSystemRouterPrototype__getOrigin(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject);
+JSC_DECLARE_CUSTOM_GETTER(FileSystemRouterPrototype__originGetterWrap);
+
+extern "C" EncodedJSValue FileSystemRouterPrototype__reload(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
+JSC_DECLARE_HOST_FUNCTION(FileSystemRouterPrototype__reloadCallback);
+
+extern "C" JSC::EncodedJSValue FileSystemRouterPrototype__getRoutes(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject);
+JSC_DECLARE_CUSTOM_GETTER(FileSystemRouterPrototype__routesGetterWrap);
+
+extern "C" JSC::EncodedJSValue FileSystemRouterPrototype__getStyle(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject);
+JSC_DECLARE_CUSTOM_GETTER(FileSystemRouterPrototype__styleGetterWrap);
+
+STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSFileSystemRouterPrototype, JSFileSystemRouterPrototype::Base);
+
+static const HashTableValue JSFileSystemRouterPrototypeTableValues[] = {
+    { "match"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, FileSystemRouterPrototype__matchCallback, 1 } },
+    { "origin"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { HashTableValue::GetterSetterType, FileSystemRouterPrototype__originGetterWrap, 0 } },
+    { "reload"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, FileSystemRouterPrototype__reloadCallback, 0 } },
+    { "routes"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { HashTableValue::GetterSetterType, FileSystemRouterPrototype__routesGetterWrap, 0 } },
+    { "style"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { HashTableValue::GetterSetterType, FileSystemRouterPrototype__styleGetterWrap, 0 } }
+};
+
+const ClassInfo JSFileSystemRouterPrototype::s_info = { "FileSystemRouter"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSFileSystemRouterPrototype) };
+
+JSC_DEFINE_CUSTOM_GETTER(jsFileSystemRouterConstructor, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName))
+{
+    VM& vm = JSC::getVM(lexicalGlobalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    auto* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+    auto* prototype = jsDynamicCast<JSFileSystemRouterPrototype*>(JSValue::decode(thisValue));
+
+    if (UNLIKELY(!prototype))
+        return throwVMTypeError(lexicalGlobalObject, throwScope);
+    return JSValue::encode(globalObject->JSFileSystemRouterConstructor());
+}
+
+JSC_DEFINE_HOST_FUNCTION(FileSystemRouterPrototype__matchCallback, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    auto& vm = lexicalGlobalObject->vm();
+
+    JSFileSystemRouter* thisObject = jsDynamicCast<JSFileSystemRouter*>(callFrame->thisValue());
+
+    if (UNLIKELY(!thisObject)) {
+        auto throwScope = DECLARE_THROW_SCOPE(vm);
+        return throwVMTypeError(lexicalGlobalObject, throwScope);
+    }
+
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+
+    return FileSystemRouterPrototype__match(thisObject->wrapped(), lexicalGlobalObject, callFrame);
+}
+
+JSC_DEFINE_CUSTOM_GETTER(FileSystemRouterPrototype__originGetterWrap, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
+{
+    auto& vm = lexicalGlobalObject->vm();
+    Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    JSFileSystemRouter* thisObject = jsCast<JSFileSystemRouter*>(JSValue::decode(thisValue));
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+
+    if (JSValue cachedValue = thisObject->m_origin.get())
+        return JSValue::encode(cachedValue);
+
+    JSC::JSValue result = JSC::JSValue::decode(
+        FileSystemRouterPrototype__getOrigin(thisObject->wrapped(), globalObject));
+    RETURN_IF_EXCEPTION(throwScope, {});
+    thisObject->m_origin.set(vm, thisObject, result);
+    RELEASE_AND_RETURN(throwScope, JSValue::encode(result));
+}
+
+extern "C" void FileSystemRouterPrototype__originSetCachedValue(JSC::EncodedJSValue thisValue, JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue value)
+{
+    auto& vm = globalObject->vm();
+    auto* thisObject = jsCast<JSFileSystemRouter*>(JSValue::decode(thisValue));
+    thisObject->m_origin.set(vm, thisObject, JSValue::decode(value));
+}
+
+extern "C" EncodedJSValue FileSystemRouterPrototype__originGetCachedValue(JSC::EncodedJSValue thisValue)
+{
+    auto* thisObject = jsCast<JSFileSystemRouter*>(JSValue::decode(thisValue));
+    return JSValue::encode(thisObject->m_origin.get());
+}
+
+JSC_DEFINE_HOST_FUNCTION(FileSystemRouterPrototype__reloadCallback, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    auto& vm = lexicalGlobalObject->vm();
+
+    JSFileSystemRouter* thisObject = jsDynamicCast<JSFileSystemRouter*>(callFrame->thisValue());
+
+    if (UNLIKELY(!thisObject)) {
+        auto throwScope = DECLARE_THROW_SCOPE(vm);
+        return throwVMTypeError(lexicalGlobalObject, throwScope);
+    }
+
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+
+    return FileSystemRouterPrototype__reload(thisObject->wrapped(), lexicalGlobalObject, callFrame);
+}
+
+JSC_DEFINE_CUSTOM_GETTER(FileSystemRouterPrototype__routesGetterWrap, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
+{
+    auto& vm = lexicalGlobalObject->vm();
+    Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    JSFileSystemRouter* thisObject = jsCast<JSFileSystemRouter*>(JSValue::decode(thisValue));
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+
+    if (JSValue cachedValue = thisObject->m_routes.get())
+        return JSValue::encode(cachedValue);
+
+    JSC::JSValue result = JSC::JSValue::decode(
+        FileSystemRouterPrototype__getRoutes(thisObject->wrapped(), globalObject));
+    RETURN_IF_EXCEPTION(throwScope, {});
+    thisObject->m_routes.set(vm, thisObject, result);
+    RELEASE_AND_RETURN(throwScope, JSValue::encode(result));
+}
+
+extern "C" void FileSystemRouterPrototype__routesSetCachedValue(JSC::EncodedJSValue thisValue, JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue value)
+{
+    auto& vm = globalObject->vm();
+    auto* thisObject = jsCast<JSFileSystemRouter*>(JSValue::decode(thisValue));
+    thisObject->m_routes.set(vm, thisObject, JSValue::decode(value));
+}
+
+extern "C" EncodedJSValue FileSystemRouterPrototype__routesGetCachedValue(JSC::EncodedJSValue thisValue)
+{
+    auto* thisObject = jsCast<JSFileSystemRouter*>(JSValue::decode(thisValue));
+    return JSValue::encode(thisObject->m_routes.get());
+}
+
+JSC_DEFINE_CUSTOM_GETTER(FileSystemRouterPrototype__styleGetterWrap, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
+{
+    auto& vm = lexicalGlobalObject->vm();
+    Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    JSFileSystemRouter* thisObject = jsCast<JSFileSystemRouter*>(JSValue::decode(thisValue));
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+
+    if (JSValue cachedValue = thisObject->m_style.get())
+        return JSValue::encode(cachedValue);
+
+    JSC::JSValue result = JSC::JSValue::decode(
+        FileSystemRouterPrototype__getStyle(thisObject->wrapped(), globalObject));
+    RETURN_IF_EXCEPTION(throwScope, {});
+    thisObject->m_style.set(vm, thisObject, result);
+    RELEASE_AND_RETURN(throwScope, JSValue::encode(result));
+}
+
+extern "C" void FileSystemRouterPrototype__styleSetCachedValue(JSC::EncodedJSValue thisValue, JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue value)
+{
+    auto& vm = globalObject->vm();
+    auto* thisObject = jsCast<JSFileSystemRouter*>(JSValue::decode(thisValue));
+    thisObject->m_style.set(vm, thisObject, JSValue::decode(value));
+}
+
+extern "C" EncodedJSValue FileSystemRouterPrototype__styleGetCachedValue(JSC::EncodedJSValue thisValue)
+{
+    auto* thisObject = jsCast<JSFileSystemRouter*>(JSValue::decode(thisValue));
+    return JSValue::encode(thisObject->m_style.get());
+}
+
+void JSFileSystemRouterPrototype::finishCreation(JSC::VM& vm, JSC::JSGlobalObject* globalObject)
+{
+    Base::finishCreation(vm);
+    reifyStaticProperties(vm, JSFileSystemRouter::info(), JSFileSystemRouterPrototypeTableValues, *this);
+    JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
+}
+
+void JSFileSystemRouterConstructor::finishCreation(VM& vm, JSC::JSGlobalObject* globalObject, JSFileSystemRouterPrototype* prototype)
+{
+    Base::finishCreation(vm, 0, "FileSystemRouter"_s, PropertyAdditionMode::WithoutStructureTransition);
+
+    putDirectWithoutTransition(vm, vm.propertyNames->prototype, prototype, PropertyAttribute::DontEnum | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
+    ASSERT(inherits(info()));
+}
+
+JSFileSystemRouterConstructor::JSFileSystemRouterConstructor(JSC::VM& vm, JSC::Structure* structure)
+    : Base(vm, structure, construct, construct)
+{
+}
+
+JSFileSystemRouterConstructor* JSFileSystemRouterConstructor::create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, JSFileSystemRouterPrototype* prototype)
+{
+    JSFileSystemRouterConstructor* ptr = new (NotNull, JSC::allocateCell<JSFileSystemRouterConstructor>(vm)) JSFileSystemRouterConstructor(vm, structure);
+    ptr->finishCreation(vm, globalObject, prototype);
+    return ptr;
+}
+
+JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSFileSystemRouterConstructor::construct(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame)
+{
+    Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+    JSC::VM& vm = globalObject->vm();
+    JSObject* newTarget = asObject(callFrame->newTarget());
+    auto* constructor = globalObject->JSFileSystemRouterConstructor();
+    Structure* structure = globalObject->JSFileSystemRouterStructure();
+    if (constructor != newTarget) {
+        auto scope = DECLARE_THROW_SCOPE(vm);
+
+        auto* functionGlobalObject = reinterpret_cast<Zig::GlobalObject*>(
+            // ShadowRealm functions belong to a different global object.
+            getFunctionRealm(globalObject, newTarget));
+        RETURN_IF_EXCEPTION(scope, {});
+        structure = InternalFunction::createSubclassStructure(
+            globalObject,
+            newTarget,
+            functionGlobalObject->JSFileSystemRouterStructure());
+    }
+
+    void* ptr = FileSystemRouterClass__construct(globalObject, callFrame);
+
+    if (UNLIKELY(!ptr)) {
+        return JSValue::encode(JSC::jsUndefined());
+    }
+
+    JSFileSystemRouter* instance = JSFileSystemRouter::create(vm, globalObject, structure, ptr);
+
+    return JSValue::encode(instance);
+}
+
+void JSFileSystemRouterConstructor::initializeProperties(VM& vm, JSC::JSGlobalObject* globalObject, JSFileSystemRouterPrototype* prototype)
+{
+}
+
+const ClassInfo JSFileSystemRouterConstructor::s_info = { "Function"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSFileSystemRouterConstructor) };
+
+extern "C" EncodedJSValue FileSystemRouter__getConstructor(Zig::GlobalObject* globalObject)
+{
+    return JSValue::encode(globalObject->JSFileSystemRouterConstructor());
+}
+
+JSFileSystemRouter::~JSFileSystemRouter()
+{
+    if (m_ctx) {
+        FileSystemRouterClass__finalize(m_ctx);
+    }
+}
+void JSFileSystemRouter::destroy(JSCell* cell)
+{
+    static_cast<JSFileSystemRouter*>(cell)->JSFileSystemRouter::~JSFileSystemRouter();
+}
+
+const ClassInfo JSFileSystemRouter::s_info = { "FileSystemRouter"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSFileSystemRouter) };
+
+void JSFileSystemRouter::finishCreation(VM& vm)
+{
+    Base::finishCreation(vm);
+    ASSERT(inherits(info()));
+}
+
+JSFileSystemRouter* JSFileSystemRouter::create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, void* ctx)
+{
+    JSFileSystemRouter* ptr = new (NotNull, JSC::allocateCell<JSFileSystemRouter>(vm)) JSFileSystemRouter(vm, structure, ctx);
+    ptr->finishCreation(vm);
+    return ptr;
+}
+
+extern "C" void* FileSystemRouter__fromJS(JSC::EncodedJSValue value)
+{
+    JSC::JSValue decodedValue = JSC::JSValue::decode(value);
+    if (!decodedValue || decodedValue.isUndefinedOrNull())
+        return nullptr;
+
+    JSFileSystemRouter* object = JSC::jsDynamicCast<JSFileSystemRouter*>(decodedValue);
+
+    if (!object)
+        return nullptr;
+
+    return object->wrapped();
+}
+
+extern "C" bool FileSystemRouter__dangerouslySetPtr(JSC::EncodedJSValue value, void* ptr)
+{
+    JSFileSystemRouter* object = JSC::jsDynamicCast<JSFileSystemRouter*>(JSValue::decode(value));
+    if (!object)
+        return false;
+
+    object->m_ctx = ptr;
+    return true;
+}
+
+extern "C" const size_t FileSystemRouter__ptrOffset = JSFileSystemRouter::offsetOfWrapped();
+
+void JSFileSystemRouter::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
+{
+    auto* thisObject = jsCast<JSFileSystemRouter*>(cell);
+    if (void* wrapped = thisObject->wrapped()) {
+        // if (thisObject->scriptExecutionContext())
+        //     analyzer.setLabelForCell(cell, "url " + thisObject->scriptExecutionContext()->url().string());
+    }
+    Base::analyzeHeap(cell, analyzer);
+}
+
+JSObject* JSFileSystemRouter::createConstructor(VM& vm, JSGlobalObject* globalObject, JSValue prototype)
+{
+    return WebCore::JSFileSystemRouterConstructor::create(vm, globalObject, WebCore::JSFileSystemRouterConstructor::createStructure(vm, globalObject, globalObject->functionPrototype()), jsCast<WebCore::JSFileSystemRouterPrototype*>(prototype));
+}
+
+JSObject* JSFileSystemRouter::createPrototype(VM& vm, JSDOMGlobalObject* globalObject)
+{
+    return JSFileSystemRouterPrototype::create(vm, globalObject, JSFileSystemRouterPrototype::createStructure(vm, globalObject, globalObject->objectPrototype()));
+}
+
+extern "C" EncodedJSValue FileSystemRouter__create(Zig::GlobalObject* globalObject, void* ptr)
+{
+    auto& vm = globalObject->vm();
+    JSC::Structure* structure = globalObject->JSFileSystemRouterStructure();
+    JSFileSystemRouter* instance = JSFileSystemRouter::create(vm, globalObject, structure, ptr);
+
+    return JSValue::encode(instance);
+}
+
+template<typename Visitor>
+void JSFileSystemRouter::visitChildrenImpl(JSCell* cell, Visitor& visitor)
+{
+    JSFileSystemRouter* thisObject = jsCast<JSFileSystemRouter*>(cell);
+    ASSERT_GC_OBJECT_INHERITS(thisObject, info());
+    Base::visitChildren(thisObject, visitor);
+
+    visitor.append(thisObject->m_origin);
+    visitor.append(thisObject->m_routes);
+    visitor.append(thisObject->m_style);
+}
+
+DEFINE_VISIT_CHILDREN(JSFileSystemRouter);
+
+template<typename Visitor>
+void JSFileSystemRouter::visitAdditionalChildren(Visitor& visitor)
+{
+    JSFileSystemRouter* thisObject = this;
+    ASSERT_GC_OBJECT_INHERITS(thisObject, info());
+
+    visitor.append(thisObject->m_origin);
+    visitor.append(thisObject->m_routes);
+    visitor.append(thisObject->m_style);
+    ;
+}
+
+DEFINE_VISIT_ADDITIONAL_CHILDREN(JSFileSystemRouter);
+
+template<typename Visitor>
+void JSFileSystemRouter::visitOutputConstraintsImpl(JSCell* cell, Visitor& visitor)
+{
+    JSFileSystemRouter* thisObject = jsCast<JSFileSystemRouter*>(cell);
+    ASSERT_GC_OBJECT_INHERITS(thisObject, info());
+    thisObject->visitAdditionalChildren<Visitor>(visitor);
+}
+
+DEFINE_VISIT_OUTPUT_CONSTRAINTS(JSFileSystemRouter);
+class JSMatchedRoutePrototype final : public JSC::JSNonFinalObject {
+public:
+    using Base = JSC::JSNonFinalObject;
+
+    static JSMatchedRoutePrototype* create(JSC::VM& vm, JSGlobalObject* globalObject, JSC::Structure* structure)
+    {
+        JSMatchedRoutePrototype* ptr = new (NotNull, JSC::allocateCell<JSMatchedRoutePrototype>(vm)) JSMatchedRoutePrototype(vm, globalObject, structure);
+        ptr->finishCreation(vm, globalObject);
+        return ptr;
+    }
+
+    DECLARE_INFO;
+    template<typename CellType, JSC::SubspaceAccess>
+    static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
+    {
+        return &vm.plainObjectSpace();
+    }
+    static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
+    {
+        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
+    }
+
+private:
+    JSMatchedRoutePrototype(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure)
+        : Base(vm, structure)
+    {
+    }
+
+    void finishCreation(JSC::VM&, JSC::JSGlobalObject*);
+};
+
+extern "C" void* MatchedRouteClass__construct(JSC::JSGlobalObject*, JSC::CallFrame*);
+JSC_DECLARE_CUSTOM_GETTER(jsMatchedRouteConstructor);
+extern "C" void MatchedRouteClass__finalize(void*);
+
+extern "C" JSC::EncodedJSValue MatchedRoutePrototype__getFilePath(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject);
+JSC_DECLARE_CUSTOM_GETTER(MatchedRoutePrototype__filePathGetterWrap);
+
+extern "C" JSC::EncodedJSValue MatchedRoutePrototype__getKind(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject);
+JSC_DECLARE_CUSTOM_GETTER(MatchedRoutePrototype__kindGetterWrap);
+
+extern "C" JSC::EncodedJSValue MatchedRoutePrototype__getName(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject);
+JSC_DECLARE_CUSTOM_GETTER(MatchedRoutePrototype__nameGetterWrap);
+
+extern "C" JSC::EncodedJSValue MatchedRoutePrototype__getParams(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject);
+JSC_DECLARE_CUSTOM_GETTER(MatchedRoutePrototype__paramsGetterWrap);
+
+extern "C" JSC::EncodedJSValue MatchedRoutePrototype__getPathname(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject);
+JSC_DECLARE_CUSTOM_GETTER(MatchedRoutePrototype__pathnameGetterWrap);
+
+extern "C" JSC::EncodedJSValue MatchedRoutePrototype__getQuery(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject);
+JSC_DECLARE_CUSTOM_GETTER(MatchedRoutePrototype__queryGetterWrap);
+
+extern "C" JSC::EncodedJSValue MatchedRoutePrototype__getScriptSrc(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject);
+JSC_DECLARE_CUSTOM_GETTER(MatchedRoutePrototype__scriptSrcGetterWrap);
+
+extern "C" JSC::EncodedJSValue MatchedRoutePrototype__getScriptSrc(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject);
+JSC_DECLARE_CUSTOM_GETTER(MatchedRoutePrototype__srcGetterWrap);
+
+STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSMatchedRoutePrototype, JSMatchedRoutePrototype::Base);
+
+static const HashTableValue JSMatchedRoutePrototypeTableValues[] = {
+    { "filePath"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { HashTableValue::GetterSetterType, MatchedRoutePrototype__filePathGetterWrap, 0 } },
+    { "kind"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { HashTableValue::GetterSetterType, MatchedRoutePrototype__kindGetterWrap, 0 } },
+    { "name"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { HashTableValue::GetterSetterType, MatchedRoutePrototype__nameGetterWrap, 0 } },
+    { "params"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { HashTableValue::GetterSetterType, MatchedRoutePrototype__paramsGetterWrap, 0 } },
+    { "pathname"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { HashTableValue::GetterSetterType, MatchedRoutePrototype__pathnameGetterWrap, 0 } },
+    { "query"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { HashTableValue::GetterSetterType, MatchedRoutePrototype__queryGetterWrap, 0 } },
+    { "scriptSrc"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { HashTableValue::GetterSetterType, MatchedRoutePrototype__scriptSrcGetterWrap, 0 } },
+    { "src"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { HashTableValue::GetterSetterType, MatchedRoutePrototype__srcGetterWrap, 0 } }
+};
+
+const ClassInfo JSMatchedRoutePrototype::s_info = { "MatchedRoute"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSMatchedRoutePrototype) };
+
+JSC_DEFINE_CUSTOM_GETTER(jsMatchedRouteConstructor, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName))
+{
+    VM& vm = JSC::getVM(lexicalGlobalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    auto* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+    auto* prototype = jsDynamicCast<JSMatchedRoutePrototype*>(JSValue::decode(thisValue));
+
+    if (UNLIKELY(!prototype))
+        return throwVMTypeError(lexicalGlobalObject, throwScope);
+    return JSValue::encode(globalObject->JSMatchedRouteConstructor());
+}
+
+JSC_DEFINE_CUSTOM_GETTER(MatchedRoutePrototype__filePathGetterWrap, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
+{
+    auto& vm = lexicalGlobalObject->vm();
+    Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    JSMatchedRoute* thisObject = jsCast<JSMatchedRoute*>(JSValue::decode(thisValue));
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+
+    if (JSValue cachedValue = thisObject->m_filePath.get())
+        return JSValue::encode(cachedValue);
+
+    JSC::JSValue result = JSC::JSValue::decode(
+        MatchedRoutePrototype__getFilePath(thisObject->wrapped(), globalObject));
+    RETURN_IF_EXCEPTION(throwScope, {});
+    thisObject->m_filePath.set(vm, thisObject, result);
+    RELEASE_AND_RETURN(throwScope, JSValue::encode(result));
+}
+
+extern "C" void MatchedRoutePrototype__filePathSetCachedValue(JSC::EncodedJSValue thisValue, JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue value)
+{
+    auto& vm = globalObject->vm();
+    auto* thisObject = jsCast<JSMatchedRoute*>(JSValue::decode(thisValue));
+    thisObject->m_filePath.set(vm, thisObject, JSValue::decode(value));
+}
+
+extern "C" EncodedJSValue MatchedRoutePrototype__filePathGetCachedValue(JSC::EncodedJSValue thisValue)
+{
+    auto* thisObject = jsCast<JSMatchedRoute*>(JSValue::decode(thisValue));
+    return JSValue::encode(thisObject->m_filePath.get());
+}
+
+JSC_DEFINE_CUSTOM_GETTER(MatchedRoutePrototype__kindGetterWrap, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
+{
+    auto& vm = lexicalGlobalObject->vm();
+    Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    JSMatchedRoute* thisObject = jsCast<JSMatchedRoute*>(JSValue::decode(thisValue));
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+
+    if (JSValue cachedValue = thisObject->m_kind.get())
+        return JSValue::encode(cachedValue);
+
+    JSC::JSValue result = JSC::JSValue::decode(
+        MatchedRoutePrototype__getKind(thisObject->wrapped(), globalObject));
+    RETURN_IF_EXCEPTION(throwScope, {});
+    thisObject->m_kind.set(vm, thisObject, result);
+    RELEASE_AND_RETURN(throwScope, JSValue::encode(result));
+}
+
+extern "C" void MatchedRoutePrototype__kindSetCachedValue(JSC::EncodedJSValue thisValue, JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue value)
+{
+    auto& vm = globalObject->vm();
+    auto* thisObject = jsCast<JSMatchedRoute*>(JSValue::decode(thisValue));
+    thisObject->m_kind.set(vm, thisObject, JSValue::decode(value));
+}
+
+extern "C" EncodedJSValue MatchedRoutePrototype__kindGetCachedValue(JSC::EncodedJSValue thisValue)
+{
+    auto* thisObject = jsCast<JSMatchedRoute*>(JSValue::decode(thisValue));
+    return JSValue::encode(thisObject->m_kind.get());
+}
+
+JSC_DEFINE_CUSTOM_GETTER(MatchedRoutePrototype__nameGetterWrap, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
+{
+    auto& vm = lexicalGlobalObject->vm();
+    Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    JSMatchedRoute* thisObject = jsCast<JSMatchedRoute*>(JSValue::decode(thisValue));
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+
+    if (JSValue cachedValue = thisObject->m_name.get())
+        return JSValue::encode(cachedValue);
+
+    JSC::JSValue result = JSC::JSValue::decode(
+        MatchedRoutePrototype__getName(thisObject->wrapped(), globalObject));
+    RETURN_IF_EXCEPTION(throwScope, {});
+    thisObject->m_name.set(vm, thisObject, result);
+    RELEASE_AND_RETURN(throwScope, JSValue::encode(result));
+}
+
+extern "C" void MatchedRoutePrototype__nameSetCachedValue(JSC::EncodedJSValue thisValue, JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue value)
+{
+    auto& vm = globalObject->vm();
+    auto* thisObject = jsCast<JSMatchedRoute*>(JSValue::decode(thisValue));
+    thisObject->m_name.set(vm, thisObject, JSValue::decode(value));
+}
+
+extern "C" EncodedJSValue MatchedRoutePrototype__nameGetCachedValue(JSC::EncodedJSValue thisValue)
+{
+    auto* thisObject = jsCast<JSMatchedRoute*>(JSValue::decode(thisValue));
+    return JSValue::encode(thisObject->m_name.get());
+}
+
+JSC_DEFINE_CUSTOM_GETTER(MatchedRoutePrototype__paramsGetterWrap, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
+{
+    auto& vm = lexicalGlobalObject->vm();
+    Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    JSMatchedRoute* thisObject = jsCast<JSMatchedRoute*>(JSValue::decode(thisValue));
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+
+    if (JSValue cachedValue = thisObject->m_params.get())
+        return JSValue::encode(cachedValue);
+
+    JSC::JSValue result = JSC::JSValue::decode(
+        MatchedRoutePrototype__getParams(thisObject->wrapped(), globalObject));
+    RETURN_IF_EXCEPTION(throwScope, {});
+    thisObject->m_params.set(vm, thisObject, result);
+    RELEASE_AND_RETURN(throwScope, JSValue::encode(result));
+}
+
+extern "C" void MatchedRoutePrototype__paramsSetCachedValue(JSC::EncodedJSValue thisValue, JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue value)
+{
+    auto& vm = globalObject->vm();
+    auto* thisObject = jsCast<JSMatchedRoute*>(JSValue::decode(thisValue));
+    thisObject->m_params.set(vm, thisObject, JSValue::decode(value));
+}
+
+extern "C" EncodedJSValue MatchedRoutePrototype__paramsGetCachedValue(JSC::EncodedJSValue thisValue)
+{
+    auto* thisObject = jsCast<JSMatchedRoute*>(JSValue::decode(thisValue));
+    return JSValue::encode(thisObject->m_params.get());
+}
+
+JSC_DEFINE_CUSTOM_GETTER(MatchedRoutePrototype__pathnameGetterWrap, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
+{
+    auto& vm = lexicalGlobalObject->vm();
+    Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    JSMatchedRoute* thisObject = jsCast<JSMatchedRoute*>(JSValue::decode(thisValue));
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+
+    if (JSValue cachedValue = thisObject->m_pathname.get())
+        return JSValue::encode(cachedValue);
+
+    JSC::JSValue result = JSC::JSValue::decode(
+        MatchedRoutePrototype__getPathname(thisObject->wrapped(), globalObject));
+    RETURN_IF_EXCEPTION(throwScope, {});
+    thisObject->m_pathname.set(vm, thisObject, result);
+    RELEASE_AND_RETURN(throwScope, JSValue::encode(result));
+}
+
+extern "C" void MatchedRoutePrototype__pathnameSetCachedValue(JSC::EncodedJSValue thisValue, JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue value)
+{
+    auto& vm = globalObject->vm();
+    auto* thisObject = jsCast<JSMatchedRoute*>(JSValue::decode(thisValue));
+    thisObject->m_pathname.set(vm, thisObject, JSValue::decode(value));
+}
+
+extern "C" EncodedJSValue MatchedRoutePrototype__pathnameGetCachedValue(JSC::EncodedJSValue thisValue)
+{
+    auto* thisObject = jsCast<JSMatchedRoute*>(JSValue::decode(thisValue));
+    return JSValue::encode(thisObject->m_pathname.get());
+}
+
+JSC_DEFINE_CUSTOM_GETTER(MatchedRoutePrototype__queryGetterWrap, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
+{
+    auto& vm = lexicalGlobalObject->vm();
+    Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    JSMatchedRoute* thisObject = jsCast<JSMatchedRoute*>(JSValue::decode(thisValue));
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+
+    if (JSValue cachedValue = thisObject->m_query.get())
+        return JSValue::encode(cachedValue);
+
+    JSC::JSValue result = JSC::JSValue::decode(
+        MatchedRoutePrototype__getQuery(thisObject->wrapped(), globalObject));
+    RETURN_IF_EXCEPTION(throwScope, {});
+    thisObject->m_query.set(vm, thisObject, result);
+    RELEASE_AND_RETURN(throwScope, JSValue::encode(result));
+}
+
+extern "C" void MatchedRoutePrototype__querySetCachedValue(JSC::EncodedJSValue thisValue, JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue value)
+{
+    auto& vm = globalObject->vm();
+    auto* thisObject = jsCast<JSMatchedRoute*>(JSValue::decode(thisValue));
+    thisObject->m_query.set(vm, thisObject, JSValue::decode(value));
+}
+
+extern "C" EncodedJSValue MatchedRoutePrototype__queryGetCachedValue(JSC::EncodedJSValue thisValue)
+{
+    auto* thisObject = jsCast<JSMatchedRoute*>(JSValue::decode(thisValue));
+    return JSValue::encode(thisObject->m_query.get());
+}
+
+JSC_DEFINE_CUSTOM_GETTER(MatchedRoutePrototype__scriptSrcGetterWrap, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
+{
+    auto& vm = lexicalGlobalObject->vm();
+    Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    JSMatchedRoute* thisObject = jsCast<JSMatchedRoute*>(JSValue::decode(thisValue));
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+
+    if (JSValue cachedValue = thisObject->m_scriptSrc.get())
+        return JSValue::encode(cachedValue);
+
+    JSC::JSValue result = JSC::JSValue::decode(
+        MatchedRoutePrototype__getScriptSrc(thisObject->wrapped(), globalObject));
+    RETURN_IF_EXCEPTION(throwScope, {});
+    thisObject->m_scriptSrc.set(vm, thisObject, result);
+    RELEASE_AND_RETURN(throwScope, JSValue::encode(result));
+}
+
+extern "C" void MatchedRoutePrototype__scriptSrcSetCachedValue(JSC::EncodedJSValue thisValue, JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue value)
+{
+    auto& vm = globalObject->vm();
+    auto* thisObject = jsCast<JSMatchedRoute*>(JSValue::decode(thisValue));
+    thisObject->m_scriptSrc.set(vm, thisObject, JSValue::decode(value));
+}
+
+extern "C" EncodedJSValue MatchedRoutePrototype__scriptSrcGetCachedValue(JSC::EncodedJSValue thisValue)
+{
+    auto* thisObject = jsCast<JSMatchedRoute*>(JSValue::decode(thisValue));
+    return JSValue::encode(thisObject->m_scriptSrc.get());
+}
+
+JSC_DEFINE_CUSTOM_GETTER(MatchedRoutePrototype__srcGetterWrap, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
+{
+    auto& vm = lexicalGlobalObject->vm();
+    Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    JSMatchedRoute* thisObject = jsCast<JSMatchedRoute*>(JSValue::decode(thisValue));
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+
+    if (JSValue cachedValue = thisObject->m_scriptSrc.get())
+        return JSValue::encode(cachedValue);
+
+    JSC::JSValue result = JSC::JSValue::decode(
+        MatchedRoutePrototype__getScriptSrc(thisObject->wrapped(), globalObject));
+    RETURN_IF_EXCEPTION(throwScope, {});
+    thisObject->m_scriptSrc.set(vm, thisObject, result);
+    RELEASE_AND_RETURN(throwScope, JSValue::encode(result));
+}
+
+extern "C" void MatchedRoutePrototype__srcSetCachedValue(JSC::EncodedJSValue thisValue, JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue value)
+{
+    auto& vm = globalObject->vm();
+    auto* thisObject = jsCast<JSMatchedRoute*>(JSValue::decode(thisValue));
+    thisObject->m_scriptSrc.set(vm, thisObject, JSValue::decode(value));
+}
+
+extern "C" EncodedJSValue MatchedRoutePrototype__srcGetCachedValue(JSC::EncodedJSValue thisValue)
+{
+    auto* thisObject = jsCast<JSMatchedRoute*>(JSValue::decode(thisValue));
+    return JSValue::encode(thisObject->m_scriptSrc.get());
+}
+
+void JSMatchedRoutePrototype::finishCreation(JSC::VM& vm, JSC::JSGlobalObject* globalObject)
+{
+    Base::finishCreation(vm);
+    reifyStaticProperties(vm, JSMatchedRoute::info(), JSMatchedRoutePrototypeTableValues, *this);
+    JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
+}
+
+JSMatchedRoute::~JSMatchedRoute()
+{
+    if (m_ctx) {
+        MatchedRouteClass__finalize(m_ctx);
+    }
+}
+void JSMatchedRoute::destroy(JSCell* cell)
+{
+    static_cast<JSMatchedRoute*>(cell)->JSMatchedRoute::~JSMatchedRoute();
+}
+
+const ClassInfo JSMatchedRoute::s_info = { "MatchedRoute"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSMatchedRoute) };
+
+void JSMatchedRoute::finishCreation(VM& vm)
+{
+    Base::finishCreation(vm);
+    ASSERT(inherits(info()));
+}
+
+JSMatchedRoute* JSMatchedRoute::create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, void* ctx)
+{
+    JSMatchedRoute* ptr = new (NotNull, JSC::allocateCell<JSMatchedRoute>(vm)) JSMatchedRoute(vm, structure, ctx);
+    ptr->finishCreation(vm);
+    return ptr;
+}
+
+extern "C" void* MatchedRoute__fromJS(JSC::EncodedJSValue value)
+{
+    JSC::JSValue decodedValue = JSC::JSValue::decode(value);
+    if (!decodedValue || decodedValue.isUndefinedOrNull())
+        return nullptr;
+
+    JSMatchedRoute* object = JSC::jsDynamicCast<JSMatchedRoute*>(decodedValue);
+
+    if (!object)
+        return nullptr;
+
+    return object->wrapped();
+}
+
+extern "C" bool MatchedRoute__dangerouslySetPtr(JSC::EncodedJSValue value, void* ptr)
+{
+    JSMatchedRoute* object = JSC::jsDynamicCast<JSMatchedRoute*>(JSValue::decode(value));
+    if (!object)
+        return false;
+
+    object->m_ctx = ptr;
+    return true;
+}
+
+extern "C" const size_t MatchedRoute__ptrOffset = JSMatchedRoute::offsetOfWrapped();
+
+void JSMatchedRoute::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
+{
+    auto* thisObject = jsCast<JSMatchedRoute*>(cell);
+    if (void* wrapped = thisObject->wrapped()) {
+        // if (thisObject->scriptExecutionContext())
+        //     analyzer.setLabelForCell(cell, "url " + thisObject->scriptExecutionContext()->url().string());
+    }
+    Base::analyzeHeap(cell, analyzer);
+}
+
+JSObject* JSMatchedRoute::createPrototype(VM& vm, JSDOMGlobalObject* globalObject)
+{
+    return JSMatchedRoutePrototype::create(vm, globalObject, JSMatchedRoutePrototype::createStructure(vm, globalObject, globalObject->objectPrototype()));
+}
+
+extern "C" EncodedJSValue MatchedRoute__create(Zig::GlobalObject* globalObject, void* ptr)
+{
+    auto& vm = globalObject->vm();
+    JSC::Structure* structure = globalObject->JSMatchedRouteStructure();
+    JSMatchedRoute* instance = JSMatchedRoute::create(vm, globalObject, structure, ptr);
+
+    return JSValue::encode(instance);
+}
+
+template<typename Visitor>
+void JSMatchedRoute::visitChildrenImpl(JSCell* cell, Visitor& visitor)
+{
+    JSMatchedRoute* thisObject = jsCast<JSMatchedRoute*>(cell);
+    ASSERT_GC_OBJECT_INHERITS(thisObject, info());
+    Base::visitChildren(thisObject, visitor);
+
+    visitor.append(thisObject->m_filePath);
+    visitor.append(thisObject->m_kind);
+    visitor.append(thisObject->m_name);
+    visitor.append(thisObject->m_params);
+    visitor.append(thisObject->m_pathname);
+    visitor.append(thisObject->m_query);
+    visitor.append(thisObject->m_scriptSrc);
+}
+
+DEFINE_VISIT_CHILDREN(JSMatchedRoute);
+
+template<typename Visitor>
+void JSMatchedRoute::visitAdditionalChildren(Visitor& visitor)
+{
+    JSMatchedRoute* thisObject = this;
+    ASSERT_GC_OBJECT_INHERITS(thisObject, info());
+
+    visitor.append(thisObject->m_filePath);
+    visitor.append(thisObject->m_kind);
+    visitor.append(thisObject->m_name);
+    visitor.append(thisObject->m_params);
+    visitor.append(thisObject->m_pathname);
+    visitor.append(thisObject->m_query);
+    visitor.append(thisObject->m_scriptSrc);
+    ;
+}
+
+DEFINE_VISIT_ADDITIONAL_CHILDREN(JSMatchedRoute);
+
+template<typename Visitor>
+void JSMatchedRoute::visitOutputConstraintsImpl(JSCell* cell, Visitor& visitor)
+{
+    JSMatchedRoute* thisObject = jsCast<JSMatchedRoute*>(cell);
+    ASSERT_GC_OBJECT_INHERITS(thisObject, info());
+    thisObject->visitAdditionalChildren<Visitor>(visitor);
+}
+
+DEFINE_VISIT_OUTPUT_CONSTRAINTS(JSMatchedRoute);
 class JSTCPSocketPrototype final : public JSC::JSNonFinalObject {
 public:
     using Base = JSC::JSNonFinalObject;
@@ -1833,6 +2718,724 @@ void JSSubprocess::visitOutputConstraintsImpl(JSCell* cell, Visitor& visitor)
 }
 
 DEFINE_VISIT_OUTPUT_CONSTRAINTS(JSSubprocess);
+class JSServerWebSocketPrototype final : public JSC::JSNonFinalObject {
+public:
+    using Base = JSC::JSNonFinalObject;
+
+    static JSServerWebSocketPrototype* create(JSC::VM& vm, JSGlobalObject* globalObject, JSC::Structure* structure)
+    {
+        JSServerWebSocketPrototype* ptr = new (NotNull, JSC::allocateCell<JSServerWebSocketPrototype>(vm)) JSServerWebSocketPrototype(vm, globalObject, structure);
+        ptr->finishCreation(vm, globalObject);
+        return ptr;
+    }
+
+    DECLARE_INFO;
+    template<typename CellType, JSC::SubspaceAccess>
+    static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
+    {
+        return &vm.plainObjectSpace();
+    }
+    static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
+    {
+        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
+    }
+
+private:
+    JSServerWebSocketPrototype(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure)
+        : Base(vm, structure)
+    {
+    }
+
+    void finishCreation(JSC::VM&, JSC::JSGlobalObject*);
+};
+
+class JSServerWebSocketConstructor final : public JSC::InternalFunction {
+public:
+    using Base = JSC::InternalFunction;
+    static JSServerWebSocketConstructor* create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, JSServerWebSocketPrototype* prototype);
+
+    static constexpr unsigned StructureFlags = Base::StructureFlags;
+    static constexpr bool needsDestruction = false;
+
+    static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
+    {
+        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::InternalFunctionType, StructureFlags), info());
+    }
+
+    template<typename, JSC::SubspaceAccess mode> static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
+    {
+        if constexpr (mode == JSC::SubspaceAccess::Concurrently)
+            return nullptr;
+        return WebCore::subspaceForImpl<JSServerWebSocketConstructor, WebCore::UseCustomHeapCellType::No>(
+            vm,
+            [](auto& spaces) { return spaces.m_clientSubspaceForServerWebSocketConstructor.get(); },
+            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForServerWebSocketConstructor = WTFMove(space); },
+            [](auto& spaces) { return spaces.m_subspaceForServerWebSocketConstructor.get(); },
+            [](auto& spaces, auto&& space) { spaces.m_subspaceForServerWebSocketConstructor = WTFMove(space); });
+    }
+
+    void initializeProperties(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSServerWebSocketPrototype* prototype);
+
+    // Must be defined for each specialization class.
+    static JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES construct(JSC::JSGlobalObject*, JSC::CallFrame*);
+
+    DECLARE_EXPORT_INFO;
+
+private:
+    JSServerWebSocketConstructor(JSC::VM& vm, JSC::Structure* structure);
+    void finishCreation(JSC::VM&, JSC::JSGlobalObject* globalObject, JSServerWebSocketPrototype* prototype);
+};
+
+extern "C" void* ServerWebSocketClass__construct(JSC::JSGlobalObject*, JSC::CallFrame*);
+JSC_DECLARE_CUSTOM_GETTER(jsServerWebSocketConstructor);
+extern "C" void ServerWebSocketClass__finalize(void*);
+
+extern "C" JSC::EncodedJSValue ServerWebSocketPrototype__getBinaryType(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject);
+JSC_DECLARE_CUSTOM_GETTER(ServerWebSocketPrototype__binaryTypeGetterWrap);
+
+extern "C" bool ServerWebSocketPrototype__setBinaryType(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::EncodedJSValue value);
+JSC_DECLARE_CUSTOM_SETTER(ServerWebSocketPrototype__binaryTypeSetterWrap);
+
+extern "C" EncodedJSValue ServerWebSocketPrototype__close(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
+JSC_DECLARE_HOST_FUNCTION(ServerWebSocketPrototype__closeCallback);
+
+extern "C" EncodedJSValue ServerWebSocketPrototype__cork(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
+JSC_DECLARE_HOST_FUNCTION(ServerWebSocketPrototype__corkCallback);
+
+extern "C" JSC::EncodedJSValue ServerWebSocketPrototype__getData(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject);
+JSC_DECLARE_CUSTOM_GETTER(ServerWebSocketPrototype__dataGetterWrap);
+
+extern "C" bool ServerWebSocketPrototype__setData(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::EncodedJSValue value);
+JSC_DECLARE_CUSTOM_SETTER(ServerWebSocketPrototype__dataSetterWrap);
+
+extern "C" EncodedJSValue ServerWebSocketPrototype__getBufferedAmount(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
+JSC_DECLARE_HOST_FUNCTION(ServerWebSocketPrototype__getBufferedAmountCallback);
+
+extern "C" EncodedJSValue ServerWebSocketPrototype__isSubscribed(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
+JSC_DECLARE_HOST_FUNCTION(ServerWebSocketPrototype__isSubscribedCallback);
+
+extern "C" EncodedJSValue ServerWebSocketPrototype__publish(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
+JSC_DECLARE_HOST_FUNCTION(ServerWebSocketPrototype__publishCallback);
+
+extern "C" EncodedJSValue ServerWebSocketPrototype__publishBinary(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
+JSC_DECLARE_HOST_FUNCTION(ServerWebSocketPrototype__publishBinaryCallback);
+
+extern "C" JSC_DECLARE_JIT_OPERATION_WITHOUT_WTF_INTERNAL(ServerWebSocketPrototype__publishBinaryWithoutTypeChecksWrapper, EncodedJSValue, (JSC::JSGlobalObject * lexicalGlobalObject, void* thisValue, JSC::JSString* arg0, JSC::JSUint8Array* arg1));
+extern "C" EncodedJSValue ServerWebSocketPrototype__publishBinaryWithoutTypeChecks(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::JSString* arg0, JSC::JSUint8Array* arg1);
+
+static const JSC::DOMJIT::Signature DOMJITSignatureForServerWebSocketPrototype__publishBinary(ServerWebSocketPrototype__publishBinaryWithoutTypeChecksWrapper,
+    JSServerWebSocket::info(),
+    JSC::DOMJIT::Effect::forReadWrite(JSC::DOMJIT::HeapRange::top(), JSC::DOMJIT::HeapRange::top()),
+    JSC::SpecHeapTop, JSC::SpecString, JSC::SpecUint8Array);
+
+JSC_DEFINE_JIT_OPERATION(ServerWebSocketPrototype__publishBinaryWithoutTypeChecksWrapper, EncodedJSValue, (JSC::JSGlobalObject * lexicalGlobalObject, void* thisValue, JSC::JSString* arg0, JSC::JSUint8Array* arg1))
+{
+    VM& vm = JSC::getVM(lexicalGlobalObject);
+    IGNORE_WARNINGS_BEGIN("frame-address")
+    CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
+    IGNORE_WARNINGS_END
+    JSC::JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
+    return ServerWebSocketPrototype__publishBinaryWithoutTypeChecks(reinterpret_cast<JSServerWebSocket*>(thisValue)->wrapped(), lexicalGlobalObject, arg0, arg1);
+}
+
+extern "C" EncodedJSValue ServerWebSocketPrototype__publishText(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
+JSC_DECLARE_HOST_FUNCTION(ServerWebSocketPrototype__publishTextCallback);
+
+extern "C" JSC_DECLARE_JIT_OPERATION_WITHOUT_WTF_INTERNAL(ServerWebSocketPrototype__publishTextWithoutTypeChecksWrapper, EncodedJSValue, (JSC::JSGlobalObject * lexicalGlobalObject, void* thisValue, JSC::JSString* arg0, JSC::JSString* arg1));
+extern "C" EncodedJSValue ServerWebSocketPrototype__publishTextWithoutTypeChecks(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::JSString* arg0, JSC::JSString* arg1);
+
+static const JSC::DOMJIT::Signature DOMJITSignatureForServerWebSocketPrototype__publishText(ServerWebSocketPrototype__publishTextWithoutTypeChecksWrapper,
+    JSServerWebSocket::info(),
+    JSC::DOMJIT::Effect::forReadWrite(JSC::DOMJIT::HeapRange::top(), JSC::DOMJIT::HeapRange::top()),
+    JSC::SpecHeapTop, JSC::SpecString, JSC::SpecString);
+
+JSC_DEFINE_JIT_OPERATION(ServerWebSocketPrototype__publishTextWithoutTypeChecksWrapper, EncodedJSValue, (JSC::JSGlobalObject * lexicalGlobalObject, void* thisValue, JSC::JSString* arg0, JSC::JSString* arg1))
+{
+    VM& vm = JSC::getVM(lexicalGlobalObject);
+    IGNORE_WARNINGS_BEGIN("frame-address")
+    CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
+    IGNORE_WARNINGS_END
+    JSC::JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
+    return ServerWebSocketPrototype__publishTextWithoutTypeChecks(reinterpret_cast<JSServerWebSocket*>(thisValue)->wrapped(), lexicalGlobalObject, arg0, arg1);
+}
+
+extern "C" JSC::EncodedJSValue ServerWebSocketPrototype__getReadyState(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject);
+JSC_DECLARE_CUSTOM_GETTER(ServerWebSocketPrototype__readyStateGetterWrap);
+
+extern "C" JSC::EncodedJSValue ServerWebSocketPrototype__getRemoteAddress(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject);
+JSC_DECLARE_CUSTOM_GETTER(ServerWebSocketPrototype__remoteAddressGetterWrap);
+
+extern "C" EncodedJSValue ServerWebSocketPrototype__send(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
+JSC_DECLARE_HOST_FUNCTION(ServerWebSocketPrototype__sendCallback);
+
+extern "C" EncodedJSValue ServerWebSocketPrototype__sendBinary(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
+JSC_DECLARE_HOST_FUNCTION(ServerWebSocketPrototype__sendBinaryCallback);
+
+extern "C" JSC_DECLARE_JIT_OPERATION_WITHOUT_WTF_INTERNAL(ServerWebSocketPrototype__sendBinaryWithoutTypeChecksWrapper, EncodedJSValue, (JSC::JSGlobalObject * lexicalGlobalObject, void* thisValue, JSC::JSUint8Array* arg0, bool arg1));
+extern "C" EncodedJSValue ServerWebSocketPrototype__sendBinaryWithoutTypeChecks(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::JSUint8Array* arg0, bool arg1);
+
+static const JSC::DOMJIT::Signature DOMJITSignatureForServerWebSocketPrototype__sendBinary(ServerWebSocketPrototype__sendBinaryWithoutTypeChecksWrapper,
+    JSServerWebSocket::info(),
+    JSC::DOMJIT::Effect::forReadWrite(JSC::DOMJIT::HeapRange::top(), JSC::DOMJIT::HeapRange::top()),
+    JSC::SpecHeapTop, JSC::SpecUint8Array, JSC::SpecBoolean);
+
+JSC_DEFINE_JIT_OPERATION(ServerWebSocketPrototype__sendBinaryWithoutTypeChecksWrapper, EncodedJSValue, (JSC::JSGlobalObject * lexicalGlobalObject, void* thisValue, JSC::JSUint8Array* arg0, bool arg1))
+{
+    VM& vm = JSC::getVM(lexicalGlobalObject);
+    IGNORE_WARNINGS_BEGIN("frame-address")
+    CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
+    IGNORE_WARNINGS_END
+    JSC::JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
+    return ServerWebSocketPrototype__sendBinaryWithoutTypeChecks(reinterpret_cast<JSServerWebSocket*>(thisValue)->wrapped(), lexicalGlobalObject, arg0, arg1);
+}
+
+extern "C" EncodedJSValue ServerWebSocketPrototype__sendText(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
+JSC_DECLARE_HOST_FUNCTION(ServerWebSocketPrototype__sendTextCallback);
+
+extern "C" JSC_DECLARE_JIT_OPERATION_WITHOUT_WTF_INTERNAL(ServerWebSocketPrototype__sendTextWithoutTypeChecksWrapper, EncodedJSValue, (JSC::JSGlobalObject * lexicalGlobalObject, void* thisValue, JSC::JSString* arg0, bool arg1));
+extern "C" EncodedJSValue ServerWebSocketPrototype__sendTextWithoutTypeChecks(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::JSString* arg0, bool arg1);
+
+static const JSC::DOMJIT::Signature DOMJITSignatureForServerWebSocketPrototype__sendText(ServerWebSocketPrototype__sendTextWithoutTypeChecksWrapper,
+    JSServerWebSocket::info(),
+    JSC::DOMJIT::Effect::forReadWrite(JSC::DOMJIT::HeapRange::top(), JSC::DOMJIT::HeapRange::top()),
+    JSC::SpecHeapTop, JSC::SpecString, JSC::SpecBoolean);
+
+JSC_DEFINE_JIT_OPERATION(ServerWebSocketPrototype__sendTextWithoutTypeChecksWrapper, EncodedJSValue, (JSC::JSGlobalObject * lexicalGlobalObject, void* thisValue, JSC::JSString* arg0, bool arg1))
+{
+    VM& vm = JSC::getVM(lexicalGlobalObject);
+    IGNORE_WARNINGS_BEGIN("frame-address")
+    CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
+    IGNORE_WARNINGS_END
+    JSC::JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
+    return ServerWebSocketPrototype__sendTextWithoutTypeChecks(reinterpret_cast<JSServerWebSocket*>(thisValue)->wrapped(), lexicalGlobalObject, arg0, arg1);
+}
+
+extern "C" EncodedJSValue ServerWebSocketPrototype__subscribe(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
+JSC_DECLARE_HOST_FUNCTION(ServerWebSocketPrototype__subscribeCallback);
+
+extern "C" EncodedJSValue ServerWebSocketPrototype__unsubscribe(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
+JSC_DECLARE_HOST_FUNCTION(ServerWebSocketPrototype__unsubscribeCallback);
+
+STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSServerWebSocketPrototype, JSServerWebSocketPrototype::Base);
+
+static const HashTableValue JSServerWebSocketPrototypeTableValues[] = {
+    { "binaryType"_s, static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { HashTableValue::GetterSetterType, ServerWebSocketPrototype__binaryTypeGetterWrap, ServerWebSocketPrototype__binaryTypeSetterWrap } },
+    { "close"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, ServerWebSocketPrototype__closeCallback, 1 } },
+    { "cork"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, ServerWebSocketPrototype__corkCallback, 1 } },
+    { "data"_s, static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { HashTableValue::GetterSetterType, ServerWebSocketPrototype__dataGetterWrap, ServerWebSocketPrototype__dataSetterWrap } },
+    { "getBufferedAmount"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, ServerWebSocketPrototype__getBufferedAmountCallback, 0 } },
+    { "isSubscribed"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, ServerWebSocketPrototype__isSubscribedCallback, 1 } },
+    { "publish"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, ServerWebSocketPrototype__publishCallback, 3 } },
+    { "publishBinary"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DOMJITFunction), NoIntrinsic, { HashTableValue::DOMJITFunctionType, ServerWebSocketPrototype__publishBinaryCallback, &DOMJITSignatureForServerWebSocketPrototype__publishBinary } },
+    { "publishText"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DOMJITFunction), NoIntrinsic, { HashTableValue::DOMJITFunctionType, ServerWebSocketPrototype__publishTextCallback, &DOMJITSignatureForServerWebSocketPrototype__publishText } },
+    { "readyState"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { HashTableValue::GetterSetterType, ServerWebSocketPrototype__readyStateGetterWrap, 0 } },
+    { "remoteAddress"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { HashTableValue::GetterSetterType, ServerWebSocketPrototype__remoteAddressGetterWrap, 0 } },
+    { "send"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, ServerWebSocketPrototype__sendCallback, 2 } },
+    { "sendBinary"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DOMJITFunction), NoIntrinsic, { HashTableValue::DOMJITFunctionType, ServerWebSocketPrototype__sendBinaryCallback, &DOMJITSignatureForServerWebSocketPrototype__sendBinary } },
+    { "sendText"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DOMJITFunction), NoIntrinsic, { HashTableValue::DOMJITFunctionType, ServerWebSocketPrototype__sendTextCallback, &DOMJITSignatureForServerWebSocketPrototype__sendText } },
+    { "subscribe"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, ServerWebSocketPrototype__subscribeCallback, 1 } },
+    { "unsubscribe"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, ServerWebSocketPrototype__unsubscribeCallback, 1 } }
+};
+
+const ClassInfo JSServerWebSocketPrototype::s_info = { "ServerWebSocket"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSServerWebSocketPrototype) };
+
+JSC_DEFINE_CUSTOM_GETTER(jsServerWebSocketConstructor, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName))
+{
+    VM& vm = JSC::getVM(lexicalGlobalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    auto* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+    auto* prototype = jsDynamicCast<JSServerWebSocketPrototype*>(JSValue::decode(thisValue));
+
+    if (UNLIKELY(!prototype))
+        return throwVMTypeError(lexicalGlobalObject, throwScope);
+    return JSValue::encode(globalObject->JSServerWebSocketConstructor());
+}
+
+JSC_DEFINE_CUSTOM_GETTER(ServerWebSocketPrototype__binaryTypeGetterWrap, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
+{
+    auto& vm = lexicalGlobalObject->vm();
+    Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    JSServerWebSocket* thisObject = jsCast<JSServerWebSocket*>(JSValue::decode(thisValue));
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+    JSC::EncodedJSValue result = ServerWebSocketPrototype__getBinaryType(thisObject->wrapped(), globalObject);
+    RETURN_IF_EXCEPTION(throwScope, {});
+    RELEASE_AND_RETURN(throwScope, result);
+}
+
+JSC_DEFINE_CUSTOM_SETTER(ServerWebSocketPrototype__binaryTypeSetterWrap, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, EncodedJSValue encodedValue, PropertyName attributeName))
+{
+    auto& vm = lexicalGlobalObject->vm();
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    JSServerWebSocket* thisObject = jsCast<JSServerWebSocket*>(JSValue::decode(thisValue));
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+    auto result = ServerWebSocketPrototype__setBinaryType(thisObject->wrapped(), lexicalGlobalObject, encodedValue);
+
+    RELEASE_AND_RETURN(throwScope, result);
+}
+
+JSC_DEFINE_HOST_FUNCTION(ServerWebSocketPrototype__closeCallback, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    auto& vm = lexicalGlobalObject->vm();
+
+    JSServerWebSocket* thisObject = jsDynamicCast<JSServerWebSocket*>(callFrame->thisValue());
+
+    if (UNLIKELY(!thisObject)) {
+        auto throwScope = DECLARE_THROW_SCOPE(vm);
+        return throwVMTypeError(lexicalGlobalObject, throwScope);
+    }
+
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+
+    return ServerWebSocketPrototype__close(thisObject->wrapped(), lexicalGlobalObject, callFrame);
+}
+
+JSC_DEFINE_HOST_FUNCTION(ServerWebSocketPrototype__corkCallback, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    auto& vm = lexicalGlobalObject->vm();
+
+    JSServerWebSocket* thisObject = jsDynamicCast<JSServerWebSocket*>(callFrame->thisValue());
+
+    if (UNLIKELY(!thisObject)) {
+        auto throwScope = DECLARE_THROW_SCOPE(vm);
+        return throwVMTypeError(lexicalGlobalObject, throwScope);
+    }
+
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+
+    return ServerWebSocketPrototype__cork(thisObject->wrapped(), lexicalGlobalObject, callFrame);
+}
+
+JSC_DEFINE_CUSTOM_GETTER(ServerWebSocketPrototype__dataGetterWrap, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
+{
+    auto& vm = lexicalGlobalObject->vm();
+    Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    JSServerWebSocket* thisObject = jsCast<JSServerWebSocket*>(JSValue::decode(thisValue));
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+
+    if (JSValue cachedValue = thisObject->m_data.get())
+        return JSValue::encode(cachedValue);
+
+    JSC::JSValue result = JSC::JSValue::decode(
+        ServerWebSocketPrototype__getData(thisObject->wrapped(), globalObject));
+    RETURN_IF_EXCEPTION(throwScope, {});
+    thisObject->m_data.set(vm, thisObject, result);
+    RELEASE_AND_RETURN(throwScope, JSValue::encode(result));
+}
+
+extern "C" void ServerWebSocketPrototype__dataSetCachedValue(JSC::EncodedJSValue thisValue, JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue value)
+{
+    auto& vm = globalObject->vm();
+    auto* thisObject = jsCast<JSServerWebSocket*>(JSValue::decode(thisValue));
+    thisObject->m_data.set(vm, thisObject, JSValue::decode(value));
+}
+
+extern "C" EncodedJSValue ServerWebSocketPrototype__dataGetCachedValue(JSC::EncodedJSValue thisValue)
+{
+    auto* thisObject = jsCast<JSServerWebSocket*>(JSValue::decode(thisValue));
+    return JSValue::encode(thisObject->m_data.get());
+}
+
+JSC_DEFINE_CUSTOM_SETTER(ServerWebSocketPrototype__dataSetterWrap, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, EncodedJSValue encodedValue, PropertyName attributeName))
+{
+    auto& vm = lexicalGlobalObject->vm();
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    JSServerWebSocket* thisObject = jsCast<JSServerWebSocket*>(JSValue::decode(thisValue));
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+    auto result = ServerWebSocketPrototype__setData(thisObject->wrapped(), lexicalGlobalObject, encodedValue);
+
+    RELEASE_AND_RETURN(throwScope, result);
+}
+
+JSC_DEFINE_HOST_FUNCTION(ServerWebSocketPrototype__getBufferedAmountCallback, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    auto& vm = lexicalGlobalObject->vm();
+
+    JSServerWebSocket* thisObject = jsDynamicCast<JSServerWebSocket*>(callFrame->thisValue());
+
+    if (UNLIKELY(!thisObject)) {
+        auto throwScope = DECLARE_THROW_SCOPE(vm);
+        return throwVMTypeError(lexicalGlobalObject, throwScope);
+    }
+
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+
+    return ServerWebSocketPrototype__getBufferedAmount(thisObject->wrapped(), lexicalGlobalObject, callFrame);
+}
+
+JSC_DEFINE_HOST_FUNCTION(ServerWebSocketPrototype__isSubscribedCallback, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    auto& vm = lexicalGlobalObject->vm();
+
+    JSServerWebSocket* thisObject = jsDynamicCast<JSServerWebSocket*>(callFrame->thisValue());
+
+    if (UNLIKELY(!thisObject)) {
+        auto throwScope = DECLARE_THROW_SCOPE(vm);
+        return throwVMTypeError(lexicalGlobalObject, throwScope);
+    }
+
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+
+    return ServerWebSocketPrototype__isSubscribed(thisObject->wrapped(), lexicalGlobalObject, callFrame);
+}
+
+JSC_DEFINE_HOST_FUNCTION(ServerWebSocketPrototype__publishCallback, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    auto& vm = lexicalGlobalObject->vm();
+
+    JSServerWebSocket* thisObject = jsDynamicCast<JSServerWebSocket*>(callFrame->thisValue());
+
+    if (UNLIKELY(!thisObject)) {
+        auto throwScope = DECLARE_THROW_SCOPE(vm);
+        return throwVMTypeError(lexicalGlobalObject, throwScope);
+    }
+
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+
+    return ServerWebSocketPrototype__publish(thisObject->wrapped(), lexicalGlobalObject, callFrame);
+}
+
+JSC_DEFINE_HOST_FUNCTION(ServerWebSocketPrototype__publishBinaryCallback, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    auto& vm = lexicalGlobalObject->vm();
+
+    JSServerWebSocket* thisObject = jsDynamicCast<JSServerWebSocket*>(callFrame->thisValue());
+
+    if (UNLIKELY(!thisObject)) {
+        auto throwScope = DECLARE_THROW_SCOPE(vm);
+        return throwVMTypeError(lexicalGlobalObject, throwScope);
+    }
+
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+
+    return ServerWebSocketPrototype__publishBinary(thisObject->wrapped(), lexicalGlobalObject, callFrame);
+}
+
+JSC_DEFINE_HOST_FUNCTION(ServerWebSocketPrototype__publishTextCallback, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    auto& vm = lexicalGlobalObject->vm();
+
+    JSServerWebSocket* thisObject = jsDynamicCast<JSServerWebSocket*>(callFrame->thisValue());
+
+    if (UNLIKELY(!thisObject)) {
+        auto throwScope = DECLARE_THROW_SCOPE(vm);
+        return throwVMTypeError(lexicalGlobalObject, throwScope);
+    }
+
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+
+    return ServerWebSocketPrototype__publishText(thisObject->wrapped(), lexicalGlobalObject, callFrame);
+}
+
+JSC_DEFINE_CUSTOM_GETTER(ServerWebSocketPrototype__readyStateGetterWrap, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
+{
+    auto& vm = lexicalGlobalObject->vm();
+    Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    JSServerWebSocket* thisObject = jsCast<JSServerWebSocket*>(JSValue::decode(thisValue));
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+    JSC::EncodedJSValue result = ServerWebSocketPrototype__getReadyState(thisObject->wrapped(), globalObject);
+    RETURN_IF_EXCEPTION(throwScope, {});
+    RELEASE_AND_RETURN(throwScope, result);
+}
+
+JSC_DEFINE_CUSTOM_GETTER(ServerWebSocketPrototype__remoteAddressGetterWrap, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
+{
+    auto& vm = lexicalGlobalObject->vm();
+    Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    JSServerWebSocket* thisObject = jsCast<JSServerWebSocket*>(JSValue::decode(thisValue));
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+
+    if (JSValue cachedValue = thisObject->m_remoteAddress.get())
+        return JSValue::encode(cachedValue);
+
+    JSC::JSValue result = JSC::JSValue::decode(
+        ServerWebSocketPrototype__getRemoteAddress(thisObject->wrapped(), globalObject));
+    RETURN_IF_EXCEPTION(throwScope, {});
+    thisObject->m_remoteAddress.set(vm, thisObject, result);
+    RELEASE_AND_RETURN(throwScope, JSValue::encode(result));
+}
+
+extern "C" void ServerWebSocketPrototype__remoteAddressSetCachedValue(JSC::EncodedJSValue thisValue, JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue value)
+{
+    auto& vm = globalObject->vm();
+    auto* thisObject = jsCast<JSServerWebSocket*>(JSValue::decode(thisValue));
+    thisObject->m_remoteAddress.set(vm, thisObject, JSValue::decode(value));
+}
+
+extern "C" EncodedJSValue ServerWebSocketPrototype__remoteAddressGetCachedValue(JSC::EncodedJSValue thisValue)
+{
+    auto* thisObject = jsCast<JSServerWebSocket*>(JSValue::decode(thisValue));
+    return JSValue::encode(thisObject->m_remoteAddress.get());
+}
+
+JSC_DEFINE_HOST_FUNCTION(ServerWebSocketPrototype__sendCallback, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    auto& vm = lexicalGlobalObject->vm();
+
+    JSServerWebSocket* thisObject = jsDynamicCast<JSServerWebSocket*>(callFrame->thisValue());
+
+    if (UNLIKELY(!thisObject)) {
+        auto throwScope = DECLARE_THROW_SCOPE(vm);
+        return throwVMTypeError(lexicalGlobalObject, throwScope);
+    }
+
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+
+    return ServerWebSocketPrototype__send(thisObject->wrapped(), lexicalGlobalObject, callFrame);
+}
+
+JSC_DEFINE_HOST_FUNCTION(ServerWebSocketPrototype__sendBinaryCallback, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    auto& vm = lexicalGlobalObject->vm();
+
+    JSServerWebSocket* thisObject = jsDynamicCast<JSServerWebSocket*>(callFrame->thisValue());
+
+    if (UNLIKELY(!thisObject)) {
+        auto throwScope = DECLARE_THROW_SCOPE(vm);
+        return throwVMTypeError(lexicalGlobalObject, throwScope);
+    }
+
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+
+    return ServerWebSocketPrototype__sendBinary(thisObject->wrapped(), lexicalGlobalObject, callFrame);
+}
+
+JSC_DEFINE_HOST_FUNCTION(ServerWebSocketPrototype__sendTextCallback, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    auto& vm = lexicalGlobalObject->vm();
+
+    JSServerWebSocket* thisObject = jsDynamicCast<JSServerWebSocket*>(callFrame->thisValue());
+
+    if (UNLIKELY(!thisObject)) {
+        auto throwScope = DECLARE_THROW_SCOPE(vm);
+        return throwVMTypeError(lexicalGlobalObject, throwScope);
+    }
+
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+
+    return ServerWebSocketPrototype__sendText(thisObject->wrapped(), lexicalGlobalObject, callFrame);
+}
+
+JSC_DEFINE_HOST_FUNCTION(ServerWebSocketPrototype__subscribeCallback, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    auto& vm = lexicalGlobalObject->vm();
+
+    JSServerWebSocket* thisObject = jsDynamicCast<JSServerWebSocket*>(callFrame->thisValue());
+
+    if (UNLIKELY(!thisObject)) {
+        auto throwScope = DECLARE_THROW_SCOPE(vm);
+        return throwVMTypeError(lexicalGlobalObject, throwScope);
+    }
+
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+
+    return ServerWebSocketPrototype__subscribe(thisObject->wrapped(), lexicalGlobalObject, callFrame);
+}
+
+JSC_DEFINE_HOST_FUNCTION(ServerWebSocketPrototype__unsubscribeCallback, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    auto& vm = lexicalGlobalObject->vm();
+
+    JSServerWebSocket* thisObject = jsDynamicCast<JSServerWebSocket*>(callFrame->thisValue());
+
+    if (UNLIKELY(!thisObject)) {
+        auto throwScope = DECLARE_THROW_SCOPE(vm);
+        return throwVMTypeError(lexicalGlobalObject, throwScope);
+    }
+
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+
+    return ServerWebSocketPrototype__unsubscribe(thisObject->wrapped(), lexicalGlobalObject, callFrame);
+}
+
+void JSServerWebSocketPrototype::finishCreation(JSC::VM& vm, JSC::JSGlobalObject* globalObject)
+{
+    Base::finishCreation(vm);
+    reifyStaticProperties(vm, JSServerWebSocket::info(), JSServerWebSocketPrototypeTableValues, *this);
+    JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
+}
+
+void JSServerWebSocketConstructor::finishCreation(VM& vm, JSC::JSGlobalObject* globalObject, JSServerWebSocketPrototype* prototype)
+{
+    Base::finishCreation(vm, 0, "ServerWebSocket"_s, PropertyAdditionMode::WithoutStructureTransition);
+
+    putDirectWithoutTransition(vm, vm.propertyNames->prototype, prototype, PropertyAttribute::DontEnum | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
+    ASSERT(inherits(info()));
+}
+
+JSServerWebSocketConstructor::JSServerWebSocketConstructor(JSC::VM& vm, JSC::Structure* structure)
+    : Base(vm, structure, construct, construct)
+{
+}
+
+JSServerWebSocketConstructor* JSServerWebSocketConstructor::create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, JSServerWebSocketPrototype* prototype)
+{
+    JSServerWebSocketConstructor* ptr = new (NotNull, JSC::allocateCell<JSServerWebSocketConstructor>(vm)) JSServerWebSocketConstructor(vm, structure);
+    ptr->finishCreation(vm, globalObject, prototype);
+    return ptr;
+}
+
+JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSServerWebSocketConstructor::construct(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame)
+{
+    Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+    JSC::VM& vm = globalObject->vm();
+    JSObject* newTarget = asObject(callFrame->newTarget());
+    auto* constructor = globalObject->JSServerWebSocketConstructor();
+    Structure* structure = globalObject->JSServerWebSocketStructure();
+    if (constructor != newTarget) {
+        auto scope = DECLARE_THROW_SCOPE(vm);
+
+        auto* functionGlobalObject = reinterpret_cast<Zig::GlobalObject*>(
+            // ShadowRealm functions belong to a different global object.
+            getFunctionRealm(globalObject, newTarget));
+        RETURN_IF_EXCEPTION(scope, {});
+        structure = InternalFunction::createSubclassStructure(
+            globalObject,
+            newTarget,
+            functionGlobalObject->JSServerWebSocketStructure());
+    }
+
+    void* ptr = ServerWebSocketClass__construct(globalObject, callFrame);
+
+    if (UNLIKELY(!ptr)) {
+        return JSValue::encode(JSC::jsUndefined());
+    }
+
+    JSServerWebSocket* instance = JSServerWebSocket::create(vm, globalObject, structure, ptr);
+
+    return JSValue::encode(instance);
+}
+
+void JSServerWebSocketConstructor::initializeProperties(VM& vm, JSC::JSGlobalObject* globalObject, JSServerWebSocketPrototype* prototype)
+{
+}
+
+const ClassInfo JSServerWebSocketConstructor::s_info = { "Function"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSServerWebSocketConstructor) };
+
+extern "C" EncodedJSValue ServerWebSocket__getConstructor(Zig::GlobalObject* globalObject)
+{
+    return JSValue::encode(globalObject->JSServerWebSocketConstructor());
+}
+
+JSServerWebSocket::~JSServerWebSocket()
+{
+    if (m_ctx) {
+        ServerWebSocketClass__finalize(m_ctx);
+    }
+}
+void JSServerWebSocket::destroy(JSCell* cell)
+{
+    static_cast<JSServerWebSocket*>(cell)->JSServerWebSocket::~JSServerWebSocket();
+}
+
+const ClassInfo JSServerWebSocket::s_info = { "ServerWebSocket"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSServerWebSocket) };
+
+void JSServerWebSocket::finishCreation(VM& vm)
+{
+    Base::finishCreation(vm);
+    ASSERT(inherits(info()));
+}
+
+JSServerWebSocket* JSServerWebSocket::create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, void* ctx)
+{
+    JSServerWebSocket* ptr = new (NotNull, JSC::allocateCell<JSServerWebSocket>(vm)) JSServerWebSocket(vm, structure, ctx);
+    ptr->finishCreation(vm);
+    return ptr;
+}
+
+extern "C" void* ServerWebSocket__fromJS(JSC::EncodedJSValue value)
+{
+    JSC::JSValue decodedValue = JSC::JSValue::decode(value);
+    if (!decodedValue || decodedValue.isUndefinedOrNull())
+        return nullptr;
+
+    JSServerWebSocket* object = JSC::jsDynamicCast<JSServerWebSocket*>(decodedValue);
+
+    if (!object)
+        return nullptr;
+
+    return object->wrapped();
+}
+
+extern "C" bool ServerWebSocket__dangerouslySetPtr(JSC::EncodedJSValue value, void* ptr)
+{
+    JSServerWebSocket* object = JSC::jsDynamicCast<JSServerWebSocket*>(JSValue::decode(value));
+    if (!object)
+        return false;
+
+    object->m_ctx = ptr;
+    return true;
+}
+
+extern "C" const size_t ServerWebSocket__ptrOffset = JSServerWebSocket::offsetOfWrapped();
+
+void JSServerWebSocket::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
+{
+    auto* thisObject = jsCast<JSServerWebSocket*>(cell);
+    if (void* wrapped = thisObject->wrapped()) {
+        // if (thisObject->scriptExecutionContext())
+        //     analyzer.setLabelForCell(cell, "url " + thisObject->scriptExecutionContext()->url().string());
+    }
+    Base::analyzeHeap(cell, analyzer);
+}
+
+JSObject* JSServerWebSocket::createConstructor(VM& vm, JSGlobalObject* globalObject, JSValue prototype)
+{
+    return WebCore::JSServerWebSocketConstructor::create(vm, globalObject, WebCore::JSServerWebSocketConstructor::createStructure(vm, globalObject, globalObject->functionPrototype()), jsCast<WebCore::JSServerWebSocketPrototype*>(prototype));
+}
+
+JSObject* JSServerWebSocket::createPrototype(VM& vm, JSDOMGlobalObject* globalObject)
+{
+    return JSServerWebSocketPrototype::create(vm, globalObject, JSServerWebSocketPrototype::createStructure(vm, globalObject, globalObject->objectPrototype()));
+}
+
+extern "C" EncodedJSValue ServerWebSocket__create(Zig::GlobalObject* globalObject, void* ptr)
+{
+    auto& vm = globalObject->vm();
+    JSC::Structure* structure = globalObject->JSServerWebSocketStructure();
+    JSServerWebSocket* instance = JSServerWebSocket::create(vm, globalObject, structure, ptr);
+
+    return JSValue::encode(instance);
+}
+
+template<typename Visitor>
+void JSServerWebSocket::visitChildrenImpl(JSCell* cell, Visitor& visitor)
+{
+    JSServerWebSocket* thisObject = jsCast<JSServerWebSocket*>(cell);
+    ASSERT_GC_OBJECT_INHERITS(thisObject, info());
+    Base::visitChildren(thisObject, visitor);
+
+    visitor.append(thisObject->m_data);
+    visitor.append(thisObject->m_remoteAddress);
+}
+
+DEFINE_VISIT_CHILDREN(JSServerWebSocket);
+
+template<typename Visitor>
+void JSServerWebSocket::visitAdditionalChildren(Visitor& visitor)
+{
+    JSServerWebSocket* thisObject = this;
+    ASSERT_GC_OBJECT_INHERITS(thisObject, info());
+
+    visitor.append(thisObject->m_data);
+    visitor.append(thisObject->m_remoteAddress);
+    ;
+}
+
+DEFINE_VISIT_ADDITIONAL_CHILDREN(JSServerWebSocket);
+
+template<typename Visitor>
+void JSServerWebSocket::visitOutputConstraintsImpl(JSCell* cell, Visitor& visitor)
+{
+    JSServerWebSocket* thisObject = jsCast<JSServerWebSocket*>(cell);
+    ASSERT_GC_OBJECT_INHERITS(thisObject, info());
+    thisObject->visitAdditionalChildren<Visitor>(visitor);
+}
+
+DEFINE_VISIT_OUTPUT_CONSTRAINTS(JSServerWebSocket);
 class JSSHA1Prototype final : public JSC::JSNonFinalObject {
 public:
     using Base = JSC::JSNonFinalObject;
@@ -4265,1609 +5868,6 @@ extern "C" EncodedJSValue SHA512_256__create(Zig::GlobalObject* globalObject, vo
 
     return JSValue::encode(instance);
 }
-class JSServerWebSocketPrototype final : public JSC::JSNonFinalObject {
-public:
-    using Base = JSC::JSNonFinalObject;
-
-    static JSServerWebSocketPrototype* create(JSC::VM& vm, JSGlobalObject* globalObject, JSC::Structure* structure)
-    {
-        JSServerWebSocketPrototype* ptr = new (NotNull, JSC::allocateCell<JSServerWebSocketPrototype>(vm)) JSServerWebSocketPrototype(vm, globalObject, structure);
-        ptr->finishCreation(vm, globalObject);
-        return ptr;
-    }
-
-    DECLARE_INFO;
-    template<typename CellType, JSC::SubspaceAccess>
-    static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
-    {
-        return &vm.plainObjectSpace();
-    }
-    static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
-    {
-        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
-    }
-
-private:
-    JSServerWebSocketPrototype(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure)
-        : Base(vm, structure)
-    {
-    }
-
-    void finishCreation(JSC::VM&, JSC::JSGlobalObject*);
-};
-
-class JSServerWebSocketConstructor final : public JSC::InternalFunction {
-public:
-    using Base = JSC::InternalFunction;
-    static JSServerWebSocketConstructor* create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, JSServerWebSocketPrototype* prototype);
-
-    static constexpr unsigned StructureFlags = Base::StructureFlags;
-    static constexpr bool needsDestruction = false;
-
-    static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
-    {
-        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::InternalFunctionType, StructureFlags), info());
-    }
-
-    template<typename, JSC::SubspaceAccess mode> static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
-    {
-        if constexpr (mode == JSC::SubspaceAccess::Concurrently)
-            return nullptr;
-        return WebCore::subspaceForImpl<JSServerWebSocketConstructor, WebCore::UseCustomHeapCellType::No>(
-            vm,
-            [](auto& spaces) { return spaces.m_clientSubspaceForServerWebSocketConstructor.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForServerWebSocketConstructor = WTFMove(space); },
-            [](auto& spaces) { return spaces.m_subspaceForServerWebSocketConstructor.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_subspaceForServerWebSocketConstructor = WTFMove(space); });
-    }
-
-    void initializeProperties(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSServerWebSocketPrototype* prototype);
-
-    // Must be defined for each specialization class.
-    static JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES construct(JSC::JSGlobalObject*, JSC::CallFrame*);
-
-    DECLARE_EXPORT_INFO;
-
-private:
-    JSServerWebSocketConstructor(JSC::VM& vm, JSC::Structure* structure);
-    void finishCreation(JSC::VM&, JSC::JSGlobalObject* globalObject, JSServerWebSocketPrototype* prototype);
-};
-
-extern "C" void* ServerWebSocketClass__construct(JSC::JSGlobalObject*, JSC::CallFrame*);
-JSC_DECLARE_CUSTOM_GETTER(jsServerWebSocketConstructor);
-extern "C" void ServerWebSocketClass__finalize(void*);
-
-extern "C" JSC::EncodedJSValue ServerWebSocketPrototype__getBinaryType(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject);
-JSC_DECLARE_CUSTOM_GETTER(ServerWebSocketPrototype__binaryTypeGetterWrap);
-
-extern "C" bool ServerWebSocketPrototype__setBinaryType(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::EncodedJSValue value);
-JSC_DECLARE_CUSTOM_SETTER(ServerWebSocketPrototype__binaryTypeSetterWrap);
-
-extern "C" EncodedJSValue ServerWebSocketPrototype__close(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
-JSC_DECLARE_HOST_FUNCTION(ServerWebSocketPrototype__closeCallback);
-
-extern "C" EncodedJSValue ServerWebSocketPrototype__cork(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
-JSC_DECLARE_HOST_FUNCTION(ServerWebSocketPrototype__corkCallback);
-
-extern "C" JSC::EncodedJSValue ServerWebSocketPrototype__getData(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject);
-JSC_DECLARE_CUSTOM_GETTER(ServerWebSocketPrototype__dataGetterWrap);
-
-extern "C" bool ServerWebSocketPrototype__setData(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::EncodedJSValue value);
-JSC_DECLARE_CUSTOM_SETTER(ServerWebSocketPrototype__dataSetterWrap);
-
-extern "C" EncodedJSValue ServerWebSocketPrototype__getBufferedAmount(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
-JSC_DECLARE_HOST_FUNCTION(ServerWebSocketPrototype__getBufferedAmountCallback);
-
-extern "C" EncodedJSValue ServerWebSocketPrototype__isSubscribed(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
-JSC_DECLARE_HOST_FUNCTION(ServerWebSocketPrototype__isSubscribedCallback);
-
-extern "C" EncodedJSValue ServerWebSocketPrototype__publish(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
-JSC_DECLARE_HOST_FUNCTION(ServerWebSocketPrototype__publishCallback);
-
-extern "C" EncodedJSValue ServerWebSocketPrototype__publishBinary(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
-JSC_DECLARE_HOST_FUNCTION(ServerWebSocketPrototype__publishBinaryCallback);
-
-extern "C" JSC_DECLARE_JIT_OPERATION_WITHOUT_WTF_INTERNAL(ServerWebSocketPrototype__publishBinaryWithoutTypeChecksWrapper, EncodedJSValue, (JSC::JSGlobalObject * lexicalGlobalObject, void* thisValue, JSC::JSString* arg0, JSC::JSUint8Array* arg1));
-extern "C" EncodedJSValue ServerWebSocketPrototype__publishBinaryWithoutTypeChecks(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::JSString* arg0, JSC::JSUint8Array* arg1);
-
-static const JSC::DOMJIT::Signature DOMJITSignatureForServerWebSocketPrototype__publishBinary(ServerWebSocketPrototype__publishBinaryWithoutTypeChecksWrapper,
-    JSServerWebSocket::info(),
-    JSC::DOMJIT::Effect::forReadWrite(JSC::DOMJIT::HeapRange::top(), JSC::DOMJIT::HeapRange::top()),
-    JSC::SpecHeapTop, JSC::SpecString, JSC::SpecUint8Array);
-
-JSC_DEFINE_JIT_OPERATION(ServerWebSocketPrototype__publishBinaryWithoutTypeChecksWrapper, EncodedJSValue, (JSC::JSGlobalObject * lexicalGlobalObject, void* thisValue, JSC::JSString* arg0, JSC::JSUint8Array* arg1))
-{
-    VM& vm = JSC::getVM(lexicalGlobalObject);
-    IGNORE_WARNINGS_BEGIN("frame-address")
-    CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
-    IGNORE_WARNINGS_END
-    JSC::JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
-    return ServerWebSocketPrototype__publishBinaryWithoutTypeChecks(reinterpret_cast<JSServerWebSocket*>(thisValue)->wrapped(), lexicalGlobalObject, arg0, arg1);
-}
-
-extern "C" EncodedJSValue ServerWebSocketPrototype__publishText(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
-JSC_DECLARE_HOST_FUNCTION(ServerWebSocketPrototype__publishTextCallback);
-
-extern "C" JSC_DECLARE_JIT_OPERATION_WITHOUT_WTF_INTERNAL(ServerWebSocketPrototype__publishTextWithoutTypeChecksWrapper, EncodedJSValue, (JSC::JSGlobalObject * lexicalGlobalObject, void* thisValue, JSC::JSString* arg0, JSC::JSString* arg1));
-extern "C" EncodedJSValue ServerWebSocketPrototype__publishTextWithoutTypeChecks(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::JSString* arg0, JSC::JSString* arg1);
-
-static const JSC::DOMJIT::Signature DOMJITSignatureForServerWebSocketPrototype__publishText(ServerWebSocketPrototype__publishTextWithoutTypeChecksWrapper,
-    JSServerWebSocket::info(),
-    JSC::DOMJIT::Effect::forReadWrite(JSC::DOMJIT::HeapRange::top(), JSC::DOMJIT::HeapRange::top()),
-    JSC::SpecHeapTop, JSC::SpecString, JSC::SpecString);
-
-JSC_DEFINE_JIT_OPERATION(ServerWebSocketPrototype__publishTextWithoutTypeChecksWrapper, EncodedJSValue, (JSC::JSGlobalObject * lexicalGlobalObject, void* thisValue, JSC::JSString* arg0, JSC::JSString* arg1))
-{
-    VM& vm = JSC::getVM(lexicalGlobalObject);
-    IGNORE_WARNINGS_BEGIN("frame-address")
-    CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
-    IGNORE_WARNINGS_END
-    JSC::JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
-    return ServerWebSocketPrototype__publishTextWithoutTypeChecks(reinterpret_cast<JSServerWebSocket*>(thisValue)->wrapped(), lexicalGlobalObject, arg0, arg1);
-}
-
-extern "C" JSC::EncodedJSValue ServerWebSocketPrototype__getReadyState(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject);
-JSC_DECLARE_CUSTOM_GETTER(ServerWebSocketPrototype__readyStateGetterWrap);
-
-extern "C" JSC::EncodedJSValue ServerWebSocketPrototype__getRemoteAddress(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject);
-JSC_DECLARE_CUSTOM_GETTER(ServerWebSocketPrototype__remoteAddressGetterWrap);
-
-extern "C" EncodedJSValue ServerWebSocketPrototype__send(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
-JSC_DECLARE_HOST_FUNCTION(ServerWebSocketPrototype__sendCallback);
-
-extern "C" EncodedJSValue ServerWebSocketPrototype__sendBinary(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
-JSC_DECLARE_HOST_FUNCTION(ServerWebSocketPrototype__sendBinaryCallback);
-
-extern "C" JSC_DECLARE_JIT_OPERATION_WITHOUT_WTF_INTERNAL(ServerWebSocketPrototype__sendBinaryWithoutTypeChecksWrapper, EncodedJSValue, (JSC::JSGlobalObject * lexicalGlobalObject, void* thisValue, JSC::JSUint8Array* arg0, bool arg1));
-extern "C" EncodedJSValue ServerWebSocketPrototype__sendBinaryWithoutTypeChecks(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::JSUint8Array* arg0, bool arg1);
-
-static const JSC::DOMJIT::Signature DOMJITSignatureForServerWebSocketPrototype__sendBinary(ServerWebSocketPrototype__sendBinaryWithoutTypeChecksWrapper,
-    JSServerWebSocket::info(),
-    JSC::DOMJIT::Effect::forReadWrite(JSC::DOMJIT::HeapRange::top(), JSC::DOMJIT::HeapRange::top()),
-    JSC::SpecHeapTop, JSC::SpecUint8Array, JSC::SpecBoolean);
-
-JSC_DEFINE_JIT_OPERATION(ServerWebSocketPrototype__sendBinaryWithoutTypeChecksWrapper, EncodedJSValue, (JSC::JSGlobalObject * lexicalGlobalObject, void* thisValue, JSC::JSUint8Array* arg0, bool arg1))
-{
-    VM& vm = JSC::getVM(lexicalGlobalObject);
-    IGNORE_WARNINGS_BEGIN("frame-address")
-    CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
-    IGNORE_WARNINGS_END
-    JSC::JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
-    return ServerWebSocketPrototype__sendBinaryWithoutTypeChecks(reinterpret_cast<JSServerWebSocket*>(thisValue)->wrapped(), lexicalGlobalObject, arg0, arg1);
-}
-
-extern "C" EncodedJSValue ServerWebSocketPrototype__sendText(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
-JSC_DECLARE_HOST_FUNCTION(ServerWebSocketPrototype__sendTextCallback);
-
-extern "C" JSC_DECLARE_JIT_OPERATION_WITHOUT_WTF_INTERNAL(ServerWebSocketPrototype__sendTextWithoutTypeChecksWrapper, EncodedJSValue, (JSC::JSGlobalObject * lexicalGlobalObject, void* thisValue, JSC::JSString* arg0, bool arg1));
-extern "C" EncodedJSValue ServerWebSocketPrototype__sendTextWithoutTypeChecks(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::JSString* arg0, bool arg1);
-
-static const JSC::DOMJIT::Signature DOMJITSignatureForServerWebSocketPrototype__sendText(ServerWebSocketPrototype__sendTextWithoutTypeChecksWrapper,
-    JSServerWebSocket::info(),
-    JSC::DOMJIT::Effect::forReadWrite(JSC::DOMJIT::HeapRange::top(), JSC::DOMJIT::HeapRange::top()),
-    JSC::SpecHeapTop, JSC::SpecString, JSC::SpecBoolean);
-
-JSC_DEFINE_JIT_OPERATION(ServerWebSocketPrototype__sendTextWithoutTypeChecksWrapper, EncodedJSValue, (JSC::JSGlobalObject * lexicalGlobalObject, void* thisValue, JSC::JSString* arg0, bool arg1))
-{
-    VM& vm = JSC::getVM(lexicalGlobalObject);
-    IGNORE_WARNINGS_BEGIN("frame-address")
-    CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
-    IGNORE_WARNINGS_END
-    JSC::JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
-    return ServerWebSocketPrototype__sendTextWithoutTypeChecks(reinterpret_cast<JSServerWebSocket*>(thisValue)->wrapped(), lexicalGlobalObject, arg0, arg1);
-}
-
-extern "C" EncodedJSValue ServerWebSocketPrototype__subscribe(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
-JSC_DECLARE_HOST_FUNCTION(ServerWebSocketPrototype__subscribeCallback);
-
-extern "C" EncodedJSValue ServerWebSocketPrototype__unsubscribe(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
-JSC_DECLARE_HOST_FUNCTION(ServerWebSocketPrototype__unsubscribeCallback);
-
-STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSServerWebSocketPrototype, JSServerWebSocketPrototype::Base);
-
-static const HashTableValue JSServerWebSocketPrototypeTableValues[] = {
-    { "binaryType"_s, static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { HashTableValue::GetterSetterType, ServerWebSocketPrototype__binaryTypeGetterWrap, ServerWebSocketPrototype__binaryTypeSetterWrap } },
-    { "close"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, ServerWebSocketPrototype__closeCallback, 1 } },
-    { "cork"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, ServerWebSocketPrototype__corkCallback, 1 } },
-    { "data"_s, static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { HashTableValue::GetterSetterType, ServerWebSocketPrototype__dataGetterWrap, ServerWebSocketPrototype__dataSetterWrap } },
-    { "getBufferedAmount"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, ServerWebSocketPrototype__getBufferedAmountCallback, 0 } },
-    { "isSubscribed"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, ServerWebSocketPrototype__isSubscribedCallback, 1 } },
-    { "publish"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, ServerWebSocketPrototype__publishCallback, 3 } },
-    { "publishBinary"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DOMJITFunction), NoIntrinsic, { HashTableValue::DOMJITFunctionType, ServerWebSocketPrototype__publishBinaryCallback, &DOMJITSignatureForServerWebSocketPrototype__publishBinary } },
-    { "publishText"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DOMJITFunction), NoIntrinsic, { HashTableValue::DOMJITFunctionType, ServerWebSocketPrototype__publishTextCallback, &DOMJITSignatureForServerWebSocketPrototype__publishText } },
-    { "readyState"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { HashTableValue::GetterSetterType, ServerWebSocketPrototype__readyStateGetterWrap, 0 } },
-    { "remoteAddress"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { HashTableValue::GetterSetterType, ServerWebSocketPrototype__remoteAddressGetterWrap, 0 } },
-    { "send"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, ServerWebSocketPrototype__sendCallback, 2 } },
-    { "sendBinary"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DOMJITFunction), NoIntrinsic, { HashTableValue::DOMJITFunctionType, ServerWebSocketPrototype__sendBinaryCallback, &DOMJITSignatureForServerWebSocketPrototype__sendBinary } },
-    { "sendText"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DOMJITFunction), NoIntrinsic, { HashTableValue::DOMJITFunctionType, ServerWebSocketPrototype__sendTextCallback, &DOMJITSignatureForServerWebSocketPrototype__sendText } },
-    { "subscribe"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, ServerWebSocketPrototype__subscribeCallback, 1 } },
-    { "unsubscribe"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, ServerWebSocketPrototype__unsubscribeCallback, 1 } }
-};
-
-const ClassInfo JSServerWebSocketPrototype::s_info = { "ServerWebSocket"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSServerWebSocketPrototype) };
-
-JSC_DEFINE_CUSTOM_GETTER(jsServerWebSocketConstructor, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName))
-{
-    VM& vm = JSC::getVM(lexicalGlobalObject);
-    auto throwScope = DECLARE_THROW_SCOPE(vm);
-    auto* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
-    auto* prototype = jsDynamicCast<JSServerWebSocketPrototype*>(JSValue::decode(thisValue));
-
-    if (UNLIKELY(!prototype))
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
-    return JSValue::encode(globalObject->JSServerWebSocketConstructor());
-}
-
-JSC_DEFINE_CUSTOM_GETTER(ServerWebSocketPrototype__binaryTypeGetterWrap, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
-{
-    auto& vm = lexicalGlobalObject->vm();
-    Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
-    auto throwScope = DECLARE_THROW_SCOPE(vm);
-    JSServerWebSocket* thisObject = jsCast<JSServerWebSocket*>(JSValue::decode(thisValue));
-    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
-    JSC::EncodedJSValue result = ServerWebSocketPrototype__getBinaryType(thisObject->wrapped(), globalObject);
-    RETURN_IF_EXCEPTION(throwScope, {});
-    RELEASE_AND_RETURN(throwScope, result);
-}
-
-JSC_DEFINE_CUSTOM_SETTER(ServerWebSocketPrototype__binaryTypeSetterWrap, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, EncodedJSValue encodedValue, PropertyName attributeName))
-{
-    auto& vm = lexicalGlobalObject->vm();
-    auto throwScope = DECLARE_THROW_SCOPE(vm);
-    JSServerWebSocket* thisObject = jsCast<JSServerWebSocket*>(JSValue::decode(thisValue));
-    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
-    auto result = ServerWebSocketPrototype__setBinaryType(thisObject->wrapped(), lexicalGlobalObject, encodedValue);
-
-    RELEASE_AND_RETURN(throwScope, result);
-}
-
-JSC_DEFINE_HOST_FUNCTION(ServerWebSocketPrototype__closeCallback, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
-{
-    auto& vm = lexicalGlobalObject->vm();
-
-    JSServerWebSocket* thisObject = jsDynamicCast<JSServerWebSocket*>(callFrame->thisValue());
-
-    if (UNLIKELY(!thisObject)) {
-        auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
-    }
-
-    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
-
-    return ServerWebSocketPrototype__close(thisObject->wrapped(), lexicalGlobalObject, callFrame);
-}
-
-JSC_DEFINE_HOST_FUNCTION(ServerWebSocketPrototype__corkCallback, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
-{
-    auto& vm = lexicalGlobalObject->vm();
-
-    JSServerWebSocket* thisObject = jsDynamicCast<JSServerWebSocket*>(callFrame->thisValue());
-
-    if (UNLIKELY(!thisObject)) {
-        auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
-    }
-
-    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
-
-    return ServerWebSocketPrototype__cork(thisObject->wrapped(), lexicalGlobalObject, callFrame);
-}
-
-JSC_DEFINE_CUSTOM_GETTER(ServerWebSocketPrototype__dataGetterWrap, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
-{
-    auto& vm = lexicalGlobalObject->vm();
-    Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
-    auto throwScope = DECLARE_THROW_SCOPE(vm);
-    JSServerWebSocket* thisObject = jsCast<JSServerWebSocket*>(JSValue::decode(thisValue));
-    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
-
-    if (JSValue cachedValue = thisObject->m_data.get())
-        return JSValue::encode(cachedValue);
-
-    JSC::JSValue result = JSC::JSValue::decode(
-        ServerWebSocketPrototype__getData(thisObject->wrapped(), globalObject));
-    RETURN_IF_EXCEPTION(throwScope, {});
-    thisObject->m_data.set(vm, thisObject, result);
-    RELEASE_AND_RETURN(throwScope, JSValue::encode(result));
-}
-
-extern "C" void ServerWebSocketPrototype__dataSetCachedValue(JSC::EncodedJSValue thisValue, JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue value)
-{
-    auto& vm = globalObject->vm();
-    auto* thisObject = jsCast<JSServerWebSocket*>(JSValue::decode(thisValue));
-    thisObject->m_data.set(vm, thisObject, JSValue::decode(value));
-}
-
-extern "C" EncodedJSValue ServerWebSocketPrototype__dataGetCachedValue(JSC::EncodedJSValue thisValue)
-{
-    auto* thisObject = jsCast<JSServerWebSocket*>(JSValue::decode(thisValue));
-    return JSValue::encode(thisObject->m_data.get());
-}
-
-JSC_DEFINE_CUSTOM_SETTER(ServerWebSocketPrototype__dataSetterWrap, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, EncodedJSValue encodedValue, PropertyName attributeName))
-{
-    auto& vm = lexicalGlobalObject->vm();
-    auto throwScope = DECLARE_THROW_SCOPE(vm);
-    JSServerWebSocket* thisObject = jsCast<JSServerWebSocket*>(JSValue::decode(thisValue));
-    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
-    auto result = ServerWebSocketPrototype__setData(thisObject->wrapped(), lexicalGlobalObject, encodedValue);
-
-    RELEASE_AND_RETURN(throwScope, result);
-}
-
-JSC_DEFINE_HOST_FUNCTION(ServerWebSocketPrototype__getBufferedAmountCallback, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
-{
-    auto& vm = lexicalGlobalObject->vm();
-
-    JSServerWebSocket* thisObject = jsDynamicCast<JSServerWebSocket*>(callFrame->thisValue());
-
-    if (UNLIKELY(!thisObject)) {
-        auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
-    }
-
-    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
-
-    return ServerWebSocketPrototype__getBufferedAmount(thisObject->wrapped(), lexicalGlobalObject, callFrame);
-}
-
-JSC_DEFINE_HOST_FUNCTION(ServerWebSocketPrototype__isSubscribedCallback, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
-{
-    auto& vm = lexicalGlobalObject->vm();
-
-    JSServerWebSocket* thisObject = jsDynamicCast<JSServerWebSocket*>(callFrame->thisValue());
-
-    if (UNLIKELY(!thisObject)) {
-        auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
-    }
-
-    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
-
-    return ServerWebSocketPrototype__isSubscribed(thisObject->wrapped(), lexicalGlobalObject, callFrame);
-}
-
-JSC_DEFINE_HOST_FUNCTION(ServerWebSocketPrototype__publishCallback, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
-{
-    auto& vm = lexicalGlobalObject->vm();
-
-    JSServerWebSocket* thisObject = jsDynamicCast<JSServerWebSocket*>(callFrame->thisValue());
-
-    if (UNLIKELY(!thisObject)) {
-        auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
-    }
-
-    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
-
-    return ServerWebSocketPrototype__publish(thisObject->wrapped(), lexicalGlobalObject, callFrame);
-}
-
-JSC_DEFINE_HOST_FUNCTION(ServerWebSocketPrototype__publishBinaryCallback, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
-{
-    auto& vm = lexicalGlobalObject->vm();
-
-    JSServerWebSocket* thisObject = jsDynamicCast<JSServerWebSocket*>(callFrame->thisValue());
-
-    if (UNLIKELY(!thisObject)) {
-        auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
-    }
-
-    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
-
-    return ServerWebSocketPrototype__publishBinary(thisObject->wrapped(), lexicalGlobalObject, callFrame);
-}
-
-JSC_DEFINE_HOST_FUNCTION(ServerWebSocketPrototype__publishTextCallback, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
-{
-    auto& vm = lexicalGlobalObject->vm();
-
-    JSServerWebSocket* thisObject = jsDynamicCast<JSServerWebSocket*>(callFrame->thisValue());
-
-    if (UNLIKELY(!thisObject)) {
-        auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
-    }
-
-    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
-
-    return ServerWebSocketPrototype__publishText(thisObject->wrapped(), lexicalGlobalObject, callFrame);
-}
-
-JSC_DEFINE_CUSTOM_GETTER(ServerWebSocketPrototype__readyStateGetterWrap, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
-{
-    auto& vm = lexicalGlobalObject->vm();
-    Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
-    auto throwScope = DECLARE_THROW_SCOPE(vm);
-    JSServerWebSocket* thisObject = jsCast<JSServerWebSocket*>(JSValue::decode(thisValue));
-    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
-    JSC::EncodedJSValue result = ServerWebSocketPrototype__getReadyState(thisObject->wrapped(), globalObject);
-    RETURN_IF_EXCEPTION(throwScope, {});
-    RELEASE_AND_RETURN(throwScope, result);
-}
-
-JSC_DEFINE_CUSTOM_GETTER(ServerWebSocketPrototype__remoteAddressGetterWrap, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
-{
-    auto& vm = lexicalGlobalObject->vm();
-    Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
-    auto throwScope = DECLARE_THROW_SCOPE(vm);
-    JSServerWebSocket* thisObject = jsCast<JSServerWebSocket*>(JSValue::decode(thisValue));
-    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
-
-    if (JSValue cachedValue = thisObject->m_remoteAddress.get())
-        return JSValue::encode(cachedValue);
-
-    JSC::JSValue result = JSC::JSValue::decode(
-        ServerWebSocketPrototype__getRemoteAddress(thisObject->wrapped(), globalObject));
-    RETURN_IF_EXCEPTION(throwScope, {});
-    thisObject->m_remoteAddress.set(vm, thisObject, result);
-    RELEASE_AND_RETURN(throwScope, JSValue::encode(result));
-}
-
-extern "C" void ServerWebSocketPrototype__remoteAddressSetCachedValue(JSC::EncodedJSValue thisValue, JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue value)
-{
-    auto& vm = globalObject->vm();
-    auto* thisObject = jsCast<JSServerWebSocket*>(JSValue::decode(thisValue));
-    thisObject->m_remoteAddress.set(vm, thisObject, JSValue::decode(value));
-}
-
-extern "C" EncodedJSValue ServerWebSocketPrototype__remoteAddressGetCachedValue(JSC::EncodedJSValue thisValue)
-{
-    auto* thisObject = jsCast<JSServerWebSocket*>(JSValue::decode(thisValue));
-    return JSValue::encode(thisObject->m_remoteAddress.get());
-}
-
-JSC_DEFINE_HOST_FUNCTION(ServerWebSocketPrototype__sendCallback, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
-{
-    auto& vm = lexicalGlobalObject->vm();
-
-    JSServerWebSocket* thisObject = jsDynamicCast<JSServerWebSocket*>(callFrame->thisValue());
-
-    if (UNLIKELY(!thisObject)) {
-        auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
-    }
-
-    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
-
-    return ServerWebSocketPrototype__send(thisObject->wrapped(), lexicalGlobalObject, callFrame);
-}
-
-JSC_DEFINE_HOST_FUNCTION(ServerWebSocketPrototype__sendBinaryCallback, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
-{
-    auto& vm = lexicalGlobalObject->vm();
-
-    JSServerWebSocket* thisObject = jsDynamicCast<JSServerWebSocket*>(callFrame->thisValue());
-
-    if (UNLIKELY(!thisObject)) {
-        auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
-    }
-
-    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
-
-    return ServerWebSocketPrototype__sendBinary(thisObject->wrapped(), lexicalGlobalObject, callFrame);
-}
-
-JSC_DEFINE_HOST_FUNCTION(ServerWebSocketPrototype__sendTextCallback, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
-{
-    auto& vm = lexicalGlobalObject->vm();
-
-    JSServerWebSocket* thisObject = jsDynamicCast<JSServerWebSocket*>(callFrame->thisValue());
-
-    if (UNLIKELY(!thisObject)) {
-        auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
-    }
-
-    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
-
-    return ServerWebSocketPrototype__sendText(thisObject->wrapped(), lexicalGlobalObject, callFrame);
-}
-
-JSC_DEFINE_HOST_FUNCTION(ServerWebSocketPrototype__subscribeCallback, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
-{
-    auto& vm = lexicalGlobalObject->vm();
-
-    JSServerWebSocket* thisObject = jsDynamicCast<JSServerWebSocket*>(callFrame->thisValue());
-
-    if (UNLIKELY(!thisObject)) {
-        auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
-    }
-
-    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
-
-    return ServerWebSocketPrototype__subscribe(thisObject->wrapped(), lexicalGlobalObject, callFrame);
-}
-
-JSC_DEFINE_HOST_FUNCTION(ServerWebSocketPrototype__unsubscribeCallback, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
-{
-    auto& vm = lexicalGlobalObject->vm();
-
-    JSServerWebSocket* thisObject = jsDynamicCast<JSServerWebSocket*>(callFrame->thisValue());
-
-    if (UNLIKELY(!thisObject)) {
-        auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
-    }
-
-    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
-
-    return ServerWebSocketPrototype__unsubscribe(thisObject->wrapped(), lexicalGlobalObject, callFrame);
-}
-
-void JSServerWebSocketPrototype::finishCreation(JSC::VM& vm, JSC::JSGlobalObject* globalObject)
-{
-    Base::finishCreation(vm);
-    reifyStaticProperties(vm, JSServerWebSocket::info(), JSServerWebSocketPrototypeTableValues, *this);
-    JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
-}
-
-void JSServerWebSocketConstructor::finishCreation(VM& vm, JSC::JSGlobalObject* globalObject, JSServerWebSocketPrototype* prototype)
-{
-    Base::finishCreation(vm, 0, "ServerWebSocket"_s, PropertyAdditionMode::WithoutStructureTransition);
-
-    putDirectWithoutTransition(vm, vm.propertyNames->prototype, prototype, PropertyAttribute::DontEnum | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
-    ASSERT(inherits(info()));
-}
-
-JSServerWebSocketConstructor::JSServerWebSocketConstructor(JSC::VM& vm, JSC::Structure* structure)
-    : Base(vm, structure, construct, construct)
-{
-}
-
-JSServerWebSocketConstructor* JSServerWebSocketConstructor::create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, JSServerWebSocketPrototype* prototype)
-{
-    JSServerWebSocketConstructor* ptr = new (NotNull, JSC::allocateCell<JSServerWebSocketConstructor>(vm)) JSServerWebSocketConstructor(vm, structure);
-    ptr->finishCreation(vm, globalObject, prototype);
-    return ptr;
-}
-
-JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSServerWebSocketConstructor::construct(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame)
-{
-    Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
-    JSC::VM& vm = globalObject->vm();
-    JSObject* newTarget = asObject(callFrame->newTarget());
-    auto* constructor = globalObject->JSServerWebSocketConstructor();
-    Structure* structure = globalObject->JSServerWebSocketStructure();
-    if (constructor != newTarget) {
-        auto scope = DECLARE_THROW_SCOPE(vm);
-
-        auto* functionGlobalObject = reinterpret_cast<Zig::GlobalObject*>(
-            // ShadowRealm functions belong to a different global object.
-            getFunctionRealm(globalObject, newTarget));
-        RETURN_IF_EXCEPTION(scope, {});
-        structure = InternalFunction::createSubclassStructure(
-            globalObject,
-            newTarget,
-            functionGlobalObject->JSServerWebSocketStructure());
-    }
-
-    void* ptr = ServerWebSocketClass__construct(globalObject, callFrame);
-
-    if (UNLIKELY(!ptr)) {
-        return JSValue::encode(JSC::jsUndefined());
-    }
-
-    JSServerWebSocket* instance = JSServerWebSocket::create(vm, globalObject, structure, ptr);
-
-    return JSValue::encode(instance);
-}
-
-void JSServerWebSocketConstructor::initializeProperties(VM& vm, JSC::JSGlobalObject* globalObject, JSServerWebSocketPrototype* prototype)
-{
-}
-
-const ClassInfo JSServerWebSocketConstructor::s_info = { "Function"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSServerWebSocketConstructor) };
-
-extern "C" EncodedJSValue ServerWebSocket__getConstructor(Zig::GlobalObject* globalObject)
-{
-    return JSValue::encode(globalObject->JSServerWebSocketConstructor());
-}
-
-JSServerWebSocket::~JSServerWebSocket()
-{
-    if (m_ctx) {
-        ServerWebSocketClass__finalize(m_ctx);
-    }
-}
-void JSServerWebSocket::destroy(JSCell* cell)
-{
-    static_cast<JSServerWebSocket*>(cell)->JSServerWebSocket::~JSServerWebSocket();
-}
-
-const ClassInfo JSServerWebSocket::s_info = { "ServerWebSocket"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSServerWebSocket) };
-
-void JSServerWebSocket::finishCreation(VM& vm)
-{
-    Base::finishCreation(vm);
-    ASSERT(inherits(info()));
-}
-
-JSServerWebSocket* JSServerWebSocket::create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, void* ctx)
-{
-    JSServerWebSocket* ptr = new (NotNull, JSC::allocateCell<JSServerWebSocket>(vm)) JSServerWebSocket(vm, structure, ctx);
-    ptr->finishCreation(vm);
-    return ptr;
-}
-
-extern "C" void* ServerWebSocket__fromJS(JSC::EncodedJSValue value)
-{
-    JSC::JSValue decodedValue = JSC::JSValue::decode(value);
-    if (!decodedValue || decodedValue.isUndefinedOrNull())
-        return nullptr;
-
-    JSServerWebSocket* object = JSC::jsDynamicCast<JSServerWebSocket*>(decodedValue);
-
-    if (!object)
-        return nullptr;
-
-    return object->wrapped();
-}
-
-extern "C" bool ServerWebSocket__dangerouslySetPtr(JSC::EncodedJSValue value, void* ptr)
-{
-    JSServerWebSocket* object = JSC::jsDynamicCast<JSServerWebSocket*>(JSValue::decode(value));
-    if (!object)
-        return false;
-
-    object->m_ctx = ptr;
-    return true;
-}
-
-extern "C" const size_t ServerWebSocket__ptrOffset = JSServerWebSocket::offsetOfWrapped();
-
-void JSServerWebSocket::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
-{
-    auto* thisObject = jsCast<JSServerWebSocket*>(cell);
-    if (void* wrapped = thisObject->wrapped()) {
-        // if (thisObject->scriptExecutionContext())
-        //     analyzer.setLabelForCell(cell, "url " + thisObject->scriptExecutionContext()->url().string());
-    }
-    Base::analyzeHeap(cell, analyzer);
-}
-
-JSObject* JSServerWebSocket::createConstructor(VM& vm, JSGlobalObject* globalObject, JSValue prototype)
-{
-    return WebCore::JSServerWebSocketConstructor::create(vm, globalObject, WebCore::JSServerWebSocketConstructor::createStructure(vm, globalObject, globalObject->functionPrototype()), jsCast<WebCore::JSServerWebSocketPrototype*>(prototype));
-}
-
-JSObject* JSServerWebSocket::createPrototype(VM& vm, JSDOMGlobalObject* globalObject)
-{
-    return JSServerWebSocketPrototype::create(vm, globalObject, JSServerWebSocketPrototype::createStructure(vm, globalObject, globalObject->objectPrototype()));
-}
-
-extern "C" EncodedJSValue ServerWebSocket__create(Zig::GlobalObject* globalObject, void* ptr)
-{
-    auto& vm = globalObject->vm();
-    JSC::Structure* structure = globalObject->JSServerWebSocketStructure();
-    JSServerWebSocket* instance = JSServerWebSocket::create(vm, globalObject, structure, ptr);
-
-    return JSValue::encode(instance);
-}
-
-template<typename Visitor>
-void JSServerWebSocket::visitChildrenImpl(JSCell* cell, Visitor& visitor)
-{
-    JSServerWebSocket* thisObject = jsCast<JSServerWebSocket*>(cell);
-    ASSERT_GC_OBJECT_INHERITS(thisObject, info());
-    Base::visitChildren(thisObject, visitor);
-
-    visitor.append(thisObject->m_data);
-    visitor.append(thisObject->m_remoteAddress);
-}
-
-DEFINE_VISIT_CHILDREN(JSServerWebSocket);
-
-template<typename Visitor>
-void JSServerWebSocket::visitAdditionalChildren(Visitor& visitor)
-{
-    JSServerWebSocket* thisObject = this;
-    ASSERT_GC_OBJECT_INHERITS(thisObject, info());
-
-    visitor.append(thisObject->m_data);
-    visitor.append(thisObject->m_remoteAddress);
-    ;
-}
-
-DEFINE_VISIT_ADDITIONAL_CHILDREN(JSServerWebSocket);
-
-template<typename Visitor>
-void JSServerWebSocket::visitOutputConstraintsImpl(JSCell* cell, Visitor& visitor)
-{
-    JSServerWebSocket* thisObject = jsCast<JSServerWebSocket*>(cell);
-    ASSERT_GC_OBJECT_INHERITS(thisObject, info());
-    thisObject->visitAdditionalChildren<Visitor>(visitor);
-}
-
-DEFINE_VISIT_OUTPUT_CONSTRAINTS(JSServerWebSocket);
-class JSFileSystemRouterPrototype final : public JSC::JSNonFinalObject {
-public:
-    using Base = JSC::JSNonFinalObject;
-
-    static JSFileSystemRouterPrototype* create(JSC::VM& vm, JSGlobalObject* globalObject, JSC::Structure* structure)
-    {
-        JSFileSystemRouterPrototype* ptr = new (NotNull, JSC::allocateCell<JSFileSystemRouterPrototype>(vm)) JSFileSystemRouterPrototype(vm, globalObject, structure);
-        ptr->finishCreation(vm, globalObject);
-        return ptr;
-    }
-
-    DECLARE_INFO;
-    template<typename CellType, JSC::SubspaceAccess>
-    static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
-    {
-        return &vm.plainObjectSpace();
-    }
-    static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
-    {
-        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
-    }
-
-private:
-    JSFileSystemRouterPrototype(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure)
-        : Base(vm, structure)
-    {
-    }
-
-    void finishCreation(JSC::VM&, JSC::JSGlobalObject*);
-};
-
-class JSFileSystemRouterConstructor final : public JSC::InternalFunction {
-public:
-    using Base = JSC::InternalFunction;
-    static JSFileSystemRouterConstructor* create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, JSFileSystemRouterPrototype* prototype);
-
-    static constexpr unsigned StructureFlags = Base::StructureFlags;
-    static constexpr bool needsDestruction = false;
-
-    static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
-    {
-        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::InternalFunctionType, StructureFlags), info());
-    }
-
-    template<typename, JSC::SubspaceAccess mode> static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
-    {
-        if constexpr (mode == JSC::SubspaceAccess::Concurrently)
-            return nullptr;
-        return WebCore::subspaceForImpl<JSFileSystemRouterConstructor, WebCore::UseCustomHeapCellType::No>(
-            vm,
-            [](auto& spaces) { return spaces.m_clientSubspaceForFileSystemRouterConstructor.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForFileSystemRouterConstructor = WTFMove(space); },
-            [](auto& spaces) { return spaces.m_subspaceForFileSystemRouterConstructor.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_subspaceForFileSystemRouterConstructor = WTFMove(space); });
-    }
-
-    void initializeProperties(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSFileSystemRouterPrototype* prototype);
-
-    // Must be defined for each specialization class.
-    static JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES construct(JSC::JSGlobalObject*, JSC::CallFrame*);
-
-    DECLARE_EXPORT_INFO;
-
-private:
-    JSFileSystemRouterConstructor(JSC::VM& vm, JSC::Structure* structure);
-    void finishCreation(JSC::VM&, JSC::JSGlobalObject* globalObject, JSFileSystemRouterPrototype* prototype);
-};
-
-extern "C" void* FileSystemRouterClass__construct(JSC::JSGlobalObject*, JSC::CallFrame*);
-JSC_DECLARE_CUSTOM_GETTER(jsFileSystemRouterConstructor);
-extern "C" void FileSystemRouterClass__finalize(void*);
-
-extern "C" EncodedJSValue FileSystemRouterPrototype__match(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
-JSC_DECLARE_HOST_FUNCTION(FileSystemRouterPrototype__matchCallback);
-
-extern "C" JSC::EncodedJSValue FileSystemRouterPrototype__getOrigin(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject);
-JSC_DECLARE_CUSTOM_GETTER(FileSystemRouterPrototype__originGetterWrap);
-
-extern "C" EncodedJSValue FileSystemRouterPrototype__reload(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
-JSC_DECLARE_HOST_FUNCTION(FileSystemRouterPrototype__reloadCallback);
-
-extern "C" JSC::EncodedJSValue FileSystemRouterPrototype__getRoutes(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject);
-JSC_DECLARE_CUSTOM_GETTER(FileSystemRouterPrototype__routesGetterWrap);
-
-extern "C" JSC::EncodedJSValue FileSystemRouterPrototype__getStyle(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject);
-JSC_DECLARE_CUSTOM_GETTER(FileSystemRouterPrototype__styleGetterWrap);
-
-STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSFileSystemRouterPrototype, JSFileSystemRouterPrototype::Base);
-
-static const HashTableValue JSFileSystemRouterPrototypeTableValues[] = {
-    { "match"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, FileSystemRouterPrototype__matchCallback, 1 } },
-    { "origin"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { HashTableValue::GetterSetterType, FileSystemRouterPrototype__originGetterWrap, 0 } },
-    { "reload"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, FileSystemRouterPrototype__reloadCallback, 0 } },
-    { "routes"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { HashTableValue::GetterSetterType, FileSystemRouterPrototype__routesGetterWrap, 0 } },
-    { "style"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { HashTableValue::GetterSetterType, FileSystemRouterPrototype__styleGetterWrap, 0 } }
-};
-
-const ClassInfo JSFileSystemRouterPrototype::s_info = { "FileSystemRouter"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSFileSystemRouterPrototype) };
-
-JSC_DEFINE_CUSTOM_GETTER(jsFileSystemRouterConstructor, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName))
-{
-    VM& vm = JSC::getVM(lexicalGlobalObject);
-    auto throwScope = DECLARE_THROW_SCOPE(vm);
-    auto* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
-    auto* prototype = jsDynamicCast<JSFileSystemRouterPrototype*>(JSValue::decode(thisValue));
-
-    if (UNLIKELY(!prototype))
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
-    return JSValue::encode(globalObject->JSFileSystemRouterConstructor());
-}
-
-JSC_DEFINE_HOST_FUNCTION(FileSystemRouterPrototype__matchCallback, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
-{
-    auto& vm = lexicalGlobalObject->vm();
-
-    JSFileSystemRouter* thisObject = jsDynamicCast<JSFileSystemRouter*>(callFrame->thisValue());
-
-    if (UNLIKELY(!thisObject)) {
-        auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
-    }
-
-    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
-
-    return FileSystemRouterPrototype__match(thisObject->wrapped(), lexicalGlobalObject, callFrame);
-}
-
-JSC_DEFINE_CUSTOM_GETTER(FileSystemRouterPrototype__originGetterWrap, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
-{
-    auto& vm = lexicalGlobalObject->vm();
-    Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
-    auto throwScope = DECLARE_THROW_SCOPE(vm);
-    JSFileSystemRouter* thisObject = jsCast<JSFileSystemRouter*>(JSValue::decode(thisValue));
-    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
-
-    if (JSValue cachedValue = thisObject->m_origin.get())
-        return JSValue::encode(cachedValue);
-
-    JSC::JSValue result = JSC::JSValue::decode(
-        FileSystemRouterPrototype__getOrigin(thisObject->wrapped(), globalObject));
-    RETURN_IF_EXCEPTION(throwScope, {});
-    thisObject->m_origin.set(vm, thisObject, result);
-    RELEASE_AND_RETURN(throwScope, JSValue::encode(result));
-}
-
-extern "C" void FileSystemRouterPrototype__originSetCachedValue(JSC::EncodedJSValue thisValue, JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue value)
-{
-    auto& vm = globalObject->vm();
-    auto* thisObject = jsCast<JSFileSystemRouter*>(JSValue::decode(thisValue));
-    thisObject->m_origin.set(vm, thisObject, JSValue::decode(value));
-}
-
-extern "C" EncodedJSValue FileSystemRouterPrototype__originGetCachedValue(JSC::EncodedJSValue thisValue)
-{
-    auto* thisObject = jsCast<JSFileSystemRouter*>(JSValue::decode(thisValue));
-    return JSValue::encode(thisObject->m_origin.get());
-}
-
-JSC_DEFINE_HOST_FUNCTION(FileSystemRouterPrototype__reloadCallback, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
-{
-    auto& vm = lexicalGlobalObject->vm();
-
-    JSFileSystemRouter* thisObject = jsDynamicCast<JSFileSystemRouter*>(callFrame->thisValue());
-
-    if (UNLIKELY(!thisObject)) {
-        auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
-    }
-
-    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
-
-    return FileSystemRouterPrototype__reload(thisObject->wrapped(), lexicalGlobalObject, callFrame);
-}
-
-JSC_DEFINE_CUSTOM_GETTER(FileSystemRouterPrototype__routesGetterWrap, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
-{
-    auto& vm = lexicalGlobalObject->vm();
-    Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
-    auto throwScope = DECLARE_THROW_SCOPE(vm);
-    JSFileSystemRouter* thisObject = jsCast<JSFileSystemRouter*>(JSValue::decode(thisValue));
-    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
-
-    if (JSValue cachedValue = thisObject->m_routes.get())
-        return JSValue::encode(cachedValue);
-
-    JSC::JSValue result = JSC::JSValue::decode(
-        FileSystemRouterPrototype__getRoutes(thisObject->wrapped(), globalObject));
-    RETURN_IF_EXCEPTION(throwScope, {});
-    thisObject->m_routes.set(vm, thisObject, result);
-    RELEASE_AND_RETURN(throwScope, JSValue::encode(result));
-}
-
-extern "C" void FileSystemRouterPrototype__routesSetCachedValue(JSC::EncodedJSValue thisValue, JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue value)
-{
-    auto& vm = globalObject->vm();
-    auto* thisObject = jsCast<JSFileSystemRouter*>(JSValue::decode(thisValue));
-    thisObject->m_routes.set(vm, thisObject, JSValue::decode(value));
-}
-
-extern "C" EncodedJSValue FileSystemRouterPrototype__routesGetCachedValue(JSC::EncodedJSValue thisValue)
-{
-    auto* thisObject = jsCast<JSFileSystemRouter*>(JSValue::decode(thisValue));
-    return JSValue::encode(thisObject->m_routes.get());
-}
-
-JSC_DEFINE_CUSTOM_GETTER(FileSystemRouterPrototype__styleGetterWrap, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
-{
-    auto& vm = lexicalGlobalObject->vm();
-    Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
-    auto throwScope = DECLARE_THROW_SCOPE(vm);
-    JSFileSystemRouter* thisObject = jsCast<JSFileSystemRouter*>(JSValue::decode(thisValue));
-    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
-
-    if (JSValue cachedValue = thisObject->m_style.get())
-        return JSValue::encode(cachedValue);
-
-    JSC::JSValue result = JSC::JSValue::decode(
-        FileSystemRouterPrototype__getStyle(thisObject->wrapped(), globalObject));
-    RETURN_IF_EXCEPTION(throwScope, {});
-    thisObject->m_style.set(vm, thisObject, result);
-    RELEASE_AND_RETURN(throwScope, JSValue::encode(result));
-}
-
-extern "C" void FileSystemRouterPrototype__styleSetCachedValue(JSC::EncodedJSValue thisValue, JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue value)
-{
-    auto& vm = globalObject->vm();
-    auto* thisObject = jsCast<JSFileSystemRouter*>(JSValue::decode(thisValue));
-    thisObject->m_style.set(vm, thisObject, JSValue::decode(value));
-}
-
-extern "C" EncodedJSValue FileSystemRouterPrototype__styleGetCachedValue(JSC::EncodedJSValue thisValue)
-{
-    auto* thisObject = jsCast<JSFileSystemRouter*>(JSValue::decode(thisValue));
-    return JSValue::encode(thisObject->m_style.get());
-}
-
-void JSFileSystemRouterPrototype::finishCreation(JSC::VM& vm, JSC::JSGlobalObject* globalObject)
-{
-    Base::finishCreation(vm);
-    reifyStaticProperties(vm, JSFileSystemRouter::info(), JSFileSystemRouterPrototypeTableValues, *this);
-    JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
-}
-
-void JSFileSystemRouterConstructor::finishCreation(VM& vm, JSC::JSGlobalObject* globalObject, JSFileSystemRouterPrototype* prototype)
-{
-    Base::finishCreation(vm, 0, "FileSystemRouter"_s, PropertyAdditionMode::WithoutStructureTransition);
-
-    putDirectWithoutTransition(vm, vm.propertyNames->prototype, prototype, PropertyAttribute::DontEnum | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
-    ASSERT(inherits(info()));
-}
-
-JSFileSystemRouterConstructor::JSFileSystemRouterConstructor(JSC::VM& vm, JSC::Structure* structure)
-    : Base(vm, structure, construct, construct)
-{
-}
-
-JSFileSystemRouterConstructor* JSFileSystemRouterConstructor::create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, JSFileSystemRouterPrototype* prototype)
-{
-    JSFileSystemRouterConstructor* ptr = new (NotNull, JSC::allocateCell<JSFileSystemRouterConstructor>(vm)) JSFileSystemRouterConstructor(vm, structure);
-    ptr->finishCreation(vm, globalObject, prototype);
-    return ptr;
-}
-
-JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSFileSystemRouterConstructor::construct(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame)
-{
-    Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
-    JSC::VM& vm = globalObject->vm();
-    JSObject* newTarget = asObject(callFrame->newTarget());
-    auto* constructor = globalObject->JSFileSystemRouterConstructor();
-    Structure* structure = globalObject->JSFileSystemRouterStructure();
-    if (constructor != newTarget) {
-        auto scope = DECLARE_THROW_SCOPE(vm);
-
-        auto* functionGlobalObject = reinterpret_cast<Zig::GlobalObject*>(
-            // ShadowRealm functions belong to a different global object.
-            getFunctionRealm(globalObject, newTarget));
-        RETURN_IF_EXCEPTION(scope, {});
-        structure = InternalFunction::createSubclassStructure(
-            globalObject,
-            newTarget,
-            functionGlobalObject->JSFileSystemRouterStructure());
-    }
-
-    void* ptr = FileSystemRouterClass__construct(globalObject, callFrame);
-
-    if (UNLIKELY(!ptr)) {
-        return JSValue::encode(JSC::jsUndefined());
-    }
-
-    JSFileSystemRouter* instance = JSFileSystemRouter::create(vm, globalObject, structure, ptr);
-
-    return JSValue::encode(instance);
-}
-
-void JSFileSystemRouterConstructor::initializeProperties(VM& vm, JSC::JSGlobalObject* globalObject, JSFileSystemRouterPrototype* prototype)
-{
-}
-
-const ClassInfo JSFileSystemRouterConstructor::s_info = { "Function"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSFileSystemRouterConstructor) };
-
-extern "C" EncodedJSValue FileSystemRouter__getConstructor(Zig::GlobalObject* globalObject)
-{
-    return JSValue::encode(globalObject->JSFileSystemRouterConstructor());
-}
-
-JSFileSystemRouter::~JSFileSystemRouter()
-{
-    if (m_ctx) {
-        FileSystemRouterClass__finalize(m_ctx);
-    }
-}
-void JSFileSystemRouter::destroy(JSCell* cell)
-{
-    static_cast<JSFileSystemRouter*>(cell)->JSFileSystemRouter::~JSFileSystemRouter();
-}
-
-const ClassInfo JSFileSystemRouter::s_info = { "FileSystemRouter"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSFileSystemRouter) };
-
-void JSFileSystemRouter::finishCreation(VM& vm)
-{
-    Base::finishCreation(vm);
-    ASSERT(inherits(info()));
-}
-
-JSFileSystemRouter* JSFileSystemRouter::create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, void* ctx)
-{
-    JSFileSystemRouter* ptr = new (NotNull, JSC::allocateCell<JSFileSystemRouter>(vm)) JSFileSystemRouter(vm, structure, ctx);
-    ptr->finishCreation(vm);
-    return ptr;
-}
-
-extern "C" void* FileSystemRouter__fromJS(JSC::EncodedJSValue value)
-{
-    JSC::JSValue decodedValue = JSC::JSValue::decode(value);
-    if (!decodedValue || decodedValue.isUndefinedOrNull())
-        return nullptr;
-
-    JSFileSystemRouter* object = JSC::jsDynamicCast<JSFileSystemRouter*>(decodedValue);
-
-    if (!object)
-        return nullptr;
-
-    return object->wrapped();
-}
-
-extern "C" bool FileSystemRouter__dangerouslySetPtr(JSC::EncodedJSValue value, void* ptr)
-{
-    JSFileSystemRouter* object = JSC::jsDynamicCast<JSFileSystemRouter*>(JSValue::decode(value));
-    if (!object)
-        return false;
-
-    object->m_ctx = ptr;
-    return true;
-}
-
-extern "C" const size_t FileSystemRouter__ptrOffset = JSFileSystemRouter::offsetOfWrapped();
-
-void JSFileSystemRouter::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
-{
-    auto* thisObject = jsCast<JSFileSystemRouter*>(cell);
-    if (void* wrapped = thisObject->wrapped()) {
-        // if (thisObject->scriptExecutionContext())
-        //     analyzer.setLabelForCell(cell, "url " + thisObject->scriptExecutionContext()->url().string());
-    }
-    Base::analyzeHeap(cell, analyzer);
-}
-
-JSObject* JSFileSystemRouter::createConstructor(VM& vm, JSGlobalObject* globalObject, JSValue prototype)
-{
-    return WebCore::JSFileSystemRouterConstructor::create(vm, globalObject, WebCore::JSFileSystemRouterConstructor::createStructure(vm, globalObject, globalObject->functionPrototype()), jsCast<WebCore::JSFileSystemRouterPrototype*>(prototype));
-}
-
-JSObject* JSFileSystemRouter::createPrototype(VM& vm, JSDOMGlobalObject* globalObject)
-{
-    return JSFileSystemRouterPrototype::create(vm, globalObject, JSFileSystemRouterPrototype::createStructure(vm, globalObject, globalObject->objectPrototype()));
-}
-
-extern "C" EncodedJSValue FileSystemRouter__create(Zig::GlobalObject* globalObject, void* ptr)
-{
-    auto& vm = globalObject->vm();
-    JSC::Structure* structure = globalObject->JSFileSystemRouterStructure();
-    JSFileSystemRouter* instance = JSFileSystemRouter::create(vm, globalObject, structure, ptr);
-
-    return JSValue::encode(instance);
-}
-
-template<typename Visitor>
-void JSFileSystemRouter::visitChildrenImpl(JSCell* cell, Visitor& visitor)
-{
-    JSFileSystemRouter* thisObject = jsCast<JSFileSystemRouter*>(cell);
-    ASSERT_GC_OBJECT_INHERITS(thisObject, info());
-    Base::visitChildren(thisObject, visitor);
-
-    visitor.append(thisObject->m_origin);
-    visitor.append(thisObject->m_routes);
-    visitor.append(thisObject->m_style);
-}
-
-DEFINE_VISIT_CHILDREN(JSFileSystemRouter);
-
-template<typename Visitor>
-void JSFileSystemRouter::visitAdditionalChildren(Visitor& visitor)
-{
-    JSFileSystemRouter* thisObject = this;
-    ASSERT_GC_OBJECT_INHERITS(thisObject, info());
-
-    visitor.append(thisObject->m_origin);
-    visitor.append(thisObject->m_routes);
-    visitor.append(thisObject->m_style);
-    ;
-}
-
-DEFINE_VISIT_ADDITIONAL_CHILDREN(JSFileSystemRouter);
-
-template<typename Visitor>
-void JSFileSystemRouter::visitOutputConstraintsImpl(JSCell* cell, Visitor& visitor)
-{
-    JSFileSystemRouter* thisObject = jsCast<JSFileSystemRouter*>(cell);
-    ASSERT_GC_OBJECT_INHERITS(thisObject, info());
-    thisObject->visitAdditionalChildren<Visitor>(visitor);
-}
-
-DEFINE_VISIT_OUTPUT_CONSTRAINTS(JSFileSystemRouter);
-class JSMatchedRoutePrototype final : public JSC::JSNonFinalObject {
-public:
-    using Base = JSC::JSNonFinalObject;
-
-    static JSMatchedRoutePrototype* create(JSC::VM& vm, JSGlobalObject* globalObject, JSC::Structure* structure)
-    {
-        JSMatchedRoutePrototype* ptr = new (NotNull, JSC::allocateCell<JSMatchedRoutePrototype>(vm)) JSMatchedRoutePrototype(vm, globalObject, structure);
-        ptr->finishCreation(vm, globalObject);
-        return ptr;
-    }
-
-    DECLARE_INFO;
-    template<typename CellType, JSC::SubspaceAccess>
-    static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
-    {
-        return &vm.plainObjectSpace();
-    }
-    static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
-    {
-        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
-    }
-
-private:
-    JSMatchedRoutePrototype(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure)
-        : Base(vm, structure)
-    {
-    }
-
-    void finishCreation(JSC::VM&, JSC::JSGlobalObject*);
-};
-
-extern "C" void* MatchedRouteClass__construct(JSC::JSGlobalObject*, JSC::CallFrame*);
-JSC_DECLARE_CUSTOM_GETTER(jsMatchedRouteConstructor);
-extern "C" void MatchedRouteClass__finalize(void*);
-
-extern "C" JSC::EncodedJSValue MatchedRoutePrototype__getFilePath(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject);
-JSC_DECLARE_CUSTOM_GETTER(MatchedRoutePrototype__filePathGetterWrap);
-
-extern "C" JSC::EncodedJSValue MatchedRoutePrototype__getKind(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject);
-JSC_DECLARE_CUSTOM_GETTER(MatchedRoutePrototype__kindGetterWrap);
-
-extern "C" JSC::EncodedJSValue MatchedRoutePrototype__getName(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject);
-JSC_DECLARE_CUSTOM_GETTER(MatchedRoutePrototype__nameGetterWrap);
-
-extern "C" JSC::EncodedJSValue MatchedRoutePrototype__getParams(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject);
-JSC_DECLARE_CUSTOM_GETTER(MatchedRoutePrototype__paramsGetterWrap);
-
-extern "C" JSC::EncodedJSValue MatchedRoutePrototype__getPathname(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject);
-JSC_DECLARE_CUSTOM_GETTER(MatchedRoutePrototype__pathnameGetterWrap);
-
-extern "C" JSC::EncodedJSValue MatchedRoutePrototype__getQuery(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject);
-JSC_DECLARE_CUSTOM_GETTER(MatchedRoutePrototype__queryGetterWrap);
-
-extern "C" JSC::EncodedJSValue MatchedRoutePrototype__getScriptSrc(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject);
-JSC_DECLARE_CUSTOM_GETTER(MatchedRoutePrototype__scriptSrcGetterWrap);
-
-extern "C" JSC::EncodedJSValue MatchedRoutePrototype__getScriptSrc(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject);
-JSC_DECLARE_CUSTOM_GETTER(MatchedRoutePrototype__srcGetterWrap);
-
-STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSMatchedRoutePrototype, JSMatchedRoutePrototype::Base);
-
-static const HashTableValue JSMatchedRoutePrototypeTableValues[] = {
-    { "filePath"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { HashTableValue::GetterSetterType, MatchedRoutePrototype__filePathGetterWrap, 0 } },
-    { "kind"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { HashTableValue::GetterSetterType, MatchedRoutePrototype__kindGetterWrap, 0 } },
-    { "name"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { HashTableValue::GetterSetterType, MatchedRoutePrototype__nameGetterWrap, 0 } },
-    { "params"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { HashTableValue::GetterSetterType, MatchedRoutePrototype__paramsGetterWrap, 0 } },
-    { "pathname"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { HashTableValue::GetterSetterType, MatchedRoutePrototype__pathnameGetterWrap, 0 } },
-    { "query"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { HashTableValue::GetterSetterType, MatchedRoutePrototype__queryGetterWrap, 0 } },
-    { "scriptSrc"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { HashTableValue::GetterSetterType, MatchedRoutePrototype__scriptSrcGetterWrap, 0 } },
-    { "src"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { HashTableValue::GetterSetterType, MatchedRoutePrototype__srcGetterWrap, 0 } }
-};
-
-const ClassInfo JSMatchedRoutePrototype::s_info = { "MatchedRoute"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSMatchedRoutePrototype) };
-
-JSC_DEFINE_CUSTOM_GETTER(jsMatchedRouteConstructor, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName))
-{
-    VM& vm = JSC::getVM(lexicalGlobalObject);
-    auto throwScope = DECLARE_THROW_SCOPE(vm);
-    auto* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
-    auto* prototype = jsDynamicCast<JSMatchedRoutePrototype*>(JSValue::decode(thisValue));
-
-    if (UNLIKELY(!prototype))
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
-    return JSValue::encode(globalObject->JSMatchedRouteConstructor());
-}
-
-JSC_DEFINE_CUSTOM_GETTER(MatchedRoutePrototype__filePathGetterWrap, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
-{
-    auto& vm = lexicalGlobalObject->vm();
-    Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
-    auto throwScope = DECLARE_THROW_SCOPE(vm);
-    JSMatchedRoute* thisObject = jsCast<JSMatchedRoute*>(JSValue::decode(thisValue));
-    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
-
-    if (JSValue cachedValue = thisObject->m_filePath.get())
-        return JSValue::encode(cachedValue);
-
-    JSC::JSValue result = JSC::JSValue::decode(
-        MatchedRoutePrototype__getFilePath(thisObject->wrapped(), globalObject));
-    RETURN_IF_EXCEPTION(throwScope, {});
-    thisObject->m_filePath.set(vm, thisObject, result);
-    RELEASE_AND_RETURN(throwScope, JSValue::encode(result));
-}
-
-extern "C" void MatchedRoutePrototype__filePathSetCachedValue(JSC::EncodedJSValue thisValue, JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue value)
-{
-    auto& vm = globalObject->vm();
-    auto* thisObject = jsCast<JSMatchedRoute*>(JSValue::decode(thisValue));
-    thisObject->m_filePath.set(vm, thisObject, JSValue::decode(value));
-}
-
-extern "C" EncodedJSValue MatchedRoutePrototype__filePathGetCachedValue(JSC::EncodedJSValue thisValue)
-{
-    auto* thisObject = jsCast<JSMatchedRoute*>(JSValue::decode(thisValue));
-    return JSValue::encode(thisObject->m_filePath.get());
-}
-
-JSC_DEFINE_CUSTOM_GETTER(MatchedRoutePrototype__kindGetterWrap, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
-{
-    auto& vm = lexicalGlobalObject->vm();
-    Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
-    auto throwScope = DECLARE_THROW_SCOPE(vm);
-    JSMatchedRoute* thisObject = jsCast<JSMatchedRoute*>(JSValue::decode(thisValue));
-    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
-
-    if (JSValue cachedValue = thisObject->m_kind.get())
-        return JSValue::encode(cachedValue);
-
-    JSC::JSValue result = JSC::JSValue::decode(
-        MatchedRoutePrototype__getKind(thisObject->wrapped(), globalObject));
-    RETURN_IF_EXCEPTION(throwScope, {});
-    thisObject->m_kind.set(vm, thisObject, result);
-    RELEASE_AND_RETURN(throwScope, JSValue::encode(result));
-}
-
-extern "C" void MatchedRoutePrototype__kindSetCachedValue(JSC::EncodedJSValue thisValue, JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue value)
-{
-    auto& vm = globalObject->vm();
-    auto* thisObject = jsCast<JSMatchedRoute*>(JSValue::decode(thisValue));
-    thisObject->m_kind.set(vm, thisObject, JSValue::decode(value));
-}
-
-extern "C" EncodedJSValue MatchedRoutePrototype__kindGetCachedValue(JSC::EncodedJSValue thisValue)
-{
-    auto* thisObject = jsCast<JSMatchedRoute*>(JSValue::decode(thisValue));
-    return JSValue::encode(thisObject->m_kind.get());
-}
-
-JSC_DEFINE_CUSTOM_GETTER(MatchedRoutePrototype__nameGetterWrap, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
-{
-    auto& vm = lexicalGlobalObject->vm();
-    Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
-    auto throwScope = DECLARE_THROW_SCOPE(vm);
-    JSMatchedRoute* thisObject = jsCast<JSMatchedRoute*>(JSValue::decode(thisValue));
-    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
-
-    if (JSValue cachedValue = thisObject->m_name.get())
-        return JSValue::encode(cachedValue);
-
-    JSC::JSValue result = JSC::JSValue::decode(
-        MatchedRoutePrototype__getName(thisObject->wrapped(), globalObject));
-    RETURN_IF_EXCEPTION(throwScope, {});
-    thisObject->m_name.set(vm, thisObject, result);
-    RELEASE_AND_RETURN(throwScope, JSValue::encode(result));
-}
-
-extern "C" void MatchedRoutePrototype__nameSetCachedValue(JSC::EncodedJSValue thisValue, JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue value)
-{
-    auto& vm = globalObject->vm();
-    auto* thisObject = jsCast<JSMatchedRoute*>(JSValue::decode(thisValue));
-    thisObject->m_name.set(vm, thisObject, JSValue::decode(value));
-}
-
-extern "C" EncodedJSValue MatchedRoutePrototype__nameGetCachedValue(JSC::EncodedJSValue thisValue)
-{
-    auto* thisObject = jsCast<JSMatchedRoute*>(JSValue::decode(thisValue));
-    return JSValue::encode(thisObject->m_name.get());
-}
-
-JSC_DEFINE_CUSTOM_GETTER(MatchedRoutePrototype__paramsGetterWrap, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
-{
-    auto& vm = lexicalGlobalObject->vm();
-    Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
-    auto throwScope = DECLARE_THROW_SCOPE(vm);
-    JSMatchedRoute* thisObject = jsCast<JSMatchedRoute*>(JSValue::decode(thisValue));
-    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
-
-    if (JSValue cachedValue = thisObject->m_params.get())
-        return JSValue::encode(cachedValue);
-
-    JSC::JSValue result = JSC::JSValue::decode(
-        MatchedRoutePrototype__getParams(thisObject->wrapped(), globalObject));
-    RETURN_IF_EXCEPTION(throwScope, {});
-    thisObject->m_params.set(vm, thisObject, result);
-    RELEASE_AND_RETURN(throwScope, JSValue::encode(result));
-}
-
-extern "C" void MatchedRoutePrototype__paramsSetCachedValue(JSC::EncodedJSValue thisValue, JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue value)
-{
-    auto& vm = globalObject->vm();
-    auto* thisObject = jsCast<JSMatchedRoute*>(JSValue::decode(thisValue));
-    thisObject->m_params.set(vm, thisObject, JSValue::decode(value));
-}
-
-extern "C" EncodedJSValue MatchedRoutePrototype__paramsGetCachedValue(JSC::EncodedJSValue thisValue)
-{
-    auto* thisObject = jsCast<JSMatchedRoute*>(JSValue::decode(thisValue));
-    return JSValue::encode(thisObject->m_params.get());
-}
-
-JSC_DEFINE_CUSTOM_GETTER(MatchedRoutePrototype__pathnameGetterWrap, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
-{
-    auto& vm = lexicalGlobalObject->vm();
-    Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
-    auto throwScope = DECLARE_THROW_SCOPE(vm);
-    JSMatchedRoute* thisObject = jsCast<JSMatchedRoute*>(JSValue::decode(thisValue));
-    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
-
-    if (JSValue cachedValue = thisObject->m_pathname.get())
-        return JSValue::encode(cachedValue);
-
-    JSC::JSValue result = JSC::JSValue::decode(
-        MatchedRoutePrototype__getPathname(thisObject->wrapped(), globalObject));
-    RETURN_IF_EXCEPTION(throwScope, {});
-    thisObject->m_pathname.set(vm, thisObject, result);
-    RELEASE_AND_RETURN(throwScope, JSValue::encode(result));
-}
-
-extern "C" void MatchedRoutePrototype__pathnameSetCachedValue(JSC::EncodedJSValue thisValue, JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue value)
-{
-    auto& vm = globalObject->vm();
-    auto* thisObject = jsCast<JSMatchedRoute*>(JSValue::decode(thisValue));
-    thisObject->m_pathname.set(vm, thisObject, JSValue::decode(value));
-}
-
-extern "C" EncodedJSValue MatchedRoutePrototype__pathnameGetCachedValue(JSC::EncodedJSValue thisValue)
-{
-    auto* thisObject = jsCast<JSMatchedRoute*>(JSValue::decode(thisValue));
-    return JSValue::encode(thisObject->m_pathname.get());
-}
-
-JSC_DEFINE_CUSTOM_GETTER(MatchedRoutePrototype__queryGetterWrap, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
-{
-    auto& vm = lexicalGlobalObject->vm();
-    Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
-    auto throwScope = DECLARE_THROW_SCOPE(vm);
-    JSMatchedRoute* thisObject = jsCast<JSMatchedRoute*>(JSValue::decode(thisValue));
-    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
-
-    if (JSValue cachedValue = thisObject->m_query.get())
-        return JSValue::encode(cachedValue);
-
-    JSC::JSValue result = JSC::JSValue::decode(
-        MatchedRoutePrototype__getQuery(thisObject->wrapped(), globalObject));
-    RETURN_IF_EXCEPTION(throwScope, {});
-    thisObject->m_query.set(vm, thisObject, result);
-    RELEASE_AND_RETURN(throwScope, JSValue::encode(result));
-}
-
-extern "C" void MatchedRoutePrototype__querySetCachedValue(JSC::EncodedJSValue thisValue, JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue value)
-{
-    auto& vm = globalObject->vm();
-    auto* thisObject = jsCast<JSMatchedRoute*>(JSValue::decode(thisValue));
-    thisObject->m_query.set(vm, thisObject, JSValue::decode(value));
-}
-
-extern "C" EncodedJSValue MatchedRoutePrototype__queryGetCachedValue(JSC::EncodedJSValue thisValue)
-{
-    auto* thisObject = jsCast<JSMatchedRoute*>(JSValue::decode(thisValue));
-    return JSValue::encode(thisObject->m_query.get());
-}
-
-JSC_DEFINE_CUSTOM_GETTER(MatchedRoutePrototype__scriptSrcGetterWrap, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
-{
-    auto& vm = lexicalGlobalObject->vm();
-    Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
-    auto throwScope = DECLARE_THROW_SCOPE(vm);
-    JSMatchedRoute* thisObject = jsCast<JSMatchedRoute*>(JSValue::decode(thisValue));
-    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
-
-    if (JSValue cachedValue = thisObject->m_scriptSrc.get())
-        return JSValue::encode(cachedValue);
-
-    JSC::JSValue result = JSC::JSValue::decode(
-        MatchedRoutePrototype__getScriptSrc(thisObject->wrapped(), globalObject));
-    RETURN_IF_EXCEPTION(throwScope, {});
-    thisObject->m_scriptSrc.set(vm, thisObject, result);
-    RELEASE_AND_RETURN(throwScope, JSValue::encode(result));
-}
-
-extern "C" void MatchedRoutePrototype__scriptSrcSetCachedValue(JSC::EncodedJSValue thisValue, JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue value)
-{
-    auto& vm = globalObject->vm();
-    auto* thisObject = jsCast<JSMatchedRoute*>(JSValue::decode(thisValue));
-    thisObject->m_scriptSrc.set(vm, thisObject, JSValue::decode(value));
-}
-
-extern "C" EncodedJSValue MatchedRoutePrototype__scriptSrcGetCachedValue(JSC::EncodedJSValue thisValue)
-{
-    auto* thisObject = jsCast<JSMatchedRoute*>(JSValue::decode(thisValue));
-    return JSValue::encode(thisObject->m_scriptSrc.get());
-}
-
-JSC_DEFINE_CUSTOM_GETTER(MatchedRoutePrototype__srcGetterWrap, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
-{
-    auto& vm = lexicalGlobalObject->vm();
-    Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
-    auto throwScope = DECLARE_THROW_SCOPE(vm);
-    JSMatchedRoute* thisObject = jsCast<JSMatchedRoute*>(JSValue::decode(thisValue));
-    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
-
-    if (JSValue cachedValue = thisObject->m_scriptSrc.get())
-        return JSValue::encode(cachedValue);
-
-    JSC::JSValue result = JSC::JSValue::decode(
-        MatchedRoutePrototype__getScriptSrc(thisObject->wrapped(), globalObject));
-    RETURN_IF_EXCEPTION(throwScope, {});
-    thisObject->m_scriptSrc.set(vm, thisObject, result);
-    RELEASE_AND_RETURN(throwScope, JSValue::encode(result));
-}
-
-extern "C" void MatchedRoutePrototype__srcSetCachedValue(JSC::EncodedJSValue thisValue, JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue value)
-{
-    auto& vm = globalObject->vm();
-    auto* thisObject = jsCast<JSMatchedRoute*>(JSValue::decode(thisValue));
-    thisObject->m_scriptSrc.set(vm, thisObject, JSValue::decode(value));
-}
-
-extern "C" EncodedJSValue MatchedRoutePrototype__srcGetCachedValue(JSC::EncodedJSValue thisValue)
-{
-    auto* thisObject = jsCast<JSMatchedRoute*>(JSValue::decode(thisValue));
-    return JSValue::encode(thisObject->m_scriptSrc.get());
-}
-
-void JSMatchedRoutePrototype::finishCreation(JSC::VM& vm, JSC::JSGlobalObject* globalObject)
-{
-    Base::finishCreation(vm);
-    reifyStaticProperties(vm, JSMatchedRoute::info(), JSMatchedRoutePrototypeTableValues, *this);
-    JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
-}
-
-JSMatchedRoute::~JSMatchedRoute()
-{
-    if (m_ctx) {
-        MatchedRouteClass__finalize(m_ctx);
-    }
-}
-void JSMatchedRoute::destroy(JSCell* cell)
-{
-    static_cast<JSMatchedRoute*>(cell)->JSMatchedRoute::~JSMatchedRoute();
-}
-
-const ClassInfo JSMatchedRoute::s_info = { "MatchedRoute"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSMatchedRoute) };
-
-void JSMatchedRoute::finishCreation(VM& vm)
-{
-    Base::finishCreation(vm);
-    ASSERT(inherits(info()));
-}
-
-JSMatchedRoute* JSMatchedRoute::create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, void* ctx)
-{
-    JSMatchedRoute* ptr = new (NotNull, JSC::allocateCell<JSMatchedRoute>(vm)) JSMatchedRoute(vm, structure, ctx);
-    ptr->finishCreation(vm);
-    return ptr;
-}
-
-extern "C" void* MatchedRoute__fromJS(JSC::EncodedJSValue value)
-{
-    JSC::JSValue decodedValue = JSC::JSValue::decode(value);
-    if (!decodedValue || decodedValue.isUndefinedOrNull())
-        return nullptr;
-
-    JSMatchedRoute* object = JSC::jsDynamicCast<JSMatchedRoute*>(decodedValue);
-
-    if (!object)
-        return nullptr;
-
-    return object->wrapped();
-}
-
-extern "C" bool MatchedRoute__dangerouslySetPtr(JSC::EncodedJSValue value, void* ptr)
-{
-    JSMatchedRoute* object = JSC::jsDynamicCast<JSMatchedRoute*>(JSValue::decode(value));
-    if (!object)
-        return false;
-
-    object->m_ctx = ptr;
-    return true;
-}
-
-extern "C" const size_t MatchedRoute__ptrOffset = JSMatchedRoute::offsetOfWrapped();
-
-void JSMatchedRoute::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
-{
-    auto* thisObject = jsCast<JSMatchedRoute*>(cell);
-    if (void* wrapped = thisObject->wrapped()) {
-        // if (thisObject->scriptExecutionContext())
-        //     analyzer.setLabelForCell(cell, "url " + thisObject->scriptExecutionContext()->url().string());
-    }
-    Base::analyzeHeap(cell, analyzer);
-}
-
-JSObject* JSMatchedRoute::createPrototype(VM& vm, JSDOMGlobalObject* globalObject)
-{
-    return JSMatchedRoutePrototype::create(vm, globalObject, JSMatchedRoutePrototype::createStructure(vm, globalObject, globalObject->objectPrototype()));
-}
-
-extern "C" EncodedJSValue MatchedRoute__create(Zig::GlobalObject* globalObject, void* ptr)
-{
-    auto& vm = globalObject->vm();
-    JSC::Structure* structure = globalObject->JSMatchedRouteStructure();
-    JSMatchedRoute* instance = JSMatchedRoute::create(vm, globalObject, structure, ptr);
-
-    return JSValue::encode(instance);
-}
-
-template<typename Visitor>
-void JSMatchedRoute::visitChildrenImpl(JSCell* cell, Visitor& visitor)
-{
-    JSMatchedRoute* thisObject = jsCast<JSMatchedRoute*>(cell);
-    ASSERT_GC_OBJECT_INHERITS(thisObject, info());
-    Base::visitChildren(thisObject, visitor);
-
-    visitor.append(thisObject->m_filePath);
-    visitor.append(thisObject->m_kind);
-    visitor.append(thisObject->m_name);
-    visitor.append(thisObject->m_params);
-    visitor.append(thisObject->m_pathname);
-    visitor.append(thisObject->m_query);
-    visitor.append(thisObject->m_scriptSrc);
-}
-
-DEFINE_VISIT_CHILDREN(JSMatchedRoute);
-
-template<typename Visitor>
-void JSMatchedRoute::visitAdditionalChildren(Visitor& visitor)
-{
-    JSMatchedRoute* thisObject = this;
-    ASSERT_GC_OBJECT_INHERITS(thisObject, info());
-
-    visitor.append(thisObject->m_filePath);
-    visitor.append(thisObject->m_kind);
-    visitor.append(thisObject->m_name);
-    visitor.append(thisObject->m_params);
-    visitor.append(thisObject->m_pathname);
-    visitor.append(thisObject->m_query);
-    visitor.append(thisObject->m_scriptSrc);
-    ;
-}
-
-DEFINE_VISIT_ADDITIONAL_CHILDREN(JSMatchedRoute);
-
-template<typename Visitor>
-void JSMatchedRoute::visitOutputConstraintsImpl(JSCell* cell, Visitor& visitor)
-{
-    JSMatchedRoute* thisObject = jsCast<JSMatchedRoute*>(cell);
-    ASSERT_GC_OBJECT_INHERITS(thisObject, info());
-    thisObject->visitAdditionalChildren<Visitor>(visitor);
-}
-
-DEFINE_VISIT_OUTPUT_CONSTRAINTS(JSMatchedRoute);
 class JSExpectPrototype final : public JSC::JSNonFinalObject {
 public:
     using Base = JSC::JSNonFinalObject;
@@ -6928,6 +6928,266 @@ void JSExpect::visitOutputConstraintsImpl(JSCell* cell, Visitor& visitor)
 }
 
 DEFINE_VISIT_OUTPUT_CONSTRAINTS(JSExpect);
+class JSMockPrototype final : public JSC::JSNonFinalObject {
+public:
+    using Base = JSC::JSNonFinalObject;
+
+    static JSMockPrototype* create(JSC::VM& vm, JSGlobalObject* globalObject, JSC::Structure* structure)
+    {
+        JSMockPrototype* ptr = new (NotNull, JSC::allocateCell<JSMockPrototype>(vm)) JSMockPrototype(vm, globalObject, structure);
+        ptr->finishCreation(vm, globalObject);
+        return ptr;
+    }
+
+    DECLARE_INFO;
+    template<typename CellType, JSC::SubspaceAccess>
+    static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
+    {
+        return &vm.plainObjectSpace();
+    }
+    static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
+    {
+        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
+    }
+
+private:
+    JSMockPrototype(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure)
+        : Base(vm, structure)
+    {
+    }
+
+    void finishCreation(JSC::VM&, JSC::JSGlobalObject*);
+};
+
+class JSMockConstructor final : public JSC::InternalFunction {
+public:
+    using Base = JSC::InternalFunction;
+    static JSMockConstructor* create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, JSMockPrototype* prototype);
+
+    static constexpr unsigned StructureFlags = Base::StructureFlags;
+    static constexpr bool needsDestruction = false;
+
+    static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
+    {
+        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::InternalFunctionType, StructureFlags), info());
+    }
+
+    template<typename, JSC::SubspaceAccess mode> static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
+    {
+        if constexpr (mode == JSC::SubspaceAccess::Concurrently)
+            return nullptr;
+        return WebCore::subspaceForImpl<JSMockConstructor, WebCore::UseCustomHeapCellType::No>(
+            vm,
+            [](auto& spaces) { return spaces.m_clientSubspaceForMockConstructor.get(); },
+            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForMockConstructor = WTFMove(space); },
+            [](auto& spaces) { return spaces.m_subspaceForMockConstructor.get(); },
+            [](auto& spaces, auto&& space) { spaces.m_subspaceForMockConstructor = WTFMove(space); });
+    }
+
+    void initializeProperties(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSMockPrototype* prototype);
+
+    // Must be defined for each specialization class.
+    static JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES construct(JSC::JSGlobalObject*, JSC::CallFrame*);
+
+    DECLARE_EXPORT_INFO;
+
+private:
+    JSMockConstructor(JSC::VM& vm, JSC::Structure* structure);
+    void finishCreation(JSC::VM&, JSC::JSGlobalObject* globalObject, JSMockPrototype* prototype);
+};
+
+extern "C" void* MockClass__construct(JSC::JSGlobalObject*, JSC::CallFrame*);
+JSC_DECLARE_CUSTOM_GETTER(jsMockConstructor);
+extern "C" void MockClass__finalize(void*);
+
+extern "C" EncodedJSValue MockPrototype__fn1(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
+JSC_DECLARE_HOST_FUNCTION(MockPrototype__fn1Callback);
+
+STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSMockPrototype, JSMockPrototype::Base);
+
+static const HashTableValue JSMockPrototypeTableValues[] = {
+    { "fn1"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, MockPrototype__fn1Callback, 0 } }
+};
+
+const ClassInfo JSMockPrototype::s_info = { "Mock"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSMockPrototype) };
+
+JSC_DEFINE_CUSTOM_GETTER(jsMockConstructor, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName))
+{
+    VM& vm = JSC::getVM(lexicalGlobalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    auto* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+    auto* prototype = jsDynamicCast<JSMockPrototype*>(JSValue::decode(thisValue));
+
+    if (UNLIKELY(!prototype))
+        return throwVMTypeError(lexicalGlobalObject, throwScope);
+    return JSValue::encode(globalObject->JSMockConstructor());
+}
+
+JSC_DEFINE_HOST_FUNCTION(MockPrototype__fn1Callback, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    auto& vm = lexicalGlobalObject->vm();
+
+    JSMock* thisObject = jsDynamicCast<JSMock*>(callFrame->thisValue());
+
+    if (UNLIKELY(!thisObject)) {
+        auto throwScope = DECLARE_THROW_SCOPE(vm);
+        return throwVMTypeError(lexicalGlobalObject, throwScope);
+    }
+
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+
+    return MockPrototype__fn1(thisObject->wrapped(), lexicalGlobalObject, callFrame);
+}
+
+void JSMockPrototype::finishCreation(JSC::VM& vm, JSC::JSGlobalObject* globalObject)
+{
+    Base::finishCreation(vm);
+    reifyStaticProperties(vm, JSMock::info(), JSMockPrototypeTableValues, *this);
+    JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
+}
+
+void JSMockConstructor::finishCreation(VM& vm, JSC::JSGlobalObject* globalObject, JSMockPrototype* prototype)
+{
+    Base::finishCreation(vm, 0, "Mock"_s, PropertyAdditionMode::WithoutStructureTransition);
+
+    putDirectWithoutTransition(vm, vm.propertyNames->prototype, prototype, PropertyAttribute::DontEnum | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
+    ASSERT(inherits(info()));
+}
+
+JSMockConstructor::JSMockConstructor(JSC::VM& vm, JSC::Structure* structure)
+    : Base(vm, structure, construct, construct)
+{
+}
+
+JSMockConstructor* JSMockConstructor::create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, JSMockPrototype* prototype)
+{
+    JSMockConstructor* ptr = new (NotNull, JSC::allocateCell<JSMockConstructor>(vm)) JSMockConstructor(vm, structure);
+    ptr->finishCreation(vm, globalObject, prototype);
+    return ptr;
+}
+
+JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSMockConstructor::construct(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame)
+{
+    Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+    JSC::VM& vm = globalObject->vm();
+    JSObject* newTarget = asObject(callFrame->newTarget());
+    auto* constructor = globalObject->JSMockConstructor();
+    Structure* structure = globalObject->JSMockStructure();
+    if (constructor != newTarget) {
+        auto scope = DECLARE_THROW_SCOPE(vm);
+
+        auto* functionGlobalObject = reinterpret_cast<Zig::GlobalObject*>(
+            // ShadowRealm functions belong to a different global object.
+            getFunctionRealm(globalObject, newTarget));
+        RETURN_IF_EXCEPTION(scope, {});
+        structure = InternalFunction::createSubclassStructure(
+            globalObject,
+            newTarget,
+            functionGlobalObject->JSMockStructure());
+    }
+
+    void* ptr = MockClass__construct(globalObject, callFrame);
+
+    if (UNLIKELY(!ptr)) {
+        return JSValue::encode(JSC::jsUndefined());
+    }
+
+    JSMock* instance = JSMock::create(vm, globalObject, structure, ptr);
+
+    return JSValue::encode(instance);
+}
+
+void JSMockConstructor::initializeProperties(VM& vm, JSC::JSGlobalObject* globalObject, JSMockPrototype* prototype)
+{
+}
+
+const ClassInfo JSMockConstructor::s_info = { "Function"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSMockConstructor) };
+
+extern "C" EncodedJSValue Mock__getConstructor(Zig::GlobalObject* globalObject)
+{
+    return JSValue::encode(globalObject->JSMockConstructor());
+}
+
+JSMock::~JSMock()
+{
+    if (m_ctx) {
+        MockClass__finalize(m_ctx);
+    }
+}
+void JSMock::destroy(JSCell* cell)
+{
+    static_cast<JSMock*>(cell)->JSMock::~JSMock();
+}
+
+const ClassInfo JSMock::s_info = { "Mock"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSMock) };
+
+void JSMock::finishCreation(VM& vm)
+{
+    Base::finishCreation(vm);
+    ASSERT(inherits(info()));
+}
+
+JSMock* JSMock::create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, void* ctx)
+{
+    JSMock* ptr = new (NotNull, JSC::allocateCell<JSMock>(vm)) JSMock(vm, structure, ctx);
+    ptr->finishCreation(vm);
+    return ptr;
+}
+
+extern "C" void* Mock__fromJS(JSC::EncodedJSValue value)
+{
+    JSC::JSValue decodedValue = JSC::JSValue::decode(value);
+    if (!decodedValue || decodedValue.isUndefinedOrNull())
+        return nullptr;
+
+    JSMock* object = JSC::jsDynamicCast<JSMock*>(decodedValue);
+
+    if (!object)
+        return nullptr;
+
+    return object->wrapped();
+}
+
+extern "C" bool Mock__dangerouslySetPtr(JSC::EncodedJSValue value, void* ptr)
+{
+    JSMock* object = JSC::jsDynamicCast<JSMock*>(JSValue::decode(value));
+    if (!object)
+        return false;
+
+    object->m_ctx = ptr;
+    return true;
+}
+
+extern "C" const size_t Mock__ptrOffset = JSMock::offsetOfWrapped();
+
+void JSMock::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
+{
+    auto* thisObject = jsCast<JSMock*>(cell);
+    if (void* wrapped = thisObject->wrapped()) {
+        // if (thisObject->scriptExecutionContext())
+        //     analyzer.setLabelForCell(cell, "url " + thisObject->scriptExecutionContext()->url().string());
+    }
+    Base::analyzeHeap(cell, analyzer);
+}
+
+JSObject* JSMock::createConstructor(VM& vm, JSGlobalObject* globalObject, JSValue prototype)
+{
+    return WebCore::JSMockConstructor::create(vm, globalObject, WebCore::JSMockConstructor::createStructure(vm, globalObject, globalObject->functionPrototype()), jsCast<WebCore::JSMockPrototype*>(prototype));
+}
+
+JSObject* JSMock::createPrototype(VM& vm, JSDOMGlobalObject* globalObject)
+{
+    return JSMockPrototype::create(vm, globalObject, JSMockPrototype::createStructure(vm, globalObject, globalObject->objectPrototype()));
+}
+
+extern "C" EncodedJSValue Mock__create(Zig::GlobalObject* globalObject, void* ptr)
+{
+    auto& vm = globalObject->vm();
+    JSC::Structure* structure = globalObject->JSMockStructure();
+    JSMock* instance = JSMock::create(vm, globalObject, structure, ptr);
+
+    return JSValue::encode(instance);
+}
 class JSTextDecoderPrototype final : public JSC::JSNonFinalObject {
 public:
     using Base = JSC::JSNonFinalObject;

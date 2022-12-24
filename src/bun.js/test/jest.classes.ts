@@ -210,4 +210,17 @@ export default [
       },
     },
   }),
+  define({
+    name: "Mock",
+    construct: true,
+    finalize: true,
+    JSType: "0b11101110",
+    klass: {},
+    proto: {
+      fn1: {
+        fn: "fn1",
+        length: 0,
+      },
+    },
+  })
 ];

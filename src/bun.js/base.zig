@@ -2044,6 +2044,7 @@ const ModuleNamespace = @import("../js_ast.zig").Macro.ModuleNamespace;
 const Expect = Test.Expect;
 const DescribeScope = Test.DescribeScope;
 const TestScope = Test.TestScope;
+const Mock = Test.Mock;
 const NodeFS = JSC.Node.NodeFS;
 const DirEnt = JSC.Node.DirEnt;
 const Stats = JSC.Node.Stats;

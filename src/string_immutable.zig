@@ -2934,7 +2934,7 @@ pub fn indexOfNewlineOrNonASCIICheckStart(slice_: []const u8, offset: u32, compt
                 @bitCast(AsciiVectorU1, vec == @splat(ascii_vector_size, @as(u8, '\n')));
 
             if (@reduce(.Max, cmp) > 0) {
-                const bitmask = @ptrCast(*const AsciiVectorInt, @alignCast(@alignOf(AsciiVectorInt)), &cmp).*;
+                const bitmask = @bitCast(AsciiVectorInt, cmp);
                 const first = @ctz(bitmask);
 
                 return @as(u32, first) + @intCast(u32, slice.len - remaining.len) + offset;
@@ -2973,7 +2973,7 @@ pub fn indexOfNeedsEscape(slice: []const u8) ?u32 {
                 @bitCast(AsciiVectorU1, vec == @splat(ascii_vector_size, @as(u8, '"')));
 
             if (@reduce(.Max, cmp) > 0) {
-                const bitmask = bun.cast(*const AsciiVectorInt, &cmp).*;
+                const bitmask = @bitCast(AsciiVectorInt, cmp);
                 const first = @ctz(bitmask);
 
                 return @as(u32, first) + @truncate(u32, @ptrToInt(remaining.ptr) - @ptrToInt(slice.ptr));
@@ -3015,7 +3015,7 @@ pub fn indexOfChar(slice: []const u8, char: u8) ?u32 {
             const cmp = vec == @splat(ascii_vector_size, char);
 
             if (@reduce(.Max, @bitCast(AsciiVectorU1, cmp)) > 0) {
-                const bitmask = bun.cast(*const AsciiVectorInt, &cmp).*;
+                const bitmask = @bitCast(AsciiVectorInt, cmp);
                 const first = @ctz(bitmask);
                 return @intCast(u32, @as(u32, first) + @intCast(u32, slice.len - remaining.len));
             }
@@ -3080,7 +3080,7 @@ pub fn indexOfNotChar(slice: []const u8, char: u8) ?u32 {
             const vec: AsciiVector = remaining[0..ascii_vector_size].*;
             const cmp = @splat(ascii_vector_size, char) != vec;
             if (@reduce(.Max, @bitCast(AsciiVectorU1, cmp)) > 0) {
-                const bitmask = bun.cast(*const AsciiVectorInt, &cmp).*;
+                const bitmask = @bitCast(AsciiVectorInt, cmp);
                 const first = @ctz(bitmask);
                 return @as(u32, first) + @intCast(u32, slice.len - remaining.len);
             }
@@ -3282,7 +3282,7 @@ pub fn firstNonASCII16CheckMin(comptime Slice: type, slice: Slice, comptime chec
                         // it removes a loop, but probably is slower in the end
                         const cmp = @bitCast(AsciiVectorU16U1, vec > max_u16_ascii) |
                             @bitCast(AsciiVectorU16U1, vec < min_u16_ascii);
-                        const bitmask: u16 = bun.cast(*const u16, &cmp).*;
+                        const bitmask: u8 = @bitCast(u8, cmp);
                         const first = @ctz(bitmask);
 
                         return @intCast(u32, @as(u32, first) +
@@ -3293,7 +3293,7 @@ pub fn firstNonASCII16CheckMin(comptime Slice: type, slice: Slice, comptime chec
                         remaining.len -= (@ptrToInt(remaining.ptr) - @ptrToInt(remaining_start)) / 2;
 
                         const cmp = vec > max_u16_ascii;
-                        const bitmask = bun.cast(*const u16, &cmp).*;
+                        const bitmask: u8 = @bitCast(u8, cmp);
                         const first = @ctz(bitmask);
 
                         return @intCast(u32, @as(u32, first) +
@@ -3341,7 +3341,7 @@ pub fn @"nextUTF16NonASCIIOr$`\\"(
                 @bitCast(AsciiVectorU16U1, (vec == @splat(ascii_u16_vector_size, @as(u16, '`')))) |
                 @bitCast(AsciiVectorU16U1, (vec == @splat(ascii_u16_vector_size, @as(u16, '\\'))));
 
-            const bitmask = bun.cast(*const u8, &cmp).*;
+            const bitmask = @bitCast(u8, cmp);
             const first = @ctz(bitmask);
             if (first < ascii_u16_vector_size) {
                 return @intCast(u32, @as(u32, first) +

@@ -183,6 +183,10 @@ const NetworkTask = struct {
         },
         extract: ExtractTarball,
         binlink: void,
+        github_clone: struct {
+            package_name: strings.StringOrTinyString,
+            package_version: strings.StringOrTinyString,
+        },
     },
 
     pub fn notify(this: *NetworkTask, _: anytype) void {
@@ -506,6 +510,14 @@ const Task = struct {
             return @as(u64, @truncate(u63, hasher.final())) | @as(u64, 1 << 63);
         }
 
+        pub fn forGitHubPackage(package_name: string, package_version: string) u64 {
+            var hasher = std.hash.Wyhash.init(0);
+            hasher.update(package_name);
+            hasher.update("@");
+            hasher.update(std.mem.asBytes(&package_version));
+            return @as(u64, @truncate(u63, hasher.final())) | @as(u64, 1 << 63);
+        }
+
         pub fn forBinLink(package_id: PackageID) u64 {
             const hash = std.hash.Wyhash.hash(0, std.mem.asBytes(&package_id));
             return @as(u64, @truncate(u62, hash)) | @as(u64, 1 << 62) | @as(u64, 1 << 63);
@@ -528,6 +540,59 @@ const Task = struct {
         defer this.package_manager.wake();
 
         switch (this.tag) {
+            .github_clone => {
+                const allocator = this.package_manager.allocator;
+                std.debug.print("Task.callback() for github_clone reached! {s} {s}\n", .{ this.request.github_clone.package_name, this.request.github_clone.package_version });
+
+                const PATH = this.package_manager.env_loader.get("PATH") orelse "";
+
+                var git_path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+                var cache_dir_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+
+                if (which(&git_path_buf, PATH, ".", "git")) |git| {
+                    const git_path = std.mem.span(git);
+                    const git_command = " clone ";
+                    const github = "https://github.com/";
+                    const github_repo = this.request.github_clone.package_version;
+                    const cache_dir = std.os.getFdPath(this.package_manager.getCacheDirectory().fd, &cache_dir_buf) catch unreachable;
+                    const repo_name = this.request.github_clone.package_name;
+
+                    const command = allocator.alloc(u8, git_path.len + git_command.len + github.len + github_repo.len + cache_dir.len + repo_name.len + 2) catch unreachable;
+                    var i: usize = 0;
+                    std.mem.copy(u8, command[i..], git_path);
+                    i += git_path.len;
+                    std.mem.copy(u8, command[i..], git_command);
+                    i += git_command.len;
+                    std.mem.copy(u8, command[i..], github);
+                    i += github.len;
+                    std.mem.copy(u8, command[i..], github_repo);
+                    i += github_repo.len;
+                    command[i] = ' ';
+                    i += 1;
+                    std.mem.copy(u8, command[i..], cache_dir);
+                    i += cache_dir.len;
+                    command[i] = '/';
+                    i += 1;
+                    std.mem.copy(u8, command[i..], repo_name);
+
+                    std.debug.print("command: {s}\n", .{command});
+
+                    var process = std.ChildProcess.init(&[1]command, allocator);
+                    _ = process.spawnAndWait() catch {
+                        this.log.addErrorFmt(null, logger.Loc.Empty, allocator, "Failed to spawn git child process to clone package {s}", .{repo_name}) catch unreachable;
+                        this.status = .fail;
+                        this.package_manager.resolve_tasks.writeItem(this.*) catch unreachable;
+                        return;
+                    };
+                }
+
+                this.status = Status.success;
+                this.package_manager.resolve_tasks.writeItem(this.*) catch unreachable;
+
+                // std.debug.print("Task.callback() for github_clone end reached!\n", .{});
+
+                return;
+            },
             .package_manifest => {
                 var allocator = bun.default_allocator;
                 const package_manifest = Npm.Registry.getPackageMetadata(
@@ -595,10 +660,11 @@ const Task = struct {
         }
     }
 
-    pub const Tag = enum(u2) {
+    pub const Tag = enum(u3) {
         package_manifest = 1,
         extract = 2,
         binlink = 3,
+        github_clone = 4,
         // install = 3,
     };
 
@@ -626,6 +692,10 @@ const Task = struct {
             tarball: ExtractTarball,
         },
         binlink: Bin.Linker,
+        github_clone: struct {
+            package_name: string,
+            package_version: string,
+        },
         // install: PackageInstall,
     };
 };
@@ -1966,6 +2036,34 @@ pub const PackageManager = struct {
         };
     }
 
+    pub fn pathForCachedGitHubPath(
+        this: *PackageManager,
+        buf: *[bun.MAX_PATH_BYTES]u8,
+        package_name: []const u8,
+        github: Semver.Version,
+    ) ![]u8 {
+        var package_name_version_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+
+        var subpath = std.fmt.bufPrintZ(
+            &package_name_version_buf,
+            "{s}" ++ std.fs.path.sep_str ++ "{any}",
+            .{
+                package_name,
+                github.fmt(this.lockfile.buffers.string_bytes.items),
+            },
+        ) catch unreachable;
+
+        return this.getCacheDirectory().readLink(
+            subpath,
+            buf,
+        ) catch |err| {
+            // if we run into an error, delete the symlink
+            // so that we don't repeatedly try to read it
+            std.os.unlinkat(this.getCacheDirectory().fd, subpath, 0) catch {};
+            return err;
+        };
+    }
+
     pub fn pathForResolution(
         this: *PackageManager,
         package_id: PackageID,
@@ -1980,6 +2078,15 @@ pub const PackageManager = struct {
                 const package_name = this.lockfile.str(package_name_);
 
                 return this.pathForCachedNPMPath(buf, package_name, npm.version);
+            },
+            .github => {
+                // const github = resolution.value.github;
+                const package_name_ = this.lockfile.packages.items(.name)[package_id];
+                const package_name = this.lockfile.str(package_name_);
+
+                return @ptrCast([]u8, package_name);
+
+                // return this.pathForCachedGitHubPath(buf, package_name, );
             },
             else => return "",
         }
@@ -2022,10 +2129,14 @@ pub const PackageManager = struct {
     }
 
     pub fn resolveFromDiskCache(this: *PackageManager, package_name: []const u8, version: Dependency.Version) ?PackageID {
-        if (version.tag != .npm) {
+        if (version.tag != .npm or version.tag != .github) {
             // only npm supported right now
             // tags are more ambiguous
             return null;
+        }
+
+        if (version.tag == .github) {
+            std.debug.print("resolveFromDiskCache() for package {s}\n", .{package_name});
         }
 
         var arena = std.heap.ArenaAllocator.init(this.allocator);
@@ -2347,6 +2458,14 @@ pub const PackageManager = struct {
                 );
             },
 
+            .github => {
+                std.debug.print("getOrPutResolvedPackage() github package {s}\n", .{this.lockfile.str(version.literal)});
+
+                _ = this.manifests.getPtr(name_hash) orelse return null;
+
+                return null;
+            },
+
             .folder => {
                 // relative to cwd
                 const res = FolderResolution.getOrPut(.{ .relative = void{} }, version, version.value.folder.slice(this.lockfile.buffers.string_bytes.items), this);
@@ -2405,6 +2524,30 @@ pub const PackageManager = struct {
             .id = task_id,
             .data = undefined,
         };
+        return &task.threadpool_task;
+    }
+
+    fn enqueueCloneGitHubPackage(
+        this: *PackageManager,
+        package_name: string,
+        package_version: string,
+    ) *ThreadPool.Task {
+        var task = this.allocator.create(Task) catch unreachable;
+        const task_id = Task.Id.forGitHubPackage(package_name, package_version);
+
+        task.* = Task{
+            .log = logger.Log.init(this.allocator),
+            .tag = Task.Tag.github_clone,
+            .request = .{
+                .github_clone = .{
+                    .package_name = package_name,
+                    .package_version = package_version,
+                },
+            },
+            .id = task_id,
+            .data = undefined,
+        };
+
         return &task.threadpool_task;
     }
 
@@ -2550,6 +2693,21 @@ pub const PackageManager = struct {
         }
 
         switch (dependency.version.tag) {
+            .github => {
+                const repo_name = this.allocator.alloc(u8, this.lockfile.str(dependency.name).len) catch unreachable;
+                std.mem.copy(u8, repo_name, this.lockfile.str(dependency.name));
+                const repo_version = this.allocator.alloc(u8, this.lockfile.str(dependency.version.literal).len) catch unreachable;
+                std.mem.copy(u8, repo_version, this.lockfile.str(dependency.version.literal));
+                std.debug.print("enqueueDependencyWithMainAndSuccessFn() for github {s}@{s}\n", .{ repo_name, repo_version });
+
+                var batch = ThreadPool.Batch{};
+                batch.push(ThreadPool.Batch.from(this.enqueueCloneGitHubPackage(repo_name, repo_version)));
+
+                const count = batch.len;
+                this.pending_tasks += @truncate(u32, count);
+                this.total_tasks += @truncate(u32, count);
+                this.thread_pool.schedule(batch);
+            },
             .folder, .npm, .dist_tag => {
                 retry_from_manifests_ptr: while (true) {
                     var resolve_result_ = this.getOrPutResolvedPackage(
@@ -2658,6 +2816,7 @@ pub const PackageManager = struct {
                             }
                         } else if (!dependency.behavior.isPeer() and dependency.version.tag.isNPM()) {
                             const name_str = this.lockfile.str(name);
+                            std.debug.print("enqueueDependencyWithMainAndSuccessFn() dependency is npm {s}\n", .{name_str});
                             const task_id = Task.Id.forManifest(Task.Tag.package_manifest, name_str);
                             var network_entry = try this.network_dedupe_map.getOrPutContext(this.allocator, task_id, .{});
                             if (!network_entry.found_existing) {
@@ -3293,6 +3452,9 @@ pub const PackageManager = struct {
                     batch.push(ThreadPool.Batch.from(manager.enqueueExtractNPMPackage(extract, task)));
                 },
                 .binlink => {},
+                .github_clone => {
+                    std.debug.print("runTasks() has github_clone task callback!\n", .{});
+                },
             }
         }
 
@@ -3420,6 +3582,15 @@ pub const PackageManager = struct {
                     }
                 },
                 .binlink => {},
+                .github_clone => {
+                    if (task.status == .fail) {
+                        std.debug.print("runTasks() resolved task github_clone has failed!\n", .{});
+                        // const err = task.err orelse error.Failed;
+                        continue;
+                    }
+
+                    std.debug.print("runTasks() resolved task github_clone has succeeded!\n", .{});
+                },
             }
         }
 

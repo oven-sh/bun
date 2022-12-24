@@ -1068,17 +1068,72 @@ static inline JSC::EncodedJSValue jsBufferPrototypeFunction_lastIndexOfBody(JSC:
 static inline JSC::EncodedJSValue jsBufferPrototypeFunction_swap16Body(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSBuffer>::ClassParameter castedThis)
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
-    return JSC::JSValue::encode(jsUndefined());
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    const int size = 2;
+    int64_t length = static_cast<int64_t>(castedThis->byteLength());
+    if (length % size != 0) {
+        throwRangeError(lexicalGlobalObject, scope, "Invalid buffer length"_s);
+        return JSC::JSValue::encode(jsUndefined());
+    }
+
+    uint8_t* typedVector = castedThis->typedVector();
+
+    for (size_t i = 0; i < length/size; i++) {
+        uint8_t temp = typedVector[size*i];
+        typedVector[size*i] = typedVector[size*i+1];
+        typedVector[size*i+1] = temp;
+    }
+
+    return JSC::JSValue::encode(castedThis);
 }
 static inline JSC::EncodedJSValue jsBufferPrototypeFunction_swap32Body(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSBuffer>::ClassParameter castedThis)
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
-    return JSC::JSValue::encode(jsUndefined());
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    const int size = 4;
+    int64_t length = static_cast<int64_t>(castedThis->byteLength());
+    if (length % size != 0) {
+        throwRangeError(lexicalGlobalObject, scope, "Invalid buffer length"_s);
+        return JSC::JSValue::encode(jsUndefined());
+    }
+
+    uint8_t* typedVector = castedThis->typedVector();
+
+    for (size_t i = 0; i < length/size; i++) {
+        for (size_t j = 0; j < size/2; j++) {
+            uint8_t temp = typedVector[size*i+j];
+            typedVector[size*i+j] = typedVector[size*i+(size-1)-j];
+            typedVector[size*i+(size-1)-j] = temp;
+        }
+    }
+
+    return JSC::JSValue::encode(castedThis);
 }
 static inline JSC::EncodedJSValue jsBufferPrototypeFunction_swap64Body(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSBuffer>::ClassParameter castedThis)
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
-    return JSC::JSValue::encode(jsUndefined());
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    const int size = 8;
+    int64_t length = static_cast<int64_t>(castedThis->byteLength());
+    if (length % size != 0) {
+        throwRangeError(lexicalGlobalObject, scope, "Invalid buffer length"_s);
+        return JSC::JSValue::encode(jsUndefined());
+    }
+
+    uint8_t* typedVector = castedThis->typedVector();
+
+    for (size_t i = 0; i < length/size; i++) {
+        for (size_t j = 0; j < size/2; j++) {
+            uint8_t temp = typedVector[size*i+j];
+            typedVector[size*i+j] = typedVector[size*i+(size-1)-j];
+            typedVector[size*i+(size-1)-j] = temp;
+        }
+    }
+
+    return JSC::JSValue::encode(castedThis);
 }
 
 static inline JSC::EncodedJSValue jsBufferPrototypeFunction_toStringBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSBuffer>::ClassParameter castedThis)

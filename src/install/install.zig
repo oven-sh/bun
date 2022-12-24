@@ -1239,7 +1239,7 @@ const PackageInstall = struct {
 
     fn isDanglingSymlink(path: [:0]const u8) bool {
         if (comptime Environment.isLinux) {
-            const rc = Syscall.system.open(path, @as(u31, std.os.O.PATH | 0), @as(u31, 0));
+            const rc = Syscall.system.open(path, @as(u32, std.os.O.PATH | 0), @as(u32, 0));
             switch (Syscall.getErrno(rc)) {
                 .SUCCESS => {
                     const fd = @intCast(std.os.fd_t, rc);
@@ -1249,7 +1249,7 @@ const PackageInstall = struct {
                 else => return true,
             }
         } else {
-            const rc = Syscall.system.open(path, @as(u31, 0), @as(u31, 0));
+            const rc = Syscall.system.open(path, @as(u32, 0), @as(u32, 0));
             switch (Syscall.getErrno(rc)) {
                 .SUCCESS => {
                     _ = Syscall.system.close(rc);
@@ -1512,11 +1512,11 @@ pub const PackageManager = struct {
         context: ?*anyopaque = null,
 
         pub inline fn getHandler(t: @This()) *const fn (ctx: *anyopaque, pm: *PackageManager) void {
-            return @ptrCast(*const fn (ctx: *anyopaque, pm: *PackageManager) void, t.handler);
+            return bun.cast(*const fn (ctx: *anyopaque, pm: *PackageManager) void, t.handler);
         }
 
         pub inline fn getonDependencyError(t: @This()) *const fn (ctx: *anyopaque, Dependency, PackageID, anyerror) void {
-            return @ptrCast(*const fn (ctx: *anyopaque, Dependency, PackageID, anyerror) void, t.handler);
+            return bun.cast(*const fn (ctx: *anyopaque, Dependency, PackageID, anyerror) void, t.handler);
         }
     };
 
@@ -6701,7 +6701,7 @@ pub const PackageManager = struct {
                 // bun install may have installed new bins, so we need to update the PATH
                 // this can happen if node_modules/.bin didn't previously exist
                 // note: it is harmless to have the same directory in the PATH multiple times
-                const current_path = manager.env.map.get("PATH");
+                const current_path = manager.env.map.get("PATH") orelse "";
 
                 // TODO: windows
                 const cwd_without_trailing_slash = if (Fs.FileSystem.instance.top_level_dir.len > 1 and Fs.FileSystem.instance.top_level_dir[Fs.FileSystem.instance.top_level_dir.len - 1] == '/')

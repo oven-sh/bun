@@ -2490,7 +2490,7 @@ pub const JSValue = enum(JSValueReprInt) {
             return FetchHeaders.cast(value);
         }
 
-        if (comptime @hasDecl(ZigType, "fromJS") and @TypeOf(ZigType.fromJS) == *const fn (JSC.JSValue) ?*ZigType) {
+        if (comptime @hasDecl(ZigType, "fromJS") and @TypeOf(ZigType.fromJS) == fn (JSC.JSValue) ?*ZigType) {
             return ZigType.fromJS(value);
         }
 

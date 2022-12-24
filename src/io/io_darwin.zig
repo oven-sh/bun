@@ -872,7 +872,7 @@ fn flush_timeouts(self: *IO) ?u64 {
 pub const Completion = struct {
     next: ?*Completion,
     context: ?*anyopaque,
-    callback: fn (*IO, *Completion) void,
+    callback: *const fn (*IO, *Completion) void,
     operation: Operation,
 };
 
@@ -1021,7 +1021,7 @@ pub fn event(
     self: *IO,
     comptime Context: type,
     context: Context,
-    comptime callback: fn (
+    comptime callback: *const fn (
         context: Context,
         completion: *Completion,
         result: void,
@@ -1047,7 +1047,7 @@ pub fn nextTick(
     self: *IO,
     comptime Context: type,
     context: Context,
-    comptime callback: fn (
+    comptime callback: *const fn (
         context: Context,
         completion: *Completion,
         result: void,
@@ -1070,7 +1070,7 @@ pub fn accept(
     self: *IO,
     comptime Context: type,
     context: Context,
-    comptime callback: fn (
+    comptime callback: *const fn (
         context: Context,
         completion: *Completion,
         result: AcceptError!os.socket_t,
@@ -1125,7 +1125,7 @@ pub fn close(
     self: *IO,
     comptime Context: type,
     context: Context,
-    comptime callback: fn (
+    comptime callback: *const fn (
         context: Context,
         completion: *Completion,
         result: CloseError!void,
@@ -1167,7 +1167,7 @@ pub fn connect(
     self: *IO,
     comptime Context: type,
     context: Context,
-    comptime callback: fn (
+    comptime callback: *const fn (
         context: Context,
         completion: *Completion,
         result: IO.ConnectError!void,
@@ -1249,7 +1249,7 @@ pub fn fsync(
     self: *IO,
     comptime Context: type,
     context: Context,
-    comptime callback: fn (
+    comptime callback: *const fn (
         context: Context,
         completion: *Completion,
         result: FsyncError!void,
@@ -1279,7 +1279,7 @@ pub fn open(
     _: *IO,
     comptime Context: type,
     context: Context,
-    comptime callback: fn (
+    comptime callback: *const fn (
         context: Context,
         completion: *Completion,
         result: OpenError!fd_t,
@@ -1314,7 +1314,7 @@ pub fn read(
     self: *IO,
     comptime Context: type,
     context: Context,
-    comptime callback: fn (
+    comptime callback: *const fn (
         context: Context,
         completion: *Completion,
         result: ReadError!usize,
@@ -1378,7 +1378,7 @@ pub fn recv(
     self: *IO,
     comptime Context: type,
     context: Context,
-    comptime callback: fn (
+    comptime callback: *const fn (
         context: Context,
         completion: *Completion,
         result: RecvError!usize,
@@ -1435,7 +1435,7 @@ pub fn send(
     self: *IO,
     comptime Context: type,
     context: Context,
-    comptime callback: fn (
+    comptime callback: *const fn (
         context: Context,
         completion: *Completion,
         result: SendError!usize,
@@ -1491,7 +1491,7 @@ pub fn timeout(
     self: *IO,
     comptime Context: type,
     context: Context,
-    comptime callback: fn (
+    comptime callback: *const fn (
         context: Context,
         completion: *Completion,
         result: TimeoutError!void,
@@ -1519,7 +1519,7 @@ fn timeoutInternal(
     self: *IO,
     comptime Context: type,
     context: Context,
-    comptime callback: fn (
+    comptime callback: *const fn (
         context: Context,
         completion: *Completion,
         result: TimeoutError!void,
@@ -1550,7 +1550,7 @@ pub fn write(
     self: *IO,
     comptime Context: type,
     context: Context,
-    comptime callback: fn (
+    comptime callback: *const fn (
         context: Context,
         completion: *Completion,
         result: WriteError!usize,

@@ -648,7 +648,6 @@ pub fn readFileAsBytesCallback(
     }
 
     var contents_buf = allocator.alloc(u8, stat.size + 2) catch unreachable; // OOM
-    errdefer allocator.free(contents_buf);
     const contents_len = file.readAll(contents_buf) catch |err| {
         JSError(allocator, "{s} reading file (\"{s}\")", .{ @errorName(err), path }, ctx, exception);
         return js.JSValueMakeUndefined(ctx);

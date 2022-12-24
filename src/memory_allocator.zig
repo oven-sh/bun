@@ -45,12 +45,12 @@ const CAllocator = struct {
     fn alignedAlloc(len: usize, alignment: usize) ?[*]u8 {
         if (comptime FeatureFlags.log_allocations) std.debug.print("Malloc: {d}\n", .{len});
 
-        var ptr = if (mi_malloc_satisfies_alignment(alignment, len))
-            mimalloc.mi_malloc(len)
+        var ptr: ?*anyopaque = if (alignment > 0 and std.math.isPowerOfTwo(alignment) and mi_malloc_satisfies_alignment(alignment, len))
+            mimalloc.mi_malloc_aligned(alignment, len)
         else
-            mimalloc.mi_malloc_aligned(len, alignment);
+            mimalloc.mi_malloc(len);
 
-        return @ptrCast([*]u8, ptr orelse null);
+        return if (ptr) |p| @ptrCast([*]u8, p) else null;
     }
 
     fn alignedAllocSize(ptr: [*]u8) usize {

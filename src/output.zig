@@ -279,12 +279,12 @@ pub fn printElapsedStdout(elapsed: f64) void {
 }
 
 pub fn printStartEnd(start: i128, end: i128) void {
-    const elapsed = @divTrunc(end - start, @as(i128, std.time.ns_per_ms));
+    const elapsed = @divTrunc(@truncate(i64, end - start), @as(i64, std.time.ns_per_ms));
     printElapsed(@intToFloat(f64, elapsed));
 }
 
 pub fn printStartEndStdout(start: i128, end: i128) void {
-    const elapsed = @divTrunc(end - start, @as(i128, std.time.ns_per_ms));
+    const elapsed = @divTrunc(@truncate(i64, end - start), @as(i64, std.time.ns_per_ms));
     printElapsedStdout(@intToFloat(f64, elapsed));
 }
 
@@ -643,7 +643,7 @@ pub const DebugTimer = struct {
             var _opts = opts;
             _opts.precision = 3;
             std.fmt.formatFloatDecimal(
-                @floatCast(f64, @intToFloat(f128, timer.read()) / std.time.ns_per_ms),
+                @floatCast(f64, @intToFloat(f64, timer.read()) / std.time.ns_per_ms),
                 _opts,
                 writer_,
             ) catch unreachable;

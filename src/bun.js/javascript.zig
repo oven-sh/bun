@@ -264,8 +264,7 @@ export fn Bun__readOriginTimer(vm: *JSC.VirtualMachine) u64 {
 
 export fn Bun__readOriginTimerStart(vm: *JSC.VirtualMachine) f64 {
     // timespce to milliseconds
-    // use f128 to reduce precision loss when converting to f64
-    return @floatCast(f64, (@intToFloat(f128, vm.origin_timestamp) + JSC.VirtualMachine.origin_relative_epoch) / 1_000_000.0);
+    return @floatCast(f64, (@intToFloat(f64, vm.origin_timestamp) + JSC.VirtualMachine.origin_relative_epoch) / 1_000_000.0);
 }
 
 // comptime {
@@ -582,15 +581,6 @@ pub const VirtualMachine = struct {
 
     pub const MacroMap = std.AutoArrayHashMap(i32, js.JSObjectRef);
 
-    /// Threadlocals are slow on macOS
-    pub threadlocal var vm_loaded = false;
-
-    /// Threadlocals are slow on macOS
-    /// Consider using `globalThis.bunVM()` instead.
-    /// There may be a time where we run multiple VMs in the same thread
-    /// At that point, this threadlocal will be a problem.
-    pub threadlocal var vm: *VirtualMachine = undefined;
-
     pub fn enableMacroMode(this: *VirtualMachine) void {
         if (!this.has_enabled_macro_mode) {
             this.has_enabled_macro_mode = true;
@@ -702,7 +692,9 @@ pub const VirtualMachine = struct {
             env_loader,
         );
 
-        VMHolder.vm.?.* = VirtualMachine{
+        var vm = VMHolder.vm.?;
+
+        vm.* = VirtualMachine{
             .global = undefined,
             .allocator = allocator,
             .entry_point = ServerEntryPoint{},
@@ -717,48 +709,48 @@ pub const VirtualMachine = struct {
             .saved_source_map_table = SavedSourceMap.HashTable.init(allocator),
             .source_mappings = undefined,
             .macros = MacroMap.init(allocator),
-            .macro_entry_points = @TypeOf(VirtualMachine.get().macro_entry_points).init(allocator),
+            .macro_entry_points = @TypeOf(vm.macro_entry_points).init(allocator),
             .origin_timer = std.time.Timer.start() catch @panic("Please don't mess with timers."),
             .origin_timestamp = getOriginTimestamp(),
             .ref_strings = JSC.RefString.Map.init(allocator),
             .file_blobs = JSC.WebCore.Blob.Store.Map.init(allocator),
         };
-        VirtualMachine.get().source_mappings = .{ .map = &VirtualMachine.get().saved_source_map_table };
-        VirtualMachine.get().regular_event_loop.tasks = EventLoop.Queue.init(
+        vm.source_mappings = .{ .map = &vm.saved_source_map_table };
+        vm.regular_event_loop.tasks = EventLoop.Queue.init(
             default_allocator,
         );
-        VirtualMachine.get().regular_event_loop.tasks.ensureUnusedCapacity(64) catch unreachable;
-        VirtualMachine.get().regular_event_loop.concurrent_tasks = .{};
-        VirtualMachine.get().event_loop = &VirtualMachine.get().regular_event_loop;
+        vm.regular_event_loop.tasks.ensureUnusedCapacity(64) catch unreachable;
+        vm.regular_event_loop.concurrent_tasks = .{};
+        vm.event_loop = &vm.regular_event_loop;
 
         vm.bundler.macro_context = null;
 
-        VirtualMachine.get().bundler.resolver.onWakePackageManager = .{
-            .context = &VirtualMachine.get().modules,
+        vm.bundler.resolver.onWakePackageManager = .{
+            .context = &vm.modules,
             .handler = ModuleLoader.AsyncModule.Queue.onWakeHandler,
             .onDependencyError = JSC.ModuleLoader.AsyncModule.Queue.onDependencyError,
         };
 
-        VirtualMachine.get().bundler.configureLinker();
-        try VirtualMachine.get().bundler.configureFramework(false);
+        vm.bundler.configureLinker();
+        try vm.bundler.configureFramework(false);
 
         vm.bundler.macro_context = js_ast.Macro.MacroContext.init(&vm.bundler);
 
         if (_args.serve orelse false) {
-            VirtualMachine.get().bundler.linker.onImportCSS = Bun.onImportCSS;
+            vm.bundler.linker.onImportCSS = Bun.onImportCSS;
         }
 
         var global_classes: [GlobalClasses.len]js.JSClassRef = undefined;
         inline for (GlobalClasses) |Class, i| {
             global_classes[i] = Class.get().*;
         }
-        VirtualMachine.get().global = ZigGlobalObject.create(
+        vm.global = ZigGlobalObject.create(
             &global_classes,
             @intCast(i32, global_classes.len),
             vm.console,
         );
-        VirtualMachine.get().regular_event_loop.global = VirtualMachine.get().global;
-        VirtualMachine.get().regular_event_loop.virtual_machine = VirtualMachine.get();
+        vm.regular_event_loop.global = vm.global;
+        vm.regular_event_loop.virtual_machine = vm;
 
         if (source_code_printer == null) {
             var writer = try js_printer.BufferWriter.init(allocator);
@@ -767,7 +759,7 @@ pub const VirtualMachine = struct {
             source_code_printer.?.ctx.append_null_byte = false;
         }
 
-        return VirtualMachine.get();
+        return vm;
     }
 
     // dynamic import
@@ -896,7 +888,7 @@ pub const VirtualMachine = struct {
         // macOS threadlocal vars are very slow
         // we won't change threads in this function
         // so we can copy it here
-        var jsc_vm = vm;
+        var jsc_vm = VirtualMachine.get();
 
         if (jsc_vm.node_modules == null and strings.eqlComptime(std.fs.path.basename(specifier), Runtime.Runtime.Imports.alt_name)) {
             ret.path = Runtime.Runtime.Imports.Name;
@@ -1024,7 +1016,7 @@ pub const VirtualMachine = struct {
 
     pub fn resolveMaybeNeedsTrailingSlash(res: *ErrorableZigString, global: *JSGlobalObject, specifier: ZigString, source: ZigString, comptime is_a_file_path: bool, comptime realpath: bool) void {
         var result = ResolveFunctionResult{ .path = "", .result = null };
-        var jsc_vm = vm;
+        var jsc_vm = VirtualMachine.get();
         if (jsc_vm.plugin_runner) |plugin_runner| {
             if (PluginRunner.couldBePlugin(specifier.slice())) {
                 const namespace = PluginRunner.extractNamespace(specifier.slice());
@@ -1087,7 +1079,7 @@ pub const VirtualMachine = struct {
             };
 
             {
-                res.* = ErrorableZigString.err(err, @ptrCast(*anyopaque, ResolveError.create(global, vm.allocator, msg, source.slice())));
+                res.* = ErrorableZigString.err(err, @ptrCast(*anyopaque, ResolveError.create(global, VirtualMachine.get().allocator, msg, source.slice())));
             }
 
             return;
@@ -1110,11 +1102,11 @@ pub const VirtualMachine = struct {
 
     pub fn fetch(ret: *ErrorableResolvedSource, global: *JSGlobalObject, specifier: ZigString, source: ZigString) callconv(.C) void {
         var jsc_vm: *VirtualMachine = if (comptime Environment.isLinux)
-            vm
+            VirtualMachine.get()
         else
             global.bunVM();
 
-        var log = logger.Log.init(vm.bundler.allocator);
+        var log = logger.Log.init(jsc_vm.bundler.allocator);
         var spec = specifier.toSlice(jsc_vm.allocator);
         defer spec.deinit();
         var refer = source.toSlice(jsc_vm.allocator);
@@ -1154,6 +1146,7 @@ pub const VirtualMachine = struct {
         }
 
         ret.result.value = result;
+        var vm = get();
 
         if (vm.blobs) |blobs| {
             const specifier_blob = brk: {
@@ -1182,17 +1175,17 @@ pub const VirtualMachine = struct {
                             .data = logger.rangeData(
                                 null,
                                 logger.Range.None,
-                                std.fmt.allocPrint(vm.allocator, "Unexpected pending import in \"{s}\". To automatically install npm packages with Bun, please use an import statement instead of require() or dynamic import().\nThis error can also happen if dependencies import packages which are not referenced anywhere. Worst case, run `bun install` and opt-out of the node_modules folder until we come up with a better way to handle this error.", .{specifier.slice()}) catch unreachable,
+                                std.fmt.allocPrint(globalThis.allocator(), "Unexpected pending import in \"{s}\". To automatically install npm packages with Bun, please use an import statement instead of require() or dynamic import().\nThis error can also happen if dependencies import packages which are not referenced anywhere. Worst case, run `bun install` and opt-out of the node_modules folder until we come up with a better way to handle this error.", .{specifier.slice()}) catch unreachable,
                             ),
                         };
                     }
 
                     break :brk logger.Msg{
-                        .data = logger.rangeData(null, logger.Range.None, std.fmt.allocPrint(vm.allocator, "{s} while building {s}", .{ @errorName(err), specifier.slice() }) catch unreachable),
+                        .data = logger.rangeData(null, logger.Range.None, std.fmt.allocPrint(globalThis.allocator(), "{s} while building {s}", .{ @errorName(err), specifier.slice() }) catch unreachable),
                     };
                 };
                 {
-                    ret.* = ErrorableResolvedSource.err(err, @ptrCast(*anyopaque, BuildError.create(globalThis, vm.bundler.allocator, msg)));
+                    ret.* = ErrorableResolvedSource.err(err, @ptrCast(*anyopaque, BuildError.create(globalThis, globalThis.allocator(), msg)));
                 }
                 return;
             },
@@ -1200,10 +1193,10 @@ pub const VirtualMachine = struct {
             1 => {
                 const msg = log.msgs.items[0];
                 ret.* = ErrorableResolvedSource.err(err, switch (msg.metadata) {
-                    .build => BuildError.create(globalThis, vm.bundler.allocator, msg).?,
+                    .build => BuildError.create(globalThis, globalThis.allocator(), msg).?,
                     .resolve => ResolveError.create(
                         globalThis,
-                        vm.bundler.allocator,
+                        globalThis.allocator(),
                         msg,
                         referrer.slice(),
                     ).?,
@@ -1217,10 +1210,10 @@ pub const VirtualMachine = struct {
 
                 for (log.msgs.items) |msg, i| {
                     errors[i] = switch (msg.metadata) {
-                        .build => BuildError.create(globalThis, vm.bundler.allocator, msg).?,
+                        .build => BuildError.create(globalThis, globalThis.allocator(), msg).?,
                         .resolve => ResolveError.create(
                             globalThis,
-                            vm.bundler.allocator,
+                            globalThis.allocator(),
                             msg,
                             referrer.slice(),
                         ).?,
@@ -1233,7 +1226,7 @@ pub const VirtualMachine = struct {
                         errors.ptr,
                         @intCast(u16, errors.len),
                         &ZigString.init(
-                            std.fmt.allocPrint(vm.bundler.allocator, "{d} errors building \"{s}\"", .{
+                            std.fmt.allocPrint(globalThis.allocator(), "{d} errors building \"{s}\"", .{
                                 errors.len,
                                 specifier.slice(),
                             }) catch unreachable,
@@ -1389,7 +1382,7 @@ pub const VirtualMachine = struct {
         path: string,
         promise: *JSInternalPromise = undefined,
         pub fn load(this: *MacroEntryPointLoader) void {
-            this.promise = vm._loadMacroEntryPoint(this.path);
+            this.promise = VirtualMachine.get()._loadMacroEntryPoint(this.path);
         }
     };
 
@@ -1565,6 +1558,7 @@ pub const VirtualMachine = struct {
     pub fn printStackTrace(comptime Writer: type, writer: Writer, trace: ZigStackTrace, comptime allow_ansi_colors: bool) !void {
         const stack = trace.frames();
         if (stack.len > 0) {
+            var vm = VirtualMachine.get();
             var i: i16 = 0;
             const origin: ?*const URL = if (vm.is_from_devserver) &vm.origin else null;
             const dir = vm.bundler.fs.top_level_dir;

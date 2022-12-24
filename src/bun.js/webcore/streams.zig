@@ -708,7 +708,7 @@ pub const StreamResult = union(Tag) {
             ctx: *anyopaque,
             handler: Fn,
 
-            pub const Fn = bun.FnPtr(fn (ctx: *anyopaque, result: StreamResult) void);
+            pub const Fn = *const fn (ctx: *anyopaque, result: StreamResult) void;
 
             pub fn init(this: *Handler, comptime Context: type, ctx: *Context, comptime handler_fn: fn (*Context, StreamResult) void) void {
                 this.ctx = ctx;
@@ -852,9 +852,9 @@ pub const Signal = struct {
     }
 
     pub const VTable = struct {
-        pub const OnCloseFn = bun.FnPtr(fn (this: *anyopaque, err: ?Syscall.Error) void);
-        pub const OnReadyFn = bun.FnPtr(fn (this: *anyopaque, amount: ?Blob.SizeType, offset: ?Blob.SizeType) void);
-        pub const OnStartFn = bun.FnPtr(fn (this: *anyopaque) void);
+        pub const OnCloseFn = *const (fn (this: *anyopaque, err: ?Syscall.Error) void);
+        pub const OnReadyFn = *const (fn (this: *anyopaque, amount: ?Blob.SizeType, offset: ?Blob.SizeType) void);
+        pub const OnStartFn = *const (fn (this: *anyopaque) void);
         close: OnCloseFn,
         ready: OnReadyFn,
         start: OnStartFn,
@@ -1007,11 +1007,11 @@ pub const Sink = struct {
     };
 
     pub const VTable = struct {
-        pub const WriteUTF16Fn = bun.FnPtr(fn (this: *anyopaque, data: StreamResult) StreamResult.Writable);
-        pub const WriteUTF8Fn = bun.FnPtr(fn (this: *anyopaque, data: StreamResult) StreamResult.Writable);
-        pub const WriteLatin1Fn = bun.FnPtr(fn (this: *anyopaque, data: StreamResult) StreamResult.Writable);
-        pub const EndFn = bun.FnPtr(fn (this: *anyopaque, err: ?Syscall.Error) JSC.Node.Maybe(void));
-        pub const ConnectFn = bun.FnPtr(fn (this: *anyopaque, signal: Signal) JSC.Node.Maybe(void));
+        pub const WriteUTF16Fn = *const (fn (this: *anyopaque, data: StreamResult) StreamResult.Writable);
+        pub const WriteUTF8Fn = *const (fn (this: *anyopaque, data: StreamResult) StreamResult.Writable);
+        pub const WriteLatin1Fn = *const (fn (this: *anyopaque, data: StreamResult) StreamResult.Writable);
+        pub const EndFn = *const (fn (this: *anyopaque, err: ?Syscall.Error) JSC.Node.Maybe(void));
+        pub const ConnectFn = *const (fn (this: *anyopaque, signal: Signal) JSC.Node.Maybe(void));
 
         connect: ConnectFn,
         write: WriteUTF8Fn,

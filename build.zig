@@ -335,7 +335,7 @@ pub fn build(b: *std.build.Builder) !void {
         obj.linkLibC();
 
         obj.strip = false;
-        obj.bundle_compiler_rt = true;
+        obj.bundle_compiler_rt = false;
         obj.omit_frame_pointer = mode != .Debug;
 
         b.default_step.dependOn(&obj.step);
@@ -552,10 +552,13 @@ pub fn configureObjectStep(_: *std.build.Builder, obj: *std.build.LibExeObjStep,
         addPicoHTTP(obj, false);
 
     obj.strip = false;
+
     obj.setOutputDir(output_dir);
     obj.setBuildMode(mode);
+    obj.bundle_compiler_rt = false;
+
     if (target.getOsTag() != .freestanding) obj.linkLibC();
-    if (target.getOsTag() != .freestanding) obj.bundle_compiler_rt = true;
+    if (target.getOsTag() != .freestanding) obj.bundle_compiler_rt = false;
 
     if (target.getOsTag() == .linux) {
         // obj.want_lto = tar;

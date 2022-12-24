@@ -386,8 +386,7 @@ pub const Linker = struct {
                         }
                     }
 
-                    if (true) @panic("TODO");
-                    var resolved_import_ = brk: {
+                    var resolved_import_: anyerror!Resolver.Result = brk: {
                         switch (import_record.tag) {
                             else => {},
                             // for fast refresh, attempt to read the version directly from the bundle instead of resolving it
@@ -445,13 +444,14 @@ pub const Linker = struct {
                                 .failure => |err| {
                                     break :brk err;
                                 },
-                                .pending => |*pending| {
+                                .pending => |pending1| {
+                                    var pending = pending1;
                                     if (!linker.resolver.opts.global_cache.canInstall()) {
                                         break :brk error.InstallationPending;
                                     }
 
                                     pending.import_record_id = record_i;
-                                    try result.pending_imports.append(linker.allocator, pending.*);
+                                    try result.pending_imports.append(linker.allocator, pending);
                                     continue;
                                 },
                                 .not_found => break :brk error.ModuleNotFound,

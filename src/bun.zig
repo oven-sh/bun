@@ -517,55 +517,6 @@ pub const DateTime = @import("./deps/zig-datetime/src/datetime.zig");
 
 pub var start_time: i128 = 0;
 
-const is_stage1 = @import("builtin").zig_backend == .stage1;
-fn FnPtrStage1(comptime T: anytype) type {
-    return T;
-}
-
-fn FnPtrOptionalStage1(comptime T: anytype) type {
-    return ?T;
-}
-
-fn FnPtrStage2(comptime T: anytype) type {
-    return @TypeOf(FnPtrStage2Wrap(T));
-}
-
-fn FnPtrOptionalStage2(comptime T: anytype) type {
-    return @TypeOf(FnPtrOptionalStage2Wrap(T));
-}
-
-fn FnPtrStage2Wrap(comptime T: anytype) @TypeOf(&struct {
-    const FnPtrType = T;
-    pub const fn_ptr: FnPtrType = undefined;
-}.fn_ptr) {
-    return &struct {
-        const FnPtrType = T;
-        pub const fn_ptr: FnPtrType = undefined;
-    }.fn_ptr;
-}
-
-fn FnPtrOptionalStage2Wrap(comptime T: anytype) ?@TypeOf(FnPtrStage2Wrap(T)) {
-    return &struct {
-        const FnPtrType = T;
-        pub const fn_ptr: FnPtrType = undefined;
-    }.fn_ptr;
-}
-
-pub const FnPtr = if (is_stage1) FnPtrStage1 else FnPtrStage2;
-
-pub const FnPtrOptional = if (is_stage1) FnPtrOptionalStage1 else FnPtrOptionalStage2;
-pub const Fn = struct {
-    pub const Ptr = FnPtr;
-    pub const Opt = FnPtrOptional;
-};
-
-pub fn fnptr(comptime T: anytype) FnPtr(@TypeOf(T)) {
-    if (comptime is_stage1)
-        return T;
-
-    return &T;
-}
-
 pub fn openDir(dir: std.fs.Dir, path_: [:0]const u8) !std.fs.IterableDir {
     const fd = try std.os.openatZ(dir.fd, path_, std.os.O.DIRECTORY | 0, 0);
     return std.fs.IterableDir{ .dir = .{ .fd = fd } };

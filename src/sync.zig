@@ -353,7 +353,7 @@ pub const ThreadPool = struct {
     const List = std.TailQueue(Runnable);
     const RunNode = List.Node;
     const Runnable = struct {
-        runFn: bun.FnPtr(fn (*Runnable) void),
+        runFn: *const (fn (*Runnable) void),
     };
 };
 

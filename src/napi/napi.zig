@@ -150,8 +150,8 @@ pub const napi_status = enum(c_uint) {
     detachable_arraybuffer_expected = 20,
     would_deadlock = 21,
 };
-pub const napi_callback = bun.FnPtrOptional(fn (napi_env, napi_callback_info) callconv(.C) napi_value);
-pub const napi_finalize = bun.FnPtrOptional(fn (napi_env, ?*anyopaque, ?*anyopaque) callconv(.C) void);
+pub const napi_callback = ?*const fn (napi_env, napi_callback_info) callconv(.C) napi_value;
+pub const napi_finalize = ?*const fn (napi_env, ?*anyopaque, ?*anyopaque) callconv(.C) void;
 pub const napi_property_descriptor = extern struct {
     utf8name: [*c]const u8,
     name: napi_value,
@@ -904,7 +904,7 @@ const WorkPoolTask = @import("../work_pool.zig").Task;
 
 /// must be globally allocated
 pub const napi_async_work = struct {
-    task: WorkPoolTask = .{ .callback = bun.fnptr(runFromThreadPool) },
+    task: WorkPoolTask = .{ .callback = &runFromThreadPool },
     concurrent_task: JSC.ConcurrentTask = .{},
     completion_task: ?*anyopaque = null,
     event_loop: *JSC.EventLoop,
@@ -998,9 +998,9 @@ pub const napi_threadsafe_function_release_mode = enum(c_uint) {
 pub const napi_tsfn_nonblocking = 0;
 pub const napi_tsfn_blocking = 1;
 pub const napi_threadsafe_function_call_mode = c_uint;
-pub const napi_async_execute_callback = bun.FnPtrOptional(fn (napi_env, ?*anyopaque) callconv(.C) void);
-pub const napi_async_complete_callback = bun.FnPtrOptional(fn (napi_env, napi_status, ?*anyopaque) callconv(.C) void);
-pub const napi_threadsafe_function_call_js = bun.FnPtrOptional(fn (napi_env, napi_value, ?*anyopaque, ?*anyopaque) callconv(.C) void);
+pub const napi_async_execute_callback = ?*const fn (napi_env, ?*anyopaque) callconv(.C) void;
+pub const napi_async_complete_callback = ?*const fn (napi_env, napi_status, ?*anyopaque) callconv(.C) void;
+pub const napi_threadsafe_function_call_js = ?*const fn (napi_env, napi_value, ?*anyopaque, ?*anyopaque) callconv(.C) void;
 pub const napi_node_version = extern struct {
     major: u32,
     minor: u32,
@@ -1016,9 +1016,9 @@ pub const napi_node_version = extern struct {
 };
 pub const struct_napi_async_cleanup_hook_handle__ = opaque {};
 pub const napi_async_cleanup_hook_handle = ?*struct_napi_async_cleanup_hook_handle__;
-pub const napi_async_cleanup_hook = bun.FnPtrOptional(fn (napi_async_cleanup_hook_handle, ?*anyopaque) callconv(.C) void);
+pub const napi_async_cleanup_hook = *const fn (napi_async_cleanup_hook_handle, ?*anyopaque) callconv(.C) void;
 
-pub const napi_addon_register_func = bun.FnPtrOptional(fn (napi_env, napi_value) callconv(.C) napi_value);
+pub const napi_addon_register_func = *const fn (napi_env, napi_value) callconv(.C) napi_value;
 pub const struct_napi_module = extern struct {
     nm_version: c_int,
     nm_flags: c_uint,
@@ -1140,14 +1140,14 @@ pub extern fn napi_fatal_exception(env: napi_env, err: napi_value) napi_status;
 
 // We use a linked list here because we assume removing these is relatively rare
 // and array reallocations are relatively expensive.
-pub export fn napi_add_env_cleanup_hook(env: napi_env, fun: bun.FnPtrOptional(fn (?*anyopaque) callconv(.C) void), arg: ?*anyopaque) napi_status {
+pub export fn napi_add_env_cleanup_hook(env: napi_env, fun: ?*const fn (?*anyopaque) callconv(.C) void, arg: ?*anyopaque) napi_status {
     if (fun == null)
         return .ok;
 
     env.bunVM().rareData().pushCleanupHook(env, arg, fun.?);
     return .ok;
 }
-pub export fn napi_remove_env_cleanup_hook(env: napi_env, fun: bun.FnPtrOptional(fn (?*anyopaque) callconv(.C) void), arg: ?*anyopaque) napi_status {
+pub export fn napi_remove_env_cleanup_hook(env: napi_env, fun: ?*const fn (?*anyopaque) callconv(.C) void, arg: ?*anyopaque) napi_status {
     if (env.bunVM().rare_data == null or fun == null)
         return .ok;
 

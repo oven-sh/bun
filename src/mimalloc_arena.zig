@@ -75,27 +75,6 @@ pub const GlobalArena = struct {
 
 pub const Arena = struct {
     heap: ?*mimalloc.Heap = null,
-    arena_id: mimalloc.ArenaID = -1,
-
-    pub fn initWithCapacity(capacity: usize) error{OutOfMemory}!Arena {
-        var arena_id: mimalloc.ArenaID = -1;
-
-        std.debug.assert(capacity >= 8 * 1024 * 1024); // mimalloc requires a minimum of 8MB
-        // which makes this not very useful for us!
-
-        if (!mimalloc.mi_manage_os_memory_ex(null, capacity, true, true, false, -1, true, &arena_id)) {
-            if (!mimalloc.mi_manage_os_memory_ex(null, capacity, false, false, false, -1, true, &arena_id)) {
-                return error.OutOfMemory;
-            }
-        }
-        std.debug.assert(arena_id != -1);
-
-        var heap = mimalloc.mi_heap_new_in_arena(arena_id) orelse return error.OutOfMemory;
-        return Arena{
-            .heap = heap,
-            .arena_id = arena_id,
-        };
-    }
 
     /// Internally, mimalloc calls mi_heap_get_default()
     /// to get the default heap.
@@ -168,15 +147,15 @@ pub const Arena = struct {
             (alignment == MI_MAX_ALIGN_SIZE and size >= (MI_MAX_ALIGN_SIZE / 2)));
     }
 
-    fn alignedAlloc(heap: *anyopaque, len: usize, alignment: usize) ?[*]u8 {
+    fn alignedAlloc(heap: *anyopaque, len: usize, _: usize) ?[*]u8 {
         if (comptime FeatureFlags.log_allocations) std.debug.print("Malloc: {d}\n", .{len});
 
-        var ptr = if (mi_malloc_satisfies_alignment(alignment, len))
-            mimalloc.mi_heap_malloc(@ptrCast(*mimalloc.Heap, heap), len)
-        else
-            mimalloc.mi_heap_malloc_aligned(@ptrCast(*mimalloc.Heap, heap), len, alignment);
+        var ptr: ?*anyopaque = mimalloc.mi_heap_malloc(@ptrCast(*mimalloc.Heap, heap), len);
 
-        return @ptrCast([*]u8, ptr orelse null);
+        return if (ptr) |p|
+            @ptrCast([*]u8, p)
+        else
+            null;
     }
 
     fn alignedAllocSize(ptr: [*]u8) usize {
@@ -184,14 +163,11 @@ pub const Arena = struct {
     }
 
     fn alloc(arena: *anyopaque, len: usize, ptr_align: u8, _: usize) ?[*]u8 {
-        var this = bun.cast(*Arena, arena);
-        return alignedAlloc(this.heap.?, len, ptr_align);
+        var this = bun.cast(*mimalloc.Heap, arena);
+        return alignedAlloc(this, len, ptr_align);
     }
 
-    fn resize(arena: *anyopaque, buf: []u8, _: u8, new_len: usize, _: usize) bool {
-        var this = bun.cast(*Arena, arena);
-        _ = this;
-
+    fn resize(_: *anyopaque, buf: []u8, _: u8, new_len: usize, _: usize) bool {
         if (new_len <= buf.len) {
             return true;
         }

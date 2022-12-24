@@ -2934,7 +2934,7 @@ pub fn indexOfNewlineOrNonASCIICheckStart(slice_: []const u8, offset: u32, compt
                 @bitCast(AsciiVectorU1, vec == @splat(ascii_vector_size, @as(u8, '\n')));
 
             if (@reduce(.Max, cmp) > 0) {
-                const bitmask = bun.cast(*const AsciiVectorInt, &cmp).*;
+                const bitmask = @ptrCast(*const AsciiVectorInt, @alignCast(@alignOf(AsciiVectorInt)), &cmp).*;
                 const first = @ctz(bitmask);
 
                 return @as(u32, first) + @intCast(u32, slice.len - remaining.len) + offset;

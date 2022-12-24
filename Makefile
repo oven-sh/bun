@@ -59,7 +59,7 @@ PACKAGE_JSON_VERSION = $(BUN_BASE_VERSION).$(BUILD_ID)
 BUN_BUILD_TAG = bun-v$(PACKAGE_JSON_VERSION)
 BUN_RELEASE_BIN = $(PACKAGE_DIR)/bun
 PRETTIER ?= $(shell which prettier || echo "./node_modules/.bin/prettier")
-DSYMUTIL ?= $(shell which dsymutil || which dsymutil-13)
+DSYMUTIL ?= $(shell which dsymutil || which dsymutil-15)
 WEBKIT_DIR ?= $(realpath src/bun.js/WebKit)
 WEBKIT_RELEASE_DIR ?= $(WEBKIT_DIR)/WebKitBuild/Release
 WEBKIT_DEBUG_DIR ?= $(WEBKIT_DIR)/WebKitBuild/Debug
@@ -74,8 +74,8 @@ ZIG ?= $(shell which zig || echo -e "error: Missing zig. Please make sure zig is
 # This is easier to happen than you'd expect.
 # Using realpath here causes issues because clang uses clang++ as a symlink
 # so if that's resolved, it won't build for C++
-REAL_CC = $(shell which clang-13 || which clang)
-REAL_CXX = $(shell which clang++-13 || which clang++)
+REAL_CC = $(shell which clang-15 || which clang)
+REAL_CXX = $(shell which clang++-15 || which clang++)
 
 CC = $(REAL_CC)
 CXX = $(REAL_CXX)
@@ -99,7 +99,7 @@ CC_WITH_CCACHE = $(CCACHE_PATH) $(CC)
 ifeq ($(OS_NAME),darwin)
 # Find LLVM
 	ifeq ($(wildcard $(LLVM_PREFIX)),)
-		LLVM_PREFIX = $(shell brew --prefix llvm@13)
+		LLVM_PREFIX = $(shell brew --prefix llvm@15)
 	endif
 	ifeq ($(wildcard $(LLVM_PREFIX)),)
 		LLVM_PREFIX = $(shell brew --prefix llvm)
@@ -160,7 +160,7 @@ endif
 
 ifeq ($(OS_NAME),linux)
 LIBICONV_PATH =
-AR = $(shell which llvm-ar-13 || which llvm-ar || which ar)
+AR = $(shell which llvm-ar-15 || which llvm-ar || which ar)
 endif
 
 OPTIMIZATION_LEVEL=-O3 $(MARCH_NATIVE)
@@ -250,7 +250,7 @@ STRIP=/usr/bin/strip
 endif
 
 ifeq ($(OS_NAME),linux)
-STRIP=$(shell which llvm-strip || which llvm-strip-13 || which strip || echo "Missing strip")
+STRIP=$(shell which llvm-strip || which llvm-strip-15 || which strip || echo "Missing strip")
 endif
 
 
@@ -622,7 +622,7 @@ endif
 .PHONY: require
 require:
 	@echo "Checking if the required utilities are available..."
-	@if [ $(CLANG_VERSION) -lt "13" ]; then echo -e "ERROR: clang version >=13 required, found: $(CLANG_VERSION). Install with:\n\n    $(POSIX_PKG_MANAGER) install llvm@13"; exit 1; fi
+	@if [ $(CLANG_VERSION) -lt "15" ]; then echo -e "ERROR: clang version >=15 required, found: $(CLANG_VERSION). Install with:\n\n    $(POSIX_PKG_MANAGER) install llvm@15"; exit 1; fi
 	@cmake --version >/dev/null 2>&1 || (echo -e "ERROR: cmake is required."; exit 1)
 	@esbuild --version >/dev/null 2>&1 || (echo -e "ERROR: esbuild is required."; exit 1)
 	@$(NPM_CLIENT) --version >/dev/null 2>&1 || (echo -e "ERROR: NPM client (bun or npm) is required."; exit 1)
@@ -1417,7 +1417,7 @@ mimalloc-wasm:
 bun-link-lld-debug:
 	$(CXX) $(BUN_LLD_FLAGS_DEBUG) $(DEBUG_FLAGS) $(SYMBOLS) \
 		-g \
-		$(DEBUG_BIN)/bun-debug.o \
+		$(DEBUG_BIN)/bun-debug.o --rtlib=compiler-rt  \
 		-W \
 		-o $(DEBUG_BIN)/bun-debug
 

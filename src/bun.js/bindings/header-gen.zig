@@ -145,7 +145,7 @@ pub const C_Generator = struct {
             }
         }
 
-        inline for (meta.args) |arg, i| {
+        inline for (meta.params) |arg, i| {
             const ArgType = comptime arg.type.?;
 
             switch (@typeInfo(ArgType)) {
@@ -172,7 +172,7 @@ pub const C_Generator = struct {
             // } else {
 
             //TODO: Figure out how to get arg names; for now just do arg0..argN
-            if (i != meta.args.len - 1)
+            if (i != meta.params.len - 1)
                 self.write(", ");
         }
 

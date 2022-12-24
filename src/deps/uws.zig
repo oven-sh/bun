@@ -516,14 +516,14 @@ pub const Loop = extern struct {
         us_loop_run(this);
     }
 
-    extern fn uws_loop_defer(loop: *Loop, ctx: *anyopaque, cb: bun.FnPtr(fn (ctx: *anyopaque) callconv(.C) void)) void;
+    extern fn uws_loop_defer(loop: *Loop, ctx: *anyopaque, cb: *const (fn (ctx: *anyopaque) callconv(.C) void)) void;
 
     extern fn uws_get_loop() ?*Loop;
     extern fn us_create_loop(
         hint: ?*anyopaque,
-        wakeup_cb: bun.FnPtrOptional(fn (*Loop) callconv(.C) void),
-        pre_cb: bun.FnPtrOptional(fn (*Loop) callconv(.C) void),
-        post_cb: bun.FnPtrOptional(fn (*Loop) callconv(.C) void),
+        wakeup_cb: ?*const fn (*Loop) callconv(.C) void,
+        pre_cb: ?*const fn (*Loop) callconv(.C) void,
+        post_cb: ?*const fn (*Loop) callconv(.C) void,
         ext_size: c_uint,
     ) ?*Loop;
     extern fn us_loop_free(loop: ?*Loop) void;
@@ -533,10 +533,10 @@ pub const Loop = extern struct {
     extern fn us_wakeup_loop(loop: ?*Loop) void;
     extern fn us_loop_integrate(loop: ?*Loop) void;
     extern fn us_loop_iteration_number(loop: ?*Loop) c_longlong;
-    extern fn uws_loop_addPostHandler(loop: *Loop, ctx: *anyopaque, cb: bun.FnPtr(fn (ctx: *anyopaque, loop: *Loop) callconv(.C) void)) void;
-    extern fn uws_loop_removePostHandler(loop: *Loop, ctx: *anyopaque, cb: bun.FnPtr(fn (ctx: *anyopaque, loop: *Loop) callconv(.C) void)) void;
-    extern fn uws_loop_addPreHandler(loop: *Loop, ctx: *anyopaque, cb: bun.FnPtr(fn (ctx: *anyopaque, loop: *Loop) callconv(.C) void)) void;
-    extern fn uws_loop_removePreHandler(loop: *Loop, ctx: *anyopaque, cb: bun.FnPtr(fn (ctx: *anyopaque, loop: *Loop) callconv(.C) void)) void;
+    extern fn uws_loop_addPostHandler(loop: *Loop, ctx: *anyopaque, cb: *const (fn (ctx: *anyopaque, loop: *Loop) callconv(.C) void)) void;
+    extern fn uws_loop_removePostHandler(loop: *Loop, ctx: *anyopaque, cb: *const (fn (ctx: *anyopaque, loop: *Loop) callconv(.C) void)) void;
+    extern fn uws_loop_addPreHandler(loop: *Loop, ctx: *anyopaque, cb: *const (fn (ctx: *anyopaque, loop: *Loop) callconv(.C) void)) void;
+    extern fn uws_loop_removePreHandler(loop: *Loop, ctx: *anyopaque, cb: *const (fn (ctx: *anyopaque, loop: *Loop) callconv(.C) void)) void;
 };
 const uintmax_t = c_ulong;
 
@@ -1677,7 +1677,7 @@ extern fn uws_res_upgrade(
     sec_web_socket_extensions_length: usize,
     ws: ?*uws_socket_context_t,
 ) void;
-extern fn uws_res_cork(i32, res: *uws_res, ctx: *anyopaque, corker: bun.FnPtr(fn (?*anyopaque) callconv(.C) void)) void;
+extern fn uws_res_cork(i32, res: *uws_res, ctx: *anyopaque, corker: *const (fn (?*anyopaque) callconv(.C) void)) void;
 extern fn uws_res_write_headers(i32, res: *uws_res, names: [*]const Api.StringPointer, values: [*]const Api.StringPointer, count: usize, buf: [*]const u8) void;
 pub const LIBUS_RECV_BUFFER_LENGTH = 524288;
 pub const LIBUS_TIMEOUT_GRANULARITY = @as(i32, 4);

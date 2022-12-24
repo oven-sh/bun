@@ -166,7 +166,7 @@ pub extern fn JSC__JSGlobalObject__putCachedObject(arg0: ?*JSC__JSGlobalObject, 
 pub extern fn JSC__JSGlobalObject__reload(arg0: ?*JSC__JSGlobalObject) void;
 pub extern fn JSC__JSGlobalObject__startRemoteInspector(arg0: ?*JSC__JSGlobalObject, arg1: [*c]u8, arg2: u16) bool;
 pub extern fn JSC__JSGlobalObject__vm(arg0: ?*JSC__JSGlobalObject) [*c]JSC__VM;
-pub extern fn JSC__JSValue___then(JSValue0: JSC__JSValue, arg1: ?*JSC__JSGlobalObject, JSValue2: JSC__JSValue, ArgFn3: ?*const fn (?*JSC__JSGlobalObject, ?*bindings.CallFrame) callconv(.C) JSC__JSValue, ArgFn4: ?*const fn (?*JSC__JSGlobalObject, ?*bindings.CallFrame) callconv(.C) JSC__JSValue) void;
+pub extern fn JSC__JSValue___then(JSValue0: JSC__JSValue, arg1: ?*JSC__JSGlobalObject, JSValue2: JSC__JSValue, ArgFn3: ?*const fn (*JSC__JSGlobalObject, *bindings.CallFrame) callconv(.C) JSC__JSValue, ArgFn4: ?*const fn (*JSC__JSGlobalObject, *bindings.CallFrame) callconv(.C) JSC__JSValue) void;
 pub extern fn JSC__JSValue__asArrayBuffer_(JSValue0: JSC__JSValue, arg1: ?*JSC__JSGlobalObject, arg2: ?*Bun__ArrayBuffer) bool;
 pub extern fn JSC__JSValue__asBigIntCompare(JSValue0: JSC__JSValue, arg1: ?*JSC__JSGlobalObject, JSValue2: JSC__JSValue) u8;
 pub extern fn JSC__JSValue__asCell(JSValue0: JSC__JSValue) [*c]JSC__JSCell;
@@ -189,7 +189,7 @@ pub extern fn JSC__JSValue__eqlCell(JSValue0: JSC__JSValue, arg1: [*c]JSC__JSCel
 pub extern fn JSC__JSValue__eqlValue(JSValue0: JSC__JSValue, JSValue1: JSC__JSValue) bool;
 pub extern fn JSC__JSValue__fastGet_(JSValue0: JSC__JSValue, arg1: ?*JSC__JSGlobalObject, arg2: u8) JSC__JSValue;
 pub extern fn JSC__JSValue__forEach(JSValue0: JSC__JSValue, arg1: ?*JSC__JSGlobalObject, arg2: ?*anyopaque, ArgFn3: ?*const fn ([*c]JSC__VM, ?*JSC__JSGlobalObject, ?*anyopaque, JSC__JSValue) callconv(.C) void) void;
-pub extern fn JSC__JSValue__forEachProperty(JSValue0: JSC__JSValue, arg1: ?*JSC__JSGlobalObject, arg2: ?*anyopaque, ArgFn3: ?*const fn (?*JSC__JSGlobalObject, ?*anyopaque, [*c]ZigString, JSC__JSValue, bool) callconv(.C) void) void;
+pub extern fn JSC__JSValue__forEachProperty(JSValue0: JSC__JSValue, arg1: ?*JSC__JSGlobalObject, arg2: ?*anyopaque, ArgFn3: *const fn (?*JSC__JSGlobalObject, ?*anyopaque, *ZigString, JSC__JSValue, bool) callconv(.C) void) void;
 pub extern fn JSC__JSValue__fromEntries(arg0: ?*JSC__JSGlobalObject, arg1: [*c]ZigString, arg2: [*c]ZigString, arg3: usize, arg4: bool) JSC__JSValue;
 pub extern fn JSC__JSValue__fromInt64NoTruncate(arg0: ?*JSC__JSGlobalObject, arg1: i64) JSC__JSValue;
 pub extern fn JSC__JSValue__fromUInt64NoTruncate(arg0: ?*JSC__JSGlobalObject, arg1: u64) JSC__JSValue;

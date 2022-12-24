@@ -486,7 +486,7 @@ const Task = struct {
     request: Request,
     data: Data,
     status: Status = Status.waiting,
-    threadpool_task: ThreadPool.Task = ThreadPool.Task{ .callback = bun.fnptr(callback) },
+    threadpool_task: ThreadPool.Task = ThreadPool.Task{ .callback = &callback },
     log: logger.Log,
     id: u64,
     err: ?anyerror = null,
@@ -656,7 +656,7 @@ const PackageInstall = struct {
     };
 
     pub const Task = struct {
-        task: ThreadPool.Task = .{ .callback = bun.fnptr(callback) },
+        task: ThreadPool.Task = .{ .callback = &callback },
         result: Result = Result{ .pending = void{} },
         package_install: PackageInstall = undefined,
         package_id: PackageID,
@@ -3149,7 +3149,7 @@ pub const PackageManager = struct {
 
                     if (comptime log_level.isVerbose()) {
                         Output.prettyError("    ", .{});
-                        Output.printElapsed(@floatCast(f64, @intToFloat(f128, task.http.elapsed) / std.time.ns_per_ms));
+                        Output.printElapsed(@intToFloat(f64, task.http.elapsed) / std.time.ns_per_ms);
                         Output.prettyError("\n <d>Downloaded <r><green>{s}<r> versions\n", .{name.slice()});
                         Output.flush();
                     }
@@ -3271,7 +3271,7 @@ pub const PackageManager = struct {
 
                     if (comptime log_level.isVerbose()) {
                         Output.prettyError("    ", .{});
-                        Output.printElapsed(@floatCast(f64, @intToFloat(f128, task.http.elapsed) / std.time.ns_per_ms));
+                        Output.printElapsed(@floatCast(f64, @intToFloat(f64, task.http.elapsed) / std.time.ns_per_ms));
                         Output.prettyError(" <d>Downloaded <r><green>{s}<r> tarball\n", .{extract.name.slice()});
                         Output.flush();
                     }

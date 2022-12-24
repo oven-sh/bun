@@ -182,7 +182,6 @@ pub fn Shimmer(comptime _namespace: []const u8, comptime _name: []const u8, comp
                 unreachable;
             } else {
                 const Fn = comptime @field(headers, symbolName(typeName));
-                if (true) @panic("TODO");
                 if (@typeInfo(@TypeOf(Fn)).Fn.params.len > 0)
                     return matchNullable(
                         comptime @typeInfo(@TypeOf(@field(Parent, typeName))).Fn.return_type.?,

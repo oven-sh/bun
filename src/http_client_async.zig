@@ -928,7 +928,7 @@ pub const AsyncHTTP = struct {
     real: ?*AsyncHTTP = null,
     next: ?*AsyncHTTP = null,
 
-    task: ThreadPool.Task = ThreadPool.Task{ .callback = bun.fnptr(startAsyncHTTP) },
+    task: ThreadPool.Task = ThreadPool.Task{ .callback = &startAsyncHTTP },
     completion_callback: HTTPClientResult.Callback = undefined,
 
     /// Timeout in nanoseconds

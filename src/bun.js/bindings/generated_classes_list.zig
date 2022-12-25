@@ -21,4 +21,6 @@ pub const Classes = struct {
     pub const Expect = JSC.Jest.Expect;
     pub const FileSystemRouter = JSC.API.FileSystemRouter;
     pub const MatchedRoute = JSC.API.MatchedRoute;
+    pub const Dirent = JSC.Node.Dirent;
+    pub const NodeJSFS = JSC.Node.NodeJSFS;
 };

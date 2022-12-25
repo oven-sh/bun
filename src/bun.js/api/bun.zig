@@ -875,10 +875,10 @@ pub fn createNodeFS(
     _: []const js.JSValueRef,
     _: js.ExceptionRef,
 ) js.JSValueRef {
-    return Node.NodeFSBindings.make(
-        ctx,
-        VirtualMachine.get().nodeFS(),
-    );
+    var module = ctx.allocator().create(JSC.Node.NodeJSFS) catch unreachable;
+    module.* = .{};
+
+    return module.toJS(ctx).asObjectRef();
 }
 
 pub fn generateHeapSnapshot(

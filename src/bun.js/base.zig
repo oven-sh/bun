@@ -281,6 +281,12 @@ pub const To = struct {
                         }
                     }
 
+                    if (comptime @hasDecl(Type, "toJS") and @typeInfo(@TypeOf(@field(Type, "toJS"))).Fn.params.len == 2) {
+                        var val = bun.default_allocator.create(Type) catch unreachable;
+                        val.* = value;
+                        return val.toJS(context).asObjectRef();
+                    }
+
                     const res = value.toJS(context, exception);
 
                     if (@TypeOf(res) == JSC.C.JSValueRef) {
@@ -2103,14 +2109,11 @@ const FFI = JSC.FFI;
 pub const JSPrivateDataPtr = TaggedPointerUnion(.{
     AttributeIterator,
     BigIntStats,
-    Blob,
-    Body,
     BuildError,
     Comment,
     DebugServer,
     DebugSSLServer,
     DescribeScope,
-    DirEnt,
     DocEnd,
     DocType,
     Element,
@@ -2121,10 +2124,7 @@ pub const JSPrivateDataPtr = TaggedPointerUnion(.{
     LazyPropertiesObject,
 
     ModuleNamespace,
-    NodeFS,
-    Request,
     ResolveError,
-    Response,
     Router,
     Server,
 

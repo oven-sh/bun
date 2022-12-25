@@ -119,6 +119,18 @@ void GlobalObject::initGeneratedLazyClasses() {
                  init.setStructure(WebCore::JSBlob::createStructure(init.vm, init.global, init.prototype));
                  init.setConstructor(WebCore::JSBlob::createConstructor(init.vm, init.global, init.prototype));
               });
+    m_JSDirent.initLater(
+              [](LazyClassStructure::Initializer& init) {
+                 init.setPrototype(WebCore::JSDirent::createPrototype(init.vm, reinterpret_cast<Zig::GlobalObject*>(init.global)));
+                 init.setStructure(WebCore::JSDirent::createStructure(init.vm, init.global, init.prototype));
+                 init.setConstructor(WebCore::JSDirent::createConstructor(init.vm, init.global, init.prototype));
+              });
+    m_JSNodeJSFS.initLater(
+              [](LazyClassStructure::Initializer& init) {
+                 init.setPrototype(WebCore::JSNodeJSFS::createPrototype(init.vm, reinterpret_cast<Zig::GlobalObject*>(init.global)));
+                 init.setStructure(WebCore::JSNodeJSFS::createStructure(init.vm, init.global, init.prototype));
+                 init.setConstructor(WebCore::JSNodeJSFS::createConstructor(init.vm, init.global, init.prototype));
+              });
 }
 template<typename Visitor>
 void GlobalObject::visitGeneratedLazyClasses(GlobalObject *thisObject, Visitor& visitor)
@@ -143,4 +155,6 @@ void GlobalObject::visitGeneratedLazyClasses(GlobalObject *thisObject, Visitor& 
       thisObject->m_JSRequest.visit(visitor);  visitor.append(thisObject->m_JSRequestSetterValue);
       thisObject->m_JSResponse.visit(visitor);  visitor.append(thisObject->m_JSResponseSetterValue);
       thisObject->m_JSBlob.visit(visitor);  visitor.append(thisObject->m_JSBlobSetterValue);
+      thisObject->m_JSDirent.visit(visitor);  visitor.append(thisObject->m_JSDirentSetterValue);
+      thisObject->m_JSNodeJSFS.visit(visitor);  visitor.append(thisObject->m_JSNodeJSFSSetterValue);
 }

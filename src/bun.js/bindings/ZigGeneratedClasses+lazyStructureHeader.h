@@ -118,3 +118,15 @@ JSC::Structure* JSBlobStructure() { return m_JSBlob.getInitializedOnMainThread(t
   JSC::LazyClassStructure m_JSBlob;
   bool hasJSBlobSetterValue { false };
   mutable JSC::WriteBarrier<JSC::Unknown> m_JSBlobSetterValue;
+JSC::Structure* JSDirentStructure() { return m_JSDirent.getInitializedOnMainThread(this); }
+        JSC::JSObject* JSDirentConstructor() { return m_JSDirent.constructorInitializedOnMainThread(this); }
+        JSC::JSValue JSDirentPrototype() { return m_JSDirent.prototypeInitializedOnMainThread(this); }
+  JSC::LazyClassStructure m_JSDirent;
+  bool hasJSDirentSetterValue { false };
+  mutable JSC::WriteBarrier<JSC::Unknown> m_JSDirentSetterValue;
+JSC::Structure* JSNodeJSFSStructure() { return m_JSNodeJSFS.getInitializedOnMainThread(this); }
+        JSC::JSObject* JSNodeJSFSConstructor() { return m_JSNodeJSFS.constructorInitializedOnMainThread(this); }
+        JSC::JSValue JSNodeJSFSPrototype() { return m_JSNodeJSFS.prototypeInitializedOnMainThread(this); }
+  JSC::LazyClassStructure m_JSNodeJSFS;
+  bool hasJSNodeJSFSSetterValue { false };
+  mutable JSC::WriteBarrier<JSC::Unknown> m_JSNodeJSFSSetterValue;

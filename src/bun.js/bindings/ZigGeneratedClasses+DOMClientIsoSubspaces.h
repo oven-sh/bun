@@ -18,4 +18,6 @@ std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForExpectConstructor;std:
 std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForTextDecoderConstructor;std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForRequest;
 std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForRequestConstructor;std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForResponse;
 std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForResponseConstructor;std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForBlob;
-std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForBlobConstructor;
+std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForBlobConstructor;std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForDirent;
+std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForDirentConstructor;std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForNodeJSFS;
+std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForNodeJSFSConstructor;

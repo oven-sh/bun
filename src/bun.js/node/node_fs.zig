@@ -40,7 +40,7 @@ const ReadPosition = u63;
 
 const Stats = JSC.Node.Stats;
 const BigIntStats = JSC.Node.BigIntStats;
-const DirEnt = JSC.Node.DirEnt;
+const Dirent = JSC.Node.Dirent;
 
 pub const FlavoredIO = struct {
     io: *AsyncIO,
@@ -2311,7 +2311,7 @@ const Return = struct {
     };
 
     pub const Readdir = union(Tag) {
-        with_file_types: []const DirEnt,
+        with_file_types: []Dirent,
         buffers: []const Buffer,
         files: []const PathString,
 
@@ -2323,7 +2323,7 @@ const Return = struct {
 
         pub fn toJS(this: Readdir, ctx: JSC.C.JSContextRef, exception: JSC.C.ExceptionRef) JSC.C.JSValueRef {
             return switch (this) {
-                .with_file_types => JSC.To.JS.withType([]const DirEnt, this.with_file_types, ctx, exception),
+                .with_file_types => JSC.To.JS.withType([]const Dirent, this.with_file_types, ctx, exception),
                 .buffers => JSC.To.JS.withType([]const Buffer, this.buffers, ctx, exception),
                 .files => JSC.To.JS.withTypeClone([]const PathString, this.files, ctx, exception, true),
             };
@@ -3178,7 +3178,7 @@ pub const NodeFS = struct {
                 return _readdir(
                     this,
                     args,
-                    DirEnt,
+                    Dirent,
                     flavor,
                 );
             },
@@ -3192,7 +3192,7 @@ pub const NodeFS = struct {
         comptime flavor: Flavor,
     ) Maybe(Return.Readdir) {
         const file_type = comptime switch (ExpectedType) {
-            DirEnt => "with_file_types",
+            Dirent => "with_file_types",
             PathString => "files",
             Buffer => "buffers",
             else => unreachable,
@@ -3220,7 +3220,7 @@ pub const NodeFS = struct {
                     .err => |err| {
                         for (entries.items) |*item| {
                             switch (comptime ExpectedType) {
-                                DirEnt => {
+                                Dirent => {
                                     bun.default_allocator.free(item.name.slice());
                                 },
                                 Buffer => {
@@ -3242,7 +3242,7 @@ pub const NodeFS = struct {
                     .result => |ent| ent,
                 }) |current| : (entry = iterator.next()) {
                     switch (comptime ExpectedType) {
-                        DirEnt => {
+                        Dirent => {
                             entries.append(.{
                                 .name = PathString.init(bun.default_allocator.dupe(u8, current.name.slice()) catch unreachable),
                                 .kind = current.kind,

@@ -1225,121 +1225,74 @@ pub const BigIntStats = StatsLike("BigIntStats", i64);
 /// When using the async iterator, the `fs.Dir` object will be automatically
 /// closed after the iterator exits.
 /// @since v12.12.0
-pub const DirEnt = struct {
+pub const Dirent = struct {
     name: PathString,
     // not publicly exposed
     kind: Kind,
 
     pub const Kind = std.fs.File.Kind;
+    pub usingnamespace JSC.Codegen.JSDirent;
+
+    pub fn constructor(globalObject: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) ?*Dirent {
+        globalObject.throw("Dirent is not a constructor", .{});
+        return null;
+    }
+
+    pub fn getName(this: *Dirent, globalObject: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue {
+        return JSC.ZigString.fromUTF8(this.name.slice()).toValueGC(globalObject);
+    }
 
     pub fn isBlockDevice(
-        this: *DirEnt,
-        ctx: JSC.C.JSContextRef,
-        _: JSC.C.JSObjectRef,
-        _: JSC.C.JSObjectRef,
-        _: []const JSC.C.JSValueRef,
-        _: JSC.C.ExceptionRef,
-    ) JSC.C.JSValueRef {
-        return JSC.C.JSValueMakeBoolean(ctx, this.kind == std.fs.File.Kind.BlockDevice);
+        this: *Dirent,
+        _: *JSC.JSGlobalObject,
+        _: *JSC.CallFrame,
+    ) callconv(.C) JSC.JSValue {
+        return JSC.JSValue.jsBoolean(this.kind == std.fs.File.Kind.BlockDevice);
     }
     pub fn isCharacterDevice(
-        this: *DirEnt,
-        ctx: JSC.C.JSContextRef,
-        _: JSC.C.JSObjectRef,
-        _: JSC.C.JSObjectRef,
-        _: []const JSC.C.JSValueRef,
-        _: JSC.C.ExceptionRef,
-    ) JSC.C.JSValueRef {
-        return JSC.C.JSValueMakeBoolean(ctx, this.kind == std.fs.File.Kind.CharacterDevice);
+        this: *Dirent,
+        _: *JSC.JSGlobalObject,
+        _: *JSC.CallFrame,
+    ) callconv(.C) JSC.JSValue {
+        return JSC.JSValue.jsBoolean(this.kind == std.fs.File.Kind.CharacterDevice);
     }
     pub fn isDirectory(
-        this: *DirEnt,
-        ctx: JSC.C.JSContextRef,
-        _: JSC.C.JSObjectRef,
-        _: JSC.C.JSObjectRef,
-        _: []const JSC.C.JSValueRef,
-        _: JSC.C.ExceptionRef,
-    ) JSC.C.JSValueRef {
-        return JSC.C.JSValueMakeBoolean(ctx, this.kind == std.fs.File.Kind.Directory);
+        this: *Dirent,
+        _: *JSC.JSGlobalObject,
+        _: *JSC.CallFrame,
+    ) callconv(.C) JSC.JSValue {
+        return JSC.JSValue.jsBoolean(this.kind == std.fs.File.Kind.Directory);
     }
     pub fn isFIFO(
-        this: *DirEnt,
-        ctx: JSC.C.JSContextRef,
-        _: JSC.C.JSObjectRef,
-        _: JSC.C.JSObjectRef,
-        _: []const JSC.C.JSValueRef,
-        _: JSC.C.ExceptionRef,
-    ) JSC.C.JSValueRef {
-        return JSC.C.JSValueMakeBoolean(ctx, this.kind == std.fs.File.Kind.NamedPipe or this.kind == std.fs.File.Kind.EventPort);
+        this: *Dirent,
+        _: *JSC.JSGlobalObject,
+        _: *JSC.CallFrame,
+    ) callconv(.C) JSC.JSValue {
+        return JSC.JSValue.jsBoolean(this.kind == std.fs.File.Kind.NamedPipe or this.kind == std.fs.File.Kind.EventPort);
     }
     pub fn isFile(
-        this: *DirEnt,
-        ctx: JSC.C.JSContextRef,
-        _: JSC.C.JSObjectRef,
-        _: JSC.C.JSObjectRef,
-        _: []const JSC.C.JSValueRef,
-        _: JSC.C.ExceptionRef,
-    ) JSC.C.JSValueRef {
-        return JSC.C.JSValueMakeBoolean(ctx, this.kind == std.fs.File.Kind.File);
+        this: *Dirent,
+        _: *JSC.JSGlobalObject,
+        _: *JSC.CallFrame,
+    ) callconv(.C) JSC.JSValue {
+        return JSC.JSValue.jsBoolean(this.kind == std.fs.File.Kind.File);
     }
     pub fn isSocket(
-        this: *DirEnt,
-        ctx: JSC.C.JSContextRef,
-        _: JSC.C.JSObjectRef,
-        _: JSC.C.JSObjectRef,
-        _: []const JSC.C.JSValueRef,
-        _: JSC.C.ExceptionRef,
-    ) JSC.C.JSValueRef {
-        return JSC.C.JSValueMakeBoolean(ctx, this.kind == std.fs.File.Kind.UnixDomainSocket);
+        this: *Dirent,
+        _: *JSC.JSGlobalObject,
+        _: *JSC.CallFrame,
+    ) callconv(.C) JSC.JSValue {
+        return JSC.JSValue.jsBoolean(this.kind == std.fs.File.Kind.UnixDomainSocket);
     }
     pub fn isSymbolicLink(
-        this: *DirEnt,
-        ctx: JSC.C.JSContextRef,
-        _: JSC.C.JSObjectRef,
-        _: JSC.C.JSObjectRef,
-        _: []const JSC.C.JSValueRef,
-        _: JSC.C.ExceptionRef,
-    ) JSC.C.JSValueRef {
-        return JSC.C.JSValueMakeBoolean(ctx, this.kind == std.fs.File.Kind.SymLink);
+        this: *Dirent,
+        _: *JSC.JSGlobalObject,
+        _: *JSC.CallFrame,
+    ) callconv(.C) JSC.JSValue {
+        return JSC.JSValue.jsBoolean(this.kind == std.fs.File.Kind.SymLink);
     }
 
-    pub const Class = JSC.NewClass(DirEnt, .{ .name = "DirEnt" }, .{
-        .isBlockDevice = .{
-            .name = "isBlockDevice",
-            .rfn = isBlockDevice,
-        },
-        .isCharacterDevice = .{
-            .name = "isCharacterDevice",
-            .rfn = isCharacterDevice,
-        },
-        .isDirectory = .{
-            .name = "isDirectory",
-            .rfn = isDirectory,
-        },
-        .isFIFO = .{
-            .name = "isFIFO",
-            .rfn = isFIFO,
-        },
-        .isFile = .{
-            .name = "isFile",
-            .rfn = isFile,
-        },
-        .isSocket = .{
-            .name = "isSocket",
-            .rfn = isSocket,
-        },
-        .isSymbolicLink = .{
-            .name = "isSymbolicLink",
-            .rfn = isSymbolicLink,
-        },
-    }, .{
-        .name = .{
-            .get = JSC.To.JS.Getter(DirEnt, .name),
-            .name = "name",
-        },
-    });
-
-    pub fn finalize(this: *DirEnt) void {
+    pub fn finalize(this: *Dirent) callconv(.C) void {
         bun.default_allocator.free(this.name.slice());
         bun.default_allocator.destroy(this);
     }

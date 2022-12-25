@@ -8,6 +8,7 @@ const directoriesToSearch = [
   resolve(`${import.meta.dir}/../api`),
   resolve(`${import.meta.dir}/../test`),
   resolve(`${import.meta.dir}/../webcore`),
+  resolve(`${import.meta.dir}/../node`),
 ];
 
 function symbolName(typeName, name) {
@@ -1430,7 +1431,7 @@ function generateZig(
           output += `
           if (@TypeOf(${typeName}.${fn}) != CallbackType) 
             @compileLog(
-              "Expected ${typeName}.${fn} to be a callback"
+              "Expected ${typeName}.${fn} to be a callback but received " ++ @typeName(@TypeOf(${typeName}.${fn}))
             );`;
         }
       },

@@ -91,7 +91,7 @@ const Dependency = @import("../install/dependency.zig");
 
 // This exists to make it so we can reload these quicker in development
 fn jsModuleFromFile(from_path: string, comptime input: string) string {
-    const absolute_path = comptime std.fs.path.dirname(@src().file).? ++ "/" ++ input;
+    const absolute_path = comptime (bun.Environment.base_path ++ std.fs.path.dirname(@src().file).?) ++ "/" ++ input;
     const Holder = struct {
         pub const file = (absolute_path);
     };
@@ -1821,7 +1821,7 @@ pub const ModuleLoader = struct {
                         .hash = 0,
                     };
                 },
-                .@"undici" => {
+                .undici => {
                     return ResolvedSource{
                         .allocator = null,
                         .source_code = ZigString.init(
@@ -1998,8 +1998,8 @@ pub const HardcodedModule = enum {
     @"node:url",
     @"node:util",
     @"node:util/types",
-    @"undici",
-    @"ws",
+    undici,
+    ws,
     /// Already resolved modules go in here.
     /// This does not remap the module name, it is just a hash table.
     /// Do not put modules that have aliases in here
@@ -2040,8 +2040,8 @@ pub const HardcodedModule = enum {
             .{ "node:url", HardcodedModule.@"node:url" },
             .{ "node:util", HardcodedModule.@"node:util" },
             .{ "node:util/types", HardcodedModule.@"node:util/types" },
-            .{ "undici", HardcodedModule.@"undici" },
-            .{ "ws", HardcodedModule.@"ws" },
+            .{ "undici", HardcodedModule.undici },
+            .{ "ws", HardcodedModule.ws },
         },
     );
     pub const Aliases = bun.ComptimeStringMap(

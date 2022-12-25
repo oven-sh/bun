@@ -238,23 +238,23 @@ pub const JSObjectCallAsConstructorCallback = *const fn (JSContextRef, JSObjectR
 pub const JSObjectHasInstanceCallback = *const fn (JSContextRef, JSObjectRef, JSValueRef, ExceptionRef) callconv(.C) bool;
 pub const JSObjectConvertToTypeCallback = *const fn (JSContextRef, JSObjectRef, JSType, ExceptionRef) callconv(.C) JSValueRef;
 pub const JSStaticValue = extern struct {
-    name: [*c]const u8,
-    getProperty: ?JSObjectGetPropertyCallback,
-    setProperty: ?JSObjectSetPropertyCallback,
-    attributes: JSPropertyAttributes,
+    name: ?[*:0]const u8 = null,
+    getProperty: ?JSObjectGetPropertyCallback = null,
+    setProperty: ?JSObjectSetPropertyCallback = null,
+    attributes: JSPropertyAttributes = .kJSPropertyAttributeNone,
 };
 pub const JSStaticFunction = extern struct {
-    name: [*c]const u8,
-    callAsFunction: ?JSObjectCallAsFunctionCallback,
-    attributes: JSPropertyAttributes,
+    name: ?[*:0]const u8 = null,
+    callAsFunction: ?JSObjectCallAsFunctionCallback = null,
+    attributes: JSPropertyAttributes = .kJSPropertyAttributeNone,
 };
 pub const JSClassDefinition = extern struct {
     version: c_int,
     attributes: JSClassAttributes,
-    className: [*c]const u8,
+    className: ?[*]const u8,
     parentClass: JSClassRef,
-    staticValues: [*c]const JSStaticValue,
-    staticFunctions: [*c]const JSStaticFunction,
+    staticValues: ?[*]const JSStaticValue,
+    staticFunctions: ?[*]const JSStaticFunction,
     initialize: ?JSObjectInitializeCallback = null,
     finalize: ?JSObjectFinalizeCallback = null,
     hasProperty: ?JSObjectHasPropertyCallback = null,

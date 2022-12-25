@@ -92,6 +92,7 @@ const BunBuildOptions = struct {
     baseline: bool = false,
     bindgen: bool = false,
     sizegen: bool = false,
+    base_path: [:0]const u8 = "",
 
     pub fn step(this: BunBuildOptions, b: anytype) *std.build.OptionsStep {
         var opts = b.addOptions();
@@ -100,6 +101,7 @@ const BunBuildOptions = struct {
         opts.addOption(@TypeOf(this.baseline), "baseline", this.baseline);
         opts.addOption(@TypeOf(this.bindgen), "bindgen", this.bindgen);
         opts.addOption(@TypeOf(this.sizegen), "sizegen", this.sizegen);
+        opts.addOption(@TypeOf(this.base_path), "base_path", this.base_path);
         return opts;
     }
 };
@@ -283,6 +285,7 @@ pub fn build(b: *std.build.Builder) !void {
             .sha = git_sha,
             .baseline = is_baseline,
             .bindgen = false,
+            .base_path = try b.allocator.dupeZ(u8, b.pathFromRoot(".")),
         };
     };
 

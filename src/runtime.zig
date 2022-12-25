@@ -126,7 +126,7 @@ pub const Fallback = struct {
     pub inline fn scriptContent() string {
         if (true) return;
         if (comptime Environment.isDebug) {
-            var dirpath = std.fs.path.dirname(@src().file).?;
+            var dirpath = comptime bun.Environment.base_path ++ std.fs.path.dirname(@src().file).?;
             var env = std.process.getEnvMap(default_allocator) catch unreachable;
 
             const dir = std.mem.replaceOwned(
@@ -215,7 +215,7 @@ pub const Runtime = struct {
 
     pub inline fn sourceContentWithoutRefresh() string {
         if (comptime Environment.isDebug) {
-            var dirpath = std.fs.path.dirname(@src().file).?;
+            var dirpath = comptime bun.Environment.base_path ++ std.fs.path.dirname(@src().file).?;
             var env = std.process.getEnvMap(default_allocator) catch unreachable;
 
             const dir = std.mem.replaceOwned(
@@ -252,7 +252,7 @@ pub const Runtime = struct {
 
     pub inline fn sourceContentWithRefresh() string {
         if (comptime Environment.isDebug) {
-            var dirpath = std.fs.path.dirname(@src().file).?;
+            var dirpath = comptime bun.Environment.base_path ++ std.fs.path.dirname(@src().file).?;
             var env = std.process.getEnvMap(default_allocator) catch unreachable;
 
             const dir = std.mem.replaceOwned(

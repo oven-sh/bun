@@ -12917,7 +12917,7 @@ fn NewParser_(
             return true;
         }
 
-        fn visitStmtsAndPrependTempRefs(p: *P, stmts: *ListManaged(Stmt), opts: *PrependTempRefsOpts) !void {
+        fn visitStmtsAndPrependTempRefs(p: *P, stmts: *ListManaged(Stmt), opts: *PrependTempRefsOpts) anyerror!void {
             if (only_scan_imports_and_do_not_visit) {
                 @compileError("only_scan_imports_and_do_not_visit must not run this.");
             }
@@ -16078,8 +16078,6 @@ fn NewParser_(
                                     }
                                 }
 
-                                // if (false) {
-                                // }
                                 if (data.no == null) {
                                     return;
                                 }
@@ -16453,7 +16451,7 @@ fn NewParser_(
                     p.enclosing_namespace_arg_ref = data.arg;
                     p.pushScopeForVisitPass(.entry, stmt.loc) catch unreachable;
                     p.recordDeclaredSymbol(data.arg) catch unreachable;
-                    if (false) p.visitStmtsAndPrependTempRefs(&prepend_list, &prepend_temp_refs) catch unreachable;
+                    try p.visitStmtsAndPrependTempRefs(&prepend_list, &prepend_temp_refs);
                     p.popScope();
                     p.enclosing_namespace_arg_ref = old_enclosing_namespace_arg_ref;
 

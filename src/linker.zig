@@ -798,7 +798,7 @@ pub const Linker = struct {
         if (had_resolve_errors) return error.ResolveError;
         result.ast.externals = try externals.toOwnedSlice();
 
-        if (result.ast.needs_runtime and result.ast.runtime_import_record_id == null) {
+        if (result.ast.needs_runtime and (result.ast.runtime_import_record_id == null or import_records.len == 0)) {
             var new_import_records = try linker.allocator.alloc(ImportRecord, import_records.len + 1);
             std.mem.copy(ImportRecord, new_import_records, import_records);
 
@@ -824,27 +824,39 @@ pub const Linker = struct {
         // Since they definitely aren't using require, we don't have to worry about the symbol being renamed.
         if (needs_require and !result.ast.uses_require_ref) {
             result.ast.uses_require_ref = true;
-            require_part_import_clauses[0] = js_ast.ClauseItem{
-                .alias = require_alias,
-                .original_name = "",
-                .alias_loc = logger.Loc.Empty,
-                .name = js_ast.LocRef{
-                    .loc = logger.Loc.Empty,
-                    .ref = result.ast.require_ref,
+            const PrependPart = struct {
+                stmts: [1]js_ast.Stmt,
+                import_statement: js_ast.S.Import,
+                clause_items: [1]js_ast.ClauseItem,
+            };
+            var prepend = linker.allocator.create(PrependPart) catch unreachable;
+
+            prepend.* = .{
+                .clause_items = .{
+                    .{
+                        .alias = require_alias,
+                        .original_name = "",
+                        .alias_loc = logger.Loc.Empty,
+                        .name = js_ast.LocRef{
+                            .loc = logger.Loc.Empty,
+                            .ref = result.ast.require_ref,
+                        },
+                    },
                 },
+                .import_statement = .{
+                    .namespace_ref = Ref.None,
+                    .items = &prepend.clause_items,
+                    .import_record_index = result.ast.runtime_import_record_id.?,
+                },
+                .stmts = undefined,
             };
 
-            require_part_import_statement = js_ast.S.Import{
-                .namespace_ref = Ref.None,
-                .items = std.mem.span(&require_part_import_clauses),
-                .import_record_index = result.ast.runtime_import_record_id.?,
-            };
-            require_part_stmts[0] = js_ast.Stmt{
-                .data = .{ .s_import = &require_part_import_statement },
+            prepend.stmts[0] = .{
+                .data = .{ .s_import = &prepend.import_statement },
                 .loc = logger.Loc.Empty,
             };
 
-            result.ast.prepend_part = js_ast.Part{ .stmts = std.mem.span(&require_part_stmts) };
+            result.ast.prepend_part = js_ast.Part{ .stmts = &prepend.stmts };
         }
     }
 

@@ -4155,7 +4155,7 @@ pub fn NewPrinter(
                     const to_print: []const u8 = if (slice.len > 1024) slice[slice.len - 1024 ..] else slice;
 
                     if (to_print.len > 0) {
-                        Global.panic("\n<r><red>voluntary crash<r> while printing:<r>\n{any}\n---This is a <b>bug<r>. Not your fault.\n", .{to_print});
+                        Global.panic("\n<r><red>voluntary crash<r> while printing:<r>\n{s}\n---This is a <b>bug<r>. Not your fault.\n", .{to_print});
                     } else {
                         Global.panic("\n<r><red>voluntary crash<r> while printing. This is a <b>bug<r>. Not your fault.\n", .{});
                     }

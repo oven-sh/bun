@@ -704,7 +704,7 @@ pub const FFI = struct {
         const FFI_HEADER: string = @embedFile("./FFI.h");
         pub inline fn ffiHeader() string {
             if (comptime Environment.isDebug) {
-                var dirpath = std.fs.path.dirname(@src().file).?;
+                var dirpath = comptime bun.Environment.base_path ++ std.fs.path.dirname(@src().file).?;
                 var env = std.process.getEnvMap(default_allocator) catch unreachable;
 
                 const dir = std.mem.replaceOwned(

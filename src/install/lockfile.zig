@@ -396,7 +396,42 @@ pub const Tree = struct {
 
             return package_ids;
         }
+
+        fn countHoistedDependencies(this: *Builder, package_id: PackageID) u32 {
+            const trees = this.list.items(.tree);
+            const lists = this.list.items(.packages);
+            const max_package_id = this.name_hashes.len;
+            const resolution_list = this.resolution_lists[package_id];
+            const resolutions: []const PackageID = resolution_list.get(this.resolutions);
+
+            var count: u32 = 0;
+            outer: for (resolutions) |pid| {
+                if (pid >= max_package_id) continue;
+                for (trees) |tree, id| {
+                    const packages = tree.packages.get(lists[id].items);
+
+                    for (packages) |child_pid| {
+                        if (child_pid == pid) {
+                            count += 1;
+                            continue :outer;
+                        }
+                    }
+                }
+            }
+            return count;
+        }
     };
+
+    fn sort(builder: *Builder, pids: [2]PackageID, qids: [2]PackageID) std.math.Order {
+        const p = pids[0];
+        const q = qids[0];
+        const dp = builder.countHoistedDependencies(p);
+        const dq = builder.countHoistedDependencies(q);
+
+        if (dp > dq) return .lt;
+        if (dp < dq) return .gt;
+        return .eq;
+    }
 
     pub fn processSubtree(
         this: *Tree,
@@ -435,7 +470,7 @@ pub const Tree = struct {
                 Tree.dependency_loop => return error.DependencyLoop,
                 Tree.hoisted => continue,
                 else => if (builder.resolution_lists[pid].len > 0) {
-                    try builder.queue.writeItem([2]PackageID{ pid, destination });
+                    try builder.queue.add([2]PackageID{ pid, destination });
                 },
             }
         }
@@ -707,7 +742,7 @@ pub fn fmtMetaHash(this: *const Lockfile) MetaHashFormatter {
     };
 }
 
-pub const TreeFiller = std.fifo.LinearFifo([2]PackageID, .Dynamic);
+pub const TreeFiller = std.PriorityQueue([2]PackageID, *Tree.Builder, Tree.sort);
 
 const Cloner = struct {
     clone_queue: PendingResolutions,
@@ -786,9 +821,6 @@ const Cloner = struct {
             root_package_list.appendAssumeCapacity(package_id);
         }
 
-        var tree_filler_queue: TreeFiller = TreeFiller.init(allocator);
-        try tree_filler_queue.ensureUnusedCapacity(root_resolutions.len);
-
         var possible_duplicates_len = root_package_list.items.len;
         for (root_resolutions) |package_id| {
             if (package_id >= max) continue;
@@ -813,29 +845,32 @@ const Cloner = struct {
             std.mem.set(Tree, trees[1..], Tree{});
         }
 
-        var builder = Tree.Builder{
+        const builder = &Tree.Builder{
+            .allocator = allocator,
             .name_hashes = name_hashes,
             .list = tree_list,
-            .queue = tree_filler_queue,
-            .resolution_lists = resolutions_lists,
             .resolutions = resolutions_buffer,
-            .allocator = allocator,
             .dependencies = this.lockfile.buffers.dependencies.items,
+            .resolution_lists = resolutions_lists,
+            .queue = undefined,
         };
-        var builder_ = &builder;
+        builder.queue = TreeFiller.init(allocator, builder);
+        try builder.queue.ensureUnusedCapacity(root_resolutions.len);
 
         for (root_resolutions) |package_id| {
             if (package_id >= max) continue;
-
-            try builder.list.items(.tree)[0].processSubtree(
-                package_id,
-                builder_,
-            );
+            try builder.queue.add([2]PackageID{ package_id, 0 });
         }
 
         // This goes breadth-first
-        while (builder.queue.readItem()) |pids| {
-            try builder.list.items(.tree)[pids[1]].processSubtree(pids[0], builder_);
+        while (builder.queue.count() > 0) {
+            var queue = builder.queue;
+            builder.queue = TreeFiller.init(allocator, builder);
+            try builder.queue.ensureUnusedCapacity(queue.count());
+            while (queue.removeOrNull()) |pids| {
+                try builder.list.items(.tree)[pids[1]].processSubtree(pids[0], builder);
+            }
+            queue.deinit();
         }
 
         var tree_packages = try builder.clean();

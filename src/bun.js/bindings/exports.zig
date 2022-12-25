@@ -399,14 +399,14 @@ pub const Process = extern struct {
     pub const getExecPath = JSC.Node.Process.getExecPath;
 
     pub const Export = shim.exportFunctions(.{
-        .@"getTitle" = getTitle,
-        .@"setTitle" = setTitle,
-        .@"getArgv" = getArgv,
-        .@"getCwd" = getCwd,
-        .@"setCwd" = setCwd,
-        .@"exit" = exit,
-        .@"getArgv0" = getArgv0,
-        .@"getExecPath" = getExecPath,
+        .getTitle = getTitle,
+        .setTitle = setTitle,
+        .getArgv = getArgv,
+        .getCwd = getCwd,
+        .setCwd = setCwd,
+        .exit = exit,
+        .getArgv0 = getArgv0,
+        .getExecPath = getExecPath,
     });
 
     comptime {

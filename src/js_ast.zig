@@ -7583,13 +7583,13 @@ pub const Macro = struct {
             },
             .{
                 .getProperty = .{
-                    .rfn = getProperty,
+                    .rfn = &getProperty,
                 },
                 .hasProperty = .{
-                    .rfn = hasProperty,
+                    .rfn = &hasProperty,
                 },
                 .getPropertyNames = .{
-                    .rfn = getPropertyNames,
+                    .rfn = &getPropertyNames,
                 },
             },
             .{},
@@ -7676,13 +7676,13 @@ pub const Macro = struct {
             },
             .{
                 .getProperty = .{
-                    .rfn = getProperty,
+                    .rfn = &getProperty,
                 },
                 .hasProperty = .{
-                    .rfn = hasProperty,
+                    .rfn = &hasProperty,
                 },
                 .getPropertyNames = .{
-                    .rfn = getPropertyNames,
+                    .rfn = &getPropertyNames,
                 },
             },
             .{},

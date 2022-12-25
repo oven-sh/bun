@@ -2182,7 +2182,7 @@ pub const ResolveError = struct {
         },
         .{
             .toString = .{ .rfn = toString },
-            .convertToType = .{ .rfn = convertToType },
+            .convertToType = .{ .rfn = &convertToType },
         },
         .{
             .referrer = .{

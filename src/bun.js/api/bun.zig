@@ -1089,131 +1089,130 @@ pub const Class = NewClass(
     },
     .{
         .match = .{
-            .rfn = Router.deprecatedBunGlobalMatch,
+            .rfn = &Router.deprecatedBunGlobalMatch,
         },
         .sleepSync = .{
-            .rfn = sleepSync,
+            .rfn = &sleepSync,
         },
         .fetch = .{
-            .rfn = Fetch.call,
+            .rfn = &Fetch.call,
         },
         .getImportedStyles = .{
-            .rfn = Bun.getImportedStyles,
+            .rfn = &Bun.getImportedStyles,
         },
         .inspect = .{
-            .rfn = Bun.inspect,
+            .rfn = &Bun.inspect,
         },
         .getRouteFiles = .{
-            .rfn = Bun.getRouteFiles,
+            .rfn = &Bun.getRouteFiles,
         },
         ._Os = .{
-            .rfn = Bun.newOs,
+            .rfn = &Bun.newOs,
         },
         ._Path = .{
-            .rfn = Bun.newPath,
+            .rfn = &Bun.newPath,
         },
         .getRouteNames = .{
-            .rfn = Bun.getRouteNames,
+            .rfn = &Bun.getRouteNames,
         },
         .readFile = .{
-            .rfn = Bun.readFileAsString,
+            .rfn = &Bun.readFileAsString,
         },
         .resolveSync = .{
-            .rfn = Bun.resolveSync,
+            .rfn = &Bun.resolveSync,
         },
         .resolve = .{
-            .rfn = Bun.resolve,
+            .rfn = &Bun.resolve,
         },
         .readFileBytes = .{
-            .rfn = Bun.readFileAsBytes,
+            .rfn = &Bun.readFileAsBytes,
         },
         .getPublicPath = .{
-            .rfn = Bun.getPublicPathJS,
+            .rfn = &Bun.getPublicPathJS,
         },
         .registerMacro = .{
-            .rfn = Bun.registerMacro,
+            .rfn = &Bun.registerMacro,
             .enumerable = false,
         },
         .fs = .{
-            .rfn = Bun.createNodeFS,
+            .rfn = &Bun.createNodeFS,
             .enumerable = false,
         },
         .jest = .{
-            .rfn = @import("../test/jest.zig").Jest.call,
+            .rfn = &@import("../test/jest.zig").Jest.call,
             .enumerable = false,
         },
         .indexOfLine = .{
-            .rfn = Bun.indexOfLine,
-            .enumerable = false,
+            .rfn = &Bun.indexOfLine,
         },
         .gc = .{
-            .rfn = Bun.runGC,
+            .rfn = &Bun.runGC,
         },
         .allocUnsafe = .{
-            .rfn = Bun.allocUnsafe,
+            .rfn = &Bun.allocUnsafe,
         },
         .mmap = .{
-            .rfn = Bun.mmapFile,
+            .rfn = &Bun.mmapFile,
         },
         .generateHeapSnapshot = .{
-            .rfn = Bun.generateHeapSnapshot,
+            .rfn = &Bun.generateHeapSnapshot,
         },
         .shrink = .{
-            .rfn = Bun.shrink,
+            .rfn = &Bun.shrink,
         },
         .openInEditor = .{
-            .rfn = Bun.openInEditor,
+            .rfn = &Bun.openInEditor,
         },
         .readAllStdinSync = .{
-            .rfn = Bun.readAllStdinSync,
+            .rfn = &Bun.readAllStdinSync,
         },
         .serve = .{
-            .rfn = Bun.serve,
+            .rfn = &Bun.serve,
         },
         .file = .{
-            .rfn = JSC.WebCore.Blob.constructFile,
+            .rfn = &JSC.WebCore.Blob.constructFile,
         },
         .write = .{
-            .rfn = JSC.WebCore.Blob.writeFile,
+            .rfn = &JSC.WebCore.Blob.writeFile,
         },
         .sha = .{
-            .rfn = JSC.wrapWithHasContainer(Crypto.SHA512_256, "hash_", false, false, true),
+            .rfn = &JSC.wrapWithHasContainer(Crypto.SHA512_256, "hash_", false, false, true),
         },
         .nanoseconds = .{
-            .rfn = nanoseconds,
+            .rfn = &nanoseconds,
         },
         .DO_NOT_USE_OR_YOU_WILL_BE_FIRED_mimalloc_dump = .{
-            .rfn = dump_mimalloc,
+            .rfn = &dump_mimalloc,
         },
         .gzipSync = .{
-            .rfn = JSC.wrapWithHasContainer(JSZlib, "gzipSync", false, false, true),
+            .rfn = &JSC.wrapWithHasContainer(JSZlib, "gzipSync", false, false, true),
         },
         .deflateSync = .{
-            .rfn = JSC.wrapWithHasContainer(JSZlib, "deflateSync", false, false, true),
+            .rfn = &JSC.wrapWithHasContainer(JSZlib, "deflateSync", false, false, true),
         },
         .gunzipSync = .{
-            .rfn = JSC.wrapWithHasContainer(JSZlib, "gunzipSync", false, false, true),
+            .rfn = &JSC.wrapWithHasContainer(JSZlib, "gunzipSync", false, false, true),
         },
         .inflateSync = .{
-            .rfn = JSC.wrapWithHasContainer(JSZlib, "inflateSync", false, false, true),
+            .rfn = &JSC.wrapWithHasContainer(JSZlib, "inflateSync", false, false, true),
         },
 
         .which = .{
-            .rfn = which,
+            .rfn = &which,
         },
         .spawn = .{
-            .rfn = JSC.wrapWithHasContainer(JSC.Subprocess, "spawn", false, false, false),
+            .rfn = &JSC.wrapWithHasContainer(JSC.Subprocess, "spawn", false, false, false),
         },
         .spawnSync = .{
-            .rfn = JSC.wrapWithHasContainer(JSC.Subprocess, "spawnSync", false, false, false),
+            .rfn = &JSC.wrapWithHasContainer(JSC.Subprocess, "spawnSync", false, false, false),
         },
 
         .listen = .{
-            .rfn = JSC.wrapWithHasContainer(JSC.API.Listener, "listen", false, false, false),
+            .rfn = &JSC.wrapWithHasContainer(JSC.API.Listener, "listen", false, false, false),
         },
 
         .connect = .{
-            .rfn = JSC.wrapWithHasContainer(JSC.API.Listener, "connect", false, false, false),
+            .rfn = &JSC.wrapWithHasContainer(JSC.API.Listener, "connect", false, false, false),
         },
     },
     .{
@@ -2067,7 +2066,7 @@ pub const Unsafe = struct {
                 .rfn = arrayBufferToString,
             },
             .gcAggressionLevel = .{
-                .rfn = JSC.wrapWithHasContainer(Unsafe, "gcAggressionLevel", false, false, false),
+                .rfn = &JSC.wrapWithHasContainer(Unsafe, "gcAggressionLevel", false, false, false),
             },
         },
         .{},
@@ -2146,7 +2145,7 @@ pub const Unsafe = struct {
 //         },
 //         .{
 //             .load = .{
-//                 .rfn = BunLockfile.load,
+//                 .rfn = &BunLockfile.load,
 //             },
 //         },
 //         .{},
@@ -2160,10 +2159,10 @@ pub const Unsafe = struct {
 //         },
 //         .{
 //             .findPackagesByName = .{
-//                 .rfn = BunLockfile.load,
+//                 .rfn = &BunLockfile.load,
 //             },
 //             .dependencies = .{
-//                 .rfn = BunLockfile.load,
+//                 .rfn = &BunLockfile.load,
 //             },
 //         },
 //         .{},
@@ -2737,27 +2736,27 @@ pub const FFI = struct {
         .{ .name = "FFI", .has_dom_calls = true },
         .{
             .viewSource = .{
-                .rfn = JSC.wrapWithHasContainer(JSC.FFI, "print", false, false, true),
+                .rfn = &JSC.wrapWithHasContainer(JSC.FFI, "print", false, false, true),
             },
             .dlopen = .{
-                .rfn = JSC.wrapWithHasContainer(JSC.FFI, "open", false, false, true),
+                .rfn = &JSC.wrapWithHasContainer(JSC.FFI, "open", false, false, true),
             },
             .callback = .{
-                .rfn = JSC.wrapWithHasContainer(JSC.FFI, "callback", false, false, false),
+                .rfn = &JSC.wrapWithHasContainer(JSC.FFI, "callback", false, false, false),
             },
             .linkSymbols = .{
-                .rfn = JSC.wrapWithHasContainer(JSC.FFI, "linkSymbols", false, false, false),
+                .rfn = &JSC.wrapWithHasContainer(JSC.FFI, "linkSymbols", false, false, false),
             },
             .ptr = JSC.DOMCall("FFI", @This(), "ptr", f64, JSC.DOMEffect.forRead(.TypedArrayProperties)),
 
             .toBuffer = .{
-                .rfn = JSC.wrapWithHasContainer(@This(), "toBuffer", false, false, true),
+                .rfn = &JSC.wrapWithHasContainer(@This(), "toBuffer", false, false, true),
             },
             .toArrayBuffer = .{
-                .rfn = JSC.wrapWithHasContainer(@This(), "toArrayBuffer", false, false, true),
+                .rfn = &JSC.wrapWithHasContainer(@This(), "toArrayBuffer", false, false, true),
             },
             .closeCallback = .{
-                .rfn = JSC.wrapWithHasContainer(JSC.FFI, "closeCallback", false, false, false),
+                .rfn = &JSC.wrapWithHasContainer(JSC.FFI, "closeCallback", false, false, false),
             },
         },
         .{

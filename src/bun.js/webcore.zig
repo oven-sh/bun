@@ -369,7 +369,7 @@ pub const Crypto = struct {
             .getRandomValues = JSC.DOMCall("Crypto", @This(), "getRandomValues", JSC.JSValue, JSC.DOMEffect.top),
             .randomUUID = JSC.DOMCall("Crypto", @This(), "randomUUID", *JSC.JSString, JSC.DOMEffect.top),
             .timingSafeEqual = JSC.DOMCall("Crypto", @This(), "timingSafeEqual", JSC.JSValue, JSC.DOMEffect.top),
-            .scryptSync = .{ .rfn = JSC.wrapWithHasContainer(Crypto, "scryptSync", false, false, false) },
+            .scryptSync = .{ .rfn = &JSC.wrapWithHasContainer(Crypto, "scryptSync", false, false, false) },
         },
         .{},
     );

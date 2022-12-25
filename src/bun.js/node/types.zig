@@ -988,9 +988,9 @@ pub const Date = enum(u64) {
     _,
 
     pub fn toJS(this: Date, ctx: JSC.C.JSContextRef, exception: JSC.C.ExceptionRef) JSC.C.JSValueRef {
-        const seconds = @floatCast(f64, @intToFloat(f128, @enumToInt(this)) * 1000.0);
-        const unix_timestamp = JSC.C.JSValueMakeNumber(ctx, seconds);
-        const array: [1]JSC.C.JSValueRef = .{unix_timestamp};
+        const seconds = @floatCast(f64, @intToFloat(f64, @enumToInt(this)) * 1000.0);
+        const unix_timestamp = JSC.JSValue.jsNumber(seconds);
+        const array: [1]JSC.C.JSValueRef = .{unix_timestamp.asObjectRef()};
         const obj = JSC.C.JSObjectMakeDate(ctx, 1, &array, exception);
         return obj;
     }

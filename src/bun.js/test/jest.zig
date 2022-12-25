@@ -1384,6 +1384,55 @@ pub const TestScope = struct {
     }
 };
 
+pub const Mock = struct {
+    count: u32,
+
+    pub usingnamespace JSC.Codegen.JSMock;
+
+    pub fn constructor(globalThis: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) ?*Mock {
+        var mock = globalThis.allocator().create(Mock) catch unreachable;
+        mock.* = .{
+            .count = 0,
+        };
+        return mock;
+    }
+
+    pub fn fn1(_: *Mock, _: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSValue {
+        return JSValue.zero;
+    }
+
+    pub const fn2 = NewClass(Mock, .{ .name = "fn" }, .{
+        .count = 0,
+    }, .{});
+
+    pub fn finalize(
+        this: *Mock,
+    ) callconv(.C) void {
+        VirtualMachine.vm.allocator.destroy(this);
+    }
+
+    // pub fn call(globalObject: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+    //     var mock = globalObject.bunVM().allocator.create(Mock) catch unreachable;
+    //     // const value = arguments[0];
+
+    //     // Todo if this works add Jest.mock == null check
+    //     // if (Jest.runner.?.pending_test == null) {
+    //     //     globalObject.throw("expect() must be called inside a test", .{});
+    //     //     return .zero;
+    //     // }
+
+    //     mock.* = .{
+    //         .count = 0,
+    //     };
+    //     const mock_js_value = mock.toJS(globalObject);
+    //     // expect_js_value.ensureStillAlive();
+    //     // JSC.Jest.Expect.capturedValueSetCached(expect_js_value, globalObject, value);
+    //     // expect_js_value.ensureStillAlive();
+    //     // expect.postMatch(globalObject);
+    //     return mock_js_value;
+    // }
+};
+
 pub const DescribeScope = struct {
     label: string = "",
     parent: ?*DescribeScope = null,
@@ -1483,6 +1532,7 @@ pub const DescribeScope = struct {
             .describe = .{ .get = createDescribe, .name = "describe" },
             .it = .{ .get = createTest, .name = "it" },
             .@"test" = .{ .get = createTest, .name = "test" },
+            .@"fn" = .{ .get = createFn, .name = "fn" },
         },
     );
 
@@ -1692,6 +1742,16 @@ pub const DescribeScope = struct {
         }
     }
 
+    pub fn createFn(
+        _: *DescribeScope,
+        ctx: js.JSContextRef,
+        _: js.JSValueRef,
+        _: js.JSStringRef,
+        _: js.ExceptionRef,
+    ) js.JSObjectRef {
+        return js.JSObjectMake(ctx, Mock.fn2.get().*, null);
+    }
+
     pub fn createExpect(
         _: *DescribeScope,
         ctx: js.JSContextRef,
@@ -1881,28 +1941,4 @@ pub const Result = union(TestRunner.Test.Status) {
     fail: u32,
     pass: u32, // assertion count
     pending: void,
-};
-
-pub const Mock = struct {
-    count: u32,
-
-    pub usingnamespace JSC.Codegen.JSMock;
-
-    pub fn constructor(globalThis: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) ?*Mock {
-        var mock = globalThis.allocator().create(Mock) catch unreachable;
-        mock.* = .{
-            .count = 0,
-        };
-        return mock;
-    }
-
-    pub fn fn1(_: *Mock, _: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSValue {
-        return JSValue.zero;
-    }
-
-    pub fn finalize(
-        this: *Mock,
-    ) callconv(.C) void {
-        VirtualMachine.vm.allocator.destroy(this);
-    }
 };

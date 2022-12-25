@@ -56,6 +56,7 @@ declare module "bun:test" {
     constructor();
     fn1(): void;
   }
+  export function fn(): void
 }
 
 declare module "test" {

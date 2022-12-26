@@ -5,6 +5,27 @@ const std = @import("std");
 const mimalloc = @import("./allocators/mimalloc.zig");
 const FeatureFlags = @import("./feature_flags.zig");
 const Environment = @import("./env.zig");
+
+fn mimalloc_free(
+    _: *anyopaque,
+    buf: []u8,
+    buf_align: u8,
+    _: usize,
+) void {
+    // mi_free_size internally just asserts the size
+    // so it's faster if we don't pass that value through
+    // but its good to have that assertion
+    if (comptime Environment.allow_assert) {
+        assert(mimalloc.mi_is_in_heap_region(buf.ptr));
+        if (mimalloc.canUseAlignedAlloc(buf.len, buf_align))
+            mimalloc.mi_free_size_aligned(buf.ptr, buf.len, buf_align)
+        else
+            mimalloc.mi_free_size(buf.ptr, buf.len);
+    } else {
+        mimalloc.mi_free(buf.ptr);
+    }
+}
+
 const c = struct {
     pub const malloc_size = mimalloc.mi_malloc_size;
     pub const malloc_usable_size = mimalloc.mi_malloc_usable_size;
@@ -35,20 +56,20 @@ const CAllocator = struct {
     const malloc_size = c.malloc_size;
     pub const supports_posix_memalign = true;
 
-    // This is copied from Rust's mimalloc integration
-    const MI_MAX_ALIGN_SIZE = 16;
-    inline fn mi_malloc_satisfies_alignment(alignment: usize, size: usize) bool {
-        return (alignment == @sizeOf(*anyopaque) or
-            (alignment == MI_MAX_ALIGN_SIZE and size >= (MI_MAX_ALIGN_SIZE / 2)));
-    }
-
     fn alignedAlloc(len: usize, alignment: usize) ?[*]u8 {
         if (comptime FeatureFlags.log_allocations) std.debug.print("Malloc: {d}\n", .{len});
 
-        var ptr: ?*anyopaque = if (alignment > 0 and std.math.isPowerOfTwo(alignment) and mi_malloc_satisfies_alignment(alignment, len))
-            mimalloc.mi_malloc_aligned(alignment, len)
+        var ptr: ?*anyopaque = if (mimalloc.canUseAlignedAlloc(len, alignment))
+            mimalloc.mi_malloc_aligned(len, alignment)
         else
             mimalloc.mi_malloc(len);
+
+        if (comptime Environment.allow_assert) {
+            const usable = mimalloc.mi_malloc_usable_size(ptr);
+            if (usable < len) {
+                std.debug.panic("mimalloc: allocated size is too small: {d} < {d}", .{ usable, len });
+            }
+        }
 
         return if (ptr) |p| @ptrCast([*]u8, p) else null;
     }
@@ -74,22 +95,7 @@ const CAllocator = struct {
         return false;
     }
 
-    fn free(
-        _: *anyopaque,
-        buf: []u8,
-        buf_align: u8,
-        _: usize,
-    ) void {
-        // mi_free_size internally just asserts the size
-        // so it's faster if we don't pass that value through
-        // but its good to have that assertion
-        if (comptime Environment.allow_assert) {
-            assert(mimalloc.mi_is_in_heap_region(buf.ptr));
-            mimalloc.mi_free_size_aligned(buf.ptr, buf.len, buf_align);
-        } else {
-            mimalloc.mi_free(buf.ptr);
-        }
-    }
+    const free = mimalloc_free;
 };
 
 pub const c_allocator = Allocator{

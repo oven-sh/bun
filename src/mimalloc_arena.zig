@@ -140,17 +140,20 @@ pub const Arena = struct {
     }
     pub const supports_posix_memalign = true;
 
-    // This is copied from Rust's mimalloc integration
-    const MI_MAX_ALIGN_SIZE = 16;
-    inline fn mi_malloc_satisfies_alignment(alignment: usize, size: usize) bool {
-        return (alignment == @sizeOf(*anyopaque) or
-            (alignment == MI_MAX_ALIGN_SIZE and size >= (MI_MAX_ALIGN_SIZE / 2)));
-    }
-
-    fn alignedAlloc(heap: *anyopaque, len: usize, _: usize) ?[*]u8 {
+    fn alignedAlloc(heap: *mimalloc.Heap, len: usize, alignment: usize) ?[*]u8 {
         if (comptime FeatureFlags.log_allocations) std.debug.print("Malloc: {d}\n", .{len});
 
-        var ptr: ?*anyopaque = mimalloc.mi_heap_malloc(@ptrCast(*mimalloc.Heap, heap), len);
+        var ptr: ?*anyopaque = if (mimalloc.canUseAlignedAlloc(len, alignment))
+            mimalloc.mi_heap_malloc_aligned(heap, len, alignment)
+        else
+            mimalloc.mi_heap_malloc(heap, len);
+
+        if (comptime Environment.allow_assert) {
+            const usable = mimalloc.mi_malloc_usable_size(ptr);
+            if (usable < len) {
+                std.debug.panic("mimalloc: allocated size is too small: {d} < {d}", .{ usable, len });
+            }
+        }
 
         return if (ptr) |p|
             @ptrCast([*]u8, p)
@@ -191,7 +194,10 @@ pub const Arena = struct {
         // but its good to have that assertion
         if (comptime Environment.allow_assert) {
             assert(mimalloc.mi_is_in_heap_region(buf.ptr));
-            mimalloc.mi_free_size_aligned(buf.ptr, buf.len, buf_align);
+            if (mimalloc.canUseAlignedAlloc(buf.len, buf_align))
+                mimalloc.mi_free_size_aligned(buf.ptr, buf.len, buf_align)
+            else
+                mimalloc.mi_free_size(buf.ptr, buf.len);
         } else {
             mimalloc.mi_free(buf.ptr);
         }

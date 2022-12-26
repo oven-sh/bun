@@ -1154,7 +1154,7 @@ pub const FFI = struct {
                 const lengthBuf = std.fmt.bufPrintIntToSlice(arg_buf["arg".len..], i, 10, .lower, .{});
                 const argName = arg_buf[0 .. 3 + lengthBuf.len];
                 if (arg.needsACastInC()) {
-                    try writer.print("{}", .{arg.toC(argName)});
+                    try writer.print("{any}", .{arg.toC(argName)});
                 } else {
                     try writer.writeAll(argName);
                 }
@@ -1168,7 +1168,7 @@ pub const FFI = struct {
             try writer.writeAll("return ");
 
             if (!(this.return_type == .void)) {
-                try writer.print("{}.asZigRepr", .{this.return_type.toJS("return_value")});
+                try writer.print("{any}.asZigRepr", .{this.return_type.toJS("return_value")});
             } else {
                 try writer.writeAll("ValueUndefined.asZigRepr");
             }

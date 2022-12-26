@@ -2189,12 +2189,12 @@ pub const JSMock = struct {
             @compileLog("Mock.finalize is not a finalizer");
         }
 
-        if (@TypeOf(Mock.fn1) != CallbackType)
-            @compileLog("Expected Mock.fn1 to be a callback");
+        if (@TypeOf(Mock.isMockFunction) != CallbackType)
+            @compileLog("Expected Mock.isMockFunction to be a callback");
         if (!JSC.is_bindgen) {
             @export(Mock.constructor, .{ .name = "MockClass__construct" });
             @export(Mock.finalize, .{ .name = "MockClass__finalize" });
-            @export(Mock.fn1, .{ .name = "MockPrototype__fn1" });
+            @export(Mock.isMockFunction, .{ .name = "MockPrototype__isMockFunction" });
         }
     }
 };

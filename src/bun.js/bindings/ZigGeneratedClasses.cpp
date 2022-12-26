@@ -7000,13 +7000,13 @@ extern "C" void* MockClass__construct(JSC::JSGlobalObject*, JSC::CallFrame*);
 JSC_DECLARE_CUSTOM_GETTER(jsMockConstructor);
 extern "C" void MockClass__finalize(void*);
 
-extern "C" EncodedJSValue MockPrototype__fn1(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
-JSC_DECLARE_HOST_FUNCTION(MockPrototype__fn1Callback);
+extern "C" EncodedJSValue MockPrototype__isMockFunction(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
+JSC_DECLARE_HOST_FUNCTION(MockPrototype__isMockFunctionCallback);
 
 STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSMockPrototype, JSMockPrototype::Base);
 
 static const HashTableValue JSMockPrototypeTableValues[] = {
-    { "fn1"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, MockPrototype__fn1Callback, 0 } }
+    { "isMockFunction"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, MockPrototype__isMockFunctionCallback, 0 } }
 };
 
 const ClassInfo JSMockPrototype::s_info = { "Mock"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSMockPrototype) };
@@ -7023,7 +7023,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsMockConstructor, (JSGlobalObject * lexicalGlobalObjec
     return JSValue::encode(globalObject->JSMockConstructor());
 }
 
-JSC_DEFINE_HOST_FUNCTION(MockPrototype__fn1Callback, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+JSC_DEFINE_HOST_FUNCTION(MockPrototype__isMockFunctionCallback, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
     auto& vm = lexicalGlobalObject->vm();
 
@@ -7036,7 +7036,7 @@ JSC_DEFINE_HOST_FUNCTION(MockPrototype__fn1Callback, (JSGlobalObject * lexicalGl
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
 
-    return MockPrototype__fn1(thisObject->wrapped(), lexicalGlobalObject, callFrame);
+    return MockPrototype__isMockFunction(thisObject->wrapped(), lexicalGlobalObject, callFrame);
 }
 
 void JSMockPrototype::finishCreation(JSC::VM& vm, JSC::JSGlobalObject* globalObject)

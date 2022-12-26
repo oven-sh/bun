@@ -217,8 +217,8 @@ export default [
     JSType: "0b11101110",
     klass: {},
     proto: {
-      fn1: {
-        fn: "fn1",
+      isMockFunction: {
+        fn: "isMockFunction",
         length: 0,
       },
     },

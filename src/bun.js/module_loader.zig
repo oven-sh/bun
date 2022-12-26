@@ -88,12 +88,11 @@ const PackageManager = @import("../install/install.zig").PackageManager;
 const Install = @import("../install/install.zig");
 const VirtualMachine = JSC.VirtualMachine;
 const Dependency = @import("../install/dependency.zig");
-
 // This exists to make it so we can reload these quicker in development
 fn jsModuleFromFile(from_path: string, comptime input: string) string {
     const absolute_path = comptime (bun.Environment.base_path ++ std.fs.path.dirname(@src().file).?) ++ "/" ++ input;
     const Holder = struct {
-        pub const file = (absolute_path);
+        pub const file = @embedFile(input);
     };
 
     if (comptime !Environment.allow_assert) {

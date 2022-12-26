@@ -15,6 +15,7 @@ const Fs = @import("./fs.zig");
 const Schema = @import("./api/schema.zig");
 const Ref = @import("ast/base.zig").Ref;
 const JSAst = @import("./js_ast.zig");
+const content = @import("root").content;
 // packages/bun-cli-*/bun
 const BUN_ROOT = "../../";
 
@@ -31,27 +32,22 @@ fn embedDebugFallback(comptime msg: []const u8, comptime code: []const u8) []con
     return code;
 }
 pub const ErrorCSS = struct {
-    const ErrorCSSPath = "packages/bun-error/dist/bun-error.css";
-    const ErrorCSSPathDev = "packages/bun-error/bun-error.css";
-
-    pub const ProdSourceContent = @embedFile("../" ++ ErrorCSSPath);
-
     pub inline fn sourceContent() string {
         if (comptime Environment.isDebug) {
             var out_buffer: [bun.MAX_PATH_BYTES]u8 = undefined;
             var dirname = std.fs.selfExeDirPath(&out_buffer) catch unreachable;
-            var paths = [_]string{ dirname, BUN_ROOT, ErrorCSSPathDev };
+            var paths = [_]string{ dirname, BUN_ROOT, content.error_css_path };
             const file = std.fs.cwd().openFile(
                 resolve_path.joinAbsString(dirname, std.mem.span(&paths), .auto),
                 .{ .mode = .read_only },
             ) catch return embedDebugFallback(
                 "Missing packages/bun-error/bun-error.css. Please run \"make bun_error\"",
-                ProdSourceContent,
+                content.error_css,
             );
             defer file.close();
             return file.readToEndAlloc(default_allocator, (file.stat() catch unreachable).size) catch unreachable;
         } else {
-            return ProdSourceContent;
+            return content.error_css;
         }
     }
 };
@@ -59,26 +55,22 @@ pub const ErrorCSS = struct {
 pub const ReactRefresh = @embedFile("./react-refresh.js");
 
 pub const ErrorJS = struct {
-    const ErrorJSPath = "packages/bun-error/dist/index.js";
-
-    pub const ProdSourceContent = @embedFile("../" ++ ErrorJSPath);
-
     pub inline fn sourceContent() string {
         if (comptime Environment.isDebug) {
             var out_buffer: [bun.MAX_PATH_BYTES]u8 = undefined;
             var dirname = std.fs.selfExeDirPath(&out_buffer) catch unreachable;
-            var paths = [_]string{ dirname, BUN_ROOT, ErrorJSPath };
+            var paths = [_]string{ dirname, BUN_ROOT, content.error_js_path };
             const file = std.fs.cwd().openFile(
                 resolve_path.joinAbsString(dirname, std.mem.span(&paths), .auto),
                 .{ .mode = .read_only },
             ) catch return embedDebugFallback(
-                "Missing " ++ ErrorJSPath ++ ". Please run \"make bun_error\"",
-                ProdSourceContent,
+                "Missing " ++ content.error_js_path ++ ". Please run \"make bun_error\"",
+                content.error_js,
             );
             defer file.close();
             return file.readToEndAlloc(default_allocator, (file.stat() catch unreachable).size) catch unreachable;
         } else {
-            return ProdSourceContent;
+            return content.error_js;
         }
     }
 };

@@ -217,7 +217,7 @@ pub fn build(b: *std.build.Builder) !void {
     exe = b.addExecutable(bun_executable_name, if (target.getOsTag() == std.Target.Os.Tag.freestanding)
         "src/main_wasm.zig"
     else
-        "src/main.zig");
+        "root.zig");
     // exe.setLibCFile("libc.txt");
     exe.linkLibC();
     // exe.linkLibCpp();

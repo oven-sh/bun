@@ -16,8 +16,6 @@ pub fn main() void {
     const Output = bun.Output;
     const Environment = bun.Environment;
 
-    const cli = @import("cli.zig");
-
     if (comptime Environment.isRelease)
         CrashReporter.start() catch unreachable;
 
@@ -37,11 +35,11 @@ pub fn main() void {
     Output.Source.set(&output_source);
     defer Output.flush();
 
-    cli.Cli.start(bun.default_allocator, stdout, stderr, MainPanicHandler);
+    bun.CLI.Cli.start(bun.default_allocator, stdout, stderr, MainPanicHandler);
 }
 
 test "panic" {
     panic("woah", null);
 }
 
-pub usingnamespace @import("./bun.zig");
+pub const build_options = @import("build_options");

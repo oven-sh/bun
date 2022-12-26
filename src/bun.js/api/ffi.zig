@@ -744,8 +744,8 @@ pub const FFI = struct {
         const MyFunctionSStructWorkAround = struct {
             JSVALUE_TO_INT64: *const fn (JSValue0: JSC.JSValue) callconv(.C) i64,
             JSVALUE_TO_UINT64: *const fn (JSValue0: JSC.JSValue) callconv(.C) u64,
-            INT64_TO_JSVALUE: *const fn (arg0: [*c]JSC.JSGlobalObject, arg1: i64) callconv(.C) JSC.JSValue,
-            UINT64_TO_JSVALUE: *const fn (arg0: [*c]JSC.JSGlobalObject, arg1: u64) callconv(.C) JSC.JSValue,
+            INT64_TO_JSVALUE: *const fn (arg0: *JSC.JSGlobalObject, arg1: i64) callconv(.C) JSC.JSValue,
+            UINT64_TO_JSVALUE: *const fn (arg0: *JSC.JSGlobalObject, arg1: u64) callconv(.C) JSC.JSValue,
             bun_call: *const @TypeOf(JSC.C.JSObjectCallAsFunction),
         };
         const headers = @import("../bindings/headers.zig");

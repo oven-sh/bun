@@ -33,6 +33,17 @@ input = keep + input.slice(first_extern_line, last_extern_fn_line);
 input = input.replaceAll("*WebCore__", "*bindings.");
 input = input.replaceAll("*JSC__", "*bindings.");
 input = input.replaceAll("[*c] JSC__", "[*c]bindings.");
+input = input.replaceAll("[*c]JSC__", "[*c]bindings.");
+input = input.replaceAll(
+  "[*c]bindings.JSGlobalObject",
+  "*bindings.JSGlobalObject",
+);
+input = input.replaceAll("[*c]bindings.JSPromise", "?*bindings.JSPromise");
+input = input.replaceAll(
+  "[*c]const bindings.JSPromise",
+  "?*const bindings.JSPromise",
+);
+
 input = input.replaceAll("[*c] const JSC__", "[*c]const bindings.");
 input = input.replaceAll(
   "[*c]Inspector__ScriptArguments",
@@ -42,6 +53,10 @@ input = input.replaceAll(
 input = input
   .replaceAll("VirtualMachine", "bindings.VirtualMachine")
   .replaceAll("bindings.bindings.VirtualMachine", "bindings.VirtualMachine");
+
+input = input.replaceAll("?*JSC__JSGlobalObject", "*bindings.JSGlobalObject");
+input = input.replaceAll("?*bindings.CallFrame", "*bindings.CallFrame");
+input = input.replaceAll("[*c]bindings.VM", "*bindings.VM");
 
 const hardcode = {
   "[*c][*c]JSC__Exception": "*?*JSC__Exception     ",

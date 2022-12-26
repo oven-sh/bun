@@ -43,28 +43,28 @@ pub fn cTypeLabel(comptime Type: type) ?[]const u8 {
         f32 => "float",
         *anyopaque => "void*",
         *const anyopaque => "const void*",
-        [*]bool => "bool*",
-        [*]usize => "size_t*",
-        [*]isize => "int*",
+        [*c]bool, [*]bool => "bool*",
+        [*c]usize, [*]usize => "size_t*",
+        [*c]isize, [*]isize => "int*",
         [*]u8 => "unsigned char*",
-        [*]u16 => "uint16_t*",
-        [*]u32 => "uint32_t*",
-        [*]u64 => "uint64_t*",
-        [*]i8 => "int8_t*",
-        [*]i16 => "int16_t*",
-        [*]i32 => "int32_t*",
-        [*]i64 => "int64_t*",
-        [*]const bool => "const bool*",
-        [*]const usize => "const size_t*",
-        [*]const isize => "const int*",
+        [*c]u16, [*]u16 => "uint16_t*",
+        [*c]u32, [*]u32 => "uint32_t*",
+        [*c]u64, [*]u64 => "uint64_t*",
+        [*c]i8, [*]i8 => "int8_t*",
+        [*c]i16, [*]i16 => "int16_t*",
+        [*c]i32, [*]i32 => "int32_t*",
+        [*c]i64, [*]i64 => "int64_t*",
+        [*c]const bool, [*]const bool => "const bool*",
+        [*c]const usize, [*]const usize => "const size_t*",
+        [*c]const isize, [*]const isize => "const int*",
         [*c]const u8, [*]const u8 => "const unsigned char*",
-        [*]const u16 => "const uint16_t*",
-        [*]const u32 => "const uint32_t*",
-        [*]const u64 => "const uint64_t*",
-        [*]const i8 => "const int8_t*",
-        [*]const i16 => "const int16_t*",
-        [*]const i32 => "const int32_t*",
-        [*]const i64 => "const int64_t*",
+        [*c]const u16, [*]const u16 => "const uint16_t*",
+        [*c]const u32, [*]const u32 => "const uint32_t*",
+        [*c]const u64, [*]const u64 => "const uint64_t*",
+        [*c]const i8, [*]const i8 => "const int8_t*",
+        [*c]const i16, [*]const i16 => "const int16_t*",
+        [*c]const i32, [*]const i32 => "const int32_t*",
+        [*c]const i64, [*]const i64 => "const int64_t*",
         else => null,
     };
 }
@@ -145,24 +145,32 @@ pub const C_Generator = struct {
             }
         }
 
+        comptime var nonnull = std.BoundedArray(u8, 32).init(0) catch unreachable;
+
         inline for (meta.params) |arg, i| {
             const ArgType = comptime arg.type.?;
 
-            switch (@typeInfo(ArgType)) {
+            switch (comptime @typeInfo(ArgType)) {
                 .Fn => {
                     self.gen_closure(comptime arg.type.?, comptime std.fmt.comptimePrint(" ArgFn{d}", .{i}));
+                    comptime nonnull.append(i) catch unreachable;
                 },
-                else => {
-                    self.writeType(comptime arg.type.?);
+                else => |info| {
+                    if (comptime info == .Pointer and @typeInfo(info.Pointer.child) == .Fn) {
+                        self.gen_closure(comptime info.Pointer.child, comptime std.fmt.comptimePrint(" ArgFn{d}", .{i}));
+                        comptime nonnull.append(i) catch unreachable;
+                    } else {
+                        self.writeType(comptime arg.type.?);
 
-                    switch (@typeInfo(ArgType)) {
-                        .Enum => {
-                            self.write(comptime std.fmt.comptimePrint(" {s}{d}", .{ typeBaseName(@typeName(ArgType)), i }));
-                        },
+                        switch (@typeInfo(ArgType)) {
+                            .Enum => {
+                                self.write(comptime std.fmt.comptimePrint(" {s}{d}", .{ typeBaseName(@typeName(ArgType)), i }));
+                            },
 
-                        else => {
-                            self.write(comptime std.fmt.comptimePrint(" arg{d}", .{i}));
-                        },
+                            else => {
+                                self.write(comptime std.fmt.comptimePrint(" arg{d}", .{i}));
+                            },
+                        }
                     }
                 },
             }
@@ -177,6 +185,16 @@ pub const C_Generator = struct {
         }
 
         self.write(")");
+        const nonnull_slice = comptime nonnull.slice();
+        if (comptime nonnull_slice.len > 0) {
+            self.write(" __attribute__((nonnull (");
+            inline for (comptime nonnull_slice) |i, j| {
+                self.write(comptime std.fmt.comptimePrint("{d}", .{i}));
+                if (j != nonnull_slice.len - 1)
+                    self.write(", ");
+            }
+            self.write(")))");
+        }
         defer self.write(";\n");
         // const ReturnTypeInfo: std.builtin.Type = comptime @typeInfo(func.return_type);
         // switch (comptime ReturnTypeInfo) {
@@ -195,8 +213,8 @@ pub const C_Generator = struct {
     ) void {
         const func: std.builtin.Type.Fn = @typeInfo(Function).Fn;
         self.writeType(func.return_type orelse void);
-        self.write(" (*" ++ name ++ ")(");
-        inline for (func.args) |arg, i| {
+        self.write("(*" ++ name ++ ")(");
+        inline for (func.params) |arg, i| {
             self.writeType(arg.type.?);
             // if (comptime func.arg_names.len > 0 and func.arg_names.len > i) {
             //     self.write(comptime arg_names[i]);
@@ -210,7 +228,7 @@ pub const C_Generator = struct {
             // }
 
             //TODO: Figure out how to get arg names; for now just do arg0..argN
-            if (i != func.args.len - 1)
+            if (i != func.params.len - 1)
                 self.write(", ");
         }
 

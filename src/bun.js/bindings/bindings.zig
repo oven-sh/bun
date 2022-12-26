@@ -2358,9 +2358,9 @@ pub const JSValue = enum(JSValueReprInt) {
     }
 
     const PropertyIteratorFn = *const fn (
-        globalObject_: [*c]JSGlobalObject,
+        globalObject_: *JSGlobalObject,
         ctx_ptr: ?*anyopaque,
-        key: *ZigString,
+        key: [*c]ZigString,
         value: JSValue,
         is_symbol: bool,
     ) callconv(.C) void;
@@ -3189,7 +3189,7 @@ pub const JSValue = enum(JSValueReprInt) {
         this: JSValue,
         globalObject: *JSGlobalObject,
         ctx: ?*anyopaque,
-        callback: *const fn (vm: [*c]VM, globalObject: [*c]JSGlobalObject, ctx: ?*anyopaque, nextValue: JSValue) callconv(.C) void,
+        callback: *const fn (vm: *VM, globalObject: *JSGlobalObject, ctx: ?*anyopaque, nextValue: JSValue) callconv(.C) void,
     ) void {
         return cppFn("forEach", .{ this, globalObject, ctx, callback });
     }

@@ -1698,16 +1698,16 @@ pub const ZigConsoleClient = struct {
                 }
 
                 pub fn forEach(
-                    globalObject_: [*c]JSGlobalObject,
+                    globalThis: *JSGlobalObject,
                     ctx_ptr: ?*anyopaque,
-                    key: *ZigString,
+                    key_: [*c]ZigString,
                     value: JSValue,
                     is_symbol: bool,
                 ) callconv(.C) void {
+                    const key = key_.?[0];
                     if (key.eqlComptime("constructor")) return;
                     if (key.eqlComptime("call")) return;
 
-                    var globalThis = globalObject_.?;
                     var ctx: *@This() = bun.cast(*@This(), ctx_ptr orelse return);
                     var this = ctx.formatter;
                     var writer_ = ctx.writer;
@@ -1790,7 +1790,7 @@ pub const ZigConsoleClient = struct {
                         writer.print(
                             comptime Output.prettyFmt("<r><d>[<r><blue>Symbol({any})<r><d>]:<r> ", enable_ansi_colors),
                             .{
-                                key.*,
+                                key,
                             },
                         );
                     }

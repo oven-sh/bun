@@ -501,7 +501,7 @@ pub const invalid_fd = std.math.maxInt(FileDescriptor);
 
 pub const simdutf = @import("./bun.js/bindings/bun-simdutf.zig");
 
-pub const JSC = @import("javascript_core");
+pub const JSC = @import("./jsc.zig");
 pub const AsyncIO = @import("async_io");
 
 pub const logger = @import("./logger.zig");

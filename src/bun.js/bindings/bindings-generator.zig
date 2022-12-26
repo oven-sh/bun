@@ -22,10 +22,11 @@ const Classes = JSC.GlobalClasses;
 pub fn main() anyerror!void {
     var allocator = std.heap.c_allocator;
     const src: std.builtin.SourceLocation = @src();
+    const src_path = comptime @import("bun").Environment.base_path ++ std.fs.path.dirname(src.file).?;
     {
-        const paths = [_][]const u8{ std.fs.path.dirname(src.file) orelse return error.BadPath, "headers.h" };
-        const paths2 = [_][]const u8{ std.fs.path.dirname(src.file) orelse return error.BadPath, "headers-cpp.h" };
-        const paths4 = [_][]const u8{ std.fs.path.dirname(src.file) orelse return error.BadPath, "ZigGeneratedCode.cpp" };
+        const paths = [_][]const u8{ src_path, "headers.h" };
+        const paths2 = [_][]const u8{ src_path, "headers-cpp.h" };
+        const paths4 = [_][]const u8{ src_path, "ZigGeneratedCode.cpp" };
 
         const cpp = try std.fs.createFileAbsolute(try std.fs.path.join(allocator, &paths2), .{});
         const file = try std.fs.createFileAbsolute(try std.fs.path.join(allocator, &paths), .{});
@@ -44,7 +45,7 @@ pub fn main() anyerror!void {
         comptime var i: usize = 0;
         inline while (i < Classes.len) : (i += 1) {
             const Class = Classes[i];
-            const paths = [_][]const u8{ std.fs.path.dirname(src.file) orelse return error.BadPath, Class.name ++ ".generated.h" };
+            const paths = [_][]const u8{ src_path, Class.name ++ ".generated.h" };
             var headerFilePath = try std.fs.path.join(
                 allocator,
                 &paths,

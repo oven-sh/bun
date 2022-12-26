@@ -31,7 +31,7 @@ const BuildOptions = if (isTest) struct {
     pub const sha = "0000000000000000000000000000000000000000";
     pub const is_canary = false;
     pub const base_path = "/tmp";
-} else @import("build_options");
+} else @import("root").build_options;
 
 pub const baseline = BuildOptions.baseline;
 pub const enableSIMD: bool = !baseline;

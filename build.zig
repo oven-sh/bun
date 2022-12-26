@@ -79,7 +79,7 @@ fn addInternalPackages(step: *std.build.LibExeObjStep, _: std.mem.Allocator, tar
         javascript_core_stub
     else
         javascript_core_real;
-    io.dependencies = &[_]std.build.Pkg{};
+    io.dependencies = &[_]std.build.Pkg{bun};
     javascript_core.dependencies = &[_]std.build.Pkg{};
     bun.dependencies = &[_]std.build.Pkg{ bun, io, javascript_core };
     step.addPackage(bun);

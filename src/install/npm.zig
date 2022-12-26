@@ -35,7 +35,7 @@ const ComptimeStringMap = @import("../comptime_string_map.zig").ComptimeStringMa
 const Npm = @This();
 
 pub const Registry = struct {
-    pub const DefaultURL = "https://registry.npmjs.org/";
+    pub const default_url = "https://registry.npmjs.org/";
     pub const BodyPool = ObjectPool(MutableString, MutableString.init2048, true, 8);
 
     pub const Scope = struct {
@@ -67,7 +67,7 @@ pub const Registry = struct {
 
         pub fn fromAPI(name: string, registry_: Api.NpmRegistry, allocator: std.mem.Allocator, env: *DotEnv.Loader) !Scope {
             var registry = registry_;
-            var url = URL.parse(if (registry.url.len == 0) DefaultURL else registry.url);
+            var url = URL.parse(registry.url);
             var auth: string = "";
 
             if (registry.token.len == 0) {

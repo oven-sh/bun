@@ -197,6 +197,30 @@ const NetworkTask = struct {
 
     const default_headers_buf: string = "Accept" ++ accept_header_value;
 
+    fn appendAuth(header_builder: *HeaderBuilder, scope: *const Npm.Registry.Scope) void {
+        if (scope.token.len > 0) {
+            header_builder.appendFmt("Authorization", "Bearer {s}", .{scope.token});
+        } else if (scope.auth.len > 0) {
+            header_builder.appendFmt("Authorization", "Basic {s}", .{scope.auth});
+        } else {
+            return;
+        }
+        header_builder.append("npm-auth-type", "legacy");
+    }
+
+    fn countAuth(header_builder: *HeaderBuilder, scope: *const Npm.Registry.Scope) void {
+        if (scope.token.len > 0) {
+            header_builder.count("Authorization", "");
+            header_builder.content.cap += "Bearer ".len + scope.token.len;
+        } else if (scope.auth.len > 0) {
+            header_builder.count("Authorization", "");
+            header_builder.content.cap += "Basic ".len + scope.auth.len;
+        } else {
+            return;
+        }
+        header_builder.count("npm-auth-type", "legacy");
+    }
+
     pub fn forManifest(
         this: *NetworkTask,
         name: string,
@@ -268,13 +292,7 @@ const NetworkTask = struct {
 
         var header_builder = HeaderBuilder{};
 
-        if (scope.token.len > 0) {
-            header_builder.count("Authorization", "");
-            header_builder.content.cap += "Bearer ".len + scope.token.len;
-        } else if (scope.auth.len > 0) {
-            header_builder.count("Authorization", "");
-            header_builder.content.cap += "Basic ".len + scope.auth.len;
-        }
+        countAuth(&header_builder, scope);
 
         if (etag.len != 0) {
             header_builder.count("If-None-Match", etag);
@@ -289,11 +307,7 @@ const NetworkTask = struct {
             }
             try header_builder.allocate(allocator);
 
-            if (scope.token.len > 0) {
-                header_builder.appendFmt("Authorization", "Bearer {s}", .{scope.token});
-            } else if (scope.auth.len > 0) {
-                header_builder.appendFmt("Authorization", "Basic {s}", .{scope.auth});
-            }
+            appendAuth(&header_builder, scope);
 
             if (etag.len != 0) {
                 header_builder.append("If-None-Match", etag);
@@ -381,23 +395,13 @@ const NetworkTask = struct {
 
         var header_builder = HeaderBuilder{};
 
-        if (scope.token.len > 0) {
-            header_builder.count("Authorization", "");
-            header_builder.content.cap += "Bearer ".len + scope.token.len;
-        } else if (scope.auth.len > 0) {
-            header_builder.count("Authorization", "");
-            header_builder.content.cap += "Basic ".len + scope.auth.len;
-        }
+        countAuth(&header_builder, scope);
 
         var header_buf: string = "";
         if (header_builder.header_count > 0) {
             try header_builder.allocate(allocator);
 
-            if (scope.token.len > 0) {
-                header_builder.appendFmt("Authorization", "Bearer {s}", .{scope.token});
-            } else if (scope.auth.len > 0) {
-                header_builder.appendFmt("Authorization", "Basic {s}", .{scope.auth});
-            }
+            appendAuth(&header_builder, scope);
 
             header_buf = header_builder.content.ptr.?[0..header_builder.content.len];
         }

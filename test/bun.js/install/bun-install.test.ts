@@ -9,6 +9,7 @@ test("bun install", async () => {
       try {
         expect(request.method).toBe("GET");
         expect(request.headers.get("accept")).toBe("application/vnd.npm.install-v1+json; q=1.0, application/json; q=0.8, */*");
+        expect(request.headers.get("npm-auth-type")).toBe(null);
         expect(await request.text()).toBe("");
         urls.push(request.url);
         return new Response("bar", { status: 404 });
@@ -48,7 +49,10 @@ test("bun install @scoped", async () => {
         expect(request.headers.get("accept")).toBe("application/vnd.npm.install-v1+json; q=1.0, application/json; q=0.8, */*");
         if (request.url === url) {
           expect(request.headers.get("authorization")).toBe("Bearer bar");
+          expect(request.headers.get("npm-auth-type")).toBe("legacy");
           seen_token = true;
+        } else {
+          expect(request.headers.get("npm-auth-type")).toBe(null);
         }
         expect(await request.text()).toBe("");
         urls.push(request.url);

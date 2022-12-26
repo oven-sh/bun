@@ -3449,11 +3449,7 @@ pub const PackageManager = struct {
         lockfile_path: stringZ = Lockfile.default_filename,
         save_lockfile_path: stringZ = Lockfile.default_filename,
         did_override_default_scope: bool = false,
-        scope: Npm.Registry.Scope = .{
-            .name = "",
-            .token = "",
-            .url = URL.parse("https://registry.npmjs.org/"),
-        },
+        scope: Npm.Registry.Scope = undefined,
 
         registries: Npm.Registry.Map = Npm.Registry.Map{},
         cache_directory: string = "",
@@ -3594,18 +3590,17 @@ pub const PackageManager = struct {
         ) !void {
             this.save_lockfile_path = this.lockfile_path;
 
+            var registry = if (bun_install_) |bun_install| bun_install.default_registry else null;
+            this.scope = try Npm.Registry.Scope.fromAPI("", registry orelse Api.NpmRegistry{
+                .url = "",
+                .username = "",
+                .password = "",
+                .token = "",
+            }, allocator, env_loader);
             defer {
-                this.did_override_default_scope = !strings.eqlComptime(this.scope.url.href, "https://registry.npmjs.org/");
+                this.did_override_default_scope = !strings.eqlComptime(this.scope.url.href, Npm.Registry.DefaultURL);
             }
             if (bun_install_) |bun_install| {
-                if (bun_install.default_registry) |*registry| {
-                    if (registry.url.len == 0) {
-                        registry.url = "https://registry.npmjs.org/";
-                    }
-
-                    this.scope = try Npm.Registry.Scope.fromAPI("", registry.*, allocator, env_loader);
-                }
-
                 if (bun_install.scoped) |scoped| {
                     for (scoped.scopes) |name, i| {
                         try this.registries.put(allocator, Npm.Registry.Scope.hash(name), try Npm.Registry.Scope.fromAPI(name, scoped.registries[i], allocator, env_loader));
@@ -6747,6 +6742,16 @@ pub const PackageManager = struct {
 
 const Package = Lockfile.Package;
 
+pub const PackageManifestError = error{
+    PackageManifestHTTP400,
+    PackageManifestHTTP401,
+    PackageManifestHTTP402,
+    PackageManifestHTTP403,
+    PackageManifestHTTP404,
+    PackageManifestHTTP4xx,
+    PackageManifestHTTP5xx,
+};
+
 test "UpdateRequests.parse" {
     var log = logger.Log.init(default_allocator);
     var array = PackageManager.UpdateRequest.Array.init(0) catch unreachable;
@@ -6773,12 +6778,106 @@ test "UpdateRequests.parse" {
     try std.testing.expectEqual(updates.len, 6);
 }
 
-pub const PackageManifestError = error{
-    PackageManifestHTTP400,
-    PackageManifestHTTP401,
-    PackageManifestHTTP402,
-    PackageManifestHTTP403,
-    PackageManifestHTTP404,
-    PackageManifestHTTP4xx,
-    PackageManifestHTTP5xx,
-};
+test "PackageManager.Options - default registry, default values" {
+    var allocator = default_allocator;
+    var log = logger.Log.init(allocator);
+    defer log.deinit();
+    var env_loader = DotEnv.Loader.init(&DotEnv.Map.init(allocator), allocator);
+    var options = PackageManager.Options{};
+
+    try options.load(allocator, &log, &env_loader, null, null);
+
+    try std.testing.expectEqualStrings(options.scope.name, "");
+    try std.testing.expectEqualStrings(options.scope.auth, "");
+    try std.testing.expectEqualStrings(options.scope.url.href, Npm.Registry.DefaultURL);
+    try std.testing.expectEqualStrings(options.scope.token, "");
+}
+
+test "PackageManager.Options - default registry, custom token" {
+    var allocator = default_allocator;
+    var log = logger.Log.init(allocator);
+    defer log.deinit();
+    var env_loader = DotEnv.Loader.init(&DotEnv.Map.init(allocator), allocator);
+    var install = Api.BunInstall{
+        .default_registry = Api.NpmRegistry{
+            .url = "",
+            .username = "",
+            .password = "",
+            .token = "foo",
+        },
+        .native_bin_links = &.{},
+    };
+    var options = PackageManager.Options{};
+
+    try options.load(allocator, &log, &env_loader, null, &install);
+
+    try std.testing.expectEqualStrings(options.scope.name, "");
+    try std.testing.expectEqualStrings(options.scope.auth, "");
+    try std.testing.expectEqualStrings(options.scope.url.href, Npm.Registry.DefaultURL);
+    try std.testing.expectEqualStrings(options.scope.token, "foo");
+}
+
+test "PackageManager.Options - default registry, custom URL" {
+    var allocator = default_allocator;
+    var log = logger.Log.init(allocator);
+    defer log.deinit();
+    var env_loader = DotEnv.Loader.init(&DotEnv.Map.init(allocator), allocator);
+    var install = Api.BunInstall{
+        .default_registry = Api.NpmRegistry{
+            .url = "https://example.com/",
+            .username = "foo",
+            .password = "bar",
+            .token = "",
+        },
+        .native_bin_links = &.{},
+    };
+    var options = PackageManager.Options{};
+
+    try options.load(allocator, &log, &env_loader, null, &install);
+
+    try std.testing.expectEqualStrings(options.scope.name, "");
+    try std.testing.expectEqualStrings(options.scope.auth, "Zm9vOmJhcg==");
+    try std.testing.expectEqualStrings(options.scope.url.href, "https://example.com/");
+    try std.testing.expectEqualStrings(options.scope.token, "");
+}
+
+test "PackageManager.Options - scoped registry" {
+    var allocator = default_allocator;
+    var log = logger.Log.init(allocator);
+    defer log.deinit();
+    var env_loader = DotEnv.Loader.init(&DotEnv.Map.init(allocator), allocator);
+    var install = Api.BunInstall{
+        .scoped = Api.NpmRegistryMap{
+            .scopes = &.{
+                "foo",
+            },
+            .registries = &.{
+                Api.NpmRegistry{
+                    .url = "",
+                    .username = "",
+                    .password = "",
+                    .token = "bar",
+                },
+            },
+        },
+        .native_bin_links = &.{},
+    };
+    var options = PackageManager.Options{};
+
+    try options.load(allocator, &log, &env_loader, null, &install);
+
+    try std.testing.expectEqualStrings(options.scope.name, "");
+    try std.testing.expectEqualStrings(options.scope.auth, "");
+    try std.testing.expectEqualStrings(options.scope.url.href, Npm.Registry.DefaultURL);
+    try std.testing.expectEqualStrings(options.scope.token, "");
+
+    var scoped = options.registries.getPtr(Npm.Registry.Scope.hash(Npm.Registry.Scope.getName("foo")));
+
+    try std.testing.expect(scoped != null);
+    if (scoped) |scope| {
+        try std.testing.expectEqualStrings(scope.name, "foo");
+        try std.testing.expectEqualStrings(scope.auth, "");
+        try std.testing.expectEqualStrings(scope.url.href, Npm.Registry.DefaultURL);
+        try std.testing.expectEqualStrings(scope.token, "bar");
+    }
+}

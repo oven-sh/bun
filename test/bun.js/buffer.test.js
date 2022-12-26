@@ -622,7 +622,7 @@ it("Buffer.swap16", () => {
     buf.swap16();
     expect(false).toBe(true);
   } catch (exception) {
-    expect(exception.message).toBe("Invalid buffer length");
+    expect(exception.message).toBe("Buffer size must be a multiple of 16-bits");
   }
 });
 
@@ -648,7 +648,7 @@ it("Buffer.swap32", () => {
     buf.swap32();
     expect(false).toBe(true);
   } catch (exception) {
-    expect(exception.message).toBe("Invalid buffer length");
+    expect(exception.message).toBe("Buffer size must be a multiple of 32-bits");
   }
 });
 
@@ -674,7 +674,7 @@ it("Buffer.swap64", () => {
     buf.swap64();
     expect(false).toBe(true);
   } catch (exception) {
-    expect(exception.message).toBe("Invalid buffer length");
+    expect(exception.message).toBe("Buffer size must be a multiple of 64-bits");
   }
 });
 

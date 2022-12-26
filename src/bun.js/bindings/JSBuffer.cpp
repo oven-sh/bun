@@ -1070,19 +1070,26 @@ static inline JSC::EncodedJSValue jsBufferPrototypeFunction_swap16Body(JSC::JSGl
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    const int size = 2;
+    constexpr int elemSize = 2;
     int64_t length = static_cast<int64_t>(castedThis->byteLength());
-    if (length % size != 0) {
-        throwRangeError(lexicalGlobalObject, scope, "Invalid buffer length"_s);
+    if (length % elemSize != 0) {
+        throwRangeError(lexicalGlobalObject, scope, "Buffer size must be a multiple of 16-bits"_s);
         return JSC::JSValue::encode(jsUndefined());
+    }
+
+    if (UNLIKELY(castedThis->isDetached())) {
+        throwVMTypeError(lexicalGlobalObject, scope, "Buffer is detached"_s);
+        return JSValue::encode(jsUndefined());
     }
 
     uint8_t* typedVector = castedThis->typedVector();
 
-    for (size_t i = 0; i < length/size; i++) {
-        uint8_t temp = typedVector[size*i];
-        typedVector[size*i] = typedVector[size*i+1];
-        typedVector[size*i+1] = temp;
+    for (size_t elem = 0; elem < length; elem += elemSize) {
+        const size_t right = elem + 1;
+
+        uint8_t temp = typedVector[elem];
+        typedVector[elem] = typedVector[right];
+        typedVector[right] = temp;
     }
 
     return JSC::JSValue::encode(castedThis);
@@ -1092,20 +1099,30 @@ static inline JSC::EncodedJSValue jsBufferPrototypeFunction_swap32Body(JSC::JSGl
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    const int size = 4;
+    constexpr int elemSize = 4;
     int64_t length = static_cast<int64_t>(castedThis->byteLength());
-    if (length % size != 0) {
-        throwRangeError(lexicalGlobalObject, scope, "Invalid buffer length"_s);
+    if (length % elemSize != 0) {
+        throwRangeError(lexicalGlobalObject, scope, "Buffer size must be a multiple of 32-bits"_s);
         return JSC::JSValue::encode(jsUndefined());
+    }
+
+    if (UNLIKELY(castedThis->isDetached())) {
+        throwVMTypeError(lexicalGlobalObject, scope, "Buffer is detached"_s);
+        return JSValue::encode(jsUndefined());
     }
 
     uint8_t* typedVector = castedThis->typedVector();
 
-    for (size_t i = 0; i < length/size; i++) {
-        for (size_t j = 0; j < size/2; j++) {
-            uint8_t temp = typedVector[size*i+j];
-            typedVector[size*i+j] = typedVector[size*i+(size-1)-j];
-            typedVector[size*i+(size-1)-j] = temp;
+    constexpr size_t swaps = elemSize/2;
+    for (size_t elem = 0; elem < length; elem += elemSize) {
+        const size_t right = elem + elemSize - 1;
+        for (size_t k = 0; k < swaps; k++) {
+            const size_t i = right - k;
+            const size_t j = elem + k;
+
+            uint8_t temp = typedVector[i];
+            typedVector[i] = typedVector[j];
+            typedVector[j] = temp;
         }
     }
 
@@ -1116,20 +1133,30 @@ static inline JSC::EncodedJSValue jsBufferPrototypeFunction_swap64Body(JSC::JSGl
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    const int size = 8;
+    constexpr size_t elemSize = 8;
     int64_t length = static_cast<int64_t>(castedThis->byteLength());
-    if (length % size != 0) {
-        throwRangeError(lexicalGlobalObject, scope, "Invalid buffer length"_s);
+    if (length % elemSize != 0) {
+        throwRangeError(lexicalGlobalObject, scope, "Buffer size must be a multiple of 64-bits"_s);
         return JSC::JSValue::encode(jsUndefined());
+    }
+
+    if (UNLIKELY(castedThis->isDetached())) {
+        throwVMTypeError(lexicalGlobalObject, scope, "Buffer is detached"_s);
+        return JSValue::encode(jsUndefined());
     }
 
     uint8_t* typedVector = castedThis->typedVector();
 
-    for (size_t i = 0; i < length/size; i++) {
-        for (size_t j = 0; j < size/2; j++) {
-            uint8_t temp = typedVector[size*i+j];
-            typedVector[size*i+j] = typedVector[size*i+(size-1)-j];
-            typedVector[size*i+(size-1)-j] = temp;
+    constexpr size_t swaps = elemSize/2;
+    for (size_t elem = 0; elem < length; elem += elemSize) {
+        const size_t right = elem + elemSize - 1;
+        for (size_t k = 0; k < swaps; k++) {
+            const size_t i = right - k;
+            const size_t j = elem + k;
+
+            uint8_t temp = typedVector[i];
+            typedVector[i] = typedVector[j];
+            typedVector[j] = temp;
         }
     }
 

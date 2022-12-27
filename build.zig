@@ -230,9 +230,8 @@ pub fn build(b: *std.build.Builder) !void {
         target.getOsVersionMax().semver
     else .{ .major = 0, .minor = 0, .patch = 0 };
 
-    defer b.default_step.dependOn(&b.addLog("Output: {s}/{s}\n", .{ output_dir, bun_executable_name }).step);
-
     var obj_step = b.step("obj", "Build bun as a .o file");
+    obj_step.dependOn(&b.addLog("Output: {s}/{s}\n", .{ output_dir, bun_executable_name }).step);
     var obj = b.addObject(bun_executable_name, root_src);
     var default_build_options: BunBuildOptions = brk: {
         const is_baseline = arch.isX86() and (target.cpu_model == .baseline or

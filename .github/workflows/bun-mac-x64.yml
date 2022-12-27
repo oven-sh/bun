@@ -68,6 +68,7 @@ jobs:
           build-args: |
             ARCH=${{ matrix.arch }}
             BUILDARCH=amd64
+            BUILD_MACHINE_ARCH=x86_64
             CPU_TARGET=${{ matrix.cpu }}
             TRIPLET=${{matrix.arch}}-macos-none
             GIT_SHA=${{github.sha}}
@@ -85,6 +86,7 @@ jobs:
           build-args: |
             ARCH=${{ matrix.arch }}
             BUILDARCH=arm64
+            BUILD_MACHINE_ARCH=aarch64
             CPU_TARGET=${{ matrix.cpu }}
             TRIPLET=${{matrix.arch}}-macos-none
             GIT_SHA=${{github.sha}}

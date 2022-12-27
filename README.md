@@ -5051,7 +5051,7 @@ It is very similar to my own development environment (except I use macOS)
 Install LLVM 13 and homebrew dependencies:
 
 ```bash
-brew install llvm@13 coreutils libtool cmake libiconv automake ninja gnu-sed pkg-config esbuild go rust
+brew install llvm@15 coreutils libtool cmake libiconv automake ninja gnu-sed pkg-config esbuild go rust
 ```
 
 bun (& the version of Zig) need LLVM 13 and Clang 13 (clang is part of LLVM). Weird build & runtime errors will happen otherwise.
@@ -5065,12 +5065,12 @@ which clang-13
 If it is not, you will have to run this to link it:
 
 ```bash
-export PATH="$(brew --prefix llvm@13)/bin:$HOME/.bun-tools/zig:$PATH"
-export LDFLAGS="$LDFLAGS -L$(brew --prefix llvm@13)/lib"
-export CPPFLAGS="$CPPFLAGS -I$(brew --prefix llvm@13)/include"
+export PATH="$(brew --prefix llvm@15)/bin:$HOME/.bun-tools/zig:$PATH"
+export LDFLAGS="$LDFLAGS -L$(brew --prefix llvm@15)/lib"
+export CPPFLAGS="$CPPFLAGS -I$(brew --prefix llvm@15)/include"
 ```
 
-On fish that looks like `fish_add_path (brew --prefix llvm@13)/bin`
+On fish that looks like `fish_add_path (brew --prefix llvm@15)/bin`
 
 #### Install Zig (macOS)
 

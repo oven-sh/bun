@@ -662,27 +662,27 @@ describe("status code text", () => {
     511: "Network Authentication Required",
   };
 
-  var statusCode = 0;
-  var server;
-  beforeAll(() => {
-    server = serve({
-      port: port++,
-      fetch(req) {
-        return new Response("hey", { status: statusCode });
-      },
-    });
-  });
+  let statusCode = 0;
+  let server;
   afterAll(() => {
     server?.stop();
   });
 
   for (let code in fixture) {
     it(`should return ${code} ${fixture[code]}`, async () => {
+      if (!server) {
+        server = serve({
+          port: port++,
+          fetch(req) {
+            return new Response("hey", { status: statusCode });
+          },
+        });
+      }
+
       statusCode = +code;
       const response = await fetch(`http://${server.hostname}:${server.port}`);
       expect(response.status).toBe(parseInt(code));
       expect(response.statusText).toBe(fixture[code]);
-      server.stop();
     });
   }
 });

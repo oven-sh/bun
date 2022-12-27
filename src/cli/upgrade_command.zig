@@ -64,11 +64,9 @@ pub const Version = struct {
                     bun.default_allocator,
                     "bun-canary-timestamp-{any}",
                     .{
-                        std.fmt.fmtSliceHexLower(
-                            std.mem.asBytes(
-                                &bun.hash(
-                                    std.mem.asBytes(&Cli.start_time),
-                                ),
+                        bun.fmt.hexIntLower(
+                            bun.hash(
+                                std.mem.asBytes(&Cli.start_time),
                             ),
                         ),
                     },

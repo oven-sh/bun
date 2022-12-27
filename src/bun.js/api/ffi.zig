@@ -1,5 +1,6 @@
 const Bun = @This();
-const default_allocator = @import("bun").default_allocator;
+const root = @import("root");
+const default_allocator = bun.default_allocator;
 const bun = @import("bun");
 const Environment = bun.Environment;
 const NetworkThread = @import("bun").HTTP.NetworkThread;
@@ -931,6 +932,16 @@ pub const FFI = struct {
             var source_code_writer = source_code.writer();
             var ffi_wrapper = Bun__createFFICallbackFunction(js_context, js_function);
             try this.printCallbackSourceCode(js_context, ffi_wrapper, &source_code_writer);
+
+            if (comptime Environment.allow_assert) {
+                debug_write: {
+                    const fd = std.os.open("/tmp/bun-ffi-callback-source.c", std.os.O.WRONLY | std.os.O.CREAT, 0o644) catch break :debug_write;
+                    _ = std.os.write(fd, source_code.items) catch break :debug_write;
+                    std.os.ftruncate(fd, source_code.items.len) catch break :debug_write;
+                    std.os.close(fd);
+                }
+            }
+
             try source_code.append(0);
             // defer source_code.deinit();
             var state = TCC.tcc_new() orelse return error.TCCMissing;
@@ -1149,8 +1160,8 @@ pub const FFI = struct {
                     try writer.writeAll(", ");
                 }
                 first = false;
-
                 try writer.writeAll("    ");
+
                 const lengthBuf = std.fmt.bufPrintIntToSlice(arg_buf["arg".len..], i, 10, .lower, .{});
                 const argName = arg_buf[0 .. 3 + lengthBuf.len];
                 if (arg.needsACastInC()) {
@@ -1196,9 +1207,8 @@ pub const FFI = struct {
         ) !void {
             {
                 const ptr = @ptrToInt(globalObject);
-                const bytes = std.mem.asBytes(&ptr);
-                const fmt = std.fmt.fmtSliceHexUpper(bytes);
-                try writer.print("#define JS_GLOBAL_OBJECT (void*)0x{any}UL\n", .{fmt});
+                const fmt = bun.fmt.hexIntUpper(ptr);
+                try writer.print("#define JS_GLOBAL_OBJECT (void*)0x{any}ULL\n", .{fmt});
             }
 
             try writer.writeAll("#define IS_CALLBACK 1\n");
@@ -1272,7 +1282,7 @@ pub const FFI = struct {
                 for (this.arg_types.items) |arg, i| {
                     const printed = std.fmt.bufPrintIntToSlice(arg_buf["arg".len..], i, 10, .lower, .{});
                     const arg_name = arg_buf[0 .. "arg".len + printed.len];
-                    try writer.print("arguments[{d}] = {}.asZigRepr;\n", .{ i, arg.toJS(arg_name) });
+                    try writer.print("arguments[{d}] = {any}.asZigRepr;\n", .{ i, arg.toJS(arg_name) });
                 }
             }
 
@@ -1282,19 +1292,18 @@ pub const FFI = struct {
 
             {
                 const ptr = @ptrToInt(context_ptr);
-                const bytes = std.mem.asBytes(&ptr);
-                const fmt = std.fmt.fmtSliceHexUpper(bytes);
+                const fmt = bun.fmt.hexIntUpper(ptr);
 
                 if (this.arg_types.items.len > 0) {
                     inner_buf = try std.fmt.bufPrint(
                         inner_buf_[1..],
-                        "FFI_Callback_call((void*)0x{any}UL, {d}, arguments)",
+                        "FFI_Callback_call((void*)0x{any}ULL, {d}, arguments)",
                         .{ fmt, this.arg_types.items.len },
                     );
                 } else {
                     inner_buf = try std.fmt.bufPrint(
                         inner_buf_[1..],
-                        "FFI_Callback_call((void*)0x{any}UL, 0, (ZIG_REPR_TYPE*)0)",
+                        "FFI_Callback_call((void*)0x{any}ULL, 0, (ZIG_REPR_TYPE*)0)",
                         .{
                             fmt,
                         },

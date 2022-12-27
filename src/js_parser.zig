@@ -986,9 +986,8 @@ const StaticSymbolName = struct {
     pub const List = struct {
         fn NewStaticSymbol(comptime basename: string) StaticSymbolName {
             const hash_value = std.hash.Wyhash.hash(0, basename);
-            const hex_int = std.mem.asBytes(&hash_value);
             return comptime StaticSymbolName{
-                .internal = basename ++ "_" ++ std.fmt.comptimePrint("{any}", .{std.fmt.fmtSliceHexLower(hex_int)}),
+                .internal = basename ++ "_" ++ std.fmt.comptimePrint("{any}", .{bun.fmt.hexIntLower(hash_value)}),
                 .primary = basename,
                 .backup = "_" ++ basename ++ "$",
             };
@@ -996,9 +995,8 @@ const StaticSymbolName = struct {
 
         fn NewStaticSymbolWithBackup(comptime basename: string, comptime backup: string) StaticSymbolName {
             const hash_value = std.hash.Wyhash.hash(0, basename);
-            const hex_int = std.mem.asBytes(&hash_value);
             return comptime StaticSymbolName{
-                .internal = basename ++ "_" ++ std.fmt.comptimePrint("{any}", .{std.fmt.fmtSliceHexLower(hex_int)}),
+                .internal = basename ++ "_" ++ std.fmt.comptimePrint("{any}", .{bun.fmt.hexIntLower(hash_value)}),
                 .primary = basename,
                 .backup = backup,
             };
@@ -3905,14 +3903,13 @@ fn NewParser_(
                             p.import_records.items[import_record_index].path.text,
                         ),
                     );
-                    const hex_int = std.mem.asBytes(&hash_value);
 
                     const cjs_import_name = std.fmt.allocPrint(
                         p.allocator,
                         "{s}_{any}_{d}",
                         .{
                             symbol_name,
-                            std.fmt.fmtSliceHexLower(hex_int),
+                            bun.fmt.hexIntLower(hash_value),
                             p.cjs_import_stmts.items.len,
                         },
                     ) catch unreachable;

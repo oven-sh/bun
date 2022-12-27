@@ -1,1 +1,1 @@
-pub usingnamespace @import("./bun.zig");
+pub usingnamespace @import("root").bun;

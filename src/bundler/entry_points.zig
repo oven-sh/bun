@@ -278,7 +278,7 @@ pub const MacroEntryPoint = struct {
         hasher.update(entry_path);
         hasher.update(function_name);
         const hash = hasher.final();
-        const fmt = std.fmt.fmtSliceHexLower(std.mem.asBytes(&hash));
+        const fmt = bun.fmt.hexIntLower(hash);
 
         const specifier = std.fmt.bufPrint(buf, js_ast.Macro.namespaceWithColon ++ "//{any}.js", .{fmt}) catch unreachable;
         len.* = @truncate(u32, specifier.len);

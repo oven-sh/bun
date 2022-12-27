@@ -3487,7 +3487,7 @@ pub fn NewPrinter(
                                 // we need to handle symbol collisions for this
                                 p.print("$eXp0rT_");
                                 var buf: [16]u8 = undefined;
-                                p.print(std.fmt.bufPrint(&buf, "{}", .{std.fmt.fmtSliceHexLower(&@bitCast([4]u8, symbol_counter))}) catch unreachable);
+                                p.print(std.fmt.bufPrint(&buf, "{}", .{bun.fmt.hexIntLower(symbol_counter)}) catch unreachable);
                                 symbol_counter +|= 1;
                             }
 

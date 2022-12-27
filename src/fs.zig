@@ -118,9 +118,8 @@ pub const FileSystem = struct {
     pub fn tmpname(_: *const FileSystem, extname: string, buf: []u8, hash: u64) ![*:0]u8 {
         // PRNG was...not so random
         const hex_value = @truncate(u64, @intCast(u128, hash) * @intCast(u128, std.time.nanoTimestamp()));
-        const hex_int = std.mem.asBytes(&hex_value);
 
-        return try std.fmt.bufPrintZ(buf, ".{any}{s}", .{ std.fmt.fmtSliceHexLower(hex_int), extname });
+        return try std.fmt.bufPrintZ(buf, ".{any}{s}", .{ bun.fmt.hexIntLower(hex_value), extname });
     }
 
     pub var max_fd: FileDescriptorType = 0;
@@ -732,14 +731,14 @@ pub const FileSystem = struct {
                 this: *const ModKey,
                 basename: string,
             ) !string {
-                const hex_int = std.mem.asBytes(&this.hash());
+                const hex_int = this.hash();
 
                 return try std.fmt.bufPrint(
                     &hash_name_buf,
                     "{s}-{any}",
                     .{
                         basename,
-                        std.fmt.fmtSliceHexLower(hex_int),
+                        bun.fmt.hexIntLower(hex_int),
                     },
                 );
             }

@@ -10,7 +10,7 @@ const default_allocator = bun.default_allocator;
 const constStrToU8 = bun.constStrToU8;
 const FeatureFlags = bun.FeatureFlags;
 const C = bun.C;
-
+const root = @import("root");
 const std = @import("std");
 const lex = @import("js_lexer.zig");
 const logger = @import("bun").logger;

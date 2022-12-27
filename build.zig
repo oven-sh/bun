@@ -1,8 +1,12 @@
 const std = @import("std");
 
 fn pkgPath(comptime out: []const u8) std.build.FileSource {
-    const outpath = comptime std.fs.path.dirname(@src().file).? ++ std.fs.path.sep_str ++ out;
-    return .{ .path = outpath };
+    if (comptime std.fs.path.dirname(@src().file)) |base| {
+        const outpath = comptime base ++ std.fs.path.sep_str ++ out;
+        return .{ .path = outpath };
+    } else {
+        return .{ .path = out };
+    }
 }
 pub fn addPicoHTTP(step: *std.build.LibExeObjStep, comptime with_obj: bool) void {
     step.addIncludePath("src/deps");
@@ -79,11 +83,9 @@ fn addInternalPackages(step: *std.build.LibExeObjStep, _: std.mem.Allocator, tar
         javascript_core_stub
     else
         javascript_core_real;
-    io.dependencies = &[_]std.build.Pkg{bun};
     javascript_core.dependencies = &[_]std.build.Pkg{};
-    bun.dependencies = &[_]std.build.Pkg{ bun, io, javascript_core };
-    step.addPackage(bun);
     step.addPackage(io);
+    step.addPackage(bun);
 }
 
 const BunBuildOptions = struct {
@@ -168,7 +170,6 @@ pub fn build(b: *std.build.Builder) !void {
     // between Debug, ReleaseSafe, ReleaseFast, and ReleaseSmall.
     mode = b.standardReleaseOptions();
 
-    var exe: *std.build.LibExeObjStep = undefined;
     var output_dir_buf = std.mem.zeroes([4096]u8);
     var bin_label = if (mode == std.builtin.Mode.Debug) "packages/debug-bun-" else "packages/bun-";
 
@@ -214,20 +215,12 @@ pub fn build(b: *std.build.Builder) !void {
 
     std.fs.cwd().makePath(output_dir) catch {};
     const bun_executable_name = if (mode == std.builtin.Mode.Debug) "bun-debug" else "bun";
-    exe = b.addExecutable(bun_executable_name, if (target.getOsTag() == std.Target.Os.Tag.freestanding)
+    const root_src = if (target.getOsTag() == std.Target.Os.Tag.freestanding)
         "src/main_wasm.zig"
     else
-        "root.zig");
-    // exe.setLibCFile("libc.txt");
-    exe.linkLibC();
-    // exe.linkLibCpp();
+        "root.zig";
 
-    exe.setOutputDir(output_dir);
     updateRuntime() catch {};
-
-    exe.setTarget(target);
-    exe.setBuildMode(mode);
-    b.install_path = output_dir;
 
     const min_version: std.builtin.Version = if (target.getOsTag() != .freestanding)
         target.getOsVersionMin().semver
@@ -237,20 +230,10 @@ pub fn build(b: *std.build.Builder) !void {
         target.getOsVersionMax().semver
     else .{ .major = 0, .minor = 0, .patch = 0 };
 
-    // exe.want_lto = true;
     defer b.default_step.dependOn(&b.addLog("Output: {s}/{s}\n", .{ output_dir, bun_executable_name }).step);
-    defer b.default_step.dependOn(&b.addLog(
-        "Build {s} v{} - v{}\n",
-        .{
-            triplet,
-            min_version,
-            max_version,
-        },
-    ).step);
 
     var obj_step = b.step("obj", "Build bun as a .o file");
-    var obj = b.addObject(bun_executable_name, exe.root_src.?.path);
-
+    var obj = b.addObject(bun_executable_name, root_src);
     var default_build_options: BunBuildOptions = brk: {
         const is_baseline = arch.isX86() and (target.cpu_model == .baseline or
             !std.Target.x86.featureSetHas(target.getCpuFeatures(), .avx2));
@@ -324,7 +307,6 @@ pub fn build(b: *std.build.Builder) !void {
 
         obj_step.dependOn(&obj.step);
 
-        obj.setOutputDir(output_dir);
         obj.setBuildMode(mode);
 
         var actual_build_options = default_build_options;
@@ -338,10 +320,8 @@ pub fn build(b: *std.build.Builder) !void {
         obj.linkLibC();
 
         obj.strip = false;
-        obj.bundle_compiler_rt = false;
+        obj.bundle_compiler_rt = true;
         obj.omit_frame_pointer = mode != .Debug;
-
-        b.default_step.dependOn(&obj.step);
 
         if (target.getOsTag() == .linux) {
             // obj.want_lto = tar;
@@ -481,6 +461,7 @@ pub fn build(b: *std.build.Builder) !void {
             headers_step.dependOn(&after.step);
         }
     }
+    b.default_step.dependOn(obj_step);
 }
 
 pub var original_make_fn: ?*const fn (step: *std.build.Step) anyerror!void = null;
@@ -558,7 +539,7 @@ pub fn configureObjectStep(_: *std.build.Builder, obj: *std.build.LibExeObjStep,
 
     obj.setOutputDir(output_dir);
     obj.setBuildMode(mode);
-    obj.bundle_compiler_rt = false;
+    obj.bundle_compiler_rt = true;
 
     if (target.getOsTag() != .freestanding) obj.linkLibC();
     if (target.getOsTag() != .freestanding) obj.bundle_compiler_rt = false;

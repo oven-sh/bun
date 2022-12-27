@@ -119,6 +119,83 @@ pub const fmt = struct {
             else => SizeFormatter{ .value = @intCast(u64, value) },
         };
     }
+
+    const lower_hex_table = [_]u8{
+        '0',
+        '1',
+        '2',
+        '3',
+        '4',
+        '5',
+        '6',
+        '7',
+        '8',
+        '9',
+        'a',
+        'b',
+        'c',
+        'd',
+        'e',
+        'f',
+    };
+    const upper_hex_table = [_]u8{
+        '0',
+        '1',
+        '2',
+        '3',
+        '4',
+        '5',
+        '6',
+        '7',
+        '8',
+        '9',
+        'A',
+        'B',
+        'C',
+        'D',
+        'E',
+        'F',
+    };
+    pub fn HexIntFormatter(comptime Int: type, comptime lower: bool) type {
+        return struct {
+            value: Int,
+
+            const table = if (lower) lower_hex_table else upper_hex_table;
+
+            const BufType = [@bitSizeOf(Int) / 4]u8;
+
+            fn getOutBuf(value: Int) BufType {
+                var buf: BufType = undefined;
+                comptime var i: usize = 0;
+                inline while (i < buf.len) : (i += 1) {
+                    // value relative to the current nibble
+                    buf[i] = table[@as(u8, @truncate(u4, value >> comptime ((buf.len - i - 1) * 4))) & 0xF];
+                }
+
+                return buf;
+            }
+
+            pub fn format(self: @This(), comptime _: []const u8, _: fmt.FormatOptions, writer: anytype) !void {
+                const value = self.value;
+                try writer.writeAll(&getOutBuf(value));
+            }
+        };
+    }
+
+    pub fn HexInt(comptime Int: type, comptime lower: std.fmt.Case, value: Int) HexIntFormatter(Int, lower == .lower) {
+        const Formatter = HexIntFormatter(Int, lower == .lower);
+        return Formatter{ .value = value };
+    }
+
+    pub fn hexIntLower(value: anytype) HexIntFormatter(@TypeOf(value), true) {
+        const Formatter = HexIntFormatter(@TypeOf(value), true);
+        return Formatter{ .value = value };
+    }
+
+    pub fn hexIntUpper(value: anytype) HexIntFormatter(@TypeOf(value), false) {
+        const Formatter = HexIntFormatter(@TypeOf(value), false);
+        return Formatter{ .value = value };
+    }
 };
 
 pub const Output = @import("./output.zig");

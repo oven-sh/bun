@@ -16,7 +16,7 @@ pub extern fn tcc_compile_string(s: *TCCState, buf: [*c]const u8) c_int;
 pub extern fn tcc_set_output_type(s: *TCCState, output_type: c_int) c_int;
 pub extern fn tcc_add_library_path(s: *TCCState, pathname: [*c]const u8) c_int;
 pub extern fn tcc_add_library(s: *TCCState, libraryname: [*c]const u8) c_int;
-pub extern fn tcc_add_symbol(s: *TCCState, name: [*c]const u8, val: ?*const anyopaque) c_int;
+pub extern fn tcc_add_symbol(s: *TCCState, name: [*:0]const u8, val: *const anyopaque) c_int;
 pub extern fn tcc_output_file(s: *TCCState, filename: [*c]const u8) c_int;
 pub extern fn tcc_run(s: *TCCState, argc: c_int, argv: [*c][*c]u8) c_int;
 pub extern fn tcc_relocate(s1: *TCCState, ptr: ?*anyopaque) c_int;

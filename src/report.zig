@@ -28,8 +28,7 @@ pub const CrashReportWriter = struct {
     pub fn printFrame(_: ?*anyopaque, frame: CrashReporter.StackFrame) void {
         const function_name = if (frame.function_name.len > 0) frame.function_name else "[function ?]";
         const filename = if (frame.filename.len > 0) frame.function_name else "[file ?]";
-        const bytes = std.mem.asBytes(&frame.pc);
-        const fmt = std.fmt.fmtSliceHexUpper(bytes);
+        const fmt = bun.fmt.hexIntUpper(frame.pc);
         crash_report_writer.print("[0x{any}] - <b>{s}<r> {s}:{d}\n", .{ fmt, function_name, filename, frame.line_number });
     }
 
@@ -272,7 +271,7 @@ pub noinline fn handleCrash(signal: i32, addr: usize) void {
 
     crash_report_writer.print(
         "\n<r><red>{s}<d> at 0x{any}\n\n",
-        .{ @errorName(name), std.fmt.fmtSliceHexUpper(std.mem.asBytes(&addr)) },
+        .{ @errorName(name), bun.fmt.hexIntUpper(addr) },
     );
     printMetadata();
     if (comptime !@import("bun").JSC.is_bindgen) {

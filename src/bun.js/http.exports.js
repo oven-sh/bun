@@ -192,6 +192,7 @@ export class IncomingMessage extends Readable {
       if (isBodySizeKnown) {
         this.#bodyStream.on("data", (chunk) => {
           this.push(chunk);
+          // when we are streaming a known body size, automatically close the stream when we have read enough
           remaining -= chunk?.byteLength ?? 0;
           if (remaining <= 0) {
             this.#closeBodyStream();

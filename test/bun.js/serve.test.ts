@@ -1,5 +1,5 @@
 import { file, gc, serve } from "bun";
-import { afterEach, describe, it, expect } from "bun:test";
+import { afterEach, describe, it, expect, beforeAll, afterAll } from "bun:test";
 import { readFile, readFileSync, writeFileSync } from "fs";
 import { resolve } from "path";
 
@@ -662,15 +662,23 @@ describe("status code text", () => {
     511: "Network Authentication Required",
   };
 
+  var statusCode = 0;
+  var server;
+  beforeAll(() => {
+    server = serve({
+      port: port++,
+      fetch(req) {
+        return new Response("hey", { status: statusCode });
+      },
+    });
+  });
+  afterAll(() => {
+    server?.stop();
+  });
+
   for (let code in fixture) {
     it(`should return ${code} ${fixture[code]}`, async () => {
-      const server = serve({
-        port: port++,
-        fetch(req) {
-          return new Response("hey", { status: +code });
-        },
-      });
-
+      statusCode = +code;
       const response = await fetch(`http://${server.hostname}:${server.port}`);
       expect(response.status).toBe(parseInt(code));
       expect(response.statusText).toBe(fixture[code]);

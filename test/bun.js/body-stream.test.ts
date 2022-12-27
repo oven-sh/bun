@@ -1,9 +1,7 @@
 // @ts-nocheck
 import { file, gc, serve, ServeOptions } from "bun";
-import { afterEach, describe, expect, it, test } from "bun:test";
+import { afterAll, afterEach, describe, expect, it, test } from "bun:test";
 import { readFileSync } from "fs";
-
-// afterEach(() => Bun.gc(true));
 
 var port = 4021;
 
@@ -214,6 +212,11 @@ async function runInServer(
   } finally {
   }
 }
+
+afterAll(() => {
+  existingServer && existingServer.close();
+  existingServer = null;
+});
 
 function fillRepeating(dstBuffer, start, end) {
   let len = dstBuffer.length,

@@ -1,6 +1,5 @@
 const std = @import("std");
 const builtin = @import("builtin");
-const imports = @cImport(@cInclude("sys/resource.h"));
 const os = std.os;
 const mem = std.mem;
 const Stat = std.fs.File.Stat;
@@ -539,13 +538,8 @@ pub fn get_system_loadavg() [3]f64 {
 pub extern fn getuid(...) std.os.uid_t;
 pub extern fn getgid(...) std.os.gid_t;
 
-pub fn get_process_priority(pid: c_uint) i32 {
-    return imports.getpriority(imports.PRIO_PROCESS, pid);
-}
-
-pub fn set_process_priority(pid: c_uint, priority: c_int) i32 {
-    return imports.setpriority(imports.PRIO_PROCESS, pid, priority);
-}
+pub extern fn get_process_priority(pid: c_uint) i32;
+pub extern fn set_process_priority(pid: c_uint, priority: c_int) i32;
 
 pub fn get_version(buf: []u8) []const u8 {
     @memset(buf.ptr, 0, buf.len);

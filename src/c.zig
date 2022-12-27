@@ -435,3 +435,7 @@ pub fn dlsym(comptime Type: type, comptime name: [:0]const u8) ?Type {
 
     return null;
 }
+
+// set in c-bindings.cpp
+pub extern fn get_process_priority(pid: c_uint) i32;
+pub extern fn set_process_priority(pid: c_uint, priority: c_int) i32;

@@ -1,5 +1,6 @@
 // when we don't want to use @cInclude, we can just stick wrapper functions here
 #include <sys/resource.h>
+#include <cstdint>
 
 extern "C" int32_t get_process_priority(uint32_t pid)
 {

@@ -228,7 +228,10 @@ pub inline fn cast(comptime To: type, value: anytype) To {
     if (comptime std.meta.trait.isIntegral(@TypeOf(value))) {
         return @intToPtr(To, @bitCast(usize, value));
     }
-    return @ptrCast(To, @alignCast(@alignOf(To), value));
+
+    // TODO: file issue about why std.meta.Child only is necessary on Linux aarch64
+    // it should be necessary on all targets
+    return @ptrCast(To, @alignCast(@alignOf(std.meta.Child(To)), value));
 }
 
 extern fn strlen(ptr: [*c]const u8) usize;

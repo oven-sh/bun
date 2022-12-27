@@ -206,8 +206,8 @@ pub fn build(b: *std.build.Builder) !void {
 
     var triplet = triplet_buf[0 .. osname.len + cpuArchName.len + 1];
 
-    if (std.os.getenv("OUTPUT_DIR")) |output_dir_| {
-        output_dir = output_dir_;
+    if (b.option([]const u8, "output-dir", "target to install to") orelse std.os.getenv("OUTPUT_DIR")) |output_dir_| {
+        output_dir = b.pathFromRoot(output_dir_);
     } else {
         const output_dir_base = try std.fmt.bufPrint(&output_dir_buf, "{s}{s}", .{ bin_label, triplet });
         output_dir = b.pathFromRoot(output_dir_base);
@@ -304,7 +304,7 @@ pub fn build(b: *std.build.Builder) !void {
             ).step);
         }
 
-        obj_step.dependOn(&obj.step);
+        defer obj_step.dependOn(&obj.step);
 
         obj.setBuildMode(mode);
 
@@ -460,6 +460,7 @@ pub fn build(b: *std.build.Builder) !void {
             headers_step.dependOn(&after.step);
         }
     }
+    obj.setOutputDir(output_dir);
     b.default_step.dependOn(obj_step);
 }
 

@@ -13,8 +13,10 @@ ARG WEBKIT_TAG=jul27-2
 ARG ZIG_TAG=jul1
 ARG ZIG_VERSION="0.11.0-dev.947+cf822c6dd"
 ARG WEBKIT_BASENAME="bun-webkit-linux-$BUILDARCH"
+
+ARG ZIG_FILENAME=zig-linux-${ARCH}-${ZIG_VERSION}.tar.xz
 ARG WEBKIT_URL="https://github.com/oven-sh/WebKit/releases/download/$WEBKIT_TAG/${WEBKIT_BASENAME}.tar.gz"
-ARG ZIG_URL="https://ziglang.org/builds/zig-linux-${ARCH}-${ZIG_VERSION}.zip"
+ARG ZIG_URL="https://ziglang.org/builds/${ZIG_FILENAME}"
 ARG GIT_SHA=""
 ARG BUN_BASE_VERSION=0.4
 
@@ -42,6 +44,7 @@ RUN install_packages \
     rsync \
     ruby \
     unzip \
+    xz-utils \
     bash tar gzip ccache
 
 ENV CXX=clang++-15
@@ -65,10 +68,10 @@ ARG ZIG_URL
 
 ENV WEBKIT_OUT_DIR=${WEBKIT_DIR}
 ENV BUILDARCH=${BUILDARCH}
-ENV AR=/usr/bin/llvm-ar-13
+ENV AR=/usr/bin/llvm-ar-15
 ENV ZIG "${ZIG_PATH}/zig"
 ENV PATH="$ZIG/bin:$PATH"
-ENV LD=lld-13
+ENV LD=lld-15
 
 RUN mkdir -p $BUN_DIR $BUN_DEPS_OUT_DIR 
 
@@ -77,8 +80,8 @@ FROM bun-base as bun-base-with-zig-and-webkit
 WORKDIR $GITHUB_WORKSPACE
 
 ADD $ZIG_URL .
-RUN unzip -q zig-linux-$BUILDARCH.zip && \
-    rm zig-linux-$BUILDARCH.zip;
+RUN tar xf ${ZIG_FILENAME} && \
+    rm ${ZIG_FILENAME};
 
 
 

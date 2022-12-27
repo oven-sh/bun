@@ -129,7 +129,7 @@ COPY src/deps/lol-html ${BUN_DIR}/src/deps/lol-html
 
 ENV CCACHE_DIR=/ccache
 
-RUN --mount=type=cache,target=/ccache export PATH=$PATH:$HOME/.cargo/bin && export CC=$(which clang-13) && cd ${BUN_DIR} && \
+RUN --mount=type=cache,target=/ccache export PATH=$PATH:$HOME/.cargo/bin && export CC=$(which clang-15) && cd ${BUN_DIR} && \
     make lolhtml && rm -rf src/deps/lol-html Makefile
 
 FROM bun-base as mimalloc
@@ -350,6 +350,7 @@ ENV CPU_TARGET=${CPU_TARGET}
 
 WORKDIR $BUN_DIR
 
+COPY ./root.zig ${BUN_DIR}/root.zig
 COPY ./src ${BUN_DIR}/src
 COPY ./build.zig ${BUN_DIR}/build.zig
 COPY ./completions ${BUN_DIR}/completions

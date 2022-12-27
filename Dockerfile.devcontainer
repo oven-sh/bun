@@ -1,12 +1,14 @@
 ARG DEBIAN_FRONTEND=noninteractive
 ARG GITHUB_WORKSPACE=/build
 ARG BUILDARCH=amd64
+ARG ARCH=x86_64
 ARG ZIG_PATH=${GITHUB_WORKSPACE}/zig
 ARG WEBKIT_DIR=${GITHUB_WORKSPACE}/bun-webkit 
 ARG BUN_RELEASE_DIR=${GITHUB_WORKSPACE}/bun-release
 ARG BUN_DEPS_OUT_DIR=${GITHUB_WORKSPACE}/bun-deps
 ARG BUN_DIR=${GITHUB_WORKSPACE}/bun
 ARG BUN_PACKAGES_DIR=${BUN_DIR}/packages
+ARG ZIG_URL="https://ziglang.org/builds/zig-${ARCH}-${ZIG_VERSION}.zip"
 
 FROM --platform=linux/${BUILDARCH} ubuntu:22.04 as bun.devcontainer
 

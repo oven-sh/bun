@@ -11,10 +11,10 @@ ARG TRIPLET=${ARCH}-linux-gnu
 ARG BUILDARCH=amd64
 ARG WEBKIT_TAG=jul27-2
 ARG ZIG_TAG=jul1
+ARG ZIG_VERSION="0.11.0-dev.947+cf822c6dd"
 ARG WEBKIT_BASENAME="bun-webkit-linux-$BUILDARCH"
 ARG WEBKIT_URL="https://github.com/oven-sh/WebKit/releases/download/$WEBKIT_TAG/${WEBKIT_BASENAME}.tar.gz"
-
-ARG ZIG_URL="https://github.com/oven-sh/zig/releases/download/$ZIG_TAG/zig-linux-$BUILDARCH.zip"
+ARG ZIG_URL="https://ziglang.org/builds/zig-linux-${ARCH}-${ZIG_VERSION}.zip"
 ARG GIT_SHA=""
 ARG BUN_BASE_VERSION=0.4
 
@@ -24,7 +24,7 @@ RUN install_packages ca-certificates curl wget lsb-release software-properties-c
 
 RUN wget https://apt.llvm.org/llvm.sh && \
     chmod +x llvm.sh && \
-    ./llvm.sh 13
+    ./llvm.sh 15
 
 RUN install_packages \
     cmake \
@@ -44,8 +44,8 @@ RUN install_packages \
     unzip \
     bash tar gzip ccache
 
-ENV CXX=clang++-13
-ENV CC=clang-13
+ENV CXX=clang++-15
+ENV CC=clang-15
 
 RUN curl -fsSL https://deb.nodesource.com/setup_lts.x | bash - && \
     install_packages nodejs && \

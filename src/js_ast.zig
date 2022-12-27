@@ -118,7 +118,8 @@ pub fn NewBaseStore(comptime Union: anytype, comptime count: usize) type {
         }
 
         pub fn reset() void {
-            for (_self.overflow.slice()) |b| {
+            const blocks = _self.overflow.slice();
+            for (blocks) |b| {
                 b.used = 0;
             }
             _self.overflow.used = 0;
@@ -7837,7 +7838,13 @@ pub const Macro = struct {
                     if (comptime is_bindgen) return undefined;
                     var macro_callback = macro.vm.macros.get(id) orelse return caller;
 
-                    var result = js.JSObjectCallAsFunctionReturnValueHoldingAPILock(macro.vm.global, macro_callback, null, args_count, &args_buf);
+                    var result = js.JSObjectCallAsFunctionReturnValueHoldingAPILock(
+                        macro.vm.global,
+                        macro_callback,
+                        null,
+                        args_count,
+                        &args_buf,
+                    );
 
                     var runner = Run{
                         .caller = caller,
@@ -8185,12 +8192,14 @@ pub const Macro = struct {
                 pub fn callWrapper(args: CallArgs) MacroError!Expr {
                     JSC.markBinding(@src());
                     call_args = args;
-                    Bun__startMacro(call, JSC.VirtualMachine.get().global);
+                    Bun__startMacro(&call, JSC.VirtualMachine.get().global);
                     return result;
                 }
 
                 pub fn call() callconv(.C) void {
-                    result = @call(.auto, Run.runAsync, call_args);
+                    const call_args_copy = call_args;
+                    const local_result = @call(.auto, Run.runAsync, call_args_copy);
+                    result = local_result;
                 }
             };
 

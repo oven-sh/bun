@@ -277,9 +277,10 @@ pub const MacroEntryPoint = struct {
         hasher.update(js_ast.Macro.namespaceWithColon);
         hasher.update(entry_path);
         hasher.update(function_name);
-        const truncated_u32 = @truncate(u32, hasher.final());
+        const hash = hasher.final();
+        const fmt = std.fmt.fmtSliceHexLower(std.mem.asBytes(&hash));
 
-        const specifier = std.fmt.bufPrint(buf, js_ast.Macro.namespaceWithColon ++ "//{any}.js", .{bun.fmt.hexInt(truncated_u32)}) catch unreachable;
+        const specifier = std.fmt.bufPrint(buf, js_ast.Macro.namespaceWithColon ++ "//{any}.js", .{fmt}) catch unreachable;
         len.* = @truncate(u32, specifier.len);
 
         return generateIDFromSpecifier(specifier);

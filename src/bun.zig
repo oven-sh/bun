@@ -121,13 +121,13 @@ pub const fmt = struct {
     }
 
     pub fn hexIntWithType(comptime T: type, value: T) @TypeOf(std.fmt.fmtSliceHexLower("")) {
-        const copied = std.mem.toBytes(value);
-        return std.fmt.fmtSliceHexLower(&copied);
+        const copied = std.mem.asBytes(&value);
+        return std.fmt.fmtSliceHexLower(copied);
     }
 
     pub fn hexIntUpWithType(comptime T: type, value: T) @TypeOf(std.fmt.fmtSliceHexUpper("")) {
-        const copied = std.mem.toBytes(value);
-        return std.fmt.fmtSliceHexUpper(&copied);
+        const copied = std.mem.asBytes(&value);
+        return std.fmt.fmtSliceHexUpper(copied);
     }
 
     pub fn hexInt(value: anytype) @TypeOf(std.fmt.fmtSliceHexLower("")) {

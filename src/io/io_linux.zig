@@ -786,7 +786,7 @@ pub const Completion = struct {
     fn complete(completion: *Completion) void {
         switch (completion.operation) {
             .accept => {
-                const result = if (completion.result < 0) switch (-completion.result) {
+                const result: AcceptError!os.socket_t = if (completion.result < 0) switch (-completion.result) {
                     os.EINTR => {
                         completion.io.enqueue(completion);
                         return;
@@ -820,7 +820,7 @@ pub const Completion = struct {
                 completion.callback(completion.context, completion, &result);
             },
             .open => {
-                const result = if (completion.result < 0) switch (-completion.result) {
+                const result: OpenError!linux.fd_t = if (completion.result < 0) switch (-completion.result) {
                     0 => unreachable,
                     os.EAGAIN, os.EINPROGRESS, os.EINTR => {
                         completion.io.enqueue(completion);
@@ -847,7 +847,7 @@ pub const Completion = struct {
                 completion.callback(completion.context, completion, &result);
             },
             .connect => {
-                const result = if (completion.result < 0) switch (-completion.result) {
+                const result: ConnectError!void = if (completion.result < 0) switch (-completion.result) {
                     os.EAGAIN, os.EINPROGRESS, os.EINTR => {
                         completion.io.enqueue(completion);
                         return;
@@ -872,7 +872,7 @@ pub const Completion = struct {
                 completion.callback(completion.context, completion, &result);
             },
             .fsync => {
-                const result = if (completion.result < 0) switch (-completion.result) {
+                const result: FsyncError!void = if (completion.result < 0) switch (-completion.result) {
                     os.EINTR => {
                         completion.io.enqueue(completion);
                         return;
@@ -888,7 +888,7 @@ pub const Completion = struct {
                 completion.callback(completion.context, completion, &result);
             },
             .read => {
-                const result = if (completion.result < 0) switch (-completion.result) {
+                const result: ReadError!usize = if (completion.result < 0) switch (-completion.result) {
                     os.EAGAIN, os.EINTR => {
                         completion.io.enqueue(completion);
                         return;
@@ -908,7 +908,7 @@ pub const Completion = struct {
                 completion.callback(completion.context, completion, &result);
             },
             .readev, .recv => {
-                const result = if (completion.result < 0) switch (-completion.result) {
+                const result: RecvError!usize = if (completion.result < 0) switch (-completion.result) {
                     os.EAGAIN, os.EINTR => {
                         completion.io.enqueue(completion);
                         return;
@@ -924,7 +924,7 @@ pub const Completion = struct {
                 completion.callback(completion.context, completion, &result);
             },
             .writev, .send => {
-                const result = if (completion.result < 0) switch (-completion.result) {
+                const result: SendError!usize = if (completion.result < 0) switch (-completion.result) {
                     os.EAGAIN, os.EINTR => {
                         completion.io.enqueue(completion);
                         return;
@@ -946,7 +946,7 @@ pub const Completion = struct {
                 completion.callback(completion.context, completion, &result);
             },
             .timeout => {
-                const result = if (completion.result < 0) switch (-completion.result) {
+                const result: TimeoutError!void = if (completion.result < 0) switch (-completion.result) {
                     os.EINTR => {
                         completion.io.enqueue(completion);
                         return;
@@ -958,7 +958,7 @@ pub const Completion = struct {
                 completion.callback(completion.context, completion, &result);
             },
             .write => {
-                const result = if (completion.result < 0) switch (-completion.result) {
+                const result: WriteError!usize = if (completion.result < 0) switch (-completion.result) {
                     os.EINTR => {
                         completion.io.enqueue(completion);
                         return;
@@ -1184,6 +1184,7 @@ pub const ConnectError = error{
     PermissionDenied,
     ProtocolNotSupported,
     ConnectionTimedOut,
+    ConnectionResetByPeer,
 } || Errno;
 
 pub fn connect(
@@ -1327,6 +1328,7 @@ pub const RecvError = error{
     SystemResources,
     SocketNotConnected,
     FileDescriptorNotASocket,
+    ConnectionResetByPeer,
 } || Errno;
 
 pub fn recv(

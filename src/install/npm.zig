@@ -557,18 +557,24 @@ pub const PackageManifest = struct {
             var out_path_buf: ["-18446744073709551615".len + ".npm".len + 1]u8 = undefined;
             var dest_path_stream = std.io.fixedBufferStream(&dest_path_buf);
             var dest_path_stream_writer = dest_path_stream.writer();
-            try dest_path_stream_writer.print("{any}.npm-{any}", .{ bun.fmt.hexInt(file_id), bun.fmt.hexInt(@max(std.time.milliTimestamp(), 0)) });
+            const hex_bytes = std.mem.asBytes(&file_id);
+            const hex_fmt = std.fmt.fmtSliceHexLower(hex_bytes);
+            const hex_timestamp = @max(std.time.milliTimestamp(), 0);
+            const hex_timestamp_fmt = std.fmt.fmtSliceHexLower(std.mem.asBytes(&hex_timestamp));
+            try dest_path_stream_writer.print("{any}.npm-{any}", .{ hex_fmt, hex_timestamp_fmt });
             try dest_path_stream_writer.writeByte(0);
             var tmp_path: [:0]u8 = dest_path_buf[0 .. dest_path_stream.pos - 1 :0];
             try writeFile(this, tmp_path, tmpdir);
-            var out_path = std.fmt.bufPrintZ(&out_path_buf, "{any}.npm", .{bun.fmt.hexInt(file_id)}) catch unreachable;
+            var out_path = std.fmt.bufPrintZ(&out_path_buf, "{any}.npm", .{hex_fmt}) catch unreachable;
             try std.os.renameatZ(tmpdir.dir.fd, tmp_path, cache_dir.dir.fd, out_path);
         }
 
         pub fn load(allocator: std.mem.Allocator, cache_dir: std.fs.IterableDir, package_name: string) !?PackageManifest {
             const file_id = std.hash.Wyhash.hash(0, package_name);
             var file_path_buf: [512 + 64]u8 = undefined;
-            var file_path = try std.fmt.bufPrintZ(&file_path_buf, "{any}.npm", .{bun.fmt.hexInt(file_id)});
+            const hex_bytes = std.mem.asBytes(&file_id);
+            const hex_fmt = std.fmt.fmtSliceHexLower(hex_bytes);
+            var file_path = try std.fmt.bufPrintZ(&file_path_buf, "{any}.npm", .{hex_fmt});
             var cache_file = cache_dir.dir.openFileZ(
                 file_path,
                 .{ .mode = .read_only },

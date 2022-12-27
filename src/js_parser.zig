@@ -985,16 +985,20 @@ const StaticSymbolName = struct {
 
     pub const List = struct {
         fn NewStaticSymbol(comptime basename: string) StaticSymbolName {
+            const hash_value = std.hash.Wyhash.hash(0, basename);
+            const hex_int = std.mem.asBytes(&hash_value);
             return comptime StaticSymbolName{
-                .internal = basename ++ "_" ++ std.fmt.comptimePrint("{any}", .{bun.fmt.hexInt(std.hash.Wyhash.hash(0, basename))}),
+                .internal = basename ++ "_" ++ std.fmt.comptimePrint("{any}", .{std.fmt.fmtSliceHexLower(hex_int)}),
                 .primary = basename,
                 .backup = "_" ++ basename ++ "$",
             };
         }
 
         fn NewStaticSymbolWithBackup(comptime basename: string, comptime backup: string) StaticSymbolName {
+            const hash_value = std.hash.Wyhash.hash(0, basename);
+            const hex_int = std.mem.asBytes(&hash_value);
             return comptime StaticSymbolName{
-                .internal = basename ++ "_" ++ std.fmt.comptimePrint("{any}", .{bun.fmt.hexInt(std.hash.Wyhash.hash(0, basename))}),
+                .internal = basename ++ "_" ++ std.fmt.comptimePrint("{any}", .{std.fmt.fmtSliceHexLower(hex_int)}),
                 .primary = basename,
                 .backup = backup,
             };
@@ -3894,20 +3898,21 @@ fn NewParser_(
                     p.import_records.items[import_record_index].contains_import_star = true;
 
                     const symbol_name = p.import_records.items[import_record_index].path.name.nonUniqueNameString(p.allocator) catch unreachable;
+                    const hash_value = @truncate(
+                        u16,
+                        std.hash.Wyhash.hash(
+                            0,
+                            p.import_records.items[import_record_index].path.text,
+                        ),
+                    );
+                    const hex_int = std.mem.asBytes(&hash_value);
+
                     const cjs_import_name = std.fmt.allocPrint(
                         p.allocator,
                         "{s}_{any}_{d}",
                         .{
                             symbol_name,
-                            bun.fmt.hexInt(
-                                @truncate(
-                                    u16,
-                                    std.hash.Wyhash.hash(
-                                        0,
-                                        p.import_records.items[import_record_index].path.text,
-                                    ),
-                                ),
-                            ),
+                            std.fmt.fmtSliceHexLower(hex_int),
                             p.cjs_import_stmts.items.len,
                         },
                     ) catch unreachable;

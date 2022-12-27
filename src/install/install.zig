@@ -1878,7 +1878,8 @@ pub const PackageManager = struct {
         var end: []u8 = undefined;
         if (scope.url.hostname.len > 32 or available.len < 64) {
             const visible_hostname = scope.url.hostname[0..@min(scope.url.hostname.len, 12)];
-            end = std.fmt.bufPrint(available, "@@{s}__{any}", .{ visible_hostname, bun.fmt.hexInt(String.Builder.stringHash(scope.url.href)) }) catch unreachable;
+            const hex_bytes = std.mem.asBytes(&String.Builder.stringHash(scope.url.href));
+            end = std.fmt.bufPrint(available, "@@{s}__{any}", .{ visible_hostname, std.fmt.fmtSliceHexLower(hex_bytes) }) catch unreachable;
         } else {
             end = std.fmt.bufPrint(available, "@@{s}", .{scope.url.hostname}) catch unreachable;
         }
@@ -1898,25 +1899,28 @@ pub const PackageManager = struct {
 
     // TODO: normalize to alphanumeric
     pub fn cachedNPMPackageFolderPrintBasename(buf: []u8, name: string, version: Semver.Version) stringZ {
+        const pre_hex_int = std.mem.asBytes(&version.tag.pre.hash);
+        const build_hex_int = std.mem.asBytes(&version.tag.build.hash);
+
         if (!version.tag.hasPre() and !version.tag.hasBuild()) {
             return std.fmt.bufPrintZ(buf, "{s}@{d}.{d}.{d}", .{ name, version.major, version.minor, version.patch }) catch unreachable;
         } else if (version.tag.hasPre() and version.tag.hasBuild()) {
             return std.fmt.bufPrintZ(
                 buf,
                 "{s}@{d}.{d}.{d}-{any}+{any}",
-                .{ name, version.major, version.minor, version.patch, bun.fmt.hexInt(version.tag.pre.hash), bun.fmt.hexIntUp(version.tag.build.hash) },
+                .{ name, version.major, version.minor, version.patch, std.fmt.fmtSliceHexLower(pre_hex_int), std.fmt.fmtSliceHexUpper(build_hex_int) },
             ) catch unreachable;
         } else if (version.tag.hasPre()) {
             return std.fmt.bufPrintZ(
                 buf,
                 "{s}@{d}.{d}.{d}-{any}",
-                .{ name, version.major, version.minor, version.patch, bun.fmt.hexInt(version.tag.pre.hash) },
+                .{ name, version.major, version.minor, version.patch, std.fmt.fmtSliceHexLower(pre_hex_int) },
             ) catch unreachable;
         } else if (version.tag.hasBuild()) {
             return std.fmt.bufPrintZ(
                 buf,
                 "{s}@{d}.{d}.{d}+{any}",
-                .{ name, version.major, version.minor, version.patch, bun.fmt.hexIntUp(version.tag.build.hash) },
+                .{ name, version.major, version.minor, version.patch, std.fmt.fmtSliceHexUpper(build_hex_int) },
             ) catch unreachable;
         } else {
             unreachable;

@@ -28,7 +28,9 @@ pub const CrashReportWriter = struct {
     pub fn printFrame(_: ?*anyopaque, frame: CrashReporter.StackFrame) void {
         const function_name = if (frame.function_name.len > 0) frame.function_name else "[function ?]";
         const filename = if (frame.filename.len > 0) frame.function_name else "[file ?]";
-        crash_report_writer.print("[0x{any}] - <b>{s}<r> {s}:{d}\n", .{ bun.fmt.hexIntUp(frame.pc), function_name, filename, frame.line_number });
+        const bytes = std.mem.asBytes(&frame.pc);
+        const fmt = std.fmt.fmtSliceHexUpper(bytes);
+        crash_report_writer.print("[0x{any}] - <b>{s}<r> {s}:{d}\n", .{ fmt, function_name, filename, frame.line_number });
     }
 
     pub fn dump() void {

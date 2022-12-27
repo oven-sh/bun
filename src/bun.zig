@@ -119,24 +119,6 @@ pub const fmt = struct {
             else => SizeFormatter{ .value = @intCast(u64, value) },
         };
     }
-
-    pub fn hexIntWithType(comptime T: type, value: T) @TypeOf(std.fmt.fmtSliceHexLower("")) {
-        const copied = std.mem.asBytes(&value);
-        return std.fmt.fmtSliceHexLower(copied);
-    }
-
-    pub fn hexIntUpWithType(comptime T: type, value: T) @TypeOf(std.fmt.fmtSliceHexUpper("")) {
-        const copied = std.mem.asBytes(&value);
-        return std.fmt.fmtSliceHexUpper(copied);
-    }
-
-    pub fn hexInt(value: anytype) @TypeOf(std.fmt.fmtSliceHexLower("")) {
-        return hexIntWithType(@TypeOf(value), value);
-    }
-
-    pub fn hexIntUp(value: anytype) @TypeOf(std.fmt.fmtSliceHexUpper("")) {
-        return hexIntUpWithType(@TypeOf(value), value);
-    }
 };
 
 pub const Output = @import("./output.zig");

@@ -946,10 +946,10 @@ pub const Linker = struct {
                         if (linker.options.serve) {
                             var hash_buf: [64]u8 = undefined;
                             const modkey = try linker.getModKey(basepath, null);
-
+                            const hex_int = std.mem.asBytes(&modkey.hash());
                             return Fs.Path.init(try origin.joinAlloc(
                                 linker.allocator,
-                                std.fmt.bufPrint(&hash_buf, "hash:{any}/", .{bun.fmt.hexInt(modkey.hash())}) catch unreachable,
+                                std.fmt.bufPrint(&hash_buf, "hash:{any}/", .{std.fmt.fmtSliceHexLower(hex_int)}) catch unreachable,
                                 dirname,
                                 basename,
                                 absolute_pathname.ext,

@@ -1194,7 +1194,13 @@ pub const FFI = struct {
             context_ptr: ?*anyopaque,
             writer: anytype,
         ) !void {
-            try writer.print("#define JS_GLOBAL_OBJECT (void*)0x{any}UL\n", .{bun.fmt.hexIntUp(@ptrToInt(globalObject))});
+            {
+                const ptr = @ptrToInt(globalObject);
+                const bytes = std.mem.asBytes(&ptr);
+                const fmt = std.fmt.fmtSliceHexUpper(bytes);
+                try writer.print("#define JS_GLOBAL_OBJECT (void*)0x{any}UL\n", .{fmt});
+            }
+
             try writer.writeAll("#define IS_CALLBACK 1\n");
 
             brk: {
@@ -1273,21 +1279,29 @@ pub const FFI = struct {
             try writer.writeAll("  ");
             var inner_buf_: [372]u8 = undefined;
             var inner_buf: []u8 = &.{};
-            if (this.arg_types.items.len > 0) {
-                inner_buf = try std.fmt.bufPrint(
-                    inner_buf_[1..],
-                    "FFI_Callback_call((void*)0x{any}UL, {d}, arguments)",
-                    .{ @ptrToInt(context_ptr), bun.fmt.hexIntUp(this.arg_types.items.len) },
-                );
-            } else {
-                inner_buf = try std.fmt.bufPrint(
-                    inner_buf_[1..],
-                    "FFI_Callback_call((void*)0x{any}UL, 0, (ZIG_REPR_TYPE*)0)",
-                    .{
-                        bun.fmt.hexInt(@ptrToInt(context_ptr)),
-                    },
-                );
+
+            {
+                const ptr = @ptrToInt(context_ptr);
+                const bytes = std.mem.asBytes(&ptr);
+                const fmt = std.fmt.fmtSliceHexUpper(bytes);
+
+                if (this.arg_types.items.len > 0) {
+                    inner_buf = try std.fmt.bufPrint(
+                        inner_buf_[1..],
+                        "FFI_Callback_call((void*)0x{any}UL, {d}, arguments)",
+                        .{ fmt, this.arg_types.items.len },
+                    );
+                } else {
+                    inner_buf = try std.fmt.bufPrint(
+                        inner_buf_[1..],
+                        "FFI_Callback_call((void*)0x{any}UL, 0, (ZIG_REPR_TYPE*)0)",
+                        .{
+                            fmt,
+                        },
+                    );
+                }
             }
+
             if (this.return_type == .void) {
                 try writer.writeAll(inner_buf);
             } else {

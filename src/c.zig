@@ -346,14 +346,7 @@ pub fn getSystemLoadavg() [3]f64 {
 
 pub fn getProcessPriority(pid_: i32) i32 {
     const pid = @intCast(c_uint, pid_);
-
-    if (comptime Environment.isLinux) {
-        return linux.get_process_priority(pid);
-    } else if (comptime Environment.isMac) {
-        return darwin.get_process_priority(pid);
-    } else {
-        return -1;
-    }
+    return get_process_priority(pid);
 }
 
 pub fn setProcessPriority(pid_: i32, priority_: i32) std.c.E {
@@ -362,14 +355,7 @@ pub fn setProcessPriority(pid_: i32, priority_: i32) std.c.E {
     const pid = @intCast(c_uint, pid_);
     const priority = @intCast(c_int, priority_);
 
-    var code: i32 = 0;
-    if (comptime Environment.isLinux) {
-        code = linux.set_process_priority(pid, priority);
-    } else if (comptime Environment.isMac) {
-        code = darwin.set_process_priority(pid, priority);
-    } else {
-        code = -2;
-    }
+    const code: i32 = set_process_priority(pid, priority);
 
     if (code == -2) return .SRCH;
     if (code == 0) return .SUCCESS;

@@ -796,7 +796,7 @@ pub const Subprocess = struct {
                     var sink = try globalThis.bunVM().allocator.create(JSC.WebCore.FileSink);
                     sink.* = .{
                         .fd = fd,
-                        .buffer = bun.ByteList.init(&.{}),
+                        .buffer = bun.ByteList{},
                         .allocator = globalThis.bunVM().allocator,
                         .auto_close = true,
                     };

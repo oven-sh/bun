@@ -1502,7 +1502,7 @@ pub const FileSink = struct {
     pub fn init(allocator: std.mem.Allocator, next: ?Sink) !*FileSink {
         var this = try allocator.create(FileSink);
         this.* = FileSink{
-            .buffer = bun.ByteList.init(&.{}),
+            .buffer = bun.ByteList{},
             .allocator = allocator,
             .next = next,
         };
@@ -1514,7 +1514,7 @@ pub const FileSink = struct {
         allocator: std.mem.Allocator,
     ) void {
         this.* = FileSink{
-            .buffer = bun.ByteList.init(&.{}),
+            .buffer = bun.ByteList{},
             .allocator = allocator,
             .next = null,
         };
@@ -1792,7 +1792,7 @@ pub const ArrayBufferSink = struct {
         allocator: std.mem.Allocator,
     ) void {
         this.* = ArrayBufferSink{
-            .bytes = bun.ByteList.init(&.{}),
+            .bytes = bun.ByteList{},
             .allocator = allocator,
             .next = null,
         };

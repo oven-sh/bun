@@ -43,7 +43,7 @@ const color_map = std.ComptimeStringMap([]const u8, .{
     &.{ "yellow", "33m" },
 });
 
-fn addInternalPackages(step: *std.build.LibExeObjStep, _: std.mem.Allocator, target: anytype) !void {
+fn addInternalPackages(step: *std.build.LibExeObjStep, allocator: std.mem.Allocator, zig_exe: []const u8, target: anytype) !void {
     var bun = std.build.Pkg{
         .name = "bun",
         .source = pkgPath("src/bun_redirect.zig"),
@@ -86,6 +86,13 @@ fn addInternalPackages(step: *std.build.LibExeObjStep, _: std.mem.Allocator, tar
     javascript_core.dependencies = &[_]std.build.Pkg{};
     step.addPackage(io);
     step.addPackage(bun);
+
+    // workaround for https://github.com/ziglang/zig/issues/14099
+    const compiler_rt: std.build.Pkg = .{
+        .name = "compiler_rt",
+        .source = .{ .path = try std.fmt.allocPrint(allocator, "{s}/lib/compiler_rt.zig", .{std.fs.path.dirname(zig_exe).?}) },
+    };
+    step.addPackage(compiler_rt);
 }
 
 const BunBuildOptions = struct {
@@ -279,6 +286,7 @@ pub fn build(b: *std.build.Builder) !void {
         try addInternalPackages(
             obj,
             b.allocator,
+            b.zig_exe,
             target,
         );
 
@@ -527,11 +535,11 @@ pub fn linkObjectFiles(b: *std.build.Builder, obj: *std.build.LibExeObjStep, tar
     }
 }
 
-pub fn configureObjectStep(_: *std.build.Builder, obj: *std.build.LibExeObjStep, comptime Target: type, target: Target, main_pkg_path: []const u8) !void {
+pub fn configureObjectStep(b: *std.build.Builder, obj: *std.build.LibExeObjStep, comptime Target: type, target: Target, main_pkg_path: []const u8) !void {
     obj.setMainPkgPath(main_pkg_path);
 
     obj.setTarget(target);
-    try addInternalPackages(obj, std.heap.page_allocator, target);
+    try addInternalPackages(obj, std.heap.page_allocator, b.zig_exe, target);
     if (target.getOsTag() != .freestanding)
         addPicoHTTP(obj, false);
 

@@ -617,7 +617,7 @@ pub const Log = struct {
         err,
 
         pub fn atLeast(this: Level, other: Level) bool {
-            return @enumToInt(this) >= @enumToInt(other);
+            return @enumToInt(this) <= @enumToInt(other);
         }
 
         pub const label: std.EnumArray(Level, string) = brk: {

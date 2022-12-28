@@ -1683,6 +1683,15 @@ pub const ModuleLoader = struct {
                         .hash = 0,
                     };
                 },
+                .@"node:crypto" => {
+                    return ResolvedSource{
+                        .allocator = null,
+                        .source_code = ZigString.init(jsModuleFromFile(jsc_vm.load_builtins_from_path, "crypto.exports.js")),
+                        .specifier = ZigString.init("node:crypto"),
+                        .source_url = ZigString.init("node:crypto"),
+                        .hash = 0,
+                    };
+                },
                 .@"bun:ffi" => {
                     return ResolvedSource{
                         .allocator = null,
@@ -1969,11 +1978,11 @@ pub const HardcodedModule = enum {
     @"bun:jsc",
     @"bun:main",
     @"bun:sqlite",
-    depd,
     @"detect-libc",
     @"node:assert",
     @"node:buffer",
     @"node:child_process",
+    @"node:crypto",
     @"node:events",
     @"node:fs",
     @"node:fs/promises",
@@ -1997,6 +2006,7 @@ pub const HardcodedModule = enum {
     @"node:url",
     @"node:util",
     @"node:util/types",
+    depd,
     undici,
     ws,
     /// Already resolved modules go in here.
@@ -2016,6 +2026,7 @@ pub const HardcodedModule = enum {
             .{ "node:assert", HardcodedModule.@"node:assert" },
             .{ "node:buffer", HardcodedModule.@"node:buffer" },
             .{ "node:child_process", HardcodedModule.@"node:child_process" },
+            .{ "node:crypto", HardcodedModule.@"node:crypto" },
             .{ "node:events", HardcodedModule.@"node:events" },
             .{ "node:fs", HardcodedModule.@"node:fs" },
             .{ "node:fs/promises", HardcodedModule.@"node:fs/promises" },
@@ -2054,6 +2065,7 @@ pub const HardcodedModule = enum {
             .{ "bun:sqlite", "bun:sqlite" },
             .{ "bun:wrap", "bun:wrap" },
             .{ "child_process", "node:child_process" },
+            .{ "crypto", "node:crypto" },
             .{ "depd", "depd" },
             .{ "detect-libc", "detect-libc" },
             .{ "detect-libc/lib/detect-libc.js", "detect-libc" },
@@ -2068,6 +2080,7 @@ pub const HardcodedModule = enum {
             .{ "node:assert", "node:assert" },
             .{ "node:buffer", "node:buffer" },
             .{ "node:child_process", "node:child_process" },
+            .{ "node:crypto", "node:crypto" },
             .{ "node:events", "node:events" },
             .{ "node:fs", "node:fs" },
             .{ "node:fs/promises", "node:fs/promises" },

@@ -527,8 +527,8 @@ pub const TinyPtr = packed struct {
             std.debug.assert(end < right);
         }
 
-        const length = @maximum(end, right) - right;
-        const offset = @maximum(@ptrToInt(in.ptr), @ptrToInt(parent.ptr)) - @ptrToInt(parent.ptr);
+        const length = @max(end, right) - right;
+        const offset = @max(@ptrToInt(in.ptr), @ptrToInt(parent.ptr)) - @ptrToInt(parent.ptr);
         return TinyPtr{ .offset = @truncate(u16, offset), .len = @truncate(u16, length) };
     }
 };
@@ -585,7 +585,7 @@ pub const Route = struct {
         pub fn sortByNameString(_: @This(), lhs: string, rhs: string) bool {
             const math = std.math;
 
-            const n = @minimum(lhs.len, rhs.len);
+            const n = @min(lhs.len, rhs.len);
             var i: usize = 0;
             while (i < n) : (i += 1) {
                 switch (math.order(sort_table[lhs[i]], sort_table[rhs[i]])) {
@@ -609,7 +609,7 @@ pub const Route = struct {
                 .eq => switch (a.kind) {
                     // static + dynamic are sorted alphabetically
                     .static, .dynamic => @call(
-                        .{ .modifier = .always_inline },
+                        .always_inline,
                         sortByNameString,
                         .{
                             ctx,
@@ -620,7 +620,7 @@ pub const Route = struct {
                     // catch all and optional catch all must appear below dynamic
                     .catch_all, .optional_catch_all => switch (std.math.order(a.param_count, b.param_count)) {
                         .eq => @call(
-                            .{ .modifier = .always_inline },
+                            .always_inline,
                             sortByNameString,
                             .{
                                 ctx,
@@ -910,14 +910,14 @@ pub const MockServer = struct {
 fn makeTest(cwd_path: string, data: anytype) !void {
     Output.initTest();
     std.debug.assert(cwd_path.len > 1 and !strings.eql(cwd_path, "/") and !strings.endsWith(cwd_path, "bun"));
-    const bun_tests_dir = try std.fs.cwd().makeOpenPath("bun-test-scratch", .{ .iterate = true });
+    const bun_tests_dir = try std.fs.cwd().makeOpenPathIterable("bun-test-scratch", .{});
     bun_tests_dir.deleteTree(cwd_path) catch {};
 
-    const cwd = try bun_tests_dir.makeOpenPath(cwd_path, .{ .iterate = true });
+    const cwd = try bun_tests_dir.makeOpenPathIterable(cwd_path, .{});
     try cwd.setAsCwd();
 
     const Data = @TypeOf(data);
-    const fields: []const std.builtin.TypeInfo.StructField = comptime std.meta.fields(Data);
+    const fields: []const std.builtin.Type.StructField = comptime std.meta.fields(Data);
     inline for (fields) |field| {
         @setEvalBranchQuota(9999);
         const value = @field(data, field.name);
@@ -1250,7 +1250,7 @@ const Pattern = struct {
                 return null;
             };
             offset = pattern.len;
-            kind = @maximum(@enumToInt(@as(Pattern.Tag, pattern.value)), kind);
+            kind = @max(@enumToInt(@as(Pattern.Tag, pattern.value)), kind);
             count += @intCast(u16, @boolToInt(@enumToInt(@as(Pattern.Tag, pattern.value)) > @enumToInt(Pattern.Tag.static)));
         }
 
@@ -1295,7 +1295,7 @@ const Pattern = struct {
 
         if (input.len == 0 or input.len <= @as(usize, offset)) return Pattern{
             .value = .{ .static = HashedString.empty },
-            .len = @truncate(RoutePathInt, @minimum(input.len, @as(usize, offset))),
+            .len = @truncate(RoutePathInt, @min(input.len, @as(usize, offset))),
         };
 
         var i: RoutePathInt = offset;
@@ -1308,7 +1308,7 @@ const Pattern = struct {
         while (i <= end) : (i += 1) {
             switch (input[i]) {
                 '/' => {
-                    return Pattern{ .len = @minimum(i + 1, end), .value = .{ .static = initHashedString(input[offset..i]) } };
+                    return Pattern{ .len = @min(i + 1, end), .value = .{ .static = initHashedString(input[offset..i]) } };
                 },
                 '[' => {
                     if (i > offset) {
@@ -1375,7 +1375,7 @@ const Pattern = struct {
                     if (@enumToInt(tag) > @enumToInt(Tag.dynamic) and i <= end) return error.CatchAllMustBeAtTheEnd;
 
                     return Pattern{
-                        .len = @minimum(i + 1, end),
+                        .len = @min(i + 1, end),
                         .value = switch (tag) {
                             .dynamic => .{
                                 .dynamic = param,

@@ -94,7 +94,7 @@ pub const Lexer = struct {
                     last_flush = i;
                     const name = variable.value[start + curly_braces_offset .. i - curly_braces_offset];
 
-                    if (@call(.{ .modifier = .always_inline }, getter, .{ ctx, name })) |new_value| {
+                    if (@call(.always_inline, getter, .{ ctx, name })) |new_value| {
                         if (new_value.len > 0) {
                             try writer.writeAll(new_value);
                         }
@@ -164,7 +164,7 @@ pub const Lexer = struct {
                 -1 => {
                     lexer.end = lexer.current;
 
-                    return lexer.source.contents[start..if (any_spaces) @minimum(last_non_space, lexer.source.contents.len) else lexer.source.contents.len];
+                    return lexer.source.contents[start..if (any_spaces) @min(last_non_space, lexer.source.contents.len) else lexer.source.contents.len];
                 },
                 '$' => {
                     lexer.has_nested_value = true;
@@ -182,13 +182,13 @@ pub const Lexer = struct {
                         '\'' => {
                             lexer.end = lexer.current;
                             lexer.step();
-                            return lexer.source.contents[start..@minimum(lexer.end, lexer.source.contents.len)];
+                            return lexer.source.contents[start..@min(lexer.end, lexer.source.contents.len)];
                         },
                         implicitQuoteCharacter => {
                             lexer.end = lexer.current;
                             lexer.step();
 
-                            return lexer.source.contents[start..@minimum(if (any_spaces) last_non_space + 1 else lexer.end, lexer.end)];
+                            return lexer.source.contents[start..@min(if (any_spaces) last_non_space + 1 else lexer.end, lexer.end)];
                         },
                         '"' => {
                             // We keep going
@@ -201,7 +201,7 @@ pub const Lexer = struct {
                     lexer.step();
 
                     lexer.was_quoted = was_quoted;
-                    return lexer.source.contents[start..@minimum(
+                    return lexer.source.contents[start..@min(
                         lexer.end,
                         lexer.source.contents.len,
                     )];
@@ -293,7 +293,7 @@ pub const Lexer = struct {
                             0, -1 => {
                                 this.end = this.current;
                                 return if (last_non_space > this.start)
-                                    Variable{ .key = this.source.contents[this.start..@minimum(last_non_space + 1, this.source.contents.len)], .value = "" }
+                                    Variable{ .key = this.source.contents[this.start..@min(last_non_space + 1, this.source.contents.len)], .value = "" }
                                 else
                                     null;
                             },

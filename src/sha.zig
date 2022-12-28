@@ -36,13 +36,13 @@ fn NewEVP(
     comptime MDName: []const u8,
 ) type {
     return struct {
-        ctx: BoringSSL.EVP_MD_CTX,
+        ctx: BoringSSL.EVP_MD_CTX = undefined,
 
         pub const Digest = [digest_size]u8;
         pub const digest: comptime_int = digest_size;
 
         pub fn init() @This() {
-            const md = @call(.{}, @field(BoringSSL, MDName), .{});
+            const md = @call(.auto, @field(BoringSSL, MDName), .{});
             var this: @This() = .{
                 .ctx = undefined,
             };
@@ -55,7 +55,7 @@ fn NewEVP(
         }
 
         pub fn hash(bytes: []const u8, out: *Digest, engine: *BoringSSL.ENGINE) void {
-            const md = @call(.{}, @field(BoringSSL, MDName), .{});
+            const md = @call(.auto, @field(BoringSSL, MDName), .{});
 
             std.debug.assert(BoringSSL.EVP_Digest(bytes.ptr, bytes.len, out, null, md, engine) == 1);
         }

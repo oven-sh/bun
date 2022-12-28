@@ -58,51 +58,51 @@ pub const ZigGlobalObject = extern struct {
             unreachable;
         }
 
-        return @call(.{ .modifier = .always_inline }, Interface.import, .{ global, specifier, source });
+        return @call(.always_inline, Interface.import, .{ global, specifier, source });
     }
     pub fn resolve(res: *ErrorableZigString, global: *JSGlobalObject, specifier: *ZigString, source: *ZigString) callconv(.C) void {
         if (comptime is_bindgen) {
             unreachable;
         }
-        @call(.{ .modifier = .always_inline }, Interface.resolve, .{ res, global, specifier, source });
+        @call(.always_inline, Interface.resolve, .{ res, global, specifier, source });
     }
     pub fn fetch(ret: *ErrorableResolvedSource, global: *JSGlobalObject, specifier: *ZigString, source: *ZigString) callconv(.C) void {
         if (comptime is_bindgen) {
             unreachable;
         }
-        @call(.{ .modifier = .always_inline }, Interface.fetch, .{ ret, global, specifier, source });
+        @call(.always_inline, Interface.fetch, .{ ret, global, specifier, source });
     }
 
     pub fn promiseRejectionTracker(global: *JSGlobalObject, promise: *JSPromise, rejection: JSPromiseRejectionOperation) callconv(.C) JSValue {
         if (comptime is_bindgen) {
             unreachable;
         }
-        return @call(.{ .modifier = .always_inline }, Interface.promiseRejectionTracker, .{ global, promise, rejection });
+        return @call(.always_inline, Interface.promiseRejectionTracker, .{ global, promise, rejection });
     }
 
     pub fn reportUncaughtException(global: *JSGlobalObject, exception: *Exception) callconv(.C) JSValue {
         if (comptime is_bindgen) {
             unreachable;
         }
-        return @call(.{ .modifier = .always_inline }, Interface.reportUncaughtException, .{ global, exception });
+        return @call(.always_inline, Interface.reportUncaughtException, .{ global, exception });
     }
 
     pub fn onCrash() callconv(.C) void {
         if (comptime is_bindgen) {
             unreachable;
         }
-        return @call(.{ .modifier = .always_inline }, Interface.onCrash, .{});
+        return @call(.always_inline, Interface.onCrash, .{});
     }
 
     pub const Export = shim.exportFunctions(
         .{
-            .@"import" = import,
-            .@"resolve" = resolve,
-            .@"fetch" = fetch,
+            .import = import,
+            .resolve = resolve,
+            .fetch = fetch,
             // .@"eval" = eval,
-            .@"promiseRejectionTracker" = promiseRejectionTracker,
-            .@"reportUncaughtException" = reportUncaughtException,
-            .@"onCrash" = onCrash,
+            .promiseRejectionTracker = promiseRejectionTracker,
+            .reportUncaughtException = reportUncaughtException,
+            .onCrash = onCrash,
         },
     );
 
@@ -146,7 +146,7 @@ pub const ZigErrorType = extern struct {
     }
 
     pub const Export = shim.exportFunctions(.{
-        .@"isPrivateData" = isPrivateData,
+        .isPrivateData = isPrivateData,
     });
 
     comptime {
@@ -399,14 +399,14 @@ pub const Process = extern struct {
     pub const getExecPath = JSC.Node.Process.getExecPath;
 
     pub const Export = shim.exportFunctions(.{
-        .@"getTitle" = getTitle,
-        .@"setTitle" = setTitle,
-        .@"getArgv" = getArgv,
-        .@"getCwd" = getCwd,
-        .@"setCwd" = setCwd,
-        .@"exit" = exit,
-        .@"getArgv0" = getArgv0,
-        .@"getExecPath" = getExecPath,
+        .getTitle = getTitle,
+        .setTitle = setTitle,
+        .getArgv = getArgv,
+        .getCwd = getCwd,
+        .setCwd = setCwd,
+        .exit = exit,
+        .getArgv0 = getArgv0,
+        .getExecPath = getExecPath,
     });
 
     comptime {
@@ -992,7 +992,7 @@ pub const ZigConsoleClient = struct {
         var exception = holder.zigException();
         var err = ZigString.init("trace output").toErrorInstance(global);
         err.toZigException(global, exception);
-        JS.VirtualMachine.vm.remapZigException(exception, err, null);
+        JS.VirtualMachine.get().remapZigException(exception, err, null);
 
         if (Output.enable_ansi_colors_stderr)
             JS.VirtualMachine.printStackTrace(
@@ -1498,7 +1498,7 @@ pub const ZigConsoleClient = struct {
                         else
                             writer.writeAll(end);
                         any_non_ascii = false;
-                        slice = slice[@minimum(slice.len, i + 1)..];
+                        slice = slice[@min(slice.len, i + 1)..];
                         i = 0;
                         len = @truncate(u32, slice.len);
                         const next_value = this.remaining_values[0];
@@ -1589,11 +1589,11 @@ pub const ZigConsoleClient = struct {
             comptime Writer: type,
             writer: Writer,
         ) !void {
-            const indent = @minimum(this.indent, 8);
+            const indent = @min(this.indent, 8);
             var buf = [_]u8{' '} ** 32;
             var total_remain: usize = indent;
             while (total_remain > 0) {
-                const written = @minimum(16, total_remain);
+                const written = @min(16, total_remain);
                 try writer.writeAll(buf[0 .. written * 2]);
                 total_remain -|= written;
             }
@@ -1698,16 +1698,16 @@ pub const ZigConsoleClient = struct {
                 }
 
                 pub fn forEach(
-                    globalObject_: [*c]JSGlobalObject,
+                    globalThis: *JSGlobalObject,
                     ctx_ptr: ?*anyopaque,
-                    key: *ZigString,
+                    key_: [*c]ZigString,
                     value: JSValue,
                     is_symbol: bool,
                 ) callconv(.C) void {
+                    const key = key_.?[0];
                     if (key.eqlComptime("constructor")) return;
                     if (key.eqlComptime("call")) return;
 
-                    var globalThis = globalObject_.?;
                     var ctx: *@This() = bun.cast(*@This(), ctx_ptr orelse return);
                     var this = ctx.formatter;
                     var writer_ = ctx.writer;
@@ -1790,7 +1790,7 @@ pub const ZigConsoleClient = struct {
                         writer.print(
                             comptime Output.prettyFmt("<r><d>[<r><blue>Symbol({any})<r><d>]:<r> ", enable_ansi_colors),
                             .{
-                                key.*,
+                                key,
                             },
                         );
                     }
@@ -1969,7 +1969,7 @@ pub const ZigConsoleClient = struct {
                     }
                 },
                 .Error => {
-                    JS.VirtualMachine.vm.printErrorlikeObject(
+                    JS.VirtualMachine.get().printErrorlikeObject(
                         value,
                         null,
                         null,
@@ -2660,7 +2660,7 @@ pub const ZigConsoleClient = struct {
             writer.print(comptime Output.prettyFmt(fmt_, enable_ansi_colors), .{slice[0]});
             var leftover = slice[1..];
             const max = 512;
-            leftover = leftover[0..@minimum(leftover.len, max)];
+            leftover = leftover[0..@min(leftover.len, max)];
             for (leftover) |el| {
                 this.printComma(@TypeOf(&writer.ctx), &writer.ctx, enable_ansi_colors) catch return;
                 writer.writeAll(" ");
@@ -2906,19 +2906,19 @@ pub const ZigConsoleClient = struct {
     ) callconv(.C) void {}
 
     pub const Export = shim.exportFunctions(.{
-        .@"messageWithTypeAndLevel" = messageWithTypeAndLevel,
-        .@"count" = count,
-        .@"countReset" = countReset,
-        .@"time" = time,
-        .@"timeLog" = timeLog,
-        .@"timeEnd" = timeEnd,
-        .@"profile" = profile,
-        .@"profileEnd" = profileEnd,
-        .@"takeHeapSnapshot" = takeHeapSnapshot,
-        .@"timeStamp" = timeStamp,
-        .@"record" = record,
-        .@"recordEnd" = recordEnd,
-        .@"screenshot" = screenshot,
+        .messageWithTypeAndLevel = messageWithTypeAndLevel,
+        .count = count,
+        .countReset = countReset,
+        .time = time,
+        .timeLog = timeLog,
+        .timeEnd = timeEnd,
+        .profile = profile,
+        .profileEnd = profileEnd,
+        .takeHeapSnapshot = takeHeapSnapshot,
+        .timeStamp = timeStamp,
+        .record = record,
+        .recordEnd = recordEnd,
+        .screenshot = screenshot,
     });
 
     comptime {

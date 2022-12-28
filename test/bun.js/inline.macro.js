@@ -12,8 +12,12 @@ export function promiseReturningFunction(expr, ctx) {
 
 export function promiseReturningCtx(expr, ctx) {
   return new Promise((resolve, reject) => {
-    setTimeout(() => {
-      resolve(ctx);
-    }, 1);
+    setTimeout(
+      (ctx) => {
+        resolve(ctx);
+      },
+      1,
+      ctx,
+    );
   });
 }

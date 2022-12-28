@@ -419,7 +419,8 @@ pub const PackageJSON = struct {
                 }
 
                 if (router.expr.asProperty("extensions")) |extensions_expr| {
-                    if (extensions_expr.expr.asArray()) |*array| {
+                    if (extensions_expr.expr.asArray()) |array_const| {
+                        var array = array_const;
                         var valid_count: usize = 0;
 
                         while (array.next()) |expr| {
@@ -774,7 +775,8 @@ pub const PackageJSON = struct {
                 }
                 if (json.get("cpu")) |os_field| {
                     var first = true;
-                    if (os_field.asArray()) |*array| {
+                    if (os_field.asArray()) |array_const| {
+                        var array = array_const;
                         while (array.next()) |item| {
                             if (item.asString(bun.default_allocator)) |str| {
                                 if (first) {
@@ -789,7 +791,8 @@ pub const PackageJSON = struct {
 
                 if (json.get("os")) |os_field| {
                     var first = true;
-                    if (os_field.asArray()) |*array| {
+                    var tmp = os_field.asArray();
+                    if (tmp) |*array| {
                         while (array.next()) |item| {
                             if (item.asString(bun.default_allocator)) |str| {
                                 if (first) {
@@ -964,7 +967,7 @@ pub const ExportsMap = struct {
 
         const root = visitor.visit(json);
 
-        if (root.data == .@"null") {
+        if (root.data == .null) {
             return null;
         }
 
@@ -985,7 +988,7 @@ pub const ExportsMap = struct {
 
             switch (expr.data) {
                 .e_null => {
-                    return Entry{ .first_token = js_lexer.rangeOfIdentifier(this.source, expr.loc), .data = .{ .@"null" = void{} } };
+                    return Entry{ .first_token = js_lexer.rangeOfIdentifier(this.source, expr.loc), .data = .{ .null = void{} } };
                 },
                 .e_string => |str| {
                     return Entry{
@@ -1111,14 +1114,14 @@ pub const ExportsMap = struct {
 
         pub const Data = union(Tag) {
             invalid: void,
-            @"null": void,
+            null: void,
             boolean: bool,
-            @"string": string,
+            string: string,
             array: []const Entry,
             map: Map,
 
             pub const Tag = enum {
-                @"null",
+                null,
                 string,
                 boolean,
                 array,
@@ -1332,7 +1335,7 @@ pub const ESModule = struct {
                 }
                 package.name = specifier[0 .. at + offset];
 
-                parseSubpath(&package.subpath, specifier[@minimum(package.name.len + package.version.len + 1, specifier.len)..], subpath_buf);
+                parseSubpath(&package.subpath, specifier[@min(package.name.len + package.version.len + 1, specifier.len)..], subpath_buf);
             } else {
                 parseSubpath(&package.subpath, specifier[package.name.len..], subpath_buf);
             }
@@ -1451,7 +1454,7 @@ pub const ESModule = struct {
         }
 
         if (strings.eqlComptime(subpath, ".")) {
-            var main_export = ExportsMap.Entry{ .data = .{ .@"null" = void{} }, .first_token = logger.Range.None };
+            var main_export = ExportsMap.Entry{ .data = .{ .null = void{} }, .first_token = logger.Range.None };
             if (switch (exports.data) {
                 .string,
                 .array,
@@ -1466,7 +1469,7 @@ pub const ESModule = struct {
                 }
             }
 
-            if (main_export.data != .@"null") {
+            if (main_export.data != .null) {
                 const result = r.resolveTarget(package_url, main_export, "", false, false);
                 if (result.status != .Null and result.status != .Undefined) {
                     return result;
@@ -1804,7 +1807,7 @@ pub const ESModule = struct {
 
                 return Resolution{ .path = "", .status = last_exception, .debug = last_debug };
             },
-            .@"null" => {
+            .null => {
                 if (r.debug_logs) |log| {
                     log.addNoteFmt("The path \"{s}\" is null", .{subpath});
                 }

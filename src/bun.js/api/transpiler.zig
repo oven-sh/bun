@@ -494,7 +494,7 @@ fn transformOptionsFromJSC(ctx: JSC.C.JSContextRef, temp_allocator: std.mem.Allo
                 allocator,
                 &transpiler.log,
                 logger.Source.initPathString("tsconfig.json", transpiler.tsconfig_buf),
-                &VirtualMachine.vm.bundler.resolver.caches.json,
+                &VirtualMachine.get().bundler.resolver.caches.json,
                 true,
             ) catch null) |parsed_tsconfig| {
                 transpiler.tsconfig = parsed_tsconfig;
@@ -529,7 +529,7 @@ fn transformOptionsFromJSC(ctx: JSC.C.JSContextRef, temp_allocator: std.mem.Allo
             if (out.len == 0) break :macros;
             transpiler.macros_buf = std.fmt.allocPrint(allocator, "{}", .{out}) catch unreachable;
             const source = logger.Source.initPathString("macros.json", transpiler.macros_buf);
-            const json = (VirtualMachine.vm.bundler.resolver.caches.json.parseJSON(
+            const json = (VirtualMachine.get().bundler.resolver.caches.json.parseJSON(
                 &transpiler.log,
                 source,
                 allocator,
@@ -639,7 +639,7 @@ fn transformOptionsFromJSC(ctx: JSC.C.JSContextRef, temp_allocator: std.mem.Allo
                         };
                         buf.items.len += name.len;
                         if (name.len > 0) {
-                            replacements.putAssumeCapacity(name, .{ .delete = .{} });
+                            replacements.putAssumeCapacity(name, .{ .delete = {} });
                         }
                     }
                 }
@@ -763,7 +763,7 @@ pub fn constructor(
         log,
         transpiler_options.transform,
         null,
-        JavaScript.VirtualMachine.vm.bundler.env,
+        JavaScript.VirtualMachine.get().bundler.env,
     ) catch |err| {
         if ((log.warnings + log.errors) > 0) {
             var out_exception = log.toJS(ctx.ptr(), getAllocator(ctx), "Failed to create transpiler");

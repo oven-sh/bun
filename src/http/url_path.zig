@@ -97,7 +97,7 @@ pub fn parse(possibly_encoded_pathname_: string) !URLPath {
 
         switch (c) {
             '?' => {
-                question_mark_i = @maximum(question_mark_i, i);
+                question_mark_i = @max(question_mark_i, i);
                 if (question_mark_i < period_i) {
                     period_i = -1;
                 }
@@ -107,13 +107,13 @@ pub fn parse(possibly_encoded_pathname_: string) !URLPath {
                 }
             },
             '.' => {
-                period_i = @maximum(period_i, i);
+                period_i = @max(period_i, i);
             },
             '/' => {
-                last_slash = @maximum(last_slash, i);
+                last_slash = @max(last_slash, i);
 
                 if (i > 0) {
-                    first_segment_end = @minimum(first_segment_end, i);
+                    first_segment_end = @min(first_segment_end, i);
                 }
             },
             else => {},
@@ -140,7 +140,7 @@ pub fn parse(possibly_encoded_pathname_: string) !URLPath {
 
     var path = if (question_mark_i < 0) decoded_pathname[1..] else decoded_pathname[1..@intCast(usize, question_mark_i)];
 
-    const first_segment = decoded_pathname[1..@minimum(@intCast(usize, first_segment_end), decoded_pathname.len)];
+    const first_segment = decoded_pathname[1..@min(@intCast(usize, first_segment_end), decoded_pathname.len)];
     const is_source_map = strings.eqlComptime(extname, "map");
     var backup_extname: string = extname;
     if (is_source_map and path.len > ".map".len) {

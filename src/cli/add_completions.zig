@@ -78,7 +78,7 @@ pub const biggest_list: usize = brk: {
     var iter = a.iterator();
     var max: usize = 0;
     while (iter.next()) |list| {
-        max = @maximum(list.value.len, max);
+        max = @max(list.value.len, max);
     }
     break :brk max;
 };

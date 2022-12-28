@@ -1,6 +1,5 @@
 const std = @import("std");
 const builtin = @import("builtin");
-const imports = @cImport(@cInclude("sys/resource.h"));
 const os = std.os;
 const mem = std.mem;
 const Stat = std.fs.File.Stat;
@@ -406,7 +405,7 @@ pub const struct_CFRunLoopSourceContext = extern struct {
     version: CFIndex,
     info: ?*anyopaque,
     pad: [7]?*anyopaque,
-    perform: ?fn (?*anyopaque) callconv(.C) void,
+    perform: ?*const fn (?*anyopaque) callconv(.C) void,
 };
 pub const struct_FSEventStreamContext = extern struct {
     version: CFIndex,
@@ -444,7 +443,7 @@ pub const io_iterator_t = c_uint;
 pub const io_object_t = c_uint;
 pub const io_service_t = c_uint;
 pub const io_registry_entry_t = c_uint;
-pub const FSEventStreamCallback = ?fn (FSEventStreamRef, ?*anyopaque, c_int, ?*anyopaque, [*c]const FSEventStreamEventFlags, [*c]const FSEventStreamEventId) callconv(.C) void;
+pub const FSEventStreamCallback = ?*const fn (FSEventStreamRef, ?*anyopaque, c_int, ?*anyopaque, [*c]const FSEventStreamEventFlags, [*c]const FSEventStreamEventId) callconv(.C) void;
 pub const kCFStringEncodingUTF8: CFStringEncoding = @bitCast(CFStringEncoding, @as(c_int, 134217984));
 pub const noErr: OSStatus = 0;
 pub const kFSEventStreamEventIdSinceNow: FSEventStreamEventId = @bitCast(FSEventStreamEventId, @as(c_longlong, -@as(c_int, 1)));
@@ -539,13 +538,8 @@ pub fn get_system_loadavg() [3]f64 {
 pub extern fn getuid(...) std.os.uid_t;
 pub extern fn getgid(...) std.os.gid_t;
 
-pub fn get_process_priority(pid: c_uint) i32 {
-    return imports.getpriority(imports.PRIO_PROCESS, pid);
-}
-
-pub fn set_process_priority(pid: c_uint, priority: c_int) i32 {
-    return imports.setpriority(imports.PRIO_PROCESS, pid, priority);
-}
+pub extern fn get_process_priority(pid: c_uint) i32;
+pub extern fn set_process_priority(pid: c_uint, priority: c_int) i32;
 
 pub fn get_version(buf: []u8) []const u8 {
     @memset(buf.ptr, 0, buf.len);
@@ -603,15 +597,12 @@ const IO_CTL_RELATED = struct {
         return _IOC(IOC_VOID, g, n, @as(c_int, 0));
     }
     pub inline fn _IOR(g: anytype, n: anytype, t: anytype) @TypeOf(_IOC(IOC_OUT, g, n, @import("std").zig.c_translation.sizeof(t))) {
-        _ = t;
         return _IOC(IOC_OUT, g, n, @import("std").zig.c_translation.sizeof(t));
     }
     pub inline fn _IOW(g: anytype, n: anytype, t: anytype) @TypeOf(_IOC(IOC_IN, g, n, @import("std").zig.c_translation.sizeof(t))) {
-        _ = t;
         return _IOC(IOC_IN, g, n, @import("std").zig.c_translation.sizeof(t));
     }
     pub inline fn _IOWR(g: anytype, n: anytype, t: anytype) @TypeOf(_IOC(IOC_INOUT, g, n, @import("std").zig.c_translation.sizeof(t))) {
-        _ = t;
         return _IOC(IOC_INOUT, g, n, @import("std").zig.c_translation.sizeof(t));
     }
     pub const TIOCMODG = _IOR('t', @as(c_int, 3), c_int);

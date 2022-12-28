@@ -436,7 +436,7 @@ pub fn NewWatcher(comptime ContextType: type) type {
                         null,
                     );
 
-                    var changes = changelist[0..@intCast(usize, @maximum(0, count_))];
+                    var changes = changelist[0..@intCast(usize, @max(0, count_))];
                     var watchevents = this.watch_events[0..changes.len];
                     for (changes) |event, i| {
                         watchevents[i].fromKEvent(event);
@@ -464,7 +464,7 @@ pub fn NewWatcher(comptime ContextType: type) type {
                     const eventlist_index = this.watchlist.items(.eventlist_index);
 
                     while (remaining_events > 0) {
-                        const slice = events[0..@minimum(remaining_events, this.watch_events.len)];
+                        const slice = events[0..@min(remaining_events, this.watch_events.len)];
                         var watchevents = this.watch_events[0..slice.len];
                         var watch_event_id: u32 = 0;
                         for (slice) |event| {
@@ -643,8 +643,8 @@ pub fn NewWatcher(comptime ContextType: type) type {
             const fd = brk: {
                 if (fd_ > 0) break :brk fd_;
 
-                const dir = try std.fs.openDirAbsolute(file_path, .{ .iterate = true });
-                break :brk @truncate(StoredFileDescriptorType, dir.fd);
+                const dir = try std.fs.cwd().openIterableDir(file_path, .{});
+                break :brk @truncate(StoredFileDescriptorType, dir.dir.fd);
             };
 
             const parent_hash = Watcher.getHash(Fs.PathName.init(file_path).dirWithTrailingSlash());

@@ -7,11 +7,11 @@ const Repository = @import("./repository.zig").Repository;
 const string = @import("../string_types.zig").string;
 const ExtractTarball = @import("./extract_tarball.zig");
 const strings = @import("../string_immutable.zig");
-const VersionedURL = @import("./versioned_url.zig");
+const VersionedURL = @import("./versioned_url.zig").VersionedURL;
 
 pub const Resolution = extern struct {
     tag: Tag = Tag.uninitialized,
-    value: Value = Value{ .uninitialized = .{} },
+    value: Value = Value{ .uninitialized = {} },
 
     pub fn order(
         lhs: *const Resolution,
@@ -93,7 +93,7 @@ pub const Resolution = extern struct {
                 .gitlab => Resolution.Value{
                     .gitlab = this.value.gitlab.clone(buf, Builder, builder),
                 },
-                .root => Resolution.Value{ .root = .{} },
+                .root => Resolution.Value{ .root = {} },
                 else => unreachable,
             },
         };

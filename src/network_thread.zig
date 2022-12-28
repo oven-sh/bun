@@ -203,7 +203,7 @@ pub const AddressListCache = std.HashMap(u64, CachedAddressList, IdentityContext
 pub var address_list_cached: AddressListCache = undefined;
 pub fn getAddressList(allocator: std.mem.Allocator, name: []const u8, port: u16) !*std.net.AddressList {
     // const hash = CachedAddressList.hash(name, port);
-    // const now = @intCast(u64, @maximum(0, std.time.milliTimestamp()));
+    // const now = @intCast(u64, @max(0, std.time.milliTimestamp()));
     // if (address_list_cached.getPtr(hash)) |cached| {
     //     if (cached.expire_after > now) {
     //         return cached;

@@ -292,7 +292,7 @@ pub const String = extern struct {
         }
 
         pub fn append(this: *Builder, comptime Type: type, slice_: string) Type {
-            return @call(.{ .modifier = .always_inline }, appendWithHash, .{ this, Type, slice_, stringHash(slice_) });
+            return @call(.always_inline, appendWithHash, .{ this, Type, slice_, stringHash(slice_) });
         }
 
         pub fn appendUTF8WithoutPool(this: *Builder, comptime Type: type, slice_: string, hash: u64) Type {
@@ -1255,11 +1255,11 @@ pub const Query = struct {
         // OR
         next: ?*List = null,
 
-        pub inline fn satisfies(this: *const List, version: Version) bool {
+        pub fn satisfies(this: *const List, version: Version) bool {
             return this.head.satisfies(version) or (this.next orelse return false).satisfies(version);
         }
 
-        pub inline fn eql(lhs: *const List, rhs: *const List) bool {
+        pub fn eql(lhs: *const List, rhs: *const List) bool {
             if (!lhs.head.eql(&rhs.head)) return false;
 
             var lhs_next = lhs.next orelse return rhs.next == null;
@@ -1395,7 +1395,7 @@ pub const Query = struct {
         return lhs_next.eql(rhs_next);
     }
 
-    pub inline fn satisfies(this: *const Query, version: Version) bool {
+    pub fn satisfies(this: *const Query, version: Version) bool {
         const left = this.range.satisfies(version);
 
         return left and (this.next orelse return true).satisfies(version);

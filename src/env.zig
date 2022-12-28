@@ -30,10 +30,12 @@ const BuildOptions = if (isTest) struct {
     pub const baseline = false;
     pub const sha = "0000000000000000000000000000000000000000";
     pub const is_canary = false;
-} else @import("build_options");
+    pub const base_path = "/tmp";
+} else @import("root").build_options;
 
 pub const baseline = BuildOptions.baseline;
 pub const enableSIMD: bool = !baseline;
 pub const git_sha = BuildOptions.sha;
 pub const is_canary = BuildOptions.is_canary;
 pub const dump_source = isDebug and !isTest;
+pub const base_path = BuildOptions.base_path ++ "/";

@@ -340,10 +340,11 @@ pub const RequestContext = struct {
                 .jsx = bundler_.options.jsx,
             };
 
-            if (bundler_.parse(
+            var tmp = bundler_.parse(
                 bundler_parse_options,
                 @as(?*bundler.FallbackEntryPoint, &fallback_entry_point),
-            )) |*result| {
+            );
+            if (tmp) |*result| {
                 try bundler_.linker.linkAllowImportingFromBundle(
                     fallback_entry_point.source.path,
                     result,
@@ -1480,7 +1481,7 @@ pub const RequestContext = struct {
 
             vm.is_from_devserver = true;
             vm.bundler.log = handler.log;
-            std.debug.assert(JavaScript.VirtualMachine.vm_loaded);
+            std.debug.assert(JavaScript.VirtualMachine.isLoaded());
             javascript_vm = vm;
             vm.bundler.options.origin = handler.origin;
             const boot = vm.bundler.options.framework.?.server.path;
@@ -1547,11 +1548,11 @@ pub const RequestContext = struct {
 
             while (true) {
                 __arena = ThreadlocalArena.init() catch unreachable;
-                JavaScript.VirtualMachine.vm.arena = &__arena;
-                JavaScript.VirtualMachine.vm.has_loaded = true;
-                JavaScript.VirtualMachine.vm.tick();
+                JavaScript.VirtualMachine.get().arena = &__arena;
+                JavaScript.VirtualMachine.get().has_loaded = true;
+                JavaScript.VirtualMachine.get().tick();
                 defer {
-                    JavaScript.VirtualMachine.vm.flush();
+                    JavaScript.VirtualMachine.get().flush();
                     std.debug.assert(
                         JavaScript.ZigGlobalObject.resetModuleRegistryMap(vm.global, module_map),
                     );
@@ -1559,13 +1560,13 @@ pub const RequestContext = struct {
                     js_ast.Expr.Data.Store.reset();
                     JavaScript.API.Bun.flushCSSImports();
                     Output.flush();
-                    JavaScript.VirtualMachine.vm.arena.deinit();
-                    JavaScript.VirtualMachine.vm.has_loaded = false;
+                    JavaScript.VirtualMachine.get().arena.deinit();
+                    JavaScript.VirtualMachine.get().has_loaded = false;
                 }
 
                 var handler: *JavaScriptHandler = try channel.readItem();
-                JavaScript.VirtualMachine.vm.tick();
-                JavaScript.VirtualMachine.vm.preflush();
+                JavaScript.VirtualMachine.get().tick();
+                JavaScript.VirtualMachine.get().preflush();
                 const original_origin = vm.origin;
                 vm.origin = handler.ctx.origin;
                 defer vm.origin = original_origin;
@@ -1580,7 +1581,7 @@ pub const RequestContext = struct {
                     HandlerThread.handleFetchEventError,
                 ) catch {};
                 Server.current.releaseRequestDataPoolNode(req_body);
-                JavaScript.VirtualMachine.vm.tick();
+                JavaScript.VirtualMachine.get().tick();
                 handler.deinit();
             }
         }
@@ -1684,7 +1685,7 @@ pub const RequestContext = struct {
             try ctx.bundler.clone(server.allocator, &clone.bundler);
             ctx.bundler = &clone.bundler;
 
-            clone.task = .{ .callback = onTask };
+            clone.task = .{ .callback = &onTask };
             clone.message_buffer = try MutableString.init(server.allocator, 0);
             clone.ctx.conn = &clone.conn;
             clone.ctx.log = logger.Log.init(server.allocator);
@@ -1828,9 +1829,6 @@ pub const RequestContext = struct {
 
                         try ctx.sendBadRequest();
                     },
-                    else => {
-                        return err;
-                    },
                 }
             };
 
@@ -1914,8 +1912,8 @@ pub const RequestContext = struct {
 
                 defer Output.flush();
                 handler.conn.client.getError() catch |err| {
-                    Output.prettyErrorln("<r><red>Websocket ERR:<r> <b>{s}<r>", .{err});
                     handler.tombstone = true;
+                    Output.prettyErrorln("<r><red>Websocket ERR:<r> <b>{s}<r>", .{@errorName(err)});
                     is_socket_closed = true;
                 };
 
@@ -1928,7 +1926,7 @@ pub const RequestContext = struct {
                             continue;
                         },
                         else => {
-                            Output.prettyErrorln("<r><red>Websocket ERR:<r> <b>{s}<r>", .{err});
+                            Output.prettyErrorln("<r><red>Websocket ERR:<r> <b>{s}<r>", .{@errorName(err)});
                         },
                     }
                     return;
@@ -2004,7 +2002,7 @@ pub const RequestContext = struct {
                                     @memset(
                                         handler.message_buffer.list.items.ptr,
                                         0,
-                                        @minimum(handler.message_buffer.list.items.len, 128),
+                                        @min(handler.message_buffer.list.items.len, 128),
                                     );
                                 }
                                 const build_result = handler.builder.build(request_id, cmd.timestamp, arena.allocator()) catch |err| {
@@ -2683,11 +2681,11 @@ pub const RequestContext = struct {
 
         // This makes it Just Work if you pass a line/column number
         if (strings.indexOfChar(id, ':')) |colon| {
-            line = id[@minimum(id.len, colon + 1)..];
+            line = id[@min(id.len, colon + 1)..];
             id = id[0..colon];
 
             if (strings.indexOfChar(line, ':')) |col| {
-                column = line[@minimum(line.len, col + 1)..];
+                column = line[@min(line.len, col + 1)..];
                 line = line[0..col];
             }
         }
@@ -2710,8 +2708,8 @@ pub const RequestContext = struct {
                 }
             }
 
-            if (JavaScript.VirtualMachine.vm_loaded) {
-                var vm = JavaScript.VirtualMachine.vm;
+            if (JavaScript.VirtualMachine.isLoaded()) {
+                var vm = JavaScript.VirtualMachine.get();
                 if (vm.blobs.?.get(id)) |blob| {
                     break :brk blob;
                 }
@@ -3073,7 +3071,7 @@ pub const RequestContext = struct {
                 const result = try ctx.buildFile(
                     ctx.url.path["abs:".len..],
                 );
-                try @call(.{ .modifier = .always_inline }, RequestContext.renderServeResult, .{ ctx, result });
+                try @call(.always_inline, RequestContext.renderServeResult, .{ ctx, result });
             },
             else => {
                 try ctx.sendNotFound();
@@ -3144,7 +3142,7 @@ pub const RequestContext = struct {
         const result = try ctx.buildFile(
             ctx.url.pathWithoutAssetPrefix(ctx.bundler.options.routes.asset_prefix_path),
         );
-        try @call(.{ .modifier = .always_inline }, RequestContext.renderServeResult, .{ ctx, result });
+        try @call(.always_inline, RequestContext.renderServeResult, .{ ctx, result });
     }
 
     pub fn handleRequest(ctx: *RequestContext) !void {
@@ -3331,9 +3329,10 @@ pub const Server = struct {
                             Output.prettyErrorln("<r><d>File changed: {s}<r>", .{ctx.bundler.fs.relativeTo(file_path)});
                         }
                     } else {
+                        var tmp = ctx.bundler.options.loaders.get(path.ext) orelse .file;
                         const change_message = Api.WebsocketMessageFileChangeNotification{
                             .id = id,
-                            .loader = (ctx.bundler.options.loaders.get(path.ext) orelse .file).toAPI(),
+                            .loader = tmp.toAPI(),
                         };
 
                         var content_writer = ByteApiWriter.init(&content_fbs);
@@ -3444,8 +3443,8 @@ pub const Server = struct {
         defer listener.deinit();
         server.websocket_threadpool.stack_size = @truncate(
             u32,
-            @minimum(
-                @maximum(128_000, Fs.FileSystem.RealFS.Limit.stack),
+            @min(
+                @max(128_000, Fs.FileSystem.RealFS.Limit.stack),
                 4_000_000,
             ),
         );
@@ -3552,13 +3551,13 @@ pub const Server = struct {
             }
         } else {
             if (server.bundler.options.routes.single_page_app_routing) {
-                Output.prettyError(" bun!! <d>v{s}<r>\n\n\n<d>  Link:<r> <b><cyan>http://{s}<r>\n       <d>{s}/index.html<r> \n\n\n", .{
+                Output.prettyError(" bun!! <d>v{s}<r>\n\n\n<d>  Link:<r> <b><cyan>http://{any}<r>\n       <d>{s}/index.html<r> \n\n\n", .{
                     Global.package_json_version_with_sha,
                     addr,
                     display_path,
                 });
             } else {
-                Output.prettyError(" bun!! <d>v{s}\n\n\n<d>  Link:<r> <b><cyan>http://{s}<r>\n\n\n", .{
+                Output.prettyError(" bun!! <d>v{s}\n\n\n<d>  Link:<r> <b><cyan>http://{any}<r>\n\n\n", .{
                     Global.package_json_version_with_sha,
                     addr,
                 });
@@ -3629,7 +3628,7 @@ pub const Server = struct {
 
         // https://stackoverflow.com/questions/686217/maximum-on-http-header-values
         var read_size = conn.client.read(&req_buf_node.data, SOCKET_FLAGS) catch {
-            _ = conn.client.write(RequestContext.printStatusLine(400) ++ "\r\n\r\n", SOCKET_FLAGS) catch {};
+            _ = conn.client.write(comptime RequestContext.printStatusLine(400) ++ "\r\n\r\n", SOCKET_FLAGS) catch {};
             return;
         };
 
@@ -3639,7 +3638,7 @@ pub const Server = struct {
         }
 
         var req = picohttp.Request.parse(req_buf_node.data[0..read_size], &req_headers_buf) catch |err| {
-            _ = conn.client.write(RequestContext.printStatusLine(400) ++ "\r\n\r\n", SOCKET_FLAGS) catch {};
+            _ = conn.client.write(comptime RequestContext.printStatusLine(400) ++ "\r\n\r\n", SOCKET_FLAGS) catch {};
             _ = Syscall.close(conn.client.socket.fd);
             Output.printErrorln("ERR: {s}", .{@errorName(err)});
             return;

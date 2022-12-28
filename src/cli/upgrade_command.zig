@@ -64,11 +64,9 @@ pub const Version = struct {
                     bun.default_allocator,
                     "bun-canary-timestamp-{any}",
                     .{
-                        std.fmt.fmtSliceHexLower(
-                            std.mem.asBytes(
-                                &bun.hash(
-                                    std.mem.asBytes(&Cli.start_time),
-                                ),
+                        bun.fmt.hexIntLower(
+                            bun.hash(
+                                std.mem.asBytes(&Cli.start_time),
                             ),
                         ),
                     },
@@ -118,7 +116,7 @@ pub const UpgradeCheckerThread = struct {
     }
 
     fn _run(env_loader: *DotEnv.Loader) anyerror!void {
-        var rand = std.rand.DefaultPrng.init(@intCast(u64, @maximum(std.time.milliTimestamp(), 0)));
+        var rand = std.rand.DefaultPrng.init(@intCast(u64, @max(std.time.milliTimestamp(), 0)));
         const delay = rand.random().intRangeAtMost(u64, 100, 10000);
         std.time.sleep(std.time.ns_per_ms * delay);
 
@@ -353,7 +351,7 @@ pub const UpgradeCommand = struct {
 
                         if (asset.asProperty("size")) |size_| {
                             if (size_.expr.data == .e_number) {
-                                version.size = @intCast(u32, @maximum(@floatToInt(i32, std.math.ceil(size_.expr.data.e_number.value)), 0));
+                                version.size = @intCast(u32, @max(@floatToInt(i32, std.math.ceil(size_.expr.data.e_number.value)), 0));
                             }
                         }
                         return version;
@@ -458,7 +456,7 @@ pub const UpgradeCommand = struct {
             refresher.refresh();
             var async_http = ctx.allocator.create(HTTP.AsyncHTTP) catch unreachable;
             var zip_file_buffer = try ctx.allocator.create(MutableString);
-            zip_file_buffer.* = try MutableString.init(ctx.allocator, @maximum(version.size, 1024));
+            zip_file_buffer.* = try MutableString.init(ctx.allocator, @max(version.size, 1024));
 
             async_http.* = HTTP.AsyncHTTP.initSync(
                 ctx.allocator,
@@ -511,10 +509,11 @@ pub const UpgradeCommand = struct {
             const version_name = version.name().?;
 
             var save_dir_ = filesystem.tmpdir();
-            var save_dir = save_dir_.makeOpenPath(version_name, .{ .iterate = true }) catch {
+            var save_dir_it = save_dir_.makeOpenPathIterable(version_name, .{}) catch {
                 Output.prettyErrorln("<r><red>error:<r> Failed to open temporary directory", .{});
                 Global.exit(1);
             };
+            const save_dir = save_dir_it.dir;
             var tmpdir_path = std.os.getFdPath(save_dir.fd, &tmpdir_path_buf) catch {
                 Output.prettyErrorln("<r><red>error:<r> Failed to read temporary directory", .{});
                 Global.exit(1);
@@ -619,7 +618,7 @@ pub const UpgradeCommand = struct {
                         Output.prettyErrorln(
                             "<r><red>error<r>: The downloaded version of bun (<red>{s}<r>) doesn't match the expected version (<b>{s}<r>)<r>. Cancelled upgrade",
                             .{
-                                version_string[0..@minimum(version_string.len, 512)],
+                                version_string[0..@min(version_string.len, 512)],
                                 version_name,
                             },
                         );
@@ -637,11 +636,12 @@ pub const UpgradeCommand = struct {
             // safe because the slash will no longer be in use
             current_executable_buf[target_dir_.len] = 0;
             var target_dirname = current_executable_buf[0..target_dir_.len :0];
-            var target_dir = std.fs.openDirAbsoluteZ(target_dirname, .{ .iterate = true }) catch |err| {
+            var target_dir_it = std.fs.openIterableDirAbsoluteZ(target_dirname, .{}) catch |err| {
                 save_dir_.deleteTree(version_name) catch {};
                 Output.prettyErrorln("<r><red>error:<r> Failed to open bun's install directory {s}", .{@errorName(err)});
                 Global.exit(1);
             };
+            var target_dir = target_dir_it.dir;
 
             if (use_canary) {
 

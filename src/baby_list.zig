@@ -91,7 +91,7 @@ pub fn BabyList(comptime Type: type) type {
         }
 
         pub fn one(allocator: std.mem.Allocator, value: Type) !ListType {
-            var items = try allocator.allocAdvanced(Type, @alignOf(Type), 1, .exact);
+            var items = try allocator.alloc(Type, 1);
             items[0] = value;
             return ListType{
                 .ptr = @ptrCast([*]Type, items.ptr),

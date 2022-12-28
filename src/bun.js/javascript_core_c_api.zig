@@ -3,7 +3,7 @@ const std = @import("std");
 const cpp = @import("./bindings/bindings.zig");
 const generic = opaque {
     pub fn value(this: *const @This()) cpp.JSValue {
-        return @bitCast(cpp.JSValue.Type, @ptrToInt(this));
+        return @intToEnum(cpp.JSValue, @bitCast(cpp.JSValue.Type, @ptrToInt(this)));
     }
 
     pub inline fn bunVM(this: *@This()) *@import("bun").JSC.VirtualMachine {
@@ -66,8 +66,8 @@ pub const OpaqueJSString = opaque {
 
         if (zig_str.isUTF8()) {
             return JSValueToStringCopy(
-                bun.JSC.VirtualMachine.vm.global,
-                zig_str.toValueGC(bun.JSC.VirtualMachine.vm.global).asObjectRef(),
+                bun.JSC.VirtualMachine.get().global,
+                zig_str.toValueGC(bun.JSC.VirtualMachine.get().global).asObjectRef(),
                 null,
             );
         }
@@ -98,7 +98,7 @@ pub const JSPropertyNameArray = opaque {
 pub const JSPropertyNameArrayRef = ?*JSPropertyNameArray;
 pub const struct_OpaqueJSPropertyNameAccumulator = generic;
 pub const JSPropertyNameAccumulatorRef = ?*struct_OpaqueJSPropertyNameAccumulator;
-pub const JSTypedArrayBytesDeallocator = ?fn (*anyopaque, *anyopaque) callconv(.C) void;
+pub const JSTypedArrayBytesDeallocator = ?*const fn (*anyopaque, *anyopaque) callconv(.C) void;
 pub const OpaqueJSValue = generic;
 pub const JSValueRef = ?*OpaqueJSValue;
 pub const JSObjectRef = ?*OpaqueJSValue;
@@ -218,15 +218,15 @@ pub const JSClassAttributes = enum(c_uint) {
 
 pub const kJSClassAttributeNone = @enumToInt(JSClassAttributes.kJSClassAttributeNone);
 pub const kJSClassAttributeNoAutomaticPrototype = @enumToInt(JSClassAttributes.kJSClassAttributeNoAutomaticPrototype);
-pub const JSObjectInitializeCallback = ?fn (JSContextRef, JSObjectRef) callconv(.C) void;
-pub const JSObjectFinalizeCallback = ?fn (JSObjectRef) callconv(.C) void;
-pub const JSObjectHasPropertyCallback = ?fn (JSContextRef, JSObjectRef, JSStringRef) callconv(.C) bool;
-pub const JSObjectGetPropertyCallback = ?fn (JSContextRef, JSObjectRef, JSStringRef, ExceptionRef) callconv(.C) JSValueRef;
-pub const JSObjectSetPropertyCallback = ?fn (JSContextRef, JSObjectRef, JSStringRef, JSValueRef, ExceptionRef) callconv(.C) bool;
-pub const JSObjectDeletePropertyCallback = ?fn (JSContextRef, JSObjectRef, JSStringRef, ExceptionRef) callconv(.C) bool;
-pub const JSObjectGetPropertyNamesCallback = ?fn (JSContextRef, JSObjectRef, JSPropertyNameAccumulatorRef) callconv(.C) void;
+pub const JSObjectInitializeCallback = *const fn (JSContextRef, JSObjectRef) callconv(.C) void;
+pub const JSObjectFinalizeCallback = *const fn (JSObjectRef) callconv(.C) void;
+pub const JSObjectHasPropertyCallback = *const fn (JSContextRef, JSObjectRef, JSStringRef) callconv(.C) bool;
+pub const JSObjectGetPropertyCallback = *const fn (JSContextRef, JSObjectRef, JSStringRef, ExceptionRef) callconv(.C) JSValueRef;
+pub const JSObjectSetPropertyCallback = *const fn (JSContextRef, JSObjectRef, JSStringRef, JSValueRef, ExceptionRef) callconv(.C) bool;
+pub const JSObjectDeletePropertyCallback = *const fn (JSContextRef, JSObjectRef, JSStringRef, ExceptionRef) callconv(.C) bool;
+pub const JSObjectGetPropertyNamesCallback = *const fn (JSContextRef, JSObjectRef, JSPropertyNameAccumulatorRef) callconv(.C) void;
 pub const ExceptionRef = [*c]JSValueRef;
-pub const JSObjectCallAsFunctionCallback = ?fn (
+pub const JSObjectCallAsFunctionCallback = *const fn (
     ctx: JSContextRef,
     function: JSObjectRef,
     thisObject: JSObjectRef,
@@ -234,38 +234,38 @@ pub const JSObjectCallAsFunctionCallback = ?fn (
     arguments: [*c]const JSValueRef,
     exception: ExceptionRef,
 ) callconv(.C) JSValueRef;
-pub const JSObjectCallAsConstructorCallback = ?fn (JSContextRef, JSObjectRef, usize, [*c]const JSValueRef, ExceptionRef) callconv(.C) JSObjectRef;
-pub const JSObjectHasInstanceCallback = ?fn (JSContextRef, JSObjectRef, JSValueRef, ExceptionRef) callconv(.C) bool;
-pub const JSObjectConvertToTypeCallback = ?fn (JSContextRef, JSObjectRef, JSType, ExceptionRef) callconv(.C) JSValueRef;
+pub const JSObjectCallAsConstructorCallback = *const fn (JSContextRef, JSObjectRef, usize, [*c]const JSValueRef, ExceptionRef) callconv(.C) JSObjectRef;
+pub const JSObjectHasInstanceCallback = *const fn (JSContextRef, JSObjectRef, JSValueRef, ExceptionRef) callconv(.C) bool;
+pub const JSObjectConvertToTypeCallback = *const fn (JSContextRef, JSObjectRef, JSType, ExceptionRef) callconv(.C) JSValueRef;
 pub const JSStaticValue = extern struct {
-    name: [*c]const u8,
-    getProperty: JSObjectGetPropertyCallback,
-    setProperty: JSObjectSetPropertyCallback,
-    attributes: JSPropertyAttributes,
+    name: [*c]const u8 = null,
+    getProperty: ?JSObjectGetPropertyCallback = null,
+    setProperty: ?JSObjectSetPropertyCallback = null,
+    attributes: JSPropertyAttributes = .kJSPropertyAttributeNone,
 };
 pub const JSStaticFunction = extern struct {
-    name: [*c]const u8,
-    callAsFunction: JSObjectCallAsFunctionCallback,
-    attributes: JSPropertyAttributes,
+    name: [*c]const u8 = null,
+    callAsFunction: ?JSObjectCallAsFunctionCallback = null,
+    attributes: JSPropertyAttributes = .kJSPropertyAttributeNone,
 };
 pub const JSClassDefinition = extern struct {
-    version: c_int,
-    attributes: JSClassAttributes,
-    className: [*c]const u8,
-    parentClass: JSClassRef,
-    staticValues: [*c]const JSStaticValue,
-    staticFunctions: [*c]const JSStaticFunction,
-    initialize: JSObjectInitializeCallback,
-    finalize: JSObjectFinalizeCallback,
-    hasProperty: JSObjectHasPropertyCallback,
-    getProperty: JSObjectGetPropertyCallback,
-    setProperty: JSObjectSetPropertyCallback,
-    deleteProperty: JSObjectDeletePropertyCallback,
-    getPropertyNames: JSObjectGetPropertyNamesCallback,
-    callAsFunction: JSObjectCallAsFunctionCallback,
-    callAsConstructor: JSObjectCallAsConstructorCallback,
-    hasInstance: JSObjectHasInstanceCallback,
-    convertToType: JSObjectConvertToTypeCallback,
+    version: c_int = 0,
+    attributes: JSClassAttributes = .kJSClassAttributeNone,
+    className: [*:0]const u8 = "",
+    parentClass: JSClassRef = null,
+    staticValues: [*c]const JSStaticValue = null,
+    staticFunctions: [*c]const JSStaticFunction = null,
+    initialize: ?JSObjectInitializeCallback = null,
+    finalize: ?JSObjectFinalizeCallback = null,
+    hasProperty: ?JSObjectHasPropertyCallback = null,
+    getProperty: ?JSObjectGetPropertyCallback = null,
+    setProperty: ?JSObjectSetPropertyCallback = null,
+    deleteProperty: ?JSObjectDeletePropertyCallback = null,
+    getPropertyNames: ?JSObjectGetPropertyNamesCallback = null,
+    callAsFunction: ?JSObjectCallAsFunctionCallback = null,
+    callAsConstructor: ?JSObjectCallAsConstructorCallback = null,
+    hasInstance: ?JSObjectHasInstanceCallback = null,
+    convertToType: ?JSObjectConvertToTypeCallback = null,
 };
 pub extern const kJSClassDefinitionEmpty: JSClassDefinition;
 pub extern "c" fn JSClassCreate(definition: [*c]const JSClassDefinition) JSClassRef;
@@ -486,7 +486,7 @@ pub const CellType = enum(u8) {
         };
     }
 };
-pub const ExternalStringFinalizer = fn (finalize_ptr: ?*anyopaque, ref: JSStringRef, buffer: *anyopaque, byteLength: usize) callconv(.C) void;
+pub const ExternalStringFinalizer = *const fn (finalize_ptr: ?*anyopaque, ref: JSStringRef, buffer: *anyopaque, byteLength: usize) callconv(.C) void;
 pub extern fn JSStringCreate(string: UTF8Ptr, length: usize) JSStringRef;
 pub extern fn JSStringCreateStatic(string: UTF8Ptr, length: usize) JSStringRef;
 pub extern fn JSStringCreateExternal(string: UTF8Ptr, length: usize, finalize_ptr: ?*anyopaque, finalizer: ExternalStringFinalizer) JSStringRef;
@@ -497,8 +497,8 @@ pub extern fn JSCellType(cell: JSCellValue) CellType;
 pub extern fn JSStringIsStatic(ref: JSStringRef) bool;
 pub extern fn JSStringIsExternal(ref: JSStringRef) bool;
 
-pub const JStringIteratorAppendCallback = fn (ctx: *JSStringIterator_, ptr: *anyopaque, length: u32) callconv(.C) anyopaque;
-pub const JStringIteratorWriteCallback = fn (ctx: *JSStringIterator_, ptr: *anyopaque, length: u32, offset: u32) callconv(.C) anyopaque;
+pub const JStringIteratorAppendCallback = *const fn (ctx: *JSStringIterator_, ptr: *anyopaque, length: u32) callconv(.C) anyopaque;
+pub const JStringIteratorWriteCallback = *const fn (ctx: *JSStringIterator_, ptr: *anyopaque, length: u32, offset: u32) callconv(.C) anyopaque;
 const JSStringIterator_ = extern struct {
     ctx: *anyopaque,
     stop: u8,

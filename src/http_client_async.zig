@@ -359,6 +359,10 @@ pub const HTTPThread = struct {
     timer: std.time.Timer = undefined,
     const threadlog = Output.scoped(.HTTPThread, true);
 
+    const FakeStruct = struct {
+        trash: i64 = 0,
+    };
+
     pub fn init() !void {
         if (http_thread_loaded.swap(true, .SeqCst)) {
             return;
@@ -375,13 +379,19 @@ pub const HTTPThread = struct {
             .timer = std.time.Timer.start() catch unreachable,
         };
 
-        var thread = try std.Thread.spawn(.{
-            .stack_size = 4 * 1024 * 1024,
-        }, onStart, .{});
+        const thread = try std.Thread.spawn(
+            .{
+                .stack_size = 4 * 1024 * 1024,
+            },
+            comptime onStart,
+            .{
+                FakeStruct{},
+            },
+        );
         thread.detach();
     }
 
-    pub fn onStart() void {
+    pub fn onStart(_: FakeStruct) void {
         Output.Source.configureNamedThread("HTTP Client");
         default_arena = Arena.init() catch unreachable;
         default_allocator = default_arena.allocator();
@@ -435,7 +445,7 @@ pub const HTTPThread = struct {
     }
 
     fn processEvents_(this: *@This()) void {
-        this.loop.num_polls = @maximum(2, this.loop.num_polls);
+        this.loop.num_polls = @max(2, this.loop.num_polls);
 
         while (true) {
             this.drainEvents();
@@ -492,7 +502,7 @@ pub fn onOpen(
     if (comptime is_ssl) {
         var ssl: *BoringSSL.SSL = @ptrCast(*BoringSSL.SSL, socket.getNativeHandle());
         if (!ssl.isInitFinished()) {
-            var hostname: [:0]u8 = "";
+            var hostname: [:0]const u8 = "";
             var hostname_needs_free = false;
             if (!strings.isIPAddress(client.url.hostname)) {
                 if (client.url.hostname.len < temp_hostname.len) {
@@ -519,7 +529,6 @@ pub fn onClose(
     comptime is_ssl: bool,
     socket: NewHTTPContext(is_ssl).HTTPSocket,
 ) void {
-    _ = socket;
     log("Closed  {s}\n", .{client.url.href});
 
     const in_progress = client.state.stage != .done and client.state.stage != .fail;
@@ -821,7 +830,7 @@ pub fn hashHeaderName(name: string) u64 {
     var buf_slice: []u8 = std.mem.span(&buf);
 
     while (remain.len > 0) {
-        const end = @minimum(hasher.buf.len, remain.len);
+        const end = @min(hasher.buf.len, remain.len);
 
         hasher.update(strings.copyLowercase(std.mem.span(remain[0..end]), buf_slice));
         remain = remain[end..];
@@ -919,7 +928,7 @@ pub const AsyncHTTP = struct {
     real: ?*AsyncHTTP = null,
     next: ?*AsyncHTTP = null,
 
-    task: ThreadPool.Task = ThreadPool.Task{ .callback = startAsyncHTTP },
+    task: ThreadPool.Task = ThreadPool.Task{ .callback = &startAsyncHTTP },
     completion_callback: HTTPClientResult.Callback = undefined,
 
     /// Timeout in nanoseconds
@@ -1293,7 +1302,7 @@ pub fn onWritable(this: *HTTPClient, comptime is_first_call: bool, comptime is_s
             std.debug.assert(list.items.len == writer.context.items.len);
             if (this.state.request_body.len > 0 and list.capacity - list.items.len > 0) {
                 var remain = list.items.ptr[list.items.len..list.capacity];
-                const wrote = @minimum(remain.len, this.state.request_body.len);
+                const wrote = @min(remain.len, this.state.request_body.len);
                 std.debug.assert(wrote > 0);
                 @memcpy(remain.ptr, this.state.request_body.ptr, wrote);
                 list.items.len += wrote;
@@ -1416,7 +1425,7 @@ pub fn onData(this: *HTTPClient, comptime is_ssl: bool, incoming_data: []const u
 
             this.state.pending_response = response;
 
-            var body_buf = to_read[@minimum(@intCast(usize, response.bytes_read), to_read.len)..];
+            var body_buf = to_read[@min(@intCast(usize, response.bytes_read), to_read.len)..];
 
             var deferred_redirect: ?*URLBufferPool.Node = null;
             const can_continue = this.handleResponseMetadata(
@@ -1643,7 +1652,7 @@ pub const HTTPClientResult = struct {
         ctx: *anyopaque,
         function: Function,
 
-        pub const Function = fn (*anyopaque, HTTPClientResult) void;
+        pub const Function = *const fn (*anyopaque, HTTPClientResult) void;
 
         pub fn run(self: Callback, result: HTTPClientResult) void {
             self.function(self.ctx, result);
@@ -1660,7 +1669,7 @@ pub const HTTPClientResult = struct {
 
                 pub fn wrapped_callback(ptr: *anyopaque, result: HTTPClientResult) void {
                     var casted = @ptrCast(Type, @alignCast(std.meta.alignment(Type), ptr));
-                    @call(.{ .modifier = .always_inline }, callback, .{ casted, result });
+                    @call(.always_inline, callback, .{ casted, result });
                 }
             };
         }
@@ -1701,8 +1710,8 @@ fn handleResponseBodyFromSinglePacket(this: *HTTPClient, incoming_data: []const 
     if (this.state.encoding.isCompressed()) {
         var body_buffer = this.state.body_out_str.?;
         if (body_buffer.list.capacity == 0) {
-            const min = @minimum(@ceil(@intToFloat(f64, incoming_data.len) * 1.5), @as(f64, 1024 * 1024 * 2));
-            try body_buffer.growBy(@maximum(@floatToInt(usize, min), 32));
+            const min = @min(@ceil(@intToFloat(f64, incoming_data.len) * 1.5), @as(f64, 1024 * 1024 * 2));
+            try body_buffer.growBy(@max(@floatToInt(usize, min), 32));
         }
 
         try ZlibPool.decompress(incoming_data, body_buffer, default_allocator);
@@ -1741,7 +1750,7 @@ fn handleResponseBodyFromMultiplePackets(this: *HTTPClient, incoming_data: []con
     }
 
     const remaining_content_length = this.state.body_size -| buffer.list.items.len;
-    var remainder = incoming_data[0..@minimum(incoming_data.len, remaining_content_length)];
+    var remainder = incoming_data[0..@min(incoming_data.len, remaining_content_length)];
 
     _ = try buffer.write(remainder);
 

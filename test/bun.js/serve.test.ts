@@ -1,5 +1,5 @@
 import { file, gc, serve } from "bun";
-import { afterEach, describe, it, expect } from "bun:test";
+import { afterEach, describe, it, expect, beforeAll, afterAll } from "bun:test";
 import { readFile, readFileSync, writeFileSync } from "fs";
 import { resolve } from "path";
 
@@ -7,509 +7,613 @@ afterEach(() => Bun.gc(true));
 
 var port = 10000;
 var count = 200;
+var server;
 
 async function runTest(serverOptions, test) {
-  var server;
-  while (true) {
-    try {
-      serverOptions.port = port++;
-      server = serve(serverOptions);
-      break;
-    } catch (e: any) {
-      if (e?.message !== `Failed to start server. Is port ${serverOptions.port} in use?`) {
-        throw e;
+  if (server) {
+    server.reload(serverOptions);
+  } else {
+    while (!server) {
+      try {
+        serverOptions.port = port++;
+        server = serve(serverOptions);
+        break;
+      } catch (e: any) {
+        if (
+          e?.message !==
+          `Failed to start server. Is port ${serverOptions.port} in use?`
+        ) {
+          throw e;
+        }
       }
     }
   }
-  try {
-    await test(server);
-  } finally {
-    server?.stop();
-    server = null;
-  }
+
+  await test(server);
 }
+
+afterAll(() => {
+  if (server) {
+    server.stop();
+    server = undefined;
+  }
+});
 
 it("should work for a file", async () => {
   const fixture = resolve(import.meta.dir, "./fetch.js.txt");
   const textToExpect = readFileSync(fixture, "utf-8");
-  await runTest({
-    fetch(req) {
-      return new Response(file(fixture));
+  await runTest(
+    {
+      fetch(req) {
+        return new Response(file(fixture));
+      },
     },
-  }, async (server) => {
-    const response = await fetch(`http://${server.hostname}:${server.port}`);
-    expect(await response.text()).toBe(textToExpect);
-  });
+    async (server) => {
+      const response = await fetch(`http://${server.hostname}:${server.port}`);
+      expect(await response.text()).toBe(textToExpect);
+    },
+  );
 });
 
 it("request.url should log successfully", async () => {
   const fixture = resolve(import.meta.dir, "./fetch.js.txt");
   const textToExpect = readFileSync(fixture, "utf-8");
   var expected;
-  await runTest({
-    fetch(req) {
-      expect(Bun.inspect(req).includes(expected)).toBe(true);
-      return new Response(file(fixture));
+  await runTest(
+    {
+      fetch(req) {
+        expect(Bun.inspect(req).includes(expected)).toBe(true);
+        return new Response(file(fixture));
+      },
     },
-  }, async (server) => {
-    expected = `http://localhost:${server.port}/helloooo`;
-    const response = await fetch(expected);
-    expect(response.url).toBe(expected);
-    expect(await response.text()).toBe(textToExpect);
-  });
+    async (server) => {
+      expected = `http://localhost:${server.port}/helloooo`;
+      const response = await fetch(expected);
+      expect(response.url).toBe(expected);
+      expect(await response.text()).toBe(textToExpect);
+    },
+  );
 });
 
 it("request.url should be based on the Host header", async () => {
   const fixture = resolve(import.meta.dir, "./fetch.js.txt");
   const textToExpect = readFileSync(fixture, "utf-8");
-  await runTest({
-    fetch(req) {
-      expect(req.url).toBe("http://example.com/helloooo");
-      return new Response(file(fixture));
-    },
-  }, async (server) => {
-    const expected = `http://${server.hostname}:${server.port}/helloooo`;
-    const response = await fetch(expected, {
-      headers: {
-        Host: "example.com",
+  await runTest(
+    {
+      fetch(req) {
+        expect(req.url).toBe("http://example.com/helloooo");
+        return new Response(file(fixture));
       },
-    });
-    expect(response.url).toBe(expected);
-    expect(await response.text()).toBe(textToExpect);
-  });
+    },
+    async (server) => {
+      const expected = `http://${server.hostname}:${server.port}/helloooo`;
+      const response = await fetch(expected, {
+        headers: {
+          Host: "example.com",
+        },
+      });
+      expect(response.url).toBe(expected);
+      expect(await response.text()).toBe(textToExpect);
+    },
+  );
 });
 
 describe("streaming", () => {
   describe("error handler", () => {
     it("throw on pull reports an error and close the connection", async () => {
       var pass = false;
-      await runTest({
-        development: false,
-        error(e) {
-          pass = true;
-          return new Response("PASS", { status: 555 });
+      await runTest(
+        {
+          development: false,
+          error(e) {
+            pass = true;
+            return new Response("PASS", { status: 555 });
+          },
+          fetch(req) {
+            return new Response(
+              new ReadableStream({
+                pull(controller) {
+                  throw new Error("FAIL");
+                },
+              }),
+            );
+          },
         },
-        fetch(req) {
-          return new Response(
-            new ReadableStream({
-              pull(controller) {
-                throw new Error("FAIL");
-              },
-            }),
+        async (server) => {
+          const response = await fetch(
+            `http://${server.hostname}:${server.port}`,
           );
+          if (response.status > 0) {
+            expect(response.status).toBe(555);
+            expect(await response.text()).toBe("PASS");
+          }
+          expect(pass).toBe(true);
         },
-      }, async (server) => {
-        const response = await fetch(
-          `http://${server.hostname}:${server.port}`,
-        );
-        if (response.status > 0) {
-          expect(response.status).toBe(555);
-          expect(await response.text()).toBe("PASS");
-        }
-        expect(pass).toBe(true);
-      });
+      );
     });
 
     it("throw on pull after writing should not call the error handler", async () => {
       var pass = true;
-      await runTest({
-        development: false,
-        error(e) {
-          pass = true;
-          return new Response("FAIL", { status: 555 });
+      await runTest(
+        {
+          development: false,
+          error(e) {
+            pass = true;
+            return new Response("FAIL", { status: 555 });
+          },
+          fetch(req) {
+            return new Response(
+              new ReadableStream({
+                pull(controller) {
+                  controller.enqueue("PASS");
+                  throw new Error("error");
+                },
+              }),
+            );
+          },
         },
-        fetch(req) {
-          return new Response(
-            new ReadableStream({
-              pull(controller) {
-                controller.enqueue("PASS");
-                throw new Error("error");
-              },
-            }),
+        async (server) => {
+          const response = await fetch(
+            `http://${server.hostname}:${server.port}`,
           );
+          // connection terminated
+          expect(response.status).toBe(500);
+          expect(await response.text()).toBe("PASS");
+          expect(pass).toBe(true);
         },
-      }, async (server) => {
-        const response = await fetch(
-          `http://${server.hostname}:${server.port}`,
-        );
-        // connection terminated
-        expect(response.status).toBe(500);
-        expect(await response.text()).toBe("PASS");
-        expect(pass).toBe(true);
-      });
+      );
     });
   });
 
   it("text from JS, one chunk", async () => {
     const relative = new URL("./fetch.js.txt", import.meta.url);
     const textToExpect = readFileSync(relative, "utf-8");
-    await runTest({
-      fetch(req) {
-        return new Response(
-          new ReadableStream({
-            start(controller) {
-              controller.enqueue(textToExpect);
-              controller.close();
-            },
-          }),
-        );
+    await runTest(
+      {
+        fetch(req) {
+          return new Response(
+            new ReadableStream({
+              start(controller) {
+                controller.enqueue(textToExpect);
+                controller.close();
+              },
+            }),
+          );
+        },
       },
-    }, async (server) => {
-      const response = await fetch(`http://${server.hostname}:${server.port}`);
-      const text = await response.text();
-      expect(text.length).toBe(textToExpect.length);
-      expect(text).toBe(textToExpect);
-    });
+      async (server) => {
+        const response = await fetch(
+          `http://${server.hostname}:${server.port}`,
+        );
+        const text = await response.text();
+        expect(text.length).toBe(textToExpect.length);
+        expect(text).toBe(textToExpect);
+      },
+    );
   });
   it("text from JS, two chunks", async () => {
     const fixture = resolve(import.meta.dir, "./fetch.js.txt");
-    const textToExpect = readFileSync(fixture, "utf-8")
-    await runTest({
-      fetch(req) {
-        return new Response(
-          new ReadableStream({
-            start(controller) {
-              controller.enqueue(textToExpect.substring(0, 100));
-              controller.enqueue(textToExpect.substring(100));
-              controller.close();
-            },
-          }),
-        );
+    const textToExpect = readFileSync(fixture, "utf-8");
+    await runTest(
+      {
+        fetch(req) {
+          return new Response(
+            new ReadableStream({
+              start(controller) {
+                controller.enqueue(textToExpect.substring(0, 100));
+                controller.enqueue(textToExpect.substring(100));
+                controller.close();
+              },
+            }),
+          );
+        },
       },
-    }, async (server) => {
-      const response = await fetch(`http://${server.hostname}:${server.port}`);
-      expect(await response.text()).toBe(textToExpect);
-    });
+      async (server) => {
+        const response = await fetch(
+          `http://${server.hostname}:${server.port}`,
+        );
+        expect(await response.text()).toBe(textToExpect);
+      },
+    );
   });
 
   it("text from JS throws on start no error handler", async () => {
-    await runTest({
-      port: port++,
-      development: false,
-      fetch(req) {
-        return new Response(
-          new ReadableStream({
-            start(controller) {
-              throw new Error("Test Passed");
-            },
-          }),
-        );
+    await runTest(
+      {
+        port: port++,
+        development: false,
+        fetch(req) {
+          return new Response(
+            new ReadableStream({
+              start(controller) {
+                throw new Error("Test Passed");
+              },
+            }),
+          );
+        },
       },
-    }, async (server) => {
-      const response = await fetch(`http://${server.hostname}:${server.port}`);
-      expect(response.status).toBe(500);
-    });
+      async (server) => {
+        const response = await fetch(
+          `http://${server.hostname}:${server.port}`,
+        );
+        expect(response.status).toBe(500);
+      },
+    );
   });
 
   it("text from JS throws on start has error handler", async () => {
     var pass = false;
     var err;
-    await runTest({
-      development: false,
-      error(e) {
-        pass = true;
-        err = e;
-        return new Response("Fail", { status: 500 });
+    await runTest(
+      {
+        development: false,
+        error(e) {
+          pass = true;
+          err = e;
+          return new Response("Fail", { status: 500 });
+        },
+        fetch(req) {
+          return new Response(
+            new ReadableStream({
+              start(controller) {
+                throw new TypeError("error");
+              },
+            }),
+          );
+        },
       },
-      fetch(req) {
-        return new Response(
-          new ReadableStream({
-            start(controller) {
-              throw new TypeError("error");
-            },
-          }),
+      async (server) => {
+        const response = await fetch(
+          `http://${server.hostname}:${server.port}`,
         );
+        expect(response.status).toBe(500);
+        expect(await response.text()).toBe("Fail");
+        expect(pass).toBe(true);
+        expect(err?.name).toBe("TypeError");
+        expect(err?.message).toBe("error");
       },
-    }, async (server) => {
-      const response = await fetch(`http://${server.hostname}:${server.port}`);
-      expect(response.status).toBe(500);
-      expect(await response.text()).toBe("Fail");
-      expect(pass).toBe(true);
-      expect(err?.name).toBe("TypeError");
-      expect(err?.message).toBe("error");
-    });
+    );
   });
 
   it("text from JS, 2 chunks, with delay", async () => {
     const fixture = resolve(import.meta.dir, "./fetch.js.txt");
     const textToExpect = readFileSync(fixture, "utf-8");
-    await runTest({
-      fetch(req) {
-        return new Response(
-          new ReadableStream({
-            start(controller) {
-              controller.enqueue(textToExpect.substring(0, 100));
-              queueMicrotask(() => {
-                controller.enqueue(textToExpect.substring(100));
-                controller.close();
-              });
-            },
-          }),
-        );
+    await runTest(
+      {
+        fetch(req) {
+          return new Response(
+            new ReadableStream({
+              start(controller) {
+                controller.enqueue(textToExpect.substring(0, 100));
+                queueMicrotask(() => {
+                  controller.enqueue(textToExpect.substring(100));
+                  controller.close();
+                });
+              },
+            }),
+          );
+        },
       },
-    }, async (server) => {
-      const response = await fetch(`http://${server.hostname}:${server.port}`);
-      expect(await response.text()).toBe(textToExpect);
-    });
+      async (server) => {
+        const response = await fetch(
+          `http://${server.hostname}:${server.port}`,
+        );
+        expect(await response.text()).toBe(textToExpect);
+      },
+    );
   });
 
   it("text from JS, 1 chunk via pull()", async () => {
     const fixture = resolve(import.meta.dir, "./fetch.js.txt");
     const textToExpect = readFileSync(fixture, "utf-8");
-    await runTest({
-      fetch(req) {
-        return new Response(
-          new ReadableStream({
-            pull(controller) {
-              controller.enqueue(textToExpect);
-              controller.close();
-            },
-          }),
-        );
+    await runTest(
+      {
+        fetch(req) {
+          return new Response(
+            new ReadableStream({
+              pull(controller) {
+                controller.enqueue(textToExpect);
+                controller.close();
+              },
+            }),
+          );
+        },
       },
-    }, async (server) => {
-      const response = await fetch(`http://${server.hostname}:${server.port}`);
-      const text = await response.text();
-      expect(text).toBe(textToExpect);
-    });
+      async (server) => {
+        const response = await fetch(
+          `http://${server.hostname}:${server.port}`,
+        );
+        const text = await response.text();
+        expect(text).toBe(textToExpect);
+      },
+    );
   });
 
   it("text from JS, 2 chunks, with delay in pull", async () => {
     const fixture = resolve(import.meta.dir, "./fetch.js.txt");
     const textToExpect = readFileSync(fixture, "utf-8");
-    await runTest({
-      fetch(req) {
-        return new Response(
-          new ReadableStream({
-            pull(controller) {
-              controller.enqueue(textToExpect.substring(0, 100));
-              queueMicrotask(() => {
-                controller.enqueue(textToExpect.substring(100));
-                controller.close();
-              });
-            },
-          }),
-        );
+    await runTest(
+      {
+        fetch(req) {
+          return new Response(
+            new ReadableStream({
+              pull(controller) {
+                controller.enqueue(textToExpect.substring(0, 100));
+                queueMicrotask(() => {
+                  controller.enqueue(textToExpect.substring(100));
+                  controller.close();
+                });
+              },
+            }),
+          );
+        },
       },
-    }, async (server) => {
-      const response = await fetch(`http://${server.hostname}:${server.port}`);
-      expect(await response.text()).toBe(textToExpect);
-    });
+      async (server) => {
+        const response = await fetch(
+          `http://${server.hostname}:${server.port}`,
+        );
+        expect(await response.text()).toBe(textToExpect);
+      },
+    );
   });
 
   it("text from JS, 2 chunks, with async pull", async () => {
     const fixture = resolve(import.meta.dir, "./fetch.js.txt");
     const textToExpect = readFileSync(fixture, "utf-8");
-    await runTest({
-      fetch(req) {
-        return new Response(
-          new ReadableStream({
-            async pull(controller) {
-              controller.enqueue(textToExpect.substring(0, 100));
-              await Promise.resolve();
-              controller.enqueue(textToExpect.substring(100));
-              await Promise.resolve();
-              controller.close();
-            },
-          }),
-        );
+    await runTest(
+      {
+        fetch(req) {
+          return new Response(
+            new ReadableStream({
+              async pull(controller) {
+                controller.enqueue(textToExpect.substring(0, 100));
+                await Promise.resolve();
+                controller.enqueue(textToExpect.substring(100));
+                await Promise.resolve();
+                controller.close();
+              },
+            }),
+          );
+        },
       },
-    }, async (server) => {
-      const response = await fetch(`http://${server.hostname}:${server.port}`);
-      expect(await response.text()).toBe(textToExpect);
-    });
+      async (server) => {
+        const response = await fetch(
+          `http://${server.hostname}:${server.port}`,
+        );
+        expect(await response.text()).toBe(textToExpect);
+      },
+    );
   });
 
   it("text from JS, 10 chunks, with async pull", async () => {
     const fixture = resolve(import.meta.dir, "./fetch.js.txt");
     const textToExpect = readFileSync(fixture, "utf-8");
-    await runTest({
-      fetch(req) {
-        return new Response(
-          new ReadableStream({
-            async pull(controller) {
-              var remain = textToExpect;
-              for (let i = 0; i < 10 && remain.length > 0; i++) {
-                controller.enqueue(remain.substring(0, 100));
-                remain = remain.substring(100);
-                await new Promise((resolve) => queueMicrotask(resolve));
-              }
+    await runTest(
+      {
+        fetch(req) {
+          return new Response(
+            new ReadableStream({
+              async pull(controller) {
+                var remain = textToExpect;
+                for (let i = 0; i < 10 && remain.length > 0; i++) {
+                  controller.enqueue(remain.substring(0, 100));
+                  remain = remain.substring(100);
+                  await new Promise((resolve) => queueMicrotask(resolve));
+                }
 
-              controller.enqueue(remain);
-              controller.close();
-            },
-          }),
-        );
+                controller.enqueue(remain);
+                controller.close();
+              },
+            }),
+          );
+        },
       },
-    }, async (server) => {
-      const response = await fetch(`http://${server.hostname}:${server.port}`);
-      expect(await response.text()).toBe(textToExpect);
-    });
+      async (server) => {
+        const response = await fetch(
+          `http://${server.hostname}:${server.port}`,
+        );
+        expect(await response.text()).toBe(textToExpect);
+      },
+    );
   });
 });
 
 it("should work for a hello world", async () => {
-  await runTest({
-    fetch(req) {
-      return new Response(`Hello, world!`);
+  await runTest(
+    {
+      fetch(req) {
+        return new Response(`Hello, world!`);
+      },
     },
-  }, async (server) => {
-    const response = await fetch(`http://${server.hostname}:${server.port}`);
-    expect(await response.text()).toBe("Hello, world!");
-  });
+    async (server) => {
+      const response = await fetch(`http://${server.hostname}:${server.port}`);
+      expect(await response.text()).toBe("Hello, world!");
+    },
+  );
 });
 
 it("should work for a blob", async () => {
   const fixture = resolve(import.meta.dir, "./fetch.js.txt");
   const textToExpect = readFileSync(fixture, "utf-8");
-  await runTest({
-    fetch(req) {
-      return new Response(new Blob([textToExpect]));
+  await runTest(
+    {
+      fetch(req) {
+        return new Response(new Blob([textToExpect]));
+      },
     },
-  }, async (server) => {
-    const response = await fetch(`http://${server.hostname}:${server.port}`);
-    expect(await response.text()).toBe(textToExpect);
-  });
+    async (server) => {
+      const response = await fetch(`http://${server.hostname}:${server.port}`);
+      expect(await response.text()).toBe(textToExpect);
+    },
+  );
 });
 
 it("should work for a blob stream", async () => {
   const fixture = resolve(import.meta.dir, "./fetch.js.txt");
   const textToExpect = readFileSync(fixture, "utf-8");
-  await runTest({
-    fetch(req) {
-      return new Response(new Blob([textToExpect]).stream());
+  await runTest(
+    {
+      fetch(req) {
+        return new Response(new Blob([textToExpect]).stream());
+      },
     },
-  }, async (server) => {
-    const response = await fetch(`http://${server.hostname}:${server.port}`);
-    expect(await response.text()).toBe(textToExpect);
-  });
+    async (server) => {
+      const response = await fetch(`http://${server.hostname}:${server.port}`);
+      expect(await response.text()).toBe(textToExpect);
+    },
+  );
 });
 
 it("should work for a file stream", async () => {
   const fixture = resolve(import.meta.dir, "./fetch.js.txt");
   const textToExpect = readFileSync(fixture, "utf-8");
-  await runTest({
-    fetch(req) {
-      return new Response(file(fixture).stream());
+  await runTest(
+    {
+      fetch(req) {
+        return new Response(file(fixture).stream());
+      },
     },
-  }, async (server) => {
-    const response = await fetch(`http://${server.hostname}:${server.port}`);
-    expect(await response.text()).toBe(textToExpect);
-  });
+    async (server) => {
+      const response = await fetch(`http://${server.hostname}:${server.port}`);
+      expect(await response.text()).toBe(textToExpect);
+    },
+  );
 });
 
 it("fetch should work with headers", async () => {
   const fixture = resolve(import.meta.dir, "./fetch.js.txt");
-  await runTest({
-    fetch(req) {
-      if (req.headers.get("X-Foo") !== "bar") {
-        return new Response("X-Foo header not set", { status: 500 });
-      }
-      return new Response(file(fixture), {
-        headers: { "X-Both-Ways": "1" },
-      });
-    },
-  }, async (server) => {
-    const response = await fetch(`http://${server.hostname}:${server.port}`, {
-      headers: {
-        "X-Foo": "bar",
+  await runTest(
+    {
+      fetch(req) {
+        if (req.headers.get("X-Foo") !== "bar") {
+          return new Response("X-Foo header not set", { status: 500 });
+        }
+        return new Response(file(fixture), {
+          headers: { "X-Both-Ways": "1" },
+        });
       },
-    });
-    expect(response.status).toBe(200);
-    expect(response.headers.get("X-Both-Ways")).toBe("1");
-  });
+    },
+    async (server) => {
+      const response = await fetch(`http://${server.hostname}:${server.port}`, {
+        headers: {
+          "X-Foo": "bar",
+        },
+      });
+      expect(response.status).toBe(200);
+      expect(response.headers.get("X-Both-Ways")).toBe("1");
+    },
+  );
 });
 
 it(`should work for a file ${count} times serial`, async () => {
   const fixture = resolve(import.meta.dir, "./fetch.js.txt");
   const textToExpect = readFileSync(fixture, "utf-8");
-  await runTest({
-    async fetch(req) {
-      return new Response(file(fixture));
+  await runTest(
+    {
+      async fetch(req) {
+        return new Response(file(fixture));
+      },
     },
-  }, async (server) => {
-    for (let i = 0; i < count; i++) {
-      const response = await fetch(`http://${server.hostname}:${server.port}`);
-      expect(await response.text()).toBe(textToExpect);
-    }
-  });
+    async (server) => {
+      for (let i = 0; i < count; i++) {
+        const response = await fetch(
+          `http://${server.hostname}:${server.port}`,
+        );
+        expect(await response.text()).toBe(textToExpect);
+      }
+    },
+  );
 });
 
 it(`should work for ArrayBuffer ${count} times serial`, async () => {
   const textToExpect = "hello";
-  await runTest({
-    fetch(req) {
-      return new Response(new TextEncoder().encode(textToExpect));
+  await runTest(
+    {
+      fetch(req) {
+        return new Response(new TextEncoder().encode(textToExpect));
+      },
     },
-  }, async (server) => {
-    for (let i = 0; i < count; i++) {
-      const response = await fetch(`http://${server.hostname}:${server.port}`);
-      expect(await response.text()).toBe(textToExpect);
-    }
-  });
+    async (server) => {
+      for (let i = 0; i < count; i++) {
+        const response = await fetch(
+          `http://${server.hostname}:${server.port}`,
+        );
+        expect(await response.text()).toBe(textToExpect);
+      }
+    },
+  );
 });
 
 describe("parallel", () => {
   it(`should work for text ${count} times in batches of 5`, async () => {
     const textToExpect = "hello";
-    await runTest({
-      fetch(req) {
-        return new Response(textToExpect);
+    await runTest(
+      {
+        fetch(req) {
+          return new Response(textToExpect);
+        },
       },
-    }, async (server) => {
-      for (let i = 0; i < count; ) {
-        let responses = await Promise.all([
-          fetch(`http://${server.hostname}:${server.port}`),
-          fetch(`http://${server.hostname}:${server.port}`),
-          fetch(`http://${server.hostname}:${server.port}`),
-          fetch(`http://${server.hostname}:${server.port}`),
-          fetch(`http://${server.hostname}:${server.port}`),
-        ]);
+      async (server) => {
+        for (let i = 0; i < count; ) {
+          let responses = await Promise.all([
+            fetch(`http://${server.hostname}:${server.port}`),
+            fetch(`http://${server.hostname}:${server.port}`),
+            fetch(`http://${server.hostname}:${server.port}`),
+            fetch(`http://${server.hostname}:${server.port}`),
+            fetch(`http://${server.hostname}:${server.port}`),
+          ]);
 
-        for (let response of responses) {
-          expect(await response.text()).toBe(textToExpect);
+          for (let response of responses) {
+            expect(await response.text()).toBe(textToExpect);
+          }
+          i += responses.length;
         }
-        i += responses.length;
-      }
-    });
+      },
+    );
   });
   it(`should work for Uint8Array ${count} times in batches of 5`, async () => {
     const textToExpect = "hello";
-    await runTest({
-      fetch(req) {
-        return new Response(new TextEncoder().encode(textToExpect));
+    await runTest(
+      {
+        fetch(req) {
+          return new Response(new TextEncoder().encode(textToExpect));
+        },
       },
-    }, async (server) => {
-      for (let i = 0; i < count; ) {
-        let responses = await Promise.all([
-          fetch(`http://${server.hostname}:${server.port}`),
-          fetch(`http://${server.hostname}:${server.port}`),
-          fetch(`http://${server.hostname}:${server.port}`),
-          fetch(`http://${server.hostname}:${server.port}`),
-          fetch(`http://${server.hostname}:${server.port}`),
-        ]);
+      async (server) => {
+        for (let i = 0; i < count; ) {
+          let responses = await Promise.all([
+            fetch(`http://${server.hostname}:${server.port}`),
+            fetch(`http://${server.hostname}:${server.port}`),
+            fetch(`http://${server.hostname}:${server.port}`),
+            fetch(`http://${server.hostname}:${server.port}`),
+            fetch(`http://${server.hostname}:${server.port}`),
+          ]);
 
-        for (let response of responses) {
-          expect(await response.text()).toBe(textToExpect);
+          for (let response of responses) {
+            expect(await response.text()).toBe(textToExpect);
+          }
+          i += responses.length;
         }
-        i += responses.length;
-      }
-    });
+      },
+    );
   });
 });
 
 it("should support reloading", async () => {
   const first = (req) => new Response("first");
   const second = (req) => new Response("second");
-  await runTest({
-    fetch: first,
-  }, async (server) => {
-    const response = await fetch(`http://${server.hostname}:${server.port}`);
-    expect(await response.text()).toBe("first");
-    server.reload({ fetch: second });
-    const response2 = await fetch(`http://${server.hostname}:${server.port}`);
-    expect(await response2.text()).toBe("second");
-  });
+  await runTest(
+    {
+      fetch: first,
+    },
+    async (server) => {
+      const response = await fetch(`http://${server.hostname}:${server.port}`);
+      expect(await response.text()).toBe("first");
+      server.reload({ fetch: second });
+      const response2 = await fetch(`http://${server.hostname}:${server.port}`);
+      expect(await response2.text()).toBe("second");
+    },
+  );
 });
 
 describe("status code text", () => {
@@ -577,54 +681,68 @@ describe("status code text", () => {
 
   for (let code in fixture) {
     it(`should return ${code} ${fixture[code]}`, async () => {
-      await runTest({
-        fetch(req) {
-          return new Response("hey", { status: +code });
+      await runTest(
+        {
+          fetch(req) {
+            return new Response("hey", { status: +code });
+          },
         },
-      }, async (server) => {
-        const response = await fetch(`http://${server.hostname}:${server.port}`);
-        expect(response.status).toBe(parseInt(code));
-        expect(response.statusText).toBe(fixture[code]);
-      });
+        async (server) => {
+          const response = await fetch(
+            `http://${server.hostname}:${server.port}`,
+          );
+          expect(response.status).toBe(parseInt(code));
+          expect(response.statusText).toBe(fixture[code]);
+        },
+      );
     });
   }
 });
 
 it("should support multiple Set-Cookie headers", async () => {
-  await runTest({
-    fetch(req) {
-      return new Response("hello", {
-        headers: [
-          ["Another-Header", "1"],
-          ["Set-Cookie", "foo=bar"],
-          ["Set-Cookie", "baz=qux"],
-        ],
-      });
+  await runTest(
+    {
+      fetch(req) {
+        return new Response("hello", {
+          headers: [
+            ["Another-Header", "1"],
+            ["Set-Cookie", "foo=bar"],
+            ["Set-Cookie", "baz=qux"],
+          ],
+        });
+      },
     },
-  }, async (server) => {
-    const response = await fetch(`http://${server.hostname}:${server.port}`);
-    expect(response.headers.getAll("Set-Cookie")).toEqual(["foo=bar", "baz=qux"]);
-    expect(response.headers.get("Set-Cookie")).toEqual("foo=bar, baz=qux");
+    async (server) => {
+      const response = await fetch(`http://${server.hostname}:${server.port}`);
+      expect(response.headers.getAll("Set-Cookie")).toEqual([
+        "foo=bar",
+        "baz=qux",
+      ]);
+      expect(response.headers.get("Set-Cookie")).toEqual("foo=bar, baz=qux");
 
-    const cloned = response.clone().headers;
-    expect(response.headers.getAll("Set-Cookie")).toEqual(["foo=bar", "baz=qux"]);
+      const cloned = response.clone().headers;
+      expect(response.headers.getAll("Set-Cookie")).toEqual([
+        "foo=bar",
+        "baz=qux",
+      ]);
 
-    response.headers.delete("Set-Cookie");
-    expect(response.headers.getAll("Set-Cookie")).toEqual([]);
-    response.headers.delete("Set-Cookie");
-    expect(cloned.getAll("Set-Cookie")).toEqual(["foo=bar", "baz=qux"]);
-    expect(new Headers(cloned).getAll("Set-Cookie")).toEqual([
-      "foo=bar",
-      "baz=qux",
-    ]);
-  });
+      response.headers.delete("Set-Cookie");
+      expect(response.headers.getAll("Set-Cookie")).toEqual([]);
+      response.headers.delete("Set-Cookie");
+      expect(cloned.getAll("Set-Cookie")).toEqual(["foo=bar", "baz=qux"]);
+      expect(new Headers(cloned).getAll("Set-Cookie")).toEqual([
+        "foo=bar",
+        "baz=qux",
+      ]);
+    },
+  );
 });
 
 describe("should support Content-Range with Bun.file()", () => {
   var server;
   // this must be a big file so we can test potentially multiple chunks
   // more than 65 KB
-  const full = function() {
+  const full = (function () {
     const fixture = resolve(import.meta.dir + "/fetch.js.txt");
     const chunk = readFileSync(fixture);
     var whole = new Uint8Array(chunk.byteLength * 128);
@@ -633,7 +751,7 @@ describe("should support Content-Range with Bun.file()", () => {
     }
     writeFileSync(fixture + ".big", whole);
     return whole;
-  }();
+  })();
   const fixture = resolve(import.meta.dir + "/fetch.js.txt") + ".big";
   const getServer = runTest.bind(null, {
     fetch(req) {

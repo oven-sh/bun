@@ -6,13 +6,13 @@
 // 1. We can't dynamically link JavaScriptCore
 // 2. It's important that this is run whenever JavaScriptCore is updated or the bindings on the Zig side change.
 //    Failure to do so will lead to undefined behavior and probably some frustrated people.
-// --- Regenerate this: --- 
+// --- Regenerate this: ---
 // 1. "make headers"
 // 2. "make sizegen"
 // 3. "make headers"
 // ------------------------
 // You can verify the numbers written in this file at runtime via the `extern`d types
-// Run "headers" twice because it uses these values in the output. That's how all the bJSC__.* types are created - from these values. 
+// Run "headers" twice because it uses these values in the output. That's how all the bJSC__.* types are created - from these values.
 pub const JSC__JSObject = 16;
 pub const JSC__JSObject_align = 8;
 pub const WebCore__DOMURL = 112;

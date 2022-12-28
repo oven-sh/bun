@@ -319,117 +319,117 @@ pub const FallbackModule = struct {
     code: string,
     package_json: *const PackageJSON,
 
-    pub const @"assert" = FallbackModule{
+    pub const assert = FallbackModule{
         .path = Fs.Path.initWithNamespaceVirtual(assert_import_path, "node", "assert"),
         .code = assert_code,
         .package_json = &assert_package_json,
     };
-    pub const @"buffer" = FallbackModule{
+    pub const buffer = FallbackModule{
         .path = Fs.Path.initWithNamespaceVirtual(buffer_import_path, "node", "buffer"),
         .code = buffer_code,
         .package_json = &buffer_package_json,
     };
-    pub const @"console" = FallbackModule{
+    pub const console = FallbackModule{
         .path = Fs.Path.initWithNamespaceVirtual(console_import_path, "node", "console"),
         .code = console_code,
         .package_json = &console_package_json,
     };
-    pub const @"constants" = FallbackModule{
+    pub const constants = FallbackModule{
         .path = Fs.Path.initWithNamespaceVirtual(constants_import_path, "node", "constants"),
         .code = constants_code,
         .package_json = &constants_package_json,
     };
-    pub const @"crypto" = FallbackModule{
+    pub const crypto = FallbackModule{
         .path = Fs.Path.initWithNamespaceVirtual(crypto_import_path, "node", "crypto"),
         .code = crypto_code,
         .package_json = &crypto_package_json,
     };
-    pub const @"domain" = FallbackModule{
+    pub const domain = FallbackModule{
         .path = Fs.Path.initWithNamespaceVirtual(domain_import_path, "node", "domain"),
         .code = domain_code,
         .package_json = &domain_package_json,
     };
-    pub const @"events" = FallbackModule{
+    pub const events = FallbackModule{
         .path = Fs.Path.initWithNamespaceVirtual(events_import_path, "node", "events"),
         .code = events_code,
         .package_json = &events_package_json,
     };
-    pub const @"http" = FallbackModule{
+    pub const http = FallbackModule{
         .path = Fs.Path.initWithNamespaceVirtual(http_import_path, "node", "http"),
         .code = http_code,
         .package_json = &http_package_json,
     };
-    pub const @"https" = FallbackModule{
+    pub const https = FallbackModule{
         .path = Fs.Path.initWithNamespaceVirtual(https_import_path, "node", "https"),
         .code = https_code,
         .package_json = &https_package_json,
     };
-    pub const @"net" = FallbackModule{
+    pub const net = FallbackModule{
         .path = Fs.Path.initWithNamespaceVirtual(net_import_path, "node", "net"),
         .code = net_code,
         .package_json = &net_package_json,
     };
-    pub const @"os" = FallbackModule{
+    pub const os = FallbackModule{
         .path = Fs.Path.initWithNamespaceVirtual(os_import_path, "node", "os"),
         .code = os_code,
         .package_json = &os_package_json,
     };
-    pub const @"path" = FallbackModule{
+    pub const path = FallbackModule{
         .path = Fs.Path.initWithNamespaceVirtual(path_import_path, "node", "path"),
         .code = path_code,
         .package_json = &path_package_json,
     };
-    pub const @"process" = FallbackModule{
+    pub const process = FallbackModule{
         .path = Fs.Path.initWithNamespaceVirtual(process_import_path, "node", "process"),
         .code = process_code,
         .package_json = &process_package_json,
     };
-    pub const @"punycode" = FallbackModule{
+    pub const punycode = FallbackModule{
         .path = Fs.Path.initWithNamespaceVirtual(punycode_import_path, "node", "punycode"),
         .code = punycode_code,
         .package_json = &punycode_package_json,
     };
-    pub const @"querystring" = FallbackModule{
+    pub const querystring = FallbackModule{
         .path = Fs.Path.initWithNamespaceVirtual(querystring_import_path, "node", "querystring"),
         .code = querystring_code,
         .package_json = &querystring_package_json,
     };
-    pub const @"stream" = FallbackModule{
+    pub const stream = FallbackModule{
         .path = Fs.Path.initWithNamespaceVirtual(stream_import_path, "node", "stream"),
         .code = stream_code,
         .package_json = &stream_package_json,
     };
-    pub const @"string_decoder" = FallbackModule{
+    pub const string_decoder = FallbackModule{
         .path = Fs.Path.initWithNamespaceVirtual(string_decoder_import_path, "node", "string_decoder"),
         .code = string_decoder_code,
         .package_json = &string_decoder_package_json,
     };
-    pub const @"sys" = FallbackModule{
+    pub const sys = FallbackModule{
         .path = Fs.Path.initWithNamespaceVirtual(sys_import_path, "node", "sys"),
         .code = sys_code,
         .package_json = &sys_package_json,
     };
-    pub const @"timers" = FallbackModule{
+    pub const timers = FallbackModule{
         .path = Fs.Path.initWithNamespaceVirtual(timers_import_path, "node", "timers"),
         .code = timers_code,
         .package_json = &timers_package_json,
     };
-    pub const @"tty" = FallbackModule{
+    pub const tty = FallbackModule{
         .path = Fs.Path.initWithNamespaceVirtual(tty_import_path, "node", "tty"),
         .code = tty_code,
         .package_json = &tty_package_json,
     };
-    pub const @"url" = FallbackModule{
+    pub const url = FallbackModule{
         .path = Fs.Path.initWithNamespaceVirtual(url_import_path, "node", "url"),
         .code = url_code,
         .package_json = &url_package_json,
     };
-    pub const @"util" = FallbackModule{
+    pub const util = FallbackModule{
         .path = Fs.Path.initWithNamespaceVirtual(util_import_path, "node", "util"),
         .code = util_code,
         .package_json = &util_package_json,
     };
-    pub const @"zlib" = FallbackModule{
+    pub const zlib = FallbackModule{
         .path = Fs.Path.initWithNamespaceVirtual(zlib_import_path, "node", "zlib"),
         .code = zlib_code,
         .package_json = &zlib_package_json,

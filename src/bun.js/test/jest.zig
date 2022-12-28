@@ -91,7 +91,7 @@ pub const TestRunner = struct {
         this.pending_test = null;
 
         // disable idling
-        JSC.VirtualMachine.vm.uws_event_loop.?.wakeup();
+        JSC.VirtualMachine.get().uws_event_loop.?.wakeup();
     }
 
     pub fn drain(this: *TestRunner) void {
@@ -126,9 +126,9 @@ pub const TestRunner = struct {
     }
 
     pub const Callback = struct {
-        pub const OnUpdateCount = fn (this: *Callback, delta: u32, total: u32) void;
-        pub const OnTestStart = fn (this: *Callback, test_id: Test.ID) void;
-        pub const OnTestUpdate = fn (this: *Callback, test_id: Test.ID, file: string, label: string, expectations: u32, parent: ?*DescribeScope) void;
+        pub const OnUpdateCount = *const fn (this: *Callback, delta: u32, total: u32) void;
+        pub const OnTestStart = *const fn (this: *Callback, test_id: Test.ID) void;
+        pub const OnTestUpdate = *const fn (this: *Callback, test_id: Test.ID, file: string, label: string, expectations: u32, parent: ?*DescribeScope) void;
         onUpdateCount: OnUpdateCount,
         onTestStart: OnTestStart,
         onTestPass: OnTestUpdate,
@@ -251,7 +251,7 @@ pub const Expect = struct {
     pub fn finalize(
         this: *Expect,
     ) callconv(.C) void {
-        VirtualMachine.vm.allocator.destroy(this);
+        VirtualMachine.get().allocator.destroy(this);
     }
 
     pub fn call(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
@@ -1201,7 +1201,7 @@ pub const TestScope = struct {
         exception: js.ExceptionRef,
         is_only: bool,
     ) js.JSObjectRef {
-        var args = bun.cast([]const JSC.JSValue, arguments[0..@minimum(arguments.len, 2)]);
+        var args = bun.cast([]const JSC.JSValue, arguments[0..@min(arguments.len, 2)]);
         var label: string = "";
         if (args.len == 0) {
             return this;
@@ -1290,7 +1290,7 @@ pub const TestScope = struct {
         task: *TestRunnerTask,
     ) Result {
         if (comptime is_bindgen) return undefined;
-        var vm = VirtualMachine.vm;
+        var vm = VirtualMachine.get();
         var callback = this.callback;
         defer {
             js.JSValueUnprotect(vm.global, callback);
@@ -1325,7 +1325,7 @@ pub const TestScope = struct {
 
             if (initial_value.jsType() == .JSPromise) {
                 if (this.promise != null) {
-                    return .{ .pending = .{} };
+                    return .{ .pending = {} };
                 }
 
                 var promise: *JSC.JSPromise = initial_value.asPromise().?;
@@ -1430,13 +1430,13 @@ pub const DescribeScope = struct {
     pub threadlocal var active: *DescribeScope = undefined;
     pub threadlocal var module: *DescribeScope = undefined;
 
-    const CallbackFn = fn (
-        _: void,
-        ctx: js.JSContextRef,
-        _: js.JSObjectRef,
-        _: js.JSObjectRef,
-        arguments: []const js.JSValueRef,
-        exception: js.ExceptionRef,
+    const CallbackFn = *const fn (
+        void,
+        js.JSContextRef,
+        js.JSObjectRef,
+        js.JSObjectRef,
+        []const js.JSValueRef,
+        js.ExceptionRef,
     ) js.JSObjectRef;
 
     fn createCallback(comptime hook: LifecycleHook) CallbackFn {
@@ -1572,7 +1572,7 @@ pub const DescribeScope = struct {
             var result = js.JSObjectCallAsFunctionReturnValue(ctx, callback, thisObject, 0, null);
 
             if (result.asPromise() != null or result.asInternalPromise() != null) {
-                var vm = JSC.VirtualMachine.vm;
+                var vm = JSC.VirtualMachine.get();
 
                 var promise = JSInternalPromise.resolvedPromise(ctx.ptr(), result);
                 vm.waitForPromise(promise);
@@ -1864,7 +1864,7 @@ pub const TestRunnerTask = struct {
     }
 
     fn deinit(this: *TestRunnerTask) void {
-        var vm = JSC.VirtualMachine.vm;
+        var vm = JSC.VirtualMachine.get();
         if (vm.onUnhandledRejectionCtx) |ctx| {
             if (ctx == @ptrCast(*anyopaque, this)) {
                 vm.onUnhandledRejectionCtx = null;

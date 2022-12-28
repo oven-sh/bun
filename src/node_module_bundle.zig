@@ -172,11 +172,12 @@ pub const NodeModuleBundle = struct {
         to: *const Api.JavascriptBundledModule,
         allocator: std.mem.Allocator,
     ) !string {
+        const fmt = bun.fmt.hexIntLower(this.bundle.packages[to.package_id].hash);
         return try std.fmt.allocPrint(
             allocator,
-            "{x}/{s}",
+            "{any}/{s}",
             .{
-                this.bundle.packages[to.package_id].hash,
+                fmt,
                 this.str(to.path),
                 123,
             },

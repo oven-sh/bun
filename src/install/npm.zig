@@ -1,4 +1,5 @@
 const URL = @import("../url.zig").URL;
+const bun = @import("bun");
 const std = @import("std");
 const MutableString = @import("../string_mutable.zig").MutableString;
 const Semver = @import("./semver.zig");
@@ -163,7 +164,7 @@ pub const Registry = struct {
         switch (response.status_code) {
             400 => return error.BadRequest,
             429 => return error.TooManyRequests,
-            404 => return PackageVersionResponse{ .not_found = .{} },
+            404 => return PackageVersionResponse{ .not_found = {} },
             500...599 => return error.HTTPInternalServerError,
             304 => return PackageVersionResponse{
                 .cached = loaded_manifest.?,
@@ -203,7 +204,7 @@ pub const Registry = struct {
             package_name,
             newly_last_modified,
             new_etag,
-            @truncate(u32, @intCast(u64, @maximum(0, std.time.timestamp()))) + 300,
+            @truncate(u32, @intCast(u64, @max(0, std.time.timestamp()))) + 300,
         )) |package| {
             if (package_manager.options.enable.manifest_cache) {
                 PackageManifest.Serializer.save(&package, package_manager.getTemporaryDirectory(), package_manager.getCacheDirectory()) catch {};
@@ -459,9 +460,9 @@ pub const PackageManifest = struct {
             var data: [fields.len]Data = undefined;
             for (fields) |field_info, i| {
                 data[i] = .{
-                    .size = @sizeOf(field_info.field_type),
+                    .size = @sizeOf(field_info.type),
                     .name = field_info.name,
-                    .alignment = if (@sizeOf(field_info.field_type) == 0) 1 else field_info.alignment,
+                    .alignment = if (@sizeOf(field_info.type) == 0) 1 else field_info.alignment,
                 };
             }
             const Sort = struct {
@@ -536,8 +537,8 @@ pub const PackageManifest = struct {
             }
         }
 
-        fn writeFile(this: *const PackageManifest, tmp_path: [:0]const u8, tmpdir: std.fs.Dir) !void {
-            var tmpfile = try tmpdir.createFileZ(tmp_path, .{
+        fn writeFile(this: *const PackageManifest, tmp_path: [:0]const u8, tmpdir: std.fs.IterableDir) !void {
+            var tmpfile = try tmpdir.dir.createFileZ(tmp_path, .{
                 .truncate = true,
             });
             defer tmpfile.close();
@@ -545,25 +546,29 @@ pub const PackageManifest = struct {
             try Serializer.write(this, @TypeOf(writer), writer);
         }
 
-        pub fn save(this: *const PackageManifest, tmpdir: std.fs.Dir, cache_dir: std.fs.Dir) !void {
+        pub fn save(this: *const PackageManifest, tmpdir: std.fs.IterableDir, cache_dir: std.fs.IterableDir) !void {
             const file_id = std.hash.Wyhash.hash(0, this.name());
             var dest_path_buf: [512 + 64]u8 = undefined;
             var out_path_buf: ["-18446744073709551615".len + ".npm".len + 1]u8 = undefined;
             var dest_path_stream = std.io.fixedBufferStream(&dest_path_buf);
             var dest_path_stream_writer = dest_path_stream.writer();
-            try dest_path_stream_writer.print("{x}.npm-{x}", .{ file_id, @maximum(std.time.milliTimestamp(), 0) });
+            const hex_fmt = bun.fmt.hexIntLower(file_id);
+            const hex_timestamp = @intCast(usize, @max(std.time.milliTimestamp(), 0));
+            const hex_timestamp_fmt = bun.fmt.hexIntLower(hex_timestamp);
+            try dest_path_stream_writer.print("{any}.npm-{any}", .{ hex_fmt, hex_timestamp_fmt });
             try dest_path_stream_writer.writeByte(0);
             var tmp_path: [:0]u8 = dest_path_buf[0 .. dest_path_stream.pos - 1 :0];
             try writeFile(this, tmp_path, tmpdir);
-            var out_path = std.fmt.bufPrintZ(&out_path_buf, "{x}.npm", .{file_id}) catch unreachable;
-            try std.os.renameatZ(tmpdir.fd, tmp_path, cache_dir.fd, out_path);
+            var out_path = std.fmt.bufPrintZ(&out_path_buf, "{any}.npm", .{hex_fmt}) catch unreachable;
+            try std.os.renameatZ(tmpdir.dir.fd, tmp_path, cache_dir.dir.fd, out_path);
         }
 
-        pub fn load(allocator: std.mem.Allocator, cache_dir: std.fs.Dir, package_name: string) !?PackageManifest {
+        pub fn load(allocator: std.mem.Allocator, cache_dir: std.fs.IterableDir, package_name: string) !?PackageManifest {
             const file_id = std.hash.Wyhash.hash(0, package_name);
             var file_path_buf: [512 + 64]u8 = undefined;
-            var file_path = try std.fmt.bufPrintZ(&file_path_buf, "{x}.npm", .{file_id});
-            var cache_file = cache_dir.openFileZ(
+            const hex_fmt = bun.fmt.hexIntLower(file_id);
+            var file_path = try std.fmt.bufPrintZ(&file_path_buf, "{any}.npm", .{hex_fmt});
+            var cache_file = cache_dir.dir.openFileZ(
                 file_path,
                 .{ .mode = .read_only },
             ) catch return null;
@@ -931,13 +936,13 @@ pub const PackageManifest = struct {
             string_builder.count(etag);
         }
 
-        var versioned_packages = try allocator.allocAdvanced(PackageVersion, null, release_versions_len + pre_versions_len, .exact);
-        var all_semver_versions = try allocator.allocAdvanced(Semver.Version, null, release_versions_len + pre_versions_len + dist_tags_count, .exact);
-        var all_extern_strings = try allocator.allocAdvanced(ExternalString, null, extern_string_count + tarball_urls_count, .exact);
-        var version_extern_strings = try allocator.allocAdvanced(ExternalString, null, dependency_sum, .exact);
-        var extern_strings_bin_entries = try allocator.allocAdvanced(ExternalString, null, extern_string_count_bin, .exact);
+        var versioned_packages = try allocator.alloc(PackageVersion, release_versions_len + pre_versions_len);
+        var all_semver_versions = try allocator.alloc(Semver.Version, release_versions_len + pre_versions_len + dist_tags_count);
+        var all_extern_strings = try allocator.alloc(ExternalString, extern_string_count + tarball_urls_count);
+        var version_extern_strings = try allocator.alloc(ExternalString, dependency_sum);
+        var extern_strings_bin_entries = try allocator.alloc(ExternalString, extern_string_count_bin);
         var all_extern_strings_bin_entries = extern_strings_bin_entries;
-        var all_tarball_url_strings = try allocator.allocAdvanced(ExternalString, null, tarball_urls_count, .exact);
+        var all_tarball_url_strings = try allocator.alloc(ExternalString, tarball_urls_count);
         var tarball_url_strings = all_tarball_url_strings;
 
         if (versioned_packages.len > 0) {
@@ -1040,8 +1045,8 @@ pub const PackageManifest = struct {
                                     }
                                 }
                             },
-                            .e_string => |str| {
-                                package_version.cpu = Architecture.apply(Architecture.none, str.data);
+                            .e_string => |stri| {
+                                package_version.cpu = Architecture.apply(Architecture.none, stri.data);
                             },
                             else => {},
                         }
@@ -1062,8 +1067,8 @@ pub const PackageManifest = struct {
                                     }
                                 }
                             },
-                            .e_string => |str| {
-                                package_version.os = OperatingSystem.apply(OperatingSystem.none, str.data);
+                            .e_string => |stri| {
+                                package_version.os = OperatingSystem.apply(OperatingSystem.none, stri.data);
                             },
                             else => {},
                         }
@@ -1127,12 +1132,12 @@ pub const PackageManifest = struct {
 
                                     break :bin;
                                 },
-                                .e_string => |str| {
-                                    if (str.data.len > 0) {
+                                .e_string => |stri| {
+                                    if (stri.data.len > 0) {
                                         package_version.bin = Bin{
                                             .tag = Bin.Tag.file,
                                             .value = .{
-                                                .file = string_builder.append(String, str.data),
+                                                .file = string_builder.append(String, stri.data),
                                             },
                                         };
                                         break :bin;

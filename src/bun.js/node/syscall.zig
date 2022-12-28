@@ -253,7 +253,7 @@ const max_count = switch (builtin.os.tag) {
 };
 
 pub fn write(fd: os.fd_t, bytes: []const u8) Maybe(usize) {
-    const adjusted_len = @minimum(max_count, bytes.len);
+    const adjusted_len = @min(max_count, bytes.len);
 
     if (comptime Environment.isMac) {
         const rc = system.@"write$NOCANCEL"(fd, bytes.ptr, adjusted_len);
@@ -290,7 +290,7 @@ else
 const fcntl_symbol = system.fcntl;
 
 pub fn pread(fd: os.fd_t, buf: []u8, offset: i64) Maybe(usize) {
-    const adjusted_len = @minimum(buf.len, max_count);
+    const adjusted_len = @min(buf.len, max_count);
     const ioffset = @bitCast(i64, offset); // the OS treats this as unsigned
     while (true) {
         const rc = pread_sym(fd, buf.ptr, adjusted_len, ioffset);
@@ -309,7 +309,7 @@ else
     sys.pwrite;
 
 pub fn pwrite(fd: os.fd_t, bytes: []const u8, offset: i64) Maybe(usize) {
-    const adjusted_len = @minimum(bytes.len, max_count);
+    const adjusted_len = @min(bytes.len, max_count);
 
     const ioffset = @bitCast(i64, offset); // the OS treats this as unsigned
     while (true) {
@@ -327,7 +327,7 @@ pub fn pwrite(fd: os.fd_t, bytes: []const u8, offset: i64) Maybe(usize) {
 
 pub fn read(fd: os.fd_t, buf: []u8) Maybe(usize) {
     const debug_timer = bun.Output.DebugTimer.start();
-    const adjusted_len = @minimum(buf.len, max_count);
+    const adjusted_len = @min(buf.len, max_count);
     if (comptime Environment.isMac) {
         const rc = system.@"read$NOCANCEL"(fd, buf.ptr, adjusted_len);
 
@@ -353,7 +353,7 @@ pub fn read(fd: os.fd_t, buf: []u8) Maybe(usize) {
 }
 
 pub fn recv(fd: os.fd_t, buf: []u8, flag: u32) Maybe(usize) {
-    const adjusted_len = @minimum(buf.len, max_count);
+    const adjusted_len = @min(buf.len, max_count);
 
     if (comptime Environment.isMac) {
         const rc = system.@"recvfrom$NOCANCEL"(fd, buf.ptr, adjusted_len, flag, null, null);
@@ -582,7 +582,7 @@ pub fn mmapFile(path: [:0]const u8, flags: u32, wanted_size: ?usize, offset: usi
         },
     }), offset) catch 0;
 
-    if (wanted_size) |size_| size = @minimum(size, size_);
+    if (wanted_size) |size_| size = @min(size, size_);
 
     const map = switch (mmap(null, size, os.PROT.READ | os.PROT.WRITE, flags, fd, offset)) {
         .result => |map| map,
@@ -612,7 +612,7 @@ pub const Error = struct {
         const errno_values = std.enums.values(os.E);
         var err = @enumToInt(os.E.SUCCESS);
         for (errno_values) |errn| {
-            err = @maximum(err, @enumToInt(errn));
+            err = @max(err, @enumToInt(errn));
         }
         break :brk err;
     };
@@ -774,7 +774,7 @@ pub fn getMaxPipeSizeOnLinux() usize {
 
                 // we set the absolute max to 8 MB because honestly that's a huge pipe
                 // my current linux machine only goes up to 1 MB, so that's very unlikely to be hit
-                return @minimum(@truncate(c_int, max_pipe_size -| 32), 1024 * 1024 * 8);
+                return @min(@truncate(c_int, max_pipe_size -| 32), 1024 * 1024 * 8);
             }
         }.once, c_int),
     );

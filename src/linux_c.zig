@@ -1,5 +1,4 @@
 const std = @import("std");
-const sysResource = @cImport(@cInclude("sys/resource.h"));
 const bun = @import("bun");
 pub const SystemErrno = enum(u8) {
     SUCCESS = 0,
@@ -353,14 +352,6 @@ pub fn get_system_loadavg() [3]f64 {
     return [3]f64{ 0, 0, 0 };
 }
 
-pub fn get_process_priority(pid: c_uint) i32 {
-    return sysResource.getpriority(sysResource.PRIO_PROCESS, pid);
-}
-
-pub fn set_process_priority(pid: c_uint, priority: c_int) i32 {
-    return sysResource.setpriority(sysResource.PRIO_PROCESS, pid, priority);
-}
-
 pub fn get_version(name_buffer: *[std.os.HOST_NAME_MAX]u8) []const u8 {
     const uts = std.os.uname();
     const result = std.mem.sliceTo(std.meta.assumeSentinel(&uts.version, 0), 0);
@@ -457,8 +448,8 @@ pub const POSIX_SPAWN_SETSIGMASK = @as(c_int, 0x08);
 pub const POSIX_SPAWN_SETSCHEDPARAM = @as(c_int, 0x10);
 pub const POSIX_SPAWN_SETSCHEDULER = @as(c_int, 0x20);
 
-const posix_spawn_file_actions_addfchdir_np_type = fn (actions: *posix_spawn_file_actions_t, filedes: fd_t) c_int;
-const posix_spawn_file_actions_addchdir_np_type = fn (actions: *posix_spawn_file_actions_t, path: [*:0]const u8) c_int;
+const posix_spawn_file_actions_addfchdir_np_type = *const fn (actions: *posix_spawn_file_actions_t, filedes: fd_t) c_int;
+const posix_spawn_file_actions_addchdir_np_type = *const fn (actions: *posix_spawn_file_actions_t, path: [*:0]const u8) c_int;
 
 /// When not available, these functions will return 0.
 pub fn posix_spawn_file_actions_addfchdir_np(actions: *posix_spawn_file_actions_t, filedes: std.os.fd_t) c_int {

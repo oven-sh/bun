@@ -5,18 +5,15 @@ const MainPanicHandler = panicky.NewPanicHandler(std.builtin.default_panic);
 
 pub const io_mode = .blocking;
 
-pub fn panic(msg: []const u8, error_return_trace: ?*std.builtin.StackTrace) noreturn {
-    MainPanicHandler.handle_panic(msg, error_return_trace);
+pub fn panic(msg: []const u8, error_return_trace: ?*std.builtin.StackTrace, addr: ?usize) noreturn {
+    MainPanicHandler.handle_panic(msg, error_return_trace, addr);
 }
 
 const CrashReporter = @import("./crash_reporter.zig");
 
 pub fn main() void {
-    const bun = @import("bun");
     const Output = bun.Output;
     const Environment = bun.Environment;
-
-    const cli = @import("cli.zig");
 
     if (comptime Environment.isRelease)
         CrashReporter.start() catch unreachable;
@@ -37,11 +34,12 @@ pub fn main() void {
     Output.Source.set(&output_source);
     defer Output.flush();
 
-    cli.Cli.start(bun.default_allocator, stdout, stderr, MainPanicHandler);
+    bun.CLI.Cli.start(bun.default_allocator, stdout, stderr, MainPanicHandler);
 }
 
 test "panic" {
     panic("woah", null);
 }
 
-pub usingnamespace @import("./bun.zig");
+pub const build_options = @import("build_options");
+pub const bun = @import("./bun.zig");

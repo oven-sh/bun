@@ -10,13 +10,10 @@ const Args = JSC.Node.NodeFS.Arguments;
 const d = JSC.d;
 
 const NodeFSFunction = fn (
-    *JSC.Node.NodeFS,
-    JSC.C.JSContextRef,
-    JSC.C.JSObjectRef,
-    JSC.C.JSObjectRef,
-    []const JSC.C.JSValueRef,
-    JSC.C.ExceptionRef,
-) JSC.C.JSValueRef;
+    this: *JSC.Node.NodeJSFS,
+    globalObject: *JSC.JSGlobalObject,
+    callframe: *JSC.CallFrame,
+) callconv(.C) JSC.JSValue;
 
 pub const toJSTrait = std.meta.trait.hasFn("toJS");
 pub const fromJSTrait = std.meta.trait.hasFn("fromJS");
@@ -26,45 +23,63 @@ fn callSync(comptime FunctionEnum: NodeFSFunctionEnum) NodeFSFunction {
     const Function = @field(JSC.Node.NodeFS, @tagName(FunctionEnum));
     const FunctionType = @TypeOf(Function);
 
-    const function: std.builtin.TypeInfo.Fn = comptime @typeInfo(FunctionType).Fn;
-    comptime if (function.args.len != 3) @compileError("Expected 3 arguments");
-    const Arguments = comptime function.args[1].arg_type.?;
+    const function: std.builtin.Type.Fn = comptime @typeInfo(FunctionType).Fn;
+    comptime if (function.params.len != 3) @compileError("Expected 3 arguments");
+    const Arguments = comptime function.params[1].type.?;
     const FormattedName = comptime [1]u8{std.ascii.toUpper(@tagName(FunctionEnum)[0])} ++ @tagName(FunctionEnum)[1..];
     const Result = comptime JSC.Maybe(@field(JSC.Node.NodeFS.ReturnType, FormattedName));
 
     const NodeBindingClosure = struct {
         pub fn bind(
-            this: *JSC.Node.NodeFS,
-            ctx: JSC.C.JSContextRef,
-            _: JSC.C.JSObjectRef,
-            _: JSC.C.JSObjectRef,
-            arguments: []const JSC.C.JSValueRef,
-            exception: JSC.C.ExceptionRef,
-        ) JSC.C.JSValueRef {
-            var slice = ArgumentsSlice.init(ctx.bunVM(), @ptrCast([*]const JSC.JSValue, arguments.ptr)[0..arguments.len]);
+            this: *JSC.Node.NodeJSFS,
+            globalObject: *JSC.JSGlobalObject,
+            callframe: *JSC.CallFrame,
+        ) callconv(.C) JSC.JSValue {
+            var exceptionref: JSC.C.JSValueRef = null;
+
+            var arguments = callframe.arguments(8);
+            var slice = ArgumentsSlice.init(globalObject.bunVM(), arguments.ptr[0..arguments.len]);
             defer slice.deinit();
 
             const args = if (comptime Arguments != void)
-                (Arguments.fromJS(ctx, &slice, exception) orelse return null)
+                (Arguments.fromJS(globalObject, &slice, &exceptionref) orelse return .zero)
             else
                 Arguments{};
-            if (exception.* != null) return null;
+
+            const exception1 = JSC.JSValue.c(exceptionref);
+
+            if (exception1 != .zero) {
+                globalObject.throwValue(exception1);
+                return .zero;
+            }
 
             const result: Result = Function(
-                this,
+                &this.node_fs,
                 args,
                 comptime Flavor.sync,
             );
-            return switch (result) {
-                .err => |err| brk: {
-                    exception.* = err.toJS(ctx);
-                    break :brk null;
+            switch (result) {
+                .err => |err| {
+                    globalObject.throwValue(JSC.JSValue.c(err.toJS(globalObject)));
+                    return .zero;
                 },
-                .result => |res| if (comptime Result.ReturnType != void)
-                    JSC.To.JS.withType(Result.ReturnType, res, ctx, exception)
-                else
-                    JSC.C.JSValueMakeUndefined(ctx),
-            };
+                .result => |res| {
+                    if (comptime Result.ReturnType != void) {
+                        const out = JSC.JSValue.c(JSC.To.JS.withType(Result.ReturnType, res, globalObject, &exceptionref));
+                        const exception = JSC.JSValue.c(exceptionref);
+                        if (exception != .zero) {
+                            globalObject.throwValue(exception);
+                            return .zero;
+                        }
+
+                        return out;
+                    } else {
+                        return JSC.JSValue.jsUndefined();
+                    }
+
+                    unreachable;
+                },
+            }
         }
     };
 
@@ -75,27 +90,20 @@ fn call(comptime Function: NodeFSFunctionEnum) NodeFSFunction {
     // const FunctionType = @TypeOf(Function);
     _ = Function;
 
-    // const function: std.builtin.TypeInfo.Fn = comptime @typeInfo(FunctionType).Fn;
+    // const function: std.builtin.Type.Fn = comptime @typeInfo(FunctionType).Fn;
     // comptime if (function.args.len != 3) @compileError("Expected 3 arguments");
-    // const Arguments = comptime function.args[2].arg_type orelse @compileError(std.fmt.comptimePrint("Function {s} expected to have an arg type at [2]", .{@typeName(FunctionType)}));
+    // const Arguments = comptime function.args[2].type orelse @compileError(std.fmt.comptimePrint("Function {s} expected to have an arg type at [2]", .{@typeName(FunctionType)}));
     // const Result = comptime function.return_type.?;
     // comptime if (Arguments != void and !fromJSTrait(Arguments)) @compileError(std.fmt.comptimePrint("{s} is missing fromJS()", .{@typeName(Arguments)}));
     // comptime if (Result != void and !toJSTrait(Result)) @compileError(std.fmt.comptimePrint("{s} is missing toJS()", .{@typeName(Result)}));
     const NodeBindingClosure = struct {
         pub fn bind(
-            this: *JSC.Node.NodeFS,
-            ctx: JSC.C.JSContextRef,
-            _: JSC.C.JSObjectRef,
-            _: JSC.C.JSObjectRef,
-            arguments: []const JSC.C.JSValueRef,
-            exception: JSC.C.ExceptionRef,
-        ) JSC.C.JSValueRef {
-            _ = this;
-            _ = ctx;
-            _ = arguments;
-            var err = JSC.SystemError{};
-            exception.* = err.toErrorInstance(ctx.ptr()).asObjectRef();
-            return null;
+            _: *JSC.Node.NodeJSFS,
+            globalObject: *JSC.JSGlobalObject,
+            _: *JSC.CallFrame,
+        ) callconv(.C) JSC.JSValue {
+            globalObject.throw("Not implemented yet", .{});
+            return .zero;
             // var slice = ArgumentsSlice.init(arguments);
 
             // defer {
@@ -130,310 +138,102 @@ fn call(comptime Function: NodeFSFunctionEnum) NodeFSFunction {
     return NodeBindingClosure.bind;
 }
 
-pub const NodeFSBindings = JSC.NewClass(
-    JSC.Node.NodeFS,
-    .{ .name = "fs", .ts = .{ .module = .{ .path = "fs" } } },
+pub const NodeJSFS = struct {
+    node_fs: JSC.Node.NodeFS = undefined,
 
-    .{
-        .access = .{
-            .name = "access",
-            .rfn = call(.access),
-        },
-        .appendFile = .{
-            .name = "appendFile",
-            .rfn = call(.appendFile),
-        },
-        .close = .{
-            .name = "close",
-            .rfn = call(.close),
-        },
-        .copyFile = .{
-            .name = "copyFile",
-            .rfn = call(.copyFile),
-        },
-        .exists = .{
-            .name = "exists",
-            .rfn = call(.exists),
-        },
-        .chown = .{
-            .name = "chown",
-            .rfn = call(.chown),
-        },
-        .chmod = .{
-            .name = "chmod",
-            .rfn = call(.chmod),
-        },
-        .fchmod = .{
-            .name = "fchmod",
-            .rfn = call(.fchmod),
-        },
-        .fchown = .{
-            .name = "fchown",
-            .rfn = call(.fchown),
-        },
-        .fstat = .{
-            .name = "fstat",
-            .rfn = call(.fstat),
-        },
-        .fsync = .{
-            .name = "fsync",
-            .rfn = call(.fsync),
-        },
-        .ftruncate = .{
-            .name = "ftruncate",
-            .rfn = call(.ftruncate),
-        },
-        .futimes = .{
-            .name = "futimes",
-            .rfn = call(.futimes),
-        },
-        .lchmod = .{
-            .name = "lchmod",
-            .rfn = call(.lchmod),
-        },
-        .lchown = .{
-            .name = "lchown",
-            .rfn = call(.lchown),
-        },
-        .link = .{
-            .name = "link",
-            .rfn = call(.link),
-        },
-        .lstat = .{
-            .name = "lstat",
-            .rfn = call(.lstat),
-        },
-        .mkdir = .{
-            .name = "mkdir",
-            .rfn = call(.mkdir),
-        },
-        .mkdtemp = .{
-            .name = "mkdtemp",
-            .rfn = call(.mkdtemp),
-        },
-        .open = .{
-            .name = "open",
-            .rfn = call(.open),
-        },
-        .read = .{
-            .name = "read",
-            .rfn = call(.read),
-        },
-        .write = .{
-            .name = "write",
-            .rfn = call(.write),
-        },
-        .readdir = .{
-            .name = "readdir",
-            .rfn = call(.readdir),
-        },
-        .readFile = .{
-            .name = "readFile",
-            .rfn = call(.readFile),
-        },
-        .writeFile = .{
-            .name = "writeFile",
-            .rfn = call(.writeFile),
-        },
-        .readlink = .{
-            .name = "readlink",
-            .rfn = call(.readlink),
-        },
-        .rm = .{
-            .name = "rm",
-            .rfn = call(.rm),
-        },
-        .rmdir = .{
-            .name = "rmdir",
-            .rfn = call(.rmdir),
-        },
-        .realpath = .{
-            .name = "realpath",
-            .rfn = call(.realpath),
-        },
-        .rename = .{
-            .name = "rename",
-            .rfn = call(.rename),
-        },
-        .stat = .{
-            .name = "stat",
-            .rfn = call(.stat),
-        },
-        .symlink = .{
-            .name = "symlink",
-            .rfn = call(.symlink),
-        },
-        .truncate = .{
-            .name = "truncate",
-            .rfn = call(.truncate),
-        },
-        .unlink = .{
-            .name = "unlink",
-            .rfn = call(.unlink),
-        },
-        .utimes = .{
-            .name = "utimes",
-            .rfn = call(.utimes),
-        },
-        .lutimes = .{
-            .name = "lutimes",
-            .rfn = call(.lutimes),
-        },
+    pub usingnamespace JSC.Codegen.JSNodeJSFS;
 
-        .createReadStream = .{
-            .name = "createReadStream",
-            .rfn = if (FeatureFlags.node_streams) callSync(.createReadStream) else call(.createReadStream),
-        },
+    pub fn constructor(globalObject: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) ?*@This() {
+        globalObject.throw("Not a constructor", .{});
+        return null;
+    }
 
-        .createWriteStream = .{
-            .name = "createWriteStream",
-            .rfn = if (FeatureFlags.node_streams) callSync(.createWriteStream) else call(.createWriteStream),
-        },
+    pub const access = call(.access);
+    pub const appendFile = call(.appendFile);
+    pub const close = call(.close);
+    pub const copyFile = call(.copyFile);
+    pub const exists = call(.exists);
+    pub const chown = call(.chown);
+    pub const chmod = call(.chmod);
+    pub const fchmod = call(.fchmod);
+    pub const fchown = call(.fchown);
+    pub const fstat = call(.fstat);
+    pub const fsync = call(.fsync);
+    pub const ftruncate = call(.ftruncate);
+    pub const futimes = call(.futimes);
+    pub const lchmod = call(.lchmod);
+    pub const lchown = call(.lchown);
+    pub const link = call(.link);
+    pub const lstat = call(.lstat);
+    pub const mkdir = call(.mkdir);
+    pub const mkdtemp = call(.mkdtemp);
+    pub const open = call(.open);
+    pub const read = call(.read);
+    pub const write = call(.write);
+    pub const readdir = call(.readdir);
+    pub const readFile = call(.readFile);
+    pub const writeFile = call(.writeFile);
+    pub const readlink = call(.readlink);
+    pub const rm = call(.rm);
+    pub const rmdir = call(.rmdir);
+    pub const realpath = call(.realpath);
+    pub const rename = call(.rename);
+    pub const stat = call(.stat);
+    pub const symlink = call(.symlink);
+    pub const truncate = call(.truncate);
+    pub const unlink = call(.unlink);
+    pub const utimes = call(.utimes);
+    pub const lutimes = call(.lutimes);
+    pub const accessSync = callSync(.access);
+    pub const appendFileSync = callSync(.appendFile);
+    pub const closeSync = callSync(.close);
+    pub const copyFileSync = callSync(.copyFile);
+    pub const existsSync = callSync(.exists);
+    pub const chownSync = callSync(.chown);
+    pub const chmodSync = callSync(.chmod);
+    pub const fchmodSync = callSync(.fchmod);
+    pub const fchownSync = callSync(.fchown);
+    pub const fstatSync = callSync(.fstat);
+    pub const fsyncSync = callSync(.fsync);
+    pub const ftruncateSync = callSync(.ftruncate);
+    pub const futimesSync = callSync(.futimes);
+    pub const lchmodSync = callSync(.lchmod);
+    pub const lchownSync = callSync(.lchown);
+    pub const linkSync = callSync(.link);
+    pub const lstatSync = callSync(.lstat);
+    pub const mkdirSync = callSync(.mkdir);
+    pub const mkdtempSync = callSync(.mkdtemp);
+    pub const openSync = callSync(.open);
+    pub const readSync = callSync(.read);
+    pub const writeSync = callSync(.write);
+    pub const readdirSync = callSync(.readdir);
+    pub const readFileSync = callSync(.readFile);
+    pub const writeFileSync = callSync(.writeFile);
+    pub const readlinkSync = callSync(.readlink);
+    pub const realpathSync = callSync(.realpath);
+    pub const renameSync = callSync(.rename);
+    pub const statSync = callSync(.stat);
+    pub const symlinkSync = callSync(.symlink);
+    pub const truncateSync = callSync(.truncate);
+    pub const unlinkSync = callSync(.unlink);
+    pub const utimesSync = callSync(.utimes);
+    pub const lutimesSync = callSync(.lutimes);
+    pub const rmSync = callSync(.rm);
+    pub const rmdirSync = callSync(.rmdir);
 
-        .accessSync = .{
-            .name = "accessSync",
-            .rfn = callSync(.access),
-        },
-        .appendFileSync = .{
-            .name = "appendFileSync",
-            .rfn = callSync(.appendFile),
-        },
-        .closeSync = .{
-            .name = "closeSync",
-            .rfn = callSync(.close),
-        },
-        .copyFileSync = .{
-            .name = "copyFileSync",
-            .rfn = callSync(.copyFile),
-        },
-        .existsSync = .{
-            .name = "existsSync",
-            .rfn = callSync(.exists),
-        },
-        .chownSync = .{
-            .name = "chownSync",
-            .rfn = callSync(.chown),
-        },
-        .chmodSync = .{
-            .name = "chmodSync",
-            .rfn = callSync(.chmod),
-        },
-        .fchmodSync = .{
-            .name = "fchmodSync",
-            .rfn = callSync(.fchmod),
-        },
-        .fchownSync = .{
-            .name = "fchownSync",
-            .rfn = callSync(.fchown),
-        },
-        .fstatSync = .{
-            .name = "fstatSync",
-            .rfn = callSync(.fstat),
-        },
-        .fsyncSync = .{
-            .name = "fsyncSync",
-            .rfn = callSync(.fsync),
-        },
-        .ftruncateSync = .{
-            .name = "ftruncateSync",
-            .rfn = callSync(.ftruncate),
-        },
-        .futimesSync = .{
-            .name = "futimesSync",
-            .rfn = callSync(.futimes),
-        },
-        .lchmodSync = .{
-            .name = "lchmodSync",
-            .rfn = callSync(.lchmod),
-        },
-        .lchownSync = .{
-            .name = "lchownSync",
-            .rfn = callSync(.lchown),
-        },
-        .linkSync = .{
-            .name = "linkSync",
-            .rfn = callSync(.link),
-        },
-        .lstatSync = .{
-            .name = "lstatSync",
-            .rfn = callSync(.lstat),
-        },
-        .mkdirSync = .{
-            .name = "mkdirSync",
-            .rfn = callSync(.mkdir),
-        },
-        .mkdtempSync = .{
-            .name = "mkdtempSync",
-            .rfn = callSync(.mkdtemp),
-        },
-        .openSync = .{
-            .name = "openSync",
-            .rfn = callSync(.open),
-        },
-        .readSync = .{
-            .name = "readSync",
-            .rfn = callSync(.read),
-        },
-        .writeSync = .{
-            .name = "writeSync",
-            .rfn = callSync(.write),
-        },
-        .readdirSync = .{
-            .name = "readdirSync",
-            .rfn = callSync(.readdir),
-        },
-        .readFileSync = .{
-            .name = "readFileSync",
-            .rfn = callSync(.readFile),
-        },
-        .writeFileSync = .{
-            .name = "writeFileSync",
-            .rfn = callSync(.writeFile),
-        },
-        .readlinkSync = .{
-            .name = "readlinkSync",
-            .rfn = callSync(.readlink),
-        },
-        .realpathSync = .{
-            .name = "realpathSync",
-            .rfn = callSync(.realpath),
-        },
-        .renameSync = .{
-            .name = "renameSync",
-            .rfn = callSync(.rename),
-        },
-        .statSync = .{
-            .name = "statSync",
-            .rfn = callSync(.stat),
-        },
-        .symlinkSync = .{
-            .name = "symlinkSync",
-            .rfn = callSync(.symlink),
-        },
-        .truncateSync = .{
-            .name = "truncateSync",
-            .rfn = callSync(.truncate),
-        },
-        .unlinkSync = .{
-            .name = "unlinkSync",
-            .rfn = callSync(.unlink),
-        },
-        .utimesSync = .{
-            .name = "utimesSync",
-            .rfn = callSync(.utimes),
-        },
-        .lutimesSync = .{
-            .name = "lutimesSync",
-            .rfn = callSync(.lutimes),
-        },
-        .rmSync = .{
-            .name = "rmSync",
-            .rfn = callSync(.rm),
-        },
-        .rmdirSync = .{
-            .name = "rmdirSync",
-            .rfn = callSync(.rmdir),
-        },
-    },
-    .{},
-);
+    pub const fdatasyncSync = callSync(.fdatasync);
+    pub const fdatasync = call(.fdatasync);
+
+    pub fn getDirent(_: *NodeJSFS, globalThis: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue {
+        return JSC.Node.Dirent.getConstructor(globalThis);
+    }
+
+    // Not implemented yet:
+    const notimpl = fdatasync;
+    pub const opendir = notimpl;
+    pub const opendirSync = notimpl;
+    pub const readv = notimpl;
+    pub const readvSync = notimpl;
+    pub const writev = notimpl;
+    pub const writevSync = notimpl;
+};

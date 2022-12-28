@@ -11,13 +11,13 @@ const FILE = @import("std").c.FILE;
 const dev_t = @import("std").c.dev_t;
 
 pub const FileType = enum(mode_t) {
-    regular = 0100000,
-    link = 0120000,
-    socket = 0140000,
-    character_oriented_device = 0020000,
-    block_oriented_device = 0060000,
-    directory = 0040000,
-    fifo = 0010000,
+    regular = 0o100000,
+    link = 0o120000,
+    socket = 0o140000,
+    character_oriented_device = 0o020000,
+    block_oriented_device = 0o060000,
+    directory = 0o040000,
+    fifo = 0o010000,
 };
 
 pub const SymlinkType = enum(c_int) {
@@ -140,15 +140,15 @@ pub extern fn archive_bzlib_version() [*c]const u8;
 pub extern fn archive_liblz4_version() [*c]const u8;
 pub extern fn archive_libzstd_version() [*c]const u8;
 
-pub const archive_read_callback = fn (*struct_archive, *anyopaque, [*c]*const anyopaque) callconv(.C) la_ssize_t;
-pub const archive_skip_callback = fn (*struct_archive, *anyopaque, la_int64_t) callconv(.C) la_int64_t;
-pub const archive_seek_callback = fn (*struct_archive, *anyopaque, la_int64_t, c_int) callconv(.C) la_int64_t;
-pub const archive_write_callback = fn (*struct_archive, *anyopaque, ?*const anyopaque, usize) callconv(.C) la_ssize_t;
-pub const archive_open_callback = fn (*struct_archive, *anyopaque) callconv(.C) c_int;
-pub const archive_close_callback = fn (*struct_archive, *anyopaque) callconv(.C) c_int;
-pub const archive_free_callback = fn (*struct_archive, *anyopaque) callconv(.C) c_int;
-pub const archive_switch_callback = fn (*struct_archive, *anyopaque, ?*anyopaque) callconv(.C) c_int;
-pub const archive_passphrase_callback = fn (*struct_archive, *anyopaque) callconv(.C) [*c]const u8;
+pub const archive_read_callback = *const fn (*struct_archive, *anyopaque, [*c]*const anyopaque) callconv(.C) la_ssize_t;
+pub const archive_skip_callback = *const fn (*struct_archive, *anyopaque, la_int64_t) callconv(.C) la_int64_t;
+pub const archive_seek_callback = *const fn (*struct_archive, *anyopaque, la_int64_t, c_int) callconv(.C) la_int64_t;
+pub const archive_write_callback = *const fn (*struct_archive, *anyopaque, ?*const anyopaque, usize) callconv(.C) la_ssize_t;
+pub const archive_open_callback = *const fn (*struct_archive, *anyopaque) callconv(.C) c_int;
+pub const archive_close_callback = *const fn (*struct_archive, *anyopaque) callconv(.C) c_int;
+pub const archive_free_callback = *const fn (*struct_archive, *anyopaque) callconv(.C) c_int;
+pub const archive_switch_callback = *const fn (*struct_archive, *anyopaque, ?*anyopaque) callconv(.C) c_int;
+pub const archive_passphrase_callback = *const fn (*struct_archive, *anyopaque) callconv(.C) [*c]const u8;
 pub extern fn archive_read_new() *struct_archive;
 pub extern fn archive_read_support_compression_all(*struct_archive) c_int;
 pub extern fn archive_read_support_compression_bzip2(*struct_archive) c_int;
@@ -244,7 +244,7 @@ pub extern fn archive_read_add_passphrase(*struct_archive, [*c]const u8) c_int;
 pub extern fn archive_read_set_passphrase_callback(*struct_archive, client_data: ?*anyopaque, ?archive_passphrase_callback) c_int;
 pub extern fn archive_read_extract(*struct_archive, *struct_archive_entry, flags: c_int) c_int;
 pub extern fn archive_read_extract2(*struct_archive, *struct_archive_entry, *struct_archive) c_int;
-pub extern fn archive_read_extract_set_progress_callback(*struct_archive, _progress_func: ?fn (?*anyopaque) callconv(.C) void, _user_data: ?*anyopaque) void;
+pub extern fn archive_read_extract_set_progress_callback(*struct_archive, _progress_func: ?*const fn (?*anyopaque) callconv(.C) void, _user_data: ?*anyopaque) void;
 pub extern fn archive_read_extract_set_skip_file(*struct_archive, la_int64_t, la_int64_t) void;
 pub extern fn archive_read_close(*struct_archive) c_int;
 pub extern fn archive_read_free(*struct_archive) c_int;
@@ -334,8 +334,8 @@ pub extern fn archive_write_disk_new() *struct_archive;
 pub extern fn archive_write_disk_set_skip_file(*struct_archive, la_int64_t, la_int64_t) c_int;
 pub extern fn archive_write_disk_set_options(*struct_archive, flags: c_int) c_int;
 pub extern fn archive_write_disk_set_standard_lookup(*struct_archive) c_int;
-pub extern fn archive_write_disk_set_group_lookup(*struct_archive, ?*anyopaque, ?fn (?*anyopaque, [*c]const u8, la_int64_t) callconv(.C) la_int64_t, ?fn (?*anyopaque) callconv(.C) void) c_int;
-pub extern fn archive_write_disk_set_user_lookup(*struct_archive, ?*anyopaque, ?fn (?*anyopaque, [*c]const u8, la_int64_t) callconv(.C) la_int64_t, ?fn (?*anyopaque) callconv(.C) void) c_int;
+pub extern fn archive_write_disk_set_group_lookup(*struct_archive, ?*anyopaque, ?*const fn (?*anyopaque, [*c]const u8, la_int64_t) callconv(.C) la_int64_t, ?*const fn (?*anyopaque) callconv(.C) void) c_int;
+pub extern fn archive_write_disk_set_user_lookup(*struct_archive, ?*anyopaque, ?*const fn (?*anyopaque, [*c]const u8, la_int64_t) callconv(.C) la_int64_t, ?*const fn (?*anyopaque) callconv(.C) void) c_int;
 pub extern fn archive_write_disk_gid(*struct_archive, [*c]const u8, la_int64_t) la_int64_t;
 pub extern fn archive_write_disk_uid(*struct_archive, [*c]const u8, la_int64_t) la_int64_t;
 pub extern fn archive_read_disk_new() *struct_archive;
@@ -346,8 +346,8 @@ pub extern fn archive_read_disk_entry_from_file(*struct_archive, *struct_archive
 pub extern fn archive_read_disk_gname(*struct_archive, la_int64_t) [*c]const u8;
 pub extern fn archive_read_disk_uname(*struct_archive, la_int64_t) [*c]const u8;
 pub extern fn archive_read_disk_set_standard_lookup(*struct_archive) c_int;
-pub extern fn archive_read_disk_set_gname_lookup(*struct_archive, ?*anyopaque, ?fn (?*anyopaque, la_int64_t) callconv(.C) [*c]const u8, ?fn (?*anyopaque) callconv(.C) void) c_int;
-pub extern fn archive_read_disk_set_uname_lookup(*struct_archive, ?*anyopaque, ?fn (?*anyopaque, la_int64_t) callconv(.C) [*c]const u8, ?fn (?*anyopaque) callconv(.C) void) c_int;
+pub extern fn archive_read_disk_set_gname_lookup(*struct_archive, ?*anyopaque, ?*const fn (?*anyopaque, la_int64_t) callconv(.C) [*c]const u8, ?*const fn (?*anyopaque) callconv(.C) void) c_int;
+pub extern fn archive_read_disk_set_uname_lookup(*struct_archive, ?*anyopaque, ?*const fn (?*anyopaque, la_int64_t) callconv(.C) [*c]const u8, ?*const fn (?*anyopaque) callconv(.C) void) c_int;
 pub extern fn archive_read_disk_open(*struct_archive, [*c]const u8) c_int;
 pub extern fn archive_read_disk_open_w(*struct_archive, [*c]const wchar_t) c_int;
 pub extern fn archive_read_disk_descend(*struct_archive) c_int;
@@ -357,8 +357,8 @@ pub extern fn archive_read_disk_current_filesystem_is_synthetic(*struct_archive)
 pub extern fn archive_read_disk_current_filesystem_is_remote(*struct_archive) c_int;
 pub extern fn archive_read_disk_set_atime_restored(*struct_archive) c_int;
 pub extern fn archive_read_disk_set_behavior(*struct_archive, flags: c_int) c_int;
-pub extern fn archive_read_disk_set_matching(*struct_archive, _matching: *struct_archive, _excluded_func: ?fn (*struct_archive, ?*anyopaque, *struct_archive_entry) callconv(.C) void, _client_data: ?*anyopaque) c_int;
-pub extern fn archive_read_disk_set_metadata_filter_callback(*struct_archive, _metadata_filter_func: ?fn (*struct_archive, ?*anyopaque, *struct_archive_entry) callconv(.C) c_int, _client_data: ?*anyopaque) c_int;
+pub extern fn archive_read_disk_set_matching(*struct_archive, _matching: *struct_archive, _excluded_func: ?*const fn (*struct_archive, ?*anyopaque, *struct_archive_entry) callconv(.C) void, _client_data: ?*anyopaque) c_int;
+pub extern fn archive_read_disk_set_metadata_filter_callback(*struct_archive, _metadata_filter_func: ?*const fn (*struct_archive, ?*anyopaque, *struct_archive_entry) callconv(.C) c_int, _client_data: ?*anyopaque) c_int;
 pub extern fn archive_free(*struct_archive) c_int;
 pub extern fn archive_filter_count(*struct_archive) c_int;
 pub extern fn archive_filter_bytes(*struct_archive, c_int) la_int64_t;

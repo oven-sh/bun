@@ -69,7 +69,7 @@ const DeprecatedGlobalRouter = struct {
             break :brk JSC.JSValue.fromRef(arguments[0]);
         };
 
-        var router = JavaScript.VirtualMachine.vm.bundler.router orelse {
+        var router = JavaScript.VirtualMachine.get().bundler.router orelse {
             JSError(getAllocator(ctx), "Bun.match needs a framework configured with routes", .{}, ctx, exception);
             return null;
         };
@@ -140,9 +140,9 @@ const DeprecatedGlobalRouter = struct {
         var matched = MatchedRoute.init(
             getAllocator(ctx),
             route.*,
-            JSC.VirtualMachine.vm.refCountedString(JSC.VirtualMachine.vm.origin.href, null, false),
-            JSC.VirtualMachine.vm.refCountedString(JSC.VirtualMachine.vm.bundler.options.routes.asset_prefix_path, null, false),
-            JSC.VirtualMachine.vm.refCountedString(JSC.VirtualMachine.vm.bundler.fs.top_level_dir, null, false),
+            JSC.VirtualMachine.get().refCountedString(JSC.VirtualMachine.get().origin.href, null, false),
+            JSC.VirtualMachine.get().refCountedString(JSC.VirtualMachine.get().bundler.options.routes.asset_prefix_path, null, false),
+            JSC.VirtualMachine.get().refCountedString(JSC.VirtualMachine.get().bundler.fs.top_level_dir, null, false),
         ) catch unreachable;
 
         return matched.toJS(ctx).asObjectRef();
@@ -665,7 +665,7 @@ pub const MatchedRoute = struct {
         var writer = stream.writer();
         JSC.API.Bun.getPublicPathWithAssetPrefix(
             this.route.file_path,
-            if (this.base_dir) |base_dir| base_dir.slice() else VirtualMachine.vm.bundler.fs.top_level_dir,
+            if (this.base_dir) |base_dir| base_dir.slice() else VirtualMachine.get().bundler.fs.top_level_dir,
             if (this.origin) |origin| URL.parse(origin.slice()) else URL{},
             if (this.asset_prefix) |prefix| prefix.slice() else "",
             @TypeOf(&writer),

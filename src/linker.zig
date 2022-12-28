@@ -41,7 +41,7 @@ const JSC = @import("bun").JSC;
 const PluginRunner = @import("./bundler.zig").PluginRunner;
 pub const CSSResolveError = error{ResolveError};
 
-pub const OnImportCallback = fn (resolve_result: *const Resolver.Result, import_record: *ImportRecord, origin: URL) void;
+pub const OnImportCallback = *const fn (resolve_result: *const Resolver.Result, import_record: *ImportRecord, origin: URL) void;
 
 pub const Linker = struct {
     const HashedFileNameMap = std.AutoHashMap(u64, string);
@@ -369,7 +369,7 @@ pub const Linker = struct {
                                 }
                                 if (package_name.len != text.len) {
                                     if (node_modules_bundle.getPackage(package_name)) |pkg| {
-                                        const import_path = text[@minimum(text.len, package_name.len + 1)..];
+                                        const import_path = text[@min(text.len, package_name.len + 1)..];
                                         if (node_modules_bundle.findModuleIDInPackageIgnoringExtension(pkg, import_path)) |found_module| {
                                             import_record.is_bundled = true;
                                             node_module_bundle_import_path = node_module_bundle_import_path orelse
@@ -386,7 +386,7 @@ pub const Linker = struct {
                         }
                     }
 
-                    var resolved_import_ = brk: {
+                    var resolved_import_: anyerror!Resolver.Result = brk: {
                         switch (import_record.tag) {
                             else => {},
                             // for fast refresh, attempt to read the version directly from the bundle instead of resolving it
@@ -397,7 +397,7 @@ pub const Linker = struct {
                                         const package_name = runtime[0 .. strings.indexOfChar(runtime, '/') orelse runtime.len];
 
                                         if (node_modules_bundle.getPackage(package_name)) |pkg| {
-                                            const import_path = runtime[@minimum(runtime.len, package_name.len + 1)..];
+                                            const import_path = runtime[@min(runtime.len, package_name.len + 1)..];
                                             if (node_modules_bundle.findModuleInPackage(pkg, import_path)) |found_module| {
                                                 import_record.is_bundled = true;
                                                 node_module_bundle_import_path = node_module_bundle_import_path orelse
@@ -444,13 +444,14 @@ pub const Linker = struct {
                                 .failure => |err| {
                                     break :brk err;
                                 },
-                                .pending => |*pending| {
+                                .pending => |pending1| {
+                                    var pending = pending1;
                                     if (!linker.resolver.opts.global_cache.canInstall()) {
                                         break :brk error.InstallationPending;
                                     }
 
                                     pending.import_record_id = record_i;
-                                    try result.pending_imports.append(linker.allocator, pending.*);
+                                    try result.pending_imports.append(linker.allocator, pending);
                                     continue;
                                 },
                                 .not_found => break :brk error.ModuleNotFound,
@@ -795,9 +796,9 @@ pub const Linker = struct {
             else => {},
         }
         if (had_resolve_errors) return error.ResolveError;
-        result.ast.externals = externals.toOwnedSlice();
+        result.ast.externals = try externals.toOwnedSlice();
 
-        if (result.ast.needs_runtime and result.ast.runtime_import_record_id == null) {
+        if (result.ast.needs_runtime and (result.ast.runtime_import_record_id == null or import_records.len == 0)) {
             var new_import_records = try linker.allocator.alloc(ImportRecord, import_records.len + 1);
             std.mem.copy(ImportRecord, new_import_records, import_records);
 
@@ -823,27 +824,39 @@ pub const Linker = struct {
         // Since they definitely aren't using require, we don't have to worry about the symbol being renamed.
         if (needs_require and !result.ast.uses_require_ref) {
             result.ast.uses_require_ref = true;
-            require_part_import_clauses[0] = js_ast.ClauseItem{
-                .alias = require_alias,
-                .original_name = "",
-                .alias_loc = logger.Loc.Empty,
-                .name = js_ast.LocRef{
-                    .loc = logger.Loc.Empty,
-                    .ref = result.ast.require_ref,
+            const PrependPart = struct {
+                stmts: [1]js_ast.Stmt,
+                import_statement: js_ast.S.Import,
+                clause_items: [1]js_ast.ClauseItem,
+            };
+            var prepend = linker.allocator.create(PrependPart) catch unreachable;
+
+            prepend.* = .{
+                .clause_items = .{
+                    .{
+                        .alias = require_alias,
+                        .original_name = "",
+                        .alias_loc = logger.Loc.Empty,
+                        .name = js_ast.LocRef{
+                            .loc = logger.Loc.Empty,
+                            .ref = result.ast.require_ref,
+                        },
+                    },
                 },
+                .import_statement = .{
+                    .namespace_ref = Ref.None,
+                    .items = &prepend.clause_items,
+                    .import_record_index = result.ast.runtime_import_record_id.?,
+                },
+                .stmts = undefined,
             };
 
-            require_part_import_statement = js_ast.S.Import{
-                .namespace_ref = Ref.None,
-                .items = std.mem.span(&require_part_import_clauses),
-                .import_record_index = result.ast.runtime_import_record_id.?,
-            };
-            require_part_stmts[0] = js_ast.Stmt{
-                .data = .{ .s_import = &require_part_import_statement },
+            prepend.stmts[0] = .{
+                .data = .{ .s_import = &prepend.import_statement },
                 .loc = logger.Loc.Empty,
             };
 
-            result.ast.prepend_part = js_ast.Part{ .stmts = std.mem.span(&require_part_stmts) };
+            result.ast.prepend_part = js_ast.Part{ .stmts = &prepend.stmts };
         }
     }
 
@@ -933,10 +946,9 @@ pub const Linker = struct {
                         if (linker.options.serve) {
                             var hash_buf: [64]u8 = undefined;
                             const modkey = try linker.getModKey(basepath, null);
-
                             return Fs.Path.init(try origin.joinAlloc(
                                 linker.allocator,
-                                std.fmt.bufPrint(&hash_buf, "hash:{x}/", .{modkey.hash()}) catch unreachable,
+                                std.fmt.bufPrint(&hash_buf, "hash:{any}/", .{bun.fmt.hexIntLower(modkey.hash())}) catch unreachable,
                                 dirname,
                                 basename,
                                 absolute_pathname.ext,

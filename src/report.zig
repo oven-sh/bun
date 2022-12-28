@@ -28,7 +28,8 @@ pub const CrashReportWriter = struct {
     pub fn printFrame(_: ?*anyopaque, frame: CrashReporter.StackFrame) void {
         const function_name = if (frame.function_name.len > 0) frame.function_name else "[function ?]";
         const filename = if (frame.filename.len > 0) frame.function_name else "[file ?]";
-        crash_report_writer.print("[0x{X}] - <b>{s}<r> {s}:{d}\n", .{ frame.pc, function_name, filename, frame.line_number });
+        const fmt = bun.fmt.hexIntUpper(frame.pc);
+        crash_report_writer.print("[0x{any}] - <b>{s}<r> {s}:{d}\n", .{ fmt, function_name, filename, frame.line_number });
     }
 
     pub fn dump() void {
@@ -68,7 +69,7 @@ pub const CrashReportWriter = struct {
         const file_path = std.fmt.bufPrintZ(
             &crash_reporter_path,
             "{s}/.bun-crash/v{s}-{d}.crash",
-            .{ base_dir, Global.package_json_version, @intCast(u64, @maximum(std.time.milliTimestamp(), 0)) },
+            .{ base_dir, Global.package_json_version, @intCast(u64, @max(std.time.milliTimestamp(), 0)) },
         ) catch return;
 
         std.fs.cwd().makeDir(std.fs.path.dirname(std.mem.span(file_path)).?) catch {};
@@ -191,7 +192,7 @@ pub fn fatal(err_: ?anyerror, msg_: ?string) void {
         if (msg_) |msg| {
             const msg_ptr = @ptrToInt(msg.ptr);
             if (msg_ptr > 0) {
-                const len = @maximum(@minimum(msg.len, 1024), 0);
+                const len = @max(@min(msg.len, 1024), 0);
 
                 if (len > 0) {
                     if (Output.isEmojiEnabled()) {
@@ -270,7 +271,7 @@ pub noinline fn handleCrash(signal: i32, addr: usize) void {
 
     crash_report_writer.print(
         "\n<r><red>{s}<d> at 0x{any}\n\n",
-        .{ @errorName(name), std.fmt.fmtSliceHexUpper(std.mem.asBytes(&addr)) },
+        .{ @errorName(name), bun.fmt.hexIntUpper(addr) },
     );
     printMetadata();
     if (comptime !@import("bun").JSC.is_bindgen) {
@@ -295,7 +296,7 @@ pub noinline fn handleCrash(signal: i32, addr: usize) void {
         }
     }
 
-    std.c._exit(128 + @truncate(u8, @intCast(u8, @maximum(signal, 0))));
+    std.c._exit(128 + @truncate(u8, @intCast(u8, @max(signal, 0))));
 }
 
 pub noinline fn globalError(err: anyerror) noreturn {
@@ -530,7 +531,7 @@ pub noinline fn globalError(err: anyerror) noreturn {
                 var debug_info = std.debug.getSelfDebugInfo() catch break :print_stacktrace;
                 var trace = @errorReturnTrace() orelse break :print_stacktrace;
                 Output.disableBuffering();
-                std.debug.writeStackTrace(trace.*, Output.errorWriter(), default_allocator, debug_info, std.debug.detectTTYConfig()) catch break :print_stacktrace;
+                std.debug.writeStackTrace(trace.*, Output.errorWriter(), default_allocator, debug_info, std.debug.detectTTYConfig(std.io.getStdErr())) catch break :print_stacktrace;
             }
 
             Global.exit(1);
@@ -554,7 +555,7 @@ pub noinline fn globalError(err: anyerror) noreturn {
         var debug_info = std.debug.getSelfDebugInfo() catch break :print_stacktrace;
         var trace = @errorReturnTrace() orelse break :print_stacktrace;
         Output.disableBuffering();
-        std.debug.writeStackTrace(trace.*, Output.errorWriter(), default_allocator, debug_info, std.debug.detectTTYConfig()) catch break :print_stacktrace;
+        std.debug.writeStackTrace(trace.*, Output.errorWriter(), default_allocator, debug_info, std.debug.detectTTYConfig(std.io.getStdErr())) catch break :print_stacktrace;
     }
 
     Global.exit(1);

@@ -88,12 +88,11 @@ const PackageManager = @import("../install/install.zig").PackageManager;
 const Install = @import("../install/install.zig");
 const VirtualMachine = JSC.VirtualMachine;
 const Dependency = @import("../install/dependency.zig");
-
 // This exists to make it so we can reload these quicker in development
 fn jsModuleFromFile(from_path: string, comptime input: string) string {
-    const absolute_path = comptime std.fs.path.dirname(@src().file).? ++ "/" ++ input;
+    const absolute_path = comptime (bun.Environment.base_path ++ std.fs.path.dirname(@src().file).?) ++ "/" ++ input;
     const Holder = struct {
-        pub const file = @embedFile(absolute_path);
+        pub const file = @embedFile(input);
     };
 
     if (comptime !Environment.allow_assert) {
@@ -152,18 +151,18 @@ inline fn jsSyntheticModule(comptime name: ResolvedSource.Tag) ResolvedSource {
 
 fn dumpSource(specifier: string, printer: anytype) !void {
     const BunDebugHolder = struct {
-        pub var dir: ?std.fs.Dir = null;
+        pub var dir: ?std.fs.IterableDir = null;
     };
     if (BunDebugHolder.dir == null) {
-        BunDebugHolder.dir = try std.fs.cwd().makeOpenPath("/tmp/bun-debug-src/", .{ .iterate = true });
+        BunDebugHolder.dir = try std.fs.cwd().makeOpenPathIterable("/tmp/bun-debug-src/", .{});
     }
 
     if (std.fs.path.dirname(specifier)) |dir_path| {
-        var parent = try BunDebugHolder.dir.?.makeOpenPath(dir_path[1..], .{ .iterate = true });
+        var parent = try BunDebugHolder.dir.?.dir.makeOpenPathIterable(dir_path[1..], .{});
         defer parent.close();
-        try parent.writeFile(std.fs.path.basename(specifier), printer.ctx.getWritten());
+        try parent.dir.writeFile(std.fs.path.basename(specifier), printer.ctx.getWritten());
     } else {
-        try BunDebugHolder.dir.?.writeFile(std.fs.path.basename(specifier), printer.ctx.getWritten());
+        try BunDebugHolder.dir.?.dir.writeFile(std.fs.path.basename(specifier), printer.ctx.getWritten());
     }
 }
 
@@ -772,7 +771,7 @@ pub const ModuleLoader = struct {
             debug("resumeLoadingModule: {s}", .{this.specifier});
             var parse_result = this.parse_result;
             var path = this.path;
-            var jsc_vm = JSC.VirtualMachine.vm;
+            var jsc_vm = JSC.VirtualMachine.get();
             var specifier = this.specifier;
             var old_log = jsc_vm.log;
 
@@ -1451,7 +1450,7 @@ pub const ModuleLoader = struct {
         const after_namespace = if (namespace.len == 0)
             specifier
         else
-            specifier[@minimum(namespace.len + 1, specifier.len)..];
+            specifier[@min(namespace.len + 1, specifier.len)..];
 
         return globalObject.runOnLoadPlugins(ZigString.init(namespace), ZigString.init(after_namespace), .bun) orelse return JSValue.zero;
     }
@@ -1755,7 +1754,7 @@ pub const ModuleLoader = struct {
                         .hash = 0,
                     };
                 },
-                .@"ws" => {
+                .ws => {
                     return ResolvedSource{
                         .allocator = null,
                         .source_code = ZigString.init(
@@ -1821,7 +1820,7 @@ pub const ModuleLoader = struct {
                         .hash = 0,
                     };
                 },
-                .@"undici" => {
+                .undici => {
                     return ResolvedSource{
                         .allocator = null,
                         .source_code = ZigString.init(
@@ -1854,7 +1853,7 @@ pub const ModuleLoader = struct {
                         .hash = 0,
                     };
                 },
-                .@"depd" => {
+                .depd => {
                     return ResolvedSource{
                         .allocator = null,
                         .source_code = ZigString.init(
@@ -1970,7 +1969,7 @@ pub const HardcodedModule = enum {
     @"bun:jsc",
     @"bun:main",
     @"bun:sqlite",
-    @"depd",
+    depd,
     @"detect-libc",
     @"node:assert",
     @"node:buffer",
@@ -1998,8 +1997,8 @@ pub const HardcodedModule = enum {
     @"node:url",
     @"node:util",
     @"node:util/types",
-    @"undici",
-    @"ws",
+    undici,
+    ws,
     /// Already resolved modules go in here.
     /// This does not remap the module name, it is just a hash table.
     /// Do not put modules that have aliases in here
@@ -2012,7 +2011,7 @@ pub const HardcodedModule = enum {
             .{ "bun:jsc", HardcodedModule.@"bun:jsc" },
             .{ "bun:main", HardcodedModule.@"bun:main" },
             .{ "bun:sqlite", HardcodedModule.@"bun:sqlite" },
-            .{ "depd", HardcodedModule.@"depd" },
+            .{ "depd", HardcodedModule.depd },
             .{ "detect-libc", HardcodedModule.@"detect-libc" },
             .{ "node:assert", HardcodedModule.@"node:assert" },
             .{ "node:buffer", HardcodedModule.@"node:buffer" },
@@ -2040,8 +2039,8 @@ pub const HardcodedModule = enum {
             .{ "node:url", HardcodedModule.@"node:url" },
             .{ "node:util", HardcodedModule.@"node:util" },
             .{ "node:util/types", HardcodedModule.@"node:util/types" },
-            .{ "undici", HardcodedModule.@"undici" },
-            .{ "ws", HardcodedModule.@"ws" },
+            .{ "undici", HardcodedModule.undici },
+            .{ "ws", HardcodedModule.ws },
         },
     );
     pub const Aliases = bun.ComptimeStringMap(

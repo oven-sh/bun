@@ -684,7 +684,7 @@ pub const MDParser = struct {
         }
 
         // Check for ordered list item marks
-        max_end = @minimum(off + 9, this.size);
+        max_end = @min(off + 9, this.size);
         container.start = 0;
         while (off < max_end and std.ascii.isDigit(this.charAt(off))) {
             container.start = container.start * 10 + (this.charAt(off) - '0');
@@ -1785,7 +1785,7 @@ pub const MDX = struct {
 
     pub fn parse(this: *MDX) !js_ast.Result {
         try this._parse();
-        return try runVisitPassAndFinish(JSParser, &this.parser, this.stmts.toOwnedSlice(this.allocator));
+        return try runVisitPassAndFinish(JSParser, &this.parser, try this.stmts.toOwnedSlice(this.allocator));
     }
 
     fn run(this: *MDX) anyerror!logger.Loc {
@@ -1797,7 +1797,7 @@ pub const MDX = struct {
         var root_children = std.ArrayListUnmanaged(Expr){};
         var first_loc = try run(this, &root_children);
 
-        first_loc.start = @maximum(first_loc.start, 0);
+        first_loc.start = @max(first_loc.start, 0);
         const args_loc = first_loc;
         first_loc.start += 1;
         const body_loc = first_loc;

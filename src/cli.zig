@@ -10,7 +10,7 @@ const default_allocator = bun.default_allocator;
 const constStrToU8 = bun.constStrToU8;
 const FeatureFlags = bun.FeatureFlags;
 const C = bun.C;
-
+const root = @import("root");
 const std = @import("std");
 const lex = @import("js_lexer.zig");
 const logger = @import("bun").logger;
@@ -753,7 +753,8 @@ pub const HelpCommand = struct {
             \\
         ;
 
-        var rand = std.rand.DefaultPrng.init(@intCast(u64, @maximum(std.time.milliTimestamp(), 0))).random();
+        var rand_state = std.rand.DefaultPrng.init(@intCast(u64, @max(std.time.milliTimestamp(), 0)));
+        const rand = rand_state.random();
         const package_add_i = rand.uintAtMost(usize, packages_to_add_filler.len - 1);
         const package_remove_i = rand.uintAtMost(usize, packages_to_remove_filler.len - 1);
 

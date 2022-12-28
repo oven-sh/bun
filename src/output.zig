@@ -243,7 +243,7 @@ pub fn flush() void {
 }
 
 inline fn printElapsedToWithCtx(elapsed: f64, comptime printerFn: anytype, comptime has_ctx: bool, ctx: anytype) void {
-    switch (elapsed) {
+    switch (@floatToInt(i64, @round(elapsed))) {
         0...1500 => {
             const fmt = "<r><d>[<b>{d:>.2}ms<r><d>]<r>";
             const args = .{elapsed};
@@ -279,12 +279,12 @@ pub fn printElapsedStdout(elapsed: f64) void {
 }
 
 pub fn printStartEnd(start: i128, end: i128) void {
-    const elapsed = @divTrunc(end - start, @as(i128, std.time.ns_per_ms));
+    const elapsed = @divTrunc(@truncate(i64, end - start), @as(i64, std.time.ns_per_ms));
     printElapsed(@intToFloat(f64, elapsed));
 }
 
 pub fn printStartEndStdout(start: i128, end: i128) void {
-    const elapsed = @divTrunc(end - start, @as(i128, std.time.ns_per_ms));
+    const elapsed = @divTrunc(@truncate(i64, end - start), @as(i64, std.time.ns_per_ms));
     printElapsedStdout(@intToFloat(f64, elapsed));
 }
 
@@ -350,11 +350,11 @@ pub fn print(comptime fmt: string, args: anytype) void {
 ///   BUN_DEBUG_foo=1
 /// To enable all logs, set the environment variable
 ///   BUN_DEBUG_ALL=1
-const _log_fn = fn (comptime fmt: string, args: anytype) callconv(.Inline) void;
+const _log_fn = fn (comptime fmt: string, args: anytype) void;
 pub fn scoped(comptime tag: @Type(.EnumLiteral), comptime disabled: bool) _log_fn {
     if (comptime !Environment.isDebug) {
         return struct {
-            pub inline fn log(comptime _: string, _: anytype) void {}
+            pub fn log(comptime _: string, _: anytype) void {}
         }.log;
     }
 
@@ -373,7 +373,7 @@ pub fn scoped(comptime tag: @Type(.EnumLiteral), comptime disabled: bool) _log_f
         ///   BUN_DEBUG_foo=1
         /// To enable all logs, set the environment variable
         ///   BUN_DEBUG_ALL=1
-        pub inline fn log(comptime fmt: string, args: anytype) void {
+        pub fn log(comptime fmt: string, args: anytype) void {
             if (!evaluated_disable) {
                 evaluated_disable = true;
                 if (bun.getenvZ("BUN_DEBUG_ALL") != null or
@@ -643,7 +643,7 @@ pub const DebugTimer = struct {
             var _opts = opts;
             _opts.precision = 3;
             std.fmt.formatFloatDecimal(
-                @floatCast(f64, @intToFloat(f128, timer.read()) / std.time.ns_per_ms),
+                @floatCast(f64, @intToFloat(f64, timer.read()) / std.time.ns_per_ms),
                 _opts,
                 writer_,
             ) catch unreachable;

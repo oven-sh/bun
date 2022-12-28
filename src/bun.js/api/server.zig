@@ -302,8 +302,8 @@ pub const ServerConfig = struct {
             if (arg.getTruthy(global, "port")) |port_| {
                 args.port = @intCast(
                     u16,
-                    @minimum(
-                        @maximum(0, port_.coerce(i32, global)),
+                    @min(
+                        @max(0, port_.coerce(i32, global)),
                         std.math.maxInt(u16),
                     ),
                 );
@@ -356,7 +356,7 @@ pub const ServerConfig = struct {
             }
 
             if (arg.getTruthy(global, "maxRequestBodySize")) |max_request_body_size| {
-                args.max_request_body_size = @intCast(u64, @maximum(0, max_request_body_size.toInt64()));
+                args.max_request_body_size = @intCast(u64, @max(0, max_request_body_size.toInt64()));
             }
 
             if (arg.getTruthy(global, "error")) |onError| {
@@ -552,26 +552,33 @@ pub fn NewRequestContextStackAllocator(comptime RequestContext: type, comptime c
 
         pub fn get(this: *@This()) std.mem.Allocator {
             this.unused = Set.initFull();
-            return std.mem.Allocator.init(this, alloc, resize, free);
+            return .{
+                .ptr = this,
+                .vtable = &.{
+                    .alloc = alloc,
+                    .resize = resize,
+                    .free = free,
+                },
+            };
         }
 
-        fn alloc(self: *@This(), a: usize, b: u29, c: u29, d: usize) ![]u8 {
+        fn alloc(self_: *anyopaque, a: usize, b: u8, d: usize) ?[*]u8 {
+            const self = @ptrCast(*@This(), @alignCast(@alignOf(@This()), self_));
             if (self.unused.findFirstSet()) |i| {
                 self.unused.unset(i);
                 return std.mem.asBytes(&self.buf[i]);
             }
 
-            return try self.fallback_allocator.rawAlloc(a, b, c, d);
+            return self.fallback_allocator.rawAlloc(a, b, d);
         }
 
         fn resize(
-            _: *@This(),
+            _: *anyopaque,
             _: []u8,
-            _: u29,
+            _: u8,
             _: usize,
-            _: u29,
             _: usize,
-        ) ?usize {
+        ) bool {
             unreachable;
         }
 
@@ -581,13 +588,12 @@ pub fn NewRequestContextStackAllocator(comptime RequestContext: type, comptime c
         }
 
         fn free(
-            self: *@This(),
+            self_: *anyopaque,
             buf: []u8,
-            buf_align: u29,
+            buf_align: u8,
             return_address: usize,
         ) void {
-            _ = buf_align;
-            _ = return_address;
+            const self = @ptrCast(*@This(), @alignCast(@alignOf(@This()), self_));
             const bytes = std.mem.asBytes(&self.buf);
             if (sliceContainsSlice(bytes, buf)) {
                 const index = if (bytes[0..buf.len].ptr != buf.ptr)
@@ -800,7 +806,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 .message = std.fmt.allocPrint(allocator, comptime Output.prettyFmt(fmt, false), args) catch unreachable,
                 .router = null,
                 .reason = .fetch_event_handler,
-                .cwd = VirtualMachine.vm.bundler.fs.top_level_dir,
+                .cwd = VirtualMachine.get().bundler.fs.top_level_dir,
                 .problems = Api.Problems{
                     .code = @truncate(u16, @errorToInt(err)),
                     .name = @errorName(err),
@@ -1127,8 +1133,8 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 return false;
             }
 
-            const adjusted_count_temporary = @minimum(@as(u64, this.sendfile.remain), @as(u63, std.math.maxInt(u63)));
-            // TODO we should not need this int cast; improve the return type of `@minimum`
+            const adjusted_count_temporary = @min(@as(u64, this.sendfile.remain), @as(u63, std.math.maxInt(u63)));
+            // TODO we should not need this int cast; improve the return type of `@min`
             const adjusted_count = @intCast(u63, adjusted_count_temporary);
 
             if (Environment.isLinux) {
@@ -1205,7 +1211,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
         pub fn sendWritableBytesForBlob(this: *RequestContext, bytes_: []const u8, write_offset: c_ulong, resp: *App.Response) bool {
             std.debug.assert(this.resp == resp);
 
-            var bytes = bytes_[@minimum(bytes_.len, @truncate(usize, write_offset))..];
+            var bytes = bytes_[@min(bytes_.len, @truncate(usize, write_offset))..];
             if (resp.tryEnd(bytes, bytes_.len, this.shouldCloseConnection())) {
                 this.finalize();
                 return true;
@@ -1218,7 +1224,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
         pub fn sendWritableBytesForCompleteResponseBuffer(this: *RequestContext, bytes_: []const u8, write_offset: c_ulong, resp: *App.Response) bool {
             std.debug.assert(this.resp == resp);
 
-            var bytes = bytes_[@minimum(bytes_.len, @truncate(usize, write_offset))..];
+            var bytes = bytes_[@min(bytes_.len, @truncate(usize, write_offset))..];
             if (resp.tryEnd(bytes, bytes_.len, this.shouldCloseConnection())) {
                 this.response_buf_owned.items.len = 0;
                 this.finalize();
@@ -1306,7 +1312,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             this.blob.Blob.size = if (std.os.S.ISREG(stat.mode))
                 stat_size
             else
-                @minimum(original_size, stat_size);
+                @min(original_size, stat_size);
 
             this.needs_content_length = true;
 
@@ -1327,8 +1333,8 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
 
             // we know the bounds when we are sending a regular file
             if (std.os.S.ISREG(stat.mode)) {
-                this.sendfile.offset = @minimum(this.sendfile.offset, stat_size);
-                this.sendfile.remain = @minimum(@maximum(this.sendfile.remain, this.sendfile.offset), stat_size) -| this.sendfile.offset;
+                this.sendfile.offset = @min(this.sendfile.offset, stat_size);
+                this.sendfile.remain = @min(@max(this.sendfile.remain, this.sendfile.offset), stat_size) -| this.sendfile.offset;
             }
 
             this.resp.runCorkedWithType(*RequestContext, renderMetadataAndNewline, this);
@@ -1386,7 +1392,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 this.blob.Blob.size = if (original_size == 0 or original_size == Blob.max_size)
                     stat_size
                 else
-                    @minimum(original_size, stat_size);
+                    @min(original_size, stat_size);
 
                 if (!this.has_written_status)
                     this.needs_content_range = true;
@@ -1830,7 +1836,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 }
             }
 
-            streamLog("onReject({s})", .{wrote_anything});
+            streamLog("onReject({any})", .{wrote_anything});
 
             if (req.aborted) {
                 req.finalizeForAbort();
@@ -2086,7 +2092,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 this.renderDefaultError(
                     vm.log,
                     error.ExceptionOcurred,
-                    exception_list.toOwnedSlice(),
+                    exception_list.toOwnedSlice() catch @panic("TODO"),
                     "<r><red>{s}<r> - <b>{s}<r> failed",
                     .{ @as(string, @tagName(this.method)), this.ensurePathname() },
                 );
@@ -2210,7 +2216,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
 
                                 this.resp.writeHeader(
                                     "content-disposition",
-                                    std.fmt.bufPrint(&filename_buf, "filename=\"{s}\"", .{basename[0..@minimum(basename.len, 1024 - 32)]}) catch "",
+                                    std.fmt.bufPrint(&filename_buf, "filename=\"{s}\"", .{basename[0..@min(basename.len, 1024 - 32)]}) catch "",
                                 );
                             }
                         }
@@ -2345,7 +2351,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             }
 
             if (this.request_body_buf.capacity == 0) {
-                this.request_body_buf.ensureTotalCapacityPrecise(this.allocator, @minimum(this.request_body_content_len, max_request_body_preallocate_length)) catch @panic("Out of memory while allocating request body buffer");
+                this.request_body_buf.ensureTotalCapacityPrecise(this.allocator, @min(this.request_body_content_len, max_request_body_preallocate_length)) catch @panic("Out of memory while allocating request body buffer");
             }
 
             this.request_body_buf.appendSlice(this.allocator, chunk) catch @panic("Out of memory while allocating request body");
@@ -2391,7 +2397,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                     if (request.as(Request)) |req| {
                         var old = req.body;
                         old.Locked.onReceiveValue = null;
-                        req.body = .{ .Empty = .{} };
+                        req.body = .{ .Empty = {} };
                         old.resolve(&req.body, this.server.globalThis);
                         return;
                     }
@@ -2402,7 +2408,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                     if (request.as(Request)) |req| {
                         var old = req.body;
                         old.Locked.onReceiveValue = null;
-                        req.body = .{ .Empty = .{} };
+                        req.body = .{ .Empty = {} };
                         old.toError(error.RequestBodyTooLarge, this.server.globalThis);
                         return;
                     }
@@ -2419,7 +2425,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 if (request.as(Request)) |req| {
                     var old = req.body;
                     old.Locked.onReceiveValue = null;
-                    req.body = .{ .Empty = .{} };
+                    req.body = .{ .Empty = {} };
                     old.resolve(&req.body, this.server.globalThis);
                     return;
                 }
@@ -2683,7 +2689,7 @@ pub const WebSocketServer = struct {
                     globalObject.throwInvalidArguments("websocket expects maxPayloadLength to be an integer", .{});
                     return null;
                 }
-                server.maxPayloadLength = @intCast(u32, @truncate(i33, @maximum(value.toInt64(), 0)));
+                server.maxPayloadLength = @intCast(u32, @truncate(i33, @max(value.toInt64(), 0)));
             }
         }
         if (object.get(globalObject, "idleTimeout")) |value| {
@@ -2703,7 +2709,7 @@ pub const WebSocketServer = struct {
                     return null;
                 }
 
-                server.backpressureLimit = @intCast(u32, @truncate(i33, @maximum(value.toInt64(), 0)));
+                server.backpressureLimit = @intCast(u32, @truncate(i33, @max(value.toInt64(), 0)));
             }
         }
         // if (object.get(globalObject, "sendPings")) |value| {
@@ -4125,7 +4131,7 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
 
             var url: URL = undefined;
             var first_arg = args.nextEat().?;
-            var body: JSC.WebCore.Body.Value = .{ .Empty = .{} };
+            var body: JSC.WebCore.Body.Value = .{ .Empty = {} };
             var existing_request: ?WebCore.Request = null;
             // TODO: set Host header
             // TODO: set User-Agent header
@@ -4329,7 +4335,7 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
                 .globalThis = globalThis,
                 .config = config,
                 .base_url_string_for_joining = bun.default_allocator.dupe(u8, strings.trim(config.base_url.href, "/")) catch unreachable,
-                .vm = JSC.VirtualMachine.vm,
+                .vm = JSC.VirtualMachine.get(),
                 .allocator = Arena.getThreadlocalDefault(),
             };
 
@@ -4402,7 +4408,8 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
                 if (written > 0) {
                     var message = output_buf[0..written];
                     zig_str = ZigString.init(std.fmt.allocPrint(bun.default_allocator, "OpenSSL {s}", .{message}) catch unreachable);
-                    zig_str.withEncoding().mark();
+                    var encoded_str = zig_str.withEncoding();
+                    encoded_str.mark();
                 }
             }
 
@@ -4457,7 +4464,7 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
             _ = js_printer.printJSON(
                 *js_printer.BufferPrinter,
                 &writer,
-                bun.Global.BunInfo.generate(*Bundler, &JSC.VirtualMachine.vm.bundler, allocator) catch unreachable,
+                bun.Global.BunInfo.generate(*Bundler, &JSC.VirtualMachine.get().bundler, allocator) catch unreachable,
                 &source,
             ) catch unreachable;
 
@@ -4480,8 +4487,8 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
                 return;
             }
 
-            var ctx = &JSC.VirtualMachine.vm.rareData().editor_context;
-            ctx.autoDetectEditor(JSC.VirtualMachine.vm.bundler.env);
+            var ctx = &JSC.VirtualMachine.get().rareData().editor_context;
+            ctx.autoDetectEditor(JSC.VirtualMachine.get().bundler.env);
             var line: ?string = req.header("editor-line");
             var column: ?string = req.header("editor-column");
 
@@ -4517,7 +4524,7 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
                 .uws_request = req,
                 .https = ssl_enabled,
                 .body = .{
-                    .Empty = .{},
+                    .Empty = {},
                 },
             };
 
@@ -4597,7 +4604,7 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
                 .upgrader = ctx,
                 .https = ssl_enabled,
                 .body = .{
-                    .Empty = .{},
+                    .Empty = {},
                 },
             };
             ctx.upgrade_context = upgrade_ctx;

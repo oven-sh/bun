@@ -10,7 +10,7 @@ fn setup_sigactions(act: ?*const os.Sigaction) !void {
 }
 
 const builtin = @import("builtin");
-const ErrorCallback = fn (sig: i32, addr: usize) void;
+const ErrorCallback = *const fn (sig: i32, addr: usize) void;
 var on_error: ?ErrorCallback = null;
 noinline fn sigaction_handler(sig: i32, info: *const std.os.siginfo_t, _: ?*const anyopaque) callconv(.C) void {
     // Prevent recursive calls

@@ -119,6 +119,83 @@ pub const fmt = struct {
             else => SizeFormatter{ .value = @intCast(u64, value) },
         };
     }
+
+    const lower_hex_table = [_]u8{
+        '0',
+        '1',
+        '2',
+        '3',
+        '4',
+        '5',
+        '6',
+        '7',
+        '8',
+        '9',
+        'a',
+        'b',
+        'c',
+        'd',
+        'e',
+        'f',
+    };
+    const upper_hex_table = [_]u8{
+        '0',
+        '1',
+        '2',
+        '3',
+        '4',
+        '5',
+        '6',
+        '7',
+        '8',
+        '9',
+        'A',
+        'B',
+        'C',
+        'D',
+        'E',
+        'F',
+    };
+    pub fn HexIntFormatter(comptime Int: type, comptime lower: bool) type {
+        return struct {
+            value: Int,
+
+            const table = if (lower) lower_hex_table else upper_hex_table;
+
+            const BufType = [@bitSizeOf(Int) / 4]u8;
+
+            fn getOutBuf(value: Int) BufType {
+                var buf: BufType = undefined;
+                comptime var i: usize = 0;
+                inline while (i < buf.len) : (i += 1) {
+                    // value relative to the current nibble
+                    buf[i] = table[@as(u8, @truncate(u4, value >> comptime ((buf.len - i - 1) * 4))) & 0xF];
+                }
+
+                return buf;
+            }
+
+            pub fn format(self: @This(), comptime _: []const u8, _: fmt.FormatOptions, writer: anytype) !void {
+                const value = self.value;
+                try writer.writeAll(&getOutBuf(value));
+            }
+        };
+    }
+
+    pub fn HexInt(comptime Int: type, comptime lower: std.fmt.Case, value: Int) HexIntFormatter(Int, lower == .lower) {
+        const Formatter = HexIntFormatter(Int, lower == .lower);
+        return Formatter{ .value = value };
+    }
+
+    pub fn hexIntLower(value: anytype) HexIntFormatter(@TypeOf(value), true) {
+        const Formatter = HexIntFormatter(@TypeOf(value), true);
+        return Formatter{ .value = value };
+    }
+
+    pub fn hexIntUpper(value: anytype) HexIntFormatter(@TypeOf(value), false) {
+        const Formatter = HexIntFormatter(@TypeOf(value), false);
+        return Formatter{ .value = value };
+    }
 };
 
 pub const Output = @import("./output.zig");
@@ -151,7 +228,10 @@ pub inline fn cast(comptime To: type, value: anytype) To {
     if (comptime std.meta.trait.isIntegral(@TypeOf(value))) {
         return @intToPtr(To, @bitCast(usize, value));
     }
-    return @ptrCast(To, @alignCast(@alignOf(To), value));
+
+    // TODO: file issue about why std.meta.Child only is necessary on Linux aarch64
+    // it should be necessary on all targets
+    return @ptrCast(To, @alignCast(@alignOf(std.meta.Child(To)), value));
 }
 
 extern fn strlen(ptr: [*c]const u8) usize;
@@ -179,7 +259,7 @@ pub fn len(value: anytype) usize {
             .Many => {
                 const sentinel_ptr = info.sentinel orelse
                     @compileError("length of pointer with no sentinel");
-                const sentinel = @ptrCast(*const info.child, sentinel_ptr).*;
+                const sentinel = @ptrCast(*align(1) const info.child, sentinel_ptr).*;
 
                 return indexOfSentinel(info.child, sentinel, value);
             },
@@ -208,7 +288,7 @@ pub fn span(ptr: anytype) std.mem.Span(@TypeOf(ptr)) {
     const l = len(ptr);
     const ptr_info = @typeInfo(Result).Pointer;
     if (ptr_info.sentinel) |s_ptr| {
-        const s = @ptrCast(*const ptr_info.child, s_ptr).*;
+        const s = @ptrCast(*align(1) const ptr_info.child, s_ptr).*;
         return ptr[0..l :s];
     } else {
         return ptr[0..l];
@@ -316,7 +396,7 @@ pub fn clone(val: anytype, allocator: std.mem.Allocator) !@TypeOf(val) {
 }
 pub const StringBuilder = @import("./string_builder.zig");
 
-pub inline fn assertDefined(val: anytype) void {
+pub fn assertDefined(val: anytype) void {
     if (comptime !Environment.allow_assert) return;
     const Type = @TypeOf(val);
 
@@ -388,7 +468,7 @@ pub fn isReadable(fd: std.os.fd_t) PollFlag {
     };
 
     const result = (std.os.poll(polls, 0) catch 0) != 0;
-    global_scope_log("poll({d}) readable: {d} ({d})", .{ fd, result, polls[0].revents });
+    global_scope_log("poll({d}) readable: {any} ({d})", .{ fd, result, polls[0].revents });
     return if (result and polls[0].revents & std.os.POLL.HUP != 0)
         PollFlag.hup
     else if (result)
@@ -408,7 +488,7 @@ pub fn isWritable(fd: std.os.fd_t) PollFlag {
     };
 
     const result = (std.os.poll(polls, 0) catch 0) != 0;
-    global_scope_log("poll({d}) writable: {d} ({d})", .{ fd, result, polls[0].revents });
+    global_scope_log("poll({d}) writable: {any} ({d})", .{ fd, result, polls[0].revents });
     if (result and polls[0].revents & std.os.POLL.HUP != 0) {
         return PollFlag.hup;
     } else if (result) {
@@ -483,7 +563,7 @@ pub const invalid_fd = std.math.maxInt(FileDescriptor);
 
 pub const simdutf = @import("./bun.js/bindings/bun-simdutf.zig");
 
-pub const JSC = @import("javascript_core");
+pub const JSC = @import("./jsc.zig");
 pub const AsyncIO = @import("async_io");
 
 pub const logger = @import("./logger.zig");
@@ -498,6 +578,11 @@ pub const analytics = @import("./analytics.zig");
 pub const DateTime = @import("./deps/zig-datetime/src/datetime.zig");
 
 pub var start_time: i128 = 0;
+
+pub fn openDir(dir: std.fs.Dir, path_: [:0]const u8) !std.fs.IterableDir {
+    const fd = try std.os.openatZ(dir.fd, path_, std.os.O.DIRECTORY | 0, 0);
+    return std.fs.IterableDir{ .dir = .{ .fd = fd } };
+}
 pub const MimallocArena = @import("./mimalloc_arena.zig").Arena;
 
 /// This wrapper exists to avoid the call to sliceTo(0)

@@ -178,25 +178,37 @@ export class IncomingMessage extends Readable {
     if (this.#noBody) {
       this.push(null);
       this.complete = true;
-    } else if (this.#bodyStream === null) {
+    } else if (this.#bodyStream == null) {
       const contentLength = this.#req.headers.get("content-length");
-      var remaining = contentLength ? parseInt(contentLength, 10) : 0;
+      let remaining = contentLength ? parseInt(contentLength, 10) : 0;
       this.#bodyStream = Readable.fromWeb(this.#req.body, {
         highWaterMark: Number.isFinite(remaining)
           ? Math.min(remaining, 16384)
           : 16384,
       });
 
-      this.#bodyStream.on("data", (chunk) => {
-        this.push(chunk);
-        remaining -= chunk?.byteLength ?? 0;
-        if (remaining <= 0) {
+      const isBodySizeKnown = remaining > 0 && Number.isSafeInteger(remaining);
+
+      if (isBodySizeKnown) {
+        this.#bodyStream.on("data", (chunk) => {
+          this.push(chunk);
+          // when we are streaming a known body size, automatically close the stream when we have read enough
+          remaining -= chunk?.byteLength ?? 0;
+          if (remaining <= 0) {
+            this.#closeBodyStream();
+          }
+        });
+      } else {
+        this.#bodyStream.on("data", (chunk) => {
+          this.push(chunk);
+        });
+      }
+
+      // this can be closed by the time we get here if enough data was synchronously available
+      this.#bodyStream &&
+        this.#bodyStream.on("end", () => {
           this.#closeBodyStream();
-        }
-      });
-      this.#bodyStream.on("end", () => {
-        this.#closeBodyStream();
-      });
+        });
     } else {
       // this.#bodyStream.read(size);
     }

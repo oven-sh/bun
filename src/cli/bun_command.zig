@@ -44,7 +44,7 @@ const ServerBundleGeneratorThread = struct {
         server_conf: Api.LoadedFramework,
         route_conf_: ?Api.LoadedRouteConfig,
         router: ?Router,
-    ) !void {
+    ) anyerror!void {
         var server_bundler = try bundler.Bundler.init(
             allocator_,
             logs,
@@ -194,7 +194,7 @@ pub const BunCommand = struct {
                 if (log.errors > 0) {
                     try log.printForLogLevel(Output.errorWriter());
                 } else {
-                    var elapsed = @divTrunc(std.time.nanoTimestamp() - ctx.start_time, @as(i128, std.time.ns_per_ms));
+                    var elapsed = @divTrunc(@truncate(i64, std.time.nanoTimestamp() - ctx.start_time), @as(i64, std.time.ns_per_ms));
                     const print_summary = !(ctx.args.no_summary orelse false);
                     if (print_summary) {
                         var bundle = NodeModuleBundle.init(node_modules, allocator);
@@ -211,7 +211,7 @@ pub const BunCommand = struct {
                             }
                         },
                         else => {
-                            const formatted_loc: f32 = @floatCast(f32, @intToFloat(f128, estimated_input_lines_of_code) / 1000);
+                            const formatted_loc: f32 = @floatCast(f32, @intToFloat(f64, estimated_input_lines_of_code) / 1000);
                             if (generated_server) {
                                 Output.prettyln(indent ++ "<d>{d:<5.2}k LOC parsed x2", .{formatted_loc});
                             } else {

@@ -1,6 +1,6 @@
 const std = @import("std");
 const assert = std.debug.assert;
-const Platform = @import("bun").analytics.GenerateHeader.GeneratePlatform;
+const Platform = @import("root").bun.analytics.GenerateHeader.GeneratePlatform;
 const os = struct {
     pub usingnamespace std.os;
     pub const EPERM = 1;
@@ -522,7 +522,7 @@ pub fn init(entries_: u12, flags: u32, waker: Waker) !IO {
         }
 
         if (limit.cur < 128 * 1024) {
-            entries = @minimum(256, entries);
+            entries = @min(256, entries);
         }
     }
 
@@ -709,7 +709,7 @@ pub const Completion = struct {
     // This is one of the usecases for anyopaque outside of C code and as such anyopaque will
     // be replaced with anyopaque eventually: https://github.com/ziglang/zig/issues/323
     context: ?*anyopaque,
-    callback: fn (context: ?*anyopaque, completion: *Completion, result: *const anyopaque) void,
+    callback: *const fn (context: ?*anyopaque, completion: *Completion, result: *const anyopaque) void,
 
     fn prep(completion: *Completion, sqe: *io_uring_sqe) void {
         switch (completion.operation) {
@@ -786,7 +786,7 @@ pub const Completion = struct {
     fn complete(completion: *Completion) void {
         switch (completion.operation) {
             .accept => {
-                const result = if (completion.result < 0) switch (-completion.result) {
+                const result: AcceptError!os.socket_t = if (completion.result < 0) switch (-completion.result) {
                     os.EINTR => {
                         completion.io.enqueue(completion);
                         return;
@@ -820,7 +820,7 @@ pub const Completion = struct {
                 completion.callback(completion.context, completion, &result);
             },
             .open => {
-                const result = if (completion.result < 0) switch (-completion.result) {
+                const result: OpenError!linux.fd_t = if (completion.result < 0) switch (-completion.result) {
                     0 => unreachable,
                     os.EAGAIN, os.EINPROGRESS, os.EINTR => {
                         completion.io.enqueue(completion);
@@ -847,7 +847,7 @@ pub const Completion = struct {
                 completion.callback(completion.context, completion, &result);
             },
             .connect => {
-                const result = if (completion.result < 0) switch (-completion.result) {
+                const result: ConnectError!void = if (completion.result < 0) switch (-completion.result) {
                     os.EAGAIN, os.EINPROGRESS, os.EINTR => {
                         completion.io.enqueue(completion);
                         return;
@@ -872,7 +872,7 @@ pub const Completion = struct {
                 completion.callback(completion.context, completion, &result);
             },
             .fsync => {
-                const result = if (completion.result < 0) switch (-completion.result) {
+                const result: FsyncError!void = if (completion.result < 0) switch (-completion.result) {
                     os.EINTR => {
                         completion.io.enqueue(completion);
                         return;
@@ -888,7 +888,7 @@ pub const Completion = struct {
                 completion.callback(completion.context, completion, &result);
             },
             .read => {
-                const result = if (completion.result < 0) switch (-completion.result) {
+                const result: ReadError!usize = if (completion.result < 0) switch (-completion.result) {
                     os.EAGAIN, os.EINTR => {
                         completion.io.enqueue(completion);
                         return;
@@ -908,7 +908,7 @@ pub const Completion = struct {
                 completion.callback(completion.context, completion, &result);
             },
             .readev, .recv => {
-                const result = if (completion.result < 0) switch (-completion.result) {
+                const result: RecvError!usize = if (completion.result < 0) switch (-completion.result) {
                     os.EAGAIN, os.EINTR => {
                         completion.io.enqueue(completion);
                         return;
@@ -924,7 +924,7 @@ pub const Completion = struct {
                 completion.callback(completion.context, completion, &result);
             },
             .writev, .send => {
-                const result = if (completion.result < 0) switch (-completion.result) {
+                const result: SendError!usize = if (completion.result < 0) switch (-completion.result) {
                     os.EAGAIN, os.EINTR => {
                         completion.io.enqueue(completion);
                         return;
@@ -946,7 +946,7 @@ pub const Completion = struct {
                 completion.callback(completion.context, completion, &result);
             },
             .timeout => {
-                const result = if (completion.result < 0) switch (-completion.result) {
+                const result: TimeoutError!void = if (completion.result < 0) switch (-completion.result) {
                     os.EINTR => {
                         completion.io.enqueue(completion);
                         return;
@@ -958,7 +958,7 @@ pub const Completion = struct {
                 completion.callback(completion.context, completion, &result);
             },
             .write => {
-                const result = if (completion.result < 0) switch (-completion.result) {
+                const result: WriteError!usize = if (completion.result < 0) switch (-completion.result) {
                     os.EINTR => {
                         completion.io.enqueue(completion);
                         return;
@@ -1093,7 +1093,7 @@ pub fn accept(
     self: *IO,
     comptime Context: type,
     context: Context,
-    comptime callback: fn (
+    comptime callback: *const fn (
         context: Context,
         completion: *Completion,
         result: AcceptError!os.socket_t,
@@ -1135,7 +1135,7 @@ pub fn close(
     self: *IO,
     comptime Context: type,
     context: Context,
-    comptime callback: fn (
+    comptime callback: *const fn (
         context: Context,
         completion: *Completion,
         result: CloseError!void,
@@ -1184,13 +1184,14 @@ pub const ConnectError = error{
     PermissionDenied,
     ProtocolNotSupported,
     ConnectionTimedOut,
+    ConnectionResetByPeer,
 } || Errno;
 
 pub fn connect(
     self: *IO,
     comptime Context: type,
     context: Context,
-    comptime callback: fn (
+    comptime callback: *const fn (
         context: Context,
         completion: *Completion,
         result: ConnectError!void,
@@ -1242,7 +1243,7 @@ pub fn fsync(
     self: *IO,
     comptime Context: type,
     context: Context,
-    comptime callback: fn (
+    comptime callback: *const fn (
         context: Context,
         completion: *Completion,
         result: FsyncError!void,
@@ -1286,7 +1287,7 @@ pub fn read(
     self: *IO,
     comptime Context: type,
     context: Context,
-    comptime callback: fn (
+    comptime callback: *const fn (
         context: Context,
         completion: *Completion,
         result: ReadError!usize,
@@ -1327,13 +1328,14 @@ pub const RecvError = error{
     SystemResources,
     SocketNotConnected,
     FileDescriptorNotASocket,
+    ConnectionResetByPeer,
 } || Errno;
 
 pub fn recv(
     self: *IO,
     comptime Context: type,
     context: Context,
-    comptime callback: fn (
+    comptime callback: *const fn (
         context: Context,
         completion: *Completion,
         result: RecvError!usize,
@@ -1373,7 +1375,7 @@ pub fn readev(
     self: *IO,
     comptime Context: type,
     context: Context,
-    comptime callback: fn (
+    comptime callback: *const fn (
         context: Context,
         completion: *Completion,
         result: RecvError!usize,
@@ -1423,7 +1425,7 @@ pub fn send(
     self: *IO,
     comptime Context: type,
     context: Context,
-    comptime callback: fn (
+    comptime callback: *const fn (
         context: Context,
         completion: *Completion,
         result: SendError!usize,
@@ -1520,7 +1522,7 @@ pub fn open(
     self: *IO,
     comptime Context: type,
     context: Context,
-    comptime callback: fn (
+    comptime callback: *const fn (
         context: Context,
         completion: *Completion,
         result: OpenError!linux.fd_t,
@@ -1557,7 +1559,7 @@ pub fn writev(
     self: *IO,
     comptime Context: type,
     context: Context,
-    comptime callback: fn (
+    comptime callback: *const fn (
         context: Context,
         completion: *Completion,
         result: SendError!usize,
@@ -1597,7 +1599,7 @@ pub fn timeout(
     self: *IO,
     comptime Context: type,
     context: Context,
-    comptime callback: fn (
+    comptime callback: *const fn (
         context: Context,
         completion: *Completion,
         result: TimeoutError!void,
@@ -1644,7 +1646,7 @@ pub fn write(
     self: *IO,
     comptime Context: type,
     context: Context,
-    comptime callback: fn (
+    comptime callback: *const fn (
         context: Context,
         completion: *Completion,
         result: WriteError!usize,
@@ -1734,5 +1736,5 @@ fn buffer_limit(buffer_len: usize) usize {
         .macos, .ios, .watchos, .tvos => std.math.maxInt(i32),
         else => std.math.maxInt(isize),
     };
-    return @minimum(limit, buffer_len);
+    return @min(limit, buffer_len);
 }

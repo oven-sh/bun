@@ -216,10 +216,10 @@ const Scanner = struct {
             var path2 = this.fs.absBuf(parts2, &this.open_dir_buf);
             this.open_dir_buf[path2.len] = 0;
             var pathZ = this.open_dir_buf[path2.len - entry.name.slice().len .. path2.len :0];
-            var child_dir = dir.openDirZ(pathZ, .{ .iterate = true }) catch continue;
+            var child_dir = bun.openDir(dir, pathZ) catch continue;
             path2 = this.fs.dirname_store.append(string, path2) catch unreachable;
-            FileSystem.setMaxFd(child_dir.fd);
-            _ = this.readDirWithName(path2, child_dir) catch continue;
+            FileSystem.setMaxFd(child_dir.dir.fd);
+            _ = this.readDirWithName(path2, child_dir.dir) catch continue;
         }
     }
 
@@ -354,7 +354,7 @@ pub const TestCommand = struct {
         scanner.scan(scanner.fs.top_level_dir);
         scanner.dirs_to_scan.deinit();
 
-        const test_files = scanner.results.toOwnedSlice();
+        const test_files = try scanner.results.toOwnedSlice();
         if (test_files.len > 0) {
             // vm.bundler.fs.fs.readDirectory(_dir: string, _handle: ?std.fs.Dir)
             runAllTests(reporter, vm, test_files, ctx.allocator);

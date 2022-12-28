@@ -329,7 +329,7 @@ pub const RunCommand = struct {
             var array_list = std.ArrayList(string).init(ctx.allocator);
             try array_list.append(executable);
             try array_list.appendSlice(passthrough);
-            argv = array_list.toOwnedSlice();
+            argv = try array_list.toOwnedSlice();
         }
 
         var child_process = std.ChildProcess.init(argv, ctx.allocator);
@@ -425,7 +425,7 @@ pub const RunCommand = struct {
                 argv0 = std.os.argv[0];
             } else if (optional_bun_path.len == 0) {
                 // otherwise, ask the OS for the absolute path
-                var self = std.fs.selfExePath(&self_exe_bin_path_buf) catch "";
+                var self = std.fs.selfExePath(&self_exe_bin_path_buf) catch unreachable;
                 if (self.len > 0) {
                     self.ptr[self.len] = 0;
                     argv0 = std.meta.assumeSentinel(self, 0).ptr;
@@ -865,7 +865,7 @@ pub const RunCommand = struct {
 
         strings.sortAsc(all_keys);
         shell_out.commands = all_keys;
-        shell_out.descriptions = descriptions.toOwnedSlice();
+        shell_out.descriptions = try descriptions.toOwnedSlice();
 
         return shell_out;
     }

@@ -1,4 +1,4 @@
-// This is copied from std.fs.Dir.Iterator
+// This is copied from std.fs.IterableDir.Iterator
 // The differences are:
 // - it returns errors in the expected format
 // - doesn't mark BADF as unreachable
@@ -19,7 +19,7 @@ const Maybe = JSC.Maybe;
 const File = std.fs.File;
 const Result = Maybe(?Entry);
 
-const Entry = JSC.Node.DirEnt;
+const Entry = JSC.Node.Dirent;
 
 pub const Iterator = switch (builtin.os.tag) {
     .macos, .ios, .freebsd, .netbsd, .dragonfly, .openbsd, .solaris => struct {

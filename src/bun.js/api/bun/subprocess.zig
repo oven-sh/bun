@@ -134,7 +134,7 @@ pub const Subprocess = struct {
                 .pipe => {
                     if (this.pipe == .buffer) {
                         if (this.pipe.buffer.fifo.poll_ref) |poll| {
-                            poll.enableKeepingProcessAlive(JSC.VirtualMachine.vm);
+                            poll.enableKeepingProcessAlive(JSC.VirtualMachine.get());
                         }
                     }
                 },
@@ -147,7 +147,7 @@ pub const Subprocess = struct {
                 .pipe => {
                     if (this.pipe == .buffer) {
                         if (this.pipe.buffer.fifo.poll_ref) |poll| {
-                            poll.disableKeepingProcessAlive(JSC.VirtualMachine.vm);
+                            poll.disableKeepingProcessAlive(JSC.VirtualMachine.get());
                         }
                     }
                 },
@@ -522,7 +522,7 @@ pub const Subprocess = struct {
                             },
                         );
 
-                        this.remain = this.remain[@minimum(bytes_written, this.remain.len)..];
+                        this.remain = this.remain[@min(bytes_written, this.remain.len)..];
                         to_write = to_write[bytes_written..];
 
                         // we are done or it accepts no more input
@@ -762,7 +762,7 @@ pub const Subprocess = struct {
             switch (this.*) {
                 .pipe => {
                     if (this.pipe.poll_ref) |poll| {
-                        poll.enableKeepingProcessAlive(JSC.VirtualMachine.vm);
+                        poll.enableKeepingProcessAlive(JSC.VirtualMachine.get());
                     }
                 },
                 else => {},
@@ -773,7 +773,7 @@ pub const Subprocess = struct {
             switch (this.*) {
                 .pipe => {
                     if (this.pipe.poll_ref) |poll| {
-                        poll.disableKeepingProcessAlive(JSC.VirtualMachine.vm);
+                        poll.disableKeepingProcessAlive(JSC.VirtualMachine.get());
                     }
                 },
                 else => {},
@@ -994,7 +994,7 @@ pub const Subprocess = struct {
         var cwd = jsc_vm.bundler.fs.top_level_dir;
 
         var stdio = [3]Stdio{
-            .{ .ignore = .{} },
+            .{ .ignore = {} },
             .{ .pipe = null },
             .{ .inherit = {} },
         };
@@ -1133,7 +1133,7 @@ pub const Subprocess = struct {
                     if (!stdio_val.isEmptyOrUndefinedOrNull()) {
                         if (stdio_val.jsType().isArray()) {
                             var stdio_iter = stdio_val.arrayIterator(globalThis);
-                            stdio_iter.len = @minimum(stdio_iter.len, 3);
+                            stdio_iter.len = @min(stdio_iter.len, 3);
                             var i: usize = 0;
                             while (stdio_iter.next()) |value| : (i += 1) {
                                 if (!extractStdio(globalThis, i, value, &stdio))
@@ -1195,17 +1195,17 @@ pub const Subprocess = struct {
         }
 
         const stdin_pipe = if (stdio[0].isPiped()) os.pipe2(0) catch |err| {
-            globalThis.throw("failed to create stdin pipe: {s}", .{err});
+            globalThis.throw("failed to create stdin pipe: {s}", .{@errorName(err)});
             return .zero;
         } else undefined;
 
         const stdout_pipe = if (stdio[1].isPiped()) os.pipe2(0) catch |err| {
-            globalThis.throw("failed to create stdout pipe: {s}", .{err});
+            globalThis.throw("failed to create stdout pipe: {s}", .{@errorName(err)});
             return .zero;
         } else undefined;
 
         const stderr_pipe = if (stdio[2].isPiped()) os.pipe2(0) catch |err| {
-            globalThis.throw("failed to create stderr pipe: {s}", .{err});
+            globalThis.throw("failed to create stderr pipe: {s}", .{@errorName(err)});
             return .zero;
         } else undefined;
 
@@ -1728,7 +1728,8 @@ pub const Subprocess = struct {
         } else if (value.as(JSC.WebCore.Response)) |req| {
             req.getBodyValue().toBlobIfPossible();
             return extractStdioBlob(globalThis, req.getBodyValue().useAsAnyBlob(), i, stdio_array);
-        } else if (JSC.WebCore.ReadableStream.fromJS(value, globalThis)) |*req| {
+        } else if (JSC.WebCore.ReadableStream.fromJS(value, globalThis)) |req_const| {
+            var req = req_const;
             if (i == std.os.STDIN_FILENO) {
                 if (req.toAnyBlob(globalThis)) |blob| {
                     return extractStdioBlob(globalThis, blob, i, stdio_array);
@@ -1742,7 +1743,7 @@ pub const Subprocess = struct {
                             return false;
                         }
 
-                        stdio_array[i] = .{ .pipe = req.* };
+                        stdio_array[i] = .{ .pipe = req };
                         return true;
                     },
                     else => {},

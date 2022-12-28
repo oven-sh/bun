@@ -123,7 +123,7 @@ pub fn moveFileZWithHandle(from_handle: std.os.fd_t, from_dir: std.os.fd_t, file
 // On Linux, this will be fast because sendfile() supports copying between two file descriptors on disk
 // macOS & BSDs will be slow because
 pub fn moveFileZSlow(from_dir: std.os.fd_t, filename: [*:0]const u8, to_dir: std.os.fd_t, destination: [*:0]const u8) !void {
-    const in_handle = try std.os.openatZ(from_dir, filename, std.os.O.RDONLY | std.os.O.CLOEXEC, 0600);
+    const in_handle = try std.os.openatZ(from_dir, filename, std.os.O.RDONLY | std.os.O.CLOEXEC, 0o600);
     try moveFileZSlowWithHandle(in_handle, to_dir, destination);
 }
 
@@ -134,7 +134,7 @@ pub fn moveFileZSlowWithHandle(in_handle: std.os.fd_t, to_dir: std.os.fd_t, dest
     // ftruncate() instead didn't work.
     // this is technically racy because it could end up deleting the file without saving
     std.os.unlinkatZ(to_dir, destination, 0) catch {};
-    const out_handle = try std.os.openatZ(to_dir, destination, std.os.O.WRONLY | std.os.O.CREAT | std.os.O.CLOEXEC, 022);
+    const out_handle = try std.os.openatZ(to_dir, destination, std.os.O.WRONLY | std.os.O.CREAT | std.os.O.CLOEXEC, 0o022);
     defer std.os.close(out_handle);
     if (comptime Environment.isLinux) {
         _ = std.os.system.fallocate(out_handle, 0, 0, @intCast(i64, stat_.size));
@@ -191,7 +191,7 @@ pub fn getSelfExeSharedLibPaths(allocator: std.mem.Allocator) error{OutOfMemory}
         => {
             var paths = List.init(allocator);
             errdefer {
-                const slice = paths.toOwnedSlice();
+                const slice = paths.toOwnedSlice() catch &.{};
                 for (slice) |item| {
                     allocator.free(item);
                 }
@@ -208,12 +208,12 @@ pub fn getSelfExeSharedLibPaths(allocator: std.mem.Allocator) error{OutOfMemory}
                     }
                 }
             }.callback);
-            return paths.toOwnedSlice();
+            return try paths.toOwnedSlice();
         },
         .macos, .ios, .watchos, .tvos => {
             var paths = List.init(allocator);
             errdefer {
-                const slice = paths.toOwnedSlice();
+                const slice = paths.toOwnedSlice() catch &.{};
                 for (slice) |item| {
                     allocator.free(item);
                 }
@@ -227,13 +227,13 @@ pub fn getSelfExeSharedLibPaths(allocator: std.mem.Allocator) error{OutOfMemory}
                 errdefer allocator.free(item);
                 try paths.append(item);
             }
-            return paths.toOwnedSlice();
+            return try paths.toOwnedSlice();
         },
         // revisit if Haiku implements dl_iterat_phdr (https://dev.haiku-os.org/ticket/15743)
         .haiku => {
             var paths = List.init(allocator);
             errdefer {
-                const slice = paths.toOwnedSlice();
+                const slice = paths.toOwnedSlice() catch &.{};
                 for (slice) |item| {
                     allocator.free(item);
                 }
@@ -245,7 +245,7 @@ pub fn getSelfExeSharedLibPaths(allocator: std.mem.Allocator) error{OutOfMemory}
             errdefer allocator.free(item);
             try paths.append(item);
 
-            return paths.toOwnedSlice();
+            return try paths.toOwnedSlice();
         },
         else => @compileError("getSelfExeSharedLibPaths unimplemented for this target"),
     }
@@ -346,14 +346,7 @@ pub fn getSystemLoadavg() [3]f64 {
 
 pub fn getProcessPriority(pid_: i32) i32 {
     const pid = @intCast(c_uint, pid_);
-
-    if (comptime Environment.isLinux) {
-        return linux.get_process_priority(pid);
-    } else if (comptime Environment.isMac) {
-        return darwin.get_process_priority(pid);
-    } else {
-        return -1;
-    }
+    return get_process_priority(pid);
 }
 
 pub fn setProcessPriority(pid_: i32, priority_: i32) std.c.E {
@@ -362,14 +355,7 @@ pub fn setProcessPriority(pid_: i32, priority_: i32) std.c.E {
     const pid = @intCast(c_uint, pid_);
     const priority = @intCast(c_int, priority_);
 
-    var code: i32 = 0;
-    if (comptime Environment.isLinux) {
-        code = linux.set_process_priority(pid, priority);
-    } else if (comptime Environment.isMac) {
-        code = darwin.set_process_priority(pid, priority);
-    } else {
-        code = -2;
-    }
+    const code: i32 = set_process_priority(pid, priority);
 
     if (code == -2) return .SRCH;
     if (code == 0) return .SUCCESS;
@@ -435,3 +421,7 @@ pub fn dlsym(comptime Type: type, comptime name: [:0]const u8) ?Type {
 
     return null;
 }
+
+// set in c-bindings.cpp
+pub extern fn get_process_priority(pid: c_uint) i32;
+pub extern fn set_process_priority(pid: c_uint, priority: c_int) i32;

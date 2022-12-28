@@ -108,9 +108,9 @@ pub const JSTCPSocket = struct {
         if (@TypeOf(TCPSocket.setData) != SetterType)
             @compileLog("Expected TCPSocket.setData to be a setter");
         if (@TypeOf(TCPSocket.end) != CallbackType)
-            @compileLog("Expected TCPSocket.end to be a callback");
+            @compileLog("Expected TCPSocket.end to be a callback but received " ++ @typeName(@TypeOf(TCPSocket.end)));
         if (@TypeOf(TCPSocket.flush) != CallbackType)
-            @compileLog("Expected TCPSocket.flush to be a callback");
+            @compileLog("Expected TCPSocket.flush to be a callback but received " ++ @typeName(@TypeOf(TCPSocket.flush)));
         if (@TypeOf(TCPSocket.getListener) != GetterType)
             @compileLog("Expected TCPSocket.getListener to be a getter");
 
@@ -121,20 +121,20 @@ pub const JSTCPSocket = struct {
             @compileLog("Expected TCPSocket.getReadyState to be a getter");
 
         if (@TypeOf(TCPSocket.ref) != CallbackType)
-            @compileLog("Expected TCPSocket.ref to be a callback");
+            @compileLog("Expected TCPSocket.ref to be a callback but received " ++ @typeName(@TypeOf(TCPSocket.ref)));
         if (@TypeOf(TCPSocket.reload) != CallbackType)
-            @compileLog("Expected TCPSocket.reload to be a callback");
+            @compileLog("Expected TCPSocket.reload to be a callback but received " ++ @typeName(@TypeOf(TCPSocket.reload)));
         if (@TypeOf(TCPSocket.getRemoteAddress) != GetterType)
             @compileLog("Expected TCPSocket.getRemoteAddress to be a getter");
 
         if (@TypeOf(TCPSocket.shutdown) != CallbackType)
-            @compileLog("Expected TCPSocket.shutdown to be a callback");
+            @compileLog("Expected TCPSocket.shutdown to be a callback but received " ++ @typeName(@TypeOf(TCPSocket.shutdown)));
         if (@TypeOf(TCPSocket.timeout) != CallbackType)
-            @compileLog("Expected TCPSocket.timeout to be a callback");
+            @compileLog("Expected TCPSocket.timeout to be a callback but received " ++ @typeName(@TypeOf(TCPSocket.timeout)));
         if (@TypeOf(TCPSocket.unref) != CallbackType)
-            @compileLog("Expected TCPSocket.unref to be a callback");
+            @compileLog("Expected TCPSocket.unref to be a callback but received " ++ @typeName(@TypeOf(TCPSocket.unref)));
         if (@TypeOf(TCPSocket.write) != CallbackType)
-            @compileLog("Expected TCPSocket.write to be a callback");
+            @compileLog("Expected TCPSocket.write to be a callback but received " ++ @typeName(@TypeOf(TCPSocket.write)));
         if (!JSC.is_bindgen) {
             @export(TCPSocket.end, .{ .name = "TCPSocketPrototype__end" });
             @export(TCPSocket.finalize, .{ .name = "TCPSocketClass__finalize" });
@@ -256,9 +256,9 @@ pub const JSTLSSocket = struct {
         if (@TypeOf(TLSSocket.setData) != SetterType)
             @compileLog("Expected TLSSocket.setData to be a setter");
         if (@TypeOf(TLSSocket.end) != CallbackType)
-            @compileLog("Expected TLSSocket.end to be a callback");
+            @compileLog("Expected TLSSocket.end to be a callback but received " ++ @typeName(@TypeOf(TLSSocket.end)));
         if (@TypeOf(TLSSocket.flush) != CallbackType)
-            @compileLog("Expected TLSSocket.flush to be a callback");
+            @compileLog("Expected TLSSocket.flush to be a callback but received " ++ @typeName(@TypeOf(TLSSocket.flush)));
         if (@TypeOf(TLSSocket.getListener) != GetterType)
             @compileLog("Expected TLSSocket.getListener to be a getter");
 
@@ -269,20 +269,20 @@ pub const JSTLSSocket = struct {
             @compileLog("Expected TLSSocket.getReadyState to be a getter");
 
         if (@TypeOf(TLSSocket.ref) != CallbackType)
-            @compileLog("Expected TLSSocket.ref to be a callback");
+            @compileLog("Expected TLSSocket.ref to be a callback but received " ++ @typeName(@TypeOf(TLSSocket.ref)));
         if (@TypeOf(TLSSocket.reload) != CallbackType)
-            @compileLog("Expected TLSSocket.reload to be a callback");
+            @compileLog("Expected TLSSocket.reload to be a callback but received " ++ @typeName(@TypeOf(TLSSocket.reload)));
         if (@TypeOf(TLSSocket.getRemoteAddress) != GetterType)
             @compileLog("Expected TLSSocket.getRemoteAddress to be a getter");
 
         if (@TypeOf(TLSSocket.shutdown) != CallbackType)
-            @compileLog("Expected TLSSocket.shutdown to be a callback");
+            @compileLog("Expected TLSSocket.shutdown to be a callback but received " ++ @typeName(@TypeOf(TLSSocket.shutdown)));
         if (@TypeOf(TLSSocket.timeout) != CallbackType)
-            @compileLog("Expected TLSSocket.timeout to be a callback");
+            @compileLog("Expected TLSSocket.timeout to be a callback but received " ++ @typeName(@TypeOf(TLSSocket.timeout)));
         if (@TypeOf(TLSSocket.unref) != CallbackType)
-            @compileLog("Expected TLSSocket.unref to be a callback");
+            @compileLog("Expected TLSSocket.unref to be a callback but received " ++ @typeName(@TypeOf(TLSSocket.unref)));
         if (@TypeOf(TLSSocket.write) != CallbackType)
-            @compileLog("Expected TLSSocket.write to be a callback");
+            @compileLog("Expected TLSSocket.write to be a callback but received " ++ @typeName(@TypeOf(TLSSocket.write)));
         if (!JSC.is_bindgen) {
             @export(TLSSocket.end, .{ .name = "TLSSocketPrototype__end" });
             @export(TLSSocket.finalize, .{ .name = "TLSSocketClass__finalize" });
@@ -410,16 +410,16 @@ pub const JSListener = struct {
             @compileLog("Expected Listener.getPort to be a getter");
 
         if (@TypeOf(Listener.ref) != CallbackType)
-            @compileLog("Expected Listener.ref to be a callback");
+            @compileLog("Expected Listener.ref to be a callback but received " ++ @typeName(@TypeOf(Listener.ref)));
         if (@TypeOf(Listener.reload) != CallbackType)
-            @compileLog("Expected Listener.reload to be a callback");
+            @compileLog("Expected Listener.reload to be a callback but received " ++ @typeName(@TypeOf(Listener.reload)));
         if (@TypeOf(Listener.stop) != CallbackType)
-            @compileLog("Expected Listener.stop to be a callback");
+            @compileLog("Expected Listener.stop to be a callback but received " ++ @typeName(@TypeOf(Listener.stop)));
         if (@TypeOf(Listener.getUnix) != GetterType)
             @compileLog("Expected Listener.getUnix to be a getter");
 
         if (@TypeOf(Listener.unref) != CallbackType)
-            @compileLog("Expected Listener.unref to be a callback");
+            @compileLog("Expected Listener.unref to be a callback but received " ++ @typeName(@TypeOf(Listener.unref)));
         if (!JSC.is_bindgen) {
             @export(Listener.finalize, .{ .name = "ListenerClass__finalize" });
             @export(Listener.getData, .{ .name = "ListenerPrototype__getData" });
@@ -558,7 +558,7 @@ pub const JSSubprocess = struct {
             @compileLog("Expected Subprocess.getExited to be a getter");
 
         if (@TypeOf(Subprocess.kill) != CallbackType)
-            @compileLog("Expected Subprocess.kill to be a callback");
+            @compileLog("Expected Subprocess.kill to be a callback but received " ++ @typeName(@TypeOf(Subprocess.kill)));
         if (@TypeOf(Subprocess.getKilled) != GetterType)
             @compileLog("Expected Subprocess.getKilled to be a getter");
 
@@ -569,7 +569,7 @@ pub const JSSubprocess = struct {
             @compileLog("Expected Subprocess.getStdout to be a getter");
 
         if (@TypeOf(Subprocess.doRef) != CallbackType)
-            @compileLog("Expected Subprocess.doRef to be a callback");
+            @compileLog("Expected Subprocess.doRef to be a callback but received " ++ @typeName(@TypeOf(Subprocess.doRef)));
         if (@TypeOf(Subprocess.getSignalCode) != GetterType)
             @compileLog("Expected Subprocess.getSignalCode to be a getter");
 
@@ -583,7 +583,7 @@ pub const JSSubprocess = struct {
             @compileLog("Expected Subprocess.getStdout to be a getter");
 
         if (@TypeOf(Subprocess.doUnref) != CallbackType)
-            @compileLog("Expected Subprocess.doUnref to be a callback");
+            @compileLog("Expected Subprocess.doUnref to be a callback but received " ++ @typeName(@TypeOf(Subprocess.doUnref)));
         if (@TypeOf(Subprocess.getStdin) != GetterType)
             @compileLog("Expected Subprocess.getStdin to be a getter");
 
@@ -670,9 +670,9 @@ pub const JSSHA1 = struct {
             @compileLog("Expected SHA1.getByteLength to be a getter");
 
         if (@TypeOf(SHA1.digest) != CallbackType)
-            @compileLog("Expected SHA1.digest to be a callback");
+            @compileLog("Expected SHA1.digest to be a callback but received " ++ @typeName(@TypeOf(SHA1.digest)));
         if (@TypeOf(SHA1.update) != CallbackType)
-            @compileLog("Expected SHA1.update to be a callback");
+            @compileLog("Expected SHA1.update to be a callback but received " ++ @typeName(@TypeOf(SHA1.update)));
         if (@TypeOf(SHA1.getByteLengthStatic) != StaticGetterType)
             @compileLog("Expected SHA1.getByteLengthStatic to be a static getter");
 
@@ -755,9 +755,9 @@ pub const JSMD5 = struct {
             @compileLog("Expected MD5.getByteLength to be a getter");
 
         if (@TypeOf(MD5.digest) != CallbackType)
-            @compileLog("Expected MD5.digest to be a callback");
+            @compileLog("Expected MD5.digest to be a callback but received " ++ @typeName(@TypeOf(MD5.digest)));
         if (@TypeOf(MD5.update) != CallbackType)
-            @compileLog("Expected MD5.update to be a callback");
+            @compileLog("Expected MD5.update to be a callback but received " ++ @typeName(@TypeOf(MD5.update)));
         if (@TypeOf(MD5.getByteLengthStatic) != StaticGetterType)
             @compileLog("Expected MD5.getByteLengthStatic to be a static getter");
 
@@ -840,9 +840,9 @@ pub const JSMD4 = struct {
             @compileLog("Expected MD4.getByteLength to be a getter");
 
         if (@TypeOf(MD4.digest) != CallbackType)
-            @compileLog("Expected MD4.digest to be a callback");
+            @compileLog("Expected MD4.digest to be a callback but received " ++ @typeName(@TypeOf(MD4.digest)));
         if (@TypeOf(MD4.update) != CallbackType)
-            @compileLog("Expected MD4.update to be a callback");
+            @compileLog("Expected MD4.update to be a callback but received " ++ @typeName(@TypeOf(MD4.update)));
         if (@TypeOf(MD4.getByteLengthStatic) != StaticGetterType)
             @compileLog("Expected MD4.getByteLengthStatic to be a static getter");
 
@@ -925,9 +925,9 @@ pub const JSSHA224 = struct {
             @compileLog("Expected SHA224.getByteLength to be a getter");
 
         if (@TypeOf(SHA224.digest) != CallbackType)
-            @compileLog("Expected SHA224.digest to be a callback");
+            @compileLog("Expected SHA224.digest to be a callback but received " ++ @typeName(@TypeOf(SHA224.digest)));
         if (@TypeOf(SHA224.update) != CallbackType)
-            @compileLog("Expected SHA224.update to be a callback");
+            @compileLog("Expected SHA224.update to be a callback but received " ++ @typeName(@TypeOf(SHA224.update)));
         if (@TypeOf(SHA224.getByteLengthStatic) != StaticGetterType)
             @compileLog("Expected SHA224.getByteLengthStatic to be a static getter");
 
@@ -1010,9 +1010,9 @@ pub const JSSHA512 = struct {
             @compileLog("Expected SHA512.getByteLength to be a getter");
 
         if (@TypeOf(SHA512.digest) != CallbackType)
-            @compileLog("Expected SHA512.digest to be a callback");
+            @compileLog("Expected SHA512.digest to be a callback but received " ++ @typeName(@TypeOf(SHA512.digest)));
         if (@TypeOf(SHA512.update) != CallbackType)
-            @compileLog("Expected SHA512.update to be a callback");
+            @compileLog("Expected SHA512.update to be a callback but received " ++ @typeName(@TypeOf(SHA512.update)));
         if (@TypeOf(SHA512.getByteLengthStatic) != StaticGetterType)
             @compileLog("Expected SHA512.getByteLengthStatic to be a static getter");
 
@@ -1095,9 +1095,9 @@ pub const JSSHA384 = struct {
             @compileLog("Expected SHA384.getByteLength to be a getter");
 
         if (@TypeOf(SHA384.digest) != CallbackType)
-            @compileLog("Expected SHA384.digest to be a callback");
+            @compileLog("Expected SHA384.digest to be a callback but received " ++ @typeName(@TypeOf(SHA384.digest)));
         if (@TypeOf(SHA384.update) != CallbackType)
-            @compileLog("Expected SHA384.update to be a callback");
+            @compileLog("Expected SHA384.update to be a callback but received " ++ @typeName(@TypeOf(SHA384.update)));
         if (@TypeOf(SHA384.getByteLengthStatic) != StaticGetterType)
             @compileLog("Expected SHA384.getByteLengthStatic to be a static getter");
 
@@ -1180,9 +1180,9 @@ pub const JSSHA256 = struct {
             @compileLog("Expected SHA256.getByteLength to be a getter");
 
         if (@TypeOf(SHA256.digest) != CallbackType)
-            @compileLog("Expected SHA256.digest to be a callback");
+            @compileLog("Expected SHA256.digest to be a callback but received " ++ @typeName(@TypeOf(SHA256.digest)));
         if (@TypeOf(SHA256.update) != CallbackType)
-            @compileLog("Expected SHA256.update to be a callback");
+            @compileLog("Expected SHA256.update to be a callback but received " ++ @typeName(@TypeOf(SHA256.update)));
         if (@TypeOf(SHA256.getByteLengthStatic) != StaticGetterType)
             @compileLog("Expected SHA256.getByteLengthStatic to be a static getter");
 
@@ -1265,9 +1265,9 @@ pub const JSSHA512_256 = struct {
             @compileLog("Expected SHA512_256.getByteLength to be a getter");
 
         if (@TypeOf(SHA512_256.digest) != CallbackType)
-            @compileLog("Expected SHA512_256.digest to be a callback");
+            @compileLog("Expected SHA512_256.digest to be a callback but received " ++ @typeName(@TypeOf(SHA512_256.digest)));
         if (@TypeOf(SHA512_256.update) != CallbackType)
-            @compileLog("Expected SHA512_256.update to be a callback");
+            @compileLog("Expected SHA512_256.update to be a callback but received " ++ @typeName(@TypeOf(SHA512_256.update)));
         if (@TypeOf(SHA512_256.getByteLengthStatic) != StaticGetterType)
             @compileLog("Expected SHA512_256.getByteLengthStatic to be a static getter");
 
@@ -1396,28 +1396,28 @@ pub const JSServerWebSocket = struct {
         if (@TypeOf(ServerWebSocket.setBinaryType) != SetterType)
             @compileLog("Expected ServerWebSocket.setBinaryType to be a setter");
         if (@TypeOf(ServerWebSocket.close) != CallbackType)
-            @compileLog("Expected ServerWebSocket.close to be a callback");
+            @compileLog("Expected ServerWebSocket.close to be a callback but received " ++ @typeName(@TypeOf(ServerWebSocket.close)));
         if (@TypeOf(ServerWebSocket.cork) != CallbackType)
-            @compileLog("Expected ServerWebSocket.cork to be a callback");
+            @compileLog("Expected ServerWebSocket.cork to be a callback but received " ++ @typeName(@TypeOf(ServerWebSocket.cork)));
         if (@TypeOf(ServerWebSocket.getData) != GetterType)
             @compileLog("Expected ServerWebSocket.getData to be a getter");
 
         if (@TypeOf(ServerWebSocket.setData) != SetterType)
             @compileLog("Expected ServerWebSocket.setData to be a setter");
         if (@TypeOf(ServerWebSocket.getBufferedAmount) != CallbackType)
-            @compileLog("Expected ServerWebSocket.getBufferedAmount to be a callback");
+            @compileLog("Expected ServerWebSocket.getBufferedAmount to be a callback but received " ++ @typeName(@TypeOf(ServerWebSocket.getBufferedAmount)));
         if (@TypeOf(ServerWebSocket.isSubscribed) != CallbackType)
-            @compileLog("Expected ServerWebSocket.isSubscribed to be a callback");
+            @compileLog("Expected ServerWebSocket.isSubscribed to be a callback but received " ++ @typeName(@TypeOf(ServerWebSocket.isSubscribed)));
         if (@TypeOf(ServerWebSocket.publish) != CallbackType)
-            @compileLog("Expected ServerWebSocket.publish to be a callback");
+            @compileLog("Expected ServerWebSocket.publish to be a callback but received " ++ @typeName(@TypeOf(ServerWebSocket.publish)));
         if (@TypeOf(ServerWebSocket.publishBinaryWithoutTypeChecks) != fn (*ServerWebSocket, *JSC.JSGlobalObject, *JSC.JSString, *JSC.JSUint8Array) callconv(.C) JSC.JSValue)
             @compileLog("Expected ServerWebSocket.publishBinaryWithoutTypeChecks to be a DOMJIT function");
         if (@TypeOf(ServerWebSocket.publishBinary) != CallbackType)
-            @compileLog("Expected ServerWebSocket.publishBinary to be a callback");
+            @compileLog("Expected ServerWebSocket.publishBinary to be a callback but received " ++ @typeName(@TypeOf(ServerWebSocket.publishBinary)));
         if (@TypeOf(ServerWebSocket.publishTextWithoutTypeChecks) != fn (*ServerWebSocket, *JSC.JSGlobalObject, *JSC.JSString, *JSC.JSString) callconv(.C) JSC.JSValue)
             @compileLog("Expected ServerWebSocket.publishTextWithoutTypeChecks to be a DOMJIT function");
         if (@TypeOf(ServerWebSocket.publishText) != CallbackType)
-            @compileLog("Expected ServerWebSocket.publishText to be a callback");
+            @compileLog("Expected ServerWebSocket.publishText to be a callback but received " ++ @typeName(@TypeOf(ServerWebSocket.publishText)));
         if (@TypeOf(ServerWebSocket.getReadyState) != GetterType)
             @compileLog("Expected ServerWebSocket.getReadyState to be a getter");
 
@@ -1425,19 +1425,19 @@ pub const JSServerWebSocket = struct {
             @compileLog("Expected ServerWebSocket.getRemoteAddress to be a getter");
 
         if (@TypeOf(ServerWebSocket.send) != CallbackType)
-            @compileLog("Expected ServerWebSocket.send to be a callback");
+            @compileLog("Expected ServerWebSocket.send to be a callback but received " ++ @typeName(@TypeOf(ServerWebSocket.send)));
         if (@TypeOf(ServerWebSocket.sendBinaryWithoutTypeChecks) != fn (*ServerWebSocket, *JSC.JSGlobalObject, *JSC.JSUint8Array, bool) callconv(.C) JSC.JSValue)
             @compileLog("Expected ServerWebSocket.sendBinaryWithoutTypeChecks to be a DOMJIT function");
         if (@TypeOf(ServerWebSocket.sendBinary) != CallbackType)
-            @compileLog("Expected ServerWebSocket.sendBinary to be a callback");
+            @compileLog("Expected ServerWebSocket.sendBinary to be a callback but received " ++ @typeName(@TypeOf(ServerWebSocket.sendBinary)));
         if (@TypeOf(ServerWebSocket.sendTextWithoutTypeChecks) != fn (*ServerWebSocket, *JSC.JSGlobalObject, *JSC.JSString, bool) callconv(.C) JSC.JSValue)
             @compileLog("Expected ServerWebSocket.sendTextWithoutTypeChecks to be a DOMJIT function");
         if (@TypeOf(ServerWebSocket.sendText) != CallbackType)
-            @compileLog("Expected ServerWebSocket.sendText to be a callback");
+            @compileLog("Expected ServerWebSocket.sendText to be a callback but received " ++ @typeName(@TypeOf(ServerWebSocket.sendText)));
         if (@TypeOf(ServerWebSocket.subscribe) != CallbackType)
-            @compileLog("Expected ServerWebSocket.subscribe to be a callback");
+            @compileLog("Expected ServerWebSocket.subscribe to be a callback but received " ++ @typeName(@TypeOf(ServerWebSocket.subscribe)));
         if (@TypeOf(ServerWebSocket.unsubscribe) != CallbackType)
-            @compileLog("Expected ServerWebSocket.unsubscribe to be a callback");
+            @compileLog("Expected ServerWebSocket.unsubscribe to be a callback but received " ++ @typeName(@TypeOf(ServerWebSocket.unsubscribe)));
         if (!JSC.is_bindgen) {
             @export(ServerWebSocket.close, .{ .name = "ServerWebSocketPrototype__close" });
             @export(ServerWebSocket.constructor, .{ .name = "ServerWebSocketClass__construct" });
@@ -1595,12 +1595,12 @@ pub const JSFileSystemRouter = struct {
         }
 
         if (@TypeOf(FileSystemRouter.match) != CallbackType)
-            @compileLog("Expected FileSystemRouter.match to be a callback");
+            @compileLog("Expected FileSystemRouter.match to be a callback but received " ++ @typeName(@TypeOf(FileSystemRouter.match)));
         if (@TypeOf(FileSystemRouter.getOrigin) != GetterType)
             @compileLog("Expected FileSystemRouter.getOrigin to be a getter");
 
         if (@TypeOf(FileSystemRouter.reload) != CallbackType)
-            @compileLog("Expected FileSystemRouter.reload to be a callback");
+            @compileLog("Expected FileSystemRouter.reload to be a callback but received " ++ @typeName(@TypeOf(FileSystemRouter.reload)));
         if (@TypeOf(FileSystemRouter.getRoutes) != GetterType)
             @compileLog("Expected FileSystemRouter.getRoutes to be a getter");
 
@@ -1972,73 +1972,73 @@ pub const JSExpect = struct {
         if (@TypeOf(Expect.getResolves) != GetterTypeWithThisValue)
             @compileLog("Expected Expect.getResolves to be a getter with thisValue");
         if (@TypeOf(Expect.toBe) != CallbackType)
-            @compileLog("Expected Expect.toBe to be a callback");
+            @compileLog("Expected Expect.toBe to be a callback but received " ++ @typeName(@TypeOf(Expect.toBe)));
         if (@TypeOf(Expect.toBeCloseTo) != CallbackType)
-            @compileLog("Expected Expect.toBeCloseTo to be a callback");
+            @compileLog("Expected Expect.toBeCloseTo to be a callback but received " ++ @typeName(@TypeOf(Expect.toBeCloseTo)));
         if (@TypeOf(Expect.toBeDefined) != CallbackType)
-            @compileLog("Expected Expect.toBeDefined to be a callback");
+            @compileLog("Expected Expect.toBeDefined to be a callback but received " ++ @typeName(@TypeOf(Expect.toBeDefined)));
         if (@TypeOf(Expect.toBeFalsy) != CallbackType)
-            @compileLog("Expected Expect.toBeFalsy to be a callback");
+            @compileLog("Expected Expect.toBeFalsy to be a callback but received " ++ @typeName(@TypeOf(Expect.toBeFalsy)));
         if (@TypeOf(Expect.toBeGreaterThan) != CallbackType)
-            @compileLog("Expected Expect.toBeGreaterThan to be a callback");
+            @compileLog("Expected Expect.toBeGreaterThan to be a callback but received " ++ @typeName(@TypeOf(Expect.toBeGreaterThan)));
         if (@TypeOf(Expect.toBeGreaterThanOrEqual) != CallbackType)
-            @compileLog("Expected Expect.toBeGreaterThanOrEqual to be a callback");
+            @compileLog("Expected Expect.toBeGreaterThanOrEqual to be a callback but received " ++ @typeName(@TypeOf(Expect.toBeGreaterThanOrEqual)));
         if (@TypeOf(Expect.toBeInstanceOf) != CallbackType)
-            @compileLog("Expected Expect.toBeInstanceOf to be a callback");
+            @compileLog("Expected Expect.toBeInstanceOf to be a callback but received " ++ @typeName(@TypeOf(Expect.toBeInstanceOf)));
         if (@TypeOf(Expect.toBeLessThan) != CallbackType)
-            @compileLog("Expected Expect.toBeLessThan to be a callback");
+            @compileLog("Expected Expect.toBeLessThan to be a callback but received " ++ @typeName(@TypeOf(Expect.toBeLessThan)));
         if (@TypeOf(Expect.toBeLessThanOrEqual) != CallbackType)
-            @compileLog("Expected Expect.toBeLessThanOrEqual to be a callback");
+            @compileLog("Expected Expect.toBeLessThanOrEqual to be a callback but received " ++ @typeName(@TypeOf(Expect.toBeLessThanOrEqual)));
         if (@TypeOf(Expect.toBeNaN) != CallbackType)
-            @compileLog("Expected Expect.toBeNaN to be a callback");
+            @compileLog("Expected Expect.toBeNaN to be a callback but received " ++ @typeName(@TypeOf(Expect.toBeNaN)));
         if (@TypeOf(Expect.toBeNull) != CallbackType)
-            @compileLog("Expected Expect.toBeNull to be a callback");
+            @compileLog("Expected Expect.toBeNull to be a callback but received " ++ @typeName(@TypeOf(Expect.toBeNull)));
         if (@TypeOf(Expect.toBeTruthy) != CallbackType)
-            @compileLog("Expected Expect.toBeTruthy to be a callback");
+            @compileLog("Expected Expect.toBeTruthy to be a callback but received " ++ @typeName(@TypeOf(Expect.toBeTruthy)));
         if (@TypeOf(Expect.toBeUndefined) != CallbackType)
-            @compileLog("Expected Expect.toBeUndefined to be a callback");
+            @compileLog("Expected Expect.toBeUndefined to be a callback but received " ++ @typeName(@TypeOf(Expect.toBeUndefined)));
         if (@TypeOf(Expect.toContain) != CallbackType)
-            @compileLog("Expected Expect.toContain to be a callback");
+            @compileLog("Expected Expect.toContain to be a callback but received " ++ @typeName(@TypeOf(Expect.toContain)));
         if (@TypeOf(Expect.toContainEqual) != CallbackType)
-            @compileLog("Expected Expect.toContainEqual to be a callback");
+            @compileLog("Expected Expect.toContainEqual to be a callback but received " ++ @typeName(@TypeOf(Expect.toContainEqual)));
         if (@TypeOf(Expect.toEqual) != CallbackType)
-            @compileLog("Expected Expect.toEqual to be a callback");
+            @compileLog("Expected Expect.toEqual to be a callback but received " ++ @typeName(@TypeOf(Expect.toEqual)));
         if (@TypeOf(Expect.toHaveBeenCalledTimes) != CallbackType)
-            @compileLog("Expected Expect.toHaveBeenCalledTimes to be a callback");
+            @compileLog("Expected Expect.toHaveBeenCalledTimes to be a callback but received " ++ @typeName(@TypeOf(Expect.toHaveBeenCalledTimes)));
         if (@TypeOf(Expect.toHaveBeenCalledWith) != CallbackType)
-            @compileLog("Expected Expect.toHaveBeenCalledWith to be a callback");
+            @compileLog("Expected Expect.toHaveBeenCalledWith to be a callback but received " ++ @typeName(@TypeOf(Expect.toHaveBeenCalledWith)));
         if (@TypeOf(Expect.toHaveBeenLastCalledWith) != CallbackType)
-            @compileLog("Expected Expect.toHaveBeenLastCalledWith to be a callback");
+            @compileLog("Expected Expect.toHaveBeenLastCalledWith to be a callback but received " ++ @typeName(@TypeOf(Expect.toHaveBeenLastCalledWith)));
         if (@TypeOf(Expect.toHaveBeenNthCalledWith) != CallbackType)
-            @compileLog("Expected Expect.toHaveBeenNthCalledWith to be a callback");
+            @compileLog("Expected Expect.toHaveBeenNthCalledWith to be a callback but received " ++ @typeName(@TypeOf(Expect.toHaveBeenNthCalledWith)));
         if (@TypeOf(Expect.toHaveLastReturnedWith) != CallbackType)
-            @compileLog("Expected Expect.toHaveLastReturnedWith to be a callback");
+            @compileLog("Expected Expect.toHaveLastReturnedWith to be a callback but received " ++ @typeName(@TypeOf(Expect.toHaveLastReturnedWith)));
         if (@TypeOf(Expect.toHaveLength) != CallbackType)
-            @compileLog("Expected Expect.toHaveLength to be a callback");
+            @compileLog("Expected Expect.toHaveLength to be a callback but received " ++ @typeName(@TypeOf(Expect.toHaveLength)));
         if (@TypeOf(Expect.toHaveNthReturnedWith) != CallbackType)
-            @compileLog("Expected Expect.toHaveNthReturnedWith to be a callback");
+            @compileLog("Expected Expect.toHaveNthReturnedWith to be a callback but received " ++ @typeName(@TypeOf(Expect.toHaveNthReturnedWith)));
         if (@TypeOf(Expect.toHaveProperty) != CallbackType)
-            @compileLog("Expected Expect.toHaveProperty to be a callback");
+            @compileLog("Expected Expect.toHaveProperty to be a callback but received " ++ @typeName(@TypeOf(Expect.toHaveProperty)));
         if (@TypeOf(Expect.toHaveReturnedTimes) != CallbackType)
-            @compileLog("Expected Expect.toHaveReturnedTimes to be a callback");
+            @compileLog("Expected Expect.toHaveReturnedTimes to be a callback but received " ++ @typeName(@TypeOf(Expect.toHaveReturnedTimes)));
         if (@TypeOf(Expect.toHaveReturnedWith) != CallbackType)
-            @compileLog("Expected Expect.toHaveReturnedWith to be a callback");
+            @compileLog("Expected Expect.toHaveReturnedWith to be a callback but received " ++ @typeName(@TypeOf(Expect.toHaveReturnedWith)));
         if (@TypeOf(Expect.toMatch) != CallbackType)
-            @compileLog("Expected Expect.toMatch to be a callback");
+            @compileLog("Expected Expect.toMatch to be a callback but received " ++ @typeName(@TypeOf(Expect.toMatch)));
         if (@TypeOf(Expect.toMatchInlineSnapshot) != CallbackType)
-            @compileLog("Expected Expect.toMatchInlineSnapshot to be a callback");
+            @compileLog("Expected Expect.toMatchInlineSnapshot to be a callback but received " ++ @typeName(@TypeOf(Expect.toMatchInlineSnapshot)));
         if (@TypeOf(Expect.toMatchObject) != CallbackType)
-            @compileLog("Expected Expect.toMatchObject to be a callback");
+            @compileLog("Expected Expect.toMatchObject to be a callback but received " ++ @typeName(@TypeOf(Expect.toMatchObject)));
         if (@TypeOf(Expect.toMatchSnapshot) != CallbackType)
-            @compileLog("Expected Expect.toMatchSnapshot to be a callback");
+            @compileLog("Expected Expect.toMatchSnapshot to be a callback but received " ++ @typeName(@TypeOf(Expect.toMatchSnapshot)));
         if (@TypeOf(Expect.toStrictEqual) != CallbackType)
-            @compileLog("Expected Expect.toStrictEqual to be a callback");
+            @compileLog("Expected Expect.toStrictEqual to be a callback but received " ++ @typeName(@TypeOf(Expect.toStrictEqual)));
         if (@TypeOf(Expect.toThrow) != CallbackType)
-            @compileLog("Expected Expect.toThrow to be a callback");
+            @compileLog("Expected Expect.toThrow to be a callback but received " ++ @typeName(@TypeOf(Expect.toThrow)));
         if (@TypeOf(Expect.toThrowErrorMatchingInlineSnapshot) != CallbackType)
-            @compileLog("Expected Expect.toThrowErrorMatchingInlineSnapshot to be a callback");
+            @compileLog("Expected Expect.toThrowErrorMatchingInlineSnapshot to be a callback but received " ++ @typeName(@TypeOf(Expect.toThrowErrorMatchingInlineSnapshot)));
         if (@TypeOf(Expect.toThrowErrorMatchingSnapshot) != CallbackType)
-            @compileLog("Expected Expect.toThrowErrorMatchingSnapshot to be a callback");
+            @compileLog("Expected Expect.toThrowErrorMatchingSnapshot to be a callback but received " ++ @typeName(@TypeOf(Expect.toThrowErrorMatchingSnapshot)));
         if (@TypeOf(Expect.addSnapshotSerializer) != StaticCallbackType)
             @compileLog("Expected Expect.addSnapshotSerializer to be a static callback");
         if (@TypeOf(Expect.any) != StaticCallbackType)
@@ -2214,7 +2214,7 @@ pub const JSTextDecoder = struct {
         if (@TypeOf(TextDecoder.decodeWithoutTypeChecks) != fn (*TextDecoder, *JSC.JSGlobalObject, *JSC.JSUint8Array) callconv(.C) JSC.JSValue)
             @compileLog("Expected TextDecoder.decodeWithoutTypeChecks to be a DOMJIT function");
         if (@TypeOf(TextDecoder.decode) != CallbackType)
-            @compileLog("Expected TextDecoder.decode to be a callback");
+            @compileLog("Expected TextDecoder.decode to be a callback but received " ++ @typeName(@TypeOf(TextDecoder.decode)));
         if (@TypeOf(TextDecoder.getEncoding) != GetterType)
             @compileLog("Expected TextDecoder.getEncoding to be a getter");
 
@@ -2364,9 +2364,9 @@ pub const JSRequest = struct {
         }
 
         if (@TypeOf(Request.getArrayBuffer) != CallbackType)
-            @compileLog("Expected Request.getArrayBuffer to be a callback");
+            @compileLog("Expected Request.getArrayBuffer to be a callback but received " ++ @typeName(@TypeOf(Request.getArrayBuffer)));
         if (@TypeOf(Request.getBlob) != CallbackType)
-            @compileLog("Expected Request.getBlob to be a callback");
+            @compileLog("Expected Request.getBlob to be a callback but received " ++ @typeName(@TypeOf(Request.getBlob)));
         if (@TypeOf(Request.getBody) != GetterType)
             @compileLog("Expected Request.getBody to be a getter");
 
@@ -2377,7 +2377,7 @@ pub const JSRequest = struct {
             @compileLog("Expected Request.getCache to be a getter");
 
         if (@TypeOf(Request.doClone) != CallbackType)
-            @compileLog("Expected Request.doClone to be a callback");
+            @compileLog("Expected Request.doClone to be a callback but received " ++ @typeName(@TypeOf(Request.doClone)));
         if (@TypeOf(Request.getCredentials) != GetterType)
             @compileLog("Expected Request.getCredentials to be a getter");
 
@@ -2391,7 +2391,7 @@ pub const JSRequest = struct {
             @compileLog("Expected Request.getIntegrity to be a getter");
 
         if (@TypeOf(Request.getJSON) != CallbackType)
-            @compileLog("Expected Request.getJSON to be a callback");
+            @compileLog("Expected Request.getJSON to be a callback but received " ++ @typeName(@TypeOf(Request.getJSON)));
         if (@TypeOf(Request.getMethod) != GetterType)
             @compileLog("Expected Request.getMethod to be a getter");
 
@@ -2408,7 +2408,7 @@ pub const JSRequest = struct {
             @compileLog("Expected Request.getReferrerPolicy to be a getter");
 
         if (@TypeOf(Request.getText) != CallbackType)
-            @compileLog("Expected Request.getText to be a callback");
+            @compileLog("Expected Request.getText to be a callback but received " ++ @typeName(@TypeOf(Request.getText)));
         if (@TypeOf(Request.getUrl) != GetterType)
             @compileLog("Expected Request.getUrl to be a getter");
 
@@ -2592,9 +2592,9 @@ pub const JSResponse = struct {
         }
 
         if (@TypeOf(Response.getArrayBuffer) != CallbackType)
-            @compileLog("Expected Response.getArrayBuffer to be a callback");
+            @compileLog("Expected Response.getArrayBuffer to be a callback but received " ++ @typeName(@TypeOf(Response.getArrayBuffer)));
         if (@TypeOf(Response.getBlob) != CallbackType)
-            @compileLog("Expected Response.getBlob to be a callback");
+            @compileLog("Expected Response.getBlob to be a callback but received " ++ @typeName(@TypeOf(Response.getBlob)));
         if (@TypeOf(Response.getBody) != GetterType)
             @compileLog("Expected Response.getBody to be a getter");
 
@@ -2602,12 +2602,12 @@ pub const JSResponse = struct {
             @compileLog("Expected Response.getBodyUsed to be a getter");
 
         if (@TypeOf(Response.doClone) != CallbackType)
-            @compileLog("Expected Response.doClone to be a callback");
+            @compileLog("Expected Response.doClone to be a callback but received " ++ @typeName(@TypeOf(Response.doClone)));
         if (@TypeOf(Response.getHeaders) != GetterType)
             @compileLog("Expected Response.getHeaders to be a getter");
 
         if (@TypeOf(Response.getJSON) != CallbackType)
-            @compileLog("Expected Response.getJSON to be a callback");
+            @compileLog("Expected Response.getJSON to be a callback but received " ++ @typeName(@TypeOf(Response.getJSON)));
         if (@TypeOf(Response.getOK) != GetterType)
             @compileLog("Expected Response.getOK to be a getter");
 
@@ -2621,7 +2621,7 @@ pub const JSResponse = struct {
             @compileLog("Expected Response.getStatusText to be a getter");
 
         if (@TypeOf(Response.getText) != CallbackType)
-            @compileLog("Expected Response.getText to be a callback");
+            @compileLog("Expected Response.getText to be a callback but received " ++ @typeName(@TypeOf(Response.getText)));
         if (@TypeOf(Response.getResponseType) != GetterType)
             @compileLog("Expected Response.getResponseType to be a getter");
 
@@ -2721,25 +2721,25 @@ pub const JSBlob = struct {
         }
 
         if (@TypeOf(Blob.getArrayBuffer) != CallbackType)
-            @compileLog("Expected Blob.getArrayBuffer to be a callback");
+            @compileLog("Expected Blob.getArrayBuffer to be a callback but received " ++ @typeName(@TypeOf(Blob.getArrayBuffer)));
         if (@TypeOf(Blob.getJSON) != CallbackType)
-            @compileLog("Expected Blob.getJSON to be a callback");
+            @compileLog("Expected Blob.getJSON to be a callback but received " ++ @typeName(@TypeOf(Blob.getJSON)));
         if (@TypeOf(Blob.getSize) != GetterType)
             @compileLog("Expected Blob.getSize to be a getter");
 
         if (@TypeOf(Blob.getSlice) != CallbackType)
-            @compileLog("Expected Blob.getSlice to be a callback");
+            @compileLog("Expected Blob.getSlice to be a callback but received " ++ @typeName(@TypeOf(Blob.getSlice)));
         if (@TypeOf(Blob.getStream) != CallbackType)
-            @compileLog("Expected Blob.getStream to be a callback");
+            @compileLog("Expected Blob.getStream to be a callback but received " ++ @typeName(@TypeOf(Blob.getStream)));
         if (@TypeOf(Blob.getText) != CallbackType)
-            @compileLog("Expected Blob.getText to be a callback");
+            @compileLog("Expected Blob.getText to be a callback but received " ++ @typeName(@TypeOf(Blob.getText)));
         if (@TypeOf(Blob.getType) != GetterType)
             @compileLog("Expected Blob.getType to be a getter");
 
         if (@TypeOf(Blob.setType) != SetterType)
             @compileLog("Expected Blob.setType to be a setter");
         if (@TypeOf(Blob.getWriter) != CallbackType)
-            @compileLog("Expected Blob.getWriter to be a callback");
+            @compileLog("Expected Blob.getWriter to be a callback but received " ++ @typeName(@TypeOf(Blob.getWriter)));
         if (!JSC.is_bindgen) {
             @export(Blob.constructor, .{ .name = "BlobClass__construct" });
             @export(Blob.finalize, .{ .name = "BlobClass__finalize" });
@@ -2752,6 +2752,428 @@ pub const JSBlob = struct {
             @export(Blob.getType, .{ .name = "BlobPrototype__getType" });
             @export(Blob.getWriter, .{ .name = "BlobPrototype__getWriter" });
             @export(Blob.setType, .{ .name = "BlobPrototype__setType" });
+        }
+    }
+};
+pub const JSDirent = struct {
+    const Dirent = Classes.Dirent;
+    const GetterType = fn (*Dirent, *JSC.JSGlobalObject) callconv(.C) JSC.JSValue;
+    const GetterTypeWithThisValue = fn (*Dirent, JSC.JSValue, *JSC.JSGlobalObject) callconv(.C) JSC.JSValue;
+    const SetterType = fn (*Dirent, *JSC.JSGlobalObject, JSC.JSValue) callconv(.C) bool;
+    const SetterTypeWithThisValue = fn (*Dirent, JSC.JSValue, *JSC.JSGlobalObject, JSC.JSValue) callconv(.C) bool;
+    const CallbackType = fn (*Dirent, *JSC.JSGlobalObject, *JSC.CallFrame) callconv(.C) JSC.JSValue;
+
+    /// Return the pointer to the wrapped object.
+    /// If the object does not match the type, return null.
+    pub fn fromJS(value: JSC.JSValue) ?*Dirent {
+        JSC.markBinding(@src());
+        return Dirent__fromJS(value);
+    }
+
+    extern fn DirentPrototype__nameSetCachedValue(JSC.JSValue, *JSC.JSGlobalObject, JSC.JSValue) void;
+
+    extern fn DirentPrototype__nameGetCachedValue(JSC.JSValue) JSC.JSValue;
+
+    /// `Dirent.name` setter
+    /// This value will be visited by the garbage collector.
+    pub fn nameSetCached(thisValue: JSC.JSValue, globalObject: *JSC.JSGlobalObject, value: JSC.JSValue) void {
+        JSC.markBinding(@src());
+        DirentPrototype__nameSetCachedValue(thisValue, globalObject, value);
+    }
+
+    /// `Dirent.name` getter
+    /// This value will be visited by the garbage collector.
+    pub fn nameGetCached(thisValue: JSC.JSValue) ?JSC.JSValue {
+        JSC.markBinding(@src());
+        const result = DirentPrototype__nameGetCachedValue(thisValue);
+        if (result == .zero)
+            return null;
+
+        return result;
+    }
+
+    /// Get the Dirent constructor value.
+    /// This loads lazily from the global object.
+    pub fn getConstructor(globalObject: *JSC.JSGlobalObject) JSC.JSValue {
+        JSC.markBinding(@src());
+        return Dirent__getConstructor(globalObject);
+    }
+
+    /// Create a new instance of Dirent
+    pub fn toJS(this: *Dirent, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
+        JSC.markBinding(@src());
+        if (comptime Environment.allow_assert) {
+            const value__ = Dirent__create(globalObject, this);
+            std.debug.assert(value__.as(Dirent).? == this); // If this fails, likely a C ABI issue.
+            return value__;
+        } else {
+            return Dirent__create(globalObject, this);
+        }
+    }
+
+    /// Modify the internal ptr to point to a new instance of Dirent.
+    pub fn dangerouslySetPtr(value: JSC.JSValue, ptr: ?*Dirent) bool {
+        JSC.markBinding(@src());
+        return Dirent__dangerouslySetPtr(value, ptr);
+    }
+
+    /// Detach the ptr from the thisValue
+    pub fn detachPtr(_: *Dirent, value: JSC.JSValue) void {
+        JSC.markBinding(@src());
+        std.debug.assert(Dirent__dangerouslySetPtr(value, null));
+    }
+
+    extern fn Dirent__fromJS(JSC.JSValue) ?*Dirent;
+    extern fn Dirent__getConstructor(*JSC.JSGlobalObject) JSC.JSValue;
+
+    extern fn Dirent__create(globalObject: *JSC.JSGlobalObject, ptr: ?*Dirent) JSC.JSValue;
+
+    extern fn Dirent__dangerouslySetPtr(JSC.JSValue, ?*Dirent) bool;
+
+    comptime {
+        if (@TypeOf(Dirent.constructor) != (fn (*JSC.JSGlobalObject, *JSC.CallFrame) callconv(.C) ?*Dirent)) {
+            @compileLog("Dirent.constructor is not a constructor");
+        }
+
+        if (@TypeOf(Dirent.finalize) != (fn (*Dirent) callconv(.C) void)) {
+            @compileLog("Dirent.finalize is not a finalizer");
+        }
+
+        if (@TypeOf(Dirent.isBlockDevice) != CallbackType)
+            @compileLog("Expected Dirent.isBlockDevice to be a callback but received " ++ @typeName(@TypeOf(Dirent.isBlockDevice)));
+        if (@TypeOf(Dirent.isCharacterDevice) != CallbackType)
+            @compileLog("Expected Dirent.isCharacterDevice to be a callback but received " ++ @typeName(@TypeOf(Dirent.isCharacterDevice)));
+        if (@TypeOf(Dirent.isDirectory) != CallbackType)
+            @compileLog("Expected Dirent.isDirectory to be a callback but received " ++ @typeName(@TypeOf(Dirent.isDirectory)));
+        if (@TypeOf(Dirent.isFIFO) != CallbackType)
+            @compileLog("Expected Dirent.isFIFO to be a callback but received " ++ @typeName(@TypeOf(Dirent.isFIFO)));
+        if (@TypeOf(Dirent.isFile) != CallbackType)
+            @compileLog("Expected Dirent.isFile to be a callback but received " ++ @typeName(@TypeOf(Dirent.isFile)));
+        if (@TypeOf(Dirent.isSocket) != CallbackType)
+            @compileLog("Expected Dirent.isSocket to be a callback but received " ++ @typeName(@TypeOf(Dirent.isSocket)));
+        if (@TypeOf(Dirent.isSymbolicLink) != CallbackType)
+            @compileLog("Expected Dirent.isSymbolicLink to be a callback but received " ++ @typeName(@TypeOf(Dirent.isSymbolicLink)));
+        if (@TypeOf(Dirent.getName) != GetterType)
+            @compileLog("Expected Dirent.getName to be a getter");
+
+        if (!JSC.is_bindgen) {
+            @export(Dirent.constructor, .{ .name = "DirentClass__construct" });
+            @export(Dirent.finalize, .{ .name = "DirentClass__finalize" });
+            @export(Dirent.getName, .{ .name = "DirentPrototype__getName" });
+            @export(Dirent.isBlockDevice, .{ .name = "DirentPrototype__isBlockDevice" });
+            @export(Dirent.isCharacterDevice, .{ .name = "DirentPrototype__isCharacterDevice" });
+            @export(Dirent.isDirectory, .{ .name = "DirentPrototype__isDirectory" });
+            @export(Dirent.isFIFO, .{ .name = "DirentPrototype__isFIFO" });
+            @export(Dirent.isFile, .{ .name = "DirentPrototype__isFile" });
+            @export(Dirent.isSocket, .{ .name = "DirentPrototype__isSocket" });
+            @export(Dirent.isSymbolicLink, .{ .name = "DirentPrototype__isSymbolicLink" });
+        }
+    }
+};
+pub const JSNodeJSFS = struct {
+    const NodeJSFS = Classes.NodeJSFS;
+    const GetterType = fn (*NodeJSFS, *JSC.JSGlobalObject) callconv(.C) JSC.JSValue;
+    const GetterTypeWithThisValue = fn (*NodeJSFS, JSC.JSValue, *JSC.JSGlobalObject) callconv(.C) JSC.JSValue;
+    const SetterType = fn (*NodeJSFS, *JSC.JSGlobalObject, JSC.JSValue) callconv(.C) bool;
+    const SetterTypeWithThisValue = fn (*NodeJSFS, JSC.JSValue, *JSC.JSGlobalObject, JSC.JSValue) callconv(.C) bool;
+    const CallbackType = fn (*NodeJSFS, *JSC.JSGlobalObject, *JSC.CallFrame) callconv(.C) JSC.JSValue;
+
+    /// Return the pointer to the wrapped object.
+    /// If the object does not match the type, return null.
+    pub fn fromJS(value: JSC.JSValue) ?*NodeJSFS {
+        JSC.markBinding(@src());
+        return NodeJSFS__fromJS(value);
+    }
+
+    /// Get the NodeJSFS constructor value.
+    /// This loads lazily from the global object.
+    pub fn getConstructor(globalObject: *JSC.JSGlobalObject) JSC.JSValue {
+        JSC.markBinding(@src());
+        return NodeJSFS__getConstructor(globalObject);
+    }
+
+    /// Create a new instance of NodeJSFS
+    pub fn toJS(this: *NodeJSFS, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
+        JSC.markBinding(@src());
+        if (comptime Environment.allow_assert) {
+            const value__ = NodeJSFS__create(globalObject, this);
+            std.debug.assert(value__.as(NodeJSFS).? == this); // If this fails, likely a C ABI issue.
+            return value__;
+        } else {
+            return NodeJSFS__create(globalObject, this);
+        }
+    }
+
+    /// Modify the internal ptr to point to a new instance of NodeJSFS.
+    pub fn dangerouslySetPtr(value: JSC.JSValue, ptr: ?*NodeJSFS) bool {
+        JSC.markBinding(@src());
+        return NodeJSFS__dangerouslySetPtr(value, ptr);
+    }
+
+    /// Detach the ptr from the thisValue
+    pub fn detachPtr(_: *NodeJSFS, value: JSC.JSValue) void {
+        JSC.markBinding(@src());
+        std.debug.assert(NodeJSFS__dangerouslySetPtr(value, null));
+    }
+
+    extern fn NodeJSFS__fromJS(JSC.JSValue) ?*NodeJSFS;
+    extern fn NodeJSFS__getConstructor(*JSC.JSGlobalObject) JSC.JSValue;
+
+    extern fn NodeJSFS__create(globalObject: *JSC.JSGlobalObject, ptr: ?*NodeJSFS) JSC.JSValue;
+
+    extern fn NodeJSFS__dangerouslySetPtr(JSC.JSValue, ?*NodeJSFS) bool;
+
+    comptime {
+        if (@TypeOf(NodeJSFS.constructor) != (fn (*JSC.JSGlobalObject, *JSC.CallFrame) callconv(.C) ?*NodeJSFS)) {
+            @compileLog("NodeJSFS.constructor is not a constructor");
+        }
+
+        if (@TypeOf(NodeJSFS.access) != CallbackType)
+            @compileLog("Expected NodeJSFS.access to be a callback but received " ++ @typeName(@TypeOf(NodeJSFS.access)));
+        if (@TypeOf(NodeJSFS.accessSync) != CallbackType)
+            @compileLog("Expected NodeJSFS.accessSync to be a callback but received " ++ @typeName(@TypeOf(NodeJSFS.accessSync)));
+        if (@TypeOf(NodeJSFS.appendFile) != CallbackType)
+            @compileLog("Expected NodeJSFS.appendFile to be a callback but received " ++ @typeName(@TypeOf(NodeJSFS.appendFile)));
+        if (@TypeOf(NodeJSFS.appendFileSync) != CallbackType)
+            @compileLog("Expected NodeJSFS.appendFileSync to be a callback but received " ++ @typeName(@TypeOf(NodeJSFS.appendFileSync)));
+        if (@TypeOf(NodeJSFS.chmod) != CallbackType)
+            @compileLog("Expected NodeJSFS.chmod to be a callback but received " ++ @typeName(@TypeOf(NodeJSFS.chmod)));
+        if (@TypeOf(NodeJSFS.chmodSync) != CallbackType)
+            @compileLog("Expected NodeJSFS.chmodSync to be a callback but received " ++ @typeName(@TypeOf(NodeJSFS.chmodSync)));
+        if (@TypeOf(NodeJSFS.chown) != CallbackType)
+            @compileLog("Expected NodeJSFS.chown to be a callback but received " ++ @typeName(@TypeOf(NodeJSFS.chown)));
+        if (@TypeOf(NodeJSFS.chownSync) != CallbackType)
+            @compileLog("Expected NodeJSFS.chownSync to be a callback but received " ++ @typeName(@TypeOf(NodeJSFS.chownSync)));
+        if (@TypeOf(NodeJSFS.close) != CallbackType)
+            @compileLog("Expected NodeJSFS.close to be a callback but received " ++ @typeName(@TypeOf(NodeJSFS.close)));
+        if (@TypeOf(NodeJSFS.closeSync) != CallbackType)
+            @compileLog("Expected NodeJSFS.closeSync to be a callback but received " ++ @typeName(@TypeOf(NodeJSFS.closeSync)));
+        if (@TypeOf(NodeJSFS.copyFile) != CallbackType)
+            @compileLog("Expected NodeJSFS.copyFile to be a callback but received " ++ @typeName(@TypeOf(NodeJSFS.copyFile)));
+        if (@TypeOf(NodeJSFS.copyFileSync) != CallbackType)
+            @compileLog("Expected NodeJSFS.copyFileSync to be a callback but received " ++ @typeName(@TypeOf(NodeJSFS.copyFileSync)));
+        if (@TypeOf(NodeJSFS.getDirent) != GetterType)
+            @compileLog("Expected NodeJSFS.getDirent to be a getter");
+
+        if (@TypeOf(NodeJSFS.exists) != CallbackType)
+            @compileLog("Expected NodeJSFS.exists to be a callback but received " ++ @typeName(@TypeOf(NodeJSFS.exists)));
+        if (@TypeOf(NodeJSFS.existsSync) != CallbackType)
+            @compileLog("Expected NodeJSFS.existsSync to be a callback but received " ++ @typeName(@TypeOf(NodeJSFS.existsSync)));
+        if (@TypeOf(NodeJSFS.fchmod) != CallbackType)
+            @compileLog("Expected NodeJSFS.fchmod to be a callback but received " ++ @typeName(@TypeOf(NodeJSFS.fchmod)));
+        if (@TypeOf(NodeJSFS.fchmodSync) != CallbackType)
+            @compileLog("Expected NodeJSFS.fchmodSync to be a callback but received " ++ @typeName(@TypeOf(NodeJSFS.fchmodSync)));
+        if (@TypeOf(NodeJSFS.fchown) != CallbackType)
+            @compileLog("Expected NodeJSFS.fchown to be a callback but received " ++ @typeName(@TypeOf(NodeJSFS.fchown)));
+        if (@TypeOf(NodeJSFS.fchownSync) != CallbackType)
+            @compileLog("Expected NodeJSFS.fchownSync to be a callback but received " ++ @typeName(@TypeOf(NodeJSFS.fchownSync)));
+        if (@TypeOf(NodeJSFS.fdatasync) != CallbackType)
+            @compileLog("Expected NodeJSFS.fdatasync to be a callback but received " ++ @typeName(@TypeOf(NodeJSFS.fdatasync)));
+        if (@TypeOf(NodeJSFS.fdatasyncSync) != CallbackType)
+            @compileLog("Expected NodeJSFS.fdatasyncSync to be a callback but received " ++ @typeName(@TypeOf(NodeJSFS.fdatasyncSync)));
+        if (@TypeOf(NodeJSFS.fstat) != CallbackType)
+            @compileLog("Expected NodeJSFS.fstat to be a callback but received " ++ @typeName(@TypeOf(NodeJSFS.fstat)));
+        if (@TypeOf(NodeJSFS.fstatSync) != CallbackType)
+            @compileLog("Expected NodeJSFS.fstatSync to be a callback but received " ++ @typeName(@TypeOf(NodeJSFS.fstatSync)));
+        if (@TypeOf(NodeJSFS.fsync) != CallbackType)
+            @compileLog("Expected NodeJSFS.fsync to be a callback but received " ++ @typeName(@TypeOf(NodeJSFS.fsync)));
+        if (@TypeOf(NodeJSFS.fsyncSync) != CallbackType)
+            @compileLog("Expected NodeJSFS.fsyncSync to be a callback but received " ++ @typeName(@TypeOf(NodeJSFS.fsyncSync)));
+        if (@TypeOf(NodeJSFS.ftruncate) != CallbackType)
+            @compileLog("Expected NodeJSFS.ftruncate to be a callback but received " ++ @typeName(@TypeOf(NodeJSFS.ftruncate)));
+        if (@TypeOf(NodeJSFS.ftruncateSync) != CallbackType)
+            @compileLog("Expected NodeJSFS.ftruncateSync to be a callback but received " ++ @typeName(@TypeOf(NodeJSFS.ftruncateSync)));
+        if (@TypeOf(NodeJSFS.futimes) != CallbackType)
+            @compileLog("Expected NodeJSFS.futimes to be a callback but received " ++ @typeName(@TypeOf(NodeJSFS.futimes)));
+        if (@TypeOf(NodeJSFS.futimesSync) != CallbackType)
+            @compileLog("Expected NodeJSFS.futimesSync to be a callback but received " ++ @typeName(@TypeOf(NodeJSFS.futimesSync)));
+        if (@TypeOf(NodeJSFS.lchmod) != CallbackType)
+            @compileLog("Expected NodeJSFS.lchmod to be a callback but received " ++ @typeName(@TypeOf(NodeJSFS.lchmod)));
+        if (@TypeOf(NodeJSFS.lchmodSync) != CallbackType)
+            @compileLog("Expected NodeJSFS.lchmodSync to be a callback but received " ++ @typeName(@TypeOf(NodeJSFS.lchmodSync)));
+        if (@TypeOf(NodeJSFS.lchown) != CallbackType)
+            @compileLog("Expected NodeJSFS.lchown to be a callback but received " ++ @typeName(@TypeOf(NodeJSFS.lchown)));
+        if (@TypeOf(NodeJSFS.lchownSync) != CallbackType)
+            @compileLog("Expected NodeJSFS.lchownSync to be a callback but received " ++ @typeName(@TypeOf(NodeJSFS.lchownSync)));
+        if (@TypeOf(NodeJSFS.link) != CallbackType)
+            @compileLog("Expected NodeJSFS.link to be a callback but received " ++ @typeName(@TypeOf(NodeJSFS.link)));
+        if (@TypeOf(NodeJSFS.linkSync) != CallbackType)
+            @compileLog("Expected NodeJSFS.linkSync to be a callback but received " ++ @typeName(@TypeOf(NodeJSFS.linkSync)));
+        if (@TypeOf(NodeJSFS.lstat) != CallbackType)
+            @compileLog("Expected NodeJSFS.lstat to be a callback but received " ++ @typeName(@TypeOf(NodeJSFS.lstat)));
+        if (@TypeOf(NodeJSFS.lstatSync) != CallbackType)
+            @compileLog("Expected NodeJSFS.lstatSync to be a callback but received " ++ @typeName(@TypeOf(NodeJSFS.lstatSync)));
+        if (@TypeOf(NodeJSFS.lutimes) != CallbackType)
+            @compileLog("Expected NodeJSFS.lutimes to be a callback but received " ++ @typeName(@TypeOf(NodeJSFS.lutimes)));
+        if (@TypeOf(NodeJSFS.lutimesSync) != CallbackType)
+            @compileLog("Expected NodeJSFS.lutimesSync to be a callback but received " ++ @typeName(@TypeOf(NodeJSFS.lutimesSync)));
+        if (@TypeOf(NodeJSFS.mkdir) != CallbackType)
+            @compileLog("Expected NodeJSFS.mkdir to be a callback but received " ++ @typeName(@TypeOf(NodeJSFS.mkdir)));
+        if (@TypeOf(NodeJSFS.mkdirSync) != CallbackType)
+            @compileLog("Expected NodeJSFS.mkdirSync to be a callback but received " ++ @typeName(@TypeOf(NodeJSFS.mkdirSync)));
+        if (@TypeOf(NodeJSFS.mkdtemp) != CallbackType)
+            @compileLog("Expected NodeJSFS.mkdtemp to be a callback but received " ++ @typeName(@TypeOf(NodeJSFS.mkdtemp)));
+        if (@TypeOf(NodeJSFS.mkdtempSync) != CallbackType)
+            @compileLog("Expected NodeJSFS.mkdtempSync to be a callback but received " ++ @typeName(@TypeOf(NodeJSFS.mkdtempSync)));
+        if (@TypeOf(NodeJSFS.open) != CallbackType)
+            @compileLog("Expected NodeJSFS.open to be a callback but received " ++ @typeName(@TypeOf(NodeJSFS.open)));
+        if (@TypeOf(NodeJSFS.opendir) != CallbackType)
+            @compileLog("Expected NodeJSFS.opendir to be a callback but received " ++ @typeName(@TypeOf(NodeJSFS.opendir)));
+        if (@TypeOf(NodeJSFS.opendirSync) != CallbackType)
+            @compileLog("Expected NodeJSFS.opendirSync to be a callback but received " ++ @typeName(@TypeOf(NodeJSFS.opendirSync)));
+        if (@TypeOf(NodeJSFS.openSync) != CallbackType)
+            @compileLog("Expected NodeJSFS.openSync to be a callback but received " ++ @typeName(@TypeOf(NodeJSFS.openSync)));
+        if (@TypeOf(NodeJSFS.read) != CallbackType)
+            @compileLog("Expected NodeJSFS.read to be a callback but received " ++ @typeName(@TypeOf(NodeJSFS.read)));
+        if (@TypeOf(NodeJSFS.readdir) != CallbackType)
+            @compileLog("Expected NodeJSFS.readdir to be a callback but received " ++ @typeName(@TypeOf(NodeJSFS.readdir)));
+        if (@TypeOf(NodeJSFS.readdirSync) != CallbackType)
+            @compileLog("Expected NodeJSFS.readdirSync to be a callback but received " ++ @typeName(@TypeOf(NodeJSFS.readdirSync)));
+        if (@TypeOf(NodeJSFS.readFile) != CallbackType)
+            @compileLog("Expected NodeJSFS.readFile to be a callback but received " ++ @typeName(@TypeOf(NodeJSFS.readFile)));
+        if (@TypeOf(NodeJSFS.readFileSync) != CallbackType)
+            @compileLog("Expected NodeJSFS.readFileSync to be a callback but received " ++ @typeName(@TypeOf(NodeJSFS.readFileSync)));
+        if (@TypeOf(NodeJSFS.readlink) != CallbackType)
+            @compileLog("Expected NodeJSFS.readlink to be a callback but received " ++ @typeName(@TypeOf(NodeJSFS.readlink)));
+        if (@TypeOf(NodeJSFS.readlinkSync) != CallbackType)
+            @compileLog("Expected NodeJSFS.readlinkSync to be a callback but received " ++ @typeName(@TypeOf(NodeJSFS.readlinkSync)));
+        if (@TypeOf(NodeJSFS.readSync) != CallbackType)
+            @compileLog("Expected NodeJSFS.readSync to be a callback but received " ++ @typeName(@TypeOf(NodeJSFS.readSync)));
+        if (@TypeOf(NodeJSFS.readv) != CallbackType)
+            @compileLog("Expected NodeJSFS.readv to be a callback but received " ++ @typeName(@TypeOf(NodeJSFS.readv)));
+        if (@TypeOf(NodeJSFS.readvSync) != CallbackType)
+            @compileLog("Expected NodeJSFS.readvSync to be a callback but received " ++ @typeName(@TypeOf(NodeJSFS.readvSync)));
+        if (@TypeOf(NodeJSFS.realpath) != CallbackType)
+            @compileLog("Expected NodeJSFS.realpath to be a callback but received " ++ @typeName(@TypeOf(NodeJSFS.realpath)));
+        if (@TypeOf(NodeJSFS.realpathSync) != CallbackType)
+            @compileLog("Expected NodeJSFS.realpathSync to be a callback but received " ++ @typeName(@TypeOf(NodeJSFS.realpathSync)));
+        if (@TypeOf(NodeJSFS.rename) != CallbackType)
+            @compileLog("Expected NodeJSFS.rename to be a callback but received " ++ @typeName(@TypeOf(NodeJSFS.rename)));
+        if (@TypeOf(NodeJSFS.renameSync) != CallbackType)
+            @compileLog("Expected NodeJSFS.renameSync to be a callback but received " ++ @typeName(@TypeOf(NodeJSFS.renameSync)));
+        if (@TypeOf(NodeJSFS.rm) != CallbackType)
+            @compileLog("Expected NodeJSFS.rm to be a callback but received " ++ @typeName(@TypeOf(NodeJSFS.rm)));
+        if (@TypeOf(NodeJSFS.rmdir) != CallbackType)
+            @compileLog("Expected NodeJSFS.rmdir to be a callback but received " ++ @typeName(@TypeOf(NodeJSFS.rmdir)));
+        if (@TypeOf(NodeJSFS.rmdirSync) != CallbackType)
+            @compileLog("Expected NodeJSFS.rmdirSync to be a callback but received " ++ @typeName(@TypeOf(NodeJSFS.rmdirSync)));
+        if (@TypeOf(NodeJSFS.rmSync) != CallbackType)
+            @compileLog("Expected NodeJSFS.rmSync to be a callback but received " ++ @typeName(@TypeOf(NodeJSFS.rmSync)));
+        if (@TypeOf(NodeJSFS.stat) != CallbackType)
+            @compileLog("Expected NodeJSFS.stat to be a callback but received " ++ @typeName(@TypeOf(NodeJSFS.stat)));
+        if (@TypeOf(NodeJSFS.statSync) != CallbackType)
+            @compileLog("Expected NodeJSFS.statSync to be a callback but received " ++ @typeName(@TypeOf(NodeJSFS.statSync)));
+        if (@TypeOf(NodeJSFS.symlink) != CallbackType)
+            @compileLog("Expected NodeJSFS.symlink to be a callback but received " ++ @typeName(@TypeOf(NodeJSFS.symlink)));
+        if (@TypeOf(NodeJSFS.symlinkSync) != CallbackType)
+            @compileLog("Expected NodeJSFS.symlinkSync to be a callback but received " ++ @typeName(@TypeOf(NodeJSFS.symlinkSync)));
+        if (@TypeOf(NodeJSFS.truncate) != CallbackType)
+            @compileLog("Expected NodeJSFS.truncate to be a callback but received " ++ @typeName(@TypeOf(NodeJSFS.truncate)));
+        if (@TypeOf(NodeJSFS.truncateSync) != CallbackType)
+            @compileLog("Expected NodeJSFS.truncateSync to be a callback but received " ++ @typeName(@TypeOf(NodeJSFS.truncateSync)));
+        if (@TypeOf(NodeJSFS.unlink) != CallbackType)
+            @compileLog("Expected NodeJSFS.unlink to be a callback but received " ++ @typeName(@TypeOf(NodeJSFS.unlink)));
+        if (@TypeOf(NodeJSFS.unlinkSync) != CallbackType)
+            @compileLog("Expected NodeJSFS.unlinkSync to be a callback but received " ++ @typeName(@TypeOf(NodeJSFS.unlinkSync)));
+        if (@TypeOf(NodeJSFS.utimes) != CallbackType)
+            @compileLog("Expected NodeJSFS.utimes to be a callback but received " ++ @typeName(@TypeOf(NodeJSFS.utimes)));
+        if (@TypeOf(NodeJSFS.utimesSync) != CallbackType)
+            @compileLog("Expected NodeJSFS.utimesSync to be a callback but received " ++ @typeName(@TypeOf(NodeJSFS.utimesSync)));
+        if (@TypeOf(NodeJSFS.write) != CallbackType)
+            @compileLog("Expected NodeJSFS.write to be a callback but received " ++ @typeName(@TypeOf(NodeJSFS.write)));
+        if (@TypeOf(NodeJSFS.writeFile) != CallbackType)
+            @compileLog("Expected NodeJSFS.writeFile to be a callback but received " ++ @typeName(@TypeOf(NodeJSFS.writeFile)));
+        if (@TypeOf(NodeJSFS.writeFileSync) != CallbackType)
+            @compileLog("Expected NodeJSFS.writeFileSync to be a callback but received " ++ @typeName(@TypeOf(NodeJSFS.writeFileSync)));
+        if (@TypeOf(NodeJSFS.writeSync) != CallbackType)
+            @compileLog("Expected NodeJSFS.writeSync to be a callback but received " ++ @typeName(@TypeOf(NodeJSFS.writeSync)));
+        if (@TypeOf(NodeJSFS.writev) != CallbackType)
+            @compileLog("Expected NodeJSFS.writev to be a callback but received " ++ @typeName(@TypeOf(NodeJSFS.writev)));
+        if (@TypeOf(NodeJSFS.writevSync) != CallbackType)
+            @compileLog("Expected NodeJSFS.writevSync to be a callback but received " ++ @typeName(@TypeOf(NodeJSFS.writevSync)));
+        if (!JSC.is_bindgen) {
+            @export(NodeJSFS.access, .{ .name = "NodeJSFSPrototype__access" });
+            @export(NodeJSFS.accessSync, .{ .name = "NodeJSFSPrototype__accessSync" });
+            @export(NodeJSFS.appendFile, .{ .name = "NodeJSFSPrototype__appendFile" });
+            @export(NodeJSFS.appendFileSync, .{ .name = "NodeJSFSPrototype__appendFileSync" });
+            @export(NodeJSFS.chmod, .{ .name = "NodeJSFSPrototype__chmod" });
+            @export(NodeJSFS.chmodSync, .{ .name = "NodeJSFSPrototype__chmodSync" });
+            @export(NodeJSFS.chown, .{ .name = "NodeJSFSPrototype__chown" });
+            @export(NodeJSFS.chownSync, .{ .name = "NodeJSFSPrototype__chownSync" });
+            @export(NodeJSFS.close, .{ .name = "NodeJSFSPrototype__close" });
+            @export(NodeJSFS.closeSync, .{ .name = "NodeJSFSPrototype__closeSync" });
+            @export(NodeJSFS.constructor, .{ .name = "NodeJSFSClass__construct" });
+            @export(NodeJSFS.copyFile, .{ .name = "NodeJSFSPrototype__copyFile" });
+            @export(NodeJSFS.copyFileSync, .{ .name = "NodeJSFSPrototype__copyFileSync" });
+            @export(NodeJSFS.exists, .{ .name = "NodeJSFSPrototype__exists" });
+            @export(NodeJSFS.existsSync, .{ .name = "NodeJSFSPrototype__existsSync" });
+            @export(NodeJSFS.fchmod, .{ .name = "NodeJSFSPrototype__fchmod" });
+            @export(NodeJSFS.fchmodSync, .{ .name = "NodeJSFSPrototype__fchmodSync" });
+            @export(NodeJSFS.fchown, .{ .name = "NodeJSFSPrototype__fchown" });
+            @export(NodeJSFS.fchownSync, .{ .name = "NodeJSFSPrototype__fchownSync" });
+            @export(NodeJSFS.fdatasync, .{ .name = "NodeJSFSPrototype__fdatasync" });
+            @export(NodeJSFS.fdatasyncSync, .{ .name = "NodeJSFSPrototype__fdatasyncSync" });
+            @export(NodeJSFS.fstat, .{ .name = "NodeJSFSPrototype__fstat" });
+            @export(NodeJSFS.fstatSync, .{ .name = "NodeJSFSPrototype__fstatSync" });
+            @export(NodeJSFS.fsync, .{ .name = "NodeJSFSPrototype__fsync" });
+            @export(NodeJSFS.fsyncSync, .{ .name = "NodeJSFSPrototype__fsyncSync" });
+            @export(NodeJSFS.ftruncate, .{ .name = "NodeJSFSPrototype__ftruncate" });
+            @export(NodeJSFS.ftruncateSync, .{ .name = "NodeJSFSPrototype__ftruncateSync" });
+            @export(NodeJSFS.futimes, .{ .name = "NodeJSFSPrototype__futimes" });
+            @export(NodeJSFS.futimesSync, .{ .name = "NodeJSFSPrototype__futimesSync" });
+            @export(NodeJSFS.getDirent, .{ .name = "NodeJSFSPrototype__getDirent" });
+            @export(NodeJSFS.lchmod, .{ .name = "NodeJSFSPrototype__lchmod" });
+            @export(NodeJSFS.lchmodSync, .{ .name = "NodeJSFSPrototype__lchmodSync" });
+            @export(NodeJSFS.lchown, .{ .name = "NodeJSFSPrototype__lchown" });
+            @export(NodeJSFS.lchownSync, .{ .name = "NodeJSFSPrototype__lchownSync" });
+            @export(NodeJSFS.link, .{ .name = "NodeJSFSPrototype__link" });
+            @export(NodeJSFS.linkSync, .{ .name = "NodeJSFSPrototype__linkSync" });
+            @export(NodeJSFS.lstat, .{ .name = "NodeJSFSPrototype__lstat" });
+            @export(NodeJSFS.lstatSync, .{ .name = "NodeJSFSPrototype__lstatSync" });
+            @export(NodeJSFS.lutimes, .{ .name = "NodeJSFSPrototype__lutimes" });
+            @export(NodeJSFS.lutimesSync, .{ .name = "NodeJSFSPrototype__lutimesSync" });
+            @export(NodeJSFS.mkdir, .{ .name = "NodeJSFSPrototype__mkdir" });
+            @export(NodeJSFS.mkdirSync, .{ .name = "NodeJSFSPrototype__mkdirSync" });
+            @export(NodeJSFS.mkdtemp, .{ .name = "NodeJSFSPrototype__mkdtemp" });
+            @export(NodeJSFS.mkdtempSync, .{ .name = "NodeJSFSPrototype__mkdtempSync" });
+            @export(NodeJSFS.open, .{ .name = "NodeJSFSPrototype__open" });
+            @export(NodeJSFS.opendir, .{ .name = "NodeJSFSPrototype__opendir" });
+            @export(NodeJSFS.opendirSync, .{ .name = "NodeJSFSPrototype__opendirSync" });
+            @export(NodeJSFS.openSync, .{ .name = "NodeJSFSPrototype__openSync" });
+            @export(NodeJSFS.read, .{ .name = "NodeJSFSPrototype__read" });
+            @export(NodeJSFS.readdir, .{ .name = "NodeJSFSPrototype__readdir" });
+            @export(NodeJSFS.readdirSync, .{ .name = "NodeJSFSPrototype__readdirSync" });
+            @export(NodeJSFS.readFile, .{ .name = "NodeJSFSPrototype__readFile" });
+            @export(NodeJSFS.readFileSync, .{ .name = "NodeJSFSPrototype__readFileSync" });
+            @export(NodeJSFS.readlink, .{ .name = "NodeJSFSPrototype__readlink" });
+            @export(NodeJSFS.readlinkSync, .{ .name = "NodeJSFSPrototype__readlinkSync" });
+            @export(NodeJSFS.readSync, .{ .name = "NodeJSFSPrototype__readSync" });
+            @export(NodeJSFS.readv, .{ .name = "NodeJSFSPrototype__readv" });
+            @export(NodeJSFS.readvSync, .{ .name = "NodeJSFSPrototype__readvSync" });
+            @export(NodeJSFS.realpath, .{ .name = "NodeJSFSPrototype__realpath" });
+            @export(NodeJSFS.realpathSync, .{ .name = "NodeJSFSPrototype__realpathSync" });
+            @export(NodeJSFS.rename, .{ .name = "NodeJSFSPrototype__rename" });
+            @export(NodeJSFS.renameSync, .{ .name = "NodeJSFSPrototype__renameSync" });
+            @export(NodeJSFS.rm, .{ .name = "NodeJSFSPrototype__rm" });
+            @export(NodeJSFS.rmdir, .{ .name = "NodeJSFSPrototype__rmdir" });
+            @export(NodeJSFS.rmdirSync, .{ .name = "NodeJSFSPrototype__rmdirSync" });
+            @export(NodeJSFS.rmSync, .{ .name = "NodeJSFSPrototype__rmSync" });
+            @export(NodeJSFS.stat, .{ .name = "NodeJSFSPrototype__stat" });
+            @export(NodeJSFS.statSync, .{ .name = "NodeJSFSPrototype__statSync" });
+            @export(NodeJSFS.symlink, .{ .name = "NodeJSFSPrototype__symlink" });
+            @export(NodeJSFS.symlinkSync, .{ .name = "NodeJSFSPrototype__symlinkSync" });
+            @export(NodeJSFS.truncate, .{ .name = "NodeJSFSPrototype__truncate" });
+            @export(NodeJSFS.truncateSync, .{ .name = "NodeJSFSPrototype__truncateSync" });
+            @export(NodeJSFS.unlink, .{ .name = "NodeJSFSPrototype__unlink" });
+            @export(NodeJSFS.unlinkSync, .{ .name = "NodeJSFSPrototype__unlinkSync" });
+            @export(NodeJSFS.utimes, .{ .name = "NodeJSFSPrototype__utimes" });
+            @export(NodeJSFS.utimesSync, .{ .name = "NodeJSFSPrototype__utimesSync" });
+            @export(NodeJSFS.write, .{ .name = "NodeJSFSPrototype__write" });
+            @export(NodeJSFS.writeFile, .{ .name = "NodeJSFSPrototype__writeFile" });
+            @export(NodeJSFS.writeFileSync, .{ .name = "NodeJSFSPrototype__writeFileSync" });
+            @export(NodeJSFS.writeSync, .{ .name = "NodeJSFSPrototype__writeSync" });
+            @export(NodeJSFS.writev, .{ .name = "NodeJSFSPrototype__writev" });
+            @export(NodeJSFS.writevSync, .{ .name = "NodeJSFSPrototype__writevSync" });
         }
     }
 };
@@ -2777,4 +3199,6 @@ comptime {
     _ = JSRequest;
     _ = JSResponse;
     _ = JSBlob;
+    _ = JSDirent;
+    _ = JSNodeJSFS;
 }

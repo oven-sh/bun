@@ -59,6 +59,7 @@ pub const Run = struct {
         };
         run.vm.argv = ctx.passthrough;
         run.vm.arena = &run.arena;
+        run.vm.allocator = arena.allocator();
 
         run.vm.bundler.options.install = ctx.install;
         run.vm.bundler.resolver.opts.install = ctx.install;

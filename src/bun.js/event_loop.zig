@@ -28,7 +28,7 @@ pub fn ConcurrentPromiseTask(comptime Context: type) type {
     return struct {
         const This = @This();
         ctx: *Context,
-        task: WorkPoolTask = .{ .callback = runFromThreadPool },
+        task: WorkPoolTask = .{ .callback = &runFromThreadPool },
         event_loop: *JSC.EventLoop,
         allocator: std.mem.Allocator,
         promise: JSC.JSPromise.Strong = .{},
@@ -41,7 +41,7 @@ pub fn ConcurrentPromiseTask(comptime Context: type) type {
         pub fn createOnJSThread(allocator: std.mem.Allocator, globalThis: *JSGlobalObject, value: *Context) !*This {
             var this = try allocator.create(This);
             this.* = .{
-                .event_loop = VirtualMachine.vm.event_loop,
+                .event_loop = VirtualMachine.get().event_loop,
                 .ctx = value,
                 .allocator = allocator,
                 .globalThis = globalThis,
@@ -86,7 +86,7 @@ pub fn IOTask(comptime Context: type) type {
     return struct {
         const This = @This();
         ctx: *Context,
-        task: NetworkThread.Task = .{ .callback = runFromThreadPool },
+        task: NetworkThread.Task = .{ .callback = &runFromThreadPool },
         event_loop: *JSC.EventLoop,
         allocator: std.mem.Allocator,
         globalThis: *JSGlobalObject,
@@ -140,7 +140,7 @@ pub fn IOTask(comptime Context: type) type {
 
 pub const AnyTask = struct {
     ctx: ?*anyopaque,
-    callback: fn (*anyopaque) void,
+    callback: *const (fn (*anyopaque) void),
 
     pub fn run(this: *AnyTask) void {
         @setRuntimeSafety(false);
@@ -586,7 +586,7 @@ pub const EventLoop = struct {
         var task = Task.from(timer.as(*anyopaque));
         timer.deinit();
 
-        JSC.VirtualMachine.vm.enqueueTask(task);
+        JSC.VirtualMachine.get().enqueueTask(task);
     }
 
     pub fn ensureWaker(this: *EventLoop) void {

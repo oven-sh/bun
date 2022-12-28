@@ -45,6 +45,7 @@ const StringJoiner = @import("../../string_joiner.zig");
 const uws = @import("bun").uws;
 
 pub const Response = struct {
+    const ResponseMixin = BodyMixin(@This());
     pub usingnamespace JSC.Codegen.JSResponse;
 
     allocator: std.mem.Allocator,
@@ -55,6 +56,13 @@ pub const Response = struct {
 
     // We must report a consistent value for this
     reported_estimated_size: ?u63 = null,
+
+    pub const getText = ResponseMixin.getText;
+    pub const getBody = ResponseMixin.getBody;
+    pub const getBodyUsed = ResponseMixin.getBodyUsed;
+    pub const getJSON = ResponseMixin.getJSON;
+    pub const getArrayBuffer = ResponseMixin.getArrayBuffer;
+    pub const getBlob = ResponseMixin.getBlob;
 
     pub fn estimatedSize(this: *Response) callconv(.C) usize {
         return this.reported_estimated_size orelse brk: {
@@ -229,8 +237,6 @@ pub const Response = struct {
         return new_response;
     }
 
-    pub usingnamespace BodyMixin(@This());
-
     pub fn getStatus(
         this: *Response,
         _: *JSC.JSGlobalObject,
@@ -319,7 +325,7 @@ pub const Response = struct {
                 .init = Body.Init{
                     .status_code = 200,
                 },
-                .value = Body.Value.empty,
+                .value = .{ .Empty = {} },
             },
             .allocator = getAllocator(globalThis),
             .url = "",
@@ -351,7 +357,7 @@ pub const Response = struct {
 
         if (args.nextEat()) |init| {
             if (init.isUndefinedOrNull()) {} else if (init.isNumber()) {
-                response.body.init.status_code = @intCast(u16, @minimum(@maximum(0, init.toInt32()), std.math.maxInt(u16)));
+                response.body.init.status_code = @intCast(u16, @min(@max(0, init.toInt32()), std.math.maxInt(u16)));
             } else {
                 if (Body.Init.init(getAllocator(globalThis), globalThis, init, init.jsType()) catch null) |_init| {
                     response.body.init = _init;
@@ -380,7 +386,7 @@ pub const Response = struct {
                 .init = Body.Init{
                     .status_code = 302,
                 },
-                .value = Body.Value.empty,
+                .value = .{ .Empty = {} },
             },
             .allocator = getAllocator(globalThis),
             .url = "",
@@ -397,7 +403,7 @@ pub const Response = struct {
 
         if (args.nextEat()) |init| {
             if (init.isUndefinedOrNull()) {} else if (init.isNumber()) {
-                response.body.init.status_code = @intCast(u16, @minimum(@maximum(0, init.toInt32()), std.math.maxInt(u16)));
+                response.body.init.status_code = @intCast(u16, @min(@max(0, init.toInt32()), std.math.maxInt(u16)));
             } else {
                 if (Body.Init.init(getAllocator(globalThis), globalThis, init, init.jsType()) catch null) |_init| {
                     response.body.init = _init;
@@ -424,7 +430,7 @@ pub const Response = struct {
                 .init = Body.Init{
                     .status_code = 0,
                 },
-                .value = Body.Value.empty,
+                .value = .{ .Empty = {} },
             },
             .allocator = getAllocator(globalThis),
             .url = "",
@@ -541,7 +547,7 @@ pub const Fetch = struct {
         void,
         .{ .name = "fetch" },
         .{
-            .@"call" = .{
+            .call = .{
                 .rfn = Fetch.call,
                 .ts = d.ts{},
             },
@@ -854,7 +860,8 @@ pub const Fetch = struct {
                     }
 
                     if (options.fastGet(ctx.ptr(), .body)) |body__| {
-                        if (Body.Value.fromJS(ctx.ptr(), body__)) |*body_value| {
+                        if (Body.Value.fromJS(ctx.ptr(), body__)) |body_const| {
+                            var body_value = body_const;
                             // TODO: buffer ReadableStream?
                             // we have to explicitly check for InternalBlob
                             body = body_value.useAsAnyBlob();
@@ -1883,7 +1890,7 @@ pub const Blob = struct {
                     return this.opened_fd;
                 }
 
-                pub const OpenCallback = fn (*This, bun.FileDescriptor) void;
+                pub const OpenCallback = *const fn (*This, bun.FileDescriptor) void;
 
                 pub fn getFd(this: *This, comptime Callback: OpenCallback) void {
                     if (this.opened_fd != null_fd) {
@@ -1898,7 +1905,7 @@ pub const Blob = struct {
                     }
                 }
 
-                const WrappedOpenCallback = fn (*State, *HTTPClient.NetworkThread.Completion, AsyncIO.OpenError!bun.FileDescriptor) void;
+                const WrappedOpenCallback = *const fn (*State, *HTTPClient.NetworkThread.Completion, AsyncIO.OpenError!bun.FileDescriptor) void;
                 fn OpenCallbackWrapper(comptime Callback: OpenCallback) WrappedOpenCallback {
                     return struct {
                         const callback = Callback;
@@ -2014,7 +2021,7 @@ pub const Blob = struct {
             };
             pub const ResultType = SystemError.Maybe(Read);
 
-            pub const OnReadFileCallback = fn (ctx: *anyopaque, bytes: ResultType) void;
+            pub const OnReadFileCallback = *const fn (ctx: *anyopaque, bytes: ResultType) void;
 
             pub usingnamespace FileOpenerMixin(ReadFile);
             pub usingnamespace FileCloserMixin(ReadFile);
@@ -2069,7 +2076,7 @@ pub const Blob = struct {
                     onRead,
                     &this.read_completion,
                     this.opened_fd,
-                    remaining[0..@minimum(remaining.len, this.max_length - this.read_off)],
+                    remaining[0..@min(remaining.len, this.max_length - this.read_off)],
                     this.offset + this.read_off,
                 );
             }
@@ -2155,7 +2162,7 @@ pub const Blob = struct {
                 const file = &this.file_store;
                 const needs_close = fd != null_fd and file.pathlike == .path and fd > 2;
 
-                this.size = @maximum(this.read_len, this.size);
+                this.size = @max(this.read_len, this.size);
 
                 if (needs_close) {
                     this.doClose();
@@ -2190,8 +2197,8 @@ pub const Blob = struct {
                 }
 
                 if (stat.size > 0 and std.os.S.ISREG(stat.mode)) {
-                    this.size = @minimum(
-                        @truncate(SizeType, @intCast(SizeType, @maximum(@intCast(i64, stat.size), 0))),
+                    this.size = @min(
+                        @truncate(SizeType, @intCast(SizeType, @max(@intCast(i64, stat.size), 0))),
                         this.max_length,
                     );
                     // read up to 4k at a time if
@@ -2232,7 +2239,7 @@ pub const Blob = struct {
 
             fn doReadLoop(this: *ReadFile) void {
                 this.read_off += this.read_len;
-                var remain = this.buffer[@minimum(this.read_off, @truncate(Blob.SizeType, this.buffer.len))..];
+                var remain = this.buffer[@min(this.read_off, @truncate(Blob.SizeType, this.buffer.len))..];
 
                 if (remain.len > 0 and this.errno == null) {
                     this.doRead();
@@ -2262,7 +2269,7 @@ pub const Blob = struct {
             wrote: usize = 0,
 
             pub const ResultType = SystemError.Maybe(SizeType);
-            pub const OnWriteFileCallback = fn (ctx: *anyopaque, count: ResultType) void;
+            pub const OnWriteFileCallback = *const fn (ctx: *anyopaque, count: ResultType) void;
 
             pub usingnamespace FileOpenerMixin(WriteFile);
             pub usingnamespace FileCloserMixin(WriteFile);
@@ -2404,7 +2411,7 @@ pub const Blob = struct {
                 var file_offset = this.file_blob.offset;
 
                 const this_tick = file_offset + this.wrote;
-                remain = remain[@minimum(this.wrote, remain.len)..];
+                remain = remain[@min(this.wrote, remain.len)..];
 
                 if (remain.len > 0 and this.errno == null) {
                     this.doWrite(remain, this_tick);
@@ -2452,7 +2459,7 @@ pub const Blob = struct {
 
             pub const ResultType = anyerror!SizeType;
 
-            pub const Callback = fn (ctx: *anyopaque, len: ResultType) void;
+            pub const Callback = *const fn (ctx: *anyopaque, len: ResultType) void;
             pub const CopyFilePromiseTask = JSC.ConcurrentPromiseTask(CopyFile);
             pub const CopyFilePromiseTaskEventLoopTask = CopyFilePromiseTask.EventLoopTask;
 
@@ -2815,7 +2822,7 @@ pub const Blob = struct {
                 }
 
                 if (stat.size != 0) {
-                    this.max_length = @maximum(@minimum(@intCast(SizeType, stat.size), this.max_length), this.offset) - this.offset;
+                    this.max_length = @max(@min(@intCast(SizeType, stat.size), this.max_length), this.offset) - this.offset;
                     if (this.max_length == 0) {
                         this.doClose();
                         return;
@@ -2967,7 +2974,7 @@ pub const Blob = struct {
                 return JSValue.jsUndefined();
             }
 
-            recommended_chunk_size = @intCast(SizeType, @maximum(0, @truncate(i52, arguments[0].toInt64())));
+            recommended_chunk_size = @intCast(SizeType, @max(0, @truncate(i52, arguments[0].toInt64())));
         }
         return JSC.WebCore.ReadableStream.fromBlob(
             globalThis,
@@ -3133,10 +3140,10 @@ pub const Blob = struct {
             const start = start_.toInt64();
             if (start < 0) {
                 // If the optional start parameter is negative, let relativeStart be start + size.
-                relativeStart = @intCast(i64, @maximum(start + @intCast(i64, this.size), 0));
+                relativeStart = @intCast(i64, @max(start + @intCast(i64, this.size), 0));
             } else {
                 // Otherwise, let relativeStart be start.
-                relativeStart = @minimum(@intCast(i64, start), @intCast(i64, this.size));
+                relativeStart = @min(@intCast(i64, start), @intCast(i64, this.size));
             }
         }
 
@@ -3145,10 +3152,10 @@ pub const Blob = struct {
             // If end is negative, let relativeEnd be max((size + end), 0).
             if (end < 0) {
                 // If the optional start parameter is negative, let relativeStart be start + size.
-                relativeEnd = @intCast(i64, @maximum(end + @intCast(i64, this.size), 0));
+                relativeEnd = @intCast(i64, @max(end + @intCast(i64, this.size), 0));
             } else {
                 // Otherwise, let relativeStart be start.
-                relativeEnd = @minimum(@intCast(i64, end), @intCast(i64, this.size));
+                relativeEnd = @min(@intCast(i64, end), @intCast(i64, this.size));
             }
         }
 
@@ -3164,7 +3171,7 @@ pub const Blob = struct {
             }
         }
 
-        const len = @intCast(SizeType, @maximum(relativeEnd - relativeStart, 0));
+        const len = @intCast(SizeType, @max(relativeEnd - relativeStart, 0));
 
         // This copies over the is_all_ascii flag
         // which is okay because this will only be a <= slice
@@ -3235,7 +3242,7 @@ pub const Blob = struct {
                 const offset = this.offset;
                 const store_size = store.size();
                 if (store_size != Blob.max_size) {
-                    this.offset = @minimum(store_size, offset);
+                    this.offset = @min(store_size, offset);
                     this.size = store_size - offset;
                 }
 
@@ -3247,7 +3254,7 @@ pub const Blob = struct {
                         switch (JSC.Node.Syscall.stat(store.data.file.pathlike.path.sliceZ(&buffer))) {
                             .result => |stat| {
                                 store.data.file.max_size = if (std.os.S.ISREG(stat.mode) or stat.size > 0)
-                                    @truncate(SizeType, @intCast(u64, @maximum(stat.size, 0)))
+                                    @truncate(SizeType, @intCast(u64, @max(stat.size, 0)))
                                 else
                                     Blob.max_size;
                                 store.data.file.mode = stat.mode;
@@ -3260,7 +3267,7 @@ pub const Blob = struct {
                         switch (JSC.Node.Syscall.fstat(store.data.file.pathlike.fd)) {
                             .result => |stat| {
                                 store.data.file.max_size = if (std.os.S.ISREG(stat.mode) or stat.size > 0)
-                                    @truncate(SizeType, @intCast(u64, @maximum(stat.size, 0)))
+                                    @truncate(SizeType, @intCast(u64, @max(stat.size, 0)))
                                 else
                                     Blob.max_size;
                                 store.data.file.mode = stat.mode;
@@ -3276,7 +3283,7 @@ pub const Blob = struct {
                     const store_size = store.data.file.max_size;
                     const offset = this.offset;
 
-                    this.offset = @minimum(store_size, offset);
+                    this.offset = @min(store_size, offset);
                     this.size = store_size -| offset;
                     return;
                 }
@@ -3457,7 +3464,7 @@ pub const Blob = struct {
         if (slice_.len == 0) return "";
         slice_ = slice_[this.offset..];
 
-        return slice_[0..@minimum(slice_.len, @as(usize, this.size))];
+        return slice_[0..@min(slice_.len, @as(usize, this.size))];
     }
 
     pub const Lifetime = JSC.WebCore.Lifetime;
@@ -3488,7 +3495,7 @@ pub const Blob = struct {
                     .result => |result| {
                         const bytes = result.buf;
                         if (blob.size > 0)
-                            blob.size = @minimum(@truncate(u32, bytes.len), blob.size);
+                            blob.size = @min(@truncate(u32, bytes.len), blob.size);
                         const value = Function(&blob, globalThis, bytes, .temporary);
 
                         // invalid JSON needs to be rejected
@@ -4322,7 +4329,7 @@ pub const InlineBlob = extern struct {
 // https://developer.mozilla.org/en-US/docs/Web/API/Body
 pub const Body = struct {
     init: Init = Init{ .headers = null, .status_code = 200 },
-    value: Value = Value.empty,
+    value: Value, // = Value.empty,
 
     pub inline fn len(this: *const Body) Blob.SizeType {
         return this.value.size();
@@ -4465,13 +4472,13 @@ pub const Body = struct {
         task: ?*anyopaque = null,
 
         /// runs after the data is available.
-        onReceiveValue: ?fn (ctx: *anyopaque, value: *Value) void = null,
+        onReceiveValue: ?*const fn (ctx: *anyopaque, value: *Value) void = null,
 
         /// conditionally runs when requesting data
         /// used in HTTP server to ignore request bodies unless asked for it
-        onStartBuffering: ?fn (ctx: *anyopaque) void = null,
+        onStartBuffering: ?*const fn (ctx: *anyopaque) void = null,
 
-        onStartStreaming: ?fn (ctx: *anyopaque) JSC.WebCore.DrainResult = null,
+        onStartStreaming: ?*const fn (ctx: *anyopaque) JSC.WebCore.DrainResult = null,
 
         deinit: bool = false,
         action: Action = Action.none,
@@ -4623,7 +4630,7 @@ pub const Body = struct {
             Error,
         };
 
-        pub const empty = Value{ .Empty = .{} };
+        // pub const empty = Value{ .Empty = void{} };
 
         pub fn toReadableStream(this: *Value, globalThis: *JSGlobalObject) JSValue {
             JSC.markBinding(@src());
@@ -4956,7 +4963,7 @@ pub const Body = struct {
                 .Blob => {
                     var new_blob = this.Blob;
                     std.debug.assert(new_blob.allocator == null); // owned by Body
-                    this.* = .{ .Used = .{} };
+                    this.* = .{ .Used = {} };
                     return new_blob;
                 },
                 .InternalBlob => {
@@ -4966,13 +4973,13 @@ pub const Body = struct {
                         // we have to use the default allocator
                         // even if it was actually allocated on a different thread
                         bun.default_allocator,
-                        JSC.VirtualMachine.vm.global,
+                        JSC.VirtualMachine.get().global,
                     );
                     if (this.InternalBlob.was_string) {
                         new_blob.content_type = MimeType.text.value;
                     }
 
-                    this.* = .{ .Used = .{} };
+                    this.* = .{ .Used = {} };
                     return new_blob;
                 },
                 // .InlineBlob => {
@@ -4980,11 +4987,11 @@ pub const Body = struct {
                 //     const new_blob = Blob.create(
                 //         cloned[0..this.InlineBlob.len],
                 //         bun.default_allocator,
-                //         JSC.VirtualMachine.vm.global,
+                //         JSC.VirtualMachine.get().global,
                 //         this.InlineBlob.was_string,
                 //     );
 
-                //     this.* = .{ .Used = .{} };
+                //     this.* = .{ .Used = {} };
                 //     return new_blob;
                 // },
                 else => {
@@ -5002,7 +5009,7 @@ pub const Body = struct {
                 else => return null,
             };
 
-            this.* = .{ .Used = .{} };
+            this.* = .{ .Used = {} };
             return any_blob;
         }
 
@@ -5082,16 +5089,16 @@ pub const Body = struct {
 
             if (tag == .InternalBlob) {
                 this.InternalBlob.clearAndFree();
-                this.* = Value.empty;
+                this.* = Value{ .Empty = {} }; //Value.empty;
             }
 
             if (tag == .Blob) {
                 this.Blob.deinit();
-                this.* = Value.empty;
+                this.* = Value{ .Empty = {} }; //Value.empty;
             }
 
             if (tag == .Error) {
-                JSC.C.JSValueUnprotect(VirtualMachine.vm.global, this.Error.asObjectRef());
+                JSC.C.JSValueUnprotect(VirtualMachine.get().global, this.Error.asObjectRef());
             }
         }
 
@@ -5115,7 +5122,7 @@ pub const Body = struct {
                 return Value{ .Blob = this.Blob.dupe() };
             }
 
-            return Value{ .Empty = .{} };
+            return Value{ .Empty = {} };
         }
     };
 
@@ -5125,7 +5132,7 @@ pub const Body = struct {
                 .headers = null,
                 .status_code = 404,
             },
-            .value = Value.empty,
+            .value = Value{ .Empty = {} }, //Value.empty,
         };
     }
 
@@ -5134,7 +5141,7 @@ pub const Body = struct {
             .init = Init{
                 .status_code = 200,
             },
-            .value = Value.empty,
+            .value = Value{ .Empty = {} }, //Value.empty,
         };
     }
 
@@ -5175,6 +5182,7 @@ pub const Body = struct {
         init_type: JSC.JSValue.JSType,
     ) ?Body {
         var body = Body{
+            .value = Value{ .Empty = {} },
             .init = Init{ .headers = null, .status_code = 200 },
         };
         var allocator = getAllocator(globalThis);
@@ -5201,7 +5209,7 @@ pub const Request = struct {
     url_was_allocated: bool = false,
 
     headers: ?*FetchHeaders = null,
-    body: Body.Value = Body.Value{ .Empty = .{} },
+    body: Body.Value = Body.Value{ .Empty = {} },
     method: Method = Method.GET,
     uws_request: ?*uws.Request = null,
     https: bool = false,
@@ -5210,7 +5218,15 @@ pub const Request = struct {
     // We must report a consistent value for this
     reported_estimated_size: ?u63 = null,
 
+    const RequestMixin = BodyMixin(@This());
     pub usingnamespace JSC.Codegen.JSRequest;
+
+    pub const getText = RequestMixin.getText;
+    pub const getBody = RequestMixin.getBody;
+    pub const getBodyUsed = RequestMixin.getBodyUsed;
+    pub const getJSON = RequestMixin.getJSON;
+    pub const getArrayBuffer = RequestMixin.getArrayBuffer;
+    pub const getBlob = RequestMixin.getBlob;
 
     pub fn estimatedSize(this: *Request) callconv(.C) usize {
         return this.reported_estimated_size orelse brk: {
@@ -5267,7 +5283,7 @@ pub const Request = struct {
     pub fn fromRequestContext(ctx: *RequestContext) !Request {
         var req = Request{
             .url = std.mem.span(ctx.getFullURL()),
-            .body = Body.Value.empty,
+            .body = .{ .Empty = {} },
             .method = ctx.method,
             .headers = FetchHeaders.createFromPicoHeaders(ctx.request.headers),
             .url_was_allocated = true,
@@ -5533,8 +5549,6 @@ pub const Request = struct {
         return &this.body;
     }
 
-    pub usingnamespace BodyMixin(@This());
-
     pub fn doClone(
         this: *Request,
         globalThis: *JSC.JSGlobalObject,
@@ -5709,7 +5723,7 @@ pub const FetchEvent = struct {
     pending_promise: JSValue = JSValue.zero,
 
     onPromiseRejectionCtx: *anyopaque = undefined,
-    onPromiseRejectionHandler: ?fn (ctx: *anyopaque, err: anyerror, fetch_event: *FetchEvent, value: JSValue) void = null,
+    onPromiseRejectionHandler: ?*const fn (ctx: *anyopaque, err: anyerror, fetch_event: *FetchEvent, value: JSValue) void = null,
     rejected: bool = false,
 
     pub const Class = NewClass(
@@ -5720,7 +5734,7 @@ pub const FetchEvent = struct {
             .ts = .{ .class = d.ts.class{ .interface = true } },
         },
         .{
-            .@"respondWith" = .{
+            .respondWith = .{
                 .rfn = respondWith,
                 .ts = d.ts{
                     .tsdoc = "Render the response in the active HTTP request",
@@ -5730,20 +5744,20 @@ pub const FetchEvent = struct {
                     },
                 },
             },
-            .@"waitUntil" = waitUntil,
+            .waitUntil = waitUntil,
             .finalize = finalize,
         },
         .{
-            .@"client" = .{
-                .@"get" = getClient,
+            .client = .{
+                .get = getClient,
                 .ro = true,
                 .ts = d.ts{
                     .tsdoc = "HTTP client metadata. This is not implemented yet, do not use.",
                     .@"return" = "undefined",
                 },
             },
-            .@"request" = .{
-                .@"get" = getRequest,
+            .request = .{
+                .get = getRequest,
                 .ro = true,
                 .ts = d.ts{
                     .tsdoc = "HTTP request",
@@ -5756,7 +5770,7 @@ pub const FetchEvent = struct {
     pub fn finalize(
         this: *FetchEvent,
     ) void {
-        VirtualMachine.vm.allocator.destroy(this);
+        VirtualMachine.get().allocator.destroy(this);
     }
 
     pub fn getClient(
@@ -5877,15 +5891,15 @@ pub const FetchEvent = struct {
         };
 
         defer {
-            if (!VirtualMachine.vm.had_errors) {
+            if (!VirtualMachine.get().had_errors) {
                 Output.printElapsed(@intToFloat(f64, (request_context.timer.lap())) / std.time.ns_per_ms);
 
                 Output.prettyError(
                     " <b>{s}<r><d> - <b>{d}<r> <d>transpiled, <d><b>{d}<r> <d>imports<r>\n",
                     .{
                         request_context.matched_route.?.name,
-                        VirtualMachine.vm.transpiled_count,
-                        VirtualMachine.vm.resolved_count,
+                        VirtualMachine.get().transpiled_count,
+                        VirtualMachine.get().resolved_count,
                     },
                 );
             }

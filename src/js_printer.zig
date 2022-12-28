@@ -179,12 +179,12 @@ pub fn quoteForJSON(text: []const u8, output_: MutableString, comptime ascii_onl
                 try bytes.appendSlice("\\n");
                 i += 1;
             },
-            std.ascii.control_code.CR => {
+            std.ascii.control_code.cr => {
                 try bytes.appendSlice("\\r");
                 i += 1;
             },
             // \v
-            std.ascii.control_code.VT => {
+            std.ascii.control_code.vt => {
                 try bytes.appendSlice("\\v");
                 i += 1;
             },
@@ -326,12 +326,12 @@ pub fn writeJSONString(input: []const u8, comptime Writer: type, writer: Writer,
                 try writer.writeAll("\\n");
                 text = text[1..];
             },
-            std.ascii.control_code.CR => {
+            std.ascii.control_code.cr => {
                 try writer.writeAll("\\r");
                 text = text[1..];
             },
             // \v
-            std.ascii.control_code.VT => {
+            std.ascii.control_code.vt => {
                 try writer.writeAll("\\v");
                 text = text[1..];
             },
@@ -406,7 +406,7 @@ pub const SourceMapHandler = struct {
     ctx: *anyopaque,
     callback: Callback,
 
-    const Callback = (fn (*anyopaque, chunk: SourceMap.Chunk, source: logger.Source) anyerror!void);
+    const Callback = *const fn (*anyopaque, chunk: SourceMap.Chunk, source: logger.Source) anyerror!void;
     pub fn onSourceMapChunk(self: *const @This(), chunk: SourceMap.Chunk, source: logger.Source) anyerror!void {
         try self.callback(self.ctx, chunk, source);
     }
@@ -616,7 +616,7 @@ pub fn NewPrinter(
 
             var remaining: usize = n;
             while (remaining > 0) {
-                const to_write = @minimum(remaining, bytes.len);
+                const to_write = @min(remaining, bytes.len);
                 try self.writeAll(bytes[0..to_write]);
                 remaining -= to_write;
             }
@@ -677,7 +677,7 @@ pub fn NewPrinter(
             var i: usize = p.options.indent * 2;
 
             while (i > 0) {
-                const amt = @minimum(i, indentation_buf.len);
+                const amt = @min(i, indentation_buf.len);
                 p.print(indentation_buf[0..amt]);
                 i -= amt;
             }
@@ -1255,13 +1255,13 @@ pub fn NewPrinter(
                         }
                     },
                     // we never print \r un-escaped
-                    std.ascii.control_code.CR => {
+                    std.ascii.control_code.cr => {
                         e.print("\\r");
                     },
                     // \v
-                    std.ascii.control_code.VT => {
+                    std.ascii.control_code.vt => {
                         if (quote == '`') {
-                            e.print(std.ascii.control_code.VT);
+                            e.print(std.ascii.control_code.vt);
                         } else {
                             e.print("\\v");
                         }
@@ -1542,7 +1542,7 @@ pub fn NewPrinter(
         }
 
         fn printClauseItem(p: *Printer, item: js_ast.ClauseItem) void {
-            return printClauseItemAs(p, item, .@"import");
+            return printClauseItemAs(p, item, .import);
         }
 
         fn printExportClauseItem(p: *Printer, item: js_ast.ClauseItem) void {
@@ -1552,7 +1552,7 @@ pub fn NewPrinter(
         fn printClauseItemAs(p: *Printer, item: js_ast.ClauseItem, comptime as: @Type(.EnumLiteral)) void {
             const name = p.renamer.nameForSymbol(item.name.ref.?);
 
-            if (comptime as == .@"import") {
+            if (comptime as == .import) {
                 p.printClauseAlias(item.alias);
 
                 if (!strings.eql(name, item.alias)) {
@@ -1988,7 +1988,7 @@ pub fn NewPrinter(
                     if (e.func.name) |sym| {
                         p.printSpaceBeforeIdentifier();
                         p.addSourceMapping(sym.loc);
-                        p.printSymbol(sym.ref orelse Global.panic("internal error: expected E.Function's name symbol to have a ref\n{s}", .{e.func}));
+                        p.printSymbol(sym.ref orelse Global.panic("internal error: expected E.Function's name symbol to have a ref\n{any}", .{e.func}));
                     }
 
                     p.printFunc(e.func);
@@ -2009,7 +2009,7 @@ pub fn NewPrinter(
                     if (e.class_name) |name| {
                         p.print(" ");
                         p.addSourceMapping(name.loc);
-                        p.printSymbol(name.ref orelse Global.panic("internal error: expected E.Class's name symbol to have a ref\n{s}", .{e}));
+                        p.printSymbol(name.ref orelse Global.panic("internal error: expected E.Class's name symbol to have a ref\n{any}", .{e}));
                     }
                     p.printClass(e.*);
                     if (wrap) {
@@ -2459,7 +2459,7 @@ pub fn NewPrinter(
                     }
                 },
                 else => {
-                    // Global.panic("Unexpected expression of type {s}", .{std.meta.activeTag(expr.data});
+                    // Global.panic("Unexpected expression of type {any}", .{std.meta.activeTag(expr.data});
                 },
             }
         }
@@ -2988,7 +2988,7 @@ pub fn NewPrinter(
                     p.print("}");
                 },
                 else => {
-                    Global.panic("Unexpected binding of type {s}", .{binding});
+                    Global.panic("Unexpected binding of type {any}", .{binding});
                 },
             }
         }
@@ -3017,8 +3017,8 @@ pub fn NewPrinter(
                 .s_function => |s| {
                     p.printIndent();
                     p.printSpaceBeforeIdentifier();
-                    const name = s.func.name orelse Global.panic("Internal error: expected func to have a name ref\n{s}", .{s});
-                    const nameRef = name.ref orelse Global.panic("Internal error: expected func to have a name\n{s}", .{s});
+                    const name = s.func.name orelse Global.panic("Internal error: expected func to have a name ref\n{any}", .{s});
+                    const nameRef = name.ref orelse Global.panic("Internal error: expected func to have a name\n{any}", .{s});
 
                     if (s.func.flags.contains(.is_export)) {
                         if (!rewrite_esm_to_cjs) {
@@ -3177,7 +3177,7 @@ pub fn NewPrinter(
 
                                     if (class.class.class_name) |name| {
                                         p.print("class ");
-                                        p.printSymbol(name.ref orelse Global.panic("Internal error: Expected class to have a name ref\n{s}", .{class}));
+                                        p.printSymbol(name.ref orelse Global.panic("Internal error: Expected class to have a name ref\n{any}", .{class}));
                                     } else {
                                         p.print("class");
                                     }
@@ -3199,7 +3199,7 @@ pub fn NewPrinter(
                                     }
                                 },
                                 else => {
-                                    Global.panic("Internal error: unexpected export default stmt data {s}", .{s});
+                                    Global.panic("Internal error: unexpected export default stmt data {any}", .{s});
                                 },
                             }
                         },
@@ -3487,7 +3487,7 @@ pub fn NewPrinter(
                                 // we need to handle symbol collisions for this
                                 p.print("$eXp0rT_");
                                 var buf: [16]u8 = undefined;
-                                p.print(std.fmt.bufPrint(&buf, "{}", .{std.fmt.fmtSliceHexLower(&@bitCast([4]u8, symbol_counter))}) catch unreachable);
+                                p.print(std.fmt.bufPrint(&buf, "{}", .{bun.fmt.hexIntLower(symbol_counter)}) catch unreachable);
                                 symbol_counter +|= 1;
                             }
 
@@ -3658,7 +3658,7 @@ pub fn NewPrinter(
                 },
                 .s_label => |s| {
                     p.printIndent();
-                    p.printSymbol(s.name.ref orelse Global.panic("Internal error: expected label to have a name {s}", .{s}));
+                    p.printSymbol(s.name.ref orelse Global.panic("Internal error: expected label to have a name {any}", .{s}));
                     p.print(":");
                     p.printBody(s.stmt);
                 },
@@ -4299,7 +4299,7 @@ pub fn NewPrinter(
                 return;
             }
 
-            @call(.{ .modifier = .always_inline }, printModuleId, .{ p, p.import_records[import_record_index].module_id });
+            @call(.always_inline, printModuleId, .{ p, p.import_records[import_record_index].module_id });
         }
 
         pub fn printCallModuleID(p: *Printer, module_id: u32) void {
@@ -4388,7 +4388,7 @@ pub fn NewPrinter(
                 // for(;)
                 .s_empty => {},
                 else => {
-                    Global.panic("Internal error: Unexpected stmt in for loop {s}", .{initSt});
+                    Global.panic("Internal error: Unexpected stmt in for loop {any}", .{initSt});
                 },
             }
         }
@@ -4788,11 +4788,11 @@ pub fn NewWriter(
         }
 
         pub inline fn prevChar(writer: *const Self) u8 {
-            return @call(.{ .modifier = .always_inline }, getLastByte, .{&writer.ctx});
+            return @call(.always_inline, getLastByte, .{&writer.ctx});
         }
 
         pub inline fn prevPrevChar(writer: *const Self) u8 {
-            return @call(.{ .modifier = .always_inline }, getLastLastByte, .{&writer.ctx});
+            return @call(.always_inline, getLastLastByte, .{&writer.ctx});
         }
 
         pub fn reserve(writer: *Self, count: u32) anyerror![*]u8 {
@@ -4807,7 +4807,7 @@ pub fn NewWriter(
         pub const Error = error{FormatError};
 
         pub fn writeAll(writer: *Self, bytes: anytype) Error!usize {
-            const written = @maximum(writer.written, 0);
+            const written = @max(writer.written, 0);
             writer.print(@TypeOf(bytes), bytes);
             return @intCast(usize, writer.written) - @intCast(usize, written);
         }
@@ -4992,8 +4992,8 @@ const FileWriterInternal = struct {
 
 pub const BufferWriter = struct {
     buffer: MutableString = undefined,
-    written: []u8 = "",
-    sentinel: [:0]u8 = "",
+    written: []u8 = &[_]u8{},
+    sentinel: [:0]const u8 = "",
     append_null_byte: bool = false,
     append_newline: bool = false,
     approximate_newline_count: usize = 0,
@@ -5193,7 +5193,7 @@ pub fn printAst(
 
     try printer.writer.done();
 
-    return @intCast(usize, @maximum(printer.writer.written, 0));
+    return @intCast(usize, @max(printer.writer.written, 0));
 }
 
 pub fn printJSON(
@@ -5227,7 +5227,7 @@ pub fn printJSON(
     }
     try printer.writer.done();
 
-    return @intCast(usize, @maximum(printer.writer.written, 0));
+    return @intCast(usize, @max(printer.writer.written, 0));
 }
 
 pub fn printCommonJS(
@@ -5287,7 +5287,7 @@ pub fn printCommonJS(
 
     try printer.writer.done();
 
-    return @intCast(usize, @maximum(printer.writer.written, 0));
+    return @intCast(usize, @max(printer.writer.written, 0));
 }
 
 pub const WriteResult = struct {
@@ -5374,7 +5374,7 @@ pub fn printCommonJSThreaded(
         @atomicStore(u32, end_off_ptr, result.end_off, .SeqCst);
     }
 
-    result.len = @intCast(usize, @maximum(printer.writer.written, 0));
+    result.len = @intCast(usize, @max(printer.writer.written, 0));
 
     return result;
 }

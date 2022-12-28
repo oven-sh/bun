@@ -1,5 +1,6 @@
 const Bun = @This();
-const default_allocator = @import("bun").default_allocator;
+const root = @import("root");
+const default_allocator = bun.default_allocator;
 const bun = @import("bun");
 const Environment = bun.Environment;
 const NetworkThread = @import("bun").HTTP.NetworkThread;
@@ -105,7 +106,7 @@ pub const FFI = struct {
             return JSC.toInvalidArguments("Expected callback function", .{}, globalThis);
         }
 
-        const allocator = VirtualMachine.vm.allocator;
+        const allocator = VirtualMachine.get().allocator;
         var function: Function = .{};
         var func = &function;
 
@@ -158,7 +159,7 @@ pub const FFI = struct {
             this.dylib = null;
         }
 
-        const allocator = VirtualMachine.vm.allocator;
+        const allocator = VirtualMachine.get().allocator;
 
         for (this.functions.values()) |*val| {
             val.deinit(globalThis, allocator);
@@ -170,7 +171,7 @@ pub const FFI = struct {
 
     pub fn printCallback(global: *JSGlobalObject, object: JSC.JSValue) JSValue {
         JSC.markBinding(@src());
-        const allocator = VirtualMachine.vm.allocator;
+        const allocator = VirtualMachine.get().allocator;
 
         if (object.isEmptyOrUndefinedOrNull() or !object.isObject()) {
             return JSC.toInvalidArguments("Expected an object", .{}, global);
@@ -194,7 +195,7 @@ pub const FFI = struct {
     }
 
     pub fn print(global: *JSGlobalObject, object: JSC.JSValue, is_callback_val: ?JSC.JSValue) JSValue {
-        const allocator = VirtualMachine.vm.allocator;
+        const allocator = VirtualMachine.get().allocator;
         if (is_callback_val) |is_callback| {
             if (is_callback.toBoolean()) {
                 return printCallback(global, object);
@@ -257,7 +258,7 @@ pub const FFI = struct {
     }
 
     // pub fn dlcompile(global: *JSGlobalObject, object: JSC.JSValue) JSValue {
-    //     const allocator = VirtualMachine.vm.allocator;
+    //     const allocator = VirtualMachine.get().allocator;
 
     //     if (object.isEmptyOrUndefinedOrNull() or !object.isObject()) {
     //         return JSC.toInvalidArguments("Expected an options object with symbol names", .{}, global);
@@ -277,7 +278,7 @@ pub const FFI = struct {
 
     pub fn open(global: *JSGlobalObject, name_str: ZigString, object: JSC.JSValue) JSC.JSValue {
         JSC.markBinding(@src());
-        const allocator = VirtualMachine.vm.allocator;
+        const allocator = VirtualMachine.get().allocator;
         var name_slice = name_str.toSlice(allocator);
         defer name_slice.deinit();
 
@@ -380,7 +381,7 @@ pub const FFI = struct {
                 },
                 .compiled => |*compiled| {
                     const str = ZigString.init(std.mem.span(function_name));
-                    const cb = JSC.NewFunction(
+                    const cb = JSC.NewRuntimeFunction(
                         global,
                         &str,
                         @intCast(u32, function.arg_types.items.len),
@@ -406,7 +407,7 @@ pub const FFI = struct {
 
     pub fn linkSymbols(global: *JSGlobalObject, object: JSC.JSValue) JSC.JSValue {
         JSC.markBinding(@src());
-        const allocator = VirtualMachine.vm.allocator;
+        const allocator = VirtualMachine.get().allocator;
 
         if (object.isEmptyOrUndefinedOrNull() or !object.isObject()) {
             return JSC.toInvalidArguments("Expected an options object with symbol names", .{}, global);
@@ -476,7 +477,7 @@ pub const FFI = struct {
                 .compiled => |*compiled| {
                     const name = &ZigString.init(std.mem.span(function_name));
 
-                    const cb = JSC.NewFunction(
+                    const cb = JSC.NewRuntimeFunction(
                         global,
                         name,
                         @intCast(u32, function.arg_types.items.len),
@@ -547,7 +548,7 @@ pub const FFI = struct {
             }
         }
         // var function
-        var return_type = ABIType.@"void";
+        var return_type = ABIType.void;
 
         var threadsafe = false;
 
@@ -578,7 +579,7 @@ pub const FFI = struct {
             };
         }
 
-        if (function.threadsafe and return_type != ABIType.@"void") {
+        if (function.threadsafe and return_type != ABIType.void) {
             abi_types.clearAndFree(allocator);
             return ZigString.static("Threadsafe functions must return void").toErrorInstance(global);
         }
@@ -607,7 +608,7 @@ pub const FFI = struct {
     }
     pub fn generateSymbols(global: *JSGlobalObject, symbols: *bun.StringArrayHashMapUnmanaged(Function), object: JSC.JSValue) !?JSValue {
         JSC.markBinding(@src());
-        const allocator = VirtualMachine.vm.allocator;
+        const allocator = VirtualMachine.get().allocator;
 
         var symbols_iter = JSC.JSPropertyIterator(.{
             .skip_empty_name = true,
@@ -642,7 +643,7 @@ pub const FFI = struct {
         base_name: ?[:0]const u8 = null,
         state: ?*TCC.TCCState = null,
 
-        return_type: ABIType = ABIType.@"void",
+        return_type: ABIType = ABIType.void,
         arg_types: std.ArrayListUnmanaged(ABIType) = .{},
         step: Step = Step{ .pending = {} },
         threadsafe: bool = false,
@@ -704,7 +705,7 @@ pub const FFI = struct {
         const FFI_HEADER: string = @embedFile("./FFI.h");
         pub inline fn ffiHeader() string {
             if (comptime Environment.isDebug) {
-                var dirpath = std.fs.path.dirname(@src().file).?;
+                var dirpath = comptime bun.Environment.base_path ++ std.fs.path.dirname(@src().file).?;
                 var env = std.process.getEnvMap(default_allocator) catch unreachable;
 
                 const dir = std.mem.replaceOwned(
@@ -736,16 +737,16 @@ pub const FFI = struct {
                 msg = msg[offset..];
             }
 
-            this.step = .{ .failed = .{ .msg = VirtualMachine.vm.allocator.dupe(u8, msg) catch unreachable, .allocated = true } };
+            this.step = .{ .failed = .{ .msg = VirtualMachine.get().allocator.dupe(u8, msg) catch unreachable, .allocated = true } };
         }
 
         extern fn pthread_jit_write_protect_np(enable: bool) callconv(.C) void;
 
         const MyFunctionSStructWorkAround = struct {
-            JSVALUE_TO_INT64: fn (JSValue0: JSC.JSValue) callconv(.C) i64,
-            JSVALUE_TO_UINT64: fn (JSValue0: JSC.JSValue) callconv(.C) u64,
-            INT64_TO_JSVALUE: fn (arg0: [*c]JSC.JSGlobalObject, arg1: i64) callconv(.C) JSC.JSValue,
-            UINT64_TO_JSVALUE: fn (arg0: [*c]JSC.JSGlobalObject, arg1: u64) callconv(.C) JSC.JSValue,
+            JSVALUE_TO_INT64: *const fn (JSValue0: JSC.JSValue) callconv(.C) i64,
+            JSVALUE_TO_UINT64: *const fn (JSValue0: JSC.JSValue) callconv(.C) u64,
+            INT64_TO_JSVALUE: *const fn (arg0: *JSC.JSGlobalObject, arg1: i64) callconv(.C) JSC.JSValue,
+            UINT64_TO_JSVALUE: *const fn (arg0: *JSC.JSGlobalObject, arg1: u64) callconv(.C) JSC.JSValue,
             bun_call: *const @TypeOf(JSC.C.JSObjectCallAsFunction),
         };
         const headers = @import("../bindings/headers.zig");
@@ -831,7 +832,7 @@ pub const FFI = struct {
                 return;
             }
 
-            var bytes: []u8 = try allocator.rawAlloc(@intCast(usize, relocation_size), 16, 16, 0);
+            var bytes: []u8 = try allocator.alloc(u8, @intCast(usize, relocation_size));
             defer {
                 if (this.step == .failed) {
                     allocator.free(bytes);
@@ -931,6 +932,16 @@ pub const FFI = struct {
             var source_code_writer = source_code.writer();
             var ffi_wrapper = Bun__createFFICallbackFunction(js_context, js_function);
             try this.printCallbackSourceCode(js_context, ffi_wrapper, &source_code_writer);
+
+            if (comptime Environment.allow_assert) {
+                debug_write: {
+                    const fd = std.os.open("/tmp/bun-ffi-callback-source.c", std.os.O.WRONLY | std.os.O.CREAT, 0o644) catch break :debug_write;
+                    _ = std.os.write(fd, source_code.items) catch break :debug_write;
+                    std.os.ftruncate(fd, source_code.items.len) catch break :debug_write;
+                    std.os.close(fd);
+                }
+            }
+
             try source_code.append(0);
             // defer source_code.deinit();
             var state = TCC.tcc_new() orelse return error.TCCMissing;
@@ -991,7 +1002,7 @@ pub const FFI = struct {
                 return;
             }
 
-            var bytes: []u8 = try allocator.rawAlloc(@intCast(usize, relocation_size), 16, 16, 0);
+            var bytes: []u8 = try allocator.alloc(u8, @intCast(usize, relocation_size));
             defer {
                 if (this.step == .failed) {
                     allocator.free(bytes);
@@ -1149,12 +1160,12 @@ pub const FFI = struct {
                     try writer.writeAll(", ");
                 }
                 first = false;
-
                 try writer.writeAll("    ");
+
                 const lengthBuf = std.fmt.bufPrintIntToSlice(arg_buf["arg".len..], i, 10, .lower, .{});
                 const argName = arg_buf[0 .. 3 + lengthBuf.len];
                 if (arg.needsACastInC()) {
-                    try writer.print("{}", .{arg.toC(argName)});
+                    try writer.print("{any}", .{arg.toC(argName)});
                 } else {
                     try writer.writeAll(argName);
                 }
@@ -1168,7 +1179,7 @@ pub const FFI = struct {
             try writer.writeAll("return ");
 
             if (!(this.return_type == .void)) {
-                try writer.print("{}.asZigRepr", .{this.return_type.toJS("return_value")});
+                try writer.print("{any}.asZigRepr", .{this.return_type.toJS("return_value")});
             } else {
                 try writer.writeAll("ValueUndefined.asZigRepr");
             }
@@ -1194,7 +1205,12 @@ pub const FFI = struct {
             context_ptr: ?*anyopaque,
             writer: anytype,
         ) !void {
-            try writer.print("#define JS_GLOBAL_OBJECT (void*)0x{X}UL\n", .{@ptrToInt(globalObject)});
+            {
+                const ptr = @ptrToInt(globalObject);
+                const fmt = bun.fmt.hexIntUpper(ptr);
+                try writer.print("#define JS_GLOBAL_OBJECT (void*)0x{any}ULL\n", .{fmt});
+            }
+
             try writer.writeAll("#define IS_CALLBACK 1\n");
 
             brk: {
@@ -1266,28 +1282,35 @@ pub const FFI = struct {
                 for (this.arg_types.items) |arg, i| {
                     const printed = std.fmt.bufPrintIntToSlice(arg_buf["arg".len..], i, 10, .lower, .{});
                     const arg_name = arg_buf[0 .. "arg".len + printed.len];
-                    try writer.print("arguments[{d}] = {}.asZigRepr;\n", .{ i, arg.toJS(arg_name) });
+                    try writer.print("arguments[{d}] = {any}.asZigRepr;\n", .{ i, arg.toJS(arg_name) });
                 }
             }
 
             try writer.writeAll("  ");
             var inner_buf_: [372]u8 = undefined;
             var inner_buf: []u8 = &.{};
-            if (this.arg_types.items.len > 0) {
-                inner_buf = try std.fmt.bufPrint(
-                    inner_buf_[1..],
-                    "FFI_Callback_call((void*)0x{X}UL, {d}, arguments)",
-                    .{ @ptrToInt(context_ptr), this.arg_types.items.len },
-                );
-            } else {
-                inner_buf = try std.fmt.bufPrint(
-                    inner_buf_[1..],
-                    "FFI_Callback_call((void*)0x{X}UL, 0, (ZIG_REPR_TYPE*)0)",
-                    .{
-                        @ptrToInt(context_ptr),
-                    },
-                );
+
+            {
+                const ptr = @ptrToInt(context_ptr);
+                const fmt = bun.fmt.hexIntUpper(ptr);
+
+                if (this.arg_types.items.len > 0) {
+                    inner_buf = try std.fmt.bufPrint(
+                        inner_buf_[1..],
+                        "FFI_Callback_call((void*)0x{any}ULL, {d}, arguments)",
+                        .{ fmt, this.arg_types.items.len },
+                    );
+                } else {
+                    inner_buf = try std.fmt.bufPrint(
+                        inner_buf_[1..],
+                        "FFI_Callback_call((void*)0x{any}ULL, 0, (ZIG_REPR_TYPE*)0)",
+                        .{
+                            fmt,
+                        },
+                    );
+                }
             }
+
             if (this.return_type == .void) {
                 try writer.writeAll(inner_buf);
             } else {
@@ -1324,7 +1347,7 @@ pub const FFI = struct {
 
         ptr = 12,
 
-        @"void" = 13,
+        void = 13,
 
         cstring = 14,
 
@@ -1375,8 +1398,8 @@ pub const FFI = struct {
             .{ "void*", ABIType.ptr },
             .{ "ptr", ABIType.ptr },
             .{ "pointer", ABIType.ptr },
-            .{ "void", ABIType.@"void" },
-            .{ "cstring", ABIType.@"cstring" },
+            .{ "void", ABIType.void },
+            .{ "cstring", ABIType.cstring },
             .{ "i64_fast", ABIType.i64_fast },
             .{ "u64_fast", ABIType.u64_fast },
             .{ "function", ABIType.function },

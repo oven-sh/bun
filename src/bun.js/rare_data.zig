@@ -117,7 +117,7 @@ pub const CleanupHook = struct {
         };
     }
 
-    pub const Function = fn (?*anyopaque) callconv(.C) void;
+    pub const Function = *const fn (?*anyopaque) callconv(.C) void;
 };
 
 pub fn pushCleanupHook(
@@ -126,7 +126,7 @@ pub fn pushCleanupHook(
     ctx: ?*anyopaque,
     func: CleanupHook.Function,
 ) void {
-    var hook = JSC.VirtualMachine.vm.allocator.create(CleanupHook) catch unreachable;
+    var hook = JSC.VirtualMachine.get().allocator.create(CleanupHook) catch unreachable;
     hook.* = CleanupHook.from(globalThis, ctx, func);
     if (this.cleanup_hook == null) {
         this.cleanup_hook = hook;

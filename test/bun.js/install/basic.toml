@@ -1,0 +1,5 @@
+[install]
+registry = "http://localhost:54321/"
+
+[install.scopes]
+foo = { token = "bar" }

@@ -2144,7 +2144,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
         pub fn renderMetadata(this: *RequestContext) void {
             var response: *JSC.WebCore.Response = this.response_ptr.?;
             var status = response.statusCode();
-            var needs_content_range = this.needs_content_range;
+            var needs_content_range = this.needs_content_range and this.sendfile.remain < this.blob.size();
 
             const size = if (needs_content_range)
                 this.sendfile.remain

@@ -197,6 +197,30 @@ const NetworkTask = struct {
 
     const default_headers_buf: string = "Accept" ++ accept_header_value;
 
+    fn appendAuth(header_builder: *HeaderBuilder, scope: *const Npm.Registry.Scope) void {
+        if (scope.token.len > 0) {
+            header_builder.appendFmt("Authorization", "Bearer {s}", .{scope.token});
+        } else if (scope.auth.len > 0) {
+            header_builder.appendFmt("Authorization", "Basic {s}", .{scope.auth});
+        } else {
+            return;
+        }
+        header_builder.append("npm-auth-type", "legacy");
+    }
+
+    fn countAuth(header_builder: *HeaderBuilder, scope: *const Npm.Registry.Scope) void {
+        if (scope.token.len > 0) {
+            header_builder.count("Authorization", "");
+            header_builder.content.cap += "Bearer ".len + scope.token.len;
+        } else if (scope.auth.len > 0) {
+            header_builder.count("Authorization", "");
+            header_builder.content.cap += "Basic ".len + scope.auth.len;
+        } else {
+            return;
+        }
+        header_builder.count("npm-auth-type", "legacy");
+    }
+
     pub fn forManifest(
         this: *NetworkTask,
         name: string,
@@ -268,13 +292,7 @@ const NetworkTask = struct {
 
         var header_builder = HeaderBuilder{};
 
-        if (scope.token.len > 0) {
-            header_builder.count("Authorization", "");
-            header_builder.content.cap += "Bearer ".len + scope.token.len;
-        } else if (scope.auth.len > 0) {
-            header_builder.count("Authorization", "");
-            header_builder.content.cap += "Basic ".len + scope.auth.len;
-        }
+        countAuth(&header_builder, scope);
 
         if (etag.len != 0) {
             header_builder.count("If-None-Match", etag);
@@ -289,11 +307,7 @@ const NetworkTask = struct {
             }
             try header_builder.allocate(allocator);
 
-            if (scope.token.len > 0) {
-                header_builder.appendFmt("Authorization", "Bearer {s}", .{scope.token});
-            } else if (scope.auth.len > 0) {
-                header_builder.appendFmt("Authorization", "Basic {s}", .{scope.auth});
-            }
+            appendAuth(&header_builder, scope);
 
             if (etag.len != 0) {
                 header_builder.append("If-None-Match", etag);
@@ -381,23 +395,13 @@ const NetworkTask = struct {
 
         var header_builder = HeaderBuilder{};
 
-        if (scope.token.len > 0) {
-            header_builder.count("Authorization", "");
-            header_builder.content.cap += "Bearer ".len + scope.token.len;
-        } else if (scope.auth.len > 0) {
-            header_builder.count("Authorization", "");
-            header_builder.content.cap += "Basic ".len + scope.auth.len;
-        }
+        countAuth(&header_builder, scope);
 
         var header_buf: string = "";
         if (header_builder.header_count > 0) {
             try header_builder.allocate(allocator);
 
-            if (scope.token.len > 0) {
-                header_builder.appendFmt("Authorization", "Bearer {s}", .{scope.token});
-            } else if (scope.auth.len > 0) {
-                header_builder.appendFmt("Authorization", "Basic {s}", .{scope.auth});
-            }
+            appendAuth(&header_builder, scope);
 
             header_buf = header_builder.content.ptr.?[0..header_builder.content.len];
         }
@@ -3459,11 +3463,7 @@ pub const PackageManager = struct {
         lockfile_path: stringZ = Lockfile.default_filename,
         save_lockfile_path: stringZ = Lockfile.default_filename,
         did_override_default_scope: bool = false,
-        scope: Npm.Registry.Scope = .{
-            .name = "",
-            .token = "",
-            .url = URL.parse("https://registry.npmjs.org/"),
-        },
+        scope: Npm.Registry.Scope = undefined,
 
         registries: Npm.Registry.Map = Npm.Registry.Map{},
         cache_directory: string = "",
@@ -3604,21 +3604,28 @@ pub const PackageManager = struct {
         ) !void {
             this.save_lockfile_path = this.lockfile_path;
 
+            var base = Api.NpmRegistry{
+                .url = "",
+                .username = "",
+                .password = "",
+                .token = "",
+            };
+            if (bun_install_) |bun_install| {
+                if (bun_install.default_registry) |registry| {
+                    base = registry;
+                }
+            }
+            if (base.url.len == 0) base.url = Npm.Registry.default_url;
+            this.scope = try Npm.Registry.Scope.fromAPI("", base, allocator, env_loader);
             defer {
-                this.did_override_default_scope = !strings.eqlComptime(this.scope.url.href, "https://registry.npmjs.org/");
+                this.did_override_default_scope = !strings.eqlComptime(this.scope.url.href, Npm.Registry.default_url);
             }
             if (bun_install_) |bun_install| {
-                if (bun_install.default_registry) |*registry| {
-                    if (registry.url.len == 0) {
-                        registry.url = "https://registry.npmjs.org/";
-                    }
-
-                    this.scope = try Npm.Registry.Scope.fromAPI("", registry.*, allocator, env_loader);
-                }
-
                 if (bun_install.scoped) |scoped| {
                     for (scoped.scopes) |name, i| {
-                        try this.registries.put(allocator, Npm.Registry.Scope.hash(name), try Npm.Registry.Scope.fromAPI(name, scoped.registries[i], allocator, env_loader));
+                        var registry = scoped.registries[i];
+                        if (registry.url.len == 0) registry.url = base.url;
+                        try this.registries.put(allocator, Npm.Registry.Scope.hash(name), try Npm.Registry.Scope.fromAPI(name, registry, allocator, env_loader));
                     }
                 }
 
@@ -6753,6 +6760,16 @@ pub const PackageManager = struct {
 
 const Package = Lockfile.Package;
 
+pub const PackageManifestError = error{
+    PackageManifestHTTP400,
+    PackageManifestHTTP401,
+    PackageManifestHTTP402,
+    PackageManifestHTTP403,
+    PackageManifestHTTP404,
+    PackageManifestHTTP4xx,
+    PackageManifestHTTP5xx,
+};
+
 test "UpdateRequests.parse" {
     var log = logger.Log.init(default_allocator);
     var array = PackageManager.UpdateRequest.Array.init(0) catch unreachable;
@@ -6779,12 +6796,153 @@ test "UpdateRequests.parse" {
     try std.testing.expectEqual(updates.len, 6);
 }
 
-pub const PackageManifestError = error{
-    PackageManifestHTTP400,
-    PackageManifestHTTP401,
-    PackageManifestHTTP402,
-    PackageManifestHTTP403,
-    PackageManifestHTTP404,
-    PackageManifestHTTP4xx,
-    PackageManifestHTTP5xx,
-};
+test "PackageManager.Options - default registry, default values" {
+    var allocator = default_allocator;
+    var log = logger.Log.init(allocator);
+    defer log.deinit();
+    var env_loader = DotEnv.Loader.init(&DotEnv.Map.init(allocator), allocator);
+    var options = PackageManager.Options{};
+
+    try options.load(allocator, &log, &env_loader, null, null);
+
+    try std.testing.expectEqualStrings("", options.scope.name);
+    try std.testing.expectEqualStrings("", options.scope.auth);
+    try std.testing.expectEqualStrings(Npm.Registry.default_url, options.scope.url.href);
+    try std.testing.expectEqualStrings("", options.scope.token);
+}
+
+test "PackageManager.Options - default registry, custom token" {
+    var allocator = default_allocator;
+    var log = logger.Log.init(allocator);
+    defer log.deinit();
+    var env_loader = DotEnv.Loader.init(&DotEnv.Map.init(allocator), allocator);
+    var install = Api.BunInstall{
+        .default_registry = Api.NpmRegistry{
+            .url = "",
+            .username = "foo",
+            .password = "bar",
+            .token = "baz",
+        },
+        .native_bin_links = &.{},
+    };
+    var options = PackageManager.Options{};
+
+    try options.load(allocator, &log, &env_loader, null, &install);
+
+    try std.testing.expectEqualStrings("", options.scope.name);
+    try std.testing.expectEqualStrings("", options.scope.auth);
+    try std.testing.expectEqualStrings(Npm.Registry.default_url, options.scope.url.href);
+    try std.testing.expectEqualStrings("baz", options.scope.token);
+}
+
+test "PackageManager.Options - default registry, custom URL" {
+    var allocator = default_allocator;
+    var log = logger.Log.init(allocator);
+    defer log.deinit();
+    var env_loader = DotEnv.Loader.init(&DotEnv.Map.init(allocator), allocator);
+    var install = Api.BunInstall{
+        .default_registry = Api.NpmRegistry{
+            .url = "https://example.com/",
+            .username = "foo",
+            .password = "bar",
+            .token = "",
+        },
+        .native_bin_links = &.{},
+    };
+    var options = PackageManager.Options{};
+
+    try options.load(allocator, &log, &env_loader, null, &install);
+
+    try std.testing.expectEqualStrings("", options.scope.name);
+    try std.testing.expectEqualStrings("Zm9vOmJhcg==", options.scope.auth);
+    try std.testing.expectEqualStrings("https://example.com/", options.scope.url.href);
+    try std.testing.expectEqualStrings("", options.scope.token);
+}
+
+test "PackageManager.Options - scoped registry" {
+    var allocator = default_allocator;
+    var log = logger.Log.init(allocator);
+    defer log.deinit();
+    var env_loader = DotEnv.Loader.init(&DotEnv.Map.init(allocator), allocator);
+    var install = Api.BunInstall{
+        .scoped = Api.NpmRegistryMap{
+            .scopes = &.{
+                "foo",
+            },
+            .registries = &.{
+                Api.NpmRegistry{
+                    .url = "",
+                    .username = "",
+                    .password = "",
+                    .token = "bar",
+                },
+            },
+        },
+        .native_bin_links = &.{},
+    };
+    var options = PackageManager.Options{};
+
+    try options.load(allocator, &log, &env_loader, null, &install);
+
+    try std.testing.expectEqualStrings("", options.scope.name);
+    try std.testing.expectEqualStrings("", options.scope.auth);
+    try std.testing.expectEqualStrings(Npm.Registry.default_url, options.scope.url.href);
+    try std.testing.expectEqualStrings("", options.scope.token);
+
+    var scoped = options.registries.getPtr(Npm.Registry.Scope.hash(Npm.Registry.Scope.getName("foo")));
+
+    try std.testing.expect(scoped != null);
+    if (scoped) |scope| {
+        try std.testing.expectEqualStrings("foo", scope.name);
+        try std.testing.expectEqualStrings("", scope.auth);
+        try std.testing.expectEqualStrings(Npm.Registry.default_url, scope.url.href);
+        try std.testing.expectEqualStrings("bar", scope.token);
+    }
+}
+
+test "PackageManager.Options - mixed default/scoped registry" {
+    var allocator = default_allocator;
+    var log = logger.Log.init(allocator);
+    defer log.deinit();
+    var env_loader = DotEnv.Loader.init(&DotEnv.Map.init(allocator), allocator);
+    var install = Api.BunInstall{
+        .default_registry = Api.NpmRegistry{
+            .url = "https://example.com/",
+            .username = "",
+            .password = "",
+            .token = "foo",
+        },
+        .scoped = Api.NpmRegistryMap{
+            .scopes = &.{
+                "bar",
+            },
+            .registries = &.{
+                Api.NpmRegistry{
+                    .url = "",
+                    .username = "baz",
+                    .password = "moo",
+                    .token = "",
+                },
+            },
+        },
+        .native_bin_links = &.{},
+    };
+    var options = PackageManager.Options{};
+
+    try options.load(allocator, &log, &env_loader, null, &install);
+
+    try std.testing.expectEqualStrings("", options.scope.name);
+    try std.testing.expectEqualStrings("", options.scope.auth);
+    try std.testing.expectEqualStrings("https://example.com/", options.scope.url.href);
+    try std.testing.expectEqualStrings("foo", options.scope.token);
+
+    var scoped = options.registries.getPtr(Npm.Registry.Scope.hash(Npm.Registry.Scope.getName("bar")));
+
+    try std.testing.expect(scoped != null);
+    if (scoped) |scope| {
+        try std.testing.expectEqualStrings("bar", scope.name);
+        try std.testing.expectEqualStrings("YmF6Om1vbw==", scope.auth);
+        try std.testing.expectEqualStrings("https://example.com/", scope.url.href);
+        try std.testing.expectEqualStrings("", scope.token);
+    }
+}

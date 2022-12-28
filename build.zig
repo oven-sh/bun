@@ -542,7 +542,7 @@ pub fn configureObjectStep(_: *std.build.Builder, obj: *std.build.LibExeObjStep,
     obj.bundle_compiler_rt = true;
 
     if (target.getOsTag() != .freestanding) obj.linkLibC();
-    if (target.getOsTag() != .freestanding) obj.bundle_compiler_rt = false;
+    if (target.getOsTag() != .freestanding) obj.bundle_compiler_rt = true;
 
     if (target.getOsTag() == .linux) {
         // obj.want_lto = tar;

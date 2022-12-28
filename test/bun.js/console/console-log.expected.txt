@@ -1,0 +1,46 @@
+Hello World!
+123
+-123
+123.567
+-123.567
+true
+false
+null
+undefined
+Symbol(Symbol Description)
+2022-02-27T05:11:48.999Z
+[ 123, 456, 789 ]
+{
+  name: "foo"
+}
+{
+  a: 123,
+  b: 456,
+  c: 789
+}
+{
+  a: {
+    b: {
+      c: 123
+    },
+    bacon: true
+  },
+  name: "bar"
+}
+Promise { <pending> }
+[Function]
+[Function: Foo]
+{}
+[Function: foooo]
+/FooRegex/
+Is it a bug or a feature that formatting numbers like 123 is colored
+String 123 should be 2nd word, 456 == 456 and percent s %s == What okay
+{
+  foo: {
+    name: "baz"
+  },
+  bar: [Circular]
+} am
+[
+  {}, {}, {}, {}
+]

@@ -81,7 +81,7 @@ CC = $(REAL_CC)
 CXX = $(REAL_CXX)
 CCACHE_CC_OR_CC := $(REAL_CC)
 
-CCACHE_PATH := $(shell which ccache 2>/dev/null) 
+CCACHE_PATH := $(shell which ccache 2>/dev/null)
 
 CCACHE_CC_FLAG = CC=$(CCACHE_CC_OR_CC)
 
@@ -399,7 +399,7 @@ endif
 SHARED_LIB_EXTENSION = .so
 
 JSC_BINDINGS = $(BINDINGS_OBJ) $(JSC_FILES)
-JSC_BINDINGS_DEBUG = $(DEBUG_BINDINGS_OBJ) $(JSC_FILES_DEBUG) 
+JSC_BINDINGS_DEBUG = $(DEBUG_BINDINGS_OBJ) $(JSC_FILES_DEBUG)
 
 RELEASE_FLAGS=
 DEBUG_FLAGS=
@@ -426,9 +426,11 @@ ARCHIVE_FILES_WITHOUT_LIBCRYPTO = $(MINIMUM_ARCHIVE_FILES) \
 		-lusockets \
 		$(BUN_DEPS_OUT_DIR)/libuwsockets.o
 
-ARCHIVE_FILES = $(ARCHIVE_FILES_WITHOUT_LIBCRYPTO) 
+ARCHIVE_FILES = $(ARCHIVE_FILES_WITHOUT_LIBCRYPTO)
 
 STATIC_MUSL_FLAG ?=
+
+WRAP_SYMBOLS_ON_LINUX =
 
 ifeq ($(OS_NAME), linux)
 WRAP_SYMBOLS_ON_LINUX = -Wl,--wrap=fcntl -Wl,--wrap=fcntl64 -Wl,--wrap=stat64 -Wl,--wrap=pow -Wl,--wrap=exp -Wl,--wrap=log \
@@ -459,10 +461,9 @@ PLATFORM_LINKER_FLAGS = $(BUN_CFLAGS) \
 		-fno-semantic-interposition \
 		-flto \
 		-Wl,--allow-multiple-definition \
-		-rdynamic \
-		$(WRAP_SYMBOLS_ON_LINUX)
+		-rdynamic
 
- 
+
 endif
 
 
@@ -475,9 +476,9 @@ BUN_LLD_FLAGS_WITHOUT_JSC = $(ARCHIVE_FILES) \
 
 
 
-BUN_LLD_FLAGS = $(BUN_LLD_FLAGS_WITHOUT_JSC)  $(JSC_FILES) $(BINDINGS_OBJ) -lwebcrypto
-BUN_LLD_FLAGS_DEBUG = $(BUN_LLD_FLAGS_WITHOUT_JSC) $(JSC_FILES_DEBUG) $(DEBUG_BINDINGS_OBJ) -lwebcrypto-debug
-BUN_LLD_FLAGS_FAST = $(BUN_LLD_FLAGS_WITHOUT_JSC)  $(JSC_FILES_DEBUG) $(BINDINGS_OBJ) -lwebcrypto-debug
+BUN_LLD_FLAGS = $(BUN_LLD_FLAGS_WITHOUT_JSC) $(WRAP_SYMBOLS_ON_LINUX) $(JSC_FILES) $(BINDINGS_OBJ) -lwebcrypto
+BUN_LLD_FLAGS_DEBUG = $(BUN_LLD_FLAGS_WITHOUT_JSC) $(WRAP_SYMBOLS_ON_LINUX) $(JSC_FILES_DEBUG) $(DEBUG_BINDINGS_OBJ) -lwebcrypto-debug
+BUN_LLD_FLAGS_FAST = $(BUN_LLD_FLAGS_WITHOUT_JSC) $(WRAP_SYMBOLS_ON_LINUX)  $(JSC_FILES_DEBUG) $(BINDINGS_OBJ) -lwebcrypto-debug
 
 CLANG_VERSION = $(shell $(CC) --version | awk '/version/ {for(i=1; i<=NF; i++){if($$i=="version"){split($$(i+1),v,".");print v[1]}}}')
 
@@ -1731,7 +1732,7 @@ webcrypto:
 
 sizegen:
 	mkdir -p $(BUN_TMP_DIR)
-	$(CXX) src/bun.js/headergen/sizegen.cpp -Wl,-dead_strip -Wl,-dead_strip_dylibs -fuse-ld=lld -o $(BUN_TMP_DIR)/sizegen $(CLANG_FLAGS) -O1 
+	$(CXX) src/bun.js/headergen/sizegen.cpp -Wl,-dead_strip -Wl,-dead_strip_dylibs -fuse-ld=lld -o $(BUN_TMP_DIR)/sizegen $(CLANG_FLAGS) -O1
 	$(BUN_TMP_DIR)/sizegen > src/bun.js/bindings/sizes.zig
 
 

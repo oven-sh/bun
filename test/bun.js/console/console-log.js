@@ -10,6 +10,7 @@ console.log(undefined);
 console.log(Symbol("Symbol Description"));
 console.log(new Date(2021, 12, 30, 666, 777, 888, 999));
 console.log([123, 456, 789]);
+console.log({ name: "foo" });
 console.log({ a: 123, b: 456, c: 789 });
 console.log({
   a: {
@@ -18,6 +19,7 @@ console.log({
     },
     bacon: true,
   },
+  name: "bar",
 });
 
 console.log(new Promise(() => {}));
@@ -38,7 +40,7 @@ console.log(
   "Is it a bug or a feature that formatting numbers like %d is colored",
   123,
 );
-console.log(globalThis);
+//console.log(globalThis);
 
 console.log(
   "String %s should be 2nd word, 456 == %s and percent s %s == %s",
@@ -50,7 +52,9 @@ console.log(
 );
 
 const infinteLoop = {
-  foo: {},
+  foo: {
+    name: "baz",
+  },
   bar: {},
 };
 

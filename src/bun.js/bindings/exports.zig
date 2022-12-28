@@ -1672,18 +1672,17 @@ pub const ZigConsoleClient = struct {
                 const enable_ansi_colors = enable_ansi_colors_;
                 pub fn handleFirstProperty(this: *@This(), globalThis: *JSC.JSGlobalObject, value: JSValue) void {
                     if (!value.jsType().isFunction() and !value.isClass(globalThis)) {
-                        var name_str = ZigString.init("");
-
-                        value.getPrototype(globalThis).getNameProperty(globalThis, &name_str);
                         var writer = WrappedWriter(Writer){
                             .ctx = this.writer,
                             .failed = false,
                         };
+                        var name_str = ZigString.init("");
 
+                        value.getNameProperty(globalThis, &name_str);
                         if (name_str.len > 0 and !strings.eqlComptime(name_str.slice(), "Object")) {
                             writer.print("{} ", .{name_str});
                         } else {
-                            value.getNameProperty(globalThis, &name_str);
+                            value.getPrototype(globalThis).getNameProperty(globalThis, &name_str);
                             if (name_str.len > 0 and !strings.eqlComptime(name_str.slice(), "Object")) {
                                 writer.print("{} ", .{name_str});
                             }

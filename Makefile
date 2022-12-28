@@ -456,6 +456,7 @@ PLATFORM_LINKER_FLAGS = $(BUN_CFLAGS) \
 		-static-libgcc \
 		-fno-omit-frame-pointer \
 		-Wl,--compress-debug-sections,zlib \
+		-latomic \
 		${STATIC_MUSL_FLAG}  \
 		-Wl,-Bsymbolic-functions \
 		-fno-semantic-interposition \

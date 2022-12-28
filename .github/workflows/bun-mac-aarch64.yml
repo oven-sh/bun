@@ -90,7 +90,7 @@ jobs:
             CPU_TARGET=${{ matrix.cpu }}
             TRIPLET=${{matrix.arch}}-macos-none
             GIT_SHA=${{github.sha}}
-          platforms: linux/amd64
+          platforms: linux/arm64
           target: build_release_obj
           outputs: type=local,dest=${{runner.temp}}/release
       - uses: actions/upload-artifact@v3

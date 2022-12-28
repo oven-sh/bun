@@ -19,6 +19,16 @@ export const strictEqual = (...args) => {
   expect(error).toBe(null);
 };
 
+export const deepStrictEqual = (...args) => {
+  let error = null;
+  try {
+    assertNode.deepStrictEqual(...args);
+  } catch (err) {
+    error = err;
+  }
+  expect(error).toBe(null);
+};
+
 export const throws = (...args) => {
   let error = null;
   try {

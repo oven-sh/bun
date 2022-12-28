@@ -3062,10 +3062,9 @@ void JSC__JSValue__getClassName(JSC__JSValue JSValue0, JSC__JSGlobalObject* arg1
 
     arg2->len = 0;
 }
-void JSC__JSValue__getNameProperty(JSC__JSValue JSValue0, JSC__JSGlobalObject* arg1,
-    ZigString* arg2)
-{
 
+void JSC__JSValue__getNameProperty(JSC__JSValue JSValue0, JSC__JSGlobalObject* arg1, ZigString* arg2)
+{
     JSC::JSObject* obj = JSC::JSValue::decode(JSValue0).getObject();
     JSC::VM& vm = arg1->vm();
 
@@ -3074,10 +3073,7 @@ void JSC__JSValue__getNameProperty(JSC__JSValue JSValue0, JSC__JSGlobalObject* a
         return;
     }
 
-    JSC::JSValue name = obj->getDirect(vm, vm.propertyNames->toStringTagSymbol);
-    if (name == JSC::JSValue {}) {
-        name = obj->getDirect(vm, vm.propertyNames->name);
-    }
+    JSC::JSValue name = obj->getIfPropertyExists(arg1, vm.propertyNames->toStringTagSymbol);
 
     if (name && name.isString()) {
         auto str = name.toWTFString(arg1);
@@ -3412,7 +3408,10 @@ restart:
                 return true;
             }
 
-            if (entry.key() == vm.propertyNames->constructor || entry.key() == vm.propertyNames->length || entry.key() == vm.propertyNames->name || entry.key() == vm.propertyNames->underscoreProto || entry.key() == vm.propertyNames->toStringTagSymbol)
+            if (entry.key() == vm.propertyNames->constructor
+                || entry.key() == vm.propertyNames->length
+                || entry.key() == vm.propertyNames->underscoreProto
+                || entry.key() == vm.propertyNames->toStringTagSymbol)
                 return true;
 
             if (clientData->builtinNames().bunNativePtrPrivateName() == entry.key())
@@ -3488,8 +3487,9 @@ restart:
                 }
 
                 if ((slot.attributes() & PropertyAttribute::DontEnum) != 0) {
-
-                    if (property == vm.propertyNames->length || property == vm.propertyNames->name || property == vm.propertyNames->underscoreProto || property == vm.propertyNames->toStringTagSymbol)
+                    if (property == vm.propertyNames->length
+                        || property == vm.propertyNames->underscoreProto
+                        || property == vm.propertyNames->toStringTagSymbol)
                         continue;
                 }
 

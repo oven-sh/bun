@@ -479,14 +479,17 @@ const char* const s_readableStreamPipeThroughCode =
 const JSC::ConstructAbility s_readableStreamPipeToCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableStreamPipeToCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_readableStreamPipeToCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_readableStreamPipeToCodeLength = 1624;
+const int s_readableStreamPipeToCodeLength = 1522;
 static const JSC::Intrinsic s_readableStreamPipeToCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_readableStreamPipeToCode =
     "(function (destination)\n" \
     "{\n" \
     "    \"use strict\";\n" \
     "    if (!@isReadableStream(this))\n" \
-    "        throw @makeTypeError(\"readable should be ReadableStream\");\n" \
+    "        return @Promise.@reject(@makeThisTypeError(\"ReadableStream\", \"pipeTo\"));\n" \
+    "\n" \
+    "    if (@isReadableStreamLocked(this))\n" \
+    "        return @Promise.@reject(@makeTypeError(\"ReadableStream is locked\"));\n" \
     "\n" \
     "    //\n" \
     "    //\n" \
@@ -517,12 +520,6 @@ const char* const s_readableStreamPipeToCode =
     "    const internalDestination = @getInternalWritableStream(destination);\n" \
     "    if (!@isWritableStream(internalDestination))\n" \
     "        return @Promise.@reject(@makeTypeError(\"ReadableStream pipeTo requires a WritableStream\"));\n" \
-    "\n" \
-    "    if (!@isReadableStream(this))\n" \
-    "        return @Promise.@reject(@makeThisTypeError(\"ReadableStream\", \"pipeTo\"));\n" \
-    "\n" \
-    "    if (@isReadableStreamLocked(this))\n" \
-    "        return @Promise.@reject(@makeTypeError(\"ReadableStream is locked\"));\n" \
     "\n" \
     "    if (@isWritableStreamLocked(internalDestination))\n" \
     "        return @Promise.@reject(@makeTypeError(\"WritableStream is locked\"));\n" \

@@ -48,6 +48,24 @@ describe("WritableStream", () => {
       throw e;
     }
   });
+
+  it("pipeTo", async () => {
+    const rs = new ReadableStream({
+      start(controller) {
+        controller.enqueue("hello world");
+        controller.close();
+      },
+    });
+
+    let received;
+    const ws = new WritableStream({
+      write(chunk, controller) {
+        received = chunk;
+      },
+    });
+    await rs.pipeTo(ws);
+    expect(received).toBe("hello world");
+  });
 });
 
 describe("ReadableStream.prototype.tee", () => {

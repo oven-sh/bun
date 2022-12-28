@@ -380,7 +380,7 @@ function pipeThrough(streams, options)
 function pipeTo(destination)
 {
     "use strict";
-    if (!@isReadableStream(readable))
+    if (!@isReadableStream(this))
         throw @makeTypeError("readable should be ReadableStream");
 
     // FIXME: https://bugs.webkit.org/show_bug.cgi?id=159869.

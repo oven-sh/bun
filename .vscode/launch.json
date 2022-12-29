@@ -133,6 +133,18 @@
         "BUN_DEBUG_QUIET_LOGS": "1"
       }
     },
+    {
+      "type": "lldb",
+      "request": "launch",
+      "name": "bun install",
+      "program": "bun-debug",
+      "args": ["install"],
+      "cwd": "${workspaceFolder}",
+      "console": "internalConsole",
+      "env": {
+        "BUN_DEBUG_QUIET_LOGS": "1"
+      }
+    },
 
     {
       "type": "lldb",

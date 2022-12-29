@@ -71,7 +71,7 @@ const CAllocator = struct {
             }
         }
 
-        return if (ptr) |p| @ptrCast([*]u8, p) else null;
+        return @ptrCast(?[*]u8, ptr);
     }
 
     fn alignedAllocSize(ptr: [*]u8) usize {
@@ -122,12 +122,19 @@ const ZAllocator = struct {
     fn alignedAlloc(len: usize, alignment: usize) ?[*]u8 {
         if (comptime FeatureFlags.log_allocations) std.debug.print("Malloc: {d}\n", .{len});
 
-        var ptr = if (mi_malloc_satisfies_alignment(alignment, len))
-            mimalloc.mi_zalloc(len)
+        var ptr = if (mimalloc.canUseAlignedAlloc(len, alignment))
+            mimalloc.mi_zalloc_aligned(len, alignment)
         else
-            mimalloc.mi_zalloc_aligned(len, alignment);
+            mimalloc.mi_zalloc(len);
 
-        return @ptrCast([*]u8, ptr orelse null);
+        if (comptime Environment.allow_assert) {
+            const usable = mimalloc.mi_malloc_usable_size(ptr);
+            if (usable < len) {
+                std.debug.panic("mimalloc: allocated size is too small: {d} < {d}", .{ usable, len });
+            }
+        }
+
+        return @ptrCast(?[*]u8, ptr);
     }
 
     fn alignedAllocSize(ptr: [*]u8) usize {
@@ -151,22 +158,7 @@ const ZAllocator = struct {
         return false;
     }
 
-    fn free(
-        _: *anyopaque,
-        buf: []u8,
-        buf_align: u8,
-        _: usize,
-    ) void {
-        // mi_free_size internally just asserts the size
-        // so it's faster if we don't pass that value through
-        // but its good to have that assertion
-        if (comptime Environment.allow_assert) {
-            assert(mimalloc.mi_is_in_heap_region(buf.ptr));
-            mimalloc.mi_free_size_aligned(buf.ptr, buf.len, buf_align);
-        } else {
-            mimalloc.mi_free(buf.ptr);
-        }
-    }
+    const free = mimalloc_free;
 };
 
 pub const z_allocator = Allocator{

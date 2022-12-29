@@ -8,7 +8,11 @@ ARG BUN_RELEASE_DIR=${GITHUB_WORKSPACE}/bun-release
 ARG BUN_DEPS_OUT_DIR=${GITHUB_WORKSPACE}/bun-deps
 ARG BUN_DIR=${GITHUB_WORKSPACE}/bun
 ARG BUN_PACKAGES_DIR=${BUN_DIR}/packages
-ARG ZIG_URL="https://ziglang.org/builds/zig-${ARCH}-${ZIG_VERSION}.zip"
+ARG ZIG_VERSION="0.11.0-dev.947+cf822c6dd"
+
+ARG ZIG_FOLDERNAME=zig-linux-${ARCH}-${ZIG_VERSION}
+ARG ZIG_FILENAME=${ZIG_FOLDERNAME}.tar.xz
+ARG ZIG_URL="https://ziglang.org/builds/${ZIG_FILENAME}"
 
 FROM --platform=linux/${BUILDARCH} ubuntu:22.04 as bun.devcontainer
 
@@ -39,7 +43,7 @@ RUN apt-get update && \
     add-apt-repository ppa:longsleep/golang-backports && \
     wget https://apt.llvm.org/llvm.sh --no-check-certificate && \
     chmod +x llvm.sh && \
-    ./llvm.sh 13 && \
+    ./llvm.sh 15 && \
     curl -fsSL https://deb.nodesource.com/setup_16.x | bash - && \
     apt-get update && \
     apt-get install --no-install-recommends -y \
@@ -52,16 +56,16 @@ RUN apt-get update && \
     git \
     libssl-dev \
     ruby \
-    liblld-13-dev \
-    libclang-13-dev \
+    liblld-15-dev \
+    libclang-15-dev \
     nodejs \
     gcc \
     g++ \
-    clang-13 \
-    clang-format-13 \
-    libc++-13-dev \
-    libc++abi-13-dev \
-    lld-13 \
+    clang-15 \
+    clang-format-15 \
+    libc++-15-dev \
+    libc++abi-15-dev \
+    lld-15 \
     libicu-dev \
     wget \
     rustc \
@@ -69,16 +73,14 @@ RUN apt-get update && \
     unzip \
     tar \
     golang-go ninja-build pkg-config automake autoconf libtool curl && \
-    update-alternatives --install /usr/bin/cc cc /usr/bin/clang-13 90 && \
-    update-alternatives --install /usr/bin/cpp cpp /usr/bin/clang++-13 90 && \
-    update-alternatives --install /usr/bin/c++ c++ /usr/bin/clang++-13 90 && \
+    update-alternatives --install /usr/bin/cc cc /usr/bin/clang-15 90 && \
+    update-alternatives --install /usr/bin/cpp cpp /usr/bin/clang++-15 90 && \
+    update-alternatives --install /usr/bin/c++ c++ /usr/bin/clang++-15 90 && \
     npm install -g esbuild
 
-ENV CC=clang-13 
-ENV CXX=clang++-13
+ENV CC=clang-15 
+ENV CXX=clang++-15
 ENV ZIG "${ZIG_PATH}/zig"
-
-
 
 WORKDIR $GITHUB_WORKSPACE
 
@@ -86,10 +88,15 @@ RUN cd / && mkdir -p $BUN_RELEASE_DIR $BUN_DEPS_OUT_DIR ${BUN_DIR} ${BUN_DEPS_OU
 
 WORKDIR $GITHUB_WORKSPACE
 
-RUN cd $GITHUB_WORKSPACE && \
-    curl -o zig-linux-$BUILDARCH.zip -L https://github.com/oven-sh/zig/releases/download/jul1/zig-linux-$BUILDARCH.zip && \
-    unzip -q zig-linux-$BUILDARCH.zip && \
-    rm zig-linux-$BUILDARCH.zip;
+
+ARG ZIG_FOLDERNAME
+ARG ZIG_FILENAME
+ARG ZIG_URL
+
+ADD $ZIG_URL .
+RUN tar -xf ${ZIG_FILENAME} && \
+    rm ${ZIG_FILENAME} && \
+    mv ${ZIG_FOLDERNAME} ${GITHUB_WORKSPACE}/;
 
 RUN cd $GITHUB_WORKSPACE && \
     curl -o bun-webkit-linux-$BUILDARCH.tar.gz -L https://github.com/oven-sh/WebKit/releases/download/dec17/bun-webkit-linux-$BUILDARCH.tar.gz && \
@@ -97,7 +104,7 @@ RUN cd $GITHUB_WORKSPACE && \
     rm bun-webkit-linux-$BUILDARCH.tar.gz && \
     cat $WEBKIT_OUT_DIR/include/cmakeconfig.h > /dev/null
 
-RUN apt-get -y update && update-alternatives --install /usr/bin/lldb lldb /usr/bin/lldb-13 90
+RUN apt-get -y update && update-alternatives --install /usr/bin/lldb lldb /usr/bin/lldb-15 90
 
 COPY .devcontainer/workspace.code-workspace $GITHUB_WORKSPACE/workspace.code-workspace
 COPY .devcontainer/zls.json $GITHUB_WORKSPACE/workspace.code-workspace

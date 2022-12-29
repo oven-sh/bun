@@ -374,6 +374,23 @@ interface Process {
    * The original argv[0] passed to Bun
    */
   readonly argv0: string;
+
+  /**
+   * Number of seconds the process has been running
+   *
+   * This uses a high-resolution timer, but divides from nanoseconds to seconds
+   * so there may be some loss of precision.
+   *
+   * For a more precise value, use `performance.timeOrigin` and `performance.now()` instead.
+   */
+  uptime(): number;
+
+  /**
+   * Bun process's file mode creation mask.
+   *
+   * @returns Bun process's file mode creation mask.
+   */
+  umask(mask?: number): number;
 }
 
 declare var process: Process;

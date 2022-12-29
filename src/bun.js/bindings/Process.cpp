@@ -7,6 +7,7 @@
 #include "headers.h"
 #include "JSEnvironmentVariableMap.h"
 #include "ImportMetaObject.h"
+#include <sys/stat.h>
 #pragma mark - Node.js Process
 
 namespace Zig {
@@ -280,8 +281,34 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionDlopen,
     return napi_register_module_v1(globalObject, JSC::JSValue::encode(exports));
 }
 
-static JSC_DECLARE_HOST_FUNCTION(Process_functionExit);
-static JSC_DEFINE_HOST_FUNCTION(Process_functionExit,
+JSC_DEFINE_HOST_FUNCTION(Process_functionUmask,
+    (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    if (callFrame->argumentCount() == 0) {
+        return JSC::JSValue::encode(JSC::jsNumber(umask(0)));
+    }
+
+    auto& vm = globalObject->vm();
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    int umaskValue = callFrame->argument(0).toInt32(globalObject);
+    RETURN_IF_EXCEPTION(throwScope, JSC::JSValue::encode(JSC::JSValue {}));
+
+    return JSC::JSValue::encode(JSC::jsNumber(umask(umaskValue)));
+}
+
+extern "C" uint64_t Bun__readOriginTimer(void*);
+extern "C" double Bun__readOriginTimerStart(void*);
+
+JSC_DEFINE_HOST_FUNCTION(Process_functionUptime,
+    (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    Zig::GlobalObject* globalObject_ = reinterpret_cast<Zig::GlobalObject*>(globalObject);
+    double now = static_cast<double>(Bun__readOriginTimer(globalObject_->bunVM()));
+    double result = (now / 1000000.0) / 1000.0;
+    return JSC::JSValue::encode(JSC::jsNumber(result));
+}
+
+JSC_DEFINE_HOST_FUNCTION(Process_functionExit,
     (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     if (callFrame->argumentCount() == 0) {
@@ -296,9 +323,7 @@ static JSC_DEFINE_HOST_FUNCTION(Process_functionExit,
 
 extern "C" uint64_t Bun__readOriginTimer(void*);
 
-static JSC_DECLARE_HOST_FUNCTION(Process_functionHRTime);
-
-static JSC_DEFINE_HOST_FUNCTION(Process_functionHRTime,
+JSC_DEFINE_HOST_FUNCTION(Process_functionHRTime,
     (JSC::JSGlobalObject * globalObject_, JSC::CallFrame* callFrame))
 {
     Zig::GlobalObject* globalObject
@@ -637,6 +662,12 @@ void Process::finishCreation(JSC::VM& vm)
 
     this->putDirectCustomAccessor(vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "execPath"_s)),
         JSC::CustomGetterSetter::create(vm, Process_lazyExecPathGetter, Process_defaultSetter), 0);
+
+    this->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(this->vm(), "uptime"_s),
+        0, Process_functionUptime, ImplementationVisibility::Public, NoIntrinsic, 0);
+
+    this->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(this->vm(), "umask"_s),
+        1, Process_functionUmask, ImplementationVisibility::Public, NoIntrinsic, 0);
 }
 
 const JSC::ClassInfo Process::s_info = { "Process"_s, &Base::s_info, nullptr, nullptr,

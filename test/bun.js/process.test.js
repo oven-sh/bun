@@ -112,3 +112,16 @@ it("process.argv0", () => {
 it("process.execPath", () => {
   expect(process.execPath).toBe(realpathSync(process.argv0));
 });
+
+it("process.uptime()", () => {
+  expect(process.uptime()).toBeGreaterThan(0);
+  expect(Math.floor(process.uptime())).toBe(
+    Math.floor(performance.now() / 1000),
+  );
+});
+
+it("process.umask()", () => {
+  const orig = process.umask(777);
+  expect(orig).toBeGreaterThan(0);
+  expect(process.umask(orig)).toBe(777);
+});

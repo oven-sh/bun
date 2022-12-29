@@ -1181,6 +1181,15 @@ declare var performance: {
    *
    */
   now: () => number;
+
+  /**
+   * The timeOrigin read-only property of the Performance interface returns the
+   * high resolution timestamp that is used as the baseline for
+   * performance-related timestamps.
+   *
+   * @link https://developer.mozilla.org/en-US/docs/Web/API/Performance/timeOrigin
+   */
+  readonly timeOrigin: number;
 };
 
 /**

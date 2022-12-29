@@ -3,17 +3,31 @@ import {
   MD5,
   MD4,
   SHA1,
+  SHA224,
   SHA256,
   SHA384,
   SHA512,
   SHA512_256,
+  RIPEMD160,
   gc,
 } from "bun";
 import { it, expect, describe } from "bun:test";
 import { readFileSync } from "fs";
 
+const HashClasses = [
+  MD5,
+  MD4,
+  SHA1,
+  SHA224,
+  SHA256,
+  SHA384,
+  SHA512,
+  SHA512_256,
+  RIPEMD160,
+];
+
 describe("crypto", () => {
-  for (let Hash of [MD5, MD4, SHA1, SHA256, SHA384, SHA512, SHA512_256]) {
+  for (let Hash of HashClasses) {
     for (let [input, label] of [
       ["hello world", '"hello world"'],
       ["hello world".repeat(20).slice(), '"hello world" x 20'],

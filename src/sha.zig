@@ -18,14 +18,17 @@ fn NewHasher(comptime digest_size: comptime_int, comptime ContextType: type, com
         }
 
         pub fn hash(bytes: []const u8, out: *Digest) void {
+            @setRuntimeSafety(false);
             _ = Full(bytes.ptr, bytes.len, out);
         }
 
         pub fn update(this: *@This(), data: []const u8) void {
+            @setRuntimeSafety(false);
             std.debug.assert(Update(&this.hasher, data.ptr, data.len) == 1);
         }
 
         pub fn final(this: *@This(), out: *Digest) void {
+            @setRuntimeSafety(false);
             std.debug.assert(Final(out, &this.hasher) == 1);
         }
     };
@@ -136,6 +139,15 @@ pub const Hashers = struct {
         BoringSSL.SHA512_256_Init,
         BoringSSL.SHA512_256_Update,
         BoringSSL.SHA512_256_Final,
+    );
+
+    pub const RIPEMD160 = NewHasher(
+        BoringSSL.RIPEMD160_DIGEST_LENGTH,
+        BoringSSL.RIPEMD160_CTX,
+        BoringSSL.RIPEMD160,
+        BoringSSL.RIPEMD160_Init,
+        BoringSSL.RIPEMD160_Update,
+        BoringSSL.RIPEMD160_Final,
     );
 };
 

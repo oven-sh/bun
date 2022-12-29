@@ -1189,7 +1189,7 @@ interface Blob {
 
 declare var performance: {
   /**
-   * Seconds since Bun.js started
+   * Milliseconds since Bun.js started
    *
    * Uses a high-precision system timer to measure the time elapsed since the
    * Bun.js runtime was initialized. The value is represented as a double

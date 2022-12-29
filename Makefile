@@ -418,6 +418,7 @@ MINIMUM_ARCHIVE_FILES = -L$(BUN_DEPS_OUT_DIR) \
 	$(_MIMALLOC_LINK) \
 	-lssl \
 	-lcrypto \
+	-ldecrepit \
 	-llolhtml
 
 ARCHIVE_FILES_WITHOUT_LIBCRYPTO = $(MINIMUM_ARCHIVE_FILES) \
@@ -565,7 +566,7 @@ lolhtml:
 # no asm is not worth it!!
 .PHONY: boringssl-build
 boringssl-build:
-	cd $(BUN_DEPS_DIR)/boringssl && mkdir -p build && cd build && CFLAGS="$(CFLAGS)" cmake $(CMAKE_FLAGS) -DCMAKE_EXE_LINKER_FLAGS="-fuse-ld=lld" -GNinja .. && ninja
+	cd $(BUN_DEPS_DIR)/boringssl && mkdir -p build && cd build && CFLAGS="$(CFLAGS)" cmake $(CMAKE_FLAGS) -DCMAKE_EXE_LINKER_FLAGS="-fuse-ld=lld" -GNinja .. && ninja libcrypto.a libssl.a libdecrepit.a
 
 .PHONY: boringssl-build-debug
 boringssl-build-debug:
@@ -574,6 +575,7 @@ boringssl-build-debug:
 boringssl-copy:
 	cp $(BUN_DEPS_DIR)/boringssl/build/ssl/libssl.a $(BUN_DEPS_OUT_DIR)/libssl.a
 	cp $(BUN_DEPS_DIR)/boringssl/build/crypto/libcrypto.a $(BUN_DEPS_OUT_DIR)/libcrypto.a
+	cp $(BUN_DEPS_DIR)/boringssl/build/decrepit/libdecrepit.a $(BUN_DEPS_OUT_DIR)/libdecrepit.a
 
 .PHONY: boringssl
 boringssl: boringssl-build boringssl-copy
@@ -1422,7 +1424,7 @@ bun-link-lld-debug:
 		$(DEBUG_BIN)/bun-debug.o \
 		-W \
 		-o $(DEBUG_BIN)/bun-debug
-	rm -f $(DEBUG_BIN)/bun-debug.o.o 2> /dev/null # workaround for https://github.com/ziglang/zig/issues/14080
+	@rm -f $(DEBUG_BIN)/bun-debug.o.o 2> /dev/null # workaround for https://github.com/ziglang/zig/issues/14080
 
 bun-link-lld-debug-no-jsc:
 	$(CXX) $(BUN_LLD_FLAGS_WITHOUT_JSC) $(SYMBOLS) \
@@ -1451,7 +1453,7 @@ bun-link-lld-release:
 		$(OPTIMIZATION_LEVEL) $(RELEASE_FLAGS)
 	rm -rf $(BUN_RELEASE_BIN).dSYM
 	cp $(BUN_RELEASE_BIN) $(BUN_RELEASE_BIN)-profile
-	rm -f $(BUN_RELEASE_BIN).o.o # workaround for https://github.com/ziglang/zig/issues/14080
+	@rm -f $(BUN_RELEASE_BIN).o.o # workaround for https://github.com/ziglang/zig/issues/14080
 
 bun-release-copy-obj:
 	cp $(BUN_RELEASE_BIN).o $(BUN_DEPLOY_DIR).o

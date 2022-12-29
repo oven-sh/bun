@@ -134,8 +134,24 @@ pub const struct_Netscape_spki_st = extern struct {
     signature: [*c]ASN1_BIT_STRING,
 };
 pub const NETSCAPE_SPKI = struct_Netscape_spki_st;
-pub const struct_RIPEMD160state_st = opaque {};
+
+pub const struct_RIPEMD160state_st = extern struct {
+    h: [5]u32,
+    Nl: u32,
+    Nh: u32,
+    data: [64]u8,
+    num: c_uint,
+};
 pub const RIPEMD160_CTX = struct_RIPEMD160state_st;
+pub const RIPEMD160_CBLOCK = @as(c_int, 64);
+pub const RIPEMD160_LBLOCK = @import("std").zig.c_translation.MacroArithmetic.div(RIPEMD160_CBLOCK, @as(c_int, 4));
+pub const RIPEMD160_DIGEST_LENGTH = @as(c_int, 20);
+pub extern fn RIPEMD160_Init(ctx: [*c]RIPEMD160_CTX) c_int;
+pub extern fn RIPEMD160_Update(ctx: [*c]RIPEMD160_CTX, data: ?*const anyopaque, len: usize) c_int;
+pub extern fn RIPEMD160_Final(out: [*c]u8, ctx: [*c]RIPEMD160_CTX) c_int;
+pub extern fn RIPEMD160(data: [*c]const u8, len: usize, out: [*c]u8) [*c]u8;
+pub extern fn RIPEMD160_Transform(ctx: [*c]RIPEMD160_CTX, block: [*c]const u8) void;
+
 pub const struct_X509_POLICY_CACHE_st = opaque {};
 pub const X509_POLICY_CACHE = struct_X509_POLICY_CACHE_st;
 pub const struct_X509_POLICY_LEVEL_st = opaque {};
@@ -2806,6 +2822,7 @@ pub extern fn X509_ALGOR_new() [*c]X509_ALGOR;
 pub extern fn X509_ALGOR_free(a: [*c]X509_ALGOR) void;
 pub extern fn d2i_X509_ALGOR(a: [*c][*c]X509_ALGOR, in: [*c][*c]const u8, len: c_long) [*c]X509_ALGOR;
 pub extern fn i2d_X509_ALGOR(a: [*c]X509_ALGOR, out: [*c][*c]u8) c_int;
+
 pub extern const X509_ALGOR_it: ASN1_ITEM;
 pub const struct_stack_st_X509_ALGOR = opaque {};
 pub const stack_X509_ALGOR_free_func = ?*const fn ([*c]X509_ALGOR) callconv(.C) void;

@@ -36,7 +36,7 @@ shallow = true
 fetchRecurseSubmodules = false
 [submodule "src/deps/boringssl"]
 path = src/deps/boringssl
-url = https://github.com/google/boringssl.git
+url = https://github.com/oven-sh/boringssl.git
 ignore = dirty
 depth = 1
 shallow = true

@@ -373,6 +373,82 @@ pub const SliceOrBuffer = union(Tag) {
             else => null,
         };
     }
+
+    pub fn fromJSWithEncoding(global: *JSC.JSGlobalObject, allocator: std.mem.Allocator, value: JSC.JSValue, encoding_value: JSC.JSValue) ?SliceOrBuffer {
+        if (encoding_value.isEmptyOrUndefinedOrNull())
+            return fromJS(global, allocator, value);
+
+        switch (value.jsType()) {
+            .ArrayBuffer,
+            .Int8Array,
+            .Uint8Array,
+            .Uint8ClampedArray,
+            .Int16Array,
+            .Uint16Array,
+            .Int32Array,
+            .Uint32Array,
+            .Float32Array,
+            .Float64Array,
+            .BigInt64Array,
+            .BigUint64Array,
+            .DataView,
+            => return SliceOrBuffer{
+                .buffer = JSC.MarkedArrayBuffer{
+                    .buffer = value.asArrayBuffer(global) orelse return null,
+                    .allocator = null,
+                },
+            },
+            else => {},
+        }
+
+        var encoding_str = encoding_value.toSlice(global, allocator);
+        if (encoding_str.len == 0)
+            return fromJS(global, allocator, value);
+
+        defer encoding_str.deinit();
+        // TODO: better error
+        const encoding = Encoding.from(encoding_str.slice()) orelse return null;
+        if (encoding == .utf8) {
+            return fromJS(global, allocator, value);
+        }
+
+        var zig_str = value.getZigString(global);
+        if (zig_str.len == 0) {
+            return fromJS(global, allocator, value);
+        }
+
+        const out = brk: {
+            if (zig_str.is16Bit()) {
+                const buf = zig_str.slice();
+                break :brk switch (encoding) {
+                    Encoding.utf8 => JSC.WebCore.Encoder.constructFromU8(buf.ptr, buf.len, .utf8),
+                    Encoding.ucs2 => JSC.WebCore.Encoder.constructFromU8(buf.ptr, buf.len, .ucs2),
+                    Encoding.utf16le => JSC.WebCore.Encoder.constructFromU8(buf.ptr, buf.len, .utf16le),
+                    Encoding.latin1 => JSC.WebCore.Encoder.constructFromU8(buf.ptr, buf.len, .latin1),
+                    Encoding.ascii => JSC.WebCore.Encoder.constructFromU8(buf.ptr, buf.len, .ascii),
+                    Encoding.base64 => JSC.WebCore.Encoder.constructFromU8(buf.ptr, buf.len, .base64),
+                    Encoding.hex => JSC.WebCore.Encoder.constructFromU8(buf.ptr, buf.len, .hex),
+                    Encoding.buffer => JSC.WebCore.Encoder.constructFromU8(buf.ptr, buf.len, .buffer),
+                    Encoding.base64url => JSC.WebCore.Encoder.constructFromU8(buf.ptr, buf.len, .base64url),
+                };
+            } else {
+                const buf = zig_str.utf16SliceAligned();
+                break :brk switch (encoding) {
+                    Encoding.utf8 => JSC.WebCore.Encoder.constructFromU16(buf.ptr, buf.len, .utf8),
+                    Encoding.ucs2 => JSC.WebCore.Encoder.constructFromU16(buf.ptr, buf.len, .ucs2),
+                    Encoding.utf16le => JSC.WebCore.Encoder.constructFromU16(buf.ptr, buf.len, .utf16le),
+                    Encoding.latin1 => JSC.WebCore.Encoder.constructFromU16(buf.ptr, buf.len, .latin1),
+                    Encoding.ascii => JSC.WebCore.Encoder.constructFromU16(buf.ptr, buf.len, .ascii),
+                    Encoding.base64 => JSC.WebCore.Encoder.constructFromU16(buf.ptr, buf.len, .base64),
+                    Encoding.hex => JSC.WebCore.Encoder.constructFromU16(buf.ptr, buf.len, .hex),
+                    Encoding.buffer => JSC.WebCore.Encoder.constructFromU16(buf.ptr, buf.len, .buffer),
+                    Encoding.base64url => JSC.WebCore.Encoder.constructFromU16(buf.ptr, buf.len, .base64url),
+                };
+            }
+        };
+
+        return .{ .string = JSC.ZigString.Slice.from(out, allocator) };
+    }
 };
 pub const ErrorCode = @import("./nodejs_error_code.zig").Code;
 
@@ -449,6 +525,36 @@ pub const Encoding = enum(u8) {
             },
             .hex => {
                 var buf: [size * 4]u8 = undefined;
+                var out = std.fmt.bufPrint(&buf, "{}", .{std.fmt.fmtSliceHexLower(input)}) catch unreachable;
+                const result = JSC.ZigString.init(out).toValueGC(globalThis);
+                return result;
+            },
+            else => {
+                globalThis.throwInvalidArguments("Unexpected encoding", .{});
+                return JSC.JSValue.zero;
+            },
+        }
+    }
+
+    pub fn encodeWithMaxSize(encoding: Encoding, globalThis: *JSC.JSGlobalObject, size: usize, comptime max_size: usize, input: []const u8) JSC.JSValue {
+        switch (encoding) {
+            .base64 => {
+                var base64_buf: [std.base64.standard.Encoder.calcSize(max_size)]u8 = undefined;
+                var base64 = base64_buf[0..std.base64.standard.Encoder.calcSize(size)];
+                const result = JSC.ZigString.init(std.base64.standard.Encoder.encode(base64, input)).toValueGC(globalThis);
+                return result;
+            },
+            .base64url => {
+                var buf_: [std.base64.url_safe.Encoder.calcSize(max_size) + "data:;base64,".len]u8 = undefined;
+                var buf = buf_[0 .. std.base64.url_safe.Encoder.calcSize(size) + "data:;base64,".len];
+                var encoded = std.base64.url_safe.Encoder.encode(buf["data:;base64,".len..], input);
+                buf[0.."data:;base64,".len].* = "data:;base64,".*;
+
+                const result = JSC.ZigString.init(buf[0 .. "data:;base64,".len + encoded.len]).toValueGC(globalThis);
+                return result;
+            },
+            .hex => {
+                var buf: [max_size * 4]u8 = undefined;
                 var out = std.fmt.bufPrint(&buf, "{}", .{std.fmt.fmtSliceHexLower(input)}) catch unreachable;
                 const result = JSC.ZigString.init(out).toValueGC(globalThis);
                 return result;

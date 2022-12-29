@@ -725,22 +725,22 @@ public:
     void finishCreation(JSC::VM&);
 };
 
-class JSRIPEMD160 final : public JSC::JSDestructibleObject {
+class JSCryptoHasher final : public JSC::JSDestructibleObject {
 public:
     using Base = JSC::JSDestructibleObject;
-    static JSRIPEMD160* create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, void* ctx);
+    static JSCryptoHasher* create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, void* ctx);
 
     DECLARE_EXPORT_INFO;
     template<typename, JSC::SubspaceAccess mode> static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
     {
         if constexpr (mode == JSC::SubspaceAccess::Concurrently)
             return nullptr;
-        return WebCore::subspaceForImpl<JSRIPEMD160, WebCore::UseCustomHeapCellType::No>(
+        return WebCore::subspaceForImpl<JSCryptoHasher, WebCore::UseCustomHeapCellType::No>(
             vm,
-            [](auto& spaces) { return spaces.m_clientSubspaceForRIPEMD160.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForRIPEMD160 = WTFMove(space); },
-            [](auto& spaces) { return spaces.m_subspaceForRIPEMD160.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_subspaceForRIPEMD160 = WTFMove(space); });
+            [](auto& spaces) { return spaces.m_clientSubspaceForCryptoHasher.get(); },
+            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForCryptoHasher = WTFMove(space); },
+            [](auto& spaces) { return spaces.m_subspaceForCryptoHasher.get(); },
+            [](auto& spaces, auto&& space) { spaces.m_subspaceForCryptoHasher = WTFMove(space); });
     }
 
     static void destroy(JSC::JSCell*);
@@ -752,7 +752,7 @@ public:
     static JSObject* createPrototype(VM& vm, JSDOMGlobalObject* globalObject);
     static JSObject* createConstructor(VM& vm, JSGlobalObject* globalObject, JSValue prototype);
 
-    ~JSRIPEMD160();
+    ~JSCryptoHasher();
 
     void* wrapped() const { return m_ctx; }
 
@@ -762,17 +762,24 @@ public:
     }
 
     static void analyzeHeap(JSCell*, JSC::HeapAnalyzer&);
-    static ptrdiff_t offsetOfWrapped() { return OBJECT_OFFSETOF(JSRIPEMD160, m_ctx); }
+    static ptrdiff_t offsetOfWrapped() { return OBJECT_OFFSETOF(JSCryptoHasher, m_ctx); }
 
     void* m_ctx { nullptr };
 
-    JSRIPEMD160(JSC::VM& vm, JSC::Structure* structure, void* sinkPtr)
+    JSCryptoHasher(JSC::VM& vm, JSC::Structure* structure, void* sinkPtr)
         : Base(vm, structure)
     {
         m_ctx = sinkPtr;
     }
 
     void finishCreation(JSC::VM&);
+
+    DECLARE_VISIT_CHILDREN;
+    template<typename Visitor> void visitAdditionalChildren(Visitor&);
+    DECLARE_VISIT_OUTPUT_CONSTRAINTS;
+
+    mutable JSC::WriteBarrier<JSC::Unknown> m_algorithms;
+    mutable JSC::WriteBarrier<JSC::Unknown> m_algorithm;
 };
 
 class JSServerWebSocket final : public JSC::JSDestructibleObject {

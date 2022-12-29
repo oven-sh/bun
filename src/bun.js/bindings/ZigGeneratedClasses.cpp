@@ -4265,13 +4265,13 @@ extern "C" EncodedJSValue SHA512_256__create(Zig::GlobalObject* globalObject, vo
 
     return JSValue::encode(instance);
 }
-class JSRIPEMD160Prototype final : public JSC::JSNonFinalObject {
+class JSCryptoHasherPrototype final : public JSC::JSNonFinalObject {
 public:
     using Base = JSC::JSNonFinalObject;
 
-    static JSRIPEMD160Prototype* create(JSC::VM& vm, JSGlobalObject* globalObject, JSC::Structure* structure)
+    static JSCryptoHasherPrototype* create(JSC::VM& vm, JSGlobalObject* globalObject, JSC::Structure* structure)
     {
-        JSRIPEMD160Prototype* ptr = new (NotNull, JSC::allocateCell<JSRIPEMD160Prototype>(vm)) JSRIPEMD160Prototype(vm, globalObject, structure);
+        JSCryptoHasherPrototype* ptr = new (NotNull, JSC::allocateCell<JSCryptoHasherPrototype>(vm)) JSCryptoHasherPrototype(vm, globalObject, structure);
         ptr->finishCreation(vm, globalObject);
         return ptr;
     }
@@ -4288,7 +4288,7 @@ public:
     }
 
 private:
-    JSRIPEMD160Prototype(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure)
+    JSCryptoHasherPrototype(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure)
         : Base(vm, structure)
     {
     }
@@ -4296,10 +4296,10 @@ private:
     void finishCreation(JSC::VM&, JSC::JSGlobalObject*);
 };
 
-class JSRIPEMD160Constructor final : public JSC::InternalFunction {
+class JSCryptoHasherConstructor final : public JSC::InternalFunction {
 public:
     using Base = JSC::InternalFunction;
-    static JSRIPEMD160Constructor* create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, JSRIPEMD160Prototype* prototype);
+    static JSCryptoHasherConstructor* create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, JSCryptoHasherPrototype* prototype);
 
     static constexpr unsigned StructureFlags = Base::StructureFlags;
     static constexpr bool needsDestruction = false;
@@ -4313,15 +4313,15 @@ public:
     {
         if constexpr (mode == JSC::SubspaceAccess::Concurrently)
             return nullptr;
-        return WebCore::subspaceForImpl<JSRIPEMD160Constructor, WebCore::UseCustomHeapCellType::No>(
+        return WebCore::subspaceForImpl<JSCryptoHasherConstructor, WebCore::UseCustomHeapCellType::No>(
             vm,
-            [](auto& spaces) { return spaces.m_clientSubspaceForRIPEMD160Constructor.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForRIPEMD160Constructor = WTFMove(space); },
-            [](auto& spaces) { return spaces.m_subspaceForRIPEMD160Constructor.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_subspaceForRIPEMD160Constructor = WTFMove(space); });
+            [](auto& spaces) { return spaces.m_clientSubspaceForCryptoHasherConstructor.get(); },
+            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForCryptoHasherConstructor = WTFMove(space); },
+            [](auto& spaces) { return spaces.m_subspaceForCryptoHasherConstructor.get(); },
+            [](auto& spaces, auto&& space) { spaces.m_subspaceForCryptoHasherConstructor = WTFMove(space); });
     }
 
-    void initializeProperties(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSRIPEMD160Prototype* prototype);
+    void initializeProperties(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSCryptoHasherPrototype* prototype);
 
     // Must be defined for each specialization class.
     static JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES construct(JSC::JSGlobalObject*, JSC::CallFrame*);
@@ -4329,62 +4329,97 @@ public:
     DECLARE_EXPORT_INFO;
 
 private:
-    JSRIPEMD160Constructor(JSC::VM& vm, JSC::Structure* structure);
-    void finishCreation(JSC::VM&, JSC::JSGlobalObject* globalObject, JSRIPEMD160Prototype* prototype);
+    JSCryptoHasherConstructor(JSC::VM& vm, JSC::Structure* structure);
+    void finishCreation(JSC::VM&, JSC::JSGlobalObject* globalObject, JSCryptoHasherPrototype* prototype);
 };
 
-extern "C" void* RIPEMD160Class__construct(JSC::JSGlobalObject*, JSC::CallFrame*);
-JSC_DECLARE_CUSTOM_GETTER(jsRIPEMD160Constructor);
-extern "C" void RIPEMD160Class__finalize(void*);
+extern "C" void* CryptoHasherClass__construct(JSC::JSGlobalObject*, JSC::CallFrame*);
+JSC_DECLARE_CUSTOM_GETTER(jsCryptoHasherConstructor);
+extern "C" void CryptoHasherClass__finalize(void*);
 
-extern "C" JSC::EncodedJSValue RIPEMD160Prototype__getByteLength(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject);
-JSC_DECLARE_CUSTOM_GETTER(RIPEMD160Prototype__byteLengthGetterWrap);
+extern "C" JSC::EncodedJSValue CryptoHasherPrototype__getAlgorithm(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject);
+JSC_DECLARE_CUSTOM_GETTER(CryptoHasherPrototype__algorithmGetterWrap);
 
-extern "C" EncodedJSValue RIPEMD160Prototype__digest(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
-JSC_DECLARE_HOST_FUNCTION(RIPEMD160Prototype__digestCallback);
+extern "C" JSC::EncodedJSValue CryptoHasherPrototype__getByteLength(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject);
+JSC_DECLARE_CUSTOM_GETTER(CryptoHasherPrototype__byteLengthGetterWrap);
 
-extern "C" EncodedJSValue RIPEMD160Prototype__update(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
-JSC_DECLARE_HOST_FUNCTION(RIPEMD160Prototype__updateCallback);
+extern "C" EncodedJSValue CryptoHasherPrototype__digest(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
+JSC_DECLARE_HOST_FUNCTION(CryptoHasherPrototype__digestCallback);
 
-STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSRIPEMD160Prototype, JSRIPEMD160Prototype::Base);
+extern "C" EncodedJSValue CryptoHasherPrototype__update(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
+JSC_DECLARE_HOST_FUNCTION(CryptoHasherPrototype__updateCallback);
 
-static const HashTableValue JSRIPEMD160PrototypeTableValues[] = {
-    { "byteLength"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { HashTableValue::GetterSetterType, RIPEMD160Prototype__byteLengthGetterWrap, 0 } },
-    { "digest"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, RIPEMD160Prototype__digestCallback, 0 } },
-    { "update"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, RIPEMD160Prototype__updateCallback, 1 } }
+STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSCryptoHasherPrototype, JSCryptoHasherPrototype::Base);
+
+static const HashTableValue JSCryptoHasherPrototypeTableValues[] = {
+    { "algorithm"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { HashTableValue::GetterSetterType, CryptoHasherPrototype__algorithmGetterWrap, 0 } },
+    { "byteLength"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { HashTableValue::GetterSetterType, CryptoHasherPrototype__byteLengthGetterWrap, 0 } },
+    { "digest"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, CryptoHasherPrototype__digestCallback, 0 } },
+    { "update"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, CryptoHasherPrototype__updateCallback, 2 } }
 };
 
-const ClassInfo JSRIPEMD160Prototype::s_info = { "RIPEMD160"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSRIPEMD160Prototype) };
+const ClassInfo JSCryptoHasherPrototype::s_info = { "CryptoHasher"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSCryptoHasherPrototype) };
 
-JSC_DEFINE_CUSTOM_GETTER(jsRIPEMD160Constructor, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName))
+JSC_DEFINE_CUSTOM_GETTER(jsCryptoHasherConstructor, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName))
 {
     VM& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     auto* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
-    auto* prototype = jsDynamicCast<JSRIPEMD160Prototype*>(JSValue::decode(thisValue));
+    auto* prototype = jsDynamicCast<JSCryptoHasherPrototype*>(JSValue::decode(thisValue));
 
     if (UNLIKELY(!prototype))
         return throwVMTypeError(lexicalGlobalObject, throwScope);
-    return JSValue::encode(globalObject->JSRIPEMD160Constructor());
+    return JSValue::encode(globalObject->JSCryptoHasherConstructor());
 }
 
-JSC_DEFINE_CUSTOM_GETTER(RIPEMD160Prototype__byteLengthGetterWrap, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
+JSC_DEFINE_CUSTOM_GETTER(CryptoHasherPrototype__algorithmGetterWrap, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
 {
     auto& vm = lexicalGlobalObject->vm();
     Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
-    JSRIPEMD160* thisObject = jsCast<JSRIPEMD160*>(JSValue::decode(thisValue));
+    JSCryptoHasher* thisObject = jsCast<JSCryptoHasher*>(JSValue::decode(thisValue));
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
-    JSC::EncodedJSValue result = RIPEMD160Prototype__getByteLength(thisObject->wrapped(), globalObject);
+
+    if (JSValue cachedValue = thisObject->m_algorithm.get())
+        return JSValue::encode(cachedValue);
+
+    JSC::JSValue result = JSC::JSValue::decode(
+        CryptoHasherPrototype__getAlgorithm(thisObject->wrapped(), globalObject));
+    RETURN_IF_EXCEPTION(throwScope, {});
+    thisObject->m_algorithm.set(vm, thisObject, result);
+    RELEASE_AND_RETURN(throwScope, JSValue::encode(result));
+}
+
+extern "C" void CryptoHasherPrototype__algorithmSetCachedValue(JSC::EncodedJSValue thisValue, JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue value)
+{
+    auto& vm = globalObject->vm();
+    auto* thisObject = jsCast<JSCryptoHasher*>(JSValue::decode(thisValue));
+    thisObject->m_algorithm.set(vm, thisObject, JSValue::decode(value));
+}
+
+extern "C" EncodedJSValue CryptoHasherPrototype__algorithmGetCachedValue(JSC::EncodedJSValue thisValue)
+{
+    auto* thisObject = jsCast<JSCryptoHasher*>(JSValue::decode(thisValue));
+    return JSValue::encode(thisObject->m_algorithm.get());
+}
+
+JSC_DEFINE_CUSTOM_GETTER(CryptoHasherPrototype__byteLengthGetterWrap, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
+{
+    auto& vm = lexicalGlobalObject->vm();
+    Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    JSCryptoHasher* thisObject = jsCast<JSCryptoHasher*>(JSValue::decode(thisValue));
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+    JSC::EncodedJSValue result = CryptoHasherPrototype__getByteLength(thisObject->wrapped(), globalObject);
     RETURN_IF_EXCEPTION(throwScope, {});
     RELEASE_AND_RETURN(throwScope, result);
 }
 
-JSC_DEFINE_HOST_FUNCTION(RIPEMD160Prototype__digestCallback, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+JSC_DEFINE_HOST_FUNCTION(CryptoHasherPrototype__digestCallback, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
     auto& vm = lexicalGlobalObject->vm();
 
-    JSRIPEMD160* thisObject = jsDynamicCast<JSRIPEMD160*>(callFrame->thisValue());
+    JSCryptoHasher* thisObject = jsDynamicCast<JSCryptoHasher*>(callFrame->thisValue());
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
@@ -4393,14 +4428,14 @@ JSC_DEFINE_HOST_FUNCTION(RIPEMD160Prototype__digestCallback, (JSGlobalObject * l
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
 
-    return RIPEMD160Prototype__digest(thisObject->wrapped(), lexicalGlobalObject, callFrame);
+    return CryptoHasherPrototype__digest(thisObject->wrapped(), lexicalGlobalObject, callFrame);
 }
 
-JSC_DEFINE_HOST_FUNCTION(RIPEMD160Prototype__updateCallback, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+JSC_DEFINE_HOST_FUNCTION(CryptoHasherPrototype__updateCallback, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
     auto& vm = lexicalGlobalObject->vm();
 
-    JSRIPEMD160* thisObject = jsDynamicCast<JSRIPEMD160*>(callFrame->thisValue());
+    JSCryptoHasher* thisObject = jsDynamicCast<JSCryptoHasher*>(callFrame->thisValue());
 
     if (UNLIKELY(!thisObject)) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
@@ -4409,51 +4444,51 @@ JSC_DEFINE_HOST_FUNCTION(RIPEMD160Prototype__updateCallback, (JSGlobalObject * l
 
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
 
-    return RIPEMD160Prototype__update(thisObject->wrapped(), lexicalGlobalObject, callFrame);
+    return CryptoHasherPrototype__update(thisObject->wrapped(), lexicalGlobalObject, callFrame);
 }
 
-void JSRIPEMD160Prototype::finishCreation(JSC::VM& vm, JSC::JSGlobalObject* globalObject)
+void JSCryptoHasherPrototype::finishCreation(JSC::VM& vm, JSC::JSGlobalObject* globalObject)
 {
     Base::finishCreation(vm);
-    reifyStaticProperties(vm, JSRIPEMD160::info(), JSRIPEMD160PrototypeTableValues, *this);
+    reifyStaticProperties(vm, JSCryptoHasher::info(), JSCryptoHasherPrototypeTableValues, *this);
     JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
 }
 
-extern "C" JSC_DECLARE_CUSTOM_GETTER(RIPEMD160Class__getByteLengthStatic);
-extern "C" JSC_DECLARE_HOST_FUNCTION(RIPEMD160Class__hash);
+extern "C" JSC_DECLARE_CUSTOM_GETTER(CryptoHasherClass__getAlgorithms);
+extern "C" JSC_DECLARE_HOST_FUNCTION(CryptoHasherClass__hash);
 
-static const HashTableValue JSRIPEMD160ConstructorTableValues[] = {
-    { "byteLength"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { HashTableValue::GetterSetterType, RIPEMD160Class__getByteLengthStatic, 0 } },
-    { "hash"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, RIPEMD160Class__hash, 2 } }
+static const HashTableValue JSCryptoHasherConstructorTableValues[] = {
+    { "algorithms"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { HashTableValue::GetterSetterType, CryptoHasherClass__getAlgorithms, 0 } },
+    { "hash"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, CryptoHasherClass__hash, 2 } }
 };
 
-void JSRIPEMD160Constructor::finishCreation(VM& vm, JSC::JSGlobalObject* globalObject, JSRIPEMD160Prototype* prototype)
+void JSCryptoHasherConstructor::finishCreation(VM& vm, JSC::JSGlobalObject* globalObject, JSCryptoHasherPrototype* prototype)
 {
-    Base::finishCreation(vm, 0, "RIPEMD160"_s, PropertyAdditionMode::WithoutStructureTransition);
-    reifyStaticProperties(vm, &JSRIPEMD160Constructor::s_info, JSRIPEMD160ConstructorTableValues, *this);
+    Base::finishCreation(vm, 0, "CryptoHasher"_s, PropertyAdditionMode::WithoutStructureTransition);
+    reifyStaticProperties(vm, &JSCryptoHasherConstructor::s_info, JSCryptoHasherConstructorTableValues, *this);
     putDirectWithoutTransition(vm, vm.propertyNames->prototype, prototype, PropertyAttribute::DontEnum | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
     ASSERT(inherits(info()));
 }
 
-JSRIPEMD160Constructor::JSRIPEMD160Constructor(JSC::VM& vm, JSC::Structure* structure)
+JSCryptoHasherConstructor::JSCryptoHasherConstructor(JSC::VM& vm, JSC::Structure* structure)
     : Base(vm, structure, construct, construct)
 {
 }
 
-JSRIPEMD160Constructor* JSRIPEMD160Constructor::create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, JSRIPEMD160Prototype* prototype)
+JSCryptoHasherConstructor* JSCryptoHasherConstructor::create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, JSCryptoHasherPrototype* prototype)
 {
-    JSRIPEMD160Constructor* ptr = new (NotNull, JSC::allocateCell<JSRIPEMD160Constructor>(vm)) JSRIPEMD160Constructor(vm, structure);
+    JSCryptoHasherConstructor* ptr = new (NotNull, JSC::allocateCell<JSCryptoHasherConstructor>(vm)) JSCryptoHasherConstructor(vm, structure);
     ptr->finishCreation(vm, globalObject, prototype);
     return ptr;
 }
 
-JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSRIPEMD160Constructor::construct(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame)
+JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSCryptoHasherConstructor::construct(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame)
 {
     Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
     JSC::VM& vm = globalObject->vm();
     JSObject* newTarget = asObject(callFrame->newTarget());
-    auto* constructor = globalObject->JSRIPEMD160Constructor();
-    Structure* structure = globalObject->JSRIPEMD160Structure();
+    auto* constructor = globalObject->JSCryptoHasherConstructor();
+    Structure* structure = globalObject->JSCryptoHasherStructure();
     if (constructor != newTarget) {
         auto scope = DECLARE_THROW_SCOPE(vm);
 
@@ -4464,64 +4499,64 @@ JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSRIPEMD160Constructor::construct(J
         structure = InternalFunction::createSubclassStructure(
             globalObject,
             newTarget,
-            functionGlobalObject->JSRIPEMD160Structure());
+            functionGlobalObject->JSCryptoHasherStructure());
     }
 
-    void* ptr = RIPEMD160Class__construct(globalObject, callFrame);
+    void* ptr = CryptoHasherClass__construct(globalObject, callFrame);
 
     if (UNLIKELY(!ptr)) {
         return JSValue::encode(JSC::jsUndefined());
     }
 
-    JSRIPEMD160* instance = JSRIPEMD160::create(vm, globalObject, structure, ptr);
+    JSCryptoHasher* instance = JSCryptoHasher::create(vm, globalObject, structure, ptr);
 
     return JSValue::encode(instance);
 }
 
-void JSRIPEMD160Constructor::initializeProperties(VM& vm, JSC::JSGlobalObject* globalObject, JSRIPEMD160Prototype* prototype)
+void JSCryptoHasherConstructor::initializeProperties(VM& vm, JSC::JSGlobalObject* globalObject, JSCryptoHasherPrototype* prototype)
 {
 }
 
-const ClassInfo JSRIPEMD160Constructor::s_info = { "Function"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSRIPEMD160Constructor) };
+const ClassInfo JSCryptoHasherConstructor::s_info = { "Function"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSCryptoHasherConstructor) };
 
-extern "C" EncodedJSValue RIPEMD160__getConstructor(Zig::GlobalObject* globalObject)
+extern "C" EncodedJSValue CryptoHasher__getConstructor(Zig::GlobalObject* globalObject)
 {
-    return JSValue::encode(globalObject->JSRIPEMD160Constructor());
+    return JSValue::encode(globalObject->JSCryptoHasherConstructor());
 }
 
-JSRIPEMD160::~JSRIPEMD160()
+JSCryptoHasher::~JSCryptoHasher()
 {
     if (m_ctx) {
-        RIPEMD160Class__finalize(m_ctx);
+        CryptoHasherClass__finalize(m_ctx);
     }
 }
-void JSRIPEMD160::destroy(JSCell* cell)
+void JSCryptoHasher::destroy(JSCell* cell)
 {
-    static_cast<JSRIPEMD160*>(cell)->JSRIPEMD160::~JSRIPEMD160();
+    static_cast<JSCryptoHasher*>(cell)->JSCryptoHasher::~JSCryptoHasher();
 }
 
-const ClassInfo JSRIPEMD160::s_info = { "RIPEMD160"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSRIPEMD160) };
+const ClassInfo JSCryptoHasher::s_info = { "CryptoHasher"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSCryptoHasher) };
 
-void JSRIPEMD160::finishCreation(VM& vm)
+void JSCryptoHasher::finishCreation(VM& vm)
 {
     Base::finishCreation(vm);
     ASSERT(inherits(info()));
 }
 
-JSRIPEMD160* JSRIPEMD160::create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, void* ctx)
+JSCryptoHasher* JSCryptoHasher::create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, void* ctx)
 {
-    JSRIPEMD160* ptr = new (NotNull, JSC::allocateCell<JSRIPEMD160>(vm)) JSRIPEMD160(vm, structure, ctx);
+    JSCryptoHasher* ptr = new (NotNull, JSC::allocateCell<JSCryptoHasher>(vm)) JSCryptoHasher(vm, structure, ctx);
     ptr->finishCreation(vm);
     return ptr;
 }
 
-extern "C" void* RIPEMD160__fromJS(JSC::EncodedJSValue value)
+extern "C" void* CryptoHasher__fromJS(JSC::EncodedJSValue value)
 {
     JSC::JSValue decodedValue = JSC::JSValue::decode(value);
     if (!decodedValue || decodedValue.isUndefinedOrNull())
         return nullptr;
 
-    JSRIPEMD160* object = JSC::jsDynamicCast<JSRIPEMD160*>(decodedValue);
+    JSCryptoHasher* object = JSC::jsDynamicCast<JSCryptoHasher*>(decodedValue);
 
     if (!object)
         return nullptr;
@@ -4529,9 +4564,9 @@ extern "C" void* RIPEMD160__fromJS(JSC::EncodedJSValue value)
     return object->wrapped();
 }
 
-extern "C" bool RIPEMD160__dangerouslySetPtr(JSC::EncodedJSValue value, void* ptr)
+extern "C" bool CryptoHasher__dangerouslySetPtr(JSC::EncodedJSValue value, void* ptr)
 {
-    JSRIPEMD160* object = JSC::jsDynamicCast<JSRIPEMD160*>(JSValue::decode(value));
+    JSCryptoHasher* object = JSC::jsDynamicCast<JSCryptoHasher*>(JSValue::decode(value));
     if (!object)
         return false;
 
@@ -4539,11 +4574,11 @@ extern "C" bool RIPEMD160__dangerouslySetPtr(JSC::EncodedJSValue value, void* pt
     return true;
 }
 
-extern "C" const size_t RIPEMD160__ptrOffset = JSRIPEMD160::offsetOfWrapped();
+extern "C" const size_t CryptoHasher__ptrOffset = JSCryptoHasher::offsetOfWrapped();
 
-void JSRIPEMD160::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
+void JSCryptoHasher::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
 {
-    auto* thisObject = jsCast<JSRIPEMD160*>(cell);
+    auto* thisObject = jsCast<JSCryptoHasher*>(cell);
     if (void* wrapped = thisObject->wrapped()) {
         // if (thisObject->scriptExecutionContext())
         //     analyzer.setLabelForCell(cell, "url " + thisObject->scriptExecutionContext()->url().string());
@@ -4551,24 +4586,60 @@ void JSRIPEMD160::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
     Base::analyzeHeap(cell, analyzer);
 }
 
-JSObject* JSRIPEMD160::createConstructor(VM& vm, JSGlobalObject* globalObject, JSValue prototype)
+JSObject* JSCryptoHasher::createConstructor(VM& vm, JSGlobalObject* globalObject, JSValue prototype)
 {
-    return WebCore::JSRIPEMD160Constructor::create(vm, globalObject, WebCore::JSRIPEMD160Constructor::createStructure(vm, globalObject, globalObject->functionPrototype()), jsCast<WebCore::JSRIPEMD160Prototype*>(prototype));
+    return WebCore::JSCryptoHasherConstructor::create(vm, globalObject, WebCore::JSCryptoHasherConstructor::createStructure(vm, globalObject, globalObject->functionPrototype()), jsCast<WebCore::JSCryptoHasherPrototype*>(prototype));
 }
 
-JSObject* JSRIPEMD160::createPrototype(VM& vm, JSDOMGlobalObject* globalObject)
+JSObject* JSCryptoHasher::createPrototype(VM& vm, JSDOMGlobalObject* globalObject)
 {
-    return JSRIPEMD160Prototype::create(vm, globalObject, JSRIPEMD160Prototype::createStructure(vm, globalObject, globalObject->objectPrototype()));
+    return JSCryptoHasherPrototype::create(vm, globalObject, JSCryptoHasherPrototype::createStructure(vm, globalObject, globalObject->objectPrototype()));
 }
 
-extern "C" EncodedJSValue RIPEMD160__create(Zig::GlobalObject* globalObject, void* ptr)
+extern "C" EncodedJSValue CryptoHasher__create(Zig::GlobalObject* globalObject, void* ptr)
 {
     auto& vm = globalObject->vm();
-    JSC::Structure* structure = globalObject->JSRIPEMD160Structure();
-    JSRIPEMD160* instance = JSRIPEMD160::create(vm, globalObject, structure, ptr);
+    JSC::Structure* structure = globalObject->JSCryptoHasherStructure();
+    JSCryptoHasher* instance = JSCryptoHasher::create(vm, globalObject, structure, ptr);
 
     return JSValue::encode(instance);
 }
+
+template<typename Visitor>
+void JSCryptoHasher::visitChildrenImpl(JSCell* cell, Visitor& visitor)
+{
+    JSCryptoHasher* thisObject = jsCast<JSCryptoHasher*>(cell);
+    ASSERT_GC_OBJECT_INHERITS(thisObject, info());
+    Base::visitChildren(thisObject, visitor);
+
+    visitor.append(thisObject->m_algorithms);
+    visitor.append(thisObject->m_algorithm);
+}
+
+DEFINE_VISIT_CHILDREN(JSCryptoHasher);
+
+template<typename Visitor>
+void JSCryptoHasher::visitAdditionalChildren(Visitor& visitor)
+{
+    JSCryptoHasher* thisObject = this;
+    ASSERT_GC_OBJECT_INHERITS(thisObject, info());
+
+    visitor.append(thisObject->m_algorithms);
+    visitor.append(thisObject->m_algorithm);
+    ;
+}
+
+DEFINE_VISIT_ADDITIONAL_CHILDREN(JSCryptoHasher);
+
+template<typename Visitor>
+void JSCryptoHasher::visitOutputConstraintsImpl(JSCell* cell, Visitor& visitor)
+{
+    JSCryptoHasher* thisObject = jsCast<JSCryptoHasher*>(cell);
+    ASSERT_GC_OBJECT_INHERITS(thisObject, info());
+    thisObject->visitAdditionalChildren<Visitor>(visitor);
+}
+
+DEFINE_VISIT_OUTPUT_CONSTRAINTS(JSCryptoHasher);
 class JSServerWebSocketPrototype final : public JSC::JSNonFinalObject {
 public:
     using Base = JSC::JSNonFinalObject;

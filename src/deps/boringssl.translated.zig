@@ -1339,9 +1339,22 @@ pub extern fn EVP_MD_CTX_move(out: [*c]EVP_MD_CTX, in: [*c]EVP_MD_CTX) void;
 pub extern fn EVP_MD_CTX_reset(ctx: *EVP_MD_CTX) c_int;
 pub extern fn EVP_DigestInit_ex(ctx: *EVP_MD_CTX, @"type": ?*const EVP_MD, engine: ?*ENGINE) c_int;
 pub extern fn EVP_DigestInit(ctx: *EVP_MD_CTX, @"type": ?*const EVP_MD) c_int;
+/// EVP_DigestUpdate hashes |len| bytes from |data| into the hashing operation
+/// in |ctx|. It returns one.
 pub extern fn EVP_DigestUpdate(ctx: *EVP_MD_CTX, data: ?[*]const u8, len: usize) c_int;
-pub extern fn EVP_DigestFinal_ex(ctx: *EVP_MD_CTX, md_out: [*]u8, out_size: ?[*]c_uint) c_int;
-pub extern fn EVP_DigestFinal(ctx: *EVP_MD_CTX, md_out: [*]u8, out_size: ?[*]c_uint) c_int;
+/// EVP_DigestFinal_ex finishes the digest in |ctx| and writes the output to
+/// |md_out|. |EVP_MD_CTX_size| bytes are written, which is at most
+/// |EVP_MAX_MD_SIZE|. If |out_size| is not NULL then |*out_size| is set to the
+/// number of bytes written. It returns one. After this call, the hash cannot be
+/// updated or finished again until |EVP_DigestInit_ex| is called to start
+/// another hashing operation.
+pub extern fn EVP_DigestFinal_ex(ctx: *EVP_MD_CTX, md_out: [*]u8, out_size: ?*u32) c_int;
+pub extern fn EVP_DigestFinal(ctx: *EVP_MD_CTX, md_out: [*]u8, out_size: ?*u32) c_int;
+/// EVP_Digest performs a complete hashing operation in one call. It hashes |len|
+/// bytes from |data| and writes the digest to |md_out|. |EVP_MD_CTX_size| bytes
+/// are written, which is at most |EVP_MAX_MD_SIZE|. If |out_size| is not NULL
+/// then |*out_size| is set to the number of bytes written. It returns one on
+/// success and zero otherwise.
 pub extern fn EVP_Digest(data: ?[*]const u8, len: usize, md_out: [*c]u8, md_out_size: [*c]c_uint, @"type": ?*const EVP_MD, impl: ?*ENGINE) c_int;
 pub extern fn EVP_MD_type(md: ?*const EVP_MD) c_int;
 pub extern fn EVP_MD_flags(md: ?*const EVP_MD) u32;

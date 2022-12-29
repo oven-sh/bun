@@ -416,9 +416,9 @@ MINIMUM_ARCHIVE_FILES = -L$(BUN_DEPS_OUT_DIR) \
 	-lz \
 	$(BUN_DEPS_OUT_DIR)/picohttpparser.o \
 	$(_MIMALLOC_LINK) \
+	-ldecrepit \
 	-lssl \
 	-lcrypto \
-	-ldecrepit \
 	-llolhtml
 
 ARCHIVE_FILES_WITHOUT_LIBCRYPTO = $(MINIMUM_ARCHIVE_FILES) \

@@ -1145,7 +1145,8 @@ pub const Encoder = struct {
             },
             JSC.Node.Encoding.latin1, JSC.Node.Encoding.buffer, JSC.Node.Encoding.ascii => {
                 var to = allocator.alloc(u8, len) catch return &[_]u8{};
-                @memcpy(to.ptr, input, len);
+                var input_bytes = std.mem.sliceAsBytes(input[0..len]);
+                @memcpy(to.ptr, input_bytes.ptr, input_bytes.len);
                 for (to[0..len]) |c, i| {
                     to[i] = @as(u8, @truncate(u7, c));
                 }

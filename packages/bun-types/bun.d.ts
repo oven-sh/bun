@@ -1,3 +1,5 @@
+import { Encoding } from "crypto";
+
 interface VoidFunction {
   (): void;
 }
@@ -1924,6 +1926,96 @@ declare module "bun" {
     static hash(input: StringOrBuffer, encoding: DigestEncoding): string;
   }
 
+  type SupportedCryptoAlgorithms =
+    | "blake2b256"
+    | "md4"
+    | "md5"
+    | "ripemd160"
+    | "sha1"
+    | "sha224"
+    | "sha256"
+    | "sha384"
+    | "sha512"
+    | "sha512-256";
+  /**
+   * Hardware-accelerated cryptographic hash functions
+   *
+   * Used for `crypto.createHash()`
+   */
+  export class CryptoHasher {
+    /**
+     * The algorithm chosen to hash the data
+     *
+     */
+    readonly algorithm: SupportedCryptoAlgorithms;
+
+    /**
+     * The length of the output hash in bytes
+     */
+    readonly byteLength: number;
+
+    /**
+     * Create a new hasher
+     *
+     * @param algorithm The algorithm to use. See {@link algorithms} for a list of supported algorithms
+     */
+    constructor(algorithm: SupportedCryptoAlgorithms);
+
+    /**
+     * Update the hash with data
+     *
+     * @param input
+     */
+    update(input: StringOrBuffer, inputEncoding?: Encoding): CryptoHasher;
+
+    /**
+     * Finalize the hash
+     *
+     * @param encoding `DigestEncoding` to return the hash in. If none is provided, it will return a `Uint8Array`.
+     */
+    digest(encoding: DigestEncoding): string;
+
+    /**
+     * Finalize the hash
+     *
+     * @param hashInto `TypedArray` to write the hash into. Faster than creating a new one each time
+     */
+    digest(hashInto?: TypedArray): TypedArray;
+
+    /**
+     * Run the hash over the given data
+     *
+     * @param input `string`, `Uint8Array`, or `ArrayBuffer` to hash. `Uint8Array` or `ArrayBuffer` is faster.
+     *
+     * @param hashInto `TypedArray` to write the hash into. Faster than creating a new one each time
+     */
+    static hash(
+      algorithm: SupportedCryptoAlgorithms,
+      input: StringOrBuffer,
+      hashInto?: TypedArray,
+    ): TypedArray;
+
+    /**
+     * Run the hash over the given data
+     *
+     * @param input `string`, `Uint8Array`, or `ArrayBuffer` to hash. `Uint8Array` or `ArrayBuffer` is faster.
+     *
+     * @param encoding `DigestEncoding` to return the hash in
+     */
+    static hash(
+      algorithm: SupportedCryptoAlgorithms,
+      input: StringOrBuffer,
+      encoding: DigestEncoding,
+    ): string;
+
+    /**
+     * List of supported hash algorithms
+     *
+     * These are hardware accelerated with BoringSSL
+     */
+    static readonly algorithms: SupportedCryptoAlgorithms[];
+  }
+
   /**
    * Sleep the thread for a given number of milliseconds
    *
@@ -2044,14 +2136,6 @@ declare module "bun" {
      * The number of bytes the hash will produce
      */
     static readonly byteLength: 32;
-  }
-  export class RIPEMD160 extends CryptoHashInterface<RIPEMD160> {
-    constructor();
-
-    /**
-     * The number of bytes the hash will produce
-     */
-    static readonly byteLength: 20;
   }
 
   /** Compression options for `Bun.deflateSync` and `Bun.gzipSync` */

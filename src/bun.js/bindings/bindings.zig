@@ -91,6 +91,68 @@ pub const ZigString = extern struct {
     ptr: [*]const u8,
     len: usize,
 
+    /// This function is not optimized!
+    pub fn eqlCaseInsensitive(this: ZigString, other: ZigString) bool {
+        var fallback = std.heap.stackFallback(1024, bun.default_allocator);
+        var fallback_allocator = fallback.get();
+
+        var utf16_slice = this.toSliceLowercase(fallback_allocator);
+        var latin1_slice = other.toSliceLowercase(fallback_allocator);
+        defer utf16_slice.deinit();
+        defer latin1_slice.deinit();
+        return strings.eqlLong(utf16_slice.slice(), latin1_slice.slice(), true);
+    }
+
+    pub fn toSliceLowercase(this: ZigString, allocator: std.mem.Allocator) Slice {
+        if (this.len == 0)
+            return Slice.empty;
+        var fallback = std.heap.stackFallback(512, allocator);
+        var fallback_allocator = fallback.get();
+
+        var uppercase_buffer = this.toOwnedSlice(fallback_allocator) catch unreachable;
+        var buffer = allocator.alloc(u8, uppercase_buffer.len) catch unreachable;
+        var out = strings.copyLowercase(uppercase_buffer, buffer);
+
+        return Slice{
+            .allocator = NullableAllocator.init(allocator),
+            .ptr = out.ptr,
+            .len = @truncate(u32, out.len),
+        };
+    }
+
+    pub fn eql(this: ZigString, other: ZigString) bool {
+        const left_utf16 = this.is16Bit();
+        const right_utf16 = other.is16Bit();
+
+        if (left_utf16 == right_utf16 and left_utf16) {
+            return strings.eqlLong(std.mem.sliceAsBytes(this.utf16SliceAligned()), std.mem.sliceAsBytes(other.utf16SliceAligned()), true);
+        } else if (left_utf16 == right_utf16) {
+            return strings.eqlLong(this.slice(), other.slice(), true);
+        }
+
+        const utf16: ZigString = if (left_utf16) this else other;
+        const latin1: ZigString = if (left_utf16) other else this;
+
+        if (latin1.isAllASCII()) {
+            return strings.utf16EqlString(utf16.utf16SliceAligned(), latin1.slice());
+        }
+
+        // slow path
+        var utf16_slice = utf16.toSlice(bun.default_allocator);
+        var latin1_slice = latin1.toSlice(bun.default_allocator);
+        defer utf16_slice.deinit();
+        defer latin1_slice.deinit();
+        return strings.eqlLong(utf16_slice.slice(), latin1_slice.slice(), true);
+    }
+
+    pub fn isAllASCII(this: ZigString) bool {
+        if (this.is16Bit()) {
+            return strings.firstNonASCII16([]const u16, this.utf16SliceAligned()) == null;
+        }
+
+        return strings.isAllASCII(this.slice());
+    }
+
     pub fn clone(this: ZigString, allocator: std.mem.Allocator) !ZigString {
         var sliced = this.toSlice(allocator);
         if (!sliced.isAllocated()) {
@@ -208,6 +270,14 @@ pub const ZigString = extern struct {
         allocator: NullableAllocator = .{},
         ptr: [*]const u8 = undefined,
         len: u32 = 0,
+
+        pub fn from(input: []u8, allocator: std.mem.Allocator) Slice {
+            return .{
+                .ptr = input.ptr,
+                .len = @truncate(u32, input.len),
+                .allocator = NullableAllocator.init(allocator),
+            };
+        }
 
         pub fn fromUTF8NeverFree(input: []const u8) Slice {
             return .{

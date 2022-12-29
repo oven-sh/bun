@@ -2669,11 +2669,30 @@ pub fn wrapWithHasContainer(
                     },
                     ?JSC.Node.StringOrBuffer => {
                         if (iter.nextEat()) |arg| {
-                            args[i] = JSC.Node.StringOrBuffer.fromJS(ctx.ptr(), iter.arena.allocator(), arg, exception) orelse {
-                                exception.* = JSC.toInvalidArguments("expected string or buffer", .{}, ctx).asObjectRef();
-                                iter.deinit();
-                                return null;
-                            };
+                            if (!arg.isEmptyOrUndefinedOrNull()) {
+                                args[i] = JSC.Node.StringOrBuffer.fromJS(ctx.ptr(), iter.arena.allocator(), arg, exception) orelse {
+                                    exception.* = JSC.toInvalidArguments("expected string or buffer", .{}, ctx).asObjectRef();
+                                    iter.deinit();
+                                    return null;
+                                };
+                            } else {
+                                args[i] = null;
+                            }
+                        } else {
+                            args[i] = null;
+                        }
+                    },
+                    ?JSC.Node.SliceOrBuffer => {
+                        if (iter.nextEat()) |arg| {
+                            if (!arg.isEmptyOrUndefinedOrNull()) {
+                                args[i] = JSC.Node.SliceOrBuffer.fromJS(ctx.ptr(), iter.arena.allocator(), arg, exception) orelse {
+                                    exception.* = JSC.toInvalidArguments("expected string or buffer", .{}, ctx).asObjectRef();
+                                    iter.deinit();
+                                    return null;
+                                };
+                            } else {
+                                args[i] = null;
+                            }
                         } else {
                             args[i] = null;
                         }
@@ -2693,11 +2712,15 @@ pub fn wrapWithHasContainer(
                     },
                     ?JSC.ArrayBuffer => {
                         if (iter.nextEat()) |arg| {
-                            args[i] = arg.asArrayBuffer(ctx.ptr()) orelse {
-                                exception.* = JSC.toInvalidArguments("expected TypedArray", .{}, ctx).asObjectRef();
-                                iter.deinit();
-                                return null;
-                            };
+                            if (!arg.isEmptyOrUndefinedOrNull()) {
+                                args[i] = arg.asArrayBuffer(ctx.ptr()) orelse {
+                                    exception.* = JSC.toInvalidArguments("expected TypedArray", .{}, ctx).asObjectRef();
+                                    iter.deinit();
+                                    return null;
+                                };
+                            } else {
+                                args[i] = null;
+                            }
                         } else {
                             args[i] = null;
                         }
@@ -2855,11 +2878,30 @@ pub fn wrapInstanceMethod(
                     },
                     ?JSC.Node.StringOrBuffer => {
                         if (iter.nextEat()) |arg| {
-                            args[i] = JSC.Node.StringOrBuffer.fromJS(globalThis.ptr(), iter.arena.allocator(), arg, null) orelse {
-                                globalThis.throwInvalidArguments("expected string or buffer", .{});
-                                iter.deinit();
-                                return JSC.JSValue.zero;
-                            };
+                            if (!arg.isEmptyOrUndefinedOrNull()) {
+                                args[i] = JSC.Node.StringOrBuffer.fromJS(globalThis.ptr(), iter.arena.allocator(), arg, null) orelse {
+                                    globalThis.throwInvalidArguments("expected string or buffer", .{});
+                                    iter.deinit();
+                                    return JSC.JSValue.zero;
+                                };
+                            } else {
+                                args[i] = null;
+                            }
+                        } else {
+                            args[i] = null;
+                        }
+                    },
+                    ?JSC.Node.SliceOrBuffer => {
+                        if (iter.nextEat()) |arg| {
+                            if (!arg.isEmptyOrUndefinedOrNull()) {
+                                args[i] = JSC.Node.SliceOrBuffer.fromJS(globalThis.ptr(), iter.arena.allocator(), arg) orelse {
+                                    globalThis.throwInvalidArguments("expected string or buffer", .{});
+                                    iter.deinit();
+                                    return JSC.JSValue.zero;
+                                };
+                            } else {
+                                args[i] = null;
+                            }
                         } else {
                             args[i] = null;
                         }

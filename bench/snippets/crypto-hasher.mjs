@@ -3,8 +3,8 @@ import { bench, run } from "mitata";
 
 import crypto from "node:crypto";
 
-var foo = new Uint8Array(65536);
-crypto.getRandomValues(foo);
+var foo = Buffer.allocUnsafe(16384);
+foo.fill(123);
 
 // if ("Bun" in globalThis) {
 //   const { CryptoHasher } = Bun;

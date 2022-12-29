@@ -1268,31 +1268,65 @@ var require_cipher_base = __commonJS({
 var require_browser2 = __commonJS({
   "node_modules/create-hash/browser.js"(exports, module) {
     "use strict";
-    var inherits = require_inherits_browser(),
-      MD5 = require_md5(),
-      RIPEMD160 = require_ripemd160(),
-      sha = require_sha2(),
-      Base = require_cipher_base();
-    function Hash(hash) {
-      Base.call(this, "digest"), (this._hash = hash);
+    const { Transform } = stream_exports;
+    class Hash extends Transform {
+      #hasher;
+      #algorithm;
+      #finalized = false;
+
+      constructor(algorithm, options) {
+        super(options);
+        this.#algorithm = algorithm;
+        this.#hasher = new CryptoHasher(algorithm);
+      }
+
+      #checkFinalized() {
+        if (this.#finalized) {
+          var err = new Error("Digest already called");
+          err.code = "ERR_CRYPTO_HASH_FINALIZED";
+          throw err;
+        }
+      }
+
+      update(data, encoding) {
+        this.#checkFinalized();
+        if (arguments.length > 1) {
+          this.#hasher.update(data, encoding);
+        } else {
+          this.#hasher.update(data);
+        }
+
+        return this;
+      }
+
+      _transform(data, encoding, callback) {
+        this.update(data, encoding);
+        callback && callback();
+      }
+
+      _flush(callback) {
+        this.push(this.digest());
+        callback();
+      }
+
+      digest(encoding) {
+        this.#checkFinalized();
+        this.#finalized = true;
+
+        return this.#hasher.digest(encoding);
+      }
+
+      copy() {
+        return new CryptoHasher(this.#algorithm);
+      }
     }
-    inherits(Hash, Base);
-    Hash.prototype._update = function (data) {
-      this._hash.update(data);
+
+    module.exports = function createHash(algorithm) {
+      return new Hash(algorithm);
     };
-    Hash.prototype._final = function () {
-      return this._hash.digest();
-    };
-    module.exports = function (alg) {
-      return (
-        (alg = alg.toLowerCase()),
-        alg === "md5"
-          ? new MD5()
-          : alg === "rmd160" || alg === "ripemd160"
-          ? new RIPEMD160()
-          : new Hash(sha(alg))
-      );
-    };
+
+    module.exports.createHash = module.exports;
+    module.exports.Hash = Hash;
   },
 });
 
@@ -27495,6 +27529,8 @@ var require_bn7 = __commonJS({
   },
 });
 
+const { CryptoHasher } = globalThis.Bun;
+
 // node_modules/public-encrypt/withPublic.js
 var require_withPublic = __commonJS({
   "node_modules/public-encrypt/withPublic.js"(exports, module) {
@@ -27714,11 +27750,10 @@ use chrome, FireFox or Internet Explorer 11`);
       if (size + offset > length || size > kBufferMaxLength)
         throw new RangeError("buffer too small");
     }
-    (crypto2 && crypto2.getRandomValues) || !process.browser
-      ? ((exports.randomFill = randomFill),
-        (exports.randomFillSync = randomFillSync))
-      : ((exports.randomFill = oldBrowser),
-        (exports.randomFillSync = oldBrowser));
+
+    exports.randomFill = randomFill;
+    exports.randomFillSync = randomFillSync;
+
     function randomFill(buf, offset, size, cb) {
       if (!Buffer2.isBuffer(buf) && !(buf instanceof global.Uint8Array))
         throw new TypeError('"buf" argument must be a Buffer or Uint8Array');
@@ -27735,17 +27770,6 @@ use chrome, FireFox or Internet Explorer 11`);
       );
     }
     function actualFill(buf, offset, size, cb) {
-      if (process.browser) {
-        var ourBuf = buf.buffer,
-          uint = new Uint8Array(ourBuf, offset, size);
-        if ((crypto2.getRandomValues(uint), cb)) {
-          process.nextTick(function () {
-            cb(null, buf);
-          });
-          return;
-        }
-        return buf;
-      }
       if (cb) {
         randombytes(size, function (err, bytes2) {
           if (err) return cb(err);
@@ -27781,7 +27805,8 @@ var require_crypto_browserify2 = __commonJS({
       exports.pseudoRandomBytes =
       exports.prng =
         require_browser();
-    exports.createHash = exports.Hash = require_browser2();
+    exports.createHash = require_browser2();
+    exports.Hash = exports.createHash.Hash;
     exports.createHmac = exports.Hmac = require_browser3();
     var algos = require_algos(),
       algoKeys = Object.keys(algos),
@@ -27862,7 +27887,10 @@ var require_crypto_browserify2 = __commonJS({
 });
 
 // crypto.js
-var crypto_exports = {};
+var crypto_exports = {
+  ...require_crypto_browserify2(),
+  [Symbol.for("CommonJS")]: 0,
+};
 __export(crypto_exports, {
   DEFAULT_ENCODING: () => DEFAULT_ENCODING,
   getRandomValues: () => getRandomValues,
@@ -27872,7 +27900,6 @@ __export(crypto_exports, {
   timingSafeEqual: () => timingSafeEqual,
   webcrypto: () => webcrypto,
 });
-__reExport(crypto_exports, __toESM(require_crypto_browserify2()));
 var DEFAULT_ENCODING = "buffer",
   getRandomValues = (array) => crypto.getRandomValues(array),
   randomUUID = () => crypto.randomUUID(),
@@ -27942,4 +27969,5 @@ export {
   timingSafeEqual,
   webcrypto,
 };
+export default crypto_exports;
 /*! safe-buffer. MIT License. Feross Aboukhadijeh <https://feross.org/opensource> */

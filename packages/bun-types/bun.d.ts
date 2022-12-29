@@ -2045,6 +2045,14 @@ declare module "bun" {
      */
     static readonly byteLength: 32;
   }
+  export class RIPEMD160 extends CryptoHashInterface<RIPEMD160> {
+    constructor();
+
+    /**
+     * The number of bytes the hash will produce
+     */
+    static readonly byteLength: 20;
+  }
 
   /** Compression options for `Bun.deflateSync` and `Bun.gzipSync` */
   export type ZlibCompressionOptions = {

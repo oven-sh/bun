@@ -9,6 +9,7 @@ const names = [
   "SHA384",
   "SHA256",
   "SHA512_256",
+  "RIPEMD160",
 ];
 export default names.map((name) => {
   return define({
@@ -32,7 +33,7 @@ export default names.map((name) => {
       },
       update: {
         fn: "update",
-        length: 0,
+        length: 1,
       },
       byteLength: {
         getter: "getByteLength",

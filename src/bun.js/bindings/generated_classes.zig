@@ -1284,6 +1284,91 @@ pub const JSSHA512_256 = struct {
         }
     }
 };
+pub const JSRIPEMD160 = struct {
+    const RIPEMD160 = Classes.RIPEMD160;
+    const GetterType = fn (*RIPEMD160, *JSC.JSGlobalObject) callconv(.C) JSC.JSValue;
+    const GetterTypeWithThisValue = fn (*RIPEMD160, JSC.JSValue, *JSC.JSGlobalObject) callconv(.C) JSC.JSValue;
+    const SetterType = fn (*RIPEMD160, *JSC.JSGlobalObject, JSC.JSValue) callconv(.C) bool;
+    const SetterTypeWithThisValue = fn (*RIPEMD160, JSC.JSValue, *JSC.JSGlobalObject, JSC.JSValue) callconv(.C) bool;
+    const CallbackType = fn (*RIPEMD160, *JSC.JSGlobalObject, *JSC.CallFrame) callconv(.C) JSC.JSValue;
+
+    /// Return the pointer to the wrapped object.
+    /// If the object does not match the type, return null.
+    pub fn fromJS(value: JSC.JSValue) ?*RIPEMD160 {
+        JSC.markBinding(@src());
+        return RIPEMD160__fromJS(value);
+    }
+
+    /// Get the RIPEMD160 constructor value.
+    /// This loads lazily from the global object.
+    pub fn getConstructor(globalObject: *JSC.JSGlobalObject) JSC.JSValue {
+        JSC.markBinding(@src());
+        return RIPEMD160__getConstructor(globalObject);
+    }
+
+    /// Create a new instance of RIPEMD160
+    pub fn toJS(this: *RIPEMD160, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
+        JSC.markBinding(@src());
+        if (comptime Environment.allow_assert) {
+            const value__ = RIPEMD160__create(globalObject, this);
+            std.debug.assert(value__.as(RIPEMD160).? == this); // If this fails, likely a C ABI issue.
+            return value__;
+        } else {
+            return RIPEMD160__create(globalObject, this);
+        }
+    }
+
+    /// Modify the internal ptr to point to a new instance of RIPEMD160.
+    pub fn dangerouslySetPtr(value: JSC.JSValue, ptr: ?*RIPEMD160) bool {
+        JSC.markBinding(@src());
+        return RIPEMD160__dangerouslySetPtr(value, ptr);
+    }
+
+    /// Detach the ptr from the thisValue
+    pub fn detachPtr(_: *RIPEMD160, value: JSC.JSValue) void {
+        JSC.markBinding(@src());
+        std.debug.assert(RIPEMD160__dangerouslySetPtr(value, null));
+    }
+
+    extern fn RIPEMD160__fromJS(JSC.JSValue) ?*RIPEMD160;
+    extern fn RIPEMD160__getConstructor(*JSC.JSGlobalObject) JSC.JSValue;
+
+    extern fn RIPEMD160__create(globalObject: *JSC.JSGlobalObject, ptr: ?*RIPEMD160) JSC.JSValue;
+
+    extern fn RIPEMD160__dangerouslySetPtr(JSC.JSValue, ?*RIPEMD160) bool;
+
+    comptime {
+        if (@TypeOf(RIPEMD160.constructor) != (fn (*JSC.JSGlobalObject, *JSC.CallFrame) callconv(.C) ?*RIPEMD160)) {
+            @compileLog("RIPEMD160.constructor is not a constructor");
+        }
+
+        if (@TypeOf(RIPEMD160.finalize) != (fn (*RIPEMD160) callconv(.C) void)) {
+            @compileLog("RIPEMD160.finalize is not a finalizer");
+        }
+
+        if (@TypeOf(RIPEMD160.getByteLength) != GetterType)
+            @compileLog("Expected RIPEMD160.getByteLength to be a getter");
+
+        if (@TypeOf(RIPEMD160.digest) != CallbackType)
+            @compileLog("Expected RIPEMD160.digest to be a callback but received " ++ @typeName(@TypeOf(RIPEMD160.digest)));
+        if (@TypeOf(RIPEMD160.update) != CallbackType)
+            @compileLog("Expected RIPEMD160.update to be a callback but received " ++ @typeName(@TypeOf(RIPEMD160.update)));
+        if (@TypeOf(RIPEMD160.getByteLengthStatic) != StaticGetterType)
+            @compileLog("Expected RIPEMD160.getByteLengthStatic to be a static getter");
+
+        if (@TypeOf(RIPEMD160.hash) != StaticCallbackType)
+            @compileLog("Expected RIPEMD160.hash to be a static callback");
+        if (!JSC.is_bindgen) {
+            @export(RIPEMD160.constructor, .{ .name = "RIPEMD160Class__construct" });
+            @export(RIPEMD160.digest, .{ .name = "RIPEMD160Prototype__digest" });
+            @export(RIPEMD160.finalize, .{ .name = "RIPEMD160Class__finalize" });
+            @export(RIPEMD160.getByteLength, .{ .name = "RIPEMD160Prototype__getByteLength" });
+            @export(RIPEMD160.getByteLengthStatic, .{ .name = "RIPEMD160Class__getByteLengthStatic" });
+            @export(RIPEMD160.hash, .{ .name = "RIPEMD160Class__hash" });
+            @export(RIPEMD160.update, .{ .name = "RIPEMD160Prototype__update" });
+        }
+    }
+};
 pub const JSServerWebSocket = struct {
     const ServerWebSocket = Classes.ServerWebSocket;
     const GetterType = fn (*ServerWebSocket, *JSC.JSGlobalObject) callconv(.C) JSC.JSValue;
@@ -3191,6 +3276,7 @@ comptime {
     _ = JSSHA384;
     _ = JSSHA256;
     _ = JSSHA512_256;
+    _ = JSRIPEMD160;
     _ = JSServerWebSocket;
     _ = JSFileSystemRouter;
     _ = JSMatchedRoute;

@@ -10,7 +10,8 @@ std::unique_ptr<IsoSubspace> m_subspaceForSHA224Constructor;std::unique_ptr<IsoS
 std::unique_ptr<IsoSubspace> m_subspaceForSHA512Constructor;std::unique_ptr<IsoSubspace> m_subspaceForSHA384;
 std::unique_ptr<IsoSubspace> m_subspaceForSHA384Constructor;std::unique_ptr<IsoSubspace> m_subspaceForSHA256;
 std::unique_ptr<IsoSubspace> m_subspaceForSHA256Constructor;std::unique_ptr<IsoSubspace> m_subspaceForSHA512_256;
-std::unique_ptr<IsoSubspace> m_subspaceForSHA512_256Constructor;std::unique_ptr<IsoSubspace> m_subspaceForServerWebSocket;
+std::unique_ptr<IsoSubspace> m_subspaceForSHA512_256Constructor;std::unique_ptr<IsoSubspace> m_subspaceForRIPEMD160;
+std::unique_ptr<IsoSubspace> m_subspaceForRIPEMD160Constructor;std::unique_ptr<IsoSubspace> m_subspaceForServerWebSocket;
 std::unique_ptr<IsoSubspace> m_subspaceForServerWebSocketConstructor;std::unique_ptr<IsoSubspace> m_subspaceForFileSystemRouter;
 std::unique_ptr<IsoSubspace> m_subspaceForFileSystemRouterConstructor;std::unique_ptr<IsoSubspace> m_subspaceForMatchedRoute;
 std::unique_ptr<IsoSubspace> m_subspaceForExpect;

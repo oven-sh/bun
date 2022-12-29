@@ -1279,6 +1279,9 @@ pub const Class = NewClass(
         .SHA256 = .{
             .get = Crypto.SHA256.getter,
         },
+        .RIPEMD160 = .{
+            .get = Crypto.RIPEMD160.getter,
+        },
         .SHA512_256 = .{
             .get = Crypto.SHA512_256.getter,
         },
@@ -1396,7 +1399,11 @@ pub const Crypto = struct {
             ) JSC.JSValue {
                 var output_digest_buf: Hasher.Digest = undefined;
 
-                Hasher.hash(input.slice(), &output_digest_buf, JSC.VirtualMachine.get().rareData().boringEngine());
+                if (comptime @typeInfo(@TypeOf(Hasher.hash)).Fn.params.len == 3) {
+                    Hasher.hash(input.slice(), &output_digest_buf, JSC.VirtualMachine.get().rareData().boringEngine());
+                } else {
+                    Hasher.hash(input.slice(), &output_digest_buf);
+                }
 
                 return encoding.encodeWithSize(globalThis, Hasher.digest, &output_digest_buf);
             }
@@ -1417,7 +1424,11 @@ pub const Crypto = struct {
                     output_digest_slice = bytes[0..Hasher.digest];
                 }
 
-                Hasher.hash(input.slice(), output_digest_slice, JSC.VirtualMachine.get().rareData().boringEngine());
+                if (comptime @typeInfo(@TypeOf(Hasher.hash)).Fn.params.len == 3) {
+                    Hasher.hash(input.slice(), output_digest_slice, JSC.VirtualMachine.get().rareData().boringEngine());
+                } else {
+                    Hasher.hash(input.slice(), output_digest_slice);
+                }
 
                 if (output) |output_buf| {
                     return output_buf.value;
@@ -1571,6 +1582,7 @@ pub const Crypto = struct {
     pub const SHA384 = CryptoHasher(Hashers.SHA384, "SHA384");
     pub const SHA256 = CryptoHasher(Hashers.SHA256, "SHA256");
     pub const SHA512_256 = CryptoHasher(Hashers.SHA512_256, "SHA512_256");
+    pub const RIPEMD160 = CryptoHasher(Hashers.Hashers.RIPEMD160, "RIPEMD160");
 };
 
 pub fn nanoseconds(

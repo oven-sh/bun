@@ -10,7 +10,8 @@ std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForSHA224Constructor;std:
 std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForSHA512Constructor;std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForSHA384;
 std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForSHA384Constructor;std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForSHA256;
 std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForSHA256Constructor;std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForSHA512_256;
-std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForSHA512_256Constructor;std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForServerWebSocket;
+std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForSHA512_256Constructor;std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForRIPEMD160;
+std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForRIPEMD160Constructor;std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForServerWebSocket;
 std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForServerWebSocketConstructor;std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForFileSystemRouter;
 std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForFileSystemRouterConstructor;std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForMatchedRoute;
 std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForExpect;

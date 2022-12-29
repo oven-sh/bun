@@ -70,6 +70,12 @@ JSC::Structure* JSSHA512_256Structure() { return m_JSSHA512_256.getInitializedOn
   JSC::LazyClassStructure m_JSSHA512_256;
   bool hasJSSHA512_256SetterValue { false };
   mutable JSC::WriteBarrier<JSC::Unknown> m_JSSHA512_256SetterValue;
+JSC::Structure* JSRIPEMD160Structure() { return m_JSRIPEMD160.getInitializedOnMainThread(this); }
+        JSC::JSObject* JSRIPEMD160Constructor() { return m_JSRIPEMD160.constructorInitializedOnMainThread(this); }
+        JSC::JSValue JSRIPEMD160Prototype() { return m_JSRIPEMD160.prototypeInitializedOnMainThread(this); }
+  JSC::LazyClassStructure m_JSRIPEMD160;
+  bool hasJSRIPEMD160SetterValue { false };
+  mutable JSC::WriteBarrier<JSC::Unknown> m_JSRIPEMD160SetterValue;
 JSC::Structure* JSServerWebSocketStructure() { return m_JSServerWebSocket.getInitializedOnMainThread(this); }
         JSC::JSObject* JSServerWebSocketConstructor() { return m_JSServerWebSocket.constructorInitializedOnMainThread(this); }
         JSC::JSValue JSServerWebSocketPrototype() { return m_JSServerWebSocket.prototypeInitializedOnMainThread(this); }

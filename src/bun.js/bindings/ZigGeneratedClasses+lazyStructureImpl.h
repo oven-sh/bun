@@ -71,6 +71,12 @@ void GlobalObject::initGeneratedLazyClasses() {
                  init.setStructure(WebCore::JSSHA512_256::createStructure(init.vm, init.global, init.prototype));
                  init.setConstructor(WebCore::JSSHA512_256::createConstructor(init.vm, init.global, init.prototype));
               });
+    m_JSRIPEMD160.initLater(
+              [](LazyClassStructure::Initializer& init) {
+                 init.setPrototype(WebCore::JSRIPEMD160::createPrototype(init.vm, reinterpret_cast<Zig::GlobalObject*>(init.global)));
+                 init.setStructure(WebCore::JSRIPEMD160::createStructure(init.vm, init.global, init.prototype));
+                 init.setConstructor(WebCore::JSRIPEMD160::createConstructor(init.vm, init.global, init.prototype));
+              });
     m_JSServerWebSocket.initLater(
               [](LazyClassStructure::Initializer& init) {
                  init.setPrototype(WebCore::JSServerWebSocket::createPrototype(init.vm, reinterpret_cast<Zig::GlobalObject*>(init.global)));
@@ -147,6 +153,7 @@ void GlobalObject::visitGeneratedLazyClasses(GlobalObject *thisObject, Visitor& 
       thisObject->m_JSSHA384.visit(visitor);  visitor.append(thisObject->m_JSSHA384SetterValue);
       thisObject->m_JSSHA256.visit(visitor);  visitor.append(thisObject->m_JSSHA256SetterValue);
       thisObject->m_JSSHA512_256.visit(visitor);  visitor.append(thisObject->m_JSSHA512_256SetterValue);
+      thisObject->m_JSRIPEMD160.visit(visitor);  visitor.append(thisObject->m_JSRIPEMD160SetterValue);
       thisObject->m_JSServerWebSocket.visit(visitor);  visitor.append(thisObject->m_JSServerWebSocketSetterValue);
       thisObject->m_JSFileSystemRouter.visit(visitor);  visitor.append(thisObject->m_JSFileSystemRouterSetterValue);
       thisObject->m_JSMatchedRoute.visit(visitor);  visitor.append(thisObject->m_JSMatchedRouteSetterValue);

@@ -112,13 +112,6 @@ const ZAllocator = struct {
     const malloc_size = c.malloc_size;
     pub const supports_posix_memalign = true;
 
-    // This is copied from Rust's mimalloc integration
-    const MI_MAX_ALIGN_SIZE = 16;
-    inline fn mi_malloc_satisfies_alignment(alignment: usize, size: usize) bool {
-        return (alignment == @sizeOf(*anyopaque) or
-            (alignment == MI_MAX_ALIGN_SIZE and size >= (MI_MAX_ALIGN_SIZE / 2)));
-    }
-
     fn alignedAlloc(len: usize, alignment: usize) ?[*]u8 {
         if (comptime FeatureFlags.log_allocations) std.debug.print("Malloc: {d}\n", .{len});
 

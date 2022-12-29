@@ -24,14 +24,48 @@ const Opcode = @import("./websocket.zig").Opcode;
 
 const log = Output.scoped(.WebSocketClient, false);
 
-fn buildRequestBody(vm: *JSC.VirtualMachine, pathname: *const JSC.ZigString, host: *const JSC.ZigString, client_protocol: *const JSC.ZigString, client_protocol_hash: *u64) std.mem.Allocator.Error![]u8 {
+const NonUTF8Headers = struct {
+    names: []const JSC.ZigString,
+    values: []const JSC.ZigString,
+
+    pub fn format(self: NonUTF8Headers, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+        const count = self.names.len;
+        var i: usize = 0;
+        while (i < count) : (i += 1) {
+            try std.fmt.format(writer, "{any}: {any}\r\n", .{ self.names[i], self.values[i] });
+        }
+    }
+
+    pub fn init(names: ?[*]const JSC.ZigString, values: ?[*]const JSC.ZigString, len: usize) NonUTF8Headers {
+        if (len == 0) {
+            return .{
+                .names = &[_]JSC.ZigString{},
+                .values = &[_]JSC.ZigString{},
+            };
+        }
+
+        return .{
+            .names = names.?[0..len],
+            .values = values.?[0..len],
+        };
+    }
+};
+
+fn buildRequestBody(
+    vm: *JSC.VirtualMachine,
+    pathname: *const JSC.ZigString,
+    host: *const JSC.ZigString,
+    client_protocol: *const JSC.ZigString,
+    client_protocol_hash: *u64,
+    extra_headers: NonUTF8Headers,
+) std.mem.Allocator.Error![]u8 {
     const allocator = vm.allocator;
     const input_rand_buf = vm.rareData().nextUUID();
     const temp_buf_size = comptime std.base64.standard.Encoder.calcSize(16);
     var encoded_buf: [temp_buf_size]u8 = undefined;
     const accept_key = std.base64.standard.Encoder.encode(&encoded_buf, &input_rand_buf);
 
-    var headers = [_]PicoHTTP.Header{
+    var static_headers = [_]PicoHTTP.Header{
         .{
             .name = "Sec-WebSocket-Key",
             .value = accept_key,
@@ -43,9 +77,10 @@ fn buildRequestBody(vm: *JSC.VirtualMachine, pathname: *const JSC.ZigString, hos
     };
 
     if (client_protocol.len > 0)
-        client_protocol_hash.* = std.hash.Wyhash.hash(0, headers[1].value);
+        client_protocol_hash.* = std.hash.Wyhash.hash(0, static_headers[1].value);
 
-    var headers_: []PicoHTTP.Header = headers[0 .. 1 + @as(usize, @boolToInt(client_protocol.len > 0))];
+    const headers_ = static_headers[0 .. 1 + @as(usize, @boolToInt(client_protocol.len > 0))];
+
     const pathname_ = pathname.slice();
     const host_ = host.slice();
     const pico_headers = PicoHTTP.Headers{ .headers = headers_ };
@@ -59,12 +94,9 @@ fn buildRequestBody(vm: *JSC.VirtualMachine, pathname: *const JSC.ZigString, hos
             "Upgrade: websocket\r\n" ++
             "Sec-WebSocket-Version: 13\r\n" ++
             "{any}" ++
+            "{any}" ++
             "\r\n",
-        .{
-            pathname_,
-            host_,
-            pico_headers,
-        },
+        .{ pathname_, host_, pico_headers, extra_headers },
     );
 }
 
@@ -174,11 +206,21 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
             port: u16,
             pathname: *const JSC.ZigString,
             client_protocol: *const JSC.ZigString,
+            header_names: ?[*]const JSC.ZigString,
+            header_values: ?[*]const JSC.ZigString,
+            header_count: usize,
         ) callconv(.C) ?*HTTPClient {
             std.debug.assert(global.bunVM().uws_event_loop != null);
 
             var client_protocol_hash: u64 = 0;
-            var body = buildRequestBody(global.bunVM(), pathname, host, client_protocol, &client_protocol_hash) catch return null;
+            var body = buildRequestBody(
+                global.bunVM(),
+                pathname,
+                host,
+                client_protocol,
+                &client_protocol_hash,
+                NonUTF8Headers.init(header_names, header_values, header_count),
+            ) catch return null;
             var client: HTTPClient = HTTPClient{
                 .tcp = undefined,
                 .outgoing_websocket = websocket,

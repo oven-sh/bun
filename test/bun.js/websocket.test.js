@@ -19,6 +19,29 @@ describe("WebSocket", () => {
     await closed;
   });
 
+  it("supports headers", (done) => {
+    const server = Bun.serve({
+      port: 8024,
+      fetch(req, server) {
+        expect(req.headers.get("X-Hello")).toBe("World");
+        expect(req.headers.get("content-type")).toBe("lolwut");
+        server.stop();
+        done();
+        return new Response();
+      },
+      websocket: {
+        open(ws) {
+          ws.close();
+        },
+      },
+    });
+    const ws = new WebSocket(`ws://${server.hostname}:${server.port}`, {
+      headers: {
+        "X-Hello": "World",
+        "content-type": "lolwut",
+      },
+    });
+  });
   it("should send and receive messages", async () => {
     const ws = new WebSocket(TEST_WEBSOCKET_HOST);
     await new Promise((resolve, reject) => {

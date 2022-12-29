@@ -1656,6 +1656,25 @@ interface WebSocket extends EventTarget {
 declare var WebSocket: {
   prototype: WebSocket;
   new (url: string | URL, protocols?: string | string[]): WebSocket;
+  new (
+    url: string | URL,
+    options: {
+      /**
+       * An object specifying connection headers
+       *
+       * This is a Bun-specific extension.
+       */
+      headers?: HeadersInit;
+      /**
+       * A string specifying the subprotocols the server is willing to accept.
+       */
+      protocol?: string;
+      /**
+       * A string array specifying the subprotocols the server is willing to accept.
+       */
+      protocols?: string[];
+    },
+  ): WebSocket;
   readonly CLOSED: number;
   readonly CLOSING: number;
   readonly CONNECTING: number;

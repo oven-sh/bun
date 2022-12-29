@@ -37,6 +37,13 @@
 #include "JSDOMConvertNumbers.h"
 #include "JSDOMConvertSequences.h"
 #include "JSDOMConvertStrings.h"
+#include "JSDOMConvertBoolean.h"
+#include "JSDOMConvertRecord.h"
+#include "JSDOMConvertUnion.h"
+#include "JSDOMExceptionHandling.h"
+#include "JSDOMGlobalObjectInlines.h"
+#include "JSDOMIterator.h"
+#include "JSDOMOperation.h"
 #include "JSDOMExceptionHandling.h"
 #include "JSDOMGlobalObjectInlines.h"
 #include "JSDOMOperation.h"
@@ -54,6 +61,8 @@
 #include <wtf/GetPtr.h>
 #include <wtf/PointerPreparations.h>
 #include <wtf/URL.h>
+#include "IDLTypes.h"
+#include "FetchHeaders.h"
 
 namespace WebCore {
 using namespace JSC;
@@ -185,6 +194,54 @@ static inline EncodedJSValue constructJSWebSocket2(JSGlobalObject* lexicalGlobal
     return JSValue::encode(jsValue);
 }
 
+static inline EncodedJSValue constructJSWebSocket3(JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, JSValue urlValue, JSValue optionsObjectValue)
+{
+    VM& vm = lexicalGlobalObject->vm();
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    auto* globalObject = jsCast<Zig::GlobalObject*>(lexicalGlobalObject);
+    auto* context = globalObject->scriptExecutionContext();
+    if (UNLIKELY(!context))
+        return throwConstructorScriptExecutionContextUnavailableError(*lexicalGlobalObject, throwScope, "WebSocket");
+    auto url = convert<IDLUSVString>(*lexicalGlobalObject, urlValue);
+    RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
+
+    Vector<String> protocols;
+
+    auto headersInit = std::optional<Converter<IDLUnion<IDLSequence<IDLSequence<IDLByteString>>, IDLRecord<IDLByteString, IDLByteString>>>::ReturnType>();
+    if (JSC::JSObject* options = optionsObjectValue.getObject()) {
+        if (JSValue headersValue = options->getIfPropertyExists(globalObject, PropertyName(Identifier::fromString(vm, "headers"_s)))) {
+            if (!headersValue.isUndefinedOrNull()) {
+                headersInit = convert<IDLUnion<IDLSequence<IDLSequence<IDLByteString>>, IDLRecord<IDLByteString, IDLByteString>>>(*lexicalGlobalObject, headersValue);
+                RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
+            }
+        }
+
+        if (JSValue protocolsValue = options->getIfPropertyExists(globalObject, PropertyName(Identifier::fromString(vm, "protocols"_s)))) {
+            if (!protocolsValue.isUndefinedOrNull()) {
+                protocols = convert<IDLSequence<IDLDOMString>>(*lexicalGlobalObject, protocolsValue);
+                RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
+            }
+        } else if (JSValue protocolValue = options->getIfPropertyExists(globalObject, PropertyName(Identifier::fromString(vm, "protocol"_s)))) {
+            if (!protocolValue.isUndefinedOrNull()) {
+                protocols = Vector<String> { convert<IDLDOMString>(*lexicalGlobalObject, protocolValue) };
+                RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
+            }
+        }
+    }
+
+    RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
+    auto object = WebSocket::create(*context, WTFMove(url), protocols, WTFMove(headersInit));
+    if constexpr (IsExceptionOr<decltype(object)>)
+        RETURN_IF_EXCEPTION(throwScope, {});
+    static_assert(TypeOrExceptionOrUnderlyingType<decltype(object)>::isRef);
+    auto jsValue = toJSNewlyCreated<IDLInterface<WebSocket>>(*lexicalGlobalObject, *globalObject, throwScope, WTFMove(object));
+    if constexpr (IsExceptionOr<decltype(object)>)
+        RETURN_IF_EXCEPTION(throwScope, {});
+    setSubclassStructureIfNeeded<WebSocket>(lexicalGlobalObject, callFrame, asObject(jsValue));
+    RETURN_IF_EXCEPTION(throwScope, {});
+    return JSValue::encode(jsValue);
+}
+
 template<> EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSWebSocketDOMConstructor::construct(JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame)
 {
     VM& vm = lexicalGlobalObject->vm();
@@ -204,7 +261,12 @@ template<> EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSWebSocketDOMConstructor::co
             if (success)
                 RELEASE_AND_RETURN(throwScope, (constructJSWebSocket1(lexicalGlobalObject, callFrame)));
         }
-        RELEASE_AND_RETURN(throwScope, (constructJSWebSocket2(lexicalGlobalObject, callFrame)));
+
+        if (distinguishingArg.isString()) {
+            RELEASE_AND_RETURN(throwScope, (constructJSWebSocket2(lexicalGlobalObject, callFrame)));
+        } else if (distinguishingArg.isObject()) {
+            RELEASE_AND_RETURN(throwScope, (constructJSWebSocket3(lexicalGlobalObject, callFrame, callFrame->uncheckedArgument(0), distinguishingArg)));
+        }
     }
     return argsCount < 1 ? throwVMError(lexicalGlobalObject, throwScope, createNotEnoughArgumentsError(lexicalGlobalObject)) : throwVMTypeError(lexicalGlobalObject, throwScope);
 }

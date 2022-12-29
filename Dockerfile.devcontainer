@@ -96,7 +96,7 @@ ARG ZIG_URL
 ADD $ZIG_URL .
 RUN tar -xf ${ZIG_FILENAME} && \
     rm ${ZIG_FILENAME} && \
-    mv ${ZIG_FOLDERNAME} ${GITHUB_WORKSPACE}/;
+    mv ${ZIG_FOLDERNAME} ${ZIG_PATH};
 
 RUN cd $GITHUB_WORKSPACE && \
     curl -o bun-webkit-linux-$BUILDARCH.tar.gz -L https://github.com/oven-sh/WebKit/releases/download/dec17/bun-webkit-linux-$BUILDARCH.tar.gz && \

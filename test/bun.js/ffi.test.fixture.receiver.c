@@ -103,6 +103,7 @@ typedef void* JSContext;
 
 
 #ifdef IS_CALLBACK
+void* callback_ctx;
 ZIG_REPR_TYPE FFI_Callback_call(void* ctx, size_t argCount, ZIG_REPR_TYPE* args);
 // We wrap 
 static EncodedJSValue _FFI_Callback_call(void* ctx, size_t argCount, ZIG_REPR_TYPE* args)  __attribute__((__always_inline__));

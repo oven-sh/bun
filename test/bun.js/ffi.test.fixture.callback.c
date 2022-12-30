@@ -1,4 +1,4 @@
-#define JS_GLOBAL_OBJECT (void*)0x0UL
+#define JS_GLOBAL_OBJECT (void*)0x0000000000000000ULL
 #define IS_CALLBACK 1
 // This file is part of Bun!
 // You can find the original source:
@@ -103,6 +103,7 @@ typedef void* JSContext;
 
 
 #ifdef IS_CALLBACK
+void* callback_ctx;
 ZIG_REPR_TYPE FFI_Callback_call(void* ctx, size_t argCount, ZIG_REPR_TYPE* args);
 // We wrap 
 static EncodedJSValue _FFI_Callback_call(void* ctx, size_t argCount, ZIG_REPR_TYPE* args)  __attribute__((__always_inline__));
@@ -290,6 +291,6 @@ INJECT_BEFORE;
 #endif
  ZIG_REPR_TYPE arguments[1];
 arguments[0] = PTR_TO_JSVALUE(arg0).asZigRepr;
-  return (bool)JSVALUE_TO_BOOL(_FFI_Callback_call((void*)0x0UL, 1, arguments));
+  return (bool)JSVALUE_TO_BOOL(_FFI_Callback_call((void*)0x0000000000000000ULL, 1, arguments));
 }
 

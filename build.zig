@@ -90,7 +90,7 @@ fn addInternalPackages(step: *std.build.LibExeObjStep, allocator: std.mem.Alloca
     // workaround for https://github.com/ziglang/zig/issues/14099
     const compiler_rt: std.build.Pkg = .{
         .name = "compiler_rt",
-        .source = .{ .path = try std.fmt.allocPrint(allocator, "{s}/lib/compiler_rt.zig", .{std.fs.path.dirname(zig_exe).?}) },
+        .source = .{ .path = try std.fmt.allocPrint(allocator, "{s}/lib/compiler_rt/stack_probe.zig", .{std.fs.path.dirname(zig_exe).?}) },
     };
     step.addPackage(compiler_rt);
 }

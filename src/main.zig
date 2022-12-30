@@ -45,5 +45,6 @@ pub const build_options = @import("build_options");
 pub const bun = @import("./bun.zig");
 
 comptime {
-    _ = @import("compiler_rt");
+    if (!bun.Environment.isRelease)
+        _ = @import("compiler_rt");
 }

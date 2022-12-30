@@ -548,13 +548,6 @@ pub const G = struct {
     };
 
     pub const Property = struct {
-        class_static_block: ?*ClassStaticBlock = null,
-        ts_decorators: ExprNodeList = ExprNodeList{},
-        // Key is optional for spread
-        key: ?ExprNodeIndex = null,
-
-        // This is omitted for class fields
-        value: ?ExprNodeIndex = null,
 
         // This is used when parsing a pattern that uses default values:
         //
@@ -568,6 +561,14 @@ pub const G = struct {
         initializer: ?ExprNodeIndex = null,
         kind: Kind = Kind.normal,
         flags: Flags.Property.Set = Flags.Property.None,
+
+        class_static_block: ?*ClassStaticBlock = null,
+        ts_decorators: ExprNodeList = ExprNodeList{},
+        // Key is optional for spread
+        key: ?ExprNodeIndex = null,
+
+        // This is omitted for class fields
+        value: ?ExprNodeIndex = null,
 
         pub const List = BabyList(Property);
 
@@ -1548,19 +1549,19 @@ pub const E = struct {
 
         const PackageJSONSort = struct {
             const Fields = enum(u8) {
-                name,
-                version,
-                author,
-                repository,
-                config,
-                main,
-                module,
-                dependencies,
-                devDependencies,
-                optionalDependencies,
-                peerDependencies,
-                exports,
-                __fake,
+                name = 0,
+                version = 1,
+                author = 2,
+                repository = 3,
+                config = 4,
+                main = 5,
+                module = 6,
+                dependencies = 7,
+                devDependencies = 8,
+                optionalDependencies = 9,
+                peerDependencies = 10,
+                exports = 11,
+                __fake = 12,
 
                 pub const Map = ComptimeStringMap(Fields, .{
                     .{ "name", Fields.name },
@@ -1576,7 +1577,6 @@ pub const E = struct {
                     .{ "peerDependencies", Fields.peerDependencies },
                     .{ "exports", Fields.exports },
                 });
-                const max_key_size = 12;
 
                 pub fn isLessThan(ctx: void, lhs: G.Property, rhs: G.Property) bool {
                     var lhs_key_size: u8 = @enumToInt(Fields.__fake);
@@ -2185,6 +2185,13 @@ pub const Stmt = struct {
                 if (!has_inited) return;
                 All.deinit();
                 has_inited = false;
+            }
+
+            pub fn assert() void {
+                if (comptime Environment.allow_assert) {
+                    if (!has_inited)
+                        bun.unreachablePanic("Store must be init'd", .{});
+                }
             }
 
             pub fn append(comptime ValueType: type, value: anytype) *ValueType {
@@ -3864,6 +3871,13 @@ pub const Expr = struct {
 
                 has_inited = true;
                 _ = All.init(allocator);
+            }
+
+            pub fn assert() void {
+                if (comptime Environment.allow_assert) {
+                    if (!has_inited)
+                        bun.unreachablePanic("Store must be init'd", .{});
+                }
             }
 
             pub fn reset() void {

@@ -642,7 +642,10 @@ pub fn clean(old: *Lockfile, updates: []PackageManager.UpdateRequest) !*Lockfile
         invalid_package_id,
     );
     var clone_queue_ = PendingResolutions.init(old.allocator);
-    new.unique_packages = try Bitset.initEmpty(old.unique_packages.bit_length, old.allocator);
+    new.unique_packages = try Bitset.initEmpty(
+        old.allocator,
+        old.unique_packages.bit_length,
+    );
     var cloner = Cloner{
         .old = old,
         .lockfile = new,
@@ -993,7 +996,10 @@ pub const Printer = struct {
             writer: Writer,
             comptime enable_ansi_colors: bool,
         ) !void {
-            var visited = try Bitset.initEmpty(this.lockfile.packages.len, this.lockfile.allocator);
+            var visited = try Bitset.initEmpty(
+                this.lockfile.allocator,
+                this.lockfile.packages.len,
+            );
 
             var slice = this.lockfile.packages.slice();
             const names: []const String = slice.items(.name);
@@ -1466,7 +1472,7 @@ pub fn initEmpty(this: *Lockfile, allocator: std.mem.Allocator) !void {
         .packages = Lockfile.Package.List{},
         .buffers = Buffers{},
         .package_index = PackageIndex.Map.initContext(allocator, .{}),
-        .unique_packages = try Bitset.initFull(0, allocator),
+        .unique_packages = try Bitset.initFull(allocator, 0),
         .string_pool = StringPool.init(allocator),
         .allocator = allocator,
         .scratch = Scratch.init(allocator),
@@ -1535,7 +1541,7 @@ pub fn getPackageID(
 }
 
 pub fn getOrPutID(this: *Lockfile, id: PackageID, name_hash: PackageNameHash) !void {
-    if (this.unique_packages.capacity() < this.packages.len) try this.unique_packages.resize(this.packages.len, true, this.allocator);
+    if (this.unique_packages.capacity() < this.packages.len) try this.unique_packages.resize(this.allocator, this.packages.len, true);
     var gpe = try this.package_index.getOrPut(name_hash);
 
     if (gpe.found_existing) {
@@ -3272,7 +3278,7 @@ pub const Serializer = struct {
 
         {
             lockfile.package_index = PackageIndex.Map.initContext(allocator, .{});
-            lockfile.unique_packages = try Bitset.initFull(lockfile.packages.len, allocator);
+            lockfile.unique_packages = try Bitset.initFull(allocator, lockfile.packages.len);
             lockfile.string_pool = StringPool.initContext(allocator, .{});
             try lockfile.package_index.ensureTotalCapacity(@truncate(u32, lockfile.packages.len));
             var slice = lockfile.packages.slice();

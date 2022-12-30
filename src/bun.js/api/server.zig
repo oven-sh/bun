@@ -1449,7 +1449,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 .sink = .{
                     .res = this.resp,
                     .allocator = this.allocator,
-                    .buffer = bun.ByteList.init(""),
+                    .buffer = bun.ByteList{},
                 },
             };
             var signal = &response_stream.sink.signal;
@@ -2291,14 +2291,14 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                         if (!last) {
                             readable.ptr.Bytes.onData(
                                 .{
-                                    .temporary = bun.ByteList.init(chunk),
+                                    .temporary = bun.ByteList.initConst(chunk),
                                 },
                                 bun.default_allocator,
                             );
                         } else {
                             readable.ptr.Bytes.onData(
                                 .{
-                                    .temporary_and_done = bun.ByteList.init(chunk),
+                                    .temporary_and_done = bun.ByteList.initConst(chunk),
                                 },
                                 bun.default_allocator,
                             );

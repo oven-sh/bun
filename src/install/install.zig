@@ -5988,7 +5988,10 @@ pub const PackageManager = struct {
                 .global_bin_dir = this.options.global_bin_dir,
                 .force_install = force_install,
                 .install_count = lockfile.buffers.hoisted_packages.items.len,
-                .successfully_installed = try Bitset.initEmpty(lockfile.packages.len, this.allocator),
+                .successfully_installed = try Bitset.initEmpty(
+                    this.allocator,
+                    lockfile.packages.len,
+                ),
             };
 
             const cwd = std.fs.cwd();

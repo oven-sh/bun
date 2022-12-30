@@ -580,7 +580,7 @@ pub const DateTime = @import("./deps/zig-datetime/src/datetime.zig");
 pub var start_time: i128 = 0;
 
 pub fn openDir(dir: std.fs.Dir, path_: [:0]const u8) !std.fs.IterableDir {
-    const fd = try std.os.openatZ(dir.fd, path_, std.os.O.DIRECTORY | 0, 0);
+    const fd = try std.os.openatZ(dir.fd, path_, std.os.O.DIRECTORY | std.os.O.CLOEXEC | 0, 0);
     return std.fs.IterableDir{ .dir = .{ .fd = fd } };
 }
 pub const MimallocArena = @import("./mimalloc_arena.zig").Arena;

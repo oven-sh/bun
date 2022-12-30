@@ -1,4 +1,5 @@
 const std = @import("std");
+const bun = @import("bun");
 
 pub const CachedBitset = extern struct {
     range: [2]i32,
@@ -19,8 +20,8 @@ pub const id_continue_meta = CachedBitset.fromFile("id_continue_bitset.meta.blob
 pub const id_start_masks = @embedFile("id_start_bitset.blob");
 pub const id_continue_masks = @embedFile("id_continue_bitset.blob");
 
-pub const IDStartType = std.bit_set.StaticBitSet(id_start_meta.len);
-pub const IDContinueType = std.bit_set.StaticBitSet(id_continue_meta.len);
+pub const IDStartType = bun.bit_set.ArrayBitSet(usize, id_start_meta.len);
+pub const IDContinueType = bun.bit_set.ArrayBitSet(usize, id_continue_meta.len);
 pub const id_start = IDStartType{
     .masks = @bitCast(std.meta.fieldInfo(IDStartType, .masks).type, @ptrCast(*const [id_start_masks.len]u8, id_start_masks).*),
 };

@@ -734,3 +734,4 @@ pub const which = @import("./which.zig").which;
 
 pub const json = @import("./json_parser.zig");
 pub const JSAst = @import("./js_ast.zig");
+pub const bit_set = @import("./install/bit_set.zig");

@@ -1121,7 +1121,7 @@ const PackageInstall = struct {
             }
         };
 
-        var subdir = bun.openDir(this.destination_dir.dir, this.destination_dir_subpath) catch |err| return Result{
+        var subdir = this.destination_dir.dir.makeOpenPathIterable(std.mem.span(this.destination_dir_subpath), .{}) catch |err| return Result{
             .fail = .{ .err = err, .step = .opening_cache_dir },
         };
 

@@ -4107,24 +4107,27 @@ pub const PackageManager = struct {
                 }
 
                 var needs_new_dependency_list = true;
-                var dependencies_object: JSAst.Expr = undefined;
-                if (current_package_json.asProperty(dependency_list)) |query| {
-                    if (query.expr.data == .e_object) {
-                        needs_new_dependency_list = false;
+                const dependencies_object: JSAst.Expr = brk: {
+                    if (current_package_json.asProperty(dependency_list)) |query| {
+                        if (query.expr.data == .e_object) {
+                            needs_new_dependency_list = false;
 
-                        dependencies_object = query.expr;
+                            break :brk query.expr;
+                        }
                     }
-                }
 
-                if (needs_new_dependency_list) {
-                    dependencies_object = JSAst.Expr.init(
+                    break :brk JSAst.Expr.init(
                         JSAst.E.Object,
                         JSAst.E.Object{
                             .properties = JSAst.G.Property.List.init(new_dependencies),
                         },
                         logger.Loc.Empty,
                     );
-                }
+                };
+
+                dependencies_object.data.e_object.properties = JSAst.G.Property.List.init(new_dependencies);
+                if (new_dependencies.len > 1)
+                    dependencies_object.data.e_object.alphabetizeProperties();
 
                 if (current_package_json.data != .e_object or current_package_json.data.e_object.properties.len == 0) {
                     var root_properties = try allocator.alloc(JSAst.G.Property, 1);
@@ -4142,19 +4145,24 @@ pub const PackageManager = struct {
                 } else if (needs_new_dependency_list) {
                     var root_properties = try allocator.alloc(JSAst.G.Property, current_package_json.data.e_object.properties.len + 1);
                     std.mem.copy(JSAst.G.Property, root_properties, current_package_json.data.e_object.properties.slice());
-                    root_properties[root_properties.len - 1].key = JSAst.Expr.init(
-                        JSAst.E.String,
-                        JSAst.E.String{
-                            .data = dependency_list,
+                    root_properties[root_properties.len - 1] = .{
+                        .key = JSAst.Expr.init(
+                            JSAst.E.String,
+                            JSAst.E.String{
+                                .data = dependency_list,
+                            },
+                            logger.Loc.Empty,
+                        ),
+                        .value = dependencies_object,
+                    };
+                    current_package_json.* = JSAst.Expr.init(
+                        JSAst.E.Object,
+                        JSAst.E.Object{
+                            .properties = JSAst.G.Property.List.init(root_properties),
                         },
                         logger.Loc.Empty,
                     );
-                    root_properties[root_properties.len - 1].value = dependencies_object;
-                    current_package_json.* = JSAst.Expr.init(JSAst.E.Object, JSAst.E.Object{ .properties = JSAst.G.Property.List.init(root_properties) }, logger.Loc.Empty);
                 }
-
-                dependencies_object.data.e_object.properties = JSAst.G.Property.List.init(new_dependencies);
-                dependencies_object.data.e_object.packageJSONSort();
             }
 
             for (updates) |*update| {

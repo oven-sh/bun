@@ -108,12 +108,15 @@ pub fn next(self: *Walker) !?WalkerEntry {
 }
 
 pub fn deinit(self: *Walker) void {
-    for (self.stack.items[1..]) |*item| {
-        if (self.stack.items.len != 0) {
-            item.iter.dir.close();
+    if (self.stack.items.len > 0) {
+        for (self.stack.items[1..]) |*item| {
+            if (self.stack.items.len != 0) {
+                item.iter.dir.close();
+            }
         }
+        self.stack.deinit();
     }
-    self.stack.deinit();
+
     self.name_buffer.allocator.free(self.skip_all);
     self.name_buffer.deinit();
 }

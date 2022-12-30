@@ -2414,6 +2414,24 @@ The interface for `Bun.serve` is loosely based on what [Cloudflare Workers](http
 
 The HTTP server and server-side websockets are based on [uWebSockets](https://github.com/uNetworking/uWebSockets).
 
+### WebSocket Client
+For client you can use the browser WebSocket API:
+
+```ts
+// Create WebSocket connection.
+const socket = new WebSocket('ws://localhost:8080');
+
+// Connection opened
+socket.addEventListener('open', (event) => {
+    socket.send('Hello Server!');
+});
+
+// Listen for messages
+socket.addEventListener('message', (event) => {
+    console.log('Message from server ', event.data);
+});
+```
+
 ## `Bun.spawn` – spawn a process
 
 `Bun.spawn` lets you quickly spawn a process. Available as of Bun v0.2.0.

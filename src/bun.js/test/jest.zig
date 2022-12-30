@@ -45,6 +45,8 @@ const Task = @import("../javascript.zig").Task;
 const Fs = @import("../../fs.zig");
 const is_bindgen: bool = std.meta.globalOption("bindgen", bool) orelse false;
 
+const snapshot = @import("./snapshot.zig");
+
 fn notImplementedFn(_: *anyopaque, ctx: js.JSContextRef, _: js.JSObjectRef, _: js.JSObjectRef, _: []const js.JSValueRef, exception: js.ExceptionRef) js.JSValueRef {
     JSError(getAllocator(ctx), "Not implemented yet!", .{}, ctx, exception);
     return null;
@@ -1080,6 +1082,33 @@ pub const Expect = struct {
         return .zero;
     }
 
+    pub fn toMatchSnapshot(this: *Expect, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSValue {
+        defer this.postMatch(globalObject);
+
+        const _arguments = callframe.arguments(1);
+        if (_arguments.len > 0) {
+            globalObject.throw("toMatchSnapshot expected to have 0 args", .{});
+        }
+   
+        const test_label = this.scope.tests.items[this.test_id].label;
+        const file_id = this.scope.file_id;
+        var file_fs: Fs.Path = Jest.runner.?.files.items(.source)[file_id].path;
+        // const dir_path = file_fs.sourceDir();
+        const snapshot_path = snapshot.resolveSnapshotPath(file_fs);
+        globalObject.throw("toMatchSnapshot label {s} : {s}", .{ test_label, snapshot_path.text });
+
+        // if (snapshot_path exists)
+            // read file
+            // Find test index in file
+            // check equivalence / diff
+        // else
+            // write to snapshot file
+
+        // after everything processes, increment the snapshot count in the test suite
+        this.scope.tests[this.test_id].snapshotCount += 1;
+        return JSValue.jsBoolean(true);
+    }
+
     pub const toHaveBeenCalledTimes = notImplementedJSCFn;
     pub const toHaveBeenCalledWith = notImplementedJSCFn;
     pub const toHaveBeenLastCalledWith = notImplementedJSCFn;
@@ -1093,7 +1122,6 @@ pub const Expect = struct {
     pub const toContainEqual = notImplementedJSCFn;
     pub const toMatch = notImplementedJSCFn;
     pub const toMatchObject = notImplementedJSCFn;
-    pub const toMatchSnapshot = notImplementedJSCFn;
     pub const toMatchInlineSnapshot = notImplementedJSCFn;
     pub const toThrow = notImplementedJSCFn;
     pub const toThrowErrorMatchingSnapshot = notImplementedJSCFn;
@@ -1162,6 +1190,7 @@ pub const TestScope = struct {
     promise: ?*JSInternalPromise = null,
     ran: bool = false,
     task: ?*TestRunnerTask = null,
+    snapshotCount: u32,
 
     pub const Class = NewClass(void, .{ .name = "test" }, .{ .call = call, .only = only }, .{});
 

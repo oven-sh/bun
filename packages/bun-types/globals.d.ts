@@ -1281,6 +1281,14 @@ declare function queueMicrotask(callback: (...args: any[]) => void): void;
  */
 declare function reportError(error: any): void;
 /**
+ * Run a function immediately after main event loop is vacant
+ * @param handler function to call
+ */
+declare function setImmediate(
+  handler: TimerHandler,
+  ...arguments: any[]
+): number;
+/**
  * Run a function every `interval` milliseconds
  * @param handler function to call
  * @param interval milliseconds to wait between calls
@@ -2277,7 +2285,7 @@ declare function alert(message?: string): void;
 declare function confirm(message?: string): boolean;
 declare function prompt(message?: string, _default?: string): string | null;
 
-/* 
+/*
 
  Web Crypto API
 

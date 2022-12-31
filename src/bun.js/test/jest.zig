@@ -1398,6 +1398,7 @@ pub const DescribeScope = struct {
     file_id: TestRunner.File.ID,
     current_test_id: TestRunner.Test.ID = 0,
     value: JSValue = .zero,
+    done: bool = false,
 
     pub fn push(new: *DescribeScope) void {
         if (comptime is_bindgen) return undefined;
@@ -1486,16 +1487,61 @@ pub const DescribeScope = struct {
         },
     );
 
+    pub fn onDone(
+        ctx: js.JSContextRef,
+        callframe: *JSC.CallFrame,
+    ) callconv(.C) JSValue {
+        const function = callframe.callee();
+        const args = callframe.arguments(1);
+        defer ctx.bunVM().autoGarbageCollect();
+
+        if (JSC.getFunctionData(function)) |data| {
+            var scope = bun.cast(*DescribeScope, data);
+            JSC.setFunctionData(function, null);
+            if (args.len > 0) {
+                const err = args.ptr[0];
+                ctx.bunVM().runErrorHandlerWithDedupe(err, null);
+            }
+            scope.done = true;
+        }
+
+        return JSValue.jsUndefined();
+    }
+
     pub fn execCallback(this: *DescribeScope, ctx: js.JSContextRef, comptime hook: LifecycleHook) JSValue {
         const name = comptime @as(string, @tagName(hook));
         var hooks: []JSC.JSValue = @field(this, name).items;
         for (hooks) |cb, i| {
             if (cb.isEmpty()) continue;
 
-            const err = cb.call(ctx, &.{});
-            if (err.isAnyError(ctx)) {
-                return err;
+            const pending_test = Jest.runner.?.pending_test;
+            // forbid `expect()` within hooks
+            Jest.runner.?.pending_test = null;
+            var result = if (cb.getLengthOfArray(ctx) > 0) brk: {
+                this.done = false;
+                const done_func = JSC.NewFunctionWithData(
+                    ctx,
+                    ZigString.static("done"),
+                    0,
+                    DescribeScope.onDone,
+                    false,
+                    this,
+                );
+                var result = cb.call(ctx, &.{done_func});
+                var vm = VirtualMachine.get();
+                while (!this.done) {
+                    vm.eventLoop().autoTick();
+                    if (this.done) break;
+                    vm.eventLoop().tick();
+                }
+                break :brk result;
+            } else cb.call(ctx, &.{});
+            if (result.asPromise()) |promise| {
+                VirtualMachine.get().waitForPromise(promise);
+                result = promise.result(ctx.vm());
             }
+            Jest.runner.?.pending_test = pending_test;
+            if (result.isAnyError(ctx)) return result;
 
             if (comptime hook == .beforeAll or hook == .afterAll) {
                 hooks[i] = JSC.JSValue.zero;

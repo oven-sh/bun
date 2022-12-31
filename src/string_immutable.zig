@@ -498,6 +498,15 @@ test "StringOrTinyString Lowercase" {
     try std.testing.expectEqualStrings("hello!!!!!", str.slice());
 }
 
+/// Copy a string into a buffer
+/// Return the copied version
+pub fn copy(buf: []u8, src: []const u8) []const u8 {
+    const len = @min(buf.len, src.len);
+    if (len > 0)
+        @memcpy(buf.ptr, src.ptr, len);
+    return buf[0..len];
+}
+
 /// startsWith except it checks for non-empty strings
 pub fn hasPrefix(self: string, str: string) bool {
     return str.len > 0 and startsWith(self, str);

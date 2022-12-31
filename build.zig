@@ -330,6 +330,10 @@ pub fn build(b: *std.build.Builder) !void {
         obj.bundle_compiler_rt = true;
         obj.omit_frame_pointer = mode != .Debug;
 
+        if (b.option(bool, "for-editor", "Do not emit bin, just check for errors") orelse false) {
+            obj.emit_bin = .no_emit;
+        }
+
         if (target.getOsTag() == .linux) {
             // obj.want_lto = tar;
             obj.link_emit_relocs = true;
@@ -468,7 +472,8 @@ pub fn build(b: *std.build.Builder) !void {
             headers_step.dependOn(&after.step);
         }
     }
-    obj.setOutputDir(output_dir);
+    if (obj.emit_bin != .no_emit)
+        obj.setOutputDir(output_dir);
     b.default_step.dependOn(obj_step);
 }
 

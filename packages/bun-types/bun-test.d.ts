@@ -26,11 +26,11 @@ declare module "bun:test" {
   export { test as it };
 
   export function expect(value: any): Expect;
-  export function afterAll(fn: () => void): void;
-  export function beforeAll(fn: () => void): void;
+  export function afterAll(fn: (done: (err?: any) => void) => void | Promise<any>): void;
+  export function beforeAll(fn: (done: (err?: any) => void) => void | Promise<any>): void;
 
-  export function afterEach(fn: () => void): void;
-  export function beforeEach(fn: () => void): void;
+  export function afterEach(fn: (done: (err?: any) => void) => void | Promise<any>): void;
+  export function beforeEach(fn: (done: (err?: any) => void) => void | Promise<any>): void;
 
   interface Expect {
     not: Expect;

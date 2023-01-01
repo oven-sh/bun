@@ -1688,6 +1688,20 @@ bool JSC__JSValue__asArrayBuffer_(JSC__JSValue JSValue0, JSC__JSGlobalObject* ar
 
     return false;
 }
+
+CPP_DECL JSC__JSValue JSC__JSValue__createEmptyArray(JSC__JSGlobalObject* arg0, size_t length)
+{
+    JSC::VM& vm = arg0->vm();
+    return JSC::JSValue::encode(JSC::constructEmptyArray(arg0, nullptr, length));
+}
+CPP_DECL void JSC__JSValue__putIndex(JSC__JSValue JSValue0, JSC__JSGlobalObject* arg1, uint32_t arg2, JSC__JSValue JSValue3)
+{
+    JSC::JSValue value = JSC::JSValue::decode(JSValue0);
+    JSC::JSValue value2 = JSC::JSValue::decode(JSValue3);
+    JSC::JSArray* array = JSC::jsCast<JSC::JSArray*>(value);
+    array->putDirectIndex(arg1, arg2, value2);
+}
+
 JSC__JSValue JSC__JSValue__createStringArray(JSC__JSGlobalObject* globalObject, ZigString* arg1,
     size_t arg2, bool clone)
 {

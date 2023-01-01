@@ -392,9 +392,10 @@ const LazyStatus = enum {
     loaded,
     failed,
 };
-pub fn dlsym(comptime Type: type, comptime name: [:0]const u8) ?Type {
+
+pub fn dlsym(comptime Type: type, comptime name: [:0]const u8) ?*const Type {
     const Wrapper = struct {
-        pub var function: Type = undefined;
+        pub var function: *const Type = undefined;
         pub var loaded: LazyStatus = LazyStatus.pending;
     };
 
@@ -406,7 +407,7 @@ pub fn dlsym(comptime Type: type, comptime name: [:0]const u8) ?Type {
         const result = std.c.dlsym(RTLD_DEFAULT, name);
 
         if (result) |ptr| {
-            Wrapper.function = bun.cast(Type, ptr);
+            Wrapper.function = bun.cast(*const Type, ptr);
             Wrapper.loaded = .loaded;
             return Wrapper.function;
         } else {

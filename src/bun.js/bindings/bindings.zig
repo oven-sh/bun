@@ -1259,6 +1259,12 @@ pub const JSString = extern struct {
         return shim.cppFn("toZigString", .{ this, global, zig_str });
     }
 
+    pub fn getZigString(this: *JSString, global: *JSGlobalObject) JSC.ZigString {
+        var out = JSC.ZigString.init("");
+        this.toZigString(global, &out);
+        return out;
+    }
+
     pub fn toSlice(
         this: *JSString,
         global: *JSGlobalObject,
@@ -1267,6 +1273,16 @@ pub const JSString = extern struct {
         var str = ZigString.init("");
         this.toZigString(global, &str);
         return str.toSlice(allocator);
+    }
+
+    pub fn toSliceZ(
+        this: *JSString,
+        global: *JSGlobalObject,
+        allocator: std.mem.Allocator,
+    ) ZigString.Slice {
+        var str = ZigString.init("");
+        this.toZigString(global, &str);
+        return str.toSliceZ(allocator);
     }
 
     pub fn eql(this: *const JSString, global: *JSGlobalObject, other: *JSString) bool {
@@ -1444,9 +1460,20 @@ pub const JSPromise = extern struct {
     pub const Strong = struct {
         strong: JSC.Strong = .{},
 
+        pub fn reject(this: *Strong, globalThis: *JSC.JSGlobalObject, val: JSC.JSValue) void {
+            this.swap().reject(globalThis, val);
+        }
+
+        pub fn resolve(this: *Strong, globalThis: *JSC.JSGlobalObject, val: JSC.JSValue) void {
+            this.swap().resolve(globalThis, val);
+        }
+
         pub fn init(globalThis: *JSC.JSGlobalObject) Strong {
             return Strong{
-                .strong = JSC.Strong.create(globalThis, JSC.JSPromise.create(globalThis).asValue(globalThis)),
+                .strong = JSC.Strong.create(
+                    JSC.JSPromise.create(globalThis).asValue(globalThis),
+                    globalThis,
+                ),
             };
         }
 
@@ -1851,6 +1878,53 @@ pub const JSGlobalObject = extern struct {
     ) void {
         var err = JSC.toInvalidArguments(fmt, args, this);
         this.vm().throwError(this, err);
+    }
+
+    pub fn createInvalidArgumentType(
+        this: *JSGlobalObject,
+        comptime name_: []const u8,
+        comptime field: []const u8,
+        comptime typename: []const u8,
+    ) JSC.JSValue {
+        return JSC.JSValue.createTypeError(
+            ZigString.static(
+                comptime std.fmt.comptimePrint("Expected {s} to be a {s} for '{s}'.", .{ field, typename, name_ }),
+            ),
+            ZigString.static("ERR_INVALID_ARG_TYPE"),
+            this,
+        );
+    }
+
+    pub fn throwInvalidArgumentType(
+        this: *JSGlobalObject,
+        comptime name_: []const u8,
+        comptime field: []const u8,
+        comptime typename: []const u8,
+    ) void {
+        this.throwValue(this.createInvalidArgumentType(name_, field, typename));
+    }
+
+    pub fn createNotEnoughArguments(
+        this: *JSGlobalObject,
+        comptime name_: []const u8,
+        comptime expected: usize,
+        got: usize,
+    ) JSC.JSValue {
+        return JSC.toTypeErrorWithCode(
+            "NOT_ENOUGH_ARGUMENTS",
+            "Not enough arguments to '" ++ name_ ++ "''. Expected {d}, got {d}.",
+            .{ expected, got },
+            this,
+        );
+    }
+
+    pub fn throwNotEnoughArguments(
+        this: *JSGlobalObject,
+        comptime name_: []const u8,
+        comptime expected: usize,
+        got: usize,
+    ) void {
+        this.throwValue(this.createNotEnoughArguments(name_, expected, got));
     }
 
     pub fn reload(this: *JSC.JSGlobalObject) void {
@@ -2540,12 +2614,20 @@ pub const JSValue = enum(JSValueReprInt) {
         return cppFn("createEmptyObject", .{ global, len });
     }
 
+    pub fn createEmptyArray(global: *JSGlobalObject, len: usize) JSValue {
+        return cppFn("createEmptyArray", .{ global, len });
+    }
+
     pub fn putRecord(value: JSValue, global: *JSGlobalObject, key: *ZigString, values: [*]ZigString, values_len: usize) void {
         return cppFn("putRecord", .{ value, global, key, values, values_len });
     }
 
     pub fn put(value: JSValue, global: *JSGlobalObject, key: *const ZigString, result: JSC.JSValue) void {
         return cppFn("put", .{ value, global, key, result });
+    }
+
+    pub fn putIndex(value: JSValue, globalObject: *JSGlobalObject, i: u32, out: JSValue) void {
+        cppFn("putIndex", .{ value, globalObject, i, out });
     }
 
     pub fn as(value: JSValue, comptime ZigType: type) ?*ZigType {
@@ -3315,7 +3397,7 @@ pub const JSValue = enum(JSValueReprInt) {
         return this.asNullableVoid().?;
     }
 
-    pub const Extern = [_][]const u8{ "createRopeString", "forEachProperty", "coerceToInt32", "fastGet_", "getStaticProperty", "createUninitializedUint8Array", "fromInt64NoTruncate", "fromUInt64NoTruncate", "toUInt64NoTruncate", "asPromise", "toInt64", "_then", "put", "makeWithNameAndPrototype", "parseJSON", "symbolKeyFor", "symbolFor", "getSymbolDescription", "createInternalPromise", "asInternalPromise", "asArrayBuffer_", "fromEntries", "createTypeError", "createRangeError", "createObject2", "getIfPropertyExistsImpl", "jsType", "jsonStringify", "kind_", "isTerminationException", "isSameValue", "getLengthOfArray", "toZigString", "createStringArray", "createEmptyObject", "putRecord", "asPromise", "isClass", "getNameProperty", "getClassName", "getErrorsProperty", "toInt32", "toBoolean", "isInt32", "isIterable", "forEach", "isAggregateError", "toError", "toZigException", "isException", "toWTFString", "hasProperty", "getPropertyNames", "getDirect", "putDirect", "getIfExists", "asString", "asObject", "asNumber", "isError", "jsNull", "jsUndefined", "jsTDZValue", "jsBoolean", "jsDoubleNumber", "jsNumberFromDouble", "jsNumberFromChar", "jsNumberFromU16", "jsNumberFromInt64", "isBoolean", "isAnyInt", "isUInt32AsAnyInt", "isInt32AsAnyInt", "isNumber", "isString", "isBigInt", "isHeapBigInt", "isBigInt32", "isSymbol", "isPrimitive", "isGetterSetter", "isCustomGetterSetter", "isObject", "isCell", "asCell", "toString", "toStringOrNull", "toPropertyKeyValue", "toObject", "toString", "getPrototype", "getPropertyByPropertyName", "eqlValue", "eqlCell", "isCallable", "toBooleanSlow", "deepEquals", "strictDeepEquals", "getIfPropertyExistsFromPath", "asBigIntCompare" };
+    pub const Extern = [_][]const u8{ "putIndex", "createRopeString", "forEachProperty", "coerceToInt32", "fastGet_", "getStaticProperty", "createUninitializedUint8Array", "fromInt64NoTruncate", "fromUInt64NoTruncate", "toUInt64NoTruncate", "asPromise", "toInt64", "_then", "put", "makeWithNameAndPrototype", "parseJSON", "symbolKeyFor", "symbolFor", "getSymbolDescription", "createInternalPromise", "asInternalPromise", "asArrayBuffer_", "fromEntries", "createTypeError", "createRangeError", "createObject2", "getIfPropertyExistsImpl", "jsType", "jsonStringify", "kind_", "isTerminationException", "isSameValue", "getLengthOfArray", "toZigString", "createStringArray", "createEmptyObject", "createEmptyArray", "putRecord", "asPromise", "isClass", "getNameProperty", "getClassName", "getErrorsProperty", "toInt32", "toBoolean", "isInt32", "isIterable", "forEach", "isAggregateError", "toError", "toZigException", "isException", "toWTFString", "hasProperty", "getPropertyNames", "getDirect", "putDirect", "getIfExists", "asString", "asObject", "asNumber", "isError", "jsNull", "jsUndefined", "jsTDZValue", "jsBoolean", "jsDoubleNumber", "jsNumberFromDouble", "jsNumberFromChar", "jsNumberFromU16", "jsNumberFromInt64", "isBoolean", "isAnyInt", "isUInt32AsAnyInt", "isInt32AsAnyInt", "isNumber", "isString", "isBigInt", "isHeapBigInt", "isBigInt32", "isSymbol", "isPrimitive", "isGetterSetter", "isCustomGetterSetter", "isObject", "isCell", "asCell", "toString", "toStringOrNull", "toPropertyKeyValue", "toObject", "toString", "getPrototype", "getPropertyByPropertyName", "eqlValue", "eqlCell", "isCallable", "toBooleanSlow", "deepEquals", "strictDeepEquals", "getIfPropertyExistsFromPath", "asBigIntCompare" };
 };
 
 extern "c" fn Microtask__run(*Microtask, *JSGlobalObject) void;
@@ -4021,3 +4103,7 @@ pub const DOMCalls = .{
     @import("../api/bun.zig").FFI.Reader,
     @import("../webcore.zig").Crypto,
 };
+
+comptime {
+    _ = bun.JSC.API.Bun.DNSResolver;
+}

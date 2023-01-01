@@ -735,3 +735,24 @@ pub const which = @import("./which.zig").which;
 pub const json = @import("./json_parser.zig");
 pub const JSAst = @import("./js_ast.zig");
 pub const bit_set = @import("./install/bit_set.zig");
+
+pub fn enumMap(comptime T: type, comptime args: anytype) (fn (T) []const u8) {
+    const Map = struct {
+        pub fn get(input: T) []const u8 {
+            // https://github.com/ziglang/zig/issues/14145
+            // https://github.com/ziglang/zig/issues/12765
+            const labels = comptime brk: {
+                var vabels_ = std.enums.EnumArray(T, []const u8).initFill("");
+                @setEvalBranchQuota(99999);
+                inline for (args) |field| {
+                    vabels_.set(field.@"0", field.@"1");
+                }
+                break :brk vabels_;
+            };
+
+            return labels.get(input);
+        }
+    };
+
+    return Map.get;
+}

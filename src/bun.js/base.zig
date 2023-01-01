@@ -1568,13 +1568,21 @@ pub fn JSError(
 ) void {
     @setCold(true);
 
+    exception.* = createError(ctx, fmt, args).asObjectRef();
+}
+
+pub fn createError(
+    globalThis: *JSC.JSGlobalObject,
+    comptime fmt: string,
+    args: anytype,
+) JSC.JSValue {
     if (comptime std.meta.fields(@TypeOf(args)).len == 0) {
         var zig_str = JSC.ZigString.init(fmt);
         if (comptime !strings.isAllASCIISimple(fmt)) {
             zig_str.markUTF16();
         }
 
-        exception.* = zig_str.toErrorInstance(ctx).asObjectRef();
+        return zig_str.toErrorInstance(globalThis);
     } else {
         var fallback = std.heap.stackFallback(256, default_allocator);
         var allocator = fallback.get();
@@ -1583,8 +1591,9 @@ pub fn JSError(
         var zig_str = JSC.ZigString.init(buf);
         zig_str.detectEncoding();
         // it alwayas clones
-        exception.* = zig_str.toErrorInstance(ctx).asObjectRef();
+        const res = zig_str.toErrorInstance(globalThis);
         allocator.free(buf);
+        return res;
     }
 }
 
@@ -1598,8 +1607,8 @@ pub fn throwTypeError(
     exception.* = toTypeError(code, fmt, args, ctx).asObjectRef();
 }
 
-pub fn toTypeError(
-    code: JSC.Node.ErrorCode,
+pub fn toTypeErrorWithCode(
+    code: []const u8,
     comptime fmt: string,
     args: anytype,
     ctx: js.JSContextRef,
@@ -1615,8 +1624,17 @@ pub fn toTypeError(
         zig_str.detectEncoding();
         zig_str.mark();
     }
-    const code_str = ZigString.init(@tagName(code));
+    const code_str = ZigString.init(code);
     return JSC.JSValue.createTypeError(&zig_str, &code_str, ctx.ptr());
+}
+
+pub fn toTypeError(
+    code: JSC.Node.ErrorCode,
+    comptime fmt: string,
+    args: anytype,
+    ctx: js.JSContextRef,
+) JSC.JSValue {
+    return toTypeErrorWithCode(std.mem.span(@tagName(code)), fmt, args, ctx);
 }
 
 pub fn throwInvalidArguments(

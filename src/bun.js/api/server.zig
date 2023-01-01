@@ -2343,16 +2343,20 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                         },
                     };
 
+                    this.request_body_value = .{
+                        .InternalBlob = .{
+                            .bytes = bytes.toManaged(this.allocator).clone() catch @panic("Out of memory"),
+                        },
+                    };
+
                     if (this.request_body_waiting_for_data) |pending| {
                         pending.resolve(&body, this.server.globalThis);
                         pending.* = body;
-                    }
 
-                    this.request_body_value = .{
-                        .InternalBlob = .{
-                            .bytes = bytes.toManaged(this.allocator),
-                        },
-                    };
+                        if (pending != &req.body) {
+                            req.body = this.request_body_value.?;
+                        }
+                    }
                 }
 
                 request.unprotect();

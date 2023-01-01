@@ -5589,6 +5589,11 @@ pub const Request = struct {
         globalThis: *JSC.JSGlobalObject,
         _: *JSC.CallFrame,
     ) callconv(.C) JSC.JSValue {
+        var value: *Body.Value = this.getBodyValue();
+        if (value.* == .Used) {
+            globalThis.vm().throwError(globalThis, ZigString.static("Body already used").toErrorInstance(globalThis));
+            return JSC.JSValue.jsUndefined();
+        }
         var cloned = this.clone(getAllocator(globalThis), globalThis);
         return cloned.toJS(globalThis);
     }

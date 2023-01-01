@@ -139,6 +139,8 @@ describe("web api - request", () => {
         async fetch(req) {
           const body = await req.clone().json();
           expect(JSON.stringify(body)).toBe(JSON.stringify(requestBody));
+          const body2 = await req.json();
+          expect(JSON.stringify(body2)).toBe(JSON.stringify(requestBody));
           return new Response(textToExpect);
         },
       },
@@ -166,6 +168,8 @@ describe("web api - request", () => {
           expect(body instanceof ReadableStream).toBe(true);
           const cloned = await req.clone().json();
           expect(JSON.stringify(cloned)).toBe(JSON.stringify(requestBody));
+          const cloned2 = await req.clone().json();
+          expect(JSON.stringify(cloned2)).toBe(JSON.stringify(requestBody));
           return new Response(textToExpect);
         },
       },
@@ -197,6 +201,37 @@ describe("web api - request", () => {
             expect(e.message).toBe("Body already used");
           }
           expect(JSON.stringify(body1)).toBe(JSON.stringify(requestBody));
+          return new Response(textToExpect);
+        },
+      },
+      async (server) => {
+        const expected = `http://${server.hostname}:${server.port}/helloooo`;
+        const response = await fetch(expected, {
+          headers: {
+            Host: "example.com",
+          },
+          method: "POST",
+          body: JSON.stringify(requestBody)
+        });
+        expect(await response.text()).toBe(textToExpect);
+      },
+    );
+  });
+
+  it("request.clone not allowed when body is used", async () => {
+    const textToExpect = "OK";
+    const requestBody = { test: "123" }
+    await runTest(
+      {
+        async fetch(req) {
+          const body = await req.json();
+          expect(JSON.stringify(body)).toBe(JSON.stringify(requestBody));
+          try {
+            req.clone();
+            expect(1).toBe(2);
+          } catch(e: any) {
+            expect(e.message).toBe("Body already used");
+          }
           return new Response(textToExpect);
         },
       },

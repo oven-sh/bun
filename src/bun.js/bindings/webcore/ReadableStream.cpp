@@ -136,8 +136,16 @@ JSC::JSValue ReadableStream::tee()
     arguments.append(JSC::jsBoolean(true));
     ASSERT(!arguments.hasOverflowed());
     auto returnedValue = invokeReadableStreamFunction(lexicalGlobalObject, privateName, JSC::jsUndefined(), arguments);
+
+    JSArray* array = JSC::jsDynamicCast<JSArray*>(returnedValue.value_or(JSC::jsUndefined()));
+
+    VM& vm = lexicalGlobalObject.vm();
+    JSC::JSObject* object = JSC::constructEmptyObject(&lexicalGlobalObject, lexicalGlobalObject.objectPrototype(), 2);
+
+    object->putDirect(vm, JSC::Identifier::fromString(vm, "branch1"_s), array->getDirectIndex(&lexicalGlobalObject, 0), 0);
+    object->putDirect(vm, JSC::Identifier::fromString(vm, "branch2"_s), array->getDirectIndex(&lexicalGlobalObject, 1), 0);
  
-    return returnedValue.value_or(JSC::jsUndefined());
+    return object;
 }
 
 void ReadableStream::lock()

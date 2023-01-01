@@ -118,28 +118,20 @@ pub const ReadableStream = struct {
         ReadableStream__cancel(this.value, globalThis);
     }
 
-    pub fn tee(this: *const ReadableStream, globalThis: *JSGlobalObject) [2]ReadableStream {
+    pub fn tee(this: *const ReadableStream, globalThis: *JSGlobalObject) [2]?ReadableStream {
         JSC.markBinding(@src());
         this.value.unprotect();
         var branches = ReadableStream__tee(this.value, globalThis);
 
-        var array = branches.arrayIterator(globalThis);
-        var i: usize = 0;
-        var branch1 = JSC.WebCore.ReadableStream.fromJS(
-                            JSC.WebCore.ReadableStream.empty(globalThis),
-                            globalThis,
-                        ).?;
-        var branch2 = JSC.WebCore.ReadableStream.fromJS(
-                            JSC.WebCore.ReadableStream.empty(globalThis),
-                            globalThis,
-                        ).?;
-        while (array.next()) |val| {
-            if (i == 0) {
-                branch1 = ReadableStream.fromJS(val, globalThis).?;
-            } else {
-                branch2 = ReadableStream.fromJS(val, globalThis).?;
-            }
-            i += 1;
+        var branch1: ?ReadableStream = null;
+        var branch2: ?ReadableStream = null;
+
+        if (branches.get(globalThis, "branch1")) |branch| {
+            branch1 = ReadableStream.fromJS(branch, globalThis);
+        }
+
+        if (branches.get(globalThis, "branch2")) |branch| {
+            branch2 = ReadableStream.fromJS(branch, globalThis);
         }
 
         return .{ branch1, branch2 };

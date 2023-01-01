@@ -1517,7 +1517,7 @@ pub const DescribeScope = struct {
             const pending_test = Jest.runner.?.pending_test;
             // forbid `expect()` within hooks
             Jest.runner.?.pending_test = null;
-            var result = if (cb.getLengthOfArray(ctx) > 0) brk: {
+            var result: JSC.JSValue = if (cb.getLengthOfArray(ctx) > 0) brk: {
                 this.done = false;
                 const done_func = JSC.NewFunctionWithData(
                     ctx,
@@ -1537,9 +1537,15 @@ pub const DescribeScope = struct {
                 break :brk result;
             } else cb.call(ctx, &.{});
             if (result.asPromise()) |promise| {
-                VirtualMachine.get().waitForPromise(promise);
+                if (promise.status(ctx.vm()) == .Pending) {
+                    result.protect();
+                    VirtualMachine.get().waitForPromise(promise);
+                    result.unprotect();
+                }
+
                 result = promise.result(ctx.vm());
             }
+
             Jest.runner.?.pending_test = pending_test;
             if (result.isAnyError(ctx)) return result;
 
@@ -1617,16 +1623,21 @@ pub const DescribeScope = struct {
             JSC.markBinding(@src());
             var result = js.JSObjectCallAsFunctionReturnValue(ctx, callback, thisObject, 0, null);
 
-            if (result.asPromise() != null or result.asInternalPromise() != null) {
-                var vm = JSC.VirtualMachine.get();
-
-                var promise = JSInternalPromise.resolvedPromise(ctx.ptr(), result);
-                vm.waitForPromise(promise);
-
-                switch (promise.status(ctx.ptr().vm())) {
+            if (result.asPromise()) |prom| {
+                ctx.bunVM().waitForPromise(prom);
+                switch (prom.status(ctx.ptr().vm())) {
                     JSPromise.Status.Fulfilled => {},
                     else => {
-                        exception.* = promise.result(ctx.ptr().vm()).asObjectRef();
+                        exception.* = prom.result(ctx.ptr().vm()).asObjectRef();
+                        return null;
+                    },
+                }
+            } else if (result.asPromise()) |prom| {
+                ctx.bunVM().waitForPromise(prom);
+                switch (prom.status(ctx.ptr().vm())) {
+                    JSPromise.Status.Fulfilled => {},
+                    else => {
+                        exception.* = prom.result(ctx.ptr().vm()).asObjectRef();
                         return null;
                     },
                 }

@@ -1692,6 +1692,24 @@ pub const ModuleLoader = struct {
                         .hash = 0,
                     };
                 },
+                .@"node:readline" => {
+                    return ResolvedSource{
+                        .allocator = null,
+                        .source_code = ZigString.init(jsModuleFromFile(jsc_vm.load_builtins_from_path, "readline.exports.js")),
+                        .specifier = ZigString.init("node:readline"),
+                        .source_url = ZigString.init("node:readline"),
+                        .hash = 0,
+                    };
+                },
+                .@"node:readline/promises" => {
+                    return ResolvedSource{
+                        .allocator = null,
+                        .source_code = ZigString.init(jsModuleFromFile(jsc_vm.load_builtins_from_path, "readline_promises.exports.js")),
+                        .specifier = ZigString.init("node:readline/promises"),
+                        .source_url = ZigString.init("node:readline/promises"),
+                        .hash = 0,
+                    };
+                },
                 .@"bun:ffi" => {
                     return ResolvedSource{
                         .allocator = null,
@@ -1996,6 +2014,8 @@ pub const HardcodedModule = enum {
     @"node:path/win32",
     @"node:perf_hooks",
     @"node:process",
+    @"node:readline",
+    @"node:readline/promises",
     @"node:stream",
     @"node:stream/consumers",
     @"node:stream/web",
@@ -2040,6 +2060,8 @@ pub const HardcodedModule = enum {
             .{ "node:path/win32", HardcodedModule.@"node:path/win32" },
             .{ "node:perf_hooks", HardcodedModule.@"node:perf_hooks" },
             .{ "node:process", HardcodedModule.@"node:process" },
+            .{ "node:readline", HardcodedModule.@"node:readline" },
+            .{ "node:readline/promises", HardcodedModule.@"node:readline/promises" },
             .{ "node:stream", HardcodedModule.@"node:stream" },
             .{ "node:stream/consumers", HardcodedModule.@"node:stream/consumers" },
             .{ "node:stream/web", HardcodedModule.@"node:stream/web" },
@@ -2094,6 +2116,8 @@ pub const HardcodedModule = enum {
             .{ "node:path/win32", "node:path/win32" },
             .{ "node:perf_hooks", "node:perf_hooks" },
             .{ "node:process", "node:process" },
+            .{ "node:readline", "node:readline" },
+            .{ "node:readline/promises", "node:readline/promises" },
             .{ "node:stream", "node:stream" },
             .{ "node:stream/consumers", "node:stream/consumers" },
             .{ "node:stream/web", "node:stream/web" },
@@ -2113,6 +2137,8 @@ pub const HardcodedModule = enum {
             .{ "readable-stream", "node:stream" },
             .{ "readable-stream/consumer", "node:stream/consumers" },
             .{ "readable-stream/web", "node:stream/web" },
+            .{ "readline", "node:readline" },
+            .{ "readline/promises", "node:readline/promises" },
             .{ "stream", "node:stream" },
             .{ "stream/consumers", "node:stream/consumers" },
             .{ "stream/web", "node:stream/web" },

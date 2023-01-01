@@ -1131,13 +1131,13 @@ void JSC__JSValue__putRecord(JSC__JSValue objectValue, JSC__JSGlobalObject* glob
 JSC__JSInternalPromise* JSC__JSValue__asInternalPromise(JSC__JSValue JSValue0)
 {
     JSC::JSValue value = JSC::JSValue::decode(JSValue0);
-    return JSC::jsCast<JSC::JSInternalPromise*>(value);
+    return JSC::jsDynamicCast<JSC::JSInternalPromise*>(value);
 }
 
 JSC__JSPromise* JSC__JSValue__asPromise(JSC__JSValue JSValue0)
 {
     JSC::JSValue value = JSC::JSValue::decode(JSValue0);
-    return JSC::jsCast<JSC::JSPromise*>(value);
+    return JSC::jsDynamicCast<JSC::JSPromise*>(value);
 }
 JSC__JSValue JSC__JSValue__createInternalPromise(JSC__JSGlobalObject* globalObject)
 {

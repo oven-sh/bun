@@ -352,8 +352,14 @@ pub const Arguments = struct {
 
         var cwd: []u8 = undefined;
         if (args.option("--cwd")) |cwd_| {
-            var cwd_paths = [_]string{cwd_};
-            cwd = try std.fs.path.resolve(allocator, &cwd_paths);
+            cwd = brk: {
+                var outbuf: [bun.MAX_PATH_BYTES]u8 = undefined;
+                const out = std.os.realpath(cwd_, &outbuf) catch |err| {
+                    Output.prettyErrorln("error resolving --cwd: {s}", .{@errorName(err)});
+                    Global.exit(1);
+                };
+                break :brk try allocator.dupe(u8, out);
+            };
         } else {
             cwd = try std.process.getCwdAlloc(allocator);
         }

@@ -357,6 +357,47 @@ describe("streaming", () => {
     );
   });
 
+  it("text from JS, 3 chunks, 1 empty, with delay in pull", async () => {
+    const textToExpect = "hello world";
+    const groups = [
+      ["hello", "", " world"],
+      ["", "hello ", "world"],
+      ["hello ", "world", ""],
+      ["hello world", "", ""],
+      ["", "", "hello world"],
+    ];
+    var count = 0;
+
+    for (const chunks of groups) {
+      await runTest(
+        {
+          fetch(req) {
+            return new Response(
+              new ReadableStream({
+                async pull(controller) {
+                  for (let chunk of chunks) {
+                    controller.enqueue(Buffer.from(chunk));
+                    await 1;
+                  }
+                  await 1;
+                  controller.close();
+                },
+              }),
+            );
+          },
+        },
+        async (server) => {
+          const response = await fetch(
+            `http://${server.hostname}:${server.port}`,
+          );
+          expect(await response.text()).toBe(textToExpect);
+          count++;
+        },
+      );
+    }
+    expect(count).toBe(groups.length);
+  });
+
   it("text from JS, 2 chunks, with async pull", async () => {
     const fixture = resolve(import.meta.dir, "./fetch.js.txt");
     const textToExpect = readFileSync(fixture, "utf-8");

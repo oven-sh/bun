@@ -3789,7 +3789,6 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
         pending_requests: usize = 0,
         request_pool_allocator: std.mem.Allocator = undefined,
         has_js_deinited: bool = false,
-        listen_callback: JSC.AnyTask = undefined,
         allocator: std.mem.Allocator,
         poll_ref: JSC.PollRef = .{},
         deinit_scheduled: ?JSC.AnyTask = null,

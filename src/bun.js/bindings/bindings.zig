@@ -4103,7 +4103,3 @@ pub const DOMCalls = .{
     @import("../api/bun.zig").FFI.Reader,
     @import("../webcore.zig").Crypto,
 };
-
-comptime {
-    _ = bun.JSC.API.Bun.DNSResolver;
-}

@@ -8456,38 +8456,10 @@ var require_brorand = __commonJS({
       return this._rand(len);
     };
     Rand.prototype._rand = function (n) {
-      if (this.rand.getBytes) return this.rand.getBytes(n);
-      for (var res = new Uint8Array(n), i = 0; i < res.length; i++)
-        res[i] = this.rand.getByte();
-      return res;
+      var out = new Buffer(n);
+      crypto.getRandomValues(out);
+      return out;
     };
-    if (typeof self == "object")
-      self.crypto && self.crypto.getRandomValues
-        ? (Rand.prototype._rand = function (n) {
-            var arr = new Uint8Array(n);
-            return self.crypto.getRandomValues(arr), arr;
-          })
-        : self.msCrypto && self.msCrypto.getRandomValues
-        ? (Rand.prototype._rand = function (n) {
-            var arr = new Uint8Array(n);
-            return self.msCrypto.getRandomValues(arr), arr;
-          })
-        : typeof window == "object" &&
-          (Rand.prototype._rand = function () {
-            throw new Error("Not implemented yet");
-          });
-    else
-      try {
-        if (
-          ((crypto2 = require_crypto_browserify()),
-          typeof crypto2.randomBytes != "function")
-        )
-          throw new Error("Not supported");
-        Rand.prototype._rand = function (n) {
-          return crypto2.randomBytes(n);
-        };
-      } catch {}
-    var crypto2;
   },
 });
 

@@ -1275,8 +1275,12 @@ pub const TestScope = struct {
             JSC.setFunctionData(function, null);
             if (args.len > 0) {
                 const err = args.ptr[0];
-                globalThis.bunVM().runErrorHandlerWithDedupe(err, null);
-                task.handleResult(.{ .fail = active_test_expectation_counter.actual }, .callback);
+                if (err.isEmptyOrUndefinedOrNull()) {
+                    task.handleResult(.{ .pass = active_test_expectation_counter.actual }, .callback);
+                } else {
+                    globalThis.bunVM().runErrorHandlerWithDedupe(err, null);
+                    task.handleResult(.{ .fail = active_test_expectation_counter.actual }, .callback);
+                }
             } else {
                 task.handleResult(.{ .pass = active_test_expectation_counter.actual }, .callback);
             }
@@ -1510,7 +1514,9 @@ pub const DescribeScope = struct {
             JSC.setFunctionData(function, null);
             if (args.len > 0) {
                 const err = args.ptr[0];
-                ctx.bunVM().runErrorHandlerWithDedupe(err, null);
+                if (!err.isEmptyOrUndefinedOrNull()) {
+                    ctx.bunVM().runErrorHandlerWithDedupe(err, null);
+                }
             }
             scope.done = true;
         }

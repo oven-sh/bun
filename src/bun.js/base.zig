@@ -3260,6 +3260,7 @@ pub const FilePoll = struct {
     const Subprocess = JSC.Subprocess;
     const BufferedInput = Subprocess.BufferedInput;
     const BufferedOutput = Subprocess.BufferedOutput;
+    const DNSLookup = bun.JSC.API.Bun.DNSLookup;
     const Deactivated = opaque {
         pub var owner: Owner = Owner.init(@intToPtr(*Deactivated, @as(usize, 0xDEADBEEF)));
     };
@@ -3271,6 +3272,7 @@ pub const FilePoll = struct {
         BufferedInput,
         FIFO,
         Deactivated,
+        DNSLookup,
     });
 
     fn updateFlags(poll: *FilePoll, updated: Flags.Set) void {
@@ -3369,6 +3371,12 @@ pub const FilePoll = struct {
                 log("onUpdate " ++ kqueue_or_epoll ++ " (fd: {d}) FileSink", .{poll.fd});
                 var loader = ptr.as(JSC.WebCore.FileSink);
                 loader.onPoll(size_or_offset, 0);
+            },
+
+            @field(Owner.Tag, "DNSLookup") => {
+                log("onUpdate " ++ kqueue_or_epoll ++ " (fd: {d}) DNSLookup", .{poll.fd});
+                var loader = ptr.as(DNSLookup);
+                loader.onReadable();
             },
 
             else => {

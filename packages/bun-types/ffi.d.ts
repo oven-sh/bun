@@ -374,7 +374,9 @@ declare module "bun:ffi" {
     | "pointer"
     | "void"
     | "cstring"
-    | "function";
+    | "function"
+    | "usize"
+    | "callback";
 
   interface FFIFunction {
     /**

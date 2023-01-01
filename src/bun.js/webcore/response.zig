@@ -4200,7 +4200,7 @@ pub const InternalBlob = struct {
     pub fn toJSON(this: *@This(), globalThis: *JSC.JSGlobalObject) JSValue {
         const str_bytes = ZigString.init(this.bytes.items).withEncoding();
         const json = str_bytes.toJSONObject(globalThis);
-        this.deinit();
+        // this.deinit();
         return json;
     }
 
@@ -4463,6 +4463,14 @@ pub const Body = struct {
         }
     };
 
+    pub const Action = enum {
+        none,
+        getText,
+        getJSON,
+        getArrayBuffer,
+        getBlob,
+    };
+
     pub const PendingValue = struct {
         promise: ?JSValue = null,
         readable: ?JSC.WebCore.ReadableStream = null,
@@ -4476,12 +4484,34 @@ pub const Body = struct {
 
         /// conditionally runs when requesting data
         /// used in HTTP server to ignore request bodies unless asked for it
-        onStartBuffering: ?*const fn (ctx: *anyopaque) void = null,
+        onStartBuffering: ?*const fn (ctx: *anyopaque, value: *Value) void = null,
 
         onStartStreaming: ?*const fn (ctx: *anyopaque) JSC.WebCore.DrainResult = null,
 
         deinit: bool = false,
         action: Action = Action.none,
+
+        pub fn clone(this: *PendingValue, globalThis: *JSC.JSGlobalObject) PendingValue {
+            if (this.readable) |readable| {
+                var branches = readable.tee(globalThis);
+                this.readable = branches[0];
+
+                return PendingValue{
+                    .task = this.task,
+                    .readable = branches[1],
+                    .global = globalThis,
+                    .onStartBuffering = this.onStartBuffering,
+                    .onStartStreaming = this.onStartStreaming,
+                };
+            }
+
+            return PendingValue{
+                .global = this.global,
+                .task = this.task,
+                .onStartBuffering = this.onStartBuffering,
+                .onStartStreaming = this.onStartStreaming,
+            };
+        }
 
         pub fn toAnyBlob(this: *PendingValue) ?AnyBlob {
             if (this.promise != null)
@@ -4500,59 +4530,6 @@ pub const Body = struct {
 
             return null;
         }
-
-        pub fn setPromise(value: *PendingValue, globalThis: *JSC.JSGlobalObject, action: Action) JSValue {
-            value.action = action;
-
-            if (value.readable) |readable| {
-                // switch (readable.ptr) {
-                //     .JavaScript
-                // }
-                switch (action) {
-                    .getText, .getJSON, .getBlob, .getArrayBuffer => {
-                        switch (readable.ptr) {
-                            .Blob => unreachable,
-                            else => {},
-                        }
-                        value.promise = switch (action) {
-                            .getJSON => globalThis.readableStreamToJSON(readable.value),
-                            .getArrayBuffer => globalThis.readableStreamToArrayBuffer(readable.value),
-                            .getText => globalThis.readableStreamToText(readable.value),
-                            .getBlob => globalThis.readableStreamToBlob(readable.value),
-                            else => unreachable,
-                        };
-                        value.promise.?.ensureStillAlive();
-                        readable.value.unprotect();
-
-                        // js now owns the memory
-                        value.readable = null;
-
-                        return value.promise.?;
-                    },
-                    .none => {},
-                }
-            }
-
-            {
-                var promise = JSC.JSPromise.create(globalThis);
-                const promise_value = promise.asValue(globalThis);
-                value.promise = promise_value;
-
-                if (value.onStartBuffering) |onStartBuffering| {
-                    value.onStartBuffering = null;
-                    onStartBuffering(value.task.?);
-                }
-                return promise_value;
-            }
-        }
-
-        pub const Action = enum {
-            none,
-            getText,
-            getJSON,
-            getArrayBuffer,
-            getBlob,
-        };
     };
 
     /// This is a duplex stream!
@@ -4567,6 +4544,62 @@ pub const Body = struct {
         Used: void,
         Empty: void,
         Error: JSValue,
+
+        pub fn setPromise(this: *Value, globalThis: *JSC.JSGlobalObject, action: Action) JSValue {
+            if (this.* == .Locked) {
+                this.Locked.action = action;
+
+                if (this.Locked.readable) |readable| {
+                    // switch (readable.ptr) {
+                    //     .JavaScript
+                    // }
+                    switch (action) {
+                        .getText, .getJSON, .getBlob, .getArrayBuffer => {
+                            switch (readable.ptr) {
+                                .Blob => unreachable,
+                                else => {},
+                            }
+                            this.Locked.promise = switch (action) {
+                                .getJSON => globalThis.readableStreamToJSON(readable.value),
+                                .getArrayBuffer => globalThis.readableStreamToArrayBuffer(readable.value),
+                                .getText => globalThis.readableStreamToText(readable.value),
+                                .getBlob => globalThis.readableStreamToBlob(readable.value),
+                                else => unreachable,
+                            };
+                            this.Locked.promise.?.ensureStillAlive();
+                            readable.value.unprotect();
+
+                            // js now owns the memory
+                            this.Locked.readable = null;
+
+                            if (this.Locked.onStartBuffering) |onStartBuffering| {
+                                this.Locked.onStartBuffering = null;
+                                onStartBuffering(this.Locked.task.?, this);
+                            }
+
+                            return this.Locked.promise.?;
+                        },
+                        .none => {},
+                    }
+                }
+
+                {
+                    var promise = JSC.JSPromise.create(globalThis);
+                    const promise_value = promise.asValue(globalThis);
+                    this.Locked.promise = promise_value;
+
+                    if (this.Locked.onStartBuffering) |onStartBuffering| {
+                        this.Locked.onStartBuffering = null;
+                        onStartBuffering(this.Locked.task.?, this);
+                    }
+                    return promise_value;
+                }
+            }
+
+            var promise = JSC.JSPromise.create(globalThis);
+            const promise_value = promise.asValue(globalThis);
+            return promise_value;
+        }
 
         pub fn toBlobIfPossible(this: *Value) void {
             if (this.* != .Locked)
@@ -5120,6 +5153,8 @@ pub const Body = struct {
 
             if (this.* == .Blob) {
                 return Value{ .Blob = this.Blob.dupe() };
+            } else if (this.* == .Locked) {
+                return Value{ .Locked = this.Locked.clone(globalThis) };
             }
 
             return Value{ .Empty = {} };
@@ -5618,7 +5653,7 @@ fn BodyMixin(comptime Type: type) type {
             }
 
             if (value.* == .Locked) {
-                return value.Locked.setPromise(globalThis, .getText);
+                return value.setPromise(globalThis, .getText);
             }
 
             var blob = value.useAsAnyBlob();
@@ -5657,7 +5692,7 @@ fn BodyMixin(comptime Type: type) type {
             }
 
             if (value.* == .Locked) {
-                return value.Locked.setPromise(globalObject, .getJSON);
+                return value.setPromise(globalObject, .getJSON);
             }
 
             var blob = value.useAsAnyBlob();
@@ -5683,7 +5718,7 @@ fn BodyMixin(comptime Type: type) type {
             }
 
             if (value.* == .Locked) {
-                return value.Locked.setPromise(globalObject, .getArrayBuffer);
+                return value.setPromise(globalObject, .getArrayBuffer);
             }
 
             var blob: AnyBlob = value.useAsAnyBlob();
@@ -5702,7 +5737,7 @@ fn BodyMixin(comptime Type: type) type {
             }
 
             if (value.* == .Locked) {
-                return value.Locked.setPromise(globalObject, .getBlob);
+                return value.setPromise(globalObject, .getBlob);
             }
 
             var blob = value.use();

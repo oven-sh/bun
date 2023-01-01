@@ -1513,6 +1513,17 @@ extern "C" bool ReadableStream__isLocked(JSC__JSValue possibleReadableStream, Zi
     return stream != nullptr && ReadableStream::isLocked(globalObject, stream);
 }
 
+extern "C" JSC__JSValue ReadableStream__tee(JSC__JSValue possibleReadableStream, Zig::GlobalObject* globalObject);
+extern "C" JSC__JSValue ReadableStream__tee(JSC__JSValue possibleReadableStream, Zig::GlobalObject* globalObject)
+{
+    ASSERT(globalObject);
+    auto* readableStream = jsDynamicCast<JSReadableStream*>(JSC::JSValue::decode(possibleReadableStream));
+    if (UNLIKELY(!readableStream))
+        return JSC::JSValue::encode(JSC::jsUndefined());
+
+    return JSC::JSValue::encode(ReadableStream(*globalObject, *readableStream).tee());
+}
+
 extern "C" int32_t ReadableStreamTag__tagged(Zig::GlobalObject* globalObject, JSC__JSValue possibleReadableStream, JSValue* ptr);
 extern "C" int32_t ReadableStreamTag__tagged(Zig::GlobalObject* globalObject, JSC__JSValue possibleReadableStream, JSValue* ptr)
 {

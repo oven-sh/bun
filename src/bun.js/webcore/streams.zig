@@ -118,6 +118,33 @@ pub const ReadableStream = struct {
         ReadableStream__cancel(this.value, globalThis);
     }
 
+    pub fn tee(this: *const ReadableStream, globalThis: *JSGlobalObject) [2]ReadableStream {
+        JSC.markBinding(@src());
+        this.value.unprotect();
+        var branches = ReadableStream__tee(this.value, globalThis);
+
+        var array = branches.arrayIterator(globalThis);
+        var i: usize = 0;
+        var branch1 = JSC.WebCore.ReadableStream.fromJS(
+                            JSC.WebCore.ReadableStream.empty(globalThis),
+                            globalThis,
+                        ).?;
+        var branch2 = JSC.WebCore.ReadableStream.fromJS(
+                            JSC.WebCore.ReadableStream.empty(globalThis),
+                            globalThis,
+                        ).?;
+        while (array.next()) |val| {
+            if (i == 0) {
+                branch1 = ReadableStream.fromJS(val, globalThis).?;
+            } else {
+                branch2 = ReadableStream.fromJS(val, globalThis).?;
+            }
+            i += 1;
+        }
+
+        return .{ branch1, branch2 };
+    }
+
     pub fn abort(this: *const ReadableStream, globalThis: *JSGlobalObject) void {
         JSC.markBinding(@src());
         this.value.unprotect();
@@ -176,6 +203,7 @@ pub const ReadableStream = struct {
     extern fn ReadableStreamTag__tagged(globalObject: *JSGlobalObject, possibleReadableStream: JSValue, ptr: *JSValue) Tag;
     extern fn ReadableStream__isDisturbed(possibleReadableStream: JSValue, globalObject: *JSGlobalObject) bool;
     extern fn ReadableStream__isLocked(possibleReadableStream: JSValue, globalObject: *JSGlobalObject) bool;
+    extern fn ReadableStream__tee(possibleReadableStream: JSValue, globalObject: *JSGlobalObject) JSValue;
     extern fn ReadableStream__empty(*JSGlobalObject) JSC.JSValue;
     extern fn ReadableStream__cancel(stream: JSValue, *JSGlobalObject) void;
     extern fn ReadableStream__abort(stream: JSValue, *JSGlobalObject) void;

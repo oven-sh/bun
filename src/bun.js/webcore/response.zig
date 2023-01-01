@@ -4200,7 +4200,7 @@ pub const InternalBlob = struct {
     pub fn toJSON(this: *@This(), globalThis: *JSC.JSGlobalObject) JSValue {
         const str_bytes = ZigString.init(this.bytes.items).withEncoding();
         const json = str_bytes.toJSONObject(globalThis);
-        // this.deinit();
+        this.deinit();
         return json;
     }
 

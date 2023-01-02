@@ -7,6 +7,7 @@
 #include "JSDOMAttribute.h"
 #include "headers.h"
 #include "JSDOMConvertEnumeration.h"
+#include "JavaScriptCore/JSArrayBufferView.h"
 
 namespace WebCore {
 
@@ -287,12 +288,20 @@ static inline JSC::EncodedJSValue jsStringDecoderPrototypeFunction_writeBody(JSC
     }
 
     auto buffer = callFrame->uncheckedArgument(0);
-    JSC::JSUint8Array* view = JSC::jsDynamicCast<JSC::JSUint8Array*>(buffer);
-    if (!view) {
+    JSC::JSArrayBufferView* view = JSC::jsDynamicCast<JSC::JSArrayBufferView*>(buffer);
+    if (UNLIKELY(!view || view->isDetached())) {
+        // What node does:
+        // StringDecoder.prototype.write = function write(buf) {
+        // if (typeof buf === 'string')
+        //     return buf;
+        if (buffer.isString()) {
+            return JSC::JSValue::encode(buffer);
+        }
+
         throwVMTypeError(lexicalGlobalObject, throwScope, "Expected Uint8Array"_s);
         return JSValue::encode(jsUndefined());
     }
-    RELEASE_AND_RETURN(throwScope, JSC::JSValue::encode(castedThis->write(vm, lexicalGlobalObject, view->typedVector(), view->length())));
+    RELEASE_AND_RETURN(throwScope, JSC::JSValue::encode(castedThis->write(vm, lexicalGlobalObject, reinterpret_cast<uint8_t*>(view->vector()), view->byteLength())));
 }
 static inline JSC::EncodedJSValue jsStringDecoderPrototypeFunction_endBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSStringDecoder>::ClassParameter castedThis)
 {
@@ -303,12 +312,12 @@ static inline JSC::EncodedJSValue jsStringDecoderPrototypeFunction_endBody(JSC::
     }
 
     auto buffer = callFrame->uncheckedArgument(0);
-    JSC::JSUint8Array* view = JSC::jsDynamicCast<JSC::JSUint8Array*>(buffer);
-    if (!view) {
+    JSC::JSArrayBufferView* view = JSC::jsDynamicCast<JSC::JSArrayBufferView*>(buffer);
+    if (UNLIKELY(!view || view->isDetached())) {
         throwVMTypeError(lexicalGlobalObject, throwScope, "Expected Uint8Array"_s);
         return JSValue::encode(jsUndefined());
     }
-    RELEASE_AND_RETURN(throwScope, JSC::JSValue::encode(castedThis->end(vm, lexicalGlobalObject, view->typedVector(), view->length())));
+    RELEASE_AND_RETURN(throwScope, JSC::JSValue::encode(castedThis->end(vm, lexicalGlobalObject, reinterpret_cast<uint8_t*>(view->vector()), view->byteLength())));
 }
 static inline JSC::EncodedJSValue jsStringDecoderPrototypeFunction_textBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSStringDecoder>::ClassParameter castedThis)
 {
@@ -320,16 +329,17 @@ static inline JSC::EncodedJSValue jsStringDecoderPrototypeFunction_textBody(JSC:
     }
 
     auto buffer = callFrame->uncheckedArgument(0);
-    JSC::JSUint8Array* view = JSC::jsDynamicCast<JSC::JSUint8Array*>(buffer);
-    if (!view) {
+    JSC::JSArrayBufferView* view = JSC::jsDynamicCast<JSC::JSArrayBufferView*>(buffer);
+    if (UNLIKELY(!view || view->isDetached())) {
         throwVMTypeError(lexicalGlobalObject, throwScope, "Expected Uint8Array"_s);
         return JSValue::encode(jsUndefined());
     }
     int32_t offset = callFrame->uncheckedArgument(1).toInt32(lexicalGlobalObject);
     RETURN_IF_EXCEPTION(throwScope, JSC::JSValue::encode(JSC::jsUndefined()));
-    if (offset > view->length())
+    uint32_t byteLength = view->byteLength();
+    if (offset > byteLength)
         RELEASE_AND_RETURN(throwScope, JSC::JSValue::encode(JSC::jsEmptyString(vm)));
-    RELEASE_AND_RETURN(throwScope, JSC::JSValue::encode(castedThis->write(vm, lexicalGlobalObject, view->typedVector() + offset, view->length() - offset)));
+    RELEASE_AND_RETURN(throwScope, JSC::JSValue::encode(castedThis->write(vm, lexicalGlobalObject, reinterpret_cast<uint8_t*>(view->vector()) + offset, byteLength - offset)));
 }
 
 static JSC_DEFINE_HOST_FUNCTION(jsStringDecoderPrototypeFunction_write,

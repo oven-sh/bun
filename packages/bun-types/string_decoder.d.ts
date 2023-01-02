@@ -47,7 +47,7 @@ declare module "string_decoder" {
      * returned string and stored in an internal buffer for the next call to`stringDecoder.write()` or `stringDecoder.end()`.
      * @param buffer A `Buffer`, or `TypedArray`, or `DataView` containing the bytes to decode.
      */
-    write(buffer: Buffer): string;
+    write(buffer: Buffer | ArrayBufferView): string;
     /**
      * Returns any remaining input stored in the internal buffer as a string. Bytes
      * representing incomplete UTF-8 and UTF-16 characters will be replaced with
@@ -57,7 +57,7 @@ declare module "string_decoder" {
      * After `end()` is called, the `stringDecoder` object can be reused for new input.
      * @param buffer A `Buffer`, or `TypedArray`, or `DataView` containing the bytes to decode.
      */
-    end(buffer?: Buffer): string;
+    end(buffer?: Buffer | ArrayBufferView): string;
   }
 }
 declare module "node:string_decoder" {

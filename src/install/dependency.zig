@@ -653,7 +653,7 @@ pub fn parseWithTag(
             };
         },
         .workspace, .git, .github => {
-            if (log_) |log| log.addErrorFmt(null, logger.Loc.Empty, allocator, "Unsupported dependency type {s} for \"{s}\"", .{ @tagName(tag), dependency }) catch unreachable;
+            if (log_) |log| log.addErrorFmt(null, logger.Loc.Empty, allocator, "Support for dependency type \"{s}\" is not implemented yet (\"{s}\")", .{ @tagName(tag), dependency }) catch unreachable;
             return null;
         },
     }

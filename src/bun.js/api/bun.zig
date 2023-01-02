@@ -2855,7 +2855,7 @@ pub const Timer = struct {
                 return;
             }
 
-            if (result.asPromise()) |promise| {
+            if (result.asAnyPromise()) |promise| {
                 switch (promise.status(globalThis.vm())) {
                     .Rejected => {
                         this.deinit();

@@ -1311,7 +1311,7 @@ pub const ModuleLoader = struct {
             }
 
             if (!promise.isEmptyOrUndefinedOrNull()) {
-                if (promise.asInternalPromise()) |promise_value| {
+                if (promise.asAnyPromise()) |promise_value| {
                     jsc_vm.waitForPromise(promise_value);
 
                     if (promise_value.status(jsc_vm.global.vm()) == .Rejected) {

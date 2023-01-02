@@ -2538,7 +2538,7 @@ pub fn DOMCall(
                     \\  static const JSC::DOMJIT::Signature {[signatureName]s}(
                     \\    {[fastPathName]s}Wrapper,
                     \\    thisObject->classInfo(),
-                    \\    
+                    \\
                 ;
 
                 try writer.print(fmt, .{
@@ -2823,16 +2823,10 @@ pub fn wrapWithHasContainer(
             }
 
             if (comptime maybe_async) {
-                if (result.asPromise() != null or result.asInternalPromise() != null) {
+                if (result.asAnyPromise()) |promise| {
                     var vm = ctx.ptr().bunVM();
-
-                    if (result.asPromise()) |promise| {
-                        vm.waitForPromise(promise);
-                        result = promise.result(ctx.vm());
-                    } else if (result.asInternalPromise()) |promise| {
-                        vm.waitForPromise(promise);
-                        result = promise.result(ctx.vm());
-                    }
+                    vm.waitForPromise(promise);
+                    result = promise.result(ctx.vm());
                 }
             }
 

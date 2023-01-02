@@ -83,13 +83,13 @@ const Handlers = struct {
     pub fn resolvePromise(this: *Handlers, value: JSValue) void {
         var promise = this.promise.get() orelse return;
         this.promise.deinit();
-        promise.asPromise().?.resolve(this.globalObject, value);
+        promise.asAnyPromise().?.resolve(this.globalObject, value);
     }
 
     pub fn rejectPromise(this: *Handlers, value: JSValue) bool {
         var promise = this.promise.get() orelse return false;
         this.promise.deinit();
-        promise.asPromise().?.reject(this.globalObject, value);
+        promise.asAnyPromise().?.reject(this.globalObject, value);
         return true;
     }
 

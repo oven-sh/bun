@@ -529,19 +529,7 @@ pub const EventLoop = struct {
         }
     }
 
-    // TODO: fix this technical debt
-    pub fn waitForPromise(this: *EventLoop, promise: anytype) void {
-        return waitForPromiseWithType(this, std.meta.Child(@TypeOf(promise)), promise);
-    }
-
-    pub fn waitForPromiseWithType(this: *EventLoop, comptime Promise: type, promise: *Promise) void {
-        comptime {
-            switch (Promise) {
-                JSC.JSPromise, JSC.JSInternalPromise => {},
-                else => @compileError("Promise must be a JSPromise or JSInternalPromise, received: " ++ @typeName(Promise)),
-            }
-        }
-
+    pub fn waitForPromise(this: *EventLoop, promise: JSC.AnyPromise) void {
         switch (promise.status(this.global.vm())) {
             JSC.JSPromise.Status.Pending => {
                 while (promise.status(this.global.vm()) == .Pending) {

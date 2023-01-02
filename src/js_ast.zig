@@ -8119,24 +8119,8 @@ pub const Macro = struct {
 
                             var promise_result = JSC.JSValue.zero;
                             var rejected = false;
-                            if (value.asPromise()) |promise| {
-                                while (true) {
-                                    if (promise.status(this.global.vm()) != .Pending) break;
-                                    this.macro.vm.tick();
-                                    if (promise.status(this.global.vm()) != .Pending) break;
-                                    this.macro.vm.eventLoop().autoTick();
-                                }
-
-                                promise_result = promise.result(this.global.vm());
-                                rejected = promise.status(this.global.vm()) == .Rejected;
-                            } else if (value.asInternalPromise()) |promise| {
-                                while (true) {
-                                    if (promise.status(this.global.vm()) != .Pending) break;
-                                    this.macro.vm.tick();
-                                    if (promise.status(this.global.vm()) != .Pending) break;
-                                    this.macro.vm.eventLoop().autoTick();
-                                }
-
+                            if (value.asAnyPromise()) |promise| {
+                                this.macro.vm.waitForPromise(promise);
                                 promise_result = promise.result(this.global.vm());
                                 rejected = promise.status(this.global.vm()) == .Rejected;
                             } else {

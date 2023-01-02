@@ -5054,12 +5054,12 @@ Install LLVM 15 and homebrew dependencies:
 brew install llvm@15 coreutils libtool cmake libiconv automake ninja gnu-sed pkg-config esbuild go rust
 ```
 
-bun (& the version of Zig) need LLVM 15 and Clang 13 (clang is part of LLVM). Weird build & runtime errors will happen otherwise.
+bun (& the version of Zig) need LLVM 15 and Clang 15 (clang is part of LLVM). Weird build & runtime errors will happen otherwise.
 
 Make sure LLVM 15 is in your `$PATH`:
 
 ```bash
-which clang-13
+which clang-15
 ```
 
 If it is not, you will have to run this to link it:
@@ -5074,79 +5074,50 @@ On fish that looks like `fish_add_path (brew --prefix llvm@15)/bin`
 
 #### Install Zig (macOS)
 
-Note: **you must use the same version of Zig used by Bun in [oven-sh/zig](https://github.com/oven-sh/zig)**. Installing `zig` from brew will not work. Installing the latest stable version of Zig won't work. If you don't use the same version Bun uses, you will get strange build errors and be sad because you put all this work into trying to get Bun to compile and it failed for weird reasons.
-
-To install the zig binary:
+Install the latest version of Zig via Homebrew:
 
 ```bash
-# Custom path for the custom zig install
-mkdir -p $HOME/.bun-tools
-
-# Requires jq & grab latest binary
-curl -o zig.tar.gz -sL https://github.com/oven-sh/zig/releases/download/jul1/zig-macos-$(uname -m).tar.gz
-
-# This will extract to $HOME/.bun-tools/zig
-tar -xvf zig.tar.gz -C $HOME/.bun-tools/
-rm zig.tar.gz
-
-# Make sure it gets trusted
-# If you get an error 'No such xattr: com.apple.quarantine', that means it's already trusted and you can continue
-xattr -d com.apple.quarantine $HOME/.bun-tools/zig/zig
+brew install zig --head
 ```
-
-Now you'll need to add Zig to your PATH.
-
-Using `zsh`:
-
-```zsh
-echo 'export PATH="$HOME/.bun-tools/zig:$PATH"' >> ~/.zshrc
-source ~/.zshrc
-```
-
-Using `fish`:
-
-```fish
-# Add to PATH (fish)
-fish_add_path $HOME/.bun-tools/zig
-```
-
-Using `bash`:
-
-```bash
-echo 'export PATH="$HOME/.bun-tools/zig:$PATH"' >> ~/.bash_profile
-source ~/.bash_profile
-```
-
-The version of Zig used by Bun is not a fork, just a slightly older version. Zig is a new programming language and moves quickly.
 
 #### Build bun (macOS)
 
-If you're building on a macOS device, you'll need to have a valid Developer Certificate, or else the code signing step will fail. To check if you have one, open the `Keychain Access` app, go to the `login` profile and search for `Apple Development`. You should have at least one certificate with a name like `Apple Development: user@example.com (WDYABC123)`. If you don't have one, follow [this guide](https://ioscodesigning.com/generating-code-signing-files/#generate-a-code-signing-certificate-using-xcode) to get one.
-
-You can still work with the generated binary locally at `packages/debug-bun-*/bun-debug` even if the code signing fails.
-
-In `bun`:
+One-off command to run:
 
 ```bash
 # If you omit --depth=1, `git submodule update` will take 17.5 minutes on 1gbps internet, mostly due to WebKit.
 git submodule update --init --recursive --progress --depth=1 --checkout
-make vendor identifier-cache bindings jsc dev
+make vendor identifier-cache
+```
+
+To compile C++ code:
+
+```bash
+# don't forget -j or you will spend like 30 minutes compiling
+make bindings -j12
+```
+
+To compile Zig code and link `bun-debug` into `packages/debug-bun-darwin-${arch}/bun-debug`:
+
+```bash
+make dev
+```
+
+These are separate commands to (usually) save you time, but you can combine them like so:
+
+```bash
+make bindings -j12 && make dev
 ```
 
 #### Verify it worked (macOS)
 
-First ensure the node dependencies are installed
-
 ```bash
-(cd test/snippets && npm i)
-(cd test/scripts && npm i)
+packages/debug-bun-darwin-*/bun-debug --version
 ```
 
-Then
+It should print `bun 0.4.0__dev` or something similar.
 
-```bash
-make test-dev-all
-```
+You will want to add `packages/debug-bun-darwin-arm64/` or `packages/debug-bun-darwin-x64/` to your `$PATH` so you can run `bun-debug` from anywhere.
 
 #### Troubleshooting (macOS)
 

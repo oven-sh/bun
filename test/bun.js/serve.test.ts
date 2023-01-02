@@ -113,7 +113,7 @@ describe("web api - request", () => {
             }
           }, 0)
           const body = await req.json();
-          expect(JSON.stringify(body)).toBe(JSON.stringify(requestBody));
+          expect(body).toEqual(requestBody);
           return new Response(textToExpect);
         },
       },
@@ -138,9 +138,9 @@ describe("web api - request", () => {
       {
         async fetch(req) {
           const body = await req.clone().json();
-          expect(JSON.stringify(body)).toBe(JSON.stringify(requestBody));
+          expect(body).toEqual(requestBody);
           const body2 = await req.json();
-          expect(JSON.stringify(body2)).toBe(JSON.stringify(requestBody));
+          expect(body2).toEqual(requestBody);
           return new Response(textToExpect);
         },
       },
@@ -167,9 +167,9 @@ describe("web api - request", () => {
           const body = req.body;
           expect(body instanceof ReadableStream).toBe(true);
           const cloned = await req.clone().json();
-          expect(JSON.stringify(cloned)).toBe(JSON.stringify(requestBody));
+          expect(cloned).toEqual(requestBody);
           const cloned2 = await req.clone().json();
-          expect(JSON.stringify(cloned2)).toBe(JSON.stringify(requestBody));
+          expect(cloned2).toEqual(requestBody);
           return new Response(textToExpect);
         },
       },
@@ -225,7 +225,7 @@ describe("web api - request", () => {
       {
         async fetch(req) {
           const body = await req.json();
-          expect(JSON.stringify(body)).toBe(JSON.stringify(requestBody));
+          expect(body).toEqual(requestBody);
           try {
             req.clone();
             expect(1).toBe(2);

@@ -175,18 +175,26 @@ DEFAULT_USE_BMALLOC := 1
 
 USE_BMALLOC ?= DEFAULT_USE_BMALLOC
 
-JSC_BASE_DIR ?= ${HOME}/webkit-build
+# Set via postinstall
+AUTO_JSX_BASE_DIR ?= $(realpath $(firstword $(wildcard bun-webkit)))
+
+ifeq (,$(AUTO_JSX_BASE_DIR))
+AUTO_JSX_BASE_DIR ?= $(HOME)/webkit-build
+endif
+
+JSC_BASE_DIR ?= $(AUTO_JSX_BASE_DIR)
 
 DEFAULT_JSC_LIB :=
 DEFAULT_JSC_LIB_DEBUG :=
 
-ifeq ($(OS_NAME),linux)
 DEFAULT_JSC_LIB = $(JSC_BASE_DIR)/lib
 DEFAULT_JSC_LIB_DEBUG = $(DEFAULT_JSC_LIB)
+
+ifneq (,$(realpath $(WEBKIT_RELEASE_DIR_LTO)/lib))
+DEFAULT_JSC_LIB = $(WEBKIT_RELEASE_DIR_LTO)/lib
 endif
 
-ifeq ($(OS_NAME),darwin)
-DEFAULT_JSC_LIB = $(WEBKIT_RELEASE_DIR_LTO)/lib
+ifneq (,$(realpath $(WEBKIT_RELEASE_DIR)/lib))
 DEFAULT_JSC_LIB_DEBUG = $(WEBKIT_RELEASE_DIR)/lib
 endif
 
@@ -489,7 +497,7 @@ CLANG_VERSION = $(shell $(CC) --version | awk '/version/ {for(i=1; i<=NF; i++){i
 bun:
 
 npm-install:
-	$(NPM_CLIENT) install
+	$(NPM_CLIENT) install --ignore-scripts --production
 
 print-%  : ; @echo $* = $($*)
 

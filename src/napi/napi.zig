@@ -833,7 +833,7 @@ pub export fn napi_is_promise(_: napi_env, value: napi_value, is_promise: *bool)
         return .ok;
     }
 
-    is_promise.* = value.asPromise() != null or value.asInternalPromise() != null;
+    is_promise.* = value.asAnyPromise() != null;
     return .ok;
 }
 pub export fn napi_run_script(env: napi_env, script: napi_value, result: *napi_value) napi_status {

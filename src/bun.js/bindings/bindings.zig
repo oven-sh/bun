@@ -1802,6 +1802,54 @@ pub const JSInternalPromise = extern struct {
     };
 };
 
+pub const AnyPromise = union(enum) {
+    Normal: *JSPromise,
+    Internal: *JSInternalPromise,
+
+    pub fn status(this: AnyPromise, vm: *VM) JSPromise.Status {
+        return switch (this) {
+            inline else => |promise| promise.status(vm),
+        };
+    }
+    pub fn result(this: AnyPromise, vm: *VM) JSValue {
+        return switch (this) {
+            inline else => |promise| promise.result(vm),
+        };
+    }
+    pub fn isHandled(this: AnyPromise, vm: *VM) bool {
+        return switch (this) {
+            inline else => |promise| promise.isHandled(vm),
+        };
+    }
+
+    pub fn rejectWithCaughtException(this: AnyPromise, globalObject: *JSGlobalObject, scope: ThrowScope) void {
+        switch (this) {
+            inline else => |promise| promise.rejectWithCaughtException(globalObject, scope),
+        }
+    }
+
+    pub fn resolve(this: AnyPromise, globalThis: *JSGlobalObject, value: JSValue) void {
+        switch (this) {
+            inline else => |promise| promise.resolve(globalThis, value),
+        }
+    }
+    pub fn reject(this: AnyPromise, globalThis: *JSGlobalObject, value: JSValue) void {
+        switch (this) {
+            inline else => |promise| promise.reject(globalThis, value),
+        }
+    }
+    pub fn rejectAsHandled(this: AnyPromise, globalThis: *JSGlobalObject, value: JSValue) void {
+        switch (this) {
+            inline else => |promise| promise.rejectAsHandled(globalThis, value),
+        }
+    }
+    pub fn rejectAsHandledException(this: AnyPromise, globalThis: *JSGlobalObject, value: *Exception) void {
+        switch (this) {
+            inline else => |promise| promise.rejectAsHandledException(globalThis, value),
+        }
+    }
+};
+
 // SourceProvider.h
 pub const SourceType = enum(u8) {
     Program = 0,
@@ -2760,6 +2808,22 @@ pub const JSValue = enum(JSValueReprInt) {
         return cppFn("asPromise", .{
             value,
         });
+    }
+
+    pub fn asAnyPromise(
+        value: JSValue,
+    ) ?AnyPromise {
+        if (value.asInternalPromise()) |promise| {
+            return AnyPromise{
+                .Internal = promise,
+            };
+        }
+        if (value.asPromise()) |promise| {
+            return AnyPromise{
+                .Normal = promise,
+            };
+        }
+        return null;
     }
 
     pub fn jsNumber(number: anytype) JSValue {

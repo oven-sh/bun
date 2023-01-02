@@ -571,7 +571,7 @@ pub const VirtualMachine = struct {
         this.eventLoop().tick();
     }
 
-    pub fn waitForPromise(this: *VirtualMachine, promise: anytype) void {
+    pub fn waitForPromise(this: *VirtualMachine, promise: JSC.AnyPromise) void {
         this.eventLoop().waitForPromise(promise);
     }
 
@@ -1308,7 +1308,9 @@ pub const VirtualMachine = struct {
             if (this.node_modules != null and !this.has_loaded_node_modules) {
                 this.has_loaded_node_modules = true;
                 promise = JSModuleLoader.loadAndEvaluateModule(this.global, ZigString.static(bun_file_import_path));
-                this.waitForPromise(promise);
+                this.waitForPromise(JSC.AnyPromise{
+                    .Internal = promise,
+                });
                 if (promise.status(this.global.vm()) == .Rejected)
                     return promise;
             }
@@ -1343,7 +1345,9 @@ pub const VirtualMachine = struct {
             }
         } else {
             this.eventLoop().performGC();
-            this.waitForPromise(promise);
+            this.waitForPromise(JSC.AnyPromise{
+                .Internal = promise,
+            });
         }
 
         this.eventLoop().autoTick();
@@ -1390,7 +1394,9 @@ pub const VirtualMachine = struct {
         var promise: *JSInternalPromise = undefined;
 
         promise = JSModuleLoader.loadAndEvaluateModule(this.global, &ZigString.init(entry_path));
-        this.waitForPromise(promise);
+        this.waitForPromise(JSC.AnyPromise{
+            .Internal = promise,
+        });
 
         return promise;
     }
@@ -2032,7 +2038,9 @@ pub const EventListenerMixin = struct {
             vm.tick();
             var promise = JSInternalPromise.resolvedPromise(vm.global, result);
 
-            vm.event_loop.waitForPromise(promise);
+            vm.event_loop.waitForPromise(JSC.AnyPromise{
+                .Internal = promise,
+            });
 
             if (fetch_event.rejected) return;
 

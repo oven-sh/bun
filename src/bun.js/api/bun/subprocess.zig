@@ -1516,12 +1516,12 @@ pub const Subprocess = struct {
         if (this.hasExited()) {
             if (this.exit_promise.trySwap()) |promise| {
                 if (this.exit_code) |code| {
-                    promise.asPromise().?.resolve(globalThis, JSValue.jsNumber(code));
+                    promise.asAnyPromise().?.resolve(globalThis, JSValue.jsNumber(code));
                 } else if (this.signal_code != null) {
-                    promise.asPromise().?.resolve(globalThis, this.getSignalCode(globalThis));
+                    promise.asAnyPromise().?.resolve(globalThis, this.getSignalCode(globalThis));
                 } else if (this.waitpid_err) |err| {
                     this.waitpid_err = null;
-                    promise.asPromise().?.reject(globalThis, err.toJSC(globalThis));
+                    promise.asAnyPromise().?.reject(globalThis, err.toJSC(globalThis));
                 } else {
                     // crash in debug mode
                     if (comptime Environment.allow_assert)

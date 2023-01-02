@@ -1323,13 +1323,18 @@ pub const TestScope = struct {
                 return .{ .fail = active_test_expectation_counter.actual };
             }
 
-            if (initial_value.jsType() == .JSPromise) {
+            if (initial_value.asAnyPromise()) |promise| {
                 if (this.promise != null) {
                     return .{ .pending = {} };
                 }
-
-                var promise: *JSC.JSPromise = initial_value.asPromise().?;
                 this.task = task;
+
+                // TODO: not easy to coerce JSInternalPromise as JSValue,
+                // so simply wait for completion for now.
+                switch (promise) {
+                    .Internal => vm.waitForPromise(promise),
+                    else => {},
+                }
 
                 switch (promise.status(vm.global.vm())) {
                     .Rejected => {
@@ -1338,8 +1343,13 @@ pub const TestScope = struct {
                     },
                     .Pending => {
                         task.promise_state = .pending;
-                        _ = promise.asValue(vm.global).then(vm.global, task, onResolve, onReject);
-                        return .{ .pending = {} };
+                        switch (promise) {
+                            .Normal => |p| {
+                                _ = p.asValue(vm.global).then(vm.global, task, onResolve, onReject);
+                                return .{ .pending = {} };
+                            },
+                            else => unreachable,
+                        }
                     },
 
                     else => {
@@ -1517,6 +1527,7 @@ pub const DescribeScope = struct {
             const pending_test = Jest.runner.?.pending_test;
             // forbid `expect()` within hooks
             Jest.runner.?.pending_test = null;
+            const vm = VirtualMachine.get();
             var result: JSC.JSValue = if (cb.getLengthOfArray(ctx) > 0) brk: {
                 this.done = false;
                 const done_func = JSC.NewFunctionWithData(
@@ -1528,7 +1539,6 @@ pub const DescribeScope = struct {
                     this,
                 );
                 var result = cb.call(ctx, &.{done_func});
-                var vm = VirtualMachine.get();
                 while (!this.done) {
                     vm.eventLoop().autoTick();
                     if (this.done) break;
@@ -1536,10 +1546,10 @@ pub const DescribeScope = struct {
                 }
                 break :brk result;
             } else cb.call(ctx, &.{});
-            if (result.asPromise()) |promise| {
+            if (result.asAnyPromise()) |promise| {
                 if (promise.status(ctx.vm()) == .Pending) {
                     result.protect();
-                    VirtualMachine.get().waitForPromise(promise);
+                    vm.waitForPromise(promise);
                     result.unprotect();
                 }
 
@@ -1623,16 +1633,7 @@ pub const DescribeScope = struct {
             JSC.markBinding(@src());
             var result = js.JSObjectCallAsFunctionReturnValue(ctx, callback, thisObject, 0, null);
 
-            if (result.asPromise()) |prom| {
-                ctx.bunVM().waitForPromise(prom);
-                switch (prom.status(ctx.ptr().vm())) {
-                    JSPromise.Status.Fulfilled => {},
-                    else => {
-                        exception.* = prom.result(ctx.ptr().vm()).asObjectRef();
-                        return null;
-                    },
-                }
-            } else if (result.asPromise()) |prom| {
+            if (result.asAnyPromise()) |prom| {
                 ctx.bunVM().waitForPromise(prom);
                 switch (prom.status(ctx.ptr().vm())) {
                     JSPromise.Status.Fulfilled => {},

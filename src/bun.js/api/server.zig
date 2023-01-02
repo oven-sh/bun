@@ -999,7 +999,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 if (this.promise) |promise| {
                     this.pending_promises_for_abort += 1;
                     this.promise = null;
-                    promise.asPromise().?.reject(this.server.globalThis, JSC.toTypeError(.ABORT_ERR, "Request aborted", .{}, this.server.globalThis));
+                    promise.asAnyPromise().?.reject(this.server.globalThis, JSC.toTypeError(.ABORT_ERR, "Request aborted", .{}, this.server.globalThis));
                 }
 
                 if (this.pending_promises_for_abort > 0) {
@@ -1052,9 +1052,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             if (this.promise) |promise| {
                 this.promise = null;
 
-                if (promise.asInternalPromise()) |prom| {
-                    prom.rejectAsHandled(this.server.globalThis, (JSC.toTypeError(.ABORT_ERR, "Request aborted", .{}, this.server.globalThis)));
-                } else if (promise.asPromise()) |prom| {
+                if (promise.asAnyPromise()) |prom| {
                     prom.rejectAsHandled(this.server.globalThis, (JSC.toTypeError(.ABORT_ERR, "Request aborted", .{}, this.server.globalThis)));
                 }
                 JSC.C.JSValueUnprotect(this.server.globalThis, promise.asObjectRef());
@@ -1520,7 +1518,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             if (!assignment_result.isEmptyOrUndefinedOrNull()) {
                 assignment_result.ensureStillAlive();
                 // it returns a Promise when it goes through ReadableStreamDefaultReader
-                if (assignment_result.asPromise()) |promise| {
+                if (assignment_result.asAnyPromise()) |promise| {
                     streamLog("returned a promise", .{});
                     switch (promise.status(this.server.globalThis.vm())) {
                         .Pending => {
@@ -1661,7 +1659,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             var wait_for_promise = false;
             var vm = this.vm;
 
-            if (response_value.asPromise()) |promise| {
+            if (response_value.asAnyPromise()) |promise| {
                 // If we immediately have the value available, we can skip the extra event loop tick
                 switch (promise.status(vm.global.vm())) {
                     .Pending => {},
@@ -1705,21 +1703,6 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                             else => {},
                         }
                         ctx.render(response);
-                        return;
-                    },
-                    .Rejected => {
-                        ctx.handleReject(promise.result(vm.global.vm()));
-                        return;
-                    },
-                }
-                wait_for_promise = true;
-                // I don't think this case should happen
-                // But I'm uncertain
-            } else if (response_value.asInternalPromise()) |promise| {
-                switch (promise.status(vm.global.vm())) {
-                    .Pending => {},
-                    .Fulfilled => {
-                        ctx.handleResolve(promise.result(vm.global.vm()));
                         return;
                     },
                     .Rejected => {
@@ -2900,7 +2883,7 @@ pub const ServerWebSocket = struct {
             return;
         }
 
-        if (result.asPromise()) |promise| {
+        if (result.asAnyPromise()) |promise| {
             switch (promise.status(globalObject.vm())) {
                 .Rejected => {
                     _ = promise.result(globalObject.vm());
@@ -4216,7 +4199,7 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
                 return JSC.JSPromise.rejectedPromiseValue(ctx, ZigString.init("fetch() returned an empty value").toErrorInstance(ctx)).asObjectRef();
             }
 
-            if (response_value.asPromise() != null) {
+            if (response_value.asAnyPromise() != null) {
                 return response_value.asObjectRef();
             }
 

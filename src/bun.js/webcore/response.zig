@@ -613,7 +613,7 @@ pub const Fetch = struct {
                 return;
             }
 
-            var promise = promise_value.asPromise().?;
+            const promise = promise_value.asAnyPromise().?;
 
             const success = this.result.isSuccess();
             const result = switch (success) {
@@ -1171,22 +1171,7 @@ pub const Blob = struct {
                     var blob = value.use();
                     // TODO: this should be one promise not two!
                     const new_promise = writeFileWithSourceDestination(globalThis, &blob, &file_blob);
-                    if (JSC.JSValue.fromRef(new_promise.?).asPromise()) |_promise| {
-                        switch (_promise.status(globalThis.vm())) {
-                            .Pending => {
-                                promise.resolve(
-                                    globalThis,
-                                    JSC.JSValue.fromRef(new_promise.?),
-                                );
-                            },
-                            .Rejected => {
-                                promise.reject(globalThis, _promise.result(globalThis.vm()));
-                            },
-                            else => {
-                                promise.resolve(globalThis, _promise.result(globalThis.vm()));
-                            },
-                        }
-                    } else if (JSC.JSValue.fromRef(new_promise.?).asInternalPromise()) |_promise| {
+                    if (JSC.JSValue.fromRef(new_promise.?).asAnyPromise()) |_promise| {
                         switch (_promise.status(globalThis.vm())) {
                             .Pending => {
                                 promise.resolve(
@@ -4896,7 +4881,7 @@ pub const Body = struct {
                 }
 
                 if (locked.promise) |promise_| {
-                    var promise = promise_.asPromise().?;
+                    const promise = promise_.asAnyPromise().?;
                     locked.promise = null;
 
                     switch (locked.action) {
@@ -4929,18 +4914,11 @@ pub const Body = struct {
                             var blob = new.useAsAnyBlob();
                             promise.resolve(global, blob.toArrayBuffer(global, .transfer));
                         },
-                        .getBlob => {
-                            var ptr = bun.default_allocator.create(Blob) catch unreachable;
-                            ptr.* = new.use();
-
-                            ptr.allocator = bun.default_allocator;
-                            promise.resolve(global, ptr.toJS(global));
-                        },
                         else => {
                             var ptr = bun.default_allocator.create(Blob) catch unreachable;
                             ptr.* = new.use();
                             ptr.allocator = bun.default_allocator;
-                            promise_.asInternalPromise().?.resolve(global, ptr.toJS(global));
+                            promise.resolve(global, ptr.toJS(global));
                         },
                     }
                     JSC.C.JSValueUnprotect(global, promise_.asObjectRef());
@@ -5031,9 +5009,7 @@ pub const Body = struct {
                 var locked = this.Locked;
                 locked.deinit = true;
                 if (locked.promise) |promise| {
-                    if (promise.asInternalPromise()) |internal| {
-                        internal.reject(global, error_instance);
-                    } else if (promise.asPromise()) |internal| {
+                    if (promise.asAnyPromise()) |internal| {
                         internal.reject(global, error_instance);
                     }
                     JSC.C.JSValueUnprotect(global, promise.asObjectRef());
@@ -5835,33 +5811,7 @@ pub const FetchEvent = struct {
             }
         }
 
-        if (this.pending_promise.asPromise()) |promise| {
-            switch (promise.status(ctx.vm())) {
-                JSC.JSPromise.Status.Pending => {
-                    while (promise.status(ctx.vm()) == .Pending) {
-                        ctx.bunVM().tick();
-                    }
-                },
-                else => {},
-            }
-
-            switch (promise.status(ctx.ptr().vm())) {
-                .Fulfilled => {},
-                else => {
-                    this.rejected = true;
-                    this.pending_promise = JSValue.zero;
-                    this.onPromiseRejectionHandler.?(
-                        this.onPromiseRejectionCtx,
-                        error.PromiseRejection,
-                        this,
-                        promise.result(globalThis.vm()),
-                    );
-                    return js.JSValueMakeUndefined(ctx);
-                },
-            }
-
-            arg = promise.result(ctx.ptr().vm()).asRef();
-        } else if (this.pending_promise.asInternalPromise()) |promise| {
+        if (this.pending_promise.asAnyPromise()) |promise| {
             globalThis.bunVM().waitForPromise(promise);
 
             switch (promise.status(ctx.ptr().vm())) {

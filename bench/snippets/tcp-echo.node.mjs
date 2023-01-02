@@ -29,22 +29,64 @@ const handlers = {
   },
 };
 
-const server = net.createServer(function (socket) {
-  socket.data = { isServer: true };
-  socket.on("connection", handlers.open.bind(socket));
-  socket.on("data", handlers.data.bind(socket));
-  socket.on("drain", handlers.drain.bind(socket));
-  socket.setEncoding("binary");
-});
+if (net.createServer) {
+  const server = net.createServer(function (socket) {
+    socket.data = { isServer: true };
+    socket.on("connection", handlers.open.bind(socket));
+    socket.on("data", handlers.data.bind(socket));
+    socket.on("drain", handlers.drain.bind(socket));
+    socket.setEncoding("binary");
+  });
 
-setInterval(() => {
-  console.log("Wrote", counter, "messages");
-  counter = 0;
-}, 1000);
+  setInterval(() => {
+    console.log("Wrote", counter, "messages");
+    counter = 0;
+  }, 1000);
 
-server.listen(8000);
+  server.listen(8000);
+} else {
+  const handlers = {
+    open(socket) {
+      if (!socket.data?.isServer) {
+        if (!socket.write(msg)) {
+          socket.data = { pending: msg };
+        }
+      }
+    },
+    data(socket, buffer) {
+      if (!socket.write(buffer)) {
+        socket.data = { pending: buffer };
+        return;
+      }
+      counter++;
+    },
+    drain(socket) {
+      const pending = socket.data?.pending;
+      if (!pending) return;
+      if (socket.write(pending)) {
+        socket.data = undefined;
+        counter++;
+        return;
+      }
+    },
+  };
 
-const socket = net.connect({ host: "localhost", port: 8000 }, () => {});
+  setInterval(() => {
+    console.log("Wrote", counter, "messages");
+    counter = 0;
+  }, 1000);
+
+  const server = Bun.listen({
+    socket: handlers,
+    hostname: "0.0.0.0",
+    port: 8000,
+    data: {
+      isServer: true,
+    },
+  });
+}
+
+const socket = net.connect({ host: "0.0.0.0", port: 8000 }, () => {});
 socket.on("connection", handlers.open.bind(socket));
 socket.on("data", handlers.data.bind(socket));
 socket.on("drain", handlers.drain.bind(socket));

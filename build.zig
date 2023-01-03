@@ -44,6 +44,7 @@ const color_map = std.ComptimeStringMap([]const u8, .{
 });
 
 var compiler_rt_path: []const u8 = "";
+var compiler_rt_path_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
 fn addInternalPackages(step: *std.build.LibExeObjStep, allocator: std.mem.Allocator, zig_exe: []const u8, target: anytype) !void {
     var bun = std.build.Pkg{
         .name = "bun",
@@ -93,6 +94,10 @@ fn addInternalPackages(step: *std.build.LibExeObjStep, allocator: std.mem.Alloca
         "{s}/../../lib/compiler_rt/stack_probe.zig",
         "{s}/../../../lib/compiler_rt/stack_probe.zig",
         "{s}/../../../../lib/compiler_rt/stack_probe.zig",
+        "{s}/../lib/zig/compiler_rt/stack_probe.zig",
+        "{s}/../../lib/zig/compiler_rt/stack_probe.zig",
+        "{s}/../../../lib/zig/compiler_rt/stack_probe.zig",
+        "{s}/../../../../lib/zig/compiler_rt/stack_probe.zig",
     };
     var found = false;
     if (compiler_rt_path.len > 0) {
@@ -107,7 +112,10 @@ fn addInternalPackages(step: *std.build.LibExeObjStep, allocator: std.mem.Alloca
             if (!found) brk: {
                 // workaround for https://github.com/ziglang/zig/issues/14099
                 const path = try std.fmt.allocPrint(allocator, path_fmt, .{zig_exe});
-                var target_path = std.fs.path.resolve(allocator, &.{path}) catch break :brk;
+                var target_path = std.os.realpath(
+                    std.fs.path.resolve(allocator, &.{path}) catch break :brk,
+                    &compiler_rt_path_buf,
+                ) catch break :brk;
                 const compiler_rt: std.build.Pkg = .{
                     .name = "compiler_rt",
                     .source = .{ .path = target_path },

@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "bun:test";
-import { isIP, isIPv4, isIPv6, Socket } from "net";
+import { connect, isIP, isIPv4, isIPv6, Socket } from "net";
 
 it("should support net.isIP()", () => {
   expect(isIP("::1")).toBe(6);
@@ -172,4 +172,16 @@ describe("net.Socket write", () => {
   });
 
   afterAll(() => server.stop());
+});
+
+it("should handle connection error", done => {
+  var data = {};
+  connect(55555, () => {
+    done(new Error("Should not have connected"));
+  }).on("error", error => {
+    expect(error).toBeDefined();
+    expect(error.name).toBe("SystemError");
+    expect(error.message).toBe("Failed to connect");
+    done();
+  });
 });

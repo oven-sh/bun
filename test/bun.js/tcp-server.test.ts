@@ -96,17 +96,12 @@ it("echo server 1 on 1", async () => {
     await Promise.all([prom, clientProm, serverProm]);
     server.stop();
     server = serverData = clientData = undefined;
-    Bun.gc(true);
   })();
+});
 
+it("should not leak memory", () => {
   // Tell the garbage collector for sure that we're done with the sockets
-  await new Promise((resolve, reject) => {
-    setTimeout(() => {
-      Bun.gc(true);
-      resolve(undefined);
-    }, 1);
-  });
-
+  Bun.gc(true);
   // assert we don't leak the sockets
   // we expect 1 because that's the prototype / structure
   expect(JSC.heapStats().objectTypeCounts.TCPSocket).toBe(1);

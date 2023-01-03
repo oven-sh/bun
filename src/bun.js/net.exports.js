@@ -60,6 +60,10 @@ const { Duplex } = import.meta.require("node:stream");
 export class Socket extends Duplex {
   static #Handlers = {
     close: Socket.#Close,
+    connectError(socket, error) {
+      const self = socket.data;
+      self.emit("error", error);
+    },
     data(socket, buffer) {
       const self = socket.data;
       self.bytesRead += buffer.length;

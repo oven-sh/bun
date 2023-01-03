@@ -781,13 +781,13 @@ pub export fn napi_get_typedarray_info(
     const array_buffer = typedarray.asArrayBuffer(env) orelse return .invalid_arg;
     if (@"type" != null)
         @"type".?.* = napi_typedarray_type.fromJSType(array_buffer.typed_array_type) orelse return .invalid_arg;
-    var slice = array_buffer.slice();
 
+    // TODO: handle detached
     if (data != null)
-        data.?.* = slice.ptr;
+        data.?.* = array_buffer.ptr;
 
     if (length != null)
-        length.?.* = slice.len;
+        length.?.* = array_buffer.len;
 
     if (arraybuffer != null)
         arraybuffer.?.* = JSValue.c(JSC.C.JSObjectGetTypedArrayBuffer(env.ref(), typedarray.asObjectRef(), null));

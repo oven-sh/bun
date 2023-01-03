@@ -47,7 +47,7 @@ pub const Ref = opaque {
     extern fn napi_set_ref(ref: *Ref, value: JSC.JSValue) void;
 };
 pub const napi_handle_scope = napi_env;
-pub const napi_escapable_handle_scope = struct_napi_escapable_handle_scope__;
+pub const napi_escapable_handle_scope = *struct_napi_escapable_handle_scope__;
 pub const napi_callback_info = *JSC.CallFrame;
 pub const napi_deferred = *JSC.JSPromise;
 
@@ -284,6 +284,7 @@ pub export fn napi_create_error(env: napi_env, code: napi_value, msg: napi_value
     result.* = system_error.toErrorInstance(env);
     return .ok;
 }
+
 pub extern fn napi_create_type_error(env: napi_env, code: napi_value, msg: napi_value, result: *napi_value) napi_status;
 pub extern fn napi_create_range_error(env: napi_env, code: napi_value, msg: napi_value, result: *napi_value) napi_status;
 pub export fn napi_typeof(env: napi_env, value: napi_value, result: *napi_valuetype) napi_status {
@@ -703,9 +704,66 @@ pub export fn napi_open_handle_scope(env: napi_env, result: *napi_handle_scope) 
 pub export fn napi_close_handle_scope(_: napi_env, _: napi_handle_scope) napi_status {
     return .ok;
 }
-pub extern fn napi_open_escapable_handle_scope(env: napi_env, result: [*c]napi_escapable_handle_scope) napi_status;
-pub extern fn napi_close_escapable_handle_scope(env: napi_env, scope: napi_escapable_handle_scope) napi_status;
-pub extern fn napi_escape_handle(env: napi_env, scope: napi_escapable_handle_scope, escapee: napi_value, result: *napi_value) napi_status;
+
+pub export fn napi_async_init(_: napi_env, _: napi_value, _: *anyopaque, _: **anyopaque) napi_status {
+    notImplementedYet("napi_async_init");
+    return .generic_failure;
+}
+
+pub export fn napi_async_destroy(_: napi_env, _: *anyopaque) napi_status {
+    notImplementedYet("napi_async_destroy");
+    return .generic_failure;
+}
+
+pub export fn napi_make_callback(_: napi_env, _: *anyopaque, _: napi_value, _: napi_value, _: usize, _: ?[*]const napi_value, _: *napi_value) napi_status {
+    notImplementedYet("napi_make_callback");
+    return .generic_failure;
+}
+
+// Sometimes shared libraries reference symbols which are not used
+// We don't want to fail to load the library because of that
+// so we instead return an error and warn the user
+fn notImplementedYet(comptime name: []const u8) void {
+    bun.once(
+        struct {
+            pub fn warn() void {
+                if (JSC.VirtualMachine.get().log.level.atLeast(.warn)) {
+                    bun.Output.prettyErrorln("<r><yellow>warning<r><d>:<r> Node-API function <b>\"{s}\"<r> is not implemented yet.\n Track the status of Node-API in Bun: https://github.com/oven-sh/bun/issues/158", .{name});
+                    bun.Output.flush();
+                }
+            }
+        }.warn,
+        void,
+    );
+}
+
+// TODO:
+pub export fn napi_open_escapable_handle_scope(_: napi_env, _: [*c]napi_escapable_handle_scope) napi_status {
+    notImplementedYet("napi_open_escapable_handle_scope");
+    return .generic_failure;
+}
+// TODO:
+pub export fn napi_close_escapable_handle_scope(_: napi_env, _: napi_escapable_handle_scope) napi_status {
+    notImplementedYet("napi_close_escapable_handle_scope");
+    return .generic_failure;
+}
+pub export fn napi_escape_handle(_: napi_env, _: napi_escapable_handle_scope, _: napi_value, _: *napi_value) napi_status {
+    notImplementedYet("napi_escape_handle");
+    return .generic_failure;
+}
+pub export fn napi_type_tag_object(_: napi_env, _: napi_value, _: [*c]const napi_type_tag) napi_status {
+    notImplementedYet("napi_type_tag_object");
+    return .generic_failure;
+}
+pub export fn napi_check_object_type_tag(_: napi_env, _: napi_value, _: [*c]const napi_type_tag, _: *bool) napi_status {
+    notImplementedYet("napi_check_object_type_tag");
+    return .generic_failure;
+}
+pub export fn napi_open_callback_scope(_: napi_env, _: napi_value, _: *anyopaque, _: *anyopaque) napi_status {
+    notImplementedYet("napi_open_callback_scope");
+    return .generic_failure;
+}
+
 pub extern fn napi_throw(env: napi_env, @"error": napi_value) napi_status;
 pub extern fn napi_throw_error(env: napi_env, code: [*c]const u8, msg: [*c]const u8) napi_status;
 pub extern fn napi_throw_type_error(env: napi_env, code: [*c]const u8, msg: [*c]const u8) napi_status;
@@ -890,14 +948,14 @@ pub export fn napi_get_value_bigint_uint64(_: napi_env, value: napi_value, resul
     result.* = value.toUInt64NoTruncate();
     return .ok;
 }
+
 pub extern fn napi_get_value_bigint_words(env: napi_env, value: napi_value, sign_bit: [*c]c_int, word_count: [*c]usize, words: [*c]u64) napi_status;
 pub extern fn napi_get_all_property_names(env: napi_env, object: napi_value, key_mode: napi_key_collection_mode, key_filter: napi_key_filter, key_conversion: napi_key_conversion, result: *napi_value) napi_status;
 pub extern fn napi_set_instance_data(env: napi_env, data: ?*anyopaque, finalize_cb: napi_finalize, finalize_hint: ?*anyopaque) napi_status;
 pub extern fn napi_get_instance_data(env: napi_env, data: [*]*anyopaque) napi_status;
 pub extern fn napi_detach_arraybuffer(env: napi_env, arraybuffer: napi_value) napi_status;
 pub extern fn napi_is_detached_arraybuffer(env: napi_env, value: napi_value, result: *bool) napi_status;
-pub extern fn napi_type_tag_object(env: napi_env, value: napi_value, type_tag: [*c]const napi_type_tag) napi_status;
-pub extern fn napi_check_object_type_tag(env: napi_env, value: napi_value, type_tag: [*c]const napi_type_tag, result: *bool) napi_status;
+
 pub const struct_napi_async_work__ = opaque {};
 const WorkPool = @import("../work_pool.zig").WorkPool;
 const WorkPoolTask = @import("../work_pool.zig").Task;
@@ -1528,6 +1586,15 @@ pub fn fixDeadCodeElimination() void {
     std.mem.doNotOptimizeAway(&napi_get_instance_data);
     std.mem.doNotOptimizeAway(&napi_set_instance_data);
     std.mem.doNotOptimizeAway(&napi_create_bigint_words);
+    std.mem.doNotOptimizeAway(&napi_async_init);
+    std.mem.doNotOptimizeAway(&napi_async_destroy);
+    std.mem.doNotOptimizeAway(&napi_make_callback);
+    std.mem.doNotOptimizeAway(&napi_open_escapable_handle_scope);
+    std.mem.doNotOptimizeAway(&napi_close_escapable_handle_scope);
+    std.mem.doNotOptimizeAway(&napi_escape_handle);
+    std.mem.doNotOptimizeAway(&napi_type_tag_object);
+    std.mem.doNotOptimizeAway(&napi_check_object_type_tag);
+    std.mem.doNotOptimizeAway(&napi_open_callback_scope);
 
     std.mem.doNotOptimizeAway(&@import("../bun.js/node/buffer.zig").BufferVectorized.fill);
 }

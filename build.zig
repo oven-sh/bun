@@ -43,6 +43,7 @@ const color_map = std.ComptimeStringMap([]const u8, .{
     &.{ "yellow", "33m" },
 });
 
+var compiler_rt_path: []const u8 = "";
 fn addInternalPackages(step: *std.build.LibExeObjStep, allocator: std.mem.Allocator, zig_exe: []const u8, target: anytype) !void {
     var bun = std.build.Pkg{
         .name = "bun",
@@ -87,12 +88,40 @@ fn addInternalPackages(step: *std.build.LibExeObjStep, allocator: std.mem.Alloca
     step.addPackage(io);
     step.addPackage(bun);
 
-    // workaround for https://github.com/ziglang/zig/issues/14099
-    const compiler_rt: std.build.Pkg = .{
-        .name = "compiler_rt",
-        .source = .{ .path = try std.fmt.allocPrint(allocator, "{s}/lib/compiler_rt/stack_probe.zig", .{std.fs.path.dirname(zig_exe).?}) },
+    const paths_to_try = .{
+        "{s}/../lib/compiler_rt/stack_probe.zig",
+        "{s}/../../lib/compiler_rt/stack_probe.zig",
+        "{s}/../../../lib/compiler_rt/stack_probe.zig",
+        "{s}/../../../../lib/compiler_rt/stack_probe.zig",
     };
-    step.addPackage(compiler_rt);
+    var found = false;
+    if (compiler_rt_path.len > 0) {
+        const compiler_rt: std.build.Pkg = .{
+            .name = "compiler_rt",
+            .source = .{ .path = compiler_rt_path },
+        };
+        found = true;
+        step.addPackage(compiler_rt);
+    } else {
+        inline for (paths_to_try) |path_fmt| {
+            if (!found) brk: {
+                // workaround for https://github.com/ziglang/zig/issues/14099
+                const path = try std.fmt.allocPrint(allocator, path_fmt, .{zig_exe});
+                var target_path = std.fs.path.resolve(allocator, &.{path}) catch break :brk;
+                const compiler_rt: std.build.Pkg = .{
+                    .name = "compiler_rt",
+                    .source = .{ .path = target_path },
+                };
+                found = true;
+                step.addPackage(compiler_rt);
+                compiler_rt_path = target_path;
+            }
+        }
+    }
+
+    if (!found) {
+        std.io.getStdErr().writeAll("\nwarning: Could not find compiler_rt. This might cause a build error until https://github.com/ziglang/zig/issues/14099 is fixed.\n\n") catch {};
+    }
 }
 
 const BunBuildOptions = struct {

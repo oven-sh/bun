@@ -178,7 +178,7 @@ describe("websocket server", () => {
               headers: 1238 as any,
             })
           ) {
-            reject();
+            reject(new Error("should not upgrade"));
             return;
           }
         } catch (e) {
@@ -186,7 +186,7 @@ describe("websocket server", () => {
           return new Response("success");
         }
 
-        reject();
+        reject(new Error("should throw error"));
         return new Response("noooooo hello world");
       },
     });
@@ -446,7 +446,7 @@ describe("websocket server", () => {
         },
         fetch(req, server) {
           if (server.upgrade(req)) {
-            reject("should not upgrade");
+            reject(new Error("should not upgrade"));
           }
 
           return new Response("success");
@@ -468,12 +468,12 @@ describe("websocket server", () => {
         fetch(req, server) {
           try {
             server.upgrade(req);
-            reject("should not upgrade");
+            reject(new Error("should not upgrade"));
           } catch (e) {
-            resolve();
+            return new Response("success");
           }
 
-          return new Response("success");
+          return new Response("fail");
         },
       });
 

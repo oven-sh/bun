@@ -47,7 +47,7 @@ pub const Ref = opaque {
     extern fn napi_set_ref(ref: *Ref, value: JSC.JSValue) void;
 };
 pub const napi_handle_scope = napi_env;
-pub const napi_escapable_handle_scope = *struct_napi_escapable_handle_scope__;
+pub const napi_escapable_handle_scope = napi_env;
 pub const napi_callback_info = *JSC.CallFrame;
 pub const napi_deferred = *JSC.JSPromise;
 
@@ -705,19 +705,42 @@ pub export fn napi_close_handle_scope(_: napi_env, _: napi_handle_scope) napi_st
     return .ok;
 }
 
-pub export fn napi_async_init(_: napi_env, _: napi_value, _: *anyopaque, _: **anyopaque) napi_status {
-    notImplementedYet("napi_async_init");
-    return .generic_failure;
+// we don't support async contexts
+pub export fn napi_async_init(env: napi_env, _: napi_value, _: napi_value, async_ctx: **anyopaque) napi_status {
+    async_ctx.* = env;
+    return .ok;
 }
 
+// we don't support async contexts
 pub export fn napi_async_destroy(_: napi_env, _: *anyopaque) napi_status {
-    notImplementedYet("napi_async_destroy");
-    return .generic_failure;
+    return .ok;
 }
 
-pub export fn napi_make_callback(_: napi_env, _: *anyopaque, _: napi_value, _: napi_value, _: usize, _: ?[*]const napi_value, _: *napi_value) napi_status {
-    notImplementedYet("napi_make_callback");
-    return .generic_failure;
+// this is just a regular function call
+pub export fn napi_make_callback(env: napi_env, _: *anyopaque, recv: napi_value, func: napi_value, arg_count: usize, args: ?[*]const napi_value, result: *napi_value) napi_status {
+    if (func.isEmptyOrUndefinedOrNull() or !func.isCallable(env.vm())) {
+        return .function_expected;
+    }
+
+    const res = func.callWithThis(
+        env,
+        if (recv != .zero)
+            recv
+        else
+            JSC.JSValue.jsUndefined(),
+        if (arg_count > 0 and args != null)
+            @ptrCast([*]const JSC.JSValue, args.?)[0..arg_count]
+        else
+            &.{},
+    );
+    result.* = res;
+
+    // TODO: this is likely incorrect
+    if (res.isAnyError(env)) {
+        return .pending_exception;
+    }
+
+    return .ok;
 }
 
 // Sometimes shared libraries reference symbols which are not used
@@ -737,19 +760,18 @@ fn notImplementedYet(comptime name: []const u8) void {
     );
 }
 
-// TODO:
-pub export fn napi_open_escapable_handle_scope(_: napi_env, _: [*c]napi_escapable_handle_scope) napi_status {
-    notImplementedYet("napi_open_escapable_handle_scope");
-    return .generic_failure;
+// JSC stack scanning will handle this
+pub export fn napi_open_escapable_handle_scope(env: napi_env, handle: *napi_escapable_handle_scope) napi_status {
+    handle.* = env;
+    return .ok;
 }
-// TODO:
 pub export fn napi_close_escapable_handle_scope(_: napi_env, _: napi_escapable_handle_scope) napi_status {
-    notImplementedYet("napi_close_escapable_handle_scope");
-    return .generic_failure;
+    return .ok;
 }
-pub export fn napi_escape_handle(_: napi_env, _: napi_escapable_handle_scope, _: napi_value, _: *napi_value) napi_status {
-    notImplementedYet("napi_escape_handle");
-    return .generic_failure;
+pub export fn napi_escape_handle(_: napi_env, _: napi_escapable_handle_scope, value: napi_value, result: *napi_value) napi_status {
+    value.ensureStillAlive();
+    result.* = value;
+    return .ok;
 }
 pub export fn napi_type_tag_object(_: napi_env, _: napi_value, _: [*c]const napi_type_tag) napi_status {
     notImplementedYet("napi_type_tag_object");
@@ -759,11 +781,14 @@ pub export fn napi_check_object_type_tag(_: napi_env, _: napi_value, _: [*c]cons
     notImplementedYet("napi_check_object_type_tag");
     return .generic_failure;
 }
-pub export fn napi_open_callback_scope(_: napi_env, _: napi_value, _: *anyopaque, _: *anyopaque) napi_status {
-    notImplementedYet("napi_open_callback_scope");
-    return .generic_failure;
-}
 
+// do nothing for both of these
+pub export fn napi_open_callback_scope(_: napi_env, _: napi_value, _: *anyopaque, _: *anyopaque) napi_status {
+    return .ok;
+}
+pub export fn napi_close_callback_scope(_: napi_env, _: *anyopaque) napi_status {
+    return .ok;
+}
 pub extern fn napi_throw(env: napi_env, @"error": napi_value) napi_status;
 pub extern fn napi_throw_error(env: napi_env, code: [*c]const u8, msg: [*c]const u8) napi_status;
 pub extern fn napi_throw_type_error(env: napi_env, code: [*c]const u8, msg: [*c]const u8) napi_status;

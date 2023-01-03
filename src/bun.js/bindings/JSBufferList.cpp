@@ -52,7 +52,7 @@ JSC::JSValue JSBufferList::concat(JSC::VM& vm, JSC::JSGlobalObject* lexicalGloba
 
     size_t i = 0;
     for (auto iter = m_deque.begin(); iter != m_deque.end(); ++iter) {
-        auto array = JSC::jsCast<JSC::JSUint8Array*>(iter->get());
+        auto array = JSC::jsDynamicCast<JSC::JSUint8Array*>(iter->get());
         if (!array)
             continue;
         size_t length = array->byteLength();
@@ -98,7 +98,7 @@ JSC::JSValue JSBufferList::_getString(JSC::VM& vm, JSC::JSGlobalObject* lexicalG
     }
     JSRopeString::RopeBuilder<RecordOverflow> ropeBuilder(vm);
     for (auto iter = m_deque.begin(); iter != m_deque.end() && n > 0; ++iter) {
-        JSC::JSString* str = JSC::jsCast<JSC::JSString*>(iter->get());
+        JSC::JSString* str = JSC::jsDynamicCast<JSC::JSString*>(iter->get());
         if (UNLIKELY(!str)) {
             return throwTypeError(lexicalGlobalObject, throwScope, "_getString can only be called when all buffers are string"_s);
         }

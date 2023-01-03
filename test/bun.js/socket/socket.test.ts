@@ -1,6 +1,6 @@
 import { expect, it } from "bun:test";
 import { bunExe } from "../bunExe";
-import { spawn } from "bun";
+import { connect, spawn } from "bun";
 
 it("should keep process alive only when active", async () => {
   const { exited, stdout, stderr } = spawn({
@@ -31,4 +31,41 @@ it("should keep process alive only when active", async () => {
     "[Client] ENDED",
     "[Client] CLOSED",
   ]);
+});
+
+it("should handle connection error", done => {
+  var data = {};
+  connect({
+    data,
+    hostname: "localhost",
+    port: 55555,
+    socket: {
+      connectError(socket, error) {
+        expect(socket).toBeDefined();
+        expect(socket.data).toBe(data);
+        expect(error).toBeDefined();
+        expect(error.name).toBe("SystemError");
+        expect(error.message).toBe("Failed to connect");
+        done();
+      },
+      data() {
+        done(new Error("Unexpected data()"));
+      },
+      drain() {
+        done(new Error("Unexpected drain()"));
+      },
+      close() {
+        done(new Error("Unexpected close()"));
+      },
+      end() {
+        done(new Error("Unexpected end()"));
+      },
+      error() {
+        done(new Error("Unexpected error()"));
+      },
+      open() {
+        done(new Error("Unexpected open()"));
+      },
+    },
+  });
 });

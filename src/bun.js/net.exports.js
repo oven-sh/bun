@@ -293,8 +293,8 @@ const ExternalSocket = function Socket(options) {
   return new InternalSocket(options);
 };
 
-ExternalSocket.prototype = InternalSocket.prototype;
-Object.assign(ExternalSocket, InternalSocket);
+Object.setPrototypeOf(ExternalSocket, InternalSocket);
+Object.setPrototypeOf(ExternalSocket.prototype, InternalSocket.prototype);
 export const Socket = ExternalSocket;
 
 export function createConnection(port, host, connectListener) {

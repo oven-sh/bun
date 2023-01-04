@@ -5065,7 +5065,7 @@ which clang-15
 If it is not, you will have to run this to link it:
 
 ```bash
-export PATH="$(brew --prefix llvm@15)/bin:$HOME/.bun-tools/zig:$PATH"
+export PATH="$(brew --prefix llvm@15)/bin"
 export LDFLAGS="$LDFLAGS -L$(brew --prefix llvm@15)/lib"
 export CPPFLAGS="$CPPFLAGS -I$(brew --prefix llvm@15)/include"
 ```
@@ -5087,7 +5087,7 @@ One-off command to run:
 ```bash
 # If you omit --depth=1, `git submodule update` will take 17.5 minutes on 1gbps internet, mostly due to WebKit.
 git submodule update --init --recursive --progress --depth=1 --checkout
-make vendor identifier-cache
+make vendor identifier-cache webcrypto-debug
 ```
 
 To compile C++ code:

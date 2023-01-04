@@ -14,16 +14,14 @@ inline void generateBufferSourceCode(JSC::JSGlobalObject *lexicalGlobalObject,
       reinterpret_cast<GlobalObject *>(lexicalGlobalObject);
 
   exportNames.append(JSC::Identifier::fromString(vm, "Buffer"_s));
-  exportValues.append(WebCore::JSBuffer::getConstructor(vm, globalObject));
+  exportValues.append(globalObject->JSBufferConstructor());
 
   auto *slowBuffer = JSC::JSFunction::create(
       vm, globalObject, 0, "SlowBuffer"_s, WebCore::constructSlowBuffer,
       ImplementationVisibility::Public, NoIntrinsic,
       WebCore::constructSlowBuffer);
   slowBuffer->putDirect(
-      vm, vm.propertyNames->prototype,
-      WebCore::JSBuffer::prototype(
-          vm, *jsCast<JSDOMGlobalObject *>(lexicalGlobalObject)),
+      vm, vm.propertyNames->prototype, globalObject->JSBufferPrototype(),
       JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum |
           JSC::PropertyAttribute::DontDelete);
   exportNames.append(JSC::Identifier::fromString(vm, "SlowBuffer"_s));

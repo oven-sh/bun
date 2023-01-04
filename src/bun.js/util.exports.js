@@ -601,8 +601,8 @@ function callbackify(original) {
   return callbackified;
 }
 exports.callbackify = callbackify;
-export var TextEncoder = (exports.TextDecoder = globalThis.TextEncoder);
-export var TextDecoder = (exports.TextEncoder = globalThis.TextDecoder);
+export var TextDecoder = (exports.TextDecoder = globalThis.TextDecoder);
+export var TextEncoder = (exports.TextEncoder = globalThis.TextEncoder);
 exports[Symbol.for("CommonJS")] = 0;
 export default exports;
 

@@ -540,8 +540,7 @@ builtins: ## to generate builtins
 .PHONY: generate-builtins
 generate-builtins: builtins
 
-.PHONY: vendor-without-check
-vendor-without-check: npm-install node-fallbacks runtime_js fallback_decoder bun_error mimalloc picohttp zlib boringssl libarchive lolhtml usockets uws tinycc
+
 
 BUN_TYPES_REPO_PATH ?= $(realpath packages/bun-types)
 
@@ -619,8 +618,6 @@ tgz-debug:
 	$(ZIG) build tgz-obj
 	$(CXX) $(DEBUG_PACKAGE_DIR)/tgz.o -g -o ./misctools/tgz $(DEFAULT_LINKER_FLAGS) -lc $(ARCHIVE_FILES)
 	rm -rf $(DEBUG_PACKAGE_DIR)/tgz.o
-
-vendor: require init-submodules vendor-without-check
 
 zlib:
 	cd $(BUN_DEPS_DIR)/zlib; make clean; $(CCACHE_CC_FLAG) CFLAGS="$(CFLAGS)" ./configure --static && make -j${CPUS} && cp ./libz.a $(BUN_DEPS_OUT_DIR)/libz.a
@@ -1907,6 +1904,13 @@ copy-to-bun-release-dir-bin:
 	cp -r $(PACKAGE_DIR)/bun-profile $(BUN_RELEASE_DIR)/bun-profile
 
 PACKAGE_MAP = --pkg-begin async_io $(BUN_DIR)/src/io/io_darwin.zig --pkg-begin bun $(BUN_DIR)/src/bun_redirect.zig --pkg-end --pkg-end --pkg-begin javascript_core $(BUN_DIR)/src/jsc.zig --pkg-begin bun $(BUN_DIR)/src/bun_redirect.zig --pkg-end --pkg-end --pkg-begin bun $(BUN_DIR)/src/bun_redirect.zig --pkg-end
+
+
+.PHONY: vendor-without-check
+vendor-without-check: npm-install node-fallbacks runtime_js fallback_decoder bun_error mimalloc picohttp zlib boringssl libarchive lolhtml sqlite usockets uws tinycc
+
+.PHONY: vendor
+vendor: require init-submodules vendor-without-check
 
 .PHONY: bun
 bun: vendor identifier-cache build-obj bun-link-lld-release bun-codesign-release-local

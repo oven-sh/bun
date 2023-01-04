@@ -25,6 +25,14 @@
 
 // ^ that comment is required or the builtins generator will have a fit.
 
+function alloc(n) {
+    "use strict";
+    if (typeof n !== "number" || n < 0) {
+      @throwRangeError("n must be a positive integer less than 2^32");
+    }
+    
+    return new this(n);
+}
 
 function from(items) {
   "use strict";
@@ -64,5 +72,5 @@ function from(items) {
     // Don't pass the second argument because Node's Buffer.from doesn't accept
     // a function and Uint8Array.from requires it if it exists
     // That means we cannot use @tailCallFowrardArguments here, sadly
-    return this.toBuffer(@Uint8Array.from(arrayLike));
+    return new this(@Uint8Array.from(arrayLike).buffer);
 }

@@ -855,13 +855,12 @@ enum class DOMConstructorID : uint16_t {
     XSLTProcessor,
 
     // --bun--
-    Buffer,
     EventEmitter,
 };
 
 static constexpr unsigned numberOfDOMConstructorsBase = 846;
 
-static constexpr unsigned bunExtraConstructors = 2;
+static constexpr unsigned bunExtraConstructors = 1;
 
 static constexpr unsigned numberOfDOMConstructors = numberOfDOMConstructorsBase + bunExtraConstructors;
 

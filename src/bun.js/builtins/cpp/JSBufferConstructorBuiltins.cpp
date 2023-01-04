@@ -48,10 +48,26 @@
 
 namespace WebCore {
 
+const JSC::ConstructAbility s_jsBufferConstructorAllocCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
+const JSC::ConstructorKind s_jsBufferConstructorAllocCodeConstructorKind = JSC::ConstructorKind::None;
+const JSC::ImplementationVisibility s_jsBufferConstructorAllocCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
+const int s_jsBufferConstructorAllocCodeLength = 185;
+static const JSC::Intrinsic s_jsBufferConstructorAllocCodeIntrinsic = JSC::NoIntrinsic;
+const char* const s_jsBufferConstructorAllocCode =
+    "(function (n) {\n" \
+    "    \"use strict\";\n" \
+    "    if (typeof n !== \"number\" || n < 0) {\n" \
+    "      @throwRangeError(\"n must be a positive integer less than 2^32\");\n" \
+    "    }\n" \
+    "    \n" \
+    "    return new this(n);\n" \
+    "})\n" \
+;
+
 const JSC::ConstructAbility s_jsBufferConstructorFromCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_jsBufferConstructorFromCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_jsBufferConstructorFromCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_jsBufferConstructorFromCodeLength = 1033;
+const int s_jsBufferConstructorFromCodeLength = 1035;
 static const JSC::Intrinsic s_jsBufferConstructorFromCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_jsBufferConstructorFromCode =
     "(function (items) {\n" \
@@ -92,7 +108,7 @@ const char* const s_jsBufferConstructorFromCode =
     "    //\n" \
     "    //\n" \
     "    //\n" \
-    "    return this.toBuffer(@Uint8Array.from(arrayLike));\n" \
+    "    return new this(@Uint8Array.from(arrayLike).buffer);\n" \
     "})\n" \
 ;
 

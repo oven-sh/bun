@@ -1,32 +1,29 @@
 import { bench, run } from "mitata";
 
+const N = parseInt(process.argv.slice(2).at(0) || "10", 10);
+
 bench("new Buffer(0)", () => {
   return new Buffer(0);
 });
 
-const buffer = new ArrayBuffer(10);
-bench("new DataView(buffer)", () => {
-  return new DataView(buffer);
+bench(`new Buffer(${N})`, () => {
+  return new Buffer(N);
 });
 
-bench("Buffer.alloc(10)", () => {
-  return Buffer.alloc(10);
+bench(`Buffer.alloc(${N})`, () => {
+  return Buffer.alloc(N);
 });
 
-bench("Buffer.allocUnsafe(10)", () => {
-  return Buffer.allocUnsafe(10);
+bench(`Buffer.allocUnsafe(${N})`, () => {
+  return Buffer.allocUnsafe(N);
 });
 
-bench("Buffer.allocUnsafe(1024)", () => {
-  return Buffer.allocUnsafe(1024);
+bench("Buffer.allocUnsafe(24_000)", () => {
+  return Buffer.allocUnsafe(24_000);
 });
 
-bench("new Uint8Array(0)", () => {
-  return new Uint8Array(0);
-});
-
-bench("new Uint8Array(10)", () => {
-  return new Uint8Array(10);
+bench("Buffer.alloc(24_000)", () => {
+  return Buffer.alloc(24_000);
 });
 
 await run();

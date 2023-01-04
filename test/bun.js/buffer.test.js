@@ -82,56 +82,12 @@ it("Buffer.isBuffer", () => {
   gc();
   expect(Buffer.isBuffer(a)).toBe(false);
   gc();
-  Buffer.toBuffer(a);
+  a = new Buffer(a.buffer);
   gc();
   expect(Buffer.isBuffer(a)).toBe(true);
   gc();
-});
-
-it("Buffer.toBuffer throws", () => {
-  const checks = [
-    [],
-    {},
-    "foo",
-    new Uint16Array(),
-    new DataView(new Uint8Array(14).buffer),
-  ];
-  for (let i = 0; i < checks.length; i++) {
-    try {
-      Buffer.toBuffer(checks[i]);
-      expect(false).toBe(true);
-    } catch (exception) {
-      expect(exception.message).toBe("Expected Uint8Array");
-    }
-  }
-  expect(true).toBe(true);
-});
-
-it("Buffer.toBuffer works", () => {
-  var array = new Uint8Array(20);
-  expect(array instanceof Buffer).toBe(false);
-  var buf = Buffer.toBuffer(array);
-  expect(array instanceof Buffer).toBe(true);
-  // if this fails or infinitely loops, it means there is a memory issue with the JSC::Structure object
-  expect(Object.keys(buf).length > 0).toBe(true);
-
-  expect(buf.write("hello world ")).toBe(12);
-  gc();
-  expect(buf.toString("utf8", 0, "hello world ".length)).toBe("hello world ");
-  gc();
-  expect(buf.toString("base64url", 0, "hello world ".length)).toBe(
-    btoa("hello world "),
-  );
-  gc();
-
-  expect(buf instanceof Uint8Array).toBe(true);
-  expect(buf instanceof Buffer).toBe(true);
-  expect(buf.slice() instanceof Uint8Array).toBe(true);
-  expect(buf.slice(0, 1) instanceof Buffer).toBe(true);
-  expect(buf.slice(0, 1) instanceof Uint8Array).toBe(true);
-  expect(buf.slice(0, 1) instanceof Buffer).toBe(true);
-  expect(new Buffer(buf) instanceof Buffer).toBe(true);
-  expect(new Buffer(buf.buffer) instanceof Buffer).toBe(true);
+  expect(a instanceof Buffer).toBe(true);
+  expect(a instanceof Uint8Array).toBe(true);
 });
 
 it("writeInt", () => {
@@ -195,8 +151,8 @@ it("Buffer.equals", () => {
   a[2] = 1;
   var b = new Uint8Array(10);
   b[2] = 1;
-  Buffer.toBuffer(a);
-  Buffer.toBuffer(b);
+  a = new Buffer(a.buffer);
+  b = new Buffer(b.buffer);
   expect(a.equals(b)).toBe(true);
   b[2] = 0;
   expect(a.equals(b)).toBe(false);
@@ -207,8 +163,8 @@ it("Buffer.compare", () => {
   a[2] = 1;
   var b = new Uint8Array(10);
   b[2] = 1;
-  Buffer.toBuffer(a);
-  Buffer.toBuffer(b);
+  a = new Buffer(a.buffer);
+  b = new Buffer(b.buffer);
   expect(a.compare(b)).toBe(0);
   b[2] = 0;
   expect(a.compare(b)).toBe(1);
@@ -283,12 +239,12 @@ it("Buffer.compare", () => {
 it("Buffer.copy", () => {
   var array1 = new Uint8Array(128);
   array1.fill(100);
-  Buffer.toBuffer(array1);
+  array1 = new Buffer(array1.buffer);
   var array2 = new Uint8Array(128);
   array2.fill(200);
-  Buffer.toBuffer(array2);
+  array2 = new Buffer(array2.buffer);
   var array3 = new Uint8Array(128);
-  Buffer.toBuffer(array3);
+  array3 = new Buffer(array3.buffer);
   gc();
   expect(array1.copy(array2)).toBe(128);
   expect(array1.join("")).toBe(array2.join(""));

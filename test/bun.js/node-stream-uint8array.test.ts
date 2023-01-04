@@ -9,7 +9,7 @@ describe("Writable", () => {
   let called;
 
   function logCall(fn, id) {
-    return function() {
+    return function () {
       called[id] = (called[id] || 0) + 1;
       return fn.apply(this, arguments);
     };
@@ -36,7 +36,7 @@ describe("Writable", () => {
 
     writable.write(ABC);
     writable.end(DEF);
-    expect(called).toEqual([ 2 ]);
+    expect(called).toEqual([2]);
   });
 
   it("should pass in Uint8Array in object mode", () => {
@@ -52,7 +52,7 @@ describe("Writable", () => {
     });
 
     writable.end(ABC);
-    expect(called).toEqual([ 1 ]);
+    expect(called).toEqual([1]);
   });
 
   it("should handle multiple writes carried out via writev()", () => {
@@ -77,14 +77,14 @@ describe("Writable", () => {
     writable.write(DEF);
     writable.end(GHI);
     callback();
-    expect(called).toEqual([ 1, 1 ]);
+    expect(called).toEqual([1, 1]);
   });
 });
 
 describe("Readable", () => {
   it("should perform simple operations", () => {
     const readable = new Readable({
-      read() {}
+      read() {},
     });
 
     readable.push(DEF);
@@ -92,12 +92,12 @@ describe("Readable", () => {
 
     const buf = readable.read();
     expect(buf instanceof Buffer).toBe(true);
-    expect([ ...buf ]).toEqual([ ...ABC, ...DEF ]);
+    expect([...buf]).toEqual([...ABC, ...DEF]);
   });
 
   it("should work with setEncoding()", () => {
     const readable = new Readable({
-      read() {}
+      read() {},
     });
 
     readable.setEncoding("utf8");

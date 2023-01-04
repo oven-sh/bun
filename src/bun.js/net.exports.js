@@ -57,7 +57,7 @@ const { Bun, createFIFO } = import.meta.primordials;
 const { connect: bunConnect } = Bun;
 const { Duplex } = import.meta.require("node:stream");
 
-export class Socket extends Duplex {
+const InternalSocket = class Socket extends Duplex {
   static #Handlers = {
     close: Socket.#Close,
     connectError(socket, error) {
@@ -223,7 +223,7 @@ export class Socket extends Duplex {
   _read(size) {
     const queue = this.#readQueue;
     let chunk;
-    while (chunk = queue.peek()) {
+    while ((chunk = queue.peek())) {
       if (!this.push(chunk)) break;
       queue.shift();
     }
@@ -274,7 +274,8 @@ export class Socket extends Duplex {
   }
 
   _write(chunk, encoding, callback) {
-    if (typeof chunk == "string" && encoding !== "utf8") chunk = Buffer.from(chunk, encoding);
+    if (typeof chunk == "string" && encoding !== "utf8")
+      chunk = Buffer.from(chunk, encoding);
     var written = this.#socket?.write(chunk);
     if (written == chunk.length) {
       callback();
@@ -286,17 +287,28 @@ export class Socket extends Duplex {
       this.#writeChunk = chunk;
     }
   }
-}
+};
+
+const ExternalSocket = function Socket(options) {
+  return new InternalSocket(options);
+};
+
+ExternalSocket.prototype = InternalSocket.prototype;
+Object.assign(ExternalSocket, InternalSocket);
+export const Socket = ExternalSocket;
 
 export function createConnection(port, host, connectListener) {
   if (typeof host == "function") {
     connectListener = host;
     host = undefined;
   }
-  var options = typeof port == "object" ? port : {
-    host: host,
-    port: port,
-  };
+  var options =
+    typeof port == "object"
+      ? port
+      : {
+          host: host,
+          port: port,
+        };
   return new Socket(options).connect(options, connectListener);
 }
 

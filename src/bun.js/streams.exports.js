@@ -2949,7 +2949,9 @@ var require_readable = __commonJS({
         } else if (chunk instanceof Buffer) {
           encoding = "";
         } else if (Stream._isUint8Array(chunk)) {
-          chunk = Stream._uint8ArrayToBuffer(chunk);
+          if (addToFront || !state.decoder) {
+            chunk = Stream._uint8ArrayToBuffer(chunk);
+          }
           encoding = "";
         } else if (chunk != null) {
           err = new ERR_INVALID_ARG_TYPE(

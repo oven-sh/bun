@@ -53,10 +53,17 @@ JSC::JSValue JSBufferList::concat(JSC::VM& vm, JSC::JSGlobalObject* lexicalGloba
     size_t i = 0;
     for (auto iter = m_deque.begin(); iter != m_deque.end(); ++iter) {
         auto array = JSC::jsDynamicCast<JSC::JSUint8Array*>(iter->get());
-        if (!array)
-            continue;
-        size_t length = array->byteLength();
-        uint8Array->setFromTypedArray(lexicalGlobalObject, i, array, 0, length, JSC::CopyType::Unobservable);
+        if (UNLIKELY(!array)) {
+            return throwTypeError(lexicalGlobalObject, throwScope, "concat can only be called when all buffers are Uint8Array"_s);
+        }
+        const size_t length = array->byteLength();
+        if (UNLIKELY(i + length > n)) {
+            return throwRangeError(lexicalGlobalObject, throwScope, "specified size too small to fit all buffers"_s);
+        }
+        if (UNLIKELY(!uint8Array->setFromTypedArray(lexicalGlobalObject, i, array, 0, length, JSC::CopyType::Unobservable))) {
+            return throwOutOfMemoryError(lexicalGlobalObject, throwScope);
+        }
+        i += length;
     }
 
     RELEASE_AND_RETURN(throwScope, uint8Array);
@@ -68,16 +75,18 @@ JSC::JSValue JSBufferList::join(JSC::VM& vm, JSC::JSGlobalObject* lexicalGlobalO
     if (length() == 0) {
         RELEASE_AND_RETURN(throwScope, JSC::jsEmptyString(vm));
     }
-    bool needSeq = false;
+    const bool needSeq = seq->length() != 0;
+    const auto end = m_deque.end();
     JSRopeString::RopeBuilder<RecordOverflow> ropeBuilder(vm);
-    for (auto iter = m_deque.begin(); iter != m_deque.end(); ++iter) {
-        auto str = JSC::jsCast<JSC::JSString*>(iter->get());
+    for (auto iter = m_deque.begin(); ;) {
+        auto str = iter->get().toString(lexicalGlobalObject);
+        if (!ropeBuilder.append(str))
+            return throwOutOfMemoryError(lexicalGlobalObject, throwScope);
+        if (++iter == end)
+            break;
         if (needSeq)
             if (!ropeBuilder.append(seq))
                 return throwOutOfMemoryError(lexicalGlobalObject, throwScope);
-        if (!ropeBuilder.append(str))
-            return throwOutOfMemoryError(lexicalGlobalObject, throwScope);
-        needSeq = seq->length() != 0;
     }
     RELEASE_AND_RETURN(throwScope, ropeBuilder.release());
 }
@@ -142,11 +151,13 @@ JSC::JSValue JSBufferList::_getBuffer(JSC::VM& vm, JSC::JSGlobalObject* lexicalG
     for (auto iter = m_deque.begin(); iter != m_deque.end() && n > 0; ++iter) {
         JSC::JSUint8Array* array = JSC::jsDynamicCast<JSC::JSUint8Array*>(iter->get());
         if (UNLIKELY(!array)) {
-            return throwOutOfMemoryError(lexicalGlobalObject, throwScope, "_getBuffer can only be called when all buffers are Uint8Array"_s);
+            return throwTypeError(lexicalGlobalObject, throwScope, "_getBuffer can only be called when all buffers are Uint8Array"_s);
         }
         size_t length = array->byteLength();
         if (length > n) {
-            uint8Array->setFromTypedArray(lexicalGlobalObject, offset, array, 0, n, JSC::CopyType::Unobservable);
+            if (UNLIKELY(!uint8Array->setFromTypedArray(lexicalGlobalObject, offset, array, 0, n, JSC::CopyType::Unobservable))) {
+                return throwOutOfMemoryError(lexicalGlobalObject, throwScope);
+            }
             // create a new array of size length - n.
             // is there a faster way to do this?
             auto arrayBuffer = JSC::ArrayBuffer::tryCreateUninitialized(length - n, 1);
@@ -160,7 +171,9 @@ JSC::JSValue JSBufferList::_getBuffer(JSC::VM& vm, JSC::JSGlobalObject* lexicalG
             memcpy(newArray->typedVector(), array->typedVector() + n, length - n);
             iter->set(vm, this, newArray);
         } else {
-            uint8Array->setFromTypedArray(lexicalGlobalObject, offset, array, 0, length, JSC::CopyType::Unobservable);
+            if (UNLIKELY(!uint8Array->setFromTypedArray(lexicalGlobalObject, offset, array, 0, length, JSC::CopyType::Unobservable))) {
+                return throwOutOfMemoryError(lexicalGlobalObject, throwScope);
+            }
             m_deque.removeFirst();
         }
         n -= static_cast<int32_t>(length);

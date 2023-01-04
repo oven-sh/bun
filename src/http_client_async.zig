@@ -814,12 +814,7 @@ const Stage = enum(u8) {
 };
 
 // threadlocal var resolver_cache
-const tcp = std.x.net.tcp;
-const ip = std.x.net.ip;
 
-const IPv4 = std.x.os.IPv4;
-const IPv6 = std.x.os.IPv6;
-const Socket = std.x.os.Socket;
 const os = std.os;
 
 // lowercase hash header names so that we can be sure

@@ -3967,7 +3967,7 @@ pub fn isIPAddress(input: []const u8) bool {
     if (containsChar(input, ':'))
         return true;
 
-    if (std.x.os.IPv4.parse(input)) |_| {
+    if (std.net.Address.resolveIp(input, 0)) |_| {
         return true;
     } else |_| {
         return false;

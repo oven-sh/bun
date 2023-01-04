@@ -249,11 +249,14 @@ pub const MutableString = struct {
         return std.mem.eql(u8, self.list.items, other);
     }
 
-    pub fn toSocketBuffers(self: *MutableString, comptime count: usize, ranges: anytype) [count]std.x.os.Buffer {
-        var buffers: [count]std.x.os.Buffer = undefined;
+    pub fn toSocketBuffers(self: *MutableString, comptime count: usize, ranges: anytype) [count]std.os.iovec_const {
+        var buffers: [count]std.os.iovec_const = undefined;
         comptime var i: usize = 0;
         inline while (i < count) : (i += 1) {
-            buffers[i] = std.x.os.Buffer.from(self.list.items[ranges[i][0]..ranges[i][1]]);
+            buffers[i] = .{
+                .iov_base = self.list.items[ranges[i][0]..ranges[i][1]].ptr,
+                .iov_len = self.list.items[ranges[i][0]..ranges[i][1]].len,
+            };
         }
         return buffers;
     }

@@ -295,6 +295,17 @@ const ExternalSocket = function Socket(options) {
 
 Object.setPrototypeOf(ExternalSocket, InternalSocket);
 Object.setPrototypeOf(ExternalSocket.prototype, InternalSocket.prototype);
+Object.defineProperty(ExternalSocket, Symbol.hasInstance, {
+  value: (instance) => instance instanceof InternalSocket,
+  configurable: false,
+});
+Object.defineProperty(ExternalSocket, Symbol.toStringTag, {
+  value: "Socket",
+  configurable: false,
+  enumerable: false,
+});
+ExternalSocket[Symbol.species] = InternalSocket;
+
 export const Socket = ExternalSocket;
 
 export function createConnection(port, host, connectListener) {

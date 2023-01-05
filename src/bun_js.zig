@@ -180,6 +180,8 @@ pub const Run = struct {
             }
         }
 
+        this.vm.global.handleRejectedPromises();
+
         this.vm.onExit();
 
         if (!JSC.is_bindgen) JSC.napi.fixDeadCodeElimination();

@@ -489,7 +489,7 @@ pub const EventLoop = struct {
 
         var global_vm = ctx.global.vm();
         while (true) {
-            while (this.tickWithCount() > 0) {
+            while (this.tickWithCount() > 0) : (this.global.handleRejectedPromises()) {
                 this.tickConcurrent();
             } else {
                 global_vm.releaseWeakRefs();

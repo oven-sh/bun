@@ -36,7 +36,7 @@ setInterval(() => {
 
 const server = listen({
   socket: handlers,
-  hostname: "localhost",
+  hostname: "0.0.0.0",
   port: 8080,
   data: {
     isServer: true,
@@ -44,6 +44,6 @@ const server = listen({
 });
 const connection = await connect({
   socket: handlers,
-  hostname: "localhost",
+  hostname: "0.0.0.0",
   port: 8080,
 });

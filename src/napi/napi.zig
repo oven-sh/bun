@@ -557,31 +557,7 @@ pub export fn napi_strict_equals(env: napi_env, lhs: napi_value, rhs: napi_value
     result.* = lhs.isSameValue(rhs, env);
     return .ok;
 }
-pub export fn napi_call_function(env: napi_env, recv: napi_value, func: napi_value, argc: usize, argv: [*c]const napi_value, result: *napi_value) napi_status {
-    JSC.markBinding(@src());
-
-    if (argc > 0 and argv == null) {
-        return .invalid_arg;
-    }
-
-    var exception = [_]JSC.C.JSValueRef{null};
-    result.* =
-        JSC.C.JSObjectCallAsFunctionReturnValue(
-        env.ref(),
-        func.asObjectRef(),
-        recv.asObjectRef(),
-        argc,
-        if (argv != null)
-            @ptrCast([*]const JSC.C.JSValueRef, argv)
-        else
-            null,
-    );
-    if (exception[0] != null) {
-        return .generic_failure;
-    }
-
-    return .ok;
-}
+pub extern fn napi_call_function(env: napi_env, recv: napi_value, func: napi_value, argc: usize, argv: [*c]const napi_value, result: *napi_value) napi_status;
 pub export fn napi_new_instance(env: napi_env, constructor: napi_value, argc: usize, argv: [*c]const napi_value, result: *napi_value) napi_status {
     JSC.markBinding(@src());
 

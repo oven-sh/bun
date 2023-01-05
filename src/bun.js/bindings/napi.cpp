@@ -889,14 +889,8 @@ extern "C" napi_status napi_is_detached_arraybuffer(napi_env env,
     Zig::GlobalObject* globalObject = toJS(env);
     JSC::VM& vm = globalObject->vm();
 
-    JSC::EncodedJSValue encodedValue = reinterpret_cast<JSC::EncodedJSValue>(arraybuffer);
-    JSC::JSValue value = JSC::JSValue::decode(encodedValue);
-    if (!value.isObject()) {
-        return napi_arraybuffer_expected;
-    }
-
-    JSC::JSArrayBuffer* jsArrayBuffer = JSC::jsDynamicCast<JSC::JSArrayBuffer*>(value);
-    if (!jsArrayBuffer) {
+    JSC::JSArrayBuffer* jsArrayBuffer = JSC::jsDynamicCast<JSC::JSArrayBuffer*>(toJS(arraybuffer));
+    if (UNLIKELY(!jsArrayBuffer)) {
         return napi_arraybuffer_expected;
     }
 
@@ -912,14 +906,8 @@ extern "C" napi_status napi_detach_arraybuffer(napi_env env,
     Zig::GlobalObject* globalObject = toJS(env);
     JSC::VM& vm = globalObject->vm();
 
-    JSC::EncodedJSValue encodedValue = reinterpret_cast<JSC::EncodedJSValue>(arraybuffer);
-    JSC::JSValue value = JSC::JSValue::decode(encodedValue);
-    if (!value.isObject()) {
-        return napi_arraybuffer_expected;
-    }
-
-    JSC::JSArrayBuffer* jsArrayBuffer = JSC::jsDynamicCast<JSC::JSArrayBuffer*>(value);
-    if (!jsArrayBuffer) {
+    JSC::JSArrayBuffer* jsArrayBuffer = JSC::jsDynamicCast<JSC::JSArrayBuffer*>(toJS(arraybuffer));
+    if (UNLIKELY(!jsArrayBuffer)) {
         return napi_arraybuffer_expected;
     }
 
@@ -1465,41 +1453,56 @@ extern "C" napi_status napi_typeof(napi_env env, napi_value val,
 
     JSC::JSValue value = toJS(val);
 
-    if (value.isEmpty()) {
+    if (UNLIKELY(value.isEmpty())) {
         return napi_invalid_arg;
     }
 
     if (value.isCell()) {
         JSC::JSCell* cell = value.asCell();
 
-        if (cell->isSymbol()) {
-            *result = napi_symbol;
-            return napi_ok;
-        }
-
-        if (cell->isString()) {
-            *result = napi_string;
-            return napi_ok;
-        }
-
-        if (value.isBigInt()) {
-            *result = napi_bigint;
-            return napi_ok;
-        }
-
-        if (cell->isCallable() || cell->isConstructor()) {
+        switch (cell->type()) {
+        case JSC::JSFunctionType:
+        case JSC::InternalFunctionType:
             *result = napi_function;
             return napi_ok;
-        }
 
-        if (JSC::jsDynamicCast<Bun::NapiExternal*>(value)) {
-            *result = napi_external;
-            return napi_ok;
-        }
+        case JSC::ObjectType:
+            if (JSC::jsDynamicCast<Bun::NapiExternal*>(value)) {
+                *result = napi_external;
+                return napi_ok;
+            }
 
-        if (cell->isObject()) {
             *result = napi_object;
             return napi_ok;
+
+        case JSC::HeapBigIntType:
+            *result = napi_bigint;
+            return napi_ok;
+        case JSC::DerivedStringObjectType:
+        case JSC::StringObjectType:
+        case JSC::StringType:
+            *result = napi_string;
+            return napi_ok;
+        case JSC::SymbolType:
+            *result = napi_symbol;
+            return napi_ok;
+
+        case JSC::FinalObjectType:
+        case JSC::ArrayType:
+        case JSC::DerivedArrayType:
+            *result = napi_object;
+            return napi_ok;
+
+        default:
+            if (cell->isObject()) {
+                *result = napi_object;
+                return napi_ok;
+            }
+
+            if (cell->isCallable() || cell->isConstructor()) {
+                *result = napi_function;
+                return napi_ok;
+            }
         }
     }
 
@@ -1533,16 +1536,8 @@ extern "C" napi_status napi_get_value_external(napi_env env, napi_value value,
         return napi_invalid_arg;
     }
 
-    Zig::GlobalObject* globalObject = toJS(env);
-    JSC::VM& vm = globalObject->vm();
-
-    auto scope = DECLARE_CATCH_SCOPE(vm);
-    JSC::JSValue jsValue = JSC::JSValue::decode(reinterpret_cast<JSC::EncodedJSValue>(value));
-    JSC::EnsureStillAliveScope ensureStillAlive(jsValue);
-
-    auto* external = jsDynamicCast<Bun::NapiExternal*>(jsValue);
-
-    if (!external) {
+    auto* external = jsDynamicCast<Bun::NapiExternal*>(toJS(value));
+    if (UNLIKELY(!external)) {
         return napi_invalid_arg;
     }
 
@@ -1555,7 +1550,7 @@ extern "C" napi_status napi_get_instance_data(napi_env env,
     void** data)
 {
     Zig::GlobalObject* globalObject = toJS(env);
-    if (data == nullptr) {
+    if (UNLIKELY(data == nullptr)) {
         return napi_invalid_arg;
     }
 
@@ -1604,5 +1599,43 @@ extern "C" napi_status napi_create_bigint_words(napi_env env,
     }
 
     *result = toNapi(bigint);
+    return napi_ok;
+}
+
+extern "C" napi_status napi_call_function(napi_env env, napi_value recv_napi,
+    napi_value func_napi, size_t argc,
+    const napi_value* argv,
+    napi_value* result_ptr)
+{
+    Zig::GlobalObject* globalObject = toJS(env);
+    JSC::VM& vm = globalObject->vm();
+
+    JSC::JSValue funcValue = toJS(func_napi);
+
+    if (UNLIKELY(!funcValue.isCell()))
+        return napi_function_expected;
+
+    JSC::CallData callData = getCallData(funcValue);
+    if (UNLIKELY(callData.type == JSC::CallData::Type::None))
+        return napi_function_expected;
+
+    JSC::MarkedArgumentBuffer args;
+    if (argc > 0 && LIKELY(argv != nullptr)) {
+        auto end = argv + argc;
+        for (auto it = argv; it != end; ++it) {
+            args.append(toJS(*it));
+        }
+    }
+
+    JSC::JSValue thisValue = toJS(recv_napi);
+    if (thisValue.isEmpty()) {
+        thisValue = JSC::jsUndefined();
+    }
+    JSC::JSValue result = JSC::call(globalObject, funcValue, callData, thisValue, args);
+
+    if (result_ptr) {
+        *result_ptr = toNapi(result);
+    }
+
     return napi_ok;
 }

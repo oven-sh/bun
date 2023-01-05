@@ -40,8 +40,41 @@ extern "C" int __wrap_statx(int fd, const char* path, int flags,
 }
 
 extern "C" int __real_fcntl(int fd, int cmd, ...);
-extern "C" double __real_exp(double x);
-extern "C" double __real_log(double x);
+typedef double (*MathFunction)(double);
+
+static inline double __real_exp(double x)
+{
+    static MathFunction function = nullptr;
+    if (UNLIKELY(function == nullptr)) {
+        function = reinterpret_cast<MathFunction>(dlsym(nullptr, "exp"));
+        if (UNLIKELY(function == nullptr))
+            abort();
+    }
+
+    return function(x);
+}
+static inline double __real_log(double x)
+{
+    static MathFunction function = nullptr;
+    if (UNLIKELY(function == nullptr)) {
+        function = reinterpret_cast<MathFunction>(dlsym(nullptr, "log"));
+        if (UNLIKELY(function == nullptr))
+            abort();
+    }
+
+    return function(x);
+}
+static inline double __real_log2(double x)
+{
+    static MathFunction function = nullptr;
+    if (UNLIKELY(function == nullptr)) {
+        function = reinterpret_cast<MathFunction>(dlsym(nullptr, "log2"));
+        if (UNLIKELY(function == nullptr))
+            abort();
+    }
+
+    return function(x);
+}
 
 extern "C" int __wrap_fcntl(int fd, int cmd, ...)
 {
@@ -77,6 +110,11 @@ extern "C" double __wrap_exp(double x)
 extern "C" double __wrap_log(double x)
 {
     return __real_log(x);
+}
+
+extern "C" double __wrap_log2(double x)
+{
+    return __real_log2(x);
 }
 
 #ifndef _MKNOD_VER

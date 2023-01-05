@@ -1,0 +1,5 @@
+exports[`test single snapshot test 1`] = `hello`;
+
+exports[`test two snapshot tests 1`] = `hello`;
+
+exports[`test two snapshot tests 2`] = `hi there`;

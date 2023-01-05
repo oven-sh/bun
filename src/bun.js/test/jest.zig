@@ -1087,26 +1087,58 @@ pub const Expect = struct {
 
         const _arguments = callframe.arguments(1);
         if (_arguments.len > 0) {
-            globalObject.throw("toMatchSnapshot expected to have 0 args", .{});
+            globalObject.throw("toMatchSnapshot does not support `propertyMatchers` or `hint` yet.", .{});
         }
-   
+
+        if (this.scope.tests.items.len <= this.test_id) {
+            globalObject.throw("toMatchSnapshot() must be called in a test", .{});
+            return .zero;
+        }
+
+        const allocator = globalObject.bunVM().allocator;
+
+        // get information about this test
         const test_label = this.scope.tests.items[this.test_id].label;
         const file_id = this.scope.file_id;
         var file_fs: Fs.Path = Jest.runner.?.files.items(.source)[file_id].path;
-        // const dir_path = file_fs.sourceDir();
-        const snapshot_path = snapshot.resolveSnapshotPath(file_fs);
-        globalObject.throw("toMatchSnapshot label {s} : {s}", .{ test_label, snapshot_path.text });
 
-        // if (snapshot_path exists)
-            // read file
-            // Find test index in file
-            // check equivalence / diff
-        // else
-            // write to snapshot file
+        const snapshot_path = snapshot.resolveSnapshotPath(file_fs, allocator);
 
-        // after everything processes, increment the snapshot count in the test suite
-        this.scope.tests[this.test_id].snapshotCount += 1;
-        return JSValue.jsBoolean(true);
+        var snapshot_file: *snapshot.SnapshotFile = if (this.scope.tests.items[this.test_id].snapshot) |s| s else blk: {
+            var s = allocator.create(snapshot.SnapshotFile) catch unreachable;
+            var _file_system = Fs.FileSystem.init1(allocator, null) catch unreachable;
+
+            s.* = .{ .globalObject = globalObject, .path = snapshot_path, .file_system = _file_system, .allocator = globalObject.bunVM().allocator, .snapshotData = null, .counters = snapshot.SnapshotFile.CountersMap.init(globalObject.bunVM().allocator) };
+            this.scope.tests.items[this.test_id].snapshot = s;
+            break :blk s;
+        };
+
+        const thisValue = callframe.this();
+        const actual: JSValue = Expect.capturedValueGetCached(thisValue) orelse {
+            globalObject.throw("Internal consistency error: the expect(value) was garbage collected but it should not have been!", .{});
+            return .zero;
+        };
+        actual.ensureStillAlive();
+
+        snapshot_file.readAndParseSnapshot() catch unreachable;
+
+        const expected_val = snapshot_file.getSnapshotValue(test_label) catch unreachable;
+
+        if (expected_val) |expected| {
+            const not = this.op.contains(.not);
+            var pass = actual.deepEquals(expected, globalObject);
+
+            if (not) pass = !pass;
+            if (pass) return thisValue;
+
+            var fmt = JSC.ZigConsoleClient.Formatter{ .globalThis = globalObject };
+            if (not) {
+                globalObject.throw("Expected values to not be equal:\n\tExpected: {any}\n\tReceived: {any}", .{ expected.toFmt(globalObject, &fmt), actual.toFmt(globalObject, &fmt) });
+            } else {
+                globalObject.throw("Expected values to be equal:\n\tExpected: {any}\n\tReceived: {any}", .{ expected.toFmt(globalObject, &fmt), actual.toFmt(globalObject, &fmt) });
+            }
+        }
+        return .zero;
     }
 
     pub const toHaveBeenCalledTimes = notImplementedJSCFn;
@@ -1190,7 +1222,7 @@ pub const TestScope = struct {
     promise: ?*JSInternalPromise = null,
     ran: bool = false,
     task: ?*TestRunnerTask = null,
-    snapshotCount: u32,
+    snapshot: ?*snapshot.SnapshotFile,
 
     pub const Class = NewClass(void, .{ .name = "test" }, .{ .call = call, .only = only }, .{});
 
@@ -1268,6 +1300,7 @@ pub const TestScope = struct {
             .label = label,
             .callback = function.asObjectRef(),
             .parent = DescribeScope.active,
+            .snapshot = null,
         }) catch unreachable;
 
         return this;

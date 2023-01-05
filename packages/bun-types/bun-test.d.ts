@@ -50,7 +50,7 @@ declare module "bun:test" {
     toBeGreaterThanOrEqual(value: number | bigint): void;
     toBeLessThan(value: number | bigint): void;
     toBeLessThanOrEqual(value: number | bigint): void;
-    toThrow(message: string | ErrorConstructor): void;
+    toThrow(error?: string | Error | ErrorConstructor): void;
   }
 }
 

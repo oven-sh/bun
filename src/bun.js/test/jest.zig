@@ -1087,11 +1087,6 @@ pub const Expect = struct {
         const _arguments = callFrame.arguments(1);
         const arguments: []const JSValue = _arguments.ptr[0.._arguments.len];
 
-        if (arguments.len < 1) {
-            globalObject.throwInvalidArguments("toThrow() requires 1 argument", .{});
-            return .zero;
-        }
-
         if (this.scope.tests.items.len <= this.test_id) {
             globalObject.throw("toThrow() must be called in a test", .{});
             return .zero;
@@ -1099,8 +1094,16 @@ pub const Expect = struct {
 
         active_test_expectation_counter.actual += 1;
 
-        const expected = arguments[0];
-        expected.ensureStillAlive();
+        const expected_value = if (arguments.len > 0) brk: {
+            const value = arguments[0];
+            if (value.isEmptyOrUndefinedOrNull() or !value.isObject() and !value.isString()) {
+                var fmt = JSC.ZigConsoleClient.Formatter{ .globalThis = globalObject };
+                globalObject.throw("Expected value must be string or Error: {any}", .{ value.toFmt(globalObject, &fmt) });
+                return .zero;
+            }
+            break :brk value;
+        } else .zero;
+        expected_value.ensureStillAlive();
 
         const value = Expect.capturedValueGetCached(thisValue) orelse {
             globalObject.throw("Internal consistency error: the expect(value) was garbage collected but it should not have been!", .{});
@@ -1108,7 +1111,7 @@ pub const Expect = struct {
         };
         value.ensureStillAlive();
 
-        if ((!value.jsType().isFunction())) {
+        if (!value.jsType().isFunction()) {
             globalObject.throw("Expected value must be a function", .{});
             return .zero;
         }
@@ -1124,23 +1127,36 @@ pub const Expect = struct {
             return .zero;
         }
 
-        if (expected.isString()) {
-            const message = result.get(globalObject, "message");
+        if (expected_value == .zero) return thisValue;
+
+        const expected_error = expected_value.toError(globalObject);
+
+        if (expected_value.isString() or !expected_error.isUndefined()) {
+            const expected = brk: {
+                if (expected_value.isString()) break :brk expected_value;
+                break :brk expected_error.get(globalObject, "message");
+            };
+            const actual = result.get(globalObject, "message");
             // TODO support partial match
-            const pass = if (message) |actual| expected.isSameValue(actual, globalObject) else false;
+            const pass = brk: {
+                if (expected) |expected_message|
+                    if (actual) |actual_message|
+                        break :brk expected_message.isSameValue(actual_message, globalObject);
+                break :brk false;
+            };
 
             if (pass) return thisValue;
             globalObject.throw("\n\tExpected: {s}\n\tReceived: {s}", .{
-                expected.getZigString(globalObject),
-                if (message) |actual| actual.getZigString(globalObject) else ZigString.init("undefined"),
+                if (expected) |message| message.getZigString(globalObject) else ZigString.init("undefined"),
+                if (actual) |message| message.getZigString(globalObject) else ZigString.init("undefined"),
             });
             return .zero;
         }
 
-        if (result.isInstanceOf(globalObject, expected)) return thisValue;
+        if (result.isInstanceOf(globalObject, expected_value)) return thisValue;
         globalObject.throw("\n\tExpected type: {s}\n\tReceived type: {s}", .{
-            expected.getName(globalObject),
-            if (result.get(globalObject, "name")) |name| name.getZigString(globalObject) else ZigString.init("<UnknownError>"),
+            expected_value.getName(globalObject),
+            if (result.get(globalObject, "name")) |name| name.getZigString(globalObject) else ZigString.init("<Unknown>"),
         });
         return .zero;
     }

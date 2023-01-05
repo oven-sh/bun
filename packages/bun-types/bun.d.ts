@@ -88,8 +88,8 @@ declare module "bun" {
    * });
    * ```
    */
-  export function serve<ServeOoptions extends Serve<any>>(
-    options: ServeOoptions,
+  export function serve<WebSocketDataType>(
+    options: Serve<WebSocketDataType>,
   ): Server;
 
   /**

@@ -1401,45 +1401,42 @@ pub const TestScope = struct {
             initial_value = js.JSObjectCallAsFunctionReturnValue(vm.global, callback, null, 0, null);
         }
 
-        if (!initial_value.isEmptyOrUndefinedOrNull()) {
-            if (initial_value.isAnyError(vm.global)) {
-                vm.runErrorHandler(initial_value, null);
-                return .{ .fail = active_test_expectation_counter.actual };
+        if (initial_value.isAnyError(vm.global)) {
+            vm.runErrorHandler(initial_value, null);
+            return .{ .fail = active_test_expectation_counter.actual };
+        }
+
+        if (initial_value.asAnyPromise()) |promise| {
+            if (this.promise != null) {
+                return .{ .pending = {} };
+            }
+            this.task = task;
+
+            // TODO: not easy to coerce JSInternalPromise as JSValue,
+            // so simply wait for completion for now.
+            switch (promise) {
+                .Internal => vm.waitForPromise(promise),
+                else => {},
             }
 
-            if (initial_value.asAnyPromise()) |promise| {
-                if (this.promise != null) {
-                    return .{ .pending = {} };
-                }
-                this.task = task;
-
-                // TODO: not easy to coerce JSInternalPromise as JSValue,
-                // so simply wait for completion for now.
-                switch (promise) {
-                    .Internal => vm.waitForPromise(promise),
-                    else => {},
-                }
-
-                switch (promise.status(vm.global.vm())) {
-                    .Rejected => {
-                        vm.runErrorHandler(promise.result(vm.global.vm()), null);
-                        return .{ .fail = active_test_expectation_counter.actual };
-                    },
-                    .Pending => {
-                        task.promise_state = .pending;
-                        switch (promise) {
-                            .Normal => |p| {
-                                _ = p.asValue(vm.global).then(vm.global, task, onResolve, onReject);
-                                return .{ .pending = {} };
-                            },
-                            else => unreachable,
-                        }
-                    },
-
-                    else => {
-                        _ = promise.result(vm.global.vm());
-                    },
-                }
+            switch (promise.status(vm.global.vm())) {
+                .Rejected => {
+                    vm.runErrorHandler(promise.result(vm.global.vm()), null);
+                    return .{ .fail = active_test_expectation_counter.actual };
+                },
+                .Pending => {
+                    task.promise_state = .pending;
+                    switch (promise) {
+                        .Normal => |p| {
+                            _ = p.asValue(vm.global).then(vm.global, task, onResolve, onReject);
+                            return .{ .pending = {} };
+                        },
+                        else => unreachable,
+                    }
+                },
+                else => {
+                    _ = promise.result(vm.global.vm());
+                },
             }
         }
 

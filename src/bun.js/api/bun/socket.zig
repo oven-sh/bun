@@ -913,7 +913,7 @@ fn NewSocket(comptime ssl: bool) type {
                 err_value,
             });
 
-            if (!result.isEmptyOrUndefinedOrNull() and result.isAnyError(globalObject)) {
+            if (result.isAnyError(globalObject)) {
                 if (handlers.rejectPromise(result)) return;
                 _ = handlers.callErrorHandler(this_value, &[_]JSC.JSValue{ this_value, result });
             }

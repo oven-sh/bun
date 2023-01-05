@@ -1504,7 +1504,7 @@ extern "C" napi_status napi_typeof(napi_env env, napi_value val,
     }
 
     if (value.isNumber()) {
-        *result = napi_boolean;
+        *result = napi_number;
         return napi_ok;
     }
 

@@ -535,7 +535,7 @@ pub const Expect = struct {
         defer this.postMatch(globalObject);
         const thisValue = callFrame.this();
         const value: JSValue = Expect.capturedValueGetCached(thisValue) orelse {
-            globalObject.throw("Interal consistency error: the expect(value) was garbage collected but it should not have been!", .{});
+            globalObject.throw("Internal consistency error: the expect(value) was garbage collected but it should not have been!", .{});
             return .zero;
         };
         value.ensureStillAlive();
@@ -564,7 +564,7 @@ pub const Expect = struct {
 
         const thisValue = callFrame.this();
         const value: JSValue = Expect.capturedValueGetCached(thisValue) orelse {
-            globalObject.throw("Interal consistency error: the expect(value) was garbage collected but it should not have been!", .{});
+            globalObject.throw("Internal consistency error: the expect(value) was garbage collected but it should not have been!", .{});
             return .zero;
         };
         value.ensureStillAlive();
@@ -596,7 +596,7 @@ pub const Expect = struct {
 
         const thisValue = callFrame.this();
         const value: JSValue = Expect.capturedValueGetCached(thisValue) orelse {
-            globalObject.throw("Interal consistency error: the expect(value) was garbage collected but it should not have been!", .{});
+            globalObject.throw("Internal consistency error: the expect(value) was garbage collected but it should not have been!", .{});
             return .zero;
         };
         value.ensureStillAlive();
@@ -623,7 +623,7 @@ pub const Expect = struct {
 
         const thisValue = callFrame.this();
         const value: JSValue = Expect.capturedValueGetCached(thisValue) orelse {
-            globalObject.throw("Interal consistency error: the expect(value) was garbage collected but it should not have been!", .{});
+            globalObject.throw("Internal consistency error: the expect(value) was garbage collected but it should not have been!", .{});
             return .zero;
         };
         value.ensureStillAlive();
@@ -851,7 +851,7 @@ pub const Expect = struct {
         other_value.ensureStillAlive();
 
         const value = Expect.capturedValueGetCached(thisValue) orelse {
-            globalObject.throw("Internal consistency error: thie expect(value) was garbage collected but it should not have been!", .{});
+            globalObject.throw("Internal consistency error: the expect(value) was garbage collected but it should not have been!", .{});
             return .zero;
         };
         value.ensureStillAlive();
@@ -914,7 +914,7 @@ pub const Expect = struct {
         other_value.ensureStillAlive();
 
         const value = Expect.capturedValueGetCached(thisValue) orelse {
-            globalObject.throw("Internal consistency error: thie expect(value) was garbage collected but it should not have been!", .{});
+            globalObject.throw("Internal consistency error: the expect(value) was garbage collected but it should not have been!", .{});
             return .zero;
         };
         value.ensureStillAlive();
@@ -977,7 +977,7 @@ pub const Expect = struct {
         other_value.ensureStillAlive();
 
         const value = Expect.capturedValueGetCached(thisValue) orelse {
-            globalObject.throw("Internal consistency error: thie expect(value) was garbage collected but it should not have been!", .{});
+            globalObject.throw("Internal consistency error: the expect(value) was garbage collected but it should not have been!", .{});
             return .zero;
         };
         value.ensureStillAlive();
@@ -1040,7 +1040,7 @@ pub const Expect = struct {
         other_value.ensureStillAlive();
 
         const value = Expect.capturedValueGetCached(thisValue) orelse {
-            globalObject.throw("Internal consistency error: thie expect(value) was garbage collected but it should not have been!", .{});
+            globalObject.throw("Internal consistency error: the expect(value) was garbage collected but it should not have been!", .{});
             return .zero;
         };
         value.ensureStillAlive();
@@ -1080,6 +1080,71 @@ pub const Expect = struct {
         return .zero;
     }
 
+    pub fn toThrow(this: *Expect, globalObject: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) callconv(.C) JSValue {
+        defer this.postMatch(globalObject);
+
+        const thisValue = callFrame.this();
+        const _arguments = callFrame.arguments(1);
+        const arguments: []const JSValue = _arguments.ptr[0.._arguments.len];
+
+        if (arguments.len < 1) {
+            globalObject.throwInvalidArguments("toThrow() requires 1 argument", .{});
+            return .zero;
+        }
+
+        if (this.scope.tests.items.len <= this.test_id) {
+            globalObject.throw("toThrow() must be called in a test", .{});
+            return .zero;
+        }
+
+        active_test_expectation_counter.actual += 1;
+
+        const expected = arguments[0];
+        expected.ensureStillAlive();
+
+        const value = Expect.capturedValueGetCached(thisValue) orelse {
+            globalObject.throw("Internal consistency error: the expect(value) was garbage collected but it should not have been!", .{});
+            return .zero;
+        };
+        value.ensureStillAlive();
+
+        if ((!value.jsType().isFunction())) {
+            globalObject.throw("Expected value must be a function", .{});
+            return .zero;
+        }
+
+        const not = this.op.contains(.not);
+        const result = value.call(globalObject, &.{}).toError(globalObject);
+        if (result.isUndefined()) {
+            if (not) return thisValue;
+            globalObject.throw("Expected function to throw", .{});
+            return .zero;
+        } else if(not) {
+            globalObject.throw("Expected function not to throw", .{});
+            return .zero;
+        }
+
+        if (expected.isString()) {
+            const message = result.get(globalObject, "message");
+            // TODO support partial match
+            const pass = if (message) |actual| expected.isSameValue(actual, globalObject) else false;
+
+            if (pass) return thisValue;
+            globalObject.throw("\n\tExpected: {s}\n\tReceived: {s}", .{
+                expected.getZigString(globalObject),
+                if (message) |actual| actual.getZigString(globalObject) else ZigString.init("undefined"),
+            });
+            return .zero;
+        }
+
+        if (result.isInstanceOf(globalObject, expected)) return thisValue;
+        globalObject.throw("\n\tExpected type: {s}\n\tReceived type: {s}", .{
+            expected.getName(globalObject),
+            if (result.get(globalObject, "name")) |name| name.getZigString(globalObject) else ZigString.init("<UnknownError>"),
+        });
+        return .zero;
+    }
+
     pub const toHaveBeenCalledTimes = notImplementedJSCFn;
     pub const toHaveBeenCalledWith = notImplementedJSCFn;
     pub const toHaveBeenLastCalledWith = notImplementedJSCFn;
@@ -1095,7 +1160,6 @@ pub const Expect = struct {
     pub const toMatchObject = notImplementedJSCFn;
     pub const toMatchSnapshot = notImplementedJSCFn;
     pub const toMatchInlineSnapshot = notImplementedJSCFn;
-    pub const toThrow = notImplementedJSCFn;
     pub const toThrowErrorMatchingSnapshot = notImplementedJSCFn;
     pub const toThrowErrorMatchingInlineSnapshot = notImplementedJSCFn;
 

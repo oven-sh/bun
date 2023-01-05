@@ -2593,9 +2593,7 @@ pub const JSValue = enum(JSValueReprInt) {
             u16 => toU16(this),
             c_uint => @intCast(c_uint, toU32(this)),
             c_int => @intCast(c_int, toInt32(this)),
-            ?*JSInternalPromise => asInternalPromise(this),
-            ?*JSPromise => asPromise(this),
-
+            ?AnyPromise => asAnyPromise(this),
             u52 => @truncate(u52, @intCast(u64, @max(this.toInt64(), 0))),
             u64 => toUInt64NoTruncate(this),
             u8 => @truncate(u8, toU32(this)),
@@ -2804,7 +2802,6 @@ pub const JSValue = enum(JSValueReprInt) {
     pub fn asPromise(
         value: JSValue,
     ) ?*JSPromise {
-        if (value.isEmptyOrUndefinedOrNull()) return null;
         return cppFn("asPromise", .{
             value,
         });
@@ -2813,6 +2810,7 @@ pub const JSValue = enum(JSValueReprInt) {
     pub fn asAnyPromise(
         value: JSValue,
     ) ?AnyPromise {
+        if (value.isEmptyOrUndefinedOrNull()) return null;
         if (value.asInternalPromise()) |promise| {
             return AnyPromise{
                 .Internal = promise,

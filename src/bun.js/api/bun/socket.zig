@@ -119,7 +119,7 @@ const Handlers = struct {
         }
 
         const result = onError.callWithThis(this.globalObject, thisValue, err);
-        if (!result.isEmptyOrUndefinedOrNull() and result.isAnyError(this.globalObject)) {
+        if (result.isAnyError(this.globalObject)) {
             this.vm.onUnhandledError(this.globalObject, result);
         }
 
@@ -547,9 +547,7 @@ pub const Listener = struct {
         var listener = this.listener orelse return JSValue.jsUndefined();
         this.listener = null;
         listener.close(this.ssl);
-        if (this.poll_ref.isActive()) {
-            this.poll_ref.unref(this.handlers.vm);
-        }
+        this.poll_ref.unref(this.handlers.vm);
         if (this.handlers.active_connections == 0) {
             this.handlers.unprotect();
             this.socket_context.?.deinit(this.ssl);
@@ -619,8 +617,6 @@ pub const Listener = struct {
     }
 
     pub fn unref(this: *Listener, globalObject: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSValue {
-        if (!this.poll_ref.isActive()) return JSValue.jsUndefined();
-
         this.poll_ref.unref(globalObject.bunVM());
         if (this.handlers.active_connections == 0) {
             this.strong_self.clear();
@@ -857,7 +853,7 @@ fn NewSocket(comptime ssl: bool) type {
                 this_value,
             });
 
-            if (!result.isEmptyOrUndefinedOrNull() and result.isAnyError(globalObject)) {
+            if (result.isAnyError(globalObject)) {
                 _ = handlers.callErrorHandler(this_value, &[_]JSC.JSValue{ this_value, result });
             }
         }
@@ -883,7 +879,7 @@ fn NewSocket(comptime ssl: bool) type {
                 this_value,
             });
 
-            if (!result.isEmptyOrUndefinedOrNull() and result.isAnyError(globalObject)) {
+            if (result.isAnyError(globalObject)) {
                 _ = handlers.callErrorHandler(this_value, &[_]JSC.JSValue{ this_value, result });
             }
         }
@@ -967,7 +963,7 @@ fn NewSocket(comptime ssl: bool) type {
                 this_value,
             });
 
-            if (!result.isEmptyOrUndefinedOrNull() and result.isAnyError(globalObject)) {
+            if (result.isAnyError(globalObject)) {
                 this.detached = true;
                 defer this.markInactive();
                 if (!this.socket.isClosed()) {
@@ -1010,7 +1006,7 @@ fn NewSocket(comptime ssl: bool) type {
                 this_value,
             });
 
-            if (!result.isEmptyOrUndefinedOrNull() and result.isAnyError(globalObject)) {
+            if (result.isAnyError(globalObject)) {
                 _ = handlers.callErrorHandler(this_value, &[_]JSC.JSValue{ this_value, result });
             }
         }
@@ -1034,7 +1030,7 @@ fn NewSocket(comptime ssl: bool) type {
                 JSValue.jsNumber(@as(i32, err)),
             });
 
-            if (!result.isEmptyOrUndefinedOrNull() and result.isAnyError(globalObject)) {
+            if (result.isAnyError(globalObject)) {
                 _ = handlers.callErrorHandler(this_value, &[_]JSC.JSValue{ this_value, result });
             }
         }
@@ -1057,7 +1053,7 @@ fn NewSocket(comptime ssl: bool) type {
                 output_value,
             });
 
-            if (!result.isEmptyOrUndefinedOrNull() and result.isAnyError(globalObject)) {
+            if (result.isAnyError(globalObject)) {
                 _ = handlers.callErrorHandler(this_value, &[_]JSC.JSValue{ this_value, result });
             }
         }
@@ -1408,12 +1404,13 @@ fn NewSocket(comptime ssl: bool) type {
 
         pub fn finalize(this: *This) callconv(.C) void {
             log("finalize()", .{});
+            if (this.detached) return;
             this.detached = true;
             if (!this.socket.isClosed()) {
                 this.socket.close(0, null);
             }
             this.markInactive();
-            if (this.poll_ref.isActive()) this.poll_ref.unref(JSC.VirtualMachine.get());
+            this.poll_ref.unref(JSC.VirtualMachine.get());
         }
 
         pub fn reload(this: *This, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSValue {

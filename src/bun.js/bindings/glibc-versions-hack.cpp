@@ -23,8 +23,9 @@
 #endif
 
 #if defined(__x86_64__)
-// force older pow
+// Force older versions of symbols
 __asm__(".symver pow,pow@GLIBC_2.2.5");
+__asm__(".symver log,log@GLIBC_2.2.5");
 #endif
 
 // ban statx, for now

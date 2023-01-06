@@ -1,6 +1,10 @@
 import { expect as expect_ } from "bun:test";
+// @ts-ignore
 import { gcTick } from "gc";
 import assertNode from "node:assert";
+
+type DoneCb = (err?: Error) => any;
+function noop() {}
 
 const expect = (actual) => {
   gcTick();
@@ -9,58 +13,55 @@ const expect = (actual) => {
   return ret;
 };
 
-export const strictEqual = (...args) => {
-  let error = null;
-  try {
-    assertNode.strictEqual(...args);
-  } catch (err) {
-    error = err;
-  }
-  expect(error).toBe(null);
+// Assert
+export const strictEqual = (
+  ...args: Parameters<typeof assertNode.strictEqual>
+) => {
+  assertNode.strictEqual.apply(this, args);
+  expect(true).toBe(true);
 };
 
-export const deepStrictEqual = (...args) => {
-  let error = null;
-  try {
-    assertNode.deepStrictEqual(...args);
-  } catch (err) {
-    error = err;
-  }
-  expect(error).toBe(null);
+export const deepStrictEqual = (
+  ...args: Parameters<typeof assertNode.deepStrictEqual>
+) => {
+  assertNode.deepStrictEqual.apply(this, args);
+  expect(true).toBe(true);
 };
 
-export const throws = (...args) => {
-  let error = null;
-  try {
-    assertNode.throws(...args);
-  } catch (err) {
-    error = err;
-  }
-  expect(error).toBe(null);
+export const throws = (...args: Parameters<typeof assertNode.throws>) => {
+  assertNode.throws.apply(this, args);
+  expect(true).toBe(true);
 };
 
-export const assert = (...args) => {
-  let error = null;
-  try {
-    assertNode(...args);
-  } catch (err) {
-    error = err;
-  }
-  expect(error).toBe(null);
+export const ok = (...args: Parameters<typeof assertNode.ok>) => {
+  assertNode.ok.apply(this, args);
+  expect(true).toBe(true);
 };
 
-export const assertOk = (...args) => {
-  let error = null;
-  try {
-    assertNode.ok(...args);
-  } catch (err) {
-    error = err;
-  }
-  expect(error).toBe(null);
+export const ifError = (...args: Parameters<typeof assertNode.ifError>) => {
+  assertNode.ifError.apply(this, args);
+  expect(true).toBe(true);
 };
 
-export const createCallCheckCtx = (done, timeout = 1500) => {
+export const match = (...args: Parameters<typeof assertNode.match>) => {
+  assertNode.match.apply(this, args);
+  expect(true).toBe(true);
+};
+
+export const assert = {
+  strictEqual,
+  deepStrictEqual,
+  throws,
+  ok,
+  ifError,
+  match,
+};
+
+// End assert
+
+export const createCallCheckCtx = (done: DoneCb) => {
   const createDone = createDoneDotAll(done);
+
   // const mustCallChecks = [];
 
   // failed.forEach(function (context) {
@@ -74,14 +75,25 @@ export const createCallCheckCtx = (done, timeout = 1500) => {
   // });
 
   // TODO: Implement this to be exact only
-  function mustCall(fn, exact) {
+  function mustCall(fn?: (...args) => any, exact?: number) {
     return mustCallAtLeast(fn, exact);
   }
 
-  function mustSucceed(fn, exact) {
+  function mustNotCall(
+    reason: string = "function should not have been called",
+  ) {
+    const localDone = createDone();
+    setTimeout(() => localDone(), 200);
+    return () => {
+      done(new Error(reason));
+    };
+  }
+
+  function mustSucceed(fn: () => any, exact?: number) {
     return mustCall(function (err, ...args) {
-      assert.ifError(err);
-      if (typeof fn === "function") return fn.apply(this, args);
+      ifError(err);
+      // @ts-ignore
+      if (typeof fn === "function") return fn.apply(this, args as []);
     }, exact);
   }
 
@@ -106,8 +118,9 @@ export const createCallCheckCtx = (done, timeout = 1500) => {
     let expected = criteria;
 
     // mustCallChecks.push(context);
-    const done = createDone(timeout);
+    const done = createDone();
     const _return = (...args) => {
+      // @ts-ignore
       const result = fn.apply(this, args);
       actual++;
       if (actual >= expected) {
@@ -138,20 +151,31 @@ export const createCallCheckCtx = (done, timeout = 1500) => {
     mustSucceed,
     mustCall,
     mustCallAtLeast,
+    mustNotCall,
   };
 };
 
-export function createDoneDotAll(done) {
+export function createDoneDotAll(done: DoneCb, globalTimeout?: number) {
   let toComplete = 0;
   let completed = 0;
-  function createDoneCb(timeout) {
+  const globalTimer = globalTimeout
+    ? setTimeout(() => {
+        console.log("Global Timeout");
+        done(new Error("Timed out!"));
+      }, globalTimeout)
+    : undefined;
+  function createDoneCb(timeout?: number) {
     toComplete += 1;
-    const timer = setTimeout(() => {
-      console.log("Timeout");
-      done(new Error("Timed out!"));
-    }, timeout);
-    return (result) => {
-      clearTimeout(timer);
+    const timer =
+      timeout !== undefined
+        ? setTimeout(() => {
+            console.log("Timeout");
+            done(new Error("Timed out!"));
+          }, timeout)
+        : timeout;
+    return (result?: Error) => {
+      if (timer) clearTimeout(timer);
+      if (globalTimer) clearTimeout(globalTimer);
       if (result instanceof Error) {
         done(result);
         return;

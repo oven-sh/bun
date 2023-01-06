@@ -47,6 +47,16 @@ pub fn addressToString(
     return JSC.ZigString.init(str);
 }
 
+pub fn normalizeDNSName(name: []const u8) []const u8 {
+
+    // https://github.com/c-ares/c-ares/issues/477
+    if (strings.endsWithComptime(name, ".localhost")) {
+        return "localhost";
+    }
+
+    return name;
+}
+
 pub fn addressToJS(
     allocator: std.mem.Allocator,
     address: std.net.Address,
@@ -516,7 +526,15 @@ pub const DNSResolver = struct {
         defer name.deinit();
         var vm = globalThis.bunVM();
         var resolver = vm.rareData().globalDNSResolver(vm);
-        var channel: *c_ares.Channel = switch (resolver.getChannel()) {
+        return resolver.doLookup(name.slice(), globalThis);
+    }
+
+    pub fn doLookup(this: *DNSResolver, name: []const u8, globalThis: *JSC.JSGlobalObject) JSC.JSValue {
+        return this.doLookup(normalizeDNSName(name), globalThis);
+    }
+
+    pub fn doLookupWithNormalizedName(this: *DNSResolver, name: []const u8, globalThis: *JSC.JSGlobalObject) JSC.JSValue {
+        var channel: *c_ares.Channel = switch (this.getChannel()) {
             .result => |res| res,
             .err => |err| {
                 const system_error = JSC.SystemError{
@@ -531,13 +549,13 @@ pub const DNSResolver = struct {
 
         var promise = JSC.JSPromise.Strong.init(globalThis);
         var promise_value = promise.value();
-        var dns = vm.allocator.create(DNSLookup) catch unreachable;
+        var dns = this.vm.allocator.create(DNSLookup) catch unreachable;
         dns.* = .{ .promise = promise, .globalThis = globalThis, .cache = .{} };
 
-        var key = DNSLookup.PendingCacheKey.init(name.slice(), undefined);
+        var key = DNSLookup.PendingCacheKey.init(name, undefined);
 
-        if (!resolver.getOrPutIntoPendingCache(key, dns))
-            channel.getAddrInfo(name.slice(), 0, &.{}, DNSLookup, dns, DNSLookup.onGetAddrInfo);
+        if (!this.getOrPutIntoPendingCache(key, dns))
+            channel.getAddrInfo(name, 0, &.{}, DNSLookup, dns, DNSLookup.onGetAddrInfo);
 
         return promise_value;
     }

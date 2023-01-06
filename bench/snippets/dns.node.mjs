@@ -1,10 +1,10 @@
 import { lookup, resolve } from "node:dns/promises";
 import { bench, run } from "mitata";
 
-bench("(cached) dns.lookup remote x 10", async () => {
-  var tld = "google.com";
+bench("(cached) dns.lookup remote x 50", async () => {
+  var tld = "example.com";
   const run = () => lookup(tld).catch(() => {});
-  const total = 10;
+  const total = 50;
   var remain = total;
   var done;
   await new Promise((resolve) => {
@@ -19,10 +19,10 @@ bench("(cached) dns.lookup remote x 10", async () => {
   });
 });
 
-bench("(cached in batch) dns.lookup remote x 10", async () => {
-  var tld = Math.random().toString(16) + ".google.com";
+bench("(cached in batch) dns.lookup remote x 50", async () => {
+  var tld = Math.random().toString(16) + ".example.com";
   const run = () => lookup(tld).catch(() => {});
-  const total = 10;
+  const total = 50;
   var remain = total;
   var done;
   await new Promise((resolve) => {
@@ -37,14 +37,14 @@ bench("(cached in batch) dns.lookup remote x 10", async () => {
   });
 });
 
-bench("dns.lookup remote x 10", async () => {
-  var remain = 10;
+bench("dns.lookup remote x 50", async () => {
+  var remain = 50;
   var done;
   const run = () =>
-    lookup(Math.random().toString() + ".google.com").catch(() => {});
+    lookup(Math.random().toString() + ".example.com").catch(() => {});
 
   await new Promise((resolve) => {
-    for (var i = 0; i < 10; i++)
+    for (var i = 0; i < 50; i++)
       run().finally(() => {
         remain--;
         if (remain === 0) {
@@ -55,14 +55,14 @@ bench("dns.lookup remote x 10", async () => {
   });
 });
 
-bench("dns.resolve remote x 10", async () => {
-  var remain = 10;
+bench("dns.resolve remote x 50", async () => {
+  var remain = 50;
   var done;
   const run = () =>
-    resolve(Math.random().toString() + ".google.com").catch(() => {});
+    resolve(Math.random().toString() + ".example.com").catch(() => {});
 
   await new Promise((resolve) => {
-    for (var i = 0; i < 10; i++)
+    for (var i = 0; i < 50; i++)
       run().finally(() => {
         remain--;
         if (remain === 0) {
@@ -71,10 +71,6 @@ bench("dns.resolve remote x 10", async () => {
       });
     done = resolve;
   });
-});
-
-bench("dns.lookup local", async () => {
-  await lookup("localhost");
 });
 
 await run();

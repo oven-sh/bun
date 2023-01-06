@@ -213,13 +213,19 @@ it("should work with partial .consume() followed by .shift()", () => {
 it("should work with partial .consume() followed by .unshift()", () => {
   const list = new Readable().readableBuffer;
   expect(list.length).toBe(0);
-  expect(list.push(makeUint8Array("foo"))).toBeUndefined();
-  expect(list.push(makeUint8Array("bar"))).toBeUndefined();
+  expect(list.push(makeUint8Array("😋😋😋"))).toBeUndefined();
+  expect(list.push(makeUint8Array("📋📋📋"))).toBeUndefined();
   expect(list.length).toBe(2);
-  expect(list.consume(4, false)).toEqual(makeUint8Array("foob"));
+  expect(list.consume(7, false)).toEqual(new Uint8Array([
+    61, 11, 61, 11, 61, 11,
+    61,
+  ]));
   expect(list.length).toBe(1);
-  expect(list.unshift(makeUint8Array("baz"))).toBeUndefined();
+  expect(list.unshift(makeUint8Array("👌👌👌"))).toBeUndefined();
   expect(list.length).toBe(2);
-  expect(list.consume(5, false)).toEqual(makeUint8Array("bazar"));
+  expect(list.consume(12, false)).toEqual(new Uint8Array([
+    61, 76, 61, 76, 61, 76,
+    203, 61, 203, 61, 203, 0,
+  ]));
   expect(list.length).toBe(0);
 });

@@ -32,7 +32,6 @@ describe("readline/promises.createInterface()", () => {
   it("should throw an error when failed completion", (done) => {
     const createDone = createDoneDotAll(done);
     const { mustCall, mustNotCall } = createCallCheckCtx(createDone());
-    let output = "";
 
     const fi = new FakeInput();
     const rli = new readlinePromises.Interface({
@@ -48,7 +47,7 @@ describe("readline/promises.createInterface()", () => {
     process.nextTick(() => {
       console.log("output", fi.output);
       assert.match(fi.output, /^Tab completion error/);
-      output = "";
+      fi.reset();
       outCheckDone();
     });
     rli.close();

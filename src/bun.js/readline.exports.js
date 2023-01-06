@@ -28,6 +28,7 @@ var { Array, RegExp, String, Bun } = import.meta.primordials;
 var EventEmitter = import.meta.require("node:events");
 var { clearTimeout, setTimeout } = import.meta.require("timers");
 var { StringDecoder } = import.meta.require("string_decoder");
+var { promises: promises_ } = import.meta.require("node:readline/promises");
 
 var { inspect } = Bun;
 var debug = process.env.DEBUG ? console.log : () => {};
@@ -3003,6 +3004,7 @@ Interface.prototype._tabComplete = function (lastKeypressWasTab) {
     this.resume();
 
     if (err) {
+      console.log("Here");
       this._writeToOutput(`Tab completion error: ${inspect(err)}`);
       return;
     }
@@ -3085,7 +3087,7 @@ export var createInterface = createInterface;
 export var cursorTo = cursorTo;
 export var emitKeypressEvents = emitKeypressEvents;
 export var moveCursor = moveCursor;
-export var promises = promises;
+export var promises = promises_;
 
 export default {
   Interface,

@@ -1108,7 +1108,7 @@ pub const Expect = struct {
             var s = allocator.create(snapshot.SnapshotFile) catch unreachable;
             var _file_system = Fs.FileSystem.init1(allocator, null) catch unreachable;
 
-            s.* = .{ .globalObject = globalObject, .path = snapshot_path, .file_system = _file_system, .allocator = globalObject.bunVM().allocator, .snapshotData = null, .counters = snapshot.SnapshotFile.CountersMap.init(globalObject.bunVM().allocator) };
+            s.* = .{ .globalObject = globalObject, .path = snapshot_path, .file_system = _file_system, .allocator = globalObject.bunVM().allocator, .snapshotData = JSC.JSValue.jsUndefined(), .counters = snapshot.SnapshotFile.CountersMap.init(globalObject.bunVM().allocator) };
             this.scope.tests.items[this.test_id].snapshot = s;
             break :blk s;
         };
@@ -1120,23 +1120,20 @@ pub const Expect = struct {
         };
         actual.ensureStillAlive();
 
-        snapshot_file.readAndParseSnapshot() catch unreachable;
+        snapshot_file.readAndParseSnapshot();
 
-        const expected_val = snapshot_file.getSnapshotValue(test_label) catch unreachable;
+        const expected = snapshot_file.getSnapshotValue(test_label) catch JSC.JSValue.jsUndefined();
+        const not = this.op.contains(.not);
+        var pass = actual.deepEquals(expected, globalObject);
 
-        if (expected_val) |expected| {
-            const not = this.op.contains(.not);
-            var pass = actual.deepEquals(expected, globalObject);
+        if (not) pass = !pass;
+        if (pass) return thisValue;
 
-            if (not) pass = !pass;
-            if (pass) return thisValue;
-
-            var fmt = JSC.ZigConsoleClient.Formatter{ .globalThis = globalObject };
-            if (not) {
-                globalObject.throw("Expected values to not be equal:\n\tExpected: {any}\n\tReceived: {any}", .{ expected.toFmt(globalObject, &fmt), actual.toFmt(globalObject, &fmt) });
-            } else {
-                globalObject.throw("Expected values to be equal:\n\tExpected: {any}\n\tReceived: {any}", .{ expected.toFmt(globalObject, &fmt), actual.toFmt(globalObject, &fmt) });
-            }
+        var fmt = JSC.ZigConsoleClient.Formatter{ .globalThis = globalObject };
+        if (not) {
+            globalObject.throw("Expected values to not be equal:\n\tExpected: {any}\n\tReceived: {any}", .{ expected.toFmt(globalObject, &fmt), actual.toFmt(globalObject, &fmt) });
+        } else {
+            globalObject.throw("Expected values to be equal:\n\tExpected: {any}\n\tReceived: {any}", .{ expected.toFmt(globalObject, &fmt), actual.toFmt(globalObject, &fmt) });
         }
         return .zero;
     }

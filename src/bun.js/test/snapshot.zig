@@ -44,8 +44,10 @@ pub const SnapshotFile = struct {
     globalObject: *JSC.JSGlobalObject,
     file_system: *fs.FileSystem,
     allocator: std.mem.Allocator,
-    snapshotData: ?JSC.JSValueRef,
+    snapshotData: JSC.JSValue,
     counters: CountersMap,
+
+    pub const SnapshotError = error{SnapshotNotFound};
 
     pub const CountersMap = std.HashMap(u64, u32, IdentityContext, 80);
 
@@ -56,18 +58,22 @@ pub const SnapshotFile = struct {
     //     return snapshot;
     // }
 
-    pub fn readAndParseSnapshot(this: *SnapshotFile) !void {
-        const contents_string = ZigString.init(try this.readSnapshot());
+    pub fn readAndParseSnapshot(this: *SnapshotFile) void {
+        var snapshot_contents = this.readSnapshot() catch return;
+        const contents_string = ZigString.init(snapshot_contents);
         this.parseSnapshot(&contents_string, this.globalObject) catch unreachable;
     }
 
     pub fn readSnapshot(this: *SnapshotFile) !bun.string {
-        var file: std.fs.File = undefined;
         // @TODO add check to throw error if the snapshot file does not exist.
-        file = try std.fs.cwd().openFile(this.path.text, .{ .mode = .read_write });
+        var file: std.fs.File = std.fs.cwd().openFile(this.path.text, .{ .mode = .read_write }) catch {
+            this.snapshotData = JSC.JSValue.jsUndefined();
+            return SnapshotError.SnapshotNotFound;
+        };
         const file_size = try file.getEndPos();
         var snapshot_contents = try this.allocator.alloc(u8, file_size);
         _ = try file.read(snapshot_contents);
+        file.close();
         return snapshot_contents;
     }
 
@@ -97,7 +103,7 @@ pub const SnapshotFile = struct {
         // Call the function
         _ = JSC.C.JSObjectCallAsFunction(this.globalObject, function, null, 1, &arguments, exception_ptr) orelse unreachable;
         // Save the value of the parameter since it has the parsed snapshot value
-        this.snapshotData = expect_arg;
+        this.snapshotData = JSC.JSValue.fromRef(expect_arg);
     }
 
     fn incrementCounter(this: *SnapshotFile, testName: bun.string) !u32 {
@@ -112,14 +118,18 @@ pub const SnapshotFile = struct {
     }
 
     // @TODO add support for hints later
-    pub fn getSnapshotValue(this: *SnapshotFile, snapshotName: bun.string) !?JSC.JSValue {
+    pub fn getSnapshotValue(this: *SnapshotFile, snapshotName: bun.string) !JSC.JSValue {
         var count = try this.incrementCounter(snapshotName);
         const snapshot_key = std.fmt.allocPrint(this.allocator, "{s} {}", .{ snapshotName, count }) catch unreachable;
 
         const test_name_string = ZigString.init(snapshot_key);
         // @TODO get this to not segfault if the snapshot for the key doesn't exist
-        const value = JSC.JSValue.fromRef(this.snapshotData.?).getIfPropertyExistsImpl(this.globalObject, test_name_string.ptr, @truncate(u32, test_name_string.len));
-        if (value.isEmpty()) {
+        if (this.snapshotData.isEmptyOrUndefinedOrNull()) {
+            this.globalObject.throw("The corresponding snapshot file did not exist: {s}", .{this.path.text});
+            return .zero;
+        }
+        const value = this.snapshotData.getIfPropertyExistsImpl(this.globalObject, test_name_string.ptr, @truncate(u32, test_name_string.len));
+        if (value.isEmptyOrUndefinedOrNull()) {
             this.globalObject.throw("The snapshot `{s}` was not found in {s}", .{ snapshot_key, this.path.text });
             return .zero;
         }

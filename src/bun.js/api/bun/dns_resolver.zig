@@ -14,6 +14,55 @@ const JSC = @import("bun").JSC;
 const JSValue = JSC.JSValue;
 const JSGlobalObject = JSC.JSGlobalObject;
 const c_ares = bun.c_ares;
+
+const GetAddrInfoAsyncCallback = fn (i32, ?*std.c.addrinfo, ?*anyopaque) callconv(.C) void;
+
+const LibInfo = struct {
+    // static int32_t (*getaddrinfo_async_start)(mach_port_t*,
+    //                                           const char*,
+    //                                           const char*,
+    //                                           const struct addrinfo*,
+    //                                           getaddrinfo_async_callback,
+    //                                           void*);
+    // static int32_t (*getaddrinfo_async_handle_reply)(void*);
+    // static void (*getaddrinfo_async_cancel)(mach_port_t);
+    // typedef void getaddrinfo_async_callback(int32_t, struct addrinfo*, void*)
+    const GetaddrinfoAsyncStart = fn (*?*anyopaque, noalias node: ?[*:0]const u8, noalias service: ?[*:0]const u8, noalias hints: ?*const std.c.addrinfo, callback: *const GetAddrInfoAsyncCallback, noalias context: ?*anyopaque) callconv(.C) i32;
+    const GetaddrinfoAsyncHandleReply = fn (?**anyopaque) callconv(.C) i32;
+    const GetaddrinfoAsyncCancel = fn (?**anyopaque) callconv(.C) void;
+
+    var handle: ?*anyopaque = null;
+    var loaded = false;
+    pub fn getHandle() ?*anyopaque {
+        if (loaded)
+            return handle;
+        loaded = true;
+        const RTLD_LAZY = 1;
+        const RTLD_LOCAL = 4;
+
+        handle = std.c.dlopen("libinfo.dylib", RTLD_LAZY | RTLD_LOCAL);
+        if (handle == null)
+            Output.debug("libinfo.dylib not found", .{});
+        return handle;
+    }
+
+    pub const getaddrinfo_async_start = struct {
+        pub fn get() ?*const GetaddrinfoAsyncStart {
+            return bun.C.dlsymWithHandle(*const GetaddrinfoAsyncStart, "getaddrinfo_async_start", getHandle);
+        }
+    }.get;
+
+    pub const getaddrinfo_async_handle_reply = struct {
+        pub fn get() ?*const GetaddrinfoAsyncHandleReply {
+            return bun.C.dlsymWithHandle(*const GetaddrinfoAsyncHandleReply, "getaddrinfo_async_handle_reply", getHandle);
+        }
+    }.get;
+
+    pub fn get() ?*const GetaddrinfoAsyncCancel {
+        return bun.C.dlsymWithHandle(*const GetaddrinfoAsyncCancel, "getaddrinfo_async_cancel", getHandle);
+    }
+};
+
 pub fn addressToString(
     allocator: std.mem.Allocator,
     address: std.net.Address,
@@ -40,7 +89,7 @@ pub fn addressToString(
             std.os.AF.UNIX => {
                 break :brk std.mem.sliceTo(&address.un.path, 0);
             },
-            else => return JSC.ZigString.Empty,
+            else => break :brk "",
         }
     };
 
@@ -65,17 +114,25 @@ pub fn addressToJS(
     return addressToString(allocator, address).toValueGC(globalThis);
 }
 
+fn addrInfoCount(addrinfo: *std.c.addrinfo) u32 {
+    var count: u32 = 1;
+    var current: ?*std.c.addrinfo = addrinfo.next;
+    while (current != null) : (current = current.?.next) {
+        count += @boolToInt(current.?.addr != null);
+    }
+    return count;
+}
+
 pub fn addrInfoToJSArray(
     parent_allocator: std.mem.Allocator,
+    addr_info: *std.c.addrinfo,
     globalThis: *JSC.JSGlobalObject,
-    addr_info: *c_ares.AddrInfo,
 ) JSC.JSValue {
     var stack = std.heap.stackFallback(2048, parent_allocator);
     var arena = std.heap.ArenaAllocator.init(stack.get());
-    var node = addr_info.node.?;
     const array = JSC.JSValue.createEmptyArray(
         globalThis,
-        node.count(),
+        addrInfoCount(addr_info),
     );
 
     {
@@ -83,19 +140,17 @@ pub fn addrInfoToJSArray(
 
         var allocator = arena.allocator();
         var j: u32 = 0;
-        var current: ?*c_ares.AddrInfo_node = addr_info.node;
-        while (current) |this_node| : (current = this_node.next) {
+        var current: ?*std.c.addrinfo = addr_info;
+        while (current) |this_node| : (current = current.?.next) {
+            const addr = std.net.Address.initPosix(@alignCast(4, this_node.addr orelse continue));
+
             array.putIndex(
                 globalThis,
                 j,
-                DNSLookup.Result.toJS(
+                bun.JSC.DNS.DNSLookup.Result.toJS(
                     &.{
-                        .address = switch (this_node.family) {
-                            std.os.AF.INET => std.net.Address{ .in = .{ .sa = bun.cast(*const std.os.sockaddr.in, this_node.addr.?).* } },
-                            std.os.AF.INET6 => std.net.Address{ .in6 = .{ .sa = bun.cast(*const std.os.sockaddr.in6, this_node.addr.?).* } },
-                            else => unreachable,
-                        },
-                        .ttl = this_node.ttl,
+                        .address = addr,
+                        .ttl = 0,
                     },
                     globalThis,
                     allocator,
@@ -120,6 +175,32 @@ pub const DNSLookup = struct {
     cache: CacheConfig = CacheConfig{},
 
     resolver_for_caching: ?*DNSResolver = null,
+
+    poll_ref_machport: ?*bun.JSC.FilePoll = null,
+    poll_ref_machport_id: ?*anyopaque = null,
+
+    pub fn getAddrInfoAsyncCallback(
+        status: i32,
+        addr_info: ?*std.c.addrinfo,
+        arg: ?*anyopaque,
+    ) callconv(.C) void {
+        const this = @intToPtr(*DNSLookup, @ptrToInt(arg));
+        log("getAddrInfoAsyncCallback: status={d}", .{status});
+
+        this.onGetAddrInfoNative(status, addr_info);
+        if (addr_info != null) std.c.freeaddrinfo(addr_info.?);
+    }
+
+    extern fn getaddrinfo_send_reply(*anyopaque, *const LibInfo.GetaddrinfoAsyncHandleReply) bool;
+    pub fn onMachportChange(this: *DNSLookup) void {
+        if (!getaddrinfo_send_reply(this.poll_ref_machport_id.?, LibInfo.getaddrinfo_async_handle_reply().?)) {
+            log("onMachportChange: getaddrinfo_send_reply failed", .{});
+            this.processGetAddrInfoNative(-1, null);
+            return;
+        } else {
+            log("onMachportChange: getaddrinfo_send_reply succeeded", .{});
+        }
+    }
 
     pub const CacheConfig = packed struct(u16) {
         pending_cache: bool = false,
@@ -177,6 +258,48 @@ pub const DNSLookup = struct {
         this.onComplete(result.?);
     }
 
+    pub fn processGetAddrInfoNative(this: *DNSLookup, status: i32, result: ?*std.c.addrinfo) void {
+        if (c_ares.Error.initEAI(status)) |err| {
+            var promise = this.promise;
+            var globalThis = this.globalThis;
+
+            const error_value = brk: {
+                if (err == .ESERVFAIL) {
+                    break :brk JSC.Node.Syscall.Error.fromCode(std.c.getErrno(-1), .getaddrinfo).toJSC(globalThis);
+                }
+                const error_value = globalThis.createErrorInstance("DNS lookup failed: {s}", .{err.label()});
+                error_value.put(
+                    globalThis,
+                    JSC.ZigString.static("code"),
+                    JSC.ZigString.init(err.code()).toValueGC(globalThis),
+                );
+                break :brk error_value;
+            };
+
+            this.deinit();
+
+            promise.reject(globalThis, error_value);
+            return;
+        }
+
+        this.onCompleteNative(result.?);
+    }
+
+    pub fn onGetAddrInfoNative(this: *DNSLookup, status: i32, result: ?*std.c.addrinfo) void {
+        if (this.resolver_for_caching) |resolver| {
+            // if (this.cache.entry_cache and result != null and result.?.node != null) {
+            //     resolver.putEntryInCache(this.name_hash, this.cache.name_len, result.?);
+            // }
+
+            if (this.cache.pending_cache) {
+                resolver.drainPendingHostNative(this.cache.pos_in_pending, this.globalThis, status, result);
+                return;
+            }
+        }
+
+        this.processGetAddrInfoNative(status, result);
+    }
+
     pub fn onGetAddrInfo(this: *DNSLookup, err_: ?c_ares.Error, timeout: i32, result: ?*c_ares.AddrInfo) void {
         if (this.resolver_for_caching) |resolver| {
             // if (this.cache.entry_cache and result != null and result.?.node != null) {
@@ -184,7 +307,7 @@ pub const DNSLookup = struct {
             // }
 
             if (this.cache.pending_cache) {
-                resolver.drainPendingHost(this.cache.pos_in_pending, this.globalThis, err_, timeout, result);
+                resolver.drainPendingHostCares(this.cache.pos_in_pending, this.globalThis, err_, timeout, result);
                 return;
             }
         }
@@ -211,7 +334,12 @@ pub const DNSLookup = struct {
     };
 
     pub fn onComplete(this: *DNSLookup, result: *c_ares.AddrInfo) void {
-        const array = addrInfoToJSArray(this.globalThis.allocator(), this.globalThis, result);
+        const array = result.toJSArray(this.globalThis.allocator(), this.globalThis);
+        this.onCompleteWithArray(array);
+    }
+
+    pub fn onCompleteNative(this: *DNSLookup, result: *std.c.addrinfo) void {
+        const array = addrInfoToJSArray(this.globalThis.allocator(), result, this.globalThis);
         this.onCompleteWithArray(array);
     }
 
@@ -226,6 +354,9 @@ pub const DNSLookup = struct {
 
     pub fn deinit(this: *DNSLookup) void {
         this.poll_ref.unref(this.globalThis.bunVM());
+        if (this.poll_ref_machport) |port| {
+            port.deinit();
+        }
         bun.default_allocator.destroy(this);
     }
 };
@@ -253,15 +384,18 @@ pub const DNSResolver = struct {
     vm: *JSC.VirtualMachine,
     polls: std.AutoArrayHashMap(i32, ?*JSC.FilePoll) = undefined,
 
-    pending_host_cache: bun.HiveArray(DNSLookup.PendingCacheKey, 32) = bun.HiveArray(DNSLookup.PendingCacheKey, 32).init(),
+    pending_host_cache_cares: PendingCache = PendingCache.init(),
+    pending_host_cache_native: PendingCache = PendingCache.init(),
     // entry_host_cache: std.BoundedArray(128)
 
-    pub fn drainPendingHost(this: *DNSResolver, index: u8, globalObject: *JSC.JSGlobalObject, err: ?c_ares.Error, timeout: i32, result: ?*c_ares.AddrInfo) void {
+    const PendingCache = bun.HiveArray(DNSLookup.PendingCacheKey, 32);
+
+    pub fn drainPendingHostCares(this: *DNSResolver, index: u8, globalObject: *JSC.JSGlobalObject, err: ?c_ares.Error, timeout: i32, result: ?*c_ares.AddrInfo) void {
         const key: DNSLookup.PendingCacheKey = brk: {
-            std.debug.assert(!this.pending_host_cache.available.isSet(index));
-            const entry = this.pending_host_cache.buffer[index];
-            this.pending_host_cache.buffer[index] = undefined;
-            this.pending_host_cache.available.unset(index);
+            std.debug.assert(!this.pending_host_cache_cares.available.isSet(index));
+            const entry = this.pending_host_cache_cares.buffer[index];
+            this.pending_host_cache_cares.buffer[index] = undefined;
+            this.pending_host_cache_cares.available.unset(index);
             break :brk entry;
         };
 
@@ -276,17 +410,19 @@ pub const DNSResolver = struct {
             return;
         };
 
-        var array = addrInfoToJSArray(this.vm.allocator, globalObject, addr);
+        var array = addr.toJSArray(this.vm.allocator, globalObject);
+        defer addr.deinit();
         array.ensureStillAlive();
         key.lookup.onCompleteWithArray(array);
         array.ensureStillAlive();
+        // std.c.addrinfo
 
         var pending: ?*DNSLookup = key.lookup.next_pending;
         var prev_global = key.lookup.globalThis;
         while (pending) |value| {
             var new_global = value.globalThis;
             if (prev_global != new_global) {
-                array = addrInfoToJSArray(this.vm.allocator, new_global, addr);
+                array = addr.toJSArray(this.vm.allocator, new_global);
                 prev_global = new_global;
             }
             array.ensureStillAlive();
@@ -296,14 +432,63 @@ pub const DNSResolver = struct {
         }
     }
 
-    pub fn getOrPutIntoPendingCache(this: *DNSResolver, key: DNSLookup.PendingCacheKey, value: *DNSLookup) bool {
+    pub fn drainPendingHostNative(this: *DNSResolver, index: u8, globalObject: *JSC.JSGlobalObject, err: i32, result: ?*std.c.addrinfo) void {
+        const key: DNSLookup.PendingCacheKey = brk: {
+            std.debug.assert(!this.pending_host_cache_native.available.isSet(index));
+            const entry = this.pending_host_cache_native.buffer[index];
+            this.pending_host_cache_native.buffer[index] = undefined;
+            this.pending_host_cache_native.available.unset(index);
+            break :brk entry;
+        };
+
+        var addr = result orelse {
+            var pending: ?*DNSLookup = key.lookup.next_pending;
+            key.lookup.processGetAddrInfoNative(err, null);
+
+            while (pending) |value| {
+                pending = value.next_pending;
+                value.processGetAddrInfoNative(err, null);
+            }
+
+            return;
+        };
+
+        var array = addrInfoToJSArray(this.vm.allocator, addr, globalObject);
+        array.ensureStillAlive();
+        key.lookup.onCompleteWithArray(array);
+        array.ensureStillAlive();
+        // std.c.addrinfo
+
+        var pending: ?*DNSLookup = key.lookup.next_pending;
+        var prev_global = key.lookup.globalThis;
+        while (pending) |value| {
+            var new_global = value.globalThis;
+            if (prev_global != new_global) {
+                array = addrInfoToJSArray(this.vm.allocator, addr, new_global);
+                prev_global = new_global;
+            }
+            array.ensureStillAlive();
+            value.onCompleteWithArray(array);
+            array.ensureStillAlive();
+            pending = value.next_pending;
+        }
+    }
+
+    pub fn getOrPutIntoPendingCache(
+        this: *DNSResolver,
+        key: DNSLookup.PendingCacheKey,
+        value: *DNSLookup,
+        comptime field: std.meta.FieldEnum(DNSResolver),
+    ) bool {
         value.cache.name_len = @truncate(u9, key.len);
         value.name_hash = key.name_hash;
 
-        var available_iter = this.pending_host_cache.available.iterator(.{});
+        var cache: *PendingCache = &@field(this, @tagName(field));
+
+        var available_iter = cache.available.iterator(.{});
 
         while (available_iter.next()) |index| {
-            const entry: DNSLookup.PendingCacheKey = this.pending_host_cache.buffer[index];
+            const entry: DNSLookup.PendingCacheKey = cache.buffer[index];
             if (entry.name_hash == key.name_hash and entry.len == key.len) {
                 if (entry.lookup.next_pending) |prev| {
                     prev.next_pending = value;
@@ -317,11 +502,11 @@ pub const DNSResolver = struct {
         value.poll_ref.ref(this.vm);
         value.resolver_for_caching = this;
 
-        if (this.pending_host_cache.get()) |new| {
+        if (cache.get()) |new| {
             value.cache.pending_cache = true;
             value.cache.pos_in_pending = @truncate(
                 @TypeOf(value.cache.pos_in_pending),
-                this.pending_host_cache.indexOf(new).?,
+                cache.indexOf(new).?,
             );
 
             new.* = key;
@@ -444,6 +629,23 @@ pub const DNSResolver = struct {
         });
     };
 
+    pub const GetAddrInfoBackend = enum {
+        c_ares,
+        system,
+
+        pub const label = bun.ComptimeStringMap(GetAddrInfoBackend, .{
+            .{ "c-ares", .c_ares },
+            .{ "cares", .c_ares },
+            .{ "async", .c_ares },
+            .{ "system", default_backend },
+        });
+
+        pub const default_backend: GetAddrInfoBackend = if (Environment.isMac)
+            GetAddrInfoBackend.system
+        else
+            GetAddrInfoBackend.c_ares;
+    };
+
     pub fn resolve(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
         const arguments = callframe.arguments(3);
         if (arguments.len < 1) {
@@ -522,18 +724,96 @@ pub const DNSResolver = struct {
             return .zero;
         }
 
+        var backend = GetAddrInfoBackend.default_backend;
+
+        if (arguments.len > 1 and arguments.ptr[1].isCell()) {
+            if (arguments.ptr[1].get(globalThis, "backend")) |backend_value| {
+                if (!backend_value.isEmptyOrUndefinedOrNull() and backend_value.isString()) {
+                    var str = backend_value.getZigString(globalThis);
+                    backend = GetAddrInfoBackend.label.getWithEql(str, JSC.ZigString.eqlComptime) orelse {
+                        globalThis.throwInvalidArgumentType("lookup", "backend", "one of: async or system");
+                        return .zero;
+                    };
+                }
+            }
+        }
+
         const name = name_str.toSlice(globalThis, bun.default_allocator);
         defer name.deinit();
         var vm = globalThis.bunVM();
         var resolver = vm.rareData().globalDNSResolver(vm);
-        return resolver.doLookup(name.slice(), globalThis);
+
+        return resolver.doLookup(backend, name.slice(), globalThis);
     }
 
-    pub fn doLookup(this: *DNSResolver, name: []const u8, globalThis: *JSC.JSGlobalObject) JSC.JSValue {
-        return this.doLookup(normalizeDNSName(name), globalThis);
+    pub fn doLookup(this: *DNSResolver, preferred_backend_: GetAddrInfoBackend, name: []const u8, globalThis: *JSC.JSGlobalObject) JSC.JSValue {
+        var backend = preferred_backend_;
+        const normalized = normalizeDNSName(name);
+        if (normalized.ptr != name.ptr) {
+            if (backend == .c_ares) {
+                backend = .system;
+            }
+        }
+
+        return switch (backend) {
+            .c_ares => this.c_aresLookupWithNormalizedName(normalized, globalThis),
+            .system => if (comptime Environment.isMac)
+                this.nativeLookupWithNormalizedName(normalized, globalThis)
+            else
+                this.libcLookupWithNormalizedName(normalized, globalThis),
+        };
     }
 
-    pub fn doLookupWithNormalizedName(this: *DNSResolver, name: []const u8, globalThis: *JSC.JSGlobalObject) JSC.JSValue {
+    pub fn libcLookupWithNormalizedName(_: *DNSResolver, _: []const u8, _: *JSC.JSGlobalObject) JSC.JSValue {
+        return JSC.JSValue.jsUndefined();
+    }
+
+    pub fn nativeLookupWithNormalizedName(this: *DNSResolver, name: []const u8, globalThis: *JSC.JSGlobalObject) JSC.JSValue {
+        const getaddrinfo_async_start = LibInfo.getaddrinfo_async_start() orelse {
+            return JSC.JSValue.jsUndefined();
+        };
+
+        if (name.len > 1023) {
+            globalThis.throwInvalidArgumentType("lookup", "name", "name must be less than 1024 bytes");
+            return .zero;
+        }
+
+        var promise = JSC.JSPromise.Strong.init(globalThis);
+        var promise_value = promise.value();
+        var dns = this.vm.allocator.create(DNSLookup) catch unreachable;
+        dns.* = .{ .promise = promise, .globalThis = globalThis, .cache = .{} };
+
+        var key = DNSLookup.PendingCacheKey.init(name, undefined);
+
+        if (!this.getOrPutIntoPendingCache(key, dns, .pending_host_cache_native)) {
+            var name_buf: [1024]u8 = undefined;
+            _ = strings.copy(name_buf[0..], name);
+
+            var port: ?*anyopaque = null;
+            name_buf[name.len] = 0;
+            var name_z = name_buf[0..name.len :0];
+
+            const errno = getaddrinfo_async_start(&port, name_z.ptr, null, null, DNSLookup.getAddrInfoAsyncCallback, dns);
+            if (errno != 0) {
+                promise.reject(globalThis, globalThis.createErrorInstance("getaddrinfo_async_start error: {s}", .{@tagName(std.c.getErrno(errno))}));
+                promise.strong.deinit();
+                this.vm.allocator.destroy(dns);
+                this.pending_host_cache_native.available.set(dns.cache.pos_in_pending);
+                return promise_value;
+            }
+            std.debug.assert(port != null);
+
+            var poll_ref = bun.JSC.FilePoll.init(this.vm, std.math.maxInt(i32) - 1, .{}, DNSLookup, dns);
+            std.debug.assert(poll_ref.registerWithFd(this.vm.uws_event_loop.?, .machport, true, @ptrToInt(port)) == .result);
+
+            dns.poll_ref_machport = poll_ref;
+            dns.poll_ref_machport_id = port;
+        }
+
+        return promise_value;
+    }
+
+    pub fn c_aresLookupWithNormalizedName(this: *DNSResolver, name: []const u8, globalThis: *JSC.JSGlobalObject) JSC.JSValue {
         var channel: *c_ares.Channel = switch (this.getChannel()) {
             .result => |res| res,
             .err => |err| {
@@ -554,7 +834,7 @@ pub const DNSResolver = struct {
 
         var key = DNSLookup.PendingCacheKey.init(name, undefined);
 
-        if (!this.getOrPutIntoPendingCache(key, dns))
+        if (!this.getOrPutIntoPendingCache(key, dns, .pending_host_cache_cares))
             channel.getAddrInfo(name, 0, &.{}, DNSLookup, dns, DNSLookup.onGetAddrInfo);
 
         return promise_value;

@@ -1,7 +1,25 @@
 import { lookup, resolve } from "node:dns/promises";
 import { bench, run } from "mitata";
 
-bench("(cached parallel) dns.lookup remote x 10", async () => {
+bench("(cached) dns.lookup remote x 10", async () => {
+  var tld = "google.com";
+  const run = () => lookup(tld).catch(() => {});
+  const total = 10;
+  var remain = total;
+  var done;
+  await new Promise((resolve) => {
+    for (var i = 0; i < total; i++)
+      run().finally(() => {
+        remain--;
+        if (remain === 0) {
+          done();
+        }
+      });
+    done = resolve;
+  });
+});
+
+bench("(cached in batch) dns.lookup remote x 10", async () => {
   var tld = Math.random().toString(16) + ".google.com";
   const run = () => lookup(tld).catch(() => {});
   const total = 10;

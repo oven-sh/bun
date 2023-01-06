@@ -66,6 +66,51 @@ pub const AddrInfo = extern struct {
     node: ?*AddrInfo_node = null,
     name_: ?[*:0]u8 = null,
 
+    const JSC = bun.JSC;
+
+    pub fn toJSArray(
+        addr_info: *AddrInfo,
+        parent_allocator: std.mem.Allocator,
+        globalThis: *JSC.JSGlobalObject,
+    ) JSC.JSValue {
+        var stack = std.heap.stackFallback(2048, parent_allocator);
+        var arena = std.heap.ArenaAllocator.init(stack.get());
+        var node = addr_info.node.?;
+        const array = JSC.JSValue.createEmptyArray(
+            globalThis,
+            node.count(),
+        );
+
+        {
+            defer arena.deinit();
+
+            var allocator = arena.allocator();
+            var j: u32 = 0;
+            var current: ?*AddrInfo_node = addr_info.node;
+            while (current) |this_node| : (current = this_node.next) {
+                array.putIndex(
+                    globalThis,
+                    j,
+                    bun.JSC.DNS.DNSLookup.Result.toJS(
+                        &.{
+                            .address = switch (this_node.family) {
+                                std.os.AF.INET => std.net.Address{ .in = .{ .sa = bun.cast(*const std.os.sockaddr.in, this_node.addr.?).* } },
+                                std.os.AF.INET6 => std.net.Address{ .in6 = .{ .sa = bun.cast(*const std.os.sockaddr.in6, this_node.addr.?).* } },
+                                else => unreachable,
+                            },
+                            .ttl = this_node.ttl,
+                        },
+                        globalThis,
+                        allocator,
+                    ),
+                );
+                j += 1;
+            }
+        }
+
+        return array;
+    }
+
     pub inline fn name(this: *const AddrInfo) []const u8 {
         var name_ = this.name_ orelse return "";
         return bun.span(name_);
@@ -467,6 +512,22 @@ pub const Error = enum(i32) {
     EADDRGETNETWORKPARAMS = ARES_EADDRGETNETWORKPARAMS,
     ECANCELLED = ARES_ECANCELLED,
     ESERVICE = ARES_ESERVICE,
+
+    pub fn initEAI(rc: i32) ?Error {
+        return switch (@intToEnum(std.os.system.EAI, rc)) {
+            @intToEnum(std.os.system.EAI, 0) => return null,
+            .ADDRFAMILY => Error.EBADFAMILY,
+            .BADFLAGS => Error.EBADFLAGS, // Invalid hints
+            .FAIL => Error.EBADRESP,
+            .FAMILY => Error.EBADFAMILY,
+            .MEMORY => Error.ENOMEM,
+            .NODATA => Error.ENODATA,
+            .NONAME => Error.ENONAME,
+            .SERVICE => Error.ESERVICE,
+            .SYSTEM => Error.ESERVFAIL,
+            else => unreachable,
+        };
+    }
 
     pub const code = bun.enumMap(Error, .{
         .{ .ENODATA, "DNS_ENODATA" },

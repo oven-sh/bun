@@ -1264,10 +1264,12 @@ var require_assert = __commonJS({
           );
         return (
           keys.forEach(function (key) {
-            (typeof actual[key] == "string" &&
-              isRegExp(expected[key]) &&
-              expected[key].test(actual[key])) ||
-              compareExceptionKey(actual, expected, key, msg, keys, fn);
+            return (
+              (typeof actual[key] == "string" &&
+                isRegExp(expected[key]) &&
+                expected[key].test(actual[key])) ||
+              compareExceptionKey(actual, expected, key, msg, keys, fn)
+            );
           }),
           !0
         );

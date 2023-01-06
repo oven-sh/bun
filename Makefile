@@ -330,7 +330,7 @@ LINUX_INCLUDE_DIRS := $(ALL_JSC_INCLUDE_DIRS) \
 UWS_INCLUDE_DIR := -I$(BUN_DEPS_DIR)/uws/uSockets/src -I$(BUN_DEPS_DIR)/uws/src -I$(BUN_DEPS_DIR)
 
 
-INCLUDE_DIRS := $(UWS_INCLUDE_DIR) -I$(BUN_DEPS_DIR)/mimalloc/include -Isrc/napi -I$(BUN_DEPS_DIR)/boringssl/include
+INCLUDE_DIRS := $(UWS_INCLUDE_DIR) -I$(BUN_DEPS_DIR)/mimalloc/include -Isrc/napi -I$(BUN_DEPS_DIR)/boringssl/include -I$(BUN_DEPS_DIR)/c-ares/include
 
 
 ifeq ($(OS_NAME),linux)
@@ -433,6 +433,7 @@ ARCHIVE_FILES_WITHOUT_LIBCRYPTO = $(MINIMUM_ARCHIVE_FILES) \
 		-larchive \
 		-ltcc \
 		-lusockets \
+		-lcares \
 		$(BUN_DEPS_OUT_DIR)/libuwsockets.o
 
 ARCHIVE_FILES = $(ARCHIVE_FILES_WITHOUT_LIBCRYPTO)
@@ -548,6 +549,14 @@ ifeq ($(DEBUG),true)
 BUN_RELEASE_BIN = bun
 endif
 
+.PHONY: c-ares
+c-ares:
+	rm -rf $(BUN_DEPS_DIR)/c-ares/build && \
+	mkdir $(BUN_DEPS_DIR)/c-ares/build && \
+	cd $(BUN_DEPS_DIR)/c-ares/build && \
+    cmake $(CMAKE_FLAGS) -DCMAKE_C_FLAGS="$(CFLAGS)" -DCMAKE_BUILD_TYPE=Release -DCARES_STATIC=ON -DCARES_SHARED=OFF -G "Ninja" .. && \
+	ninja && cp lib/libcares.a $(BUN_DEPS_OUT_DIR)/libcares.a
+
 .PHONY: prepare-types
 prepare-types:
 	BUN_VERSION=$(PACKAGE_JSON_VERSION) $(BUN_RELEASE_BIN) $(BUN_TYPES_REPO_PATH)/scripts/bundle.ts $(BUN_TYPES_REPO_PATH)/dist
@@ -592,7 +601,6 @@ boringssl-debug: boringssl-build-debug boringssl-copy
 .PHONY: compile-ffi-test
 compile-ffi-test:
 	clang $(OPTIMIZATION_LEVEL) -shared -undefined dynamic_lookup -o /tmp/bun-ffi-test.dylib -fPIC ./test/bun.js/ffi-test.c
-
 
 sqlite:
 
@@ -1907,7 +1915,7 @@ PACKAGE_MAP = --pkg-begin async_io $(BUN_DIR)/src/io/io_darwin.zig --pkg-begin b
 
 
 .PHONY: vendor-without-check
-vendor-without-check: npm-install node-fallbacks runtime_js fallback_decoder bun_error mimalloc picohttp zlib boringssl libarchive lolhtml sqlite usockets uws tinycc
+vendor-without-check: npm-install node-fallbacks runtime_js fallback_decoder bun_error mimalloc picohttp zlib boringssl libarchive lolhtml sqlite usockets uws tinycc c-ares
 
 .PHONY: vendor
 vendor: require init-submodules vendor-without-check

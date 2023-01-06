@@ -397,7 +397,7 @@ ifeq ($(OS_NAME), darwin)
 SYMBOLS=-exported_symbols_list $(realpath src/symbols.txt)
 PLATFORM_LINKER_FLAGS += -DDU_DISABLE_RENAMING=1 \
 		-lstdc++ \
-		-fno-keep-static-consts
+		-fno-keep-static-consts -lresolv
 endif
 
 ifeq ($(OS_NAME),linux)
@@ -554,7 +554,7 @@ c-ares:
 	rm -rf $(BUN_DEPS_DIR)/c-ares/build && \
 	mkdir $(BUN_DEPS_DIR)/c-ares/build && \
 	cd $(BUN_DEPS_DIR)/c-ares/build && \
-    cmake $(CMAKE_FLAGS) -DCMAKE_C_FLAGS="$(CFLAGS)" -DCMAKE_BUILD_TYPE=Release -DCARES_STATIC=ON -DCARES_SHARED=OFF -G "Ninja" .. && \
+    cmake $(CMAKE_FLAGS) -DCMAKE_C_FLAGS="$(CFLAGS)" -DCMAKE_BUILD_TYPE=Release -DCARES_STATIC=ON -DCARES_STATIC_PIC=ON -DCARES_SHARED=OFF -G "Ninja" .. && \
 	ninja && cp lib/libcares.a $(BUN_DEPS_OUT_DIR)/libcares.a
 
 .PHONY: prepare-types

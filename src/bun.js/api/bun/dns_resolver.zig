@@ -55,6 +55,49 @@ pub fn addressToJS(
     return addressToString(allocator, address).toValueGC(globalThis);
 }
 
+pub fn addrInfoToJSArray(
+    parent_allocator: std.mem.Allocator,
+    globalThis: *JSC.JSGlobalObject,
+    addr_info: *c_ares.AddrInfo,
+) JSC.JSValue {
+    var stack = std.heap.stackFallback(2048, parent_allocator);
+    var arena = std.heap.ArenaAllocator.init(stack.get());
+    var node = addr_info.node.?;
+    const array = JSC.JSValue.createEmptyArray(
+        globalThis,
+        node.count(),
+    );
+
+    {
+        defer arena.deinit();
+
+        var allocator = arena.allocator();
+        var j: u32 = 0;
+        var current: ?*c_ares.AddrInfo_node = addr_info.node;
+        while (current) |this_node| : (current = this_node.next) {
+            array.putIndex(
+                globalThis,
+                j,
+                DNSLookup.Result.toJS(
+                    &.{
+                        .address = switch (this_node.family) {
+                            std.os.AF.INET => std.net.Address{ .in = .{ .sa = bun.cast(*const std.os.sockaddr.in, this_node.addr.?).* } },
+                            std.os.AF.INET6 => std.net.Address{ .in6 = .{ .sa = bun.cast(*const std.os.sockaddr.in6, this_node.addr.?).* } },
+                            else => unreachable,
+                        },
+                        .ttl = this_node.ttl,
+                    },
+                    globalThis,
+                    allocator,
+                ),
+            );
+            j += 1;
+        }
+    }
+
+    return array;
+}
+
 pub const DNSLookup = struct {
     const log = Output.scoped(.DNSLookup, true);
 
@@ -62,7 +105,34 @@ pub const DNSLookup = struct {
     poll_ref: bun.JSC.PollRef = .{},
     promise: JSC.JSPromise.Strong,
 
-    pub fn onGetAddrInfo(this: *DNSLookup, err_: ?c_ares.Error, _: i32, result: ?*c_ares.AddrInfo) void {
+    next_pending: ?*DNSLookup = null,
+    name_hash: u64 = 0,
+    cache: CacheConfig = CacheConfig{},
+
+    resolver_for_caching: ?*DNSResolver = null,
+
+    pub const CacheConfig = packed struct(u16) {
+        pending_cache: bool = false,
+        entry_cache: bool = false,
+        pos_in_pending: u5 = 0,
+        name_len: u9 = 0,
+    };
+
+    pub const PendingCacheKey = struct {
+        name_hash: u64,
+        len: u16,
+        lookup: *DNSLookup = undefined,
+
+        pub fn init(name: []const u8, lookup: *DNSLookup) PendingCacheKey {
+            return PendingCacheKey{
+                .name_hash = std.hash.Wyhash.hash(0, name),
+                .len = @truncate(u16, name.len),
+                .lookup = lookup,
+            };
+        }
+    };
+
+    pub fn processGetAddrInfo(this: *DNSLookup, err_: ?c_ares.Error, _: i32, result: ?*c_ares.AddrInfo) void {
         if (err_) |err| {
             var promise = this.promise;
             var globalThis = this.globalThis;
@@ -72,9 +142,9 @@ pub const DNSLookup = struct {
                 JSC.ZigString.static("code"),
                 JSC.ZigString.init(err.code()).toValueGC(globalThis),
             );
-            if (result) |res| res.deinit();
 
             this.deinit();
+
             promise.reject(globalThis, error_value);
             return;
         }
@@ -97,10 +167,25 @@ pub const DNSLookup = struct {
         this.onComplete(result.?);
     }
 
+    pub fn onGetAddrInfo(this: *DNSLookup, err_: ?c_ares.Error, timeout: i32, result: ?*c_ares.AddrInfo) void {
+        if (this.resolver_for_caching) |resolver| {
+            // if (this.cache.entry_cache and result != null and result.?.node != null) {
+            //     resolver.putEntryInCache(this.name_hash, this.cache.name_len, result.?);
+            // }
+
+            if (this.cache.pending_cache) {
+                resolver.drainPendingHost(this.cache.pos_in_pending, this.globalThis, err_, timeout, result);
+                return;
+            }
+        }
+
+        this.processGetAddrInfo(err_, timeout, result);
+        if (result) |res| res.deinit();
+    }
+
     pub const Result = struct {
         address: std.net.Address,
         ttl: i32 = 0,
-        interface: u16 = 0,
 
         pub fn toJS(this: *const Result, globalThis: *JSC.JSGlobalObject, allocator: std.mem.Allocator) JSValue {
             const obj = JSC.JSValue.createEmptyObject(globalThis, 3);
@@ -111,55 +196,19 @@ pub const DNSLookup = struct {
                 else => JSValue.jsNumber(0),
             });
             obj.put(globalThis, JSC.ZigString.static("ttl"), JSValue.jsNumber(this.ttl));
-            obj.put(globalThis, JSC.ZigString.static("networkInterface"), JSValue.jsNumber(this.interface));
             return obj;
         }
     };
 
-    pub fn onComplete(this: *DNSLookup, addr_info: *c_ares.AddrInfo) void {
+    pub fn onComplete(this: *DNSLookup, result: *c_ares.AddrInfo) void {
+        const array = addrInfoToJSArray(this.globalThis.allocator(), this.globalThis, result);
+        this.onCompleteWithArray(array);
+    }
+
+    pub fn onCompleteWithArray(this: *DNSLookup, result: JSC.JSValue) void {
         var promise = this.promise;
         var globalThis = this.globalThis;
         this.promise = .{};
-
-        const result: JSC.JSValue = brk: {
-            var stack = std.heap.stackFallback(2048, default_allocator);
-            var arena = std.heap.ArenaAllocator.init(stack.get());
-            var node = addr_info.node.?;
-            const array = JSC.JSValue.createEmptyArray(
-                globalThis,
-                node.count(),
-            );
-
-            {
-                defer arena.deinit();
-                defer addr_info.deinit();
-                var allocator = arena.allocator();
-                var j: u32 = 0;
-                var current: ?*c_ares.AddrInfo_node = addr_info.node;
-                while (current) |this_node| : (current = this_node.next) {
-                    array.putIndex(
-                        globalThis,
-                        j,
-                        Result.toJS(
-                            &.{
-                                .address = switch (this_node.family) {
-                                    std.os.AF.INET => std.net.Address{ .in = .{ .sa = bun.cast(*const std.os.sockaddr.in, this_node.addr.?).* } },
-                                    std.os.AF.INET6 => std.net.Address{ .in6 = .{ .sa = bun.cast(*const std.os.sockaddr.in6, this_node.addr.?).* } },
-                                    else => unreachable,
-                                },
-                                .ttl = this_node.ttl,
-                                .interface = 0,
-                            },
-                            globalThis,
-                            allocator,
-                        ),
-                    );
-                    j += 1;
-                }
-            }
-
-            break :brk array;
-        };
 
         this.deinit();
         promise.resolve(globalThis, result);
@@ -193,6 +242,79 @@ pub const DNSResolver = struct {
     channel: ?*c_ares.Channel = null,
     vm: *JSC.VirtualMachine,
     polls: std.AutoArrayHashMap(i32, ?*JSC.FilePoll) = undefined,
+
+    pending_host_cache: bun.HiveArray(DNSLookup.PendingCacheKey, 32) = bun.HiveArray(DNSLookup.PendingCacheKey, 32).init(),
+    // entry_host_cache: std.BoundedArray(128)
+
+    pub fn drainPendingHost(this: *DNSResolver, index: u8, globalObject: *JSC.JSGlobalObject, err: ?c_ares.Error, timeout: i32, result: ?*c_ares.AddrInfo) void {
+        const key: DNSLookup.PendingCacheKey = brk: {
+            std.debug.assert(!this.pending_host_cache.available.isSet(index));
+            const entry = this.pending_host_cache.buffer[index];
+            this.pending_host_cache.buffer[index] = undefined;
+            this.pending_host_cache.available.unset(index);
+            break :brk entry;
+        };
+
+        var addr = result orelse {
+            var pending: ?*DNSLookup = key.lookup.next_pending;
+            key.lookup.processGetAddrInfo(err, timeout, null);
+
+            while (pending) |value| {
+                pending = value.next_pending;
+                value.processGetAddrInfo(err, timeout, null);
+            }
+            return;
+        };
+
+        var array = addrInfoToJSArray(this.vm.allocator, globalObject, addr);
+        array.ensureStillAlive();
+        key.lookup.onCompleteWithArray(array);
+        array.ensureStillAlive();
+
+        var pending: ?*DNSLookup = key.lookup.next_pending;
+        var prev_global = key.lookup.globalThis;
+        while (pending) |value| {
+            var new_global = value.globalThis;
+            if (prev_global != new_global) {
+                array = addrInfoToJSArray(this.vm.allocator, new_global, addr);
+                prev_global = new_global;
+            }
+            array.ensureStillAlive();
+            value.onCompleteWithArray(array);
+            array.ensureStillAlive();
+            pending = value.next_pending;
+        }
+    }
+
+    pub fn getOrPutIntoPendingCache(this: *DNSResolver, key: DNSLookup.PendingCacheKey, value: *DNSLookup) bool {
+        var available_iter = this.pending_host_cache.available.iterator(.{});
+
+        while (available_iter.next()) |index| {
+            const entry: DNSLookup.PendingCacheKey = this.pending_host_cache.buffer[index];
+            if (entry.name_hash == key.name_hash and entry.len == key.len) {
+                if (entry.lookup.next_pending) |prev| {
+                    prev.next_pending = value;
+                } else {
+                    entry.lookup.next_pending = value;
+                }
+                return true;
+            }
+        }
+
+        if (this.pending_host_cache.get()) |new| {
+            new.* = key;
+            value.cache.pending_cache = true;
+            value.cache.pos_in_pending = @truncate(
+                @TypeOf(value.cache.pos_in_pending),
+                this.pending_host_cache.indexOf(new).?,
+            );
+        }
+
+        value.cache.name_len = @truncate(u9, key.len);
+        value.name_hash = key.name_hash;
+        value.resolver_for_caching = this;
+        return false;
+    }
 
     pub const ChannelResult = union(enum) {
         err: c_ares.Error,
@@ -386,6 +508,7 @@ pub const DNSResolver = struct {
         }
 
         const name = name_str.toSlice(globalThis, bun.default_allocator);
+        defer name.deinit();
         var vm = globalThis.bunVM();
         var resolver = vm.rareData().globalDNSResolver(vm);
         var channel: *c_ares.Channel = switch (resolver.getChannel()) {
@@ -397,7 +520,6 @@ pub const DNSResolver = struct {
                     .message = JSC.ZigString.init(err.label()),
                 };
 
-                name.deinit();
                 return system_error.toErrorInstance(globalThis);
             },
         };
@@ -405,13 +527,13 @@ pub const DNSResolver = struct {
         var promise = JSC.JSPromise.Strong.init(globalThis);
         var promise_value = promise.value();
         var dns = vm.allocator.create(DNSLookup) catch unreachable;
-        dns.* = .{
-            .promise = promise,
-            .globalThis = globalThis,
-        };
+        dns.* = .{ .promise = promise, .globalThis = globalThis, .cache = .{} };
         dns.poll_ref.ref(vm);
 
-        channel.getAddrInfo(name.slice(), 0, &.{}, DNSLookup, dns, DNSLookup.onGetAddrInfo);
+        var key = DNSLookup.PendingCacheKey.init(name.slice(), undefined);
+
+        if (!resolver.getOrPutIntoPendingCache(key, dns))
+            channel.getAddrInfo(name.slice(), 0, &.{}, DNSLookup, dns, DNSLookup.onGetAddrInfo);
 
         return promise_value;
     }

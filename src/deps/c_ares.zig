@@ -130,9 +130,8 @@ pub const Channel = opaque {
         const optmask: c_int =
             ARES_OPT_FLAGS | ARES_OPT_TIMEOUTMS |
             ARES_OPT_SOCK_STATE_CB | ARES_OPT_TRIES;
-        const r = ares_init_options(&channel, &opts, optmask);
 
-        if (Error.get(r)) |err| {
+        if (Error.get(ares_init_options(&channel, &opts, optmask))) |err| {
             ares_library_cleanup();
             return err;
         }
@@ -526,10 +525,12 @@ pub const Error = enum(i32) {
     });
 
     pub fn get(rc: i32) ?Error {
-        return if (rc < 0)
-            get(-rc)
-        else
-            @intToEnum(Error, rc);
+        return switch (rc) {
+            0 => null,
+            1...ARES_ESERVICE => @intToEnum(Error, rc),
+            -ARES_ESERVICE...-1 => @intToEnum(Error, -rc),
+            else => unreachable,
+        };
     }
 };
 

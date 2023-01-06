@@ -21,6 +21,13 @@ export const strictEqual = (
   expect(true).toBe(true);
 };
 
+export const notStrictEqual = (
+  ...args: Parameters<typeof assertNode.notStrictEqual>
+) => {
+  assertNode.notStrictEqual.apply(this, args);
+  expect(true).toBe(true);
+};
+
 export const deepStrictEqual = (
   ...args: Parameters<typeof assertNode.deepStrictEqual>
 ) => {
@@ -51,6 +58,7 @@ export const match = (...args: Parameters<typeof assertNode.match>) => {
 export const assert = {
   strictEqual,
   deepStrictEqual,
+  notStrictEqual,
   throws,
   ok,
   ifError,

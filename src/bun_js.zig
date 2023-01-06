@@ -35,12 +35,14 @@ const Arena = @import("./mimalloc_arena.zig").Arena;
 const OpaqueWrap = JSC.OpaqueWrap;
 const VirtualMachine = JSC.VirtualMachine;
 
+var run: Run = undefined;
 pub const Run = struct {
     file: std.fs.File,
     ctx: Command.Context,
     vm: *VirtualMachine,
     entry_path: string,
     arena: Arena = undefined,
+    any_unhandled: bool = false,
 
     pub fn boot(ctx: Command.Context, file: std.fs.File, entry_path: string) !void {
         JSC.markBinding(@src());
@@ -50,58 +52,61 @@ pub const Run = struct {
         js_ast.Stmt.Data.Store.create(default_allocator);
         var arena = try Arena.init();
 
-        var run = Run{
+        run = .{
             .vm = try VirtualMachine.init(arena.allocator(), ctx.args, null, ctx.log, null),
             .file = file,
             .arena = arena,
             .ctx = ctx,
             .entry_path = entry_path,
         };
-        run.vm.argv = ctx.passthrough;
-        run.vm.arena = &run.arena;
-        run.vm.allocator = arena.allocator();
+        var vm = run.vm;
+        var b = &vm.bundler;
 
-        run.vm.bundler.options.install = ctx.install;
-        run.vm.bundler.resolver.opts.install = ctx.install;
-        run.vm.bundler.resolver.opts.global_cache = ctx.debug.global_cache;
-        run.vm.bundler.resolver.opts.prefer_offline_install = (ctx.debug.offline_mode_setting orelse .online) == .offline;
-        run.vm.bundler.resolver.opts.prefer_latest_install = (ctx.debug.offline_mode_setting orelse .online) == .latest;
-        run.vm.bundler.options.global_cache = run.vm.bundler.resolver.opts.global_cache;
-        run.vm.bundler.options.prefer_offline_install = run.vm.bundler.resolver.opts.prefer_offline_install;
-        run.vm.bundler.options.prefer_latest_install = run.vm.bundler.resolver.opts.prefer_latest_install;
-        run.vm.bundler.resolver.env_loader = run.vm.bundler.env;
+        vm.argv = ctx.passthrough;
+        vm.arena = &run.arena;
+        vm.allocator = arena.allocator();
+
+        b.options.install = ctx.install;
+        b.resolver.opts.install = ctx.install;
+        b.resolver.opts.global_cache = ctx.debug.global_cache;
+        b.resolver.opts.prefer_offline_install = (ctx.debug.offline_mode_setting orelse .online) == .offline;
+        b.resolver.opts.prefer_latest_install = (ctx.debug.offline_mode_setting orelse .online) == .latest;
+        b.options.global_cache = b.resolver.opts.global_cache;
+        b.options.prefer_offline_install = b.resolver.opts.prefer_offline_install;
+        b.options.prefer_latest_install = b.resolver.opts.prefer_latest_install;
+        b.resolver.env_loader = b.env;
 
         if (ctx.debug.macros) |macros| {
-            run.vm.bundler.options.macro_remap = macros;
+            b.options.macro_remap = macros;
         }
 
-        run.vm.bundler.configureRouter(false) catch {
+        b.configureRouter(false) catch {
             if (Output.enable_ansi_colors_stderr) {
-                run.vm.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), true) catch {};
+                vm.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), true) catch {};
             } else {
-                run.vm.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), false) catch {};
+                vm.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), false) catch {};
             }
             Output.prettyErrorln("\n", .{});
             Global.exit(1);
         };
-        run.vm.bundler.configureDefines() catch {
+        b.configureDefines() catch {
             if (Output.enable_ansi_colors_stderr) {
-                run.vm.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), true) catch {};
+                vm.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), true) catch {};
             } else {
-                run.vm.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), false) catch {};
+                vm.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), false) catch {};
             }
             Output.prettyErrorln("\n", .{});
             Global.exit(1);
         };
         AsyncHTTP.max_simultaneous_requests = 255;
 
-        if (run.vm.bundler.env.map.get("BUN_CONFIG_MAX_HTTP_REQUESTS")) |max_http_requests| {
+        if (b.env.map.get("BUN_CONFIG_MAX_HTTP_REQUESTS")) |max_http_requests| {
             load: {
                 AsyncHTTP.max_simultaneous_requests = std.fmt.parseInt(u16, max_http_requests, 10) catch {
-                    run.vm.log.addErrorFmt(
+                    vm.log.addErrorFmt(
                         null,
                         logger.Loc.Empty,
-                        run.vm.allocator,
+                        vm.allocator,
                         "BUN_CONFIG_MAX_HTTP_REQUESTS value \"{s}\" is not a valid integer between 1 and 65535",
                         .{max_http_requests},
                     ) catch unreachable;
@@ -109,10 +114,10 @@ pub const Run = struct {
                 };
 
                 if (AsyncHTTP.max_simultaneous_requests == 0) {
-                    run.vm.log.addWarningFmt(
+                    vm.log.addWarningFmt(
                         null,
                         logger.Loc.Empty,
-                        run.vm.allocator,
+                        vm.allocator,
                         "BUN_CONFIG_MAX_HTTP_REQUESTS value must be a number between 1 and 65535",
                         .{},
                     ) catch unreachable;
@@ -121,71 +126,77 @@ pub const Run = struct {
             }
         }
 
-        run.vm.loadExtraEnv();
-        run.vm.is_main_thread = true;
+        vm.loadExtraEnv();
+        vm.is_main_thread = true;
         JSC.VirtualMachine.is_main_thread_vm = true;
 
         var callback = OpaqueWrap(Run, Run.start);
-        run.vm.global.vm().holdAPILock(&run, callback);
+        vm.global.vm().holdAPILock(&run, callback);
+    }
+
+    fn onUnhandledRejectionBeforeClose(this: *JSC.VirtualMachine, _: *JSC.JSGlobalObject, value: JSC.JSValue) void {
+        this.runErrorHandler(value, null);
+        run.any_unhandled = true;
     }
 
     pub fn start(this: *Run) void {
+        var vm = this.vm;
         if (this.ctx.debug.hot_reload) {
-            JSC.HotReloader.enableHotModuleReloading(this.vm);
+            JSC.HotReloader.enableHotModuleReloading(vm);
         }
-        var promise = this.vm.loadEntryPoint(this.entry_path) catch return;
+        var promise = vm.loadEntryPoint(this.entry_path) catch return;
 
-        if (promise.status(this.vm.global.vm()) == .Rejected) {
-            this.vm.runErrorHandler(promise.result(this.vm.global.vm()), null);
+        if (promise.status(vm.global.vm()) == .Rejected) {
+            vm.runErrorHandler(promise.result(vm.global.vm()), null);
             Global.exit(1);
         }
 
-        _ = promise.result(this.vm.global.vm());
+        _ = promise.result(vm.global.vm());
 
-        if (this.vm.log.msgs.items.len > 0) {
+        if (vm.log.msgs.items.len > 0) {
             if (Output.enable_ansi_colors) {
-                this.vm.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), true) catch {};
+                vm.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), true) catch {};
             } else {
-                this.vm.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), false) catch {};
+                vm.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), false) catch {};
             }
             Output.prettyErrorln("\n", .{});
             Output.flush();
         }
 
         // don't run the GC if we don't actually need to
-        if (this.vm.eventLoop().tasks.count > 0 or this.vm.active_tasks > 0 or
-            this.vm.uws_event_loop.?.active > 0 or
-            this.vm.eventLoop().tickConcurrentWithCount() > 0)
+        if (vm.eventLoop().tasks.count > 0 or vm.active_tasks > 0 or
+            vm.uws_event_loop.?.active > 0 or
+            vm.eventLoop().tickConcurrentWithCount() > 0)
         {
-            this.vm.global.vm().releaseWeakRefs();
-            _ = this.vm.arena.gc(false);
-            _ = this.vm.global.vm().runGC(false);
-            this.vm.tick();
+            vm.global.vm().releaseWeakRefs();
+            _ = vm.arena.gc(false);
+            _ = vm.global.vm().runGC(false);
+            vm.tick();
         }
 
         {
-            while (this.vm.eventLoop().tasks.count > 0 or this.vm.active_tasks > 0 or this.vm.uws_event_loop.?.active > 0) {
-                this.vm.tick();
-                this.vm.eventLoop().autoTickActive();
+            while (vm.eventLoop().tasks.count > 0 or vm.active_tasks > 0 or vm.uws_event_loop.?.active > 0) {
+                vm.tick();
+                vm.eventLoop().autoTickActive();
             }
 
-            if (this.vm.log.msgs.items.len > 0) {
+            if (vm.log.msgs.items.len > 0) {
                 if (Output.enable_ansi_colors) {
-                    this.vm.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), true) catch {};
+                    vm.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), true) catch {};
                 } else {
-                    this.vm.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), false) catch {};
+                    vm.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), false) catch {};
                 }
                 Output.prettyErrorln("\n", .{});
                 Output.flush();
             }
         }
 
-        this.vm.global.handleRejectedPromises();
+        vm.onUnhandledRejection = &onUnhandledRejectionBeforeClose;
+        vm.global.handleRejectedPromises();
 
-        this.vm.onExit();
+        vm.onExit();
 
         if (!JSC.is_bindgen) JSC.napi.fixDeadCodeElimination();
-
-        Global.exit(0);
+        Global.exit(@boolToInt(this.any_unhandled));
     }
 };

@@ -3260,7 +3260,7 @@ pub const FilePoll = struct {
     const Subprocess = JSC.Subprocess;
     const BufferedInput = Subprocess.BufferedInput;
     const BufferedOutput = Subprocess.BufferedOutput;
-    const DNSLookup = bun.JSC.API.Bun.DNSLookup;
+    const DNSResolver = JSC.DNS.DNSResolver;
     const Deactivated = opaque {
         pub var owner: Owner = Owner.init(@intToPtr(*Deactivated, @as(usize, 0xDEADBEEF)));
     };
@@ -3272,7 +3272,7 @@ pub const FilePoll = struct {
         BufferedInput,
         FIFO,
         Deactivated,
-        DNSLookup,
+        DNSResolver,
     });
 
     fn updateFlags(poll: *FilePoll, updated: Flags.Set) void {
@@ -3373,10 +3373,10 @@ pub const FilePoll = struct {
                 loader.onPoll(size_or_offset, 0);
             },
 
-            @field(Owner.Tag, "DNSLookup") => {
-                log("onUpdate " ++ kqueue_or_epoll ++ " (fd: {d}) DNSLookup", .{poll.fd});
-                var loader = ptr.as(DNSLookup);
-                loader.onReadable();
+            @field(Owner.Tag, "DNSResolver") => {
+                log("onUpdate " ++ kqueue_or_epoll ++ " (fd: {d}) DNSResolver", .{poll.fd});
+                var loader: *DNSResolver = ptr.as(DNSResolver);
+                loader.onDNSPoll(poll);
             },
 
             else => {
@@ -3598,6 +3598,7 @@ pub const FilePoll = struct {
     const timeout = std.mem.zeroes(std.os.timespec);
     const kevent = std.c.kevent;
     const linux = std.os.linux;
+
     pub fn register(this: *FilePoll, loop: *uws.Loop, flag: Flags, one_shot: bool) JSC.Maybe(void) {
         const watcher_fd = loop.fd;
         const fd = this.fd;

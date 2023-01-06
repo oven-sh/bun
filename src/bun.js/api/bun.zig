@@ -4005,4 +4005,3 @@ pub const JSZlib = struct {
 };
 
 pub usingnamespace @import("./bun/subprocess.zig");
-pub usingnamespace @import("./bun/dns_resolver.zig");

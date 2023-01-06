@@ -25,6 +25,8 @@ cleanup_hook: ?*CleanupHook = null,
 
 file_polls_: ?*JSC.FilePoll.HiveArray = null,
 
+global_dns_data: ?*JSC.DNS.GlobalData = null,
+
 pub fn filePolls(this: *RareData, vm: *JSC.VirtualMachine) *JSC.FilePoll.HiveArray {
     return this.file_polls_ orelse {
         this.file_polls_ = vm.allocator.create(JSC.FilePoll.HiveArray) catch unreachable;
@@ -227,4 +229,12 @@ pub fn stdin(rare: *RareData) *Blob.Store {
         rare.stdin_store = store;
         break :brk store;
     };
+}
+
+pub fn globalDNSResolver(rare: *RareData, vm: *JSC.VirtualMachine) *JSC.DNS.DNSResolver {
+    if (rare.global_dns_data == null) {
+        rare.global_dns_data = JSC.DNS.GlobalData.init(vm.allocator, vm);
+    }
+
+    return &rare.global_dns_data.?.resolver;
 }

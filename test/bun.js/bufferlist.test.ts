@@ -185,3 +185,41 @@ it("should work with .unshift()", () => {
   expect(list.shift()).toBe(item2);
   expect(list.shift()).toBeUndefined();
 });
+
+it("should work with partial .consume() followed by .first()", () => {
+  const list = new Readable().readableBuffer;
+  expect(list.length).toBe(0);
+  expect(list.push("foo")).toBeUndefined();
+  expect(list.push("bar")).toBeUndefined();
+  expect(list.length).toBe(2);
+  expect(list.consume(4, true)).toEqual("foob");
+  expect(list.length).toBe(1);
+  expect(list.first()).toEqual("ar");
+  expect(list.length).toBe(1);
+});
+
+it("should work with partial .consume() followed by .shift()", () => {
+  const list = new Readable().readableBuffer;
+  expect(list.length).toBe(0);
+  expect(list.push(makeUint8Array("foo"))).toBeUndefined();
+  expect(list.push(makeUint8Array("bar"))).toBeUndefined();
+  expect(list.length).toBe(2);
+  expect(list.consume(4, false)).toEqual(makeUint8Array("foob"));
+  expect(list.length).toBe(1);
+  expect(list.shift()).toEqual(makeUint8Array("ar"));
+  expect(list.length).toBe(0);
+});
+
+it("should work with partial .consume() followed by .unshift()", () => {
+  const list = new Readable().readableBuffer;
+  expect(list.length).toBe(0);
+  expect(list.push(makeUint8Array("foo"))).toBeUndefined();
+  expect(list.push(makeUint8Array("bar"))).toBeUndefined();
+  expect(list.length).toBe(2);
+  expect(list.consume(4, false)).toEqual(makeUint8Array("foob"));
+  expect(list.length).toBe(1);
+  expect(list.unshift(makeUint8Array("baz"))).toBeUndefined();
+  expect(list.length).toBe(2);
+  expect(list.consume(5, false)).toEqual(makeUint8Array("bazar"));
+  expect(list.length).toBe(0);
+});

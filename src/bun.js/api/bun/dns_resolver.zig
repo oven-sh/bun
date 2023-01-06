@@ -534,6 +534,7 @@ pub const DNSResolver = struct {
     }
 
     pub fn doLookupWithNormalizedName(this: *DNSResolver, name: []const u8, globalThis: *JSC.JSGlobalObject) JSC.JSValue {
+        var hello_vexu_i_am_reproducing_the_issue_with_this_line = true;
         var channel: *c_ares.Channel = switch (this.getChannel()) {
             .result => |res| res,
             .err => |err| {

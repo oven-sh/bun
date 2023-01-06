@@ -3003,7 +3003,6 @@ Interface.prototype._tabComplete = function (lastKeypressWasTab) {
     this.resume();
 
     if (err) {
-      console.log("Here");
       this._writeToOutput(`Tab completion error: ${inspect(err)}`);
       return;
     }

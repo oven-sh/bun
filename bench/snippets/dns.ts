@@ -2,8 +2,9 @@ import { dns } from "bun";
 import { bench, run } from "mitata";
 
 bench("(cached parallel) dns.lookup remote x 10", async () => {
-  const run = () => dns.lookup("google.com").catch(() => {});
-  const total = 1000;
+  var tld = Math.random().toString(16) + ".google.com";
+  const run = () => dns.lookup(tld).catch(() => {});
+  const total = 10;
   var remain = total;
   var done;
   await new Promise((resolve) => {

@@ -287,6 +287,9 @@ pub const DNSResolver = struct {
     }
 
     pub fn getOrPutIntoPendingCache(this: *DNSResolver, key: DNSLookup.PendingCacheKey, value: *DNSLookup) bool {
+        value.cache.name_len = @truncate(u9, key.len);
+        value.name_hash = key.name_hash;
+
         var available_iter = this.pending_host_cache.available.iterator(.{});
 
         while (available_iter.next()) |index| {
@@ -301,18 +304,20 @@ pub const DNSResolver = struct {
             }
         }
 
+        value.poll_ref.ref(this.vm);
+        value.resolver_for_caching = this;
+
         if (this.pending_host_cache.get()) |new| {
-            new.* = key;
             value.cache.pending_cache = true;
             value.cache.pos_in_pending = @truncate(
                 @TypeOf(value.cache.pos_in_pending),
                 this.pending_host_cache.indexOf(new).?,
             );
+
+            new.* = key;
+            new.lookup = value;
         }
 
-        value.cache.name_len = @truncate(u9, key.len);
-        value.name_hash = key.name_hash;
-        value.resolver_for_caching = this;
         return false;
     }
 
@@ -528,7 +533,6 @@ pub const DNSResolver = struct {
         var promise_value = promise.value();
         var dns = vm.allocator.create(DNSLookup) catch unreachable;
         dns.* = .{ .promise = promise, .globalThis = globalThis, .cache = .{} };
-        dns.poll_ref.ref(vm);
 
         var key = DNSLookup.PendingCacheKey.init(name.slice(), undefined);
 

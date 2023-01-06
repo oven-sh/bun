@@ -103,7 +103,7 @@ exe_name=bun
 if [[ $# = 2 && $2 = debug-info ]]; then
     target=$target-profile
     exe_name=bun-profile
-    info "You requested a debug build of bun. More infomation will be shown if a crash occurs."
+    info "You requested a debug build of bun. More information will be shown if a crash occurs."
 fi
 
 if [[ $# = 0 ]]; then

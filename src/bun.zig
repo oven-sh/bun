@@ -756,3 +756,12 @@ pub fn enumMap(comptime T: type, comptime args: anytype) (fn (T) []const u8) {
 
     return Map.get;
 }
+
+/// Write 0's for every byte in Type
+/// Ignores default struct values.
+pub fn zero(comptime Type: type) Type {
+    var out: [@sizeOf(Type)]u8 align(@alignOf(Type)) = undefined;
+    @memset(@ptrCast([*]u8, &out), 0, out.len);
+    return @bitCast(Type, out);
+}
+pub const c_ares = @import("./deps/c_ares.zig");

@@ -62,3 +62,6 @@ ignore = dirty
 depth = 1
 shallow = true
 fetchRecurseSubmodules = false
+[submodule "src/deps/c-ares"]
+	path = src/deps/c-ares
+	url = https://github.com/c-ares/c-ares.git

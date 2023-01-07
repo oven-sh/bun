@@ -111,6 +111,30 @@ RUN mkdir -p ${WEBKIT_DIR} && cd ${GITHUB_WORKSPACE} && \
 LABEL org.opencontainers.image.title="bun base image with zig & webkit ${BUILDARCH} (glibc)"
 LABEL org.opencontainers.image.source=https://github.com/oven-sh/bun
 
+FROM bun-base as c-ares
+
+ARG DEBIAN_FRONTEND
+ARG GITHUB_WORKSPACE
+ARG ZIG_PATH
+# Directory extracts to "bun-webkit"
+ARG WEBKIT_DIR
+ARG BUN_RELEASE_DIR
+ARG BUN_DEPS_OUT_DIR
+ARG BUN_DIR
+ARG CPU_TARGET
+
+ENV CPU_TARGET=${CPU_TARGET}
+ENV CCACHE_DIR=/ccache
+ENV JSC_BASE_DIR=${WEBKIT_DIR}
+ENV LIB_ICU_PATH=${WEBKIT_DIR}/lib
+
+COPY Makefile ${BUN_DIR}/Makefile
+COPY src/deps/c-ares ${BUN_DIR}/src/deps/c-ares
+
+WORKDIR $BUN_DIR
+
+RUN --mount=type=cache,target=/ccache cd $BUN_DIR && make c-ares && rm -rf ${BUN_DIR}/src/deps/c-ares/build ${BUN_DIR}/Makefile
+
 
 FROM bun-base as lolhtml
 
@@ -279,6 +303,7 @@ ARG BUN_RELEASE_DIR
 ARG BUN_DEPS_OUT_DIR
 ARG BUN_DIR
 ARG CPU_TARGET
+
 
 ENV CPU_TARGET=${CPU_TARGET}
 
@@ -449,6 +474,7 @@ COPY --from=picohttp ${BUN_DEPS_OUT_DIR}/*.o ${BUN_DEPS_OUT_DIR}/
 COPY --from=uws ${BUN_DEPS_OUT_DIR}/*.a ${BUN_DEPS_OUT_DIR}/
 COPY --from=uws ${BUN_DEPS_OUT_DIR}/*.o ${BUN_DEPS_OUT_DIR}/
 COPY --from=tinycc ${BUN_DEPS_OUT_DIR}/*.a ${BUN_DEPS_OUT_DIR}/
+COPY --from=c-ares ${BUN_DEPS_OUT_DIR}/*.a ${BUN_DEPS_OUT_DIR}/
 
 # Required for `make webcrypto`
 COPY src/deps/boringssl/include ${BUN_DIR}/src/deps/boringssl/include
@@ -458,7 +484,7 @@ ENV CCACHE_DIR=/ccache
 RUN --mount=type=cache,target=/ccache cd $BUN_DIR && mkdir -p src/bun.js/bindings-obj &&  rm -rf $HOME/.cache zig-cache && mkdir -p $BUN_RELEASE_DIR && make webcrypto && \
     make release-bindings -j10 && mv ${BUN_DEPS_OUT_DIR}/libwebcrypto.a /tmp && mv src/bun.js/bindings-obj/* /tmp
 
-FROM prepare_release as sqlite
+FROM bun-base as sqlite
 
 ARG DEBIAN_FRONTEND
 ARG GITHUB_WORKSPACE
@@ -469,14 +495,17 @@ ARG BUN_RELEASE_DIR
 ARG BUN_DEPS_OUT_DIR
 ARG BUN_DIR
 
+ENV CCACHE_DIR=/ccache
+
 COPY Makefile ${BUN_DIR}/Makefile
+COPY src/bun.js/bindings/sqlite ${BUN_DIR}/src/bun.js/bindings/sqlite
 
 WORKDIR $BUN_DIR
 
 ENV JSC_BASE_DIR=${WEBKIT_DIR}
 ENV LIB_ICU_PATH=${WEBKIT_DIR}/lib
 
-RUN cd $BUN_DIR && make sqlite
+RUN --mount=type=cache,target=/ccache cd $BUN_DIR && make sqlite
 
 FROM scratch as build_release_cpp
 

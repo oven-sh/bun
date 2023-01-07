@@ -2168,6 +2168,8 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionPerformMicrotask, (JSGlobalObject * globalObj
     return JSValue::encode(jsUndefined());
 }
 
+extern "C" EncodedJSValue Bun__DNSResolver__lookup(JSGlobalObject*, JSC::CallFrame*);
+
 JSC_DEFINE_HOST_FUNCTION(jsFunctionPerformMicrotaskVariadic, (JSGlobalObject * globalObject, CallFrame* callframe))
 {
     auto& vm = globalObject->vm();
@@ -3301,6 +3303,14 @@ void GlobalObject::installAPIGlobals(JSClassRef* globals, int count, JSC::VM& vm
             JSC::Identifier identifier = JSC::Identifier::fromString(vm, "stringHashCode"_s);
             object->putDirectNativeFunction(vm, this, identifier, 1, functionHashCode, ImplementationVisibility::Public, NoIntrinsic,
                 JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DontDelete | 0);
+        }
+
+        {
+            JSC::Identifier identifier = JSC::Identifier::fromString(vm, "dns"_s);
+            JSC::JSObject* dnsObject = JSC::constructEmptyObject(this);
+            dnsObject->putDirectNativeFunction(vm, this, JSC::Identifier::fromString(vm, "lookup"_s), 2, Bun__DNSResolver__lookup, ImplementationVisibility::Public, NoIntrinsic,
+                JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DontDelete | 0);
+            object->putDirect(vm, PropertyName(identifier), dnsObject, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontDelete | 0);
         }
 
         {

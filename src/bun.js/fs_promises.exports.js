@@ -8,7 +8,7 @@ function promisify(fsFunction) {
   // we can use new Function() here instead
   // based on fsFucntion.length
   var obj = {
-    [fsFunction.name]: function (resolve, reject, args) {
+    ["::bunternal::"]: function (resolve, reject, args) {
       var result;
       try {
         result = fsFunction.apply(fs, args);

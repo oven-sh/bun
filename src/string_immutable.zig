@@ -3974,6 +3974,14 @@ pub fn isIPAddress(input: []const u8) bool {
     }
 }
 
+pub fn isIPV6Address(input: []const u8) bool {
+    if (std.net.Address.parseIp6(input, 0)) |_| {
+        return true;
+    } else |_| {
+        return false;
+    }
+}
+
 pub fn cloneNormalizingSeparators(
     allocator: std.mem.Allocator,
     input: []const u8,

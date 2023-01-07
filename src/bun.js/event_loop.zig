@@ -83,10 +83,16 @@ pub fn ConcurrentPromiseTask(comptime Context: type) type {
 }
 
 pub fn IOTask(comptime Context: type) type {
+    return WorkTask(Context, false);
+}
+
+pub fn WorkTask(comptime Context: type, comptime async_io: bool) type {
     return struct {
+        const TaskType = if (async_io) NetworkThread.Task else WorkPoolTask;
+
         const This = @This();
         ctx: *Context,
-        task: NetworkThread.Task = .{ .callback = &runFromThreadPool },
+        task: TaskType = .{ .callback = &runFromThreadPool },
         event_loop: *JSC.EventLoop,
         allocator: std.mem.Allocator,
         globalThis: *JSGlobalObject,
@@ -108,7 +114,7 @@ pub fn IOTask(comptime Context: type) type {
             return this;
         }
 
-        pub fn runFromThreadPool(task: *NetworkThread.Task) void {
+        pub fn runFromThreadPool(task: *TaskType) void {
             var this = @fieldParentPtr(This, "task", task);
             Context.run(this.ctx, this);
         }
@@ -121,8 +127,12 @@ pub fn IOTask(comptime Context: type) type {
 
         pub fn schedule(this: *This) void {
             this.ref.ref(this.event_loop.virtual_machine);
-            NetworkThread.init() catch return;
-            NetworkThread.global.schedule(NetworkThread.Batch.from(&this.task));
+            if (comptime async_io) {
+                NetworkThread.init() catch return;
+                NetworkThread.global.schedule(NetworkThread.Batch.from(&this.task));
+            } else {
+                WorkPool.schedule(&this.task);
+            }
         }
 
         pub fn onFinish(this: *This) void {
@@ -175,6 +185,7 @@ const MicrotaskForDefaultGlobalObject = JSC.MicrotaskForDefaultGlobalObject;
 const HotReloadTask = JSC.HotReloader.HotReloadTask;
 const PollPendingModulesTask = JSC.ModuleLoader.AsyncModule.Queue;
 // const PromiseTask = JSInternalPromise.Completion.PromiseTask;
+const GetAddrInfoRequestTask = JSC.DNS.GetAddrInfoRequest.Task;
 pub const Task = TaggedPointerUnion(.{
     FetchTasklet,
     Microtask,
@@ -189,6 +200,7 @@ pub const Task = TaggedPointerUnion(.{
     CppTask,
     HotReloadTask,
     PollPendingModulesTask,
+    GetAddrInfoRequestTask,
     // PromiseTask,
     // TimeoutTasklet,
 });
@@ -415,6 +427,11 @@ pub const EventLoop = struct {
                 },
                 @field(Task.Tag, typeBaseName(@typeName(PollPendingModulesTask))) => {
                     this.virtual_machine.modules.onPoll();
+                },
+                @field(Task.Tag, typeBaseName(@typeName(GetAddrInfoRequestTask))) => {
+                    var any: *GetAddrInfoRequestTask = task.get(GetAddrInfoRequestTask).?;
+                    any.runFromJS();
+                    any.deinit();
                 },
                 else => if (Environment.allow_assert) {
                     bun.Output.prettyln("\nUnexpected tag: {s}\n", .{@tagName(task.tag())});

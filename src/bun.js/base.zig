@@ -3260,6 +3260,8 @@ pub const FilePoll = struct {
     const Subprocess = JSC.Subprocess;
     const BufferedInput = Subprocess.BufferedInput;
     const BufferedOutput = Subprocess.BufferedOutput;
+    const DNSResolver = JSC.DNS.DNSResolver;
+    const GetAddrInfoRequest = JSC.DNS.GetAddrInfoRequest;
     const Deactivated = opaque {
         pub var owner: Owner = Owner.init(@intToPtr(*Deactivated, @as(usize, 0xDEADBEEF)));
     };
@@ -3271,6 +3273,8 @@ pub const FilePoll = struct {
         BufferedInput,
         FIFO,
         Deactivated,
+        DNSResolver,
+        GetAddrInfoRequest,
     });
 
     fn updateFlags(poll: *FilePoll, updated: Flags.Set) void {
@@ -3278,6 +3282,7 @@ pub const FilePoll = struct {
         flags.remove(.readable);
         flags.remove(.writable);
         flags.remove(.process);
+        flags.remove(.machport);
         flags.remove(.eof);
         flags.remove(.hup);
 
@@ -3331,19 +3336,24 @@ pub const FilePoll = struct {
         this.deinitWithVM(vm);
     }
 
-    pub fn deinitWithVM(this: *FilePoll, vm: *JSC.VirtualMachine) void {
+    pub fn deinitWithoutVM(this: *FilePoll, loop: *uws.Loop, polls: *JSC.FilePoll.HiveArray) void {
         if (this.isRegistered()) {
-            _ = this.unregister(vm.uws_event_loop.?);
+            _ = this.unregister(loop);
         }
 
         this.owner = Deactivated.owner;
         this.flags = Flags.Set{};
         this.fd = invalid_fd;
-        vm.rareData().filePolls(vm).put(this);
+        polls.put(this);
+    }
+
+    pub fn deinitWithVM(this: *FilePoll, vm: *JSC.VirtualMachine) void {
+        var loop = vm.uws_event_loop.?;
+        this.deinitWithoutVM(loop, vm.rareData().filePolls(vm));
     }
 
     pub fn isRegistered(this: *const FilePoll) bool {
-        return this.flags.contains(.poll_writable) or this.flags.contains(.poll_readable) or this.flags.contains(.poll_process);
+        return this.flags.contains(.poll_writable) or this.flags.contains(.poll_readable) or this.flags.contains(.poll_process) or this.flags.contains(.poll_machport);
     }
 
     const kqueue_or_epoll = if (Environment.isMac) "kevent" else "epoll";
@@ -3371,6 +3381,18 @@ pub const FilePoll = struct {
                 loader.onPoll(size_or_offset, 0);
             },
 
+            @field(Owner.Tag, "DNSResolver") => {
+                log("onUpdate " ++ kqueue_or_epoll ++ " (fd: {d}) DNSResolver", .{poll.fd});
+                var loader: *DNSResolver = ptr.as(DNSResolver);
+                loader.onDNSPoll(poll);
+            },
+
+            @field(Owner.Tag, "GetAddrInfoRequest") => {
+                log("onUpdate " ++ kqueue_or_epoll ++ " (fd: {d}) GetAddrInfoRequest", .{poll.fd});
+                var loader: *GetAddrInfoRequest = ptr.as(GetAddrInfoRequest);
+                loader.onMachportChange();
+            },
+
             else => {
                 log("onUpdate " ++ kqueue_or_epoll ++ " (fd: {d}) disconnected?", .{poll.fd});
             },
@@ -3389,12 +3411,16 @@ pub const FilePoll = struct {
         /// Poll for process-related events
         poll_process,
 
+        /// Poll for machport events
+        poll_machport,
+
         // What did the event loop tell us?
         readable,
         writable,
         process,
         eof,
         hup,
+        machport,
 
         // What is the type of file descriptor?
         fifo,
@@ -3414,6 +3440,7 @@ pub const FilePoll = struct {
                 .readable => .poll_readable,
                 .writable => .poll_writable,
                 .process => .poll_process,
+                .machport => .poll_machport,
                 else => this,
             };
         }
@@ -3440,6 +3467,9 @@ pub const FilePoll = struct {
             } else if (kqueue_event.filter == std.os.system.EVFILT_PROC) {
                 log("proc", .{});
                 flags.insert(Flags.process);
+            } else if (kqueue_event.filter == std.os.system.EVFILT_MACHPORT) {
+                log("machport", .{});
+                flags.insert(Flags.machport);
             }
             return flags;
         }
@@ -3590,17 +3620,20 @@ pub const FilePoll = struct {
     const timeout = std.mem.zeroes(std.os.timespec);
     const kevent = std.c.kevent;
     const linux = std.os.linux;
+
     pub fn register(this: *FilePoll, loop: *uws.Loop, flag: Flags, one_shot: bool) JSC.Maybe(void) {
+        return registerWithFd(this, loop, flag, one_shot, this.fd);
+    }
+    pub fn registerWithFd(this: *FilePoll, loop: *uws.Loop, flag: Flags, one_shot: bool, fd: u64) JSC.Maybe(void) {
         const watcher_fd = loop.fd;
-        const fd = this.fd;
 
         log("register: {s} ({d})", .{ @tagName(flag), fd });
+
+        std.debug.assert(fd != invalid_fd);
 
         if (one_shot) {
             this.flags.insert(.one_shot);
         }
-
-        std.debug.assert(this.fd != invalid_fd);
 
         if (comptime Environment.isLinux) {
             const one_shot_flag: u32 = if (!this.flags.contains(.one_shot)) 0 else linux.EPOLL.ONESHOT;
@@ -3652,6 +3685,15 @@ pub const FilePoll = struct {
                     .filter = std.os.system.EVFILT_PROC,
                     .data = 0,
                     .fflags = std.c.NOTE_EXIT,
+                    .udata = @ptrToInt(Pollable.init(this).ptr()),
+                    .flags = std.c.EV_ADD | one_shot_flag,
+                    .ext = .{ this.generation_number, 0 },
+                },
+                .machport => .{
+                    .ident = @intCast(u64, fd),
+                    .filter = std.os.system.EVFILT_MACHPORT,
+                    .data = 0,
+                    .fflags = 0,
                     .udata = @ptrToInt(Pollable.init(this).ptr()),
                     .flags = std.c.EV_ADD | one_shot_flag,
                     .ext = .{ this.generation_number, 0 },
@@ -3711,6 +3753,7 @@ pub const FilePoll = struct {
             .readable => .poll_readable,
             .process => if (comptime Environment.isLinux) .poll_readable else .poll_process,
             .writable => .poll_writable,
+            .machport => .poll_machport,
             else => unreachable,
         });
         this.flags.remove(.needs_rearm);
@@ -3721,12 +3764,15 @@ pub const FilePoll = struct {
     const invalid_fd = bun.invalid_fd;
 
     pub fn unregister(this: *FilePoll, loop: *uws.Loop) JSC.Maybe(void) {
-        if (!(this.flags.contains(.poll_readable) or this.flags.contains(.poll_writable) or this.flags.contains(.poll_process))) {
+        return this.unregisterWithFd(loop, this.fd);
+    }
+
+    pub fn unregisterWithFd(this: *FilePoll, loop: *uws.Loop, fd: u64) JSC.Maybe(void) {
+        if (!(this.flags.contains(.poll_readable) or this.flags.contains(.poll_writable) or this.flags.contains(.poll_process) or this.flags.contains(.poll_machport))) {
             // no-op
             return JSC.Maybe(void).success;
         }
 
-        const fd = this.fd;
         std.debug.assert(fd != invalid_fd);
         const watcher_fd = loop.fd;
         const flag: Flags = brk: {
@@ -3736,6 +3782,9 @@ pub const FilePoll = struct {
                 break :brk .writable;
             if (this.flags.contains(.poll_process))
                 break :brk .process;
+
+            if (this.flags.contains(.poll_machport))
+                break :brk .machport;
             return JSC.Maybe(void).success;
         };
 
@@ -3744,6 +3793,7 @@ pub const FilePoll = struct {
             this.flags.remove(.poll_process);
             this.flags.remove(.poll_readable);
             this.flags.remove(.poll_process);
+            this.flags.remove(.poll_machport);
             return JSC.Maybe(void).success;
         }
 
@@ -3767,6 +3817,15 @@ pub const FilePoll = struct {
                 .readable => .{
                     .ident = @intCast(u64, fd),
                     .filter = std.os.system.EVFILT_READ,
+                    .data = 0,
+                    .fflags = 0,
+                    .udata = @ptrToInt(Pollable.init(this).ptr()),
+                    .flags = std.c.EV_DELETE,
+                    .ext = .{ 0, 0 },
+                },
+                .machport => .{
+                    .ident = @intCast(u64, fd),
+                    .filter = std.os.system.EVFILT_MACHPORT,
                     .data = 0,
                     .fflags = 0,
                     .udata = @ptrToInt(Pollable.init(this).ptr()),
@@ -3836,6 +3895,7 @@ pub const FilePoll = struct {
         this.flags.remove(.poll_readable);
         this.flags.remove(.poll_writable);
         this.flags.remove(.poll_process);
+        this.flags.remove(.poll_machport);
 
         if (this.isActive())
             this.deactivate(loop);

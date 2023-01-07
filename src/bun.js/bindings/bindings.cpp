@@ -1982,6 +1982,50 @@ void JSC__JSPromise__resolve(JSC__JSPromise* arg0, JSC__JSGlobalObject* arg1,
 {
     arg0->resolve(arg1, JSC::JSValue::decode(JSValue2));
 }
+
+// This implementation closely mimicks the one in JSC::JSPromise::resolve
+void JSC__JSPromise__resolveOnNextTick(JSC__JSPromise* promise, JSC__JSGlobalObject* lexicalGlobalObject,
+    JSC__JSValue encoedValue)
+{
+    JSC::JSValue value = JSC::JSValue::decode(encoedValue);
+    VM& vm = lexicalGlobalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    uint32_t flags = promise->internalField(JSC::JSPromise::Field::Flags).get().asUInt32();
+    if (!(flags & JSC::JSPromise::isFirstResolvingFunctionCalledFlag)) {
+        promise->internalField(JSC::JSPromise::Field::Flags).set(vm, promise, jsNumber(flags | JSC::JSPromise::isFirstResolvingFunctionCalledFlag));
+        auto* globalObject = jsCast<Zig::GlobalObject*>(promise->globalObject());
+
+        globalObject->queueMicrotask(
+            globalObject->performMicrotaskFunction(),
+            globalObject->resolvePromiseFunction(),
+            promise,
+            value,
+            JSValue {});
+        RETURN_IF_EXCEPTION(scope, void());
+    }
+}
+
+// This implementation closely mimicks the one in JSC::JSPromise::reject
+void JSC__JSPromise__rejectOnNextTick(JSC__JSPromise* promise, JSC__JSGlobalObject* lexicalGlobalObject,
+    JSC__JSValue encoedValue)
+{
+    JSC::JSValue value = JSC::JSValue::decode(encoedValue);
+    VM& vm = lexicalGlobalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    uint32_t flags = promise->internalField(JSC::JSPromise::Field::Flags).get().asUInt32();
+    if (!(flags & JSC::JSPromise::isFirstResolvingFunctionCalledFlag)) {
+        promise->internalField(JSC::JSPromise::Field::Flags).set(vm, promise, jsNumber(flags | JSC::JSPromise::isFirstResolvingFunctionCalledFlag));
+        auto* globalObject = jsCast<Zig::GlobalObject*>(promise->globalObject());
+
+        globalObject->queueMicrotask(
+            globalObject->performMicrotaskFunction(),
+            globalObject->rejectPromiseFunction(),
+            promise,
+            value,
+            JSValue {});
+        RETURN_IF_EXCEPTION(scope, void());
+    }
+}
 JSC__JSPromise* JSC__JSPromise__resolvedPromise(JSC__JSGlobalObject* arg0, JSC__JSValue JSValue1)
 {
     Zig::GlobalObject* global = reinterpret_cast<Zig::GlobalObject*>(arg0);
@@ -3574,4 +3618,16 @@ extern "C" size_t JSC__VM__externalMemorySize(JSC__VM* vm)
 #else
     return 0;
 #endif
+}
+
+extern "C" void JSC__JSGlobalObject__queueMicrotaskJob(JSC__JSGlobalObject* arg0, JSC__JSValue JSValue1, JSC__JSValue JSValue2, JSC__JSValue JSValue3, JSC__JSValue JSValue4)
+{
+    Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(arg0);
+    JSC::VM& vm = globalObject->vm();
+    globalObject->queueMicrotask(
+        JSValue(globalObject->performMicrotaskFunction()),
+        JSC::JSValue::decode(JSValue1),
+        JSC::JSValue::decode(JSValue2),
+        JSC::JSValue::decode(JSValue3),
+        JSC::JSValue::decode(JSValue4));
 }

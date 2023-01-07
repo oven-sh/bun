@@ -400,6 +400,50 @@ declare module "bun" {
   }
 
   export const dns: {
+    /**
+     * Lookup the IP address for a hostname
+     *
+     * Uses non-blocking APIs by default
+     *
+     * @param hostname The hostname to lookup
+     * @param options Options for the lookup
+     *
+     * ## Example
+     *
+     * ```js
+     * const {address} = await Bun.dns.lookup('example.com');
+     * ```
+     *
+     * ### Filter results to IPv4:
+     *
+     * ```js
+     * import {dns} from 'bun';
+     * const {address} = await dns.lookup('example.com', {family: 4});
+     * console.log(address); // "123.122.22.126"
+     * ```
+     *
+     * ### Filter results to IPv6:
+     *
+     * ```js
+     * import {dns} from 'bun';
+     * const {address} = await dns.lookup('example.com', {family: 6});
+     * console.log(address); // "2001:db8::1"
+     * ```
+     *
+     * #### DNS resolver client
+     *
+     * Bun supports three DNS resolvers:
+     * - `c-ares` - Uses the c-ares library to perform DNS resolution. This is the default on Linux.
+     * - `system` - Uses the system's non-blocking DNS resolver API if available, falls back to `getaddrinfo`. This is the default on macOS and the same as `getaddrinfo` on Linux.
+     * - `getaddrinfo` - Uses the posix standard `getaddrinfo` function. Will cause performance issues under concurrent loads.
+     *
+     * To customize the DNS resolver, pass a `backend` option to `dns.lookup`:
+     * ```js
+     * import {dns} from 'bun';
+     * const {address} = await dns.lookup('example.com', {backend: 'getaddrinfo'});
+     * console.log(address); // "19.42.52.62"
+     * ```
+     */
     lookup(
       hostname: string,
       options?: {

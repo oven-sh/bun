@@ -280,6 +280,7 @@ ARG BUN_DEPS_OUT_DIR
 ARG BUN_DIR
 ARG CPU_TARGET
 
+
 ENV CPU_TARGET=${CPU_TARGET}
 
 COPY Makefile ${BUN_DIR}/Makefile
@@ -459,7 +460,7 @@ ENV CCACHE_DIR=/ccache
 RUN --mount=type=cache,target=/ccache cd $BUN_DIR && mkdir -p src/bun.js/bindings-obj &&  rm -rf $HOME/.cache zig-cache && mkdir -p $BUN_RELEASE_DIR && make webcrypto && \
     make release-bindings -j10 && mv ${BUN_DEPS_OUT_DIR}/libwebcrypto.a /tmp && mv src/bun.js/bindings-obj/* /tmp
 
-FROM prepare_release as sqlite
+FROM bun-base as sqlite
 
 ARG DEBIAN_FRONTEND
 ARG GITHUB_WORKSPACE
@@ -469,6 +470,8 @@ ARG WEBKIT_DIR
 ARG BUN_RELEASE_DIR
 ARG BUN_DEPS_OUT_DIR
 ARG BUN_DIR
+
+ENV CCACHE_DIR=/ccache
 
 COPY Makefile ${BUN_DIR}/Makefile
 
@@ -477,9 +480,9 @@ WORKDIR $BUN_DIR
 ENV JSC_BASE_DIR=${WEBKIT_DIR}
 ENV LIB_ICU_PATH=${WEBKIT_DIR}/lib
 
-RUN cd $BUN_DIR && make sqlite
+RUN --mount=type=cache,target=/ccache cd $BUN_DIR && make sqlite
 
-FROM prepare_release as c-ares
+FROM bun-base as c-ares
 
 ARG DEBIAN_FRONTEND
 ARG GITHUB_WORKSPACE
@@ -489,6 +492,10 @@ ARG WEBKIT_DIR
 ARG BUN_RELEASE_DIR
 ARG BUN_DEPS_OUT_DIR
 ARG BUN_DIR
+ARG CPU_TARGET
+ENV CPU_TARGET=${CPU_TARGET}
+
+ENV CCACHE_DIR=/ccache
 
 COPY Makefile ${BUN_DIR}/Makefile
 COPY src/deps/c-ares ${BUN_DIR}/src/deps/c-ares
@@ -498,7 +505,7 @@ WORKDIR $BUN_DIR
 ENV JSC_BASE_DIR=${WEBKIT_DIR}
 ENV LIB_ICU_PATH=${WEBKIT_DIR}/lib
 
-RUN cd $BUN_DIR && make c-ares
+RUN --mount=type=cache,target=/ccache mkdir -p ${BUN_DEPS_OUT_DIR} && cd $BUN_DIR && make c-ares
 
 FROM scratch as build_release_cpp
 

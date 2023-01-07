@@ -141,7 +141,15 @@ LIBICONV_PATH ?= $(BREW_PREFIX_PATH)/opt/libiconv/lib/libiconv.a
 
 OPENSSL_LINUX_DIR = $(BUN_DEPS_DIR)/openssl/openssl-OpenSSL_1_1_1l
 
-CMAKE_FLAGS_WITHOUT_RELEASE = -DCMAKE_C_COMPILER=$(CC) -DCMAKE_CXX_COMPILER=$(CXX) -DCMAKE_OSX_DEPLOYMENT_TARGET=$(MIN_MACOS_VERSION) $(CMAKE_CXX_COMPILER_LAUNCHER_FLAG)
+CMAKE_FLAGS_WITHOUT_RELEASE = -DCMAKE_C_COMPILER=$(CC) \
+	-DCMAKE_CXX_COMPILER=$(CXX) \
+	-DCMAKE_OSX_DEPLOYMENT_TARGET=$(MIN_MACOS_VERSION) \
+	$(CMAKE_CXX_COMPILER_LAUNCHER_FLAG) \
+	-DCMAKE_AR=$(AR) \
+    -DCMAKE_RANLIB=$(which llvm-15-ranlib || which llvm-ranlib)
+	
+	
+
 CMAKE_FLAGS = $(CMAKE_FLAGS_WITHOUT_RELEASE) -DCMAKE_BUILD_TYPE=Release
 
 # SQLite3 is dynamically linked on macOS
@@ -554,7 +562,7 @@ c-ares:
 	rm -rf $(BUN_DEPS_DIR)/c-ares/build && \
 	mkdir $(BUN_DEPS_DIR)/c-ares/build && \
 	cd $(BUN_DEPS_DIR)/c-ares/build && \
-    cmake $(CMAKE_FLAGS) -DCMAKE_C_FLAGS="$(CFLAGS)" -DCMAKE_BUILD_TYPE=Release -DCARES_STATIC=ON -DCARES_STATIC_PIC=ON -DCARES_SHARED=OFF -G "Ninja" .. && \
+    cmake $(CMAKE_FLAGS) -DCMAKE_C_FLAGS="$(CFLAGS) -flto=full" -DCMAKE_BUILD_TYPE=Release -DCARES_STATIC=ON -DCARES_SHARED=OFF -G "Ninja" .. && \
 	ninja && cp lib/libcares.a $(BUN_DEPS_OUT_DIR)/libcares.a
 
 .PHONY: prepare-types

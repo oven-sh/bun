@@ -3261,7 +3261,7 @@ pub const FilePoll = struct {
     const BufferedInput = Subprocess.BufferedInput;
     const BufferedOutput = Subprocess.BufferedOutput;
     const DNSResolver = JSC.DNS.DNSResolver;
-    const DNSLookup = JSC.DNS.DNSLookup;
+    const GetAddrInfoRequest = JSC.DNS.GetAddrInfoRequest;
     const Deactivated = opaque {
         pub var owner: Owner = Owner.init(@intToPtr(*Deactivated, @as(usize, 0xDEADBEEF)));
     };
@@ -3274,7 +3274,7 @@ pub const FilePoll = struct {
         FIFO,
         Deactivated,
         DNSResolver,
-        DNSLookup,
+        GetAddrInfoRequest,
     });
 
     fn updateFlags(poll: *FilePoll, updated: Flags.Set) void {
@@ -3336,15 +3336,20 @@ pub const FilePoll = struct {
         this.deinitWithVM(vm);
     }
 
-    pub fn deinitWithVM(this: *FilePoll, vm: *JSC.VirtualMachine) void {
+    pub fn deinitWithoutVM(this: *FilePoll, loop: *uws.Loop, polls: *JSC.FilePoll.HiveArray) void {
         if (this.isRegistered()) {
-            _ = this.unregister(vm.uws_event_loop.?);
+            _ = this.unregister(loop);
         }
 
         this.owner = Deactivated.owner;
         this.flags = Flags.Set{};
         this.fd = invalid_fd;
-        vm.rareData().filePolls(vm).put(this);
+        polls.put(this);
+    }
+
+    pub fn deinitWithVM(this: *FilePoll, vm: *JSC.VirtualMachine) void {
+        var loop = vm.uws_event_loop.?;
+        this.deinitWithoutVM(loop, vm.rareData().filePolls(vm));
     }
 
     pub fn isRegistered(this: *const FilePoll) bool {
@@ -3382,9 +3387,9 @@ pub const FilePoll = struct {
                 loader.onDNSPoll(poll);
             },
 
-            @field(Owner.Tag, "DNSLookup") => {
-                log("onUpdate " ++ kqueue_or_epoll ++ " (fd: {d}) DNSLookup", .{poll.fd});
-                var loader: *DNSLookup = ptr.as(DNSLookup);
+            @field(Owner.Tag, "GetAddrInfoRequest") => {
+                log("onUpdate " ++ kqueue_or_epoll ++ " (fd: {d}) GetAddrInfoRequest", .{poll.fd});
+                var loader: *GetAddrInfoRequest = ptr.as(GetAddrInfoRequest);
                 loader.onMachportChange();
             },
 

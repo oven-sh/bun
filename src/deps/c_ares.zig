@@ -91,7 +91,7 @@ pub const AddrInfo = extern struct {
                 array.putIndex(
                     globalThis,
                     j,
-                    bun.JSC.DNS.DNSLookup.Result.toJS(
+                    bun.JSC.DNS.GetAddrInfo.Result.toJS(
                         &.{
                             .address = switch (this_node.family) {
                                 std.os.AF.INET => std.net.Address{ .in = .{ .sa = bun.cast(*const std.os.sockaddr.in, this_node.addr.?).* } },
@@ -147,6 +147,10 @@ pub const AddrInfo_hints = extern struct {
     ai_family: c_int = 0,
     ai_socktype: c_int = 0,
     ai_protocol: c_int = 0,
+
+    pub fn isEmpty(this: AddrInfo_hints) bool {
+        return this.ai_flags == 0 and this.ai_family == 0 and this.ai_socktype == 0 and this.ai_protocol == 0;
+    }
 };
 pub const Channel = opaque {
     pub fn init(comptime Container: type, this: *Container) ?Error {
@@ -321,14 +325,14 @@ pub extern fn ares_set_socket_configure_callback(channel: *Channel, callback: ar
 pub extern fn ares_set_sortlist(channel: *Channel, sortstr: [*c]const u8) c_int;
 pub extern fn ares_getaddrinfo(channel: *Channel, node: ?[*:0]const u8, service: ?[*:0]const u8, hints: [*c]const AddrInfo_hints, callback: ares_addrinfo_callback, arg: ?*anyopaque) void;
 pub extern fn ares_freeaddrinfo(ai: *AddrInfo) void;
-pub const struct_ares_socket_functions = extern struct {
+pub const ares_socket_functions = extern struct {
     socket: ?*const fn (c_int, c_int, c_int, ?*anyopaque) callconv(.C) ares_socket_t = null,
     close: ?*const fn (ares_socket_t, ?*anyopaque) callconv(.C) c_int = null,
     connect: ?*const fn (ares_socket_t, [*c]const struct_sockaddr, ares_socklen_t, ?*anyopaque) callconv(.C) c_int = null,
     recvfrom: ?*const fn (ares_socket_t, ?*anyopaque, usize, c_int, [*c]struct_sockaddr, [*c]ares_socklen_t, ?*anyopaque) callconv(.C) ares_ssize_t = null,
     sendv: ?*const fn (ares_socket_t, [*c]const iovec, c_int, ?*anyopaque) callconv(.C) ares_ssize_t = null,
 };
-pub extern fn ares_set_socket_functions(channel: *Channel, funcs: ?*const struct_ares_socket_functions, user_data: ?*anyopaque) void;
+pub extern fn ares_set_socket_functions(channel: *Channel, funcs: ?*const ares_socket_functions, user_data: ?*anyopaque) void;
 pub extern fn ares_send(channel: *Channel, qbuf: [*c]const u8, qlen: c_int, callback: ares_callback, arg: ?*anyopaque) void;
 pub extern fn ares_query(channel: *Channel, name: [*c]const u8, dnsclass: c_int, @"type": c_int, callback: ares_callback, arg: ?*anyopaque) void;
 pub extern fn ares_search(channel: *Channel, name: [*c]const u8, dnsclass: c_int, @"type": c_int, callback: ares_callback, arg: ?*anyopaque) void;
@@ -668,7 +672,6 @@ pub const ares_addrinfo_cname = AddrInfo_cname;
 pub const ares_addrinfo_node = AddrInfo_node;
 pub const ares_addrinfo = AddrInfo;
 pub const ares_addrinfo_hints = AddrInfo_hints;
-pub const ares_socket_functions = struct_ares_socket_functions;
 pub const ares_in6_addr = struct_ares_in6_addr;
 pub const ares_addrttl = struct_ares_addrttl;
 pub const ares_addr6ttl = struct_ares_addr6ttl;

@@ -36,7 +36,7 @@ extern "C" void FFI__ptr__put(JSC::JSGlobalObject *globalObject, JSC::EncodedJSV
   static const JSC::DOMJIT::Signature DOMJIT_ptr_signature(
     FFI__ptr__fastpathWrapper,
     thisObject->classInfo(),
-    JSC::DOMJIT::Effect::forReadWrite(JSC::DOMJIT::HeapRange::top(), JSC::DOMJIT::HeapRange::top()),
+JSC::DOMJIT::Effect::forReadWrite(JSC::DOMJIT::HeapRange::top(), JSC::DOMJIT::HeapRange::top()),
   JSC::SpecDoubleReal,
   JSC::SpecUint8Array
   );
@@ -78,7 +78,7 @@ extern "C" void Reader__u8__put(JSC::JSGlobalObject *globalObject, JSC::EncodedJ
   static const JSC::DOMJIT::Signature DOMJIT_u8_signature(
     Reader__u8__fastpathWrapper,
     thisObject->classInfo(),
-    JSC::DOMJIT::Effect::forReadWrite(JSC::DOMJIT::HeapRange::top(), JSC::DOMJIT::HeapRange::top()),
+JSC::DOMJIT::Effect::forReadWrite(JSC::DOMJIT::HeapRange::top(), JSC::DOMJIT::HeapRange::top()),
   JSC::SpecInt32Only,
   JSC::SpecInt52Any,
   JSC::SpecInt32Only
@@ -121,7 +121,7 @@ extern "C" void Reader__u16__put(JSC::JSGlobalObject *globalObject, JSC::Encoded
   static const JSC::DOMJIT::Signature DOMJIT_u16_signature(
     Reader__u16__fastpathWrapper,
     thisObject->classInfo(),
-    JSC::DOMJIT::Effect::forReadWrite(JSC::DOMJIT::HeapRange::top(), JSC::DOMJIT::HeapRange::top()),
+JSC::DOMJIT::Effect::forReadWrite(JSC::DOMJIT::HeapRange::top(), JSC::DOMJIT::HeapRange::top()),
   JSC::SpecInt32Only,
   JSC::SpecInt52Any,
   JSC::SpecInt32Only
@@ -164,7 +164,7 @@ extern "C" void Reader__u32__put(JSC::JSGlobalObject *globalObject, JSC::Encoded
   static const JSC::DOMJIT::Signature DOMJIT_u32_signature(
     Reader__u32__fastpathWrapper,
     thisObject->classInfo(),
-    JSC::DOMJIT::Effect::forReadWrite(JSC::DOMJIT::HeapRange::top(), JSC::DOMJIT::HeapRange::top()),
+JSC::DOMJIT::Effect::forReadWrite(JSC::DOMJIT::HeapRange::top(), JSC::DOMJIT::HeapRange::top()),
   JSC::SpecInt32Only,
   JSC::SpecInt52Any,
   JSC::SpecInt32Only
@@ -207,7 +207,7 @@ extern "C" void Reader__ptr__put(JSC::JSGlobalObject *globalObject, JSC::Encoded
   static const JSC::DOMJIT::Signature DOMJIT_ptr_signature(
     Reader__ptr__fastpathWrapper,
     thisObject->classInfo(),
-    JSC::DOMJIT::Effect::forReadWrite(JSC::DOMJIT::HeapRange::top(), JSC::DOMJIT::HeapRange::top()),
+JSC::DOMJIT::Effect::forReadWrite(JSC::DOMJIT::HeapRange::top(), JSC::DOMJIT::HeapRange::top()),
   JSC::SpecInt52Any,
   JSC::SpecInt52Any,
   JSC::SpecInt32Only
@@ -250,7 +250,7 @@ extern "C" void Reader__i8__put(JSC::JSGlobalObject *globalObject, JSC::EncodedJ
   static const JSC::DOMJIT::Signature DOMJIT_i8_signature(
     Reader__i8__fastpathWrapper,
     thisObject->classInfo(),
-    JSC::DOMJIT::Effect::forReadWrite(JSC::DOMJIT::HeapRange::top(), JSC::DOMJIT::HeapRange::top()),
+JSC::DOMJIT::Effect::forReadWrite(JSC::DOMJIT::HeapRange::top(), JSC::DOMJIT::HeapRange::top()),
   JSC::SpecInt32Only,
   JSC::SpecInt52Any,
   JSC::SpecInt32Only
@@ -293,7 +293,7 @@ extern "C" void Reader__i16__put(JSC::JSGlobalObject *globalObject, JSC::Encoded
   static const JSC::DOMJIT::Signature DOMJIT_i16_signature(
     Reader__i16__fastpathWrapper,
     thisObject->classInfo(),
-    JSC::DOMJIT::Effect::forReadWrite(JSC::DOMJIT::HeapRange::top(), JSC::DOMJIT::HeapRange::top()),
+JSC::DOMJIT::Effect::forReadWrite(JSC::DOMJIT::HeapRange::top(), JSC::DOMJIT::HeapRange::top()),
   JSC::SpecInt32Only,
   JSC::SpecInt52Any,
   JSC::SpecInt32Only
@@ -336,7 +336,7 @@ extern "C" void Reader__i32__put(JSC::JSGlobalObject *globalObject, JSC::Encoded
   static const JSC::DOMJIT::Signature DOMJIT_i32_signature(
     Reader__i32__fastpathWrapper,
     thisObject->classInfo(),
-    JSC::DOMJIT::Effect::forReadWrite(JSC::DOMJIT::HeapRange::top(), JSC::DOMJIT::HeapRange::top()),
+JSC::DOMJIT::Effect::forReadWrite(JSC::DOMJIT::HeapRange::top(), JSC::DOMJIT::HeapRange::top()),
   JSC::SpecInt32Only,
   JSC::SpecInt52Any,
   JSC::SpecInt32Only
@@ -379,7 +379,7 @@ extern "C" void Reader__i64__put(JSC::JSGlobalObject *globalObject, JSC::Encoded
   static const JSC::DOMJIT::Signature DOMJIT_i64_signature(
     Reader__i64__fastpathWrapper,
     thisObject->classInfo(),
-    JSC::DOMJIT::Effect::forReadWrite(JSC::DOMJIT::HeapRange::top(), JSC::DOMJIT::HeapRange::top()),
+JSC::DOMJIT::Effect::forReadWrite(JSC::DOMJIT::HeapRange::top(), JSC::DOMJIT::HeapRange::top()),
   JSC::SpecHeapTop,
   JSC::SpecInt52Any,
   JSC::SpecInt32Only
@@ -422,7 +422,7 @@ extern "C" void Reader__u64__put(JSC::JSGlobalObject *globalObject, JSC::Encoded
   static const JSC::DOMJIT::Signature DOMJIT_u64_signature(
     Reader__u64__fastpathWrapper,
     thisObject->classInfo(),
-    JSC::DOMJIT::Effect::forReadWrite(JSC::DOMJIT::HeapRange::top(), JSC::DOMJIT::HeapRange::top()),
+JSC::DOMJIT::Effect::forReadWrite(JSC::DOMJIT::HeapRange::top(), JSC::DOMJIT::HeapRange::top()),
   JSC::SpecHeapTop,
   JSC::SpecInt52Any,
   JSC::SpecInt32Only
@@ -465,7 +465,7 @@ extern "C" void Reader__intptr__put(JSC::JSGlobalObject *globalObject, JSC::Enco
   static const JSC::DOMJIT::Signature DOMJIT_intptr_signature(
     Reader__intptr__fastpathWrapper,
     thisObject->classInfo(),
-    JSC::DOMJIT::Effect::forReadWrite(JSC::DOMJIT::HeapRange::top(), JSC::DOMJIT::HeapRange::top()),
+JSC::DOMJIT::Effect::forReadWrite(JSC::DOMJIT::HeapRange::top(), JSC::DOMJIT::HeapRange::top()),
   JSC::SpecInt52Any,
   JSC::SpecInt52Any,
   JSC::SpecInt32Only
@@ -508,7 +508,7 @@ extern "C" void Reader__f32__put(JSC::JSGlobalObject *globalObject, JSC::Encoded
   static const JSC::DOMJIT::Signature DOMJIT_f32_signature(
     Reader__f32__fastpathWrapper,
     thisObject->classInfo(),
-    JSC::DOMJIT::Effect::forReadWrite(JSC::DOMJIT::HeapRange::top(), JSC::DOMJIT::HeapRange::top()),
+JSC::DOMJIT::Effect::forReadWrite(JSC::DOMJIT::HeapRange::top(), JSC::DOMJIT::HeapRange::top()),
   JSC::SpecDoubleReal,
   JSC::SpecInt52Any,
   JSC::SpecInt32Only
@@ -551,7 +551,7 @@ extern "C" void Reader__f64__put(JSC::JSGlobalObject *globalObject, JSC::Encoded
   static const JSC::DOMJIT::Signature DOMJIT_f64_signature(
     Reader__f64__fastpathWrapper,
     thisObject->classInfo(),
-    JSC::DOMJIT::Effect::forReadWrite(JSC::DOMJIT::HeapRange::top(), JSC::DOMJIT::HeapRange::top()),
+JSC::DOMJIT::Effect::forReadWrite(JSC::DOMJIT::HeapRange::top(), JSC::DOMJIT::HeapRange::top()),
   JSC::SpecDoubleReal,
   JSC::SpecInt52Any,
   JSC::SpecInt32Only
@@ -594,7 +594,7 @@ extern "C" void Crypto__getRandomValues__put(JSC::JSGlobalObject *globalObject, 
   static const JSC::DOMJIT::Signature DOMJIT_getRandomValues_signature(
     Crypto__getRandomValues__fastpathWrapper,
     thisObject->classInfo(),
-    JSC::DOMJIT::Effect::forReadWrite(JSC::DOMJIT::HeapRange::top(), JSC::DOMJIT::HeapRange::top()),
+JSC::DOMJIT::Effect::forReadWrite(JSC::DOMJIT::HeapRange::top(), JSC::DOMJIT::HeapRange::top()),
   JSC::SpecHeapTop,
   JSC::SpecUint8Array
   );
@@ -636,7 +636,7 @@ extern "C" void Crypto__randomUUID__put(JSC::JSGlobalObject *globalObject, JSC::
   static const JSC::DOMJIT::Signature DOMJIT_randomUUID_signature(
     Crypto__randomUUID__fastpathWrapper,
     thisObject->classInfo(),
-    JSC::DOMJIT::Effect::forReadWrite(JSC::DOMJIT::HeapRange::top(), JSC::DOMJIT::HeapRange::top()),
+JSC::DOMJIT::Effect::forReadWrite(JSC::DOMJIT::HeapRange::top(), JSC::DOMJIT::HeapRange::top()),
   JSC::SpecString);
                   JSFunction* function = JSFunction::create(
                     globalObject->vm(),
@@ -676,7 +676,7 @@ extern "C" void Crypto__timingSafeEqual__put(JSC::JSGlobalObject *globalObject, 
   static const JSC::DOMJIT::Signature DOMJIT_timingSafeEqual_signature(
     Crypto__timingSafeEqual__fastpathWrapper,
     thisObject->classInfo(),
-    JSC::DOMJIT::Effect::forReadWrite(JSC::DOMJIT::HeapRange::top(), JSC::DOMJIT::HeapRange::top()),
+JSC::DOMJIT::Effect::forReadWrite(JSC::DOMJIT::HeapRange::top(), JSC::DOMJIT::HeapRange::top()),
   JSC::SpecHeapTop,
   JSC::SpecUint8Array,
   JSC::SpecUint8Array

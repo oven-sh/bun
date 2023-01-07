@@ -61,6 +61,103 @@ const LibInfo = struct {
     pub fn get() ?*const GetaddrinfoAsyncCancel {
         return bun.C.dlsymWithHandle(*const GetaddrinfoAsyncCancel, "getaddrinfo_async_cancel", getHandle);
     }
+
+    pub fn lookup(this: *DNSResolver, query: GetAddrInfo, globalThis: *JSC.JSGlobalObject) JSC.JSValue {
+        const getaddrinfo_async_start_ = LibInfo.getaddrinfo_async_start() orelse return LibC.lookup(this, query, globalThis);
+
+        var key = GetAddrInfoRequest.PendingCacheKey.init(query);
+        var cache = this.getOrPutIntoPendingCache(key, .pending_host_cache_native);
+
+        if (cache == .inflight) {
+            var dns_lookup = DNSLookup.init(globalThis, globalThis.allocator()) catch unreachable;
+
+            cache.inflight.append(dns_lookup);
+
+            return dns_lookup.promise.value();
+        }
+
+        var name_buf: [1024]u8 = undefined;
+        _ = strings.copy(name_buf[0..], query.name);
+
+        name_buf[query.name.len] = 0;
+        var name_z = name_buf[0..query.name.len :0];
+
+        var request = GetAddrInfoRequest.init(
+            cache,
+            .{ .libinfo = undefined },
+            this,
+            query,
+            globalThis,
+            "pending_host_cache_native",
+        ) catch unreachable;
+        const promise_value = request.head.promise.value();
+
+        const errno = getaddrinfo_async_start_(
+            &request.backend.libinfo.machport,
+            name_z.ptr,
+            null,
+            null,
+            GetAddrInfoRequest.getAddrInfoAsyncCallback,
+            request,
+        );
+
+        if (errno != 0) {
+            request.head.promise.reject(globalThis, globalThis.createErrorInstance("getaddrinfo_async_start error: {s}", .{@tagName(std.c.getErrno(errno))}));
+            if (request.cache.pending_cache) this.pending_host_cache_native.available.set(request.cache.pos_in_pending);
+            this.vm.allocator.destroy(request);
+
+            return promise_value;
+        }
+        std.debug.assert(request.backend.libinfo.machport != null);
+        request.backend.libinfo.file_poll = bun.JSC.FilePoll.init(this.vm, std.math.maxInt(i32) - 1, .{}, GetAddrInfoRequest, request);
+        std.debug.assert(
+            request.backend.libinfo.file_poll.?.registerWithFd(
+                this.vm.uws_event_loop.?,
+                .machport,
+                true,
+                @ptrToInt(request.backend.libinfo.machport),
+            ) == .result,
+        );
+
+        return promise_value;
+    }
+};
+
+const LibC = struct {
+    pub fn lookup(this: *DNSResolver, query_init: GetAddrInfo, globalThis: *JSC.JSGlobalObject) JSC.JSValue {
+        const key = GetAddrInfoRequest.PendingCacheKey.init(query_init);
+
+        var cache = this.getOrPutIntoPendingCache(key, .pending_host_cache_native);
+        if (cache == .inflight) {
+            var dns_lookup = DNSLookup.init(globalThis, globalThis.allocator()) catch unreachable;
+
+            cache.inflight.append(dns_lookup);
+
+            return dns_lookup.promise.value();
+        }
+
+        var query = query_init.clone();
+
+        var request = GetAddrInfoRequest.init(
+            cache,
+            .{
+                .libc = .{
+                    .query = query,
+                },
+            },
+            this,
+            query,
+            globalThis,
+            "pending_host_cache_native",
+        ) catch unreachable;
+        const promise_value = request.head.promise.value();
+
+        var io = GetAddrInfoRequest.Task.createOnJSThread(this.vm.allocator, globalThis, request) catch unreachable;
+
+        io.schedule();
+
+        return promise_value;
+    }
 };
 
 pub fn addressToString(
@@ -96,11 +193,18 @@ pub fn addressToString(
     return JSC.ZigString.init(str);
 }
 
-pub fn normalizeDNSName(name: []const u8) []const u8 {
-
-    // https://github.com/c-ares/c-ares/issues/477
-    if (strings.endsWithComptime(name, ".localhost")) {
-        return "localhost";
+pub fn normalizeDNSName(name: []const u8, backend: *GetAddrInfo.Backend) []const u8 {
+    if (backend.* == .c_ares) {
+        // https://github.com/c-ares/c-ares/issues/477
+        if (strings.endsWithComptime(name, ".localhost")) {
+            backend.* = .system;
+            return "localhost";
+        } else if (strings.endsWithComptime(name, ".local")) {
+            backend.* = .system;
+            // https://github.com/c-ares/c-ares/pull/463
+        } else if (strings.isIPV6Address(name)) {
+            backend.* = .system;
+        }
     }
 
     return name;
@@ -142,16 +246,11 @@ pub fn addrInfoToJSArray(
         var j: u32 = 0;
         var current: ?*std.c.addrinfo = addr_info;
         while (current) |this_node| : (current = current.?.next) {
-            const addr = std.net.Address.initPosix(@alignCast(4, this_node.addr orelse continue));
-
             array.putIndex(
                 globalThis,
                 j,
-                bun.JSC.DNS.DNSLookup.Result.toJS(
-                    &.{
-                        .address = addr,
-                        .ttl = 0,
-                    },
+                bun.JSC.DNS.GetAddrInfo.Result.toJS(
+                    &(bun.JSC.DNS.GetAddrInfo.Result.fromAddrInfo(this_node) orelse continue),
                     globalThis,
                     allocator,
                 ),
@@ -163,44 +262,391 @@ pub fn addrInfoToJSArray(
     return array;
 }
 
-pub const DNSLookup = struct {
-    const log = Output.scoped(.DNSLookup, true);
+pub const GetAddrInfo = struct {
+    name: []const u8 = "",
+    port: u16 = 0,
+    options: Options = Options{},
 
-    globalThis: *JSC.JSGlobalObject = undefined,
-    poll_ref: bun.JSC.PollRef = .{},
-    promise: JSC.JSPromise.Strong,
-
-    next_pending: ?*DNSLookup = null,
-    name_hash: u64 = 0,
-    cache: CacheConfig = CacheConfig{},
-
-    resolver_for_caching: ?*DNSResolver = null,
-
-    poll_ref_machport: ?*bun.JSC.FilePoll = null,
-    poll_ref_machport_id: ?*anyopaque = null,
-
-    pub fn getAddrInfoAsyncCallback(
-        status: i32,
-        addr_info: ?*std.c.addrinfo,
-        arg: ?*anyopaque,
-    ) callconv(.C) void {
-        const this = @intToPtr(*DNSLookup, @ptrToInt(arg));
-        log("getAddrInfoAsyncCallback: status={d}", .{status});
-
-        this.onGetAddrInfoNative(status, addr_info);
-        if (addr_info != null) std.c.freeaddrinfo(addr_info.?);
+    pub fn clone(this: GetAddrInfo) GetAddrInfo {
+        return GetAddrInfo{
+            .name = bun.default_allocator.dupe(u8, this.name) catch unreachable,
+            .port = this.port,
+            .options = this.options,
+        };
     }
 
-    extern fn getaddrinfo_send_reply(*anyopaque, *const LibInfo.GetaddrinfoAsyncHandleReply) bool;
-    pub fn onMachportChange(this: *DNSLookup) void {
-        if (!getaddrinfo_send_reply(this.poll_ref_machport_id.?, LibInfo.getaddrinfo_async_handle_reply().?)) {
-            log("onMachportChange: getaddrinfo_send_reply failed", .{});
-            this.processGetAddrInfoNative(-1, null);
-            return;
-        } else {
-            log("onMachportChange: getaddrinfo_send_reply succeeded", .{});
+    pub fn toCAres(this: GetAddrInfo) bun.c_ares.AddrInfo_hints {
+        var hints: bun.c_ares.AddrInfo_hints = undefined;
+        @memset(std.mem.asBytes(&hints), 0, @sizeOf(bun.c_ares.AddrInfo_hints));
+
+        hints.ai_family = this.options.family.toLibC();
+        hints.ai_socktype = this.options.socktype.toLibC();
+        hints.ai_protocol = this.options.protocol.toLibC();
+        hints.ai_flags = this.options.flags;
+
+        return hints;
+    }
+
+    pub fn hash(self: GetAddrInfo) u64 {
+        var hasher = std.hash.Wyhash.init(0);
+        const bytes =
+            std.mem.asBytes(&self.port) ++
+            std.mem.asBytes(&self.options);
+
+        hasher.update(bytes);
+        hasher.update(self.name);
+
+        return hasher.final();
+    }
+
+    pub const Options = packed struct {
+        family: Family = .unspecified,
+        socktype: SockType = .unspecified,
+        protocol: Protocol = .unspecified,
+        backend: Backend = Backend.default,
+        flags: i32 = 0,
+
+        pub fn toLibC(this: Options) ?std.c.addrinfo {
+            if (this.family == .unspecified and this.socktype == .unspecified and this.protocol == .unspecified and this.flags == 0) {
+                return null;
+            }
+
+            var hints: std.c.addrinfo = undefined;
+            @memset(std.mem.asBytes(&hints), 0, @sizeOf(std.c.addrinfo));
+
+            hints.family = this.family.toLibC();
+            hints.socktype = this.socktype.toLibC();
+            hints.protocol = this.protocol.toLibC();
+            hints.flags = this.flags;
+            return hints;
         }
+
+        pub fn fromJS(value: JSC.JSValue, globalObject: *JSC.JSGlobalObject) !Options {
+            if (value.isEmptyOrUndefinedOrNull())
+                return Options{};
+
+            if (value.isObject()) {
+                var options = Options{};
+
+                if (value.get(globalObject, "family")) |family| {
+                    options.family = try Family.fromJS(family, globalObject);
+                }
+
+                if (value.get(globalObject, "socktype")) |socktype| {
+                    options.socktype = try SockType.fromJS(socktype, globalObject);
+                }
+
+                if (value.get(globalObject, "protocol")) |protocol| {
+                    options.protocol = try Protocol.fromJS(protocol, globalObject);
+                }
+
+                if (value.get(globalObject, "backend")) |backend| {
+                    options.backend = try Backend.fromJS(backend, globalObject);
+                }
+
+                if (value.get(globalObject, "flags")) |flags| {
+                    if (!flags.isNumber())
+                        return error.InvalidFlags;
+
+                    options.flags = flags.coerce(i32, globalObject);
+                }
+
+                return options;
+            }
+
+            return error.InvalidOptions;
+        }
+    };
+
+    pub const Family = enum(u2) {
+        unspecified,
+        inet,
+        inet6,
+        unix,
+
+        pub const map = bun.ComptimeStringMap(Family, .{
+            .{ "IPv4", Family.inet },
+            .{ "IPv6", Family.inet6 },
+            .{ "ipv4", Family.inet },
+            .{ "ipv6", Family.inet6 },
+        });
+
+        pub fn fromJS(value: JSC.JSValue, globalObject: *JSC.JSGlobalObject) !Family {
+            if (value.isEmptyOrUndefinedOrNull())
+                return .unspecified;
+
+            if (value.isNumber()) {
+                return switch (value.to(i32)) {
+                    0 => .unspecified,
+                    4 => .inet,
+                    6 => .inet6,
+                    else => return error.InvalidFamily,
+                };
+            }
+
+            if (value.isString()) {
+                const str = value.getZigString(globalObject);
+                if (str.len == 0)
+                    return .unspecified;
+
+                return map.getWithEql(str, JSC.ZigString.eqlComptime) orelse return error.InvalidFamily;
+            }
+
+            return error.InvalidFamily;
+        }
+
+        pub fn toLibC(this: Family) i32 {
+            return switch (this) {
+                .unspecified => 0,
+                .inet => std.os.AF.INET,
+                .inet6 => std.os.AF.INET6,
+                .unix => std.os.AF.UNIX,
+            };
+        }
+    };
+
+    pub const SockType = enum(u2) {
+        unspecified,
+        stream,
+        dgram,
+
+        const map = bun.ComptimeStringMap(SockType, .{
+            .{ "stream", SockType.stream },
+            .{ "dgram", SockType.dgram },
+        });
+
+        pub fn toLibC(this: SockType) i32 {
+            switch (this) {
+                .unspecified => return 0,
+                .stream => return std.os.SOCK.STREAM,
+                .dgram => return std.os.SOCK.DGRAM,
+            }
+        }
+
+        pub fn fromJS(value: JSC.JSValue, globalObject: *JSC.JSGlobalObject) !SockType {
+            if (value.isEmptyOrUndefinedOrNull())
+                return .unspecified;
+
+            if (value.isNumber()) {
+                return switch (value.to(i32)) {
+                    0 => .unspecified,
+                    1 => .stream,
+                    2 => .dgram,
+                    else => return error.InvalidSockType,
+                };
+            }
+
+            if (value.isString()) {
+                const str = value.getZigString(globalObject);
+                if (str.len == 0)
+                    return .unspecified;
+
+                return map.getWithEql(str, JSC.ZigString.eqlComptime) orelse return error.InvalidSockType;
+            }
+
+            return error.InvalidSockType;
+        }
+    };
+
+    pub const Protocol = enum(u2) {
+        unspecified,
+        tcp,
+        udp,
+
+        const map = bun.ComptimeStringMap(Protocol, .{
+            .{ "tcp", Protocol.tcp },
+            .{ "udp", Protocol.udp },
+        });
+
+        pub fn fromJS(value: JSC.JSValue, globalObject: *JSC.JSGlobalObject) !Protocol {
+            if (value.isEmptyOrUndefinedOrNull())
+                return .unspecified;
+
+            if (value.isNumber()) {
+                return switch (value.to(i32)) {
+                    0 => .unspecified,
+                    6 => .tcp,
+                    17 => .udp,
+                    else => return error.InvalidProtocol,
+                };
+            }
+
+            if (value.isString()) {
+                const str = value.getZigString(globalObject);
+                if (str.len == 0)
+                    return .unspecified;
+
+                return map.getWithEql(str, JSC.ZigString.eqlComptime) orelse return error.InvalidProtocol;
+            }
+
+            return error.InvalidProtocol;
+        }
+
+        pub fn toLibC(this: Protocol) i32 {
+            switch (this) {
+                .unspecified => return 0,
+                .tcp => return std.os.IPPROTO.TCP,
+                .udp => return std.os.IPPROTO.UDP,
+            }
+        }
+    };
+
+    pub const Backend = enum(u2) {
+        c_ares,
+        system,
+        libc,
+
+        pub const label = bun.ComptimeStringMap(GetAddrInfo.Backend, .{
+            .{ "c-ares", .c_ares },
+            .{ "c_ares", .c_ares },
+            .{ "cares", .c_ares },
+            .{ "async", .c_ares },
+            .{ "libc", .libc },
+            .{ "system", .system },
+        });
+
+        pub const default: GetAddrInfo.Backend = if (Environment.isMac)
+            GetAddrInfo.Backend.system
+        else
+            GetAddrInfo.Backend.c_ares;
+
+        pub fn fromJS(value: JSC.JSValue, globalObject: *JSC.JSGlobalObject) !Backend {
+            if (value.isEmptyOrUndefinedOrNull())
+                return default;
+
+            if (value.isString()) {
+                const str = value.getZigString(globalObject);
+                if (str.len == 0)
+                    return default;
+
+                return label.getWithEql(str, JSC.ZigString.eqlComptime) orelse return error.InvalidBackend;
+            }
+
+            return error.InvalidBackend;
+        }
+    };
+
+    pub const Result = struct {
+        address: std.net.Address,
+        ttl: i32 = 0,
+
+        pub const List = std.ArrayList(Result);
+
+        pub const Any = union(enum) {
+            addrinfo: ?*std.c.addrinfo,
+            list: List,
+
+            pub fn toJS(this: Any, globalThis: *JSC.JSGlobalObject) ?JSC.JSValue {
+                return switch (this) {
+                    .addrinfo => |addrinfo| addrInfoToJSArray(globalThis.allocator(), addrinfo orelse return null, globalThis),
+                    .list => |list| brk: {
+                        var stack = std.heap.stackFallback(2048, globalThis.allocator());
+                        var arena = std.heap.ArenaAllocator.init(stack.get());
+                        const array = JSC.JSValue.createEmptyArray(globalThis, @truncate(u32, list.items.len));
+                        var i: u32 = 0;
+                        const items: []const Result = list.items;
+                        for (items) |item| {
+                            array.putIndex(globalThis, i, item.toJS(globalThis, arena.allocator()));
+                            i += 1;
+                        }
+                        break :brk array;
+                    },
+                };
+            }
+
+            pub fn deinit(this: Any) void {
+                switch (this) {
+                    .addrinfo => |addrinfo| {
+                        if (addrinfo) |a| {
+                            std.c.freeaddrinfo(a);
+                        }
+                    },
+                    .list => |list| {
+                        var list_ = list;
+                        list_.deinit();
+                    },
+                }
+            }
+        };
+
+        pub fn toList(allocator: std.mem.Allocator, addrinfo: *std.c.addrinfo) !List {
+            var list = try List.initCapacity(allocator, addrInfoCount(addrinfo));
+
+            var addr: ?*std.c.addrinfo = addrinfo;
+            while (addr) |a| : (addr = a.next) {
+                list.appendAssumeCapacity(fromAddrInfo(a) orelse continue);
+            }
+
+            return list;
+        }
+
+        pub fn fromAddrInfo(addrinfo: *std.c.addrinfo) ?Result {
+            return Result{
+                .address = std.net.Address.initPosix(@alignCast(4, addrinfo.addr orelse return null)),
+                // no TTL in POSIX getaddrinfo()
+                .ttl = 0,
+            };
+        }
+
+        pub fn toJS(this: *const Result, globalThis: *JSC.JSGlobalObject, allocator: std.mem.Allocator) JSValue {
+            const obj = JSC.JSValue.createEmptyObject(globalThis, 3);
+            obj.put(globalThis, JSC.ZigString.static("address"), addressToJS(allocator, this.address, globalThis));
+            obj.put(globalThis, JSC.ZigString.static("family"), switch (this.address.any.family) {
+                std.os.AF.INET => JSValue.jsNumber(4),
+                std.os.AF.INET6 => JSValue.jsNumber(6),
+                else => JSValue.jsNumber(0),
+            });
+            obj.put(globalThis, JSC.ZigString.static("ttl"), JSValue.jsNumber(this.ttl));
+            return obj;
+        }
+    };
+};
+
+pub const GetAddrInfoRequest = struct {
+    const log = Output.scoped(.GetAddrInfoRequest, false);
+
+    backend: Backend = undefined,
+    resolver_for_caching: ?*DNSResolver = null,
+    hash: u64 = 0,
+    cache: CacheConfig = CacheConfig{},
+    head: DNSLookup,
+    tail: *DNSLookup = undefined,
+    task: bun.ThreadPool.Task = undefined,
+
+    pub fn init(
+        cache: DNSResolver.CacheHit,
+        backend: Backend,
+        resolver: ?*DNSResolver,
+        query: GetAddrInfo,
+        globalThis: *JSC.JSGlobalObject,
+        comptime cache_field: []const u8,
+    ) !*GetAddrInfoRequest {
+        var request = try globalThis.allocator().create(GetAddrInfoRequest);
+        request.* = .{
+            .backend = backend,
+            .resolver_for_caching = resolver,
+            .hash = query.hash(),
+            .head = .{
+                .globalThis = globalThis,
+                .promise = JSC.JSPromise.Strong.init(globalThis),
+                .allocated = false,
+            },
+        };
+        request.tail = &request.head;
+        if (cache == .new) {
+            request.resolver_for_caching = resolver;
+            request.cache = CacheConfig{
+                .pending_cache = true,
+                .entry_cache = false,
+                .pos_in_pending = @truncate(u5, @field(resolver.?, cache_field).indexOf(cache.new).?),
+                .name_len = @truncate(u9, query.name.len),
+            };
+            cache.new.lookup = request;
+        }
+        return request;
     }
+
+    pub const Task = bun.JSC.WorkTask(GetAddrInfoRequest, false);
 
     pub const CacheConfig = packed struct(u16) {
         pending_cache: bool = false,
@@ -210,18 +656,213 @@ pub const DNSLookup = struct {
     };
 
     pub const PendingCacheKey = struct {
-        name_hash: u64,
+        hash: u64,
         len: u16,
-        lookup: *DNSLookup = undefined,
+        lookup: *GetAddrInfoRequest = undefined,
 
-        pub fn init(name: []const u8, lookup: *DNSLookup) PendingCacheKey {
+        pub fn append(this: *PendingCacheKey, dns_lookup: *DNSLookup) void {
+            var tail = this.lookup.tail;
+            tail.next = dns_lookup;
+            this.lookup.tail = dns_lookup;
+        }
+
+        pub fn init(query: GetAddrInfo) PendingCacheKey {
             return PendingCacheKey{
-                .name_hash = std.hash.Wyhash.hash(0, name),
-                .len = @truncate(u16, name.len),
-                .lookup = lookup,
+                .hash = query.hash(),
+                .len = @truncate(u16, query.name.len),
+                .lookup = undefined,
             };
         }
     };
+
+    pub fn getAddrInfoAsyncCallback(
+        status: i32,
+        addr_info: ?*std.c.addrinfo,
+        arg: ?*anyopaque,
+    ) callconv(.C) void {
+        const this = @intToPtr(*GetAddrInfoRequest, @ptrToInt(arg));
+        log("getAddrInfoAsyncCallback: status={d}", .{status});
+
+        if (this.backend == .libinfo) {
+            if (this.backend.libinfo.file_poll) |poll| poll.deinit();
+        }
+
+        if (this.resolver_for_caching) |resolver| {
+            if (this.cache.pending_cache) {
+                resolver.drainPendingHostNative(this.cache.pos_in_pending, this.head.globalThis, status, .{ .addrinfo = addr_info });
+                return;
+            }
+        }
+
+        var head = this.head;
+        bun.default_allocator.destroy(this);
+        head.processGetAddrInfoNative(status, addr_info);
+    }
+
+    pub const Backend = union(enum) {
+        c_ares: void,
+        libinfo: GetAddrInfoRequest.Backend.LibInfo,
+        libc: union(enum) {
+            success: GetAddrInfo.Result.List,
+            err: i32,
+            query: GetAddrInfo,
+
+            pub fn run(this: *@This()) void {
+                const query = this.query;
+                defer bun.default_allocator.free(bun.constStrToU8(query.name));
+                var hints = query.options.toLibC();
+                var port_buf: [128]u8 = undefined;
+                var port = std.fmt.bufPrintIntToSlice(&port_buf, query.port, 10, .lower, .{});
+                port_buf[port.len] = 0;
+                var portZ = port_buf[0..port.len :0];
+                var hostname: [bun.MAX_PATH_BYTES]u8 = undefined;
+                _ = strings.copy(hostname[0..], query.name);
+                hostname[query.name.len] = 0;
+                var addrinfo: *std.c.addrinfo = undefined;
+                var host = hostname[0..query.name.len :0];
+                const debug_timer = bun.Output.DebugTimer.start();
+                const err = std.c.getaddrinfo(
+                    host.ptr,
+                    if (port.len > 0) portZ.ptr else null,
+                    if (hints) |*hint| hint else null,
+                    &addrinfo,
+                );
+                defer std.c.freeaddrinfo(addrinfo);
+                JSC.Node.Syscall.syslog("getaddrinfo({s}, {d}) = {d} ({any})", .{
+                    query.name,
+                    port,
+                    err,
+                    debug_timer,
+                });
+                if (@enumToInt(err) != 0) {
+                    this.* = .{ .err = @enumToInt(err) };
+                    return;
+                }
+
+                this.* = .{ .success = GetAddrInfo.Result.toList(default_allocator, addrinfo) catch unreachable };
+            }
+        },
+
+        pub const LibInfo = struct {
+            file_poll: ?*bun.JSC.FilePoll = null,
+            machport: ?*anyopaque = null,
+
+            extern fn getaddrinfo_send_reply(*anyopaque, *const JSC.DNS.LibInfo.GetaddrinfoAsyncHandleReply) bool;
+            pub fn onMachportChange(this: *GetAddrInfoRequest) void {
+                if (!getaddrinfo_send_reply(this.backend.libinfo.machport.?, JSC.DNS.LibInfo.getaddrinfo_async_handle_reply().?)) {
+                    log("onMachportChange: getaddrinfo_send_reply failed", .{});
+                    getAddrInfoAsyncCallback(-1, null, this);
+                }
+            }
+        };
+    };
+
+    pub const onMachportChange = Backend.LibInfo.onMachportChange;
+
+    pub fn run(this: *GetAddrInfoRequest, task: *Task) void {
+        this.backend.libc.run();
+        task.onFinish();
+    }
+
+    pub fn then(this: *GetAddrInfoRequest, _: *JSC.JSGlobalObject) void {
+        switch (this.backend.libc) {
+            .success => |result| {
+                const any = GetAddrInfo.Result.Any{ .list = result };
+                defer any.deinit();
+                if (this.resolver_for_caching) |resolver| {
+                    // if (this.cache.entry_cache and result != null and result.?.node != null) {
+                    //     resolver.putEntryInCache(this.hash, this.cache.name_len, result.?);
+                    // }
+
+                    if (this.cache.pending_cache) {
+                        resolver.drainPendingHostNative(this.cache.pos_in_pending, this.head.globalThis, 0, any);
+                        return;
+                    }
+                }
+                var head = this.head;
+                bun.default_allocator.destroy(this);
+                head.onCompleteNative(any);
+            },
+            .err => |err| {
+                getAddrInfoAsyncCallback(err, null, this);
+            },
+            else => unreachable,
+        }
+    }
+
+    pub fn onCaresComplete(this: *GetAddrInfoRequest, err_: ?c_ares.Error, timeout: i32, result: ?*c_ares.AddrInfo) void {
+        if (this.resolver_for_caching) |resolver| {
+            // if (this.cache.entry_cache and result != null and result.?.node != null) {
+            //     resolver.putEntryInCache(this.hash, this.cache.name_len, result.?);
+            // }
+
+            if (this.cache.pending_cache) {
+                resolver.drainPendingHostCares(
+                    this.cache.pos_in_pending,
+                    err_,
+                    timeout,
+                    result,
+                );
+                return;
+            }
+        }
+
+        var head = this.head;
+        bun.default_allocator.destroy(this);
+
+        head.processGetAddrInfo(err_, timeout, result);
+    }
+};
+
+pub const DNSLookup = struct {
+    const log = Output.scoped(.DNSLookup, true);
+
+    globalThis: *JSC.JSGlobalObject = undefined,
+    promise: JSC.JSPromise.Strong,
+    allocated: bool = false,
+    next: ?*DNSLookup = null,
+
+    pub fn init(globalThis: *JSC.JSGlobalObject, allocator: std.mem.Allocator) !*DNSLookup {
+        var this = try allocator.create(DNSLookup);
+        this.* = .{
+            .globalThis = globalThis,
+            .promise = JSC.JSPromise.Strong.init(globalThis),
+            .allocated = true,
+        };
+        return this;
+    }
+
+    pub fn onCompleteNative(this: *DNSLookup, result: GetAddrInfo.Result.Any) void {
+        const array = result.toJS(this.globalThis).?;
+        this.onCompleteWithArray(array);
+    }
+
+    pub fn processGetAddrInfoNative(this: *DNSLookup, status: i32, result: ?*std.c.addrinfo) void {
+        if (c_ares.Error.initEAI(status)) |err| {
+            var promise = this.promise;
+            var globalThis = this.globalThis;
+
+            const error_value = brk: {
+                if (err == .ESERVFAIL) {
+                    break :brk JSC.Node.Syscall.Error.fromCode(std.c.getErrno(-1), .getaddrinfo).toJSC(globalThis);
+                }
+                const error_value = globalThis.createErrorInstance("DNS lookup failed: {s}", .{err.label()});
+                error_value.put(
+                    globalThis,
+                    JSC.ZigString.static("code"),
+                    JSC.ZigString.init(err.code()).toValueGC(globalThis),
+                );
+                break :brk error_value;
+            };
+
+            this.deinit();
+
+            promise.reject(globalThis, error_value);
+            return;
+        }
+
+        onCompleteNative(this, .{ .addrinfo = result });
+    }
 
     pub fn processGetAddrInfo(this: *DNSLookup, err_: ?c_ares.Error, _: i32, result: ?*c_ares.AddrInfo) void {
         if (err_) |err| {
@@ -258,88 +899,8 @@ pub const DNSLookup = struct {
         this.onComplete(result.?);
     }
 
-    pub fn processGetAddrInfoNative(this: *DNSLookup, status: i32, result: ?*std.c.addrinfo) void {
-        if (c_ares.Error.initEAI(status)) |err| {
-            var promise = this.promise;
-            var globalThis = this.globalThis;
-
-            const error_value = brk: {
-                if (err == .ESERVFAIL) {
-                    break :brk JSC.Node.Syscall.Error.fromCode(std.c.getErrno(-1), .getaddrinfo).toJSC(globalThis);
-                }
-                const error_value = globalThis.createErrorInstance("DNS lookup failed: {s}", .{err.label()});
-                error_value.put(
-                    globalThis,
-                    JSC.ZigString.static("code"),
-                    JSC.ZigString.init(err.code()).toValueGC(globalThis),
-                );
-                break :brk error_value;
-            };
-
-            this.deinit();
-
-            promise.reject(globalThis, error_value);
-            return;
-        }
-
-        this.onCompleteNative(result.?);
-    }
-
-    pub fn onGetAddrInfoNative(this: *DNSLookup, status: i32, result: ?*std.c.addrinfo) void {
-        if (this.resolver_for_caching) |resolver| {
-            // if (this.cache.entry_cache and result != null and result.?.node != null) {
-            //     resolver.putEntryInCache(this.name_hash, this.cache.name_len, result.?);
-            // }
-
-            if (this.cache.pending_cache) {
-                resolver.drainPendingHostNative(this.cache.pos_in_pending, this.globalThis, status, result);
-                return;
-            }
-        }
-
-        this.processGetAddrInfoNative(status, result);
-    }
-
-    pub fn onGetAddrInfo(this: *DNSLookup, err_: ?c_ares.Error, timeout: i32, result: ?*c_ares.AddrInfo) void {
-        if (this.resolver_for_caching) |resolver| {
-            // if (this.cache.entry_cache and result != null and result.?.node != null) {
-            //     resolver.putEntryInCache(this.name_hash, this.cache.name_len, result.?);
-            // }
-
-            if (this.cache.pending_cache) {
-                resolver.drainPendingHostCares(this.cache.pos_in_pending, this.globalThis, err_, timeout, result);
-                return;
-            }
-        }
-
-        this.processGetAddrInfo(err_, timeout, result);
-        if (result) |res| res.deinit();
-    }
-
-    pub const Result = struct {
-        address: std.net.Address,
-        ttl: i32 = 0,
-
-        pub fn toJS(this: *const Result, globalThis: *JSC.JSGlobalObject, allocator: std.mem.Allocator) JSValue {
-            const obj = JSC.JSValue.createEmptyObject(globalThis, 3);
-            obj.put(globalThis, JSC.ZigString.static("address"), addressToJS(allocator, this.address, globalThis));
-            obj.put(globalThis, JSC.ZigString.static("family"), switch (this.address.any.family) {
-                std.os.AF.INET => JSValue.jsNumber(4),
-                std.os.AF.INET6 => JSValue.jsNumber(6),
-                else => JSValue.jsNumber(0),
-            });
-            obj.put(globalThis, JSC.ZigString.static("ttl"), JSValue.jsNumber(this.ttl));
-            return obj;
-        }
-    };
-
     pub fn onComplete(this: *DNSLookup, result: *c_ares.AddrInfo) void {
         const array = result.toJSArray(this.globalThis.allocator(), this.globalThis);
-        this.onCompleteWithArray(array);
-    }
-
-    pub fn onCompleteNative(this: *DNSLookup, result: *std.c.addrinfo) void {
-        const array = addrInfoToJSArray(this.globalThis.allocator(), result, this.globalThis);
         this.onCompleteWithArray(array);
     }
 
@@ -349,15 +910,12 @@ pub const DNSLookup = struct {
         this.promise = .{};
 
         this.deinit();
-        promise.resolve(globalThis, result);
+        promise.resolveOnNextTick(globalThis, result);
     }
 
     pub fn deinit(this: *DNSLookup) void {
-        this.poll_ref.unref(this.globalThis.bunVM());
-        if (this.poll_ref_machport) |port| {
-            port.deinit();
-        }
-        bun.default_allocator.destroy(this);
+        if (this.allocated)
+            this.globalThis.allocator().destroy(this);
     }
 };
 
@@ -388,10 +946,10 @@ pub const DNSResolver = struct {
     pending_host_cache_native: PendingCache = PendingCache.init(),
     // entry_host_cache: std.BoundedArray(128)
 
-    const PendingCache = bun.HiveArray(DNSLookup.PendingCacheKey, 32);
+    const PendingCache = bun.HiveArray(GetAddrInfoRequest.PendingCacheKey, 32);
 
-    pub fn drainPendingHostCares(this: *DNSResolver, index: u8, globalObject: *JSC.JSGlobalObject, err: ?c_ares.Error, timeout: i32, result: ?*c_ares.AddrInfo) void {
-        const key: DNSLookup.PendingCacheKey = brk: {
+    pub fn drainPendingHostCares(this: *DNSResolver, index: u8, err: ?c_ares.Error, timeout: i32, result: ?*c_ares.AddrInfo) void {
+        const key: GetAddrInfoRequest.PendingCacheKey = brk: {
             std.debug.assert(!this.pending_host_cache_cares.available.isSet(index));
             const entry = this.pending_host_cache_cares.buffer[index];
             this.pending_host_cache_cares.buffer[index] = undefined;
@@ -400,25 +958,28 @@ pub const DNSResolver = struct {
         };
 
         var addr = result orelse {
-            var pending: ?*DNSLookup = key.lookup.next_pending;
-            key.lookup.processGetAddrInfo(err, timeout, null);
+            var pending: ?*DNSLookup = key.lookup.head.next;
+            key.lookup.head.processGetAddrInfo(err, timeout, null);
+            bun.default_allocator.destroy(key.lookup);
 
             while (pending) |value| {
-                pending = value.next_pending;
+                pending = value.next;
                 value.processGetAddrInfo(err, timeout, null);
             }
             return;
         };
 
-        var array = addr.toJSArray(this.vm.allocator, globalObject);
+        var pending: ?*DNSLookup = key.lookup.head.next;
+        var prev_global = key.lookup.head.globalThis;
+        var array = addr.toJSArray(this.vm.allocator, prev_global);
         defer addr.deinit();
         array.ensureStillAlive();
-        key.lookup.onCompleteWithArray(array);
+        key.lookup.head.onCompleteWithArray(array);
+        bun.default_allocator.destroy(key.lookup);
+
         array.ensureStillAlive();
         // std.c.addrinfo
 
-        var pending: ?*DNSLookup = key.lookup.next_pending;
-        var prev_global = key.lookup.globalThis;
         while (pending) |value| {
             var new_global = value.globalThis;
             if (prev_global != new_global) {
@@ -428,12 +989,12 @@ pub const DNSResolver = struct {
             array.ensureStillAlive();
             value.onCompleteWithArray(array);
             array.ensureStillAlive();
-            pending = value.next_pending;
+            pending = value.next;
         }
     }
 
-    pub fn drainPendingHostNative(this: *DNSResolver, index: u8, globalObject: *JSC.JSGlobalObject, err: i32, result: ?*std.c.addrinfo) void {
-        const key: DNSLookup.PendingCacheKey = brk: {
+    pub fn drainPendingHostNative(this: *DNSResolver, index: u8, globalObject: *JSC.JSGlobalObject, err: i32, result: GetAddrInfo.Result.Any) void {
+        const key: GetAddrInfoRequest.PendingCacheKey = brk: {
             std.debug.assert(!this.pending_host_cache_native.available.isSet(index));
             const entry = this.pending_host_cache_native.buffer[index];
             this.pending_host_cache_native.buffer[index] = undefined;
@@ -441,79 +1002,70 @@ pub const DNSResolver = struct {
             break :brk entry;
         };
 
-        var addr = result orelse {
-            var pending: ?*DNSLookup = key.lookup.next_pending;
-            key.lookup.processGetAddrInfoNative(err, null);
+        var array = result.toJS(globalObject) orelse {
+            var pending: ?*DNSLookup = key.lookup.head.next;
+            var head = key.lookup.head;
+            head.processGetAddrInfoNative(err, null);
+            bun.default_allocator.destroy(key.lookup);
 
             while (pending) |value| {
-                pending = value.next_pending;
+                pending = value.next;
                 value.processGetAddrInfoNative(err, null);
             }
 
             return;
         };
-
-        var array = addrInfoToJSArray(this.vm.allocator, addr, globalObject);
+        var pending: ?*DNSLookup = key.lookup.head.next;
+        var prev_global = key.lookup.head.globalThis;
         array.ensureStillAlive();
-        key.lookup.onCompleteWithArray(array);
+        key.lookup.head.onCompleteWithArray(array);
+        bun.default_allocator.destroy(key.lookup);
         array.ensureStillAlive();
         // std.c.addrinfo
 
-        var pending: ?*DNSLookup = key.lookup.next_pending;
-        var prev_global = key.lookup.globalThis;
         while (pending) |value| {
             var new_global = value.globalThis;
             if (prev_global != new_global) {
-                array = addrInfoToJSArray(this.vm.allocator, addr, new_global);
+                array = result.toJS(new_global).?;
                 prev_global = new_global;
             }
             array.ensureStillAlive();
             value.onCompleteWithArray(array);
             array.ensureStillAlive();
-            pending = value.next_pending;
+            pending = value.next;
         }
     }
 
+    pub const CacheHit = union(enum) {
+        inflight: *GetAddrInfoRequest.PendingCacheKey,
+        new: *GetAddrInfoRequest.PendingCacheKey,
+        disabled: void,
+    };
+
     pub fn getOrPutIntoPendingCache(
         this: *DNSResolver,
-        key: DNSLookup.PendingCacheKey,
-        value: *DNSLookup,
+        key: GetAddrInfoRequest.PendingCacheKey,
         comptime field: std.meta.FieldEnum(DNSResolver),
-    ) bool {
-        value.cache.name_len = @truncate(u9, key.len);
-        value.name_hash = key.name_hash;
-
+    ) CacheHit {
         var cache: *PendingCache = &@field(this, @tagName(field));
+        var inflight_iter = cache.available.iterator(.{
+            .kind = .unset,
+        });
 
-        var available_iter = cache.available.iterator(.{});
-
-        while (available_iter.next()) |index| {
-            const entry: DNSLookup.PendingCacheKey = cache.buffer[index];
-            if (entry.name_hash == key.name_hash and entry.len == key.len) {
-                if (entry.lookup.next_pending) |prev| {
-                    prev.next_pending = value;
-                } else {
-                    entry.lookup.next_pending = value;
-                }
-                return true;
+        while (inflight_iter.next()) |index| {
+            var entry: *GetAddrInfoRequest.PendingCacheKey = &cache.buffer[index];
+            if (entry.hash == key.hash and entry.len == key.len) {
+                return .{ .inflight = entry };
             }
         }
 
-        value.poll_ref.ref(this.vm);
-        value.resolver_for_caching = this;
-
         if (cache.get()) |new| {
-            value.cache.pending_cache = true;
-            value.cache.pos_in_pending = @truncate(
-                @TypeOf(value.cache.pos_in_pending),
-                cache.indexOf(new).?,
-            );
-
-            new.* = key;
-            new.lookup = value;
+            new.hash = key.hash;
+            new.len = key.len;
+            return .{ .new = new };
         }
 
-        return false;
+        return .{ .disabled = {} };
     }
 
     pub const ChannelResult = union(enum) {
@@ -576,14 +1128,10 @@ pub const DNSResolver = struct {
 
         var poll = poll_entry.value_ptr.*.?;
 
-        if ((!readable and poll.flags.contains(.poll_readable)) or (!writable and poll.flags.contains(.poll_writable))) {
-            _ = poll.unregister(vm.uws_event_loop.?);
-        }
-
-        if (readable)
+        if (readable and !poll.flags.contains(.poll_readable))
             _ = poll.register(vm.uws_event_loop.?, .readable, false);
 
-        if (writable)
+        if (writable and !poll.flags.contains(.poll_writable))
             _ = poll.register(vm.uws_event_loop.?, .writable, false);
     }
 
@@ -627,23 +1175,6 @@ pub const DNSResolver = struct {
             .{ "srv", .SRV },
             .{ "txt", .TXT },
         });
-    };
-
-    pub const GetAddrInfoBackend = enum {
-        c_ares,
-        system,
-
-        pub const label = bun.ComptimeStringMap(GetAddrInfoBackend, .{
-            .{ "c-ares", .c_ares },
-            .{ "cares", .c_ares },
-            .{ "async", .c_ares },
-            .{ "system", default_backend },
-        });
-
-        pub const default_backend: GetAddrInfoBackend = if (Environment.isMac)
-            GetAddrInfoBackend.system
-        else
-            GetAddrInfoBackend.c_ares;
     };
 
     pub fn resolve(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
@@ -724,18 +1255,20 @@ pub const DNSResolver = struct {
             return .zero;
         }
 
-        var backend = GetAddrInfoBackend.default_backend;
+        var options = GetAddrInfo.Options{};
+        var port: u16 = 0;
 
         if (arguments.len > 1 and arguments.ptr[1].isCell()) {
-            if (arguments.ptr[1].get(globalThis, "backend")) |backend_value| {
-                if (!backend_value.isEmptyOrUndefinedOrNull() and backend_value.isString()) {
-                    var str = backend_value.getZigString(globalThis);
-                    backend = GetAddrInfoBackend.label.getWithEql(str, JSC.ZigString.eqlComptime) orelse {
-                        globalThis.throwInvalidArgumentType("lookup", "backend", "one of: async or system");
-                        return .zero;
-                    };
+            if (arguments.ptr[1].get(globalThis, "port")) |port_value| {
+                if (port_value.isNumber()) {
+                    port = port_value.to(u16);
                 }
             }
+
+            options = GetAddrInfo.Options.fromJS(arguments.ptr[1], globalThis) catch |err| {
+                globalThis.throw("Invalid options passed to lookup(): {s}", .{@errorName(err)});
+                return .zero;
+            };
         }
 
         const name = name_str.toSlice(globalThis, bun.default_allocator);
@@ -743,77 +1276,30 @@ pub const DNSResolver = struct {
         var vm = globalThis.bunVM();
         var resolver = vm.rareData().globalDNSResolver(vm);
 
-        return resolver.doLookup(backend, name.slice(), globalThis);
+        return resolver.doLookup(name.slice(), port, options, globalThis);
     }
 
-    pub fn doLookup(this: *DNSResolver, preferred_backend_: GetAddrInfoBackend, name: []const u8, globalThis: *JSC.JSGlobalObject) JSC.JSValue {
-        var backend = preferred_backend_;
-        const normalized = normalizeDNSName(name);
-        if (normalized.ptr != name.ptr) {
-            if (backend == .c_ares) {
-                backend = .system;
-            }
-        }
-
-        return switch (backend) {
-            .c_ares => this.c_aresLookupWithNormalizedName(normalized, globalThis),
+    pub fn doLookup(this: *DNSResolver, name: []const u8, port: u16, options: GetAddrInfo.Options, globalThis: *JSC.JSGlobalObject) JSC.JSValue {
+        var opts = options;
+        var backend = opts.backend;
+        const normalized = normalizeDNSName(name, &backend);
+        opts.backend = backend;
+        const query = GetAddrInfo{
+            .options = opts,
+            .port = port,
+            .name = normalized,
+        };
+        return switch (opts.backend) {
+            .c_ares => this.c_aresLookupWithNormalizedName(query, globalThis),
+            .libc => LibC.lookup(this, query, globalThis),
             .system => if (comptime Environment.isMac)
-                this.nativeLookupWithNormalizedName(normalized, globalThis)
+                LibInfo.lookup(this, query, globalThis)
             else
-                this.libcLookupWithNormalizedName(normalized, globalThis),
+                LibC.lookup(this, query, globalThis),
         };
     }
 
-    pub fn libcLookupWithNormalizedName(_: *DNSResolver, _: []const u8, _: *JSC.JSGlobalObject) JSC.JSValue {
-        return JSC.JSValue.jsUndefined();
-    }
-
-    pub fn nativeLookupWithNormalizedName(this: *DNSResolver, name: []const u8, globalThis: *JSC.JSGlobalObject) JSC.JSValue {
-        const getaddrinfo_async_start = LibInfo.getaddrinfo_async_start() orelse {
-            return JSC.JSValue.jsUndefined();
-        };
-
-        if (name.len > 1023) {
-            globalThis.throwInvalidArgumentType("lookup", "name", "name must be less than 1024 bytes");
-            return .zero;
-        }
-
-        var promise = JSC.JSPromise.Strong.init(globalThis);
-        var promise_value = promise.value();
-        var dns = this.vm.allocator.create(DNSLookup) catch unreachable;
-        dns.* = .{ .promise = promise, .globalThis = globalThis, .cache = .{} };
-
-        var key = DNSLookup.PendingCacheKey.init(name, undefined);
-
-        if (!this.getOrPutIntoPendingCache(key, dns, .pending_host_cache_native)) {
-            var name_buf: [1024]u8 = undefined;
-            _ = strings.copy(name_buf[0..], name);
-
-            var port: ?*anyopaque = null;
-            name_buf[name.len] = 0;
-            var name_z = name_buf[0..name.len :0];
-
-            const errno = getaddrinfo_async_start(&port, name_z.ptr, null, null, DNSLookup.getAddrInfoAsyncCallback, dns);
-            if (errno != 0) {
-                promise.reject(globalThis, globalThis.createErrorInstance("getaddrinfo_async_start error: {s}", .{@tagName(std.c.getErrno(errno))}));
-                promise.strong.deinit();
-                this.vm.allocator.destroy(dns);
-                this.pending_host_cache_native.available.set(dns.cache.pos_in_pending);
-                return promise_value;
-            }
-            std.debug.assert(port != null);
-
-            var poll_ref = bun.JSC.FilePoll.init(this.vm, std.math.maxInt(i32) - 1, .{}, DNSLookup, dns);
-            std.debug.assert(poll_ref.registerWithFd(this.vm.uws_event_loop.?, .machport, true, @ptrToInt(port)) == .result);
-
-            dns.poll_ref_machport = poll_ref;
-            dns.poll_ref_machport_id = port;
-        }
-
-        return promise_value;
-    }
-
-    pub fn c_aresLookupWithNormalizedName(this: *DNSResolver, name: []const u8, globalThis: *JSC.JSGlobalObject) JSC.JSValue {
+    pub fn c_aresLookupWithNormalizedName(this: *DNSResolver, query: GetAddrInfo, globalThis: *JSC.JSGlobalObject) JSC.JSValue {
         var channel: *c_ares.Channel = switch (this.getChannel()) {
             .result => |res| res,
             .err => |err| {
@@ -823,21 +1309,43 @@ pub const DNSResolver = struct {
                     .message = JSC.ZigString.init(err.label()),
                 };
 
-                return system_error.toErrorInstance(globalThis);
+                globalThis.throwValue(system_error.toErrorInstance(globalThis));
+                return .zero;
             },
         };
 
-        var promise = JSC.JSPromise.Strong.init(globalThis);
-        var promise_value = promise.value();
-        var dns = this.vm.allocator.create(DNSLookup) catch unreachable;
-        dns.* = .{ .promise = promise, .globalThis = globalThis, .cache = .{} };
+        const key = GetAddrInfoRequest.PendingCacheKey.init(query);
 
-        var key = DNSLookup.PendingCacheKey.init(name, undefined);
+        var cache = this.getOrPutIntoPendingCache(key, .pending_host_cache_cares);
+        if (cache == .inflight) {
+            var dns_lookup = DNSLookup.init(globalThis, globalThis.allocator()) catch unreachable;
+            cache.inflight.append(dns_lookup);
+            return dns_lookup.promise.value();
+        }
 
-        if (!this.getOrPutIntoPendingCache(key, dns, .pending_host_cache_cares))
-            channel.getAddrInfo(name, 0, &.{}, DNSLookup, dns, DNSLookup.onGetAddrInfo);
+        // var hints_buf = &[_]c_ares.AddrInfo_hints{query.toCAres()};
+        var request = GetAddrInfoRequest.init(
+            cache,
+            .{
+                .c_ares = {},
+            },
+            this,
+            query,
+            globalThis,
+            "pending_host_cache_cares",
+        ) catch unreachable;
+        const promise = request.tail.promise.value();
 
-        return promise_value;
+        channel.getAddrInfo(
+            query.name,
+            query.port,
+            &.{},
+            GetAddrInfoRequest,
+            request,
+            GetAddrInfoRequest.onCaresComplete,
+        );
+
+        return promise;
     }
 
     comptime {

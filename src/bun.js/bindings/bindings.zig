@@ -1464,8 +1464,16 @@ pub const JSPromise = extern struct {
             this.swap().reject(globalThis, val);
         }
 
+        pub fn rejectOnNextTick(this: *Strong, globalThis: *JSC.JSGlobalObject, val: JSC.JSValue) void {
+            this.swap().rejectOnNextTick(globalThis, val);
+        }
+
         pub fn resolve(this: *Strong, globalThis: *JSC.JSGlobalObject, val: JSC.JSValue) void {
             this.swap().resolve(globalThis, val);
+        }
+
+        pub fn resolveOnNextTick(this: *Strong, globalThis: *JSC.JSGlobalObject, val: JSC.JSValue) void {
+            this.swap().resolveOnNextTick(globalThis, val);
         }
 
         pub fn init(globalThis: *JSC.JSGlobalObject) Strong {
@@ -1530,6 +1538,14 @@ pub const JSPromise = extern struct {
         return cppFn("resolvedPromise", .{ globalThis, value });
     }
 
+    pub fn resolveOnNextTick(promise: *JSC.JSPromise, globalThis: *JSGlobalObject, value: JSC.JSValue) void {
+        return cppFn("resolveOnNextTick", .{ promise, globalThis, value });
+    }
+
+    pub fn rejectOnNextTick(promise: *JSC.JSPromise, globalThis: *JSGlobalObject, value: JSC.JSValue) void {
+        return cppFn("rejectOnNextTick", .{ promise, globalThis, value });
+    }
+
     /// Create a new promise with an already fulfilled value
     /// This is the faster function for doing that.
     pub fn resolvedPromiseValue(globalThis: *JSGlobalObject, value: JSValue) JSValue {
@@ -1572,21 +1588,23 @@ pub const JSPromise = extern struct {
     }
 
     pub const Extern = [_][]const u8{
-        "rejectWithCaughtException",
-        "status",
-        "result",
-        "isHandled",
-        "resolvedPromise",
-        "rejectedPromise",
-        "resolve",
-        "reject",
-        "rejectAsHandled",
-        // "rejectException",
-        "rejectAsHandledException",
-        "rejectedPromiseValue",
-        "resolvedPromiseValue",
         "asValue",
         "create",
+        "isHandled",
+        "reject",
+        "rejectAsHandled",
+        "rejectAsHandledException",
+        "rejectOnNextTick",
+        "rejectWithCaughtException",
+        "rejectedPromise",
+        "rejectedPromiseValue",
+        "resolve",
+        "resolveOnNextTick",
+        "resolvedPromise",
+        "resolvedPromiseValue",
+        "result",
+        "status",
+        // "rejectException",
     };
 };
 
@@ -2065,6 +2083,35 @@ pub const JSGlobalObject = extern struct {
         this.vm().throwError(this, this.createErrorInstance(fmt, args));
     }
 
+    pub fn queueMicrotask(
+        this: *JSGlobalObject,
+        function: JSValue,
+        args: []JSC.JSValue,
+    ) void {
+        this.queueMicrotaskJob(
+            function,
+            if (args.len > 0) args[0] else .zero,
+            if (args.len > 1) args[1] else .zero,
+            if (args.len > 2) args[2] else .zero,
+        );
+    }
+
+    pub fn queueMicrotaskJob(
+        this: *JSGlobalObject,
+        function: JSValue,
+        first: JSValue,
+        second: JSValue,
+        third: JSValue,
+    ) void {
+        shim.cppFn("queueMicrotaskJob", .{
+            this,
+            function,
+            first,
+            second,
+            third,
+        });
+    }
+
     pub fn throwValue(
         this: *JSGlobalObject,
         value: JSC.JSValue,
@@ -2211,6 +2258,7 @@ pub const JSGlobalObject = extern struct {
         "startRemoteInspector",
         "handleRejectedPromises",
         "createSyntheticModule_",
+        "queueMicrotaskJob",
         // "createError",
         // "throwError",
     };

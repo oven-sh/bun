@@ -137,10 +137,12 @@ pub extern fn JSC__JSPromise__rejectAsHandled(arg0: ?*bindings.JSPromise, arg1: 
 pub extern fn JSC__JSPromise__rejectAsHandledException(arg0: ?*bindings.JSPromise, arg1: *bindings.JSGlobalObject, arg2: [*c]bindings.Exception) void;
 pub extern fn JSC__JSPromise__rejectedPromise(arg0: *bindings.JSGlobalObject, JSValue1: JSC__JSValue) ?*bindings.JSPromise;
 pub extern fn JSC__JSPromise__rejectedPromiseValue(arg0: *bindings.JSGlobalObject, JSValue1: JSC__JSValue) JSC__JSValue;
+pub extern fn JSC__JSPromise__rejectOnNextTick(arg0: ?*bindings.JSPromise, arg1: *bindings.JSGlobalObject, JSValue2: JSC__JSValue) void;
 pub extern fn JSC__JSPromise__rejectWithCaughtException(arg0: ?*bindings.JSPromise, arg1: *bindings.JSGlobalObject, arg2: bJSC__ThrowScope) void;
 pub extern fn JSC__JSPromise__resolve(arg0: ?*bindings.JSPromise, arg1: *bindings.JSGlobalObject, JSValue2: JSC__JSValue) void;
 pub extern fn JSC__JSPromise__resolvedPromise(arg0: *bindings.JSGlobalObject, JSValue1: JSC__JSValue) ?*bindings.JSPromise;
 pub extern fn JSC__JSPromise__resolvedPromiseValue(arg0: *bindings.JSGlobalObject, JSValue1: JSC__JSValue) JSC__JSValue;
+pub extern fn JSC__JSPromise__resolveOnNextTick(arg0: ?*bindings.JSPromise, arg1: *bindings.JSGlobalObject, JSValue2: JSC__JSValue) void;
 pub extern fn JSC__JSPromise__result(arg0: ?*bindings.JSPromise, arg1: *bindings.VM) JSC__JSValue;
 pub extern fn JSC__JSPromise__status(arg0: [*c]const JSC__JSPromise, arg1: *bindings.VM) u32;
 pub extern fn JSC__JSInternalPromise__create(arg0: *bindings.JSGlobalObject) [*c]bindings.JSInternalPromise;
@@ -163,6 +165,7 @@ pub extern fn JSC__JSGlobalObject__generateHeapSnapshot(arg0: *bindings.JSGlobal
 pub extern fn JSC__JSGlobalObject__getCachedObject(arg0: *bindings.JSGlobalObject, arg1: [*c]const ZigString) JSC__JSValue;
 pub extern fn JSC__JSGlobalObject__handleRejectedPromises(arg0: *bindings.JSGlobalObject) void;
 pub extern fn JSC__JSGlobalObject__putCachedObject(arg0: *bindings.JSGlobalObject, arg1: [*c]const ZigString, JSValue2: JSC__JSValue) JSC__JSValue;
+pub extern fn JSC__JSGlobalObject__queueMicrotaskJob(arg0: *bindings.JSGlobalObject, JSValue1: JSC__JSValue, JSValue2: JSC__JSValue, JSValue3: JSC__JSValue, JSValue4: JSC__JSValue) void;
 pub extern fn JSC__JSGlobalObject__reload(arg0: *bindings.JSGlobalObject) void;
 pub extern fn JSC__JSGlobalObject__startRemoteInspector(arg0: *bindings.JSGlobalObject, arg1: [*c]u8, arg2: u16) bool;
 pub extern fn JSC__JSGlobalObject__vm(arg0: *bindings.JSGlobalObject) *bindings.VM;

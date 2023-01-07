@@ -449,6 +449,7 @@ COPY --from=picohttp ${BUN_DEPS_OUT_DIR}/*.o ${BUN_DEPS_OUT_DIR}/
 COPY --from=uws ${BUN_DEPS_OUT_DIR}/*.a ${BUN_DEPS_OUT_DIR}/
 COPY --from=uws ${BUN_DEPS_OUT_DIR}/*.o ${BUN_DEPS_OUT_DIR}/
 COPY --from=tinycc ${BUN_DEPS_OUT_DIR}/*.a ${BUN_DEPS_OUT_DIR}/
+COPY --from=c-ares ${BUN_DEPS_OUT_DIR}/*.a ${BUN_DEPS_OUT_DIR}/
 
 # Required for `make webcrypto`
 COPY src/deps/boringssl/include ${BUN_DIR}/src/deps/boringssl/include
@@ -477,6 +478,27 @@ ENV JSC_BASE_DIR=${WEBKIT_DIR}
 ENV LIB_ICU_PATH=${WEBKIT_DIR}/lib
 
 RUN cd $BUN_DIR && make sqlite
+
+FROM prepare_release as c-ares
+
+ARG DEBIAN_FRONTEND
+ARG GITHUB_WORKSPACE
+ARG ZIG_PATH
+# Directory extracts to "bun-webkit"
+ARG WEBKIT_DIR
+ARG BUN_RELEASE_DIR
+ARG BUN_DEPS_OUT_DIR
+ARG BUN_DIR
+
+COPY Makefile ${BUN_DIR}/Makefile
+COPY src/deps/c-ares ${BUN_DIR}/src/deps/c-ares
+
+WORKDIR $BUN_DIR
+
+ENV JSC_BASE_DIR=${WEBKIT_DIR}
+ENV LIB_ICU_PATH=${WEBKIT_DIR}/lib
+
+RUN cd $BUN_DIR && make c-ares
 
 FROM scratch as build_release_cpp
 

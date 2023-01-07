@@ -744,16 +744,19 @@ pub export fn napi_create_external_arraybuffer(env: napi_env, external_data: ?*a
     result.* = external.toArrayBuffer(env);
     return .ok;
 }
-pub export fn napi_get_arraybuffer_info(env: napi_env, arraybuffer: napi_value, data: *[*]u8, byte_length: *usize) napi_status {
+pub export fn napi_get_arraybuffer_info(env: napi_env, arraybuffer: napi_value, data: ?*[*]u8, byte_length: ?*usize) napi_status {
     const array_buffer = arraybuffer.asArrayBuffer(env) orelse return .arraybuffer_expected;
     var slice = array_buffer.slice();
-    data.* = slice.ptr;
-    byte_length.* = slice.len;
+    if (data) |dat|
+        dat.* = slice.ptr;
+    if (byte_length) |len|
+        len.* = slice.len;
     return .ok;
 }
-pub export fn napi_is_typedarray(_: napi_env, value: napi_value, result: *bool) napi_status {
-    result.* = value.jsTypeLoose().isTypedArray();
-    return .ok;
+pub export fn napi_is_typedarray(_: napi_env, value: napi_value, result: ?*bool) napi_status {
+    if (result != null)
+        result.?.* = value.jsTypeLoose().isTypedArray();
+    return if (result != null) .ok else .invalid_arg;
 }
 pub export fn napi_create_typedarray(env: napi_env, @"type": napi_typedarray_type, length: usize, arraybuffer: napi_value, byte_offset: usize, result: *napi_value) napi_status {
     result.* = JSValue.c(

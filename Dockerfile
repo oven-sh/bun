@@ -474,6 +474,7 @@ ARG BUN_DIR
 ENV CCACHE_DIR=/ccache
 
 COPY Makefile ${BUN_DIR}/Makefile
+COPY src/bun.js/bindings/sqlite ${BUN_DIR}/src/bun.js/bindings/sqlite
 
 WORKDIR $BUN_DIR
 

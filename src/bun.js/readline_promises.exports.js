@@ -23,7 +23,7 @@
 
 var { Promise } = import.meta.primordials;
 var readline = import.meta.require("node:readline");
-var { isWritable } = import.meta.require("node:stream");
+var isWritable;
 
 var ArrayPrototypePush = Array.prototype.push;
 var ArrayPrototypeJoin = Array.prototype.join;
@@ -60,6 +60,7 @@ export class Readline {
   #todo = [];
 
   constructor(stream, options = undefined) {
+    isWritable ??= import.meta.require("node:stream").isWritable;
     if (!isWritable(stream))
       throw new ERR_INVALID_ARG_TYPE("stream", "Writable", stream);
     this.#stream = stream;

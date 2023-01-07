@@ -111,6 +111,30 @@ RUN mkdir -p ${WEBKIT_DIR} && cd ${GITHUB_WORKSPACE} && \
 LABEL org.opencontainers.image.title="bun base image with zig & webkit ${BUILDARCH} (glibc)"
 LABEL org.opencontainers.image.source=https://github.com/oven-sh/bun
 
+FROM bun-base as c-ares
+
+ARG DEBIAN_FRONTEND
+ARG GITHUB_WORKSPACE
+ARG ZIG_PATH
+# Directory extracts to "bun-webkit"
+ARG WEBKIT_DIR
+ARG BUN_RELEASE_DIR
+ARG BUN_DEPS_OUT_DIR
+ARG BUN_DIR
+ARG CPU_TARGET
+
+ENV CPU_TARGET=${CPU_TARGET}
+ENV CCACHE_DIR=/ccache
+ENV JSC_BASE_DIR=${WEBKIT_DIR}
+ENV LIB_ICU_PATH=${WEBKIT_DIR}/lib
+
+COPY Makefile ${BUN_DIR}/Makefile
+COPY src/deps/c-ares ${BUN_DIR}/src/deps/c-ares
+
+WORKDIR $BUN_DIR
+
+RUN --mount=type=cache,target=/ccache cd $BUN_DIR && make c-ares
+
 
 FROM bun-base as lolhtml
 
@@ -482,31 +506,6 @@ ENV JSC_BASE_DIR=${WEBKIT_DIR}
 ENV LIB_ICU_PATH=${WEBKIT_DIR}/lib
 
 RUN --mount=type=cache,target=/ccache cd $BUN_DIR && make sqlite
-
-FROM bun-base as c-ares
-
-ARG DEBIAN_FRONTEND
-ARG GITHUB_WORKSPACE
-ARG ZIG_PATH
-# Directory extracts to "bun-webkit"
-ARG WEBKIT_DIR
-ARG BUN_RELEASE_DIR
-ARG BUN_DEPS_OUT_DIR
-ARG BUN_DIR
-ARG CPU_TARGET
-ENV CPU_TARGET=${CPU_TARGET}
-
-ENV CCACHE_DIR=/ccache
-
-COPY Makefile ${BUN_DIR}/Makefile
-COPY src/deps/c-ares ${BUN_DIR}/src/deps/c-ares
-
-WORKDIR $BUN_DIR
-
-ENV JSC_BASE_DIR=${WEBKIT_DIR}
-ENV LIB_ICU_PATH=${WEBKIT_DIR}/lib
-
-RUN --mount=type=cache,target=/ccache mkdir -p ${BUN_DEPS_OUT_DIR} && cd $BUN_DIR && make c-ares
 
 FROM scratch as build_release_cpp
 

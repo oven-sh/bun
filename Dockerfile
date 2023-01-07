@@ -133,7 +133,7 @@ COPY src/deps/c-ares ${BUN_DIR}/src/deps/c-ares
 
 WORKDIR $BUN_DIR
 
-RUN --mount=type=cache,target=/ccache cd $BUN_DIR && make c-ares
+RUN --mount=type=cache,target=/ccache cd $BUN_DIR && make c-ares && rm -rf ${BUN_DIR}/src/deps/c-ares/build ${BUN_DIR}/Makefile
 
 
 FROM bun-base as lolhtml

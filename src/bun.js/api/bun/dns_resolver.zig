@@ -301,7 +301,7 @@ pub const GetAddrInfo = struct {
 
     pub const Options = packed struct {
         family: Family = .unspecified,
-        socktype: SockType = .unspecified,
+        socktype: SocketType = .unspecified,
         protocol: Protocol = .unspecified,
         backend: Backend = Backend.default,
         flags: i32 = 0,
@@ -332,8 +332,8 @@ pub const GetAddrInfo = struct {
                     options.family = try Family.fromJS(family, globalObject);
                 }
 
-                if (value.get(globalObject, "socktype")) |socktype| {
-                    options.socktype = try SockType.fromJS(socktype, globalObject);
+                if (value.get(globalObject, "socketType") orelse value.get(globalObject, "socktype")) |socktype| {
+                    options.socktype = try SocketType.fromJS(socktype, globalObject);
                 }
 
                 if (value.get(globalObject, "protocol")) |protocol| {
@@ -369,6 +369,7 @@ pub const GetAddrInfo = struct {
             .{ "IPv6", Family.inet6 },
             .{ "ipv4", Family.inet },
             .{ "ipv6", Family.inet6 },
+            .{ "any", Family.unspecified },
         });
 
         pub fn fromJS(value: JSC.JSValue, globalObject: *JSC.JSGlobalObject) !Family {
@@ -405,17 +406,19 @@ pub const GetAddrInfo = struct {
         }
     };
 
-    pub const SockType = enum(u2) {
+    pub const SocketType = enum(u2) {
         unspecified,
         stream,
         dgram,
 
-        const map = bun.ComptimeStringMap(SockType, .{
-            .{ "stream", SockType.stream },
-            .{ "dgram", SockType.dgram },
+        const map = bun.ComptimeStringMap(SocketType, .{
+            .{ "stream", SocketType.stream },
+            .{ "dgram", SocketType.dgram },
+            .{ "tcp", SocketType.stream },
+            .{ "udp", SocketType.dgram },
         });
 
-        pub fn toLibC(this: SockType) i32 {
+        pub fn toLibC(this: SocketType) i32 {
             switch (this) {
                 .unspecified => return 0,
                 .stream => return std.os.SOCK.STREAM,
@@ -423,7 +426,7 @@ pub const GetAddrInfo = struct {
             }
         }
 
-        pub fn fromJS(value: JSC.JSValue, globalObject: *JSC.JSGlobalObject) !SockType {
+        pub fn fromJS(value: JSC.JSValue, globalObject: *JSC.JSGlobalObject) !SocketType {
             if (value.isEmptyOrUndefinedOrNull())
                 return .unspecified;
 
@@ -432,7 +435,7 @@ pub const GetAddrInfo = struct {
                     0 => .unspecified,
                     1 => .stream,
                     2 => .dgram,
-                    else => return error.InvalidSockType,
+                    else => return error.InvalidSocketType,
                 };
             }
 
@@ -441,10 +444,10 @@ pub const GetAddrInfo = struct {
                 if (str.len == 0)
                     return .unspecified;
 
-                return map.getWithEql(str, JSC.ZigString.eqlComptime) orelse return error.InvalidSockType;
+                return map.getWithEql(str, JSC.ZigString.eqlComptime) orelse return error.InvalidSocketType;
             }
 
-            return error.InvalidSockType;
+            return error.InvalidSocketType;
         }
     };
 
@@ -503,6 +506,7 @@ pub const GetAddrInfo = struct {
             .{ "async", .c_ares },
             .{ "libc", .libc },
             .{ "system", .system },
+            .{ "getaddrinfo", .libc },
         });
 
         pub const default: GetAddrInfo.Backend = if (Environment.isMac)

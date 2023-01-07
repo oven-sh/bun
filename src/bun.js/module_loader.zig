@@ -1655,6 +1655,24 @@ pub const ModuleLoader = struct {
                         .hash = 0,
                     };
                 },
+                .@"node:dns" => {
+                    return ResolvedSource{
+                        .allocator = null,
+                        .source_code = ZigString.init(jsModuleFromFile(jsc_vm.load_builtins_from_path, "node-dns.exports.js")),
+                        .specifier = ZigString.init("node:dns"),
+                        .source_url = ZigString.init("node:dns"),
+                        .hash = 0,
+                    };
+                },
+                .@"node:dns/promises" => {
+                    return ResolvedSource{
+                        .allocator = null,
+                        .source_code = ZigString.init(jsModuleFromFile(jsc_vm.load_builtins_from_path, "node-dns_promises.exports.js")),
+                        .specifier = ZigString.init("node:dns/promises"),
+                        .source_url = ZigString.init("node:dns/promises"),
+                        .hash = 0,
+                    };
+                },
                 .@"node:path/win32" => {
                     return ResolvedSource{
                         .allocator = null,
@@ -1983,6 +2001,8 @@ pub const HardcodedModule = enum {
     @"node:buffer",
     @"node:child_process",
     @"node:crypto",
+    @"node:dns",
+    @"node:dns/promises",
     @"node:events",
     @"node:fs",
     @"node:fs/promises",
@@ -2033,6 +2053,7 @@ pub const HardcodedModule = enum {
             .{ "node:http", HardcodedModule.@"node:http" },
             .{ "node:https", HardcodedModule.@"node:https" },
             .{ "node:module", HardcodedModule.@"node:module" },
+            .{ "node:dns", HardcodedModule.@"node:dns" },
             .{ "node:net", HardcodedModule.@"node:net" },
             .{ "node:os", HardcodedModule.@"node:os" },
             .{ "node:path", HardcodedModule.@"node:path" },
@@ -2069,6 +2090,8 @@ pub const HardcodedModule = enum {
             .{ "depd", "depd" },
             .{ "detect-libc", "detect-libc" },
             .{ "detect-libc/lib/detect-libc.js", "detect-libc" },
+            .{ "dns", "node:dns" },
+            .{ "dns/promises", "node:dns/promises" },
             .{ "events", "node:events" },
             .{ "ffi", "bun:ffi" },
             .{ "fs", "node:fs" },
@@ -2081,6 +2104,8 @@ pub const HardcodedModule = enum {
             .{ "node:buffer", "node:buffer" },
             .{ "node:child_process", "node:child_process" },
             .{ "node:crypto", "node:crypto" },
+            .{ "node:dns", "node:dns" },
+            .{ "node:dns/promises", "node:dns/promises" },
             .{ "node:events", "node:events" },
             .{ "node:fs", "node:fs" },
             .{ "node:fs/promises", "node:fs/promises" },

@@ -1477,18 +1477,23 @@ function InterfaceConstructor(input, output, completer, terminal) {
     history = input.history;
     historySize = input.historySize;
     signal = input.signal;
+
     var tabSize = input.tabSize;
     if (tabSize !== undefined) {
       validateUint32(tabSize, "tabSize", true);
       this.tabSize = tabSize;
     }
     removeHistoryDuplicates = input.removeHistoryDuplicates;
-    if (input.prompt !== undefined) {
-      prompt = input.prompt;
+
+    var inputPrompt = input.prompt;
+    if (inputPrompt !== undefined) {
+      prompt = inputPrompt;
     }
-    if (input.escapeCodeTimeout !== undefined) {
-      if (NumberIsFinite(input.escapeCodeTimeout)) {
-        this.escapeCodeTimeout = input.escapeCodeTimeout;
+
+    var inputEscapeCodeTimeout = input.escapeCodeTimeout;
+    if (inputEscapeCodeTimeout !== undefined) {
+      if (NumberIsFinite(inputEscapeCodeTimeout)) {
+        this.escapeCodeTimeout = inputEscapeCodeTimeout;
       } else {
         throw new ERR_INVALID_ARG_VALUE(
           "input.escapeCodeTimeout",

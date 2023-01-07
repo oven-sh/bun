@@ -108,3 +108,5 @@ misctools/machbench
 .eslintcache
 
 bun-webkit
+
+src/deps/c-ares/build

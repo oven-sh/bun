@@ -41,9 +41,9 @@ var {
     validateInteger,
     ERR_INVALID_ARG_TYPE,
   },
-} = readline.default[kInternal];
+} = readline[kInternal];
 
-const { kClearToLineBeginning, kClearToLineEnd, kClearLine, kClearScreenDown } =
+var { kClearToLineBeginning, kClearToLineEnd, kClearLine, kClearScreenDown } =
   CSI;
 
 class AbortError extends Error {
@@ -79,7 +79,7 @@ export class Readline {
     validateInteger(x, "x");
     if (y != null) validateInteger(y, "y");
 
-    const data = y == null ? CSI`${x + 1}G` : CSI`${y + 1};${x + 1}H`;
+    var data = y == null ? CSI`${x + 1}G` : CSI`${y + 1};${x + 1}H`;
     if (this.#autoCommit) process.nextTick(() => this.#stream.write(data));
     else ArrayPrototypePush.call(this.#todo, data);
 
@@ -97,7 +97,7 @@ export class Readline {
       validateInteger(dx, "dx");
       validateInteger(dy, "dy");
 
-      let data = "";
+      var data = "";
 
       if (dx < 0) {
         data += CSI`${-dx}D`;
@@ -127,7 +127,7 @@ export class Readline {
   clearLine(dir) {
     validateInteger(dir, "dir", -1, 1);
 
-    const data =
+    var data =
       dir < 0 ? kClearToLineBeginning : dir > 0 ? kClearToLineEnd : kClearLine;
     if (this.#autoCommit) process.nextTick(() => this.#stream.write(data));
     else ArrayPrototypePush.call(this.#todo, data);
@@ -178,7 +178,7 @@ export class Interface extends _Interface {
   }
   question(query, options = kEmptyObject) {
     return new Promise((resolve, reject) => {
-      let cb = resolve;
+      var cb = resolve;
 
       if (options?.signal) {
         validateAbortSignal(options.signal, "options.signal");
@@ -188,7 +188,7 @@ export class Interface extends _Interface {
           );
         }
 
-        const onAbort = () => {
+        var onAbort = () => {
           this[kQuestionCancel]();
           reject(new AbortError(undefined, { cause: options.signal.reason }));
         };
@@ -213,6 +213,5 @@ export default {
   Interface,
   createInterface,
 
-  // [SymbolFor("__BUN_INTERNALS_DO_NOT_USE_OR_YOU_WILL_BE_FIRED__")]: {},
-  [SymbolFor("CommonJS")]: true,
+  [SymbolFor("CommonJS")]: 0,
 };

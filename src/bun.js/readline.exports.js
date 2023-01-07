@@ -178,12 +178,12 @@ var isZeroWidthCodePoint = (code) => {
  * Returns the number of columns required to display the given string.
  */
 var getStringWidth = function getStringWidth(str, removeControlChars = true) {
-  let width = 0;
+  var width = 0;
 
   if (removeControlChars) str = stripVTControlCharacters(str);
   str = StringPrototypeNormalize.call(str, "NFC");
-  for (const char of new SafeStringIterator(str)) {
-    const code = StringPrototypeCodePointAt.call(char, 0);
+  for (var char of new SafeStringIterator(str)) {
+    var code = StringPrototypeCodePointAt.call(char, 0);
     if (isFullWidthCodePoint(code)) {
       width += 2;
     } else if (!isZeroWidthCodePoint(code)) {
@@ -222,7 +222,7 @@ function promisify(original) {
   validateFunction(original, "original");
 
   if (original[kCustomPromisifiedSymbol]) {
-    const fn = original[kCustomPromisifiedSymbol];
+    var fn = original[kCustomPromisifiedSymbol];
 
     validateFunction(fn, "util.promisify.custom");
 
@@ -237,7 +237,7 @@ function promisify(original) {
 
   // Names to create an object from in case the callback receives multiple
   // arguments, e.g. ['bytesRead', 'buffer'] for fs.read.
-  const argumentNames = original[kCustomPromisifyArgsSymbol];
+  var argumentNames = original[kCustomPromisifyArgsSymbol];
 
   function fn(...args) {
     return new Promise((resolve, reject) => {
@@ -246,8 +246,8 @@ function promisify(original) {
           return reject(err);
         }
         if (argumentNames !== undefined && values.length > 1) {
-          const obj = {};
-          for (let i = 0; i < argumentNames.length; i++)
+          var obj = {};
+          for (var i = 0; i < argumentNames.length; i++)
             obj[argumentNames[i]] = values[i];
           resolve(obj);
         } else {
@@ -268,9 +268,9 @@ function promisify(original) {
     configurable: true,
   });
 
-  const descriptors = ObjectGetOwnPropertyDescriptors(original);
-  const propertiesValues = ObjectValues(descriptors);
-  for (let i = 0; i < propertiesValues.length; i++) {
+  var descriptors = ObjectGetOwnPropertyDescriptors(original);
+  var propertiesValues = ObjectValues(descriptors);
+  for (var i = 0; i < propertiesValues.length; i++) {
     // We want to use null-prototype objects to not rely on globally mutable
     // %Object.prototype%.
     ObjectSetPrototypeOf(propertiesValues[i], null);
@@ -407,12 +407,12 @@ function validateAbortSignal(signal, name) {
  * @returns {asserts value is any[]}
  */
 function validateArray(value, name, minLength = 0) {
-  // const validateArray = hideStackFrames((value, name, minLength = 0) => {
+  // var validateArray = hideStackFrames((value, name, minLength = 0) => {
   if (!ArrayIsArray(value)) {
     throw new ERR_INVALID_ARG_TYPE(name, "Array", value);
   }
   if (value.length < minLength) {
-    const reason = `must be longer than ${minLength}`;
+    var reason = `must be longer than ${minLength}`;
     throw new ERR_INVALID_ARG_VALUE(name, value, reason);
   }
 }
@@ -450,10 +450,10 @@ function validateBoolean(value, name) {
  * }} [options]
  */
 function validateObject(value, name, options = null) {
-  // const validateObject = hideStackFrames((value, name, options = null) => {
-  const allowArray = options?.allowArray ?? false;
-  const allowFunction = options?.allowFunction ?? false;
-  const nullable = options?.nullable ?? false;
+  // var validateObject = hideStackFrames((value, name, options = null) => {
+  var allowArray = options?.allowArray ?? false;
+  var allowFunction = options?.allowFunction ?? false;
+  var nullable = options?.nullable ?? false;
   if (
     (!nullable && value === null) ||
     (!allowArray && ArrayIsArray.call(value)) ||
@@ -502,8 +502,8 @@ function validateUint32(value, name, positive = false) {
     throw new ERR_OUT_OF_RANGE(name, "an integer", value);
   }
 
-  const min = positive ? 1 : 0; // 2 ** 32 === 4294967296
-  const max = 4_294_967_295;
+  var min = positive ? 1 : 0; // 2 ** 32 === 4294967296
+  var max = 4_294_967_295;
 
   if (value < min || value > max) {
     throw new ERR_OUT_OF_RANGE(name, `>= ${min} && <= ${max}`, value);
@@ -1462,12 +1462,12 @@ function InterfaceConstructor(input, output, completer, terminal) {
   this.escapeCodeTimeout = ESCAPE_CODE_TIMEOUT;
   this.tabSize = 8;
 
-  let history;
-  let historySize;
-  let removeHistoryDuplicates = false;
-  let crlfDelay;
-  let prompt = "> ";
-  let signal;
+  var history;
+  var historySize;
+  var removeHistoryDuplicates = false;
+  var crlfDelay;
+  var prompt = "> ";
+  var signal;
 
   if (input?.input) {
     // An options object was given
@@ -1477,9 +1477,10 @@ function InterfaceConstructor(input, output, completer, terminal) {
     history = input.history;
     historySize = input.historySize;
     signal = input.signal;
-    if (input.tabSize !== undefined) {
-      validateUint32(input.tabSize, "tabSize", true);
-      this.tabSize = input.tabSize;
+    var tabSize = input.tabSize;
+    if (tabSize !== undefined) {
+      validateUint32(tabSize, "tabSize", true);
+      this.tabSize = tabSize;
     }
     removeHistoryDuplicates = input.removeHistoryDuplicates;
     if (input.prompt !== undefined) {
@@ -2659,10 +2660,10 @@ function Interface(input, output, completer, terminal) {
     typeof input.completer === "function" &&
     input.completer.length !== 2
   ) {
-    const { completer } = input;
+    var { completer } = input;
     input.completer = (v, cb) => cb(null, completer(v));
   } else if (typeof completer === "function" && completer.length !== 2) {
-    const realCompleter = completer;
+    var realCompleter = completer;
     completer = (v, cb) => cb(null, realCompleter(v));
   }
 
@@ -2696,14 +2697,14 @@ Interface.prototype.question = function question(query, options, cb) {
       return;
     }
 
-    const onAbort = () => {
+    var onAbort = () => {
       this[kQuestionCancel]();
     };
     options.signal.addEventListener("abort", onAbort, { once: true });
-    const cleanup = () => {
+    var cleanup = () => {
       options.signal.removeEventListener("abort", onAbort);
     };
-    const originalCb = cb;
+    var originalCb = cb;
     cb =
       typeof cb === "function"
         ? (answer) => {
@@ -2732,10 +2733,10 @@ Interface.prototype.question[promisify.custom] = function question(
   }
 
   return new Promise((resolve, reject) => {
-    let cb = resolve;
+    var cb = resolve;
 
     if (options.signal) {
-      const onAbort = () => {
+      var onAbort = () => {
         reject(new AbortError(undefined, { cause: options.signal.reason }));
       };
       options.signal.addEventListener("abort", onAbort, { once: true });
@@ -2998,7 +2999,7 @@ Interface.prototype._tabComplete = function (lastKeypressWasTab) {
   // Overriding parent method because `this.completer` in the legacy
   // implementation takes a callback instead of being an async function.
   this.pause();
-  const string = StringPrototypeSlice.call(this.line, 0, this.cursor);
+  var string = StringPrototypeSlice.call(this.line, 0, this.cursor);
   this.completer(string, (err, value) => {
     this.resume();
 
@@ -3118,5 +3119,5 @@ export default {
       kQuestionCancel,
     },
   },
-  [SymbolFor("CommonJS")]: true,
+  [SymbolFor("CommonJS")]: 0,
 };

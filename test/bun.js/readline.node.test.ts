@@ -1,7 +1,7 @@
 import { beforeEach, describe, it } from "bun:test";
 import readline from "node:readline";
-import { Writable, Readable, PassThrough } from "node:stream";
-import { EventEmitter, getEventListeners } from "node:events";
+import { Writable, PassThrough } from "node:stream";
+import { EventEmitter } from "node:events";
 import {
   createDoneDotAll,
   createCallCheckCtx,
@@ -11,10 +11,7 @@ import {
 var {
   CSI,
   utils: { getStringWidth, stripVTControlCharacters },
-} =
-  readline.default[
-    Symbol.for("__BUN_INTERNALS_DO_NOT_USE_OR_YOU_WILL_BE_FIRED__")
-  ];
+} = readline[Symbol.for("__BUN_INTERNALS_DO_NOT_USE_OR_YOU_WILL_BE_FIRED__")];
 
 // ----------------------------------------------------------------------------
 // Helpers

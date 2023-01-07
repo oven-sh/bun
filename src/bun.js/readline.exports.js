@@ -30,7 +30,7 @@ var { clearTimeout, setTimeout } = import.meta.require("timers");
 var { StringDecoder } = import.meta.require("string_decoder");
 
 var { inspect } = Bun;
-var debug = process.env.DEBUG ? console.log : () => {};
+var debug = process.env.BUN_JS_DEBUG ? console.log : () => {};
 
 // ----------------------------------------------------------------------------
 // Section: Preamble

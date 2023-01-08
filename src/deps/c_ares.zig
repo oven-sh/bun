@@ -552,7 +552,7 @@ pub const Error = enum(i32) {
         .{ .EDESTRUCTION, "DNS_EDESTRUCTION" },
         .{ .EBADSTR, "DNS_EBADSTR" },
         .{ .EBADFLAGS, "DNS_EBADFLAGS" },
-        .{ .ENONAME, "DNS_ENONAME" },
+        .{ .ENONAME, "DNS_ENOTFOUND" },
         .{ .EBADHINTS, "DNS_EBADHINTS" },
         .{ .ENOTINITIALIZED, "DNS_ENOTINITIALIZED" },
         .{ .ELOADIPHLPAPI, "DNS_ELOADIPHLPAPI" },

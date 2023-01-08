@@ -541,7 +541,7 @@ pub const Error = enum(i32) {
         .{ .ENOTIMP, "DNS_ENOTIMP" },
         .{ .EREFUSED, "DNS_EREFUSED" },
         .{ .EBADQUERY, "DNS_EBADQUERY" },
-        .{ .EBADNAME, "DNS_EBADNAME" },
+        .{ .EBADNAME, "DNS_ENOTFOUND" },
         .{ .EBADFAMILY, "DNS_EBADFAMILY" },
         .{ .EBADRESP, "DNS_EBADRESP" },
         .{ .ECONNREFUSED, "DNS_ECONNREFUSED" },

@@ -1146,12 +1146,13 @@ ${name}* ${name}::create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::St
 
 extern "C" void* ${typeName}__fromJS(JSC::EncodedJSValue value) {
   JSC::JSValue decodedValue = JSC::JSValue::decode(value);
-  if (!decodedValue || decodedValue.isUndefinedOrNull()) 
-    return nullptr;
+  if (!decodedValue.isCell())
+      return nullptr;
 
+  JSC::JSCell* cell = decodedValue.asCell();
   ${className(typeName)}* object = JSC::jsDynamicCast<${className(
     typeName,
-  )}*>(decodedValue);
+  )}*>(decodedValue.asCell());
 
   if (!object)
       return nullptr;

@@ -39,6 +39,21 @@ afterAll(() => {
   }
 });
 
+it("should display a welcome message when the response value type is incorrect", async () => {
+  await runTest(
+    {
+      fetch(req) {
+        return Symbol("invalid response type");
+      },
+    },
+    async (server) => {
+      const response = await fetch(`http://${server.hostname}:${server.port}`);
+      const text = await response.text();
+      expect(text).toContain("Welcome to Bun!");
+    },
+  );
+});
+
 it("should work for a file", async () => {
   const fixture = resolve(import.meta.dir, "./fetch.js.txt");
   const textToExpect = readFileSync(fixture, "utf-8");
@@ -104,7 +119,6 @@ describe("streaming", () => {
       var pass = false;
       await runTest(
         {
-          development: false,
           error(e) {
             pass = true;
             return new Response("PASS", { status: 555 });
@@ -136,16 +150,16 @@ describe("streaming", () => {
       var pass = true;
       await runTest(
         {
-          development: false,
           error(e) {
-            pass = true;
+            pass = false;
             return new Response("FAIL", { status: 555 });
           },
           fetch(req) {
             return new Response(
               new ReadableStream({
-                pull(controller) {
+                async pull(controller) {
                   controller.enqueue("PASS");
+                  controller.close();
                   throw new Error("error");
                 },
               }),
@@ -157,7 +171,7 @@ describe("streaming", () => {
             `http://${server.hostname}:${server.port}`,
           );
           // connection terminated
-          expect(response.status).toBe(500);
+          expect(response.status).toBe(200);
           expect(await response.text()).toBe("PASS");
           expect(pass).toBe(true);
         },
@@ -217,11 +231,14 @@ describe("streaming", () => {
     );
   });
 
-  it("text from JS throws on start no error handler", async () => {
+  it("Error handler is called when a throwing stream hasn't written anything", async () => {
     await runTest(
       {
         port: port++,
-        development: false,
+        error(e) {
+          return new Response("Test Passed", { status: 200 });
+        },
+
         fetch(req) {
           return new Response(
             new ReadableStream({
@@ -229,6 +246,42 @@ describe("streaming", () => {
                 throw new Error("Test Passed");
               },
             }),
+            {
+              status: 404,
+            },
+          );
+        },
+      },
+      async (server) => {
+        const response = await fetch(
+          `http://${server.hostname}:${server.port}`,
+        );
+        expect(response.status).toBe(200);
+        expect(await response.text()).toBe("Test Passed");
+      },
+    );
+  });
+
+  // TODO: this test fails because we write status/headers at start of stream
+  it("text from JS throws on start with no error handler", async () => {
+    await runTest(
+      {
+        port: port++,
+        error: undefined,
+
+        fetch(req) {
+          return new Response(
+            new ReadableStream({
+              start(controller) {
+                throw new Error("Test Passed");
+              },
+            }),
+            {
+              status: 420,
+              headers: {
+                "x-what": "123",
+              },
+            },
           );
         },
       },
@@ -246,7 +299,6 @@ describe("streaming", () => {
     var err;
     await runTest(
       {
-        development: false,
         error(e) {
           pass = true;
           err = e;

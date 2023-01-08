@@ -2005,6 +2005,20 @@ void JSC__JSPromise__resolveOnNextTick(JSC__JSPromise* promise, JSC__JSGlobalObj
     }
 }
 
+bool JSC__JSValue__isAnyError(JSC__JSValue JSValue0)
+{
+    JSC::JSValue value = JSC::JSValue::decode(JSValue0);
+
+    JSC::JSCell* cell = value.asCell();
+    JSC::JSType type = cell->type();
+
+    if (type == JSC::CellType) {
+        return cell->inherits<JSC::Exception>();
+    }
+
+    return type == JSC::ErrorInstanceType;
+}
+
 // This implementation closely mimicks the one in JSC::JSPromise::reject
 void JSC__JSPromise__rejectOnNextTickWithHandled(JSC__JSPromise* promise, JSC__JSGlobalObject* lexicalGlobalObject,
     JSC__JSValue encoedValue, bool handled)
@@ -3168,18 +3182,28 @@ void JSC__JSValue__getNameProperty(JSC__JSValue JSValue0, JSC__JSGlobalObject* a
     arg2->len = 0;
 }
 
-JSC__JSValue JSC__JSValue__toError(JSC__JSValue JSValue0, JSC__JSGlobalObject* arg1)
+JSC__JSValue JSC__JSValue__toError_(JSC__JSValue JSValue0)
 {
     JSC::JSValue value = JSC::JSValue::decode(JSValue0);
-    if (JSC::Exception* jscException = JSC::jsDynamicCast<JSC::Exception*>(value)) {
-        if (JSC::ErrorInstance* error = JSC::jsDynamicCast<JSC::ErrorInstance*>(jscException->value())) {
-            return JSC::JSValue::encode(JSC::JSValue(error));
+    if (!value.isCell())
+        return JSC::JSValue::encode({});
+
+    JSC::JSCell* cell = value.asCell();
+
+    switch (cell->type()) {
+    case JSC::ErrorInstanceType:
+        return JSC::JSValue::encode(value);
+
+    case JSC::CellType:
+        if (cell->inherits<JSC::Exception>()) {
+            JSC::Exception* exception = jsCast<JSC::Exception*>(cell);
+            return JSC::JSValue::encode(exception->value());
         }
+    default: {
     }
-    if (JSC::ErrorInstance* error = JSC::jsDynamicCast<JSC::ErrorInstance*>(value)) {
-        return JSC::JSValue::encode(JSC::JSValue(error));
     }
-    return JSC::JSValue::encode(JSC::jsUndefined());
+
+    return JSC::JSValue::encode({});
 }
 
 void JSC__JSValue__toZigException(JSC__JSValue JSValue0, JSC__JSGlobalObject* arg1,

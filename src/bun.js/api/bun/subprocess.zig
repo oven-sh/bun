@@ -1553,7 +1553,7 @@ pub const Subprocess = struct {
                 &args,
             );
 
-            if (result.isAnyError(globalThis)) {
+            if (result.isAnyError()) {
                 globalThis.bunVM().onUnhandledError(globalThis, result);
             }
         }

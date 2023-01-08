@@ -2849,7 +2849,7 @@ pub const Timer = struct {
                 return;
             }
 
-            if (result.isAnyError(globalThis)) {
+            if (result.isAnyError()) {
                 vm.runErrorHandlerWithDedupe(result, null);
                 this.deinit();
                 return;

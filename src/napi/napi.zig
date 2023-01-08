@@ -656,7 +656,7 @@ pub export fn napi_make_callback(env: napi_env, _: *anyopaque, recv: napi_value,
     result.* = res;
 
     // TODO: this is likely incorrect
-    if (res.isAnyError(env)) {
+    if (res.isAnyError()) {
         return .pending_exception;
     }
 
@@ -713,8 +713,8 @@ pub extern fn napi_throw(env: napi_env, @"error": napi_value) napi_status;
 pub extern fn napi_throw_error(env: napi_env, code: [*c]const u8, msg: [*c]const u8) napi_status;
 pub extern fn napi_throw_type_error(env: napi_env, code: [*c]const u8, msg: [*c]const u8) napi_status;
 pub extern fn napi_throw_range_error(env: napi_env, code: [*c]const u8, msg: [*c]const u8) napi_status;
-pub export fn napi_is_error(env: napi_env, value: napi_value, result: *bool) napi_status {
-    result.* = value.isAnyError(env);
+pub export fn napi_is_error(_: napi_env, value: napi_value, result: *bool) napi_status {
+    result.* = value.isAnyError();
     return .ok;
 }
 pub extern fn napi_is_exception_pending(env: napi_env, result: *bool) napi_status;

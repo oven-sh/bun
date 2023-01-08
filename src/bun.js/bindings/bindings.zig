@@ -1514,7 +1514,7 @@ pub const JSPromise = extern struct {
             return value;
         }
 
-        if (value.isAnyError(globalObject)) {
+        if (value.isAnyError()) {
             return rejectedPromiseValue(globalObject, value);
         }
 
@@ -3064,14 +3064,30 @@ pub const JSValue = enum(JSValueReprInt) {
     }
 
     pub fn isError(this: JSValue) bool {
-        return cppFn("isError", .{this});
+        if (!this.isCell())
+            return false;
+
+        return this.jsType() == JSType.ErrorInstance;
     }
 
-    pub fn isAnyError(this: JSValue, global: *JSGlobalObject) bool {
-        if (this.isEmptyOrUndefinedOrNull()) return false;
+    pub fn isAnyError(this: JSValue) bool {
+        if (!this.isCell())
+            return false;
 
-        return this.isError() or this.isException(global.vm()) or this.isAggregateError(global);
+        return cppFn("isAnyError", .{this});
     }
+
+    pub fn toError_(this: JSValue) JSValue {
+        return cppFn("toError_", .{this});
+    }
+
+    pub fn toError(this: JSValue) ?JSValue {
+        const res = this.toError_();
+        if (res == .zero)
+            return null;
+        return res;
+    }
+
     pub fn isString(this: JSValue) bool {
         return cppFn("isString", .{this});
     }
@@ -3122,8 +3138,8 @@ pub const JSValue = enum(JSValueReprInt) {
         cppFn("getClassName", .{ this, global, ret });
     }
 
-    pub fn isCell(this: JSValue) bool {
-        return cppFn("isCell", .{this});
+    pub inline fn isCell(this: JSValue) bool {
+        return (@bitCast(u64, @enumToInt(this)) & FFI.NotCellMask) == 0;
     }
 
     pub fn asCell(this: JSValue) *JSCell {
@@ -3140,10 +3156,6 @@ pub const JSValue = enum(JSValueReprInt) {
 
     pub fn isTerminationException(this: JSValue, vm: *VM) bool {
         return cppFn("isTerminationException", .{ this, vm });
-    }
-
-    pub fn toError(this: JSValue, global: *JSGlobalObject) JSValue {
-        return cppFn("toError", .{ this, global });
     }
 
     pub fn toZigException(this: JSValue, global: *JSGlobalObject, exception: *ZigException) void {
@@ -3515,7 +3527,108 @@ pub const JSValue = enum(JSValueReprInt) {
         return this.asNullableVoid().?;
     }
 
-    pub const Extern = [_][]const u8{ "putIndex", "createRopeString", "forEachProperty", "coerceToInt32", "fastGet_", "getStaticProperty", "createUninitializedUint8Array", "fromInt64NoTruncate", "fromUInt64NoTruncate", "toUInt64NoTruncate", "asPromise", "toInt64", "_then", "put", "makeWithNameAndPrototype", "parseJSON", "symbolKeyFor", "symbolFor", "getSymbolDescription", "createInternalPromise", "asInternalPromise", "asArrayBuffer_", "fromEntries", "createTypeError", "createRangeError", "createObject2", "getIfPropertyExistsImpl", "jsType", "jsonStringify", "kind_", "isTerminationException", "isSameValue", "getLengthOfArray", "toZigString", "createStringArray", "createEmptyObject", "createEmptyArray", "putRecord", "asPromise", "isClass", "getNameProperty", "getClassName", "getErrorsProperty", "toInt32", "toBoolean", "isInt32", "isIterable", "forEach", "isAggregateError", "toError", "toZigException", "isException", "toWTFString", "hasProperty", "getPropertyNames", "getDirect", "putDirect", "getIfExists", "asString", "asObject", "asNumber", "isError", "jsNull", "jsUndefined", "jsTDZValue", "jsBoolean", "jsDoubleNumber", "jsNumberFromDouble", "jsNumberFromChar", "jsNumberFromU16", "jsNumberFromInt64", "isBoolean", "isAnyInt", "isUInt32AsAnyInt", "isInt32AsAnyInt", "isNumber", "isString", "isBigInt", "isHeapBigInt", "isBigInt32", "isSymbol", "isPrimitive", "isGetterSetter", "isCustomGetterSetter", "isObject", "isCell", "asCell", "toString", "toStringOrNull", "toPropertyKeyValue", "toObject", "toString", "getPrototype", "getPropertyByPropertyName", "eqlValue", "eqlCell", "isCallable", "toBooleanSlow", "deepEquals", "strictDeepEquals", "getIfPropertyExistsFromPath", "asBigIntCompare" };
+    pub const Extern = [_][]const u8{
+        "_then",
+        "asArrayBuffer_",
+        "asBigIntCompare",
+        "asCell",
+        "asInternalPromise",
+        "asNumber",
+        "asObject",
+        "asPromise",
+        "asString",
+        "coerceToInt32",
+        "createEmptyArray",
+        "createEmptyObject",
+        "createInternalPromise",
+        "createObject2",
+        "createRangeError",
+        "createRopeString",
+        "createStringArray",
+        "createTypeError",
+        "createUninitializedUint8Array",
+        "deepEquals",
+        "eqlCell",
+        "eqlValue",
+        "fastGet_",
+        "forEach",
+        "forEachProperty",
+        "fromEntries",
+        "fromInt64NoTruncate",
+        "fromUInt64NoTruncate",
+        "getClassName",
+        "getDirect",
+        "getErrorsProperty",
+        "getIfExists",
+        "getIfPropertyExistsFromPath",
+        "getIfPropertyExistsImpl",
+        "getLengthOfArray",
+        "getNameProperty",
+        "getPropertyByPropertyName",
+        "getPropertyNames",
+        "getPrototype",
+        "getStaticProperty",
+        "getSymbolDescription",
+        "hasProperty",
+        "isAggregateError",
+        "isAnyError",
+        "isAnyInt",
+        "isBigInt",
+        "isBigInt32",
+        "isBoolean",
+        "isCallable",
+        "isClass",
+        "isCustomGetterSetter",
+        "isError",
+        "isException",
+        "isGetterSetter",
+        "isHeapBigInt",
+        "isInt32",
+        "isInt32AsAnyInt",
+        "isIterable",
+        "isNumber",
+        "isObject",
+        "isPrimitive",
+        "isSameValue",
+        "isString",
+        "isSymbol",
+        "isTerminationException",
+        "isUInt32AsAnyInt",
+        "jsBoolean",
+        "jsDoubleNumber",
+        "jsNull",
+        "jsNumberFromChar",
+        "jsNumberFromDouble",
+        "jsNumberFromInt64",
+        "jsNumberFromU16",
+        "jsTDZValue",
+        "jsType",
+        "jsUndefined",
+        "jsonStringify",
+        "kind_",
+        "makeWithNameAndPrototype",
+        "parseJSON",
+        "put",
+        "putDirect",
+        "putIndex",
+        "putRecord",
+        "strictDeepEquals",
+        "symbolFor",
+        "symbolKeyFor",
+        "toBoolean",
+        "toBooleanSlow",
+        "toError_",
+        "toInt32",
+        "toInt64",
+        "toObject",
+        "toPropertyKeyValue",
+        "toString",
+        "toStringOrNull",
+        "toUInt64NoTruncate",
+        "toWTFString",
+        "toZigException",
+        "toZigString",
+    };
 };
 
 extern "c" fn Microtask__run(*Microtask, *JSGlobalObject) void;

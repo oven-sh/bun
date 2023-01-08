@@ -1098,7 +1098,7 @@ pub const Expect = struct {
             const value = arguments[0];
             if (value.isEmptyOrUndefinedOrNull() or !value.isObject() and !value.isString()) {
                 var fmt = JSC.ZigConsoleClient.Formatter{ .globalThis = globalObject };
-                globalObject.throw("Expected value must be string or Error: {any}", .{ value.toFmt(globalObject, &fmt) });
+                globalObject.throw("Expected value must be string or Error: {any}", .{value.toFmt(globalObject, &fmt)});
                 return .zero;
             }
             break :brk value;
@@ -1117,19 +1117,19 @@ pub const Expect = struct {
         }
 
         const not = this.op.contains(.not);
-        const result = value.call(globalObject, &.{}).toError(globalObject);
-        if (result.isUndefined()) {
+        const result = value.call(globalObject, &.{}).toError_();
+        if (result == .zero) {
             if (not) return thisValue;
             globalObject.throw("Expected function to throw", .{});
             return .zero;
-        } else if(not) {
+        } else if (not) {
             globalObject.throw("Expected function not to throw", .{});
             return .zero;
         }
 
-        if (expected_value == .zero) return thisValue;
+        if (expected_value == .zero or !expected_value.isCell()) return thisValue;
 
-        const expected_error = expected_value.toError(globalObject);
+        const expected_error = expected_value.toError() orelse expected_value;
 
         if (expected_value.isString() or !expected_error.isUndefined()) {
             const expected = brk: {
@@ -1401,7 +1401,7 @@ pub const TestScope = struct {
             initial_value = js.JSObjectCallAsFunctionReturnValue(vm.global, callback, null, 0, null);
         }
 
-        if (initial_value.isAnyError(vm.global)) {
+        if (initial_value.isAnyError()) {
             vm.runErrorHandler(initial_value, null);
             return .{ .fail = active_test_expectation_counter.actual };
         }
@@ -1640,7 +1640,7 @@ pub const DescribeScope = struct {
             }
 
             Jest.runner.?.pending_test = pending_test;
-            if (result.isAnyError(ctx)) return result;
+            if (result.isAnyError()) return result;
 
             if (comptime hook == .beforeAll or hook == .afterAll) {
                 hooks[i] = JSC.JSValue.zero;
@@ -1725,8 +1725,8 @@ pub const DescribeScope = struct {
                         return null;
                     },
                 }
-            } else if (result.isAnyError(ctx)) {
-                exception.* = result.asObjectRef();
+            } else if (result.toError()) |err| {
+                exception.* = err.asObjectRef();
                 return null;
             }
         }

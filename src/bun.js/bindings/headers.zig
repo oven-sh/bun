@@ -206,12 +206,12 @@ pub extern fn JSC__JSValue__getNameProperty(JSValue0: JSC__JSValue, arg1: *bindi
 pub extern fn JSC__JSValue__getPrototype(JSValue0: JSC__JSValue, arg1: *bindings.JSGlobalObject) JSC__JSValue;
 pub extern fn JSC__JSValue__getSymbolDescription(JSValue0: JSC__JSValue, arg1: *bindings.JSGlobalObject, arg2: [*c]ZigString) void;
 pub extern fn JSC__JSValue__isAggregateError(JSValue0: JSC__JSValue, arg1: *bindings.JSGlobalObject) bool;
+pub extern fn JSC__JSValue__isAnyError(JSValue0: JSC__JSValue) bool;
 pub extern fn JSC__JSValue__isAnyInt(JSValue0: JSC__JSValue) bool;
 pub extern fn JSC__JSValue__isBigInt(JSValue0: JSC__JSValue) bool;
 pub extern fn JSC__JSValue__isBigInt32(JSValue0: JSC__JSValue) bool;
 pub extern fn JSC__JSValue__isBoolean(JSValue0: JSC__JSValue) bool;
 pub extern fn JSC__JSValue__isCallable(JSValue0: JSC__JSValue, arg1: *bindings.VM) bool;
-pub extern fn JSC__JSValue__isCell(JSValue0: JSC__JSValue) bool;
 pub extern fn JSC__JSValue__isClass(JSValue0: JSC__JSValue, arg1: *bindings.JSGlobalObject) bool;
 pub extern fn JSC__JSValue__isCustomGetterSetter(JSValue0: JSC__JSValue) bool;
 pub extern fn JSC__JSValue__isError(JSValue0: JSC__JSValue) bool;
@@ -250,7 +250,7 @@ pub extern fn JSC__JSValue__symbolFor(arg0: *bindings.JSGlobalObject, arg1: [*c]
 pub extern fn JSC__JSValue__symbolKeyFor(JSValue0: JSC__JSValue, arg1: *bindings.JSGlobalObject, arg2: [*c]ZigString) bool;
 pub extern fn JSC__JSValue__toBoolean(JSValue0: JSC__JSValue) bool;
 pub extern fn JSC__JSValue__toBooleanSlow(JSValue0: JSC__JSValue, arg1: *bindings.JSGlobalObject) bool;
-pub extern fn JSC__JSValue__toError(JSValue0: JSC__JSValue, arg1: *bindings.JSGlobalObject) JSC__JSValue;
+pub extern fn JSC__JSValue__toError_(JSValue0: JSC__JSValue) JSC__JSValue;
 pub extern fn JSC__JSValue__toInt32(JSValue0: JSC__JSValue) i32;
 pub extern fn JSC__JSValue__toInt64(JSValue0: JSC__JSValue) i64;
 pub extern fn JSC__JSValue__toObject(JSValue0: JSC__JSValue, arg1: *bindings.JSGlobalObject) [*c]bindings.JSObject;

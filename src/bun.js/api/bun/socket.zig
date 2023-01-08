@@ -117,7 +117,7 @@ const Handlers = struct {
         }
 
         const result = onError.callWithThis(this.globalObject, thisValue, err);
-        if (result.isAnyError(this.globalObject)) {
+        if (result.isAnyError()) {
             this.vm.onUnhandledError(this.globalObject, result);
         }
 
@@ -862,8 +862,8 @@ fn NewSocket(comptime ssl: bool) type {
                 this_value,
             });
 
-            if (result.isAnyError(globalObject)) {
-                _ = handlers.callErrorHandler(this_value, &[_]JSC.JSValue{ this_value, result });
+            if (result.toError()) |err_value| {
+                _ = handlers.callErrorHandler(this_value, &[_]JSC.JSValue{ this_value, err_value });
             }
         }
         pub fn onTimeout(
@@ -888,8 +888,8 @@ fn NewSocket(comptime ssl: bool) type {
                 this_value,
             });
 
-            if (result.isAnyError(globalObject)) {
-                _ = handlers.callErrorHandler(this_value, &[_]JSC.JSValue{ this_value, result });
+            if (result.toError()) |err_value| {
+                _ = handlers.callErrorHandler(this_value, &[_]JSC.JSValue{ this_value, err_value });
             }
         }
         pub fn onConnectError(this: *This, _: Socket, errno: c_int) void {
@@ -927,9 +927,9 @@ fn NewSocket(comptime ssl: bool) type {
                 err_value,
             });
 
-            if (result.isAnyError(globalObject)) {
-                if (handlers.rejectPromise(result)) return;
-                _ = handlers.callErrorHandler(this_value, &[_]JSC.JSValue{ this_value, result });
+            if (result.toError()) |err_val| {
+                if (handlers.rejectPromise(err_val)) return;
+                _ = handlers.callErrorHandler(this_value, &[_]JSC.JSValue{ this_value, err_val });
             } else if (handlers.promise.trySwap()) |val| {
                 // They've defined a `connectError` callback
                 // The error is effectively handled, but we should still reject the promise.
@@ -987,7 +987,7 @@ fn NewSocket(comptime ssl: bool) type {
                 this_value,
             });
 
-            if (result.isAnyError(globalObject)) {
+            if (result.toError()) |err| {
                 this.detached = true;
                 defer this.markInactive();
                 if (!this.socket.isClosed()) {
@@ -996,8 +996,8 @@ fn NewSocket(comptime ssl: bool) type {
                     log("Already closed", .{});
                 }
 
-                if (handlers.rejectPromise(result)) return;
-                _ = handlers.callErrorHandler(this_value, &[_]JSC.JSValue{ this_value, result });
+                if (handlers.rejectPromise(err)) return;
+                _ = handlers.callErrorHandler(this_value, &[_]JSC.JSValue{ this_value, err });
             }
         }
 
@@ -1030,8 +1030,8 @@ fn NewSocket(comptime ssl: bool) type {
                 this_value,
             });
 
-            if (result.isAnyError(globalObject)) {
-                _ = handlers.callErrorHandler(this_value, &[_]JSC.JSValue{ this_value, result });
+            if (result.toError()) |err_value| {
+                _ = handlers.callErrorHandler(this_value, &[_]JSC.JSValue{ this_value, err_value });
             }
         }
 
@@ -1054,8 +1054,8 @@ fn NewSocket(comptime ssl: bool) type {
                 JSValue.jsNumber(@as(i32, err)),
             });
 
-            if (result.isAnyError(globalObject)) {
-                _ = handlers.callErrorHandler(this_value, &[_]JSC.JSValue{ this_value, result });
+            if (result.toError()) |err_value| {
+                _ = handlers.callErrorHandler(this_value, &[_]JSC.JSValue{ this_value, err_value });
             }
         }
 
@@ -1077,8 +1077,8 @@ fn NewSocket(comptime ssl: bool) type {
                 output_value,
             });
 
-            if (result.isAnyError(globalObject)) {
-                _ = handlers.callErrorHandler(this_value, &[_]JSC.JSValue{ this_value, result });
+            if (result.toError()) |err_value| {
+                _ = handlers.callErrorHandler(this_value, &[_]JSC.JSValue{ this_value, err_value });
             }
         }
 

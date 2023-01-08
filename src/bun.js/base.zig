@@ -2185,7 +2185,7 @@ pub fn getterWrap(comptime Container: type, comptime name: string) GetterType(Co
                 })
             else
                 @call(.auto, @field(Container, name), .{ this, ctx.ptr() });
-            if (!result.isUndefinedOrNull() and result.isError()) {
+            if (result.isError()) {
                 exception.* = result.asObjectRef();
                 return null;
             }
@@ -2816,7 +2816,7 @@ pub fn wrapWithHasContainer(
             }
 
             var result: JSValue = @call(.auto, @field(Container, name), args);
-            if (!result.isEmptyOrUndefinedOrNull() and result.isError()) {
+            if (result.isError()) {
                 exception.* = result.asObjectRef();
                 iter.deinit();
                 return null;

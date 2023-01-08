@@ -3484,7 +3484,7 @@ pub const Blob = struct {
                         const value = Function(&blob, globalThis, bytes, .temporary);
 
                         // invalid JSON needs to be rejected
-                        if (value.isAnyError(globalThis)) {
+                        if (value.isAnyError()) {
                             promise.reject(globalThis, value);
                         } else {
                             promise.resolve(globalThis, value);
@@ -4904,7 +4904,7 @@ pub const Body = struct {
                             const json_value = blob.toJSON(global, .share);
                             blob.detach();
 
-                            if (json_value.isAnyError(global)) {
+                            if (json_value.isAnyError()) {
                                 promise.reject(global, json_value);
                             } else {
                                 promise.resolve(global, json_value);

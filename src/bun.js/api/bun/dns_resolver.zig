@@ -48,21 +48,29 @@ const LibInfo = struct {
 
     pub const getaddrinfo_async_start = struct {
         pub fn get() ?*const GetaddrinfoAsyncStart {
+            bun.Environment.onlyMac();
+
             return bun.C.dlsymWithHandle(*const GetaddrinfoAsyncStart, "getaddrinfo_async_start", getHandle);
         }
     }.get;
 
     pub const getaddrinfo_async_handle_reply = struct {
         pub fn get() ?*const GetaddrinfoAsyncHandleReply {
+            bun.Environment.onlyMac();
+
             return bun.C.dlsymWithHandle(*const GetaddrinfoAsyncHandleReply, "getaddrinfo_async_handle_reply", getHandle);
         }
     }.get;
 
     pub fn get() ?*const GetaddrinfoAsyncCancel {
+        bun.Environment.onlyMac();
+
         return bun.C.dlsymWithHandle(*const GetaddrinfoAsyncCancel, "getaddrinfo_async_cancel", getHandle);
     }
 
     pub fn lookup(this: *DNSResolver, query: GetAddrInfo, globalThis: *JSC.JSGlobalObject) JSC.JSValue {
+        bun.Environment.onlyMac();
+
         const getaddrinfo_async_start_ = LibInfo.getaddrinfo_async_start() orelse return LibC.lookup(this, query, globalThis);
 
         var key = GetAddrInfoRequest.PendingCacheKey.init(query);

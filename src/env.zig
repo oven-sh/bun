@@ -39,3 +39,9 @@ pub const git_sha = BuildOptions.sha;
 pub const is_canary = BuildOptions.is_canary;
 pub const dump_source = isDebug and !isTest;
 pub const base_path = BuildOptions.base_path ++ "/";
+
+pub inline fn onlyMac() void {
+    if (comptime !isMac) {
+        unreachable;
+    }
+}

@@ -5014,7 +5014,7 @@ var require_transform = __commonJS({
         if (typeof options.flush === "function") this._flush = options.flush;
       }
 
-      this.on("prefinish", prefinish);
+      this.on("prefinish", prefinish.bind(this));
     }
     ObjectSetPrototypeOf(Transform.prototype, Duplex.prototype);
     ObjectSetPrototypeOf(Transform, Duplex);

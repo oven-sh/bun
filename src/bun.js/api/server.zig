@@ -768,18 +768,41 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
         }
 
         pub fn renderMissing(ctx: *RequestContext) void {
+            ctx.resp.runCorkedWithType(*RequestContext, renderMissingCorked, ctx);
+            ctx.finalize();
+        }
+
+        pub fn renderMissingCorked(ctx: *RequestContext) void {
             if (comptime !debug_mode) {
                 if (!ctx.has_written_status)
                     ctx.resp.writeStatus("204 No Content");
                 ctx.has_written_status = true;
-                ctx.resp.endWithoutBody(ctx.shouldCloseConnection());
-                ctx.finalize();
+                ctx.resp.end("", ctx.shouldCloseConnection());
             } else {
+                const is_web_browser_navigation = brk: {
+                    if (ctx.req.header("sec-fetch-dest")) |fetch_dest| {
+                        if (strings.eqlComptime(fetch_dest, "document")) {
+                            break :brk true;
+                        }
+                    }
+
+                    break :brk false;
+                };
+                if (is_web_browser_navigation) {
+                    ctx.resp.writeStatus("200 OK");
+                    ctx.has_written_status = true;
+
+                    ctx.resp.writeHeader("content-type", MimeType.html.value);
+                    ctx.resp.writeHeader("content-encoding", "gzip");
+                    ctx.resp.writeHeaderInt("content-length", welcome_page_html_gz.len);
+                    ctx.resp.end(welcome_page_html_gz, ctx.shouldCloseConnection());
+                    return;
+                }
+
                 if (!ctx.has_written_status)
                     ctx.resp.writeStatus("200 OK");
                 ctx.has_written_status = true;
                 ctx.resp.end("Welcome to Bun! To get started, return a Response object.", ctx.shouldCloseConnection());
-                ctx.finalize();
             }
         }
 
@@ -1434,6 +1457,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
         fn doRenderStream(pair: *StreamPair) void {
             var this = pair.this;
             var stream = pair.stream;
+
             // uWS automatically adds the status line if needed
             // we want to batch network calls as much as possible
             if (!(this.response_ptr.?.statusCode() == 200 and this.response_ptr.?.body.init.headers == null)) {
@@ -1480,14 +1504,14 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
 
             this.aborted = this.aborted or response_stream.sink.aborted;
 
-            if (assignment_result.isAnyError(this.server.globalThis)) {
+            if (assignment_result.toError()) |err_value| {
                 streamLog("returned an error", .{});
                 if (!this.aborted) this.resp.clearAborted();
                 response_stream.detach();
                 this.sink = null;
                 response_stream.sink.destroy();
                 stream.value.unprotect();
-                return this.handleReject(assignment_result);
+                return this.handleReject(err_value);
             }
 
             if (response_stream.sink.done or
@@ -1618,18 +1642,8 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 return;
             }
 
-            if (response_value.isError() or response_value.isAggregateError(this.globalThis) or response_value.isException(this.globalThis.vm())) {
-                // cast exception to error instance
-                if (response_value.isException(this.globalThis.vm())) {
-                    const err = response_value.toError(this.globalThis);
-                    if (!err.isUndefinedOrNull()) {
-                        ctx.runErrorHandler(err);
-                        return;
-                    }
-                }
-
-                ctx.runErrorHandler(response_value);
-
+            if (response_value.toError()) |err_value| {
+                ctx.runErrorHandler(err_value);
                 return;
             }
 
@@ -2784,7 +2798,7 @@ pub const ServerWebSocket = struct {
         ws.cork(&corker, Corker.run);
         const result = corker.result;
         this.opened = true;
-        if (result.isAnyError(globalObject)) {
+        if (result.toError()) |err_value| {
             log("onOpen exception", .{});
 
             if (!this.closed) {
@@ -2798,9 +2812,9 @@ pub const ServerWebSocket = struct {
             }
 
             if (error_handler.isEmptyOrUndefinedOrNull()) {
-                globalObject.bunVM().runErrorHandler(result, null);
+                globalObject.bunVM().runErrorHandler(err_value, null);
             } else {
-                const corky = [_]JSValue{corker.result};
+                const corky = [_]JSValue{err_value};
                 corker.args = &corky;
                 corker.callback = error_handler;
                 corker.this_value = .zero;
@@ -2869,11 +2883,11 @@ pub const ServerWebSocket = struct {
 
         if (result.isEmptyOrUndefinedOrNull()) return;
 
-        if (result.isAnyError(globalObject)) {
+        if (result.toError()) |err_value| {
             if (this.handler.onError.isEmptyOrUndefinedOrNull()) {
-                globalObject.bunVM().runErrorHandler(result, null);
+                globalObject.bunVM().runErrorHandler(err_value, null);
             } else {
-                const args = [_]JSValue{result};
+                const args = [_]JSValue{err_value};
                 corker.args = &args;
                 corker.callback = this.handler.onError;
                 corker.this_value = .zero;
@@ -2913,11 +2927,11 @@ pub const ServerWebSocket = struct {
             this.websocket.cork(&corker, Corker.run);
             const result = corker.result;
 
-            if (result.isAnyError(globalObject)) {
+            if (result.toError()) |err_value| {
                 if (this.handler.onError.isEmptyOrUndefinedOrNull()) {
-                    globalObject.bunVM().runErrorHandler(result, null);
+                    globalObject.bunVM().runErrorHandler(err_value, null);
                 } else {
-                    const args = [_]JSValue{result};
+                    const args = [_]JSValue{err_value};
                     corker.args = &args;
                     corker.callback = this.handler.onError;
                     corker.this_value = .zero;
@@ -2950,9 +2964,9 @@ pub const ServerWebSocket = struct {
                 &[_]JSC.JSValue{ this.this_value, JSValue.jsNumber(code), ZigString.init(message).toValueGC(handler.globalObject) },
             );
 
-            if (result.isAnyError(handler.globalObject)) {
+            if (result.toError()) |err| {
                 log("onClose error", .{});
-                handler.globalObject.bunVM().runErrorHandler(result, null);
+                handler.globalObject.bunVM().runErrorHandler(err, null);
             }
         }
 
@@ -3285,7 +3299,7 @@ pub const ServerWebSocket = struct {
         if (result.isEmptyOrUndefinedOrNull())
             return JSValue.jsUndefined();
 
-        if (result.isAnyError(globalThis)) {
+        if (result.isAnyError()) {
             globalThis.throwValue(result);
             return JSValue.jsUndefined();
         }
@@ -4191,7 +4205,7 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
                 &args_,
             );
 
-            if (response_value.isAnyError(ctx)) {
+            if (response_value.isAnyError()) {
                 return JSC.JSPromise.rejectedPromiseValue(ctx, response_value).asObjectRef();
             }
 
@@ -4683,3 +4697,5 @@ pub const Server = NewServer(false, false);
 pub const SSLServer = NewServer(true, false);
 pub const DebugServer = NewServer(false, true);
 pub const DebugSSLServer = NewServer(true, true);
+
+const welcome_page_html_gz = @embedFile("welcome-page.html.gz");

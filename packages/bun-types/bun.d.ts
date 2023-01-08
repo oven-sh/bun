@@ -2736,6 +2736,21 @@ declare module "bun" {
     error?(socket: Socket<Data>, error: Error): void | Promise<void>;
     data?(socket: Socket<Data>, data: BufferSource): void | Promise<void>;
     drain?(socket: Socket<Data>): void | Promise<void>;
+
+    /**
+     * When the socket fails to be created, this function is called.
+     *
+     * The promise returned by `Bun.connect` rejects **after** this function is
+     * called.
+     *
+     * When `connectError` is specified, the rejected promise will not be
+     * added to the promise rejection queue (so it won't be reported as an
+     * unhandled promise rejection, since connectError handles it).
+     *
+     * When `connectError` is not specified, the rejected promise will be added
+     * to the promise rejection queue.
+     */
+    connectError?(error: Error): void | Promise<void>;
   }
 
   interface SocketOptions<Data = unknown> {

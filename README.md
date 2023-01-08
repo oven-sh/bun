@@ -4940,7 +4940,8 @@ bun also statically links these libraries:
 - [`tinycc`](https://github.com/tinycc/tinycc), which is LGPL v2.1 licensed
 - [`uSockets`](https://github.com/uNetworking/uSockets), which is Apache 2.0 licensed
 - [`zlib-cloudflare`](https://github.com/cloudflare/zlib), which is zlib licensed
-- `libicu` 66.1, which can be found here: <https://github.com/unicode-org/icu/blob/main/icu4c/LICENSE>
+- [`c-ares`](https://github.com/c-ares/c-ares), which is MIT licensed
+- `libicu` 72, which can be found here: <https://github.com/unicode-org/icu/blob/main/icu4c/LICENSE>
 - A fork of [`uWebsockets`](https://github.com/jarred-sumner/uwebsockets), which is Apache 2.0 licensed
 
 For compatibility reasons, these NPM packages are embedded into bun’s binary and injected if imported.

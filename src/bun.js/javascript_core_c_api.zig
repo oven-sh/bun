@@ -22,7 +22,7 @@ pub const OpaqueJSString = opaque {
     }
 
     pub fn is16Bit(this: *OpaqueJSString) bool {
-        return JSStringEncoding(this) == Encoding.char8;
+        return JSStringEncoding(this) == Encoding.char16;
     }
 
     pub fn characters16(this: *OpaqueJSString) UTF16Ptr {

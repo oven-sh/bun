@@ -3090,7 +3090,7 @@ function _ttyWriteDumb(s, key) {
   }
 }
 
-export class Readline {
+class Readline {
   #autoCommit = false;
   #stream;
   #todo = [];

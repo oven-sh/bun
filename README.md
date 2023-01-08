@@ -4932,7 +4932,6 @@ bun also statically links these libraries:
 
 - [`boringssl`](https://boringssl.googlesource.com/boringssl/), which has [several licenses](https://boringssl.googlesource.com/boringssl/+/refs/heads/master/LICENSE)
 - [`libarchive`](https://github.com/libarchive/libarchive), which has [several licenses](https://github.com/libarchive/libarchive/blob/master/COPYING)
-- [`libiconv`](https://www.gnu.org/software/libiconv/), which is LGPL2. It’s a dependency of libarchive.
 - [`lol-html`](https://github.com/cloudflare/lol-html/tree/master/c-api), which is BSD 3-Clause licensed
 - [`mimalloc`](https://github.com/microsoft/mimalloc), which is MIT licensed
 - [`picohttp`](https://github.com/h2o/picohttpparser), which is dual-licensed under the Perl License or the MIT License

@@ -2006,14 +2006,18 @@ void JSC__JSPromise__resolveOnNextTick(JSC__JSPromise* promise, JSC__JSGlobalObj
 }
 
 // This implementation closely mimicks the one in JSC::JSPromise::reject
-void JSC__JSPromise__rejectOnNextTick(JSC__JSPromise* promise, JSC__JSGlobalObject* lexicalGlobalObject,
-    JSC__JSValue encoedValue)
+void JSC__JSPromise__rejectOnNextTickWithHandled(JSC__JSPromise* promise, JSC__JSGlobalObject* lexicalGlobalObject,
+    JSC__JSValue encoedValue, bool handled)
 {
     JSC::JSValue value = JSC::JSValue::decode(encoedValue);
     VM& vm = lexicalGlobalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     uint32_t flags = promise->internalField(JSC::JSPromise::Field::Flags).get().asUInt32();
     if (!(flags & JSC::JSPromise::isFirstResolvingFunctionCalledFlag)) {
+        if (handled) {
+            flags |= JSC::JSPromise::isHandledFlag;
+        }
+
         promise->internalField(JSC::JSPromise::Field::Flags).set(vm, promise, jsNumber(flags | JSC::JSPromise::isFirstResolvingFunctionCalledFlag));
         auto* globalObject = jsCast<Zig::GlobalObject*>(promise->globalObject());
 

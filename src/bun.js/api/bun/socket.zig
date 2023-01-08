@@ -81,14 +81,12 @@ const Handlers = struct {
     // corker: Corker = .{},
 
     pub fn resolvePromise(this: *Handlers, value: JSValue) void {
-        var promise = this.promise.get() orelse return;
-        this.promise.deinit();
+        const promise = this.promise.trySwap() orelse return;
         promise.asAnyPromise().?.resolve(this.globalObject, value);
     }
 
     pub fn rejectPromise(this: *Handlers, value: JSValue) bool {
-        var promise = this.promise.get() orelse return false;
-        this.promise.deinit();
+        const promise = this.promise.trySwap() orelse return false;
         promise.asAnyPromise().?.reject(this.globalObject, value);
         return true;
     }
@@ -885,7 +883,7 @@ fn NewSocket(comptime ssl: bool) type {
         }
         pub fn onConnectError(this: *This, _: Socket, errno: c_int) void {
             JSC.markBinding(@src());
-            log("onConnectError({d})", .{ errno });
+            log("onConnectError({d})", .{errno});
             if (this.detached) return;
             this.detached = true;
             defer this.markInactive();
@@ -894,15 +892,24 @@ fn NewSocket(comptime ssl: bool) type {
             this.poll_ref.unref(handlers.vm);
 
             const callback = handlers.onConnectError;
-            if (callback == .zero) return;
-
-            const globalObject = handlers.globalObject;
-            const this_value = this.getThisValue(globalObject);
+            var globalObject = handlers.globalObject;
             const err = JSC.SystemError{
                 .errno = errno,
                 .message = ZigString.init("Failed to connect"),
                 .syscall = ZigString.init("connect"),
             };
+
+            if (callback == .zero) {
+                if (handlers.promise.trySwap()) |promise| {
+                    // reject the promise on connect() error
+                    const err_value = err.toErrorInstance(globalObject);
+                    promise.asPromise().?.rejectOnNextTick(globalObject, err_value);
+                }
+
+                return;
+            }
+
+            const this_value = this.getThisValue(globalObject);
             const err_value = err.toErrorInstance(globalObject);
             const result = callback.callWithThis(globalObject, this_value, &[_]JSValue{
                 this_value,
@@ -912,6 +919,12 @@ fn NewSocket(comptime ssl: bool) type {
             if (result.isAnyError(globalObject)) {
                 if (handlers.rejectPromise(result)) return;
                 _ = handlers.callErrorHandler(this_value, &[_]JSC.JSValue{ this_value, result });
+            } else if (handlers.promise.trySwap()) |val| {
+                // They've defined a `connectError` callback
+                // The error is effectively handled, but we should still reject the promise.
+                var promise = val.asPromise().?;
+                const err_ = err.toErrorInstance(globalObject);
+                promise.rejectOnNextTickAsHandled(globalObject, err_);
             }
         }
 
@@ -1037,7 +1050,7 @@ fn NewSocket(comptime ssl: bool) type {
 
         pub fn onData(this: *This, _: Socket, data: []const u8) void {
             JSC.markBinding(@src());
-            log("onData({d})", .{ data.len });
+            log("onData({d})", .{data.len});
             if (this.detached) return;
 
             const handlers = this.handlers;

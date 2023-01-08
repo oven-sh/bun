@@ -405,7 +405,7 @@ pub const ZigString = extern struct {
         return strings.cmpStringsAsc(void{}, a.slice(), b.slice());
     }
 
-    pub fn init(slice_: []const u8) ZigString {
+    pub inline fn init(slice_: []const u8) ZigString {
         return ZigString{ .ptr = slice_.ptr, .len = slice_.len };
     }
 
@@ -1543,7 +1543,15 @@ pub const JSPromise = extern struct {
     }
 
     pub fn rejectOnNextTick(promise: *JSC.JSPromise, globalThis: *JSGlobalObject, value: JSC.JSValue) void {
-        return cppFn("rejectOnNextTick", .{ promise, globalThis, value });
+        return rejectOnNextTickWithHandled(promise, globalThis, value, false);
+    }
+
+    pub fn rejectOnNextTickAsHandled(promise: *JSC.JSPromise, globalThis: *JSGlobalObject, value: JSC.JSValue) void {
+        return rejectOnNextTickWithHandled(promise, globalThis, value, true);
+    }
+
+    pub fn rejectOnNextTickWithHandled(promise: *JSC.JSPromise, globalThis: *JSGlobalObject, value: JSC.JSValue, handled: bool) void {
+        return cppFn("rejectOnNextTickWithHandled", .{ promise, globalThis, value, handled });
     }
 
     /// Create a new promise with an already fulfilled value
@@ -1594,7 +1602,7 @@ pub const JSPromise = extern struct {
         "reject",
         "rejectAsHandled",
         "rejectAsHandledException",
-        "rejectOnNextTick",
+        "rejectOnNextTickWithHandled",
         "rejectWithCaughtException",
         "rejectedPromise",
         "rejectedPromiseValue",

@@ -37,7 +37,7 @@ it("should reject on connection error, calling both connectError() and rejecting
   var data = {};
   connect({
     data,
-    hostname: "127.0.0.1",
+    hostname: "localhost",
     port: 55555,
     socket: {
       connectError(socket, error) {

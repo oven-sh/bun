@@ -1,24 +1,28 @@
 function createOptions(type, message, closeOnDone) {
   let buffers = [];
-  let report = function() {
-    report = function() {};
-    const data = new Uint8Array(buffers.reduce(function(sum, buffer) {
-      return sum + buffer.length;
-    }, 0));
-    buffers.reduce(function(offset, buffer) {
+  let report = function () {
+    report = function () {};
+    const data = new Uint8Array(
+      buffers.reduce(function (sum, buffer) {
+        return sum + buffer.length;
+      }, 0),
+    );
+    buffers.reduce(function (offset, buffer) {
       data.set(buffer, offset);
       return offset + buffer.length;
     }, 0);
     console.log(type, "GOT", new TextDecoder().decode(data));
-  }
+  };
 
-  let done = closeOnDone ? function(socket, sent) {
-    socket.data[sent ? "sent" : "received"] = true;
-    if (socket.data.sent && socket.data.received) {
-      done = function() {};
-      closeOnDone(socket);
-    }
-  } : function() {};
+  let done = closeOnDone
+    ? function (socket, sent) {
+        socket.data[sent ? "sent" : "received"] = true;
+        if (socket.data.sent && socket.data.received) {
+          done = function () {};
+          closeOnDone(socket);
+        }
+      }
+    : function () {};
 
   function drain(socket) {
     const message = socket.data.message;
@@ -63,8 +67,10 @@ function createOptions(type, message, closeOnDone) {
   };
 }
 
-const server = Bun.listen(createOptions("[Server]", "response", socket => {
-  server.stop();
-  socket.end();
-}));
+const server = Bun.listen(
+  createOptions("[Server]", "response", (socket) => {
+    server.stop();
+    socket.end();
+  }),
+);
 Bun.connect(createOptions("[Client]", "request"));

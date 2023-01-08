@@ -460,7 +460,18 @@ pub const Listener = struct {
             .host => |c| {
                 var host = bun.default_allocator.dupeZ(u8, c.host) catch unreachable;
                 defer bun.default_allocator.destroy(host.ptr);
-                this.listener = uws.us_socket_context_listen(@boolToInt(ssl_enabled), this.socket_context, host, c.port, socket_flags, 8) orelse {
+                this.listener = uws.us_socket_context_listen(
+                    @boolToInt(ssl_enabled),
+                    this.socket_context,
+                    // workaround issue with IPv6 localhost with getaddrinfo()
+                    if (strings.eqlComptime(c.host, "localhost"))
+                        "127.0.0.1"
+                    else
+                        host,
+                    c.port,
+                    socket_flags,
+                    8,
+                ) orelse {
                     exception.* = JSC.toInvalidArguments(
                         "Failed to listen at {s}:{d}",
                         .{

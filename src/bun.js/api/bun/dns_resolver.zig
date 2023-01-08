@@ -739,7 +739,6 @@ pub const GetAddrInfoRequest = struct {
                     if (hints) |*hint| hint else null,
                     &addrinfo,
                 );
-                defer std.c.freeaddrinfo(addrinfo);
                 JSC.Node.Syscall.syslog("getaddrinfo({s}, {d}) = {d} ({any})", .{
                     query.name,
                     port,
@@ -750,6 +749,10 @@ pub const GetAddrInfoRequest = struct {
                     this.* = .{ .err = @enumToInt(err) };
                     return;
                 }
+                
+                // do not free addrinfo when err != 0
+                // https://github.com/ziglang/zig/pull/14242
+                defer std.c.freeaddrinfo(addrinfo);
 
                 this.* = .{ .success = GetAddrInfo.Result.toList(default_allocator, addrinfo) catch unreachable };
             }

@@ -133,6 +133,7 @@ pub const TestRunner = struct {
         onTestStart: OnTestStart,
         onTestPass: OnTestUpdate,
         onTestFail: OnTestUpdate,
+        onTestSkip: OnTestUpdate,
     };
 
     pub fn reportPass(this: *TestRunner, test_id: Test.ID, file: string, label: string, expectations: u32, parent: ?*DescribeScope) void {
@@ -142,6 +143,11 @@ pub const TestRunner = struct {
     pub fn reportFailure(this: *TestRunner, test_id: Test.ID, file: string, label: string, expectations: u32, parent: ?*DescribeScope) void {
         this.tests.items(.status)[test_id] = .fail;
         this.callback.onTestFail(this.callback, test_id, file, label, expectations, parent);
+    }
+
+    pub fn reportSkip(this: *TestRunner, test_id: Test.ID, file: string, label: string, parent: ?*DescribeScope) void {
+        this.tests.items(.status)[test_id] = .skip;
+        this.callback.onTestSkip(this.callback, test_id, file, label, 0, parent);
     }
 
     pub fn addTestCount(this: *TestRunner, count: u32) u32 {
@@ -190,6 +196,7 @@ pub const TestRunner = struct {
             pending,
             pass,
             fail,
+            skip,
         };
     };
 };
@@ -1245,8 +1252,18 @@ pub const TestScope = struct {
     promise: ?*JSInternalPromise = null,
     ran: bool = false,
     task: ?*TestRunnerTask = null,
+    skipped: bool = false,
 
-    pub const Class = NewClass(void, .{ .name = "test" }, .{ .call = call, .only = only }, .{});
+    pub const Class = NewClass(
+        void,
+        .{ .name = "test" },
+        .{
+            .call = call,
+            .only = only,
+            .skip = skip,
+        },
+        .{},
+    );
 
     pub const Counter = struct {
         expected: u32 = 0,
@@ -1262,7 +1279,19 @@ pub const TestScope = struct {
         arguments: []const js.JSValueRef,
         exception: js.ExceptionRef,
     ) js.JSObjectRef {
-        return callMaybeOnly(this, ctx, arguments, exception, true);
+        return prepare(this, ctx, arguments, exception, .only);
+    }
+
+    pub fn skip(
+        // the DescribeScope here is the top of the file, not the real one
+        _: void,
+        ctx: js.JSContextRef,
+        this: js.JSObjectRef,
+        _: js.JSObjectRef,
+        arguments: []const js.JSValueRef,
+        exception: js.ExceptionRef,
+    ) js.JSObjectRef {
+        return prepare(this, ctx, arguments, exception, .skip);
     }
 
     pub fn call(
@@ -1274,15 +1303,15 @@ pub const TestScope = struct {
         arguments: []const js.JSValueRef,
         exception: js.ExceptionRef,
     ) js.JSObjectRef {
-        return callMaybeOnly(this, ctx, arguments, exception, false);
+        return prepare(this, ctx, arguments, exception, .call);
     }
 
-    fn callMaybeOnly(
+    fn prepare(
         this: js.JSObjectRef,
         ctx: js.JSContextRef,
         arguments: []const js.JSValueRef,
         exception: js.ExceptionRef,
-        is_only: bool,
+        comptime tag: @Type(.EnumLiteral),
     ) js.JSObjectRef {
         var args = bun.cast([]const JSC.JSValue, arguments[0..@min(arguments.len, 2)]);
         var label: string = "";
@@ -1309,12 +1338,20 @@ pub const TestScope = struct {
             return this;
         }
 
-        if (is_only) {
+        if (tag == .only) {
             Jest.runner.?.setOnly();
         }
 
-        if (!is_only and Jest.runner.?.only)
+        if (tag == .skip or (tag != .only and Jest.runner.?.only)) {
+            DescribeScope.active.skipped_counter += 1;
+            DescribeScope.active.tests.append(getAllocator(ctx), TestScope{
+                .label = label,
+                .parent = DescribeScope.active,
+                .skipped = true,
+                .callback = null,
+            }) catch unreachable;
             return this;
+        }
 
         js.JSValueProtect(ctx, function.asObjectRef());
 
@@ -1493,6 +1530,11 @@ pub const DescribeScope = struct {
     current_test_id: TestRunner.Test.ID = 0,
     value: JSValue = .zero,
     done: bool = false,
+    skipped_counter: u32 = 0,
+
+    pub fn isAllSkipped(this: *const DescribeScope) bool {
+        return @as(usize, this.skipped_counter) >= this.tests.items.len;
+    }
 
     pub fn push(new: *DescribeScope) void {
         if (comptime is_bindgen) return undefined;
@@ -1752,15 +1794,17 @@ pub const DescribeScope = struct {
 
         var i: TestRunner.Test.ID = 0;
 
-        const beforeAll = this.runCallback(ctx, .beforeAll);
-        if (!beforeAll.isEmpty()) {
-            while (i < end) {
-                Jest.runner.?.reportFailure(i + this.test_id_start, source.path.text, tests[i].label, 0, this);
-                i += 1;
+        if (!this.isAllSkipped()) {
+            const beforeAll = this.runCallback(ctx, .beforeAll);
+            if (!beforeAll.isEmpty()) {
+                while (i < end) {
+                    Jest.runner.?.reportFailure(i + this.test_id_start, source.path.text, tests[i].label, 0, this);
+                    i += 1;
+                }
+                this.tests.clearAndFree(allocator);
+                this.pending_tests.deinit(allocator);
+                return;
             }
-            this.tests.clearAndFree(allocator);
-            this.pending_tests.deinit(allocator);
-            return;
         }
 
         while (i < end) : (i += 1) {
@@ -1778,24 +1822,29 @@ pub const DescribeScope = struct {
         }
     }
 
-    pub fn onTestComplete(this: *DescribeScope, globalThis: *JSC.JSGlobalObject, test_id: TestRunner.Test.ID) void {
+    pub fn onTestComplete(this: *DescribeScope, globalThis: *JSC.JSGlobalObject, test_id: TestRunner.Test.ID, skipped: bool) void {
         // invalidate it
         this.current_test_id = std.math.maxInt(TestRunner.Test.ID);
         this.pending_tests.unset(test_id);
 
-        const afterEach = this.execCallback(globalThis, .afterEach);
-        if (!afterEach.isEmpty()) {
-            globalThis.bunVM().runErrorHandler(afterEach, null);
+        if (!skipped) {
+            const afterEach = this.execCallback(globalThis, .afterEach);
+            if (!afterEach.isEmpty()) {
+                globalThis.bunVM().runErrorHandler(afterEach, null);
+            }
         }
 
         if (this.pending_tests.findFirstSet() != null) {
             return;
         }
 
-        // Step 1. Run the afterAll callbacks, in reverse order
-        const afterAll = this.execCallback(globalThis, .afterAll);
-        if (!afterAll.isEmpty()) {
-            globalThis.bunVM().runErrorHandler(afterAll, null);
+        if (!this.isAllSkipped()) {
+            // Run the afterAll callbacks, in reverse order
+            // unless there were no tests for this scope
+            const afterAll = this.execCallback(globalThis, .afterAll);
+            if (!afterAll.isEmpty()) {
+                globalThis.bunVM().runErrorHandler(afterAll, null);
+            }
         }
 
         this.pending_tests.deinit(getAllocator(globalThis));
@@ -1907,16 +1956,21 @@ pub const TestRunnerTask = struct {
         DescribeScope.active = describe;
         active_test_expectation_counter = .{};
 
-        describe.current_test_id = this.test_id;
-        var globalThis = this.globalThis;
-        globalThis.bunVM().onUnhandledRejectionCtx = this;
-        var test_: TestScope = this.describe.tests.items[this.test_id];
-        const label = this.describe.tests.items[this.test_id].label;
-
         const test_id = this.test_id;
+        var test_: TestScope = this.describe.tests.items[test_id];
+        describe.current_test_id = test_id;
+        var globalThis = this.globalThis;
+        if (test_.skipped) {
+            this.processTestResult(globalThis, .{ .skip = {} }, test_, test_id, describe);
+            this.deinit();
+            return false;
+        }
+
+        globalThis.bunVM().onUnhandledRejectionCtx = this;
 
         if (this.needs_before_each) {
             this.needs_before_each = false;
+            const label = test_.label;
 
             const beforeEach = this.describe.runCallback(globalThis, .beforeEach);
 
@@ -1986,20 +2040,21 @@ pub const TestRunnerTask = struct {
 
         this.reported = true;
 
-        var globalThis = this.globalThis;
-        var test_ = this.describe.tests.items[this.test_id];
-        const label = this.describe.tests.items[this.test_id].label;
         const test_id = this.test_id;
+        var test_ = this.describe.tests.items[test_id];
         var describe = this.describe;
+        describe.tests.items[test_id] = test_;
+        processTestResult(this, this.globalThis, result, test_, test_id, describe);
+    }
 
-        describe.tests.items[this.test_id] = test_;
+    fn processTestResult(this: *TestRunnerTask, globalThis: *JSC.JSGlobalObject, result: Result, test_: TestScope, test_id: u32, describe: *DescribeScope) void {
         switch (result) {
-            .pass => |count| Jest.runner.?.reportPass(test_id, this.source.path.text, label, count, describe),
-            .fail => |count| Jest.runner.?.reportFailure(test_id, this.source.path.text, label, count, describe),
+            .pass => |count| Jest.runner.?.reportPass(test_id, this.source.path.text, test_.label, count, describe),
+            .fail => |count| Jest.runner.?.reportFailure(test_id, this.source.path.text, test_.label, count, describe),
+            .skip => Jest.runner.?.reportSkip(test_id, this.source.path.text, test_.label, describe),
             .pending => @panic("Unexpected pending test"),
         }
-        describe.onTestComplete(globalThis, this.test_id);
-
+        describe.onTestComplete(globalThis, test_id, result == .skip);
         Jest.runner.?.runNextTest();
     }
 
@@ -2021,4 +2076,5 @@ pub const Result = union(TestRunner.Test.Status) {
     fail: u32,
     pass: u32, // assertion count
     pending: void,
+    skip: void,
 };

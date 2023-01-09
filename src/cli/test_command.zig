@@ -44,6 +44,23 @@ const TestRunner = JSC.Jest.TestRunner;
 const Test = TestRunner.Test;
 const NetworkThread = @import("bun").HTTP.NetworkThread;
 const uws = @import("bun").uws;
+
+fn fmtStatusTextLine(comptime status: @Type(.EnumLiteral), comptime emoji: bool) []const u8 {
+    return switch (comptime status) {
+        .pass => comptime Output.prettyFmt("<green>✓<r>", emoji),
+        .fail => comptime Output.prettyFmt("<r><red>✗<r>", emoji),
+        .skip => comptime Output.prettyFmt("<r><yellow>-", emoji),
+        else => @compileError("Invalid status " ++ @tagName(status)),
+    };
+}
+
+fn writeTestStatusLine(comptime status: @Type(.EnumLiteral), writer: anytype) void {
+    if (Output.enable_ansi_colors_stderr)
+        writer.print(fmtStatusTextLine(status, true), .{}) catch unreachable
+    else
+        writer.print(fmtStatusTextLine(status, false), .{}) catch unreachable;
+}
+
 pub const CommandLineReporter = struct {
     jest: TestRunner,
     callback: TestRunner.Callback,
@@ -52,10 +69,12 @@ pub const CommandLineReporter = struct {
     prev_file: u64 = 0,
 
     failures_to_repeat_buf: std.ArrayListUnmanaged(u8) = .{},
+    skips_to_repeat_buf: std.ArrayListUnmanaged(u8) = .{},
 
     pub const Summary = struct {
         pass: u32 = 0,
         expectations: u32 = 0,
+        skip: u32 = 0,
         fail: u32 = 0,
     };
 
@@ -76,7 +95,7 @@ pub const CommandLineReporter = struct {
         // var this: *CommandLineReporter = @fieldParentPtr(CommandLineReporter, "callback", cb);
     }
 
-    fn printTestLine(label: string, parent: ?*Jest.DescribeScope, writer: anytype) void {
+    fn printTestLine(label: string, parent: ?*Jest.DescribeScope, comptime skip: bool, writer: anytype) void {
         var scopes_stack = std.BoundedArray(*Jest.DescribeScope, 64).init(0) catch unreachable;
         var parent_ = parent;
 
@@ -89,12 +108,14 @@ pub const CommandLineReporter = struct {
 
         const display_label = if (label.len > 0) label else "test";
 
+        const color_code = comptime if (skip) "<yellow>" else "";
+
         if (Output.enable_ansi_colors_stderr) {
             for (scopes) |scope| {
                 if (scope.label.len == 0) continue;
                 writer.writeAll(" ") catch unreachable;
 
-                writer.print(comptime Output.prettyFmt("<r>", true), .{}) catch unreachable;
+                writer.print(comptime Output.prettyFmt("<r>" ++ color_code, true), .{}) catch unreachable;
                 writer.writeAll(scope.label) catch unreachable;
                 writer.print(comptime Output.prettyFmt("<d>", true), .{}) catch unreachable;
                 writer.writeAll(" >") catch unreachable;
@@ -108,10 +129,12 @@ pub const CommandLineReporter = struct {
             }
         }
 
+        const line_color_code = if (comptime skip) "<r><yellow>" else "<r><b>";
+
         if (Output.enable_ansi_colors_stderr)
-            writer.print(comptime Output.prettyFmt("<r><b> {s}<r>", true), .{display_label}) catch unreachable
+            writer.print(comptime Output.prettyFmt(line_color_code ++ " {s}<r>", true), .{display_label}) catch unreachable
         else
-            writer.print(comptime Output.prettyFmt("<r><b> {s}<r>", false), .{display_label}) catch unreachable;
+            writer.print(comptime Output.prettyFmt(" {s}", false), .{display_label}) catch unreachable;
 
         writer.writeAll("\n") catch unreachable;
     }
@@ -124,12 +147,9 @@ pub const CommandLineReporter = struct {
 
         var this: *CommandLineReporter = @fieldParentPtr(CommandLineReporter, "callback", cb);
 
-        if (Output.enable_ansi_colors_stderr)
-            writer.print(comptime Output.prettyFmt("<green>✓<r>", true), .{}) catch unreachable
-        else
-            writer.print(comptime Output.prettyFmt("<green>✓<r>", false), .{}) catch unreachable;
+        writeTestStatusLine(.pass, &writer);
 
-        printTestLine(label, parent, writer);
+        printTestLine(label, parent, false, writer);
 
         this.jest.tests.items(.status)[id] = TestRunner.Test.Status.pass;
         this.summary.pass += 1;
@@ -145,12 +165,8 @@ pub const CommandLineReporter = struct {
         const initial_length = this.failures_to_repeat_buf.items.len;
         var writer = this.failures_to_repeat_buf.writer(bun.default_allocator);
 
-        if (Output.enable_ansi_colors_stderr)
-            writer.print(comptime Output.prettyFmt("<r><red>✗<r>", true), .{}) catch unreachable
-        else
-            writer.print(comptime Output.prettyFmt("<r><red>✗<r>", false), .{}) catch unreachable;
-
-        printTestLine(label, parent, writer);
+        writeTestStatusLine(.fail, &writer);
+        printTestLine(label, parent, false, writer);
 
         writer_.writeAll(this.failures_to_repeat_buf.items[initial_length..]) catch unreachable;
         Output.flush();
@@ -159,6 +175,27 @@ pub const CommandLineReporter = struct {
         this.summary.fail += 1;
         this.summary.expectations += expectations;
         this.jest.tests.items(.status)[id] = TestRunner.Test.Status.fail;
+    }
+
+    pub fn handleTestSkip(cb: *TestRunner.Callback, id: Test.ID, _: string, label: string, expectations: u32, parent: ?*Jest.DescribeScope) void {
+        var writer_: std.fs.File.Writer = Output.errorWriter();
+        var this: *CommandLineReporter = @fieldParentPtr(CommandLineReporter, "callback", cb);
+
+        // when the tests fail, we want to repeat the failures at the end
+        // so that you can see them better when there are lots of tests that ran
+        const initial_length = this.skips_to_repeat_buf.items.len;
+        var writer = this.skips_to_repeat_buf.writer(bun.default_allocator);
+
+        writeTestStatusLine(.skip, &writer);
+        printTestLine(label, parent, true, writer);
+
+        writer_.writeAll(this.skips_to_repeat_buf.items[initial_length..]) catch unreachable;
+        Output.flush();
+
+        // this.updateDots();
+        this.summary.skip += 1;
+        this.summary.expectations += expectations;
+        this.jest.tests.items(.status)[id] = TestRunner.Test.Status.skip;
     }
 };
 
@@ -328,6 +365,7 @@ pub const TestCommand = struct {
             .onTestStart = CommandLineReporter.handleTestStart,
             .onTestPass = CommandLineReporter.handleTestPass,
             .onTestFail = CommandLineReporter.handleTestFail,
+            .onTestSkip = CommandLineReporter.handleTestSkip,
         };
         reporter.jest.callback = &reporter.callback;
         Jest.Jest.runner = &reporter.jest;
@@ -351,7 +389,15 @@ pub const TestCommand = struct {
             .filter_names = ctx.positionals[1..],
             .results = std.ArrayList(PathString).init(ctx.allocator),
         };
-        scanner.scan(scanner.fs.top_level_dir);
+        const dir_to_scan = brk: {
+            if (ctx.debug.test_directory.len > 0) {
+                break :brk try vm.allocator.dupe(u8, resolve_path.joinAbs(scanner.fs.top_level_dir, .auto, ctx.debug.test_directory));
+            }
+
+            break :brk scanner.fs.top_level_dir;
+        };
+
+        scanner.scan(dir_to_scan);
         scanner.dirs_to_scan.deinit();
 
         const test_files = try scanner.results.toOwnedSlice();
@@ -360,13 +406,26 @@ pub const TestCommand = struct {
             runAllTests(reporter, vm, test_files, ctx.allocator);
         }
 
-        if (reporter.summary.pass > 20 and reporter.summary.fail > 0) {
-            Output.prettyError("\n<r><d>{d} tests failed<r>:\n", .{reporter.summary.fail});
+        if (reporter.summary.pass > 20) {
+            if (reporter.summary.skip > 0) {
+                Output.prettyError("\n<r><d>{d} tests skipped:<r>\n", .{reporter.summary.skip});
+                Output.flush();
 
-            Output.flush();
+                var error_writer = Output.errorWriter();
+                error_writer.writeAll(reporter.skips_to_repeat_buf.items) catch unreachable;
+            }
 
-            var error_writer = Output.errorWriter();
-            error_writer.writeAll(reporter.failures_to_repeat_buf.items) catch unreachable;
+            if (reporter.summary.fail > 0) {
+                if (reporter.summary.skip > 0) {
+                    Output.prettyError("\n", .{});
+                }
+
+                Output.prettyError("\n<r><d>{d} tests failed:<r>\n", .{reporter.summary.fail});
+                Output.flush();
+
+                var error_writer = Output.errorWriter();
+                error_writer.writeAll(reporter.failures_to_repeat_buf.items) catch unreachable;
+            }
         }
 
         Output.flush();
@@ -394,6 +453,10 @@ pub const TestCommand = struct {
             }
 
             Output.prettyError(" {d:5>} pass<r>\n", .{reporter.summary.pass});
+
+            if (reporter.summary.skip > 0) {
+                Output.prettyError(" <r><yellow>{d:5>} skip<r>\n", .{reporter.summary.skip});
+            }
 
             if (reporter.summary.fail > 0) {
                 Output.prettyError("<r><red>", .{});

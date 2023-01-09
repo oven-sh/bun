@@ -4,7 +4,6 @@ import {
   strictEqual,
   throws,
   assert,
-  assertOk,
   createCallCheckCtx,
   createDoneDotAll,
 } from "node-test-helpers";
@@ -405,11 +404,7 @@ describe("child_process default options", () => {
     // NOTE: Original test used child.on("exit"), but this is unreliable
     // because the process can exit before the stream is closed and the data is read
     child.stdout.on("close", () => {
-      assertOk(
-        response.includes(`TMPDIR=${platformTmpDir}`),
-        "spawn did not use process.env as default " +
-          `(process.env.TMPDIR=${platformTmpDir})`,
-      );
+      expect(response.includes(`TMPDIR=${platformTmpDir}`)).toBe(true);
       done();
     });
   });

@@ -1625,11 +1625,7 @@ pub const DescribeScope = struct {
                     this,
                 );
                 var result = cb.call(ctx, &.{done_func});
-                while (!this.done) {
-                    vm.eventLoop().autoTick();
-                    if (this.done) break;
-                    vm.eventLoop().tick();
-                }
+                vm.waitFor(&this.done);
                 break :brk result;
             } else cb.call(ctx, &.{});
             if (result.asAnyPromise()) |promise| {

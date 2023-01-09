@@ -3139,7 +3139,10 @@ pub const JSValue = enum(JSValueReprInt) {
     }
 
     pub inline fn isCell(this: JSValue) bool {
-        return (@bitCast(u64, @enumToInt(this)) & FFI.NotCellMask) == 0;
+        return switch (this) {
+            .zero, .undefined, .null, .true, .false => false,
+            else => (@bitCast(u64, @enumToInt(this)) & FFI.NotCellMask) == 0,
+        };
     }
 
     pub fn asCell(this: JSValue) *JSCell {

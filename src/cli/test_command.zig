@@ -39,7 +39,7 @@ const is_bindgen = std.meta.globalOption("bindgen", bool) orelse false;
 const HTTPThread = @import("bun").HTTP.HTTPThread;
 
 const JSC = @import("bun").JSC;
-const Jest = JSC.Jest;
+const jest = JSC.Jest;
 const TestRunner = JSC.Jest.TestRunner;
 const Test = TestRunner.Test;
 const NetworkThread = @import("bun").HTTP.NetworkThread;
@@ -97,8 +97,8 @@ pub const CommandLineReporter = struct {
         // var this: *CommandLineReporter = @fieldParentPtr(CommandLineReporter, "callback", cb);
     }
 
-    fn printTestLine(label: string, parent: ?*Jest.DescribeScope, comptime skip: bool, writer: anytype) void {
-        var scopes_stack = std.BoundedArray(*Jest.DescribeScope, 64).init(0) catch unreachable;
+    fn printTestLine(label: string, parent: ?*jest.DescribeScope, comptime skip: bool, writer: anytype) void {
+        var scopes_stack = std.BoundedArray(*jest.DescribeScope, 64).init(0) catch unreachable;
         var parent_ = parent;
 
         while (parent_) |scope| {
@@ -106,7 +106,7 @@ pub const CommandLineReporter = struct {
             parent_ = scope.parent;
         }
 
-        var scopes: []*Jest.DescribeScope = scopes_stack.slice();
+        var scopes: []*jest.DescribeScope = scopes_stack.slice();
 
         const display_label = if (label.len > 0) label else "test";
 
@@ -141,7 +141,7 @@ pub const CommandLineReporter = struct {
         writer.writeAll("\n") catch unreachable;
     }
 
-    pub fn handleTestPass(cb: *TestRunner.Callback, id: Test.ID, _: string, label: string, expectations: u32, parent: ?*Jest.DescribeScope) void {
+    pub fn handleTestPass(cb: *TestRunner.Callback, id: Test.ID, _: string, label: string, expectations: u32, parent: ?*jest.DescribeScope) void {
         var writer_: std.fs.File.Writer = Output.errorWriter();
         var buffered_writer = std.io.bufferedWriter(writer_);
         var writer = buffered_writer.writer();
@@ -158,7 +158,7 @@ pub const CommandLineReporter = struct {
         this.summary.expectations += expectations;
     }
 
-    pub fn handleTestFail(cb: *TestRunner.Callback, id: Test.ID, _: string, label: string, expectations: u32, parent: ?*Jest.DescribeScope) void {
+    pub fn handleTestFail(cb: *TestRunner.Callback, id: Test.ID, _: string, label: string, expectations: u32, parent: ?*jest.DescribeScope) void {
         var writer_: std.fs.File.Writer = Output.errorWriter();
         var this: *CommandLineReporter = @fieldParentPtr(CommandLineReporter, "callback", cb);
 
@@ -179,20 +179,23 @@ pub const CommandLineReporter = struct {
         this.jest.tests.items(.status)[id] = TestRunner.Test.Status.fail;
     }
 
-    pub fn handleTestSkip(cb: *TestRunner.Callback, id: Test.ID, _: string, label: string, expectations: u32, parent: ?*Jest.DescribeScope) void {
+    pub fn handleTestSkip(cb: *TestRunner.Callback, id: Test.ID, _: string, label: string, expectations: u32, parent: ?*jest.DescribeScope) void {
         var writer_: std.fs.File.Writer = Output.errorWriter();
         var this: *CommandLineReporter = @fieldParentPtr(CommandLineReporter, "callback", cb);
 
-        // when the tests fail, we want to repeat the failures at the end
-        // so that you can see them better when there are lots of tests that ran
-        const initial_length = this.skips_to_repeat_buf.items.len;
-        var writer = this.skips_to_repeat_buf.writer(bun.default_allocator);
+        // If you do it.only, don't report the skipped tests because its pretty noisy
+        if (jest.Jest.runner.?.only) {
+            // when the tests skip, we want to repeat the failures at the end
+            // so that you can see them better when there are lots of tests that ran
+            const initial_length = this.skips_to_repeat_buf.items.len;
+            var writer = this.skips_to_repeat_buf.writer(bun.default_allocator);
 
-        writeTestStatusLine(.skip, &writer);
-        printTestLine(label, parent, true, writer);
+            writeTestStatusLine(.skip, &writer);
+            printTestLine(label, parent, true, writer);
 
-        writer_.writeAll(this.skips_to_repeat_buf.items[initial_length..]) catch unreachable;
-        Output.flush();
+            writer_.writeAll(this.skips_to_repeat_buf.items[initial_length..]) catch unreachable;
+            Output.flush();
+        }
 
         // this.updateDots();
         this.summary.skip += 1;
@@ -370,7 +373,7 @@ pub const TestCommand = struct {
             .onTestSkip = CommandLineReporter.handleTestSkip,
         };
         reporter.jest.callback = &reporter.callback;
-        Jest.Jest.runner = &reporter.jest;
+        jest.jest.runner = &reporter.jest;
 
         js_ast.Expr.Data.Store.create(default_allocator);
         js_ast.Stmt.Data.Store.create(default_allocator);
@@ -579,10 +582,10 @@ pub const TestCommand = struct {
             vm.global.vm().doWork();
         }
 
-        var modules: []*Jest.DescribeScope = reporter.jest.files.items(.module_scope)[file_start..];
+        var modules: []*jest.DescribeScope = reporter.jest.files.items(.module_scope)[file_start..];
         for (modules) |module| {
             vm.onUnhandledRejectionCtx = null;
-            vm.onUnhandledRejection = Jest.TestRunnerTask.onUnhandledRejection;
+            vm.onUnhandledRejection = jest.TestRunnerTask.onUnhandledRejection;
             module.runTests(JSC.JSValue.zero, vm.global);
             vm.eventLoop().tick();
 

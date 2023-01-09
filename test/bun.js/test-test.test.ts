@@ -139,6 +139,30 @@ test("deepEquals regex", () => {
   expect(new RegExp("s", "g")).not.toEqual(new RegExp("s", "i"));
 });
 
+test("toThrow", () => {
+  expect(() => {
+    throw new Error("hello");
+  }).toThrow("hello");
+
+  var err = new Error("bad");
+  expect(() => {
+    throw err;
+  }).toThrow(err);
+
+  var err = new Error("good");
+  expect(() => {
+    throw err;
+  }).toThrow();
+
+  expect(() => {
+    return true;
+  }).not.toThrow();
+
+  expect(() => {
+    return true;
+  }).not.toThrow(err);
+});
+
 test("deepEquals derived strings and strings", () => {
   let a = new String("hello");
   let b = "hello";

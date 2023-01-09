@@ -46,12 +46,14 @@ const NetworkThread = @import("bun").HTTP.NetworkThread;
 const uws = @import("bun").uws;
 
 fn fmtStatusTextLine(comptime status: @Type(.EnumLiteral), comptime emoji: bool) []const u8 {
-    return switch (comptime status) {
-        .pass => comptime Output.prettyFmt("<green>✓<r>", emoji),
-        .fail => comptime Output.prettyFmt("<r><red>✗<r>", emoji),
-        .skip => comptime Output.prettyFmt("<r><yellow>-", emoji),
-        else => @compileError("Invalid status " ++ @tagName(status)),
-    };
+    comptime {
+        return switch (status) {
+            .pass => Output.prettyFmt("<green>✓<r>", emoji),
+            .fail => Output.prettyFmt("<r><red>✗<r>", emoji),
+            .skip => Output.prettyFmt("<r><yellow>⍉", emoji),
+            else => @compileError("Invalid status " ++ @tagName(status)),
+        };
+    }
 }
 
 fn writeTestStatusLine(comptime status: @Type(.EnumLiteral), writer: anytype) void {

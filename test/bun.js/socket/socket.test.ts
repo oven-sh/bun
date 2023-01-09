@@ -33,6 +33,23 @@ it("should keep process alive only when active", async () => {
   ]);
 });
 
+it("listen() should throw connection error for invalid host", () => {
+  expect(() => {
+    const handlers = {
+      open(socket) {
+        socket.close();
+      },
+      data() {},
+    };
+
+    Bun.listen({
+      port: 4423,
+      hostname: "whatishtis.com",
+      socket: handlers,
+    });
+  }).toThrow();
+});
+
 it("should reject on connection error, calling both connectError() and rejecting the promise", (done) => {
   var data = {};
   connect({

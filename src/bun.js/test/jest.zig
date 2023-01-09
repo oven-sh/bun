@@ -1117,24 +1117,27 @@ pub const Expect = struct {
         }
 
         const not = this.op.contains(.not);
-        const result = value.call(globalObject, &.{}).toError_();
-        if (result == .zero) {
-            if (not) return thisValue;
-            globalObject.throw("Expected function to throw", .{});
-            return .zero;
-        } else if (not) {
-            globalObject.throw("Expected function not to throw", .{});
+        const result_ = value.call(globalObject, &.{}).toError();
+        const did_throw = result_ != null;
+        const matched_expectation = did_throw == !not;
+        if (matched_expectation) return thisValue;
+
+        if (expected_value.isEmptyOrUndefinedOrNull()) {
+            if (did_throw)
+                globalObject.throw("Expected function to throw", .{})
+            else
+                globalObject.throw("Expected function not to throw", .{});
+
             return .zero;
         }
+        const result = result_.?;
 
-        if (expected_value == .zero or !expected_value.isCell()) return thisValue;
+        const expected_error = expected_value.toError();
 
-        const expected_error = expected_value.toError() orelse expected_value;
-
-        if (expected_value.isString() or !expected_error.isUndefined()) {
+        if (expected_value.isString() or expected_error != null) {
             const expected = brk: {
                 if (expected_value.isString()) break :brk expected_value;
-                break :brk expected_error.get(globalObject, "message");
+                break :brk expected_error.?.get(globalObject, "message");
             };
             const actual = result.get(globalObject, "message");
             // TODO support partial match

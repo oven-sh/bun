@@ -571,6 +571,16 @@ pub const VirtualMachine = struct {
         this.eventLoop().tick();
     }
 
+    pub fn waitFor(this: *VirtualMachine, cond: *bool) void {
+        while (!cond.*) {
+            this.eventLoop().tick();
+
+            if (!cond.*) {
+                this.eventLoop().autoTick();
+            }
+        }
+    }
+
     pub fn waitForPromise(this: *VirtualMachine, promise: JSC.AnyPromise) void {
         this.eventLoop().waitForPromise(promise);
     }

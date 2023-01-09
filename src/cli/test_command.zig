@@ -591,12 +591,12 @@ pub const TestCommand = struct {
 
             const initial_unhandled_counter = vm.unhandled_error_counter;
             while (vm.active_tasks > 0 and vm.unhandled_error_counter == initial_unhandled_counter) {
-                if (!Jest.Jest.runner.?.has_pending_tests) Jest.Jest.runner.?.drain();
+                if (!jest.jest.runner.?.has_pending_tests) jest.jest.runner.?.drain();
                 vm.eventLoop().tick();
 
-                while (Jest.Jest.runner.?.has_pending_tests) {
+                while (jest.jest.runner.?.has_pending_tests) {
                     vm.eventLoop().autoTick();
-                    if (!Jest.Jest.runner.?.has_pending_tests) break;
+                    if (!jest.jest.runner.?.has_pending_tests) break;
                     vm.eventLoop().tick();
                 }
             }

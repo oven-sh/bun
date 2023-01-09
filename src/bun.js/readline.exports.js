@@ -2705,18 +2705,19 @@ Interface.prototype.question = function question(query, options, cb) {
     options = kEmptyObject;
   }
 
-  if (options.signal) {
-    validateAbortSignal(options.signal, "options.signal");
-    if (options.signal.aborted) {
+  var signal = options?.signal;
+  if (signal) {
+    validateAbortSignal(signal, "options.signal");
+    if (signal.aborted) {
       return;
     }
 
     var onAbort = () => {
       this[kQuestionCancel]();
     };
-    options.signal.addEventListener("abort", onAbort, { once: true });
+    signal.addEventListener("abort", onAbort, { once: true });
     var cleanup = () => {
-      options.signal.removeEventListener("abort", onAbort);
+      signal.removeEventListener("abort", onAbort);
     };
     var originalCb = cb;
     cb =
@@ -2732,6 +2733,7 @@ Interface.prototype.question = function question(query, options, cb) {
     this[kQuestion](query, cb);
   }
 };
+
 Interface.prototype.question[promisify.custom] = function question(
   query,
   options,
@@ -2740,26 +2742,24 @@ Interface.prototype.question[promisify.custom] = function question(
     options = kEmptyObject;
   }
 
-  if (options.signal && options.signal.aborted) {
-    return PromiseReject(
-      new AbortError(undefined, { cause: options.signal.reason }),
-    );
+  var signal = options?.signal;
+
+  if (signal && signal.aborted) {
+    return PromiseReject(new AbortError(undefined, { cause: signal.reason }));
   }
 
   return new Promise((resolve, reject) => {
     var cb = resolve;
-
-    if (options.signal) {
+    if (signal) {
       var onAbort = () => {
-        reject(new AbortError(undefined, { cause: options.signal.reason }));
+        reject(new AbortError(undefined, { cause: signal.reason }));
       };
-      options.signal.addEventListener("abort", onAbort, { once: true });
+      signal.addEventListener("abort", onAbort, { once: true });
       cb = (answer) => {
-        options.signal.removeEventListener("abort", onAbort);
+        signal.removeEventListener("abort", onAbort);
         resolve(answer);
       };
     }
-
     this.question(query, options, cb);
   });
 };
@@ -3214,28 +3214,28 @@ var PromisesInterface = class Interface extends _Interface {
     super(input, output, completer, terminal);
   }
   question(query, options = kEmptyObject) {
+    var signal = options?.signal;
+    if (signal) {
+      validateAbortSignal(signal, "options.signal");
+      if (signal.aborted) {
+        return PromiseReject(
+          new AbortError(undefined, { cause: signal.reason }),
+        );
+      }
+    }
     return new Promise((resolve, reject) => {
       var cb = resolve;
-
       if (options?.signal) {
-        validateAbortSignal(options.signal, "options.signal");
-        if (options.signal.aborted) {
-          return reject(
-            new AbortError(undefined, { cause: options.signal.reason }),
-          );
-        }
-
         var onAbort = () => {
           this[kQuestionCancel]();
-          reject(new AbortError(undefined, { cause: options.signal.reason }));
+          reject(new AbortError(undefined, { cause: signal.reason }));
         };
-        options.signal.addEventListener("abort", onAbort, { once: true });
+        signal.addEventListener("abort", onAbort, { once: true });
         cb = (answer) => {
-          options.signal.removeEventListener("abort", onAbort);
+          signal.removeEventListener("abort", onAbort);
           resolve(answer);
         };
       }
-
       this[kQuestion](query, cb);
     });
   }

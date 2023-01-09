@@ -749,7 +749,7 @@ pub const GetAddrInfoRequest = struct {
                     this.* = .{ .err = @enumToInt(err) };
                     return;
                 }
-                
+
                 // do not free addrinfo when err != 0
                 // https://github.com/ziglang/zig/pull/14242
                 defer std.c.freeaddrinfo(addrinfo);
@@ -1004,10 +1004,13 @@ pub const DNSResolver = struct {
                 array = addr.toJSArray(this.vm.allocator, new_global);
                 prev_global = new_global;
             }
-            array.ensureStillAlive();
-            value.onCompleteWithArray(array);
-            array.ensureStillAlive();
             pending = value.next;
+
+            {
+                array.ensureStillAlive();
+                value.onCompleteWithArray(array);
+                array.ensureStillAlive();
+            }
         }
     }
 
@@ -1035,22 +1038,29 @@ pub const DNSResolver = struct {
         };
         var pending: ?*DNSLookup = key.lookup.head.next;
         var prev_global = key.lookup.head.globalThis;
-        array.ensureStillAlive();
-        key.lookup.head.onCompleteWithArray(array);
-        bun.default_allocator.destroy(key.lookup);
-        array.ensureStillAlive();
+
+        {
+            array.ensureStillAlive();
+            key.lookup.head.onCompleteWithArray(array);
+            bun.default_allocator.destroy(key.lookup);
+            array.ensureStillAlive();
+        }
+
         // std.c.addrinfo
 
         while (pending) |value| {
             var new_global = value.globalThis;
+            pending = value.next;
             if (prev_global != new_global) {
                 array = result.toJS(new_global).?;
                 prev_global = new_global;
             }
-            array.ensureStillAlive();
-            value.onCompleteWithArray(array);
-            array.ensureStillAlive();
-            pending = value.next;
+
+            {
+                array.ensureStillAlive();
+                value.onCompleteWithArray(array);
+                array.ensureStillAlive();
+            }
         }
     }
 
@@ -1066,9 +1076,11 @@ pub const DNSResolver = struct {
         comptime field: std.meta.FieldEnum(DNSResolver),
     ) CacheHit {
         var cache: *PendingCache = &@field(this, @tagName(field));
-        var inflight_iter = cache.available.iterator(.{
-            .kind = .unset,
-        });
+        var inflight_iter = cache.available.iterator(
+            .{
+                .kind = .unset,
+            },
+        );
 
         while (inflight_iter.next()) |index| {
             var entry: *GetAddrInfoRequest.PendingCacheKey = &cache.buffer[index];

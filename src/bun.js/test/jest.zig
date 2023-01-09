@@ -1701,7 +1701,7 @@ pub const DescribeScope = struct {
         return scope.run(new_this, ctx, callback, exception);
     }
 
-    pub fn run(this: *DescribeScope, thisObject: js.JSObjectRef, ctx: js.JSContextRef, callback: js.JSObjectRef, exception: js.ExceptionRef) js.JSObjectRef {
+    pub fn run(this: *DescribeScope, thisObject: js.JSObjectRef, ctx: js.JSContextRef, callback: js.JSObjectRef, _: js.ExceptionRef) js.JSObjectRef {
         if (comptime is_bindgen) return undefined;
         js.JSValueProtect(ctx, callback);
         defer js.JSValueUnprotect(ctx, callback);
@@ -1720,13 +1720,13 @@ pub const DescribeScope = struct {
                 switch (prom.status(ctx.ptr().vm())) {
                     JSPromise.Status.Fulfilled => {},
                     else => {
-                        exception.* = prom.result(ctx.ptr().vm()).asObjectRef();
-                        return null;
+                        ctx.bunVM().runErrorHandlerWithDedupe(prom.result(ctx.ptr().vm()), null);
+                        return JSC.JSValue.jsUndefined().asObjectRef();
                     },
                 }
             } else if (result.toError()) |err| {
-                exception.* = err.asObjectRef();
-                return null;
+                ctx.bunVM().runErrorHandlerWithDedupe(err, null);
+                return JSC.JSValue.jsUndefined().asObjectRef();
             }
         }
 

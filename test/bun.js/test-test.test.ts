@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test";
+import { describe, expect, it, test } from "bun:test";
 
 test("toStrictEqual() vs toEqual()", () => {
   expect([1, , 3]).toEqual([1, , 3]);
@@ -1986,3 +1986,26 @@ try {
 try {
   test();
 } catch (e) {}
+
+describe("throw in describe scope doesn't enqueue tests after thrown", () => {
+  it("test enqueued before a describe scope throws is never run", () => {
+    throw new Error("This test failed");
+  });
+
+  class TestPass extends Error {
+    constructor(message) {
+      super(message);
+      this.name = "TestPass";
+    }
+  }
+
+  throw new TestPass("This test passed. Ignore the error message");
+
+  it("test enqueued after a describe scope throws is never run", () => {
+    throw new Error("This test failed");
+  });
+});
+
+it("a describe scope throwing doesn't cause all other tests in the file to fail", () => {
+  expect(true).toBe(true);
+});

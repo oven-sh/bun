@@ -48,9 +48,9 @@ const uws = @import("bun").uws;
 fn fmtStatusTextLine(comptime status: @Type(.EnumLiteral), comptime emoji: bool) []const u8 {
     comptime {
         return switch (status) {
-            .pass => Output.prettyFmt("<green>✓<r>", emoji),
+            .pass => Output.prettyFmt("<r><green>✓<r>", emoji),
             .fail => Output.prettyFmt("<r><red>✗<r>", emoji),
-            .skip => Output.prettyFmt("<r><yellow>⍉", emoji),
+            .skip => Output.prettyFmt("<r><yellow>-<d>", emoji),
             else => @compileError("Invalid status " ++ @tagName(status)),
         };
     }

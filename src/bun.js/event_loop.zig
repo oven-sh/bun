@@ -83,7 +83,7 @@ pub fn ConcurrentPromiseTask(comptime Context: type) type {
 }
 
 pub fn IOTask(comptime Context: type) type {
-    return WorkTask(Context, false);
+    return WorkTask(Context, true);
 }
 
 pub fn WorkTask(comptime Context: type, comptime async_io: bool) type {

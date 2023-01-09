@@ -175,12 +175,12 @@ export var {
   resolvePtr,
   resolveSoa,
   resolveSrv,
+  reverse,
   resolveTxt,
 } = InternalResolver.prototype;
 
 function setDefaultResultOrder() {}
 function setServers() {}
-export const { resolve, reverse } = InternalResolver.prototype;
 
 // promisified versions
 export const promises = {

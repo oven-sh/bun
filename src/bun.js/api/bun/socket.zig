@@ -55,6 +55,16 @@ const ZigString = JSC.ZigString;
 //     }
 // };
 
+fn normalizeHost(input: anytype) @TypeOf(input) {
+    if (input.len == 0) {
+        return "localhost";
+    }
+
+    if (strings.eqlComptime(input, "localhost"))
+        return "127.0.0.1";
+
+    return input;
+}
 const Handlers = struct {
     onOpen: JSC.JSValue = .zero,
     onClose: JSC.JSValue = .zero,
@@ -131,7 +141,7 @@ const Handlers = struct {
         };
 
         if (opts.isEmptyOrUndefinedOrNull() or opts.isBoolean() or !opts.isObject()) {
-            exception.* = JSC.toInvalidArguments("Expected socket object", .{}, globalObject).asObjectRef();
+            exception.* = JSC.toInvalidArguments("Expected \"socket\" to be an object", .{}, globalObject).asObjectRef();
             return null;
         }
 
@@ -366,7 +376,7 @@ pub const Listener = struct {
             return .zero;
         }
 
-        const socket_config = SocketConfig.fromJS(opts, globalObject, exception) orelse {
+        var socket_config = SocketConfig.fromJS(opts, globalObject, exception) orelse {
             return .zero;
         };
         var hostname_or_unix = socket_config.hostname_or_unix;
@@ -377,54 +387,52 @@ pub const Listener = struct {
 
         const ssl_enabled = ssl != null;
 
-        var socket = Listener{
-            .handlers = handlers,
-            .connection = if (port) |port_| .{
-                .host = .{ .host = (hostname_or_unix.cloneIfNeeded(bun.default_allocator) catch unreachable).slice(), .port = port_ },
-            } else .{
-                .unix = (hostname_or_unix.cloneIfNeeded(bun.default_allocator) catch unreachable).slice(),
-            },
-            .ssl = ssl_enabled,
-        };
-
-        socket.handlers.protect();
-
-        if (socket_config.default_data != .zero) {
-            socket.strong_data = JSC.Strong.create(socket_config.default_data, globalObject);
-        }
-
         const socket_flags: i32 = 0;
 
-        var ctx_opts: uws.us_socket_context_options_t = undefined;
-        @memset(@ptrCast([*]u8, &ctx_opts), 0, @sizeOf(uws.us_socket_context_options_t));
+        const ctx_opts: uws.us_socket_context_options_t = brk: {
+            var sock_ctx: uws.us_socket_context_options_t = undefined;
+            @memset(@ptrCast([*]u8, &sock_ctx), 0, @sizeOf(uws.us_socket_context_options_t));
 
-        if (ssl) |ssl_config| {
-            ctx_opts.key_file_name = ssl_config.key_file_name;
-            ctx_opts.cert_file_name = ssl_config.cert_file_name;
-            ctx_opts.ca_file_name = ssl_config.ca_file_name;
-            ctx_opts.dh_params_file_name = ssl_config.dh_params_file_name;
-            ctx_opts.passphrase = ssl_config.passphrase;
-            ctx_opts.ssl_prefer_low_memory_usage = @boolToInt(ssl_config.low_memory_mode);
-        }
-
+            if (ssl) |ssl_config| {
+                sock_ctx.key_file_name = ssl_config.key_file_name;
+                sock_ctx.cert_file_name = ssl_config.cert_file_name;
+                sock_ctx.ca_file_name = ssl_config.ca_file_name;
+                sock_ctx.dh_params_file_name = ssl_config.dh_params_file_name;
+                sock_ctx.passphrase = ssl_config.passphrase;
+                sock_ctx.ssl_prefer_low_memory_usage = @boolToInt(ssl_config.low_memory_mode);
+            }
+            break :brk sock_ctx;
+        };
+        defer if (ssl != null) ssl.?.deinit();
         globalObject.bunVM().eventLoop().ensureWaker();
-        socket.socket_context = uws.us_create_socket_context(@boolToInt(ssl_enabled), uws.Loop.get().?, @sizeOf(usize), ctx_opts);
 
-        if (ssl) |ssl_config| {
-            uws.us_socket_context_add_server_name(1, socket.socket_context, ssl_config.server_name, ctx_opts, null);
-        }
+        var socket_context = uws.us_create_socket_context(
+            @boolToInt(ssl_enabled),
+            uws.Loop.get().?,
+            @sizeOf(usize),
+            ctx_opts,
+        ) orelse {
+            var err = globalObject.createErrorInstance("Failed to listen on {s}:{d}", .{ hostname_or_unix.slice(), port orelse 0 });
+            defer {
+                socket_config.handlers.unprotect();
+                hostname_or_unix.deinit();
+            }
 
-        var this: *Listener = handlers.vm.allocator.create(Listener) catch @panic("OOM");
-        this.* = socket;
-        this.socket_context.?.ext(ssl_enabled, *Listener).?.* = this;
+            const errno = @enumToInt(std.c.getErrno(-1));
+            if (errno != 0) {
+                err.put(globalObject, ZigString.static("errno"), JSValue.jsNumber(errno));
+                if (bun.C.SystemErrno.init(errno)) |str| {
+                    err.put(globalObject, ZigString.static("code"), ZigString.init(@tagName(str)).toValueGC(globalObject));
+                }
+            }
 
-        var this_value = this.toJS(globalObject);
-        this.strong_self.set(globalObject, this_value);
-        this.poll_ref.ref(handlers.vm);
+            exception.* = err.asObjectRef();
+            return .zero;
+        };
 
         if (ssl_enabled) {
             uws.NewSocketHandler(true).configure(
-                this.socket_context.?,
+                socket_context,
                 true,
                 *TLSSocket,
                 struct {
@@ -440,7 +448,7 @@ pub const Listener = struct {
             );
         } else {
             uws.NewSocketHandler(false).configure(
-                this.socket_context.?,
+                socket_context,
                 true,
                 *TCPSocket,
                 struct {
@@ -456,58 +464,81 @@ pub const Listener = struct {
             );
         }
 
-        switch (this.connection) {
-            .host => |c| {
-                var host = bun.default_allocator.dupeZ(u8, c.host) catch unreachable;
-                defer bun.default_allocator.destroy(host.ptr);
-                this.listener = uws.us_socket_context_listen(
-                    @boolToInt(ssl_enabled),
-                    this.socket_context,
-                    // workaround issue with IPv6 localhost with getaddrinfo()
-                    if (strings.eqlComptime(c.host, "localhost"))
-                        "127.0.0.1"
-                    else
-                        host,
-                    c.port,
-                    socket_flags,
-                    8,
-                ) orelse {
-                    exception.* = JSC.toInvalidArguments(
-                        "Failed to listen at {s}:{d}",
-                        .{
-                            bun.span(host),
-                            c.port,
-                        },
-                        globalObject,
-                    ).asObjectRef();
-                    this.poll_ref.unref(handlers.vm);
+        const connection: Listener.UnixOrHost = if (port) |port_| .{
+            .host = .{ .host = (hostname_or_unix.cloneIfNeeded(bun.default_allocator) catch unreachable).slice(), .port = port_ },
+        } else .{
+            .unix = (hostname_or_unix.cloneIfNeeded(bun.default_allocator) catch unreachable).slice(),
+        };
 
-                    this.strong_self.clear();
-                    this.strong_data.clear();
+        var listen_socket: *uws.ListenSocket = brk: {
+            switch (connection) {
+                .host => |c| {
+                    var host = bun.default_allocator.dupeZ(u8, c.host) catch unreachable;
+                    defer bun.default_allocator.free(host);
+                    break :brk uws.us_socket_context_listen(
+                        @boolToInt(ssl_enabled),
+                        socket_context,
+                        normalizeHost(@as([:0]const u8, host)),
+                        c.port,
+                        socket_flags,
+                        8,
+                    );
+                },
+                .unix => |u| {
+                    var host = bun.default_allocator.dupeZ(u8, u) catch unreachable;
+                    defer bun.default_allocator.free(host);
+                    break :brk uws.us_socket_context_listen_unix(@boolToInt(ssl_enabled), socket_context, host, socket_flags, 8);
+                },
+            }
+        } orelse {
+            defer {
+                hostname_or_unix.deinit();
+                uws.us_socket_context_free(@boolToInt(ssl_enabled), socket_context);
+            }
 
-                    return .zero;
-                };
-            },
-            .unix => |u| {
-                var host = bun.default_allocator.dupeZ(u8, u) catch unreachable;
-                defer bun.default_allocator.destroy(host.ptr);
-                this.listener = uws.us_socket_context_listen_unix(@boolToInt(ssl_enabled), this.socket_context, host, socket_flags, 8) orelse {
-                    exception.* = JSC.toInvalidArguments(
-                        "Failed to listen on socket {s}",
-                        .{
-                            bun.span(host),
-                        },
-                        globalObject,
-                    ).asObjectRef();
-                    this.poll_ref.unref(handlers.vm);
+            const err = globalObject.createErrorInstance(
+                "Failed to listen at {s}",
+                .{
+                    bun.span(hostname_or_unix.slice()),
+                },
+            );
+            const errno = @enumToInt(std.c.getErrno(-1));
+            if (errno != 0) {
+                err.put(globalObject, ZigString.static("errno"), JSValue.jsNumber(errno));
+                if (bun.C.SystemErrno.init(errno)) |str| {
+                    err.put(globalObject, ZigString.static("code"), ZigString.init(@tagName(str)).toValueGC(globalObject));
+                }
+            }
+            exception.* = err.asObjectRef();
 
-                    this.strong_self.clear();
-                    this.strong_data.clear();
+            return .zero;
+        };
 
-                    return .zero;
-                };
-            },
+        var socket = Listener{
+            .handlers = handlers,
+            .connection = connection,
+            .ssl = ssl_enabled,
+            .socket_context = socket_context,
+            .listener = listen_socket,
+        };
+
+        socket.handlers.protect();
+
+        if (socket_config.default_data != .zero) {
+            socket.strong_data = JSC.Strong.create(socket_config.default_data, globalObject);
         }
+
+        if (ssl) |ssl_config| {
+            uws.us_socket_context_add_server_name(1, socket.socket_context, ssl_config.server_name, ctx_opts, null);
+        }
+
+        var this: *Listener = handlers.vm.allocator.create(Listener) catch @panic("OOM");
+        this.* = socket;
+        this.socket_context.?.ext(ssl_enabled, *Listener).?.* = this;
+
+        var this_value = this.toJS(globalObject);
+        this.strong_self.set(globalObject, this_value);
+        this.poll_ref.ref(handlers.vm);
 
         return this_value;
     }
@@ -819,7 +850,7 @@ fn NewSocket(comptime ssl: bool) type {
             switch (connection) {
                 .host => |c| {
                     _ = @This().Socket.connectPtr(
-                        c.host,
+                        normalizeHost(c.host),
                         c.port,
                         socket_ctx,
                         @This(),

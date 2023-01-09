@@ -285,6 +285,20 @@ pub const SystemErrno = enum(u8) {
 
     pub const max = 107;
 
+    pub fn init(code: anytype) ?SystemErrno {
+        if (comptime std.meta.trait.isSignedInt(@TypeOf(code))) {
+            if (code < 0)
+                return init(-code);
+        }
+
+        if (code >= max) return null;
+        return @intToEnum(SystemErrno, code);
+    }
+
+    pub fn label(this: SystemErrno) ?[]const u8 {
+        return labels.get(this) orelse null;
+    }
+
     const LabelMap = std.EnumMap(SystemErrno, []const u8);
     pub const labels: LabelMap = brk: {
         var map: LabelMap = LabelMap.initFull("");

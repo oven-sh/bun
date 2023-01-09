@@ -184,7 +184,7 @@ pub const CommandLineReporter = struct {
         var this: *CommandLineReporter = @fieldParentPtr(CommandLineReporter, "callback", cb);
 
         // If you do it.only, don't report the skipped tests because its pretty noisy
-        if (jest.Jest.runner.?.only) {
+        if (jest.Jest.runner != null and !jest.Jest.runner.?.only) {
             // when the tests skip, we want to repeat the failures at the end
             // so that you can see them better when there are lots of tests that ran
             const initial_length = this.skips_to_repeat_buf.items.len;
@@ -373,7 +373,7 @@ pub const TestCommand = struct {
             .onTestSkip = CommandLineReporter.handleTestSkip,
         };
         reporter.jest.callback = &reporter.callback;
-        jest.jest.runner = &reporter.jest;
+        jest.Jest.runner = &reporter.jest;
 
         js_ast.Expr.Data.Store.create(default_allocator);
         js_ast.Stmt.Data.Store.create(default_allocator);
@@ -591,12 +591,12 @@ pub const TestCommand = struct {
 
             const initial_unhandled_counter = vm.unhandled_error_counter;
             while (vm.active_tasks > 0 and vm.unhandled_error_counter == initial_unhandled_counter) {
-                if (!jest.jest.runner.?.has_pending_tests) jest.jest.runner.?.drain();
+                if (!jest.Jest.runner.?.has_pending_tests) jest.Jest.runner.?.drain();
                 vm.eventLoop().tick();
 
-                while (jest.jest.runner.?.has_pending_tests) {
+                while (jest.Jest.runner.?.has_pending_tests) {
                     vm.eventLoop().autoTick();
-                    if (!jest.jest.runner.?.has_pending_tests) break;
+                    if (!jest.Jest.runner.?.has_pending_tests) break;
                     vm.eventLoop().tick();
                 }
             }

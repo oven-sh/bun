@@ -64,6 +64,8 @@ fn notImplementedProp(
 }
 
 const ArrayIdentityContext = @import("../../identity_context.zig").ArrayIdentityContext;
+const IdentityContext = @import("../../identity_context.zig").IdentityContext;
+
 pub const TestRunner = struct {
     tests: TestRunner.Test.List = .{},
     log: *logger.Log,
@@ -71,6 +73,8 @@ pub const TestRunner = struct {
     index: File.Map = File.Map{},
     only: bool = false,
     last_file: u64 = 0,
+    updateSnapshot: bool = true,
+    snapshots: File.Snapshot,
 
     timeout_seconds: f64 = 5.0,
 
@@ -139,6 +143,8 @@ pub const TestRunner = struct {
 
     pub fn reportPass(this: *TestRunner, test_id: Test.ID, file: string, label: string, expectations: u32, parent: ?*DescribeScope) void {
         this.tests.items(.status)[test_id] = .pass;
+        // @TODO run this just on test close
+        // this.tests.items(.status)[test_id].snapshot.appendToFile();
         this.callback.onTestPass(this.callback, test_id, file, label, expectations, parent);
     }
     pub fn reportFailure(this: *TestRunner, test_id: Test.ID, file: string, label: string, expectations: u32, parent: ?*DescribeScope) void {
@@ -161,25 +167,51 @@ pub const TestRunner = struct {
         if (entry.found_existing) {
             return this.files.items(.module_scope)[entry.value_ptr.*];
         }
+
+        // put snapshot here
+        // const snapshot_path = snapshot.resolveSnapshotPath(Fs.Path.init(file_path), this.allocator);
+        // var snapshot_file: *snapshot.SnapshotFile = if (this.scope.tests.items[this.test_id].snapshot) |s| s else blk: {
+        //     var s = this.allocator.create(snapshot.SnapshotFile) catch unreachable;
+
+        //     s.* = .{ .path = snapshot_path, .allocator = this.allocator, .snapshotData = JSC.JSValue.jsUndefined(), .counters = snapshot.SnapshotFile.CountersMap.init(this.allocator) };
+        //     // this.scope.tests.items[this.test_id].snapshot = s;
+        //     break :blk s;
+        // };
+        // const snapshot_path = snapshot.resolveSnapshotPath(Fs.Path.init(file_path), this.allocator);
+        // var snapshot_file: *snapshot.SnapshotFile = this.allocator.create(snapshot.SnapshotFile) catch unreachable;
+
+        // snapshot_file.* = .{ .path = snapshot_path, .globalObject = null, .allocator = this.allocator, .snapshotData = JSC.JSValue.jsUndefined(), .counters = snapshot.SnapshotFile.CountersMap.init(this.allocator) };
+
         var scope = this.allocator.create(DescribeScope) catch unreachable;
         const file_id = @truncate(File.ID, this.files.len);
         scope.* = DescribeScope{
             .file_id = file_id,
             .test_id_start = @truncate(Test.ID, this.tests.len),
+            // .snapshot = snapshot_file,
         };
         this.files.append(this.allocator, .{ .module_scope = scope, .source = logger.Source.initEmptyFile(file_path) }) catch unreachable;
         entry.value_ptr.* = file_id;
         return scope;
     }
 
+    pub fn saveSnapshots(this: *TestRunner) void {
+        var iterator = this.snapshots.valueIterator();
+        while (iterator.next()) |snapshot_file| {
+            snapshot_file.*.writeToFile();
+        }
+    }
+
     pub const File = struct {
         source: logger.Source = logger.Source.initEmptyFile(""),
         log: logger.Log = logger.Log.initComptime(default_allocator),
         module_scope: *DescribeScope = undefined,
+        // snapshot: snapshot.SnapshotFile,
 
         pub const List = std.MultiArrayList(File);
         pub const ID = u32;
         pub const Map = std.ArrayHashMapUnmanaged(u32, u32, ArrayIdentityContext, false);
+        // Each test file has a corresponding snapshot file
+        pub const Snapshot = std.HashMap(u32, *snapshot.SnapshotFile, IdentityContext(u32), 80);
     };
 
     pub const Test = struct {
@@ -1102,15 +1134,14 @@ pub const Expect = struct {
         const file_id = this.scope.file_id;
         var file_fs: Fs.Path = Jest.runner.?.files.items(.source)[file_id].path;
 
-        const snapshot_path = snapshot.resolveSnapshotPath(file_fs, allocator);
-
-        var snapshot_file: *snapshot.SnapshotFile = if (this.scope.tests.items[this.test_id].snapshot) |s| s else blk: {
-            var s = allocator.create(snapshot.SnapshotFile) catch unreachable;
-            var _file_system = Fs.FileSystem.init1(allocator, null) catch unreachable;
-
-            s.* = .{ .globalObject = globalObject, .path = snapshot_path, .file_system = _file_system, .allocator = globalObject.bunVM().allocator, .snapshotData = JSC.JSValue.jsUndefined(), .counters = snapshot.SnapshotFile.CountersMap.init(globalObject.bunVM().allocator) };
-            this.scope.tests.items[this.test_id].snapshot = s;
-            break :blk s;
+        // find or create if the snapshot file for this test
+        const hash = @truncate(u32, std.hash.Wyhash.hash(0, file_fs.pretty));
+        const snapshot_file: *snapshot.SnapshotFile = Jest.runner.?.snapshots.get(hash) orelse blk: {
+            const snapshot_path = snapshot.resolveSnapshotPath(file_fs, allocator);
+            var snapshot_file: *snapshot.SnapshotFile = allocator.create(snapshot.SnapshotFile) catch unreachable;
+            snapshot_file.* = .{ .path = snapshot_path, .globalObject = null, .allocator = allocator, .snapshotData = JSC.JSValue.jsUndefined(), .counters = snapshot.SnapshotFile.CountersMap.init(allocator) };
+            Jest.runner.?.snapshots.put(hash, snapshot_file) catch unreachable;
+            break :blk snapshot_file;
         };
 
         const thisValue = callframe.this();
@@ -1120,21 +1151,11 @@ pub const Expect = struct {
         };
         actual.ensureStillAlive();
 
-        snapshot_file.readAndParseSnapshot();
-
-        const expected = snapshot_file.getSnapshotValue(test_label) catch JSC.JSValue.jsUndefined();
+        snapshot_file.readAndParseSnapshot(globalObject);
         const not = this.op.contains(.not);
-        var pass = actual.deepEquals(expected, globalObject);
-
-        if (not) pass = !pass;
+        const pass = snapshot_file.match(test_label, actual, not, globalObject) catch false;
         if (pass) return thisValue;
 
-        var fmt = JSC.ZigConsoleClient.Formatter{ .globalThis = globalObject };
-        if (not) {
-            globalObject.throw("Expected values to not be equal:\n\tExpected: {any}\n\tReceived: {any}", .{ expected.toFmt(globalObject, &fmt), actual.toFmt(globalObject, &fmt) });
-        } else {
-            globalObject.throw("Expected values to be equal:\n\tExpected: {any}\n\tReceived: {any}", .{ expected.toFmt(globalObject, &fmt), actual.toFmt(globalObject, &fmt) });
-        }
         return .zero;
     }
 
@@ -1219,7 +1240,7 @@ pub const TestScope = struct {
     promise: ?*JSInternalPromise = null,
     ran: bool = false,
     task: ?*TestRunnerTask = null,
-    snapshot: ?*snapshot.SnapshotFile,
+    // snapshot: ?*snapshot.SnapshotFile,
 
     pub const Class = NewClass(void, .{ .name = "test" }, .{ .call = call, .only = only }, .{});
 
@@ -1297,7 +1318,7 @@ pub const TestScope = struct {
             .label = label,
             .callback = function.asObjectRef(),
             .parent = DescribeScope.active,
-            .snapshot = null,
+            // .snapshot = null,
         }) catch unreachable;
 
         return this;

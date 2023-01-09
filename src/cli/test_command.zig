@@ -320,6 +320,7 @@ pub const TestCommand = struct {
                 .allocator = ctx.allocator,
                 .log = ctx.log,
                 .callback = undefined,
+                .snapshots = TestRunner.File.Snapshot.init(ctx.allocator),
             },
             .callback = undefined,
         };
@@ -532,6 +533,7 @@ pub const TestCommand = struct {
                     vm.eventLoop().tick();
                 }
             }
+            Jest.Jest.runner.?.saveSnapshots();
             _ = vm.global.vm().runGC(false);
         }
         vm.global.vm().clearMicrotaskCallback();

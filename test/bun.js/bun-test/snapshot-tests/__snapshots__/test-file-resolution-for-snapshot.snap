@@ -1,1 +1,3 @@
+exports[`a 1`] = `should match`;
+exports[`a 2`] = `should match this too`;
 exports[`snap file should match 1`] = `should match`;

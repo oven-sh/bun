@@ -2816,8 +2816,7 @@ pub fn wrapWithHasContainer(
             }
 
             var result: JSValue = @call(.auto, @field(Container, name), args);
-            if (result.isError()) {
-                exception.* = result.asObjectRef();
+            if (exception.* != null) {
                 iter.deinit();
                 return null;
             }

@@ -3185,7 +3185,7 @@ void JSC__JSValue__getNameProperty(JSC__JSValue JSValue0, JSC__JSGlobalObject* a
 JSC__JSValue JSC__JSValue__toError_(JSC__JSValue JSValue0)
 {
     JSC::JSValue value = JSC::JSValue::decode(JSValue0);
-    if (!value.isCell())
+    if (value.isEmpty() || !value.isCell())
         return JSC::JSValue::encode({});
 
     JSC::JSCell* cell = value.asCell();

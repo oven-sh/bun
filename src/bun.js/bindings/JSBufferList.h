@@ -52,43 +52,28 @@ public:
         m_deque.append(WriteBarrier<Unknown>());
         m_deque.last().set(vm, this, v);
     }
-    void unshift(JSC::VM& vm, JSC::JSGlobalObject* lexicalGlobalObject, JSC::JSValue v)
+    void unshift(JSC::VM& vm, JSC::JSValue v)
     {
-        if (m_read > 0) {
-            m_deque.first().set(vm, this, trim(vm, lexicalGlobalObject, m_deque.first().get()));
-            m_read = 0;
-        }
         m_deque.prepend(WriteBarrier<Unknown>());
         m_deque.first().set(vm, this, v);
     }
-    JSC::JSValue shift(JSC::VM& vm, JSC::JSGlobalObject* lexicalGlobalObject)
+    JSC::JSValue shift()
     {
         if (UNLIKELY(length() == 0))
             return JSC::jsUndefined();
-        auto value = m_deque.first().get();
-        if (m_read > 0) {
-            value = trim(vm, lexicalGlobalObject, value);
-            m_read = 0;
-        }
+        auto v = m_deque.first().get();
         m_deque.removeFirst();
-        return value;
+        return v;
     }
     void clear()
     {
         m_deque.clear();
-        m_read = 0;
     }
-    JSC::JSValue first(JSC::VM& vm, JSC::JSGlobalObject* lexicalGlobalObject)
+    JSC::JSValue first()
     {
         if (UNLIKELY(length() == 0))
             return JSC::jsUndefined();
-        auto value = m_deque.first().get();
-        if (m_read > 0) {
-            value = trim(vm, lexicalGlobalObject, value);
-            m_deque.first().set(vm, this, value);
-            m_read = 0;
-        }
-        return value;
+        return JSC::JSValue(m_deque.first().get());
     }
 
     JSC::JSValue concat(JSC::VM&, JSC::JSGlobalObject*, int32_t);
@@ -99,9 +84,6 @@ public:
 
 private:
     Deque<WriteBarrier<Unknown>> m_deque;
-    size_t m_read = 0;
-
-    JSC::JSValue trim(JSC::VM& vm, JSC::JSGlobalObject* lexicalGlobalObject, JSC::JSValue value);
 };
 
 class JSBufferListPrototype : public JSC::JSNonFinalObject {
@@ -152,7 +134,6 @@ public:
     // Must be defined for each specialization class.
     static JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES construct(JSC::JSGlobalObject*, JSC::CallFrame*);
     DECLARE_EXPORT_INFO;
-
 private:
     JSBufferListConstructor(JSC::VM& vm, JSC::Structure* structure, JSC::NativeFunction nativeFunction)
         : Base(vm, structure, nativeFunction, nativeFunction)

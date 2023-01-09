@@ -838,6 +838,8 @@ pub const Command = struct {
         macros: ?MacroMap = null,
         editor: string = "",
         package_bundle_map: bun.StringArrayHashMapUnmanaged(options.BundlePackage) = bun.StringArrayHashMapUnmanaged(options.BundlePackage){},
+
+        test_directory: []const u8 = "",
     };
 
     pub const Context = struct {

@@ -191,6 +191,14 @@ pub const Bunfig = struct {
                 }
             }
 
+            if (comptime cmd == .TestCommand) {
+                if (json.get("test")) |test_| {
+                    if (test_.get("root")) |root| {
+                        this.ctx.debug.test_directory = root.asString(this.allocator) orelse "";
+                    }
+                }
+            }
+
             if (comptime cmd.isNPMRelated() or cmd == .RunCommand or cmd == .AutoCommand) {
                 if (json.get("install")) |_bun| {
                     var install: *Api.BunInstall = this.ctx.install orelse brk: {

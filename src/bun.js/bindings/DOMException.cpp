@@ -70,11 +70,11 @@ static const DOMException::Description descriptions[] = {
     { "NotAllowedError"_s, "The request is not allowed by the user agent or the platform in the current context, possibly because the user denied permission."_s, 0 }
 };
 static_assert(!IndexSizeError, "This table needs to be kept in sync with DOMException names in ExceptionCode enumeration");
-static_assert(NotAllowedError == WTF_ARRAY_LENGTH(descriptions) - 1, "This table needs to be kept in sync with DOMException names in ExceptionCode enumeration");
+static_assert(NotAllowedError == std::size(descriptions) - 1, "This table needs to be kept in sync with DOMException names in ExceptionCode enumeration");
 
 auto DOMException::description(ExceptionCode ec) -> const Description&
 {
-    if (ec < WTF_ARRAY_LENGTH(descriptions))
+    if (ec < std::size(descriptions))
         return descriptions[ec];
 
     static const Description emptyDescription { {}, {}, 0 };

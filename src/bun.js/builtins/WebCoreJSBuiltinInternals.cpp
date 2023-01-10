@@ -111,7 +111,7 @@ SUPPRESS_ASAN void JSBuiltinInternalFunctions::initialize(JSDOMGlobalObject& glo
     WEBCORE_FOREACH_WRITABLESTREAMINTERNALS_BUILTIN_FUNCTION_NAME(DECLARE_GLOBAL_STATIC)
 #undef DECLARE_GLOBAL_STATIC
     };
-    globalObject.addStaticGlobals(staticGlobals, WTF_ARRAY_LENGTH(staticGlobals));
+    globalObject.addStaticGlobals(staticGlobals, std::size(staticGlobals));
     UNUSED_PARAM(clientData);
 }
 

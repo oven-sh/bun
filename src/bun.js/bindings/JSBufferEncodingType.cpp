@@ -43,7 +43,7 @@ String convertEnumerationToString(BufferEncodingType enumerationValue)
         MAKE_STATIC_STRING_IMPL("hex"),
         MAKE_STATIC_STRING_IMPL("buffer"),
     };
-    ASSERT(static_cast<size_t>(enumerationValue) < WTF_ARRAY_LENGTH(values));
+    ASSERT(static_cast<size_t>(enumerationValue) < std::size(values));
     return values[static_cast<size_t>(enumerationValue)];
 }
 

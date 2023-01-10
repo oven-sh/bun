@@ -351,7 +351,7 @@ interface Process {
   revision: string;
   chdir(directory: string): void;
   cwd(): string;
-  exit(code?: number): void;
+  exit(code?: number): never;
   getgid(): number;
   setgid(id: number | string): void;
   getuid(): number;

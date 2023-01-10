@@ -1147,6 +1147,11 @@ static inline JSC::EncodedJSValue jsBufferPrototypeFunction_toStringBody(JSC::JS
     case 3:
     case 1: {
         JSC::JSValue arg1 = callFrame->uncheckedArgument(0);
+        if (arg1.isUndefined()) {
+            encoding = WebCore::BufferEncodingType::utf8;
+            break;
+        }
+
         std::optional<BufferEncodingType> encoded = parseEnumeration<BufferEncodingType>(*lexicalGlobalObject, arg1);
         if (!encoded) {
             throwTypeError(lexicalGlobalObject, scope, "Invalid encoding"_s);

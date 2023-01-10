@@ -2617,7 +2617,7 @@ declare module "bun" {
     clearAll(): void;
   }
 
-  var plugin: BunPlugin;
+  const plugin: BunPlugin;
 
   interface Socket<Data = undefined> {
     /**
@@ -2713,6 +2713,16 @@ declare module "bun" {
      * This will return undefined if the socket was created by {@link Bun.connect} or if the listener has already closed.
      */
     readonly listener?: SocketListener;
+
+    /**
+     * Remote IP address connected to the socket
+     */
+    readonly remoteAddress: string;
+
+    /**
+     * local port connected to the socket
+     */
+    readonly localPort: number;
   }
 
   interface SocketListener<Options extends SocketOptions = SocketOptions> {

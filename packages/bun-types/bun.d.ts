@@ -26,6 +26,7 @@ declare namespace Bun {
  *
  */
 declare module "bun" {
+  type ArrayBufferView = TypedArray | DataView;
   import { Encoding as CryptoEncoding } from "crypto";
   /**
    * The environment variables of the process
@@ -3097,6 +3098,7 @@ type TypedArray =
   | Uint32Array
   | Float32Array
   | Float64Array;
+
 type TimeLike = string | number | Date;
 type StringOrBuffer = string | TypedArray | ArrayBufferLike;
 type PathLike = string | TypedArray | ArrayBufferLike | URL;

@@ -1854,7 +1854,7 @@ declare var AbortSignal: {
 
 // type AlgorithmIdentifier = Algorithm | string;
 // type BodyInit = ReadableStream | XMLHttpRequestBodyInit;
-type BufferSource = ArrayBufferView | ArrayBuffer | SharedArrayBuffer;
+type BufferSource = TypedArray | DataView | ArrayBufferLike;
 // type COSEAlgorithmIdentifier = number;
 // type CSSNumberish = number;
 // type CanvasImageSource =

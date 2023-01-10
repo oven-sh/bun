@@ -8,6 +8,7 @@
  * concurrent modifications on the same file or data corruption may occur.
  */
 declare module "fs/promises" {
+  import { ArrayBufferView } from "bun";
   import {
     Stats,
     BigIntStats,

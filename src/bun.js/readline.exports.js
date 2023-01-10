@@ -28,6 +28,7 @@ var { Array, RegExp, String, Bun } = import.meta.primordials;
 var EventEmitter = import.meta.require("node:events");
 var { clearTimeout, setTimeout } = import.meta.require("timers");
 var { StringDecoder } = import.meta.require("string_decoder");
+var isWritable;
 
 var { inspect } = Bun;
 var debug = process.env.BUN_JS_DEBUG ? console.log : () => {};
@@ -369,6 +370,14 @@ class ERR_USE_AFTER_CLOSE extends NodeError {
     super("This socket has been ended by the other party", {
       code: "ERR_USE_AFTER_CLOSE",
     });
+  }
+}
+
+class AbortError extends Error {
+  code;
+  constructor() {
+    super("The operation was aborted");
+    this.code = "ABORT_ERR";
   }
 }
 
@@ -2696,18 +2705,19 @@ Interface.prototype.question = function question(query, options, cb) {
     options = kEmptyObject;
   }
 
-  if (options.signal) {
-    validateAbortSignal(options.signal, "options.signal");
-    if (options.signal.aborted) {
+  var signal = options?.signal;
+  if (signal) {
+    validateAbortSignal(signal, "options.signal");
+    if (signal.aborted) {
       return;
     }
 
     var onAbort = () => {
       this[kQuestionCancel]();
     };
-    options.signal.addEventListener("abort", onAbort, { once: true });
+    signal.addEventListener("abort", onAbort, { once: true });
     var cleanup = () => {
-      options.signal.removeEventListener("abort", onAbort);
+      signal.removeEventListener("abort", onAbort);
     };
     var originalCb = cb;
     cb =
@@ -2723,6 +2733,7 @@ Interface.prototype.question = function question(query, options, cb) {
     this[kQuestion](query, cb);
   }
 };
+
 Interface.prototype.question[promisify.custom] = function question(
   query,
   options,
@@ -2731,26 +2742,24 @@ Interface.prototype.question[promisify.custom] = function question(
     options = kEmptyObject;
   }
 
-  if (options.signal && options.signal.aborted) {
-    return PromiseReject(
-      new AbortError(undefined, { cause: options.signal.reason }),
-    );
+  var signal = options?.signal;
+
+  if (signal && signal.aborted) {
+    return PromiseReject(new AbortError(undefined, { cause: signal.reason }));
   }
 
   return new Promise((resolve, reject) => {
     var cb = resolve;
-
-    if (options.signal) {
+    if (signal) {
       var onAbort = () => {
-        reject(new AbortError(undefined, { cause: options.signal.reason }));
+        reject(new AbortError(undefined, { cause: signal.reason }));
       };
-      options.signal.addEventListener("abort", onAbort, { once: true });
+      signal.addEventListener("abort", onAbort, { once: true });
       cb = (answer) => {
-        options.signal.removeEventListener("abort", onAbort);
+        signal.removeEventListener("abort", onAbort);
         resolve(answer);
       };
     }
-
     this.question(query, options, cb);
   });
 };
@@ -3081,6 +3090,157 @@ function _ttyWriteDumb(s, key) {
   }
 }
 
+class Readline {
+  #autoCommit = false;
+  #stream;
+  #todo = [];
+
+  constructor(stream, options = undefined) {
+    isWritable ??= import.meta.require("node:stream").isWritable;
+    if (!isWritable(stream))
+      throw new ERR_INVALID_ARG_TYPE("stream", "Writable", stream);
+    this.#stream = stream;
+    if (options?.autoCommit != null) {
+      validateBoolean(options.autoCommit, "options.autoCommit");
+      this.#autoCommit = options.autoCommit;
+    }
+  }
+
+  /**
+   * Moves the cursor to the x and y coordinate on the given stream.
+   * @param {integer} x
+   * @param {integer} [y]
+   * @returns {Readline} this
+   */
+  cursorTo(x, y = undefined) {
+    validateInteger(x, "x");
+    if (y != null) validateInteger(y, "y");
+
+    var data = y == null ? CSI`${x + 1}G` : CSI`${y + 1};${x + 1}H`;
+    if (this.#autoCommit) process.nextTick(() => this.#stream.write(data));
+    else ArrayPrototypePush.call(this.#todo, data);
+
+    return this;
+  }
+
+  /**
+   * Moves the cursor relative to its current location.
+   * @param {integer} dx
+   * @param {integer} dy
+   * @returns {Readline} this
+   */
+  moveCursor(dx, dy) {
+    if (dx || dy) {
+      validateInteger(dx, "dx");
+      validateInteger(dy, "dy");
+
+      var data = "";
+
+      if (dx < 0) {
+        data += CSI`${-dx}D`;
+      } else if (dx > 0) {
+        data += CSI`${dx}C`;
+      }
+
+      if (dy < 0) {
+        data += CSI`${-dy}A`;
+      } else if (dy > 0) {
+        data += CSI`${dy}B`;
+      }
+      if (this.#autoCommit) process.nextTick(() => this.#stream.write(data));
+      else ArrayPrototypePush.call(this.#todo, data);
+    }
+    return this;
+  }
+
+  /**
+   * Clears the current line the cursor is on.
+   * @param {-1|0|1} dir Direction to clear:
+   *   -1 for left of the cursor
+   *   +1 for right of the cursor
+   *    0 for the entire line
+   * @returns {Readline} this
+   */
+  clearLine(dir) {
+    validateInteger(dir, "dir", -1, 1);
+
+    var data =
+      dir < 0 ? kClearToLineBeginning : dir > 0 ? kClearToLineEnd : kClearLine;
+    if (this.#autoCommit) process.nextTick(() => this.#stream.write(data));
+    else ArrayPrototypePush.call(this.#todo, data);
+    return this;
+  }
+
+  /**
+   * Clears the screen from the current position of the cursor down.
+   * @returns {Readline} this
+   */
+  clearScreenDown() {
+    if (this.#autoCommit) {
+      process.nextTick(() => this.#stream.write(kClearScreenDown));
+    } else {
+      ArrayPrototypePush.call(this.#todo, kClearScreenDown);
+    }
+    return this;
+  }
+
+  /**
+   * Sends all the pending actions to the associated `stream` and clears the
+   * internal list of pending actions.
+   * @returns {Promise<void>} Resolves when all pending actions have been
+   * flushed to the associated `stream`.
+   */
+  commit() {
+    return new Promise((resolve) => {
+      this.#stream.write(ArrayPrototypeJoin.call(this.#todo, ""), resolve);
+      this.#todo = [];
+    });
+  }
+
+  /**
+   * Clears the internal list of pending actions without sending it to the
+   * associated `stream`.
+   * @returns {Readline} this
+   */
+  rollback() {
+    this.#todo = [];
+    return this;
+  }
+}
+
+var PromisesInterface = class Interface extends _Interface {
+  // eslint-disable-next-line no-useless-constructor
+  constructor(input, output, completer, terminal) {
+    super(input, output, completer, terminal);
+  }
+  question(query, options = kEmptyObject) {
+    var signal = options?.signal;
+    if (signal) {
+      validateAbortSignal(signal, "options.signal");
+      if (signal.aborted) {
+        return PromiseReject(
+          new AbortError(undefined, { cause: signal.reason }),
+        );
+      }
+    }
+    return new Promise((resolve, reject) => {
+      var cb = resolve;
+      if (options?.signal) {
+        var onAbort = () => {
+          this[kQuestionCancel]();
+          reject(new AbortError(undefined, { cause: signal.reason }));
+        };
+        signal.addEventListener("abort", onAbort, { once: true });
+        cb = (answer) => {
+          signal.removeEventListener("abort", onAbort);
+          resolve(answer);
+        };
+      }
+      this[kQuestion](query, cb);
+    });
+  }
+};
+
 // ----------------------------------------------------------------------------
 // Exports
 // ----------------------------------------------------------------------------
@@ -3092,7 +3252,11 @@ export var cursorTo = cursorTo;
 export var emitKeypressEvents = emitKeypressEvents;
 export var moveCursor = moveCursor;
 export var promises = {
-  [SymbolFor("__UNIMPLEMENTED__")]: true,
+  Readline,
+  Interface: PromisesInterface,
+  createInterface(input, output, completer, terminal) {
+    return new Interface(input, output, completer, terminal);
+  },
 };
 
 export default {
@@ -3107,21 +3271,9 @@ export default {
 
   [SymbolFor("__BUN_INTERNALS_DO_NOT_USE_OR_YOU_WILL_BE_FIRED__")]: {
     CSI,
-    _Interface,
     utils: {
       getStringWidth,
       stripVTControlCharacters,
-    },
-    shared: {
-      kEmptyObject,
-      validateBoolean,
-      validateInteger,
-      validateAbortSignal,
-      ERR_INVALID_ARG_TYPE,
-    },
-    symbols: {
-      kQuestion,
-      kQuestionCancel,
     },
   },
   [SymbolFor("CommonJS")]: 0,

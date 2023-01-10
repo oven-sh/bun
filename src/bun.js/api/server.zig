@@ -121,6 +121,27 @@ pub const ServerConfig = struct {
         passphrase: [*c]const u8 = null,
         low_memory_mode: bool = false,
 
+        pub fn asUSockets(this_: ?SSLConfig) uws.us_socket_context_options_t {
+            var ctx_opts: uws.us_socket_context_options_t = undefined;
+            @memset(@ptrCast([*]u8, &ctx_opts), 0, @sizeOf(uws.us_socket_context_options_t));
+
+            if (this_) |ssl_config| {
+                if (ssl_config.key_file_name != null)
+                    ctx_opts.key_file_name = ssl_config.key_file_name;
+                if (ssl_config.cert_file_name != null)
+                    ctx_opts.cert_file_name = ssl_config.cert_file_name;
+                if (ssl_config.ca_file_name != null)
+                    ctx_opts.ca_file_name = ssl_config.ca_file_name;
+                if (ssl_config.dh_params_file_name != null)
+                    ctx_opts.dh_params_file_name = ssl_config.dh_params_file_name;
+                if (ssl_config.passphrase != null)
+                    ctx_opts.passphrase = ssl_config.passphrase;
+                ctx_opts.ssl_prefer_low_memory_usage = @boolToInt(ssl_config.low_memory_mode);
+            }
+
+            return ctx_opts;
+        }
+
         pub fn deinit(this: *SSLConfig) void {
             const fields = .{
                 "server_name",
@@ -141,7 +162,7 @@ pub const ServerConfig = struct {
             }
         }
 
-        const zero = SSLConfig{};
+        pub const zero = SSLConfig{};
 
         pub fn inJS(global: *JSC.JSGlobalObject, obj: JSC.JSValue, exception: JSC.C.ExceptionRef) ?SSLConfig {
             var result = zero;

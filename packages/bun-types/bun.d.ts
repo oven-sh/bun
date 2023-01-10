@@ -1537,6 +1537,11 @@ declare module "bun" {
     dhParamsFile?: string;
 
     /**
+     * Explicitly set a server name
+     */
+    serverName?: string;
+
+    /**
      * This sets `OPENSSL_RELEASE_BUFFERS` to 1.
      * It reduces overall performance but saves some memory.
      * @default false
@@ -2755,7 +2760,7 @@ declare module "bun" {
 
   interface SocketOptions<Data = unknown> {
     socket: SocketHandler<Data>;
-    tls?: TLSOptions;
+    tls?: boolean | TLSOptions;
     data?: Data;
   }
   interface TCPSocketOptions<Data = undefined> extends SocketOptions<Data> {

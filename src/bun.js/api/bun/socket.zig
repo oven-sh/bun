@@ -216,7 +216,15 @@ pub const SocketConfig = struct {
         var ssl: ?JSC.API.ServerConfig.SSLConfig = null;
         var default_data = JSValue.zero;
 
-        if (opts.getTruthy(globalObject, "tls")) |tls| {
+        if (opts.getTruthy(globalObject, "tls")) |tls| outer: {
+            if (tls.isBoolean()) {
+                if (tls.toBoolean()) {
+                    ssl = JSC.API.ServerConfig.SSLConfig.zero;
+                }
+
+                break :outer;
+            }
+
             if (JSC.API.ServerConfig.SSLConfig.inJS(globalObject, tls, exception)) |ssl_config| {
                 ssl = ssl_config;
             } else if (exception.* != null) {
@@ -581,6 +589,19 @@ pub const Listener = struct {
         socket.timeout(120000);
     }
 
+    // pub fn addServerName(this: *Listener, _: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSValue {
+
+    //     uws.us_socket_context_add_server_name
+    // }
+
+    // pub fn removeServerName(this: *Listener, _: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSValue {
+    //     uws.us_socket_context_add_server_name
+    // }
+
+    // pub fn removeServerName(this: *Listener, _: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSValue {
+    //     uws.us_socket_context_add_server_name
+    // }
+
     pub fn stop(this: *Listener, _: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSValue {
         log("close", .{});
 
@@ -687,22 +708,7 @@ pub const Listener = struct {
 
         handlers.protect();
 
-        var ctx_opts: uws.us_socket_context_options_t = undefined;
-        @memset(@ptrCast([*]u8, &ctx_opts), 0, @sizeOf(uws.us_socket_context_options_t));
-
-        if (ssl) |ssl_config| {
-            if (ssl_config.key_file_name != null)
-                ctx_opts.key_file_name = ssl_config.key_file_name;
-            if (ssl_config.cert_file_name != null)
-                ctx_opts.cert_file_name = ssl_config.cert_file_name;
-            if (ssl_config.ca_file_name != null)
-                ctx_opts.ca_file_name = ssl_config.ca_file_name;
-            if (ssl_config.dh_params_file_name != null)
-                ctx_opts.dh_params_file_name = ssl_config.dh_params_file_name;
-            if (ssl_config.passphrase != null)
-                ctx_opts.passphrase = ssl_config.passphrase;
-            ctx_opts.ssl_prefer_low_memory_usage = @boolToInt(ssl_config.low_memory_mode);
-        }
+        const ctx_opts: uws.us_socket_context_options_t = JSC.API.ServerConfig.SSLConfig.asUSockets(socket_config.ssl);
 
         globalObject.bunVM().eventLoop().ensureWaker();
 

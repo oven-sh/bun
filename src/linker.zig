@@ -304,7 +304,7 @@ pub const Linker = struct {
                             }
                         }
 
-                        if (import_record.path.text.len > 4 and strings.eqlComptimeIgnoreLen(import_record.path.text[0.."bun:".len], "bun:")) {
+                        if (strings.hasPrefixComptime(import_record.path.text, "bun:")) {
                             import_record.path = Fs.Path.init(import_record.path.text["bun:".len..]);
                             import_record.path.namespace = "bun";
 

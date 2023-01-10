@@ -4873,7 +4873,7 @@ pub const Macro = struct {
     pub const namespaceWithColon: string = namespace ++ ":";
 
     pub fn isMacroPath(str: string) bool {
-        return (str.len > namespaceWithColon.len and strings.eqlComptimeIgnoreLen(str[0..namespaceWithColon.len], namespaceWithColon));
+        return strings.hasPrefixComptime(str, namespaceWithColon);
     }
 
     pub const MacroContext = struct {

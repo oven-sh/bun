@@ -106,44 +106,42 @@ pub const RunCommand = struct {
             switch (script[entry_i]) {
                 'y' => {
                     if (delimiter > 0) {
-                        if (entry_i + "arn".len < script.len) {
-                            var remainder = script[start..];
-                            if (remainder.len > "yarn ".len and strings.eqlComptimeIgnoreLen(remainder[0.."yarn ".len], "yarn ")) {
-                                const next = remainder["yarn ".len..];
-                                // We have yarn
-                                // Find the next space
-                                if (strings.indexOfChar(next, ' ')) |space| {
-                                    const yarn_cmd = next[0..space];
-                                    if (strings.eqlComptime(yarn_cmd, "run")) {
-                                        try copy_script.appendSlice(BUN_RUN);
-                                        entry_i += "yarn run".len;
-                                        continue;
-                                    }
+                        const remainder = script[start..];
+                        if (strings.hasPrefixComptime(remainder, "yarn ")) {
+                            const next = remainder["yarn ".len..];
+                            // We have yarn
+                            // Find the next space
+                            if (strings.indexOfChar(next, ' ')) |space| {
+                                const yarn_cmd = next[0..space];
+                                if (strings.eqlComptime(yarn_cmd, "run")) {
+                                    try copy_script.appendSlice(BUN_RUN);
+                                    entry_i += "yarn run".len;
+                                    continue;
+                                }
 
-                                    // yarn npm is a yarn 2 subcommand
-                                    if (strings.eqlComptime(yarn_cmd, "npm")) {
-                                        entry_i += "yarn npm ".len;
-                                        try copy_script.appendSlice("yarn npm ");
-                                        continue;
-                                    }
+                                // yarn npm is a yarn 2 subcommand
+                                if (strings.eqlComptime(yarn_cmd, "npm")) {
+                                    entry_i += "yarn npm ".len;
+                                    try copy_script.appendSlice("yarn npm ");
+                                    continue;
+                                }
 
-                                    if (strings.startsWith(yarn_cmd, "-")) {
-                                        // Skip the rest of the command
-                                        entry_i += "yarn ".len + yarn_cmd.len;
-                                        try copy_script.appendSlice("yarn ");
-                                        try copy_script.appendSlice(yarn_cmd);
-                                        continue;
-                                    }
+                                if (strings.startsWith(yarn_cmd, "-")) {
+                                    // Skip the rest of the command
+                                    entry_i += "yarn ".len + yarn_cmd.len;
+                                    try copy_script.appendSlice("yarn ");
+                                    try copy_script.appendSlice(yarn_cmd);
+                                    continue;
+                                }
 
-                                    // implicit yarn commands
-                                    if (std.mem.indexOfScalar(u64, yarn_commands, std.hash.Wyhash.hash(0, yarn_cmd)) == null) {
-                                        try copy_script.appendSlice(BUN_RUN);
-                                        try copy_script.append(' ');
-                                        try copy_script.appendSlice(yarn_cmd);
-                                        entry_i += "yarn ".len + yarn_cmd.len;
-                                        delimiter = 0;
-                                        continue;
-                                    }
+                                // implicit yarn commands
+                                if (std.mem.indexOfScalar(u64, yarn_commands, std.hash.Wyhash.hash(0, yarn_cmd)) == null) {
+                                    try copy_script.appendSlice(BUN_RUN);
+                                    try copy_script.append(' ');
+                                    try copy_script.appendSlice(yarn_cmd);
+                                    entry_i += "yarn ".len + yarn_cmd.len;
+                                    delimiter = 0;
+                                    continue;
                                 }
                             }
                         }
@@ -165,32 +163,18 @@ pub const RunCommand = struct {
 
                 'n' => {
                     if (delimiter > 0) {
-                        const npm_i = entry_i + "pm run ".len;
-                        if (npm_i < script.len) {
-                            const base = script[start..];
-                            if (base.len > "npm run ".len) {
-                                const remainder = base[0.."npm run ".len];
-                                if (strings.eqlComptimeIgnoreLen(remainder, "npm run ")) {
-                                    try copy_script.appendSlice(BUN_RUN ++ " ");
-                                    entry_i += remainder.len;
-                                    delimiter = 0;
-                                    continue;
-                                }
-                            }
+                        if (strings.hasPrefixComptime(script[start..], "npm run ")) {
+                            try copy_script.appendSlice(BUN_RUN ++ " ");
+                            entry_i += "npm run ".len;
+                            delimiter = 0;
+                            continue;
                         }
 
-                        const npx_i = entry_i + "px ".len;
-                        if (npx_i < script.len) {
-                            const base = script[start..];
-                            if (base.len > "px ".len) {
-                                const remainder = base[0.."px ".len];
-                                if (strings.eqlComptimeIgnoreLen(remainder, "px ")) {
-                                    try copy_script.appendSlice("bunx" ++ " ");
-                                    entry_i += remainder.len;
-                                    delimiter = 0;
-                                    continue;
-                                }
-                            }
+                        if (strings.hasPrefixComptime(script[start..], "npx ")) {
+                            try copy_script.appendSlice("bunx" ++ " ");
+                            entry_i += "npx ".len;
+                            delimiter = 0;
+                            continue;
                         }
                     }
 
@@ -198,15 +182,11 @@ pub const RunCommand = struct {
                 },
                 'p' => {
                     if (delimiter > 0) {
-                        const npm_i = entry_i + "npm run ".len;
-                        if (npm_i < script.len) {
-                            const remainder = script[start .. npm_i + 1];
-                            if (remainder.len > npm_i and strings.eqlComptimeIgnoreLen(remainder, "pnpm run") and remainder[remainder.len - 1] == delimiter) {
-                                try copy_script.appendSlice(BUN_RUN ++ " ");
-                                entry_i += remainder.len;
-                                delimiter = 0;
-                                continue;
-                            }
+                        if (strings.hasPrefixComptime(script[start..], "pnpm run ")) {
+                            try copy_script.appendSlice(BUN_RUN ++ " ");
+                            entry_i += "pnpm run ".len;
+                            delimiter = 0;
+                            continue;
                         }
                     }
 
@@ -935,7 +915,7 @@ pub const RunCommand = struct {
                         shebang = std.mem.trim(u8, shebang, " \r\n\t");
                         if (shebang.len == 0) break :possibly_open_with_bun_js;
 
-                        if (shebang.len > 2 and strings.eqlComptimeIgnoreLen(shebang[0..2], "#!")) {
+                        if (strings.hasPrefixComptime(shebang, "#!")) {
                             const first_arg: string = if (std.os.argv.len > 0) bun.span(std.os.argv[0]) else "";
                             const filename = std.fs.path.basename(first_arg);
                             // are we attempting to run the script with bun?

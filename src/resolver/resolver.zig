@@ -1129,7 +1129,7 @@ pub const Resolver = struct {
                     // "fs/*"
                     // These are disabled!
                 } else if (had_node_prefix or
-                    (import_path_without_node_prefix.len >= 2 and strings.eqlComptimeIgnoreLen(import_path_without_node_prefix[0..2], "fs") and
+                    (strings.hasPrefixComptime(import_path_without_node_prefix, "fs") and
                     (import_path_without_node_prefix.len == 2 or
                     import_path_without_node_prefix[3] == '/')))
                 {

@@ -3085,37 +3085,37 @@ pub const RequestContext = struct {
             return true;
         }
 
-        if (ctx.url.path.len > "blob:".len) {
-            if (strings.eqlComptimeIgnoreLen(ctx.url.path[0.."blob:".len], "blob:")) {
-                try ctx.handleBlobURL(server);
-                return true;
-            }
+        if (strings.hasPrefixComptime(ctx.url.path, "blob:")) {
+            try ctx.handleBlobURL(server);
+            return true;
+        }
 
-            // From HTTP, we serve files with a hash modkey
-            // The format is
-            //    hash:${hash}/${ORIGINAL_PATH}
-            //    hash:abcdefg123/app/foo/my-file.jpeg
-            // The hash exists for browser cache invalidation
-            if (strings.eqlComptimeIgnoreLen(ctx.url.path[0.."hash:".len], "hash:")) {
-                var current = ctx.url.path;
-                current = current["hash:".len..];
-                if (strings.indexOfChar(current, '/')) |i| {
-                    current = current[i + 1 ..];
-                    ctx.url.path = current;
-                    return false;
-                }
+        // From HTTP, we serve files with a hash modkey
+        // The format is
+        //    hash:${hash}/${ORIGINAL_PATH}
+        //    hash:abcdefg123/app/foo/my-file.jpeg
+        // The hash exists for browser cache invalidation
+        if (strings.hasPrefixComptime(ctx.url.path, "hash:")) {
+            var current = ctx.url.path;
+            current = current["hash:".len..];
+            if (strings.indexOfChar(current, '/')) |i| {
+                current = current[i + 1 ..];
+                ctx.url.path = current;
+                return false;
             }
         }
 
-        const isMaybePrefix = ctx.url.path.len > "bun:".len;
-
-        if (isMaybePrefix and strings.eqlComptimeIgnoreLen(ctx.url.path[0.."bun:".len], "bun:")) {
+        if (strings.hasPrefixComptime(ctx.url.path, "bun:")) {
             try ctx.handleBunURL(server);
             return true;
-        } else if (isMaybePrefix and strings.eqlComptimeIgnoreLen(ctx.url.path[0.."src:".len], "src:")) {
+        }
+
+        if (strings.hasPrefixComptime(ctx.url.path, "src:")) {
             try ctx.handleSrcURL(server);
             return true;
-        } else if (isMaybePrefix and strings.eqlComptimeIgnoreLen(ctx.url.path[0.."abs:".len], "abs:")) {
+        }
+
+        if (strings.hasPrefixComptime(ctx.url.path, "abs:")) {
             try ctx.handleAbsURL(server);
             return true;
         }

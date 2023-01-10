@@ -1336,7 +1336,7 @@ const Pattern = struct {
 
                             i += 1;
 
-                            if (!strings.eqlComptimeIgnoreLen(input[i..][0..3], "...")) return error.InvalidOptionalCatchAllRoute;
+                            if (!strings.hasPrefixComptime(input[i..], "...")) return error.InvalidOptionalCatchAllRoute;
                             i += 3;
                             param.offset = i;
                         },
@@ -1348,7 +1348,7 @@ const Pattern = struct {
                                 return error.InvalidCatchAllRoute;
                             }
 
-                            if (!strings.eqlComptimeIgnoreLen(input[i..][0..2], "..")) return error.InvalidCatchAllRoute;
+                            if (!strings.hasPrefixComptime(input[i..], "..")) return error.InvalidCatchAllRoute;
                             i += 2;
 
                             param.offset = i;

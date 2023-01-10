@@ -118,8 +118,8 @@ pub const Mapping = struct {
             if (remain[0] == ';') {
                 generated.columns = 0;
 
-                while (remain.len > @sizeOf(usize) / 2 and strings.eqlComptimeIgnoreLen(
-                    remain[0 .. @sizeOf(usize) / 2],
+                while (strings.hasPrefixComptime(
+                    remain,
                     comptime [_]u8{';'} ** (@sizeOf(usize) / 2),
                 )) {
                     generated.lines += (@sizeOf(usize) / 2);
@@ -210,7 +210,7 @@ pub const Mapping = struct {
             remain = remain[source_index_delta.start..];
 
             // // "AAAA" is extremely common
-            // if (remain.len > 5 and remain[4] == ';' and strings.eqlComptimeIgnoreLen(remain[0..4], "AAAA")) {
+            // if (strings.hasPrefixComptime(remain, "AAAA;")) {
 
             // }
 

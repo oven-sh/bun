@@ -311,7 +311,7 @@ pub const Version = struct {
                 },
 
                 'n' => {
-                    if (dependency.len > 4 and strings.eqlComptimeIgnoreLen(dependency[0..4], "npm:")) {
+                    if (strings.hasPrefixComptime(dependency, "npm:")) {
                         return Tag.npm;
                     }
                 },
@@ -536,7 +536,7 @@ pub fn parse(
     if (dependency.len == 0) return null;
     const tag = Version.Tag.infer(dependency);
 
-    if (tag == .npm and dependency.len > 4 and strings.eqlComptimeIgnoreLen(dependency[0..4], "npm:")) {
+    if (tag == .npm and strings.hasPrefixComptime(dependency, "npm:")) {
         dependency = dependency[4..];
     }
 

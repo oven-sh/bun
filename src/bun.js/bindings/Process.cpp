@@ -747,6 +747,10 @@ JSC_DEFINE_CUSTOM_GETTER(Process_getPPID, (JSC::JSGlobalObject * globalObject, J
     return JSC::JSValue::encode(JSC::JSValue(getppid()));
 }
 
+#if !defined(BUN_WEBKIT_VERSION)
+#define BUN_WEBKIT_VERSION "unknown"
+#endif
+
 JSC_DEFINE_CUSTOM_GETTER(Process_getVersionsLazy,
     (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue,
         JSC::PropertyName))

@@ -1043,9 +1043,8 @@ pub const MDParser = struct {
         }
 
         // Scan for end of the line.
-        while (off + 3 < this.size and
-            !(strings.eqlComptimeIgnoreLen(this.source.contents.ptr[off..][0..4], "\n\n\n\n") or
-            strings.eqlComptimeIgnoreLen(this.source.contents.ptr[off..][0..4], "\r\n\r\n")))
+        while (!(strings.hasPrefixComptime(this.source.contents.ptr[off..], "\n\n\n\n") or
+            strings.hasPrefixComptime(this.source.contents.ptr[off..], "\r\n\r\n")))
         {
             off += 4;
         }

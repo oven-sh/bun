@@ -31,7 +31,7 @@ inline fn isDotSlash(slice: []const u8) bool {
 }
 
 inline fn @"is ../"(slice: []const u8) bool {
-    return slice.len >= 3 and strings.eqlComptimeIgnoreLen(slice[0..3], "../");
+    return strings.hasPrefixComptime(slice, "../");
 }
 
 // TODO: is it faster to determine longest_common_separator in the while loop

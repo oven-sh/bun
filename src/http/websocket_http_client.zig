@@ -346,9 +346,9 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
             var body = this.getBody();
             var remain = body[this.body_written..];
             const is_first = this.body_written == 0;
-            if (is_first and data.len >= "HTTP/1.1 101 ".len) {
+            if (is_first) {
                 // fail early if we receive a non-101 status code
-                if (!strings.eqlComptimeIgnoreLen(data[0.."HTTP/1.1 101 ".len], "HTTP/1.1 101 ")) {
+                if (!strings.hasPrefixComptime(data, "HTTP/1.1 101 ")) {
                     this.terminate(ErrorCode.expected_101_status_code);
                     return;
                 }

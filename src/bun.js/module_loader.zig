@@ -940,7 +940,7 @@ pub const ModuleLoader = struct {
                 }
 
                 // this should be a cheap lookup because 24 bytes == 8 * 3 so it's read 3 machine words
-                const is_node_override = specifier.len > "/bun-vfs/node_modules/".len and strings.eqlComptimeIgnoreLen(specifier[0.."/bun-vfs/node_modules/".len], "/bun-vfs/node_modules/");
+                const is_node_override = strings.hasPrefixComptime(specifier, "/bun-vfs/node_modules/");
 
                 const macro_remappings = if (jsc_vm.macro_mode or !jsc_vm.has_any_macro_remappings or is_node_override)
                     MacroRemap{}
@@ -1910,9 +1910,7 @@ pub const ModuleLoader = struct {
                     };
                 },
             }
-        } else if (specifier.len > js_ast.Macro.namespaceWithColon.len and
-            strings.eqlComptimeIgnoreLen(specifier[0..js_ast.Macro.namespaceWithColon.len], js_ast.Macro.namespaceWithColon))
-        {
+        } else if (strings.hasPrefixComptime(specifier, js_ast.Macro.namespaceWithColon)) {
             if (jsc_vm.macro_entry_points.get(MacroEntryPoint.generateIDFromSpecifier(specifier))) |entry| {
                 return ResolvedSource{
                     .allocator = null,

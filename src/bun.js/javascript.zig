@@ -910,11 +910,11 @@ pub const VirtualMachine = struct {
             ret.result = null;
             ret.path = jsc_vm.entry_point.source.path.text;
             return;
-        } else if (specifier.len > js_ast.Macro.namespaceWithColon.len and strings.eqlComptimeIgnoreLen(specifier[0..js_ast.Macro.namespaceWithColon.len], js_ast.Macro.namespaceWithColon)) {
+        } else if (strings.hasPrefixComptime(specifier, js_ast.Macro.namespaceWithColon)) {
             ret.result = null;
             ret.path = specifier;
             return;
-        } else if (specifier.len > "/bun-vfs/node_modules/".len and strings.eqlComptimeIgnoreLen(specifier[0.."/bun-vfs/node_modules/".len], "/bun-vfs/node_modules/")) {
+        } else if (strings.hasPrefixComptime(specifier, "/bun-vfs/node_modules/")) {
             ret.result = null;
             ret.path = specifier;
             return;

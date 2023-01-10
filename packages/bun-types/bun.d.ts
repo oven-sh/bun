@@ -26,6 +26,7 @@ declare namespace Bun {
  *
  */
 declare module "bun" {
+  import { Encoding as CryptoEncoding } from "crypto";
   /**
    * The environment variables of the process
    *
@@ -1966,7 +1967,7 @@ declare module "bun" {
      *
      * @param input
      */
-    update(input: StringOrBuffer, inputEncoding?: Encoding): CryptoHasher;
+    update(input: StringOrBuffer, inputEncoding?: CryptoEncoding): CryptoHasher;
 
     /**
      * Finalize the hash

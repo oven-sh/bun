@@ -1,5 +1,3 @@
-import { Encoding } from "crypto";
-
 interface VoidFunction {
   (): void;
 }

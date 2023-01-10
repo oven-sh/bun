@@ -3610,7 +3610,7 @@ pub const Expr = struct {
 
         pub fn canBeConstValue(this: Expr.Data) bool {
             return switch (this) {
-                .e_reg_exp, .e_string, .e_number, .e_boolean, .e_null, .e_undefined => true,
+                .e_string, .e_number, .e_boolean, .e_null, .e_undefined => true,
                 .e_array => |array| array.was_originally_macro,
                 .e_object => |object| object.was_originally_macro,
                 else => false,

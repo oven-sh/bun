@@ -102,7 +102,9 @@ pub const CommandLineReporter = struct {
                 writer.writeAll(" >") catch unreachable;
             }
         } else {
-            for (scopes) |scope| {
+            for (scopes) |_, i| {
+                const index = (scopes.len - 1) - i;
+                const scope = scopes[index];
                 if (scope.label.len == 0) continue;
                 writer.writeAll(" ") catch unreachable;
                 writer.writeAll(scope.label) catch unreachable;

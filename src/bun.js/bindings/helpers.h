@@ -2,16 +2,22 @@
 
 #include "root.h"
 
-#include "headers.h"
+#include <JavaScriptCore/Error.h>
+#include <JavaScriptCore/Exception.h>
+#include <JavaScriptCore/Identifier.h>
+#include <JavaScriptCore/JSGlobalObject.h>
+#include <JavaScriptCore/JSString.h>
+#include <JavaScriptCore/JSValueInternal.h>
+#include <JavaScriptCore/ThrowScope.h>
+#include <JavaScriptCore/VM.h>
 
-#include "JavaScriptCore/Error.h"
-#include "JavaScriptCore/Exception.h"
-#include "JavaScriptCore/Identifier.h"
-#include "JavaScriptCore/JSGlobalObject.h"
-#include "JavaScriptCore/JSString.h"
-#include "JavaScriptCore/JSValueInternal.h"
-#include "JavaScriptCore/ThrowScope.h"
-#include "JavaScriptCore/VM.h"
+using JSC__JSGlobalObject = JSC::JSGlobalObject;
+using JSC__JSValue = JSC::EncodedJSValue;
+using JSC__CallFrame = JSC::CallFrame;
+namespace Zig {
+}
+
+#include "headers-handwritten.h"
 
 template<class CppType, typename ZigType> class Wrap {
 public:

@@ -223,6 +223,7 @@ async function implementation() {
 //   make generate-sink
 //
 #include "root.h"
+#include "headers.h"
 #include "JSSink.h"
 
 #include "ActiveDOMObject.h"

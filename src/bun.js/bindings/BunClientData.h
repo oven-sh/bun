@@ -25,6 +25,9 @@ class DOMWrapperWorld;
 
 #include "WebCoreJSBuiltins.h"
 
+namespace Zig {
+}
+
 namespace WebCore {
 using namespace JSC;
 using namespace Zig;

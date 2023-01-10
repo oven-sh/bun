@@ -1,4 +1,5 @@
  #include "root.h"
+ #include "headers.h"
  
  #include <JavaScriptCore/DOMJITAbstractHeap.h>
  #include "DOMJITIDLConvert.h"

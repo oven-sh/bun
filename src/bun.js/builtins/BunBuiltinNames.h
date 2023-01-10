@@ -5,8 +5,6 @@
 #include "root.h"
 
 
-#include "helpers.h"
-
 #include "JavaScriptCore/BuiltinUtils.h"
 
 

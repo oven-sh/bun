@@ -1,4 +1,6 @@
 #include "root.h"
+#include "headers.h"
+
 #include "ImportMetaObject.h"
 #include "ZigGlobalObject.h"
 #include "ActiveDOMObject.h"

@@ -3690,6 +3690,61 @@ JSC::JSValue GlobalObject::moduleLoaderEvaluate(JSGlobalObject* globalObject,
     return result;
 }
 
+GlobalObject::PromiseFunctions GlobalObject::promiseHandlerID(EncodedJSValue (*handler)(JSC__JSGlobalObject* arg0, JSC__CallFrame* arg1))
+{
+    if (handler == Bun__HTTPRequestContext__onReject) {
+        return GlobalObject::PromiseFunctions::Bun__HTTPRequestContext__onReject;
+    } else if (handler == Bun__HTTPRequestContext__onRejectStream) {
+        return GlobalObject::PromiseFunctions::Bun__HTTPRequestContext__onRejectStream;
+    } else if (handler == Bun__HTTPRequestContext__onResolve) {
+        return GlobalObject::PromiseFunctions::Bun__HTTPRequestContext__onResolve;
+    } else if (handler == Bun__HTTPRequestContext__onResolveStream) {
+        return GlobalObject::PromiseFunctions::Bun__HTTPRequestContext__onResolveStream;
+    } else if (handler == Bun__HTTPRequestContextTLS__onReject) {
+        return GlobalObject::PromiseFunctions::Bun__HTTPRequestContextTLS__onReject;
+    } else if (handler == Bun__HTTPRequestContextTLS__onRejectStream) {
+        return GlobalObject::PromiseFunctions::Bun__HTTPRequestContextTLS__onRejectStream;
+    } else if (handler == Bun__HTTPRequestContextTLS__onResolve) {
+        return GlobalObject::PromiseFunctions::Bun__HTTPRequestContextTLS__onResolve;
+    } else if (handler == Bun__HTTPRequestContextTLS__onResolveStream) {
+        return GlobalObject::PromiseFunctions::Bun__HTTPRequestContextTLS__onResolveStream;
+    } else if (handler == Bun__HTTPRequestContextDebug__onReject) {
+        return GlobalObject::PromiseFunctions::Bun__HTTPRequestContextDebug__onReject;
+    } else if (handler == Bun__HTTPRequestContextDebug__onRejectStream) {
+        return GlobalObject::PromiseFunctions::Bun__HTTPRequestContextDebug__onRejectStream;
+    } else if (handler == Bun__HTTPRequestContextDebug__onResolve) {
+        return GlobalObject::PromiseFunctions::Bun__HTTPRequestContextDebug__onResolve;
+    } else if (handler == Bun__HTTPRequestContextDebug__onResolveStream) {
+        return GlobalObject::PromiseFunctions::Bun__HTTPRequestContextDebug__onResolveStream;
+    } else if (handler == Bun__HTTPRequestContextDebugTLS__onReject) {
+        return GlobalObject::PromiseFunctions::Bun__HTTPRequestContextDebugTLS__onReject;
+    } else if (handler == Bun__HTTPRequestContextDebugTLS__onRejectStream) {
+        return GlobalObject::PromiseFunctions::Bun__HTTPRequestContextDebugTLS__onRejectStream;
+    } else if (handler == Bun__HTTPRequestContextDebugTLS__onResolve) {
+        return GlobalObject::PromiseFunctions::Bun__HTTPRequestContextDebugTLS__onResolve;
+    } else if (handler == Bun__HTTPRequestContextDebugTLS__onResolveStream) {
+        return GlobalObject::PromiseFunctions::Bun__HTTPRequestContextDebugTLS__onResolveStream;
+    } else if (handler == Bun__HTTPRequestContextDebugTLS__onResolveStream) {
+        return GlobalObject::PromiseFunctions::Bun__HTTPRequestContextDebugTLS__onResolveStream;
+    } else if (handler == Bun__HTTPRequestContextDebugTLS__onResolveStream) {
+        return GlobalObject::PromiseFunctions::Bun__HTTPRequestContextDebugTLS__onResolveStream;
+    } else if (handler == jsFunctionOnLoadObjectResultResolve) {
+        return GlobalObject::PromiseFunctions::jsFunctionOnLoadObjectResultResolve;
+    } else if (handler == jsFunctionOnLoadObjectResultReject) {
+        return GlobalObject::PromiseFunctions::jsFunctionOnLoadObjectResultReject;
+    } else if (handler == Bun__TestScope__onReject) {
+        return GlobalObject::PromiseFunctions::Bun__TestScope__onReject;
+    } else if (handler == Bun__TestScope__onResolve) {
+        return GlobalObject::PromiseFunctions::Bun__TestScope__onResolve;
+    } else if (handler == CallbackJob__onResolve) {
+        return GlobalObject::PromiseFunctions::CallbackJob__onResolve;
+    } else if (handler == CallbackJob__onReject) {
+        return GlobalObject::PromiseFunctions::CallbackJob__onReject;
+    } else {
+        RELEASE_ASSERT_NOT_REACHED();
+    }
+}
+
 #include "ZigGeneratedClasses+lazyStructureImpl.h"
 
 } // namespace Zig

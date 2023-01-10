@@ -1,5 +1,7 @@
 #include "root.h"
 
+#include "headers.h"
+
 #include "BunClientData.h"
 #include "GCDefferalContext.h"
 
@@ -1460,14 +1462,74 @@ JSC__JSObject* JSC__JSString__toObject(JSC__JSString* arg0, JSC__JSGlobalObject*
 //     arg2->depen
 // }
 
+class JSMicrotaskCallbackDefaultGlobal final : public RefCounted<JSMicrotaskCallbackDefaultGlobal> {
+public:
+    static Ref<JSMicrotaskCallbackDefaultGlobal> create(Ref<JSC::Microtask>&& task)
+    {
+        return adoptRef(*new JSMicrotaskCallbackDefaultGlobal(WTFMove(task).leakRef()));
+    }
+
+    void call(JSC::JSGlobalObject* globalObject)
+    {
+
+        JSC::VM& vm = globalObject->vm();
+        auto task = &m_task.leakRef();
+        task->run(globalObject);
+
+        delete this;
+    }
+
+private:
+    JSMicrotaskCallbackDefaultGlobal(Ref<JSC::Microtask>&& task)
+        : m_task { WTFMove(task) }
+    {
+    }
+
+    Ref<JSC::Microtask> m_task;
+};
+
+class JSMicrotaskCallback final : public RefCounted<JSMicrotaskCallback> {
+public:
+    static Ref<JSMicrotaskCallback> create(JSC::JSGlobalObject& globalObject,
+        Ref<JSC::Microtask>&& task)
+    {
+        return adoptRef(*new JSMicrotaskCallback(globalObject, WTFMove(task).leakRef()));
+    }
+
+    void call()
+    {
+        auto* globalObject = m_globalObject.get();
+        if (UNLIKELY(!globalObject)) {
+            delete this;
+            return;
+        }
+
+        JSC::VM& vm = m_globalObject->vm();
+        auto task = &m_task.leakRef();
+        task->run(globalObject);
+
+        delete this;
+    }
+
+private:
+    JSMicrotaskCallback(JSC::JSGlobalObject& globalObject, Ref<JSC::Microtask>&& task)
+        : m_globalObject { &globalObject }
+        , m_task { WTFMove(task) }
+    {
+    }
+
+    JSC::Weak<JSC::JSGlobalObject> m_globalObject;
+    Ref<JSC::Microtask> m_task;
+};
+
 void Microtask__run(void* microtask, void* global)
 {
-    reinterpret_cast<Zig::JSMicrotaskCallback*>(microtask)->call();
+    reinterpret_cast<JSMicrotaskCallback*>(microtask)->call();
 }
 
 void Microtask__run_default(void* microtask, void* global)
 {
-    reinterpret_cast<Zig::JSMicrotaskCallbackDefaultGlobal*>(microtask)->call(reinterpret_cast<Zig::GlobalObject*>(global));
+    reinterpret_cast<JSMicrotaskCallbackDefaultGlobal*>(microtask)->call(reinterpret_cast<Zig::GlobalObject*>(global));
 }
 
 JSC__JSValue JSC__JSModuleLoader__evaluate(JSC__JSGlobalObject* globalObject, const unsigned char* arg1,

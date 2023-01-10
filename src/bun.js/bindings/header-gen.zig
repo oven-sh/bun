@@ -929,6 +929,7 @@ pub fn HeaderGen(comptime first_import: type, comptime second_import: type, comp
 
             generated.writer().print(
                 \\ #include "root.h"
+                \\ #include "headers.h"
                 \\ 
                 \\ #include <JavaScriptCore/DOMJITAbstractHeap.h>
                 \\ #include "DOMJITIDLConvert.h"

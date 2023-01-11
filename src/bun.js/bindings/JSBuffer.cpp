@@ -82,7 +82,7 @@ static JSC_DECLARE_HOST_FUNCTION(jsBufferPrototypeFunction_swap64);
 static JSC_DECLARE_HOST_FUNCTION(jsBufferPrototypeFunction_toString);
 static JSC_DECLARE_HOST_FUNCTION(jsBufferPrototypeFunction_write);
 
-static JSUint8Array* allocBuffer(JSC::JSGlobalObject* lexicalGlobalObject, unsigned int byteLength)
+static JSUint8Array* allocBuffer(JSC::JSGlobalObject* lexicalGlobalObject, size_t byteLength)
 {
     JSC::VM& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
@@ -98,7 +98,7 @@ static JSUint8Array* allocBuffer(JSC::JSGlobalObject* lexicalGlobalObject, unsig
 
     return uint8Array;
 }
-static JSUint8Array* allocBufferUnsafe(JSC::JSGlobalObject* lexicalGlobalObject, unsigned int byteLength)
+static JSUint8Array* allocBufferUnsafe(JSC::JSGlobalObject* lexicalGlobalObject, size_t byteLength)
 {
     JSC::VM& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
@@ -175,7 +175,7 @@ public:
 
 }
 
-JSC::EncodedJSValue JSBuffer__bufferFromPointerAndLengthAndDeinit(JSC::JSGlobalObject* lexicalGlobalObject, char* ptr, unsigned int length, void* ctx, JSTypedArrayBytesDeallocator bytesDeallocator)
+JSC::EncodedJSValue JSBuffer__bufferFromPointerAndLengthAndDeinit(JSC::JSGlobalObject* lexicalGlobalObject, char* ptr, size_t length, void* ctx, JSTypedArrayBytesDeallocator bytesDeallocator)
 {
 
     JSC::JSUint8Array* uint8Array = nullptr;
@@ -242,7 +242,7 @@ static inline JSC::EncodedJSValue jsBufferConstructorFunction_allocUnsafeBody(JS
     RELEASE_AND_RETURN(throwScope, JSValue::encode(allocBufferUnsafe(lexicalGlobalObject, length)));
 }
 
-EncodedJSValue JSBuffer__bufferFromPointerAndLength(JSC::JSGlobalObject* lexicalGlobalObject, const unsigned char* ptr, unsigned int length)
+EncodedJSValue JSBuffer__bufferFromPointerAndLength(JSC::JSGlobalObject* lexicalGlobalObject, const unsigned char* ptr, size_t length)
 {
 
     JSC::JSUint8Array* uint8Array;
@@ -921,9 +921,9 @@ static inline JSC::EncodedJSValue jsBufferPrototypeFunction_fillBody(JSC::JSGlob
     {
         EnsureStillAliveScope value_ = callFrame->argument(0);
 
-        unsigned int length = castedThis->byteLength();
-        unsigned int start = 0;
-        unsigned int end = length;
+        size_t length = castedThis->byteLength();
+        size_t start = 0;
+        size_t end = length;
         WebCore::BufferEncodingType encoding = WebCore::BufferEncodingType::utf8;
         if (callFrame->argumentCount() > 1) {
             if (auto start_ = callFrame->uncheckedArgument(1).tryGetAsUint32Index()) {
@@ -1159,7 +1159,7 @@ static inline JSC::EncodedJSValue jsBufferPrototypeFunction_swap32Body(JSC::JSGl
 
     uint8_t* typedVector = castedThis->typedVector();
 
-    constexpr size_t swaps = elemSize/2;
+    constexpr size_t swaps = elemSize / 2;
     for (size_t elem = 0; elem < length; elem += elemSize) {
         const size_t right = elem + elemSize - 1;
         for (size_t k = 0; k < swaps; k++) {
@@ -1193,7 +1193,7 @@ static inline JSC::EncodedJSValue jsBufferPrototypeFunction_swap64Body(JSC::JSGl
 
     uint8_t* typedVector = castedThis->typedVector();
 
-    constexpr size_t swaps = elemSize/2;
+    constexpr size_t swaps = elemSize / 2;
     for (size_t elem = 0; elem < length; elem += elemSize) {
         const size_t right = elem + elemSize - 1;
         for (size_t k = 0; k < swaps; k++) {

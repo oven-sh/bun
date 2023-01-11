@@ -1130,10 +1130,12 @@ pub const Expect = struct {
         if (matched_expectation) return thisValue;
 
         if (expected_value.isEmptyOrUndefinedOrNull()) {
-            if (did_throw)
+            if (!not)
                 globalObject.throw("Expected function to throw", .{})
-            else
-                globalObject.throw("Expected function not to throw", .{});
+            else {
+                var fmt = JSC.ZigConsoleClient.Formatter{ .globalThis = globalObject };
+                globalObject.throw("Expected function not to throw. Received:\n\t{any}", .{result_.?.toFmt(globalObject, &fmt)});
+            }
 
             return .zero;
         }

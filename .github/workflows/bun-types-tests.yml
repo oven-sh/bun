@@ -16,6 +16,9 @@ jobs:
         working-directory: packages/bun-types
 
     steps:
+      - name: Install root deps
+        run: bun install
+        working-directory: "."
       - name: Checkout repo
         uses: actions/checkout@v2
 

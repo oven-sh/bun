@@ -22,7 +22,7 @@ jobs:
       - name: Install bun
         uses: xhyrom/setup-bun@v0.1.8
         with:
-          bun-version: canary
+          bun-version: latest
           github-token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Install node

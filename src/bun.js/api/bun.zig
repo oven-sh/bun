@@ -942,7 +942,17 @@ fn doResolve(
         return null;
     }
 
-    return doResolveWithArgs(ctx, specifier.getZigString(ctx.ptr()), from.getZigString(ctx.ptr()), exception, false);
+    var is_esm = true;
+    if (args.nextEat()) |next| {
+        if (next.isBoolean()) {
+            is_esm = next.toBoolean();
+        } else {
+            JSC.throwInvalidArguments("esm must be a boolean", .{}, ctx, exception);
+            return null;
+        }
+    }
+
+    return doResolveWithArgs(ctx, specifier.getZigString(ctx.ptr()), from.getZigString(ctx.ptr()), exception, is_esm, false);
 }
 
 fn doResolveWithArgs(
@@ -950,6 +960,7 @@ fn doResolveWithArgs(
     specifier: ZigString,
     from: ZigString,
     exception: js.ExceptionRef,
+    is_esm: bool,
     comptime is_file_path: bool,
 ) ?JSC.JSValue {
     var errorable: ErrorableZigString = undefined;
@@ -960,6 +971,7 @@ fn doResolveWithArgs(
             ctx.ptr(),
             specifier,
             from,
+            is_esm,
         );
     } else {
         VirtualMachine.resolveForAPI(
@@ -967,6 +979,7 @@ fn doResolveWithArgs(
             ctx.ptr(),
             specifier,
             from,
+            is_esm,
         );
     }
 
@@ -1010,10 +1023,11 @@ export fn Bun__resolve(
     global: *JSGlobalObject,
     specifier: JSValue,
     source: JSValue,
+    is_esm: bool,
 ) JSC.JSValue {
     var exception_ = [1]JSC.JSValueRef{null};
     var exception = &exception_;
-    const value = doResolveWithArgs(global, specifier.getZigString(global), source.getZigString(global), exception, true) orelse {
+    const value = doResolveWithArgs(global, specifier.getZigString(global), source.getZigString(global), exception, is_esm, true) orelse {
         return JSC.JSPromise.rejectedPromiseValue(global, JSC.JSValue.fromRef(exception[0]));
     };
     return JSC.JSPromise.resolvedPromiseValue(global, value);
@@ -1023,10 +1037,11 @@ export fn Bun__resolveSync(
     global: *JSGlobalObject,
     specifier: JSValue,
     source: JSValue,
+    is_esm: bool,
 ) JSC.JSValue {
     var exception_ = [1]JSC.JSValueRef{null};
     var exception = &exception_;
-    return doResolveWithArgs(global, specifier.getZigString(global), source.getZigString(global), exception, true) orelse {
+    return doResolveWithArgs(global, specifier.getZigString(global), source.getZigString(global), exception, is_esm, true) orelse {
         return JSC.JSValue.fromRef(exception[0]);
     };
 }

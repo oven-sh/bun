@@ -429,12 +429,13 @@ pub const Origin = enum(u8) {
 };
 
 pub const Features = struct {
-    optional_dependencies: bool = false,
-    dev_dependencies: bool = false,
-    scripts: bool = false,
-    peer_dependencies: bool = true,
-    is_main: bool = false,
     dependencies: bool = true,
+    dev_dependencies: bool = false,
+    is_main: bool = false,
+    optional_dependencies: bool = false,
+    peer_dependencies: bool = true,
+    scripts: bool = false,
+    workspaces: bool = false,
 
     check_for_duplicate_dependencies: bool = false,
 
@@ -444,25 +445,18 @@ pub const Features = struct {
         out |= @as(u8, @boolToInt(this.optional_dependencies)) << 2;
         out |= @as(u8, @boolToInt(this.dev_dependencies)) << 3;
         out |= @as(u8, @boolToInt(this.peer_dependencies)) << 4;
+        out |= @as(u8, @boolToInt(this.workspaces)) << 5;
         return @intToEnum(Behavior, out);
     }
 
     pub const folder = Features{
-        .optional_dependencies = true,
         .dev_dependencies = true,
-        .scripts = false,
-        .peer_dependencies = true,
-        .is_main = false,
-        .dependencies = true,
+        .optional_dependencies = true,
     };
 
     pub const link = Features{
-        .optional_dependencies = false,
-        .dev_dependencies = false,
-        .scripts = false,
-        .peer_dependencies = false,
-        .is_main = false,
         .dependencies = false,
+        .peer_dependencies = false,
     };
 
     pub const npm = Features{
@@ -707,6 +701,15 @@ const PackageInstall = struct {
                 .folder => {
                     var folder_buf = &cache_dir_subpath_buf;
                     const folder = resolution.value.folder.slice(ctx.string_buf);
+                    std.mem.copy(u8, folder_buf, "../" ++ std.fs.path.sep_str);
+                    std.mem.copy(u8, folder_buf["../".len..], folder);
+                    folder_buf["../".len + folder.len] = 0;
+                    this.package_install.cache_dir_subpath = folder_buf[0 .. "../".len + folder.len :0];
+                    this.package_install.cache_dir = std.fs.cwd();
+                },
+                .workspace => {
+                    var folder_buf = &cache_dir_subpath_buf;
+                    const folder = resolution.value.workspace.slice(ctx.string_buf);
                     std.mem.copy(u8, folder_buf, "../" ++ std.fs.path.sep_str);
                     std.mem.copy(u8, folder_buf["../".len..], folder);
                     folder_buf["../".len + folder.len] = 0;
@@ -1265,15 +1268,19 @@ const PackageInstall = struct {
     }
 
     pub fn installFromLink(this: *PackageInstall, skip_delete: bool) Result {
-
+        const dest_path = this.destination_dir_subpath;
         // If this fails, we don't care.
         // we'll catch it the next error
-        if (!skip_delete and !strings.eqlComptime(this.destination_dir_subpath, ".")) this.uninstall() catch {};
+        if (!skip_delete and !strings.eqlComptime(dest_path, ".")) this.uninstall() catch {};
 
         // cache_dir_subpath in here is actually the full path to the symlink pointing to the linked package
         const symlinked_path = this.cache_dir_subpath;
 
-        std.os.symlinkatZ(symlinked_path, this.destination_dir.dir.fd, this.destination_dir_subpath) catch |err| {
+        std.os.symlinkat(
+            std.fs.path.relative(this.allocator, "node_modules", symlinked_path[0..symlinked_path.len]) catch unreachable,
+            this.destination_dir.dir.fd,
+            dest_path[0..dest_path.len],
+        ) catch |err| {
             return Result{
                 .fail = .{
                     .err = err,
@@ -2349,7 +2356,24 @@ pub const PackageManager = struct {
 
             .folder => {
                 // relative to cwd
-                const res = FolderResolution.getOrPut(.{ .relative = void{} }, version, version.value.folder.slice(this.lockfile.buffers.string_bytes.items), this);
+                const res = FolderResolution.getOrPut(.{ .relative = .folder }, version, version.value.folder.slice(this.lockfile.buffers.string_bytes.items), this);
+
+                switch (res) {
+                    .err => |err| return err,
+                    .package_id => |package_id| {
+                        successFn(this, dependency_id, package_id);
+                        return ResolvedPackageResult{ .package = this.lockfile.packages.get(package_id) };
+                    },
+
+                    .new_package_id => |package_id| {
+                        successFn(this, dependency_id, package_id);
+                        return ResolvedPackageResult{ .package = this.lockfile.packages.get(package_id), .is_first_time = true };
+                    },
+                }
+            },
+            .workspace => {
+                // relative to cwd
+                const res = FolderResolution.getOrPut(.{ .relative = .workspace }, version, version.value.workspace.slice(this.lockfile.buffers.string_bytes.items), this);
 
                 switch (res) {
                     .err => |err| return err,
@@ -2370,12 +2394,12 @@ pub const PackageManager = struct {
                 switch (res) {
                     .err => |err| return err,
                     .package_id => |package_id| {
-                        this.lockfile.buffers.resolutions.items[dependency_id] = package_id;
+                        successFn(this, dependency_id, package_id);
                         return ResolvedPackageResult{ .package = this.lockfile.packages.get(package_id) };
                     },
 
                     .new_package_id => |package_id| {
-                        this.lockfile.buffers.resolutions.items[dependency_id] = package_id;
+                        successFn(this, dependency_id, package_id);
                         return ResolvedPackageResult{ .package = this.lockfile.packages.get(package_id), .is_first_time = true };
                     },
                 }
@@ -2550,7 +2574,7 @@ pub const PackageManager = struct {
         }
 
         switch (dependency.version.tag) {
-            .folder, .npm, .dist_tag => {
+            .dist_tag, .folder, .npm => {
                 retry_from_manifests_ptr: while (true) {
                     var resolve_result_ = this.getOrPutResolvedPackage(
                         name_hash,
@@ -2734,7 +2758,7 @@ pub const PackageManager = struct {
                 }
                 return;
             },
-            .symlink => {
+            .symlink, .workspace => {
                 const _result = this.getOrPutResolvedPackage(
                     name_hash,
                     name,
@@ -3472,8 +3496,14 @@ pub const PackageManager = struct {
         positionals: []const string = &[_]string{},
         update: Update = Update{},
         dry_run: bool = false,
-        remote_package_features: Features = Features{ .peer_dependencies = false, .optional_dependencies = true },
-        local_package_features: Features = Features{ .peer_dependencies = false, .dev_dependencies = true },
+        remote_package_features: Features = Features{
+            .optional_dependencies = true,
+            .peer_dependencies = false,
+        },
+        local_package_features: Features = Features{
+            .dev_dependencies = true,
+            .peer_dependencies = false,
+        },
         // The idea here is:
         // 1. package has a platform-specific binary to install
         // 2. To prevent downloading & installing incompatible versions, they stick the "real" one in optionalDependencies
@@ -5657,13 +5687,24 @@ pub const PackageManager = struct {
                     //   "mineflayer": "file:."
                     if (folder.len == 0 or (folder.len == 1 and folder[0] == '.')) {
                         installer.cache_dir_subpath = ".";
-                        installer.cache_dir = .{ .dir = std.fs.cwd() };
                     } else {
                         @memcpy(&this.folder_path_buf, folder.ptr, folder.len);
                         this.folder_path_buf[folder.len] = 0;
                         installer.cache_dir_subpath = std.meta.assumeSentinel(this.folder_path_buf[0..folder.len], 0);
-                        installer.cache_dir = .{ .dir = std.fs.cwd() };
                     }
+                    installer.cache_dir = .{ .dir = std.fs.cwd() };
+                },
+                .workspace => {
+                    const folder = resolution.value.workspace.slice(buf);
+                    // Handle when a package depends on itself
+                    if (folder.len == 0 or (folder.len == 1 and folder[0] == '.')) {
+                        installer.cache_dir_subpath = ".";
+                    } else {
+                        @memcpy(&this.folder_path_buf, folder.ptr, folder.len);
+                        this.folder_path_buf[folder.len] = 0;
+                        installer.cache_dir_subpath = std.meta.assumeSentinel(this.folder_path_buf[0..folder.len], 0);
+                    }
+                    installer.cache_dir = .{ .dir = std.fs.cwd() };
                 },
                 .symlink => {
                     const directory = this.manager.globalLinkDir() catch |err| {
@@ -5726,6 +5767,7 @@ pub const PackageManager = struct {
             if (needs_install) {
                 const result: PackageInstall.Result = switch (resolution.tag) {
                     .symlink => installer.installFromLink(this.skip_delete),
+                    .workspace => installer.installFromLink(this.skip_delete),
                     else => installer.install(this.skip_delete),
                 };
                 switch (result) {
@@ -6284,12 +6326,13 @@ pub const PackageManager = struct {
                         ctx.log,
                         package_json_source,
                         Features{
-                            .optional_dependencies = true,
+                            .check_for_duplicate_dependencies = true,
                             .dev_dependencies = true,
                             .is_main = true,
-                            .check_for_duplicate_dependencies = true,
+                            .optional_dependencies = true,
                             .peer_dependencies = false,
                             .scripts = true,
+                            .workspaces = true,
                         },
                     );
                     manager.lockfile.scripts = lockfile.scripts;
@@ -6409,12 +6452,13 @@ pub const PackageManager = struct {
                 ctx.log,
                 package_json_source,
                 Features{
-                    .optional_dependencies = true,
+                    .check_for_duplicate_dependencies = true,
                     .dev_dependencies = true,
                     .is_main = true,
-                    .check_for_duplicate_dependencies = true,
+                    .optional_dependencies = true,
                     .peer_dependencies = false,
                     .scripts = true,
+                    .workspaces = true,
                 },
             );
 

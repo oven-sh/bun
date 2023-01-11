@@ -51,6 +51,7 @@ pub const FolderResolution = union(Tag) {
 
     pub const Resolver = NewResolver(Resolution.Tag.folder);
     pub const SymlinkResolver = NewResolver(Resolution.Tag.symlink);
+    pub const WorkspaceResolver = NewResolver(Resolution.Tag.workspace);
     pub const CacheFolderResolver = struct {
         folder_path: []const u8 = "",
         version: Semver.Version,
@@ -160,7 +161,7 @@ pub const FolderResolution = union(Tag) {
 
     pub const GlobalOrRelative = union(enum) {
         global: []const u8,
-        relative: void,
+        relative: Dependency.Version.Tag,
         cache_folder: []const u8,
     };
 
@@ -185,15 +186,27 @@ pub const FolderResolution = union(Tag) {
                 SymlinkResolver,
                 SymlinkResolver{ .folder_path = non_normalized_path },
             ),
-            .relative => readPackageJSONFromDisk(
-                manager,
-                joinedZ,
-                abs,
-                version,
-                Features.folder,
-                Resolver,
-                Resolver{ .folder_path = rel },
-            ),
+            .relative => |tag| switch (tag) {
+                .folder => readPackageJSONFromDisk(
+                    manager,
+                    joinedZ,
+                    abs,
+                    version,
+                    Features.folder,
+                    Resolver,
+                    Resolver{ .folder_path = rel },
+                ),
+                .workspace => readPackageJSONFromDisk(
+                    manager,
+                    joinedZ,
+                    abs,
+                    version,
+                    Features.folder,
+                    WorkspaceResolver,
+                    WorkspaceResolver{ .folder_path = rel },
+                ),
+                else => unreachable,
+            },
             .cache_folder => readPackageJSONFromDisk(
                 manager,
                 joinedZ,

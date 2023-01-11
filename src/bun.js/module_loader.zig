@@ -1664,6 +1664,15 @@ pub const ModuleLoader = struct {
                         .hash = 0,
                     };
                 },
+                .@"node:tls" => {
+                    return ResolvedSource{
+                        .allocator = null,
+                        .source_code = ZigString.init(jsModuleFromFile(jsc_vm.load_builtins_from_path, "node-tls.exports.js")),
+                        .specifier = ZigString.init("node:tls"),
+                        .source_url = ZigString.init("node:tls"),
+                        .hash = 0,
+                    };
+                },
                 .@"node:dns/promises" => {
                     return ResolvedSource{
                         .allocator = null,
@@ -2026,6 +2035,7 @@ pub const HardcodedModule = enum {
     @"node:https",
     @"node:module",
     @"node:net",
+    @"node:tls",
     @"node:os",
     @"node:path",
     @"node:path/posix",
@@ -2074,6 +2084,7 @@ pub const HardcodedModule = enum {
             .{ "node:dns", HardcodedModule.@"node:dns" },
             .{ "node:net", HardcodedModule.@"node:net" },
             .{ "node:os", HardcodedModule.@"node:os" },
+            .{ "node:tls", HardcodedModule.@"node:tls" },
             .{ "node:path", HardcodedModule.@"node:path" },
             .{ "node:path/posix", HardcodedModule.@"node:path/posix" },
             .{ "node:path/win32", HardcodedModule.@"node:path/win32" },
@@ -2142,6 +2153,8 @@ pub const HardcodedModule = enum {
             .{ "node:readline", "node:readline" },
             .{ "node:readline/promises", "node:readline/promises" },
             .{ "node:stream", "node:stream" },
+            .{ "node:tls", "node:tls" },
+            .{ "tls", "node:tls" },
             .{ "node:stream/consumers", "node:stream/consumers" },
             .{ "node:stream/web", "node:stream/web" },
             .{ "node:string_decoder", "node:string_decoder" },

@@ -3,73 +3,74 @@ var fs = Bun.fs();
 // note: this is not quite the same as how node does it
 // in some cases, node swaps around arguments or makes small tweaks to the return type
 // this is just better than nothing.
-function promisify(fsFunction) {
-  // TODO: remove variadic arguments
-  // we can use new Function() here instead
-  // based on fsFucntion.length
-  var obj = {
-    ["::bunternal::"]: function (resolve, reject, args) {
-      var result;
-      try {
-        result = fsFunction.apply(fs, args);
-        args = undefined;
-      } catch (err) {
-        args = undefined;
-        reject(err);
-        return;
-      }
+const notrace = "::bunternal::";
+var promisify = {
+  [notrace]: (fsFunction) => {
+    // TODO: remove variadic arguments
+    // we can use new Function() here instead
+    // based on fsFucntion.length
+    var func = {
+      [notrace]: function (resolve, reject, args) {
+        var result;
+        try {
+          result = fsFunction.apply(fs, args);
+          args = undefined;
+        } catch (err) {
+          args = undefined;
+          reject(err);
+          return;
+        }
 
-      resolve(result);
-    },
-  };
+        resolve(result);
+      },
+    }[notrace];
 
-  var func = obj[fsFunction.name];
+    return async function (...args) {
+      // we await it so that the stack is captured
+      return await new Promise((resolve, reject) => {
+        process.nextTick(func, resolve, reject, args);
+      });
+    };
+  },
+}[notrace];
 
-  // TODO: consider @createPromiseCapabiilty intrinsic
-  return (...args) => {
-    return new Promise((resolve, reject) => {
-      func(resolve, reject, args);
-    });
-  };
-}
-
-export var access = promisify(fs.accessSync);
-export var appendFile = promisify(fs.appendFileSync);
-export var close = promisify(fs.closeSync);
-export var copyFile = promisify(fs.copyFileSync);
-export var exists = promisify(fs.existsSync);
-export var chown = promisify(fs.chownSync);
-export var chmod = promisify(fs.chmodSync);
-export var fchmod = promisify(fs.fchmodSync);
-export var fchown = promisify(fs.fchownSync);
-export var fstat = promisify(fs.fstatSync);
-export var fsync = promisify(fs.fsyncSync);
-export var ftruncate = promisify(fs.ftruncateSync);
-export var futimes = promisify(fs.futimesSync);
-export var lchmod = promisify(fs.lchmodSync);
-export var lchown = promisify(fs.lchownSync);
-export var link = promisify(fs.linkSync);
-export var lstat = promisify(fs.lstatSync);
-export var mkdir = promisify(fs.mkdirSync);
-export var mkdtemp = promisify(fs.mkdtempSync);
-export var open = promisify(fs.openSync);
-export var read = promisify(fs.readSync);
-export var write = promisify(fs.writeSync);
-export var readdir = promisify(fs.readdirSync);
-export var readFile = promisify(fs.readFileSync);
-export var readfile = readFile;
-export var writeFile = promisify(fs.writeFileSync);
-export var readlink = promisify(fs.readlinkSync);
-export var realpath = promisify(fs.realpathSync);
-export var rename = promisify(fs.renameSync);
-export var stat = promisify(fs.statSync);
-export var symlink = promisify(fs.symlinkSync);
-export var truncate = promisify(fs.truncateSync);
-export var unlink = promisify(fs.unlinkSync);
-export var utimes = promisify(fs.utimesSync);
-export var lutimes = promisify(fs.lutimesSync);
-export var rm = promisify(fs.rmSync);
-export var rmdir = promisify(fs.rmdirSync);
+export var access = promisify(fs.accessSync),
+  appendFile = promisify(fs.appendFileSync),
+  close = promisify(fs.closeSync),
+  copyFile = promisify(fs.copyFileSync),
+  exists = promisify(fs.existsSync),
+  chown = promisify(fs.chownSync),
+  chmod = promisify(fs.chmodSync),
+  fchmod = promisify(fs.fchmodSync),
+  fchown = promisify(fs.fchownSync),
+  fstat = promisify(fs.fstatSync),
+  fsync = promisify(fs.fsyncSync),
+  ftruncate = promisify(fs.ftruncateSync),
+  futimes = promisify(fs.futimesSync),
+  lchmod = promisify(fs.lchmodSync),
+  lchown = promisify(fs.lchownSync),
+  link = promisify(fs.linkSync),
+  lstat = promisify(fs.lstatSync),
+  mkdir = promisify(fs.mkdirSync),
+  mkdtemp = promisify(fs.mkdtempSync),
+  open = promisify(fs.openSync),
+  read = promisify(fs.readSync),
+  write = promisify(fs.writeSync),
+  readdir = promisify(fs.readdirSync),
+  readFile = promisify(fs.readFileSync),
+  readfile = readFile,
+  writeFile = promisify(fs.writeFileSync),
+  readlink = promisify(fs.readlinkSync),
+  realpath = promisify(fs.realpathSync),
+  rename = promisify(fs.renameSync),
+  stat = promisify(fs.statSync),
+  symlink = promisify(fs.symlinkSync),
+  truncate = promisify(fs.truncateSync),
+  unlink = promisify(fs.unlinkSync),
+  utimes = promisify(fs.utimesSync),
+  lutimes = promisify(fs.lutimesSync),
+  rm = promisify(fs.rmSync),
+  rmdir = promisify(fs.rmdirSync);
 
 export default {
   access,
@@ -82,7 +83,6 @@ export default {
   fchmod,
   fchown,
   fstat,
-  readfile,
   fsync,
   ftruncate,
   futimes,
@@ -97,6 +97,7 @@ export default {
   write,
   readdir,
   readFile,
+  readfile,
   writeFile,
   readlink,
   realpath,

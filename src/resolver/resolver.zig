@@ -430,6 +430,10 @@ pub const Resolver = struct {
     care_about_bin_folder: bool = false,
     care_about_scripts: bool = false,
 
+    /// Read the "browser" field in package.json files?
+    /// For Bun's runtime, we don't.
+    care_about_browser_field: bool = true,
+
     debug_logs: ?DebugLogs = null,
     elapsed: u64 = 0, // tracing
 
@@ -528,6 +532,7 @@ pub const Resolver = struct {
             .node_module_bundle = opts.node_modules_bundle,
             .log = log,
             .extension_order = opts.extension_order,
+            .care_about_browser_field = opts.platform.isWebLike(),
         };
     }
 
@@ -1051,41 +1056,43 @@ pub const Resolver = struct {
             }
 
             // Check the "browser" map
-            if (r.dirInfoCached(std.fs.path.dirname(abs_path) orelse unreachable) catch null) |_import_dir_info| {
-                if (_import_dir_info.getEnclosingBrowserScope()) |import_dir_info| {
-                    const pkg = import_dir_info.package_json.?;
-                    if (r.checkBrowserMap(
-                        import_dir_info,
-                        abs_path,
-                        .AbsolutePath,
-                    )) |remap| {
+            if (r.care_about_browser_field) {
+                if (r.dirInfoCached(std.fs.path.dirname(abs_path) orelse unreachable) catch null) |_import_dir_info| {
+                    if (_import_dir_info.getEnclosingBrowserScope()) |import_dir_info| {
+                        const pkg = import_dir_info.package_json.?;
+                        if (r.checkBrowserMap(
+                            import_dir_info,
+                            abs_path,
+                            .AbsolutePath,
+                        )) |remap| {
 
-                        // Is the path disabled?
-                        if (remap.len == 0) {
-                            var _path = Path.init(r.fs.dirname_store.append(string, abs_path) catch unreachable);
-                            _path.is_disabled = true;
-                            return .{
-                                .success = Result{
-                                    .path_pair = PathPair{
-                                        .primary = _path,
+                            // Is the path disabled?
+                            if (remap.len == 0) {
+                                var _path = Path.init(r.fs.dirname_store.append(string, abs_path) catch unreachable);
+                                _path.is_disabled = true;
+                                return .{
+                                    .success = Result{
+                                        .path_pair = PathPair{
+                                            .primary = _path,
+                                        },
                                     },
-                                },
-                            };
-                        }
-
-                        switch (r.resolveWithoutRemapping(import_dir_info, remap, kind, global_cache)) {
-                            .success => |_result| {
-                                result = Result{
-                                    .path_pair = _result.path_pair,
-                                    .diff_case = _result.diff_case,
-                                    .dirname_fd = _result.dirname_fd,
-                                    .package_json = pkg,
-                                    .jsx = r.opts.jsx,
                                 };
-                                check_relative = false;
-                                check_package = false;
-                            },
-                            else => {},
+                            }
+
+                            switch (r.resolveWithoutRemapping(import_dir_info, remap, kind, global_cache)) {
+                                .success => |_result| {
+                                    result = Result{
+                                        .path_pair = _result.path_pair,
+                                        .diff_case = _result.diff_case,
+                                        .dirname_fd = _result.dirname_fd,
+                                        .package_json = pkg,
+                                        .jsx = r.opts.jsx,
+                                    };
+                                    check_relative = false;
+                                    check_package = false;
+                                },
+                                else => {},
+                            }
                         }
                     }
                 }
@@ -1168,53 +1175,55 @@ pub const Resolver = struct {
 
             var source_dir_info = (r.dirInfoCached(source_dir) catch null) orelse return .{ .not_found = {} };
 
-            // Support remapping one package path to another via the "browser" field
-            if (source_dir_info.getEnclosingBrowserScope()) |browser_scope| {
-                if (browser_scope.package_json) |package_json| {
-                    if (r.checkBrowserMap(
-                        browser_scope,
-                        import_path,
-                        .PackagePath,
-                    )) |remapped| {
-                        if (remapped.len == 0) {
-                            // "browser": {"module": false}
-                            // does the module exist in the filesystem?
-                            switch (r.loadNodeModules(import_path, kind, source_dir_info, global_cache, false)) {
-                                .success => |node_module| {
-                                    var pair = node_module.path_pair;
-                                    pair.primary.is_disabled = true;
-                                    if (pair.secondary != null) {
-                                        pair.secondary.?.is_disabled = true;
-                                    }
-                                    return .{
-                                        .success = Result{
-                                            .path_pair = pair,
-                                            .dirname_fd = node_module.dirname_fd,
-                                            .diff_case = node_module.diff_case,
-                                            .package_json = package_json,
-                                            .jsx = r.opts.jsx,
-                                        },
-                                    };
-                                },
-                                else => {
-                                    // "browser": {"module": false}
-                                    // the module doesn't exist and it's disabled
-                                    // so we should just not try to load it
-                                    var primary = Path.init(import_path);
-                                    primary.is_disabled = true;
-                                    return .{
-                                        .success = Result{
-                                            .path_pair = PathPair{ .primary = primary },
-                                            .diff_case = null,
-                                            .jsx = r.opts.jsx,
-                                        },
-                                    };
-                                },
+            if (r.care_about_browser_field) {
+                // Support remapping one package path to another via the "browser" field
+                if (source_dir_info.getEnclosingBrowserScope()) |browser_scope| {
+                    if (browser_scope.package_json) |package_json| {
+                        if (r.checkBrowserMap(
+                            browser_scope,
+                            import_path,
+                            .PackagePath,
+                        )) |remapped| {
+                            if (remapped.len == 0) {
+                                // "browser": {"module": false}
+                                // does the module exist in the filesystem?
+                                switch (r.loadNodeModules(import_path, kind, source_dir_info, global_cache, false)) {
+                                    .success => |node_module| {
+                                        var pair = node_module.path_pair;
+                                        pair.primary.is_disabled = true;
+                                        if (pair.secondary != null) {
+                                            pair.secondary.?.is_disabled = true;
+                                        }
+                                        return .{
+                                            .success = Result{
+                                                .path_pair = pair,
+                                                .dirname_fd = node_module.dirname_fd,
+                                                .diff_case = node_module.diff_case,
+                                                .package_json = package_json,
+                                                .jsx = r.opts.jsx,
+                                            },
+                                        };
+                                    },
+                                    else => {
+                                        // "browser": {"module": false}
+                                        // the module doesn't exist and it's disabled
+                                        // so we should just not try to load it
+                                        var primary = Path.init(import_path);
+                                        primary.is_disabled = true;
+                                        return .{
+                                            .success = Result{
+                                                .path_pair = PathPair{ .primary = primary },
+                                                .diff_case = null,
+                                                .jsx = r.opts.jsx,
+                                            },
+                                        };
+                                    },
+                                }
                             }
-                        }
 
-                        import_path = remapped;
-                        source_dir_info = browser_scope;
+                            import_path = remapped;
+                            source_dir_info = browser_scope;
+                        }
                     }
                 }
             }
@@ -1233,7 +1242,7 @@ pub const Resolver = struct {
                         return .{ .success = result };
                     }
 
-                    if (res.package_json != null) {
+                    if (res.package_json != null and r.care_about_browser_field) {
                         var base_dir_info = res.dir_info orelse (r.readDirInfo(res.path_pair.primary.name.dir) catch null) orelse return .{ .success = result };
                         if (base_dir_info.getEnclosingBrowserScope()) |browser_scope| {
                             if (r.checkBrowserMap(
@@ -2757,29 +2766,31 @@ pub const Resolver = struct {
             }
         }
 
-        // Potentially remap using the "browser" field
-        if (dir_info.getEnclosingBrowserScope()) |browser_scope| {
-            if (browser_scope.package_json) |browser_json| {
-                if (r.checkBrowserMap(
-                    browser_scope,
-                    field_rel_path,
-                    .AbsolutePath,
-                )) |remap| {
-                    // Is the path disabled?
-                    if (remap.len == 0) {
-                        const paths = [_]string{ path, field_rel_path };
-                        const new_path = r.fs.absAlloc(r.allocator, &paths) catch unreachable;
-                        var _path = Path.init(new_path);
-                        _path.is_disabled = true;
-                        return MatchResult{
-                            .path_pair = PathPair{
-                                .primary = _path,
-                            },
-                            .package_json = browser_json,
-                        };
-                    }
+        if (r.care_about_browser_field) {
+            // Potentially remap using the "browser" field
+            if (dir_info.getEnclosingBrowserScope()) |browser_scope| {
+                if (browser_scope.package_json) |browser_json| {
+                    if (r.checkBrowserMap(
+                        browser_scope,
+                        field_rel_path,
+                        .AbsolutePath,
+                    )) |remap| {
+                        // Is the path disabled?
+                        if (remap.len == 0) {
+                            const paths = [_]string{ path, field_rel_path };
+                            const new_path = r.fs.absAlloc(r.allocator, &paths) catch unreachable;
+                            var _path = Path.init(new_path);
+                            _path.is_disabled = true;
+                            return MatchResult{
+                                .path_pair = PathPair{
+                                    .primary = _path,
+                                },
+                                .package_json = browser_json,
+                            };
+                        }
 
-                    field_rel_path = remap;
+                        field_rel_path = remap;
+                    }
                 }
             }
         }
@@ -2875,46 +2886,48 @@ pub const Resolver = struct {
             path = remap_path_trailing_slash[0 .. path.len + 1];
         }
 
-        if (dir_info.getEnclosingBrowserScope()) |browser_scope| {
-            const field_rel_path = comptime "index";
+        if (r.care_about_browser_field) {
+            if (dir_info.getEnclosingBrowserScope()) |browser_scope| {
+                const field_rel_path = comptime "index";
 
-            if (browser_scope.package_json) |browser_json| {
-                if (r.checkBrowserMap(
-                    browser_scope,
-                    field_rel_path,
-                    .AbsolutePath,
-                )) |remap| {
+                if (browser_scope.package_json) |browser_json| {
+                    if (r.checkBrowserMap(
+                        browser_scope,
+                        field_rel_path,
+                        .AbsolutePath,
+                    )) |remap| {
 
-                    // Is the path disabled?
-                    if (remap.len == 0) {
-                        const paths = [_]string{ path, field_rel_path };
-                        const new_path = r.fs.absBuf(&paths, &remap_path_buf);
-                        var _path = Path.init(new_path);
-                        _path.is_disabled = true;
-                        return MatchResult{
-                            .path_pair = PathPair{
-                                .primary = _path,
-                            },
-                            .package_json = browser_json,
-                        };
-                    }
-
-                    const new_paths = [_]string{ path, remap };
-                    const remapped_abs = r.fs.absBuf(&new_paths, &remap_path_buf);
-
-                    // Is this a file
-                    if (r.loadAsFile(remapped_abs, extension_order)) |file_result| {
-                        return MatchResult{ .dirname_fd = file_result.dirname_fd, .path_pair = .{ .primary = Path.init(file_result.path) }, .diff_case = file_result.diff_case };
-                    }
-
-                    // Is it a directory with an index?
-                    if (r.dirInfoCached(remapped_abs) catch null) |new_dir| {
-                        if (r.loadAsIndex(new_dir, extension_order)) |absolute| {
-                            return absolute;
+                        // Is the path disabled?
+                        if (remap.len == 0) {
+                            const paths = [_]string{ path, field_rel_path };
+                            const new_path = r.fs.absBuf(&paths, &remap_path_buf);
+                            var _path = Path.init(new_path);
+                            _path.is_disabled = true;
+                            return MatchResult{
+                                .path_pair = PathPair{
+                                    .primary = _path,
+                                },
+                                .package_json = browser_json,
+                            };
                         }
-                    }
 
-                    return null;
+                        const new_paths = [_]string{ path, remap };
+                        const remapped_abs = r.fs.absBuf(&new_paths, &remap_path_buf);
+
+                        // Is this a file
+                        if (r.loadAsFile(remapped_abs, extension_order)) |file_result| {
+                            return MatchResult{ .dirname_fd = file_result.dirname_fd, .path_pair = .{ .primary = Path.init(file_result.path) }, .diff_case = file_result.diff_case };
+                        }
+
+                        // Is it a directory with an index?
+                        if (r.dirInfoCached(remapped_abs) catch null) |new_dir| {
+                            if (r.loadAsIndex(new_dir, extension_order)) |absolute| {
+                                return absolute;
+                            }
+                        }
+
+                        return null;
+                    }
                 }
             }
         }

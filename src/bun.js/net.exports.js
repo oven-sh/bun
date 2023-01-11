@@ -196,7 +196,13 @@ export const Socket = (function (InternalSocket) {
 
     connect(port, host, connectListener) {
       // TODO support IPC sockets
+      var path;
       if (typeof host == "function") {
+        if (typeof port === "string") {
+          path = port;
+          port = undefined;
+        }
+
         connectListener = host;
         host = undefined;
       }
@@ -223,13 +229,22 @@ export const Socket = (function (InternalSocket) {
       if (typeof bunTLS === "function") {
         tls = bunTLS.call(this, port, host);
       }
-      bunConnect({
-        data: this,
-        hostname: host || "localhost",
-        port: port,
-        socket: Socket.#Handlers,
-        tls,
-      });
+      bunConnect(
+        path
+          ? {
+              data: this,
+              unix: path,
+              socket: Socket.#Handlers,
+              tls,
+            }
+          : {
+              data: this,
+              hostname: host || "localhost",
+              port: port,
+              socket: Socket.#Handlers,
+              tls,
+            },
+      );
       return this;
     }
 

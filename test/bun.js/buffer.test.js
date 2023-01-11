@@ -673,3 +673,28 @@ it("Buffer.toString(base64)", () => {
     );
   }
 });
+
+it("Buffer can be mocked", () => {
+  function MockBuffer() {
+    const noop = function () {};
+    const res = Buffer.alloc(0);
+    for (const op in Buffer.prototype) {
+      if (typeof res[op] === "function") {
+        res[op] = noop;
+      }
+    }
+    return res;
+  }
+
+  const buf = MockBuffer();
+
+  expect(() => {
+    buf.write("hello world");
+    buf.writeUint16BE(0);
+    buf.writeUint32BE(0);
+    buf.writeBigInt64BE(0);
+    buf.writeBigUInt64BE(0);
+    buf.writeBigInt64LE(0);
+    buf.writeBigUInt64LE(0);
+  }).not.toThrow();
+});

@@ -3020,7 +3020,7 @@ pub const Resolver = struct {
                             if (main_rel_path.len > 0) {
                                 absolute_result = r.loadFromMainField(path, dir_info, main_rel_path, "main", extension_order);
                             }
-                        } else if (r.care_about_browser_field) {
+                        } else {
                             // Some packages have a "module" field without a "main" field but
                             // still have an implicit "index.js" file. In that case, treat that
                             // as the value for "main".

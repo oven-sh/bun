@@ -13,6 +13,8 @@ const string = @import("../string_types.zig").string;
 const strings = @import("../string_immutable.zig");
 const bun = @import("bun");
 
+const Repository = @import("./repository.zig").Repository;
+
 pub const Pair = struct {
     resolution_id: Install.PackageID = Install.invalid_package_id,
     dependency: Dependency = .{},
@@ -235,6 +237,8 @@ pub const Version = struct {
             .folder, .dist_tag => lhs.literal.eql(rhs.literal, lhs_buf, rhs_buf),
             .tarball => lhs.value.tarball.eql(rhs.value.tarball, lhs_buf, rhs_buf),
             .symlink => lhs.value.symlink.eql(rhs.value.symlink, lhs_buf, rhs_buf),
+            .git => lhs.value.git.eql(rhs.value.git, lhs_buf, rhs_buf),
+            .github => lhs.value.github.eql(rhs.value.github, lhs_buf, rhs_buf),
             else => true,
         };
     }
@@ -259,12 +263,14 @@ pub const Version = struct {
         /// https://stackoverflow.com/questions/51954956/whats-the-difference-between-yarn-link-and-npm-link
         symlink = 5,
 
+        // git+https://example.com/repo#commit
+        git = 7,
+
+        // profile/repo#commit
+        github = 8,
+
         /// TODO:
         workspace = 6,
-        /// TODO:
-        git = 7,
-        /// TODO:
-        github = 8,
 
         pub inline fn isNPM(this: Tag) bool {
             return @enumToInt(this) < 3;
@@ -275,7 +281,6 @@ pub const Version = struct {
         }
 
         pub inline fn isGitHubRepoPath(dependency: string) bool {
-            std.debug.print("isGitHubRepoPath() for {s}\n", .{dependency});
             var slash_count: u8 = 0;
 
             for (dependency) |c| {
@@ -284,7 +289,7 @@ pub const Version = struct {
 
                 // Must be alphanumeric
                 switch (c) {
-                    '\\', '/', 'a'...'z', 'A'...'Z', '0'...'9', '%' => {},
+                    '\\', '/', 'a'...'z', 'A'...'Z', '0'...'9', '%', '-' => {},
                     else => return false,
                 }
             }
@@ -500,16 +505,14 @@ pub const Version = struct {
         dist_tag: String,
         tarball: URI,
         folder: String,
+        git: Repository,
+        github: Repository,
 
         /// Equivalent to npm link
         symlink: String,
 
         /// Unsupported, but still parsed so an error can be thrown
         workspace: void,
-        /// Unsupported, but still parsed so an error can be thrown
-        git: void,
-        /// Unsupported, but still parsed so an error can be thrown
-        github: String,
     };
 };
 
@@ -585,14 +588,45 @@ pub fn parseWithTag(
                 .tag = .npm,
             };
         },
+        .git => return Version{
+            .literal = sliced.value(),
+            .value = .{
+                .git = Repository.parse(sliced) catch |err| {
+                    if (log_) |log| log.addErrorFmt(
+                        null,
+                        logger.Loc.Empty,
+                        allocator,
+                        "{s} parsing dependency \"{s}\"",
+                        .{
+                            @errorName(err),
+                            dependency,
+                        },
+                    ) catch unreachable;
+                    return null;
+                },
+            },
+            .tag = .git,
+        },
         .github => {
-            std.debug.print("parseWithTag() github dependency {s}\n", .{dependency});
             return Version{
                 .literal = sliced.value(),
-                .value = .{ .github = sliced.value() },
+                .value = .{
+                    .github = Repository.parseGitHub(sliced) catch |err| {
+                        if (log_) |log| log.addErrorFmt(
+                            null,
+                            logger.Loc.Empty,
+                            allocator,
+                            "{s} parsing dependency \"{s}\"",
+                            .{
+                                @errorName(err),
+                                dependency,
+                            },
+                        ) catch unreachable;
+                        return null;
+                    },
+                },
                 .tag = .github,
             };
-            // return null;
         },
         .dist_tag => {
             return Version{
@@ -666,7 +700,7 @@ pub fn parseWithTag(
                 .literal = sliced.value(),
             };
         },
-        .workspace, .git => {
+        .workspace => {
             if (log_) |log| log.addErrorFmt(null, logger.Loc.Empty, allocator, "Dependency type not implemented yet {s} for \"{s}\"", .{ @tagName(tag), dependency }) catch unreachable;
             return null;
         },

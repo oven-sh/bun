@@ -1,11 +1,16 @@
 const PackageManager = @import("./install.zig").PackageManager;
+const Lockfile = @import("./lockfile.zig");
 const Semver = @import("./semver.zig");
 const ExternalString = Semver.ExternalString;
 const String = Semver.String;
+const SlicedString = Semver.SlicedString;
 const std = @import("std");
 const GitSHA = String;
+const bun = @import("../bun.zig");
 const string = @import("../string_types.zig").string;
+const strings = @import("../bun.zig").strings;
 const Environment = @import("../env.zig");
+const Group = Semver.Query.Group;
 
 pub const Repository = extern struct {
     owner: String = String{},
@@ -44,6 +49,129 @@ pub const Repository = extern struct {
     pub fn formatAs(this: Repository, label: string, buf: []const u8, comptime layout: []const u8, opts: std.fmt.FormatOptions, writer: anytype) !void {
         const formatter = Formatter{ .label = label, .repository = this, .buf = buf };
         return try formatter.format(layout, opts, writer);
+    }
+
+    pub fn getGitHubURL(this: Repository, lockfile: *Lockfile, buf: *[bun.MAX_PATH_BYTES]u8) []u8 {
+        const github = "https://github.com/";
+        const owner = lockfile.str(this.owner);
+        const repo = lockfile.str(this.repo);
+        const committish = lockfile.str(this.committish);
+
+        var i: usize = 0;
+        std.mem.copy(u8, buf[i..], github);
+        i += github.len;
+
+        // might need to skip "github:"
+        std.mem.copy(u8, buf[i..], owner);
+        i += owner.len;
+        buf[i] = '/';
+        i += 1;
+        std.mem.copy(u8, buf[i..], repo);
+        i += repo.len;
+        if (committish.len > 0) {
+            buf[i] = '#';
+            i += 1;
+            std.mem.copy(u8, buf[i..], committish);
+            i += committish.len;
+        }
+
+        return buf[0..i];
+    }
+
+    pub fn getURL(this: Repository, lockfile: *Lockfile, buf: *[bun.MAX_PATH_BYTES]u8) []u8 {
+        const owner = lockfile.str(this.owner);
+        const repo = lockfile.str(this.repo);
+        const committish = lockfile.str(this.committish);
+
+        var i: usize = 0;
+        std.mem.copy(u8, buf[i..], owner);
+        i += owner.len;
+        buf[i] = '/';
+        i += 1;
+        std.mem.copy(u8, buf[i..], repo);
+        i += repo.len;
+        if (committish.len > 0) {
+            buf[i] = '#';
+            i += 1;
+            std.mem.copy(u8, buf[i..], committish);
+            i += committish.len;
+        }
+
+        return buf[0..i];
+    }
+
+    pub fn getCacheDirectoryForGitHub(this: Repository, manager: *PackageManager, buf: *[bun.MAX_PATH_BYTES]u8) ![]u8 {
+        var url_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+        const url = this.getGitHubURL(manager.lockfile, &url_buf);
+
+        const url_hash = std.hash.Wyhash.hash(0, url);
+        const hex_fmt = bun.fmt.hexIntLower(url_hash);
+
+        const repo = manager.lockfile.str(this.repo);
+
+        return try std.fmt.bufPrint(buf, "{s}-{any}", .{ repo[0..@min(16, repo.len)], hex_fmt });
+    }
+
+    pub fn getCacheDirectory(this: Repository, manager: *PackageManager, buf: *[bun.MAX_PATH_BYTES]u8) ![]u8 {
+        var url_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+        const url = this.getURL(manager.lockfile, &url_buf);
+
+        const url_hash = std.hash.Wyhash.hash(0, url);
+        const hex_fmt = bun.fmt.hexIntLower(url_hash);
+
+        const repo = manager.lockfile.str(this.repo);
+
+        return try std.fmt.bufPrint(buf, "{s}-{any}", .{ repo[0..@min(16, repo.len)], hex_fmt });
+    }
+
+    pub fn getCachePathForGitHub(this: Repository, manager: *PackageManager, buf: *[bun.MAX_PATH_BYTES]u8) ![]u8 {
+        var url_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+        const url = this.getGitHubURL(manager.lockfile, &url_buf);
+
+        var path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+        const path = try std.os.getFdPath(manager.getGitCacheDirectory().dir.fd, &path_buf);
+
+        const url_hash = std.hash.Wyhash.hash(0, url);
+        const hex_fmt = bun.fmt.hexIntLower(url_hash);
+
+        const repo = manager.lockfile.str(this.repo);
+
+        return try std.fmt.bufPrint(buf, "{s}/{s}-{any}", .{ path, repo[0..@min(16, repo.len)], hex_fmt });
+    }
+
+    pub fn getCachePath(this: Repository, manager: *PackageManager, buf: *[bun.MAX_PATH_BYTES]u8) ![]u8 {
+        var url_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+        const url = this.getURL(manager.lockfile, &url_buf);
+
+        var path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+        const path = try std.os.getFdPath(manager.getGitCacheDirectory().dir.fd, &path_buf);
+
+        const url_hash = std.hash.Wyhash.hash(0, url);
+        const hex_fmt = bun.fmt.hexIntLower(url_hash);
+
+        const repo = manager.lockfile.str(this.repo);
+
+        return try std.fmt.bufPrint(buf, "{s}/{s}-{any}", .{ path, repo[0..@min(16, repo.len)], hex_fmt });
+    }
+
+    pub fn parse(_: *const SlicedString) !Repository {
+        var repo = Repository{};
+
+        return repo;
+    }
+
+    pub fn parseGitHub(input: *const SlicedString) !Repository {
+        var repo = Repository{};
+        if (strings.indexOfChar(input.slice, '/')) |i| {
+            repo.owner = String.init(input.buf, input.slice[0..i]);
+            if (strings.indexOfChar(input.slice[i + 1 ..], '#')) |j| {
+                repo.repo = String.init(input.buf, input.slice[i + 1 .. j]);
+                repo.committish = String.init(input.buf, input.slice[j + 1 ..]);
+            } else {
+                repo.repo = String.init(input.buf, input.slice[i + 1 ..]);
+            }
+        }
+        return repo;
     }
 
     pub const Formatter = struct {

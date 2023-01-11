@@ -11,6 +11,7 @@ const Features = @import("../install.zig").Features;
 const IdentityContext = @import("../../identity_context.zig").IdentityContext;
 const strings = @import("bun").strings;
 const Resolution = @import("../resolution.zig").Resolution;
+const Repository = @import("../repository.zig").Repository;
 const String = @import("../semver.zig").String;
 const Semver = @import("../semver.zig");
 const bun = @import("bun");
@@ -74,7 +75,18 @@ pub const FolderResolution = union(Tag) {
         var abs: string = "";
         var rel: string = "";
         // We consider it valid if there is a package.json in the folder
-        const normalized = std.mem.trimRight(u8, normalize(non_normalized_path), std.fs.path.sep_str);
+        const temp_normalized = std.mem.trimRight(u8, normalize(non_normalized_path), std.fs.path.sep_str);
+        var normalized_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+        std.mem.copy(u8, &normalized_buf, temp_normalized);
+        var normalized = normalized_buf[0..temp_normalized.len];
+
+        if (global_or_relative == .git_cache_folder and normalized[0] != '/') {
+            var temp_path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+            temp_path_buf[0] = '/';
+            std.mem.copy(u8, temp_path_buf[1..], normalized);
+            normalized.len += 1;
+            std.mem.copy(u8, normalized, temp_path_buf[0..normalized.len]);
+        }
 
         if (strings.startsWithChar(normalized, '.')) {
             var tempcat: [bun.MAX_PATH_BYTES]u8 = undefined;
@@ -115,6 +127,39 @@ pub const FolderResolution = union(Tag) {
         }
 
         return .{ abs, rel };
+    }
+
+    pub fn readPackageJSONFromBytes(
+        manager: *PackageManager,
+        abs: []const u8,
+        json_bytes: string,
+        version: Dependency.Version,
+        comptime features: Features,
+        comptime ResolverType: type,
+        resolver: ResolverType,
+    ) !Lockfile.Package {
+        var package = Lockfile.Package{};
+        var body = Npm.Registry.BodyPool.get(manager.allocator);
+        defer Npm.Registry.BodyPool.release(body);
+
+        const source = logger.Source.initPathString(abs, json_bytes);
+
+        try Lockfile.Package.parse(
+            manager.lockfile,
+            &package,
+            manager.allocator,
+            manager.log,
+            source,
+            ResolverType,
+            resolver,
+            features,
+        );
+
+        if (manager.lockfile.getPackageID(package.name_hash, version, package.resolution)) |existing_id| {
+            return manager.lockfile.packages.get(existing_id);
+        }
+
+        return manager.lockfile.appendPackage(package) catch unreachable;
     }
 
     pub fn readPackageJSONFromDisk(
@@ -162,7 +207,72 @@ pub const FolderResolution = union(Tag) {
         global: []const u8,
         relative: void,
         cache_folder: []const u8,
+        git_cache_folder: []const u8,
     };
+
+    pub fn getOrPutWithPackageJSONBytes(global_or_relative: GlobalOrRelative, version: Dependency.Version, non_normalized_path: string, manager: *PackageManager, json_bytes: string) FolderResolution {
+        var joined: [bun.MAX_PATH_BYTES]u8 = undefined;
+        const paths = normalizePackageJSONPath(global_or_relative, &joined, non_normalized_path);
+        const abs = paths[0];
+        const rel = paths[1];
+
+        var entry = manager.folders.getOrPut(manager.allocator, hash(abs)) catch unreachable;
+        if (entry.found_existing) {
+            if (global_or_relative != .git_cache_folder or entry.value_ptr.*.err != error.MissingPackageJSON) {
+                return entry.value_ptr.*;
+            }
+        }
+
+        const package: Lockfile.Package = switch (global_or_relative) {
+            .global => readPackageJSONFromBytes(
+                manager,
+                abs,
+                json_bytes,
+                version,
+                Features.link,
+                SymlinkResolver,
+                SymlinkResolver{ .folder_path = non_normalized_path },
+            ),
+            .relative => readPackageJSONFromBytes(
+                manager,
+                abs,
+                json_bytes,
+                version,
+                Features.folder,
+                Resolver,
+                Resolver{ .folder_path = rel },
+            ),
+            .cache_folder => readPackageJSONFromBytes(
+                manager,
+                abs,
+                json_bytes,
+                version,
+                Features.npm,
+                CacheFolderResolver,
+                CacheFolderResolver{ .version = version.value.npm.toVersion() },
+            ),
+            .git_cache_folder => readPackageJSONFromBytes(
+                manager,
+                abs,
+                json_bytes,
+                version,
+                Features.git,
+                Resolver,
+                Resolver{ .folder_path = rel },
+            ),
+        } catch |err| {
+            if (err == error.FileNotFound) {
+                entry.value_ptr.* = .{ .err = error.MissingPackageJSON };
+            } else {
+                entry.value_ptr.* = .{ .err = err };
+            }
+
+            return entry.value_ptr.*;
+        };
+
+        entry.value_ptr.* = .{ .package_id = package.meta.id };
+        return FolderResolution{ .new_package_id = package.meta.id };
+    }
 
     pub fn getOrPut(global_or_relative: GlobalOrRelative, version: Dependency.Version, non_normalized_path: string, manager: *PackageManager) FolderResolution {
         var joined: [bun.MAX_PATH_BYTES]u8 = undefined;
@@ -171,7 +281,11 @@ pub const FolderResolution = union(Tag) {
         const rel = paths[1];
 
         var entry = manager.folders.getOrPut(manager.allocator, hash(abs)) catch unreachable;
-        if (entry.found_existing) return entry.value_ptr.*;
+        if (entry.found_existing) {
+            if (global_or_relative != .git_cache_folder or entry.value_ptr.*.err != error.MissingPackageJSON) {
+                return entry.value_ptr.*;
+            }
+        }
 
         joined[abs.len] = 0;
         var joinedZ: [:0]u8 = joined[0..abs.len :0];
@@ -202,6 +316,15 @@ pub const FolderResolution = union(Tag) {
                 Features.npm,
                 CacheFolderResolver,
                 CacheFolderResolver{ .version = version.value.npm.toVersion() },
+            ),
+            .git_cache_folder => readPackageJSONFromDisk(
+                manager,
+                joinedZ,
+                abs,
+                version,
+                Features.git,
+                Resolver,
+                Resolver{ .folder_path = rel },
             ),
         } catch |err| {
             if (err == error.FileNotFound) {

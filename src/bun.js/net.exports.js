@@ -197,7 +197,10 @@ export const Socket = (function (InternalSocket) {
     connect(port, host, connectListener) {
       // TODO support IPC sockets
       var path;
-      if (typeof host == "function") {
+      if (arguments.length === 1 && typeof port === "string") {
+        path = port;
+        port = undefined;
+      } else if (typeof host == "function") {
         if (typeof port === "string") {
           path = port;
           port = undefined;

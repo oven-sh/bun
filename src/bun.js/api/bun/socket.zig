@@ -1251,7 +1251,9 @@ fn NewSocket(comptime ssl: bool) type {
                 return -1;
             }
             // we don't cork yet but we might later
-            return this.socket.write(buffer, is_end);
+            const res = this.socket.write(buffer, is_end);
+            log("write({d}, {any})", .{ buffer.len, is_end });
+            return res;
         }
 
         fn writeOrEnd(this: *This, globalObject: *JSC.JSGlobalObject, args: []const JSC.JSValue, is_end: bool) WriteResult {

@@ -1114,17 +1114,99 @@ static inline JSC::EncodedJSValue jsBufferPrototypeFunction_lastIndexOfBody(JSC:
 static inline JSC::EncodedJSValue jsBufferPrototypeFunction_swap16Body(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSArrayBufferView>::ClassParameter castedThis)
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
-    return JSC::JSValue::encode(jsUndefined());
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    constexpr int elemSize = 2;
+    int64_t length = static_cast<int64_t>(castedThis->byteLength());
+    if (length % elemSize != 0) {
+        throwRangeError(lexicalGlobalObject, scope, "Buffer size must be a multiple of 16-bits"_s);
+        return JSC::JSValue::encode(jsUndefined());
+    }
+
+    if (UNLIKELY(castedThis->isDetached())) {
+        throwVMTypeError(lexicalGlobalObject, scope, "Buffer is detached"_s);
+        return JSValue::encode(jsUndefined());
+    }
+
+    uint8_t* typedVector = castedThis->typedVector();
+
+    for (size_t elem = 0; elem < length; elem += elemSize) {
+        const size_t right = elem + 1;
+
+        uint8_t temp = typedVector[elem];
+        typedVector[elem] = typedVector[right];
+        typedVector[right] = temp;
+    }
+
+    return JSC::JSValue::encode(castedThis);
 }
 static inline JSC::EncodedJSValue jsBufferPrototypeFunction_swap32Body(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSArrayBufferView>::ClassParameter castedThis)
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
-    return JSC::JSValue::encode(jsUndefined());
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    constexpr int elemSize = 4;
+    int64_t length = static_cast<int64_t>(castedThis->byteLength());
+    if (length % elemSize != 0) {
+        throwRangeError(lexicalGlobalObject, scope, "Buffer size must be a multiple of 32-bits"_s);
+        return JSC::JSValue::encode(jsUndefined());
+    }
+
+    if (UNLIKELY(castedThis->isDetached())) {
+        throwVMTypeError(lexicalGlobalObject, scope, "Buffer is detached"_s);
+        return JSValue::encode(jsUndefined());
+    }
+
+    uint8_t* typedVector = castedThis->typedVector();
+
+    constexpr size_t swaps = elemSize/2;
+    for (size_t elem = 0; elem < length; elem += elemSize) {
+        const size_t right = elem + elemSize - 1;
+        for (size_t k = 0; k < swaps; k++) {
+            const size_t i = right - k;
+            const size_t j = elem + k;
+
+            uint8_t temp = typedVector[i];
+            typedVector[i] = typedVector[j];
+            typedVector[j] = temp;
+        }
+    }
+
+    return JSC::JSValue::encode(castedThis);
 }
 static inline JSC::EncodedJSValue jsBufferPrototypeFunction_swap64Body(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSArrayBufferView>::ClassParameter castedThis)
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
-    return JSC::JSValue::encode(jsUndefined());
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    constexpr size_t elemSize = 8;
+    int64_t length = static_cast<int64_t>(castedThis->byteLength());
+    if (length % elemSize != 0) {
+        throwRangeError(lexicalGlobalObject, scope, "Buffer size must be a multiple of 64-bits"_s);
+        return JSC::JSValue::encode(jsUndefined());
+    }
+
+    if (UNLIKELY(castedThis->isDetached())) {
+        throwVMTypeError(lexicalGlobalObject, scope, "Buffer is detached"_s);
+        return JSValue::encode(jsUndefined());
+    }
+
+    uint8_t* typedVector = castedThis->typedVector();
+
+    constexpr size_t swaps = elemSize/2;
+    for (size_t elem = 0; elem < length; elem += elemSize) {
+        const size_t right = elem + elemSize - 1;
+        for (size_t k = 0; k < swaps; k++) {
+            const size_t i = right - k;
+            const size_t j = elem + k;
+
+            uint8_t temp = typedVector[i];
+            typedVector[i] = typedVector[j];
+            typedVector[j] = temp;
+        }
+    }
+
+    return JSC::JSValue::encode(castedThis);
 }
 
 static inline JSC::EncodedJSValue jsBufferPrototypeFunction_toStringBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSArrayBufferView>::ClassParameter castedThis)

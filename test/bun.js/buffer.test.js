@@ -556,6 +556,84 @@ it("Buffer.from(base64)", () => {
   ).toBe('console.log("hello world")\n');
 });
 
+it("Buffer.swap16", () => {
+  const examples = [
+    ["", ""],
+    ["a1", "1a"],
+    ["a1b2", "1a2b"]
+  ];
+
+  for (let i = 0; i < examples.length; i++) {
+    const input = examples[i][0];
+    const output = examples[i][1];
+    const buf = Buffer.from(input, "utf-8");
+
+    const ref = buf.swap16();
+    expect(ref instanceof Buffer).toBe(true);
+    expect(buf.toString()).toBe(output);
+  }
+
+  const buf = Buffer.from("123", "utf-8");
+  try {
+    buf.swap16();
+    expect(false).toBe(true);
+  } catch (exception) {
+    expect(exception.message).toBe("Buffer size must be a multiple of 16-bits");
+  }
+});
+
+it("Buffer.swap32", () => {
+  const examples = [
+    ["", ""],
+    ["a1b2", "2b1a"],
+    ["a1b2c3d4", "2b1a4d3c"]
+  ];
+
+  for (let i = 0; i < examples.length; i++) {
+    const input = examples[i][0];
+    const output = examples[i][1];
+    const buf = Buffer.from(input, "utf-8");
+
+    const ref = buf.swap32();
+    expect(ref instanceof Buffer).toBe(true);
+    expect(buf.toString()).toBe(output);
+  }
+
+  const buf = Buffer.from("12345", "utf-8");
+  try {
+    buf.swap32();
+    expect(false).toBe(true);
+  } catch (exception) {
+    expect(exception.message).toBe("Buffer size must be a multiple of 32-bits");
+  }
+});
+
+it("Buffer.swap64", () => {
+  const examples = [
+    ["", ""],
+    ["a1b2c3d4", "4d3c2b1a"],
+    ["a1b2c3d4e5f6g7h8", "4d3c2b1a8h7g6f5e"],
+  ];
+
+  for (let i = 0; i < examples.length; i++) {
+    const input = examples[i][0];
+    const output = examples[i][1];
+    const buf = Buffer.from(input, "utf-8");
+
+    const ref = buf.swap64();
+    expect(ref instanceof Buffer).toBe(true);
+    expect(buf.toString()).toBe(output);
+  }
+
+  const buf = Buffer.from("123456789", "utf-8");
+  try {
+    buf.swap64();
+    expect(false).toBe(true);
+  } catch (exception) {
+    expect(exception.message).toBe("Buffer size must be a multiple of 64-bits");
+  }
+});
+
 it("Buffer.toString regessions", () => {
   expect(
     Buffer.from([65, 0])

@@ -1276,30 +1276,66 @@ const PackageInstall = struct {
         // cache_dir_subpath in here is actually the full path to the symlink pointing to the linked package
         const symlinked_path = this.cache_dir_subpath;
 
-        std.os.symlinkat(
-            std.fs.path.relative(this.allocator, "node_modules", symlinked_path[0..symlinked_path.len]) catch unreachable,
-            this.destination_dir.dir.fd,
-            dest_path[0..dest_path.len],
-        ) catch |err| {
-            return Result{
+        const subdir = std.fs.path.dirname(dest_path);
+        var dest_dir = if (subdir) |dir| brk: {
+            break :brk this.destination_dir.dir.makeOpenPath(dir, .{}) catch |err| return Result{
                 .fail = .{
                     .err = err,
                     .step = .linking,
                 },
             };
-        };
-
-        if (isDanglingSymlink(symlinked_path)) {
-            return Result{
-                .fail = .{
-                    .err = error.DanglingSymlink,
-                    .step = .linking,
-                },
-            };
+        } else this.destination_dir.dir;
+        defer {
+            if (subdir != null) dest_dir.close();
         }
 
+        var dest_full_path = dest_dir.realpathAlloc(this.allocator, ".") catch |err| return Result{
+            .fail = .{
+                .err = err,
+                .step = .linking,
+            },
+        };
+        defer this.allocator.free(dest_full_path);
+
+        var to_path = std.fs.path.resolve(this.allocator, &[_]string{
+            FileSystem.instance.top_level_dir,
+            symlinked_path,
+        }) catch |err| return Result{
+            .fail = .{
+                .err = err,
+                .step = .linking,
+            },
+        };
+        defer this.allocator.free(to_path);
+
+        var target = std.fs.path.relative(
+            this.allocator,
+            dest_full_path,
+            to_path,
+        ) catch |err| return Result{
+            .fail = .{
+                .err = err,
+                .step = .linking,
+            },
+        };
+        defer this.allocator.free(target);
+
+        std.os.symlinkat(target, dest_dir.fd, std.fs.path.basename(dest_path)) catch |err| return Result{
+            .fail = .{
+                .err = err,
+                .step = .linking,
+            },
+        };
+
+        if (isDanglingSymlink(symlinked_path)) return Result{
+            .fail = .{
+                .err = error.DanglingSymlink,
+                .step = .linking,
+            },
+        };
+
         return Result{
-            .success = void{},
+            .success = {},
         };
     }
 

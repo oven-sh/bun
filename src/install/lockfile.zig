@@ -2642,10 +2642,14 @@ pub const Package = extern struct {
             if (json.asProperty(group.prop)) |dependencies_q| {
                 switch (dependencies_q.expr.data) {
                     .e_array => |arr| {
+                        workspace_names = try allocator.alloc(string, arr.items.len);
+
                         var workspace_log = logger.Log.init(allocator);
                         defer log.deinit();
 
-                        workspace_names = try allocator.alloc(string, arr.items.len);
+                        var workspace_buf = try allocator.alloc(u8, 1024);
+                        defer allocator.free(workspace_buf);
+
                         for (arr.slice()) |item, i| {
                             const path = item.asString(allocator) orelse return error.InvalidPackageJSON;
 
@@ -2655,7 +2659,6 @@ pub const Package = extern struct {
                             var workspace_file = try workspace_dir.openFile("package.json", .{ .mode = .read_only });
                             defer workspace_file.close();
 
-                            var workspace_buf = try allocator.alloc(u8, 1024);
                             const workspace_read = try workspace_file.preadAll(workspace_buf, 0);
                             const workspace_source = logger.Source.initPathString(path, workspace_buf[0..workspace_read]);
 
@@ -2667,10 +2670,11 @@ pub const Package = extern struct {
                             if (!workspace_json.has_found_name) return error.InvalidPackageJSON;
 
                             const workspace_name = workspace_json.found_name;
-                            workspace_names[i] = workspace_name;
+
                             string_builder.count(workspace_name);
                             string_builder.count(path);
                             string_builder.cap += bun.MAX_PATH_BYTES;
+                            workspace_names[i] = try allocator.dupe(u8, workspace_name);
                         }
                         total_dependencies_count += @truncate(u32, arr.items.len);
                     },

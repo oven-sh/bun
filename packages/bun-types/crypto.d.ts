@@ -16,6 +16,7 @@
  * @see [source](https://github.com/nodejs/node/blob/v18.0.0/lib/crypto.js)
  */
 declare module "crypto" {
+  import { ArrayBufferView } from "bun";
   import * as stream from "node:stream";
   /**
    * SPKAC is a Certificate Signing Request mechanism originally implemented by

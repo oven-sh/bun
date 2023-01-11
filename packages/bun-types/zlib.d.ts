@@ -90,6 +90,7 @@
  * @see [source](https://github.com/nodejs/node/blob/v18.0.0/lib/zlib.js)
  */
 declare module "zlib" {
+  import { ArrayBufferView } from "bun";
   import * as stream from "node:stream";
   interface ZlibOptions {
     /**

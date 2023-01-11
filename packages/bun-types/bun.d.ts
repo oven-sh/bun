@@ -1,5 +1,3 @@
-import { Encoding } from "crypto";
-
 interface VoidFunction {
   (): void;
 }
@@ -28,6 +26,8 @@ declare namespace Bun {
  *
  */
 declare module "bun" {
+  type ArrayBufferView = TypedArray | DataView;
+  import { Encoding as CryptoEncoding } from "crypto";
   /**
    * The environment variables of the process
    *
@@ -2085,7 +2085,7 @@ declare module "bun" {
      *
      * @param input
      */
-    update(input: StringOrBuffer, inputEncoding?: Encoding): CryptoHasher;
+    update(input: StringOrBuffer, inputEncoding?: CryptoEncoding): CryptoHasher;
 
     /**
      * Finalize the hash
@@ -3225,6 +3225,7 @@ type TypedArray =
   | Uint32Array
   | Float32Array
   | Float64Array;
+
 type TimeLike = string | number | Date;
 type StringOrBuffer = string | TypedArray | ArrayBufferLike;
 type PathLike = string | TypedArray | ArrayBufferLike | URL;

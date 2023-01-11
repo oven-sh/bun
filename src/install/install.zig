@@ -552,9 +552,6 @@ const Task = struct {
 
                     const git_repo = this.request.git_clone.repository;
 
-                    var owner = lockfile.str(git_repo.owner);
-                    owner = if (strings.hasPrefixComptime(owner, "github:")) owner["github:".len..] else owner;
-
                     const repo_name = lockfile.str(git_repo.repo);
 
                     var url_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
@@ -2501,8 +2498,7 @@ pub const PackageManager = struct {
             .git => {
                 var cache_path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
 
-                // TODO: need to remove "https://github.com/" prefix
-                const cache_path = try version.value.github.getCachePath(this, &cache_path_buf);
+                const cache_path = try version.value.git.getCachePath(this, &cache_path_buf);
 
                 const res = FolderResolution.getOrPut(.{ .git_cache_folder = cache_path }, version, cache_path, this);
 

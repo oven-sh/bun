@@ -162,13 +162,15 @@ pub const Repository = extern struct {
 
     pub fn parseGitHub(input: *const SlicedString) !Repository {
         var repo = Repository{};
-        if (strings.indexOfChar(input.slice, '/')) |i| {
-            repo.owner = String.init(input.buf, input.slice[0..i]);
-            if (strings.indexOfChar(input.slice[i + 1 ..], '#')) |j| {
-                repo.repo = String.init(input.buf, input.slice[i + 1 .. j]);
-                repo.committish = String.init(input.buf, input.slice[j + 1 ..]);
+        // ignore "github:"
+        const i: usize = if (strings.indexOfChar(input.slice, ':')) |j| j + 1 else 0;
+        if (strings.indexOfChar(input.slice, '/')) |j| {
+            repo.owner = String.init(input.buf, input.slice[i..j]);
+            if (strings.indexOfChar(input.slice[j + 1 ..], '#')) |k| {
+                repo.repo = String.init(input.buf, input.slice[j + 1 .. k]);
+                repo.committish = String.init(input.buf, input.slice[k + 1 ..]);
             } else {
-                repo.repo = String.init(input.buf, input.slice[i + 1 ..]);
+                repo.repo = String.init(input.buf, input.slice[j + 1 ..]);
             }
         }
         return repo;

@@ -53,11 +53,19 @@ export function isIP(s) {
   return 0;
 }
 
-const { Bun, createFIFO } = import.meta.primordials;
+const { Bun, createFIFO, Object } = import.meta.primordials;
 const { connect: bunConnect } = Bun;
 const { Duplex } = import.meta.require("node:stream");
 
+const bunTlsSymbol = Symbol.for("::buntls::");
+var SocketClass;
 export const Socket = (function (InternalSocket) {
+  SocketClass = InternalSocket;
+  Object.defineProperty(SocketClass.prototype, Symbol.toStringTag, {
+    value: "Socket",
+    enumerable: false,
+  });
+
   return Object.defineProperty(
     function Socket(options) {
       return new InternalSocket(options);
@@ -75,16 +83,18 @@ export const Socket = (function (InternalSocket) {
       close: Socket.#Close,
       connectError(socket, error) {
         const self = socket.data;
+
         self.emit("error", error);
       },
       data(socket, buffer) {
         const self = socket.data;
         self.bytesRead += buffer.length;
         const queue = self.#readQueue;
+        const ret = new Buffer(buffer.buffer);
         if (queue.isEmpty()) {
-          if (self.push(buffer)) return;
+          if (self.push(ret)) return;
         }
-        queue.push(buffer);
+        queue.push(ret);
       },
       drain: Socket.#Drain,
       end: Socket.#Close,
@@ -95,6 +105,7 @@ export const Socket = (function (InternalSocket) {
           self.#writeCallback = null;
           callback(error);
         }
+        console.error(error);
         self.emit("error", error);
       },
       open(socket) {
@@ -150,16 +161,25 @@ export const Socket = (function (InternalSocket) {
     timeout = 0;
     #writeCallback;
     #writeChunk;
+    #pendingRead;
 
     constructor(options) {
+      const {
+        signal,
+        write,
+        read,
+        allowHalfOpen = false,
+        ...opts
+      } = options || {};
       super({
-        allowHalfOpen: options?.allowHalfOpen || false,
+        ...opts,
+        allowHalfOpen,
         readable: true,
         writable: true,
       });
-      options?.signal?.once("abort", () => this.destroy());
+      this.#pendingRead = undefined;
+      signal?.once("abort", () => this.destroy());
       this.once("connect", () => this.emit("ready"));
-      // TODO support `options.fd`
     }
 
     address() {
@@ -198,11 +218,17 @@ export const Socket = (function (InternalSocket) {
       this.connecting = true;
       this.remotePort = port;
       if (connectListener) this.on("connect", connectListener);
+      const bunTLS = this[bunTlsSymbol];
+      var tls = undefined;
+      if (typeof bunTLS === "function") {
+        tls = bunTLS.call(this, port, host);
+      }
       bunConnect({
         data: this,
         hostname: host || "localhost",
         port: port,
         socket: Socket.#Handlers,
+        tls,
       });
       return this;
     }
@@ -237,7 +263,7 @@ export const Socket = (function (InternalSocket) {
       const queue = this.#readQueue;
       let chunk;
       while ((chunk = queue.peek())) {
-        if (!this.push(chunk)) break;
+        if (!this.push(chunk)) return;
         queue.shift();
       }
     }
@@ -328,4 +354,5 @@ export default {
   isIPv6,
   Socket,
   [Symbol.for("CommonJS")]: 0,
+  [Symbol.for("::bunternal::")]: SocketClass,
 };

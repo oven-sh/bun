@@ -2642,25 +2642,33 @@ pub const Package = extern struct {
             if (json.asProperty(group.prop)) |dependencies_q| {
                 switch (dependencies_q.expr.data) {
                     .e_array => |arr| {
+                        var workspace_log = logger.Log.init(allocator);
+                        defer log.deinit();
+
                         workspace_names = try allocator.alloc(string, arr.items.len);
                         for (arr.slice()) |item, i| {
                             const path = item.asString(allocator) orelse return error.InvalidPackageJSON;
 
-                            const workspace_dir = try std.fs.cwd().openDir(path, .{});
-                            const workspace_file = try workspace_dir.openFile("package.json", .{ .mode = .read_only });
-                            const workspace_stat = try workspace_file.stat();
-                            var workspace_buf = try allocator.alloc(u8, workspace_stat.size + 64);
-                            const workspace_contents_len = try workspace_file.preadAll(workspace_buf, 0);
-                            const workspace_source = logger.Source.initPathString(path, workspace_buf[0..workspace_contents_len]);
-                            const workspace_json = try json_parser.ParseJSONUTF8(&workspace_source, log, allocator);
+                            var workspace_dir = try std.fs.cwd().openDir(path, .{});
+                            defer workspace_dir.close();
 
-                            if (workspace_json.asProperty("name")) |workspace_name_q| {
-                                if (workspace_name_q.expr.asString(allocator)) |workspace_name| {
-                                    string_builder.count(workspace_name);
-                                    workspace_names[i] = workspace_name;
-                                } else return error.InvalidPackageJSON;
-                            } else return error.InvalidPackageJSON;
+                            var workspace_file = try workspace_dir.openFile("package.json", .{ .mode = .read_only });
+                            defer workspace_file.close();
 
+                            var workspace_buf = try allocator.alloc(u8, 1024);
+                            const workspace_read = try workspace_file.preadAll(workspace_buf, 0);
+                            const workspace_source = logger.Source.initPathString(path, workspace_buf[0..workspace_read]);
+
+                            initializeStore();
+
+                            var workspace_json = try json_parser.PackageJSONVersionChecker.init(allocator, &workspace_source, &workspace_log);
+
+                            _ = try workspace_json.parseExpr();
+                            if (!workspace_json.has_found_name) return error.InvalidPackageJSON;
+
+                            const workspace_name = workspace_json.found_name;
+                            workspace_names[i] = workspace_name;
+                            string_builder.count(workspace_name);
                             string_builder.count(path);
                             string_builder.cap += bun.MAX_PATH_BYTES;
                         }

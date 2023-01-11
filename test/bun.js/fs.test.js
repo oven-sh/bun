@@ -17,6 +17,7 @@ import {
   rmSync,
   createReadStream,
   createWriteStream,
+  promises,
 } from "node:fs";
 import { join } from "node:path";
 
@@ -538,5 +539,20 @@ describe("createWriteStream", () => {
     stream.on("error", () => {
       throw new Error("should not get here");
     });
+  });
+});
+
+describe("fs/promises", () => {
+  const { readFile, writeFile } = promises;
+
+  it("readFile", async () => {
+    const data = await readFile(import.meta.dir + "/readFileSync.txt", "utf8");
+    expect(data).toBe("File read successfully");
+  });
+
+  it("writeFile", async () => {
+    const path = `/tmp/fs.test.js/${Date.now()}.writeFile.txt`;
+    await writeFile(path, "File written successfully");
+    expect(readFileSync(path, "utf8")).toBe("File written successfully");
   });
 });

@@ -3,6 +3,7 @@ on:
   push:
     paths:
       - packages/bun-types/**/*
+    branches: [main]
   pull_request:
     paths:
       - packages/bun-types/**/*

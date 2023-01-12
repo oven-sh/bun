@@ -117,8 +117,9 @@ fn foldStringAddition(lhs: Expr, rhs: Expr) ?Expr {
     switch (lhs.data) {
         .e_string => |left| {
             if (rhs.data == .e_string and left.isUTF8() and rhs.data.e_string.isUTF8()) {
-                lhs.data.e_string.push(rhs.data.e_string);
-                return lhs;
+                var orig = lhs.data.e_string.*;
+                orig.push(rhs.data.e_string);
+                return Expr.init(E.String, orig, lhs.loc);
             }
         },
         .e_binary => |bin| {

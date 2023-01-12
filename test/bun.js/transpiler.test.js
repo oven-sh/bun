@@ -915,6 +915,19 @@ export var ComponentThatHasSpreadCausesDeopt = $jsx(Hello, {
 
     it("fold string addition", () => {
       expectPrinted_(
+        `
+const a = "[^aeiou]";
+const b = a + "[^aeiouy]*";
+console.log(a);
+        `,
+        `
+const a = "[^aeiou]";
+const b = a + "[^aeiouy]*";
+console.log(a)
+        `.trim(),
+      );
+
+      expectPrinted_(
         `export const foo = "a" + "b";`,
         `export const foo = "ab"`,
       );
@@ -1732,6 +1745,17 @@ class Foo {
       check(
         `const foo = "foo"; const bar = "bar"; return foo + bar`,
         `return "foobar";`,
+      );
+
+      check(
+        `
+const a = "[^aeiou]";
+const b = a + "[^aeiouy]*";
+console.log(a, b);
+        `,
+        `
+console.log("[^aeiou]", "[^aeiou][^aeiouy]*");
+        `.trim(),
       );
 
       // check that it doesn't inline after "var"

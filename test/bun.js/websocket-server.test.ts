@@ -1,6 +1,6 @@
-import { serve } from "bun";
 import { describe, expect, it } from "bun:test";
 import { gcTick } from "./gc";
+import { serve } from "bun";
 
 var port = 4321;
 function getPort() {
@@ -43,6 +43,44 @@ describe("websocket server", () => {
         queueMicrotask(() => {
           server.publish("all", "hello");
         });
+      };
+    });
+    server.stop();
+    done();
+  });
+
+  it("can do publish() with publishToSelf: false", async (done) => {
+    var server = serve({
+      port: getPort(),
+      websocket: {
+        open(ws) {
+          ws.subscribe("all");
+          ws.publish("all", "hey");
+          server.publish("all", "hello");
+        },
+        message(ws, msg) {
+          if (new TextDecoder().decode(msg) !== "hello") {
+            done(new Error("unexpected message"));
+          }
+        },
+        close(ws) {},
+        publishToSelf: false,
+      },
+      fetch(req, server) {
+        if (server.upgrade(req)) {
+          return;
+        }
+
+        return new Response("success");
+      },
+    });
+
+    await new Promise<void>((resolve2, reject2) => {
+      var socket = new WebSocket(`ws://${server.hostname}:${server.port}`);
+
+      socket.onmessage = (e) => {
+        expect(e.data).toBe("hello");
+        resolve2();
       };
     });
     server.stop();
@@ -463,7 +501,9 @@ describe("websocket server", () => {
           server.stop();
           expect(() => {
             server.upgrade(req);
-          }).toThrow('To enable websocket support, set the "websocket" object in Bun.serve({})');
+          }).toThrow(
+            'To enable websocket support, set the "websocket" object in Bun.serve({})',
+          );
           return new Response("success");
         },
       });
@@ -826,9 +866,11 @@ describe("websocket server", () => {
       fetch(req) {
         gcTick();
         server.stop();
-        if (server.upgrade(req, {
-          data: { count: 0 },
-        }))
+        if (
+          server.upgrade(req, {
+            data: { count: 0 },
+          })
+        )
           return;
         return new Response("noooooo hello world");
       },

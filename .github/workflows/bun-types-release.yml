@@ -41,7 +41,7 @@ jobs:
           if-no-files-found: error
 
   publish-npm:
-    name: Publish on NPM
+    name: Publish to NPM
     runs-on: ubuntu-latest
     needs: [test-build]
     if: github.repository_owner == 'oven-sh'
@@ -51,7 +51,7 @@ jobs:
 
     steps:
       - uses: actions/checkout@v3
-      - name: Install node
+      - name: Install Node
         uses: actions/setup-node@v3
         with:
           node-version: latest
@@ -63,8 +63,9 @@ jobs:
           name: bun-types
           path: packages/bun-types/dist
 
-      - name: Publish on NPM
-        run: cd packages/bun-types/dist/ && npm publish --access public
+      - name: Publish to NPM
+        working-directory: packages/bun-types/dist
+        run: npm publish --dry-run
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

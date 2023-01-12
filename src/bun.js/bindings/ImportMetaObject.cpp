@@ -156,7 +156,7 @@ JSObject* Zig::ImportMetaObject::createRequireFunction(VM& vm, JSGlobalObject* g
     JSFunction* requireFunction = JSFunction::create(vm, importMetaObjectRequireCodeGenerator(vm), globalObject);
     auto clientData = WebCore::clientData(vm);
     requireFunction->putDirectCustomAccessor(vm, clientData->builtinNames().resolvePublicName(), JSC::CustomGetterSetter::create(vm, functionRequireResolveLazyGetter, functionRequireResolveLazySetter), 0);
-    requireFunction->putDirect(vm, clientData->builtinNames().pathPublicName(), jsOwnedString(vm, pathString), JSC::PropertyAttribute::DontEnum | 0);
+    requireFunction->putDirect(vm, clientData->builtinNames().pathPublicName(), jsString(vm, pathString), JSC::PropertyAttribute::DontEnum | 0);
     return requireFunction;
 }
 

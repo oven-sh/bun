@@ -128,13 +128,22 @@ export const createCallCheckCtx = (done: DoneCb) => {
     // mustCallChecks.push(context);
     const done = createDone();
     const _return = (...args) => {
-      // @ts-ignore
-      const result = fn.apply(this, args);
-      actual++;
-      if (actual >= expected) {
-        done();
+      try {
+        // @ts-ignore
+        const result = fn.apply(this, args);
+        actual++;
+        if (actual >= expected) {
+          done();
+        }
+        return result;
+      } catch (err) {
+        if (err instanceof Error) done(err);
+        else if (err?.toString) done(new Error(err?.toString()));
+        else {
+          console.error("Unknown error", err);
+          done(new Error("Unknown error"));
+        }
       }
-      return result;
     };
     // Function instances have own properties that may be relevant.
     // Let's replicate those properties to the returned function.

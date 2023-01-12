@@ -2753,6 +2753,12 @@ declare module "bun" {
     drain?(socket: Socket<Data>): void | Promise<void>;
 
     /**
+     * When the socket has been shutdown from the other end, this function is
+     * called. This is a TCP FIN packet.
+     */
+    end?(socket: Socket<Data>): void | Promise<void>;
+
+    /**
      * When the socket fails to be created, this function is called.
      *
      * The promise returned by `Bun.connect` rejects **after** this function is

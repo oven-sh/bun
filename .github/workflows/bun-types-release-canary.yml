@@ -44,9 +44,9 @@ jobs:
           echo "${new_pkg_version}"
           npm version ${new_pkg_version} --no-git-tag-version
 
-      - uses: JS-DevTools/npm-publish@v1
-        with:
-          tag: canary
-          dry-run: true
-          package: packages/bun-types/dist/package.json
-          token: ${{ secrets.NPM_TOKEN }}
+      - name: Publish on NPM
+        working-directory: packages/bun-types/dist
+        run: npm publish --access public --tag canary --dry-run
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

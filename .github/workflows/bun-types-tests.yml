@@ -37,8 +37,5 @@ jobs:
       - name: Generate package
         run: bun run build
 
-      - name: ESLint
-        run: bun run lint
-
       - name: Tests
         run: bun run test

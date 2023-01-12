@@ -30,26 +30,25 @@ it("Blob inspect", () => {
 }`);
 });
 
-// this test is currently failing!
-// it("utf16 property name", () => {
-//   var { Database } = require("bun:sqlite");
-//   const db = Database.open(":memory:");
-//   expect("笑".codePointAt(0)).toBe(31505);
+it.skip("utf16 property name", () => {
+  var { Database } = require("bun:sqlite");
+  const db = Database.open(":memory:");
+  expect("笑".codePointAt(0)).toBe(31505);
 
-//   // latin1 escaping identifier issue
-//   expect(Object.keys({ 笑: "hey" })[0].codePointAt(0)).toBe(31505);
+  // latin1 escaping identifier issue
+  expect(Object.keys({ 笑: "hey" })[0].codePointAt(0)).toBe(31505);
 
-//   const output = JSON.stringify(
-//     [
-//       {
-//         笑: "😀",
-//       },
-//     ],
-//     null,
-//     2,
-//   );
-//   expect(Bun.inspect(db.prepare("select '😀' as 笑").all())).toBe(output);
-// });
+  const output = JSON.stringify(
+    [
+      {
+        笑: "😀",
+      },
+    ],
+    null,
+    2,
+  );
+  expect(Bun.inspect(db.prepare("select '😀' as 笑").all())).toBe(output);
+});
 
 it("latin1", () => {
   expect(Bun.inspect("English")).toBe("English");

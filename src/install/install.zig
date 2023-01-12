@@ -2578,7 +2578,7 @@ pub const PackageManager = struct {
         return &task.threadpool_task;
     }
 
-    fn enqueueCloneGitHubPackage(
+    fn enqueueCloneGitPackage(
         this: *PackageManager,
         task_id: u64,
         repository: Repository,
@@ -2746,7 +2746,7 @@ pub const PackageManager = struct {
         }
 
         switch (dependency.version.tag) {
-            .github => {
+            .github, .git => {
                 var resolve_result = this.getOrPutResolvedPackage(
                     name_hash,
                     name,
@@ -2765,13 +2765,19 @@ pub const PackageManager = struct {
 
                 if (resolve_result == null) {
                     const lockfile = this.lockfile;
-                    const repo = dependency.version.value.github;
+
+                    const repo = if (version.tag == .github) version.value.github else version.value.git;
 
                     const task_id = Task.Id.forGitHubPackage(lockfile.str(repo.repo), lockfile.str(repo.owner));
                     const network_id = try this.network_dedupe_map.getOrPutContext(this.allocator, task_id, .{});
                     if (!network_id.found_existing) {
                         var batch = ThreadPool.Batch{};
-                        batch.push(ThreadPool.Batch.from(this.enqueueCloneGitHubPackage(task_id, version.value.github, id, dependency.version)));
+                        batch.push(ThreadPool.Batch.from(this.enqueueCloneGitPackage(
+                            task_id,
+                            repo,
+                            id,
+                            dependency.version,
+                        )));
 
                         const count = batch.len;
                         this.pending_tasks += @truncate(u32, count);

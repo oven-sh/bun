@@ -61,7 +61,6 @@ pub const Repository = extern struct {
         std.mem.copy(u8, buf[i..], github);
         i += github.len;
 
-        // might need to skip "github:"
         std.mem.copy(u8, buf[i..], owner);
         i += owner.len;
         buf[i] = '/';
@@ -154,8 +153,37 @@ pub const Repository = extern struct {
         return try std.fmt.bufPrint(buf, "{s}/{s}-{any}", .{ path, repo[0..@min(16, repo.len)], hex_fmt });
     }
 
-    pub fn parse(_: *const SlicedString) !Repository {
+    pub fn parse(input: *const SlicedString) !Repository {
         var repo = Repository{};
+        const slice = input.slice;
+
+        // ignore "git+"
+        const i: usize = if (strings.indexOfChar(slice, '+')) |j| j + 1 else 0;
+        if (strings.indexOfChar(slice[i..], ':')) |_j| {
+            var j = i + _j + 1;
+            if (!strings.hasPrefixComptime(slice[j..], "//")) return error.InvalidGitURL;
+            j += 2;
+            if (strings.indexOfAny(slice[j..], ":/")) |k| {
+                j += k + 1;
+                if (strings.indexOfChar(slice[j..], '/')) |l| {
+                    j += l;
+                    repo.owner = String.init(input.buf, slice[i..j]);
+                } else return error.InvalidGitURL;
+            } else return error.InvalidGitURL;
+
+            if (strings.indexOfChar(slice[j..], '#')) |_k| {
+                var k = _k + j;
+                if (strings.endsWithComptime(slice[j + 1 .. k], ".git")) {
+                    repo.repo = String.init(input.buf, slice[j + 1 .. k - ".git".len]);
+                } else {
+                    repo.repo = String.init(input.buf, slice[j + 1 .. k]);
+                }
+                repo.committish = String.init(input.buf, slice[k + 1 ..]);
+            } else {
+                const end = if (strings.endsWithComptime(slice[j + 1 ..], ".git")) slice.len - ".git".len else slice.len;
+                repo.repo = String.init(input.buf, slice[j + 1 .. end]);
+            }
+        } else return error.InvalidGitURL;
 
         return repo;
     }
@@ -172,6 +200,8 @@ pub const Repository = extern struct {
             } else {
                 repo.repo = String.init(input.buf, input.slice[j + 1 ..]);
             }
+        } else {
+            return error.InvalidGitURL;
         }
         return repo;
     }

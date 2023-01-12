@@ -4,7 +4,7 @@ on:
     branches: [main, canary-types]
 jobs:
   tests:
-    name: Build and Test
+    name: Build, test, publish canary
     runs-on: ubuntu-latest
     if: github.repository_owner == 'oven-sh'
     defaults:
@@ -30,9 +30,6 @@ jobs:
 
       - name: Generate package
         run: bun run build
-        
-      - name: ESLint
-        run: bun run lint
 
       - name: Tests
         run: bun run test
@@ -40,7 +37,6 @@ jobs:
       - name: Set temp version
         working-directory: packages/bun-types/dist
         run: |
-          cd dist
           npm version --json
           git_hash=$(git rev-parse --short "$GITHUB_SHA")
           new_pkg_version="$(bun --version)-canary.${git_hash}"

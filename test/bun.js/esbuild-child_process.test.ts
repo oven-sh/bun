@@ -1,49 +1,20 @@
-import { transform, transformSync } from "esbuild";
-import { describe, it, expect } from "bun:test";
+import { spawnSync } from "bun";
+import { describe, it, expect, test } from "bun:test";
+import { bunExe } from "bunExe";
 
-describe("child_process.spawn - esbuild", () => {
-  it("should transform successfully", async () => {
-    const result = await transform("console.log('hello world')", {
-      loader: "js",
-      target: "node12",
-    });
-    expect(result.code).toBe('console.log("hello world");\n');
-  });
+test("esbuild", () => {
+  const { exitCode, stderr, stdout } = spawnSync(
+    [bunExe(), import.meta.dir + "/esbuild-test.js"],
+    {
+      env: {
+        BUN_DEBUG_QUIET_LOGS: "1",
+      },
+    },
+  );
+  const out = "" + stderr?.toString() + stdout?.toString();
+  if (exitCode !== 0 && out?.length) {
+    throw new Error(out);
+  }
 
-  it("works for input exceeding the pipe capacity", async () => {
-    const hugeString = `console.log(${JSON.stringify("a".repeat(1000000))});`;
-
-    for (let i = 0; i < 2; i++) {
-      const result = await transform(hugeString, {
-        loader: "js",
-        target: "node12",
-      });
-      expect(result.code).toBe(hugeString + "\n");
-    }
-  });
-});
-
-describe("child_process.spawnSync - esbuild", () => {
-  it("should transform successfully", () => {
-    const result = transformSync("console.log('hello world')", {
-      loader: "js",
-      target: "node12",
-    });
-    expect(result.code).toBe('console.log("hello world");\n');
-  });
-
-  // This test is failing with the following error:
-  // error: Error
-  // path: "/Users/jarred/Code/bun/test/bun.js/node_modules/esbuild-darwin-arm64/bin/esbuild"
-  // code: "13"
-  // syscall: "spawnSync"
-  // errno: -1
-  // it("works for input exceeding the pipe capacity", () => {
-  //   const hugeString = `console.log(${JSON.stringify("a".repeat(100000))});`;
-  //   const result = transformSync(hugeString, {
-  //     loader: "js",
-  //     target: "node12",
-  //   });
-  //   expect(result.code).toBe(hugeString + "\n");
-  // });
+  expect(exitCode).toBe(0);
 });

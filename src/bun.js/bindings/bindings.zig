@@ -2484,10 +2484,8 @@ pub const JSValue = enum(JSValueReprInt) {
         }
 
         pub fn isObject(this: JSType) bool {
-            return switch (this) {
-                .Object, .FinalObject => true,
-                else => false,
-            };
+            // inline constexpr bool isObjectType(JSType type) { return type >= ObjectType; }
+            return @enumToInt(this) >= @enumToInt(JSType.Object);
         }
 
         pub fn isFunction(this: JSType) bool {
@@ -2663,7 +2661,7 @@ pub const JSValue = enum(JSValueReprInt) {
     }
 
     pub fn isInstanceOf(this: JSValue, global: *JSGlobalObject, constructor: JSValue) bool {
-        if (this.isEmptyOrUndefinedOrNull())
+        if (!this.isCell())
             return false;
 
         return JSC.C.JSValueIsInstanceOfConstructor(global, this.asObjectRef(), constructor.asObjectRef(), null);
@@ -3112,8 +3110,8 @@ pub const JSValue = enum(JSValueReprInt) {
     pub fn isCustomGetterSetter(this: JSValue) bool {
         return cppFn("isCustomGetterSetter", .{this});
     }
-    pub fn isObject(this: JSValue) bool {
-        return cppFn("isObject", .{this});
+    pub inline fn isObject(this: JSValue) bool {
+        return this.isCell() and this.jsType().isObject();
     }
 
     pub fn isClass(this: JSValue, global: *JSGlobalObject) bool {

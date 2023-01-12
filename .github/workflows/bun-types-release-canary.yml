@@ -41,7 +41,7 @@ jobs:
         working-directory: packages/bun-types/dist
         run: |
           git_hash=$(git rev-parse --short "$GITHUB_SHA")
-          new_pkg_version="${{ bun --version }}-canary.${git_hash}"
+          new_pkg_version="$(bun --version)-canary.${git_hash}"
           echo "new_pkg_version"
           echo "${new_pkg_version}"
           npm version ${new_pkg_version} --no-git-tag-version

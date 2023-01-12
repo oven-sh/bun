@@ -1,0 +1,59 @@
+name: Publish canary types
+on:
+  push:
+    branches: [main, canary-types]
+jobs:
+  tests:
+    name: Build and Test
+    runs-on: ubuntu-latest
+    if: github.repository_owner == 'oven-sh'
+    defaults:
+      run:
+        working-directory: packages/bun-types
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v3
+      
+      - name: Install Node
+        uses: actions/setup-node@v3
+        with:
+          node-version: latest
+      
+      - name: Install Bun
+        uses: xhyrom/setup-bun@v0.1.8
+        with:
+          bun-version: latest
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+      
+      - name: Install dependencies
+        run: bun install
+
+      - name: Generate package
+        run: bun run build
+        
+      - name: ESLint
+        run: bun run lint
+
+      - name: Tests
+        run: bun run test
+
+      - name: Get package.json version
+        working-directory: packages/bun-types/dist
+        id: pkg
+        uses: martinbeentjes/npm-get-version-action@main
+
+      - name: Set temp version
+        working-directory: packages/bun-types/dist
+        run: |
+          git_hash=$(git rev-parse --short "$GITHUB_SHA")
+          new_pkg_version="${{ steps.pkg.outputs.current-version}}-canary.${git_hash}"
+          echo "new_pkg_version"
+          echo "${new_pkg_version}"
+          npm version ${new_pkg_version} --no-git-tag-version
+
+      - uses: JS-DevTools/npm-publish@v1
+        working-directory: packages/bun-types/dist
+        with:
+          tag: canary
+          dry-run: true
+          token: ${{ secrets.NPM_TOKEN }}

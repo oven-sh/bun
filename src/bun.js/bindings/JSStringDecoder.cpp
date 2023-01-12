@@ -206,9 +206,30 @@ JSC::JSValue JSStringDecoder::write(JSC::VM& vm, JSC::JSGlobalObject* globalObje
     }
 }
 
-JSC::JSValue JSStringDecoder::end(JSC::VM& vm, JSC::JSGlobalObject* globalObject, uint8_t* bufPtr, uint32_t length)
+class ResetScope final {
+public:
+    ResetScope(JSStringDecoder* decoder);
+    ~ResetScope();
+    JSStringDecoder* m_decoder;
+};
+
+ResetScope::ResetScope(JSStringDecoder* decoder)
+{
+    m_decoder = decoder;
+}
+
+ResetScope::~ResetScope()
+{
+    m_decoder->m_lastTotal = 0;
+    m_decoder->m_lastNeed = 0;
+    memset(m_decoder->m_lastChar, 0, 4);
+}
+
+JSC::JSValue
+JSStringDecoder::end(JSC::VM& vm, JSC::JSGlobalObject* globalObject, uint8_t* bufPtr, uint32_t length)
 {
     auto throwScope = DECLARE_THROW_SCOPE(vm);
+    auto resetScope = ResetScope(this);
     switch (m_encoding) {
     case BufferEncodingType::ucs2:
     case BufferEncodingType::utf16le: {

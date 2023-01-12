@@ -1,5 +1,5 @@
-import { it, describe, expect } from "bun:test";
-import fs, { unlinkSync } from "fs";
+import { afterAll, beforeAll, describe, expect, it, test } from "bun:test";
+import fs, { chmodSync, unlinkSync } from "fs";
 import { mkfifo } from "mkfifo";
 import { gc, withoutAggressiveGC } from "./gc";
 
@@ -392,6 +392,46 @@ describe("Bun.file", () => {
 
     const { size } = Bun.file("/tmp/test-fifo");
     expect(size).toBe(Infinity);
+  });
+
+  function forEachMethod(fn) {
+    const method = ["arrayBuffer", "text", "json"];
+    for (const m of method) {
+      test(m, fn(m));
+    }
+  }
+
+  describe("bad permissions throws", () => {
+    beforeAll(async () => {
+      try {
+        unlinkSync("/tmp/my-new-file");
+      } catch {}
+      await Bun.write("/tmp/my-new-file", "hey");
+      chmodSync("/tmp/my-new-file", 0o000);
+    });
+    afterAll(() => {
+      try {
+        unlinkSync("/tmp/my-new-file");
+      } catch {}
+    });
+
+    forEachMethod((m) => () => {
+      const file = Bun.file("/tmp/my-new-file");
+      expect(async () => await file[m]()).toThrow("Permission denied");
+    });
+  });
+
+  describe("non-existent file throws", () => {
+    beforeAll(() => {
+      try {
+        unlinkSync("/tmp/does-not-exist");
+      } catch {}
+    });
+
+    forEachMethod((m) => async () => {
+      const file = Bun.file("/tmp/does-not-exist");
+      expect(async () => await file[m]()).toThrow("No such file or directory");
+    });
   });
 });
 

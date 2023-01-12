@@ -180,7 +180,7 @@ describe("ChildProcess.spawn", () => {
     // Test that we can call spawn
 
     strictEqual(Object.hasOwn(child, "pid"), true);
-    assert(Number.isInteger(child.pid));
+    assert.ok(Number.isInteger(child.pid));
     child.kill();
   });
 
@@ -404,7 +404,7 @@ describe("child_process default options", () => {
     // NOTE: Original test used child.on("exit"), but this is unreliable
     // because the process can exit before the stream is closed and the data is read
     child.stdout.on("close", () => {
-      expect(response.includes(`TMPDIR=${platformTmpDir}`)).toBe(true);
+      assert.ok(response.includes(`TMPDIR=${platformTmpDir}`));
       done();
     });
   });

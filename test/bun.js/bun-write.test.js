@@ -281,27 +281,21 @@ it("Bun.write(Bun.stderr, 'new TextEncoder().encode(Bun.write STDERR TEST'))", a
 
 // FLAKY TEST
 // Since Bun.file is resolved lazily, this needs to specifically be checked
-// it("Bun.write('output.html', HTMLRewriter.transform(Bun.file)))", async (done) => {
-//   var rewriter = new HTMLRewriter();
+it("Bun.write('output.html', HTMLRewriter.transform(Bun.file)))", async (done) => {
+  var rewriter = new HTMLRewriter();
 
-//   rewriter.on("div", {
-//     element(element) {
-//       element.setInnerContent("<blink>it worked!</blink>", { html: true });
-//     },
-//   });
-//   globalThis["HTMLRewriter.a"] = Bun.write(
-//     "/tmp/html-rewriter.txt.js",
-//     "<div>hello</div>",
-//   );
-//   await globalThis["HTMLRewriter.a"];
-//   var input = new Response(Bun.file("/tmp/html-rewriter.txt.js"));
-//   var output = rewriter.transform(input);
-//   const outpath = `/tmp/html-rewriter.${Date.now()}.html`;
-//   globalThis["HTMLRewriter.a"] = Bun.write(outpath, output);
-//   await globalThis["HTMLRewriter.a"];
-//   console.log("HIERE");
-//   expect(await Bun.file(outpath).text()).toBe(
-//     "<div><blink>it worked!</blink></div>",
-//   );
-//   done();
-// });
+  rewriter.on("div", {
+    element(element) {
+      element.setInnerContent("<blink>it worked!</blink>", { html: true });
+    },
+  });
+  await Bun.write("/tmp/html-rewriter.txt.js", "<div>hello</div>");
+  var input = new Response(Bun.file("/tmp/html-rewriter.txt.js"));
+  var output = rewriter.transform(input);
+  const outpath = `/tmp/html-rewriter.${Date.now()}.html`;
+  await Bun.write(outpath, output);
+  expect(await Bun.file(outpath).text()).toBe(
+    "<div><blink>it worked!</blink></div>",
+  );
+  done();
+});

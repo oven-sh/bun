@@ -429,7 +429,7 @@ pub const VirtualMachine = struct {
     auto_install_dependencies: bool = false,
     load_builtins_from_path: []const u8 = "",
 
-    onUnhandledRejection: *const fn (*VirtualMachine, globalObject: *JSC.JSGlobalObject, JSC.JSValue) void = defaultOnUnhandledRejection,
+    onUnhandledRejection: *const OnUnhandledRejection = defaultOnUnhandledRejection,
     onUnhandledRejectionCtx: ?*anyopaque = null,
     unhandled_error_counter: usize = 0,
 
@@ -437,6 +437,8 @@ pub const VirtualMachine = struct {
     aggressive_garbage_collection: GCLevel = GCLevel.none,
 
     gc_controller: JSC.GarbageCollectionController = .{},
+
+    pub const OnUnhandledRejection = fn (*VirtualMachine, globalObject: *JSC.JSGlobalObject, JSC.JSValue) void;
 
     const VMHolder = struct {
         pub threadlocal var vm: ?*VirtualMachine = null;
@@ -453,6 +455,30 @@ pub const VirtualMachine = struct {
     };
 
     pub threadlocal var is_main_thread_vm: bool = false;
+
+    pub const UnhandledRejectionScope = struct {
+        ctx: ?*anyopaque = null,
+        onUnhandledRejection: *const OnUnhandledRejection = undefined,
+        count: usize = 0,
+
+        pub fn apply(this: *UnhandledRejectionScope, vm: *JSC.VirtualMachine) void {
+            vm.onUnhandledRejection = this.onUnhandledRejection;
+            vm.onUnhandledRejectionCtx = this.ctx;
+            vm.unhandled_error_counter = this.count;
+        }
+    };
+
+    pub fn onQuietUnhandledRejectionHandler(this: *VirtualMachine, _: *JSC.JSGlobalObject, _: JSC.JSValue) void {
+        this.unhandled_error_counter += 1;
+    }
+
+    pub fn unhandledRejectionScope(this: *VirtualMachine) UnhandledRejectionScope {
+        return .{
+            .onUnhandledRejection = this.onUnhandledRejection,
+            .ctx = this.onUnhandledRejectionCtx,
+            .count = this.unhandled_error_counter,
+        };
+    }
 
     pub fn resetUnhandledRejection(this: *VirtualMachine) void {
         this.onUnhandledRejection = defaultOnUnhandledRejection;

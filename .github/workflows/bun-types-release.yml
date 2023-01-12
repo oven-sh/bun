@@ -1,4 +1,4 @@
-name: Release
+name: Release bun-types
 on:
   workflow_dispatch:
 

@@ -1,4 +1,4 @@
-name: Publish canary types
+name: Release bun-types@canary
 on:
   push:
     branches: [main, canary-types]

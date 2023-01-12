@@ -1128,12 +1128,12 @@ pub const Expect = struct {
         const result_: ?JSValue = brk: {
             var vm = globalObject.bunVM();
             var scope = vm.unhandledRejectionScope();
-            defer scope.apply(vm);
             vm.onUnhandledRejection = &VirtualMachine.onQuietUnhandledRejectionHandler;
             const return_value: JSValue = value.call(globalObject, &.{});
 
             if (return_value.asAnyPromise()) |promise| {
                 globalObject.bunVM().waitForPromise(promise);
+                scope.apply(vm);
                 const promise_result = promise.result(globalObject.vm());
 
                 switch (promise.status(globalObject.vm())) {
@@ -1147,6 +1147,7 @@ pub const Expect = struct {
                     .Pending => unreachable,
                 }
             }
+            scope.apply(vm);
 
             break :brk return_value.toError();
         };
@@ -1495,7 +1496,6 @@ pub const TestScope = struct {
                 .Internal => vm.waitForPromise(promise),
                 else => {},
             }
-
             switch (promise.status(vm.global.vm())) {
                 .Rejected => {
                     vm.runErrorHandler(promise.result(vm.global.vm()), null);

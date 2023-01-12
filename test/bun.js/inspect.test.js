@@ -2,7 +2,7 @@ import { it, expect, describe } from "bun:test";
 
 it("Blob inspect", () => {
   expect(Bun.inspect(new Blob(["123"]))).toBe(`Blob (3 bytes)`);
-  expect(Bun.inspect(new Blob(["123".repeat(900)]))).toBe(`Blob (3 KB)`);
+  expect(Bun.inspect(new Blob(["123".repeat(900)]))).toBe(`Blob (2.70 KB)`);
   expect(Bun.inspect(Bun.file("/tmp/file.txt")))
     .toBe(`FileRef ("/tmp/file.txt") {
   type: "text/plain;charset=utf-8"

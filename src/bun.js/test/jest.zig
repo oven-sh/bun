@@ -1737,7 +1737,7 @@ pub const DescribeScope = struct {
         var scope = allocator.create(DescribeScope) catch unreachable;
         scope.* = .{
             .label = (label.toSlice(allocator).cloneIfNeeded(allocator) catch unreachable).slice(),
-            .parent = this,
+            .parent = active orelse this,
             .file_id = this.file_id,
         };
         var new_this = DescribeScope.Class.make(ctx, scope);

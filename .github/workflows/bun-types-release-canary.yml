@@ -46,7 +46,7 @@ jobs:
 
       - name: Publish on NPM
         working-directory: packages/bun-types/dist
-        run: npm publish --access public --tag canary --dry-run
+        run: npm publish --access public --tag canary # --dry-run
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

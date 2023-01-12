@@ -765,3 +765,4 @@ pub fn zero(comptime Type: type) Type {
     return @bitCast(Type, out);
 }
 pub const c_ares = @import("./deps/c_ares.zig");
+pub const URL = @import("./url.zig").URL;

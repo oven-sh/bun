@@ -1374,6 +1374,21 @@ declare module "bun" {
      * @see {@link ServerWebSocket.publish}
      */
     closeOnBackpressureLimit?: boolean;
+
+    /**
+     * Control whether or not ws.publish() should include the ServerWebSocket
+     * that published the message. This is enabled by default, but it was an API
+     * design mistake. A future version of Bun will change this default to
+     * `false` and eventually remove this option entirely. The better way to publish to all is to use {@link Server.publish}.
+     *
+     * if `true` or `undefined`, {@link ServerWebSocket.publish} will publish to all subscribers, including the websocket publishing the message.
+     *
+     * if `false`, {@link ServerWebSocket.publish} will publish to all subscribers excluding the websocket publishing the message.
+     *
+     * @default true
+     *
+     */
+    publishToSelf?: boolean;
   }
 
   interface GenericServeOptions {

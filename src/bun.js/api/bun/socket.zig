@@ -280,6 +280,10 @@ pub const SocketConfig = struct {
                     exception.* = JSC.toInvalidArguments("Expected \"hostname\" to be a non-empty string", .{}, globalObject).asObjectRef();
                     return null;
                 }
+
+                if (hostname_or_unix.len > 0) {
+                    break :hostname_or_unix;
+                }
             }
 
             if (hostname_or_unix.len == 0) {

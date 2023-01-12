@@ -40,6 +40,8 @@ jobs:
       - name: Set temp version
         working-directory: packages/bun-types/dist
         run: |
+          cd dist
+          npm version --json
           git_hash=$(git rev-parse --short "$GITHUB_SHA")
           new_pkg_version="$(bun --version)-canary.${git_hash}"
           echo "new_pkg_version"
@@ -47,8 +49,8 @@ jobs:
           npm version ${new_pkg_version} --no-git-tag-version
 
       - uses: JS-DevTools/npm-publish@v1
-        working-directory: packages/bun-types/dist
         with:
           tag: canary
           dry-run: true
+          package: packages/bun-types/dist/package.json
           token: ${{ secrets.NPM_TOKEN }}

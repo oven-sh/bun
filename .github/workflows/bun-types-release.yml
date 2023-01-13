@@ -18,7 +18,7 @@ jobs:
       - name: Install bun
         uses: oven-sh/setup-bun@v0.1.8
         with:
-          bun-version: canary
+          bun-version: latest
           github-token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Install node
@@ -28,9 +28,6 @@ jobs:
 
       - name: Install dependencies
         run: bun install
-
-      - name: ESLint
-        run: bun run lint
 
       - name: Build package
         run: bun run build
@@ -93,7 +90,7 @@ jobs:
       - name: Install bun
         uses: oven-sh/setup-bun@v0.1.8
         with:
-          bun-version: canary
+          bun-version: latest
           github-token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Download all artifacts

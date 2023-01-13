@@ -125,7 +125,7 @@ void ReadableStream::pipeTo(ReadableStreamSink& sink)
     invokeReadableStreamFunction(lexicalGlobalObject, privateName, JSC::jsUndefined(), arguments);
 }
 
-std::optional<std::pair<Ref<ReadableStream>, Ref<ReadableStream>>> ReadableStream::tee()
+JSC::JSValue ReadableStream::tee()
 {
     auto& lexicalGlobalObject = *m_globalObject;
     auto* clientData = static_cast<JSVMClientData*>(lexicalGlobalObject.vm().clientData);
@@ -136,13 +136,16 @@ std::optional<std::pair<Ref<ReadableStream>, Ref<ReadableStream>>> ReadableStrea
     arguments.append(JSC::jsBoolean(true));
     ASSERT(!arguments.hasOverflowed());
     auto returnedValue = invokeReadableStreamFunction(lexicalGlobalObject, privateName, JSC::jsUndefined(), arguments);
-    if (!returnedValue)
-        return {};
 
-    auto results = Detail::SequenceConverter<IDLInterface<ReadableStream>>::convert(lexicalGlobalObject, *returnedValue);
+    JSArray* array = JSC::jsDynamicCast<JSArray*>(returnedValue.value_or(JSC::jsUndefined()));
 
-    ASSERT(results.size() == 2);
-    return std::make_pair(results[0].releaseNonNull(), results[1].releaseNonNull());
+    VM& vm = lexicalGlobalObject.vm();
+    JSC::JSObject* object = JSC::constructEmptyObject(&lexicalGlobalObject, lexicalGlobalObject.objectPrototype(), 2);
+
+    object->putDirect(vm, JSC::Identifier::fromString(vm, "branch1"_s), array->getDirectIndex(&lexicalGlobalObject, 0), 0);
+    object->putDirect(vm, JSC::Identifier::fromString(vm, "branch2"_s), array->getDirectIndex(&lexicalGlobalObject, 1), 0);
+ 
+    return object;
 }
 
 void ReadableStream::lock()

@@ -19,7 +19,7 @@
  */
 declare module "fs" {
   import * as stream from "stream";
-  import type { SystemError } from "bun";
+  import type { SystemError, ArrayBufferView } from "bun";
 
   interface ObjectEncodingOptions {
     encoding?: BufferEncoding | null | undefined;

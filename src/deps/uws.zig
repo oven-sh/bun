@@ -756,10 +756,10 @@ pub const AnyWebSocket = union(enum) {
     // pub fn iterateTopics(this: AnyWebSocket) {
     //     return uws_ws_iterate_topics(ssl_flag, this.raw(), callback: ?*const fn ([*c]const u8, usize, ?*anyopaque) callconv(.C) void, user_data: ?*anyopaque) void;
     // }
-    pub fn publish(this: AnyWebSocket, topic: []const u8, message: []const u8) bool {
+    pub fn publish(this: AnyWebSocket, topic: []const u8, message: []const u8, opcode: Opcode, compress: bool) bool {
         return switch (this) {
-            .ssl => uws_ws_publish(1, this.ssl.raw(), topic.ptr, topic.len, message.ptr, message.len),
-            .tcp => uws_ws_publish(0, this.tcp.raw(), topic.ptr, topic.len, message.ptr, message.len),
+            .ssl => uws_ws_publish_with_options(1, this.ssl.raw(), topic.ptr, topic.len, message.ptr, message.len, opcode, compress),
+            .tcp => uws_ws_publish_with_options(0, this.tcp.raw(), topic.ptr, topic.len, message.ptr, message.len, opcode, compress),
         };
     }
     pub fn publishWithOptions(ssl: bool, app: *anyopaque, topic: []const u8, message: []const u8, opcode: Opcode, compress: bool) bool {

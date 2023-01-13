@@ -351,7 +351,7 @@ interface Process {
   revision: string;
   chdir(directory: string): void;
   cwd(): string;
-  exit(code?: number): void;
+  exit(code?: number): never;
   getgid(): number;
   setgid(id: number | string): void;
   getuid(): number;
@@ -1854,7 +1854,7 @@ declare var AbortSignal: {
 
 // type AlgorithmIdentifier = Algorithm | string;
 // type BodyInit = ReadableStream | XMLHttpRequestBodyInit;
-type BufferSource = ArrayBufferView | ArrayBuffer | SharedArrayBuffer;
+type BufferSource = TypedArray | DataView | ArrayBufferLike;
 // type COSEAlgorithmIdentifier = number;
 // type CSSNumberish = number;
 // type CanvasImageSource =

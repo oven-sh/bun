@@ -597,6 +597,7 @@ pub const Platform = enum {
                 default_conditions_strings.bun,
                 default_conditions_strings.worker,
                 default_conditions_strings.module,
+                default_conditions_strings.node,
                 default_conditions_strings.browser,
             },
         );
@@ -606,6 +607,7 @@ pub const Platform = enum {
                 default_conditions_strings.bun,
                 default_conditions_strings.worker,
                 default_conditions_strings.module,
+                default_conditions_strings.node,
                 default_conditions_strings.browser,
             },
         );

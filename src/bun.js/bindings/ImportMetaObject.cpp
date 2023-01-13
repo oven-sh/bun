@@ -80,7 +80,7 @@ static EncodedJSValue functionRequireResolve(JSC::JSGlobalObject* globalObject, 
             }
         }
 
-        auto result = Bun__resolveSync(globalObject, JSC::JSValue::encode(moduleName), from);
+        auto result = Bun__resolveSync(globalObject, JSC::JSValue::encode(moduleName), from, false);
         auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
 
         if (!JSC::JSValue::decode(result).isString()) {
@@ -156,17 +156,18 @@ JSObject* Zig::ImportMetaObject::createRequireFunction(VM& vm, JSGlobalObject* g
     JSFunction* requireFunction = JSFunction::create(vm, importMetaObjectRequireCodeGenerator(vm), globalObject);
     auto clientData = WebCore::clientData(vm);
     requireFunction->putDirectCustomAccessor(vm, clientData->builtinNames().resolvePublicName(), JSC::CustomGetterSetter::create(vm, functionRequireResolveLazyGetter, functionRequireResolveLazySetter), 0);
-    requireFunction->putDirect(vm, clientData->builtinNames().pathPrivateName(), jsOwnedString(vm, pathString), JSC::PropertyAttribute::DontEnum | 0);
+    requireFunction->putDirect(vm, clientData->builtinNames().pathPublicName(), jsString(vm, pathString), JSC::PropertyAttribute::DontEnum | 0);
     return requireFunction;
 }
 
 extern "C" EncodedJSValue functionImportMeta__resolveSync(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame)
 {
     JSC::VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
 
     switch (callFrame->argumentCount()) {
     case 0: {
-        auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+
         // not "requires" because "require" could be confusing
         JSC::throwTypeError(globalObject, scope, "import.meta.resolveSync needs 1 argument (a string)"_s);
         scope.release();
@@ -176,13 +177,13 @@ extern "C" EncodedJSValue functionImportMeta__resolveSync(JSC::JSGlobalObject* g
         JSC::JSValue moduleName = callFrame->argument(0);
 
         if (moduleName.isUndefinedOrNull()) {
-            auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
             JSC::throwTypeError(globalObject, scope, "import.meta.resolveSync expects a string"_s);
             scope.release();
             return JSC::JSValue::encode(JSC::JSValue {});
         }
 
         JSC__JSValue from;
+        bool isESM = true;
 
         if (callFrame->argumentCount() > 1) {
             JSC::JSValue fromValue = callFrame->argument(1);
@@ -195,8 +196,20 @@ extern "C" EncodedJSValue functionImportMeta__resolveSync(JSC::JSGlobalObject* g
                         fromValue = array->getIndex(globalObject, 0);
                     }
                 }
+
+                if (callFrame->argumentCount() > 2) {
+                    JSC::JSValue isESMValue = callFrame->argument(2);
+                    if (isESMValue.isBoolean()) {
+                        isESM = isESMValue.toBoolean(globalObject);
+                        RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode(JSC::JSValue {}));
+                    }
+                }
+            } else if (fromValue.isBoolean()) {
+                isESM = fromValue.toBoolean(globalObject);
+                RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode(JSC::JSValue {}));
             }
             from = JSC::JSValue::encode(fromValue);
+
         } else {
             JSC::JSObject* thisObject = JSC::jsDynamicCast<JSC::JSObject*>(callFrame->thisValue());
             if (UNLIKELY(!thisObject)) {
@@ -210,8 +223,7 @@ extern "C" EncodedJSValue functionImportMeta__resolveSync(JSC::JSGlobalObject* g
             from = JSC::JSValue::encode(thisObject->get(globalObject, clientData->builtinNames().pathPublicName()));
         }
 
-        auto result = Bun__resolveSync(globalObject, JSC::JSValue::encode(moduleName), from);
-        auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+        auto result = Bun__resolveSync(globalObject, JSC::JSValue::encode(moduleName), from, isESM);
 
         if (!JSC::JSValue::decode(result).isString()) {
             JSC::throwException(globalObject, scope, JSC::JSValue::decode(result));
@@ -266,7 +278,7 @@ JSC_DEFINE_HOST_FUNCTION(functionImportMeta__resolve,
             from = JSC::JSValue::encode(thisObject->get(globalObject, clientData->builtinNames().pathPublicName()));
         }
 
-        return Bun__resolve(globalObject, JSC::JSValue::encode(moduleName), from);
+        return Bun__resolve(globalObject, JSC::JSValue::encode(moduleName), from, true);
     }
     }
 }

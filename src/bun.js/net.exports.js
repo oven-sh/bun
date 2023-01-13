@@ -86,11 +86,10 @@ export const Socket = (function (InternalSocket) {
 
         self.emit("error", error);
       },
-      data(socket, buffer) {
-        const self = socket.data;
-        self.bytesRead += buffer.length;
+      data({ data: self }, { length, buffer }) {
+        self.bytesRead += length;
         const queue = self.#readQueue;
-        const ret = new Buffer(buffer.buffer);
+        const ret = new Buffer(buffer);
         if (queue.isEmpty()) {
           if (self.push(ret)) return;
         }
@@ -197,7 +196,10 @@ export const Socket = (function (InternalSocket) {
     connect(port, host, connectListener) {
       // TODO support IPC sockets
       var path;
-      if (typeof host == "function") {
+      if (arguments.length === 1 && typeof port === "string") {
+        path = port;
+        port = undefined;
+      } else if (typeof host == "function") {
         if (typeof port === "string") {
           path = port;
           port = undefined;
@@ -336,7 +338,14 @@ export const Socket = (function (InternalSocket) {
       } else if (this.#writeCallback) {
         callback(new Error("overlapping _write()"));
       } else {
-        if (written > 0) chunk = chunk.slice(written);
+        if (written > 0) {
+          if (typeof chunk == "string") {
+            chunk = chunk.slice(written);
+          } else {
+            chunk = chunk.subarray(written);
+          }
+        }
+
         this.#writeCallback = callback;
         this.#writeChunk = chunk;
       }

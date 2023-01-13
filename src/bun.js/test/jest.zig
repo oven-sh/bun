@@ -1124,12 +1124,38 @@ pub const Expect = struct {
         }
 
         const not = this.op.contains(.not);
-        const result_ = value.call(globalObject, &.{}).toError();
+
+        const result_: ?JSValue = brk: {
+            var vm = globalObject.bunVM();
+            var scope = vm.unhandledRejectionScope();
+            vm.onUnhandledRejection = &VirtualMachine.onQuietUnhandledRejectionHandler;
+            const return_value: JSValue = value.call(globalObject, &.{});
+
+            if (return_value.asAnyPromise()) |promise| {
+                globalObject.bunVM().waitForPromise(promise);
+                scope.apply(vm);
+                const promise_result = promise.result(globalObject.vm());
+
+                switch (promise.status(globalObject.vm())) {
+                    .Fulfilled => {
+                        break :brk null;
+                    },
+                    .Rejected => {
+                        // since we know for sure it rejected, we should always return the error
+                        break :brk promise_result.toError() orelse promise_result;
+                    },
+                    .Pending => unreachable,
+                }
+            }
+            scope.apply(vm);
+
+            break :brk return_value.toError();
+        };
+
         const did_throw = result_ != null;
         const matched_expectation = did_throw == !not;
-        if (matched_expectation) return thisValue;
 
-        if (expected_value.isEmptyOrUndefinedOrNull()) {
+        if (!matched_expectation) {
             if (!not)
                 globalObject.throw("Expected function to throw", .{})
             else {
@@ -1139,7 +1165,14 @@ pub const Expect = struct {
 
             return .zero;
         }
-        const result = result_.?;
+
+        // If you throw a string, it's treated as the message of an Error
+        // If you are expected not to throw and you didn't throw, then you pass
+        // If you are expected to throw a specific message and you throw a different one, then you fail.
+        if (matched_expectation and (!expected_value.isCell() or not))
+            return thisValue;
+
+        const result = result_ orelse JSC.JSValue.jsUndefined();
 
         const expected_error = expected_value.toError();
 
@@ -1148,7 +1181,10 @@ pub const Expect = struct {
                 if (expected_value.isString()) break :brk expected_value;
                 break :brk expected_error.?.get(globalObject, "message");
             };
-            const actual = result.get(globalObject, "message");
+            const actual: ?JSValue = if (result.isObject())
+                result.get(globalObject, "message")
+            else
+                null;
             // TODO support partial match
             const pass = brk: {
                 if (expected) |expected_message|
@@ -1460,7 +1496,6 @@ pub const TestScope = struct {
                 .Internal => vm.waitForPromise(promise),
                 else => {},
             }
-
             switch (promise.status(vm.global.vm())) {
                 .Rejected => {
                     vm.runErrorHandler(promise.result(vm.global.vm()), null);
@@ -1737,7 +1772,7 @@ pub const DescribeScope = struct {
         var scope = allocator.create(DescribeScope) catch unreachable;
         scope.* = .{
             .label = (label.toSlice(allocator).cloneIfNeeded(allocator) catch unreachable).slice(),
-            .parent = this,
+            .parent = active,
             .file_id = this.file_id,
         };
         var new_this = DescribeScope.Class.make(ctx, scope);

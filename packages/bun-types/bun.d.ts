@@ -1,5 +1,3 @@
-import { Encoding } from "crypto";
-
 interface VoidFunction {
   (): void;
 }
@@ -28,6 +26,8 @@ declare namespace Bun {
  *
  */
 declare module "bun" {
+  type ArrayBufferView = TypedArray | DataView;
+  import { Encoding as CryptoEncoding } from "crypto";
   /**
    * The environment variables of the process
    *
@@ -1374,6 +1374,21 @@ declare module "bun" {
      * @see {@link ServerWebSocket.publish}
      */
     closeOnBackpressureLimit?: boolean;
+
+    /**
+     * Control whether or not ws.publish() should include the ServerWebSocket
+     * that published the message. This is enabled by default, but it was an API
+     * design mistake. A future version of Bun will change this default to
+     * `false` and eventually remove this option entirely. The better way to publish to all is to use {@link Server.publish}.
+     *
+     * if `true` or `undefined`, {@link ServerWebSocket.publish} will publish to all subscribers, including the websocket publishing the message.
+     *
+     * if `false`, {@link ServerWebSocket.publish} will publish to all subscribers excluding the websocket publishing the message.
+     *
+     * @default true
+     *
+     */
+    publishToSelf?: boolean;
   }
 
   interface GenericServeOptions {
@@ -2085,7 +2100,7 @@ declare module "bun" {
      *
      * @param input
      */
-    update(input: StringOrBuffer, inputEncoding?: Encoding): CryptoHasher;
+    update(input: StringOrBuffer, inputEncoding?: CryptoEncoding): CryptoHasher;
 
     /**
      * Finalize the hash
@@ -2753,6 +2768,12 @@ declare module "bun" {
     drain?(socket: Socket<Data>): void | Promise<void>;
 
     /**
+     * When the socket has been shutdown from the other end, this function is
+     * called. This is a TCP FIN packet.
+     */
+    end?(socket: Socket<Data>): void | Promise<void>;
+
+    /**
      * When the socket fails to be created, this function is called.
      *
      * The promise returned by `Bun.connect` rejects **after** this function is
@@ -3225,6 +3246,7 @@ type TypedArray =
   | Uint32Array
   | Float32Array
   | Float64Array;
+
 type TimeLike = string | number | Date;
 type StringOrBuffer = string | TypedArray | ArrayBufferLike;
 type PathLike = string | TypedArray | ArrayBufferLike | URL;

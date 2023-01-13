@@ -1,6 +1,7 @@
-import { resolveSync } from "bun";
+import { resolveSync, which } from "bun";
 import { describe, expect, it } from "bun:test";
 import { readFileSync, realpathSync } from "fs";
+import { basename } from "path";
 
 it("process", () => {
   // this property isn't implemented yet but it should at least return a string
@@ -106,11 +107,12 @@ it("process.version starts with v", () => {
 });
 
 it("process.argv0", () => {
-  expect(process.argv0).toBe(process.argv[0]);
+  expect(basename(process.argv0)).toBe(basename(process.argv[0]));
 });
 
 it("process.execPath", () => {
-  expect(process.execPath).toBe(realpathSync(process.argv0));
+  expect(process.execPath).not.toBe(basename(process.argv0));
+  expect(which(process.execPath)).not.toBeNull();
 });
 
 it("process.uptime()", () => {

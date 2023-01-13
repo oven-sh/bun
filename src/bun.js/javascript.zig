@@ -429,7 +429,7 @@ pub const VirtualMachine = struct {
     auto_install_dependencies: bool = false,
     load_builtins_from_path: []const u8 = "",
 
-    onUnhandledRejection: *const fn (*VirtualMachine, globalObject: *JSC.JSGlobalObject, JSC.JSValue) void = defaultOnUnhandledRejection,
+    onUnhandledRejection: *const OnUnhandledRejection = defaultOnUnhandledRejection,
     onUnhandledRejectionCtx: ?*anyopaque = null,
     unhandled_error_counter: usize = 0,
 
@@ -437,6 +437,8 @@ pub const VirtualMachine = struct {
     aggressive_garbage_collection: GCLevel = GCLevel.none,
 
     gc_controller: JSC.GarbageCollectionController = .{},
+
+    pub const OnUnhandledRejection = fn (*VirtualMachine, globalObject: *JSC.JSGlobalObject, JSC.JSValue) void;
 
     const VMHolder = struct {
         pub threadlocal var vm: ?*VirtualMachine = null;
@@ -453,6 +455,30 @@ pub const VirtualMachine = struct {
     };
 
     pub threadlocal var is_main_thread_vm: bool = false;
+
+    pub const UnhandledRejectionScope = struct {
+        ctx: ?*anyopaque = null,
+        onUnhandledRejection: *const OnUnhandledRejection = undefined,
+        count: usize = 0,
+
+        pub fn apply(this: *UnhandledRejectionScope, vm: *JSC.VirtualMachine) void {
+            vm.onUnhandledRejection = this.onUnhandledRejection;
+            vm.onUnhandledRejectionCtx = this.ctx;
+            vm.unhandled_error_counter = this.count;
+        }
+    };
+
+    pub fn onQuietUnhandledRejectionHandler(this: *VirtualMachine, _: *JSC.JSGlobalObject, _: JSC.JSValue) void {
+        this.unhandled_error_counter += 1;
+    }
+
+    pub fn unhandledRejectionScope(this: *VirtualMachine) UnhandledRejectionScope {
+        return .{
+            .onUnhandledRejection = this.onUnhandledRejection,
+            .ctx = this.onUnhandledRejectionCtx,
+            .count = this.unhandled_error_counter,
+        };
+    }
 
     pub fn resetUnhandledRejection(this: *VirtualMachine) void {
         this.onUnhandledRejection = defaultOnUnhandledRejection;
@@ -891,6 +917,7 @@ pub const VirtualMachine = struct {
         _: *JSGlobalObject,
         specifier: string,
         source: string,
+        is_esm: bool,
         comptime is_a_file_path: bool,
         comptime realpath: bool,
     ) !void {
@@ -936,7 +963,7 @@ pub const VirtualMachine = struct {
                 jsc_vm.bundler.fs.top_level_dir,
             // TODO: do we need to handle things like query string params?
             if (strings.hasPrefixComptime(specifier, "file://")) specifier["file://".len..] else specifier,
-            .stmt,
+            if (is_esm) .stmt else .require,
             .read_only,
         )) {
             .success => |r| r,
@@ -1012,19 +1039,53 @@ pub const VirtualMachine = struct {
         }
     }
 
-    pub fn resolveForAPI(res: *ErrorableZigString, global: *JSGlobalObject, specifier: ZigString, source: ZigString) void {
-        resolveMaybeNeedsTrailingSlash(res, global, specifier, source, false, true);
+    pub fn resolveForAPI(
+        res: *ErrorableZigString,
+        global: *JSGlobalObject,
+        specifier: ZigString,
+        source: ZigString,
+        is_esm: bool,
+    ) void {
+        resolveMaybeNeedsTrailingSlash(res, global, specifier, source, is_esm, false, true);
     }
 
-    pub fn resolveFilePathForAPI(res: *ErrorableZigString, global: *JSGlobalObject, specifier: ZigString, source: ZigString) void {
-        resolveMaybeNeedsTrailingSlash(res, global, specifier, source, true, true);
+    pub fn resolveFilePathForAPI(
+        res: *ErrorableZigString,
+        global: *JSGlobalObject,
+        specifier: ZigString,
+        source: ZigString,
+        is_esm: bool,
+    ) void {
+        resolveMaybeNeedsTrailingSlash(res, global, specifier, source, is_esm, true, true);
     }
 
-    pub fn resolve(res: *ErrorableZigString, global: *JSGlobalObject, specifier: ZigString, source: ZigString) void {
-        resolveMaybeNeedsTrailingSlash(res, global, specifier, source, true, false);
+    pub fn resolve(
+        res: *ErrorableZigString,
+        global: *JSGlobalObject,
+        specifier: ZigString,
+        source: ZigString,
+        is_esm: bool,
+    ) void {
+        resolveMaybeNeedsTrailingSlash(res, global, specifier, source, is_esm, true, false);
     }
 
-    pub fn resolveMaybeNeedsTrailingSlash(res: *ErrorableZigString, global: *JSGlobalObject, specifier: ZigString, source: ZigString, comptime is_a_file_path: bool, comptime realpath: bool) void {
+    fn normalizeSource(source: []const u8) []const u8 {
+        if (strings.hasPrefixComptime(source, "file://")) {
+            return source["file://".len..];
+        }
+
+        return source;
+    }
+
+    pub fn resolveMaybeNeedsTrailingSlash(
+        res: *ErrorableZigString,
+        global: *JSGlobalObject,
+        specifier: ZigString,
+        source: ZigString,
+        is_esm: bool,
+        comptime is_a_file_path: bool,
+        comptime realpath: bool,
+    ) void {
         var result = ResolveFunctionResult{ .path = "", .result = null };
         var jsc_vm = VirtualMachine.get();
         if (jsc_vm.plugin_runner) |plugin_runner| {
@@ -1057,7 +1118,7 @@ pub const VirtualMachine = struct {
             jsc_vm.bundler.linker.log = old_log;
             jsc_vm.bundler.resolver.log = old_log;
         }
-        _resolve(&result, global, specifier.slice(), source.slice(), is_a_file_path, realpath) catch |err_| {
+        _resolve(&result, global, specifier.slice(), normalizeSource(source.slice()), is_esm, is_a_file_path, realpath) catch |err_| {
             var err = err_;
             const msg: logger.Msg = brk: {
                 var msgs: []logger.Msg = log.msgs.items;

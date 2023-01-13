@@ -106,6 +106,31 @@ describe("Bun.Transpiler", () => {
       ts.expectPrinted_("export = {foo: 123}", "module.exports = { foo: 123 }");
     });
 
+    it("export default class implements TypeScript regression", () => {
+      expect(
+        transpiler
+          .transformSync(
+            `
+      export default class implements ITest {
+        async* runTest(path: string): AsyncGenerator<number> {
+          yield Math.random();
+        }
+      }
+      `,
+            "ts",
+          )
+          .trim(),
+      ).toBe(
+        `
+export default class {
+  async* runTest(path) {
+    yield Math.random();
+  }
+}
+      `.trim(),
+      );
+    });
+
     it("satisfies", () => {
       ts.expectPrinted_(
         "const t1 = { a: 1 } satisfies I1;",

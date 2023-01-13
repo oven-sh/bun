@@ -6782,7 +6782,7 @@ fn NewParser_(
 
         fn parseClassStmt(p: *P, loc: logger.Loc, opts: *ParseStatementOptions) !Stmt {
             var name: ?js_ast.LocRef = null;
-            var class_keyword = p.lexer.range();
+            const class_keyword = p.lexer.range();
             if (p.lexer.token == .t_class) {
                 //marksyntaxfeature
                 try p.lexer.next();
@@ -6790,11 +6790,11 @@ fn NewParser_(
                 try p.lexer.expected(.t_class);
             }
 
-            var is_identifier = p.lexer.token == .t_identifier;
+            const is_identifier = p.lexer.token == .t_identifier;
 
-            if (!opts.is_name_optional or (is_identifier and (!is_typescript_enabled or !strings.eqlComptime(p.lexer.identifier, "interface")))) {
-                var name_loc = p.lexer.loc();
-                var name_text = p.lexer.identifier;
+            if (!opts.is_name_optional or (is_identifier and (!is_typescript_enabled or !strings.eqlComptime(p.lexer.identifier, "implements")))) {
+                const name_loc = p.lexer.loc();
+                const name_text = p.lexer.identifier;
                 try p.lexer.expect(.t_identifier);
 
                 // We must return here

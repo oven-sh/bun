@@ -55,7 +55,12 @@ export const match = (...args: Parameters<typeof assertNode.match>) => {
   expect(true).toBe(true);
 };
 
-export const assert = {
+export const assert = function (...args: any[]) {
+  // @ts-ignore
+  assertNode(...args);
+};
+
+Object.assign(assert, {
   strictEqual,
   deepStrictEqual,
   notStrictEqual,
@@ -63,7 +68,7 @@ export const assert = {
   ok,
   ifError,
   match,
-};
+});
 
 // End assert
 

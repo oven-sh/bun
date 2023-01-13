@@ -1346,6 +1346,17 @@ extern "C"
                        size_t sec_web_socket_extensions_length,
                        uws_socket_context_t *ws)
   {
+    if (ssl) {
+    uWS::HttpResponse<true> *uwsRes = (uWS::HttpResponse<true> *)res;
+
+    uwsRes->template upgrade<void *>(
+        data ? std::move(data) : NULL,
+        std::string_view(sec_web_socket_key, sec_web_socket_key_length),
+        std::string_view(sec_web_socket_protocol, sec_web_socket_protocol_length),
+        std::string_view(sec_web_socket_extensions,
+                         sec_web_socket_extensions_length),
+        (struct us_socket_context_t *)ws);
+    } else {
     uWS::HttpResponse<false> *uwsRes = (uWS::HttpResponse<false> *)res;
 
     uwsRes->template upgrade<void *>(
@@ -1355,6 +1366,7 @@ extern "C"
         std::string_view(sec_web_socket_extensions,
                          sec_web_socket_extensions_length),
         (struct us_socket_context_t *)ws);
+    }
   }
 
   struct us_loop_t *uws_get_loop()

@@ -32,7 +32,7 @@ jobs:
           node-version: latest
 
       - name: Install dependencies
-        run: bun install
+        run: bun install --verbose
 
       - name: Generate package
         run: bun run build

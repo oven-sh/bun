@@ -116,7 +116,6 @@ pub const Fallback = struct {
     };
 
     pub inline fn scriptContent() string {
-        if (true) return;
         if (comptime Environment.isDebug) {
             var dirpath = comptime bun.Environment.base_path ++ std.fs.path.dirname(@src().file).?;
             var env = std.process.getEnvMap(default_allocator) catch unreachable;
@@ -166,7 +165,6 @@ pub const Fallback = struct {
             fallback: string,
             entry_point: string,
         };
-        if (true) return;
         try writer.print(HTMLTemplate, PrintArgs{
             .blob = Base64FallbackMessage{ .msg = msg, .allocator = allocator },
             .preload = preload,
@@ -188,7 +186,6 @@ pub const Fallback = struct {
             fallback: string,
             bun_error_page_css: string,
         };
-        if (true) return;
         try writer.print(HTMLBackendTemplate, PrintArgs{
             .blob = Base64FallbackMessage{ .msg = msg, .allocator = allocator },
             .bun_error_css = ErrorCSS.sourceContent(),

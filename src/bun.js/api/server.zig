@@ -2135,8 +2135,8 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 const result = JSC.C.JSObjectCallAsFunctionReturnValue(this.server.globalThis, this.server.config.onError.asObjectRef(), this.server.thisObject.asObjectRef(), 1, &args);
 
                 if (!result.isEmptyOrUndefinedOrNull()) {
-                    if (result.isError() or result.isAggregateError(this.server.globalThis)) {
-                        this.finishRunningErrorHandler(result, status);
+                    if (result.toError()) |err| {
+                        this.finishRunningErrorHandler(err, status);
                         return;
                     } else if (result.as(Response)) |response| {
                         this.render(response);
@@ -2514,7 +2514,7 @@ pub const WebSocketServer = struct {
         active_connections: usize = 0,
 
         /// used by publish()
-        flags: packed struct (u2) {
+        flags: packed struct(u2) {
             ssl: bool = false,
             publish_to_self: bool = true,
         } = .{},

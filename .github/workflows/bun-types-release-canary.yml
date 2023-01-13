@@ -1,7 +1,7 @@
 name: Release bun-types@canary
 on:
   push:
-    branches: [main, canary-types]
+    branches: [main]
 jobs:
   tests:
     name: Build, test, publish canary

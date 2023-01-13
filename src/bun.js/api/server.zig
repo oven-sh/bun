@@ -3859,12 +3859,16 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
         config: ServerConfig = ServerConfig{},
         pending_requests: usize = 0,
         request_pool_allocator: std.mem.Allocator = undefined,
-        has_js_deinited: bool = false,
         listen_callback: JSC.AnyTask = undefined,
         allocator: std.mem.Allocator,
         poll_ref: JSC.PollRef = .{},
-        deinit_scheduled: bool = false,
         temporary_url_buffer: std.ArrayListUnmanaged(u8) = .{},
+
+        flags: packed struct(u3) {
+            deinit_scheduled: bool = false,
+            terminated: bool = false,
+            has_js_deinited: bool = false,
+        } = .{},
 
         pub const Class = JSC.NewClass(
             ThisServer,
@@ -3980,6 +3984,11 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
                 JSC.throwInvalidArguments("To enable websocket support, set the \"websocket\" object in Bun.serve({})", .{}, globalThis, exception);
                 return JSValue.jsUndefined();
             }
+
+            if (this.flags.terminated) {
+                return JSValue.jsBoolean(false);
+            }
+
             var request = object.as(Request) orelse {
                 JSC.throwInvalidArguments("upgrade requires a Request object", .{}, globalThis, exception);
                 return JSValue.jsUndefined();
@@ -4281,11 +4290,20 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
             return JSC.JSPromise.resolvedPromiseValue(ctx, response_value).asObjectRef();
         }
 
-        pub fn stopFromJS(this: *ThisServer) JSC.JSValue {
+        pub fn stopFromJS(this: *ThisServer, abruptly: ?JSValue) JSC.JSValue {
             if (this.listener != null) {
+                const abrupt = brk: {
+                    if (abruptly) |val| {
+                        if (val.isBoolean() and val.toBoolean()) {
+                            break :brk true;
+                        }
+                    }
+                    break :brk false;
+                };
+
                 JSC.C.JSValueUnprotect(this.globalThis, this.thisObject.asObjectRef());
                 this.thisObject = JSC.JSValue.jsUndefined();
-                this.stop();
+                this.stop(abrupt);
             }
 
             return JSC.JSValue.jsUndefined();
@@ -4330,7 +4348,7 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
 
         pub fn finalize(this: *ThisServer) void {
             httplog("finalize", .{});
-            this.has_js_deinited = true;
+            this.flags.has_js_deinited = true;
             this.deinitIfWeCan();
         }
 
@@ -4345,7 +4363,7 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
 
         pub fn deinitIfWeCan(this: *ThisServer) void {
             httplog("deinitIfWeCan", .{});
-            if (this.pending_requests == 0 and this.listener == null and this.has_js_deinited and !this.hasActiveWebSockets()) {
+            if (this.pending_requests == 0 and this.listener == null and this.flags.has_js_deinited and !this.hasActiveWebSockets()) {
                 if (this.config.websocket) |*ws| {
                     ws.handler.app = null;
                 }
@@ -4354,23 +4372,34 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
             }
         }
 
-        pub fn stopListening(this: *ThisServer) void {
+        pub fn stopListening(this: *ThisServer, abrupt: bool) void {
             var listener = this.listener orelse return;
             this.listener = null;
             this.unref();
-            listener.close();
+            if (!abrupt) {
+                listener.close();
+            } else {
+                this.flags.terminated = true;
+                this.app.close();
+            }
         }
 
-        pub fn stop(this: *ThisServer) void {
-            this.stopListening();
+        pub fn stop(this: *ThisServer, abrupt: bool) void {
+            this.stopListening(abrupt);
             this.deinitIfWeCan();
         }
 
         pub fn scheduleDeinit(this: *ThisServer) void {
-            if (this.deinit_scheduled)
+            if (this.flags.deinit_scheduled)
                 return;
-            this.deinit_scheduled = true;
+            this.flags.deinit_scheduled = true;
             httplog("scheduleDeinit", .{});
+
+            if (!this.flags.terminated) {
+                this.flags.terminated = true;
+                this.app.close();
+            }
+
             var task = bun.default_allocator.create(JSC.AnyTask) catch unreachable;
             task.* = JSC.AnyTask.New(ThisServer, deinit).init(this);
             this.vm.enqueueTask(JSC.Task.init(task));

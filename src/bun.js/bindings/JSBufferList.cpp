@@ -75,6 +75,8 @@ JSC::JSValue JSBufferList::concat(JSC::VM& vm, JSC::JSGlobalObject* lexicalGloba
         i += length;
     }
 
+    memset(uint8Array->typedVector() + i, 0, n - i);
+
     RELEASE_AND_RETURN(throwScope, uint8Array);
 }
 

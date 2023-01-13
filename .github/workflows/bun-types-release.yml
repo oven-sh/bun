@@ -1,8 +1,6 @@
 name: Release bun-types
 on:
   workflow_dispatch:
-  push:
-    branches: [canary-types]
 
 jobs:
   test-build:

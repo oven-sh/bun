@@ -32,7 +32,7 @@ void JSBufferList::finishCreation(JSC::VM& vm, JSC::JSGlobalObject* globalObject
         JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly);
 }
 
-JSC::JSValue JSBufferList::concat(JSC::VM& vm, JSC::JSGlobalObject* lexicalGlobalObject, int32_t n)
+JSC::JSValue JSBufferList::concat(JSC::VM& vm, JSC::JSGlobalObject* lexicalGlobalObject, size_t n)
 {
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     auto* subclassStructure = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject)->JSBufferSubclassStructure();
@@ -102,7 +102,7 @@ JSC::JSValue JSBufferList::join(JSC::VM& vm, JSC::JSGlobalObject* lexicalGlobalO
     RELEASE_AND_RETURN(throwScope, ropeBuilder.release());
 }
 
-JSC::JSValue JSBufferList::consume(JSC::VM& vm, JSC::JSGlobalObject* lexicalGlobalObject, int32_t n, bool hasString)
+JSC::JSValue JSBufferList::consume(JSC::VM& vm, JSC::JSGlobalObject* lexicalGlobalObject, size_t n, bool hasString)
 {
     if (hasString)
         return _getString(vm, lexicalGlobalObject, n);
@@ -110,7 +110,7 @@ JSC::JSValue JSBufferList::consume(JSC::VM& vm, JSC::JSGlobalObject* lexicalGlob
         return _getBuffer(vm, lexicalGlobalObject, n);
 }
 
-JSC::JSValue JSBufferList::_getString(JSC::VM& vm, JSC::JSGlobalObject* lexicalGlobalObject, int32_t total)
+JSC::JSValue JSBufferList::_getString(JSC::VM& vm, JSC::JSGlobalObject* lexicalGlobalObject, size_t total)
 {
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     if (total <= 0 || length() == 0) {
@@ -152,13 +152,14 @@ JSC::JSValue JSBufferList::_getString(JSC::VM& vm, JSC::JSGlobalObject* lexicalG
         if (!ropeBuilder.append(str))
             return throwOutOfMemoryError(lexicalGlobalObject, throwScope);
         m_deque.removeFirst();
-        if (n == len) break;
+        if (n == len)
+            break;
         n -= len;
     }
     RELEASE_AND_RETURN(throwScope, ropeBuilder.release());
 }
 
-JSC::JSValue JSBufferList::_getBuffer(JSC::VM& vm, JSC::JSGlobalObject* lexicalGlobalObject, int32_t total)
+JSC::JSValue JSBufferList::_getBuffer(JSC::VM& vm, JSC::JSGlobalObject* lexicalGlobalObject, size_t total)
 {
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     auto* subclassStructure = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject)->JSBufferSubclassStructure();
@@ -207,16 +208,23 @@ JSC::JSValue JSBufferList::_getBuffer(JSC::VM& vm, JSC::JSGlobalObject* lexicalG
             auto buffer = array->possiblySharedBuffer();
             JSC::JSUint8Array* newArray = JSC::JSUint8Array::create(lexicalGlobalObject, subclassStructure, buffer, n, len - n);
             iter->set(vm, this, newArray);
+            offset += n;
             break;
         }
         if (UNLIKELY(!uint8Array->setFromTypedArray(lexicalGlobalObject, offset, array, 0, len, JSC::CopyType::Unobservable))) {
             return throwOutOfMemoryError(lexicalGlobalObject, throwScope);
         }
         m_deque.removeFirst();
-        if (n == len) break;
+        if (n == len) {
+            offset += len;
+            break;
+        }
         n -= len;
         offset += len;
     }
+
+    memset(uint8Array->typedVector() + offset, 0, total - offset);
+
     RELEASE_AND_RETURN(throwScope, uint8Array);
 }
 

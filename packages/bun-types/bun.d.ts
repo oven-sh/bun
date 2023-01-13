@@ -1592,11 +1592,12 @@ declare module "bun" {
     /**
      * Stop listening to prevent new connections from being accepted.
      *
-     * It does not close existing connections.
+     * By default, it does not cancel in-flight requests or websockets. That means it may take some time before all network activity stops.
      *
-     * It may take a second or two to actually stop.
+     * @param closeActiveConnections Immediately terminate in-flight requests, websockets, and stop accepting new connections.
+     * @default false
      */
-    stop(): void;
+    stop(closeActiveConnections?: boolean): void;
 
     /**
      * Update the `fetch` and `error` handlers without restarting the server.
@@ -2741,7 +2742,7 @@ declare module "bun" {
   }
 
   interface SocketListener<Options extends SocketOptions = SocketOptions> {
-    stop(): void;
+    stop(closeActiveConnections?: boolean): void;
     ref(): void;
     unref(): void;
     reload(options: Pick<Partial<Options>, "socket">): void;

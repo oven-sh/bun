@@ -75,6 +75,11 @@ JSC::JSValue JSBufferList::concat(JSC::VM& vm, JSC::JSGlobalObject* lexicalGloba
         i += length;
     }
 
+    while (i < n) {
+        uint8Array->setIndex(lexicalGlobalObject, i, jsNumber(0));
+        i += 1;
+    }
+
     RELEASE_AND_RETURN(throwScope, uint8Array);
 }
 

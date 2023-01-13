@@ -34,7 +34,7 @@ async function runTest(serverOptions, test) {
 
 afterAll(() => {
   if (server) {
-    server.stop();
+    server.stop(true);
     server = undefined;
   }
 });

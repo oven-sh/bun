@@ -673,15 +673,15 @@ pub const Behavior = enum(u8) {
             return .eq;
         }
 
-        if (lhs.isNormal() != rhs.isNormal()) {
-            return if (lhs.isNormal())
+        if (lhs.isWorkspace() != rhs.isWorkspace()) {
+            return if (lhs.isWorkspace())
                 .gt
             else
                 .lt;
         }
 
-        if (lhs.isWorkspace() != rhs.isWorkspace()) {
-            return if (lhs.isWorkspace())
+        if (lhs.isNormal() != rhs.isNormal()) {
+            return if (lhs.isNormal())
                 .gt
             else
                 .lt;
@@ -717,7 +717,7 @@ pub const Behavior = enum(u8) {
 
     pub fn isEnabled(this: Behavior, features: Features) bool {
         return this.isNormal() or
-            this.isWorkspace() or
+            (features.workspaces and this.isWorkspace()) or
             (features.dev_dependencies and this.isDev()) or
             (features.peer_dependencies and this.isPeer()) or
             (features.optional_dependencies and this.isOptional());

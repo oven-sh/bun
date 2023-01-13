@@ -1857,10 +1857,10 @@ pub const Resolver = struct {
                 // the unknown package is the root package
                 package = Package{
                     .name = Semver.String.init("", ""),
-                };
-                package.resolution = .{
-                    .tag = .root,
-                    .value = .{ .root = {} },
+                    .resolution = .{
+                        .tag = .root,
+                        .value = .{ .root = {} },
+                    },
                 };
                 package = pm.lockfile.appendPackage(package) catch |err| {
                     return .{ .failure = err };

@@ -106,6 +106,7 @@ allocator: std.mem.Allocator,
 scratch: Scratch = Scratch{},
 
 scripts: Scripts = .{},
+workspace_paths: std.HashMapUnmanaged(u64, String, IdentityContext(u64), 80) = .{},
 
 const Stream = std.io.FixedBufferStream([]u8);
 const StringArrayList = std.ArrayListUnmanaged(string);
@@ -419,7 +420,7 @@ pub const Tree = struct {
 
         const name_hashes: []const PackageNameHash = builder.name_hashes;
         const max_package_id = name_hashes.len;
-        const dependencies: []const Dependency = builder.dependencies[resolution_list.off .. resolution_list.off + resolution_list.len];
+        const dependencies: []const Dependency = builder.dependencies[resolution_list.off..][0..resolution_list.len];
 
         for (resolutions) |pid, j| {
             // Do not download/install "peerDependencies"
@@ -1472,6 +1473,7 @@ pub fn initEmpty(this: *Lockfile, allocator: std.mem.Allocator) !void {
         .allocator = allocator,
         .scratch = Scratch.init(allocator),
         .scripts = .{},
+        .workspace_paths = .{},
     };
 }
 
@@ -1799,6 +1801,14 @@ pub const StringBuffer = std.ArrayListUnmanaged(u8);
 pub const ExternalStringBuffer = std.ArrayListUnmanaged(ExternalString);
 
 pub const Package = extern struct {
+    name: String = String{},
+    name_hash: PackageNameHash = 0,
+    resolution: Resolution = Resolution{},
+    dependencies: DependencySlice = DependencySlice{},
+    resolutions: PackageIDSlice = PackageIDSlice{},
+    meta: Meta = Meta{},
+    bin: Bin = Bin{},
+
     pub const DependencyGroup = struct {
         prop: string,
         field: string,
@@ -2397,14 +2407,15 @@ pub const Package = extern struct {
         package_dependencies: []Dependency,
         dependencies: []Dependency,
         tag: ?Dependency.Version.Tag,
-        name: string,
+        workspace_path: ?String,
+        external_name: ExternalString,
         version: string,
         key: Expr,
         value: Expr,
     ) !?Dependency {
-        const external_name = string_builder.append(ExternalString, name);
         const external_version = string_builder.append(String, version);
-        const sliced = external_version.sliced(lockfile.buffers.string_bytes.items);
+        var buf = lockfile.buffers.string_bytes.items;
+        const sliced = external_version.sliced(buf);
 
         var dependency_version = Dependency.parseWithOptionalTag(
             allocator,
@@ -2416,7 +2427,6 @@ pub const Package = extern struct {
 
         switch (dependency_version.tag) {
             .folder => {
-                const folder_path = dependency_version.value.folder.slice(lockfile.buffers.string_bytes.items);
                 dependency_version.value.folder = string_builder.append(
                     String,
                     Path.relative(
@@ -2425,16 +2435,17 @@ pub const Package = extern struct {
                             FileSystem.instance.top_level_dir,
                             &[_]string{
                                 source.path.name.dir,
-                                folder_path,
+                                dependency_version.value.folder.slice(buf),
                             },
                             .posix,
                         ),
                     ),
                 );
             },
-            .workspace => {
-                const folder_path = dependency_version.value.workspace.slice(lockfile.buffers.string_bytes.items);
-                dependency_version.value.workspace = string_builder.append(
+            .workspace => if (workspace_path) |path| {
+                dependency_version.value.workspace = path;
+            } else {
+                const path = string_builder.append(
                     String,
                     Path.relative(
                         FileSystem.instance.top_level_dir,
@@ -2442,12 +2453,16 @@ pub const Package = extern struct {
                             FileSystem.instance.top_level_dir,
                             &[_]string{
                                 source.path.name.dir,
-                                folder_path,
+                                dependency_version.value.workspace.slice(buf),
                             },
                             .posix,
                         ),
                     ),
                 );
+                dependency_version.value.workspace = path;
+                var workspace_entry = try lockfile.workspace_paths.getOrPut(allocator, external_name.hash);
+                if (workspace_entry.found_existing) return error.@"Workspace name already exists";
+                workspace_entry.value_ptr.* = path;
             },
             else => {},
         }
@@ -2475,7 +2490,7 @@ pub const Package = extern struct {
                     var notes = try allocator.alloc(logger.Data, 1);
 
                     notes[0] = logger.Data{
-                        .text = try std.fmt.allocPrint(lockfile.allocator, "\"{s}\" originally specified here", .{name}),
+                        .text = try std.fmt.allocPrint(lockfile.allocator, "\"{s}\" originally specified here", .{external_name.slice(buf)}),
                         .location = logger.Location.init_or_nil(&source, source.rangeOfString(entry.value_ptr.*)),
                     };
 
@@ -2485,7 +2500,7 @@ pub const Package = extern struct {
                         lockfile.allocator,
                         notes,
                         "Duplicate dependency: \"{s}\" specified in package.json",
-                        .{name},
+                        .{external_name.slice(buf)},
                     );
                 }
             }
@@ -2637,11 +2652,13 @@ pub const Package = extern struct {
             break :brk out_groups;
         };
 
-        var workspace_names: []string = undefined;
+        var workspace_names: []string = &.{};
         inline for (dependency_groups) |group| {
-            if (json.asProperty(group.prop)) |dependencies_q| {
+            if (json.asProperty(group.prop)) |dependencies_q| brk: {
                 switch (dependencies_q.expr.data) {
                     .e_array => |arr| {
+                        if (arr.items.len == 0) break :brk;
+
                         workspace_names = try allocator.alloc(string, arr.items.len);
 
                         var workspace_log = logger.Log.init(allocator);
@@ -2822,11 +2839,19 @@ pub const Package = extern struct {
         }
 
         inline for (dependency_groups) |group| {
-            if (json.asProperty(group.prop)) |dependencies_q| {
+            if (json.asProperty(group.prop)) |dependencies_q| brk: {
                 switch (dependencies_q.expr.data) {
                     .e_array => |arr| {
+                        if (arr.items.len == 0) break :brk;
+
                         for (arr.slice()) |item, i| {
-                            const this_dep = try parseDependency(
+                            const name = workspace_names[i];
+                            defer allocator.free(name);
+
+                            const external_name = string_builder.append(ExternalString, name);
+                            const path = item.asString(allocator).?;
+
+                            if (try parseDependency(
                                 lockfile,
                                 allocator,
                                 log,
@@ -2837,21 +2862,34 @@ pub const Package = extern struct {
                                 package_dependencies,
                                 dependencies,
                                 .workspace,
-                                workspace_names[i],
-                                item.asString(allocator).?,
+                                null,
+                                external_name,
+                                path,
                                 item,
                                 item,
-                            ) orelse continue;
-
-                            dependencies[0] = this_dep;
-                            dependencies = dependencies[1..];
+                            )) |dep| {
+                                dependencies[0] = dep;
+                                dependencies = dependencies[1..];
+                            }
                         }
+
+                        allocator.free(workspace_names);
                     },
                     .e_object => |obj| {
                         for (obj.properties.slice()) |item| {
                             const key = item.key.?;
                             const value = item.value.?;
-                            const this_dep = try parseDependency(
+                            const external_name = string_builder.append(ExternalString, key.asString(allocator).?);
+                            const version = value.asString(allocator).?;
+                            var tag: ?Dependency.Version.Tag = null;
+                            var workspace_path: ?String = null;
+
+                            if (lockfile.workspace_paths.get(external_name.hash)) |path| {
+                                tag = .workspace;
+                                workspace_path = path;
+                            }
+
+                            if (try parseDependency(
                                 lockfile,
                                 allocator,
                                 log,
@@ -2861,15 +2899,16 @@ pub const Package = extern struct {
                                 features,
                                 package_dependencies,
                                 dependencies,
-                                null,
-                                key.asString(allocator) orelse "",
-                                value.asString(allocator) orelse "",
+                                tag,
+                                workspace_path,
+                                external_name,
+                                version,
                                 key,
                                 value,
-                            ) orelse continue;
-
-                            dependencies[0] = this_dep;
-                            dependencies = dependencies[1..];
+                            )) |dep| {
+                                dependencies[0] = dep;
+                                dependencies = dependencies[1..];
+                            }
                         }
                     },
                     else => {},
@@ -2928,14 +2967,6 @@ pub const Package = extern struct {
             return new;
         }
     };
-
-    name: String = String{},
-    name_hash: PackageNameHash = 0,
-    resolution: Resolution = Resolution{},
-    dependencies: DependencySlice = DependencySlice{},
-    resolutions: PackageIDSlice = PackageIDSlice{},
-    meta: Meta = Meta{},
-    bin: Bin = Bin{},
 
     pub const Serializer = struct {
         pub const sizes = blk: {
@@ -3064,6 +3095,7 @@ pub fn deinit(this: *Lockfile) void {
     this.packages.deinit(this.allocator);
     this.unique_packages.deinit(this.allocator);
     this.string_pool.deinit();
+    this.workspace_paths.deinit(this.allocator);
 }
 
 const Buffers = struct {
@@ -3386,6 +3418,21 @@ pub const Serializer = struct {
             var name_hashes = slice.items(.name_hash);
             for (name_hashes) |name_hash, id| {
                 try lockfile.getOrPutID(@truncate(PackageID, id), name_hash);
+            }
+        }
+
+        {
+            const slice = lockfile.packages.slice();
+            const name_hashes = slice.items(.name_hash);
+            const resolutions = slice.items(.resolution);
+
+            for (resolutions) |resolution, i| {
+                switch (resolution.tag) {
+                    .workspace => {
+                        try lockfile.workspace_paths.put(allocator, name_hashes[i], resolution.value.workspace);
+                    },
+                    else => {},
+                }
             }
         }
 

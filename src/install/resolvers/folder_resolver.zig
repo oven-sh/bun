@@ -120,14 +120,13 @@ pub const FolderResolution = union(Tag) {
 
     pub fn readPackageJSONFromDisk(
         manager: *PackageManager,
-        joinedZ: [:0]const u8,
         abs: []const u8,
         version: Dependency.Version,
         comptime features: Features,
         comptime ResolverType: type,
         resolver: ResolverType,
     ) !Lockfile.Package {
-        var package_json: std.fs.File = try std.fs.cwd().openFileZ(joinedZ, .{ .mode = .read_only });
+        var package_json: std.fs.File = try std.fs.cwd().openFile(abs, .{ .mode = .read_only });
         defer package_json.close();
         var package = Lockfile.Package{};
         var body = Npm.Registry.BodyPool.get(manager.allocator);
@@ -174,12 +173,9 @@ pub const FolderResolution = union(Tag) {
         var entry = manager.folders.getOrPut(manager.allocator, hash(abs)) catch unreachable;
         if (entry.found_existing) return entry.value_ptr.*;
 
-        joined[abs.len] = 0;
-        var joinedZ: [:0]u8 = joined[0..abs.len :0];
         const package: Lockfile.Package = switch (global_or_relative) {
             .global => readPackageJSONFromDisk(
                 manager,
-                joinedZ,
                 abs,
                 version,
                 Features.link,
@@ -189,7 +185,6 @@ pub const FolderResolution = union(Tag) {
             .relative => |tag| switch (tag) {
                 .folder => readPackageJSONFromDisk(
                     manager,
-                    joinedZ,
                     abs,
                     version,
                     Features.folder,
@@ -198,10 +193,9 @@ pub const FolderResolution = union(Tag) {
                 ),
                 .workspace => readPackageJSONFromDisk(
                     manager,
-                    joinedZ,
                     abs,
                     version,
-                    Features.folder,
+                    Features.workspace,
                     WorkspaceResolver,
                     WorkspaceResolver{ .folder_path = rel },
                 ),
@@ -209,7 +203,6 @@ pub const FolderResolution = union(Tag) {
             },
             .cache_folder => readPackageJSONFromDisk(
                 manager,
-                joinedZ,
                 abs,
                 version,
                 Features.npm,

@@ -454,6 +454,13 @@ pub const Features = struct {
         .optional_dependencies = true,
     };
 
+    pub const workspace = Features{
+        .dev_dependencies = true,
+        .optional_dependencies = true,
+        .scripts = true,
+        .workspaces = true,
+    };
+
     pub const link = Features{
         .dependencies = false,
         .peer_dependencies = false,
@@ -701,15 +708,6 @@ const PackageInstall = struct {
                 .folder => {
                     var folder_buf = &cache_dir_subpath_buf;
                     const folder = resolution.value.folder.slice(ctx.string_buf);
-                    std.mem.copy(u8, folder_buf, "../" ++ std.fs.path.sep_str);
-                    std.mem.copy(u8, folder_buf["../".len..], folder);
-                    folder_buf["../".len + folder.len] = 0;
-                    this.package_install.cache_dir_subpath = folder_buf[0 .. "../".len + folder.len :0];
-                    this.package_install.cache_dir = std.fs.cwd();
-                },
-                .workspace => {
-                    var folder_buf = &cache_dir_subpath_buf;
-                    const folder = resolution.value.workspace.slice(ctx.string_buf);
                     std.mem.copy(u8, folder_buf, "../" ++ std.fs.path.sep_str);
                     std.mem.copy(u8, folder_buf["../".len..], folder);
                     folder_buf["../".len + folder.len] = 0;
@@ -1273,9 +1271,6 @@ const PackageInstall = struct {
         // we'll catch it the next error
         if (!skip_delete and !strings.eqlComptime(dest_path, ".")) this.uninstall() catch {};
 
-        // cache_dir_subpath in here is actually the full path to the symlink pointing to the linked package
-        const symlinked_path = this.cache_dir_subpath;
-
         const subdir = std.fs.path.dirname(dest_path);
         var dest_dir = if (subdir) |dir| brk: {
             break :brk this.destination_dir.dir.makeOpenPath(dir, .{}) catch |err| return Result{
@@ -1289,36 +1284,23 @@ const PackageInstall = struct {
             if (subdir != null) dest_dir.close();
         }
 
-        var dest_full_path = dest_dir.realpathAlloc(this.allocator, ".") catch |err| return Result{
+        var dest_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+        const dest_dir_path = dest_dir.realpath(".", &dest_buf) catch |err| return Result{
             .fail = .{
                 .err = err,
                 .step = .linking,
             },
         };
-        defer this.allocator.free(dest_full_path);
-
-        var to_path = std.fs.path.resolve(this.allocator, &[_]string{
-            FileSystem.instance.top_level_dir,
-            symlinked_path,
-        }) catch |err| return Result{
+        // cache_dir_subpath in here is actually the full path to the symlink pointing to the linked package
+        const symlinked_path = this.cache_dir_subpath;
+        var to_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+        const to_path = this.cache_dir.dir.realpath(symlinked_path, &to_buf) catch |err| return Result{
             .fail = .{
                 .err = err,
                 .step = .linking,
             },
         };
-        defer this.allocator.free(to_path);
-
-        var target = std.fs.path.relative(
-            this.allocator,
-            dest_full_path,
-            to_path,
-        ) catch |err| return Result{
-            .fail = .{
-                .err = err,
-                .step = .linking,
-            },
-        };
-        defer this.allocator.free(target);
+        const target = Path.relative(dest_dir_path, to_path);
 
         std.os.symlinkat(target, dest_dir.fd, std.fs.path.basename(dest_path)) catch |err| return Result{
             .fail = .{
@@ -1541,7 +1523,6 @@ pub const PackageManager = struct {
 
     const PreallocatedNetworkTasks = std.BoundedArray(NetworkTask, 1024);
     const NetworkTaskQueue = std.HashMapUnmanaged(u64, void, IdentityContext(u64), 80);
-    const PackageIndex = std.AutoHashMapUnmanaged(u64, *Package);
     pub var verbose_install = false;
 
     const PackageDedupeList = std.HashMapUnmanaged(
@@ -5802,8 +5783,7 @@ pub const PackageManager = struct {
 
             if (needs_install) {
                 const result: PackageInstall.Result = switch (resolution.tag) {
-                    .symlink => installer.installFromLink(this.skip_delete),
-                    .workspace => installer.installFromLink(this.skip_delete),
+                    .symlink, .workspace => installer.installFromLink(this.skip_delete),
                     else => installer.install(this.skip_delete),
                 };
                 switch (result) {

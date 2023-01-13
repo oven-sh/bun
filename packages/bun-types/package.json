@@ -2,7 +2,7 @@
   "name": "bun-types",
   "types": "index.d.ts",
   "private": true,
-  "repository": "https://github.com/oven-sh/bun-types",
+  "repository": "https://github.com/oven-sh/bun",
   "scripts": {
     "build": "rm -rf ./dist && bun run bundle && bun run fmt",
     "bundle": "bun scripts/bundle.ts ./dist",

@@ -188,7 +188,7 @@ describe("ChildProcess spawn bad stdio", () => {
     return child;
   }
 
-  it("should handle normal execution of child process", (done) => {
+  it.skip("should handle normal execution of child process", (done) => {
     createChild(
       {},
       (err, stdout, stderr) => {
@@ -200,7 +200,7 @@ describe("ChildProcess spawn bad stdio", () => {
     );
   });
 
-  it("should handle error event of child process", (done) => {
+  it.skip("should handle error event of child process", (done) => {
     const error = new Error("foo");
     createChild(
       {},

@@ -2,11 +2,11 @@ name: Test bun-types
 on:
   push:
     paths:
-      - packages/bun-types
+      - 'packages/bun-types/**'
     branches: [main]
   pull_request:
     paths:
-      - packages/bun-types
+      - 'packages/bun-types/**'
 
 jobs:
   tests:

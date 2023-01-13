@@ -100,7 +100,7 @@ jobs:
         uses: actions/download-artifact@v3
         with:
           name: bun-types
-          path: dist
+          path: packages/bun-types/dist
 
       - name: Add scope to name
         run: bun scripts/gpr.ts

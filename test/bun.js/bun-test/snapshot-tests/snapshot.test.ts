@@ -5,8 +5,10 @@ import {
   } from "bun:test";
 
 describe("test generic snapshot tests", () => {
-    it("test single snapshot test", () => {
-        expect("hello").toMatchSnapshot()
+    describe("inner",() => {
+        it("test single snapshot test", () => {
+            expect("hello").toMatchSnapshot()
+        })
     })
     it("test two snapshot tests", () => {
         expect("hello").toMatchSnapshot()

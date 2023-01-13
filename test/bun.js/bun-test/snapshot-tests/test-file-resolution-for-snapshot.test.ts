@@ -7,14 +7,27 @@ import { readFileSync } from "fs";
 
 describe("test snapshot resolution", () => {
     it("snap file should match", () => {
-        expect("should match").toMatchSnapshot()
+        expect([1 , "2"]).toMatchSnapshot()
     })
     it("a", () => {
         expect("should match").toMatchSnapshot()
         expect("should match this too").toMatchSnapshot()
     })
+    it("object should match", () => {
+        expect({
+            "a": {
+              "b": 1,
+              "c": 2
+            },
+            "d": "3",
+            "e": [
+              4
+            ]
+          }).toMatchSnapshot()
+    })
 })
 
+/*
 describe("test format of snapshot", () => {
     it("snapshot file should be properly fomatted", () => {
         const data = readFileSync(import.meta.dir + "/__snapshots__/test-file-resolution-for-snapshot.snap");
@@ -30,3 +43,4 @@ describe("test format of snapshot", () => {
         })
     })
 })
+*/

@@ -1,3 +1,7 @@
-exports[`test single snapshot test 1`] = `hello`;
-exports[`test two snapshot tests 1`] = `hello`;
-exports[`test two snapshot tests 2`] = `hi there`;
+// Jest Snapshot v1, https://goo.gl/fbAQLP
+
+exports[`test generic snapshot tests inner test single snapshot test 1`] = `"hello"`;
+
+exports[`test generic snapshot tests test two snapshot tests 2`] = `"hi there"`;
+
+exports[`test generic snapshot tests test two snapshot tests 1`] = `"hello"`;

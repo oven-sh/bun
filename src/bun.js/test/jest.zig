@@ -1130,7 +1130,6 @@ pub const Expect = struct {
         const allocator = globalObject.bunVM().allocator;
 
         // get information about this test
-        const test_label = this.scope.tests.items[this.test_id].label;
         const file_id = this.scope.file_id;
         var file_fs: Fs.Path = Jest.runner.?.files.items(.source)[file_id].path;
 
@@ -1144,6 +1143,9 @@ pub const Expect = struct {
             break :blk snapshot_file;
         };
 
+        const test_label = this.scope.tests.items[this.test_id].label;
+        const snapshot_name = snapshot.createSnapshotName(test_label, this.scope, allocator);
+
         const thisValue = callframe.this();
         const actual: JSValue = Expect.capturedValueGetCached(thisValue) orelse {
             globalObject.throw("Internal consistency error: the expect(value) was garbage collected but it should not have been!", .{});
@@ -1153,7 +1155,7 @@ pub const Expect = struct {
 
         snapshot_file.readAndParseSnapshot(globalObject);
         const not = this.op.contains(.not);
-        const pass = snapshot_file.match(test_label, actual, not, globalObject) catch false;
+        const pass = snapshot_file.match(snapshot_name, actual, not, globalObject) catch false;
         if (pass) return thisValue;
 
         return .zero;

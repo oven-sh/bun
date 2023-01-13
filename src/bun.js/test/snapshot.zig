@@ -10,7 +10,9 @@ const default_allocator = bun.default_allocator;
 const std = @import("std");
 const testing = std.testing;
 
-const ArrayIdentityContext = @import("../../identity_context.zig").ArrayIdentityContext;
+const IdentityContext = @import("../../identity_context.zig").IdentityContext;
+
+const DescribeScope = @import("jest.zig").DescribeScope;
 
 const SNAPSHOTS_DIR = "__snapshots__/";
 const EXTENSION = "snap";
@@ -29,16 +31,18 @@ pub fn resolveSnapshotPath(test_path: fs.Path, allocator: std.mem.Allocator) fs.
     return fs.Path.init(snapshot_file_path);
 }
 
-// @TODO update this as an import from `identity_context`
-const IdentityContext = struct {
-    pub fn eql(_: @This(), a: u64, b: u64) bool {
-        return a == b;
+pub fn createSnapshotName(testName: bun.string, describeScope: *DescribeScope, allocator: std.mem.Allocator) bun.string {
+    var arr = std.ArrayList(bun.string).init(allocator);
+    var parent: ?*DescribeScope = describeScope;
+    while (parent) |scope| {
+        // can optimize so that each insert is done in O(1)
+        if (!std.mem.eql(u8, scope.label, "")) arr.insert(0, scope.label) catch unreachable;
+        parent = scope.parent;
     }
-
-    pub fn hash(_: @This(), a: u64) u64 {
-        return a;
-    }
-};
+    arr.append(testName) catch unreachable;
+    const snapshot_name = strings.join(arr.items, " ", allocator) catch unreachable;
+    return snapshot_name;
+}
 
 pub const SnapshotFile = struct {
     path: fs.Path,
@@ -52,7 +56,7 @@ pub const SnapshotFile = struct {
     // used to update the snapshot file
     tests: std.ArrayListUnmanaged(TestData) = .{},
     counters: CountersMap,
-    updateSnapshot: bool = true,
+    updateSnapshot: bool = false,
 
     pub const TestData = struct {
         k: ZigString,
@@ -68,7 +72,7 @@ pub const SnapshotFile = struct {
 
     pub const SnapshotError = error{SnapshotNotFound};
 
-    pub const CountersMap = std.HashMap(u64, u32, IdentityContext, 80);
+    pub const CountersMap = std.HashMap(u64, u32, IdentityContext(u64), 80);
 
     // pub fn init(globalObject: *JSC.JSGlobalObject, path: fs.Path) !SnapshotFile {
     //     var _file_system = try fs.FileSystem.init1(globalObject.bunVM().allocator, null);
@@ -165,6 +169,17 @@ pub const SnapshotFile = struct {
             fs.FileSystem.DirnameStore.instance.exists(this.path.pretty));
     }
 
+    fn compare(this: *SnapshotFile, actual: JSC.JSValue, expected: JSC.JSValue) bool {
+        const globalObject = this.globalObject orelse unreachable;
+
+        var expected_json_string = ZigString.init("");
+
+        expected.toZigString(&expected_json_string, globalObject);
+        const json_expected = expected_json_string.toJSONObject(globalObject);
+
+        return JSC.JSValue.deepEquals(actual, json_expected, globalObject);
+    }
+
     // @TODO if the snapshot file is not found, then we set update = true
     // and save the contents of the test after the run
     pub fn match(this: *SnapshotFile, snapshotName: bun.string, actual: JSC.JSValue, not: bool, globalObject: *JSC.JSGlobalObject) !bool {
@@ -184,7 +199,7 @@ pub const SnapshotFile = struct {
             return false;
         };
 
-        var pass = actual.deepEquals(expected, globalObject);
+        var pass = this.compare(actual, expected);
 
         if (not) pass = !pass;
         if (pass) return true;
@@ -224,14 +239,18 @@ pub const SnapshotFile = struct {
         // sort the order that tests are written to the file
         std.sort.sort(TestData, this.tests.items, {}, TestData.lessThan);
 
+        if (this.tests.items.len > 0) {
+            snapshot_file.writer().print("// Jest Snapshot v1, https://goo.gl/fbAQLP", .{}) catch unreachable;
+        }
+
         var i: usize = 0;
         while (i < this.tests.items.len) {
             const test_data = this.tests.items[i];
             const key: ZigString = test_data.k;
             var value_stringified = JSC.ZigString.init("");
-            test_data.v.toZigString(&value_stringified, globalObject);
+            test_data.v.jsonStringify(globalObject, 0, &value_stringified);
             const count = test_data.count;
-            snapshot_file.writer().print("exports[`{s} {}`] = `{s}`;\n", .{ key, count, value_stringified }) catch unreachable;
+            snapshot_file.writer().print("\nexports[`{s} {}`] = `{s}`;\n", .{ key, count, value_stringified }) catch unreachable;
             i += 1;
         }
     }

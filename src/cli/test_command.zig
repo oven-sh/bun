@@ -110,7 +110,7 @@ pub const CommandLineReporter = struct {
 
         const display_label = if (label.len > 0) label else "test";
 
-        const color_code = comptime if (skip) "<yellow>" else "";
+        const color_code = comptime if (skip) "<yellow><d>" else "";
 
         if (Output.enable_ansi_colors_stderr) {
             for (scopes) |_, i| {

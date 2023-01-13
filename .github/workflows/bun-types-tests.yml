@@ -30,11 +30,9 @@ jobs:
         uses: actions/setup-node@v3
         with:
           node-version: latest
+
       - name: Install dependencies
         run: bun install
-        working-directory: '.'
-      - name: Install dependencies
-        run: bun install --force
 
       - name: Generate package
         run: bun run build

@@ -14,7 +14,7 @@ jobs:
       - uses: actions/checkout@v3
 
       - name: Install bun
-        uses: xhyrom/setup-bun@v0.1.8
+        uses: oven-sh/setup-bun@v0.1.8
         with:
           bun-version: canary
           github-token: ${{ secrets.GITHUB_TOKEN }}
@@ -89,7 +89,7 @@ jobs:
           scope: '@oven-sh'
 
       - name: Install bun
-        uses: xhyrom/setup-bun@v0.1.8
+        uses: oven-sh/setup-bun@v0.1.8
         with:
           bun-version: canary
           github-token: ${{ secrets.GITHUB_TOKEN }}
@@ -104,7 +104,7 @@ jobs:
         run: bun scripts/gpr.ts
 
       - name: Publish on GPR
-        run: cd dist/ && npm publish --access public
+        run: cd dist/ && npm publish --dry-run --access public
         env:
           NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 

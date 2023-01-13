@@ -20,7 +20,7 @@ jobs:
           node-version: latest
       
       - name: Install Bun
-        uses: xhyrom/setup-bun@v0.1.8
+        uses: oven-sh/setup-bun@v0.1.8
         with:
           bun-version: latest
           github-token: ${{ secrets.GITHUB_TOKEN }}

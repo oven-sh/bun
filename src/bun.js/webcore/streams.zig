@@ -37,7 +37,7 @@ const JSValue = JSC.JSValue;
 const JSError = JSC.JSError;
 const JSGlobalObject = JSC.JSGlobalObject;
 
-const VirtualMachine = @import("../javascript.zig").VirtualMachine;
+const VirtualMachine = JSC.VirtualMachine;
 const Task = JSC.Task;
 const JSPrinter = @import("../../js_printer.zig");
 const picohttp = @import("bun").picohttp;

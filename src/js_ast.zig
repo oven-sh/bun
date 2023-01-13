@@ -4864,8 +4864,8 @@ pub const Macro = struct {
     const DotEnv = @import("./env_loader.zig");
     const js = @import("./bun.js/javascript_core_c_api.zig");
     const Zig = @import("./bun.js/bindings/exports.zig");
-    const Bundler = @import("./bundler.zig").Bundler;
-    const MacroEntryPoint = @import("./bundler.zig").MacroEntryPoint;
+    const Bundler = bun.Bundler;
+    const MacroEntryPoint = bun.bundler.MacroEntryPoint;
     const MacroRemap = @import("./resolver/package_json.zig").MacroMap;
     pub const MacroRemapEntry = @import("./resolver/package_json.zig").MacroImportReplacementMap;
 

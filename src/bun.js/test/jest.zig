@@ -39,7 +39,7 @@ const JSError = JSC.JSError;
 const JSGlobalObject = JSC.JSGlobalObject;
 const JSObject = JSC.JSObject;
 
-const VirtualMachine = @import("../javascript.zig").VirtualMachine;
+const VirtualMachine = JSC.VirtualMachine;
 const Task = @import("../javascript.zig").Task;
 
 const Fs = @import("../../fs.zig");

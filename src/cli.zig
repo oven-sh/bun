@@ -28,7 +28,7 @@ const configureTransformOptionsForBun = @import("./bun.js/config.zig").configure
 const clap = @import("bun").clap;
 const BunJS = @import("./bun_js.zig");
 const Install = @import("./install/install.zig");
-const bundler = @import("bundler.zig");
+const bundler = bun.bundler;
 const DotEnv = @import("./env_loader.zig");
 
 const fs = @import("fs.zig");

@@ -30,7 +30,7 @@ const ImportKind = _import_record.ImportKind;
 const allocators = @import("./allocators.zig");
 const MimeType = @import("./http/mime_type.zig");
 const resolve_path = @import("./resolver/resolve_path.zig");
-const _bundler = @import("./bundler.zig");
+const _bundler = bun.bundler;
 const Bundler = _bundler.Bundler;
 const ResolveQueue = _bundler.ResolveQueue;
 const ResolverType = Resolver.Resolver;
@@ -38,7 +38,7 @@ const ESModule = @import("./resolver/package_json.zig").ESModule;
 const Runtime = @import("./runtime.zig").Runtime;
 const URL = @import("url.zig").URL;
 const JSC = @import("bun").JSC;
-const PluginRunner = @import("./bundler.zig").PluginRunner;
+const PluginRunner = bun.bundler.PluginRunner;
 pub const CSSResolveError = error{ResolveError};
 
 pub const OnImportCallback = *const fn (resolve_result: *const Resolver.Result, import_record: *ImportRecord, origin: URL) void;

@@ -729,7 +729,8 @@ pub const CLI = @import("./cli.zig");
 pub const PackageManager = @import("./install/install.zig").PackageManager;
 
 pub const fs = @import("./fs.zig");
-pub const Bundler = @import("./bundler.zig").Bundler;
+pub const Bundler = bundler.Bundler;
+pub const bundler = @import("./bundler.zig");
 pub const which = @import("./which.zig").which;
 
 pub const json = @import("./json_parser.zig");

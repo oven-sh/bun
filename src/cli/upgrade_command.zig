@@ -217,6 +217,14 @@ pub const UpgradeCommand = struct {
             }
         }
 
+        var http_proxy: ?URL = null;
+
+         if (env_loader.map.get("https_proxy")) |proxy| {
+             http_proxy = URL.parse(proxy);
+         } else if (env_loader.map.get("HTTPS_PROXY")) |proxy| {
+             http_proxy = URL.parse(proxy);
+         }
+
         var metadata_body = try MutableString.init(allocator, 2048);
 
         // ensure very stable memory address
@@ -230,7 +238,7 @@ pub const UpgradeCommand = struct {
             &metadata_body,
             "",
             60 * std.time.ns_per_min,
-            null
+            http_proxy
         );
         if (!silent) async_http.client.progress_node = progress;
         const response = try async_http.sendSync(true);
@@ -451,6 +459,14 @@ pub const UpgradeCommand = struct {
             };
         }
 
+        var http_proxy: ?URL = null;
+
+        if (env_loader.map.get("https_proxy")) |proxy| {
+            http_proxy = URL.parse(proxy);
+        } else if (env_loader.map.get("HTTPS_PROXY")) |proxy| {
+            http_proxy = URL.parse(proxy);
+        }
+
         {
             var refresher = std.Progress{};
             var progress = refresher.start("Downloading", version.size);
@@ -468,7 +484,7 @@ pub const UpgradeCommand = struct {
                 zip_file_buffer,
                 "",
                 timeout,
-                null
+                http_proxy
             );
             async_http.client.timeout = timeout;
             async_http.client.progress_node = progress;

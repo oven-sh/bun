@@ -497,7 +497,11 @@ pub fn onOpen(
     socket: NewHTTPContext(is_ssl).HTTPSocket,
 ) void {
     if (comptime Environment.allow_assert) {
-        std.debug.assert(is_ssl == client.url.isHTTPS());
+        if (client.http_proxy) | proxy | {
+            std.debug.assert(is_ssl == proxy.isHTTPS());
+        }else{
+            std.debug.assert(is_ssl == client.url.isHTTPS());
+        }
     }
 
     log("Connected {s} \n", .{client.url.href});
@@ -663,6 +667,7 @@ fn writeProxyRequest(
     }
 
     _ = writer.write(request.method) catch 0;
+    // will always be http:// here, https:// needs CONNECT tunnel
     _ = writer.write(" http://") catch 0;
     _ = writer.write(client.url.hostname) catch 0;
     _ = writer.write(":") catch 0;
@@ -852,7 +857,7 @@ request_content_len_buf: ["-4294967295".len]u8 = undefined,
 cloned_metadata: HTTPResponseMetadata = .{},
 http_proxy: ?URL = null,
 proxy_authorization: ?[]u8 = null,
-proxy_pre_flight: bool = false,
+proxy_tunneling: bool = false,
 
 pub fn init(
     allocator: std.mem.Allocator,
@@ -1314,10 +1319,19 @@ pub fn start(this: *HTTPClient, body: []const u8, body_out_str: *MutableString) 
     std.debug.assert(this.state.response_message_buffer.list.capacity == 0);
     this.state = InternalState.init(body, body_out_str);
 
-    if (this.url.isHTTPS()) {
-        this.start_(true);
-    } else {
-        this.start_(false);
+    if (this.http_proxy) | proxy | {
+
+        if (proxy.isHTTPS()) {
+            this.start_(true);
+        } else {
+            this.start_(false);
+        }
+    }else {
+        if (this.url.isHTTPS()) {
+            this.start_(true);
+        } else {
+            this.start_(false);
+        }
     }
 }
 
@@ -1367,10 +1381,21 @@ pub fn onWritable(this: *HTTPClient, comptime is_first_call: bool, comptime is_s
             const request = this.buildRequest(this.state.request_body.len);
 
             if (this.http_proxy) |_| {
-                if (this.url.isHTTPS()) {
-                    //...
-                    this.closeAndFail(error.Canceled, is_ssl, socket);
-                } else {
+                if (this.url.isHTTPS()){
+                    
+                    //DO the tunneling!
+                    this.proxy_tunneling = true;
+                    writeProxyConnect(
+                        @TypeOf(writer),
+                        writer,
+                        this
+                    ) catch {
+                        this.closeAndFail(error.OutOfMemory, is_ssl, socket);
+                        return;
+                    };
+                    
+                }else{
+                    //HTTP do not need tunneling with CONNECT just a slightly different version of the request
                     writeProxyRequest(
                         @TypeOf(writer),
                         writer,
@@ -1381,6 +1406,7 @@ pub fn onWritable(this: *HTTPClient, comptime is_first_call: bool, comptime is_s
                         return;
                     };
                 }
+                
             } else {
                 writeRequest(
                     @TypeOf(writer),
@@ -1482,6 +1508,7 @@ pub fn closeAndFail(this: *HTTPClient, err: anyerror, comptime is_ssl: bool, soc
 }
 
 pub fn onData(this: *HTTPClient, comptime is_ssl: bool, incoming_data: []const u8, ctx: *NewHTTPContext(is_ssl), socket: NewHTTPContext(is_ssl).HTTPSocket) void {
+    
     switch (this.state.response_stage) {
         .pending, .headers => {
             var to_read = incoming_data;
@@ -1567,6 +1594,14 @@ pub fn onData(this: *HTTPClient, comptime is_ssl: bool, incoming_data: []const u
 
             if (!can_continue) {
                 this.done(is_ssl, ctx, socket);
+                return;
+            }
+
+            if(this.proxy_tunneling){
+                //TODO: BIO_push if in SSL -> SSL
+                //or create new CTX and use SSL_set_fd in case of HTTP -> SSL
+
+                this.closeAndFail(error.ConnectionAborted, is_ssl, socket);
                 return;
             }
 
@@ -2071,7 +2106,14 @@ pub fn handleResponseMetadata(
     if (pretend_304) {
         this.state.pending_response.status_code = 304;
     }
-
+    if(this.proxy_tunneling){
+        if(this.state.pending_response.status_code != 200){
+            return error.ConnectionRefused;
+        }
+        //signal to continue the proxing
+        return true;
+    }
+    
     const is_redirect = this.state.pending_response.status_code >= 300 and this.state.pending_response.status_code <= 399;
 
     if (is_redirect and this.follow_redirects and location.len > 0 and this.remaining_redirect_count > 0) {

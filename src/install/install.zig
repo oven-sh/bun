@@ -344,6 +344,7 @@ const NetworkTask = struct {
             "",
             0,
             this.getCompletionCallback(),
+            null
         );
         this.http.max_retry_count = this.package_manager.options.max_retry_count;
         this.callback = .{
@@ -416,6 +417,7 @@ const NetworkTask = struct {
             "",
             0,
             this.getCompletionCallback(),
+            null
         );
         this.http.max_retry_count = this.package_manager.options.max_retry_count;
         this.callback = .{ .extract = tarball };

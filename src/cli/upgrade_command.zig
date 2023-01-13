@@ -230,6 +230,7 @@ pub const UpgradeCommand = struct {
             &metadata_body,
             "",
             60 * std.time.ns_per_min,
+            null
         );
         if (!silent) async_http.client.progress_node = progress;
         const response = try async_http.sendSync(true);
@@ -467,6 +468,7 @@ pub const UpgradeCommand = struct {
                 zip_file_buffer,
                 "",
                 timeout,
+                null
             );
             async_http.client.timeout = timeout;
             async_http.client.progress_node = progress;

@@ -152,6 +152,11 @@ pub fn TaggedPointerUnion(comptime Types: anytype) type {
             return this.repr.to();
         }
 
+        pub inline fn ptrUnsafe(this: This) *anyopaque {
+            @setRuntimeSafety(false);
+            return this.repr.to();
+        }
+
         pub inline fn init(_ptr: anytype) This {
             const Type = std.meta.Child(@TypeOf(_ptr));
             const name = comptime typeBaseName(@typeName(Type));

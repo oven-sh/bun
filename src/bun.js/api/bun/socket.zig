@@ -630,15 +630,23 @@ pub const Listener = struct {
     //     uws.us_socket_context_add_server_name
     // }
 
-    pub fn stop(this: *Listener, _: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSValue {
+    pub fn stop(this: *Listener, _: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSValue {
+        const arguments = callframe.arguments(1);
         log("close", .{});
 
-        var listener = this.listener orelse return JSValue.jsUndefined();
-        this.listener = null;
-        listener.close(this.ssl);
+        if (arguments.len > 0 and arguments.ptr[0].isBoolean() and arguments.ptr[0].toBoolean() and this.socket_context != null) {
+            this.socket_context.?.close(this.ssl);
+            this.listener = null;
+        } else {
+            var listener = this.listener orelse return JSValue.jsUndefined();
+            this.listener = null;
+            listener.close(this.ssl);
+        }
+
         this.poll_ref.unref(this.handlers.vm);
         if (this.handlers.active_connections == 0) {
             this.handlers.unprotect();
+            this.socket_context.?.close(this.ssl);
             this.socket_context.?.deinit(this.ssl);
             this.socket_context = null;
             this.strong_self.clear();
@@ -661,6 +669,7 @@ pub const Listener = struct {
         std.debug.assert(this.handlers.active_connections == 0);
 
         if (this.socket_context) |ctx| {
+            ctx.close(this.ssl);
             ctx.deinit(this.ssl);
         }
 

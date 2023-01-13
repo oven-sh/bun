@@ -20,10 +20,10 @@ const allocators = @import("allocators.zig");
 const JSC = @import("bun").JSC;
 const HTTP = @import("bun").HTTP;
 const RefCtx = @import("./ast/base.zig").RefCtx;
-const JSONParser = @import("./json_parser.zig");
+const JSONParser = bun.JSON;
 const is_bindgen = std.meta.globalOption("bindgen", bool) orelse false;
 const ComptimeStringMap = bun.ComptimeStringMap;
-const JSPrinter = @import("./js_printer.zig");
+const JSPrinter = bun.js_printer;
 pub fn NewBaseStore(comptime Union: anytype, comptime count: usize) type {
     var max_size = 0;
     var max_align = 1;
@@ -7112,7 +7112,7 @@ pub const Macro = struct {
                                 return false;
                             }
 
-                            const JSLexer = @import("./js_lexer.zig");
+                            const JSLexer = bun.js_lexer;
 
                             var array_iter = JSC.JSPropertyIterator(.{
                                 .skip_empty_name = true,

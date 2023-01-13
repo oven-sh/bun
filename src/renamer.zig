@@ -1,4 +1,4 @@
-const js_ast = @import("js_ast.zig");
+const js_ast = bun.JSAst;
 const bun = @import("bun");
 const string = bun.string;
 const Output = bun.Output;

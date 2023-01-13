@@ -941,7 +941,7 @@ pub const Test = struct {
     pub fn makeRoutes(comptime testName: string, data: anytype) !Routes {
         Output.initTest();
         try makeTest(testName, data);
-        const JSAst = @import("./js_ast.zig");
+        const JSAst = bun.JSAst;
         JSAst.Expr.Data.Store.create(default_allocator);
         JSAst.Stmt.Data.Store.create(default_allocator);
         var fs = try FileSystem.init1(default_allocator, null);
@@ -998,7 +998,7 @@ pub const Test = struct {
     pub fn make(comptime testName: string, data: anytype) !Router {
         std.testing.refAllDecls(@import("./bun.js/bindings/exports.zig"));
         try makeTest(testName, data);
-        const JSAst = @import("./js_ast.zig");
+        const JSAst = bun.JSAst;
         JSAst.Expr.Data.Store.create(default_allocator);
         JSAst.Stmt.Data.Store.create(default_allocator);
         var fs = try FileSystem.init1WithForce(default_allocator, null, true);

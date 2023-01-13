@@ -10,12 +10,12 @@ const default_allocator = bun.default_allocator;
 const C = bun.C;
 const std = @import("std");
 
-const JSLexer = @import("../js_lexer.zig");
+const JSLexer = bun.js_lexer;
 const logger = @import("bun").logger;
 
-const js_parser = @import("../js_parser.zig");
-const json_parser = @import("../json_parser.zig");
-const JSPrinter = @import("../js_printer.zig");
+const js_parser = bun.js_parser;
+const json_parser = bun.JSON;
+const JSPrinter = bun.js_printer;
 
 const linker = @import("../linker.zig");
 
@@ -60,7 +60,7 @@ pub const Lockfile = @import("./lockfile.zig");
 // because why not
 pub const alignment_bytes_to_repeat_buffer = [_]u8{0} ** 144;
 
-const JSAst = @import("../js_ast.zig");
+const JSAst = bun.JSAst;
 
 pub fn initializeStore() void {
     if (initialized_store) {

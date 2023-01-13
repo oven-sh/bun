@@ -11,10 +11,10 @@ const FeatureFlags = bun.FeatureFlags;
 const default_allocator = bun.default_allocator;
 const C = bun.C;
 
-const js_ast = @import("./js_ast.zig");
+const js_ast = bun.JSAst;
 const logger = @import("bun").logger;
-const js_parser = @import("./js_parser.zig");
-const json_parser = @import("./json_parser.zig");
+const js_parser = bun.js_parser;
+const json_parser = bun.JSON;
 const options = @import("./options.zig");
 const Define = @import("./defines.zig").Define;
 const std = @import("std");

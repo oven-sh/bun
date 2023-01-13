@@ -39,7 +39,7 @@ const NullableAllocator = @import("../../nullable_allocator.zig").NullableAlloca
 
 const VirtualMachine = JSC.VirtualMachine;
 const Task = JSC.Task;
-const JSPrinter = @import("../../js_printer.zig");
+const JSPrinter = bun.js_printer;
 const picohttp = @import("bun").picohttp;
 const StringJoiner = @import("../../string_joiner.zig");
 const uws = @import("bun").uws;

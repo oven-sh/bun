@@ -10,13 +10,13 @@ const default_allocator = bun.default_allocator;
 const C = bun.C;
 const std = @import("std");
 
-const JSLexer = @import("../js_lexer.zig");
+const JSLexer = bun.js_lexer;
 const logger = @import("bun").logger;
 
-const js_parser = @import("../js_parser.zig");
+const js_parser = bun.js_parser;
 const Expr = @import("../js_ast.zig").Expr;
-const json_parser = @import("../json_parser.zig");
-const JSPrinter = @import("../js_printer.zig");
+const json_parser = bun.JSON;
+const JSPrinter = bun.js_printer;
 
 const linker = @import("../linker.zig");
 
@@ -76,7 +76,7 @@ const alignment_bytes_to_repeat_buffer = @import("./install.zig").alignment_byte
 const Resolution = @import("./resolution.zig").Resolution;
 const initializeStore = @import("./install.zig").initializeStore;
 const invalid_package_id = @import("./install.zig").invalid_package_id;
-const JSAst = @import("../js_ast.zig");
+const JSAst = bun.JSAst;
 const Origin = @import("./install.zig").Origin;
 const PackageIDMultiple = @import("./install.zig").PackageIDMultiple;
 const Crypto = @import("../sha.zig").Hashers;

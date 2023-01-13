@@ -2,7 +2,7 @@ const std = @import("std");
 const logger = @import("bun").logger;
 const tables = @import("js_lexer_tables.zig");
 const build_options = @import("build_options");
-const js_ast = @import("js_ast.zig");
+const js_ast = bun.JSAst;
 
 const bun = @import("bun");
 const string = bun.string;

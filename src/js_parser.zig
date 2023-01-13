@@ -1,10 +1,10 @@
 pub const std = @import("std");
 pub const logger = @import("bun").logger;
-pub const js_lexer = @import("./js_lexer.zig");
+pub const js_lexer = bun.js_lexer;
 pub const importRecord = @import("./import_record.zig");
-pub const js_ast = @import("./js_ast.zig");
+pub const js_ast = bun.JSAst;
 pub const options = @import("./options.zig");
-pub const js_printer = @import("./js_printer.zig");
+pub const js_printer = bun.js_printer;
 pub const renamer = @import("./renamer.zig");
 const _runtime = @import("./runtime.zig");
 pub const RuntimeImports = _runtime.Runtime.Imports;

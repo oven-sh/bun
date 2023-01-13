@@ -3,7 +3,7 @@ const logger = @import("bun").logger;
 const toml_lexer = @import("./toml_lexer.zig");
 const Lexer = toml_lexer.Lexer;
 const importRecord = @import("../import_record.zig");
-const js_ast = @import("../js_ast.zig");
+const js_ast = bun.JSAst;
 const options = @import("../options.zig");
 
 const fs = @import("../fs.zig");

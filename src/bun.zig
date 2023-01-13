@@ -732,8 +732,10 @@ pub const fs = @import("./fs.zig");
 pub const Bundler = bundler.Bundler;
 pub const bundler = @import("./bundler.zig");
 pub const which = @import("./which.zig").which;
-
-pub const json = @import("./json_parser.zig");
+pub const js_parser = @import("./js_parser.zig");
+pub const js_printer = @import("./js_printer.zig");
+pub const js_lexer = @import("./js_lexer.zig");
+pub const JSON = @import("./json_parser.zig");
 pub const JSAst = @import("./js_ast.zig");
 pub const bit_set = @import("./install/bit_set.zig");
 

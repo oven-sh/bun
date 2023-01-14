@@ -109,10 +109,10 @@ scripts: Scripts = .{},
 workspace_paths: std.HashMapUnmanaged(u64, String, IdentityContext(u64), 80) = .{},
 
 const Stream = std.io.FixedBufferStream([]u8);
-const StringArrayList = std.ArrayListUnmanaged(string);
 pub const default_filename = "bun.lockb";
 
 pub const Scripts = struct {
+    const StringArrayList = std.ArrayListUnmanaged(string);
     const RunCommand = @import("../cli/run_command.zig").RunCommand;
 
     preinstall: StringArrayList = .{},

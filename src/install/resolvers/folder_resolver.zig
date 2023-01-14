@@ -71,6 +71,22 @@ pub const FolderResolution = union(Tag) {
         pub fn count(_: @This(), comptime Builder: type, _: Builder, _: JSAst.Expr) void {}
     };
 
+    pub const GitCacheFolderResolver = struct {
+        repository: Repository,
+        version_tag: Dependency.Version.Tag,
+
+        pub fn resolve(this: @This(), comptime Builder: type, _: Builder, _: JSAst.Expr) !Resolution {
+            return Resolution{
+                .tag = if (this.version_tag == .git) Resolution.Tag.git else Resolution.Tag.github,
+                .value = .{
+                    .git = this.repository,
+                },
+            };
+        }
+
+        pub fn count(_: @This(), comptime Builder: type, _: Builder, _: JSAst.Expr) void {}
+    };
+
     pub fn normalizePackageJSONPath(global_or_relative: GlobalOrRelative, joined: *[bun.MAX_PATH_BYTES]u8, non_normalized_path: string) [2]string {
         var abs: string = "";
         var rel: string = "";
@@ -257,8 +273,11 @@ pub const FolderResolution = union(Tag) {
                 json_bytes,
                 version,
                 Features.git,
-                Resolver,
-                Resolver{ .folder_path = rel },
+                GitCacheFolderResolver,
+                GitCacheFolderResolver{
+                    .repository = if (version.tag == .git) version.value.git else version.value.github,
+                    .version_tag = version.tag,
+                },
             ),
         } catch |err| {
             if (err == error.FileNotFound) {
@@ -323,8 +342,11 @@ pub const FolderResolution = union(Tag) {
                 abs,
                 version,
                 Features.git,
-                Resolver,
-                Resolver{ .folder_path = rel },
+                GitCacheFolderResolver,
+                GitCacheFolderResolver{
+                    .repository = if (version.tag == .git) version.value.git else version.value.github,
+                    .version_tag = version.tag,
+                },
             ),
         } catch |err| {
             if (err == error.FileNotFound) {

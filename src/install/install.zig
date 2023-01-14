@@ -555,7 +555,7 @@ const Task = struct {
                     const repo_name = lockfile.str(git_repo.repo);
 
                     var url_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
-                    const url = if (this.request.git_clone.version.tag == .github) git_repo.getGitHubURL(lockfile, &url_buf) else git_repo.getURL(lockfile, &url_buf);
+                    const url = if (this.request.git_clone.version.tag == .github) git_repo.getGitHubURL(lockfile, &url_buf) else git_repo.getURLForClone(lockfile, &url_buf);
 
                     var temp_dir_path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
                     const temp_dir = std.os.getFdPath(this.package_manager.getTemporaryDirectory().dir.fd, &temp_dir_path_buf) catch unreachable;
@@ -580,7 +580,7 @@ const Task = struct {
                     process.stdin_behavior = .Close;
 
                     const term = process.spawnAndWait() catch {
-                        this.log.addErrorFmt(null, logger.Loc.Empty, allocator, "Failed to spawn git process to clone github dependency \"{s}\"", .{repo_name}) catch unreachable;
+                        this.log.addErrorFmt(null, logger.Loc.Empty, allocator, "Failed to spawn git process to clone git dependency \"{s}\"", .{repo_name}) catch unreachable;
                         this.status = .fail;
                         this.package_manager.resolve_tasks.writeItem(this.*) catch unreachable;
                         return;
@@ -598,7 +598,7 @@ const Task = struct {
 
                     const package_json_file = std.fs.openFileAbsolute(package_json_path, .{}) catch {
                         this.status = .fail;
-                        this.log.addErrorFmt(null, logger.Loc.Empty, allocator, "Failed to find package.json for github dependency \"{s}\"", .{repo_name}) catch unreachable;
+                        this.log.addErrorFmt(null, logger.Loc.Empty, allocator, "Failed to find package.json for git dependency \"{s}\"", .{repo_name}) catch unreachable;
                         this.package_manager.resolve_tasks.writeItem(this.*) catch unreachable;
                         return;
                     };
@@ -612,7 +612,7 @@ const Task = struct {
                     if (package_json_file_size < "{\"name\":\"\",\"version\":\"\"}".len + repo_name.len + "0.0.0".len) {
                         // package.json smaller than minimum possible
                         this.status = .fail;
-                        this.log.addErrorFmt(null, logger.Loc.Empty, allocator, "Invalid package.json for github dependency \"{s}\"", .{repo_name}) catch unreachable;
+                        this.log.addErrorFmt(null, logger.Loc.Empty, allocator, "Invalid package.json for git dependency \"{s}\"", .{repo_name}) catch unreachable;
                         this.package_manager.resolve_tasks.writeItem(this.*) catch unreachable;
                         return;
                     }
@@ -3626,8 +3626,9 @@ pub const PackageManager = struct {
                     const git_cache_dir = manager.getGitCacheDirectory().dir;
                     git_cache_dir.deleteTree(package_name) catch unreachable;
 
+                    const version = task.request.git_clone.version;
                     var destination_name_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
-                    const destination_name = try git_repo.getCacheDirectoryForGitHub(manager, &destination_name_buf);
+                    const destination_name = if (version.tag == .github) try git_repo.getCacheDirectoryForGitHub(manager, &destination_name_buf) else try git_repo.getCacheDirectory(manager, &destination_name_buf);
                     std.fs.rename(temp_dir, package_name, git_cache_dir, destination_name) catch unreachable;
                     temp_dir.deleteTree(package_name) catch unreachable;
 
@@ -5972,6 +5973,22 @@ pub const PackageManager = struct {
                         installer.cache_dir_subpath = std.meta.assumeSentinel(this.folder_path_buf[0..folder.len], 0);
                         installer.cache_dir = .{ .dir = std.fs.cwd() };
                     }
+                },
+                .git => {
+                    const repo: Repository = resolution.value.git;
+                    const temp = repo.getCacheDirectory(this.manager, &cached_package_folder_name_buf) catch unreachable;
+                    cached_package_folder_name_buf[temp.len] = 0;
+                    const cache_dir_subpath: stringZ = std.meta.assumeSentinel(cached_package_folder_name_buf[0..temp.len], 0);
+                    installer.cache_dir_subpath = cache_dir_subpath;
+                    installer.cache_dir = .{ .dir = this.manager.getGitCacheDirectory().dir };
+                },
+                .github => {
+                    const repo: Repository = resolution.value.github;
+                    const temp = repo.getCacheDirectoryForGitHub(this.manager, &cached_package_folder_name_buf) catch unreachable;
+                    cached_package_folder_name_buf[temp.len] = 0;
+                    const cache_dir_subpath: stringZ = std.meta.assumeSentinel(cached_package_folder_name_buf[0..temp.len], 0);
+                    installer.cache_dir_subpath = cache_dir_subpath;
+                    installer.cache_dir = .{ .dir = this.manager.getGitCacheDirectory().dir };
                 },
                 .symlink => {
                     const directory = this.manager.globalLinkDir() catch |err| {

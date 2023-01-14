@@ -26,8 +26,7 @@ pub const Resolution = extern struct {
         return switch (lhs.tag) {
             .npm => lhs.value.npm.order(rhs.value.npm, lhs_buf, rhs_buf),
             .local_tarball => lhs.value.local_tarball.order(&rhs.value.local_tarball, lhs_buf, rhs_buf),
-            .git_ssh => lhs.value.git_ssh.order(&rhs.value.git_ssh, lhs_buf, rhs_buf),
-            .git_http => lhs.value.git_http.order(&rhs.value.git_http, lhs_buf, rhs_buf),
+            .git => lhs.value.git.order(&rhs.value.git, lhs_buf, rhs_buf),
             .folder => lhs.value.folder.order(&rhs.value.folder, lhs_buf, rhs_buf),
             .remote_tarball => lhs.value.remote_tarball.order(&rhs.value.remote_tarball, lhs_buf, rhs_buf),
             .workspace => lhs.value.workspace.order(&rhs.value.workspace, lhs_buf, rhs_buf),
@@ -43,8 +42,7 @@ pub const Resolution = extern struct {
         switch (this.tag) {
             .npm => this.value.npm.count(buf, Builder, builder),
             .local_tarball => builder.count(this.value.local_tarball.slice(buf)),
-            .git_ssh => builder.count(this.value.git_ssh.slice(buf)),
-            .git_http => builder.count(this.value.git_http.slice(buf)),
+            .git => this.value.git.count(buf, Builder, builder),
             .folder => builder.count(this.value.folder.slice(buf)),
             .remote_tarball => builder.count(this.value.remote_tarball.slice(buf)),
             .workspace => builder.count(this.value.workspace.slice(buf)),
@@ -66,11 +64,8 @@ pub const Resolution = extern struct {
                 .local_tarball => Resolution.Value{
                     .local_tarball = builder.append(String, this.value.local_tarball.slice(buf)),
                 },
-                .git_ssh => Resolution.Value{
-                    .git_ssh = builder.append(String, this.value.git_ssh.slice(buf)),
-                },
-                .git_http => Resolution.Value{
-                    .git_http = builder.append(String, this.value.git_http.slice(buf)),
+                .git => Resolution.Value{
+                    .git = this.value.git.clone(buf, Builder, builder),
                 },
                 .folder => Resolution.Value{
                     .folder = builder.append(String, this.value.folder.slice(buf)),
@@ -123,13 +118,8 @@ pub const Resolution = extern struct {
                 lhs_string_buf,
                 rhs_string_buf,
             ),
-            .git_ssh => lhs.value.git_ssh.eql(
-                rhs.value.git_ssh,
-                lhs_string_buf,
-                rhs_string_buf,
-            ),
-            .git_http => lhs.value.git_http.eql(
-                rhs.value.git_http,
+            .git => lhs.value.git.eql(
+                rhs.value.git,
                 lhs_string_buf,
                 rhs_string_buf,
             ),
@@ -183,8 +173,7 @@ pub const Resolution = extern struct {
             switch (formatter.resolution.tag) {
                 .npm => try writer.writeAll(formatter.resolution.value.npm.url.slice(formatter.buf)),
                 .local_tarball => try writer.writeAll(formatter.resolution.value.local_tarball.slice(formatter.buf)),
-                .git_ssh => try std.fmt.format(writer, "git+ssh://{s}", .{formatter.resolution.value.git_ssh.slice(formatter.buf)}),
-                .git_http => try std.fmt.format(writer, "https://{s}", .{formatter.resolution.value.git_http.slice(formatter.buf)}),
+                .git => try formatter.resolution.value.git.formatAs("git", formatter.buf, layout, opts, writer),
                 .folder => try writer.writeAll(formatter.resolution.value.folder.slice(formatter.buf)),
                 .remote_tarball => try writer.writeAll(formatter.resolution.value.remote_tarball.slice(formatter.buf)),
                 .github => try formatter.resolution.value.github.formatAs("github", formatter.buf, layout, opts, writer),
@@ -205,8 +194,7 @@ pub const Resolution = extern struct {
             switch (formatter.resolution.tag) {
                 .npm => try formatter.resolution.value.npm.version.fmt(formatter.buf).format(layout, opts, writer),
                 .local_tarball => try writer.writeAll(formatter.resolution.value.local_tarball.slice(formatter.buf)),
-                .git_ssh => try std.fmt.format(writer, "git+ssh://{s}", .{formatter.resolution.value.git_ssh.slice(formatter.buf)}),
-                .git_http => try std.fmt.format(writer, "https://{s}", .{formatter.resolution.value.git_http.slice(formatter.buf)}),
+                .git => try formatter.resolution.value.git.formatAs("git", formatter.buf, layout, opts, writer),
                 .folder => try writer.writeAll(formatter.resolution.value.folder.slice(formatter.buf)),
                 .remote_tarball => try writer.writeAll(formatter.resolution.value.remote_tarball.slice(formatter.buf)),
                 .github => try formatter.resolution.value.github.formatAs("github", formatter.buf, layout, opts, writer),
@@ -228,8 +216,7 @@ pub const Resolution = extern struct {
         /// File path to a tarball relative to the package root
         local_tarball: String,
 
-        git_ssh: String,
-        git_http: String,
+        git: Repository,
 
         folder: String,
 
@@ -258,8 +245,7 @@ pub const Resolution = extern struct {
         github = 16,
         gitlab = 24,
 
-        git_ssh = 32,
-        git_http = 33,
+        git = 33,
 
         symlink = 64,
 

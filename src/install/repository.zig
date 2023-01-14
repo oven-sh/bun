@@ -99,6 +99,19 @@ pub const Repository = extern struct {
         return buf[0..i];
     }
 
+    pub fn getURLForClone(this: Repository, lockfile: *Lockfile, buf: *[bun.MAX_PATH_BYTES]u8) []u8 {
+        var url = this.getURL(lockfile, buf);
+
+        // replace ':' with '/' if it exists to make a valid url
+        if (strings.lastIndexOfChar(url, ':')) |j| {
+            if (url[j + 1] != '/') {
+                url[j] = '/';
+            }
+        }
+
+        return url;
+    }
+
     pub fn getCacheDirectoryForGitHub(this: Repository, manager: *PackageManager, buf: *[bun.MAX_PATH_BYTES]u8) ![]u8 {
         var url_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
         const url = this.getGitHubURL(manager.lockfile, &url_buf);

@@ -6,7 +6,8 @@ const Npm = @import("../npm.zig");
 const logger = @import("bun").logger;
 const FileSystem = @import("../../fs.zig").FileSystem;
 const JSAst = bun.JSAst;
-const string = @import("../../string_types.zig").string;
+const string = bun.string;
+const stringZ = bun.stringZ;
 const Features = @import("../install.zig").Features;
 const IdentityContext = @import("../../identity_context.zig").IdentityContext;
 const strings = @import("bun").strings;
@@ -71,7 +72,11 @@ pub const FolderResolution = union(Tag) {
         pub fn count(_: @This(), comptime Builder: type, _: Builder, _: JSAst.Expr) void {}
     };
 
-    pub fn normalizePackageJSONPath(global_or_relative: GlobalOrRelative, joined: *[bun.MAX_PATH_BYTES]u8, non_normalized_path: string) [2]string {
+    const Paths = struct {
+        abs: stringZ,
+        rel: string,
+    };
+    fn normalizePackageJSONPath(global_or_relative: GlobalOrRelative, joined: *[bun.MAX_PATH_BYTES]u8, non_normalized_path: string) Paths {
         var abs: string = "";
         var rel: string = "";
         // We consider it valid if there is a package.json in the folder
@@ -114,19 +119,23 @@ pub const FolderResolution = union(Tag) {
             // We store the folder name without package.json
             rel = abs[0 .. abs.len - "/package.json".len];
         }
+        joined[abs.len] = 0;
 
-        return .{ abs, rel };
+        return .{
+            .abs = joined[0..abs.len :0],
+            .rel = rel,
+        };
     }
 
-    pub fn readPackageJSONFromDisk(
+    fn readPackageJSONFromDisk(
         manager: *PackageManager,
-        abs: []const u8,
+        abs: stringZ,
         version: Dependency.Version,
         comptime features: Features,
         comptime ResolverType: type,
         resolver: ResolverType,
     ) !Lockfile.Package {
-        var package_json: std.fs.File = try std.fs.cwd().openFile(abs, .{ .mode = .read_only });
+        var package_json: std.fs.File = try std.fs.cwd().openFileZ(abs, .{ .mode = .read_only });
         defer package_json.close();
         var package = Lockfile.Package{};
         var body = Npm.Registry.BodyPool.get(manager.allocator);
@@ -167,8 +176,8 @@ pub const FolderResolution = union(Tag) {
     pub fn getOrPut(global_or_relative: GlobalOrRelative, version: Dependency.Version, non_normalized_path: string, manager: *PackageManager) FolderResolution {
         var joined: [bun.MAX_PATH_BYTES]u8 = undefined;
         const paths = normalizePackageJSONPath(global_or_relative, &joined, non_normalized_path);
-        const abs = paths[0];
-        const rel = paths[1];
+        const abs = paths.abs;
+        const rel = paths.rel;
 
         var entry = manager.folders.getOrPut(manager.allocator, hash(abs)) catch unreachable;
         if (entry.found_existing) return entry.value_ptr.*;

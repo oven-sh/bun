@@ -301,15 +301,18 @@ it("should ignore peerDependencies within workspaces", async () => {
     name: "Foo",
     version: "0.0.1",
     workspaces: [
-      "bar",
+      "packages/baz",
     ],
-  }));
-  await mkdir(join(package_dir, "bar"));
-  await writeFile(join(package_dir, "bar", "package.json"), JSON.stringify({
-    name: "Bar",
-    version: "0.0.2",
     peerDependencies: {
-      "Baz": ">=0.0.3",
+      "Bar": ">=0.0.2",
+    },
+  }));
+  await mkdir(join(package_dir, "packages", "baz"), { recursive: true });
+  await writeFile(join(package_dir, "packages", "baz", "package.json"), JSON.stringify({
+    name: "Baz",
+    version: "0.0.3",
+    peerDependencies: {
+      "Moo": ">=0.0.4",
     },
   }));
   const { stdout, stderr, exited } = spawn({
@@ -328,10 +331,10 @@ it("should ignore peerDependencies within workspaces", async () => {
   expect(err).toContain("Saved lockfile");
   expect(stdout).toBeDefined();
   var out = await new Response(stdout).text();
-  expect(out).toContain("+ Bar@workspace://bar");
+  expect(out).toContain("+ Baz@workspace://packages/baz");
   expect(out).toContain("1 packages installed");
   expect(await exited).toBe(0);
   expect(requested).toBe(0);
-  expect(await readdir(join(package_dir, "node_modules"))).toEqual(["Bar"]);
-  expect(await readlink(join(package_dir, "node_modules", "Bar"))).toBe(join("..", "bar"));
+  expect(await readdir(join(package_dir, "node_modules"))).toEqual(["Baz"]);
+  expect(await readlink(join(package_dir, "node_modules", "Baz"))).toBe(join("..", "packages", "baz"));
 });

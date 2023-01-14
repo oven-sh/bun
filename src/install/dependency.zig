@@ -288,7 +288,7 @@ pub const Version = struct {
                 }
             }
 
-            return slash_index != dependency.len - 1;
+            return slash_index > 0 and slash_index != dependency.len - 1;
         }
 
         // this won't work for query string params

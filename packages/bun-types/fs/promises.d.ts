@@ -24,6 +24,7 @@ declare module "fs/promises" {
     WriteFileOptions,
     SimlinkType,
     Abortable,
+    RmOptions,
   } from "node:fs";
 
   interface FlagAndOpenMode {
@@ -670,6 +671,15 @@ declare module "fs/promises" {
       | BufferEncoding
       | null,
   ): Promise<string | Buffer>;
+  /**
+   * Asynchronously removes files and directories (modeled on the standard POSIX `rm`utility). No arguments other than a possible exception are given to the
+   * completion callback.
+   * @since v14.14.0
+   */
+  export function rm(
+    path: PathLike,
+    options?: RmOptions,
+  ): Promise<void>;
 }
 
 declare module "node:fs/promises" {

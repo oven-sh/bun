@@ -2472,14 +2472,6 @@ pub const PackageManager = struct {
         return &task.threadpool_task;
     }
 
-    pub inline fn enqueueDependency(this: *PackageManager, id: u32, dependency: Dependency, resolution: PackageID) !void {
-        return try this.enqueueDependencyWithMain(id, dependency, resolution, false);
-    }
-
-    pub inline fn enqueueMainDependency(this: *PackageManager, id: u32, dependency: Dependency, resolution: PackageID) !void {
-        return try this.enqueueDependencyWithMain(id, dependency, resolution, true);
-    }
-
     pub fn dynamicRootDependencies(this: *PackageManager) *std.ArrayList(Dependency.Pair) {
         if (this.dynamic_root_dependencies == null) {
             const root_deps = this.lockfile.rootPackage().?.dependencies.get(this.lockfile.buffers.dependencies.items);
@@ -2583,8 +2575,7 @@ pub const PackageManager = struct {
             // it might really be main
             if (!this.isRootDependency(id))
                 if (!dependency.behavior.isEnabled(switch (dependency.version.tag) {
-                    .folder => this.options.remote_package_features,
-                    .dist_tag, .npm => this.options.remote_package_features,
+                    .dist_tag, .folder, .npm => this.options.remote_package_features,
                     else => Features{},
                 }))
                     return;
@@ -2958,10 +2949,11 @@ pub const PackageManager = struct {
                         const dependency = this.lockfile.buffers.dependencies.items[dependency_id];
                         const resolution = this.lockfile.buffers.resolutions.items[dependency_id];
 
-                        try this.enqueueDependency(
+                        try this.enqueueDependencyWithMain(
                             dependency_id,
                             dependency,
                             resolution,
+                            false,
                         );
                     },
 

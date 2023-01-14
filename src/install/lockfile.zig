@@ -106,7 +106,7 @@ allocator: std.mem.Allocator,
 scratch: Scratch = Scratch{},
 
 scripts: Scripts = .{},
-workspace_paths: std.HashMapUnmanaged(u64, String, IdentityContext(u64), 80) = .{},
+workspace_paths: std.ArrayHashMapUnmanaged(u32, String, ArrayIdentityContext, false) = .{},
 
 const Stream = std.io.FixedBufferStream([]u8);
 pub const default_filename = "bun.lockb";
@@ -1601,7 +1601,7 @@ pub fn appendPackage(this: *Lockfile, package_: Lockfile.Package) !Lockfile.Pack
     return try appendPackageWithID(this, package_, id);
 }
 
-pub fn appendPackageWithID(this: *Lockfile, package_: Lockfile.Package, id: PackageID) !Lockfile.Package {
+fn appendPackageWithID(this: *Lockfile, package_: Lockfile.Package, id: PackageID) !Lockfile.Package {
     defer {
         if (comptime Environment.isDebug) {
             std.debug.assert(this.getPackageID(package_.name_hash, null, package_.resolution) != null);
@@ -2406,6 +2406,7 @@ pub const Package = extern struct {
         comptime features: Features,
         package_dependencies: []Dependency,
         dependencies: []Dependency,
+        in_workspace: bool,
         tag: ?Dependency.Version.Tag,
         workspace_path: ?String,
         external_name: ExternalString,
@@ -2460,7 +2461,7 @@ pub const Package = extern struct {
                     ),
                 );
                 dependency_version.value.workspace = path;
-                var workspace_entry = try lockfile.workspace_paths.getOrPut(allocator, external_name.hash);
+                var workspace_entry = try lockfile.workspace_paths.getOrPut(allocator, @truncate(u32, external_name.hash));
                 if (workspace_entry.found_existing) return error.@"Workspace name already exists";
                 workspace_entry.value_ptr.* = path;
             },
@@ -2468,7 +2469,7 @@ pub const Package = extern struct {
         }
 
         const this_dep = Dependency{
-            .behavior = group.behavior,
+            .behavior = if (group.behavior.isPeer()) group.behavior else group.behavior.setWorkspace(in_workspace),
             .name = external_name.value,
             .name_hash = external_name.hash,
             .version = dependency_version,
@@ -2511,7 +2512,7 @@ pub const Package = extern struct {
         return this_dep;
     }
 
-    pub fn parseWithJSON(
+    fn parseWithJSON(
         package: *Lockfile.Package,
         lockfile: *Lockfile,
         allocator: std.mem.Allocator,
@@ -2838,6 +2839,7 @@ pub const Package = extern struct {
             try lockfile.scratch.duplicate_checker_map.ensureTotalCapacity(total_dependencies_count);
         }
 
+        const in_workspace = lockfile.workspace_paths.contains(@truncate(u32, package.name_hash));
         inline for (dependency_groups) |group| {
             if (json.asProperty(group.prop)) |dependencies_q| brk: {
                 switch (dependencies_q.expr.data) {
@@ -2861,6 +2863,7 @@ pub const Package = extern struct {
                                 features,
                                 package_dependencies,
                                 dependencies,
+                                in_workspace,
                                 .workspace,
                                 null,
                                 external_name,
@@ -2884,7 +2887,7 @@ pub const Package = extern struct {
                             var tag: ?Dependency.Version.Tag = null;
                             var workspace_path: ?String = null;
 
-                            if (lockfile.workspace_paths.get(external_name.hash)) |path| {
+                            if (lockfile.workspace_paths.get(@truncate(u32, external_name.hash))) |path| {
                                 tag = .workspace;
                                 workspace_path = path;
                             }
@@ -2899,6 +2902,7 @@ pub const Package = extern struct {
                                 features,
                                 package_dependencies,
                                 dependencies,
+                                in_workspace,
                                 tag,
                                 workspace_path,
                                 external_name,
@@ -3414,22 +3418,16 @@ pub const Serializer = struct {
             lockfile.unique_packages = try Bitset.initFull(allocator, lockfile.packages.len);
             lockfile.string_pool = StringPool.initContext(allocator, .{});
             try lockfile.package_index.ensureTotalCapacity(@truncate(u32, lockfile.packages.len));
-            var slice = lockfile.packages.slice();
-            var name_hashes = slice.items(.name_hash);
-            for (name_hashes) |name_hash, id| {
-                try lockfile.getOrPutID(@truncate(PackageID, id), name_hash);
-            }
-        }
-
-        {
             const slice = lockfile.packages.slice();
             const name_hashes = slice.items(.name_hash);
             const resolutions = slice.items(.resolution);
+            for (name_hashes) |name_hash, id| {
+                try lockfile.getOrPutID(@truncate(PackageID, id), name_hash);
 
-            for (resolutions) |resolution, i| {
+                const resolution = resolutions[id];
                 switch (resolution.tag) {
                     .workspace => {
-                        try lockfile.workspace_paths.put(allocator, name_hashes[i], resolution.value.workspace);
+                        try lockfile.workspace_paths.put(allocator, @truncate(u32, name_hash), resolution.value.workspace);
                     },
                     else => {},
                 }

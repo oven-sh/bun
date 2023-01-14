@@ -640,6 +640,10 @@ pub const Behavior = enum(u8) {
     pub const peer: u8 = 1 << 4;
     pub const workspace: u8 = 1 << 5;
 
+    pub inline fn isNormal(this: Behavior) bool {
+        return (@enumToInt(this) & Behavior.normal) != 0;
+    }
+
     pub inline fn isOptional(this: Behavior) bool {
         return (@enumToInt(this) & Behavior.optional) != 0 and !this.isPeer();
     }
@@ -652,32 +656,53 @@ pub const Behavior = enum(u8) {
         return (@enumToInt(this) & Behavior.peer) != 0;
     }
 
-    pub inline fn isNormal(this: Behavior) bool {
-        return (@enumToInt(this) & Behavior.normal) != 0;
-    }
-
     pub inline fn isWorkspace(this: Behavior) bool {
         return (@enumToInt(this) & Behavior.workspace) != 0;
     }
 
+    pub inline fn setNormal(this: Behavior, value: bool) Behavior {
+        if (value) {
+            return @intToEnum(Behavior, @enumToInt(this) | Behavior.normal);
+        } else {
+            return @intToEnum(Behavior, @enumToInt(this) & ~Behavior.normal);
+        }
+    }
+
     pub inline fn setOptional(this: Behavior, value: bool) Behavior {
-        return @intToEnum(Behavior, @enumToInt(this) | (@as(u8, @boolToInt(value))) << 2);
+        if (value) {
+            return @intToEnum(Behavior, @enumToInt(this) | Behavior.optional);
+        } else {
+            return @intToEnum(Behavior, @enumToInt(this) & ~Behavior.optional);
+        }
     }
 
     pub inline fn setDev(this: Behavior, value: bool) Behavior {
-        return @intToEnum(Behavior, @enumToInt(this) | (@as(u8, @boolToInt(value))) << 2);
+        if (value) {
+            return @intToEnum(Behavior, @enumToInt(this) | Behavior.dev);
+        } else {
+            return @intToEnum(Behavior, @enumToInt(this) & ~Behavior.dev);
+        }
+    }
+
+    pub inline fn setPeer(this: Behavior, value: bool) Behavior {
+        if (value) {
+            return @intToEnum(Behavior, @enumToInt(this) | Behavior.peer);
+        } else {
+            return @intToEnum(Behavior, @enumToInt(this) & ~Behavior.peer);
+        }
+    }
+
+    pub inline fn setWorkspace(this: Behavior, value: bool) Behavior {
+        if (value) {
+            return @intToEnum(Behavior, @enumToInt(this) | Behavior.workspace);
+        } else {
+            return @intToEnum(Behavior, @enumToInt(this) & ~Behavior.workspace);
+        }
     }
 
     pub inline fn cmp(lhs: Behavior, rhs: Behavior) std.math.Order {
         if (@enumToInt(lhs) == @enumToInt(rhs)) {
             return .eq;
-        }
-
-        if (lhs.isWorkspace() != rhs.isWorkspace()) {
-            return if (lhs.isWorkspace())
-                .gt
-            else
-                .lt;
         }
 
         if (lhs.isNormal() != rhs.isNormal()) {
@@ -708,6 +733,13 @@ pub const Behavior = enum(u8) {
                 .lt;
         }
 
+        if (lhs.isWorkspace() != rhs.isWorkspace()) {
+            return if (lhs.isWorkspace())
+                .gt
+            else
+                .lt;
+        }
+
         return .eq;
     }
 
@@ -717,9 +749,9 @@ pub const Behavior = enum(u8) {
 
     pub fn isEnabled(this: Behavior, features: Features) bool {
         return this.isNormal() or
-            (features.workspaces and this.isWorkspace()) or
+            (features.optional_dependencies and this.isOptional()) or
             (features.dev_dependencies and this.isDev()) or
             (features.peer_dependencies and this.isPeer()) or
-            (features.optional_dependencies and this.isOptional());
+            this.isWorkspace();
     }
 };

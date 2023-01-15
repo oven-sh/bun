@@ -4142,11 +4142,11 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
             if (exception.* != null) return js.JSValueMakeUndefined(ctx);
 
             // only reload those two
-            if (new_config.onRequest != .zero) {
+            if (this.config.onRequest != new_config.onRequest) {
                 this.config.onRequest.unprotect();
                 this.config.onRequest = new_config.onRequest;
             }
-            if (new_config.onError != .zero) {
+            if (this.config.onError != new_config.onError) {
                 this.config.onError.unprotect();
                 this.config.onError = new_config.onError;
             }

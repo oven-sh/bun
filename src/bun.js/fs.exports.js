@@ -176,6 +176,7 @@ var _lazyReadStream;
 var readStreamPathFastPathSymbol = Symbol.for("Bun.Node.readStreamPathFastPath");
 const readStreamSymbol = Symbol.for("Bun.NodeReadStream");
 const readStreamPathOrFdSymbol = Symbol.for("Bun.NodeReadStreamPathOrFd");
+const writeStreamSymbol = Symbol.for("Bun.NodeWriteStream");
 var writeStreamPathFastPathSymbol = Symbol.for("Bun.NodeWriteStreamFastPath");
 var writeStreamPathFastPathCallSymbol = Symbol.for("Bun.NodeWriteStreamFastPathCall");
 var kIoDone = Symbol.for("kIoDone");
@@ -843,12 +844,37 @@ var internalCreateWriteStream = function createWriteStream(path, options) {
 };
 
 export var createWriteStream = internalCreateWriteStream;
+
+export var WriteStream = Object.defineProperty(
+  function WriteStream(path, options) {
+    var _InternalWriteStream = getLazyWriteStream();
+    return new _InternalWriteStream(path, options);
+  },
+  Symbol.hasInstance,
+  { value: (instance) => (instance[writeStreamSymbol] = true) },
+);
+
+export var ReadStream = Object.defineProperty(
+  function ReadStream(path, options) {
+    var _InternalReadStream = getLazyReadStream();
+    return new _InternalReadStream(path, options);
+  },
+  Symbol.hasInstance,
+  { value: (instance) => (instance[readStreamSymbol] = true) },
+);
+
 Object.defineProperties(fs, {
   createReadStream: {
     value: internalCreateReadStream,
   },
   createWriteStream: {
     value: createWriteStream,
+  },
+  ReadStream: {
+    get: () => getLazyReadStream(),
+  },
+  WriteStream: {
+    get: () => getLazyWriteStream(),
   },
 });
 

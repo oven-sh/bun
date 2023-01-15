@@ -1848,8 +1848,11 @@ pub const VirtualMachine = struct {
 
         const message = exception.message;
         var did_print_name = false;
-        if (source_lines.next()) |source| {
-            if (source.text.len > 0 and exception.stack.frames()[0].position.isInvalid()) {
+        if (source_lines.next()) |source| brk: {
+            if (source.text.len == 0) break :brk;
+
+            const top_frame = if (exception.stack.frames_len > 0) exception.stack.frames()[0] else null;
+            if (top_frame == null or top_frame.?.position.isInvalid()) {
                 defer did_print_name = true;
                 var text = std.mem.trim(u8, source.text, "\n");
 
@@ -1864,12 +1867,11 @@ pub const VirtualMachine = struct {
                 );
 
                 try this.printErrorNameAndMessage(name, message, Writer, writer, allow_ansi_color);
-            } else if (source.text.len > 0) {
+            } else if (top_frame) |top| {
                 defer did_print_name = true;
                 const int_size = std.fmt.count("{d}", .{source.line});
                 const pad = max_line_number_pad - int_size;
                 try writer.writeByteNTimes(' ', pad);
-                const top = exception.stack.frames()[0];
                 var remainder = std.mem.trim(u8, source.text, "\n");
 
                 try writer.print(

@@ -936,4 +936,11 @@ export default {
   writeFile,
   writeFileSync,
   writeSync,
+
+  get WriteStream() {
+    return getLazyWriteStream();
+  },
+  get ReadStream() {
+    return getLazyReadStream();
+  },
 };

@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it } from "bun:test";
 import { gc, gcTick } from "./gc";
-import {
+import fs, {
   closeSync,
   existsSync,
   mkdirSync,
@@ -601,6 +601,27 @@ describe("createReadStream", () => {
         resolve(true);
       });
     });
+  });
+});
+
+describe("fs.WriteStream", () => {
+  it("should be exported", () => {
+    expect(fs.WriteStream).toBeDefined();
+  });
+
+  it("should be constructable", () => {
+    const stream = new fs.WriteStream("test.txt");
+    expect(stream instanceof fs.WriteStream).toBe(true);
+  });
+});
+
+describe("fs.ReadStream", () => {
+  it("should be exported", () => {
+    expect(fs.ReadStream).toBeDefined();
+  });
+  it("should be constructable", () => {
+    const stream = new fs.ReadStream("test.txt");
+    expect(stream instanceof fs.ReadStream).toBe(true);
   });
 });
 

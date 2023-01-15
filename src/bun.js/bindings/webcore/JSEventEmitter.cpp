@@ -358,8 +358,11 @@ static inline JSC::EncodedJSValue jsEventEmitterPrototypeFunction_removeAllListe
     UNUSED_PARAM(throwScope);
     UNUSED_PARAM(callFrame);
     auto& impl = castedThis->wrapped();
-    if (UNLIKELY(callFrame->argumentCount() < 1))
-        return throwVMError(lexicalGlobalObject, throwScope, createNotEnoughArgumentsError(lexicalGlobalObject));
+    if (callFrame->argumentCount() == 0) {
+        impl.removeAllListeners();
+        return JSValue::encode(jsUndefined());
+    }
+
     EnsureStillAliveScope argument0 = callFrame->uncheckedArgument(0);
     auto eventType = argument0.value().toPropertyKey(lexicalGlobalObject);
     RETURN_IF_EXCEPTION(throwScope, encodedJSValue());

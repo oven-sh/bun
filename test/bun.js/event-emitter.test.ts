@@ -22,6 +22,24 @@ describe("EventEmitter", () => {
     expect(emitter.getMaxListeners()).toBe(100);
   });
 
+  test("EventEmitter.removeAllListeners()", () => {
+    var emitter = new EventEmitter();
+    var ran = false;
+    emitter.on("hey", () => {
+      ran = true;
+    });
+    emitter.removeAllListeners();
+    expect(emitter.listenerCount("hey")).toBe(0);
+    emitter.emit("hey");
+    expect(ran).toBe(false);
+    emitter.on("hey", () => {
+      ran = true;
+    });
+    emitter.emit("hey");
+    expect(ran).toBe(true);
+    expect(emitter.listenerCount("hey")).toBe(1);
+  });
+
   // These are also tests for the done() function in the test runner.
   test("EventEmitter emit (different tick)", (done) => {
     var emitter = new EventEmitter();

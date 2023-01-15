@@ -57,7 +57,7 @@ it("should handle missing package", async () => {
     },
   });
   expect(stderr).toBeDefined();
-  var err = await new Response(stderr).text();
+  const err = await new Response(stderr).text();
   expect(err.split(/\r?\n/)).toContain('error: package "foo" not found localhost/foo 404');
   expect(stdout).toBeDefined();
   expect(await new Response(stdout).text()).toBe("");
@@ -96,7 +96,7 @@ it("should handle @scoped authentication", async () => {
     },
   });
   expect(stderr).toBeDefined();
-  var err = await new Response(stderr).text();
+  const err = await new Response(stderr).text();
   expect(err.split(/\r?\n/)).toContain(`GET ${url} - 555`);
   expect(stdout).toBeDefined();
   expect(await new Response(stdout).text()).toBe("");
@@ -131,12 +131,15 @@ it("should handle workspaces", async () => {
     },
   });
   expect(stderr).toBeDefined();
-  var err = await new Response(stderr).text();
+  const err = await new Response(stderr).text();
   expect(err).toContain("Saved lockfile");
   expect(stdout).toBeDefined();
-  var out = await new Response(stdout).text();
-  expect(out).toContain("+ Bar@workspace://bar");
-  expect(out).toContain("1 packages installed");
+  const out = await new Response(stdout).text();
+  expect(out.replace(/\s*\[[0-9\.]+ms\]\s*$/, "").split(/\r?\n/)).toEqual([
+    " + Bar@workspace://bar",
+    "",
+    " 1 packages installed",
+  ]);
   expect(await exited).toBe(0);
   expect(requested).toBe(0);
   expect(await readdir(join(package_dir, "node_modules"))).toEqual(["Bar"]);
@@ -180,13 +183,16 @@ it("should handle inter-dependency between workspaces", async () => {
     },
   });
   expect(stderr).toBeDefined();
-  var err = await new Response(stderr).text();
+  const err = await new Response(stderr).text();
   expect(err).toContain("Saved lockfile");
   expect(stdout).toBeDefined();
-  var out = await new Response(stdout).text();
-  expect(out).toContain("+ Bar@workspace://bar");
-  expect(out).toContain("+ Baz@workspace://packages/baz");
-  expect(out).toContain("2 packages installed");
+  const out = await new Response(stdout).text();
+  expect(out.replace(/\s*\[[0-9\.]+ms\]\s*$/, "").split(/\r?\n/)).toEqual([
+    " + Bar@workspace://bar",
+    " + Baz@workspace://packages/baz",
+    "",
+    " 2 packages installed",
+  ]);
   expect(await exited).toBe(0);
   expect(requested).toBe(0);
   expect(await readdir(join(package_dir, "node_modules"))).toEqual(["Bar", "Baz"]);
@@ -231,13 +237,16 @@ it("should handle inter-dependency between workspaces (devDependencies)", async 
     },
   });
   expect(stderr).toBeDefined();
-  var err = await new Response(stderr).text();
+  const err = await new Response(stderr).text();
   expect(err).toContain("Saved lockfile");
   expect(stdout).toBeDefined();
-  var out = await new Response(stdout).text();
-  expect(out).toContain("+ Bar@workspace://bar");
-  expect(out).toContain("+ Baz@workspace://packages/baz");
-  expect(out).toContain("2 packages installed");
+  const out = await new Response(stdout).text();
+  expect(out.replace(/\s*\[[0-9\.]+ms\]\s*$/, "").split(/\r?\n/)).toEqual([
+    " + Bar@workspace://bar",
+    " + Baz@workspace://packages/baz",
+    "",
+    " 2 packages installed",
+  ]);
   expect(await exited).toBe(0);
   expect(requested).toBe(0);
   expect(await readdir(join(package_dir, "node_modules"))).toEqual(["Bar", "Baz"]);
@@ -282,13 +291,16 @@ it("should handle inter-dependency between workspaces (optionalDependencies)", a
     },
   });
   expect(stderr).toBeDefined();
-  var err = await new Response(stderr).text();
+  const err = await new Response(stderr).text();
   expect(err).toContain("Saved lockfile");
   expect(stdout).toBeDefined();
-  var out = await new Response(stdout).text();
-  expect(out).toContain("+ Bar@workspace://bar");
-  expect(out).toContain("+ Baz@workspace://packages/baz");
-  expect(out).toContain("2 packages installed");
+  const out = await new Response(stdout).text();
+  expect(out.replace(/\s*\[[0-9\.]+ms\]\s*$/, "").split(/\r?\n/)).toEqual([
+    " + Bar@workspace://bar",
+    " + Baz@workspace://packages/baz",
+    "",
+    " 2 packages installed",
+  ]);
   expect(await exited).toBe(0);
   expect(requested).toBe(0);
   expect(await readdir(join(package_dir, "node_modules"))).toEqual(["Bar", "Baz"]);
@@ -327,14 +339,67 @@ it("should ignore peerDependencies within workspaces", async () => {
     },
   });
   expect(stderr).toBeDefined();
-  var err = await new Response(stderr).text();
+  const err = await new Response(stderr).text();
   expect(err).toContain("Saved lockfile");
   expect(stdout).toBeDefined();
-  var out = await new Response(stdout).text();
-  expect(out).toContain("+ Baz@workspace://packages/baz");
-  expect(out).toContain("1 packages installed");
+  const out = await new Response(stdout).text();
+  expect(out.replace(/\s*\[[0-9\.]+ms\]\s*$/, "").split(/\r?\n/)).toEqual([
+    " + Baz@workspace://packages/baz",
+    "",
+    " 1 packages installed",
+  ]);
   expect(await exited).toBe(0);
   expect(requested).toBe(0);
   expect(await readdir(join(package_dir, "node_modules"))).toEqual(["Baz"]);
   expect(await readlink(join(package_dir, "node_modules", "Baz"))).toBe(join("..", "packages", "baz"));
+});
+
+it("should handle life-cycle scripts within workspaces", async () => {
+  await writeFile(join(package_dir, "package.json"), JSON.stringify({
+    name: "Foo",
+    version: "0.0.1",
+    scripts: {
+      install: [bunExe(), "index.js"].join(" "),
+    },
+    workspaces: [
+      "bar",
+    ],
+  }));
+  await writeFile(join(package_dir, "index.js"), 'console.log("[scripts:run] Foo");');
+  await mkdir(join(package_dir, "bar"));
+  await writeFile(join(package_dir, "bar", "package.json"), JSON.stringify({
+    name: "Bar",
+    version: "0.0.2",
+    scripts: {
+      preinstall: [bunExe(), "index.js"].join(" "),
+    },
+  }));
+  await writeFile(join(package_dir, "bar", "index.js"), 'console.log("[scripts:run] Bar");');
+  const { stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "install", "--config", import.meta.dir + "/basic.toml"],
+    cwd: package_dir,
+    stdout: null,
+    stdin: "pipe",
+    stderr: "pipe",
+    env: {
+      ...process.env,
+      BUN_DEBUG_QUIET_LOGS: "1",
+    },
+  });
+  expect(stderr).toBeDefined();
+  const err = await new Response(stderr).text();
+  expect(err).toContain("Saved lockfile");
+  expect(stdout).toBeDefined();
+  const out = await new Response(stdout).text();
+  expect(out.replace(/\s*\[[0-9\.]+ms\]\s*$/, "").split(/\r?\n/)).toEqual([
+    "[scripts:run] Bar",
+    " + Bar@workspace://bar",
+    "[scripts:run] Foo",
+    "",
+    " 1 packages installed",
+  ]);
+  expect(await exited).toBe(0);
+  expect(requested).toBe(0);
+  expect(await readdir(join(package_dir, "node_modules"))).toEqual(["Bar"]);
+  expect(await readlink(join(package_dir, "node_modules", "Bar"))).toBe(join("..", "bar"));
 });

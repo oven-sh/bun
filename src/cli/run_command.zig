@@ -533,81 +533,67 @@ pub const RunCommand = struct {
         var needs_to_force_bun = force_using_bun or !found_node;
         var optional_bun_self_path: string = "";
 
-        if (bin_dirs.len > 0 or package_json_dir.len > 0) {
-            var new_path_len: usize = PATH.len + 2;
-            for (bin_dirs) |bin| {
-                new_path_len += bin.len + 1;
-            }
-
-            if (package_json_dir.len > 0) {
-                new_path_len += package_json_dir.len + 1;
-            }
-
-            new_path_len += if (needs_to_force_bun) bun_node_dir.len + 1 else 0;
-
-            var new_path = try std.ArrayList(u8).initCapacity(ctx.allocator, new_path_len);
-
-            if (needs_to_force_bun) {
-                createFakeTemporaryNodeExecutable(&new_path, &optional_bun_self_path) catch unreachable;
-                if (!force_using_bun) {
-                    this_bundler.env.map.put("NODE", bun_node_dir ++ "/node") catch unreachable;
-                    this_bundler.env.map.put("npm_node_execpath", bun_node_dir ++ "/node") catch unreachable;
-                    this_bundler.env.map.put("npm_execpath", optional_bun_self_path) catch unreachable;
-                }
-
-                needs_to_force_bun = false;
-            }
-
-            {
-                var needs_colon = false;
-                if (package_json_dir.len > 0) {
-                    defer needs_colon = true;
-                    if (needs_colon) {
-                        try new_path.append(':');
-                    }
-                    try new_path.appendSlice(package_json_dir);
-                }
-
-                var bin_dir_i: i32 = @intCast(i32, bin_dirs.len) - 1;
-                // Iterate in reverse order
-                // Directories are added to bin_dirs in top-down order
-                // That means the parent-most node_modules/.bin will be first
-                while (bin_dir_i >= 0) : (bin_dir_i -= 1) {
-                    defer needs_colon = true;
-                    if (needs_colon) {
-                        try new_path.append(':');
-                    }
-                    try new_path.appendSlice(bin_dirs[@intCast(usize, bin_dir_i)]);
-                }
-
-                if (needs_colon) {
-                    try new_path.append(':');
-                }
-                try new_path.appendSlice(PATH);
-            }
-
-            this_bundler.env.map.put("PATH", new_path.items) catch unreachable;
-            PATH = new_path.items;
+        var new_path_len: usize = PATH.len + 2;
+        for (bin_dirs) |bin| {
+            new_path_len += bin.len + 1;
         }
 
+        if (package_json_dir.len > 0) {
+            new_path_len += package_json_dir.len + 1;
+        }
+
+        new_path_len += root_dir_info.abs_path.len + "node_modules/.bin".len + 1;
+
         if (needs_to_force_bun) {
-            needs_to_force_bun = false;
+            new_path_len += bun_node_dir.len + 1;
+        }
 
-            var new_path = try std.ArrayList(u8).initCapacity(ctx.allocator, PATH.len);
+        var new_path = try std.ArrayList(u8).initCapacity(ctx.allocator, new_path_len);
+
+        if (needs_to_force_bun) {
             createFakeTemporaryNodeExecutable(&new_path, &optional_bun_self_path) catch unreachable;
-            if (new_path.items.len > 0)
-                try new_path.append(':');
-            try new_path.appendSlice(PATH);
-
-            this_bundler.env.map.put("PATH", new_path.items) catch unreachable;
-
             if (!force_using_bun) {
                 this_bundler.env.map.put("NODE", bun_node_dir ++ "/node") catch unreachable;
                 this_bundler.env.map.put("npm_node_execpath", bun_node_dir ++ "/node") catch unreachable;
                 this_bundler.env.map.put("npm_execpath", optional_bun_self_path) catch unreachable;
             }
-            PATH = new_path.items;
+
+            needs_to_force_bun = false;
         }
+
+        {
+            var needs_colon = false;
+            if (package_json_dir.len > 0) {
+                defer needs_colon = true;
+                if (needs_colon) {
+                    try new_path.append(':');
+                }
+                try new_path.appendSlice(package_json_dir);
+            }
+
+            var bin_dir_i: i32 = @intCast(i32, bin_dirs.len) - 1;
+            // Iterate in reverse order
+            // Directories are added to bin_dirs in top-down order
+            // That means the parent-most node_modules/.bin will be first
+            while (bin_dir_i >= 0) : (bin_dir_i -= 1) {
+                defer needs_colon = true;
+                if (needs_colon) {
+                    try new_path.append(':');
+                }
+                try new_path.appendSlice(bin_dirs[@intCast(usize, bin_dir_i)]);
+            }
+
+            if (needs_colon) {
+                try new_path.append(':');
+            }
+            try new_path.appendSlice(root_dir_info.abs_path);
+            try new_path.appendSlice("node_modules/.bin");
+            try new_path.append(':');
+            try new_path.appendSlice(PATH);
+        }
+
+        this_bundler.env.map.put("PATH", new_path.items) catch unreachable;
+        PATH = new_path.items;
 
         this_bundler.env.map.putDefault("npm_config_local_prefix", this_bundler.fs.top_level_dir) catch unreachable;
 

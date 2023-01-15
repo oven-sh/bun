@@ -478,7 +478,7 @@ pub const TestCommand = struct {
             if (reporter.summary.expectations > 0) Output.prettyError(" {d:5>} expect() calls\n", .{reporter.summary.expectations});
 
             Output.prettyError(
-                \\ Ran {d} tests across {d} files 
+                \\ Ran {d} tests across {d} files
             , .{
                 reporter.summary.fail + reporter.summary.pass,
                 test_files.len,
@@ -593,8 +593,8 @@ pub const TestCommand = struct {
             module.runTests(JSC.JSValue.zero, vm.global);
             vm.eventLoop().tick();
 
-            const initial_unhandled_counter = vm.unhandled_error_counter;
-            while (vm.active_tasks > 0 and vm.unhandled_error_counter == initial_unhandled_counter) {
+            var prev_unhandled_count = vm.unhandled_error_counter;
+            while (vm.active_tasks > 0) {
                 if (!jest.Jest.runner.?.has_pending_tests) jest.Jest.runner.?.drain();
                 vm.eventLoop().tick();
 
@@ -602,6 +602,11 @@ pub const TestCommand = struct {
                     vm.eventLoop().autoTick();
                     if (!jest.Jest.runner.?.has_pending_tests) break;
                     vm.eventLoop().tick();
+                }
+
+                while (prev_unhandled_count < vm.unhandled_error_counter) {
+                    vm.global.handleRejectedPromises();
+                    prev_unhandled_count = vm.unhandled_error_counter;
                 }
             }
             _ = vm.global.vm().runGC(false);

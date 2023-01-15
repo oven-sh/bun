@@ -1,13 +1,13 @@
 import { file, gc, serve } from "bun";
-import { afterEach, describe, it, expect, beforeAll, afterAll } from "bun:test";
-import { readFile, readFileSync, writeFileSync } from "fs";
+import { afterEach, describe, it, expect, afterAll } from "bun:test";
+import { readFileSync, writeFileSync } from "fs";
 import { resolve } from "path";
 
-afterEach(() => Bun.gc(true));
+afterEach(() => gc(true));
 
-var port = 10000;
-var count = 200;
-var server;
+const count = 200;
+let port = 10000;
+let server;
 
 async function runTest(serverOptions, test) {
   if (server) {
@@ -37,6 +37,40 @@ afterAll(() => {
     server.stop(true);
     server = undefined;
   }
+});
+
+[ 100, 101, 418, 999 ].forEach((statusCode) => {
+  it(`should response with HTTP status code (${statusCode})`, async () => {
+    await runTest(
+      {
+        fetch() {
+          return new Response("Foo Bar", { status: statusCode });
+        },
+      },
+      async (server) => {
+        const response = await fetch(`http://${server.hostname}:${server.port}`);
+        expect(response.status).toBe(statusCode);
+        expect(await response.text()).toBe("Foo Bar");
+      },
+    );
+  });
+});
+
+[ -200, 42, 12345, Math.PI ].forEach((statusCode) => {
+  it(`should ignore invalid HTTP status code (${statusCode})`, async () => {
+    await runTest(
+      {
+        fetch() {
+          return new Response("Foo Bar", { status: statusCode });
+        },
+      },
+      async (server) => {
+        const response = await fetch(`http://${server.hostname}:${server.port}`);
+        expect(response.status).toBe(200);
+        expect(await response.text()).toBe("Foo Bar");
+      }
+    );
+  });
 });
 
 it("should display a welcome message when the response value type is incorrect", async () => {
@@ -234,7 +268,6 @@ describe("streaming", () => {
   it("Error handler is called when a throwing stream hasn't written anything", async () => {
     await runTest(
       {
-        port: port++,
         error(e) {
           return new Response("Test Passed", { status: 200 });
         },
@@ -266,7 +299,6 @@ describe("streaming", () => {
   it("text from JS throws on start with no error handler", async () => {
     await runTest(
       {
-        port: port++,
         error: undefined,
 
         fetch(req) {
@@ -832,7 +864,6 @@ it("should support multiple Set-Cookie headers", async () => {
 });
 
 describe("should support Content-Range with Bun.file()", () => {
-  var server;
   // this must be a big file so we can test potentially multiple chunks
   // more than 65 KB
   const full = (function () {

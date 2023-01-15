@@ -112,7 +112,11 @@ const Stream = std.io.FixedBufferStream([]u8);
 pub const default_filename = "bun.lockb";
 
 pub const Scripts = struct {
-    const StringArrayList = std.ArrayListUnmanaged(string);
+    const Entry = struct {
+        cwd: string,
+        script: string,
+    };
+    const StringArrayList = std.ArrayListUnmanaged(Entry);
     const RunCommand = @import("../cli/run_command.zig").RunCommand;
 
     preinstall: StringArrayList = .{},
@@ -122,7 +126,7 @@ pub const Scripts = struct {
     prepare: StringArrayList = .{},
     postprepare: StringArrayList = .{},
 
-    pub fn hasAny(this: Scripts) bool {
+    pub fn hasAny(this: *Scripts) bool {
         return (this.preinstall.items.len +
             this.install.items.len +
             this.postinstall.items.len +
@@ -131,12 +135,27 @@ pub const Scripts = struct {
             this.postprepare.items.len) > 0;
     }
 
-    pub fn run(this: Scripts, allocator: std.mem.Allocator, env: *DotEnv.Loader, silent: bool, comptime hook: []const u8) !void {
-        for (@field(this, hook).items) |script| {
+    pub fn run(this: *Scripts, allocator: std.mem.Allocator, env: *DotEnv.Loader, silent: bool, comptime hook: []const u8) !void {
+        for (@field(this, hook).items) |entry| {
             std.debug.assert(Fs.FileSystem.instance_loaded);
-            const cwd = Fs.FileSystem.instance.top_level_dir;
-            _ = try RunCommand.runPackageScript(allocator, script, hook, cwd, env, &.{}, silent);
+            const cwd = Path.joinAbsString(
+                FileSystem.instance.top_level_dir,
+                &[_]string{
+                    entry.cwd,
+                },
+                .posix,
+            );
+            _ = try RunCommand.runPackageScript(allocator, entry.script, hook, cwd, env, &.{}, silent);
         }
+    }
+
+    pub fn deinit(this: *Scripts, allocator: std.mem.Allocator) void {
+        this.preinstall.deinit(allocator);
+        this.install.deinit(allocator);
+        this.postinstall.deinit(allocator);
+        this.preprepare.deinit(allocator);
+        this.prepare.deinit(allocator);
+        this.postprepare.deinit(allocator);
     }
 };
 
@@ -2593,20 +2612,18 @@ pub const Package = extern struct {
                         "prepare",
                         "preprepare",
                     };
+                    var cwd: string = "";
 
                     inline for (scripts) |script_name| {
                         if (scripts_prop.expr.get(script_name)) |script| {
                             if (script.asString(allocator)) |input| {
-                                var list = @field(lockfile.scripts, script_name);
-                                if (list.capacity == 0) {
-                                    list.capacity = 1;
-                                    list.items = try allocator.alloc(string, 1);
-                                    list.items[0] = input;
-                                } else {
-                                    try list.append(allocator, input);
+                                if (cwd.len == 0 and source.path.name.dir.len > 0) {
+                                    cwd = try allocator.dupe(u8, source.path.name.dir);
                                 }
-
-                                @field(lockfile.scripts, script_name) = list;
+                                try @field(lockfile.scripts, script_name).append(allocator, .{
+                                    .cwd = cwd,
+                                    .script = input,
+                                });
                             }
                         }
                     }
@@ -3100,6 +3117,7 @@ pub fn deinit(this: *Lockfile) void {
     this.packages.deinit(this.allocator);
     this.unique_packages.deinit(this.allocator);
     this.string_pool.deinit();
+    this.scripts.deinit(this.allocator);
     this.workspace_paths.deinit(this.allocator);
 }
 

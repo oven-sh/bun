@@ -2403,10 +2403,7 @@ pub const Expr = struct {
 
     pub inline fn asString(expr: *const Expr, allocator: std.mem.Allocator) ?string {
         if (std.meta.activeTag(expr.data) != .e_string) return null;
-
-        const key_str = expr.data.e_string;
-
-        return if (key_str.isUTF8()) key_str.data else key_str.string(allocator) catch null;
+        return expr.data.e_string.string(allocator) catch null;
     }
 
     pub fn asBool(
@@ -6841,11 +6838,9 @@ pub const Macro = struct {
                     var p = self.p;
 
                     const node_type: JSNode.Tag = JSNode.Tag.names.get(str.data) orelse {
-                        if (!str.isUTF8()) {
-                            self.log.addErrorFmt(p.source, tag_expr.loc, p.allocator, "Tag \"{s}\" is invalid", .{strings.toUTF8Alloc(self.p.allocator, str.slice16()) catch unreachable}) catch unreachable;
-                        } else {
-                            self.log.addErrorFmt(p.source, tag_expr.loc, p.allocator, "Tag \"{s}\" is invalid", .{str.data}) catch unreachable;
-                        }
+                        self.log.addErrorFmt(p.source, tag_expr.loc, p.allocator, "Tag \"{s}\" is invalid", .{
+                            str.string(self.p.allocator) catch unreachable,
+                        }) catch unreachable;
                         return false;
                     };
 
@@ -6863,13 +6858,9 @@ pub const Macro = struct {
                     var p = self.p;
 
                     const node_type: JSNode.Tag = JSNode.Tag.names.get(str.data) orelse {
-                        if (!str.isUTF8()) {
-                            self.log.addErrorFmt(p.source, tag_expr.loc, p.allocator, "Tag \"{s}\" is invalid", .{
-                                strings.toUTF8Alloc(self.p.allocator, str.slice16()) catch unreachable,
-                            }) catch unreachable;
-                        } else {
-                            self.log.addErrorFmt(p.source, tag_expr.loc, p.allocator, "Tag \"{s}\" is invalid", .{str.data}) catch unreachable;
-                        }
+                        self.log.addErrorFmt(p.source, tag_expr.loc, p.allocator, "Tag \"{s}\" is invalid", .{
+                            str.string(self.p.allocator) catch unreachable,
+                        }) catch unreachable;
                         return false;
                     };
 

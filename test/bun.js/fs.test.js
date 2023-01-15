@@ -26,6 +26,7 @@ import fs, {
   Dirent,
   Stats,
 } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 const Buffer = globalThis.Buffer || Uint8Array;
@@ -613,15 +614,63 @@ describe("fs.WriteStream", () => {
     const stream = new fs.WriteStream("test.txt");
     expect(stream instanceof fs.WriteStream).toBe(true);
   });
+
+  it("should be able to write to a file", (done) => {
+    const pathToDir = `${tmpdir()}/${Date.now()}`;
+    mkdirSync(pathToDir);
+    const path = `${pathToDir}/fs-writestream-test.txt`;
+
+    const stream = new fs.WriteStream(path, { flags: "w+" });
+    stream.write("Test file written successfully");
+    stream.end();
+
+    stream.on("error", (e) => {
+      done(e instanceof Error ? e : new Error(e));
+    });
+
+    stream.on("finish", () => {
+      expect(readFileSync(path, "utf8")).toBe("Test file written successfully");
+      done();
+    });
+  });
 });
 
 describe("fs.ReadStream", () => {
   it("should be exported", () => {
     expect(fs.ReadStream).toBeDefined();
   });
+
   it("should be constructable", () => {
     const stream = new fs.ReadStream("test.txt");
     expect(stream instanceof fs.ReadStream).toBe(true);
+  });
+
+  it("should be able to read from a file", (done) => {
+    const pathToDir = `${tmpdir()}/${Date.now()}`;
+    mkdirSync(pathToDir);
+    const path = `${pathToDir}fs-readstream-test.txt`;
+    const fd = openSync(path, "w+");
+
+    writeFileSync(fd, "Test file written successfully", {
+      encoding: "utf8",
+    });
+
+    const stream = new fs.ReadStream(path);
+    stream.setEncoding("utf8");
+    stream.on("error", (e) => {
+      done(e instanceof Error ? e : new Error(e));
+    });
+
+    let data = "";
+
+    stream.on("data", (chunk) => {
+      data += chunk;
+    });
+
+    stream.on("end", () => {
+      expect(data).toBe("Test file written successfully");
+      done();
+    });
   });
 });
 

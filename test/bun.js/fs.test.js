@@ -649,10 +649,10 @@ describe("fs.ReadStream", () => {
     const pathToDir = `${tmpdir()}/${Date.now()}`;
     mkdirSync(pathToDir);
     const path = `${pathToDir}fs-readstream-test.txt`;
-    const fd = openSync(path, "w+");
 
-    writeFileSync(fd, "Test file written successfully", {
+    writeFileSync(path, "Test file written successfully", {
       encoding: "utf8",
+      flag: "w+",
     });
 
     const stream = new fs.ReadStream(path);

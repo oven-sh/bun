@@ -171,7 +171,7 @@ pub const Body = struct {
 
             if (response_init.fastGet(ctx, .status)) |status_value| {
                 const number = status_value.to(i32);
-                if (number > 0)
+                if (100 <= number and number < 1000)
                     result.status_code = @truncate(u16, @intCast(u32, number));
             }
 
@@ -183,7 +183,6 @@ pub const Body = struct {
                 }
             }
 
-            if (result.headers == null and result.status_code < 200) return null;
             return result;
         }
     };

@@ -262,7 +262,7 @@ describe("streaming", () => {
     );
   });
 
-  // TODO: this test fails because we write status/headers at start of stream
+  // Also verifies error handler reset in `.reload()` due to test above
   it("text from JS throws on start with no error handler", async () => {
     await runTest(
       {

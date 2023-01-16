@@ -2802,6 +2802,13 @@ pub const JSValue = enum(JSValueReprInt) {
         return cppFn("makeWithNameAndPrototype", .{ globalObject, class, instance, name_ });
     }
 
+    pub fn createBufferFromLength(globalObject: *JSGlobalObject, len: usize) JSValue {
+        JSC.markBinding(@src());
+        return JSBuffer__bufferFromLength(globalObject, @intCast(i64, len));
+    }
+
+    extern fn JSBuffer__bufferFromLength(*JSGlobalObject, i64) JSValue;
+
     /// Must come from globally-allocated memory if allocator is not null
     pub fn createBuffer(globalObject: *JSGlobalObject, slice: []u8, allocator: ?std.mem.Allocator) JSValue {
         JSC.markBinding(@src());

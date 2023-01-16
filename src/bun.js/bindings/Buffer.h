@@ -12,6 +12,7 @@
 #include "JavaScriptCore/JSBase.h"
 #include "headers-handwritten.h"
 
+extern "C" JSC::EncodedJSValue JSBuffer__bufferFromLength(JSC::JSGlobalObject* lexicalGlobalObject, int64_t length);
 extern "C" JSC::EncodedJSValue JSBuffer__bufferFromPointerAndLengthAndDeinit(JSC::JSGlobalObject* lexicalGlobalObject, char* ptr, size_t length, void* ctx, JSTypedArrayBytesDeallocator bytesDeallocator);
 extern "C" JSC::EncodedJSValue Bun__encoding__toString(const uint8_t* input, size_t len, JSC::JSGlobalObject* globalObject, Encoding encoding);
 extern "C" JSC::EncodedJSValue Bun__encoding__toStringUTF8(const uint8_t* input, size_t len, JSC::JSGlobalObject* globalObject);

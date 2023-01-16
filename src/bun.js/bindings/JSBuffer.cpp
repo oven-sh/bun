@@ -223,7 +223,7 @@ static inline JSC::JSUint8Array* JSBuffer__bufferFromLengthAsArray(JSC::JSGlobal
     RELEASE_AND_RETURN(throwScope, uint8Array);
 }
 
-EncodedJSValue JSBuffer__bufferFromLength(JSC::JSGlobalObject* lexicalGlobalObject, int64_t length)
+extern "C" EncodedJSValue JSBuffer__bufferFromLength(JSC::JSGlobalObject* lexicalGlobalObject, int64_t length)
 {
     return JSC::JSValue::encode(JSBuffer__bufferFromLengthAsArray(lexicalGlobalObject, length));
 }

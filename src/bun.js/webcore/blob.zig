@@ -926,7 +926,12 @@ pub const Blob = struct {
 
                 const State = @This();
 
-                const __opener_flags = std.os.O.NONBLOCK | std.os.O.CLOEXEC;
+                /// This is a workaround for some versions of IO uring returning
+                /// EAGAIN when reading a file opened with O_NONBLOCK. Since io_uring waits, we don't need to wait.
+                const non_block_without_io_uring = if (Environment.isLinux) 0 else std.os.O.NONBLOCK;
+
+                const __opener_flags = non_block_without_io_uring | std.os.O.CLOEXEC;
+
                 const open_flags_ = if (@hasDecl(This, "open_flags"))
                     This.open_flags | __opener_flags
                 else

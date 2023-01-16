@@ -18747,6 +18747,7 @@ pub const struct_bio_st = extern struct {
         else
             return error.Fail;
     }
+
 };
 
 pub const SSL = opaque {
@@ -18796,6 +18797,10 @@ pub const SSL = opaque {
         return SSL_has_pending(ssl) > 0;
     }
 
+    pub inline fn setFD(this: *SSL, fd: c_int) void {
+        _ = SSL_set_fd(this, fd);
+    }
+    
     pub inline fn setIsClient(ssl: *SSL, comptime is_client: bool) void {
         if (comptime !is_client) {
             SSL_set_accept_state(ssl);
@@ -18831,7 +18836,7 @@ pub const SSL = opaque {
 
         SSL_set_enable_ech_grease(ssl, 1);
     }
-
+   
     pub fn handshake(this: *SSL) Error!void {
         const rc = SSL_connect(this);
         return switch (SSL_get_error(this, rc)) {
@@ -18941,7 +18946,7 @@ pub const SSL_CTX = opaque {
         ctx.setup();
         return ctx;
     }
-
+    
     pub fn setup(ctx: *SSL_CTX) void {
         if (auto_crypto_buffer_pool == null) auto_crypto_buffer_pool = CRYPTO_BUFFER_POOL_new();
         SSL_CTX_set0_buffer_pool(ctx, auto_crypto_buffer_pool);
@@ -18954,6 +18959,10 @@ pub const SSL_CTX = opaque {
         SSL_CTX_set_custom_verify(this, 0, cb);
         // SSL_CTX_set_custom_verify(this, 1, cb);
         // SSL_CTX_set_custom_verify(this, 2, cb);
+    }
+    
+    pub fn deinit(this: *SSL_CTX) void {
+        SSL_CTX_free(this);
     }
 };
 

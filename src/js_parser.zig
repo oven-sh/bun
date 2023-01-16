@@ -118,7 +118,9 @@ fn foldStringAddition(lhs: Expr, rhs: Expr) ?Expr {
         .e_string => |left| {
             if (rhs.data == .e_string and left.isUTF8() and rhs.data.e_string.isUTF8()) {
                 var orig = lhs.data.e_string.*;
-                orig.push(rhs.data.e_string);
+                const rhs_clone = Expr.init(E.String, rhs.data.e_string.*, rhs.loc);
+                orig.push(rhs_clone.data.e_string);
+
                 return Expr.init(E.String, orig, lhs.loc);
             }
         },

@@ -1672,23 +1672,15 @@ pub const E = struct {
 
         pub fn resovleRopeIfNeeded(this: *String, allocator: std.mem.Allocator) void {
             if (this.next == null or !this.isUTF8()) return;
-            var bytes = allocator.alloc(u8, this.rope_len) catch unreachable;
-            var ptr = bytes.ptr;
-            var remain = bytes.len;
-            @memcpy(ptr, this.data.ptr, this.data.len);
-            ptr += this.data.len;
-            remain -= this.data.len;
             var str = this.next;
+            var bytes = std.ArrayList(u8).initCapacity(allocator, this.rope_len) catch unreachable;
+
+            bytes.appendSliceAssumeCapacity(this.data);
             while (str) |strin| {
-                @memcpy(ptr, strin.data.ptr, strin.data.len);
-                ptr += strin.data.len;
-                remain -= strin.data.len;
-                var prev = strin;
+                bytes.appendSlice(strin.data) catch unreachable;
                 str = strin.next;
-                prev.next = null;
-                prev.end = null;
             }
-            this.data = bytes;
+            this.data = bytes.items;
             this.next = null;
         }
 
@@ -3607,7 +3599,8 @@ pub const Expr = struct {
 
         pub fn canBeConstValue(this: Expr.Data) bool {
             return switch (this) {
-                .e_string, .e_number, .e_boolean, .e_null, .e_undefined => true,
+                .e_number, .e_boolean, .e_null, .e_undefined => true,
+                .e_string => |str| str.next == null,
                 .e_array => |array| array.was_originally_macro,
                 .e_object => |object| object.was_originally_macro,
                 else => false,

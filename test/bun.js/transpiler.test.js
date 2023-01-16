@@ -1774,12 +1774,17 @@ class Foo {
 
       check(
         `
-const a = "[^aeiou]";
-const b = a + "[^aeiouy]*";
-console.log(a, b);
+const a = "a";
+const c = "b" + a;
+const b = c + a;
+const d = b + a;
+console.log(a, b, c, d);
         `,
         `
-console.log("[^aeiou]", "[^aeiou][^aeiouy]*");
+const c = "ba";
+const b = c + "a";
+const d = b + "a";
+console.log("a", b, c, d);
         `.trim(),
       );
 

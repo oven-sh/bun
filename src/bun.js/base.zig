@@ -2058,7 +2058,10 @@ pub const ExternalBuffer = struct {
 };
 pub export fn ExternalBuffer_deallocator(bytes_: *anyopaque, ctx: *anyopaque) callconv(.C) void {
     var external: *ExternalBuffer = bun.cast(*ExternalBuffer, ctx);
-    external.function.?(external.global, external.ctx, bytes_);
+    if (external.function) |function| {
+        function(external.global, external.ctx, bytes_);
+    }
+
     const allocator = external.allocator;
     allocator.destroy(external);
 }

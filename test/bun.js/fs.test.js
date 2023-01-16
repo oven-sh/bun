@@ -670,6 +670,25 @@ describe("fs.WriteStream", () => {
     expect(stream instanceof WriteStreamStar_).toBe(true);
     expect(stream instanceof fs.WriteStream).toBe(true);
   });
+
+  it("should be able to write to a file with re-exported WriteStream", (done) => {
+    const pathToDir = `${tmpdir()}/${Date.now()}`;
+    mkdirSync(pathToDir);
+    const path = `${pathToDir}/fs-writestream-re-exported-test.txt`;
+
+    const stream = new WriteStream_(path, { flags: "w+" });
+    stream.write("Test file written successfully");
+    stream.end();
+
+    stream.on("error", (e) => {
+      done(e instanceof Error ? e : new Error(e));
+    });
+
+    stream.on("finish", () => {
+      expect(readFileSync(path, "utf8")).toBe("Test file written successfully");
+      done();
+    });
+  });
 });
 
 describe("fs.ReadStream", () => {
@@ -736,6 +755,34 @@ describe("fs.ReadStream", () => {
     expect(stream instanceof ReadStreamStar_).toBe(true);
     expect(stream instanceof ReadStream_).toBe(true);
     expect(stream instanceof fs.ReadStream).toBe(true);
+  });
+
+  it("should be able to read from a file, with re-exported ReadStream", (done) => {
+    const pathToDir = `${tmpdir()}/${Date.now()}`;
+    mkdirSync(pathToDir);
+    const path = `${pathToDir}fs-readstream-re-exported-test.txt`;
+
+    writeFileSync(path, "Test file written successfully", {
+      encoding: "utf8",
+      flag: "w+",
+    });
+
+    const stream = new ReadStream_(path);
+    stream.setEncoding("utf8");
+    stream.on("error", (e) => {
+      done(e instanceof Error ? e : new Error(e));
+    });
+
+    let data = "";
+
+    stream.on("data", (chunk) => {
+      data += chunk;
+    });
+
+    stream.on("end", () => {
+      expect(data).toBe("Test file written successfully");
+      done();
+    });
   });
 });
 

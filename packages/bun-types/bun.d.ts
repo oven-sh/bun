@@ -2787,7 +2787,7 @@ declare module "bun" {
      * When `connectError` is not specified, the rejected promise will be added
      * to the promise rejection queue.
      */
-    connectError?(error: Error): void | Promise<void>;
+    connectError?(socket: Socket<Data>, error: Error): void | Promise<void>;
   }
 
   interface SocketOptions<Data = unknown> {

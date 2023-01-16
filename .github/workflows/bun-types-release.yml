@@ -25,7 +25,7 @@ jobs:
           node-version: latest
 
       - name: Install dependencies
-        run: bun install
+        run: bun upgrade --canary; bun install
 
       - name: Build package
         run: bun run build
@@ -52,7 +52,7 @@ jobs:
         uses: actions/setup-node@v3
         with:
           node-version: latest
-          registry-url: 'https://registry.npmjs.org'
+          registry-url: "https://registry.npmjs.org"
 
       - name: Download all artifacts
         uses: actions/download-artifact@v3
@@ -82,8 +82,8 @@ jobs:
         uses: actions/setup-node@v3
         with:
           node-version: latest
-          registry-url: 'https://npm.pkg.github.com/'
-          scope: '@oven-sh'
+          registry-url: "https://npm.pkg.github.com/"
+          scope: "@oven-sh"
 
       - name: Install bun
         uses: oven-sh/setup-bun@v0.1.8

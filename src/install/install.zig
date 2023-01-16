@@ -1168,7 +1168,7 @@ const PackageInstall = struct {
             ) !u32 {
                 var real_file_count: u32 = 0;
                 var buf: [bun.MAX_PATH_BYTES]u8 = undefined;
-                var cache_dir_path = try std.os.getFdPath(cache_dir_fd, &buf);
+                var cache_dir_path = try bun.getFdPath(cache_dir_fd, &buf);
 
                 var remain = buf[cache_dir_path.len..];
                 var cache_dir_offset = cache_dir_path.len;
@@ -1178,7 +1178,7 @@ const PackageInstall = struct {
                     remain = remain[1..];
                 }
                 var dest_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
-                var dest_base = try std.os.getFdPath(dest_dir_fd, &dest_buf);
+                var dest_base = try bun.getFdPath(dest_dir_fd, &dest_buf);
                 var dest_remaining = dest_buf[dest_base.len..];
                 var dest_dir_offset = dest_base.len;
                 if (dest_base.len > 0 and dest_buf[dest_base.len - 1] != std.fs.path.sep) {
@@ -1687,7 +1687,7 @@ pub const PackageManager = struct {
             this.global_dir = global_dir;
             this.global_link_dir = try global_dir.dir.makeOpenPathIterable("node_modules", .{});
             var buf: [bun.MAX_PATH_BYTES]u8 = undefined;
-            const _path = try std.os.getFdPath(this.global_link_dir.?.dir.fd, &buf);
+            const _path = try bun.getFdPath(this.global_link_dir.?.dir.fd, &buf);
             this.global_link_dir_path = try Fs.FileSystem.DirnameStore.instance.append([]const u8, _path);
             break :brk this.global_link_dir.?;
         };
@@ -1868,7 +1868,7 @@ pub const PackageManager = struct {
         if (this.options.log_level != .silent) {
             const elapsed = timer.read();
             if (elapsed > std.time.ns_per_ms * 100) {
-                var cache_dir_path = std.os.getFdPath(cache_directory.dir.fd, &path_buf) catch "it's";
+                var cache_dir_path = bun.getFdPath(cache_directory.dir.fd, &path_buf) catch "it's";
                 Output.prettyErrorln(
                     "<r><yellow>warn<r>: Slow filesystem detected. If {s} is a network drive, consider setting $BUN_INSTALL_CACHE_DIR to a local folder.",
                     .{cache_dir_path},
@@ -6212,7 +6212,7 @@ pub const PackageManager = struct {
     pub fn setupGlobalDir(manager: *PackageManager, ctx: *const Command.Context) !void {
         manager.options.global_bin_dir = try Options.openGlobalBinDir(ctx.install);
         var out_buffer: [bun.MAX_PATH_BYTES]u8 = undefined;
-        var result = try std.os.getFdPath(manager.options.global_bin_dir.dir.fd, &out_buffer);
+        var result = try bun.getFdPath(manager.options.global_bin_dir.dir.fd, &out_buffer);
         out_buffer[result.len] = 0;
         var result_: [:0]u8 = out_buffer[0..result.len :0];
         manager.options.bin_path = std.meta.assumeSentinel(try FileSystem.instance.dirname_store.append([:0]u8, result_), 0);

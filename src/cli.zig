@@ -1338,7 +1338,7 @@ pub const Command = struct {
         Global.configureAllocator(.{ .long_running = true });
 
         // the case where this doesn't work is if the script name on disk doesn't end with a known JS-like file extension
-        var absolute_script_path = std.os.getFdPath(file.handle, &script_name_buf) catch return false;
+        var absolute_script_path = bun.getFdPath(file.handle, &script_name_buf) catch return false;
         BunJS.Run.boot(
             ctx.*,
             file,

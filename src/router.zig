@@ -757,7 +757,7 @@ pub const Route = struct {
                 if (!needs_close) entry.cache.fd = file.handle;
             }
 
-            var _abs = std.os.getFdPath(file.handle, &route_file_buf) catch |err| {
+            var _abs = bun.getFdPath(file.handle, &route_file_buf) catch |err| {
                 log.addErrorFmt(null, Logger.Loc.Empty, allocator, "{s} resolving route: {s}", .{ @errorName(err), abs_path_str }) catch unreachable;
                 return null;
             };

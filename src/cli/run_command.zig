@@ -1052,7 +1052,7 @@ pub const RunCommand = struct {
                 //     Output.flush();
                 //     return err;
                 // };
-                // // var outbuf = std.os.getFdPath(file.handle, &path_buf2) catch |err| {
+                // // var outbuf = bun.getFdPath(file.handle, &path_buf2) catch |err| {
                 // //     if (!log_errors) return false;
                 // //     Output.prettyErrorln("<r>error: <red>{s}<r> resolving file: \"{s}\"", .{ err, std.mem.span(destination) });
                 // //     Output.flush();

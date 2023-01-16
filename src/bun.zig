@@ -769,3 +769,41 @@ pub fn zero(comptime Type: type) Type {
 }
 pub const c_ares = @import("./deps/c_ares.zig");
 pub const URL = @import("./url.zig").URL;
+
+var needs_proc_self_workaround: bool = false;
+
+// This is our "polyfill" when /proc/self/fd is not available it's only
+// necessary on linux because other platforms don't have an optional
+// /proc/self/fd
+fn getFdPathViaCWD(fd: std.os.fd_t, buf: *[@This().MAX_PATH_BYTES]u8) ![]u8 {
+    const prev_fd = try std.os.openatZ(std.os.AT.FDCWD, ".", 0, 0);
+    var needs_chdir = false;
+    defer {
+        if (needs_chdir) std.os.fchdir(prev_fd) catch unreachable;
+        std.os.close(prev_fd);
+    }
+    try std.os.fchdir(fd);
+    needs_chdir = true;
+    return std.os.getcwd(buf);
+}
+
+/// Get the absolute path to a file descriptor.
+/// On Linux, when `/proc/self/fd` is not available, this function will attempt to use `fchdir` and `getcwd` to get the path instead.
+pub fn getFdPath(fd: std.os.fd_t, buf: *[@This().MAX_PATH_BYTES]u8) ![]u8 {
+    if (comptime !Environment.isLinux) {
+        return std.os.getFdPath(fd, buf);
+    }
+
+    if (needs_proc_self_workaround) {
+        return getFdPathViaCWD(fd, buf);
+    }
+
+    return std.os.getFdPath(fd, buf) catch |err| {
+        if (err == error.FileNotFound and !needs_proc_self_workaround) {
+            needs_proc_self_workaround = true;
+            return getFdPathViaCWD(fd, buf);
+        }
+
+        return err;
+    };
+}

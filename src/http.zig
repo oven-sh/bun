@@ -564,7 +564,7 @@ pub const RequestContext = struct {
             if (stat.kind == .SymLink) {
                 file.* = std.fs.openFileAbsolute(absolute_path, .{ .mode = .read_only }) catch return null;
 
-                absolute_path = std.os.getFdPath(
+                absolute_path = bun.getFdPath(
                     file.handle,
                     &Bundler.tmp_buildfile_buf,
                 ) catch return null;

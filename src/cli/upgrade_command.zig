@@ -514,7 +514,7 @@ pub const UpgradeCommand = struct {
                 Global.exit(1);
             };
             const save_dir = save_dir_it.dir;
-            var tmpdir_path = std.os.getFdPath(save_dir.fd, &tmpdir_path_buf) catch {
+            var tmpdir_path = bun.getFdPath(save_dir.fd, &tmpdir_path_buf) catch {
                 Output.prettyErrorln("<r><red>error:<r> Failed to read temporary directory", .{});
                 Global.exit(1);
             };

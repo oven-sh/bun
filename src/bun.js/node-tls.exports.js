@@ -111,7 +111,22 @@ export const CLIENT_RENEG_LIMIT = 3,
   DEFAULT_CIPHERS =
     "DHE-RSA-AES256-GCM-SHA384:DHE-RSA-AES128-GCM-SHA256:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-RSA-AES128-GCM-SHA256",
   DEFAULT_MIN_VERSION = "TLSv1.2",
-  DEFAULT_MAX_VERSION = "TLSv1.3";
+  DEFAULT_MAX_VERSION = "TLSv1.3",
+  createConnection = (port, host, connectListener) => {
+    if (typeof host == "function") {
+      connectListener = host;
+      host = undefined;
+    }
+    var options =
+      typeof port == "object"
+        ? port
+        : {
+            host: host,
+            port: port,
+          };
+    return new TLSSocket(options).connect(options, connectListener);
+  },
+  connect = createConnection;
 
 var exports = {
   createSecureContext,
@@ -135,7 +150,16 @@ var exports = {
   DEFAULT_MIN_VERSION,
   DEFAULT_MAX_VERSION,
   [Symbol.for("CommonJS")]: 0,
+  connect,
+  createConnection,
 };
 
 export default exports;
-export { createSecureContext, parseCertString, TLSSocket, SecureContext };
+export {
+  createSecureContext,
+  parseCertString,
+  TLSSocket,
+  SecureContext,
+  connect,
+  createConnection,
+};

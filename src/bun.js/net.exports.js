@@ -110,6 +110,7 @@ export const Socket = (function (InternalSocket) {
       open(socket) {
         const self = socket.data;
         socket.timeout(self.timeout);
+        socket.ref();
         self.#socket = socket;
         self.connecting = false;
         self.emit("connect");
@@ -138,6 +139,7 @@ export const Socket = (function (InternalSocket) {
       if (callback) {
         const chunk = self.#writeChunk;
         const written = socket.write(chunk);
+
         self.bytesWritten += written;
         if (written < chunk.length) {
           self.#writeChunk = chunk.slice(written);

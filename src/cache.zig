@@ -163,7 +163,7 @@ pub const Fs = struct {
                     }
                 };
             } else {
-                file_handle = try std.fs.openFileAbsolute(path, .{ .mode = .read_only });
+                file_handle = try std.fs.cwd().openFile(path, .{ .mode = .read_only });
             }
         }
 

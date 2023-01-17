@@ -110,7 +110,7 @@ pub const CommandLineReporter = struct {
 
         const display_label = if (label.len > 0) label else "test";
 
-        const color_code = comptime if (skip) "<yellow><d>" else "";
+        const color_code = comptime if (skip) "<d>" else "";
 
         if (Output.enable_ansi_colors_stderr) {
             for (scopes) |_, i| {
@@ -135,7 +135,7 @@ pub const CommandLineReporter = struct {
             }
         }
 
-        const line_color_code = if (comptime skip) "<r><yellow><d>" else "<r><b>";
+        const line_color_code = if (comptime skip) "<r><d>" else "<r><b>";
 
         if (Output.enable_ansi_colors_stderr)
             writer.print(comptime Output.prettyFmt(line_color_code ++ " {s}<r>", true), .{display_label}) catch unreachable

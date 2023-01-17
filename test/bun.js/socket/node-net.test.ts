@@ -170,16 +170,13 @@ describe("net.Socket write", () => {
 
   function runWithServer(cb) {
     return (done) => {
-      let onClose, server;
+      let server;
 
       function close(socket) {
-        if (onClose) {
-          const done = onClose;
-          onClose = null;
-          expect(Buffer.concat(socket.data).toString("utf8")).toBe(message);
-          done();
-        }
+        expect(Buffer.concat(socket.data).toString("utf8")).toBe(message);
+        done();
       }
+
       var leaky;
       server = Bun.listen({
         hostname: "0.0.0.0",
@@ -193,7 +190,7 @@ describe("net.Socket write", () => {
           end: close,
           error(socket, err) {
             leaky = socket;
-            onClose(err);
+            done(err);
           },
           open(socket) {
             leaky = socket;
@@ -216,7 +213,7 @@ describe("net.Socket write", () => {
     };
   }
 
-  it.skip(
+  it(
     "should work with .end(data)",
     runWithServer((server, done) => {
       const socket = new Socket()
@@ -230,7 +227,7 @@ describe("net.Socket write", () => {
     }),
   );
 
-  it.skip(
+  it(
     "should work with .write(data).end()",
     runWithServer((server, done) => {
       const socket = new Socket()
@@ -244,7 +241,7 @@ describe("net.Socket write", () => {
     }),
   );
 
-  it.skip(
+  it(
     "should work with multiple .write()s",
     runWithServer((server, done) => {
       const socket = new Socket()

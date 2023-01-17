@@ -3543,6 +3543,8 @@ void JSC__JSValue__forEachProperty(JSC__JSValue JSValue0, JSC__JSGlobalObject* g
     }
 
     auto* clientData = WebCore::clientData(vm);
+    WTF::Vector<Identifier, 6> visitedProperties;
+
 restart:
     if (fast) {
         bool anyHits = false;
@@ -3555,24 +3557,30 @@ restart:
             if ((entry.attributes() & (PropertyAttribute::Function)) == 0 && (entry.attributes() & (PropertyAttribute::Builtin)) != 0) {
                 return true;
             }
+            auto* prop = entry.key();
 
-            if (entry.key() == vm.propertyNames->constructor
-                || entry.key() == vm.propertyNames->length
-                || entry.key() == vm.propertyNames->underscoreProto
-                || entry.key() == vm.propertyNames->toStringTagSymbol)
+            if (prop == vm.propertyNames->constructor
+                || prop == vm.propertyNames->length
+                || prop == vm.propertyNames->underscoreProto
+                || prop == vm.propertyNames->toStringTagSymbol)
                 return true;
 
-            if (clientData->builtinNames().bunNativePtrPrivateName() == entry.key())
+            if (clientData->builtinNames().bunNativePtrPrivateName() == prop)
                 return true;
 
-            ZigString key = toZigString(entry.key());
+            if (visitedProperties.contains(Identifier::fromUid(vm, prop))) {
+                return true;
+            }
+            visitedProperties.append(Identifier::fromUid(vm, prop));
+
+            ZigString key = toZigString(prop);
 
             if (key.len == 0)
                 return true;
 
             JSC::JSValue propertyValue = objectToUse == object ? objectToUse->getDirect(entry.offset()) : JSValue();
             if (!propertyValue || propertyValue.isGetterSetter()) {
-                propertyValue = objectToUse->get(globalObject, entry.key());
+                propertyValue = objectToUse->get(globalObject, prop);
             }
 
             if (scope.exception())
@@ -3583,7 +3591,7 @@ restart:
 
             anyHits = true;
             JSC::EnsureStillAliveScope ensureStillAliveScope(propertyValue);
-            iter(globalObject, arg2, &key, JSC::JSValue::encode(propertyValue), entry.key()->isSymbol());
+            iter(globalObject, arg2, &key, JSC::JSValue::encode(propertyValue), prop->isSymbol());
             return true;
         });
         if (scope.exception()) {
@@ -3640,6 +3648,10 @@ restart:
                         || property == vm.propertyNames->toStringTagSymbol)
                         continue;
                 }
+
+                if (visitedProperties.contains(property))
+                    continue;
+                visitedProperties.append(property);
 
                 ZigString key = toZigString(property.isSymbol() && !property.isPrivateName() ? property.impl() : property.string());
 

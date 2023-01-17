@@ -436,13 +436,13 @@ pub const Loader = struct {
         // TODO: When Web Worker support is added, make sure to intern these strings
         var http_proxy: ?URL = null;
 
-        if(url.isHTTP()){
-        if (this.map.get("http_proxy")) |proxy| {
+        if (url.isHTTP()) {
+            if (this.map.get("http_proxy")) |proxy| {
                 http_proxy = URL.parse(proxy);
             } else if (this.map.get("HTTP_PROXY")) |proxy| {
                 http_proxy = URL.parse(proxy);
             }
-        }else{
+        } else {
             if (this.map.get("https_proxy")) |proxy| {
                 http_proxy = URL.parse(proxy);
             } else if (this.map.get("HTTPS_PROXY")) |proxy| {
@@ -459,17 +459,17 @@ pub const Loader = struct {
                 no_proxy = no_proxy_text;
             }
 
-            if (no_proxy) | no_proxy_text | {
+            if (no_proxy) |no_proxy_text| {
                 var no_proxy_list = std.mem.split(u8, no_proxy_text, ",");
                 var next = no_proxy_list.next();
-                while(next != null){
+                while (next != null) {
                     var host = next.?;
-                    if (strings.eql(host, "*")){
+                    if (strings.eql(host, "*")) {
                         return null;
                     }
                     //strips .
-                    if(host[0] == '.'){
-                        host = host[1..:0];
+                    if (host[0] == '.') {
+                        host = host[1.. :0];
                     }
                     //hostname ends with suffix
                     if (strings.lastIndexOf(url.hostname, host) == url.hostname.len - host.len) {

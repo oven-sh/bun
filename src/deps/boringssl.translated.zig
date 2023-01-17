@@ -18799,7 +18799,7 @@ pub const SSL = opaque {
     pub inline fn setFD(this: *SSL, fd: c_int) void {
         _ = SSL_set_fd(this, fd);
     }
-    
+
     pub inline fn setIsClient(ssl: *SSL, comptime is_client: bool) void {
         if (comptime is_client) {
             SSL_set_connect_state(ssl);
@@ -18835,7 +18835,7 @@ pub const SSL = opaque {
 
         SSL_set_enable_ech_grease(ssl, 1);
     }
-   
+
     pub fn handshake(this: *SSL) Error!void {
         const rc = SSL_connect(this);
         return switch (SSL_get_error(this, rc)) {
@@ -18930,7 +18930,6 @@ pub const SSL = opaque {
         return rbio.slice()[start_len..][0..written];
     }
 
-
     pub fn writeAll(this: *SSL, buf: []const u8) Error![]const u8 {
         var rbio = SSL_get_wbio(this);
         const start_len = rbio.slice().len;
@@ -18960,7 +18959,7 @@ pub const SSL_CTX = opaque {
         // SSL_CTX_set_custom_verify(this, 1, cb);
         // SSL_CTX_set_custom_verify(this, 2, cb);
     }
-    
+
     pub fn deinit(this: *SSL_CTX) void {
         SSL_CTX_free(this);
     }

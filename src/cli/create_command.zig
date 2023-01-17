@@ -1989,7 +1989,7 @@ pub const Example = struct {
 
         // ensure very stable memory address
         const parsed_tarball_url = URL.parse(tarball_url);
-        
+
         http_proxy = env_loader.getHttpProxy(parsed_tarball_url);
 
         async_http.* = HTTP.AsyncHTTP.initSync(ctx.allocator, .GET, parsed_tarball_url, .{}, "", mutable, "", 60 * std.time.ns_per_min, http_proxy);

@@ -451,7 +451,7 @@ pub const Loader = struct {
         }
 
         //NO_PROXY filter
-        if (http_proxy) | proxy_host | {
+        if (http_proxy != null) {
             var no_proxy: ?string = null;
             if (this.map.get("no_proxy")) |no_proxy_text| {
                 no_proxy = no_proxy_text;
@@ -472,7 +472,7 @@ pub const Loader = struct {
                         host = host[1..:0];
                     }
                     //hostname ends with suffix
-                    if (strings.lastIndexOf(proxy_host.hostname, host) == proxy_host.hostname.len - host.len) {
+                    if (strings.lastIndexOf(url.hostname, host) == url.hostname.len - host.len) {
                         return null;
                     }
                     next = no_proxy_list.next();

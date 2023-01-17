@@ -167,3 +167,12 @@ it("process.versions", () => {
     expect(process.versions[name]).toBe(versions[name]);
   }
 });
+
+it("process.config", () => {
+  expect(process.config).toEqual({
+    variables: {
+      v8_enable_i8n_support: 1,
+    },
+    target_defaults: {},
+  });
+});

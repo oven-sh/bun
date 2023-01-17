@@ -18747,7 +18747,6 @@ pub const struct_bio_st = extern struct {
         else
             return error.Fail;
     }
-
 };
 
 pub const SSL = opaque {
@@ -18802,10 +18801,10 @@ pub const SSL = opaque {
     }
     
     pub inline fn setIsClient(ssl: *SSL, comptime is_client: bool) void {
-        if (comptime !is_client) {
-            SSL_set_accept_state(ssl);
-        } else {
+        if (comptime is_client) {
             SSL_set_connect_state(ssl);
+        } else {
+            SSL_set_accept_state(ssl);
         }
     }
 
@@ -18931,6 +18930,7 @@ pub const SSL = opaque {
         return rbio.slice()[start_len..][0..written];
     }
 
+
     pub fn writeAll(this: *SSL, buf: []const u8) Error![]const u8 {
         var rbio = SSL_get_wbio(this);
         const start_len = rbio.slice().len;
@@ -18946,7 +18946,7 @@ pub const SSL_CTX = opaque {
         ctx.setup();
         return ctx;
     }
-    
+
     pub fn setup(ctx: *SSL_CTX) void {
         if (auto_crypto_buffer_pool == null) auto_crypto_buffer_pool = CRYPTO_BUFFER_POOL_new();
         SSL_CTX_set0_buffer_pool(ctx, auto_crypto_buffer_pool);

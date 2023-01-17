@@ -20,7 +20,7 @@ extern "C" bool is_executable_file(const char* path)
 
 #ifdef __APPLE__
     // O_EXEC is macOS specific
-    int fd = open(path, O_EXEC, O_CLOEXEC);
+    int fd = open(path, O_EXEC | O_CLOEXEC, 0);
     if (fd < 0)
         return false;
     close(fd);

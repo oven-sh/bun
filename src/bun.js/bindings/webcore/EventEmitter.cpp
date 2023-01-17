@@ -72,6 +72,18 @@ void EventEmitter::removeAllListenersForBindings(const Identifier& eventType)
     removeAllListeners(eventType);
 }
 
+bool EventEmitter::removeAllListeners()
+{
+    auto* data = eventTargetData();
+    if (!data)
+        return false;
+
+    auto& map = data->eventListenerMap;
+    bool any = !map.isEmpty();
+    map.clear();
+    return any;
+}
+
 bool EventEmitter::removeAllListeners(const Identifier& eventType)
 {
     auto* data = eventTargetData();

@@ -1,10 +1,10 @@
 pub const std = @import("std");
 pub const logger = @import("bun").logger;
-pub const js_lexer = @import("./js_lexer.zig");
+pub const js_lexer = bun.js_lexer;
 pub const importRecord = @import("./import_record.zig");
-pub const js_ast = @import("./js_ast.zig");
+pub const js_ast = bun.JSAst;
 pub const options = @import("./options.zig");
-pub const js_printer = @import("./js_printer.zig");
+pub const js_printer = bun.js_printer;
 pub const renamer = @import("./renamer.zig");
 const _runtime = @import("./runtime.zig");
 pub const RuntimeImports = _runtime.Runtime.Imports;
@@ -117,8 +117,11 @@ fn foldStringAddition(lhs: Expr, rhs: Expr) ?Expr {
     switch (lhs.data) {
         .e_string => |left| {
             if (rhs.data == .e_string and left.isUTF8() and rhs.data.e_string.isUTF8()) {
-                lhs.data.e_string.push(rhs.data.e_string);
-                return lhs;
+                var orig = lhs.data.e_string.*;
+                const rhs_clone = Expr.init(E.String, rhs.data.e_string.*, rhs.loc);
+                orig.push(rhs_clone.data.e_string);
+
+                return Expr.init(E.String, orig, lhs.loc);
             }
         },
         .e_binary => |bin| {
@@ -6781,7 +6784,7 @@ fn NewParser_(
 
         fn parseClassStmt(p: *P, loc: logger.Loc, opts: *ParseStatementOptions) !Stmt {
             var name: ?js_ast.LocRef = null;
-            var class_keyword = p.lexer.range();
+            const class_keyword = p.lexer.range();
             if (p.lexer.token == .t_class) {
                 //marksyntaxfeature
                 try p.lexer.next();
@@ -6789,11 +6792,11 @@ fn NewParser_(
                 try p.lexer.expected(.t_class);
             }
 
-            var is_identifier = p.lexer.token == .t_identifier;
+            const is_identifier = p.lexer.token == .t_identifier;
 
-            if (!opts.is_name_optional or (is_identifier and (!is_typescript_enabled or !strings.eqlComptime(p.lexer.identifier, "interface")))) {
-                var name_loc = p.lexer.loc();
-                var name_text = p.lexer.identifier;
+            if (!opts.is_name_optional or (is_identifier and (!is_typescript_enabled or !strings.eqlComptime(p.lexer.identifier, "implements")))) {
+                const name_loc = p.lexer.loc();
+                const name_text = p.lexer.identifier;
                 try p.lexer.expect(.t_identifier);
 
                 // We must return here

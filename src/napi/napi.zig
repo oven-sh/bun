@@ -1058,12 +1058,14 @@ pub export fn napi_fatal_error(location_ptr: ?[*:0]const u8, location_len: usize
 
     bun.Global.panic("napi: {s}", .{message});
 }
-pub export fn napi_create_buffer(env: napi_env, length: usize, data: [*]*anyopaque, result: *napi_value) napi_status {
-    var buf = JSC.ExternalBuffer.create(null, @ptrCast([*]u8, data)[0..length], env, null, env.bunVM().allocator) catch {
-        return .generic_failure;
-    };
-
-    result.* = buf.toJS(env);
+pub export fn napi_create_buffer(env: napi_env, length: usize, data: ?**anyopaque, result: *napi_value) napi_status {
+    var buffer = JSC.JSValue.createBufferFromLength(env, length);
+    if (length > 0) {
+        if (data) |ptr| {
+            ptr.* = buffer.asArrayBuffer(env).?.ptr;
+        }
+    }
+    result.* = buffer;
     return .ok;
 }
 pub export fn napi_create_external_buffer(env: napi_env, length: usize, data: ?*anyopaque, finalize_cb: napi_finalize, finalize_hint: ?*anyopaque, result: *napi_value) napi_status {
@@ -1075,15 +1077,17 @@ pub export fn napi_create_external_buffer(env: napi_env, length: usize, data: ?*
     return .ok;
 }
 pub export fn napi_create_buffer_copy(env: napi_env, length: usize, data: [*]u8, result_data: ?*?*anyopaque, result: *napi_value) napi_status {
-    var duped = env.bunVM().allocator.alloc(u8, length) catch {
-        return .generic_failure;
-    };
-    @memcpy(duped.ptr, data, length);
-    if (result_data) |res| {
-        res.* = duped.ptr;
+    var buffer = JSC.JSValue.createBufferFromLength(env, length);
+    if (buffer.asArrayBuffer(env)) |array_buf| {
+        if (length > 0) {
+            @memcpy(array_buf.slice().ptr, data, length);
+        }
+        if (result_data) |ptr| {
+            ptr.* = if (length > 0) array_buf.ptr else null;
+        }
     }
 
-    result.* = JSC.JSValue.createBuffer(env, duped, env.bunVM().allocator);
+    result.* = buffer;
 
     return .ok;
 }

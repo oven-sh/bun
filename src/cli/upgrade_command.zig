@@ -10,12 +10,12 @@ const default_allocator = bun.default_allocator;
 const C = bun.C;
 const std = @import("std");
 
-const lex = @import("../js_lexer.zig");
+const lex = bun.js_lexer;
 const logger = @import("bun").logger;
 
 const options = @import("../options.zig");
-const js_parser = @import("../js_parser.zig");
-const js_ast = @import("../js_ast.zig");
+const js_parser = bun.js_parser;
+const js_ast = bun.JSAst;
 const linker = @import("../linker.zig");
 
 const allocators = @import("../allocators.zig");
@@ -24,7 +24,7 @@ const Api = @import("../api/schema.zig").Api;
 const resolve_path = @import("../resolver/resolve_path.zig");
 const configureTransformOptionsForBun = @import("../bun.js/config.zig").configureTransformOptionsForBun;
 const Command = @import("../cli.zig").Command;
-const bundler = @import("../bundler.zig");
+const bundler = bun.bundler;
 const NodeModuleBundle = @import("../node_module_bundle.zig").NodeModuleBundle;
 const fs = @import("../fs.zig");
 const URL = @import("../url.zig").URL;
@@ -32,7 +32,7 @@ const HTTP = @import("bun").HTTP;
 const ParseJSON = @import("../json_parser.zig").ParseJSONUTF8;
 const Archive = @import("../libarchive/libarchive.zig").Archive;
 const Zlib = @import("../zlib.zig");
-const JSPrinter = @import("../js_printer.zig");
+const JSPrinter = bun.js_printer;
 const DotEnv = @import("../env_loader.zig");
 const which = @import("../which.zig").which;
 const clap = @import("bun").clap;
@@ -532,7 +532,7 @@ pub const UpgradeCommand = struct {
                 Global.exit(1);
             };
             const save_dir = save_dir_it.dir;
-            var tmpdir_path = std.os.getFdPath(save_dir.fd, &tmpdir_path_buf) catch {
+            var tmpdir_path = bun.getFdPath(save_dir.fd, &tmpdir_path_buf) catch {
                 Output.prettyErrorln("<r><red>error:<r> Failed to read temporary directory", .{});
                 Global.exit(1);
             };

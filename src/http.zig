@@ -17,8 +17,8 @@ const ApiReader = @import("./api/schema.zig").Reader;
 const ApiWriter = @import("./api/schema.zig").Writer;
 const ByteApiWriter = @import("./api/schema.zig").ByteWriter;
 const NewApiWriter = @import("./api/schema.zig").Writer;
-const js_ast = @import("./js_ast.zig");
-const bundler = @import("bundler.zig");
+const js_ast = bun.JSAst;
+const bundler = bun.bundler;
 const logger = @import("bun").logger;
 const Fs = @import("./fs.zig");
 const Options = @import("./options.zig");
@@ -36,7 +36,7 @@ const MacroMap = @import("./resolver/package_json.zig").MacroMap;
 const Analytics = @import("./analytics/analytics_thread.zig");
 const Arena = std.heap.ArenaAllocator;
 const ThreadlocalArena = @import("./mimalloc_arena.zig").Arena;
-const JSON = @import("./json_parser.zig");
+const JSON = bun.JSON;
 const DateTime = bun.DateTime;
 const ThreadPool = @import("bun").ThreadPool;
 const SourceMap = @import("./sourcemap/sourcemap.zig");
@@ -60,7 +60,7 @@ pub const Headers = picohttp.Headers;
 pub const MimeType = @import("./http/mime_type.zig");
 const Bundler = bundler.Bundler;
 const Websocket = @import("./http/websocket.zig");
-const JSPrinter = @import("./js_printer.zig");
+const JSPrinter = bun.js_printer;
 const watcher = @import("./watcher.zig");
 threadlocal var req_headers_buf: [100]picohttp.Header = undefined;
 threadlocal var res_headers_buf: [100]picohttp.Header = undefined;
@@ -564,7 +564,7 @@ pub const RequestContext = struct {
             if (stat.kind == .SymLink) {
                 file.* = std.fs.openFileAbsolute(absolute_path, .{ .mode = .read_only }) catch return null;
 
-                absolute_path = std.os.getFdPath(
+                absolute_path = bun.getFdPath(
                     file.handle,
                     &Bundler.tmp_buildfile_buf,
                 ) catch return null;

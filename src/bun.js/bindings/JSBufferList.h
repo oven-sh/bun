@@ -76,11 +76,11 @@ public:
         return JSC::JSValue(m_deque.first().get());
     }
 
-    JSC::JSValue concat(JSC::VM&, JSC::JSGlobalObject*, int32_t);
+    JSC::JSValue concat(JSC::VM&, JSC::JSGlobalObject*, size_t);
     JSC::JSValue join(JSC::VM&, JSC::JSGlobalObject*, JSString*);
-    JSC::JSValue consume(JSC::VM&, JSC::JSGlobalObject*, int32_t, bool);
-    JSC::JSValue _getBuffer(JSC::VM&, JSC::JSGlobalObject*, int32_t);
-    JSC::JSValue _getString(JSC::VM&, JSC::JSGlobalObject*, int32_t);
+    JSC::JSValue consume(JSC::VM&, JSC::JSGlobalObject*, size_t, bool);
+    JSC::JSValue _getBuffer(JSC::VM&, JSC::JSGlobalObject*, size_t);
+    JSC::JSValue _getString(JSC::VM&, JSC::JSGlobalObject*, size_t);
 
 private:
     Deque<WriteBarrier<Unknown>> m_deque;
@@ -134,6 +134,7 @@ public:
     // Must be defined for each specialization class.
     static JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES construct(JSC::JSGlobalObject*, JSC::CallFrame*);
     DECLARE_EXPORT_INFO;
+
 private:
     JSBufferListConstructor(JSC::VM& vm, JSC::Structure* structure, JSC::NativeFunction nativeFunction)
         : Base(vm, structure, nativeFunction, nativeFunction)

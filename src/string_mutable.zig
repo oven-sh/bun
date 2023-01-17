@@ -1,12 +1,14 @@
 const std = @import("std");
 const expect = std.testing.expect;
 
-const strings = @import("string_immutable.zig");
-const js_lexer = @import("js_lexer.zig");
+const bun = @import("bun");
 
-const string = @import("string_types.zig").string;
-const stringZ = @import("string_types.zig").stringZ;
-const CodePoint = @import("string_types.zig").CodePoint;
+const strings = bun.strings;
+const js_lexer = bun.js_lexer;
+
+const string = bun.string;
+const stringZ = bun.stringZ;
+const CodePoint = bun.CodePoint;
 
 pub const MutableString = struct {
     allocator: std.mem.Allocator,
@@ -299,7 +301,7 @@ pub const MutableString = struct {
             return pending.len;
         }
 
-        const E = @import("./js_ast.zig").E;
+        const E = bun.JSAst.E;
 
         /// Write a E.String to the buffer.
         /// This automatically encodes UTF-16 into UTF-8 using

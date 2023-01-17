@@ -500,20 +500,20 @@ describe("createWriteStream", () => {
     const stream = createWriteStream(path);
     try {
       stream.write(null);
-      throw new Error("should not get here");
+      expect(() => {}).toThrow(Error);
     } catch (exception) {
       expect(exception.code).toBe("ERR_STREAM_NULL_VALUES");
     }
   });
 
-  it("writing null with objectMode: true throws ERR_STREAM_NULL_VALUES", async () => {
+  it("writing null throws ERR_STREAM_NULL_VALUES (objectMode: true)", async () => {
     const path = `/tmp/fs.test.js/${Date.now()}.createWriteStreamNulls.txt`;
     const stream = createWriteStream(path, {
       objectMode: true,
     });
     try {
       stream.write(null);
-      throw new Error("should not get here");
+      expect(() => {}).toThrow(Error);
     } catch (exception) {
       expect(exception.code).toBe("ERR_STREAM_NULL_VALUES");
     }
@@ -524,26 +524,32 @@ describe("createWriteStream", () => {
     const stream = createWriteStream(path);
     try {
       stream.write(false);
-      throw new Error("should not get here");
+      expect(() => {}).toThrow(Error);
     } catch (exception) {
       expect(exception.code).toBe("ERR_INVALID_ARG_TYPE");
     }
   });
 
-  it("writing false with objectMode: true should not throw", async () => {
+  it("writing false throws ERR_INVALID_ARG_TYPE (objectMode: true)", async () => {
     const path = `/tmp/fs.test.js/${Date.now()}.createWriteStreamFalse.txt`;
     const stream = createWriteStream(path, {
       objectMode: true,
     });
-    stream.write(false);
-    stream.on("error", () => {
-      throw new Error("should not get here");
-    });
+    try {
+      stream.write(false);
+      expect(() => {}).toThrow(Error);
+    } catch (exception) {
+      expect(exception.code).toBe("ERR_INVALID_ARG_TYPE");
+    }
   });
 });
 
 describe("fs/promises", () => {
-  const { readFile, writeFile } = promises;
+  const { readFile, stat, writeFile } = promises;
+
+  it("should not segfault on exception", async () => {
+    stat("foo/bar");
+  });
 
   it("readFile", async () => {
     const data = await readFile(import.meta.dir + "/readFileSync.txt", "utf8");

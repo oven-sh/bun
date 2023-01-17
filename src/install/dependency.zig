@@ -235,6 +235,7 @@ pub const Version = struct {
             .folder, .dist_tag => lhs.literal.eql(rhs.literal, lhs_buf, rhs_buf),
             .tarball => lhs.value.tarball.eql(rhs.value.tarball, lhs_buf, rhs_buf),
             .symlink => lhs.value.symlink.eql(rhs.value.symlink, lhs_buf, rhs_buf),
+            .workspace => lhs.value.workspace.eql(rhs.value.workspace, lhs_buf, rhs_buf),
             else => true,
         };
     }
@@ -259,7 +260,6 @@ pub const Version = struct {
         /// https://stackoverflow.com/questions/51954956/whats-the-difference-between-yarn-link-and-npm-link
         symlink = 5,
 
-        /// TODO:
         workspace = 6,
         /// TODO:
         git = 7,
@@ -271,20 +271,24 @@ pub const Version = struct {
         }
 
         pub inline fn isGitHubRepoPath(dependency: string) bool {
-            var slash_count: u8 = 0;
+            if (dependency.len < 3) return false;
+            if (dependency[0] == '/') return false;
 
-            for (dependency) |c| {
-                slash_count += @as(u8, @boolToInt(c == '/'));
-                if (slash_count > 1 or c == '#') break;
+            var slash_index: usize = 0;
 
+            for (dependency) |c, i| {
                 // Must be alphanumeric
                 switch (c) {
-                    '\\', '/', 'a'...'z', 'A'...'Z', '0'...'9', '%' => {},
+                    '/' => {
+                        if (slash_index > 0) return false;
+                        slash_index = i;
+                    },
+                    '\\', 'a'...'z', 'A'...'Z', '0'...'9', '%' => {},
                     else => return false,
                 }
             }
 
-            return (slash_count == 1);
+            return slash_index > 0 and slash_index != dependency.len - 1;
         }
 
         // this won't work for query string params
@@ -331,32 +335,17 @@ pub const Version = struct {
 
                 // git://, git@, git+ssh
                 'g' => {
-                    if (strings.eqlComptime(
-                        dependency[0..@min("git://".len, dependency.len)],
-                        "git://",
-                    ) or strings.eqlComptime(
-                        dependency[0..@min("git@".len, dependency.len)],
-                        "git@",
-                    ) or strings.eqlComptime(
-                        dependency[0..@min("git+ssh".len, dependency.len)],
-                        "git+ssh",
-                    ) or strings.eqlComptime(
-                        dependency[0..@min("git+file".len, dependency.len)],
-                        "git+file",
-                    ) or strings.eqlComptime(
-                        dependency[0..@min("git+http".len, dependency.len)],
-                        "git+http",
-                    ) or strings.eqlComptime(
-                        dependency[0..@min("git+https".len, dependency.len)],
-                        "git+https",
-                    )) {
+                    if (strings.hasPrefixComptime(dependency, "git://") or
+                        strings.hasPrefixComptime(dependency, "git@") or
+                        strings.hasPrefixComptime(dependency, "git+ssh") or
+                        strings.hasPrefixComptime(dependency, "git+file") or
+                        strings.hasPrefixComptime(dependency, "git+http") or
+                        strings.hasPrefixComptime(dependency, "git+https"))
+                    {
                         return .git;
                     }
 
-                    if (strings.eqlComptime(
-                        dependency[0..@min("github".len, dependency.len)],
-                        "github",
-                    ) or isGitHubRepoPath(dependency)) {
+                    if (strings.hasPrefixComptime(dependency, "github:") or isGitHubRepoPath(dependency)) {
                         return .github;
                     }
 
@@ -378,24 +367,15 @@ pub const Version = struct {
                     }
 
                     var remainder = dependency;
-                    if (strings.eqlComptime(
-                        remainder[0..@min("https://".len, remainder.len)],
-                        "https://",
-                    )) {
+                    if (strings.hasPrefixComptime(remainder, "https://")) {
                         remainder = remainder["https://".len..];
                     }
 
-                    if (strings.eqlComptime(
-                        remainder[0..@min("http://".len, remainder.len)],
-                        "http://",
-                    )) {
+                    if (strings.hasPrefixComptime(remainder, "http://")) {
                         remainder = remainder["http://".len..];
                     }
 
-                    if (strings.eqlComptime(
-                        remainder[0..@min("github".len, remainder.len)],
-                        "github",
-                    ) or isGitHubRepoPath(remainder)) {
+                    if (strings.hasPrefixComptime(remainder, "github.com/") or isGitHubRepoPath(remainder)) {
                         return .github;
                     }
 
@@ -422,10 +402,7 @@ pub const Version = struct {
                     if (isTarball(dependency))
                         return .tarball;
 
-                    if (strings.eqlComptime(
-                        dependency[0..@min("file:".len, dependency.len)],
-                        "file:",
-                    )) {
+                    if (strings.hasPrefixComptime(dependency, "file:")) {
                         return .folder;
                     }
 
@@ -436,36 +413,14 @@ pub const Version = struct {
                     return .dist_tag;
                 },
 
-                // link://
+                // link:
                 'l' => {
                     if (isTarball(dependency))
                         return .tarball;
 
-                    if (strings.eqlComptime(
-                        dependency[0..@min("link:".len, dependency.len)],
-                        "link:",
-                    )) {
+                    if (strings.hasPrefixComptime(dependency, "link:")) {
                         return .symlink;
                     }
-
-                    if (isGitHubRepoPath(dependency)) {
-                        return .github;
-                    }
-
-                    return .dist_tag;
-                },
-
-                // workspace://
-                'w' => {
-                    if (strings.eqlComptime(
-                        dependency[0..@min("workspace://".len, dependency.len)],
-                        "workspace://",
-                    )) {
-                        return .workspace;
-                    }
-
-                    if (isTarball(dependency))
-                        return .tarball;
 
                     if (isGitHubRepoPath(dependency)) {
                         return .github;
@@ -499,8 +454,7 @@ pub const Version = struct {
         /// Equivalent to npm link
         symlink: String,
 
-        /// Unsupported, but still parsed so an error can be thrown
-        workspace: void,
+        workspace: String,
         /// Unsupported, but still parsed so an error can be thrown
         git: void,
         /// Unsupported, but still parsed so an error can be thrown
@@ -525,16 +479,26 @@ pub fn eqlResolved(a: Dependency, b: Dependency) bool {
     return @as(Dependency.Version.Tag, a.version) == @as(Dependency.Version.Tag, b.version) and a.resolution == b.resolution;
 }
 
-pub fn parse(
+pub inline fn parse(
+    allocator: std.mem.Allocator,
+    dependency: string,
+    sliced: *const SlicedString,
+    log: ?*logger.Log,
+) ?Version {
+    return parseWithOptionalTag(allocator, dependency, null, sliced, log);
+}
+
+pub fn parseWithOptionalTag(
     allocator: std.mem.Allocator,
     dependency_: string,
+    tag_or_null: ?Dependency.Version.Tag,
     sliced: *const SlicedString,
     log: ?*logger.Log,
 ) ?Version {
     var dependency = std.mem.trimLeft(u8, dependency_, " \t\n\r");
 
     if (dependency.len == 0) return null;
-    const tag = Version.Tag.infer(dependency);
+    const tag = tag_or_null orelse Version.Tag.infer(dependency);
 
     if (tag == .npm and strings.hasPrefixComptime(dependency, "npm:")) {
         dependency = dependency[4..];
@@ -652,7 +616,14 @@ pub fn parseWithTag(
                 .literal = sliced.value(),
             };
         },
-        .workspace, .git, .github => {
+        .workspace => {
+            return Version{
+                .value = .{ .workspace = sliced.value() },
+                .tag = .workspace,
+                .literal = sliced.value(),
+            };
+        },
+        .git, .github => {
             if (log_) |log| log.addErrorFmt(null, logger.Loc.Empty, allocator, "Support for dependency type \"{s}\" is not implemented yet (\"{s}\")", .{ @tagName(tag), dependency }) catch unreachable;
             return null;
         },
@@ -667,6 +638,11 @@ pub const Behavior = enum(u8) {
     pub const optional: u8 = 1 << 2;
     pub const dev: u8 = 1 << 3;
     pub const peer: u8 = 1 << 4;
+    pub const workspace: u8 = 1 << 5;
+
+    pub inline fn isNormal(this: Behavior) bool {
+        return (@enumToInt(this) & Behavior.normal) != 0;
+    }
 
     pub inline fn isOptional(this: Behavior) bool {
         return (@enumToInt(this) & Behavior.optional) != 0 and !this.isPeer();
@@ -680,16 +656,48 @@ pub const Behavior = enum(u8) {
         return (@enumToInt(this) & Behavior.peer) != 0;
     }
 
-    pub inline fn isNormal(this: Behavior) bool {
-        return (@enumToInt(this) & Behavior.normal) != 0;
+    pub inline fn isWorkspace(this: Behavior) bool {
+        return (@enumToInt(this) & Behavior.workspace) != 0;
+    }
+
+    pub inline fn setNormal(this: Behavior, value: bool) Behavior {
+        if (value) {
+            return @intToEnum(Behavior, @enumToInt(this) | Behavior.normal);
+        } else {
+            return @intToEnum(Behavior, @enumToInt(this) & ~Behavior.normal);
+        }
     }
 
     pub inline fn setOptional(this: Behavior, value: bool) Behavior {
-        return @intToEnum(Behavior, @enumToInt(this) | (@as(u8, @boolToInt(value))) << 2);
+        if (value) {
+            return @intToEnum(Behavior, @enumToInt(this) | Behavior.optional);
+        } else {
+            return @intToEnum(Behavior, @enumToInt(this) & ~Behavior.optional);
+        }
     }
 
     pub inline fn setDev(this: Behavior, value: bool) Behavior {
-        return @intToEnum(Behavior, @enumToInt(this) | (@as(u8, @boolToInt(value))) << 2);
+        if (value) {
+            return @intToEnum(Behavior, @enumToInt(this) | Behavior.dev);
+        } else {
+            return @intToEnum(Behavior, @enumToInt(this) & ~Behavior.dev);
+        }
+    }
+
+    pub inline fn setPeer(this: Behavior, value: bool) Behavior {
+        if (value) {
+            return @intToEnum(Behavior, @enumToInt(this) | Behavior.peer);
+        } else {
+            return @intToEnum(Behavior, @enumToInt(this) & ~Behavior.peer);
+        }
+    }
+
+    pub inline fn setWorkspace(this: Behavior, value: bool) Behavior {
+        if (value) {
+            return @intToEnum(Behavior, @enumToInt(this) | Behavior.workspace);
+        } else {
+            return @intToEnum(Behavior, @enumToInt(this) & ~Behavior.workspace);
+        }
     }
 
     pub inline fn cmp(lhs: Behavior, rhs: Behavior) std.math.Order {
@@ -725,6 +733,13 @@ pub const Behavior = enum(u8) {
                 .lt;
         }
 
+        if (lhs.isWorkspace() != rhs.isWorkspace()) {
+            return if (lhs.isWorkspace())
+                .gt
+            else
+                .lt;
+        }
+
         return .eq;
     }
 
@@ -734,8 +749,9 @@ pub const Behavior = enum(u8) {
 
     pub fn isEnabled(this: Behavior, features: Features) bool {
         return this.isNormal() or
+            (features.optional_dependencies and this.isOptional()) or
             (features.dev_dependencies and this.isDev()) or
             (features.peer_dependencies and this.isPeer()) or
-            (features.optional_dependencies and this.isOptional());
+            this.isWorkspace();
     }
 };

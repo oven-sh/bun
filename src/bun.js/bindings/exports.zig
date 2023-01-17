@@ -26,8 +26,8 @@ const JSModuleLoader = JSC.JSModuleLoader;
 const Microtask = JSC.Microtask;
 const JSPrivateDataPtr = @import("../base.zig").JSPrivateDataPtr;
 const Backtrace = @import("../../crash_reporter.zig");
-const JSPrinter = @import("../../js_printer.zig");
-const JSLexer = @import("../../js_lexer.zig");
+const JSPrinter = bun.js_printer;
+const JSLexer = bun.js_lexer;
 const typeBaseName = @import("../../meta.zig").typeBaseName;
 
 pub const ZigGlobalObject = extern struct {

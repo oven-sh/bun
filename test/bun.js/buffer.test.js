@@ -1,6 +1,8 @@
 import { describe, it, expect, beforeEach, afterEach } from "bun:test";
 import { gc } from "./gc";
 
+const BufferModule = await import("buffer");
+
 beforeEach(() => gc());
 afterEach(() => gc());
 
@@ -560,7 +562,7 @@ it("Buffer.swap16", () => {
   const examples = [
     ["", ""],
     ["a1", "1a"],
-    ["a1b2", "1a2b"]
+    ["a1b2", "1a2b"],
   ];
 
   for (let i = 0; i < examples.length; i++) {
@@ -586,7 +588,7 @@ it("Buffer.swap32", () => {
   const examples = [
     ["", ""],
     ["a1b2", "2b1a"],
-    ["a1b2c3d4", "2b1a4d3c"]
+    ["a1b2c3d4", "2b1a4d3c"],
   ];
 
   for (let i = 0; i < examples.length; i++) {
@@ -697,4 +699,22 @@ it("Buffer can be mocked", () => {
     buf.writeBigInt64LE(0);
     buf.writeBigUInt64LE(0);
   }).not.toThrow();
+});
+
+it("constants", () => {
+  expect(BufferModule.constants.MAX_LENGTH).toBe(4294967296);
+  expect(BufferModule.constants.MAX_STRING_LENGTH).toBe(536870888);
+  expect(BufferModule.default.constants.MAX_LENGTH).toBe(4294967296);
+  expect(BufferModule.default.constants.MAX_STRING_LENGTH).toBe(536870888);
+});
+
+it("File", () => {
+  expect(BufferModule.File).toBe(Blob);
+});
+
+it("transcode", () => {
+  expect(typeof BufferModule.transcode).toBe("undefined");
+
+  // This is a masqueradesAsUndefined function
+  expect(() => BufferModule.transcode()).toThrow("Not implemented");
 });

@@ -14,11 +14,11 @@ const std = @import("std");
 const options = @import("../options.zig");
 const cache = @import("../cache.zig");
 const logger = @import("bun").logger;
-const js_ast = @import("../js_ast.zig");
+const js_ast = bun.JSAst;
 
 const fs = @import("../fs.zig");
 const resolver = @import("./resolver.zig");
-const js_lexer = @import("../js_lexer.zig");
+const js_lexer = bun.js_lexer;
 const resolve_path = @import("./resolve_path.zig");
 // Assume they're not going to have hundreds of main fields or browser map
 // so use an array-backed hash table instead of bucketed

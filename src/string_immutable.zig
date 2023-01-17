@@ -1,9 +1,9 @@
 const std = @import("std");
 const expect = std.testing.expect;
 const Environment = @import("./env.zig");
-const string = @import("string_types.zig").string;
-const stringZ = @import("string_types.zig").stringZ;
-const CodePoint = @import("string_types.zig").CodePoint;
+const string = bun.string;
+const stringZ = bun.stringZ;
+const CodePoint = bun.CodePoint;
 const bun = @import("bun");
 pub const joiner = @import("./string_joiner.zig");
 const assert = std.debug.assert;

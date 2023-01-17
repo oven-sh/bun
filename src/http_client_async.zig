@@ -394,10 +394,12 @@ fn NewHTTPContext(comptime ssl: bool) type {
                 ptr: *anyopaque,
                 socket: HTTPSocket,
             ) void {
-                
-                var tagged = ActiveSocket.from(bun.cast(**anyopaque, ptr).*);
-                //TODO: Check why this is falling some times
-                // socket.ext(**anyopaque).?.* = bun.cast(**anyopaque, ActiveSocket.init(dead_socket).ptr());
+                var tagged = ActiveSocket.from(@ptrCast(**anyopaque, @alignCast(@alignOf(**anyopaque), ptr)).*);
+                {
+                    @setRuntimeSafety(false);
+                    socket.ext(**anyopaque).?.* = @ptrCast(**anyopaque, @alignCast(@alignOf(**anyopaque), ActiveSocket.init(dead_socket).ptrUnsafe()));
+                }
+
                 if (tagged.get(HTTPClient)) |client| {
                     return client.onEnd(
                         comptime ssl,

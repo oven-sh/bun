@@ -1131,6 +1131,16 @@ export class ChildProcess extends EventEmitter {
     // if (ipc !== undefined) setupChannel(this, ipc, serialization);
   }
 
+  send() {
+    console.log("ChildProcess.prototype.send() - Sorry! Not implemented yet");
+  }
+
+  disconnect() {
+    console.log(
+      "ChildProcess.prototype.disconnect() - Sorry! Not implemented yet",
+    );
+  }
+
   kill(sig) {
     const signal =
       sig === 0

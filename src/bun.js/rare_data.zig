@@ -1,5 +1,5 @@
 const EditorContext = @import("../open.zig").EditorContext;
-const Blob = @import("./webcore/response.zig").Blob;
+const Blob = JSC.WebCore.Blob;
 const default_allocator = @import("bun").default_allocator;
 const Output = @import("bun").Output;
 const RareData = @This();

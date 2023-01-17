@@ -1,8 +1,8 @@
-import { serve } from "bun";
 import { describe, expect, it } from "bun:test";
 import { gcTick } from "./gc";
+import { serve } from "bun";
 
-var port = 4321;
+var port = 4301;
 function getPort() {
   if (port > 4444) {
     port = 4321;
@@ -45,13 +45,52 @@ describe("websocket server", () => {
         });
       };
     });
-    server.stop();
+    server.stop(true);
+    done();
+  });
+
+  it("can do publish() with publishToSelf: false", async (done) => {
+    var server = serve({
+      port: getPort(),
+      websocket: {
+        open(ws) {
+          ws.subscribe("all");
+          ws.publish("all", "hey");
+          server.publish("all", "hello");
+        },
+        message(ws, msg) {
+          if (new TextDecoder().decode(msg) !== "hello") {
+            done(new Error("unexpected message"));
+          }
+        },
+        close(ws) {},
+        publishToSelf: false,
+      },
+      fetch(req, server) {
+        if (server.upgrade(req)) {
+          return;
+        }
+
+        return new Response("success");
+      },
+    });
+
+    await new Promise<void>((resolve2, reject2) => {
+      var socket = new WebSocket(`ws://${server.hostname}:${server.port}`);
+
+      socket.onmessage = (e) => {
+        expect(e.data).toBe("hello");
+        resolve2();
+      };
+    });
+    server.stop(true);
     done();
   });
 
   for (let method of ["publish", "publishText", "publishBinary"]) {
     describe(method, () => {
       it("in close() should work", async () => {
+        var count = 0;
         var server = serve({
           port: getPort(),
           websocket: {
@@ -64,6 +103,11 @@ describe("websocket server", () => {
                 "all",
                 method === "publishBinary" ? Buffer.from("bye!") : "bye!",
               );
+              count++;
+
+              if (count >= 2) {
+                server.stop(true);
+              }
             },
           },
           fetch(req, server) {
@@ -83,29 +127,29 @@ describe("websocket server", () => {
             socket.onopen = () => resolve2(socket);
           });
 
-          const second = await new Promise<WebSocket>((resolve2, reject2) => {
+          await new Promise<WebSocket>((resolve2, reject2) => {
             var socket = new WebSocket(
               `ws://${server.hostname}:${server.port}`,
             );
+            socket.onopen = () => {
+              queueMicrotask(() => first.close());
+            };
             socket.onmessage = (ev) => {
               var msg = ev.data;
               if (typeof msg !== "string") {
                 msg = new TextDecoder().decode(msg);
               }
+
               if (msg === "bye!") {
+                socket.close(0);
                 resolve2(socket);
               } else {
                 reject2(msg);
               }
             };
-            socket.onopen = () => {
-              first.close();
-            };
           });
-
-          second.close();
         } finally {
-          server.stop();
+          server.stop(true);
         }
       });
     });
@@ -113,6 +157,7 @@ describe("websocket server", () => {
 
   it("close inside open", async () => {
     var resolve;
+    console.trace("here");
     var server = serve({
       port: getPort(),
       websocket: {
@@ -120,6 +165,7 @@ describe("websocket server", () => {
         message(ws, msg) {},
         close() {
           resolve();
+          server.stop(true);
         },
       },
       fetch(req, server) {
@@ -152,7 +198,6 @@ describe("websocket server", () => {
       websocket.onmessage = (e) => {};
       websocket.onerror = (e) => {};
     });
-    server.stop();
   });
 
   it("headers error doesn't crash", async () => {
@@ -161,18 +206,19 @@ describe("websocket server", () => {
         port: getPort(),
         websocket: {
           open(ws) {
-            server.stop();
+            ws.close();
           },
           message(ws, msg) {},
           close() {
             resolve();
+            server.stop(true);
           },
         },
         error(err) {
           resolve();
+          server.stop(true);
         },
         fetch(req, server) {
-          server.stop();
           expect(() => {
             if (
               server.upgrade(req, {
@@ -451,7 +497,7 @@ describe("websocket server", () => {
       const response = await fetch(`http://${server.hostname}:${server.port}`);
       expect(await response.text()).toBe("success");
       resolve();
-      server.stop();
+      server.stop(true);
     });
   });
 
@@ -463,7 +509,9 @@ describe("websocket server", () => {
           server.stop();
           expect(() => {
             server.upgrade(req);
-          }).toThrow('To enable websocket support, set the "websocket" object in Bun.serve({})');
+          }).toThrow(
+            'To enable websocket support, set the "websocket" object in Bun.serve({})',
+          );
           return new Response("success");
         },
       });
@@ -479,7 +527,7 @@ describe("websocket server", () => {
       port: getPort(),
       websocket: {
         async open(ws) {
-          server.stop();
+          server.stop(true);
           ws.send("hello world");
         },
         message(ws, msg) {},
@@ -523,6 +571,7 @@ describe("websocket server", () => {
             // we just want to make sure the DOMJIT call doesn't crash
             for (let i = 0; i < 40_000; i++) ws.publishText("hello", "world");
             websocket.close();
+            server.stop(true);
             resolve();
           },
           message(ws, msg) {},
@@ -551,8 +600,9 @@ describe("websocket server", () => {
             // we don't care about the data
             // we just want to make sure the DOMJIT call doesn't crash
             for (let i = 0; i < 40_000; i++) ws.publishBinary("hello", bytes);
-            resolve();
             websocket.close();
+            server.stop(true);
+            resolve();
           },
           message(ws, msg) {},
         },
@@ -580,6 +630,7 @@ describe("websocket server", () => {
             for (let i = 0; i < 40_000; i++) ws.sendText("hello world", true);
             resolve();
             websocket.close();
+            server.stop(true);
           },
           message(ws, msg) {},
         },
@@ -606,6 +657,7 @@ describe("websocket server", () => {
             // we just want to make sure the DOMJIT call doesn't crash
             for (let i = 0; i < 40_000; i++) ws.sendBinary(bytes, true);
             websocket.close();
+            server.stop(true);
             resolve();
           },
           message(ws, msg) {},
@@ -660,6 +712,7 @@ describe("websocket server", () => {
         reject(e);
       };
     });
+    server.stop(true);
   });
 
   it("can do some back and forth", async () => {
@@ -727,6 +780,7 @@ describe("websocket server", () => {
         }
       };
     });
+    server.stop(true);
   });
 
   it("send rope strings", async () => {
@@ -787,6 +841,7 @@ describe("websocket server", () => {
         }
       };
     });
+    server.stop(true);
   });
 
   // this test sends 100 messages to 10 connected clients via pubsub
@@ -826,9 +881,11 @@ describe("websocket server", () => {
       fetch(req) {
         gcTick();
         server.stop();
-        if (server.upgrade(req, {
-          data: { count: 0 },
-        }))
+        if (
+          server.upgrade(req, {
+            data: { count: 0 },
+          })
+        )
           return;
         return new Response("noooooo hello world");
       },
@@ -914,5 +971,6 @@ describe("websocket server", () => {
       }
     });
     expect(serverCounter).toBe(sendQueue.length);
+    server.stop(true);
   });
 });

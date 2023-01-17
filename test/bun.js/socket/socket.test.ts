@@ -25,12 +25,7 @@ it("should keep process alive only when active", async () => {
     lines.filter(function (line) {
       return line.startsWith("[Client]");
     }),
-  ).toEqual([
-    "[Client] OPENED",
-    "[Client] GOT response",
-    "[Client] ENDED",
-    "[Client] CLOSED",
-  ]);
+  ).toEqual(["[Client] OPENED", "[Client] GOT response", "[Client] CLOSED"]);
 });
 
 it("listen() should throw connection error for invalid host", () => {

@@ -2484,10 +2484,8 @@ pub const JSValue = enum(JSValueReprInt) {
         }
 
         pub fn isObject(this: JSType) bool {
-            return switch (this) {
-                .Object, .FinalObject => true,
-                else => false,
-            };
+            // inline constexpr bool isObjectType(JSType type) { return type >= ObjectType; }
+            return @enumToInt(this) >= @enumToInt(JSType.Object);
         }
 
         pub fn isFunction(this: JSType) bool {
@@ -2663,7 +2661,7 @@ pub const JSValue = enum(JSValueReprInt) {
     }
 
     pub fn isInstanceOf(this: JSValue, global: *JSGlobalObject, constructor: JSValue) bool {
-        if (this.isEmptyOrUndefinedOrNull())
+        if (!this.isCell())
             return false;
 
         return JSC.C.JSValueIsInstanceOfConstructor(global, this.asObjectRef(), constructor.asObjectRef(), null);
@@ -2803,6 +2801,13 @@ pub const JSValue = enum(JSValueReprInt) {
     pub fn makeWithNameAndPrototype(globalObject: *JSGlobalObject, class: ?*anyopaque, instance: ?*anyopaque, name_: *const ZigString) JSValue {
         return cppFn("makeWithNameAndPrototype", .{ globalObject, class, instance, name_ });
     }
+
+    pub fn createBufferFromLength(globalObject: *JSGlobalObject, len: usize) JSValue {
+        JSC.markBinding(@src());
+        return JSBuffer__bufferFromLength(globalObject, @intCast(i64, len));
+    }
+
+    extern fn JSBuffer__bufferFromLength(*JSGlobalObject, i64) JSValue;
 
     /// Must come from globally-allocated memory if allocator is not null
     pub fn createBuffer(globalObject: *JSGlobalObject, slice: []u8, allocator: ?std.mem.Allocator) JSValue {
@@ -3112,8 +3117,8 @@ pub const JSValue = enum(JSValueReprInt) {
     pub fn isCustomGetterSetter(this: JSValue) bool {
         return cppFn("isCustomGetterSetter", .{this});
     }
-    pub fn isObject(this: JSValue) bool {
-        return cppFn("isObject", .{this});
+    pub inline fn isObject(this: JSValue) bool {
+        return this.isCell() and this.jsType().isObject();
     }
 
     pub fn isClass(this: JSValue, global: *JSGlobalObject) bool {

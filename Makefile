@@ -39,7 +39,7 @@ NATIVE_OR_OLD_MARCH = -march=westmere
 endif
 
 MIN_MACOS_VERSION ?= $(DEFAULT_MIN_MACOS_VERSION)
-BUN_BASE_VERSION = 0.4
+BUN_BASE_VERSION = 0.5
 
 AR=
 
@@ -1378,6 +1378,7 @@ clean: clean-bindings
 	(cd $(BUN_DEPS_DIR)/boringssl && make clean) || echo "";
 	(cd $(BUN_DEPS_DIR)/picohttp && make clean) || echo "";
 	(cd $(BUN_DEPS_DIR)/zlib && make clean) || echo "";
+	(cd $(BUN_DEPS_DIR)/c-ares && rm -rf build && make clean) || echo "";
 
 .PHONY: release-bindings
 release-bindings: $(OBJ_DIR) $(OBJ_FILES) $(WEBCORE_OBJ_FILES) $(SQLITE_OBJ_FILES) $(NODE_OS_OBJ_FILES) $(BUILTINS_OBJ_FILES) $(IO_FILES) $(MODULES_OBJ_FILES)

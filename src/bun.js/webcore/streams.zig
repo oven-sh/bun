@@ -37,9 +37,9 @@ const JSValue = JSC.JSValue;
 const JSError = JSC.JSError;
 const JSGlobalObject = JSC.JSGlobalObject;
 
-const VirtualMachine = @import("../javascript.zig").VirtualMachine;
+const VirtualMachine = JSC.VirtualMachine;
 const Task = JSC.Task;
-const JSPrinter = @import("../../js_printer.zig");
+const JSPrinter = bun.js_printer;
 const picohttp = @import("bun").picohttp;
 const StringJoiner = @import("../../string_joiner.zig");
 const uws = @import("bun").uws;
@@ -2028,20 +2028,29 @@ pub fn NewJSSink(comptime SinkType: type, comptime name_: []const u8) type {
             const args_list = callframe.arguments(4);
             const args = args_list.ptr[0..args_list.len];
 
-            if (args.len == 0 or args[0].isEmptyOrUndefinedOrNull() or args[0].isNumber()) {
-                const err = JSC.toTypeError(
-                    if (args.len == 0) JSC.Node.ErrorCode.ERR_MISSING_ARGS else JSC.Node.ErrorCode.ERR_INVALID_ARG_TYPE,
+            if (args.len == 0) {
+                globalThis.vm().throwError(globalThis, JSC.toTypeError(
+                    JSC.Node.ErrorCode.ERR_MISSING_ARGS,
                     "write() expects a string, ArrayBufferView, or ArrayBuffer",
                     .{},
                     globalThis,
-                );
-                globalThis.vm().throwError(globalThis, err);
+                ));
                 return JSC.JSValue.jsUndefined();
             }
 
             const arg = args[0];
             arg.ensureStillAlive();
             defer arg.ensureStillAlive();
+
+            if (arg.isEmptyOrUndefinedOrNull()) {
+                globalThis.vm().throwError(globalThis, JSC.toTypeError(
+                    JSC.Node.ErrorCode.ERR_STREAM_NULL_VALUES,
+                    "write() expects a string, ArrayBufferView, or ArrayBuffer",
+                    .{},
+                    globalThis,
+                ));
+                return JSC.JSValue.jsUndefined();
+            }
 
             if (arg.asArrayBuffer(globalThis)) |buffer| {
                 const slice = buffer.slice();
@@ -2050,6 +2059,16 @@ pub fn NewJSSink(comptime SinkType: type, comptime name_: []const u8) type {
                 }
 
                 return this.sink.writeBytes(.{ .temporary = bun.ByteList.init(slice) }).toJS(globalThis);
+            }
+
+            if (!arg.isString()) {
+                globalThis.vm().throwError(globalThis, JSC.toTypeError(
+                    JSC.Node.ErrorCode.ERR_INVALID_ARG_TYPE,
+                    "write() expects a string, ArrayBufferView, or ArrayBuffer",
+                    .{},
+                    globalThis,
+                ));
+                return JSC.JSValue.jsUndefined();
             }
 
             const str = arg.getZigString(globalThis);

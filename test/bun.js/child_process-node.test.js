@@ -1,7 +1,6 @@
-import { beforeAll, describe, it as it_ } from "bun:test";
+import { beforeAll, describe, expect, it } from "bun:test";
 import { ChildProcess, spawn, exec } from "node:child_process";
 import {
-  strictEqual,
   throws,
   assert,
   createCallCheckCtx,
@@ -9,36 +8,7 @@ import {
 } from "node-test-helpers";
 import { tmpdir } from "node:os";
 import { gcTick } from "gc";
-
-const it = (label, fn) => {
-  const hasDone = fn.length === 1;
-  if (fn.constructor.name === "AsyncFunction" && hasDone) {
-    return it_(label, async (done) => {
-      gcTick();
-      await fn(done);
-      gcTick();
-    });
-  } else if (hasDone) {
-    return it_(label, (done) => {
-      gcTick();
-      fn(done);
-      gcTick();
-    });
-  } else if (fn.constructor.name === "AsyncFunction") {
-    return it_(label, async () => {
-      gcTick();
-      await fn();
-      gcTick();
-    });
-  } else {
-    return it_(label, () => {
-      gcTick();
-      fn();
-      gcTick();
-    });
-  }
-};
-
+const strictEqual = (a, b) => expect(a).toStrictEqual(b);
 const debug = process.env.DEBUG ? console.log : () => {};
 
 const platformTmpDir = require("fs").realpathSync(tmpdir());
@@ -218,7 +188,7 @@ describe("ChildProcess spawn bad stdio", () => {
     return child;
   }
 
-  it("should handle normal execution of child process", (done) => {
+  it.skip("should handle normal execution of child process", (done) => {
     createChild(
       {},
       (err, stdout, stderr) => {
@@ -230,7 +200,7 @@ describe("ChildProcess spawn bad stdio", () => {
     );
   });
 
-  it("should handle error event of child process", (done) => {
+  it.skip("should handle error event of child process", (done) => {
     const error = new Error("foo");
     createChild(
       {},

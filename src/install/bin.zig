@@ -308,7 +308,7 @@ pub const Bin = extern struct {
                 from_remain = target_buf[this.global_bin_path.len..];
                 from_remain[0] = std.fs.path.sep;
                 from_remain = from_remain[1..];
-                const abs = std.os.getFdPath(this.root_node_modules_folder, &dest_buf) catch |err| {
+                const abs = bun.getFdPath(this.root_node_modules_folder, &dest_buf) catch |err| {
                     this.err = err;
                     return;
                 };
@@ -433,7 +433,7 @@ pub const Bin = extern struct {
 
                     var iter = child_dir.iterate();
 
-                    var basedir_path = std.os.getFdPath(child_dir.dir.fd, &target_buf) catch |err| {
+                    var basedir_path = bun.getFdPath(child_dir.dir.fd, &target_buf) catch |err| {
                         this.err = err;
                         return;
                     };
@@ -485,7 +485,7 @@ pub const Bin = extern struct {
                 from_remain = target_buf[this.global_bin_path.len..];
                 from_remain[0] = std.fs.path.sep;
                 from_remain = from_remain[1..];
-                const abs = std.os.getFdPath(this.root_node_modules_folder, &dest_buf) catch |err| {
+                const abs = bun.getFdPath(this.root_node_modules_folder, &dest_buf) catch |err| {
                     this.err = err;
                     return;
                 };
@@ -585,7 +585,7 @@ pub const Bin = extern struct {
 
                     var iter = child_dir.iterate();
 
-                    var basedir_path = std.os.getFdPath(child_dir.dir.fd, &target_buf) catch |err| {
+                    var basedir_path = bun.getFdPath(child_dir.dir.fd, &target_buf) catch |err| {
                         this.err = err;
                         return;
                     };

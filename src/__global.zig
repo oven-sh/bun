@@ -5,8 +5,9 @@ const Output = @import("output.zig");
 const use_mimalloc = @import("bun").use_mimalloc;
 const StringTypes = @import("./string_types.zig");
 const Mimalloc = @import("bun").Mimalloc;
+const bun = @import("bun");
 
-const BASE_VERSION = "0.4";
+const BASE_VERSION = "0.5";
 
 pub const build_id = std.fmt.parseInt(u64, std.mem.trim(u8, @embedFile("./build-id"), "\n \r\t"), 10) catch unreachable;
 pub const package_json_version = if (Environment.isDebug)
@@ -143,8 +144,8 @@ pub const BunInfo = struct {
     framework_version: string = "",
 
     const Analytics = @import("./analytics/analytics_thread.zig");
-    const JSON = @import("./json_parser.zig");
-    const JSAst = @import("./js_ast.zig");
+    const JSON = bun.JSON;
+    const JSAst = bun.JSAst;
     pub fn generate(comptime Bundler: type, bundler: Bundler, allocator: std.mem.Allocator) !JSAst.Expr {
         var info = BunInfo{
             .bun_version = Global.package_json_version,

@@ -9,7 +9,7 @@ const string = bun.string;
 const JSC = @import("bun").JSC;
 const js = JSC.C;
 const WebCore = @import("../webcore/response.zig");
-const Bundler = @import("../../bundler.zig");
+const Bundler = bun.bundler;
 const options = @import("../../options.zig");
 const VirtualMachine = JavaScript.VirtualMachine;
 const ScriptSrcStream = std.io.FixedBufferStream([]u8);
@@ -33,14 +33,14 @@ const PackageJSON = @import("../../resolver/package_json.zig").PackageJSON;
 const logger = @import("bun").logger;
 const Loader = options.Loader;
 const Platform = options.Platform;
-const JSAst = @import("../../js_ast.zig");
+const JSAst = bun.JSAst;
 const Transpiler = @This();
-const JSParser = @import("../../js_parser.zig");
-const JSPrinter = @import("../../js_printer.zig");
+const JSParser = bun.js_parser;
+const JSPrinter = bun.js_printer;
 const ScanPassResult = JSParser.ScanPassResult;
 const Mimalloc = @import("../../mimalloc_arena.zig");
 const Runtime = @import("../../runtime.zig").Runtime;
-const JSLexer = @import("../../js_lexer.zig");
+const JSLexer = bun.js_lexer;
 const Expr = JSAst.Expr;
 
 bundler: Bundler.Bundler,

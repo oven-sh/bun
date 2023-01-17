@@ -261,7 +261,7 @@ fn extract(this: *const ExtractTarball, tgz_bytes: []const u8) !string {
 
     defer final_dir.close();
     // and get the fd path
-    var final_path = std.os.getFdPath(
+    var final_path = bun.getFdPath(
         final_dir.fd,
         &abs_buf,
     ) catch |err| {

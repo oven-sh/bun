@@ -2591,7 +2591,7 @@ If you need to read from `stdout` or `stderr` synchronously, you should use `Bun
 
 `Bun.spawn` returns a `Subprocess` object.
 
-More complete types are available in [`bun-types`](https://github.com/oven-sh/bun-types).
+More complete types are available in [`bun-types`](https://github.com/oven-sh/bun/tree/main/packages/bun-types).
 
 ```ts
 interface Subprocess {

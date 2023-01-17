@@ -1374,6 +1374,21 @@ declare module "bun" {
      * @see {@link ServerWebSocket.publish}
      */
     closeOnBackpressureLimit?: boolean;
+
+    /**
+     * Control whether or not ws.publish() should include the ServerWebSocket
+     * that published the message. This is enabled by default, but it was an API
+     * design mistake. A future version of Bun will change this default to
+     * `false` and eventually remove this option entirely. The better way to publish to all is to use {@link Server.publish}.
+     *
+     * if `true` or `undefined`, {@link ServerWebSocket.publish} will publish to all subscribers, including the websocket publishing the message.
+     *
+     * if `false`, {@link ServerWebSocket.publish} will publish to all subscribers excluding the websocket publishing the message.
+     *
+     * @default true
+     *
+     */
+    publishToSelf?: boolean;
   }
 
   interface GenericServeOptions {
@@ -1577,11 +1592,12 @@ declare module "bun" {
     /**
      * Stop listening to prevent new connections from being accepted.
      *
-     * It does not close existing connections.
+     * By default, it does not cancel in-flight requests or websockets. That means it may take some time before all network activity stops.
      *
-     * It may take a second or two to actually stop.
+     * @param closeActiveConnections Immediately terminate in-flight requests, websockets, and stop accepting new connections.
+     * @default false
      */
-    stop(): void;
+    stop(closeActiveConnections?: boolean): void;
 
     /**
      * Update the `fetch` and `error` handlers without restarting the server.
@@ -2726,7 +2742,7 @@ declare module "bun" {
   }
 
   interface SocketListener<Options extends SocketOptions = SocketOptions> {
-    stop(): void;
+    stop(closeActiveConnections?: boolean): void;
     ref(): void;
     unref(): void;
     reload(options: Pick<Partial<Options>, "socket">): void;
@@ -2753,6 +2769,12 @@ declare module "bun" {
     drain?(socket: Socket<Data>): void | Promise<void>;
 
     /**
+     * When the socket has been shutdown from the other end, this function is
+     * called. This is a TCP FIN packet.
+     */
+    end?(socket: Socket<Data>): void | Promise<void>;
+
+    /**
      * When the socket fails to be created, this function is called.
      *
      * The promise returned by `Bun.connect` rejects **after** this function is
@@ -2765,7 +2787,7 @@ declare module "bun" {
      * When `connectError` is not specified, the rejected promise will be added
      * to the promise rejection queue.
      */
-    connectError?(error: Error): void | Promise<void>;
+    connectError?(socket: Socket<Data>, error: Error): void | Promise<void>;
   }
 
   interface SocketOptions<Data = unknown> {

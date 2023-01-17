@@ -10,16 +10,16 @@ const default_allocator = bun.default_allocator;
 const C = bun.C;
 const std = @import("std");
 
-const lex = @import("../js_lexer.zig");
+const lex = bun.js_lexer;
 const logger = @import("bun").logger;
 
 const FileSystem = @import("../fs.zig").FileSystem;
 const PathName = @import("../fs.zig").PathName;
 const options = @import("../options.zig");
-const js_parser = @import("../js_parser.zig");
-const json_parser = @import("../json_parser.zig");
-const js_printer = @import("../js_printer.zig");
-const js_ast = @import("../js_ast.zig");
+const js_parser = bun.js_parser;
+const json_parser = bun.JSON;
+const js_printer = bun.js_printer;
+const js_ast = bun.JSAst;
 const linker = @import("../linker.zig");
 
 const sync = @import("../sync.zig");
@@ -27,7 +27,7 @@ const Api = @import("../api/schema.zig").Api;
 const resolve_path = @import("../resolver/resolve_path.zig");
 const configureTransformOptionsForBun = @import("../bun.js/config.zig").configureTransformOptionsForBun;
 const Command = @import("../cli.zig").Command;
-const bundler = @import("../bundler.zig");
+const bundler = bun.bundler;
 const NodeModuleBundle = @import("../node_module_bundle.zig").NodeModuleBundle;
 const DotEnv = @import("../env_loader.zig");
 const which = @import("../which.zig").which;
@@ -110,10 +110,12 @@ pub const CommandLineReporter = struct {
 
         const display_label = if (label.len > 0) label else "test";
 
-        const color_code = comptime if (skip) "<yellow>" else "";
+        const color_code = comptime if (skip) "<d>" else "";
 
         if (Output.enable_ansi_colors_stderr) {
-            for (scopes) |scope| {
+            for (scopes) |_, i| {
+                const index = (scopes.len - 1) - i;
+                const scope = scopes[index];
                 if (scope.label.len == 0) continue;
                 writer.writeAll(" ") catch unreachable;
 
@@ -123,7 +125,9 @@ pub const CommandLineReporter = struct {
                 writer.writeAll(" >") catch unreachable;
             }
         } else {
-            for (scopes) |scope| {
+            for (scopes) |_, i| {
+                const index = (scopes.len - 1) - i;
+                const scope = scopes[index];
                 if (scope.label.len == 0) continue;
                 writer.writeAll(" ") catch unreachable;
                 writer.writeAll(scope.label) catch unreachable;
@@ -131,7 +135,7 @@ pub const CommandLineReporter = struct {
             }
         }
 
-        const line_color_code = if (comptime skip) "<r><yellow>" else "<r><b>";
+        const line_color_code = if (comptime skip) "<r><d>" else "<r><b>";
 
         if (Output.enable_ansi_colors_stderr)
             writer.print(comptime Output.prettyFmt(line_color_code ++ " {s}<r>", true), .{display_label}) catch unreachable
@@ -473,9 +477,7 @@ pub const TestCommand = struct {
 
             if (reporter.summary.expectations > 0) Output.prettyError(" {d:5>} expect() calls\n", .{reporter.summary.expectations});
 
-            Output.prettyError(
-                \\ Ran {d} tests across {d} files 
-            , .{
+            Output.prettyError("Ran {d} tests across {d} files ", .{
                 reporter.summary.fail + reporter.summary.pass,
                 test_files.len,
             });
@@ -589,8 +591,8 @@ pub const TestCommand = struct {
             module.runTests(JSC.JSValue.zero, vm.global);
             vm.eventLoop().tick();
 
-            const initial_unhandled_counter = vm.unhandled_error_counter;
-            while (vm.active_tasks > 0 and vm.unhandled_error_counter == initial_unhandled_counter) {
+            var prev_unhandled_count = vm.unhandled_error_counter;
+            while (vm.active_tasks > 0) {
                 if (!jest.Jest.runner.?.has_pending_tests) jest.Jest.runner.?.drain();
                 vm.eventLoop().tick();
 
@@ -598,6 +600,11 @@ pub const TestCommand = struct {
                     vm.eventLoop().autoTick();
                     if (!jest.Jest.runner.?.has_pending_tests) break;
                     vm.eventLoop().tick();
+                }
+
+                while (prev_unhandled_count < vm.unhandled_error_counter) {
+                    vm.global.handleRejectedPromises();
+                    prev_unhandled_count = vm.unhandled_error_counter;
                 }
             }
             _ = vm.global.vm().runGC(false);

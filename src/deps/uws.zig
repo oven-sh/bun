@@ -389,6 +389,10 @@ pub const SocketContext = opaque {
         us_socket_context_free(@as(i32, @boolToInt(ssl)), this);
     }
 
+    pub fn close(this: *SocketContext, ssl: bool) void {
+        us_socket_context_close(@as(i32, @boolToInt(ssl)), this);
+    }
+
     pub fn ext(this: *SocketContext, ssl: bool, comptime ContextType: type) ?*ContextType {
         const alignment = if (ContextType == *anyopaque)
             @sizeOf(usize)
@@ -756,10 +760,10 @@ pub const AnyWebSocket = union(enum) {
     // pub fn iterateTopics(this: AnyWebSocket) {
     //     return uws_ws_iterate_topics(ssl_flag, this.raw(), callback: ?*const fn ([*c]const u8, usize, ?*anyopaque) callconv(.C) void, user_data: ?*anyopaque) void;
     // }
-    pub fn publish(this: AnyWebSocket, topic: []const u8, message: []const u8) bool {
+    pub fn publish(this: AnyWebSocket, topic: []const u8, message: []const u8, opcode: Opcode, compress: bool) bool {
         return switch (this) {
-            .ssl => uws_ws_publish(1, this.ssl.raw(), topic.ptr, topic.len, message.ptr, message.len),
-            .tcp => uws_ws_publish(0, this.tcp.raw(), topic.ptr, topic.len, message.ptr, message.len),
+            .ssl => uws_ws_publish_with_options(1, this.ssl.raw(), topic.ptr, topic.len, message.ptr, message.len, opcode, compress),
+            .tcp => uws_ws_publish_with_options(0, this.tcp.raw(), topic.ptr, topic.len, message.ptr, message.len, opcode, compress),
         };
     }
     pub fn publishWithOptions(ssl: bool, app: *anyopaque, topic: []const u8, message: []const u8, opcode: Opcode, compress: bool) bool {
@@ -967,11 +971,21 @@ pub const ListenSocket = opaque {
     }
 };
 extern fn us_listen_socket_close(ssl: i32, ls: *ListenSocket) void;
+extern fn uws_app_close(ssl: i32, app: *uws_app_s) void;
+extern fn us_socket_context_close(ssl: i32, ctx: *anyopaque) void;
 
 pub fn NewApp(comptime ssl: bool) type {
     return opaque {
         const ssl_flag = @as(i32, @boolToInt(ssl));
         const ThisApp = @This();
+
+        pub fn close(this: *ThisApp) void {
+            if (comptime is_bindgen) {
+                unreachable;
+            }
+
+            return uws_app_close(ssl_flag, @ptrCast(*uws_app_s, this));
+        }
 
         pub fn create(opts: us_socket_context_options_t) *ThisApp {
             if (comptime is_bindgen) {
@@ -1246,8 +1260,8 @@ pub fn NewApp(comptime ssl: bool) type {
                 uws_res_end(ssl_flag, res.downcast(), data.ptr, data.len, close_connection);
             }
 
-            pub fn tryEnd(res: *Response, data: []const u8, total: usize, close: bool) bool {
-                return uws_res_try_end(ssl_flag, res.downcast(), data.ptr, data.len, total, close);
+            pub fn tryEnd(res: *Response, data: []const u8, total: usize, close_: bool) bool {
+                return uws_res_try_end(ssl_flag, res.downcast(), data.ptr, data.len, total, close_);
             }
 
             pub fn state(res: *const Response) State {

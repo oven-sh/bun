@@ -668,6 +668,37 @@ void Process::finishCreation(JSC::VM& vm)
 
     this->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(this->vm(), "umask"_s),
         1, Process_functionUmask, ImplementationVisibility::Public, NoIntrinsic, 0);
+
+    //   target_defaults:
+    //    { cflags: [],
+    //      default_configuration: 'Release',
+    //      defines: [],
+    //      include_dirs: [],
+    //      libraries: [] },
+    //   variables:
+    //    {
+    //      host_arch: 'x64',
+    //      napi_build_version: 5,
+    //      node_install_npm: 'true',
+    //      node_prefix: '',
+    //      node_shared_cares: 'false',
+    //      node_shared_http_parser: 'false',
+    //      node_shared_libuv: 'false',
+    //      node_shared_zlib: 'false',
+    //      node_use_openssl: 'true',
+    //      node_shared_openssl: 'false',
+    //      strict_aliasing: 'true',
+    //      target_arch: 'x64',
+    //      v8_use_snapshot: 1
+    //    }
+    // }
+    JSC::JSObject* config = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), 2);
+    JSC::JSObject* variables = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), 1);
+    variables->putDirect(vm, JSC::Identifier::fromString(vm, "v8_enable_i8n_support"_s),
+        JSC::jsNumber(1), 0);
+    config->putDirect(vm, JSC::Identifier::fromString(vm, "target_defaults"_s), JSC::constructEmptyObject(globalObject), 0);
+    config->putDirect(vm, JSC::Identifier::fromString(vm, "variables"_s), variables, 0);
+    this->putDirect(vm, JSC::Identifier::fromString(vm, "config"_s), config, 0);
 }
 
 const JSC::ClassInfo Process::s_info = { "Process"_s, &Base::s_info, nullptr, nullptr,

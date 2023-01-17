@@ -20,10 +20,10 @@ const allocators = @import("allocators.zig");
 const JSC = @import("bun").JSC;
 const HTTP = @import("bun").HTTP;
 const RefCtx = @import("./ast/base.zig").RefCtx;
-const JSONParser = @import("./json_parser.zig");
+const JSONParser = bun.JSON;
 const is_bindgen = std.meta.globalOption("bindgen", bool) orelse false;
 const ComptimeStringMap = bun.ComptimeStringMap;
-const JSPrinter = @import("./js_printer.zig");
+const JSPrinter = bun.js_printer;
 pub fn NewBaseStore(comptime Union: anytype, comptime count: usize) type {
     var max_size = 0;
     var max_align = 1;
@@ -1672,23 +1672,15 @@ pub const E = struct {
 
         pub fn resovleRopeIfNeeded(this: *String, allocator: std.mem.Allocator) void {
             if (this.next == null or !this.isUTF8()) return;
-            var bytes = allocator.alloc(u8, this.rope_len) catch unreachable;
-            var ptr = bytes.ptr;
-            var remain = bytes.len;
-            @memcpy(ptr, this.data.ptr, this.data.len);
-            ptr += this.data.len;
-            remain -= this.data.len;
             var str = this.next;
+            var bytes = std.ArrayList(u8).initCapacity(allocator, this.rope_len) catch unreachable;
+
+            bytes.appendSliceAssumeCapacity(this.data);
             while (str) |strin| {
-                @memcpy(ptr, strin.data.ptr, strin.data.len);
-                ptr += strin.data.len;
-                remain -= strin.data.len;
-                var prev = strin;
+                bytes.appendSlice(strin.data) catch unreachable;
                 str = strin.next;
-                prev.next = null;
-                prev.end = null;
             }
-            this.data = bytes;
+            this.data = bytes.items;
             this.next = null;
         }
 
@@ -2403,10 +2395,7 @@ pub const Expr = struct {
 
     pub inline fn asString(expr: *const Expr, allocator: std.mem.Allocator) ?string {
         if (std.meta.activeTag(expr.data) != .e_string) return null;
-
-        const key_str = expr.data.e_string;
-
-        return if (key_str.isUTF8()) key_str.data else key_str.string(allocator) catch null;
+        return expr.data.e_string.string(allocator) catch null;
     }
 
     pub fn asBool(
@@ -3610,7 +3599,8 @@ pub const Expr = struct {
 
         pub fn canBeConstValue(this: Expr.Data) bool {
             return switch (this) {
-                .e_string, .e_number, .e_boolean, .e_null, .e_undefined => true,
+                .e_number, .e_boolean, .e_null, .e_undefined => true,
+                .e_string => |str| str.next == null,
                 .e_array => |array| array.was_originally_macro,
                 .e_object => |object| object.was_originally_macro,
                 else => false,
@@ -4864,8 +4854,8 @@ pub const Macro = struct {
     const DotEnv = @import("./env_loader.zig");
     const js = @import("./bun.js/javascript_core_c_api.zig");
     const Zig = @import("./bun.js/bindings/exports.zig");
-    const Bundler = @import("./bundler.zig").Bundler;
-    const MacroEntryPoint = @import("./bundler.zig").MacroEntryPoint;
+    const Bundler = bun.Bundler;
+    const MacroEntryPoint = bun.bundler.MacroEntryPoint;
     const MacroRemap = @import("./resolver/package_json.zig").MacroMap;
     pub const MacroRemapEntry = @import("./resolver/package_json.zig").MacroImportReplacementMap;
 
@@ -6841,11 +6831,9 @@ pub const Macro = struct {
                     var p = self.p;
 
                     const node_type: JSNode.Tag = JSNode.Tag.names.get(str.data) orelse {
-                        if (!str.isUTF8()) {
-                            self.log.addErrorFmt(p.source, tag_expr.loc, p.allocator, "Tag \"{s}\" is invalid", .{strings.toUTF8Alloc(self.p.allocator, str.slice16()) catch unreachable}) catch unreachable;
-                        } else {
-                            self.log.addErrorFmt(p.source, tag_expr.loc, p.allocator, "Tag \"{s}\" is invalid", .{str.data}) catch unreachable;
-                        }
+                        self.log.addErrorFmt(p.source, tag_expr.loc, p.allocator, "Tag \"{s}\" is invalid", .{
+                            str.string(self.p.allocator) catch unreachable,
+                        }) catch unreachable;
                         return false;
                     };
 
@@ -6863,13 +6851,9 @@ pub const Macro = struct {
                     var p = self.p;
 
                     const node_type: JSNode.Tag = JSNode.Tag.names.get(str.data) orelse {
-                        if (!str.isUTF8()) {
-                            self.log.addErrorFmt(p.source, tag_expr.loc, p.allocator, "Tag \"{s}\" is invalid", .{
-                                strings.toUTF8Alloc(self.p.allocator, str.slice16()) catch unreachable,
-                            }) catch unreachable;
-                        } else {
-                            self.log.addErrorFmt(p.source, tag_expr.loc, p.allocator, "Tag \"{s}\" is invalid", .{str.data}) catch unreachable;
-                        }
+                        self.log.addErrorFmt(p.source, tag_expr.loc, p.allocator, "Tag \"{s}\" is invalid", .{
+                            str.string(self.p.allocator) catch unreachable,
+                        }) catch unreachable;
                         return false;
                     };
 
@@ -7112,7 +7096,7 @@ pub const Macro = struct {
                                 return false;
                             }
 
-                            const JSLexer = @import("./js_lexer.zig");
+                            const JSLexer = bun.js_lexer;
 
                             var array_iter = JSC.JSPropertyIterator(.{
                                 .skip_empty_name = true,

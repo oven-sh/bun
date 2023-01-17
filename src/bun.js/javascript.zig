@@ -22,17 +22,17 @@ const Fs = @import("../fs.zig");
 const Resolver = @import("../resolver/resolver.zig");
 const ast = @import("../import_record.zig");
 const NodeModuleBundle = @import("../node_module_bundle.zig").NodeModuleBundle;
-const MacroEntryPoint = @import("../bundler.zig").MacroEntryPoint;
-const ParseResult = @import("../bundler.zig").ParseResult;
+const MacroEntryPoint = bun.bundler.MacroEntryPoint;
+const ParseResult = bun.bundler.ParseResult;
 const logger = @import("bun").logger;
 const Api = @import("../api/schema.zig").Api;
 const options = @import("../options.zig");
-const Bundler = @import("../bundler.zig").Bundler;
-const PluginRunner = @import("../bundler.zig").PluginRunner;
-const ServerEntryPoint = @import("../bundler.zig").ServerEntryPoint;
-const js_printer = @import("../js_printer.zig");
-const js_parser = @import("../js_parser.zig");
-const js_ast = @import("../js_ast.zig");
+const Bundler = bun.Bundler;
+const PluginRunner = bun.bundler.PluginRunner;
+const ServerEntryPoint = bun.bundler.ServerEntryPoint;
+const js_printer = bun.js_printer;
+const js_parser = bun.js_parser;
+const js_ast = bun.JSAst;
 const http = @import("../http.zig");
 const NodeFallbackModules = @import("../node_fallbacks.zig");
 const ImportKind = ast.ImportKind;
@@ -429,7 +429,7 @@ pub const VirtualMachine = struct {
     auto_install_dependencies: bool = false,
     load_builtins_from_path: []const u8 = "",
 
-    onUnhandledRejection: *const fn (*VirtualMachine, globalObject: *JSC.JSGlobalObject, JSC.JSValue) void = defaultOnUnhandledRejection,
+    onUnhandledRejection: *const OnUnhandledRejection = defaultOnUnhandledRejection,
     onUnhandledRejectionCtx: ?*anyopaque = null,
     unhandled_error_counter: usize = 0,
 
@@ -437,6 +437,8 @@ pub const VirtualMachine = struct {
     aggressive_garbage_collection: GCLevel = GCLevel.none,
 
     gc_controller: JSC.GarbageCollectionController = .{},
+
+    pub const OnUnhandledRejection = fn (*VirtualMachine, globalObject: *JSC.JSGlobalObject, JSC.JSValue) void;
 
     const VMHolder = struct {
         pub threadlocal var vm: ?*VirtualMachine = null;
@@ -453,6 +455,30 @@ pub const VirtualMachine = struct {
     };
 
     pub threadlocal var is_main_thread_vm: bool = false;
+
+    pub const UnhandledRejectionScope = struct {
+        ctx: ?*anyopaque = null,
+        onUnhandledRejection: *const OnUnhandledRejection = undefined,
+        count: usize = 0,
+
+        pub fn apply(this: *UnhandledRejectionScope, vm: *JSC.VirtualMachine) void {
+            vm.onUnhandledRejection = this.onUnhandledRejection;
+            vm.onUnhandledRejectionCtx = this.ctx;
+            vm.unhandled_error_counter = this.count;
+        }
+    };
+
+    pub fn onQuietUnhandledRejectionHandler(this: *VirtualMachine, _: *JSC.JSGlobalObject, _: JSC.JSValue) void {
+        this.unhandled_error_counter += 1;
+    }
+
+    pub fn unhandledRejectionScope(this: *VirtualMachine) UnhandledRejectionScope {
+        return .{
+            .onUnhandledRejection = this.onUnhandledRejection,
+            .ctx = this.onUnhandledRejectionCtx,
+            .count = this.unhandled_error_counter,
+        };
+    }
 
     pub fn resetUnhandledRejection(this: *VirtualMachine) void {
         this.onUnhandledRejection = defaultOnUnhandledRejection;
@@ -1822,8 +1848,11 @@ pub const VirtualMachine = struct {
 
         const message = exception.message;
         var did_print_name = false;
-        if (source_lines.next()) |source| {
-            if (source.text.len > 0 and exception.stack.frames()[0].position.isInvalid()) {
+        if (source_lines.next()) |source| brk: {
+            if (source.text.len == 0) break :brk;
+
+            const top_frame = if (exception.stack.frames_len > 0) exception.stack.frames()[0] else null;
+            if (top_frame == null or top_frame.?.position.isInvalid()) {
                 defer did_print_name = true;
                 var text = std.mem.trim(u8, source.text, "\n");
 
@@ -1838,12 +1867,11 @@ pub const VirtualMachine = struct {
                 );
 
                 try this.printErrorNameAndMessage(name, message, Writer, writer, allow_ansi_color);
-            } else if (source.text.len > 0) {
+            } else if (top_frame) |top| {
                 defer did_print_name = true;
                 const int_size = std.fmt.count("{d}", .{source.line});
                 const pad = max_line_number_pad - int_size;
                 try writer.writeByteNTimes(' ', pad);
-                const top = exception.stack.frames()[0];
                 var remainder = std.mem.trim(u8, source.text, "\n");
 
                 try writer.print(

@@ -53,7 +53,7 @@ const packageJSON = {
   files: ["types.d.ts", "README.md"],
   private: false,
   keywords: ["bun", "bun.js", "types"],
-  repository: "https://github.com/oven-sh/bun-types",
+  repository: "https://github.com/oven-sh/bun",
   homepage: "https://bun.sh",
 };
 

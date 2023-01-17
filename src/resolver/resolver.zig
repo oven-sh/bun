@@ -895,7 +895,7 @@ pub const Resolver = struct {
                             var file = try std.fs.openFileAbsoluteZ(span, .{ .mode = .read_only });
 
                             if (comptime !FeatureFlags.store_file_descriptors) {
-                                out = try std.os.getFdPath(query.entry.cache.fd, &buf);
+                                out = try bun.getFdPath(query.entry.cache.fd, &buf);
                                 file.close();
                             } else {
                                 query.entry.cache.fd = file.handle;
@@ -914,7 +914,7 @@ pub const Resolver = struct {
                         }
 
                         if (comptime FeatureFlags.store_file_descriptors) {
-                            out = try std.os.getFdPath(query.entry.cache.fd, &buf);
+                            out = try bun.getFdPath(query.entry.cache.fd, &buf);
                         }
 
                         const symlink = try Fs.FileSystem.FilenameStore.instance.append(@TypeOf(out), out);
@@ -1857,10 +1857,10 @@ pub const Resolver = struct {
                 // the unknown package is the root package
                 package = Package{
                     .name = Semver.String.init("", ""),
-                };
-                package.resolution = .{
-                    .tag = .root,
-                    .value = .{ .root = {} },
+                    .resolution = .{
+                        .tag = .root,
+                        .value = .{ .root = {} },
+                    },
                 };
                 package = pm.lockfile.appendPackage(package) catch |err| {
                     return .{ .failure = err };
@@ -3316,7 +3316,7 @@ pub const Resolver = struct {
                         const this_dir = std.fs.Dir{ .fd = fd };
                         var file = this_dir.openDirZ("node_modules/.bin", .{}, true) catch break :append_bin_dir;
                         defer file.close();
-                        var bin_path = std.os.getFdPath(file.fd, &node_bin_path) catch break :append_bin_dir;
+                        var bin_path = bun.getFdPath(file.fd, &node_bin_path) catch break :append_bin_dir;
                         bin_folders_lock.lock();
                         defer bin_folders_lock.unlock();
 
@@ -3341,7 +3341,7 @@ pub const Resolver = struct {
                             const this_dir = std.fs.Dir{ .fd = fd };
                             var file = this_dir.openDirZ(".bin", .{}, false) catch break :append_bin_dir;
                             defer file.close();
-                            var bin_path = std.os.getFdPath(file.fd, &node_bin_path) catch break :append_bin_dir;
+                            var bin_path = bun.getFdPath(file.fd, &node_bin_path) catch break :append_bin_dir;
                             bin_folders_lock.lock();
                             defer bin_folders_lock.unlock();
 

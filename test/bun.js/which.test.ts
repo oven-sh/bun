@@ -1,11 +1,20 @@
 import { test, expect } from "bun:test";
 
 import { which } from "bun";
+import { chmodSync, mkdirSync, unlinkSync } from "node:fs";
 
 test("which", () => {
   writeFixture("/tmp/myscript.sh");
 
   // Our cwd is not /tmp
+  expect(which("myscript.sh")).toBe(null);
+
+  try {
+    mkdirSync("myscript.sh");
+    chmodSync("myscript.sh", "755");
+  } catch (e) {}
+
+  // directories should not be returned
   expect(which("myscript.sh")).toBe(null);
 
   // "bun" is in our PATH
@@ -37,6 +46,10 @@ test("which", () => {
       cwd: "/tmp",
     }),
   ).toBe("/tmp/myscript.sh");
+
+  try {
+    unlinkSync("myscript.sh");
+  } catch (e) {}
 });
 
 function writeFixture(path) {

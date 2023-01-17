@@ -1,0 +1,58 @@
+name: Release bun-types@canary
+on:
+  push:
+    branches: [main]
+jobs:
+  tests:
+    name: Build, test, publish canary
+    runs-on: ubuntu-latest
+    if: github.repository_owner == 'oven-sh'
+    defaults:
+      run:
+        working-directory: packages/bun-types
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v3
+      
+      - name: Install Node
+        uses: actions/setup-node@v3
+        with:
+          node-version: latest
+      
+      - name: Install Bun
+        uses: oven-sh/setup-bun@v0.1.8
+        with:
+          bun-version: latest
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+      
+      - name: Install dependencies
+        run: bun install
+
+      - name: Generate package
+        run: bun run build
+
+      - name: Tests
+        run: bun run test
+
+      - name: Set temp version
+        working-directory: packages/bun-types/dist
+        run: |
+          git_hash=$(git rev-parse --short "$GITHUB_SHA")
+          new_pkg_version="$(bun --version)-canary.${git_hash}"
+          echo "new_pkg_version"
+          echo "${new_pkg_version}"
+          npm version ${new_pkg_version} --no-git-tag-version
+      - name: Publish to NPM
+        uses: JS-DevTools/npm-publish@v1
+        with:
+          package: packages/bun-types/dist/package.json
+          token: ${{ secrets.NPM_BUN_TYPES_TOKEN }}
+          # dry-run: true
+          tag: canary
+      
+      # - name: Publish on NPM
+      #   working-directory: packages/bun-types/dist
+      #   run: npm publish --access public --tag canary # --dry-run
+      #   env:
+      #     GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      #     NODE_AUTH_TOKEN: ${{ secrets.NPM_BUN_TYPES_TOKEN }}

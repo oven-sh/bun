@@ -106,6 +106,31 @@ describe("Bun.Transpiler", () => {
       ts.expectPrinted_("export = {foo: 123}", "module.exports = { foo: 123 }");
     });
 
+    it("export default class implements TypeScript regression", () => {
+      expect(
+        transpiler
+          .transformSync(
+            `
+      export default class implements ITest {
+        async* runTest(path: string): AsyncGenerator<number> {
+          yield Math.random();
+        }
+      }
+      `,
+            "ts",
+          )
+          .trim(),
+      ).toBe(
+        `
+export default class {
+  async* runTest(path) {
+    yield Math.random();
+  }
+}
+      `.trim(),
+      );
+    });
+
     it("satisfies", () => {
       ts.expectPrinted_(
         "const t1 = { a: 1 } satisfies I1;",
@@ -914,6 +939,19 @@ export var ComponentThatHasSpreadCausesDeopt = $jsx(Hello, {
     });
 
     it("fold string addition", () => {
+      expectPrinted_(
+        `
+const a = "[^aeiou]";
+const b = a + "[^aeiouy]*";
+console.log(a);
+        `,
+        `
+const a = "[^aeiou]";
+const b = a + "[^aeiouy]*";
+console.log(a)
+        `.trim(),
+      );
+
       expectPrinted_(
         `export const foo = "a" + "b";`,
         `export const foo = "ab"`,
@@ -1732,6 +1770,22 @@ class Foo {
       check(
         `const foo = "foo"; const bar = "bar"; return foo + bar`,
         `return "foobar";`,
+      );
+
+      check(
+        `
+const a = "a";
+const c = "b" + a;
+const b = c + a;
+const d = b + a;
+console.log(a, b, c, d);
+        `,
+        `
+const c = "ba";
+const b = c + "a";
+const d = b + "a";
+console.log("a", b, c, d);
+        `.trim(),
       );
 
       // check that it doesn't inline after "var"

@@ -232,38 +232,65 @@ pub const SocketConfig = struct {
             }
         }
 
-        if (opts.getTruthy(globalObject, "hostname")) |hostname| {
-            if (hostname.isEmptyOrUndefinedOrNull() or !hostname.isString()) {
-                exception.* = JSC.toInvalidArguments("Expected \"hostname\" to be a string", .{}, globalObject).asObjectRef();
-                return null;
+        hostname_or_unix: {
+            if (opts.getTruthy(globalObject, "unix")) |unix_socket| {
+                if (!unix_socket.isString()) {
+                    exception.* = JSC.toInvalidArguments("Expected \"unix\" to be a string", .{}, globalObject).asObjectRef();
+                    return null;
+                }
+
+                hostname_or_unix = unix_socket.getZigString(globalObject).toSlice(bun.default_allocator);
+
+                if (strings.hasPrefixComptime(hostname_or_unix.slice(), "file://") or strings.hasPrefixComptime(hostname_or_unix.slice(), "unix://") or strings.hasPrefixComptime(hostname_or_unix.slice(), "sock://")) {
+                    hostname_or_unix.ptr += 7;
+                    hostname_or_unix.len -|= 7;
+                }
+
+                if (hostname_or_unix.len > 0) {
+                    break :hostname_or_unix;
+                }
             }
 
-            const port_value = opts.get(globalObject, "port") orelse JSValue.zero;
-            if (port_value.isEmptyOrUndefinedOrNull() or !port_value.isNumber() or port_value.toInt64() > std.math.maxInt(u16) or port_value.toInt64() < 0) {
-                exception.* = JSC.toInvalidArguments("Expected \"port\" to be a number between 0 and 65535", .{}, globalObject).asObjectRef();
-                return null;
-            }
+            if (opts.getTruthy(globalObject, "hostname")) |hostname| {
+                if (!hostname.isString()) {
+                    exception.* = JSC.toInvalidArguments("Expected \"hostname\" to be a string", .{}, globalObject).asObjectRef();
+                    return null;
+                }
 
-            hostname_or_unix = hostname.getZigString(globalObject).toSlice(bun.default_allocator);
-            port = port_value.toU16();
+                var port_value = opts.get(globalObject, "port") orelse JSValue.zero;
+                hostname_or_unix = hostname.getZigString(globalObject).toSlice(bun.default_allocator);
 
-            if (hostname_or_unix.len == 0) {
-                exception.* = JSC.toInvalidArguments("Expected \"hostname\" to be a non-empty string", .{}, globalObject).asObjectRef();
-                return null;
-            }
-        } else if (opts.getTruthy(globalObject, "unix")) |unix_socket| {
-            if (unix_socket.isEmptyOrUndefinedOrNull() or !unix_socket.isString()) {
-                exception.* = JSC.toInvalidArguments("Expected \"unix\" to be a string", .{}, globalObject).asObjectRef();
-                return null;
-            }
+                if (port_value.isEmptyOrUndefinedOrNull() and hostname_or_unix.len > 0) {
+                    const parsed_url = bun.URL.parse(hostname_or_unix.slice());
+                    if (parsed_url.getPort()) |port_num| {
+                        port_value = JSValue.jsNumber(port_num);
+                        hostname_or_unix.ptr = parsed_url.hostname.ptr;
+                        hostname_or_unix.len = @truncate(u32, parsed_url.hostname.len);
+                    }
+                }
 
-            hostname_or_unix = unix_socket.getZigString(globalObject).toSlice(bun.default_allocator);
+                if (port_value.isEmptyOrUndefinedOrNull() or !port_value.isNumber() or port_value.toInt64() > std.math.maxInt(u16) or port_value.toInt64() < 0) {
+                    exception.* = JSC.toInvalidArguments("Expected \"port\" to be a number between 0 and 65535", .{}, globalObject).asObjectRef();
+                    return null;
+                }
+
+                port = port_value.toU16();
+
+                if (hostname_or_unix.len == 0) {
+                    exception.* = JSC.toInvalidArguments("Expected \"hostname\" to be a non-empty string", .{}, globalObject).asObjectRef();
+                    return null;
+                }
+
+                if (hostname_or_unix.len > 0) {
+                    break :hostname_or_unix;
+                }
+            }
 
             if (hostname_or_unix.len == 0) {
                 exception.* = JSC.toInvalidArguments("Expected \"unix\" to be a non-empty string", .{}, globalObject).asObjectRef();
                 return null;
             }
-        } else {
+
             exception.* = JSC.toInvalidArguments("Expected either \"hostname\" or \"unix\"", .{}, globalObject).asObjectRef();
             return null;
         }
@@ -603,15 +630,23 @@ pub const Listener = struct {
     //     uws.us_socket_context_add_server_name
     // }
 
-    pub fn stop(this: *Listener, _: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSValue {
+    pub fn stop(this: *Listener, _: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSValue {
+        const arguments = callframe.arguments(1);
         log("close", .{});
 
-        var listener = this.listener orelse return JSValue.jsUndefined();
-        this.listener = null;
-        listener.close(this.ssl);
+        if (arguments.len > 0 and arguments.ptr[0].isBoolean() and arguments.ptr[0].toBoolean() and this.socket_context != null) {
+            this.socket_context.?.close(this.ssl);
+            this.listener = null;
+        } else {
+            var listener = this.listener orelse return JSValue.jsUndefined();
+            this.listener = null;
+            listener.close(this.ssl);
+        }
+
         this.poll_ref.unref(this.handlers.vm);
         if (this.handlers.active_connections == 0) {
             this.handlers.unprotect();
+            this.socket_context.?.close(this.ssl);
             this.socket_context.?.deinit(this.ssl);
             this.socket_context = null;
             this.strong_self.clear();
@@ -634,6 +669,7 @@ pub const Listener = struct {
         std.debug.assert(this.handlers.active_connections == 0);
 
         if (this.socket_context) |ctx| {
+            ctx.close(this.ssl);
             ctx.deinit(this.ssl);
         }
 

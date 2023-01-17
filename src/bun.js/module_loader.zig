@@ -22,17 +22,17 @@ const Fs = @import("../fs.zig");
 const Resolver = @import("../resolver/resolver.zig");
 const ast = @import("../import_record.zig");
 const NodeModuleBundle = @import("../node_module_bundle.zig").NodeModuleBundle;
-const MacroEntryPoint = @import("../bundler.zig").MacroEntryPoint;
-const ParseResult = @import("../bundler.zig").ParseResult;
+const MacroEntryPoint = bun.bundler.MacroEntryPoint;
+const ParseResult = bun.bundler.ParseResult;
 const logger = @import("bun").logger;
 const Api = @import("../api/schema.zig").Api;
 const options = @import("../options.zig");
-const Bundler = @import("../bundler.zig").Bundler;
-const PluginRunner = @import("../bundler.zig").PluginRunner;
-const ServerEntryPoint = @import("../bundler.zig").ServerEntryPoint;
-const js_printer = @import("../js_printer.zig");
-const js_parser = @import("../js_parser.zig");
-const js_ast = @import("../js_ast.zig");
+const Bundler = bun.Bundler;
+const PluginRunner = bun.bundler.PluginRunner;
+const ServerEntryPoint = bun.bundler.ServerEntryPoint;
+const js_printer = bun.js_printer;
+const js_parser = bun.js_parser;
+const js_ast = bun.JSAst;
 const http = @import("../http.zig");
 const NodeFallbackModules = @import("../node_fallbacks.zig");
 const ImportKind = ast.ImportKind;
@@ -2075,16 +2075,16 @@ pub const HardcodedModule = enum {
             .{ "node:buffer", HardcodedModule.@"node:buffer" },
             .{ "node:child_process", HardcodedModule.@"node:child_process" },
             .{ "node:crypto", HardcodedModule.@"node:crypto" },
+            .{ "node:dns", HardcodedModule.@"node:dns" },
+            .{ "node:dns/promises", HardcodedModule.@"node:dns/promises" },
             .{ "node:events", HardcodedModule.@"node:events" },
             .{ "node:fs", HardcodedModule.@"node:fs" },
             .{ "node:fs/promises", HardcodedModule.@"node:fs/promises" },
             .{ "node:http", HardcodedModule.@"node:http" },
             .{ "node:https", HardcodedModule.@"node:https" },
             .{ "node:module", HardcodedModule.@"node:module" },
-            .{ "node:dns", HardcodedModule.@"node:dns" },
             .{ "node:net", HardcodedModule.@"node:net" },
             .{ "node:os", HardcodedModule.@"node:os" },
-            .{ "node:tls", HardcodedModule.@"node:tls" },
             .{ "node:path", HardcodedModule.@"node:path" },
             .{ "node:path/posix", HardcodedModule.@"node:path/posix" },
             .{ "node:path/win32", HardcodedModule.@"node:path/win32" },
@@ -2098,6 +2098,7 @@ pub const HardcodedModule = enum {
             .{ "node:string_decoder", HardcodedModule.@"node:string_decoder" },
             .{ "node:timers", HardcodedModule.@"node:timers" },
             .{ "node:timers/promises", HardcodedModule.@"node:timers/promises" },
+            .{ "node:tls", HardcodedModule.@"node:tls" },
             .{ "node:tty", HardcodedModule.@"node:tty" },
             .{ "node:url", HardcodedModule.@"node:url" },
             .{ "node:util", HardcodedModule.@"node:util" },

@@ -1,8 +1,8 @@
 const std = @import("std");
 const logger = @import("bun").logger;
-const js_lexer = @import("js_lexer.zig");
+const js_lexer = bun.js_lexer;
 const importRecord = @import("import_record.zig");
-const js_ast = @import("js_ast.zig");
+const js_ast = bun.JSAst;
 const options = @import("options.zig");
 
 const fs = @import("fs.zig");
@@ -913,12 +913,12 @@ pub fn ParseTSConfig(source: *const logger.Source, log: *logger.Log, allocator: 
 
 const duplicateKeyJson = "{ \"name\": \"valid\", \"name\": \"invalid\" }";
 
-const js_printer = @import("js_printer.zig");
+const js_printer = bun.js_printer;
 const renamer = @import("renamer.zig");
 const SymbolList = [][]Symbol;
 
-const Bundler = @import("./bundler.zig").Bundler;
-const ParseResult = @import("./bundler.zig").ParseResult;
+const Bundler = bun.Bundler;
+const ParseResult = bun.bundler.ParseResult;
 fn expectPrintedJSON(_contents: string, expected: string) !void {
     Expr.Data.Store.create(default_allocator);
     Stmt.Data.Store.create(default_allocator);

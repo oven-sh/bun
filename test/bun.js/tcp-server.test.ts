@@ -94,7 +94,7 @@ it("echo server 1 on 1", async () => {
       },
     });
     await Promise.all([prom, clientProm, serverProm]);
-    server.stop();
+    server.stop(true);
     server = serverData = clientData = undefined;
   })();
 });

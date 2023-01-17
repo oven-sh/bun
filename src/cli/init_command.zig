@@ -13,14 +13,14 @@ const open = @import("../open.zig");
 const CLI = @import("../cli.zig");
 const Fs = @import("../fs.zig");
 const ParseJSON = @import("../json_parser.zig").ParseJSONUTF8;
-const js_parser = @import("../js_parser.zig");
-const js_ast = @import("../js_ast.zig");
+const js_parser = bun.js_parser;
+const js_ast = bun.JSAst;
 const linker = @import("../linker.zig");
 const options = @import("../options.zig");
 const initializeStore = @import("./create_command.zig").initializeStore;
-const lex = @import("../js_lexer.zig");
+const lex = bun.js_lexer;
 const logger = @import("bun").logger;
-const JSPrinter = @import("../js_printer.zig");
+const JSPrinter = bun.js_printer;
 
 fn exists(path: anytype) bool {
     if (@TypeOf(path) == [:0]const u8 or @TypeOf(path) == [:0]u8) {

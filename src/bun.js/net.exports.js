@@ -86,11 +86,10 @@ export const Socket = (function (InternalSocket) {
 
         self.emit("error", error);
       },
-      data(socket, buffer) {
-        const self = socket.data;
-        self.bytesRead += buffer.length;
+      data({ data: self }, { length, buffer }) {
+        self.bytesRead += length;
         const queue = self.#readQueue;
-        const ret = new Buffer(buffer.buffer);
+        const ret = new Buffer(buffer);
         if (queue.isEmpty()) {
           if (self.push(ret)) return;
         }
@@ -111,6 +110,7 @@ export const Socket = (function (InternalSocket) {
       open(socket) {
         const self = socket.data;
         socket.timeout(self.timeout);
+        socket.ref();
         self.#socket = socket;
         self.connecting = false;
         self.emit("connect");
@@ -139,6 +139,7 @@ export const Socket = (function (InternalSocket) {
       if (callback) {
         const chunk = self.#writeChunk;
         const written = socket.write(chunk);
+
         self.bytesWritten += written;
         if (written < chunk.length) {
           self.#writeChunk = chunk.slice(written);
@@ -313,10 +314,12 @@ export const Socket = (function (InternalSocket) {
 
     setKeepAlive(enable = false, initialDelay = 0) {
       // TODO
+      return this;
     }
 
     setNoDelay(noDelay = true) {
       // TODO
+      return this;
     }
 
     setTimeout(timeout, callback) {
@@ -339,7 +342,14 @@ export const Socket = (function (InternalSocket) {
       } else if (this.#writeCallback) {
         callback(new Error("overlapping _write()"));
       } else {
-        if (written > 0) chunk = chunk.slice(written);
+        if (written > 0) {
+          if (typeof chunk == "string") {
+            chunk = chunk.slice(written);
+          } else {
+            chunk = chunk.subarray(written);
+          }
+        }
+
         this.#writeCallback = callback;
         this.#writeChunk = chunk;
       }

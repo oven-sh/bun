@@ -182,10 +182,15 @@ export var {
 function setDefaultResultOrder() {}
 function setServers() {}
 
+const promisifyLookup = (res) => {
+  const [{ address, family }] = res;
+  return { address, family };
+};
+
 // promisified versions
 export const promises = {
   lookup(domain, options) {
-    return dns.lookup(domain, options);
+    return dns.lookup(domain, options).then(promisifyLookup);
   },
 
   lookupService(address, port) {

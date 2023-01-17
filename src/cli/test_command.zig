@@ -135,7 +135,7 @@ pub const CommandLineReporter = struct {
             }
         }
 
-        const line_color_code = if (comptime skip) "<r><yellow>" else "<r><b>";
+        const line_color_code = if (comptime skip) "<r><yellow><d>" else "<r><b>";
 
         if (Output.enable_ansi_colors_stderr)
             writer.print(comptime Output.prettyFmt(line_color_code ++ " {s}<r>", true), .{display_label}) catch unreachable
@@ -477,9 +477,7 @@ pub const TestCommand = struct {
 
             if (reporter.summary.expectations > 0) Output.prettyError(" {d:5>} expect() calls\n", .{reporter.summary.expectations});
 
-            Output.prettyError(
-                \\ Ran {d} tests across {d} files
-            , .{
+            Output.prettyError("Ran {d} tests across {d} files ", .{
                 reporter.summary.fail + reporter.summary.pass,
                 test_files.len,
             });

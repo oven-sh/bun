@@ -185,7 +185,10 @@ function setServers() {}
 // promisified versions
 export const promises = {
   lookup(domain, options) {
-    return dns.lookup(domain, options);
+    return dns.lookup(domain, options).then((res) => {
+      const [{ address, family }] = res;
+      return { address, family };
+    });
   },
 
   lookupService(address, port) {

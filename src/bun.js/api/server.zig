@@ -1449,7 +1449,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 };
 
                 this.response_buf_owned = .{ .items = result.result.buf, .capacity = result.result.buf.len };
-                this.resp.onWritable(*RequestContext, onWritableCompleteResponseBufferAndMetadata, this);
+                this.renderResponseBufferAndMetadataCorked();
             }
         }
 

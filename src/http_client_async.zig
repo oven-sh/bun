@@ -1909,7 +1909,7 @@ pub fn onData(this: *HTTPClient, comptime is_ssl: bool, incoming_data: []const u
 
             if (this.state.response_stage == .body) {
                 {
-                    const is_done = this.handleResponseBody(body_buf, false) catch |err| {
+                    const is_done = this.handleResponseBody(body_buf, true) catch |err| {
                         this.closeAndFail(err, is_ssl, socket);
                         return;
                     };

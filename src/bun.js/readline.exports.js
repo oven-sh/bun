@@ -3255,7 +3255,7 @@ export var promises = {
   Readline,
   Interface: PromisesInterface,
   createInterface(input, output, completer, terminal) {
-    return new Interface(input, output, completer, terminal);
+    return new PromisesInterface(input, output, completer, terminal);
   },
 };
 

@@ -2647,6 +2647,11 @@ pub const ZigConsoleClient = struct {
         }
 
         fn writeTypedArray(this: *ZigConsoleClient.Formatter, comptime Writer: type, writer: Writer, comptime Number: type, slice: []const Number, comptime enable_ansi_colors: bool) void {
+            writer.writeAll("\n  ");
+            defer {
+                writer.writeAll("\n");
+            }
+
             const fmt_ = if (Number == i64 or Number == u64)
                 "<r><yellow>{d}n<r>"
             else
@@ -2659,10 +2664,15 @@ pub const ZigConsoleClient = struct {
             writer.print(comptime Output.prettyFmt(fmt_, enable_ansi_colors), .{slice[0]});
             var leftover = slice[1..];
             const max = 512;
+            const max_length_in_line = 10;
             leftover = leftover[0..@min(leftover.len, max)];
-            for (leftover) |el| {
+            for (leftover) |el, idx| {
                 this.printComma(@TypeOf(&writer.ctx), &writer.ctx, enable_ansi_colors) catch return;
-                writer.writeAll(" ");
+                if ((idx + 1) % max_length_in_line == 0) {
+                    writer.writeAll("\n  ");
+                } else {
+                    writer.writeAll(" ");
+                }
 
                 writer.print(comptime Output.prettyFmt(fmt_, enable_ansi_colors), .{el});
             }

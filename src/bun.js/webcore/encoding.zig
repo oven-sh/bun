@@ -926,7 +926,7 @@ pub const Encoder = struct {
 
                 // Hoping this gets auto vectorized
                 for (to[0..written]) |c, i| {
-                    to[i] = @as(u8, @truncate(u7, c));
+                    to[i] = c;
                 }
 
                 return @intCast(i64, written);

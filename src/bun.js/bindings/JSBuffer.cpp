@@ -926,23 +926,43 @@ static inline JSC::EncodedJSValue jsBufferPrototypeFunction_fillBody(JSC::JSGlob
         size_t end = length;
         WebCore::BufferEncodingType encoding = WebCore::BufferEncodingType::utf8;
         if (callFrame->argumentCount() > 1) {
-            if (auto start_ = callFrame->uncheckedArgument(1).tryGetAsUint32Index()) {
-                start = start_.value();
-            } else {
-                throwVMError(lexicalGlobalObject, throwScope, createRangeError(lexicalGlobalObject, "start out of range"_s));
-                return JSC::JSValue::encode(jsUndefined());
-            }
-            if (callFrame->argumentCount() > 2) {
-                if (auto end_ = callFrame->uncheckedArgument(2).tryGetAsUint32Index()) {
-                    end = end_.value();
-                } else {
-                    throwVMError(lexicalGlobalObject, throwScope, createRangeError(lexicalGlobalObject, "end out of range"_s));
-                    return JSC::JSValue::encode(jsUndefined());
-                }
-            }
+            auto secondArg = callFrame->uncheckedArgument(1);
+            if (secondArg.isUInt32()) {
+                start = secondArg.toUInt32(lexicalGlobalObject);
 
-            if (callFrame->argumentCount() > 3) {
-                auto encoding_ = callFrame->uncheckedArgument(3).toString(lexicalGlobalObject);
+                if (callFrame->argumentCount() > 2) {
+                    auto thirdArg = callFrame->uncheckedArgument(2);
+                    if (thirdArg.isUInt32()) {
+                        end = thirdArg.toUInt32(lexicalGlobalObject);
+                    } else if (thirdArg.isString()) {
+                        auto encoding_ = thirdArg.toString(lexicalGlobalObject);
+
+                        std::optional<BufferEncodingType> encoded = parseEnumeration<BufferEncodingType>(*lexicalGlobalObject, encoding_);
+                        if (!encoded) {
+                            throwTypeError(lexicalGlobalObject, throwScope, "Invalid encoding"_s);
+                            return JSC::JSValue::encode(jsUndefined());
+                        }
+
+                        encoding = encoded.value();
+                    } else {
+                        throwTypeError(lexicalGlobalObject, throwScope, "third argument should either be number or string"_s);
+                        return JSC::JSValue::encode(jsUndefined());
+                    }
+                }
+
+                if (callFrame->argumentCount() > 3) {
+                    auto encoding_ = callFrame->uncheckedArgument(3).toString(lexicalGlobalObject);
+
+                    std::optional<BufferEncodingType> encoded = parseEnumeration<BufferEncodingType>(*lexicalGlobalObject, encoding_);
+                    if (!encoded) {
+                        throwTypeError(lexicalGlobalObject, throwScope, "Invalid encoding"_s);
+                        return JSC::JSValue::encode(jsUndefined());
+                    }
+
+                    encoding = encoded.value();
+                }
+            } else if (secondArg.isString()) {
+                auto encoding_ = secondArg.toString(lexicalGlobalObject);
 
                 std::optional<BufferEncodingType> encoded = parseEnumeration<BufferEncodingType>(*lexicalGlobalObject, encoding_);
                 if (!encoded) {
@@ -951,6 +971,9 @@ static inline JSC::EncodedJSValue jsBufferPrototypeFunction_fillBody(JSC::JSGlob
                 }
 
                 encoding = encoded.value();
+            } else {
+                throwTypeError(lexicalGlobalObject, throwScope, "second argument should either be number or string"_s);
+                return JSC::JSValue::encode(jsUndefined());
             }
         }
         if (start > end) {

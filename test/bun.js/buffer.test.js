@@ -324,6 +324,22 @@ it("Buffer.fill 1 char string", () => {
   expect(input.join("")).toBe(demo.join(""));
 });
 
+it("Buffer.fill different arguments", () => {
+  var input = new Buffer(3);
+  input.fill("a", "ascii");
+  input.fill("b", 1, 2, "ascii");
+  input.fill("c", 2, "ascii");
+  expect(input[0]).toBe(97)
+  expect(input[1]).toBe(98)
+  expect(input[2]).toBe(99)
+});
+
+it("Buffer.fill extend ascii encoding", () => {
+  var input = new Buffer(1);
+  input.fill("\xc8", "ascii");
+  expect(input[0]).toBe(200);
+});
+
 it("Buffer.concat", () => {
   var array1 = new Uint8Array(128);
   array1.fill(100);

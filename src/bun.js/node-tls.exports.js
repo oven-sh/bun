@@ -155,11 +155,4 @@ var exports = {
 };
 
 export default exports;
-export {
-  createSecureContext,
-  parseCertString,
-  TLSSocket,
-  SecureContext,
-  connect,
-  createConnection,
-};
+export { createSecureContext, parseCertString, TLSSocket, SecureContext };

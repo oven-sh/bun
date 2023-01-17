@@ -314,10 +314,12 @@ export const Socket = (function (InternalSocket) {
 
     setKeepAlive(enable = false, initialDelay = 0) {
       // TODO
+      return this;
     }
 
     setNoDelay(noDelay = true) {
       // TODO
+      return this;
     }
 
     setTimeout(timeout, callback) {

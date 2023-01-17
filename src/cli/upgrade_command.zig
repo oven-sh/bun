@@ -217,13 +217,7 @@ pub const UpgradeCommand = struct {
             }
         }
 
-        var http_proxy: ?URL = null;
-
-         if (env_loader.map.get("https_proxy")) |proxy| {
-             http_proxy = URL.parse(proxy);
-         } else if (env_loader.map.get("HTTPS_PROXY")) |proxy| {
-             http_proxy = URL.parse(proxy);
-         }
+        var http_proxy: ?URL = env_loader.getHttpProxy(api_url);
 
         var metadata_body = try MutableString.init(allocator, 2048);
 
@@ -459,13 +453,8 @@ pub const UpgradeCommand = struct {
             };
         }
 
-        var http_proxy: ?URL = null;
-
-        if (env_loader.map.get("https_proxy")) |proxy| {
-            http_proxy = URL.parse(proxy);
-        } else if (env_loader.map.get("HTTPS_PROXY")) |proxy| {
-            http_proxy = URL.parse(proxy);
-        }
+        var zip_url = URL.parse(version.zip_url);
+        var http_proxy: ?URL = env_loader.getHttpProxy(zip_url);
 
         {
             var refresher = std.Progress{};
@@ -478,7 +467,7 @@ pub const UpgradeCommand = struct {
             async_http.* = HTTP.AsyncHTTP.initSync(
                 ctx.allocator,
                 .GET,
-                URL.parse(version.zip_url),
+                zip_url,
                 .{},
                 "",
                 zip_file_buffer,

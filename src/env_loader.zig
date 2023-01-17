@@ -14,6 +14,7 @@ const C = bun.C;
 const CodepointIterator = @import("./string_immutable.zig").CodepointIterator;
 const Analytics = @import("./analytics/analytics_thread.zig");
 const Fs = @import("./fs.zig");
+const URL = @import("./url.zig").URL;
 const Api = @import("./api/schema.zig").Api;
 const which = @import("./which.zig").which;
 const Variable = struct {
@@ -431,6 +432,54 @@ pub const Loader = struct {
             this.map.get("bamboo.buildKey")) != null;
     }
 
+    pub fn getHttpProxy(this: *Loader, url: URL) ?URL {
+        var http_proxy: ?URL = null;
+
+        if(url.isHTTP()){
+        if (this.map.get("http_proxy")) |proxy| {
+                http_proxy = URL.parse(proxy);
+            } else if (this.map.get("HTTP_PROXY")) |proxy| {
+                http_proxy = URL.parse(proxy);
+            }
+        }else{
+            if (this.map.get("https_proxy")) |proxy| {
+                http_proxy = URL.parse(proxy);
+            } else if (this.map.get("HTTPS_PROXY")) |proxy| {
+                http_proxy = URL.parse(proxy);
+            }
+        }
+
+        //NO_PROXY filter
+        if (http_proxy) | proxy_host | {
+            var no_proxy: ?string = null;
+            if (this.map.get("no_proxy")) |no_proxy_text| {
+                no_proxy = no_proxy_text;
+            } else if (this.map.get("NO_PROXY")) |no_proxy_text| {
+                no_proxy = no_proxy_text;
+            }
+
+            if (no_proxy) | no_proxy_text | {
+                var no_proxy_list = std.mem.split(u8, no_proxy_text, ",");
+                var next = no_proxy_list.next();
+                while(next != null){
+                    var host = next.?;
+                    if (strings.eql(host, "*")){
+                        return null;
+                    }
+                    //strips .
+                    if(host[0] == '.'){
+                        host = host[1..:0];
+                    }
+                    //hostname ends with suffix
+                    if (strings.lastIndexOf(proxy_host.hostname, host) == proxy_host.hostname.len - host.len) {
+                        return null;
+                    }
+                    next = no_proxy_list.next();
+                }
+            }
+        }
+        return http_proxy;
+    }
     pub fn loadNodeJSConfig(this: *Loader, fs: *Fs.FileSystem, override_node: []const u8) !bool {
         var buf: Fs.PathBuffer = undefined;
 

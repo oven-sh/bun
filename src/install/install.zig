@@ -337,21 +337,7 @@ const NetworkTask = struct {
         const env_loader = this.package_manager.env_loader;
 
         var url = URL.parse(this.url_buf);
-        var http_proxy: ?URL = null;
-        if (url.isHTTP()) {
-            if (env_loader.map.get("http_proxy")) |proxy| {
-                http_proxy = URL.parse(proxy);
-            } else if (env_loader.map.get("HTTP_PROXY")) |proxy| {
-                http_proxy = URL.parse(proxy);
-            }
-        } else if (url.isHTTPS()) {
-            if (env_loader.map.get("https_proxy")) |proxy| {
-                http_proxy = URL.parse(proxy);
-            } else if (env_loader.map.get("HTTPS_PROXY")) |proxy| {
-                http_proxy = URL.parse(proxy);
-            }
-        }
-
+        var http_proxy: ?URL = env_loader.getHttpProxy(url);
         this.http = AsyncHTTP.init(
             allocator,
             .GET,
@@ -428,20 +414,7 @@ const NetworkTask = struct {
         const env_loader = this.package_manager.env_loader;
 
         var url = URL.parse(this.url_buf);
-        var http_proxy: ?URL = null;
-        if (url.isHTTP()) {
-            if (env_loader.map.get("http_proxy")) |proxy| {
-                http_proxy = URL.parse(proxy);
-            } else if (env_loader.map.get("HTTP_PROXY")) |proxy| {
-                http_proxy = URL.parse(proxy);
-            }
-        } else if (url.isHTTPS()) {
-            if (env_loader.map.get("https_proxy")) |proxy| {
-                http_proxy = URL.parse(proxy);
-            } else if (env_loader.map.get("HTTPS_PROXY")) |proxy| {
-                http_proxy = URL.parse(proxy);
-            }
-        }
+        var http_proxy: ?URL = env_loader.getHttpProxy(url);
 
         this.http = AsyncHTTP.init(
             allocator,

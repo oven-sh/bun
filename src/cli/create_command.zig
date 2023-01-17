@@ -1846,14 +1846,7 @@ pub const Example = struct {
             }
         }
 
-        var http_proxy: ?URL = null;
-
-        if (env_loader.map.get("https_proxy")) |proxy| {
-            http_proxy = URL.parse(proxy);
-        } else if (env_loader.map.get("HTTPS_PROXY")) |proxy| {
-            http_proxy = URL.parse(proxy);
-        }
-
+        var http_proxy: ?URL = env_loader.getHttpProxy(api_url);
         var mutable = try ctx.allocator.create(MutableString);
         mutable.* = try MutableString.init(ctx.allocator, 8096);
 
@@ -1919,14 +1912,7 @@ pub const Example = struct {
 
         url = URL.parse(try std.fmt.bufPrint(&url_buf, "https://registry.npmjs.org/@bun-examples/{s}/latest", .{name}));
 
-        var http_proxy: ?URL = null;
-
- 
-        if (env_loader.map.get("https_proxy")) |proxy| {
-            http_proxy = URL.parse(proxy);
-        } else if (env_loader.map.get("HTTPS_PROXY")) |proxy| {
-            http_proxy = URL.parse(proxy);
-        }
+        var http_proxy: ?URL = env_loader.getHttpProxy(url);
 
         // ensure very stable memory address
         var async_http: *HTTP.AsyncHTTP = ctx.allocator.create(HTTP.AsyncHTTP) catch unreachable;
@@ -2004,21 +1990,8 @@ pub const Example = struct {
         // ensure very stable memory address
         const parsed_tarball_url = URL.parse(tarball_url);
         
-        http_proxy = null;
+        http_proxy = env_loader.getHttpProxy(parsed_tarball_url);
 
-        if (parsed_tarball_url.isHTTP()) {
-            if (env_loader.map.get("http_proxy")) |proxy| {
-                http_proxy = URL.parse(proxy);
-            } else if (env_loader.map.get("HTTP_PROXY")) |proxy| {
-                http_proxy = URL.parse(proxy);
-            }
-        } else if (parsed_tarball_url.isHTTPS()) {
-            if (env_loader.map.get("https_proxy")) |proxy| {
-                http_proxy = URL.parse(proxy);
-            } else if (env_loader.map.get("HTTPS_PROXY")) |proxy| {
-                http_proxy = URL.parse(proxy);
-            }
-        }
         async_http.* = HTTP.AsyncHTTP.initSync(ctx.allocator, .GET, parsed_tarball_url, .{}, "", mutable, "", 60 * std.time.ns_per_min, http_proxy);
         async_http.client.progress_node = progress;
 
@@ -2043,21 +2016,7 @@ pub const Example = struct {
     pub fn fetchAll(ctx: Command.Context, env_loader: *DotEnv.Loader, progress_node: ?*std.Progress.Node) ![]Example {
         url = URL.parse(examples_url);
 
-        var http_proxy: ?URL = null;
-
-        if (url.isHTTP()) {
-            if (env_loader.map.get("http_proxy")) |proxy| {
-                http_proxy = URL.parse(proxy);
-            } else if (env_loader.map.get("HTTP_PROXY")) |proxy| {
-                http_proxy = URL.parse(proxy);
-            }
-        } else if (url.isHTTPS()) {
-            if (env_loader.map.get("https_proxy")) |proxy| {
-                http_proxy = URL.parse(proxy);
-            } else if (env_loader.map.get("HTTPS_PROXY")) |proxy| {
-                http_proxy = URL.parse(proxy);
-            }
-        }
+        var http_proxy: ?URL = env_loader.getHttpProxy(url);
 
         var async_http: *HTTP.AsyncHTTP = ctx.allocator.create(HTTP.AsyncHTTP) catch unreachable;
         var mutable = try ctx.allocator.create(MutableString);

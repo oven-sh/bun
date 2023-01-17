@@ -18,7 +18,7 @@ extern "C" int32_t set_process_priority(uint32_t pid, int32_t priority)
 extern "C" bool is_executable_file(const char* path)
 {
 
-#ifdef __APPLE__
+#if defined(O_EXEC)
     // O_EXEC is macOS specific
     int fd = open(path, O_EXEC | O_CLOEXEC, 0);
     if (fd < 0)

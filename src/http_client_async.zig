@@ -56,7 +56,7 @@ const ProxySSLData = struct {
     partial: bool,
     temporary_slice: ?[]const u8,
     pub fn init() !ProxySSLData {
-        var buffer = std.ArrayList(u8).initCapacity(bun.default_allocator, 16 * 1024) catch |err| return err;
+        var buffer = try std.ArrayList(u8).initCapacity(bun.default_allocator, 16 * 1024);
 
         return ProxySSLData{ .buffer = buffer, .partial = false, .temporary_slice = null };
     }
@@ -139,9 +139,7 @@ const ProxyTunnel = struct {
             data = partial;
             data.partial = false;
         } else {
-            data = ProxySSLData.init() catch |err| {
-                return err;
-            };
+            data = try ProxySSLData.init();
         }
 
         var writer = data.buffer.writer();

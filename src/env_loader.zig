@@ -437,29 +437,20 @@ pub const Loader = struct {
         var http_proxy: ?URL = null;
 
         if (url.isHTTP()) {
-            if (this.map.get("http_proxy")) |proxy| {
-                http_proxy = URL.parse(proxy);
-            } else if (this.map.get("HTTP_PROXY")) |proxy| {
-                http_proxy = URL.parse(proxy);
+            if (this.map.get("http_proxy") orelse this.map.get("HTTP_PROXY")) |proxy| {
+                if (proxy.len > 0) http_proxy = URL.parse(proxy);
             }
         } else {
-            if (this.map.get("https_proxy")) |proxy| {
-                http_proxy = URL.parse(proxy);
-            } else if (this.map.get("HTTPS_PROXY")) |proxy| {
-                http_proxy = URL.parse(proxy);
+            if (this.map.get("https_proxy") orelse this.map.get("HTTPS_PROXY")) |proxy| {
+                if (proxy.len > 0) http_proxy = URL.parse(proxy);
             }
         }
 
         //NO_PROXY filter
         if (http_proxy != null) {
-            var no_proxy: ?string = null;
-            if (this.map.get("no_proxy")) |no_proxy_text| {
-                no_proxy = no_proxy_text;
-            } else if (this.map.get("NO_PROXY")) |no_proxy_text| {
-                no_proxy = no_proxy_text;
-            }
+            if (this.map.get("no_proxy") orelse this.map.get("NO_PROXY")) |no_proxy_text| {
+                if (no_proxy_text.len == 0) return http_proxy;
 
-            if (no_proxy) |no_proxy_text| {
                 var no_proxy_list = std.mem.split(u8, no_proxy_text, ",");
                 var next = no_proxy_list.next();
                 while (next != null) {
@@ -472,7 +463,7 @@ pub const Loader = struct {
                         host = host[1.. :0];
                     }
                     //hostname ends with suffix
-                    if (strings.lastIndexOf(url.hostname, host) == url.hostname.len - host.len) {
+                    if (strings.endsWith(url.hostname, host)) {
                         return null;
                     }
                     next = no_proxy_list.next();

@@ -966,14 +966,21 @@ pub const DNSResolver = struct {
 
     const PendingCache = bun.HiveArray(GetAddrInfoRequest.PendingCacheKey, 32);
 
+    fn getKey(this: *DNSResolver, index: u8, comptime cache_name: []const u8) GetAddrInfoRequest.PendingCacheKey {
+        var cache: *PendingCache = &@field(this, cache_name);
+        std.debug.assert(!cache.available.isSet(index));
+        const entry = cache.buffer[index];
+        cache.buffer[index] = undefined;
+
+        var available = cache.available;
+        available.set(index);
+        cache.available = available;
+
+        return entry;
+    }
+
     pub fn drainPendingHostCares(this: *DNSResolver, index: u8, err: ?c_ares.Error, timeout: i32, result: ?*c_ares.AddrInfo) void {
-        const key: GetAddrInfoRequest.PendingCacheKey = brk: {
-            std.debug.assert(!this.pending_host_cache_cares.available.isSet(index));
-            const entry = this.pending_host_cache_cares.buffer[index];
-            this.pending_host_cache_cares.buffer[index] = undefined;
-            this.pending_host_cache_cares.available.unset(index);
-            break :brk entry;
-        };
+        const key = this.getKey(index, "pending_host_cache_cares");
 
         var addr = result orelse {
             var pending: ?*DNSLookup = key.lookup.head.next;
@@ -1015,13 +1022,7 @@ pub const DNSResolver = struct {
     }
 
     pub fn drainPendingHostNative(this: *DNSResolver, index: u8, globalObject: *JSC.JSGlobalObject, err: i32, result: GetAddrInfo.Result.Any) void {
-        const key: GetAddrInfoRequest.PendingCacheKey = brk: {
-            std.debug.assert(!this.pending_host_cache_native.available.isSet(index));
-            const entry = this.pending_host_cache_native.buffer[index];
-            this.pending_host_cache_native.buffer[index] = undefined;
-            this.pending_host_cache_native.available.unset(index);
-            break :brk entry;
-        };
+        const key = this.getKey(index, "pending_host_cache_native");
 
         var array = result.toJS(globalObject) orelse {
             var pending: ?*DNSLookup = key.lookup.head.next;

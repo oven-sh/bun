@@ -334,17 +334,35 @@ const NetworkTask = struct {
 
         this.response_buffer = try MutableString.init(allocator, 0);
         this.allocator = allocator;
+        const env_loader = this.package_manager.env_loader;
+
+        var url = URL.parse(this.url_buf);
+        var http_proxy: ?URL = null;
+        if (url.isHTTP()) {
+            if (env_loader.map.get("http_proxy")) |proxy| {
+                http_proxy = URL.parse(proxy);
+            } else if (env_loader.map.get("HTTP_PROXY")) |proxy| {
+                http_proxy = URL.parse(proxy);
+            }
+        } else if (url.isHTTPS()) {
+            if (env_loader.map.get("https_proxy")) |proxy| {
+                http_proxy = URL.parse(proxy);
+            } else if (env_loader.map.get("HTTPS_PROXY")) |proxy| {
+                http_proxy = URL.parse(proxy);
+            }
+        }
+
         this.http = AsyncHTTP.init(
             allocator,
             .GET,
-            URL.parse(this.url_buf),
+            url,
             header_builder.entries,
             header_builder.content.ptr.?[0..header_builder.content.len],
             &this.response_buffer,
             "",
             0,
             this.getCompletionCallback(),
-            null
+            http_proxy
         );
         this.http.max_retry_count = this.package_manager.options.max_retry_count;
         this.callback = .{
@@ -407,17 +425,35 @@ const NetworkTask = struct {
             header_buf = header_builder.content.ptr.?[0..header_builder.content.len];
         }
 
+        const env_loader = this.package_manager.env_loader;
+
+        var url = URL.parse(this.url_buf);
+        var http_proxy: ?URL = null;
+        if (url.isHTTP()) {
+            if (env_loader.map.get("http_proxy")) |proxy| {
+                http_proxy = URL.parse(proxy);
+            } else if (env_loader.map.get("HTTP_PROXY")) |proxy| {
+                http_proxy = URL.parse(proxy);
+            }
+        } else if (url.isHTTPS()) {
+            if (env_loader.map.get("https_proxy")) |proxy| {
+                http_proxy = URL.parse(proxy);
+            } else if (env_loader.map.get("HTTPS_PROXY")) |proxy| {
+                http_proxy = URL.parse(proxy);
+            }
+        }
+
         this.http = AsyncHTTP.init(
             allocator,
             .GET,
-            URL.parse(this.url_buf),
+            url,
             header_builder.entries,
             header_buf,
             &this.response_buffer,
             "",
             0,
             this.getCompletionCallback(),
-            null
+            http_proxy
         );
         this.http.max_retry_count = this.package_manager.options.max_retry_count;
         this.callback = .{ .extract = tarball };

@@ -83,7 +83,7 @@ describe("net.Socket read", () => {
         };
       }
 
-      it.skip(
+      it(
         "should work with .connect(port)",
         runWithServer((server, drain, done) => {
           var data = "";
@@ -110,7 +110,7 @@ describe("net.Socket read", () => {
         }),
       );
 
-      it.skip(
+      it(
         "should work with .connect(port, listener)",
         runWithServer((server, drain, done) => {
           var data = "";
@@ -136,7 +136,7 @@ describe("net.Socket read", () => {
         }),
       );
 
-      it.skip(
+      it(
         "should work with .connect(port, host, listener)",
         runWithServer((server, drain, done) => {
           var data = "";

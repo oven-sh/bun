@@ -413,7 +413,7 @@ pub const Version = struct {
                     return .dist_tag;
                 },
 
-                // link://
+                // link:
                 'l' => {
                     if (isTarball(dependency))
                         return .tarball;

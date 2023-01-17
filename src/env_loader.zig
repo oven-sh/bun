@@ -433,6 +433,7 @@ pub const Loader = struct {
     }
 
     pub fn getHttpProxy(this: *Loader, url: URL) ?URL {
+        // TODO: When Web Worker support is added, make sure to intern these strings
         var http_proxy: ?URL = null;
 
         if(url.isHTTP()){

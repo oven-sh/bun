@@ -1003,8 +1003,6 @@ request_content_len_buf: ["-4294967295".len]u8 = undefined,
 
 cloned_metadata: HTTPResponseMetadata = .{},
 http_proxy: ?URL = null,
-// ssl_proxy_buffer: ?[]u8 = null,
-// ssl_proxy_buffer_position: usize = 0,
 proxy_authorization: ?[]u8 = null,
 proxy_tunneling: bool = false,
 proxy_tunnel: ?ProxyTunnel = null,

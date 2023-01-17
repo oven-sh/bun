@@ -178,7 +178,7 @@ declare module "tls" {
      * socket has been destroyed, `null` will be returned.
      * @since v11.2.0
      */
-    getCertificate(): PeerCertificate | object | null;
+    // getCertificate(): PeerCertificate | object | null;
     /**
      * Returns an object containing information on the negotiated cipher suite.
      *
@@ -195,7 +195,7 @@ declare module "tls" {
      * See [SSL\_CIPHER\_get\_name](https://www.openssl.org/docs/man1.1.1/man3/SSL_CIPHER_get_name.html) for more information.
      * @since v0.11.4
      */
-    getCipher(): CipherNameAndProtocol;
+    // getCipher(): CipherNameAndProtocol;
     /**
      * Returns an object representing the type, name, and size of parameter of
      * an ephemeral key exchange in `perfect forward secrecy` on a client
@@ -206,7 +206,7 @@ declare module "tls" {
      * For example: `{ type: 'ECDH', name: 'prime256v1', size: 256 }`.
      * @since v5.0.0
      */
-    getEphemeralKeyInfo(): EphemeralKeyInfo | object | null;
+    // getEphemeralKeyInfo(): EphemeralKeyInfo | object | null;
     /**
      * As the `Finished` messages are message digests of the complete handshake
      * (with a total of 192 bits for TLS 1.0 and more for SSL 3.0), they can
@@ -265,7 +265,7 @@ declare module "tls" {
      * See the OpenSSL [`SSL_get_version`](https://www.openssl.org/docs/man1.1.1/man3/SSL_get_version.html) documentation for more information.
      * @since v5.7.0
      */
-    getProtocol(): string | null;
+    // getProtocol(): string | null;
     /**
      * Returns the TLS session data or `undefined` if no session was
      * negotiated. On the client, the data can be provided to the `session` option of {@link connect} to resume the connection. On the server, it may be useful
@@ -277,13 +277,13 @@ declare module "tls" {
      * must use the `'session'` event (it also works for TLSv1.2 and below).
      * @since v0.11.4
      */
-    getSession(): Buffer | undefined;
+    // getSession(): Buffer | undefined;
     /**
      * See [SSL\_get\_shared\_sigalgs](https://www.openssl.org/docs/man1.1.1/man3/SSL_get_shared_sigalgs.html) for more information.
      * @since v12.11.0
      * @return List of signature algorithms shared between the server and the client in the order of decreasing preference.
      */
-    getSharedSigalgs(): string[];
+    // getSharedSigalgs(): string[];
     /**
      * For a client, returns the TLS session ticket if one is available, or`undefined`. For a server, always returns `undefined`.
      *
@@ -292,13 +292,13 @@ declare module "tls" {
      * See `Session Resumption` for more information.
      * @since v0.11.4
      */
-    getTLSTicket(): Buffer | undefined;
+    // getTLSTicket(): Buffer | undefined;
     /**
      * See `Session Resumption` for more information.
      * @since v0.5.6
      * @return `true` if the session was reused, `false` otherwise.
      */
-    isSessionReused(): boolean;
+    // isSessionReused(): boolean;
     /**
      * The `tlsSocket.renegotiate()` method initiates a TLS renegotiation process.
      * Upon completion, the `callback` function will be passed a single argument

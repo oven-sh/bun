@@ -2,6 +2,8 @@ name: Release bun-types@canary
 on:
   push:
     branches: [main]
+    paths:
+      - 'packages/bun-types/**'
 jobs:
   tests:
     name: Build, test, publish canary

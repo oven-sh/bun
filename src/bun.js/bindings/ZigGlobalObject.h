@@ -243,6 +243,9 @@ public:
 
     JSC::JSFunction* emitReadableNextTickFunction() { return m_emitReadableNextTickFunction.getInitializedOnMainThread(this); }
 
+    Structure* requireResolveFunctionStructure() { return m_requireResolveFunctionStructure.getInitializedOnMainThread(this); }
+    JSObject* requireResolveFunctionPrototype() { return m_resolveFunctionPrototype.getInitializedOnMainThread(this); }
+
     JSC::JSObject* processObject()
     {
         return m_processObject.getInitializedOnMainThread(this);
@@ -444,6 +447,8 @@ private:
     LazyProperty<JSGlobalObject, JSObject> m_subtleCryptoObject;
     LazyProperty<JSGlobalObject, Structure> m_JSHTTPResponseController;
     LazyProperty<JSGlobalObject, JSC::Structure> m_JSBufferSubclassStructure;
+    LazyProperty<JSGlobalObject, JSC::Structure> m_requireResolveFunctionStructure;
+    LazyProperty<JSGlobalObject, JSObject> m_resolveFunctionPrototype;
 
     DOMGuardedObjectSet m_guardedObjects WTF_GUARDED_BY_LOCK(m_gcLock);
     void* m_bunVM;

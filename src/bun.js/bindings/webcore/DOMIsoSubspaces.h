@@ -30,6 +30,7 @@ public:
     std::unique_ptr<IsoSubspace> m_subspaceForPendingVirtualModuleResult;
     std::unique_ptr<IsoSubspace> m_subspaceForCallSite;
     std::unique_ptr<IsoSubspace> m_subspaceForNapiExternal;
+    std::unique_ptr<IsoSubspace> m_subspaceForRequireResolveFunction;
 #include "ZigGeneratedClasses+DOMIsoSubspaces.h"
     /*-- BUN --*/
 

@@ -2582,6 +2582,16 @@ void GlobalObject::finishCreation(VM& vm)
             init.set(structure);
         });
 
+    m_requireResolveFunctionStructure.initLater(
+        [](const JSC::LazyProperty<JSC::JSGlobalObject, JSC::Structure>::Initializer& init) {
+            init.set(Zig::ImportMetaObject::createResolveFunctionStructure(init.vm, jsCast<Zig::GlobalObject*>(init.owner)));
+        });
+
+    m_resolveFunctionPrototype.initLater(
+        [](const JSC::LazyProperty<JSC::JSGlobalObject, JSC::JSObject>::Initializer& init) {
+            init.set(Zig::ImportMetaObject::createResolveFunctionPrototype(init.vm, jsCast<Zig::GlobalObject*>(init.owner)).getObject());
+        });
+
     m_JSFileSinkClassStructure.initLater(
         [](LazyClassStructure::Initializer& init) {
             auto* prototype = createJSSinkPrototype(init.vm, init.global, WebCore::SinkID::FileSink);
@@ -3462,6 +3472,9 @@ void GlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     thisObject->m_callSiteStructure.visit(visitor);
     thisObject->m_emitReadableNextTickFunction.visit(visitor);
     thisObject->m_JSBufferSubclassStructure.visit(visitor);
+
+    thisObject->m_requireResolveFunctionStructure.visit(visitor);
+    thisObject->m_resolveFunctionPrototype.visit(visitor);
 
     for (auto& barrier : thisObject->m_thenables) {
         visitor.append(barrier);

@@ -1046,10 +1046,24 @@ export fn Bun__resolveSync(
     };
 }
 
+export fn Bun__resolveSyncWithSource(
+    global: *JSGlobalObject,
+    specifier: JSValue,
+    source: *ZigString,
+    is_esm: bool,
+) JSC.JSValue {
+    var exception_ = [1]JSC.JSValueRef{null};
+    var exception = &exception_;
+    return doResolveWithArgs(global, specifier.getZigString(global), source.*, exception, is_esm, true) orelse {
+        return JSC.JSValue.fromRef(exception[0]);
+    };
+}
+
 comptime {
     if (!is_bindgen) {
         _ = Bun__resolve;
         _ = Bun__resolveSync;
+        _ = Bun__resolveSyncWithSource;
     }
 }
 

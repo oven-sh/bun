@@ -334,17 +334,11 @@ const NetworkTask = struct {
 
         this.response_buffer = try MutableString.init(allocator, 0);
         this.allocator = allocator;
-        this.http = AsyncHTTP.init(
-            allocator,
-            .GET,
-            URL.parse(this.url_buf),
-            header_builder.entries,
-            header_builder.content.ptr.?[0..header_builder.content.len],
-            &this.response_buffer,
-            "",
-            0,
-            this.getCompletionCallback(),
-        );
+        const env_loader = this.package_manager.env_loader;
+
+        var url = URL.parse(this.url_buf);
+        var http_proxy: ?URL = env_loader.getHttpProxy(url);
+        this.http = AsyncHTTP.init(allocator, .GET, url, header_builder.entries, header_builder.content.ptr.?[0..header_builder.content.len], &this.response_buffer, "", 0, this.getCompletionCallback(), http_proxy);
         this.http.max_retry_count = this.package_manager.options.max_retry_count;
         this.callback = .{
             .package_manifest = .{
@@ -406,17 +400,12 @@ const NetworkTask = struct {
             header_buf = header_builder.content.ptr.?[0..header_builder.content.len];
         }
 
-        this.http = AsyncHTTP.init(
-            allocator,
-            .GET,
-            URL.parse(this.url_buf),
-            header_builder.entries,
-            header_buf,
-            &this.response_buffer,
-            "",
-            0,
-            this.getCompletionCallback(),
-        );
+        const env_loader = this.package_manager.env_loader;
+
+        var url = URL.parse(this.url_buf);
+        var http_proxy: ?URL = env_loader.getHttpProxy(url);
+
+        this.http = AsyncHTTP.init(allocator, .GET, url, header_builder.entries, header_buf, &this.response_buffer, "", 0, this.getCompletionCallback(), http_proxy);
         this.http.max_retry_count = this.package_manager.options.max_retry_count;
         this.callback = .{ .extract = tarball };
     }

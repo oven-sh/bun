@@ -745,6 +745,7 @@ pub const Fetch = struct {
                 ).init(
                     fetch_tasklet,
                 ),
+                null
             );
 
             if (!fetch_options.follow_redirects) {

@@ -18796,11 +18796,15 @@ pub const SSL = opaque {
         return SSL_has_pending(ssl) > 0;
     }
 
+    pub inline fn setFD(this: *SSL, fd: c_int) void {
+        _ = SSL_set_fd(this, fd);
+    }
+
     pub inline fn setIsClient(ssl: *SSL, comptime is_client: bool) void {
-        if (comptime !is_client) {
-            SSL_set_accept_state(ssl);
-        } else {
+        if (comptime is_client) {
             SSL_set_connect_state(ssl);
+        } else {
+            SSL_set_accept_state(ssl);
         }
     }
 
@@ -18954,6 +18958,10 @@ pub const SSL_CTX = opaque {
         SSL_CTX_set_custom_verify(this, 0, cb);
         // SSL_CTX_set_custom_verify(this, 1, cb);
         // SSL_CTX_set_custom_verify(this, 2, cb);
+    }
+
+    pub fn deinit(this: *SSL_CTX) void {
+        SSL_CTX_free(this);
     }
 };
 

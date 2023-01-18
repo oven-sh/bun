@@ -217,20 +217,13 @@ pub const UpgradeCommand = struct {
             }
         }
 
+        var http_proxy: ?URL = env_loader.getHttpProxy(api_url);
+
         var metadata_body = try MutableString.init(allocator, 2048);
 
         // ensure very stable memory address
         var async_http: *HTTP.AsyncHTTP = allocator.create(HTTP.AsyncHTTP) catch unreachable;
-        async_http.* = HTTP.AsyncHTTP.initSync(
-            allocator,
-            .GET,
-            api_url,
-            header_entries,
-            headers_buf,
-            &metadata_body,
-            "",
-            60 * std.time.ns_per_min,
-        );
+        async_http.* = HTTP.AsyncHTTP.initSync(allocator, .GET, api_url, header_entries, headers_buf, &metadata_body, "", 60 * std.time.ns_per_min, http_proxy);
         if (!silent) async_http.client.progress_node = progress;
         const response = try async_http.sendSync(true);
 
@@ -450,6 +443,9 @@ pub const UpgradeCommand = struct {
             };
         }
 
+        var zip_url = URL.parse(version.zip_url);
+        var http_proxy: ?URL = env_loader.getHttpProxy(zip_url);
+
         {
             var refresher = std.Progress{};
             var progress = refresher.start("Downloading", version.size);
@@ -458,16 +454,7 @@ pub const UpgradeCommand = struct {
             var zip_file_buffer = try ctx.allocator.create(MutableString);
             zip_file_buffer.* = try MutableString.init(ctx.allocator, @max(version.size, 1024));
 
-            async_http.* = HTTP.AsyncHTTP.initSync(
-                ctx.allocator,
-                .GET,
-                URL.parse(version.zip_url),
-                .{},
-                "",
-                zip_file_buffer,
-                "",
-                timeout,
-            );
+            async_http.* = HTTP.AsyncHTTP.initSync(ctx.allocator, .GET, zip_url, .{}, "", zip_file_buffer, "", timeout, http_proxy);
             async_http.client.timeout = timeout;
             async_http.client.progress_node = progress;
             const response = try async_http.sendSync(true);

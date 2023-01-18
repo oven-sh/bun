@@ -22,7 +22,7 @@ jobs:
       - name: Install Bun
         uses: oven-sh/setup-bun@v0.1.8
         with:
-          bun-version: latest
+          bun-version: canary
           github-token: ${{ secrets.GITHUB_TOKEN }}
       
       - name: Install dependencies

@@ -28,6 +28,12 @@ it("import.meta.require (json)", () => {
   expect(require("./require-json.json").hello).toBe(sync.hello);
 });
 
+it("const f = require;require(json)", () => {
+  const f = require;
+  console.log(f);
+  expect(f("./require-json.json").hello).toBe(sync.hello);
+});
+
 it("Module.createRequire().resolve", () => {
   const expected = Bun.resolveSync("./require-json.json", import.meta.dir);
 

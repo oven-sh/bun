@@ -166,7 +166,7 @@ describe("net.Socket read", () => {
 
 describe("net.Socket write", () => {
   const message = "Hello World!".repeat(1024);
-  let port = 54321;
+  let port = 53213;
 
   function runWithServer(cb) {
     return (done) => {

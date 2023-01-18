@@ -411,22 +411,22 @@ declare module "bun" {
      * ## Example
      *
      * ```js
-     * const {address} = await Bun.dns.lookup('example.com');
+     * const [{ address }] = await Bun.dns.lookup('example.com');
      * ```
      *
      * ### Filter results to IPv4:
      *
      * ```js
-     * import {dns} from 'bun';
-     * const {address} = await dns.lookup('example.com', {family: 4});
+     * import { dns } from 'bun';
+     * const [{ address }] = await dns.lookup('example.com', {family: 4});
      * console.log(address); // "123.122.22.126"
      * ```
      *
      * ### Filter results to IPv6:
      *
      * ```js
-     * import {dns} from 'bun';
-     * const {address} = await dns.lookup('example.com', {family: 6});
+     * import { dns } from 'bun';
+     * const [{ address }] = await dns.lookup('example.com', {family: 6});
      * console.log(address); // "2001:db8::1"
      * ```
      *
@@ -439,8 +439,8 @@ declare module "bun" {
      *
      * To customize the DNS resolver, pass a `backend` option to `dns.lookup`:
      * ```js
-     * import {dns} from 'bun';
-     * const {address} = await dns.lookup('example.com', {backend: 'getaddrinfo'});
+     * import { dns } from 'bun';
+     * const [{ address }] = await dns.lookup('example.com', {backend: 'getaddrinfo'});
      * console.log(address); // "19.42.52.62"
      * ```
      */

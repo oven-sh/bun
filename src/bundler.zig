@@ -454,7 +454,7 @@ pub const Bundler = struct {
             DotEnv.instance = env_loader;
         }
 
-        env_loader.quiet = log.level.atLeast(.warn);
+        env_loader.quiet = !log.level.atLeast(.warn);
 
         // var pool = try allocator.create(ThreadPool);
         // try pool.init(ThreadPool.InitConfig{

@@ -548,7 +548,9 @@ describe("fs/promises", () => {
   const { readFile, stat, writeFile } = promises;
 
   it("should not segfault on exception", async () => {
-    stat("foo/bar");
+    try {
+      await stat("foo/bar");
+    } catch (e) {}
   });
 
   it("readFile", async () => {
@@ -560,5 +562,31 @@ describe("fs/promises", () => {
     const path = `/tmp/fs.test.js/${Date.now()}.writeFile.txt`;
     await writeFile(path, "File written successfully");
     expect(readFileSync(path, "utf8")).toBe("File written successfully");
+  });
+
+  it("readdir()", async () => {
+    const files = await promises.readdir(import.meta.dir);
+    expect(files.length).toBeGreaterThan(0);
+  });
+
+  it("readdir() no args doesnt segfault", async () => {
+    const fizz = [
+      [],
+      [Symbol("ok")],
+      [Symbol("ok"), Symbol("ok")],
+      [Symbol("ok"), Symbol("ok"), Symbol("ok")],
+      [Infinity, -NaN, -Infinity],
+      "\0\0\0\0",
+      "\r\n",
+    ];
+    for (const args of fizz) {
+      try {
+        // check it doens't segfault when called with invalid arguments
+        await promises.readdir(...args);
+      } catch (e) {
+        // check that producing the error doesn't cause any crashes
+        Bun.inspect(e);
+      }
+    }
   });
 });

@@ -318,7 +318,9 @@ interface EncodeIntoResult {
 
 interface Process {
   /**
-   * The current version of Bun
+   * A Node.js LTS version
+   *
+   * To see the current Bun version, use {@link Bun.version}
    */
   version: string;
   /**
@@ -391,6 +393,10 @@ interface Process {
    * @returns Bun process's file mode creation mask.
    */
   umask(mask?: number): number;
+
+  emitWarning(warning: string | Error /*name?: string, ctor?: Function*/): void;
+
+  readonly config: Object;
 }
 
 declare var process: Process;

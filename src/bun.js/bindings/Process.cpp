@@ -531,21 +531,30 @@ JSC_DEFINE_HOST_FUNCTION(Process_emitWarning, (JSGlobalObject * lexicalGlobalObj
         return JSValue::encode(jsUndefined());
     }
 
-    auto jsArgs = JSValue::encode(callFrame->uncheckedArgument(0));
-
     RETURN_IF_EXCEPTION(scope, encodedJSValue());
 
     auto* process = jsCast<Process*>(globalObject->processObject());
 
+    auto getError = [&]() -> JSValue {
+        JSValue arg0 = callFrame->uncheckedArgument(0);
+        if (!arg0.isEmpty() && arg0.isCell() && arg0.asCell()->type() == ErrorInstanceType) {
+            return arg0;
+        }
+
+        WTF::String str = arg0.toWTFString(globalObject);
+        return createError(globalObject, str);
+    };
+
     auto ident = Identifier::fromString(vm, "warning"_s);
     if (process->wrapped().hasEventListeners(ident)) {
-        WTF::String str = callFrame->uncheckedArgument(0).toWTFString(globalObject);
         JSC::MarkedArgumentBuffer args;
-        args.append(createError(globalObject, str));
+        args.append(getError());
+
         process->wrapped().emit(ident, args);
         return JSValue::encode(jsUndefined());
     }
 
+    auto jsArgs = JSValue::encode(getError());
     Zig__ConsoleClient__messageWithTypeAndLevel(reinterpret_cast<Zig::ConsoleClient*>(globalObject->consoleClient().get())->m_client, static_cast<uint32_t>(MessageType::Log),
         static_cast<uint32_t>(MessageLevel::Warning), globalObject, &jsArgs, 1);
     return JSValue::encode(jsUndefined());

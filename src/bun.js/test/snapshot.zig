@@ -58,6 +58,8 @@ pub const SnapshotFile = struct {
     counters: CountersMap,
     updateSnapshot: bool = false,
 
+    pub var updateAllSnapshots: bool = false;
+
     pub const TestData = struct {
         k: ZigString,
         v: JSC.JSValue,
@@ -172,12 +174,12 @@ pub const SnapshotFile = struct {
     fn compare(this: *SnapshotFile, actual: JSC.JSValue, expected: JSC.JSValue) bool {
         const globalObject = this.globalObject orelse unreachable;
 
-        var expected_json_string = ZigString.init("");
+        var fmt = JSC.ZigConsoleClient.Formatter{ .globalThis = globalObject };
 
-        expected.toZigString(&expected_json_string, globalObject);
-        const json_expected = expected_json_string.toJSONObject(globalObject);
+        const actual_formatted = std.fmt.allocPrint(this.allocator, "{any}", .{actual.toFmt(globalObject, &fmt)}) catch unreachable;
+        const expected_formatted = std.fmt.allocPrint(this.allocator, "{any}", .{expected.toFmt(globalObject, &fmt)}) catch unreachable;
 
-        return JSC.JSValue.deepEquals(actual, json_expected, globalObject);
+        return std.mem.eql(u8, actual_formatted, expected_formatted);
     }
 
     // @TODO if the snapshot file is not found, then we set update = true
@@ -228,7 +230,7 @@ pub const SnapshotFile = struct {
     }
 
     pub fn writeToFile(this: *SnapshotFile) void {
-        if (!this.updateSnapshot) return;
+        if (!this.updateSnapshot and !SnapshotFile.updateAllSnapshots) return;
         const globalObject = this.globalObject orelse {
             return;
         };
@@ -240,15 +242,16 @@ pub const SnapshotFile = struct {
         std.sort.sort(TestData, this.tests.items, {}, TestData.lessThan);
 
         if (this.tests.items.len > 0) {
-            snapshot_file.writer().print("// Jest Snapshot v1, https://goo.gl/fbAQLP", .{}) catch unreachable;
+            snapshot_file.writer().print("// Jest Snapshot v1, https://goo.gl/fbAQLP\n", .{}) catch unreachable;
         }
 
         var i: usize = 0;
         while (i < this.tests.items.len) {
             const test_data = this.tests.items[i];
             const key: ZigString = test_data.k;
-            var value_stringified = JSC.ZigString.init("");
-            test_data.v.jsonStringify(globalObject, 0, &value_stringified);
+
+            var fmt = JSC.ZigConsoleClient.Formatter{ .globalThis = globalObject };
+            var value_stringified = test_data.v.toFmt(globalObject, &fmt);
             const count = test_data.count;
             snapshot_file.writer().print("\nexports[`{s} {}`] = `{s}`;\n", .{ key, count, value_stringified }) catch unreachable;
             i += 1;

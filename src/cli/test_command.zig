@@ -8,6 +8,7 @@ const MutableString = bun.MutableString;
 const stringZ = bun.stringZ;
 const default_allocator = bun.default_allocator;
 const C = bun.C;
+const clap = bun.clap;
 const std = @import("std");
 
 const lex = @import("../js_lexer.zig");
@@ -42,6 +43,7 @@ const JSC = @import("bun").JSC;
 const Jest = JSC.Jest;
 const TestRunner = JSC.Jest.TestRunner;
 const Test = TestRunner.Test;
+const SnapshotFile = @import("../bun.js/test/snapshot.zig").SnapshotFile;
 const NetworkThread = @import("bun").HTTP.NetworkThread;
 const uws = @import("bun").uws;
 pub const CommandLineReporter = struct {
@@ -295,13 +297,42 @@ const Scanner = struct {
     }
 };
 
+const ParamType = clap.Param(clap.Help);
+const params = [_]ParamType{
+    clap.parseParam("--updateSnapshot              Update snapshot in bun:test") catch unreachable,
+    clap.parseParam("--help                            Print this bun-test help menu") catch unreachable,
+    clap.parseParam("<POS>...                         ") catch unreachable,
+};
+
 pub const TestCommand = struct {
     pub const name = "wiptest";
     pub fn exec(ctx: Command.Context) !void {
+        var diag = clap.Diagnostic{};
+        var args = clap.parse(clap.Help, &params, .{
+            .diagnostic = &diag,
+            .allocator = ctx.allocator,
+        }) catch |err| {
+            clap.help(Output.errorWriter(), &params) catch {};
+            Output.errorWriter().writeAll("\n") catch {};
+            diag.report(Output.errorWriter(), err) catch {};
+            return err;
+        };
+        defer args.deinit();
+
         if (comptime is_bindgen) unreachable;
         // print the version so you know its doing stuff if it takes a sec
         Output.prettyErrorln("<r><b>bun wiptest <r><d>v" ++ Global.package_json_version_with_sha ++ "<r>", .{});
         Output.flush();
+
+        if (args.flag("--help")) {
+            clap.help(Output.writer(), &params) catch {};
+            Output.flush();
+            Global.exit(0);
+        } else if (args.flag("--updateSnapshot")) {
+            Output.prettyln("\n<b><magenta>bun wiptest<r> Updating All Snapshots\n", .{});
+            Output.flush();
+            SnapshotFile.updateAllSnapshots = true;
+        }
 
         var env_loader = brk: {
             var map = try ctx.allocator.create(DotEnv.Map);

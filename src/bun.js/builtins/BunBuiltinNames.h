@@ -35,6 +35,7 @@ using namespace JSC;
     macro(WritableStream) \
     macro(WritableStreamDefaultController) \
     macro(WritableStreamDefaultWriter) \
+    macro(_events) \
     macro(abortAlgorithm) \
     macro(abortSteps) \
     macro(addEventListener) \
@@ -120,6 +121,7 @@ using namespace JSC;
     macro(inFlightCloseRequest) \
     macro(inFlightWriteRequest) \
     macro(initializeWith) \
+    macro(internalRequire) \
     macro(internalStream) \
     macro(internalWritable) \
     macro(isAbortSignal) \
@@ -245,7 +247,6 @@ using namespace JSC;
     macro(writer) \
     macro(writing) \
     macro(written) \
-    macro(_events) \
     BUN_ADDITIONAL_PRIVATE_IDENTIFIERS(macro) \
 
 class BunBuiltinNames {

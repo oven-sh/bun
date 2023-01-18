@@ -520,6 +520,37 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionAbort, (JSGlobalObject * globalObject, 
     __builtin_unreachable();
 }
 
+JSC_DEFINE_HOST_FUNCTION(Process_emitWarning, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    Zig::GlobalObject* globalObject = static_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    if (callFrame->argumentCount() < 1) {
+        throwVMError(globalObject, scope, "Not enough arguments"_s);
+        return JSValue::encode(jsUndefined());
+    }
+
+    auto jsArgs = JSValue::encode(callFrame->uncheckedArgument(0));
+
+    RETURN_IF_EXCEPTION(scope, encodedJSValue());
+
+    auto* process = jsCast<Process*>(globalObject->processObject());
+
+    auto ident = Identifier::fromString(vm, "warning"_s);
+    if (process->wrapped().hasEventListeners(ident)) {
+        WTF::String str = callFrame->uncheckedArgument(0).toWTFString(globalObject);
+        JSC::MarkedArgumentBuffer args;
+        args.append(createError(globalObject, str));
+        process->wrapped().emit(ident, args);
+        return JSValue::encode(jsUndefined());
+    }
+
+    Zig__ConsoleClient__messageWithTypeAndLevel(reinterpret_cast<Zig::ConsoleClient*>(globalObject->consoleClient().get())->m_client, static_cast<uint32_t>(MessageType::Log),
+        static_cast<uint32_t>(MessageLevel::Warning), globalObject, &jsArgs, 1);
+    return JSValue::encode(jsUndefined());
+}
+
 JSC_DEFINE_CUSTOM_GETTER(Process_lazyArgv0Getter, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::PropertyName name))
 {
     JSC::JSObject* thisObject = JSValue::decode(thisValue).getObject();
@@ -699,6 +730,9 @@ void Process::finishCreation(JSC::VM& vm)
     config->putDirect(vm, JSC::Identifier::fromString(vm, "target_defaults"_s), JSC::constructEmptyObject(globalObject), 0);
     config->putDirect(vm, JSC::Identifier::fromString(vm, "variables"_s), variables, 0);
     this->putDirect(vm, JSC::Identifier::fromString(vm, "config"_s), config, 0);
+
+    this->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(this->vm(), "emitWarning"_s),
+        1, Process_emitWarning, ImplementationVisibility::Public, NoIntrinsic, 0);
 }
 
 const JSC::ClassInfo Process::s_info = { "Process"_s, &Base::s_info, nullptr, nullptr,

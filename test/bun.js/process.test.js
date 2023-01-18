@@ -176,3 +176,17 @@ it("process.config", () => {
     target_defaults: {},
   });
 });
+
+it("process.emitWarning", () => {
+  process.emitWarning("-- Testing process.emitWarning --");
+  var called = 0;
+  process.on("warning", (err) => {
+    called++;
+    expect(err.message).toBe("-- Testing process.on('warning') --");
+  });
+  process.emitWarning("-- Testing process.on('warning') --");
+  expect(called).toBe(1);
+  expect(process.off("warning")).toBe(process);
+  process.emitWarning("-- Testing process.on('warning') --");
+  expect(called).toBe(1);
+});

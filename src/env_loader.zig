@@ -676,8 +676,10 @@ pub const Loader = struct {
 
         // This is a little weird because it's evidently stored line-by-line
         var source = logger.Source.initPathString("process.env", "");
+
+        this.map.map.ensureTotalCapacity(std.os.environ.len) catch unreachable;
         for (std.os.environ) |env| {
-            source.contents = std.mem.span(env);
+            source.contents = bun.span(env);
             Parser.parse(&source, this.allocator, this.map, true, true);
         }
         this.did_load_process = true;

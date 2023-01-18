@@ -676,10 +676,7 @@ declare module "fs/promises" {
    * completion callback.
    * @since v14.14.0
    */
-  export function rm(
-    path: PathLike,
-    options?: RmOptions,
-  ): Promise<void>;
+  export function rm(path: PathLike, options?: RmOptions): Promise<void>;
 }
 
 declare module "node:fs/promises" {

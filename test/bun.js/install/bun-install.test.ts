@@ -20,6 +20,13 @@ function resetHanlder() {
   };
 }
 
+const env: any = {
+  ...process.env,
+  BUN_DEBUG_QUIET_LOGS: "1",
+  NO_COLOR: "1",
+  FORCE_COLOR: undefined,
+};
+
 beforeAll(() => {
   server = Bun.serve({
     async fetch(request) {
@@ -66,10 +73,7 @@ it("should handle missing package", async () => {
     stdout: null,
     stdin: "pipe",
     stderr: "pipe",
-    env: {
-      ...process.env,
-      BUN_DEBUG_QUIET_LOGS: "1",
-    },
+    env,
   });
   expect(stderr).toBeDefined();
   const err = await new Response(stderr).text();
@@ -115,10 +119,7 @@ it("should handle @scoped authentication", async () => {
     stdout: null,
     stdin: "pipe",
     stderr: "pipe",
-    env: {
-      ...process.env,
-      BUN_DEBUG_QUIET_LOGS: "1",
-    },
+    env,
   });
   expect(stderr).toBeDefined();
   const err = await new Response(stderr).text();
@@ -154,10 +155,7 @@ it("should handle workspaces", async () => {
     stdout: null,
     stdin: "pipe",
     stderr: "pipe",
-    env: {
-      ...process.env,
-      BUN_DEBUG_QUIET_LOGS: "1",
-    },
+    env,
   });
   expect(stderr).toBeDefined();
   const err = await new Response(stderr).text();
@@ -171,7 +169,9 @@ it("should handle workspaces", async () => {
   ]);
   expect(await exited).toBe(0);
   expect(requested).toBe(0);
-  expect(await readdir(join(package_dir, "node_modules"))).toEqual(["Bar"]);
+  expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([
+    "Bar",
+  ]);
   expect(await readlink(join(package_dir, "node_modules", "Bar"))).toBe(
     join("..", "bar"),
   );
@@ -214,10 +214,7 @@ it("should handle inter-dependency between workspaces", async () => {
     stdout: null,
     stdin: "pipe",
     stderr: "pipe",
-    env: {
-      ...process.env,
-      BUN_DEBUG_QUIET_LOGS: "1",
-    },
+    env,
   });
   expect(stderr).toBeDefined();
   const err = await new Response(stderr).text();
@@ -232,7 +229,7 @@ it("should handle inter-dependency between workspaces", async () => {
   ]);
   expect(await exited).toBe(0);
   expect(requested).toBe(0);
-  expect(await readdir(join(package_dir, "node_modules"))).toEqual([
+  expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([
     "Bar",
     "Baz",
   ]);
@@ -281,10 +278,7 @@ it("should handle inter-dependency between workspaces (devDependencies)", async 
     stdout: null,
     stdin: "pipe",
     stderr: "pipe",
-    env: {
-      ...process.env,
-      BUN_DEBUG_QUIET_LOGS: "1",
-    },
+    env,
   });
   expect(stderr).toBeDefined();
   const err = await new Response(stderr).text();
@@ -299,7 +293,7 @@ it("should handle inter-dependency between workspaces (devDependencies)", async 
   ]);
   expect(await exited).toBe(0);
   expect(requested).toBe(0);
-  expect(await readdir(join(package_dir, "node_modules"))).toEqual([
+  expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([
     "Bar",
     "Baz",
   ]);
@@ -348,10 +342,7 @@ it("should handle inter-dependency between workspaces (optionalDependencies)", a
     stdout: null,
     stdin: "pipe",
     stderr: "pipe",
-    env: {
-      ...process.env,
-      BUN_DEBUG_QUIET_LOGS: "1",
-    },
+    env,
   });
   expect(stderr).toBeDefined();
   const err = await new Response(stderr).text();
@@ -366,7 +357,7 @@ it("should handle inter-dependency between workspaces (optionalDependencies)", a
   ]);
   expect(await exited).toBe(0);
   expect(requested).toBe(0);
-  expect(await readdir(join(package_dir, "node_modules"))).toEqual([
+  expect(await await readdirSorted(join(package_dir, "node_modules"))).toEqual([
     "Bar",
     "Baz",
   ]);
@@ -407,10 +398,7 @@ it("should ignore peerDependencies within workspaces", async () => {
     stdout: null,
     stdin: "pipe",
     stderr: "pipe",
-    env: {
-      ...process.env,
-      BUN_DEBUG_QUIET_LOGS: "1",
-    },
+    env,
   });
   expect(stderr).toBeDefined();
   const err = await new Response(stderr).text();
@@ -424,7 +412,9 @@ it("should ignore peerDependencies within workspaces", async () => {
   ]);
   expect(await exited).toBe(0);
   expect(requested).toBe(0);
-  expect(await readdir(join(package_dir, "node_modules"))).toEqual(["Baz"]);
+  expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([
+    "Baz",
+  ]);
   expect(await readlink(join(package_dir, "node_modules", "Baz"))).toBe(
     join("..", "packages", "baz"),
   );
@@ -467,10 +457,7 @@ it("should handle life-cycle scripts within workspaces", async () => {
     stdout: null,
     stdin: "pipe",
     stderr: "pipe",
-    env: {
-      ...process.env,
-      BUN_DEBUG_QUIET_LOGS: "1",
-    },
+    env,
   });
   expect(stderr).toBeDefined();
   const err = await new Response(stderr).text();
@@ -486,8 +473,18 @@ it("should handle life-cycle scripts within workspaces", async () => {
   ]);
   expect(await exited).toBe(0);
   expect(requested).toBe(0);
-  expect(await readdir(join(package_dir, "node_modules"))).toEqual(["Bar"]);
+  expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([
+    "Bar",
+  ]);
   expect(await readlink(join(package_dir, "node_modules", "Bar"))).toBe(
     join("..", "bar"),
   );
 });
+
+var readdirSorted = async (
+  ...args: Parameters<typeof readdir>
+): ReturnType<typeof readdir> => {
+  const results = await readdir(...args);
+  results.sort();
+  return results;
+};

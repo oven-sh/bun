@@ -122,12 +122,12 @@ JSC_DEFINE_CUSTOM_GETTER(functionRequireResolveLazyGetter,
     }
 
     JSValue pathStringValue = require->get(globalObject, PropertyName(builtinNames.pathPrivateName()));
-    JSC::Strong<JSC::JSString> pathString = JSC::Strong<JSC::JSString>(vm, pathStringValue.toStringOrNull(globalObject));
+    WTF::String pathString = pathStringValue.toWTFString(globalObject);
 
     JSC::JSFunction* resolverFunction
         = JSC::JSNativeStdFunction::create(
             globalObject->vm(), globalObject, 2, "resolve"_s, [pathString_ = WTFMove(pathString)](JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame) -> const JSC::EncodedJSValue {
-                return functionRequireResolve(globalObject, callFrame, JSValue::encode(pathString_.get()));
+                return functionRequireResolve(globalObject, callFrame, JSValue::encode(jsString(globalObject->vm(), pathString_)));
             });
     require->putDirect(vm, builtinNames.resolvePrivateName(), resolverFunction, 0);
     return JSValue::encode(JSValue(resolverFunction));

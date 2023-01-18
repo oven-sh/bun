@@ -18,16 +18,16 @@ declare module "net" {
     Abortable,
     // EventEmitter
   } from "node:events";
-  // import * as dns from "node:dns";
-  // type LookupFunction = (
-  //   hostname: string,
-  //   options: dns.LookupOneOptions,
-  //   callback: (
-  //     err: NodeJS.ErrnoException | null,
-  //     address: string,
-  //     family: number,
-  //   ) => void,
-  // ) => void;
+  import * as dns from "node:dns";
+  type LookupFunction = (
+    hostname: string,
+    options: dns.LookupOneOptions,
+    callback: (
+      err: ErrnoException | null,
+      address: string,
+      family: number,
+    ) => void,
+  ) => void;
   interface AddressInfo {
     address: string;
     family: string;

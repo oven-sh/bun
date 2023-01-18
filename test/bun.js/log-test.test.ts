@@ -3,6 +3,7 @@ import { basename, dirname, join } from "path";
 import * as fs from "fs";
 import { readableStreamToText, spawnSync } from "bun";
 import { bunExe } from "bunExe";
+import { bunEnv } from "bunEnv";
 
 it("should not log .env when quiet", async () => {
   writeDirectoryTree("/tmp/log-test-silent", {
@@ -13,9 +14,7 @@ it("should not log .env when quiet", async () => {
   const { stderr } = spawnSync({
     cmd: [bunExe(), "index.ts"],
     cwd: "/tmp/log-test-silent",
-    env: {
-      BUN_DEBUG_QUIET_LOGS: "1",
-    },
+    env: bunEnv,
   });
 
   expect(stderr!.toString()).toBe("");
@@ -31,9 +30,7 @@ it("should log .env by default", async () => {
   const { stderr } = spawnSync({
     cmd: [bunExe(), "index.ts"],
     cwd: "/tmp/log-test-silent",
-    env: {
-      BUN_DEBUG_QUIET_LOGS: "1",
-    },
+    env: bunEnv,
   });
 
   expect(stderr?.toString().includes(".env")).toBe(true);

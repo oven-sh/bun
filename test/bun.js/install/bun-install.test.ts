@@ -11,6 +11,7 @@ import { bunExe } from "bunExe";
 import { mkdir, mkdtemp, readdir, readlink, rm, writeFile } from "fs/promises";
 import { join } from "path";
 import { tmpdir } from "os";
+import { bunEnv } from "bunEnv";
 
 let handler, package_dir, requested, server;
 
@@ -20,12 +21,7 @@ function resetHanlder() {
   };
 }
 
-const env: any = {
-  ...process.env,
-  BUN_DEBUG_QUIET_LOGS: "1",
-  NO_COLOR: "1",
-  FORCE_COLOR: undefined,
-};
+const env = bunEnv;
 
 beforeAll(() => {
   server = Bun.serve({

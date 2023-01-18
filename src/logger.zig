@@ -588,7 +588,7 @@ pub const Log = struct {
         this.errors = 0;
     }
 
-    pub var default_log_level = if (Environment.isDebug) Level.info else Level.warn;
+    pub var default_log_level = Level.warn;
 
     pub fn hasAny(this: *const Log) bool {
         return (this.warnings + this.errors) > 0;

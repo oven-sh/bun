@@ -8,7 +8,6 @@
     "moduleResolution": "nodenext",
     "strict": true,
     "noImplicitAny": false,
-    "allowSyntheticDefaultImports": true,
     "allowJs": true,
     "downlevelIteration": true,
     "esModuleInterop": true,

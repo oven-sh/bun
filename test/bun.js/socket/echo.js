@@ -47,10 +47,10 @@ function createOptions(type, message, closeOnDone) {
         done(socket);
       },
       drain: drain,
-      end() {
-        report();
-        console.log(type, "ENDED");
-      },
+      // end() {
+      //   report();
+      //   console.log(type, "ENDED");
+      // },
       error(socket, err) {
         console.log(type, "ERRED", err);
       },

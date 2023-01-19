@@ -729,7 +729,7 @@ pub const Fetch = struct {
             if (fetch_tasklet.request_body.store()) |store| {
                 store.ref();
             }
-
+            
             fetch_tasklet.http.?.* = HTTPClient.AsyncHTTP.init(
                 allocator,
                 fetch_options.method,
@@ -745,7 +745,7 @@ pub const Fetch = struct {
                 ).init(
                     fetch_tasklet,
                 ),
-                null
+                jsc_vm.bundler.env.getHttpProxy(fetch_options.url)
             );
 
             if (!fetch_options.follow_redirects) {

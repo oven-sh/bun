@@ -15,6 +15,12 @@ import { bunEnv } from "bunEnv";
 
 let handler, package_dir, requested, server;
 
+async function readdirSorted(path: PathLike): Promise<string[]> {
+  const results = await readdir(path);
+  results.sort();
+  return results;
+}
+
 function resetHanlder() {
   handler = function () {
     return new Response("Tea Break~", { status: 418 });
@@ -78,7 +84,9 @@ it("should handle missing package", async () => {
   );
   expect(stdout).toBeDefined();
   expect(await new Response(stdout).text()).toBe("");
-  expect(urls).toContain("http://localhost:54321/foo");
+  expect(urls).toEqual([
+    "http://localhost:54321/foo",
+  ]);
   expect(await exited).toBe(1);
   expect(requested).toBe(1);
 });
@@ -122,7 +130,9 @@ it("should handle @scoped authentication", async () => {
   expect(err.split(/\r?\n/)).toContain(`GET ${url} - 555`);
   expect(stdout).toBeDefined();
   expect(await new Response(stdout).text()).toBe("");
-  expect(urls).toContain(url);
+  expect(urls).toEqual([
+    url,
+  ]);
   expect(seen_token).toBe(true);
   expect(await exited).toBe(1);
   expect(requested).toBe(1);
@@ -353,7 +363,7 @@ it("should handle inter-dependency between workspaces (optionalDependencies)", a
   ]);
   expect(await exited).toBe(0);
   expect(requested).toBe(0);
-  expect(await await readdirSorted(join(package_dir, "node_modules"))).toEqual([
+  expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([
     "Bar",
     "Baz",
   ]);
@@ -477,10 +487,134 @@ it("should handle life-cycle scripts within workspaces", async () => {
   );
 });
 
-var readdirSorted = async (
-  ...args: Parameters<typeof readdir>
-): ReturnType<typeof readdir> => {
-  const results = await readdir(...args);
-  results.sort();
-  return results;
-};
+it("should handle dependency aliasing", async () => {
+  const urls: string[] = [];
+  handler = async (request) => {
+    expect(request.method).toBe("GET");
+    expect(request.headers.get("accept")).toBe(
+      "application/vnd.npm.install-v1+json; q=1.0, application/json; q=0.8, */*",
+    );
+    expect(request.headers.get("npm-auth-type")).toBe(null);
+    expect(await request.text()).toBe("");
+    urls.push(request.url);
+    return new Response("not to be found", { status: 404 });
+  };
+  await writeFile(
+    join(package_dir, "package.json"),
+    JSON.stringify({
+      name: "Foo",
+      version: "0.0.1",
+      dependencies: {
+        "Bar": "npm:baz",
+      },
+    }),
+  );
+  const { stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "install", "--config", import.meta.dir + "/basic.toml"],
+    cwd: package_dir,
+    stdout: null,
+    stdin: "pipe",
+    stderr: "pipe",
+    env,
+  });
+  expect(stderr).toBeDefined();
+  const err = await new Response(stderr).text();
+  expect(err).toContain('error: package "baz" not found localhost/baz 404');
+  expect(err).toContain("error: Bar@npm:baz failed to resolve");
+  expect(stdout).toBeDefined();
+  const out = await new Response(stdout).text();
+  expect(out.replace(/\s*\[[0-9\.]+ms\]\s*$/, "").split(/\r?\n/)).toEqual([""]);
+  expect(urls).toEqual([
+    "http://localhost:54321/baz",
+  ]);
+  expect(await exited).toBe(1);
+  expect(requested).toBe(1);
+});
+
+it("should handle dependency aliasing (versioned)", async () => {
+  const urls: string[] = [];
+  handler = async (request) => {
+    expect(request.method).toBe("GET");
+    expect(request.headers.get("accept")).toBe(
+      "application/vnd.npm.install-v1+json; q=1.0, application/json; q=0.8, */*",
+    );
+    expect(request.headers.get("npm-auth-type")).toBe(null);
+    expect(await request.text()).toBe("");
+    urls.push(request.url);
+    return new Response("not to be found", { status: 404 });
+  };
+  await writeFile(
+    join(package_dir, "package.json"),
+    JSON.stringify({
+      name: "Foo",
+      version: "0.0.1",
+      dependencies: {
+        "Bar": "npm:baz@0.0.2",
+      },
+    }),
+  );
+  const { stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "install", "--config", import.meta.dir + "/basic.toml"],
+    cwd: package_dir,
+    stdout: null,
+    stdin: "pipe",
+    stderr: "pipe",
+    env,
+  });
+  expect(stderr).toBeDefined();
+  const err = await new Response(stderr).text();
+  expect(err).toContain('error: package "baz" not found localhost/baz 404');
+  expect(err).toContain("error: Bar@npm:baz@0.0.2 failed to resolve");
+  expect(stdout).toBeDefined();
+  const out = await new Response(stdout).text();
+  expect(out.replace(/\s*\[[0-9\.]+ms\]\s*$/, "").split(/\r?\n/)).toEqual([""]);
+  expect(urls).toEqual([
+    "http://localhost:54321/baz",
+  ]);
+  expect(await exited).toBe(1);
+  expect(requested).toBe(1);
+});
+
+it("should handle dependency aliasing (dist-tagged)", async () => {
+  const urls: string[] = [];
+  handler = async (request) => {
+    expect(request.method).toBe("GET");
+    expect(request.headers.get("accept")).toBe(
+      "application/vnd.npm.install-v1+json; q=1.0, application/json; q=0.8, */*",
+    );
+    expect(request.headers.get("npm-auth-type")).toBe(null);
+    expect(await request.text()).toBe("");
+    urls.push(request.url);
+    return new Response("not to be found", { status: 404 });
+  };
+  await writeFile(
+    join(package_dir, "package.json"),
+    JSON.stringify({
+      name: "Foo",
+      version: "0.0.1",
+      dependencies: {
+        "Bar": "npm:baz@latest",
+      },
+    }),
+  );
+  const { stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "install", "--config", import.meta.dir + "/basic.toml"],
+    cwd: package_dir,
+    stdout: null,
+    stdin: "pipe",
+    stderr: "pipe",
+    env,
+  });
+  expect(stderr).toBeDefined();
+  const err = await new Response(stderr).text();
+  expect(err).toContain('error: package "baz" not found localhost/baz 404');
+  expect(err).toContain("error: Bar@npm:baz@latest failed to resolve");
+  expect(stdout).toBeDefined();
+  const out = await new Response(stdout).text();
+  expect(out.replace(/\s*\[[0-9\.]+ms\]\s*$/, "").split(/\r?\n/)).toEqual([""]);
+  expect(urls).toEqual([
+    "http://localhost:54321/baz",
+  ]);
+  expect(await exited).toBe(1);
+  expect(requested).toBe(1);
+});

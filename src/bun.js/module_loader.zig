@@ -621,9 +621,9 @@ pub const ModuleLoader = struct {
                     .{ result.name, result.url },
                 ),
                 error.DistTagNotFound, error.NoMatchingVersion => brk: {
-                    const prefix: []const u8 = if (result.err == error.NoMatchingVersion and result.version.tag == .npm and result.version.value.npm.isExact())
+                    const prefix: []const u8 = if (result.err == error.NoMatchingVersion and result.version.tag == .npm and result.version.value.npm.version.isExact())
                         "Version not found"
-                    else if (result.version.tag == .npm and !result.version.value.npm.isExact())
+                    else if (result.version.tag == .npm and !result.version.value.npm.version.isExact())
                         "No matching version found"
                     else
                         "No match found";

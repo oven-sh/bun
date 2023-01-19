@@ -216,7 +216,7 @@ pub const FolderResolution = union(Tag) {
                 version,
                 Features.npm,
                 CacheFolderResolver,
-                CacheFolderResolver{ .version = version.value.npm.toVersion() },
+                CacheFolderResolver{ .version = version.value.npm.version.toVersion() },
             ),
         } catch |err| {
             if (err == error.FileNotFound) {

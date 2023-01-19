@@ -15,6 +15,8 @@ import {
   lstatSync,
   copyFileSync,
   rmSync,
+  rmdir,
+  rmdirSync,
   createReadStream,
   createWriteStream,
   promises,
@@ -432,6 +434,77 @@ describe("rm", () => {
   });
 });
 
+describe("rmdir", () => {
+  it("removes a file", (done) => {
+    const path = `/tmp/${Date.now()}.rm.txt`;
+    writeFileSync(path, "File written successfully", "utf8");
+    expect(existsSync(path)).toBe(true);
+    rmdir(path, (err) => {
+      expect(err).toBeDefined();
+      expect(err.code).toBe("EPERM");
+      expect(err.message).toBe("Operation not permitted");
+      expect(existsSync(path)).toBe(true);
+      done();
+    });
+  });
+
+  it("removes a dir", (done) => {
+    const path = `/tmp/${Date.now()}.rm.dir`;
+    try {
+      mkdirSync(path);
+    } catch (e) {}
+    expect(existsSync(path)).toBe(true);
+    rmdir(path, (err) => {
+      expect(existsSync(path)).toBe(false);
+      done(err);
+    });
+  });
+  // TODO support `recursive: true`
+  // it("removes a dir recursively", (done) => {
+  //   const path = `/tmp/${Date.now()}.rm.dir/foo/bar`;
+  //   try {
+  //     mkdirSync(path, { recursive: true });
+  //   } catch (e) {}
+  //   expect(existsSync(path)).toBe(true);
+  //   rmdir(join(path, "../../"), { recursive: true }, (err) => {
+  //     expect(existsSync(path)).toBe(false);
+  //     done(err);
+  //   });
+  // });
+});
+
+describe("rmdirSync", () => {
+  it("removes a file", () => {
+    const path = `/tmp/${Date.now()}.rm.txt`;
+    writeFileSync(path, "File written successfully", "utf8");
+    expect(existsSync(path)).toBe(true);
+    expect(() => {
+      rmdirSync(path);
+    }).toThrow("Operation not permitted");
+    expect(existsSync(path)).toBe(true);
+  });
+
+  it("removes a dir", () => {
+    const path = `/tmp/${Date.now()}.rm.dir`;
+    try {
+      mkdirSync(path);
+    } catch (e) {}
+    expect(existsSync(path)).toBe(true);
+    rmdirSync(path);
+    expect(existsSync(path)).toBe(false);
+  });
+  // TODO support `recursive: true`
+  // it("removes a dir recursively", () => {
+  //   const path = `/tmp/${Date.now()}.rm.dir/foo/bar`;
+  //   try {
+  //     mkdirSync(path, { recursive: true });
+  //   } catch (e) {}
+  //   expect(existsSync(path)).toBe(true);
+  //   rmdirSync(join(path, "../../"), { recursive: true });
+  //   expect(existsSync(path)).toBe(false);
+  // });
+});
+
 describe("createReadStream", () => {
   it("works (1 chunk)", async () => {
     return await new Promise((resolve, reject) => {
@@ -545,7 +618,14 @@ describe("createWriteStream", () => {
 });
 
 describe("fs/promises", () => {
-  const { readFile, stat, writeFile } = promises;
+  const {
+    exists,
+    mkdir,
+    readFile,
+    rmdir,
+    stat,
+    writeFile,
+  } = promises;
 
   it("should not segfault on exception", async () => {
     try {
@@ -588,5 +668,41 @@ describe("fs/promises", () => {
         Bun.inspect(e);
       }
     }
+  });
+
+  describe("rmdir", () => {
+    it("removes a file", async () => {
+      const path = `/tmp/${Date.now()}.rm.txt`;
+      await writeFile(path, "File written successfully", "utf8");
+      expect(await exists(path)).toBe(true);
+      try {
+        await rmdir(path);
+        expect(() => {}).toThrow();
+      } catch (err) {
+        expect(err.code).toBe("EPERM");
+        expect(err.message).toBe("Operation not permitted");
+        expect(await exists(path)).toBe(true);
+      }
+    });
+
+    it("removes a dir", async () => {
+      const path = `/tmp/${Date.now()}.rm.dir`;
+      try {
+        await mkdir(path);
+      } catch (e) {}
+      expect(await exists(path)).toBe(true);
+      await rmdir(path);
+      expect(await exists(path)).toBe(false);
+    });
+    // TODO support `recursive: true`
+    // it("removes a dir recursively", async () => {
+    //   const path = `/tmp/${Date.now()}.rm.dir/foo/bar`;
+    //   try {
+    //     await mkdir(path, { recursive: true });
+    //   } catch (e) {}
+    //   expect(await exists(path)).toBe(true);
+    //   await rmdir(join(path, "../../"), { recursive: true });
+    //   expect(await exists(path)).toBe(false);
+    // });
   });
 });

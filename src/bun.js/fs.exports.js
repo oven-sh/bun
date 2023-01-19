@@ -14,6 +14,9 @@ export var access = function access(...args) {
   rm = function rm(...args) {
     callbackify(fs.rmSync, args);
   },
+  rmdir = function rmdir(...args) {
+    callbackify(fs.rmdirSync, args);
+  },
   copyFile = function copyFile(...args) {
     callbackify(fs.copyFileSync, args);
   },
@@ -142,6 +145,7 @@ export var access = function access(...args) {
   utimesSync = fs.utimesSync.bind(fs),
   lutimesSync = fs.lutimesSync.bind(fs),
   rmSync = fs.rmSync.bind(fs),
+  rmdirSync = fs.rmdirSync.bind(fs),
   promises = import.meta.require("node:fs/promises");
 
 function callbackify(fsFunction, args) {
@@ -945,6 +949,8 @@ export default {
   renameSync,
   rm,
   rmSync,
+  rmdir,
+  rmdirSync,
   stat,
   statSync,
   symlink,

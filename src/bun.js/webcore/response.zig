@@ -730,15 +730,7 @@ pub const Fetch = struct {
             if (fetch_tasklet.request_body.store()) |store| {
                 store.ref();
             }
-            // Probably will always be in DotEnv.instance because of bundler in VM
-            var env_loader = DotEnv.instance orelse brk: {
-                var map = try allocator.create(DotEnv.Map);
-                map.* = DotEnv.Map.init(allocator);
-
-                var loader = try allocator.create(DotEnv.Loader);
-                loader.* = DotEnv.Loader.init(map, allocator);
-                break :brk loader;
-            };
+            
             fetch_tasklet.http.?.* = HTTPClient.AsyncHTTP.init(
                 allocator,
                 fetch_options.method,
@@ -754,7 +746,7 @@ pub const Fetch = struct {
                 ).init(
                     fetch_tasklet,
                 ),
-                env_loader.getHttpProxy(fetch_options.url)
+                jsc_vm.bundler.env.getHttpProxy(fetch_options.url)
             );
 
             if (!fetch_options.follow_redirects) {

@@ -303,147 +303,148 @@ pub const Version = struct {
         }
 
         pub fn infer(dependency: string) Tag {
+            // empty string means >= 0.0.0
+            if (dependency.len == 0) return .npm;
             switch (dependency[0]) {
-                // npm package
-                '=', '>', '<', '0'...'9', '^', '*', '|' => return Tag.npm,
-
-                '.' => return Tag.folder,
-
-                '~' => {
-
-                    // https://docs.npmjs.com/cli/v8/configuring-npm/package-json#local-paths
-                    if (dependency.len > 1 and dependency[1] == '/') {
-                        return Tag.folder;
-                    }
-
-                    return Tag.npm;
-                },
-
-                'n' => {
-                    if (strings.hasPrefixComptime(dependency, "npm:")) {
-                        return Tag.npm;
-                    }
-                },
-
-                // MIGHT be semver, might not be.
-                'x', 'X' => {
-                    if (dependency.len == 1) {
-                        return Tag.npm;
-                    }
-
-                    if (dependency[1] == '.') {
-                        return Tag.npm;
-                    }
-
-                    return .dist_tag;
-                },
-
-                // git://, git@, git+ssh
-                'g' => {
-                    if (strings.hasPrefixComptime(dependency, "git://") or
-                        strings.hasPrefixComptime(dependency, "git@") or
-                        strings.hasPrefixComptime(dependency, "git+ssh") or
-                        strings.hasPrefixComptime(dependency, "git+file") or
-                        strings.hasPrefixComptime(dependency, "git+http") or
-                        strings.hasPrefixComptime(dependency, "git+https"))
-                    {
-                        return .git;
-                    }
-
-                    if (strings.hasPrefixComptime(dependency, "github:") or isGitHubRepoPath(dependency)) {
-                        return .github;
-                    }
-
-                    return .dist_tag;
-                },
-
-                '/' => {
-                    if (isTarball(dependency)) {
-                        return .tarball;
-                    }
-
+                // =1
+                // >1.2
+                // >=1.2.3
+                // <1
+                // <=1.2
+                // ^1.2.3
+                // *
+                '=', '>', '<', '^', '*' => return .npm,
+                // ./foo.tgz
+                // ./path/to/foo
+                // ../path/to/bar
+                '.' => {
+                    if (isTarball(dependency)) return .tarball;
                     return .folder;
                 },
-
-                // https://, http://
-                'h' => {
-                    if (isTarball(dependency)) {
-                        return .tarball;
-                    }
-
-                    var remainder = dependency;
-                    if (strings.hasPrefixComptime(remainder, "https://")) {
-                        remainder = remainder["https://".len..];
-                    }
-
-                    if (strings.hasPrefixComptime(remainder, "http://")) {
-                        remainder = remainder["http://".len..];
-                    }
-
-                    if (strings.hasPrefixComptime(remainder, "github.com/") or isGitHubRepoPath(remainder)) {
-                        return .github;
-                    }
-
-                    return .dist_tag;
-                },
-
-                // Dependencies can start with v
-                // v1.0.0 is the same as 1.0.0
-                // However, a github repo or a tarball could start with v
-                'v' => {
-                    if (isTarball(dependency)) {
-                        return .tarball;
-                    }
-
-                    if (isGitHubRepoPath(dependency)) {
-                        return .github;
-                    }
-
-                    return .npm;
-                },
-
-                // file:
-                'f' => {
-                    if (isTarball(dependency))
-                        return .tarball;
-
-                    if (strings.hasPrefixComptime(dependency, "file:")) {
+                // ~1.2.3
+                // ~/foo.tgz
+                // ~/path/to/foo
+                '~' => {
+                    // https://docs.npmjs.com/cli/v8/configuring-npm/package-json#local-paths
+                    if (dependency.len > 1 and dependency[1] == '/') {
+                        if (isTarball(dependency)) return .tarball;
                         return .folder;
                     }
-
-                    if (isGitHubRepoPath(dependency)) {
-                        return .github;
-                    }
-
-                    return .dist_tag;
+                    return .npm;
                 },
-
-                // link:
+                // /path/to/foo
+                // /path/to/foo.tgz
+                '/' => {
+                    if (isTarball(dependency)) return .tarball;
+                    return .folder;
+                },
+                // 1.2.3
+                // 123.tar.gz
+                '0'...'9' => {
+                    if (isTarball(dependency)) return .tarball;
+                    return .npm;
+                },
+                // foo.tgz
+                // foo/repo
+                // file:path/to/foo
+                // file:path/to/foo.tar.gz
+                'f' => {
+                    if (strings.hasPrefixComptime(dependency, "file:")) {
+                        if (isTarball(dependency)) return .tarball;
+                        return .folder;
+                    }
+                },
+                // git_user/repo
+                // git_tarball.tgz
+                // github:user/repo
+                // git@example.com/repo.git
+                // git://user@example.com/repo.git
+                'g' => {
+                    if (strings.hasPrefixComptime(dependency, "git")) {
+                        const url = dependency["git".len..];
+                        if (url.len > 2) {
+                            switch (url[0]) {
+                                ':' => {
+                                    if (strings.hasPrefixComptime(url, "://")) return .git;
+                                },
+                                '+' => {
+                                    if (strings.hasPrefixComptime(url, "+ssh") or
+                                        strings.hasPrefixComptime(url, "+file") or
+                                        strings.hasPrefixComptime(url, "+http") or
+                                        strings.hasPrefixComptime(url, "+https"))
+                                    {
+                                        return .git;
+                                    }
+                                },
+                                'h' => {
+                                    if (strings.hasPrefixComptime(url, "hub:")) return .github;
+                                },
+                                else => {},
+                            }
+                        }
+                    }
+                },
+                // hello/world
+                // hello.tar.gz
+                // https://github.com/user/repo
+                'h' => {
+                    if (strings.hasPrefixComptime(dependency, "http")) {
+                        var url = dependency["http".len..];
+                        if (url.len > 2) {
+                            switch (url[0]) {
+                                ':' => {
+                                    if (strings.hasPrefixComptime(url, "://")) {
+                                        url = url["://".len..];
+                                    }
+                                },
+                                's' => {
+                                    if (strings.hasPrefixComptime(url, "s://")) {
+                                        url = url["s://".len..];
+                                    }
+                                },
+                                else => {},
+                            }
+                            if (strings.hasPrefixComptime(url, "github.com/")) return .github;
+                        }
+                    }
+                },
+                // lisp.tgz
+                // lisp/repo
+                // link:path/to/foo
                 'l' => {
-                    if (isTarball(dependency))
-                        return .tarball;
-
-                    if (strings.hasPrefixComptime(dependency, "link:")) {
-                        return .symlink;
-                    }
-
-                    if (isGitHubRepoPath(dependency)) {
-                        return .github;
-                    }
-
-                    return .dist_tag;
+                    if (strings.hasPrefixComptime(dependency, "link:")) return .symlink;
                 },
-
+                // newspeak.tgz
+                // newspeak/repo
+                // npm:package@1.2.3
+                'n' => {
+                    if (strings.hasPrefixComptime(dependency, "npm:")) return .npm;
+                },
+                // v1.2.3
+                // verilog.tar.gz
+                // verilog/repo
+                'v' => {
+                    if (isTarball(dependency)) return .tarball;
+                    if (isGitHubRepoPath(dependency)) return .github;
+                    return .npm;
+                },
+                // x
+                // xyz.tar.gz
+                // xyz/repo#main
+                'x', 'X' => {
+                    if (dependency.len == 1) return .npm;
+                    if (dependency[1] == '.') return .npm;
+                },
                 else => {},
             }
 
-            if (isTarball(dependency))
-                return .tarball;
-
-            if (isGitHubRepoPath(dependency)) {
-                return .github;
-            }
-
+            // foo.tgz
+            // bar.tar.gz
+            if (isTarball(dependency)) return .tarball;
+            // user/repo
+            // user/repo#main
+            if (isGitHubRepoPath(dependency)) return .github;
+            // beta
             return .dist_tag;
         }
     };
@@ -506,18 +507,17 @@ pub inline fn parse(
 pub fn parseWithOptionalTag(
     allocator: std.mem.Allocator,
     alias: String,
-    dependency_: string,
-    tag_or_null: ?Dependency.Version.Tag,
+    dependency: string,
+    tag: ?Dependency.Version.Tag,
     sliced: *const SlicedString,
     log: ?*logger.Log,
 ) ?Version {
-    var dependency = std.mem.trimLeft(u8, dependency_, " \t\n\r");
-    if (dependency.len == 0) return null;
+    const dep = std.mem.trimLeft(u8, dependency, " \t\n\r");
     return parseWithTag(
         allocator,
         alias,
-        dependency,
-        tag_or_null orelse Version.Tag.infer(dependency),
+        dep,
+        tag orelse Version.Tag.infer(dep),
         sliced,
         log,
     );

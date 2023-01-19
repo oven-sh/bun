@@ -22,9 +22,7 @@ async function readdirSorted(path: PathLike): Promise<string[]> {
 }
 
 function resetHanlder() {
-  handler = function () {
-    return new Response("Tea Break~", { status: 418 });
-  };
+  handler = () => new Response("Tea Break~", { status: 418 });
 }
 
 const env = bunEnv;
@@ -134,6 +132,50 @@ it("should handle @scoped authentication", async () => {
     url,
   ]);
   expect(seen_token).toBe(true);
+  expect(await exited).toBe(1);
+  expect(requested).toBe(1);
+});
+
+it("should handle empty string in dependencies", async () => {
+  const urls: string[] = [];
+  handler = async (request) => {
+    expect(request.method).toBe("GET");
+    expect(request.headers.get("accept")).toBe(
+      "application/vnd.npm.install-v1+json; q=1.0, application/json; q=0.8, */*",
+    );
+    expect(request.headers.get("npm-auth-type")).toBe(null);
+    expect(await request.text()).toBe("");
+    urls.push(request.url);
+    return new Response("not to be found", { status: 404 });
+  };
+  await writeFile(
+    join(package_dir, "package.json"),
+    JSON.stringify({
+      name: "foo",
+      version: "0.0.1",
+      dependencies: {
+        "bar": "",
+      },
+    }),
+  );
+  const { stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "install", "--config", import.meta.dir + "/basic.toml"],
+    cwd: package_dir,
+    stdout: null,
+    stdin: "pipe",
+    stderr: "pipe",
+    env,
+  });
+  expect(stderr).toBeDefined();
+  const err = await new Response(stderr).text();
+  expect(err).toContain('error: package "bar" not found localhost/bar 404');
+  expect(err).toContain("error: bar@ failed to resolve");
+  expect(stdout).toBeDefined();
+  const out = await new Response(stdout).text();
+  expect(out.replace(/\s*\[[0-9\.]+ms\]\s*$/, "").split(/\r?\n/)).toEqual([""]);
+  expect(urls).toEqual([
+    "http://localhost:54321/bar",
+  ]);
   expect(await exited).toBe(1);
   expect(requested).toBe(1);
 });

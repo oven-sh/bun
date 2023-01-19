@@ -4,6 +4,7 @@ const bun = @import("bun");
 const RequestContext = @import("../../http.zig").RequestContext;
 const MimeType = @import("../../http.zig").MimeType;
 const ZigURL = @import("../../url.zig").URL;
+const DotEnv = @import("../../env_loader.zig");
 const HTTPClient = @import("bun").HTTP;
 const NetworkThread = HTTPClient.NetworkThread;
 const AsyncIO = NetworkThread.AsyncIO;
@@ -729,7 +730,15 @@ pub const Fetch = struct {
             if (fetch_tasklet.request_body.store()) |store| {
                 store.ref();
             }
+            // Probably will always be in DotEnv.instance because of bundler in VM
+            var env_loader = DotEnv.instance orelse brk: {
+                var map = try allocator.create(DotEnv.Map);
+                map.* = DotEnv.Map.init(allocator);
 
+                var loader = try allocator.create(DotEnv.Loader);
+                loader.* = DotEnv.Loader.init(map, allocator);
+                break :brk loader;
+            };
             fetch_tasklet.http.?.* = HTTPClient.AsyncHTTP.init(
                 allocator,
                 fetch_options.method,
@@ -745,7 +754,7 @@ pub const Fetch = struct {
                 ).init(
                     fetch_tasklet,
                 ),
-                null
+                env_loader.getHttpProxy(fetch_options.url)
             );
 
             if (!fetch_options.follow_redirects) {

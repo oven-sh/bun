@@ -1375,7 +1375,6 @@ pub const PackageManager = struct {
     resolve_tasks: TaskChannel,
     timestamp_for_manifest_cache_control: u32 = 0,
     extracted_count: u32 = 0,
-    alias_map: std.ArrayHashMapUnmanaged(PackageID, string, ArrayIdentityContext, false) = .{},
     default_features: Features = Features{},
     summary: Lockfile.Package.Diff.Summary = Lockfile.Package.Diff.Summary{},
     env: *DotEnv.Loader,
@@ -2071,8 +2070,7 @@ pub const PackageManager = struct {
 
         const buf = this.lockfile.buffers.string_bytes.items;
         if (!alias.eql(name, buf, buf)) {
-            const alias_str = try this.allocator.dupe(u8, alias.slice(buf));
-            try this.alias_map.put(this.allocator, package.meta.id, alias_str);
+            try this.lockfile.alias_map.put(this.allocator, package.meta.id, alias);
         }
 
         if (!behavior.isEnabled(if (this.isRootDependency(dependency_id))
@@ -5534,7 +5532,7 @@ pub const PackageManager = struct {
             resolution: Resolution,
         ) void {
             const buf = this.lockfile.buffers.string_bytes.items;
-            const alias = this.manager.alias_map.get(package_id) orelse name;
+            const alias = if (this.lockfile.alias_map.get(package_id)) |str| str.slice(buf) else name;
             std.mem.copy(u8, &this.destination_dir_subpath_buf, alias);
             this.destination_dir_subpath_buf[alias.len] = 0;
             var destination_dir_subpath: [:0]u8 = this.destination_dir_subpath_buf[0..alias.len :0];

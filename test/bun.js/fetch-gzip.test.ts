@@ -24,7 +24,6 @@ it("fetch() with a buffered gzip response works (one chunk)", async () => {
 
   const res = await fetch(
     `http://${server.hostname}:${server.port}`,
-    {},
     { verbose: true },
   );
   gcTick(true);
@@ -64,7 +63,6 @@ it("fetch() with a redirect that returns a buffered gzip response works (one chu
 
   const res = await fetch(
     `http://${server.hostname}:${server.port}/hey`,
-    {},
     { verbose: true },
   );
   const arrayBuffer = await res.arrayBuffer();
@@ -100,7 +98,6 @@ it("fetch() with a protocol-relative redirect that returns a buffered gzip respo
 
   const res = await fetch(
     `http://${server.hostname}:${server.port}/hey`,
-    {},
     { verbose: true },
   );
   expect(res.url).toBe(`http://${server.hostname}:${server.port}/redirect`);

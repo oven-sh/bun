@@ -832,6 +832,22 @@ interface RequestInit {
    * Enable or disable HTTP request timeout
    */
   timeout?: boolean;
+
+}
+
+interface FetchRequestInit extends RequestInit {
+    /**
+   * Log the raw HTTP request & response to stdout. This API may be
+   * removed in a future version of Bun without notice.
+   * This is a custom property that is not part of the Fetch API specification.
+   * It exists mostly as a debugging tool
+   */
+    verbose?: boolean,
+    /**
+     * Override http_proxy or HTTPS_PROXY
+     * This is a custom property that is not part of the Fetch API specification.
+     */
+    proxy?: string
 }
 
 /**
@@ -1239,18 +1255,7 @@ declare function clearTimeout(id?: number): void;
  */
 declare function fetch(
   url: string,
-  init?: RequestInit,
-  /**
-   * This is a custom property that is not part of the Fetch API specification.
-   * It exists mostly as a debugging tool
-   */
-  bunOnlyOptions?: {
-    /**
-     * Log the raw HTTP request & response to stdout. This API may be
-     * removed in a future version of Bun without notice.
-     */
-    verbose: boolean;
-  },
+  init?: FetchRequestInit
 ): Promise<Response>;
 
 /**
@@ -1266,18 +1271,7 @@ declare function fetch(
 // tslint:disable-next-line:unified-signatures
 declare function fetch(
   request: Request,
-  init?: RequestInit,
-  /**
-   * This is a custom property that is not part of the Fetch API specification.
-   * It exists mostly as a debugging tool
-   */
-  bunOnlyOptions?: {
-    /**
-     * Log the raw HTTP request & response to stdout. This API may be
-     * removed in a future version of Bun without notice.
-     */
-    verbose: boolean;
-  },
+  init?: RequestInit
 ): Promise<Response>;
 
 declare function queueMicrotask(callback: (...args: any[]) => void): void;

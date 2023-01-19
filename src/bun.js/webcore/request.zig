@@ -268,12 +268,17 @@ pub const Request = struct {
             return this.url.len;
 
         if (this.uws_request) |req| {
-            const fmt = ZigURL.HostFormatter{
-                .is_https = this.https,
-                .host = req.header("host") orelse "",
-            };
-
-            return this.getProtocol().len + req.url().len + std.fmt.count("{any}", .{fmt});
+            const req_url = req.url();
+            if (req_url.len > 0 and req_url[0] == '/') {
+                if (req.header("host")) |host| {
+                    const fmt = ZigURL.HostFormatter{
+                        .is_https = this.https,
+                        .host = host,
+                    };
+                    return this.getProtocol().len + req_url.len + std.fmt.count("{any}", .{fmt});
+                }
+            }
+            return req_url.len;
         }
 
         return 0;
@@ -291,7 +296,7 @@ pub const Request = struct {
 
         if (this.uws_request) |req| {
             const req_url = req.url();
-            if (req_url[0] == '/') {
+            if (req_url.len > 0 and req_url[0] == '/') {
                 if (req.header("host")) |host| {
                     const fmt = ZigURL.HostFormatter{
                         .is_https = this.https,

@@ -106,6 +106,7 @@ allocator: std.mem.Allocator,
 scratch: Scratch = Scratch{},
 
 scripts: Scripts = .{},
+alias_map: std.ArrayHashMapUnmanaged(PackageID, String, ArrayIdentityContext, false) = .{},
 workspace_paths: std.ArrayHashMapUnmanaged(u32, String, ArrayIdentityContext, false) = .{},
 
 const Stream = std.io.FixedBufferStream([]u8);
@@ -205,6 +206,7 @@ pub fn loadFromBytes(this: *Lockfile, buf: []u8, allocator: std.mem.Allocator, l
 
     this.format = FormatVersion.current;
     this.scripts = .{};
+    this.alias_map = .{};
     this.workspace_paths = .{};
 
     Lockfile.Serializer.load(this, &stream, allocator, log) catch |err| {
@@ -1494,6 +1496,7 @@ pub fn initEmpty(this: *Lockfile, allocator: std.mem.Allocator) !void {
         .allocator = allocator,
         .scratch = Scratch.init(allocator),
         .scripts = .{},
+        .alias_map = .{},
         .workspace_paths = .{},
     };
 }
@@ -1878,6 +1881,10 @@ pub const Package = extern struct {
         this.meta.count(old_string_buf, *Lockfile.StringBuilder, builder);
         const new_extern_string_count = this.bin.count(old_string_buf, old_extern_string_buf, *Lockfile.StringBuilder, builder);
 
+        if (old.alias_map.get(this.meta.id)) |alias| {
+            builder.count(old.str(alias));
+        }
+
         const old_dependencies: []const Dependency = this.dependencies.get(old.buffers.dependencies.items);
         const old_resolutions: []const PackageID = this.resolutions.get(old.buffers.resolutions.items);
 
@@ -1933,6 +1940,10 @@ pub const Package = extern struct {
         );
 
         package_id_mapping[this.meta.id] = new_package.meta.id;
+
+        if (old.alias_map.get(this.meta.id)) |alias| {
+            try new.alias_map.put(new.allocator, new_package.meta.id, builder.append(String, old.str(alias)));
+        }
 
         for (old_dependencies) |dependency, i| {
             dependencies[i] = try dependency.clone(
@@ -3092,6 +3103,7 @@ pub fn deinit(this: *Lockfile) void {
     this.unique_packages.deinit(this.allocator);
     this.string_pool.deinit();
     this.scripts.deinit(this.allocator);
+    this.alias_map.deinit(this.allocator);
     this.workspace_paths.deinit(this.allocator);
 }
 

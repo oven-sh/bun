@@ -1479,9 +1479,8 @@ pub const Subprocess = struct {
                 }
 
                 if (std.os.W.IFSIGNALED(result.status)) {
-                    const code = std.os.W.TERMSIG(result.status);
-                    this.signal_code = @intToEnum(SignalCode, @truncate(u8, code));
-                    if (code == 42) {
+                    this.signal_code = @intToEnum(SignalCode, @truncate(u8, std.os.W.TERMSIG(result.status)));
+                    if (this.exit_code == null) {
                         this.exit_code = 1;
                     }
                 } else if (std.os.W.IFSTOPPED(result.status)) {

@@ -577,6 +577,7 @@ fn preprocessUpdateRequests(old: *Lockfile, updates: []PackageManager.UpdateRequ
                             );
                             dep.version = Dependency.parse(
                                 old.allocator,
+                                dep.name,
                                 sliced.slice,
                                 &sliced,
                                 null,
@@ -1523,7 +1524,7 @@ pub fn getPackageID(
                 switch (version_.tag) {
                     .npm => {
                         // is it a peerDependency satisfied by a parent package?
-                        if (version_.value.npm.satisfies(resolutions[id].value.npm.version)) {
+                        if (version_.value.npm.version.satisfies(resolutions[id].value.npm.version)) {
                             return id;
                         }
                     },
@@ -1547,7 +1548,7 @@ pub fn getPackageID(
                     return id;
                 }
 
-                if (can_satisfy and version.?.value.npm.satisfies(resolutions[id].value.npm.version)) {
+                if (can_satisfy and version.?.value.npm.version.satisfies(resolutions[id].value.npm.version)) {
                     return id;
                 }
             }
@@ -1968,9 +1969,7 @@ pub const Package = extern struct {
     }
 
     pub fn fromPackageJSON(
-        allocator: std.mem.Allocator,
         lockfile: *Lockfile,
-        log: *logger.Log,
         package_json: *PackageJSON,
         comptime features: Features,
     ) !Lockfile.Package {
@@ -2013,39 +2012,12 @@ pub const Package = extern struct {
             const package_name: ExternalString = string_builder.append(ExternalString, package_json.name);
             package.name_hash = package_name.hash;
             package.name = package_name.value;
-            var package_version = string_builder.append(String, package_json.version);
-            var buf = string_builder.allocatedSlice();
 
-            const version: Dependency.Version = brk: {
-                if (package_json.version.len > 0) {
-                    const sliced = package_version.sliced(buf);
-                    const name = package.name.slice(buf);
-                    if (Dependency.parse(allocator, name, &sliced, log)) |dep| {
-                        break :brk dep;
-                    }
-                }
-
-                break :brk Dependency.Version{};
+            package.resolution = .{
+                .tag = .root,
+                .value = .{ .root = {} },
             };
 
-            if (version.tag == .npm and version.value.npm.isExact()) {
-                package.resolution = Resolution{
-                    .value = .{
-                        .npm = .{
-                            .version = version.value.npm.toVersion(),
-                            .url = .{},
-                        },
-                    },
-                    .tag = .npm,
-                };
-            } else {
-                package.resolution = Resolution{
-                    .value = .{
-                        .root = {},
-                    },
-                    .tag = .root,
-                };
-            }
             const total_len = dependencies_list.items.len + total_dependencies_count;
             std.debug.assert(dependencies_list.items.len == resolutions_list.items.len);
 
@@ -2235,6 +2207,7 @@ pub const Package = extern struct {
                             group.behavior,
                         .version = Dependency.parse(
                             allocator,
+                            name.value,
                             sliced.slice,
                             &sliced,
                             log,
@@ -2440,6 +2413,7 @@ pub const Package = extern struct {
 
         var dependency_version = Dependency.parseWithOptionalTag(
             allocator,
+            external_name.value,
             sliced.slice,
             tag,
             &sliced,
@@ -3539,7 +3513,7 @@ pub fn resolve(this: *Lockfile, package_name: []const u8, version: Dependency.Ve
         .PackageID => |id| {
             const resolutions = this.packages.items(.resolution);
 
-            if (can_satisfy and version.value.npm.satisfies(resolutions[id].value.npm.version)) {
+            if (can_satisfy and version.value.npm.version.satisfies(resolutions[id].value.npm.version)) {
                 return id;
             }
         },
@@ -3554,7 +3528,7 @@ pub fn resolve(this: *Lockfile, package_name: []const u8, version: Dependency.Ve
 
                 if (id == invalid_package_id - 1) return null;
 
-                if (can_satisfy and version.value.npm.satisfies(resolutions[id].value.npm.version)) {
+                if (can_satisfy and version.value.npm.version.satisfies(resolutions[id].value.npm.version)) {
                     return id;
                 }
             }

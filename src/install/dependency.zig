@@ -88,12 +88,14 @@ pub fn cloneWithDifferentBuffers(this: Dependency, name_buf: []const u8, version
     const out_slice = builder.lockfile.buffers.string_bytes.items;
     const new_literal = builder.append(String, this.version.literal.slice(version_buf));
     const sliced = new_literal.sliced(out_slice);
+    const new_name = builder.append(String, this.name.slice(name_buf));
 
     return Dependency{
         .name_hash = this.name_hash,
-        .name = builder.append(String, this.name.slice(name_buf)),
+        .name = new_name,
         .version = Dependency.parseWithTag(
             builder.lockfile.allocator,
+            new_name,
             new_literal.slice(out_slice),
             this.version.tag,
             &sliced,
@@ -120,13 +122,14 @@ pub fn toDependency(
     this: External,
     ctx: Context,
 ) Dependency {
+    const name = String{
+        .bytes = this[0..8].*,
+    };
     return Dependency{
-        .name = String{
-            .bytes = this[0..8].*,
-        },
+        .name = name,
         .name_hash = @bitCast(u64, this[8..16].*),
         .behavior = @intToEnum(Dependency.Behavior, this[16]),
-        .version = Dependency.Version.toVersion(this[17..this.len].*, ctx),
+        .version = Dependency.Version.toVersion(name, this[17..this.len].*, ctx),
     };
 }
 
@@ -147,7 +150,7 @@ pub const Version = struct {
     pub fn deinit(this: *Version) void {
         switch (this.tag) {
             .npm => {
-                this.value.npm.deinit();
+                this.value.npm.version.deinit();
             },
             else => {},
         }
@@ -195,6 +198,7 @@ pub const Version = struct {
     pub const External = [9]u8;
 
     pub fn toVersion(
+        alias: String,
         bytes: Version.External,
         ctx: Dependency.Context,
     ) Dependency.Version {
@@ -203,6 +207,7 @@ pub const Version = struct {
         const sliced = &slice.sliced(ctx.buffer);
         return Dependency.parseWithTag(
             ctx.allocator,
+            alias,
             sliced.slice,
             tag,
             sliced,
@@ -231,7 +236,7 @@ pub const Version = struct {
             // if the two versions are identical as strings, it should often be faster to compare that than the actual semver version
             // semver ranges involve a ton of pointer chasing
             .npm => strings.eql(lhs.literal.slice(lhs_buf), rhs.literal.slice(rhs_buf)) or
-                lhs.value.npm.eql(rhs.value.npm),
+                lhs.value.npm.eql(rhs.value.npm, lhs_buf, rhs_buf),
             .folder, .dist_tag => lhs.literal.eql(rhs.literal, lhs_buf, rhs_buf),
             .tarball => lhs.value.tarball.eql(rhs.value.tarball, lhs_buf, rhs_buf),
             .symlink => lhs.value.symlink.eql(rhs.value.symlink, lhs_buf, rhs_buf),
@@ -443,10 +448,19 @@ pub const Version = struct {
         }
     };
 
+    const NpmInfo = struct {
+        name: String,
+        version: Semver.Query.Group,
+
+        fn eql(this: NpmInfo, that: NpmInfo, this_buf: []const u8, that_buf: []const u8) bool {
+            return this.name.eql(that.name, this_buf, that_buf) and this.version.eql(that.version);
+        }
+    };
+
     pub const Value = union {
         uninitialized: void,
 
-        npm: Semver.Query.Group,
+        npm: NpmInfo,
         dist_tag: String,
         tarball: URI,
         folder: String,
@@ -481,40 +495,29 @@ pub fn eqlResolved(a: Dependency, b: Dependency) bool {
 
 pub inline fn parse(
     allocator: std.mem.Allocator,
+    alias: String,
     dependency: string,
     sliced: *const SlicedString,
     log: ?*logger.Log,
 ) ?Version {
-    return parseWithOptionalTag(allocator, dependency, null, sliced, log);
+    return parseWithOptionalTag(allocator, alias, dependency, null, sliced, log);
 }
 
 pub fn parseWithOptionalTag(
     allocator: std.mem.Allocator,
+    alias: String,
     dependency_: string,
     tag_or_null: ?Dependency.Version.Tag,
     sliced: *const SlicedString,
     log: ?*logger.Log,
 ) ?Version {
     var dependency = std.mem.trimLeft(u8, dependency_, " \t\n\r");
-
     if (dependency.len == 0) return null;
-    const tag = tag_or_null orelse Version.Tag.infer(dependency);
-
-    if (tag == .npm and strings.hasPrefixComptime(dependency, "npm:")) {
-        dependency = dependency[4..];
-    }
-
-    // Strip single leading v
-    // v1.0.0 -> 1.0.0
-    // note: "vx" is valid, it becomes "x". "yarn add react@vx" -> "yarn add react@x" -> "yarn add react@17.0.2"
-    if (tag == .npm and dependency.len > 1 and dependency[0] == 'v') {
-        dependency = dependency[1..];
-    }
-
     return parseWithTag(
         allocator,
+        alias,
         dependency,
-        tag,
+        tag_or_null orelse Version.Tag.infer(dependency),
         sliced,
         log,
     );
@@ -522,6 +525,7 @@ pub fn parseWithOptionalTag(
 
 pub fn parseWithTag(
     allocator: std.mem.Allocator,
+    alias: String,
     dependency: string,
     tag: Dependency.Version.Tag,
     sliced: *const SlicedString,
@@ -529,10 +533,31 @@ pub fn parseWithTag(
 ) ?Version {
     switch (tag) {
         .npm => {
+            var input = dependency;
+            const name = if (strings.hasPrefixComptime(input, "npm:")) sliced.sub(brk: {
+                var str = input["npm:".len..];
+                var i: usize = 0;
+                while (i < str.len) : (i += 1) {
+                    if (str[i] == '@') {
+                        input = str[i + 1 ..];
+                        break :brk str[0..i];
+                    }
+                }
+                input = str[i..];
+                break :brk str[0..i];
+            }).value() else alias;
+
+            // Strip single leading v
+            // v1.0.0 -> 1.0.0
+            // note: "vx" is valid, it becomes "x". "yarn add react@vx" -> "yarn add react@x" -> "yarn add react@17.0.2"
+            if (input.len > 1 and input[0] == 'v') {
+                input = input[1..];
+            }
+
             const version = Semver.Query.parse(
                 allocator,
-                dependency,
-                sliced.sub(dependency),
+                input,
+                sliced.sub(input),
             ) catch |err| {
                 if (log_) |log| log.addErrorFmt(null, logger.Loc.Empty, allocator, "{s} parsing dependency \"{s}\"", .{ @errorName(err), dependency }) catch unreachable;
                 return null;
@@ -540,7 +565,12 @@ pub fn parseWithTag(
 
             return Version{
                 .literal = sliced.value(),
-                .value = .{ .npm = version },
+                .value = .{
+                    .npm = .{
+                        .name = name,
+                        .version = version,
+                    },
+                },
                 .tag = .npm,
             };
         },

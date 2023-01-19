@@ -635,89 +635,6 @@ const PackageInstall = struct {
     package_version: string,
     file_count: u32 = 0,
 
-    threadlocal var package_json_checker: json_parser.PackageJSONVersionChecker = undefined;
-
-    pub const Context = struct {
-        metas: []const Lockfile.Package.Meta,
-        names: []const String,
-        resolutions: []const Resolution,
-        string_buf: []const u8,
-        channel: PackageInstall.Task.Channel = undefined,
-        skip_verify: bool = false,
-        progress: *Progress = undefined,
-        cache_dir: std.fs.IterableDir = undefined,
-        allocator: std.mem.Allocator,
-    };
-
-    pub const Task = struct {
-        task: ThreadPool.Task = .{ .callback = &callback },
-        result: Result = Result{ .pending = void{} },
-        package_install: PackageInstall = undefined,
-        package_id: PackageID,
-        ctx: *PackageInstall.Context,
-        destination_dir: std.fs.IterableDir,
-
-        pub const Channel = sync.Channel(*PackageInstall.Task, .{ .Static = 1024 });
-
-        pub fn callback(task: *ThreadPool.Task) void {
-            Output.Source.configureThread();
-            defer Output.flush();
-
-            var this: *PackageInstall.Task = @fieldParentPtr(PackageInstall.Task, "task", task);
-            var ctx = this.ctx;
-
-            var destination_dir_subpath_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
-            var cache_dir_subpath_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
-            const name = ctx.names[this.package_id].slice(ctx.string_buf);
-            const resolution = ctx.resolutions[this.package_id];
-            std.mem.copy(u8, &destination_dir_subpath_buf, name);
-            destination_dir_subpath_buf[name.len] = 0;
-            var destination_dir_subpath: [:0]u8 = destination_dir_subpath_buf[0..name.len :0];
-            var resolution_buf: [512]u8 = undefined;
-            var resolution_label = std.fmt.bufPrint(&resolution_buf, "{}", .{resolution.fmt(ctx.string_buf)}) catch unreachable;
-
-            this.package_install = PackageInstall{
-                .cache_dir = undefined,
-                .cache_dir_subpath = undefined,
-                .progress = ctx.progress,
-
-                .destination_dir = this.destination_dir,
-                .destination_dir_subpath = destination_dir_subpath,
-                .destination_dir_subpath_buf = &destination_dir_subpath_buf,
-                .allocator = ctx.allocator,
-                .package_name = name,
-                .package_version = resolution_label,
-            };
-
-            switch (resolution.tag) {
-                .npm => {
-                    this.package_install.cache_dir_subpath = this.manager.cachedNPMPackageFolderName(name, resolution.value.npm);
-                    this.package_install.cache_dir = this.manager.getCacheDirectory();
-                },
-                .folder => {
-                    var folder_buf = &cache_dir_subpath_buf;
-                    const folder = resolution.value.folder.slice(ctx.string_buf);
-                    std.mem.copy(u8, folder_buf, "../" ++ std.fs.path.sep_str);
-                    std.mem.copy(u8, folder_buf["../".len..], folder);
-                    folder_buf["../".len + folder.len] = 0;
-                    this.package_install.cache_dir_subpath = folder_buf[0 .. "../".len + folder.len :0];
-                    this.package_install.cache_dir = std.fs.cwd();
-                },
-                else => return,
-            }
-
-            const needs_install = ctx.skip_verify_installed_version_number or !this.package_install.verify();
-
-            if (needs_install) {
-                this.result = this.package_install.install(ctx.skip_verify_installed_version_number);
-            } else {
-                this.result = .{ .skip = .{} };
-            }
-
-            ctx.channel.writeItem(this) catch unreachable;
-        }
-    };
-
     pub const Summary = struct {
         fail: u32 = 0,
         success: u32 = 0,
@@ -832,7 +749,7 @@ const PackageInstall = struct {
 
         initializeStore();
 
-        package_json_checker = json_parser.PackageJSONVersionChecker.init(allocator, &source, &log) catch return false;
+        var package_json_checker = json_parser.PackageJSONVersionChecker.init(allocator, &source, &log) catch return false;
         _ = package_json_checker.parseExpr() catch return false;
         if (!package_json_checker.has_found_name or !package_json_checker.has_found_version or log.errors > 0) return false;
 
@@ -1458,6 +1375,7 @@ pub const PackageManager = struct {
     resolve_tasks: TaskChannel,
     timestamp_for_manifest_cache_control: u32 = 0,
     extracted_count: u32 = 0,
+    alias_map: std.ArrayHashMapUnmanaged(PackageID, String, ArrayIdentityContext, false) = .{},
     default_features: Features = Features{},
     summary: Lockfile.Package.Diff.Summary = Lockfile.Package.Diff.Summary{},
     env: *DotEnv.Loader,
@@ -2060,7 +1978,7 @@ pub const PackageManager = struct {
             Semver.Version.sortGt,
         );
         for (installed_versions.items) |installed_version| {
-            if (version.value.npm.satisfies(installed_version)) {
+            if (version.value.npm.version.satisfies(installed_version)) {
                 var buf: [bun.MAX_PATH_BYTES]u8 = undefined;
                 var npm_package_path = this.pathForCachedNPMPath(&buf, package_name, installed_version) catch |err| {
                     Output.debug("error getting path for cached npm path: {s}", .{std.mem.span(@errorName(err))});
@@ -2069,7 +1987,10 @@ pub const PackageManager = struct {
                 const dependency = Dependency.Version{
                     .tag = .npm,
                     .value = .{
-                        .npm = Semver.Query.Group.from(installed_version),
+                        .npm = .{
+                            .name = String.init(package_name, package_name),
+                            .version = Semver.Query.Group.from(installed_version),
+                        },
                     },
                 };
                 switch (FolderResolution.getOrPut(.{ .cache_folder = npm_package_path }, dependency, ".", this)) {
@@ -2102,8 +2023,9 @@ pub const PackageManager = struct {
         network_task: ?*NetworkTask = null,
     };
 
-    pub fn getOrPutResolvedPackageWithFindResult(
+    fn getOrPutResolvedPackageWithFindResult(
         this: *PackageManager,
+        alias: String,
         name_hash: PackageNameHash,
         name: String,
         version: Dependency.Version,
@@ -2135,8 +2057,8 @@ pub const PackageManager = struct {
             };
         }
 
-        var package =
-            try Lockfile.Package.fromNPM(
+        // appendPackage sets the PackageID on the package
+        const package = try this.lockfile.appendPackage(try Lockfile.Package.fromNPM(
             this.allocator,
             this.lockfile,
             this.log,
@@ -2145,10 +2067,9 @@ pub const PackageManager = struct {
             find_result.package,
             manifest.string_buf,
             Features.npm,
-        );
+        ));
 
-        // appendPackage sets the PackageID on the package
-        package = try this.lockfile.appendPackage(package);
+        try this.alias_map.put(this.allocator, package.meta.id, alias);
 
         if (!behavior.isEnabled(if (this.isRootDependency(dependency_id))
             this.options.local_package_features
@@ -2173,7 +2094,7 @@ pub const PackageManager = struct {
             .extract => {
                 const task_id = Task.Id.forNPMPackage(
                     Task.Tag.extract,
-                    name.slice(this.lockfile.buffers.string_bytes.items),
+                    this.lockfile.str(name),
                     package.resolution.value.npm.version,
                 );
 
@@ -2234,64 +2155,6 @@ pub const PackageManager = struct {
         return network_task;
     }
 
-    pub fn fetchVersionsForPackageName(
-        this: *PackageManager,
-        name: string,
-        version: Dependency.Version,
-        id: PackageID,
-    ) !?Npm.PackageManifest {
-        const task_id = Task.Id.forManifest(Task.Tag.package_manifest, name);
-        var network_entry = try this.network_dedupe_map.getOrPutContext(this.allocator, task_id, .{});
-        var loaded_manifest: ?Npm.PackageManifest = null;
-        if (!network_entry.found_existing) {
-            if (this.options.enable.manifest_cache) {
-                if (this.manifests.get(std.hash.Wyhash.hash(0, name)) orelse (Npm.PackageManifest.Serializer.load(this.allocator, this.cache_directory, name) catch null)) |manifest_| {
-                    const manifest: Npm.PackageManifest = manifest_;
-                    loaded_manifest = manifest;
-
-                    if (this.options.enable.manifest_cache_control and manifest.pkg.public_max_age > this.timestamp_for_manifest_cache_control) {
-                        try this.manifests.put(this.allocator, @truncate(PackageNameHash, manifest.pkg.name.hash), manifest);
-                    }
-
-                    // If it's an exact package version already living in the cache
-                    // We can skip the network request, even if it's beyond the caching period
-                    if (version.tag == .npm and version.value.npm.isExact()) {
-                        if (loaded_manifest.?.findByVersion(version.value.npm.head.head.range.left.version) != null) {
-                            return manifest;
-                        }
-                    }
-
-                    // Was it recent enough to just load it without the network call?
-                    if (this.options.enable.manifest_cache_control and manifest.pkg.public_max_age > this.timestamp_for_manifest_cache_control) {
-                        return manifest;
-                    }
-                }
-            }
-
-            if (PackageManager.verbose_install) {
-                Output.prettyErrorln("Enqueue package manifest for download: {s}", .{name});
-            }
-
-            var network_task = this.getNetworkTask();
-            network_task.* = NetworkTask{
-                .callback = undefined,
-                .task_id = task_id,
-                .allocator = this.allocator,
-                .package_manager = this,
-            };
-            try network_task.forManifest(name, this.allocator, this.scopeForPackageName(name), loaded_manifest);
-            this.enqueueNetworkTask(network_task);
-        }
-
-        var manifest_entry_parse = try this.task_queue.getOrPutContext(this.allocator, task_id, .{});
-        if (!manifest_entry_parse.found_existing) {
-            manifest_entry_parse.value_ptr.* = TaskCallbackList{};
-        }
-
-        try manifest_entry_parse.value_ptr.append(this.allocator, TaskCallbackContext{ .request_id = id });
-        return null;
-    }
-
     fn enqueueNetworkTask(this: *PackageManager, task: *NetworkTask) void {
         if (this.network_task_fifo.writableLength() == 0) {
             this.flushNetworkQueue();
@@ -2319,8 +2182,9 @@ pub const PackageManager = struct {
         }
     }
 
-    pub fn getOrPutResolvedPackage(
+    fn getOrPutResolvedPackage(
         this: *PackageManager,
+        alias: String,
         name_hash: PackageNameHash,
         name: String,
         version: Dependency.Version,
@@ -2339,7 +2203,7 @@ pub const PackageManager = struct {
                 const manifest = this.manifests.getPtr(name_hash) orelse return null; // manifest might still be downloading. This feels unreliable.
                 const find_result: Npm.PackageManifest.FindResult = switch (version.tag) {
                     .dist_tag => manifest.findByDistTag(this.lockfile.str(version.value.dist_tag)),
-                    .npm => manifest.findBestVersion(version.value.npm),
+                    .npm => manifest.findBestVersion(version.value.npm.version),
                     else => unreachable,
                 } orelse return switch (version.tag) {
                     .npm => error.NoMatchingVersion,
@@ -2349,6 +2213,7 @@ pub const PackageManager = struct {
 
                 return try getOrPutResolvedPackageWithFindResult(
                     this,
+                    alias,
                     name_hash,
                     name,
                     version,
@@ -2555,9 +2420,16 @@ pub const PackageManager = struct {
         comptime successFn: SuccessFn,
         comptime failFn: ?FailFn,
     ) !void {
-        const name = dependency.name;
-        const name_hash = dependency.name_hash;
-        const version: Dependency.Version = dependency.version;
+        const alias = dependency.name;
+        const name = switch (dependency.version.tag) {
+            .npm => dependency.version.value.npm.name,
+            else => alias,
+        };
+        const name_hash = switch (dependency.version.tag) {
+            .npm => Lockfile.stringHash(this.lockfile.str(name)),
+            else => dependency.name_hash,
+        };
+        const version = dependency.version;
         var loaded_manifest: ?Npm.PackageManifest = null;
 
         if (comptime !is_main) {
@@ -2574,6 +2446,7 @@ pub const PackageManager = struct {
             .dist_tag, .folder, .npm => {
                 retry_from_manifests_ptr: while (true) {
                     var resolve_result_ = this.getOrPutResolvedPackage(
+                        alias,
                         name_hash,
                         name,
                         version,
@@ -2693,9 +2566,10 @@ pub const PackageManager = struct {
 
                                         // If it's an exact package version already living in the cache
                                         // We can skip the network request, even if it's beyond the caching period
-                                        if (dependency.version.tag == .npm and dependency.version.value.npm.isExact()) {
-                                            if (loaded_manifest.?.findByVersion(dependency.version.value.npm.head.head.range.left.version)) |find_result| {
+                                        if (dependency.version.tag == .npm and dependency.version.value.npm.version.isExact()) {
+                                            if (loaded_manifest.?.findByVersion(dependency.version.value.npm.version.head.head.range.left.version)) |find_result| {
                                                 if (this.getOrPutResolvedPackageWithFindResult(
+                                                    alias,
                                                     name_hash,
                                                     name,
                                                     version,
@@ -2721,7 +2595,7 @@ pub const PackageManager = struct {
                                 }
 
                                 if (PackageManager.verbose_install) {
-                                    Output.prettyErrorln("Enqueue package manifest for download: {s}", .{this.lockfile.str(name)});
+                                    Output.prettyErrorln("Enqueue package manifest for download: {s}", .{name_str});
                                 }
 
                                 var network_task = this.getNetworkTask();
@@ -2732,9 +2606,9 @@ pub const PackageManager = struct {
                                     .allocator = this.allocator,
                                 };
                                 try network_task.forManifest(
-                                    this.lockfile.str(name),
+                                    name_str,
                                     this.allocator,
-                                    this.scopeForPackageName(this.lockfile.str(name)),
+                                    this.scopeForPackageName(name_str),
                                     loaded_manifest,
                                 );
                                 this.enqueueNetworkTask(network_task);
@@ -2757,6 +2631,7 @@ pub const PackageManager = struct {
             },
             .symlink, .workspace => {
                 const _result = this.getOrPutResolvedPackage(
+                    alias,
                     name_hash,
                     name,
                     version,
@@ -5120,7 +4995,7 @@ pub const PackageManager = struct {
                     request.missing_version = true;
                 } else {
                     const sliced = SlicedString.init(request.version_buf, request.version_buf);
-                    request.version = Dependency.parse(allocator, request.version_buf, &sliced, log) orelse Dependency.Version{};
+                    request.version = Dependency.parse(allocator, String.init(request.name, request.name), request.version_buf, &sliced, log) orelse Dependency.Version{};
                 }
 
                 update_requests.append(request) catch break;
@@ -5287,7 +5162,7 @@ pub const PackageManager = struct {
         );
     }
 
-    pub fn updatePackageJSONAndInstallWithManagerWithUpdates(
+    fn updatePackageJSONAndInstallWithManagerWithUpdates(
         ctx: Command.Context,
         manager: *PackageManager,
         updates: []UpdateRequest,
@@ -5654,11 +5529,12 @@ pub const PackageManager = struct {
             name: string,
             resolution: Resolution,
         ) void {
-            std.mem.copy(u8, &this.destination_dir_subpath_buf, name);
-            this.destination_dir_subpath_buf[name.len] = 0;
-            var destination_dir_subpath: [:0]u8 = this.destination_dir_subpath_buf[0..name.len :0];
-            var resolution_buf: [512]u8 = undefined;
             const buf = this.lockfile.buffers.string_bytes.items;
+            const alias = if (this.manager.alias_map.get(package_id)) |str| str.slice(buf) else name;
+            std.mem.copy(u8, &this.destination_dir_subpath_buf, alias);
+            this.destination_dir_subpath_buf[alias.len] = 0;
+            var destination_dir_subpath: [:0]u8 = this.destination_dir_subpath_buf[0..alias.len :0];
+            var resolution_buf: [512]u8 = undefined;
             const extern_string_buf = this.lockfile.buffers.extern_strings.items;
             var resolution_label = std.fmt.bufPrint(&resolution_buf, "{}", .{resolution.fmt(buf)}) catch unreachable;
             var installer = PackageInstall{

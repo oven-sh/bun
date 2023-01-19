@@ -313,7 +313,8 @@ pub const Version = struct {
                 // <=1.2
                 // ^1.2.3
                 // *
-                '=', '>', '<', '^', '*' => return .npm,
+                // || 1.x
+                '=', '>', '<', '^', '*', '|' => return .npm,
                 // ./foo.tgz
                 // ./path/to/foo
                 // ../path/to/bar

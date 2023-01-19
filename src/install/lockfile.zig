@@ -1827,9 +1827,19 @@ pub const ExternalStringBuffer = std.ArrayListUnmanaged(ExternalString);
 pub const Package = extern struct {
     name: String = String{},
     name_hash: PackageNameHash = 0,
+
+    /// How a package has been resolved
+    /// When .tag is uninitialized, that means the package is not resolved yet.
     resolution: Resolution = Resolution{},
+
+    /// dependencies & resolutions must be the same length
+    /// resolutions[i] is the resolved package ID for dependencies[i]
+    /// if resolutions[i] is an invalid package ID, then dependencies[i] is not resolved
     dependencies: DependencySlice = DependencySlice{},
+
+    /// The resolved package IDs for the dependencies
     resolutions: PackageIDSlice = PackageIDSlice{},
+
     meta: Meta = Meta{},
     bin: Bin = Bin{},
 
@@ -2665,27 +2675,64 @@ pub const Package = extern struct {
 
                         workspace_names = try allocator.alloc(string, arr.items.len);
 
-                        var workspace_log = logger.Log.init(allocator);
-                        defer log.deinit();
+                        var fallback = std.heap.stackFallback(1024, allocator);
+                        var workspace_allocator = fallback.get();
 
-                        var workspace_buf = try allocator.alloc(u8, 1024);
-                        defer allocator.free(workspace_buf);
+                        const orig_msgs_len = log.msgs.items.len;
 
                         for (arr.slice()) |item, i| {
+                            defer fallback.fixed_buffer_allocator.reset();
                             const path = item.asString(allocator) orelse return error.InvalidPackageJSON;
 
-                            var workspace_dir = try std.fs.cwd().openDir(path, .{});
+                            var workspace_dir = std.fs.cwd().openDir(path, .{}) catch |err| {
+                                if (err == error.FileNotFound) {
+                                    log.addErrorFmt(
+                                        &source,
+                                        item.loc,
+                                        allocator,
+                                        "Workspace not found \"{s}\" in \"{s}\"",
+                                        .{
+                                            path,
+                                            std.os.getcwd(allocator.alloc(u8, bun.MAX_PATH_BYTES) catch unreachable) catch unreachable,
+                                        },
+                                    ) catch {};
+                                } else log.addErrorFmt(
+                                    &source,
+                                    item.loc,
+                                    allocator,
+                                    "{s} opening workspace package \"{s}\" from \"{s}\"",
+                                    .{
+                                        @errorName(err),
+                                        path,
+                                        std.os.getcwd(allocator.alloc(u8, bun.MAX_PATH_BYTES) catch unreachable) catch unreachable,
+                                    },
+                                ) catch {};
+                                workspace_names[i] = "";
+                                // report errors for multiple workspaces
+                                continue;
+                            };
                             defer workspace_dir.close();
 
-                            var workspace_file = try workspace_dir.openFile("package.json", .{ .mode = .read_only });
+                            var workspace_file = workspace_dir.openFile("package.json", .{ .mode = .read_only }) catch |err| {
+                                log.addErrorFmt(&source, item.loc, allocator, "{s} opening package.json for workspace package \"{s}\" from \"{s}\"", .{ @errorName(err), path, std.os.getcwd(allocator.alloc(u8, bun.MAX_PATH_BYTES) catch unreachable) catch unreachable }) catch {};
+                                workspace_names[i] = "";
+                                // report errors for multiple workspaces
+                                continue;
+                            };
                             defer workspace_file.close();
 
-                            const workspace_read = try workspace_file.preadAll(workspace_buf, 0);
-                            const workspace_source = logger.Source.initPathString(path, workspace_buf[0..workspace_read]);
+                            const workspace_bytes = workspace_file.readToEndAlloc(workspace_allocator, std.math.maxInt(usize)) catch |err| {
+                                log.addErrorFmt(&source, item.loc, allocator, "{s} reading package.json for workspace package \"{s}\" from \"{s}\"", .{ @errorName(err), path, std.os.getcwd(allocator.alloc(u8, bun.MAX_PATH_BYTES) catch unreachable) catch unreachable }) catch {};
+                                workspace_names[i] = "";
+                                // report errors for multiple workspaces
+                                continue;
+                            };
+                            defer workspace_allocator.free(workspace_bytes);
+                            const workspace_source = logger.Source.initPathString(path, workspace_bytes);
 
                             initializeStore();
 
-                            var workspace_json = try json_parser.PackageJSONVersionChecker.init(allocator, &workspace_source, &workspace_log);
+                            var workspace_json = try json_parser.PackageJSONVersionChecker.init(allocator, &workspace_source, log);
 
                             _ = try workspace_json.parseExpr();
                             if (!workspace_json.has_found_name) return error.InvalidPackageJSON;
@@ -2696,6 +2743,10 @@ pub const Package = extern struct {
                             string_builder.count(path);
                             string_builder.cap += bun.MAX_PATH_BYTES;
                             workspace_names[i] = try allocator.dupe(u8, workspace_name);
+                        }
+
+                        if (orig_msgs_len != log.msgs.items.len) {
+                            return error.InstallFailed;
                         }
                         total_dependencies_count += @truncate(u32, arr.items.len);
                     },

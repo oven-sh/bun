@@ -30,36 +30,6 @@ jobs:
       - name: Build package
         run: bun run build
 
-      - name: Upload artifact
-        uses: actions/upload-artifact@v3
-        with:
-          name: bun-types
-          path: packages/bun-types/dist/*
-          if-no-files-found: error
-
-  publish-npm:
-    name: Publish to NPM
-    runs-on: ubuntu-latest
-    needs: [test-build]
-    if: github.repository_owner == 'oven-sh'
-    defaults:
-      run:
-        working-directory: packages/bun-types
-
-    steps:
-      - uses: actions/checkout@v3
-      - name: Install Node
-        uses: actions/setup-node@v3
-        with:
-          node-version: latest
-          registry-url: "https://registry.npmjs.org"
-
-      - name: Download all artifacts
-        uses: actions/download-artifact@v3
-        with:
-          name: bun-types
-          path: packages/bun-types/dist
-
       - name: Publish to NPM
         uses: JS-DevTools/npm-publish@v1
         with:

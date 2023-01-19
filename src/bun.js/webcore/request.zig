@@ -291,28 +291,31 @@ pub const Request = struct {
 
         if (this.uws_request) |req| {
             const req_url = req.url();
-            if (req.header("host")) |host| {
-                const fmt = ZigURL.HostFormatter{
-                    .is_https = this.https,
-                    .host = host,
-                };
-                const url = try std.fmt.allocPrint(bun.default_allocator, "{s}{any}{s}", .{
-                    this.getProtocol(),
-                    fmt,
-                    req_url,
-                });
-                if (comptime Environment.allow_assert) {
-                    std.debug.assert(this.sizeOfURL() == url.len);
+            if (req_url[0] == '/') {
+                if (req.header("host")) |host| {
+                    const fmt = ZigURL.HostFormatter{
+                        .is_https = this.https,
+                        .host = host,
+                    };
+                    const url = try std.fmt.allocPrint(bun.default_allocator, "{s}{any}{s}", .{
+                        this.getProtocol(),
+                        fmt,
+                        req_url,
+                    });
+                    if (comptime Environment.allow_assert) {
+                        std.debug.assert(this.sizeOfURL() == url.len);
+                    }
+                    this.url = url;
+                    this.url_was_allocated = true;
+                    return;
                 }
-                this.url = url;
-                this.url_was_allocated = true;
-            } else {
-                if (comptime Environment.allow_assert) {
-                    std.debug.assert(this.sizeOfURL() == req_url.len);
-                }
-                this.url = try bun.default_allocator.dupe(u8, req_url);
-                this.url_was_allocated = true;
             }
+
+            if (comptime Environment.allow_assert) {
+                std.debug.assert(this.sizeOfURL() == req_url.len);
+            }
+            this.url = try bun.default_allocator.dupe(u8, req_url);
+            this.url_was_allocated = true;
         }
     }
 

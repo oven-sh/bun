@@ -1791,6 +1791,9 @@ pub const Query = struct {
                         },
                     }
                 } else if (count == 0) {
+                    // From a semver perspective, treat "--foo" the same as "-foo"
+                    // example: foo/bar@1.2.3@--canary.24
+                    //                         ^
                     if (token.tag == .none) {
                         is_or = false;
                         token.wildcard = .none;

@@ -419,8 +419,19 @@ pub const Version = struct {
                 // newspeak/repo
                 // npm:package@1.2.3
                 'n' => {
-                    if (strings.hasPrefixComptime(dependency, "npm:")) {
-                        return infer(dependency["npm:".len..]);
+                    if (strings.hasPrefixComptime(dependency, "npm:") and dependency.len > "npm:".len) {
+                        var i: usize = "npm:".len + @boolToInt(dependency["npm:".len] == '@');
+                        var remain = dependency[i..];
+                        for (remain) |c, j| {
+                            if (c == '@') {
+                                remain = remain[j + 1 ..];
+                                if (remain.len == 0) return .npm;
+
+                                return infer(remain[j + 1 ..]);
+                            }
+                        }
+
+                        return .npm;
                     }
                 },
                 // v1.2.3
@@ -548,7 +559,8 @@ pub fn parseWithTag(
             var input = dependency;
             const name = if (strings.hasPrefixComptime(input, "npm:")) sliced.sub(brk: {
                 var str = input["npm:".len..];
-                var i: usize = 0;
+                var i: usize = @boolToInt(str.len > 0 and str[0] == '@');
+
                 while (i < str.len) : (i += 1) {
                     if (str[i] == '@') {
                         input = str[i + 1 ..];
@@ -589,7 +601,7 @@ pub fn parseWithTag(
         .dist_tag => {
             var tag_to_use: String = sliced.value();
 
-            const actual = if (strings.hasPrefixComptime(dependency, "npm:"))
+            const actual = if (strings.hasPrefixComptime(dependency, "npm:") and dependency.len > "npm:".len)
                 // npm:@foo/bar@latest
                 sliced.sub(brk: {
                     var i: usize = "npm:".len;
@@ -607,7 +619,7 @@ pub fn parseWithTag(
                     }
 
                     tag_to_use = sliced.sub(dependency[i + 1 ..]).value();
-                    if (tag_to_use.len() == 0) {
+                    if (tag_to_use.isEmpty()) {
                         tag_to_use = String.from("latest");
                     }
 
@@ -615,6 +627,13 @@ pub fn parseWithTag(
                 }).value()
             else
                 alias;
+
+            // name should never be empty
+            std.debug.assert(!actual.isEmpty());
+
+            // tag should never be empty
+            std.debug.assert(!tag_to_use.isEmpty());
+
             return Version{
                 .literal = sliced.value(),
                 .value = .{

@@ -16926,7 +16926,6 @@ fn NewParser_(
             stmts.append(closure) catch unreachable;
         }
 
-        // TODO: https://github.com/oven-sh/bun/issues/51
         fn lowerClass(
             p: *P,
             stmtorexpr: js_ast.StmtOrExpr,

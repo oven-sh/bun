@@ -128,6 +128,17 @@ class Test extends Bar {
 
       for (const [code, out] of fixtures) {
         expect(ts.parsed(code, false, false).trim()).toBe(out);
+        expect(
+          ts
+            .parsed("var Test = " + code.trim(), false, false)
+            .trim()
+            .replaceAll("\n", "")
+            .replaceAll("  ", ""),
+        ).toBe(
+          ("var Test = " + out.trim() + ";\n")
+            .replaceAll("\n", "")
+            .replaceAll("  ", ""),
+        );
       }
     });
 

@@ -730,6 +730,11 @@ pub const Fetch = struct {
                 store.ref();
             }
             
+            var http_proxy: ?ZigURL = fetch_options.proxy;
+            if (http_proxy == null) {
+                http_proxy = jsc_vm.bundler.env.getHttpProxy(fetch_options.url);
+            }
+
             fetch_tasklet.http.?.* = HTTPClient.AsyncHTTP.init(
                 allocator,
                 fetch_options.method,
@@ -745,7 +750,7 @@ pub const Fetch = struct {
                 ).init(
                     fetch_tasklet,
                 ),
-                jsc_vm.bundler.env.getHttpProxy(fetch_options.url)
+                http_proxy
             );
 
             if (!fetch_options.follow_redirects) {

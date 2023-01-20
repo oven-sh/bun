@@ -95,7 +95,9 @@ fn disableSIGPIPESoClosingTheTabDoesntCrash(conn: anytype) void {
         std.os.SOL.SOCKET,
         std.os.SO.NOSIGPIPE,
         &std.mem.toBytes(@as(c_int, 1)),
-    ) catch {};
+    ) catch (err: Exception) {
+        std.debug.printStackTrace(err);
+    };
 }
 var http_editor_context: EditorContext = EditorContext{};
 

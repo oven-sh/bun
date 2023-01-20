@@ -1517,7 +1517,7 @@ pub fn getPackageID(
                 std.debug.assert(id != invalid_package_id - 1);
             }
 
-            if (resolutions[id].eql(
+            if (id < resolutions.len and resolutions[id].eql(
                 resolution,
                 this.buffers.string_bytes.items,
                 this.buffers.string_bytes.items,
@@ -1545,7 +1545,7 @@ pub fn getPackageID(
                     std.debug.assert(id != invalid_package_id);
                 }
 
-                if (id == invalid_package_id - 1) return null;
+                if (id >= resolutions.len) return null;
 
                 if (resolutions[id].eql(resolution, this.buffers.string_bytes.items, this.buffers.string_bytes.items)) {
                     return id;
@@ -2684,7 +2684,7 @@ pub const Package = extern struct {
                             defer fallback.fixed_buffer_allocator.reset();
                             const path = item.asString(allocator) orelse return error.InvalidPackageJSON;
 
-                            var workspace_dir = std.fs.cwd().openDir(path, .{}) catch |err| {
+                            var workspace_dir = std.fs.cwd().openIterableDir(path, .{}) catch |err| {
                                 if (err == error.FileNotFound) {
                                     log.addErrorFmt(
                                         &source,
@@ -2713,8 +2713,14 @@ pub const Package = extern struct {
                             };
                             defer workspace_dir.close();
 
-                            var workspace_file = workspace_dir.openFile("package.json", .{ .mode = .read_only }) catch |err| {
-                                log.addErrorFmt(&source, item.loc, allocator, "{s} opening package.json for workspace package \"{s}\" from \"{s}\"", .{ @errorName(err), path, std.os.getcwd(allocator.alloc(u8, bun.MAX_PATH_BYTES) catch unreachable) catch unreachable }) catch {};
+                            var workspace_file = workspace_dir.dir.openFile("package.json", .{ .mode = .read_only }) catch |err| {
+                                log.addErrorFmt(
+                                    &source,
+                                    item.loc,
+                                    allocator,
+                                    "{s} opening package.json for workspace package \"{s}\" from \"{s}\"",
+                                    .{ @errorName(err), path, std.os.getcwd(allocator.alloc(u8, bun.MAX_PATH_BYTES) catch unreachable) catch unreachable },
+                                ) catch {};
                                 workspace_names[i] = "";
                                 // report errors for multiple workspaces
                                 continue;
@@ -3395,6 +3401,11 @@ const Buffers = struct {
             switch (dep.version.tag) {
                 .npm => {
                     if (!dep.name.eql(dep.version.value.npm.name, string_buf, string_buf)) {
+                        try alias_map.put(allocator, this.resolutions.items[i], dep.name);
+                    }
+                },
+                .dist_tag => {
+                    if (!dep.name.eql(dep.version.value.dist_tag.name, string_buf, string_buf)) {
                         try alias_map.put(allocator, this.resolutions.items[i], dep.name);
                     }
                 },

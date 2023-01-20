@@ -2092,13 +2092,17 @@ pub const PackageManager = struct {
                     package.resolution.value.npm.version,
                 );
 
-                var network_task = (try this.generateNetworkTaskForTarball(task_id, manifest.str(find_result.package.tarball_url), package)).?;
+                var is_first_time: bool = true;
+                if (try this.generateNetworkTaskForTarballTrackExisting(task_id, manifest.str(find_result.package.tarball_url), package, &is_first_time)) |network_task| {
+                    return ResolvedPackageResult{
+                        .package = package,
+                        .is_first_time = true,
+                        .network_task = network_task,
+                    };
+                }
 
-                return ResolvedPackageResult{
-                    .package = package,
-                    .is_first_time = true,
-                    .network_task = network_task,
-                };
+                // if we are in the middle of extracting this package, we should wait for it to finish
+                return ResolvedPackageResult{ .package = package };
             },
             else => unreachable,
         }
@@ -2107,8 +2111,17 @@ pub const PackageManager = struct {
     }
 
     pub fn generateNetworkTaskForTarball(this: *PackageManager, task_id: u64, url: string, package: Lockfile.Package) !?*NetworkTask {
+        return this.generateNetworkTaskForTarballTrackExisting(task_id, url, package, null);
+    }
+
+    pub fn generateNetworkTaskForTarballTrackExisting(this: *PackageManager, task_id: u64, url: string, package: Lockfile.Package, existing: ?*bool) !?*NetworkTask {
         const dedupe_entry = try this.network_dedupe_map.getOrPut(this.allocator, task_id);
-        if (dedupe_entry.found_existing) return null;
+        if (dedupe_entry.found_existing) {
+            if (existing) |exist| {
+                exist.* = true;
+            }
+            return null;
+        }
 
         var network_task = this.getNetworkTask();
 
@@ -2196,7 +2209,7 @@ pub const PackageManager = struct {
                 // Resolve the version from the loaded NPM manifest
                 const manifest = this.manifests.getPtr(name_hash) orelse return null; // manifest might still be downloading. This feels unreliable.
                 const find_result: Npm.PackageManifest.FindResult = switch (version.tag) {
-                    .dist_tag => manifest.findByDistTag(this.lockfile.str(version.value.dist_tag)),
+                    .dist_tag => manifest.findByDistTag(this.lockfile.str(version.value.dist_tag.tag)),
                     .npm => manifest.findBestVersion(version.value.npm.version),
                     else => unreachable,
                 } orelse return switch (version.tag) {
@@ -2417,10 +2430,11 @@ pub const PackageManager = struct {
         const alias = dependency.name;
         const name = switch (dependency.version.tag) {
             .npm => dependency.version.value.npm.name,
+            .dist_tag => dependency.version.value.dist_tag.name,
             else => alias,
         };
         const name_hash = switch (dependency.version.tag) {
-            .npm => Lockfile.stringHash(this.lockfile.str(name)),
+            .dist_tag, .npm => Lockfile.stringHash(this.lockfile.str(name)),
             else => dependency.name_hash,
         };
         const version = dependency.version;
@@ -2470,7 +2484,7 @@ pub const PackageManager = struct {
                                                 "package \"{s}\" with tag \"{s}\" not found, but package exists",
                                                 .{
                                                     this.lockfile.str(name),
-                                                    this.lockfile.str(version.value.dist_tag),
+                                                    this.lockfile.str(version.value.dist_tag.tag),
                                                 },
                                             ) catch unreachable;
                                         }

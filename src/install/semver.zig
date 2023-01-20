@@ -19,6 +19,12 @@ pub const String = extern struct {
     /// 3. If the final bit is not set, then it's a string that is stored in an external buffer.
     bytes: [max_inline_len]u8 = [8]u8{ 0, 0, 0, 0, 0, 0, 0, 0 },
 
+    /// Create an inline string
+    pub fn from(inlinable_buffer: []const u8) String {
+        std.debug.assert(inlinable_buffer.len <= max_inline_len);
+        return String.init(inlinable_buffer, inlinable_buffer);
+    }
+
     pub const Tag = enum {
         small,
         big,
@@ -829,17 +835,13 @@ pub const Version = extern struct {
                 .pre => {
                     result.tag.pre = sliced_string.sub(input[start..i]).external();
                     // a pre can contain multiple consecutive tags
-                    if (comptime Environment.isDebug) {
-                        std.debug.assert(!strings.startsWithChar(result.tag.pre.slice(sliced_string.buf), '-'));
-                    }
+                    // checking for "-" prefix is not enough, as --canary.67e7966.0 is a valid tag
                     state = State.none;
                 },
                 .build => {
                     // a build can contain multiple consecutive tags
                     result.tag.build = sliced_string.sub(input[start..i]).external();
-                    if (comptime Environment.isDebug) {
-                        std.debug.assert(!strings.startsWithChar(result.tag.build.slice(sliced_string.buf), '+'));
-                    }
+
                     state = State.none;
                 },
             }
@@ -1789,6 +1791,12 @@ pub const Query = struct {
                         },
                     }
                 } else if (count == 0) {
+                    if (token.tag == .none) {
+                        is_or = false;
+                        token.wildcard = .none;
+                        prev_token.tag = .none;
+                        continue;
+                    }
                     try list.andRange(token.toRange(parse_result.version));
                 } else if (is_or) {
                     try list.orRange(token.toRange(parse_result.version));

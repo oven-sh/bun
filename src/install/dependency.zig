@@ -419,7 +419,9 @@ pub const Version = struct {
                 // newspeak/repo
                 // npm:package@1.2.3
                 'n' => {
-                    if (strings.hasPrefixComptime(dependency, "npm:")) return .npm;
+                    if (strings.hasPrefixComptime(dependency, "npm:")) {
+                        return infer(dependency["npm:".len..]);
+                    }
                 },
                 // v1.2.3
                 // verilog.tar.gz
@@ -459,11 +461,20 @@ pub const Version = struct {
         }
     };
 
+    const TagInfo = struct {
+        name: String,
+        tag: String,
+
+        fn eql(this: TagInfo, that: TagInfo, this_buf: []const u8, that_buf: []const u8) bool {
+            return this.name.eql(that.name, this_buf, that_buf) and this.tag.eql(that.tag);
+        }
+    };
+
     pub const Value = union {
         uninitialized: void,
 
         npm: NpmInfo,
-        dist_tag: String,
+        dist_tag: TagInfo,
         tarball: URI,
         folder: String,
 
@@ -576,9 +587,42 @@ pub fn parseWithTag(
             };
         },
         .dist_tag => {
+            var tag_to_use: String = sliced.value();
+
+            const actual = if (strings.hasPrefixComptime(dependency, "npm:"))
+                // npm:@foo/bar@latest
+                sliced.sub(brk: {
+                    var i: usize = "npm:".len;
+
+                    // npm:@foo/bar@latest
+                    //     ^
+                    i += @boolToInt(dependency[i] == '@');
+
+                    while (i < dependency.len) : (i += 1) {
+                        // npm:@foo/bar@latest
+                        //             ^
+                        if (dependency[i] == '@') {
+                            break;
+                        }
+                    }
+
+                    tag_to_use = sliced.sub(dependency[i + 1 ..]).value();
+                    if (tag_to_use.len() == 0) {
+                        tag_to_use = String.from("latest");
+                    }
+
+                    break :brk dependency["npm:".len..i];
+                }).value()
+            else
+                alias;
             return Version{
                 .literal = sliced.value(),
-                .value = .{ .dist_tag = sliced.value() },
+                .value = .{
+                    .dist_tag = .{
+                        .name = actual,
+                        .tag = tag_to_use,
+                    },
+                },
                 .tag = .dist_tag,
             };
         },

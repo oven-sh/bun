@@ -915,7 +915,7 @@ pub const Fetch = struct {
                     if (options.get(ctx, "proxy")) |proxy_value| {
                         if (proxy_value.toStringOrNull(globalThis)) |proxy_string| {
 
-                            var proxyurl_slice = jsstring.toSlice(globalThis, bun.default_allocator).cloneIfNeeded(bun.default_allocator) catch {
+                            var proxyurl_slice = proxy_string.toSlice(globalThis, bun.default_allocator).cloneIfNeeded(bun.default_allocator) catch {
                                  JSC.JSError(bun.default_allocator, "Out of memory", .{}, ctx, exception);
                                 return null;
                             };

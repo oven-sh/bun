@@ -44,7 +44,7 @@ afterAll(() => {
 describe("proxy", () => {
   const requests = [
     [ new Request("http://localhost:54322"), "fetch() GET with non-TLS Proxy", "http://localhost:54321"],
-    [ new Request("http://localhost:54322", { method: "POST", body: "Hello, World" }), "fetch() POSTT with non-TLS Proxy", "http://localhost:54321"]
+    [ new Request("http://localhost:54322", { method: "POST", body: "Hello, World" }), "fetch() POST with non-TLS Proxy", "http://localhost:54321"]
   ];
   for (let [ request, name, proxy ] of requests) {
     gc();

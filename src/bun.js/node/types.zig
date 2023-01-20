@@ -346,68 +346,46 @@ pub const SliceOrBuffer = union(Tag) {
     }
 
     pub fn fromJS(global: *JSC.JSGlobalObject, allocator: std.mem.Allocator, value: JSC.JSValue) ?SliceOrBuffer {
-        return switch (value.jsType()) {
-            JSC.JSValue.JSType.String, JSC.JSValue.JSType.StringObject, JSC.JSValue.JSType.DerivedStringObject, JSC.JSValue.JSType.Object => {
-                var zig_str = value.toSlice(global, allocator);
-                return SliceOrBuffer{ .string = zig_str };
-            },
-            .ArrayBuffer,
-            .Int8Array,
-            .Uint8Array,
-            .Uint8ClampedArray,
-            .Int16Array,
-            .Uint16Array,
-            .Int32Array,
-            .Uint32Array,
-            .Float32Array,
-            .Float64Array,
-            .BigInt64Array,
-            .BigUint64Array,
-            .DataView,
-            => SliceOrBuffer{
+        if (!value.isEmpty() and value.isCell() and value.jsType().isTypedArray()) {
+            return SliceOrBuffer{
                 .buffer = JSC.MarkedArrayBuffer{
                     .buffer = value.asArrayBuffer(global) orelse return null,
                     .allocator = null,
                 },
-            },
-            else => null,
-        };
+            };
+        }
+
+        if (value.isEmpty()) {
+            return null;
+        }
+
+        var str = value.toStringOrNull(global) orelse return null;
+        return SliceOrBuffer{ .string = str.toSlice(global, allocator) };
     }
 
     pub fn fromJSWithEncoding(global: *JSC.JSGlobalObject, allocator: std.mem.Allocator, value: JSC.JSValue, encoding_value: JSC.JSValue) ?SliceOrBuffer {
-        if (encoding_value.isEmptyOrUndefinedOrNull())
-            return fromJS(global, allocator, value);
-
-        switch (value.jsType()) {
-            .ArrayBuffer,
-            .Int8Array,
-            .Uint8Array,
-            .Uint8ClampedArray,
-            .Int16Array,
-            .Uint16Array,
-            .Int32Array,
-            .Uint32Array,
-            .Float32Array,
-            .Float64Array,
-            .BigInt64Array,
-            .BigUint64Array,
-            .DataView,
-            => return SliceOrBuffer{
+        if (value.isCell() and value.jsType().isTypedArray()) {
+            return SliceOrBuffer{
                 .buffer = JSC.MarkedArrayBuffer{
                     .buffer = value.asArrayBuffer(global) orelse return null,
                     .allocator = null,
                 },
-            },
-            else => {},
+            };
         }
 
-        var encoding_str = encoding_value.toSlice(global, allocator);
-        if (encoding_str.len == 0)
-            return fromJS(global, allocator, value);
+        const encoding: Encoding = brk: {
+            if (encoding_value.isEmpty())
+                break :brk .utf8;
+            var encoding_str = encoding_value.toSlice(global, allocator);
+            if (encoding_str.len == 0)
+                break :brk .utf8;
 
-        defer encoding_str.deinit();
-        // TODO: better error
-        const encoding = Encoding.from(encoding_str.slice()) orelse return null;
+            defer encoding_str.deinit();
+
+            // TODO: better error
+            break :brk Encoding.from(encoding_str.slice()) orelse return null;
+        };
+
         if (encoding == .utf8) {
             return fromJS(global, allocator, value);
         }

@@ -461,6 +461,7 @@ pub const Crypto = struct {
             null,
             0,
         ) != 1)) {
+            BoringSSL.ERR_clear_error();
             return globalThis.createErrorInstance("scrypt parameters are invalid", .{});
         }
         var slice: []u8 = undefined;
@@ -577,6 +578,7 @@ pub const Crypto = struct {
             buf.ptr,
             keylen,
         ) != 1) {
+            BoringSSL.ERR_clear_error();
             return globalThis.createErrorInstance("Failed to derive key", .{});
         }
 

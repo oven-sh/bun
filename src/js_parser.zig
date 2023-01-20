@@ -16926,7 +16926,6 @@ fn NewParser_(
             stmts.append(closure) catch unreachable;
         }
 
-        // TODO: https://github.com/oven-sh/bun/issues/51
         fn lowerClass(
             p: *P,
             stmtorexpr: js_ast.StmtOrExpr,
@@ -16935,12 +16934,13 @@ fn NewParser_(
         ) []Stmt {
             switch (stmtorexpr) {
                 .stmt => |stmt| {
-                    if (!stmt.data.s_class.class.has_decorators) {
-                        var stmts = p.allocator.alloc(Stmt, 1) catch unreachable;
-                        stmts[0] = stmt;
-                        return stmts;
+                    if (comptime !is_typescript_enabled) {
+                        if (!stmt.data.s_class.class.has_decorators) {
+                            var stmts = p.allocator.alloc(Stmt, 1) catch unreachable;
+                            stmts[0] = stmt;
+                            return stmts;
+                        }
                     }
-
                     var class = &stmt.data.s_class.class;
                     var constructor_function: ?*E.Function = null;
 
@@ -16957,6 +16957,9 @@ fn NewParser_(
                                 switch (prop_value.data) {
                                     .e_function => |func| {
                                         const is_constructor = (prop.key.?.data == .e_string and prop.key.?.data.e_string.eqlComptime("constructor"));
+
+                                        if (is_constructor) constructor_function = func;
+
                                         for (func.func.args) |arg, i| {
                                             for (arg.ts_decorators.ptr[0..arg.ts_decorators.len]) |arg_decorator| {
                                                 var decorators = if (is_constructor) class.ts_decorators.listManaged(p.allocator) else prop.ts_decorators.listManaged(p.allocator);
@@ -16973,19 +16976,6 @@ fn NewParser_(
                                         }
                                     },
                                     else => unreachable,
-                                }
-                            }
-                        }
-
-                        if (prop.flags.contains(.is_method)) {
-                            if (prop.key.?.data == .e_string and prop.key.?.data.e_string.eqlComptime("constructor")) {
-                                if (prop.value) |prop_value| {
-                                    switch (prop_value.data) {
-                                        .e_function => |func| {
-                                            constructor_function = func;
-                                        },
-                                        else => unreachable,
-                                    }
                                 }
                             }
                         }
@@ -17098,14 +17088,20 @@ fn NewParser_(
                         } else {
                             var constructor_stmts = ListManaged(Stmt).fromOwnedSlice(p.allocator, constructor_function.?.func.body.stmts);
                             // statements coming from class body inserted after super call or beginning of constructor.
-                            var has_super = false;
+                            var super_index: ?usize = null;
                             for (constructor_stmts.items) |item, index| {
                                 if (item.data != .s_expr or item.data.s_expr.value.data != .e_call or item.data.s_expr.value.data.e_call.target.data != .e_super) continue;
-                                has_super = true;
-                                constructor_stmts.insertSlice(index + 1, instance_members.items) catch unreachable;
+                                super_index = index;
+                                break;
                             }
-                            if (!has_super) {
-                                constructor_stmts.insertSlice(0, instance_members.items) catch unreachable;
+
+                            const i = if (super_index) |j| j + 1 else 0;
+                            constructor_stmts.insertSlice(i, instance_members.items) catch unreachable;
+
+                            // move super behind statements generated from parameter properties
+                            if (super_index) |j| {
+                                const super = constructor_stmts.orderedRemove(j);
+                                constructor_stmts.insert(0, super) catch unreachable;
                             }
 
                             constructor_function.?.func.body.stmts = constructor_stmts.items;
@@ -17611,17 +17607,15 @@ fn NewParser_(
                                         .b_identifier => |id| {
                                             const name = p.symbols.items[id.ref.innerIndex()].original_name;
                                             const ident = p.newExpr(E.Identifier{ .ref = id.ref }, arg.binding.loc);
-                                            stmts.appendAssumeCapacity(
-                                                Expr.assignStmt(
-                                                    p.newExpr(E.Dot{
-                                                        .target = p.newExpr(E.This{}, arg.binding.loc),
-                                                        .name = name,
-                                                        .name_loc = arg.binding.loc,
-                                                    }, arg.binding.loc),
-                                                    ident,
-                                                    p.allocator,
-                                                ),
-                                            );
+                                            stmts.insert(j, Expr.assignStmt(
+                                                p.newExpr(E.Dot{
+                                                    .target = p.newExpr(E.This{}, arg.binding.loc),
+                                                    .name = name,
+                                                    .name_loc = arg.binding.loc,
+                                                }, arg.binding.loc),
+                                                ident,
+                                                p.allocator,
+                                            )) catch unreachable;
                                             // O(N)
                                             class_body.items.len += 1;
                                             std.mem.copyBackwards(G.Property, class_body.items[j + 1 .. class_body.items.len], class_body.items[j .. class_body.items.len - 1]);

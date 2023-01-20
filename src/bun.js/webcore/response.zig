@@ -729,13 +729,24 @@ pub const Fetch = struct {
             if (fetch_tasklet.request_body.store()) |store| {
                 store.ref();
             }
-
-            fetch_tasklet.http.?.* = HTTPClient.AsyncHTTP.init(allocator, fetch_options.method, fetch_options.url, fetch_options.headers.entries, fetch_options.headers.buf.items, &fetch_tasklet.response_buffer, fetch_tasklet.request_body.slice(), fetch_options.timeout, HTTPClient.HTTPClientResult.Callback.New(
-                *FetchTasklet,
-                FetchTasklet.callback,
-            ).init(
-                fetch_tasklet,
-            ), fetch_options.proxy orelse jsc_vm.bundler.env.getHttpProxy(fetch_options.url));
+            
+            fetch_tasklet.http.?.* = HTTPClient.AsyncHTTP.init(
+                allocator,
+                fetch_options.method,
+                fetch_options.url,
+                fetch_options.headers.entries,
+                fetch_options.headers.buf.items,
+                &fetch_tasklet.response_buffer,
+                fetch_tasklet.request_body.slice(),
+                fetch_options.timeout,
+                HTTPClient.HTTPClientResult.Callback.New(
+                    *FetchTasklet,
+                    FetchTasklet.callback,
+                ).init(
+                    fetch_tasklet,
+                ),
+                fetch_options.proxy orelse jsc_vm.bundler.env.getHttpProxy(fetch_options.url)
+            );
 
             if (!fetch_options.follow_redirects) {
                 fetch_tasklet.http.?.client.remaining_redirect_count = 0;

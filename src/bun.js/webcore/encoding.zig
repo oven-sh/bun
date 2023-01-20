@@ -1064,6 +1064,14 @@ pub const Encoder = struct {
         }
     }
 
+    pub fn constructFrom(comptime T: type, input: []const T, comptime encoding: JSC.Node.Encoding) []u8 {
+        return switch (comptime T) {
+            u16 => constructFromU16(input.ptr, input.len, encoding),
+            u8 => constructFromU8(input.ptr, input.len, encoding),
+            else => @compileError("Unsupported type for constructFrom: " ++ @typeName(T)),
+        };
+    }
+
     pub fn constructFromU8(input: [*]const u8, len: usize, comptime encoding: JSC.Node.Encoding) []u8 {
         if (len == 0)
             return &[_]u8{};

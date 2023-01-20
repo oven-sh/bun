@@ -786,3 +786,33 @@ test("no decorators", () => {
   expect(a).toBe(1);
   expect(aa.b).toBe(300000);
 });
+
+test("class constructor parameter properties", () => {
+  class A {
+    constructor(readonly d: string = "default") {
+      expect(d).toBe(d);
+      expect(this.d).toBe(d);
+    }
+  }
+
+  const a = new A("c");
+  expect(a.d).toBe("c");
+
+  class B extends A {}
+
+  const b = new B();
+  expect(b.d).toBe("default");
+
+  class C extends A {
+    constructor(public f: number) {
+      super();
+      expect(this.d).toBe("default");
+      expect(f).toBe(f);
+      expect(this.f).toBe(f);
+    }
+  }
+
+  const c = new C(5);
+  expect(c.d).toBe("default");
+  expect(c.f).toBe(5);
+});

@@ -1578,6 +1578,7 @@ pub const Resolver = struct {
                             }
                             dependency_version = Dependency.parse(
                                 r.allocator,
+                                Semver.String.init(esm.name, esm.name),
                                 esm.version,
                                 &sliced_string,
                                 r.log,
@@ -1829,9 +1830,7 @@ pub const Resolver = struct {
         if (is_main) {
             if (package_json_) |package_json| {
                 package = Package.fromPackageJSON(
-                    pm.allocator,
                     pm.lockfile,
-                    r.log,
                     package_json,
                     Install.Features{
                         .dev_dependencies = true,
@@ -1842,12 +1841,6 @@ pub const Resolver = struct {
                 ) catch |err| {
                     return .{ .failure = err };
                 };
-
-                package.resolution = .{
-                    .tag = .root,
-                    .value = .{ .root = {} },
-                };
-
                 package = pm.lockfile.appendPackage(package) catch |err| {
                     return .{ .failure = err };
                 };
@@ -1856,7 +1849,7 @@ pub const Resolver = struct {
                 // we're resolving an unknown package
                 // the unknown package is the root package
                 package = Package{
-                    .name = Semver.String.init("", ""),
+                    .name = Semver.String.from(""),
                     .resolution = .{
                         .tag = .root,
                         .value = .{ .root = {} },

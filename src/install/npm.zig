@@ -577,7 +577,13 @@ pub const PackageManifest = struct {
                 timer = std.time.Timer.start() catch @panic("timer fail");
             }
             defer cache_file.close();
-            var bytes = try cache_file.readToEndAlloc(allocator, std.math.maxInt(u32));
+            var bytes = try cache_file.readToEndAllocOptions(
+                allocator,
+                std.math.maxInt(u32),
+                cache_file.getEndPos() catch null,
+                @alignOf(u8),
+                null,
+            );
             errdefer allocator.free(bytes);
             if (bytes.len < header_bytes.len) return null;
             const result = try readAll(bytes);

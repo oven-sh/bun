@@ -158,12 +158,9 @@ function requireESM(resolved) {
   return exports;
 }
 
-function require(name) {
+function internalRequire(resolved) {
   "use strict";
-  if (typeof name !== "string") {
-    @throwTypeError("require() expects a string as its argument");
-  }
-  const resolved = @resolveSync(name, this.path);
+
   var cached = @requireMap.@get(resolved);
   const last5 = resolved.substring(resolved.length - 5);
   if (cached) {
@@ -195,4 +192,14 @@ function require(name) {
     @requireMap.@set(resolved, exports);
     return exports;
   }
+}
+
+function require(name) {
+  const from = this?.path ?? arguments.callee.path;
+
+  if (typeof name !== "string") {
+    @throwTypeError("require(name) must be a string");
+  }
+
+  return @internalRequire(@resolveSync(name, from));
 }

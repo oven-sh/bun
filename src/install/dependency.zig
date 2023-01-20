@@ -420,11 +420,10 @@ pub const Version = struct {
                 // npm:package@1.2.3
                 'n' => {
                     if (strings.hasPrefixComptime(dependency, "npm:") and dependency.len > "npm:".len) {
-                        var i: usize = "npm:".len + @boolToInt(dependency["npm:".len] == '@');
-                        var remain = dependency[i..];
-                        for (remain) |c, j| {
+                        const remain = dependency["npm:".len + @boolToInt(dependency["npm:".len] == '@') ..];
+                        for (remain) |c, i| {
                             if (c == '@') {
-                                return infer(remain[j + 1 ..]);
+                                return infer(remain[i + 1 ..]);
                             }
                         }
 

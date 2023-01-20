@@ -91,6 +91,23 @@ pub const ZigString = extern struct {
     ptr: [*]const u8,
     len: usize,
 
+    pub const ByteString = union(enum) {
+        latin1: []const u8,
+        utf16: []const u16,
+    };
+
+    pub inline fn as(this: ZigString) ByteString {
+        return if (this.is16Bit()) .{ .utf16 = this.utf16SliceAligned() } else .{ .latin1 = this.slice() };
+    }
+
+    pub fn encode(this: ZigString, encoding: JSC.Node.Encoding) []u8 {
+        return switch (this.as()) {
+            inline else => |repr| switch (encoding) {
+                inline else => |enc| JSC.WebCore.Encoder.constructFrom(std.meta.Child(@TypeOf(repr)), repr, enc),
+            },
+        };
+    }
+
     /// This function is not optimized!
     pub fn eqlCaseInsensitive(this: ZigString, other: ZigString) bool {
         var fallback = std.heap.stackFallback(1024, bun.default_allocator);

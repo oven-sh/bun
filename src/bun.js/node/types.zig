@@ -417,35 +417,7 @@ pub const SliceOrBuffer = union(Tag) {
             return fromJS(global, allocator, value);
         }
 
-        const out = brk: {
-            if (!zig_str.is16Bit()) {
-                const buf = zig_str.slice();
-                break :brk switch (encoding) {
-                    Encoding.utf8 => JSC.WebCore.Encoder.constructFromU8(buf.ptr, buf.len, .utf8),
-                    Encoding.ucs2 => JSC.WebCore.Encoder.constructFromU8(buf.ptr, buf.len, .ucs2),
-                    Encoding.utf16le => JSC.WebCore.Encoder.constructFromU8(buf.ptr, buf.len, .utf16le),
-                    Encoding.latin1 => JSC.WebCore.Encoder.constructFromU8(buf.ptr, buf.len, .latin1),
-                    Encoding.ascii => JSC.WebCore.Encoder.constructFromU8(buf.ptr, buf.len, .ascii),
-                    Encoding.base64 => JSC.WebCore.Encoder.constructFromU8(buf.ptr, buf.len, .base64),
-                    Encoding.hex => JSC.WebCore.Encoder.constructFromU8(buf.ptr, buf.len, .hex),
-                    Encoding.buffer => JSC.WebCore.Encoder.constructFromU8(buf.ptr, buf.len, .buffer),
-                    Encoding.base64url => JSC.WebCore.Encoder.constructFromU8(buf.ptr, buf.len, .base64url),
-                };
-            } else {
-                const buf = zig_str.utf16SliceAligned();
-                break :brk switch (encoding) {
-                    Encoding.utf8 => JSC.WebCore.Encoder.constructFromU16(buf.ptr, buf.len, .utf8),
-                    Encoding.ucs2 => JSC.WebCore.Encoder.constructFromU16(buf.ptr, buf.len, .ucs2),
-                    Encoding.utf16le => JSC.WebCore.Encoder.constructFromU16(buf.ptr, buf.len, .utf16le),
-                    Encoding.latin1 => JSC.WebCore.Encoder.constructFromU16(buf.ptr, buf.len, .latin1),
-                    Encoding.ascii => JSC.WebCore.Encoder.constructFromU16(buf.ptr, buf.len, .ascii),
-                    Encoding.base64 => JSC.WebCore.Encoder.constructFromU16(buf.ptr, buf.len, .base64),
-                    Encoding.hex => JSC.WebCore.Encoder.constructFromU16(buf.ptr, buf.len, .hex),
-                    Encoding.buffer => JSC.WebCore.Encoder.constructFromU16(buf.ptr, buf.len, .buffer),
-                    Encoding.base64url => JSC.WebCore.Encoder.constructFromU16(buf.ptr, buf.len, .base64url),
-                };
-            }
-        };
+        const out = zig_str.encode(encoding);
 
         return .{ .string = JSC.ZigString.Slice.from(out, allocator) };
     }

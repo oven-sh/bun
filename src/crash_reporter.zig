@@ -32,11 +32,6 @@ noinline fn sigpipe_handler(_: i32, _: *const std.os.siginfo_t, _: ?*const anyop
     bun.Output.debug("SIGPIPE received\n", .{});
 }
 
-noinline fn sighup_handler(_: i32, _: *const std.os.siginfo_t, _: ?*const anyopaque) callconv(.C) void {
-    const bun = @import("bun");
-    bun.Output.debug("SIGHUP received\n", .{});
-}
-
 pub fn reloadHandlers() !void {
     try os.sigaction(os.SIG.PIPE, null, null);
     try setup_sigactions(null);
@@ -49,33 +44,17 @@ pub fn reloadHandlers() !void {
 
     try setup_sigactions(&act);
 
-    {
-        var pipe = os.Sigaction{
-            .handler = .{ .sigaction = sigpipe_handler },
-            .mask = os.empty_sigset,
-            .flags = (os.SA.SIGINFO | os.SA.RESTART | os.SA.RESETHAND),
-        };
+    var pipe = os.Sigaction{
+        .handler = .{ .sigaction = sigpipe_handler },
+        .mask = os.empty_sigset,
+        .flags = (os.SA.SIGINFO | os.SA.RESTART | os.SA.RESETHAND),
+    };
 
-        try os.sigaction(
-            os.SIG.PIPE,
-            &pipe,
-            null,
-        );
-    }
-
-    {
-        var pipe = os.Sigaction{
-            .handler = .{ .sigaction = sighup_handler },
-            .mask = os.empty_sigset,
-            .flags = (os.SA.SIGINFO | os.SA.RESTART | os.SA.RESETHAND),
-        };
-
-        try os.sigaction(
-            os.SIG.HUP,
-            &pipe,
-            null,
-        );
-    }
+    try os.sigaction(
+        os.SIG.PIPE,
+        &pipe,
+        null,
+    );
 }
 const os = std.os;
 pub fn start() !void {
@@ -95,20 +74,6 @@ pub fn start() !void {
 
         try os.sigaction(
             os.SIG.PIPE,
-            &pipe,
-            null,
-        );
-    }
-
-    {
-        var pipe = os.Sigaction{
-            .handler = .{ .sigaction = sighup_handler },
-            .mask = os.empty_sigset,
-            .flags = (os.SA.SIGINFO | os.SA.RESTART | os.SA.RESETHAND),
-        };
-
-        try os.sigaction(
-            os.SIG.HUP,
             &pipe,
             null,
         );

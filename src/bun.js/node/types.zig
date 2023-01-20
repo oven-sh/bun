@@ -221,10 +221,6 @@ pub const StringOrBuffer = union(Tag) {
     }
 
     pub fn fromJS(global: *JSC.JSGlobalObject, allocator: std.mem.Allocator, value: JSC.JSValue, exception: JSC.C.ExceptionRef) ?StringOrBuffer {
-        if (!value.isCell()) {
-            var zig_str = value.toSlice(global, allocator);
-            return StringOrBuffer{ .string = zig_str.slice() };
-        }
         return switch (value.jsType()) {
             JSC.JSValue.JSType.String, JSC.JSValue.JSType.StringObject, JSC.JSValue.JSType.DerivedStringObject, JSC.JSValue.JSType.Object => {
                 var zig_str = value.toSlice(global, allocator);

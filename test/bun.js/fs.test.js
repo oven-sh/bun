@@ -420,6 +420,8 @@ describe("rm", () => {
     } catch (e) {}
     expect(existsSync(path)).toBe(true);
     rmSync(path);
+    expect(existsSync(path)).toBe(true);
+    rmSync(path, { recursive: true, force: true });
     expect(existsSync(path)).toBe(false);
   });
 
@@ -441,8 +443,8 @@ describe("rmdir", () => {
     expect(existsSync(path)).toBe(true);
     rmdir(path, (err) => {
       expect(err).toBeDefined();
-      expect(err.code).toBe("EPERM");
-      expect(err.message).toBe("Operation not permitted");
+      expect(err.code).toBe("ENOTDIR");
+      expect(err.message).toBe("Not a directory");
       expect(existsSync(path)).toBe(true);
       done();
     });
@@ -480,7 +482,7 @@ describe("rmdirSync", () => {
     expect(existsSync(path)).toBe(true);
     expect(() => {
       rmdirSync(path);
-    }).toThrow("Operation not permitted");
+    }).toThrow("Not a directory");
     expect(existsSync(path)).toBe(true);
   });
 
@@ -618,14 +620,7 @@ describe("createWriteStream", () => {
 });
 
 describe("fs/promises", () => {
-  const {
-    exists,
-    mkdir,
-    readFile,
-    rmdir,
-    stat,
-    writeFile,
-  } = promises;
+  const { exists, mkdir, readFile, rmdir, stat, writeFile } = promises;
 
   it("should not segfault on exception", async () => {
     try {
@@ -679,8 +674,8 @@ describe("fs/promises", () => {
         await rmdir(path);
         expect(() => {}).toThrow();
       } catch (err) {
-        expect(err.code).toBe("EPERM");
-        expect(err.message).toBe("Operation not permitted");
+        expect(err.code).toBe("ENOTDIR");
+        expect(err.message).toBe("Not a directory");
         expect(await exists(path)).toBe(true);
       }
     });

@@ -2041,6 +2041,10 @@ const Arguments = struct {
                     if (arg.getIfPropertyExists(ctx.ptr(), "start")) |start| {
                         stream.start = start.toInt32();
                     }
+
+                    if (arg.getIfPropertyExists(ctx.ptr(), "highWaterMark")) |highwaterMark| {
+                        stream.highwater_mark = highwaterMark.toU32();
+                    }
                 }
             }
 

@@ -1,4 +1,4 @@
-import { spawn } from "bun";
+import { file, spawn } from "bun";
 import {
   afterAll,
   afterEach,
@@ -8,7 +8,7 @@ import {
   it,
 } from "bun:test";
 import { bunExe } from "bunExe";
-import { mkdir, mkdtemp, readdir, readlink, rm, writeFile } from "fs/promises";
+import { access, mkdir, mkdtemp, readdir, readlink, rm, writeFile } from "fs/promises";
 import { join } from "path";
 import { tmpdir } from "os";
 import { bunEnv } from "bunEnv";
@@ -87,6 +87,12 @@ it("should handle missing package", async () => {
   ]);
   expect(await exited).toBe(1);
   expect(requested).toBe(1);
+  try {
+    await access(join(package_dir, "bun.lockb"));
+    expect(() => {}).toThrow();
+  } catch (err: any) {
+    expect(err.code).toBe("ENOENT");
+  }
 });
 
 it("should handle @scoped authentication", async () => {
@@ -134,6 +140,12 @@ it("should handle @scoped authentication", async () => {
   expect(seen_token).toBe(true);
   expect(await exited).toBe(1);
   expect(requested).toBe(1);
+  try {
+    await access(join(package_dir, "bun.lockb"));
+    expect(() => {}).toThrow();
+  } catch (err: any) {
+    expect(err.code).toBe("ENOENT");
+  }
 });
 
 it("should handle empty string in dependencies", async () => {
@@ -178,6 +190,12 @@ it("should handle empty string in dependencies", async () => {
   ]);
   expect(await exited).toBe(1);
   expect(requested).toBe(1);
+  try {
+    await access(join(package_dir, "bun.lockb"));
+    expect(() => {}).toThrow();
+  } catch (err: any) {
+    expect(err.code).toBe("ENOENT");
+  }
 });
 
 it("should handle workspaces", async () => {
@@ -218,11 +236,13 @@ it("should handle workspaces", async () => {
   expect(await exited).toBe(0);
   expect(requested).toBe(0);
   expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([
+    ".cache",
     "Bar",
   ]);
   expect(await readlink(join(package_dir, "node_modules", "Bar"))).toBe(
     join("..", "bar"),
   );
+  await access(join(package_dir, "bun.lockb"));
 });
 
 it("should handle inter-dependency between workspaces", async () => {
@@ -278,6 +298,7 @@ it("should handle inter-dependency between workspaces", async () => {
   expect(await exited).toBe(0);
   expect(requested).toBe(0);
   expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([
+    ".cache",
     "Bar",
     "Baz",
   ]);
@@ -287,6 +308,7 @@ it("should handle inter-dependency between workspaces", async () => {
   expect(await readlink(join(package_dir, "node_modules", "Baz"))).toBe(
     join("..", "packages", "baz"),
   );
+  await access(join(package_dir, "bun.lockb"));
 });
 
 it("should handle inter-dependency between workspaces (devDependencies)", async () => {
@@ -342,6 +364,7 @@ it("should handle inter-dependency between workspaces (devDependencies)", async 
   expect(await exited).toBe(0);
   expect(requested).toBe(0);
   expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([
+    ".cache",
     "Bar",
     "Baz",
   ]);
@@ -351,6 +374,7 @@ it("should handle inter-dependency between workspaces (devDependencies)", async 
   expect(await readlink(join(package_dir, "node_modules", "Baz"))).toBe(
     join("..", "packages", "baz"),
   );
+  await access(join(package_dir, "bun.lockb"));
 });
 
 it("should handle inter-dependency between workspaces (optionalDependencies)", async () => {
@@ -406,6 +430,7 @@ it("should handle inter-dependency between workspaces (optionalDependencies)", a
   expect(await exited).toBe(0);
   expect(requested).toBe(0);
   expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([
+    ".cache",
     "Bar",
     "Baz",
   ]);
@@ -415,6 +440,7 @@ it("should handle inter-dependency between workspaces (optionalDependencies)", a
   expect(await readlink(join(package_dir, "node_modules", "Baz"))).toBe(
     join("..", "packages", "baz"),
   );
+  await access(join(package_dir, "bun.lockb"));
 });
 
 it("should ignore peerDependencies within workspaces", async () => {
@@ -461,11 +487,13 @@ it("should ignore peerDependencies within workspaces", async () => {
   expect(await exited).toBe(0);
   expect(requested).toBe(0);
   expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([
+    ".cache",
     "Baz",
   ]);
   expect(await readlink(join(package_dir, "node_modules", "Baz"))).toBe(
     join("..", "packages", "baz"),
   );
+  await access(join(package_dir, "bun.lockb"));
 });
 
 it("should handle life-cycle scripts within workspaces", async () => {
@@ -522,25 +550,49 @@ it("should handle life-cycle scripts within workspaces", async () => {
   expect(await exited).toBe(0);
   expect(requested).toBe(0);
   expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([
+    ".cache",
     "Bar",
   ]);
   expect(await readlink(join(package_dir, "node_modules", "Bar"))).toBe(
     join("..", "bar"),
   );
+  await access(join(package_dir, "bun.lockb"));
 });
 
-it("should handle dependency aliasing", async () => {
-  const urls: string[] = [];
-  handler = async (request) => {
+function dummyRegistry(urls) {
+  return async (request) => {
+    urls.push(request.url);
     expect(request.method).toBe("GET");
+    if (request.url.endsWith(".tgz")) {
+      return new Response(file(join(import.meta.dir, "tarball.tgz")));
+    }
     expect(request.headers.get("accept")).toBe(
       "application/vnd.npm.install-v1+json; q=1.0, application/json; q=0.8, */*",
     );
     expect(request.headers.get("npm-auth-type")).toBe(null);
     expect(await request.text()).toBe("");
-    urls.push(request.url);
-    return new Response("not to be found", { status: 404 });
+    const name = request.url.slice(request.url.lastIndexOf("/") + 1);
+    return new Response(JSON.stringify({
+      name: name,
+      versions: {
+        "0.0.2": {
+          name: name,
+          version: "0.0.2",
+          dist: {
+            tarball: `${request.url}.tgz`,
+          },
+        },
+      },
+      "dist-tags": {
+        latest: "0.0.2",
+      },
+    }));
   };
+}
+
+it("should handle dependency aliasing", async () => {
+  const urls = [];
+  handler = dummyRegistry(urls);
   await writeFile(
     join(package_dir, "package.json"),
     JSON.stringify({
@@ -561,30 +613,37 @@ it("should handle dependency aliasing", async () => {
   });
   expect(stderr).toBeDefined();
   const err = await new Response(stderr).text();
-  expect(err).toContain('error: package "baz" not found localhost/baz 404');
-  expect(err).toContain("error: Bar@npm:baz failed to resolve");
+  expect(err).toContain("Saved lockfile");
   expect(stdout).toBeDefined();
   const out = await new Response(stdout).text();
-  expect(out.replace(/\s*\[[0-9\.]+ms\]\s*$/, "").split(/\r?\n/)).toEqual([""]);
+  expect(out.replace(/\s*\[[0-9\.]+ms\]\s*$/, "").split(/\r?\n/)).toEqual([
+    " + baz@0.0.2",
+    "",
+    " 1 packages installed",
+  ]);
+  expect(await exited).toBe(0);
   expect(urls).toEqual([
     "http://localhost:54321/baz",
+    "http://localhost:54321/baz.tgz",
   ]);
-  expect(await exited).toBe(1);
-  expect(requested).toBe(1);
+  expect(requested).toBe(2);
+  expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([
+    ".cache",
+    "Bar",
+  ]);
+  expect(await readdirSorted(join(package_dir, "node_modules", "Bar"))).toEqual([
+    "package.json",
+  ]);
+  expect(await file(join(package_dir, "node_modules", "Bar", "package.json")).json()).toEqual({
+    name: "baz",
+    version: "0.0.2",
+  })
+  await access(join(package_dir, "bun.lockb"));
 });
 
 it("should handle dependency aliasing (versioned)", async () => {
   const urls: string[] = [];
-  handler = async (request) => {
-    expect(request.method).toBe("GET");
-    expect(request.headers.get("accept")).toBe(
-      "application/vnd.npm.install-v1+json; q=1.0, application/json; q=0.8, */*",
-    );
-    expect(request.headers.get("npm-auth-type")).toBe(null);
-    expect(await request.text()).toBe("");
-    urls.push(request.url);
-    return new Response("not to be found", { status: 404 });
-  };
+  handler = dummyRegistry(urls);
   await writeFile(
     join(package_dir, "package.json"),
     JSON.stringify({
@@ -605,30 +664,37 @@ it("should handle dependency aliasing (versioned)", async () => {
   });
   expect(stderr).toBeDefined();
   const err = await new Response(stderr).text();
-  expect(err).toContain('error: package "baz" not found localhost/baz 404');
-  expect(err).toContain("error: Bar@npm:baz@0.0.2 failed to resolve");
+  expect(err).toContain("Saved lockfile");
   expect(stdout).toBeDefined();
   const out = await new Response(stdout).text();
-  expect(out.replace(/\s*\[[0-9\.]+ms\]\s*$/, "").split(/\r?\n/)).toEqual([""]);
+  expect(out.replace(/\s*\[[0-9\.]+ms\]\s*$/, "").split(/\r?\n/)).toEqual([
+    " + baz@0.0.2",
+    "",
+    " 1 packages installed",
+  ]);
+  expect(await exited).toBe(0);
   expect(urls).toEqual([
     "http://localhost:54321/baz",
+    "http://localhost:54321/baz.tgz",
   ]);
-  expect(await exited).toBe(1);
-  expect(requested).toBe(1);
+  expect(requested).toBe(2);
+  expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([
+    ".cache",
+    "Bar",
+  ]);
+  expect(await readdirSorted(join(package_dir, "node_modules", "Bar"))).toEqual([
+    "package.json",
+  ]);
+  expect(await file(join(package_dir, "node_modules", "Bar", "package.json")).json()).toEqual({
+    name: "baz",
+    version: "0.0.2",
+  })
+  await access(join(package_dir, "bun.lockb"));
 });
 
 it("should handle dependency aliasing (dist-tagged)", async () => {
   const urls: string[] = [];
-  handler = async (request) => {
-    expect(request.method).toBe("GET");
-    expect(request.headers.get("accept")).toBe(
-      "application/vnd.npm.install-v1+json; q=1.0, application/json; q=0.8, */*",
-    );
-    expect(request.headers.get("npm-auth-type")).toBe(null);
-    expect(await request.text()).toBe("");
-    urls.push(request.url);
-    return new Response("not to be found", { status: 404 });
-  };
+  handler = dummyRegistry(urls);
   await writeFile(
     join(package_dir, "package.json"),
     JSON.stringify({
@@ -649,14 +715,115 @@ it("should handle dependency aliasing (dist-tagged)", async () => {
   });
   expect(stderr).toBeDefined();
   const err = await new Response(stderr).text();
-  expect(err).toContain('error: package "baz" not found localhost/baz 404');
-  expect(err).toContain("error: Bar@npm:baz@latest failed to resolve");
+  expect(err).toContain("Saved lockfile");
   expect(stdout).toBeDefined();
   const out = await new Response(stdout).text();
-  expect(out.replace(/\s*\[[0-9\.]+ms\]\s*$/, "").split(/\r?\n/)).toEqual([""]);
+  expect(out.replace(/\s*\[[0-9\.]+ms\]\s*$/, "").split(/\r?\n/)).toEqual([
+    " + baz@0.0.2",
+    "",
+    " 1 packages installed",
+  ]);
+  expect(await exited).toBe(0);
   expect(urls).toEqual([
     "http://localhost:54321/baz",
+    "http://localhost:54321/baz.tgz",
   ]);
-  expect(await exited).toBe(1);
-  expect(requested).toBe(1);
+  expect(requested).toBe(2);
+  expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([
+    ".cache",
+    "Bar",
+  ]);
+  expect(await readdirSorted(join(package_dir, "node_modules", "Bar"))).toEqual([
+    "package.json",
+  ]);
+  expect(await file(join(package_dir, "node_modules", "Bar", "package.json")).json()).toEqual({
+    name: "baz",
+    version: "0.0.2",
+  })
+  await access(join(package_dir, "bun.lockb"));
+});
+
+it("should not reinstall aliased dependencies", async () => {
+  const urls = [];
+  handler = dummyRegistry(urls);
+  await writeFile(
+    join(package_dir, "package.json"),
+    JSON.stringify({
+      name: "Foo",
+      version: "0.0.1",
+      dependencies: {
+        "Bar": "npm:baz",
+      },
+    }),
+  );
+  const { stdout: stdout1, stderr: stderr1, exited: exited1 } = spawn({
+    cmd: [bunExe(), "install", "--config", import.meta.dir + "/basic.toml"],
+    cwd: package_dir,
+    stdout: null,
+    stdin: "pipe",
+    stderr: "pipe",
+    env,
+  });
+  expect(stderr1).toBeDefined();
+  const err1 = await new Response(stderr1).text();
+  expect(err1).toContain("Saved lockfile");
+  expect(stdout1).toBeDefined();
+  const out1 = await new Response(stdout1).text();
+  expect(out1.replace(/\s*\[[0-9\.]+ms\]\s*$/, "").split(/\r?\n/)).toEqual([
+    " + baz@0.0.2",
+    "",
+    " 1 packages installed",
+  ]);
+  expect(await exited1).toBe(0);
+  expect(urls).toEqual([
+    "http://localhost:54321/baz",
+    "http://localhost:54321/baz.tgz",
+  ]);
+  expect(requested).toBe(2);
+  expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([
+    ".cache",
+    "Bar",
+  ]);
+  expect(await readdirSorted(join(package_dir, "node_modules", "Bar"))).toEqual([
+    "package.json",
+  ]);
+  expect(await file(join(package_dir, "node_modules", "Bar", "package.json")).json()).toEqual({
+    name: "baz",
+    version: "0.0.2",
+  })
+  await access(join(package_dir, "bun.lockb"));
+  // Performs `bun install` again, expects no-op
+  urls.length = 0;
+  const { stdout: stdout2, stderr: stderr2, exited: exited2 } = spawn({
+    cmd: [bunExe(), "install", "--config", import.meta.dir + "/basic.toml"],
+    cwd: package_dir,
+    stdout: null,
+    stdin: "pipe",
+    stderr: "pipe",
+    env,
+  });
+  expect(stderr2).toBeDefined();
+  const err2 = await new Response(stderr2).text();
+  expect(err2).not.toContain("Saved lockfile");
+  expect(stdout2).toBeDefined();
+  const out2 = await new Response(stdout2).text();
+  expect(out2.replace(/\s*\[[0-9\.]+ms\]\s*$/, "").split(/\r?\n/)).toEqual([
+    "",
+    "Checked 1 installs across 2 packages (no changes)",
+  ]);
+  expect(await exited2).toBe(0);
+  expect(urls).toEqual([]);
+  expect(requested).toBe(2);
+  expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([
+    ".cache",
+    "Bar",
+  ]);
+  expect(await readdirSorted(join(package_dir, "node_modules", "Bar"))).toEqual([
+    "package.json",
+  ]);
+  expect(await file(join(package_dir, "node_modules", "Bar", "package.json")).json()).toEqual({
+    name: "baz",
+    version: "0.0.2",
+  })
+  await access(join(package_dir, "bun.lockb"));
 });

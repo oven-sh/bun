@@ -43,14 +43,14 @@ afterAll(() => {
 
 describe("proxy", () => {
   const requests = [
-    [ new Request("http://localhost:54322"), "non-TLS GET"],
-    [ new Request("http://localhost:54322", { method: "POST", body: "Hello, World" }), "non-TLS POST"]
+    [ new Request("http://localhost:54322"), "fetch() GET with non-TLS Proxy", "http://localhost:54321"],
+    [ new Request("http://localhost:54322", { method: "POST", body: "Hello, World" }), "fetch() POSTT with non-TLS Proxy", "http://localhost:54321"]
   ];
-  for (let [ request, name ] of requests) {
+  for (let [ request, name, proxy ] of requests) {
     gc();
     it(name, async () => {
       gc();
-      const response = await fetch(request, { verbose: true, proxy: "http://localhost:54321" });
+      const response = await fetch(request, { verbose: true, proxy });
       gc();
       const text = await response.text();
       gc();

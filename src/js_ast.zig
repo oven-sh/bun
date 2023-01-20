@@ -120,6 +120,11 @@ pub fn NewBaseStore(comptime Union: anytype, comptime count: usize) type {
         pub fn reset() void {
             const blocks = _self.overflow.slice();
             for (blocks) |b| {
+                if (comptime Environment.isDebug) {
+                    // ensure we crash if we use a freed value
+                    var bytes = std.mem.asBytes(&b.items);
+                    @memset(bytes, undefined, bytes.len);
+                }
                 b.used = 0;
             }
             _self.overflow.used = 0;

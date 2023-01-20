@@ -424,9 +424,6 @@ pub const Version = struct {
                         var remain = dependency[i..];
                         for (remain) |c, j| {
                             if (c == '@') {
-                                remain = remain[j + 1 ..];
-                                if (remain.len == 0) return .npm;
-
                                 return infer(remain[j + 1 ..]);
                             }
                         }

@@ -1849,7 +1849,7 @@ pub const Resolver = struct {
                 // we're resolving an unknown package
                 // the unknown package is the root package
                 package = Package{
-                    .name = Semver.String.init("", ""),
+                    .name = Semver.String.from(""),
                     .resolution = .{
                         .tag = .root,
                         .value = .{ .root = {} },

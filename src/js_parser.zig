@@ -16935,12 +16935,13 @@ fn NewParser_(
         ) []Stmt {
             switch (stmtorexpr) {
                 .stmt => |stmt| {
-                    if (!stmt.data.s_class.class.has_decorators) {
-                        var stmts = p.allocator.alloc(Stmt, 1) catch unreachable;
-                        stmts[0] = stmt;
-                        return stmts;
+                    if (comptime !is_typescript_enabled) {
+                        if (!stmt.data.s_class.class.has_decorators) {
+                            var stmts = p.allocator.alloc(Stmt, 1) catch unreachable;
+                            stmts[0] = stmt;
+                            return stmts;
+                        }
                     }
-
                     var class = &stmt.data.s_class.class;
                     var constructor_function: ?*E.Function = null;
 

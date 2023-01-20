@@ -80,6 +80,57 @@ describe("Bun.Transpiler", () => {
       );
     });
 
+    it("class constructor", () => {
+      const fixtures = [
+        [
+          `class Test {
+            b: string;
+          
+            constructor(private a: string) {
+              this.b = a;
+            }
+          }`,
+
+          `
+class Test {
+  a;
+  b;
+  constructor(a) {
+    this.b = a;
+    this.a = a;
+  }
+}
+                  `.trim(),
+        ],
+        [
+          `class Test extends Bar {
+            b: string;
+          
+            constructor(private a: string) {
+              super();
+              this.b = a;
+            }
+          }`,
+
+          `
+class Test extends Bar {
+  a;
+  b;
+  constructor(a) {
+    super();
+    this.b = a;
+    this.a = a;
+  }
+}
+                  `.trim(),
+        ],
+      ];
+
+      for (const [code, out] of fixtures) {
+        expect(ts.parsed(code, false, false).trim()).toBe(out);
+      }
+    });
+
     it("import Foo = require('bar')", () => {
       ts.expectPrinted_(
         "import React = require('react')",

@@ -2730,8 +2730,6 @@ pub const Package = extern struct {
                             defer workspace_allocator.free(workspace_bytes);
                             const workspace_source = logger.Source.initPathString(path, workspace_bytes);
 
-                            initializeStore();
-
                             var workspace_json = try json_parser.PackageJSONVersionChecker.init(allocator, &workspace_source, log);
 
                             _ = try workspace_json.parseExpr();

@@ -1552,7 +1552,7 @@ pub const Crypto = struct {
 
         _ = BoringSSL.ERR_error_string_n(err_code, message_buf, message_buf.len);
 
-        const error_message: []const u8 = bun.span(std.meta.assumeSentinel(&outbuf, 0));
+        const error_message: []const u8 = bun.sliceTo(outbuf[0..], 0);
         if (error_message.len == "BoringSSL error: ".len) {
             return ZigString.static("Unknown BoringSSL error").toErrorInstance(globalThis);
         }

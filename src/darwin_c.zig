@@ -1,4 +1,5 @@
 const std = @import("std");
+const bun = @import("bun");
 const builtin = @import("builtin");
 const os = std.os;
 const mem = std.mem;
@@ -568,7 +569,7 @@ pub fn get_version(buf: []u8) []const u8 {
         0,
     ) == -1) return "unknown";
 
-    return std.mem.span(std.meta.assumeSentinel(buf.ptr, 0));
+    return bun.sliceTo(buf, 0);
 }
 
 pub fn get_release(buf: []u8) []const u8 {
@@ -584,7 +585,7 @@ pub fn get_release(buf: []u8) []const u8 {
         0,
     ) == -1) return "unknown";
 
-    return std.mem.span(std.meta.assumeSentinel(buf.ptr, 0));
+    return bun.sliceTo(buf, 0);
 }
 
 const IO_CTL_RELATED = struct {

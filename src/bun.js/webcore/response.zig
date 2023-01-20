@@ -766,6 +766,7 @@ pub const Fetch = struct {
             disable_timeout: bool,
             disable_keepalive: bool,
             url: ZigURL,
+            proxy: ?ZigURL,
             verbose: bool = false,
             follow_redirects: bool = true,
         };
@@ -821,6 +822,7 @@ pub const Fetch = struct {
         defer args.deinit();
 
         var url: ZigURL = undefined;
+        var proxy: ?ZigURL = null;
         var first_arg = args.nextEat().?;
         var body: AnyBlob = AnyBlob{
             .Blob = .{},
@@ -831,6 +833,9 @@ pub const Fetch = struct {
         var follow_redirects = true;
         if (first_arg.as(Request)) |request| {
             url = ZigURL.parse(getAllocator(ctx).dupe(u8, request.url) catch unreachable);
+            if (request.proxy) |proxy_value| {
+                proxy = ZigURL.parse(getAllocator(ctx).dupe(u8, proxy_value) catch unreachable);
+            }
             method = request.method;
             if (request.headers) |head| {
                 headers = Headers.from(head, bun.default_allocator) catch unreachable;
@@ -901,6 +906,20 @@ pub const Fetch = struct {
                             disable_keepalive = keepalive_value.to(i32) == 0;
                         }
                     }
+
+                    if (options.get(ctx, "proxy")) |proxy_value| {
+                        if (proxy_value.toStringOrNull(globalThis)) |proxy_string| {
+
+                            var proxyurl_slice = jsstring.toSlice(globalThis, bun.default_allocator).cloneIfNeeded(bun.default_allocator) catch {
+                                 JSC.JSError(bun.default_allocator, "Out of memory", .{}, ctx, exception);
+                                return null;
+                            };
+
+                            if (proxyurl_slice.len > 0) {
+                                proxy = ZigURL.parse(proxyurl_slice.slice());
+                            }
+                        }
+                    }
                 }
 
                 // non-standard debug things
@@ -937,6 +956,7 @@ pub const Fetch = struct {
                 .disable_timeout = disable_timeout,
                 .follow_redirects = follow_redirects,
                 .verbose = verbose,
+                .proxy = proxy,
             },
             JSC.JSValue.fromRef(deferred_promise),
         ) catch unreachable;

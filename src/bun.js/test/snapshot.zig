@@ -4,6 +4,7 @@ const strings = bun.strings;
 const JSC = @import("bun").JSC;
 const js = JSC.C;
 const ZigString = JSC.ZigString;
+const Output = bun.Output;
 
 const fs = @import("../../fs.zig");
 const default_allocator = bun.default_allocator;
@@ -72,7 +73,7 @@ pub const SnapshotFile = struct {
         }
     };
 
-    pub const SnapshotError = error{SnapshotNotFound};
+    pub const SnapshotError = error{ SnapshotNotFound, CaseNotFound };
 
     pub const CountersMap = std.HashMap(u64, u32, IdentityContext(u64), 80);
 
@@ -157,9 +158,8 @@ pub const SnapshotFile = struct {
             return SnapshotError.SnapshotNotFound;
         };
         const value = snapshotData.getIfPropertyExistsImpl(globalObject, test_name_string.ptr, @truncate(u32, test_name_string.len));
-        if (value.isEmptyOrUndefinedOrNull()) {
-            globalObject.throw("The snapshot `{s}` was not found in {s}", .{ snapshot_key, this.path.text });
-            return .zero;
+        if (@enumToInt(value) == 0) {
+            return SnapshotError.CaseNotFound;
         }
         return value;
     }
@@ -195,6 +195,12 @@ pub const SnapshotFile = struct {
                 std.debug.print("SnapshotNotFound\n", .{});
                 // If the snapshot file does not exist, then we return true
                 // and update the snapshot file
+                this.updateSnapshot = true;
+                return true;
+            }
+            if (this.updateSnapshot or SnapshotFile.updateAllSnapshots) {
+                Output.prettyln("    <green>Updating Snapshot<r>\n", .{});
+                Output.flush();
                 return true;
             }
             globalObject.throw("The snapshot `{s}` was not found in {s}", .{ snapshotName, this.path.text });

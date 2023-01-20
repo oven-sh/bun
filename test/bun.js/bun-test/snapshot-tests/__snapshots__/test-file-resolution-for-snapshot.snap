@@ -1,4 +1,5 @@
 // Jest Snapshot v1, https://goo.gl/fbAQLP
+
 exports[`test snapshot resolution snap file should match 1`] = `[ 1, "2" ]`;
 
 exports[`test snapshot resolution object should match 1`] = `{

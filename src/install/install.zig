@@ -89,9 +89,6 @@ const Dependency = @import("./dependency.zig");
 const Behavior = @import("./dependency.zig").Behavior;
 const FolderResolution = @import("./resolvers/folder_resolver.zig").FolderResolution;
 
-pub const ExternalStringBuilder = StructBuilder.Builder(ExternalString);
-pub const SmallExternalStringList = ExternalSlice(String);
-
 pub fn ExternalSlice(comptime Type: type) type {
     return ExternalSliceAligned(Type, null);
 }
@@ -144,11 +141,6 @@ pub const VersionSlice = ExternalSlice(Semver.Version);
 pub const ExternalStringMap = extern struct {
     name: ExternalStringList = ExternalStringList{},
     value: ExternalStringList = ExternalStringList{},
-
-    pub const Small = extern struct {
-        name: SmallExternalStringList = SmallExternalStringList{},
-        value: SmallExternalStringList = SmallExternalStringList{},
-    };
 };
 
 pub const PackageNameHash = u64;

@@ -85,8 +85,8 @@ const zero_hash = std.mem.zeroes(MetaHash);
 
 const PackageJSON = @import("../resolver/package_json.zig").PackageJSON;
 
-pub const ExternalStringBuilder = StructBuilder.Builder(ExternalString);
-pub const SmallExternalStringList = ExternalSlice(String);
+const AliasMap = std.ArrayHashMapUnmanaged(PackageID, String, ArrayIdentityContext, false);
+const NameHashMap = std.ArrayHashMapUnmanaged(u32, String, ArrayIdentityContext, false);
 
 // Serialized data
 /// The version of the lockfile format, intended to prevent data corruption for format changes.
@@ -106,8 +106,8 @@ allocator: std.mem.Allocator,
 scratch: Scratch = Scratch{},
 
 scripts: Scripts = .{},
-alias_map: std.ArrayHashMapUnmanaged(PackageID, String, ArrayIdentityContext, false) = .{},
-workspace_paths: std.ArrayHashMapUnmanaged(u32, String, ArrayIdentityContext, false) = .{},
+alias_map: AliasMap = .{},
+workspace_paths: NameHashMap = .{},
 
 const Stream = std.io.FixedBufferStream([]u8);
 pub const default_filename = "bun.lockb";
@@ -3157,21 +3157,21 @@ pub fn deinit(this: *Lockfile) void {
 }
 
 const Buffers = struct {
-    trees: Tree.List = Tree.List{},
-    hoisted_packages: PackageIDList = PackageIDList{},
-    resolutions: PackageIDList = PackageIDList{},
-    dependencies: DependencyList = DependencyList{},
-    extern_strings: ExternalStringBuffer = ExternalStringBuffer{},
+    trees: Tree.List = .{},
+    hoisted_packages: PackageIDList = .{},
+    resolutions: PackageIDList = .{},
+    dependencies: DependencyList = .{},
+    extern_strings: ExternalStringBuffer = .{},
     // node_modules_folders: NodeModulesFolderList = NodeModulesFolderList{},
     // node_modules_package_ids: PackageIDList = PackageIDList{},
-    string_bytes: StringBuffer = StringBuffer{},
+    string_bytes: StringBuffer = .{},
 
     pub fn deinit(this: *Buffers, allocator: std.mem.Allocator) void {
-        try this.trees.deinit(allocator);
-        try this.resolutions.deinit(allocator);
-        try this.dependencies.deinit(allocator);
-        try this.extern_strings.deinit(allocator);
-        try this.string_bytes.deinit(allocator);
+        this.trees.deinit(allocator);
+        this.resolutions.deinit(allocator);
+        this.dependencies.deinit(allocator);
+        this.extern_strings.deinit(allocator);
+        this.string_bytes.deinit(allocator);
     }
 
     pub fn preallocate(this: *Buffers, that: Buffers, allocator: std.mem.Allocator) !void {
@@ -3337,7 +3337,7 @@ const Buffers = struct {
         }
     }
 
-    pub fn load(stream: *Stream, allocator: std.mem.Allocator, log: *logger.Log) !Buffers {
+    pub fn load(stream: *Stream, allocator: std.mem.Allocator, log: *logger.Log, alias_map: *AliasMap) !Buffers {
         var this = Buffers{};
         var external_dependency_list_: std.ArrayListUnmanaged(Dependency.External) = std.ArrayListUnmanaged(Dependency.External){};
 
@@ -3380,16 +3380,26 @@ const Buffers = struct {
         // Dependencies are serialized separately.
         // This is unfortunate. However, not using pointers for Semver Range's make the code a lot more complex.
         this.dependencies = try DependencyList.initCapacity(allocator, external_dependency_list.len);
+        const string_buf = this.string_bytes.items;
         const extern_context = Dependency.Context{
             .log = log,
             .allocator = allocator,
-            .buffer = this.string_bytes.items,
+            .buffer = string_buf,
         };
 
         this.dependencies.expandToCapacity();
         this.dependencies.items.len = external_dependency_list.len;
-        for (external_dependency_list) |dep, i| {
-            this.dependencies.items[i] = Dependency.toDependency(dep, extern_context);
+        for (external_dependency_list) |external_dep, i| {
+            const dep = Dependency.toDependency(external_dep, extern_context);
+            this.dependencies.items[i] = dep;
+            switch (dep.version.tag) {
+                .npm => {
+                    if (!dep.name.eql(dep.version.value.npm.name, string_buf, string_buf)) {
+                        try alias_map.put(allocator, this.resolutions.items[i], dep.name);
+                    }
+                },
+                else => {},
+            }
         }
 
         return this;
@@ -3458,7 +3468,7 @@ pub const Serializer = struct {
             total_buffer_size,
             allocator,
         );
-        lockfile.buffers = try Lockfile.Buffers.load(stream, allocator, log);
+        lockfile.buffers = try Lockfile.Buffers.load(stream, allocator, log, &lockfile.alias_map);
         if ((try stream.reader().readIntLittle(u64)) != 0) {
             return error.@"Lockfile is malformed (expected 0 at the end)";
         }

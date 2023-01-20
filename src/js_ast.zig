@@ -117,6 +117,12 @@ pub fn NewBaseStore(comptime Union: anytype, comptime count: usize) type {
             return used;
         }
 
+        /// Reset all AST nodes, allowing the memory to be reused for the next parse.
+        /// Only call this when we're done with ALL AST nodes, or you risk
+        /// undefined memory bugs.
+        ///
+        /// Nested parsing should either use the same store, or call
+        /// Store.reclaim.
         pub fn reset() void {
             const blocks = _self.overflow.slice();
             for (blocks) |b| {

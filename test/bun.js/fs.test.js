@@ -437,7 +437,7 @@ describe("rm", () => {
 });
 
 describe("rmdir", () => {
-  it("removes a file", (done) => {
+  it("does not remove a file", (done) => {
     const path = `/tmp/${Date.now()}.rm.txt`;
     writeFileSync(path, "File written successfully", "utf8");
     expect(existsSync(path)).toBe(true);
@@ -476,7 +476,7 @@ describe("rmdir", () => {
 });
 
 describe("rmdirSync", () => {
-  it("removes a file", () => {
+  it("does not remove a file", () => {
     const path = `/tmp/${Date.now()}.rm.txt`;
     writeFileSync(path, "File written successfully", "utf8");
     expect(existsSync(path)).toBe(true);
@@ -666,7 +666,7 @@ describe("fs/promises", () => {
   });
 
   describe("rmdir", () => {
-    it("removes a file", async () => {
+    it("does not remove a file", async () => {
       const path = `/tmp/${Date.now()}.rm.txt`;
       await writeFile(path, "File written successfully", "utf8");
       expect(await exists(path)).toBe(true);

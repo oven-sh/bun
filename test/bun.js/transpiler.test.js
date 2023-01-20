@@ -118,8 +118,8 @@ class Test extends Bar {
   b;
   constructor(a) {
     super();
-    this.b = a;
     this.a = a;
+    this.b = a;
   }
 }
                   `.trim(),

@@ -16,16 +16,12 @@ const IdentityContext = @import("../../identity_context.zig").IdentityContext;
 const DescribeScope = @import("jest.zig").DescribeScope;
 
 const SNAPSHOTS_DIR = "__snapshots__/";
-const EXTENSION = "snap";
+const EXTENSION = ".snap";
 
 pub fn resolveSnapshotPath(test_path: fs.Path, allocator: std.mem.Allocator) fs.Path {
     const dir_path = test_path.sourceDir();
-    const file_name = test_path.name.base;
-    // A test's name could be `feature.test.ts` and the base is `feature.test`
-    // `test` should be stripped if it exists. This is the default patter of the
-    // test runner.
-    const file_name_stripped = std.mem.trimRight(u8, file_name, "test");
-    var string_list = &[_][]const u8{ dir_path, SNAPSHOTS_DIR, file_name_stripped, EXTENSION };
+    const file_name = test_path.name.filename;
+    var string_list = &[_][]const u8{ dir_path, SNAPSHOTS_DIR, file_name, EXTENSION };
     // maybe use resolve_path.joinAbsString
     const snapshot_file_path = strings.join(string_list, "", allocator) catch unreachable;
 

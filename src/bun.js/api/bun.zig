@@ -1529,8 +1529,19 @@ pub const Crypto = struct {
                     return EVP.init(algorithm, BoringSSL.EVP_blake2b256(), engine);
                 }
 
-                if (BoringSSL.EVP_get_digestbyname(@tagName(algorithm))) |md| {
-                    return EVP.init(algorithm, md, engine);
+                switch (algorithm) {
+                    .md4 => return EVP.init(algorithm, BoringSSL.EVP_md4(), engine),
+                    .md5 => return EVP.init(algorithm, BoringSSL.EVP_md5(), engine),
+                    .sha1 => return EVP.init(algorithm, BoringSSL.EVP_sha1(), engine),
+                    .sha224 => return EVP.init(algorithm, BoringSSL.EVP_sha224(), engine),
+                    .sha256 => return EVP.init(algorithm, BoringSSL.EVP_sha256(), engine),
+                    .sha384 => return EVP.init(algorithm, BoringSSL.EVP_sha384(), engine),
+                    .sha512 => return EVP.init(algorithm, BoringSSL.EVP_sha512(), engine),
+                    .@"sha512-256" => return EVP.init(algorithm, BoringSSL.EVP_sha512_256(), engine),
+                    else => {
+                        if (BoringSSL.EVP_get_digestbyname(@tagName(algorithm))) |md|
+                            return EVP.init(algorithm, md, engine);
+                    },
                 }
             }
 

@@ -158,7 +158,7 @@ pub const Version = struct {
 
     pub const @"0.0.0" = Version{
         .tag = Dependency.Version.Tag.npm,
-        .literal = String.init("0.0.0", "0.0.0"),
+        .literal = String.from("0.0.0"),
         .value = Value{
             .npm = Semver.Query.Group{
                 .allocator = bun.default_allocator,

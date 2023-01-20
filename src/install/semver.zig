@@ -20,8 +20,15 @@ pub const String = extern struct {
     bytes: [max_inline_len]u8 = [8]u8{ 0, 0, 0, 0, 0, 0, 0, 0 },
 
     /// Create an inline string
-    pub fn from(inlinable_buffer: []const u8) String {
-        std.debug.assert(inlinable_buffer.len <= max_inline_len);
+    pub fn from(comptime inlinable_buffer: []const u8) String {
+        comptime {
+            if (inlinable_buffer.len > max_inline_len or
+                inlinable_buffer.len == max_inline_len and
+                inlinable_buffer[max_inline_len - 1] >= 0x80)
+            {
+                @compileError("string constant too long to be inlined");
+            }
+        }
         return String.init(inlinable_buffer, inlinable_buffer);
     }
 

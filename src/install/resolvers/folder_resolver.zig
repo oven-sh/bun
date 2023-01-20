@@ -63,7 +63,7 @@ pub const FolderResolution = union(Tag) {
                 .value = .{
                     .npm = .{
                         .version = this.version,
-                        .url = String.init("", ""),
+                        .url = String.from(""),
                     },
                 },
             };

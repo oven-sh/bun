@@ -96,8 +96,8 @@ class Test {
   a;
   b;
   constructor(a) {
-    this.b = a;
     this.a = a;
+    this.b = a;
   }
 }
                   `.trim(),

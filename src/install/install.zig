@@ -2092,8 +2092,7 @@ pub const PackageManager = struct {
                     package.resolution.value.npm.version,
                 );
 
-                var is_first_time: bool = true;
-                if (try this.generateNetworkTaskForTarballTrackExisting(task_id, manifest.str(find_result.package.tarball_url), package, &is_first_time)) |network_task| {
+                if (try this.generateNetworkTaskForTarball(task_id, manifest.str(find_result.package.tarball_url), package)) |network_task| {
                     return ResolvedPackageResult{
                         .package = package,
                         .is_first_time = true,
@@ -2111,15 +2110,8 @@ pub const PackageManager = struct {
     }
 
     pub fn generateNetworkTaskForTarball(this: *PackageManager, task_id: u64, url: string, package: Lockfile.Package) !?*NetworkTask {
-        return this.generateNetworkTaskForTarballTrackExisting(task_id, url, package, null);
-    }
-
-    pub fn generateNetworkTaskForTarballTrackExisting(this: *PackageManager, task_id: u64, url: string, package: Lockfile.Package, existing: ?*bool) !?*NetworkTask {
         const dedupe_entry = try this.network_dedupe_map.getOrPut(this.allocator, task_id);
         if (dedupe_entry.found_existing) {
-            if (existing) |exist| {
-                exist.* = true;
-            }
             return null;
         }
 

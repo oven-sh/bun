@@ -1923,21 +1923,22 @@ pub const PackageManager = struct {
         while (try iter.next()) |entry| {
             if (entry.kind != .Directory and entry.kind != .SymLink) continue;
             const name = entry.name;
-            var sliced = SlicedString.init(name, name);
-            var parsed = Semver.Version.parse(sliced, allocator);
+            const sliced = SlicedString.init(name, name);
+            const parsed = Semver.Version.parse(sliced, allocator);
             if (!parsed.valid or parsed.wildcard != .none) continue;
             // not handling OOM
             // TODO: wildcard
-            const total = parsed.version.tag.build.len() + parsed.version.tag.pre.len();
+            var version = parsed.version.fill();
+            const total = version.tag.build.len() + version.tag.pre.len();
             if (total > 0) {
                 tags_buf.ensureUnusedCapacity(total) catch unreachable;
                 var available = tags_buf.items.ptr[tags_buf.items.len..tags_buf.capacity];
-                const new_version = parsed.version.cloneInto(name, &available);
+                const new_version = version.cloneInto(name, &available);
                 tags_buf.items.len += total;
-                parsed.version = new_version;
+                version = new_version;
             }
 
-            list.append(parsed.version) catch unreachable;
+            list.append(version) catch unreachable;
         }
 
         return list;

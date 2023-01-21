@@ -588,6 +588,17 @@ CMD make headers \
 
 FROM scratch as compile-dependencies
 
+ARG DEBIAN_FRONTEND
+ARG GITHUB_WORKSPACE
+ARG ZIG_PATH
+ARG WEBKIT_DIR
+ARG BUN_RELEASE_DIR
+ARG BUN_DEPS_OUT_DIR
+ARG BUN_DIR
+ARG CPU_TARGET
+
+ENV CPU_TARGET=${CPU_TARGET}
+
 COPY --from=zlib ${BUN_DEPS_OUT_DIR}/*.a /
 COPY --from=libarchive ${BUN_DEPS_OUT_DIR}/*.a /
 COPY --from=boringssl ${BUN_DEPS_OUT_DIR}/*.a /

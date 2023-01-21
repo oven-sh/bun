@@ -835,15 +835,19 @@ pub const Fetch = struct {
                     }
 
                     if (options.fastGet(ctx.ptr(), .headers)) |headers_| {
-                        // override headers
+                        
                         if (headers_.as(FetchHeaders)) |headers__| {
-                                headers = Headers.from(headers__, bun.default_allocator) catch unreachable;
-                                // TODO: make this one pass
-                            } else if (FetchHeaders.createFromJS(ctx.ptr(), headers_)) |headers__| {
-                                headers = Headers.from(headers__, bun.default_allocator) catch unreachable;
-                                headers__.deref();
-                            }
+                            headers = Headers.from(headers__, bun.default_allocator) catch unreachable;
+                            // TODO: make this one pass
+                        } else if (FetchHeaders.createFromJS(ctx.ptr(), headers_)) |headers__| {
+                            headers = Headers.from(headers__, bun.default_allocator) catch unreachable;
+                            headers__.deref();
+                        } else {
+
+                        } if (request.headers) |head| {
+                            headers = Headers.from(head, bun.default_allocator) catch unreachable;
                         }
+                        
                     } else if (request.headers) |head| {
                         headers = Headers.from(head, bun.default_allocator) catch unreachable;
                     }
@@ -1112,7 +1116,7 @@ pub const Headers = struct {
         else
             "";
     }
- 
+    
     pub fn from(headers_ref: *FetchHeaders, allocator: std.mem.Allocator) !Headers {
 
         var header_count: u32 = 0;

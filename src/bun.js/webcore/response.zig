@@ -835,17 +835,8 @@ pub const Fetch = struct {
                     }
 
                     if (options.fastGet(ctx.ptr(), .headers)) |headers_| {
-                        //merge headers
-                        if (request.headers) |head| {
-                            if (headers_.as(FetchHeaders)) |headers__| {
-                                headers = Headers.fromMerge(head, headers__, bun.default_allocator) catch unreachable;
-                                // TODO: make this one pass
-                            } else if (FetchHeaders.createFromJS(ctx.ptr(), headers_)) |headers__| {
-                                headers = Headers.fromMerge(head, headers__, bun.default_allocator) catch unreachable;
-                                headers__.deref();
-                            }
-                        } else {
-                            if (headers_.as(FetchHeaders)) |headers__| {
+                        // override headers
+                        if (headers_.as(FetchHeaders)) |headers__| {
                                 headers = Headers.from(headers__, bun.default_allocator) catch unreachable;
                                 // TODO: make this one pass
                             } else if (FetchHeaders.createFromJS(ctx.ptr(), headers_)) |headers__| {
@@ -1121,33 +1112,7 @@ pub const Headers = struct {
         else
             "";
     }
-    pub fn fromMerge(headers_ref: *FetchHeaders, b_headers_ref: *FetchHeaders, allocator: std.mem.Allocator) !Headers {
-
-        var header_count: u32 = 0;
-        var buf_len: u32 = 0;
-        headers_ref.count(&header_count, &buf_len);
-
-        var b_header_count: u32 = 0;
-        var b_buf_len: u32 = 0;
-        b_headers_ref.count(&b_header_count, &b_buf_len);
-
-        var headers = Headers{
-            .entries = .{},
-            .buf = .{},
-            .allocator = allocator,
-        };
-        headers.entries.ensureTotalCapacity(allocator, header_count + b_header_count) catch unreachable;
-        headers.entries.len = header_count + b_header_count;
-        headers.buf.ensureTotalCapacityPrecise(allocator, buf_len + b_buf_len) catch unreachable;
-        headers.buf.items.len = buf_len + b_buf_len;
-        var sliced = headers.entries.slice();
-        var names = sliced.items(.name);
-        var values = sliced.items(.value);
-        headers_ref.copyTo(names.ptr, values.ptr, headers.buf.items.ptr);
-        b_headers_ref.copyTo(names.ptr[header_count..headers.entries.len].ptr, values.ptr[header_count..headers.entries.len].ptr, headers.buf.items.ptr[buf_len..headers.buf.items.len].ptr);
-        return headers;
-    }
-
+ 
     pub fn from(headers_ref: *FetchHeaders, allocator: std.mem.Allocator) !Headers {
 
         var header_count: u32 = 0;

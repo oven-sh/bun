@@ -1528,8 +1528,7 @@ pub const Resolver = struct {
                         }
 
                         for (dependencies_list) |dependency, dependency_id| {
-                            const dep_name_ = &dependency.name;
-                            const dep_name = dep_name_.slice(string_buf);
+                            const dep_name = dependency.name.slice(string_buf);
                             if (dep_name.len == esm.name.len) {
                                 if (!strings.eqlLong(dep_name, esm.name, false)) {
                                     continue;

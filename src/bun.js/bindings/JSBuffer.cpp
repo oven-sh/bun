@@ -1778,10 +1778,19 @@ JSC_DEFINE_HOST_FUNCTION(constructJSBuffer, (JSC::JSGlobalObject * lexicalGlobal
         RELEASE_AND_RETURN(throwScope, (constructBufferEmpty(lexicalGlobalObject, callFrame)));
     }
     JSValue distinguishingArg = callFrame->uncheckedArgument(0);
+
     if (distinguishingArg.isAnyInt()) {
         RELEASE_AND_RETURN(throwScope, JSBuffer__bufferFromLength(lexicalGlobalObject, distinguishingArg.asAnyInt()));
-    } else if (distinguishingArg.isString()) {
-        RELEASE_AND_RETURN(throwScope, (constructBufferFromStringAndEncoding(lexicalGlobalObject, callFrame)));
+    } else if (distinguishingArg.isCell()) {
+        auto type = distinguishingArg.asCell()->type();
+
+        switch (type) {
+        case StringType:
+        case StringObjectType:
+        case DerivedStringObjectType: {
+            RELEASE_AND_RETURN(throwScope, (constructBufferFromStringAndEncoding(lexicalGlobalObject, callFrame)));
+        }
+        }
     }
 
     JSC::JSObject* constructor = lexicalGlobalObject->m_typedArrayUint8.constructor(lexicalGlobalObject);

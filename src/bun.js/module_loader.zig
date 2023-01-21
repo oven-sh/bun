@@ -230,7 +230,7 @@ pub const ModuleLoader = struct {
 
             pub fn onDependencyError(ctx: *anyopaque, dependency: Dependency, root_dependency_id: Install.PackageID, err: anyerror) void {
                 var this = bun.cast(*Queue, ctx);
-                debug("onDependencyError: {s}", .{this.vm().packageManager().lockfile.str(dependency.name)});
+                debug("onDependencyError: {s}", .{this.vm().packageManager().lockfile.str(&dependency.name)});
 
                 var modules: []AsyncModule = this.map.items;
                 var i: usize = 0;
@@ -243,7 +243,7 @@ pub const ModuleLoader = struct {
                             this.vm(),
                             module.parse_result.pending_imports.items(.import_record_id)[dep_i],
                             .{
-                                .name = this.vm().packageManager().lockfile.str(dependency.name),
+                                .name = this.vm().packageManager().lockfile.str(&dependency.name),
                                 .err = err,
                                 .url = "",
                                 .version = dependency.version,
@@ -398,7 +398,7 @@ pub const ModuleLoader = struct {
             pub fn onExtract(this: *Queue, package_id: u32, comptime _: PackageManager.Options.LogLevel) void {
                 if (comptime Environment.allow_assert)
                     debug("onExtract: {s} ({d})", .{
-                        this.vm().packageManager().lockfile.str(this.vm().packageManager().lockfile.packages.get(package_id).name),
+                        this.vm().packageManager().lockfile.str(&this.vm().packageManager().lockfile.packages.get(package_id).name),
                         package_id,
                     });
                 this.onPackageID(package_id);
@@ -631,7 +631,7 @@ pub const ModuleLoader = struct {
                     break :brk std.fmt.allocPrint(
                         bun.default_allocator,
                         "{s} '{s}' for package '{s}' (but package exists)",
-                        .{ prefix, vm.packageManager().lockfile.str(result.version.literal), result.name },
+                        .{ prefix, vm.packageManager().lockfile.str(&result.version.literal), result.name },
                     );
                 },
                 else => |err| std.fmt.allocPrint(

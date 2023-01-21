@@ -499,7 +499,7 @@ pub const ExternalString = extern struct {
         };
     }
 
-    pub inline fn slice(this: ExternalString, buf: string) string {
+    pub inline fn slice(this: *const ExternalString, buf: string) string {
         return this.value.slice(buf);
     }
 };

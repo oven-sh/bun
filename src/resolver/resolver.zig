@@ -1640,7 +1640,7 @@ pub const Resolver = struct {
                                         esm.name,
                                         resolved_package_id,
                                         resolution.value.npm.version,
-                                        manager.lockfile.str(resolution.value.npm.url),
+                                        manager.lockfile.str(&resolution.value.npm.url),
                                         .{
                                             .root_request_id = 0,
                                         },

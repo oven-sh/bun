@@ -1496,7 +1496,7 @@ pub const PackageManager = struct {
         const existing: []const Dependency.Pair = root_deps.items;
         var str_buf = this.lockfile.buffers.string_bytes.items;
         for (existing) |pair, i| {
-            if (strings.eqlLong(this.lockfile.str(pair.dependency.name), name, true)) {
+            if (strings.eqlLong(this.lockfile.str(&pair.dependency.name), name, true)) {
                 if (pair.dependency.version.eql(version, str_buf, version_buf)) {
                     if (pair.resolution_id != invalid_package_id) {
                         return .{
@@ -1899,7 +1899,7 @@ pub const PackageManager = struct {
             .npm => {
                 const npm = resolution.value.npm;
                 const package_name_ = this.lockfile.packages.items(.name)[package_id];
-                const package_name = this.lockfile.str(package_name_);
+                const package_name = this.lockfile.str(&package_name_);
 
                 return this.pathForCachedNPMPath(buf, package_name, npm.version);
             },
@@ -2088,7 +2088,7 @@ pub const PackageManager = struct {
             .extract => {
                 const task_id = Task.Id.forNPMPackage(
                     Task.Tag.extract,
-                    this.lockfile.str(name),
+                    this.lockfile.str(&name),
                     package.resolution.value.npm.version,
                 );
 
@@ -2124,7 +2124,7 @@ pub const PackageManager = struct {
             .package_manager = this,
         };
 
-        const scope = this.scopeForPackageName(this.lockfile.str(package.name));
+        const scope = this.scopeForPackageName(this.lockfile.str(&package.name));
 
         try network_task.forTarball(
             this.allocator,
@@ -2133,12 +2133,12 @@ pub const PackageManager = struct {
                 .name = if (package.name.len() >= strings.StringOrTinyString.Max)
                     strings.StringOrTinyString.init(
                         try FileSystem.FilenameStore.instance.append(
-                            @TypeOf(this.lockfile.str(package.name)),
-                            this.lockfile.str(package.name),
+                            string,
+                            this.lockfile.str(&package.name),
                         ),
                     )
                 else
-                    strings.StringOrTinyString.init(this.lockfile.str(package.name)),
+                    strings.StringOrTinyString.init(this.lockfile.str(&package.name)),
 
                 .resolution = package.resolution,
                 .cache_dir = this.getCacheDirectory().dir,
@@ -2201,7 +2201,7 @@ pub const PackageManager = struct {
                 // Resolve the version from the loaded NPM manifest
                 const manifest = this.manifests.getPtr(name_hash) orelse return null; // manifest might still be downloading. This feels unreliable.
                 const find_result: Npm.PackageManifest.FindResult = switch (version.tag) {
-                    .dist_tag => manifest.findByDistTag(this.lockfile.str(version.value.dist_tag.tag)),
+                    .dist_tag => manifest.findByDistTag(this.lockfile.str(&version.value.dist_tag.tag)),
                     .npm => manifest.findBestVersion(version.value.npm.version),
                     else => unreachable,
                 } orelse return switch (version.tag) {
@@ -2426,7 +2426,7 @@ pub const PackageManager = struct {
             else => alias,
         };
         const name_hash = switch (dependency.version.tag) {
-            .dist_tag, .npm => Lockfile.stringHash(this.lockfile.str(name)),
+            .dist_tag, .npm => Lockfile.stringHash(this.lockfile.str(&name)),
             else => dependency.name_hash,
         };
         const version = dependency.version;
@@ -2475,8 +2475,8 @@ pub const PackageManager = struct {
                                                 this.allocator,
                                                 "package \"{s}\" with tag \"{s}\" not found, but package exists",
                                                 .{
-                                                    this.lockfile.str(name),
-                                                    this.lockfile.str(version.value.dist_tag.tag),
+                                                    this.lockfile.str(&name),
+                                                    this.lockfile.str(&version.value.dist_tag.tag),
                                                 },
                                             ) catch unreachable;
                                         }
@@ -2500,8 +2500,8 @@ pub const PackageManager = struct {
                                                 this.allocator,
                                                 "No version matching \"{s}\" found for specifier \"{s}\" (but package exists)",
                                                 .{
-                                                    this.lockfile.str(version.literal),
-                                                    this.lockfile.str(name),
+                                                    this.lockfile.str(&version.literal),
+                                                    this.lockfile.str(&name),
                                                 },
                                             ) catch unreachable;
                                         }
@@ -2529,12 +2529,12 @@ pub const PackageManager = struct {
                             // First time?
                             if (result.is_first_time) {
                                 if (PackageManager.verbose_install) {
-                                    const label: string = this.lockfile.str(version.literal);
+                                    const label: string = this.lockfile.str(&version.literal);
 
                                     Output.prettyErrorln("   -> \"{s}\": \"{s}\" -> {s}@{}", .{
-                                        this.lockfile.str(result.package.name),
+                                        this.lockfile.str(&result.package.name),
                                         label,
-                                        this.lockfile.str(result.package.name),
+                                        this.lockfile.str(&result.package.name),
                                         result.package.resolution.fmt(this.lockfile.buffers.string_bytes.items),
                                     });
                                 }
@@ -2551,7 +2551,7 @@ pub const PackageManager = struct {
                                 }
                             }
                         } else if (!dependency.behavior.isPeer() and dependency.version.tag.isNPM()) {
-                            const name_str = this.lockfile.str(name);
+                            const name_str = this.lockfile.str(&name);
                             const task_id = Task.Id.forManifest(Task.Tag.package_manifest, name_str);
                             var network_entry = try this.network_dedupe_map.getOrPutContext(this.allocator, task_id, .{});
                             if (!network_entry.found_existing) {
@@ -2660,12 +2660,12 @@ pub const PackageManager = struct {
                     // First time?
                     if (result.is_first_time) {
                         if (PackageManager.verbose_install) {
-                            const label: string = this.lockfile.str(version.literal);
+                            const label: string = this.lockfile.str(&version.literal);
 
                             Output.prettyErrorln("   -> \"{s}\": \"{s}\" -> {s}@{}", .{
-                                this.lockfile.str(result.package.name),
+                                this.lockfile.str(&result.package.name),
                                 label,
-                                this.lockfile.str(result.package.name),
+                                this.lockfile.str(&result.package.name),
                                 result.package.resolution.fmt(this.lockfile.buffers.string_bytes.items),
                             });
                         }
@@ -2684,7 +2684,7 @@ pub const PackageManager = struct {
                         this.allocator,
                         not_found_fmt,
                         .{
-                            .name = this.lockfile.str(name),
+                            .name = this.lockfile.str(&name),
                         },
                     ) catch unreachable;
                 } else if (this.options.log_level.isVerbose()) {
@@ -2694,7 +2694,7 @@ pub const PackageManager = struct {
                         this.allocator,
                         not_found_fmt,
                         .{
-                            .name = this.lockfile.str(name),
+                            .name = this.lockfile.str(&name),
                         },
                     ) catch unreachable;
                 }
@@ -2914,7 +2914,7 @@ pub const PackageManager = struct {
                             if (manager.dynamic_root_dependencies) |*root_deps| {
                                 var deps: []Dependency.Pair = root_deps.items;
                                 for (deps) |*dep| {
-                                    if (strings.eqlLong(manager.lockfile.str(dep.dependency.name), name.slice(), true)) {
+                                    if (strings.eqlLong(manager.lockfile.str(&dep.dependency.name), name.slice(), true)) {
                                         dep.failed = dep.failed orelse err;
                                     }
                                 }
@@ -2958,7 +2958,7 @@ pub const PackageManager = struct {
                             if (manager.dynamic_root_dependencies) |*root_deps| {
                                 var deps: []Dependency.Pair = root_deps.items;
                                 for (deps) |*dep| {
-                                    if (strings.eql(manager.lockfile.str(dep.dependency.name), name.slice())) {
+                                    if (strings.eql(manager.lockfile.str(&dep.dependency.name), name.slice())) {
                                         dep.failed = dep.failed orelse err;
                                     }
                                 }
@@ -3215,7 +3215,7 @@ pub const PackageManager = struct {
                             if (manager.dynamic_root_dependencies) |*root_deps| {
                                 var deps: []Dependency.Pair = root_deps.items;
                                 for (deps) |*dep| {
-                                    if (strings.eql(manager.lockfile.str(dep.dependency.name), name.slice())) {
+                                    if (strings.eql(manager.lockfile.str(&dep.dependency.name), name.slice())) {
                                         dep.failed = dep.failed orelse err;
                                     }
                                 }
@@ -4445,7 +4445,7 @@ pub const PackageManager = struct {
                 try lockfile.initEmpty(ctx.allocator);
 
                 try Lockfile.Package.parseMain(&lockfile, &package, ctx.allocator, manager.log, package_json_source, Features.folder);
-                name = lockfile.str(package.name);
+                name = lockfile.str(&package.name);
                 if (name.len == 0) {
                     if (manager.options.log_level != .silent)
                         Output.prettyErrorln("<r><red>error:<r> package.json missing \"name\" <d>in \"{s}\"<r>", .{package_json_source.path.text});
@@ -4595,7 +4595,7 @@ pub const PackageManager = struct {
                 try lockfile.initEmpty(ctx.allocator);
 
                 try Lockfile.Package.parseMain(&lockfile, &package, ctx.allocator, manager.log, package_json_source, Features.folder);
-                name = lockfile.str(package.name);
+                name = lockfile.str(&package.name);
                 if (name.len == 0) {
                     if (manager.options.log_level != .silent)
                         Output.prettyErrorln("<r><red>error:<r> package.json missing \"name\" <d>in \"{s}\"<r>", .{package_json_source.path.text});

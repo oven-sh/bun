@@ -1374,15 +1374,15 @@ pub fn verifyData(this: *Lockfile) !void {
         var i: usize = 0;
         while (i < this.packages.len) : (i += 1) {
             const package: Lockfile.Package = this.packages.get(i);
-            std.debug.assert(this.str(package.name).len == @as(usize, package.name.len()));
-            std.debug.assert(stringHash(this.str(package.name)) == @as(usize, package.name_hash));
+            std.debug.assert(this.str(&package.name).len == @as(usize, package.name.len()));
+            std.debug.assert(stringHash(this.str(&package.name)) == @as(usize, package.name_hash));
             std.debug.assert(package.dependencies.get(this.buffers.dependencies.items).len == @as(usize, package.dependencies.len));
             std.debug.assert(package.resolutions.get(this.buffers.resolutions.items).len == @as(usize, package.resolutions.len));
             std.debug.assert(package.resolutions.get(this.buffers.resolutions.items).len == @as(usize, package.dependencies.len));
             const dependencies = package.dependencies.get(this.buffers.dependencies.items);
             for (dependencies) |dependency| {
-                std.debug.assert(this.str(dependency.name).len == @as(usize, dependency.name.len()));
-                std.debug.assert(stringHash(this.str(dependency.name)) == dependency.name_hash);
+                std.debug.assert(this.str(&dependency.name).len == @as(usize, dependency.name.len()));
+                std.debug.assert(stringHash(this.str(&dependency.name)) == dependency.name_hash);
             }
         }
     }
@@ -1482,6 +1482,18 @@ pub fn rootPackage(this: *Lockfile) ?Lockfile.Package {
 }
 
 pub inline fn str(this: *Lockfile, slicable: anytype) string {
+    return strWithType(this, @TypeOf(slicable), slicable);
+}
+
+inline fn strWithType(this: *Lockfile, comptime Type: type, slicable: Type) string {
+    if (comptime Type == String) {
+        @compileError("str must be a *const String. Otherwise it is a pointer to a temporary which is undefined behavior");
+    }
+
+    if (comptime Type == ExternalString) {
+        @compileError("str must be a *const ExternalString. Otherwise it is a pointer to a temporary which is undefined behavior");
+    }
+
     return slicable.slice(this.buffers.string_bytes.items);
 }
 
@@ -1892,7 +1904,7 @@ pub const Package = extern struct {
         const new_extern_string_count = this.bin.count(old_string_buf, old_extern_string_buf, *Lockfile.StringBuilder, builder);
 
         if (old.alias_map.get(this.meta.id)) |alias| {
-            builder.count(old.str(alias));
+            builder.count(old.str(&alias));
         }
 
         const old_dependencies: []const Dependency = this.dependencies.get(old.buffers.dependencies.items);
@@ -1952,7 +1964,7 @@ pub const Package = extern struct {
         package_id_mapping[this.meta.id] = new_package.meta.id;
 
         if (old.alias_map.get(this.meta.id)) |alias| {
-            try new.alias_map.put(new.allocator, new_package.meta.id, builder.append(String, old.str(alias)));
+            try new.alias_map.put(new.allocator, new_package.meta.id, builder.append(String, old.str(&alias)));
         }
 
         for (old_dependencies) |dependency, i| {

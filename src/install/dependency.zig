@@ -143,9 +143,9 @@ pub fn toExternal(this: Dependency) External {
 }
 
 pub const Version = struct {
-    tag: Dependency.Version.Tag = Dependency.Version.Tag.uninitialized,
-    literal: String = String{},
-    value: Value = Value{ .uninitialized = void{} },
+    tag: Dependency.Version.Tag = .uninitialized,
+    literal: String = .{},
+    value: Value = .{ .uninitialized = {} },
 
     pub fn deinit(this: *Version) void {
         switch (this.tag) {
@@ -155,25 +155,6 @@ pub const Version = struct {
             else => {},
         }
     }
-
-    pub const @"0.0.0" = Version{
-        .tag = Dependency.Version.Tag.npm,
-        .literal = String.from("0.0.0"),
-        .value = Value{
-            .npm = Semver.Query.Group{
-                .allocator = bun.default_allocator,
-                .head = .{
-                    .head = .{
-                        .range = .{
-                            .left = .{
-                                .op = .gte,
-                            },
-                        },
-                    },
-                },
-            },
-        },
-    };
 
     pub const zeroed = Version{};
 

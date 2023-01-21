@@ -90,6 +90,30 @@ const RefExprMap = std.ArrayHashMapUnmanaged(Ref, Expr, RefHashCtx, false);
 
 const ScopeOrderList = std.ArrayListUnmanaged(?ScopeOrder);
 
+fn newStmt(t: anytype, loc: logger.Loc) Stmt {
+    const Type = @TypeOf(t);
+
+    if (@typeInfo(Type) == .Pointer) {
+        return Stmt.init(std.meta.Child(Type), t, loc);
+    } else {
+        return Stmt.alloc(Type, t, loc);
+    }
+}
+
+// One statement could potentially expand to several statements
+fn stmtsToSingleStmt(loc: logger.Loc, stmts: []Stmt) Stmt {
+    if (stmts.len == 0) {
+        return Stmt{ .data = Prefill.Data.SEmpty, .loc = loc };
+    }
+
+    if (stmts.len == 1 and std.meta.activeTag(stmts[0].data) != .s_local or (std.meta.activeTag(stmts[0].data) == .s_local and stmts[0].data.s_local.kind == S.Local.Kind.k_var)) {
+        // "let" and "const" must be put in a block when in a single-statement context
+        return stmts[0];
+    }
+
+    return newStmt(S.Block{ .stmts = stmts }, loc);
+}
+
 const JSXFactoryName = "JSX";
 const JSXAutomaticName = "jsx_module";
 // kept as a static reference
@@ -816,7 +840,7 @@ pub const ImportScanner = struct {
                                         .e_function => |func| {
                                             if (func.func.name) |name_ref| {
                                                 if (name_ref.ref != null) {
-                                                    stmt = p.s(S.Function{ .func = func.func }, ex.loc);
+                                                    stmt = newStmt(S.Function{ .func = func.func }, ex.loc);
                                                     st.default_name.ref = name_ref.ref.?;
                                                     break :transform_export_default_when_its_anonymous;
                                                 }
@@ -825,7 +849,7 @@ pub const ImportScanner = struct {
                                         .e_class => |class| {
                                             if (class.class_name) |name_ref| {
                                                 if (name_ref.ref != null) {
-                                                    stmt = p.s(
+                                                    stmt = newStmt(
                                                         S.Class{
                                                             .class = class.*,
                                                         },
@@ -841,7 +865,7 @@ pub const ImportScanner = struct {
                                     var decls = try allocator.alloc(G.Decl, 1);
                                     decls[0] = G.Decl{ .binding = p.b(B.Identifier{ .ref = st.default_name.ref.? }, stmt.loc), .value = ex };
 
-                                    stmt = p.s(S.Local{
+                                    stmt = newStmt(S.Local{
                                         .decls = decls,
                                         .kind = S.Local.Kind.k_var,
                                         .is_export = false,
@@ -861,7 +885,7 @@ pub const ImportScanner = struct {
                                             var decls = try allocator.alloc(G.Decl, 1);
                                             decls[0] = G.Decl{ .binding = p.b(B.Identifier{ .ref = st.default_name.ref.? }, stmt.loc), .value = p.newExpr(E.Function{ .func = func.func }, stmt.loc) };
 
-                                            stmt = p.s(S.Local{
+                                            stmt = newStmt(S.Local{
                                                 .decls = decls,
                                                 .kind = S.Local.Kind.k_var,
                                                 .is_export = false,
@@ -890,7 +914,7 @@ pub const ImportScanner = struct {
                                                 }, stmt.loc),
                                             };
 
-                                            stmt = p.s(S.Local{
+                                            stmt = newStmt(S.Local{
                                                 .decls = decls,
                                                 .kind = S.Local.Kind.k_var,
                                                 .is_export = false,
@@ -919,7 +943,7 @@ pub const ImportScanner = struct {
                         var export_default_args = p.allocator.alloc(Expr, 2) catch unreachable;
                         export_default_args[0] = p.@"module.exports"(expr.loc);
                         export_default_args[1] = expr;
-                        stmt = p.s(S.SExpr{ .value = p.callRuntime(expr.loc, "__exportDefault", export_default_args) }, expr.loc);
+                        stmt = newStmt(S.SExpr{ .value = p.callRuntime(expr.loc, "__exportDefault", export_default_args) }, expr.loc);
                     }
                 },
                 .s_export_clause => |st| {
@@ -1065,16 +1089,16 @@ pub const SideEffects = enum(u1) {
         return left == right and left != .unknown and left != .mixed;
     }
 
-    pub fn simplifyBoolean(p: anytype, expr: Expr) Expr {
+    pub fn simplifyBoolean(expr: Expr) Expr {
         switch (expr.data) {
             .e_unary => |e| {
                 if (e.op == .un_not) {
                     // "!!a" => "a"
                     if (e.value.data == .e_unary and e.value.data.e_unary.op == .un_not) {
-                        return simplifyBoolean(p, e.value.data.e_unary.value);
+                        return simplifyBoolean(e.value.data.e_unary.value);
                     }
 
-                    e.value = simplifyBoolean(p, e.value);
+                    e.value = simplifyBoolean(e.value);
                 }
             },
             .e_binary => |e| {
@@ -2432,7 +2456,7 @@ pub const Parser = struct {
         //     decls[0] = Decl{ .binding = p.b(B.Identifier{
         //         .ref = p.import_meta_ref,
         //     }, logger.Loc.Empty), .value = p.newExpr(E.Object{}, logger.Loc.Empty) };
-        //     var importMetaStatement = p.s(S.Local{
+        //     var importMetaStatement = newStmt(S.Local{
         //         .kind = .k_const,
         //         .decls = decls,
         //     }, logger.Loc.Empty);
@@ -2458,7 +2482,7 @@ pub const Parser = struct {
                                 list.items.len = 1;
                                 list.items[0] = decl;
                                 _local.decls = list.items;
-                                sliced.items[0] = p.s(_local, stmt.loc);
+                                sliced.items[0] = newStmt(_local, stmt.loc);
                                 try p.appendPart(&parts, sliced.items);
                             }
                         } else {
@@ -2514,7 +2538,7 @@ pub const Parser = struct {
 
             // TODO: DeclaredSymbol
             var part_stmts = p.allocator.alloc(Stmt, 1) catch unreachable;
-            part_stmts[0] = p.s(S.Local{
+            part_stmts[0] = newStmt(S.Local{
                 .kind = .k_var,
                 .decls = decls,
             }, logger.Loc.Empty);
@@ -2811,7 +2835,7 @@ pub const Parser = struct {
                                 // When everything is CommonJS
                                 // We import JSX like this:
                                 // var {jsxDev} = require("react/jsx-dev")
-                                jsx_part_stmts[stmt_i] = p.s(S.Import{
+                                jsx_part_stmts[stmt_i] = newStmt(S.Import{
                                     .namespace_ref = automatic_namespace_ref,
                                     .star_name_loc = loc,
                                     .is_single_line = true,
@@ -2893,7 +2917,7 @@ pub const Parser = struct {
                             }
 
                             if (dot_call_target.data != .e_require) {
-                                jsx_part_stmts[stmt_i] = p.s(S.Import{
+                                jsx_part_stmts[stmt_i] = newStmt(S.Import{
                                     .namespace_ref = classic_namespace_ref,
                                     .star_name_loc = loc,
                                     .is_single_line = true,
@@ -2931,7 +2955,7 @@ pub const Parser = struct {
 
                                 const import_record_id = p.addImportRecord(.require, loc, p.options.jsx.refresh_runtime);
                                 p.import_records.items[import_record_id].tag = .react_refresh;
-                                jsx_part_stmts[stmt_i] = p.s(S.Import{
+                                jsx_part_stmts[stmt_i] = newStmt(S.Import{
                                     .namespace_ref = p.jsx_refresh_runtime.ref,
                                     .star_name_loc = loc,
                                     .is_single_line = true,
@@ -2955,7 +2979,7 @@ pub const Parser = struct {
                             p.recordUsage(p.jsx_refresh_runtime.ref);
                         }
 
-                        jsx_part_stmts[stmt_i] = p.s(S.Local{ .kind = .k_var, .decls = decls[0..decl_i] }, loc);
+                        jsx_part_stmts[stmt_i] = newStmt(S.Local{ .kind = .k_var, .decls = decls[0..decl_i] }, loc);
                         stmt_i += 1;
 
                         before.append(js_ast.Part{
@@ -3012,7 +3036,7 @@ pub const Parser = struct {
                                 logger.Loc.Empty,
                             ),
                         };
-                        part_stmts[0] = p.s(S.Local{ .kind = .k_var, .decls = decls }, logger.Loc.Empty);
+                        part_stmts[0] = newStmt(S.Local{ .kind = .k_var, .decls = decls }, logger.Loc.Empty);
                         before.append(js_ast.Part{
                             .stmts = part_stmts,
                             .declared_symbols = declared_symbols,
@@ -3055,7 +3079,7 @@ pub const Parser = struct {
                                 ),
                                 .value = try p.jsxStringsToMemberExpression(logger.Loc.Empty, p.options.jsx.factory),
                             });
-                        part_stmts[0] = p.s(S.Local{ .kind = .k_var, .decls = decls.items }, logger.Loc.Empty);
+                        part_stmts[0] = newStmt(S.Local{ .kind = .k_var, .decls = decls.items }, logger.Loc.Empty);
                         before.append(js_ast.Part{
                             .stmts = part_stmts,
                             .declared_symbols = declared_symbols.items,
@@ -3076,7 +3100,7 @@ pub const Parser = struct {
                         const import_record_id = p.addImportRecord(.require, loc, p.options.jsx.refresh_runtime);
                         p.import_records.items[import_record_id].tag = .react_refresh;
 
-                        var import_stmt = p.s(S.Import{
+                        var import_stmt = newStmt(S.Import{
                             .namespace_ref = p.jsx_refresh_runtime.ref,
                             .star_name_loc = loc,
                             .is_single_line = true,
@@ -3166,7 +3190,7 @@ pub const Parser = struct {
                             &imports,
                             &before,
                             p.runtime_imports,
-                            p.s(
+                            newStmt(
                                 S.SExpr{
                                     .value = p.newExpr(E.Call{
                                         .target = p.newExpr(E.Dot{
@@ -3921,7 +3945,7 @@ fn NewParser_(
                     const namespace_ref = p.declareSymbol(.hoisted, arg.loc, cjs_import_name) catch unreachable;
 
                     p.cjs_import_stmts.append(
-                        p.s(
+                        newStmt(
                             S.Import{
                                 .namespace_ref = namespace_ref,
                                 .star_name_loc = arg.loc,
@@ -4143,43 +4167,6 @@ fn NewParser_(
             for (part.declared_symbols) |declared| {
                 symbols[declared.ref.innerIndex()].use_count_estimate = 0;
                 // }
-            }
-        }
-
-        pub fn s(_: *P, t: anytype, loc: logger.Loc) Stmt {
-            const Type = @TypeOf(t);
-            comptime {
-                if (!is_typescript_enabled and (Type == S.TypeScript or Type == *S.TypeScript)) {
-                    @compileError("Attempted to use TypeScript syntax in a non-TypeScript environment");
-                }
-            }
-
-            if (!is_typescript_enabled and (Type == S.TypeScript or Type == *S.TypeScript)) {
-                unreachable;
-            }
-
-            // Output.print("\nStmt: {s} - {d}\n", .{ @typeName(@TypeOf(t)), loc.start });
-            if (@typeInfo(Type) == .Pointer) {
-                // ExportFrom normally becomes import records during the visiting pass
-                // However, we skip the visiting pass in this mode
-                // So we must generate a minimum version of it here.
-                if (comptime only_scan_imports_and_do_not_visit) {
-                    // if (@TypeOf(t) == *S.ExportFrom) {
-                    //     switch (call.target.data) {
-                    //         .e_identifier => |ident| {
-                    //             // is this a require("something")
-                    //             if (strings.eqlComptime(p.loadNameFromRef(ident.ref), "require") and call.args.len == 1 and std.meta.activeTag(call.args[0].data) == .e_string) {
-                    //                 _ = p.addImportRecord(.require, loc, call.args[0].data.e_string.string(p.allocator) catch unreachable);
-                    //             }
-                    //         },
-                    //         else => {},
-                    //     }
-                    // }
-                }
-
-                return Stmt.init(std.meta.Child(Type), t, loc);
-            } else {
-                return Stmt.alloc(Type, t, loc);
             }
         }
 
@@ -4533,7 +4520,7 @@ fn NewParser_(
                 });
             }
 
-            stmts[0] = p.s(S.Import{
+            stmts[0] = newStmt(S.Import{
                 .namespace_ref = namespace_ref,
                 .items = clause_items,
                 .import_record_index = import_record_i,
@@ -5707,7 +5694,7 @@ fn NewParser_(
                         p.has_non_local_export_declare_inside_namespace = true;
                     }
 
-                    return p.s(S.TypeScript{}, loc);
+                    return newStmt(S.TypeScript{}, loc);
                 }
             }
 
@@ -5733,7 +5720,7 @@ fn NewParser_(
                 p.popScope();
             }
 
-            return p.s(S.Function{
+            return newStmt(S.Function{
                 .func = func,
             }, func.open_parens_loc);
         }
@@ -6531,7 +6518,7 @@ fn NewParser_(
                     try p.macro.refs.put(ref, id);
                 }
 
-                return p.s(S.Empty{}, loc);
+                return newStmt(S.Empty{}, loc);
             }
 
             if (p.options.features.hoist_bun_plugin and strings.eqlComptime(path.text, "bun")) {
@@ -6562,7 +6549,7 @@ fn NewParser_(
 
                 // if the import statement is now empty, remove it completely
                 if (stmt.items.len == 0 and stmt.default_name == null and stmt.star_name_loc == null) {
-                    return p.s(S.Empty{}, loc);
+                    return newStmt(S.Empty{}, loc);
                 }
             }
 
@@ -6704,14 +6691,14 @@ fn NewParser_(
                     p.import_records.items[stmt.import_record_index].is_internal = true;
                 }
 
-                return p.s(S.Empty{}, loc);
+                return newStmt(S.Empty{}, loc);
             } else if (remap_count > 0) {
                 item_refs.shrinkAndFree(stmt.items.len + @as(usize, @boolToInt(stmt.default_name != null)));
             }
 
             // Track the items for this namespace
             try p.import_items_for_namespace.put(p.allocator, stmt.namespace_ref, item_refs);
-            return p.s(stmt, loc);
+            return newStmt(stmt, loc);
         }
 
         // This is the type parameter declarations that go with other symbol
@@ -6840,12 +6827,12 @@ fn NewParser_(
                         p.has_non_local_export_declare_inside_namespace = true;
                     }
 
-                    return p.s(S.TypeScript{}, loc);
+                    return newStmt(S.TypeScript{}, loc);
                 }
             }
 
             p.popScope();
-            return p.s(S.Class{
+            return newStmt(S.Class{
                 .class = class,
                 .is_export = opts.is_export,
             }, loc);
@@ -6991,7 +6978,7 @@ fn NewParser_(
                                     try p.lexer.expect(T.t_identifier);
                                     try p.lexer.expectOrInsertSemicolon();
 
-                                    return p.s(S.TypeScript{}, loc);
+                                    return newStmt(S.TypeScript{}, loc);
                                 }
                             }
 
@@ -7020,7 +7007,7 @@ fn NewParser_(
                                             }
                                             var skipper = ParseStatementOptions{ .is_module_scope = opts.is_module_scope, .is_export = true };
                                             try p.skipTypeScriptTypeStmt(&skipper);
-                                            return p.s(S.TypeScript{}, loc);
+                                            return newStmt(S.TypeScript{}, loc);
                                         },
                                         .s_namespace, .s_abstract, .s_module, .s_interface => {
                                             // "export namespace Foo {}"
@@ -7083,7 +7070,7 @@ fn NewParser_(
                                         defaultName = try p.createDefaultName(defaultLoc);
                                     }
                                     var value = js_ast.StmtOrExpr{ .stmt = stmt };
-                                    return p.s(S.ExportDefault{ .default_name = defaultName, .value = value }, loc);
+                                    return newStmt(S.ExportDefault{ .default_name = defaultName, .value = value }, loc);
                                 }
 
                                 defaultName = try createDefaultName(p, loc);
@@ -7093,7 +7080,7 @@ fn NewParser_(
                                 try p.lexer.expectOrInsertSemicolon();
                                 var value = js_ast.StmtOrExpr{ .expr = expr };
                                 p.has_export_default = true;
-                                return p.s(S.ExportDefault{ .default_name = defaultName, .value = value }, loc);
+                                return newStmt(S.ExportDefault{ .default_name = defaultName, .value = value }, loc);
                             }
 
                             if (p.lexer.token == .t_function or p.lexer.token == .t_class or p.lexer.isContextualKeyword("interface")) {
@@ -7127,7 +7114,7 @@ fn NewParser_(
                                     break :default_name_getter createDefaultName(p, defaultLoc) catch unreachable;
                                 };
                                 p.has_export_default = true;
-                                return p.s(
+                                return newStmt(
                                     S.ExportDefault{ .default_name = default_name, .value = js_ast.StmtOrExpr{ .stmt = stmt } },
                                     loc,
                                 );
@@ -7171,7 +7158,7 @@ fn NewParser_(
                                             break :default_name_getter createDefaultName(p, defaultLoc) catch unreachable;
                                         };
                                         p.has_export_default = true;
-                                        return p.s(S.ExportDefault{ .default_name = default_name, .value = js_ast.StmtOrExpr{ .stmt = stmt } }, loc);
+                                        return newStmt(S.ExportDefault{ .default_name = default_name, .value = js_ast.StmtOrExpr{ .stmt = stmt } }, loc);
                                     },
                                     else => {
                                         p.panic("internal error: unexpected", .{});
@@ -7183,7 +7170,7 @@ fn NewParser_(
 
                             // Use the expression name if present, since it's a better name
                             p.has_export_default = true;
-                            return p.s(
+                            return newStmt(
                                 S.ExportDefault{
                                     .default_name = p.defaultNameForExpr(expr, defaultLoc),
                                     .value = js_ast.StmtOrExpr{
@@ -7235,7 +7222,7 @@ fn NewParser_(
                             }
 
                             try p.lexer.expectOrInsertSemicolon();
-                            return p.s(S.ExportStar{
+                            return newStmt(S.ExportStar{
                                 .namespace_ref = namespace_ref,
                                 .alias = alias,
                                 .import_record_index = import_record_index,
@@ -7260,7 +7247,7 @@ fn NewParser_(
                                     // nothing
                                     // https://www.typescriptlang.org/play?useDefineForClassFields=true&esModuleInterop=false&declaration=false&target=99&isolatedModules=false&ts=4.5.4#code/KYDwDg9gTgLgBDAnmYcDeAxCEC+cBmUEAtnAOQBGAhlGQNwBQQA
                                     if (export_clause.clauses.len == 0 and export_clause.had_type_only_exports) {
-                                        return p.s(S.TypeScript{}, loc);
+                                        return newStmt(S.TypeScript{}, loc);
                                     }
                                 }
 
@@ -7273,7 +7260,7 @@ fn NewParser_(
                                     p.import_records.items[import_record_index].calls_run_time_re_export_fn = true;
                                 }
 
-                                return p.s(S.ExportFrom{ .items = export_clause.clauses, .is_single_line = export_clause.is_single_line, .namespace_ref = namespace_ref, .import_record_index = import_record_index }, loc);
+                                return newStmt(S.ExportFrom{ .items = export_clause.clauses, .is_single_line = export_clause.is_single_line, .namespace_ref = namespace_ref, .import_record_index = import_record_index }, loc);
                             }
                             try p.lexer.expectOrInsertSemicolon();
 
@@ -7283,11 +7270,11 @@ fn NewParser_(
                                 // nothing
                                 // https://www.typescriptlang.org/play?useDefineForClassFields=true&esModuleInterop=false&declaration=false&target=99&isolatedModules=false&ts=4.5.4#code/KYDwDg9gTgLgBDAnmYcDeAxCEC+cBmUEAtnAOQBGAhlGQNwBQQA
                                 if (export_clause.clauses.len == 0 and export_clause.had_type_only_exports) {
-                                    return p.s(S.TypeScript{}, loc);
+                                    return newStmt(S.TypeScript{}, loc);
                                 }
                             }
 
-                            return p.s(S.ExportClause{ .items = export_clause.clauses, .is_single_line = export_clause.is_single_line }, loc);
+                            return newStmt(S.ExportClause{ .items = export_clause.clauses, .is_single_line = export_clause.is_single_line }, loc);
                         },
                         T.t_equals => {
                             // "export = value;"
@@ -7297,7 +7284,7 @@ fn NewParser_(
                                 try p.lexer.next();
                                 var value = try p.parseExpr(.lowest);
                                 try p.lexer.expectOrInsertSemicolon();
-                                return p.s(S.ExportEquals{ .value = value }, loc);
+                                return newStmt(S.ExportEquals{ .value = value }, loc);
                             }
                             try p.lexer.unexpected();
                             return error.SyntaxError;
@@ -7372,7 +7359,7 @@ fn NewParser_(
                     try p.lexer.next();
                     const decls = try p.parseAndDeclareDecls(.hoisted, opts);
                     try p.lexer.expectOrInsertSemicolon();
-                    return p.s(S.Local{ .kind = .k_var, .decls = decls, .is_export = opts.is_export }, loc);
+                    return newStmt(S.Local{ .kind = .k_var, .decls = decls, .is_export = opts.is_export }, loc);
                 },
                 .t_const => {
                     if (opts.lexical_decl != .allow_all) {
@@ -7395,7 +7382,7 @@ fn NewParser_(
 
                     // When HMR is enabled, replace all const/let exports with var
                     const kind = if (p.options.features.hot_module_reloading and opts.is_export) S.Local.Kind.k_var else S.Local.Kind.k_const;
-                    return p.s(S.Local{ .kind = kind, .decls = decls, .is_export = opts.is_export }, loc);
+                    return newStmt(S.Local{ .kind = kind, .decls = decls, .is_export = opts.is_export }, loc);
                 },
                 .t_if => {
                     try p.lexer.next();
@@ -7415,7 +7402,7 @@ fn NewParser_(
                         no = try p.parseStmt(&stmtOpts);
                     }
 
-                    return p.s(S.If{
+                    return newStmt(S.If{
                         .test_ = test_,
                         .yes = yes,
                         .no = no,
@@ -7435,7 +7422,7 @@ fn NewParser_(
                     if (p.lexer.token == .t_semicolon) {
                         try p.lexer.next();
                     }
-                    return p.s(S.DoWhile{ .body = body, .test_ = test_ }, loc);
+                    return newStmt(S.DoWhile{ .body = body, .test_ = test_ }, loc);
                 },
                 .t_while => {
                     try p.lexer.next();
@@ -7447,7 +7434,7 @@ fn NewParser_(
                     var stmtOpts = ParseStatementOptions{};
                     const body = try p.parseStmt(&stmtOpts);
 
-                    return p.s(S.While{
+                    return newStmt(S.While{
                         .body = body,
                         .test_ = test_,
                     }, loc);
@@ -7465,7 +7452,7 @@ fn NewParser_(
                     var stmtOpts = ParseStatementOptions{};
                     const body = try p.parseStmt(&stmtOpts);
 
-                    return p.s(S.With{ .body = body, .body_loc = body_loc, .value = test_ }, loc);
+                    return newStmt(S.With{ .body = body, .body_loc = body_loc, .value = test_ }, loc);
                 },
                 .t_switch => {
                     try p.lexer.next();
@@ -7515,7 +7502,7 @@ fn NewParser_(
                         try cases.append(js_ast.Case{ .value = value, .body = body.items, .loc = logger.Loc.Empty });
                     }
                     try p.lexer.expect(.t_close_brace);
-                    return p.s(S.Switch{ .test_ = test_, .body_loc = body_loc, .cases = cases.items }, loc);
+                    return newStmt(S.Switch{ .test_ = test_, .body_loc = body_loc, .cases = cases.items }, loc);
                 },
                 .t_try => {
                     try p.lexer.next();
@@ -7587,7 +7574,7 @@ fn NewParser_(
                         p.popScope();
                     }
 
-                    return p.s(
+                    return newStmt(
                         S.Try{ .body_loc = body_loc, .body = body, .catch_ = catch_, .finally = finally },
                         loc,
                     );
@@ -7640,14 +7627,14 @@ fn NewParser_(
                             try p.lexer.next();
                             var stmtOpts = ParseStatementOptions{};
                             decls = try p.parseAndDeclareDecls(.hoisted, &stmtOpts);
-                            init_ = p.s(S.Local{ .kind = .k_var, .decls = decls }, init_loc);
+                            init_ = newStmt(S.Local{ .kind = .k_var, .decls = decls }, init_loc);
                         },
                         // for (const )
                         .t_const => {
                             try p.lexer.next();
                             var stmtOpts = ParseStatementOptions{};
                             decls = try p.parseAndDeclareDecls(.cconst, &stmtOpts);
-                            init_ = p.s(S.Local{ .kind = .k_const, .decls = decls }, init_loc);
+                            init_ = newStmt(S.Local{ .kind = .k_const, .decls = decls }, init_loc);
                         },
                         // for (;)
                         .t_semicolon => {},
@@ -7661,7 +7648,7 @@ fn NewParser_(
                                     init_ = stmt;
                                 },
                                 .expr => |expr| {
-                                    init_ = p.s(S.SExpr{
+                                    init_ = newStmt(S.SExpr{
                                         .value = expr,
                                     }, init_loc);
                                 },
@@ -7694,7 +7681,7 @@ fn NewParser_(
                         try p.lexer.expect(.t_close_paren);
                         var stmtOpts = ParseStatementOptions{};
                         const body = try p.parseStmt(&stmtOpts);
-                        return p.s(S.ForOf{ .is_await = isForAwait, .init = init_ orelse unreachable, .value = value, .body = body }, loc);
+                        return newStmt(S.ForOf{ .is_await = isForAwait, .init = init_ orelse unreachable, .value = value, .body = body }, loc);
                     }
 
                     // Detect for-in loops
@@ -7705,7 +7692,7 @@ fn NewParser_(
                         try p.lexer.expect(.t_close_paren);
                         var stmtOpts = ParseStatementOptions{};
                         const body = try p.parseStmt(&stmtOpts);
-                        return p.s(S.ForIn{ .init = init_ orelse unreachable, .value = value, .body = body }, loc);
+                        return newStmt(S.ForIn{ .init = init_ orelse unreachable, .value = value, .body = body }, loc);
                     }
 
                     // Only require "const" statement initializers when we know we're a normal for loop
@@ -7734,7 +7721,7 @@ fn NewParser_(
                     try p.lexer.expect(.t_close_paren);
                     var stmtOpts = ParseStatementOptions{};
                     const body = try p.parseStmt(&stmtOpts);
-                    return p.s(
+                    return newStmt(
                         S.For{ .init = init_, .test_ = test_, .update = update, .body = body },
                         loc,
                     );
@@ -7761,7 +7748,7 @@ fn NewParser_(
                             p.es6_import_keyword = previous_import_keyword; // this wasn't an esm import statement after all
                             const expr = try p.parseSuffix(try p.parseImportExpr(loc, .lowest), .lowest, null, Expr.EFlags.none);
                             try p.lexer.expectOrInsertSemicolon();
-                            return p.s(S.SExpr{
+                            return newStmt(S.SExpr{
                                 .value = expr,
                             }, loc);
                         },
@@ -7802,7 +7789,7 @@ fn NewParser_(
                                     try p.lexer.expectContextualKeyword("from");
                                     _ = try p.parsePath();
                                     try p.lexer.expectOrInsertSemicolon();
-                                    return p.s(S.TypeScript{}, loc);
+                                    return newStmt(S.TypeScript{}, loc);
                                 }
                             }
 
@@ -7849,7 +7836,7 @@ fn NewParser_(
                                                     try p.lexer.expectContextualKeyword("from");
                                                     _ = try p.parsePath();
                                                     try p.lexer.expectOrInsertSemicolon();
-                                                    return p.s(S.TypeScript{}, loc);
+                                                    return newStmt(S.TypeScript{}, loc);
                                                 }
                                             }
                                         },
@@ -7861,7 +7848,7 @@ fn NewParser_(
                                             try p.lexer.expectContextualKeyword("from");
                                             _ = try p.parsePath();
                                             try p.lexer.expectOrInsertSemicolon();
-                                            return p.s(S.TypeScript{}, loc);
+                                            return newStmt(S.TypeScript{}, loc);
                                         },
 
                                         .t_open_brace => {
@@ -7870,7 +7857,7 @@ fn NewParser_(
                                             try p.lexer.expectContextualKeyword("from");
                                             _ = try p.parsePath();
                                             try p.lexer.expectOrInsertSemicolon();
-                                            return p.s(S.TypeScript{}, loc);
+                                            return newStmt(S.TypeScript{}, loc);
                                         },
                                         else => {},
                                     }
@@ -7926,13 +7913,13 @@ fn NewParser_(
                     try p.lexer.next();
                     const name = try p.parseLabelName();
                     try p.lexer.expectOrInsertSemicolon();
-                    return p.s(S.Break{ .label = name }, loc);
+                    return newStmt(S.Break{ .label = name }, loc);
                 },
                 .t_continue => {
                     try p.lexer.next();
                     const name = try p.parseLabelName();
                     try p.lexer.expectOrInsertSemicolon();
-                    return p.s(S.Continue{ .label = name }, loc);
+                    return newStmt(S.Continue{ .label = name }, loc);
                 },
                 .t_return => {
                     if (p.fn_or_arrow_data_parse.is_return_disallowed) {
@@ -7950,7 +7937,7 @@ fn NewParser_(
                     p.latest_return_had_semicolon = p.lexer.token == .t_semicolon;
                     try p.lexer.expectOrInsertSemicolon();
 
-                    return p.s(S.Return{ .value = value }, loc);
+                    return newStmt(S.Return{ .value = value }, loc);
                 },
                 .t_throw => {
                     try p.lexer.next();
@@ -7962,12 +7949,12 @@ fn NewParser_(
                     }
                     const expr = try p.parseExpr(.lowest);
                     try p.lexer.expectOrInsertSemicolon();
-                    return p.s(S.Throw{ .value = expr }, loc);
+                    return newStmt(S.Throw{ .value = expr }, loc);
                 },
                 .t_debugger => {
                     try p.lexer.next();
                     try p.lexer.expectOrInsertSemicolon();
-                    return p.s(S.Debugger{}, loc);
+                    return newStmt(S.Debugger{}, loc);
                 },
                 .t_open_brace => {
                     _ = try p.pushScopeForParsePass(.block, loc);
@@ -7976,7 +7963,7 @@ fn NewParser_(
                     var stmtOpts = ParseStatementOptions{};
                     const stmts = try p.parseStmtsUpTo(.t_close_brace, &stmtOpts);
                     try p.lexer.next();
-                    return p.s(S.Block{
+                    return newStmt(S.Block{
                         .stmts = stmts,
                     }, loc);
                 },
@@ -8029,7 +8016,7 @@ fn NewParser_(
                                         else => {},
                                     }
                                     var stmt = try p.parseStmt(&nestedOpts);
-                                    return p.s(S.Label{ .name = _name, .stmt = stmt }, loc);
+                                    return newStmt(S.Label{ .name = _name, .stmt = stmt }, loc);
                                 }
                             },
                             else => {},
@@ -8043,7 +8030,7 @@ fn NewParser_(
                                             // "type Foo = any"
                                             var stmtOpts = ParseStatementOptions{ .is_module_scope = opts.is_module_scope };
                                             try p.skipTypeScriptTypeStmt(&stmtOpts);
-                                            return p.s(S.TypeScript{}, loc);
+                                            return newStmt(S.TypeScript{}, loc);
                                         }
                                     },
                                     .ts_stmt_namespace, .ts_stmt_module => {
@@ -8062,7 +8049,7 @@ fn NewParser_(
                                         var stmtOpts = ParseStatementOptions{ .is_module_scope = opts.is_module_scope };
 
                                         try p.skipTypeScriptInterfaceStmt(&stmtOpts);
-                                        return p.s(S.TypeScript{}, loc);
+                                        return newStmt(S.TypeScript{}, loc);
                                     },
                                     .ts_stmt_abstract => {
                                         if (p.lexer.token == .t_class or opts.ts_decorators != null) {
@@ -8075,7 +8062,7 @@ fn NewParser_(
                                             try p.lexer.next();
                                             _ = try p.parseStmtsUpTo(.t_close_brace, opts);
                                             try p.lexer.next();
-                                            return p.s(S.TypeScript{}, loc);
+                                            return newStmt(S.TypeScript{}, loc);
                                         }
                                     },
                                     .ts_stmt_declare => {
@@ -8094,7 +8081,7 @@ fn NewParser_(
                                             try p.lexer.expect(.t_open_brace);
                                             _ = try p.parseStmtsUpTo(.t_close_brace, opts);
                                             try p.lexer.next();
-                                            return p.s(S.TypeScript{}, loc);
+                                            return newStmt(S.TypeScript{}, loc);
                                         }
 
                                         // "declare const x: any"
@@ -8137,7 +8124,7 @@ fn NewParser_(
                                             }
 
                                             if (decls.len > 0) {
-                                                return p.s(S.Local{
+                                                return newStmt(S.Local{
                                                     .kind = .k_var,
                                                     .is_export = true,
                                                     .decls = decls,
@@ -8145,7 +8132,7 @@ fn NewParser_(
                                             }
                                         }
 
-                                        return p.s(S.TypeScript{}, loc);
+                                        return newStmt(S.TypeScript{}, loc);
                                     },
                                 }
                             }
@@ -8153,7 +8140,7 @@ fn NewParser_(
                     }
                     // Output.print("\n\nmVALUE {s}:{s}\n", .{ expr, name });
                     try p.lexer.expectOrInsertSemicolon();
-                    return p.s(S.SExpr{ .value = expr }, loc);
+                    return newStmt(S.SExpr{ .value = expr }, loc);
                 },
             }
 
@@ -8280,7 +8267,7 @@ fn NewParser_(
                 if (opts.is_module_scope) {
                     p.local_type_names.put(p.allocator, name_text, true) catch unreachable;
                 }
-                return p.s(S.TypeScript{}, loc);
+                return newStmt(S.TypeScript{}, loc);
             }
 
             var arg_ref: ?Ref = null;
@@ -8317,7 +8304,7 @@ fn NewParser_(
                 name.ref = p.declareSymbol(.ts_namespace, name_loc, name_text) catch unreachable;
             }
 
-            return p.s(
+            return newStmt(
                 S.Namespace{ .name = name, .arg = arg_ref orelse Ref.None, .stmts = stmts.items, .is_export = opts.is_export },
                 loc,
             );
@@ -8404,7 +8391,7 @@ fn NewParser_(
             if (opts.is_typescript_declare) {
                 // "import type foo = require('bar');"
                 // "import type foo = bar.baz;"
-                return p.s(S.TypeScript{}, loc);
+                return newStmt(S.TypeScript{}, loc);
             }
 
             const ref = p.declareSymbol(.cconst, default_name_loc, default_name) catch unreachable;
@@ -8413,7 +8400,7 @@ fn NewParser_(
                 .binding = p.b(B.Identifier{ .ref = ref }, default_name_loc),
                 .value = value,
             };
-            return p.s(S.Local{ .kind = kind, .decls = decls, .is_export = opts.is_export, .was_ts_import_equals = true }, loc);
+            return newStmt(S.Local{ .kind = kind, .decls = decls, .is_export = opts.is_export, .was_ts_import_equals = true }, loc);
         }
 
         fn parseClauseAlias(p: *P, kind: string) !string {
@@ -8637,7 +8624,7 @@ fn NewParser_(
                         const decls = try p.parseAndDeclareDecls(.other, opts);
                         return ExprOrLetStmt{
                             .stmt_or_expr = js_ast.StmtOrExpr{
-                                .stmt = p.s(S.Local{
+                                .stmt = newStmt(S.Local{
                                     // Replace all "export let" with "export var" when HMR is enabled
                                     .kind = if (opts.is_export and p.options.features.hot_module_reloading) .k_var else .k_let,
                                     .decls = decls,
@@ -9056,10 +9043,10 @@ fn NewParser_(
                     p.has_non_local_export_declare_inside_namespace = true;
                 }
 
-                return p.s(S.TypeScript{}, loc);
+                return newStmt(S.TypeScript{}, loc);
             }
 
-            return p.s(S.Enum{
+            return newStmt(S.Enum{
                 .name = name,
                 .arg = arg_ref,
                 .values = try values.toOwnedSlice(),
@@ -9295,7 +9282,7 @@ fn NewParser_(
 
             while (true) {
                 for (p.lexer.comments_to_preserve_before.items) |comment| {
-                    try stmts.append(p.s(S.Comment{
+                    try stmts.append(newStmt(S.Comment{
                         .text = comment.text,
                     }, p.lexer.loc()));
                 }
@@ -9703,7 +9690,7 @@ fn NewParser_(
             p.fn_or_arrow_data_parse = std.mem.bytesToValue(@TypeOf(p.fn_or_arrow_data_parse), &old_fn_or_arrow_data);
 
             var stmts = try p.allocator.alloc(Stmt, 1);
-            stmts[0] = p.s(S.Return{ .value = expr }, expr.loc);
+            stmts[0] = newStmt(S.Return{ .value = expr }, expr.loc);
             return E.Arrow{ .args = args, .prefer_expr = true, .body = G.FnBody{ .loc = arrow_loc, .stmts = stmts } };
         }
 
@@ -11588,7 +11575,7 @@ fn NewParser_(
                     // Ensure we don't accidentally think this is an export from
                 }
 
-                p.macro.prepend_stmts.append(p.s(import, this.loc)) catch unreachable;
+                p.macro.prepend_stmts.append(newStmt(import, this.loc)) catch unreachable;
             }
         };
 
@@ -12738,7 +12725,7 @@ fn NewParser_(
                         decls[0] = Decl{
                             .binding = p.b(B.Identifier{ .ref = ref }, local.loc),
                         };
-                        try partStmts.append(p.s(S.Local{ .decls = decls }, local.loc));
+                        try partStmts.append(newStmt(S.Local{ .decls = decls }, local.loc));
                     }
                 }
                 p.relocated_top_level_vars.clearRetainingCapacity();
@@ -14165,7 +14152,7 @@ fn NewParser_(
 
                             switch (e_.op) {
                                 .un_not => {
-                                    e_.value = SideEffects.simplifyBoolean(p, e_.value);
+                                    e_.value = SideEffects.simplifyBoolean(e_.value);
 
                                     const side_effects = SideEffects.toBoolean(e_.value.data);
                                     if (side_effects.ok) {
@@ -14305,7 +14292,7 @@ fn NewParser_(
 
                     e_.test_ = p.visitExpr(e_.test_);
 
-                    e_.test_ = SideEffects.simplifyBoolean(p, e_.test_);
+                    e_.test_ = SideEffects.simplifyBoolean(e_.test_);
 
                     const side_effects = SideEffects.toBoolean(e_.test_.data);
 
@@ -15384,7 +15371,7 @@ fn NewParser_(
                 return .{ .ok = true };
             }
 
-            return .{ .stmt = p.s(S.SExpr{ .value = value }, value.loc), .ok = true };
+            return .{ .stmt = newStmt(S.SExpr{ .value = value }, value.loc), .ok = true };
         }
 
         // fn maybeInlineMacroObject(p: *P, decl: *G.Decl, macro: Expr) void {
@@ -15652,11 +15639,11 @@ fn NewParser_(
 
                         p.recordUsage(data.namespace_ref);
                         try stmts.ensureTotalCapacity(stmts.items.len + 2);
-                        stmts.appendAssumeCapacity(p.s(S.Import{ .namespace_ref = data.namespace_ref, .star_name_loc = alias.loc, .import_record_index = data.import_record_index }, stmt.loc));
+                        stmts.appendAssumeCapacity(newStmt(S.Import{ .namespace_ref = data.namespace_ref, .star_name_loc = alias.loc, .import_record_index = data.import_record_index }, stmt.loc));
 
                         var items = try List(js_ast.ClauseItem).initCapacity(p.allocator, 1);
                         items.appendAssumeCapacity(js_ast.ClauseItem{ .alias = alias.original_name, .original_name = alias.original_name, .alias_loc = alias.loc, .name = LocRef{ .loc = alias.loc, .ref = data.namespace_ref } });
-                        stmts.appendAssumeCapacity(p.s(S.ExportClause{ .items = items.toOwnedSlice(p.allocator) catch @panic("TODO"), .is_single_line = true }, stmt.loc));
+                        stmts.appendAssumeCapacity(newStmt(S.ExportClause{ .items = items.toOwnedSlice(p.allocator) catch @panic("TODO"), .is_single_line = true }, stmt.loc));
                         return;
                     }
                 },
@@ -15727,7 +15714,7 @@ fn NewParser_(
                                 var export_default_args = p.allocator.alloc(Expr, 2) catch unreachable;
                                 export_default_args[0] = p.@"module.exports"(expr.loc);
                                 export_default_args[1] = data.value.expr;
-                                stmts.append(p.s(S.SExpr{ .value = p.callRuntime(expr.loc, "__exportDefault", export_default_args) }, expr.loc)) catch unreachable;
+                                stmts.append(newStmt(S.SExpr{ .value = p.callRuntime(expr.loc, "__exportDefault", export_default_args) }, expr.loc)) catch unreachable;
                                 return;
                             }
                         },
@@ -15764,7 +15751,7 @@ fn NewParser_(
                                             var export_default_args = p.allocator.alloc(Expr, 2) catch unreachable;
                                             export_default_args[0] = p.@"module.exports"(data.value.expr.loc);
                                             export_default_args[1] = data.value.expr;
-                                            stmts.append(p.s(S.SExpr{ .value = p.callRuntime(data.value.expr.loc, "__exportDefault", export_default_args) }, data.value.expr.loc)) catch unreachable;
+                                            stmts.append(newStmt(S.SExpr{ .value = p.callRuntime(data.value.expr.loc, "__exportDefault", export_default_args) }, data.value.expr.loc)) catch unreachable;
                                             return;
                                         }
                                     } else if (p.options.enable_bundling) {
@@ -15780,7 +15767,7 @@ fn NewParser_(
                                             export_default_args[1] = p.newExpr(E.Function{ .func = func.func }, s2.loc);
                                         }
 
-                                        stmts.append(p.s(S.SExpr{ .value = p.callRuntime(s2.loc, "__exportDefault", export_default_args) }, s2.loc)) catch unreachable;
+                                        stmts.append(newStmt(S.SExpr{ .value = p.callRuntime(s2.loc, "__exportDefault", export_default_args) }, s2.loc)) catch unreachable;
                                         return;
                                     }
 
@@ -15812,7 +15799,7 @@ fn NewParser_(
                                             var export_default_args = p.allocator.alloc(Expr, 2) catch unreachable;
                                             export_default_args[0] = p.@"module.exports"(data.value.expr.loc);
                                             export_default_args[1] = data.value.expr;
-                                            stmts.append(p.s(S.SExpr{ .value = p.callRuntime(data.value.expr.loc, "__exportDefault", export_default_args) }, data.value.expr.loc)) catch unreachable;
+                                            stmts.append(newStmt(S.SExpr{ .value = p.callRuntime(data.value.expr.loc, "__exportDefault", export_default_args) }, data.value.expr.loc)) catch unreachable;
                                             return;
                                         }
                                     } else if (p.options.enable_bundling) {
@@ -15835,7 +15822,7 @@ fn NewParser_(
                                             export_default_args[1] = p.newExpr(class.class, s2.loc);
                                         }
 
-                                        stmts.append(p.s(S.SExpr{ .value = p.callRuntime(s2.loc, "__exportDefault", export_default_args) }, s2.loc)) catch unreachable;
+                                        stmts.append(newStmt(S.SExpr{ .value = p.callRuntime(s2.loc, "__exportDefault", export_default_args) }, s2.loc)) catch unreachable;
                                         return;
                                     }
 
@@ -15853,7 +15840,7 @@ fn NewParser_(
                         export_default_args[0] = p.@"module.exports"(stmt.loc);
                         export_default_args[1] = data.value;
 
-                        stmts.append(p.s(S.SExpr{ .value = p.callRuntime(stmt.loc, "__exportDefault", export_default_args) }, stmt.loc)) catch unreachable;
+                        stmts.append(newStmt(S.SExpr{ .value = p.callRuntime(stmt.loc, "__exportDefault", export_default_args) }, stmt.loc)) catch unreachable;
                         return;
                     }
 
@@ -15935,7 +15922,7 @@ fn NewParser_(
                             if (d.value) |val| {
                                 p.recordUsage((p.enclosing_namespace_arg_ref orelse unreachable));
                                 // TODO: is it necessary to lowerAssign? why does esbuild do it _most_ of the time?
-                                stmts.append(p.s(S.SExpr{
+                                stmts.append(newStmt(S.SExpr{
                                     .value = Expr.assign(Binding.toExpr(&d.binding, p.to_expr_wrapper_namespace), val, p.allocator),
                                 }, stmt.loc)) catch unreachable;
                             }
@@ -16036,7 +16023,7 @@ fn NewParser_(
                     data.test_ = p.visitExpr(data.test_);
                     data.body = p.visitLoopBody(data.body);
 
-                    data.test_ = SideEffects.simplifyBoolean(p, data.test_);
+                    data.test_ = SideEffects.simplifyBoolean(data.test_);
                     const result = SideEffects.toBoolean(data.test_.data);
                     if (result.ok and result.side_effects == .no_side_effects) {
                         data.test_ = p.newExpr(E.Boolean{ .value = result.value }, data.test_.loc);
@@ -16046,10 +16033,10 @@ fn NewParser_(
                     data.body = p.visitLoopBody(data.body);
                     data.test_ = p.visitExpr(data.test_);
 
-                    data.test_ = SideEffects.simplifyBoolean(p, data.test_);
+                    data.test_ = SideEffects.simplifyBoolean(data.test_);
                 },
                 .s_if => |data| {
-                    data.test_ = SideEffects.simplifyBoolean(p, p.visitExpr(data.test_));
+                    data.test_ = SideEffects.simplifyBoolean(p.visitExpr(data.test_));
 
                     const effects = SideEffects.toBoolean(data.test_.data);
                     if (effects.ok and !effects.value) {
@@ -16084,7 +16071,7 @@ fn NewParser_(
                                 if (effects.side_effects == .could_have_side_effects) {
                                     // Keep the condition if it could have side effects (but is still known to be truthy)
                                     if (SideEffects.simpifyUnusedExpr(p, data.test_)) |test_| {
-                                        stmts.append(p.s(S.SExpr{ .value = test_ }, test_.loc)) catch unreachable;
+                                        stmts.append(newStmt(S.SExpr{ .value = test_ }, test_.loc)) catch unreachable;
                                     }
                                 }
 
@@ -16098,7 +16085,7 @@ fn NewParser_(
                                 if (effects.side_effects == .could_have_side_effects) {
                                     // Keep the condition if it could have side effects (but is still known to be truthy)
                                     if (SideEffects.simpifyUnusedExpr(p, data.test_)) |test_| {
-                                        stmts.append(p.s(S.SExpr{ .value = test_ }, test_.loc)) catch unreachable;
+                                        stmts.append(newStmt(S.SExpr{ .value = test_ }, test_.loc)) catch unreachable;
                                     }
                                 }
 
@@ -16120,7 +16107,7 @@ fn NewParser_(
                         }
 
                         if (data.test_) |test_| {
-                            data.test_ = SideEffects.simplifyBoolean(p, p.visitExpr(test_));
+                            data.test_ = SideEffects.simplifyBoolean(p.visitExpr(test_));
 
                             const result = SideEffects.toBoolean(data.test_.?.data);
                             if (result.ok and result.value and result.side_effects == .no_side_effects) {
@@ -16436,7 +16423,7 @@ fn NewParser_(
                     var value_stmts = ListManaged(Stmt).initCapacity(allocator, value_exprs.items.len) catch unreachable;
                     // Generate statements from expressions
                     for (value_exprs.items) |expr| {
-                        value_stmts.appendAssumeCapacity(p.s(S.SExpr{ .value = expr }, expr.loc));
+                        value_stmts.appendAssumeCapacity(newStmt(S.SExpr{ .value = expr }, expr.loc));
                     }
                     value_exprs.deinit();
                     try p.generateClosureForTypeScriptNamespaceOrEnum(
@@ -16592,7 +16579,7 @@ fn NewParser_(
                     var decls = p.allocator.alloc(G.Decl, 1) catch unreachable;
 
                     decls[0] = .{ .binding = p.b(B.Identifier{ .ref = name_ref }, loc), .value = value };
-                    var local = p.s(
+                    var local = newStmt(
                         S.Local{
                             .is_export = true,
                             .decls = decls,
@@ -16613,7 +16600,7 @@ fn NewParser_(
                         .value = with.value,
                     };
 
-                    var local = p.s(
+                    var local = newStmt(
                         S.Local{
                             .is_export = true,
                             .decls = decls,
@@ -16766,7 +16753,7 @@ fn NewParser_(
             if (statementCaresAboutScope(body)) {
                 var block_stmts = try p.allocator.alloc(Stmt, 1);
                 block_stmts[0] = body;
-                try stmts.append(p.s(S.Block{ .stmts = block_stmts }, body.loc));
+                try stmts.append(newStmt(S.Block{ .stmts = block_stmts }, body.loc));
                 return;
             }
 
@@ -16827,7 +16814,7 @@ fn NewParser_(
                 if (p.enclosing_namespace_arg_ref == null) {
                     // Top-level namespace
                     stmts.append(
-                        p.s(
+                        newStmt(
                             S.Local{
                                 .kind = .k_var,
                                 .decls = decls,
@@ -16839,7 +16826,7 @@ fn NewParser_(
                 } else {
                     // Nested namespace
                     stmts.append(
-                        p.s(
+                        newStmt(
                             S.Local{
                                 .kind = .k_let,
                                 .decls = decls,
@@ -16935,7 +16922,7 @@ fn NewParser_(
                 stmt_loc,
             );
 
-            const closure = p.s(
+            const closure = newStmt(
                 S.SExpr{
                     .value = call,
                 },
@@ -17023,7 +17010,7 @@ fn NewParser_(
                             args[3] = p.newExpr(E.Number{ .value = descriptor_kind }, loc);
 
                             const decorator = p.callRuntime(prop.key.?.loc, "__decorateClass", args);
-                            const decorator_stmt = p.s(S.SExpr{ .value = decorator }, decorator.loc);
+                            const decorator_stmt = newStmt(S.SExpr{ .value = decorator }, decorator.loc);
 
                             if (prop.flags.contains(.is_static)) {
                                 static_decorators.append(decorator_stmt) catch unreachable;
@@ -17084,7 +17071,7 @@ fn NewParser_(
                                 const super = p.newExpr(E.Spread{ .value = p.newExpr(E.Identifier{ .ref = arguments_ref }, stmt.loc) }, stmt.loc);
                                 const args = ExprNodeList.one(p.allocator, super) catch unreachable;
 
-                                constructor_stmts.append(p.s(S.SExpr{ .value = p.newExpr(E.Call{ .target = target, .args = args }, stmt.loc) }, stmt.loc)) catch unreachable;
+                                constructor_stmts.append(newStmt(S.SExpr{ .value = p.newExpr(E.Call{ .target = target, .args = args }, stmt.loc) }, stmt.loc)) catch unreachable;
                             }
 
                             constructor_stmts.appendSlice(instance_members.items) catch unreachable;
@@ -17144,7 +17131,7 @@ fn NewParser_(
                 },
                 .expr => |expr| {
                     var stmts = p.allocator.alloc(Stmt, 1) catch unreachable;
-                    stmts[0] = p.s(S.SExpr{ .value = expr }, expr.loc);
+                    stmts[0] = newStmt(S.SExpr{ .value = expr }, expr.loc);
                     return stmts;
                 },
             }
@@ -17404,21 +17391,7 @@ fn NewParser_(
                 p.popScope();
             }
 
-            return p.stmtsToSingleStmt(stmt.loc, stmts.toOwnedSlice() catch @panic("TODO"));
-        }
-
-        // One statement could potentially expand to several statements
-        fn stmtsToSingleStmt(p: *P, loc: logger.Loc, stmts: []Stmt) Stmt {
-            if (stmts.len == 0) {
-                return Stmt{ .data = Prefill.Data.SEmpty, .loc = loc };
-            }
-
-            if (stmts.len == 1 and std.meta.activeTag(stmts[0].data) != .s_local or (std.meta.activeTag(stmts[0].data) == .s_local and stmts[0].data.s_local.kind == S.Local.Kind.k_var)) {
-                // "let" and "const" must be put in a block when in a single-statement context
-                return stmts[0];
-            }
-
-            return p.s(S.Block{ .stmts = stmts }, loc);
+            return stmtsToSingleStmt(stmt.loc, stmts.toOwnedSlice() catch @panic("TODO"));
         }
 
         fn findLabelSymbol(p: *P, loc: logger.Loc, name: string) FindLabelSymbolResult {
@@ -17683,7 +17656,7 @@ fn NewParser_(
                 .ref = ref,
             }, loc));
             p.expr_list.appendAssumeCapacity(p.newExpr(E.String{ .data = name }, loc));
-            return p.s(S.SExpr{
+            return newStmt(S.SExpr{
                 // I believe that this is a spot we can do $RefreshReg$(name)
                 .value = p.callRuntime(loc, "__name", p.expr_list.items[start..p.expr_list.items.len]),
 
@@ -18359,7 +18332,7 @@ fn NewParser_(
                 }
                 commonjs_wrapper.data.e_call.args.ptr[1] = p.newExpr(E.String{ .data = sourcefile_name }, logger.Loc.Empty);
 
-                new_stmts_list[imports_list.len] = p.s(
+                new_stmts_list[imports_list.len] = newStmt(
                     S.ExportDefault{
                         .value = .{
                             .expr = commonjs_wrapper,
@@ -18567,7 +18540,7 @@ fn NewParser_(
                     var name_ref = try p.declareSymbol(.other, logger.Loc.Empty, export_name_string);
 
                     var body_stmts = export_all_function_body_stmts[named_export_i .. named_export_i + 1];
-                    body_stmts[0] = p.s(
+                    body_stmts[0] = newStmt(
                         // was this originally a named import?
                         // preserve the identifier
                         S.Return{ .value = if (named_export_symbol.namespace_alias != null)
@@ -18632,7 +18605,7 @@ fn NewParser_(
                     logger.Loc.Empty,
                 );
 
-                part_stmts[part_stmts.len - 1] = p.s(
+                part_stmts[part_stmts.len - 1] = newStmt(
                     S.SExpr{
                         .value = p.newExpr(
                             E.Call{
@@ -18652,7 +18625,7 @@ fn NewParser_(
                     logger.Loc.Empty,
                 );
 
-                toplevel_stmts[toplevel_stmts_i] = p.s(
+                toplevel_stmts[toplevel_stmts_i] = newStmt(
                     S.Local{
                         .decls = first_decl,
                     },
@@ -18696,7 +18669,7 @@ fn NewParser_(
                     logger.Loc.Empty,
                 );
                 // (__hmrModule._load = function())()
-                toplevel_stmts[toplevel_stmts_i] = p.s(
+                toplevel_stmts[toplevel_stmts_i] = newStmt(
                     S.SExpr{
                         .value = if (is_async)
                             p.newExpr(E.Await{ .value = call_load }, logger.Loc.Empty)
@@ -18710,14 +18683,14 @@ fn NewParser_(
 
                 if (has_any_exports) {
                     if (named_export_i > 0) {
-                        toplevel_stmts[toplevel_stmts_i] = p.s(
+                        toplevel_stmts[toplevel_stmts_i] = newStmt(
                             S.Local{
                                 .decls = exports_decls[0..named_export_i],
                             },
                             logger.Loc.Empty,
                         );
                     } else {
-                        toplevel_stmts[toplevel_stmts_i] = p.s(
+                        toplevel_stmts[toplevel_stmts_i] = newStmt(
                             S.Empty{},
                             logger.Loc.Empty,
                         );
@@ -18726,7 +18699,7 @@ fn NewParser_(
                     toplevel_stmts_i += 1;
                 }
 
-                toplevel_stmts[toplevel_stmts_i] = p.s(
+                toplevel_stmts[toplevel_stmts_i] = newStmt(
                     S.SExpr{
                         .value = Expr.assign(
                             p.newExpr(
@@ -18756,14 +18729,14 @@ fn NewParser_(
                 toplevel_stmts_i += 1;
                 if (has_any_exports) {
                     if (named_export_i > 0) {
-                        toplevel_stmts[toplevel_stmts_i] = p.s(
+                        toplevel_stmts[toplevel_stmts_i] = newStmt(
                             S.ExportClause{
                                 .items = export_clauses[0..named_export_i],
                             },
                             logger.Loc.Empty,
                         );
                     } else {
-                        toplevel_stmts[toplevel_stmts_i] = p.s(
+                        toplevel_stmts[toplevel_stmts_i] = newStmt(
                             S.Empty{},
                             logger.Loc.Empty,
                         );

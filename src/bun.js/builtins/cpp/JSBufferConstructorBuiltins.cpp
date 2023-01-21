@@ -51,7 +51,7 @@ namespace WebCore {
 const JSC::ConstructAbility s_jsBufferConstructorFromCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_jsBufferConstructorFromCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_jsBufferConstructorFromCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_jsBufferConstructorFromCodeLength = 1832;
+const int s_jsBufferConstructorFromCodeLength = 1984;
 static const JSC::Intrinsic s_jsBufferConstructorFromCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_jsBufferConstructorFromCode =
     "(function (items) {\n" \
@@ -64,6 +64,12 @@ const char* const s_jsBufferConstructorFromCode =
     "    @throwTypeError(\n" \
     "      \"The first argument must be one of type string, Buffer, ArrayBuffer, Array, or Array-like Object.\",\n" \
     "    );\n" \
+    "\n" \
+    "  if (@argumentCount() === 1 && @isTypedArrayView(items)) {\n" \
+    "    var out = this.allocUnsafe(items.byteLength);\n" \
+    "    out.copy(items);\n" \
+    "    return out;\n" \
+    "  }\n" \
     "\n" \
     "  //\n" \
     "  if (\n" \

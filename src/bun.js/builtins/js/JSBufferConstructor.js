@@ -36,6 +36,12 @@ function from(items) {
       "The first argument must be one of type string, Buffer, ArrayBuffer, Array, or Array-like Object.",
     );
 
+  if (@argumentCount() === 1 && @isTypedArrayView(items)) {
+    var out = this.allocUnsafe(items.byteLength);
+    out.copy(items);
+    return out;
+  }
+
   // TODO: figure out why private symbol not found
   if (
     typeof items === "string" ||

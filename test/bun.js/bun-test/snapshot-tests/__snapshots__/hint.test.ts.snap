@@ -1,0 +1,5 @@
+// Jest Snapshot v1, https://goo.gl/fbAQLP
+
+exports[`test hint hint should be well formatted: using a hint 1`] = `some string`;
+
+exports[`test hint hint should be well formatted 1`] = `do not use a hint`;

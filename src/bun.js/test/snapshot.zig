@@ -28,13 +28,21 @@ pub fn resolveSnapshotPath(test_path: fs.Path, allocator: std.mem.Allocator) fs.
     return fs.Path.init(snapshot_file_path);
 }
 
-pub fn createSnapshotName(testName: bun.string, describeScope: *DescribeScope, allocator: std.mem.Allocator) bun.string {
+pub fn createSnapshotName(testName: bun.string, describeScope: *DescribeScope, hint: ZigString, allocator: std.mem.Allocator) bun.string {
     var arr = std.ArrayList(bun.string).init(allocator);
     var parent: ?*DescribeScope = describeScope;
     while (parent) |scope| {
         // can optimize so that each insert is done in O(1)
         if (!std.mem.eql(u8, scope.label, "")) arr.insert(0, scope.label) catch unreachable;
         parent = scope.parent;
+    }
+
+    if (hint.len > 0) {
+        var snap_name_list = [_][]const u8{ testName, ": ", hint.slice() };
+        const snap_name = std.mem.concat(allocator, u8, &snap_name_list) catch unreachable;
+        arr.append(snap_name) catch unreachable;
+        const snapshot_name = strings.join(arr.items, " ", allocator) catch unreachable;
+        return snapshot_name;
     }
     arr.append(testName) catch unreachable;
     const snapshot_name = strings.join(arr.items, " ", allocator) catch unreachable;
@@ -184,7 +192,8 @@ pub const SnapshotFile = struct {
 
         const expected = this.getSnapshotValue(snapshotName, count, globalObject) catch |err| {
             if (err == SnapshotError.SnapshotNotFound) {
-                std.debug.print("SnapshotNotFound\n", .{});
+                Output.prettyln("    <green>Missing Snapshot file, creating one<r>\n", .{});
+                Output.flush();
                 // If the snapshot file does not exist, then we return true
                 // and update the snapshot file
                 this.updateSnapshot = true;
@@ -251,6 +260,7 @@ pub const SnapshotFile = struct {
             var fmt = JSC.ZigConsoleClient.Formatter{ .globalThis = globalObject };
             var value_stringified = test_data.v.toFmt(globalObject, &fmt);
             const count = test_data.count;
+            // @TODO add backtick escaping
             snapshot_file.writer().print("\nexports[`{s} {}`] = `{s}`;\n", .{ key, count, value_stringified }) catch unreachable;
             i += 1;
         }

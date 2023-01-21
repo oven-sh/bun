@@ -1116,8 +1116,13 @@ pub const Expect = struct {
         defer this.postMatch(globalObject);
 
         const _arguments = callframe.arguments(1);
-        if (_arguments.len > 0) {
-            globalObject.throw("toMatchSnapshot does not support `propertyMatchers` or `hint` yet.", .{});
+        const arguments: []const JSValue = _arguments.ptr[0.._arguments.len];
+        var hint: ?JSC.JSValue = null;
+
+        if (_arguments.len == 1) {
+            hint = arguments[0];
+        } else if (_arguments.len > 1) {
+            globalObject.throw("toMatchSnapshot does not support `propertyMatchers` yet.", .{});
         }
 
         if (this.scope.tests.items.len <= this.test_id) {
@@ -1142,7 +1147,11 @@ pub const Expect = struct {
         };
 
         const test_label = this.scope.tests.items[this.test_id].label;
-        const snapshot_name = snapshot.createSnapshotName(test_label, this.scope, allocator);
+        var hint_string = ZigString.init("");
+        if (hint != null) {
+            hint.?.toZigString(&hint_string, globalObject);
+        }
+        const snapshot_name = snapshot.createSnapshotName(test_label, this.scope, hint_string, allocator);
 
         const thisValue = callframe.this();
         const actual: JSValue = Expect.capturedValueGetCached(thisValue) orelse {

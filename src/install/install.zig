@@ -1629,7 +1629,7 @@ pub const PackageManager = struct {
                     return .done;
                 }
 
-                const folder_path = manager.cachedNPMPackageFolderName(this.name.slice(lockfile.buffers.string_bytes.items), this.resolution.value.npm.version);
+                const folder_path = manager.cachedNPMPackageFolderName(lockfile.str(&this.name), this.resolution.value.npm.version);
                 if (manager.isFolderInCache(folder_path)) {
                     manager.setPreinstallState(this.meta.id, lockfile, .done);
                     return .done;
@@ -2227,7 +2227,7 @@ pub const PackageManager = struct {
 
             .folder => {
                 // relative to cwd
-                const res = FolderResolution.getOrPut(.{ .relative = .folder }, version, version.value.folder.slice(this.lockfile.buffers.string_bytes.items), this);
+                const res = FolderResolution.getOrPut(.{ .relative = .folder }, version, this.lockfile.str(&version.value.folder), this);
 
                 switch (res) {
                     .err => |err| return err,
@@ -2244,7 +2244,7 @@ pub const PackageManager = struct {
             },
             .workspace => {
                 // relative to cwd
-                const res = FolderResolution.getOrPut(.{ .relative = .workspace }, version, version.value.workspace.slice(this.lockfile.buffers.string_bytes.items), this);
+                const res = FolderResolution.getOrPut(.{ .relative = .workspace }, version, this.lockfile.str(&version.value.workspace), this);
 
                 switch (res) {
                     .err => |err| return err,
@@ -2260,7 +2260,7 @@ pub const PackageManager = struct {
                 }
             },
             .symlink => {
-                const res = FolderResolution.getOrPut(.{ .global = try this.globalLinkDirPath() }, version, version.value.symlink.slice(this.lockfile.buffers.string_bytes.items), this);
+                const res = FolderResolution.getOrPut(.{ .global = try this.globalLinkDirPath() }, version, this.lockfile.str(&version.value.symlink), this);
 
                 switch (res) {
                     .err => |err| return err,
@@ -5500,9 +5500,7 @@ pub const PackageManager = struct {
             package_id: PackageID,
             comptime log_level: Options.LogLevel,
         ) void {
-            const buf = this.lockfile.buffers.string_bytes.items;
-
-            const name = this.names[package_id].slice(buf);
+            const name = this.lockfile.str(&this.names[package_id]);
             const resolution = this.resolutions[package_id];
 
             if (this.manager.task_queue.fetchRemove(Task.Id.forNPMPackage(
@@ -5773,8 +5771,7 @@ pub const PackageManager = struct {
                 return;
             }
 
-            const buf = this.lockfile.buffers.string_bytes.items;
-            const name = this.names[package_id].slice(buf);
+            const name = this.lockfile.str(&this.names[package_id]);
             const resolution = this.resolutions[package_id];
 
             this.installPackageWithNameAndResolution(package_id, log_level, name, resolution);
@@ -6007,7 +6004,7 @@ pub const PackageManager = struct {
                     // Don't attempt to link incompatible binaries
                     if (meta.isDisabled()) continue;
 
-                    const name: string = installer.names[resolved_id].slice(lockfile.buffers.string_bytes.items);
+                    const name: string = lockfile.str(&installer.names[resolved_id]);
 
                     if (!installer.has_created_bin) {
                         if (!this.options.global) {
@@ -6057,7 +6054,7 @@ pub const PackageManager = struct {
 
                 if (comptime log_level != .silent) {
                     const fmt = "\n<r><yellow>warn:<r> no compatible binaries found for <b>{s}<r>\n";
-                    const args = .{names[package_id].slice(lockfile.buffers.string_bytes.items)};
+                    const args = .{lockfile.str(&names[package_id])};
 
                     if (comptime log_level.showProgress()) {
                         if (Output.enable_ansi_colors) {

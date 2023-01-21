@@ -574,9 +574,7 @@ fn preprocessUpdateRequests(old: *Lockfile, updates: []PackageManager.UpdateRequ
                             const res = resolutions_of_yore[old_resolution];
                             var buf = std.fmt.bufPrint(&temp_buf, "^{}", .{res.value.npm.fmt(old.buffers.string_bytes.items)}) catch break;
                             const external_version = string_builder.append(ExternalString, buf);
-                            const sliced = external_version.value.sliced(
-                                old.buffers.string_bytes.items,
-                            );
+                            const sliced = external_version.value.sliced(old.buffers.string_bytes.items);
                             dep.version = Dependency.parse(
                                 old.allocator,
                                 dep.name,

@@ -396,11 +396,13 @@ pub const ModuleLoader = struct {
             }
 
             pub fn onExtract(this: *Queue, package_id: u32, comptime _: PackageManager.Options.LogLevel) void {
-                if (comptime Environment.allow_assert)
+                if (comptime Environment.allow_assert) {
+                    const lockfile = this.vm().packageManager().lockfile;
                     debug("onExtract: {s} ({d})", .{
-                        this.vm().packageManager().lockfile.str(&this.vm().packageManager().lockfile.packages.get(package_id).name),
+                        lockfile.str(&lockfile.packages.get(package_id).name),
                         package_id,
                     });
+                }
                 this.onPackageID(package_id);
             }
 
@@ -726,7 +728,8 @@ pub const ModuleLoader = struct {
                     bun.default_allocator,
                     "{s} downloading package '{s}@{any}'",
                     .{
-                        std.mem.span(@errorName(err)),                                                  result.name,
+                        std.mem.span(@errorName(err)),
+                        result.name,
                         result.resolution.fmt(vm.packageManager().lockfile.buffers.string_bytes.items),
                     },
                 ),

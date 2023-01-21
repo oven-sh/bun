@@ -48,67 +48,82 @@
 
 namespace WebCore {
 
-const JSC::ConstructAbility s_jsBufferConstructorAllocCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
-const JSC::ConstructorKind s_jsBufferConstructorAllocCodeConstructorKind = JSC::ConstructorKind::None;
-const JSC::ImplementationVisibility s_jsBufferConstructorAllocCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_jsBufferConstructorAllocCodeLength = 185;
-static const JSC::Intrinsic s_jsBufferConstructorAllocCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_jsBufferConstructorAllocCode =
-    "(function (n) {\n" \
-    "    \"use strict\";\n" \
-    "    if (typeof n !== \"number\" || n < 0) {\n" \
-    "      @throwRangeError(\"n must be a positive integer less than 2^32\");\n" \
-    "    }\n" \
-    "    \n" \
-    "    return new this(n);\n" \
-    "})\n" \
-;
-
 const JSC::ConstructAbility s_jsBufferConstructorFromCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_jsBufferConstructorFromCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_jsBufferConstructorFromCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_jsBufferConstructorFromCodeLength = 1035;
+const int s_jsBufferConstructorFromCodeLength = 1832;
 static const JSC::Intrinsic s_jsBufferConstructorFromCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_jsBufferConstructorFromCode =
     "(function (items) {\n" \
     "  \"use strict\";\n" \
     "\n" \
     "  if (!@isConstructor(this))\n" \
-    "        @throwTypeError(\"Buffer.from requires |this| to be a constructor\");\n" \
+    "    @throwTypeError(\"Buffer.from requires |this| to be a constructor\");\n" \
     "\n" \
+    "  if (@isUndefinedOrNull(items))\n" \
+    "    @throwTypeError(\n" \
+    "      \"The first argument must be one of type string, Buffer, ArrayBuffer, Array, or Array-like Object.\",\n" \
+    "    );\n" \
     "\n" \
-    "    //\n" \
-    "    if (typeof items === 'string' || (typeof items === 'object' && items && (items instanceof ArrayBuffer || items instanceof SharedArrayBuffer))) {\n" \
+    "  //\n" \
+    "  if (\n" \
+    "    typeof items === \"string\" ||\n" \
+    "    (typeof items === \"object\" &&\n" \
+    "      (@isTypedArrayView(items) ||\n" \
+    "        items instanceof ArrayBuffer ||\n" \
+    "        items instanceof SharedArrayBuffer ||\n" \
+    "        items instanceof @String))\n" \
+    "  ) {\n" \
+    "    switch (@argumentCount()) {\n" \
+    "      case 1: {\n" \
+    "        return new this(items);\n" \
+    "      }\n" \
+    "      case 2: {\n" \
+    "        return new this(items, @argument(1));\n" \
+    "      }\n" \
+    "      default: {\n" \
+    "        return new this(items, @argument(1), @argument(2));\n" \
+    "      }\n" \
+    "    }\n" \
+    "  }\n" \
+    "\n" \
+    "  var arrayLike = @toObject(\n" \
+    "    items,\n" \
+    "    \"The first argument must be of type string or an instance of Buffer, ArrayBuffer, or Array or an Array-like Object.\",\n" \
+    "  );\n" \
+    "\n" \
+    "  if (!@isJSArray(arrayLike)) {\n" \
+    "    const toPrimitive = @tryGetByIdWithWellKnownSymbol(items, \"toPrimitive\");\n" \
+    "\n" \
+    "    if (toPrimitive) {\n" \
+    "      const primitive = toPrimitive.@call(items, \"string\");\n" \
+    "\n" \
+    "      if (typeof primitive === \"string\") {\n" \
     "        switch (@argumentCount()) {\n" \
-    "            case 1: {\n" \
-    "                return new this(items);\n" \
-    "            }\n" \
-    "            case 2: {\n" \
-    "                return new this(items, @argument(1));\n" \
-    "            }\n" \
-    "            default: {\n" \
-    "                return new this(items, @argument(1), @argument(2));\n" \
-    "            }\n" \
+    "          case 1: {\n" \
+    "            return new this(primitive);\n" \
+    "          }\n" \
+    "          case 2: {\n" \
+    "            return new this(primitive, @argument(1));\n" \
+    "          }\n" \
+    "          default: {\n" \
+    "            return new this(primitive, @argument(1), @argument(2));\n" \
+    "          }\n" \
     "        }\n" \
+    "      }\n" \
     "    }\n" \
     "\n" \
+    "    if (!(\"length\" in arrayLike) || @isCallable(arrayLike)) {\n" \
+    "      @throwTypeError(\n" \
+    "        \"The first argument must be of type string or an instance of Buffer, ArrayBuffer, or Array or an Array-like Object.\",\n" \
+    "      );\n" \
+    "    }\n" \
+    "  }\n" \
     "\n" \
-    "    var arrayLike = @toObject(items, \"Buffer.from requires an array-like object - not null or undefined\");\n" \
-    "\n" \
-    "    //\n" \
-    "    //\n" \
-    "    //\n" \
-    "    if (@isTypedArrayView(arrayLike)) {\n" \
-    "        var length = @typedArrayLength(arrayLike);\n" \
-    "        var result = this.allocUnsafe(length);\n" \
-    "        result.set(arrayLike);\n" \
-    "        return result;\n" \
-    "    } \n" \
-    "\n" \
-    "    //\n" \
-    "    //\n" \
-    "    //\n" \
-    "    return new this(@Uint8Array.from(arrayLike).buffer);\n" \
+    "  //\n" \
+    "  //\n" \
+    "  //\n" \
+    "  return new this(@Uint8Array.from(arrayLike).buffer);\n" \
     "})\n" \
 ;
 

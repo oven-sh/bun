@@ -122,7 +122,8 @@ it("Buffer.from", () => {
   expect(Buffer.from([254], "utf16").join(",")).toBe("254");
   expect(Buffer.isBuffer(Buffer.from([254], "utf16"))).toBe(true);
 
-  expect(Buffer.from(123).join(",")).toBe(Uint8Array.from(123).join(","));
+  expect(() => Buffer.from(123).join(",")).toThrow();
+
   expect(Buffer.from({ length: 124 }).join(",")).toBe(
     Uint8Array.from({ length: 124 }).join(","),
   );
@@ -717,4 +718,62 @@ it("transcode", () => {
 
   // This is a masqueradesAsUndefined function
   expect(() => BufferModule.transcode()).toThrow("Not implemented");
+});
+
+it("Buffer.from (Node.js test/test-buffer-from.js)", () => {
+  const checkString = "test";
+
+  const check = Buffer.from(checkString);
+
+  class MyString extends String {
+    constructor() {
+      super(checkString);
+    }
+  }
+
+  class MyPrimitive {
+    [Symbol.toPrimitive]() {
+      return checkString;
+    }
+  }
+
+  class MyBadPrimitive {
+    [Symbol.toPrimitive]() {
+      return 1;
+    }
+  }
+
+  expect(Buffer.from(new String(checkString))).toStrictEqual(check);
+  expect(Buffer.from(new MyString())).toStrictEqual(check);
+  expect(Buffer.from(new MyPrimitive())).toStrictEqual(check);
+
+  [
+    {},
+    new Boolean(true),
+    {
+      valueOf() {
+        return null;
+      },
+    },
+    {
+      valueOf() {
+        return undefined;
+      },
+    },
+    { valueOf: null },
+    Object.create(null),
+    new Number(true),
+    new MyBadPrimitive(),
+    Symbol(),
+    5n,
+    (one, two, three) => {},
+    undefined,
+    null,
+  ].forEach((input) => {
+    expect(() => Buffer.from(input)).toThrow();
+    expect(() => Buffer.from(input, "hex")).toThrow();
+  });
+
+  expect(() => Buffer.allocUnsafe(10)).not.toThrow(); // Should not throw.
+  expect(() => Buffer.from("deadbeaf", "hex")).not.toThrow(); // Should not throw.
 });

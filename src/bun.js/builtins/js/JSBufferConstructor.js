@@ -25,52 +25,74 @@
 
 // ^ that comment is required or the builtins generator will have a fit.
 
-function alloc(n) {
-    "use strict";
-    if (typeof n !== "number" || n < 0) {
-      @throwRangeError("n must be a positive integer less than 2^32");
-    }
-    
-    return new this(n);
-}
-
 function from(items) {
   "use strict";
 
   if (!@isConstructor(this))
-        @throwTypeError("Buffer.from requires |this| to be a constructor");
+    @throwTypeError("Buffer.from requires |this| to be a constructor");
 
+  if (@isUndefinedOrNull(items))
+    @throwTypeError(
+      "The first argument must be one of type string, Buffer, ArrayBuffer, Array, or Array-like Object.",
+    );
 
-    // TODO: figure out why private symbol not found
-    if (typeof items === 'string' || (typeof items === 'object' && items && (items instanceof ArrayBuffer || items instanceof SharedArrayBuffer))) {
+  // TODO: figure out why private symbol not found
+  if (
+    typeof items === "string" ||
+    (typeof items === "object" &&
+      (@isTypedArrayView(items) ||
+        items instanceof ArrayBuffer ||
+        items instanceof SharedArrayBuffer ||
+        items instanceof @String))
+  ) {
+    switch (@argumentCount()) {
+      case 1: {
+        return new this(items);
+      }
+      case 2: {
+        return new this(items, @argument(1));
+      }
+      default: {
+        return new this(items, @argument(1), @argument(2));
+      }
+    }
+  }
+
+  var arrayLike = @toObject(
+    items,
+    "The first argument must be of type string or an instance of Buffer, ArrayBuffer, or Array or an Array-like Object.",
+  );
+
+  if (!@isJSArray(arrayLike)) {
+    const toPrimitive = @tryGetByIdWithWellKnownSymbol(items, "toPrimitive");
+
+    if (toPrimitive) {
+      const primitive = toPrimitive.@call(items, "string");
+
+      if (typeof primitive === "string") {
         switch (@argumentCount()) {
-            case 1: {
-                return new this(items);
-            }
-            case 2: {
-                return new this(items, @argument(1));
-            }
-            default: {
-                return new this(items, @argument(1), @argument(2));
-            }
+          case 1: {
+            return new this(primitive);
+          }
+          case 2: {
+            return new this(primitive, @argument(1));
+          }
+          default: {
+            return new this(primitive, @argument(1), @argument(2));
+          }
         }
+      }
     }
 
+    if (!("length" in arrayLike) || @isCallable(arrayLike)) {
+      @throwTypeError(
+        "The first argument must be of type string or an instance of Buffer, ArrayBuffer, or Array or an Array-like Object.",
+      );
+    }
+  }
 
-    var arrayLike = @toObject(items, "Buffer.from requires an array-like object - not null or undefined");
-
-    // Buffer-specific fast path: 
-    // - uninitialized memory
-    // - use .set
-    if (@isTypedArrayView(arrayLike)) {
-        var length = @typedArrayLength(arrayLike);
-        var result = this.allocUnsafe(length);
-        result.set(arrayLike);
-        return result;
-    } 
-
-    // Don't pass the second argument because Node's Buffer.from doesn't accept
-    // a function and Uint8Array.from requires it if it exists
-    // That means we cannot use @tailCallFowrardArguments here, sadly
-    return new this(@Uint8Array.from(arrayLike).buffer);
+  // Don't pass the second argument because Node's Buffer.from doesn't accept
+  // a function and Uint8Array.from requires it if it exists
+  // That means we cannot use @tailCallFowrardArguments here, sadly
+  return new this(@Uint8Array.from(arrayLike).buffer);
 }

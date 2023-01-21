@@ -2854,7 +2854,7 @@ pub const JSValue = enum(JSValueReprInt) {
         return switch (comptime Number) {
             JSValue => number,
             f32, f64 => jsNumberFromDouble(@as(f64, number)),
-            u8, i16, i32, c_int, i8, u16 => jsNumberFromInt32(@intCast(i32, number)),
+            c_ushort, u8, i16, i32, c_int, i8, u16 => jsNumberFromInt32(@intCast(i32, number)),
             u32, u52, c_uint, i64 => jsNumberFromInt64(@intCast(i64, number)),
             usize, u64 => jsNumberFromUint64(@intCast(u64, number)),
             comptime_int => switch (number) {

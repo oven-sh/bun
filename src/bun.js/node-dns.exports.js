@@ -25,6 +25,22 @@ function lookup(domain, options, callback) {
   );
 }
 
+function resolveSrv(hostname, callback) {
+
+  if (typeof callback != "function") {
+    throw new TypeError("callback must be a function");
+  }
+
+  dns.resolveSrv(hostname, options).then(
+    (results) => {
+      callback(null, results);
+    },
+    (error) => {
+      callback(error);
+    },
+  );
+}
+
 function lookupService(address, port, callback) {
   if (typeof callback != "function") {
     throw new TypeError("callback must be a function");
@@ -209,6 +225,10 @@ export const promises = {
     return dns.lookup(hostname, { family: 6 });
   },
 
+  resolveSrv(hostname) {
+    return dns.resolveSrv(hostname);
+  },
+
   Resolver: class Resolver {
     constructor(options) {}
 
@@ -259,7 +279,7 @@ export const promises = {
     }
 
     resolveSrv(hostname) {
-      return Promise.resolve([]);
+      return dns.resolveSrv(hostname);
     }
 
     resolveCaa(hostname) {

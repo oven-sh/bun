@@ -650,13 +650,13 @@ declare module "dns" {
    * ```
    * @since v0.1.27
    */
-  // export function resolveSrv(
-  //   hostname: string,
-  //   callback: (err: ErrnoException | null, addresses: SrvRecord[]) => void,
-  // ): void;
-  // export namespace resolveSrv {
-  //   function __promisify__(hostname: string): Promise<SrvRecord[]>;
-  // }
+  export function resolveSrv(
+    hostname: string,
+    callback: (err: ErrnoException | null, addresses: SrvRecord[]) => void,
+  ): void;
+  export namespace resolveSrv {
+    function __promisify__(hostname: string): Promise<SrvRecord[]>;
+  }
   /**
    * Uses the DNS protocol to resolve text queries (`TXT` records) for the`hostname`. The `records` argument passed to the `callback` function is a
    * two-dimensional array of the text records available for `hostname` (e.g.`[ ['v=spf1 ip4:0.0.0.0 ', '~all' ] ]`). Each sub-array contains TXT chunks of

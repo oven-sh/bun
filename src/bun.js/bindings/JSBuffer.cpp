@@ -342,13 +342,15 @@ static inline JSC::EncodedJSValue constructBufferFromStringAndEncoding(JSC::JSGl
     EnsureStillAliveScope arg0 = callFrame->argument(0);
     auto* str = arg0.value().toString(lexicalGlobalObject);
 
+    RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode(jsUndefined()));
+
     EnsureStillAliveScope arg1 = callFrame->argument(1);
 
     if (str->length() == 0)
         return constructBufferEmpty(lexicalGlobalObject, callFrame);
 
     if (callFrame->argumentCount() > 1) {
-        std::optional<BufferEncodingType> encoded = parseEnumeration<BufferEncodingType>(*lexicalGlobalObject, callFrame->argument(1));
+        std::optional<BufferEncodingType> encoded = parseEnumeration<BufferEncodingType>(*lexicalGlobalObject, arg1.value());
         if (!encoded) {
             throwTypeError(lexicalGlobalObject, scope, "Invalid encoding"_s);
             return JSC::JSValue::encode(jsUndefined());
@@ -1702,6 +1704,11 @@ void JSBufferPrototype::finishCreation(VM& vm, JSC::JSGlobalObject* globalThis)
 
 const ClassInfo JSBufferPrototype::s_info = { "Buffer"_s, nullptr, nullptr, nullptr, CREATE_METHOD_TABLE(JSBufferPrototype) };
 
+static const JSC::DOMJIT::Signature DOMJITSignaturejsBufferConstructorAlloc(jsBufferConstructorAllocWithoutTypeChecks,
+    JSBufferConstructor::info(),
+    JSC::DOMJIT::Effect::forWriteKinds(JSC::DFG::AbstractHeapKind::Heap),
+    JSC::SpecUint8Array, JSC::SpecInt32Only);
+
 static const JSC::DOMJIT::Signature DOMJITSignaturejsBufferConstructorAllocUnsafe(jsBufferConstructorAllocUnsafeWithoutTypeChecks,
     JSBufferConstructor::info(),
     JSC::DOMJIT::Effect::forWriteKinds(JSC::DFG::AbstractHeapKind::Heap),
@@ -1713,16 +1720,16 @@ static const JSC::DOMJIT::Signature DOMJITSignaturejsBufferConstructorAllocUnsaf
 
 /* Hash table for constructor */
 static const HashTableValue JSBufferConstructorTableValues[] = {
-    { "alloc"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::Builtin), NoIntrinsic, { HashTableValue::BuiltinGeneratorType, jsBufferConstructorAllocCodeGenerator, 1 } },
+    { "alloc"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DOMJITFunction), NoIntrinsic, { HashTableValue::DOMJITFunctionType, jsBufferConstructorFunction_alloc, &DOMJITSignaturejsBufferConstructorAlloc } },
     // { "alloc"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DOMJITFunction), NoIntrinsic, { HashTableValue::DOMJITFunctionType, jsBufferConstructorFunction_alloc, &DOMJITSignaturejsBufferConstructorAlloc } },
-    { "allocUnsafe"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsBufferConstructorFunction_allocUnsafe, 1 } },
-    // { "allocUnsafe"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DOMJITFunction), NoIntrinsic, { HashTableValue::DOMJITFunctionType, jsBufferConstructorFunction_allocUnsafe, &DOMJITSignaturejsBufferConstructorAllocUnsafe } },
-    { "allocUnsafeSlow"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsBufferConstructorFunction_allocUnsafeSlow, 1 } },
-    // { "allocUnsafeSlow"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DOMJITFunction), NoIntrinsic, { HashTableValue::DOMJITFunctionType, jsBufferConstructorFunction_allocUnsafeSlow, &DOMJITSignaturejsBufferConstructorAllocUnsafeSlow } },
+    // { "allocUnsafe"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsBufferConstructorFunction_allocUnsafe, 1 } },
+    { "allocUnsafe"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DOMJITFunction), NoIntrinsic, { HashTableValue::DOMJITFunctionType, jsBufferConstructorFunction_allocUnsafe, &DOMJITSignaturejsBufferConstructorAllocUnsafe } },
+    // { "allocUnsafeSlow"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsBufferConstructorFunction_allocUnsafeSlow, 1 } },
+    { "allocUnsafeSlow"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DOMJITFunction), NoIntrinsic, { HashTableValue::DOMJITFunctionType, jsBufferConstructorFunction_allocUnsafeSlow, &DOMJITSignaturejsBufferConstructorAllocUnsafeSlow } },
     { "byteLength"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsBufferConstructorFunction_byteLength, 2 } },
     { "compare"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsBufferConstructorFunction_compare, 2 } },
     { "concat"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsBufferConstructorFunction_concat, 2 } },
-    { "from"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::Builtin), NoIntrinsic, { HashTableValue::BuiltinGeneratorType, jsBufferConstructorFromCodeGenerator, 1 } },
+    { "from"_s, static_cast<unsigned>(JSC::PropertyAttribute::Builtin), NoIntrinsic, { HashTableValue::BuiltinGeneratorType, jsBufferConstructorFromCodeGenerator, 1 } },
     { "isBuffer"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsBufferConstructorFunction_isBuffer, 1 } },
     { "toBuffer"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsBufferConstructorFunction_toBuffer, 1 } },
     { "isEncoding"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsBufferConstructorFunction_isEncoding, 1 } },
@@ -1756,11 +1763,9 @@ JSC::JSObject* createBufferConstructor(JSC::VM& vm, JSC::JSGlobalObject* globalO
 
 } // namespace WebCore
 
+// this is now a no-op
 void toBuffer(JSC::JSGlobalObject* lexicalGlobalObject, JSC::JSUint8Array* uint8Array)
 {
-    JSC::VM& vm = lexicalGlobalObject->vm();
-    auto clientData = WebCore::clientData(vm);
-    JSC::JSObject* object = JSC::JSValue(uint8Array).getObject();
 }
 
 JSC_DEFINE_HOST_FUNCTION(constructJSBuffer, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
@@ -1782,7 +1787,8 @@ JSC_DEFINE_HOST_FUNCTION(constructJSBuffer, (JSC::JSGlobalObject * lexicalGlobal
     JSC::JSObject* constructor = lexicalGlobalObject->m_typedArrayUint8.constructor(lexicalGlobalObject);
 
     MarkedArgumentBuffer args;
-    for (size_t i = 0; i < argsCount; ++i)
+    args.append(distinguishingArg);
+    for (size_t i = 1; i < argsCount; ++i)
         args.append(callFrame->uncheckedArgument(i));
 
     JSC::JSObject* object = JSC::construct(lexicalGlobalObject, constructor, callFrame->newTarget(), args, "Failed to construct 'Buffer' object"_s);

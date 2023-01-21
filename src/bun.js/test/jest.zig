@@ -143,8 +143,6 @@ pub const TestRunner = struct {
 
     pub fn reportPass(this: *TestRunner, test_id: Test.ID, file: string, label: string, expectations: u32, parent: ?*DescribeScope) void {
         this.tests.items(.status)[test_id] = .pass;
-        // @TODO run this just on test close
-        // this.tests.items(.status)[test_id].snapshot.appendToFile();
         this.callback.onTestPass(this.callback, test_id, file, label, expectations, parent);
     }
     pub fn reportFailure(this: *TestRunner, test_id: Test.ID, file: string, label: string, expectations: u32, parent: ?*DescribeScope) void {

@@ -87,7 +87,6 @@ pub const SnapshotFile = struct {
     }
 
     pub fn readSnapshot(this: *SnapshotFile) !bun.string {
-        // @TODO add check to throw error if the snapshot file does not exist.
         var file: std.fs.File = std.fs.cwd().openFile(this.path.text, .{ .mode = .read_write }) catch {
             this.snapshotData = SnapshotError.SnapshotNotFound;
             return SnapshotError.SnapshotNotFound;
@@ -148,7 +147,6 @@ pub const SnapshotFile = struct {
         const snapshot_key = std.fmt.allocPrint(this.allocator, "{s} {}", .{ snapshotName, count }) catch unreachable;
 
         const test_name_string = ZigString.init(snapshot_key);
-        // @TODO get this to not segfault if the snapshot for the key doesn't exist
         const snapshotData = this.snapshotData catch {
             this.updateSnapshot = true;
             return SnapshotError.SnapshotNotFound;
@@ -178,8 +176,6 @@ pub const SnapshotFile = struct {
         return std.mem.eql(u8, actual_formatted, expected_formatted);
     }
 
-    // @TODO if the snapshot file is not found, then we set update = true
-    // and save the contents of the test after the run
     pub fn match(this: *SnapshotFile, snapshotName: bun.string, actual: JSC.JSValue, not: bool, globalObject: *JSC.JSGlobalObject) !bool {
         this.globalObject = globalObject;
         var count: u32 = this.incrementCounter(snapshotName) catch 1;

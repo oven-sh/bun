@@ -98,7 +98,7 @@ jobs:
       - name: Add package.json
         run: |
           cd ${{runner.temp}}/dependencies
-          echo "{ "name": "bun-dependencies-${{matrix.tag}}", "description": "Precompiled dependencies for building Bun", "version": "0.0.1-${{github.sha}}", "os": ["linux"], "cpu": ["${{matrix.package_json_arch}}"], "repository": "https://github.com/${{github.repository}}" }' > package.json
+          echo '{ "name": "bun-dependencies-${{matrix.tag}}", "description": "Precompiled dependencies for building Bun", "version": "0.0.1-${{github.sha}}", "os": ["linux"], "cpu": ["${{matrix.package_json_arch}}"], "repository": "https://github.com/${{github.repository}}" }' > package.json
       - uses: actions/setup-node@v3
         with:
           node-version: "16.x"

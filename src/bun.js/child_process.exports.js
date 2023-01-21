@@ -290,7 +290,9 @@ export function execFile(file, args, options, callback) {
 
     if (args?.length) cmd += ` ${ArrayPrototypeJoin.call(args, " ")}`;
     if (!ex) {
-      ex = genericNodeError(`Command failed: ${cmd}\n${stderr}`, {
+      let message = `Command failed: ${cmd}`;
+      if (stderr) message += `\n${stderr}`;
+      ex = genericNodeError(message, {
         // code: code < 0 ? getSystemErrorName(code) : code, // TODO: Add getSystemErrorName
         code: code,
         killed: child.killed || killed,

@@ -182,7 +182,7 @@ pub const String = extern struct {
         } else {
             const a = this.ptr();
             const b = that.ptr();
-            return strings.eql(this_buf[0..a.len], that_buf[0..b.len]);
+            return strings.eql(this_buf[a.off..][0..a.len], that_buf[b.off..][0..b.len]);
         }
     }
 
@@ -689,11 +689,11 @@ pub const Version = extern struct {
         if (lhs.patch < rhs.patch) return .lt;
         if (lhs.patch > rhs.patch) return .gt;
 
-        if (lhs.tag.hasPre() != rhs.tag.hasPre())
-            return if (lhs.tag.hasPre()) .lt else .gt;
-
-        if (lhs.tag.hasBuild() != rhs.tag.hasBuild())
-            return if (lhs.tag.hasBuild()) .gt else .lt;
+        if (lhs.tag.hasPre()) {
+            if (!rhs.tag.hasPre()) return .lt;
+        } else {
+            if (rhs.tag.hasPre()) return .gt;
+        }
 
         return .eq;
     }
@@ -764,7 +764,7 @@ pub const Version = extern struct {
         }
 
         pub fn eql(lhs: Tag, rhs: Tag) bool {
-            return lhs.build.hash == rhs.build.hash and lhs.pre.hash == rhs.pre.hash;
+            return lhs.pre.hash == rhs.pre.hash;
         }
 
         pub const TagResult = struct {
@@ -1430,9 +1430,7 @@ pub const Query = struct {
     }
 
     pub fn satisfies(this: *const Query, version: Version) bool {
-        const left = this.range.satisfies(version);
-
-        return left and (this.next orelse return true).satisfies(version);
+        return this.range.satisfies(version) and (this.next orelse return true).satisfies(version);
     }
 
     const Token = struct {

@@ -559,7 +559,7 @@ it("should handle life-cycle scripts within workspaces", async () => {
   await access(join(package_dir, "bun.lockb"));
 });
 
-function dummyRegistry(urls) {
+function dummyRegistry(urls, version = "0.0.2") {
   return async (request) => {
     urls.push(request.url);
     expect(request.method).toBe("GET");
@@ -573,18 +573,18 @@ function dummyRegistry(urls) {
     expect(await request.text()).toBe("");
     const name = request.url.slice(request.url.lastIndexOf("/") + 1);
     return new Response(JSON.stringify({
-      name: name,
+      name,
       versions: {
-        "0.0.2": {
-          name: name,
-          version: "0.0.2",
+        [version]: {
+          name,
+          version,
           dist: {
             tarball: `${request.url}.tgz`,
           },
         },
       },
       "dist-tags": {
-        latest: "0.0.2",
+        latest: version,
       },
     }));
   };
@@ -859,7 +859,7 @@ it("should handle ^0.0.2 in dependencies", async () => {
 
 it("should handle ^0.0.2-rc in dependencies", async () => {
   const urls: string[] = [];
-  handler = dummyRegistry(urls);
+  handler = dummyRegistry(urls, "0.0.2-rc");
   await writeFile(
     join(package_dir, "package.json"),
     JSON.stringify({
@@ -884,7 +884,57 @@ it("should handle ^0.0.2-rc in dependencies", async () => {
   expect(stdout).toBeDefined();
   const out = await new Response(stdout).text();
   expect(out.replace(/\s*\[[0-9\.]+ms\]\s*$/, "").split(/\r?\n/)).toEqual([
-    " + bar@0.0.2", "",
+    " + bar@0.0.2-rc", "",
+    " 1 packages installed",
+  ]);
+  expect(await exited).toBe(0);
+  expect(urls).toEqual([
+    "http://localhost:54321/bar",
+    "http://localhost:54321/bar.tgz",
+  ]);
+  expect(requested).toBe(2);
+  expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([
+    ".cache",
+    "bar",
+  ]);
+  expect(await readdirSorted(join(package_dir, "node_modules", "bar"))).toEqual([
+    "package.json",
+  ]);
+  expect(await file(join(package_dir, "node_modules", "bar", "package.json")).json()).toEqual({
+    name: "baz",
+    version: "0.0.2",
+  });
+  await access(join(package_dir, "bun.lockb"));
+});
+
+it("should handle ^0.0.2-alpha.3+b4d in dependencies", async () => {
+  const urls: string[] = [];
+  handler = dummyRegistry(urls, "0.0.2-alpha.3");
+  await writeFile(
+    join(package_dir, "package.json"),
+    JSON.stringify({
+      name: "foo",
+      version: "0.0.1",
+      dependencies: {
+        "bar": "^0.0.2-alpha.3+b4d",
+      },
+    }),
+  );
+  const { stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "install", "--config", import.meta.dir + "/basic.toml"],
+    cwd: package_dir,
+    stdout: null,
+    stdin: "pipe",
+    stderr: "pipe",
+    env,
+  });
+  expect(stderr).toBeDefined();
+  const err = await new Response(stderr).text();
+  expect(err).toContain("Saved lockfile");
+  expect(stdout).toBeDefined();
+  const out = await new Response(stdout).text();
+  expect(out.replace(/\s*\[[0-9\.]+ms\]\s*$/, "").split(/\r?\n/)).toEqual([
+    " + bar@0.0.2-alpha.3", "",
     " 1 packages installed",
   ]);
   expect(await exited).toBe(0);

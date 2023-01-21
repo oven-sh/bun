@@ -816,3 +816,32 @@ test("class constructor parameter properties", () => {
   expect(c.d).toBe("default");
   expect(c.f).toBe(5);
 });
+
+test("class expressions are lowered correctly (no decorators)", () => {
+  const A = class a {
+    constructor(readonly b: string = "default") {
+      expect(b).toBe(b);
+      expect(this.b).toBe(b);
+    }
+  };
+
+  const a = new A("hello class expression");
+  expect(a.b).toBe("hello class expression");
+
+  const B = class b extends A {};
+  const b = new B();
+  expect(b.b).toBe("default");
+
+  const C = class c extends A {
+    constructor(public f: number) {
+      super();
+      expect(this.b).toBe("default");
+      expect(this.f).toBe(f);
+      expect(f).toBe(f);
+    }
+  };
+
+  const c = new C(5);
+  expect(c.b).toBe("default");
+  expect(c.f).toBe(5);
+});

@@ -586,43 +586,16 @@ CMD make headers \
 
 
 
-# FROM bun-test-base as test_base
+FROM scratch as compile-dependencies
 
-# ARG DEBIAN_FRONTEND=noninteractive
-# ARG GITHUB_WORKSPACE=/build
-# ARG ZIG_PATH=${GITHUB_WORKSPACE}/zig
-# # Directory extracts to "bun-webkit"
-# ARG WEBKIT_DIR=${GITHUB_WORKSPACE}/bun-webkit 
-# ARG BUN_RELEASE_DIR=${GITHUB_WORKSPACE}/bun-release
-# ARG BUN_DEPS_OUT_DIR=${GITHUB_WORKSPACE}/bun-deps
-# ARG BUN_DIR=${GITHUB_WORKSPACE}/bun
-
-# ARG BUILDARCH=amd64
-# RUN groupadd -r chromium && useradd   -d  ${BUN_DIR} -M -r -g chromium -G audio,video chromium \
-#     && mkdir -p /home/chromium/Downloads && chown -R chromium:chromium /home/chromium
-
-# USER chromium
-# WORKDIR $BUN_DIR
-
-# ENV NPM_CLIENT bun
-# ENV PATH "${BUN_DIR}/packages/bun-linux-x64:${BUN_DIR}/packages/bun-linux-aarch64:$PATH"
-# ENV CI 1
-# ENV BROWSER_EXECUTABLE /usr/bin/chromium
-
-# COPY ./test ${BUN_DIR}/test
-# COPY Makefile ${BUN_DIR}/Makefile
-# COPY package.json ${BUN_DIR}/package.json
-# COPY .docker/run-test.sh ${BUN_DIR}/run-test.sh
-# COPY ./bun.lockb ${BUN_DIR}/bun.lockb   
-
-# # # We don't want to worry about architecture differences in this image
-# COPY --from=release /opt/bun/bin/bun ${BUN_DIR}/packages/bun-linux-aarch64/bun
-# COPY --from=release /opt/bun/bin/bun ${BUN_DIR}/packages/bun-linux-x64/bun
-
-# USER root
-# RUN chgrp -R chromium ${BUN_DIR} && chmod g+rwx ${BUN_DIR} && chown -R chromium:chromium ${BUN_DIR}
-# USER chromium
-
-# CMD [ "bash", "run-test.sh" ]
-
-# FROM release
+COPY --from=zlib ${BUN_DEPS_OUT_DIR}/*.a /
+COPY --from=libarchive ${BUN_DEPS_OUT_DIR}/*.a /
+COPY --from=boringssl ${BUN_DEPS_OUT_DIR}/*.a /
+COPY --from=lolhtml ${BUN_DEPS_OUT_DIR}/*.a /
+COPY --from=mimalloc ${BUN_DEPS_OUT_DIR}/*.o /
+COPY --from=picohttp ${BUN_DEPS_OUT_DIR}/*.o /
+COPY --from=sqlite ${BUN_DEPS_OUT_DIR}/*.o  /
+COPY --from=tinycc ${BUN_DEPS_OUT_DIR}/*.a /
+COPY --from=uws ${BUN_DEPS_OUT_DIR}/*.a /
+COPY --from=uws ${BUN_DEPS_OUT_DIR}/*.o /
+COPY --from=c-ares ${BUN_DEPS_OUT_DIR}/*.a /

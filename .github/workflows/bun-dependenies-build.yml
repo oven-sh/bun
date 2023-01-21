@@ -1,0 +1,119 @@
+name: bun-dependencies
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+  TEST_TAG: bun-test-dependencies
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "src/deps/**/*"
+      - "Makefile"
+      - "Dockerfile"
+  pull_request:
+    branches:
+      - main
+    paths:
+      - "src/deps/**/*"
+      - "Makefile"
+      - "Dockerfile"
+  # Allows you to run this workflow manually from the Actions tab
+  workflow_dispatch:
+
+jobs:
+  dependencies:
+    name: ${{matrix.tag}}
+    runs-on: ${{matrix.runner}}
+    timeout-minutes: 90
+    strategy:
+      matrix:
+        include:
+          - cpu: haswell
+            tag: linux-x64
+            arch: x86_64
+            build_arch: amd64
+            runner: linux-amd64
+            package_json_arch: x64
+            webkit_url: "https://github.com/oven-sh/WebKit/releases/download/dec30/bun-webkit-linux-amd64-lto.tar.gz"
+            webkit_basename: "bun-webkit-linux-amd64-lto"
+            build_machine_arch: x86_64
+          - cpu: westmere
+            tag: linux-x64-baseline
+            arch: x86_64
+            build_arch: amd64
+            package_json_arch: x64
+            runner: linux-amd64
+            webkit_url: "https://github.com/oven-sh/WebKit/releases/download/dec30/bun-webkit-linux-amd64-lto.tar.gz"
+            webkit_basename: "bun-webkit-linux-amd64-lto"
+            build_machine_arch: x86_64
+          - cpu: native
+            tag: linux-aarch64
+            arch: aarch64
+            build_arch: arm64
+            runner: linux-arm64
+            package_json_arch: arm64
+            webkit_url: "https://github.com/oven-sh/WebKit/releases/download/dec30/bun-webkit-linux-arm64-lto.tar.gz"
+            webkit_basename: "bun-webkit-linux-arm64-lto"
+            build_machine_arch: aarch64
+
+    steps:
+      - uses: actions/checkout@v3
+        with:
+          submodules: recursive
+      - uses: docker/setup-buildx-action@v2
+        id: buildx
+        with:
+          install: true
+      - name: Run
+        run: |
+          rm -rf ${{runner.temp}}/release
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v2
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - run: |
+          mkdir -p /tmp/.buildx-cache-${{matrix.tag}}
+      - name: Build and push
+        uses: docker/build-push-action@v3
+        with:
+          context: .
+          push: false
+          cache-from: type=local,src=/tmp/.buildx-cache-${{matrix.tag}}-compile-dependencies
+          cache-to: type=local,dest=/tmp/.buildx-cache-${{matrix.tag}}-compile-dependencies
+          build-args: |
+            ARCH=${{matrix.arch}}
+            BUILDARCH=${{matrix.build_arch}}
+            BUILD_MACHINE_ARCH=${{matrix.build_machine_arch}}
+            CPU_TARGET=${{matrix.cpu}}
+            WEBKIT_URL=${{matrix.webkit_url}}
+            GIT_SHA=${{github.sha}}
+            WEBKIT_BASENAME=${{matrix.webkit_basename}}
+          platforms: linux/${{matrix.build_arch}}
+          target: compile-dependencies
+          outputs: type=local,dest=${{runner.temp}}/dependencies
+      - name: Add package.json
+        run: |
+          cd ${{runner.temp}}/dependencies
+          echo '{ "name": "bun-dependencies-${{matrix.tag}}", "description": "Precompiled dependencies for building Bun" "version": "0.0.1-${{github.sha}}", "os": ["linux"], "cpu": ["${{matrix.package_json_arch}}"], "repository": "https://github.com/${{github.repository}}" }' > package.json
+      - uses: actions/setup-node@v3
+        with:
+          node-version: "16.x"
+          registry-url: "https://registry.npmjs.org"
+      - name: Publish to npm
+        if: github.ref == 'refs/heads/main'
+        run: |
+          cd ${{runner.temp}}/dependencies
+          npm publish --tag next --access=public
+      - name: Pack dependencies
+        run: |
+          cd ${{runner.temp}}/dependencies
+          npm pack --pack-destination ${{runner.temp}}/dependencies
+      - name: Upload dependencies
+        uses: actions/upload-artifact@v2
+        with:
+          name: bun-dependencies-${{matrix.tag}}
+          path: ${{runner.temp}}/dependencies/bun-dependencies-${{matrix.tag}}-0.0.1-${{github.sha}}.tgz

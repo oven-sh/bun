@@ -842,9 +842,7 @@ pub const Fetch = struct {
                         } else if (FetchHeaders.createFromJS(ctx.ptr(), headers_)) |headers__| {
                             headers = Headers.from(headers__, bun.default_allocator) catch unreachable;
                             headers__.deref();
-                        } else {
-
-                        } if (request.headers) |head| {
+                        } else if (request.headers) |head| {
                             headers = Headers.from(head, bun.default_allocator) catch unreachable;
                         }
                         

@@ -1446,13 +1446,13 @@ pub const PackageManager = struct {
         }
     };
 
-    pub fn failRootResolution(this: *PackageManager, dependency: Dependency, dependency_id: PackageID, err: anyerror) void {
+    pub fn failRootResolution(this: *PackageManager, dependency: *const Dependency, dependency_id: PackageID, err: anyerror) void {
         if (this.dynamic_root_dependencies) |*dynamic| {
             dynamic.items[dependency_id].failed = err;
             if (this.onWake.context) |ctx| {
                 this.onWake.getonDependencyError()(
                     ctx,
-                    dependency,
+                    dependency.*,
                     dependency_id,
                     err,
                 );
@@ -1535,7 +1535,7 @@ pub const PackageManager = struct {
         if (is_main) {
             this.enqueueDependencyWithMainAndSuccessFn(
                 index,
-                cloned_dependency,
+                &cloned_dependency,
                 invalid_package_id,
                 true,
                 assignRootResolution,
@@ -1547,7 +1547,7 @@ pub const PackageManager = struct {
         } else {
             this.enqueueDependencyWithMainAndSuccessFn(
                 index,
-                cloned_dependency,
+                &cloned_dependency,
                 invalid_package_id,
                 false,
                 assignRootResolution,
@@ -2093,7 +2093,7 @@ pub const PackageManager = struct {
                     package.resolution.value.npm.version,
                 );
 
-                if (try this.generateNetworkTaskForTarball(task_id, manifest.str(find_result.package.tarball_url), package)) |network_task| {
+                if (try this.generateNetworkTaskForTarball(task_id, manifest.str(&find_result.package.tarball_url), package)) |network_task| {
                     return ResolvedPackageResult{
                         .package = package,
                         .is_first_time = true,
@@ -2164,7 +2164,7 @@ pub const PackageManager = struct {
     }
 
     const SuccessFn = *const fn (*PackageManager, PackageID, PackageID) void;
-    const FailFn = *const fn (*PackageManager, Dependency, PackageID, anyerror) void;
+    const FailFn = *const fn (*PackageManager, *const Dependency, PackageID, anyerror) void;
     fn assignResolution(this: *PackageManager, dependency_id: PackageID, package_id: PackageID) void {
         this.lockfile.buffers.resolutions.items[dependency_id] = package_id;
     }
@@ -2193,6 +2193,9 @@ pub const PackageManager = struct {
         resolution: PackageID,
         comptime successFn: SuccessFn,
     ) !?ResolvedPackageResult {
+        name.assertDefined();
+        alias.assertDefined();
+
         if (resolution < this.lockfile.packages.len) {
             return ResolvedPackageResult{ .package = this.lockfile.packages.get(resolution) };
         }
@@ -2397,7 +2400,8 @@ pub const PackageManager = struct {
     fn enqueueDependencyWithMain(
         this: *PackageManager,
         id: u32,
-        dependency: Dependency,
+        /// This must be a *const to prevent UB
+        dependency: *const Dependency,
         resolution: PackageID,
         comptime is_main: bool,
     ) !void {
@@ -2411,21 +2415,21 @@ pub const PackageManager = struct {
         );
     }
 
+    /// Q: "What do we do with a dependency in a package.json?"
+    /// A: "We enqueue it!"
     pub fn enqueueDependencyWithMainAndSuccessFn(
         this: *PackageManager,
         id: u32,
-        dependency: Dependency,
+        /// This must be a *const to prevent UB
+        dependency: *const Dependency,
         resolution: PackageID,
         comptime is_main: bool,
         comptime successFn: SuccessFn,
         comptime failFn: ?FailFn,
     ) !void {
         const alias = dependency.name;
-        const name = switch (dependency.version.tag) {
-            .npm => dependency.version.value.npm.name,
-            .dist_tag => dependency.version.value.dist_tag.name,
-            else => alias,
-        };
+        const name = dependency.realname();
+
         const name_hash = switch (dependency.version.tag) {
             .dist_tag, .npm => Lockfile.stringHash(this.lockfile.str(&name)),
             else => dependency.name_hash,
@@ -2721,9 +2725,10 @@ pub const PackageManager = struct {
             var i: u32 = dependencies_list.off;
             const end = dependencies_list.off + dependencies_list.len;
             while (i < end) : (i += 1) {
+                const dependency = lockfile.buffers.dependencies.items[i];
                 this.enqueueDependencyWithMain(
                     i,
-                    lockfile.buffers.dependencies.items[i],
+                    &dependency,
                     lockfile.buffers.resolutions.items[i],
                     false,
                 ) catch {};
@@ -2769,10 +2774,12 @@ pub const PackageManager = struct {
             const end = dependencies_list.off + dependencies_list.len;
             // we have to be very careful with pointers here
             while (i < end) : (i += 1) {
+                const dependency = lockfile.buffers.dependencies.items[i];
+                const resolution = lockfile.buffers.resolutions.items[i];
                 this.enqueueDependencyWithMain(
                     i,
-                    lockfile.buffers.dependencies.items[i],
-                    lockfile.buffers.resolutions.items[i],
+                    &dependency,
+                    resolution,
                     is_main,
                 ) catch {};
             }
@@ -2816,7 +2823,7 @@ pub const PackageManager = struct {
 
                         try this.enqueueDependencyWithMain(
                             dependency_id,
-                            dependency,
+                            &dependency,
                             resolution,
                             false,
                         );
@@ -2829,7 +2836,7 @@ pub const PackageManager = struct {
 
                         try this.enqueueDependencyWithMainAndSuccessFn(
                             dependency_id,
-                            dependency,
+                            &dependency,
                             resolution,
                             true,
                             assignRootResolution,
@@ -6289,9 +6296,10 @@ pub const PackageManager = struct {
                             while (counter_i < changes) : (counter_i += 1) {
                                 if (remaining[counter_i] == invalid_package_id) {
                                     dependency_i = counter_i + off;
+                                    const dependency = manager.lockfile.buffers.dependencies.items[dependency_i];
                                     try manager.enqueueDependencyWithMain(
                                         dependency_i,
-                                        manager.lockfile.buffers.dependencies.items[dependency_i],
+                                        &dependency,
                                         manager.lockfile.buffers.resolutions.items[dependency_i],
                                         true,
                                     );

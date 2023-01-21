@@ -71,20 +71,20 @@ pub fn isLessThan(string_buf: []const u8, lhs: Dependency, rhs: Dependency) bool
     return strings.cmpStringsAsc(void{}, lhs_name, rhs_name);
 }
 
-pub fn countWithDifferentBuffers(this: Dependency, name_buf: []const u8, version_buf: []const u8, comptime StringBuilder: type, builder: StringBuilder) void {
+pub fn countWithDifferentBuffers(this: *const Dependency, name_buf: []const u8, version_buf: []const u8, comptime StringBuilder: type, builder: StringBuilder) void {
     builder.count(this.name.slice(name_buf));
     builder.count(this.version.literal.slice(version_buf));
 }
 
-pub fn count(this: Dependency, buf: []const u8, comptime StringBuilder: type, builder: StringBuilder) void {
+pub fn count(this: *const Dependency, buf: []const u8, comptime StringBuilder: type, builder: StringBuilder) void {
     this.countWithDifferentBuffers(buf, buf, StringBuilder, builder);
 }
 
-pub fn clone(this: Dependency, buf: []const u8, comptime StringBuilder: type, builder: StringBuilder) !Dependency {
+pub fn clone(this: *const Dependency, buf: []const u8, comptime StringBuilder: type, builder: StringBuilder) !Dependency {
     return this.cloneWithDifferentBuffers(buf, buf, StringBuilder, builder);
 }
 
-pub fn cloneWithDifferentBuffers(this: Dependency, name_buf: []const u8, version_buf: []const u8, comptime StringBuilder: type, builder: StringBuilder) !Dependency {
+pub fn cloneWithDifferentBuffers(this: *const Dependency, name_buf: []const u8, version_buf: []const u8, comptime StringBuilder: type, builder: StringBuilder) !Dependency {
     const out_slice = builder.lockfile.buffers.string_bytes.items;
     const new_literal = builder.append(String, this.version.literal.slice(version_buf));
     const sliced = new_literal.sliced(out_slice);
@@ -117,6 +117,23 @@ pub const Context = struct {
     log: *logger.Log,
     buffer: []const u8,
 };
+
+/// Get the name of the package as it should appear in a remote registry.
+pub inline fn realname(this: *const Dependency) String {
+    return switch (this.version.tag) {
+        .npm => this.version.value.npm.name,
+        .dist_tag => this.version.value.dist_tag.name,
+        else => this.name,
+    };
+}
+
+pub inline fn isAliased(this: *const Dependency, buf: []const u8) bool {
+    return switch (this.version.tag) {
+        .npm => !this.version.value.npm.name.eql(this.name, buf, buf),
+        .dist_tag => !this.version.value.dist_tag.name.eql(this.name, buf, buf),
+        else => false,
+    };
+}
 
 pub fn toDependency(
     this: External,
@@ -531,6 +548,8 @@ pub fn parseWithTag(
     sliced: *const SlicedString,
     log_: ?*logger.Log,
 ) ?Version {
+    alias.assertDefined();
+
     switch (tag) {
         .npm => {
             var input = dependency;

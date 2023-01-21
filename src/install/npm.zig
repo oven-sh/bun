@@ -584,6 +584,7 @@ pub const PackageManifest = struct {
                 @alignOf(u8),
                 null,
             );
+
             errdefer allocator.free(bytes);
             if (bytes.len < header_bytes.len) return null;
             const result = try readAll(bytes);
@@ -620,7 +621,7 @@ pub const PackageManifest = struct {
         }
     };
 
-    pub fn str(self: *const PackageManifest, external: ExternalString) string {
+    pub fn str(self: *const PackageManifest, external: *const ExternalString) string {
         return external.slice(self.string_buf);
     }
 

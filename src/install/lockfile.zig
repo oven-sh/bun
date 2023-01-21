@@ -2026,7 +2026,7 @@ pub const Package = extern struct {
             }
         }
 
-        // string_builder.count(manifest.str(package_version_ptr.tarball_url));
+        // string_builder.count(manifest.str(&package_version_ptr.tarball_url));
 
         try string_builder.allocate();
         defer string_builder.clamp();
@@ -2161,7 +2161,7 @@ pub const Package = extern struct {
             bin_extern_strings_count = package_version.bin.count(string_buf, manifest.extern_strings_bin_entries, @TypeOf(&string_builder), &string_builder);
         }
 
-        string_builder.count(manifest.str(package_version_ptr.tarball_url));
+        string_builder.count(manifest.str(&package_version_ptr.tarball_url));
 
         try string_builder.allocate();
         defer string_builder.clamp();
@@ -2187,7 +2187,7 @@ pub const Package = extern struct {
                             @TypeOf(&string_builder),
                             &string_builder,
                         ),
-                        .url = string_builder.append(String, manifest.str(package_version_ptr.tarball_url)),
+                        .url = string_builder.append(String, manifest.str(&package_version_ptr.tarball_url)),
                     },
                 },
                 .tag = .npm,
@@ -3407,20 +3407,11 @@ const Buffers = struct {
         this.dependencies.items.len = external_dependency_list.len;
         for (external_dependency_list) |external_dep, i| {
             const dep = Dependency.toDependency(external_dep, extern_context);
-            this.dependencies.items[i] = dep;
-            switch (dep.version.tag) {
-                .npm => {
-                    if (!dep.name.eql(dep.version.value.npm.name, string_buf, string_buf)) {
-                        try alias_map.put(allocator, this.resolutions.items[i], dep.name);
-                    }
-                },
-                .dist_tag => {
-                    if (!dep.name.eql(dep.version.value.dist_tag.name, string_buf, string_buf)) {
-                        try alias_map.put(allocator, this.resolutions.items[i], dep.name);
-                    }
-                },
-                else => {},
+            if (dep.isAliased(string_buf)) {
+                try alias_map.put(allocator, this.resolutions.items[i], dep.name);
             }
+
+            this.dependencies.items[i] = dep;
         }
 
         return this;

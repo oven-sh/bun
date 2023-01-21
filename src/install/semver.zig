@@ -44,6 +44,19 @@ pub const String = extern struct {
         };
     }
 
+    pub inline fn assertDefined(this: *const String) void {
+        if (comptime !Environment.allow_assert)
+            return;
+
+        if (this.isUndefined()) @panic("String is undefined");
+    }
+
+    pub fn isUndefined(this: *const String) bool {
+        var num: u64 = undefined;
+        var bytes = @bitCast(u64, this.bytes);
+        return @truncate(u63, bytes) == @truncate(u63, num) or @truncate(u63, bytes) == @as(u63, 0);
+    }
+
     pub const Formatter = struct {
         str: *const String,
         buf: string,

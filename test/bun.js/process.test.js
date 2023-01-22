@@ -190,3 +190,7 @@ it("process.emitWarning", () => {
   process.emitWarning("-- Testing process.on('warning') --");
   expect(called).toBe(1);
 });
+
+it("process.execArgv", () => {
+  expect(process.execArgv instanceof Array).toBe(true);
+});

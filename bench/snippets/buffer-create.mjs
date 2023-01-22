@@ -21,8 +21,8 @@ bench("Buffer.from(Uint8Array(0))", () => {
   return Buffer.from(empty);
 });
 
-bench("Buffer.from(Uint8Array(0))", () => {
-  return Buffer.from(empty);
+bench("new Buffer(Uint8Array(0))", () => {
+  return new Buffer(empty);
 });
 
 bench(`new Buffer(${N})`, () => {

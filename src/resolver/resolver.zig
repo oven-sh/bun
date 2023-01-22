@@ -1373,6 +1373,14 @@ pub const Resolver = struct {
         }
     }
 
+    const dev = Output.scoped(.Resolver, false);
+
+    pub fn bustDirCache(r: *ThisResolver, path: string) void {
+        dev("Bust {s}", .{path});
+        r.fs.fs.bustEntriesCache(path);
+        r.dir_cache.remove(path);
+    }
+
     threadlocal var esm_subpath_buf: [512]u8 = undefined;
     threadlocal var esm_absolute_package_path: [bun.MAX_PATH_BYTES]u8 = undefined;
     threadlocal var esm_absolute_package_path_joined: [bun.MAX_PATH_BYTES]u8 = undefined;

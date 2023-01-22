@@ -553,6 +553,11 @@ pub fn withoutTrailingSlash(this: string) []const u8 {
     return href;
 }
 
+pub fn withTrailingSlash(dir: string, in: string) []const u8 {
+    std.debug.assert(bun.isSliceInBuffer(dir, in));
+    return in[0..@min(strings.withoutTrailingSlash(in[0..@min(dir.len + 1, in.len)]).len + 1, in.len)];
+}
+
 pub fn withoutLeadingSlash(this: string) []const u8 {
     return std.mem.trimLeft(u8, this, "/");
 }

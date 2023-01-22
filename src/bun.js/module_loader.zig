@@ -887,6 +887,7 @@ pub const ModuleLoader = struct {
     pub fn transpileSourceCode(
         jsc_vm: *VirtualMachine,
         specifier: string,
+        display_specifier: string,
         referrer: string,
         path: Fs.Path,
         loader: options.Loader,
@@ -993,7 +994,7 @@ pub const ModuleLoader = struct {
                             .print_source => ZigString.init(parse_result.source.contents),
                             else => unreachable,
                         },
-                        .specifier = ZigString.init(specifier),
+                        .specifier = ZigString.init(display_specifier),
                         .source_url = ZigString.init(path.text),
                         .hash = 0,
                     };
@@ -1105,7 +1106,7 @@ pub const ModuleLoader = struct {
                 }
 
                 if (jsc_vm.isWatcherEnabled()) {
-                    const resolved_source = jsc_vm.refCountedResolvedSource(printer.ctx.written, specifier, path.text, null);
+                    const resolved_source = jsc_vm.refCountedResolvedSource(printer.ctx.written, display_specifier, path.text, null);
 
                     if (parse_result.input_fd) |fd_| {
                         if (jsc_vm.bun_watcher != null and !is_node_override and std.fs.path.isAbsolute(path.text) and !strings.contains(path.text, "node_modules")) {
@@ -1127,7 +1128,7 @@ pub const ModuleLoader = struct {
                 return ResolvedSource{
                     .allocator = null,
                     .source_code = ZigString.init(try default_allocator.dupe(u8, printer.ctx.getWritten())),
-                    .specifier = ZigString.init(specifier),
+                    .specifier = ZigString.init(display_specifier),
                     .source_url = ZigString.init(path.text),
                     // // TODO: change hash to a bitfield
                     // .hash = 1,
@@ -1328,7 +1329,7 @@ pub const ModuleLoader = struct {
             }
         }
     }
-    pub fn normalizeSpecifier(jsc_vm: *VirtualMachine, slice_: string) string {
+    pub fn normalizeSpecifier(jsc_vm: *VirtualMachine, slice_: string, string_to_use_for_source: *[]const u8) string {
         var slice = slice_;
         if (slice.len == 0) return slice;
         var was_http = false;
@@ -1358,6 +1359,12 @@ pub const ModuleLoader = struct {
             if (strings.hasPrefix(slice, jsc_vm.bundler.options.routes.asset_prefix_path)) {
                 slice = slice[jsc_vm.bundler.options.routes.asset_prefix_path.len..];
             }
+        }
+
+        string_to_use_for_source.* = slice;
+
+        if (strings.indexOfChar(slice, '?')) |i| {
+            slice = slice[0..i];
         }
 
         return slice;
@@ -1405,7 +1412,12 @@ pub const ModuleLoader = struct {
         var referrer_slice = referrer.toSlice(jsc_vm.allocator);
         defer _specifier.deinit();
         defer referrer_slice.deinit();
-        var specifier = normalizeSpecifier(jsc_vm, _specifier.slice());
+        var display_specifier: []const u8 = "";
+        var specifier = normalizeSpecifier(
+            jsc_vm,
+            _specifier.slice(),
+            &display_specifier,
+        );
         const path = Fs.Path.init(specifier);
         const loader = jsc_vm.bundler.options.loaders.get(path.name.ext) orelse options.Loader.js;
         var promise: ?*JSC.JSInternalPromise = null;
@@ -1413,6 +1425,7 @@ pub const ModuleLoader = struct {
             ModuleLoader.transpileSourceCode(
                 jsc_vm,
                 specifier,
+                display_specifier,
                 referrer_slice.slice(),
                 path,
                 loader,
@@ -1976,6 +1989,7 @@ pub const ModuleLoader = struct {
         ret.* = ErrorableResolvedSource.ok(
             ModuleLoader.transpileSourceCode(
                 jsc_vm,
+                specifier,
                 specifier,
                 referrer_slice.slice(),
                 path,

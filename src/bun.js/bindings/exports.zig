@@ -54,43 +54,31 @@ pub const ZigGlobalObject = extern struct {
     }
 
     pub fn import(global: *JSGlobalObject, specifier: *ZigString, source: *ZigString) callconv(.C) ErrorableZigString {
-        if (comptime is_bindgen) {
-            unreachable;
-        }
+        JSC.markBinding(@src());
 
         return @call(.always_inline, Interface.import, .{ global, specifier, source });
     }
-    pub fn resolve(res: *ErrorableZigString, global: *JSGlobalObject, specifier: *ZigString, source: *ZigString) callconv(.C) void {
-        if (comptime is_bindgen) {
-            unreachable;
-        }
-        @call(.always_inline, Interface.resolve, .{ res, global, specifier, source });
+    pub fn resolve(res: *ErrorableZigString, global: *JSGlobalObject, specifier: *ZigString, source: *ZigString, query: *ZigString) callconv(.C) void {
+        JSC.markBinding(@src());
+        @call(.always_inline, Interface.resolve, .{ res, global, specifier, source, query });
     }
     pub fn fetch(ret: *ErrorableResolvedSource, global: *JSGlobalObject, specifier: *ZigString, source: *ZigString) callconv(.C) void {
-        if (comptime is_bindgen) {
-            unreachable;
-        }
+        JSC.markBinding(@src());
         @call(.always_inline, Interface.fetch, .{ ret, global, specifier, source });
     }
 
     pub fn promiseRejectionTracker(global: *JSGlobalObject, promise: *JSPromise, rejection: JSPromiseRejectionOperation) callconv(.C) JSValue {
-        if (comptime is_bindgen) {
-            unreachable;
-        }
+        JSC.markBinding(@src());
         return @call(.always_inline, Interface.promiseRejectionTracker, .{ global, promise, rejection });
     }
 
     pub fn reportUncaughtException(global: *JSGlobalObject, exception: *Exception) callconv(.C) JSValue {
-        if (comptime is_bindgen) {
-            unreachable;
-        }
+        JSC.markBinding(@src());
         return @call(.always_inline, Interface.reportUncaughtException, .{ global, exception });
     }
 
     pub fn onCrash() callconv(.C) void {
-        if (comptime is_bindgen) {
-            unreachable;
-        }
+        JSC.markBinding(@src());
         return @call(.always_inline, Interface.onCrash, .{});
     }
 

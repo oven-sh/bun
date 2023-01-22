@@ -570,11 +570,10 @@ pub const struct_ares_srv_reply = extern struct {
         // }
 
         obj.put(globalThis, JSC.ZigString.static("priority"), JSC.JSValue.jsNumber(this.weight));
-        obj.put(globalThis, JSC.ZigString.static("weight"), JSC.JSValue.jsNumber(this.priority));
+        obj.put(globalThis, JSC.ZigString.static("weight"), JSC.JSValue.jsNumber(this.weight));
         obj.put(globalThis, JSC.ZigString.static("port"), JSC.JSValue.jsNumber(this.port));
 
 
-        
         const len = bun.len(this.host);
         var host = this.host[0..len];
         obj.put(globalThis, JSC.ZigString.static("name"), JSC.ZigString.fromUTF8(host).toValueGC(globalThis));

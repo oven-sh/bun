@@ -965,7 +965,6 @@ pub const SrvLookup = struct {
             );
 
             this.deinit();
-
             promise.reject(globalThis, error_value);
             return;
         }
@@ -998,7 +997,7 @@ pub const SrvLookup = struct {
         this.promise = .{};
 
         this.deinit();
-        promise.resolveOnNextTick(globalThis, result);
+        promise.resolve(globalThis, result);
     }
 
     pub fn deinit(this: *SrvLookup) void {

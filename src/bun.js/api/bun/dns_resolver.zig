@@ -618,12 +618,12 @@ pub const GetAddrInfo = struct {
 
 
 
-pub const ResolveSrcInfoRequest = struct {
-    const log = Output.scoped(.ResolveSrcInfoRequest, false);
+pub const ResolveSrvInfoRequest = struct {
+    const log = Output.scoped(.ResolveSrvInfoRequest, false);
 
     resolver_for_caching: ?*DNSResolver = null,
     hash: u64 = 0,
-    cache: ResolveSrcInfoRequest.CacheConfig = ResolveSrcInfoRequest.CacheConfig{},
+    cache: ResolveSrvInfoRequest.CacheConfig = ResolveSrvInfoRequest.CacheConfig{},
     head: SrvLookup,
     tail: *SrvLookup = undefined,
     task: bun.ThreadPool.Task = undefined,
@@ -634,17 +634,19 @@ pub const ResolveSrcInfoRequest = struct {
         name: [] const u8,
         globalThis: *JSC.JSGlobalObject,
         comptime cache_field: []const u8,
-    ) !*ResolveSrcInfoRequest {
+    ) !*ResolveSrvInfoRequest {
 
-        var request = try globalThis.allocator().create(ResolveSrcInfoRequest);
+        var request = try globalThis.allocator().create(ResolveSrvInfoRequest);
         var hasher = std.hash.Wyhash.init(0);
         hasher.update(name);
         const hash = hasher.final();
-
+        var poll_ref = JSC.PollRef.init();
+        poll_ref.ref(globalThis.bunVM());
         request.* = .{
             .resolver_for_caching = resolver,
             .hash = hash,
             .head = .{
+                .poll_ref = poll_ref,
                 .globalThis = globalThis,
                 .promise = JSC.JSPromise.Strong.init(globalThis),
                 .allocated = false,
@@ -653,7 +655,7 @@ pub const ResolveSrcInfoRequest = struct {
         request.tail = &request.head;
         if (cache == .new) {
             request.resolver_for_caching = resolver;
-            request.cache = ResolveSrcInfoRequest.CacheConfig{
+            request.cache = ResolveSrvInfoRequest.CacheConfig{
                 .pending_cache = true,
                 .entry_cache = false,
                 .pos_in_pending = @truncate(u5, @field(resolver.?, cache_field).indexOf(cache.new).?),
@@ -664,7 +666,7 @@ pub const ResolveSrcInfoRequest = struct {
         return request;
     }
 
-    pub const Task = bun.JSC.WorkTask(ResolveSrcInfoRequest, false);
+    pub const Task = bun.JSC.WorkTask(ResolveSrvInfoRequest, false);
 
     pub const CacheConfig = packed struct(u16) {
         pending_cache: bool = false,
@@ -676,7 +678,7 @@ pub const ResolveSrcInfoRequest = struct {
     pub const PendingCacheKey = struct {
         hash: u64,
         len: u16,
-        lookup: *ResolveSrcInfoRequest = undefined,
+        lookup: *ResolveSrvInfoRequest = undefined,
 
         pub fn append(this: *PendingCacheKey, srv_lookup: *SrvLookup) void {
             var tail = this.lookup.tail;
@@ -696,7 +698,7 @@ pub const ResolveSrcInfoRequest = struct {
         }
     };
 
-    pub fn onCaresComplete(this: *ResolveSrcInfoRequest, err_: ?c_ares.Error, timeout: i32, result: ?*c_ares.struct_ares_srv_reply) void {
+    pub fn onCaresComplete(this: *ResolveSrvInfoRequest, err_: ?c_ares.Error, timeout: i32, result: ?*c_ares.struct_ares_srv_reply) void {
         if (this.resolver_for_caching) |resolver| {
 
             if (this.cache.pending_cache) {
@@ -737,12 +739,15 @@ pub const GetAddrInfoRequest = struct {
         comptime cache_field: []const u8,
     ) !*GetAddrInfoRequest {
         var request = try globalThis.allocator().create(GetAddrInfoRequest);
+        var poll_ref = JSC.PollRef.init();
+        poll_ref.ref(globalThis.bunVM());
         request.* = .{
             .backend = backend,
             .resolver_for_caching = resolver,
             .hash = query.hash(),
             .head = .{
                 .globalThis = globalThis,
+                .poll_ref = poll_ref,
                 .promise = JSC.JSPromise.Strong.init(globalThis),
                 .allocated = false,
             },
@@ -940,14 +945,18 @@ pub const SrvLookup = struct {
 
     globalThis: *JSC.JSGlobalObject = undefined,
     promise: JSC.JSPromise.Strong,
+    poll_ref: JSC.PollRef,
     allocated: bool = false,
     next: ?*SrvLookup = null,
 
     pub fn init(globalThis: *JSC.JSGlobalObject, allocator: std.mem.Allocator) !*SrvLookup {
         var this = try allocator.create(SrvLookup);
+        var poll_ref = JSC.PollRef.init();
+        poll_ref.ref(globalThis.bunVM());
         this.* = .{
             .globalThis = globalThis,
             .promise = JSC.JSPromise.Strong.init(globalThis),
+            .poll_ref = poll_ref,
             .allocated = true,
         };
         return this;
@@ -964,8 +973,8 @@ pub const SrvLookup = struct {
                 JSC.ZigString.init(err.code()).toValueGC(globalThis),
             );
 
-            this.deinit();
             promise.reject(globalThis, error_value);
+            this.deinit();
             return;
         }
 
@@ -979,8 +988,8 @@ pub const SrvLookup = struct {
                 JSC.ZigString.init("EUNREACHABLE").toValueGC(globalThis),
             );
 
-            this.deinit();
             promise.reject(globalThis, error_value);
+            this.deinit();
             return;
         }
         var node = result.?;
@@ -996,11 +1005,13 @@ pub const SrvLookup = struct {
         var globalThis = this.globalThis;
         this.promise = .{};
 
-        this.deinit();
         promise.resolve(globalThis, result);
+        this.deinit();
     }
 
     pub fn deinit(this: *SrvLookup) void {
+        this.poll_ref.unrefOnNextTick(this.globalThis.bunVM());
+
         if (this.allocated)
             this.globalThis.allocator().destroy(this);
     }
@@ -1012,11 +1023,16 @@ pub const DNSLookup = struct {
     promise: JSC.JSPromise.Strong,
     allocated: bool = false,
     next: ?*DNSLookup = null,
+    poll_ref: JSC.PollRef,
 
     pub fn init(globalThis: *JSC.JSGlobalObject, allocator: std.mem.Allocator) !*DNSLookup {
         var this = try allocator.create(DNSLookup);
+        var poll_ref = JSC.PollRef.init();
+        poll_ref.ref(globalThis.bunVM());
+
         this.* = .{
             .globalThis = globalThis,
+            .poll_ref = poll_ref,
             .promise = JSC.JSPromise.Strong.init(globalThis),
             .allocated = true,
         };
@@ -1066,9 +1082,8 @@ pub const DNSLookup = struct {
                 JSC.ZigString.init(err.code()).toValueGC(globalThis),
             );
 
-            this.deinit();
-
             promise.reject(globalThis, error_value);
+            this.deinit();
             return;
         }
 
@@ -1082,8 +1097,8 @@ pub const DNSLookup = struct {
                 JSC.ZigString.init("EUNREACHABLE").toValueGC(globalThis),
             );
 
-            this.deinit();
             promise.reject(globalThis, error_value);
+            this.deinit();
             return;
         }
 
@@ -1100,11 +1115,12 @@ pub const DNSLookup = struct {
         var globalThis = this.globalThis;
         this.promise = .{};
 
+        promise.resolve(globalThis, result);
         this.deinit();
-        promise.resolveOnNextTick(globalThis, result);
     }
 
     pub fn deinit(this: *DNSLookup) void {
+        this.poll_ref.unrefOnNextTick(this.globalThis.bunVM());
         if (this.allocated)
             this.globalThis.allocator().destroy(this);
     }
@@ -1139,7 +1155,7 @@ pub const DNSResolver = struct {
     // entry_host_cache: std.BoundedArray(128)
 
     const PendingCache = bun.HiveArray(GetAddrInfoRequest.PendingCacheKey, 32);
-    const SrvPendingCache = bun.HiveArray(ResolveSrcInfoRequest.PendingCacheKey, 32);
+    const SrvPendingCache = bun.HiveArray(ResolveSrvInfoRequest.PendingCacheKey, 32);
 
     fn getKey(this: *DNSResolver, index: u8, comptime cache_name: []const u8) GetAddrInfoRequest.PendingCacheKey {
         var cache: *PendingCache = &@field(this, cache_name);
@@ -1153,7 +1169,7 @@ pub const DNSResolver = struct {
 
         return entry;
     }
-     fn getSrvKey(this: *DNSResolver, index: u8, comptime cache_name: []const u8) ResolveSrcInfoRequest.PendingCacheKey {
+     fn getSrvKey(this: *DNSResolver, index: u8, comptime cache_name: []const u8) ResolveSrvInfoRequest.PendingCacheKey {
         var cache: *SrvPendingCache = &@field(this, cache_name);
         std.debug.assert(!cache.available.isSet(index));
         const entry = cache.buffer[index];
@@ -1300,14 +1316,14 @@ pub const DNSResolver = struct {
         disabled: void,
     };
     pub const SrvCacheHit = union(enum) {
-        inflight: *ResolveSrcInfoRequest.PendingCacheKey,
-        new: *ResolveSrcInfoRequest.PendingCacheKey,
+        inflight: *ResolveSrvInfoRequest.PendingCacheKey,
+        new: *ResolveSrvInfoRequest.PendingCacheKey,
         disabled: void,
     };
 
     pub fn getOrPutIntoSrvPendingCache(
         this: *DNSResolver,
-        key: ResolveSrcInfoRequest.PendingCacheKey,
+        key: ResolveSrvInfoRequest.PendingCacheKey,
         comptime field: std.meta.FieldEnum(DNSResolver),
     ) SrvCacheHit {
         var cache: *SrvPendingCache = &@field(this, @tagName(field));
@@ -1318,7 +1334,7 @@ pub const DNSResolver = struct {
         );
 
         while (inflight_iter.next()) |index| {
-            var entry: *ResolveSrcInfoRequest.PendingCacheKey = &cache.buffer[index];
+            var entry: *ResolveSrvInfoRequest.PendingCacheKey = &cache.buffer[index];
             if (entry.hash == key.hash and entry.len == key.len) {
                 return .{ .inflight = entry };
             }
@@ -1639,7 +1655,7 @@ pub const DNSResolver = struct {
             },
         };
 
-        const key = ResolveSrcInfoRequest.PendingCacheKey.init(name);
+        const key = ResolveSrvInfoRequest.PendingCacheKey.init(name);
 
         var cache = this.getOrPutIntoSrvPendingCache(key, .pending_srv_cache_cares);
         if (cache == .inflight) {
@@ -1648,7 +1664,7 @@ pub const DNSResolver = struct {
             return srv_lookup.promise.value();
         }
 
-        var request = ResolveSrcInfoRequest.init(
+        var request = ResolveSrvInfoRequest.init(
             cache,
             this,
             name,
@@ -1659,9 +1675,9 @@ pub const DNSResolver = struct {
 
         channel.resolveSrv(
             name,
-            ResolveSrcInfoRequest,
+            ResolveSrvInfoRequest,
             request,
-            ResolveSrcInfoRequest.onCaresComplete,
+            ResolveSrvInfoRequest.onCaresComplete,
         );
 
         return promise;

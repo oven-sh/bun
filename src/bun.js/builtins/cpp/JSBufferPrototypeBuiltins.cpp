@@ -746,6 +746,18 @@ const char* const s_jsBufferPrototypeSliceCode =
     "})\n" \
 ;
 
+const JSC::ConstructAbility s_jsBufferPrototypeParentCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
+const JSC::ConstructorKind s_jsBufferPrototypeParentCodeConstructorKind = JSC::ConstructorKind::None;
+const JSC::ImplementationVisibility s_jsBufferPrototypeParentCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
+const int s_jsBufferPrototypeParentCodeLength = 56;
+static const JSC::Intrinsic s_jsBufferPrototypeParentCodeIntrinsic = JSC::NoIntrinsic;
+const char* const s_jsBufferPrototypeParentCode =
+    "(function () {\n" \
+    "  \"use strict\";\n" \
+    "  return this.buffer;\n" \
+    "})\n" \
+;
+
 const JSC::ConstructAbility s_jsBufferPrototypeInitializeBunBufferCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_jsBufferPrototypeInitializeBunBufferCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_jsBufferPrototypeInitializeBunBufferCodeImplementationVisibility = JSC::ImplementationVisibility::Public;

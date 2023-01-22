@@ -574,9 +574,7 @@ fn preprocessUpdateRequests(old: *Lockfile, updates: []PackageManager.UpdateRequ
                             const res = resolutions_of_yore[old_resolution];
                             var buf = std.fmt.bufPrint(&temp_buf, "^{}", .{res.value.npm.fmt(old.buffers.string_bytes.items)}) catch break;
                             const external_version = string_builder.append(ExternalString, buf);
-                            const sliced = external_version.value.sliced(
-                                old.buffers.string_bytes.items,
-                            );
+                            const sliced = external_version.value.sliced(old.buffers.string_bytes.items);
                             dep.version = Dependency.parse(
                                 old.allocator,
                                 dep.name,
@@ -1374,15 +1372,15 @@ pub fn verifyData(this: *Lockfile) !void {
         var i: usize = 0;
         while (i < this.packages.len) : (i += 1) {
             const package: Lockfile.Package = this.packages.get(i);
-            std.debug.assert(this.str(package.name).len == @as(usize, package.name.len()));
-            std.debug.assert(stringHash(this.str(package.name)) == @as(usize, package.name_hash));
+            std.debug.assert(this.str(&package.name).len == @as(usize, package.name.len()));
+            std.debug.assert(stringHash(this.str(&package.name)) == @as(usize, package.name_hash));
             std.debug.assert(package.dependencies.get(this.buffers.dependencies.items).len == @as(usize, package.dependencies.len));
             std.debug.assert(package.resolutions.get(this.buffers.resolutions.items).len == @as(usize, package.resolutions.len));
             std.debug.assert(package.resolutions.get(this.buffers.resolutions.items).len == @as(usize, package.dependencies.len));
             const dependencies = package.dependencies.get(this.buffers.dependencies.items);
             for (dependencies) |dependency| {
-                std.debug.assert(this.str(dependency.name).len == @as(usize, dependency.name.len()));
-                std.debug.assert(stringHash(this.str(dependency.name)) == dependency.name_hash);
+                std.debug.assert(this.str(&dependency.name).len == @as(usize, dependency.name.len()));
+                std.debug.assert(stringHash(this.str(&dependency.name)) == dependency.name_hash);
             }
         }
     }
@@ -1482,6 +1480,18 @@ pub fn rootPackage(this: *Lockfile) ?Lockfile.Package {
 }
 
 pub inline fn str(this: *Lockfile, slicable: anytype) string {
+    return strWithType(this, @TypeOf(slicable), slicable);
+}
+
+inline fn strWithType(this: *Lockfile, comptime Type: type, slicable: Type) string {
+    if (comptime Type == String) {
+        @compileError("str must be a *const String. Otherwise it is a pointer to a temporary which is undefined behavior");
+    }
+
+    if (comptime Type == ExternalString) {
+        @compileError("str must be a *const ExternalString. Otherwise it is a pointer to a temporary which is undefined behavior");
+    }
+
     return slicable.slice(this.buffers.string_bytes.items);
 }
 
@@ -1892,7 +1902,7 @@ pub const Package = extern struct {
         const new_extern_string_count = this.bin.count(old_string_buf, old_extern_string_buf, *Lockfile.StringBuilder, builder);
 
         if (old.alias_map.get(this.meta.id)) |alias| {
-            builder.count(old.str(alias));
+            builder.count(old.str(&alias));
         }
 
         const old_dependencies: []const Dependency = this.dependencies.get(old.buffers.dependencies.items);
@@ -1952,7 +1962,7 @@ pub const Package = extern struct {
         package_id_mapping[this.meta.id] = new_package.meta.id;
 
         if (old.alias_map.get(this.meta.id)) |alias| {
-            try new.alias_map.put(new.allocator, new_package.meta.id, builder.append(String, old.str(alias)));
+            try new.alias_map.put(new.allocator, new_package.meta.id, builder.append(String, old.str(&alias)));
         }
 
         for (old_dependencies) |dependency, i| {
@@ -2016,7 +2026,7 @@ pub const Package = extern struct {
             }
         }
 
-        // string_builder.count(manifest.str(package_version_ptr.tarball_url));
+        // string_builder.count(manifest.str(&package_version_ptr.tarball_url));
 
         try string_builder.allocate();
         defer string_builder.clamp();
@@ -2151,7 +2161,7 @@ pub const Package = extern struct {
             bin_extern_strings_count = package_version.bin.count(string_buf, manifest.extern_strings_bin_entries, @TypeOf(&string_builder), &string_builder);
         }
 
-        string_builder.count(manifest.str(package_version_ptr.tarball_url));
+        string_builder.count(manifest.str(&package_version_ptr.tarball_url));
 
         try string_builder.allocate();
         defer string_builder.clamp();
@@ -2177,7 +2187,7 @@ pub const Package = extern struct {
                             @TypeOf(&string_builder),
                             &string_builder,
                         ),
-                        .url = string_builder.append(String, manifest.str(package_version_ptr.tarball_url)),
+                        .url = string_builder.append(String, manifest.str(&package_version_ptr.tarball_url)),
                     },
                 },
                 .tag = .npm,
@@ -3397,20 +3407,11 @@ const Buffers = struct {
         this.dependencies.items.len = external_dependency_list.len;
         for (external_dependency_list) |external_dep, i| {
             const dep = Dependency.toDependency(external_dep, extern_context);
-            this.dependencies.items[i] = dep;
-            switch (dep.version.tag) {
-                .npm => {
-                    if (!dep.name.eql(dep.version.value.npm.name, string_buf, string_buf)) {
-                        try alias_map.put(allocator, this.resolutions.items[i], dep.name);
-                    }
-                },
-                .dist_tag => {
-                    if (!dep.name.eql(dep.version.value.dist_tag.name, string_buf, string_buf)) {
-                        try alias_map.put(allocator, this.resolutions.items[i], dep.name);
-                    }
-                },
-                else => {},
+            if (dep.isAliased(string_buf)) {
+                try alias_map.put(allocator, this.resolutions.items[i], dep.name);
             }
+
+            this.dependencies.items[i] = dep;
         }
 
         return this;

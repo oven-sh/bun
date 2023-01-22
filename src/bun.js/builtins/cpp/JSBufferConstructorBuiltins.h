@@ -47,11 +47,6 @@ class FunctionExecutable;
 namespace WebCore {
 
 /* JSBufferConstructor */
-extern const char* const s_jsBufferConstructorAllocCode;
-extern const int s_jsBufferConstructorAllocCodeLength;
-extern const JSC::ConstructAbility s_jsBufferConstructorAllocCodeConstructAbility;
-extern const JSC::ConstructorKind s_jsBufferConstructorAllocCodeConstructorKind;
-extern const JSC::ImplementationVisibility s_jsBufferConstructorAllocCodeImplementationVisibility;
 extern const char* const s_jsBufferConstructorFromCode;
 extern const int s_jsBufferConstructorFromCodeLength;
 extern const JSC::ConstructAbility s_jsBufferConstructorFromCodeConstructAbility;
@@ -59,18 +54,14 @@ extern const JSC::ConstructorKind s_jsBufferConstructorFromCodeConstructorKind;
 extern const JSC::ImplementationVisibility s_jsBufferConstructorFromCodeImplementationVisibility;
 
 #define WEBCORE_FOREACH_JSBUFFERCONSTRUCTOR_BUILTIN_DATA(macro) \
-    macro(alloc, jsBufferConstructorAlloc, 1) \
     macro(from, jsBufferConstructorFrom, 1) \
 
-#define WEBCORE_BUILTIN_JSBUFFERCONSTRUCTOR_ALLOC 1
 #define WEBCORE_BUILTIN_JSBUFFERCONSTRUCTOR_FROM 1
 
 #define WEBCORE_FOREACH_JSBUFFERCONSTRUCTOR_BUILTIN_CODE(macro) \
-    macro(jsBufferConstructorAllocCode, alloc, ASCIILiteral(), s_jsBufferConstructorAllocCodeLength) \
     macro(jsBufferConstructorFromCode, from, ASCIILiteral(), s_jsBufferConstructorFromCodeLength) \
 
 #define WEBCORE_FOREACH_JSBUFFERCONSTRUCTOR_BUILTIN_FUNCTION_NAME(macro) \
-    macro(alloc) \
     macro(from) \
 
 #define DECLARE_BUILTIN_GENERATOR(codeName, functionName, overriddenName, argumentCount) \

@@ -293,10 +293,10 @@ pub const GenerateHeader = struct {
             }
             _ = forOS();
             const release = std.mem.span(&linux_os_name.release);
-            var sliced_string = Semver.SlicedString.init(release, release);
-            var result = Semver.Version.parse(sliced_string, bun.default_allocator);
+            const sliced_string = Semver.SlicedString.init(release, release);
+            const result = Semver.Version.parse(sliced_string, bun.default_allocator);
             // we only care about major, minor, patch so we don't care about the string
-            return result.version;
+            return result.version.fill();
         }
 
         pub fn forLinux() Analytics.Platform {

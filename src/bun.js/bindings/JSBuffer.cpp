@@ -342,13 +342,15 @@ static inline JSC::EncodedJSValue constructBufferFromStringAndEncoding(JSC::JSGl
     EnsureStillAliveScope arg0 = callFrame->argument(0);
     auto* str = arg0.value().toString(lexicalGlobalObject);
 
+    RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode(jsUndefined()));
+
     EnsureStillAliveScope arg1 = callFrame->argument(1);
 
     if (str->length() == 0)
         return constructBufferEmpty(lexicalGlobalObject, callFrame);
 
     if (callFrame->argumentCount() > 1) {
-        std::optional<BufferEncodingType> encoded = parseEnumeration<BufferEncodingType>(*lexicalGlobalObject, callFrame->argument(1));
+        std::optional<BufferEncodingType> encoded = parseEnumeration<BufferEncodingType>(*lexicalGlobalObject, arg1.value());
         if (!encoded) {
             throwTypeError(lexicalGlobalObject, scope, "Invalid encoding"_s);
             return JSC::JSValue::encode(jsUndefined());
@@ -1615,6 +1617,7 @@ static const HashTableValue JSBufferPrototypeTableValues[]
           { "lastIndexOf"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsBufferPrototypeFunction_lastIndexOf, 3 } },
           { "latin1Slice"_s, static_cast<unsigned>(JSC::PropertyAttribute::Builtin), NoIntrinsic, { HashTableValue::BuiltinGeneratorType, jsBufferPrototypeLatin1SliceCodeGenerator, 2 } },
           { "latin1Write"_s, static_cast<unsigned>(JSC::PropertyAttribute::Builtin), NoIntrinsic, { HashTableValue::BuiltinGeneratorType, jsBufferPrototypeLatin1WriteCodeGenerator, 1 } },
+          { "parent"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::Accessor | JSC::PropertyAttribute::Builtin), NoIntrinsic, { HashTableValue::BuiltinGeneratorType, jsBufferPrototypeParentCodeGenerator, 0 } },
           { "readBigInt64"_s, static_cast<unsigned>(JSC::PropertyAttribute::Builtin), NoIntrinsic, { HashTableValue::BuiltinGeneratorType, jsBufferPrototypeReadBigInt64LECodeGenerator, 1 } },
           { "readBigInt64BE"_s, static_cast<unsigned>(JSC::PropertyAttribute::Builtin), NoIntrinsic, { HashTableValue::BuiltinGeneratorType, jsBufferPrototypeReadBigInt64BECodeGenerator, 1 } },
           { "readBigInt64LE"_s, static_cast<unsigned>(JSC::PropertyAttribute::Builtin), NoIntrinsic, { HashTableValue::BuiltinGeneratorType, jsBufferPrototypeReadBigInt64LECodeGenerator, 1 } },
@@ -1702,6 +1705,11 @@ void JSBufferPrototype::finishCreation(VM& vm, JSC::JSGlobalObject* globalThis)
 
 const ClassInfo JSBufferPrototype::s_info = { "Buffer"_s, nullptr, nullptr, nullptr, CREATE_METHOD_TABLE(JSBufferPrototype) };
 
+static const JSC::DOMJIT::Signature DOMJITSignaturejsBufferConstructorAlloc(jsBufferConstructorAllocWithoutTypeChecks,
+    JSBufferConstructor::info(),
+    JSC::DOMJIT::Effect::forWriteKinds(JSC::DFG::AbstractHeapKind::Heap),
+    JSC::SpecUint8Array, JSC::SpecInt32Only);
+
 static const JSC::DOMJIT::Signature DOMJITSignaturejsBufferConstructorAllocUnsafe(jsBufferConstructorAllocUnsafeWithoutTypeChecks,
     JSBufferConstructor::info(),
     JSC::DOMJIT::Effect::forWriteKinds(JSC::DFG::AbstractHeapKind::Heap),
@@ -1713,16 +1721,16 @@ static const JSC::DOMJIT::Signature DOMJITSignaturejsBufferConstructorAllocUnsaf
 
 /* Hash table for constructor */
 static const HashTableValue JSBufferConstructorTableValues[] = {
-    { "alloc"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::Builtin), NoIntrinsic, { HashTableValue::BuiltinGeneratorType, jsBufferConstructorAllocCodeGenerator, 1 } },
+    { "alloc"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DOMJITFunction), NoIntrinsic, { HashTableValue::DOMJITFunctionType, jsBufferConstructorFunction_alloc, &DOMJITSignaturejsBufferConstructorAlloc } },
     // { "alloc"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DOMJITFunction), NoIntrinsic, { HashTableValue::DOMJITFunctionType, jsBufferConstructorFunction_alloc, &DOMJITSignaturejsBufferConstructorAlloc } },
-    { "allocUnsafe"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsBufferConstructorFunction_allocUnsafe, 1 } },
-    // { "allocUnsafe"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DOMJITFunction), NoIntrinsic, { HashTableValue::DOMJITFunctionType, jsBufferConstructorFunction_allocUnsafe, &DOMJITSignaturejsBufferConstructorAllocUnsafe } },
-    { "allocUnsafeSlow"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsBufferConstructorFunction_allocUnsafeSlow, 1 } },
-    // { "allocUnsafeSlow"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DOMJITFunction), NoIntrinsic, { HashTableValue::DOMJITFunctionType, jsBufferConstructorFunction_allocUnsafeSlow, &DOMJITSignaturejsBufferConstructorAllocUnsafeSlow } },
+    // { "allocUnsafe"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsBufferConstructorFunction_allocUnsafe, 1 } },
+    { "allocUnsafe"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DOMJITFunction), NoIntrinsic, { HashTableValue::DOMJITFunctionType, jsBufferConstructorFunction_allocUnsafe, &DOMJITSignaturejsBufferConstructorAllocUnsafe } },
+    // { "allocUnsafeSlow"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsBufferConstructorFunction_allocUnsafeSlow, 1 } },
+    { "allocUnsafeSlow"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DOMJITFunction), NoIntrinsic, { HashTableValue::DOMJITFunctionType, jsBufferConstructorFunction_allocUnsafeSlow, &DOMJITSignaturejsBufferConstructorAllocUnsafeSlow } },
     { "byteLength"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsBufferConstructorFunction_byteLength, 2 } },
     { "compare"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsBufferConstructorFunction_compare, 2 } },
     { "concat"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsBufferConstructorFunction_concat, 2 } },
-    { "from"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::Builtin), NoIntrinsic, { HashTableValue::BuiltinGeneratorType, jsBufferConstructorFromCodeGenerator, 1 } },
+    { "from"_s, static_cast<unsigned>(JSC::PropertyAttribute::Builtin), NoIntrinsic, { HashTableValue::BuiltinGeneratorType, jsBufferConstructorFromCodeGenerator, 1 } },
     { "isBuffer"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsBufferConstructorFunction_isBuffer, 1 } },
     { "toBuffer"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsBufferConstructorFunction_toBuffer, 1 } },
     { "isEncoding"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsBufferConstructorFunction_isEncoding, 1 } },
@@ -1756,43 +1764,144 @@ JSC::JSObject* createBufferConstructor(JSC::VM& vm, JSC::JSGlobalObject* globalO
 
 } // namespace WebCore
 
+// this is now a no-op
 void toBuffer(JSC::JSGlobalObject* lexicalGlobalObject, JSC::JSUint8Array* uint8Array)
 {
-    JSC::VM& vm = lexicalGlobalObject->vm();
-    auto clientData = WebCore::clientData(vm);
-    JSC::JSObject* object = JSC::JSValue(uint8Array).getObject();
 }
 
 JSC_DEFINE_HOST_FUNCTION(constructJSBuffer, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
 {
     VM& vm = lexicalGlobalObject->vm();
     auto throwScope = DECLARE_THROW_SCOPE(vm);
-    UNUSED_PARAM(throwScope);
-    size_t argsCount = std::min<size_t>(3, callFrame->argumentCount());
+    size_t argsCount = callFrame->argumentCount();
     if (argsCount == 0) {
-        RELEASE_AND_RETURN(throwScope, (constructBufferEmpty(lexicalGlobalObject, callFrame)));
+        RELEASE_AND_RETURN(throwScope, constructBufferEmpty(lexicalGlobalObject, callFrame));
     }
     JSValue distinguishingArg = callFrame->uncheckedArgument(0);
+    auto* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+
     if (distinguishingArg.isAnyInt()) {
-        RELEASE_AND_RETURN(throwScope, JSBuffer__bufferFromLength(lexicalGlobalObject, distinguishingArg.asAnyInt()));
-    } else if (distinguishingArg.isString()) {
-        RELEASE_AND_RETURN(throwScope, (constructBufferFromStringAndEncoding(lexicalGlobalObject, callFrame)));
+        throwScope.release();
+        return JSBuffer__bufferFromLength(lexicalGlobalObject, distinguishingArg.asAnyInt());
+    } else if (distinguishingArg.isCell()) {
+        auto type = distinguishingArg.asCell()->type();
+
+        switch (type) {
+        case StringType:
+        case StringObjectType:
+        case DerivedStringObjectType: {
+            throwScope.release();
+            return constructBufferFromStringAndEncoding(lexicalGlobalObject, callFrame);
+        }
+
+        case Uint8ArrayType:
+        case Uint8ClampedArrayType:
+        case Uint16ArrayType:
+        case Uint32ArrayType:
+        case Int8ArrayType:
+        case Int16ArrayType:
+        case Int32ArrayType:
+        case Float32ArrayType:
+        case Float64ArrayType:
+        case BigInt64ArrayType:
+        case BigUint64ArrayType:
+        case DataViewType: {
+            // byteOffset and byteLength are ignored in this case, which is consitent with Node.js and new Uint8Array()
+            JSC::JSArrayBufferView* view = jsCast<JSC::JSArrayBufferView*>(distinguishingArg.asCell());
+
+            void* data = view->vector();
+            size_t byteLength = view->byteLength();
+
+            if (UNLIKELY(!data)) {
+                throwException(globalObject, throwScope, createRangeError(globalObject, "Buffer is detached"_s));
+                return JSValue::encode({});
+            }
+
+            auto* subclassStructure = globalObject->JSBufferSubclassStructure();
+            auto* uint8Array = JSC::JSUint8Array::createUninitialized(lexicalGlobalObject, subclassStructure, byteLength);
+            if (UNLIKELY(!uint8Array)) {
+                throwOutOfMemoryError(globalObject, throwScope);
+                return JSValue::encode({});
+            }
+
+            if (byteLength) {
+                memcpy(uint8Array->vector(), data, byteLength);
+            }
+
+            RELEASE_AND_RETURN(throwScope, JSC::JSValue::encode(uint8Array));
+        }
+        case ArrayBufferType: {
+            // This closely matches `new Uint8Array(buffer, byteOffset, length)` in JavaScriptCore's implementation.
+            // See Source/JavaScriptCore/runtime/JSGenericTypedArrayViewConstructorInlines.h
+            size_t offset = 0;
+            std::optional<size_t> length;
+            if (argsCount > 1) {
+
+                offset = callFrame->uncheckedArgument(1).toTypedArrayIndex(globalObject, "byteOffset"_s);
+
+                // TOOD: return Node.js error
+                RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
+
+                if (argsCount > 2) {
+                    // If the length value is present but undefined, treat it as missing.
+                    JSValue lengthValue = callFrame->uncheckedArgument(2);
+                    if (!lengthValue.isUndefined()) {
+                        length = lengthValue.toTypedArrayIndex(globalObject, "length"_s);
+
+                        // TOOD: return Node.js error
+                        RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
+                    }
+                }
+            }
+
+            auto* jsBuffer = jsCast<JSC::JSArrayBuffer*>(distinguishingArg.asCell());
+            RefPtr<ArrayBuffer> buffer = jsBuffer->impl();
+            if (buffer->isDetached()) {
+                // TOOD: return Node.js error
+                throwTypeError(globalObject, throwScope, "Buffer is detached"_s);
+                return JSValue::encode({});
+            }
+
+            if (!length) {
+                size_t byteLength = buffer->byteLength();
+                if (buffer->isResizableOrGrowableShared()) {
+                    if (UNLIKELY(offset > byteLength)) {
+                        // TOOD: return Node.js error
+                        throwRangeError(globalObject, throwScope, "byteOffset exceeds source ArrayBuffer byteLength"_s);
+                        return JSValue::encode({});
+                    }
+                } else {
+                    length = (byteLength - offset);
+                }
+            }
+
+            auto* subclassStructure = globalObject->JSBufferSubclassStructure();
+            auto* uint8Array = JSC::JSUint8Array::create(lexicalGlobalObject, subclassStructure, WTFMove(buffer), offset, length);
+            if (UNLIKELY(!uint8Array)) {
+                throwOutOfMemoryError(globalObject, throwScope);
+                return JSC::JSValue::encode({});
+            }
+
+            RELEASE_AND_RETURN(throwScope, JSC::JSValue::encode(uint8Array));
+        }
+        default: {
+            break;
+        }
+        }
     }
 
     JSC::JSObject* constructor = lexicalGlobalObject->m_typedArrayUint8.constructor(lexicalGlobalObject);
 
     MarkedArgumentBuffer args;
-    for (size_t i = 0; i < argsCount; ++i)
+    args.append(distinguishingArg);
+    for (size_t i = 1; i < argsCount; ++i)
         args.append(callFrame->uncheckedArgument(i));
 
-    JSC::JSObject* object = JSC::construct(lexicalGlobalObject, constructor, callFrame->newTarget(), args, "Failed to construct 'Buffer' object"_s);
+    JSC::CallData callData = JSC::getCallData(constructor);
+    JSC::JSObject* object = JSC::construct(lexicalGlobalObject, constructor, callData, args, globalObject->JSBufferConstructor());
     if (!object) {
-        return JSC::JSValue::encode(JSC::jsUndefined());
+        return JSC::JSValue::encode({});
     }
 
-    auto value = JSC::JSValue(object);
-
-    toBuffer(lexicalGlobalObject, JSC::jsCast<JSC::JSUint8Array*>(value));
-
-    RELEASE_AND_RETURN(throwScope, JSC::JSValue::encode(value));
+    RELEASE_AND_RETURN(throwScope, JSC::JSValue::encode(object));
 }

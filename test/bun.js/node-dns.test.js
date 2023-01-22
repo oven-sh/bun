@@ -44,3 +44,11 @@ test("dns.resolveSrv (_test._tcp.test.socketify.dev)", (done) => {
     done(err);
   });
 });
+
+test("dns.resolveSrv (_test._tcp.invalid.localhost)", (done) => {
+  dns.resolveSrv("_test._tcp.invalid.localhost", (err, results) => {
+    expect(err).toBeTruthy();
+    expect(results).toBeUndefined(true);
+    done();
+  });
+});

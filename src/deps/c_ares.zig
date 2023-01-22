@@ -12,81 +12,6 @@ pub const ares_sock_state_cb = ?*const fn (?*anyopaque, ares_socket_t, c_int, c_
 pub const struct_apattern = opaque {};
 const fd_set = c.fd_set;
 
-
-pub const NSClass = enum(i32) {
-    ns_c_invalid = 0,       // Cookie. 
-    ns_c_in = 1,            // Internet. 
-    ns_c_2 = 2,             // unallocated/unsupported. 
-    ns_c_chaos = 3,         // MIT Chaos-net. 
-    ns_c_hs = 4,            // MIT Hesiod. 
-    // Query class values which do not appear in resource records 
-    ns_c_none = 254,        // for prereq. sections in update requests 
-    ns_c_any = 255,         // Wildcard match. 
-    ns_c_max = 65536
-};
-
-pub const NSType = enum(i32) {
-    ns_t_invalid = 0,       // Cookie. 
-    ns_t_a = 1,             // Host address. 
-    ns_t_ns = 2,            // Authoritative server. 
-    ns_t_md = 3,            // Mail destination. 
-    ns_t_mf = 4,            // Mail forwarder. 
-    ns_t_cname = 5,         // Canonical name. 
-    ns_t_soa = 6,           // Start of authority zone. 
-    ns_t_mb = 7,            // Mailbox domain name. 
-    ns_t_mg = 8,            // Mail group member. 
-    ns_t_mr = 9,            // Mail rename name. 
-    ns_t_null = 10,         // Null resource record. 
-    ns_t_wks = 11,          // Well known service. 
-    ns_t_ptr = 12,          // Domain name pointer. 
-    ns_t_hinfo = 13,        // Host information. 
-    ns_t_minfo = 14,        // Mailbox information. 
-    ns_t_mx = 15,           // Mail routing information. 
-    ns_t_txt = 16,          // Text strings. 
-    ns_t_rp = 17,           // Responsible person. 
-    ns_t_afsdb = 18,        // AFS cell database. 
-    ns_t_x25 = 19,          // X_25 calling address. 
-    ns_t_isdn = 20,         // ISDN calling address. 
-    ns_t_rt = 21,           // Router. 
-    ns_t_nsap = 22,         // NSAP address. 
-    ns_t_nsap_ptr = 23,     // Reverse NSAP lookup (deprecated). 
-    ns_t_sig = 24,          // Security signature. 
-    ns_t_key = 25,          // Security key. 
-    ns_t_px = 26,           // X.400 mail mapping. 
-    ns_t_gpos = 27,         // Geographical position (withdrawn). 
-    ns_t_aaaa = 28,         // Ip6 Address. 
-    ns_t_loc = 29,          // Location Information. 
-    ns_t_nxt = 30,          // Next domain (security). 
-    ns_t_eid = 31,          // Endpoint identifier. 
-    ns_t_nimloc = 32,       // Nimrod Locator. 
-    ns_t_srv = 33,          // Server Selection. 
-    ns_t_atma = 34,         // ATM Address 
-    ns_t_naptr = 35,        // Naming Authority PoinTeR 
-    ns_t_kx = 36,           // Key Exchange 
-    ns_t_cert = 37,         // Certification record 
-    ns_t_a6 = 38,           // IPv6 address (deprecates AAAA) 
-    ns_t_dname = 39,        // Non-terminal DNAME (for IPv6) 
-    ns_t_sink = 40,         // Kitchen sink (experimentatl) 
-    ns_t_opt = 41,          // EDNS0 option (meta-RR) 
-    ns_t_apl = 42,          // Address prefix list (RFC3123) 
-    ns_t_ds = 43,           // Delegation Signer (RFC4034) 
-    ns_t_sshfp = 44,        // SSH Key Fingerprint (RFC4255) 
-    ns_t_rrsig = 46,        // Resource Record Signature (RFC4034) 
-    ns_t_nsec = 47,         // Next Secure (RFC4034) 
-    ns_t_dnskey = 48,       // DNS Public Key (RFC4034) 
-    ns_t_tkey = 249,        // Transaction key 
-    ns_t_tsig = 250,        // Transaction signature. 
-    ns_t_ixfr = 251,        // Incremental zone transfer. 
-    ns_t_axfr = 252,        // Transfer zone of authority. 
-    ns_t_mailb = 253,       // Transfer mailbox records. 
-    ns_t_maila = 254,       // Transfer mail agent records. 
-    ns_t_any = 255,         // Wildcard match. 
-    ns_t_uri = 256,         // Uniform Resource Identifier (RFC7553) 
-    ns_t_caa = 257,         // Certification Authority Authorization. 
-    ns_t_max = 65536,
-    _,
-};
-
 pub const Options = extern struct {
     flags: c_int = 0,
     timeout: c_int = 0,
@@ -350,23 +275,6 @@ pub const Channel = opaque {
         ares_getaddrinfo(this, host_ptr, port_ptr, hints_, AddrInfo.callbackWrapper(Type, callback), ctx);
     }
 
-    pub fn resolveSrv(this: *Channel, name: []const u8, comptime Type: type, ctx: *Type, comptime callback: struct_ares_srv_reply.Callback(Type)) void {
-
-        var name_buf: [1024]u8 = undefined;
-        const name_ptr: ?[*:0]const u8 = brk: {
-            if (name.len == 0 or name.length >= 1023) {
-                break :brk null;
-            }
-            const len = @min(name_buf.len, name_buf.len - 1);
-            @memcpy(&name_buf, name.ptr, len);
-            name_buf[len] = 0;
-            break :brk name_buf[0..len :0].ptr;
-        };
-
-
-        ares_query(this, name_ptr, NSClass.ns_c_in, NSType.ns_t_srv, struct_ares_srv_reply.callbackWrapper(Type, callback), ctx);
-    }
-
     pub inline fn process(this: *Channel, fd: i32, readable: bool, writable: bool) void {
         ares_process_fd(
             this,
@@ -471,48 +379,6 @@ pub const struct_ares_srv_reply = extern struct {
     priority: c_ushort,
     weight: c_ushort,
     port: c_ushort,
-
-
-    pub fn Callback(comptime Type: type) type {
-        return fn (*Type, status: ?Error, timeouts: i32, results: ?*struct_ares_srv_reply) void;
-    }
-
-    pub fn callbackWrapper(
-        comptime Type: type,
-        comptime function: Callback(Type),
-    ) ares_callback {
-        return &struct {
-
-            pub fn handleSrv(ctx: ?*anyopaque, status: c_int, timeouts: c_int, buffer: *[] const u8, buffer_length: c_int) callconv(.C) void {
-                var this = bun.cast(*Type, ctx.?);
-                if (status != ARES_SUCCESS){
-                   function(this, Error.get(status), timeouts, null); 
-                   return;
-                }
-                
-
-
-                var srv_start: *struct_ares_srv_reply = undefined;
-                status = ares_parse_srv_reply(buffer, buffer_length, &srv_start);
-                if (status != ARES_SUCCESS){
-                   function(this, Error.get(status), timeouts, null); 
-                   return;
-                }
-
-                // for (srv = srv_start; srv; srv = srv->next) {
-                //      printf("Host: %s\n", srv->host);
-                //      printf("Port: %d\n", srv->port);
-                //      printf("Priority: %d\n", srv->priority);
-                //      printf("Weight: %d\n", srv->weight);
-                //  }
-                function(this, null, timeouts, srv_start);
-            }
-        }.handleSrv;
-    }
-
-    pub fn deinit(this: *struct_ares_srv_reply) void {
-        ares_free_data(this);
-    }
 };
 pub const struct_ares_mx_reply = extern struct {
     next: [*c]struct_ares_mx_reply,

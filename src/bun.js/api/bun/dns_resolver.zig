@@ -1329,21 +1329,7 @@ pub const DNSResolver = struct {
                 LibC.lookup(this, query, globalThis),
         };
     }
-    pub fn doResolveSrv(this: *DNSResolver, name: []const u8, globalThis: *JSC.JSGlobalObject) JSC.JSValue {
-        var channel: *c_ares.Channel = switch (this.getChannel()) {
-            .result => |res| res,
-            .err => |err| {
-                const system_error = JSC.SystemError{
-                    .errno = -1,
-                    .code = JSC.ZigString.init(err.code()),
-                    .message = JSC.ZigString.init(err.label()),
-                };
-
-                globalThis.throwValue(system_error.toErrorInstance(globalThis));
-                return .zero;
-            },
-        };
-    }
+    
     pub fn c_aresLookupWithNormalizedName(this: *DNSResolver, query: GetAddrInfo, globalThis: *JSC.JSGlobalObject) JSC.JSValue {
         var channel: *c_ares.Channel = switch (this.getChannel()) {
             .result => |res| res,

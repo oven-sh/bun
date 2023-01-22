@@ -144,7 +144,7 @@ declare module "dns/promises" {
   // function resolve(hostname: string, rrtype: "NS"): Promise<string[]>;
   // function resolve(hostname: string, rrtype: "PTR"): Promise<string[]>;
   // function resolve(hostname: string, rrtype: "SOA"): Promise<SoaRecord>;
-  function resolveSrv(hostname: string, rrtype: "SRV"): Promise<SrvRecord[]>;
+  function resolveSrv(hostname: string): Promise<SrvRecord[]>;
   // function resolve(hostname: string, rrtype: "TXT"): Promise<string[][]>;
   // function resolve(
   //   hostname: string,

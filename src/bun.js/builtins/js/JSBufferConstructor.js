@@ -31,16 +31,12 @@ function from(items) {
   if (!@isConstructor(this))
     @throwTypeError("Buffer.from requires |this| to be a constructor");
 
-  if (@isUndefinedOrNull(items))
+  if (@isUndefinedOrNull(items)) {
     @throwTypeError(
       "The first argument must be one of type string, Buffer, ArrayBuffer, Array, or Array-like Object.",
     );
-
-  if (@argumentCount() === 1 && @isTypedArrayView(items)) {
-    var out = this.allocUnsafe(items.byteLength);
-    out.copy(items);
-    return out;
   }
+    
 
   // TODO: figure out why private symbol not found
   if (

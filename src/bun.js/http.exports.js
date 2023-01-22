@@ -60,7 +60,7 @@ export class Server extends EventEmitter {
     try {
       this.#server = Bun.serve({
         port,
-        hostName: host,
+        hostname: host,
 
         fetch(req) {
           var pendingResponse;

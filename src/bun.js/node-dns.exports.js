@@ -317,7 +317,6 @@ for (const key of [
   "resolveNs",
   "resolvePtr",
   "resolveSoa",
-  "resolveSrv",
   "resolveTxt",
   "reverse",
 ]) {

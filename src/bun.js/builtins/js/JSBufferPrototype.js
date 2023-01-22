@@ -300,6 +300,12 @@ function slice(start, end) {
   return new Buffer(buffer, byteOffset + start_, end_ > start_ ? (end_ - start_) : 0);
 }
 
+@getter
+function parent() {
+  "use strict";
+  return this.buffer;
+}
+
 
 function initializeBunBuffer(parameters)
 {

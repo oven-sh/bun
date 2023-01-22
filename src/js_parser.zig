@@ -14718,7 +14718,7 @@ fn NewParser_(
                     }
 
                     // This might be wrong.
-                    _ = p.visitClass(expr.loc, e_);
+                    _ = p.visitClass(expr.loc, e_, true);
                 },
                 else => {},
             }
@@ -15773,8 +15773,7 @@ fn NewParser_(
                                     return;
                                 },
                                 .s_class => |class| {
-                                    // TODO: https://github.com/oven-sh/bun/issues/51
-                                    _ = p.visitClass(s2.loc, &class.class);
+                                    _ = p.visitClass(s2.loc, &class.class, false);
 
                                     if (p.is_control_flow_dead)
                                         return;
@@ -16278,7 +16277,7 @@ fn NewParser_(
                         }
                     }
 
-                    const shadow_ref = p.visitClass(stmt.loc, &data.class);
+                    _ = p.visitClass(stmt.loc, &data.class, false);
 
                     // Remove the export flag inside a namespace
                     const was_export_inside_namespace = data.is_export and p.enclosing_namespace_arg_ref != null;
@@ -16286,7 +16285,7 @@ fn NewParser_(
                         data.is_export = false;
                     }
 
-                    const lowered = p.lowerClass(js_ast.StmtOrExpr{ .stmt = stmt.* }, shadow_ref);
+                    const lowered = p.lowerClass(js_ast.StmtOrExpr{ .stmt = stmt.* });
 
                     if (!mark_as_dead or was_export_inside_namespace)
                         // Lower class field syntax for browsers that don't support it
@@ -16929,8 +16928,6 @@ fn NewParser_(
         fn lowerClass(
             p: *P,
             stmtorexpr: js_ast.StmtOrExpr,
-            // ref
-            _: Ref,
         ) []Stmt {
             switch (stmtorexpr) {
                 .stmt => |stmt| {
@@ -17440,7 +17437,7 @@ fn NewParser_(
             return res;
         }
 
-        fn visitClass(p: *P, name_scope_loc: logger.Loc, class: *G.Class) Ref {
+        fn visitClass(p: *P, name_scope_loc: logger.Loc, class: *G.Class, comptime is_expr: bool) Ref {
             if (only_scan_imports_and_do_not_visit) {
                 @compileError("only_scan_imports_and_do_not_visit must not run this.");
             }
@@ -17593,6 +17590,16 @@ fn NewParser_(
                             to_add += @boolToInt(arg.is_typescript_ctor_field and arg.binding.data == .b_identifier);
                         }
 
+                        // if this is an expression, we can move statements after super() because there will be 0 decorators
+                        var super_index: ?usize = null;
+                        if (comptime is_expr and class.extends != null) {
+                            for (constructor.func.body.stmts) |stmt, index| {
+                                if (stmt.data != .s_expr or stmt.data.s_expr.value.data != .e_call or stmt.data.s_expr.value.data.e_call.target.data != .e_super) continue;
+                                super_index = index;
+                                break;
+                            }
+                        }
+
                         if (to_add > 0) {
                             // to match typescript behavior, we also must prepend to the class body
                             var stmts = std.ArrayList(Stmt).fromOwnedSlice(p.allocator, constructor.func.body.stmts);
@@ -17607,6 +17614,10 @@ fn NewParser_(
                                         .b_identifier => |id| {
                                             const name = p.symbols.items[id.ref.innerIndex()].original_name;
                                             const ident = p.newExpr(E.Identifier{ .ref = id.ref }, arg.binding.loc);
+
+                                            if (comptime is_expr) {
+                                                if (super_index) |k| j += k + 1;
+                                            }
                                             stmts.insert(j, Expr.assignStmt(
                                                 p.newExpr(E.Dot{
                                                     .target = p.newExpr(E.This{}, arg.binding.loc),

@@ -54,43 +54,31 @@ pub const ZigGlobalObject = extern struct {
     }
 
     pub fn import(global: *JSGlobalObject, specifier: *ZigString, source: *ZigString) callconv(.C) ErrorableZigString {
-        if (comptime is_bindgen) {
-            unreachable;
-        }
+        JSC.markBinding(@src());
 
         return @call(.always_inline, Interface.import, .{ global, specifier, source });
     }
-    pub fn resolve(res: *ErrorableZigString, global: *JSGlobalObject, specifier: *ZigString, source: *ZigString) callconv(.C) void {
-        if (comptime is_bindgen) {
-            unreachable;
-        }
-        @call(.always_inline, Interface.resolve, .{ res, global, specifier, source });
+    pub fn resolve(res: *ErrorableZigString, global: *JSGlobalObject, specifier: *ZigString, source: *ZigString, query: *ZigString) callconv(.C) void {
+        JSC.markBinding(@src());
+        @call(.always_inline, Interface.resolve, .{ res, global, specifier, source, query });
     }
     pub fn fetch(ret: *ErrorableResolvedSource, global: *JSGlobalObject, specifier: *ZigString, source: *ZigString) callconv(.C) void {
-        if (comptime is_bindgen) {
-            unreachable;
-        }
+        JSC.markBinding(@src());
         @call(.always_inline, Interface.fetch, .{ ret, global, specifier, source });
     }
 
     pub fn promiseRejectionTracker(global: *JSGlobalObject, promise: *JSPromise, rejection: JSPromiseRejectionOperation) callconv(.C) JSValue {
-        if (comptime is_bindgen) {
-            unreachable;
-        }
+        JSC.markBinding(@src());
         return @call(.always_inline, Interface.promiseRejectionTracker, .{ global, promise, rejection });
     }
 
     pub fn reportUncaughtException(global: *JSGlobalObject, exception: *Exception) callconv(.C) JSValue {
-        if (comptime is_bindgen) {
-            unreachable;
-        }
+        JSC.markBinding(@src());
         return @call(.always_inline, Interface.reportUncaughtException, .{ global, exception });
     }
 
     pub fn onCrash() callconv(.C) void {
-        if (comptime is_bindgen) {
-            unreachable;
-        }
+        JSC.markBinding(@src());
         return @call(.always_inline, Interface.onCrash, .{});
     }
 
@@ -397,6 +385,7 @@ pub const Process = extern struct {
     pub const exit = JSC.Node.Process.exit;
     pub const getArgv0 = JSC.Node.Process.getArgv0;
     pub const getExecPath = JSC.Node.Process.getExecPath;
+    pub const getExecArgv = JSC.Node.Process.getExecArgv;
 
     pub const Export = shim.exportFunctions(.{
         .getTitle = getTitle,
@@ -407,6 +396,7 @@ pub const Process = extern struct {
         .exit = exit,
         .getArgv0 = getArgv0,
         .getExecPath = getExecPath,
+        .getExecArgv = getExecArgv,
     });
 
     comptime {
@@ -434,6 +424,10 @@ pub const Process = extern struct {
             });
             @export(getExecPath, .{
                 .name = Export[7].symbol_name,
+            });
+
+            @export(getExecArgv, .{
+                .name = Export[8].symbol_name,
             });
         }
     }

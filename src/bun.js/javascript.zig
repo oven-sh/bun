@@ -880,8 +880,8 @@ pub const VirtualMachine = struct {
         if (try ModuleLoader.fetchBuiltinModule(jsc_vm, _specifier, log, comptime flags.disableTranspiling())) |builtin| {
             return builtin;
         }
-
-        var specifier = ModuleLoader.normalizeSpecifier(jsc_vm, _specifier);
+        var display_specifier = _specifier;
+        var specifier = ModuleLoader.normalizeSpecifier(jsc_vm, _specifier, &display_specifier);
         var path = Fs.Path.init(specifier);
         const loader = jsc_vm.bundler.options.loaders.get(path.name.ext) orelse brk: {
             if (strings.eqlLong(specifier, jsc_vm.main, true)) {
@@ -894,6 +894,7 @@ pub const VirtualMachine = struct {
         return try ModuleLoader.transpileSourceCode(
             jsc_vm,
             specifier,
+            display_specifier,
             referrer,
             path,
             loader,
@@ -910,8 +911,22 @@ pub const VirtualMachine = struct {
     pub const ResolveFunctionResult = struct {
         result: ?Resolver.Result,
         path: string,
+        query_string: []const u8 = "",
     };
 
+    fn normalizeSpecifierForResolution(specifier_: []const u8, query_string: *[]const u8) []const u8 {
+        var specifier = specifier_;
+        if (strings.hasPrefixComptime(specifier, "file://")) specifier = specifier["file://".len..];
+
+        if (strings.indexOfChar(specifier, '?')) |i| {
+            specifier = specifier[0..i];
+            query_string.* = specifier[i..];
+        }
+
+        return specifier;
+    }
+
+    threadlocal var specifier_cache_resolver_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
     fn _resolve(
         ret: *ResolveFunctionResult,
         _: *JSGlobalObject,
@@ -952,30 +967,65 @@ pub const VirtualMachine = struct {
         }
 
         const is_special_source = strings.eqlComptime(source, main_file_name) or js_ast.Macro.isMacroPath(source);
-
-        const result = try switch (jsc_vm.bundler.resolver.resolveAndAutoInstall(
-            if (!is_special_source)
-                if (is_a_file_path)
-                    Fs.PathName.init(source).dirWithTrailingSlash()
-                else
-                    source
+        var query_string: []const u8 = "";
+        const normalized_specifier = normalizeSpecifierForResolution(specifier, &query_string);
+        const source_to_use = if (!is_special_source)
+            if (is_a_file_path)
+                Fs.PathName.init(source).dirWithTrailingSlash()
             else
-                jsc_vm.bundler.fs.top_level_dir,
-            // TODO: do we need to handle things like query string params?
-            if (strings.hasPrefixComptime(specifier, "file://")) specifier["file://".len..] else specifier,
-            if (is_esm) .stmt else .require,
-            .read_only,
-        )) {
-            .success => |r| r,
-            .failure => |e| e,
-            .not_found => error.ModuleNotFound,
-            .pending => unreachable,
+                source
+        else
+            jsc_vm.bundler.fs.top_level_dir;
+
+        const result: Resolver.Result = try brk: {
+            var retry_on_not_found = query_string.len > 0;
+            while (true) {
+                break :brk switch (jsc_vm.bundler.resolver.resolveAndAutoInstall(
+                    source_to_use,
+                    normalized_specifier,
+                    if (is_esm) .stmt else .require,
+                    .read_only,
+                )) {
+                    .success => |r| r,
+                    .failure => |e| e,
+                    .pending => unreachable,
+                    .not_found => if (!retry_on_not_found)
+                        error.ModuleNotFound
+                    else {
+                        retry_on_not_found = false;
+
+                        const buster_name = name: {
+                            if (std.fs.path.isAbsolute(normalized_specifier)) {
+                                if (std.fs.path.dirname(normalized_specifier)) |dir| {
+                                    break :name strings.withTrailingSlash(dir, normalized_specifier);
+                                }
+                            }
+
+                            var parts = [_]string{
+                                source_to_use,
+                                normalized_specifier,
+                            };
+
+                            break :name bun.path.joinAbsStringBuf(
+                                jsc_vm.bundler.fs.top_level_dir,
+                                &specifier_cache_resolver_buf,
+                                &parts,
+                                .auto,
+                            );
+                        };
+
+                        jsc_vm.bundler.resolver.bustDirCache(buster_name);
+                        continue;
+                    },
+                };
+            }
         };
 
         if (!jsc_vm.macro_mode) {
             jsc_vm.has_any_macro_remappings = jsc_vm.has_any_macro_remappings or jsc_vm.bundler.options.macro_remap.count() > 0;
         }
         ret.result = result;
+        ret.query_string = query_string;
         const result_path = result.pathConst() orelse return error.ModuleNotFound;
         jsc_vm.resolved_count += 1;
         if (comptime !realpath) {
@@ -1044,9 +1094,10 @@ pub const VirtualMachine = struct {
         global: *JSGlobalObject,
         specifier: ZigString,
         source: ZigString,
+        query_string: *ZigString,
         is_esm: bool,
     ) void {
-        resolveMaybeNeedsTrailingSlash(res, global, specifier, source, is_esm, false, true);
+        resolveMaybeNeedsTrailingSlash(res, global, specifier, source, query_string, is_esm, false, true);
     }
 
     pub fn resolveFilePathForAPI(
@@ -1054,9 +1105,10 @@ pub const VirtualMachine = struct {
         global: *JSGlobalObject,
         specifier: ZigString,
         source: ZigString,
+        query_string: *ZigString,
         is_esm: bool,
     ) void {
-        resolveMaybeNeedsTrailingSlash(res, global, specifier, source, is_esm, true, true);
+        resolveMaybeNeedsTrailingSlash(res, global, specifier, source, query_string, is_esm, true, true);
     }
 
     pub fn resolve(
@@ -1064,9 +1116,10 @@ pub const VirtualMachine = struct {
         global: *JSGlobalObject,
         specifier: ZigString,
         source: ZigString,
+        query_string: *ZigString,
         is_esm: bool,
     ) void {
-        resolveMaybeNeedsTrailingSlash(res, global, specifier, source, is_esm, true, false);
+        resolveMaybeNeedsTrailingSlash(res, global, specifier, source, query_string, is_esm, true, false);
     }
 
     fn normalizeSource(source: []const u8) []const u8 {
@@ -1077,11 +1130,12 @@ pub const VirtualMachine = struct {
         return source;
     }
 
-    pub fn resolveMaybeNeedsTrailingSlash(
+    fn resolveMaybeNeedsTrailingSlash(
         res: *ErrorableZigString,
         global: *JSGlobalObject,
         specifier: ZigString,
         source: ZigString,
+        query_string: ?*ZigString,
         is_esm: bool,
         comptime is_a_file_path: bool,
         comptime realpath: bool,
@@ -1155,6 +1209,10 @@ pub const VirtualMachine = struct {
 
             return;
         };
+
+        if (query_string) |query| {
+            query.* = ZigString.init(result.query_string);
+        }
 
         res.* = ErrorableZigString.ok(ZigString.init(result.path));
     }
@@ -2726,8 +2784,7 @@ pub const HotReloader = struct {
                         entries_option = rfs.entries.get(file_path);
                     }
 
-                    rfs.bustEntriesCache(file_path);
-                    resolver.dir_cache.remove(file_path);
+                    resolver.bustDirCache(file_path);
 
                     if (entries_option) |dir_ent| {
                         var last_file_hash: Watcher.HashType = std.math.maxInt(Watcher.HashType);

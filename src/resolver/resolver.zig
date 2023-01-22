@@ -1373,6 +1373,14 @@ pub const Resolver = struct {
         }
     }
 
+    const dev = Output.scoped(.Resolver, false);
+
+    pub fn bustDirCache(r: *ThisResolver, path: string) void {
+        dev("Bust {s}", .{path});
+        r.fs.fs.bustEntriesCache(path);
+        r.dir_cache.remove(path);
+    }
+
     threadlocal var esm_subpath_buf: [512]u8 = undefined;
     threadlocal var esm_absolute_package_path: [bun.MAX_PATH_BYTES]u8 = undefined;
     threadlocal var esm_absolute_package_path_joined: [bun.MAX_PATH_BYTES]u8 = undefined;
@@ -1528,8 +1536,7 @@ pub const Resolver = struct {
                         }
 
                         for (dependencies_list) |dependency, dependency_id| {
-                            const dep_name_ = &dependency.name;
-                            const dep_name = dep_name_.slice(string_buf);
+                            const dep_name = dependency.name.slice(string_buf);
                             if (dep_name.len == esm.name.len) {
                                 if (!strings.eqlLong(dep_name, esm.name, false)) {
                                     continue;
@@ -1640,7 +1647,7 @@ pub const Resolver = struct {
                                         esm.name,
                                         resolved_package_id,
                                         resolution.value.npm.version,
-                                        manager.lockfile.str(resolution.value.npm.url),
+                                        manager.lockfile.str(&resolution.value.npm.url),
                                         .{
                                             .root_request_id = 0,
                                         },

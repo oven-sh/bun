@@ -1354,9 +1354,15 @@ pub fn NewGlobalObject(comptime Type: type) type {
             }
             return ErrorableZigString.err(error.ImportFailed, ZigString.init(importNotImpl).toErrorInstance(global).asVoid());
         }
-        pub fn resolve(res: *ErrorableZigString, global: *JSGlobalObject, specifier: *ZigString, source: *ZigString) callconv(.C) void {
+        pub fn resolve(
+            res: *ErrorableZigString,
+            global: *JSGlobalObject,
+            specifier: *ZigString,
+            source: *ZigString,
+            query_string: *ZigString,
+        ) callconv(.C) void {
             if (comptime @hasDecl(Type, "resolve")) {
-                @call(.always_inline, Type.resolve, .{ res, global, specifier.*, source.*, true });
+                @call(.always_inline, Type.resolve, .{ res, global, specifier.*, source.*, query_string, true });
                 return;
             }
             res.* = ErrorableZigString.err(error.ResolveFailed, ZigString.init(resolveNotImpl).toErrorInstance(global).asVoid());

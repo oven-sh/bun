@@ -12,6 +12,7 @@ fn isValid(buf: *[bun.MAX_PATH_BYTES]u8, segment: []const u8, bin: []const u8) ?
 
 extern "C" fn is_executable_file(path: [*:0]const u8) bool;
 fn checkPath(filepath: [:0]const u8) bool {
+    bun.JSC.markBinding(@src());
     return is_executable_file(filepath);
 }
 

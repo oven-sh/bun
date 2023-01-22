@@ -1652,6 +1652,15 @@ pub const ModuleLoader = struct {
                         .hash = 0,
                     };
                 },
+                .@"node:zlib" => {
+                    return ResolvedSource{
+                        .allocator = null,
+                        .source_code = ZigString.init(jsModuleFromFile(jsc_vm.load_builtins_from_path, "zlib.exports.js")),
+                        .specifier = ZigString.init("node:zlib"),
+                        .source_url = ZigString.init("node:zlib"),
+                        .hash = 0,
+                    };
+                },
 
                 .@"node:fs/promises" => {
                     return ResolvedSource{
@@ -2071,6 +2080,7 @@ pub const HardcodedModule = enum {
     @"node:url",
     @"node:util",
     @"node:util/types",
+    @"node:zlib",
     depd,
     undici,
     ws,
@@ -2120,6 +2130,7 @@ pub const HardcodedModule = enum {
             .{ "node:url", HardcodedModule.@"node:url" },
             .{ "node:util", HardcodedModule.@"node:util" },
             .{ "node:util/types", HardcodedModule.@"node:util/types" },
+            .{ "node:zlib", HardcodedModule.@"node:zlib" },
             .{ "undici", HardcodedModule.undici },
             .{ "ws", HardcodedModule.ws },
         },
@@ -2171,17 +2182,17 @@ pub const HardcodedModule = enum {
             .{ "node:readline", "node:readline" },
             .{ "node:readline/promises", "node:readline/promises" },
             .{ "node:stream", "node:stream" },
-            .{ "node:tls", "node:tls" },
-            .{ "tls", "node:tls" },
             .{ "node:stream/consumers", "node:stream/consumers" },
             .{ "node:stream/web", "node:stream/web" },
             .{ "node:string_decoder", "node:string_decoder" },
             .{ "node:timers", "node:timers" },
             .{ "node:timers/promises", "node:timers/promises" },
+            .{ "node:tls", "node:tls" },
             .{ "node:tty", "node:tty" },
             .{ "node:url", "node:url" },
             .{ "node:util", "node:util" },
             .{ "node:util/types", "node:util/types" },
+            .{ "node:zlib", "node:zlib" },
             .{ "os", "node:os" },
             .{ "path", "node:path" },
             .{ "path/posix", "node:path/posix" },
@@ -2199,6 +2210,7 @@ pub const HardcodedModule = enum {
             .{ "string_decoder", "node:string_decoder" },
             .{ "timers", "node:timers" },
             .{ "timers/promises", "node:timers/promises" },
+            .{ "tls", "node:tls" },
             .{ "tty", "node:tty" },
             .{ "undici", "undici" },
             .{ "url", "node:url" },
@@ -2206,6 +2218,7 @@ pub const HardcodedModule = enum {
             .{ "util/types", "node:util/types" },
             .{ "ws", "ws" },
             .{ "ws/lib/websocket", "ws" },
+            .{ "zlib", "node:zlib" },
         },
     );
 };

@@ -964,6 +964,7 @@ fn doResolveWithArgs(
     comptime is_file_path: bool,
 ) ?JSC.JSValue {
     var errorable: ErrorableZigString = undefined;
+    var query_string = ZigString.Empty;
 
     if (comptime is_file_path) {
         VirtualMachine.resolveFilePathForAPI(
@@ -971,6 +972,7 @@ fn doResolveWithArgs(
             ctx.ptr(),
             specifier,
             from,
+            &query_string,
             is_esm,
         );
     } else {
@@ -979,6 +981,7 @@ fn doResolveWithArgs(
             ctx.ptr(),
             specifier,
             from,
+            &query_string,
             is_esm,
         );
     }
@@ -988,7 +991,23 @@ fn doResolveWithArgs(
         return null;
     }
 
-    return errorable.result.value.toValue(ctx.ptr());
+    if (query_string.len > 0) {
+        var stack = std.heap.stackFallback(1024, ctx.allocator());
+        const allocator = stack.get();
+        var arraylist = std.ArrayList(u8).initCapacity(allocator, 1024) catch unreachable;
+        defer arraylist.deinit();
+        arraylist.writer().print("{any}{any}", .{
+            errorable.result.value,
+            query_string,
+        }) catch {
+            JSC.JSError(allocator, "Failed to allocate memory", .{}, ctx, exception);
+            return null;
+        };
+
+        return ZigString.initUTF8(arraylist.items).toValueGC(ctx);
+    }
+
+    return errorable.result.value.toValue(ctx);
 }
 
 pub fn resolveSync(

@@ -122,7 +122,8 @@ it("Buffer.from", () => {
   expect(Buffer.from([254], "utf16").join(",")).toBe("254");
   expect(Buffer.isBuffer(Buffer.from([254], "utf16"))).toBe(true);
 
-  expect(Buffer.from(123).join(",")).toBe(Uint8Array.from(123).join(","));
+  expect(() => Buffer.from(123).join(",")).toThrow();
+
   expect(Buffer.from({ length: 124 }).join(",")).toBe(
     Uint8Array.from({ length: 124 }).join(","),
   );
@@ -717,4 +718,177 @@ it("transcode", () => {
 
   // This is a masqueradesAsUndefined function
   expect(() => BufferModule.transcode()).toThrow("Not implemented");
+});
+
+it("Buffer.from (Node.js test/test-buffer-from.js)", () => {
+  const checkString = "test";
+
+  const check = Buffer.from(checkString);
+
+  class MyString extends String {
+    constructor() {
+      super(checkString);
+    }
+  }
+
+  class MyPrimitive {
+    [Symbol.toPrimitive]() {
+      return checkString;
+    }
+  }
+
+  class MyBadPrimitive {
+    [Symbol.toPrimitive]() {
+      return 1;
+    }
+  }
+
+  expect(Buffer.from(new String(checkString))).toStrictEqual(check);
+  expect(Buffer.from(new MyString())).toStrictEqual(check);
+  expect(Buffer.from(new MyPrimitive())).toStrictEqual(check);
+
+  [
+    {},
+    new Boolean(true),
+    {
+      valueOf() {
+        return null;
+      },
+    },
+    {
+      valueOf() {
+        return undefined;
+      },
+    },
+    { valueOf: null },
+    Object.create(null),
+    new Number(true),
+    new MyBadPrimitive(),
+    Symbol(),
+    5n,
+    (one, two, three) => {},
+    undefined,
+    null,
+  ].forEach((input) => {
+    expect(() => Buffer.from(input)).toThrow();
+    expect(() => Buffer.from(input, "hex")).toThrow();
+  });
+
+  expect(() => Buffer.allocUnsafe(10)).not.toThrow(); // Should not throw.
+  expect(() => Buffer.from("deadbeaf", "hex")).not.toThrow(); // Should not throw.
+});
+
+it("new Buffer() (Node.js test/test-buffer-new.js)", () => {
+  const LENGTH = 16;
+
+  const ab = new ArrayBuffer(LENGTH);
+  const dv = new DataView(ab);
+  const ui = new Uint8Array(ab);
+  const buf = Buffer.from(ab);
+
+  expect(buf instanceof Buffer).toBe(true);
+  // expect(buf.parent, buf.buffer);
+  expect(buf.buffer).toBe(ab);
+  expect(buf.length).toBe(ab.byteLength);
+
+  buf.fill(0xc);
+  for (let i = 0; i < LENGTH; i++) {
+    expect(ui[i]).toBe(0xc);
+    ui[i] = 0xf;
+    expect(buf[i]).toBe(0xf);
+  }
+
+  buf.writeUInt32LE(0xf00, 0);
+  buf.writeUInt32BE(0xb47, 4);
+  buf.writeDoubleLE(3.1415, 8);
+  expect(dv.getUint32(0, true)).toBe(0xf00);
+  expect(dv.getUint32(4)).toBe(0xb47);
+  expect(dv.getFloat64(8, true)).toBe(3.1415);
+
+  // Now test protecting users from doing stupid things
+
+  expect(function () {
+    function AB() {}
+    Object.setPrototypeOf(AB, ArrayBuffer);
+    Object.setPrototypeOf(AB.prototype, ArrayBuffer.prototype);
+    Buffer.from(new AB());
+  }).toThrow();
+  // console.log(origAB !== ab);
+
+  // Test the byteOffset and length arguments
+  {
+    const ab = new Uint8Array(5);
+    ab[0] = 1;
+    ab[1] = 2;
+    ab[2] = 3;
+    ab[3] = 4;
+    ab[4] = 5;
+    const buf = Buffer.from(ab.buffer, 1, 3);
+    expect(buf.length).toBe(3);
+    expect(buf[0]).toBe(2);
+    expect(buf[1]).toBe(3);
+    expect(buf[2]).toBe(4);
+    buf[0] = 9;
+    expect(ab[1]).toBe(9);
+
+    expect(() => Buffer.from(ab.buffer, 6)).toThrow();
+    expect(() => Buffer.from(ab.buffer, 3, 6)).toThrow();
+  }
+
+  // Test the deprecated Buffer() version also
+  {
+    const ab = new Uint8Array(5);
+    ab[0] = 1;
+    ab[1] = 2;
+    ab[2] = 3;
+    ab[3] = 4;
+    ab[4] = 5;
+    const buf = Buffer(ab.buffer, 1, 3);
+    expect(buf.length).toBe(3);
+    expect(buf[0]).toBe(2);
+    expect(buf[1]).toBe(3);
+    expect(buf[2]).toBe(4);
+    buf[0] = 9;
+    expect(ab[1]).toBe(9);
+
+    expect(() => Buffer(ab.buffer, 6)).toThrow();
+    expect(() => Buffer(ab.buffer, 3, 6)).toThrow();
+  }
+
+  {
+    // If byteOffset is not numeric, it defaults to 0.
+    const ab = new ArrayBuffer(10);
+    const expected = Buffer.from(ab, 0);
+    expect(Buffer.from(ab, "fhqwhgads")).toStrictEqual(expected);
+    expect(Buffer.from(ab, NaN)).toStrictEqual(expected);
+    expect(Buffer.from(ab, {})).toStrictEqual(expected);
+    expect(Buffer.from(ab, [])).toStrictEqual(expected);
+
+    // If byteOffset can be converted to a number, it will be.
+    expect(Buffer.from(ab, [1])).toStrictEqual(Buffer.from(ab, 1));
+
+    // If byteOffset is Infinity, throw.
+    expect(() => {
+      Buffer.from(ab, Infinity);
+    }).toThrow();
+  }
+
+  {
+    // If length is not numeric, it defaults to 0.
+    const ab = new ArrayBuffer(10);
+    const expected = Buffer.from(ab, 0, 0);
+    expect(Buffer.from(ab, 0, "fhqwhgads")).toStrictEqual(expected);
+    expect(Buffer.from(ab, 0, NaN)).toStrictEqual(expected);
+    expect(Buffer.from(ab, 0, {})).toStrictEqual(expected);
+    expect(Buffer.from(ab, 0, [])).toStrictEqual(expected);
+
+    // If length can be converted to a number, it will be.
+    expect(Buffer.from(ab, 0, [1])).toStrictEqual(Buffer.from(ab, 0, 1));
+
+    // If length is Infinity, throw.
+    expect(() => Buffer.from(ab, 0, Infinity)).toThrow();
+  }
+
+  // Test an array like entry with the length set to NaN.
+  expect(Buffer.from({ length: NaN })).toStrictEqual(Buffer.alloc(0));
 });

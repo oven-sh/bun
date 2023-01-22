@@ -730,7 +730,7 @@ pub const GetAddrInfoRequest = struct {
                 var hostname: [bun.MAX_PATH_BYTES]u8 = undefined;
                 _ = strings.copy(hostname[0..], query.name);
                 hostname[query.name.len] = 0;
-                var addrinfo: *std.c.addrinfo = undefined;
+                var addrinfo: ?*std.c.addrinfo = null;
                 var host = hostname[0..query.name.len :0];
                 const debug_timer = bun.Output.DebugTimer.start();
                 const err = std.c.getaddrinfo(
@@ -745,16 +745,16 @@ pub const GetAddrInfoRequest = struct {
                     err,
                     debug_timer,
                 });
-                if (@enumToInt(err) != 0) {
+                if (@enumToInt(err) != 0 or addrinfo == null) {
                     this.* = .{ .err = @enumToInt(err) };
                     return;
                 }
 
                 // do not free addrinfo when err != 0
                 // https://github.com/ziglang/zig/pull/14242
-                defer std.c.freeaddrinfo(addrinfo);
+                defer std.c.freeaddrinfo(addrinfo.?);
 
-                this.* = .{ .success = GetAddrInfo.Result.toList(default_allocator, addrinfo) catch unreachable };
+                this.* = .{ .success = GetAddrInfo.Result.toList(default_allocator, addrinfo.?) catch unreachable };
             }
         },
 
@@ -1329,7 +1329,21 @@ pub const DNSResolver = struct {
                 LibC.lookup(this, query, globalThis),
         };
     }
+    pub fn doResolveSrv(this: *DNSResolver, name: []const u8, globalThis: *JSC.JSGlobalObject) JSC.JSValue {
+        var channel: *c_ares.Channel = switch (this.getChannel()) {
+            .result => |res| res,
+            .err => |err| {
+                const system_error = JSC.SystemError{
+                    .errno = -1,
+                    .code = JSC.ZigString.init(err.code()),
+                    .message = JSC.ZigString.init(err.label()),
+                };
 
+                globalThis.throwValue(system_error.toErrorInstance(globalThis));
+                return .zero;
+            },
+        };
+    }
     pub fn c_aresLookupWithNormalizedName(this: *DNSResolver, query: GetAddrInfo, globalThis: *JSC.JSGlobalObject) JSC.JSValue {
         var channel: *c_ares.Channel = switch (this.getChannel()) {
             .result => |res| res,

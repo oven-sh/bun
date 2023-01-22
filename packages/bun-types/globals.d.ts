@@ -344,7 +344,7 @@ interface Process {
   arch: Architecture;
   platform: Platform;
   argv: string[];
-  // execArgv: string[];
+  execArgv: string[];
   env: Bun.Env;
 
   /** Whether you are using Bun */

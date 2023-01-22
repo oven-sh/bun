@@ -3585,9 +3585,14 @@ JSC::Identifier GlobalObject::moduleLoaderResolve(JSGlobalObject* globalObject,
     res.success = false;
     ZigString keyZ = toZigString(key, globalObject);
     ZigString referrerZ = referrer && !referrer.isUndefinedOrNull() && referrer.isString() ? toZigString(referrer, globalObject) : ZigStringEmpty;
-    Zig__GlobalObject__resolve(&res, globalObject, &keyZ, &referrerZ);
+    ZigString queryString = { 0, 0 };
+    Zig__GlobalObject__resolve(&res, globalObject, &keyZ, &referrerZ, &queryString);
 
     if (res.success) {
+        if (queryString.len > 0) {
+            return JSC::Identifier::fromString(globalObject->vm(), makeString(Zig::toString(res.result.value), Zig::toString(queryString)));
+        }
+
         return toIdentifier(res.result.value, globalObject);
     } else {
         auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
@@ -3612,14 +3617,22 @@ JSC::JSInternalPromise* GlobalObject::moduleLoaderImportModule(JSGlobalObject* g
     ErrorableZigString resolved;
     auto moduleNameZ = toZigString(moduleNameValue, globalObject);
     auto sourceOriginZ = sourceURL.isEmpty() ? ZigStringCwd : toZigString(sourceURL.fileSystemPath());
+    ZigString queryString = { 0, 0 };
     resolved.success = false;
-    Zig__GlobalObject__resolve(&resolved, globalObject, &moduleNameZ, &sourceOriginZ);
+    Zig__GlobalObject__resolve(&resolved, globalObject, &moduleNameZ, &sourceOriginZ, &queryString);
     if (!resolved.success) {
         throwException(scope, resolved.result.err, globalObject);
         return promise->rejectWithCaughtException(globalObject, scope);
     }
 
-    auto result = JSC::importModule(globalObject, toIdentifier(resolved.result.value, globalObject),
+    JSC::Identifier resolvedIdentifier;
+    if (queryString.len == 0) {
+        resolvedIdentifier = toIdentifier(resolved.result.value, globalObject);
+    } else {
+        resolvedIdentifier = JSC::Identifier::fromString(vm, makeString(Zig::toString(resolved.result.value), Zig::toString(queryString)));
+    }
+
+    auto result = JSC::importModule(globalObject, resolvedIdentifier,
         JSC::jsUndefined(), parameters, JSC::jsUndefined());
     RETURN_IF_EXCEPTION(scope, promise->rejectWithCaughtException(globalObject, scope));
 

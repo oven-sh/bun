@@ -1,0 +1,41 @@
+{
+  "name": "bun",
+  "version": "0.1.7",
+  "description": "Bun is a fast all-in-one JavaScript runtime.",
+  "keywords": [
+    "bun",
+    "bun.js",
+    "node",
+    "node.js",
+    "runtime",
+    "bundler",
+    "transpiler",
+    "typescript"
+  ],
+  "homepage": "https://bun.sh",
+  "bugs": "https://github.com/oven-sh/issues",
+  "license": "MIT",
+  "bin": {
+    "bun": "bin/bun"
+  },
+  "repository": "https://github.com/oven-sh/bun",
+  "scripts": {
+    "postinstall": "node install.js"
+  },
+  "optionalDependencies": {
+    "@oven/bun-darwin-aarch64": "0.1.7",
+    "@oven/bun-darwin-x64": "0.1.7",
+    "@oven/bun-darwin-x64-baseline": "0.1.7",
+    "@oven/bun-linux-aarch64": "0.1.7",
+    "@oven/bun-linux-x64": "0.1.7",
+    "@oven/bun-linux-x64-baseline": "0.1.7"
+  },
+  "os": [
+    "darwin",
+    "linux"
+  ],
+  "cpu": [
+    "arm64",
+    "x64"
+  ]
+}

@@ -1,0 +1,17 @@
+{
+  "compilerOptions": {
+    "lib": ["esnext"],
+    "module": "esnext",
+    "target": "esnext",
+    "moduleResolution": "node",
+    "types": ["bun-types"],
+    "esModuleInterop": true,
+    "allowJs": true,
+    "strict": true,
+    "resolveJsonModule": true
+  },
+  "include": [
+    "src",
+    "scripts"
+  ]
+}

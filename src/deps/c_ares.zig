@@ -13,75 +13,139 @@ pub const struct_apattern = opaque {};
 const fd_set = c.fd_set;
 
 pub const NSClass = enum(c_int) {
-    ns_c_invalid = 0, // Cookie.
-    ns_c_in  = 1, // Internet.
-    ns_c_2  = 2, // unallocated/unsupported.
-    ns_c_chaos  = 3, // MIT Chaos-net.
-    ns_c_hs  = 4, // MIT Hesiod.
-    // Query class values which do not appear in resource records
-    ns_c_none = 254, // for prereq. sections in update requests
-    ns_c_any = 255, // Wildcard match.
+    /// Cookie.
+    ns_c_invalid = 0,
+    /// Internet.
+    ns_c_in  = 1,
+    /// unallocated/unsupported.
+    ns_c_2  = 2,
+    /// MIT Chaos-net.
+    ns_c_chaos  = 3,
+    /// MIT Hesiod.
+    ns_c_hs  = 4,
+    /// Query class values which do not appear in resource records
+    /// for prereq. sections in update requests
+    ns_c_none = 254,
+    /// Wildcard match.
+    ns_c_any = 255,
     ns_c_max = 65536,
 };
 
 pub const NSType = enum(c_int) {
-    ns_t_invalid = 0, // Cookie.
-    ns_t_a = 1, // Host address.
-    ns_t_ns = 2, // Authoritative server.
-    ns_t_md = 3, // Mail destination.
-    ns_t_mf = 4, // Mail forwarder.
-    ns_t_cname = 5, // Canonical name.
-    ns_t_soa = 6, // Start of authority zone.
-    ns_t_mb = 7, // Mailbox domain name.
-    ns_t_mg = 8, // Mail group member.
-    ns_t_mr = 9, // Mail rename name.
-    ns_t_null = 10, // Null resource record.
-    ns_t_wks = 11, // Well known service.
-    ns_t_ptr = 12, // Domain name pointer.
-    ns_t_hinfo = 13, // Host information.
-    ns_t_minfo = 14, // Mailbox information.
-    ns_t_mx = 15, // Mail routing information.
-    ns_t_txt = 16, // Text strings.
-    ns_t_rp = 17, // Responsible person.
-    ns_t_afsdb = 18, // AFS cell database.
-    ns_t_x25 = 19, // X_25 calling address.
-    ns_t_isdn = 20, // ISDN calling address.
-    ns_t_rt = 21, // Router.
-    ns_t_nsap = 22, // NSAP address.
-    ns_t_nsap_ptr = 23, // Reverse NSAP lookup (deprecated).
-    ns_t_sig = 24, // Security signature.
-    ns_t_key = 25, // Security key.
-    ns_t_px = 26, // X.400 mail mapping.
-    ns_t_gpos = 27, // Geographical position (withdrawn).
-    ns_t_aaaa = 28, // Ip6 Address.
-    ns_t_loc = 29, // Location Information.
-    ns_t_nxt = 30, // Next domain (security).
-    ns_t_eid = 31, // Endpoint identifier.
-    ns_t_nimloc = 32, // Nimrod Locator.
-    ns_t_srv = 33, // Server Selection.
-    ns_t_atma = 34, // ATM Address
-    ns_t_naptr = 35, // Naming Authority PoinTeR
-    ns_t_kx = 36, // Key Exchange
-    ns_t_cert = 37, // Certification record
-    ns_t_a6 = 38, // IPv6 address (deprecates AAAA)
-    ns_t_dname = 39, // Non-terminal DNAME (for IPv6)
-    ns_t_sink = 40, // Kitchen sink (experimentatl)
-    ns_t_opt = 41, // EDNS0 option (meta-RR)
-    ns_t_apl = 42, // Address prefix list (RFC3123)
-    ns_t_ds = 43, // Delegation Signer (RFC4034)
-    ns_t_sshfp = 44, // SSH Key Fingerprint (RFC4255)
-    ns_t_rrsig = 46, // Resource Record Signature (RFC4034)
-    ns_t_nsec = 47, // Next Secure (RFC4034)
-    ns_t_dnskey = 48, // DNS Public Key (RFC4034)
-    ns_t_tkey = 249, // Transaction key
-    ns_t_tsig = 250, // Transaction signature.
-    ns_t_ixfr = 251, // Incremental zone transfer.
-    ns_t_axfr = 252, // Transfer zone of authority.
-    ns_t_mailb = 253, // Transfer mailbox records.
-    ns_t_maila = 254, // Transfer mail agent records.
-    ns_t_any = 255, // Wildcard match.
-    ns_t_uri = 256, // Uniform Resource Identifier (RFC7553)
-    ns_t_caa = 257, // Certification Authority Authorization.
+    /// Cookie.
+    ns_t_invalid = 0,
+    /// Host address.
+    ns_t_a = 1,
+    /// Authoritative server.
+    ns_t_ns = 2,
+    /// Mail destination.
+    ns_t_md = 3,
+    /// Mail forwarder.
+    ns_t_mf = 4,
+    /// Canonical name.
+    ns_t_cname = 5,
+    /// Start of authority zone.
+    ns_t_soa = 6,
+    /// Mailbox domain name.
+    ns_t_mb = 7,
+    /// Mail group member.
+    ns_t_mg = 8,
+    /// Mail rename name.
+    ns_t_mr = 9,
+    /// Null resource record.
+    ns_t_null = 10,
+    /// Well known service.
+    ns_t_wks = 11,
+    /// Domain name pointer.
+    ns_t_ptr = 12,
+    /// Host information.
+    ns_t_hinfo = 13,
+    /// Mailbox information.
+    ns_t_minfo = 14,
+    /// Mail routing information.
+    ns_t_mx = 15,
+    /// Text strings.
+    ns_t_txt = 16,
+    /// Responsible person.
+    ns_t_rp = 17,
+    /// AFS cell database.
+    ns_t_afsdb = 18,
+    /// X_25 calling address.
+    ns_t_x25 = 19,
+    /// ISDN calling address.
+    ns_t_isdn = 20,
+    /// Router.
+    ns_t_rt = 21,
+    /// NSAP address.
+    ns_t_nsap = 22,
+    /// Reverse NSAP lookup (deprecated).
+    ns_t_nsap_ptr = 23,
+    /// Security signature.
+    ns_t_sig = 24,
+    /// Security key.
+    ns_t_key = 25,
+    /// X.400 mail mapping.
+    ns_t_px = 26,
+    /// Geographical position (withdrawn).
+    ns_t_gpos = 27,
+    /// Ip6 Address.
+    ns_t_aaaa = 28,
+    /// Location Information.
+    ns_t_loc = 29,
+    /// Next domain (security).
+    ns_t_nxt = 30,
+    /// Endpoint identifier.
+    ns_t_eid = 31,
+    /// Nimrod Locator.
+    ns_t_nimloc = 32,
+    /// Server Selection.
+    ns_t_srv = 33,
+    /// ATM Address
+    ns_t_atma = 34,
+    /// Naming Authority PoinTeR
+    ns_t_naptr = 35,
+    /// Key Exchange
+    ns_t_kx = 36,
+    /// Certification record
+    ns_t_cert = 37,
+    /// IPv6 address (deprecates AAAA)
+    ns_t_a6 = 38,
+    /// Non-terminal DNAME (for IPv6)
+    ns_t_dname = 39,
+    /// Kitchen sink (experimentatl)
+    ns_t_sink = 40,
+    /// EDNS0 option (meta-RR)
+    ns_t_opt = 41,
+    /// Address prefix list (RFC3123)
+    ns_t_apl = 42,
+    /// Delegation Signer (RFC4034)
+    ns_t_ds = 43,
+    /// SSH Key Fingerprint (RFC4255)
+    ns_t_sshfp = 44,
+    /// Resource Record Signature (RFC4034)
+    ns_t_rrsig = 46,
+    /// Next Secure (RFC4034)
+    ns_t_nsec = 47,
+    /// DNS Public Key (RFC4034)
+    ns_t_dnskey = 48,
+    /// Transaction key
+    ns_t_tkey = 249,
+    /// Transaction signature.
+    ns_t_tsig = 250,
+    /// Incremental zone transfer.
+    ns_t_ixfr = 251,
+    /// Transfer zone of authority.
+    ns_t_axfr = 252,
+    /// Transfer mailbox records.
+    ns_t_mailb = 253,
+    /// Transfer mail agent records.
+    ns_t_maila = 254,
+    /// Wildcard match.
+    ns_t_any = 255,
+    /// Uniform Resource Identifier (RFC7553)
+    ns_t_uri = 256,
+    /// Certification Authority Authorization.
+    ns_t_caa = 257,
     ns_t_max = 65536,
     _,
 };
@@ -481,7 +545,7 @@ pub const struct_ares_srv_reply = extern struct {
         while (srv != null) : (srv = srv.?.next) {
             count += 1;
         }
-
+        
         const array = JSC.JSValue.createEmptyArray(globalThis, count);
 
         srv = this;
@@ -496,7 +560,7 @@ pub const struct_ares_srv_reply = extern struct {
         return array;
     }
 
-    pub fn toJS(this: *struct_ares_srv_reply, globalThis: *JSC.JSGlobalObject, allocator: std.mem.Allocator) JSC.JSValue {
+    pub fn toJS(this: *struct_ares_srv_reply, globalThis: *JSC.JSGlobalObject, _: std.mem.Allocator) JSC.JSValue {
         var obj = JSC.JSValue.createEmptyObject(globalThis, 4);
         // {
         //   priority: 10,
@@ -510,11 +574,10 @@ pub const struct_ares_srv_reply = extern struct {
         obj.put(globalThis, JSC.ZigString.static("port"), JSC.JSValue.jsNumber(this.port));
 
 
-
-        const len = std.mem.len(this.host);
+        
+        const len = bun.len(this.host);
         var host = this.host[0..len];
-        var name = JSC.ZigString.fromUTF8(host).clone(allocator) catch unreachable;
-        obj.put(globalThis, JSC.ZigString.static("name"), name.toValueGC(globalThis));
+        obj.put(globalThis, JSC.ZigString.static("name"), JSC.ZigString.fromUTF8(host).toValueGC(globalThis));
 
         return obj;
     }

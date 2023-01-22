@@ -1603,7 +1603,7 @@ pub const DNSResolver = struct {
         const name_value = arguments.ptr[0];
 
         if (name_value.isEmptyOrUndefinedOrNull() or !name_value.isString()) {
-            globalThis.throwInvalidArgumentType("resolveSrv", "name", "string");
+            globalThis.throwInvalidArgumentType("resolveSrv", "hostname", "string");
             return .zero;
         }
 
@@ -1612,7 +1612,7 @@ pub const DNSResolver = struct {
         };
 
         if (name_str.length() == 0) {
-            globalThis.throwInvalidArgumentType("resolveSrv", "name", "non-empty string");
+            globalThis.throwInvalidArgumentType("resolveSrv", "hostname", "non-empty string");
             return .zero;
         }
 

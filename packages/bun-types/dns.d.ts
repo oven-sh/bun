@@ -867,7 +867,7 @@ declare module "dns" {
     // resolveNs: typeof resolveNs;
     // resolvePtr: typeof resolvePtr;
     // resolveSoa: typeof resolveSoa;
-    // resolveSrv: typeof resolveSrv;
+    resolveSrv: typeof resolveSrv;
     // resolveTxt: typeof resolveTxt;
     // reverse: typeof reverse;
     /**

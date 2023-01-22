@@ -1,4 +1,4 @@
-// only resolve4, resolve, lookup, and resolve6 are implemented.
+// only resolve4, resolve, lookup, resolve6 and resolveSrv are implemented.
 
 const { dns } = globalThis.Bun;
 
@@ -31,7 +31,7 @@ function resolveSrv(hostname, callback) {
     throw new TypeError("callback must be a function");
   }
 
-  dns.resolveSrv(hostname, options).then(
+  dns.resolveSrv(hostname, callback).then(
     (results) => {
       callback(null, results);
     },
@@ -154,7 +154,18 @@ var InternalResolver = class Resolver {
   }
 
   resolveSrv(hostname, callback) {
-    callback(null, []);
+    if (typeof callback != "function") {
+      throw new TypeError("callback must be a function");
+    }
+  
+    dns.resolveSrv(hostname, callback).then(
+      (results) => {
+        callback(null, results);
+      },
+      (error) => {
+        callback(error);
+      },
+    );
   }
 
   resolveCaa(hostname, callback) {

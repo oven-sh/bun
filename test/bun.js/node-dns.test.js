@@ -32,3 +32,13 @@ test("dns.lookup (example.com)", (done) => {
   });
 });
 
+//TODO: use a bun.sh SRV for testing
+test("dns.resolveSrv (_test._tcp.test.socketify.dev)", (done) => {
+  dns.resolveSrv("_test._tcp.test.socketify.dev", (err, results) => {
+    expect(err).toBeNull();
+    expect(results instanceof Array).toBe(true);
+    done(err);
+  });
+});
+
+

@@ -3225,19 +3225,22 @@ pub const PollRef = struct {
         if (this.status != .active)
             return;
         this.status = .inactive;
-        log("unref", .{});
-        vm.uws_event_loop.?.num_polls -= 1;
-        vm.uws_event_loop.?.active -= 1;
+        vm.uws_event_loop.?.unref();
+    }
+    /// Prevent a poll from keeping the process alive on the next tick.
+    pub fn unrefOnNextTick(this: *PollRef, vm: *JSC.VirtualMachine) void {
+        if (this.status != .active)
+            return;
+        this.status = .inactive;
+        vm.uws_event_loop.?.nextTick(*uws.Loop, vm.uws_event_loop.?, uws.Loop.unref);
     }
 
     /// Allow a poll to keep the process alive.
     pub fn ref(this: *PollRef, vm: *JSC.VirtualMachine) void {
         if (this.status != .inactive)
             return;
-        log("ref", .{});
         this.status = .active;
-        vm.uws_event_loop.?.num_polls += 1;
-        vm.uws_event_loop.?.active += 1;
+        vm.uws_event_loop.?.ref();
     }
 };
 

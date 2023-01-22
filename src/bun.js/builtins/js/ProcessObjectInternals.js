@@ -510,6 +510,7 @@ function getStdinStream(fd_, rawRequire, Bun) {
       }
     }
 
+    setRawMode(mode) {}
     on(name, callback) {
       // Streams don't generally required to present any data when only
       // `readable` events are present, i.e. `readableFlowing === false`

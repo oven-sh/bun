@@ -77,16 +77,13 @@ async function buildPackage({ bin, exe, os, arch }: Platform): Promise<void> {
   const cwd = join("npm", npmPackage);
   write(join(cwd, exe), await bun.async("arraybuffer"));
   chmod(join(cwd, exe), 0o755);
-  patchJson(
-    join(cwd, "package.json"),
-    {
-      name: npmPackage,
-      version,
-      preferUnplugged: true,
-      os: [os],
-      cpu: [arch],
-    }
-  );
+  patchJson(join(cwd, "package.json"), {
+    name: npmPackage,
+    version,
+    preferUnplugged: true,
+    os: [os],
+    cpu: [arch],
+  });
   done();
 }
 
@@ -158,7 +155,7 @@ function patchJson(path: string, patch: object): void {
   } catch {
     value = patch;
   }
-  write(path, JSON.stringify(value, undefined, 2));
+  write(path, `${JSON.stringify(value, undefined, 2)}\n`);
 }
 
 function buildJs(src: string, dst: string, options: BuildOptions = {}): void {

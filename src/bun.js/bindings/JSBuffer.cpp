@@ -1374,11 +1374,14 @@ static inline JSC::EncodedJSValue jsBufferPrototypeFunction_writeBody(JSC::JSGlo
 
     if (callFrame->argumentCount() > 2) {
         uint32_t arg_len = 0;
-        arg_len = callFrame->argument(2).toUInt32(lexicalGlobalObject);
-        length = std::min(arg_len, length - offset);
+        EnsureStillAliveScope arg2 = callFrame->argument(2);
+        if (arg2.value().isAnyInt()) {
+            arg_len = arg2.value().toUInt32(lexicalGlobalObject);
+            length = std::min(arg_len, length - offset);
+        }
     }
 
-    if (callFrame->argumentCount() > 2) {
+    if (callFrame->argumentCount() > 3) {
         std::optional<BufferEncodingType> parsedEncoding = parseEnumeration<BufferEncodingType>(*lexicalGlobalObject, callFrame->argument(3));
         if (parsedEncoding.has_value()) {
             encoding = parsedEncoding.value();

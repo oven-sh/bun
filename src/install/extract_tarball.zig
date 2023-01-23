@@ -1,24 +1,31 @@
-const Output = @import("bun").Output;
-const strings = @import("../string_immutable.zig");
-const string = @import("../string_types.zig").string;
-const Resolution = @import("./resolution.zig").Resolution;
-const FileSystem = @import("../fs.zig").FileSystem;
-const Semver = @import("./semver.zig");
-const Integrity = @import("./integrity.zig").Integrity;
-const PackageID = @import("./install.zig").PackageID;
-const PackageManager = @import("./install.zig").PackageManager;
-const std = @import("std");
-const Npm = @import("./npm.zig");
-const ExtractTarball = @This();
-const default_allocator = @import("bun").default_allocator;
-const Global = @import("bun").Global;
 const bun = @import("bun");
+const default_allocator = bun.default_allocator;
+const Global = bun.Global;
+const json_parser = bun.JSON;
+const logger = bun.logger;
+const Output = bun.Output;
+const FileSystem = @import("../fs.zig").FileSystem;
+const Install = @import("./install.zig");
+const Features = Install.Features;
+const Lockfile = Install.Lockfile;
+const PackageID = Install.PackageID;
+const PackageManager = Install.PackageManager;
+const Integrity = @import("./integrity.zig").Integrity;
+const Npm = @import("./npm.zig");
+const Resolution = @import("./resolution.zig").Resolution;
+const Semver = @import("./semver.zig");
+const std = @import("std");
+const string = @import("../string_types.zig").string;
+const strings = @import("../string_immutable.zig");
+const ExtractTarball = @This();
+
 name: strings.StringOrTinyString,
 resolution: Resolution,
 registry: string,
 cache_dir: std.fs.Dir,
 temp_dir: std.fs.Dir,
 package_id: PackageID,
+dependency_id: PackageID = Install.invalid_package_id,
 skip_verify: bool = false,
 integrity: Integrity = Integrity{},
 url: string = "",
@@ -194,6 +201,7 @@ fn extract(this: *const ExtractTarball, tgz_bytes: []const u8) !string {
                 void,
                 void{},
                 // for npm packages, the root dir is always "package"
+                // for github tarballs, the root dir is always the commit id
                 1,
                 true,
                 true,
@@ -206,6 +214,7 @@ fn extract(this: *const ExtractTarball, tgz_bytes: []const u8) !string {
                 void,
                 void{},
                 // for npm packages, the root dir is always "package"
+                // for github tarballs, the root dir is always the commit id
                 1,
                 true,
                 false,
@@ -221,7 +230,11 @@ fn extract(this: *const ExtractTarball, tgz_bytes: []const u8) !string {
             Output.flush();
         }
     }
-    var folder_name = this.package_manager.cachedNPMPackageFolderNamePrint(&abs_buf2, name, this.resolution.value.npm.version);
+    const folder_name = switch (this.resolution.tag) {
+        .npm => this.package_manager.cachedNPMPackageFolderNamePrint(&abs_buf2, name, this.resolution.value.npm.version),
+        .github => this.package_manager.cachedGitHubFolderNamePrint(&abs_buf2, name, this.resolution.value.github),
+        else => unreachable,
+    };
     if (folder_name.len == 0 or (folder_name.len == 1 and folder_name[0] == '/')) @panic("Tried to delete root and stopped it");
     var cache_dir = this.cache_dir;
     cache_dir.deleteTree(folder_name) catch {};
@@ -285,6 +298,56 @@ fn extract(this: *const ExtractTarball, tgz_bytes: []const u8) !string {
             folder_name[name.len + 1 ..],
             .{},
         ) catch break :create_index;
+    }
+
+    switch (this.resolution.tag) {
+        .github => {
+            const manager = this.package_manager;
+            var package = manager.lockfile.packages.get(this.package_id);
+            const package_name = package.name;
+            const package_name_hash = package.name_hash;
+
+            var package_json_file = final_dir.openFileZ("package.json", .{ .mode = .read_only }) catch |err| {
+                Output.prettyErrorln("<r><red>Error {s}<r> failed to open package.json for {s}", .{
+                    @errorName(err),
+                    name,
+                });
+                Global.crash();
+            };
+            defer package_json_file.close();
+            var package_json_stat = try package_json_file.stat();
+            var package_json_buf = try manager.allocator.alloc(u8, package_json_stat.size + 64);
+            defer manager.allocator.free(package_json_buf);
+            const package_json_contents_len = try package_json_file.preadAll(
+                package_json_buf,
+                0,
+            );
+
+            var package_json_path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+            const package_json_source = logger.Source.initPathString(
+                try final_dir.realpath("package.json", &package_json_path_buf),
+                package_json_buf[0..package_json_contents_len],
+            );
+            try Lockfile.Package.parse(
+                manager.lockfile,
+                &package,
+                manager.allocator,
+                manager.log,
+                package_json_source,
+                void,
+                {},
+                Features.npm,
+            );
+            package.name = package_name;
+            package.name_hash = package_name_hash;
+            manager.lockfile.packages.set(this.package_id, package);
+            if (package.dependencies.len > 0) {
+                try manager.lockfile.scratch.dependency_list_queue.writeItem(package.dependencies);
+            }
+            manager.lockfile.buffers.resolutions.items[this.dependency_id] = this.package_id;
+            // TODO remove extracted files not matching any globs under "files"
+        },
+        else => {},
     }
 
     return try FileSystem.instance.dirname_store.append(@TypeOf(final_path), final_path);

@@ -485,7 +485,7 @@ const Task = struct {
             hasher.update(package_name);
             hasher.update("@");
             hasher.update(std.mem.asBytes(&package_version));
-            return @as(u64, @truncate(u63, hasher.final())) | @as(u64, 1 << 63);
+            return @as(u64, @truncate(u62, hasher.final())) | @as(u64, 1 << 63);
         }
 
         pub fn forBinLink(package_id: PackageID) u64 {
@@ -497,7 +497,13 @@ const Task = struct {
             _: Task.Tag,
             name: string,
         ) u64 {
-            return @as(u64, @truncate(u63, std.hash.Wyhash.hash(0, name)));
+            return @as(u64, @truncate(u62, std.hash.Wyhash.hash(0, name)));
+        }
+
+        pub fn forTarball(url: string) u64 {
+            var hasher = std.hash.Wyhash.init(0);
+            hasher.update(url);
+            return @as(u64, @truncate(u62, hasher.final())) | @as(u64, 1 << 62);
         }
     };
 
@@ -1789,6 +1795,26 @@ pub const PackageManager = struct {
         return this.allocator.create(NetworkTask) catch @panic("Memory allocation failure creating NetworkTask!");
     }
 
+    pub fn cachedGitHubFolderNamePrint(this: *const PackageManager, buf: []u8, name: string, repository: Repository) stringZ {
+        if (repository.committish.isEmpty()) {
+            return std.fmt.bufPrintZ(buf, "{s}@{s}!{s}", .{
+                name,
+                this.lockfile.str(&repository.owner),
+                this.lockfile.str(&repository.repo),
+            }) catch unreachable;
+        }
+        return std.fmt.bufPrintZ(buf, "{s}@{s}!{s}#{s}", .{
+            name,
+            this.lockfile.str(&repository.owner),
+            this.lockfile.str(&repository.repo),
+            this.lockfile.str(&repository.committish),
+        }) catch unreachable;
+    }
+
+    pub fn cachedGitHubFolderName(this: *const PackageManager, name: string, repository: Repository) stringZ {
+        return this.cachedGitHubFolderNamePrint(&cached_package_folder_name_buf, name, repository);
+    }
+
     // TODO: normalize to alphanumeric
     pub fn cachedNPMPackageFolderNamePrint(this: *const PackageManager, buf: []u8, name: string, version: Semver.Version) stringZ {
         const scope = this.scopeForPackageName(name);
@@ -1824,34 +1850,52 @@ pub const PackageManager = struct {
 
     // TODO: normalize to alphanumeric
     pub fn cachedNPMPackageFolderPrintBasename(buf: []u8, name: string, version: Semver.Version) stringZ {
-        const pre_hex_int = version.tag.pre.hash;
-        const build_hex_int = version.tag.build.hash;
-
-        if (!version.tag.hasPre() and !version.tag.hasBuild()) {
-            return std.fmt.bufPrintZ(buf, "{s}@{d}.{d}.{d}", .{ name, version.major, version.minor, version.patch }) catch unreachable;
-        } else if (version.tag.hasPre() and version.tag.hasBuild()) {
-            return std.fmt.bufPrintZ(
-                buf,
-                "{s}@{d}.{d}.{d}-{any}+{any}",
-                .{ name, version.major, version.minor, version.patch, bun.fmt.hexIntLower(pre_hex_int), bun.fmt.hexIntUpper(build_hex_int) },
-            ) catch unreachable;
-        } else if (version.tag.hasPre()) {
+        if (version.tag.hasPre()) {
+            if (version.tag.hasBuild()) {
+                return std.fmt.bufPrintZ(
+                    buf,
+                    "{s}@{d}.{d}.{d}-{any}+{any}",
+                    .{
+                        name,
+                        version.major,
+                        version.minor,
+                        version.patch,
+                        bun.fmt.hexIntLower(version.tag.pre.hash),
+                        bun.fmt.hexIntUpper(version.tag.build.hash),
+                    },
+                ) catch unreachable;
+            }
             return std.fmt.bufPrintZ(
                 buf,
                 "{s}@{d}.{d}.{d}-{any}",
-                .{ name, version.major, version.minor, version.patch, bun.fmt.hexIntLower(pre_hex_int) },
+                .{
+                    name,
+                    version.major,
+                    version.minor,
+                    version.patch,
+                    bun.fmt.hexIntLower(version.tag.pre.hash),
+                },
             ) catch unreachable;
-        } else if (version.tag.hasBuild()) {
+        }
+        if (version.tag.hasBuild()) {
             return std.fmt.bufPrintZ(
                 buf,
                 "{s}@{d}.{d}.{d}+{any}",
-                .{ name, version.major, version.minor, version.patch, bun.fmt.hexIntUpper(build_hex_int) },
+                .{
+                    name,
+                    version.major,
+                    version.minor,
+                    version.patch,
+                    bun.fmt.hexIntUpper(version.tag.build.hash),
+                },
             ) catch unreachable;
-        } else {
-            unreachable;
         }
-
-        unreachable;
+        return std.fmt.bufPrintZ(buf, "{s}@{d}.{d}.{d}", .{
+            name,
+            version.major,
+            version.minor,
+            version.patch,
+        }) catch unreachable;
     }
 
     pub fn isFolderInCache(this: *PackageManager, folder_path: stringZ) bool {
@@ -2026,7 +2070,7 @@ pub const PackageManager = struct {
         manifest: *const Npm.PackageManifest,
         find_result: Npm.PackageManifest.FindResult,
         comptime successFn: SuccessFn,
-    ) !?ResolvedPackageResult {
+    ) !ResolvedPackageResult {
 
         // Was this package already allocated? Let's reuse the existing one.
         if (this.lockfile.getPackageID(
@@ -2619,7 +2663,7 @@ pub const PackageManager = struct {
                                 this.enqueueNetworkTask(network_task);
                             }
 
-                            std.debug.assert(task_id != 0);
+                            if (comptime Environment.isDebug) std.debug.assert(task_id != 0);
 
                             var manifest_entry_parse = try this.task_queue.getOrPutContext(this.allocator, task_id, .{});
                             if (!manifest_entry_parse.found_existing) {
@@ -2633,6 +2677,47 @@ pub const PackageManager = struct {
                     }
                 }
                 return;
+            },
+            .github => {
+                if (dependency.behavior.isPeer()) return;
+                const dep = dependency.version.value.github;
+                const res = Resolution{
+                    .tag = .github,
+                    .value = .{
+                        .github = dep,
+                    },
+                };
+                if (this.lockfile.getPackageID(name_hash, null, res)) |pkg_id| {
+                    successFn(this, id, pkg_id);
+                    return;
+                }
+                const package = try this.lockfile.appendPackage(.{
+                    .name = name,
+                    .name_hash = name_hash,
+                    .resolution = res,
+                });
+                var github_api_domain: string = "api.github.com";
+                if (this.env_loader.map.get("GITHUB_API_DOMAIN")) |api_domain| {
+                    if (api_domain.len > 0) {
+                        github_api_domain = api_domain;
+                    }
+                }
+                const url = try std.fmt.allocPrint(
+                    this.allocator,
+                    "https://{s}/repos/{s}/{s}/tarball/{s}",
+                    .{
+                        github_api_domain,
+                        this.lockfile.str(&dep.owner),
+                        this.lockfile.str(&dep.repo),
+                        this.lockfile.str(&dep.committish),
+                    },
+                );
+                const task_id = Task.Id.forTarball(url);
+                if (try this.generateNetworkTaskForTarball(task_id, url, package)) |network_task| {
+                    network_task.callback.extract.dependency_id = id;
+                    this.setPreinstallState(package.meta.id, this.lockfile, .extracting);
+                    this.enqueueNetworkTask(network_task);
+                }
             },
             .symlink, .workspace => {
                 const _result = this.getOrPutResolvedPackage(
@@ -2704,7 +2789,6 @@ pub const PackageManager = struct {
                     ) catch unreachable;
                 }
             },
-
             else => {},
         }
     }
@@ -5558,6 +5642,10 @@ pub const PackageManager = struct {
             switch (resolution.tag) {
                 .npm => {
                     installer.cache_dir_subpath = this.manager.cachedNPMPackageFolderName(name, resolution.value.npm.version);
+                    installer.cache_dir = this.manager.getCacheDirectory();
+                },
+                .github => {
+                    installer.cache_dir_subpath = this.manager.cachedGitHubFolderName(name, resolution.value.github);
                     installer.cache_dir = this.manager.getCacheDirectory();
                 },
                 .folder => {

@@ -1,11 +1,11 @@
+const Environment = @import("../env.zig");
 const PackageManager = @import("./install.zig").PackageManager;
 const Semver = @import("./semver.zig");
 const ExternalString = Semver.ExternalString;
 const String = Semver.String;
 const std = @import("std");
-const GitSHA = String;
 const string = @import("../string_types.zig").string;
-const Environment = @import("../env.zig");
+const GitSHA = String;
 
 pub const Repository = extern struct {
     owner: String = String{},
@@ -57,6 +57,7 @@ pub const Repository = extern struct {
             try writer.writeAll(":");
 
             try writer.writeAll(formatter.repository.owner.slice(formatter.buf));
+            try writer.writeAll("/");
             try writer.writeAll(formatter.repository.repo.slice(formatter.buf));
 
             if (!formatter.repository.committish.isEmpty()) {

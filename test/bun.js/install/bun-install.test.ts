@@ -15,6 +15,37 @@ import { bunEnv } from "bunEnv";
 
 let handler, package_dir, requested, server;
 
+function dummyRegistry(urls, version = "0.0.2") {
+  return async (request) => {
+    urls.push(request.url);
+    expect(request.method).toBe("GET");
+    if (request.url.endsWith(".tgz")) {
+      return new Response(file(join(import.meta.dir, "tarball.tgz")));
+    }
+    expect(request.headers.get("accept")).toBe(
+      "application/vnd.npm.install-v1+json; q=1.0, application/json; q=0.8, */*",
+    );
+    expect(request.headers.get("npm-auth-type")).toBe(null);
+    expect(await request.text()).toBe("");
+    const name = request.url.slice(request.url.lastIndexOf("/") + 1);
+    return new Response(JSON.stringify({
+      name,
+      versions: {
+        [version]: {
+          name,
+          version,
+          dist: {
+            tarball: `${request.url}.tgz`,
+          },
+        },
+      },
+      "dist-tags": {
+        latest: version,
+      },
+    }));
+  };
+}
+
 async function readdirSorted(path: PathLike): Promise<string[]> {
   const results = await readdir(path);
   results.sort();
@@ -558,37 +589,6 @@ it("should handle life-cycle scripts within workspaces", async () => {
   );
   await access(join(package_dir, "bun.lockb"));
 });
-
-function dummyRegistry(urls, version = "0.0.2") {
-  return async (request) => {
-    urls.push(request.url);
-    expect(request.method).toBe("GET");
-    if (request.url.endsWith(".tgz")) {
-      return new Response(file(join(import.meta.dir, "tarball.tgz")));
-    }
-    expect(request.headers.get("accept")).toBe(
-      "application/vnd.npm.install-v1+json; q=1.0, application/json; q=0.8, */*",
-    );
-    expect(request.headers.get("npm-auth-type")).toBe(null);
-    expect(await request.text()).toBe("");
-    const name = request.url.slice(request.url.lastIndexOf("/") + 1);
-    return new Response(JSON.stringify({
-      name,
-      versions: {
-        [version]: {
-          name,
-          version,
-          dist: {
-            tarball: `${request.url}.tgz`,
-          },
-        },
-      },
-      "dist-tags": {
-        latest: version,
-      },
-    }));
-  };
-}
 
 it("should handle ^0 in dependencies", async () => {
   const urls: string[] = [];
@@ -1192,5 +1192,187 @@ it("should not reinstall aliased dependencies", async () => {
     name: "baz",
     version: "0.0.2",
   });
+  await access(join(package_dir, "bun.lockb"));
+});
+
+it("should handle GitHub URL in dependencies (user/repo)", async () => {
+  const urls: string[] = [];
+  handler = dummyRegistry(urls);
+  await writeFile(
+    join(package_dir, "package.json"),
+    JSON.stringify({
+      name: "Foo",
+      version: "0.0.1",
+      dependencies: {
+        "uglify": "mishoo/UglifyJS",
+      },
+    }),
+  );
+  const { stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "install", "--config", import.meta.dir + "/basic.toml"],
+    cwd: package_dir,
+    stdout: null,
+    stdin: "pipe",
+    stderr: "pipe",
+    env,
+  });
+  expect(stderr).toBeDefined();
+  const err = await new Response(stderr).text();
+  expect(err).toContain("Saved lockfile");
+  expect(stdout).toBeDefined();
+  const out = await new Response(stdout).text();
+  expect(out.replace(/\s*\[[0-9\.]+ms\]\s*$/, "").split(/\r?\n/)).toEqual([
+    " + uglify@github:mishoo/UglifyJS",
+    "",
+    " 1 packages installed",
+  ]);
+  expect(await exited).toBe(0);
+  expect(urls).toEqual([]);
+  expect(requested).toBe(0);
+  expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([
+    ".bin",
+    ".cache",
+    "uglify",
+  ]);
+  expect(await readdirSorted(join(package_dir, "node_modules", ".bin"))).toEqual([
+    "uglifyjs",
+  ]);
+  expect(await readdirSorted(join(package_dir, "node_modules", "uglify"))).toEqual([
+    ".gitattributes",
+    ".github",
+    ".gitignore",
+    "CONTRIBUTING.md",
+    "LICENSE",
+    "README.md",
+    "bin",
+    "lib",
+    "package.json",
+    "test",
+    "tools",
+    ]);
+  var package_json = await file(join(package_dir, "node_modules", "uglify", "package.json")).json();
+  expect(package_json.name).toBe("uglify-js");
+  await access(join(package_dir, "bun.lockb"));
+});
+
+it("should handle GitHub URL in dependencies (user/repo#commit-id)", async () => {
+  const urls: string[] = [];
+  handler = dummyRegistry(urls);
+  await writeFile(
+    join(package_dir, "package.json"),
+    JSON.stringify({
+      name: "Foo",
+      version: "0.0.1",
+      dependencies: {
+        "uglify": "mishoo/UglifyJS#e219a9a",
+      },
+    }),
+  );
+  const { stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "install", "--config", import.meta.dir + "/basic.toml"],
+    cwd: package_dir,
+    stdout: null,
+    stdin: "pipe",
+    stderr: "pipe",
+    env,
+  });
+  expect(stderr).toBeDefined();
+  const err = await new Response(stderr).text();
+  expect(err).toContain("Saved lockfile");
+  expect(stdout).toBeDefined();
+  const out = await new Response(stdout).text();
+  expect(out.replace(/\s*\[[0-9\.]+ms\]\s*$/, "").split(/\r?\n/)).toEqual([
+    " + uglify@github:mishoo/UglifyJS#e219a9a",
+    "",
+    " 1 packages installed",
+  ]);
+  expect(await exited).toBe(0);
+  expect(urls).toEqual([]);
+  expect(requested).toBe(0);
+  expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([
+    ".bin",
+    ".cache",
+    "uglify",
+  ]);
+  expect(await readdirSorted(join(package_dir, "node_modules", ".bin"))).toEqual([
+    "uglifyjs",
+  ]);
+  expect(await readdirSorted(join(package_dir, "node_modules", "uglify"))).toEqual([
+    ".gitattributes",
+    ".github",
+    ".gitignore",
+    "CONTRIBUTING.md",
+    "LICENSE",
+    "README.md",
+    "bin",
+    "lib",
+    "package.json",
+    "test",
+    "tools",
+    ]);
+  var package_json = await file(join(package_dir, "node_modules", "uglify", "package.json")).json();
+  expect(package_json.name).toBe("uglify-js");
+  expect(package_json.version).toBe("3.14.1");
+  await access(join(package_dir, "bun.lockb"));
+});
+
+it("should handle GitHub URL in dependencies (user/repo#tag)", async () => {
+  const urls: string[] = [];
+  handler = dummyRegistry(urls);
+  await writeFile(
+    join(package_dir, "package.json"),
+    JSON.stringify({
+      name: "Foo",
+      version: "0.0.1",
+      dependencies: {
+        "uglify": "mishoo/UglifyJS#v3.14.1",
+      },
+    }),
+  );
+  const { stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "install", "--config", import.meta.dir + "/basic.toml"],
+    cwd: package_dir,
+    stdout: null,
+    stdin: "pipe",
+    stderr: "pipe",
+    env,
+  });
+  expect(stderr).toBeDefined();
+  const err = await new Response(stderr).text();
+  expect(err).toContain("Saved lockfile");
+  expect(stdout).toBeDefined();
+  const out = await new Response(stdout).text();
+  expect(out.replace(/\s*\[[0-9\.]+ms\]\s*$/, "").split(/\r?\n/)).toEqual([
+    " + uglify@github:mishoo/UglifyJS#v3.14.1",
+    "",
+    " 1 packages installed",
+  ]);
+  expect(await exited).toBe(0);
+  expect(urls).toEqual([]);
+  expect(requested).toBe(0);
+  expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([
+    ".bin",
+    ".cache",
+    "uglify",
+  ]);
+  expect(await readdirSorted(join(package_dir, "node_modules", ".bin"))).toEqual([
+    "uglifyjs",
+  ]);
+  expect(await readdirSorted(join(package_dir, "node_modules", "uglify"))).toEqual([
+    ".gitattributes",
+    ".github",
+    ".gitignore",
+    "CONTRIBUTING.md",
+    "LICENSE",
+    "README.md",
+    "bin",
+    "lib",
+    "package.json",
+    "test",
+    "tools",
+    ]);
+  var package_json = await file(join(package_dir, "node_modules", "uglify", "package.json")).json();
+  expect(package_json.name).toBe("uglify-js");
+  expect(package_json.version).toBe("3.14.1");
   await access(join(package_dir, "bun.lockb"));
 });

@@ -247,6 +247,7 @@ static inline JSC::EncodedJSValue addListener(JSC::JSGlobalObject* lexicalGlobal
     RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
 
     vm.writeBarrier(&static_cast<JSObject&>(*castedThis), argument1.value());
+    impl.setThisObject(actualThis);
     RELEASE_AND_RETURN(throwScope, JSValue::encode(actualThis));
 }
 
@@ -348,6 +349,7 @@ static inline JSC::EncodedJSValue jsEventEmitterPrototypeFunction_removeListener
     auto result = JSValue::encode(toJS<IDLUndefined>(*lexicalGlobalObject, throwScope, [&]() -> decltype(auto) { return impl.removeListenerForBindings(WTFMove(eventType), WTFMove(listener)); }));
     RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
     vm.writeBarrier(&static_cast<JSObject&>(*castedThis), argument1.value());
+    impl.setThisObject(actualThis);
     RELEASE_AND_RETURN(throwScope, JSValue::encode(actualThis));
 }
 

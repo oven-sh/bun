@@ -83,6 +83,15 @@ public:
 
     IdentifierEventListenerMap& eventListenerMap() { return ensureEventEmitterData().eventListenerMap; }
 
+    void setThisObject(JSC::JSValue thisObject)
+    {
+        m_thisObject.clear();
+
+        if (thisObject.isCell()) {
+            m_thisObject = JSC::Weak<JSC::JSObject>(thisObject.getObject());
+        }
+    }
+
 private:
     EventEmitter(ScriptExecutionContext& context)
         : ContextDestructionObserver(&context)
@@ -99,6 +108,8 @@ private:
 
     EventEmitterData m_eventTargetData;
     unsigned m_maxListeners { 10 };
+
+    mutable JSC::Weak<JSC::JSObject> m_thisObject { nullptr };
 };
 
 inline const EventEmitterData* EventEmitter::eventTargetData() const

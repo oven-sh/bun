@@ -1,4 +1,8 @@
+import { spawnSync } from "bun";
 import { describe, expect, it, test } from "bun:test";
+import { bunEnv } from "bunEnv";
+import { bunExe } from "bunExe";
+import { mkdirSync, realpathSync, rmSync, writeFileSync } from "fs";
 
 test("toStrictEqual() vs toEqual()", () => {
   expect([1, , 3]).toEqual([1, , 3]);
@@ -2008,4 +2012,42 @@ describe("throw in describe scope doesn't enqueue tests after thrown", () => {
 
 it("a describe scope throwing doesn't cause all other tests in the file to fail", () => {
   expect(true).toBe(true);
+});
+
+test("test throwing inside an EventEmitter fails the test", () => {
+  const code = `
+  import {test, expect} from 'bun:test';
+  import {EventEmitter} from 'events';
+  test('test throwing inside an EventEmitter fails the test', () => {
+    const emitter = new EventEmitter();
+    emitter.on('event', () => {
+      throw new Error('THIS TEST HAS PASSED');
+    });
+    emitter.emit('event');
+  });
+  
+  `;
+
+  rmSync("/tmp/test-throwing-bun/test-throwing-eventemitter.test.js", {
+    force: true,
+  });
+
+  try {
+    mkdirSync("/tmp/test-throwing-bun", { recursive: true });
+  } catch (e) {}
+  writeFileSync(
+    "/tmp/test-throwing-bun/test-throwing-eventemitter.test.js",
+    code,
+  );
+
+  const { stdout, stderr, exitCode } = spawnSync(
+    [bunExe(), "wiptest", "test-throwing-eventemitter"],
+    {
+      cwd: realpathSync("/tmp/test-throwing-bun"),
+      env: bunEnv,
+    },
+  );
+
+  expect(exitCode).toBe(1);
+  expect(stderr!.toString()).toContain("THIS TEST HAS PASSED");
 });

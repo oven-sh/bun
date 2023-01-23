@@ -123,9 +123,9 @@ for (let create of waysOfCreating) {
     .trim()} should work`, () => {
     var myEmitter = create();
     var called = false;
-
-    myEmitter.once("event", () => {
+    myEmitter.once("event", function () {
       called = true;
+      expect(this as any).toBe(myEmitter);
     });
     var firstEvents = myEmitter._events;
     expect(myEmitter.listenerCount("event")).toBe(1);

@@ -1818,6 +1818,7 @@ function findClasses() {
       }
     });
   }
+  classes.sort((a, b) => (a.name < b.name ? -1 : 1));
   return classes;
 }
 

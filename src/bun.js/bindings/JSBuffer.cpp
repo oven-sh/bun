@@ -1370,13 +1370,13 @@ static inline JSC::EncodedJSValue jsBufferPrototypeFunction_writeBody(JSC::JSGlo
     if (UNLIKELY(length < offset)) {
         RELEASE_AND_RETURN(scope, JSC::JSValue::encode(JSC::jsNumber(0)));
     }
-
+    
     if (callFrame->argumentCount() > 2) {
         uint32_t arg_len = 0;
         EnsureStillAliveScope arg2 = callFrame->argument(2);
         if (arg2.value().isAnyInt()) {
             arg_len = arg2.value().toUInt32(lexicalGlobalObject);
-            length = std::min(arg_len, length - offset);
+            length = std::min(arg_len, length);
 
             if (callFrame->argumentCount() > 3) {
                 EnsureStillAliveScope arg3 = callFrame->argument(3);
@@ -1399,6 +1399,8 @@ static inline JSC::EncodedJSValue jsBufferPrototypeFunction_writeBody(JSC::JSGlo
             encoding = encoded.value();
         }
     }
+
+    length = length - offset;
 
     auto view = str->tryGetValue(lexicalGlobalObject);
     int64_t written = 0;

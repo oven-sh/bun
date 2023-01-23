@@ -944,7 +944,7 @@ pub const Encoder = struct {
             },
 
             JSC.Node.Encoding.hex => {
-                return len * 2;
+                return len / 2; 
             },
 
             JSC.Node.Encoding.base64, JSC.Node.Encoding.base64url => {
@@ -1002,7 +1002,7 @@ pub const Encoder = struct {
             },
 
             JSC.Node.Encoding.hex => {
-                return len;
+                return len / 2;
             },
 
             JSC.Node.Encoding.base64, JSC.Node.Encoding.base64url => {

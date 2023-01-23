@@ -1363,7 +1363,6 @@ static inline JSC::EncodedJSValue jsBufferPrototypeFunction_writeBody(JSC::JSGlo
                 throwTypeError(lexicalGlobalObject, scope, "Invalid encoding"_s);
                 return JSC::JSValue::encode(jsUndefined());
             }
-
             encoding = encoded.value();
         }
     }
@@ -1413,6 +1412,8 @@ static inline JSC::EncodedJSValue jsBufferPrototypeFunction_writeBody(JSC::JSGlo
     case WebCore::BufferEncodingType::base64:
     case WebCore::BufferEncodingType::base64url:
     case WebCore::BufferEncodingType::hex: {
+
+        
         if (view.is8Bit()) {
             written = Bun__encoding__writeLatin1(view.characters8(), view.length(), castedThis->typedVector() + offset, length, static_cast<uint8_t>(encoding));
         } else {

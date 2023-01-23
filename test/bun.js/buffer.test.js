@@ -1,5 +1,4 @@
 import { describe, it, expect, beforeEach, afterEach } from "bun:test";
-import exp from "constants";
 import { gc } from "./gc";
 
 const BufferModule = await import("buffer");

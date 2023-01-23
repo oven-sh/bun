@@ -888,11 +888,15 @@ pub const Encoder = struct {
                 if (std.mem.isAligned(@ptrToInt(to), @alignOf([*]u16))) {
                     var buf = input[0..len];
                     var output = @ptrCast([*]u16, @alignCast(@alignOf(u16), to))[0 .. to_len / 2];
-                    return strings.copyLatin1IntoUTF16([]u16, output, []const u8, buf).written;
+                    var written = strings.copyLatin1IntoUTF16([]u16, output, []const u8, buf).written;
+                    return written * 2;
                 } else {
                     var buf = input[0..len];
                     var output = @ptrCast([*]align(1) u16, to)[0 .. to_len / 2];
-                    return strings.copyLatin1IntoUTF16([]align(1) u16, output, []const u8, buf).written;
+
+                    var written = strings.copyLatin1IntoUTF16([]align(1) u16, output, []const u8, buf).written;
+                    return written * 2;
+                    
                 }
             },
 
@@ -961,7 +965,6 @@ pub const Encoder = struct {
             // string is already encoded, just need to copy the data
             .latin1, JSC.Node.Encoding.ascii, JSC.Node.Encoding.ucs2, JSC.Node.Encoding.buffer, JSC.Node.Encoding.utf16le => {
                 strings.copyU16IntoU8(to[0..to_len], []const u16, input[0..len]);
-
                 return @intCast(i64, @min(len, to_len));
             },
 

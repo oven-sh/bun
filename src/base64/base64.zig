@@ -37,14 +37,21 @@ pub fn decodeURLSafe(destination: []u8, source: []const u8) DecodeResult {
 
 pub fn encode(destination: []u8, source: []const u8) usize {
     return zig_base64.standard.Encoder.encode(destination, source).len;
+    
+}
+
+pub fn decodeLenUpperBound(len: usize) usize {
+    return zig_base64.standard.Decoder.calcSizeUpperBound(len) catch {
+        //fallback
+        return len / 4 * 3;
+    };
 }
 
 pub fn decodeLen(source: anytype) usize {
     return zig_base64.standard.Decoder.calcSizeForSlice(source) catch {
-        //invalid padding so use the fallback?
-        return (source.len / 4 * 3 + 2);
+        //fallback
+        return source.len / 4 * 3;
     };
-
 }
 
 pub fn encodeLen(source: anytype) usize {

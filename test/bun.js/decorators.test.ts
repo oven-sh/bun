@@ -1,5 +1,5 @@
 // @ts-nocheck
-import { test, expect } from "bun:test";
+import { test, expect, describe } from "bun:test";
 
 test("decorator order of evaluation", () => {
   let counter = 0;
@@ -787,61 +787,164 @@ test("no decorators", () => {
   expect(aa.b).toBe(300000);
 });
 
-test("class constructor parameter properties", () => {
-  class A {
-    constructor(readonly d: string = "default") {
-      expect(d).toBe(d);
-      expect(this.d).toBe(d);
+describe("constructor statements", () => {
+  test("with parameter properties", () => {
+    class A {
+      constructor(readonly d: string = "default") {
+        expect(d).toBe(d);
+        expect(this.d).toBe(d);
+      }
     }
-  }
 
-  const a = new A("c");
-  expect(a.d).toBe("c");
+    const a = new A("c");
+    expect(a.d).toBe("c");
 
-  class B extends A {}
+    class B extends A {}
 
-  const b = new B();
-  expect(b.d).toBe("default");
+    const b = new B();
+    expect(b.d).toBe("default");
 
-  class C extends A {
-    constructor(public f: number) {
-      super();
-      expect(this.d).toBe("default");
-      expect(f).toBe(f);
-      expect(this.f).toBe(f);
+    class C extends A {
+      constructor(public f: number) {
+        super();
+        expect(this.d).toBe("default");
+        expect(f).toBe(f);
+        expect(this.f).toBe(f);
+      }
     }
-  }
 
-  const c = new C(5);
-  expect(c.d).toBe("default");
-  expect(c.f).toBe(5);
-});
+    const c = new C(5);
+    expect(c.d).toBe("default");
+    expect(c.f).toBe(5);
+  });
 
-test("class expressions are lowered correctly (no decorators)", () => {
-  const A = class a {
-    constructor(readonly b: string = "default") {
-      expect(b).toBe(b);
-      expect(this.b).toBe(b);
+  test("class expressions (no decorators)", () => {
+    const A = class a {
+      constructor(readonly b: string = "default") {
+        expect(b).toBe(b);
+        expect(this.b).toBe(b);
+      }
+    };
+
+    const a = new A("hello class expression");
+    expect(a.b).toBe("hello class expression");
+
+    const B = class b extends A {};
+    const b = new B();
+    expect(b.b).toBe("default");
+
+    const C = class c extends A {
+      constructor(public f: number) {
+        super();
+        expect(this.b).toBe("default");
+        expect(this.f).toBe(f);
+        expect(f).toBe(f);
+      }
+    };
+
+    const c = new C(5);
+    expect(c.b).toBe("default");
+    expect(c.f).toBe(5);
+  });
+
+  test("with parameter properties and statements", () => {
+    class B {
+      value: number;
+      v2: number;
+      constructor(value: number) {
+        this.value = value;
+        this.v2 = 0;
+      }
     }
-  };
 
-  const a = new A("hello class expression");
-  expect(a.b).toBe("hello class expression");
-
-  const B = class b extends A {};
-  const b = new B();
-  expect(b.b).toBe("default");
-
-  const C = class c extends A {
-    constructor(public f: number) {
-      super();
-      expect(this.b).toBe("default");
-      expect(this.f).toBe(f);
-      expect(f).toBe(f);
+    class A extends B {
+      constructor(value: number, public v: string = "test") {
+        const newValue = value * 10;
+        super(newValue);
+      }
     }
-  };
 
-  const c = new C(5);
-  expect(c.b).toBe("default");
-  expect(c.f).toBe(5);
+    const a = new A(10);
+    expect(a.value).toBe(100);
+    expect(a.v).toBe("test");
+    expect(a.v2).toBe(0);
+  });
+
+  test("with parameter properties, statements, and decorators", () => {
+    class B {
+      value: number;
+      v2: number;
+      constructor(value: number) {
+        this.value = value;
+        this.v2 = 0;
+      }
+    }
+
+    function d1() {}
+
+    class A extends B {
+      b: number;
+      constructor(value: number, @d1 b: number, public v: string = "test") {
+        const newValue = value * 10;
+        super(newValue);
+        expect(this.v).toBe("test");
+        this.b = b;
+        expect(this.b).toBe(b);
+      }
+    }
+
+    const a = new A(10, 1);
+    expect(a.b).toBe(1);
+    expect(a.value).toBe(100);
+    expect(a.v).toBe("test");
+    expect(a.v2).toBe(0);
+  });
+
+  test("with more parameter properties, statements, and decorators", () => {
+    let decoratorCounter = 0;
+    function d1() {
+      expect(decoratorCounter).toBe(1);
+      decoratorCounter += 1;
+    }
+    function d2() {
+      expect(decoratorCounter).toBe(0);
+      decoratorCounter += 1;
+    }
+    function d3() {
+      expect(decoratorCounter).toBe(2);
+      decoratorCounter += 1;
+    }
+    function d4() {
+      expect(decoratorCounter).toBe(3);
+      decoratorCounter += 1;
+    }
+
+    class A {
+      l: number;
+      constructor(
+        protected u: string,
+        @d1 l: number = 3,
+        @d2 public k: number = 4,
+      ) {
+        this.l = l;
+      }
+    }
+
+    class B extends A {
+      @d3 e: string = "hello test";
+
+      constructor(private i: number) {
+        super("protected");
+        expect(this.i).toBe(i);
+        expect(this.u).toBe("protected");
+      }
+
+      @d4 f() {}
+    }
+
+    let b = new B(9);
+    expect(b.k).toBe(4);
+    expect(b.l).toBe(3);
+    expect(b.e).toBe("hello test");
+  });
 });

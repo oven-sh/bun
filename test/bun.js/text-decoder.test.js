@@ -14,6 +14,27 @@ const getByteLength = (str) => {
 };
 
 describe("TextDecoder", () => {
+  it("should not crash on empty text", () => {
+    const decoder = new TextDecoder();
+    gcTrace(true);
+    const fixtures = [
+      new Uint8Array(),
+      new Uint8Array([]),
+      new Buffer(0),
+      new ArrayBuffer(0),
+    ];
+
+    for (let input of fixtures) {
+      expect(decoder.decode(input)).toBe("");
+    }
+
+    // DOMJIT test
+    for (let i = 0; i < 90000; i++) {
+      decoder.decode(fixtures[0]);
+    }
+
+    gcTrace(true);
+  });
   it("should decode ascii text", () => {
     const decoder = new TextDecoder("latin1");
     gcTrace(true);

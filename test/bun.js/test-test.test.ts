@@ -2014,18 +2014,65 @@ it("a describe scope throwing doesn't cause all other tests in the file to fail"
   expect(true).toBe(true);
 });
 
-test("test throwing inside an EventEmitter fails the test", () => {
+test("test async exceptions fail tests", () => {
   const code = `
   import {test, expect} from 'bun:test';
   import {EventEmitter} from 'events';
   test('test throwing inside an EventEmitter fails the test', () => {
     const emitter = new EventEmitter();
     emitter.on('event', () => {
-      throw new Error('THIS TEST HAS PASSED');
+      throw new Error('test throwing inside an EventEmitter #FAIL001');
     });
     emitter.emit('event');
   });
-  
+
+  test('test throwing inside a queueMicrotask callback fails', async () => {
+
+    queueMicrotask(() => {
+      throw new Error('test throwing inside an EventEmitter #FAIL002');
+    });
+
+    await 1;
+  });
+
+  test('test throwing inside a process.nextTick callback fails', async () => {
+    
+    process.nextTick(() => {
+      throw new Error('test throwing inside an EventEmitter #FAIL003');
+    });
+
+    await 1;
+  });
+
+  test('test throwing inside a setTimeout', async () => {
+    await new Promise((resolve, reject) => {
+      setTimeout(() => {
+        resolve();
+        throw new Error('test throwing inside an EventEmitter #FAIL004');
+      }, 0);
+    });
+  });
+
+  test('test throwing inside an async setTimeout', async () => {
+    await new Promise((resolve, reject) => {
+      setTimeout(async () => {
+        await 1;
+        resolve();
+        throw new Error('test throwing inside an EventEmitter #FAIL005');
+      }, 0);
+    });
+  });
+
+
+  test('test throwing inside an async setTimeout no await' , async () => {
+    await new Promise((resolve, reject) => {
+      setTimeout(async () => {
+        resolve();
+        throw new Error('test throwing inside an EventEmitter #FAIL006');
+      }, 0);
+    });
+  });
+
   `;
 
   rmSync("/tmp/test-throwing-bun/test-throwing-eventemitter.test.js", {
@@ -2040,7 +2087,7 @@ test("test throwing inside an EventEmitter fails the test", () => {
     code,
   );
 
-  const { stdout, stderr, exitCode } = spawnSync(
+  const { stderr, exitCode } = spawnSync(
     [bunExe(), "wiptest", "test-throwing-eventemitter"],
     {
       cwd: realpathSync("/tmp/test-throwing-bun"),
@@ -2048,6 +2095,15 @@ test("test throwing inside an EventEmitter fails the test", () => {
     },
   );
 
+  const str = stderr!.toString();
+  expect(str).toContain("#FAIL001");
+  expect(str).toContain("#FAIL002");
+  expect(str).toContain("#FAIL003");
+  expect(str).toContain("#FAIL004");
+  expect(str).toContain("#FAIL005");
+  expect(str).toContain("#FAIL006");
+  expect(str).toContain("6 fail");
+  expect(str).toContain("0 pass");
+
   expect(exitCode).toBe(1);
-  expect(stderr!.toString()).toContain("THIS TEST HAS PASSED");
 });

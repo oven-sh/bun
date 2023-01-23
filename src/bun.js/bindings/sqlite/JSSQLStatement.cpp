@@ -1461,14 +1461,17 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementExecuteStatementFunctionRun, (JSC::JSGlob
         initializeColumnNames(lexicalGlobalObject, castedThis);
     }
 
-    if (status == SQLITE_ROW || status == SQLITE_DONE) {
-        // sqlite3_reset(stmt);
-        RELEASE_AND_RETURN(scope, JSC::JSValue::encode(jsUndefined()));
-    } else {
+    while (status == SQLITE_ROW) {
+        status = sqlite3_step(stmt);
+    }
+
+    if (UNLIKELY(status != SQLITE_DONE)) {
         sqlite3_reset(stmt);
         throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, WTF::String::fromUTF8(sqlite3_errstr(status))));
         return JSValue::encode(jsUndefined());
     }
+
+    RELEASE_AND_RETURN(scope, JSC::JSValue::encode(jsUndefined()));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsSQLStatementToStringFunction, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))

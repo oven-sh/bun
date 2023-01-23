@@ -10,10 +10,17 @@ import type { Platform } from "../src/platform";
 import { platforms } from "../src/platform";
 
 const tag = process.argv[2];
-const release = await getRelease(tag);
-const version = release.tag_name.replace("bun-v", "");
 const npmPackage = "bun";
 const npmOwner = "@oven";
+let npmVersion: string;
+const release = await getRelease(tag);
+if (release.tag_name === "canary") {
+  const { tag_name } = await getRelease();
+  const sha = await getSha(tag_name);
+  npmVersion = `${tag_name.replace("bun-v", "")}+canary.${sha}`;
+} else {
+  npmVersion = release.tag_name.replace("bun-v", "");
+}
 
 await buildBasePackage();
 for (const platform of platforms) {
@@ -30,10 +37,10 @@ if (publish || dryRun) {
 }
 
 async function buildBasePackage() {
-  const done = log("Building:", `${npmPackage}@${version}`);
+  const done = log("Building:", `${npmPackage}@${npmVersion}`);
   const cwd = join("npm", npmPackage);
   const define = {
-    npmVersion: `"${version}"`,
+    npmVersion: `"${npmVersion}"`,
     npmPackage: `"${npmPackage}"`,
     npmOwner: `"${npmOwner}"`,
   };
@@ -50,12 +57,12 @@ async function buildBasePackage() {
   const cpu = [...new Set(platforms.map(({ arch }) => arch))];
   patchJson(join(cwd, "package.json"), {
     name: npmPackage,
-    version,
+    version: npmVersion,
     scripts: {
       postinstall: "node install.js",
     },
     optionalDependencies: Object.fromEntries(
-      platforms.map(({ bin }) => [`${npmOwner}/${bin}`, version]),
+      platforms.map(({ bin }) => [`${npmOwner}/${bin}`, npmVersion]),
     ),
     bin: {
       bun: "bin/bun",
@@ -68,7 +75,7 @@ async function buildBasePackage() {
 
 async function buildPackage({ bin, exe, os, arch }: Platform): Promise<void> {
   const npmPackage = `${npmOwner}/${bin}`;
-  const done = log("Building:", `${npmPackage}@${version}`);
+  const done = log("Building:", `${npmPackage}@${npmVersion}`);
   const asset = release.assets.find(({ name }) => name === `${bin}.zip`);
   if (!asset) {
     throw new Error(`No asset found: ${bin}`);
@@ -79,7 +86,7 @@ async function buildPackage({ bin, exe, os, arch }: Platform): Promise<void> {
   chmod(join(cwd, exe), 0o755);
   patchJson(join(cwd, "package.json"), {
     name: npmPackage,
-    version,
+    version: npmVersion,
     preferUnplugged: true,
     os: [os],
     cpu: [arch],
@@ -96,7 +103,7 @@ function publishPackage(name: string, dryRun?: boolean): void {
       "--access",
       "public",
       "--tag",
-      version === "canary" ? "canary" : "latest",
+      npmVersion.startsWith("canary") ? "canary" : "latest",
       ...(dryRun ? ["--dry-run"] : []),
     ],
     {
@@ -131,17 +138,34 @@ async function getRelease(
 ): Promise<
   Endpoints["GET /repos/{owner}/{repo}/releases/latest"]["response"]["data"]
 > {
-  const tag = version
-    ? version === "canary" || version.startsWith("bun-v")
-      ? version
-      : `bun-v${version}`
-    : null;
   const response = await fetch(
-    tag
-      ? `https://api.github.com/repos/oven-sh/bun/releases/tags/${tag}`
+    version
+      ? `https://api.github.com/repos/oven-sh/bun/releases/tags/${formatTag(
+          version,
+        )}`
       : `https://api.github.com/repos/oven-sh/bun/releases/latest`,
   );
   return response.json();
+}
+
+async function getSha(version: string): Promise<string> {
+  const response = await fetch(
+    `https://api.github.com/repos/oven-sh/bun/git/ref/tags/${formatTag(
+      version,
+    )}`,
+  );
+  const {
+    object,
+  }: Endpoints["GET /repos/{owner}/{repo}/git/ref/{ref}"]["response"]["data"] =
+    await response.json();
+  return object.sha.substring(0, 7);
+}
+
+function formatTag(version: string): string {
+  if (version.startsWith("canary") || version.startsWith("bun-v")) {
+    return version;
+  }
+  return `bun-v${version}`;
 }
 
 function patchJson(path: string, patch: object): void {

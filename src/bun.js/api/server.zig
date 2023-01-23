@@ -704,14 +704,16 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             const arguments = callframe.arguments(2);
             var ctx = arguments.ptr[1].asPromisePtr(@This());
             const result = arguments.ptr[0];
+            result.ensureStillAlive();
+
             ctx.pending_promises_for_abort -|= 1;
             if (ctx.aborted) {
                 ctx.finalizeForAbort();
                 return JSValue.jsUndefined();
             }
 
-            if (result.isEmptyOrUndefinedOrNull()) {
-                ctx.renderMissing();
+            if (ctx.didUpgradeWebSocket()) {
+                ctx.finalize();
                 return JSValue.jsUndefined();
             }
 
@@ -720,12 +722,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
         }
 
         fn handleResolve(ctx: *RequestContext, value: JSC.JSValue) void {
-            if (ctx.didUpgradeWebSocket()) {
-                ctx.finalize();
-                return;
-            }
-
-            if (value.isEmptyOrUndefinedOrNull()) {
+            if (value.isEmptyOrUndefinedOrNull() or !value.isCell()) {
                 ctx.renderMissing();
                 return;
             }

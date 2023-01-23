@@ -2049,22 +2049,7 @@ void JSC__JSPromise__resolve(JSC__JSPromise* arg0, JSC__JSGlobalObject* arg1,
 void JSC__JSPromise__resolveOnNextTick(JSC__JSPromise* promise, JSC__JSGlobalObject* lexicalGlobalObject,
     JSC__JSValue encoedValue)
 {
-    JSC::JSValue value = JSC::JSValue::decode(encoedValue);
-    VM& vm = lexicalGlobalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    uint32_t flags = promise->internalField(JSC::JSPromise::Field::Flags).get().asUInt32();
-    if (!(flags & JSC::JSPromise::isFirstResolvingFunctionCalledFlag)) {
-        promise->internalField(JSC::JSPromise::Field::Flags).set(vm, promise, jsNumber(flags | JSC::JSPromise::isFirstResolvingFunctionCalledFlag));
-        auto* globalObject = jsCast<Zig::GlobalObject*>(promise->globalObject());
-
-        globalObject->queueMicrotask(
-            globalObject->performMicrotaskFunction(),
-            globalObject->resolvePromiseFunction(),
-            promise,
-            value,
-            JSValue {});
-        RETURN_IF_EXCEPTION(scope, void());
-    }
+    return JSC__JSPromise__resolve(promise, lexicalGlobalObject, encoedValue);
 }
 
 bool JSC__JSValue__isAnyError(JSC__JSValue JSValue0)

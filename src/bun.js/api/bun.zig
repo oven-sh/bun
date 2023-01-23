@@ -964,6 +964,7 @@ fn doResolveWithArgs(
     comptime is_file_path: bool,
 ) ?JSC.JSValue {
     var errorable: ErrorableZigString = undefined;
+    var query_string = ZigString.Empty;
 
     if (comptime is_file_path) {
         VirtualMachine.resolveFilePathForAPI(
@@ -971,6 +972,7 @@ fn doResolveWithArgs(
             ctx.ptr(),
             specifier,
             from,
+            &query_string,
             is_esm,
         );
     } else {
@@ -979,6 +981,7 @@ fn doResolveWithArgs(
             ctx.ptr(),
             specifier,
             from,
+            &query_string,
             is_esm,
         );
     }
@@ -988,7 +991,23 @@ fn doResolveWithArgs(
         return null;
     }
 
-    return errorable.result.value.toValue(ctx.ptr());
+    if (query_string.len > 0) {
+        var stack = std.heap.stackFallback(1024, ctx.allocator());
+        const allocator = stack.get();
+        var arraylist = std.ArrayList(u8).initCapacity(allocator, 1024) catch unreachable;
+        defer arraylist.deinit();
+        arraylist.writer().print("{any}{any}", .{
+            errorable.result.value,
+            query_string,
+        }) catch {
+            JSC.JSError(allocator, "Failed to allocate memory", .{}, ctx, exception);
+            return null;
+        };
+
+        return ZigString.initUTF8(arraylist.items).toValueGC(ctx);
+    }
+
+    return errorable.result.value.toValue(ctx);
 }
 
 pub fn resolveSync(
@@ -2309,15 +2328,7 @@ pub fn getTranspilerConstructor(
     _: js.JSStringRef,
     _: js.ExceptionRef,
 ) js.JSValueRef {
-    var existing = ctx.ptr().getCachedObject(ZigString.static("BunTranspiler"));
-    if (existing.isEmpty()) {
-        return ctx.ptr().putCachedObject(
-            &ZigString.init("BunTranspiler"),
-            JSC.JSValue.fromRef(Transpiler.Constructor.constructor(ctx)),
-        ).asObjectRef();
-    }
-
-    return existing.asObjectRef();
+    return JSC.API.Bun.Transpiler.getConstructor(ctx).asObjectRef();
 }
 
 pub fn getFileSystemRouter(
@@ -2821,7 +2832,7 @@ pub const Timer = struct {
             }
 
             var this = args.ptr[1].asPtr(CallbackJob);
-            globalThis.bunVM().runErrorHandlerWithDedupe(args.ptr[0], null);
+            globalThis.bunVM().onUnhandledError(globalThis, args.ptr[0]);
             this.deinit();
             return JSValue.jsUndefined();
         }
@@ -2890,7 +2901,7 @@ pub const Timer = struct {
             }
 
             if (result.isAnyError()) {
-                vm.runErrorHandlerWithDedupe(result, null);
+                vm.onUnhandledError(globalThis, result);
                 this.deinit();
                 return;
             }
@@ -2899,7 +2910,7 @@ pub const Timer = struct {
                 switch (promise.status(globalThis.vm())) {
                     .Rejected => {
                         this.deinit();
-                        vm.runErrorHandlerWithDedupe(promise.result(globalThis.vm()), null);
+                        vm.onUnhandledError(globalThis, promise.result(globalThis.vm()));
                     },
                     .Fulfilled => {
                         this.deinit();
@@ -3010,7 +3021,7 @@ pub const Timer = struct {
 
             var vm = this.globalThis.bunVM();
 
-            this.poll_ref.unref(vm);
+            this.poll_ref.unrefOnNextTick(vm);
             this.timer.deinit();
             this.callback.deinit();
             this.arguments.deinit();
@@ -3887,8 +3898,8 @@ pub const EnvironmentVariables = struct {
     }
 };
 
-export fn Bun__reportError(_: *JSGlobalObject, err: JSC.JSValue) void {
-    JSC.VirtualMachine.get().runErrorHandler(err, null);
+export fn Bun__reportError(globalObject: *JSGlobalObject, err: JSC.JSValue) void {
+    JSC.VirtualMachine.runErrorHandlerWithDedupe(globalObject.bunVM(), err, null);
 }
 
 comptime {

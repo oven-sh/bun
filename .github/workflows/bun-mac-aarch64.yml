@@ -31,7 +31,7 @@ jobs:
     strategy:
       matrix:
         include:
-          # - cpu: westmere
+          # - cpu: nehalem
           #   arch: x86_64
           #   tag: bun-obj-darwin-x64-baseline
           # - cpu: haswell
@@ -104,7 +104,7 @@ jobs:
     strategy:
       matrix:
         include:
-          # - cpu: westmere
+          # - cpu: nehalem
           #   arch: x86_64
           #   tag: bun-darwin-x64-baseline
           #   obj: bun-obj-darwin-x64-baseline
@@ -122,7 +122,7 @@ jobs:
           #   webkit_url: "https://github.com/oven-sh/WebKit/releases/download/dec30/bun-webkit-macos-amd64-lto.tar.gz"
           #   dependencies: true
           #   compile_obj: false
-          # - cpu: westmere
+          # - cpu: nehalem
           #   arch: x86_64
           #   tag: bun-darwin-x64-baseline
           #   obj: bun-obj-darwin-x64-baseline
@@ -242,7 +242,7 @@ jobs:
     strategy:
       matrix:
         include:
-          # - cpu: westmere
+          # - cpu: nehalem
           #   arch: x86_64
           #   tag: bun-darwin-x64-baseline
           #   obj: bun-obj-darwin-x64-baseline

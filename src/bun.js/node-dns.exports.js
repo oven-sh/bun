@@ -1,4 +1,4 @@
-// only resolve4, resolve, lookup, and resolve6 are implemented.
+// only resolve4, resolve, lookup, resolve6 and resolveSrv are implemented.
 
 const { dns } = globalThis.Bun;
 
@@ -18,6 +18,22 @@ function lookup(domain, options, callback) {
   dns.lookup(domain, options).then(
     ([{ address, family }]) => {
       callback(null, address, family);
+    },
+    (error) => {
+      callback(error);
+    },
+  );
+}
+
+function resolveSrv(hostname, callback) {
+
+  if (typeof callback != "function") {
+    throw new TypeError("callback must be a function");
+  }
+
+  dns.resolveSrv(hostname, callback).then(
+    (results) => {
+      callback(null, results);
     },
     (error) => {
       callback(error);
@@ -138,7 +154,18 @@ var InternalResolver = class Resolver {
   }
 
   resolveSrv(hostname, callback) {
-    callback(null, []);
+    if (typeof callback != "function") {
+      throw new TypeError("callback must be a function");
+    }
+  
+    dns.resolveSrv(hostname, callback).then(
+      (results) => {
+        callback(null, results);
+      },
+      (error) => {
+        callback(error);
+      },
+    );
   }
 
   resolveCaa(hostname, callback) {
@@ -209,6 +236,10 @@ export const promises = {
     return dns.lookup(hostname, { family: 6 });
   },
 
+  resolveSrv(hostname) {
+    return dns.resolveSrv(hostname);
+  },
+
   Resolver: class Resolver {
     constructor(options) {}
 
@@ -259,7 +290,7 @@ export const promises = {
     }
 
     resolveSrv(hostname) {
-      return Promise.resolve([]);
+      return dns.resolveSrv(hostname);
     }
 
     resolveCaa(hostname) {
@@ -286,7 +317,6 @@ for (const key of [
   "resolveNs",
   "resolvePtr",
   "resolveSoa",
-  "resolveSrv",
   "resolveTxt",
   "reverse",
 ]) {

@@ -31,3 +31,24 @@ test("dns.lookup (example.com)", (done) => {
     done(err);
   });
 });
+
+//TODO: use a bun.sh SRV for testing
+test("dns.resolveSrv (_test._tcp.test.socketify.dev)", (done) => {
+  dns.resolveSrv("_test._tcp.test.socketify.dev", (err, results) => {
+    expect(err).toBeNull();
+    expect(results instanceof Array).toBe(true);
+    expect(results[0].name).toBe("_dc-srv.130c90ab9de1._test._tcp.test.socketify.dev");
+    expect(results[0].priority).toBe(50);
+    expect(results[0].weight).toBe(50);
+    expect(results[0].port).toBe(80);
+    done(err);
+  });
+});
+
+test("dns.resolveSrv (_test._tcp.invalid.localhost)", (done) => {
+  dns.resolveSrv("_test._tcp.invalid.localhost", (err, results) => {
+    expect(err).toBeTruthy();
+    expect(results).toBeUndefined(true);
+    done();
+  });
+});

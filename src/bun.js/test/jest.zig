@@ -80,6 +80,10 @@ pub const TestRunner = struct {
 
     has_pending_tests: bool = false,
     pending_test: ?*TestRunnerTask = null,
+
+    /// This silences TestNotRunningError when expect() is used to halt a running test.
+    did_pending_test_fail: bool = false,
+
     pub const Drainer = JSC.AnyTask.New(TestRunner, drain);
 
     pub fn enqueue(this: *TestRunner, task: *TestRunnerTask) void {
@@ -100,6 +104,7 @@ pub const TestRunner = struct {
         if (this.queue.readItem()) |task| {
             this.pending_test = task;
             this.has_pending_tests = true;
+            this.did_pending_test_fail = false;
             if (!task.run()) {
                 this.has_pending_tests = false;
                 this.pending_test = null;
@@ -273,7 +278,9 @@ pub const Expect = struct {
         const value = arguments[0];
 
         if (Jest.runner.?.pending_test == null) {
-            globalObject.throw("expect() must be called inside a test", .{});
+            const err = globalObject.createErrorInstance("expect() must be called in a test", .{});
+            err.put(globalObject, ZigString.static("name"), ZigString.init("TestNotRunningError").toValueGC(globalObject));
+            globalObject.throwValue(err);
             return .zero;
         }
 
@@ -1454,6 +1461,7 @@ pub const TestScope = struct {
         if (comptime is_bindgen) return undefined;
         var vm = VirtualMachine.get();
         var callback = this.callback;
+        Jest.runner.?.did_pending_test_fail = false;
         defer {
             js.JSValueUnprotect(vm.global, callback);
             this.callback = null;
@@ -1480,7 +1488,11 @@ pub const TestScope = struct {
         }
 
         if (initial_value.isAnyError()) {
-            vm.runErrorHandler(initial_value, null);
+            if (!Jest.runner.?.did_pending_test_fail) {
+                Jest.runner.?.did_pending_test_fail = true;
+                vm.runErrorHandler(initial_value, null);
+            }
+
             return .{ .fail = active_test_expectation_counter.actual };
         }
 
@@ -1498,7 +1510,11 @@ pub const TestScope = struct {
             }
             switch (promise.status(vm.global.vm())) {
                 .Rejected => {
-                    vm.runErrorHandler(promise.result(vm.global.vm()), null);
+                    if (!Jest.runner.?.did_pending_test_fail) {
+                        Jest.runner.?.did_pending_test_fail = true;
+                        vm.runErrorHandler(promise.result(vm.global.vm()), null);
+                    }
+
                     return .{ .fail = active_test_expectation_counter.actual };
                 },
                 .Pending => {
@@ -1692,6 +1708,10 @@ pub const DescribeScope = struct {
             const pending_test = Jest.runner.?.pending_test;
             // forbid `expect()` within hooks
             Jest.runner.?.pending_test = null;
+            const orig_did_pending_test_fail = Jest.runner.?.did_pending_test_fail;
+
+            Jest.runner.?.did_pending_test_fail = false;
+
             const vm = VirtualMachine.get();
             var result: JSC.JSValue = if (cb.getLengthOfArray(ctx) > 0) brk: {
                 this.done = false;
@@ -1718,6 +1738,7 @@ pub const DescribeScope = struct {
             }
 
             Jest.runner.?.pending_test = pending_test;
+            Jest.runner.?.did_pending_test_fail = orig_did_pending_test_fail;
             if (result.isAnyError()) return result;
 
             if (comptime hook == .beforeAll or hook == .afterAll) {
@@ -1971,7 +1992,19 @@ pub const TestRunnerTask = struct {
         fulfilled,
     };
 
-    pub fn onUnhandledRejection(jsc_vm: *VirtualMachine, _: *JSC.JSGlobalObject, rejection: JSC.JSValue) void {
+    pub fn onUnhandledRejection(jsc_vm: *VirtualMachine, global: *JSC.JSGlobalObject, rejection: JSC.JSValue) void {
+        if (Jest.runner) |runner| {
+            if (runner.did_pending_test_fail and rejection.isException(global.vm())) {
+                if (rejection.toError()) |err| {
+                    if (err.get(global, "name")) |name| {
+                        if (name.isString() and name.getZigString(global).eqlComptime("TestNotRunningError")) {
+                            return;
+                        }
+                    }
+                }
+            }
+        }
+
         if (jsc_vm.last_reported_error_for_dedupe == rejection and rejection != .zero) {
             jsc_vm.last_reported_error_for_dedupe = .zero;
         } else {
@@ -2042,6 +2075,9 @@ pub const TestRunnerTask = struct {
     }
 
     pub fn handleResult(this: *TestRunnerTask, result: Result, comptime from: @Type(.EnumLiteral)) void {
+        if (result == .fail)
+            Jest.runner.?.did_pending_test_fail = true;
+
         switch (comptime from) {
             .promise => {
                 std.debug.assert(this.promise_state == .pending);

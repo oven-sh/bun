@@ -16,3 +16,24 @@ describe("zlib", () => {
     expect(decompressed.join("")).toBe(data.join(""));
   });
 });
+
+import * as zlib from "node:zlib";
+import * as fs from "node:fs";
+import * as buffer from "node:buffer";
+
+describe("zlib.gunzip", () => {
+  it("should be able to unzip a Buffer and return an unzipped Buffer", async () => {
+    const content = fs.readFileSync(import.meta.dir + "/fixture.html.gz");
+    return new Promise((resolve, reject) => {
+      zlib.gunzip(content, (error, data) => {
+        if (error) {
+          reject(error);
+          return;
+        }
+        expect(data !== null).toBe(true);
+        expect(buffer.Buffer.isBuffer(data)).toBe(true);
+        resolve(true);
+      });
+    });
+  });
+});

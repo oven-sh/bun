@@ -2,8 +2,27 @@ import { bench, run } from "mitata";
 
 const N = parseInt(process.argv.slice(2).at(0) || "10", 10);
 
-bench("new Buffer(0)", () => {
-  return new Buffer(0);
+bench("Buffer.from('short string')", () => {
+  return Buffer.from("short string");
+});
+
+var hundred = new ArrayBuffer(100);
+bench("Buffer.from(ArrayBuffer(100))", () => {
+  return Buffer.from(hundred);
+});
+
+var hundredArray = new Uint8Array(100);
+bench("Buffer.from(Uint8Array(100))", () => {
+  return Buffer.from(hundredArray);
+});
+
+var empty = new Uint8Array(0);
+bench("Buffer.from(Uint8Array(0))", () => {
+  return Buffer.from(empty);
+});
+
+bench("new Buffer(Uint8Array(0))", () => {
+  return new Buffer(empty);
 });
 
 bench(`new Buffer(${N})`, () => {

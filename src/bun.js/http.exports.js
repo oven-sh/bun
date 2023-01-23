@@ -35,16 +35,32 @@ export class Server extends EventEmitter {
     }
   }
 
-  listen(...args) {
+  address() {
+    return this.#server.hostname;
+  }
+
+  listen(port, host, onListen) {
     const server = this;
-    const [options, listening_cb] = _normalizeArgs(args);
+    if (typeof host === "function") {
+      onListen = host;
+    }
+
+    if (typeof port === "function") {
+      onListen = port;
+    }
+
+    if (typeof port === "object") {
+      host = port?.host;
+      port = port?.port;
+      if (typeof port?.callback === "function") onListen = port?.callback;
+    }
     const ResponseClass = this.#options.ServerResponse || ServerResponse;
     const RequestClass = this.#options.IncomingMessage || IncomingMessage;
 
     try {
       this.#server = Bun.serve({
-        port: options.port,
-        hostname: options.host,
+        port,
+        hostname: host,
 
         fetch(req) {
           var pendingResponse;
@@ -84,12 +100,16 @@ export class Server extends EventEmitter {
         },
       });
 
-      if (listening_cb) listening_cb();
+      if (onListen)
+        setTimeout(
+          () => onListen(null, this.#server.hostname, this.#server.port),
+          0,
+        );
     } catch (err) {
-      this.emit(
-        "error",
-        new Error(`bun-http-polyfill: Bun.serve failed: ${err.message}`),
-      );
+      if (onListen) {
+        setTimeout(onListen, 0, err);
+      }
+      this.emit("error", err);
     }
   }
 }

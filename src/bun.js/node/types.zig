@@ -1892,6 +1892,38 @@ pub const Process = struct {
         return JSC.ZigString.fromUTF8(out).toValueGC(globalObject);
     }
 
+    pub fn getExecArgv(globalObject: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue {
+        const allocator = globalObject.allocator();
+        var vm = globalObject.bunVM();
+        var args = allocator.alloc(
+            JSC.ZigString,
+            // argv omits "bun" because it could be "bun run" or "bun" and it's kind of ambiguous
+            // argv also omits the script name
+            std.os.argv.len -| 1,
+        ) catch unreachable;
+        defer allocator.free(args);
+        var used: usize = 0;
+        const offset: usize = 1;
+
+        for (std.os.argv[@min(std.os.argv.len, offset)..]) |arg_| {
+            const arg = bun.span(arg_);
+            if (arg.len == 0)
+                continue;
+
+            if (arg[0] != '-')
+                continue;
+
+            if (vm.argv.len > 0 and strings.eqlLong(vm.argv[0], arg, true))
+                break;
+
+            args[used] = JSC.ZigString.fromUTF8(arg);
+
+            used += 1;
+        }
+
+        return JSC.JSValue.createStringArray(globalObject, args.ptr, used, true);
+    }
+
     pub fn getArgv(globalObject: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue {
         var vm = globalObject.bunVM();
 

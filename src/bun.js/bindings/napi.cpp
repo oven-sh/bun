@@ -204,21 +204,35 @@ static uint32_t getPropertyAttributes(napi_property_descriptor prop)
     return result;
 }
 
-static void defineNapiProperty(Zig::GlobalObject* globalObject, JSC::JSObject* to, void* inheritedDataPtr, napi_property_descriptor property, bool isInstance)
+static void defineNapiProperty(Zig::GlobalObject* globalObject, JSC::JSObject* to, void* inheritedDataPtr, napi_property_descriptor property, bool isInstance, JSC::ThrowScope& scope)
 {
     JSC::VM& vm = globalObject->vm();
     void* dataPtr = property.data;
     if (!dataPtr) {
         dataPtr = inheritedDataPtr;
     }
-    WTF::String nameStr;
-    if (property.utf8name != nullptr) {
-        nameStr = WTF::String::fromUTF8(property.utf8name).isolatedCopy();
-    } else if (property.name) {
-        nameStr = toJS(property.name).toWTFString(globalObject).isolatedCopy();
-    }
 
-    auto propertyName = JSC::PropertyName(JSC::Identifier::fromString(vm, nameStr));
+    auto getPropertyName = [&]() -> JSC::Identifier {
+        if (property.utf8name != nullptr) {
+            size_t len = strlen(property.utf8name);
+            if (len > 0) {
+                return JSC::Identifier::fromString(vm, WTF::String::fromUTF8(property.utf8name, len).isolatedCopy());
+            }
+        }
+
+        if (!property.name) {
+            throwVMError(globalObject, scope, JSC::createTypeError(globalObject, "Property name is required"_s));
+            return JSC::Identifier();
+        }
+
+        JSValue nameValue = toJS(property.name);
+        return nameValue.toPropertyKey(globalObject);
+    };
+
+    JSC::Identifier propertyName = getPropertyName();
+    if (propertyName.isEmpty()) {
+        return;
+    }
 
     if (property.method) {
         JSC::JSValue value;
@@ -235,7 +249,7 @@ static void defineNapiProperty(Zig::GlobalObject* globalObject, JSC::JSObject* t
         //         });
         //     value = JSC::JSValue(func);
         // } else {
-        auto function = Zig::JSFFIFunction::create(vm, globalObject, 1, nameStr, method);
+        auto function = Zig::JSFFIFunction::create(vm, globalObject, 1, propertyName.isSymbol() ? String() : propertyName.string(), method);
         function->dataPtr = dataPtr;
         value = JSC::JSValue(function);
         // }
@@ -727,6 +741,7 @@ napi_define_properties(napi_env env, napi_value object, size_t property_count,
 
     JSC::JSValue objectValue = toJS(object);
     JSC::JSObject* objectObject = objectValue.getObject();
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
 
     if (!objectObject) {
         return NAPI_OBJECT_EXPECTED;
@@ -740,8 +755,12 @@ napi_define_properties(napi_env env, napi_value object, size_t property_count,
     }
 
     for (size_t i = 0; i < property_count; i++) {
-        defineNapiProperty(globalObject, objectObject, inheritedDataPtr, properties[i], true);
+        defineNapiProperty(globalObject, objectObject, inheritedDataPtr, properties[i], true, throwScope);
+
+        RETURN_IF_EXCEPTION(throwScope, napi_generic_failure);
     }
+
+    throwScope.release();
 
     return napi_ok;
 }
@@ -1263,14 +1282,19 @@ void NapiClass::finishCreation(VM& vm, NativeExecutable* executable, unsigned le
 
     NapiPrototype* prototype = NapiPrototype::create(vm, globalObject);
 
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+
     for (size_t i = 0; i < property_count; i++) {
         const napi_property_descriptor& property = properties[i];
 
         if (property.attributes & napi_static) {
-            defineNapiProperty(globalObject, this, nullptr, property, true);
+            defineNapiProperty(globalObject, this, nullptr, property, true, throwScope);
         } else {
-            defineNapiProperty(globalObject, prototype, nullptr, property, false);
+            defineNapiProperty(globalObject, prototype, nullptr, property, false, throwScope);
         }
+
+        if (throwScope.exception())
+            break;
     }
 
     this->putDirect(vm, vm.propertyNames->prototype, prototype, JSC::PropertyAttribute::DontEnum | 0);
@@ -1599,6 +1623,37 @@ extern "C" napi_status napi_create_bigint_words(napi_env env,
     }
 
     *result = toNapi(bigint);
+    return napi_ok;
+}
+
+extern "C" napi_status napi_create_symbol(napi_env env, napi_value description,
+    napi_value* result)
+{
+    Zig::GlobalObject* globalObject = toJS(env);
+    JSC::VM& vm = globalObject->vm();
+
+    if (UNLIKELY(result == nullptr || globalObject == nullptr)) {
+        return napi_invalid_arg;
+    }
+
+    JSC::JSValue descriptionValue = toJS(description);
+    if (descriptionValue && !descriptionValue.isUndefinedOrNull()) {
+        if (!descriptionValue.isString()) {
+            return napi_string_expected;
+        }
+
+        JSC::JSString* descriptionString = descriptionValue.toStringOrNull(globalObject);
+        if (UNLIKELY(!descriptionString)) {
+            return napi_generic_failure;
+        }
+
+        if (descriptionString->length() > 0) {
+            *result = toNapi(JSC::Symbol::createWithDescription(vm, descriptionString->value(globalObject)));
+            return napi_ok;
+        }
+    }
+
+    *result = toNapi(JSC::Symbol::create(vm));
     return napi_ok;
 }
 

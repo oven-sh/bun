@@ -704,14 +704,16 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             const arguments = callframe.arguments(2);
             var ctx = arguments.ptr[1].asPromisePtr(@This());
             const result = arguments.ptr[0];
+            result.ensureStillAlive();
+
             ctx.pending_promises_for_abort -|= 1;
             if (ctx.aborted) {
                 ctx.finalizeForAbort();
                 return JSValue.jsUndefined();
             }
 
-            if (result.isEmptyOrUndefinedOrNull()) {
-                ctx.renderMissing();
+            if (ctx.didUpgradeWebSocket()) {
+                ctx.finalize();
                 return JSValue.jsUndefined();
             }
 
@@ -720,12 +722,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
         }
 
         fn handleResolve(ctx: *RequestContext, value: JSC.JSValue) void {
-            if (ctx.didUpgradeWebSocket()) {
-                ctx.finalize();
-                return;
-            }
-
-            if (value.isEmptyOrUndefinedOrNull()) {
+            if (value.isEmptyOrUndefinedOrNull() or !value.isCell()) {
                 ctx.renderMissing();
                 return;
             }
@@ -4528,7 +4525,7 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
         pub fn unref(this: *ThisServer) void {
             if (!this.poll_ref.isActive()) return;
 
-            this.poll_ref.unref(this.vm);
+            this.poll_ref.unrefOnNextTick(this.vm);
             this.vm.eventLoop().start_server_on_next_tick = false;
         }
 

@@ -1868,6 +1868,10 @@ JSC__JSValue ZigString__to16BitValue(const ZigString* arg0, JSC__JSGlobalObject*
 
 JSC__JSValue ZigString__toExternalU16(const uint16_t* arg0, size_t len, JSC__JSGlobalObject* global)
 {
+    if (len == 0) {
+        return JSC::JSValue::encode(JSC::jsEmptyString(global->vm()));
+    }
+
     auto ref = String(ExternalStringImpl::create(reinterpret_cast<const UChar*>(arg0), len, reinterpret_cast<void*>(const_cast<uint16_t*>(arg0)), free_global_string));
 
     return JSC::JSValue::encode(JSC::JSValue(JSC::jsString(
@@ -1876,7 +1880,12 @@ JSC__JSValue ZigString__toExternalU16(const uint16_t* arg0, size_t len, JSC__JSG
 // This must be a globally allocated string
 JSC__JSValue ZigString__toExternalValue(const ZigString* arg0, JSC__JSGlobalObject* arg1)
 {
+
     ZigString str = *arg0;
+    if (str.len == 0) {
+        return JSC::JSValue::encode(JSC::jsEmptyString(arg1->vm()));
+    }
+
     if (Zig::isTaggedUTF16Ptr(str.ptr)) {
         auto ref = String(ExternalStringImpl::create(reinterpret_cast<const UChar*>(Zig::untag(str.ptr)), str.len, Zig::untagVoid(str.ptr), free_global_string));
 
@@ -2049,22 +2058,7 @@ void JSC__JSPromise__resolve(JSC__JSPromise* arg0, JSC__JSGlobalObject* arg1,
 void JSC__JSPromise__resolveOnNextTick(JSC__JSPromise* promise, JSC__JSGlobalObject* lexicalGlobalObject,
     JSC__JSValue encoedValue)
 {
-    JSC::JSValue value = JSC::JSValue::decode(encoedValue);
-    VM& vm = lexicalGlobalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    uint32_t flags = promise->internalField(JSC::JSPromise::Field::Flags).get().asUInt32();
-    if (!(flags & JSC::JSPromise::isFirstResolvingFunctionCalledFlag)) {
-        promise->internalField(JSC::JSPromise::Field::Flags).set(vm, promise, jsNumber(flags | JSC::JSPromise::isFirstResolvingFunctionCalledFlag));
-        auto* globalObject = jsCast<Zig::GlobalObject*>(promise->globalObject());
-
-        globalObject->queueMicrotask(
-            globalObject->performMicrotaskFunction(),
-            globalObject->resolvePromiseFunction(),
-            promise,
-            value,
-            JSValue {});
-        RETURN_IF_EXCEPTION(scope, void());
-    }
+    return JSC__JSPromise__resolve(promise, lexicalGlobalObject, encoedValue);
 }
 
 bool JSC__JSValue__isAnyError(JSC__JSValue JSValue0)

@@ -359,6 +359,7 @@ pub const VirtualMachine = struct {
     has_loaded_node_modules: bool = false,
     timer: Bun.Timer = Bun.Timer{},
     uws_event_loop: ?*uws.Loop = null,
+    pending_unref_counter: i32 = 0,
 
     /// hide bun:wrap from stack traces
     /// bun:wrap is very noisy

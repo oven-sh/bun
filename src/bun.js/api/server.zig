@@ -4528,7 +4528,7 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
         pub fn unref(this: *ThisServer) void {
             if (!this.poll_ref.isActive()) return;
 
-            this.poll_ref.unref(this.vm);
+            this.poll_ref.unrefOnNextTick(this.vm);
             this.vm.eventLoop().start_server_on_next_tick = false;
         }
 

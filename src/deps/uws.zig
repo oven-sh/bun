@@ -464,6 +464,12 @@ pub const Loop = extern struct {
         this.active -= 1;
     }
 
+    pub fn unrefCount(this: *Loop, count: i32) void {
+        log("unref x {d}", .{count});
+        this.num_polls -|= count;
+        this.active -|= @intCast(u32, count);
+    }
+
     pub fn get() ?*Loop {
         return uws_get_loop();
     }

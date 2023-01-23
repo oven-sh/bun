@@ -476,7 +476,21 @@ pub const EventLoop = struct {
     }
 
     pub fn autoTick(this: *EventLoop) void {
-        var loop = this.virtual_machine.uws_event_loop.?;
+        var ctx = this.virtual_machine;
+        var loop = ctx.uws_event_loop.?;
+
+        // Some tasks need to keep the event loop alive for one more tick.
+        // We want to keep the event loop alive long enough to process those ticks and any microtasks
+        //
+        // BUT. We don't actually have an idle event in that case.
+        // That means the process will be waiting forever on nothing.
+        // So we need to drain the counter immediately before entering uSockets loop
+        const pending_unref = ctx.pending_unref_counter;
+        if (pending_unref > 0) {
+            ctx.pending_unref_counter = 0;
+            loop.unrefCount(pending_unref);
+        }
+
         if (loop.num_polls > 0 or loop.active > 0) {
             loop.tick();
             this.processGCTimer();
@@ -486,6 +500,15 @@ pub const EventLoop = struct {
 
     pub fn autoTickActive(this: *EventLoop) void {
         var loop = this.virtual_machine.uws_event_loop.?;
+
+        var ctx = this.virtual_machine;
+
+        const pending_unref = ctx.pending_unref_counter;
+        if (pending_unref > 0) {
+            ctx.pending_unref_counter = 0;
+            loop.unrefCount(pending_unref);
+        }
+
         if (loop.active > 0) {
             loop.tick();
             this.processGCTimer();
@@ -497,7 +520,6 @@ pub const EventLoop = struct {
         this.virtual_machine.gc_controller.processGCTimer();
     }
 
-    // TODO: fix this technical debt
     pub fn tick(this: *EventLoop) void {
         var ctx = this.virtual_machine;
         this.tickConcurrent();
@@ -517,6 +539,8 @@ pub const EventLoop = struct {
             break;
         }
 
+        // TODO: unify the event loops
+        // This needs a hook into JSC to schedule timers
         this.global.vm().doWork();
 
         while (this.tickWithCount() > 0) {

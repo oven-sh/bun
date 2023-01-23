@@ -614,10 +614,6 @@ pub const GetAddrInfo = struct {
     };
 };
 
-
-
-
-
 pub const ResolveSrvInfoRequest = struct {
     const log = Output.scoped(.ResolveSrvInfoRequest, false);
 
@@ -631,11 +627,10 @@ pub const ResolveSrvInfoRequest = struct {
     pub fn init(
         cache: DNSResolver.SrvCacheHit,
         resolver: ?*DNSResolver,
-        name: [] const u8,
+        name: []const u8,
         globalThis: *JSC.JSGlobalObject,
         comptime cache_field: []const u8,
     ) !*ResolveSrvInfoRequest {
-
         var request = try globalThis.allocator().create(ResolveSrvInfoRequest);
         var hasher = std.hash.Wyhash.init(0);
         hasher.update(name);
@@ -700,7 +695,6 @@ pub const ResolveSrvInfoRequest = struct {
 
     pub fn onCaresComplete(this: *ResolveSrvInfoRequest, err_: ?c_ares.Error, timeout: i32, result: ?*c_ares.struct_ares_srv_reply) void {
         if (this.resolver_for_caching) |resolver| {
-
             if (this.cache.pending_cache) {
                 resolver.drainPendingSrvCares(
                     this.cache.pos_in_pending,
@@ -998,13 +992,10 @@ pub const SrvLookup = struct {
         return;
     }
 
-
-
     pub fn onComplete(this: *SrvLookup, result: JSC.JSValue) void {
         var promise = this.promise;
         var globalThis = this.globalThis;
         this.promise = .{};
-
         promise.resolve(globalThis, result);
         this.deinit();
     }
@@ -1169,7 +1160,7 @@ pub const DNSResolver = struct {
 
         return entry;
     }
-     fn getSrvKey(this: *DNSResolver, index: u8, comptime cache_name: []const u8) ResolveSrvInfoRequest.PendingCacheKey {
+    fn getSrvKey(this: *DNSResolver, index: u8, comptime cache_name: []const u8) ResolveSrvInfoRequest.PendingCacheKey {
         var cache: *SrvPendingCache = &@field(this, cache_name);
         std.debug.assert(!cache.available.isSet(index));
         const entry = cache.buffer[index];
@@ -1206,7 +1197,6 @@ pub const DNSResolver = struct {
         bun.default_allocator.destroy(key.lookup);
 
         array.ensureStillAlive();
-
 
         while (pending) |value| {
             var new_global = value.globalThis;
@@ -1631,7 +1621,6 @@ pub const DNSResolver = struct {
             return .zero;
         }
 
-      
         const name = name_str.toSlice(globalThis, bun.default_allocator);
         defer name.deinit();
         var vm = globalThis.bunVM();

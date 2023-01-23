@@ -3029,7 +3029,7 @@ pub const Timer = struct {
 
             var vm = this.globalThis.bunVM();
 
-            this.poll_ref.unref(vm);
+            this.poll_ref.unrefOnNextTick(vm);
             this.timer.deinit();
             this.callback.deinit();
             this.arguments.deinit();

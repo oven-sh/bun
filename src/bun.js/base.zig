@@ -3232,7 +3232,7 @@ pub const PollRef = struct {
         if (this.status != .active)
             return;
         this.status = .inactive;
-        vm.uws_event_loop.?.nextTick(*uws.Loop, vm.uws_event_loop.?, uws.Loop.unref);
+        vm.pending_unref_counter +|= 1;
     }
 
     /// Allow a poll to keep the process alive.

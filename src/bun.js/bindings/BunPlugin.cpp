@@ -21,6 +21,7 @@
 namespace Zig {
 
 extern "C" void Bun__onDidAppendPlugin(void* bunVM, JSGlobalObject* globalObject);
+using OnAppendPluginCallback = void (*)(void*, JSGlobalObject* globalObject);
 
 static bool isValidNamespaceString(String& namespaceString)
 {
@@ -31,7 +32,7 @@ static bool isValidNamespaceString(String& namespaceString)
     return namespaceRegex->match(namespaceString) > -1;
 }
 
-static EncodedJSValue jsFunctionAppendOnLoadPluginBody(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callframe, BunPluginTarget target)
+static EncodedJSValue jsFunctionAppendOnLoadPluginBody(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callframe, BunPluginTarget target, BunPlugin::Base& plugin, void* ctx, OnAppendPluginCallback callback)
 {
     JSC::VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -77,14 +78,13 @@ static EncodedJSValue jsFunctionAppendOnLoadPluginBody(JSC::JSGlobalObject* glob
         return JSValue::encode(jsUndefined());
     }
 
-    Zig::GlobalObject* global = reinterpret_cast<Zig::GlobalObject*>(globalObject);
-    auto& plugins = global->onLoadPlugins[target];
-    plugins.append(vm, filter->regExp(), jsCast<JSFunction*>(func), namespaceString);
-    Bun__onDidAppendPlugin(reinterpret_cast<Zig::GlobalObject*>(globalObject)->bunVM(), globalObject);
+    plugin.append(vm, filter->regExp(), jsCast<JSFunction*>(func), namespaceString);
+    callback(ctx, globalObject);
+
     return JSValue::encode(jsUndefined());
 }
 
-static EncodedJSValue jsFunctionAppendOnResolvePluginBody(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callframe, BunPluginTarget target)
+static EncodedJSValue jsFunctionAppendOnResolvePluginBody(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callframe, BunPluginTarget target, BunPlugin::Base& plugin, void* ctx, OnAppendPluginCallback callback)
 {
     JSC::VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -131,42 +131,58 @@ static EncodedJSValue jsFunctionAppendOnResolvePluginBody(JSC::JSGlobalObject* g
         return JSValue::encode(jsUndefined());
     }
 
-    Zig::GlobalObject* global = reinterpret_cast<Zig::GlobalObject*>(globalObject);
-    auto& plugins = global->onResolvePlugins[target];
-    plugins.append(vm, filter->regExp(), jsCast<JSFunction*>(func), namespaceString);
+    plugin.append(vm, filter->regExp(), jsCast<JSFunction*>(func), namespaceString);
+    callback(ctx, globalObject);
 
-    Bun__onDidAppendPlugin(reinterpret_cast<Zig::GlobalObject*>(globalObject)->bunVM(), globalObject);
     return JSValue::encode(jsUndefined());
+}
+
+static EncodedJSValue jsFunctionAppendOnResolvePluginGlobal(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callframe, BunPluginTarget target)
+{
+    Zig::GlobalObject* global = Zig::jsCast<Zig::GlobalObject*>(globalObject);
+
+    auto& plugins = global->onResolvePlugins[target];
+    auto callback = Bun__onDidAppendPlugin;
+    return jsFunctionAppendOnResolvePluginBody(globalObject, callframe, target, plugins, global->bunVM(), callback);
+}
+
+static EncodedJSValue jsFunctionAppendOnLoadPluginGlobal(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callframe, BunPluginTarget target)
+{
+    Zig::GlobalObject* global = Zig::jsCast<Zig::GlobalObject*>(globalObject);
+
+    auto& plugins = global->onLoadPlugins[target];
+    auto callback = Bun__onDidAppendPlugin;
+    return jsFunctionAppendOnLoadPluginBody(globalObject, callframe, target, plugins, global->bunVM(), callback);
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsFunctionAppendOnLoadPluginNode, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callframe))
 {
-    return jsFunctionAppendOnLoadPluginBody(globalObject, callframe, BunPluginTargetNode);
+    return jsFunctionAppendOnLoadPluginGlobal(globalObject, callframe, BunPluginTargetNode);
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsFunctionAppendOnLoadPluginBun, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callframe))
 {
-    return jsFunctionAppendOnLoadPluginBody(globalObject, callframe, BunPluginTargetBun);
+    return jsFunctionAppendOnLoadPluginGlobal(globalObject, callframe, BunPluginTargetBun);
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsFunctionAppendOnLoadPluginBrowser, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callframe))
 {
-    return jsFunctionAppendOnLoadPluginBody(globalObject, callframe, BunPluginTargetBrowser);
+    return jsFunctionAppendOnLoadPluginGlobal(globalObject, callframe, BunPluginTargetBrowser);
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsFunctionAppendOnResolvePluginNode, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callframe))
 {
-    return jsFunctionAppendOnResolvePluginBody(globalObject, callframe, BunPluginTargetNode);
+    return jsFunctionAppendOnResolvePluginGlobal(globalObject, callframe, BunPluginTargetNode);
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsFunctionAppendOnResolvePluginBun, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callframe))
 {
-    return jsFunctionAppendOnResolvePluginBody(globalObject, callframe, BunPluginTargetBun);
+    return jsFunctionAppendOnResolvePluginGlobal(globalObject, callframe, BunPluginTargetBun);
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsFunctionAppendOnResolvePluginBrowser, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callframe))
 {
-    return jsFunctionAppendOnResolvePluginBody(globalObject, callframe, BunPluginTargetBrowser);
+    return jsFunctionAppendOnResolvePluginGlobal(globalObject, callframe, BunPluginTargetBrowser);
 }
 
 extern "C" EncodedJSValue jsFunctionBunPluginClear(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callframe)
@@ -182,30 +198,28 @@ extern "C" EncodedJSValue jsFunctionBunPluginClear(JSC::JSGlobalObject* globalOb
     return JSValue::encode(jsUndefined());
 }
 
-extern "C" EncodedJSValue jsFunctionBunPlugin(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callframe)
+extern "C" EncodedJSValue setupBunPlugin(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callframe, BunPluginTarget target)
 {
     JSC::VM& vm = globalObject->vm();
     auto clientData = WebCore::clientData(vm);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     if (callframe->argumentCount() < 1) {
-        JSC::throwTypeError(globalObject, throwScope, "Bun.plugin() needs at least one argument (an object)"_s);
+        JSC::throwTypeError(globalObject, throwScope, "plugin needs at least one argument (an object)"_s);
         return JSValue::encode(jsUndefined());
     }
 
     JSC::JSObject* obj = callframe->uncheckedArgument(0).getObject();
     if (!obj) {
-        JSC::throwTypeError(globalObject, throwScope, "Bun.plugin() needs an object as first argument"_s);
+        JSC::throwTypeError(globalObject, throwScope, "plugin needs an object as first argument"_s);
         return JSValue::encode(jsUndefined());
     }
 
-    JSC::JSValue setupFunctionValue = obj->get(globalObject, Identifier::fromString(vm, "setup"_s));
+    JSC::JSValue setupFunctionValue = obj->getIfPropertyExists(globalObject, Identifier::fromString(vm, "setup"_s));
     if (!setupFunctionValue || setupFunctionValue.isUndefinedOrNull() || !setupFunctionValue.isCell() || !setupFunctionValue.isCallable()) {
-        JSC::throwTypeError(globalObject, throwScope, "Bun.plugin() needs a setup() function"_s);
+        JSC::throwTypeError(globalObject, throwScope, "plugin needs a setup() function"_s);
         return JSValue::encode(jsUndefined());
     }
 
-    Zig::GlobalObject* global = reinterpret_cast<Zig::GlobalObject*>(globalObject);
-    BunPluginTarget target = global->defaultBunPluginTarget;
     if (JSValue targetValue = obj->getIfPropertyExists(globalObject, Identifier::fromString(vm, "target"_s))) {
         if (auto* targetJSString = targetValue.toStringOrNull(globalObject)) {
             auto targetString = targetJSString->value(globalObject);
@@ -216,7 +230,7 @@ extern "C" EncodedJSValue jsFunctionBunPlugin(JSC::JSGlobalObject* globalObject,
             } else if (targetString == "browser"_s) {
                 target = BunPluginTargetBrowser;
             } else {
-                JSC::throwTypeError(globalObject, throwScope, "Bun.plugin() target must be one of 'node', 'bun' or 'browser'"_s);
+                JSC::throwTypeError(globalObject, throwScope, "plugin target must be one of 'node', 'bun' or 'browser'"_s);
                 return JSValue::encode(jsUndefined());
             }
         }
@@ -308,6 +322,14 @@ extern "C" EncodedJSValue jsFunctionBunPlugin(JSC::JSGlobalObject* globalObject,
     }
 
     RELEASE_AND_RETURN(throwScope, JSValue::encode(jsUndefined()));
+}
+
+extern "C" EncodedJSValue jsFunctionBunPlugin(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callframe)
+{
+    Zig::GlobalObject* global = reinterpret_cast<Zig::GlobalObject*>(globalObject);
+    BunPluginTarget target = global->defaultBunPluginTarget;
+
+    return setupBunPlugin(globalObject, callframe, target);
 }
 
 void BunPlugin::Group::append(JSC::VM& vm, JSC::RegExp* filter, JSC::JSFunction* func)

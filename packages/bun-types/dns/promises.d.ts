@@ -15,7 +15,7 @@ declare module "dns/promises" {
     // MxRecord,
     // NaptrRecord,
     // SoaRecord,
-    // SrvRecord,
+    SrvRecord,
     ResolveWithTtlOptions,
     RecordWithTtl,
     ResolveOptions,
@@ -144,7 +144,7 @@ declare module "dns/promises" {
   // function resolve(hostname: string, rrtype: "NS"): Promise<string[]>;
   // function resolve(hostname: string, rrtype: "PTR"): Promise<string[]>;
   // function resolve(hostname: string, rrtype: "SOA"): Promise<SoaRecord>;
-  // function resolve(hostname: string, rrtype: "SRV"): Promise<SrvRecord[]>;
+  function resolveSrv(hostname: string): Promise<SrvRecord[]>;
   // function resolve(hostname: string, rrtype: "TXT"): Promise<string[][]>;
   // function resolve(
   //   hostname: string,
@@ -319,7 +319,7 @@ declare module "dns/promises" {
    * ```
    * @since v10.6.0
    */
-  // function resolveSrv(hostname: string): Promise<SrvRecord[]>;
+  function resolveSrv(hostname: string): Promise<SrvRecord[]>;
   /**
    * Uses the DNS protocol to resolve text queries (`TXT` records) for the`hostname`. On success, the `Promise` is resolved with a two-dimensional array
    * of the text records available for `hostname` (e.g.`[ ['v=spf1 ip4:0.0.0.0 ', '~all' ] ]`). Each sub-array contains TXT chunks of
@@ -390,7 +390,7 @@ declare module "dns/promises" {
     // resolveNs: typeof resolveNs;
     // resolvePtr: typeof resolvePtr;
     // resolveSoa: typeof resolveSoa;
-    // resolveSrv: typeof resolveSrv;
+    resolveSrv: typeof resolveSrv;
     // resolveTxt: typeof resolveTxt;
     // reverse: typeof reverse;
     // setLocalAddress(ipv4?: string, ipv6?: string): void;

@@ -496,7 +496,7 @@ WebCore::ScriptExecutionContext* GlobalObject::scriptExecutionContext() const
 void GlobalObject::reportUncaughtExceptionAtEventLoop(JSGlobalObject* globalObject,
     JSC::Exception* exception)
 {
-    Bun__reportError(globalObject, JSValue::encode(JSValue(exception)));
+    Bun__reportUnhandledError(globalObject, JSValue::encode(JSValue(exception)));
 }
 
 void GlobalObject::promiseRejectionTracker(JSGlobalObject* obj, JSC::JSPromise* promise,
@@ -2119,7 +2119,6 @@ public:
 
 const ClassInfo BunPrimordialsObject::s_info = { "Primordials"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(BunPrimordialsObject) };
 
-extern "C" void Bun__reportUnhandledError(JSGlobalObject*, EncodedJSValue);
 JSC_DEFINE_HOST_FUNCTION(jsFunctionPerformMicrotask, (JSGlobalObject * globalObject, CallFrame* callframe))
 {
     auto& vm = globalObject->vm();
@@ -2141,22 +2140,26 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionPerformMicrotask, (JSGlobalObject * globalObj
     WTF::NakedPtr<JSC::Exception> exceptionPtr;
 
     size_t argCount = callframe->argumentCount();
-    if (argCount > 1) {
-        if (JSValue arg0 = callframe->argument(1)) {
-            arguments.append(arg0);
-        }
-
-        if (argCount > 2) {
-            if (JSValue arg1 = callframe->argument(2)) {
-                arguments.append(arg1);
-            }
-
-            if (argCount > 3) {
-                if (JSValue arg2 = callframe->argument(3)) {
-                    arguments.append(arg2);
-                }
-            }
-        }
+    switch (argCount) {
+    case 1: {
+        break;
+    }
+    case 2: {
+        arguments.append(callframe->uncheckedArgument(1));
+        break;
+    }
+    case 3: {
+        arguments.append(callframe->uncheckedArgument(1));
+        arguments.append(callframe->uncheckedArgument(2));
+        break;
+    }
+    case 4: {
+        arguments.append(callframe->uncheckedArgument(1));
+        arguments.append(callframe->uncheckedArgument(2));
+        arguments.append(callframe->uncheckedArgument(3));
+    }
+    default:
+        break;
     }
 
     JSC::call(globalObject, job, callData, jsUndefined(), arguments, exceptionPtr);
@@ -2169,6 +2172,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionPerformMicrotask, (JSGlobalObject * globalObj
 }
 
 extern "C" EncodedJSValue Bun__DNSResolver__lookup(JSGlobalObject*, JSC::CallFrame*);
+extern "C" EncodedJSValue Bun__DNSResolver__resolveSrv(JSGlobalObject*, JSC::CallFrame*);
 
 JSC_DEFINE_HOST_FUNCTION(jsFunctionPerformMicrotaskVariadic, (JSGlobalObject * globalObject, CallFrame* callframe))
 {
@@ -3320,6 +3324,8 @@ void GlobalObject::installAPIGlobals(JSClassRef* globals, int count, JSC::VM& vm
             JSC::Identifier identifier = JSC::Identifier::fromString(vm, "dns"_s);
             JSC::JSObject* dnsObject = JSC::constructEmptyObject(this);
             dnsObject->putDirectNativeFunction(vm, this, JSC::Identifier::fromString(vm, "lookup"_s), 2, Bun__DNSResolver__lookup, ImplementationVisibility::Public, NoIntrinsic,
+                JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DontDelete | 0);
+            dnsObject->putDirectNativeFunction(vm, this, JSC::Identifier::fromString(vm, "resolveSrv"_s), 2, Bun__DNSResolver__resolveSrv, ImplementationVisibility::Public, NoIntrinsic,
                 JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DontDelete | 0);
             object->putDirect(vm, PropertyName(identifier), dnsObject, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontDelete | 0);
         }

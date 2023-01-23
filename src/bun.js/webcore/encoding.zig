@@ -490,7 +490,7 @@ pub const TextDecoder = struct {
                 return ZigString.init16(slice).toValueGC(ctx);
             } else {
                 var str = ZigString.init("");
-                str.ptr = @ptrCast([*]u8, slice.ptr);
+                str.ptr = @ptrCast([*]const u8, slice.ptr);
                 str.len = slice.len;
                 str.markUTF16();
                 return str.toValueGC(ctx.ptr());
@@ -582,69 +582,14 @@ pub const TextDecoder = struct {
             return JSValue.zero;
         };
 
-        if (array_buffer.len == 0) {
-            return ZigString.Empty.toValue(globalThis);
-        }
-
-        switch (this.encoding) {
-            EncodingLabel.latin1 => {
-                return ZigString.init(array_buffer.byteSlice()).toValueGC(globalThis);
-            },
-            EncodingLabel.@"UTF-8" => {
-                const buffer_slice = array_buffer.byteSlice();
-
-                if (this.fatal) {
-                    if (strings.toUTF16Alloc(default_allocator, buffer_slice, true)) |result_| {
-                        if (result_) |result| {
-                            return ZigString.toExternalU16(result.ptr, result.len, globalThis);
-                        }
-                    } else |err| {
-                        switch (err) {
-                            error.InvalidByteSequence => {
-                                globalThis.throw("Invalid byte sequence", .{});
-                                return JSValue.zero;
-                            },
-                            error.OutOfMemory => {
-                                globalThis.throw("Out of memory", .{});
-                                return JSValue.zero;
-                            },
-                        }
-                    }
-                } else {
-                    if (strings.toUTF16Alloc(default_allocator, buffer_slice, false)) |result_| {
-                        if (result_) |result| {
-                            return ZigString.toExternalU16(result.ptr, result.len, globalThis);
-                        }
-                    } else |err| {
-                        switch (err) {
-                            error.OutOfMemory => {
-                                globalThis.throw("Out of memory", .{});
-                                return JSValue.zero;
-                            },
-                        }
-                    }
-                }
-
-                // Experiment: using mimalloc directly is slightly slower
-                return ZigString.init(buffer_slice).toValueGC(globalThis);
-            },
-
-            EncodingLabel.@"UTF-16LE" => {
-                if (std.mem.isAligned(@ptrToInt(array_buffer.ptr) + @as(usize, array_buffer.offset), @alignOf([*]u16))) {
-                    return this.decodeUTF16WithAlignment([]u16, array_buffer.asU16(), globalThis);
-                }
-
-                return this.decodeUTF16WithAlignment([]align(1) u16, array_buffer.asU16Unaligned(), globalThis);
-            },
-            else => {
-                globalThis.throwInvalidArguments("TextDecoder.decode set to unsupported encoding", .{});
-                return JSValue.zero;
-            },
-        }
+        return this.decodeSlice(globalThis, array_buffer.slice());
     }
 
     pub fn decodeWithoutTypeChecks(this: *TextDecoder, globalThis: *JSC.JSGlobalObject, uint8array: *JSC.JSUint8Array) callconv(.C) JSValue {
-        const buffer_slice = uint8array.slice();
+        return this.decodeSlice(globalThis, uint8array.slice());
+    }
+
+    fn decodeSlice(this: *TextDecoder, globalThis: *JSC.JSGlobalObject, buffer_slice: []const u8) JSValue {
         switch (this.encoding) {
             EncodingLabel.latin1 => {
                 return ZigString.init(buffer_slice).toValueGC(globalThis);
@@ -687,11 +632,11 @@ pub const TextDecoder = struct {
             },
 
             EncodingLabel.@"UTF-16LE" => {
-                if (std.mem.isAligned(@ptrToInt(buffer_slice.ptr), @alignOf([*]u16))) {
-                    return this.decodeUTF16WithAlignment([]u16, @alignCast(2, std.mem.bytesAsSlice(u16, buffer_slice)), globalThis);
+                if (std.mem.isAligned(@ptrToInt(buffer_slice.ptr), @alignOf([*]const u16))) {
+                    return this.decodeUTF16WithAlignment([]const u16, @alignCast(2, std.mem.bytesAsSlice(u16, buffer_slice)), globalThis);
                 }
 
-                return this.decodeUTF16WithAlignment([]align(1) u16, std.mem.bytesAsSlice(u16, buffer_slice), globalThis);
+                return this.decodeUTF16WithAlignment([]align(1) const u16, std.mem.bytesAsSlice(u16, buffer_slice), globalThis);
             },
             else => {
                 globalThis.throwInvalidArguments("TextDecoder.decode set to unsupported encoding", .{});

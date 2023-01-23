@@ -44,6 +44,7 @@ class SubtleCrypto;
 }
 
 extern "C" void Bun__reportError(JSC__JSGlobalObject*, JSC__JSValue);
+extern "C" void Bun__reportUnhandledError(JSGlobalObject*, EncodedJSValue);
 // defined in ModuleLoader.cpp
 extern "C" JSC::EncodedJSValue jsFunctionOnLoadObjectResultResolve(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame);
 extern "C" JSC::EncodedJSValue jsFunctionOnLoadObjectResultReject(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame);

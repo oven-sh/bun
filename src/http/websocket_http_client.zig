@@ -268,7 +268,7 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
             this.input_body_buf.len = 0;
         }
         pub fn clearData(this: *HTTPClient) void {
-            this.poll_ref.unref(JSC.VirtualMachine.get());
+            this.poll_ref.unrefOnNextTick(JSC.VirtualMachine.get());
 
             this.clearInput();
             if (this.body_buf) |buf| {
@@ -866,7 +866,7 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
         }
 
         pub fn clearData(this: *WebSocket) void {
-            this.poll_ref.unref(this.globalThis.bunVM());
+            this.poll_ref.unrefOnNextTick(this.globalThis.bunVM());
             this.clearReceiveBuffers(true);
             this.clearSendBuffers(true);
             this.ping_len = 0;
@@ -1453,7 +1453,7 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
 
         fn dispatchClose(this: *WebSocket) void {
             var out = this.outgoing_websocket orelse return;
-            this.poll_ref.unref(this.globalThis.bunVM());
+            this.poll_ref.unrefOnNextTick(this.globalThis.bunVM());
             JSC.markBinding(@src());
             WebSocket__didCloseWithErrorCode(out, ErrorCode.closed);
         }

@@ -669,7 +669,7 @@ pub const Loader = enum(u4) {
         if (zig_str.len == 0) return null;
 
         return fromString(zig_str.slice()) orelse {
-            JSC.throwInvalidArguments("invalid loader – must be js, jsx, tsx, ts, css, file, toml, wasm, or json", .{}, global, exception);
+            JSC.throwInvalidArguments("invalid loader - must be js, jsx, tsx, ts, css, file, toml, wasm, or json", .{}, global, exception);
             return null;
         };
     }

@@ -24,4 +24,5 @@ pub const Classes = struct {
     pub const MatchedRoute = JSC.API.MatchedRoute;
     pub const Dirent = JSC.Node.Dirent;
     pub const NodeJSFS = JSC.Node.NodeJSFS;
+    pub const Transpiler = JSC.API.Transpiler;
 };

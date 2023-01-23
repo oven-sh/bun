@@ -429,6 +429,7 @@ pub const Loop = extern struct {
     ready_polls: [1024]EventType align(16),
 
     const EventType = if (Environment.isLinux) std.os.linux.epoll_event else if (Environment.isMac) std.os.system.kevent64_s;
+    const log = bun.Output.scoped(.Loop, false);
 
     pub const InternalLoopData = extern struct {
         pub const us_internal_async = opaque {};
@@ -451,6 +452,23 @@ pub const Loop = extern struct {
             return this.recv_buf[0..LIBUS_RECV_BUFFER_LENGTH];
         }
     };
+
+    pub fn ref(this: *Loop) void {
+        log("ref", .{});
+        this.num_polls += 1;
+        this.active += 1;
+    }
+    pub fn unref(this: *Loop) void {
+        log("unref", .{});
+        this.num_polls -= 1;
+        this.active -= 1;
+    }
+
+    pub fn unrefCount(this: *Loop, count: i32) void {
+        log("unref x {d}", .{count});
+        this.num_polls -|= count;
+        this.active -|= @intCast(u32, count);
+    }
 
     pub fn get() ?*Loop {
         return uws_get_loop();

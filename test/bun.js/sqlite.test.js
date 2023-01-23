@@ -1,6 +1,9 @@
 import { expect, it, describe } from "bun:test";
 import { Database, constants } from "bun:sqlite";
-import { existsSync, fstat, writeFileSync } from "fs";
+import { existsSync, fstat, realpathSync, rmSync, writeFileSync } from "fs";
+import { spawnSync } from "bun";
+import { bunExe } from "bunExe";
+import { tmpdir } from "os";
 var encode = (text) => new TextEncoder().encode(text);
 
 it("Database.open", () => {
@@ -53,6 +56,27 @@ it("Database.open", () => {
   // this should not throw
   // it creates an in-memory db
   new Database().close();
+});
+
+it("upsert cross-process, see #1366", () => {
+  const dir = realpathSync(tmpdir()) + "/";
+  const { exitCode } = spawnSync(
+    [bunExe(), import.meta.dir + "/sqlite-cross-process.js"],
+    {
+      env: {
+        SQLITE_DIR: dir,
+      },
+      stderr: "inherit",
+    },
+  );
+  expect(exitCode).toBe(0);
+
+  const db2 = Database.open(dir + "get-persist.sqlite");
+
+  expect(db2.query(`SELECT id FROM examples`).all()).toEqual([
+    { id: "hello" },
+    { id: "world" },
+  ]);
 });
 
 it("creates", () => {

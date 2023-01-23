@@ -31,7 +31,7 @@ COPY --from=get /tmp/sgerrand.rsa.pub /etc/apk/keys
 COPY --from=get /tmp/glibc-${GLIBC_RELEASE}.apk /tmp
 
 # install glibc
-RUN apk --no-cache add /tmp/glibc-${GLIBC_RELEASE}.apk && \
+RUN apk --no-cache add --force-overwrite /tmp/glibc-${GLIBC_RELEASE}.apk && \
 
 # cleanup
     rm /etc/apk/keys/sgerrand.rsa.pub && \

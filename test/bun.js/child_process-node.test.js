@@ -170,7 +170,7 @@ describe("ChildProcess spawn bad stdio", () => {
   // Monkey patch spawn() to create a child process normally, but destroy the
   // stdout and stderr streams. This replicates the conditions where the streams
   // cannot be properly created.
-  function createChild(options, callback, done) {
+  function createChild(options, callback, done, target) {
     var __originalSpawn = ChildProcess.prototype.spawn;
     ChildProcess.prototype.spawn = function () {
       const err = __originalSpawn.apply(this, arguments);
@@ -182,13 +182,14 @@ describe("ChildProcess spawn bad stdio", () => {
     };
 
     const { mustCall } = createCallCheckCtx(done);
-    const cmd = `bun ${__dirname}/spawned-child.js`;
+    let cmd = `bun ${import.meta.dir}/spawned-child.js`;
+    if (target) cmd += " " + target;
     const child = exec(cmd, options, mustCall(callback));
     ChildProcess.prototype.spawn = __originalSpawn;
     return child;
   }
 
-  it.skip("should handle normal execution of child process", (done) => {
+  it("should handle normal execution of child process", (done) => {
     createChild(
       {},
       (err, stdout, stderr) => {
@@ -200,16 +201,19 @@ describe("ChildProcess spawn bad stdio", () => {
     );
   });
 
-  it.skip("should handle error event of child process", (done) => {
-    const error = new Error("foo");
+  it("should handle error event of child process", (done) => {
+    const error = new Error(
+      `Command failed: bun ${import.meta.dir}/spawned-child.js ERROR`,
+    );
     createChild(
       {},
       (err, stdout, stderr) => {
-        strictEqual(err, error);
+        strictEqual(err.message, error.message);
         strictEqual(stdout, "");
         strictEqual(stderr, "");
       },
       done,
+      "ERROR",
     );
   });
 

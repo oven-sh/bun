@@ -948,7 +948,7 @@ pub const Encoder = struct {
             },
 
             JSC.Node.Encoding.base64, JSC.Node.Encoding.base64url => {
-                return bun.base64.encodeLen(input[0..len]);
+                return bun.base64.decodeLen(input[0..len]);
             },
             // else => return &[_]u8{};
         }
@@ -1006,7 +1006,7 @@ pub const Encoder = struct {
             },
 
             JSC.Node.Encoding.base64, JSC.Node.Encoding.base64url => {
-                return bun.base64.encodeLen(input[0..len]);
+                return bun.base64.decodeLenUpperBound(len);
             },
             // else => return &[_]u8{};
         }

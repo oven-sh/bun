@@ -127,7 +127,7 @@ describe("fetch", () => {
     }
     it(name, async () => {
       gc();
-      const response = await fetch(url, {}, { verbose: true });
+      const response = await fetch(url, { verbose: true });
       gc();
       const text = await response.text();
       gc();

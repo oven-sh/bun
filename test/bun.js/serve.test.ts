@@ -905,7 +905,6 @@ describe("should support Content-Range with Bun.file()", () => {
       await getServer(async (server) => {
         const response = await fetch(
           `http://${server.hostname}:${server.port}/?start=${start}&end=${end}`,
-          {},
           { verbose: true },
         );
         expect(await response.arrayBuffer()).toEqual(

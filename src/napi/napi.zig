@@ -270,12 +270,7 @@ pub export fn napi_create_string_utf16(env: napi_env, str: [*]const char16_t, le
     result.* = JSC.ZigString.from16(str, len).toValueGC(env);
     return .ok;
 }
-pub export fn napi_create_symbol(env: napi_env, description: napi_value, result: *napi_value) napi_status {
-    var string_ref = JSC.C.JSValueToStringCopy(env.ref(), description.asObjectRef(), null);
-    defer JSC.C.JSStringRelease(string_ref);
-    result.* = JSValue.c(JSC.C.JSValueMakeSymbol(env.ref(), string_ref));
-    return .ok;
-}
+pub extern fn napi_create_symbol(env: napi_env, description: napi_value, result: *napi_value) napi_status;
 pub export fn napi_create_error(env: napi_env, code: napi_value, msg: napi_value, result: *napi_value) napi_status {
     const system_error = JSC.SystemError{
         .code = if (!code.isEmptyOrUndefinedOrNull()) code.getZigString(env) else ZigString.Empty,

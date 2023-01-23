@@ -1602,6 +1602,37 @@ extern "C" napi_status napi_create_bigint_words(napi_env env,
     return napi_ok;
 }
 
+extern "C" napi_status napi_create_symbol(napi_env env, napi_value description,
+    napi_value* result)
+{
+    Zig::GlobalObject* globalObject = toJS(env);
+    JSC::VM& vm = globalObject->vm();
+
+    if (UNLIKELY(result == nullptr || globalObject == nullptr)) {
+        return napi_invalid_arg;
+    }
+
+    JSC::JSValue descriptionValue = toJS(description);
+    if (descriptionValue && !descriptionValue.isUndefinedOrNull()) {
+        if (!descriptionValue.isString()) {
+            return napi_string_expected;
+        }
+
+        JSC::JSString* descriptionString = descriptionValue.toStringOrNull(globalObject);
+        if (UNLIKELY(!descriptionString)) {
+            return napi_generic_failure;
+        }
+
+        if (descriptionString->length() > 0) {
+            *result = toNapi(JSC::Symbol::createWithDescription(vm, descriptionString->value(globalObject)));
+            return napi_ok;
+        }
+    }
+
+    *result = toNapi(JSC::Symbol::create(vm));
+    return napi_ok;
+}
+
 extern "C" napi_status napi_call_function(napi_env env, napi_value recv_napi,
     napi_value func_napi, size_t argc,
     const napi_value* argv,

@@ -385,6 +385,47 @@ static inline JSC::EncodedJSValue jsBufferConstructorFunction_allocBody(JSC::JSG
 
     auto uint8Array = JSC::JSUint8Array::create(lexicalGlobalObject, subclassStructure, WTFMove(arrayBuffer), 0, length);
 
+    // fill argument
+    if(callFrame->argumentCount() > 1){
+        auto value = callFrame->argument(1);
+
+        if (!value.isString()) {
+            auto value_ = value.toInt32(lexicalGlobalObject) & 0xFF;
+
+            auto value_uint8 = static_cast<uint8_t>(value_);
+            auto length = uint8Array->byteLength();
+            auto start = 0;
+            auto end = length;
+
+            auto startPtr = uint8Array->typedVector() + start;
+            auto endPtr = uint8Array->typedVector() + end;
+            memset(startPtr, value_uint8, endPtr - startPtr);
+            RELEASE_AND_RETURN(throwScope, JSC::JSValue::encode(uint8Array));
+        }
+
+        {
+            size_t length = uint8Array->byteLength();
+            size_t start = 0;
+            size_t end = length;
+            WebCore::BufferEncodingType encoding = WebCore::BufferEncodingType::utf8;
+            if (callFrame->argumentCount() > 2) {
+                auto encoding_ = callFrame->uncheckedArgument(2).toString(lexicalGlobalObject);
+
+                std::optional<BufferEncodingType> encoded = parseEnumeration<BufferEncodingType>(*lexicalGlobalObject, encoding_);
+                if (!encoded) {
+                    throwTypeError(lexicalGlobalObject, throwScope, "Invalid encoding"_s);
+                    return JSC::JSValue::encode(jsUndefined());
+                }
+                encoding = encoded.value();
+                
+            }
+            auto startPtr = uint8Array->typedVector() + start;
+            auto str_ = value.toWTFString(lexicalGlobalObject);
+            ZigString str = Zig::toZigString(str_);
+
+            Bun__Buffer_fill(&str, startPtr, end - start, encoding);
+        }
+    }
     RELEASE_AND_RETURN(throwScope, JSC::JSValue::encode(uint8Array));
 }
 

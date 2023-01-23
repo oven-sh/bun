@@ -496,7 +496,7 @@ it("write", () => {
     // Should not write anything, pos 3 doesn't have enough room for a 16-bit char
     expect(x.write('ыыыыыы', 3, 'ucs2')).toBe(0);
     // CVE-2018-12115 experienced via buffer overrun to next block in the pool
-    // expect(Buffer.compare(y, Buffer.alloc(4, 1))).toBe(0);
+    expect(Buffer.compare(y, Buffer.alloc(4, 1))).toBe(0);
   }
 
   // // Should not write any data when there is no space for 16-bit chars

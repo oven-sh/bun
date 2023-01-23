@@ -28,6 +28,11 @@ describe("TextDecoder", () => {
       expect(decoder.decode(input)).toBe("");
     }
 
+    // Cause a de-opt
+    try {
+      decoder.decode([NaN, Symbol("s")]);
+    } catch (e) {}
+
     // DOMJIT test
     for (let i = 0; i < 90000; i++) {
       decoder.decode(fixtures[0]);

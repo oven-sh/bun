@@ -1107,7 +1107,7 @@ pub fn transformSync(
         globalThis.throwValue(this.bundler.log.toJS(globalThis, globalThis.allocator(), "Parse error"));
         return .zero;
     }
-JSC.Codegen
+
     var buffer_writer = this.buffer_writer orelse brk: {
         var writer = JSPrinter.BufferWriter.init(arena.backingAllocator()) catch {
             globalThis.throw("Failed to create BufferWriter", .{});

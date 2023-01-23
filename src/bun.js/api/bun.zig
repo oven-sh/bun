@@ -2328,15 +2328,7 @@ pub fn getTranspilerConstructor(
     _: js.JSStringRef,
     _: js.ExceptionRef,
 ) js.JSValueRef {
-    var existing = ctx.ptr().getCachedObject(ZigString.static("BunTranspiler"));
-    if (existing.isEmpty()) {
-        return ctx.ptr().putCachedObject(
-            &ZigString.init("BunTranspiler"),
-            JSC.JSValue.fromRef(Transpiler.Constructor.constructor(ctx)),
-        ).asObjectRef();
-    }
-
-    return existing.asObjectRef();
+    return JSC.API.Bun.Transpiler.getConstructor(ctx).asObjectRef();
 }
 
 pub fn getFileSystemRouter(

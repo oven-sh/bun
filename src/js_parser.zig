@@ -17609,10 +17609,7 @@ fn NewParser_(
                                             const name = p.symbols.items[id.ref.innerIndex()].original_name;
                                             const ident = p.newExpr(E.Identifier{ .ref = id.ref }, arg.binding.loc);
 
-                                            if (class.extends != null) {
-                                                if (super_index) |k| j += k + 1;
-                                            }
-                                            stmts.insert(j, Expr.assignStmt(
+                                            stmts.insert(if (super_index) |k| j + k + 1 else j, Expr.assignStmt(
                                                 p.newExpr(E.Dot{
                                                     .target = p.newExpr(E.This{}, arg.binding.loc),
                                                     .name = name,

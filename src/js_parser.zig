@@ -14718,7 +14718,7 @@ fn NewParser_(
                     }
 
                     // This might be wrong.
-                    _ = p.visitClass(expr.loc, e_, true);
+                    _ = p.visitClass(expr.loc, e_);
                 },
                 else => {},
             }
@@ -15773,7 +15773,7 @@ fn NewParser_(
                                     return;
                                 },
                                 .s_class => |class| {
-                                    _ = p.visitClass(s2.loc, &class.class, false);
+                                    _ = p.visitClass(s2.loc, &class.class);
 
                                     if (p.is_control_flow_dead)
                                         return;
@@ -16277,7 +16277,7 @@ fn NewParser_(
                         }
                     }
 
-                    _ = p.visitClass(stmt.loc, &data.class, false);
+                    _ = p.visitClass(stmt.loc, &data.class);
 
                     // Remove the export flag inside a namespace
                     const was_export_inside_namespace = data.is_export and p.enclosing_namespace_arg_ref != null;
@@ -17095,12 +17095,6 @@ fn NewParser_(
                             const i = if (super_index) |j| j + 1 else 0;
                             constructor_stmts.insertSlice(i, instance_members.items) catch unreachable;
 
-                            // move super behind statements generated from parameter properties
-                            if (super_index) |j| {
-                                const super = constructor_stmts.orderedRemove(j);
-                                constructor_stmts.insert(0, super) catch unreachable;
-                            }
-
                             constructor_function.?.func.body.stmts = constructor_stmts.items;
                         }
                     }
@@ -17437,7 +17431,7 @@ fn NewParser_(
             return res;
         }
 
-        fn visitClass(p: *P, name_scope_loc: logger.Loc, class: *G.Class, comptime is_expr: bool) Ref {
+        fn visitClass(p: *P, name_scope_loc: logger.Loc, class: *G.Class) Ref {
             if (only_scan_imports_and_do_not_visit) {
                 @compileError("only_scan_imports_and_do_not_visit must not run this.");
             }
@@ -17592,7 +17586,7 @@ fn NewParser_(
 
                         // if this is an expression, we can move statements after super() because there will be 0 decorators
                         var super_index: ?usize = null;
-                        if (comptime is_expr and class.extends != null) {
+                        if (class.extends != null) {
                             for (constructor.func.body.stmts) |stmt, index| {
                                 if (stmt.data != .s_expr or stmt.data.s_expr.value.data != .e_call or stmt.data.s_expr.value.data.e_call.target.data != .e_super) continue;
                                 super_index = index;
@@ -17615,7 +17609,7 @@ fn NewParser_(
                                             const name = p.symbols.items[id.ref.innerIndex()].original_name;
                                             const ident = p.newExpr(E.Identifier{ .ref = id.ref }, arg.binding.loc);
 
-                                            if (comptime is_expr) {
+                                            if (class.extends != null) {
                                                 if (super_index) |k| j += k + 1;
                                             }
                                             stmts.insert(j, Expr.assignStmt(

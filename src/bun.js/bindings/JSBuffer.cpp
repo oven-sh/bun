@@ -1378,13 +1378,26 @@ static inline JSC::EncodedJSValue jsBufferPrototypeFunction_writeBody(JSC::JSGlo
         if (arg2.value().isAnyInt()) {
             arg_len = arg2.value().toUInt32(lexicalGlobalObject);
             length = std::min(arg_len, length - offset);
-        }
-    }
 
-    if (callFrame->argumentCount() > 3) {
-        std::optional<BufferEncodingType> parsedEncoding = parseEnumeration<BufferEncodingType>(*lexicalGlobalObject, callFrame->argument(3));
-        if (parsedEncoding.has_value()) {
-            encoding = parsedEncoding.value();
+            if (callFrame->argumentCount() > 3) {
+                EnsureStillAliveScope arg3 = callFrame->argument(3);
+                if (arg3.value().isString()) {
+                     std::optional<BufferEncodingType> encoded = parseEnumeration<BufferEncodingType>(*lexicalGlobalObject, arg3.value());
+                     if (!encoded) {
+                         throwTypeError(lexicalGlobalObject, scope, "Invalid encoding"_s);
+                         return JSC::JSValue::encode(jsUndefined());
+                     }
+                     encoding = encoded.value();
+                }
+            }
+        } else if (arg2.value().isString()) {
+            std::optional<BufferEncodingType> encoded = parseEnumeration<BufferEncodingType>(*lexicalGlobalObject, arg2.value());
+            if (!encoded) {
+                throwTypeError(lexicalGlobalObject, scope, "Invalid encoding"_s);
+                return JSC::JSValue::encode(jsUndefined());
+            }
+
+            encoding = encoded.value();
         }
     }
 

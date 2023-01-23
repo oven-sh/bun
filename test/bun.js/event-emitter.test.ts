@@ -7,6 +7,7 @@ import EventEmitter, {
   getEventListeners,
   captureRejectionSymbol,
 } from "node:events";
+import { heapStats } from "bun:jsc";
 
 describe("EventEmitter", () => {
   it("captureRejectionSymbol", () => {
@@ -146,4 +147,33 @@ test("EventEmitter.on", () => {
 test("EventEmitter.off", () => {
   var myEmitter = new EventEmitter();
   expect(myEmitter.off("foo", () => {})).toBe(myEmitter);
+});
+
+// Internally, EventEmitter has a JSC::Weak with the thisValue of the listener
+test("EventEmitter GCs", () => {
+  Bun.gc(true);
+
+  const startCount = heapStats().objectTypeCounts["EventEmitter"] || 0;
+  (function () {
+    Bun.gc(true);
+
+    function EventEmitterSubclass() {
+      EventEmitter.call(this);
+    }
+
+    Object.setPrototypeOf(
+      EventEmitterSubclass.prototype,
+      EventEmitter.prototype,
+    );
+    Object.setPrototypeOf(EventEmitterSubclass, EventEmitter);
+
+    var myEmitter = new EventEmitterSubclass();
+    myEmitter.on("foo", () => {});
+    myEmitter.emit("foo");
+    Bun.gc(true);
+  })();
+  Bun.gc(true);
+
+  const endCount = heapStats().objectTypeCounts["EventEmitter"] || 0;
+  expect(endCount).toBe(startCount);
 });

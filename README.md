@@ -581,7 +581,6 @@ You can see [Bun's Roadmap](https://github.com/oven-sh/bun/issues/159), but here
 | ------------------------------------------------------------------------------------- | -------------- |
 | Web Streams with Fetch API                                                            | bun.js         |
 | Web Streams with HTMLRewriter                                                         | bun.js         |
-| Package hoisting that matches npm behavior                                            | bun install    |
 | Source Maps (unbundled is supported)                                                  | JS Bundler     |
 | Source Maps                                                                           | CSS            |
 | JavaScript Minifier                                                                   | JS Transpiler  |
@@ -2847,21 +2846,24 @@ console.log(address); // "2606:2800:220:1:248:1893:25c8:1946"
 ```
 
 Bun supports three backends for DNS resolution:
-  - `c-ares` - This is the default on Linux, and it uses the [c-ares](https://c-ares.org/) library to perform DNS resolution.
-  - `system` - Uses the system's non-blocking DNS resolver, if available. Otherwise, falls back to `getaddrinfo`. This is the default on macOS, and the same as `getaddrinfo` on Linux.
-  - `getaddrinfo` - Uses the POSIX standard `getaddrinfo` function, which may cause performance issues under concurrent load.
-  
+
+- `c-ares` - This is the default on Linux, and it uses the [c-ares](https://c-ares.org/) library to perform DNS resolution.
+- `system` - Uses the system's non-blocking DNS resolver, if available. Otherwise, falls back to `getaddrinfo`. This is the default on macOS, and the same as `getaddrinfo` on Linux.
+- `getaddrinfo` - Uses the POSIX standard `getaddrinfo` function, which may cause performance issues under concurrent load.
+
 You can choose a particular backend by specifying `backend` as an option.
 
 ```ts
 import { dns } from "bun";
 
-const [{ address, ttl }] = await dns.lookup("example.com", { backend: "c-ares" });
+const [{ address, ttl }] = await dns.lookup("example.com", {
+  backend: "c-ares",
+});
 console.log(address); // "93.184.216.34"
 console.log(ttl); // 21237
 ```
 
-Note: the `ttl` property is only accurate when the `backend` is c-ares. Otherwise, `ttl` will be `0`. 
+Note: the `ttl` property is only accurate when the `backend` is c-ares. Otherwise, `ttl` will be `0`.
 
 This was added in Bun v0.5.0.
 

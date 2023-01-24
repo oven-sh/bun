@@ -628,7 +628,7 @@ const Task = struct {
 
 pub const ExtractData = struct {
     final_path: string,
-    json_path: []u8,
+    json_path: string,
     json_buf: []u8,
     json_len: usize,
     dependency_id: PackageID,
@@ -2976,15 +2976,12 @@ pub const PackageManager = struct {
         manager: *PackageManager,
         package_id: PackageID,
         data: ExtractData,
-        comptime _: Options.LogLevel,
+        comptime log_level: Options.LogLevel,
     ) void {
         var package = manager.lockfile.packages.get(package_id);
         switch (package.resolution.tag) {
             .github => {
-                defer {
-                    manager.allocator.free(data.json_path);
-                    manager.allocator.free(data.json_buf);
-                }
+                defer manager.allocator.free(data.json_buf);
                 const package_name = package.name;
                 const package_name_hash = package.name_hash;
                 const package_json_source = logger.Source.initPathString(
@@ -3000,7 +2997,16 @@ pub const PackageManager = struct {
                     void,
                     {},
                     Features.npm,
-                ) catch unreachable;
+                ) catch |err| {
+                    if (comptime log_level != .silent) {
+                        const string_buf = manager.lockfile.buffers.string_bytes.items;
+                        Output.prettyErrorln("<r><red>error:<r> expected package.json in <b>{any}<r> to be a JSON file: {s}\n", .{
+                            package.resolution.fmtURL(&manager.options, package_name.slice(string_buf), string_buf),
+                            @errorName(err),
+                        });
+                    }
+                    Global.crash();
+                };
                 package.name = package_name;
                 package.name_hash = package_name_hash;
                 manager.lockfile.packages.set(package_id, package);

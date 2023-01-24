@@ -148,8 +148,9 @@ pub fn buildURLWithPrinter(
     }
 }
 
-threadlocal var abs_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
-threadlocal var abs_buf2: [bun.MAX_PATH_BYTES]u8 = undefined;
+threadlocal var final_path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+threadlocal var folder_name_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+threadlocal var json_path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
 
 fn extract(this: *const ExtractTarball, tgz_bytes: []const u8) !Install.ExtractData {
     var tmpdir = this.temp_dir;
@@ -231,8 +232,8 @@ fn extract(this: *const ExtractTarball, tgz_bytes: []const u8) !Install.ExtractD
         }
     }
     const folder_name = switch (this.resolution.tag) {
-        .npm => this.package_manager.cachedNPMPackageFolderNamePrint(&abs_buf2, name, this.resolution.value.npm.version),
-        .github => this.package_manager.cachedGitHubFolderNamePrint(&abs_buf2, name, this.resolution.value.github),
+        .npm => this.package_manager.cachedNPMPackageFolderNamePrint(&folder_name_buf, name, this.resolution.value.npm.version),
+        .github => this.package_manager.cachedGitHubFolderNamePrint(&folder_name_buf, name, this.resolution.value.github),
         else => unreachable,
     };
     if (folder_name.len == 0 or (folder_name.len == 1 and folder_name[0] == '/')) @panic("Tried to delete root and stopped it");
@@ -276,7 +277,7 @@ fn extract(this: *const ExtractTarball, tgz_bytes: []const u8) !Install.ExtractD
     // and get the fd path
     var final_path = bun.getFdPath(
         final_dir.fd,
-        &abs_buf,
+        &final_path_buf,
     ) catch |err| {
         Output.prettyErrorln(
             "<r><red>Error {s}<r> failed to verify cache dir for {s}",
@@ -317,18 +318,29 @@ fn extract(this: *const ExtractTarball, tgz_bytes: []const u8) !Install.ExtractD
             json_buf = try this.package_manager.allocator.alloc(u8, json_stat.size + 64);
             json_len = try json_file.preadAll(json_buf, 0);
 
-            var json_path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
-            json_path = try final_dir.realpath("package.json", &json_path_buf);
-            json_path = try this.package_manager.allocator.dupe(u8, json_path);
+            json_path = bun.getFdPath(
+                json_file.handle,
+                &json_path_buf,
+            ) catch |err| {
+                Output.prettyErrorln(
+                    "<r><red>Error {s}<r> failed to open package.json for {s}",
+                    .{
+                        @errorName(err),
+                        name,
+                    },
+                );
+                Global.crash();
+            };
             // TODO remove extracted files not matching any globs under "files"
         },
         else => {},
     }
 
-    const result = try FileSystem.instance.dirname_store.append(@TypeOf(final_path), final_path);
+    const ret_final_path = try FileSystem.instance.dirname_store.append(@TypeOf(final_path), final_path);
+    const ret_json_path = try FileSystem.instance.dirname_store.append(@TypeOf(json_path), json_path);
     return .{
-        .final_path = result,
-        .json_path = json_path,
+        .final_path = ret_final_path,
+        .json_path = ret_json_path,
         .json_buf = json_buf,
         .json_len = json_len,
         .dependency_id = this.dependency_id,

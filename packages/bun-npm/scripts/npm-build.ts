@@ -32,7 +32,8 @@ async function build(version: string): Promise<void> {
   if (release.tag_name === "canary") {
     const { tag_name } = await getRelease();
     const sha = await getSha(tag_name);
-    npmVersion = `${tag_name.replace("bun-v", "")}+canary.${sha}`;
+    // Note: this needs to be run using canary
+    npmVersion = `${Bun.version}-canary+${sha}`;
   } else {
     npmVersion = release.tag_name.replace("bun-v", "");
   }

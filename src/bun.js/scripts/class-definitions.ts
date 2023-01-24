@@ -29,6 +29,15 @@ export interface ClassDefinition {
   estimatedSize?: boolean;
   hasPendingActivity?: boolean;
   isEventEmitter?: boolean;
+
+  custom?: Record<string, CustomField>;
+}
+
+export interface CustomField {
+  header?: string;
+  extraHeaderIncludes?: string[];
+  impl?: string;
+  type?: string;
 }
 
 export function define(

@@ -1035,7 +1035,7 @@ fn napiSpan(ptr: anytype, len: usize) []const u8 {
         return &[_]u8{};
 
     if (len == NAPI_AUTO_LENGTH) {
-        return std.mem.sliceTo(ptr.?, 0);
+        return bun.sliceTo(ptr.?, 0);
     }
 
     return ptr.?[0..len];

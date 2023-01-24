@@ -947,4 +947,27 @@ describe("constructor statements", () => {
     expect(b.l).toBe(3);
     expect(b.e).toBe("hello test");
   });
+
+  test("expression with parameter properties and statements", () => {
+    const B = class b {
+      value: number;
+      v2: number;
+      constructor(value: number) {
+        this.value = value;
+        this.v2 = 0;
+      }
+    };
+
+    const A = class a extends B {
+      constructor(value: number, public v: string = "test") {
+        const newValue = value * 10;
+        super(newValue);
+      }
+    };
+
+    const a = new A(10);
+    expect(a.value).toBe(100);
+    expect(a.v).toBe("test");
+    expect(a.v2).toBe(0);
+  });
 });

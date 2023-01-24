@@ -28,6 +28,29 @@ pub fn resolveSnapshotPath(test_path: fs.Path, allocator: std.mem.Allocator) fs.
     return fs.Path.init(snapshot_file_path);
 }
 
+fn escapeBackTicks(str: bun.string, allocator: std.mem.Allocator) bun.string {
+    var escaped_string_len: usize = 0;
+    for (str) |v| {
+        if (v == '`')
+            escaped_string_len += 1;
+        escaped_string_len += 1;
+    }
+
+    var i: usize = 0;
+    var buf = allocator.alloc(u8, escaped_string_len) catch unreachable;
+    for (str) |v| {
+        if (v == '`') {
+            buf[i] = '\\';
+            buf[i + 1] = '`';
+            i += 2;
+        } else {
+            buf[i] = v;
+            i += 1;
+        }
+    }
+    return buf;
+}
+
 pub fn createSnapshotName(testName: bun.string, describeScope: *DescribeScope, hint: ZigString, allocator: std.mem.Allocator) bun.string {
     var arr = std.ArrayList(bun.string).init(allocator);
     var parent: ?*DescribeScope = describeScope;
@@ -204,7 +227,7 @@ pub const SnapshotFile = struct {
                 Output.flush();
                 return true;
             }
-            globalObject.throw("The snapshot `{s}` was not found in {s}", .{ snapshotName, this.path.text });
+            globalObject.throw("The snapshot `{s} {}` was not found in {s}", .{ snapshotName, count, this.path.text });
             return false;
         };
 
@@ -256,12 +279,15 @@ pub const SnapshotFile = struct {
         while (i < this.tests.items.len) {
             const test_data = this.tests.items[i];
             const key: ZigString = test_data.k;
+            const escaped_test_name = escapeBackTicks(key.slice(), this.allocator);
 
             var fmt = JSC.ZigConsoleClient.Formatter{ .globalThis = globalObject };
-            var value_stringified = test_data.v.toFmt(globalObject, &fmt);
+            var value_formatted = test_data.v.toFmt(globalObject, &fmt);
+            var value_stringified = std.fmt.allocPrint(this.allocator, "{any}", .{value_formatted}) catch unreachable;
+            var value_escaped = escapeBackTicks(value_stringified, this.allocator);
             const count = test_data.count;
             // @TODO add backtick escaping
-            snapshot_file.writer().print("\nexports[`{s} {}`] = `{s}`;\n", .{ key, count, value_stringified }) catch unreachable;
+            snapshot_file.writer().print("\nexports[`{s} {}`] = `{s}`;\n", .{ escaped_test_name, count, value_escaped }) catch unreachable;
             i += 1;
         }
     }
@@ -270,5 +296,5 @@ pub const SnapshotFile = struct {
 test "resolveSnapshotPath test" {
     const test_path = fs.Path.init("project/test/feature.test.ts");
     const snapshot_path = resolveSnapshotPath(test_path);
-    try testing.expectEqualSlices(u8, snapshot_path.text, "project/test/__snapshots__/feature.snap");
+    try testing.expectEqualSlices(u8, snapshot_path.text, "project/test/__snapshots__/feature.test.ts.snap");
 }

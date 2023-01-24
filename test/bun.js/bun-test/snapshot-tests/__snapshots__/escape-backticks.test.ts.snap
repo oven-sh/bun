@@ -1,0 +1,3 @@
+// Jest Snapshot v1, https://goo.gl/fbAQLP
+
+exports[`test bun-test escapes backticks correctly \`escape backticks\` 1`] = `escape the \` backtick!`;

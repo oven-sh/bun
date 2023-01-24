@@ -1764,7 +1764,7 @@ CPP_DECL void JSC__JSValue__putIndex(JSC__JSValue JSValue0, JSC__JSGlobalObject*
     array->putDirectIndex(arg1, arg2, value2);
 }
 
-JSC__JSValue JSC__JSValue__createStringArray(JSC__JSGlobalObject* globalObject, ZigString* arg1,
+JSC__JSValue JSC__JSValue__createStringArray(JSC__JSGlobalObject* globalObject, const ZigString* arg1,
     size_t arg2, bool clone)
 {
     JSC::VM& vm = globalObject->vm();

@@ -866,14 +866,23 @@ const Arguments = struct {
     };
 
     const MkdirTemp = struct {
-        prefix: string = "",
+        prefix: JSC.Node.SliceOrBuffer = .{ .buffer = .{ .buffer = JSC.ArrayBuffer.empty } },
         encoding: Encoding = Encoding.utf8,
 
         pub fn fromJS(ctx: JSC.C.JSContextRef, arguments: *ArgumentsSlice, exception: JSC.C.ExceptionRef) ?MkdirTemp {
             const prefix_value = arguments.next() orelse return MkdirTemp{};
 
-            var prefix = JSC.ZigString.Empty;
-            prefix_value.toZigString(&prefix, ctx.ptr());
+            var prefix = JSC.Node.SliceOrBuffer.fromJS(ctx, arguments.arena.allocator(), prefix_value) orelse {
+                if (exception.* == null) {
+                    JSC.throwInvalidArguments(
+                        "prefix must be a string or TypedArray",
+                        .{},
+                        ctx,
+                        exception,
+                    );
+                }
+                return null;
+            };
 
             if (exception.* != null) return null;
 
@@ -899,7 +908,7 @@ const Arguments = struct {
             }
 
             return MkdirTemp{
-                .prefix = prefix.slice(),
+                .prefix = prefix,
                 .encoding = encoding,
             };
         }
@@ -2241,7 +2250,7 @@ const Return = struct {
     pub const Link = void;
     pub const Lstat = Stats;
     pub const Mkdir = string;
-    pub const Mkdtemp = PathString;
+    pub const Mkdtemp = JSC.ZigString;
     pub const Open = FileDescriptor;
     pub const WriteFile = void;
     pub const Read = struct {
@@ -2313,7 +2322,7 @@ const Return = struct {
     pub const Readdir = union(Tag) {
         with_file_types: []Dirent,
         buffers: []const Buffer,
-        files: []const PathString,
+        files: []const JSC.ZigString,
 
         pub const Tag = enum {
             with_file_types,
@@ -2325,7 +2334,7 @@ const Return = struct {
             return switch (this) {
                 .with_file_types => JSC.To.JS.withType([]const Dirent, this.with_file_types, ctx, exception),
                 .buffers => JSC.To.JS.withType([]const Buffer, this.buffers, ctx, exception),
-                .files => JSC.To.JS.withTypeClone([]const PathString, this.files, ctx, exception, true),
+                .files => JSC.To.JS.withType([]const JSC.ZigString, this.files, ctx, exception),
             };
         }
     };
@@ -3004,9 +3013,10 @@ pub const NodeFS = struct {
 
     pub fn mkdtemp(this: *NodeFS, args: Arguments.MkdirTemp, comptime _: Flavor) Maybe(Return.Mkdtemp) {
         var prefix_buf = &this.sync_error_buf;
-        const len = @min(args.prefix.len, prefix_buf.len - 7);
+        const prefix_slice = args.prefix.slice();
+        const len = @min(prefix_slice.len, prefix_buf.len -| 7);
         if (len > 0) {
-            @memcpy(prefix_buf, args.prefix.ptr, len);
+            @memcpy(prefix_buf, prefix_slice.ptr, len);
         }
         prefix_buf[len..][0..6].* = "XXXXXX".*;
         prefix_buf[len..][6] = 0;
@@ -3018,7 +3028,7 @@ pub const NodeFS = struct {
         }
 
         return .{
-            .result = PathString.init(bun.default_allocator.dupe(u8, std.mem.span(rc.?)) catch unreachable),
+            .result = JSC.ZigString.dupeForJS(bun.sliceTo(rc.?, 0), bun.default_allocator) catch unreachable,
         };
     }
     pub fn open(this: *NodeFS, args: Arguments.Open, comptime flavor: Flavor) Maybe(Return.Open) {
@@ -3170,7 +3180,7 @@ pub const NodeFS = struct {
                     return _readdir(
                         this,
                         args,
-                        PathString,
+                        JSC.ZigString,
                         flavor,
                     );
                 }
@@ -3193,7 +3203,7 @@ pub const NodeFS = struct {
     ) Maybe(Return.Readdir) {
         const file_type = comptime switch (ExpectedType) {
             Dirent => "with_file_types",
-            PathString => "files",
+            JSC.ZigString => "files",
             Buffer => "buffers",
             else => unreachable,
         };
@@ -3226,7 +3236,7 @@ pub const NodeFS = struct {
                                 Buffer => {
                                     item.destroy();
                                 },
-                                PathString => {
+                                JSC.ZigString => {
                                     bun.default_allocator.free(item.slice());
                                 },
                                 else => unreachable,
@@ -3252,10 +3262,8 @@ pub const NodeFS = struct {
                             const slice = current.name.slice();
                             entries.append(Buffer.fromString(slice, bun.default_allocator) catch unreachable) catch unreachable;
                         },
-                        PathString => {
-                            entries.append(
-                                PathString.init(bun.default_allocator.dupe(u8, current.name.slice()) catch unreachable),
-                            ) catch unreachable;
+                        JSC.ZigString => {
+                            entries.append(JSC.ZigString.dupeForJS(current.name.slice(), bun.default_allocator) catch unreachable) catch unreachable;
                         },
                         else => unreachable,
                     }

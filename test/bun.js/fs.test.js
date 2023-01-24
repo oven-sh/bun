@@ -20,6 +20,8 @@ import {
   createReadStream,
   createWriteStream,
   promises,
+  unlinkSync,
+  mkdtempSync,
 } from "node:fs";
 import { join } from "node:path";
 
@@ -111,6 +113,51 @@ it("readdirSync on import.meta.dir", () => {
   }
   gc(true);
   expect(match).toBe(true);
+});
+
+// https://github.com/oven-sh/bun/issues/1887
+it("mkdtempSync, readdirSync, rmdirSync and unlinkSync with non-ascii", () => {
+  const tempdir = mkdtempSync(`/tmp/emoji-fruit-🍇 🍈 🍉 🍊 🍋`);
+  expect(existsSync(tempdir)).toBe(true);
+  writeFileSync(tempdir + "/non-ascii-👍.txt", "hello");
+  const dirs = readdirSync(tempdir);
+  expect(dirs.length > 0).toBe(true);
+  var match = false;
+  gc(true);
+  for (let i = 0; i < dirs.length; i++) {
+    if (dirs[i].endsWith("non-ascii-👍.txt")) {
+      match = true;
+      break;
+    }
+  }
+  gc(true);
+  expect(match).toBe(true);
+  unlinkSync(tempdir + "/non-ascii-👍.txt");
+  expect(existsSync(tempdir + "/non-ascii-👍.txt")).toBe(false);
+  rmdirSync(tempdir);
+  expect(existsSync(tempdir)).toBe(false);
+});
+
+it("mkdtempSync() empty name", () => {
+  const tempdir = mkdtempSync();
+  expect(existsSync(tempdir)).toBe(true);
+  writeFileSync(tempdir + "/non-ascii-👍.txt", "hello");
+  const dirs = readdirSync(tempdir);
+  expect(dirs.length > 0).toBe(true);
+  var match = false;
+  gc(true);
+  for (let i = 0; i < dirs.length; i++) {
+    if (dirs[i].endsWith("non-ascii-👍.txt")) {
+      match = true;
+      break;
+    }
+  }
+  gc(true);
+  expect(match).toBe(true);
+  unlinkSync(tempdir + "/non-ascii-👍.txt");
+  expect(existsSync(tempdir + "/non-ascii-👍.txt")).toBe(false);
+  rmdirSync(tempdir);
+  expect(existsSync(tempdir)).toBe(false);
 });
 
 it("readdirSync on import.meta.dir with trailing slash", () => {

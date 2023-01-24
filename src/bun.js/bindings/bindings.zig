@@ -108,6 +108,27 @@ pub const ZigString = extern struct {
         };
     }
 
+    pub fn dupeForJS(utf8: []const u8, allocator: std.mem.Allocator) !ZigString {
+        if (try strings.toUTF16Alloc(allocator, utf8, false)) |utf16| {
+            var out = ZigString.init16(utf16);
+            out.mark();
+            out.markUTF16();
+            return out;
+        } else {
+            var out = ZigString.init(try allocator.dupe(u8, utf8));
+            out.mark();
+            return out;
+        }
+    }
+
+    pub fn toJS(this: ZigString, ctx: *JSC.JSGlobalObject, _: JSC.C.ExceptionRef) JSValue {
+        if (this.isGloballyAllocated()) {
+            return this.toExternalValue(ctx);
+        }
+
+        return this.toValueAuto(ctx);
+    }
+
     /// This function is not optimized!
     pub fn eqlCaseInsensitive(this: ZigString, other: ZigString) bool {
         var fallback = std.heap.stackFallback(1024, bun.default_allocator);
@@ -519,7 +540,9 @@ pub const ZigString = extern struct {
         bun.default_allocator.free(this.slice());
     }
 
-    pub inline fn mark(this: *ZigString) void {
+    pub const mark = markGlobal;
+
+    pub inline fn markGlobal(this: *ZigString) void {
         this.ptr = @intToPtr([*]const u8, @ptrToInt(this.ptr) | (1 << 62));
     }
 
@@ -2937,7 +2960,7 @@ pub const JSValue = enum(JSValueReprInt) {
         return str;
     }
 
-    pub fn createStringArray(globalThis: *JSGlobalObject, str: [*c]ZigString, strings_count: usize, clone: bool) JSValue {
+    pub fn createStringArray(globalThis: *JSGlobalObject, str: [*c]const ZigString, strings_count: usize, clone: bool) JSValue {
         return cppFn("createStringArray", .{
             globalThis,
             str,

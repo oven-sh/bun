@@ -395,7 +395,7 @@ pub const ModuleLoader = struct {
                 this.map.items.len = i;
             }
 
-            pub fn onExtract(this: *Queue, package_id: u32, comptime _: PackageManager.Options.LogLevel) void {
+            pub fn onExtract(this: *Queue, package_id: Install.PackageID, _: Install.ExtractData, comptime _: PackageManager.Options.LogLevel) void {
                 if (comptime Environment.allow_assert) {
                     const lockfile = this.vm().packageManager().lockfile;
                     debug("onExtract: {s} ({d})", .{
@@ -406,7 +406,7 @@ pub const ModuleLoader = struct {
                 this.onPackageID(package_id);
             }
 
-            pub fn onPackageID(this: *Queue, package_id: u32) void {
+            pub fn onPackageID(this: *Queue, package_id: Install.PackageID) void {
                 var values = this.map.items;
                 for (values) |value| {
                     var package_ids = value.parse_result.pending_imports.items(.resolution_id);

@@ -31,7 +31,7 @@ integrity: Integrity = Integrity{},
 url: string = "",
 package_manager: *PackageManager,
 
-pub inline fn run(this: ExtractTarball, bytes: []const u8) !string {
+pub inline fn run(this: ExtractTarball, bytes: []const u8) !Install.ExtractData {
     if (!this.skip_verify and this.integrity.tag.isSupported()) {
         if (!this.integrity.verify(bytes)) {
             Output.prettyErrorln("<r><red>Integrity check failed<r> for tarball: {s}", .{this.name.slice()});
@@ -151,7 +151,7 @@ pub fn buildURLWithPrinter(
 threadlocal var abs_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
 threadlocal var abs_buf2: [bun.MAX_PATH_BYTES]u8 = undefined;
 
-fn extract(this: *const ExtractTarball, tgz_bytes: []const u8) !string {
+fn extract(this: *const ExtractTarball, tgz_bytes: []const u8) !Install.ExtractData {
     var tmpdir = this.temp_dir;
     var tmpname_buf: [256]u8 = undefined;
     const name = this.name.slice();
@@ -300,55 +300,37 @@ fn extract(this: *const ExtractTarball, tgz_bytes: []const u8) !string {
         ) catch break :create_index;
     }
 
+    var json_path: []u8 = "";
+    var json_buf: []u8 = "";
+    var json_len: usize = 0;
     switch (this.resolution.tag) {
         .github => {
-            const manager = this.package_manager;
-            var package = manager.lockfile.packages.get(this.package_id);
-            const package_name = package.name;
-            const package_name_hash = package.name_hash;
-
-            var package_json_file = final_dir.openFileZ("package.json", .{ .mode = .read_only }) catch |err| {
+            var json_file = final_dir.openFileZ("package.json", .{ .mode = .read_only }) catch |err| {
                 Output.prettyErrorln("<r><red>Error {s}<r> failed to open package.json for {s}", .{
                     @errorName(err),
                     name,
                 });
                 Global.crash();
             };
-            defer package_json_file.close();
-            var package_json_stat = try package_json_file.stat();
-            var package_json_buf = try manager.allocator.alloc(u8, package_json_stat.size + 64);
-            defer manager.allocator.free(package_json_buf);
-            const package_json_contents_len = try package_json_file.preadAll(
-                package_json_buf,
-                0,
-            );
+            defer json_file.close();
+            var json_stat = try json_file.stat();
+            json_buf = try this.package_manager.allocator.alloc(u8, json_stat.size + 64);
+            json_len = try json_file.preadAll(json_buf, 0);
 
-            var package_json_path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
-            const package_json_source = logger.Source.initPathString(
-                try final_dir.realpath("package.json", &package_json_path_buf),
-                package_json_buf[0..package_json_contents_len],
-            );
-            try Lockfile.Package.parse(
-                manager.lockfile,
-                &package,
-                manager.allocator,
-                manager.log,
-                package_json_source,
-                void,
-                {},
-                Features.npm,
-            );
-            package.name = package_name;
-            package.name_hash = package_name_hash;
-            manager.lockfile.packages.set(this.package_id, package);
-            if (package.dependencies.len > 0) {
-                try manager.lockfile.scratch.dependency_list_queue.writeItem(package.dependencies);
-            }
-            manager.lockfile.buffers.resolutions.items[this.dependency_id] = this.package_id;
+            var json_path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+            json_path = try final_dir.realpath("package.json", &json_path_buf);
+            json_path = try this.package_manager.allocator.dupe(u8, json_path);
             // TODO remove extracted files not matching any globs under "files"
         },
         else => {},
     }
 
-    return try FileSystem.instance.dirname_store.append(@TypeOf(final_path), final_path);
+    const result = try FileSystem.instance.dirname_store.append(@TypeOf(final_path), final_path);
+    return .{
+        .final_path = result,
+        .json_path = json_path,
+        .json_buf = json_buf,
+        .json_len = json_len,
+        .dependency_id = this.dependency_id,
+    };
 }

@@ -660,6 +660,7 @@ pub fn parseWithTag(
             };
         },
         .github => {
+            var from_url = false;
             var input = dependency;
             if (strings.hasPrefixComptime(input, "github:")) {
                 input = input["github:".len..];
@@ -681,6 +682,7 @@ pub fn parseWithTag(
                     }
                     if (strings.hasPrefixComptime(url, "github.com/")) {
                         input = url["github.com/".len..];
+                        from_url = true;
                     }
                 }
             }
@@ -702,17 +704,18 @@ pub fn parseWithTag(
                 }
             }
 
+            var repo = if (hash_index == 0) input[slash_index + 1 ..] else input[slash_index + 1 .. hash_index];
+            if (from_url and strings.endsWithComptime(repo, ".git")) {
+                repo = repo[0 .. repo.len - ".git".len];
+            }
+
             return Version{
                 .literal = sliced.value(),
                 .value = .{
-                    .github = if (hash_index == 0) .{
+                    .github = .{
                         .owner = sliced.sub(input[0..slash_index]).value(),
-                        .repo = sliced.sub(input[slash_index + 1 ..]).value(),
-                        .committish = String.from(""),
-                    } else .{
-                        .owner = sliced.sub(input[0..slash_index]).value(),
-                        .repo = sliced.sub(input[slash_index + 1 .. hash_index]).value(),
-                        .committish = sliced.sub(input[hash_index + 1 ..]).value(),
+                        .repo = sliced.sub(repo).value(),
+                        .committish = if (hash_index == 0) String.from("") else sliced.sub(input[hash_index + 1 ..]).value(),
                     },
                 },
                 .tag = .github,

@@ -570,7 +570,15 @@ const Task = struct {
 
                     this.err = err;
                     this.status = Status.fail;
-                    this.data = .{ .extract = "" };
+                    this.data = .{
+                        .extract = .{
+                            .final_path = "",
+                            .json_path = "",
+                            .json_buf = "",
+                            .json_len = 0,
+                            .dependency_id = invalid_package_id,
+                        },
+                    };
                     this.package_manager.resolve_tasks.writeItem(this.*) catch unreachable;
                     return;
                 };
@@ -598,7 +606,7 @@ const Task = struct {
 
     pub const Data = union {
         package_manifest: Npm.PackageManifest,
-        extract: string,
+        extract: ExtractData,
         binlink: bool,
     };
 
@@ -616,6 +624,14 @@ const Task = struct {
         binlink: Bin.Linker,
         // install: PackageInstall,
     };
+};
+
+pub const ExtractData = struct {
+    final_path: string,
+    json_path: []u8,
+    json_buf: []u8,
+    json_len: usize,
+    dependency_id: PackageID,
 };
 
 const PackageInstall = struct {
@@ -1795,15 +1811,34 @@ pub const PackageManager = struct {
         return this.allocator.create(NetworkTask) catch @panic("Memory allocation failure creating NetworkTask!");
     }
 
+    fn allocGitHubURL(this: *const PackageManager, repository: Repository) !string {
+        var github_api_domain: string = "api.github.com";
+        if (this.env_loader.map.get("GITHUB_API_DOMAIN")) |api_domain| {
+            if (api_domain.len > 0) {
+                github_api_domain = api_domain;
+            }
+        }
+        return try std.fmt.allocPrint(
+            this.allocator,
+            "https://{s}/repos/{s}/{s}/tarball/{s}",
+            .{
+                github_api_domain,
+                this.lockfile.str(&repository.owner),
+                this.lockfile.str(&repository.repo),
+                this.lockfile.str(&repository.committish),
+            },
+        );
+    }
+
     pub fn cachedGitHubFolderNamePrint(this: *const PackageManager, buf: []u8, name: string, repository: Repository) stringZ {
         if (repository.committish.isEmpty()) {
-            return std.fmt.bufPrintZ(buf, "{s}@{s}!{s}", .{
+            return std.fmt.bufPrintZ(buf, "{s}@{s}@{s}", .{
                 name,
                 this.lockfile.str(&repository.owner),
                 this.lockfile.str(&repository.repo),
             }) catch unreachable;
         }
-        return std.fmt.bufPrintZ(buf, "{s}@{s}!{s}#{s}", .{
+        return std.fmt.bufPrintZ(buf, "{s}@{s}@{s}@{s}", .{
             name,
             this.lockfile.str(&repository.owner),
             this.lockfile.str(&repository.repo),
@@ -2702,16 +2737,7 @@ pub const PackageManager = struct {
                         github_api_domain = api_domain;
                     }
                 }
-                const url = try std.fmt.allocPrint(
-                    this.allocator,
-                    "https://{s}/repos/{s}/{s}/tarball/{s}",
-                    .{
-                        github_api_domain,
-                        this.lockfile.str(&dep.owner),
-                        this.lockfile.str(&dep.repo),
-                        this.lockfile.str(&dep.committish),
-                    },
-                );
+                const url = try this.allocGitHubURL(dep);
                 const task_id = Task.Id.forTarball(url);
                 if (try this.generateNetworkTaskForTarball(task_id, url, package)) |network_task| {
                     network_task.callback.extract.dependency_id = id;
@@ -2943,6 +2969,49 @@ pub const PackageManager = struct {
             }
 
             dependency_list.deinit(this.allocator);
+        }
+    }
+
+    fn enqueueDependenciesFromJSON(
+        manager: *PackageManager,
+        package_id: PackageID,
+        data: ExtractData,
+        comptime _: Options.LogLevel,
+    ) void {
+        var package = manager.lockfile.packages.get(package_id);
+        switch (package.resolution.tag) {
+            .github => {
+                defer {
+                    manager.allocator.free(data.json_path);
+                    manager.allocator.free(data.json_buf);
+                }
+                const package_name = package.name;
+                const package_name_hash = package.name_hash;
+                const package_json_source = logger.Source.initPathString(
+                    data.json_path,
+                    data.json_buf[0..data.json_len],
+                );
+                Lockfile.Package.parse(
+                    manager.lockfile,
+                    &package,
+                    manager.allocator,
+                    manager.log,
+                    package_json_source,
+                    void,
+                    {},
+                    Features.npm,
+                ) catch unreachable;
+                package.name = package_name;
+                package.name_hash = package_name_hash;
+                manager.lockfile.packages.set(package_id, package);
+                if (package.dependencies.len > 0) {
+                    manager.lockfile.scratch.dependency_list_queue.writeItem(package.dependencies) catch unreachable;
+                }
+                if (data.dependency_id < manager.lockfile.buffers.resolutions.items.len) {
+                    assignResolution(manager, data.dependency_id, package_id);
+                }
+            },
+            else => {},
         }
     }
 
@@ -3398,7 +3467,7 @@ pub const PackageManager = struct {
                     manager.setPreinstallState(package_id, manager.lockfile, .done);
 
                     if (comptime @TypeOf(callbacks.onExtract) != void) {
-                        callbacks.onExtract(extract_ctx, package_id, comptime log_level);
+                        callbacks.onExtract(extract_ctx, package_id, task.data.extract, comptime log_level);
                     }
 
                     if (comptime log_level.showProgress()) {
@@ -3425,7 +3494,7 @@ pub const PackageManager = struct {
             manager.network_resolve_batch = .{};
 
             if (comptime log_level.showProgress()) {
-                if (comptime ExtractCompletionContext == void or (@hasField(@TypeOf(callbacks), "progress_bar") and callbacks.progress_bar == true)) {
+                if (@hasField(@TypeOf(callbacks), "progress_bar") and callbacks.progress_bar == true) {
                     const completed_items = manager.total_tasks - manager.pending_tasks;
                     if (completed_items != manager.downloads_node.?.unprotected_completed_items or has_updated_this_run) {
                         manager.downloads_node.?.setCompletedItems(completed_items);
@@ -5589,16 +5658,17 @@ pub const PackageManager = struct {
         pub fn installEnqueuedPackages(
             this: *PackageInstaller,
             package_id: PackageID,
+            _: ExtractData,
             comptime log_level: Options.LogLevel,
         ) void {
             const name = this.lockfile.str(&this.names[package_id]);
             const resolution = this.resolutions[package_id];
-
-            if (this.manager.task_queue.fetchRemove(Task.Id.forNPMPackage(
-                Task.Tag.extract,
-                name,
-                resolution.value.npm.version,
-            ))) |removed| {
+            const task_id = switch (resolution.tag) {
+                .github => Task.Id.forTarball(this.manager.allocGitHubURL(resolution.value.github) catch unreachable),
+                .npm => Task.Id.forNPMPackage(Task.Tag.extract, name, resolution.value.npm.version),
+                else => unreachable,
+            };
+            if (this.manager.task_queue.fetchRemove(task_id)) |removed| {
                 var callbacks = removed.value;
                 defer callbacks.deinit(this.manager.allocator);
 
@@ -5811,6 +5881,15 @@ pub const PackageManager = struct {
                     .fail => |cause| {
                         if (cause.isPackageMissingFromCache()) {
                             switch (resolution.tag) {
+                                .github => {
+                                    this.manager.enqueueTarballForDownload(
+                                        package_id,
+                                        resolution.value.github,
+                                        .{
+                                            .node_modules_folder = @intCast(u32, this.node_modules_folder.dir.fd),
+                                        },
+                                    );
+                                },
                                 .npm => {
                                     std.debug.assert(resolution.value.npm.url.len() > 0);
                                     this.manager.enqueuePackageForDownload(
@@ -5882,6 +5961,34 @@ pub const PackageManager = struct {
         task_context: TaskCallbackContext,
     ) void {
         const task_id = Task.Id.forNPMPackage(Task.Tag.extract, name, version);
+        var task_queue = this.task_queue.getOrPut(this.allocator, task_id) catch unreachable;
+        if (!task_queue.found_existing) {
+            task_queue.value_ptr.* = .{};
+        }
+
+        task_queue.value_ptr.append(
+            this.allocator,
+            task_context,
+        ) catch unreachable;
+
+        if (!task_queue.found_existing) {
+            if (this.generateNetworkTaskForTarball(task_id, url, this.lockfile.packages.get(package_id)) catch unreachable) |task| {
+                task.schedule(&this.network_tarball_batch);
+                if (this.network_tarball_batch.len > 0) {
+                    _ = this.scheduleNetworkTasks();
+                }
+            }
+        }
+    }
+
+    pub fn enqueueTarballForDownload(
+        this: *PackageManager,
+        package_id: PackageID,
+        repository: Repository,
+        task_context: TaskCallbackContext,
+    ) void {
+        const url = this.allocGitHubURL(repository) catch unreachable;
+        const task_id = Task.Id.forTarball(url);
         var task_queue = this.task_queue.getOrPut(this.allocator, task_id) catch unreachable;
         if (!task_queue.found_existing) {
             task_queue.value_ptr.* = .{};
@@ -6461,15 +6568,19 @@ pub const PackageManager = struct {
                 Output.flush();
             }
 
-            {
-                while (manager.pending_tasks > 0) : (manager.sleep()) {
-                    try manager.runTasks(void, void{}, .{
-                        .onExtract = void{},
+            while (manager.pending_tasks > 0) : (manager.sleep()) {
+                try manager.runTasks(
+                    *PackageManager,
+                    manager,
+                    .{
+                        .onExtract = PackageManager.enqueueDependenciesFromJSON,
                         .onResolve = void{},
                         .onPackageManifestError = void{},
                         .onPackageDownloadError = void{},
-                    }, log_level);
-                }
+                        .progress_bar = true,
+                    },
+                    log_level,
+                );
             }
 
             if (comptime log_level.showProgress()) {

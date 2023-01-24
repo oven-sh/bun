@@ -2653,7 +2653,7 @@ pub const PackageManager = struct {
                 };
 
                 const not_found_fmt =
-                    \\package \"{[name]s}\" is not linked
+                    \\package "{[name]s}" is not linked
                     \\
                     \\To install a linked package:
                     \\   <cyan>bun link my-pkg-name-from-package-json<r>
@@ -4490,6 +4490,18 @@ pub const PackageManager = struct {
             {
                 // delete it if it exists
                 node_modules.dir.deleteTree(name) catch {};
+
+                // create scope if specified
+                if (name[0] == '@') {
+                    if (std.mem.indexOfScalar(u8, name, '/')) |i| {
+                        node_modules.dir.makeDir(name[0..i]) catch |err| brk: {
+                            if (err == error.PathAlreadyExists) break :brk;
+                            if (manager.options.log_level != .silent)
+                                Output.prettyErrorln("<r><red>error:<r> failed to create scope in global dir due to error {s}", .{@errorName(err)});
+                            Global.crash();
+                        };
+                    }
+                }
 
                 // create the symlink
                 node_modules.dir.symLink(Fs.FileSystem.instance.topLevelDirWithoutTrailingSlash(), name, .{ .is_directory = true }) catch |err| {

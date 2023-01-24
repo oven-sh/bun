@@ -8,10 +8,10 @@ import {
   it,
 } from "bun:test";
 import { bunExe } from "bunExe";
+import { bunEnv as env } from "bunEnv";
 import { access, mkdir, mkdtemp, readdir, readlink, rm, writeFile } from "fs/promises";
 import { join } from "path";
 import { tmpdir } from "os";
-import { bunEnv } from "bunEnv";
 
 let handler, package_dir, requested, server;
 
@@ -24,8 +24,6 @@ async function readdirSorted(path: PathLike): Promise<string[]> {
 function resetHanlder() {
   handler = () => new Response("Tea Break~", { status: 418 });
 }
-
-const env = bunEnv;
 
 beforeAll(() => {
   server = Bun.serve({

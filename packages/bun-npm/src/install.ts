@@ -137,15 +137,23 @@ async function downloadBun(platform: Platform, dst: string): Promise<void> {
 
 export function optimizeBun(path: string): void {
   if (os === "win32") {
-    return;
+    throw new Error(
+      "You must use Windows Subsystem for Linux, aka. WSL, to run bun. Learn more: https://learn.microsoft.com/en-us/windows/wsl/install",
+    );
   }
   const { npm_config_user_agent } = process.env;
   if (npm_config_user_agent && /\byarn\//.test(npm_config_user_agent)) {
-    return;
+    throw new Error(
+      "Yarn does not support bun, because it does not allow linking to binaries. To use bun, install using the following command: curl -fsSL https://bun.sh/install | bash",
+    );
   }
   try {
     rename(path, join(__dirname, "bin", "bun"));
+    return;
   } catch (error) {
     console.debug("optimizeBun failed", error);
   }
+  throw new Error(
+    "Your package manager doesn't seem to support bun. To use bun, install using the following command: curl -fsSL https://bun.sh/install | bash",
+  );
 }

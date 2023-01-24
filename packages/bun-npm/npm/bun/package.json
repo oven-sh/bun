@@ -16,7 +16,8 @@
   "bugs": "https://github.com/oven-sh/issues",
   "license": "MIT",
   "bin": {
-    "bun": "bin/bun"
+    "bun": "bin/bun",
+    "bunx": "bin/bun"
   },
   "repository": "https://github.com/oven-sh/bun",
   "scripts": {

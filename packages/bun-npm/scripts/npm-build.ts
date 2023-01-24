@@ -78,6 +78,7 @@ async function buildBasePackage() {
     ),
     bin: {
       bun: "bin/bun",
+      bunx: "bin/bun",
     },
     os,
     cpu,
@@ -117,7 +118,10 @@ async function buildPackage(
 }
 
 function publishPackage(name: string, dryRun?: boolean): void {
-  const done = log(dryRun ? "Dry-run Publishing:" : "Publishing:", name);
+  const done = log(
+    dryRun ? "Dry-run Publishing:" : "Publishing:",
+    `${name}@${npmVersion}`,
+  );
   const { exitCode, stdout, stderr } = spawn(
     "npm",
     [

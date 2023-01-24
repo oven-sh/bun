@@ -7,7 +7,6 @@ FROM alpine:latest as get
 
 # prepare environment
 WORKDIR /tmp
-RUN apk --no-cache add unzip
 
 # get bun
 ADD https://github.com/oven-sh/bun/releases/latest/download/bun-linux-x64.zip bun-linux-x64.zip

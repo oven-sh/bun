@@ -331,7 +331,7 @@ pub export fn napi_get_value_string_latin1(env: napi_env, value: napi_value, buf
     var buf_ = buf[0..bufsize];
 
     if (bufsize == 0) {
-        buf_ = bun.span(std.meta.assumeSentinel(buf_, 0));
+        buf_ = bun.sliceTo(buf_ptr, 0);
         if (buf_.len == 0) {
             result.* = 0;
             return .ok;
@@ -393,7 +393,7 @@ pub export fn napi_get_value_string_utf8(env: napi_env, value: napi_value, buf_p
     var buf_ = buf[0..bufsize];
 
     if (bufsize == 0) {
-        buf_ = bun.span(std.meta.assumeSentinel(buf_, 0));
+        buf_ = bun.sliceTo(buf_ptr, 0);
         if (buf_.len == 0) {
             if (result_ptr) |result| {
                 result.* = 0;
@@ -451,7 +451,7 @@ pub export fn napi_get_value_string_utf16(env: napi_env, value: napi_value, buf_
     var buf_ = buf[0..bufsize];
 
     if (bufsize == 0) {
-        buf_ = bun.span(std.meta.assumeSentinel(buf_, 0));
+        buf_ = bun.sliceTo(buf_ptr, 0);
         if (buf_.len == 0) {
             if (result_ptr) |result| {
                 result.* = 0;

@@ -1978,8 +1978,11 @@ JSC_DEFINE_HOST_FUNCTION(constructJSBuffer, (JSC::JSGlobalObject * lexicalGlobal
     for (size_t i = 1; i < argsCount; ++i)
         args.append(callFrame->uncheckedArgument(i));
 
-    JSC::CallData callData = JSC::getCallData(constructor);
-    JSC::JSObject* object = JSC::construct(lexicalGlobalObject, constructor, callData, args, globalObject->JSBufferConstructor());
+    JSValue target = callFrame->newTarget();
+    if (!target) {
+        target = globalObject->JSBufferConstructor();
+    }
+    JSC::JSObject* object = JSC::construct(lexicalGlobalObject, constructor, target, args, "Buffer failed to construct"_s);
     if (!object) {
         return JSC::JSValue::encode({});
     }

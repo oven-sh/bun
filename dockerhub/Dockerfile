@@ -14,8 +14,8 @@ RUN unzip bun-linux-x64.zip
 
 # get glibc
 ARG GLIBC_RELEASE
-RUN wget https://alpine-pkgs.sgerrand.com/sgerrand.rsa.pub && \
-    wget https://github.com/sgerrand/alpine-pkg-glibc/releases/download/${GLIBC_RELEASE}/glibc-${GLIBC_RELEASE}.apk
+ADD https://alpine-pkgs.sgerrand.com/sgerrand.rsa.pub sgerrand.rsa.pub
+ADD https://github.com/sgerrand/alpine-pkg-glibc/releases/download/${GLIBC_RELEASE}/glibc-${GLIBC_RELEASE}.apk glibc-${GLIBC_RELEASE}.apk
 
 
 ### IMAGE ###

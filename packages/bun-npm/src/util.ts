@@ -103,6 +103,27 @@ export function chmod(path: string, mode: fs.Mode): void {
   fs.chmodSync(path, mode);
 }
 
+export function copy(path: string, newPath: string): void {
+  console.debug("copy", path, newPath);
+  try {
+    fs.copyFileSync(path, newPath);
+    return;
+  } catch (error) {
+    console.debug("copyFileSync failed", error);
+  }
+  write(newPath, read(path));
+}
+
+export function exists(path: string): boolean {
+  console.debug("exists", path);
+  try {
+    return fs.existsSync(path);
+  } catch (error) {
+    console.debug("existsSync failed", error);
+  }
+  return false;
+}
+
 export function spawn(
   cmd: string,
   args: string[],

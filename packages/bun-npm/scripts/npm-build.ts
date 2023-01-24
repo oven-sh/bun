@@ -1,5 +1,5 @@
 import type { Endpoints } from "@octokit/types";
-import { fetch, spawn } from "../src/util";
+import { copy, exists, fetch, spawn } from "../src/util";
 import type { JSZipObject } from "jszip";
 import { loadAsync } from "jszip";
 import { join } from "node:path";
@@ -85,6 +85,9 @@ async function buildBasePackage() {
     os,
     cpu,
   });
+  if (exists(".npmrc")) {
+    copy(".npmrc", join(cwd, ".npmrc"));
+  }
   done();
 }
 
@@ -96,7 +99,8 @@ async function buildPackage(
   const done = log("Building:", `${npmPackage}@${npmVersion}`);
   const asset = release.assets.find(({ name }) => name === `${bin}.zip`);
   if (!asset) {
-    throw new Error(`No asset found: ${bin}`);
+    console.warn(`No asset found: ${bin}`);
+    return;
   }
   const bun = await extractFromZip(asset.browser_download_url, `${bin}/bun`);
   const cwd = join("npm", npmPackage);
@@ -109,6 +113,9 @@ async function buildPackage(
     os: [os],
     cpu: [arch],
   });
+  if (exists(".npmrc")) {
+    copy(".npmrc", join(cwd, ".npmrc"));
+  }
   done();
 }
 
@@ -132,7 +139,7 @@ function publishPackage(name: string, dryRun?: boolean): void {
     done();
     return;
   }
-  throw new Error(stdout || stderr);
+  console.warn(stdout || stderr);
 }
 
 async function extractFromZip(

@@ -30,13 +30,7 @@ if (action === "publish") {
 async function build(version: string): Promise<void> {
   const release = await getRelease(version);
   if (release.tag_name === "canary") {
-    const { tag_name } = await getRelease();
-    const sha = await getSha(tag_name);
-    // Bun.version is the nightly release version,
-    // but that means this script must be run using canary.
-    // Also, npm does not accept "+build" in releases,
-    // so the format is "{nightly}-canary.{sha}".
-    npmVersion = `${Bun.version}-canary.${sha}`;
+    npmVersion = await getCanaryVersion();
   } else {
     npmVersion = release.tag_name.replace("bun-v", "");
   }
@@ -185,6 +179,28 @@ async function fetchGithub(path: string) {
   }
   const url = new URL(path, "https://api.github.com/repos/oven-sh/bun/");
   return fetch(url.toString());
+}
+
+async function getCanaryVersion(): Promise<string> {
+  const date = new Date().toISOString().split("T")[0].replace(/-/g, "");
+  const semver = `${Bun.version}-canary.${date}`;
+  try {
+    const sha = await getSha("canary");
+    const response = await fetch(
+      `https://registry.npmjs.org/-/package/${npmPackage}/dist-tags`,
+    );
+    const { canary }: { canary: string } = await response.json();
+    if (canary.startsWith(semver)) {
+      const match = /canary.[0-9]{8}\.([0-9]+)+?/.exec(canary);
+      if (match && isFinite(parseInt(match[1]))) {
+        return `${semver}.${match[1]}+${sha}`;
+      }
+    }
+    return `${semver}.1+${sha}`;
+  } catch (error) {
+    console.warn("Failed to calculate canary version", error);
+  }
+  return `${semver}.1`;
 }
 
 function formatTag(version: string): string {

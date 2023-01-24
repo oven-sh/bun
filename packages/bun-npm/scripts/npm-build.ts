@@ -9,26 +9,40 @@ import { buildSync, formatMessagesSync } from "esbuild";
 import type { Platform } from "../src/platform";
 import { platforms } from "../src/platform";
 
-const tag = process.argv[2];
+type Release =
+  Endpoints["GET /repos/{owner}/{repo}/releases/latest"]["response"]["data"];
+
 const npmPackage = "bun";
 const npmOwner = "@oven";
 let npmVersion: string;
-const release = await getRelease(tag);
-if (release.tag_name === "canary") {
-  const { tag_name } = await getRelease();
-  const sha = await getSha(tag_name);
-  npmVersion = `${tag_name.replace("bun-v", "")}+canary.${sha}`;
-} else {
-  npmVersion = release.tag_name.replace("bun-v", "");
+
+const [tag, action] = process.argv.slice(2);
+
+await build(tag);
+if (action === "publish") {
+  await publish();
+} else if (action === "dry-run") {
+  await publish(true);
+} else if (action) {
+  throw new Error(`Unknown action: ${action}`);
 }
 
-await buildBasePackage();
-for (const platform of platforms) {
-  await buildPackage(platform);
+async function build(version: string): Promise<void> {
+  const release = await getRelease(version);
+  if (release.tag_name === "canary") {
+    const { tag_name } = await getRelease();
+    const sha = await getSha(tag_name);
+    npmVersion = `${tag_name.replace("bun-v", "")}+canary.${sha}`;
+  } else {
+    npmVersion = release.tag_name.replace("bun-v", "");
+  }
+  await buildBasePackage();
+  for (const platform of platforms) {
+    await buildPackage(release, platform);
+  }
 }
-const publish = process.argv[3] === "publish";
-const dryRun = process.argv[3] === "dry-run";
-if (publish || dryRun) {
+
+async function publish(dryRun?: boolean): Promise<void> {
   const npmPackages = platforms.map(({ bin }) => `${npmOwner}/${bin}`);
   npmPackages.push(npmPackage);
   for (const npmPackage of npmPackages) {
@@ -73,7 +87,10 @@ async function buildBasePackage() {
   done();
 }
 
-async function buildPackage({ bin, exe, os, arch }: Platform): Promise<void> {
+async function buildPackage(
+  release: Release,
+  { bin, exe, os, arch }: Platform,
+): Promise<void> {
   const npmPackage = `${npmOwner}/${bin}`;
   const done = log("Building:", `${npmPackage}@${npmVersion}`);
   const asset = release.assets.find(({ name }) => name === `${bin}.zip`);
@@ -133,32 +150,30 @@ async function extractFromZip(
   throw new Error(`File not found: ${filename}`);
 }
 
-async function getRelease(
-  version?: string | null,
-): Promise<
-  Endpoints["GET /repos/{owner}/{repo}/releases/latest"]["response"]["data"]
-> {
-  const response = await fetch(
-    version
-      ? `https://api.github.com/repos/oven-sh/bun/releases/tags/${formatTag(
-          version,
-        )}`
-      : `https://api.github.com/repos/oven-sh/bun/releases/latest`,
+async function getRelease(version?: string | null): Promise<Release> {
+  const response = await fetchGithub(
+    version ? `releases/tags/${formatTag(version)}` : `releases/latest`,
   );
   return response.json();
 }
 
 async function getSha(version: string): Promise<string> {
-  const response = await fetch(
-    `https://api.github.com/repos/oven-sh/bun/git/ref/tags/${formatTag(
-      version,
-    )}`,
-  );
+  const response = await fetchGithub(`git/ref/tags/${formatTag(version)}`);
   const {
     object,
   }: Endpoints["GET /repos/{owner}/{repo}/git/ref/{ref}"]["response"]["data"] =
     await response.json();
   return object.sha.substring(0, 7);
+}
+
+async function fetchGithub(path: string) {
+  const headers = new Headers();
+  const token = process.env.GITHUB_TOKEN;
+  if (token) {
+    headers.set("Authorization", `Bearer ${token}`);
+  }
+  const url = new URL(path, "https://api.github.com/repos/oven-sh/bun/");
+  return fetch(url.toString());
 }
 
 function formatTag(version: string): string {

@@ -572,6 +572,7 @@ const Task = struct {
                     this.status = Status.fail;
                     this.data = .{
                         .extract = .{
+                            .url = "",
                             .final_path = "",
                             .json_path = "",
                             .json_buf = "",
@@ -627,6 +628,7 @@ const Task = struct {
 };
 
 pub const ExtractData = struct {
+    url: string,
     final_path: string,
     json_path: string,
     json_buf: []u8,
@@ -2731,12 +2733,6 @@ pub const PackageManager = struct {
                     .name_hash = name_hash,
                     .resolution = res,
                 });
-                var github_api_domain: string = "api.github.com";
-                if (this.env_loader.map.get("GITHUB_API_DOMAIN")) |api_domain| {
-                    if (api_domain.len > 0) {
-                        github_api_domain = api_domain;
-                    }
-                }
                 const url = try this.allocGitHubURL(dep);
                 const task_id = Task.Id.forTarball(url);
                 if (try this.generateNetworkTaskForTarball(task_id, url, package)) |network_task| {
@@ -5664,13 +5660,13 @@ pub const PackageManager = struct {
         pub fn installEnqueuedPackages(
             this: *PackageInstaller,
             package_id: PackageID,
-            _: ExtractData,
+            data: ExtractData,
             comptime log_level: Options.LogLevel,
         ) void {
             const name = this.lockfile.str(&this.names[package_id]);
             const resolution = this.resolutions[package_id];
             const task_id = switch (resolution.tag) {
-                .github => Task.Id.forTarball(this.manager.allocGitHubURL(resolution.value.github) catch unreachable),
+                .github => Task.Id.forTarball(data.url),
                 .npm => Task.Id.forNPMPackage(Task.Tag.extract, name, resolution.value.npm.version),
                 else => unreachable,
             };

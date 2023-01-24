@@ -377,9 +377,8 @@ static inline JSC::EncodedJSValue jsBufferConstructorFunction_allocBody(JSC::JSG
     auto* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
     auto* subclassStructure = globalObject->JSBufferSubclassStructure();
 
-
     // fill argument
-    if(callFrame->argumentCount() > 1){
+    if (callFrame->argumentCount() > 1) {
         auto uint8Array = JSC::JSUint8Array::createUninitialized(lexicalGlobalObject, subclassStructure, length);
 
         auto value = callFrame->argument(1);
@@ -414,7 +413,6 @@ static inline JSC::EncodedJSValue jsBufferConstructorFunction_allocBody(JSC::JSG
                     return JSC::JSValue::encode(jsUndefined());
                 }
                 encoding = encoded.value();
-                
             }
             auto startPtr = uint8Array->typedVector() + start;
             auto str_ = value.toWTFString(lexicalGlobalObject);
@@ -431,7 +429,6 @@ static inline JSC::EncodedJSValue jsBufferConstructorFunction_allocBody(JSC::JSG
         }
         auto uint8Array = JSC::JSUint8Array::create(lexicalGlobalObject, subclassStructure, WTFMove(arrayBuffer), 0, length);
         RELEASE_AND_RETURN(throwScope, JSC::JSValue::encode(uint8Array));
-
     }
 }
 
@@ -939,7 +936,7 @@ static inline JSC::EncodedJSValue jsBufferPrototypeFunction_fillBody(JSC::JSGlob
 
         auto value_uint8 = static_cast<uint8_t>(value_);
         RETURN_IF_EXCEPTION(throwScope, JSC::JSValue::encode(jsUndefined()));
-        
+
         auto length = castedThis->byteLength();
         auto start = 0;
         auto end = length;
@@ -1419,7 +1416,7 @@ static inline JSC::EncodedJSValue jsBufferPrototypeFunction_writeBody(JSC::JSGlo
     if (UNLIKELY(length < offset)) {
         RELEASE_AND_RETURN(scope, JSC::JSValue::encode(JSC::jsNumber(0)));
     }
-    
+
     if (callFrame->argumentCount() > 2) {
         uint32_t arg_len = 0;
         EnsureStillAliveScope arg2 = callFrame->argument(2);
@@ -1430,12 +1427,12 @@ static inline JSC::EncodedJSValue jsBufferPrototypeFunction_writeBody(JSC::JSGlo
             if (callFrame->argumentCount() > 3) {
                 EnsureStillAliveScope arg3 = callFrame->argument(3);
                 if (arg3.value().isString()) {
-                     std::optional<BufferEncodingType> encoded = parseEnumeration<BufferEncodingType>(*lexicalGlobalObject, arg3.value());
-                     if (!encoded) {
-                         throwTypeError(lexicalGlobalObject, scope, "Invalid encoding"_s);
-                         return JSC::JSValue::encode(jsUndefined());
-                     }
-                     encoding = encoded.value();
+                    std::optional<BufferEncodingType> encoded = parseEnumeration<BufferEncodingType>(*lexicalGlobalObject, arg3.value());
+                    if (!encoded) {
+                        throwTypeError(lexicalGlobalObject, scope, "Invalid encoding"_s);
+                        return JSC::JSValue::encode(jsUndefined());
+                    }
+                    encoding = encoded.value();
                 }
             }
         } else if (arg2.value().isString()) {
@@ -1464,7 +1461,6 @@ static inline JSC::EncodedJSValue jsBufferPrototypeFunction_writeBody(JSC::JSGlo
     case WebCore::BufferEncodingType::base64url:
     case WebCore::BufferEncodingType::hex: {
 
-        
         if (view.is8Bit()) {
             written = Bun__encoding__writeLatin1(view.characters8(), view.length(), castedThis->typedVector() + offset, length, static_cast<uint8_t>(encoding));
         } else {
@@ -1771,7 +1767,14 @@ void JSBufferPrototype::finishCreation(VM& vm, JSC::JSGlobalObject* globalThis)
     reifyStaticProperties(vm, JSBuffer::info(), JSBufferPrototypeTableValues, *this);
 }
 
-const ClassInfo JSBufferPrototype::s_info = { "Buffer"_s, nullptr, nullptr, nullptr, CREATE_METHOD_TABLE(JSBufferPrototype) };
+const ClassInfo JSBufferPrototype::s_info = {
+    // In Node.js, Object.prototype.toString.call(new Buffer(0)) returns "[object Uint8Array]".
+    // We must use the same naming convention to match Node
+    // Some packages (like MongoDB's official Node.js client) rely on this behavior.
+    "Uint8Array"_s,
+
+    nullptr, nullptr, nullptr, CREATE_METHOD_TABLE(JSBufferPrototype)
+};
 
 static const JSC::DOMJIT::Signature DOMJITSignaturejsBufferConstructorAlloc(jsBufferConstructorAllocWithoutTypeChecks,
     JSBufferConstructor::info(),

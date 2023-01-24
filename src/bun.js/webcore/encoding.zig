@@ -860,12 +860,14 @@ pub const Encoder = struct {
 
         switch (comptime encoding) {
             JSC.Node.Encoding.buffer => {
+
                 const written = @min(len, to_len);
                 @memcpy(to, input, written);
 
                 return @intCast(i64, written);
             },
             .latin1, .ascii => {
+
                 const written = @min(len, to_len);
                 @memcpy(to, input, written);
 
@@ -887,12 +889,17 @@ pub const Encoder = struct {
 
                 if (std.mem.isAligned(@ptrToInt(to), @alignOf([*]u16))) {
                     var buf = input[0..len];
+
                     var output = @ptrCast([*]u16, @alignCast(@alignOf(u16), to))[0 .. to_len / 2];
-                    return strings.copyLatin1IntoUTF16([]u16, output, []const u8, buf).written;
+                    var written = strings.copyLatin1IntoUTF16([]u16, output, []const u8, buf).written;
+                    return written * 2;
                 } else {
                     var buf = input[0..len];
                     var output = @ptrCast([*]align(1) u16, to)[0 .. to_len / 2];
-                    return strings.copyLatin1IntoUTF16([]align(1) u16, output, []const u8, buf).written;
+
+                    var written = strings.copyLatin1IntoUTF16([]align(1) u16, output, []const u8, buf).written;
+                    return written * 2;
+                    
                 }
             },
 
@@ -901,6 +908,7 @@ pub const Encoder = struct {
             },
 
             JSC.Node.Encoding.base64url => {
+
                 var slice = strings.trim(input[0..len], "\r\n\t " ++ [_]u8{std.ascii.control_code.vt});
                 if (slice.len == 0)
                     return 0;
@@ -940,11 +948,11 @@ pub const Encoder = struct {
             },
 
             JSC.Node.Encoding.hex => {
-                return len * 2;
+                return len / 2; 
             },
 
             JSC.Node.Encoding.base64, JSC.Node.Encoding.base64url => {
-                return bun.base64.encodeLen(input[0..len]);
+                return bun.base64.decodeLen(input[0..len]);
             },
             // else => return &[_]u8{};
         }
@@ -958,11 +966,20 @@ pub const Encoder = struct {
             .utf8 => {
                 return @intCast(i32, strings.copyUTF16IntoUTF8(to[0..to_len], []const u16, input[0..len]).written);
             },
-            // string is already encoded, just need to copy the data
-            .latin1, JSC.Node.Encoding.ascii, JSC.Node.Encoding.ucs2, JSC.Node.Encoding.buffer, JSC.Node.Encoding.utf16le => {
+            .latin1, JSC.Node.Encoding.ascii, JSC.Node.Encoding.buffer => {
                 strings.copyU16IntoU8(to[0..to_len], []const u16, input[0..len]);
-
                 return @intCast(i64, @min(len, to_len));
+            },
+            // string is already encoded, just need to copy the data
+            JSC.Node.Encoding.ucs2, JSC.Node.Encoding.utf16le => {
+                var bytes_input_len = len * 2;
+                var written = @min(bytes_input_len, to_len);
+                if (written < 2) return 0;
+
+                var fixed_len = (written/2) * 2;
+                var input_u8 = @ptrCast([*] const u8,  input);
+                strings.copyU16IntoU8(to[0..written], []const u8, input_u8[0..fixed_len]);
+                return @intCast(i64, written);
             },
 
             JSC.Node.Encoding.hex => {
@@ -999,11 +1016,11 @@ pub const Encoder = struct {
             },
 
             JSC.Node.Encoding.hex => {
-                return len;
+                return len / 2;
             },
 
             JSC.Node.Encoding.base64, JSC.Node.Encoding.base64url => {
-                return bun.base64.encodeLen(input[0..len]);
+                return bun.base64.decodeLenUpperBound(len);
             },
             // else => return &[_]u8{};
         }

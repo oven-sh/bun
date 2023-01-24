@@ -374,18 +374,65 @@ static inline JSC::EncodedJSValue jsBufferConstructorFunction_allocBody(JSC::JSG
         return JSValue::encode(jsUndefined());
     }
 
-    auto arrayBuffer = JSC::ArrayBuffer::tryCreate(length, 1);
-    if (!arrayBuffer) {
-        throwOutOfMemoryError(lexicalGlobalObject, throwScope);
-        return JSValue::encode(jsUndefined());
-    }
-
     auto* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
     auto* subclassStructure = globalObject->JSBufferSubclassStructure();
 
-    auto uint8Array = JSC::JSUint8Array::create(lexicalGlobalObject, subclassStructure, WTFMove(arrayBuffer), 0, length);
 
-    RELEASE_AND_RETURN(throwScope, JSC::JSValue::encode(uint8Array));
+    // fill argument
+    if(callFrame->argumentCount() > 1){
+        auto uint8Array = JSC::JSUint8Array::createUninitialized(lexicalGlobalObject, subclassStructure, length);
+
+        auto value = callFrame->argument(1);
+
+        if (!value.isString()) {
+            auto value_ = value.toInt32(lexicalGlobalObject) & 0xFF;
+
+            auto value_uint8 = static_cast<uint8_t>(value_);
+            RETURN_IF_EXCEPTION(throwScope, JSC::JSValue::encode(jsUndefined()));
+
+            auto length = uint8Array->byteLength();
+            auto start = 0;
+            auto end = length;
+
+            auto startPtr = uint8Array->typedVector() + start;
+            auto endPtr = uint8Array->typedVector() + end;
+            memset(startPtr, value_uint8, endPtr - startPtr);
+            RELEASE_AND_RETURN(throwScope, JSC::JSValue::encode(uint8Array));
+        }
+
+        {
+            size_t length = uint8Array->byteLength();
+            size_t start = 0;
+            size_t end = length;
+            WebCore::BufferEncodingType encoding = WebCore::BufferEncodingType::utf8;
+            if (callFrame->argumentCount() > 2) {
+                auto encoding_ = callFrame->uncheckedArgument(2).toString(lexicalGlobalObject);
+
+                std::optional<BufferEncodingType> encoded = parseEnumeration<BufferEncodingType>(*lexicalGlobalObject, encoding_);
+                if (!encoded) {
+                    throwTypeError(lexicalGlobalObject, throwScope, "Invalid encoding"_s);
+                    return JSC::JSValue::encode(jsUndefined());
+                }
+                encoding = encoded.value();
+                
+            }
+            auto startPtr = uint8Array->typedVector() + start;
+            auto str_ = value.toWTFString(lexicalGlobalObject);
+            ZigString str = Zig::toZigString(str_);
+
+            Bun__Buffer_fill(&str, startPtr, end - start, encoding);
+            RELEASE_AND_RETURN(throwScope, JSC::JSValue::encode(uint8Array));
+        }
+    } else {
+        auto arrayBuffer = JSC::ArrayBuffer::tryCreate(length, 1);
+        if (!arrayBuffer) {
+            throwOutOfMemoryError(lexicalGlobalObject, throwScope);
+            return JSValue::encode(jsUndefined());
+        }
+        auto uint8Array = JSC::JSUint8Array::create(lexicalGlobalObject, subclassStructure, WTFMove(arrayBuffer), 0, length);
+        RELEASE_AND_RETURN(throwScope, JSC::JSValue::encode(uint8Array));
+
+    }
 }
 
 static inline JSC::EncodedJSValue jsBufferConstructorFunction_allocUnsafeSlowBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame)
@@ -891,6 +938,8 @@ static inline JSC::EncodedJSValue jsBufferPrototypeFunction_fillBody(JSC::JSGlob
         auto value_ = value.toInt32(lexicalGlobalObject) & 0xFF;
 
         auto value_uint8 = static_cast<uint8_t>(value_);
+        RETURN_IF_EXCEPTION(throwScope, JSC::JSValue::encode(jsUndefined()));
+        
         auto length = castedThis->byteLength();
         auto start = 0;
         auto end = length;
@@ -1363,7 +1412,6 @@ static inline JSC::EncodedJSValue jsBufferPrototypeFunction_writeBody(JSC::JSGlo
                 throwTypeError(lexicalGlobalObject, scope, "Invalid encoding"_s);
                 return JSC::JSValue::encode(jsUndefined());
             }
-
             encoding = encoded.value();
         }
     }
@@ -1371,19 +1419,37 @@ static inline JSC::EncodedJSValue jsBufferPrototypeFunction_writeBody(JSC::JSGlo
     if (UNLIKELY(length < offset)) {
         RELEASE_AND_RETURN(scope, JSC::JSValue::encode(JSC::jsNumber(0)));
     }
-
+    
     if (callFrame->argumentCount() > 2) {
         uint32_t arg_len = 0;
-        arg_len = callFrame->argument(2).toUInt32(lexicalGlobalObject);
-        length = std::min(arg_len, length - offset);
-    }
+        EnsureStillAliveScope arg2 = callFrame->argument(2);
+        if (arg2.value().isAnyInt()) {
+            arg_len = arg2.value().toUInt32(lexicalGlobalObject);
+            length = std::min(arg_len, length);
 
-    if (callFrame->argumentCount() > 2) {
-        std::optional<BufferEncodingType> parsedEncoding = parseEnumeration<BufferEncodingType>(*lexicalGlobalObject, callFrame->argument(3));
-        if (parsedEncoding.has_value()) {
-            encoding = parsedEncoding.value();
+            if (callFrame->argumentCount() > 3) {
+                EnsureStillAliveScope arg3 = callFrame->argument(3);
+                if (arg3.value().isString()) {
+                     std::optional<BufferEncodingType> encoded = parseEnumeration<BufferEncodingType>(*lexicalGlobalObject, arg3.value());
+                     if (!encoded) {
+                         throwTypeError(lexicalGlobalObject, scope, "Invalid encoding"_s);
+                         return JSC::JSValue::encode(jsUndefined());
+                     }
+                     encoding = encoded.value();
+                }
+            }
+        } else if (arg2.value().isString()) {
+            std::optional<BufferEncodingType> encoded = parseEnumeration<BufferEncodingType>(*lexicalGlobalObject, arg2.value());
+            if (!encoded) {
+                throwTypeError(lexicalGlobalObject, scope, "Invalid encoding"_s);
+                return JSC::JSValue::encode(jsUndefined());
+            }
+
+            encoding = encoded.value();
         }
     }
+
+    length = length - offset;
 
     auto view = str->tryGetValue(lexicalGlobalObject);
     int64_t written = 0;
@@ -1397,6 +1463,8 @@ static inline JSC::EncodedJSValue jsBufferPrototypeFunction_writeBody(JSC::JSGlo
     case WebCore::BufferEncodingType::base64:
     case WebCore::BufferEncodingType::base64url:
     case WebCore::BufferEncodingType::hex: {
+
+        
         if (view.is8Bit()) {
             written = Bun__encoding__writeLatin1(view.characters8(), view.length(), castedThis->typedVector() + offset, length, static_cast<uint8_t>(encoding));
         } else {

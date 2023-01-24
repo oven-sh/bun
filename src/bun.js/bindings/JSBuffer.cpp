@@ -374,25 +374,22 @@ static inline JSC::EncodedJSValue jsBufferConstructorFunction_allocBody(JSC::JSG
         return JSValue::encode(jsUndefined());
     }
 
-    auto arrayBuffer = JSC::ArrayBuffer::tryCreate(length, 1);
-    if (!arrayBuffer) {
-        throwOutOfMemoryError(lexicalGlobalObject, throwScope);
-        return JSValue::encode(jsUndefined());
-    }
-
     auto* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
     auto* subclassStructure = globalObject->JSBufferSubclassStructure();
 
-    auto uint8Array = JSC::JSUint8Array::create(lexicalGlobalObject, subclassStructure, WTFMove(arrayBuffer), 0, length);
 
     // fill argument
     if(callFrame->argumentCount() > 1){
+        auto uint8Array = JSC::JSUint8Array::createUninitialized(lexicalGlobalObject, subclassStructure, length);
+
         auto value = callFrame->argument(1);
 
         if (!value.isString()) {
             auto value_ = value.toInt32(lexicalGlobalObject) & 0xFF;
 
             auto value_uint8 = static_cast<uint8_t>(value_);
+            RETURN_IF_EXCEPTION(throwScope, JSC::JSValue::encode(jsUndefined()));
+
             auto length = uint8Array->byteLength();
             auto start = 0;
             auto end = length;
@@ -424,9 +421,18 @@ static inline JSC::EncodedJSValue jsBufferConstructorFunction_allocBody(JSC::JSG
             ZigString str = Zig::toZigString(str_);
 
             Bun__Buffer_fill(&str, startPtr, end - start, encoding);
+            RELEASE_AND_RETURN(throwScope, JSC::JSValue::encode(uint8Array));
         }
+    } else {
+        auto arrayBuffer = JSC::ArrayBuffer::tryCreate(length, 1);
+        if (!arrayBuffer) {
+            throwOutOfMemoryError(lexicalGlobalObject, throwScope);
+            return JSValue::encode(jsUndefined());
+        }
+        auto uint8Array = JSC::JSUint8Array::create(lexicalGlobalObject, subclassStructure, WTFMove(arrayBuffer), 0, length);
+        RELEASE_AND_RETURN(throwScope, JSC::JSValue::encode(uint8Array));
+
     }
-    RELEASE_AND_RETURN(throwScope, JSC::JSValue::encode(uint8Array));
 }
 
 static inline JSC::EncodedJSValue jsBufferConstructorFunction_allocUnsafeSlowBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame)
@@ -932,6 +938,8 @@ static inline JSC::EncodedJSValue jsBufferPrototypeFunction_fillBody(JSC::JSGlob
         auto value_ = value.toInt32(lexicalGlobalObject) & 0xFF;
 
         auto value_uint8 = static_cast<uint8_t>(value_);
+        RETURN_IF_EXCEPTION(throwScope, JSC::JSValue::encode(jsUndefined()));
+        
         auto length = castedThis->byteLength();
         auto start = 0;
         auto end = length;

@@ -41,7 +41,7 @@ jobs:
         run: bun install
       - id: bun-run
         name: Release
-        run: bun run npm -- publish "${{ env.TAG }}"
+        run: bun run npm -- "${{ env.TAG }}" publish
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           NPM_TOKEN: ${{ secrets.NPM_TOKEN }}

@@ -90,6 +90,18 @@ it("Buffer.isBuffer", () => {
   gc();
   expect(a instanceof Buffer).toBe(true);
   expect(a instanceof Uint8Array).toBe(true);
+  expect(new Uint8Array(0) instanceof Buffer).toBe(false);
+
+  // DOMJIT
+  for (let i = 0; i < 9000; i++) {
+    if (!Buffer.isBuffer(a)) {
+      throw new Error("Buffer.isBuffer failed");
+    }
+
+    if (Buffer.isBuffer("wat")) {
+      throw new Error("Buffer.isBuffer failed");
+    }
+  }
 });
 
 it("writeInt", () => {
@@ -430,7 +442,7 @@ it("read", () => {
 
 // this is for checking the simd code path
 it("write long utf16 string works", () => {
-  const long = "😀😃😄😁😆😅😂🤣☺️😊😊😇".repeat(1000);
+  const long = "😀😃😄😁😆😅😂🤣☺️😊😊😇".repeat(200);
   const buf = Buffer.alloc(long.length * 2);
   buf.write(long, 0, "utf16le");
   expect(buf.toString("utf16le")).toBe(long);

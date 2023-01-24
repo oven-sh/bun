@@ -29,6 +29,12 @@ Native: (macOS x64 & Silicon, Linux x64, Windows Subsystem for Linux)
 curl -fsSL https://bun.sh/install | bash
 ```
 
+npm:
+
+```sh
+npm install -g bun
+```
+
 Homebrew: (MacOS and Linux)
 
 ```sh

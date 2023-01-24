@@ -1,17 +1,19 @@
-const ExternalStringList = @import("./install.zig").ExternalStringList;
+const bun = @import("bun");
+const logger = bun.logger;
+const Environment = @import("../env.zig");
+const Install = @import("./install.zig");
+const ExternalStringList = Install.ExternalStringList;
+const Features = Install.Features;
+const PackageNameHash = Install.PackageNameHash;
+const Repository = @import("./repository.zig").Repository;
 const Semver = @import("./semver.zig");
 const ExternalString = Semver.ExternalString;
+const SlicedString = Semver.SlicedString;
 const String = Semver.String;
 const std = @import("std");
-const SlicedString = Semver.SlicedString;
-const PackageNameHash = @import("./install.zig").PackageNameHash;
-const Features = @import("./install.zig").Features;
-const Install = @import("./install.zig");
-const logger = @import("bun").logger;
-const Dependency = @This();
 const string = @import("../string_types.zig").string;
 const strings = @import("../string_immutable.zig");
-const bun = @import("bun");
+const Dependency = @This();
 
 pub const Pair = struct {
     resolution_id: Install.PackageID = Install.invalid_package_id,
@@ -189,7 +191,7 @@ pub const Version = struct {
     }
 
     pub fn isLessThan(string_buf: []const u8, lhs: Dependency.Version, rhs: Dependency.Version) bool {
-        std.debug.assert(lhs.tag == rhs.tag);
+        if (Environment.allow_assert) std.debug.assert(lhs.tag == rhs.tag);
         return strings.cmpStringsAsc({}, lhs.literal.slice(string_buf), rhs.literal.slice(string_buf));
     }
 
@@ -236,6 +238,7 @@ pub const Version = struct {
             .npm => strings.eql(lhs.literal.slice(lhs_buf), rhs.literal.slice(rhs_buf)) or
                 lhs.value.npm.eql(rhs.value.npm, lhs_buf, rhs_buf),
             .folder, .dist_tag => lhs.literal.eql(rhs.literal, lhs_buf, rhs_buf),
+            .github => lhs.value.github.eql(rhs.value.github, lhs_buf, rhs_buf),
             .tarball => lhs.value.tarball.eql(rhs.value.tarball, lhs_buf, rhs_buf),
             .symlink => lhs.value.symlink.eql(rhs.value.symlink, lhs_buf, rhs_buf),
             .workspace => lhs.value.workspace.eql(rhs.value.workspace, lhs_buf, rhs_buf),
@@ -274,24 +277,36 @@ pub const Version = struct {
         }
 
         pub inline fn isGitHubRepoPath(dependency: string) bool {
+            // Shortest valid expression: u/r
             if (dependency.len < 3) return false;
-            if (dependency[0] == '/') return false;
 
+            var hash_index: usize = 0;
             var slash_index: usize = 0;
 
             for (dependency) |c, i| {
-                // Must be alphanumeric
                 switch (c) {
                     '/' => {
+                        if (i == 0) return false;
                         if (slash_index > 0) return false;
                         slash_index = i;
                     },
-                    '\\', 'a'...'z', 'A'...'Z', '0'...'9', '%' => {},
+                    '#' => {
+                        if (i == 0) return false;
+                        if (hash_index > 0) return false;
+                        if (slash_index == 0) return false;
+                        hash_index = i;
+                    },
+                    // Not allowed in username
+                    '.', '_' => {
+                        if (slash_index == 0) return false;
+                    },
+                    // Must be alphanumeric
+                    '-', 'a'...'z', 'A'...'Z', '0'...'9' => {},
                     else => return false,
                 }
             }
 
-            return slash_index > 0 and slash_index != dependency.len - 1;
+            return hash_index != dependency.len - 1 and slash_index > 0 and slash_index != dependency.len - 1;
         }
 
         // this won't work for query string params
@@ -376,7 +391,9 @@ pub const Version = struct {
                                     }
                                 },
                                 'h' => {
-                                    if (strings.hasPrefixComptime(url, "hub:")) return .github;
+                                    if (strings.hasPrefixComptime(url, "hub:")) {
+                                        if (isGitHubRepoPath(url["hub:".len..])) return .github;
+                                    }
                                 },
                                 else => {},
                             }
@@ -403,7 +420,9 @@ pub const Version = struct {
                                 },
                                 else => {},
                             }
-                            if (strings.hasPrefixComptime(url, "github.com/")) return .github;
+                            if (strings.hasPrefixComptime(url, "github.com/")) {
+                                if (isGitHubRepoPath(url["github.com/".len..])) return .github;
+                            }
                         }
                     }
                 },
@@ -489,8 +508,7 @@ pub const Version = struct {
         workspace: String,
         /// Unsupported, but still parsed so an error can be thrown
         git: void,
-        /// Unsupported, but still parsed so an error can be thrown
-        github: void,
+        github: Repository,
     };
 };
 
@@ -625,10 +643,10 @@ pub fn parseWithTag(
                 alias;
 
             // name should never be empty
-            std.debug.assert(!actual.isEmpty());
+            if (Environment.allow_assert) std.debug.assert(!actual.isEmpty());
 
             // tag should never be empty
-            std.debug.assert(!tag_to_use.isEmpty());
+            if (Environment.allow_assert) std.debug.assert(!tag_to_use.isEmpty());
 
             return Version{
                 .literal = sliced.value(),
@@ -639,6 +657,68 @@ pub fn parseWithTag(
                     },
                 },
                 .tag = .dist_tag,
+            };
+        },
+        .github => {
+            var from_url = false;
+            var input = dependency;
+            if (strings.hasPrefixComptime(input, "github:")) {
+                input = input["github:".len..];
+            } else if (strings.hasPrefixComptime(input, "http")) {
+                var url = input["http".len..];
+                if (url.len > 2) {
+                    switch (url[0]) {
+                        ':' => {
+                            if (strings.hasPrefixComptime(url, "://")) {
+                                url = url["://".len..];
+                            }
+                        },
+                        's' => {
+                            if (strings.hasPrefixComptime(url, "s://")) {
+                                url = url["s://".len..];
+                            }
+                        },
+                        else => {},
+                    }
+                    if (strings.hasPrefixComptime(url, "github.com/")) {
+                        input = url["github.com/".len..];
+                        from_url = true;
+                    }
+                }
+            }
+
+            if (Environment.allow_assert) std.debug.assert(Version.Tag.isGitHubRepoPath(input));
+
+            var hash_index: usize = 0;
+            var slash_index: usize = 0;
+            for (input) |c, i| {
+                switch (c) {
+                    '/' => {
+                        slash_index = i;
+                    },
+                    '#' => {
+                        hash_index = i;
+                        break;
+                    },
+                    else => {},
+                }
+            }
+
+            var repo = if (hash_index == 0) input[slash_index + 1 ..] else input[slash_index + 1 .. hash_index];
+            if (from_url and strings.endsWithComptime(repo, ".git")) {
+                repo = repo[0 .. repo.len - ".git".len];
+            }
+
+            return Version{
+                .literal = sliced.value(),
+                .value = .{
+                    .github = .{
+                        .owner = sliced.sub(input[0..slash_index]).value(),
+                        .repo = sliced.sub(repo).value(),
+                        .committish = if (hash_index == 0) String.from("") else sliced.sub(input[hash_index + 1 ..]).value(),
+                    },
+                },
+                .tag = .github,
             };
         },
         .tarball => {
@@ -713,7 +793,7 @@ pub fn parseWithTag(
                 .literal = sliced.value(),
             };
         },
-        .git, .github => {
+        .git => {
             if (log_) |log| log.addErrorFmt(null, logger.Loc.Empty, allocator, "Support for dependency type \"{s}\" is not implemented yet (\"{s}\")", .{ @tagName(tag), dependency }) catch unreachable;
             return null;
         },

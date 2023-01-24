@@ -1,30 +1,37 @@
-const Output = @import("bun").Output;
-const strings = @import("../string_immutable.zig");
-const string = @import("../string_types.zig").string;
-const Resolution = @import("./resolution.zig").Resolution;
-const FileSystem = @import("../fs.zig").FileSystem;
-const Semver = @import("./semver.zig");
-const Integrity = @import("./integrity.zig").Integrity;
-const PackageID = @import("./install.zig").PackageID;
-const PackageManager = @import("./install.zig").PackageManager;
-const std = @import("std");
-const Npm = @import("./npm.zig");
-const ExtractTarball = @This();
-const default_allocator = @import("bun").default_allocator;
-const Global = @import("bun").Global;
 const bun = @import("bun");
+const default_allocator = bun.default_allocator;
+const Global = bun.Global;
+const json_parser = bun.JSON;
+const logger = bun.logger;
+const Output = bun.Output;
+const FileSystem = @import("../fs.zig").FileSystem;
+const Install = @import("./install.zig");
+const Features = Install.Features;
+const Lockfile = Install.Lockfile;
+const PackageID = Install.PackageID;
+const PackageManager = Install.PackageManager;
+const Integrity = @import("./integrity.zig").Integrity;
+const Npm = @import("./npm.zig");
+const Resolution = @import("./resolution.zig").Resolution;
+const Semver = @import("./semver.zig");
+const std = @import("std");
+const string = @import("../string_types.zig").string;
+const strings = @import("../string_immutable.zig");
+const ExtractTarball = @This();
+
 name: strings.StringOrTinyString,
 resolution: Resolution,
 registry: string,
 cache_dir: std.fs.Dir,
 temp_dir: std.fs.Dir,
 package_id: PackageID,
+dependency_id: PackageID = Install.invalid_package_id,
 skip_verify: bool = false,
 integrity: Integrity = Integrity{},
 url: string = "",
 package_manager: *PackageManager,
 
-pub inline fn run(this: ExtractTarball, bytes: []const u8) !string {
+pub inline fn run(this: ExtractTarball, bytes: []const u8) !Install.ExtractData {
     if (!this.skip_verify and this.integrity.tag.isSupported()) {
         if (!this.integrity.verify(bytes)) {
             Output.prettyErrorln("<r><red>Integrity check failed<r> for tarball: {s}", .{this.name.slice()});
@@ -141,10 +148,11 @@ pub fn buildURLWithPrinter(
     }
 }
 
-threadlocal var abs_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
-threadlocal var abs_buf2: [bun.MAX_PATH_BYTES]u8 = undefined;
+threadlocal var final_path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+threadlocal var folder_name_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+threadlocal var json_path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
 
-fn extract(this: *const ExtractTarball, tgz_bytes: []const u8) !string {
+fn extract(this: *const ExtractTarball, tgz_bytes: []const u8) !Install.ExtractData {
     var tmpdir = this.temp_dir;
     var tmpname_buf: [256]u8 = undefined;
     const name = this.name.slice();
@@ -156,6 +164,7 @@ fn extract(this: *const ExtractTarball, tgz_bytes: []const u8) !string {
         }
     }
 
+    var resolved: string = "";
     var tmpname = try FileSystem.instance.tmpname(basename[0..@min(basename.len, 32)], &tmpname_buf, tgz_bytes.len);
     {
         var extract_destination = tmpdir.makeOpenPathIterable(std.mem.span(tmpname), .{}) catch |err| {
@@ -194,6 +203,7 @@ fn extract(this: *const ExtractTarball, tgz_bytes: []const u8) !string {
                 void,
                 void{},
                 // for npm packages, the root dir is always "package"
+                // for github tarballs, the root dir is always the commit id
                 1,
                 true,
                 true,
@@ -206,10 +216,19 @@ fn extract(this: *const ExtractTarball, tgz_bytes: []const u8) !string {
                 void,
                 void{},
                 // for npm packages, the root dir is always "package"
+                // for github tarballs, the root dir is always the commit id
                 1,
                 true,
                 false,
             );
+
+        switch (this.resolution.tag) {
+            .github => {
+                resolved = try Archive.readFirstDirname(zlib_pool.data.list.items);
+                resolved = try this.package_manager.allocator.dupe(u8, resolved);
+            },
+            else => {},
+        }
 
         if (PackageManager.verbose_install) {
             Output.prettyErrorln(
@@ -221,7 +240,11 @@ fn extract(this: *const ExtractTarball, tgz_bytes: []const u8) !string {
             Output.flush();
         }
     }
-    var folder_name = this.package_manager.cachedNPMPackageFolderNamePrint(&abs_buf2, name, this.resolution.value.npm.version);
+    const folder_name = switch (this.resolution.tag) {
+        .npm => this.package_manager.cachedNPMPackageFolderNamePrint(&folder_name_buf, name, this.resolution.value.npm.version),
+        .github => PackageManager.cachedGitHubFolderNamePrint(&folder_name_buf, resolved),
+        else => unreachable,
+    };
     if (folder_name.len == 0 or (folder_name.len == 1 and folder_name[0] == '/')) @panic("Tried to delete root and stopped it");
     var cache_dir = this.cache_dir;
     cache_dir.deleteTree(folder_name) catch {};
@@ -263,7 +286,7 @@ fn extract(this: *const ExtractTarball, tgz_bytes: []const u8) !string {
     // and get the fd path
     var final_path = bun.getFdPath(
         final_dir.fd,
-        &abs_buf,
+        &final_path_buf,
     ) catch |err| {
         Output.prettyErrorln(
             "<r><red>Error {s}<r> failed to verify cache dir for {s}",
@@ -281,11 +304,60 @@ fn extract(this: *const ExtractTarball, tgz_bytes: []const u8) !string {
         defer index_dir.close();
         index_dir.dir.symLink(
             final_path,
-            // trim "name@" from the prefix
-            folder_name[name.len + 1 ..],
+            switch (this.resolution.tag) {
+                .github => folder_name["@GH@".len..],
+                // trim "name@" from the prefix
+                .npm => folder_name[name.len + 1 ..],
+                else => folder_name,
+            },
             .{},
         ) catch break :create_index;
     }
 
-    return try FileSystem.instance.dirname_store.append(@TypeOf(final_path), final_path);
+    var json_path: []u8 = "";
+    var json_buf: []u8 = "";
+    var json_len: usize = 0;
+    switch (this.resolution.tag) {
+        .github => {
+            var json_file = final_dir.openFileZ("package.json", .{ .mode = .read_only }) catch |err| {
+                Output.prettyErrorln("<r><red>Error {s}<r> failed to open package.json for {s}", .{
+                    @errorName(err),
+                    name,
+                });
+                Global.crash();
+            };
+            defer json_file.close();
+            var json_stat = try json_file.stat();
+            json_buf = try this.package_manager.allocator.alloc(u8, json_stat.size + 64);
+            json_len = try json_file.preadAll(json_buf, 0);
+
+            json_path = bun.getFdPath(
+                json_file.handle,
+                &json_path_buf,
+            ) catch |err| {
+                Output.prettyErrorln(
+                    "<r><red>Error {s}<r> failed to open package.json for {s}",
+                    .{
+                        @errorName(err),
+                        name,
+                    },
+                );
+                Global.crash();
+            };
+            // TODO remove extracted files not matching any globs under "files"
+        },
+        else => {},
+    }
+
+    const ret_final_path = try FileSystem.instance.dirname_store.append(@TypeOf(final_path), final_path);
+    const ret_json_path = try FileSystem.instance.dirname_store.append(@TypeOf(json_path), json_path);
+    return .{
+        .url = this.url,
+        .resolved = resolved,
+        .final_path = ret_final_path,
+        .json_path = ret_json_path,
+        .json_buf = json_buf,
+        .json_len = json_len,
+        .dependency_id = this.dependency_id,
+    };
 }

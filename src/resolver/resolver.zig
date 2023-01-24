@@ -1485,6 +1485,18 @@ pub const Resolver = struct {
 
                                 if (r.handleESMResolution(esm_resolution, abs_package_path, kind, package_json, esm.subpath)) |result| {
                                     return .{ .success = result };
+                                // if they hid "package.json" from "exports", still allow importing it.
+                                if (strings.eqlComptime(esm.subpath, "./package.json")) {
+                                    return .{
+                                        .success = .{
+                                            .path_pair = .{ .primary = package_json.source.path },
+                                            .dirname_fd = pkg_dir_info.getFileDescriptor(),
+                                            .file_fd = 0,
+                                            .is_node_module = package_json.source.path.isNodeModule(),
+                                            .package_json = package_json,
+                                            .dir_info = dir_info,
+                                        },
+                                    };
                                 }
 
                                 return .{ .not_found = {} };
@@ -1704,6 +1716,19 @@ pub const Resolver = struct {
                                     var result_copy = result;
                                     result_copy.is_node_module = true;
                                     return .{ .success = result_copy };
+
+                                // if they hid "package.json" from "exports", still allow importing it.
+                                if (strings.eqlComptime(esm.subpath, "./package.json")) {
+                                    return .{
+                                        .success = .{
+                                            .path_pair = .{ .primary = package_json.source.path },
+                                            .dirname_fd = pkg_dir_info.getFileDescriptor(),
+                                            .file_fd = 0,
+                                            .is_node_module = package_json.source.path.isNodeModule(),
+                                            .package_json = package_json,
+                                            .dir_info = dir_info,
+                                        },
+                                    };
                                 }
 
                                 return .{ .not_found = {} };

@@ -956,31 +956,52 @@ pub inline fn copyU16IntoU8(output_: []u8, comptime InputType: type, input_: Inp
     if (comptime Environment.allow_assert) {
         std.debug.assert(input_.len <= output_.len);
     }
-    if (comptime !JSC.is_bindgen and Environment.isAarch64) {
-        // faster on aarch64
-        // but it only uses SSE2 when it could use AVX2
-        // so it's better to let llvm auto-vectorize it
-        JSC.WTF.copyLCharsFromUCharSource(output_.ptr, InputType, input_);
-    } else {
-        var output = output_;
-        var input = input_;
-        if (comptime Environment.allow_assert) {
-            std.debug.assert(input.len <= output.len);
+
+    var output = output_;
+    var input = input_;
+    if (comptime Environment.allow_assert) {
+        std.debug.assert(input.len <= output.len);
+    }
+
+    // https://zig.godbolt.org/z/9rTn1orcY
+
+    const group = @as(usize, 16);
+    // end at the last group of 16 bytes
+    var input_ptr = input.ptr;
+    var output_ptr = output.ptr;
+
+    if (comptime Environment.enableSIMD) {
+        const last_vector_ptr = input.ptr + (@min(input.len, output.len) & ~(group - 1));
+        while (last_vector_ptr != input_ptr) {
+            const input_vec1: @Vector(group, u16) = input_ptr[0..group].*;
+            output_ptr[0] = @truncate(u8, input_vec1[0]);
+            output_ptr[1] = @truncate(u8, input_vec1[1]);
+            output_ptr[2] = @truncate(u8, input_vec1[2]);
+            output_ptr[3] = @truncate(u8, input_vec1[3]);
+            output_ptr[4] = @truncate(u8, input_vec1[4]);
+            output_ptr[5] = @truncate(u8, input_vec1[5]);
+            output_ptr[6] = @truncate(u8, input_vec1[6]);
+            output_ptr[7] = @truncate(u8, input_vec1[7]);
+            output_ptr[8] = @truncate(u8, input_vec1[8]);
+            output_ptr[9] = @truncate(u8, input_vec1[9]);
+            output_ptr[10] = @truncate(u8, input_vec1[10]);
+            output_ptr[11] = @truncate(u8, input_vec1[11]);
+            output_ptr[12] = @truncate(u8, input_vec1[12]);
+            output_ptr[13] = @truncate(u8, input_vec1[13]);
+            output_ptr[14] = @truncate(u8, input_vec1[14]);
+            output_ptr[15] = @truncate(u8, input_vec1[15]);
+
+            output_ptr += group;
+            input_ptr += group;
         }
+    }
 
-        // https://zig.godbolt.org/z/Y1qa9PTo1
-        // https://github.com/ziglang/zig/issues/11830
-        // this auto-vectorizes on x64 and aarch64
-        var input_ptr = input.ptr;
-        var output_ptr = output.ptr;
+    const last_input_ptr = input_ptr + @min(input.len, output.len);
 
-        const last_input_ptr = input_ptr + @min(input.len, output.len);
-
-        while (last_input_ptr != input_ptr) {
-            output_ptr[0] = @truncate(u8, input_ptr[0]);
-            output_ptr += 1;
-            input_ptr += 1;
-        }
+    while (last_input_ptr != input_ptr) {
+        output_ptr[0] = @truncate(u8, input_ptr[0]);
+        output_ptr += 1;
+        input_ptr += 1;
     }
 }
 

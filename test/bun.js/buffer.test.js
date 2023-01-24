@@ -428,18 +428,49 @@ it("read", () => {
   reset();
 });
 
-it("write", () => {
+// this is for checking the simd code path
+it("write long utf16 string works", () => {
+  const long = "😀😃😄😁😆😅😂🤣☺️😊😊😇".repeat(1000);
+  const buf = Buffer.alloc(long.length * 2);
+  buf.write(long, 0, "utf16le");
+  expect(buf.toString("utf16le")).toBe(long);
+  for (let offset = 0; offset < long.length; offset += 48) {
+    expect(buf.toString("utf16le", offset, offset + 4)).toBe("😀");
+    expect(buf.toString("utf16le", offset, offset + 8)).toBe("😀😃");
+    expect(buf.toString("utf16le", offset, offset + 12)).toBe("😀😃😄");
+    expect(buf.toString("utf16le", offset, offset + 16)).toBe("😀😃😄😁");
+    expect(buf.toString("utf16le", offset, offset + 20)).toBe("😀😃😄😁😆");
+    expect(buf.toString("utf16le", offset, offset + 24)).toBe("😀😃😄😁😆😅");
+    expect(buf.toString("utf16le", offset, offset + 28)).toBe("😀😃😄😁😆😅😂");
+    expect(buf.toString("utf16le", offset, offset + 32)).toBe(
+      "😀😃😄😁😆😅😂🤣",
+    );
+    expect(buf.toString("utf16le", offset, offset + 36)).toBe(
+      "😀😃😄😁😆😅😂🤣☺️",
+    );
+    expect(buf.toString("utf16le", offset, offset + 40)).toBe(
+      "😀😃😄😁😆😅😂🤣☺️😊",
+    );
+    expect(buf.toString("utf16le", offset, offset + 44)).toBe(
+      "😀😃😄😁😆😅😂🤣☺️😊😊",
+    );
+    expect(buf.toString("utf16le", offset, offset + 48)).toBe(
+      "😀😃😄😁😆😅😂🤣☺️😊😊😇",
+    );
+  }
+});
 
+it("write", () => {
   const resultMap = new Map([
-    ['utf8', Buffer.from([102, 111, 111, 0, 0, 0, 0, 0, 0])],
-    ['ucs2', Buffer.from([102, 0, 111, 0, 111, 0, 0, 0, 0])],
-    ['ascii', Buffer.from([102, 111, 111, 0, 0, 0, 0, 0, 0])],
-    ['latin1', Buffer.from([102, 111, 111, 0, 0, 0, 0, 0, 0])],
-    ['binary', Buffer.from([102, 111, 111, 0, 0, 0, 0, 0, 0])],
-    ['utf16le', Buffer.from([102, 0, 111, 0, 111, 0, 0, 0, 0])],
-    ['base64', Buffer.from([102, 111, 111, 0, 0, 0, 0, 0, 0])],
-    ['base64url', Buffer.from([102, 111, 111, 0, 0, 0, 0, 0, 0])],
-    ['hex', Buffer.from([102, 111, 111, 0, 0, 0, 0, 0, 0])],
+    ["utf8", Buffer.from([102, 111, 111, 0, 0, 0, 0, 0, 0])],
+    ["ucs2", Buffer.from([102, 0, 111, 0, 111, 0, 0, 0, 0])],
+    ["ascii", Buffer.from([102, 111, 111, 0, 0, 0, 0, 0, 0])],
+    ["latin1", Buffer.from([102, 111, 111, 0, 0, 0, 0, 0, 0])],
+    ["binary", Buffer.from([102, 111, 111, 0, 0, 0, 0, 0, 0])],
+    ["utf16le", Buffer.from([102, 0, 111, 0, 111, 0, 0, 0, 0])],
+    ["base64", Buffer.from([102, 111, 111, 0, 0, 0, 0, 0, 0])],
+    ["base64url", Buffer.from([102, 111, 111, 0, 0, 0, 0, 0, 0])],
+    ["hex", Buffer.from([102, 111, 111, 0, 0, 0, 0, 0, 0])],
   ]);
 
   let buf = Buffer.alloc(9);
@@ -447,45 +478,50 @@ it("write", () => {
     new Uint8Array(buf.buffer).fill(0);
   }
 
-
   // utf8, ucs2, ascii, latin1, utf16le
-  const encodings = ['utf8', 'utf-8', 'ucs2', 'ucs-2', 'ascii', 'latin1',
-    'binary', 'utf16le', 'utf-16le'];
+  const encodings = [
+    "utf8",
+    "utf-8",
+    "ucs2",
+    "ucs-2",
+    "ascii",
+    "latin1",
+    "binary",
+    "utf16le",
+    "utf-16le",
+  ];
 
   encodings
     .reduce((es, e) => es.concat(e, e.toUpperCase()), [])
     .forEach((encoding) => {
       reset();
 
-      const len = Buffer.byteLength('foo', encoding);
-      expect(buf.write('foo', 0, len, encoding)).toBe(len);
+      const len = Buffer.byteLength("foo", encoding);
+      expect(buf.write("foo", 0, len, encoding)).toBe(len);
 
-      if (encoding.includes('-'))
-        encoding = encoding.replace('-', '');
+      if (encoding.includes("-")) encoding = encoding.replace("-", "");
 
       expect(buf).toStrictEqual(resultMap.get(encoding.toLowerCase()));
     });
 
   // base64
-  ['base64', 'BASE64', 'base64url', 'BASE64URL'].forEach((encoding) => {
-    reset()
+  ["base64", "BASE64", "base64url", "BASE64URL"].forEach((encoding) => {
+    reset();
 
-    const len = Buffer.byteLength('Zm9v', encoding);
+    const len = Buffer.byteLength("Zm9v", encoding);
 
-    expect(buf.write('Zm9v', 0, len, encoding)).toBe(len);
+    expect(buf.write("Zm9v", 0, len, encoding)).toBe(len);
     expect(buf).toStrictEqual(resultMap.get(encoding.toLowerCase()));
   });
-
 
   // hex
-  ['hex', 'HEX'].forEach((encoding) => {
+  ["hex", "HEX"].forEach((encoding) => {
     reset();
-    const len = Buffer.byteLength('666f6f', encoding);
+    const len = Buffer.byteLength("666f6f", encoding);
 
-    expect(buf.write('666f6f', 0, len, encoding)).toBe(len);
+    expect(buf.write("666f6f", 0, len, encoding)).toBe(len);
     expect(buf).toStrictEqual(resultMap.get(encoding.toLowerCase()));
   });
-
 
   // UCS-2 overflow CVE-2018-12115
   for (let i = 1; i < 4; i++) {
@@ -494,32 +530,31 @@ it("write", () => {
     const x = Buffer.allocUnsafe(4).fill(0);
     const y = Buffer.allocUnsafe(4).fill(1);
     // Should not write anything, pos 3 doesn't have enough room for a 16-bit char
-    expect(x.write('ыыыыыы', 3, 'ucs2')).toBe(0);
+    expect(x.write("ыыыыыы", 3, "ucs2")).toBe(0);
     // CVE-2018-12115 experienced via buffer overrun to next block in the pool
     expect(Buffer.compare(y, Buffer.alloc(4, 1))).toBe(0);
   }
 
   // // Should not write any data when there is no space for 16-bit chars
   const z = Buffer.alloc(4, 0);
-  expect(z.write('\u0001', 3, 'ucs2')).toBe(0);
+  expect(z.write("\u0001", 3, "ucs2")).toBe(0);
   expect(Buffer.compare(z, Buffer.alloc(4, 0))).toBe(0);
   // Make sure longer strings are written up to the buffer end.
-  expect(z.write('abcd', 2)).toBe(2);
+  expect(z.write("abcd", 2)).toBe(2);
   expect([...z]).toStrictEqual([0, 0, 0x61, 0x62]);
 
   //Large overrun could corrupt the process with utf8
-  expect(Buffer.alloc(4).write('a'.repeat(100), 3, 'utf8')).toBe(1);
+  expect(Buffer.alloc(4).write("a".repeat(100), 3, "utf8")).toBe(1);
 
   // Large overrun could corrupt the process
-  expect(Buffer.alloc(4).write('ыыыыыы'.repeat(100), 3, 'utf16le')).toBe(0);
+  expect(Buffer.alloc(4).write("ыыыыыы".repeat(100), 3, "utf16le")).toBe(0);
 
   {
     // .write() does not affect the byte after the written-to slice of the Buffer.
     // Refs: https://github.com/nodejs/node/issues/26422
     const buf = Buffer.alloc(8);
-    expect(buf.write('ыы', 1, 'utf16le')).toBe(4);
+    expect(buf.write("ыы", 1, "utf16le")).toBe(4);
     expect([...buf]).toStrictEqual([0, 0x4b, 0x04, 0x4b, 0x04, 0, 0, 0]);
-
   }
 });
 
@@ -743,7 +778,7 @@ it("Buffer.toString(base64)", () => {
 
 it("Buffer can be mocked", () => {
   function MockBuffer() {
-    const noop = function () { };
+    const noop = function () {};
     const res = Buffer.alloc(0);
     for (const op in Buffer.prototype) {
       if (typeof res[op] === "function") {
@@ -830,7 +865,7 @@ it("Buffer.from (Node.js test/test-buffer-from.js)", () => {
     new MyBadPrimitive(),
     Symbol(),
     5n,
-    (one, two, three) => { },
+    (one, two, three) => {},
     undefined,
     null,
   ].forEach((input) => {
@@ -872,7 +907,7 @@ it("new Buffer() (Node.js test/test-buffer-new.js)", () => {
   // Now test protecting users from doing stupid things
 
   expect(function () {
-    function AB() { }
+    function AB() {}
     Object.setPrototypeOf(AB, ArrayBuffer);
     Object.setPrototypeOf(AB.prototype, ArrayBuffer.prototype);
     Buffer.from(new AB());

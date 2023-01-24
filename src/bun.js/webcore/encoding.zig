@@ -966,13 +966,19 @@ pub const Encoder = struct {
             .utf8 => {
                 return @intCast(i32, strings.copyUTF16IntoUTF8(to[0..to_len], []const u16, input[0..len]).written);
             },
+            .latin1, JSC.Node.Encoding.ascii, JSC.Node.Encoding.buffer => {
+                strings.copyU16IntoU8(to[0..to_len], []const u16, input[0..len]);
+                return @intCast(i64, @min(len, to_len));
+            },
             // string is already encoded, just need to copy the data
-            .latin1, JSC.Node.Encoding.ascii, JSC.Node.Encoding.ucs2, JSC.Node.Encoding.buffer, JSC.Node.Encoding.utf16le => {
+            JSC.Node.Encoding.ucs2, JSC.Node.Encoding.utf16le => {
                 var bytes_input_len = len * 2;
                 var written = @min(bytes_input_len, to_len);
                 if (written < 2) return 0;
 
-                strings.copyU16IntoU8(to[0..written], []const u16, input[0..written/2]);
+                var fixed_len = (written/2) * 2;
+                var input_u8 = @ptrCast([*] const u8,  input);
+                strings.copyU16IntoU8(to[0..written], []const u8, input_u8[0..fixed_len]);
                 return @intCast(i64, written);
             },
 

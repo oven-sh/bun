@@ -26,7 +26,6 @@ function lookup(domain, options, callback) {
 }
 
 function resolveSrv(hostname, callback) {
-
   if (typeof callback != "function") {
     throw new TypeError("callback must be a function");
   }
@@ -157,7 +156,7 @@ var InternalResolver = class Resolver {
     if (typeof callback != "function") {
       throw new TypeError("callback must be a function");
     }
-  
+
     dns.resolveSrv(hostname, callback).then(
       (results) => {
         callback(null, results);
@@ -210,6 +209,7 @@ function setDefaultResultOrder() {}
 function setServers() {}
 
 const promisifyLookup = (res) => {
+  res.sort((a, b) => a.family - b.family);
   const [{ address, family }] = res;
   return { address, family };
 };

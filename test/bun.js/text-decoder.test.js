@@ -22,6 +22,7 @@ describe("TextDecoder", () => {
       new Uint8Array([]),
       new Buffer(0),
       new ArrayBuffer(0),
+      new Uint16Array(0),
     ];
 
     for (let input of fixtures) {

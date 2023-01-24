@@ -1,6 +1,22 @@
 import { bench, run } from "mitata";
 
 const N = parseInt(process.argv.slice(2).at(0) || "10", 10);
+var isBuffer = new Buffer(0);
+var isNOtBuffer = "not a buffer";
+
+bench("Buffer.isBuffer(buffer)", () => {
+  return Buffer.isBuffer(isBuffer);
+});
+
+{
+  var j = 0;
+  j += 1;
+  j += eval("'ok'");
+
+  bench("Buffer.isBuffer(string)", () => {
+    return Buffer.isBuffer(j);
+  });
+}
 
 bench("Buffer.from('short string')", () => {
   return Buffer.from("short string");
@@ -45,4 +61,4 @@ bench("Buffer.alloc(24_000)", () => {
   return Buffer.alloc(24_000);
 });
 
-await run();
+await run({});

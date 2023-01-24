@@ -1,0 +1,47 @@
+name: Release bun to npm
+on:
+  release:
+    types:
+      - published
+      - edited # canary only
+  workflow_dispatch:
+    inputs:
+      tag:
+        type: string
+        description: The tag to publish, defaults to 'canary' if empty
+        default: canary
+jobs:
+  release:
+    name: Release
+    runs-on: ubuntu-latest
+    if: github.repository_owner == 'oven-sh'
+    defaults:
+      run:
+        working-directory: packages/bun-npm
+    steps:
+      - id: checkout
+        name: Checkout
+        uses: actions/checkout@v3
+      - id: setup-env
+        name: Setup Environment
+        run: |
+          TAG="${{ github.event.inputs.tag }}"
+          TAG="${TAG:-"${{ github.event.release.tag_name }}"}"
+          TAG="${TAG:-"canary"}"
+          echo "Setup tag: ${TAG}"
+          echo "TAG=${TAG}" >> ${GITHUB_ENV}
+      - id: setup-bun
+        name: Setup Bun
+        uses: oven-sh/setup-bun@v0.1.8
+        with:
+          bun-version: canary
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+      - id: bun-install
+        name: Install Dependencies
+        run: bun install
+      - id: bun-run
+        name: Release
+        run: bun run npm -- publish "${{ env.TAG }}"
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}

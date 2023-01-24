@@ -1,0 +1,15 @@
+{
+  "private": true,
+  "dependencies": {},
+  "devDependencies": {
+    "@octokit/types": "^8.1.1",
+    "bun-types": "^0.4.0",
+    "prettier": "^2.8.2",
+    "esbuild": "^0.17.3",
+    "jszip": "^3.10.1"
+  },
+  "scripts": {
+    "format": "prettier --write src scripts",
+    "npm": "bun scripts/npm-build.ts"
+  }
+}

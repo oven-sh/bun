@@ -128,7 +128,7 @@ function publishPackage(name: string, dryRun?: boolean): void {
       "--access",
       "public",
       "--tag",
-      npmVersion.startsWith("canary") ? "canary" : "latest",
+      npmVersion.includes("canary") ? "canary" : "latest",
       ...(dryRun ? ["--dry-run"] : []),
     ],
     {
@@ -185,7 +185,7 @@ async function fetchGithub(path: string) {
 }
 
 function formatTag(version: string): string {
-  if (version.startsWith("canary") || version.startsWith("bun-v")) {
+  if (version.includes("canary") || version.startsWith("bun-v")) {
     return version;
   }
   return `bun-v${version}`;

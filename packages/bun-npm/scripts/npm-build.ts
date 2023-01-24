@@ -32,8 +32,11 @@ async function build(version: string): Promise<void> {
   if (release.tag_name === "canary") {
     const { tag_name } = await getRelease();
     const sha = await getSha(tag_name);
-    // Note: this needs to be run using canary
-    npmVersion = `${Bun.version}-canary+${sha}`;
+    // Bun.version is the nightly release version,
+    // but that means this script must be run using canary.
+    // Also, npm does not accept "+build" in releases,
+    // so the format is "{nightly}-canary.{sha}".
+    npmVersion = `${Bun.version}-canary.${sha}`;
   } else {
     npmVersion = release.tag_name.replace("bun-v", "");
   }

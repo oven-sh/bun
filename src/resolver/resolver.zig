@@ -1481,10 +1481,40 @@ pub const Resolver = struct {
                                 // want problems due to Windows paths, which are very unlike URL
                                 // paths. We also want to avoid any "%" characters in the absolute
                                 // directory path accidentally being interpreted as URL escapes.
-                                const esm_resolution = esmodule.resolve("/", esm.subpath, exports_map.root);
+                                {
+                                    const esm_resolution = esmodule.resolve("/", esm.subpath, exports_map.root);
 
-                                if (r.handleESMResolution(esm_resolution, abs_package_path, kind, package_json, esm.subpath)) |result| {
-                                    return .{ .success = result };
+                                    if (r.handleESMResolution(esm_resolution, abs_package_path, kind, package_json, esm.subpath)) |result| {
+                                        var result_copy = result;
+                                        result_copy.is_node_module = true;
+                                        return .{ .success = result_copy };
+                                    }
+                                }
+
+                                // Some popular packages forget to include the extension in their
+                                // exports map, so we try again without the extension.
+                                //
+                                // This is useful for browser-like environments
+                                // where you want a file extension in the URL
+                                // pathname by convention. Vite does this.
+                                //
+                                // React is an example of a package that doesn't include file extensions.
+                                // {
+                                //     "exports": {
+                                //         ".": "./index.js",
+                                //         "./jsx-runtime": "./jsx-runtime.js",
+                                //     }
+                                // }
+                                //
+                                // We limit this behavior just to ".js" files.
+                                const extname = std.fs.path.extension(esm.subpath);
+                                if (strings.eqlComptime(extname, ".js") and esm.subpath.len > 3) {
+                                    const esm_resolution = esmodule.resolve("/", esm.subpath[0 .. esm.subpath.len - 3], exports_map.root);
+                                    if (r.handleESMResolution(esm_resolution, abs_package_path, kind, package_json, esm.subpath)) |result| {
+                                        return .{ .success = result };
+                                    }
+                                }
+
                                 // if they hid "package.json" from "exports", still allow importing it.
                                 if (strings.eqlComptime(esm.subpath, "./package.json")) {
                                     return .{
@@ -1710,12 +1740,41 @@ pub const Resolver = struct {
                                 // want problems due to Windows paths, which are very unlike URL
                                 // paths. We also want to avoid any "%" characters in the absolute
                                 // directory path accidentally being interpreted as URL escapes.
-                                const esm_resolution = esmodule.resolve("/", esm.subpath, exports_map.root);
+                                {
+                                    const esm_resolution = esmodule.resolve("/", esm.subpath, exports_map.root);
 
-                                if (r.handleESMResolution(esm_resolution, abs_package_path, kind, package_json, esm.subpath)) |result| {
-                                    var result_copy = result;
-                                    result_copy.is_node_module = true;
-                                    return .{ .success = result_copy };
+                                    if (r.handleESMResolution(esm_resolution, abs_package_path, kind, package_json, esm.subpath)) |result| {
+                                        var result_copy = result;
+                                        result_copy.is_node_module = true;
+                                        return .{ .success = result_copy };
+                                    }
+                                }
+
+                                // Some popular packages forget to include the extension in their
+                                // exports map, so we try again without the extension.
+                                //
+                                // This is useful for browser-like environments
+                                // where you want a file extension in the URL
+                                // pathname by convention. Vite does this.
+                                //
+                                // React is an example of a package that doesn't include file extensions.
+                                // {
+                                //     "exports": {
+                                //         ".": "./index.js",
+                                //         "./jsx-runtime": "./jsx-runtime.js",
+                                //     }
+                                // }
+                                //
+                                // We limit this behavior just to ".js" files.
+                                const extname = std.fs.path.extension(esm.subpath);
+                                if (strings.eqlComptime(extname, ".js") and esm.subpath.len > 3) {
+                                    const esm_resolution = esmodule.resolve("/", esm.subpath[0 .. esm.subpath.len - 3], exports_map.root);
+                                    if (r.handleESMResolution(esm_resolution, abs_package_path, kind, package_json, esm.subpath)) |result| {
+                                        var result_copy = result;
+                                        result_copy.is_node_module = true;
+                                        return .{ .success = result_copy };
+                                    }
+                                }
 
                                 // if they hid "package.json" from "exports", still allow importing it.
                                 if (strings.eqlComptime(esm.subpath, "./package.json")) {

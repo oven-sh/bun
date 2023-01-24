@@ -570,16 +570,7 @@ const Task = struct {
 
                     this.err = err;
                     this.status = Status.fail;
-                    this.data = .{
-                        .extract = .{
-                            .url = "",
-                            .final_path = "",
-                            .json_path = "",
-                            .json_buf = "",
-                            .json_len = 0,
-                            .dependency_id = invalid_package_id,
-                        },
-                    };
+                    this.data = .{ .extract = .{} };
                     this.package_manager.resolve_tasks.writeItem(this.*) catch unreachable;
                     return;
                 };
@@ -628,12 +619,13 @@ const Task = struct {
 };
 
 pub const ExtractData = struct {
-    url: string,
-    final_path: string,
-    json_path: string,
-    json_buf: []u8,
-    json_len: usize,
-    dependency_id: PackageID,
+    url: string = "",
+    resolved: string = "",
+    final_path: string = "",
+    json_path: string = "",
+    json_buf: []u8 = "",
+    json_len: usize = 0,
+    dependency_id: PackageID = invalid_package_id,
 };
 
 const PackageInstall = struct {
@@ -1832,24 +1824,12 @@ pub const PackageManager = struct {
         );
     }
 
-    pub fn cachedGitHubFolderNamePrint(this: *const PackageManager, buf: []u8, name: string, repository: Repository) stringZ {
-        if (repository.committish.isEmpty()) {
-            return std.fmt.bufPrintZ(buf, "{s}@{s}@{s}", .{
-                name,
-                this.lockfile.str(&repository.owner),
-                this.lockfile.str(&repository.repo),
-            }) catch unreachable;
-        }
-        return std.fmt.bufPrintZ(buf, "{s}@{s}@{s}@{s}", .{
-            name,
-            this.lockfile.str(&repository.owner),
-            this.lockfile.str(&repository.repo),
-            this.lockfile.str(&repository.committish),
-        }) catch unreachable;
+    pub fn cachedGitHubFolderNamePrint(buf: []u8, resolved: string) stringZ {
+        return std.fmt.bufPrintZ(buf, "@GH@{s}", .{resolved}) catch unreachable;
     }
 
-    pub fn cachedGitHubFolderName(this: *const PackageManager, name: string, repository: Repository) stringZ {
-        return this.cachedGitHubFolderNamePrint(&cached_package_folder_name_buf, name, repository);
+    pub fn cachedGitHubFolderName(this: *const PackageManager, repository: Repository) stringZ {
+        return cachedGitHubFolderNamePrint(&cached_package_folder_name_buf, this.lockfile.str(&repository.resolved));
     }
 
     // TODO: normalize to alphanumeric
@@ -2977,13 +2957,17 @@ pub const PackageManager = struct {
         var package = manager.lockfile.packages.get(package_id);
         switch (package.resolution.tag) {
             .github => {
-                defer manager.allocator.free(data.json_buf);
+                defer {
+                    manager.allocator.free(data.resolved);
+                    manager.allocator.free(data.json_buf);
+                }
                 const package_name = package.name;
                 const package_name_hash = package.name_hash;
                 const package_json_source = logger.Source.initPathString(
                     data.json_path,
                     data.json_buf[0..data.json_len],
                 );
+
                 Lockfile.Package.parse(
                     manager.lockfile,
                     &package,
@@ -3003,9 +2987,17 @@ pub const PackageManager = struct {
                     }
                     Global.crash();
                 };
+                // package.json might contain a different name than already appended
                 package.name = package_name;
                 package.name_hash = package_name_hash;
+                // stored resolved ID from committish
+                var builder = manager.lockfile.stringBuilder();
+                builder.count(data.resolved);
+                builder.allocate() catch unreachable;
+                package.resolution.value.github.resolved = builder.append(String, data.resolved);
+                builder.clamp();
                 manager.lockfile.packages.set(package_id, package);
+
                 if (package.dependencies.len > 0) {
                     manager.lockfile.scratch.dependency_list_queue.writeItem(package.dependencies) catch unreachable;
                 }
@@ -5717,7 +5709,7 @@ pub const PackageManager = struct {
                     installer.cache_dir = this.manager.getCacheDirectory();
                 },
                 .github => {
-                    installer.cache_dir_subpath = this.manager.cachedGitHubFolderName(name, resolution.value.github);
+                    installer.cache_dir_subpath = this.manager.cachedGitHubFolderName(resolution.value.github);
                     installer.cache_dir = this.manager.getCacheDirectory();
                 },
                 .folder => {

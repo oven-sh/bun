@@ -468,6 +468,36 @@ pub const Archive = struct {
         }
     }
 
+    pub fn readFirstDirname(
+        file_buffer: []const u8,
+    ) !string {
+        var entry: *lib.archive_entry = undefined;
+
+        var stream: BufferReadStream = undefined;
+        stream.init(file_buffer);
+        defer stream.deinit();
+        _ = stream.openRead();
+        var archive = stream.archive;
+
+        return brk: {
+            while (true) {
+                const r = @intToEnum(Status, lib.archive_read_next_header(archive, &entry));
+
+                switch (r) {
+                    Status.eof => break,
+                    Status.retry => continue,
+                    Status.failed, Status.fatal => return error.Fail,
+                    else => {
+                        var pathname: [:0]const u8 = std.mem.sliceTo(lib.archive_entry_pathname(entry).?, 0);
+                        var tokenizer = std.mem.tokenize(u8, std.mem.span(pathname), std.fs.path.sep_str);
+
+                        if (tokenizer.next()) |name| break :brk name;
+                    },
+                }
+            }
+        };
+    }
+
     pub fn extractToDir(
         file_buffer: []const u8,
         dir_: std.fs.IterableDir,

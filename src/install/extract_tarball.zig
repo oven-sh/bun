@@ -164,6 +164,7 @@ fn extract(this: *const ExtractTarball, tgz_bytes: []const u8) !Install.ExtractD
         }
     }
 
+    var resolved: string = "";
     var tmpname = try FileSystem.instance.tmpname(basename[0..@min(basename.len, 32)], &tmpname_buf, tgz_bytes.len);
     {
         var extract_destination = tmpdir.makeOpenPathIterable(std.mem.span(tmpname), .{}) catch |err| {
@@ -221,6 +222,14 @@ fn extract(this: *const ExtractTarball, tgz_bytes: []const u8) !Install.ExtractD
                 false,
             );
 
+        switch (this.resolution.tag) {
+            .github => {
+                resolved = try Archive.readFirstDirname(zlib_pool.data.list.items);
+                resolved = try this.package_manager.allocator.dupe(u8, resolved);
+            },
+            else => {},
+        }
+
         if (PackageManager.verbose_install) {
             Output.prettyErrorln(
                 "[{s}] Extracted<r>",
@@ -233,7 +242,7 @@ fn extract(this: *const ExtractTarball, tgz_bytes: []const u8) !Install.ExtractD
     }
     const folder_name = switch (this.resolution.tag) {
         .npm => this.package_manager.cachedNPMPackageFolderNamePrint(&folder_name_buf, name, this.resolution.value.npm.version),
-        .github => this.package_manager.cachedGitHubFolderNamePrint(&folder_name_buf, name, this.resolution.value.github),
+        .github => PackageManager.cachedGitHubFolderNamePrint(&folder_name_buf, resolved),
         else => unreachable,
     };
     if (folder_name.len == 0 or (folder_name.len == 1 and folder_name[0] == '/')) @panic("Tried to delete root and stopped it");
@@ -295,8 +304,12 @@ fn extract(this: *const ExtractTarball, tgz_bytes: []const u8) !Install.ExtractD
         defer index_dir.close();
         index_dir.dir.symLink(
             final_path,
-            // trim "name@" from the prefix
-            folder_name[name.len + 1 ..],
+            switch (this.resolution.tag) {
+                .github => folder_name["@GH@".len..],
+                // trim "name@" from the prefix
+                .npm => folder_name[name.len + 1 ..],
+                else => folder_name,
+            },
             .{},
         ) catch break :create_index;
     }
@@ -340,6 +353,7 @@ fn extract(this: *const ExtractTarball, tgz_bytes: []const u8) !Install.ExtractD
     const ret_json_path = try FileSystem.instance.dirname_store.append(@TypeOf(json_path), json_path);
     return .{
         .url = this.url,
+        .resolved = resolved,
         .final_path = ret_final_path,
         .json_path = ret_json_path,
         .json_buf = json_buf,

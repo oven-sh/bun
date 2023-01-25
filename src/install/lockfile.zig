@@ -1886,13 +1886,12 @@ pub const Package = extern struct {
     const debug = Output.scoped(.Lockfile, true);
 
     pub fn clone(
-        this_: *const Lockfile.Package,
+        this: *const Lockfile.Package,
         old: *Lockfile,
         new: *Lockfile,
         package_id_mapping: []PackageID,
         cloner: *Cloner,
     ) !PackageID {
-        const this = this_.*;
         const old_string_buf = old.buffers.string_bytes.items;
         const old_extern_string_buf = old.buffers.extern_strings.items;
         var builder_ = new.stringBuilder();

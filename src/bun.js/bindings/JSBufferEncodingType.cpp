@@ -55,6 +55,7 @@ template<> JSString* convertEnumerationToJS(JSGlobalObject& lexicalGlobalObject,
 // this function is mostly copied from node
 template<> std::optional<BufferEncodingType> parseEnumeration<BufferEncodingType>(JSGlobalObject& lexicalGlobalObject, JSValue value)
 {
+
     JSC::JSString* str = value.toStringOrNull(&lexicalGlobalObject);
     if (!str)
         return std::nullopt;

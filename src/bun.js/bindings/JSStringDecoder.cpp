@@ -443,10 +443,13 @@ JSC::EncodedJSValue JSStringDecoderConstructor::construct(JSC::JSGlobalObject* l
     JSC::VM& vm = lexicalGlobalObject->vm();
     auto encoding = BufferEncodingType::utf8;
     if (callFrame->argumentCount() > 0) {
-        auto encoding_ = callFrame->argument(0).toString(lexicalGlobalObject);
-        std::optional<BufferEncodingType> opt = parseEnumeration<BufferEncodingType>(*lexicalGlobalObject, encoding_);
-        if (opt.has_value()) {
-            encoding = opt.value();
+
+        auto encoding_ = callFrame->argument(0);
+        if (encoding_.isString()) {
+            std::optional<BufferEncodingType> opt = parseEnumeration<BufferEncodingType>(*lexicalGlobalObject, encoding_);
+            if (opt.has_value()) {
+                encoding = opt.value();
+            }
         }
     }
     JSStringDecoder* stringDecoder = JSStringDecoder::create(

@@ -526,12 +526,86 @@ pub const struct_ares_addr6ttl = extern struct {
     ttl: c_int,
 };
 pub const struct_ares_caa_reply = extern struct {
-    next: [*c]struct_ares_caa_reply,
+    next: ?*struct_ares_caa_reply,
     critical: c_int,
     property: [*c]u8,
     plength: usize,
     value: [*c]u8,
     length: usize,
+
+    const JSC = bun.JSC;
+
+    pub fn toJSReponse(this: *struct_ares_caa_reply, parent_allocator: std.mem.Allocator, globalThis: *JSC.JSGlobalObject) JSC.JSValue {
+        var stack = std.heap.stackFallback(2048, parent_allocator);
+        var arena = std.heap.ArenaAllocator.init(stack.get());
+        defer arena.deinit();
+
+        var allocator = arena.allocator();
+        var count: usize = 0;
+        var caa: ?*struct_ares_caa_reply = this;
+        while (caa != null) : (caa = caa.?.next) {
+            count += 1;
+        }
+        
+        const array = JSC.JSValue.createEmptyArray(globalThis, count);
+
+        caa = this;
+        var i: u32 = 0;
+        while (caa != null) {
+            var node = caa.?;
+            array.putIndex(globalThis, i, node.toJS(globalThis, allocator));
+            caa = node.next;
+            i += 1;
+        }
+
+        return array;
+    }
+
+    pub fn toJS(this: *struct_ares_caa_reply, globalThis: *JSC.JSGlobalObject, _: std.mem.Allocator) JSC.JSValue {
+        var obj = JSC.JSValue.createEmptyObject(globalThis, 2);
+
+        obj.put(globalThis, JSC.ZigString.static("critical"), JSC.JSValue.jsNumber(this.critical));
+
+        //TODO: check the right way to do this
+        const property = this.property[0..this.plength];
+        const value = this.value[0..this.length];
+        const property_str = JSC.ZigString.fromUTF8(property);
+        _ = property_str.toAtomicValue(globalThis);
+        obj.put(globalThis, &property_str, JSC.ZigString.fromUTF8(value).toValueGC(globalThis));
+
+        return obj;
+    }
+
+    pub fn Callback(comptime Type: type) type {
+        return fn (*Type, status: ?Error, timeouts: i32, results: ?*struct_ares_caa_reply) void;
+    }
+
+    pub fn callbackWrapper(
+        comptime Type: type,
+        comptime function: Callback(Type),
+    ) ares_callback {
+        return &struct {
+            pub fn handle(ctx: ?*anyopaque, status: c_int, timeouts: c_int, buffer: [*c]u8, buffer_length: c_int) callconv(.C) void {
+                var this = bun.cast(*Type, ctx.?);
+                if (status != ARES_SUCCESS) {
+                    function(this, Error.get(status), timeouts, null);
+                    return;
+                }
+
+                var start: [*c]struct_ares_caa_reply = undefined;
+                var result = ares_parse_caa_reply(buffer, buffer_length, &start);
+                if (result != ARES_SUCCESS) {
+                    function(this, Error.get(result), timeouts, null);
+                    return;
+                }
+                function(this, null, timeouts, start);
+            }
+        }.handle;
+    }
+
+    pub fn deinit(this: *struct_ares_caa_reply) void {
+        ares_free_data(this);
+    }
 };
 pub const struct_ares_srv_reply = extern struct {
     next: ?*struct_ares_srv_reply,
@@ -568,7 +642,7 @@ pub const struct_ares_srv_reply = extern struct {
     }
 
     pub fn toJS(this: *struct_ares_srv_reply, globalThis: *JSC.JSGlobalObject, _: std.mem.Allocator) JSC.JSValue {
-        var obj = JSC.JSValue.createEmptyObject(globalThis, 4);
+        const obj = JSC.JSValue.createEmptyObject(globalThis, 4);
         // {
         //   priority: 10,
         //   weight: 5,
@@ -582,7 +656,7 @@ pub const struct_ares_srv_reply = extern struct {
 
 
         const len = bun.len(this.host);
-        var host = this.host[0..len];
+        const host = this.host[0..len];
         obj.put(globalThis, JSC.ZigString.static("name"), JSC.ZigString.fromUTF8(host).toValueGC(globalThis));
 
         return obj;
@@ -655,11 +729,11 @@ pub const struct_ares_mx_reply = extern struct {
 
     pub fn toJS(this: *struct_ares_mx_reply, globalThis: *JSC.JSGlobalObject, _: std.mem.Allocator) JSC.JSValue {
         
-        var obj = JSC.JSValue.createEmptyObject(globalThis, 2);
+        const obj = JSC.JSValue.createEmptyObject(globalThis, 2);
         obj.put(globalThis, JSC.ZigString.static("priority"), JSC.JSValue.jsNumber(this.priority));
 
         const host_len = bun.len(this.host);
-        var host = this.host[0..host_len];
+        const host = this.host[0..host_len];
         obj.put(globalThis, JSC.ZigString.static("exchange"), JSC.ZigString.fromUTF8(host).toValueGC(globalThis));
 
 
@@ -733,7 +807,7 @@ pub const struct_ares_txt_reply = extern struct {
 
     pub fn toJS(this: *struct_ares_txt_reply, globalThis: *JSC.JSGlobalObject, _: std.mem.Allocator) JSC.JSValue {
         const array = JSC.JSValue.createEmptyArray(globalThis, 1);
-        var value = this.txt[0..this.length];
+        const value = this.txt[0..this.length];
         array.putIndex(globalThis, 0, JSC.ZigString.fromUTF8(value).toValueGC(globalThis));
         return array;
     }
@@ -813,26 +887,26 @@ pub const struct_ares_naptr_reply = extern struct {
     }
 
     pub fn toJS(this: *struct_ares_naptr_reply, globalThis: *JSC.JSGlobalObject, _: std.mem.Allocator) JSC.JSValue {
-        var obj = JSC.JSValue.createEmptyObject(globalThis, 6);
+        const obj = JSC.JSValue.createEmptyObject(globalThis, 6);
 
 
         obj.put(globalThis, JSC.ZigString.static("preference"), JSC.JSValue.jsNumber(this.preference));
         obj.put(globalThis, JSC.ZigString.static("order"), JSC.JSValue.jsNumber(this.order));
 
         const flags_len = bun.len(this.flags);
-        var flags = this.flags[0..flags_len];
+        const flags = this.flags[0..flags_len];
         obj.put(globalThis, JSC.ZigString.static("flags"), JSC.ZigString.fromUTF8(flags).toValueGC(globalThis));
 
         const service_len = bun.len(this.service);
-        var service = this.flags[0..service_len];
+        const service = this.flags[0..service_len];
         obj.put(globalThis, JSC.ZigString.static("service"), JSC.ZigString.fromUTF8(service).toValueGC(globalThis));
 
         const regexp_len = bun.len(this.regexp);
-        var regexp = this.regexp[0..regexp_len];
+        const regexp = this.regexp[0..regexp_len];
         obj.put(globalThis, JSC.ZigString.static("regexp"), JSC.ZigString.fromUTF8(regexp).toValueGC(globalThis));
 
         const replacement_len = bun.len(this.replacement);
-        var replacement = this.replacement[0..replacement_len];
+        const replacement = this.replacement[0..replacement_len];
         obj.put(globalThis, JSC.ZigString.static("replacement"), JSC.ZigString.fromUTF8(replacement).toValueGC(globalThis));
 
         return obj;
@@ -891,7 +965,7 @@ pub const struct_ares_soa_reply = extern struct {
     }
 
     pub fn toJS(this: *struct_ares_soa_reply, globalThis: *JSC.JSGlobalObject, _: std.mem.Allocator) JSC.JSValue {
-        var obj = JSC.JSValue.createEmptyObject(globalThis, 7);
+        const obj = JSC.JSValue.createEmptyObject(globalThis, 7);
         
         obj.put(globalThis, JSC.ZigString.static("serial"), JSC.JSValue.jsNumber(this.serial));
         obj.put(globalThis, JSC.ZigString.static("refresh"), JSC.JSValue.jsNumber(this.refresh));

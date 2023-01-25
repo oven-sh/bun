@@ -102,6 +102,21 @@ function resolveMx(hostname, callback) {
 
 }
 
+function resolveCaa(hostname, callback) {
+  if (typeof callback != "function") {
+    throw new TypeError("callback must be a function");
+  }
+
+  dns.resolveCaa(hostname, callback).then(
+    (results) => {
+      callback(null, results);
+    },
+    (error) => {
+      callback(error);
+    },
+  );
+}
+
 function lookupService(address, port, callback) {
   if (typeof callback != "function") {
     throw new TypeError("callback must be a function");
@@ -233,10 +248,6 @@ var InternalResolver = class Resolver {
     callback(null, []);
   }
 
-  resolveSoa(hostname, callback) {
-    callback(null, []);
-  }
-
   resolveSrv(hostname, callback) {
     if (typeof callback != "function") {
       throw new TypeError("callback must be a function");
@@ -253,7 +264,18 @@ var InternalResolver = class Resolver {
   }
 
   resolveCaa(hostname, callback) {
-    callback(null, []);
+    if (typeof callback != "function") {
+      throw new TypeError("callback must be a function");
+    }
+
+    dns.resolveCaa(hostname, callback).then(
+      (results) => {
+        callback(null, results);
+      },
+      (error) => {
+        callback(error);
+      },
+    );
   }
 
   resolveTxt(hostname, callback) {
@@ -362,6 +384,9 @@ export const promises = {
   resolveMx(hostname) {
     return dns.resolveMx(hostname);
   },
+  resolveCaa(hostname) {
+    return dns.resolveCaa(hostname);
+  },
 
   Resolver: class Resolver {
     constructor(options) {}
@@ -417,7 +442,7 @@ export const promises = {
     }
 
     resolveCaa(hostname) {
-      return Promise.resolve([]);
+      return dns.resolveCaa(hostname);
     }
 
     resolveTxt(hostname) {
@@ -434,7 +459,6 @@ export const promises = {
 for (const key of [
   "resolveAny",
   "resolveCname",
-  "resolveCaa",
   "resolveNs",
   "resolvePtr",
   "reverse",

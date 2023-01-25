@@ -14,6 +14,7 @@ test("it exists", () => {
   expect(dns.resolveSoa).toBeDefined();
   expect(dns.resolveNaptr).toBeDefined();
   expect(dns.resolveMx).toBeDefined();
+  expect(dns.resolveCaa).toBeDefined();
 });
 
 test("dns.lookup (localhost)", (done) => {
@@ -98,6 +99,16 @@ test("dns.resolveNaptr (naptr.socketify.dev)", (done) => {
   });
 });
 
+test("dns.resolveCaa (caa.socketify.dev)", (done) => {
+  dns.resolveMx("caa.socketify.dev", (err, results) => {
+    expect(err).toBeNull();
+    expect(results instanceof Array).toBe(true);
+    expect(results[0].critical).toBe(0);
+    expect(results[0].issue).toBe('bun.sh');
+    done(err);
+  });
+});
+
 
 test("dns.resolveMx (bun.sh)", (done) => {
   dns.resolveMx("bun.sh", (err, results) => {
@@ -108,4 +119,3 @@ test("dns.resolveMx (bun.sh)", (done) => {
     done(err);
   });
 });
-

@@ -236,7 +236,7 @@ declare module "dns/promises" {
    * containing both a `priority` and `exchange` property (e.g.`[{priority: 10, exchange: 'mx.example.com'}, ...]`).
    * @since v10.6.0
    */
-  // function resolveMx(hostname: string): Promise<MxRecord[]>;
+  function resolveMx(hostname: string): Promise<MxRecord[]>;
   /**
    * Uses the DNS protocol to resolve regular expression based records (`NAPTR`records) for the `hostname`. On success, the `Promise` is resolved with an array
    * of objects with the following properties:
@@ -385,7 +385,7 @@ declare module "dns/promises" {
     resolve6: typeof resolve6;
     // resolveAny: typeof resolveAny;
     // resolveCname: typeof resolveCname;
-    // resolveMx: typeof resolveMx;
+    resolveMx: typeof resolveMx;
     resolveNaptr: typeof resolveNaptr;
     // resolveNs: typeof resolveNs;
     // resolvePtr: typeof resolvePtr;

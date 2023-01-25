@@ -537,13 +537,13 @@ declare module "dns" {
    * contain an array of objects containing both a `priority` and `exchange`property (e.g. `[{priority: 10, exchange: 'mx.example.com'}, ...]`).
    * @since v0.1.27
    */
-  // export function resolveMx(
-  //   hostname: string,
-  //   callback: (err: ErrnoException | null, addresses: MxRecord[]) => void,
-  // ): void;
-  // export namespace resolveMx {
-  //   function __promisify__(hostname: string): Promise<MxRecord[]>;
-  // }
+  export function resolveMx(
+    hostname: string,
+    callback: (err: ErrnoException | null, addresses: MxRecord[]) => void,
+  ): void;
+  export namespace resolveMx {
+    function __promisify__(hostname: string): Promise<MxRecord[]>;
+  }
   /**
    * Uses the DNS protocol to resolve regular expression based records (`NAPTR`records) for the `hostname`. The `addresses` argument passed to the `callback`function will contain an array of
    * objects with the following properties:
@@ -567,13 +567,13 @@ declare module "dns" {
    * ```
    * @since v0.9.12
    */
-  // export function resolveNaptr(
-  //   hostname: string,
-  //   callback: (err: ErrnoException | null, addresses: NaptrRecord[]) => void,
-  // ): void;
-  // export namespace resolveNaptr {
-  //   function __promisify__(hostname: string): Promise<NaptrRecord[]>;
-  // }
+  export function resolveNaptr(
+    hostname: string,
+    callback: (err: ErrnoException | null, addresses: NaptrRecord[]) => void,
+  ): void;
+  export namespace resolveNaptr {
+    function __promisify__(hostname: string): Promise<NaptrRecord[]>;
+  }
   /**
    * Uses the DNS protocol to resolve name server records (`NS` records) for the`hostname`. The `addresses` argument passed to the `callback` function will
    * contain an array of name server records available for `hostname`(e.g. `['ns1.example.com', 'ns2.example.com']`).
@@ -862,8 +862,8 @@ declare module "dns" {
     resolve6: typeof resolve6;
     // resolveAny: typeof resolveAny;
     // resolveCname: typeof resolveCname;
-    // resolveMx: typeof resolveMx;
-    // resolveNaptr: typeof resolveNaptr;
+    resolveMx: typeof resolveMx;
+    resolveNaptr: typeof resolveNaptr;
     // resolveNs: typeof resolveNs;
     // resolvePtr: typeof resolvePtr;
     resolveSoa: typeof resolveSoa;

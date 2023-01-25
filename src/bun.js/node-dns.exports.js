@@ -86,6 +86,22 @@ function resolveNaptr(hostname, callback) {
   );
 }
 
+function resolveMx(hostname, callback) {
+  if (typeof callback != "function") {
+    throw new TypeError("callback must be a function");
+  }
+
+  dns.resolveMx(hostname, callback).then(
+    (results) => {
+      callback(null, results);
+    },
+    (error) => {
+      callback(error);
+    },
+  );
+
+}
+
 function lookupService(address, port, callback) {
   if (typeof callback != "function") {
     throw new TypeError("callback must be a function");
@@ -179,7 +195,19 @@ var InternalResolver = class Resolver {
   }
 
   resolveMx(hostname, callback) {
-    callback(null, []);
+    if (typeof callback != "function") {
+      throw new TypeError("callback must be a function");
+    }
+
+    dns.resolveMx(hostname, callback).then(
+      (results) => {
+        callback(null, results);
+      },
+      (error) => {
+        callback(error);
+      },
+    );
+
   }
 
   resolveNaptr(hostname, callback) {
@@ -331,6 +359,10 @@ export const promises = {
     return dns.resolveNaptr(hostname);
   },
 
+  resolveMx(hostname) {
+    return dns.resolveMx(hostname);
+  },
+
   Resolver: class Resolver {
     constructor(options) {}
 
@@ -361,7 +393,7 @@ export const promises = {
     }
 
     resolveMx(hostname) {
-      return Promise.resolve([]);
+      return dns.resolveMx(hostname);
     }
 
     resolveNaptr(hostname) {
@@ -403,7 +435,6 @@ for (const key of [
   "resolveAny",
   "resolveCname",
   "resolveCaa",
-  "resolveMx",
   "resolveNs",
   "resolvePtr",
   "reverse",
@@ -462,6 +493,7 @@ const exports = {
   resolveSoa,
   resolveSrv,
   resolveTxt,
+  resolveNaptr,
   promises,
   [Symbol.for("CommonJS")]: 0,
 };

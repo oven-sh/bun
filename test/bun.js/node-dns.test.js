@@ -13,6 +13,7 @@ test("it exists", () => {
   expect(dns.resolveTxt).toBeDefined();
   expect(dns.resolveSoa).toBeDefined();
   expect(dns.resolveNaptr).toBeDefined();
+  expect(dns.resolveMx).toBeDefined();
 });
 
 test("dns.lookup (localhost)", (done) => {
@@ -93,6 +94,17 @@ test("dns.resolveNaptr (naptr.socketify.dev)", (done) => {
     expect(results[0].replacement).toBe('');
     expect(results[0].order).toBe(1);
     expect(results[0].preference).toBe(12);
+    done(err);
+  });
+});
+
+
+test("dns.resolveMx (bun.sh)", (done) => {
+  dns.resolveMx("bun.sh", (err, results) => {
+    expect(err).toBeNull();
+    expect(results instanceof Array).toBe(true);
+    expect(results[0].priority).toBe(10);
+    expect(results[0].exchange).toBe('eforward1.registrar-servers.com');
     done(err);
   });
 });

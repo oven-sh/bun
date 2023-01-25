@@ -620,9 +620,83 @@ pub const struct_ares_srv_reply = extern struct {
     }
 };
 pub const struct_ares_mx_reply = extern struct {
-    next: [*c]struct_ares_mx_reply,
+    next: ?*struct_ares_mx_reply,
     host: [*c]u8,
     priority: c_ushort,
+
+
+    const JSC = bun.JSC;
+
+    pub fn toJSReponse(this: *struct_ares_mx_reply, parent_allocator: std.mem.Allocator, globalThis: *JSC.JSGlobalObject) JSC.JSValue {
+        var stack = std.heap.stackFallback(2048, parent_allocator);
+        var arena = std.heap.ArenaAllocator.init(stack.get());
+        defer arena.deinit();
+
+        var allocator = arena.allocator();
+        var count: usize = 0;
+        var mx: ?*struct_ares_mx_reply = this;
+        while (mx != null) : (mx = mx.?.next) {
+            count += 1;
+        }
+        
+        const array = JSC.JSValue.createEmptyArray(globalThis, count);
+
+        mx = this;
+        var i: u32 = 0;
+        while (mx != null) {
+            var node = mx.?;
+            array.putIndex(globalThis, i, node.toJS(globalThis, allocator));
+            mx = node.next;
+            i += 1;
+        }
+
+        return array;
+    }
+
+    pub fn toJS(this: *struct_ares_mx_reply, globalThis: *JSC.JSGlobalObject, _: std.mem.Allocator) JSC.JSValue {
+        
+        var obj = JSC.JSValue.createEmptyObject(globalThis, 2);
+        obj.put(globalThis, JSC.ZigString.static("priority"), JSC.JSValue.jsNumber(this.priority));
+
+        const host_len = bun.len(this.host);
+        var host = this.host[0..host_len];
+        obj.put(globalThis, JSC.ZigString.static("exchange"), JSC.ZigString.fromUTF8(host).toValueGC(globalThis));
+
+
+        return obj;
+    }
+
+    pub fn Callback(comptime Type: type) type {
+        return fn (*Type, status: ?Error, timeouts: i32, results: ?*struct_ares_mx_reply) void;
+    }
+
+    pub fn callbackWrapper(
+        comptime Type: type,
+        comptime function: Callback(Type),
+    ) ares_callback {
+        return &struct {
+            pub fn handle(ctx: ?*anyopaque, status: c_int, timeouts: c_int, buffer: [*c]u8, buffer_length: c_int) callconv(.C) void {
+                var this = bun.cast(*Type, ctx.?);
+                if (status != ARES_SUCCESS) {
+                    function(this, Error.get(status), timeouts, null);
+                    return;
+                }
+
+                var start: [*c]struct_ares_mx_reply = undefined;
+                var result = ares_parse_mx_reply(buffer, buffer_length, &start);
+                if (result != ARES_SUCCESS) {
+                    function(this, Error.get(result), timeouts, null);
+                    return;
+                }
+                function(this, null, timeouts, start);
+            }
+        }.handle;
+    }
+
+    pub fn deinit(this: *struct_ares_mx_reply) void {
+        ares_free_data(this);
+    }
+
 };
 pub const struct_ares_txt_reply = extern struct {
     next: ?*struct_ares_txt_reply,
@@ -739,7 +813,7 @@ pub const struct_ares_naptr_reply = extern struct {
     }
 
     pub fn toJS(this: *struct_ares_naptr_reply, globalThis: *JSC.JSGlobalObject, _: std.mem.Allocator) JSC.JSValue {
-        var obj = JSC.JSValue.createEmptyObject(globalThis, 4);
+        var obj = JSC.JSValue.createEmptyObject(globalThis, 6);
 
 
         obj.put(globalThis, JSC.ZigString.static("preference"), JSC.JSValue.jsNumber(this.preference));
@@ -817,7 +891,7 @@ pub const struct_ares_soa_reply = extern struct {
     }
 
     pub fn toJS(this: *struct_ares_soa_reply, globalThis: *JSC.JSGlobalObject, _: std.mem.Allocator) JSC.JSValue {
-        var obj = JSC.JSValue.createEmptyObject(globalThis, 4);
+        var obj = JSC.JSValue.createEmptyObject(globalThis, 7);
         
         obj.put(globalThis, JSC.ZigString.static("serial"), JSC.JSValue.jsNumber(this.serial));
         obj.put(globalThis, JSC.ZigString.static("refresh"), JSC.JSValue.jsNumber(this.refresh));

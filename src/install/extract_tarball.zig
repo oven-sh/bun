@@ -31,7 +31,7 @@ integrity: Integrity = Integrity{},
 url: string = "",
 package_manager: *PackageManager,
 
-pub inline fn run(this: ExtractTarball, bytes: []const u8) !Install.ExtractData {
+pub inline fn run(this: ExtractTarball, task_id: u64, bytes: []const u8) !Install.ExtractData {
     if (!this.skip_verify and this.integrity.tag.isSupported()) {
         if (!this.integrity.verify(bytes)) {
             Output.prettyErrorln("<r><red>Integrity check failed<r> for tarball: {s}", .{this.name.slice()});
@@ -39,7 +39,7 @@ pub inline fn run(this: ExtractTarball, bytes: []const u8) !Install.ExtractData 
             return error.IntegrityCheckFailed;
         }
     }
-    return this.extract(bytes);
+    return this.extract(bytes, task_id);
 }
 
 pub fn buildURL(
@@ -152,7 +152,7 @@ threadlocal var final_path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
 threadlocal var folder_name_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
 threadlocal var json_path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
 
-fn extract(this: *const ExtractTarball, tgz_bytes: []const u8) !Install.ExtractData {
+fn extract(this: *const ExtractTarball, tgz_bytes: []const u8, task_id: u64) !Install.ExtractData {
     var tmpdir = this.temp_dir;
     var tmpname_buf: [256]u8 = undefined;
     const name = this.name.slice();
@@ -393,6 +393,6 @@ fn extract(this: *const ExtractTarball, tgz_bytes: []const u8) !Install.ExtractD
         .json_path = ret_json_path,
         .json_buf = json_buf,
         .json_len = json_len,
-        .dependency_id = this.dependency_id,
+        .task_id = task_id,
     };
 }

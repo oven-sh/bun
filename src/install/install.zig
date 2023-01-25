@@ -560,6 +560,7 @@ const Task = struct {
             },
             .extract => {
                 const result = this.request.extract.tarball.run(
+                    this.id,
                     this.request.extract.network.response_buffer.toOwnedSliceLeaky(),
                 ) catch |err| {
                     if (comptime Environment.isDebug) {
@@ -625,7 +626,7 @@ pub const ExtractData = struct {
     json_path: string = "",
     json_buf: []u8 = "",
     json_len: usize = 0,
-    dependency_id: PackageID = invalid_package_id,
+    task_id: u64 = 0,
 };
 
 const PackageInstall = struct {
@@ -2718,9 +2719,15 @@ pub const PackageManager = struct {
 
                 const url = this.allocGitHubURL(&package.resolution.value.github) catch unreachable;
                 const task_id = Task.Id.forTarball(url);
-                if (try this.generateNetworkTaskForTarball(task_id, url, package)) |network_task| {
-                    network_task.callback.extract.dependency_id = id;
+                var entry = this.task_queue.getOrPutContext(this.allocator, task_id, .{}) catch unreachable;
+                if (!entry.found_existing) {
+                    entry.value_ptr.* = TaskCallbackList{};
+                }
 
+                const callback_tag = comptime if (successFn == assignRootResolution) "root_dependency" else "dependency";
+                try entry.value_ptr.append(this.allocator, @unionInit(TaskCallbackContext, callback_tag, id));
+
+                if (try this.generateNetworkTaskForTarball(task_id, url, package)) |network_task| {
                     this.setPreinstallState(package.meta.id, this.lockfile, .extracting);
                     this.enqueueNetworkTask(network_task);
                 }
@@ -2952,11 +2959,50 @@ pub const PackageManager = struct {
         }
     }
 
-    fn enqueueDependenciesFromJSON(
+    fn enqueueDependenciesFromJSONForInstall(
         manager: *PackageManager,
         package_id: PackageID,
         data: ExtractData,
         comptime log_level: Options.LogLevel,
+    ) void {
+        enqueueDependenciesFromJSONInternal(manager, package_id, data, log_level, true);
+    }
+
+    fn enqueueDependenciesFromJSONForResolve(
+        manager: *PackageManager,
+        package_id: PackageID,
+        data: ExtractData,
+        comptime log_level: Options.LogLevel,
+    ) void {
+        enqueueDependenciesFromJSONInternal(manager, package_id, data, log_level, false);
+    }
+
+    const GitHubResolver = struct {
+        data_: ExtractData,
+        package_name: String,
+        package_name_hash: u64,
+
+        pub fn count(this: *@This(), comptime StringBuilderType: type, builder: StringBuilderType, _: JSAst.Expr) void {
+            builder.count(this.data_.resolved);
+        }
+
+        pub fn resolveWithPackage(this: *@This(), comptime StringBuilderType: type, builder: StringBuilderType, pkg: *Package) anyerror!Resolution {
+            pkg.name = this.package_name;
+            pkg.name_hash = this.package_name_hash;
+            var resolution = pkg.resolution;
+            resolution.value.github.resolved = builder.append(String, this.data_.resolved);
+
+            return resolution;
+        }
+    };
+
+    fn enqueueDependenciesFromJSONInternal(
+        manager: *PackageManager,
+        package_id: PackageID,
+        data: ExtractData,
+        comptime log_level: Options.LogLevel,
+        // TODO: turn this into a struct?
+        comptime is_install: bool,
     ) void {
         var package = manager.lockfile.packages.get(package_id);
         switch (package.resolution.tag) {
@@ -2972,25 +3018,6 @@ pub const PackageManager = struct {
                     data.json_buf[0..data.json_len],
                 );
                 package.resolution.value.github.resolved = String{};
-
-                const GitHubResolver = struct {
-                    data_: ExtractData,
-                    package_name: String,
-                    package_name_hash: u64,
-
-                    pub fn count(this: *@This(), comptime StringBuilderType: type, builder: StringBuilderType, _: JSAst.Expr) void {
-                        builder.count(this.data_.resolved);
-                    }
-
-                    pub fn resolveWithPackage(this: *@This(), comptime StringBuilderType: type, builder: StringBuilderType, pkg: *Package) anyerror!Resolution {
-                        pkg.name = this.package_name;
-                        pkg.name_hash = this.package_name_hash;
-                        var resolution = pkg.resolution;
-                        resolution.value.github.resolved = builder.append(String, this.data_.resolved);
-
-                        return resolution;
-                    }
-                };
 
                 var github = GitHubResolver{
                     .data_ = data,
@@ -3021,8 +3048,28 @@ pub const PackageManager = struct {
                 if (package.dependencies.len > 0) {
                     manager.lockfile.scratch.dependency_list_queue.writeItem(package.dependencies) catch unreachable;
                 }
-                if (data.dependency_id < manager.lockfile.buffers.resolutions.items.len) {
-                    assignResolution(manager, data.dependency_id, package_id);
+
+                var dependency_list_entry = manager.task_queue.getEntry(data.task_id).?;
+
+                var dependency_list = dependency_list_entry.value_ptr.*;
+                dependency_list_entry.value_ptr.* = .{};
+
+                if (comptime is_install) {
+                    manager.processDependencyList(dependency_list, *PackageManager, manager, .{
+                        .onExtract = PackageManager.installEnqueuedPackages,
+                        .onResolve = void{},
+                        .onPackageManifestError = void{},
+                        .onPackageDownloadError = void{},
+                        .progress_bar = true,
+                    }) catch unreachable;
+                } else {
+                    manager.processDependencyList(dependency_list, *PackageManager, manager, .{
+                        .onExtract = PackageManager.enqueueDependenciesFromJSONForResolve,
+                        .onResolve = void{},
+                        .onPackageManifestError = void{},
+                        .onPackageDownloadError = void{},
+                        .progress_bar = true,
+                    }) catch unreachable;
                 }
             },
             else => {},
@@ -6610,7 +6657,7 @@ pub const PackageManager = struct {
                     *PackageManager,
                     manager,
                     .{
-                        .onExtract = PackageManager.enqueueDependenciesFromJSON,
+                        .onExtract = PackageManager.enqueueDependenciesFromJSONForResolve,
                         .onResolve = void{},
                         .onPackageManifestError = void{},
                         .onPackageDownloadError = void{},

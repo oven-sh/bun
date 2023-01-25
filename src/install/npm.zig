@@ -1113,12 +1113,30 @@ pub const PackageManifest = struct {
                                                 group_slice[group_i] = string_builder.append(ExternalString, bin_prop.key.?.asString(allocator) orelse break :bin);
                                                 if (is_identical) {
                                                     is_identical = group_slice[group_i].hash == prev_extern_bin_group[group_i].hash;
+                                                    if (comptime Environment.allow_assert) {
+                                                        if (is_identical) {
+                                                            const first = group_slice[group_i].slice(string_builder.allocatedSlice());
+                                                            const second = prev_extern_bin_group[group_i].slice(string_builder.allocatedSlice());
+                                                            if (!strings.eqlLong(first, second, true)) {
+                                                                Output.panic("Bin group is not identical: {s} != {s}", .{ first, second });
+                                                            }
+                                                        }
+                                                    }
                                                 }
                                                 group_i += 1;
 
                                                 group_slice[group_i] = string_builder.append(ExternalString, bin_prop.value.?.asString(allocator) orelse break :bin);
                                                 if (is_identical) {
                                                     is_identical = group_slice[group_i].hash == prev_extern_bin_group[group_i].hash;
+                                                    if (comptime Environment.allow_assert) {
+                                                        if (is_identical) {
+                                                            const first = group_slice[group_i].slice(string_builder.allocatedSlice());
+                                                            const second = prev_extern_bin_group[group_i].slice(string_builder.allocatedSlice());
+                                                            if (!strings.eqlLong(first, second, true)) {
+                                                                Output.panic("Bin group is not identical: {s} != {s}", .{ first, second });
+                                                            }
+                                                        }
+                                                    }
                                                 }
                                                 group_i += 1;
                                             }

@@ -2806,7 +2806,15 @@ pub const Package = extern struct {
 
         if (comptime !features.is_main) {
             if (comptime ResolverContext != void) {
-                package.resolution = try resolver.resolve(*Lockfile.StringBuilder, &string_builder, json);
+                if (comptime std.meta.trait.is(.Pointer)(ResolverContext) and @hasDecl(std.meta.Child(ResolverContext), "resolveWithPackage")) {
+                    package.resolution = try resolver.resolveWithPackage(*Lockfile.StringBuilder, &string_builder, package);
+                } else {
+                    package.resolution = try resolver.resolve(
+                        *Lockfile.StringBuilder,
+                        &string_builder,
+                        json,
+                    );
+                }
             }
         } else {
             package.resolution = .{

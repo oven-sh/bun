@@ -2967,6 +2967,32 @@ pub const PackageManager = struct {
                     data.json_path,
                     data.json_buf[0..data.json_len],
                 );
+                package.resolution.value.github.resolved = String{};
+
+                const GitHubResolver = struct {
+                    data_: ExtractData,
+                    package_name: String,
+                    package_name_hash: u64,
+
+                    pub fn count(this: *@This(), comptime StringBuilderType: type, builder: StringBuilderType, _: JSAst.Expr) void {
+                        builder.count(this.data_.resolved);
+                    }
+
+                    pub fn resolveWithPackage(this: *@This(), comptime StringBuilderType: type, builder: StringBuilderType, pkg: *Package) anyerror!Resolution {
+                        pkg.name = this.package_name;
+                        pkg.name_hash = this.package_name_hash;
+                        var resolution = pkg.resolution;
+                        resolution.value.github.resolved = builder.append(String, this.data_.resolved);
+
+                        return resolution;
+                    }
+                };
+
+                var github = GitHubResolver{
+                    .data_ = data,
+                    .package_name = package_name,
+                    .package_name_hash = package_name_hash,
+                };
 
                 Lockfile.Package.parse(
                     manager.lockfile,
@@ -2974,8 +3000,8 @@ pub const PackageManager = struct {
                     manager.allocator,
                     manager.log,
                     package_json_source,
-                    void,
-                    {},
+                    *GitHubResolver,
+                    &github,
                     Features.npm,
                 ) catch |err| {
                     if (comptime log_level != .silent) {
@@ -2987,16 +3013,6 @@ pub const PackageManager = struct {
                     }
                     Global.crash();
                 };
-                // package.json might contain a different name than already appended
-                package.name = package_name;
-                package.name_hash = package_name_hash;
-                // stored resolved ID from committish
-                var builder = manager.lockfile.stringBuilder();
-                builder.count(data.resolved);
-                builder.allocate() catch unreachable;
-                package.resolution.value.github.resolved = builder.append(String, data.resolved);
-                builder.clamp();
-                manager.lockfile.packages.set(package_id, package);
 
                 if (package.dependencies.len > 0) {
                     manager.lockfile.scratch.dependency_list_queue.writeItem(package.dependencies) catch unreachable;

@@ -71,6 +71,21 @@ function resolveSoa(hostname, callback) {
   );
 }
 
+function resolveNaptr(hostname, callback) {
+  if (typeof callback != "function") {
+    throw new TypeError("callback must be a function");
+  }
+
+  dns.resolveNaptr(hostname, callback).then(
+    (results) => {
+      callback(null, results);
+    },
+    (error) => {
+      callback(error);
+    },
+  );
+}
+
 function lookupService(address, port, callback) {
   if (typeof callback != "function") {
     throw new TypeError("callback must be a function");

@@ -10,6 +10,9 @@ test("it exists", () => {
   expect(dns.resolve4).toBeDefined();
   expect(dns.resolve6).toBeDefined();
   expect(dns.resolveSrv).toBeDefined();
+  expect(dns.resolveTxt).toBeDefined();
+  expect(dns.resolveSoa).toBeDefined();
+  expect(dns.resolveNaptr).toBeDefined();
 });
 
 test("dns.lookup (localhost)", (done) => {
@@ -76,6 +79,20 @@ test("dns.resolveSoa (bun.sh)", (done) => {
     expect(result.nsname).toBe("hans.ns.cloudflare.com");
     expect(result.hostmaster).toBe("dns.cloudflare.com");
     
+    done(err);
+  });
+});
+
+test("dns.resolveNaptr (naptr.socketify.dev)", (done) => {
+  dns.resolveNaptr("naptr.socketify.dev ", (err, results) => {
+    expect(err).toBeNull();
+    expect(results instanceof Array).toBe(true);
+    expect(results[0].flags).toBe('S');
+    expect(results[0].service).toBe('test');
+    expect(results[0].regexp).toBe('');
+    expect(results[0].replacement).toBe('');
+    expect(results[0].order).toBe(1);
+    expect(results[0].preference).toBe(12);
     done(err);
   });
 });

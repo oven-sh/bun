@@ -13,7 +13,7 @@ declare module "dns/promises" {
     // AnyRecord,
     // CaaRecord,
     // MxRecord,
-    // NaptrRecord,
+    NaptrRecord,
     SoaRecord,
     SrvRecord,
     ResolveWithTtlOptions,
@@ -260,7 +260,7 @@ declare module "dns/promises" {
    * ```
    * @since v10.6.0
    */
-  // function resolveNaptr(hostname: string): Promise<NaptrRecord[]>;
+  function resolveNaptr(hostname: string): Promise<NaptrRecord[]>;
   /**
    * Uses the DNS protocol to resolve name server records (`NS` records) for the`hostname`. On success, the `Promise` is resolved with an array of name server
    * records available for `hostname` (e.g.`['ns1.example.com', 'ns2.example.com']`).
@@ -386,7 +386,7 @@ declare module "dns/promises" {
     // resolveAny: typeof resolveAny;
     // resolveCname: typeof resolveCname;
     // resolveMx: typeof resolveMx;
-    // resolveNaptr: typeof resolveNaptr;
+    resolveNaptr: typeof resolveNaptr;
     // resolveNs: typeof resolveNs;
     // resolvePtr: typeof resolvePtr;
     resolveSoa: typeof resolveSoa;

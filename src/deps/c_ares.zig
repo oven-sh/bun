@@ -702,13 +702,98 @@ pub const struct_ares_txt_ext = extern struct {
     record_start: u8,
 };
 pub const struct_ares_naptr_reply = extern struct {
-    next: [*c]struct_ares_naptr_reply,
+    next: ?*struct_ares_naptr_reply,
     flags: [*c]u8,
     service: [*c]u8,
     regexp: [*c]u8,
     replacement: [*c]u8,
     order: c_ushort,
     preference: c_ushort,
+
+    const JSC = bun.JSC;
+
+    pub fn toJSReponse(this: *struct_ares_naptr_reply, parent_allocator: std.mem.Allocator, globalThis: *JSC.JSGlobalObject) JSC.JSValue {
+        var stack = std.heap.stackFallback(2048, parent_allocator);
+        var arena = std.heap.ArenaAllocator.init(stack.get());
+        defer arena.deinit();
+
+        var allocator = arena.allocator();
+        var count: usize = 0;
+        var naptr: ?*struct_ares_naptr_reply = this;
+        while (naptr != null) : (naptr = naptr.?.next) {
+            count += 1;
+        }
+        
+        const array = JSC.JSValue.createEmptyArray(globalThis, count);
+
+        naptr = this;
+        var i: u32 = 0;
+        while (naptr != null) {
+            var node = naptr.?;
+            array.putIndex(globalThis, i, node.toJS(globalThis, allocator));
+            naptr = node.next;
+            i += 1;
+        }
+
+        return array;
+    }
+
+    pub fn toJS(this: *struct_ares_naptr_reply, globalThis: *JSC.JSGlobalObject, _: std.mem.Allocator) JSC.JSValue {
+        var obj = JSC.JSValue.createEmptyObject(globalThis, 4);
+
+
+        obj.put(globalThis, JSC.ZigString.static("preference"), JSC.JSValue.jsNumber(this.preference));
+        obj.put(globalThis, JSC.ZigString.static("order"), JSC.JSValue.jsNumber(this.order));
+
+        const flags_len = bun.len(this.flags);
+        var flags = this.flags[0..flags_len];
+        obj.put(globalThis, JSC.ZigString.static("flags"), JSC.ZigString.fromUTF8(flags).toValueGC(globalThis));
+
+        const service_len = bun.len(this.service);
+        var service = this.flags[0..service_len];
+        obj.put(globalThis, JSC.ZigString.static("service"), JSC.ZigString.fromUTF8(service).toValueGC(globalThis));
+
+        const regexp_len = bun.len(this.regexp);
+        var regexp = this.regexp[0..regexp_len];
+        obj.put(globalThis, JSC.ZigString.static("regexp"), JSC.ZigString.fromUTF8(regexp).toValueGC(globalThis));
+
+        const replacement_len = bun.len(this.replacement);
+        var replacement = this.replacement[0..replacement_len];
+        obj.put(globalThis, JSC.ZigString.static("replacement"), JSC.ZigString.fromUTF8(replacement).toValueGC(globalThis));
+
+        return obj;
+    }
+
+    pub fn Callback(comptime Type: type) type {
+        return fn (*Type, status: ?Error, timeouts: i32, results: ?*struct_ares_naptr_reply) void;
+    }
+
+    pub fn callbackWrapper(
+        comptime Type: type,
+        comptime function: Callback(Type),
+    ) ares_callback {
+        return &struct {
+            pub fn handleNaptr(ctx: ?*anyopaque, status: c_int, timeouts: c_int, buffer: [*c]u8, buffer_length: c_int) callconv(.C) void {
+                var this = bun.cast(*Type, ctx.?);
+                if (status != ARES_SUCCESS) {
+                    function(this, Error.get(status), timeouts, null);
+                    return;
+                }
+
+                var naptr_start: [*c]struct_ares_naptr_reply = undefined;
+                var result = ares_parse_naptr_reply(buffer, buffer_length, &naptr_start);
+                if (result != ARES_SUCCESS) {
+                    function(this, Error.get(result), timeouts, null);
+                    return;
+                }
+                function(this, null, timeouts, naptr_start);
+            }
+        }.handleNaptr;
+    }
+
+    pub fn deinit(this: *struct_ares_naptr_reply) void {
+        ares_free_data(this);
+    }
 };
 pub const struct_ares_soa_reply = extern struct {
     nsname: [*c]u8,

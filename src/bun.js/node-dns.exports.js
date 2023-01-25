@@ -168,7 +168,18 @@ var InternalResolver = class Resolver {
   }
 
   resolveNaptr(hostname, callback) {
-    callback(null, []);
+    if (typeof callback != "function") {
+      throw new TypeError("callback must be a function");
+    }
+
+    dns.resolveNaptr(hostname, callback).then(
+      (results) => {
+        callback(null, results);
+      },
+      (error) => {
+        callback(error);
+      },
+    );
   }
 
   resolveNs(hostname, callback) {
@@ -301,6 +312,9 @@ export const promises = {
   resolveSoa(hostname) {
     return dns.resolveSoa(hostname);
   },
+  resolveNaptr(hostname) {
+    return dns.resolveNaptr(hostname);
+  },
 
   Resolver: class Resolver {
     constructor(options) {}
@@ -336,7 +350,7 @@ export const promises = {
     }
 
     resolveNaptr(hostname) {
-      return Promise.resolve([]);
+      return dns.resolveNaptr(hostname);
     }
 
     resolveNs(hostname) {
@@ -375,7 +389,6 @@ for (const key of [
   "resolveCname",
   "resolveCaa",
   "resolveMx",
-  "resolveNaptr",
   "resolveNs",
   "resolvePtr",
   "reverse",
@@ -429,7 +442,6 @@ const exports = {
   resolveCname,
   resolveCaa,
   resolveMx,
-  resolveNaptr,
   resolveNs,
   resolvePtr,
   resolveSoa,

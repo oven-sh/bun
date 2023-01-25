@@ -413,7 +413,7 @@ pub const Channel = opaque {
         ares_getaddrinfo(this, host_ptr, port_ptr, hints_, AddrInfo.callbackWrapper(Type, callback), ctx);
     }
 
-    pub fn resolveSrv(this: *Channel, name: []const u8, comptime Type: type, ctx: *Type, comptime callback: struct_ares_srv_reply.Callback(Type)) void {
+    pub fn resolve(this: *Channel, name: []const u8, comptime lookup_name: []const u8, comptime Type: type, ctx: *Type, comptime cares_type: type, comptime callback: cares_type.Callback(Type)) void {
         var name_buf: [1024]u8 = undefined;
         const name_ptr: ?[*:0]const u8 = brk: {
             if (name.len == 0 or name.len >= 1023) {
@@ -424,8 +424,9 @@ pub const Channel = opaque {
             name_buf[len] = 0;
             break :brk name_buf[0..len :0];
         };
-
-        ares_query(this, name_ptr, NSClass.ns_c_in, NSType.ns_t_srv, struct_ares_srv_reply.callbackWrapper(Type, callback), ctx);
+        
+        const field_name = comptime std.fmt.comptimePrint("ns_t_{s}", .{lookup_name});
+        ares_query(this, name_ptr, NSClass.ns_c_in, @field(NSType, field_name), cares_type.callbackWrapper(Type, callback), ctx);
     }
 
     pub inline fn process(this: *Channel, fd: i32, readable: bool, writable: bool) void {
@@ -618,9 +619,74 @@ pub const struct_ares_mx_reply = extern struct {
     priority: c_ushort,
 };
 pub const struct_ares_txt_reply = extern struct {
-    next: [*c]struct_ares_txt_reply,
+    next: ?*struct_ares_txt_reply,
     txt: [*c]u8,
     length: usize,
+
+    const JSC = bun.JSC;
+
+    pub fn toJSArray(this: *struct_ares_txt_reply, parent_allocator: std.mem.Allocator, globalThis: *JSC.JSGlobalObject) JSC.JSValue {
+        var stack = std.heap.stackFallback(2048, parent_allocator);
+        var arena = std.heap.ArenaAllocator.init(stack.get());
+        defer arena.deinit();
+
+        var allocator = arena.allocator();
+        var count: usize = 0;
+        var txt: ?*struct_ares_txt_reply = this;
+        while (txt != null) : (txt = txt.?.next) {
+            count += 1;
+        }
+        
+        const array = JSC.JSValue.createEmptyArray(globalThis, count);
+
+        txt = this;
+        var i: u32 = 0;
+        while (txt != null) {
+            var node = txt.?;
+            array.putIndex(globalThis, i, node.toJS(globalThis, allocator));
+            txt = node.next;
+            i += 1;
+        }
+
+        return array;
+    }
+
+    pub fn toJS(this: *struct_ares_txt_reply, globalThis: *JSC.JSGlobalObject, _: std.mem.Allocator) JSC.JSValue {
+
+        var value = this.txt[0..this.length];
+        return JSC.ZigString.fromUTF8(value).toValueGC(globalThis);
+    }
+
+    pub fn Callback(comptime Type: type) type {
+        return fn (*Type, status: ?Error, timeouts: i32, results: ?*struct_ares_txt_reply) void;
+    }
+
+    pub fn callbackWrapper(
+        comptime Type: type,
+        comptime function: Callback(Type),
+    ) ares_callback {
+        return &struct {
+            pub fn handleTxt(ctx: ?*anyopaque, status: c_int, timeouts: c_int, buffer: [*c]u8, buffer_length: c_int) callconv(.C) void {
+                var this = bun.cast(*Type, ctx.?);
+                if (status != ARES_SUCCESS) {
+                    function(this, Error.get(status), timeouts, null);
+                    return;
+                }
+
+                var srv_start: [*c]struct_ares_txt_reply = undefined;
+                var result = ares_parse_txt_reply(buffer, buffer_length, &srv_start);
+                if (result != ARES_SUCCESS) {
+                    function(this, Error.get(result), timeouts, null);
+                    return;
+                }
+                function(this, null, timeouts, srv_start);
+            }
+        }.handleTxt;
+    }
+
+    pub fn deinit(this: *struct_ares_txt_reply) void {
+        ares_free_data(this);
+    }
 };
 pub const struct_ares_txt_ext = extern struct {
     next: [*c]struct_ares_txt_ext,

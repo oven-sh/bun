@@ -9,6 +9,7 @@ test("it exists", () => {
   expect(dns.resolve).toBeDefined();
   expect(dns.resolve4).toBeDefined();
   expect(dns.resolve6).toBeDefined();
+  expect(dns.resolveSrv).toBeDefined();
 });
 
 test("dns.lookup (localhost)", (done) => {
@@ -52,3 +53,13 @@ test("dns.resolveSrv (_test._tcp.invalid.localhost)", (done) => {
     done();
   });
 });
+
+test("dns.resolveTxt (txt.socketify.dev)", (done) => {
+  dns.resolveTxt("txt.socketify.dev", (err, results) => {
+    expect(err).toBeNull();
+    expect(results instanceof Array).toBe(true);
+    expect(results[0]).toBe("bun_test;test");
+    done(err);
+  });
+});
+

@@ -48,13 +48,34 @@ pub const String = extern struct {
         if (comptime !Environment.allow_assert)
             return;
 
-        if (this.isUndefined()) @panic("String is undefined");
+        if (this.isUndefined()) {
+            @breakpoint();
+            @panic("String is undefined");
+        }
+    }
+
+    pub inline fn init(
+        buf: string,
+        in: string,
+    ) String {
+        if (comptime Environment.allow_assert) {
+            const out = realInit(buf, in);
+            if (out.isInline()) {
+                out.assertDefined();
+            } else {
+                std.debug.assert(@bitCast(u64, out.slice(buf)[0..8].*) != undefined);
+            }
+
+            return out;
+        } else {
+            return realInit(buf, in);
+        }
     }
 
     pub fn isUndefined(this: *const String) bool {
         var num: u64 = undefined;
         var bytes = @bitCast(u64, this.bytes);
-        return @truncate(u63, bytes) == @truncate(u63, num) or @truncate(u63, bytes) == @as(u63, 0);
+        return @truncate(u63, bytes) == @truncate(u63, num);
     }
 
     pub const Formatter = struct {
@@ -134,7 +155,7 @@ pub const String = extern struct {
         }
     };
 
-    pub fn init(
+    fn realInit(
         buf: string,
         in: string,
     ) String {
@@ -252,6 +273,8 @@ pub const String = extern struct {
 
     // String must be a pointer because we reference it as a slice. It will become a dead pointer if it is copied.
     pub fn slice(this: *const String, buf: string) string {
+        this.assertDefined();
+
         switch (this.bytes[max_inline_len - 1] & 128) {
             0 => {
                 // Edgecase: string that starts with a 0 byte will be considered empty.
@@ -605,13 +628,13 @@ pub const Version = extern struct {
         return .{ .version = this, .input = input };
     }
 
-    pub fn count(this: Version, buf: []const u8, comptime StringBuilder: type, builder: StringBuilder) void {
+    pub fn count(this: *const Version, buf: []const u8, comptime StringBuilder: type, builder: StringBuilder) void {
         if (this.tag.hasPre() and !this.tag.pre.isInline()) builder.count(this.tag.pre.slice(buf));
         if (this.tag.hasBuild() and !this.tag.build.isInline()) builder.count(this.tag.build.slice(buf));
     }
 
-    pub fn clone(this: Version, buf: []const u8, comptime StringBuilder: type, builder: StringBuilder) Version {
-        var that = this;
+    pub fn clone(this: *const Version, buf: []const u8, comptime StringBuilder: type, builder: StringBuilder) Version {
+        var that = this.*;
 
         if (this.tag.hasPre() and !this.tag.pre.isInline()) that.tag.pre = builder.append(ExternalString, this.tag.pre.slice(buf));
         if (this.tag.hasBuild() and !this.tag.build.isInline()) that.tag.build = builder.append(ExternalString, this.tag.build.slice(buf));

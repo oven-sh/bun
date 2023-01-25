@@ -5269,85 +5269,77 @@ pub const PackageManager = struct {
             // add
             // remove
             outer: for (positionals) |positional| {
-                var request = UpdateRequest{
-                    .name = positional,
-                };
-                var unscoped_name = positional;
-                request.name = unscoped_name;
-
-                // request.name = "@package..." => unscoped_name = "package..."
-                if (unscoped_name.len > 0 and unscoped_name[0] == '@') {
-                    unscoped_name = unscoped_name[1..];
+                var value = std.mem.trim(u8, positional, " \n\r\t");
+                switch (op) {
+                    .link, .unlink => if (!strings.hasPrefixComptime(value, "link:")) {
+                        value = std.fmt.allocPrint(allocator, "link:{s}", .{value}) catch unreachable;
+                    },
+                    else => {},
                 }
 
-                // if there is a semver in package name...
-                if (std.mem.indexOfScalar(u8, unscoped_name, '@')) |i| {
-                    // unscoped_name = "package@1.0.0" => request.name = "package"
-                    request.name = unscoped_name[0..i];
-
-                    // if package was scoped, put "@" back in request.name
-                    if (unscoped_name.ptr != positional.ptr) {
-                        request.name = positional[0 .. i + 1];
-                    }
-
-                    // unscoped_name = "package@1.0.0" => request.version_buf = "1.0.0"
-                    if (unscoped_name.len > i + 1) request.version_buf = unscoped_name[i + 1 ..];
-                }
-
-                if (strings.hasPrefix("http://", request.name) or
-                    strings.hasPrefix("https://", request.name))
-                {
-                    if (Output.isEmojiEnabled()) {
-                        Output.prettyErrorln("<r>😢 <red>error<r><d>:<r> bun {s} http://url is not implemented yet.", .{
-                            @tagName(op),
-                        });
-                    } else {
-                        Output.prettyErrorln("<r><red>error<r><d>:<r> bun {s} http://url is not implemented yet.", .{
-                            @tagName(op),
-                        });
-                    }
-
+                const placeholder = String.from("@@@");
+                var version = Dependency.parseWithOptionalTag(
+                    allocator,
+                    placeholder,
+                    value,
+                    null,
+                    &SlicedString.init(value, value),
+                    log,
+                ) orelse switch (op) {
+                    .link, .unlink => null,
+                    else => brk: {
+                        value = std.fmt.allocPrint(allocator, "npm:{s}", .{value}) catch unreachable;
+                        break :brk Dependency.parseWithOptionalTag(
+                            allocator,
+                            placeholder,
+                            value,
+                            null,
+                            &SlicedString.init(value, value),
+                            log,
+                        );
+                    },
+                } orelse {
+                    Output.prettyErrorln("<r><red>error<r><d>:<r> unrecognised dependency format: {s}", .{
+                        positional,
+                    });
                     Global.exit(1);
+                };
+                switch (version.tag) {
+                    .dist_tag => if (version.value.dist_tag.name.eql(placeholder, value, value)) {
+                        value = std.fmt.allocPrint(allocator, "npm:{s}", .{value}) catch unreachable;
+                        version = Dependency.parseWithOptionalTag(
+                            allocator,
+                            placeholder,
+                            value,
+                            null,
+                            &SlicedString.init(value, value),
+                            log,
+                        ) orelse {
+                            Output.prettyErrorln("<r><red>error<r><d>:<r> unrecognised dependency format: {s}", .{
+                                positional,
+                            });
+                            Global.exit(1);
+                        };
+                    },
+                    else => {},
                 }
 
-                request.name = std.mem.trim(u8, request.name, "\n\r\t");
-                if (request.name.len == 0) continue;
-
+                var request = UpdateRequest{
+                    .name = switch (version.tag) {
+                        .dist_tag => version.value.dist_tag.name,
+                        .github => version.value.github.repo,
+                        .npm => version.value.npm.name,
+                        .symlink => version.value.symlink,
+                        else => version.literal,
+                    }.slice(value),
+                    .version = version,
+                    .version_buf = value,
+                };
                 request.name_hash = String.Builder.stringHash(request.name);
+
                 for (update_requests.constSlice()) |*prev| {
                     if (prev.name_hash == request.name_hash and request.name.len == prev.name.len) continue :outer;
                 }
-
-                request.version_buf = std.mem.trim(u8, request.version_buf, "\n\r\t");
-
-                // https://github.com/npm/npm-package-arg/blob/fbaf2fd0b72a0f38e7c24260fd4504f4724c9466/npa.js#L330
-                if (strings.hasPrefix("https://", request.version_buf) or
-                    strings.hasPrefix("http://", request.version_buf))
-                {
-                    if (Output.isEmojiEnabled()) {
-                        Output.prettyErrorln("<r>😢 <red>error<r><d>:<r> bun {s} http://url is not implemented yet.", .{
-                            @tagName(op),
-                        });
-                    } else {
-                        Output.prettyErrorln("<r><red>error<r><d>:<r> bun {s} http://url is not implemented yet.", .{
-                            @tagName(op),
-                        });
-                    }
-
-                    Global.exit(1);
-                }
-
-                if ((op == .link or op == .unlink) and !strings.hasPrefixComptime(request.version_buf, "link:")) {
-                    request.version_buf = std.fmt.allocPrint(allocator, "link:{s}", .{request.name}) catch unreachable;
-                }
-
-                if (request.version_buf.len == 0) {
-                    request.missing_version = true;
-                } else {
-                    const sliced = SlicedString.init(request.version_buf, request.version_buf);
-                    request.version = Dependency.parse(allocator, String.init(request.name, request.name), request.version_buf, &sliced, log) orelse Dependency.Version{};
-                }
-
                 update_requests.append(request) catch break;
             }
 

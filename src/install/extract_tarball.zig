@@ -195,39 +195,74 @@ fn extract(this: *const ExtractTarball, tgz_bytes: []const u8) !Install.ExtractD
             );
             Global.crash();
         };
-        _ = if (PackageManager.verbose_install)
-            try Archive.extractToDir(
-                zlib_pool.data.list.items,
-                extract_destination,
-                null,
-                void,
-                void{},
-                // for npm packages, the root dir is always "package"
-                // for github tarballs, the root dir is always the commit id
-                1,
-                true,
-                true,
-            )
-        else
-            try Archive.extractToDir(
-                zlib_pool.data.list.items,
-                extract_destination,
-                null,
-                void,
-                void{},
-                // for npm packages, the root dir is always "package"
-                // for github tarballs, the root dir is always the commit id
-                1,
-                true,
-                false,
-            );
-
         switch (this.resolution.tag) {
             .github => {
-                resolved = try Archive.readFirstDirname(zlib_pool.data.list.items);
-                resolved = try this.package_manager.allocator.dupe(u8, resolved);
+                const DirnameReader = struct {
+                    needs_first_dirname: bool = true,
+                    outdirname: *[]const u8,
+                    pub fn onFirstDirectoryName(dirname_reader: *@This(), first_dirname: []const u8) void {
+                        std.debug.assert(dirname_reader.needs_first_dirname);
+                        dirname_reader.needs_first_dirname = false;
+                        dirname_reader.outdirname.* = FileSystem.DirnameStore.instance.append([]const u8, first_dirname) catch unreachable;
+                    }
+                };
+                var dirname_reader = DirnameReader{ .outdirname = &resolved };
+
+                _ = if (PackageManager.verbose_install)
+                    try Archive.extractToDir(
+                        zlib_pool.data.list.items,
+                        extract_destination,
+                        null,
+                        *DirnameReader,
+                        &dirname_reader,
+                        // for npm packages, the root dir is always "package"
+                        // for github tarballs, the root dir is always the commit id
+                        1,
+                        true,
+                        true,
+                    )
+                else
+                    try Archive.extractToDir(
+                        zlib_pool.data.list.items,
+                        extract_destination,
+                        null,
+                        *DirnameReader,
+                        &dirname_reader,
+                        // for npm packages, the root dir is always "package"
+                        // for github tarballs, the root dir is always the commit id
+                        1,
+                        true,
+                        false,
+                    );
             },
-            else => {},
+            else => {
+                _ = if (PackageManager.verbose_install)
+                    try Archive.extractToDir(
+                        zlib_pool.data.list.items,
+                        extract_destination,
+                        null,
+                        void,
+                        void{},
+                        // for npm packages, the root dir is always "package"
+                        // for github tarballs, the root dir is always the commit id
+                        1,
+                        true,
+                        true,
+                    )
+                else
+                    try Archive.extractToDir(
+                        zlib_pool.data.list.items,
+                        extract_destination,
+                        null,
+                        void,
+                        void{},
+                        // for npm packages, the root dir is always "package"
+                        // for github tarballs, the root dir is always the commit id
+                        1,
+                        true,
+                        false,
+                    );
+            },
         }
 
         if (PackageManager.verbose_install) {

@@ -624,13 +624,13 @@ declare module "dns" {
    * ```
    * @since v0.11.10
    */
-  // export function resolveSoa(
-  //   hostname: string,
-  //   callback: (err: ErrnoException | null, address: SoaRecord) => void,
-  // ): void;
-  // export namespace resolveSoa {
-  //   function __promisify__(hostname: string): Promise<SoaRecord>;
-  // }
+  export function resolveSoa(
+    hostname: string,
+    callback: (err: ErrnoException | null, address: SoaRecord) => void,
+  ): void;
+  export namespace resolveSoa {
+    function __promisify__(hostname: string): Promise<SoaRecord>;
+  }
   /**
    * Uses the DNS protocol to resolve service records (`SRV` records) for the`hostname`. The `addresses` argument passed to the `callback` function will
    * be an array of objects with the following properties:
@@ -664,13 +664,13 @@ declare module "dns" {
    * treated separately.
    * @since v0.1.27
    */
-  // export function resolveTxt(
-  //   hostname: string,
-  //   callback: (err: ErrnoException | null, addresses: string[][]) => void,
-  // ): void;
-  // export namespace resolveTxt {
-  //   function __promisify__(hostname: string): Promise<string[][]>;
-  // }
+  export function resolveTxt(
+    hostname: string,
+    callback: (err: ErrnoException | null, addresses: string[][]) => void,
+  ): void;
+  export namespace resolveTxt {
+    function __promisify__(hostname: string): Promise<string[][]>;
+  }
   /**
    * Uses the DNS protocol to resolve all records (also known as `ANY` or `*` query).
    * The `ret` argument passed to the `callback` function will be an array containing
@@ -866,9 +866,9 @@ declare module "dns" {
     // resolveNaptr: typeof resolveNaptr;
     // resolveNs: typeof resolveNs;
     // resolvePtr: typeof resolvePtr;
-    // resolveSoa: typeof resolveSoa;
+    resolveSoa: typeof resolveSoa;
     resolveSrv: typeof resolveSrv;
-    // resolveTxt: typeof resolveTxt;
+    resolveTxt: typeof resolveTxt;
     // reverse: typeof reverse;
     /**
      * The resolver instance will send its requests from the specified IP address.

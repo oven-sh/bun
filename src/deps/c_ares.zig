@@ -172,7 +172,13 @@ pub const Options = extern struct {
     resolvconf_path: ?[*:0]u8 = null,
     hosts_path: ?[*:0]u8 = null,
 };
-pub const struct_hostent = opaque {};
+pub const struct_hostent = extern struct {
+    h_name: [*c]u8,
+    h_aliases: [*c][*c]u8,
+    h_addrtype: c_int,
+    h_length: c_int,
+    h_addr_list: [*c][*c]u8,
+};
 pub const struct_timeval = opaque {};
 pub const struct_Channeldata = opaque {};
 pub const AddrInfo_cname = extern struct {
@@ -535,7 +541,7 @@ pub const struct_ares_srv_reply = extern struct {
     port: c_ushort,
     const JSC = bun.JSC;
 
-    pub fn toJSArray(this: *struct_ares_srv_reply, parent_allocator: std.mem.Allocator, globalThis: *JSC.JSGlobalObject) JSC.JSValue {
+    pub fn toJSReponse(this: *struct_ares_srv_reply, parent_allocator: std.mem.Allocator, globalThis: *JSC.JSGlobalObject) JSC.JSValue {
         var stack = std.heap.stackFallback(2048, parent_allocator);
         var arena = std.heap.ArenaAllocator.init(stack.get());
         defer arena.deinit();
@@ -625,7 +631,7 @@ pub const struct_ares_txt_reply = extern struct {
 
     const JSC = bun.JSC;
 
-    pub fn toJSArray(this: *struct_ares_txt_reply, parent_allocator: std.mem.Allocator, globalThis: *JSC.JSGlobalObject) JSC.JSValue {
+    pub fn toJSReponse(this: *struct_ares_txt_reply, parent_allocator: std.mem.Allocator, globalThis: *JSC.JSGlobalObject) JSC.JSValue {
         var stack = std.heap.stackFallback(2048, parent_allocator);
         var arena = std.heap.ArenaAllocator.init(stack.get());
         defer arena.deinit();
@@ -652,9 +658,10 @@ pub const struct_ares_txt_reply = extern struct {
     }
 
     pub fn toJS(this: *struct_ares_txt_reply, globalThis: *JSC.JSGlobalObject, _: std.mem.Allocator) JSC.JSValue {
-
+        const array = JSC.JSValue.createEmptyArray(globalThis, 1);
         var value = this.txt[0..this.length];
-        return JSC.ZigString.fromUTF8(value).toValueGC(globalThis);
+        array.putIndex(globalThis, 0, JSC.ZigString.fromUTF8(value).toValueGC(globalThis));
+        return array;
     }
 
     pub fn Callback(comptime Type: type) type {
@@ -711,6 +718,70 @@ pub const struct_ares_soa_reply = extern struct {
     retry: c_uint,
     expire: c_uint,
     minttl: c_uint,
+
+    const JSC = bun.JSC;
+
+    pub fn toJSReponse(this: *struct_ares_soa_reply, parent_allocator: std.mem.Allocator, globalThis: *JSC.JSGlobalObject) JSC.JSValue {
+        var stack = std.heap.stackFallback(2048, parent_allocator);
+        var arena = std.heap.ArenaAllocator.init(stack.get());
+        defer arena.deinit();
+
+        var allocator = arena.allocator();
+        
+        return this.toJS(globalThis, allocator);
+    }
+
+    pub fn toJS(this: *struct_ares_soa_reply, globalThis: *JSC.JSGlobalObject, _: std.mem.Allocator) JSC.JSValue {
+        var obj = JSC.JSValue.createEmptyObject(globalThis, 4);
+        
+        obj.put(globalThis, JSC.ZigString.static("serial"), JSC.JSValue.jsNumber(this.serial));
+        obj.put(globalThis, JSC.ZigString.static("refresh"), JSC.JSValue.jsNumber(this.refresh));
+        obj.put(globalThis, JSC.ZigString.static("retry"), JSC.JSValue.jsNumber(this.retry));
+        obj.put(globalThis, JSC.ZigString.static("expire"), JSC.JSValue.jsNumber(this.expire));
+        obj.put(globalThis, JSC.ZigString.static("minttl"), JSC.JSValue.jsNumber(this.minttl));
+
+
+        const nsname_len = bun.len(this.nsname);
+        const nsname = this.nsname[0..nsname_len];
+        obj.put(globalThis, JSC.ZigString.static("nsname"), JSC.ZigString.fromUTF8(nsname).toValueGC(globalThis));
+
+        const hostmaster_len = bun.len(this.hostmaster);
+        const hostmaster = this.hostmaster[0..hostmaster_len];
+        obj.put(globalThis, JSC.ZigString.static("hostmaster"), JSC.ZigString.fromUTF8(hostmaster).toValueGC(globalThis));
+
+        return obj;
+    }
+
+    pub fn Callback(comptime Type: type) type {
+        return fn (*Type, status: ?Error, timeouts: i32, results: ?*struct_ares_soa_reply) void;
+    }
+
+    pub fn callbackWrapper(
+        comptime Type: type,
+        comptime function: Callback(Type),
+    ) ares_callback {
+        return &struct {
+            pub fn handleSoa(ctx: ?*anyopaque, status: c_int, timeouts: c_int, buffer: [*c]u8, buffer_length: c_int) callconv(.C) void {
+                var this = bun.cast(*Type, ctx.?);
+                if (status != ARES_SUCCESS) {
+                    function(this, Error.get(status), timeouts, null);
+                    return;
+                }
+
+                var soa_start: [*c]struct_ares_soa_reply = undefined;
+                var result = ares_parse_soa_reply(buffer, buffer_length, &soa_start);
+                if (result != ARES_SUCCESS) {
+                    function(this, Error.get(result), timeouts, null);
+                    return;
+                }
+                function(this, null, timeouts, soa_start);
+            }
+        }.handleSoa;
+    }
+
+    pub fn deinit(this: *struct_ares_soa_reply) void {
+        ares_free_data(this);
+    }
 };
 pub const struct_ares_uri_reply = extern struct {
     next: [*c]struct_ares_uri_reply,

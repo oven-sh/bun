@@ -58,7 +58,24 @@ test("dns.resolveTxt (txt.socketify.dev)", (done) => {
   dns.resolveTxt("txt.socketify.dev", (err, results) => {
     expect(err).toBeNull();
     expect(results instanceof Array).toBe(true);
-    expect(results[0]).toBe("bun_test;test");
+    expect(results[0][0]).toBe("bun_test;test");
+    done(err);
+  });
+});
+
+
+test("dns.resolveSoa (bun.sh)", (done) => {
+  dns.resolveSoa("bun.sh", (err, result) => {
+    expect(err).toBeNull();
+    
+    expect(result.serial).toBe(2295878541);
+    expect(result.refresh).toBe(10000);
+    expect(result.retry).toBe(2400);
+    expect(result.expire).toBe(604800);
+    expect(result.minttl).toBe(3600);
+    expect(result.nsname).toBe("hans.ns.cloudflare.com");
+    expect(result.hostmaster).toBe("dns.cloudflare.com");
+    
     done(err);
   });
 });

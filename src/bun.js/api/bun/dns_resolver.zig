@@ -614,7 +614,6 @@ pub const GetAddrInfo = struct {
     };
 };
 
-
 pub fn ResolveInfoRequest(comptime cares_type: type, comptime type_name: []const u8) type {
     return struct {
         const request_type = @This();
@@ -716,7 +715,6 @@ pub fn ResolveInfoRequest(comptime cares_type: type, comptime type_name: []const
         }
     };
 }
-
 
 pub const GetAddrInfoRequest = struct {
     const log = Output.scoped(.GetAddrInfoRequest, false);
@@ -973,23 +971,39 @@ pub fn CAresLookup(comptime cares_type: type, comptime type_name: []const u8) ty
                 this.deinit();
                 return;
             }
+            if (comptime strings.eqlComptime(type_name, "soa")) {
+                if (result == null) {
+                    var promise = this.promise;
+                    var globalThis = this.globalThis;
+                    const error_value = globalThis.createErrorInstance("{s} lookup failed: {s}", .{ type_name, "No results" });
+                    error_value.put(
+                        globalThis,
+                        JSC.ZigString.static("code"),
+                        JSC.ZigString.init("EUNREACHABLE").toValueGC(globalThis),
+                    );
 
-            if (result == null or result.?.next == null) {
-                var promise = this.promise;
-                var globalThis = this.globalThis;
-                const error_value = globalThis.createErrorInstance("{s} lookup failed: {s}", .{ type_name, "No results" });
-                error_value.put(
-                    globalThis,
-                    JSC.ZigString.static("code"),
-                    JSC.ZigString.init("EUNREACHABLE").toValueGC(globalThis),
-                );
+                    promise.reject(globalThis, error_value);
+                    this.deinit();
+                    return;
+                }
+            } else {
+                if (result == null or result.?.next == null) {
+                    var promise = this.promise;
+                    var globalThis = this.globalThis;
+                    const error_value = globalThis.createErrorInstance("{s} lookup failed: {s}", .{ type_name, "No results" });
+                    error_value.put(
+                        globalThis,
+                        JSC.ZigString.static("code"),
+                        JSC.ZigString.init("EUNREACHABLE").toValueGC(globalThis),
+                    );
 
-                promise.reject(globalThis, error_value);
-                this.deinit();
-                return;
+                    promise.reject(globalThis, error_value);
+                    this.deinit();
+                    return;
+                }
             }
             var node = result.?;
-            const array = node.toJSArray(this.globalThis.allocator(), this.globalThis);
+            const array = node.toJSReponse(this.globalThis.allocator(), this.globalThis);
             this.onComplete(array);
             return;
         }
@@ -1011,7 +1025,6 @@ pub fn CAresLookup(comptime cares_type: type, comptime type_name: []const u8) ty
         }
     };
 }
-
 
 pub const DNSLookup = struct {
     const log = Output.scoped(.DNSLookup, true);
@@ -1140,7 +1153,6 @@ pub const GlobalData = struct {
 };
 
 pub const DNSResolver = struct {
-
     const log = Output.scoped(.DNSResolver, true);
 
     channel: ?*c_ares.Channel = null,
@@ -1150,11 +1162,13 @@ pub const DNSResolver = struct {
     pending_host_cache_cares: PendingCache = PendingCache.init(),
     pending_host_cache_native: PendingCache = PendingCache.init(),
     pending_srv_cache_cares: SrvPendingCache = SrvPendingCache.init(),
+    pending_soa_cache_cares: SoaPendingCache = SoaPendingCache.init(),
     pending_txt_cache_cares: TxtPendingCache = TxtPendingCache.init(),
     // entry_host_cache: std.BoundedArray(128)
 
     const PendingCache = bun.HiveArray(GetAddrInfoRequest.PendingCacheKey, 32);
     const SrvPendingCache = bun.HiveArray(ResolveInfoRequest(c_ares.struct_ares_srv_reply, "srv").PendingCacheKey, 32);
+    const SoaPendingCache = bun.HiveArray(ResolveInfoRequest(c_ares.struct_ares_soa_reply, "soa").PendingCacheKey, 32);
     const TxtPendingCache = bun.HiveArray(ResolveInfoRequest(c_ares.struct_ares_txt_reply, "txt").PendingCacheKey, 32);
 
     fn getKey(this: *DNSResolver, index: u8, comptime cache_name: []const u8, comptime request_type: type) request_type.PendingCacheKey {
@@ -1169,7 +1183,6 @@ pub const DNSResolver = struct {
 
         return entry;
     }
-
 
     pub fn drainPendingCares(this: *DNSResolver, index: u8, err: ?c_ares.Error, timeout: i32, comptime request_type: type, comptime cares_type: type, comptime lookup_name: []const u8, result: ?*cares_type) void {
         const cache_name = comptime std.fmt.comptimePrint("pending_{s}_cache_cares", .{lookup_name});
@@ -1190,7 +1203,7 @@ pub const DNSResolver = struct {
 
         var pending: ?*CAresLookup(cares_type, lookup_name) = key.lookup.head.next;
         var prev_global = key.lookup.head.globalThis;
-        var array = addr.toJSArray(this.vm.allocator, prev_global);
+        var array = addr.toJSReponse(this.vm.allocator, prev_global);
         defer addr.deinit();
         array.ensureStillAlive();
         key.lookup.head.onComplete(array);
@@ -1201,7 +1214,7 @@ pub const DNSResolver = struct {
         while (pending) |value| {
             var new_global = value.globalThis;
             if (prev_global != new_global) {
-                array = addr.toJSArray(this.vm.allocator, new_global);
+                array = addr.toJSReponse(this.vm.allocator, new_global);
                 prev_global = new_global;
             }
             pending = value.next;
@@ -1313,7 +1326,7 @@ pub const DNSResolver = struct {
             disabled: void,
         };
     }
-    
+
     pub fn getOrPutIntoResolvePendingCache(
         this: *DNSResolver,
         comptime request_type: type,
@@ -1633,6 +1646,37 @@ pub const DNSResolver = struct {
         return resolver.doResolveCAres(c_ares.struct_ares_srv_reply, "srv", &name, globalThis);
     }
 
+    pub fn resolveSoa(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+        const arguments = callframe.arguments(2);
+        if (arguments.len < 1) {
+            globalThis.throwNotEnoughArguments("resolveSoa", 2, arguments.len);
+            return .zero;
+        }
+
+        const name_value = arguments.ptr[0];
+
+        if (name_value.isEmptyOrUndefinedOrNull() or !name_value.isString()) {
+            globalThis.throwInvalidArgumentType("resolveSoa", "hostname", "string");
+            return .zero;
+        }
+
+        const name_str = name_value.toStringOrNull(globalThis) orelse {
+            return .zero;
+        };
+
+        if (name_str.length() == 0) {
+            globalThis.throwInvalidArgumentType("resolveSoa", "hostname", "non-empty string");
+            return .zero;
+        }
+
+        const name = name_str.toSlice(globalThis, bun.default_allocator);
+
+        var vm = globalThis.bunVM();
+        var resolver = vm.rareData().globalDNSResolver(vm);
+
+        return resolver.doResolveCAres(c_ares.struct_ares_soa_reply, "soa", &name, globalThis);
+    }
+
     pub fn resolveTxt(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
         const arguments = callframe.arguments(2);
         if (arguments.len < 1) {
@@ -1680,7 +1724,6 @@ pub const DNSResolver = struct {
                 return .zero;
             },
         };
-
 
         const cache_name = comptime std.fmt.comptimePrint("pending_{s}_cache_cares", .{type_name});
 
@@ -1774,6 +1817,12 @@ pub const DNSResolver = struct {
             resolveTxt,
             .{
                 .name = "Bun__DNSResolver__resolveTxt",
+            },
+        );
+        @export(
+            resolveSoa,
+            .{
+                .name = "Bun__DNSResolver__resolveSoa",
             },
         );
         @export(

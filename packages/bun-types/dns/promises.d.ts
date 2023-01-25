@@ -14,7 +14,7 @@ declare module "dns/promises" {
     // CaaRecord,
     // MxRecord,
     // NaptrRecord,
-    // SoaRecord,
+    SoaRecord,
     SrvRecord,
     ResolveWithTtlOptions,
     RecordWithTtl,
@@ -145,7 +145,7 @@ declare module "dns/promises" {
   // function resolve(hostname: string, rrtype: "PTR"): Promise<string[]>;
   // function resolve(hostname: string, rrtype: "SOA"): Promise<SoaRecord>;
   function resolveSrv(hostname: string): Promise<SrvRecord[]>;
-  // function resolve(hostname: string, rrtype: "TXT"): Promise<string[][]>;
+  function resolve(hostname: string, rrtype: "TXT"): Promise<string[][]>;
   // function resolve(
   //   hostname: string,
   //   rrtype: string,
@@ -299,7 +299,7 @@ declare module "dns/promises" {
    * ```
    * @since v10.6.0
    */
-  // function resolveSoa(hostname: string): Promise<SoaRecord>;
+  function resolveSoa(hostname: string): Promise<SoaRecord>;
   /**
    * Uses the DNS protocol to resolve service records (`SRV` records) for the`hostname`. On success, the `Promise` is resolved with an array of objects with
    * the following properties:
@@ -327,7 +327,7 @@ declare module "dns/promises" {
    * treated separately.
    * @since v10.6.0
    */
-  // function resolveTxt(hostname: string): Promise<string[][]>;
+  function resolveTxt(hostname: string): Promise<string[][]>;
   /**
    * Performs a reverse DNS query that resolves an IPv4 or IPv6 address to an
    * array of host names.
@@ -389,9 +389,9 @@ declare module "dns/promises" {
     // resolveNaptr: typeof resolveNaptr;
     // resolveNs: typeof resolveNs;
     // resolvePtr: typeof resolvePtr;
-    // resolveSoa: typeof resolveSoa;
+    resolveSoa: typeof resolveSoa;
     resolveSrv: typeof resolveSrv;
-    // resolveTxt: typeof resolveTxt;
+    resolveTxt: typeof resolveTxt;
     // reverse: typeof reverse;
     // setLocalAddress(ipv4?: string, ipv6?: string): void;
     // setServers: typeof setServers;

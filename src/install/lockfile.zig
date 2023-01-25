@@ -1883,6 +1883,8 @@ pub const Package = extern struct {
         }
     };
 
+    const debug = Output.scoped(.Lockfile, true);
+
     pub fn clone(
         this_: *const Lockfile.Package,
         old: *Lockfile,
@@ -1895,6 +1897,7 @@ pub const Package = extern struct {
         const old_extern_string_buf = old.buffers.extern_strings.items;
         var builder_ = new.stringBuilder();
         var builder = &builder_;
+        debug("Clone: {s}@{any} ({s}, {d} dependencies)", .{ this.name.slice(old_string_buf), this.resolution.fmt(old_string_buf), @tagName(this.resolution.tag), this.dependencies.len });
 
         builder.count(this.name.slice(old_string_buf));
         this.resolution.count(old_string_buf, *Lockfile.StringBuilder, builder);

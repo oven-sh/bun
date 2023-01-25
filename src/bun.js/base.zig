@@ -151,6 +151,20 @@ pub const To = struct {
 
                     break :brk val.asObjectRef();
                 },
+                []const JSC.ZigString => {
+                    var array = JSC.JSValue.createStringArray(context.ptr(), value.ptr, value.len, clone).asObjectRef();
+                    const values: []const JSC.ZigString = value;
+                    defer bun.default_allocator.free(values);
+                    if (clone) {
+                        for (values) |out| {
+                            if (out.isGloballyAllocated()) {
+                                out.deinitGlobal();
+                            }
+                        }
+                    }
+
+                    return array;
+                },
                 []const PathString, []const []const u8, []const []u8, [][]const u8, [][:0]const u8, [][:0]u8 => {
                     if (value.len == 0)
                         return JSC.C.JSObjectMakeArray(context, 0, null, exception);
@@ -2147,7 +2161,6 @@ pub const JSPrivateDataPtr = TaggedPointerUnion(.{
     SSLServer,
     Stats,
     TextChunk,
-    Transpiler,
     FFI,
 });
 

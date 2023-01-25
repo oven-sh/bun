@@ -178,7 +178,7 @@ pub const Version = struct {
     pub const zeroed = Version{};
 
     pub fn clone(
-        this: Version,
+        this: *const Version,
         buf: []const u8,
         comptime StringBuilder: type,
         builder: StringBuilder,
@@ -223,8 +223,8 @@ pub const Version = struct {
     }
 
     pub inline fn eql(
-        lhs: Version,
-        rhs: Version,
+        lhs: *const Version,
+        rhs: *const Version,
         lhs_buf: []const u8,
         rhs_buf: []const u8,
     ) bool {
@@ -238,7 +238,7 @@ pub const Version = struct {
             .npm => strings.eql(lhs.literal.slice(lhs_buf), rhs.literal.slice(rhs_buf)) or
                 lhs.value.npm.eql(rhs.value.npm, lhs_buf, rhs_buf),
             .folder, .dist_tag => lhs.literal.eql(rhs.literal, lhs_buf, rhs_buf),
-            .github => lhs.value.github.eql(rhs.value.github, lhs_buf, rhs_buf),
+            .github => lhs.value.github.eql(&rhs.value.github, lhs_buf, rhs_buf),
             .tarball => lhs.value.tarball.eql(rhs.value.tarball, lhs_buf, rhs_buf),
             .symlink => lhs.value.symlink.eql(rhs.value.symlink, lhs_buf, rhs_buf),
             .workspace => lhs.value.workspace.eql(rhs.value.workspace, lhs_buf, rhs_buf),
@@ -513,15 +513,15 @@ pub const Version = struct {
 };
 
 pub fn eql(
-    a: Dependency,
-    b: Dependency,
+    a: *const Dependency,
+    b: *const Dependency,
     lhs_buf: []const u8,
     rhs_buf: []const u8,
 ) bool {
-    return a.name_hash == b.name_hash and a.name.len() == b.name.len() and a.version.eql(b.version, lhs_buf, rhs_buf);
+    return a.name_hash == b.name_hash and a.name.len() == b.name.len() and a.version.eql(&b.version, lhs_buf, rhs_buf);
 }
 
-pub fn eqlResolved(a: Dependency, b: Dependency) bool {
+pub fn eqlResolved(a: *const Dependency, b: *const Dependency) bool {
     if (a.isNPM() and b.tag.isNPM()) {
         return a.resolution == b.resolution;
     }

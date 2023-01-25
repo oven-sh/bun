@@ -1271,9 +1271,9 @@ pub const Printer = struct {
                     const always_needs_quote = name[0] == '@';
                     var prev_dependency_version: ?Dependency.Version = null;
                     var needs_comma = false;
-                    for (dependency_versions) |dependency_version| {
+                    for (dependency_versions) |*dependency_version| {
                         if (needs_comma) {
-                            if (prev_dependency_version) |prev| {
+                            if (prev_dependency_version) |*prev| {
                                 if (prev.eql(dependency_version, string_buf, string_buf)) {
                                     continue;
                                 }
@@ -1295,7 +1295,7 @@ pub const Printer = struct {
                         if (needs_quote) {
                             try writer.writeByte('"');
                         }
-                        prev_dependency_version = dependency_version;
+                        prev_dependency_version = dependency_version.*;
                         needs_comma = true;
                     }
 
@@ -1516,7 +1516,7 @@ pub fn getPackageID(
     name_hash: u64,
     // if it's a peer dependency, a folder, or a symlink
     version: ?Dependency.Version,
-    resolution: Resolution,
+    resolution: *const Resolution,
 ) ?PackageID {
     const entry = this.package_index.get(name_hash) orelse return null;
     const resolutions: []const Resolution = this.packages.items(.resolution);
@@ -1638,7 +1638,7 @@ pub fn appendPackage(this: *Lockfile, package_: Lockfile.Package) !Lockfile.Pack
 fn appendPackageWithID(this: *Lockfile, package_: Lockfile.Package, id: PackageID) !Lockfile.Package {
     defer {
         if (comptime Environment.isDebug) {
-            std.debug.assert(this.getPackageID(package_.name_hash, null, package_.resolution) != null);
+            std.debug.assert(this.getPackageID(package_.name_hash, null, &package_.resolution) != null);
         }
     }
     var package = package_;
@@ -1853,6 +1853,16 @@ pub const Package = extern struct {
     meta: Meta = Meta{},
     bin: Bin = Bin{},
 
+    pub fn verify(this: *const Package, externs: []const ExternalString) void {
+        if (comptime !Environment.allow_assert)
+            return;
+
+        this.name.assertDefined();
+        this.resolution.verify();
+        this.meta.man_dir.assertDefined();
+        this.bin.verify(externs);
+    }
+
     pub const DependencyGroup = struct {
         prop: string,
         field: string,
@@ -1903,8 +1913,8 @@ pub const Package = extern struct {
         this.meta.count(old_string_buf, *Lockfile.StringBuilder, builder);
         const new_extern_string_count = this.bin.count(old_string_buf, old_extern_string_buf, *Lockfile.StringBuilder, builder);
 
-        if (old.alias_map.get(this.meta.id)) |alias| {
-            builder.count(old.str(&alias));
+        if (old.alias_map.get(this.meta.id)) |*alias| {
+            builder.count(old.str(alias));
         }
 
         const old_dependencies: []const Dependency = this.dependencies.get(old.buffers.dependencies.items);
@@ -1960,11 +1970,12 @@ pub const Package = extern struct {
             },
             id,
         );
+        defer new_package.verify(new.buffers.extern_strings.items);
 
         package_id_mapping[this.meta.id] = new_package.meta.id;
 
-        if (old.alias_map.get(this.meta.id)) |alias| {
-            try new.alias_map.put(new.allocator, new_package.meta.id, builder.append(String, old.str(&alias)));
+        if (old.alias_map.get(this.meta.id)) |*alias| {
+            try new.alias_map.put(new.allocator, new_package.meta.id, builder.append(String, old.str(alias)));
         }
 
         for (old_dependencies) |dependency, i| {
@@ -2325,7 +2336,7 @@ pub const Package = extern struct {
             const to_deps = to.dependencies.get(to_lockfile.buffers.dependencies.items);
             const from_deps = from.dependencies.get(from_lockfile.buffers.dependencies.items);
 
-            for (from_deps) |from_dep, i| {
+            for (from_deps) |*from_dep, i| {
                 // common case: dependency is present in both versions and in the same position
                 const to_i = if (to_deps.len > i and to_deps[i].name_hash == from_dep.name_hash)
                     i

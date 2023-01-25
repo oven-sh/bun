@@ -407,6 +407,13 @@ pub const PackageVersion = extern struct {
     os: OperatingSystem = OperatingSystem.all,
     /// `"cpu"` field in package.json
     cpu: Architecture = Architecture.all,
+
+    pub fn verify(this: *const PackageVersion) void {
+        if (comptime !Environment.allow_assert)
+            return;
+
+        this.man_dir.value.assertDefined();
+    }
 };
 
 pub const NpmPackage = extern struct {
@@ -439,6 +446,23 @@ pub const PackageManifest = struct {
     external_strings_for_versions: []const ExternalString = &[_]ExternalString{},
     package_versions: []const PackageVersion = &[_]PackageVersion{},
     extern_strings_bin_entries: []const ExternalString = &[_]ExternalString{},
+
+    pub fn verify(this: *const PackageManifest) void {
+        if (comptime !Environment.allow_assert)
+            return;
+
+        for (this.extern_strings_bin_entries) |*entry| {
+            entry.value.assertDefined();
+        }
+
+        for (this.external_strings_for_versions) |entry| {
+            entry.value.assertDefined();
+        }
+
+        for (this.package_versions) |package| {
+            package.tarball_url.value.assertDefined();
+        }
+    }
 
     pub inline fn name(this: *const PackageManifest) string {
         return this.pkg.name.slice(this.string_buf);
@@ -616,6 +640,8 @@ pub const PackageManifest = struct {
                     );
                 }
             }
+
+            package_manifest.verify();
 
             return package_manifest;
         }

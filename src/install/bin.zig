@@ -20,7 +20,30 @@ pub const Bin = extern struct {
     tag: Tag = Tag.none,
     value: Value = Value{ .none = {} },
 
-    pub fn count(this: Bin, buf: []const u8, extern_strings: []const ExternalString, comptime StringBuilder: type, builder: StringBuilder) u32 {
+    pub fn verify(this: *const Bin, extern_strings: []const ExternalString) void {
+        if (comptime !Environment.allow_assert)
+            return;
+
+        switch (this.tag) {
+            .file => this.value.file.assertDefined(),
+            .named_file => {
+                this.value.named_file[0].assertDefined();
+                this.value.named_file[1].assertDefined();
+            },
+            .dir => {
+                this.value.dir.assertDefined();
+            },
+            .map => {
+                const list = this.value.map.get(extern_strings);
+                for (list) |*extern_string| {
+                    extern_string.value.assertDefined();
+                }
+            },
+            else => {},
+        }
+    }
+
+    pub fn count(this: *const Bin, buf: []const u8, extern_strings: []const ExternalString, comptime StringBuilder: type, builder: StringBuilder) u32 {
         switch (this.tag) {
             .file => builder.count(this.value.file.slice(buf)),
             .named_file => {
@@ -29,10 +52,11 @@ pub const Bin = extern struct {
             },
             .dir => builder.count(this.value.dir.slice(buf)),
             .map => {
-                for (this.value.map.get(extern_strings)) |extern_string| {
+                const list = this.value.map.get(extern_strings);
+                for (list) |*extern_string| {
                     builder.count(extern_string.slice(buf));
                 }
-                return this.value.map.len;
+                return @truncate(u32, list.len);
             },
             else => {},
         }
@@ -40,7 +64,7 @@ pub const Bin = extern struct {
         return 0;
     }
 
-    pub fn clone(this: Bin, buf: []const u8, prev_external_strings: []const ExternalString, all_extern_strings: []ExternalString, extern_strings_slice: []ExternalString, comptime StringBuilder: type, builder: StringBuilder) Bin {
+    pub fn clone(this: *const Bin, buf: []const u8, prev_external_strings: []const ExternalString, all_extern_strings: []ExternalString, extern_strings_slice: []ExternalString, comptime StringBuilder: type, builder: StringBuilder) Bin {
         return switch (this.tag) {
             .none => Bin{ .tag = .none, .value = .{ .none = {} } },
             .file => Bin{

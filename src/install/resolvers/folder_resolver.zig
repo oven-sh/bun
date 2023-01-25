@@ -160,7 +160,7 @@ pub const FolderResolution = union(Tag) {
             features,
         );
 
-        if (manager.lockfile.getPackageID(package.name_hash, version, package.resolution)) |existing_id| {
+        if (manager.lockfile.getPackageID(package.name_hash, version, &package.resolution)) |existing_id| {
             return manager.lockfile.packages.get(existing_id);
         }
 

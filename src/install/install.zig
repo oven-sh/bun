@@ -5696,10 +5696,21 @@ pub const PackageManager = struct {
             resolution: Resolution,
         ) void {
             const buf = this.lockfile.buffers.string_bytes.items;
-            const alias = if (this.lockfile.alias_map.get(package_id)) |str| str.slice(buf) else name;
-            std.mem.copy(u8, &this.destination_dir_subpath_buf, alias);
-            this.destination_dir_subpath_buf[alias.len] = 0;
-            var destination_dir_subpath: [:0]u8 = this.destination_dir_subpath_buf[0..alias.len :0];
+
+            const destination_dir_subpath: [:0]u8 = brk: {
+                var alias = name;
+                if (this.lockfile.alias_map.get(package_id)) |str| {
+                    alias = str.slice(buf);
+                    std.mem.copy(u8, &this.destination_dir_subpath_buf, alias);
+                    this.destination_dir_subpath_buf[alias.len] = 0;
+                    break :brk this.destination_dir_subpath_buf[0..alias.len :0];
+                }
+
+                std.mem.copy(u8, &this.destination_dir_subpath_buf, alias);
+                this.destination_dir_subpath_buf[alias.len] = 0;
+                break :brk this.destination_dir_subpath_buf[0..alias.len :0];
+            };
+
             var resolution_buf: [512]u8 = undefined;
             const extern_string_buf = this.lockfile.buffers.extern_strings.items;
             var resolution_label = std.fmt.bufPrint(&resolution_buf, "{}", .{resolution.fmt(buf)}) catch unreachable;

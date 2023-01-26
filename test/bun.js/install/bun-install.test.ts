@@ -1236,6 +1236,7 @@ it("should handle GitHub URL in dependencies (user/repo)", async () => {
     "uglifyjs",
   ]);
   expect(await readdirSorted(join(package_dir, "node_modules", "uglify"))).toEqual([
+    ".bun-tag",
     ".gitattributes",
     ".github",
     ".gitignore",
@@ -1306,6 +1307,7 @@ it("should handle GitHub URL in dependencies (user/repo#commit-id)", async () =>
     join(package_dir, "node_modules", ".cache", "@GH@mishoo-UglifyJS-e219a9a"),
   );
   expect(await readdirSorted(join(package_dir, "node_modules", "uglify"))).toEqual([
+    ".bun-tag",
     ".gitattributes",
     ".github",
     ".gitignore",
@@ -1377,6 +1379,7 @@ it("should handle GitHub URL in dependencies (user/repo#tag)", async () => {
     join(package_dir, "node_modules", ".cache", "@GH@mishoo-UglifyJS-e219a9a"),
   );
   expect(await readdirSorted(join(package_dir, "node_modules", "uglify"))).toEqual([
+    ".bun-tag",
     ".gitattributes",
     ".github",
     ".gitignore",
@@ -1448,6 +1451,7 @@ it("should handle GitHub URL in dependencies (github:user/repo#tag)", async () =
     join(package_dir, "node_modules", ".cache", "@GH@mishoo-UglifyJS-e219a9a"),
   );
   expect(await readdirSorted(join(package_dir, "node_modules", "uglify"))).toEqual([
+    ".bun-tag",
     ".gitattributes",
     ".github",
     ".gitignore",
@@ -1509,6 +1513,7 @@ it("should handle GitHub URL in dependencies (https://github.com/user/repo.git)"
     "uglifyjs",
   ]);
   expect(await readdirSorted(join(package_dir, "node_modules", "uglify"))).toEqual([
+    ".bun-tag",
     ".gitattributes",
     ".github",
     ".gitignore",

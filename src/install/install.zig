@@ -5325,13 +5325,13 @@ pub const PackageManager = struct {
                 }
 
                 var request = UpdateRequest{
-                    .name = switch (version.tag) {
+                    .name = allocator.dupe(u8, switch (version.tag) {
                         .dist_tag => version.value.dist_tag.name,
                         .github => version.value.github.repo,
                         .npm => version.value.npm.name,
                         .symlink => version.value.symlink,
                         else => version.literal,
-                    }.slice(value),
+                    }.slice(value)) catch unreachable,
                     .version = version,
                     .version_buf = value,
                 };
@@ -5873,14 +5873,7 @@ pub const PackageManager = struct {
             const buf = this.lockfile.buffers.string_bytes.items;
 
             const destination_dir_subpath: [:0]u8 = brk: {
-                var alias = name;
-                if (this.lockfile.alias_map.get(package_id)) |str| {
-                    alias = str.slice(buf);
-                    std.mem.copy(u8, &this.destination_dir_subpath_buf, alias);
-                    this.destination_dir_subpath_buf[alias.len] = 0;
-                    break :brk this.destination_dir_subpath_buf[0..alias.len :0];
-                }
-
+                const alias = if (this.lockfile.alias_map.get(package_id)) |str| str.slice(buf) else name;
                 std.mem.copy(u8, &this.destination_dir_subpath_buf, alias);
                 this.destination_dir_subpath_buf[alias.len] = 0;
                 break :brk this.destination_dir_subpath_buf[0..alias.len :0];

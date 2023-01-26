@@ -70,10 +70,7 @@ pub const Repository = extern struct {
             try writer.writeAll("/");
             try writer.writeAll(formatter.repository.repo.slice(formatter.buf));
 
-            if (!formatter.repository.resolved.isEmpty()) {
-                try writer.writeAll("#");
-                try writer.writeAll(formatter.repository.resolved.slice(formatter.buf));
-            } else if (!formatter.repository.committish.isEmpty()) {
+            if (!formatter.repository.committish.isEmpty()) {
                 try writer.writeAll("#");
                 try writer.writeAll(formatter.repository.committish.slice(formatter.buf));
             }

@@ -298,6 +298,7 @@ pub fn BSSStringList(comptime _count: usize, comptime _item_length: usize) type 
             if (!loaded) {
                 instance = Self{
                     .allocator = allocator,
+                    .backing_buf_used = 0,
                 };
                 loaded = true;
             }

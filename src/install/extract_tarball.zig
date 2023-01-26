@@ -234,6 +234,17 @@ fn extract(this: *const ExtractTarball, tgz_bytes: []const u8, task_id: u64) !In
                         true,
                         false,
                     );
+
+                // This tag is used to know which version of the package was
+                // installed from GitHub. package.json version becomes sort of
+                // meaningless in cases like this.
+                if (resolved.len > 0) insert_tag: {
+                    const gh_tag = extract_destination.dir.createFileZ(".bun-tag", .{ .truncate = true }) catch break :insert_tag;
+                    defer gh_tag.close();
+                    gh_tag.writeAll(resolved) catch {
+                        extract_destination.dir.deleteFileZ(".bun-tag") catch {};
+                    };
+                }
             },
             else => {
                 _ = if (PackageManager.verbose_install)

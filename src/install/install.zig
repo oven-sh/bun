@@ -704,10 +704,76 @@ const PackageInstall = struct {
         }
     };
 
+    // 1. verify that .bun-tag exists (was it installed from bun?)
+    // 2. check .bun-tag against the resolved version
+    fn verifyGitHubResolution(this: *PackageInstall, resolution: *const Resolution, buf: []const u8) bool {
+        var allocator = this.allocator;
+
+        var total: usize = 0;
+        var read: usize = 0;
+
+        std.mem.copy(u8, this.destination_dir_subpath_buf[this.destination_dir_subpath.len..], std.fs.path.sep_str ++ ".bun-tag");
+        this.destination_dir_subpath_buf[this.destination_dir_subpath.len + std.fs.path.sep_str.len + ".bun-tag".len] = 0;
+        var bun_gh_tag_path: [:0]u8 = this.destination_dir_subpath_buf[0 .. this.destination_dir_subpath.len + std.fs.path.sep_str.len + ".bun-tag".len :0];
+        defer this.destination_dir_subpath_buf[this.destination_dir_subpath.len] = 0;
+        const gh_tag_file = this.destination_dir.dir.openFileZ(bun_gh_tag_path, .{ .mode = .read_only }) catch return false;
+        defer gh_tag_file.close();
+
+        var body_pool = Npm.Registry.BodyPool.get(allocator);
+        var mutable: MutableString = body_pool.data;
+        defer {
+            body_pool.data = mutable;
+            Npm.Registry.BodyPool.release(body_pool);
+        }
+
+        mutable.reset();
+
+        mutable.list.expandToCapacity();
+
+        // this file is pretty small
+        read = gh_tag_file.read(mutable.list.items[total..]) catch return false;
+        var remain = mutable.list.items[@min(total, read)..];
+        if (read > 0 and remain.len < 1024) {
+            mutable.growBy(4096) catch return false;
+            mutable.list.expandToCapacity();
+        }
+
+        // never read more than 2048 bytes. it should never be 2048 bytes.
+        while (read > 0 and total < 2048) : (read = gh_tag_file.read(remain) catch return false) {
+            total += read;
+
+            mutable.list.expandToCapacity();
+            remain = mutable.list.items[total..];
+
+            if (remain.len < 1024) {
+                mutable.growBy(4096) catch return false;
+            }
+            mutable.list.expandToCapacity();
+            remain = mutable.list.items[total..];
+        }
+
+        mutable.list.expandToCapacity();
+
+        return strings.eqlLong(resolution.value.github.resolved.slice(buf), mutable.list.items[0..total], true);
+    }
+
     pub fn verify(
         this: *PackageInstall,
+        resolution: *const Resolution,
+        buf: []const u8,
     ) bool {
+        if (resolution.tag == .github) {
+            return this.verifyGitHubResolution(resolution, buf);
+        }
+
+        return this.verifyPackageJSONNameAndVersion();
+    }
+
+    fn verifyPackageJSONNameAndVersion(this: *PackageInstall) bool {
         var allocator = this.allocator;
+        var total: usize = 0;
+        var read: usize = 0;
+
         std.mem.copy(u8, this.destination_dir_subpath_buf[this.destination_dir_subpath.len..], std.fs.path.sep_str ++ "package.json");
         this.destination_dir_subpath_buf[this.destination_dir_subpath.len + std.fs.path.sep_str.len + "package.json".len] = 0;
         var package_json_path: [:0]u8 = this.destination_dir_subpath_buf[0 .. this.destination_dir_subpath.len + std.fs.path.sep_str.len + "package.json".len :0];

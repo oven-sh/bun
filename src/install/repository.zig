@@ -70,7 +70,14 @@ pub const Repository = extern struct {
             try writer.writeAll("/");
             try writer.writeAll(formatter.repository.repo.slice(formatter.buf));
 
-            if (!formatter.repository.committish.isEmpty()) {
+            if (!formatter.repository.resolved.isEmpty()) {
+                try writer.writeAll("#");
+                var resolved = formatter.repository.resolved.slice(formatter.buf);
+                if (std.mem.lastIndexOfScalar(u8, resolved, '-')) |i| {
+                    resolved = resolved[i + 1 ..];
+                }
+                try writer.writeAll(resolved);
+            } else if (!formatter.repository.committish.isEmpty()) {
                 try writer.writeAll("#");
                 try writer.writeAll(formatter.repository.committish.slice(formatter.buf));
             }

@@ -1218,8 +1218,10 @@ it("should handle GitHub URL in dependencies (user/repo)", async () => {
   const err = await new Response(stderr).text();
   expect(err).toContain("Saved lockfile");
   expect(stdout).toBeDefined();
-  const out = await new Response(stdout).text();
-  expect(out.replace(/\s*\[[0-9\.]+ms\]\s*$/, "").split(/\r?\n/)).toEqual([
+  let out = await new Response(stdout).text();
+  out = out.replace(/\s*\[[0-9\.]+ms\]\s*$/, "");
+  out = out.replace(/(github:[^#]+)#[a-f0-9]+/, "$1");
+  expect(out.split(/\r?\n/)).toEqual([
     " + uglify@github:mishoo/UglifyJS",
     "",
     " 1 packages installed",
@@ -1353,7 +1355,7 @@ it("should handle GitHub URL in dependencies (user/repo#tag)", async () => {
   expect(stdout).toBeDefined();
   const out = await new Response(stdout).text();
   expect(out.replace(/\s*\[[0-9\.]+ms\]\s*$/, "").split(/\r?\n/)).toEqual([
-    " + uglify@github:mishoo/UglifyJS#v3.14.1",
+    " + uglify@github:mishoo/UglifyJS#e219a9a",
     "",
     " 1 packages installed",
   ]);
@@ -1425,7 +1427,7 @@ it("should handle GitHub URL in dependencies (github:user/repo#tag)", async () =
   expect(stdout).toBeDefined();
   const out = await new Response(stdout).text();
   expect(out.replace(/\s*\[[0-9\.]+ms\]\s*$/, "").split(/\r?\n/)).toEqual([
-    " + uglify@github:mishoo/UglifyJS#v3.14.1",
+    " + uglify@github:mishoo/UglifyJS#e219a9a",
     "",
     " 1 packages installed",
   ]);
@@ -1495,8 +1497,10 @@ it("should handle GitHub URL in dependencies (https://github.com/user/repo.git)"
   const err = await new Response(stderr).text();
   expect(err).toContain("Saved lockfile");
   expect(stdout).toBeDefined();
-  const out = await new Response(stdout).text();
-  expect(out.replace(/\s*\[[0-9\.]+ms\]\s*$/, "").split(/\r?\n/)).toEqual([
+  let out = await new Response(stdout).text();
+  out = out.replace(/\s*\[[0-9\.]+ms\]\s*$/, "");
+  out = out.replace(/(github:[^#]+)#[a-f0-9]+/, "$1");
+  expect(out.split(/\r?\n/)).toEqual([
     " + uglify@github:mishoo/UglifyJS",
     "",
     " 1 packages installed",

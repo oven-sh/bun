@@ -986,7 +986,7 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
             @memcpy(writable.ptr, data_.ptr, data_.len);
             this.receive_buffer.update(data_.len);
 
-            if (left_in_fragment > data_.len and left_in_fragment - data_.len - this.receive_pending_chunk_len == 0) {
+            if (left_in_fragment >= data_.len and left_in_fragment - data_.len - this.receive_pending_chunk_len == 0) {
                 this.receive_pending_chunk_len = 0;
                 this.dispatchData(this.receive_buffer.readableSlice(0), kind);
                 this.clearReceiveBuffers(false);

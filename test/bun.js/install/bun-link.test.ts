@@ -1,4 +1,4 @@
-import { file, spawn } from "bun";
+import { spawn } from "bun";
 import {
   afterEach,
   beforeEach,
@@ -7,7 +7,7 @@ import {
 } from "bun:test";
 import { bunExe } from "bunExe";
 import { bunEnv as env } from "bunEnv";
-import { access, mkdir, mkdtemp, readdir, readlink, rm, writeFile } from "fs/promises";
+import { mkdtemp, rm, writeFile } from "fs/promises";
 import { basename, join } from "path";
 import { tmpdir } from "os";
 

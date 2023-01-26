@@ -93,7 +93,7 @@ test("dns.resolveNaptr (naptr.socketify.dev)", (done) => {
     expect(err).toBeNull();
     expect(results instanceof Array).toBe(true);
     expect(results[0].flags).toBe('S');
-    expect(results[0].service).toBe('');
+    expect(results[0].service).toBe('test');
     expect(results[0].regexp).toBe('');
     expect(results[0].replacement).toBe('');
     expect(results[0].order).toBe(1);

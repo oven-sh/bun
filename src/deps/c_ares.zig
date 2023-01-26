@@ -977,7 +977,7 @@ pub const struct_ares_naptr_reply = extern struct {
         obj.put(globalThis, JSC.ZigString.static("flags"), JSC.ZigString.fromUTF8(flags).toValueGC(globalThis));
 
         const service_len = bun.len(this.service);
-        const service = this.flags[0..service_len];
+        const service = this.service[0..service_len];
         obj.put(globalThis, JSC.ZigString.static("service"), JSC.ZigString.fromUTF8(service).toValueGC(globalThis));
 
         const regexp_len = bun.len(this.regexp);
